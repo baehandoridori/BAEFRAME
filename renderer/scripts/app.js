@@ -142,14 +142,17 @@ async function initApp() {
   // 비디오 재생 상태 변경
   videoPlayer.addEventListener('play', () => {
     elements.btnPlay.textContent = '⏸';
+    drawingManager.setPlaying(true);
   });
 
   videoPlayer.addEventListener('pause', () => {
     elements.btnPlay.textContent = '▶';
+    drawingManager.setPlaying(false);
   });
 
   videoPlayer.addEventListener('ended', () => {
     elements.btnPlay.textContent = '▶';
+    drawingManager.setPlaying(false);
   });
 
   // 비디오 에러
@@ -315,25 +318,141 @@ async function initApp() {
     });
   });
 
-  // 색상 선택
+  // 색상 선택 (8색 팔레트)
   const colorMap = {
     'red': '#ff4757',
     'yellow': '#ffd000',
     'green': '#26de81',
     'blue': '#4a9eff',
-    'white': '#ffffff'
+    'white': '#ffffff',
+    'black': '#000000',
+    'mint': '#1abc9c',
+    'pink': '#ff6b9d'
   };
+
+  let currentColor = '#ff4757';
 
   document.querySelectorAll('.color-btn').forEach(btn => {
     btn.addEventListener('click', function() {
       document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
       this.classList.add('active');
 
-      const color = colorMap[this.dataset.color] || '#ff4757';
-      drawingManager.setColor(color);
+      currentColor = colorMap[this.dataset.color] || '#ff4757';
+      drawingManager.setColor(currentColor);
+      updateSizePreview();
       log.debug('색상 선택', { color: this.dataset.color });
     });
   });
+
+  // 브러쉬 사이즈 슬라이더
+  const brushSizeSlider = document.getElementById('brushSizeSlider');
+  const brushSizeValue = document.getElementById('brushSizeValue');
+  const sizePreview = document.getElementById('sizePreview');
+
+  function updateSizePreview() {
+    const size = brushSizeSlider.value;
+    brushSizeValue.textContent = `${size}px`;
+    sizePreview.style.setProperty('--preview-size', `${Math.min(size, 20)}px`);
+    sizePreview.style.setProperty('--preview-color', currentColor);
+  }
+
+  brushSizeSlider.addEventListener('input', function() {
+    const size = parseInt(this.value);
+    drawingManager.setLineWidth(size);
+    updateSizePreview();
+  });
+
+  // 초기 사이즈 프리뷰 설정
+  updateSizePreview();
+
+  // ====== 그리기 도구 메뉴 이동/접기 ======
+  const drawingToolsPanel = elements.drawingTools;
+  const drawingToolsHeader = document.getElementById('drawingToolsHeader');
+  const collapseToolsBtn = document.getElementById('collapseToolsBtn');
+
+  // 접기/펴기 기능
+  collapseToolsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    drawingToolsPanel.classList.toggle('collapsed');
+  });
+
+  // 드래그로 이동 기능
+  let isDraggingTools = false;
+  let toolsDragStartX = 0;
+  let toolsDragStartY = 0;
+  let toolsInitialLeft = 0;
+  let toolsInitialTop = 0;
+
+  drawingToolsHeader.addEventListener('mousedown', (e) => {
+    if (e.target === collapseToolsBtn) return;
+    isDraggingTools = true;
+    toolsDragStartX = e.clientX;
+    toolsDragStartY = e.clientY;
+    toolsInitialLeft = drawingToolsPanel.offsetLeft;
+    toolsInitialTop = drawingToolsPanel.offsetTop;
+    drawingToolsPanel.style.transition = 'none';
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isDraggingTools) return;
+
+    const deltaX = e.clientX - toolsDragStartX;
+    const deltaY = e.clientY - toolsDragStartY;
+
+    const newLeft = toolsInitialLeft + deltaX;
+    const newTop = toolsInitialTop + deltaY;
+
+    // 경계 체크
+    const container = elements.videoWrapper;
+    const maxLeft = container.offsetWidth - drawingToolsPanel.offsetWidth - 10;
+    const maxTop = container.offsetHeight - 50;
+
+    drawingToolsPanel.style.left = `${Math.max(10, Math.min(newLeft, maxLeft))}px`;
+    drawingToolsPanel.style.top = `${Math.max(10, Math.min(newTop, maxTop))}px`;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (isDraggingTools) {
+      isDraggingTools = false;
+      drawingToolsPanel.style.transition = '';
+    }
+  });
+
+  // ====== 어니언 스킨 ======
+  const onionToggle = document.getElementById('onionToggle');
+  const onionControls = document.getElementById('onionControls');
+  const onionBefore = document.getElementById('onionBefore');
+  const onionAfter = document.getElementById('onionAfter');
+  const onionOpacity = document.getElementById('onionOpacity');
+  const onionOpacityValue = document.getElementById('onionOpacityValue');
+
+  onionToggle.addEventListener('click', () => {
+    const isActive = onionToggle.classList.toggle('active');
+    onionToggle.textContent = isActive ? 'ON' : 'OFF';
+    onionControls.classList.toggle('visible', isActive);
+    drawingManager.setOnionSkin(isActive, {
+      before: parseInt(onionBefore.value),
+      after: parseInt(onionAfter.value),
+      opacity: parseInt(onionOpacity.value) / 100
+    });
+  });
+
+  onionBefore.addEventListener('change', updateOnionSettings);
+  onionAfter.addEventListener('change', updateOnionSettings);
+  onionOpacity.addEventListener('input', () => {
+    onionOpacityValue.textContent = `${onionOpacity.value}%`;
+    updateOnionSettings();
+  });
+
+  function updateOnionSettings() {
+    if (onionToggle.classList.contains('active')) {
+      drawingManager.setOnionSkin(true, {
+        before: parseInt(onionBefore.value),
+        after: parseInt(onionAfter.value),
+        opacity: parseInt(onionOpacity.value) / 100
+      });
+    }
+  }
 
   // 패널 리사이저
   setupResizer(elements.panelResizer, 'col', (delta) => {

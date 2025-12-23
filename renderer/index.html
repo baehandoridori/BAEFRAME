@@ -61,21 +61,86 @@
           <!-- Drawing Overlay Canvas -->
           <canvas id="drawingCanvas" class="drawing-overlay"></canvas>
 
-          <!-- Drawing Tools Palette -->
+          <!-- Drawing Tools Palette (이동/접기 가능) -->
           <div class="drawing-tools" id="drawingTools">
-            <button class="tool-btn active" data-tool="pen" title="펜 (P)">✏️</button>
-            <button class="tool-btn" data-tool="arrow" title="화살표 (A)">➡️</button>
-            <button class="tool-btn" data-tool="circle" title="원 (O)">⭕</button>
-            <button class="tool-btn" data-tool="rectangle" title="사각형 (R)">⬜</button>
-            <div class="tool-divider"></div>
-            <button class="color-btn color-red active" data-color="#ff4757" title="빨강"></button>
-            <button class="color-btn color-yellow" data-color="#ffd000" title="노랑"></button>
-            <button class="color-btn color-green" data-color="#26de81" title="초록"></button>
-            <button class="color-btn color-blue" data-color="#4a9eff" title="파랑"></button>
-            <button class="color-btn color-white" data-color="#ffffff" title="흰색"></button>
-            <div class="tool-divider"></div>
-            <button class="tool-btn" id="btnUndo" title="실행 취소 (Ctrl+Z)">↩️</button>
-            <button class="tool-btn" id="btnClearDrawing" title="지우기">🗑️</button>
+            <!-- 드래그 핸들 및 접기 버튼 -->
+            <div class="drawing-tools-header" id="drawingToolsHeader">
+              <span class="drag-handle" title="드래그하여 이동">⋮⋮</span>
+              <span class="tools-title">그리기 도구</span>
+              <button class="collapse-btn" id="collapseToolsBtn" title="접기/펴기">▼</button>
+            </div>
+
+            <!-- 접히는 컨텐츠 영역 -->
+            <div class="drawing-tools-content" id="drawingToolsContent">
+              <!-- 도구 선택 -->
+              <div class="tools-section">
+                <div class="section-label">도구</div>
+                <div class="tools-row">
+                  <button class="tool-btn active" data-tool="pen" title="펜 (P)">✏️</button>
+                  <button class="tool-btn" data-tool="brush" title="브러쉬 (B)">🖌️</button>
+                  <button class="tool-btn" data-tool="eraser" title="지우개 (E)">🧹</button>
+                  <button class="tool-btn" data-tool="line" title="선 (L)">📏</button>
+                  <button class="tool-btn" data-tool="arrow" title="화살표 (A)">➡️</button>
+                  <button class="tool-btn" data-tool="rect" title="사각형 (R)">⬜</button>
+                  <button class="tool-btn" data-tool="circle" title="원 (O)">⭕</button>
+                </div>
+              </div>
+
+              <!-- 브러쉬 사이즈 -->
+              <div class="tools-section">
+                <div class="section-label">크기 <span id="brushSizeValue">3px</span></div>
+                <div class="size-slider-wrapper">
+                  <input type="range" class="size-slider" id="brushSizeSlider" min="1" max="30" value="3">
+                  <div class="size-preview" id="sizePreview"></div>
+                </div>
+              </div>
+
+              <!-- 색상 선택 -->
+              <div class="tools-section">
+                <div class="section-label">색상</div>
+                <div class="colors-row">
+                  <button class="color-btn active" data-color="red" style="background: #ff4757" title="빨강"></button>
+                  <button class="color-btn" data-color="yellow" style="background: #ffd000" title="노랑"></button>
+                  <button class="color-btn" data-color="green" style="background: #26de81" title="초록"></button>
+                  <button class="color-btn" data-color="blue" style="background: #4a9eff" title="파랑"></button>
+                  <button class="color-btn" data-color="white" style="background: #ffffff; border: 1px solid #555" title="하양"></button>
+                  <button class="color-btn" data-color="black" style="background: #000000" title="검정"></button>
+                  <button class="color-btn" data-color="mint" style="background: #1abc9c" title="민트"></button>
+                  <button class="color-btn" data-color="pink" style="background: #ff6b9d" title="핑크"></button>
+                </div>
+              </div>
+
+              <!-- 어니언 스킨 -->
+              <div class="tools-section">
+                <div class="section-label">
+                  어니언 스킨
+                  <button class="onion-toggle" id="onionToggle" title="어니언 스킨 토글">OFF</button>
+                </div>
+                <div class="onion-controls" id="onionControls">
+                  <div class="onion-row">
+                    <span>이전</span>
+                    <input type="number" id="onionBefore" min="0" max="5" value="2">
+                    <span>장</span>
+                  </div>
+                  <div class="onion-row">
+                    <span>이후</span>
+                    <input type="number" id="onionAfter" min="0" max="5" value="1">
+                    <span>장</span>
+                  </div>
+                  <div class="onion-row">
+                    <span>투명도</span>
+                    <input type="range" id="onionOpacity" min="10" max="80" value="30">
+                    <span id="onionOpacityValue">30%</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 액션 버튼 -->
+              <div class="tools-section tools-actions">
+                <button class="tool-btn" id="btnUndo" title="실행 취소 (Ctrl+Z)">↩️</button>
+                <button class="tool-btn" id="btnClearDrawing" title="전체 지우기">🗑️</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

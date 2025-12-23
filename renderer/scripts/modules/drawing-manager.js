@@ -33,6 +33,19 @@ export class DrawingManager extends EventTarget {
     this.canvasWidth = 0;
     this.canvasHeight = 0;
 
+    // 어니언 스킨 설정
+    this.onionSkin = {
+      enabled: false,
+      before: 2,      // 이전 프레임 수
+      after: 1,       // 이후 프레임 수
+      opacity: 0.3    // 투명도
+    };
+
+    // 재생 성능 관련
+    this.preloadedFrames = new Map();  // 프리로드된 이미지 캐시
+    this.isPlaying = false;
+    this.preloadRange = 10;  // 앞뒤로 프리로드할 프레임 수
+
     // 이벤트 연결
     this._setupEvents();
 
@@ -306,11 +319,17 @@ export class DrawingManager extends EventTarget {
 
     log.debug('renderFrame 시작', {
       frame,
-      layersCount: this.layers.length
+      layersCount: this.layers.length,
+      onionSkin: this.onionSkin.enabled
     });
 
     // 캔버스 초기화
     this.drawingCanvas.clear();
+
+    // 어니언 스킨 먼저 렌더링 (현재 프레임 아래에 표시)
+    if (this.onionSkin.enabled && !this.isPlaying) {
+      await this._renderOnionSkin(frame);
+    }
 
     // 렌더링할 이미지들을 먼저 모두 로드
     const imagesToRender = [];
@@ -319,15 +338,6 @@ export class DrawingManager extends EventTarget {
       if (!layer.visible) continue;
 
       const keyframe = layer.getKeyframeAtFrame(frame);
-
-      log.debug('키프레임 검색', {
-        layerId: layer.id,
-        frame,
-        found: !!keyframe,
-        keyframeFrame: keyframe?.frame,
-        isEmpty: keyframe?.isEmpty,
-        hasData: !!keyframe?.canvasData
-      });
 
       if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
@@ -349,6 +359,11 @@ export class DrawingManager extends EventTarget {
       this.drawingCanvas.ctx.globalAlpha = layer.opacity;
       this.drawingCanvas.ctx.drawImage(img, 0, 0);
       this.drawingCanvas.ctx.globalAlpha = 1;
+    }
+
+    // 재생 중이면 주변 프레임 프리로드
+    if (this.isPlaying) {
+      this._preloadFrames(frame);
     }
 
     log.debug('renderFrame 완료', { frame, renderedCount: imagesToRender.length });
@@ -441,6 +456,130 @@ export class DrawingManager extends EventTarget {
     this.drawingCanvas.setLineWidth(width);
   }
 
+  // ====== 어니언 스킨 ======
+
+  /**
+   * 어니언 스킨 설정
+   */
+  setOnionSkin(enabled, options = {}) {
+    this.onionSkin.enabled = enabled;
+    if (options.before !== undefined) this.onionSkin.before = options.before;
+    if (options.after !== undefined) this.onionSkin.after = options.after;
+    if (options.opacity !== undefined) this.onionSkin.opacity = options.opacity;
+
+    log.info('어니언 스킨 설정', this.onionSkin);
+
+    // 현재 프레임 다시 렌더링
+    this.renderFrame(this.currentFrame);
+  }
+
+  /**
+   * 어니언 스킨 렌더링
+   */
+  async _renderOnionSkin(currentFrame) {
+    if (!this.onionSkin.enabled) return;
+
+    const ctx = this.drawingCanvas.ctx;
+
+    // 이전 프레임들 (파란색 틴트)
+    for (let i = this.onionSkin.before; i >= 1; i--) {
+      const frame = currentFrame - i;
+      if (frame < 0) continue;
+
+      const opacity = this.onionSkin.opacity * (1 - (i - 1) / this.onionSkin.before);
+      await this._renderOnionFrame(frame, opacity, 'rgba(100, 149, 237, 0.5)'); // 파란색
+    }
+
+    // 이후 프레임들 (녹색 틴트)
+    for (let i = 1; i <= this.onionSkin.after; i++) {
+      const frame = currentFrame + i;
+      if (frame >= this.totalFrames) continue;
+
+      const opacity = this.onionSkin.opacity * (1 - (i - 1) / this.onionSkin.after);
+      await this._renderOnionFrame(frame, opacity, 'rgba(50, 205, 50, 0.5)'); // 녹색
+    }
+  }
+
+  /**
+   * 어니언 스킨 단일 프레임 렌더링
+   */
+  async _renderOnionFrame(frame, opacity, tintColor) {
+    const ctx = this.drawingCanvas.ctx;
+
+    for (const layer of this.layers) {
+      if (!layer.visible) continue;
+
+      const keyframe = layer.getKeyframeAtFrame(frame);
+      if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
+
+      const img = await this._loadImage(keyframe.canvasData, keyframe);
+      if (!img) continue;
+
+      // 임시 캔버스에 이미지 그리기 (틴트 적용)
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = this.drawingCanvas.canvas.width;
+      tempCanvas.height = this.drawingCanvas.canvas.height;
+      const tempCtx = tempCanvas.getContext('2d');
+
+      tempCtx.drawImage(img, 0, 0);
+
+      // 틴트 오버레이
+      tempCtx.globalCompositeOperation = 'source-atop';
+      tempCtx.fillStyle = tintColor;
+      tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+      // 메인 캔버스에 그리기
+      ctx.globalAlpha = opacity;
+      ctx.drawImage(tempCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ====== 재생 성능 개선 ======
+
+  /**
+   * 재생 상태 설정
+   */
+  setPlaying(isPlaying) {
+    this.isPlaying = isPlaying;
+    if (isPlaying) {
+      // 재생 시작 시 주변 프레임 프리로드
+      this._preloadFrames(this.currentFrame);
+    }
+  }
+
+  /**
+   * 프레임 프리로드
+   */
+  async _preloadFrames(centerFrame) {
+    const startFrame = Math.max(0, centerFrame - this.preloadRange);
+    const endFrame = Math.min(this.totalFrames - 1, centerFrame + this.preloadRange);
+
+    for (let frame = startFrame; frame <= endFrame; frame++) {
+      if (this.preloadedFrames.has(frame)) continue;
+
+      // 해당 프레임의 모든 레이어 이미지 프리로드
+      for (const layer of this.layers) {
+        if (!layer.visible) continue;
+
+        const keyframe = layer.getKeyframeAtFrame(frame);
+        if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
+
+        // 이미지 프리로드 (캐시에 저장됨)
+        await this._loadImage(keyframe.canvasData, keyframe);
+      }
+
+      this.preloadedFrames.set(frame, true);
+    }
+  }
+
+  /**
+   * 프리로드 캐시 클리어
+   */
+  clearPreloadCache() {
+    this.preloadedFrames.clear();
+  }
+
   /**
    * 커스텀 이벤트 발생
    */
@@ -454,6 +593,7 @@ export class DrawingManager extends EventTarget {
   destroy() {
     this.drawingCanvas.destroy();
     this.layers = [];
+    this.preloadedFrames.clear();
     log.info('DrawingManager 정리됨');
   }
 }

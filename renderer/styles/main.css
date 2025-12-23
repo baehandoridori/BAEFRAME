@@ -356,23 +356,21 @@ body {
   cursor: crosshair;
 }
 
-/* Drawing Tools */
+/* Drawing Tools - 이동/접기 가능한 플로팅 패널 */
 .drawing-tools {
   position: absolute;
   top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 4px;
-  padding: 8px;
+  left: 16px;
+  width: 220px;
   background: var(--bg-elevated);
   border-radius: 10px;
   box-shadow: var(--shadow-lg);
   border: 1px solid var(--border-subtle);
   opacity: 0;
   visibility: hidden;
-  transition: all var(--transition-normal);
-  z-index: 20;
+  transition: opacity var(--transition-normal), visibility var(--transition-normal);
+  z-index: 100;
+  user-select: none;
 }
 
 .drawing-tools.visible {
@@ -380,40 +378,185 @@ body {
   visibility: visible;
 }
 
+/* 헤더 (드래그 핸들) */
+.drawing-tools-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--bg-tertiary);
+  border-radius: 10px 10px 0 0;
+  cursor: move;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.drawing-tools.collapsed .drawing-tools-header {
+  border-radius: 10px;
+  border-bottom: none;
+}
+
+.drag-handle {
+  color: var(--text-muted);
+  font-size: 12px;
+  letter-spacing: 2px;
+  margin-right: 8px;
+}
+
+.tools-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.collapse-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  font-size: 10px;
+  transition: transform var(--transition-fast);
+}
+
+.collapse-btn:hover {
+  color: var(--text-primary);
+}
+
+.drawing-tools.collapsed .collapse-btn {
+  transform: rotate(-90deg);
+}
+
+/* 컨텐츠 영역 (접기 애니메이션) */
+.drawing-tools-content {
+  max-height: 500px;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out, padding 0.3s ease-out, opacity 0.2s ease-out;
+  padding: 10px;
+}
+
+.drawing-tools.collapsed .drawing-tools-content {
+  max-height: 0;
+  padding: 0 10px;
+  opacity: 0;
+}
+
+/* 섹션 스타일 */
+.tools-section {
+  margin-bottom: 12px;
+}
+
+.tools-section:last-child {
+  margin-bottom: 0;
+}
+
+.section-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section-label span {
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+/* 도구 버튼 행 */
+.tools-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
 .tool-btn {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  border: none;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .tool-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+  border-color: var(--border-default);
 }
 
 .tool-btn.active {
   background: var(--accent-glow-strong);
   color: var(--accent-primary);
+  border-color: var(--accent-primary);
 }
 
-.tool-divider {
-  width: 1px;
-  background: var(--border-subtle);
-  margin: 4px 4px;
+/* 브러쉬 사이즈 슬라이더 */
+.size-slider-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.size-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  outline: none;
+}
+
+.size-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent-primary);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+
+.size-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.size-preview {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+.size-preview::after {
+  content: '';
+  width: var(--preview-size, 3px);
+  height: var(--preview-size, 3px);
+  background: var(--preview-color, var(--accent-primary));
+  border-radius: 50%;
+}
+
+/* 색상 버튼 행 */
+.colors-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .color-btn {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
@@ -421,19 +564,91 @@ body {
 }
 
 .color-btn:hover {
-  transform: scale(1.1);
+  transform: scale(1.15);
 }
 
 .color-btn.active {
   border-color: white;
-  box-shadow: 0 0 0 2px var(--bg-elevated);
+  box-shadow: 0 0 0 2px var(--accent-primary);
 }
 
-.color-red { background: var(--draw-red); }
-.color-yellow { background: var(--draw-yellow); }
-.color-green { background: var(--draw-green); }
-.color-blue { background: var(--draw-blue); }
-.color-white { background: var(--draw-white); }
+/* 어니언 스킨 컨트롤 */
+.onion-toggle {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.onion-toggle.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: white;
+}
+
+.onion-controls {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+.onion-controls.visible {
+  display: flex;
+}
+
+.onion-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.onion-row input[type="number"] {
+  width: 40px;
+  padding: 4px 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  text-align: center;
+}
+
+.onion-row input[type="range"] {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--bg-secondary);
+  border-radius: 2px;
+}
+
+.onion-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--accent-primary);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* 액션 버튼 */
+.tools-actions {
+  display: flex;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
 
 /* ========================================
    Playback Controls
