@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;">
+  <title>baeframe - Video Review Tool</title>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">
+        <div class="logo-icon">B</div>
+        <span>baeframe</span>
+      </div>
+      <div class="file-info" id="fileInfo">
+        <span class="file-icon">🎬</span>
+        <span class="file-name" id="fileName">파일을 열어주세요</span>
+        <span class="file-path" id="filePath"></span>
+        <span class="version-badge" id="versionBadge" style="display: none;">v1</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="btn btn-secondary" id="btnVersionHistory">
+        <span>📋</span>
+        버전 히스토리
+      </button>
+      <button class="btn btn-primary" id="btnCopyLink">
+        <span>🔗</span>
+        링크 복사
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="main-container">
+    <!-- Viewer Section -->
+    <div class="viewer-section" id="viewerSection">
+      <!-- Video Viewer -->
+      <div class="viewer-container" id="viewerContainer">
+        <div class="video-wrapper" id="videoWrapper">
+          <!-- 드롭 존 -->
+          <div class="drop-zone" id="dropZone">
+            <div class="drop-zone-content">
+              <div class="drop-zone-icon">🎬</div>
+              <div class="drop-zone-text">영상 파일을 여기에 드롭하세요</div>
+              <div class="drop-zone-hint">MOV, MP4, H.264/265 지원</div>
+              <button class="btn btn-primary" id="btnOpenFile" style="margin-top: 16px;">
+                <span>📂</span>
+                파일 열기
+              </button>
+            </div>
+          </div>
+
+          <!-- Video Element (추후 mpv로 대체) -->
+          <video id="videoPlayer" style="display: none;"></video>
+
+          <!-- Drawing Overlay Canvas -->
+          <canvas id="drawingCanvas" class="drawing-overlay"></canvas>
+
+          <!-- Drawing Tools Palette -->
+          <div class="drawing-tools" id="drawingTools">
+            <button class="tool-btn active" data-tool="pen" title="펜 (P)">✏️</button>
+            <button class="tool-btn" data-tool="arrow" title="화살표 (A)">➡️</button>
+            <button class="tool-btn" data-tool="circle" title="원 (O)">⭕</button>
+            <button class="tool-btn" data-tool="rectangle" title="사각형 (R)">⬜</button>
+            <div class="tool-divider"></div>
+            <button class="color-btn color-red active" data-color="#ff4757" title="빨강"></button>
+            <button class="color-btn color-yellow" data-color="#ffd000" title="노랑"></button>
+            <button class="color-btn color-green" data-color="#26de81" title="초록"></button>
+            <button class="color-btn color-blue" data-color="#4a9eff" title="파랑"></button>
+            <button class="color-btn color-white" data-color="#ffffff" title="흰색"></button>
+            <div class="tool-divider"></div>
+            <button class="tool-btn" id="btnUndo" title="실행 취소 (Ctrl+Z)">↩️</button>
+            <button class="tool-btn" id="btnClearDrawing" title="지우기">🗑️</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resizer (Horizontal) -->
+      <div class="resizer resizer-h" id="viewerResizer"></div>
+
+      <!-- Playback Controls -->
+      <div class="controls-bar">
+        <div class="playback-controls">
+          <button class="control-btn" id="btnFirst" title="처음으로 (Home)">⏮</button>
+          <button class="control-btn" id="btnPrevFrame" title="이전 프레임 (←)">◀</button>
+          <button class="control-btn play-btn" id="btnPlay" title="재생/일시정지 (Space)">▶</button>
+          <button class="control-btn" id="btnNextFrame" title="다음 프레임 (→)">▶</button>
+          <button class="control-btn" id="btnLast" title="끝으로 (End)">⏭</button>
+        </div>
+
+        <div class="timecode" id="timecode">
+          <span class="timecode-current" id="timecodeCurrent">00:00:00:00</span>
+          <span class="timecode-separator">/</span>
+          <span class="timecode-total" id="timecodeTotal">00:00:00:00</span>
+        </div>
+
+        <div class="frame-indicator" id="frameIndicator">24fps · Frame 0 / 0</div>
+
+        <div class="controls-spacer"></div>
+
+        <div class="action-controls">
+          <button class="action-btn" id="btnDrawMode">
+            <span>✏️</span>
+            그리기
+            <span class="shortcut-hint">D</span>
+          </button>
+          <button class="action-btn" id="btnAddComment">
+            <span>💬</span>
+            댓글 추가
+            <span class="shortcut-hint">C</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="timeline-section" id="timelineSection">
+        <div class="timeline-toolbar">
+          <div class="timeline-toolbar-left">
+            <div class="timeline-title">
+              <span class="timeline-title-icon">🎞️</span>
+              타임라인
+            </div>
+          </div>
+          <div class="timeline-toolbar-right">
+            <div class="zoom-control">
+              <span class="zoom-label">줌</span>
+              <input type="range" class="zoom-slider" id="zoomSlider" min="1" max="100" value="50">
+              <span class="zoom-display" id="zoomDisplay">100%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline-main">
+          <!-- Layer Headers -->
+          <div class="layer-headers" id="layerHeaders">
+            <div class="layer-header-ruler"></div>
+            <div class="layer-header" data-layer="video">
+              <div class="layer-color" style="background: #3a3a3a"></div>
+              <span class="layer-visibility">👁️</span>
+              <span class="layer-name">📹 Video</span>
+              <span class="layer-lock">🔒</span>
+            </div>
+          </div>
+
+          <!-- Timeline Tracks -->
+          <div class="timeline-tracks" id="timelineTracks">
+            <div class="timeline-ruler" id="timelineRuler">
+              <div class="playhead-handle" id="playheadHandle"></div>
+            </div>
+            <div class="tracks-container" id="tracksContainer">
+              <div class="playhead-line" id="playheadLine"></div>
+              <div class="track-row">
+                <div class="track-clip video" id="videoTrackClip">영상을 로드하세요</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resizer (Vertical) -->
+    <div class="resizer" id="panelResizer"></div>
+
+    <!-- Comment Panel -->
+    <div class="comment-panel" id="commentPanel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span class="panel-title-icon">💬</span>
+          댓글
+          <span class="comment-count" id="commentCount">0</span>
+        </div>
+        <div class="panel-actions">
+          <button class="panel-btn" title="정렬">⬇️</button>
+          <button class="panel-btn" title="설정">⚙️</button>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <button class="filter-chip active" data-filter="all">전체</button>
+        <button class="filter-chip" data-filter="unresolved">미해결</button>
+        <button class="filter-chip" data-filter="resolved">해결됨</button>
+      </div>
+
+      <div class="comments-list" id="commentsList">
+        <!-- 댓글들이 여기에 렌더링됨 -->
+        <div class="empty-comments">
+          <div class="empty-comments-icon">💬</div>
+          <div class="empty-comments-text">아직 댓글이 없습니다</div>
+          <div class="empty-comments-hint">영상을 재생하고 C키를 눌러 댓글을 추가하세요</div>
+        </div>
+      </div>
+
+      <!-- New Comment Input -->
+      <div class="new-comment">
+        <div class="comment-input-wrapper">
+          <textarea class="comment-input" id="commentInput" rows="2" placeholder="댓글을 입력하세요..."></textarea>
+          <button class="comment-submit" id="btnSubmitComment">전송</button>
+        </div>
+        <div class="input-hint">Tip: 그리기 도구(D)로 마킹을 추가하면 더 명확한 피드백을 줄 수 있어요</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shortcuts Toggle Button -->
+  <button class="shortcuts-toggle" id="shortcutsToggle" title="단축키 (?)">⌨️</button>
+
+  <!-- Shortcuts Menu -->
+  <div class="shortcuts-menu" id="shortcutsMenu">
+    <div class="shortcuts-menu-header">
+      <span>⌨️</span>
+      키보드 단축키
+    </div>
+    <div class="shortcuts-menu-content">
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">재생</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">재생/정지</span>
+          <div class="shortcut-keys"><span class="shortcut-key">Space</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">이전/다음 프레임</span>
+          <div class="shortcut-keys"><span class="shortcut-key">←</span><span class="shortcut-key">→</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">1초 이동</span>
+          <div class="shortcut-keys"><span class="shortcut-key">Shift</span><span class="shortcut-key">←→</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">처음/끝으로</span>
+          <div class="shortcut-keys"><span class="shortcut-key">Home</span><span class="shortcut-key">End</span></div>
+        </div>
+      </div>
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">도구</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">그리기 모드</span>
+          <div class="shortcut-keys"><span class="shortcut-key">D</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">댓글 추가</span>
+          <div class="shortcut-keys"><span class="shortcut-key">C</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">실행 취소</span>
+          <div class="shortcut-keys"><span class="shortcut-key">Ctrl</span><span class="shortcut-key">Z</span></div>
+        </div>
+      </div>
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">보기</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">타임라인 줌</span>
+          <div class="shortcut-keys"><span class="shortcut-key">Ctrl</span><span class="shortcut-key">+/-</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">단축키 메뉴</span>
+          <div class="shortcut-keys"><span class="shortcut-key">?</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Scripts -->
+  <script type="module" src="scripts/app.js"></script>
+</body>
+</html>

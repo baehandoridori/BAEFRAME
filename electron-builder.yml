@@ -1,0 +1,41 @@
+appId: com.baeframe.app
+productName: baeframe
+copyright: Copyright © 2024
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - main/**/*
+  - preload/**/*
+  - renderer/**/*
+  - shared/**/*
+  - package.json
+
+extraResources:
+  - from: mpv/
+    to: mpv/
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: portable
+      arch: x64
+  icon: build/icon.ico
+
+mac:
+  target:
+    - target: dir
+      arch: x64
+  icon: build/icon.icns
+
+linux:
+  target:
+    - target: AppImage
+      arch: x64
+  icon: build/icon.png
+
+portable:
+  artifactName: ${productName}-portable.exe
