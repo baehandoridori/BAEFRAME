@@ -1,0 +1,2222 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>baeframe - Video Review Tool</title>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ========================================
+       baeframe UI/UX Design Mockup v2
+       Theme: Yellow + Black
+       Features: Layer Timeline, Resizable Panels
+       ======================================== */
+
+    :root {
+      /* 색상 시스템 - Yellow & Black Theme */
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --bg-elevated: #222222;
+      --bg-hover: #2a2a2a;
+      
+      --border-subtle: #2a2a2a;
+      --border-default: #3a3a3a;
+      
+      --text-primary: #f5f5f5;
+      --text-secondary: #a0a0a0;
+      --text-tertiary: #666666;
+      
+      /* Yellow Accent */
+      --accent-primary: #ffd000;
+      --accent-secondary: #e6bb00;
+      --accent-tertiary: #ccaa00;
+      --accent-glow: rgba(255, 208, 0, 0.15);
+      --accent-glow-strong: rgba(255, 208, 0, 0.25);
+      
+      --success: #4ade80;
+      --success-bg: rgba(74, 222, 128, 0.15);
+      --warning: #fbbf24;
+      --error: #f87171;
+      --error-bg: rgba(248, 113, 113, 0.15);
+      
+      /* 그리기 도구 색상 */
+      --draw-red: #ff4757;
+      --draw-yellow: #ffd000;
+      --draw-green: #26de81;
+      --draw-blue: #4a9eff;
+      --draw-white: #ffffff;
+      
+      /* 레이어 색상 */
+      --layer-video: #3a3a3a;
+      --layer-drawing-1: #ff6b6b;
+      --layer-drawing-2: #4ecdc4;
+      --layer-drawing-3: #ffe66d;
+      --layer-comment: #a55eea;
+      
+      /* 타이포그래피 */
+      --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      --font-mono: 'SF Mono', 'Consolas', monospace;
+      
+      /* 그림자 */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
+      --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.7);
+      --shadow-glow: 0 0 20px rgba(255, 208, 0, 0.3);
+      
+      /* 레이아웃 */
+      --header-height: 48px;
+      --controls-height: 52px;
+      --timeline-height: 180px;
+      --panel-width: 320px;
+      --layer-header-width: 140px;
+      
+      /* 애니메이션 */
+      --transition-fast: 0.1s ease;
+      --transition-normal: 0.2s ease;
+      --transition-slow: 0.3s ease;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: var(--font-family);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      overflow: hidden;
+      height: 100vh;
+      user-select: none;
+    }
+
+    /* ========================================
+       Header
+       ======================================== */
+    .header {
+      height: var(--header-height);
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--accent-primary);
+    }
+
+    .logo-icon {
+      width: 28px;
+      height: 28px;
+      background: var(--accent-primary);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      color: var(--bg-primary);
+      font-weight: 800;
+    }
+
+    .file-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--bg-tertiary);
+      border-radius: 6px;
+      font-size: 13px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .file-icon {
+      color: var(--accent-primary);
+    }
+
+    .file-name {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .file-path {
+      color: var(--text-tertiary);
+      font-size: 12px;
+    }
+
+    .version-badge {
+      background: var(--accent-glow-strong);
+      color: var(--accent-primary);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid var(--accent-primary);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-default);
+    }
+
+    .btn-primary {
+      background: var(--accent-primary);
+      color: var(--bg-primary);
+      font-weight: 600;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-secondary);
+      box-shadow: var(--shadow-glow);
+    }
+
+    /* ========================================
+       Main Layout
+       ======================================== */
+    .main-container {
+      display: flex;
+      height: calc(100vh - var(--header-height));
+    }
+
+    .viewer-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-primary);
+      min-width: 400px;
+    }
+
+    /* 리사이저 핸들 */
+    .resizer {
+      width: 6px;
+      background: var(--bg-secondary);
+      cursor: col-resize;
+      transition: background var(--transition-fast);
+      position: relative;
+    }
+
+    .resizer:hover,
+    .resizer.dragging {
+      background: var(--accent-primary);
+    }
+
+    .resizer::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 2px;
+      height: 40px;
+      background: var(--border-default);
+      border-radius: 1px;
+    }
+
+    .resizer:hover::after,
+    .resizer.dragging::after {
+      background: var(--bg-primary);
+    }
+
+    .resizer-h {
+      height: 6px;
+      width: 100%;
+      cursor: row-resize;
+    }
+
+    .resizer-h::after {
+      width: 40px;
+      height: 2px;
+    }
+
+    .comment-panel {
+      width: 320px;
+      min-width: 260px;
+      max-width: 500px;
+      background: var(--bg-secondary);
+      border-left: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ========================================
+       Video Viewer
+       ======================================== */
+    .viewer-container {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      overflow: hidden;
+      min-height: 300px;
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 1280px;
+      aspect-ratio: 16 / 9;
+      background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .video-placeholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+      gap: 12px;
+    }
+
+    .video-placeholder-icon {
+      font-size: 48px;
+      opacity: 0.5;
+    }
+
+    /* 그리기 오버레이 */
+    .drawing-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .drawing-overlay.active {
+      pointer-events: auto;
+      cursor: crosshair;
+    }
+
+    /* 마킹 예시 */
+    .marking-example {
+      position: absolute;
+      top: 30%;
+      left: 40%;
+    }
+
+    .marking-circle {
+      width: 80px;
+      height: 80px;
+      border: 3px solid var(--draw-red);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    .marking-arrow {
+      position: absolute;
+      top: 20%;
+      right: 25%;
+      width: 60px;
+      height: 3px;
+      background: var(--accent-primary);
+      transform: rotate(-30deg);
+    }
+
+    .marking-arrow::after {
+      content: '';
+      position: absolute;
+      right: -2px;
+      top: -6px;
+      border: 8px solid transparent;
+      border-left: 12px solid var(--accent-primary);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.7; transform: scale(1.05); }
+    }
+
+    /* 그리기 도구 팔레트 */
+    .drawing-tools {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 4px;
+      padding: 8px;
+      background: var(--bg-elevated);
+      border-radius: 10px;
+      box-shadow: var(--shadow-lg);
+      border: 1px solid var(--border-subtle);
+      opacity: 0;
+      visibility: hidden;
+      transition: all var(--transition-normal);
+    }
+
+    .drawing-tools.visible {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .tool-btn {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      font-size: 16px;
+    }
+
+    .tool-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .tool-btn.active {
+      background: var(--accent-glow-strong);
+      color: var(--accent-primary);
+    }
+
+    .tool-divider {
+      width: 1px;
+      background: var(--border-subtle);
+      margin: 4px 4px;
+    }
+
+    .color-btn {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .color-btn:hover {
+      transform: scale(1.1);
+    }
+
+    .color-btn.active {
+      border-color: white;
+      box-shadow: 0 0 0 2px var(--bg-elevated);
+    }
+
+    .color-red { background: var(--draw-red); }
+    .color-yellow { background: var(--draw-yellow); }
+    .color-green { background: var(--draw-green); }
+    .color-blue { background: var(--draw-blue); }
+    .color-white { background: var(--draw-white); }
+
+    /* ========================================
+       Playback Controls
+       ======================================== */
+    .controls-bar {
+      height: var(--controls-height);
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 16px;
+    }
+
+    .playback-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .control-btn {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      font-size: 14px;
+    }
+
+    .control-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .control-btn.play-btn {
+      width: 44px;
+      height: 44px;
+      background: var(--accent-primary);
+      color: var(--bg-primary);
+      font-size: 18px;
+      border-radius: 50%;
+    }
+
+    .control-btn.play-btn:hover {
+      background: var(--accent-secondary);
+      box-shadow: var(--shadow-glow);
+    }
+
+    .timecode {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-primary);
+      min-width: 180px;
+      background: var(--bg-tertiary);
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .timecode-current {
+      color: var(--accent-primary);
+      font-weight: 600;
+    }
+
+    .timecode-separator {
+      color: var(--text-tertiary);
+      margin: 0 4px;
+    }
+
+    .timecode-total {
+      color: var(--text-secondary);
+    }
+
+    .frame-indicator {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      background: var(--bg-tertiary);
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .controls-spacer {
+      flex: 1;
+    }
+
+    .action-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .action-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .action-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-default);
+    }
+
+    .action-btn.active {
+      background: var(--accent-glow-strong);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+    }
+
+    .shortcut-hint {
+      font-size: 10px;
+      color: var(--text-tertiary);
+      background: var(--bg-primary);
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-family: var(--font-mono);
+    }
+
+    /* ========================================
+       Timeline with Layers (Premiere Pro Style)
+       ======================================== */
+    .timeline-section {
+      height: 180px;
+      min-height: 120px;
+      max-height: 400px;
+      background: var(--bg-tertiary);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .timeline-toolbar {
+      height: 32px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+    }
+
+    .timeline-toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .timeline-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .timeline-title-icon {
+      color: var(--accent-primary);
+    }
+
+    .layer-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .layer-action-btn {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      font-size: 12px;
+      transition: all var(--transition-fast);
+    }
+
+    .layer-action-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .timeline-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .zoom-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .zoom-label {
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    .zoom-slider {
+      width: 80px;
+      height: 4px;
+      background: var(--bg-primary);
+      border-radius: 2px;
+      appearance: none;
+      cursor: pointer;
+    }
+
+    .zoom-slider::-webkit-slider-thumb {
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      background: var(--accent-primary);
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    .timeline-main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* 레이어 헤더 (왼쪽) */
+    .layer-headers {
+      width: var(--layer-header-width);
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .layer-headers::-webkit-scrollbar {
+      display: none;
+    }
+
+    .layer-header-ruler {
+      height: 24px;
+      min-height: 24px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-subtle);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .layer-header {
+      height: 28px;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      gap: 6px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 11px;
+      cursor: pointer;
+      transition: background var(--transition-fast);
+    }
+
+    .layer-header:hover {
+      background: var(--bg-hover);
+    }
+
+    .layer-header.selected {
+      background: var(--accent-glow);
+    }
+
+    .layer-color {
+      width: 4px;
+      height: 16px;
+      border-radius: 2px;
+    }
+
+    .layer-visibility {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: var(--text-tertiary);
+      cursor: pointer;
+    }
+
+    .layer-visibility:hover {
+      color: var(--accent-primary);
+    }
+
+    .layer-visibility.hidden {
+      opacity: 0.3;
+    }
+
+    .layer-name {
+      flex: 1;
+      color: var(--text-secondary);
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .layer-lock {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: var(--text-tertiary);
+      cursor: pointer;
+    }
+
+    .layer-lock:hover {
+      color: var(--accent-primary);
+    }
+
+    /* 타임라인 트랙 (오른쪽) */
+    .timeline-tracks {
+      flex: 1;
+      position: relative;
+      overflow: auto;
+    }
+
+    .timeline-ruler {
+      height: 24px;
+      min-height: 24px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-subtle);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      min-width: 100%;
+    }
+
+    .ruler-marks {
+      display: flex;
+      height: 100%;
+      align-items: flex-end;
+    }
+
+    .ruler-mark {
+      position: absolute;
+      font-size: 9px;
+      color: var(--text-tertiary);
+      font-family: var(--font-mono);
+      bottom: 4px;
+    }
+
+    .ruler-mark::before {
+      content: '';
+      position: absolute;
+      bottom: -4px;
+      left: 0;
+      width: 1px;
+      height: 8px;
+      background: var(--border-default);
+    }
+
+    .tracks-container {
+      position: relative;
+    }
+
+    .track-row {
+      height: 28px;
+      position: relative;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg-primary);
+    }
+
+    .track-row:nth-child(odd) {
+      background: var(--bg-tertiary);
+    }
+
+    /* 트랙 내 클립/마킹 */
+    .track-clip {
+      position: absolute;
+      top: 3px;
+      height: 22px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 500;
+      color: white;
+      cursor: pointer;
+      transition: filter var(--transition-fast);
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .track-clip:hover {
+      filter: brightness(1.1);
+    }
+
+    .track-clip.video {
+      background: linear-gradient(90deg, #2a2a2a, #3a3a3a);
+      left: 0;
+      right: 0;
+      border: 1px solid var(--border-default);
+    }
+
+    .track-clip.drawing {
+      background: linear-gradient(90deg, var(--layer-drawing-1), #ff8585);
+    }
+
+    .track-clip.drawing-2 {
+      background: linear-gradient(90deg, var(--layer-drawing-2), #7eded6);
+    }
+
+    .track-clip.drawing-3 {
+      background: linear-gradient(90deg, var(--layer-drawing-3), #fff09e);
+    }
+
+    /* 플레이헤드 */
+    .playhead-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 25%;
+      width: 2px;
+      background: var(--accent-primary);
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    .playhead-handle {
+      position: absolute;
+      top: 0;
+      left: 25%;
+      transform: translateX(-50%);
+      width: 12px;
+      height: 24px;
+      background: var(--accent-primary);
+      clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
+      cursor: ew-resize;
+      z-index: 101;
+    }
+
+    /* 댓글 마커 (트랙 위) */
+    .comment-marker-track {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      width: 2px;
+      background: var(--error);
+      z-index: 50;
+    }
+
+    .comment-marker-track.resolved {
+      background: var(--success);
+    }
+
+    .comment-marker-track::before {
+      content: '💬';
+      position: absolute;
+      top: -20px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+    }
+
+    /* ========================================
+       Comment Panel
+       ======================================== */
+    .panel-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .panel-title-icon {
+      color: var(--accent-primary);
+    }
+
+    .comment-count {
+      background: var(--accent-glow-strong);
+      color: var(--accent-primary);
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .panel-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .panel-btn {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .panel-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .filter-bar {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      gap: 8px;
+    }
+
+    .filter-chip {
+      padding: 6px 12px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .filter-chip:hover {
+      border-color: var(--border-default);
+      color: var(--text-primary);
+    }
+
+    .filter-chip.active {
+      background: var(--accent-glow-strong);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+    }
+
+    .comments-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .comment-item {
+      padding: 12px;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      border: 1px solid transparent;
+    }
+
+    .comment-item:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-subtle);
+    }
+
+    .comment-item.selected {
+      border-color: var(--accent-primary);
+      background: var(--accent-glow);
+    }
+
+    .comment-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .comment-timestamp {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-primary);
+    }
+
+    .timestamp-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--error);
+    }
+
+    .timestamp-dot.resolved {
+      background: var(--success);
+    }
+
+    .comment-meta {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .comment-author {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .comment-time {
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    .comment-content {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+
+    .comment-attachment {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: var(--bg-primary);
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--accent-primary);
+      margin-bottom: 12px;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .comment-attachment:hover {
+      background: var(--accent-glow);
+      border-color: var(--accent-primary);
+    }
+
+    .comment-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .comment-action {
+      padding: 6px 10px;
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .comment-action:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-default);
+      color: var(--text-primary);
+    }
+
+    .comment-action.resolve-btn {
+      color: var(--success);
+      border-color: var(--success);
+    }
+
+    .comment-action.resolve-btn:hover {
+      background: var(--success-bg);
+    }
+
+    .comment-action.resolved {
+      background: var(--success-bg);
+      color: var(--success);
+      border-color: transparent;
+    }
+
+    /* 새 댓글 입력 */
+    .new-comment {
+      padding: 16px;
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-tertiary);
+    }
+
+    .comment-input-wrapper {
+      position: relative;
+    }
+
+    .comment-input {
+      width: 100%;
+      padding: 12px;
+      padding-right: 80px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 13px;
+      resize: none;
+      outline: none;
+      transition: all var(--transition-fast);
+    }
+
+    .comment-input:focus {
+      border-color: var(--accent-primary);
+    }
+
+    .comment-input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .comment-submit {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      padding: 6px 12px;
+      background: var(--accent-primary);
+      border: none;
+      border-radius: 4px;
+      color: var(--bg-primary);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .comment-submit:hover {
+      background: var(--accent-secondary);
+    }
+
+    .input-hint {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    /* ========================================
+       Shortcuts Menu (Toggle)
+       ======================================== */
+    .shortcuts-toggle {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      width: 40px;
+      height: 40px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 200;
+      transition: all var(--transition-fast);
+      font-size: 16px;
+    }
+
+    .shortcuts-toggle:hover {
+      background: var(--accent-glow-strong);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+    }
+
+    .shortcuts-toggle.active {
+      background: var(--accent-primary);
+      color: var(--bg-primary);
+    }
+
+    .shortcuts-menu {
+      position: fixed;
+      bottom: 70px;
+      right: 16px;
+      width: 280px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      box-shadow: var(--shadow-lg);
+      z-index: 199;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(10px);
+      transition: all var(--transition-normal);
+    }
+
+    .shortcuts-menu.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+
+    .shortcuts-menu-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .shortcuts-menu-content {
+      padding: 12px 16px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .shortcut-category {
+      margin-bottom: 16px;
+    }
+
+    .shortcut-category:last-child {
+      margin-bottom: 0;
+    }
+
+    .shortcut-category-title {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .shortcut-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+    }
+
+    .shortcut-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .shortcut-keys {
+      display: flex;
+      gap: 4px;
+    }
+
+    .shortcut-key {
+      padding: 3px 6px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-primary);
+    }
+
+    /* ========================================
+       Scrollbar
+       ======================================== */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--bg-primary);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--bg-hover);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--border-default);
+    }
+
+    /* ========================================
+       반응형 조정
+       ======================================== */
+    @media (max-width: 1200px) {
+      .comment-panel {
+        width: 280px;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .comment-panel {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">
+        <div class="logo-icon">B</div>
+        <span>baeframe</span>
+      </div>
+      <div class="file-info">
+        <span class="file-icon">🎬</span>
+        <span class="file-name">EP01_shot_015_animation_v3.mp4</span>
+        <span class="file-path">G:/프로젝트/스튜디오장삐쭈야/EP01/</span>
+        <span class="version-badge">v3</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="btn btn-secondary">
+        <span>📋</span>
+        버전 히스토리
+      </button>
+      <button class="btn btn-primary">
+        <span>🔗</span>
+        링크 복사
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="main-container">
+    <!-- Viewer Section -->
+    <div class="viewer-section" id="viewerSection">
+      <!-- Video Viewer -->
+      <div class="viewer-container" id="viewerContainer">
+        <div class="video-wrapper">
+          <div class="video-placeholder">
+            <div class="video-placeholder-icon">🎬</div>
+            <div>영상이 여기에 표시됩니다</div>
+            <div style="font-size: 12px;">MOV, MP4, H.264/265 지원</div>
+          </div>
+          
+          <!-- Drawing Overlay -->
+          <div class="drawing-overlay">
+            <div class="marking-example">
+              <div class="marking-circle"></div>
+            </div>
+            <div class="marking-arrow"></div>
+          </div>
+
+          <!-- Drawing Tools Palette -->
+          <div class="drawing-tools visible">
+            <button class="tool-btn active" title="펜">✏️</button>
+            <button class="tool-btn" title="원">⭕</button>
+            <button class="tool-btn" title="사각형">⬜</button>
+            <button class="tool-btn" title="화살표">➡️</button>
+            <div class="tool-divider"></div>
+            <button class="color-btn color-red active" title="빨강"></button>
+            <button class="color-btn color-yellow" title="노랑"></button>
+            <button class="color-btn color-green" title="초록"></button>
+            <button class="color-btn color-blue" title="파랑"></button>
+            <button class="color-btn color-white" title="흰색"></button>
+            <div class="tool-divider"></div>
+            <button class="tool-btn" title="실행 취소">↩️</button>
+            <button class="tool-btn" title="지우기">🗑️</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resizer (Horizontal) -->
+      <div class="resizer resizer-h" id="viewerResizer"></div>
+
+      <!-- Playback Controls -->
+      <div class="controls-bar">
+        <div class="playback-controls">
+          <button class="control-btn" title="처음으로 (Home)">⏮</button>
+          <button class="control-btn" title="이전 프레임 (←)">◀</button>
+          <button class="control-btn play-btn" title="재생/일시정지 (Space)">▶</button>
+          <button class="control-btn" title="다음 프레임 (→)">▶</button>
+          <button class="control-btn" title="끝으로 (End)">⏭</button>
+        </div>
+        
+        <div class="timecode">
+          <span class="timecode-current">00:02:15:08</span>
+          <span class="timecode-separator">/</span>
+          <span class="timecode-total">00:05:30:00</span>
+        </div>
+        
+        <div class="frame-indicator">24fps · Frame 3128 / 7920</div>
+        
+        <div class="controls-spacer"></div>
+        
+        <div class="action-controls">
+          <button class="action-btn active">
+            <span>✏️</span>
+            그리기
+            <span class="shortcut-hint">D</span>
+          </button>
+          <button class="action-btn">
+            <span>💬</span>
+            댓글 추가
+            <span class="shortcut-hint">C</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Timeline with Layers -->
+      <div class="timeline-section" id="timelineSection">
+        <div class="timeline-toolbar">
+          <div class="timeline-toolbar-left">
+            <div class="timeline-title">
+              <span class="timeline-title-icon">🎞️</span>
+              타임라인
+            </div>
+            <div class="layer-actions">
+              <button class="layer-action-btn" title="새 레이어">➕</button>
+              <button class="layer-action-btn" title="레이어 삭제">🗑️</button>
+              <button class="layer-action-btn" title="레이어 그룹">📁</button>
+            </div>
+            <div class="wheel-hints" style="display: flex; gap: 12px; margin-left: 16px; font-size: 10px; color: var(--text-tertiary);">
+              <span>🖱️ 휠: 상하 스크롤</span>
+              <span>Ctrl+휠: 확대/축소</span>
+              <span>Shift+휠: 좌우 이동</span>
+            </div>
+          </div>
+          <div class="timeline-toolbar-right">
+            <div class="zoom-control">
+              <span class="zoom-label">줌</span>
+              <input type="range" class="zoom-slider" min="1" max="100" value="50">
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline-main">
+          <!-- Layer Headers -->
+          <div class="layer-headers">
+            <div class="layer-header-ruler"></div>
+            <div class="layer-header" data-layer="drawing6">
+              <div class="layer-color" style="background: #a55eea"></div>
+              <span class="layer-visibility">👁️</span>
+              <span class="layer-name">마킹 - 이민수</span>
+              <span class="layer-lock">🔓</span>
+            </div>
+            <div class="layer-header" data-layer="drawing5">
+              <div class="layer-color" style="background: #ff9f43"></div>
+              <span class="layer-visibility">👁️</span>
+              <span class="layer-name">마킹 - 최지영</span>
+              <span class="layer-lock">🔓</span>
+            </div>
+            <div class="layer-header" data-layer="drawing4">
+              <div class="layer-color" style="background: #00d2d3"></div>
+              <span class="layer-visibility">👁️</span>
+              <span class="layer-name">마킹 - 정우진</span>
+              <span class="layer-lock">🔓</span>
+            </div>
+            <div class="layer-header" data-layer="drawing3">
+              <div class="layer-color" style="background: var(--layer-drawing-3)"></div>
+              <span class="layer-visibility">👁️</span>
+              <span class="layer-name">마킹 - 박영희</span>
+              <span class="layer-lock">🔓</span>
+            </div>
+            <div class="layer-header selected" data-layer="drawing2">
+              <div class="layer-color" style="background: var(--layer-drawing-2)"></div>
+              <span class="layer-visibility">👁️</span>
+              <span class="layer-name">마킹 - 김철수</span>
+              <span class="layer-lock">🔓</span>
+            </div>
+            <div class="layer-header" data-layer="drawing1">
+              <div class="layer-color" style="background: var(--layer-drawing-1)"></div>
+              <span class="layer-visibility">👁️</span>
+              <span class="layer-name">마킹 - 홍길동</span>
+              <span class="layer-lock">🔓</span>
+            </div>
+            <div class="layer-header" data-layer="video">
+              <div class="layer-color" style="background: var(--layer-video)"></div>
+              <span class="layer-visibility">👁️</span>
+              <span class="layer-name">📹 Video</span>
+              <span class="layer-lock">🔒</span>
+            </div>
+          </div>
+
+          <!-- Timeline Tracks -->
+          <div class="timeline-tracks">
+            <!-- Ruler -->
+            <div class="timeline-ruler">
+              <span class="ruler-mark" style="left: 0%">00:00</span>
+              <span class="ruler-mark" style="left: 20%">01:06</span>
+              <span class="ruler-mark" style="left: 40%">02:12</span>
+              <span class="ruler-mark" style="left: 60%">03:18</span>
+              <span class="ruler-mark" style="left: 80%">04:24</span>
+              <span class="ruler-mark" style="left: 95%">05:30</span>
+              
+              <!-- Playhead Handle -->
+              <div class="playhead-handle"></div>
+            </div>
+
+            <!-- Tracks -->
+            <div class="tracks-container">
+              <!-- Playhead Line -->
+              <div class="playhead-line"></div>
+
+              <!-- Drawing Layer 6 -->
+              <div class="track-row">
+                <div class="track-clip" style="left: 70%; width: 18%; background: linear-gradient(90deg, #a55eea, #c78bf2);">
+                  ✏️ 04:15 마킹
+                </div>
+              </div>
+
+              <!-- Drawing Layer 5 -->
+              <div class="track-row">
+                <div class="track-clip" style="left: 42%; width: 8%; background: linear-gradient(90deg, #ff9f43, #ffbe76);">
+                  ✏️ 02:30 마킹
+                </div>
+              </div>
+
+              <!-- Drawing Layer 4 -->
+              <div class="track-row">
+                <div class="track-clip" style="left: 15%; width: 12%; background: linear-gradient(90deg, #00d2d3, #54e0e1);">
+                  ✏️ 00:55 마킹
+                </div>
+              </div>
+
+              <!-- Drawing Layer 3 -->
+              <div class="track-row">
+                <div class="track-clip drawing-3" style="left: 55%; width: 15%;">
+                  ✏️ 03:28 마킹
+                </div>
+              </div>
+
+              <!-- Drawing Layer 2 -->
+              <div class="track-row">
+                <div class="track-clip drawing-2" style="left: 35%; width: 12%;">
+                  ✏️ 02:15 마킹
+                </div>
+              </div>
+
+              <!-- Drawing Layer 1 -->
+              <div class="track-row">
+                <div class="track-clip drawing" style="left: 8%; width: 10%;">
+                  ✏️ 00:42 마킹
+                </div>
+              </div>
+
+              <!-- Video Track -->
+              <div class="track-row">
+                <div class="track-clip video">
+                  📹 EP01_shot_015_animation_v3.mp4
+                </div>
+                
+                <!-- Comment Markers on Video Track -->
+                <div class="comment-marker-track" style="left: 12%;"></div>
+                <div class="comment-marker-track resolved" style="left: 35%;"></div>
+                <div class="comment-marker-track" style="left: 58%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resizer (Vertical) -->
+    <div class="resizer" id="panelResizer"></div>
+
+    <!-- Comment Panel -->
+    <div class="comment-panel" id="commentPanel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span class="panel-title-icon">💬</span>
+          댓글
+          <span class="comment-count">3</span>
+        </div>
+        <div class="panel-actions">
+          <button class="panel-btn" title="정렬">⬇️</button>
+          <button class="panel-btn" title="설정">⚙️</button>
+        </div>
+      </div>
+      
+      <div class="filter-bar">
+        <button class="filter-chip active">전체</button>
+        <button class="filter-chip">미해결</button>
+        <button class="filter-chip">해결됨</button>
+      </div>
+      
+      <div class="comments-list">
+        <!-- Comment 1 -->
+        <div class="comment-item">
+          <div class="comment-header">
+            <div class="comment-timestamp">
+              <span class="timestamp-dot"></span>
+              00:00:42
+            </div>
+            <div class="comment-meta">
+              <span class="comment-author">홍길동</span>
+              <span class="comment-time">2시간 전</span>
+            </div>
+          </div>
+          <div class="comment-content">
+            캐릭터 손 위치가 조금 어색해 보여요. 왼손을 좀 더 위로 올려주시면 좋겠습니다.
+          </div>
+          <div class="comment-attachment">
+            <span>🖼️</span>
+            마킹 보기
+          </div>
+          <div class="comment-actions">
+            <button class="comment-action">답글</button>
+            <button class="comment-action resolve-btn">해결됨 ✓</button>
+          </div>
+        </div>
+
+        <!-- Comment 2 (Resolved) -->
+        <div class="comment-item">
+          <div class="comment-header">
+            <div class="comment-timestamp">
+              <span class="timestamp-dot resolved"></span>
+              00:02:15
+            </div>
+            <div class="comment-meta">
+              <span class="comment-author">김철수</span>
+              <span class="comment-time">1시간 전</span>
+            </div>
+          </div>
+          <div class="comment-content">
+            이 부분 타이밍 너무 좋아요! 👍
+          </div>
+          <div class="comment-actions">
+            <button class="comment-action">답글</button>
+            <button class="comment-action resolved">✓ 해결됨</button>
+          </div>
+        </div>
+
+        <!-- Comment 3 -->
+        <div class="comment-item selected">
+          <div class="comment-header">
+            <div class="comment-timestamp">
+              <span class="timestamp-dot"></span>
+              00:03:28
+            </div>
+            <div class="comment-meta">
+              <span class="comment-author">박영희</span>
+              <span class="comment-time">30분 전</span>
+            </div>
+          </div>
+          <div class="comment-content">
+            이 장면 전환 부분에 페이드 이펙트를 추가해주세요. 너무 갑작스러워 보입니다.
+          </div>
+          <div class="comment-attachment">
+            <span>🖼️</span>
+            마킹 보기
+          </div>
+          <div class="comment-actions">
+            <button class="comment-action">답글</button>
+            <button class="comment-action resolve-btn">해결됨 ✓</button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- New Comment Input -->
+      <div class="new-comment">
+        <div class="comment-input-wrapper">
+          <textarea class="comment-input" rows="2" placeholder="현재 시점(00:02:15)에 댓글 남기기..."></textarea>
+          <button class="comment-submit">전송</button>
+        </div>
+        <div class="input-hint">Tip: 그리기 도구(D)로 마킹을 추가하면 더 명확한 피드백을 줄 수 있어요</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shortcuts Toggle Button -->
+  <button class="shortcuts-toggle" id="shortcutsToggle" title="단축키 (?)">
+    ⌨️
+  </button>
+
+  <!-- Shortcuts Menu -->
+  <div class="shortcuts-menu" id="shortcutsMenu">
+    <div class="shortcuts-menu-header">
+      <span>⌨️</span>
+      키보드 단축키
+    </div>
+    <div class="shortcuts-menu-content">
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">재생</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">재생/정지</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">Space</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">이전 프레임</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">←</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">다음 프레임</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">→</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">1초 뒤로</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">Shift</span>
+            <span class="shortcut-key">←</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">1초 앞으로</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">Shift</span>
+            <span class="shortcut-key">→</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">처음으로</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">Home</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">끝으로</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">End</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">도구</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">그리기 모드</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">D</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">댓글 추가</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">C</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">실행 취소</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">Ctrl</span>
+            <span class="shortcut-key">Z</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">공유</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">링크 복사</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">Ctrl</span>
+            <span class="shortcut-key">Shift</span>
+            <span class="shortcut-key">C</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">보기</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">타임라인 확대</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">Ctrl</span>
+            <span class="shortcut-key">+</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">타임라인 축소</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">Ctrl</span>
+            <span class="shortcut-key">-</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">전체 보기</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">\\</span>
+          </div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">단축키 메뉴</span>
+          <div class="shortcut-keys">
+            <span class="shortcut-key">?</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script>
+    // ========================================
+    // 패널 리사이즈 기능
+    // ========================================
+    
+    // 세로 리사이저 (댓글 패널)
+    const panelResizer = document.getElementById('panelResizer');
+    const commentPanel = document.getElementById('commentPanel');
+    let isResizingPanel = false;
+
+    panelResizer.addEventListener('mousedown', (e) => {
+      isResizingPanel = true;
+      panelResizer.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+    });
+
+    // 가로 리사이저 (뷰어/타임라인)
+    const viewerResizer = document.getElementById('viewerResizer');
+    const viewerContainer = document.getElementById('viewerContainer');
+    const timelineSection = document.getElementById('timelineSection');
+    let isResizingViewer = false;
+
+    viewerResizer.addEventListener('mousedown', (e) => {
+      isResizingViewer = true;
+      viewerResizer.classList.add('dragging');
+      document.body.style.cursor = 'row-resize';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (isResizingPanel) {
+        const containerWidth = document.querySelector('.main-container').offsetWidth;
+        const newWidth = containerWidth - e.clientX;
+        if (newWidth >= 260 && newWidth <= 500) {
+          commentPanel.style.width = newWidth + 'px';
+        }
+      }
+      
+      if (isResizingViewer) {
+        const viewerSection = document.getElementById('viewerSection');
+        const sectionTop = viewerSection.getBoundingClientRect().top;
+        const sectionHeight = viewerSection.offsetHeight;
+        const controlsHeight = 52; // controls-bar height
+        const toolbarHeight = 32; // timeline-toolbar height
+        
+        const mouseY = e.clientY - sectionTop;
+        const newViewerHeight = mouseY - controlsHeight;
+        const newTimelineHeight = sectionHeight - mouseY - toolbarHeight;
+        
+        if (newTimelineHeight >= 120 && newTimelineHeight <= 400 && newViewerHeight >= 200) {
+          viewerContainer.style.flex = 'none';
+          viewerContainer.style.height = newViewerHeight + 'px';
+          timelineSection.style.height = newTimelineHeight + 'px';
+        }
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      isResizingPanel = false;
+      isResizingViewer = false;
+      panelResizer.classList.remove('dragging');
+      viewerResizer.classList.remove('dragging');
+      document.body.style.cursor = 'default';
+    });
+
+    // ========================================
+    // 단축키 메뉴 토글
+    // ========================================
+    const shortcutsToggle = document.getElementById('shortcutsToggle');
+    const shortcutsMenu = document.getElementById('shortcutsMenu');
+
+    shortcutsToggle.addEventListener('click', () => {
+      shortcutsToggle.classList.toggle('active');
+      shortcutsMenu.classList.toggle('visible');
+    });
+
+    // 외부 클릭 시 닫기
+    document.addEventListener('click', (e) => {
+      if (!shortcutsToggle.contains(e.target) && !shortcutsMenu.contains(e.target)) {
+        shortcutsToggle.classList.remove('active');
+        shortcutsMenu.classList.remove('visible');
+      }
+    });
+
+    // ? 키로 토글
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '?') {
+        shortcutsToggle.classList.toggle('active');
+        shortcutsMenu.classList.toggle('visible');
+      }
+    });
+
+    // ========================================
+    // 기존 인터랙션
+    // ========================================
+    
+    // 그리기 도구 토글
+    document.querySelectorAll('.tool-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        if (!this.classList.contains('active') && this.title !== '실행 취소' && this.title !== '지우기') {
+          document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+          this.classList.add('active');
+        }
+      });
+    });
+
+    // 색상 선택
+    document.querySelectorAll('.color-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+
+    // 필터 칩 토글
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', function() {
+        document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+
+    // 댓글 선택
+    document.querySelectorAll('.comment-item').forEach(item => {
+      item.addEventListener('click', function() {
+        document.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
+        this.classList.add('selected');
+      });
+    });
+
+    // 레이어 선택
+    document.querySelectorAll('.layer-header').forEach(header => {
+      header.addEventListener('click', function() {
+        document.querySelectorAll('.layer-header').forEach(h => h.classList.remove('selected'));
+        this.classList.add('selected');
+      });
+    });
+
+    // 레이어 가시성 토글
+    document.querySelectorAll('.layer-visibility').forEach(vis => {
+      vis.addEventListener('click', function(e) {
+        e.stopPropagation();
+        this.classList.toggle('hidden');
+        this.textContent = this.classList.contains('hidden') ? '👁️‍🗨️' : '👁️';
+      });
+    });
+
+    // 액션 버튼 토글
+    document.querySelectorAll('.action-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        this.classList.toggle('active');
+      });
+    });
+
+    // 재생 버튼 토글
+    const playBtn = document.querySelector('.play-btn');
+    let isPlaying = false;
+    playBtn.addEventListener('click', function() {
+      isPlaying = !isPlaying;
+      this.textContent = isPlaying ? '⏸' : '▶';
+    });
+
+    // 키보드 단축키
+    document.addEventListener('keydown', function(e) {
+      // textarea에서는 단축키 무시
+      if (e.target.tagName === 'TEXTAREA') return;
+      
+      if (e.code === 'Space') {
+        e.preventDefault();
+        playBtn.click();
+      }
+      if (e.code === 'KeyD') {
+        document.querySelector('.action-btn').click();
+      }
+      if (e.code === 'KeyC' && !e.ctrlKey) {
+        document.querySelectorAll('.action-btn')[1].click();
+      }
+    });
+
+    // ========================================
+    // 타임라인 휠 컨트롤
+    // ========================================
+    const timelineTracks = document.querySelector('.timeline-tracks');
+    const timelineMain = document.querySelector('.timeline-main');
+    const layerHeaders = document.querySelector('.layer-headers');
+    const zoomSlider = document.querySelector('.zoom-slider');
+    const tracksContainer = document.querySelector('.tracks-container');
+    const timelineRuler = document.querySelector('.timeline-ruler');
+    
+    let timelineZoom = 100; // 100% = 기본
+    const minZoom = 50;
+    const maxZoom = 400;
+    
+    // 줌 레벨 표시 요소 추가
+    const zoomDisplay = document.createElement('span');
+    zoomDisplay.className = 'zoom-display';
+    zoomDisplay.textContent = '100%';
+    zoomDisplay.style.cssText = 'font-size: 11px; color: var(--text-tertiary); min-width: 40px; text-align: right;';
+    document.querySelector('.zoom-control').appendChild(zoomDisplay);
+    
+    // 클립들의 원본 위치/크기 저장
+    const clips = document.querySelectorAll('.track-clip');
+    const markers = document.querySelectorAll('.comment-marker-track');
+    const rulerMarks = document.querySelectorAll('.ruler-mark');
+    
+    const clipData = [];
+    clips.forEach(clip => {
+      clipData.push({
+        element: clip,
+        left: parseFloat(clip.style.left) || 0,
+        width: parseFloat(clip.style.width) || 100
+      });
+    });
+    
+    const markerData = [];
+    markers.forEach(marker => {
+      markerData.push({
+        element: marker,
+        left: parseFloat(marker.style.left) || 0
+      });
+    });
+    
+    const rulerData = [];
+    rulerMarks.forEach(mark => {
+      rulerData.push({
+        element: mark,
+        left: parseFloat(mark.style.left) || 0
+      });
+    });
+    
+    // 플레이헤드 원본 위치
+    const playheadLine = document.querySelector('.playhead-line');
+    const playheadHandle = document.querySelector('.playhead-handle');
+    const playheadOriginalLeft = 25; // %
+    
+    // 줌 적용 함수 (글자 크기 유지)
+    function applyZoom() {
+      const scale = timelineZoom / 100;
+      
+      // 컨테이너 너비 조절
+      tracksContainer.style.width = `${scale * 100}%`;
+      timelineRuler.style.width = `${scale * 100}%`;
+      
+      // 클립 위치/크기 조절 (비율 유지)
+      clipData.forEach(data => {
+        data.element.style.left = `${data.left * scale}%`;
+        data.element.style.width = `${data.width * scale}%`;
+      });
+      
+      // 마커 위치 조절
+      markerData.forEach(data => {
+        data.element.style.left = `${data.left * scale}%`;
+      });
+      
+      // 룰러 마크 위치 조절
+      rulerData.forEach(data => {
+        data.element.style.left = `${data.left * scale}%`;
+      });
+      
+      // 플레이헤드 위치 조절
+      playheadLine.style.left = `${playheadOriginalLeft * scale}%`;
+      playheadHandle.style.left = `${playheadOriginalLeft * scale}%`;
+      
+      // 슬라이더 & 디스플레이 업데이트
+      zoomSlider.value = ((timelineZoom - minZoom) / (maxZoom - minZoom)) * 100;
+      zoomDisplay.textContent = `${Math.round(timelineZoom)}%`;
+    }
+    
+    // 타임라인 영역 휠 이벤트
+    timelineTracks.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl + 휠: 확대/축소
+        const delta = e.deltaY > 0 ? -15 : 15;
+        timelineZoom = Math.max(minZoom, Math.min(maxZoom, timelineZoom + delta));
+        applyZoom();
+        
+        // 줌 인디케이터 표시
+        showZoomIndicator();
+      } else if (e.shiftKey) {
+        // Shift + 휠: 좌우 스크롤
+        timelineTracks.scrollLeft += e.deltaY;
+      } else {
+        // 기본 휠: 위아래 스크롤 (레이어 스크롤)
+        timelineTracks.scrollTop += e.deltaY;
+        layerHeaders.scrollTop = timelineTracks.scrollTop; // 헤더도 같이 스크롤
+      }
+    });
+    
+    // 레이어 헤더도 동기화 스크롤
+    layerHeaders.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      layerHeaders.scrollTop += e.deltaY;
+      timelineTracks.scrollTop = layerHeaders.scrollTop;
+    });
+    
+    // 슬라이더로 줌 조절
+    zoomSlider.addEventListener('input', function() {
+      timelineZoom = minZoom + (this.value / 100) * (maxZoom - minZoom);
+      applyZoom();
+    });
+    
+    // 줌 인디케이터 (일시적으로 표시)
+    const zoomIndicator = document.createElement('div');
+    zoomIndicator.style.cssText = `
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--bg-elevated);
+      border: 1px solid var(--accent-primary);
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent-primary);
+      box-shadow: var(--shadow-lg);
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+      z-index: 1000;
+    `;
+    document.querySelector('.timeline-section').style.position = 'relative';
+    document.querySelector('.timeline-section').appendChild(zoomIndicator);
+    
+    let zoomIndicatorTimeout;
+    function showZoomIndicator() {
+      zoomIndicator.textContent = `🔍 ${Math.round(timelineZoom)}%`;
+      zoomIndicator.style.opacity = '1';
+      clearTimeout(zoomIndicatorTimeout);
+      zoomIndicatorTimeout = setTimeout(() => {
+        zoomIndicator.style.opacity = '0';
+      }, 800);
+    }
+    
+    // 키보드 줌 단축키
+    document.addEventListener('keydown', function(e) {
+      if (e.target.tagName === 'TEXTAREA') return;
+      
+      // Ctrl + / Ctrl -
+      if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+        e.preventDefault();
+        timelineZoom = Math.min(maxZoom, timelineZoom + 25);
+        applyZoom();
+        showZoomIndicator();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+        e.preventDefault();
+        timelineZoom = Math.max(minZoom, timelineZoom - 25);
+        applyZoom();
+        showZoomIndicator();
+      }
+      // \ 키: 전체 보기 (100%)
+      if (e.key === '\\') {
+        e.preventDefault();
+        timelineZoom = 100;
+        applyZoom();
+        showZoomIndicator();
+      }
+    });
+  </script>
+</body>
+</html>
