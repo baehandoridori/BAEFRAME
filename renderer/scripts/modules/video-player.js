@@ -197,8 +197,13 @@ export class VideoPlayer extends EventTarget {
     if (!this.isLoaded) return;
 
     time = Math.max(0, Math.min(time, this.duration));
+
+    // 내부 상태 즉시 업데이트 (timeupdate 이벤트 전에)
+    this.currentTime = time;
+    this.currentFrame = Math.floor(time * this.fps);
+
     this.videoElement.currentTime = time;
-    log.debug('시간 이동', { time });
+    log.debug('시간 이동', { time, frame: this.currentFrame });
   }
 
   /**
@@ -210,8 +215,13 @@ export class VideoPlayer extends EventTarget {
 
     frame = Math.max(0, Math.min(frame, this.totalFrames - 1));
     const time = frame / this.fps;
-    this.seek(time);
-    log.debug('프레임 이동', { frame });
+
+    // 프레임 번호 직접 설정 (시간에서 재계산하지 않음)
+    this.currentFrame = frame;
+    this.currentTime = time;
+
+    this.videoElement.currentTime = time;
+    log.debug('프레임 이동', { frame, time });
   }
 
   /**
@@ -247,7 +257,8 @@ export class VideoPlayer extends EventTarget {
    * @param {number} seconds
    */
   rewind(seconds = 1) {
-    this.seek(this.currentTime - seconds);
+    const newTime = Math.max(0, this.currentTime - seconds);
+    this.seek(newTime);
   }
 
   /**
@@ -255,7 +266,8 @@ export class VideoPlayer extends EventTarget {
    * @param {number} seconds
    */
   forward(seconds = 1) {
-    this.seek(this.currentTime + seconds);
+    const newTime = Math.min(this.duration, this.currentTime + seconds);
+    this.seek(newTime);
   }
 
   /**
