@@ -25,10 +25,14 @@ export class Timeline extends EventTarget {
     // 상태
     this.duration = 0;
     this.fps = 24;
+    this.totalFrames = 0;
     this.currentTime = 0;
     this.zoom = 100; // 100% = 기본
     this.minZoom = 50;
     this.maxZoom = 400;
+
+    // 프레임 그리드 설정
+    this.frameGridContainer = null;
 
     // 플레이헤드 드래그 상태
     this.isDraggingPlayhead = false;
@@ -127,11 +131,11 @@ export class Timeline extends EventTarget {
     const rect = this.tracksContainer?.getBoundingClientRect();
     if (!rect) return;
 
-    // 클릭 위치 (스크롤 오프셋 고려)
-    const scrollLeft = this.timelineTracks?.scrollLeft || 0;
-    const x = e.clientX - rect.left + scrollLeft;
+    // getBoundingClientRect()는 이미 스크롤 위치를 반영하므로
+    // 클릭 위치에서 rect.left를 빼면 컨테이너 내 상대 위치가 됨
+    const x = e.clientX - rect.left;
 
-    // tracksContainer의 실제 너비 기준으로 비율 계산
+    // tracksContainer의 실제 너비 (줌이 적용된 상태)
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
     const time = percent * this.duration;
@@ -152,8 +156,10 @@ export class Timeline extends EventTarget {
   setVideoInfo(duration, fps) {
     this.duration = duration;
     this.fps = fps;
+    this.totalFrames = Math.floor(duration * fps);
     this._updateRuler();
-    log.info('비디오 정보 설정', { duration, fps });
+    this._updateFrameGrid();
+    log.info('비디오 정보 설정', { duration, fps, totalFrames: this.totalFrames });
   }
 
   /**
@@ -213,6 +219,7 @@ export class Timeline extends EventTarget {
 
     this._updatePlayheadPosition();
     this._updateRuler();
+    this._updateFrameGrid();
   }
 
   /**
@@ -297,6 +304,126 @@ export class Timeline extends EventTarget {
 
       this.timelineRuler.appendChild(mark);
     }
+  }
+
+  /**
+   * 프레임 그리드 업데이트
+   * 줌 레벨에 따라 프레임 단위 격자선 표시 (프리미어 스타일)
+   */
+  _updateFrameGrid() {
+    if (!this.tracksContainer || this.duration === 0 || this.totalFrames === 0) return;
+
+    // 프레임 그리드 컨테이너 생성 또는 가져오기
+    if (!this.frameGridContainer) {
+      this.frameGridContainer = document.createElement('div');
+      this.frameGridContainer.className = 'frame-grid-container';
+      this.frameGridContainer.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+      `;
+      this.tracksContainer.appendChild(this.frameGridContainer);
+    }
+
+    const containerWidth = this.tracksContainer.offsetWidth;
+    const frameWidth = containerWidth / this.totalFrames;
+
+    // 프레임 너비에 따른 그리드 표시 결정
+    // 4px 이상: 개별 프레임 표시
+    // 2px 이상: 5프레임 단위 표시
+    // 그 이하: 숨김
+    const minFrameWidthForGrid = 4;
+    const minFrameWidthForSparse = 2;
+
+    if (frameWidth >= minFrameWidthForGrid) {
+      // 개별 프레임 그리드 표시
+      this._renderFrameGrid(frameWidth, 1);
+    } else if (frameWidth >= minFrameWidthForSparse) {
+      // 5프레임 또는 10프레임 단위로 표시
+      const step = frameWidth * 5 >= minFrameWidthForGrid ? 5 : 10;
+      this._renderFrameGrid(frameWidth * step, step);
+    } else {
+      // 그리드 숨김
+      this.frameGridContainer.innerHTML = '';
+      this.frameGridContainer.style.display = 'none';
+    }
+  }
+
+  /**
+   * 프레임 그리드 렌더링
+   * @param {number} gridWidth - 격자 간격 (픽셀)
+   * @param {number} frameStep - 프레임 단위 (1, 5, 10 등)
+   */
+  _renderFrameGrid(gridWidth, frameStep) {
+    this.frameGridContainer.style.display = 'block';
+
+    // CSS background로 효율적인 그리드 렌더링
+    const majorLineColor = 'rgba(255, 208, 0, 0.3)'; // 1초 단위 (노란색)
+    const minorLineColor = 'rgba(255, 255, 255, 0.08)'; // 일반 프레임
+
+    // 1초 단위 강조선 계산
+    const framesPerSecond = this.fps;
+    const secondWidth = gridWidth * (framesPerSecond / frameStep);
+
+    // 그리드 패턴 생성
+    let backgroundImage = '';
+    let backgroundSize = '';
+
+    if (frameStep === 1) {
+      // 개별 프레임 표시 + 1초 단위 강조
+      backgroundImage = `
+        repeating-linear-gradient(
+          to right,
+          ${majorLineColor} 0px,
+          ${majorLineColor} 1px,
+          transparent 1px,
+          transparent ${secondWidth}px
+        ),
+        repeating-linear-gradient(
+          to right,
+          ${minorLineColor} 0px,
+          ${minorLineColor} 1px,
+          transparent 1px,
+          transparent ${gridWidth}px
+        )
+      `;
+      backgroundSize = `${secondWidth}px 100%, ${gridWidth}px 100%`;
+    } else {
+      // 스파스 그리드 (5프레임/10프레임 단위)
+      const sparseLineColor = 'rgba(255, 255, 255, 0.12)';
+      backgroundImage = `
+        repeating-linear-gradient(
+          to right,
+          ${majorLineColor} 0px,
+          ${majorLineColor} 1px,
+          transparent 1px,
+          transparent ${secondWidth}px
+        ),
+        repeating-linear-gradient(
+          to right,
+          ${sparseLineColor} 0px,
+          ${sparseLineColor} 1px,
+          transparent 1px,
+          transparent ${gridWidth}px
+        )
+      `;
+      backgroundSize = `${secondWidth}px 100%, ${gridWidth}px 100%`;
+    }
+
+    this.frameGridContainer.style.backgroundImage = backgroundImage;
+    this.frameGridContainer.style.backgroundSize = backgroundSize;
+    this.frameGridContainer.style.backgroundRepeat = 'repeat-x';
+    this.frameGridContainer.style.backgroundPosition = '0 0';
+
+    log.debug('프레임 그리드 업데이트', {
+      frameStep,
+      gridWidth: gridWidth.toFixed(2),
+      zoom: this.zoom
+    });
   }
 
   /**
