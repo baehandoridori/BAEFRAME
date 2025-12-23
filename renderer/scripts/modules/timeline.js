@@ -436,6 +436,133 @@ export class Timeline extends EventTarget {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   }
 
+  // ====== 그리기 레이어 관련 ======
+
+  /**
+   * 그리기 레이어들 렌더링
+   * @param {Array} layers - DrawingLayer 배열
+   * @param {string} activeLayerId - 현재 선택된 레이어 ID
+   */
+  renderDrawingLayers(layers, activeLayerId) {
+    if (!this.tracksContainer || !this.layerHeaders) return;
+
+    // 기존 그리기 레이어 트랙 제거
+    const existingTracks = this.tracksContainer.querySelectorAll('.drawing-track-row');
+    existingTracks.forEach(t => t.remove());
+
+    const existingHeaders = this.layerHeaders.querySelectorAll('.drawing-layer-header');
+    existingHeaders.forEach(h => h.remove());
+
+    // 각 레이어 렌더링
+    layers.forEach((layer, index) => {
+      this._renderLayerHeader(layer, activeLayerId === layer.id);
+      this._renderLayerTrack(layer, activeLayerId === layer.id);
+    });
+  }
+
+  /**
+   * 레이어 헤더 렌더링 (왼쪽 패널)
+   */
+  _renderLayerHeader(layer, isActive) {
+    const header = document.createElement('div');
+    header.className = `layer-header drawing-layer-header${isActive ? ' selected' : ''}`;
+    header.dataset.layerId = layer.id;
+
+    header.innerHTML = `
+      <div class="layer-color" style="background: ${layer.color}"></div>
+      <span class="layer-visibility" data-action="visibility">
+        ${layer.visible ? '👁' : '👁‍🗨'}
+      </span>
+      <span class="layer-name">${layer.name}</span>
+      <span class="layer-lock" data-action="lock">
+        ${layer.locked ? '🔒' : ''}
+      </span>
+    `;
+
+    // 레이어 선택 클릭
+    header.addEventListener('click', (e) => {
+      if (e.target.dataset.action) return;
+      this._emit('layerSelect', { layerId: layer.id });
+    });
+
+    // 가시성 토글
+    header.querySelector('[data-action="visibility"]').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._emit('layerVisibilityToggle', { layerId: layer.id });
+    });
+
+    // 잠금 토글
+    header.querySelector('[data-action="lock"]').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._emit('layerLockToggle', { layerId: layer.id });
+    });
+
+    this.layerHeaders.appendChild(header);
+  }
+
+  /**
+   * 레이어 트랙 렌더링 (오른쪽 타임라인)
+   */
+  _renderLayerTrack(layer, isActive) {
+    const trackRow = document.createElement('div');
+    trackRow.className = `track-row drawing-track-row${isActive ? ' active-layer' : ''}`;
+    trackRow.dataset.layerId = layer.id;
+
+    // 키프레임 범위 가져오기
+    const ranges = layer.getKeyframeRanges(this.totalFrames);
+
+    ranges.forEach(range => {
+      const clip = this._createKeyframeClip(layer, range);
+      trackRow.appendChild(clip);
+    });
+
+    // 트랙 클릭 이벤트 (프레임 이동)
+    trackRow.addEventListener('click', (e) => {
+      if (e.target.classList.contains('keyframe-marker')) return;
+      this._seekFromClick(e);
+    });
+
+    this.tracksContainer.appendChild(trackRow);
+  }
+
+  /**
+   * 키프레임 클립 요소 생성
+   */
+  _createKeyframeClip(layer, range) {
+    const clip = document.createElement('div');
+    clip.className = 'track-clip drawing-clip';
+    clip.dataset.startFrame = range.start;
+    clip.dataset.endFrame = range.end;
+
+    // 위치 및 크기 계산
+    const startPercent = (range.start / this.totalFrames) * 100;
+    const widthPercent = ((range.end - range.start + 1) / this.totalFrames) * 100;
+
+    clip.style.cssText = `
+      left: ${startPercent}%;
+      width: ${widthPercent}%;
+      background: linear-gradient(90deg, ${layer.color}66, ${layer.color}33);
+      border-left: 2px solid ${layer.color};
+    `;
+
+    // 키프레임 마커
+    const marker = document.createElement('div');
+    marker.className = 'keyframe-marker';
+    marker.innerHTML = range.keyframe.isEmpty ? '○' : '●';
+    marker.title = `키프레임 ${range.start}`;
+    clip.appendChild(marker);
+
+    // 프레임 범위 표시
+    if (range.end - range.start > 0) {
+      const label = document.createElement('span');
+      label.className = 'clip-label';
+      label.textContent = `${range.start} - ${range.end}`;
+      clip.appendChild(label);
+    }
+
+    return clip;
+  }
+
   /**
    * 댓글 마커 추가
    */

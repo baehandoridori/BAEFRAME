@@ -5,6 +5,7 @@
 import { createLogger, setupGlobalErrorHandlers } from './logger.js';
 import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
+import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 
 const log = createLogger('App');
 
@@ -106,6 +107,11 @@ async function initApp() {
     layerHeaders: elements.layerHeaders
   });
 
+  // 드로잉 매니저
+  const drawingManager = new DrawingManager({
+    canvas: elements.drawingCanvas
+  });
+
   // ====== 모듈 이벤트 연결 ======
 
   // 비디오 메타데이터 로드됨
@@ -117,6 +123,9 @@ async function initApp() {
     // 비디오 크기 정보가 준비되면 캔버스 오버레이 동기화
     syncCanvasOverlay();
 
+    // 드로잉 매니저에 비디오 정보 전달
+    drawingManager.setVideoInfo(totalFrames, fps);
+
     log.info('비디오 정보', { duration, totalFrames, fps });
   });
 
@@ -125,6 +134,9 @@ async function initApp() {
     const { currentTime, currentFrame } = e.detail;
     timeline.setCurrentTime(currentTime);
     updateTimecodeDisplay();
+
+    // 드로잉 매니저에 현재 프레임 전달 (재생 중 프레임 변경 시)
+    drawingManager.setCurrentFrame(currentFrame);
   });
 
   // 비디오 재생 상태 변경
@@ -153,6 +165,36 @@ async function initApp() {
   // 타임라인 마커 클릭
   timeline.addEventListener('markerClick', (e) => {
     videoPlayer.seek(e.detail.time);
+  });
+
+  // ====== 드로잉 매니저 이벤트 ======
+
+  // 레이어 변경 시 타임라인 업데이트
+  drawingManager.addEventListener('layersChanged', () => {
+    timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+  });
+
+  // 프레임 렌더링 완료 시
+  drawingManager.addEventListener('frameRendered', (e) => {
+    log.debug('프레임 렌더링 완료', { frame: e.detail.frame });
+  });
+
+  // ====== 타임라인 레이어 이벤트 ======
+
+  // 레이어 선택
+  timeline.addEventListener('layerSelect', (e) => {
+    drawingManager.setActiveLayer(e.detail.layerId);
+    timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+  });
+
+  // 레이어 가시성 토글
+  timeline.addEventListener('layerVisibilityToggle', (e) => {
+    drawingManager.toggleLayerVisibility(e.detail.layerId);
+  });
+
+  // 레이어 잠금 토글
+  timeline.addEventListener('layerLockToggle', (e) => {
+    drawingManager.toggleLayerLock(e.detail.layerId);
   });
 
   // ====== 이벤트 리스너 설정 ======
@@ -256,15 +298,39 @@ async function initApp() {
     btn.addEventListener('click', function() {
       document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
       this.classList.add('active');
+
+      // 도구 매핑
+      const toolMap = {
+        'pen': DrawingTool.PEN,
+        'brush': DrawingTool.BRUSH,
+        'eraser': DrawingTool.ERASER,
+        'line': DrawingTool.LINE,
+        'arrow': DrawingTool.ARROW,
+        'rect': DrawingTool.RECT,
+        'circle': DrawingTool.CIRCLE
+      };
+      const tool = toolMap[this.dataset.tool] || DrawingTool.PEN;
+      drawingManager.setTool(tool);
       log.debug('도구 선택', { tool: this.dataset.tool });
     });
   });
 
   // 색상 선택
+  const colorMap = {
+    'red': '#ff4757',
+    'yellow': '#ffd000',
+    'green': '#26de81',
+    'blue': '#4a9eff',
+    'white': '#ffffff'
+  };
+
   document.querySelectorAll('.color-btn').forEach(btn => {
     btn.addEventListener('click', function() {
       document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
       this.classList.add('active');
+
+      const color = colorMap[this.dataset.color] || '#ff4757';
+      drawingManager.setColor(color);
       log.debug('색상 선택', { color: this.dataset.color });
     });
   });
@@ -359,6 +425,9 @@ async function initApp() {
     // 캔버스의 내부 해상도를 비디오 원본 해상도에 맞춤 (고해상도 드로잉)
     canvas.width = renderArea.videoWidth;
     canvas.height = renderArea.videoHeight;
+
+    // 드로잉 매니저에도 캔버스 크기 전달
+    drawingManager.setCanvasSize(renderArea.videoWidth, renderArea.videoHeight);
 
     log.debug('캔버스 오버레이 동기화', {
       renderWidth: renderArea.width,
@@ -542,6 +611,33 @@ async function initApp() {
         if (!e.ctrlKey) {
           e.preventDefault();
           elements.commentInput.focus();
+        }
+        break;
+
+      case 'F6':
+        // 키프레임 복제 추가 (이전 내용 복사)
+        e.preventDefault();
+        if (state.isDrawMode) {
+          drawingManager.addKeyframeWithContent();
+          showToast('키프레임 추가됨', 'success');
+        }
+        break;
+
+      case 'F7':
+        // 빈 키프레임 추가
+        e.preventDefault();
+        if (state.isDrawMode) {
+          drawingManager.addBlankKeyframe();
+          showToast('빈 키프레임 추가됨', 'success');
+        }
+        break;
+
+      case 'Delete':
+      case 'Backspace':
+        // 키프레임 삭제 (그리기 모드에서만)
+        if (state.isDrawMode && !e.ctrlKey) {
+          e.preventDefault();
+          drawingManager.removeKeyframe();
         }
         break;
 
