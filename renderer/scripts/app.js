@@ -3,6 +3,8 @@
  */
 
 import { createLogger, setupGlobalErrorHandlers } from './logger.js';
+import { VideoPlayer } from './modules/video-player.js';
+import { Timeline } from './modules/timeline.js';
 
 const log = createLogger('App');
 
@@ -51,6 +53,10 @@ async function initApp() {
     playheadLine: document.getElementById('playheadLine'),
     playheadHandle: document.getElementById('playheadHandle'),
     videoTrackClip: document.getElementById('videoTrackClip'),
+    tracksContainer: document.getElementById('tracksContainer'),
+    timelineRuler: document.getElementById('timelineRuler'),
+    timelineTracks: document.getElementById('timelineTracks'),
+    layerHeaders: document.getElementById('layerHeaders'),
 
     // 댓글 패널
     commentCount: document.getElementById('commentCount'),
@@ -74,13 +80,76 @@ async function initApp() {
 
   // 상태
   const state = {
-    isPlaying: false,
     isDrawMode: false,
-    currentFile: null,
-    fps: 24,
-    currentFrame: 0,
-    totalFrames: 0
+    currentFile: null
   };
+
+  // ====== 모듈 초기화 ======
+
+  // 비디오 플레이어
+  const videoPlayer = new VideoPlayer({
+    videoElement: elements.videoPlayer,
+    container: elements.videoWrapper,
+    fps: 24
+  });
+
+  // 타임라인
+  const timeline = new Timeline({
+    container: elements.timelineSection,
+    tracksContainer: elements.tracksContainer,
+    timelineRuler: elements.timelineRuler,
+    playheadLine: elements.playheadLine,
+    playheadHandle: elements.playheadHandle,
+    zoomSlider: elements.zoomSlider,
+    zoomDisplay: elements.zoomDisplay,
+    timelineTracks: elements.timelineTracks,
+    layerHeaders: elements.layerHeaders
+  });
+
+  // ====== 모듈 이벤트 연결 ======
+
+  // 비디오 메타데이터 로드됨
+  videoPlayer.addEventListener('loadedmetadata', (e) => {
+    const { duration, totalFrames, fps } = e.detail;
+    timeline.setVideoInfo(duration, fps);
+    updateTimecodeDisplay();
+    log.info('비디오 정보', { duration, totalFrames, fps });
+  });
+
+  // 비디오 시간 업데이트
+  videoPlayer.addEventListener('timeupdate', (e) => {
+    const { currentTime, currentFrame } = e.detail;
+    timeline.setCurrentTime(currentTime);
+    updateTimecodeDisplay();
+  });
+
+  // 비디오 재생 상태 변경
+  videoPlayer.addEventListener('play', () => {
+    elements.btnPlay.textContent = '⏸';
+  });
+
+  videoPlayer.addEventListener('pause', () => {
+    elements.btnPlay.textContent = '▶';
+  });
+
+  videoPlayer.addEventListener('ended', () => {
+    elements.btnPlay.textContent = '▶';
+  });
+
+  // 비디오 에러
+  videoPlayer.addEventListener('error', (e) => {
+    showToast('비디오 재생 오류가 발생했습니다.', 'error');
+  });
+
+  // 타임라인에서 시간 이동 요청
+  timeline.addEventListener('seek', (e) => {
+    videoPlayer.seek(e.detail.time);
+  });
+
+  // 타임라인 마커 클릭
+  timeline.addEventListener('markerClick', (e) => {
+    videoPlayer.seek(e.detail.time);
+  });
 
   // ====== 이벤트 리스너 설정 ======
 
@@ -124,13 +193,15 @@ async function initApp() {
   });
 
   // 재생/일시정지
-  elements.btnPlay.addEventListener('click', togglePlay);
+  elements.btnPlay.addEventListener('click', () => {
+    videoPlayer.togglePlay();
+  });
 
   // 프레임 이동
-  elements.btnFirst.addEventListener('click', () => seekFrame(0));
-  elements.btnPrevFrame.addEventListener('click', () => seekFrame(state.currentFrame - 1));
-  elements.btnNextFrame.addEventListener('click', () => seekFrame(state.currentFrame + 1));
-  elements.btnLast.addEventListener('click', () => seekFrame(state.totalFrames - 1));
+  elements.btnFirst.addEventListener('click', () => videoPlayer.seekToStart());
+  elements.btnPrevFrame.addEventListener('click', () => videoPlayer.prevFrame());
+  elements.btnNextFrame.addEventListener('click', () => videoPlayer.nextFrame());
+  elements.btnLast.addEventListener('click', () => videoPlayer.seekToEnd());
 
   // 그리기 모드 토글
   elements.btnDrawMode.addEventListener('click', toggleDrawMode);
@@ -221,7 +292,11 @@ async function initApp() {
   async function loadVideo(filePath) {
     const trace = log.trace('loadVideo');
     try {
+      // 파일 정보 가져오기
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
+
+      // 비디오 플레이어에 로드
+      await videoPlayer.load(filePath);
 
       state.currentFile = filePath;
       elements.fileName.textContent = fileInfo.name;
@@ -233,6 +308,8 @@ async function initApp() {
       if (versionMatch) {
         elements.versionBadge.textContent = `v${versionMatch[1]}`;
         elements.versionBadge.style.display = 'inline-block';
+      } else {
+        elements.versionBadge.style.display = 'none';
       }
 
       // 비디오 트랙 업데이트
@@ -248,45 +325,13 @@ async function initApp() {
   }
 
   /**
-   * 재생/일시정지 토글
+   * 타임코드 디스플레이 업데이트
    */
-  function togglePlay() {
-    state.isPlaying = !state.isPlaying;
-    elements.btnPlay.textContent = state.isPlaying ? '⏸' : '▶';
-    log.debug('재생 상태 변경', { isPlaying: state.isPlaying });
-  }
-
-  /**
-   * 프레임 이동
-   */
-  function seekFrame(frame) {
-    frame = Math.max(0, Math.min(frame, state.totalFrames - 1));
-    state.currentFrame = frame;
-    updateTimecode();
-    log.debug('프레임 이동', { frame });
-  }
-
-  /**
-   * 타임코드 업데이트
-   */
-  function updateTimecode() {
-    const current = frameToTimecode(state.currentFrame, state.fps);
-    const total = frameToTimecode(state.totalFrames, state.fps);
-    elements.timecodeCurrent.textContent = current;
-    elements.timecodeTotal.textContent = total;
-    elements.frameIndicator.textContent = `${state.fps}fps · Frame ${state.currentFrame} / ${state.totalFrames}`;
-  }
-
-  /**
-   * 프레임을 타임코드로 변환
-   */
-  function frameToTimecode(frame, fps) {
-    const totalSeconds = frame / fps;
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = Math.floor(totalSeconds % 60);
-    const frames = frame % fps;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(frames).padStart(2, '0')}`;
+  function updateTimecodeDisplay() {
+    elements.timecodeCurrent.textContent = videoPlayer.getCurrentTimecode();
+    elements.timecodeTotal.textContent = videoPlayer.getDurationTimecode();
+    elements.frameIndicator.textContent =
+      `${videoPlayer.fps}fps · Frame ${videoPlayer.currentFrame} / ${videoPlayer.totalFrames}`;
   }
 
   /**
@@ -364,35 +409,35 @@ async function initApp() {
     switch (e.code) {
       case 'Space':
         e.preventDefault();
-        togglePlay();
+        videoPlayer.togglePlay();
         break;
 
       case 'ArrowLeft':
         e.preventDefault();
         if (e.shiftKey) {
-          seekFrame(state.currentFrame - state.fps); // 1초 뒤로
+          videoPlayer.rewind(1); // 1초 뒤로
         } else {
-          seekFrame(state.currentFrame - 1);
+          videoPlayer.prevFrame();
         }
         break;
 
       case 'ArrowRight':
         e.preventDefault();
         if (e.shiftKey) {
-          seekFrame(state.currentFrame + state.fps); // 1초 앞으로
+          videoPlayer.forward(1); // 1초 앞으로
         } else {
-          seekFrame(state.currentFrame + 1);
+          videoPlayer.nextFrame();
         }
         break;
 
       case 'Home':
         e.preventDefault();
-        seekFrame(0);
+        videoPlayer.seekToStart();
         break;
 
       case 'End':
         e.preventDefault();
-        seekFrame(state.totalFrames - 1);
+        videoPlayer.seekToEnd();
         break;
 
       case 'KeyD':
@@ -411,6 +456,27 @@ async function initApp() {
         if (e.shiftKey) { // ?
           e.preventDefault();
           elements.shortcutsToggle.click();
+        }
+        break;
+
+      case 'Backslash':
+        e.preventDefault();
+        timeline.fitToView();
+        break;
+
+      case 'Equal':
+      case 'NumpadAdd':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          timeline.zoomIn();
+        }
+        break;
+
+      case 'Minus':
+      case 'NumpadSubtract':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          timeline.zoomOut();
         }
         break;
     }
