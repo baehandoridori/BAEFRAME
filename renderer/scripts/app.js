@@ -113,6 +113,10 @@ async function initApp() {
     const { duration, totalFrames, fps } = e.detail;
     timeline.setVideoInfo(duration, fps);
     updateTimecodeDisplay();
+
+    // 비디오 크기 정보가 준비되면 캔버스 오버레이 동기화
+    syncCanvasOverlay();
+
     log.info('비디오 정보', { duration, totalFrames, fps });
   });
 
@@ -278,11 +282,100 @@ async function initApp() {
     const newHeight = elements.timelineSection.offsetHeight - delta;
     if (newHeight >= 120 && newHeight <= 400) {
       elements.timelineSection.style.height = `${newHeight}px`;
+      // 뷰어 크기가 바뀌므로 캔버스도 동기화
+      syncCanvasOverlay();
     }
   });
 
   // 키보드 단축키
   document.addEventListener('keydown', handleKeydown);
+
+  // ====== 캔버스 오버레이 동기화 ======
+
+  /**
+   * 비디오의 실제 렌더링 영역 계산
+   * object-fit: contain 사용 시 레터박스/필러박스 영역을 제외한 실제 비디오 영역
+   */
+  function getVideoRenderArea() {
+    const video = elements.videoPlayer;
+    const container = elements.videoWrapper;
+
+    if (!video || !container || !video.videoWidth || !video.videoHeight) {
+      return null;
+    }
+
+    const containerWidth = container.clientWidth;
+    const containerHeight = container.clientHeight;
+    const videoWidth = video.videoWidth;
+    const videoHeight = video.videoHeight;
+
+    const containerRatio = containerWidth / containerHeight;
+    const videoRatio = videoWidth / videoHeight;
+
+    let renderWidth, renderHeight, offsetX, offsetY;
+
+    if (videoRatio > containerRatio) {
+      // 비디오가 더 넓음 - 위아래 레터박스
+      renderWidth = containerWidth;
+      renderHeight = containerWidth / videoRatio;
+      offsetX = 0;
+      offsetY = (containerHeight - renderHeight) / 2;
+    } else {
+      // 비디오가 더 높음 - 좌우 필러박스
+      renderHeight = containerHeight;
+      renderWidth = containerHeight * videoRatio;
+      offsetX = (containerWidth - renderWidth) / 2;
+      offsetY = 0;
+    }
+
+    return {
+      width: renderWidth,
+      height: renderHeight,
+      left: offsetX,
+      top: offsetY,
+      videoWidth,
+      videoHeight
+    };
+  }
+
+  /**
+   * 캔버스 오버레이를 비디오 실제 영역에 맞게 동기화
+   */
+  function syncCanvasOverlay() {
+    const renderArea = getVideoRenderArea();
+    const canvas = elements.drawingCanvas;
+
+    if (!renderArea || !canvas) {
+      return;
+    }
+
+    // 캔버스 위치와 크기를 비디오 실제 렌더 영역에 맞춤
+    canvas.style.position = 'absolute';
+    canvas.style.left = `${renderArea.left}px`;
+    canvas.style.top = `${renderArea.top}px`;
+    canvas.style.width = `${renderArea.width}px`;
+    canvas.style.height = `${renderArea.height}px`;
+
+    // 캔버스의 내부 해상도를 비디오 원본 해상도에 맞춤 (고해상도 드로잉)
+    canvas.width = renderArea.videoWidth;
+    canvas.height = renderArea.videoHeight;
+
+    log.debug('캔버스 오버레이 동기화', {
+      renderWidth: renderArea.width,
+      renderHeight: renderArea.height,
+      left: renderArea.left,
+      top: renderArea.top
+    });
+  }
+
+  // 윈도우 리사이즈 시 캔버스 동기화
+  window.addEventListener('resize', syncCanvasOverlay);
+
+  // ResizeObserver로 컨테이너 크기 변경 감지
+  const resizeObserver = new ResizeObserver(() => {
+    syncCanvasOverlay();
+  });
+  resizeObserver.observe(elements.videoWrapper);
 
   // ====== 헬퍼 함수 ======
 

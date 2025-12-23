@@ -149,11 +149,12 @@
 
           <!-- Timeline Tracks -->
           <div class="timeline-tracks" id="timelineTracks">
-            <div class="timeline-ruler" id="timelineRuler">
-              <div class="playhead-handle" id="playheadHandle"></div>
-            </div>
+            <!-- 플레이헤드 (핸들 + 라인이 같은 부모에서 같은 left 값 사용) -->
+            <div class="playhead-handle" id="playheadHandle"></div>
+            <div class="playhead-line" id="playheadLine"></div>
+
+            <div class="timeline-ruler" id="timelineRuler"></div>
             <div class="tracks-container" id="tracksContainer">
-              <div class="playhead-line" id="playheadLine"></div>
               <div class="track-row">
                 <div class="track-clip video" id="videoTrackClip">영상을 로드하세요</div>
               </div>

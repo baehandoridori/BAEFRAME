@@ -124,14 +124,17 @@ export class Timeline extends EventTarget {
   _seekFromClick(e) {
     if (this.duration === 0) return;
 
-    const rect = this.tracksContainer?.getBoundingClientRect() || this.timelineRuler?.getBoundingClientRect();
+    const rect = this.tracksContainer?.getBoundingClientRect();
     if (!rect) return;
 
-    const x = e.clientX - rect.left + (this.timelineTracks?.scrollLeft || 0);
-    const width = this.tracksContainer?.offsetWidth || rect.width;
-    const scale = this.zoom / 100;
-    const percent = x / (width * scale);
-    const time = Math.max(0, Math.min(percent * this.duration, this.duration));
+    // 클릭 위치 (스크롤 오프셋 고려)
+    const scrollLeft = this.timelineTracks?.scrollLeft || 0;
+    const x = e.clientX - rect.left + scrollLeft;
+
+    // tracksContainer의 실제 너비 기준으로 비율 계산
+    const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
+    const percent = Math.max(0, Math.min(x / containerWidth, 1));
+    const time = percent * this.duration;
 
     this._emit('seek', { time });
   }
@@ -163,19 +166,25 @@ export class Timeline extends EventTarget {
 
   /**
    * 플레이헤드 위치 업데이트
+   * 핸들과 라인 모두 동일한 left 값을 사용 (CSS에서 margin-left로 핸들 중앙 정렬)
    */
   _updatePlayheadPosition() {
     if (this.duration === 0) return;
 
-    const percent = (this.currentTime / this.duration) * 100;
-    const scale = this.zoom / 100;
-    const position = percent * scale;
+    // tracksContainer의 실제 너비를 기준으로 픽셀 위치 계산
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (containerWidth === 0) return;
 
+    const percent = this.currentTime / this.duration;
+    const positionPx = containerWidth * percent;
+
+    // 핸들과 라인 모두 동일한 픽셀 위치 설정
+    // CSS에서 핸들은 margin-left: -6px로 중앙 정렬됨
     if (this.playheadLine) {
-      this.playheadLine.style.left = `${position}%`;
+      this.playheadLine.style.left = `${positionPx}px`;
     }
     if (this.playheadHandle) {
-      this.playheadHandle.style.left = `${position}%`;
+      this.playheadHandle.style.left = `${positionPx}px`;
     }
   }
 

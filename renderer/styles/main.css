@@ -277,12 +277,28 @@ body {
 .video-wrapper {
   position: relative;
   width: 100%;
-  max-width: 1280px;
-  aspect-ratio: 16 / 9;
-  background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
-  border-radius: 4px;
+  height: 100%;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+}
+
+/* 비디오 요소 */
+#videoPlayer {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+/* 비디오 실제 영역 위에 정확히 맞는 오버레이 컨테이너 */
+.video-overlay-container {
+  position: absolute;
+  pointer-events: none;
+  /* JS에서 비디오 실제 크기에 맞게 동적으로 설정 */
 }
 
 /* 드롭 존 */
@@ -328,14 +344,11 @@ body {
   font-size: 12px;
 }
 
-/* Drawing Overlay */
+/* Drawing Overlay - JS에서 비디오 실제 영역에 맞게 위치/크기 설정 */
 .drawing-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
   pointer-events: none;
+  /* top, left, width, height는 JS에서 동적으로 설정 */
 }
 
 .drawing-overlay.active {
@@ -791,10 +804,10 @@ body {
   border: 1px solid var(--border-default);
 }
 
-/* Playhead */
+/* Playhead - 핸들과 라인이 timeline-tracks의 자식으로 동일한 left 값 공유 */
 .playhead-line {
   position: absolute;
-  top: 0;
+  top: 24px; /* ruler 높이만큼 아래에서 시작 */
   bottom: 0;
   left: 0;
   width: 2px;
@@ -807,9 +820,9 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  transform: translateX(-50%);
   width: 12px;
   height: 24px;
+  margin-left: -6px; /* 핸들 중앙 정렬 */
   background: var(--accent-primary);
   clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
   cursor: ew-resize;
