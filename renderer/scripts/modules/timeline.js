@@ -28,14 +28,22 @@ export class Timeline extends EventTarget {
     this.totalFrames = 0;
     this.currentTime = 0;
     this.zoom = 100; // 100% = 기본
-    this.minZoom = 50;
-    this.maxZoom = 400;
+    this.minZoom = 25;
+    this.maxZoom = 800;  // 확대 상한 800%로 증가
 
     // 프레임 그리드 설정
     this.frameGridContainer = null;
 
     // 플레이헤드 드래그 상태
     this.isDraggingPlayhead = false;
+
+    // 타임라인 드래그 seek 상태
+    this.isDraggingSeeking = false;
+
+    // 패닝 상태
+    this.isPanning = false;
+    this.panStartX = 0;
+    this.panScrollLeft = 0;
 
     // 초기화
     this._setupEventListeners();
@@ -98,19 +106,68 @@ export class Timeline extends EventTarget {
       this._seekFromClick(e);
     });
 
-    // 트랙 영역 클릭으로 시간 이동
-    this.tracksContainer?.addEventListener('click', (e) => {
+    // 트랙 영역 마우스 이벤트 (드래그 seek + 패닝)
+    this.tracksContainer?.addEventListener('mousedown', (e) => {
       if (this.isDraggingPlayhead) return;
-      // 클립이 아닌 빈 영역 클릭 시에만
-      if (e.target === this.tracksContainer || e.target.classList.contains('track-row')) {
+
+      // Space 키를 누른 상태면 패닝 모드
+      if (this._isSpacePressed) {
+        this.isPanning = true;
+        this.panStartX = e.clientX;
+        this.panScrollLeft = this.timelineTracks.scrollLeft;
+        this.tracksContainer.classList.add('panning');
+        e.preventDefault();
+        return;
+      }
+
+      // 빈 영역에서 마우스 다운 시 드래그 seek 시작
+      if (e.target === this.tracksContainer ||
+          e.target.classList.contains('track-row') ||
+          e.target.classList.contains('frame-grid-container')) {
+        this.isDraggingSeeking = true;
         this._seekFromClick(e);
+        document.body.style.cursor = 'ew-resize';
+      }
+    });
+
+    // Space 키 추적 (패닝 모드용)
+    this._isSpacePressed = false;
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && !e.target.matches('input, textarea')) {
+        this._isSpacePressed = true;
+        if (this.tracksContainer) {
+          this.tracksContainer.style.cursor = 'grab';
+        }
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (e.code === 'Space') {
+        this._isSpacePressed = false;
+        if (this.tracksContainer && !this.isPanning) {
+          this.tracksContainer.style.cursor = 'grab';
+        }
       }
     });
 
     // 전역 마우스 이벤트 (드래그용)
     document.addEventListener('mousemove', (e) => {
+      // 플레이헤드 드래그
       if (this.isDraggingPlayhead) {
         this._seekFromClick(e);
+        return;
+      }
+
+      // 드래그 seek
+      if (this.isDraggingSeeking) {
+        this._seekFromClick(e);
+        return;
+      }
+
+      // 패닝
+      if (this.isPanning) {
+        const dx = e.clientX - this.panStartX;
+        this.timelineTracks.scrollLeft = this.panScrollLeft - dx;
       }
     });
 
@@ -118,6 +175,16 @@ export class Timeline extends EventTarget {
       if (this.isDraggingPlayhead) {
         this.isDraggingPlayhead = false;
         document.body.style.cursor = 'default';
+      }
+
+      if (this.isDraggingSeeking) {
+        this.isDraggingSeeking = false;
+        document.body.style.cursor = 'default';
+      }
+
+      if (this.isPanning) {
+        this.isPanning = false;
+        this.tracksContainer?.classList.remove('panning');
       }
     });
   }

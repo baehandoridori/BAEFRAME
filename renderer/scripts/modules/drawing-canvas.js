@@ -288,31 +288,31 @@ export class DrawingCanvas extends EventTarget {
     this._setupContext();
 
     switch (this.tool) {
-      case DrawingTool.LINE:
-        this.ctx.beginPath();
-        this.ctx.moveTo(x1, y1);
-        this.ctx.lineTo(x2, y2);
-        this.ctx.stroke();
-        break;
+    case DrawingTool.LINE:
+      this.ctx.beginPath();
+      this.ctx.moveTo(x1, y1);
+      this.ctx.lineTo(x2, y2);
+      this.ctx.stroke();
+      break;
 
-      case DrawingTool.ARROW:
-        this._drawArrow(x1, y1, x2, y2);
-        break;
+    case DrawingTool.ARROW:
+      this._drawArrow(x1, y1, x2, y2);
+      break;
 
-      case DrawingTool.RECT:
-        this.ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-        break;
+    case DrawingTool.RECT:
+      this.ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      break;
 
-      case DrawingTool.CIRCLE:
-        const rx = Math.abs(x2 - x1) / 2;
-        const ry = Math.abs(y2 - y1) / 2;
-        const cx = x1 + (x2 - x1) / 2;
-        const cy = y1 + (y2 - y1) / 2;
+    case DrawingTool.CIRCLE:
+      const rx = Math.abs(x2 - x1) / 2;
+      const ry = Math.abs(y2 - y1) / 2;
+      const cx = x1 + (x2 - x1) / 2;
+      const cy = y1 + (y2 - y1) / 2;
 
-        this.ctx.beginPath();
-        this.ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-        this.ctx.stroke();
-        break;
+      this.ctx.beginPath();
+      this.ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      this.ctx.stroke();
+      break;
     }
 
     this.ctx.restore();

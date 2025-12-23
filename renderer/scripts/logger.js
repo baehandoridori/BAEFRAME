@@ -33,11 +33,11 @@ class Logger {
 
   _getConsoleStyle(level) {
     switch (level) {
-      case LOG_LEVELS.DEBUG: return 'color: #888';
-      case LOG_LEVELS.INFO: return 'color: #4a9eff';
-      case LOG_LEVELS.WARN: return 'color: #ffd000';
-      case LOG_LEVELS.ERROR: return 'color: #ff4757; font-weight: bold';
-      default: return 'color: inherit';
+    case LOG_LEVELS.DEBUG: return 'color: #888';
+    case LOG_LEVELS.INFO: return 'color: #4a9eff';
+    case LOG_LEVELS.WARN: return 'color: #ffd000';
+    case LOG_LEVELS.ERROR: return 'color: #ff4757; font-weight: bold';
+    default: return 'color: inherit';
     }
   }
 

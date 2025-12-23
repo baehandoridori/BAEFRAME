@@ -64,13 +64,34 @@
           <!-- Drawing Overlay Canvas -->
           <canvas id="drawingCanvas" class="drawing-overlay"></canvas>
 
+          <!-- Video Zoom Controls -->
+          <div class="video-zoom-controls" id="videoZoomControls">
+            <button class="video-zoom-btn" id="btnVideoZoomOut" title="축소">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            </button>
+            <span class="video-zoom-display" id="videoZoomDisplay">100%</span>
+            <button class="video-zoom-btn" id="btnVideoZoomIn" title="확대">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            </button>
+            <button class="video-zoom-btn" id="btnVideoZoomReset" title="원본 크기 (100%)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+            </button>
+          </div>
+
+          <!-- Zoom Indicator Overlay -->
+          <div class="zoom-indicator-overlay" id="zoomIndicatorOverlay"></div>
+
           <!-- Drawing Tools Palette (이동/접기 가능) -->
           <div class="drawing-tools" id="drawingTools">
             <!-- 드래그 핸들 및 접기 버튼 -->
             <div class="drawing-tools-header" id="drawingToolsHeader">
-              <span class="drag-handle" title="드래그하여 이동">⋮⋮</span>
+              <span class="drag-handle" title="드래그하여 이동">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/></svg>
+              </span>
               <span class="tools-title">그리기 도구</span>
-              <button class="collapse-btn" id="collapseToolsBtn" title="접기/펴기">▼</button>
+              <button class="collapse-btn" id="collapseToolsBtn" title="접기/펴기">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
             </div>
 
             <!-- 접히는 컨텐츠 영역 -->
@@ -79,13 +100,27 @@
               <div class="tools-section">
                 <div class="section-label">도구</div>
                 <div class="tools-row">
-                  <button class="tool-btn active" data-tool="pen" title="펜 (P)">✏️</button>
-                  <button class="tool-btn" data-tool="brush" title="브러쉬 (B)">🖌️</button>
-                  <button class="tool-btn" data-tool="eraser" title="지우개 (E)">🧹</button>
-                  <button class="tool-btn" data-tool="line" title="선 (L)">📏</button>
-                  <button class="tool-btn" data-tool="arrow" title="화살표 (A)">➡️</button>
-                  <button class="tool-btn" data-tool="rect" title="사각형 (R)">⬜</button>
-                  <button class="tool-btn" data-tool="circle" title="원 (O)">⭕</button>
+                  <button class="tool-btn active" data-tool="pen" title="펜 (P)">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                  </button>
+                  <button class="tool-btn" data-tool="brush" title="브러쉬 (B)">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>
+                  </button>
+                  <button class="tool-btn" data-tool="eraser" title="지우개 (E)">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+                  </button>
+                  <button class="tool-btn" data-tool="line" title="선 (L)">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/></svg>
+                  </button>
+                  <button class="tool-btn" data-tool="arrow" title="화살표 (A)">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                  </button>
+                  <button class="tool-btn" data-tool="rect" title="사각형 (R)">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+                  </button>
+                  <button class="tool-btn" data-tool="circle" title="원 (O)">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+                  </button>
                 </div>
               </div>
 
@@ -140,8 +175,12 @@
 
               <!-- 액션 버튼 -->
               <div class="tools-section tools-actions">
-                <button class="tool-btn" id="btnUndo" title="실행 취소 (Ctrl+Z)">↩️</button>
-                <button class="tool-btn" id="btnClearDrawing" title="전체 지우기">🗑️</button>
+                <button class="tool-btn" id="btnUndo" title="실행 취소 (Ctrl+Z)">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+                </button>
+                <button class="tool-btn" id="btnClearDrawing" title="전체 지우기">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
               </div>
             </div>
           </div>
@@ -154,11 +193,21 @@
       <!-- Playback Controls -->
       <div class="controls-bar">
         <div class="playback-controls">
-          <button class="control-btn" id="btnFirst" title="처음으로 (Home)">⏮</button>
-          <button class="control-btn" id="btnPrevFrame" title="이전 프레임 (←)">◀</button>
-          <button class="control-btn play-btn" id="btnPlay" title="재생/일시정지 (Space)">▶</button>
-          <button class="control-btn" id="btnNextFrame" title="다음 프레임 (→)">▶</button>
-          <button class="control-btn" id="btnLast" title="끝으로 (End)">⏭</button>
+          <button class="control-btn" id="btnFirst" title="처음으로 (Home)">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+          </button>
+          <button class="control-btn" id="btnPrevFrame" title="이전 프레임 (←)">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>
+          </button>
+          <button class="control-btn play-btn" id="btnPlay" title="재생/일시정지 (Space)">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" id="playIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          </button>
+          <button class="control-btn" id="btnNextFrame" title="다음 프레임 (→)">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>
+          </button>
+          <button class="control-btn" id="btnLast" title="끝으로 (End)">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+          </button>
         </div>
 
         <div class="timecode" id="timecode">
@@ -173,12 +222,12 @@
 
         <div class="action-controls">
           <button class="action-btn" id="btnDrawMode">
-            <span>✏️</span>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
             그리기
             <span class="shortcut-hint">D</span>
           </button>
           <button class="action-btn" id="btnAddComment">
-            <span>💬</span>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             댓글 추가
             <span class="shortcut-hint">C</span>
           </button>
@@ -190,11 +239,22 @@
         <div class="timeline-toolbar">
           <div class="timeline-toolbar-left">
             <div class="timeline-title">
-              <span class="timeline-title-icon">🎞️</span>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent-primary)"><rect x="2" y="7" width="20" height="10" rx="2"/><line x1="6" y1="7" x2="6" y2="17"/><line x1="10" y1="7" x2="10" y2="17"/><line x1="14" y1="7" x2="14" y2="17"/><line x1="18" y1="7" x2="18" y2="17"/></svg>
               타임라인
             </div>
           </div>
           <div class="timeline-toolbar-right">
+            <div class="zoom-buttons">
+              <button class="zoom-btn" id="btnTimelineZoomOut" title="축소">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+              <button class="zoom-btn" id="btnTimelineZoomReset" title="원본 (100%)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+              </button>
+              <button class="zoom-btn" id="btnTimelineZoomIn" title="확대">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
             <div class="zoom-control">
               <span class="zoom-label">줌</span>
               <input type="range" class="zoom-slider" id="zoomSlider" min="1" max="100" value="50">
@@ -209,9 +269,16 @@
             <div class="layer-header-ruler"></div>
             <div class="layer-header" data-layer="video">
               <div class="layer-color" style="background: #3a3a3a"></div>
-              <span class="layer-visibility">👁️</span>
-              <span class="layer-name">📹 Video</span>
-              <span class="layer-lock">🔒</span>
+              <span class="layer-visibility">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </span>
+              <span class="layer-name">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+                Video
+              </span>
+              <span class="layer-lock">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </span>
             </div>
           </div>
 
@@ -233,19 +300,28 @@
     </div>
 
     <!-- Resizer (Vertical) -->
-    <div class="resizer" id="panelResizer"></div>
+    <div class="resizer" id="panelResizer">
+      <!-- Comment Panel Toggle Button -->
+      <button class="comment-panel-toggle" id="commentPanelToggle" title="댓글 패널 토글">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
 
     <!-- Comment Panel -->
     <div class="comment-panel" id="commentPanel">
       <div class="panel-header">
         <div class="panel-title">
-          <span class="panel-title-icon">💬</span>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent-primary)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           댓글
           <span class="comment-count" id="commentCount">0</span>
         </div>
         <div class="panel-actions">
-          <button class="panel-btn" title="정렬">⬇️</button>
-          <button class="panel-btn" title="설정">⚙️</button>
+          <button class="panel-btn" title="정렬">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          </button>
+          <button class="panel-btn" title="설정">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
         </div>
       </div>
 
@@ -258,7 +334,9 @@
       <div class="comments-list" id="commentsList">
         <!-- 댓글들이 여기에 렌더링됨 -->
         <div class="empty-comments">
-          <div class="empty-comments-icon">💬</div>
+          <div class="empty-comments-icon">
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
           <div class="empty-comments-text">아직 댓글이 없습니다</div>
           <div class="empty-comments-hint">영상을 재생하고 C키를 눌러 댓글을 추가하세요</div>
         </div>
@@ -276,12 +354,14 @@
   </div>
 
   <!-- Shortcuts Toggle Button -->
-  <button class="shortcuts-toggle" id="shortcutsToggle" title="단축키 (?)">⌨️</button>
+  <button class="shortcuts-toggle" id="shortcutsToggle" title="단축키 (?)">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="6" y1="16" x2="18" y2="16"/></svg>
+  </button>
 
   <!-- Shortcuts Menu -->
   <div class="shortcuts-menu" id="shortcutsMenu">
     <div class="shortcuts-menu-header">
-      <span>⌨️</span>
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="6" y1="16" x2="18" y2="16"/></svg>
       키보드 단축키
     </div>
     <div class="shortcuts-menu-content">

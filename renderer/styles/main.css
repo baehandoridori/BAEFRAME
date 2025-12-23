@@ -52,11 +52,11 @@
   --shadow-glow: 0 0 20px rgba(255, 208, 0, 0.3);
 
   /* 레이아웃 */
-  --header-height: 48px;
-  --controls-height: 52px;
-  --timeline-height: 180px;
-  --panel-width: 320px;
-  --layer-header-width: 140px;
+  --header-height: 52px;
+  --controls-height: 56px;
+  --timeline-height: 220px;
+  --panel-width: 340px;
+  --layer-header-width: 160px;
 
   /* 애니메이션 */
   --transition-fast: 0.1s ease;
@@ -167,12 +167,12 @@ body {
 .btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
+  gap: 8px;
+  padding: 10px 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -198,6 +198,39 @@ body {
 .btn-primary:hover {
   background: var(--accent-secondary);
   box-shadow: var(--shadow-glow);
+}
+
+/* 아이콘 전용 버튼 */
+.btn-icon {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-icon:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+.btn-icon.active {
+  background: var(--accent-glow-strong);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.btn-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 /* ========================================
@@ -795,9 +828,9 @@ body {
    Timeline
    ======================================== */
 .timeline-section {
-  height: 180px;
-  min-height: 120px;
-  max-height: 400px;
+  height: var(--timeline-height);
+  min-height: 160px;
+  max-height: 500px;
   background: var(--bg-tertiary);
   border-top: 1px solid var(--border-subtle);
   display: flex;
@@ -805,28 +838,28 @@ body {
 }
 
 .timeline-toolbar {
-  height: 32px;
+  height: 40px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
+  padding: 0 16px;
 }
 
 .timeline-toolbar-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
 
 .timeline-title {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-secondary);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .timeline-title-icon {
@@ -836,43 +869,82 @@ body {
 .timeline-toolbar-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
 
 .zoom-control {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .zoom-label {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-tertiary);
 }
 
 .zoom-slider {
-  width: 80px;
-  height: 4px;
+  width: 100px;
+  height: 6px;
   background: var(--bg-primary);
-  border-radius: 2px;
+  border-radius: 3px;
   appearance: none;
   cursor: pointer;
 }
 
 .zoom-slider::-webkit-slider-thumb {
   appearance: none;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   background: var(--accent-primary);
   border-radius: 50%;
   cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+
+.zoom-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
 }
 
 .zoom-display {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-tertiary);
-  min-width: 40px;
+  min-width: 45px;
   text-align: right;
+  font-family: var(--font-mono);
+}
+
+/* 타임라인 줌 버튼들 */
+.zoom-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.zoom-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all var(--transition-fast);
+}
+
+.zoom-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+.zoom-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .timeline-main {
@@ -897,8 +969,8 @@ body {
 }
 
 .layer-header-ruler {
-  height: 24px;
-  min-height: 24px;
+  height: 32px;
+  min-height: 32px;
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-subtle);
   position: sticky;
@@ -907,13 +979,13 @@ body {
 }
 
 .layer-header {
-  height: 28px;
+  height: 36px;
   display: flex;
   align-items: center;
-  padding: 0 8px;
-  gap: 6px;
+  padding: 0 12px;
+  gap: 8px;
   border-bottom: 1px solid var(--border-subtle);
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
   transition: background var(--transition-fast);
 }
@@ -974,8 +1046,8 @@ body {
 }
 
 .timeline-ruler {
-  height: 24px;
-  min-height: 24px;
+  height: 32px;
+  min-height: 32px;
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-subtle);
   position: sticky;
@@ -986,10 +1058,19 @@ body {
 
 .tracks-container {
   position: relative;
+  cursor: grab;
+}
+
+.tracks-container:active {
+  cursor: grabbing;
+}
+
+.tracks-container.panning {
+  cursor: grabbing;
 }
 
 .track-row {
-  height: 28px;
+  height: 36px;
   position: relative;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-primary);
@@ -1001,13 +1082,13 @@ body {
 
 .track-clip {
   position: absolute;
-  top: 3px;
-  height: 22px;
-  border-radius: 4px;
+  top: 4px;
+  height: 28px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
-  padding: 0 8px;
-  font-size: 10px;
+  padding: 0 10px;
+  font-size: 12px;
   font-weight: 500;
   color: white;
   cursor: pointer;
@@ -1031,26 +1112,32 @@ body {
 /* Playhead - 핸들과 라인이 timeline-tracks의 자식으로 동일한 left 값 공유 */
 .playhead-line {
   position: absolute;
-  top: 24px; /* ruler 높이만큼 아래에서 시작 */
+  top: 32px; /* ruler 높이만큼 아래에서 시작 */
   bottom: 0;
   left: 0;
   width: 2px;
   background: var(--accent-primary);
   z-index: 100;
   pointer-events: none;
+  box-shadow: 0 0 8px rgba(255, 208, 0, 0.5);
 }
 
 .playhead-handle {
   position: absolute;
   top: 0;
   left: 0;
-  width: 12px;
-  height: 24px;
-  margin-left: -6px; /* 핸들 중앙 정렬 */
+  width: 14px;
+  height: 32px;
+  margin-left: -7px; /* 핸들 중앙 정렬 */
   background: var(--accent-primary);
   clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
   cursor: ew-resize;
   z-index: 101;
+  transition: transform var(--transition-fast);
+}
+
+.playhead-handle:hover {
+  transform: scale(1.1);
 }
 
 /* Comment Markers */
@@ -1104,15 +1191,15 @@ body {
 /* 키프레임 클립 */
 .drawing-clip {
   position: absolute;
-  top: 3px;
-  height: 22px;
-  border-radius: 3px;
+  top: 4px;
+  height: 28px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
-  padding-left: 4px;
+  padding-left: 6px;
   cursor: pointer;
   transition: filter var(--transition-fast);
-  min-width: 20px;
+  min-width: 24px;
 }
 
 .drawing-clip:hover {
@@ -1609,11 +1696,163 @@ body {
 }
 
 /* ========================================
+   Comment Panel Toggle
+   ======================================== */
+.comment-panel {
+  transition: width 0.3s ease, min-width 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
+}
+
+.comment-panel.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  opacity: 0;
+  overflow: hidden;
+  border-left: none;
+}
+
+.comment-panel-toggle {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 60px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  transition: all var(--transition-fast);
+  z-index: 50;
+}
+
+.comment-panel-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  width: 28px;
+}
+
+.comment-panel-toggle svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.3s ease;
+}
+
+.comment-panel-toggle.collapsed svg {
+  transform: rotate(180deg);
+}
+
+/* ========================================
+   Video Zoom Controls
+   ======================================== */
+.video-zoom-controls {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  z-index: 50;
+  opacity: 0;
+  visibility: hidden;
+  transition: all var(--transition-normal);
+}
+
+.viewer-container:hover .video-zoom-controls,
+.video-zoom-controls.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.video-zoom-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.video-zoom-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+.video-zoom-btn:active {
+  transform: scale(0.95);
+}
+
+.video-zoom-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.video-zoom-display {
+  min-width: 50px;
+  text-align: center;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* 비디오 줌/패닝 상태 */
+.video-wrapper.zoomed {
+  cursor: grab;
+}
+
+.video-wrapper.zoomed:active {
+  cursor: grabbing;
+}
+
+.video-wrapper.panning {
+  cursor: grabbing;
+}
+
+/* 줌 인디케이터 */
+.zoom-indicator-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.8);
+  border: 1px solid var(--accent-primary);
+  border-radius: 12px;
+  padding: 16px 24px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.zoom-indicator-overlay.visible {
+  opacity: 1;
+}
+
+/* ========================================
    Scrollbar
    ======================================== */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -1622,7 +1861,7 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: var(--bg-hover);
-  border-radius: 4px;
+  border-radius: 5px;
 }
 
 ::-webkit-scrollbar-thumb:hover {

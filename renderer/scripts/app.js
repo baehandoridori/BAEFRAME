@@ -77,13 +77,41 @@ async function initApp() {
     shortcutsMenu: document.getElementById('shortcutsMenu'),
 
     // 토스트
-    toastContainer: document.getElementById('toastContainer')
+    toastContainer: document.getElementById('toastContainer'),
+
+    // 비디오 줌 컨트롤
+    videoZoomControls: document.getElementById('videoZoomControls'),
+    btnVideoZoomIn: document.getElementById('btnVideoZoomIn'),
+    btnVideoZoomOut: document.getElementById('btnVideoZoomOut'),
+    btnVideoZoomReset: document.getElementById('btnVideoZoomReset'),
+    videoZoomDisplay: document.getElementById('videoZoomDisplay'),
+    zoomIndicatorOverlay: document.getElementById('zoomIndicatorOverlay'),
+
+    // 댓글 패널 토글
+    commentPanelToggle: document.getElementById('commentPanelToggle'),
+
+    // 타임라인 줌 버튼
+    btnTimelineZoomIn: document.getElementById('btnTimelineZoomIn'),
+    btnTimelineZoomOut: document.getElementById('btnTimelineZoomOut'),
+    btnTimelineZoomReset: document.getElementById('btnTimelineZoomReset')
   };
 
   // 상태
   const state = {
     isDrawMode: false,
-    currentFile: null
+    currentFile: null,
+    // 비디오 줌 상태
+    videoZoom: 100,
+    minVideoZoom: 25,
+    maxVideoZoom: 800,
+    // 비디오 패닝 상태
+    videoPanX: 0,
+    videoPanY: 0,
+    isPanningVideo: false,
+    panStartX: 0,
+    panStartY: 0,
+    panInitialX: 0,
+    panInitialY: 0
   };
 
   // ====== 모듈 초기화 ======
@@ -141,19 +169,23 @@ async function initApp() {
     drawingManager.setCurrentFrame(currentFrame);
   });
 
+  // 재생 아이콘 SVG
+  const playIconSVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+  const pauseIconSVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+
   // 비디오 재생 상태 변경
   videoPlayer.addEventListener('play', () => {
-    elements.btnPlay.textContent = '⏸';
+    elements.btnPlay.innerHTML = pauseIconSVG;
     drawingManager.setPlaying(true);
   });
 
   videoPlayer.addEventListener('pause', () => {
-    elements.btnPlay.textContent = '▶';
+    elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
   });
 
   videoPlayer.addEventListener('ended', () => {
-    elements.btnPlay.textContent = '▶';
+    elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
   });
 
@@ -456,6 +488,168 @@ async function initApp() {
     }
   }
 
+  // ====== 비디오 줌/패닝 ======
+
+  /**
+   * 비디오 줌 레벨 설정
+   */
+  function setVideoZoom(zoom, showIndicator = true) {
+    state.videoZoom = Math.max(state.minVideoZoom, Math.min(state.maxVideoZoom, zoom));
+    applyVideoZoom();
+
+    if (showIndicator) {
+      showZoomIndicator(state.videoZoom);
+    }
+  }
+
+  /**
+   * 비디오 줌 적용
+   */
+  function applyVideoZoom() {
+    const video = elements.videoPlayer;
+    const scale = state.videoZoom / 100;
+
+    video.style.transform = `scale(${scale}) translate(${state.videoPanX}px, ${state.videoPanY}px)`;
+    video.style.transformOrigin = 'center center';
+
+    // 줌 디스플레이 업데이트
+    if (elements.videoZoomDisplay) {
+      elements.videoZoomDisplay.textContent = `${Math.round(state.videoZoom)}%`;
+    }
+
+    // 줌이 100%가 아니면 줌 상태 표시
+    if (state.videoZoom !== 100) {
+      elements.videoWrapper?.classList.add('zoomed');
+    } else {
+      elements.videoWrapper?.classList.remove('zoomed');
+      // 100%로 돌아오면 패닝도 리셋
+      state.videoPanX = 0;
+      state.videoPanY = 0;
+    }
+
+    // 캔버스도 동일하게 적용
+    syncCanvasZoom();
+  }
+
+  /**
+   * 캔버스 줌 동기화
+   */
+  function syncCanvasZoom() {
+    const scale = state.videoZoom / 100;
+    const transform = `scale(${scale}) translate(${state.videoPanX}px, ${state.videoPanY}px)`;
+
+    if (elements.drawingCanvas) {
+      elements.drawingCanvas.style.transform = transform;
+      elements.drawingCanvas.style.transformOrigin = 'center center';
+    }
+    if (elements.onionSkinCanvas) {
+      elements.onionSkinCanvas.style.transform = transform;
+      elements.onionSkinCanvas.style.transformOrigin = 'center center';
+    }
+  }
+
+  /**
+   * 줌 인디케이터 표시
+   */
+  function showZoomIndicator(zoom) {
+    if (!elements.zoomIndicatorOverlay) return;
+
+    elements.zoomIndicatorOverlay.textContent = `${Math.round(zoom)}%`;
+    elements.zoomIndicatorOverlay.classList.add('visible');
+
+    clearTimeout(window._zoomIndicatorTimeout);
+    window._zoomIndicatorTimeout = setTimeout(() => {
+      elements.zoomIndicatorOverlay.classList.remove('visible');
+    }, 800);
+  }
+
+  /**
+   * 비디오 줌 리셋
+   */
+  function resetVideoZoom() {
+    state.videoZoom = 100;
+    state.videoPanX = 0;
+    state.videoPanY = 0;
+    applyVideoZoom();
+    showZoomIndicator(100);
+  }
+
+  // 비디오 줌 버튼 이벤트
+  elements.btnVideoZoomIn?.addEventListener('click', () => {
+    setVideoZoom(state.videoZoom + 25);
+  });
+
+  elements.btnVideoZoomOut?.addEventListener('click', () => {
+    setVideoZoom(state.videoZoom - 25);
+  });
+
+  elements.btnVideoZoomReset?.addEventListener('click', () => {
+    resetVideoZoom();
+  });
+
+  // 비디오 영역 휠 줌
+  elements.viewerContainer?.addEventListener('wheel', (e) => {
+    // 그리기 모드가 아닐 때만 줌 적용
+    if (!state.isDrawMode) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -25 : 25;
+      setVideoZoom(state.videoZoom + delta);
+    }
+  }, { passive: false });
+
+  // 비디오 패닝 (줌이 100% 이상일 때)
+  elements.videoWrapper?.addEventListener('mousedown', (e) => {
+    if (state.videoZoom > 100 && !state.isDrawMode && e.button === 0) {
+      state.isPanningVideo = true;
+      state.panStartX = e.clientX;
+      state.panStartY = e.clientY;
+      state.panInitialX = state.videoPanX;
+      state.panInitialY = state.videoPanY;
+      elements.videoWrapper.classList.add('panning');
+      e.preventDefault();
+    }
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (state.isPanningVideo) {
+      const scale = state.videoZoom / 100;
+      const dx = (e.clientX - state.panStartX) / scale;
+      const dy = (e.clientY - state.panStartY) / scale;
+      state.videoPanX = state.panInitialX + dx;
+      state.videoPanY = state.panInitialY + dy;
+      applyVideoZoom();
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (state.isPanningVideo) {
+      state.isPanningVideo = false;
+      elements.videoWrapper?.classList.remove('panning');
+    }
+  });
+
+  // ====== 댓글 패널 토글 ======
+
+  elements.commentPanelToggle?.addEventListener('click', () => {
+    const isCollapsed = elements.commentPanel?.classList.toggle('collapsed');
+    elements.commentPanelToggle?.classList.toggle('collapsed', isCollapsed);
+    elements.panelResizer?.classList.toggle('hidden', isCollapsed);
+  });
+
+  // ====== 타임라인 줌 버튼 ======
+
+  elements.btnTimelineZoomIn?.addEventListener('click', () => {
+    timeline.zoomIn();
+  });
+
+  elements.btnTimelineZoomOut?.addEventListener('click', () => {
+    timeline.zoomOut();
+  });
+
+  elements.btnTimelineZoomReset?.addEventListener('click', () => {
+    timeline.fitToView();
+  });
+
   // 패널 리사이저
   setupResizer(elements.panelResizer, 'col', (delta) => {
     const newWidth = elements.commentPanel.offsetWidth - delta;
@@ -700,105 +894,105 @@ async function initApp() {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
 
     switch (e.code) {
-      case 'Space':
+    case 'Space':
+      e.preventDefault();
+      videoPlayer.togglePlay();
+      break;
+
+    case 'ArrowLeft':
+      e.preventDefault();
+      if (e.shiftKey) {
+        videoPlayer.rewind(1); // 1초 뒤로
+      } else {
+        videoPlayer.prevFrame();
+      }
+      break;
+
+    case 'ArrowRight':
+      e.preventDefault();
+      if (e.shiftKey) {
+        videoPlayer.forward(1); // 1초 앞으로
+      } else {
+        videoPlayer.nextFrame();
+      }
+      break;
+
+    case 'Home':
+      e.preventDefault();
+      videoPlayer.seekToStart();
+      break;
+
+    case 'End':
+      e.preventDefault();
+      videoPlayer.seekToEnd();
+      break;
+
+    case 'KeyD':
+      e.preventDefault();
+      toggleDrawMode();
+      break;
+
+    case 'KeyC':
+      if (!e.ctrlKey) {
         e.preventDefault();
-        videoPlayer.togglePlay();
-        break;
+        elements.commentInput.focus();
+      }
+      break;
 
-      case 'ArrowLeft':
+    case 'F6':
+      // 키프레임 복제 추가 (이전 내용 복사)
+      e.preventDefault();
+      if (state.isDrawMode) {
+        drawingManager.addKeyframeWithContent();
+        showToast('키프레임 추가됨', 'success');
+      }
+      break;
+
+    case 'F7':
+      // 빈 키프레임 추가
+      e.preventDefault();
+      if (state.isDrawMode) {
+        drawingManager.addBlankKeyframe();
+        showToast('빈 키프레임 추가됨', 'success');
+      }
+      break;
+
+    case 'Delete':
+    case 'Backspace':
+      // 키프레임 삭제 (그리기 모드에서만)
+      if (state.isDrawMode && !e.ctrlKey) {
         e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.rewind(1); // 1초 뒤로
-        } else {
-          videoPlayer.prevFrame();
-        }
-        break;
+        drawingManager.removeKeyframe();
+      }
+      break;
 
-      case 'ArrowRight':
+    case 'Slash':
+      if (e.shiftKey) { // ?
         e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.forward(1); // 1초 앞으로
-        } else {
-          videoPlayer.nextFrame();
-        }
-        break;
+        elements.shortcutsToggle.click();
+      }
+      break;
 
-      case 'Home':
+    case 'Backslash':
+      e.preventDefault();
+      timeline.fitToView();
+      break;
+
+    case 'Equal':
+    case 'NumpadAdd':
+      if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        videoPlayer.seekToStart();
-        break;
+        timeline.zoomIn();
+      }
+      break;
 
-      case 'End':
+    case 'Minus':
+    case 'NumpadSubtract':
+      if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        videoPlayer.seekToEnd();
-        break;
-
-      case 'KeyD':
-        e.preventDefault();
-        toggleDrawMode();
-        break;
-
-      case 'KeyC':
-        if (!e.ctrlKey) {
-          e.preventDefault();
-          elements.commentInput.focus();
-        }
-        break;
-
-      case 'F6':
-        // 키프레임 복제 추가 (이전 내용 복사)
-        e.preventDefault();
-        if (state.isDrawMode) {
-          drawingManager.addKeyframeWithContent();
-          showToast('키프레임 추가됨', 'success');
-        }
-        break;
-
-      case 'F7':
-        // 빈 키프레임 추가
-        e.preventDefault();
-        if (state.isDrawMode) {
-          drawingManager.addBlankKeyframe();
-          showToast('빈 키프레임 추가됨', 'success');
-        }
-        break;
-
-      case 'Delete':
-      case 'Backspace':
-        // 키프레임 삭제 (그리기 모드에서만)
-        if (state.isDrawMode && !e.ctrlKey) {
-          e.preventDefault();
-          drawingManager.removeKeyframe();
-        }
-        break;
-
-      case 'Slash':
-        if (e.shiftKey) { // ?
-          e.preventDefault();
-          elements.shortcutsToggle.click();
-        }
-        break;
-
-      case 'Backslash':
-        e.preventDefault();
-        timeline.fitToView();
-        break;
-
-      case 'Equal':
-      case 'NumpadAdd':
-        if (e.ctrlKey || e.metaKey) {
-          e.preventDefault();
-          timeline.zoomIn();
-        }
-        break;
-
-      case 'Minus':
-      case 'NumpadSubtract':
-        if (e.ctrlKey || e.metaKey) {
-          e.preventDefault();
-          timeline.zoomOut();
-        }
-        break;
+        timeline.zoomOut();
+      }
+      break;
     }
   }
 

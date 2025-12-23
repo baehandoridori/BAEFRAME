@@ -51,11 +51,11 @@ class MainLogger {
 
   _getConsoleColor(level) {
     switch (level) {
-      case LOG_LEVELS.DEBUG: return '\x1b[90m'; // Gray
-      case LOG_LEVELS.INFO: return '\x1b[36m';  // Cyan
-      case LOG_LEVELS.WARN: return '\x1b[33m';  // Yellow
-      case LOG_LEVELS.ERROR: return '\x1b[31m'; // Red
-      default: return '\x1b[0m';
+    case LOG_LEVELS.DEBUG: return '\x1b[90m'; // Gray
+    case LOG_LEVELS.INFO: return '\x1b[36m';  // Cyan
+    case LOG_LEVELS.WARN: return '\x1b[33m';  // Yellow
+    case LOG_LEVELS.ERROR: return '\x1b[31m'; // Red
+    default: return '\x1b[0m';
     }
   }
 
