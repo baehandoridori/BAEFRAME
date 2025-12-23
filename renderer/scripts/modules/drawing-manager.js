@@ -46,6 +46,9 @@ export class DrawingManager extends EventTarget {
     this.isPlaying = false;
     this.preloadRange = 10;  // 앞뒤로 프리로드할 프레임 수
 
+    // 렌더링 상태 관리
+    this._renderingId = 0;  // 렌더링 취소용 ID
+
     // 이벤트 연결
     this._setupEvents();
 
@@ -230,7 +233,9 @@ export class DrawingManager extends EventTarget {
     if (!layer || layer.locked) return;
 
     layer.addBlankKeyframe(this.currentFrame);
-    this.drawingCanvas.clear();
+
+    // 어니언 스킨 포함하여 다시 렌더링
+    this.renderFrame(this.currentFrame);
 
     this._emit('keyframeAdded', { layer, frame: this.currentFrame, blank: true });
     this._emit('layersChanged');
@@ -317,18 +322,35 @@ export class DrawingManager extends EventTarget {
       return;
     }
 
-    log.debug('renderFrame 시작', {
-      frame,
-      layersCount: this.layers.length,
-      onionSkin: this.onionSkin.enabled
-    });
+    // 렌더링 ID 증가 (이전 렌더링 취소용)
+    const currentRenderingId = ++this._renderingId;
 
     // 캔버스 초기화
     this.drawingCanvas.clear();
 
+    // 재생 중이면 빠른 동기 렌더링
+    if (this.isPlaying) {
+      this._renderFrameSync(frame);
+      this._preloadFrames(frame);
+      return;
+    }
+
+    log.debug('renderFrame 시작', {
+      frame,
+      layersCount: this.layers.length,
+      onionSkin: this.onionSkin.enabled,
+      renderingId: currentRenderingId
+    });
+
     // 어니언 스킨 먼저 렌더링 (현재 프레임 아래에 표시)
-    if (this.onionSkin.enabled && !this.isPlaying) {
-      await this._renderOnionSkin(frame);
+    if (this.onionSkin.enabled) {
+      await this._renderOnionSkin(frame, currentRenderingId);
+
+      // 렌더링 취소 체크
+      if (this._renderingId !== currentRenderingId) {
+        log.debug('어니언 스킨 후 렌더링 취소', { frame, currentRenderingId });
+        return;
+      }
     }
 
     // 렌더링할 이미지들을 먼저 모두 로드
@@ -346,11 +368,17 @@ export class DrawingManager extends EventTarget {
       if (img) {
         imagesToRender.push({ img, layer });
       }
+
+      // 렌더링 취소 체크
+      if (this._renderingId !== currentRenderingId) {
+        log.debug('이미지 로드 중 렌더링 취소', { frame, currentRenderingId });
+        return;
+      }
     }
 
-    // 현재 프레임이 변경되었으면 렌더링 취소
-    if (this.currentFrame !== frame) {
-      log.debug('프레임 변경으로 렌더링 취소', { frame, currentFrame: this.currentFrame });
+    // 최종 렌더링 취소 체크
+    if (this._renderingId !== currentRenderingId || this.currentFrame !== frame) {
+      log.debug('최종 렌더링 취소', { frame, currentFrame: this.currentFrame });
       return;
     }
 
@@ -361,13 +389,28 @@ export class DrawingManager extends EventTarget {
       this.drawingCanvas.ctx.globalAlpha = 1;
     }
 
-    // 재생 중이면 주변 프레임 프리로드
-    if (this.isPlaying) {
-      this._preloadFrames(frame);
-    }
-
     log.debug('renderFrame 완료', { frame, renderedCount: imagesToRender.length });
     this._emit('frameRendered', { frame });
+  }
+
+  /**
+   * 동기적 프레임 렌더링 (재생 중 성능 최적화)
+   * 캐시된 이미지만 사용, 없으면 스킵
+   */
+  _renderFrameSync(frame) {
+    for (const layer of this.layers) {
+      if (!layer.visible) continue;
+
+      const keyframe = layer.getKeyframeAtFrame(frame);
+      if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
+
+      // 캐시된 이미지만 사용 (없으면 스킵)
+      if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
+        this.drawingCanvas.ctx.globalAlpha = layer.opacity;
+        this.drawingCanvas.ctx.drawImage(keyframe._cachedImage, 0, 0);
+        this.drawingCanvas.ctx.globalAlpha = 1;
+      }
+    }
   }
 
   /**
@@ -476,18 +519,22 @@ export class DrawingManager extends EventTarget {
   /**
    * 어니언 스킨 렌더링
    */
-  async _renderOnionSkin(currentFrame) {
+  async _renderOnionSkin(currentFrame, renderingId) {
     if (!this.onionSkin.enabled) return;
 
     const ctx = this.drawingCanvas.ctx;
 
-    // 이전 프레임들 (파란색 틴트)
+    // 이전 프레임들 (파란색 틴트) - 가장 먼 것부터
     for (let i = this.onionSkin.before; i >= 1; i--) {
       const frame = currentFrame - i;
       if (frame < 0) continue;
 
-      const opacity = this.onionSkin.opacity * (1 - (i - 1) / this.onionSkin.before);
-      await this._renderOnionFrame(frame, opacity, 'rgba(100, 149, 237, 0.5)'); // 파란색
+      // 렌더링 취소 체크
+      if (this._renderingId !== renderingId) return;
+
+      // 가까울수록 진하게 (i=1이 가장 가까움)
+      const opacity = this.onionSkin.opacity * (1 - (i - 1) / Math.max(this.onionSkin.before, 1));
+      await this._renderOnionFrame(frame, opacity, 'rgba(100, 149, 237, 0.6)'); // 파란색
     }
 
     // 이후 프레임들 (녹색 틴트)
@@ -495,13 +542,17 @@ export class DrawingManager extends EventTarget {
       const frame = currentFrame + i;
       if (frame >= this.totalFrames) continue;
 
-      const opacity = this.onionSkin.opacity * (1 - (i - 1) / this.onionSkin.after);
-      await this._renderOnionFrame(frame, opacity, 'rgba(50, 205, 50, 0.5)'); // 녹색
+      // 렌더링 취소 체크
+      if (this._renderingId !== renderingId) return;
+
+      const opacity = this.onionSkin.opacity * (1 - (i - 1) / Math.max(this.onionSkin.after, 1));
+      await this._renderOnionFrame(frame, opacity, 'rgba(50, 205, 50, 0.6)'); // 녹색
     }
   }
 
   /**
    * 어니언 스킨 단일 프레임 렌더링
+   * @param {number} frame - 렌더링할 프레임 (현재 프레임이 아닌 어니언 스킨 대상 프레임)
    */
   async _renderOnionFrame(frame, opacity, tintColor) {
     const ctx = this.drawingCanvas.ctx;
@@ -509,8 +560,15 @@ export class DrawingManager extends EventTarget {
     for (const layer of this.layers) {
       if (!layer.visible) continue;
 
+      // 해당 프레임에서 실제로 보이는 키프레임 찾기
       const keyframe = layer.getKeyframeAtFrame(frame);
-      if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
+
+      // 키프레임이 없거나 데이터가 없으면 스킵
+      // 단, 빈 키프레임(isEmpty)인 경우에도 스킵 (빈 키프레임은 의도적으로 비운 것)
+      if (!keyframe || !keyframe.canvasData) continue;
+
+      // 빈 키프레임은 어니언 스킨에서도 표시하지 않음
+      if (keyframe.isEmpty) continue;
 
       const img = await this._loadImage(keyframe.canvasData, keyframe);
       if (!img) continue;
