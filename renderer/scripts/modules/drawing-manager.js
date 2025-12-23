@@ -97,7 +97,10 @@ export class DrawingManager extends EventTarget {
    */
   _saveCurrentFrameData() {
     const layer = this.getActiveLayer();
-    if (!layer) return;
+    if (!layer) {
+      log.warn('저장 실패: 활성 레이어 없음');
+      return;
+    }
 
     // 현재 프레임에 해당하는 키프레임 찾기
     let keyframe = layer.getKeyframeAtFrame(this.currentFrame);
@@ -112,9 +115,15 @@ export class DrawingManager extends EventTarget {
     const imageData = this.drawingCanvas.toDataURL();
     keyframe.setCanvasData(imageData);
 
-    log.debug('프레임 데이터 저장됨', {
+    // 캐시 무효화 (새 데이터이므로)
+    keyframe._cachedImage = null;
+    keyframe._cachedSrc = null;
+
+    log.info('프레임 데이터 저장됨', {
       layerId: layer.id,
-      frame: this.currentFrame
+      frame: this.currentFrame,
+      dataLength: imageData?.length || 0,
+      keyframesCount: layer.keyframes.length
     });
   }
 
@@ -273,6 +282,9 @@ export class DrawingManager extends EventTarget {
    * 현재 프레임 설정 및 렌더링
    */
   setCurrentFrame(frame) {
+    // 같은 프레임이면 무시 (불필요한 렌더링 방지)
+    if (frame === this.currentFrame) return;
+
     // 이전 프레임에서 그리기 중이었으면 저장
     if (this.drawingCanvas.isDrawing) {
       this._saveCurrentFrameData();
@@ -286,6 +298,17 @@ export class DrawingManager extends EventTarget {
    * 특정 프레임 렌더링 (모든 보이는 레이어 합성)
    */
   async renderFrame(frame) {
+    // 그리기 중이면 렌더링 스킵 (사용자가 그리는 중에 캔버스 지우기 방지)
+    if (this.drawingCanvas.isDrawing) {
+      log.debug('그리기 중이므로 렌더링 스킵', { frame });
+      return;
+    }
+
+    log.debug('renderFrame 시작', {
+      frame,
+      layersCount: this.layers.length
+    });
+
     // 캔버스 초기화
     this.drawingCanvas.clear();
 
@@ -296,6 +319,16 @@ export class DrawingManager extends EventTarget {
       if (!layer.visible) continue;
 
       const keyframe = layer.getKeyframeAtFrame(frame);
+
+      log.debug('키프레임 검색', {
+        layerId: layer.id,
+        frame,
+        found: !!keyframe,
+        keyframeFrame: keyframe?.frame,
+        isEmpty: keyframe?.isEmpty,
+        hasData: !!keyframe?.canvasData
+      });
+
       if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
       // 이미지 캐시 확인 또는 새로 로드
@@ -306,7 +339,10 @@ export class DrawingManager extends EventTarget {
     }
 
     // 현재 프레임이 변경되었으면 렌더링 취소
-    if (this.currentFrame !== frame) return;
+    if (this.currentFrame !== frame) {
+      log.debug('프레임 변경으로 렌더링 취소', { frame, currentFrame: this.currentFrame });
+      return;
+    }
 
     // 모든 이미지를 순서대로 그리기
     for (const { img, layer } of imagesToRender) {
@@ -315,6 +351,7 @@ export class DrawingManager extends EventTarget {
       this.drawingCanvas.ctx.globalAlpha = 1;
     }
 
+    log.debug('renderFrame 완료', { frame, renderedCount: imagesToRender.length });
     this._emit('frameRendered', { frame });
   }
 
