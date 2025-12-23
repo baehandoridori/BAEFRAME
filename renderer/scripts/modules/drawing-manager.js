@@ -285,30 +285,63 @@ export class DrawingManager extends EventTarget {
   /**
    * 특정 프레임 렌더링 (모든 보이는 레이어 합성)
    */
-  renderFrame(frame) {
+  async renderFrame(frame) {
     // 캔버스 초기화
     this.drawingCanvas.clear();
 
-    // 아래 레이어부터 위로 합성
+    // 렌더링할 이미지들을 먼저 모두 로드
+    const imagesToRender = [];
+
     for (const layer of this.layers) {
       if (!layer.visible) continue;
 
       const keyframe = layer.getKeyframeAtFrame(frame);
-      if (!keyframe || keyframe.isEmpty) continue;
+      if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
-      // 키프레임의 이미지 데이터 그리기
-      if (keyframe.canvasData) {
-        const img = new Image();
-        img.onload = () => {
-          this.drawingCanvas.ctx.globalAlpha = layer.opacity;
-          this.drawingCanvas.ctx.drawImage(img, 0, 0);
-          this.drawingCanvas.ctx.globalAlpha = 1;
-        };
-        img.src = keyframe.canvasData;
+      // 이미지 캐시 확인 또는 새로 로드
+      const img = await this._loadImage(keyframe.canvasData, keyframe);
+      if (img) {
+        imagesToRender.push({ img, layer });
       }
     }
 
+    // 현재 프레임이 변경되었으면 렌더링 취소
+    if (this.currentFrame !== frame) return;
+
+    // 모든 이미지를 순서대로 그리기
+    for (const { img, layer } of imagesToRender) {
+      this.drawingCanvas.ctx.globalAlpha = layer.opacity;
+      this.drawingCanvas.ctx.drawImage(img, 0, 0);
+      this.drawingCanvas.ctx.globalAlpha = 1;
+    }
+
     this._emit('frameRendered', { frame });
+  }
+
+  /**
+   * 이미지 로드 (캐싱 지원)
+   */
+  _loadImage(src, keyframe) {
+    return new Promise((resolve) => {
+      // 캐시된 이미지가 있으면 사용
+      if (keyframe._cachedImage && keyframe._cachedSrc === src) {
+        resolve(keyframe._cachedImage);
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        // 캐시에 저장
+        keyframe._cachedImage = img;
+        keyframe._cachedSrc = src;
+        resolve(img);
+      };
+      img.onerror = () => {
+        log.error('이미지 로드 실패');
+        resolve(null);
+      };
+      img.src = src;
+    });
   }
 
   /**
