@@ -28,6 +28,10 @@ export class VideoPlayer extends EventTarget {
     this.totalFrames = 0;
     this.filePath = null;
 
+    // 수동 seek 중 플래그 (timeupdate가 프레임을 덮어쓰지 않도록)
+    this._isSeeking = false;
+    this._seekTimeout = null;
+
     // 초기화
     this._setupEventListeners();
 
@@ -60,8 +64,19 @@ export class VideoPlayer extends EventTarget {
 
     // 재생 위치 변경
     video.addEventListener('timeupdate', () => {
+      // 수동 seek 중에는 프레임 계산을 건너뜀 (이미 정확한 값이 설정됨)
+      if (this._isSeeking) {
+        this._emit('timeupdate', {
+          currentTime: this.currentTime,
+          currentFrame: this.currentFrame
+        });
+        return;
+      }
+
       this.currentTime = video.currentTime;
-      this.currentFrame = Math.floor(this.currentTime * this.fps);
+      // 부동소수점 오차 보정: 약간의 여유를 두고 반올림
+      this.currentFrame = Math.round(this.currentTime * this.fps - 0.0001);
+      this.currentFrame = Math.max(0, this.currentFrame);
 
       this._emit('timeupdate', {
         currentTime: this.currentTime,
@@ -216,11 +231,23 @@ export class VideoPlayer extends EventTarget {
     frame = Math.max(0, Math.min(frame, this.totalFrames - 1));
     const time = frame / this.fps;
 
+    // seeking 플래그 설정 (timeupdate가 프레임을 덮어쓰지 않도록)
+    this._isSeeking = true;
+    if (this._seekTimeout) {
+      clearTimeout(this._seekTimeout);
+    }
+
     // 프레임 번호 직접 설정 (시간에서 재계산하지 않음)
     this.currentFrame = frame;
     this.currentTime = time;
 
     this.videoElement.currentTime = time;
+
+    // 100ms 후 seeking 플래그 해제
+    this._seekTimeout = setTimeout(() => {
+      this._isSeeking = false;
+    }, 100);
+
     log.debug('프레임 이동', { frame, time });
   }
 

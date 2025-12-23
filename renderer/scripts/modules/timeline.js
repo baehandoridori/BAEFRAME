@@ -362,8 +362,9 @@ export class Timeline extends EventTarget {
     this.frameGridContainer.style.display = 'block';
 
     // CSS background로 효율적인 그리드 렌더링
-    const majorLineColor = 'rgba(255, 208, 0, 0.3)'; // 1초 단위 (노란색)
-    const minorLineColor = 'rgba(255, 255, 255, 0.08)'; // 일반 프레임
+    // 가시성 개선: 투명도를 높임
+    const majorLineColor = 'rgba(255, 208, 0, 0.6)'; // 1초 단위 (노란색, 더 진하게)
+    const minorLineColor = 'rgba(255, 255, 255, 0.25)'; // 일반 프레임 (더 잘 보이게)
 
     // 1초 단위 강조선 계산
     const framesPerSecond = this.fps;
@@ -379,8 +380,8 @@ export class Timeline extends EventTarget {
         repeating-linear-gradient(
           to right,
           ${majorLineColor} 0px,
-          ${majorLineColor} 1px,
-          transparent 1px,
+          ${majorLineColor} 2px,
+          transparent 2px,
           transparent ${secondWidth}px
         ),
         repeating-linear-gradient(
@@ -394,13 +395,13 @@ export class Timeline extends EventTarget {
       backgroundSize = `${secondWidth}px 100%, ${gridWidth}px 100%`;
     } else {
       // 스파스 그리드 (5프레임/10프레임 단위)
-      const sparseLineColor = 'rgba(255, 255, 255, 0.12)';
+      const sparseLineColor = 'rgba(255, 255, 255, 0.35)';
       backgroundImage = `
         repeating-linear-gradient(
           to right,
           ${majorLineColor} 0px,
-          ${majorLineColor} 1px,
-          transparent 1px,
+          ${majorLineColor} 2px,
+          transparent 2px,
           transparent ${secondWidth}px
         ),
         repeating-linear-gradient(
