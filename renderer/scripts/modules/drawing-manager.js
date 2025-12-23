@@ -20,6 +20,10 @@ export class DrawingManager extends EventTarget {
     this.canvas = options.canvas;
     this.drawingCanvas = new DrawingCanvas(this.canvas);
 
+    // 어니언 스킨 전용 캔버스 (별도 레이어)
+    this.onionSkinCanvasElement = options.onionSkinCanvas;
+    this.onionSkinCtx = this.onionSkinCanvasElement?.getContext('2d');
+
     // 레이어 관리
     this.layers = [];
     this.activeLayerId = null;
@@ -293,6 +297,13 @@ export class DrawingManager extends EventTarget {
     this.canvasWidth = width;
     this.canvasHeight = height;
     this.drawingCanvas.syncSize(width, height);
+
+    // 어니언 스킨 캔버스 크기도 동기화
+    if (this.onionSkinCanvasElement) {
+      this.onionSkinCanvasElement.width = width;
+      this.onionSkinCanvasElement.height = height;
+    }
+
     log.debug('캔버스 크기 설정됨', { width, height });
   }
 
@@ -325,8 +336,9 @@ export class DrawingManager extends EventTarget {
     // 렌더링 ID 증가 (이전 렌더링 취소용)
     const currentRenderingId = ++this._renderingId;
 
-    // 캔버스 초기화
+    // 캔버스 초기화 (그리기 캔버스 + 어니언 스킨 캔버스)
     this.drawingCanvas.clear();
+    this._clearOnionSkinCanvas();
 
     // 재생 중이면 빠른 동기 렌더링
     if (this.isPlaying) {
@@ -502,6 +514,19 @@ export class DrawingManager extends EventTarget {
   // ====== 어니언 스킨 ======
 
   /**
+   * 어니언 스킨 캔버스 초기화
+   */
+  _clearOnionSkinCanvas() {
+    if (this.onionSkinCtx && this.onionSkinCanvasElement) {
+      this.onionSkinCtx.clearRect(
+        0, 0,
+        this.onionSkinCanvasElement.width,
+        this.onionSkinCanvasElement.height
+      );
+    }
+  }
+
+  /**
    * 어니언 스킨 설정
    */
   setOnionSkin(enabled, options = {}) {
@@ -512,17 +537,24 @@ export class DrawingManager extends EventTarget {
 
     log.info('어니언 스킨 설정', this.onionSkin);
 
+    // 어니언 스킨 끄면 캔버스 초기화
+    if (!enabled) {
+      this._clearOnionSkinCanvas();
+    }
+
     // 현재 프레임 다시 렌더링
     this.renderFrame(this.currentFrame);
   }
 
   /**
-   * 어니언 스킨 렌더링
+   * 어니언 스킨 렌더링 (별도 캔버스에 렌더링)
    */
   async _renderOnionSkin(currentFrame, renderingId) {
     if (!this.onionSkin.enabled) return;
-
-    const ctx = this.drawingCanvas.ctx;
+    if (!this.onionSkinCtx || !this.onionSkinCanvasElement) {
+      log.warn('어니언 스킨 캔버스가 없습니다');
+      return;
+    }
 
     // 이전 프레임들 (파란색 틴트) - 가장 먼 것부터
     for (let i = this.onionSkin.before; i >= 1; i--) {
@@ -551,11 +583,13 @@ export class DrawingManager extends EventTarget {
   }
 
   /**
-   * 어니언 스킨 단일 프레임 렌더링
+   * 어니언 스킨 단일 프레임 렌더링 (어니언 스킨 전용 캔버스에 렌더링)
    * @param {number} frame - 렌더링할 프레임 (현재 프레임이 아닌 어니언 스킨 대상 프레임)
    */
   async _renderOnionFrame(frame, opacity, tintColor) {
-    const ctx = this.drawingCanvas.ctx;
+    // 어니언 스킨 전용 캔버스 사용
+    const ctx = this.onionSkinCtx;
+    if (!ctx) return;
 
     for (const layer of this.layers) {
       if (!layer.visible) continue;
@@ -575,8 +609,8 @@ export class DrawingManager extends EventTarget {
 
       // 임시 캔버스에 이미지 그리기 (틴트 적용)
       const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = this.drawingCanvas.canvas.width;
-      tempCanvas.height = this.drawingCanvas.canvas.height;
+      tempCanvas.width = this.onionSkinCanvasElement.width;
+      tempCanvas.height = this.onionSkinCanvasElement.height;
       const tempCtx = tempCanvas.getContext('2d');
 
       tempCtx.drawImage(img, 0, 0);
@@ -586,7 +620,7 @@ export class DrawingManager extends EventTarget {
       tempCtx.fillStyle = tintColor;
       tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
 
-      // 메인 캔버스에 그리기
+      // 어니언 스킨 캔버스에 그리기 (그리기 캔버스와 분리)
       ctx.globalAlpha = opacity;
       ctx.drawImage(tempCanvas, 0, 0);
       ctx.globalAlpha = 1;

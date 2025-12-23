@@ -32,6 +32,7 @@ async function initApp() {
     videoWrapper: document.getElementById('videoWrapper'),
     videoPlayer: document.getElementById('videoPlayer'),
     drawingCanvas: document.getElementById('drawingCanvas'),
+    onionSkinCanvas: document.getElementById('onionSkinCanvas'),
     drawingTools: document.getElementById('drawingTools'),
     btnOpenFile: document.getElementById('btnOpenFile'),
 
@@ -109,7 +110,8 @@ async function initApp() {
 
   // 드로잉 매니저
   const drawingManager = new DrawingManager({
-    canvas: elements.drawingCanvas
+    canvas: elements.drawingCanvas,
+    onionSkinCanvas: elements.onionSkinCanvas
   });
 
   // ====== 모듈 이벤트 연결 ======
@@ -529,21 +531,31 @@ async function initApp() {
   function syncCanvasOverlay() {
     const renderArea = getVideoRenderArea();
     const canvas = elements.drawingCanvas;
+    const onionCanvas = elements.onionSkinCanvas;
 
     if (!renderArea || !canvas) {
       return;
     }
 
-    // 캔버스 위치와 크기를 비디오 실제 렌더 영역에 맞춤
+    // 그리기 캔버스 위치와 크기를 비디오 실제 렌더 영역에 맞춤
     canvas.style.position = 'absolute';
     canvas.style.left = `${renderArea.left}px`;
     canvas.style.top = `${renderArea.top}px`;
     canvas.style.width = `${renderArea.width}px`;
     canvas.style.height = `${renderArea.height}px`;
-
-    // 캔버스의 내부 해상도를 비디오 원본 해상도에 맞춤 (고해상도 드로잉)
     canvas.width = renderArea.videoWidth;
     canvas.height = renderArea.videoHeight;
+
+    // 어니언 스킨 캔버스도 동일하게 동기화
+    if (onionCanvas) {
+      onionCanvas.style.position = 'absolute';
+      onionCanvas.style.left = `${renderArea.left}px`;
+      onionCanvas.style.top = `${renderArea.top}px`;
+      onionCanvas.style.width = `${renderArea.width}px`;
+      onionCanvas.style.height = `${renderArea.height}px`;
+      onionCanvas.width = renderArea.videoWidth;
+      onionCanvas.height = renderArea.videoHeight;
+    }
 
     // 드로잉 매니저에도 캔버스 크기 전달
     drawingManager.setCanvasSize(renderArea.videoWidth, renderArea.videoHeight);
