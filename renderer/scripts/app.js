@@ -294,7 +294,10 @@ async function initApp() {
     if (isCommentMode) {
       elements.videoWrapper.classList.add('comment-mode');
       markerContainer.style.pointerEvents = 'auto';
-      showToast('댓글 모드: 영상을 클릭하여 댓글을 추가하세요', 'info');
+      // pendingText가 있으면 토스트 생략 (역순 플로우에서는 Enter 핸들러가 토스트 표시)
+      if (!commentManager.getPendingText()) {
+        showToast('댓글 모드: 영상을 클릭하여 댓글을 추가하세요', 'info');
+      }
     } else {
       elements.videoWrapper.classList.remove('comment-mode');
       markerContainer.style.pointerEvents = 'none';
@@ -349,6 +352,12 @@ async function initApp() {
   commentManager.addEventListener('markerPinnedChanged', (e) => {
     const { marker } = e.detail;
     updateMarkerTooltipState(marker);
+  });
+
+  // pending 텍스트 설정됨 (역순 플로우)
+  commentManager.addEventListener('pendingTextSet', (e) => {
+    const { text } = e.detail;
+    log.info('Pending 텍스트 설정됨 (역순 플로우)', { text });
   });
 
   // 타임라인 댓글 마커 클릭
@@ -415,6 +424,20 @@ async function initApp() {
   // 댓글 추가 버튼 (댓글 모드 토글)
   elements.btnAddComment.addEventListener('click', () => {
     toggleCommentMode();
+  });
+
+  // 사이드바 댓글 입력 Enter 처리 (역순 플로우: 텍스트 입력 → 마커 찍기)
+  elements.commentInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const text = elements.commentInput.value.trim();
+      if (text) {
+        // 텍스트를 pending으로 설정하고 댓글 모드 활성화
+        commentManager.setPendingText(text);
+        elements.commentInput.value = '';
+        showToast('영상에서 마커를 찍어주세요', 'info');
+      }
+    }
   });
 
   // 마커 컨테이너 클릭 (영상 위 클릭으로 마커 생성)

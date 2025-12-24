@@ -193,6 +193,7 @@ export class CommentManager extends EventTarget {
     // 상태
     this.isCommentMode = false; // 댓글 추가 모드
     this.pendingMarker = null; // 생성 중인 마커
+    this.pendingText = null; // 미리 입력한 텍스트 (역순 플로우)
     this.currentFrame = 0;
 
     // 기본 레이어 생성
@@ -271,13 +272,48 @@ export class CommentManager extends EventTarget {
       if (!enabled && this.pendingMarker) {
         this._cancelPendingMarker();
       }
+
+      // 댓글 모드 해제 시 pendingText도 정리
+      if (!enabled) {
+        this.pendingText = null;
+      }
     }
+  }
+
+  /**
+   * 미리 텍스트 설정 (역순 플로우: 텍스트 입력 → 마커 찍기)
+   * @param {string} text - 미리 입력한 댓글 텍스트
+   */
+  setPendingText(text) {
+    if (text && text.trim()) {
+      this.pendingText = text.trim();
+      this.setCommentMode(true);
+      log.info('Pending 텍스트 설정됨', { text: this.pendingText });
+      this._emit('pendingTextSet', { text: this.pendingText });
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * pending 텍스트 가져오기
+   */
+  getPendingText() {
+    return this.pendingText;
+  }
+
+  /**
+   * pending 텍스트 정리
+   */
+  clearPendingText() {
+    this.pendingText = null;
   }
 
   /**
    * 영상 클릭 시 마커 생성 시작
    * @param {number} x - 상대 X 좌표 (0~1)
    * @param {number} y - 상대 Y 좌표 (0~1)
+   * @returns {CommentMarker|null} 생성된 마커 또는 null
    */
   startMarkerCreation(x, y) {
     if (!this.isCommentMode) return null;
@@ -299,6 +335,15 @@ export class CommentManager extends EventTarget {
 
     log.info('마커 생성 시작', { x, y, frame: this.currentFrame });
 
+    // 역순 플로우: pendingText가 있으면 바로 마커 확정
+    if (this.pendingText) {
+      const text = this.pendingText;
+      this.pendingText = null;
+      log.info('Pending 텍스트로 마커 즉시 확정', { text });
+      return this.confirmMarker(text);
+    }
+
+    // 일반 플로우: 마커 생성 후 텍스트 입력 대기
     this._emit('markerCreationStarted', { marker: this.pendingMarker });
 
     return this.pendingMarker;
