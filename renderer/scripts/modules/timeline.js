@@ -82,19 +82,18 @@ export class Timeline extends EventTarget {
     this.timelineTracks?.addEventListener('wheel', (e) => {
       e.preventDefault();
 
-      if (e.ctrlKey || e.metaKey) {
-        // Ctrl + 휠: 확대/축소
-        const delta = e.deltaY > 0 ? -15 : 15;
-        this.setZoom(this.zoom + delta);
-      } else if (e.shiftKey) {
-        // Shift + 휠: 좌우 스크롤
-        this.timelineTracks.scrollLeft += e.deltaY;
-      } else {
-        // 기본 휠: 상하 스크롤
+      if (e.shiftKey) {
+        // Shift + 휠: 상하 스크롤 (레이어 탐색)
         this.timelineTracks.scrollTop += e.deltaY;
         if (this.layerHeaders) {
           this.layerHeaders.scrollTop = this.timelineTracks.scrollTop;
         }
+      } else {
+        // 기본 휠: 마우스 위치 기준 확대/축소
+        const delta = e.deltaY > 0 ? -15 : 15;
+        const rect = this.timelineTracks.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left + this.timelineTracks.scrollLeft;
+        this.setZoomAtPosition(this.zoom + delta, mouseX);
       }
     });
 
@@ -310,6 +309,35 @@ export class Timeline extends EventTarget {
     this._applyZoom();
     this._updateZoomDisplay();
     this._showZoomIndicator();
+  }
+
+  /**
+   * 특정 위치를 기준으로 줌 설정 (마우스 위치 기준 확대/축소)
+   * @param {number} zoom - 새 줌 레벨
+   * @param {number} focalX - 기준점 X 좌표 (스크롤 포함된 절대 위치)
+   */
+  setZoomAtPosition(zoom, focalX) {
+    const oldZoom = this.zoom;
+    const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, zoom));
+
+    if (oldZoom === newZoom) return;
+
+    // 현재 기준점의 상대적 위치 (0~1)
+    const oldScale = oldZoom / 100;
+    const newScale = newZoom / 100;
+
+    // 현재 뷰포트에서의 마우스 위치
+    const viewportX = focalX - this.timelineTracks.scrollLeft;
+
+    // 줌 적용
+    this.zoom = newZoom;
+    this._applyZoom();
+    this._updateZoomDisplay();
+    this._showZoomIndicator();
+
+    // 새 줌에서 같은 콘텐츠 위치가 마우스 아래에 오도록 스크롤 조정
+    const newFocalX = (focalX / oldScale) * newScale;
+    this.timelineTracks.scrollLeft = newFocalX - viewportX;
   }
 
   /**
