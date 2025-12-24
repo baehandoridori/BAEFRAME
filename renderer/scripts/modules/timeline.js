@@ -936,20 +936,30 @@ export class Timeline extends EventTarget {
   /**
    * 댓글 마커 추가
    */
-  addCommentMarker(time, resolved = false) {
+  addCommentMarker(time, resolved = false, frame = 0) {
     const percent = (time / this.duration) * 100;
     const marker = document.createElement('div');
     marker.className = `comment-marker-track${resolved ? ' resolved' : ''}`;
     marker.style.left = `${percent}%`;
     marker.dataset.time = time;
+    marker.dataset.frame = frame;
+    marker.title = `댓글 (프레임 ${frame})`;
 
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
-      this._emit('markerClick', { time });
+      this._emit('commentMarkerClick', { time, frame });
     });
 
     this.tracksContainer?.appendChild(marker);
     return marker;
+  }
+
+  /**
+   * 모든 댓글 마커 제거
+   */
+  clearCommentMarkers() {
+    const markers = this.tracksContainer?.querySelectorAll('.comment-marker-track');
+    markers?.forEach(marker => marker.remove());
   }
 
   /**
@@ -963,8 +973,7 @@ export class Timeline extends EventTarget {
    * 모든 마커 제거
    */
   clearMarkers() {
-    const markers = this.tracksContainer?.querySelectorAll('.comment-marker-track');
-    markers?.forEach(marker => marker.remove());
+    this.clearCommentMarkers();
   }
 
   /**

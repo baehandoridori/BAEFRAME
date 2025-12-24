@@ -1954,3 +1954,157 @@ body {
     display: none;
   }
 }
+
+/* ========================================
+   Comment Items (Enhanced)
+   ======================================== */
+.comment-item.resolved {
+  opacity: 0.7;
+}
+
+.comment-item.resolved .comment-text {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+}
+
+.comment-timecode {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: var(--accent-glow);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.comment-author {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+.comment-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.comment-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.comment-text {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.comment-drawing-badge {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.comment-snapshot {
+  margin-top: 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.comment-snapshot img {
+  width: 100%;
+  height: auto;
+  max-height: 120px;
+  object-fit: cover;
+  display: block;
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.comment-snapshot img:hover {
+  opacity: 0.9;
+}
+
+.comment-action-btn {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.comment-action-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.comment-action-btn.resolve-btn:hover {
+  color: var(--success);
+  border-color: var(--success);
+  background: var(--success-bg);
+}
+
+.comment-action-btn.delete-btn:hover {
+  color: var(--error);
+  border-color: var(--error);
+  background: var(--error-bg);
+}
+
+.comment-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* Comment Marker on Timeline */
+.comment-marker-track {
+  position: absolute;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  background: var(--error);
+  border-radius: 2px;
+  cursor: pointer;
+  z-index: 10;
+  transition: all var(--transition-fast);
+}
+
+.comment-marker-track::before {
+  content: '💬';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.comment-marker-track:hover {
+  width: 5px;
+  background: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-glow-strong);
+}
+
+.comment-marker-track.resolved {
+  background: var(--success);
+  opacity: 0.6;
+}
+
+.comment-marker-track.resolved::before {
+  content: '✓';
+  color: var(--success);
+}

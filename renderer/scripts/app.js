@@ -6,6 +6,7 @@ import { createLogger, setupGlobalErrorHandlers } from './logger.js';
 import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
+import { CommentManager } from './modules/comment-manager.js';
 
 const log = createLogger('App');
 
@@ -150,6 +151,11 @@ async function initApp() {
     onionSkinCanvas: elements.onionSkinCanvas
   });
 
+  // 댓글 매니저
+  const commentManager = new CommentManager({
+    fps: 24
+  });
+
   // ====== 모듈 이벤트 연결 ======
 
   // 비디오 메타데이터 로드됨
@@ -163,6 +169,9 @@ async function initApp() {
 
     // 드로잉 매니저에 비디오 정보 전달
     drawingManager.setVideoInfo(totalFrames, fps);
+
+    // 댓글 매니저에 FPS 전달
+    commentManager.setFPS(fps);
 
     log.info('비디오 정보', { duration, totalFrames, fps });
   });
@@ -255,6 +264,51 @@ async function initApp() {
     }
   });
 
+  // ====== 댓글 매니저 이벤트 ======
+
+  // 댓글 추가됨
+  commentManager.addEventListener('commentAdded', (e) => {
+    const { comment } = e.detail;
+    renderComments();
+    updateCommentMarkers();
+    updateCommentCount();
+    log.info('댓글 추가됨', { id: comment.id, frame: comment.frame });
+  });
+
+  // 댓글 삭제됨
+  commentManager.addEventListener('commentDeleted', (e) => {
+    renderComments();
+    updateCommentMarkers();
+    updateCommentCount();
+  });
+
+  // 댓글 수정됨 (해결 상태 포함)
+  commentManager.addEventListener('commentUpdated', (e) => {
+    renderComments();
+    updateCommentMarkers();
+    updateCommentCount();
+  });
+
+  // 댓글 해결 상태 변경
+  commentManager.addEventListener('commentResolved', (e) => {
+    renderComments();
+    updateCommentMarkers();
+    updateCommentCount();
+  });
+
+  // 필터 변경됨
+  commentManager.addEventListener('filterChanged', (e) => {
+    renderComments();
+  });
+
+  // 타임라인 댓글 마커 클릭
+  timeline.addEventListener('commentMarkerClick', (e) => {
+    const { time, frame } = e.detail;
+    videoPlayer.seek(time);
+    // 해당 프레임의 댓글 강조
+    highlightCommentsAtFrame(frame);
+  });
+
   // ====== 이벤트 리스너 설정 ======
 
   // 파일 열기 버튼
@@ -310,9 +364,22 @@ async function initApp() {
   // 그리기 모드 토글
   elements.btnDrawMode.addEventListener('click', toggleDrawMode);
 
-  // 댓글 추가
+  // 댓글 추가 버튼
   elements.btnAddComment.addEventListener('click', () => {
     elements.commentInput.focus();
+  });
+
+  // 댓글 전송 버튼
+  elements.btnSubmitComment?.addEventListener('click', () => {
+    submitComment();
+  });
+
+  // 댓글 입력창 Enter 키
+  elements.commentInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitComment();
+    }
   });
 
   // 링크 복사
@@ -347,7 +414,9 @@ async function initApp() {
     chip.addEventListener('click', function() {
       document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
       this.classList.add('active');
-      log.debug('필터 변경', { filter: this.dataset.filter });
+      const filter = this.dataset.filter;
+      commentManager.setFilter(filter);
+      log.debug('필터 변경', { filter });
     });
   });
 
@@ -897,6 +966,192 @@ async function initApp() {
     elements.drawingTools.classList.toggle('visible', state.isDrawMode);
     elements.drawingCanvas.classList.toggle('active', state.isDrawMode);
     log.debug('그리기 모드 변경', { isDrawMode: state.isDrawMode });
+  }
+
+  /**
+   * 댓글 전송
+   */
+  function submitComment() {
+    const text = elements.commentInput?.value?.trim();
+    if (!text) {
+      showToast('댓글 내용을 입력해주세요.', 'warn');
+      return;
+    }
+
+    const currentFrame = videoPlayer.currentFrame;
+    const currentTime = videoPlayer.getCurrentTime();
+
+    // 그리기가 있으면 스냅샷 캡처
+    const hasDrawing = !drawingManager.drawingCanvas.isEmpty();
+    const drawingSnapshot = hasDrawing ? drawingManager.drawingCanvas.toDataURL() : null;
+
+    // 댓글 추가
+    commentManager.addComment({
+      frame: currentFrame,
+      timecode: videoPlayer.getCurrentTimecode(),
+      text: text,
+      author: '나', // TODO: 사용자 설정에서 가져오기
+      hasDrawing: hasDrawing,
+      drawingSnapshot: drawingSnapshot
+    });
+
+    // 입력 필드 초기화
+    elements.commentInput.value = '';
+    showToast('댓글이 추가되었습니다.', 'success');
+  }
+
+  /**
+   * 댓글 패널 렌더링
+   */
+  function renderComments() {
+    const comments = commentManager.getFilteredComments();
+    const container = elements.commentsList;
+
+    if (!container) return;
+
+    if (comments.length === 0) {
+      container.innerHTML = `
+        <div class="comment-empty">
+          <span style="font-size: 32px; margin-bottom: 8px;">💬</span>
+          <p>댓글이 없습니다</p>
+          <p style="font-size: 11px; color: var(--text-muted);">C키 또는 입력창에서 댓글을 추가하세요</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = comments.map(comment => `
+      <div class="comment-item ${comment.resolved ? 'resolved' : ''}" data-comment-id="${comment.id}" data-frame="${comment.frame}">
+        <div class="comment-header">
+          <span class="comment-timecode">${comment.timecode}</span>
+          <span class="comment-author">${comment.author}</span>
+          <span class="comment-time">${formatRelativeTime(comment.createdAt)}</span>
+        </div>
+        <div class="comment-content">
+          ${comment.hasDrawing ? '<span class="comment-drawing-badge" title="마킹 포함">🖍️</span>' : ''}
+          <p class="comment-text">${escapeHtml(comment.text)}</p>
+        </div>
+        ${comment.hasDrawing && comment.drawingSnapshot ? `
+          <div class="comment-snapshot">
+            <img src="${comment.drawingSnapshot}" alt="마킹 스냅샷" />
+          </div>
+        ` : ''}
+        <div class="comment-actions">
+          <button class="comment-action-btn resolve-btn" data-action="resolve" title="${comment.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
+            ${comment.resolved ? '↩️ 미해결' : '✓ 해결'}
+          </button>
+          <button class="comment-action-btn delete-btn" data-action="delete" title="삭제">
+            🗑️
+          </button>
+        </div>
+      </div>
+    `).join('');
+
+    // 댓글 아이템 클릭 이벤트
+    container.querySelectorAll('.comment-item').forEach(item => {
+      // 댓글 클릭 시 해당 프레임으로 이동
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.comment-action-btn')) return; // 버튼 클릭 무시
+
+        const frame = parseInt(item.dataset.frame);
+        const time = frame / videoPlayer.fps;
+        videoPlayer.seek(time);
+
+        // 선택 상태 표시
+        container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
+        item.classList.add('selected');
+      });
+
+      // 해결 버튼
+      item.querySelector('.resolve-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const commentId = item.dataset.commentId;
+        commentManager.toggleResolve(commentId);
+      });
+
+      // 삭제 버튼
+      item.querySelector('.delete-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const commentId = item.dataset.commentId;
+        if (confirm('댓글을 삭제하시겠습니까?')) {
+          commentManager.deleteComment(commentId);
+          showToast('댓글이 삭제되었습니다.', 'info');
+        }
+      });
+    });
+  }
+
+  /**
+   * 특정 프레임의 댓글 강조
+   */
+  function highlightCommentsAtFrame(frame) {
+    const container = elements.commentsList;
+    if (!container) return;
+
+    container.querySelectorAll('.comment-item').forEach(item => {
+      item.classList.remove('selected');
+      if (parseInt(item.dataset.frame) === frame) {
+        item.classList.add('selected');
+        item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }
+
+  /**
+   * 타임라인 댓글 마커 업데이트
+   */
+  function updateCommentMarkers() {
+    const commentFrames = commentManager.getCommentFrames();
+    const fps = videoPlayer.fps || 24;
+
+    // 기존 마커 제거
+    timeline.clearCommentMarkers();
+
+    // 새 마커 추가
+    commentFrames.forEach(frameInfo => {
+      const time = frameInfo.frame / fps;
+      timeline.addCommentMarker(time, !frameInfo.hasUnresolved, frameInfo.frame);
+    });
+  }
+
+  /**
+   * 댓글 개수 업데이트
+   */
+  function updateCommentCount() {
+    const count = commentManager.getCommentCount();
+    if (elements.commentCount) {
+      elements.commentCount.textContent = count.total > 0
+        ? `${count.unresolved > 0 ? count.unresolved + ' 미해결 / ' : ''}${count.total}개`
+        : '0';
+    }
+  }
+
+  /**
+   * 상대 시간 포맷
+   */
+  function formatRelativeTime(date) {
+    const now = new Date();
+    const diffMs = now - new Date(date);
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHour / 24);
+
+    if (diffSec < 60) return '방금';
+    if (diffMin < 60) return `${diffMin}분 전`;
+    if (diffHour < 24) return `${diffHour}시간 전`;
+    if (diffDay < 7) return `${diffDay}일 전`;
+
+    return new Date(date).toLocaleDateString('ko-KR');
+  }
+
+  /**
+   * HTML 이스케이프
+   */
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   /**
