@@ -68,10 +68,10 @@ export class ReviewDataManager extends EventTarget {
     }
 
     if (this.drawingManager) {
-      this.drawingManager.addEventListener('strokeEnd', this._onDataChanged);
-      this.drawingManager.addEventListener('layerAdded', this._onDataChanged);
-      this.drawingManager.addEventListener('layerRemoved', this._onDataChanged);
-      this.drawingManager.addEventListener('layerUpdated', this._onDataChanged);
+      this.drawingManager.addEventListener('drawend', this._onDataChanged);
+      this.drawingManager.addEventListener('layerCreated', this._onDataChanged);
+      this.drawingManager.addEventListener('layerDeleted', this._onDataChanged);
+      this.drawingManager.addEventListener('activeLayerChanged', this._onDataChanged);
       this.drawingManager.addEventListener('keyframeAdded', this._onDataChanged);
       this.drawingManager.addEventListener('keyframeRemoved', this._onDataChanged);
       this.drawingManager.addEventListener('undo', this._onDataChanged);
@@ -94,10 +94,10 @@ export class ReviewDataManager extends EventTarget {
     }
 
     if (this.drawingManager) {
-      this.drawingManager.removeEventListener('strokeEnd', this._onDataChanged);
-      this.drawingManager.removeEventListener('layerAdded', this._onDataChanged);
-      this.drawingManager.removeEventListener('layerRemoved', this._onDataChanged);
-      this.drawingManager.removeEventListener('layerUpdated', this._onDataChanged);
+      this.drawingManager.removeEventListener('drawend', this._onDataChanged);
+      this.drawingManager.removeEventListener('layerCreated', this._onDataChanged);
+      this.drawingManager.removeEventListener('layerDeleted', this._onDataChanged);
+      this.drawingManager.removeEventListener('activeLayerChanged', this._onDataChanged);
       this.drawingManager.removeEventListener('keyframeAdded', this._onDataChanged);
       this.drawingManager.removeEventListener('keyframeRemoved', this._onDataChanged);
       this.drawingManager.removeEventListener('undo', this._onDataChanged);
