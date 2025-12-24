@@ -7,6 +7,7 @@ import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { CommentManager } from './modules/comment-manager.js';
+import { ReviewDataManager } from './modules/review-data-manager.js';
 
 const log = createLogger('App');
 
@@ -172,6 +173,15 @@ async function initApp() {
     container: markerContainer
   });
 
+  // 리뷰 데이터 매니저 (.bframe 파일 저장/로드)
+  const reviewDataManager = new ReviewDataManager({
+    commentManager,
+    drawingManager,
+    autoSave: true,
+    autoSaveDelay: 2000 // 2초 디바운스
+  });
+  reviewDataManager.connect();
+
   // ====== 모듈 이벤트 연결 ======
 
   // 비디오 메타데이터 로드됨
@@ -281,6 +291,31 @@ async function initApp() {
       }));
       showToast(`키프레임 ${frameDelta > 0 ? '+' : ''}${frameDelta} 프레임 이동`, 'info');
     }
+  });
+
+  // ====== 리뷰 데이터 매니저 이벤트 ======
+
+  // 자동 저장 완료
+  reviewDataManager.addEventListener('saved', (e) => {
+    log.info('.bframe 저장됨', { path: e.detail.path });
+    // 조용히 저장 (토스트 생략 - 자동 저장이라 너무 자주 뜸)
+  });
+
+  // 저장 에러
+  reviewDataManager.addEventListener('saveError', (e) => {
+    log.error('.bframe 저장 실패', e.detail.error);
+    showToast('리뷰 데이터 저장 실패', 'error');
+  });
+
+  // 로드 완료
+  reviewDataManager.addEventListener('loaded', (e) => {
+    log.info('.bframe 로드됨', { path: e.detail.path });
+  });
+
+  // 로드 에러
+  reviewDataManager.addEventListener('loadError', (e) => {
+    log.error('.bframe 로드 실패', e.detail.error);
+    showToast('리뷰 데이터 로드 실패', 'error');
   });
 
   // ====== 댓글 매니저 이벤트 (마커 기반) ======
@@ -1012,8 +1047,18 @@ async function initApp() {
       // 비디오 트랙 업데이트
       elements.videoTrackClip.textContent = `📹 ${fileInfo.name}`;
 
-      showToast(`"${fileInfo.name}" 로드됨`, 'success');
-      trace.end({ filePath });
+      // .bframe 파일 로드 시도
+      const hasExistingData = await reviewDataManager.setVideoFile(filePath);
+      if (hasExistingData) {
+        showToast(`"${fileInfo.name}" 로드됨 (리뷰 데이터 복원)`, 'success');
+        // 마커 렌더링 업데이트
+        renderVideoMarkers();
+        updateCommentList();
+      } else {
+        showToast(`"${fileInfo.name}" 로드됨`, 'success');
+      }
+
+      trace.end({ filePath, hasExistingData });
 
     } catch (error) {
       trace.error(error);
@@ -1572,6 +1617,53 @@ async function initApp() {
   }
 
   // 초기화 완료
+  // ====== 외부에서 파일 열기 처리 ======
+
+  /**
+   * 외부에서 전달된 파일 처리 (.bframe 또는 영상 파일)
+   */
+  async function handleExternalFile(filePath) {
+    log.info('외부 파일 열기', { filePath });
+
+    if (filePath.endsWith('.bframe')) {
+      // .bframe 파일인 경우: 내부의 videoPath를 읽어서 영상 로드
+      try {
+        const bframeData = await window.electronAPI.loadReview(filePath);
+        if (bframeData && bframeData.videoPath) {
+          // 영상 파일이 같은 폴더에 있는지 확인 (상대 경로 처리)
+          let videoPath = bframeData.videoPath;
+
+          // 상대 경로인 경우 .bframe 파일 기준으로 절대 경로 생성
+          if (!videoPath.includes(':') && !videoPath.startsWith('/')) {
+            const bframeDir = filePath.substring(0, filePath.lastIndexOf(filePath.includes('/') ? '/' : '\\'));
+            videoPath = bframeDir + (filePath.includes('/') ? '/' : '\\') + videoPath;
+          }
+
+          await loadVideo(videoPath);
+          showToast('.bframe 파일에서 영상 로드됨', 'success');
+        } else {
+          showToast('.bframe 파일에 영상 경로가 없습니다', 'warn');
+        }
+      } catch (error) {
+        log.error('.bframe 파일 처리 실패', error);
+        showToast('.bframe 파일을 열 수 없습니다', 'error');
+      }
+    } else if (filePath.startsWith('baeframe://')) {
+      // 프로토콜 링크
+      const actualPath = filePath.replace('baeframe://', '');
+      await loadVideo(actualPath);
+    } else {
+      // 일반 영상 파일
+      await loadVideo(filePath);
+    }
+  }
+
+  // 프로토콜/파일 열기 이벤트 리스너
+  window.electronAPI.onOpenFromProtocol((arg) => {
+    log.info('프로토콜/파일 열기 이벤트 수신', { arg });
+    handleExternalFile(arg);
+  });
+
   log.info('앱 초기화 완료');
 
   // 버전 표시

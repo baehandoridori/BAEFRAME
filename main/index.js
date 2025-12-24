@@ -28,9 +28,12 @@ if (!gotTheLock) {
       // 프로토콜 링크나 파일 경로가 있으면 처리
       const arg = commandLine.find(arg =>
         arg.startsWith('baeframe://') ||
-        arg.endsWith('.baef') ||
+        arg.endsWith('.bframe') ||
         arg.endsWith('.mp4') ||
-        arg.endsWith('.mov')
+        arg.endsWith('.mov') ||
+        arg.endsWith('.avi') ||
+        arg.endsWith('.mkv') ||
+        arg.endsWith('.webm')
       );
       if (arg) {
         mainWindow.webContents.send('open-from-protocol', arg);
@@ -47,6 +50,24 @@ if (!gotTheLock) {
 
     // 메인 윈도우 생성
     createMainWindow();
+
+    // 시작 시 전달된 파일 인자 처리
+    const fileArg = process.argv.find(arg =>
+      arg.endsWith('.bframe') ||
+      arg.endsWith('.mp4') ||
+      arg.endsWith('.mov') ||
+      arg.endsWith('.avi') ||
+      arg.endsWith('.mkv') ||
+      arg.endsWith('.webm')
+    );
+    if (fileArg) {
+      log.info('시작 인자로 파일 전달됨', { fileArg });
+      // 윈도우 로드 완료 후 파일 열기
+      const mainWindow = getMainWindow();
+      mainWindow.webContents.once('did-finish-load', () => {
+        mainWindow.webContents.send('open-from-protocol', fileArg);
+      });
+    }
 
     // macOS: 모든 창이 닫혀도 앱은 유지
     app.on('activate', () => {

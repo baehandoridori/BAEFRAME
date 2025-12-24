@@ -19,6 +19,12 @@ extraResources:
     filter:
       - "**/*"
 
+fileAssociations:
+  - ext: bframe
+    name: BAEFRAME Review
+    description: BAEFRAME Review File
+    role: Editor
+
 win:
   target:
     - target: portable
