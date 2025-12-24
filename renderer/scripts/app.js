@@ -199,6 +199,16 @@ async function initApp() {
     // 댓글 매니저에 FPS 전달
     commentManager.setFPS(fps);
 
+    // .bframe에서 로드된 데이터가 있으면 다시 렌더링
+    if (drawingManager.layers.length > 0) {
+      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      drawingManager.renderFrame(videoPlayer.currentFrame);
+    }
+
+    // 댓글 마커도 다시 렌더링 (FPS 설정 후)
+    renderVideoMarkers();
+    updateTimelineMarkers();
+
     log.info('비디오 정보', { duration, totalFrames, fps });
   });
 
@@ -1051,9 +1061,13 @@ async function initApp() {
       const hasExistingData = await reviewDataManager.setVideoFile(filePath);
       if (hasExistingData) {
         showToast(`"${fileInfo.name}" 로드됨 (리뷰 데이터 복원)`, 'success');
-        // 마커 렌더링 업데이트
+        // 마커 및 그리기 렌더링 업데이트
         renderVideoMarkers();
+        updateTimelineMarkers();
         updateCommentList();
+        // 그리기 레이어 UI 및 캔버스 다시 렌더링
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        drawingManager.renderFrame(videoPlayer.currentFrame);
       } else {
         showToast(`"${fileInfo.name}" 로드됨`, 'success');
       }
