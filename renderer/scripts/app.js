@@ -108,6 +108,7 @@ async function initApp() {
   // 상태
   const state = {
     isDrawMode: false,
+    isCommentMode: false, // 댓글 추가 모드
     currentFile: null,
     // 비디오 줌 상태
     videoZoom: 100,
@@ -122,6 +123,20 @@ async function initApp() {
     panInitialX: 0,
     panInitialY: 0
   };
+
+  // 마커 컨테이너 생성 (영상 위에 마커 표시용)
+  const markerContainer = document.createElement('div');
+  markerContainer.className = 'comment-markers-container';
+  markerContainer.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 15;
+  `;
+  elements.videoWrapper.appendChild(markerContainer);
 
   // ====== 모듈 초기화 ======
 
@@ -153,7 +168,8 @@ async function initApp() {
 
   // 댓글 매니저
   const commentManager = new CommentManager({
-    fps: 24
+    fps: 24,
+    container: markerContainer
   });
 
   // ====== 모듈 이벤트 연결 ======
@@ -184,6 +200,9 @@ async function initApp() {
 
     // 드로잉 매니저에 현재 프레임 전달 (재생 중 프레임 변경 시)
     drawingManager.setCurrentFrame(currentFrame);
+
+    // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
+    commentManager.setCurrentFrame(currentFrame);
   });
 
   // 재생 아이콘 SVG
@@ -264,49 +283,78 @@ async function initApp() {
     }
   });
 
-  // ====== 댓글 매니저 이벤트 ======
+  // ====== 댓글 매니저 이벤트 (마커 기반) ======
 
-  // 댓글 추가됨
-  commentManager.addEventListener('commentAdded', (e) => {
-    const { comment } = e.detail;
-    renderComments();
-    updateCommentMarkers();
-    updateCommentCount();
-    log.info('댓글 추가됨', { id: comment.id, frame: comment.frame });
+  // 댓글 모드 변경
+  commentManager.addEventListener('commentModeChanged', (e) => {
+    const { isCommentMode } = e.detail;
+    state.isCommentMode = isCommentMode;
+
+    // 커서 변경
+    if (isCommentMode) {
+      elements.videoWrapper.classList.add('comment-mode');
+      markerContainer.style.pointerEvents = 'auto';
+      showToast('댓글 모드: 영상을 클릭하여 댓글을 추가하세요', 'info');
+    } else {
+      elements.videoWrapper.classList.remove('comment-mode');
+      markerContainer.style.pointerEvents = 'none';
+      removePendingMarkerUI();
+    }
+
+    // 버튼 상태 업데이트
+    elements.btnAddComment?.classList.toggle('active', isCommentMode);
   });
 
-  // 댓글 삭제됨
-  commentManager.addEventListener('commentDeleted', (e) => {
-    renderComments();
-    updateCommentMarkers();
-    updateCommentCount();
+  // 마커 생성 시작
+  commentManager.addEventListener('markerCreationStarted', (e) => {
+    const { marker } = e.detail;
+    renderPendingMarker(marker);
   });
 
-  // 댓글 수정됨 (해결 상태 포함)
-  commentManager.addEventListener('commentUpdated', (e) => {
-    renderComments();
-    updateCommentMarkers();
-    updateCommentCount();
+  // 마커 생성 취소
+  commentManager.addEventListener('markerCreationCancelled', (e) => {
+    removePendingMarkerUI();
   });
 
-  // 댓글 해결 상태 변경
-  commentManager.addEventListener('commentResolved', (e) => {
-    renderComments();
-    updateCommentMarkers();
-    updateCommentCount();
+  // 마커 추가됨
+  commentManager.addEventListener('markerAdded', (e) => {
+    const { marker } = e.detail;
+    removePendingMarkerUI();
+    renderVideoMarkers();
+    updateTimelineMarkers();
+    updateCommentList();
+    log.info('마커 추가됨', { id: marker.id, text: marker.text });
   });
 
-  // 필터 변경됨
-  commentManager.addEventListener('filterChanged', (e) => {
-    renderComments();
+  // 마커 삭제됨
+  commentManager.addEventListener('markerDeleted', (e) => {
+    renderVideoMarkers();
+    updateTimelineMarkers();
+    updateCommentList();
+  });
+
+  // 마커 업데이트됨
+  commentManager.addEventListener('markerUpdated', (e) => {
+    renderVideoMarkers();
+    updateTimelineMarkers();
+    updateCommentList();
+  });
+
+  // 프레임 변경 시 마커 가시성 업데이트
+  commentManager.addEventListener('frameChanged', (e) => {
+    updateVideoMarkersVisibility();
+  });
+
+  // 마커 고정 상태 변경
+  commentManager.addEventListener('markerPinnedChanged', (e) => {
+    const { marker } = e.detail;
+    updateMarkerTooltipState(marker);
   });
 
   // 타임라인 댓글 마커 클릭
   timeline.addEventListener('commentMarkerClick', (e) => {
     const { time, frame } = e.detail;
     videoPlayer.seek(time);
-    // 해당 프레임의 댓글 강조
-    highlightCommentsAtFrame(frame);
   });
 
   // ====== 이벤트 리스너 설정 ======
@@ -364,22 +412,25 @@ async function initApp() {
   // 그리기 모드 토글
   elements.btnDrawMode.addEventListener('click', toggleDrawMode);
 
-  // 댓글 추가 버튼
+  // 댓글 추가 버튼 (댓글 모드 토글)
   elements.btnAddComment.addEventListener('click', () => {
-    elements.commentInput.focus();
+    toggleCommentMode();
   });
 
-  // 댓글 전송 버튼
-  elements.btnSubmitComment?.addEventListener('click', () => {
-    submitComment();
-  });
+  // 마커 컨테이너 클릭 (영상 위 클릭으로 마커 생성)
+  markerContainer.addEventListener('click', (e) => {
+    if (!state.isCommentMode) return;
 
-  // 댓글 입력창 Enter 키
-  elements.commentInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      submitComment();
-    }
+    // 마커 요소 클릭은 무시 (마커 자체의 이벤트 처리)
+    if (e.target.closest('.comment-marker')) return;
+
+    // 캔버스 영역 내 상대 좌표 계산
+    const rect = markerContainer.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+
+    // 마커 생성 시작
+    commentManager.startMarkerCreation(x, y);
   });
 
   // 링크 복사
@@ -409,13 +460,13 @@ async function initApp() {
     }
   });
 
-  // 필터 칩
+  // 필터 칩 (댓글 목록 필터링)
   document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', function() {
       document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
       this.classList.add('active');
       const filter = this.dataset.filter;
-      commentManager.setFilter(filter);
+      updateCommentList(filter);
       log.debug('필터 변경', { filter });
     });
   });
@@ -969,95 +1020,294 @@ async function initApp() {
   }
 
   /**
-   * 댓글 전송
+   * 댓글 모드 토글
    */
-  function submitComment() {
-    const text = elements.commentInput?.value?.trim();
-    if (!text) {
-      showToast('댓글 내용을 입력해주세요.', 'warn');
-      return;
+  function toggleCommentMode() {
+    // 그리기 모드가 켜져있으면 끄기
+    if (state.isDrawMode) {
+      toggleDrawMode();
     }
-
-    const currentFrame = videoPlayer.currentFrame;
-    const currentTime = videoPlayer.getCurrentTime();
-
-    // 그리기가 있으면 스냅샷 캡처
-    const hasDrawing = !drawingManager.drawingCanvas.isEmpty();
-    const drawingSnapshot = hasDrawing ? drawingManager.drawingCanvas.toDataURL() : null;
-
-    // 댓글 추가
-    commentManager.addComment({
-      frame: currentFrame,
-      timecode: videoPlayer.getCurrentTimecode(),
-      text: text,
-      author: '나', // TODO: 사용자 설정에서 가져오기
-      hasDrawing: hasDrawing,
-      drawingSnapshot: drawingSnapshot
-    });
-
-    // 입력 필드 초기화
-    elements.commentInput.value = '';
-    showToast('댓글이 추가되었습니다.', 'success');
+    commentManager.toggleCommentMode();
   }
 
   /**
-   * 댓글 패널 렌더링
+   * Pending 마커 렌더링 (클릭 후 텍스트 입력 대기 상태)
    */
-  function renderComments() {
-    const comments = commentManager.getFilteredComments();
-    const container = elements.commentsList;
+  function renderPendingMarker(marker) {
+    removePendingMarkerUI();
 
+    // 마커 동그라미 생성
+    const markerEl = document.createElement('div');
+    markerEl.className = 'comment-marker pending';
+    markerEl.style.cssText = `
+      position: absolute;
+      left: ${marker.x * 100}%;
+      top: ${marker.y * 100}%;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+    `;
+    markerEl.dataset.markerId = marker.id;
+
+    // 인라인 입력창 생성
+    const inputWrapper = document.createElement('div');
+    inputWrapper.className = 'comment-marker-input-wrapper';
+    inputWrapper.innerHTML = `
+      <input type="text" class="comment-marker-input" placeholder="댓글 입력..." autofocus />
+      <div class="comment-marker-input-hint">Enter로 확인, Esc로 취소</div>
+    `;
+
+    markerEl.appendChild(inputWrapper);
+    markerContainer.appendChild(markerEl);
+
+    // 입력창 포커스
+    const input = inputWrapper.querySelector('input');
+    setTimeout(() => input?.focus(), 50);
+
+    // Enter로 확정
+    input?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const text = input.value.trim();
+        commentManager.confirmMarker(text);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        commentManager.setCommentMode(false);
+      }
+    });
+
+    // 포커스 잃으면 취소 (다른 곳 클릭)
+    input?.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (commentManager.pendingMarker) {
+          commentManager.setCommentMode(false);
+        }
+      }, 100);
+    });
+  }
+
+  /**
+   * Pending 마커 UI 제거
+   */
+  function removePendingMarkerUI() {
+    const pending = markerContainer.querySelector('.comment-marker.pending');
+    if (pending) {
+      pending.remove();
+    }
+  }
+
+  /**
+   * 영상 위 마커들 렌더링
+   */
+  function renderVideoMarkers() {
+    // 기존 확정된 마커들 제거
+    markerContainer.querySelectorAll('.comment-marker:not(.pending)').forEach(el => el.remove());
+
+    // 모든 마커 렌더링
+    const allMarkers = commentManager.getAllMarkers();
+    allMarkers.forEach(marker => {
+      renderSingleMarker(marker);
+    });
+
+    updateVideoMarkersVisibility();
+  }
+
+  /**
+   * 단일 마커 렌더링
+   */
+  function renderSingleMarker(marker) {
+    const markerEl = document.createElement('div');
+    markerEl.className = `comment-marker${marker.resolved ? ' resolved' : ''}`;
+    markerEl.dataset.markerId = marker.id;
+    markerEl.style.cssText = `
+      position: absolute;
+      left: ${marker.x * 100}%;
+      top: ${marker.y * 100}%;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+    `;
+
+    // 말풍선 (툴팁)
+    const tooltip = document.createElement('div');
+    tooltip.className = 'comment-marker-tooltip';
+    tooltip.innerHTML = `
+      <div class="tooltip-header">
+        <span class="tooltip-timecode">${marker.startTimecode}</span>
+        <span class="tooltip-author">${marker.author}</span>
+      </div>
+      <div class="tooltip-text">${escapeHtml(marker.text)}</div>
+      <div class="tooltip-actions">
+        <button class="tooltip-btn resolve" title="${marker.resolved ? '미해결로 변경' : '해결'}">
+          ${marker.resolved ? '↩️' : '✓'}
+        </button>
+        <button class="tooltip-btn delete" title="삭제">🗑️</button>
+      </div>
+    `;
+
+    markerEl.appendChild(tooltip);
+
+    // 호버 이벤트 - 말풍선 표시
+    markerEl.addEventListener('mouseenter', () => {
+      if (!marker.pinned) {
+        tooltip.classList.add('visible');
+      }
+    });
+
+    markerEl.addEventListener('mouseleave', () => {
+      if (!marker.pinned) {
+        tooltip.classList.remove('visible');
+      }
+    });
+
+    // 클릭 - 고정 토글
+    markerEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (e.target.closest('.tooltip-btn')) return;
+      commentManager.toggleMarkerPinned(marker.id);
+    });
+
+    // 해결 버튼
+    tooltip.querySelector('.tooltip-btn.resolve')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      commentManager.toggleMarkerResolved(marker.id);
+    });
+
+    // 삭제 버튼
+    tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirm('댓글을 삭제하시겠습니까?')) {
+        commentManager.deleteMarker(marker.id);
+        showToast('댓글이 삭제되었습니다.', 'info');
+      }
+    });
+
+    // 마커 객체에 DOM 요소 참조 저장
+    marker.element = markerEl;
+    marker.tooltipElement = tooltip;
+
+    markerContainer.appendChild(markerEl);
+  }
+
+  /**
+   * 마커 가시성 업데이트 (현재 프레임에 따라)
+   */
+  function updateVideoMarkersVisibility() {
+    const currentFrame = videoPlayer.currentFrame;
+
+    markerContainer.querySelectorAll('.comment-marker:not(.pending)').forEach(el => {
+      const markerId = el.dataset.markerId;
+      const marker = commentManager.getMarker(markerId);
+
+      if (marker && marker.isVisibleAtFrame(currentFrame)) {
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    });
+  }
+
+  /**
+   * 마커 툴팁 상태 업데이트 (고정 상태)
+   */
+  function updateMarkerTooltipState(marker) {
+    if (marker.tooltipElement) {
+      if (marker.pinned) {
+        marker.tooltipElement.classList.add('visible', 'pinned');
+      } else {
+        marker.tooltipElement.classList.remove('pinned');
+        // 마우스가 마커 위에 없으면 숨기기
+        if (!marker.element?.matches(':hover')) {
+          marker.tooltipElement.classList.remove('visible');
+        }
+      }
+    }
+  }
+
+  /**
+   * 타임라인 마커 업데이트
+   */
+  function updateTimelineMarkers() {
+    const ranges = commentManager.getMarkerRanges();
+    const fps = videoPlayer.fps || 24;
+
+    // 기존 마커 제거
+    timeline.clearCommentMarkers();
+
+    // 새 마커 추가 (각 마커의 시작 프레임에)
+    const frameSet = new Set();
+    ranges.forEach(range => {
+      if (!frameSet.has(range.startFrame)) {
+        frameSet.add(range.startFrame);
+        const time = range.startFrame / fps;
+        timeline.addCommentMarker(time, range.resolved, range.startFrame);
+      }
+    });
+  }
+
+  /**
+   * 댓글 목록 업데이트 (사이드 패널)
+   */
+  function updateCommentList(filter = 'all') {
+    const container = elements.commentsList;
     if (!container) return;
 
-    if (comments.length === 0) {
+    let markers = commentManager.getAllMarkers();
+
+    // 필터 적용
+    if (filter === 'unresolved') {
+      markers = markers.filter(m => !m.resolved);
+    } else if (filter === 'resolved') {
+      markers = markers.filter(m => m.resolved);
+    }
+
+    // 개수 업데이트
+    const allMarkers = commentManager.getAllMarkers();
+    const unresolvedCount = allMarkers.filter(m => !m.resolved).length;
+    if (elements.commentCount) {
+      elements.commentCount.textContent = allMarkers.length > 0
+        ? `${unresolvedCount > 0 ? unresolvedCount + ' 미해결 / ' : ''}${allMarkers.length}개`
+        : '0';
+    }
+
+    if (markers.length === 0) {
       container.innerHTML = `
         <div class="comment-empty">
           <span style="font-size: 32px; margin-bottom: 8px;">💬</span>
           <p>댓글이 없습니다</p>
-          <p style="font-size: 11px; color: var(--text-muted);">C키 또는 입력창에서 댓글을 추가하세요</p>
+          <p style="font-size: 11px; color: var(--text-muted);">C키를 눌러 영상 위에 댓글을 추가하세요</p>
         </div>
       `;
       return;
     }
 
-    container.innerHTML = comments.map(comment => `
-      <div class="comment-item ${comment.resolved ? 'resolved' : ''}" data-comment-id="${comment.id}" data-frame="${comment.frame}">
+    container.innerHTML = markers.map(marker => `
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
         <div class="comment-header">
-          <span class="comment-timecode">${comment.timecode}</span>
-          <span class="comment-author">${comment.author}</span>
-          <span class="comment-time">${formatRelativeTime(comment.createdAt)}</span>
+          <span class="comment-timecode">${marker.startTimecode}</span>
+          <span class="comment-author">${marker.author}</span>
+          <span class="comment-time">${formatRelativeTime(marker.createdAt)}</span>
         </div>
         <div class="comment-content">
-          ${comment.hasDrawing ? '<span class="comment-drawing-badge" title="마킹 포함">🖍️</span>' : ''}
-          <p class="comment-text">${escapeHtml(comment.text)}</p>
+          <p class="comment-text">${escapeHtml(marker.text)}</p>
         </div>
-        ${comment.hasDrawing && comment.drawingSnapshot ? `
-          <div class="comment-snapshot">
-            <img src="${comment.drawingSnapshot}" alt="마킹 스냅샷" />
-          </div>
-        ` : ''}
         <div class="comment-actions">
-          <button class="comment-action-btn resolve-btn" data-action="resolve" title="${comment.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
-            ${comment.resolved ? '↩️ 미해결' : '✓ 해결'}
+          <button class="comment-action-btn resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
+            ${marker.resolved ? '↩️ 미해결' : '✓ 해결'}
           </button>
-          <button class="comment-action-btn delete-btn" data-action="delete" title="삭제">
+          <button class="comment-action-btn delete-btn" title="삭제">
             🗑️
           </button>
         </div>
       </div>
     `).join('');
 
-    // 댓글 아이템 클릭 이벤트
+    // 이벤트 바인딩
     container.querySelectorAll('.comment-item').forEach(item => {
-      // 댓글 클릭 시 해당 프레임으로 이동
+      // 클릭으로 해당 프레임 이동
       item.addEventListener('click', (e) => {
-        if (e.target.closest('.comment-action-btn')) return; // 버튼 클릭 무시
-
-        const frame = parseInt(item.dataset.frame);
+        if (e.target.closest('.comment-action-btn')) return;
+        const frame = parseInt(item.dataset.startFrame);
         const time = frame / videoPlayer.fps;
         videoPlayer.seek(time);
-
-        // 선택 상태 표시
         container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
       });
@@ -1065,65 +1315,18 @@ async function initApp() {
       // 해결 버튼
       item.querySelector('.resolve-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        const commentId = item.dataset.commentId;
-        commentManager.toggleResolve(commentId);
+        commentManager.toggleMarkerResolved(item.dataset.markerId);
       });
 
       // 삭제 버튼
       item.querySelector('.delete-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        const commentId = item.dataset.commentId;
         if (confirm('댓글을 삭제하시겠습니까?')) {
-          commentManager.deleteComment(commentId);
+          commentManager.deleteMarker(item.dataset.markerId);
           showToast('댓글이 삭제되었습니다.', 'info');
         }
       });
     });
-  }
-
-  /**
-   * 특정 프레임의 댓글 강조
-   */
-  function highlightCommentsAtFrame(frame) {
-    const container = elements.commentsList;
-    if (!container) return;
-
-    container.querySelectorAll('.comment-item').forEach(item => {
-      item.classList.remove('selected');
-      if (parseInt(item.dataset.frame) === frame) {
-        item.classList.add('selected');
-        item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-    });
-  }
-
-  /**
-   * 타임라인 댓글 마커 업데이트
-   */
-  function updateCommentMarkers() {
-    const commentFrames = commentManager.getCommentFrames();
-    const fps = videoPlayer.fps || 24;
-
-    // 기존 마커 제거
-    timeline.clearCommentMarkers();
-
-    // 새 마커 추가
-    commentFrames.forEach(frameInfo => {
-      const time = frameInfo.frame / fps;
-      timeline.addCommentMarker(time, !frameInfo.hasUnresolved, frameInfo.frame);
-    });
-  }
-
-  /**
-   * 댓글 개수 업데이트
-   */
-  function updateCommentCount() {
-    const count = commentManager.getCommentCount();
-    if (elements.commentCount) {
-      elements.commentCount.textContent = count.total > 0
-        ? `${count.unresolved > 0 ? count.unresolved + ' 미해결 / ' : ''}${count.total}개`
-        : '0';
-    }
   }
 
   /**
@@ -1257,7 +1460,7 @@ async function initApp() {
     case 'KeyC':
       if (!e.ctrlKey) {
         e.preventDefault();
-        elements.commentInput.focus();
+        toggleCommentMode();
       }
       break;
 

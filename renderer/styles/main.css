@@ -2108,3 +2108,198 @@ body {
   content: '✓';
   color: var(--success);
 }
+
+/* ========================================
+   Comment Markers (Video Overlay)
+   ======================================== */
+
+/* 댓글 모드 커서 */
+.video-wrapper.comment-mode {
+  cursor: crosshair;
+}
+
+.video-wrapper.comment-mode .drawing-overlay {
+  pointer-events: none;
+}
+
+/* 마커 동그라미 */
+.comment-marker {
+  width: 24px;
+  height: 24px;
+  background: var(--error);
+  border: 2px solid white;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  z-index: 20;
+}
+
+.comment-marker:hover {
+  transform: translate(-50%, -50%) scale(1.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.comment-marker.resolved {
+  background: var(--success);
+  opacity: 0.7;
+}
+
+.comment-marker.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.comment-marker.pending {
+  background: var(--accent-primary);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(255, 208, 0, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(255, 208, 0, 0);
+  }
+}
+
+/* 마커 입력창 */
+.comment-marker-input-wrapper {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-primary);
+  border-radius: 8px;
+  padding: 8px;
+  min-width: 200px;
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+}
+
+.comment-marker-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.comment-marker-input:focus {
+  border-color: var(--accent-primary);
+}
+
+.comment-marker-input-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* 마커 말풍선 (툴팁) */
+.comment-marker-tooltip {
+  position: absolute;
+  left: 30px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-width: 180px;
+  max-width: 280px;
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.comment-marker-tooltip.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.comment-marker-tooltip.pinned {
+  border-color: var(--accent-primary);
+}
+
+.comment-marker-tooltip::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-right-color: var(--bg-elevated);
+}
+
+.tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.tooltip-timecode {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: var(--accent-glow);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.tooltip-author {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.tooltip-text {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  word-break: break-word;
+  margin-bottom: 8px;
+}
+
+.tooltip-actions {
+  display: flex;
+  gap: 6px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
+}
+
+.tooltip-btn {
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.tooltip-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+}
+
+.tooltip-btn.resolve:hover {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.tooltip-btn.delete:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
