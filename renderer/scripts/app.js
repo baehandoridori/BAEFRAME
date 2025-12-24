@@ -93,7 +93,15 @@ async function initApp() {
     // 타임라인 줌 버튼
     btnTimelineZoomIn: document.getElementById('btnTimelineZoomIn'),
     btnTimelineZoomOut: document.getElementById('btnTimelineZoomOut'),
-    btnTimelineZoomReset: document.getElementById('btnTimelineZoomReset')
+    btnTimelineZoomReset: document.getElementById('btnTimelineZoomReset'),
+
+    // 그리기 도구 액션 버튼
+    btnUndo: document.getElementById('btnUndo'),
+    btnClearDrawing: document.getElementById('btnClearDrawing'),
+
+    // 레이어 추가/삭제 버튼
+    btnAddLayer: document.getElementById('btnAddLayer'),
+    btnDeleteLayer: document.getElementById('btnDeleteLayer')
   };
 
   // 상태
@@ -232,6 +240,19 @@ async function initApp() {
   // 레이어 잠금 토글
   timeline.addEventListener('layerLockToggle', (e) => {
     drawingManager.toggleLayerLock(e.detail.layerId);
+  });
+
+  // 키프레임 이동
+  timeline.addEventListener('keyframesMove', (e) => {
+    const { keyframes, frameDelta } = e.detail;
+    if (drawingManager.moveKeyframes(keyframes)) {
+      // 이동 성공 시 선택 상태 업데이트
+      timeline.selectedKeyframes = keyframes.map(kf => ({
+        layerId: kf.layerId,
+        frame: kf.toFrame
+      }));
+      showToast(`키프레임 ${frameDelta > 0 ? '+' : ''}${frameDelta} 프레임 이동`, 'info');
+    }
   });
 
   // ====== 이벤트 리스너 설정 ======
@@ -398,6 +419,52 @@ async function initApp() {
 
   // 초기 사이즈 프리뷰 설정
   updateSizePreview();
+
+  // Undo 버튼
+  elements.btnUndo?.addEventListener('click', () => {
+    if (drawingManager.undo()) {
+      showToast('실행 취소됨', 'info');
+    }
+  });
+
+  // 전체 지우기 버튼
+  elements.btnClearDrawing?.addEventListener('click', () => {
+    const layer = drawingManager.getActiveLayer();
+    if (layer) {
+      // 현재 키프레임의 데이터를 지움
+      const keyframe = layer.getKeyframeAtFrame(drawingManager.currentFrame);
+      if (keyframe && !keyframe.isEmpty) {
+        drawingManager._saveToHistory();
+        keyframe.setCanvasData(null);
+        drawingManager.renderFrame(drawingManager.currentFrame);
+        showToast('현재 프레임 지워짐', 'info');
+      }
+    }
+  });
+
+  // 레이어 추가 버튼
+  elements.btnAddLayer?.addEventListener('click', () => {
+    drawingManager.createLayer();
+    timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+    showToast('새 레이어 추가됨', 'success');
+  });
+
+  // 레이어 삭제 버튼
+  elements.btnDeleteLayer?.addEventListener('click', () => {
+    const activeLayerId = drawingManager.activeLayerId;
+    if (!activeLayerId) {
+      showToast('삭제할 레이어가 없습니다.', 'warn');
+      return;
+    }
+    if (drawingManager.layers.length <= 1) {
+      showToast('마지막 레이어는 삭제할 수 없습니다.', 'warn');
+      return;
+    }
+    if (drawingManager.deleteLayer(activeLayerId)) {
+      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      showToast('레이어 삭제됨', 'info');
+    }
+  });
 
   // ====== 그리기 도구 메뉴 이동/접기 ======
   const drawingToolsPanel = elements.drawingTools;
@@ -976,6 +1043,33 @@ async function initApp() {
     case 'Backslash':
       e.preventDefault();
       timeline.fitToView();
+      break;
+
+    case 'KeyZ':
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          // Ctrl+Shift+Z: Redo
+          if (drawingManager.redo()) {
+            showToast('다시 실행됨', 'info');
+          }
+        } else {
+          // Ctrl+Z: Undo
+          if (drawingManager.undo()) {
+            showToast('실행 취소됨', 'info');
+          }
+        }
+      }
+      break;
+
+    case 'KeyY':
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+Y: Redo (alternative)
+        e.preventDefault();
+        if (drawingManager.redo()) {
+          showToast('다시 실행됨', 'info');
+        }
+      }
       break;
 
     case 'Equal':

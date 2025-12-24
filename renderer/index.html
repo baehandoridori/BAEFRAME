@@ -266,7 +266,15 @@
         <div class="timeline-main">
           <!-- Layer Headers -->
           <div class="layer-headers" id="layerHeaders">
-            <div class="layer-header-ruler"></div>
+            <div class="layer-header-ruler">
+              <!-- 레이어 추가/삭제 버튼 -->
+              <button class="layer-action-btn" id="btnAddLayer" title="레이어 추가">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+              <button class="layer-action-btn" id="btnDeleteLayer" title="레이어 삭제">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
             <div class="layer-header" data-layer="video">
               <div class="layer-color" style="background: #3a3a3a"></div>
               <span class="layer-visibility">

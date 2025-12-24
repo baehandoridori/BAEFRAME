@@ -45,6 +45,20 @@ export class Timeline extends EventTarget {
     this.panStartX = 0;
     this.panScrollLeft = 0;
 
+    // 키프레임 드래그 상태
+    this.isDraggingKeyframe = false;
+    this.draggedKeyframe = null;  // { layerId, frame, element }
+    this.dragStartX = 0;
+    this.dragStartFrame = 0;
+    this.dragGhost = null;  // 드래그 중 표시할 고스트 요소
+
+    // 다중 선택 상태
+    this.selectedKeyframes = [];  // [ { layerId, frame } ]
+    this.isSelecting = false;  // 드래그 박스 선택 중
+    this.selectionBox = null;
+    this.selectionStartX = 0;
+    this.selectionStartY = 0;
+
     // 초기화
     this._setupEventListeners();
     this._updateZoomDisplay();
@@ -106,7 +120,7 @@ export class Timeline extends EventTarget {
       this._seekFromClick(e);
     });
 
-    // 트랙 영역 마우스 이벤트 (드래그 seek + 패닝)
+    // 트랙 영역 마우스 이벤트 (드래그 seek + 패닝 + 선택)
     this.tracksContainer?.addEventListener('mousedown', (e) => {
       if (this.isDraggingPlayhead) return;
 
@@ -117,6 +131,13 @@ export class Timeline extends EventTarget {
         this.panScrollLeft = this.timelineTracks.scrollLeft;
         this.tracksContainer.classList.add('panning');
         e.preventDefault();
+        return;
+      }
+
+      // Alt 키를 누른 상태면 선택 박스 모드
+      if (e.altKey) {
+        e.preventDefault();
+        this._startSelection(e);
         return;
       }
 
@@ -169,9 +190,19 @@ export class Timeline extends EventTarget {
         const dx = e.clientX - this.panStartX;
         this.timelineTracks.scrollLeft = this.panScrollLeft - dx;
       }
+
+      // 키프레임 드래그
+      if (this.isDraggingKeyframe) {
+        this._updateKeyframeDrag(e);
+      }
+
+      // 선택 박스 드래그
+      if (this.isSelecting) {
+        this._updateSelection(e);
+      }
     });
 
-    document.addEventListener('mouseup', () => {
+    document.addEventListener('mouseup', (e) => {
       if (this.isDraggingPlayhead) {
         this.isDraggingPlayhead = false;
         document.body.style.cursor = 'default';
@@ -185,6 +216,16 @@ export class Timeline extends EventTarget {
       if (this.isPanning) {
         this.isPanning = false;
         this.tracksContainer?.classList.remove('panning');
+      }
+
+      // 키프레임 드래그 완료
+      if (this.isDraggingKeyframe) {
+        this._finishKeyframeDrag(e);
+      }
+
+      // 선택 박스 완료
+      if (this.isSelecting) {
+        this._finishSelection(e);
       }
     });
   }
@@ -600,6 +641,15 @@ export class Timeline extends EventTarget {
     clip.className = 'track-clip drawing-clip';
     clip.dataset.startFrame = range.start;
     clip.dataset.endFrame = range.end;
+    clip.dataset.layerId = layer.id;
+
+    // 선택된 키프레임인지 확인
+    const isSelected = this.selectedKeyframes.some(
+      kf => kf.layerId === layer.id && kf.frame === range.start
+    );
+    if (isSelected) {
+      clip.classList.add('selected');
+    }
 
     // 위치 및 크기 계산
     const startPercent = (range.start / this.totalFrames) * 100;
@@ -612,11 +662,26 @@ export class Timeline extends EventTarget {
       border-left: 2px solid ${layer.color};
     `;
 
-    // 키프레임 마커
+    // 키프레임 마커 (드래그 핸들)
     const marker = document.createElement('div');
     marker.className = 'keyframe-marker';
     marker.innerHTML = range.keyframe.isEmpty ? '○' : '●';
-    marker.title = `키프레임 ${range.start}`;
+    marker.title = `키프레임 ${range.start} (드래그하여 이동)`;
+    marker.dataset.layerId = layer.id;
+    marker.dataset.frame = range.start;
+
+    // 키프레임 마커 드래그 시작
+    marker.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      this._startKeyframeDrag(e, layer.id, range.start, clip);
+    });
+
+    // 키프레임 클릭으로 선택 토글
+    marker.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._toggleKeyframeSelection(layer.id, range.start, e.ctrlKey || e.metaKey);
+    });
+
     clip.appendChild(marker);
 
     // 프레임 범위 표시
@@ -628,6 +693,244 @@ export class Timeline extends EventTarget {
     }
 
     return clip;
+  }
+
+  // ====== 키프레임 드래그 ======
+
+  /**
+   * 키프레임 드래그 시작
+   */
+  _startKeyframeDrag(e, layerId, frame, clipElement) {
+    this.isDraggingKeyframe = true;
+    this.draggedKeyframe = { layerId, frame, element: clipElement };
+    this.dragStartX = e.clientX;
+    this.dragStartFrame = frame;
+
+    // 이 키프레임이 선택되지 않았으면 단독 선택
+    const isSelected = this.selectedKeyframes.some(
+      kf => kf.layerId === layerId && kf.frame === frame
+    );
+    if (!isSelected) {
+      this.selectedKeyframes = [{ layerId, frame }];
+    }
+
+    // 고스트 요소 생성
+    this._createDragGhost(e, frame);
+
+    document.body.style.cursor = 'grabbing';
+    log.debug('키프레임 드래그 시작', { layerId, frame });
+  }
+
+  /**
+   * 키프레임 드래그 업데이트
+   */
+  _updateKeyframeDrag(e) {
+    if (!this.dragGhost || !this.tracksContainer) return;
+
+    const containerRect = this.tracksContainer.getBoundingClientRect();
+    const containerWidth = this.tracksContainer.offsetWidth;
+
+    // 마우스 위치에서 프레임 계산
+    const x = e.clientX - containerRect.left + this.timelineTracks.scrollLeft;
+    const percent = Math.max(0, Math.min(x / containerWidth, 1));
+    const newFrame = Math.round(percent * (this.totalFrames - 1));
+
+    // 고스트 위치 업데이트
+    const ghostPercent = (newFrame / this.totalFrames) * 100;
+    this.dragGhost.style.left = `${ghostPercent}%`;
+    this.dragGhost.textContent = `F${newFrame}`;
+
+    // 프레임 이동량 저장
+    this.dragGhost.dataset.targetFrame = newFrame;
+  }
+
+  /**
+   * 키프레임 드래그 완료
+   */
+  _finishKeyframeDrag(e) {
+    if (!this.draggedKeyframe) return;
+
+    const targetFrame = parseInt(this.dragGhost?.dataset.targetFrame || this.dragStartFrame);
+    const frameDelta = targetFrame - this.dragStartFrame;
+
+    // 고스트 제거
+    if (this.dragGhost) {
+      this.dragGhost.remove();
+      this.dragGhost = null;
+    }
+
+    this.isDraggingKeyframe = false;
+    document.body.style.cursor = 'default';
+
+    // 이동량이 있으면 이벤트 발생
+    if (frameDelta !== 0) {
+      // 선택된 모든 키프레임 이동
+      const keyframesToMove = this.selectedKeyframes.map(kf => ({
+        layerId: kf.layerId,
+        fromFrame: kf.frame,
+        toFrame: kf.frame + frameDelta
+      }));
+
+      this._emit('keyframesMove', { keyframes: keyframesToMove, frameDelta });
+      log.info('키프레임 이동', { keyframes: keyframesToMove, frameDelta });
+    }
+
+    this.draggedKeyframe = null;
+  }
+
+  /**
+   * 드래그 고스트 생성
+   */
+  _createDragGhost(e, frame) {
+    this.dragGhost = document.createElement('div');
+    this.dragGhost.className = 'keyframe-drag-ghost';
+    this.dragGhost.textContent = `F${frame}`;
+
+    const containerRect = this.tracksContainer.getBoundingClientRect();
+    const percent = (frame / this.totalFrames) * 100;
+    this.dragGhost.style.left = `${percent}%`;
+
+    this.tracksContainer.appendChild(this.dragGhost);
+  }
+
+  // ====== 키프레임 선택 ======
+
+  /**
+   * 키프레임 선택 토글
+   */
+  _toggleKeyframeSelection(layerId, frame, addToSelection) {
+    const index = this.selectedKeyframes.findIndex(
+      kf => kf.layerId === layerId && kf.frame === frame
+    );
+
+    if (addToSelection) {
+      // Ctrl/Cmd + 클릭: 선택에 추가/제거
+      if (index !== -1) {
+        this.selectedKeyframes.splice(index, 1);
+      } else {
+        this.selectedKeyframes.push({ layerId, frame });
+      }
+    } else {
+      // 일반 클릭: 단독 선택
+      if (index !== -1 && this.selectedKeyframes.length === 1) {
+        // 이미 단독 선택된 상태면 선택 해제
+        this.selectedKeyframes = [];
+      } else {
+        this.selectedKeyframes = [{ layerId, frame }];
+      }
+    }
+
+    this._emit('keyframeSelectionChanged', { selected: this.selectedKeyframes });
+    this._updateKeyframeSelectionUI();
+  }
+
+  /**
+   * 키프레임 선택 UI 업데이트
+   */
+  _updateKeyframeSelectionUI() {
+    // 모든 클립에서 selected 클래스 제거
+    this.tracksContainer?.querySelectorAll('.drawing-clip').forEach(clip => {
+      clip.classList.remove('selected');
+    });
+
+    // 선택된 키프레임에 selected 클래스 추가
+    this.selectedKeyframes.forEach(kf => {
+      const clip = this.tracksContainer?.querySelector(
+        `.drawing-clip[data-layer-id="${kf.layerId}"][data-start-frame="${kf.frame}"]`
+      );
+      if (clip) {
+        clip.classList.add('selected');
+      }
+    });
+  }
+
+  /**
+   * 선택 박스 시작 (빈 영역 드래그)
+   */
+  _startSelection(e) {
+    if (this.isDraggingPlayhead || this.isPanning || this.isDraggingSeeking) return;
+
+    this.isSelecting = true;
+    const containerRect = this.tracksContainer.getBoundingClientRect();
+    this.selectionStartX = e.clientX - containerRect.left + this.timelineTracks.scrollLeft;
+    this.selectionStartY = e.clientY - containerRect.top;
+
+    // 선택 박스 생성
+    this.selectionBox = document.createElement('div');
+    this.selectionBox.className = 'selection-box';
+    this.selectionBox.style.left = `${this.selectionStartX}px`;
+    this.selectionBox.style.top = `${this.selectionStartY}px`;
+    this.tracksContainer.appendChild(this.selectionBox);
+
+    // 기존 선택 초기화 (Ctrl 안 누른 경우)
+    if (!e.ctrlKey && !e.metaKey) {
+      this.selectedKeyframes = [];
+    }
+  }
+
+  /**
+   * 선택 박스 업데이트
+   */
+  _updateSelection(e) {
+    if (!this.selectionBox || !this.tracksContainer) return;
+
+    const containerRect = this.tracksContainer.getBoundingClientRect();
+    const currentX = e.clientX - containerRect.left + this.timelineTracks.scrollLeft;
+    const currentY = e.clientY - containerRect.top;
+
+    const left = Math.min(this.selectionStartX, currentX);
+    const top = Math.min(this.selectionStartY, currentY);
+    const width = Math.abs(currentX - this.selectionStartX);
+    const height = Math.abs(currentY - this.selectionStartY);
+
+    this.selectionBox.style.left = `${left}px`;
+    this.selectionBox.style.top = `${top}px`;
+    this.selectionBox.style.width = `${width}px`;
+    this.selectionBox.style.height = `${height}px`;
+  }
+
+  /**
+   * 선택 박스 완료
+   */
+  _finishSelection(e) {
+    if (!this.selectionBox) return;
+
+    const boxRect = this.selectionBox.getBoundingClientRect();
+
+    // 선택 박스 내의 키프레임 마커 찾기
+    this.tracksContainer?.querySelectorAll('.keyframe-marker').forEach(marker => {
+      const markerRect = marker.getBoundingClientRect();
+
+      // 마커가 선택 박스 안에 있는지 확인
+      if (markerRect.left >= boxRect.left &&
+          markerRect.right <= boxRect.right &&
+          markerRect.top >= boxRect.top &&
+          markerRect.bottom <= boxRect.bottom) {
+        const layerId = marker.dataset.layerId;
+        const frame = parseInt(marker.dataset.frame);
+
+        // 선택에 추가 (중복 방지)
+        if (!this.selectedKeyframes.some(kf => kf.layerId === layerId && kf.frame === frame)) {
+          this.selectedKeyframes.push({ layerId, frame });
+        }
+      }
+    });
+
+    // 선택 박스 제거
+    this.selectionBox.remove();
+    this.selectionBox = null;
+    this.isSelecting = false;
+
+    this._emit('keyframeSelectionChanged', { selected: this.selectedKeyframes });
+    this._updateKeyframeSelectionUI();
+  }
+
+  /**
+   * 선택 초기화
+   */
+  clearSelection() {
+    this.selectedKeyframes = [];
+    this._updateKeyframeSelectionUI();
   }
 
   /**

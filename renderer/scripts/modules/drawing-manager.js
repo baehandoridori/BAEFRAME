@@ -53,6 +53,12 @@ export class DrawingManager extends EventTarget {
     // 렌더링 상태 관리
     this._renderingId = 0;  // 렌더링 취소용 ID
 
+    // Undo/Redo 히스토리
+    this.history = [];
+    this.historyIndex = -1;
+    this.maxHistorySize = 50;  // 최대 히스토리 개수
+    this._isUndoingOrRedoing = false;  // undo/redo 중인지 여부
+
     // 이벤트 연결
     this._setupEvents();
 
@@ -85,6 +91,11 @@ export class DrawingManager extends EventTarget {
 
     const layer = this.getActiveLayer();
     if (!layer) return;
+
+    // Undo를 위해 현재 상태 저장 (그리기 시작 전)
+    if (!this._isUndoingOrRedoing) {
+      this._saveToHistory();
+    }
 
     // 현재 프레임에 키프레임이 없으면 생성
     // (기존 키프레임 범위 내에서 그리는 경우는 덧그리기)
@@ -150,7 +161,12 @@ export class DrawingManager extends EventTarget {
   /**
    * 새 레이어 생성
    */
-  createLayer(options = {}) {
+  createLayer(options = {}, saveHistory = true) {
+    // Undo를 위해 현재 상태 저장
+    if (saveHistory && this.layers.length > 0) {
+      this._saveToHistory();
+    }
+
     const layer = new DrawingLayer(options);
     this.layers.push(layer);
     this.activeLayerId = layer.id;
@@ -168,6 +184,9 @@ export class DrawingManager extends EventTarget {
   deleteLayer(layerId) {
     const index = this.layers.findIndex(l => l.id === layerId);
     if (index === -1) return false;
+
+    // Undo를 위해 현재 상태 저장
+    this._saveToHistory();
 
     const layer = this.layers[index];
     this.layers.splice(index, 1);
@@ -229,12 +248,127 @@ export class DrawingManager extends EventTarget {
     }
   }
 
+  // ====== Undo/Redo ======
+
+  /**
+   * 현재 상태를 히스토리에 저장
+   */
+  _saveToHistory() {
+    // 현재 위치 이후의 히스토리 제거 (새 변경 시 redo 히스토리 삭제)
+    if (this.historyIndex < this.history.length - 1) {
+      this.history = this.history.slice(0, this.historyIndex + 1);
+    }
+
+    // 현재 상태 스냅샷 생성
+    const snapshot = {
+      layers: this.layers.map(l => l.toJSON()),
+      activeLayerId: this.activeLayerId,
+      currentFrame: this.currentFrame
+    };
+
+    this.history.push(snapshot);
+
+    // 최대 개수 초과 시 오래된 것 제거
+    if (this.history.length > this.maxHistorySize) {
+      this.history.shift();
+    } else {
+      this.historyIndex = this.history.length - 1;
+    }
+
+    log.debug('히스토리 저장', { index: this.historyIndex, total: this.history.length });
+  }
+
+  /**
+   * 실행 취소 (Undo)
+   */
+  undo() {
+    if (this.historyIndex < 0) {
+      log.debug('Undo 불가: 히스토리 없음');
+      return false;
+    }
+
+    this._isUndoingOrRedoing = true;
+
+    const snapshot = this.history[this.historyIndex];
+    this._restoreSnapshot(snapshot);
+    this.historyIndex--;
+
+    this._isUndoingOrRedoing = false;
+
+    log.info('Undo 실행', { index: this.historyIndex });
+    this._emit('undo');
+    return true;
+  }
+
+  /**
+   * 다시 실행 (Redo)
+   */
+  redo() {
+    if (this.historyIndex >= this.history.length - 1) {
+      log.debug('Redo 불가: 앞으로 갈 히스토리 없음');
+      return false;
+    }
+
+    this._isUndoingOrRedoing = true;
+
+    this.historyIndex++;
+    const snapshot = this.history[this.historyIndex + 1] || this.history[this.historyIndex];
+    this._restoreSnapshot(snapshot);
+
+    this._isUndoingOrRedoing = false;
+
+    log.info('Redo 실행', { index: this.historyIndex });
+    this._emit('redo');
+    return true;
+  }
+
+  /**
+   * 스냅샷에서 상태 복원
+   */
+  _restoreSnapshot(snapshot) {
+    if (!snapshot) return;
+
+    // 레이어 복원
+    this.layers = snapshot.layers.map(l => DrawingLayer.fromJSON(l));
+    this.activeLayerId = snapshot.activeLayerId;
+
+    // UI 업데이트
+    this._emit('layersChanged');
+    this.renderFrame(this.currentFrame);
+  }
+
+  /**
+   * Undo 가능 여부
+   */
+  canUndo() {
+    return this.historyIndex >= 0;
+  }
+
+  /**
+   * Redo 가능 여부
+   */
+  canRedo() {
+    return this.historyIndex < this.history.length - 1;
+  }
+
+  /**
+   * 히스토리 초기화
+   */
+  clearHistory() {
+    this.history = [];
+    this.historyIndex = -1;
+    log.debug('히스토리 초기화됨');
+  }
+
   /**
    * 빈 키프레임 추가 (F7)
    */
   addBlankKeyframe() {
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return;
+
+    // Undo를 위해 현재 상태 저장
+    this._saveToHistory();
 
     layer.addBlankKeyframe(this.currentFrame);
 
@@ -251,6 +385,9 @@ export class DrawingManager extends EventTarget {
   addKeyframeWithContent() {
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return;
+
+    // Undo를 위해 현재 상태 저장
+    this._saveToHistory();
 
     layer.addKeyframeWithContent(this.currentFrame);
 
@@ -274,11 +411,63 @@ export class DrawingManager extends EventTarget {
       return;
     }
 
+    // Undo를 위해 현재 상태 저장
+    this._saveToHistory();
+
     layer.removeKeyframe(this.currentFrame);
     this.renderFrame(this.currentFrame);
 
     this._emit('keyframeRemoved', { layer, frame: this.currentFrame });
     this._emit('layersChanged');
+  }
+
+  /**
+   * 키프레임 이동 (드래그로 이동)
+   * @param {Array} keyframesToMove - [ { layerId, fromFrame, toFrame } ]
+   */
+  moveKeyframes(keyframesToMove) {
+    if (!keyframesToMove || keyframesToMove.length === 0) return false;
+
+    // Undo를 위해 현재 상태 저장
+    this._saveToHistory();
+
+    let moved = false;
+
+    // 충돌 방지를 위해 뒤에서부터 처리 (프레임이 높은 것부터)
+    const sorted = [...keyframesToMove].sort((a, b) => b.fromFrame - a.fromFrame);
+
+    for (const { layerId, fromFrame, toFrame } of sorted) {
+      const layer = this.layers.find(l => l.id === layerId);
+      if (!layer || layer.locked) continue;
+
+      // 프레임 범위 검증
+      if (toFrame < 0 || toFrame >= this.totalFrames) continue;
+
+      // 키프레임 찾기
+      const keyframe = layer.keyframes.find(kf => kf.frame === fromFrame);
+      if (!keyframe) continue;
+
+      // 대상 위치에 이미 키프레임이 있는지 확인
+      const existingAtTarget = layer.keyframes.find(kf => kf.frame === toFrame);
+      if (existingAtTarget && existingAtTarget !== keyframe) {
+        log.warn('대상 위치에 이미 키프레임이 있습니다', { layerId, toFrame });
+        continue;
+      }
+
+      // 키프레임 프레임 번호 변경
+      keyframe.frame = toFrame;
+      layer._sortKeyframes();
+      moved = true;
+
+      log.debug('키프레임 이동됨', { layerId, fromFrame, toFrame });
+    }
+
+    if (moved) {
+      this._emit('layersChanged');
+      this.renderFrame(this.currentFrame);
+    }
+
+    return moved;
   }
 
   /**
