@@ -185,6 +185,7 @@ export class CommentManager extends EventTarget {
     this.fps = options.fps || 24;
     this.container = options.container; // 마커를 렌더링할 컨테이너
     this.videoElement = options.videoElement;
+    this.author = options.author || '익명'; // 기본 작성자
 
     // 레이어
     this.layers = [];
@@ -228,6 +229,21 @@ export class CommentManager extends EventTarget {
    */
   setContainer(container) {
     this.container = container;
+  }
+
+  /**
+   * 작성자 이름 설정
+   */
+  setAuthor(author) {
+    this.author = author || '익명';
+    log.info('작성자 설정됨', { author: this.author });
+  }
+
+  /**
+   * 작성자 이름 가져오기
+   */
+  getAuthor() {
+    return this.author;
   }
 
   /**
@@ -330,7 +346,8 @@ export class CommentManager extends EventTarget {
       startFrame: this.currentFrame,
       endFrame: this.currentFrame + this.fps, // 기본 1초
       fps: this.fps,
-      layerId: this.activeLayerId
+      layerId: this.activeLayerId,
+      author: this.author
     });
 
     log.info('마커 생성 시작', { x, y, frame: this.currentFrame });

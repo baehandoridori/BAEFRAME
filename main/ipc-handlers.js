@@ -127,6 +127,36 @@ function setupIpcHandlers() {
     return { success: true };
   });
 
+  // ====== 사용자 정보 관련 ======
+
+  // OS 사용자 이름 가져오기
+  ipcMain.handle('user:get-os-user', async () => {
+    const os = require('os');
+    try {
+      // Windows에서는 환경변수에서 사용자 이름 가져오기
+      const userName = process.env.USERNAME || process.env.USER || os.userInfo().username;
+      log.info('OS 사용자 이름', { userName });
+      return userName;
+    } catch (error) {
+      log.error('OS 사용자 이름 가져오기 실패', error);
+      return null;
+    }
+  });
+
+  // Slack 사용자 정보 가져오기
+  ipcMain.handle('user:get-slack-user', async () => {
+    try {
+      const slackUser = await getSlackUserInfo();
+      if (slackUser) {
+        log.info('Slack 사용자 감지됨', { name: slackUser.name });
+      }
+      return slackUser;
+    } catch (error) {
+      log.debug('Slack 사용자 감지 실패', error);
+      return null;
+    }
+  });
+
   // ====== 로그 관련 ======
 
   ipcMain.on('log:write', (event, logData) => {
@@ -139,6 +169,82 @@ function setupIpcHandlers() {
   });
 
   log.info('IPC 핸들러 등록 완료');
+}
+
+/**
+ * Slack 로컬 데이터에서 사용자 정보 읽기
+ * Windows: %APPDATA%\Slack\storage\
+ */
+async function getSlackUserInfo() {
+  const os = require('os');
+  const path = require('path');
+
+  // Slack 데이터 경로 (Windows)
+  const slackPaths = [];
+
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA;
+    if (appData) {
+      slackPaths.push(path.join(appData, 'Slack', 'storage'));
+      slackPaths.push(path.join(appData, 'Slack', 'Local Storage', 'leveldb'));
+    }
+  } else if (process.platform === 'darwin') {
+    const home = os.homedir();
+    slackPaths.push(path.join(home, 'Library', 'Application Support', 'Slack', 'storage'));
+  } else {
+    const home = os.homedir();
+    slackPaths.push(path.join(home, '.config', 'Slack', 'storage'));
+  }
+
+  // Slack 설정 파일에서 사용자 정보 읽기 시도
+  for (const slackPath of slackPaths) {
+    try {
+      const rootStatePath = path.join(slackPath, 'root-state.json');
+      if (fs.existsSync(rootStatePath)) {
+        const content = await fs.promises.readFile(rootStatePath, 'utf-8');
+        const data = JSON.parse(content);
+
+        // Slack root-state에서 사용자 정보 추출
+        if (data.teams) {
+          const teams = Object.values(data.teams);
+          for (const team of teams) {
+            if (team.user_id && team.name) {
+              return {
+                id: team.user_id,
+                name: team.name,
+                workspace: team.team_name || team.team_id
+              };
+            }
+          }
+        }
+      }
+    } catch (error) {
+      // 이 경로에서 실패하면 다음 경로 시도
+      continue;
+    }
+  }
+
+  // Slack 프로세스가 실행 중인지 확인
+  try {
+    const { execSync } = require('child_process');
+    let isSlackRunning = false;
+
+    if (process.platform === 'win32') {
+      const result = execSync('tasklist /FI "IMAGENAME eq slack.exe" /NH', { encoding: 'utf-8' });
+      isSlackRunning = result.toLowerCase().includes('slack.exe');
+    } else {
+      const result = execSync('pgrep -x slack || pgrep -x Slack', { encoding: 'utf-8' });
+      isSlackRunning = result.trim().length > 0;
+    }
+
+    if (isSlackRunning) {
+      log.debug('Slack 실행 중이지만 사용자 정보를 읽을 수 없음');
+    }
+  } catch (error) {
+    // Slack이 실행 중이 아님
+  }
+
+  return null;
 }
 
 module.exports = { setupIpcHandlers };

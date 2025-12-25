@@ -8,6 +8,7 @@ import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { CommentManager } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
+import { getUserSettings } from './modules/user-settings.js';
 
 const log = createLogger('App');
 
@@ -1677,6 +1678,21 @@ async function initApp() {
     log.info('프로토콜/파일 열기 이벤트 수신', { arg });
     handleExternalFile(arg);
   });
+
+  // ====== 사용자 설정 초기화 ======
+  const userSettings = getUserSettings();
+  const userName = await userSettings.initialize();
+  log.info('사용자 이름 감지됨', { userName, source: userSettings.getUserSource() });
+
+  // 사용자 이름을 헤더에 표시 (옵션)
+  const userNameDisplay = document.getElementById('userNameDisplay');
+  if (userNameDisplay) {
+    userNameDisplay.textContent = userName;
+    userNameDisplay.title = `출처: ${userSettings.getUserSource()}`;
+  }
+
+  // 댓글 매니저에 사용자 이름 설정
+  commentManager.setAuthor(userName);
 
   log.info('앱 초기화 완료');
 

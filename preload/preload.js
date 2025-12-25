@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ====== 링크 관련 ======
   copyToClipboard: (text) => ipcRenderer.invoke('link:copy', text),
 
+  // ====== 사용자 정보 관련 ======
+  getOSUser: () => ipcRenderer.invoke('user:get-os-user'),
+  getSlackUser: () => ipcRenderer.invoke('user:get-slack-user'),
+
   // ====== 로그 관련 ======
   writeLog: (logData) => ipcRenderer.send('log:write', logData),
 
