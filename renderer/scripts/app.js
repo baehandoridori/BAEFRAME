@@ -389,6 +389,12 @@ async function initApp() {
     updateCommentList();
   });
 
+  // 답글 추가됨
+  commentManager.addEventListener('replyAdded', (e) => {
+    renderVideoMarkers();
+    updateCommentList();
+  });
+
   // 프레임 변경 시 마커 가시성 업데이트
   commentManager.addEventListener('frameChanged', (e) => {
     updateVideoMarkersVisibility();
@@ -1221,10 +1227,11 @@ async function initApp() {
     // 말풍선 (툴팁)
     const tooltip = document.createElement('div');
     tooltip.className = 'comment-marker-tooltip';
+    const authorClass = getAuthorColorClass(marker.author);
     tooltip.innerHTML = `
       <div class="tooltip-header">
         <span class="tooltip-timecode">${marker.startTimecode}</span>
-        <span class="tooltip-author">${marker.author}</span>
+        <span class="tooltip-author ${authorClass}">${marker.author}</span>
       </div>
       <div class="tooltip-text">${escapeHtml(marker.text)}</div>
       <div class="tooltip-actions">
@@ -1236,6 +1243,20 @@ async function initApp() {
     `;
 
     markerEl.appendChild(tooltip);
+
+    // 답글 배지 (스레드 개수 표시)
+    const replyCount = marker.replies?.length || 0;
+    if (replyCount > 0) {
+      const replyBadge = document.createElement('div');
+      replyBadge.className = 'marker-replies-badge';
+      replyBadge.textContent = `💬 ${replyCount}`;
+      replyBadge.title = `답글 ${replyCount}개 보기`;
+      replyBadge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.scrollToCommentAndExpandThread(marker.id);
+      });
+      markerEl.appendChild(replyBadge);
+    }
 
     // 호버 이벤트 - 말풍선 표시
     markerEl.addEventListener('mouseenter', () => {
@@ -1338,6 +1359,18 @@ async function initApp() {
   /**
    * 댓글 목록 업데이트 (사이드 패널)
    */
+
+  /**
+   * 이름에 따른 색상 클래스 반환
+   */
+  function getAuthorColorClass(author) {
+    if (!author) return '';
+    if (author.includes('배한솔')) return 'author-hansol';
+    if (author.includes('윤성원')) return 'author-sungwon';
+    if (author.includes('허혜원')) return 'author-hyewon';
+    return '';
+  }
+
   function updateCommentList(filter = 'all') {
     const container = elements.commentsList;
     if (!container) return;
@@ -1371,11 +1404,24 @@ async function initApp() {
       return;
     }
 
-    container.innerHTML = markers.map(marker => `
+    container.innerHTML = markers.map(marker => {
+      const authorClass = getAuthorColorClass(marker.author);
+      const replyCount = marker.replies?.length || 0;
+      const repliesHtml = (marker.replies || []).map(reply => `
+        <div class="comment-reply">
+          <div class="comment-reply-header">
+            <span class="comment-reply-author ${getAuthorColorClass(reply.author)}">${reply.author}</span>
+            <span class="comment-reply-time">${formatRelativeTime(reply.createdAt)}</span>
+          </div>
+          <p class="comment-reply-text">${escapeHtml(reply.text)}</p>
+        </div>
+      `).join('');
+
+      return `
       <div class="comment-item ${marker.resolved ? 'resolved' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
         <div class="comment-header">
           <span class="comment-timecode">${marker.startTimecode}</span>
-          <span class="comment-author">${marker.author}</span>
+          <span class="comment-author ${authorClass}">${marker.author}</span>
           <span class="comment-time">${formatRelativeTime(marker.createdAt)}</span>
         </div>
         <div class="comment-content">
@@ -1392,6 +1438,9 @@ async function initApp() {
           <button class="comment-action-btn edit-btn" title="수정">
             ✏️
           </button>
+          <button class="comment-action-btn reply-btn" title="답글">
+            💬
+          </button>
           <button class="comment-action-btn resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
             ${marker.resolved ? '↩️ 미해결' : '✓ 해결'}
           </button>
@@ -1399,8 +1448,22 @@ async function initApp() {
             🗑️
           </button>
         </div>
+        ${replyCount > 0 ? `
+        <button class="comment-thread-toggle" data-marker-id="${marker.id}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          답글 ${replyCount}개
+        </button>
+        ` : ''}
+        <div class="comment-replies" data-marker-id="${marker.id}">
+          ${repliesHtml}
+          <div class="comment-reply-input-wrapper">
+            <textarea class="comment-reply-input" placeholder="답글 입력..." rows="1"></textarea>
+            <button class="comment-reply-submit">전송</button>
+          </div>
+        </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
     // 이벤트 바인딩
     container.querySelectorAll('.comment-item').forEach(item => {
@@ -1482,8 +1545,85 @@ async function initApp() {
           item.querySelector('.comment-edit-save').click();
         }
       });
+
+      // ====== 스레드(답글) 관련 이벤트 ======
+      const threadToggle = item.querySelector('.comment-thread-toggle');
+      const repliesContainer = item.querySelector('.comment-replies');
+      const replyBtn = item.querySelector('.reply-btn');
+      const replyInput = item.querySelector('.comment-reply-input');
+      const replySubmit = item.querySelector('.comment-reply-submit');
+
+      // 스레드 토글 버튼
+      threadToggle?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        threadToggle.classList.toggle('expanded');
+        repliesContainer.classList.toggle('expanded');
+      });
+
+      // 답글 버튼 - 스레드 열고 입력창 포커스
+      replyBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (threadToggle) {
+          threadToggle.classList.add('expanded');
+        }
+        repliesContainer.classList.add('expanded');
+        replyInput?.focus();
+      });
+
+      // 답글 제출
+      replySubmit?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const replyText = replyInput.value.trim();
+        if (replyText) {
+          commentManager.addReplyToMarker(item.dataset.markerId, replyText);
+          replyInput.value = '';
+          showToast('답글이 추가되었습니다.', 'success');
+        }
+      });
+
+      // Enter로 답글 제출
+      replyInput?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          replySubmit?.click();
+        }
+      });
     });
   }
+
+  /**
+   * 특정 댓글로 스크롤하고 스레드 펼치기
+   */
+  function scrollToCommentAndExpandThread(markerId) {
+    const container = elements.commentsList;
+    if (!container) return;
+
+    const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
+    if (commentItem) {
+      // 댓글 패널 열기
+      const commentPanel = document.getElementById('commentPanel');
+      commentPanel?.classList.add('open');
+
+      // 스크롤
+      commentItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      // 선택 표시
+      container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
+      commentItem.classList.add('selected');
+
+      // 스레드 펼치기
+      const threadToggle = commentItem.querySelector('.comment-thread-toggle');
+      const repliesContainer = commentItem.querySelector('.comment-replies');
+      if (threadToggle) {
+        threadToggle.classList.add('expanded');
+      }
+      repliesContainer?.classList.add('expanded');
+    }
+  }
+
+  // 전역으로 노출 (마커에서 호출용)
+  window.scrollToCommentAndExpandThread = scrollToCommentAndExpandThread;
 
   /**
    * 상대 시간 포맷

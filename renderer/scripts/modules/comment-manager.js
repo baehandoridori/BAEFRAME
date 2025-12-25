@@ -60,9 +60,32 @@ export class CommentMarker {
     // 레이어
     this.layerId = options.layerId || 'comment-layer-1';
 
+    // 답글 (스레드)
+    this.replies = options.replies || [];
+
     // DOM 요소 (렌더링 후 설정)
     this.element = null;
     this.tooltipElement = null;
+  }
+
+  /**
+   * 답글 추가
+   */
+  addReply(reply) {
+    this.replies.push({
+      id: generateUUID(),
+      text: reply.text,
+      author: reply.author || '익명',
+      createdAt: new Date()
+    });
+    return this.replies[this.replies.length - 1];
+  }
+
+  /**
+   * 답글 개수
+   */
+  get replyCount() {
+    return this.replies.length;
   }
 
   /**
@@ -124,7 +147,11 @@ export class CommentMarker {
       author: this.author,
       createdAt: this.createdAt instanceof Date ? this.createdAt.toISOString() : this.createdAt,
       resolved: this.resolved,
-      layerId: this.layerId
+      layerId: this.layerId,
+      replies: this.replies.map(r => ({
+        ...r,
+        createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt
+      }))
     };
   }
 
@@ -134,7 +161,11 @@ export class CommentMarker {
   static fromJSON(json) {
     return new CommentMarker({
       ...json,
-      createdAt: new Date(json.createdAt)
+      createdAt: new Date(json.createdAt),
+      replies: (json.replies || []).map(r => ({
+        ...r,
+        createdAt: new Date(r.createdAt)
+      }))
     });
   }
 }
@@ -475,6 +506,24 @@ export class CommentManager extends EventTarget {
     this._emit('markerPinnedChanged', { marker });
 
     return marker;
+  }
+
+  /**
+   * 마커에 답글 추가
+   */
+  addReplyToMarker(markerId, replyText, author) {
+    const marker = this.getMarker(markerId);
+    if (!marker) return null;
+
+    const reply = marker.addReply({
+      text: replyText,
+      author: author || this.author
+    });
+
+    this._emit('replyAdded', { marker, reply });
+    this._emit('markersChanged');
+
+    return reply;
   }
 
   /**
