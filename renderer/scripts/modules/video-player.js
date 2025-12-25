@@ -32,6 +32,10 @@ export class VideoPlayer extends EventTarget {
     this._isSeeking = false;
     this._seekTimeout = null;
 
+    // 프레임 콜백 상태
+    this._frameCallbackId = null;
+    this._lastEmittedFrame = -1;
+
     // 초기화
     this._setupEventListeners();
 
@@ -88,12 +92,14 @@ export class VideoPlayer extends EventTarget {
     video.addEventListener('play', () => {
       this.isPlaying = true;
       this._emit('play');
+      this._startFrameCallback();
     });
 
     // 일시정지
     video.addEventListener('pause', () => {
       this.isPlaying = false;
       this._emit('pause');
+      this._stopFrameCallback();
     });
 
     // 재생 종료
@@ -127,6 +133,82 @@ export class VideoPlayer extends EventTarget {
    */
   _emit(eventName, detail = {}) {
     this.dispatchEvent(new CustomEvent(eventName, { detail }));
+  }
+
+  /**
+   * 프레임 콜백 시작 (requestVideoFrameCallback 또는 requestAnimationFrame 폴백)
+   */
+  _startFrameCallback() {
+    if (this._frameCallbackId) return;
+
+    const video = this.videoElement;
+
+    // requestVideoFrameCallback이 지원되는 경우 (Chrome 83+, Edge 83+)
+    if ('requestVideoFrameCallback' in video) {
+      const onFrame = (now, metadata) => {
+        if (!this.isPlaying) return;
+
+        // 정확한 프레임 번호 계산
+        const frame = Math.round(metadata.mediaTime * this.fps);
+
+        if (frame !== this._lastEmittedFrame) {
+          this._lastEmittedFrame = frame;
+          this.currentFrame = frame;
+          this.currentTime = metadata.mediaTime;
+
+          this._emit('frameUpdate', {
+            frame,
+            time: metadata.mediaTime,
+            presentedFrames: metadata.presentedFrames
+          });
+        }
+
+        this._frameCallbackId = video.requestVideoFrameCallback(onFrame);
+      };
+
+      this._frameCallbackId = video.requestVideoFrameCallback(onFrame);
+      log.debug('requestVideoFrameCallback 사용');
+    } else {
+      // 폴백: requestAnimationFrame
+      const onFrame = () => {
+        if (!this.isPlaying) return;
+
+        const frame = Math.round(video.currentTime * this.fps);
+
+        if (frame !== this._lastEmittedFrame) {
+          this._lastEmittedFrame = frame;
+          this.currentFrame = frame;
+          this.currentTime = video.currentTime;
+
+          this._emit('frameUpdate', {
+            frame,
+            time: video.currentTime
+          });
+        }
+
+        this._frameCallbackId = requestAnimationFrame(onFrame);
+      };
+
+      this._frameCallbackId = requestAnimationFrame(onFrame);
+      log.debug('requestAnimationFrame 폴백 사용');
+    }
+  }
+
+  /**
+   * 프레임 콜백 정지
+   */
+  _stopFrameCallback() {
+    if (!this._frameCallbackId) return;
+
+    const video = this.videoElement;
+
+    if ('requestVideoFrameCallback' in video && video.cancelVideoFrameCallback) {
+      video.cancelVideoFrameCallback(this._frameCallbackId);
+    } else {
+      cancelAnimationFrame(this._frameCallbackId);
+    }
+
+    this._frameCallbackId = null;
   }
 
   /**

@@ -58,6 +58,15 @@
           <!-- Video Element (추후 mpv로 대체) -->
           <video id="videoPlayer" style="display: none;"></video>
 
+          <!-- Video Loading Overlay -->
+          <div class="video-loading-overlay" id="videoLoadingOverlay">
+            <div class="loading-spinner"></div>
+            <div class="loading-text" id="loadingText">썸네일 생성 중...</div>
+            <div class="loading-progress-bar">
+              <div class="loading-progress-fill" id="loadingProgressFill"></div>
+            </div>
+          </div>
+
           <!-- Onion Skin Canvas (그리기 캔버스 아래에 표시) -->
           <canvas id="onionSkinCanvas" class="drawing-overlay onion-skin-layer"></canvas>
 

@@ -59,8 +59,14 @@ export class Timeline extends EventTarget {
     this.selectionStartX = 0;
     this.selectionStartY = 0;
 
+    // 썸네일 프리뷰 상태
+    this.thumbnailGenerator = null;
+    this.thumbnailTooltip = null;
+    this.isThumbnailVisible = false;
+
     // 초기화
     this._setupEventListeners();
+    this._setupThumbnailTooltip();
     this._updateZoomDisplay();
 
     log.info('Timeline 초기화됨');
@@ -172,15 +178,15 @@ export class Timeline extends EventTarget {
 
     // 전역 마우스 이벤트 (드래그용)
     document.addEventListener('mousemove', (e) => {
-      // 플레이헤드 드래그
+      // 플레이헤드 드래그 (스크러빙 모드)
       if (this.isDraggingPlayhead) {
-        this._seekFromClick(e);
+        this._scrubFromClick(e);
         return;
       }
 
-      // 드래그 seek
+      // 드래그 seek (스크러빙 모드)
       if (this.isDraggingSeeking) {
-        this._seekFromClick(e);
+        this._scrubFromClick(e);
         return;
       }
 
@@ -203,11 +209,15 @@ export class Timeline extends EventTarget {
 
     document.addEventListener('mouseup', (e) => {
       if (this.isDraggingPlayhead) {
+        // 드래그 종료 시 실제 seek 수행
+        this._finishScrubbing(e);
         this.isDraggingPlayhead = false;
         document.body.style.cursor = 'default';
       }
 
       if (this.isDraggingSeeking) {
+        // 드래그 종료 시 실제 seek 수행
+        this._finishScrubbing(e);
         this.isDraggingSeeking = false;
         document.body.style.cursor = 'default';
       }
@@ -248,6 +258,57 @@ export class Timeline extends EventTarget {
     const time = percent * this.duration;
 
     this._emit('seek', { time });
+  }
+
+  /**
+   * 스크러빙 중 (드래그 중 프리뷰만 표시, 실제 seek 없음)
+   */
+  _scrubFromClick(e) {
+    if (this.duration === 0) return;
+
+    const rect = this.tracksContainer?.getBoundingClientRect();
+    if (!rect) return;
+
+    const x = e.clientX - rect.left;
+    const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
+    const percent = Math.max(0, Math.min(x / containerWidth, 1));
+    const time = percent * this.duration;
+
+    // 플레이헤드 위치 업데이트 (시각적으로만)
+    this.scrubTime = time;
+    this._updatePlayheadPositionDirect(time);
+
+    // 스크러빙 프리뷰 이벤트 (썸네일 표시용)
+    this._emit('scrubbing', { time, percent });
+  }
+
+  /**
+   * 스크러빙 완료 (실제 seek 수행)
+   */
+  _finishScrubbing(e) {
+    if (this.scrubTime !== undefined) {
+      this._emit('seek', { time: this.scrubTime });
+      this._emit('scrubbingEnd', { time: this.scrubTime });
+      this.scrubTime = undefined;
+    }
+  }
+
+  /**
+   * 플레이헤드 위치 직접 업데이트 (스크러빙용)
+   */
+  _updatePlayheadPositionDirect(time) {
+    if (this.duration === 0) return;
+
+    const percent = time / this.duration;
+    const containerWidth = this.tracksContainer?.offsetWidth || 1000;
+    const positionPx = percent * containerWidth;
+
+    if (this.playheadLine) {
+      this.playheadLine.style.left = `${positionPx}px`;
+    }
+    if (this.playheadHandle) {
+      this.playheadHandle.style.left = `${positionPx}px`;
+    }
   }
 
   /**
@@ -1025,11 +1086,131 @@ export class Timeline extends EventTarget {
     this.setZoom(this.zoom - 25);
   }
 
+  // ==========================================
+  // 썸네일 프리뷰 관련
+  // ==========================================
+
+  /**
+   * 썸네일 툴팁 초기화
+   */
+  _setupThumbnailTooltip() {
+    // 툴팁 요소 생성
+    this.thumbnailTooltip = document.createElement('div');
+    this.thumbnailTooltip.className = 'timeline-thumbnail-tooltip';
+    this.thumbnailTooltip.innerHTML = `
+      <img class="thumbnail-image" src="" alt="Preview">
+      <div class="thumbnail-time"></div>
+    `;
+    this.thumbnailTooltip.style.cssText = `
+      position: fixed;
+      display: none;
+      z-index: 9999;
+      pointer-events: none;
+    `;
+    document.body.appendChild(this.thumbnailTooltip);
+
+    // 타임라인 트랙 영역 마우스 이벤트
+    this.timelineTracks?.addEventListener('mousemove', (e) => {
+      if (this.isDraggingPlayhead || this.isDraggingSeeking || this.isPanning) {
+        this._hideThumbnailTooltip();
+        return;
+      }
+      this._showThumbnailAtPosition(e);
+    });
+
+    this.timelineTracks?.addEventListener('mouseleave', () => {
+      this._hideThumbnailTooltip();
+    });
+  }
+
+  /**
+   * 썸네일 생성기 설정
+   */
+  setThumbnailGenerator(generator) {
+    this.thumbnailGenerator = generator;
+    log.info('썸네일 생성기 연결됨');
+  }
+
+  /**
+   * 마우스 위치에 썸네일 표시
+   */
+  _showThumbnailAtPosition(e) {
+    if (!this.thumbnailGenerator?.isReady || this.duration === 0) {
+      return;
+    }
+
+    const rect = this.tracksContainer?.getBoundingClientRect();
+    if (!rect) return;
+
+    // 마우스 위치에서 시간 계산
+    const x = e.clientX - rect.left;
+    const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
+    const percent = Math.max(0, Math.min(x / containerWidth, 1));
+    const time = percent * this.duration;
+
+    // 해당 시간의 썸네일 가져오기
+    const thumbnailUrl = this.thumbnailGenerator.getThumbnailUrlAt(time);
+    if (!thumbnailUrl) return;
+
+    // 툴팁 업데이트
+    const img = this.thumbnailTooltip.querySelector('.thumbnail-image');
+    const timeDisplay = this.thumbnailTooltip.querySelector('.thumbnail-time');
+
+    img.src = thumbnailUrl;
+    timeDisplay.textContent = this._formatTime(time);
+
+    // 툴팁 위치 설정 (마우스 위)
+    const tooltipWidth = 170;
+    const tooltipHeight = 110;
+    let tooltipX = e.clientX - tooltipWidth / 2;
+    let tooltipY = rect.top - tooltipHeight - 10;
+
+    // 화면 밖으로 나가지 않도록 조정
+    tooltipX = Math.max(10, Math.min(tooltipX, window.innerWidth - tooltipWidth - 10));
+    if (tooltipY < 10) {
+      tooltipY = rect.bottom + 10;
+    }
+
+    this.thumbnailTooltip.style.left = `${tooltipX}px`;
+    this.thumbnailTooltip.style.top = `${tooltipY}px`;
+    this.thumbnailTooltip.style.display = 'block';
+    this.isThumbnailVisible = true;
+  }
+
+  /**
+   * 썸네일 툴팁 숨기기
+   */
+  _hideThumbnailTooltip() {
+    if (this.thumbnailTooltip) {
+      this.thumbnailTooltip.style.display = 'none';
+      this.isThumbnailVisible = false;
+    }
+  }
+
+  /**
+   * 시간 포맷 (HH:MM:SS)
+   */
+  _formatTime(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    const f = Math.floor((seconds % 1) * this.fps);
+
+    if (h > 0) {
+      return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+    }
+    return `${m}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+  }
+
   /**
    * 정리
    */
   destroy() {
     this.clearMarkers();
+    if (this.thumbnailTooltip) {
+      this.thumbnailTooltip.remove();
+      this.thumbnailTooltip = null;
+    }
     log.info('Timeline 정리됨');
   }
 }

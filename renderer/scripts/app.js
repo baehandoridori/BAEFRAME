@@ -9,6 +9,7 @@ import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { CommentManager } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
+import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 
 const log = createLogger('App');
 
@@ -213,17 +214,28 @@ async function initApp() {
     log.info('비디오 정보', { duration, totalFrames, fps });
   });
 
-  // 비디오 시간 업데이트
+  // 비디오 시간 업데이트 (일반 timeupdate - 타임라인 및 표시용)
   videoPlayer.addEventListener('timeupdate', (e) => {
     const { currentTime, currentFrame } = e.detail;
     timeline.setCurrentTime(currentTime);
     updateTimecodeDisplay();
 
-    // 드로잉 매니저에 현재 프레임 전달 (재생 중 프레임 변경 시)
-    drawingManager.setCurrentFrame(currentFrame);
-
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
+
+    // 재생 중이 아닐 때 (seeking)만 그리기 업데이트
+    // 재생 중에는 frameUpdate 이벤트에서 처리
+    if (!videoPlayer.isPlaying) {
+      drawingManager.renderFrame(currentFrame);
+    }
+  });
+
+  // 프레임 정확한 업데이트 (requestVideoFrameCallback 기반 - 그리기 동기화용)
+  videoPlayer.addEventListener('frameUpdate', (e) => {
+    const { frame, time } = e.detail;
+
+    // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
+    drawingManager.renderFrame(frame);
   });
 
   // 재생 아이콘 SVG
@@ -254,6 +266,17 @@ async function initApp() {
   // 타임라인에서 시간 이동 요청
   timeline.addEventListener('seek', (e) => {
     videoPlayer.seek(e.detail.time);
+    hideScrubPreview();
+  });
+
+  // 스크러빙 중 (드래그 중 프리뷰)
+  timeline.addEventListener('scrubbing', (e) => {
+    showScrubPreview(e.detail.time);
+  });
+
+  // 스크러빙 종료
+  timeline.addEventListener('scrubbingEnd', (e) => {
+    hideScrubPreview();
   });
 
   // 타임라인 마커 클릭
@@ -1064,6 +1087,9 @@ async function initApp() {
       // 비디오 트랙 업데이트
       elements.videoTrackClip.textContent = `📹 ${fileInfo.name}`;
 
+      // 썸네일 생성 시작
+      await generateThumbnails(filePath);
+
       // .bframe 파일 로드 시도
       const hasExistingData = await reviewDataManager.setVideoFile(filePath);
       if (hasExistingData) {
@@ -1085,6 +1111,120 @@ async function initApp() {
       trace.error(error);
       showToast('파일을 로드할 수 없습니다.', 'error');
     }
+  }
+
+  /**
+   * 썸네일 생성
+   */
+  async function generateThumbnails(filePath) {
+    const loadingOverlay = document.getElementById('videoLoadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+    const loadingProgress = document.getElementById('loadingProgressFill');
+
+    // 로딩 오버레이 표시
+    loadingOverlay?.classList.add('active');
+    loadingText.textContent = '썸네일 생성 중...';
+    loadingProgress.style.width = '0%';
+
+    try {
+      // 썸네일 생성기 초기화
+      const thumbnailGenerator = getThumbnailGenerator({
+        thumbnailWidth: 160,
+        thumbnailHeight: 90,
+        interval: 0.5, // 0.5초 간격
+        quality: 0.7
+      });
+
+      // 기존 썸네일 정리
+      thumbnailGenerator.clear();
+
+      // 진행률 이벤트 리스너
+      const onProgress = (e) => {
+        const { progress, current, total } = e.detail;
+        loadingProgress.style.width = `${progress * 100}%`;
+        loadingText.textContent = `썸네일 생성 중... (${current}/${total})`;
+      };
+
+      const onComplete = () => {
+        thumbnailGenerator.removeEventListener('progress', onProgress);
+        thumbnailGenerator.removeEventListener('complete', onComplete);
+
+        // 타임라인에 썸네일 생성기 연결
+        timeline.setThumbnailGenerator(thumbnailGenerator);
+
+        log.info('썸네일 생성 완료');
+      };
+
+      thumbnailGenerator.addEventListener('progress', onProgress);
+      thumbnailGenerator.addEventListener('complete', onComplete);
+
+      // 비디오 소스 경로 (file:// 프로토콜 추가)
+      const videoSrc = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
+
+      // 썸네일 생성 시작
+      await thumbnailGenerator.generate(videoSrc);
+
+    } catch (error) {
+      log.error('썸네일 생성 실패', error);
+      showToast('썸네일 생성에 실패했습니다.', 'warning');
+    } finally {
+      // 로딩 오버레이 숨김
+      loadingOverlay?.classList.remove('active');
+    }
+  }
+
+  // 스크러빙 프리뷰 오버레이 (동적 생성)
+  let scrubPreviewOverlay = null;
+
+  /**
+   * 스크러빙 프리뷰 표시
+   */
+  function showScrubPreview(time) {
+    const thumbnailGenerator = getThumbnailGenerator();
+    if (!thumbnailGenerator?.isReady) return;
+
+    const thumbnailUrl = thumbnailGenerator.getThumbnailUrlAt(time);
+    if (!thumbnailUrl) return;
+
+    // 프리뷰 오버레이 생성 (없으면)
+    if (!scrubPreviewOverlay) {
+      scrubPreviewOverlay = document.createElement('div');
+      scrubPreviewOverlay.className = 'scrub-preview-overlay';
+      scrubPreviewOverlay.innerHTML = `
+        <img class="scrub-preview-image" src="" alt="Preview">
+        <div class="scrub-preview-time"></div>
+      `;
+      elements.videoWrapper.appendChild(scrubPreviewOverlay);
+    }
+
+    // 이미지 및 시간 업데이트
+    const img = scrubPreviewOverlay.querySelector('.scrub-preview-image');
+    const timeDisplay = scrubPreviewOverlay.querySelector('.scrub-preview-time');
+
+    img.src = thumbnailUrl;
+    timeDisplay.textContent = formatTimecode(time, videoPlayer.fps);
+
+    // 표시
+    scrubPreviewOverlay.classList.add('active');
+  }
+
+  /**
+   * 스크러빙 프리뷰 숨김
+   */
+  function hideScrubPreview() {
+    scrubPreviewOverlay?.classList.remove('active');
+  }
+
+  /**
+   * 시간을 타임코드로 변환
+   */
+  function formatTimecode(seconds, fps = 24) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    const f = Math.floor((seconds % 1) * fps);
+
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
   }
 
   /**
