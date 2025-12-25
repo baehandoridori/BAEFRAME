@@ -1754,18 +1754,93 @@ async function initApp() {
 
   // ====== 사용자 설정 초기화 ======
   const userSettings = getUserSettings();
-  const userName = await userSettings.initialize();
+  let userName = await userSettings.initialize();
   log.info('사용자 이름 감지됨', { userName, source: userSettings.getUserSource() });
 
-  // 사용자 이름을 헤더에 표시 (옵션)
-  const userNameDisplay = document.getElementById('userNameDisplay');
-  if (userNameDisplay) {
-    userNameDisplay.textContent = userName;
-    userNameDisplay.title = `출처: ${userSettings.getUserSource()}`;
+  // 사용자 이름 업데이트 함수
+  function updateUserName(name) {
+    userName = name;
+    const userNameDisplay = document.getElementById('userNameDisplay');
+    if (userNameDisplay) {
+      userNameDisplay.textContent = name;
+      userNameDisplay.title = `출처: ${userSettings.getUserSource()}`;
+    }
+    commentManager.setAuthor(name);
   }
 
-  // 댓글 매니저에 사용자 이름 설정
-  commentManager.setAuthor(userName);
+  // 사용자 이름을 헤더에 표시 (옵션)
+  updateUserName(userName);
+
+  // ====== 사용자 설정 모달 ======
+  const userSettingsModal = document.getElementById('userSettingsModal');
+  const userNameInput = document.getElementById('userNameInput');
+  const btnCommentSettings = document.getElementById('btnCommentSettings');
+  const closeUserSettings = document.getElementById('closeUserSettings');
+  const cancelUserSettings = document.getElementById('cancelUserSettings');
+  const saveUserSettings = document.getElementById('saveUserSettings');
+
+  // 모달 열기
+  function openUserSettingsModal() {
+    userNameInput.value = userSettings.getUserName();
+    userSettingsModal.classList.add('active');
+    userNameInput.focus();
+    userNameInput.select();
+  }
+
+  // 모달 닫기
+  function closeUserSettingsModal() {
+    userSettingsModal.classList.remove('active');
+  }
+
+  // 저장
+  function saveUserName() {
+    const newName = userNameInput.value.trim();
+    if (newName) {
+      userSettings.setUserName(newName);
+      updateUserName(newName);
+      showToast(`이름이 "${newName}"(으)로 변경되었습니다.`, 'success');
+      closeUserSettingsModal();
+    } else {
+      showToast('이름을 입력해주세요.', 'warning');
+      userNameInput.focus();
+    }
+  }
+
+  // 설정 버튼 클릭
+  btnCommentSettings?.addEventListener('click', openUserSettingsModal);
+
+  // 닫기 버튼
+  closeUserSettings?.addEventListener('click', closeUserSettingsModal);
+  cancelUserSettings?.addEventListener('click', closeUserSettingsModal);
+
+  // 저장 버튼
+  saveUserSettings?.addEventListener('click', saveUserName);
+
+  // Enter 키로 저장
+  userNameInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveUserName();
+    } else if (e.key === 'Escape') {
+      closeUserSettingsModal();
+    }
+  });
+
+  // 오버레이 클릭으로 닫기
+  userSettingsModal?.addEventListener('click', (e) => {
+    if (e.target === userSettingsModal) {
+      closeUserSettingsModal();
+    }
+  });
+
+  // 익명 사용자인 경우 최초 한 번 이름 설정 요청
+  if (userSettings.getUserSource() === 'anonymous' || userName === '익명') {
+    // 약간의 딜레이 후 모달 열기
+    setTimeout(() => {
+      openUserSettingsModal();
+      showToast('댓글에 표시될 이름을 설정해주세요.', 'info');
+    }, 500);
+  }
 
   log.info('앱 초기화 완료');
 

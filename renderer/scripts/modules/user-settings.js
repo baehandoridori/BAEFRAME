@@ -56,44 +56,22 @@ export class UserSettings extends EventTarget {
   }
 
   /**
-   * 사용자 이름 초기화 (자동 감지 시도)
+   * 사용자 이름 초기화
+   * - 이미 수동으로 설정된 이름이 있으면 사용
+   * - 없으면 익명으로 설정 (모달에서 수동 입력 유도)
    */
   async initialize() {
-    // 이미 설정된 이름이 있으면 스킵
-    if (this.settings.userName && this.settings.userSource !== 'anonymous') {
+    // 이미 수동으로 설정된 이름이 있으면 사용
+    if (this.settings.userName && this.settings.userSource === 'manual') {
       log.info('기존 사용자 이름 사용', { userName: this.settings.userName });
       return this.settings.userName;
     }
 
-    // 1. Slack에서 사용자 정보 가져오기 시도
-    const slackUser = await this._tryGetSlackUser();
-    if (slackUser) {
-      this.settings.userName = slackUser.name;
-      this.settings.userSource = 'slack';
-      this.settings.slackUserId = slackUser.id;
-      this.settings.slackWorkspace = slackUser.workspace;
-      this._saveToStorage();
-      log.info('Slack에서 사용자 감지됨', { userName: slackUser.name });
-      this._emit('userDetected', { userName: slackUser.name, source: 'slack' });
-      return slackUser.name;
-    }
-
-    // 2. OS 사용자 이름 가져오기 시도
-    const osUser = await this._tryGetOSUser();
-    if (osUser) {
-      this.settings.userName = osUser;
-      this.settings.userSource = 'os';
-      this._saveToStorage();
-      log.info('OS에서 사용자 감지됨', { userName: osUser });
-      this._emit('userDetected', { userName: osUser, source: 'os' });
-      return osUser;
-    }
-
-    // 3. 익명으로 설정
+    // 익명으로 설정 (앱에서 모달을 통해 수동 입력 유도)
     this.settings.userName = '익명';
     this.settings.userSource = 'anonymous';
     this._saveToStorage();
-    log.info('익명 사용자로 설정됨');
+    log.info('익명 사용자로 설정됨 (수동 입력 필요)');
     this._emit('userDetected', { userName: '익명', source: 'anonymous' });
     return '익명';
   }
