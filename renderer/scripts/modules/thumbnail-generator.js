@@ -1,6 +1,10 @@
 /**
  * baeframe - Thumbnail Generator Module
  * 비디오 썸네일 사전 생성 및 캐싱
+ *
+ * 2단계 생성 방식:
+ * - 1단계: 빠른 스캔 (5초 간격) → 빠르게 UI 해제
+ * - 2단계: 백그라운드에서 세부 채움 (1초 간격)
  */
 
 import { createLogger } from '../logger.js';
@@ -14,16 +18,18 @@ export class ThumbnailGenerator extends EventTarget {
     // 설정
     this.thumbnailWidth = options.thumbnailWidth || 160;
     this.thumbnailHeight = options.thumbnailHeight || 90;
-    this.interval = options.interval || 1; // 초 단위 간격
-    this.quality = options.quality || 0.7; // JPEG 품질
+    this.quickInterval = options.quickInterval || 5; // 1단계: 빠른 스캔 간격 (초)
+    this.detailInterval = options.detailInterval || 1; // 2단계: 세부 간격 (초)
+    this.quality = options.quality || 0.6; // JPEG 품질 (약간 낮춤)
 
     // 상태
     this.isGenerating = false;
-    this.isReady = false;
+    this.isQuickReady = false; // 1단계 완료 여부
+    this.isFullReady = false;  // 2단계 완료 여부
     this.progress = 0;
-    this.thumbnails = []; // { time, dataUrl }
+    this.thumbnailMap = new Map(); // time -> dataUrl (빠른 검색용)
     this.duration = 0;
-    this.totalThumbnails = 0;
+    this.videoSrc = null;
 
     // 캔버스 (오프스크린)
     this.canvas = document.createElement('canvas');
@@ -34,81 +40,171 @@ export class ThumbnailGenerator extends EventTarget {
     // 비디오 요소 (숨김)
     this.video = null;
 
+    // 백그라운드 생성 제어
+    this.abortController = null;
+
     log.info('ThumbnailGenerator 초기화됨', {
       thumbnailSize: `${this.thumbnailWidth}x${this.thumbnailHeight}`,
-      interval: this.interval
+      quickInterval: this.quickInterval,
+      detailInterval: this.detailInterval
     });
   }
 
   /**
-   * 비디오에서 썸네일 생성 시작
+   * 비디오에서 썸네일 생성 시작 (2단계)
    */
   async generate(videoSrc) {
-    if (this.isGenerating) {
-      log.warn('이미 썸네일 생성 중');
-      return;
+    // 이전 작업 중단
+    if (this.abortController) {
+      this.abortController.abort();
     }
 
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
+
     this.isGenerating = true;
-    this.isReady = false;
+    this.isQuickReady = false;
+    this.isFullReady = false;
     this.progress = 0;
-    this.thumbnails = [];
+    this.thumbnailMap.clear();
+    this.videoSrc = videoSrc;
 
     this._emit('start');
 
     try {
-      // 별도의 비디오 요소 생성
+      // 비디오 요소 생성
       this.video = document.createElement('video');
       this.video.muted = true;
       this.video.preload = 'auto';
 
       // 비디오 로드
       await this._loadVideo(videoSrc);
-
       this.duration = this.video.duration;
-      this.totalThumbnails = Math.ceil(this.duration / this.interval);
 
-      log.info('썸네일 생성 시작', {
-        duration: this.duration,
-        totalThumbnails: this.totalThumbnails
-      });
+      // ===== 1단계: 빠른 스캔 =====
+      log.info('1단계: 빠른 스캔 시작', { interval: this.quickInterval });
+      await this._generatePhase1(signal);
 
-      // 썸네일 생성
-      for (let i = 0; i < this.totalThumbnails; i++) {
-        const time = i * this.interval;
+      if (signal.aborted) return;
 
-        // 해당 시간으로 seek
-        await this._seekTo(time);
-
-        // 프레임 캡처
-        const dataUrl = this._captureFrame();
-
-        this.thumbnails.push({
-          time,
-          index: i,
-          dataUrl
-        });
-
-        // 진행률 업데이트
-        this.progress = (i + 1) / this.totalThumbnails;
-        this._emit('progress', { progress: this.progress, current: i + 1, total: this.totalThumbnails });
-      }
-
-      this.isReady = true;
+      this.isQuickReady = true;
       this.isGenerating = false;
 
-      // 비디오 요소 정리
-      this.video.src = '';
-      this.video = null;
+      log.info('1단계 완료 - UI 사용 가능', { count: this.thumbnailMap.size });
+      this._emit('quickReady', { count: this.thumbnailMap.size });
 
-      log.info('썸네일 생성 완료', { count: this.thumbnails.length });
-      this._emit('complete', { thumbnails: this.thumbnails });
+      // ===== 2단계: 백그라운드에서 세부 채움 =====
+      // 약간의 딜레이 후 시작 (UI 반응성 확보)
+      await this._delay(100);
+
+      if (signal.aborted) return;
+
+      log.info('2단계: 세부 생성 시작 (백그라운드)', { interval: this.detailInterval });
+      await this._generatePhase2(signal);
+
+      if (signal.aborted) return;
+
+      this.isFullReady = true;
+
+      // 비디오 요소 정리
+      this._cleanupVideo();
+
+      log.info('모든 썸네일 생성 완료', { count: this.thumbnailMap.size });
+      this._emit('complete', { count: this.thumbnailMap.size });
 
     } catch (error) {
+      if (error.name === 'AbortError') {
+        log.info('썸네일 생성 중단됨');
+        return;
+      }
       log.error('썸네일 생성 실패', error);
       this.isGenerating = false;
       this._emit('error', { error });
     }
+  }
+
+  /**
+   * 1단계: 빠른 스캔 (큰 간격으로 전체 커버)
+   */
+  async _generatePhase1(signal) {
+    const totalQuick = Math.ceil(this.duration / this.quickInterval);
+
+    for (let i = 0; i < totalQuick; i++) {
+      if (signal.aborted) return;
+
+      const time = i * this.quickInterval;
+      await this._seekAndCapture(time);
+
+      // 진행률 (1단계는 0~80%)
+      this.progress = ((i + 1) / totalQuick) * 0.8;
+      this._emit('progress', {
+        progress: this.progress,
+        phase: 1,
+        current: i + 1,
+        total: totalQuick
+      });
+    }
+  }
+
+  /**
+   * 2단계: 세부 채움 (사이사이 채우기)
+   */
+  async _generatePhase2(signal) {
+    const timesToGenerate = [];
+
+    // 1단계에서 생성되지 않은 시간 수집
+    for (let time = 0; time < this.duration; time += this.detailInterval) {
+      const roundedTime = Math.round(time * 10) / 10;
+      if (!this.thumbnailMap.has(roundedTime)) {
+        timesToGenerate.push(roundedTime);
+      }
+    }
+
+    const total = timesToGenerate.length;
+    if (total === 0) {
+      this.progress = 1;
+      return;
+    }
+
+    // 배치 처리 (UI 블로킹 방지)
+    const batchSize = 5;
+    for (let i = 0; i < total; i++) {
+      if (signal.aborted) return;
+
+      const time = timesToGenerate[i];
+      await this._seekAndCapture(time);
+
+      // 진행률 (2단계는 80~100%)
+      this.progress = 0.8 + ((i + 1) / total) * 0.2;
+
+      // 배치마다 이벤트 발생 (빈번한 업데이트 방지)
+      if ((i + 1) % batchSize === 0 || i === total - 1) {
+        this._emit('progress', {
+          progress: this.progress,
+          phase: 2,
+          current: i + 1,
+          total
+        });
+        // UI 반응성을 위해 잠시 양보
+        await this._delay(0);
+      }
+    }
+  }
+
+  /**
+   * 특정 시간으로 seek하고 캡처
+   */
+  async _seekAndCapture(time) {
+    const roundedTime = Math.round(time * 10) / 10;
+
+    // 이미 있으면 스킵
+    if (this.thumbnailMap.has(roundedTime)) {
+      return;
+    }
+
+    await this._seekTo(time);
+    const dataUrl = this._captureFrame();
+    this.thumbnailMap.set(roundedTime, dataUrl);
   }
 
   /**
@@ -123,18 +219,14 @@ export class ThumbnailGenerator extends EventTarget {
   }
 
   /**
-   * 특정 시간으로 seek
+   * 특정 시간으로 seek (최적화)
    */
   _seekTo(time) {
     return new Promise((resolve) => {
       const onSeeked = () => {
         this.video.removeEventListener('seeked', onSeeked);
-        // 약간의 딜레이를 줘서 프레임이 완전히 렌더링되도록
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            resolve();
-          });
-        });
+        // 프레임 렌더링 대기 (1프레임만)
+        requestAnimationFrame(() => resolve());
       };
 
       this.video.addEventListener('seeked', onSeeked);
@@ -155,43 +247,69 @@ export class ThumbnailGenerator extends EventTarget {
   }
 
   /**
-   * 특정 시간의 썸네일 가져오기
+   * 딜레이 헬퍼
    */
-  getThumbnailAt(time) {
-    if (!this.isReady || this.thumbnails.length === 0) {
-      return null;
+  _delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 비디오 정리
+   */
+  _cleanupVideo() {
+    if (this.video) {
+      this.video.src = '';
+      this.video = null;
     }
-
-    // 가장 가까운 썸네일 찾기
-    const index = Math.min(
-      Math.floor(time / this.interval),
-      this.thumbnails.length - 1
-    );
-
-    return this.thumbnails[Math.max(0, index)];
   }
 
   /**
    * 특정 시간의 썸네일 dataUrl 가져오기
    */
   getThumbnailUrlAt(time) {
-    const thumbnail = this.getThumbnailAt(time);
-    return thumbnail ? thumbnail.dataUrl : null;
+    if (this.thumbnailMap.size === 0) {
+      return null;
+    }
+
+    // 정확한 시간 먼저 찾기
+    const roundedTime = Math.round(time * 10) / 10;
+    if (this.thumbnailMap.has(roundedTime)) {
+      return this.thumbnailMap.get(roundedTime);
+    }
+
+    // 없으면 가장 가까운 것 찾기
+    let closestTime = 0;
+    let minDiff = Infinity;
+
+    for (const t of this.thumbnailMap.keys()) {
+      const diff = Math.abs(t - time);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestTime = t;
+      }
+    }
+
+    return this.thumbnailMap.get(closestTime) || null;
   }
 
   /**
-   * 모든 썸네일 가져오기
+   * 준비 상태 확인
    */
-  getAllThumbnails() {
-    return this.thumbnails;
+  get isReady() {
+    return this.isQuickReady || this.isFullReady;
   }
 
   /**
    * 메모리 정리
    */
   clear() {
-    this.thumbnails = [];
-    this.isReady = false;
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this._cleanupVideo();
+    this.thumbnailMap.clear();
+    this.isQuickReady = false;
+    this.isFullReady = false;
     this.progress = 0;
     log.info('썸네일 캐시 정리됨');
   }

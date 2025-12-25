@@ -1127,12 +1127,13 @@ async function initApp() {
     loadingProgress.style.width = '0%';
 
     try {
-      // 썸네일 생성기 초기화
+      // 썸네일 생성기 초기화 (2단계 생성 방식)
       const thumbnailGenerator = getThumbnailGenerator({
         thumbnailWidth: 160,
         thumbnailHeight: 90,
-        interval: 0.5, // 0.5초 간격
-        quality: 0.7
+        quickInterval: 5,   // 1단계: 5초 간격 (빠른 스캔)
+        detailInterval: 1,  // 2단계: 1초 간격 (세부)
+        quality: 0.6
       });
 
       // 기존 썸네일 정리
@@ -1140,35 +1141,54 @@ async function initApp() {
 
       // 진행률 이벤트 리스너
       const onProgress = (e) => {
-        const { progress, current, total } = e.detail;
+        const { progress, phase, current, total } = e.detail;
         loadingProgress.style.width = `${progress * 100}%`;
-        loadingText.textContent = `썸네일 생성 중... (${current}/${total})`;
+
+        if (phase === 1) {
+          loadingText.textContent = `썸네일 빠른 생성 중... (${current}/${total})`;
+        } else {
+          // 2단계는 로딩 오버레이가 이미 해제된 상태
+          // 하지만 혹시 모르니 처리
+          loadingText.textContent = `썸네일 세부 생성 중... (${current}/${total})`;
+        }
       };
 
+      // 1단계 완료 시 (빠른 스캔 완료) - 즉시 로딩 해제
+      const onQuickReady = () => {
+        thumbnailGenerator.removeEventListener('quickReady', onQuickReady);
+
+        // 타임라인에 썸네일 생성기 연결 (1단계 완료 즉시)
+        timeline.setThumbnailGenerator(thumbnailGenerator);
+
+        // 로딩 오버레이 숨김
+        loadingOverlay?.classList.remove('active');
+
+        log.info('썸네일 1단계 완료 - UI 사용 가능');
+        showToast('미리보기 준비 완료! (세부 생성 중...)', 'success');
+      };
+
+      // 2단계 완료 시 (모든 세부 썸네일 생성 완료)
       const onComplete = () => {
         thumbnailGenerator.removeEventListener('progress', onProgress);
         thumbnailGenerator.removeEventListener('complete', onComplete);
 
-        // 타임라인에 썸네일 생성기 연결
-        timeline.setThumbnailGenerator(thumbnailGenerator);
-
-        log.info('썸네일 생성 완료');
+        log.info('썸네일 2단계 완료 - 모든 세부 생성 완료');
       };
 
       thumbnailGenerator.addEventListener('progress', onProgress);
+      thumbnailGenerator.addEventListener('quickReady', onQuickReady);
       thumbnailGenerator.addEventListener('complete', onComplete);
 
       // 비디오 소스 경로 (file:// 프로토콜 추가)
       const videoSrc = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
 
-      // 썸네일 생성 시작
-      await thumbnailGenerator.generate(videoSrc);
+      // 썸네일 생성 시작 (비동기, 완료 대기 안함)
+      thumbnailGenerator.generate(videoSrc);
 
     } catch (error) {
       log.error('썸네일 생성 실패', error);
       showToast('썸네일 생성에 실패했습니다.', 'warning');
-    } finally {
-      // 로딩 오버레이 숨김
+      // 실패 시에도 오버레이 숨김
       loadingOverlay?.classList.remove('active');
     }
   }
