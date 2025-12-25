@@ -226,7 +226,7 @@ async function initApp() {
     // 재생 중이 아닐 때 (seeking)만 그리기 업데이트
     // 재생 중에는 frameUpdate 이벤트에서 처리
     if (!videoPlayer.isPlaying) {
-      drawingManager.renderFrame(currentFrame);
+      drawingManager.setCurrentFrame(currentFrame);
     }
   });
 
@@ -235,7 +235,7 @@ async function initApp() {
     const { frame, time } = e.detail;
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
-    drawingManager.renderFrame(frame);
+    drawingManager.setCurrentFrame(frame);
   });
 
   // 재생 아이콘 SVG
