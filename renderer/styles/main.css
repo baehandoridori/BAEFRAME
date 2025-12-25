@@ -1526,6 +1526,69 @@ body {
   background: var(--success-bg);
 }
 
+/* Comment Edit Form */
+.comment-edit-form {
+  margin-top: 8px;
+}
+
+.comment-edit-textarea {
+  width: 100%;
+  padding: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 60px;
+  max-height: 200px;
+  outline: none;
+}
+
+.comment-edit-textarea:focus {
+  box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.2);
+}
+
+.comment-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+.comment-edit-save,
+.comment-edit-cancel {
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.comment-edit-save {
+  background: var(--accent-primary);
+  color: white;
+  border: none;
+}
+
+.comment-edit-save:hover {
+  background: var(--accent-hover);
+}
+
+.comment-edit-cancel {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.comment-edit-cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 /* New Comment */
 .new-comment {
   padding: 16px;
@@ -2060,6 +2123,12 @@ body {
   background: var(--error-bg);
 }
 
+.comment-action-btn.edit-btn:hover {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  background: rgba(var(--accent-primary-rgb), 0.1);
+}
+
 .comment-empty {
   display: flex;
   flex-direction: column;
@@ -2181,6 +2250,7 @@ body {
 
 .comment-marker-input {
   width: 100%;
+  min-width: 180px;
   padding: 8px 10px;
   background: var(--bg-primary);
   border: 1px solid var(--border-subtle);
@@ -2189,10 +2259,18 @@ body {
   font-family: inherit;
   font-size: 13px;
   outline: none;
+  resize: none;
+  line-height: 1.4;
+  overflow-y: auto;
+  max-height: 150px;
 }
 
 .comment-marker-input:focus {
   border-color: var(--accent-primary);
+}
+
+.comment-marker-input::placeholder {
+  color: var(--text-tertiary);
 }
 
 .comment-marker-input-hint {

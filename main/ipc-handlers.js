@@ -210,14 +210,18 @@ async function getSlackUserInfo() {
           for (const team of teams) {
             if (team.user_id) {
               // 표시 이름 우선순위: real_name > display_name > profile.real_name > name
-              const displayName =
+              const rawName =
                 team.real_name ||
                 team.display_name ||
                 team.profile?.real_name ||
                 team.profile?.display_name ||
                 team.name;
 
-              if (displayName) {
+              if (rawName) {
+                // 한글만 추출 (공백, 특수문자, 이모지 제외)
+                const koreanOnly = rawName.match(/[\uAC00-\uD7A3]/g);
+                const displayName = koreanOnly ? koreanOnly.join('') : rawName;
+
                 return {
                   id: team.user_id,
                   name: displayName,
@@ -233,13 +237,17 @@ async function getSlackUserInfo() {
         if (data.users) {
           const users = Object.values(data.users);
           for (const user of users) {
-            const displayName =
+            const rawName =
               user.real_name ||
               user.display_name ||
               user.profile?.real_name ||
               user.profile?.display_name;
 
-            if (displayName) {
+            if (rawName) {
+              // 한글만 추출
+              const koreanOnly = rawName.match(/[\uAC00-\uD7A3]/g);
+              const displayName = koreanOnly ? koreanOnly.join('') : rawName;
+
               return {
                 id: user.id || user.user_id,
                 name: displayName,

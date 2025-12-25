@@ -1131,26 +1131,35 @@ async function initApp() {
     `;
     markerEl.dataset.markerId = marker.id;
 
-    // 인라인 입력창 생성
+    // 인라인 입력창 생성 (textarea로 변경 - 여러 줄 지원)
     const inputWrapper = document.createElement('div');
     inputWrapper.className = 'comment-marker-input-wrapper';
     inputWrapper.innerHTML = `
-      <input type="text" class="comment-marker-input" placeholder="댓글 입력..." autofocus />
-      <div class="comment-marker-input-hint">Enter로 확인, Esc로 취소</div>
+      <textarea class="comment-marker-input" placeholder="댓글 입력..." rows="1"></textarea>
+      <div class="comment-marker-input-hint">Enter 확인 · Shift+Enter 줄바꿈 · Esc 취소</div>
     `;
 
     markerEl.appendChild(inputWrapper);
     markerContainer.appendChild(markerEl);
 
     // 입력창 포커스
-    const input = inputWrapper.querySelector('input');
-    setTimeout(() => input?.focus(), 50);
+    const textarea = inputWrapper.querySelector('textarea');
+    setTimeout(() => textarea?.focus(), 50);
 
-    // Enter로 확정
-    input?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+    // 자동 높이 조절 함수
+    const autoResize = () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+    };
+
+    // 입력 시 자동 크기 조절
+    textarea?.addEventListener('input', autoResize);
+
+    // Enter로 확정, Shift+Enter로 줄바꿈
+    textarea?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        const text = input.value.trim();
+        const text = textarea.value.trim();
         commentManager.confirmMarker(text);
       } else if (e.key === 'Escape') {
         e.preventDefault();
@@ -1159,7 +1168,7 @@ async function initApp() {
     });
 
     // 포커스 잃으면 취소 (다른 곳 클릭)
-    input?.addEventListener('blur', () => {
+    textarea?.addEventListener('blur', () => {
       setTimeout(() => {
         if (commentManager.pendingMarker) {
           commentManager.setCommentMode(false);
@@ -1372,7 +1381,17 @@ async function initApp() {
         <div class="comment-content">
           <p class="comment-text">${escapeHtml(marker.text)}</p>
         </div>
+        <div class="comment-edit-form" style="display: none;">
+          <textarea class="comment-edit-textarea" rows="3">${escapeHtml(marker.text)}</textarea>
+          <div class="comment-edit-actions">
+            <button class="comment-edit-save">저장</button>
+            <button class="comment-edit-cancel">취소</button>
+          </div>
+        </div>
         <div class="comment-actions">
+          <button class="comment-action-btn edit-btn" title="수정">
+            ✏️
+          </button>
           <button class="comment-action-btn resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
             ${marker.resolved ? '↩️ 미해결' : '✓ 해결'}
           </button>
@@ -1407,6 +1426,60 @@ async function initApp() {
         if (confirm('댓글을 삭제하시겠습니까?')) {
           commentManager.deleteMarker(item.dataset.markerId);
           showToast('댓글이 삭제되었습니다.', 'info');
+        }
+      });
+
+      // 수정 버튼
+      const editBtn = item.querySelector('.edit-btn');
+      const contentEl = item.querySelector('.comment-content');
+      const editFormEl = item.querySelector('.comment-edit-form');
+      const editTextarea = item.querySelector('.comment-edit-textarea');
+      const actionsEl = item.querySelector('.comment-actions');
+
+      editBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // 수정 모드 진입
+        contentEl.style.display = 'none';
+        actionsEl.style.display = 'none';
+        editFormEl.style.display = 'block';
+        editTextarea.focus();
+        editTextarea.select();
+      });
+
+      // 수정 저장
+      item.querySelector('.comment-edit-save')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const newText = editTextarea.value.trim();
+        if (newText) {
+          commentManager.updateMarker(item.dataset.markerId, { text: newText });
+          showToast('댓글이 수정되었습니다.', 'success');
+        }
+      });
+
+      // 수정 취소
+      item.querySelector('.comment-edit-cancel')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // 원래 상태로 복원
+        contentEl.style.display = 'block';
+        actionsEl.style.display = 'flex';
+        editFormEl.style.display = 'none';
+        // 원래 텍스트로 복원
+        const marker = commentManager.getMarker(item.dataset.markerId);
+        if (marker) {
+          editTextarea.value = marker.text;
+        }
+      });
+
+      // Textarea에서 Escape로 취소
+      editTextarea?.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          item.querySelector('.comment-edit-cancel').click();
+        } else if (e.key === 'Enter' && e.ctrlKey) {
+          // Ctrl+Enter로 저장
+          e.stopPropagation();
+          e.preventDefault();
+          item.querySelector('.comment-edit-save').click();
         }
       });
     });
