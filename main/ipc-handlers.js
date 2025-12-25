@@ -208,6 +208,18 @@ async function getSlackUserInfo() {
         if (data.teams) {
           const teams = Object.values(data.teams);
           for (const team of teams) {
+            // 디버그: team 객체의 모든 이름 관련 필드 출력
+            log.info('Slack team 데이터 발견', {
+              user_id: team.user_id,
+              name: team.name,
+              real_name: team.real_name,
+              display_name: team.display_name,
+              profile_real_name: team.profile?.real_name,
+              profile_display_name: team.profile?.display_name,
+              // team 객체의 키들 확인
+              teamKeys: Object.keys(team).slice(0, 20)
+            });
+
             if (team.user_id) {
               // 표시 이름 우선순위: real_name > display_name > profile.real_name > name
               const rawName =
@@ -217,10 +229,14 @@ async function getSlackUserInfo() {
                 team.profile?.display_name ||
                 team.name;
 
+              log.info('Slack 이름 추출', { rawName });
+
               if (rawName) {
                 // 한글만 추출 (공백, 특수문자, 이모지 제외)
                 const koreanOnly = rawName.match(/[\uAC00-\uD7A3]/g);
                 const displayName = koreanOnly ? koreanOnly.join('') : rawName;
+
+                log.info('Slack 최종 이름', { koreanOnly, displayName });
 
                 return {
                   id: team.user_id,
