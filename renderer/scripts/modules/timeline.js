@@ -1109,8 +1109,10 @@ export class Timeline extends EventTarget {
     `;
     document.body.appendChild(this.thumbnailTooltip);
 
-    // 타임라인 트랙 영역 마우스 이벤트
-    this.timelineTracks?.addEventListener('mousemove', (e) => {
+    // 영상 레이어(비디오 트랙 클립)에만 썸네일 표시
+    const videoTrackClip = document.getElementById('videoTrackClip');
+
+    videoTrackClip?.addEventListener('mousemove', (e) => {
       if (this.isDraggingPlayhead || this.isDraggingSeeking || this.isPanning) {
         this._hideThumbnailTooltip();
         return;
@@ -1118,7 +1120,7 @@ export class Timeline extends EventTarget {
       this._showThumbnailAtPosition(e);
     });
 
-    this.timelineTracks?.addEventListener('mouseleave', () => {
+    videoTrackClip?.addEventListener('mouseleave', () => {
       this._hideThumbnailTooltip();
     });
   }
