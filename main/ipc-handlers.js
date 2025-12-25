@@ -208,11 +208,43 @@ async function getSlackUserInfo() {
         if (data.teams) {
           const teams = Object.values(data.teams);
           for (const team of teams) {
-            if (team.user_id && team.name) {
+            if (team.user_id) {
+              // 표시 이름 우선순위: real_name > display_name > profile.real_name > name
+              const displayName =
+                team.real_name ||
+                team.display_name ||
+                team.profile?.real_name ||
+                team.profile?.display_name ||
+                team.name;
+
+              if (displayName) {
+                return {
+                  id: team.user_id,
+                  name: displayName,
+                  username: team.name, // 영어 사용자명 (백업용)
+                  workspace: team.team_name || team.team_id
+                };
+              }
+            }
+          }
+        }
+
+        // 다른 구조 시도: users 객체가 있는 경우
+        if (data.users) {
+          const users = Object.values(data.users);
+          for (const user of users) {
+            const displayName =
+              user.real_name ||
+              user.display_name ||
+              user.profile?.real_name ||
+              user.profile?.display_name;
+
+            if (displayName) {
               return {
-                id: team.user_id,
-                name: team.name,
-                workspace: team.team_name || team.team_id
+                id: user.id || user.user_id,
+                name: displayName,
+                username: user.name,
+                workspace: null
               };
             }
           }
