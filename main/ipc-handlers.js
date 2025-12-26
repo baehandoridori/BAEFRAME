@@ -2,7 +2,7 @@
  * baeframe - IPC 핸들러 등록
  */
 
-const { ipcMain, dialog, app, clipboard } = require('electron');
+const { ipcMain, dialog, app, clipboard, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { createLogger } = require('./logger');
@@ -125,6 +125,34 @@ function setupIpcHandlers() {
     clipboard.writeText(text);
     log.info('클립보드에 복사됨', { text });
     return { success: true };
+  });
+
+  // ====== 폴더/탐색기 관련 ======
+
+  // 폴더 열기 (탐색기에서 폴더 열기)
+  ipcMain.handle('folder:open', async (event, folderPath) => {
+    const trace = log.trace('folder:open');
+    try {
+      await shell.openPath(folderPath);
+      trace.end({ folderPath });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  // 파일 위치 보기 (탐색기에서 파일 선택된 상태로 열기)
+  ipcMain.handle('folder:show-item', async (event, filePath) => {
+    const trace = log.trace('folder:show-item');
+    try {
+      shell.showItemInFolder(filePath);
+      trace.end({ filePath });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      throw error;
+    }
   });
 
   // ====== 사용자 정보 관련 ======

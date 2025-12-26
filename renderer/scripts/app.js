@@ -30,6 +30,8 @@ async function initApp() {
     versionBadge: document.getElementById('versionBadge'),
     btnVersionHistory: document.getElementById('btnVersionHistory'),
     btnCopyLink: document.getElementById('btnCopyLink'),
+    btnOpenFolder: document.getElementById('btnOpenFolder'),
+    btnOpenOther: document.getElementById('btnOpenOther'),
 
     // 뷰어
     dropZone: document.getElementById('dropZone'),
@@ -546,6 +548,37 @@ async function initApp() {
     await window.electronAPI.copyToClipboard(windowsPath);
     showToast('.bframe 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
     log.info('경로 복사됨', { path: windowsPath });
+  });
+
+  // 폴더 열기 (현재 파일이 있는 폴더를 탐색기에서 열기)
+  elements.btnOpenFolder.addEventListener('click', async () => {
+    const videoPath = reviewDataManager.getVideoPath();
+    if (!videoPath) {
+      showToast('먼저 파일을 열어주세요.', 'warn');
+      return;
+    }
+
+    try {
+      await window.electronAPI.showInFolder(videoPath);
+      log.info('폴더 열기', { path: videoPath });
+    } catch (error) {
+      log.error('폴더 열기 실패', error);
+      showToast('폴더를 열 수 없습니다.', 'error');
+    }
+  });
+
+  // 다른 파일 열기
+  elements.btnOpenOther.addEventListener('click', async () => {
+    log.info('다른 파일 열기 버튼 클릭');
+    try {
+      const result = await window.electronAPI.openFileDialog();
+      if (!result.canceled && result.filePaths.length > 0) {
+        await loadVideoFile(result.filePaths[0]);
+      }
+    } catch (error) {
+      log.error('다른 파일 열기 실패', error);
+      showToast('파일을 열 수 없습니다.', 'error');
+    }
   });
 
   // 단축키 메뉴 토글
@@ -1079,6 +1112,10 @@ async function initApp() {
       elements.fileName.textContent = fileInfo.name;
       elements.filePath.textContent = fileInfo.dir;
       elements.dropZone.classList.add('hidden');
+
+      // 폴더 열기 / 다른 파일 열기 버튼 표시
+      elements.btnOpenFolder.style.display = 'inline-flex';
+      elements.btnOpenOther.style.display = 'inline-flex';
 
       // 버전 감지
       const versionMatch = fileInfo.name.match(/_v(\d+)/i);
