@@ -3,9 +3,8 @@
 ; baeframe:// 프로토콜 및 .bframe 파일을 BAEFRAME 앱으로 여는 스크립트
 ;
 ; 사용법:
-; 1. 이 스크립트를 BAEFRAME 폴더에 배치
-; 2. 작업도우미가 처음 실행될 때 레지스트리에 등록됨
-; 3. baeframe://... 링크 클릭 시 이 스크립트가 실행됨
+; 1. 이 스크립트를 더블클릭하면 baeframe:// 프로토콜이 자동 등록됩니다
+; 2. 등록 후 baeframe://... 링크 클릭 시 BAEFRAME 앱이 열립니다
 ; ==========================================================================
 #NoEnv
 #SingleInstance Force
@@ -25,15 +24,12 @@ BAEFRAME_PATHS.Push("G:\공유 드라이브\개인작업일지 배한솔\BAEFRAM
 ; 명령줄 인자 받기 (baeframe://G:/경로/파일.bframe 또는 G:\경로\파일.bframe)
 fullArg := A_Args[1]
 
-; ─────────────────────────────────────────────
-; [디버그] 핸들러가 어떤 인자를 받았는지 확인
-; 문제 해결 후 이 줄을 주석 처리하세요
-; ─────────────────────────────────────────────
-; MsgBox, 64, BAEFRAME 디버그, 받은 인자: %fullArg%`n`n스크립트 위치: %A_ScriptDir%
-
+; ═══════════════════════════════════════════════════════════════════════════
+; 인자가 없으면 → 프로토콜 자가 등록 모드
+; ═══════════════════════════════════════════════════════════════════════════
 if (fullArg = "")
 {
-    MsgBox, 48, BAEFRAME, 파일 경로가 전달되지 않았습니다.
+    RegisterBaeframeProtocol()
     ExitApp
 }
 
@@ -206,4 +202,33 @@ Utf8BytesToChar(bytes) {
     }
 
     return ""
+}
+
+; ==========================================================================
+; baeframe:// 프로토콜 자가 등록 함수
+; 이 스크립트를 더블클릭하면 실행됨
+; ==========================================================================
+RegisterBaeframeProtocol() {
+    ; 이 스크립트 자체의 경로
+    handlerPath := A_ScriptFullPath
+
+    ; AutoHotkey 실행 파일 경로
+    ahkExePath := A_AhkPath
+    if (ahkExePath = "") {
+        ahkExePath := "C:\Program Files\AutoHotkey\AutoHotkey.exe"
+    }
+
+    ; 레지스트리 등록
+    try {
+        ; HKEY_CURRENT_USER에 등록 (관리자 권한 불필요)
+        RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes\baeframe,, URL:BAEFRAME Protocol
+        RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes\baeframe, URL Protocol,
+
+        commandValue := """" . ahkExePath . """ """ . handlerPath . """ ""%1"""
+        RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes\baeframe\shell\open\command,, %commandValue%
+
+        MsgBox, 64, BAEFRAME, baeframe:// 프로토콜이 등록되었습니다!`n`n이제 Slack에서 baeframe:// 링크를 클릭하면 BAEFRAME이 열립니다.`n`n핸들러 경로:`n%handlerPath%
+    } catch e {
+        MsgBox, 48, BAEFRAME, 프로토콜 등록 실패`n`n오류: %e%
+    }
 }
