@@ -10,6 +10,11 @@
 #SingleInstance Off  ; 여러 인스턴스 허용 (링크 여러 번 클릭 가능)
 SetWorkingDir %A_ScriptDir%
 
+; ─────────────────────────────────────────────
+; [디버그] 스크립트가 호출되었는지 확인
+; ─────────────────────────────────────────────
+TrayTip, BAEFRAME, 프로토콜 핸들러 호출됨, 1
+
 ; ╔═══════════════════════════════════════════════════════════════════════════╗
 ; ║  ★★★ BAEFRAME 앱 경로 설정 ★★★                                          ║
 ; ║                                                                           ║
@@ -100,7 +105,10 @@ baeframeExe := baeframeDir . "\BAEFRAME.exe"
 if FileExist(baeframeExe)
 {
     ; 빌드된 exe가 있으면 실행
-    Run, "%baeframeExe%" "%path%"
+    TrayTip, BAEFRAME, BAEFRAME.exe 실행 중..., 1
+    Run, "%baeframeExe%" "%path%",, UseErrorLevel
+    if (ErrorLevel = "ERROR")
+        MsgBox, 48, BAEFRAME, BAEFRAME.exe 실행 실패`n`n경로: %baeframeExe%
     ExitApp
 }
 
@@ -110,7 +118,10 @@ packageJson := baeframeDir . "\package.json"
 if FileExist(packageJson)
 {
     ; 개발 모드로 실행 (npm start)
-    Run, cmd /c "cd /d "%baeframeDir%" && npm start -- "%path%"",, Hide
+    TrayTip, BAEFRAME, 개발 모드로 실행 중..., 1
+    Run, cmd /c "cd /d "%baeframeDir%" && npm start -- "%path%"",, Hide UseErrorLevel
+    if (ErrorLevel = "ERROR")
+        MsgBox, 48, BAEFRAME, npm start 실행 실패`n`n경로: %baeframeDir%
     ExitApp
 }
 
