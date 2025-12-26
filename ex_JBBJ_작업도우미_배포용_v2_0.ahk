@@ -1313,27 +1313,6 @@ ClipboardPathConverter(clipType) {
     if (SubStr(clipText, 1, 7) = "jbbj://")
         return
 
-    ; ─────────────────────────────────────────────
-    ; [baeframe:// 프로토콜 감지] BAEFRAME 앱 링크
-    ; ─────────────────────────────────────────────
-    if (SubStr(clipText, 1, 11) = "baeframe://")
-    {
-        ; baeframe://G:/경로/파일.bframe 에서 경로 추출
-        filePath := SubStr(clipText, 12)  ; "G:/경로/파일.bframe"
-
-        ; 슬래시를 백슬래시로 변환 (Windows 경로 형식으로 표시)
-        displayPath := StrReplace(filePath, "/", "\")
-
-        ; 전역 변수에 저장 (Slack 하이퍼링크용)
-        g_LastOriginalPath := displayPath   ; "G:\경로\파일.bframe" (전체 경로)
-        g_LastJbbjLink := clipText          ; "baeframe://..." (링크)
-
-        ; 툴팁 표시
-        ToolTip, 🎬 BAEFRAME 링크 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
-        SetTimer, RemoveToolTip, -2500
-        return
-    }
-
     ; G:\ ~ Z:\ 드라이브 경로인지 확인 (공유 드라이브 포함)
     if RegExMatch(clipText, "i)^[G-Z]:\\")
     {
@@ -1345,17 +1324,38 @@ ClipboardPathConverter(clipType) {
         ; 백슬래시를 슬래시로 변환
         urlPath := StrReplace(cleanPath, "\", "/")
 
-        ; jbbj:// 링크 생성
-        jbbjLink := "jbbj://open/" . urlPath
+        ; ─────────────────────────────────────────────
+        ; .bframe 파일이면 baeframe:// 링크 생성
+        ; 그 외는 jbbj://open/ 링크 생성
+        ; ─────────────────────────────────────────────
+        SplitPath, cleanPath,,, ext
+        if (ext = "bframe")
+        {
+            ; baeframe:// 링크 생성 (BAEFRAME 앱용)
+            protocolLink := "baeframe://" . urlPath
 
-        ; 전역 변수에 저장 (Slack 하이퍼링크용)
-        g_LastOriginalPath := cleanPath
-        g_LastJbbjLink := jbbjLink
+            ; 전역 변수에 저장 (Slack 하이퍼링크용)
+            g_LastOriginalPath := cleanPath
+            g_LastJbbjLink := protocolLink
 
-        ; 클립보드는 원본 경로 유지 (변환하지 않음)
-        ; 짧은 툴팁으로 안내
-        ToolTip, 📎 경로 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
-        SetTimer, RemoveToolTip, -2500
+            ; 툴팁 표시
+            ToolTip, 🎬 BAEFRAME 경로 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
+            SetTimer, RemoveToolTip, -2500
+        }
+        else
+        {
+            ; jbbj:// 링크 생성 (일반 파일/폴더용)
+            jbbjLink := "jbbj://open/" . urlPath
+
+            ; 전역 변수에 저장 (Slack 하이퍼링크용)
+            g_LastOriginalPath := cleanPath
+            g_LastJbbjLink := jbbjLink
+
+            ; 클립보드는 원본 경로 유지 (변환하지 않음)
+            ; 짧은 툴팁으로 안내
+            ToolTip, 📎 경로 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
+            SetTimer, RemoveToolTip, -2500
+        }
     }
 }
 

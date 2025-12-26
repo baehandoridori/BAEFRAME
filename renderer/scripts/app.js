@@ -531,7 +531,8 @@ async function initApp() {
     commentManager.startMarkerCreation(x, y);
   });
 
-  // 링크 복사 (.bframe 파일 경로 - baeframe:// 프로토콜 사용)
+  // 링크 복사 (.bframe 파일 경로 - JBBJ 방식과 동일)
+  // 원시 경로를 복사하면 AutoHotkey가 baeframe:// 링크로 변환
   elements.btnCopyLink.addEventListener('click', async () => {
     const bframePath = reviewDataManager.getBframePath();
     if (!bframePath) {
@@ -539,14 +540,12 @@ async function initApp() {
       return;
     }
 
-    // 경로를 슬래시로 통일
-    const normalizedPath = bframePath.replace(/\\/g, '/');
-    // baeframe:// 형식으로 생성 (BAEFRAME 앱이 직접 처리)
-    const link = `baeframe://${normalizedPath}`;
+    // Windows 경로 형식으로 통일 (백슬래시 사용)
+    const windowsPath = bframePath.replace(/\//g, '\\');
 
-    await window.electronAPI.copyToClipboard(link);
-    showToast('BAEFRAME 링크가 복사되었습니다!', 'success');
-    log.info('링크 복사됨', { link });
+    await window.electronAPI.copyToClipboard(windowsPath);
+    showToast('.bframe 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
+    log.info('경로 복사됨', { path: windowsPath });
   });
 
   // 단축키 메뉴 토글
