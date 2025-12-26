@@ -561,8 +561,10 @@ async function initApp() {
     try {
       // Windows 경로 형식으로 변환 (백슬래시)
       const windowsPath = videoPath.replace(/\//g, '\\');
-      await window.electronAPI.showInFolder(windowsPath);
-      log.info('파일 경로 열기', { path: windowsPath });
+      // 폴더 경로 추출
+      const folderPath = windowsPath.substring(0, windowsPath.lastIndexOf('\\'));
+      await window.electronAPI.openFolder(folderPath);
+      log.info('파일 경로 열기', { path: folderPath });
     } catch (error) {
       log.error('파일 경로 열기 실패', error);
       showToast('경로를 열 수 없습니다.', 'error');
