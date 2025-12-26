@@ -573,7 +573,7 @@ async function initApp() {
     try {
       const result = await window.electronAPI.openFileDialog();
       if (!result.canceled && result.filePaths.length > 0) {
-        await loadVideoFile(result.filePaths[0]);
+        await loadVideo(result.filePaths[0]);
       }
     } catch (error) {
       log.error('다른 파일 열기 실패', error);
@@ -1114,8 +1114,8 @@ async function initApp() {
       elements.dropZone.classList.add('hidden');
 
       // 폴더 열기 / 다른 파일 열기 버튼 표시
-      elements.btnOpenFolder.style.display = 'inline-flex';
-      elements.btnOpenOther.style.display = 'inline-flex';
+      elements.btnOpenFolder.style.display = 'flex';
+      elements.btnOpenOther.style.display = 'flex';
 
       // 버전 감지
       const versionMatch = fileInfo.name.match(/_v(\d+)/i);
