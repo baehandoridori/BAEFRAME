@@ -531,15 +531,20 @@ async function initApp() {
     commentManager.startMarkerCreation(x, y);
   });
 
-  // 링크 복사
+  // 링크 복사 (.bframe 파일 경로)
   elements.btnCopyLink.addEventListener('click', async () => {
-    if (!state.currentFile) {
+    const bframePath = reviewDataManager.getBframePath();
+    if (!bframePath) {
       showToast('먼저 파일을 열어주세요.', 'warn');
       return;
     }
-    const link = `baeframe://${state.currentFile}`;
+
+    // 경로를 슬래시로 통일
+    const normalizedPath = bframePath.replace(/\\/g, '/');
+    const link = `baeframe://${normalizedPath}`;
+
     await window.electronAPI.copyToClipboard(link);
-    showToast('링크가 복사되었습니다!', 'success');
+    showToast('BAEFRAME 링크가 복사되었습니다!', 'success');
     log.info('링크 복사됨', { link });
   });
 
