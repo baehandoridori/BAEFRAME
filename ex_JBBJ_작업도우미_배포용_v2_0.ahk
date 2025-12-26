@@ -110,6 +110,9 @@ InitializePaths()
 ; jbbj:// 프로토콜 등록 확인 및 자동 등록
 CheckAndRegisterProtocol()
 
+; baeframe:// 프로토콜 등록 확인 및 자동 등록
+CheckAndRegisterBaeframeProtocol()
+
 ; 클립보드 변환 핸들러 등록 (G:\ 경로 → jbbj:// 링크)
 OnClipboardChange("ClipboardPathConverter")
 
@@ -1225,6 +1228,59 @@ CheckAndRegisterProtocol() {
 
             commandValue := """" . ahkExePath . """ """ . handlerPath . """ ""%1"""
             RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes\jbbj\shell\open\command,, %commandValue%
+        }
+    }
+}
+
+; --------------------------------------------------------------------------
+; [baeframe:// 프로토콜 등록 확인 및 자동 등록]
+; BAEFRAME 앱용 프로토콜 핸들러 등록
+; --------------------------------------------------------------------------
+CheckAndRegisterBaeframeProtocol() {
+    ; 레지스트리에서 baeframe 프로토콜 확인
+    RegRead, existingValue, HKEY_CLASSES_ROOT, baeframe, URL Protocol
+
+    ; 이미 등록되어 있으면 스킵
+    if (!ErrorLevel) {
+        return
+    }
+
+    ; BAEFRAME 프로토콜 핸들러 경로 (G드라이브 공유폴더)
+    handlerPath := "G:\공유 자료실\BAEFRAME\EX_baeframe_protocol_handler.ahk"
+
+    ; 핸들러 파일 존재 확인
+    if !FileExist(handlerPath) {
+        return  ; 핸들러 없으면 조용히 스킵
+    }
+
+    ; AutoHotkey 실행 파일 경로 찾기
+    ahkExePath := A_AhkPath
+    if (ahkExePath = "") {
+        ahkExePath := "C:\Program Files\AutoHotkey\AutoHotkey.exe"
+    }
+
+    ; 레지스트리 등록 시도 (관리자 권한 필요할 수 있음)
+    try {
+        ; HKEY_CLASSES_ROOT\baeframe 키 생성
+        RegWrite, REG_SZ, HKEY_CLASSES_ROOT, baeframe,, URL:BAEFRAME Protocol
+        RegWrite, REG_SZ, HKEY_CLASSES_ROOT, baeframe, URL Protocol,
+
+        ; shell\open\command 키 생성
+        commandValue := """" . ahkExePath . """ """ . handlerPath . """ ""%1"""
+        RegWrite, REG_SZ, HKEY_CLASSES_ROOT, baeframe\shell\open\command,, %commandValue%
+
+        ; 성공 시 알림
+        TrayTip, BAEFRAME, baeframe:// 프로토콜이 등록되었습니다., 2, 1
+    } catch {
+        ; 관리자 권한이 없으면 HKEY_CURRENT_USER에 등록 시도
+        try {
+            RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes, baeframe,, URL:BAEFRAME Protocol
+            RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes, baeframe, URL Protocol,
+
+            commandValue := """" . ahkExePath . """ """ . handlerPath . """ ""%1"""
+            RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes\baeframe\shell\open\command,, %commandValue%
+
+            TrayTip, BAEFRAME, baeframe:// 프로토콜이 등록되었습니다., 2, 1
         }
     }
 }
