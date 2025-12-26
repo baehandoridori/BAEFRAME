@@ -1253,30 +1253,28 @@ ClipboardPathConverter(clipType) {
     if (clipText = "")
         return
 
-    ; ─────────────────────────────────────────────
-    ; [jbbj:// 링크 감지] - .bframe 파일이면 BAEFRAME 링크로 처리
-    ; ─────────────────────────────────────────────
+    ; 이미 jbbj:// 링크면 스킵
     if (SubStr(clipText, 1, 7) = "jbbj://")
+        return
+
+    ; ─────────────────────────────────────────────
+    ; [baeframe:// 프로토콜 감지] BAEFRAME 앱 링크
+    ; ─────────────────────────────────────────────
+    if (SubStr(clipText, 1, 11) = "baeframe://")
     {
-        ; .bframe 파일인지 확인
-        if (InStr(clipText, ".bframe"))
-        {
-            ; jbbj://open/G:/경로/파일.bframe 에서 경로 추출
-            filePath := RegExReplace(clipText, "^jbbj://open/", "")
-            filePath := RegExReplace(filePath, "^jbbj://", "")
+        ; baeframe://G:/경로/파일.bframe 에서 경로 추출
+        filePath := SubStr(clipText, 12)  ; "G:/경로/파일.bframe"
 
-            ; 파일명만 추출 (표시용)
-            SplitPath, filePath, fileName
+        ; 파일명만 추출 (표시용)
+        SplitPath, filePath, fileName
 
-            ; 전역 변수에 저장 (Slack 하이퍼링크용)
-            g_LastOriginalPath := fileName      ; "파일.bframe" (표시될 텍스트)
-            g_LastJbbjLink := clipText          ; "jbbj://open/..." (링크)
+        ; 전역 변수에 저장 (Slack 하이퍼링크용)
+        g_LastOriginalPath := fileName      ; "파일.bframe" (표시될 텍스트)
+        g_LastJbbjLink := clipText          ; "baeframe://..." (링크)
 
-            ; 툴팁 표시
-            ToolTip, 🎬 BAEFRAME 링크 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
-            SetTimer, RemoveToolTip, -2500
-        }
-        ; .bframe 아닌 jbbj:// 링크는 스킵 (이미 처리된 것)
+        ; 툴팁 표시
+        ToolTip, 🎬 BAEFRAME 링크 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
+        SetTimer, RemoveToolTip, -2500
         return
     }
 
