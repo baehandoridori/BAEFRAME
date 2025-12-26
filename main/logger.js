@@ -20,7 +20,16 @@ class MainLogger {
     this.level = options.level ?? LOG_LEVELS.DEBUG;
     this.enableConsole = options.console ?? true;
     this.enableFile = options.file ?? true;
-    this.logDir = options.logDir ?? path.join(process.cwd(), 'logs');
+
+    // app.getPath('userData') 사용 (프로토콜 핸들러로 실행 시 process.cwd()가 system32가 됨)
+    let defaultLogDir;
+    try {
+      defaultLogDir = path.join(app.getPath('userData'), 'logs');
+    } catch {
+      // app이 아직 ready 전이면 앱 디렉토리 사용
+      defaultLogDir = path.join(__dirname, '..', 'logs');
+    }
+    this.logDir = options.logDir ?? defaultLogDir;
     this.logFile = null;
 
     this._ensureLogDir();
