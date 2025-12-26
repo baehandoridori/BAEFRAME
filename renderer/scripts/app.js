@@ -531,7 +531,7 @@ async function initApp() {
     commentManager.startMarkerCreation(x, y);
   });
 
-  // 링크 복사 (.bframe 파일 경로)
+  // 링크 복사 (.bframe 파일 경로 - jbbj:// 프로토콜 사용)
   elements.btnCopyLink.addEventListener('click', async () => {
     const bframePath = reviewDataManager.getBframePath();
     if (!bframePath) {
@@ -541,7 +541,8 @@ async function initApp() {
 
     // 경로를 슬래시로 통일
     const normalizedPath = bframePath.replace(/\\/g, '/');
-    const link = `baeframe://${normalizedPath}`;
+    // jbbj://open/ 형식으로 생성 (슬랙 하이퍼링크 호환)
+    const link = `jbbj://open/${normalizedPath}`;
 
     await window.electronAPI.copyToClipboard(link);
     showToast('BAEFRAME 링크가 복사되었습니다!', 'success');

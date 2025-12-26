@@ -41,8 +41,32 @@ if FileExist(path)
     }
     else
     {
-        ; 파일이면 해당 파일 선택해서 열기
-        Run, explorer /select`,"%path%"
+        ; ─────────────────────────────────────────────
+        ; .bframe 파일이면 BAEFRAME 앱으로 열기
+        ; ─────────────────────────────────────────────
+        SplitPath, path,,, ext
+        if (ext = "bframe")
+        {
+            ; BAEFRAME 앱 경로 (G드라이브 공유폴더 기준)
+            baeframeExe := "G:\공유 자료실\BAEFRAME\BAEFRAME.exe"
+
+            ; 앱이 존재하면 실행, 아니면 파일 탐색기로 열기
+            if FileExist(baeframeExe)
+            {
+                Run, "%baeframeExe%" "%path%"
+            }
+            else
+            {
+                ; 앱을 찾을 수 없으면 파일 선택해서 열기
+                MsgBox, 48, BAEFRAME, BAEFRAME 앱을 찾을 수 없습니다:`n%baeframeExe%`n`n파일 탐색기로 엽니다.
+                Run, explorer /select`,"%path%"
+            }
+        }
+        else
+        {
+            ; 일반 파일이면 해당 파일 선택해서 열기
+            Run, explorer /select`,"%path%"
+        }
     }
 }
 else
