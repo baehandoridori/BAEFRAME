@@ -2037,9 +2037,12 @@ async function initApp() {
         showToast('.bframe 파일을 열 수 없습니다', 'error');
       }
     } else if (filePath.startsWith('baeframe://')) {
-      // 프로토콜 링크
+      // 프로토콜 링크: baeframe://G:/경로/파일.bframe 또는 baeframe://G:/경로/영상.mp4
       const actualPath = filePath.replace('baeframe://', '');
-      await loadVideo(actualPath);
+      log.info('프로토콜 링크에서 경로 추출', { actualPath });
+
+      // 실제 경로로 다시 처리 (재귀)
+      await handleExternalFile(actualPath);
     } else {
       // 일반 영상 파일
       await loadVideo(filePath);

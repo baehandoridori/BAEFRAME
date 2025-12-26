@@ -1257,6 +1257,27 @@ ClipboardPathConverter(clipType) {
     if (SubStr(clipText, 1, 7) = "jbbj://")
         return
 
+    ; ─────────────────────────────────────────────
+    ; [BAEFRAME 프로토콜 감지] baeframe://G:/경로/파일.bframe
+    ; ─────────────────────────────────────────────
+    if (SubStr(clipText, 1, 11) = "baeframe://")
+    {
+        ; baeframe://G:/경로/파일.bframe 에서 경로 추출
+        filePath := SubStr(clipText, 12)  ; "G:/경로/파일.bframe"
+
+        ; 파일명만 추출 (표시용)
+        SplitPath, filePath, fileName
+
+        ; 전역 변수에 저장 (Slack 하이퍼링크용)
+        g_LastOriginalPath := fileName      ; "파일.bframe" (표시될 텍스트)
+        g_LastJbbjLink := clipText          ; "baeframe://..." (링크)
+
+        ; 툴팁 표시
+        ToolTip, 🎬 BAEFRAME 링크 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
+        SetTimer, RemoveToolTip, -2500
+        return
+    }
+
     ; G:\ ~ Z:\ 드라이브 경로인지 확인 (공유 드라이브 포함)
     if RegExMatch(clipText, "i)^[G-Z]:\\")
     {

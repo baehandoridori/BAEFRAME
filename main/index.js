@@ -10,6 +10,21 @@ const { setupIpcHandlers } = require('./ipc-handlers');
 
 const log = createLogger('Main');
 
+// ============================================
+// baeframe:// 프로토콜 등록
+// ============================================
+if (process.defaultApp) {
+  // 개발 모드: electron.exe 경로와 스크립트 경로 함께 등록
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('baeframe', process.execPath, [path.resolve(process.argv[1])]);
+  }
+} else {
+  // 프로덕션 모드: 실행 파일만 등록
+  app.setAsDefaultProtocolClient('baeframe');
+}
+
+log.info('baeframe:// 프로토콜 등록됨');
+
 // 단일 인스턴스 잠금
 const gotTheLock = app.requestSingleInstanceLock();
 
