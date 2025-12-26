@@ -14,6 +14,12 @@ SetWorkingDir %A_ScriptDir%
 ; 명령줄 인자 받기 (baeframe://G:/경로/파일.bframe 또는 G:\경로\파일.bframe)
 fullArg := A_Args[1]
 
+; ─────────────────────────────────────────────
+; [디버그] 핸들러가 어떤 인자를 받았는지 확인
+; 문제 해결 후 이 줄을 주석 처리하세요
+; ─────────────────────────────────────────────
+; MsgBox, 64, BAEFRAME 디버그, 받은 인자: %fullArg%`n`n스크립트 위치: %A_ScriptDir%
+
 if (fullArg = "")
 {
     MsgBox, 48, BAEFRAME, 파일 경로가 전달되지 않았습니다.
