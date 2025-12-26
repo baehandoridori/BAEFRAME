@@ -5,7 +5,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const { app } = require('electron');
 
 const LOG_LEVELS = {
   DEBUG: 0,
@@ -21,15 +20,9 @@ class MainLogger {
     this.enableConsole = options.console ?? true;
     this.enableFile = options.file ?? true;
 
-    // app.getPath('userData') 사용 (프로토콜 핸들러로 실행 시 process.cwd()가 system32가 됨)
-    let defaultLogDir;
-    try {
-      defaultLogDir = path.join(app.getPath('userData'), 'logs');
-    } catch {
-      // app이 아직 ready 전이면 앱 디렉토리 사용
-      defaultLogDir = path.join(__dirname, '..', 'logs');
-    }
-    this.logDir = options.logDir ?? defaultLogDir;
+    // __dirname 기반 경로 사용 (프로토콜 핸들러로 실행 시 process.cwd()가 system32가 됨)
+    // app.getPath()는 app ready 전에 호출하면 에러 발생할 수 있음
+    this.logDir = options.logDir ?? path.join(__dirname, '..', 'logs');
     this.logFile = null;
 
     this._ensureLogDir();
