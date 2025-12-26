@@ -110,7 +110,10 @@ InitializePaths()
 ; jbbj:// 프로토콜 등록 확인 및 자동 등록
 CheckAndRegisterProtocol()
 
-; 클립보드 변환 핸들러 등록 (G:\ 경로 → jbbj:// 링크)
+; baeframe:// 프로토콜 등록 확인 및 자동 등록 [BAEFRAME 연동]
+CheckAndRegisterBaeframeProtocol()
+
+; 클립보드 변환 핸들러 등록 (G:\ 경로 → jbbj:// 또는 baeframe:// 링크)
 OnClipboardChange("ClipboardPathConverter")
 
 ; 종료 시 관련 스크립트도 함께 종료되도록 등록
@@ -1229,8 +1232,95 @@ CheckAndRegisterProtocol() {
     }
 }
 
+; =================================================================================================
+; ██████╗  █████╗ ███████╗███████╗██████╗  █████╗ ███╗   ███╗███████╗
+; ██╔══██╗██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗████╗ ████║██╔════╝
+; ██████╔╝███████║█████╗  █████╗  ██████╔╝███████║██╔████╔██║█████╗
+; ██╔══██╗██╔══██║██╔══╝  ██╔══╝  ██╔══██╗██╔══██║██║╚██╔╝██║██╔══╝
+; ██████╔╝██║  ██║███████╗██║     ██║  ██║██║  ██║██║ ╚═╝ ██║███████╗
+; ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝
+; =================================================================================================
+; [BAEFRAME 연동 기능]
+;
+; 기능 설명:
+;   - baeframe:// 프로토콜 자동 등록 (Windows 레지스트리)
+;   - .bframe 파일 경로 복사 시 자동 감지
+;   - Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기 지원
+;
+; 작동 방식:
+;   1. BAEFRAME 앱에서 "링크 복사" 클릭 → 클립보드에 G:\...\파일.bframe 복사됨
+;   2. 이 스크립트가 클립보드 감지 → .bframe 확장자면 baeframe:// 링크 생성
+;   3. Slack에서 Ctrl+Shift+V → 하이퍼링크 다이얼로그에 자동 입력
+;
+; 필요 파일:
+;   - EX_baeframe_protocol_handler.ahk (G:\공유 자료실\BAEFRAME\ 에 위치)
+;
+; =================================================================================================
+
 ; --------------------------------------------------------------------------
-; [클립보드 경로 → jbbj:// 링크 자동 변환]
+; [baeframe:// 프로토콜 등록 확인 및 자동 등록]
+;
+; 이 함수는 스크립트 시작 시 한 번 호출됨
+; baeframe:// 링크 클릭 시 BAEFRAME 앱이 열리도록 Windows에 등록
+; --------------------------------------------------------------------------
+CheckAndRegisterBaeframeProtocol() {
+    ; ─────────────────────────────────────────────
+    ; 1단계: 이미 등록되어 있는지 확인
+    ; ─────────────────────────────────────────────
+    RegRead, existingValue, HKEY_CLASSES_ROOT, baeframe, URL Protocol
+    if (!ErrorLevel) {
+        return  ; 이미 등록됨 → 스킵
+    }
+
+    ; ─────────────────────────────────────────────
+    ; 2단계: 프로토콜 핸들러 파일 경로 설정
+    ; ※ 이 경로를 실제 BAEFRAME 폴더 위치에 맞게 수정하세요
+    ; ─────────────────────────────────────────────
+    handlerPath := "G:\공유 자료실\BAEFRAME\EX_baeframe_protocol_handler.ahk"
+
+    ; 핸들러 파일이 없으면 조용히 스킵
+    if !FileExist(handlerPath) {
+        return
+    }
+
+    ; ─────────────────────────────────────────────
+    ; 3단계: AutoHotkey 실행 파일 경로 찾기
+    ; ─────────────────────────────────────────────
+    ahkExePath := A_AhkPath
+    if (ahkExePath = "") {
+        ahkExePath := "C:\Program Files\AutoHotkey\AutoHotkey.exe"
+    }
+
+    ; ─────────────────────────────────────────────
+    ; 4단계: Windows 레지스트리에 프로토콜 등록
+    ; ─────────────────────────────────────────────
+    try {
+        ; HKEY_CLASSES_ROOT에 등록 시도 (관리자 권한 필요)
+        RegWrite, REG_SZ, HKEY_CLASSES_ROOT, baeframe,, URL:BAEFRAME Protocol
+        RegWrite, REG_SZ, HKEY_CLASSES_ROOT, baeframe, URL Protocol,
+        commandValue := """" . ahkExePath . """ """ . handlerPath . """ ""%1"""
+        RegWrite, REG_SZ, HKEY_CLASSES_ROOT, baeframe\shell\open\command,, %commandValue%
+        TrayTip, BAEFRAME, baeframe:// 프로토콜이 등록되었습니다., 2, 1
+    } catch {
+        ; 관리자 권한 없으면 HKEY_CURRENT_USER에 등록
+        try {
+            RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes, baeframe,, URL:BAEFRAME Protocol
+            RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes, baeframe, URL Protocol,
+            commandValue := """" . ahkExePath . """ """ . handlerPath . """ ""%1"""
+            RegWrite, REG_SZ, HKEY_CURRENT_USER\Software\Classes\baeframe\shell\open\command,, %commandValue%
+            TrayTip, BAEFRAME, baeframe:// 프로토콜이 등록되었습니다., 2, 1
+        }
+    }
+}
+
+; --------------------------------------------------------------------------
+; [클립보드 경로 → 프로토콜 링크 자동 변환]
+;
+; G:\~Z:\ 드라이브 경로를 클립보드에 복사하면:
+;   - .bframe 파일 → baeframe:// 링크 생성 (BAEFRAME 앱용)
+;   - 그 외 파일/폴더 → jbbj://open/ 링크 생성
+;
+; 생성된 링크는 g_LastJbbjLink에 저장되어 Ctrl+Shift+V로 사용
 ; --------------------------------------------------------------------------
 ClipboardPathConverter(clipType) {
     global checkPathToLink, isConvertingClipboard, g_LastOriginalPath, g_LastJbbjLink
@@ -1265,20 +1355,43 @@ ClipboardPathConverter(clipType) {
         cleanPath := RegExReplace(cleanPath, "[\r\n]+$", "")
         cleanPath := RegExReplace(cleanPath, "^[\r\n]+", "")
 
-        ; 백슬래시를 슬래시로 변환
+        ; 백슬래시를 슬래시로 변환 (URL용)
         urlPath := StrReplace(cleanPath, "\", "/")
 
-        ; jbbj:// 링크 생성
-        jbbjLink := "jbbj://open/" . urlPath
+        ; ─────────────────────────────────────────────────────────────────
+        ; [BAEFRAME 연동] .bframe 파일 감지 시 baeframe:// 링크 생성
+        ; ─────────────────────────────────────────────────────────────────
+        SplitPath, cleanPath,,, ext
+        if (ext = "bframe")
+        {
+            ; baeframe:// 링크 생성
+            ; 예: G:\공유\파일.bframe → baeframe://G:/공유/파일.bframe
+            protocolLink := "baeframe://" . urlPath
 
-        ; 전역 변수에 저장 (Slack 하이퍼링크용)
-        g_LastOriginalPath := cleanPath
-        g_LastJbbjLink := jbbjLink
+            ; 전역 변수에 저장 (Slack Ctrl+Shift+V용)
+            ; g_LastOriginalPath = 표시 텍스트 (G:\...\파일.bframe)
+            ; g_LastJbbjLink = 하이퍼링크 URL (baeframe://...)
+            g_LastOriginalPath := cleanPath
+            g_LastJbbjLink := protocolLink
 
-        ; 클립보드는 원본 경로 유지 (변환하지 않음)
-        ; 짧은 툴팁으로 안내
-        ToolTip, 📎 경로 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
-        SetTimer, RemoveToolTip, -2500
+            ; 사용자에게 감지됨 알림
+            ToolTip, 🎬 BAEFRAME 경로 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
+            SetTimer, RemoveToolTip, -2500
+        }
+        ; ─────────────────────────────────────────────────────────────────
+        else
+        {
+            ; jbbj://open/ 링크 생성 (일반 파일/폴더용)
+            jbbjLink := "jbbj://open/" . urlPath
+
+            ; 전역 변수에 저장 (Slack 하이퍼링크용)
+            g_LastOriginalPath := cleanPath
+            g_LastJbbjLink := jbbjLink
+
+            ; 클립보드는 원본 경로 유지 (변환하지 않음)
+            ToolTip, 📎 경로 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
+            SetTimer, RemoveToolTip, -2500
+        }
     }
 }
 
