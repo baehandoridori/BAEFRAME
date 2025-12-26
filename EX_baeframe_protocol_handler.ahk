@@ -33,6 +33,12 @@ if (fullArg = "")
     ExitApp
 }
 
+; ─────────────────────────────────────────────
+; [디버그] 핸들러가 어떤 인자를 받았는지 확인
+; 문제 해결 후 이 줄을 주석 처리하세요
+; ─────────────────────────────────────────────
+MsgBox, 64, BAEFRAME 디버그, 받은 인자: %fullArg%`n`n스크립트 위치: %A_ScriptDir%
+
 ; baeframe:// 프로토콜 제거
 path := fullArg
 path := RegExReplace(path, "^baeframe://", "")
