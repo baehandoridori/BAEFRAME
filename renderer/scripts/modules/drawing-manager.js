@@ -680,6 +680,22 @@ export class DrawingManager extends EventTarget {
   }
 
   /**
+   * 새 파일 로드 시 초기화 (기본 레이어 생성 포함)
+   */
+  reset() {
+    this.layers = [];
+    this.activeLayerId = null;
+    this.drawingCanvas.clear();
+    this.clearHistory();
+
+    // 기본 레이어 생성
+    this.createLayer({ name: '레이어 1' }, false);
+
+    this._emit('layersChanged');
+    log.info('DrawingManager 초기화됨 (기본 레이어 생성)');
+  }
+
+  /**
    * 그리기 도구 설정
    */
   setTool(tool) {

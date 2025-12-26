@@ -552,7 +552,10 @@ async function initApp() {
 
   // 파일 경로 열기 (현재 파일이 있는 폴더를 탐색기에서 열기)
   elements.btnOpenFolder.addEventListener('click', async () => {
+    log.info('파일 경로 열기 버튼 클릭');
     const videoPath = reviewDataManager.getVideoPath();
+    log.info('현재 비디오 경로', { videoPath });
+
     if (!videoPath) {
       showToast('먼저 파일을 열어주세요.', 'warn');
       return;
@@ -563,8 +566,9 @@ async function initApp() {
       const windowsPath = videoPath.replace(/\//g, '\\');
       // 폴더 경로 추출
       const folderPath = windowsPath.substring(0, windowsPath.lastIndexOf('\\'));
-      await window.electronAPI.openFolder(folderPath);
-      log.info('파일 경로 열기', { path: folderPath });
+      log.info('폴더 경로 열기 시도', { windowsPath, folderPath });
+      const result = await window.electronAPI.openFolder(folderPath);
+      log.info('파일 경로 열기 완료', { path: folderPath, result });
     } catch (error) {
       log.error('파일 경로 열기 실패', error);
       showToast('경로를 열 수 없습니다.', 'error');
@@ -1109,6 +1113,21 @@ async function initApp() {
       // 파일 정보 가져오기
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
 
+      // ====== 이전 데이터 초기화 ======
+      // 댓글 매니저 초기화
+      commentManager.clear();
+      // 그리기 매니저 초기화
+      drawingManager.reset();
+      // 타임라인 마커 초기화
+      timeline.clearMarkers();
+      // 영상 위 마커 UI 초기화
+      markerContainer.innerHTML = '';
+      // 댓글 모드 해제
+      if (state.isCommentMode) {
+        state.isCommentMode = false;
+        elements.btnAddComment?.classList.remove('active');
+      }
+
       // 비디오 플레이어에 로드
       await videoPlayer.load(filePath);
 
@@ -1140,16 +1159,17 @@ async function initApp() {
       const hasExistingData = await reviewDataManager.setVideoFile(filePath);
       if (hasExistingData) {
         showToast(`"${fileInfo.name}" 로드됨 (리뷰 데이터 복원)`, 'success');
-        // 마커 및 그리기 렌더링 업데이트
-        renderVideoMarkers();
-        updateTimelineMarkers();
-        updateCommentList();
-        // 그리기 레이어 UI 및 캔버스 다시 렌더링
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        drawingManager.renderFrame(videoPlayer.currentFrame);
       } else {
         showToast(`"${fileInfo.name}" 로드됨`, 'success');
       }
+
+      // 마커 및 그리기 렌더링 업데이트 (항상 실행)
+      renderVideoMarkers();
+      updateTimelineMarkers();
+      updateCommentList();
+      // 그리기 레이어 UI 및 캔버스 다시 렌더링
+      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      drawingManager.renderFrame(videoPlayer.currentFrame);
 
       trace.end({ filePath, hasExistingData });
 

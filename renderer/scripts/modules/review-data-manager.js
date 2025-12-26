@@ -140,6 +140,14 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
+   * 현재 영상 파일 경로 반환
+   * @returns {string|null}
+   */
+  getVideoPath() {
+    return this.currentVideoPath;
+  }
+
+  /**
    * 현재 데이터를 .bframe 파일로 저장
    */
   async save() {

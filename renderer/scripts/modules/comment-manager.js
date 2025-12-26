@@ -718,6 +718,20 @@ export class CommentManager extends EventTarget {
   }
 
   /**
+   * 모든 마커/레이어 초기화 (새 파일 로드 시)
+   */
+  clear() {
+    this.layers = [];
+    this.pendingMarker = null;
+    this.pendingText = null;
+    this.isCommentMode = false;
+    this._createDefaultLayer();
+    this._emit('markersChanged');
+    this._emit('layersChanged');
+    log.info('CommentManager 초기화됨');
+  }
+
+  /**
    * 정리
    */
   destroy() {
