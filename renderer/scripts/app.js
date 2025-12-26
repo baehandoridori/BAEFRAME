@@ -550,7 +550,7 @@ async function initApp() {
     log.info('경로 복사됨', { path: windowsPath });
   });
 
-  // 폴더 열기 (현재 파일이 있는 폴더를 탐색기에서 열기)
+  // 파일 경로 열기 (현재 파일이 있는 폴더를 탐색기에서 열기)
   elements.btnOpenFolder.addEventListener('click', async () => {
     const videoPath = reviewDataManager.getVideoPath();
     if (!videoPath) {
@@ -559,11 +559,13 @@ async function initApp() {
     }
 
     try {
-      await window.electronAPI.showInFolder(videoPath);
-      log.info('폴더 열기', { path: videoPath });
+      // Windows 경로 형식으로 변환 (백슬래시)
+      const windowsPath = videoPath.replace(/\//g, '\\');
+      await window.electronAPI.showInFolder(windowsPath);
+      log.info('파일 경로 열기', { path: windowsPath });
     } catch (error) {
-      log.error('폴더 열기 실패', error);
-      showToast('폴더를 열 수 없습니다.', 'error');
+      log.error('파일 경로 열기 실패', error);
+      showToast('경로를 열 수 없습니다.', 'error');
     }
   });
 
