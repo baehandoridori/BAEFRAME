@@ -8,12 +8,15 @@
 ; ==========================================================================
 #NoEnv
 #SingleInstance Off  ; 여러 인스턴스 허용 (링크 여러 번 클릭 가능)
+#NoTrayIcon          ; 트레이 아이콘 생성 안 함 (빠른 종료)
 SetWorkingDir %A_ScriptDir%
+SetBatchLines, -1    ; 최대 속도로 실행
 
 ; ─────────────────────────────────────────────
 ; [디버그] 스크립트가 호출되었는지 확인
 ; ─────────────────────────────────────────────
-TrayTip, BAEFRAME, 프로토콜 핸들러 호출됨, 1
+ToolTip, BAEFRAME: 프로토콜 핸들러 호출됨
+SetTimer, RemoveToolTip, -2000
 
 ; ╔═══════════════════════════════════════════════════════════════════════════╗
 ; ║  ★★★ BAEFRAME 앱 경로 설정 ★★★                                          ║
@@ -105,7 +108,7 @@ baeframeExe := baeframeDir . "\BAEFRAME.exe"
 if FileExist(baeframeExe)
 {
     ; 빌드된 exe가 있으면 실행
-    TrayTip, BAEFRAME, BAEFRAME.exe 실행 중..., 1
+    ToolTip, BAEFRAME: BAEFRAME.exe 실행 중...
     Run, "%baeframeExe%" "%path%",, UseErrorLevel
     if (ErrorLevel = "ERROR")
         MsgBox, 48, BAEFRAME, BAEFRAME.exe 실행 실패`n`n경로: %baeframeExe%
@@ -118,12 +121,17 @@ packageJson := baeframeDir . "\package.json"
 if FileExist(packageJson)
 {
     ; 개발 모드로 실행 (npm start)
-    TrayTip, BAEFRAME, 개발 모드로 실행 중..., 1
+    ToolTip, BAEFRAME: 개발 모드로 실행 중...
     Run, cmd /c "cd /d "%baeframeDir%" && npm start -- "%path%"",, Hide UseErrorLevel
     if (ErrorLevel = "ERROR")
         MsgBox, 48, BAEFRAME, npm start 실행 실패`n`n경로: %baeframeDir%
     ExitApp
 }
+
+; ToolTip 제거용 라벨
+RemoveToolTip:
+    ToolTip
+    return
 
 ; ==========================================================================
 ; URL 디코딩 함수
