@@ -1272,14 +1272,28 @@ CheckAndRegisterBaeframeProtocol() {
         return  ; 이미 등록됨 → 스킵
     }
 
-    ; ─────────────────────────────────────────────
-    ; 2단계: 프로토콜 핸들러 파일 경로 설정
-    ; ※ 이 경로를 실제 BAEFRAME 폴더 위치에 맞게 수정하세요
-    ; ─────────────────────────────────────────────
-    handlerPath := "G:\공유 자료실\BAEFRAME\EX_baeframe_protocol_handler.ahk"
+    ; ╔═══════════════════════════════════════════════════════════════════════════╗
+    ; ║  ★★★ BAEFRAME 핸들러 경로 설정 ★★★                                       ║
+    ; ║                                                                           ║
+    ; ║  아래 경로들을 실제 EX_baeframe_protocol_handler.ahk 파일 위치로 변경하세요!║
+    ; ║  여러 경로를 설정하면 순서대로 확인하여 먼저 찾은 경로를 사용합니다.        ║
+    ; ╚═══════════════════════════════════════════════════════════════════════════╝
+    handlerPaths := []
+    handlerPaths.Push("C:\BAEframe\BAEFRAME\EX_baeframe_protocol_handler.ahk")                    ; 테스트용 경로
+    handlerPaths.Push("G:\공유 드라이브\개인작업일지 배한솔\BAEFRAME\EX_baeframe_protocol_handler.ahk")  ; 실제 배포 경로
+    ; handlerPaths.Push("여기에 추가 경로...")                                                    ; 필요시 추가
+
+    ; 핸들러 파일 탐색
+    handlerPath := ""
+    for index, tryPath in handlerPaths {
+        if FileExist(tryPath) {
+            handlerPath := tryPath
+            break
+        }
+    }
 
     ; 핸들러 파일이 없으면 조용히 스킵
-    if !FileExist(handlerPath) {
+    if (handlerPath = "") {
         return
     }
 

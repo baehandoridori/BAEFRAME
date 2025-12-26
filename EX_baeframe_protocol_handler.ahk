@@ -11,6 +11,17 @@
 #SingleInstance Force
 SetWorkingDir %A_ScriptDir%
 
+; ╔═══════════════════════════════════════════════════════════════════════════╗
+; ║  ★★★ BAEFRAME 앱 경로 설정 ★★★                                          ║
+; ║                                                                           ║
+; ║  아래 경로들을 실제 BAEFRAME 앱이 설치된 경로로 변경하세요!                ║
+; ║  여러 경로를 설정하면 순서대로 확인하여 먼저 찾은 경로를 사용합니다.       ║
+; ╚═══════════════════════════════════════════════════════════════════════════╝
+global BAEFRAME_PATHS := []
+BAEFRAME_PATHS.Push("C:\BAEframe\BAEFRAME")                              ; 테스트용 경로
+BAEFRAME_PATHS.Push("G:\공유 드라이브\개인작업일지 배한솔\BAEFRAME")      ; 실제 배포 경로
+; BAEFRAME_PATHS.Push("여기에 추가 경로...")                              ; 필요시 추가
+
 ; 명령줄 인자 받기 (baeframe://G:/경로/파일.bframe 또는 G:\경로\파일.bframe)
 fullArg := A_Args[1]
 
@@ -39,10 +50,39 @@ path := StrReplace(path, "/", "\")
 ; 앞뒤 공백 제거
 path := Trim(path)
 
-; BAEFRAME 앱 경로 확인 (이 스크립트와 같은 폴더)
-baeframeDir := A_ScriptDir
+; ─────────────────────────────────────────────
+; BAEFRAME 앱 경로 탐색 (설정된 경로들을 순서대로 확인)
+; ─────────────────────────────────────────────
+baeframeDir := ""
 
-; 1순위: BAEFRAME.exe (빌드된 앱)
+for index, tryPath in BAEFRAME_PATHS
+{
+    ; 1순위: BAEFRAME.exe (빌드된 앱)
+    if FileExist(tryPath . "\BAEFRAME.exe")
+    {
+        baeframeDir := tryPath
+        break
+    }
+    ; 2순위: package.json (개발 모드)
+    if FileExist(tryPath . "\package.json")
+    {
+        baeframeDir := tryPath
+        break
+    }
+}
+
+; 어느 경로에서도 못 찾으면 에러
+if (baeframeDir = "")
+{
+    pathList := ""
+    for index, p in BAEFRAME_PATHS
+        pathList .= "- " . p . "`n"
+
+    MsgBox, 48, BAEFRAME, BAEFRAME 앱을 찾을 수 없습니다.`n`n확인한 경로들:`n%pathList%`nBAEFRAME.exe 또는 package.json이 필요합니다.
+    ExitApp
+}
+
+; BAEFRAME 실행
 baeframeExe := baeframeDir . "\BAEFRAME.exe"
 
 if FileExist(baeframeExe)
@@ -52,20 +92,15 @@ if FileExist(baeframeExe)
     ExitApp
 }
 
-; 2순위: 개발 모드 (npm start)
+; 개발 모드 (npm start)
 packageJson := baeframeDir . "\package.json"
 
 if FileExist(packageJson)
 {
     ; 개발 모드로 실행 (npm start)
-    ; cmd 창을 숨기고 실행
     Run, cmd /c "cd /d "%baeframeDir%" && npm start -- "%path%"",, Hide
     ExitApp
 }
-
-; 둘 다 없으면 에러
-MsgBox, 48, BAEFRAME, BAEFRAME 앱을 찾을 수 없습니다.`n`n경로: %baeframeDir%`n`nBAEFRAME.exe 또는 package.json이 필요합니다.
-ExitApp
 
 ; ==========================================================================
 ; URL 디코딩 함수
