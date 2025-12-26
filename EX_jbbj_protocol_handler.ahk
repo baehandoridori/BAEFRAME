@@ -47,8 +47,8 @@ if FileExist(path)
         SplitPath, path,,, ext
         if (ext = "bframe")
         {
-            ; BAEFRAME 앱 경로 (G드라이브 공유폴더 기준)
-            baeframeExe := "G:\공유 자료실\BAEFRAME\BAEFRAME.exe"
+            ; BAEFRAME 앱 경로 (이 스크립트와 같은 폴더)
+            baeframeExe := A_ScriptDir . "\BAEFRAME.exe"
 
             ; 앱이 존재하면 실행, 아니면 파일 탐색기로 열기
             if FileExist(baeframeExe)
