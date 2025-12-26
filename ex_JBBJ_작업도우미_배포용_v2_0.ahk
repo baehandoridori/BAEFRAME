@@ -1321,11 +1321,11 @@ ClipboardPathConverter(clipType) {
         ; baeframe://G:/경로/파일.bframe 에서 경로 추출
         filePath := SubStr(clipText, 12)  ; "G:/경로/파일.bframe"
 
-        ; 파일명만 추출 (표시용)
-        SplitPath, filePath, fileName
+        ; 슬래시를 백슬래시로 변환 (Windows 경로 형식으로 표시)
+        displayPath := StrReplace(filePath, "/", "\")
 
         ; 전역 변수에 저장 (Slack 하이퍼링크용)
-        g_LastOriginalPath := fileName      ; "파일.bframe" (표시될 텍스트)
+        g_LastOriginalPath := displayPath   ; "G:\경로\파일.bframe" (전체 경로)
         g_LastJbbjLink := clipText          ; "baeframe://..." (링크)
 
         ; 툴팁 표시
