@@ -186,6 +186,9 @@ async function initApp() {
   });
   reviewDataManager.connect();
 
+  // 사용자 설정 (단축키 세트 등)
+  const userSettings = getUserSettings();
+
   // ====== 모듈 이벤트 연결 ======
 
   // 비디오 메타데이터 로드됨
@@ -2265,8 +2268,7 @@ async function initApp() {
     handleExternalFile(arg);
   });
 
-  // ====== 사용자 설정 초기화 ======
-  const userSettings = getUserSettings();
+  // ====== 사용자 이름 초기화 ======
   let userName = await userSettings.initialize();
   log.info('사용자 이름 감지됨', { userName, source: userSettings.getUserSource() });
 
