@@ -907,6 +907,10 @@ async function initApp() {
   }
 
   // ====== 영상 어니언 스킨 ======
+  // TODO: 영상 어니언 스킨 기능 - 비디오 가림 문제로 임시 비활성화
+  // 문제: 캔버스 오버레이가 비디오를 가려서 검은 화면으로 표시됨
+  // 해결 필요: z-index, visibility 조정으로 해결 안됨 - 다른 접근 방식 필요
+  /*
   const videoOnionToggle = document.getElementById('videoOnionToggle');
   const videoOnionControls = document.getElementById('videoOnionControls');
   const videoOnionBefore = document.getElementById('videoOnionBefore');
@@ -988,6 +992,7 @@ async function initApp() {
       }, 150);
     }
   });
+  */
 
   // ====== 구간 반복 ======
   const btnSetInPoint = document.getElementById('btnSetInPoint');
@@ -1311,7 +1316,8 @@ async function initApp() {
       onionCanvas.height = renderArea.videoHeight;
     }
 
-    // 영상 어니언 스킨 캔버스도 동일하게 동기화
+    // 영상 어니언 스킨 캔버스도 동일하게 동기화 (TODO: 임시 비활성화)
+    /*
     if (videoOnionSkinCanvas) {
       videoOnionSkinCanvas.style.position = 'absolute';
       videoOnionSkinCanvas.style.left = `${renderArea.left}px`;
@@ -1321,6 +1327,7 @@ async function initApp() {
       videoOnionSkinCanvas.width = renderArea.videoWidth;
       videoOnionSkinCanvas.height = renderArea.videoHeight;
     }
+    */
 
     // 드로잉 매니저에도 캔버스 크기 전달
     drawingManager.setCanvasSize(renderArea.videoWidth, renderArea.videoHeight);
