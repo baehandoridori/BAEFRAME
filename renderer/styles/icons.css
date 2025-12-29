@@ -1,0 +1,26 @@
+/**
+ * baeframe - SVG Icon Styles
+ * 세련된 SVG 아이콘 정의
+ */
+
+/* 아이콘 기본 스타일 */
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
+.icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* 아이콘 크기 변형 */
+.icon-sm { font-size: 14px; }
+.icon-md { font-size: 18px; }
+.icon-lg { font-size: 24px; }
+.icon-xl { font-size: 32px; }
