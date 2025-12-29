@@ -61,15 +61,34 @@ export class VideoPlayer extends EventTarget {
       this.totalFrames = Math.floor(this.duration * this.fps);
       this.isLoaded = true;
 
+      // 상세 비디오 정보 로깅 (디버깅용)
       log.info('메타데이터 로드됨', {
         duration: this.duration,
-        totalFrames: this.totalFrames
+        totalFrames: this.totalFrames,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        readyState: video.readyState,
+        networkState: video.networkState
       });
+
+      // 비디오 크기가 0이면 경고 (코덱 문제 가능성)
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        log.warn('비디오 크기가 0입니다. 코덱 호환성 문제일 수 있습니다.');
+      }
 
       this._emit('loadedmetadata', {
         duration: this.duration,
         totalFrames: this.totalFrames,
         fps: this.fps
+      });
+    });
+
+    // 첫 프레임 로드됨 (실제 렌더링 가능 상태)
+    video.addEventListener('loadeddata', () => {
+      log.info('비디오 데이터 로드됨', {
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        currentSrc: video.currentSrc
       });
     });
 
