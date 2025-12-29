@@ -1,6 +1,7 @@
 /**
  * Plexus Effect - Canvas animation with connected particles
  * Color shifting from warm to cool hues
+ * With triangle fill between connected particles
  */
 
 export class PlexusEffect {
@@ -14,12 +15,14 @@ export class PlexusEffect {
     this.lineDistance = options.lineDistance || 150;
     this.speed = options.speed || 0.5;
     this.baseOpacity = options.baseOpacity || 0.8;
-    this.lineOpacity = options.lineOpacity || 0.25;
+    this.lineOpacity = options.lineOpacity || 0.4;
+    this.fillOpacity = options.fillOpacity || 0.08;
+    this.lineWidth = options.lineWidth || 1.5;
 
     // Color shifting
-    this.hue = 0; // Start with red (0)
-    this.hueSpeed = options.hueSpeed || 0.3; // How fast colors change
-    this.hueRange = options.hueRange || 60; // Range of hue variation (0-360)
+    this.hue = 0;
+    this.hueSpeed = options.hueSpeed || 0.3;
+    this.hueRange = options.hueRange || 60;
 
     this.particles = [];
     this.animationId = null;
@@ -30,9 +33,6 @@ export class PlexusEffect {
     this._animate = this._animate.bind(this);
   }
 
-  /**
-   * Initialize and start the effect
-   */
   start() {
     if (this.isRunning) return;
 
@@ -45,9 +45,6 @@ export class PlexusEffect {
     this._animate();
   }
 
-  /**
-   * Stop the effect
-   */
   stop() {
     this.isRunning = false;
 
@@ -58,31 +55,20 @@ export class PlexusEffect {
 
     window.removeEventListener('resize', this._handleResize);
     this.particles = [];
-
-    // Clear canvas
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  /**
-   * Handle window resize
-   */
   _handleResize() {
     this._resize();
     this._createParticles();
   }
 
-  /**
-   * Resize canvas to fill container
-   */
   _resize() {
     const rect = this.canvas.parentElement.getBoundingClientRect();
     this.canvas.width = rect.width;
     this.canvas.height = rect.height;
   }
 
-  /**
-   * Create particles
-   */
   _createParticles() {
     this.particles = [];
 
@@ -93,16 +79,12 @@ export class PlexusEffect {
         vx: (Math.random() - 0.5) * this.speed,
         vy: (Math.random() - 0.5) * this.speed,
         radius: Math.random() * this.particleRadius + 1,
-        hueOffset: Math.random() * 30 - 15 // Individual particle hue variation
+        hueOffset: Math.random() * 30 - 15
       });
     }
   }
 
-  /**
-   * Get current color based on time
-   */
   _getColor(hueOffset = 0, opacity = 1) {
-    // Oscillate hue: red (0) -> orange (30) -> yellow (50) -> back
     const baseHue = (Math.sin(this.time * this.hueSpeed * 0.01) + 1) * 0.5 * this.hueRange;
     const hue = baseHue + hueOffset;
     const saturation = 90;
@@ -110,56 +92,100 @@ export class PlexusEffect {
     return `hsla(${hue}, ${saturation}%, ${lightness}%, ${opacity})`;
   }
 
-  /**
-   * Animation loop
-   */
+  _getDistance(p1, p2) {
+    const dx = p1.x - p2.x;
+    const dy = p1.y - p2.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
   _animate() {
     if (!this.isRunning) return;
 
     this.time++;
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-    // Update and draw particles
-    for (let i = 0; i < this.particles.length; i++) {
-      const p = this.particles[i];
-
-      // Update position
+    // Update positions
+    for (const p of this.particles) {
       p.x += p.vx;
       p.y += p.vy;
 
-      // Bounce off edges
       if (p.x < 0 || p.x > this.canvas.width) p.vx *= -1;
       if (p.y < 0 || p.y > this.canvas.height) p.vy *= -1;
 
-      // Keep in bounds
       p.x = Math.max(0, Math.min(this.canvas.width, p.x));
       p.y = Math.max(0, Math.min(this.canvas.height, p.y));
+    }
 
-      // Draw particle with color shift
+    // Find and draw triangles (filled polygons)
+    const drawnTriangles = new Set();
+
+    for (let i = 0; i < this.particles.length; i++) {
+      const p1 = this.particles[i];
+
+      for (let j = i + 1; j < this.particles.length; j++) {
+        const p2 = this.particles[j];
+        const dist12 = this._getDistance(p1, p2);
+
+        if (dist12 < this.lineDistance) {
+          // Look for a third particle to form a triangle
+          for (let k = j + 1; k < this.particles.length; k++) {
+            const p3 = this.particles[k];
+            const dist13 = this._getDistance(p1, p3);
+            const dist23 = this._getDistance(p2, p3);
+
+            if (dist13 < this.lineDistance && dist23 < this.lineDistance) {
+              const triangleKey = `${i}-${j}-${k}`;
+              if (!drawnTriangles.has(triangleKey)) {
+                drawnTriangles.add(triangleKey);
+
+                // Calculate average opacity based on distances
+                const avgDist = (dist12 + dist13 + dist23) / 3;
+                const distanceOpacity = 1 - (avgDist / this.lineDistance);
+                const avgHueOffset = (p1.hueOffset + p2.hueOffset + p3.hueOffset) / 3;
+
+                // Draw filled triangle
+                this.ctx.beginPath();
+                this.ctx.moveTo(p1.x, p1.y);
+                this.ctx.lineTo(p2.x, p2.y);
+                this.ctx.lineTo(p3.x, p3.y);
+                this.ctx.closePath();
+                this.ctx.fillStyle = this._getColor(avgHueOffset, this.fillOpacity * distanceOpacity);
+                this.ctx.fill();
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Draw lines
+    for (let i = 0; i < this.particles.length; i++) {
+      const p1 = this.particles[i];
+
+      for (let j = i + 1; j < this.particles.length; j++) {
+        const p2 = this.particles[j];
+        const distance = this._getDistance(p1, p2);
+
+        if (distance < this.lineDistance) {
+          const distanceOpacity = 1 - (distance / this.lineDistance);
+          const avgHueOffset = (p1.hueOffset + p2.hueOffset) / 2;
+
+          this.ctx.beginPath();
+          this.ctx.moveTo(p1.x, p1.y);
+          this.ctx.lineTo(p2.x, p2.y);
+          this.ctx.strokeStyle = this._getColor(avgHueOffset, this.lineOpacity * distanceOpacity);
+          this.ctx.lineWidth = this.lineWidth;
+          this.ctx.stroke();
+        }
+      }
+    }
+
+    // Draw particles on top
+    for (const p of this.particles) {
       this.ctx.beginPath();
       this.ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
       this.ctx.fillStyle = this._getColor(p.hueOffset, this.baseOpacity);
       this.ctx.fill();
-
-      // Draw lines to nearby particles
-      for (let j = i + 1; j < this.particles.length; j++) {
-        const p2 = this.particles[j];
-        const dx = p.x - p2.x;
-        const dy = p.y - p2.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        if (distance < this.lineDistance) {
-          const distanceOpacity = 1 - (distance / this.lineDistance);
-          const avgHueOffset = (p.hueOffset + p2.hueOffset) / 2;
-
-          this.ctx.beginPath();
-          this.ctx.moveTo(p.x, p.y);
-          this.ctx.lineTo(p2.x, p2.y);
-          this.ctx.strokeStyle = this._getColor(avgHueOffset, this.lineOpacity * distanceOpacity);
-          this.ctx.lineWidth = 1;
-          this.ctx.stroke();
-        }
-      }
     }
 
     this.animationId = requestAnimationFrame(this._animate);

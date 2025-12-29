@@ -10,6 +10,48 @@ const log = createLogger('UserSettings');
 // 로컬 스토리지 키
 const STORAGE_KEY = 'baeframe_user_settings';
 
+// 이름별 테마 매핑
+const NAME_THEMES = {
+  // 파란색 테마
+  blue: ['윤성원', '성원', 'SW', 'sw'],
+  // 보라-핑크 테마
+  pink: ['허혜원', '혜원', '모몽가'],
+  // 붉은색 테마
+  red: ['한솔', '배한솔', '한솔쿤']
+};
+
+// 테마별 색상 정의
+const THEME_COLORS = {
+  default: {
+    primary: '#ffd000',
+    secondary: '#e6bb00',
+    tertiary: '#ccaa00',
+    glow: 'rgba(255, 208, 0, 0.15)',
+    glowStrong: 'rgba(255, 208, 0, 0.25)'
+  },
+  blue: {
+    primary: '#4a9eff',
+    secondary: '#3d8ae6',
+    tertiary: '#3075cc',
+    glow: 'rgba(74, 158, 255, 0.15)',
+    glowStrong: 'rgba(74, 158, 255, 0.25)'
+  },
+  pink: {
+    primary: '#e066ff',
+    secondary: '#c957e6',
+    tertiary: '#b248cc',
+    glow: 'rgba(224, 102, 255, 0.15)',
+    glowStrong: 'rgba(224, 102, 255, 0.25)'
+  },
+  red: {
+    primary: '#ff5555',
+    secondary: '#e64a4a',
+    tertiary: '#cc4040',
+    glow: 'rgba(255, 85, 85, 0.15)',
+    glowStrong: 'rgba(255, 85, 85, 0.25)'
+  }
+};
+
 /**
  * User Settings Manager
  */
@@ -38,6 +80,17 @@ export class UserSettings extends EventTarget {
         const parsed = JSON.parse(stored);
         this.settings = { ...this.settings, ...parsed };
         log.info('설정 로드됨', { userName: this.settings.userName, source: this.settings.userSource });
+
+        // 저장된 이름이 있으면 테마 자동 적용 (DOM 로드 후)
+        if (this.settings.userName && this.settings.userSource === 'manual') {
+          // DOMContentLoaded 이후에 테마 적용
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.applyThemeForCurrentUser());
+          } else {
+            // 이미 로드된 경우 약간의 딜레이 후 적용
+            setTimeout(() => this.applyThemeForCurrentUser(), 0);
+          }
+        }
       }
     } catch (error) {
       log.warn('설정 로드 실패', error);
@@ -129,6 +182,10 @@ export class UserSettings extends EventTarget {
       this._saveToStorage();
       this._emit('userNameChanged', { userName: this.settings.userName });
       log.info('사용자 이름 수동 설정됨', { userName: this.settings.userName });
+
+      // 이름에 맞는 테마 자동 적용
+      this.applyThemeForCurrentUser();
+
       return true;
     }
     return false;
@@ -182,6 +239,54 @@ export class UserSettings extends EventTarget {
       this._emit('shortcutSetChanged', { shortcutSet: set });
       log.info('단축키 세트 변경됨', { shortcutSet: set });
     }
+  }
+
+  /**
+   * 이름에 맞는 테마 찾기
+   * @param {string} name - 사용자 이름
+   * @returns {string} 테마 키 ('default', 'blue', 'pink', 'red')
+   */
+  getThemeForName(name) {
+    if (!name) return 'default';
+
+    const lowerName = name.toLowerCase();
+
+    for (const [theme, names] of Object.entries(NAME_THEMES)) {
+      for (const themeName of names) {
+        if (lowerName === themeName.toLowerCase() || lowerName.includes(themeName.toLowerCase())) {
+          return theme;
+        }
+      }
+    }
+
+    return 'default';
+  }
+
+  /**
+   * 테마 적용 (CSS 변수 설정)
+   * @param {string} themeName - 테마 이름
+   */
+  applyTheme(themeName = 'default') {
+    const colors = THEME_COLORS[themeName] || THEME_COLORS.default;
+    const root = document.documentElement;
+
+    root.style.setProperty('--accent-primary', colors.primary);
+    root.style.setProperty('--accent-secondary', colors.secondary);
+    root.style.setProperty('--accent-tertiary', colors.tertiary);
+    root.style.setProperty('--accent-glow', colors.glow);
+    root.style.setProperty('--accent-glow-strong', colors.glowStrong);
+
+    log.info('테마 적용됨', { theme: themeName, colors });
+    this._emit('themeChanged', { theme: themeName, colors });
+  }
+
+  /**
+   * 현재 이름에 맞는 테마 자동 적용
+   */
+  applyThemeForCurrentUser() {
+    const theme = this.getThemeForName(this.settings.userName);
+    this.applyTheme(theme);
+    return theme;
   }
 
   /**

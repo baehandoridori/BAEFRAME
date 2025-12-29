@@ -2617,14 +2617,16 @@ async function initApp() {
     // 플렉서스 효과 시작
     if (!plexusEffect) {
       plexusEffect = new PlexusEffect(creditsPlexus, {
-        particleCount: 80,
+        particleCount: 70,
         particleRadius: 2.5,
-        lineDistance: 180,
-        speed: 0.4,
-        baseOpacity: 0.9,
-        lineOpacity: 0.35,
-        hueSpeed: 0.2,
-        hueRange: 55  // red(0) -> orange(30) -> yellow(55)
+        lineDistance: 160,
+        speed: 0.35,
+        baseOpacity: 0.95,
+        lineOpacity: 0.5,
+        fillOpacity: 0.12,
+        lineWidth: 1.5,
+        hueSpeed: 0.15,
+        hueRange: 55
       });
     }
     plexusEffect.start();
