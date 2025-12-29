@@ -2143,7 +2143,6 @@ async function initApp() {
           const prevKf = drawingManager.getPrevKeyframeFrame();
           if (prevKf !== null) {
             videoPlayer.seekToFrame(prevKf);
-            showToast(`키프레임 ${prevKf}으로 이동`, 'info');
           }
         }
         break;
@@ -2158,17 +2157,16 @@ async function initApp() {
           const nextKf = drawingManager.getNextKeyframeFrame();
           if (nextKf !== null) {
             videoPlayer.seekToFrame(nextKf);
-            showToast(`키프레임 ${nextKf}으로 이동`, 'info');
           }
         }
         break;
 
       case 'Digit1':
-        // 1: 어니언 스킨 토글
+        // 1: 어니언 스킨 토글 (드로잉 모드 여부 상관없이)
         e.preventDefault();
-        if (state.isDrawMode) {
+        {
           const enabled = drawingManager.toggleOnionSkin();
-          showToast(enabled ? '어니언 스킨 켜짐' : '어니언 스킨 꺼짐', 'info');
+          showToast(enabled ? '어니언 스킨 ON' : '어니언 스킨 OFF', 'info');
         }
         break;
 
