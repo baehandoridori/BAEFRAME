@@ -44,7 +44,7 @@ const NAME_COLORS = {
   },
   pink: {
     names: ['허혜원', '혜원', '모몽가'],
-    color: '#e066ff'
+    color: '#ffaaaa'
   }
 };
 
@@ -65,11 +65,11 @@ const THEME_COLORS = {
     glowStrong: 'rgba(74, 158, 255, 0.25)'
   },
   pink: {
-    primary: '#e066ff',
-    secondary: '#c957e6',
-    tertiary: '#b248cc',
-    glow: 'rgba(224, 102, 255, 0.15)',
-    glowStrong: 'rgba(224, 102, 255, 0.25)'
+    primary: '#ffaaaa',
+    secondary: '#e69999',
+    tertiary: '#cc8888',
+    glow: 'rgba(255, 170, 170, 0.15)',
+    glowStrong: 'rgba(255, 170, 170, 0.25)'
   },
   red: {
     primary: '#ff5555',
