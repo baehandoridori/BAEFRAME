@@ -826,8 +826,10 @@ async function initApp() {
   const onionOpacity = document.getElementById('onionOpacity');
   const onionOpacityValue = document.getElementById('onionOpacityValue');
 
-  onionToggle.addEventListener('click', () => {
-    const isActive = onionToggle.classList.toggle('active');
+  // 어니언 스킨 토글 함수 (UI 동기화 포함)
+  function toggleOnionSkinWithUI() {
+    const isActive = !onionToggle.classList.contains('active');
+    onionToggle.classList.toggle('active', isActive);
     onionToggle.textContent = isActive ? 'ON' : 'OFF';
     onionControls.classList.toggle('visible', isActive);
     drawingManager.setOnionSkin(isActive, {
@@ -835,6 +837,11 @@ async function initApp() {
       after: parseInt(onionAfter.value),
       opacity: parseInt(onionOpacity.value) / 100
     });
+    return isActive;
+  }
+
+  onionToggle.addEventListener('click', () => {
+    toggleOnionSkinWithUI();
   });
 
   onionBefore.addEventListener('change', updateOnionSettings);
@@ -2162,41 +2169,30 @@ async function initApp() {
         break;
 
       case 'Digit1':
-        // 1: 어니언 스킨 토글 (드로잉 모드 여부 상관없이)
+        // 1: 어니언 스킨 토글 (UI 버튼과 동기화)
         e.preventDefault();
-        {
-          const enabled = drawingManager.toggleOnionSkin();
-          showToast(enabled ? '어니언 스킨 ON' : '어니언 스킨 OFF', 'info');
-        }
+        toggleOnionSkinWithUI();
         break;
 
       case 'Digit2':
         // 2: 빈 키프레임 삽입
         e.preventDefault();
-        if (state.isDrawMode) {
-          drawingManager.addBlankKeyframe();
-          showToast('빈 키프레임 추가됨', 'success');
-        }
+        drawingManager.addBlankKeyframe();
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
         break;
 
       case 'Digit3':
         // 3: 프레임 삽입 (홀드 추가)
         e.preventDefault();
-        if (state.isDrawMode) {
-          if (drawingManager.insertFrame()) {
-            showToast('프레임 삽입됨 (홀드 추가)', 'success');
-          }
-        }
+        drawingManager.insertFrame();
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
         break;
 
       case 'Digit4':
         // 4: 프레임 삭제
         e.preventDefault();
-        if (state.isDrawMode) {
-          if (drawingManager.deleteFrame()) {
-            showToast('프레임 삭제됨', 'success');
-          }
-        }
+        drawingManager.deleteFrame();
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
         break;
 
       case 'KeyB':
