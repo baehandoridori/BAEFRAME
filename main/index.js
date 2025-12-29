@@ -11,6 +11,18 @@ const { setupIpcHandlers } = require('./ipc-handlers');
 const log = createLogger('Main');
 
 // ============================================
+// 비디오 코덱 지원 향상을 위한 Chromium 플래그
+// ============================================
+// HEVC/H.265 하드웨어 디코딩 활성화 시도
+app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,VaapiVideoEncoder,PlatformHEVCDecoderSupport');
+app.commandLine.appendSwitch('enable-accelerated-video-decode');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+// 일부 시스템에서 GPU 프로세스 안정성 향상
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+
+log.info('비디오 하드웨어 가속 플래그 적용됨');
+
+// ============================================
 // baeframe:// 프로토콜 등록
 // ============================================
 // 주의: AutoHotkey 핸들러(EX_baeframe_protocol_handler.ahk)를 사용하므로
