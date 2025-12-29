@@ -924,6 +924,8 @@ async function initApp() {
     videoOnionToggle.classList.toggle('active', isActive);
     videoOnionToggle.textContent = isActive ? 'ON' : 'OFF';
     videoOnionControls.classList.toggle('visible', isActive);
+    // 캔버스 표시/숨김
+    videoOnionSkinCanvas.classList.toggle('visible', isActive);
     videoPlayer.setVideoOnionSkin(isActive, {
       before: parseInt(videoOnionBefore.value),
       after: parseInt(videoOnionAfter.value),
