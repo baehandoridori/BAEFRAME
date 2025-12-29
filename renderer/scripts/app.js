@@ -10,6 +10,7 @@ import { CommentManager } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
+import { PlexusEffect } from './modules/plexus.js';
 
 const log = createLogger('App');
 
@@ -2594,6 +2595,72 @@ async function initApp() {
       showToast('댓글에 표시될 이름을 설정해주세요.', 'info');
     }, 500);
   }
+
+  // ====== 크레딧 모달 ======
+  const creditsOverlay = document.getElementById('creditsOverlay');
+  const creditsClose = document.getElementById('creditsClose');
+  const creditsPlexus = document.getElementById('creditsPlexus');
+  const creditsVersion = document.getElementById('creditsVersion');
+  const logoIcon = document.querySelector('.logo-icon');
+
+  let plexusEffect = null;
+
+  async function openCreditsModal() {
+    // 버전 정보 가져오기
+    try {
+      const version = await window.electronAPI.getVersion();
+      creditsVersion.textContent = `v${version}`;
+    } catch (e) {
+      creditsVersion.textContent = 'v1.0.0';
+    }
+
+    // 플렉서스 효과 시작
+    if (!plexusEffect) {
+      plexusEffect = new PlexusEffect(creditsPlexus, {
+        particleCount: 60,
+        particleColor: 'rgba(255, 208, 0, 0.5)',
+        lineColor: 'rgba(255, 208, 0, 0.12)',
+        particleRadius: 2,
+        lineDistance: 180,
+        speed: 0.3
+      });
+    }
+    plexusEffect.start();
+
+    // 모달 열기
+    creditsOverlay.classList.add('active');
+  }
+
+  function closeCreditsModal() {
+    creditsOverlay.classList.remove('active');
+
+    // 애니메이션 완료 후 플렉서스 중지
+    setTimeout(() => {
+      if (plexusEffect) {
+        plexusEffect.stop();
+      }
+    }, 400);
+  }
+
+  // 로고 클릭 시 크레딧 모달 열기
+  logoIcon?.addEventListener('click', openCreditsModal);
+
+  // 닫기 버튼
+  creditsClose?.addEventListener('click', closeCreditsModal);
+
+  // 오버레이 클릭 시 닫기
+  creditsOverlay?.addEventListener('click', (e) => {
+    if (e.target === creditsOverlay) {
+      closeCreditsModal();
+    }
+  });
+
+  // ESC 키로 닫기
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && creditsOverlay?.classList.contains('active')) {
+      closeCreditsModal();
+    }
+  });
 
   log.info('앱 초기화 완료');
 
