@@ -1665,14 +1665,38 @@ async function initApp() {
       }
     });
 
-    // 포커스 잃으면 취소 (다른 곳 클릭)
+    // pointerdown으로 클릭 대상 감지 (blur보다 먼저 발생)
+    let clickedInsideMarker = false;
+
+    const handlePointerDown = (e) => {
+      clickedInsideMarker = markerEl.contains(e.target);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+
+    // 포커스 잃으면 취소 (마커 외부 클릭 시에만)
     textarea?.addEventListener('blur', () => {
       setTimeout(() => {
-        if (commentManager.pendingMarker) {
+        if (commentManager.pendingMarker && !clickedInsideMarker) {
           commentManager.setCommentMode(false);
         }
+        clickedInsideMarker = false; // 리셋
       }, 100);
     });
+
+    // 마커 제거 시 이벤트 리스너 정리
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const removed of mutation.removedNodes) {
+          if (removed === markerEl || removed.contains?.(markerEl)) {
+            document.removeEventListener('pointerdown', handlePointerDown);
+            observer.disconnect();
+            return;
+          }
+        }
+      }
+    });
+    observer.observe(markerContainer, { childList: true, subtree: true });
   }
 
   /**
@@ -2837,6 +2861,15 @@ async function initApp() {
     threadEditor.focus();
     const selection = window.getSelection();
 
+    // Selection이 없으면 에디터 끝에 커서 배치
+    if (!selection || selection.rangeCount === 0) {
+      const range = document.createRange();
+      range.selectNodeContents(threadEditor);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
     switch (format) {
       case 'bold':
         document.execCommand('bold', false, null);
@@ -2866,8 +2899,14 @@ async function initApp() {
         }
         break;
       case 'link':
+        // prompt() 전에 selection 백업
+        const savedRange = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
         const url = prompt('링크 URL을 입력하세요:');
-        if (url) {
+        if (url && savedRange) {
+          // selection 복원 후 링크 적용
+          threadEditor.focus();
+          selection.removeAllRanges();
+          selection.addRange(savedRange);
           document.execCommand('createLink', false, url);
         }
         break;
@@ -2976,8 +3015,19 @@ async function initApp() {
     // "- " 입력 시 자동 불릿 리스트
     const text = threadEditor.innerText;
     if (text.endsWith('- ') && text.length === 2) {
-      threadEditor.innerHTML = '';
-      document.execCommand('insertUnorderedList', false, null);
+      // execCommand 대신 직접 DOM 조작으로 안정적 처리
+      threadEditor.innerHTML = '<ul><li><br></li></ul>';
+
+      // 커서를 li 안으로 명시적 이동
+      const li = threadEditor.querySelector('li');
+      if (li) {
+        const range = document.createRange();
+        const sel = window.getSelection();
+        range.setStart(li, 0);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
     }
   });
 
