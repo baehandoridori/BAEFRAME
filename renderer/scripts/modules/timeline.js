@@ -908,10 +908,15 @@ export class Timeline extends EventTarget {
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
     const newFrame = Math.round(percent * (this.totalFrames - 1));
 
-    // 고스트 위치 업데이트
+    // 고스트 클립 위치 업데이트
     const ghostPercent = (newFrame / this.totalFrames) * 100;
     this.dragGhost.style.left = `${ghostPercent}%`;
-    this.dragGhost.textContent = `F${newFrame}`;
+
+    // 툴팁 위치 및 내용 업데이트
+    if (this.dragTooltip) {
+      this.dragTooltip.style.left = `${ghostPercent}%`;
+      this.dragTooltip.textContent = `F${newFrame}`;
+    }
 
     // 프레임 이동량 저장
     this.dragGhost.dataset.targetFrame = newFrame;
@@ -926,10 +931,19 @@ export class Timeline extends EventTarget {
     const targetFrame = parseInt(this.dragGhost?.dataset.targetFrame || this.dragStartFrame);
     const frameDelta = targetFrame - this.dragStartFrame;
 
-    // 고스트 제거
+    // 원본 클립 투명도 복원
+    if (this.draggedKeyframe.element) {
+      this.draggedKeyframe.element.style.opacity = '';
+    }
+
+    // 고스트 및 툴팁 제거
     if (this.dragGhost) {
       this.dragGhost.remove();
       this.dragGhost = null;
+    }
+    if (this.dragTooltip) {
+      this.dragTooltip.remove();
+      this.dragTooltip = null;
     }
 
     this.isDraggingKeyframe = false;
@@ -955,15 +969,33 @@ export class Timeline extends EventTarget {
    * 드래그 고스트 생성
    */
   _createDragGhost(e, frame) {
-    this.dragGhost = document.createElement('div');
-    this.dragGhost.className = 'keyframe-drag-ghost';
-    this.dragGhost.textContent = `F${frame}`;
+    const { element: clipElement, layerId } = this.draggedKeyframe;
 
-    const containerRect = this.tracksContainer.getBoundingClientRect();
+    // 클립 요소 복제하여 고스트로 사용
+    this.dragGhost = clipElement.cloneNode(true);
+    this.dragGhost.className = 'drawing-clip keyframe-drag-ghost-clip';
+
+    // 원본 클립의 스타일 복사하고 투명도 적용
+    const clipRect = clipElement.getBoundingClientRect();
+    const trackRect = clipElement.parentElement.getBoundingClientRect();
+
+    this.dragGhost.style.cssText = clipElement.style.cssText;
+    this.dragGhost.style.opacity = '0.5';
+    this.dragGhost.style.pointerEvents = 'none';
+    this.dragGhost.style.zIndex = '100';
+
+    // 원본 클립을 반투명하게 처리
+    clipElement.style.opacity = '0.3';
+
+    // 프레임 표시 툴팁 추가
+    this.dragTooltip = document.createElement('div');
+    this.dragTooltip.className = 'keyframe-drag-ghost';
+    this.dragTooltip.textContent = `F${frame}`;
     const percent = (frame / this.totalFrames) * 100;
-    this.dragGhost.style.left = `${percent}%`;
+    this.dragTooltip.style.left = `${percent}%`;
 
-    this.tracksContainer.appendChild(this.dragGhost);
+    clipElement.parentElement.appendChild(this.dragGhost);
+    this.tracksContainer.appendChild(this.dragTooltip);
   }
 
   // ====== 키프레임 선택 ======

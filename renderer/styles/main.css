@@ -1455,11 +1455,11 @@ body {
   color: var(--accent-primary);
 }
 
-/* 키프레임 드래그 고스트 */
+/* 키프레임 드래그 고스트 (툴팁) */
 .keyframe-drag-ghost {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
+  top: -24px;
+  transform: translateX(-50%);
   background: var(--accent-primary);
   color: var(--bg-primary);
   padding: 4px 8px;
@@ -1470,6 +1470,16 @@ body {
   z-index: 100;
   pointer-events: none;
   box-shadow: var(--shadow-md);
+  white-space: nowrap;
+}
+
+/* 키프레임 드래그 고스트 (클립 복제) */
+.keyframe-drag-ghost-clip {
+  opacity: 0.5 !important;
+  pointer-events: none !important;
+  z-index: 100 !important;
+  outline: 2px dashed var(--accent-primary) !important;
+  outline-offset: -2px;
 }
 
 /* 선택 박스 */

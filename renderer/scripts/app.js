@@ -1895,7 +1895,7 @@ async function initApp() {
     if (!author) return '';
     const color = userSettings.getColorForName(author);
     if (color) {
-      return `style="color: ${color};"`;
+      return `style="color: ${color}; font-weight: bold;"`;
     }
     return '';
   }
@@ -2481,9 +2481,15 @@ async function initApp() {
         break;
 
       case 'Digit3':
-        // 3: 프레임 삽입 (홀드 추가)
         e.preventDefault();
-        drawingManager.insertFrame();
+        if (e.shiftKey) {
+          // Shift+3: 현재 키프레임 삭제
+          drawingManager.removeKeyframe();
+          showToast('키프레임이 삭제되었습니다.', 'info');
+        } else {
+          // 3: 프레임 삽입 (홀드 추가)
+          drawingManager.insertFrame();
+        }
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
         break;
 

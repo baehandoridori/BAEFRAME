@@ -238,12 +238,29 @@ export class DrawingLayer {
    * @param {number} frame - 삭제할 프레임
    */
   deleteFrame(frame) {
-    // 현재 프레임의 키프레임은 삭제하지 않고, 이후 키프레임만 당김
+    // 현재 프레임에 키프레임이 있으면 먼저 삭제
+    const currentKeyframeIndex = this.keyframes.findIndex(kf => kf.frame === frame);
+    if (currentKeyframeIndex !== -1) {
+      this.keyframes.splice(currentKeyframeIndex, 1);
+    }
+
+    // 이후 키프레임들을 1프레임씩 앞으로 이동
     for (const kf of this.keyframes) {
       if (kf.frame > frame) {
         kf.frame -= 1;
       }
     }
+
+    // 중첩된 키프레임 제거 (같은 프레임에 여러 키프레임이 있으면 첫 번째만 유지)
+    const seen = new Set();
+    this.keyframes = this.keyframes.filter(kf => {
+      if (seen.has(kf.frame)) {
+        return false;
+      }
+      seen.add(kf.frame);
+      return true;
+    });
+
     log.debug('프레임 삭제됨', { layerId: this.id, frame });
   }
 
