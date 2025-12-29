@@ -240,6 +240,15 @@ export class Timeline extends EventTarget {
   }
 
   /**
+   * 시간을 프레임 단위로 스냅
+   */
+  _snapTimeToFrame(time) {
+    if (this.fps === 0) return time;
+    const frame = Math.round(time * this.fps);
+    return Math.max(0, Math.min(frame / this.fps, this.duration));
+  }
+
+  /**
    * 클릭 위치에서 시간 계산하여 이동
    */
   _seekFromClick(e) {
@@ -255,7 +264,7 @@ export class Timeline extends EventTarget {
     // tracksContainer의 실제 너비 (줌이 적용된 상태)
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = percent * this.duration;
+    const time = this._snapTimeToFrame(percent * this.duration);
 
     this._emit('seek', { time });
   }
@@ -272,7 +281,7 @@ export class Timeline extends EventTarget {
     const x = e.clientX - rect.left;
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = percent * this.duration;
+    const time = this._snapTimeToFrame(percent * this.duration);
 
     // 플레이헤드 위치 업데이트 (시각적으로만)
     this.scrubTime = time;

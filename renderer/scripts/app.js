@@ -239,6 +239,9 @@ async function initApp() {
   videoPlayer.addEventListener('frameUpdate', (e) => {
     const { frame, time } = e.detail;
 
+    // 타임라인 플레이헤드 실시간 업데이트 (재생 중)
+    timeline.setCurrentTime(time);
+
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
   });
