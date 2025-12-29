@@ -381,6 +381,10 @@ body {
 .drawing-overlay {
   position: absolute;
   pointer-events: none;
+  background: transparent;
+  /* 초기 상태: 크기가 0이면 아무것도 표시하지 않음 */
+  width: 0;
+  height: 0;
   /* top, left, width, height는 JS에서 동적으로 설정 */
 }
 
@@ -390,15 +394,19 @@ body {
 }
 
 /* 영상 어니언 스킨 레이어 (비디오 위, 그리기 레이어 아래) */
-.video-onion-layer {
-  z-index: 1;
+#videoOnionSkinCanvas {
+  position: absolute;
   pointer-events: none;
   background: transparent !important;
-  display: none; /* 기본적으로 숨김, 활성화 시 표시 */
+  z-index: 1;
+  /* 기본적으로 완전히 숨김 */
+  visibility: hidden;
+  opacity: 0;
 }
 
-.video-onion-layer.visible {
-  display: block;
+#videoOnionSkinCanvas.visible {
+  visibility: visible;
+  opacity: 1;
 }
 
 /* 어니언 스킨 레이어 (그리기 캔버스 아래) */
