@@ -782,6 +782,20 @@ export class DrawingManager extends EventTarget {
     this.drawingCanvas.setLineWidth(width);
   }
 
+  /**
+   * 투명도 설정
+   */
+  setOpacity(opacity) {
+    this.drawingCanvas.setOpacity(opacity);
+  }
+
+  /**
+   * 현재 도구 가져오기
+   */
+  getCurrentTool() {
+    return this.drawingCanvas.tool;
+  }
+
   // ====== 어니언 스킨 ======
 
   /**

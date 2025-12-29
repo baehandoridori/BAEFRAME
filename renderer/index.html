@@ -66,6 +66,9 @@
           <!-- Video Element (추후 mpv로 대체) -->
           <video id="videoPlayer" style="display: none;"></video>
 
+          <!-- Video Onion Skin Canvas (영상 어니언 스킨) -->
+          <canvas id="videoOnionSkinCanvas" class="drawing-overlay video-onion-layer"></canvas>
+
           <!-- Video Loading Overlay -->
           <div class="video-loading-overlay" id="videoLoadingOverlay">
             <div class="loading-spinner"></div>
@@ -145,8 +148,16 @@
               <div class="tools-section">
                 <div class="section-label">크기 <span id="brushSizeValue">3px</span></div>
                 <div class="size-slider-wrapper">
-                  <input type="range" class="size-slider" id="brushSizeSlider" min="1" max="30" value="3">
+                  <input type="range" class="size-slider" id="brushSizeSlider" min="1" max="50" value="3">
                   <div class="size-preview" id="sizePreview"></div>
+                </div>
+              </div>
+
+              <!-- 불투명도 (지우개 제외) -->
+              <div class="tools-section" id="opacitySection">
+                <div class="section-label">불투명도 <span id="brushOpacityValue">100%</span></div>
+                <div class="size-slider-wrapper">
+                  <input type="range" class="size-slider" id="brushOpacitySlider" min="10" max="100" value="100">
                 </div>
               </div>
 
@@ -165,10 +176,10 @@
                 </div>
               </div>
 
-              <!-- 어니언 스킨 -->
+              <!-- 그리기 어니언 스킨 -->
               <div class="tools-section">
                 <div class="section-label">
-                  어니언 스킨
+                  그리기 어니언
                   <button class="onion-toggle" id="onionToggle" title="어니언 스킨 토글">OFF</button>
                 </div>
                 <div class="onion-controls" id="onionControls">
@@ -186,6 +197,31 @@
                     <span>투명도</span>
                     <input type="range" id="onionOpacity" min="10" max="80" value="30">
                     <span id="onionOpacityValue">30%</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 영상 어니언 스킨 -->
+              <div class="tools-section">
+                <div class="section-label">
+                  영상 어니언
+                  <button class="onion-toggle" id="videoOnionToggle" title="영상 어니언 스킨 토글">OFF</button>
+                </div>
+                <div class="onion-controls" id="videoOnionControls">
+                  <div class="onion-row">
+                    <span>이전</span>
+                    <input type="number" id="videoOnionBefore" min="0" max="5" value="1">
+                    <span>장</span>
+                  </div>
+                  <div class="onion-row">
+                    <span>이후</span>
+                    <input type="number" id="videoOnionAfter" min="0" max="5" value="1">
+                    <span>장</span>
+                  </div>
+                  <div class="onion-row">
+                    <span>투명도</span>
+                    <input type="range" id="videoOnionOpacity" min="10" max="60" value="30">
+                    <span id="videoOnionOpacityValue">30%</span>
                   </div>
                 </div>
               </div>
@@ -247,6 +283,24 @@
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             댓글 추가
             <span class="shortcut-hint">C</span>
+          </button>
+        </div>
+
+        <!-- 구간 반복 컨트롤 -->
+        <div class="loop-controls" id="loopControls">
+          <button class="loop-btn" id="btnSetInPoint" title="시작점 설정 (I)">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 19l-7-7 7-7"/><line x1="4" y1="12" x2="20" y2="12"/></svg>
+            <span class="loop-timecode" id="inPointDisplay">--:--</span>
+          </button>
+          <button class="loop-btn loop-toggle" id="btnLoopToggle" title="구간 반복 (L)">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          </button>
+          <button class="loop-btn" id="btnSetOutPoint" title="종료점 설정 (O)">
+            <span class="loop-timecode" id="outPointDisplay">--:--</span>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 5l7 7-7 7"/><line x1="20" y1="12" x2="4" y2="12"/></svg>
+          </button>
+          <button class="loop-btn loop-clear" id="btnClearLoop" title="구간 초기화">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
       </div>
@@ -505,6 +559,21 @@
         <div class="shortcut-row">
           <span class="shortcut-label">단축키 메뉴</span>
           <div class="shortcut-keys"><span class="shortcut-key">?</span></div>
+        </div>
+      </div>
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">구간 반복 (공통)</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">시작점 설정</span>
+          <div class="shortcut-keys"><span class="shortcut-key">I</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">종료점 설정</span>
+          <div class="shortcut-keys"><span class="shortcut-key">O</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">구간 반복 토글</span>
+          <div class="shortcut-keys"><span class="shortcut-key">L</span></div>
         </div>
       </div>
     </div>

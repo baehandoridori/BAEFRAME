@@ -650,7 +650,21 @@ async function initApp() {
     });
   });
 
+  // 도구별 설정 저장 (크기, 불투명도)
+  const toolSettings = {
+    eraser: { size: 20 },      // 지우개는 기본 크기 더 크게
+    brush: { size: 3, opacity: 100 }  // 브러시/펜 등 다른 도구들
+  };
+  let currentToolType = 'brush';  // 'eraser' 또는 'brush'
+
   // 그리기 도구 선택
+  const opacitySection = document.getElementById('opacitySection');
+  const brushSizeSlider = document.getElementById('brushSizeSlider');
+  const brushSizeValue = document.getElementById('brushSizeValue');
+  const sizePreview = document.getElementById('sizePreview');
+  const brushOpacitySlider = document.getElementById('brushOpacitySlider');
+  const brushOpacityValue = document.getElementById('brushOpacityValue');
+
   document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
     btn.addEventListener('click', function() {
       document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
@@ -666,9 +680,35 @@ async function initApp() {
         'rect': DrawingTool.RECT,
         'circle': DrawingTool.CIRCLE
       };
-      const tool = toolMap[this.dataset.tool] || DrawingTool.PEN;
+      const toolName = this.dataset.tool;
+      const tool = toolMap[toolName] || DrawingTool.PEN;
+      const newToolType = toolName === 'eraser' ? 'eraser' : 'brush';
+
+      // 이전 도구 설정 저장
+      toolSettings[currentToolType].size = parseInt(brushSizeSlider.value);
+      if (currentToolType === 'brush') {
+        toolSettings.brush.opacity = parseInt(brushOpacitySlider.value);
+      }
+
+      // 새 도구 설정 적용
+      currentToolType = newToolType;
+      brushSizeSlider.value = toolSettings[currentToolType].size;
+      drawingManager.setLineWidth(toolSettings[currentToolType].size);
+      updateSizePreview();
+
+      // 지우개일 때 불투명도 섹션 숨기기, 아니면 보이기
+      if (newToolType === 'eraser') {
+        opacitySection.style.display = 'none';
+        drawingManager.setOpacity(1);  // 지우개는 항상 100%
+      } else {
+        opacitySection.style.display = 'block';
+        brushOpacitySlider.value = toolSettings.brush.opacity;
+        brushOpacityValue.textContent = `${toolSettings.brush.opacity}%`;
+        drawingManager.setOpacity(toolSettings.brush.opacity / 100);
+      }
+
       drawingManager.setTool(tool);
-      log.debug('도구 선택', { tool: this.dataset.tool });
+      log.debug('도구 선택', { tool: toolName, size: toolSettings[currentToolType].size });
     });
   });
 
@@ -698,11 +738,7 @@ async function initApp() {
     });
   });
 
-  // 브러쉬 사이즈 슬라이더
-  const brushSizeSlider = document.getElementById('brushSizeSlider');
-  const brushSizeValue = document.getElementById('brushSizeValue');
-  const sizePreview = document.getElementById('sizePreview');
-
+  // 브러쉬 사이즈 슬라이더 (변수는 위에서 이미 선언됨)
   function updateSizePreview() {
     const size = brushSizeSlider.value;
     brushSizeValue.textContent = `${size}px`;
@@ -712,8 +748,17 @@ async function initApp() {
 
   brushSizeSlider.addEventListener('input', function() {
     const size = parseInt(this.value);
+    toolSettings[currentToolType].size = size;  // 현재 도구 설정에 저장
     drawingManager.setLineWidth(size);
     updateSizePreview();
+  });
+
+  // 불투명도 슬라이더
+  brushOpacitySlider.addEventListener('input', function() {
+    const opacity = parseInt(this.value);
+    toolSettings.brush.opacity = opacity;  // 브러시 설정에 저장
+    brushOpacityValue.textContent = `${opacity}%`;
+    drawingManager.setOpacity(opacity / 100);
   });
 
   // 초기 사이즈 프리뷰 설정
@@ -860,6 +905,134 @@ async function initApp() {
       });
     }
   }
+
+  // ====== 영상 어니언 스킨 ======
+  const videoOnionToggle = document.getElementById('videoOnionToggle');
+  const videoOnionControls = document.getElementById('videoOnionControls');
+  const videoOnionBefore = document.getElementById('videoOnionBefore');
+  const videoOnionAfter = document.getElementById('videoOnionAfter');
+  const videoOnionOpacity = document.getElementById('videoOnionOpacity');
+  const videoOnionOpacityValue = document.getElementById('videoOnionOpacityValue');
+  const videoOnionSkinCanvas = document.getElementById('videoOnionSkinCanvas');
+
+  // 비디오 플레이어에 영상 어니언 스킨 캔버스 설정
+  videoPlayer.setVideoOnionSkinCanvas(videoOnionSkinCanvas);
+
+  // 영상 어니언 스킨 토글 함수 (UI 동기화 포함)
+  function toggleVideoOnionSkinWithUI() {
+    const isActive = !videoOnionToggle.classList.contains('active');
+    videoOnionToggle.classList.toggle('active', isActive);
+    videoOnionToggle.textContent = isActive ? 'ON' : 'OFF';
+    videoOnionControls.classList.toggle('visible', isActive);
+    videoPlayer.setVideoOnionSkin(isActive, {
+      before: parseInt(videoOnionBefore.value),
+      after: parseInt(videoOnionAfter.value),
+      opacity: parseInt(videoOnionOpacity.value) / 100
+    });
+    return isActive;
+  }
+
+  videoOnionToggle.addEventListener('click', () => {
+    toggleVideoOnionSkinWithUI();
+  });
+
+  videoOnionBefore.addEventListener('change', updateVideoOnionSettings);
+  videoOnionAfter.addEventListener('change', updateVideoOnionSettings);
+  videoOnionOpacity.addEventListener('input', () => {
+    videoOnionOpacityValue.textContent = `${videoOnionOpacity.value}%`;
+    updateVideoOnionSettings();
+  });
+
+  function updateVideoOnionSettings() {
+    if (videoOnionToggle.classList.contains('active')) {
+      videoPlayer.setVideoOnionSkin(true, {
+        before: parseInt(videoOnionBefore.value),
+        after: parseInt(videoOnionAfter.value),
+        opacity: parseInt(videoOnionOpacity.value) / 100
+      });
+    }
+  }
+
+  // 비디오 일시정지 시 영상 어니언 스킨 렌더링
+  videoPlayer.addEventListener('pause', () => {
+    if (videoPlayer.videoOnionSkin?.enabled) {
+      videoPlayer.renderVideoOnionSkin();
+    }
+  });
+
+  // 비디오 재생 시 영상 어니언 스킨 클리어
+  videoPlayer.addEventListener('play', () => {
+    videoPlayer._clearVideoOnionSkin();
+  });
+
+  // 비디오 시간 변경 시 (일시정지 상태에서 seeking) 영상 어니언 스킨 업데이트
+  let videoOnionSkinDebounceTimer = null;
+  videoPlayer.addEventListener('timeupdate', () => {
+    if (!videoPlayer.isPlaying && videoPlayer.videoOnionSkin?.enabled) {
+      // 디바운스 처리 (너무 자주 렌더링하지 않도록)
+      clearTimeout(videoOnionSkinDebounceTimer);
+      videoOnionSkinDebounceTimer = setTimeout(() => {
+        videoPlayer.renderVideoOnionSkin();
+      }, 150);
+    }
+  });
+
+  // ====== 구간 반복 ======
+  const btnSetInPoint = document.getElementById('btnSetInPoint');
+  const btnSetOutPoint = document.getElementById('btnSetOutPoint');
+  const btnLoopToggle = document.getElementById('btnLoopToggle');
+  const btnClearLoop = document.getElementById('btnClearLoop');
+  const inPointDisplay = document.getElementById('inPointDisplay');
+  const outPointDisplay = document.getElementById('outPointDisplay');
+
+  // 시작점 설정
+  btnSetInPoint.addEventListener('click', () => {
+    const time = videoPlayer.setInPointAtCurrent();
+    inPointDisplay.textContent = videoPlayer.formatTimeShort(time);
+    btnSetInPoint.classList.add('has-point');
+    showToast(`시작점 설정: ${videoPlayer.formatTimeShort(time)}`, 'info');
+  });
+
+  // 종료점 설정
+  btnSetOutPoint.addEventListener('click', () => {
+    const time = videoPlayer.setOutPointAtCurrent();
+    outPointDisplay.textContent = videoPlayer.formatTimeShort(time);
+    btnSetOutPoint.classList.add('has-point');
+    showToast(`종료점 설정: ${videoPlayer.formatTimeShort(time)}`, 'info');
+  });
+
+  // 구간 반복 토글
+  btnLoopToggle.addEventListener('click', () => {
+    // 시작점과 종료점이 설정되어 있어야 활성화 가능
+    if (videoPlayer.loop.inPoint === null || videoPlayer.loop.outPoint === null) {
+      showToast('시작점과 종료점을 먼저 설정하세요', 'warn');
+      return;
+    }
+    const enabled = videoPlayer.toggleLoop();
+    btnLoopToggle.classList.toggle('active', enabled);
+    showToast(enabled ? '구간 반복 활성화' : '구간 반복 비활성화', 'info');
+  });
+
+  // 구간 초기화
+  btnClearLoop.addEventListener('click', () => {
+    videoPlayer.clearLoop();
+    inPointDisplay.textContent = '--:--';
+    outPointDisplay.textContent = '--:--';
+    btnSetInPoint.classList.remove('has-point');
+    btnSetOutPoint.classList.remove('has-point');
+    btnLoopToggle.classList.remove('active');
+    showToast('구간 초기화', 'info');
+  });
+
+  // 구간 변경 이벤트 수신 (UI 동기화)
+  videoPlayer.addEventListener('loopChanged', (e) => {
+    const { inPoint, outPoint, enabled } = e.detail;
+    inPointDisplay.textContent = videoPlayer.formatTimeShort(inPoint);
+    outPointDisplay.textContent = videoPlayer.formatTimeShort(outPoint);
+    btnSetInPoint.classList.toggle('has-point', inPoint !== null);
+    btnSetOutPoint.classList.toggle('has-point', outPoint !== null);
+    btnLoopToggle.classList.toggle('active', enabled);
+  });
 
   // ====== 비디오 줌/패닝 ======
 
@@ -1122,6 +1295,17 @@ async function initApp() {
       onionCanvas.style.height = `${renderArea.height}px`;
       onionCanvas.width = renderArea.videoWidth;
       onionCanvas.height = renderArea.videoHeight;
+    }
+
+    // 영상 어니언 스킨 캔버스도 동일하게 동기화
+    if (videoOnionSkinCanvas) {
+      videoOnionSkinCanvas.style.position = 'absolute';
+      videoOnionSkinCanvas.style.left = `${renderArea.left}px`;
+      videoOnionSkinCanvas.style.top = `${renderArea.top}px`;
+      videoOnionSkinCanvas.style.width = `${renderArea.width}px`;
+      videoOnionSkinCanvas.style.height = `${renderArea.height}px`;
+      videoOnionSkinCanvas.width = renderArea.videoWidth;
+      videoOnionSkinCanvas.height = renderArea.videoHeight;
     }
 
     // 드로잉 매니저에도 캔버스 크기 전달
@@ -2006,6 +2190,24 @@ async function initApp() {
         e.preventDefault();
         toggleCommentMode();
       }
+      return;
+
+    case 'KeyI':
+      // 시작점 설정
+      e.preventDefault();
+      btnSetInPoint.click();
+      return;
+
+    case 'KeyO':
+      // 종료점 설정
+      e.preventDefault();
+      btnSetOutPoint.click();
+      return;
+
+    case 'KeyL':
+      // 구간 반복 토글
+      e.preventDefault();
+      btnLoopToggle.click();
       return;
 
     case 'F6':

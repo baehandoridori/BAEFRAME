@@ -389,6 +389,11 @@ body {
   cursor: crosshair;
 }
 
+/* 영상 어니언 스킨 레이어 (가장 아래) */
+.video-onion-layer {
+  z-index: 0;
+}
+
 /* 어니언 스킨 레이어 (그리기 캔버스 아래) */
 .onion-skin-layer {
   z-index: 1;
@@ -822,6 +827,76 @@ body {
   padding: 2px 5px;
   border-radius: 3px;
   font-family: var(--font-mono);
+}
+
+/* 구간 반복 컨트롤 */
+.loop-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.loop-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.loop-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.loop-btn.active {
+  background: var(--accent-glow);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.loop-btn.has-point {
+  background: var(--bg-secondary);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.loop-btn.loop-toggle {
+  padding: 6px;
+}
+
+.loop-btn.loop-toggle.active {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.loop-btn.loop-clear {
+  padding: 4px;
+  opacity: 0.6;
+}
+
+.loop-btn.loop-clear:hover {
+  opacity: 1;
+  color: var(--status-error);
+  border-color: var(--status-error);
+}
+
+.loop-timecode {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  min-width: 35px;
+  text-align: center;
 }
 
 /* ========================================
