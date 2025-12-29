@@ -1896,9 +1896,12 @@ async function initApp() {
       return;
     }
 
+    const userSettings = getUserSettings();
+
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
       const replyCount = marker.replies?.length || 0;
+      const avatarImage = userSettings.getAvatarForName(marker.author);
       const repliesHtml = (marker.replies || []).map(reply => `
         <div class="comment-reply">
           <div class="comment-reply-header">
@@ -1910,7 +1913,8 @@ async function initApp() {
       `).join('');
 
       return `
-      <div class="comment-item ${marker.resolved ? 'resolved' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
+        ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
         <div class="comment-header">
           <span class="comment-timecode">${marker.startTimecode}</span>
           <span class="comment-author ${authorClass}">${marker.author}</span>

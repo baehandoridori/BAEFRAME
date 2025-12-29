@@ -1632,6 +1632,39 @@ body {
   background: var(--accent-glow);
 }
 
+/* 특별 아바타가 있는 댓글 카드 */
+.comment-item.has-avatar {
+  position: relative;
+  overflow: hidden;
+}
+
+.comment-avatar-bg {
+  position: absolute;
+  top: 0;
+  right: -20px;
+  width: 140px;
+  height: 100%;
+  background-size: cover;
+  background-position: center top;
+  background-repeat: no-repeat;
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 0;
+  /* 좌측 페더 효과 - 모던한 그라데이션 마스크 */
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.3) 30%, rgba(0,0,0,0.8) 70%, rgba(0,0,0,1) 100%);
+  mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.3) 30%, rgba(0,0,0,0.8) 70%, rgba(0,0,0,1) 100%);
+}
+
+.comment-item.has-avatar .comment-header,
+.comment-item.has-avatar .comment-content,
+.comment-item.has-avatar .comment-actions,
+.comment-item.has-avatar .comment-edit-form,
+.comment-item.has-avatar .comment-thread-toggle,
+.comment-item.has-avatar .comment-replies {
+  position: relative;
+  z-index: 1;
+}
+
 .comment-header {
   display: flex;
   align-items: center;
