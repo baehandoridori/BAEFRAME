@@ -67,9 +67,24 @@ export class Timeline extends EventTarget {
     // 초기화
     this._setupEventListeners();
     this._setupThumbnailTooltip();
+    this._setupResizeObserver();
     this._updateZoomDisplay();
 
     log.info('Timeline 초기화됨');
+  }
+
+  /**
+   * 리사이즈 옵저버 설정 (창 크기 변경 시 플레이헤드 위치 보정)
+   */
+  _setupResizeObserver() {
+    if (!this.timelineTracks) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      // 줌 상태에서 리사이즈 시 플레이헤드 위치 업데이트
+      this._updatePlayheadPosition();
+    });
+
+    resizeObserver.observe(this.timelineTracks);
   }
 
   /**
@@ -888,7 +903,8 @@ export class Timeline extends EventTarget {
     const containerWidth = this.tracksContainer.offsetWidth;
 
     // 마우스 위치에서 프레임 계산
-    const x = e.clientX - containerRect.left + this.timelineTracks.scrollLeft;
+    // getBoundingClientRect()는 이미 스크롤 위치를 반영하므로 scrollLeft 추가 불필요
+    const x = e.clientX - containerRect.left;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
     const newFrame = Math.round(percent * (this.totalFrames - 1));
 
