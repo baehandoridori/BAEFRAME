@@ -1973,6 +1973,14 @@ async function initApp() {
         item.classList.add('selected');
       });
 
+      // 더블클릭으로 스레드 팝업 열기
+      item.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.comment-action-btn')) return;
+        e.stopPropagation();
+        const markerId = item.dataset.markerId;
+        openThreadPopup(markerId);
+      });
+
       // 해결 버튼
       item.querySelector('.resolve-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2669,6 +2677,299 @@ async function initApp() {
       closeCreditsModal();
     }
   });
+
+  // ========================================
+  // Thread Popup (Slack-style)
+  // ========================================
+  const threadOverlay = document.getElementById('threadOverlay');
+  const threadBack = document.getElementById('threadBack');
+  const threadClose = document.getElementById('threadClose');
+  const threadAuthor = document.getElementById('threadAuthor');
+  const threadOriginal = document.getElementById('threadOriginal');
+  const threadReplyCount = document.getElementById('threadReplyCount');
+  const threadReplies = document.getElementById('threadReplies');
+  const threadEditor = document.getElementById('threadEditor');
+  const threadSubmit = document.getElementById('threadSubmit');
+
+  let currentThreadMarkerId = null;
+
+  /**
+   * 스레드 팝업 열기
+   */
+  function openThreadPopup(markerId) {
+    const marker = commentManager.getMarker(markerId);
+    if (!marker) return;
+
+    currentThreadMarkerId = markerId;
+
+    // 헤더에 작성자 표시
+    threadAuthor.textContent = marker.author;
+
+    // 아바타 이미지 가져오기
+    const avatarImage = userSettings.getAvatarForName(marker.author);
+
+    // 원본 댓글 렌더링
+    threadOriginal.innerHTML = `
+      ${avatarImage ? `<div class="thread-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
+      <div class="thread-original-inner">
+        <div class="thread-comment-header">
+          <div class="thread-comment-avatar">${marker.author.charAt(0)}</div>
+          <div class="thread-comment-info">
+            <div class="thread-comment-author">${marker.author}</div>
+            <div class="thread-comment-time">${formatRelativeTime(marker.createdAt)}</div>
+          </div>
+        </div>
+        <div class="thread-comment-text">${formatMarkdown(marker.text)}</div>
+        <div class="thread-comment-reactions">
+          <button class="thread-reaction">
+            <span class="thread-reaction-emoji">✅</span>
+          </button>
+          <button class="thread-reaction">
+            <span class="thread-reaction-emoji">💯</span>
+          </button>
+          <button class="thread-reaction">
+            <span class="thread-reaction-emoji">👍</span>
+          </button>
+          <button class="thread-reaction">
+            <span class="thread-reaction-emoji">😀</span>
+          </button>
+        </div>
+      </div>
+    `;
+
+    // 답글 개수 표시
+    const replyCount = marker.replies?.length || 0;
+    threadReplyCount.textContent = replyCount > 0 ? `${replyCount}개의 댓글` : '';
+    threadReplyCount.style.display = replyCount > 0 ? 'flex' : 'none';
+
+    // 답글들 렌더링
+    threadReplies.innerHTML = (marker.replies || []).map(reply => `
+      <div class="thread-reply-item">
+        <div class="thread-reply-avatar">${reply.author.charAt(0)}</div>
+        <div class="thread-reply-content">
+          <div class="thread-reply-header">
+            <span class="thread-reply-author">${reply.author}</span>
+            <span class="thread-reply-time">${formatRelativeTime(reply.createdAt)}</span>
+          </div>
+          <div class="thread-reply-text">${formatMarkdown(reply.text)}</div>
+        </div>
+      </div>
+    `).join('');
+
+    // 에디터 초기화
+    threadEditor.innerHTML = '';
+    updateSubmitButtonState();
+
+    // 팝업 열기
+    threadOverlay.classList.add('open');
+    threadEditor.focus();
+  }
+
+  /**
+   * 스레드 팝업 닫기
+   */
+  function closeThreadPopup() {
+    threadOverlay.classList.remove('open');
+    currentThreadMarkerId = null;
+    threadEditor.innerHTML = '';
+  }
+
+  /**
+   * 마크다운 포맷팅 적용
+   */
+  function formatMarkdown(text) {
+    if (!text) return '';
+
+    let html = escapeHtml(text);
+
+    // Bold: *text* or **text**
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<strong>$1</strong>');
+
+    // Italic: _text_
+    html = html.replace(/_(.+?)_/g, '<em>$1</em>');
+
+    // Strikethrough: ~text~
+    html = html.replace(/~(.+?)~/g, '<s>$1</s>');
+
+    // Code: `code`
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Bullet list: - item
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+    // Clean up consecutive ul tags
+    html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+    // Line breaks
+    html = html.replace(/\n/g, '<br>');
+
+    return html;
+  }
+
+  /**
+   * 에디터에 포맷 적용
+   */
+  function applyFormat(format) {
+    threadEditor.focus();
+    const selection = window.getSelection();
+
+    switch (format) {
+      case 'bold':
+        document.execCommand('bold', false, null);
+        break;
+      case 'italic':
+        document.execCommand('italic', false, null);
+        break;
+      case 'underline':
+        document.execCommand('underline', false, null);
+        break;
+      case 'strike':
+        document.execCommand('strikeThrough', false, null);
+        break;
+      case 'bullet':
+        document.execCommand('insertUnorderedList', false, null);
+        break;
+      case 'numbered':
+        document.execCommand('insertOrderedList', false, null);
+        break;
+      case 'code':
+        if (selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0);
+          const selectedText = range.toString();
+          if (selectedText) {
+            document.execCommand('insertHTML', false, `<code>${escapeHtml(selectedText)}</code>`);
+          }
+        }
+        break;
+      case 'link':
+        const url = prompt('링크 URL을 입력하세요:');
+        if (url) {
+          document.execCommand('createLink', false, url);
+        }
+        break;
+    }
+
+    updateSubmitButtonState();
+  }
+
+  /**
+   * 전송 버튼 상태 업데이트
+   */
+  function updateSubmitButtonState() {
+    const hasContent = threadEditor.textContent.trim().length > 0;
+    threadSubmit.classList.toggle('active', hasContent);
+  }
+
+  /**
+   * 스레드에 답글 제출
+   */
+  function submitThreadReply() {
+    const text = threadEditor.innerText.trim();
+    if (!text || !currentThreadMarkerId) return;
+
+    commentManager.addReplyToMarker(currentThreadMarkerId, text);
+
+    // UI 업데이트
+    const marker = commentManager.getMarker(currentThreadMarkerId);
+    if (marker) {
+      // 답글 개수 업데이트
+      const replyCount = marker.replies?.length || 0;
+      threadReplyCount.textContent = `${replyCount}개의 댓글`;
+      threadReplyCount.style.display = 'flex';
+
+      // 새 답글 추가
+      const newReply = marker.replies[marker.replies.length - 1];
+      threadReplies.innerHTML += `
+        <div class="thread-reply-item">
+          <div class="thread-reply-avatar">${newReply.author.charAt(0)}</div>
+          <div class="thread-reply-content">
+            <div class="thread-reply-header">
+              <span class="thread-reply-author">${newReply.author}</span>
+              <span class="thread-reply-time">${formatRelativeTime(newReply.createdAt)}</span>
+            </div>
+            <div class="thread-reply-text">${formatMarkdown(newReply.text)}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    // 에디터 초기화
+    threadEditor.innerHTML = '';
+    updateSubmitButtonState();
+    showToast('답글이 추가되었습니다.', 'success');
+  }
+
+  // 스레드 팝업 이벤트 리스너
+  threadBack?.addEventListener('click', closeThreadPopup);
+  threadClose?.addEventListener('click', closeThreadPopup);
+
+  // 오버레이 클릭 시 닫기
+  threadOverlay?.addEventListener('click', (e) => {
+    if (e.target === threadOverlay) {
+      closeThreadPopup();
+    }
+  });
+
+  // ESC 키로 스레드 팝업 닫기
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && threadOverlay?.classList.contains('open')) {
+      closeThreadPopup();
+    }
+  });
+
+  // 에디터 툴바 버튼 클릭
+  document.querySelectorAll('.thread-editor-toolbar .editor-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const format = btn.dataset.format;
+      if (format) {
+        applyFormat(format);
+      }
+    });
+  });
+
+  // 에디터 키보드 단축키
+  threadEditor?.addEventListener('keydown', (e) => {
+    // Ctrl+B: Bold
+    if (e.ctrlKey && e.key === 'b') {
+      e.preventDefault();
+      applyFormat('bold');
+    }
+    // Ctrl+I: Italic
+    if (e.ctrlKey && e.key === 'i') {
+      e.preventDefault();
+      applyFormat('italic');
+    }
+    // Ctrl+U: Underline
+    if (e.ctrlKey && e.key === 'u') {
+      e.preventDefault();
+      applyFormat('underline');
+    }
+    // Enter: Submit (without Shift)
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitThreadReply();
+    }
+  });
+
+  // 에디터 내용 변경 감지
+  threadEditor?.addEventListener('input', () => {
+    updateSubmitButtonState();
+
+    // "- " 입력 시 자동 불릿 리스트
+    const text = threadEditor.innerText;
+    if (text.endsWith('- ') && text.length === 2) {
+      threadEditor.innerHTML = '';
+      document.execCommand('insertUnorderedList', false, null);
+    }
+  });
+
+  // 전송 버튼 클릭
+  threadSubmit?.addEventListener('click', submitThreadReply);
+
+  // 전역으로 노출
+  window.openThreadPopup = openThreadPopup;
 
   log.info('앱 초기화 완료');
 

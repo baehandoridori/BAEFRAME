@@ -659,6 +659,113 @@
     </div>
   </div>
 
+  <!-- Thread Popup Modal -->
+  <div class="thread-overlay" id="threadOverlay">
+    <div class="thread-modal">
+      <div class="thread-header">
+        <button class="thread-back" id="threadBack">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+        <div class="thread-title">
+          <span class="thread-title-text">스레드</span>
+          <span class="thread-author" id="threadAuthor"></span>
+        </div>
+        <div class="thread-actions">
+          <button class="thread-action-btn" title="설정">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>
+            </svg>
+          </button>
+          <button class="thread-close" id="threadClose">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="thread-content" id="threadContent">
+        <!-- 원본 댓글 -->
+        <div class="thread-original" id="threadOriginal"></div>
+
+        <!-- 답글 개수 -->
+        <div class="thread-reply-count" id="threadReplyCount"></div>
+
+        <!-- 답글들 -->
+        <div class="thread-replies" id="threadReplies"></div>
+      </div>
+
+      <!-- 답글 입력 -->
+      <div class="thread-input-area">
+        <div class="thread-editor-toolbar">
+          <button class="editor-btn" data-format="bold" title="굵게 (Ctrl+B)">
+            <strong>B</strong>
+          </button>
+          <button class="editor-btn" data-format="italic" title="기울임 (Ctrl+I)">
+            <em>I</em>
+          </button>
+          <button class="editor-btn" data-format="underline" title="밑줄 (Ctrl+U)">
+            <u>U</u>
+          </button>
+          <button class="editor-btn" data-format="strike" title="취소선">
+            <s>S</s>
+          </button>
+          <span class="editor-divider"></span>
+          <button class="editor-btn" data-format="link" title="링크">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          </button>
+          <span class="editor-divider"></span>
+          <button class="editor-btn" data-format="bullet" title="목록">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+              <circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/>
+            </svg>
+          </button>
+          <button class="editor-btn" data-format="numbered" title="번호 목록">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/>
+              <text x="2" y="8" font-size="8" fill="currentColor">1</text>
+              <text x="2" y="14" font-size="8" fill="currentColor">2</text>
+              <text x="2" y="20" font-size="8" fill="currentColor">3</text>
+            </svg>
+          </button>
+          <span class="editor-divider"></span>
+          <button class="editor-btn" data-format="code" title="코드">
+            &lt;/&gt;
+          </button>
+          <button class="editor-btn" data-format="codeblock" title="코드 블록">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <polyline points="8 10 5 12 8 14"/><polyline points="16 10 19 12 16 14"/>
+            </svg>
+          </button>
+        </div>
+        <div class="thread-editor-wrapper">
+          <div class="thread-editor"
+               id="threadEditor"
+               contenteditable="true"
+               data-placeholder="댓글 남기기..."></div>
+        </div>
+        <div class="thread-input-footer">
+          <label class="thread-dm-option">
+            <input type="checkbox" id="threadDmCheckbox">
+            다이렉트 메시지로도 전송
+          </label>
+          <button class="thread-submit" id="threadSubmit">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="scripts/app.js"></script>
 </body>
 </html>
