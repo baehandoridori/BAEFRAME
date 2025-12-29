@@ -2617,12 +2617,14 @@ async function initApp() {
     // 플렉서스 효과 시작
     if (!plexusEffect) {
       plexusEffect = new PlexusEffect(creditsPlexus, {
-        particleCount: 60,
-        particleColor: 'rgba(255, 208, 0, 0.5)',
-        lineColor: 'rgba(255, 208, 0, 0.12)',
-        particleRadius: 2,
+        particleCount: 80,
+        particleRadius: 2.5,
         lineDistance: 180,
-        speed: 0.3
+        speed: 0.4,
+        baseOpacity: 0.9,
+        lineOpacity: 0.35,
+        hueSpeed: 0.2,
+        hueRange: 55  // red(0) -> orange(30) -> yellow(55)
       });
     }
     plexusEffect.start();

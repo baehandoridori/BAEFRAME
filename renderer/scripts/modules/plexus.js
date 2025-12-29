@@ -1,5 +1,6 @@
 /**
  * Plexus Effect - Canvas animation with connected particles
+ * Color shifting from warm to cool hues
  */
 
 export class PlexusEffect {
@@ -9,15 +10,21 @@ export class PlexusEffect {
 
     // Options
     this.particleCount = options.particleCount || 80;
-    this.particleColor = options.particleColor || 'rgba(255, 208, 0, 0.6)';
-    this.lineColor = options.lineColor || 'rgba(255, 208, 0, 0.15)';
     this.particleRadius = options.particleRadius || 2;
     this.lineDistance = options.lineDistance || 150;
     this.speed = options.speed || 0.5;
+    this.baseOpacity = options.baseOpacity || 0.8;
+    this.lineOpacity = options.lineOpacity || 0.25;
+
+    // Color shifting
+    this.hue = 0; // Start with red (0)
+    this.hueSpeed = options.hueSpeed || 0.3; // How fast colors change
+    this.hueRange = options.hueRange || 60; // Range of hue variation (0-360)
 
     this.particles = [];
     this.animationId = null;
     this.isRunning = false;
+    this.time = 0;
 
     this._handleResize = this._handleResize.bind(this);
     this._animate = this._animate.bind(this);
@@ -30,6 +37,7 @@ export class PlexusEffect {
     if (this.isRunning) return;
 
     this.isRunning = true;
+    this.time = 0;
     this._resize();
     this._createParticles();
 
@@ -84,9 +92,22 @@ export class PlexusEffect {
         y: Math.random() * this.canvas.height,
         vx: (Math.random() - 0.5) * this.speed,
         vy: (Math.random() - 0.5) * this.speed,
-        radius: Math.random() * this.particleRadius + 1
+        radius: Math.random() * this.particleRadius + 1,
+        hueOffset: Math.random() * 30 - 15 // Individual particle hue variation
       });
     }
+  }
+
+  /**
+   * Get current color based on time
+   */
+  _getColor(hueOffset = 0, opacity = 1) {
+    // Oscillate hue: red (0) -> orange (30) -> yellow (50) -> back
+    const baseHue = (Math.sin(this.time * this.hueSpeed * 0.01) + 1) * 0.5 * this.hueRange;
+    const hue = baseHue + hueOffset;
+    const saturation = 90;
+    const lightness = 55;
+    return `hsla(${hue}, ${saturation}%, ${lightness}%, ${opacity})`;
   }
 
   /**
@@ -95,6 +116,7 @@ export class PlexusEffect {
   _animate() {
     if (!this.isRunning) return;
 
+    this.time++;
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     // Update and draw particles
@@ -113,10 +135,10 @@ export class PlexusEffect {
       p.x = Math.max(0, Math.min(this.canvas.width, p.x));
       p.y = Math.max(0, Math.min(this.canvas.height, p.y));
 
-      // Draw particle
+      // Draw particle with color shift
       this.ctx.beginPath();
       this.ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-      this.ctx.fillStyle = this.particleColor;
+      this.ctx.fillStyle = this._getColor(p.hueOffset, this.baseOpacity);
       this.ctx.fill();
 
       // Draw lines to nearby particles
@@ -127,11 +149,13 @@ export class PlexusEffect {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance < this.lineDistance) {
-          const opacity = 1 - (distance / this.lineDistance);
+          const distanceOpacity = 1 - (distance / this.lineDistance);
+          const avgHueOffset = (p.hueOffset + p2.hueOffset) / 2;
+
           this.ctx.beginPath();
           this.ctx.moveTo(p.x, p.y);
           this.ctx.lineTo(p2.x, p2.y);
-          this.ctx.strokeStyle = this.lineColor.replace('0.15', (0.15 * opacity).toFixed(2));
+          this.ctx.strokeStyle = this._getColor(avgHueOffset, this.lineOpacity * distanceOpacity);
           this.ctx.lineWidth = 1;
           this.ctx.stroke();
         }
