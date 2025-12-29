@@ -604,6 +604,35 @@ async function initApp() {
     }
   });
 
+  // ====== 단축키 세트 선택 ======
+  const shortcutSet1Btn = document.getElementById('shortcutSet1');
+  const shortcutSet2Btn = document.getElementById('shortcutSet2');
+
+  // 초기 단축키 세트 UI 설정
+  function updateShortcutSetUI() {
+    const currentSet = userSettings.getShortcutSet();
+    elements.shortcutsMenu.dataset.set = currentSet;
+
+    shortcutSet1Btn?.classList.toggle('active', currentSet === 'set1');
+    shortcutSet2Btn?.classList.toggle('active', currentSet === 'set2');
+  }
+
+  // 단축키 세트 버튼 클릭 이벤트
+  shortcutSet1Btn?.addEventListener('click', () => {
+    userSettings.setShortcutSet('set1');
+    updateShortcutSetUI();
+    showToast('단축키 Set 1 (기본) 활성화', 'info');
+  });
+
+  shortcutSet2Btn?.addEventListener('click', () => {
+    userSettings.setShortcutSet('set2');
+    updateShortcutSetUI();
+    showToast('단축키 Set 2 (애니메이션) 활성화', 'info');
+  });
+
+  // 초기 UI 업데이트
+  updateShortcutSetUI();
+
   // 필터 칩 (댓글 목록 필터링)
   document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', function() {
@@ -1940,51 +1969,31 @@ async function initApp() {
     // 입력 필드에서는 단축키 무시
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
 
+    const shortcutSet = userSettings.getShortcutSet();
+
+    // ====== 공통 단축키 (모든 세트에서 동일) ======
     switch (e.code) {
     case 'Space':
       e.preventDefault();
       videoPlayer.togglePlay();
-      break;
-
-    case 'ArrowLeft':
-      e.preventDefault();
-      if (e.shiftKey) {
-        videoPlayer.rewind(1); // 1초 뒤로
-      } else {
-        videoPlayer.prevFrame();
-      }
-      break;
-
-    case 'ArrowRight':
-      e.preventDefault();
-      if (e.shiftKey) {
-        videoPlayer.forward(1); // 1초 앞으로
-      } else {
-        videoPlayer.nextFrame();
-      }
-      break;
+      return;
 
     case 'Home':
       e.preventDefault();
       videoPlayer.seekToStart();
-      break;
+      return;
 
     case 'End':
       e.preventDefault();
       videoPlayer.seekToEnd();
-      break;
-
-    case 'KeyD':
-      e.preventDefault();
-      toggleDrawMode();
-      break;
+      return;
 
     case 'KeyC':
       if (!e.ctrlKey) {
         e.preventDefault();
         toggleCommentMode();
       }
-      break;
+      return;
 
     case 'F6':
       // 키프레임 복제 추가 (이전 내용 복사)
@@ -1993,7 +2002,7 @@ async function initApp() {
         drawingManager.addKeyframeWithContent();
         showToast('키프레임 추가됨', 'success');
       }
-      break;
+      return;
 
     case 'F7':
       // 빈 키프레임 추가
@@ -2002,7 +2011,7 @@ async function initApp() {
         drawingManager.addBlankKeyframe();
         showToast('빈 키프레임 추가됨', 'success');
       }
-      break;
+      return;
 
     case 'Delete':
     case 'Backspace':
@@ -2011,19 +2020,19 @@ async function initApp() {
         e.preventDefault();
         drawingManager.removeKeyframe();
       }
-      break;
+      return;
 
     case 'Slash':
       if (e.shiftKey) { // ?
         e.preventDefault();
         elements.shortcutsToggle.click();
       }
-      break;
+      return;
 
     case 'Backslash':
       e.preventDefault();
       timeline.fitToView();
-      break;
+      return;
 
     case 'KeyZ':
       if (e.ctrlKey || e.metaKey) {
@@ -2040,7 +2049,7 @@ async function initApp() {
           }
         }
       }
-      break;
+      return;
 
     case 'KeyY':
       if (e.ctrlKey || e.metaKey) {
@@ -2050,7 +2059,7 @@ async function initApp() {
           showToast('다시 실행됨', 'info');
         }
       }
-      break;
+      return;
 
     case 'Equal':
     case 'NumpadAdd':
@@ -2058,7 +2067,7 @@ async function initApp() {
         e.preventDefault();
         timeline.zoomIn();
       }
-      break;
+      return;
 
     case 'Minus':
     case 'NumpadSubtract':
@@ -2066,7 +2075,142 @@ async function initApp() {
         e.preventDefault();
         timeline.zoomOut();
       }
-      break;
+      return;
+    }
+
+    // ====== Set 1: 기존 단축키 (화살표 기반) ======
+    if (shortcutSet === 'set1') {
+      switch (e.code) {
+      case 'ArrowLeft':
+        e.preventDefault();
+        if (e.shiftKey) {
+          videoPlayer.rewind(1); // 1초 뒤로
+        } else {
+          videoPlayer.prevFrame();
+        }
+        break;
+
+      case 'ArrowRight':
+        e.preventDefault();
+        if (e.shiftKey) {
+          videoPlayer.forward(1); // 1초 앞으로
+        } else {
+          videoPlayer.nextFrame();
+        }
+        break;
+
+      case 'KeyD':
+        e.preventDefault();
+        toggleDrawMode();
+        break;
+      }
+    }
+
+    // ====== Set 2: 새 단축키 (A/D 기반, 애니메이션 작업용) ======
+    if (shortcutSet === 'set2') {
+      switch (e.code) {
+      case 'ArrowLeft':
+        e.preventDefault();
+        if (e.shiftKey) {
+          videoPlayer.rewind(1);
+        } else {
+          videoPlayer.prevFrame();
+        }
+        break;
+
+      case 'ArrowRight':
+        e.preventDefault();
+        if (e.shiftKey) {
+          videoPlayer.forward(1);
+        } else {
+          videoPlayer.nextFrame();
+        }
+        break;
+
+      case 'KeyA':
+        e.preventDefault();
+        if (e.shiftKey) {
+          // Shift+A: 1프레임 이전
+          videoPlayer.prevFrame();
+        } else {
+          // A: 이전 키프레임으로 이동
+          const prevKf = drawingManager.getPrevKeyframeFrame();
+          if (prevKf !== null) {
+            videoPlayer.seekToFrame(prevKf);
+            showToast(`키프레임 ${prevKf}으로 이동`, 'info');
+          }
+        }
+        break;
+
+      case 'KeyD':
+        e.preventDefault();
+        if (e.shiftKey) {
+          // Shift+D: 1프레임 다음
+          videoPlayer.nextFrame();
+        } else {
+          // D: 다음 키프레임으로 이동
+          const nextKf = drawingManager.getNextKeyframeFrame();
+          if (nextKf !== null) {
+            videoPlayer.seekToFrame(nextKf);
+            showToast(`키프레임 ${nextKf}으로 이동`, 'info');
+          }
+        }
+        break;
+
+      case 'Digit1':
+        // 1: 어니언 스킨 토글
+        e.preventDefault();
+        if (state.isDrawMode) {
+          const enabled = drawingManager.toggleOnionSkin();
+          showToast(enabled ? '어니언 스킨 켜짐' : '어니언 스킨 꺼짐', 'info');
+        }
+        break;
+
+      case 'Digit2':
+        // 2: 빈 키프레임 삽입
+        e.preventDefault();
+        if (state.isDrawMode) {
+          drawingManager.addBlankKeyframe();
+          showToast('빈 키프레임 추가됨', 'success');
+        }
+        break;
+
+      case 'Digit3':
+        // 3: 프레임 삽입 (홀드 추가)
+        e.preventDefault();
+        if (state.isDrawMode) {
+          if (drawingManager.insertFrame()) {
+            showToast('프레임 삽입됨 (홀드 추가)', 'success');
+          }
+        }
+        break;
+
+      case 'Digit4':
+        // 4: 프레임 삭제
+        e.preventDefault();
+        if (state.isDrawMode) {
+          if (drawingManager.deleteFrame()) {
+            showToast('프레임 삭제됨', 'success');
+          }
+        }
+        break;
+
+      case 'KeyB':
+        // B: 브러시 모드 (드로잉 모드 켜기)
+        e.preventDefault();
+        if (!state.isDrawMode) {
+          toggleDrawMode();
+        }
+        break;
+
+      case 'KeyV':
+        // V: 선택 모드 (드로잉 모드 끄기)
+        e.preventDefault();
+        if (state.isDrawMode) {
+          toggleDrawMode();
+        }
+        break;
+      }
     }
   }
 

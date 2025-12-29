@@ -389,9 +389,15 @@
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="6" y1="16" x2="18" y2="16"/></svg>
       키보드 단축키
     </div>
+    <!-- 단축키 세트 선택 -->
+    <div class="shortcut-set-selector">
+      <button class="shortcut-set-btn" data-set="set1" id="shortcutSet1">Set 1 (기본)</button>
+      <button class="shortcut-set-btn active" data-set="set2" id="shortcutSet2">Set 2 (애니)</button>
+    </div>
     <div class="shortcuts-menu-content">
+      <!-- 공통 단축키 -->
       <div class="shortcut-category">
-        <div class="shortcut-category-title">재생</div>
+        <div class="shortcut-category-title">재생 (공통)</div>
         <div class="shortcut-row">
           <span class="shortcut-label">재생/정지</span>
           <div class="shortcut-keys"><span class="shortcut-key">Space</span></div>
@@ -409,23 +415,89 @@
           <div class="shortcut-keys"><span class="shortcut-key">Home</span><span class="shortcut-key">End</span></div>
         </div>
       </div>
-      <div class="shortcut-category">
-        <div class="shortcut-category-title">도구</div>
+
+      <!-- Set 1 전용 단축키 -->
+      <div class="shortcut-category shortcut-set1-only">
+        <div class="shortcut-category-title">도구 (Set 1)</div>
         <div class="shortcut-row">
-          <span class="shortcut-label">그리기 모드</span>
+          <span class="shortcut-label">그리기 모드 토글</span>
           <div class="shortcut-keys"><span class="shortcut-key">D</span></div>
         </div>
         <div class="shortcut-row">
           <span class="shortcut-label">댓글 추가</span>
           <div class="shortcut-keys"><span class="shortcut-key">C</span></div>
         </div>
+      </div>
+
+      <!-- Set 2 전용 단축키 -->
+      <div class="shortcut-category shortcut-set2-only">
+        <div class="shortcut-category-title">탐색 (Set 2)</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">1프레임 이전/다음</span>
+          <div class="shortcut-keys"><span class="shortcut-key">Shift</span><span class="shortcut-key">A/D</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">이전/다음 키프레임</span>
+          <div class="shortcut-keys"><span class="shortcut-key">A</span><span class="shortcut-key">D</span></div>
+        </div>
+      </div>
+      <div class="shortcut-category shortcut-set2-only">
+        <div class="shortcut-category-title">도구 (Set 2)</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">브러시 모드 (그리기)</span>
+          <div class="shortcut-keys"><span class="shortcut-key">B</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">선택 모드 (그리기 해제)</span>
+          <div class="shortcut-keys"><span class="shortcut-key">V</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">댓글 추가</span>
+          <div class="shortcut-keys"><span class="shortcut-key">C</span></div>
+        </div>
+      </div>
+      <div class="shortcut-category shortcut-set2-only">
+        <div class="shortcut-category-title">키프레임 (Set 2, 그리기 모드)</div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">어니언 스킨 토글</span>
+          <div class="shortcut-keys"><span class="shortcut-key">1</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">빈 키프레임 삽입</span>
+          <div class="shortcut-keys"><span class="shortcut-key">2</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">프레임 삽입 (홀드)</span>
+          <div class="shortcut-keys"><span class="shortcut-key">3</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">프레임 삭제</span>
+          <div class="shortcut-keys"><span class="shortcut-key">4</span></div>
+        </div>
+      </div>
+
+      <!-- 공통 도구 -->
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">편집 (공통)</div>
         <div class="shortcut-row">
           <span class="shortcut-label">실행 취소</span>
           <div class="shortcut-keys"><span class="shortcut-key">Ctrl</span><span class="shortcut-key">Z</span></div>
         </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">다시 실행</span>
+          <div class="shortcut-keys"><span class="shortcut-key">Ctrl</span><span class="shortcut-key">Y</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">키프레임 복제 추가</span>
+          <div class="shortcut-keys"><span class="shortcut-key">F6</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">빈 키프레임 추가</span>
+          <div class="shortcut-keys"><span class="shortcut-key">F7</span></div>
+        </div>
       </div>
       <div class="shortcut-category">
-        <div class="shortcut-category-title">보기</div>
+        <div class="shortcut-category-title">보기 (공통)</div>
         <div class="shortcut-row">
           <span class="shortcut-label">타임라인 줌</span>
           <div class="shortcut-keys"><span class="shortcut-key">Ctrl</span><span class="shortcut-key">+/-</span></div>

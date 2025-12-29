@@ -1764,6 +1764,51 @@ body {
   color: var(--text-primary);
 }
 
+/* 단축키 세트 선택 버튼 */
+.shortcut-set-selector {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.shortcut-set-btn {
+  flex: 1;
+  padding: 6px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.shortcut-set-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.shortcut-set-btn.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--bg-primary);
+}
+
+/* 세트별 단축키 표시/숨김 */
+.shortcut-set1-only,
+.shortcut-set2-only {
+  display: none;
+}
+
+.shortcuts-menu[data-set="set1"] .shortcut-set1-only {
+  display: block;
+}
+
+.shortcuts-menu[data-set="set2"] .shortcut-set2-only {
+  display: block;
+}
+
 /* ========================================
    Toast
    ======================================== */
