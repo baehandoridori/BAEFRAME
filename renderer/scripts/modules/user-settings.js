@@ -25,8 +25,27 @@ const NAME_AVATARS = {
   hansol: {
     names: ['한솔', '배한솔', '한솔쿤'],
     image: 'assets/avatars/hansol.png'
+  },
+  hyewon: {
+    names: ['허혜원', '혜원', '모몽가'],
+    image: 'assets/avatars/hyewon.png'
   }
-  // 추후 다른 사용자 아바타 추가 가능
+};
+
+// 이름별 색상 매핑 (이름 표시용)
+const NAME_COLORS = {
+  red: {
+    names: ['한솔', '배한솔', '한솔쿤'],
+    color: '#ff5555'
+  },
+  blue: {
+    names: ['윤성원', '성원', 'SW', 'sw'],
+    color: '#4a9eff'
+  },
+  pink: {
+    names: ['허혜원', '혜원', '모몽가'],
+    color: '#e066ff'
+  }
 };
 
 // 테마별 색상 정의
@@ -312,6 +331,27 @@ export class UserSettings extends EventTarget {
       for (const avatarName of avatarData.names) {
         if (lowerName === avatarName.toLowerCase() || lowerName.includes(avatarName.toLowerCase())) {
           return avatarData.image;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 이름에 맞는 색상 반환
+   * @param {string} name - 사용자 이름
+   * @returns {string|null} 색상 코드 또는 null
+   */
+  getColorForName(name) {
+    if (!name) return null;
+
+    const lowerName = name.toLowerCase();
+
+    for (const colorData of Object.values(NAME_COLORS)) {
+      for (const colorName of colorData.names) {
+        if (lowerName === colorName.toLowerCase() || lowerName.includes(colorName.toLowerCase())) {
+          return colorData.color;
         }
       }
     }

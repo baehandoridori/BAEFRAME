@@ -1857,9 +1857,22 @@ async function initApp() {
    */
   function getAuthorColorClass(author) {
     if (!author) return '';
-    if (author.includes('배한솔')) return 'author-hansol';
-    if (author.includes('윤성원')) return 'author-sungwon';
-    if (author.includes('허혜원')) return 'author-hyewon';
+    const color = userSettings.getColorForName(author);
+    if (color) {
+      return 'author-colored';
+    }
+    return '';
+  }
+
+  /**
+   * 이름에 따른 인라인 스타일 반환
+   */
+  function getAuthorColorStyle(author) {
+    if (!author) return '';
+    const color = userSettings.getColorForName(author);
+    if (color) {
+      return `style="color: ${color};"`;
+    }
     return '';
   }
 
@@ -1900,12 +1913,13 @@ async function initApp() {
 
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
+      const authorStyle = getAuthorColorStyle(marker.author);
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
       const repliesHtml = (marker.replies || []).map(reply => `
         <div class="comment-reply">
           <div class="comment-reply-header">
-            <span class="comment-reply-author ${getAuthorColorClass(reply.author)}">${reply.author}</span>
+            <span class="comment-reply-author ${getAuthorColorClass(reply.author)}" ${getAuthorColorStyle(reply.author)}>${reply.author}</span>
             <span class="comment-reply-time">${formatRelativeTime(reply.createdAt)}</span>
           </div>
           <p class="comment-reply-text">${escapeHtml(reply.text)}</p>
@@ -1917,7 +1931,7 @@ async function initApp() {
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
         <div class="comment-header">
           <span class="comment-timecode">${marker.startTimecode}</span>
-          <span class="comment-author ${authorClass}">${marker.author}</span>
+          <span class="comment-author ${authorClass}" ${authorStyle}>${marker.author}</span>
           <span class="comment-time">${formatRelativeTime(marker.createdAt)}</span>
         </div>
         <div class="comment-content">
@@ -2217,6 +2231,13 @@ async function initApp() {
   function handleKeydown(e) {
     // 입력 필드에서는 단축키 무시
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+
+    // contenteditable 요소에서는 단축키 무시 (스레드 에디터 등)
+    if (e.target.isContentEditable) return;
+
+    // 스레드 팝업이 열려있으면 단축키 무시
+    const threadOverlay = document.getElementById('threadOverlay');
+    if (threadOverlay?.classList.contains('open')) return;
 
     const shortcutSet = userSettings.getShortcutSet();
 
@@ -2702,8 +2723,10 @@ async function initApp() {
 
     currentThreadMarkerId = markerId;
 
-    // 헤더에 작성자 표시
+    // 헤더에 작성자 표시 (색상 포함)
+    const authorColor = userSettings.getColorForName(marker.author);
     threadAuthor.textContent = marker.author;
+    threadAuthor.style.color = authorColor || '';
 
     // 아바타 이미지 가져오기
     const avatarImage = userSettings.getAvatarForName(marker.author);
@@ -2715,7 +2738,7 @@ async function initApp() {
         <div class="thread-comment-header">
           <div class="thread-comment-avatar">${marker.author.charAt(0)}</div>
           <div class="thread-comment-info">
-            <div class="thread-comment-author">${marker.author}</div>
+            <div class="thread-comment-author" ${getAuthorColorStyle(marker.author)}>${marker.author}</div>
             <div class="thread-comment-time">${formatRelativeTime(marker.createdAt)}</div>
           </div>
         </div>
@@ -2748,7 +2771,7 @@ async function initApp() {
         <div class="thread-reply-avatar">${reply.author.charAt(0)}</div>
         <div class="thread-reply-content">
           <div class="thread-reply-header">
-            <span class="thread-reply-author">${reply.author}</span>
+            <span class="thread-reply-author" ${getAuthorColorStyle(reply.author)}>${reply.author}</span>
             <span class="thread-reply-time">${formatRelativeTime(reply.createdAt)}</span>
           </div>
           <div class="thread-reply-text">${formatMarkdown(reply.text)}</div>
@@ -2885,7 +2908,7 @@ async function initApp() {
           <div class="thread-reply-avatar">${newReply.author.charAt(0)}</div>
           <div class="thread-reply-content">
             <div class="thread-reply-header">
-              <span class="thread-reply-author">${newReply.author}</span>
+              <span class="thread-reply-author" ${getAuthorColorStyle(newReply.author)}>${newReply.author}</span>
               <span class="thread-reply-time">${formatRelativeTime(newReply.createdAt)}</span>
             </div>
             <div class="thread-reply-text">${formatMarkdown(newReply.text)}</div>
