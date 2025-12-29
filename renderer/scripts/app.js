@@ -918,12 +918,18 @@ async function initApp() {
   // 비디오 플레이어에 영상 어니언 스킨 캔버스 설정
   videoPlayer.setVideoOnionSkinCanvas(videoOnionSkinCanvas);
 
+  // 컨트롤바의 영상 어니언 스킨 버튼
+  const btnVideoOnionSkin = document.getElementById('btnVideoOnionSkin');
+
   // 영상 어니언 스킨 토글 함수 (UI 동기화 포함)
   function toggleVideoOnionSkinWithUI() {
     const isActive = !videoOnionToggle.classList.contains('active');
+    // 그리기 도구 패널 버튼 업데이트
     videoOnionToggle.classList.toggle('active', isActive);
     videoOnionToggle.textContent = isActive ? 'ON' : 'OFF';
     videoOnionControls.classList.toggle('visible', isActive);
+    // 컨트롤바 버튼 업데이트
+    btnVideoOnionSkin.classList.toggle('active', isActive);
     // 캔버스 표시/숨김
     videoOnionSkinCanvas.classList.toggle('visible', isActive);
     videoPlayer.setVideoOnionSkin(isActive, {
@@ -935,6 +941,10 @@ async function initApp() {
   }
 
   videoOnionToggle.addEventListener('click', () => {
+    toggleVideoOnionSkinWithUI();
+  });
+
+  btnVideoOnionSkin.addEventListener('click', () => {
     toggleVideoOnionSkinWithUI();
   });
 
@@ -1034,6 +1044,8 @@ async function initApp() {
     btnSetInPoint.classList.toggle('has-point', inPoint !== null);
     btnSetOutPoint.classList.toggle('has-point', outPoint !== null);
     btnLoopToggle.classList.toggle('active', enabled);
+    // 타임라인에 구간 마커 표시
+    timeline.setLoopRegion(inPoint, outPoint, enabled);
   });
 
   // ====== 비디오 줌/패닝 ======

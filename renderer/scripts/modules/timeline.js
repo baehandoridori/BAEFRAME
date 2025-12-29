@@ -372,6 +372,65 @@ export class Timeline extends EventTarget {
   }
 
   /**
+   * 구간 반복 마커 설정
+   * @param {number|null} inPoint - 시작점 (초)
+   * @param {number|null} outPoint - 종료점 (초)
+   * @param {boolean} enabled - 활성화 여부
+   */
+  setLoopRegion(inPoint, outPoint, enabled) {
+    // 기존 마커 제거
+    this._clearLoopMarkers();
+
+    if (this.duration === 0) return;
+
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (containerWidth === 0) return;
+
+    // 구간 영역 오버레이 생성
+    if (inPoint !== null && outPoint !== null) {
+      const inPercent = inPoint / this.duration;
+      const outPercent = outPoint / this.duration;
+      const inPx = containerWidth * inPercent;
+      const outPx = containerWidth * outPercent;
+
+      // 구간 영역 오버레이
+      const loopRegion = document.createElement('div');
+      loopRegion.className = 'loop-region' + (enabled ? ' active' : '');
+      loopRegion.style.left = `${inPx}px`;
+      loopRegion.style.width = `${outPx - inPx}px`;
+      this.tracksContainer.appendChild(loopRegion);
+    }
+
+    // In 마커
+    if (inPoint !== null) {
+      const inPercent = inPoint / this.duration;
+      const inPx = containerWidth * inPercent;
+      const inMarker = document.createElement('div');
+      inMarker.className = 'loop-marker loop-in-marker';
+      inMarker.style.left = `${inPx}px`;
+      this.tracksContainer.appendChild(inMarker);
+    }
+
+    // Out 마커
+    if (outPoint !== null) {
+      const outPercent = outPoint / this.duration;
+      const outPx = containerWidth * outPercent;
+      const outMarker = document.createElement('div');
+      outMarker.className = 'loop-marker loop-out-marker';
+      outMarker.style.left = `${outPx}px`;
+      this.tracksContainer.appendChild(outMarker);
+    }
+  }
+
+  /**
+   * 구간 마커 제거
+   */
+  _clearLoopMarkers() {
+    const markers = this.tracksContainer?.querySelectorAll('.loop-marker, .loop-region');
+    markers?.forEach(m => m.remove());
+  }
+
+  /**
    * 줌 레벨 설정
    */
   setZoom(zoom) {
