@@ -271,6 +271,22 @@ async function initApp() {
     showToast('비디오 재생 오류가 발생했습니다.', 'error');
   });
 
+  // 코덱 미지원
+  const codecErrorOverlay = document.getElementById('codecErrorOverlay');
+  const btnCodecErrorClose = document.getElementById('btnCodecErrorClose');
+
+  videoPlayer.addEventListener('codecunsupported', (e) => {
+    log.warn('코덱 미지원', e.detail);
+    codecErrorOverlay?.classList.add('active');
+  });
+
+  btnCodecErrorClose?.addEventListener('click', () => {
+    codecErrorOverlay?.classList.remove('active');
+    // 드롭존 다시 표시
+    elements.dropZone?.classList.remove('hidden');
+    elements.videoPlayer.style.display = 'none';
+  });
+
   // 타임라인에서 시간 이동 요청
   timeline.addEventListener('seek', (e) => {
     videoPlayer.seek(e.detail.time);
@@ -1374,6 +1390,8 @@ async function initApp() {
         state.isCommentMode = false;
         elements.btnAddComment?.classList.remove('active');
       }
+      // 코덱 에러 오버레이 숨기기
+      codecErrorOverlay?.classList.remove('active');
 
       // 비디오 플레이어에 로드
       await videoPlayer.load(filePath);

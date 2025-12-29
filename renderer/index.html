@@ -79,6 +79,15 @@
             </div>
           </div>
 
+          <!-- Codec Unsupported Overlay -->
+          <div class="codec-error-overlay" id="codecErrorOverlay">
+            <div class="codec-error-icon">⚠️</div>
+            <div class="codec-error-title">지원하지 않는 코덱</div>
+            <div class="codec-error-message">이 영상은 지원하지 않는 코덱(MPEG-4 Part 2, HEVC 등)입니다.</div>
+            <div class="codec-error-hint">H.264 코덱으로 변환 후 다시 열어주세요.</div>
+            <button class="btn btn-secondary" id="btnCodecErrorClose">다른 파일 열기</button>
+          </div>
+
           <!-- Onion Skin Canvas (그리기 캔버스 아래에 표시) -->
           <canvas id="onionSkinCanvas" class="drawing-overlay onion-skin-layer"></canvas>
 

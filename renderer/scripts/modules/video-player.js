@@ -74,6 +74,10 @@ export class VideoPlayer extends EventTarget {
       // 비디오 크기가 0이면 경고 (코덱 문제 가능성)
       if (video.videoWidth === 0 || video.videoHeight === 0) {
         log.warn('비디오 크기가 0입니다. 코덱 호환성 문제일 수 있습니다.');
+        this._emit('codecunsupported', {
+          message: '이 영상은 지원하지 않는 코덱입니다.\nH.264 코덱으로 변환해주세요.',
+          hint: 'MPEG-4 Part 2, H.265/HEVC 등은 지원되지 않습니다.'
+        });
       }
 
       this._emit('loadedmetadata', {
