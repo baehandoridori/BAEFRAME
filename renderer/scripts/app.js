@@ -2923,16 +2923,9 @@ async function initApp() {
     showToast('답글이 추가되었습니다.', 'success');
   }
 
-  // 스레드 팝업 이벤트 리스너
+  // 스레드 팝업 이벤트 리스너 (X 버튼, < 버튼, ESC로만 닫기)
   threadBack?.addEventListener('click', closeThreadPopup);
   threadClose?.addEventListener('click', closeThreadPopup);
-
-  // 오버레이 클릭 시 닫기
-  threadOverlay?.addEventListener('click', (e) => {
-    if (e.target === threadOverlay) {
-      closeThreadPopup();
-    }
-  });
 
   // ESC 키로 스레드 팝업 닫기
   document.addEventListener('keydown', (e) => {
