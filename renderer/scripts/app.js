@@ -675,17 +675,25 @@ async function initApp() {
   const thumbnailScaleValue = document.getElementById('thumbnailScaleValue');
   const thumbnailScaleItem = document.getElementById('thumbnailScaleItem');
 
-  // 설정 초기값 로드
-  toggleCommentThumbnails.checked = userSettings.getShowCommentThumbnails();
-  thumbnailScaleSlider.value = userSettings.getCommentThumbnailScale();
-  thumbnailScaleValue.textContent = `${userSettings.getCommentThumbnailScale()}%`;
-  thumbnailScaleItem.classList.toggle('disabled', !toggleCommentThumbnails.checked);
+  // 설정 초기값 로드 (요소가 있을 경우에만)
+  if (toggleCommentThumbnails) {
+    toggleCommentThumbnails.checked = userSettings.getShowCommentThumbnails();
+  }
+  if (thumbnailScaleSlider) {
+    thumbnailScaleSlider.value = userSettings.getCommentThumbnailScale();
+  }
+  if (thumbnailScaleValue) {
+    thumbnailScaleValue.textContent = `${userSettings.getCommentThumbnailScale()}%`;
+  }
+  if (thumbnailScaleItem && toggleCommentThumbnails) {
+    thumbnailScaleItem.classList.toggle('disabled', !toggleCommentThumbnails.checked);
+  }
 
   // 설정 버튼 클릭 - 드롭다운 토글
   btnCommentSettings?.addEventListener('click', (e) => {
     e.stopPropagation();
-    commentSettingsDropdown.classList.toggle('open');
-    btnCommentSettings.classList.toggle('active', commentSettingsDropdown.classList.contains('open'));
+    commentSettingsDropdown?.classList.toggle('open');
+    btnCommentSettings.classList.toggle('active', commentSettingsDropdown?.classList.contains('open'));
   });
 
   // 드롭다운 외부 클릭 시 닫기
