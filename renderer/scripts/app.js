@@ -469,7 +469,7 @@ async function initApp() {
   // ====== 이벤트 리스너 설정 ======
 
   // 파일 열기 버튼
-  elements.btnOpenFile.addEventListener('click', async () => {
+  elements.btnOpenFile?.addEventListener('click', async () => {
     log.info('파일 열기 버튼 클릭');
     try {
       const result = await window.electronAPI.openFileDialog();
@@ -2679,7 +2679,7 @@ async function initApp() {
   // ====== 사용자 설정 모달 ======
   const userSettingsModal = document.getElementById('userSettingsModal');
   const userNameInput = document.getElementById('userNameInput');
-  const btnCommentSettings = document.getElementById('btnCommentSettings');
+  // btnCommentSettings는 이미 위에서 선언됨 (댓글 설정 드롭다운)
   const closeUserSettings = document.getElementById('closeUserSettings');
   const cancelUserSettings = document.getElementById('cancelUserSettings');
   const saveUserSettings = document.getElementById('saveUserSettings');
@@ -2712,7 +2712,8 @@ async function initApp() {
   }
 
   // 설정 버튼 클릭
-  btnCommentSettings?.addEventListener('click', openUserSettingsModal);
+  // 사용자 설정 모달은 드롭다운 내 별도 버튼으로 열기 (TODO)
+  // btnCommentSettings는 이제 드롭다운 토글용으로 사용됨
 
   // 닫기 버튼
   closeUserSettings?.addEventListener('click', closeUserSettingsModal);
