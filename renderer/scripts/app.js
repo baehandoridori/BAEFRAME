@@ -667,6 +667,61 @@ async function initApp() {
     });
   });
 
+  // ====== 댓글 설정 드롭다운 ======
+  const btnCommentSettings = document.getElementById('btnCommentSettings');
+  const commentSettingsDropdown = document.getElementById('commentSettingsDropdown');
+  const toggleCommentThumbnails = document.getElementById('toggleCommentThumbnails');
+  const thumbnailScaleSlider = document.getElementById('thumbnailScaleSlider');
+  const thumbnailScaleValue = document.getElementById('thumbnailScaleValue');
+  const thumbnailScaleItem = document.getElementById('thumbnailScaleItem');
+
+  // 설정 초기값 로드
+  toggleCommentThumbnails.checked = userSettings.getShowCommentThumbnails();
+  thumbnailScaleSlider.value = userSettings.getCommentThumbnailScale();
+  thumbnailScaleValue.textContent = `${userSettings.getCommentThumbnailScale()}%`;
+  thumbnailScaleItem.classList.toggle('disabled', !toggleCommentThumbnails.checked);
+
+  // 설정 버튼 클릭 - 드롭다운 토글
+  btnCommentSettings?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    commentSettingsDropdown.classList.toggle('open');
+    btnCommentSettings.classList.toggle('active', commentSettingsDropdown.classList.contains('open'));
+  });
+
+  // 드롭다운 외부 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    if (!commentSettingsDropdown?.contains(e.target) && e.target !== btnCommentSettings) {
+      commentSettingsDropdown?.classList.remove('open');
+      btnCommentSettings?.classList.remove('active');
+    }
+  });
+
+  // 드롭다운 내부 클릭 시 이벤트 버블링 방지
+  commentSettingsDropdown?.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  // 썸네일 토글 변경
+  toggleCommentThumbnails?.addEventListener('change', () => {
+    const show = toggleCommentThumbnails.checked;
+    userSettings.setShowCommentThumbnails(show);
+    thumbnailScaleItem.classList.toggle('disabled', !show);
+    updateCommentList(document.querySelector('.filter-chip.active')?.dataset.filter || 'all');
+  });
+
+  // 썸네일 스케일 변경
+  thumbnailScaleSlider?.addEventListener('input', () => {
+    const scale = parseInt(thumbnailScaleSlider.value);
+    thumbnailScaleValue.textContent = `${scale}%`;
+    userSettings.setCommentThumbnailScale(scale);
+    // CSS 변수로 스케일 적용
+    document.documentElement.style.setProperty('--comment-thumbnail-scale', scale / 100);
+    updateCommentList(document.querySelector('.filter-chip.active')?.dataset.filter || 'all');
+  });
+
+  // 초기 스케일 CSS 변수 설정
+  document.documentElement.style.setProperty('--comment-thumbnail-scale', userSettings.getCommentThumbnailScale() / 100);
+
   // 도구별 설정 저장 (크기, 불투명도)
   const toolSettings = {
     eraser: { size: 20 },      // 지우개는 기본 크기 더 크게
@@ -1492,6 +1547,9 @@ async function initApp() {
         // 타임라인에 썸네일 생성기 연결 (1단계 완료 즉시)
         timeline.setThumbnailGenerator(thumbnailGenerator);
 
+        // 댓글 리스트 업데이트 (썸네일 표시를 위해)
+        updateCommentList(document.querySelector('.filter-chip.active')?.dataset.filter || 'all');
+
         // 로딩 오버레이 숨김
         loadingOverlay?.classList.remove('active');
 
@@ -1934,6 +1992,9 @@ async function initApp() {
     }
 
     const userSettings = getUserSettings();
+    const showThumbnails = userSettings.getShowCommentThumbnails();
+    const thumbnailScale = userSettings.getCommentThumbnailScale();
+    const thumbnailGenerator = getThumbnailGenerator();
 
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
@@ -1950,9 +2011,28 @@ async function initApp() {
         </div>
       `).join('');
 
+      // 썸네일 URL 가져오기
+      const markerTime = marker.startFrame / videoPlayer.fps;
+      const thumbnailUrl = showThumbnails && thumbnailGenerator?.isReady
+        ? thumbnailGenerator.getThumbnailUrlAt(markerTime)
+        : null;
+
+      const thumbnailHtml = thumbnailUrl ? `
+        <div class="comment-thumbnail-wrapper" style="max-width: ${thumbnailScale}%;">
+          <img class="comment-thumbnail" src="${thumbnailUrl}" alt="Frame ${marker.startFrame}">
+          <div class="comment-thumbnail-overlay">
+            <div class="thumbnail-play-icon">
+              <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+            <span class="thumbnail-timecode">${marker.startTimecode}</span>
+          </div>
+        </div>
+      ` : '';
+
       return `
-      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
+        ${thumbnailHtml}
         <div class="comment-header">
           <span class="comment-timecode">${marker.startTimecode}</span>
           <span class="comment-author ${authorClass}" ${authorStyle}>${marker.author}</span>

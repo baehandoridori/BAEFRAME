@@ -92,7 +92,10 @@ export class UserSettings extends EventTarget {
       userSource: null, // 'slack', 'os', 'manual', 'anonymous'
       slackUserId: null,
       slackWorkspace: null,
-      shortcutSet: 'set2' // 'set1' 또는 'set2' (기본값: set2)
+      shortcutSet: 'set2', // 'set1' 또는 'set2' (기본값: set2)
+      // 댓글 썸네일 설정
+      showCommentThumbnails: true,
+      commentThumbnailScale: 100 // 50 ~ 200
     };
 
     this._loadFromStorage();
@@ -357,6 +360,43 @@ export class UserSettings extends EventTarget {
     }
 
     return null;
+  }
+
+  // ====== 댓글 썸네일 설정 ======
+
+  /**
+   * 댓글 썸네일 표시 여부 가져오기
+   */
+  getShowCommentThumbnails() {
+    return this.settings.showCommentThumbnails ?? true;
+  }
+
+  /**
+   * 댓글 썸네일 표시 여부 설정
+   */
+  setShowCommentThumbnails(show) {
+    this.settings.showCommentThumbnails = !!show;
+    this._saveToStorage();
+    this._emit('commentThumbnailsChanged', { show: this.settings.showCommentThumbnails });
+    log.info('댓글 썸네일 설정 변경됨', { show });
+  }
+
+  /**
+   * 댓글 썸네일 스케일 가져오기 (50 ~ 200)
+   */
+  getCommentThumbnailScale() {
+    return this.settings.commentThumbnailScale ?? 100;
+  }
+
+  /**
+   * 댓글 썸네일 스케일 설정 (50 ~ 200)
+   */
+  setCommentThumbnailScale(scale) {
+    const clampedScale = Math.max(50, Math.min(200, scale));
+    this.settings.commentThumbnailScale = clampedScale;
+    this._saveToStorage();
+    this._emit('commentThumbnailScaleChanged', { scale: clampedScale });
+    log.info('댓글 썸네일 스케일 변경됨', { scale: clampedScale });
   }
 
   /**
