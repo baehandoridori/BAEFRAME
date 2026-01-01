@@ -44,6 +44,14 @@ const CONFIG = {
   DISCOVERY_DOC: 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'
 };
 
+// 개발 모드 확인
+const IS_DEV_MODE = window.location.hostname === 'localhost' ||
+                    window.location.hostname === '127.0.0.1' ||
+                    window.location.protocol === 'file:';
+
+// 테스트용 공개 비디오 URL
+const TEST_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+
 // ============================================
 // 초기화
 // ============================================
@@ -63,10 +71,12 @@ async function init() {
   updateLoadingStatus('Google API 로드 중...');
 
   // 개발 모드: Google API 없이 테스트
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    console.log('개발 모드: Google API 스킵');
+  if (IS_DEV_MODE) {
+    console.log('🔧 개발 모드: Google API 스킵');
+    console.log('💡 팁: "데모 보기" 버튼을 클릭하면 샘플 영상으로 테스트할 수 있습니다.');
     setTimeout(() => {
       showScreen('select');
+      addDemoButton(); // 데모 버튼 추가
     }, 500);
     return;
   }
@@ -308,12 +318,87 @@ function validateInputs() {
   const videoUrl = elements.inputVideoUrl?.value.trim();
   const bframeUrl = elements.inputBframeUrl?.value.trim();
 
-  const isValid = videoUrl && bframeUrl &&
-    (videoUrl.includes('drive.google.com') || videoUrl.startsWith('http')) &&
-    (bframeUrl.includes('drive.google.com') || bframeUrl.startsWith('http'));
+  // 개발 모드에서는 조건 완화
+  let isValid = false;
+
+  if (IS_DEV_MODE) {
+    // 개발 모드: 둘 중 하나만 있어도 OK (또는 demo 입력)
+    isValid = videoUrl || bframeUrl || videoUrl === 'demo' || bframeUrl === 'demo';
+  } else {
+    isValid = videoUrl && bframeUrl &&
+      (videoUrl.includes('drive.google.com') || videoUrl.startsWith('http')) &&
+      (bframeUrl.includes('drive.google.com') || bframeUrl.startsWith('http'));
+  }
 
   if (elements.btnOpenFiles) {
     elements.btnOpenFiles.disabled = !isValid;
+  }
+}
+
+// 개발 모드용 데모 버튼 추가
+function addDemoButton() {
+  const selectContent = document.querySelector('.select-content');
+  if (!selectContent) return;
+
+  // 이미 있으면 추가 안 함
+  if (document.getElementById('btnDemo')) return;
+
+  const demoSection = document.createElement('div');
+  demoSection.className = 'demo-section';
+  demoSection.innerHTML = `
+    <div style="margin: 2rem 0; padding: 1rem; background: #1a3a1a; border-radius: 8px; border: 1px solid #2a5a2a;">
+      <h3 style="color: #4aff4a; margin-bottom: 0.5rem;">🔧 개발 모드</h3>
+      <p style="color: #aaa; font-size: 0.9rem; margin-bottom: 1rem;">
+        실제 파일 없이 샘플 데이터로 테스트할 수 있습니다.
+      </p>
+      <button id="btnDemo" style="
+        width: 100%;
+        padding: 1rem;
+        background: linear-gradient(135deg, #4a9eff, #4aff9e);
+        border: none;
+        border-radius: 8px;
+        color: #000;
+        font-size: 1rem;
+        font-weight: bold;
+        cursor: pointer;
+      ">
+        🎬 데모 보기 (샘플 영상)
+      </button>
+    </div>
+  `;
+
+  // 버튼 앞에 삽입
+  const btnOpenFiles = elements.btnOpenFiles;
+  btnOpenFiles.parentNode.insertBefore(demoSection, btnOpenFiles.nextSibling);
+
+  // 데모 버튼 이벤트
+  document.getElementById('btnDemo').addEventListener('click', openDemoMode);
+}
+
+// 데모 모드 열기
+async function openDemoMode() {
+  showScreen('loading');
+  updateLoadingStatus('데모 영상 로드 중...');
+
+  try {
+    // 샘플 .bframe 데이터 로드
+    state.bframeData = getSampleBframeData();
+
+    // 테스트용 공개 비디오 로드
+    await loadVideo(TEST_VIDEO_URL);
+
+    // 뷰어 화면으로 전환
+    showScreen('viewer');
+
+    // UI 업데이트
+    updateCommentsList();
+    renderTimelineMarkers();
+
+    showToast('데모 모드로 시작합니다!', 'success');
+  } catch (error) {
+    console.error('데모 로드 실패:', error);
+    showToast('데모 로드 실패: ' + error.message, 'error');
+    showScreen('select');
   }
 }
 
@@ -409,26 +494,49 @@ async function loadVideo(url) {
     // Google Drive URL 변환
     const fileId = extractDriveFileId(url);
     if (fileId) {
-      // Google Drive 스트리밍 URL
+      // Google Drive 스트리밍 URL (여러 형식 시도)
       videoSrc = `https://drive.google.com/uc?export=download&id=${fileId}`;
     }
 
-    elements.videoPlayer.src = videoSrc;
-    elements.videoPlayer.load();
+    console.log('영상 로드 시도:', videoSrc);
 
-    elements.videoPlayer.oncanplay = () => {
-      console.log('비디오 로드 완료');
+    // 기존 이벤트 제거
+    elements.videoPlayer.oncanplay = null;
+    elements.videoPlayer.onerror = null;
+    elements.videoPlayer.onloadedmetadata = null;
+
+    let resolved = false;
+
+    const handleSuccess = () => {
+      if (resolved) return;
+      resolved = true;
+      console.log('✅ 비디오 로드 완료');
       resolve();
     };
 
-    elements.videoPlayer.onerror = () => {
-      reject(new Error('영상을 불러올 수 없습니다'));
+    const handleError = (e) => {
+      if (resolved) return;
+      resolved = true;
+      console.error('❌ 비디오 로드 실패:', e);
+      reject(new Error('영상을 불러올 수 없습니다. URL을 확인해주세요.'));
     };
 
-    // 타임아웃
+    // 이벤트 리스너 등록
+    elements.videoPlayer.onloadedmetadata = handleSuccess;
+    elements.videoPlayer.oncanplay = handleSuccess;
+    elements.videoPlayer.onerror = handleError;
+
+    // 소스 설정 및 로드
+    elements.videoPlayer.src = videoSrc;
+    elements.videoPlayer.load();
+
+    // 타임아웃 (60초)
     setTimeout(() => {
-      reject(new Error('영상 로드 시간 초과'));
-    }, 30000);
+      if (!resolved) {
+        resolved = true;
+        reject(new Error('영상 로드 시간 초과 (60초)'));
+      }
+    }, 60000);
   });
 }
 
