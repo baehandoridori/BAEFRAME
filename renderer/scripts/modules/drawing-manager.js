@@ -422,6 +422,72 @@ export class DrawingManager extends EventTarget {
   }
 
   /**
+   * 이전 키프레임 프레임 번호 가져오기
+   * @returns {number|null}
+   */
+  getPrevKeyframeFrame() {
+    const layer = this.getActiveLayer();
+    if (!layer) return null;
+    return layer.getPrevKeyframeFrame(this.currentFrame);
+  }
+
+  /**
+   * 다음 키프레임 프레임 번호 가져오기
+   * @returns {number|null}
+   */
+  getNextKeyframeFrame() {
+    const layer = this.getActiveLayer();
+    if (!layer) return null;
+    return layer.getNextKeyframeFrame(this.currentFrame);
+  }
+
+  /**
+   * 어니언 스킨 토글
+   * @returns {boolean} 새로운 어니언 스킨 상태
+   */
+  toggleOnionSkin() {
+    const enabled = !this.onionSkin.enabled;
+    this.setOnionSkin(enabled);
+    return enabled;
+  }
+
+  /**
+   * 프레임 삽입 (홀드 추가) - 현재 프레임 이후의 모든 키프레임을 1프레임씩 뒤로 이동
+   */
+  insertFrame() {
+    const layer = this.getActiveLayer();
+    if (!layer || layer.locked) return false;
+
+    // Undo를 위해 현재 상태 저장
+    this._saveToHistory();
+
+    layer.insertFrame(this.currentFrame);
+    this.renderFrame(this.currentFrame);
+
+    this._emit('frameInserted', { layer, frame: this.currentFrame });
+    this._emit('layersChanged');
+    return true;
+  }
+
+  /**
+   * 프레임 삭제 - 현재 프레임 이후의 모든 키프레임을 1프레임씩 앞으로 이동
+   */
+  deleteFrame() {
+    const layer = this.getActiveLayer();
+    if (!layer || layer.locked) return false;
+
+    // Undo를 위해 현재 상태 저장
+    this._saveToHistory();
+
+    layer.deleteFrame(this.currentFrame);
+    this.renderFrame(this.currentFrame);
+
+    this._emit('frameDeleted', { layer, frame: this.currentFrame });
+    this._emit('layersChanged');
+    return true;
+  }
+
+  /**
    * 키프레임 이동 (드래그로 이동)
    * @param {Array} keyframesToMove - [ { layerId, fromFrame, toFrame } ]
    */
@@ -714,6 +780,20 @@ export class DrawingManager extends EventTarget {
    */
   setLineWidth(width) {
     this.drawingCanvas.setLineWidth(width);
+  }
+
+  /**
+   * 투명도 설정
+   */
+  setOpacity(opacity) {
+    this.drawingCanvas.setOpacity(opacity);
+  }
+
+  /**
+   * 현재 도구 가져오기
+   */
+  getCurrentTool() {
+    return this.drawingCanvas.tool;
   }
 
   // ====== 어니언 스킨 ======

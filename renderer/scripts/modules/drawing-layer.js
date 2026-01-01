@@ -134,6 +134,37 @@ export class DrawingLayer {
   }
 
   /**
+   * 이전 키프레임 찾기
+   * @param {number} currentFrame - 현재 프레임
+   * @returns {number|null} 이전 키프레임의 프레임 번호 또는 null
+   */
+  getPrevKeyframeFrame(currentFrame) {
+    let prevFrame = null;
+    for (const kf of this.keyframes) {
+      if (kf.frame < currentFrame) {
+        prevFrame = kf.frame;
+      } else {
+        break;
+      }
+    }
+    return prevFrame;
+  }
+
+  /**
+   * 다음 키프레임 찾기
+   * @param {number} currentFrame - 현재 프레임
+   * @returns {number|null} 다음 키프레임의 프레임 번호 또는 null
+   */
+  getNextKeyframeFrame(currentFrame) {
+    for (const kf of this.keyframes) {
+      if (kf.frame > currentFrame) {
+        return kf.frame;
+      }
+    }
+    return null;
+  }
+
+  /**
    * 빈 키프레임 추가 (F7 기능)
    * @param {number} frame - 프레임 번호
    */
@@ -187,6 +218,50 @@ export class DrawingLayer {
    */
   _sortKeyframes() {
     this.keyframes.sort((a, b) => a.frame - b.frame);
+  }
+
+  /**
+   * 프레임 삽입 (홀드 추가) - 현재 프레임 이후의 모든 키프레임을 1프레임씩 뒤로 이동
+   * @param {number} frame - 삽입 위치 프레임
+   */
+  insertFrame(frame) {
+    for (const kf of this.keyframes) {
+      if (kf.frame > frame) {
+        kf.frame += 1;
+      }
+    }
+    log.debug('프레임 삽입됨', { layerId: this.id, frame });
+  }
+
+  /**
+   * 프레임 삭제 - 현재 프레임 이후의 모든 키프레임을 1프레임씩 앞으로 이동
+   * @param {number} frame - 삭제할 프레임
+   */
+  deleteFrame(frame) {
+    // 현재 프레임에 키프레임이 있으면 먼저 삭제
+    const currentKeyframeIndex = this.keyframes.findIndex(kf => kf.frame === frame);
+    if (currentKeyframeIndex !== -1) {
+      this.keyframes.splice(currentKeyframeIndex, 1);
+    }
+
+    // 이후 키프레임들을 1프레임씩 앞으로 이동
+    for (const kf of this.keyframes) {
+      if (kf.frame > frame) {
+        kf.frame -= 1;
+      }
+    }
+
+    // 중첩된 키프레임 제거 (같은 프레임에 여러 키프레임이 있으면 첫 번째만 유지)
+    const seen = new Set();
+    this.keyframes = this.keyframes.filter(kf => {
+      if (seen.has(kf.frame)) {
+        return false;
+      }
+      seen.add(kf.frame);
+      return true;
+    });
+
+    log.debug('프레임 삭제됨', { layerId: this.id, frame });
   }
 
   /**

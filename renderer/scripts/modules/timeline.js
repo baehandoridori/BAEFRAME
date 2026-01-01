@@ -67,9 +67,24 @@ export class Timeline extends EventTarget {
     // 초기화
     this._setupEventListeners();
     this._setupThumbnailTooltip();
+    this._setupResizeObserver();
     this._updateZoomDisplay();
 
     log.info('Timeline 초기화됨');
+  }
+
+  /**
+   * 리사이즈 옵저버 설정 (창 크기 변경 시 플레이헤드 위치 보정)
+   */
+  _setupResizeObserver() {
+    if (!this.timelineTracks) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      // 줌 상태에서 리사이즈 시 플레이헤드 위치 업데이트
+      this._updatePlayheadPosition();
+    });
+
+    resizeObserver.observe(this.timelineTracks);
   }
 
   /**
@@ -240,6 +255,15 @@ export class Timeline extends EventTarget {
   }
 
   /**
+   * 시간을 프레임 단위로 스냅
+   */
+  _snapTimeToFrame(time) {
+    if (this.fps === 0) return time;
+    const frame = Math.round(time * this.fps);
+    return Math.max(0, Math.min(frame / this.fps, this.duration));
+  }
+
+  /**
    * 클릭 위치에서 시간 계산하여 이동
    */
   _seekFromClick(e) {
@@ -255,7 +279,7 @@ export class Timeline extends EventTarget {
     // tracksContainer의 실제 너비 (줌이 적용된 상태)
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = percent * this.duration;
+    const time = this._snapTimeToFrame(percent * this.duration);
 
     this._emit('seek', { time });
   }
@@ -272,7 +296,7 @@ export class Timeline extends EventTarget {
     const x = e.clientX - rect.left;
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = percent * this.duration;
+    const time = this._snapTimeToFrame(percent * this.duration);
 
     // 플레이헤드 위치 업데이트 (시각적으로만)
     this.scrubTime = time;
@@ -360,6 +384,65 @@ export class Timeline extends EventTarget {
     if (this.playheadHandle) {
       this.playheadHandle.style.left = `${positionPx}px`;
     }
+  }
+
+  /**
+   * 구간 반복 마커 설정
+   * @param {number|null} inPoint - 시작점 (초)
+   * @param {number|null} outPoint - 종료점 (초)
+   * @param {boolean} enabled - 활성화 여부
+   */
+  setLoopRegion(inPoint, outPoint, enabled) {
+    // 기존 마커 제거
+    this._clearLoopMarkers();
+
+    if (this.duration === 0) return;
+
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (containerWidth === 0) return;
+
+    // 구간 영역 오버레이 생성
+    if (inPoint !== null && outPoint !== null) {
+      const inPercent = inPoint / this.duration;
+      const outPercent = outPoint / this.duration;
+      const inPx = containerWidth * inPercent;
+      const outPx = containerWidth * outPercent;
+
+      // 구간 영역 오버레이
+      const loopRegion = document.createElement('div');
+      loopRegion.className = 'loop-region' + (enabled ? ' active' : '');
+      loopRegion.style.left = `${inPx}px`;
+      loopRegion.style.width = `${outPx - inPx}px`;
+      this.tracksContainer.appendChild(loopRegion);
+    }
+
+    // In 마커
+    if (inPoint !== null) {
+      const inPercent = inPoint / this.duration;
+      const inPx = containerWidth * inPercent;
+      const inMarker = document.createElement('div');
+      inMarker.className = 'loop-marker loop-in-marker';
+      inMarker.style.left = `${inPx}px`;
+      this.tracksContainer.appendChild(inMarker);
+    }
+
+    // Out 마커
+    if (outPoint !== null) {
+      const outPercent = outPoint / this.duration;
+      const outPx = containerWidth * outPercent;
+      const outMarker = document.createElement('div');
+      outMarker.className = 'loop-marker loop-out-marker';
+      outMarker.style.left = `${outPx}px`;
+      this.tracksContainer.appendChild(outMarker);
+    }
+  }
+
+  /**
+   * 구간 마커 제거
+   */
+  _clearLoopMarkers() {
+    const markers = this.tracksContainer?.querySelectorAll('.loop-marker, .loop-region');
+    markers?.forEach(m => m.remove());
   }
 
   /**
@@ -820,14 +903,20 @@ export class Timeline extends EventTarget {
     const containerWidth = this.tracksContainer.offsetWidth;
 
     // 마우스 위치에서 프레임 계산
-    const x = e.clientX - containerRect.left + this.timelineTracks.scrollLeft;
+    // getBoundingClientRect()는 이미 스크롤 위치를 반영하므로 scrollLeft 추가 불필요
+    const x = e.clientX - containerRect.left;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
     const newFrame = Math.round(percent * (this.totalFrames - 1));
 
-    // 고스트 위치 업데이트
+    // 고스트 클립 위치 업데이트
     const ghostPercent = (newFrame / this.totalFrames) * 100;
     this.dragGhost.style.left = `${ghostPercent}%`;
-    this.dragGhost.textContent = `F${newFrame}`;
+
+    // 툴팁 위치 및 내용 업데이트
+    if (this.dragTooltip) {
+      this.dragTooltip.style.left = `${ghostPercent}%`;
+      this.dragTooltip.textContent = `F${newFrame}`;
+    }
 
     // 프레임 이동량 저장
     this.dragGhost.dataset.targetFrame = newFrame;
@@ -842,10 +931,19 @@ export class Timeline extends EventTarget {
     const targetFrame = parseInt(this.dragGhost?.dataset.targetFrame || this.dragStartFrame);
     const frameDelta = targetFrame - this.dragStartFrame;
 
-    // 고스트 제거
+    // 원본 클립 투명도 복원
+    if (this.draggedKeyframe.element) {
+      this.draggedKeyframe.element.style.opacity = '';
+    }
+
+    // 고스트 및 툴팁 제거
     if (this.dragGhost) {
       this.dragGhost.remove();
       this.dragGhost = null;
+    }
+    if (this.dragTooltip) {
+      this.dragTooltip.remove();
+      this.dragTooltip = null;
     }
 
     this.isDraggingKeyframe = false;
@@ -871,15 +969,33 @@ export class Timeline extends EventTarget {
    * 드래그 고스트 생성
    */
   _createDragGhost(e, frame) {
-    this.dragGhost = document.createElement('div');
-    this.dragGhost.className = 'keyframe-drag-ghost';
-    this.dragGhost.textContent = `F${frame}`;
+    const { element: clipElement, layerId } = this.draggedKeyframe;
 
-    const containerRect = this.tracksContainer.getBoundingClientRect();
+    // 클립 요소 복제하여 고스트로 사용
+    this.dragGhost = clipElement.cloneNode(true);
+    this.dragGhost.className = 'drawing-clip keyframe-drag-ghost-clip';
+
+    // 원본 클립의 스타일 복사하고 투명도 적용
+    const clipRect = clipElement.getBoundingClientRect();
+    const trackRect = clipElement.parentElement.getBoundingClientRect();
+
+    this.dragGhost.style.cssText = clipElement.style.cssText;
+    this.dragGhost.style.opacity = '0.5';
+    this.dragGhost.style.pointerEvents = 'none';
+    this.dragGhost.style.zIndex = '100';
+
+    // 원본 클립을 반투명하게 처리
+    clipElement.style.opacity = '0.3';
+
+    // 프레임 표시 툴팁 추가
+    this.dragTooltip = document.createElement('div');
+    this.dragTooltip.className = 'keyframe-drag-ghost';
+    this.dragTooltip.textContent = `F${frame}`;
     const percent = (frame / this.totalFrames) * 100;
-    this.dragGhost.style.left = `${percent}%`;
+    this.dragTooltip.style.left = `${percent}%`;
 
-    this.tracksContainer.appendChild(this.dragGhost);
+    clipElement.parentElement.appendChild(this.dragGhost);
+    this.tracksContainer.appendChild(this.dragTooltip);
   }
 
   // ====== 키프레임 선택 ======

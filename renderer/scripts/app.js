@@ -10,6 +10,7 @@ import { CommentManager } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
+import { PlexusEffect } from './modules/plexus.js';
 
 const log = createLogger('App');
 
@@ -186,6 +187,9 @@ async function initApp() {
   });
   reviewDataManager.connect();
 
+  // 사용자 설정 (단축키 세트 등)
+  const userSettings = getUserSettings();
+
   // ====== 모듈 이벤트 연결 ======
 
   // 비디오 메타데이터 로드됨
@@ -236,6 +240,9 @@ async function initApp() {
   videoPlayer.addEventListener('frameUpdate', (e) => {
     const { frame, time } = e.detail;
 
+    // 타임라인 플레이헤드 실시간 업데이트 (재생 중)
+    timeline.setCurrentTime(time);
+
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
   });
@@ -263,6 +270,22 @@ async function initApp() {
   // 비디오 에러
   videoPlayer.addEventListener('error', (e) => {
     showToast('비디오 재생 오류가 발생했습니다.', 'error');
+  });
+
+  // 코덱 미지원
+  const codecErrorOverlay = document.getElementById('codecErrorOverlay');
+  const btnCodecErrorClose = document.getElementById('btnCodecErrorClose');
+
+  videoPlayer.addEventListener('codecunsupported', (e) => {
+    log.warn('코덱 미지원', e.detail);
+    codecErrorOverlay?.classList.add('active');
+  });
+
+  btnCodecErrorClose?.addEventListener('click', () => {
+    codecErrorOverlay?.classList.remove('active');
+    // 드롭존 다시 표시
+    elements.dropZone?.classList.remove('hidden');
+    elements.videoPlayer.style.display = 'none';
   });
 
   // 타임라인에서 시간 이동 요청
@@ -446,7 +469,7 @@ async function initApp() {
   // ====== 이벤트 리스너 설정 ======
 
   // 파일 열기 버튼
-  elements.btnOpenFile.addEventListener('click', async () => {
+  elements.btnOpenFile?.addEventListener('click', async () => {
     log.info('파일 열기 버튼 클릭');
     try {
       const result = await window.electronAPI.openFileDialog();
@@ -604,6 +627,35 @@ async function initApp() {
     }
   });
 
+  // ====== 단축키 세트 선택 ======
+  const shortcutSet1Btn = document.getElementById('shortcutSet1');
+  const shortcutSet2Btn = document.getElementById('shortcutSet2');
+
+  // 초기 단축키 세트 UI 설정
+  function updateShortcutSetUI() {
+    const currentSet = userSettings.getShortcutSet();
+    elements.shortcutsMenu.dataset.set = currentSet;
+
+    shortcutSet1Btn?.classList.toggle('active', currentSet === 'set1');
+    shortcutSet2Btn?.classList.toggle('active', currentSet === 'set2');
+  }
+
+  // 단축키 세트 버튼 클릭 이벤트
+  shortcutSet1Btn?.addEventListener('click', () => {
+    userSettings.setShortcutSet('set1');
+    updateShortcutSetUI();
+    showToast('단축키 Set 1 (기본) 활성화', 'info');
+  });
+
+  shortcutSet2Btn?.addEventListener('click', () => {
+    userSettings.setShortcutSet('set2');
+    updateShortcutSetUI();
+    showToast('단축키 Set 2 (애니메이션) 활성화', 'info');
+  });
+
+  // 초기 UI 업데이트
+  updateShortcutSetUI();
+
   // 필터 칩 (댓글 목록 필터링)
   document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', function() {
@@ -615,7 +667,84 @@ async function initApp() {
     });
   });
 
+  // ====== 댓글 설정 드롭다운 ======
+  const btnCommentSettings = document.getElementById('btnCommentSettings');
+  const commentSettingsDropdown = document.getElementById('commentSettingsDropdown');
+  const toggleCommentThumbnails = document.getElementById('toggleCommentThumbnails');
+  const thumbnailScaleSlider = document.getElementById('thumbnailScaleSlider');
+  const thumbnailScaleValue = document.getElementById('thumbnailScaleValue');
+  const thumbnailScaleItem = document.getElementById('thumbnailScaleItem');
+
+  // 설정 초기값 로드 (요소가 있을 경우에만)
+  if (toggleCommentThumbnails) {
+    toggleCommentThumbnails.checked = userSettings.getShowCommentThumbnails();
+  }
+  if (thumbnailScaleSlider) {
+    thumbnailScaleSlider.value = userSettings.getCommentThumbnailScale();
+  }
+  if (thumbnailScaleValue) {
+    thumbnailScaleValue.textContent = `${userSettings.getCommentThumbnailScale()}%`;
+  }
+  if (thumbnailScaleItem && toggleCommentThumbnails) {
+    thumbnailScaleItem.classList.toggle('disabled', !toggleCommentThumbnails.checked);
+  }
+
+  // 설정 버튼 클릭 - 드롭다운 토글
+  btnCommentSettings?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    commentSettingsDropdown?.classList.toggle('open');
+    btnCommentSettings.classList.toggle('active', commentSettingsDropdown?.classList.contains('open'));
+  });
+
+  // 드롭다운 외부 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    if (!commentSettingsDropdown?.contains(e.target) && e.target !== btnCommentSettings) {
+      commentSettingsDropdown?.classList.remove('open');
+      btnCommentSettings?.classList.remove('active');
+    }
+  });
+
+  // 드롭다운 내부 클릭 시 이벤트 버블링 방지
+  commentSettingsDropdown?.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  // 썸네일 토글 변경
+  toggleCommentThumbnails?.addEventListener('change', () => {
+    const show = toggleCommentThumbnails.checked;
+    userSettings.setShowCommentThumbnails(show);
+    thumbnailScaleItem.classList.toggle('disabled', !show);
+    updateCommentList(document.querySelector('.filter-chip.active')?.dataset.filter || 'all');
+  });
+
+  // 썸네일 스케일 변경
+  thumbnailScaleSlider?.addEventListener('input', () => {
+    const scale = parseInt(thumbnailScaleSlider.value);
+    thumbnailScaleValue.textContent = `${scale}%`;
+    userSettings.setCommentThumbnailScale(scale);
+    // CSS 변수로 스케일 적용
+    document.documentElement.style.setProperty('--comment-thumbnail-scale', scale / 100);
+    updateCommentList(document.querySelector('.filter-chip.active')?.dataset.filter || 'all');
+  });
+
+  // 초기 스케일 CSS 변수 설정
+  document.documentElement.style.setProperty('--comment-thumbnail-scale', userSettings.getCommentThumbnailScale() / 100);
+
+  // 도구별 설정 저장 (크기, 불투명도)
+  const toolSettings = {
+    eraser: { size: 20 },      // 지우개는 기본 크기 더 크게
+    brush: { size: 3, opacity: 100 }  // 브러시/펜 등 다른 도구들
+  };
+  let currentToolType = 'brush';  // 'eraser' 또는 'brush'
+
   // 그리기 도구 선택
+  const opacitySection = document.getElementById('opacitySection');
+  const brushSizeSlider = document.getElementById('brushSizeSlider');
+  const brushSizeValue = document.getElementById('brushSizeValue');
+  const sizePreview = document.getElementById('sizePreview');
+  const brushOpacitySlider = document.getElementById('brushOpacitySlider');
+  const brushOpacityValue = document.getElementById('brushOpacityValue');
+
   document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
     btn.addEventListener('click', function() {
       document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
@@ -631,9 +760,35 @@ async function initApp() {
         'rect': DrawingTool.RECT,
         'circle': DrawingTool.CIRCLE
       };
-      const tool = toolMap[this.dataset.tool] || DrawingTool.PEN;
+      const toolName = this.dataset.tool;
+      const tool = toolMap[toolName] || DrawingTool.PEN;
+      const newToolType = toolName === 'eraser' ? 'eraser' : 'brush';
+
+      // 이전 도구 설정 저장
+      toolSettings[currentToolType].size = parseInt(brushSizeSlider.value);
+      if (currentToolType === 'brush') {
+        toolSettings.brush.opacity = parseInt(brushOpacitySlider.value);
+      }
+
+      // 새 도구 설정 적용
+      currentToolType = newToolType;
+      brushSizeSlider.value = toolSettings[currentToolType].size;
+      drawingManager.setLineWidth(toolSettings[currentToolType].size);
+      updateSizePreview();
+
+      // 지우개일 때 불투명도 섹션 숨기기, 아니면 보이기
+      if (newToolType === 'eraser') {
+        opacitySection.style.display = 'none';
+        drawingManager.setOpacity(1);  // 지우개는 항상 100%
+      } else {
+        opacitySection.style.display = 'block';
+        brushOpacitySlider.value = toolSettings.brush.opacity;
+        brushOpacityValue.textContent = `${toolSettings.brush.opacity}%`;
+        drawingManager.setOpacity(toolSettings.brush.opacity / 100);
+      }
+
       drawingManager.setTool(tool);
-      log.debug('도구 선택', { tool: this.dataset.tool });
+      log.debug('도구 선택', { tool: toolName, size: toolSettings[currentToolType].size });
     });
   });
 
@@ -663,11 +818,7 @@ async function initApp() {
     });
   });
 
-  // 브러쉬 사이즈 슬라이더
-  const brushSizeSlider = document.getElementById('brushSizeSlider');
-  const brushSizeValue = document.getElementById('brushSizeValue');
-  const sizePreview = document.getElementById('sizePreview');
-
+  // 브러쉬 사이즈 슬라이더 (변수는 위에서 이미 선언됨)
   function updateSizePreview() {
     const size = brushSizeSlider.value;
     brushSizeValue.textContent = `${size}px`;
@@ -677,8 +828,17 @@ async function initApp() {
 
   brushSizeSlider.addEventListener('input', function() {
     const size = parseInt(this.value);
+    toolSettings[currentToolType].size = size;  // 현재 도구 설정에 저장
     drawingManager.setLineWidth(size);
     updateSizePreview();
+  });
+
+  // 불투명도 슬라이더
+  brushOpacitySlider.addEventListener('input', function() {
+    const opacity = parseInt(this.value);
+    toolSettings.brush.opacity = opacity;  // 브러시 설정에 저장
+    brushOpacityValue.textContent = `${opacity}%`;
+    drawingManager.setOpacity(opacity / 100);
   });
 
   // 초기 사이즈 프리뷰 설정
@@ -791,8 +951,10 @@ async function initApp() {
   const onionOpacity = document.getElementById('onionOpacity');
   const onionOpacityValue = document.getElementById('onionOpacityValue');
 
-  onionToggle.addEventListener('click', () => {
-    const isActive = onionToggle.classList.toggle('active');
+  // 어니언 스킨 토글 함수 (UI 동기화 포함)
+  function toggleOnionSkinWithUI() {
+    const isActive = !onionToggle.classList.contains('active');
+    onionToggle.classList.toggle('active', isActive);
     onionToggle.textContent = isActive ? 'ON' : 'OFF';
     onionControls.classList.toggle('visible', isActive);
     drawingManager.setOnionSkin(isActive, {
@@ -800,6 +962,11 @@ async function initApp() {
       after: parseInt(onionAfter.value),
       opacity: parseInt(onionOpacity.value) / 100
     });
+    return isActive;
+  }
+
+  onionToggle.addEventListener('click', () => {
+    toggleOnionSkinWithUI();
   });
 
   onionBefore.addEventListener('change', updateOnionSettings);
@@ -818,6 +985,153 @@ async function initApp() {
       });
     }
   }
+
+  // ====== 영상 어니언 스킨 ======
+  // TODO: 영상 어니언 스킨 기능 - 비디오 가림 문제로 임시 비활성화
+  // 문제: 캔버스 오버레이가 비디오를 가려서 검은 화면으로 표시됨
+  // 해결 필요: z-index, visibility 조정으로 해결 안됨 - 다른 접근 방식 필요
+  /*
+  const videoOnionToggle = document.getElementById('videoOnionToggle');
+  const videoOnionControls = document.getElementById('videoOnionControls');
+  const videoOnionBefore = document.getElementById('videoOnionBefore');
+  const videoOnionAfter = document.getElementById('videoOnionAfter');
+  const videoOnionOpacity = document.getElementById('videoOnionOpacity');
+  const videoOnionOpacityValue = document.getElementById('videoOnionOpacityValue');
+  const videoOnionSkinCanvas = document.getElementById('videoOnionSkinCanvas');
+
+  // 비디오 플레이어에 영상 어니언 스킨 캔버스 설정
+  videoPlayer.setVideoOnionSkinCanvas(videoOnionSkinCanvas);
+
+  // 컨트롤바의 영상 어니언 스킨 버튼
+  const btnVideoOnionSkin = document.getElementById('btnVideoOnionSkin');
+
+  // 영상 어니언 스킨 토글 함수 (UI 동기화 포함)
+  function toggleVideoOnionSkinWithUI() {
+    const isActive = !videoOnionToggle.classList.contains('active');
+    // 그리기 도구 패널 버튼 업데이트
+    videoOnionToggle.classList.toggle('active', isActive);
+    videoOnionToggle.textContent = isActive ? 'ON' : 'OFF';
+    videoOnionControls.classList.toggle('visible', isActive);
+    // 컨트롤바 버튼 업데이트
+    btnVideoOnionSkin.classList.toggle('active', isActive);
+    // 캔버스 표시/숨김
+    videoOnionSkinCanvas.classList.toggle('visible', isActive);
+    videoPlayer.setVideoOnionSkin(isActive, {
+      before: parseInt(videoOnionBefore.value),
+      after: parseInt(videoOnionAfter.value),
+      opacity: parseInt(videoOnionOpacity.value) / 100
+    });
+    return isActive;
+  }
+
+  videoOnionToggle.addEventListener('click', () => {
+    toggleVideoOnionSkinWithUI();
+  });
+
+  btnVideoOnionSkin.addEventListener('click', () => {
+    toggleVideoOnionSkinWithUI();
+  });
+
+  videoOnionBefore.addEventListener('change', updateVideoOnionSettings);
+  videoOnionAfter.addEventListener('change', updateVideoOnionSettings);
+  videoOnionOpacity.addEventListener('input', () => {
+    videoOnionOpacityValue.textContent = `${videoOnionOpacity.value}%`;
+    updateVideoOnionSettings();
+  });
+
+  function updateVideoOnionSettings() {
+    if (videoOnionToggle.classList.contains('active')) {
+      videoPlayer.setVideoOnionSkin(true, {
+        before: parseInt(videoOnionBefore.value),
+        after: parseInt(videoOnionAfter.value),
+        opacity: parseInt(videoOnionOpacity.value) / 100
+      });
+    }
+  }
+
+  // 비디오 일시정지 시 영상 어니언 스킨 렌더링
+  videoPlayer.addEventListener('pause', () => {
+    if (videoPlayer.videoOnionSkin?.enabled) {
+      videoPlayer.renderVideoOnionSkin();
+    }
+  });
+
+  // 비디오 재생 시 영상 어니언 스킨 클리어
+  videoPlayer.addEventListener('play', () => {
+    videoPlayer._clearVideoOnionSkin();
+  });
+
+  // 비디오 시간 변경 시 (일시정지 상태에서 seeking) 영상 어니언 스킨 업데이트
+  let videoOnionSkinDebounceTimer = null;
+  videoPlayer.addEventListener('timeupdate', () => {
+    if (!videoPlayer.isPlaying && videoPlayer.videoOnionSkin?.enabled) {
+      // 디바운스 처리 (너무 자주 렌더링하지 않도록)
+      clearTimeout(videoOnionSkinDebounceTimer);
+      videoOnionSkinDebounceTimer = setTimeout(() => {
+        videoPlayer.renderVideoOnionSkin();
+      }, 150);
+    }
+  });
+  */
+
+  // ====== 구간 반복 ======
+  const btnSetInPoint = document.getElementById('btnSetInPoint');
+  const btnSetOutPoint = document.getElementById('btnSetOutPoint');
+  const btnLoopToggle = document.getElementById('btnLoopToggle');
+  const btnClearLoop = document.getElementById('btnClearLoop');
+  const inPointDisplay = document.getElementById('inPointDisplay');
+  const outPointDisplay = document.getElementById('outPointDisplay');
+
+  // 시작점 설정
+  btnSetInPoint.addEventListener('click', () => {
+    const time = videoPlayer.setInPointAtCurrent();
+    inPointDisplay.textContent = videoPlayer.formatTimeShort(time);
+    btnSetInPoint.classList.add('has-point');
+    showToast(`시작점 설정: ${videoPlayer.formatTimeShort(time)}`, 'info');
+  });
+
+  // 종료점 설정
+  btnSetOutPoint.addEventListener('click', () => {
+    const time = videoPlayer.setOutPointAtCurrent();
+    outPointDisplay.textContent = videoPlayer.formatTimeShort(time);
+    btnSetOutPoint.classList.add('has-point');
+    showToast(`종료점 설정: ${videoPlayer.formatTimeShort(time)}`, 'info');
+  });
+
+  // 구간 반복 토글
+  btnLoopToggle.addEventListener('click', () => {
+    // 시작점과 종료점이 설정되어 있어야 활성화 가능
+    if (videoPlayer.loop.inPoint === null || videoPlayer.loop.outPoint === null) {
+      showToast('시작점과 종료점을 먼저 설정하세요', 'warn');
+      return;
+    }
+    const enabled = videoPlayer.toggleLoop();
+    btnLoopToggle.classList.toggle('active', enabled);
+    showToast(enabled ? '구간 반복 활성화' : '구간 반복 비활성화', 'info');
+  });
+
+  // 구간 초기화
+  btnClearLoop.addEventListener('click', () => {
+    videoPlayer.clearLoop();
+    inPointDisplay.textContent = '--:--';
+    outPointDisplay.textContent = '--:--';
+    btnSetInPoint.classList.remove('has-point');
+    btnSetOutPoint.classList.remove('has-point');
+    btnLoopToggle.classList.remove('active');
+    showToast('구간 초기화', 'info');
+  });
+
+  // 구간 변경 이벤트 수신 (UI 동기화)
+  videoPlayer.addEventListener('loopChanged', (e) => {
+    const { inPoint, outPoint, enabled } = e.detail;
+    inPointDisplay.textContent = videoPlayer.formatTimeShort(inPoint);
+    outPointDisplay.textContent = videoPlayer.formatTimeShort(outPoint);
+    btnSetInPoint.classList.toggle('has-point', inPoint !== null);
+    btnSetOutPoint.classList.toggle('has-point', outPoint !== null);
+    btnLoopToggle.classList.toggle('active', enabled);
+    // 타임라인에 구간 마커 표시
+    timeline.setLoopRegion(inPoint, outPoint, enabled);
+  });
 
   // ====== 비디오 줌/패닝 ======
 
@@ -1082,6 +1396,19 @@ async function initApp() {
       onionCanvas.height = renderArea.videoHeight;
     }
 
+    // 영상 어니언 스킨 캔버스도 동일하게 동기화 (TODO: 임시 비활성화)
+    /*
+    if (videoOnionSkinCanvas) {
+      videoOnionSkinCanvas.style.position = 'absolute';
+      videoOnionSkinCanvas.style.left = `${renderArea.left}px`;
+      videoOnionSkinCanvas.style.top = `${renderArea.top}px`;
+      videoOnionSkinCanvas.style.width = `${renderArea.width}px`;
+      videoOnionSkinCanvas.style.height = `${renderArea.height}px`;
+      videoOnionSkinCanvas.width = renderArea.videoWidth;
+      videoOnionSkinCanvas.height = renderArea.videoHeight;
+    }
+    */
+
     // 드로잉 매니저에도 캔버스 크기 전달
     drawingManager.setCanvasSize(renderArea.videoWidth, renderArea.videoHeight);
 
@@ -1127,6 +1454,8 @@ async function initApp() {
         state.isCommentMode = false;
         elements.btnAddComment?.classList.remove('active');
       }
+      // 코덱 에러 오버레이 숨기기
+      codecErrorOverlay?.classList.remove('active');
 
       // 비디오 플레이어에 로드
       await videoPlayer.load(filePath);
@@ -1225,6 +1554,9 @@ async function initApp() {
 
         // 타임라인에 썸네일 생성기 연결 (1단계 완료 즉시)
         timeline.setThumbnailGenerator(thumbnailGenerator);
+
+        // 댓글 리스트 업데이트 (썸네일 표시를 위해)
+        updateCommentList(document.querySelector('.filter-chip.active')?.dataset.filter || 'all');
 
         // 로딩 오버레이 숨김
         loadingOverlay?.classList.remove('active');
@@ -1399,14 +1731,38 @@ async function initApp() {
       }
     });
 
-    // 포커스 잃으면 취소 (다른 곳 클릭)
+    // pointerdown으로 클릭 대상 감지 (blur보다 먼저 발생)
+    let clickedInsideMarker = false;
+
+    const handlePointerDown = (e) => {
+      clickedInsideMarker = markerEl.contains(e.target);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+
+    // 포커스 잃으면 취소 (마커 외부 클릭 시에만)
     textarea?.addEventListener('blur', () => {
       setTimeout(() => {
-        if (commentManager.pendingMarker) {
+        if (commentManager.pendingMarker && !clickedInsideMarker) {
           commentManager.setCommentMode(false);
         }
+        clickedInsideMarker = false; // 리셋
       }, 100);
     });
+
+    // 마커 제거 시 이벤트 리스너 정리
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const removed of mutation.removedNodes) {
+          if (removed === markerEl || removed.contains?.(markerEl)) {
+            document.removeEventListener('pointerdown', handlePointerDown);
+            observer.disconnect();
+            return;
+          }
+        }
+      }
+    });
+    observer.observe(markerContainer, { childList: true, subtree: true });
   }
 
   /**
@@ -1591,9 +1947,22 @@ async function initApp() {
    */
   function getAuthorColorClass(author) {
     if (!author) return '';
-    if (author.includes('배한솔')) return 'author-hansol';
-    if (author.includes('윤성원')) return 'author-sungwon';
-    if (author.includes('허혜원')) return 'author-hyewon';
+    const color = userSettings.getColorForName(author);
+    if (color) {
+      return 'author-colored';
+    }
+    return '';
+  }
+
+  /**
+   * 이름에 따른 인라인 스타일 반환
+   */
+  function getAuthorColorStyle(author) {
+    if (!author) return '';
+    const color = userSettings.getColorForName(author);
+    if (color) {
+      return `style="color: ${color}; font-weight: bold;"`;
+    }
     return '';
   }
 
@@ -1630,24 +1999,51 @@ async function initApp() {
       return;
     }
 
+    const userSettings = getUserSettings();
+    const showThumbnails = userSettings.getShowCommentThumbnails();
+    const thumbnailScale = userSettings.getCommentThumbnailScale();
+    const thumbnailGenerator = getThumbnailGenerator();
+
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
+      const authorStyle = getAuthorColorStyle(marker.author);
       const replyCount = marker.replies?.length || 0;
+      const avatarImage = userSettings.getAvatarForName(marker.author);
       const repliesHtml = (marker.replies || []).map(reply => `
         <div class="comment-reply">
           <div class="comment-reply-header">
-            <span class="comment-reply-author ${getAuthorColorClass(reply.author)}">${reply.author}</span>
+            <span class="comment-reply-author ${getAuthorColorClass(reply.author)}" ${getAuthorColorStyle(reply.author)}>${reply.author}</span>
             <span class="comment-reply-time">${formatRelativeTime(reply.createdAt)}</span>
           </div>
           <p class="comment-reply-text">${escapeHtml(reply.text)}</p>
         </div>
       `).join('');
 
+      // 썸네일 URL 가져오기
+      const markerTime = marker.startFrame / videoPlayer.fps;
+      const thumbnailUrl = showThumbnails && thumbnailGenerator?.isReady
+        ? thumbnailGenerator.getThumbnailUrlAt(markerTime)
+        : null;
+
+      const thumbnailHtml = thumbnailUrl ? `
+        <div class="comment-thumbnail-wrapper" style="max-width: ${thumbnailScale}%;">
+          <img class="comment-thumbnail" src="${thumbnailUrl}" alt="Frame ${marker.startFrame}">
+          <div class="comment-thumbnail-overlay">
+            <div class="thumbnail-play-icon">
+              <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+            <span class="thumbnail-timecode">${marker.startTimecode}</span>
+          </div>
+        </div>
+      ` : '';
+
       return `
-      <div class="comment-item ${marker.resolved ? 'resolved' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
+        ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
+        ${thumbnailHtml}
         <div class="comment-header">
           <span class="comment-timecode">${marker.startTimecode}</span>
-          <span class="comment-author ${authorClass}">${marker.author}</span>
+          <span class="comment-author ${authorClass}" ${authorStyle}>${marker.author}</span>
           <span class="comment-time">${formatRelativeTime(marker.createdAt)}</span>
         </div>
         <div class="comment-content">
@@ -1701,6 +2097,14 @@ async function initApp() {
         videoPlayer.seek(time);
         container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
+      });
+
+      // 더블클릭으로 스레드 팝업 열기
+      item.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.comment-action-btn')) return;
+        e.stopPropagation();
+        const markerId = item.dataset.markerId;
+        openThreadPopup(markerId);
       });
 
       // 해결 버튼
@@ -1940,51 +2344,56 @@ async function initApp() {
     // 입력 필드에서는 단축키 무시
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
 
+    // contenteditable 요소에서는 단축키 무시 (스레드 에디터 등)
+    if (e.target.isContentEditable) return;
+
+    // 스레드 팝업이 열려있으면 단축키 무시
+    const threadOverlay = document.getElementById('threadOverlay');
+    if (threadOverlay?.classList.contains('open')) return;
+
+    const shortcutSet = userSettings.getShortcutSet();
+
+    // ====== 공통 단축키 (모든 세트에서 동일) ======
     switch (e.code) {
     case 'Space':
       e.preventDefault();
       videoPlayer.togglePlay();
-      break;
-
-    case 'ArrowLeft':
-      e.preventDefault();
-      if (e.shiftKey) {
-        videoPlayer.rewind(1); // 1초 뒤로
-      } else {
-        videoPlayer.prevFrame();
-      }
-      break;
-
-    case 'ArrowRight':
-      e.preventDefault();
-      if (e.shiftKey) {
-        videoPlayer.forward(1); // 1초 앞으로
-      } else {
-        videoPlayer.nextFrame();
-      }
-      break;
+      return;
 
     case 'Home':
       e.preventDefault();
       videoPlayer.seekToStart();
-      break;
+      return;
 
     case 'End':
       e.preventDefault();
       videoPlayer.seekToEnd();
-      break;
-
-    case 'KeyD':
-      e.preventDefault();
-      toggleDrawMode();
-      break;
+      return;
 
     case 'KeyC':
       if (!e.ctrlKey) {
         e.preventDefault();
         toggleCommentMode();
       }
-      break;
+      return;
+
+    case 'KeyI':
+      // 시작점 설정
+      e.preventDefault();
+      btnSetInPoint.click();
+      return;
+
+    case 'KeyO':
+      // 종료점 설정
+      e.preventDefault();
+      btnSetOutPoint.click();
+      return;
+
+    case 'KeyL':
+      // 구간 반복 토글
+      e.preventDefault();
+      btnLoopToggle.click();
+      return;
 
     case 'F6':
       // 키프레임 복제 추가 (이전 내용 복사)
@@ -1993,7 +2402,7 @@ async function initApp() {
         drawingManager.addKeyframeWithContent();
         showToast('키프레임 추가됨', 'success');
       }
-      break;
+      return;
 
     case 'F7':
       // 빈 키프레임 추가
@@ -2002,7 +2411,7 @@ async function initApp() {
         drawingManager.addBlankKeyframe();
         showToast('빈 키프레임 추가됨', 'success');
       }
-      break;
+      return;
 
     case 'Delete':
     case 'Backspace':
@@ -2011,19 +2420,19 @@ async function initApp() {
         e.preventDefault();
         drawingManager.removeKeyframe();
       }
-      break;
+      return;
 
     case 'Slash':
       if (e.shiftKey) { // ?
         e.preventDefault();
         elements.shortcutsToggle.click();
       }
-      break;
+      return;
 
     case 'Backslash':
       e.preventDefault();
       timeline.fitToView();
-      break;
+      return;
 
     case 'KeyZ':
       if (e.ctrlKey || e.metaKey) {
@@ -2040,7 +2449,7 @@ async function initApp() {
           }
         }
       }
-      break;
+      return;
 
     case 'KeyY':
       if (e.ctrlKey || e.metaKey) {
@@ -2050,7 +2459,7 @@ async function initApp() {
           showToast('다시 실행됨', 'info');
         }
       }
-      break;
+      return;
 
     case 'Equal':
     case 'NumpadAdd':
@@ -2058,7 +2467,7 @@ async function initApp() {
         e.preventDefault();
         timeline.zoomIn();
       }
-      break;
+      return;
 
     case 'Minus':
     case 'NumpadSubtract':
@@ -2066,7 +2475,135 @@ async function initApp() {
         e.preventDefault();
         timeline.zoomOut();
       }
-      break;
+      return;
+    }
+
+    // ====== Set 1: 기존 단축키 (화살표 기반) ======
+    if (shortcutSet === 'set1') {
+      switch (e.code) {
+      case 'ArrowLeft':
+        e.preventDefault();
+        if (e.shiftKey) {
+          videoPlayer.rewind(1); // 1초 뒤로
+        } else {
+          videoPlayer.prevFrame();
+        }
+        break;
+
+      case 'ArrowRight':
+        e.preventDefault();
+        if (e.shiftKey) {
+          videoPlayer.forward(1); // 1초 앞으로
+        } else {
+          videoPlayer.nextFrame();
+        }
+        break;
+
+      case 'KeyD':
+        e.preventDefault();
+        toggleDrawMode();
+        break;
+      }
+    }
+
+    // ====== Set 2: 새 단축키 (A/D 기반, 애니메이션 작업용) ======
+    if (shortcutSet === 'set2') {
+      switch (e.code) {
+      case 'ArrowLeft':
+        e.preventDefault();
+        if (e.shiftKey) {
+          videoPlayer.rewind(1);
+        } else {
+          videoPlayer.prevFrame();
+        }
+        break;
+
+      case 'ArrowRight':
+        e.preventDefault();
+        if (e.shiftKey) {
+          videoPlayer.forward(1);
+        } else {
+          videoPlayer.nextFrame();
+        }
+        break;
+
+      case 'KeyA':
+        e.preventDefault();
+        if (e.shiftKey) {
+          // Shift+A: 1프레임 이전
+          videoPlayer.prevFrame();
+        } else {
+          // A: 이전 키프레임으로 이동
+          const prevKf = drawingManager.getPrevKeyframeFrame();
+          if (prevKf !== null) {
+            videoPlayer.seekToFrame(prevKf);
+          }
+        }
+        break;
+
+      case 'KeyD':
+        e.preventDefault();
+        if (e.shiftKey) {
+          // Shift+D: 1프레임 다음
+          videoPlayer.nextFrame();
+        } else {
+          // D: 다음 키프레임으로 이동
+          const nextKf = drawingManager.getNextKeyframeFrame();
+          if (nextKf !== null) {
+            videoPlayer.seekToFrame(nextKf);
+          }
+        }
+        break;
+
+      case 'Digit1':
+        // 1: 어니언 스킨 토글 (UI 버튼과 동기화)
+        e.preventDefault();
+        toggleOnionSkinWithUI();
+        break;
+
+      case 'Digit2':
+        // 2: 빈 키프레임 삽입
+        e.preventDefault();
+        drawingManager.addBlankKeyframe();
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        break;
+
+      case 'Digit3':
+        e.preventDefault();
+        if (e.shiftKey) {
+          // Shift+3: 현재 키프레임 삭제
+          drawingManager.removeKeyframe();
+          showToast('키프레임이 삭제되었습니다.', 'info');
+        } else {
+          // 3: 프레임 삽입 (홀드 추가)
+          drawingManager.insertFrame();
+        }
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        break;
+
+      case 'Digit4':
+        // 4: 프레임 삭제
+        e.preventDefault();
+        drawingManager.deleteFrame();
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        break;
+
+      case 'KeyB':
+        // B: 브러시 모드 (드로잉 모드 켜기)
+        e.preventDefault();
+        if (!state.isDrawMode) {
+          toggleDrawMode();
+        }
+        break;
+
+      case 'KeyV':
+        // V: 선택 모드 (드로잉 모드 끄기)
+        e.preventDefault();
+        if (state.isDrawMode) {
+          toggleDrawMode();
+        }
+        break;
+      }
     }
   }
 
@@ -2121,8 +2658,7 @@ async function initApp() {
     handleExternalFile(arg);
   });
 
-  // ====== 사용자 설정 초기화 ======
-  const userSettings = getUserSettings();
+  // ====== 사용자 이름 초기화 ======
   let userName = await userSettings.initialize();
   log.info('사용자 이름 감지됨', { userName, source: userSettings.getUserSource() });
 
@@ -2143,7 +2679,7 @@ async function initApp() {
   // ====== 사용자 설정 모달 ======
   const userSettingsModal = document.getElementById('userSettingsModal');
   const userNameInput = document.getElementById('userNameInput');
-  const btnCommentSettings = document.getElementById('btnCommentSettings');
+  // btnCommentSettings는 이미 위에서 선언됨 (댓글 설정 드롭다운)
   const closeUserSettings = document.getElementById('closeUserSettings');
   const cancelUserSettings = document.getElementById('cancelUserSettings');
   const saveUserSettings = document.getElementById('saveUserSettings');
@@ -2176,7 +2712,8 @@ async function initApp() {
   }
 
   // 설정 버튼 클릭
-  btnCommentSettings?.addEventListener('click', openUserSettingsModal);
+  // 사용자 설정 모달은 드롭다운 내 별도 버튼으로 열기 (TODO)
+  // btnCommentSettings는 이제 드롭다운 토글용으로 사용됨
 
   // 닫기 버튼
   closeUserSettings?.addEventListener('click', closeUserSettingsModal);
@@ -2210,6 +2747,390 @@ async function initApp() {
       showToast('댓글에 표시될 이름을 설정해주세요.', 'info');
     }, 500);
   }
+
+  // ====== 크레딧 모달 ======
+  const creditsOverlay = document.getElementById('creditsOverlay');
+  const creditsClose = document.getElementById('creditsClose');
+  const creditsPlexus = document.getElementById('creditsPlexus');
+  const creditsVersion = document.getElementById('creditsVersion');
+  const logoIcon = document.querySelector('.logo-icon');
+
+  let plexusEffect = null;
+
+  async function openCreditsModal() {
+    // 버전 정보 가져오기
+    try {
+      const version = await window.electronAPI.getVersion();
+      creditsVersion.textContent = `v${version}`;
+    } catch (e) {
+      creditsVersion.textContent = 'v1.0.0';
+    }
+
+    // 플렉서스 효과 시작
+    if (!plexusEffect) {
+      plexusEffect = new PlexusEffect(creditsPlexus, {
+        particleCount: 70,
+        particleRadius: 2.5,
+        lineDistance: 160,
+        speed: 0.35,
+        baseOpacity: 0.95,
+        lineOpacity: 0.5,
+        fillOpacity: 0.12,
+        lineWidth: 1.5,
+        hueSpeed: 0.15,
+        hueRange: 55
+      });
+    }
+    plexusEffect.start();
+
+    // 모달 열기
+    creditsOverlay.classList.add('active');
+  }
+
+  function closeCreditsModal() {
+    creditsOverlay.classList.remove('active');
+
+    // 애니메이션 완료 후 플렉서스 중지
+    setTimeout(() => {
+      if (plexusEffect) {
+        plexusEffect.stop();
+      }
+    }, 400);
+  }
+
+  // 로고 클릭 시 크레딧 모달 열기
+  logoIcon?.addEventListener('click', openCreditsModal);
+
+  // 닫기 버튼
+  creditsClose?.addEventListener('click', closeCreditsModal);
+
+  // 오버레이 클릭 시 닫기
+  creditsOverlay?.addEventListener('click', (e) => {
+    if (e.target === creditsOverlay) {
+      closeCreditsModal();
+    }
+  });
+
+  // ESC 키로 닫기
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && creditsOverlay?.classList.contains('active')) {
+      closeCreditsModal();
+    }
+  });
+
+  // ========================================
+  // Thread Popup (Slack-style)
+  // ========================================
+  const threadOverlay = document.getElementById('threadOverlay');
+  const threadBack = document.getElementById('threadBack');
+  const threadClose = document.getElementById('threadClose');
+  const threadAuthor = document.getElementById('threadAuthor');
+  const threadOriginal = document.getElementById('threadOriginal');
+  const threadReplyCount = document.getElementById('threadReplyCount');
+  const threadReplies = document.getElementById('threadReplies');
+  const threadEditor = document.getElementById('threadEditor');
+  const threadSubmit = document.getElementById('threadSubmit');
+
+  let currentThreadMarkerId = null;
+
+  /**
+   * 스레드 팝업 열기
+   */
+  function openThreadPopup(markerId) {
+    const marker = commentManager.getMarker(markerId);
+    if (!marker) return;
+
+    currentThreadMarkerId = markerId;
+
+    // 헤더에 작성자 표시 (색상 포함)
+    const authorColor = userSettings.getColorForName(marker.author);
+    threadAuthor.textContent = marker.author;
+    threadAuthor.style.color = authorColor || '';
+
+    // 아바타 이미지 가져오기
+    const avatarImage = userSettings.getAvatarForName(marker.author);
+
+    // 원본 댓글 렌더링
+    threadOriginal.innerHTML = `
+      ${avatarImage ? `<div class="thread-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
+      <div class="thread-original-inner">
+        <div class="thread-comment-header">
+          <div class="thread-comment-avatar">${marker.author.charAt(0)}</div>
+          <div class="thread-comment-info">
+            <div class="thread-comment-author" ${getAuthorColorStyle(marker.author)}>${marker.author}</div>
+            <div class="thread-comment-time">${formatRelativeTime(marker.createdAt)}</div>
+          </div>
+        </div>
+        <div class="thread-comment-text">${formatMarkdown(marker.text)}</div>
+        <div class="thread-comment-reactions">
+          <button class="thread-reaction">
+            <span class="thread-reaction-emoji">✅</span>
+          </button>
+          <button class="thread-reaction">
+            <span class="thread-reaction-emoji">💯</span>
+          </button>
+          <button class="thread-reaction">
+            <span class="thread-reaction-emoji">👍</span>
+          </button>
+          <button class="thread-reaction">
+            <span class="thread-reaction-emoji">😀</span>
+          </button>
+        </div>
+      </div>
+    `;
+
+    // 답글 개수 표시
+    const replyCount = marker.replies?.length || 0;
+    threadReplyCount.textContent = replyCount > 0 ? `${replyCount}개의 댓글` : '';
+    threadReplyCount.style.display = replyCount > 0 ? 'flex' : 'none';
+
+    // 답글들 렌더링
+    threadReplies.innerHTML = (marker.replies || []).map(reply => `
+      <div class="thread-reply-item">
+        <div class="thread-reply-avatar">${reply.author.charAt(0)}</div>
+        <div class="thread-reply-content">
+          <div class="thread-reply-header">
+            <span class="thread-reply-author" ${getAuthorColorStyle(reply.author)}>${reply.author}</span>
+            <span class="thread-reply-time">${formatRelativeTime(reply.createdAt)}</span>
+          </div>
+          <div class="thread-reply-text">${formatMarkdown(reply.text)}</div>
+        </div>
+      </div>
+    `).join('');
+
+    // 에디터 초기화
+    threadEditor.innerHTML = '';
+    updateSubmitButtonState();
+
+    // 팝업 열기
+    threadOverlay.classList.add('open');
+    threadEditor.focus();
+  }
+
+  /**
+   * 스레드 팝업 닫기
+   */
+  function closeThreadPopup() {
+    threadOverlay.classList.remove('open');
+    currentThreadMarkerId = null;
+    threadEditor.innerHTML = '';
+  }
+
+  /**
+   * 마크다운 포맷팅 적용
+   */
+  function formatMarkdown(text) {
+    if (!text) return '';
+
+    let html = escapeHtml(text);
+
+    // Bold: *text* or **text**
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<strong>$1</strong>');
+
+    // Italic: _text_
+    html = html.replace(/_(.+?)_/g, '<em>$1</em>');
+
+    // Strikethrough: ~text~
+    html = html.replace(/~(.+?)~/g, '<s>$1</s>');
+
+    // Code: `code`
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Bullet list: - item
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+    // Clean up consecutive ul tags
+    html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+    // Line breaks
+    html = html.replace(/\n/g, '<br>');
+
+    return html;
+  }
+
+  /**
+   * 에디터에 포맷 적용
+   */
+  function applyFormat(format) {
+    threadEditor.focus();
+    const selection = window.getSelection();
+
+    // Selection이 없으면 에디터 끝에 커서 배치
+    if (!selection || selection.rangeCount === 0) {
+      const range = document.createRange();
+      range.selectNodeContents(threadEditor);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    switch (format) {
+      case 'bold':
+        document.execCommand('bold', false, null);
+        break;
+      case 'italic':
+        document.execCommand('italic', false, null);
+        break;
+      case 'underline':
+        document.execCommand('underline', false, null);
+        break;
+      case 'strike':
+        document.execCommand('strikeThrough', false, null);
+        break;
+      case 'bullet':
+        document.execCommand('insertUnorderedList', false, null);
+        break;
+      case 'numbered':
+        document.execCommand('insertOrderedList', false, null);
+        break;
+      case 'code':
+        if (selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0);
+          const selectedText = range.toString();
+          if (selectedText) {
+            document.execCommand('insertHTML', false, `<code>${escapeHtml(selectedText)}</code>`);
+          }
+        }
+        break;
+      case 'link':
+        // prompt() 전에 selection 백업
+        const savedRange = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
+        const url = prompt('링크 URL을 입력하세요:');
+        if (url && savedRange) {
+          // selection 복원 후 링크 적용
+          threadEditor.focus();
+          selection.removeAllRanges();
+          selection.addRange(savedRange);
+          document.execCommand('createLink', false, url);
+        }
+        break;
+    }
+
+    updateSubmitButtonState();
+  }
+
+  /**
+   * 전송 버튼 상태 업데이트
+   */
+  function updateSubmitButtonState() {
+    const hasContent = threadEditor.textContent.trim().length > 0;
+    threadSubmit.classList.toggle('active', hasContent);
+  }
+
+  /**
+   * 스레드에 답글 제출
+   */
+  function submitThreadReply() {
+    const text = threadEditor.innerText.trim();
+    if (!text || !currentThreadMarkerId) return;
+
+    commentManager.addReplyToMarker(currentThreadMarkerId, text);
+
+    // UI 업데이트
+    const marker = commentManager.getMarker(currentThreadMarkerId);
+    if (marker) {
+      // 답글 개수 업데이트
+      const replyCount = marker.replies?.length || 0;
+      threadReplyCount.textContent = `${replyCount}개의 댓글`;
+      threadReplyCount.style.display = 'flex';
+
+      // 새 답글 추가
+      const newReply = marker.replies[marker.replies.length - 1];
+      threadReplies.innerHTML += `
+        <div class="thread-reply-item">
+          <div class="thread-reply-avatar">${newReply.author.charAt(0)}</div>
+          <div class="thread-reply-content">
+            <div class="thread-reply-header">
+              <span class="thread-reply-author" ${getAuthorColorStyle(newReply.author)}>${newReply.author}</span>
+              <span class="thread-reply-time">${formatRelativeTime(newReply.createdAt)}</span>
+            </div>
+            <div class="thread-reply-text">${formatMarkdown(newReply.text)}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    // 에디터 초기화
+    threadEditor.innerHTML = '';
+    updateSubmitButtonState();
+    showToast('답글이 추가되었습니다.', 'success');
+  }
+
+  // 스레드 팝업 이벤트 리스너 (X 버튼, < 버튼, ESC로만 닫기)
+  threadBack?.addEventListener('click', closeThreadPopup);
+  threadClose?.addEventListener('click', closeThreadPopup);
+
+  // ESC 키로 스레드 팝업 닫기
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && threadOverlay?.classList.contains('open')) {
+      closeThreadPopup();
+    }
+  });
+
+  // 에디터 툴바 버튼 클릭
+  document.querySelectorAll('.thread-editor-toolbar .editor-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const format = btn.dataset.format;
+      if (format) {
+        applyFormat(format);
+      }
+    });
+  });
+
+  // 에디터 키보드 단축키
+  threadEditor?.addEventListener('keydown', (e) => {
+    // Ctrl+B: Bold
+    if (e.ctrlKey && e.key === 'b') {
+      e.preventDefault();
+      applyFormat('bold');
+    }
+    // Ctrl+I: Italic
+    if (e.ctrlKey && e.key === 'i') {
+      e.preventDefault();
+      applyFormat('italic');
+    }
+    // Ctrl+U: Underline
+    if (e.ctrlKey && e.key === 'u') {
+      e.preventDefault();
+      applyFormat('underline');
+    }
+    // Enter: Submit (without Shift)
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitThreadReply();
+    }
+  });
+
+  // 에디터 내용 변경 감지
+  threadEditor?.addEventListener('input', () => {
+    updateSubmitButtonState();
+
+    // "- " 입력 시 자동 불릿 리스트
+    const text = threadEditor.innerText;
+    if (text.endsWith('- ') && text.length === 2) {
+      // execCommand 대신 직접 DOM 조작으로 안정적 처리
+      threadEditor.innerHTML = '<ul><li><br></li></ul>';
+
+      // 커서를 li 안으로 명시적 이동
+      const li = threadEditor.querySelector('li');
+      if (li) {
+        const range = document.createRange();
+        const sel = window.getSelection();
+        range.setStart(li, 0);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+  });
+
+  // 전송 버튼 클릭
+  threadSubmit?.addEventListener('click', submitThreadReply);
+
+  // 전역으로 노출
+  window.openThreadPopup = openThreadPopup;
 
   log.info('앱 초기화 완료');
 

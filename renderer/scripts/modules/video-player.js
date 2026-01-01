@@ -28,6 +28,13 @@ export class VideoPlayer extends EventTarget {
     this.totalFrames = 0;
     this.filePath = null;
 
+    // 구간 반복 설정
+    this.loop = {
+      enabled: false,
+      inPoint: null,   // 시작점 (초)
+      outPoint: null   // 종료점 (초)
+    };
+
     // 수동 seek 중 플래그 (timeupdate가 프레임을 덮어쓰지 않도록)
     this._isSeeking = false;
     this._seekTimeout = null;
@@ -54,15 +61,38 @@ export class VideoPlayer extends EventTarget {
       this.totalFrames = Math.floor(this.duration * this.fps);
       this.isLoaded = true;
 
+      // 상세 비디오 정보 로깅 (디버깅용)
       log.info('메타데이터 로드됨', {
         duration: this.duration,
-        totalFrames: this.totalFrames
+        totalFrames: this.totalFrames,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        readyState: video.readyState,
+        networkState: video.networkState
       });
+
+      // 비디오 크기가 0이면 경고 (코덱 문제 가능성)
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        log.warn('비디오 크기가 0입니다. 코덱 호환성 문제일 수 있습니다.');
+        this._emit('codecunsupported', {
+          message: '이 영상은 지원하지 않는 코덱입니다.\nH.264 코덱으로 변환해주세요.',
+          hint: 'MPEG-4 Part 2, H.265/HEVC 등은 지원되지 않습니다.'
+        });
+      }
 
       this._emit('loadedmetadata', {
         duration: this.duration,
         totalFrames: this.totalFrames,
         fps: this.fps
+      });
+    });
+
+    // 첫 프레임 로드됨 (실제 렌더링 가능 상태)
+    video.addEventListener('loadeddata', () => {
+      log.info('비디오 데이터 로드됨', {
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        currentSrc: video.currentSrc
       });
     });
 
@@ -81,6 +111,16 @@ export class VideoPlayer extends EventTarget {
       // 부동소수점 오차 보정: 약간의 여유를 두고 반올림
       this.currentFrame = Math.round(this.currentTime * this.fps - 0.0001);
       this.currentFrame = Math.max(0, this.currentFrame);
+
+      // 구간 반복 처리
+      if (this.loop.enabled && this.isPlaying &&
+          this.loop.inPoint !== null && this.loop.outPoint !== null) {
+        if (this.currentTime >= this.loop.outPoint) {
+          this.seek(this.loop.inPoint);
+          this._emit('loopRestart');
+          return;
+        }
+      }
 
       this._emit('timeupdate', {
         currentTime: this.currentTime,
@@ -464,6 +504,88 @@ export class VideoPlayer extends EventTarget {
     };
   }
 
+  // ====== 구간 반복 ======
+
+  /**
+   * 시작점(In Point) 설정
+   * @param {number|null} time - 시작점 시간 (초), null이면 해제
+   */
+  setInPoint(time) {
+    this.loop.inPoint = time;
+    log.debug('시작점 설정', { inPoint: time });
+    this._emit('loopChanged', { ...this.loop });
+  }
+
+  /**
+   * 종료점(Out Point) 설정
+   * @param {number|null} time - 종료점 시간 (초), null이면 해제
+   */
+  setOutPoint(time) {
+    this.loop.outPoint = time;
+    log.debug('종료점 설정', { outPoint: time });
+    this._emit('loopChanged', { ...this.loop });
+  }
+
+  /**
+   * 구간 반복 활성화/비활성화
+   * @param {boolean} enabled
+   */
+  setLoopEnabled(enabled) {
+    this.loop.enabled = enabled;
+    log.debug('구간 반복 설정', { enabled });
+    this._emit('loopChanged', { ...this.loop });
+  }
+
+  /**
+   * 구간 반복 토글
+   * @returns {boolean} 새로운 상태
+   */
+  toggleLoop() {
+    this.loop.enabled = !this.loop.enabled;
+    log.debug('구간 반복 토글', { enabled: this.loop.enabled });
+    this._emit('loopChanged', { ...this.loop });
+    return this.loop.enabled;
+  }
+
+  /**
+   * 구간 초기화
+   */
+  clearLoop() {
+    this.loop.inPoint = null;
+    this.loop.outPoint = null;
+    this.loop.enabled = false;
+    log.debug('구간 초기화');
+    this._emit('loopChanged', { ...this.loop });
+  }
+
+  /**
+   * 현재 시간을 시작점으로 설정
+   */
+  setInPointAtCurrent() {
+    this.setInPoint(this.currentTime);
+    return this.currentTime;
+  }
+
+  /**
+   * 현재 시간을 종료점으로 설정
+   */
+  setOutPointAtCurrent() {
+    this.setOutPoint(this.currentTime);
+    return this.currentTime;
+  }
+
+  /**
+   * 시간을 MM:SS 형식으로 포맷
+   * @param {number} time - 시간 (초)
+   * @returns {string}
+   */
+  formatTimeShort(time) {
+    if (time === null || time === undefined) return '--:--';
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
   /**
    * 비디오 언로드
    */
@@ -478,8 +600,185 @@ export class VideoPlayer extends EventTarget {
     this.totalFrames = 0;
     this.filePath = null;
 
+    // 구간 반복 초기화
+    this.clearLoop();
+
+    // 영상 어니언 스킨 클리어
+    this._clearVideoOnionSkin();
+
     log.info('비디오 언로드됨');
     this._emit('unloaded');
+  }
+
+  // ====== 영상 어니언 스킨 ======
+
+  /**
+   * 영상 어니언 스킨 캔버스 설정
+   * @param {HTMLCanvasElement} canvas
+   */
+  setVideoOnionSkinCanvas(canvas) {
+    this.videoOnionSkinCanvas = canvas;
+    this.videoOnionSkinCtx = canvas?.getContext('2d');
+
+    // 어니언 스킨 설정
+    this.videoOnionSkin = {
+      enabled: false,
+      before: 1,
+      after: 1,
+      opacity: 0.3
+    };
+
+    // 프레임 캡처용 임시 캔버스
+    this._frameCaptureCanvas = document.createElement('canvas');
+    this._frameCaptureCtx = this._frameCaptureCanvas.getContext('2d');
+
+    log.info('영상 어니언 스킨 캔버스 설정됨');
+  }
+
+  /**
+   * 영상 어니언 스킨 활성화/비활성화
+   * @param {boolean} enabled
+   * @param {Object} options - { before, after, opacity }
+   */
+  setVideoOnionSkin(enabled, options = {}) {
+    if (!this.videoOnionSkin) return;
+
+    this.videoOnionSkin.enabled = enabled;
+    if (options.before !== undefined) this.videoOnionSkin.before = options.before;
+    if (options.after !== undefined) this.videoOnionSkin.after = options.after;
+    if (options.opacity !== undefined) this.videoOnionSkin.opacity = options.opacity;
+
+    if (enabled && !this.isPlaying) {
+      this.renderVideoOnionSkin();
+    } else {
+      this._clearVideoOnionSkin();
+    }
+
+    log.debug('영상 어니언 스킨 설정', this.videoOnionSkin);
+  }
+
+  /**
+   * 영상 어니언 스킨 클리어
+   */
+  _clearVideoOnionSkin() {
+    if (this.videoOnionSkinCtx && this.videoOnionSkinCanvas) {
+      this.videoOnionSkinCtx.clearRect(
+        0, 0,
+        this.videoOnionSkinCanvas.width,
+        this.videoOnionSkinCanvas.height
+      );
+    }
+  }
+
+  /**
+   * 영상 어니언 스킨 렌더링
+   */
+  async renderVideoOnionSkin() {
+    if (!this.videoOnionSkin?.enabled || !this.isLoaded) {
+      this._clearVideoOnionSkin();
+      return;
+    }
+
+    // 재생 중에는 렌더링하지 않음 (성능)
+    if (this.isPlaying) {
+      this._clearVideoOnionSkin();
+      return;
+    }
+
+    // 이미 렌더링 중이면 스킵
+    if (this._isRenderingVideoOnionSkin) return;
+    this._isRenderingVideoOnionSkin = true;
+
+    const canvas = this.videoOnionSkinCanvas;
+    const ctx = this.videoOnionSkinCtx;
+    if (!canvas || !ctx) {
+      this._isRenderingVideoOnionSkin = false;
+      return;
+    }
+
+    // 캔버스 클리어
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const currentFrame = this.currentFrame;
+    const { before, after, opacity } = this.videoOnionSkin;
+
+    // 현재 시간 저장
+    const originalTime = this.videoElement.currentTime;
+
+    try {
+      // 이전 프레임들 렌더링 (파란색 틴트)
+      for (let i = before; i >= 1; i--) {
+        const frame = currentFrame - i;
+        if (frame >= 0) {
+          const frameOpacity = opacity * (1 - (i - 1) / Math.max(before, 1));
+          await this._renderVideoOnionFrame(frame, frameOpacity, 'rgba(100, 149, 237, 0.4)');
+        }
+      }
+
+      // 이후 프레임들 렌더링 (녹색 틴트)
+      for (let i = 1; i <= after; i++) {
+        const frame = currentFrame + i;
+        if (frame < this.totalFrames) {
+          const frameOpacity = opacity * (1 - (i - 1) / Math.max(after, 1));
+          await this._renderVideoOnionFrame(frame, frameOpacity, 'rgba(50, 205, 50, 0.4)');
+        }
+      }
+    } finally {
+      // 원래 시간으로 복원
+      this.videoElement.currentTime = originalTime;
+      this._isRenderingVideoOnionSkin = false;
+    }
+  }
+
+  /**
+   * 단일 영상 어니언 프레임 렌더링
+   * @param {number} frame - 프레임 번호
+   * @param {number} opacity - 투명도
+   * @param {string} tintColor - 틴트 색상
+   */
+  async _renderVideoOnionFrame(frame, opacity, tintColor) {
+    const video = this.videoElement;
+    const canvas = this.videoOnionSkinCanvas;
+    const ctx = this.videoOnionSkinCtx;
+
+    if (!canvas || !ctx) return;
+
+    // 프레임 시간으로 이동
+    const time = frame / this.fps;
+    video.currentTime = time;
+
+    // 비디오가 해당 시간으로 이동할 때까지 대기
+    await new Promise(resolve => {
+      const onSeeked = () => {
+        video.removeEventListener('seeked', onSeeked);
+        resolve();
+      };
+      video.addEventListener('seeked', onSeeked);
+      // 타임아웃 (100ms)
+      setTimeout(() => {
+        video.removeEventListener('seeked', onSeeked);
+        resolve();
+      }, 100);
+    });
+
+    // 캡처 캔버스에 비디오 프레임 그리기
+    const captureCanvas = this._frameCaptureCanvas;
+    const captureCtx = this._frameCaptureCtx;
+
+    captureCanvas.width = video.videoWidth;
+    captureCanvas.height = video.videoHeight;
+    captureCtx.drawImage(video, 0, 0);
+
+    // 틴트 적용
+    captureCtx.globalCompositeOperation = 'source-atop';
+    captureCtx.fillStyle = tintColor;
+    captureCtx.fillRect(0, 0, captureCanvas.width, captureCanvas.height);
+    captureCtx.globalCompositeOperation = 'source-over';
+
+    // 메인 어니언 스킨 캔버스에 그리기
+    ctx.globalAlpha = opacity;
+    ctx.drawImage(captureCanvas, 0, 0, canvas.width, canvas.height);
+    ctx.globalAlpha = 1;
   }
 
   /**
