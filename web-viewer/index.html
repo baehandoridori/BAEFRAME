@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>BAEFRAME 웹 뷰어</title>
+  <link rel="stylesheet" href="styles/main.css">
+
+  <!-- Google API -->
+  <script src="https://apis.google.com/js/api.js"></script>
+  <script src="https://accounts.google.com/gsi/client"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- 로딩 화면 -->
+    <div id="loadingScreen" class="screen active">
+      <div class="loading-content">
+        <div class="logo">BAEFRAME</div>
+        <div class="subtitle">웹 뷰어</div>
+        <div class="loader"></div>
+        <p id="loadingStatus">초기화 중...</p>
+      </div>
+    </div>
+
+    <!-- 파일 선택 화면 -->
+    <div id="selectScreen" class="screen">
+      <header class="top-bar">
+        <div class="logo-small">BAEFRAME</div>
+        <button id="btnGoogleLogin" class="btn-login">
+          <span class="google-icon">G</span>
+          Google 로그인
+        </button>
+      </header>
+
+      <div class="select-content">
+        <h1>영상 리뷰</h1>
+        <p class="description">Google Drive의 영상과 .bframe 파일을 선택하세요</p>
+
+        <div class="input-group">
+          <label>영상 파일 (Google Drive URL)</label>
+          <input type="text" id="inputVideoUrl" placeholder="https://drive.google.com/file/d/...">
+        </div>
+
+        <div class="input-group">
+          <label>.bframe 파일 (Google Drive URL)</label>
+          <input type="text" id="inputBframeUrl" placeholder="https://drive.google.com/file/d/...">
+        </div>
+
+        <button id="btnOpenFiles" class="btn-primary" disabled>
+          열기
+        </button>
+
+        <div class="recent-files" id="recentFiles">
+          <h3>최근 파일</h3>
+          <ul id="recentFilesList">
+            <!-- 동적으로 채워짐 -->
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- 뷰어 화면 -->
+    <div id="viewerScreen" class="screen">
+      <!-- 상단 바 -->
+      <header class="viewer-header">
+        <button id="btnBack" class="btn-icon">←</button>
+        <div class="file-name" id="fileName">파일명</div>
+        <button id="btnSave" class="btn-icon">💾</button>
+      </header>
+
+      <!-- 비디오 영역 -->
+      <div class="video-container">
+        <video id="videoPlayer" playsinline>
+          <source src="" type="video/mp4">
+        </video>
+
+        <!-- 그리기 오버레이 -->
+        <canvas id="drawingCanvas"></canvas>
+
+        <!-- 마커 오버레이 (댓글 작성 시) -->
+        <div id="markerOverlay" class="marker-overlay hidden">
+          <div class="marker-pin"></div>
+        </div>
+      </div>
+
+      <!-- 컨트롤 바 -->
+      <div class="controls-bar">
+        <div class="timeline-container">
+          <div class="timeline" id="timeline">
+            <div class="timeline-progress" id="timelineProgress"></div>
+            <div class="timeline-markers" id="timelineMarkers">
+              <!-- 댓글 마커들 -->
+            </div>
+            <div class="playhead" id="playhead"></div>
+          </div>
+        </div>
+
+        <div class="controls-row">
+          <button id="btnPrevFrame" class="btn-control">◀◀</button>
+          <button id="btnPlayPause" class="btn-control btn-play">▶</button>
+          <button id="btnNextFrame" class="btn-control">▶▶</button>
+          <span class="time-display" id="timeDisplay">00:00:00 / 00:00:00</span>
+        </div>
+      </div>
+
+      <!-- 하단 탭 -->
+      <div class="bottom-tabs">
+        <button class="tab-btn active" data-tab="comments">
+          💬 댓글 <span class="badge" id="commentCount">0</span>
+        </button>
+        <button class="tab-btn" data-tab="draw">
+          ✏️ 그리기
+        </button>
+      </div>
+
+      <!-- 댓글 패널 -->
+      <div class="panel" id="commentsPanel">
+        <div class="panel-header">
+          <h3>댓글</h3>
+          <button id="btnAddComment" class="btn-add">+ 댓글 추가</button>
+        </div>
+
+        <div class="comments-list" id="commentsList">
+          <!-- 댓글 카드들 -->
+        </div>
+      </div>
+
+      <!-- 그리기 패널 -->
+      <div class="panel hidden" id="drawPanel">
+        <div class="panel-header">
+          <h3>그리기 도구</h3>
+        </div>
+
+        <div class="draw-tools">
+          <button class="tool-btn active" data-tool="pen">✏️ 펜</button>
+          <button class="tool-btn" data-tool="arrow">➔ 화살표</button>
+          <button class="tool-btn" data-tool="circle">○ 원</button>
+          <div class="color-picker">
+            <button class="color-btn" data-color="#ff0000" style="background:#ff0000"></button>
+            <button class="color-btn active" data-color="#ffff00" style="background:#ffff00"></button>
+            <button class="color-btn" data-color="#00ff00" style="background:#00ff00"></button>
+            <button class="color-btn" data-color="#00ffff" style="background:#00ffff"></button>
+          </div>
+          <button id="btnClearDraw" class="btn-clear">🗑️ 지우기</button>
+        </div>
+      </div>
+
+      <!-- 댓글 작성 모달 -->
+      <div class="modal hidden" id="commentModal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>댓글 작성</h3>
+            <button class="btn-close" id="btnCloseModal">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="time-badge" id="commentTime">00:00:00</div>
+            <textarea id="commentText" placeholder="피드백을 입력하세요..."></textarea>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-secondary" id="btnCancelComment">취소</button>
+            <button class="btn-primary" id="btnSubmitComment">저장</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 스레드 모달 -->
+      <div class="modal hidden" id="threadModal">
+        <div class="modal-content modal-thread">
+          <div class="modal-header">
+            <h3>스레드</h3>
+            <button class="btn-close" id="btnCloseThread">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="thread-original" id="threadOriginal">
+              <!-- 원본 댓글 -->
+            </div>
+            <div class="thread-replies" id="threadReplies">
+              <!-- 답글들 -->
+            </div>
+          </div>
+          <div class="modal-footer">
+            <input type="text" id="replyInput" placeholder="답글 입력...">
+            <button class="btn-primary" id="btnSubmitReply">전송</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 토스트 메시지 -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script type="module" src="scripts/app.js"></script>
+</body>
+</html>
