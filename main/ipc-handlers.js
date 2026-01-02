@@ -200,6 +200,52 @@ function setupIpcHandlers() {
     }
   });
 
+  // ====== Google Drive 로컬 파일 ID 추출 ======
+
+  // 로컬 경로에서 Google Drive 파일 ID 추출
+  ipcMain.handle('gdrive:get-file-id', async (event, localPath) => {
+    const trace = log.trace('gdrive:get-file-id');
+    try {
+      const fileId = await getGoogleDriveFileId(localPath);
+      if (fileId) {
+        const shareLink = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+        trace.end({ success: true, fileId });
+        return { success: true, fileId, shareLink };
+      }
+      trace.end({ success: false, reason: 'not found' });
+      return { success: false, error: '파일 ID를 찾을 수 없습니다' };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 웹 공유 링크 자동 생성 (로컬 경로에서)
+  ipcMain.handle('gdrive:generate-share-link', async (event, videoPath, bframePath) => {
+    const trace = log.trace('gdrive:generate-share-link');
+    try {
+      const videoResult = await getGoogleDriveFileId(videoPath);
+      const bframeResult = await getGoogleDriveFileId(bframePath);
+
+      if (!videoResult) {
+        throw new Error('영상 파일의 Drive ID를 찾을 수 없습니다');
+      }
+      if (!bframeResult) {
+        throw new Error('Bframe 파일의 Drive ID를 찾을 수 없습니다');
+      }
+
+      const videoUrl = `https://drive.google.com/file/d/${videoResult}/view?usp=sharing`;
+      const bframeUrl = `https://drive.google.com/file/d/${bframeResult}/view?usp=sharing`;
+      const webShareUrl = `https://baeframe.vercel.app/open.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+
+      trace.end({ success: true });
+      return { success: true, videoUrl, bframeUrl, webShareUrl };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // ====== 클립보드 Google Drive 링크 감지 ======
 
   // 클립보드에서 Google Drive 링크 읽기
@@ -365,6 +411,157 @@ async function getSlackUserInfo() {
     }
   } catch (error) {
     // Slack이 실행 중이 아님
+  }
+
+  return null;
+}
+
+/**
+ * Google Drive 로컬 경로에서 파일 ID 추출
+ * Google Drive for Desktop의 SQLite 메타데이터 DB를 읽음
+ */
+async function getGoogleDriveFileId(localPath) {
+  const os = require('os');
+  const path = require('path');
+  const Database = require('better-sqlite3');
+
+  if (!localPath) return null;
+
+  // 경로 정규화
+  const normalizedPath = path.normalize(localPath);
+  const fileName = path.basename(normalizedPath);
+
+  log.info('Google Drive 파일 ID 검색 시작', { localPath, fileName });
+
+  // Google Drive 메타데이터 DB 경로 찾기
+  let driveDbPaths = [];
+
+  if (process.platform === 'win32') {
+    // Windows: %LOCALAPPDATA%\Google\DriveFS\<account_id>\metadata_sqlite_db
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+    const driveFsPath = path.join(localAppData, 'Google', 'DriveFS');
+
+    try {
+      const accounts = fs.readdirSync(driveFsPath);
+      for (const account of accounts) {
+        const dbPath = path.join(driveFsPath, account, 'metadata_sqlite_db');
+        if (fs.existsSync(dbPath)) {
+          driveDbPaths.push(dbPath);
+        }
+      }
+    } catch (error) {
+      log.warn('Google Drive 폴더 읽기 실패', { error: error.message });
+    }
+  } else if (process.platform === 'darwin') {
+    // Mac: ~/Library/Application Support/Google/DriveFS/<account_id>/metadata_sqlite_db
+    const driveFsPath = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'DriveFS');
+
+    try {
+      const accounts = fs.readdirSync(driveFsPath);
+      for (const account of accounts) {
+        const dbPath = path.join(driveFsPath, account, 'metadata_sqlite_db');
+        if (fs.existsSync(dbPath)) {
+          driveDbPaths.push(dbPath);
+        }
+      }
+    } catch (error) {
+      log.warn('Google Drive 폴더 읽기 실패', { error: error.message });
+    }
+  }
+
+  if (driveDbPaths.length === 0) {
+    log.warn('Google Drive 메타데이터 DB를 찾을 수 없음');
+    return null;
+  }
+
+  // 각 DB에서 파일 검색
+  for (const dbPath of driveDbPaths) {
+    try {
+      log.info('DB 검색 중', { dbPath });
+
+      // DB를 읽기 전용으로 열기 (원본 파일이 잠겨있을 수 있음)
+      // WAL 모드로 열린 DB는 복사 후 읽기
+      const tempDbPath = path.join(os.tmpdir(), `baeframe_gdrive_${Date.now()}.db`);
+      fs.copyFileSync(dbPath, tempDbPath);
+
+      // WAL과 SHM 파일도 복사 (있는 경우)
+      const walPath = dbPath + '-wal';
+      const shmPath = dbPath + '-shm';
+      if (fs.existsSync(walPath)) {
+        fs.copyFileSync(walPath, tempDbPath + '-wal');
+      }
+      if (fs.existsSync(shmPath)) {
+        fs.copyFileSync(shmPath, tempDbPath + '-shm');
+      }
+
+      const db = new Database(tempDbPath, { readonly: true });
+
+      try {
+        // 테이블 구조 확인 (디버깅용)
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
+        log.debug('DB 테이블 목록', { tables: tables.map(t => t.name) });
+
+        // items 테이블에서 파일명으로 검색
+        // Google Drive DB 스키마: stable_id가 파일 ID
+        const query = `
+          SELECT stable_id, local_title, local_path
+          FROM items
+          WHERE local_title = ? OR local_path LIKE ?
+          LIMIT 5
+        `;
+
+        const rows = db.prepare(query).all(fileName, `%${fileName}`);
+        log.info('검색 결과', { count: rows.length, rows });
+
+        if (rows.length > 0) {
+          // 정확한 경로 매칭 우선
+          for (const row of rows) {
+            if (row.local_path && normalizedPath.includes(row.local_path)) {
+              log.info('경로 매칭으로 파일 ID 찾음', { fileId: row.stable_id });
+              db.close();
+
+              // 임시 파일 정리
+              try {
+                fs.unlinkSync(tempDbPath);
+                if (fs.existsSync(tempDbPath + '-wal')) fs.unlinkSync(tempDbPath + '-wal');
+                if (fs.existsSync(tempDbPath + '-shm')) fs.unlinkSync(tempDbPath + '-shm');
+              } catch (e) {}
+
+              return row.stable_id;
+            }
+          }
+
+          // 파일명만 매칭
+          const fileId = rows[0].stable_id;
+          log.info('파일명 매칭으로 파일 ID 찾음', { fileId });
+          db.close();
+
+          // 임시 파일 정리
+          try {
+            fs.unlinkSync(tempDbPath);
+            if (fs.existsSync(tempDbPath + '-wal')) fs.unlinkSync(tempDbPath + '-wal');
+            if (fs.existsSync(tempDbPath + '-shm')) fs.unlinkSync(tempDbPath + '-shm');
+          } catch (e) {}
+
+          return fileId;
+        }
+
+        db.close();
+
+        // 임시 파일 정리
+        try {
+          fs.unlinkSync(tempDbPath);
+          if (fs.existsSync(tempDbPath + '-wal')) fs.unlinkSync(tempDbPath + '-wal');
+          if (fs.existsSync(tempDbPath + '-shm')) fs.unlinkSync(tempDbPath + '-shm');
+        } catch (e) {}
+
+      } catch (queryError) {
+        log.error('DB 쿼리 오류', { error: queryError.message });
+        try { db.close(); } catch (e) {}
+      }
+    } catch (dbError) {
+      log.error('DB 열기 오류', { dbPath, error: dbError.message });
+    }
   }
 
   return null;

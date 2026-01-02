@@ -647,7 +647,33 @@ async function initApp() {
       }
     }
 
-    // 링크가 없으면 모달 열기
+    // 1️⃣ 먼저 로컬 경로에서 자동으로 Google Drive 파일 ID 추출 시도
+    showToast('웹 공유 링크 생성 중...', 'info');
+    log.info('Google Drive 파일 ID 자동 추출 시도', { videoPath, bframePath });
+
+    try {
+      const result = await window.electronAPI.generateGDriveShareLink(videoPath, bframePath);
+
+      if (result.success) {
+        // 성공! 링크 저장 및 클립보드 복사
+        storedDriveLinks.videoUrl = result.videoUrl;
+        storedDriveLinks.bframeUrl = result.bframeUrl;
+
+        await window.electronAPI.copyToClipboard(result.webShareUrl);
+        showToast('✅ 웹 공유 링크가 클립보드에 복사되었습니다!', 'success');
+        log.info('자동 웹 공유 링크 생성 완료', { url: result.webShareUrl });
+        return;
+      }
+
+      // 자동 추출 실패 → 수동 모달 열기
+      log.warn('자동 파일 ID 추출 실패', { error: result.error });
+      showToast('자동 링크 생성 실패. 수동으로 입력해주세요.', 'warn');
+    } catch (error) {
+      log.error('자동 링크 생성 중 오류', error);
+      showToast('자동 링크 생성 실패. 수동으로 입력해주세요.', 'warn');
+    }
+
+    // 2️⃣ 자동 실패 시 수동 모달 열기
     openWebShareModal();
   });
 
