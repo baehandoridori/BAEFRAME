@@ -30,6 +30,11 @@ const state = {
   drawTool: 'pen',
   drawColor: '#ffff00',
 
+  // 댓글 추가 모드
+  isCommentMode: false,
+  pendingCommentPos: null, // { x: 0-1, y: 0-1 }
+  editingCommentId: null,
+
   // 그리기
   drawingContext: null,
   isDrawing: false,
@@ -113,6 +118,8 @@ function cacheElements() {
   elements.videoPlayer = document.getElementById('videoPlayer');
   elements.drawingCanvas = document.getElementById('drawingCanvas');
   elements.markerOverlay = document.getElementById('markerOverlay');
+  elements.videoMarkers = document.getElementById('videoMarkers');
+  elements.videoContainer = document.getElementById('videoContainer');
 
   // 컨트롤
   elements.timeline = document.getElementById('timeline');
@@ -218,6 +225,14 @@ function setupEventListeners() {
 
   // 터치 이벤트 (모바일)
   setupTouchEvents();
+
+  // 비디오 클릭/터치 (댓글 위치 선택)
+  elements.videoContainer?.addEventListener('click', handleVideoClick);
+  elements.videoContainer?.addEventListener('touchend', handleVideoClick);
+
+  // 전체화면 버튼
+  document.getElementById('btnFullscreen')?.addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', handleFullscreenChange);
 }
 
 // ============================================
@@ -399,6 +414,7 @@ async function openDemoMode() {
     // UI 업데이트
     updateCommentsList();
     renderTimelineMarkers();
+    renderVideoMarkers();
 
     showToast('데모 모드로 시작합니다!', 'success');
   } catch (error) {
@@ -448,6 +464,7 @@ async function handleOpenFiles() {
     // UI 업데이트
     updateCommentsList();
     renderTimelineMarkers();
+    renderVideoMarkers();
 
     // 최근 파일에 추가
     saveRecentFile(videoUrl, bframeUrl);
@@ -767,6 +784,7 @@ function handleTimeUpdate() {
   updateTimeDisplay();
   updatePlayhead();
   renderDrawingForCurrentFrame();
+  updateVideoMarkersVisibility();
 }
 
 function updateTimeDisplay() {
@@ -940,18 +958,158 @@ function renderTimelineMarkers() {
   });
 }
 
+/**
+ * 영상 위에 마커 렌더링
+ */
+function renderVideoMarkers() {
+  if (!elements.videoMarkers) return;
+
+  const comments = getAllComments();
+  elements.videoMarkers.innerHTML = '';
+
+  comments.forEach(comment => {
+    const markerEl = document.createElement('div');
+    markerEl.className = `video-marker${comment.resolved ? ' resolved' : ''}`;
+    markerEl.dataset.markerId = comment.id;
+    markerEl.dataset.frame = comment.frame || comment.startFrame || 0;
+
+    // x, y 위치 (0-1 정규화 좌표)
+    const x = (comment.x || 0.5) * 100;
+    const y = (comment.y || 0.5) * 100;
+    markerEl.style.left = `${x}%`;
+    markerEl.style.top = `${y}%`;
+
+    // 레이어 색상
+    if (comment.layerColor) {
+      markerEl.style.setProperty('--accent-color', comment.layerColor);
+    }
+
+    // 툴팁
+    const tooltip = document.createElement('div');
+    tooltip.className = 'video-marker-tooltip';
+    tooltip.textContent = comment.text || '';
+    markerEl.appendChild(tooltip);
+
+    // 클릭 시 해당 프레임으로 이동 & 댓글 하이라이트
+    markerEl.addEventListener('click', () => {
+      const frame = parseInt(markerEl.dataset.frame);
+      seekToFrame(frame);
+      highlightComment(comment.id);
+    });
+
+    elements.videoMarkers.appendChild(markerEl);
+  });
+
+  updateVideoMarkersVisibility();
+}
+
+/**
+ * 현재 프레임에 따라 마커 가시성 업데이트
+ */
+function updateVideoMarkersVisibility() {
+  if (!elements.videoMarkers) return;
+
+  const currentFrame = Math.floor(state.currentTime * state.frameRate);
+
+  elements.videoMarkers.querySelectorAll('.video-marker').forEach(marker => {
+    const startFrame = parseInt(marker.dataset.frame);
+    // 마커의 표시 범위: startFrame부터 startFrame + 24프레임 (1초)
+    const endFrame = startFrame + state.frameRate;
+
+    if (currentFrame >= startFrame && currentFrame < endFrame) {
+      marker.classList.remove('hidden');
+    } else {
+      marker.classList.add('hidden');
+    }
+  });
+}
+
+/**
+ * 특정 댓글 하이라이트
+ */
+function highlightComment(commentId) {
+  // 기존 하이라이트 제거
+  document.querySelectorAll('.comment-card.highlighted').forEach(el => {
+    el.classList.remove('highlighted');
+  });
+
+  // 새 하이라이트
+  const card = document.querySelector(`.comment-card[data-id="${commentId}"]`);
+  if (card) {
+    card.classList.add('highlighted');
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+/**
+ * 댓글 추가 모드 시작
+ */
 function handleAddComment() {
-  // 현재 시간에 댓글 추가
   elements.videoPlayer.pause();
+  state.isCommentMode = true;
+  state.pendingCommentPos = null;
+  state.editingCommentId = null;
+
+  // 영상 컨테이너에 댓글 모드 표시
+  elements.videoContainer?.classList.add('comment-mode');
+  showToast('영상을 터치하여 마커 위치를 선택하세요', 'info');
+}
+
+/**
+ * 영상 클릭/터치 시 댓글 위치 선택
+ */
+function handleVideoClick(e) {
+  if (!state.isCommentMode) return;
+
+  // 터치 또는 클릭 좌표 가져오기
+  const rect = elements.videoContainer.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+  // 정규화된 좌표 (0-1)
+  const x = (clientX - rect.left) / rect.width;
+  const y = (clientY - rect.top) / rect.height;
+
+  // 범위 체크
+  if (x < 0 || x > 1 || y < 0 || y > 1) return;
+
+  state.pendingCommentPos = { x, y };
+  state.isCommentMode = false;
+  elements.videoContainer?.classList.remove('comment-mode');
+
+  // 모달 열기
+  openCommentModal();
+}
+
+/**
+ * 댓글 모달 열기
+ */
+function openCommentModal(editComment = null) {
   const time = formatTime(state.currentTime);
   elements.commentTime.textContent = time;
-  elements.commentText.value = '';
+
+  if (editComment) {
+    // 수정 모드
+    state.editingCommentId = editComment.id;
+    elements.commentText.value = editComment.text || '';
+    elements.commentModal.querySelector('h3').textContent = '댓글 수정';
+  } else {
+    // 추가 모드
+    state.editingCommentId = null;
+    elements.commentText.value = '';
+    elements.commentModal.querySelector('h3').textContent = '댓글 작성';
+  }
+
   elements.commentModal.classList.remove('hidden');
   elements.commentText.focus();
 }
 
 function closeCommentModal() {
   elements.commentModal.classList.add('hidden');
+  state.isCommentMode = false;
+  state.pendingCommentPos = null;
+  state.editingCommentId = null;
+  elements.videoContainer?.classList.remove('comment-mode');
 }
 
 function submitComment() {
@@ -962,48 +1120,152 @@ function submitComment() {
   }
 
   const frame = Math.floor(state.currentTime * state.frameRate);
-  const newComment = {
+
+  // 수정 모드
+  if (state.editingCommentId) {
+    updateExistingComment(state.editingCommentId, text);
+    return;
+  }
+
+  // 새 댓글 추가 (데스크톱 앱 구조에 맞춤)
+  const newMarker = {
     id: generateId(),
-    frame: frame,
+    x: state.pendingCommentPos?.x || 0.5,
+    y: state.pendingCommentPos?.y || 0.5,
+    startFrame: frame,
+    endFrame: frame + state.frameRate, // 1초간 표시
     text: text,
-    author: '웹 사용자', // TODO: Google 계정 이름 사용
-    timestamp: Date.now(),
+    author: '웹 사용자',
+    createdAt: new Date().toISOString(),
+    resolved: false,
     replies: []
   };
 
+  // bframe 데이터 구조 확인 및 초기화
   if (!state.bframeData.comments) {
-    state.bframeData.comments = [];
+    state.bframeData.comments = {
+      fps: state.frameRate,
+      layers: []
+    };
   }
 
-  state.bframeData.comments.push(newComment);
-  state.bframeData.comments.sort((a, b) => a.frame - b.frame);
+  // layers 구조가 아닌 경우 변환
+  if (!state.bframeData.comments.layers) {
+    state.bframeData.comments = {
+      fps: state.frameRate,
+      layers: [{
+        id: 'web-layer-1',
+        name: '웹 댓글',
+        color: '#ff6b6b',
+        visible: true,
+        locked: false,
+        markers: Array.isArray(state.bframeData.comments) ? state.bframeData.comments : []
+      }]
+    };
+  }
 
+  // 첫 번째 레이어에 마커 추가
+  if (state.bframeData.comments.layers.length === 0) {
+    state.bframeData.comments.layers.push({
+      id: 'web-layer-1',
+      name: '웹 댓글',
+      color: '#ff6b6b',
+      visible: true,
+      locked: false,
+      markers: []
+    });
+  }
+
+  state.bframeData.comments.layers[0].markers.push(newMarker);
+
+  // UI 업데이트
   updateCommentsList();
   renderTimelineMarkers();
+  renderVideoMarkers();
   closeCommentModal();
   showToast('댓글이 추가되었습니다', 'success');
 }
 
-function editComment(id) {
-  const comment = state.bframeData.comments.find(c => c.id === id);
-  if (!comment) return;
+/**
+ * 기존 댓글 수정
+ */
+function updateExistingComment(commentId, newText) {
+  const layers = state.bframeData?.comments?.layers || [];
 
-  const newText = prompt('댓글 수정:', comment.text);
-  if (newText !== null && newText.trim()) {
-    comment.text = newText.trim();
-    comment.timestamp = Date.now();
-    updateCommentsList();
-    showToast('댓글이 수정되었습니다', 'success');
+  for (const layer of layers) {
+    const marker = layer.markers?.find(m => m.id === commentId);
+    if (marker) {
+      marker.text = newText;
+      marker.modifiedAt = new Date().toISOString();
+      break;
+    }
   }
+
+  updateCommentsList();
+  renderVideoMarkers();
+  closeCommentModal();
+  showToast('댓글이 수정되었습니다', 'success');
 }
 
-function deleteComment(id) {
+/**
+ * 댓글 삭제
+ */
+function deleteComment(commentId) {
   if (!confirm('댓글을 삭제하시겠습니까?')) return;
 
-  state.bframeData.comments = state.bframeData.comments.filter(c => c.id !== id);
+  const layers = state.bframeData?.comments?.layers || [];
+
+  for (const layer of layers) {
+    const idx = layer.markers?.findIndex(m => m.id === commentId);
+    if (idx !== undefined && idx >= 0) {
+      layer.markers.splice(idx, 1);
+      break;
+    }
+  }
+
   updateCommentsList();
   renderTimelineMarkers();
-  showToast('댓글이 삭제되었습니다', 'success');
+  renderVideoMarkers();
+  showToast('댓글이 삭제되었습니다', 'info');
+}
+
+/**
+ * 댓글 수정 (모달 열기)
+ */
+function editComment(commentId) {
+  const comment = findCommentById(commentId);
+  if (!comment) {
+    showToast('댓글을 찾을 수 없습니다', 'error');
+    return;
+  }
+
+  // 해당 프레임으로 이동
+  const frame = comment.startFrame || comment.frame || 0;
+  seekToFrame(frame);
+
+  // 모달 열기 (수정 모드)
+  openCommentModal(comment);
+}
+
+/**
+ * ID로 댓글 찾기 (layers 구조 지원)
+ */
+function findCommentById(commentId) {
+  const layers = state.bframeData?.comments?.layers || [];
+
+  for (const layer of layers) {
+    const marker = layer.markers?.find(m => m.id === commentId);
+    if (marker) {
+      return { ...marker, layerName: layer.name, layerColor: layer.color };
+    }
+  }
+
+  // 이전 구조 (배열)
+  if (Array.isArray(state.bframeData?.comments)) {
+    return state.bframeData.comments.find(c => c.id === commentId);
+  }
+
+  return null;
 }
 
 // ============================================
@@ -1284,12 +1546,33 @@ async function handleSave() {
 async function saveToDrive() {
   const content = JSON.stringify(state.bframeData, null, 2);
 
-  await gapi.client.request({
-    path: `/upload/drive/v3/files/${state.bframeFileId}`,
-    method: 'PATCH',
-    params: { uploadType: 'media' },
-    body: content
-  });
+  // fetch API 사용 (Shared Drive 지원)
+  const response = await fetch(
+    `https://www.googleapis.com/upload/drive/v3/files/${state.bframeFileId}?uploadType=media&supportsAllDrives=true`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${state.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: content
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('저장 실패:', response.status, errorText);
+
+    if (response.status === 401) {
+      throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
+    } else if (response.status === 403) {
+      throw new Error('파일 수정 권한이 없습니다.');
+    } else {
+      throw new Error(`저장 실패 (${response.status})`);
+    }
+  }
+
+  console.log('✅ Google Drive 저장 완료');
 }
 
 function downloadBframe() {
@@ -1416,6 +1699,69 @@ window.addEventListener('resize', () => {
     renderDrawingForCurrentFrame();
   }
 });
+
+// ============================================
+// 전체화면 모드
+// ============================================
+
+/**
+ * 전체화면 토글
+ */
+function toggleFullscreen() {
+  const viewerScreen = elements.viewerScreen;
+
+  if (!document.fullscreenElement) {
+    // 전체화면 진입
+    if (viewerScreen.requestFullscreen) {
+      viewerScreen.requestFullscreen();
+    } else if (viewerScreen.webkitRequestFullscreen) {
+      viewerScreen.webkitRequestFullscreen();
+    } else if (viewerScreen.mozRequestFullScreen) {
+      viewerScreen.mozRequestFullScreen();
+    } else if (viewerScreen.msRequestFullscreen) {
+      viewerScreen.msRequestFullscreen();
+    }
+
+    // 가로 모드 강제 (모바일)
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(() => {
+        // 권한 없으면 무시
+      });
+    }
+  } else {
+    // 전체화면 해제
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    } else if (document.mozCancelFullScreen) {
+      document.mozCancelFullScreen();
+    } else if (document.msExitFullscreen) {
+      document.msExitFullscreen();
+    }
+  }
+}
+
+/**
+ * 전체화면 상태 변경 핸들러
+ */
+function handleFullscreenChange() {
+  const isFullscreen = !!document.fullscreenElement;
+  document.body.classList.toggle('fullscreen-mode', isFullscreen);
+
+  // 전체화면 버튼 아이콘 변경
+  const btnFullscreen = document.getElementById('btnFullscreen');
+  if (btnFullscreen) {
+    btnFullscreen.textContent = isFullscreen ? '⛶' : '⛶';
+    btnFullscreen.title = isFullscreen ? '전체화면 해제' : '전체화면';
+  }
+
+  // 캔버스 리사이즈
+  setTimeout(() => {
+    resizeCanvas();
+    renderDrawingForCurrentFrame();
+  }, 100);
+}
 
 // ============================================
 // 디버그용

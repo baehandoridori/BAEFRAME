@@ -67,17 +67,23 @@
       <header class="viewer-header">
         <button id="btnBack" class="btn-icon">←</button>
         <div class="file-name" id="fileName">파일명</div>
-        <button id="btnSave" class="btn-icon">💾</button>
+        <div class="header-actions">
+          <button id="btnFullscreen" class="btn-icon" title="전체화면">⛶</button>
+          <button id="btnSave" class="btn-icon">💾</button>
+        </div>
       </header>
 
       <!-- 비디오 영역 -->
-      <div class="video-container">
+      <div class="video-container" id="videoContainer">
         <video id="videoPlayer" playsinline>
           <source src="" type="video/mp4">
         </video>
 
         <!-- 그리기 오버레이 -->
         <canvas id="drawingCanvas"></canvas>
+
+        <!-- 댓글 마커들 (영상 위에 표시) -->
+        <div id="videoMarkers" class="video-markers-container"></div>
 
         <!-- 마커 오버레이 (댓글 작성 시) -->
         <div id="markerOverlay" class="marker-overlay hidden">

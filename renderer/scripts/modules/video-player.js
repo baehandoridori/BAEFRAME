@@ -108,9 +108,9 @@ export class VideoPlayer extends EventTarget {
       }
 
       this.currentTime = video.currentTime;
-      // 부동소수점 오차 보정: 약간의 여유를 두고 반올림
-      this.currentFrame = Math.round(this.currentTime * this.fps - 0.0001);
-      this.currentFrame = Math.max(0, this.currentFrame);
+      // 프레임 계산: floor 사용 (프레임은 0-indexed, 시간 t는 frame floor(t*fps)에 속함)
+      this.currentFrame = Math.floor(this.currentTime * this.fps);
+      this.currentFrame = Math.max(0, Math.min(this.currentFrame, this.totalFrames - 1));
 
       // 구간 반복 처리
       if (this.loop.enabled && this.isPlaying &&
@@ -188,8 +188,8 @@ export class VideoPlayer extends EventTarget {
       const onFrame = (now, metadata) => {
         if (!this.isPlaying) return;
 
-        // 정확한 프레임 번호 계산
-        const frame = Math.round(metadata.mediaTime * this.fps);
+        // 정확한 프레임 번호 계산 (floor 사용)
+        const frame = Math.floor(metadata.mediaTime * this.fps);
 
         if (frame !== this._lastEmittedFrame) {
           this._lastEmittedFrame = frame;
@@ -213,7 +213,7 @@ export class VideoPlayer extends EventTarget {
       const onFrame = () => {
         if (!this.isPlaying) return;
 
-        const frame = Math.round(video.currentTime * this.fps);
+        const frame = Math.floor(video.currentTime * this.fps);
 
         if (frame !== this._lastEmittedFrame) {
           this._lastEmittedFrame = frame;
@@ -351,7 +351,12 @@ export class VideoPlayer extends EventTarget {
     if (!this.isLoaded) return;
 
     frame = Math.max(0, Math.min(frame, this.totalFrames - 1));
-    const time = frame / this.fps;
+
+    // 프레임의 시작 시간 + 작은 오프셋 (프레임 경계 부동소수점 오차 방지)
+    // 프레임 N의 정확한 시작: N / fps
+    // 프레임 내부로 확실히 들어가기 위해 0.001초 추가
+    const frameDuration = 1 / this.fps;
+    const time = (frame * frameDuration) + 0.001;
 
     // seeking 플래그 설정 (timeupdate가 프레임을 덮어쓰지 않도록)
     this._isSeeking = true;
@@ -361,7 +366,7 @@ export class VideoPlayer extends EventTarget {
 
     // 프레임 번호 직접 설정 (시간에서 재계산하지 않음)
     this.currentFrame = frame;
-    this.currentTime = time;
+    this.currentTime = frame * frameDuration;  // 표시용 시간은 정확한 프레임 시작점
 
     this.videoElement.currentTime = time;
 

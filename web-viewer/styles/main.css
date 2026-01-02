@@ -349,6 +349,90 @@ body {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
+/* 영상 위 댓글 마커들 */
+.video-markers-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.video-marker {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 5;
+}
+
+.video-marker::before {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: var(--accent-color, #ff6b6b);
+  border: 3px solid white;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s ease;
+}
+
+.video-marker:hover::before {
+  transform: rotate(-45deg) scale(1.15);
+}
+
+.video-marker.hidden {
+  display: none;
+}
+
+.video-marker.resolved::before {
+  background: #4ecdc4;
+  opacity: 0.6;
+}
+
+/* 마커 툴팁 */
+.video-marker-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.9);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  pointer-events: none;
+  margin-bottom: 8px;
+}
+
+.video-marker:hover .video-marker-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.video-marker-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: rgba(0, 0, 0, 0.9);
+}
+
 /* ========================================
    컨트롤 바
    ======================================== */
@@ -553,6 +637,11 @@ body {
 
 .comment-card:active {
   background: var(--border-color);
+}
+
+.comment-card.highlighted {
+  background: rgba(255, 107, 107, 0.2);
+  border-left: 3px solid var(--accent-color);
 }
 
 .comment-header {
@@ -956,4 +1045,142 @@ body.draw-mode .video-container::after {
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 0.75rem;
+}
+
+/* ========================================
+   헤더 액션 버튼들
+   ======================================== */
+
+.header-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+/* ========================================
+   댓글 모드 (마커 위치 선택)
+   ======================================== */
+
+.video-container.comment-mode {
+  cursor: crosshair;
+}
+
+.video-container.comment-mode::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(74, 158, 255, 0.1);
+  border: 3px dashed var(--accent-color);
+  z-index: 10;
+  pointer-events: none;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.video-container.comment-mode::after {
+  content: '터치하여 마커 위치 선택';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 1rem 2rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  z-index: 11;
+  pointer-events: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* ========================================
+   전체화면 모드
+   ======================================== */
+
+body.fullscreen-mode {
+  overflow: hidden;
+}
+
+body.fullscreen-mode #viewerScreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 9999;
+  background: #000;
+}
+
+body.fullscreen-mode .viewer-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+body.fullscreen-mode #viewerScreen:hover .viewer-header {
+  opacity: 1;
+}
+
+body.fullscreen-mode .video-container {
+  flex: 1;
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+body.fullscreen-mode .controls-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+body.fullscreen-mode #viewerScreen:hover .controls-bar {
+  opacity: 1;
+}
+
+body.fullscreen-mode .bottom-tabs,
+body.fullscreen-mode .panel {
+  display: none;
+}
+
+/* 전체화면 버튼 */
+#btnFullscreen {
+  font-size: 1.4rem;
+}
+
+/* ========================================
+   터치 디바이스 최적화
+   ======================================== */
+
+@media (hover: none) and (pointer: coarse) {
+  /* 터치 디바이스에서 항상 컨트롤 표시 */
+  body.fullscreen-mode .viewer-header,
+  body.fullscreen-mode .controls-bar {
+    opacity: 1;
+  }
+
+  /* 마커 터치 영역 확대 */
+  .video-marker {
+    width: 40px;
+    height: 40px;
+  }
+
+  .timeline-marker {
+    width: 12px;
+    height: 12px;
+  }
 }
