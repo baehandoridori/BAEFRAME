@@ -56,6 +56,7 @@ export class CommentMarker {
 
     // 상태
     this.resolved = options.resolved || false;
+    this.resolvedAt = options.resolvedAt ? new Date(options.resolvedAt) : null; // 해결된 시간
     this.pinned = options.pinned || false; // 말풍선 고정 상태
 
     // 레이어
@@ -122,6 +123,8 @@ export class CommentMarker {
    */
   toggleResolved() {
     this.resolved = !this.resolved;
+    // 해결됨으로 변경 시 시간 기록, 미해결로 변경 시 시간 초기화
+    this.resolvedAt = this.resolved ? new Date() : null;
     return this.resolved;
   }
 
@@ -148,6 +151,7 @@ export class CommentMarker {
       author: this.author,
       createdAt: this.createdAt instanceof Date ? this.createdAt.toISOString() : this.createdAt,
       resolved: this.resolved,
+      resolvedAt: this.resolvedAt instanceof Date ? this.resolvedAt.toISOString() : this.resolvedAt,
       layerId: this.layerId,
       replies: this.replies.map(r => ({
         ...r,
@@ -163,6 +167,7 @@ export class CommentMarker {
     return new CommentMarker({
       ...json,
       createdAt: new Date(json.createdAt),
+      resolvedAt: json.resolvedAt ? new Date(json.resolvedAt) : null,
       replies: (json.replies || []).map(r => ({
         ...r,
         createdAt: new Date(r.createdAt)
