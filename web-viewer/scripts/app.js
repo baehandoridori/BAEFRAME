@@ -835,7 +835,11 @@ function handleTimelineClick(e) {
 // ============================================
 
 function updateCommentsList() {
-  const comments = state.bframeData?.comments || [];
+  // comments가 배열인지 확인 (객체일 수도 있음)
+  let comments = state.bframeData?.comments;
+  if (!Array.isArray(comments)) {
+    comments = [];
+  }
   elements.commentCount.textContent = comments.length;
 
   elements.commentsList.innerHTML = comments.map(comment => {
@@ -885,7 +889,10 @@ function updateCommentsList() {
 }
 
 function renderTimelineMarkers() {
-  const comments = state.bframeData?.comments || [];
+  let comments = state.bframeData?.comments;
+  if (!Array.isArray(comments)) {
+    comments = [];
+  }
 
   elements.timelineMarkers.innerHTML = comments.map(comment => {
     const progress = (comment.frame / state.frameRate / state.duration) * 100;
