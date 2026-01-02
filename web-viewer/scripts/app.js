@@ -36,11 +36,11 @@ const state = {
   currentStroke: []
 };
 
-// Google API 설정 (실제 사용 시 본인의 클라이언트 ID로 교체 필요)
+// Google API 설정
 const CONFIG = {
-  CLIENT_ID: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
-  API_KEY: 'YOUR_GOOGLE_API_KEY',
-  SCOPES: 'https://www.googleapis.com/auth/drive.file',
+  CLIENT_ID: '798911270101-1lmnk5evmusf3kmls3hrh4nfrp6d57ph.apps.googleusercontent.com',
+  API_KEY: 'AIzaSyANCLUx8Hmaf0UT96N7HgAhseew48cyTdY',
+  SCOPES: 'https://www.googleapis.com/auth/drive.readonly',
   DISCOVERY_DOC: 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'
 };
 
