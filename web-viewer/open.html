@@ -34,6 +34,7 @@
       background: linear-gradient(135deg, #4a9eff, #ff4a9e);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
+      background-clip: text;
       margin-bottom: 0.5rem;
     }
 
@@ -82,6 +83,7 @@
       text-decoration: none;
       display: inline-block;
       transition: transform 0.2s, opacity 0.2s;
+      text-align: center;
     }
 
     .btn:hover {
@@ -127,6 +129,11 @@
       color: #ff6b6b;
       margin-bottom: 1.5rem;
     }
+
+    /* 숨겨진 iframe (앱 열기 시도용) */
+    #appLauncher {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -147,14 +154,17 @@
     </div>
 
     <div id="buttons" class="buttons hidden">
-      <a href="#" id="btnOpenApp" class="btn btn-secondary">
-        🖥️ 데스크톱 앱으로 열기
-      </a>
       <a href="#" id="btnOpenWeb" class="btn btn-primary">
         🌐 웹 뷰어로 열기
       </a>
+      <a href="#" id="btnOpenApp" class="btn btn-secondary">
+        🖥️ 데스크톱 앱으로 열기
+      </a>
     </div>
   </div>
+
+  <!-- 앱 열기 시도용 숨겨진 iframe -->
+  <iframe id="appLauncher" name="appLauncher"></iframe>
 
   <script>
     // URL 파라미터 파싱
@@ -163,11 +173,12 @@
     const bframeUrl = params.get('bframe');
 
     // 플랫폼 감지
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const isAndroid = /Android/i.test(navigator.userAgent);
-    const isMac = /Mac/i.test(navigator.userAgent) && !isMobile;
-    const isWindows = /Win/i.test(navigator.userAgent);
+    const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+    const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+    const isIOS = /iPhone|iPad|iPod/i.test(userAgent);
+    const isAndroid = /Android/i.test(userAgent);
+    const isMac = /Mac/i.test(userAgent) && !isMobile;
+    const isWindows = /Win/i.test(userAgent);
 
     // UI 요소
     const platformBadge = document.getElementById('platformBadge');
@@ -179,16 +190,30 @@
     const btnOpenWeb = document.getElementById('btnOpenWeb');
     const statusText = document.getElementById('statusText');
     const statusDetail = document.getElementById('statusDetail');
+    const appLauncher = document.getElementById('appLauncher');
+
+    // 웹 뷰어 URL 생성
+    function getWebViewerUrl() {
+      const baseUrl = window.location.href.replace(/\/open\.html.*$/, '');
+      return `${baseUrl}/index.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+    }
+
+    // 앱 프로토콜 URL 생성
+    function getAppUrl() {
+      return `baeframe://open?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+    }
 
     // 플랫폼 표시
-    if (isMobile) {
-      platformBadge.textContent = isIOS ? '📱 iOS' : '📱 Android';
-    } else if (isMac) {
-      platformBadge.textContent = '🍎 macOS';
-    } else if (isWindows) {
-      platformBadge.textContent = '🪟 Windows';
-    } else {
-      platformBadge.textContent = '💻 Desktop';
+    function showPlatform() {
+      if (isMobile) {
+        platformBadge.textContent = isIOS ? '📱 iOS' : '📱 Android';
+      } else if (isMac) {
+        platformBadge.textContent = '🍎 macOS';
+      } else if (isWindows) {
+        platformBadge.textContent = '🪟 Windows';
+      } else {
+        platformBadge.textContent = '💻 Desktop';
+      }
     }
 
     // URL 유효성 검사
@@ -205,19 +230,14 @@
       loadingState.classList.add('hidden');
       errorState.classList.remove('hidden');
       errorMessage.textContent = message;
-      buttons.classList.remove('hidden');
-      updateButtons();
+      showButtons();
     }
 
-    // 버튼 URL 설정
-    function updateButtons() {
-      // 웹 뷰어 URL
-      const webViewerUrl = `./index.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
-      btnOpenWeb.href = webViewerUrl;
-
-      // 데스크톱 앱 URL (baeframe:// 프로토콜)
-      const appUrl = `baeframe://open?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
-      btnOpenApp.href = appUrl;
+    // 버튼 표시
+    function showButtons() {
+      buttons.classList.remove('hidden');
+      btnOpenWeb.href = getWebViewerUrl();
+      btnOpenApp.href = getAppUrl();
 
       // 모바일에서는 앱 버튼 숨기기
       if (isMobile) {
@@ -225,70 +245,104 @@
       }
     }
 
-    // 앱 열기 시도
-    function tryOpenApp() {
-      const appUrl = `baeframe://open?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
-
-      statusText.textContent = '데스크톱 앱 열기 시도 중...';
-      statusDetail.textContent = '앱이 설치되어 있다면 자동으로 열립니다';
-
-      // 앱 열기 시도
-      const startTime = Date.now();
-      window.location.href = appUrl;
-
-      // 2초 후 앱이 안 열렸으면 웹으로 폴백
-      setTimeout(() => {
-        // 페이지가 아직 보이면 앱이 안 열린 것
-        if (document.visibilityState !== 'hidden' && Date.now() - startTime < 3000) {
-          statusText.textContent = '앱이 설치되지 않은 것 같습니다';
-          statusDetail.textContent = '웹 뷰어로 이동합니다...';
-
-          setTimeout(() => {
-            redirectToWebViewer();
-          }, 1000);
-        }
-      }, 2000);
-    }
-
     // 웹 뷰어로 리다이렉트
     function redirectToWebViewer() {
-      const webViewerUrl = `./index.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
-      window.location.href = webViewerUrl;
+      console.log('🌐 웹 뷰어로 이동');
+      window.location.replace(getWebViewerUrl());
+    }
+
+    // 데스크톱에서 앱 열기 시도 (iframe 방식)
+    function tryOpenAppWithFallback() {
+      statusText.textContent = '데스크톱 앱 확인 중...';
+      statusDetail.textContent = '잠시만 기다려주세요';
+
+      const appUrl = getAppUrl();
+      let appOpened = false;
+
+      // visibility change로 앱 열림 감지
+      const handleVisibilityChange = () => {
+        if (document.hidden) {
+          appOpened = true;
+          console.log('✅ 앱이 열린 것 같습니다');
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+
+      // blur 이벤트로도 감지 (일부 브라우저)
+      const handleBlur = () => {
+        appOpened = true;
+        console.log('✅ 창이 포커스를 잃음 - 앱 열림');
+      };
+      window.addEventListener('blur', handleBlur);
+
+      // iframe으로 앱 열기 시도 (대화상자 없이)
+      try {
+        appLauncher.src = appUrl;
+      } catch (e) {
+        console.log('iframe 방식 실패, link 방식 시도');
+      }
+
+      // 숨겨진 링크로도 시도
+      const link = document.createElement('a');
+      link.href = appUrl;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // 1.5초 후 앱이 안 열렸으면 웹으로 폴백
+      setTimeout(() => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('blur', handleBlur);
+
+        if (!appOpened && !document.hidden) {
+          console.log('⚠️ 앱이 열리지 않음, 웹 뷰어로 이동');
+          statusText.textContent = '웹 뷰어로 이동합니다...';
+          statusDetail.textContent = '';
+
+          setTimeout(redirectToWebViewer, 500);
+        }
+      }, 1500);
     }
 
     // 메인 로직
     function main() {
+      showPlatform();
+
       if (!validateUrls()) {
         return;
       }
-
-      updateButtons();
 
       if (isMobile) {
         // 모바일: 바로 웹 뷰어로 이동
         statusText.textContent = '모바일 환경 감지';
         statusDetail.textContent = '웹 뷰어로 이동합니다...';
 
-        setTimeout(() => {
-          redirectToWebViewer();
-        }, 1000);
+        // 즉시 리다이렉트 (setTimeout 없이)
+        redirectToWebViewer();
       } else {
-        // 데스크톱: 앱 열기 시도 후 폴백
-        tryOpenApp();
+        // 데스크톱: 앱 열기 시도 후 웹 폴백
+        tryOpenAppWithFallback();
       }
     }
 
-    // 버튼 클릭 이벤트 (수동 선택 시)
+    // 버튼 클릭 이벤트
     btnOpenApp.addEventListener('click', (e) => {
-      // href로 자동 이동하므로 별도 처리 불필요
+      e.preventDefault();
+      window.location.href = getAppUrl();
     });
 
     btnOpenWeb.addEventListener('click', (e) => {
-      // href로 자동 이동
+      e.preventDefault();
+      redirectToWebViewer();
     });
 
-    // 시작
-    main();
+    // 페이지 로드 시 시작
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', main);
+    } else {
+      main();
+    }
   </script>
 </body>
 </html>
