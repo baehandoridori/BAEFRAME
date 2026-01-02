@@ -254,6 +254,12 @@ async function handleGoogleLogin() {
     return;
   }
 
+  // 이미 로그인된 경우 재인증 여부 확인
+  const isReauth = !!state.accessToken;
+  if (isReauth) {
+    showToast('재인증 중...', 'info');
+  }
+
   try {
     // Google Identity Services 사용
     state.tokenClient = google.accounts.oauth2.initTokenClient({
@@ -261,16 +267,20 @@ async function handleGoogleLogin() {
       scope: CONFIG.SCOPES,
       callback: (response) => {
         if (response.error) {
-          showToast('로그인 실패', 'error');
+          console.error('로그인 에러:', response);
+          showToast('로그인 실패: ' + (response.error_description || response.error), 'error');
           return;
         }
         state.accessToken = response.access_token;
-        elements.btnGoogleLogin.textContent = '✓ 로그인됨';
-        elements.btnGoogleLogin.disabled = true;
-        showToast('로그인 성공!', 'success');
+        console.log('✅ 로그인 성공, 토큰 획득');
+
+        // 버튼 상태 업데이트 (재인증 가능하도록 disabled 하지 않음)
+        elements.btnGoogleLogin.innerHTML = '✓ 로그인됨 <small style="opacity:0.7">(재인증)</small>';
+        showToast(isReauth ? '재인증 성공!' : '로그인 성공!', 'success');
       }
     });
 
+    // prompt: 'consent'로 항상 권한 요청 화면 표시
     state.tokenClient.requestAccessToken({ prompt: 'consent' });
   } catch (error) {
     console.error('로그인 에러:', error);
@@ -499,6 +509,7 @@ async function loadBframeFile(url) {
   }
 
   console.log('bframe 파일 ID:', fileId);
+  console.log('Access Token:', state.accessToken ? '있음 (' + state.accessToken.substring(0, 20) + '...)' : '없음');
 
   // 인증된 fetch 사용
   if (state.accessToken) {
@@ -513,7 +524,19 @@ async function loadBframeFile(url) {
       );
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('API 에러 응답:', errorText);
+
+        // 에러 코드별 메시지
+        if (response.status === 401) {
+          throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
+        } else if (response.status === 403) {
+          throw new Error('파일 접근 권한이 없습니다. 해당 계정으로 로그인했는지 확인해주세요.');
+        } else if (response.status === 404) {
+          throw new Error('파일을 찾을 수 없습니다. URL을 확인해주세요.');
+        } else {
+          throw new Error(`API 오류 (${response.status}): ${errorText.substring(0, 100)}`);
+        }
       }
 
       state.bframeData = await response.json();
@@ -521,7 +544,7 @@ async function loadBframeFile(url) {
       return;
     } catch (error) {
       console.error('인증된 접근 실패:', error);
-      throw new Error('파일을 불러올 수 없습니다. 파일 공유 설정을 확인해주세요.');
+      throw error; // 원래 에러 메시지 그대로 전달
     }
   }
 
@@ -554,7 +577,17 @@ async function loadVideoFromDrive(fileId) {
     );
 
     if (!metaResponse.ok) {
-      throw new Error('파일 정보를 가져올 수 없습니다');
+      const errorText = await metaResponse.text();
+      console.error('메타데이터 에러:', metaResponse.status, errorText);
+
+      if (metaResponse.status === 401) {
+        throw new Error('인증이 만료되었습니다. 페이지를 새로고침하고 다시 로그인해주세요.');
+      } else if (metaResponse.status === 403) {
+        throw new Error('영상 파일 접근 권한이 없습니다. 파일이 공유되었는지 확인해주세요.');
+      } else if (metaResponse.status === 404) {
+        throw new Error('영상 파일을 찾을 수 없습니다.');
+      }
+      throw new Error(`영상 정보 로드 실패 (${metaResponse.status})`);
     }
 
     const meta = await metaResponse.json();
