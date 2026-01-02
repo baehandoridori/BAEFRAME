@@ -113,6 +113,8 @@ function cacheElements() {
   elements.videoPlayer = document.getElementById('videoPlayer');
   elements.drawingCanvas = document.getElementById('drawingCanvas');
   elements.markerOverlay = document.getElementById('markerOverlay');
+  elements.videoMarkers = document.getElementById('videoMarkers');
+  elements.videoContainer = document.getElementById('videoContainer');
 
   // 컨트롤
   elements.timeline = document.getElementById('timeline');
@@ -399,6 +401,7 @@ async function openDemoMode() {
     // UI 업데이트
     updateCommentsList();
     renderTimelineMarkers();
+    renderVideoMarkers();
 
     showToast('데모 모드로 시작합니다!', 'success');
   } catch (error) {
@@ -448,6 +451,7 @@ async function handleOpenFiles() {
     // UI 업데이트
     updateCommentsList();
     renderTimelineMarkers();
+    renderVideoMarkers();
 
     // 최근 파일에 추가
     saveRecentFile(videoUrl, bframeUrl);
@@ -767,6 +771,7 @@ function handleTimeUpdate() {
   updateTimeDisplay();
   updatePlayhead();
   renderDrawingForCurrentFrame();
+  updateVideoMarkersVisibility();
 }
 
 function updateTimeDisplay() {
@@ -938,6 +943,89 @@ function renderTimelineMarkers() {
       seekToFrame(frame);
     });
   });
+}
+
+/**
+ * 영상 위에 마커 렌더링
+ */
+function renderVideoMarkers() {
+  if (!elements.videoMarkers) return;
+
+  const comments = getAllComments();
+  elements.videoMarkers.innerHTML = '';
+
+  comments.forEach(comment => {
+    const markerEl = document.createElement('div');
+    markerEl.className = `video-marker${comment.resolved ? ' resolved' : ''}`;
+    markerEl.dataset.markerId = comment.id;
+    markerEl.dataset.frame = comment.frame || comment.startFrame || 0;
+
+    // x, y 위치 (0-1 정규화 좌표)
+    const x = (comment.x || 0.5) * 100;
+    const y = (comment.y || 0.5) * 100;
+    markerEl.style.left = `${x}%`;
+    markerEl.style.top = `${y}%`;
+
+    // 레이어 색상
+    if (comment.layerColor) {
+      markerEl.style.setProperty('--accent-color', comment.layerColor);
+    }
+
+    // 툴팁
+    const tooltip = document.createElement('div');
+    tooltip.className = 'video-marker-tooltip';
+    tooltip.textContent = comment.text || '';
+    markerEl.appendChild(tooltip);
+
+    // 클릭 시 해당 프레임으로 이동 & 댓글 하이라이트
+    markerEl.addEventListener('click', () => {
+      const frame = parseInt(markerEl.dataset.frame);
+      seekToFrame(frame);
+      highlightComment(comment.id);
+    });
+
+    elements.videoMarkers.appendChild(markerEl);
+  });
+
+  updateVideoMarkersVisibility();
+}
+
+/**
+ * 현재 프레임에 따라 마커 가시성 업데이트
+ */
+function updateVideoMarkersVisibility() {
+  if (!elements.videoMarkers) return;
+
+  const currentFrame = Math.floor(state.currentTime * state.frameRate);
+
+  elements.videoMarkers.querySelectorAll('.video-marker').forEach(marker => {
+    const startFrame = parseInt(marker.dataset.frame);
+    // 마커의 표시 범위: startFrame부터 startFrame + 24프레임 (1초)
+    const endFrame = startFrame + state.frameRate;
+
+    if (currentFrame >= startFrame && currentFrame < endFrame) {
+      marker.classList.remove('hidden');
+    } else {
+      marker.classList.add('hidden');
+    }
+  });
+}
+
+/**
+ * 특정 댓글 하이라이트
+ */
+function highlightComment(commentId) {
+  // 기존 하이라이트 제거
+  document.querySelectorAll('.comment-card.highlighted').forEach(el => {
+    el.classList.remove('highlighted');
+  });
+
+  // 새 하이라이트
+  const card = document.querySelector(`.comment-card[data-id="${commentId}"]`);
+  if (card) {
+    card.classList.add('highlighted');
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
 
 function handleAddComment() {

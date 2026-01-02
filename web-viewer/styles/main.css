@@ -349,6 +349,90 @@ body {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
+/* 영상 위 댓글 마커들 */
+.video-markers-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.video-marker {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 5;
+}
+
+.video-marker::before {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: var(--accent-color, #ff6b6b);
+  border: 3px solid white;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s ease;
+}
+
+.video-marker:hover::before {
+  transform: rotate(-45deg) scale(1.15);
+}
+
+.video-marker.hidden {
+  display: none;
+}
+
+.video-marker.resolved::before {
+  background: #4ecdc4;
+  opacity: 0.6;
+}
+
+/* 마커 툴팁 */
+.video-marker-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.9);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  pointer-events: none;
+  margin-bottom: 8px;
+}
+
+.video-marker:hover .video-marker-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.video-marker-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: rgba(0, 0, 0, 0.9);
+}
+
 /* ========================================
    컨트롤 바
    ======================================== */
@@ -553,6 +637,11 @@ body {
 
 .comment-card:active {
   background: var(--border-color);
+}
+
+.comment-card.highlighted {
+  background: rgba(255, 107, 107, 0.2);
+  border-left: 3px solid var(--accent-color);
 }
 
 .comment-header {
