@@ -1041,8 +1041,8 @@ return
         Send, ^+u
         Sleep, 300
 
-        ; 2. 텍스트 필드에 "모바일/웹 버전 링크" 입력
-        Clipboard := "모바일/웹 버전 링크"
+        ; 2. 텍스트 필드에 "파일명 / 모바일 및 웹 버전" 입력
+        Clipboard := g_LastFileName . " / 모바일 및 웹 버전"
         ClipWait, 1
         Send, ^v
         Sleep, 100

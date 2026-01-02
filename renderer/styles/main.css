@@ -2406,6 +2406,12 @@ body {
   transition: width 0.3s ease, min-width 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
 }
 
+/* 리사이징 중에는 트랜지션 비활성화 (부드러운 드래그를 위해) */
+.comment-panel.resizing,
+body.resizing .comment-panel {
+  transition: none !important;
+}
+
 .comment-panel.collapsed {
   width: 0 !important;
   min-width: 0 !important;
@@ -3639,7 +3645,22 @@ body {
   gap: 24px;
 }
 
-/* Logo */
+/* Logo Image */
+.credits-logo-img {
+  width: 160px;
+  height: auto;
+  margin-bottom: 16px;
+  filter: drop-shadow(0 0 30px rgba(255, 208, 0, 0.6))
+          drop-shadow(0 0 60px rgba(255, 208, 0, 0.3));
+  animation: creditsLogoFloat 4s ease-in-out infinite;
+}
+
+@keyframes creditsLogoFloat {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-10px) scale(1.02); }
+}
+
+/* Logo Text */
 .credits-logo {
   display: flex;
   align-items: baseline;
