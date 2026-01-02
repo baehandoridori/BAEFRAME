@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BAEFRAME - 파일 열기</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .container {
+      text-align: center;
+      max-width: 400px;
+    }
+
+    .logo {
+      font-size: 3rem;
+      font-weight: bold;
+      background: linear-gradient(135deg, #4a9eff, #ff4a9e);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      color: #888;
+      margin-bottom: 2rem;
+    }
+
+    .loader {
+      width: 50px;
+      height: 50px;
+      border: 3px solid #333;
+      border-top-color: #4a9eff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 1.5rem;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .status {
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+    }
+
+    .status-detail {
+      color: #888;
+      font-size: 0.9rem;
+      margin-bottom: 2rem;
+    }
+
+    .buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .btn {
+      padding: 1rem 2rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+      transition: transform 0.2s, opacity 0.2s;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #4a9eff, #4aff9e);
+      color: #000;
+      font-weight: bold;
+    }
+
+    .btn-secondary {
+      background: #2a2a2a;
+      color: #fff;
+      border: 1px solid #444;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .platform-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      background: rgba(74, 158, 255, 0.2);
+      border: 1px solid rgba(74, 158, 255, 0.5);
+      border-radius: 20px;
+      font-size: 0.8rem;
+      color: #4a9eff;
+      margin-bottom: 1rem;
+    }
+
+    .error-message {
+      background: rgba(255, 74, 74, 0.2);
+      border: 1px solid rgba(255, 74, 74, 0.5);
+      padding: 1rem;
+      border-radius: 8px;
+      color: #ff6b6b;
+      margin-bottom: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">BAEFRAME</div>
+    <div class="subtitle">영상 리뷰 협업 도구</div>
+
+    <div id="platformBadge" class="platform-badge"></div>
+
+    <div id="loadingState">
+      <div class="loader"></div>
+      <div class="status" id="statusText">파일 정보 확인 중...</div>
+      <div class="status-detail" id="statusDetail"></div>
+    </div>
+
+    <div id="errorState" class="hidden">
+      <div class="error-message" id="errorMessage"></div>
+    </div>
+
+    <div id="buttons" class="buttons hidden">
+      <a href="#" id="btnOpenApp" class="btn btn-secondary">
+        🖥️ 데스크톱 앱으로 열기
+      </a>
+      <a href="#" id="btnOpenWeb" class="btn btn-primary">
+        🌐 웹 뷰어로 열기
+      </a>
+    </div>
+  </div>
+
+  <script>
+    // URL 파라미터 파싱
+    const params = new URLSearchParams(window.location.search);
+    const videoUrl = params.get('video');
+    const bframeUrl = params.get('bframe');
+
+    // 플랫폼 감지
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const isMac = /Mac/i.test(navigator.userAgent) && !isMobile;
+    const isWindows = /Win/i.test(navigator.userAgent);
+
+    // UI 요소
+    const platformBadge = document.getElementById('platformBadge');
+    const loadingState = document.getElementById('loadingState');
+    const errorState = document.getElementById('errorState');
+    const errorMessage = document.getElementById('errorMessage');
+    const buttons = document.getElementById('buttons');
+    const btnOpenApp = document.getElementById('btnOpenApp');
+    const btnOpenWeb = document.getElementById('btnOpenWeb');
+    const statusText = document.getElementById('statusText');
+    const statusDetail = document.getElementById('statusDetail');
+
+    // 플랫폼 표시
+    if (isMobile) {
+      platformBadge.textContent = isIOS ? '📱 iOS' : '📱 Android';
+    } else if (isMac) {
+      platformBadge.textContent = '🍎 macOS';
+    } else if (isWindows) {
+      platformBadge.textContent = '🪟 Windows';
+    } else {
+      platformBadge.textContent = '💻 Desktop';
+    }
+
+    // URL 유효성 검사
+    function validateUrls() {
+      if (!videoUrl || !bframeUrl) {
+        showError('파일 URL이 누락되었습니다. 올바른 공유 링크인지 확인해주세요.');
+        return false;
+      }
+      return true;
+    }
+
+    // 에러 표시
+    function showError(message) {
+      loadingState.classList.add('hidden');
+      errorState.classList.remove('hidden');
+      errorMessage.textContent = message;
+      buttons.classList.remove('hidden');
+      updateButtons();
+    }
+
+    // 버튼 URL 설정
+    function updateButtons() {
+      // 웹 뷰어 URL
+      const webViewerUrl = `./index.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+      btnOpenWeb.href = webViewerUrl;
+
+      // 데스크톱 앱 URL (baeframe:// 프로토콜)
+      const appUrl = `baeframe://open?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+      btnOpenApp.href = appUrl;
+
+      // 모바일에서는 앱 버튼 숨기기
+      if (isMobile) {
+        btnOpenApp.classList.add('hidden');
+      }
+    }
+
+    // 앱 열기 시도
+    function tryOpenApp() {
+      const appUrl = `baeframe://open?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+
+      statusText.textContent = '데스크톱 앱 열기 시도 중...';
+      statusDetail.textContent = '앱이 설치되어 있다면 자동으로 열립니다';
+
+      // 앱 열기 시도
+      const startTime = Date.now();
+      window.location.href = appUrl;
+
+      // 2초 후 앱이 안 열렸으면 웹으로 폴백
+      setTimeout(() => {
+        // 페이지가 아직 보이면 앱이 안 열린 것
+        if (document.visibilityState !== 'hidden' && Date.now() - startTime < 3000) {
+          statusText.textContent = '앱이 설치되지 않은 것 같습니다';
+          statusDetail.textContent = '웹 뷰어로 이동합니다...';
+
+          setTimeout(() => {
+            redirectToWebViewer();
+          }, 1000);
+        }
+      }, 2000);
+    }
+
+    // 웹 뷰어로 리다이렉트
+    function redirectToWebViewer() {
+      const webViewerUrl = `./index.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+      window.location.href = webViewerUrl;
+    }
+
+    // 메인 로직
+    function main() {
+      if (!validateUrls()) {
+        return;
+      }
+
+      updateButtons();
+
+      if (isMobile) {
+        // 모바일: 바로 웹 뷰어로 이동
+        statusText.textContent = '모바일 환경 감지';
+        statusDetail.textContent = '웹 뷰어로 이동합니다...';
+
+        setTimeout(() => {
+          redirectToWebViewer();
+        }, 1000);
+      } else {
+        // 데스크톱: 앱 열기 시도 후 폴백
+        tryOpenApp();
+      }
+    }
+
+    // 버튼 클릭 이벤트 (수동 선택 시)
+    btnOpenApp.addEventListener('click', (e) => {
+      // href로 자동 이동하므로 별도 처리 불필요
+    });
+
+    btnOpenWeb.addEventListener('click', (e) => {
+      // href로 자동 이동
+    });
+
+    // 시작
+    main();
+  </script>
+</body>
+</html>

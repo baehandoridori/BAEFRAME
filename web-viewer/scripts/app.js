@@ -80,14 +80,76 @@ async function init() {
   try {
     await loadGoogleAPI();
     console.log('✅ Google API 로드 완료');
-    showScreen('select');
-    addDemoButton(); // 데모 버튼도 추가 (폴백용)
   } catch (error) {
     console.error('Google API 로드 실패:', error);
-    // 실패해도 데모 모드로 사용 가능
-    console.log('🔧 데모 모드로 전환');
+    console.log('🔧 API 없이 진행');
+  }
+
+  // URL 파라미터 확인 (공유 링크로 들어온 경우)
+  const urlParams = new URLSearchParams(window.location.search);
+  const videoUrl = urlParams.get('video');
+  const bframeUrl = urlParams.get('bframe');
+
+  if (videoUrl && bframeUrl) {
+    console.log('📎 URL 파라미터로 파일 로드:', { videoUrl, bframeUrl });
+    // 입력 필드에 자동 입력
+    if (elements.inputVideoUrl) elements.inputVideoUrl.value = videoUrl;
+    if (elements.inputBframeUrl) elements.inputBframeUrl.value = bframeUrl;
+    // 자동 로드 시도
+    await autoLoadFromUrlParams(videoUrl, bframeUrl);
+  } else {
     showScreen('select');
     addDemoButton();
+  }
+}
+
+/**
+ * URL 파라미터로 파일 자동 로드
+ */
+async function autoLoadFromUrlParams(videoUrl, bframeUrl) {
+  showScreen('loading');
+  updateLoadingStatus('공유 링크에서 파일 로드 중...');
+
+  // Google Drive URL인 경우 로그인 필요 여부 확인
+  const isGoogleDriveVideo = videoUrl.includes('drive.google.com');
+  const isGoogleDriveBframe = bframeUrl.includes('drive.google.com');
+  const needsAuth = (isGoogleDriveVideo || isGoogleDriveBframe) && !state.accessToken;
+
+  if (needsAuth) {
+    // 로그인 필요 - 선택 화면으로 이동하되 URL은 유지
+    showScreen('select');
+    addDemoButton();
+    showToast('Google Drive 파일입니다. 먼저 로그인해주세요.', 'info');
+    return;
+  }
+
+  try {
+    // 파일 ID 추출
+    state.videoFileId = extractDriveFileId(videoUrl);
+    state.bframeFileId = extractDriveFileId(bframeUrl);
+
+    // .bframe 파일 로드
+    updateLoadingStatus('.bframe 파일 로드 중...');
+    await loadBframeFile(bframeUrl);
+
+    // 비디오 로드
+    updateLoadingStatus('영상 로드 중...');
+    await loadVideo(videoUrl);
+
+    // 뷰어 화면으로 전환
+    showScreen('viewer');
+
+    // UI 업데이트
+    updateCommentsList();
+    renderTimelineMarkers();
+    renderVideoMarkers();
+
+    showToast('파일을 불러왔습니다!', 'success');
+  } catch (error) {
+    console.error('자동 로드 실패:', error);
+    showScreen('select');
+    addDemoButton();
+    showToast('파일 로드 실패: ' + error.message, 'error');
   }
 }
 
@@ -180,6 +242,7 @@ function setupEventListeners() {
   // 뷰어 헤더
   elements.btnBack?.addEventListener('click', handleBack);
   elements.btnSave?.addEventListener('click', handleSave);
+  document.getElementById('btnShare')?.addEventListener('click', handleShare);
 
   // 비디오 컨트롤
   elements.videoPlayer?.addEventListener('loadedmetadata', handleVideoLoaded);
@@ -1598,6 +1661,50 @@ async function saveToDrive() {
   }
 
   console.log('✅ Google Drive 저장 완료');
+}
+
+// ============================================
+// 공유
+// ============================================
+
+/**
+ * 공유 링크 생성 및 복사
+ */
+async function handleShare() {
+  // URL 파라미터에서 또는 입력 필드에서 원본 URL 가져오기
+  const videoUrl = elements.inputVideoUrl?.value || new URLSearchParams(window.location.search).get('video');
+  const bframeUrl = elements.inputBframeUrl?.value || new URLSearchParams(window.location.search).get('bframe');
+
+  if (!videoUrl || !bframeUrl) {
+    showToast('공유할 파일 정보가 없습니다', 'error');
+    return;
+  }
+
+  // 공유 링크 생성 (open.html 사용)
+  const baseUrl = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '');
+  const shareUrl = `${baseUrl}/open.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+
+  try {
+    // 클립보드에 복사
+    await navigator.clipboard.writeText(shareUrl);
+    showToast('공유 링크가 복사되었습니다!', 'success');
+    console.log('📋 공유 링크:', shareUrl);
+  } catch (error) {
+    // 클립보드 API 실패 시 대체 방법
+    const textArea = document.createElement('textarea');
+    textArea.value = shareUrl;
+    textArea.style.position = 'fixed';
+    textArea.style.opacity = '0';
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      showToast('공유 링크가 복사되었습니다!', 'success');
+    } catch (e) {
+      showToast('복사 실패. 링크: ' + shareUrl, 'error');
+    }
+    document.body.removeChild(textArea);
+  }
 }
 
 function downloadBframe() {
