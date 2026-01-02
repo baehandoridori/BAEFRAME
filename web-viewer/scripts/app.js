@@ -431,7 +431,7 @@ async function handleGoogleLogin(forceSilent = false) {
     state.tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.CLIENT_ID,
       scope: CONFIG.SCOPES,
-      callback: (response) => {
+      callback: async (response) => {
         if (response.error) {
           console.error('로그인 에러:', response);
           if (!forceSilent) {
@@ -446,9 +446,21 @@ async function handleGoogleLogin(forceSilent = false) {
         saveAccessToken(response.access_token);
 
         // 버튼 상태 업데이트 (재인증 가능하도록 disabled 하지 않음)
-        elements.btnGoogleLogin.innerHTML = '✓ 로그인됨 <small style="opacity:0.7">(재인증)</small>';
+        if (elements.btnGoogleLogin) {
+          elements.btnGoogleLogin.innerHTML = '✓ 로그인됨 <small style="opacity:0.7">(재인증)</small>';
+        }
         if (!forceSilent) {
           showToast(isReauth ? '재인증 성공!' : '로그인 성공!', 'success');
+        }
+
+        // 🔥 로그인 후 URL 파라미터가 있으면 자동으로 파일 열기
+        const urlParams = new URLSearchParams(window.location.search);
+        const videoUrl = urlParams.get('video');
+        const bframeUrl = urlParams.get('bframe');
+
+        if (videoUrl && bframeUrl) {
+          console.log('📂 로그인 완료, 파일 자동 로드 시작');
+          await autoLoadFromUrlParams(videoUrl, bframeUrl);
         }
       }
     });
