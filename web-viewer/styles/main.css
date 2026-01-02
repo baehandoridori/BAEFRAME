@@ -522,10 +522,99 @@ body {
   height: 56px;
   background: var(--accent-color);
   font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn-play:hover {
   background: var(--accent-hover);
+}
+
+.btn-play svg {
+  width: 28px;
+  height: 28px;
+}
+
+.btn-play svg.hidden {
+  display: none;
+}
+
+/* 프레임 버튼 스타일 */
+.btn-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px;
+}
+
+.btn-frame svg {
+  width: 20px;
+  height: 20px;
+}
+
+.frame-label {
+  font-size: 9px;
+  font-weight: bold;
+  color: var(--accent-color);
+  font-family: monospace;
+}
+
+/* 5초 건너뛰기 버튼 */
+.btn-skip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-skip svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* 컨트롤 버튼 내 SVG */
+.btn-control svg {
+  fill: currentColor;
+}
+
+/* 타임라인 썸네일 미리보기 */
+.timeline-thumbnail {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-secondary);
+  border: 2px solid var(--accent-color);
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.timeline-thumbnail.hidden {
+  display: none;
+}
+
+.timeline-thumbnail canvas {
+  display: block;
+  width: 160px;
+  height: 90px;
+  border-radius: 4px;
+  background: #000;
+}
+
+.timeline-thumbnail span {
+  display: block;
+  text-align: center;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text-primary);
+  margin-top: 4px;
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .time-display {
@@ -1127,7 +1216,8 @@ body.fullscreen-mode .viewer-header {
   transition: opacity 0.3s;
 }
 
-body.fullscreen-mode #viewerScreen:hover .viewer-header {
+body.fullscreen-mode #viewerScreen:hover .viewer-header,
+body.fullscreen-mode.controls-visible .viewer-header {
   opacity: 1;
 }
 
@@ -1148,13 +1238,56 @@ body.fullscreen-mode .controls-bar {
   transition: opacity 0.3s;
 }
 
-body.fullscreen-mode #viewerScreen:hover .controls-bar {
+body.fullscreen-mode #viewerScreen:hover .controls-bar,
+body.fullscreen-mode.controls-visible .controls-bar {
   opacity: 1;
 }
 
 body.fullscreen-mode .bottom-tabs,
 body.fullscreen-mode .panel {
   display: none;
+}
+
+/* 모바일 전체화면 - 가로 강제 회전 */
+@media screen and (max-width: 768px) {
+  body.fullscreen-mode.landscape-lock {
+    /* 세로 모드일 때 가로로 회전 */
+  }
+
+  body.fullscreen-mode.landscape-lock #viewerScreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* 세로 모드에서 가로로 강제 회전 (선택적) */
+  @media (orientation: portrait) {
+    body.fullscreen-mode.force-landscape #viewerScreen {
+      transform: rotate(90deg);
+      transform-origin: left top;
+      width: 100vh;
+      height: 100vw;
+      position: fixed;
+      top: 0;
+      left: 100%;
+    }
+
+    body.fullscreen-mode.force-landscape .controls-bar {
+      /* 터치 영역 조정 */
+    }
+  }
+}
+
+/* 모바일 전체화면 컨트롤 자동 숨김 */
+body.fullscreen-mode .controls-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
 }
 
 /* 헤더 버튼 SVG 아이콘 */
