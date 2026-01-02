@@ -168,15 +168,15 @@ function restoreAccessToken() {
 }
 
 /**
- * 토큰 저장 (1시간 유효)
+ * 토큰 저장 (7일 유효 - 로컬 캐시용, 만료 시 재로그인 필요)
  */
 function saveAccessToken(token) {
   try {
     localStorage.setItem('baeframe_access_token', token);
-    // Google 토큰은 보통 1시간 유효
-    const expiry = Date.now() + 3600000;
+    // 7일 유효 (604800000ms = 7 * 24 * 60 * 60 * 1000)
+    const expiry = Date.now() + 604800000;
     localStorage.setItem('baeframe_token_expiry', expiry.toString());
-    console.log('💾 토큰 저장됨');
+    console.log('💾 토큰 저장됨 (7일 유효)');
   } catch (error) {
     console.error('토큰 저장 실패:', error);
   }

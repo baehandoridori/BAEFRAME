@@ -33,13 +33,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ====== 외부 링크 열기 ======
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
 
-  // ====== Google 인증 관련 ======
-  googleLogin: () => ipcRenderer.invoke('google:login'),
-  googleLogout: () => ipcRenderer.invoke('google:logout'),
-  googleIsAuthenticated: () => ipcRenderer.invoke('google:is-authenticated'),
-  googleSearchFile: (fileName) => ipcRenderer.invoke('google:search-file', fileName),
-  googleGenerateWebShareLink: (videoFileName, bframeFileName) =>
-    ipcRenderer.invoke('google:generate-web-share-link', videoFileName, bframeFileName),
+  // ====== 클립보드 관련 ======
+  readClipboard: () => ipcRenderer.invoke('clipboard:read'),
+  readGDriveLink: () => ipcRenderer.invoke('clipboard:read-gdrive-link'),
+  generateWebShareLink: (videoUrl, bframeUrl) =>
+    ipcRenderer.invoke('webshare:generate-link', videoUrl, bframeUrl),
 
   // ====== 사용자 정보 관련 ======
   getOSUser: () => ipcRenderer.invoke('user:get-os-user'),
