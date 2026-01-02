@@ -588,6 +588,24 @@ async function initApp() {
   // ====== 웹 공유 모달 ======
   const WEB_VIEWER_BASE_URL = 'https://baeframe.vercel.app';
 
+  // Google Drive 경로 감지
+  function isGoogleDrivePath(path) {
+    if (!path) return false;
+    const lowerPath = path.toLowerCase();
+    return lowerPath.includes('공유 드라이브') ||
+           lowerPath.includes('shared drives') ||
+           lowerPath.includes('my drive') ||
+           lowerPath.includes('내 드라이브') ||
+           lowerPath.includes('googledrive') ||
+           lowerPath.includes('google drive');
+  }
+
+  // 파일명 추출
+  function getFileName(path) {
+    if (!path) return '';
+    return path.split(/[/\\]/).pop() || '';
+  }
+
   // 웹 공유 버튼 클릭 - 모달 열기
   elements.btnWebShare.addEventListener('click', () => {
     elements.webShareModal.classList.add('active');
@@ -595,7 +613,33 @@ async function initApp() {
     elements.webShareVideoUrl.value = '';
     elements.webShareBframeUrl.value = '';
     elements.webShareResultUrl.value = '';
-    log.info('웹 공유 모달 열림');
+
+    // Google Drive 파일인지 감지하고 파일명 표시
+    const videoPath = reviewDataManager.getVideoPath();
+    const bframePath = reviewDataManager.getBframePath();
+    const isGDrive = isGoogleDrivePath(videoPath) || isGoogleDrivePath(bframePath);
+
+    // 파일명 정보 표시용 요소 업데이트
+    const fileInfoEl = document.getElementById('webShareFileInfo');
+    if (fileInfoEl) {
+      if (isGDrive) {
+        const videoName = getFileName(videoPath);
+        const bframeName = getFileName(bframePath);
+        fileInfoEl.innerHTML = `
+          <div class="file-info-box">
+            <strong>📁 Google Drive 파일 감지됨</strong><br>
+            <span>영상: ${videoName || '(알 수 없음)'}</span><br>
+            <span>Bframe: ${bframeName || '(알 수 없음)'}</span><br>
+            <small>위 파일명으로 Google Drive에서 검색하여 링크를 복사하세요.</small>
+          </div>
+        `;
+        fileInfoEl.style.display = 'block';
+      } else {
+        fileInfoEl.style.display = 'none';
+      }
+    }
+
+    log.info('웹 공유 모달 열림', { isGDrive, videoPath, bframePath });
   });
 
   // 모달 닫기

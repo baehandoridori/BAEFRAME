@@ -1157,9 +1157,12 @@ body.fullscreen-mode .panel {
   display: none;
 }
 
-/* 전체화면 버튼 */
-#btnFullscreen {
-  font-size: 1.4rem;
+/* 헤더 버튼 SVG 아이콘 */
+.btn-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  flex-shrink: 0;
 }
 
 /* ========================================
@@ -1173,14 +1176,18 @@ body.fullscreen-mode .panel {
     opacity: 1;
   }
 
-  /* 마커 터치 영역 확대 */
+  /* 모바일 마커 크기 조정 (너무 크지 않게) */
   .video-marker {
-    width: 40px;
-    height: 40px;
+    width: 22px;
+    height: 22px;
+  }
+
+  .video-marker::before {
+    border-width: 2px;
   }
 
   .timeline-marker {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
   }
 }

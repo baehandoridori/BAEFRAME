@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFolder: (folderPath) => ipcRenderer.invoke('folder:open', folderPath),
   showInFolder: (filePath) => ipcRenderer.invoke('folder:show-item', filePath),
 
+  // ====== 외부 링크 열기 ======
+  openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
+
   // ====== 사용자 정보 관련 ======
   getOSUser: () => ipcRenderer.invoke('user:get-os-user'),
   getSlackUser: () => ipcRenderer.invoke('user:get-slack-user'),

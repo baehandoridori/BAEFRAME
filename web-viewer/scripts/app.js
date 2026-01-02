@@ -56,8 +56,36 @@ const IS_DEV_MODE = window.location.hostname === 'localhost' ||
                     window.location.hostname.includes('github.io') ||
                     window.location.hostname.includes('vercel.app'); // Vercel도 데모 모드
 
+// 모바일 환경 감지
+const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                  (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches);
+
 // 테스트용 공개 비디오 URL
 const TEST_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+
+// 모바일 자동 저장 (debounced)
+let autoSaveTimeout = null;
+function scheduleAutoSave() {
+  if (!IS_MOBILE) return; // 모바일에서만 자동 저장
+  if (!state.bframeFileId || !state.accessToken) return; // 저장 가능한 상태인지 확인
+
+  // 기존 타이머 취소
+  if (autoSaveTimeout) {
+    clearTimeout(autoSaveTimeout);
+  }
+
+  // 2초 후 자동 저장
+  autoSaveTimeout = setTimeout(async () => {
+    try {
+      console.log('📱 모바일 자동 저장 중...');
+      await saveToDrive();
+      console.log('✅ 모바일 자동 저장 완료');
+      // 조용히 저장 (토스트 없음)
+    } catch (error) {
+      console.error('모바일 자동 저장 실패:', error);
+    }
+  }, 2000);
+}
 
 // ============================================
 // 초기화
@@ -74,6 +102,9 @@ async function init() {
   // 이벤트 리스너 등록
   setupEventListeners();
 
+  // 저장된 토큰 복원 시도
+  restoreAccessToken();
+
   // Google API 로드
   updateLoadingStatus('Google API 로드 중...');
 
@@ -84,6 +115,9 @@ async function init() {
     console.error('Google API 로드 실패:', error);
     console.log('🔧 API 없이 진행');
   }
+
+  // 로그인 상태 UI 업데이트
+  updateLoginButtonState();
 
   // URL 파라미터 확인 (공유 링크로 들어온 경우)
   const urlParams = new URLSearchParams(window.location.search);
@@ -100,6 +134,60 @@ async function init() {
   } else {
     showScreen('select');
     addDemoButton();
+  }
+}
+
+/**
+ * 저장된 토큰 복원
+ */
+function restoreAccessToken() {
+  try {
+    const savedToken = localStorage.getItem('baeframe_access_token');
+    const tokenExpiry = localStorage.getItem('baeframe_token_expiry');
+
+    if (savedToken && tokenExpiry) {
+      const expiryTime = parseInt(tokenExpiry, 10);
+      const now = Date.now();
+
+      // 토큰이 아직 유효한 경우 (만료 5분 전까지)
+      if (expiryTime > now + 300000) {
+        state.accessToken = savedToken;
+        console.log('✅ 저장된 토큰 복원 성공');
+        return true;
+      } else {
+        // 만료된 토큰 삭제
+        localStorage.removeItem('baeframe_access_token');
+        localStorage.removeItem('baeframe_token_expiry');
+        console.log('⏰ 토큰 만료됨, 재로그인 필요');
+      }
+    }
+  } catch (error) {
+    console.error('토큰 복원 실패:', error);
+  }
+  return false;
+}
+
+/**
+ * 토큰 저장 (1시간 유효)
+ */
+function saveAccessToken(token) {
+  try {
+    localStorage.setItem('baeframe_access_token', token);
+    // Google 토큰은 보통 1시간 유효
+    const expiry = Date.now() + 3600000;
+    localStorage.setItem('baeframe_token_expiry', expiry.toString());
+    console.log('💾 토큰 저장됨');
+  } catch (error) {
+    console.error('토큰 저장 실패:', error);
+  }
+}
+
+/**
+ * 로그인 버튼 상태 업데이트
+ */
+function updateLoginButtonState() {
+  if (state.accessToken && elements.btnGoogleLogin) {
+    elements.btnGoogleLogin.innerHTML = '✓ 로그인됨 <small style="opacity:0.7">(재인증)</small>';
   }
 }
 
@@ -351,6 +439,9 @@ async function handleGoogleLogin() {
         }
         state.accessToken = response.access_token;
         console.log('✅ 로그인 성공, 토큰 획득');
+
+        // 토큰 저장 (자동 로그인용)
+        saveAccessToken(response.access_token);
 
         // 버튼 상태 업데이트 (재인증 가능하도록 disabled 하지 않음)
         elements.btnGoogleLogin.innerHTML = '✓ 로그인됨 <small style="opacity:0.7">(재인증)</small>';
@@ -1281,6 +1372,9 @@ function submitComment() {
   renderVideoMarkers();
   closeCommentModal();
   showToast('댓글이 추가되었습니다', 'success');
+
+  // 모바일 자동 저장
+  scheduleAutoSave();
 }
 
 /**
@@ -1302,6 +1396,9 @@ function updateExistingComment(commentId, newText) {
   renderVideoMarkers();
   closeCommentModal();
   showToast('댓글이 수정되었습니다', 'success');
+
+  // 모바일 자동 저장
+  scheduleAutoSave();
 }
 
 /**
@@ -1324,6 +1421,9 @@ function deleteComment(commentId) {
   renderTimelineMarkers();
   renderVideoMarkers();
   showToast('댓글이 삭제되었습니다', 'info');
+
+  // 모바일 자동 저장
+  scheduleAutoSave();
 }
 
 /**
@@ -1441,6 +1541,9 @@ function submitReply() {
   updateCommentsList();
   elements.replyInput.value = '';
   showToast('답글이 추가되었습니다', 'success');
+
+  // 모바일 자동 저장
+  scheduleAutoSave();
 }
 
 // ============================================
