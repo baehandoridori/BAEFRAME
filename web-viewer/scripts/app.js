@@ -40,7 +40,7 @@ const state = {
 const CONFIG = {
   CLIENT_ID: '798911270101-1lmnk5evmusf3kmls3hrh4nfrp6d57ph.apps.googleusercontent.com',
   API_KEY: 'AIzaSyANCLUx8Hmaf0UT96N7HgAhseew48cyTdY',
-  SCOPES: 'https://www.googleapis.com/auth/drive.readonly',
+  SCOPES: 'https://www.googleapis.com/auth/drive', // 전체 드라이브 접근 (기존 파일 수정 가능)
   DISCOVERY_DOC: 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'
 };
 
