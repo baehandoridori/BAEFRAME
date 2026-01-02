@@ -549,13 +549,43 @@ async function getGoogleDriveFileId(localPath) {
 
         if (rows.length > 0) {
           const row = rows[0];
-          const fileId = row.stable_id || row.id || row.doc_id || row.inode;
 
-          log.info('파일 ID 찾음', { fileId, rowKeys: Object.keys(row) });
+          // 모든 컬럼과 값 출력 (디버깅용)
+          log.info('행 데이터 전체:', row);
+
+          // Google Drive 파일 ID는 긴 영숫자 문자열 (보통 33자)
+          // stable_id는 로컬 DB 내부용 숫자 ID이므로 사용하면 안됨
+          // doc_id, cloud_doc_id, remote_id, id 등에서 찾아야 함
+          let fileId = null;
+
+          // 가능한 컬럼들 확인 (긴 영숫자 ID를 찾음)
+          const possibleIdColumns = ['doc_id', 'cloud_doc_id', 'remote_id', 'target_id', 'id'];
+          for (const col of possibleIdColumns) {
+            if (row[col] && typeof row[col] === 'string' && row[col].length > 20) {
+              fileId = row[col];
+              log.info(`파일 ID 발견 (${col}):`, fileId);
+              break;
+            }
+          }
+
+          // 모든 문자열 컬럼에서 긴 ID 패턴 검색 (백업)
+          if (!fileId) {
+            for (const [key, value] of Object.entries(row)) {
+              if (typeof value === 'string' && value.length >= 25 && value.length <= 50 && /^[a-zA-Z0-9_-]+$/.test(value)) {
+                fileId = value;
+                log.info(`파일 ID 발견 (패턴 매칭, ${key}):`, fileId);
+                break;
+              }
+            }
+          }
+
+          log.info('최종 파일 ID:', { fileId, rowKeys: Object.keys(row) });
 
           if (fileId) {
             db.close();
             return fileId;
+          } else {
+            log.warn('긴 형식의 파일 ID를 찾지 못함. 행 데이터 확인 필요:', row);
           }
         }
 
