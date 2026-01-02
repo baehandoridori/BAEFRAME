@@ -603,7 +603,15 @@ async function loadVideoFromDrive(fileId) {
     );
 
     if (!response.ok) {
-      throw new Error(`다운로드 실패: ${response.status}`);
+      const errorText = await response.text();
+      console.error('영상 다운로드 에러:', response.status, errorText);
+
+      if (response.status === 403) {
+        throw new Error('영상 파일 접근 권한이 없습니다.');
+      } else if (response.status === 404) {
+        throw new Error('영상 파일을 찾을 수 없습니다.');
+      }
+      throw new Error(`영상 다운로드 실패 (${response.status})`);
     }
 
     const contentLength = response.headers.get('content-length');
@@ -638,7 +646,8 @@ async function loadVideoFromDrive(fileId) {
 
   } catch (error) {
     console.error('Google Drive 영상 로드 실패:', error);
-    throw new Error('영상을 불러올 수 없습니다. 파일 공유 설정을 확인해주세요.');
+    // 원래 에러 메시지 유지
+    throw error;
   }
 }
 
