@@ -2280,8 +2280,10 @@ let controlsHideTimer = null;
 // 롱프레스 마커 추가용 변수
 let longPressTimer = null;
 let longPressPos = { x: 0, y: 0 };
+let longPressStartPos = { x: 0, y: 0 }; // 터치 시작 위치 (이동 감지용)
 let isLongPressActive = false;
-const LONG_PRESS_DURATION = 600; // 600ms 길게 누르기
+const LONG_PRESS_DURATION = 500; // 500ms 길게 누르기
+const LONG_PRESS_MOVE_THRESHOLD = 15; // 15px 이내 이동은 허용
 
 /**
  * 전체화면 토글
@@ -2452,13 +2454,28 @@ function clearFullscreenControls() {
  * 전체화면 터치 시작 핸들러 (롱프레스 감지)
  */
 function handleFullscreenTouchStart(e) {
+  // 컨트롤 버튼 위에서는 롱프레스 무시
+  const target = e.target;
+  if (target.closest('.controls-bar') || target.closest('.viewer-header') ||
+      target.closest('button') || target.closest('.panel')) {
+    return;
+  }
+
   // 터치 위치 저장
   if (e.touches && e.touches.length > 0) {
-    longPressPos.x = e.touches[0].clientX;
-    longPressPos.y = e.touches[0].clientY;
+    const touch = e.touches[0];
+    longPressPos.x = touch.clientX;
+    longPressPos.y = touch.clientY;
+    longPressStartPos.x = touch.clientX;
+    longPressStartPos.y = touch.clientY;
   }
 
   isLongPressActive = false;
+
+  // 기존 타이머 취소
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+  }
 
   // 롱프레스 타이머 시작
   longPressTimer = setTimeout(() => {
@@ -2494,10 +2511,20 @@ function handleFullscreenTouchEnd(e) {
  * 전체화면 터치 이동 핸들러 (롱프레스 취소)
  */
 function handleFullscreenTouchMove(e) {
-  // 손가락이 움직이면 롱프레스 취소
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
+  if (!longPressTimer) return;
+
+  // 이동 거리 계산
+  if (e.touches && e.touches.length > 0) {
+    const touch = e.touches[0];
+    const dx = Math.abs(touch.clientX - longPressStartPos.x);
+    const dy = Math.abs(touch.clientY - longPressStartPos.y);
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    // 이동 거리가 임계값 초과 시에만 롱프레스 취소
+    if (distance > LONG_PRESS_MOVE_THRESHOLD) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
   }
 }
 
@@ -2524,11 +2551,14 @@ function handleLongPressMarker(screenX, screenY) {
 
   // 마커 프리뷰 표시
   const markerOverlay = document.getElementById('markerOverlay');
-  const markerPreview = document.getElementById('markerPreview');
-  if (markerOverlay && markerPreview) {
+  const markerPin = markerOverlay?.querySelector('.marker-pin');
+  if (markerOverlay) {
+    markerOverlay.classList.remove('hidden');
     markerOverlay.classList.add('active');
-    markerPreview.style.left = `${x * 100}%`;
-    markerPreview.style.top = `${y * 100}%`;
+    if (markerPin) {
+      markerPin.style.left = `${x * 100}%`;
+      markerPin.style.top = `${y * 100}%`;
+    }
   }
 
   // 컨트롤 표시

@@ -2647,6 +2647,7 @@ async function initApp() {
       isResizing = true;
       startPos = direction === 'col' ? e.clientX : e.clientY;
       resizer.classList.add('dragging');
+      document.body.classList.add('resizing');
       document.body.style.cursor = direction === 'col' ? 'col-resize' : 'row-resize';
       document.body.style.userSelect = 'none';
     });
@@ -2668,6 +2669,7 @@ async function initApp() {
       if (isResizing) {
         isResizing = false;
         resizer.classList.remove('dragging');
+        document.body.classList.remove('resizing');
         document.body.style.cursor = 'default';
         document.body.style.userSelect = '';
         if (rafId) {

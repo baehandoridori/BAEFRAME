@@ -2406,6 +2406,12 @@ body {
   transition: width 0.3s ease, min-width 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
 }
 
+/* 리사이징 중에는 트랜지션 비활성화 (부드러운 드래그를 위해) */
+.comment-panel.resizing,
+body.resizing .comment-panel {
+  transition: none !important;
+}
+
 .comment-panel.collapsed {
   width: 0 !important;
   min-width: 0 !important;
