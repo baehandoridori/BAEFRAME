@@ -291,7 +291,7 @@ function setupEventListeners() {
 
   // 비디오 클릭/터치 (댓글 위치 선택)
   elements.videoContainer?.addEventListener('click', handleVideoClick);
-  elements.videoContainer?.addEventListener('touchend', handleVideoClick);
+  elements.videoContainer?.addEventListener('touchend', handleVideoClick, { passive: false });
 
   // 전체화면 버튼
   document.getElementById('btnFullscreen')?.addEventListener('click', toggleFullscreen);
@@ -1132,10 +1132,34 @@ function handleAddComment() {
 function handleVideoClick(e) {
   if (!state.isCommentMode) return;
 
+  // 터치 이벤트 중복 방지
+  if (e.type === 'touchend') {
+    e.preventDefault();
+  }
+
   // 터치 또는 클릭 좌표 가져오기
   const rect = elements.videoContainer.getBoundingClientRect();
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  let clientX, clientY;
+
+  if (e.type === 'touchend' && e.changedTouches && e.changedTouches.length > 0) {
+    // touchend: changedTouches 사용
+    clientX = e.changedTouches[0].clientX;
+    clientY = e.changedTouches[0].clientY;
+  } else if (e.touches && e.touches.length > 0) {
+    // touchstart/touchmove: touches 사용
+    clientX = e.touches[0].clientX;
+    clientY = e.touches[0].clientY;
+  } else {
+    // 마우스 클릭
+    clientX = e.clientX;
+    clientY = e.clientY;
+  }
+
+  // 좌표 유효성 검사
+  if (clientX === undefined || clientY === undefined) {
+    console.warn('터치 좌표를 가져올 수 없습니다');
+    return;
+  }
 
   // 정규화된 좌표 (0-1)
   const x = (clientX - rect.left) / rect.width;
@@ -1143,6 +1167,8 @@ function handleVideoClick(e) {
 
   // 범위 체크
   if (x < 0 || x > 1 || y < 0 || y > 1) return;
+
+  console.log('📍 마커 위치 선택:', { x: x.toFixed(3), y: y.toFixed(3) });
 
   state.pendingCommentPos = { x, y };
   state.isCommentMode = false;
