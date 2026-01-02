@@ -1331,13 +1331,44 @@ body.fullscreen-mode .panel {
   display: none;
 }
 
-/* 전체화면 마커 추가 버튼 (모바일용) */
-.btn-fullscreen-marker {
+/* 전체화면 플로팅 컨트롤 (모바일용) */
+.fullscreen-floating-controls {
   display: none;
   position: fixed;
-  right: 20px;
+  right: 16px;
   top: 50%;
   transform: translateY(-50%);
+  z-index: 1000;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 전체화면 해제 버튼 */
+.btn-fullscreen-exit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-fullscreen-exit:hover,
+.btn-fullscreen-exit:active {
+  background: rgba(0, 0, 0, 0.8);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* 마커 추가 버튼 */
+.btn-fullscreen-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -1345,10 +1376,8 @@ body.fullscreen-mode .panel {
   border: none;
   color: white;
   cursor: pointer;
-  z-index: 1000;
   box-shadow: 0 4px 20px rgba(255, 107, 53, 0.5);
   transition: all 0.3s ease;
-  opacity: 0;
 }
 
 .btn-fullscreen-marker svg {
@@ -1363,17 +1392,19 @@ body.fullscreen-mode .panel {
 }
 
 @keyframes marker-btn-pulse {
-  0%, 100% { transform: translateY(-50%) scale(1); }
-  50% { transform: translateY(-50%) scale(1.1); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
 }
 
-/* 전체화면 + 컨트롤 표시 시에만 마커 버튼 보이기 (iOS용) */
-/* 모바일에서만 표시 - 컨트롤이 보일 때만 나타남 */
+/* 전체화면 플로팅 컨트롤 (모바일 전용) */
+/* CSS 기반 전체화면에서 항상 표시 */
 @media (hover: none) and (pointer: coarse) {
-  body.fullscreen-mode.controls-visible .btn-fullscreen-marker {
+  body.fullscreen-mode .fullscreen-floating-controls {
     display: flex;
-    align-items: center;
-    justify-content: center;
+    opacity: 0.7;
+  }
+
+  body.fullscreen-mode.controls-visible .fullscreen-floating-controls {
     opacity: 1;
   }
 }

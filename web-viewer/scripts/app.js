@@ -392,6 +392,7 @@ function cacheElements() {
   // 댓글
   elements.btnAddComment = document.getElementById('btnAddComment');
   elements.btnFullscreenMarker = document.getElementById('btnFullscreenMarker');
+  elements.btnExitFullscreen = document.getElementById('btnExitFullscreen');
   elements.commentsList = document.getElementById('commentsList');
   elements.commentCount = document.getElementById('commentCount');
 
@@ -461,6 +462,7 @@ function setupEventListeners() {
   // 댓글
   elements.btnAddComment?.addEventListener('click', handleAddComment);
   elements.btnFullscreenMarker?.addEventListener('click', handleFullscreenMarkerButton);
+  elements.btnExitFullscreen?.addEventListener('click', exitFullscreenMode);
   elements.btnCloseModal?.addEventListener('click', closeCommentModal);
   elements.btnCancelComment?.addEventListener('click', closeCommentModal);
   elements.btnSubmitComment?.addEventListener('click', submitComment);
@@ -1019,7 +1021,7 @@ async function loadVideoFromDrive(fileId) {
 
 /**
  * 프로그레시브 다운로드 방식으로 영상 로드
- * - 파일의 80%를 먼저 다운로드 (개선: 더 많이 로드)
+ * - 파일의 80%를 먼저 다운로드 (필수)
  * - 재생 시작
  * - 백그라운드에서 나머지 20% 다운로드
  */
@@ -1027,12 +1029,10 @@ async function loadVideoWithStreaming(fileId, meta) {
   const total = parseInt(meta.size, 10) || 0;
   const mimeType = meta.mimeType || 'video/mp4';
 
-  // 80% 또는 최대 150MB 중 작은 값을 초기 다운로드 크기로 설정 (개선)
-  const MAX_INITIAL_SIZE = 150 * 1024 * 1024; // 150MB (기존 50MB → 150MB)
-  const TARGET_PERCENT = Math.floor(total * 0.8); // 80% (기존 50% → 80%)
-  const initialSize = Math.min(TARGET_PERCENT, MAX_INITIAL_SIZE);
+  // 항상 80%를 초기 다운로드 (용량 제한 없음)
+  const initialSize = Math.floor(total * 0.8);
 
-  console.log(`📥 프로그레시브 다운로드 시작: 전체 ${(total / 1024 / 1024).toFixed(1)}MB, 초기 ${(initialSize / 1024 / 1024).toFixed(1)}MB (${Math.round(initialSize/total*100)}%)`);
+  console.log(`📥 프로그레시브 다운로드 시작: 전체 ${(total / 1024 / 1024).toFixed(1)}MB, 초기 ${(initialSize / 1024 / 1024).toFixed(1)}MB (80%)`);
 
   // 초기 다운로드 (더 큰 청크로 분할)
   const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB 청크 (기존 5MB → 10MB)
@@ -2445,18 +2445,14 @@ function toggleFullscreen() {
     return;
   }
 
-  // iOS Safari: 비디오 요소의 webkitEnterFullscreen 사용
-  if (IS_MOBILE && video && video.webkitEnterFullscreen) {
-    try {
-      video.webkitEnterFullscreen();
-      state.isFullscreen = true;
-      return;
-    } catch (err) {
-      console.log('iOS 전체화면 진입 실패:', err);
-    }
+  // 모바일: 항상 CSS 기반 전체화면 사용 (앱 UI 유지, 마커 추가 가능)
+  // 네이티브 전체화면(webkitEnterFullscreen)은 OS UI만 표시되어 마커 추가 불가
+  if (IS_MOBILE) {
+    enterCSSFullscreen();
+    return;
   }
 
-  // 표준 Fullscreen API 시도
+  // 데스크톱: 표준 Fullscreen API 시도
   const enterFullscreen = viewerScreen.requestFullscreen ||
                           viewerScreen.webkitRequestFullscreen ||
                           viewerScreen.mozRequestFullScreen ||
@@ -2465,12 +2461,6 @@ function toggleFullscreen() {
   if (enterFullscreen) {
     enterFullscreen.call(viewerScreen).then(() => {
       state.isFullscreen = true;
-      // 모바일: 가로 모드 강제
-      if (IS_MOBILE && screen.orientation && screen.orientation.lock) {
-        screen.orientation.lock('landscape').catch(() => {
-          console.log('화면 회전 잠금 실패 (권한 없음)');
-        });
-      }
     }).catch((err) => {
       console.log('전체화면 진입 실패:', err);
       // 폴백: CSS 기반 전체화면
