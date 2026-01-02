@@ -1,0 +1,55 @@
+# BAEFRAME 웹 뷰어 자동 배포
+# web-viewer 폴더가 변경되면 GitHub Pages에 자동 배포
+
+name: 웹 뷰어 배포
+
+on:
+  # web-viewer 폴더가 변경될 때만 실행
+  push:
+    branches:
+      - main
+      - 'claude/웹뷰어-*'
+    paths:
+      - 'web-viewer/**'
+
+  # 수동 실행도 가능
+  workflow_dispatch:
+
+# GitHub Pages 배포 권한
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 동시 배포 방지
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  # 빌드 작업
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 📦 GitHub Pages 설정
+        uses: actions/configure-pages@v4
+
+      - name: 📁 web-viewer 폴더 업로드
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './web-viewer'
+
+  # 배포 작업
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: 🚀 GitHub Pages 배포
+        id: deployment
+        uses: actions/deploy-pages@v4
