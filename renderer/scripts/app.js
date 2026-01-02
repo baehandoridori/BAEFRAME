@@ -606,20 +606,77 @@ async function initApp() {
     return path.split(/[/\\]/).pop() || '';
   }
 
-  // 웹 공유 버튼 클릭 - 모달 열기
-  elements.btnWebShare.addEventListener('click', () => {
+  // 웹 공유 버튼 클릭 - 자동 링크 생성 시도
+  elements.btnWebShare.addEventListener('click', async () => {
+    const videoPath = reviewDataManager.getVideoPath();
+    const bframePath = reviewDataManager.getBframePath();
+
+    if (!videoPath || !bframePath) {
+      showToast('먼저 파일을 열어주세요.', 'warn');
+      return;
+    }
+
+    const isGDrive = isGoogleDrivePath(videoPath) || isGoogleDrivePath(bframePath);
+
+    if (isGDrive) {
+      // Google Drive 파일 → 자동 링크 생성 시도
+      try {
+        // 인증 상태 확인
+        const isAuth = await window.electronAPI.googleIsAuthenticated();
+        log.info('Google 인증 상태', { isAuth });
+
+        if (!isAuth) {
+          showToast('Google 로그인 중... (한 번만 필요)', 'info');
+          const loginResult = await window.electronAPI.googleLogin();
+          if (!loginResult.success) {
+            showToast('로그인 실패: ' + loginResult.error, 'error');
+            openManualWebShareModal();
+            return;
+          }
+          showToast('Google 로그인 성공!', 'success');
+        }
+
+        // 파일명으로 자동 검색 및 링크 생성
+        const videoName = getFileName(videoPath);
+        const bframeName = getFileName(bframePath);
+
+        showToast('웹 공유 링크 생성 중...', 'info');
+        const result = await window.electronAPI.googleGenerateWebShareLink(videoName, bframeName);
+
+        if (result.success) {
+          // 클립보드에 복사
+          await window.electronAPI.copyToClipboard(result.webShareUrl);
+          showToast('✅ 웹 공유 링크가 클립보드에 복사되었습니다!', 'success');
+          log.info('웹 공유 링크 자동 생성 및 복사 완료', { url: result.webShareUrl });
+        } else {
+          log.warn('자동 링크 생성 실패, 수동 모달 열기', { error: result.error });
+          showToast('자동 생성 실패: ' + result.error, 'warn');
+          openManualWebShareModal();
+        }
+      } catch (error) {
+        log.error('웹 공유 링크 생성 중 오류', error);
+        showToast('오류 발생: ' + error.message, 'error');
+        openManualWebShareModal();
+      }
+    } else {
+      // Google Drive 파일이 아님 → 수동 모달 열기
+      showToast('Google Drive 파일만 웹 공유가 가능합니다.', 'warn');
+      openManualWebShareModal();
+    }
+  });
+
+  // 수동 웹 공유 모달 열기
+  function openManualWebShareModal() {
     elements.webShareModal.classList.add('active');
     elements.webShareResultGroup.style.display = 'none';
     elements.webShareVideoUrl.value = '';
     elements.webShareBframeUrl.value = '';
     elements.webShareResultUrl.value = '';
 
-    // Google Drive 파일인지 감지하고 파일명 표시
     const videoPath = reviewDataManager.getVideoPath();
     const bframePath = reviewDataManager.getBframePath();
     const isGDrive = isGoogleDrivePath(videoPath) || isGoogleDrivePath(bframePath);
 
-    // 파일명 정보 표시용 요소 업데이트
     const fileInfoEl = document.getElementById('webShareFileInfo');
     if (fileInfoEl) {
       if (isGDrive) {
@@ -627,10 +684,10 @@ async function initApp() {
         const bframeName = getFileName(bframePath);
         fileInfoEl.innerHTML = `
           <div class="file-info-box">
-            <strong>📁 Google Drive 파일 감지됨</strong><br>
+            <strong>📁 Google Drive 파일</strong><br>
             <span>영상: ${videoName || '(알 수 없음)'}</span><br>
             <span>Bframe: ${bframeName || '(알 수 없음)'}</span><br>
-            <small>위 파일명으로 Google Drive에서 검색하여 링크를 복사하세요.</small>
+            <small>자동 검색 실패 시, Google Drive에서 직접 링크를 복사하세요.</small>
           </div>
         `;
         fileInfoEl.style.display = 'block';
@@ -639,8 +696,8 @@ async function initApp() {
       }
     }
 
-    log.info('웹 공유 모달 열림', { isGDrive, videoPath, bframePath });
-  });
+    log.info('수동 웹 공유 모달 열림');
+  }
 
   // 모달 닫기
   function closeWebShareModal() {

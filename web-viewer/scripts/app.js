@@ -414,7 +414,7 @@ async function loadGoogleAPI() {
   });
 }
 
-async function handleGoogleLogin() {
+async function handleGoogleLogin(forceSilent = false) {
   if (!state.gapiLoaded) {
     showToast('Google API가 로드되지 않았습니다', 'error');
     return;
@@ -422,7 +422,7 @@ async function handleGoogleLogin() {
 
   // 이미 로그인된 경우 재인증 여부 확인
   const isReauth = !!state.accessToken;
-  if (isReauth) {
+  if (isReauth && !forceSilent) {
     showToast('재인증 중...', 'info');
   }
 
@@ -434,7 +434,9 @@ async function handleGoogleLogin() {
       callback: (response) => {
         if (response.error) {
           console.error('로그인 에러:', response);
-          showToast('로그인 실패: ' + (response.error_description || response.error), 'error');
+          if (!forceSilent) {
+            showToast('로그인 실패: ' + (response.error_description || response.error), 'error');
+          }
           return;
         }
         state.accessToken = response.access_token;
@@ -445,15 +447,43 @@ async function handleGoogleLogin() {
 
         // 버튼 상태 업데이트 (재인증 가능하도록 disabled 하지 않음)
         elements.btnGoogleLogin.innerHTML = '✓ 로그인됨 <small style="opacity:0.7">(재인증)</small>';
-        showToast(isReauth ? '재인증 성공!' : '로그인 성공!', 'success');
+        if (!forceSilent) {
+          showToast(isReauth ? '재인증 성공!' : '로그인 성공!', 'success');
+        }
       }
     });
 
-    // prompt: 'consent'로 항상 권한 요청 화면 표시
-    state.tokenClient.requestAccessToken({ prompt: 'consent' });
+    // 저장된 토큰이 있고 유효하면 사용, 없으면 사용자 동의 요청
+    // forceSilent가 true면 prompt 없이 시도 (실패하면 조용히 무시)
+    const promptType = forceSilent ? '' : 'consent';
+    state.tokenClient.requestAccessToken({ prompt: promptType });
   } catch (error) {
     console.error('로그인 에러:', error);
-    showToast('로그인 중 오류 발생', 'error');
+    if (!forceSilent) {
+      showToast('로그인 중 오류 발생', 'error');
+    }
+  }
+}
+
+/**
+ * 저장된 토큰이 만료된 경우 자동으로 토큰 갱신 시도
+ */
+async function tryAutoRefreshToken() {
+  if (state.accessToken) return; // 이미 토큰이 있음
+
+  const savedToken = localStorage.getItem('baeframe_access_token');
+  const tokenExpiry = localStorage.getItem('baeframe_token_expiry');
+
+  if (savedToken && tokenExpiry) {
+    const expiryTime = parseInt(tokenExpiry, 10);
+    const now = Date.now();
+
+    // 토큰이 만료되었거나 곧 만료될 예정이면 자동 갱신 시도
+    if (expiryTime <= now + 300000) {
+      console.log('🔄 토큰 만료 임박, 자동 갱신 시도...');
+      // Google GIS는 자동 갱신을 직접 지원하지 않음
+      // 사용자가 다음 로그인 시 갱신됨
+    }
   }
 }
 
