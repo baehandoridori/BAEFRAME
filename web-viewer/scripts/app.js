@@ -300,6 +300,7 @@ function cacheElements() {
 
   // 댓글
   elements.btnAddComment = document.getElementById('btnAddComment');
+  elements.btnFullscreenMarker = document.getElementById('btnFullscreenMarker');
   elements.commentsList = document.getElementById('commentsList');
   elements.commentCount = document.getElementById('commentCount');
 
@@ -368,6 +369,7 @@ function setupEventListeners() {
 
   // 댓글
   elements.btnAddComment?.addEventListener('click', handleAddComment);
+  elements.btnFullscreenMarker?.addEventListener('click', handleFullscreenMarkerButton);
   elements.btnCloseModal?.addEventListener('click', closeCommentModal);
   elements.btnCancelComment?.addEventListener('click', closeCommentModal);
   elements.btnSubmitComment?.addEventListener('click', submitComment);
@@ -2573,6 +2575,58 @@ function handleFullscreenClick(e) {
   if (!state.isCommentMode && document.body.classList.contains('fullscreen-mode')) {
     toggleFullscreenControls();
   }
+}
+
+// 마커 추가 모드 상태
+let isMarkerAddMode = false;
+
+/**
+ * 전체화면 마커 추가 버튼 클릭 핸들러 (iOS 대안)
+ */
+function handleFullscreenMarkerButton() {
+  const btn = elements.btnFullscreenMarker;
+
+  if (isMarkerAddMode) {
+    // 마커 추가 모드 종료
+    isMarkerAddMode = false;
+    btn?.classList.remove('active');
+    elements.videoContainer?.removeEventListener('click', handleMarkerPlacement);
+    showToast('마커 추가 모드 종료');
+  } else {
+    // 마커 추가 모드 시작
+    isMarkerAddMode = true;
+    btn?.classList.add('active');
+    elements.videoContainer?.addEventListener('click', handleMarkerPlacement, { once: true });
+    showToast('화면을 터치하여 마커를 추가하세요');
+
+    // 컨트롤 자동 숨김 방지
+    if (controlsHideTimer) {
+      clearTimeout(controlsHideTimer);
+    }
+  }
+}
+
+/**
+ * 마커 위치 선택 핸들러 (전체화면 마커 버튼용)
+ */
+function handleMarkerPlacement(e) {
+  // 버튼 자체를 클릭한 경우 무시
+  if (e.target.closest('.btn-fullscreen-marker')) {
+    elements.videoContainer?.addEventListener('click', handleMarkerPlacement, { once: true });
+    return;
+  }
+
+  // 마커 모드 종료
+  isMarkerAddMode = false;
+  elements.btnFullscreenMarker?.classList.remove('active');
+
+  // 터치/클릭 위치 계산
+  const rect = elements.videoContainer.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+  // 마커 추가 처리
+  handleLongPressMarker(clientX, clientY);
 }
 
 /**

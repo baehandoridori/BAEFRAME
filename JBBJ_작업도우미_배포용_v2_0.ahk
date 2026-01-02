@@ -1013,7 +1013,7 @@ return
         Sleep, 300
 
         ; 2. 텍스트 필드에 파일명 입력
-        Clipboard := "배프레임 " . g_LastFileName
+        Clipboard := g_LastFileName . ".bframe"
         ClipWait, 1
         Send, ^v
         Sleep, 100
@@ -1041,8 +1041,8 @@ return
         Send, ^+u
         Sleep, 300
 
-        ; 2. 텍스트 필드에 "파일명 / 모바일 및 웹 버전" 입력
-        Clipboard := g_LastFileName . " / 모바일 및 웹 버전"
+        ; 2. 텍스트 필드에 "파일명 / 모바일 버전" 입력
+        Clipboard := g_LastFileName . ".bframe / 모바일 버전"
         ClipWait, 1
         Send, ^v
         Sleep, 100
