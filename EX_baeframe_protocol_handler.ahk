@@ -22,6 +22,7 @@ global BAEFRAME_PATHS := []
 BAEFRAME_PATHS.Push("C:\BAEframe\BAEFRAME")                                                            ; 테스트용 경로
 BAEFRAME_PATHS.Push("G:\공유 드라이브\개인작업일지 배한솔\BAEFRAME")                                    ; 실제 배포 경로
 BAEFRAME_PATHS.Push("G:\공유 드라이브\개인작업일지 모음\개인작업일지_배한솔\02_업무\프로젝트\BAEFRAME")  ; 프로젝트 경로
+BAEFRAME_PATHS.Push("G:\공유 드라이브\JBBJ 자료실\한솔이의 두근두근 실험실\BAEFRAME")                   ; JBBJ 자료실 경로
 ; BAEFRAME_PATHS.Push("여기에 추가 경로...")                                                            ; 필요시 추가
 
 ; 명령줄 인자 받기 (baeframe://G:/경로/파일.bframe 또는 G:\경로\파일.bframe)

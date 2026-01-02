@@ -1177,7 +1177,7 @@ async function initApp() {
   }
 
   /**
-   * 캔버스 줌 동기화
+   * 캔버스 및 마커 컨테이너 줌 동기화
    */
   function syncCanvasZoom() {
     const scale = state.videoZoom / 100;
@@ -1190,6 +1190,11 @@ async function initApp() {
     if (elements.onionSkinCanvas) {
       elements.onionSkinCanvas.style.transform = transform;
       elements.onionSkinCanvas.style.transformOrigin = 'center center';
+    }
+    // 마커 컨테이너도 동일하게 적용 (영상 확대 시 마커가 따라다님)
+    if (markerContainer) {
+      markerContainer.style.transform = transform;
+      markerContainer.style.transformOrigin = 'center center';
     }
   }
 
