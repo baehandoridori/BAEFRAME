@@ -519,11 +519,11 @@ async function loadBframeFile(url) {
   console.log('bframe 파일 ID:', fileId);
   console.log('Access Token:', state.accessToken ? '있음 (' + state.accessToken.substring(0, 20) + '...)' : '없음');
 
-  // 인증된 fetch 사용
+  // 인증된 fetch 사용 (Shared Drive 지원)
   if (state.accessToken) {
     try {
       const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
         {
           headers: {
             'Authorization': `Bearer ${state.accessToken}`
@@ -576,9 +576,9 @@ async function loadVideoFromDrive(fileId) {
   updateLoadingStatus('영상 다운로드 중... (0%)');
 
   try {
-    // 파일 메타데이터 먼저 가져오기
+    // 파일 메타데이터 먼저 가져오기 (Shared Drive 지원)
     const metaResponse = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,size,mimeType`,
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,size,mimeType&supportsAllDrives=true`,
       {
         headers: { 'Authorization': `Bearer ${state.accessToken}` }
       }
@@ -602,9 +602,9 @@ async function loadVideoFromDrive(fileId) {
     console.log('파일 정보:', meta);
     elements.fileName.textContent = meta.name || '영상';
 
-    // 영상 다운로드 (진행률 표시)
+    // 영상 다운로드 (진행률 표시, Shared Drive 지원)
     const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
       {
         headers: { 'Authorization': `Bearer ${state.accessToken}` }
       }
