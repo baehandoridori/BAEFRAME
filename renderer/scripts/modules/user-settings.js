@@ -95,7 +95,9 @@ export class UserSettings extends EventTarget {
       shortcutSet: 'set2', // 'set1' 또는 'set2' (기본값: set2)
       // 댓글 썸네일 설정
       showCommentThumbnails: true,
-      commentThumbnailScale: 100 // 50 ~ 200
+      commentThumbnailScale: 50, // 50 ~ 200 (기본값: 50%)
+      // 최초 이름 설정 여부 (모달 한 번만 표시)
+      hasSetNameOnce: false
     };
 
     this._loadFromStorage();
@@ -210,6 +212,7 @@ export class UserSettings extends EventTarget {
     if (name && name.trim()) {
       this.settings.userName = name.trim();
       this.settings.userSource = 'manual';
+      this.settings.hasSetNameOnce = true; // 이름 설정 완료 표시
       this._saveToStorage();
       this._emit('userNameChanged', { userName: this.settings.userName });
       log.info('사용자 이름 수동 설정됨', { userName: this.settings.userName });
@@ -220,6 +223,13 @@ export class UserSettings extends EventTarget {
       return true;
     }
     return false;
+  }
+
+  /**
+   * 최초 이름 설정 여부 확인
+   */
+  hasSetNameOnce() {
+    return this.settings.hasSetNameOnce === true;
   }
 
   /**
@@ -385,7 +395,7 @@ export class UserSettings extends EventTarget {
    * 댓글 썸네일 스케일 가져오기 (50 ~ 200)
    */
   getCommentThumbnailScale() {
-    return this.settings.commentThumbnailScale ?? 100;
+    return this.settings.commentThumbnailScale ?? 50;
   }
 
   /**

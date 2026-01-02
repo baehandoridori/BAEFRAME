@@ -1326,4 +1326,62 @@ body.fullscreen-mode .controls-overlay {
     width: 10px;
     height: 10px;
   }
+
+  /* 모바일 댓글 카드 사이즈 축소 */
+  .comment-card {
+    padding: 0.65rem 0.75rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .comment-header {
+    margin-bottom: 0.35rem;
+  }
+
+  .comment-time {
+    padding: 0.15rem 0.35rem;
+    font-size: 0.7rem;
+  }
+
+  .comment-author {
+    font-size: 0.75rem;
+  }
+
+  .comment-text {
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
+
+  .comment-footer {
+    margin-top: 0.5rem;
+    padding-top: 0.35rem;
+  }
+
+  .comment-actions button {
+    font-size: 0.7rem;
+    padding: 0.15rem;
+  }
+
+  /* 모바일 댓글 추가 버튼 사이즈 축소 */
+  .btn-add {
+    padding: 0.35rem 0.65rem;
+    font-size: 0.75rem;
+    border-radius: 4px;
+  }
+
+  .panel-header {
+    padding: 0.65rem 0.75rem;
+  }
+
+  .panel-header h3 {
+    font-size: 0.9rem;
+  }
+
+  .comments-list {
+    padding: 0.35rem;
+  }
+
+  /* 답글 스타일 축소 */
+  .reply-count {
+    font-size: 0.7rem;
+  }
 }

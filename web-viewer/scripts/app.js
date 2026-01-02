@@ -866,136 +866,76 @@ async function loadVideoFromDrive(fileId) {
 }
 
 /**
- * 스트리밍 방식으로 영상 로드 (먼저 재생 시작, 백그라운드에서 완전 다운로드)
+ * 프로그레시브 다운로드 방식으로 영상 로드
+ * - 파일의 50%를 먼저 다운로드
+ * - 재생 시작
+ * - 백그라운드에서 나머지 50% 다운로드
  */
 async function loadVideoWithStreaming(fileId, meta) {
   const total = parseInt(meta.size, 10) || 0;
   const mimeType = meta.mimeType || 'video/mp4';
 
-  // MediaSource API 지원 확인
-  if ('MediaSource' in window && MediaSource.isTypeSupported(mimeType)) {
-    try {
-      await loadWithMediaSource(fileId, meta);
-      return;
-    } catch (err) {
-      console.log('MediaSource 실패, 폴백 사용:', err);
-    }
-  }
+  // 50% 또는 최대 50MB 중 작은 값을 초기 다운로드 크기로 설정
+  const MAX_INITIAL_SIZE = 50 * 1024 * 1024; // 50MB
+  const HALF_SIZE = Math.floor(total / 2);
+  const initialSize = Math.min(HALF_SIZE, MAX_INITIAL_SIZE);
 
-  // 폴백: 청크 방식으로 빠르게 시작
-  updateLoadingStatus('영상 로드 중...');
+  console.log(`📥 프로그레시브 다운로드 시작: 전체 ${(total / 1024 / 1024).toFixed(1)}MB, 초기 ${(initialSize / 1024 / 1024).toFixed(1)}MB`);
 
-  // 처음 1MB만 먼저 다운로드해서 빠르게 시작
-  const INITIAL_CHUNK_SIZE = 1024 * 1024; // 1MB
-  const initialEnd = Math.min(INITIAL_CHUNK_SIZE - 1, total - 1);
+  // 초기 50% 다운로드 (여러 청크로 분할)
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB 청크
+  const chunks = [];
+  let offset = 0;
 
-  // 첫 청크 다운로드
-  const firstChunkResponse = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
-    {
-      headers: {
-        'Authorization': `Bearer ${state.accessToken}`,
-        'Range': `bytes=0-${initialEnd}`
+  while (offset < initialSize) {
+    const end = Math.min(offset + CHUNK_SIZE - 1, initialSize - 1, total - 1);
+    const percent = Math.round((offset / initialSize) * 100);
+    updateLoadingStatus(`영상 다운로드 중... (${percent}%)`);
+
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+      {
+        headers: {
+          'Authorization': `Bearer ${state.accessToken}`,
+          'Range': `bytes=${offset}-${end}`
+        }
       }
-    }
-  );
+    );
 
-  if (!firstChunkResponse.ok && firstChunkResponse.status !== 206) {
-    throw new Error(`영상 다운로드 실패 (${firstChunkResponse.status})`);
+    if (!response.ok && response.status !== 206) {
+      throw new Error(`영상 다운로드 실패 (${response.status})`);
+    }
+
+    const chunk = await response.arrayBuffer();
+    chunks.push(chunk);
+    offset = end + 1;
   }
 
-  const firstChunk = await firstChunkResponse.arrayBuffer();
-  console.log(`✅ 첫 ${(firstChunk.byteLength / 1024 / 1024).toFixed(2)}MB 로드 완료`);
+  console.log(`✅ 초기 ${(offset / 1024 / 1024).toFixed(1)}MB 다운로드 완료`);
+  updateLoadingStatus('영상 준비 중...');
 
-  // 첫 청크로 Blob 생성하여 재생 시작
-  let currentBlob = new Blob([firstChunk], { type: mimeType });
-  let currentUrl = URL.createObjectURL(currentBlob);
+  // Blob 생성 및 재생 시작
+  const initialBlob = new Blob(chunks, { type: mimeType });
+  const initialUrl = URL.createObjectURL(initialBlob);
 
-  await loadVideoFromUrl(currentUrl);
+  await loadVideoFromUrl(initialUrl);
   updateLoadingStatus('');
 
   // 백그라운드에서 나머지 다운로드
-  if (total > INITIAL_CHUNK_SIZE) {
-    downloadRemainingInBackground(fileId, firstChunk, total, mimeType);
+  if (offset < total) {
+    downloadRemainingInBackground(fileId, chunks, offset, total, mimeType);
   }
-}
-
-/**
- * MediaSource API를 사용한 스트리밍 (지원되는 경우)
- */
-async function loadWithMediaSource(fileId, meta) {
-  return new Promise((resolve, reject) => {
-    const mediaSource = new MediaSource();
-    const videoUrl = URL.createObjectURL(mediaSource);
-
-    elements.videoPlayer.src = videoUrl;
-
-    mediaSource.addEventListener('sourceopen', async () => {
-      try {
-        const mimeType = meta.mimeType || 'video/mp4';
-        const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-
-        const total = parseInt(meta.size, 10) || 0;
-        const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
-        let offset = 0;
-
-        const appendNextChunk = async () => {
-          if (offset >= total) {
-            if (mediaSource.readyState === 'open') {
-              mediaSource.endOfStream();
-            }
-            resolve();
-            return;
-          }
-
-          const end = Math.min(offset + CHUNK_SIZE - 1, total - 1);
-
-          const response = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
-            {
-              headers: {
-                'Authorization': `Bearer ${state.accessToken}`,
-                'Range': `bytes=${offset}-${end}`
-              }
-            }
-          );
-
-          const chunk = await response.arrayBuffer();
-
-          sourceBuffer.appendBuffer(chunk);
-          offset = end + 1;
-
-          const percent = Math.round((offset / total) * 100);
-          if (percent < 100) {
-            updateLoadingStatus(`로드 중... (${percent}%)`);
-          } else {
-            updateLoadingStatus('');
-          }
-        };
-
-        sourceBuffer.addEventListener('updateend', appendNextChunk);
-        await appendNextChunk();
-
-      } catch (err) {
-        reject(err);
-      }
-    });
-
-    mediaSource.addEventListener('error', (e) => {
-      reject(new Error('MediaSource error'));
-    });
-  });
 }
 
 /**
  * 백그라운드에서 나머지 영상 다운로드
  */
-async function downloadRemainingInBackground(fileId, firstChunk, total, mimeType) {
-  console.log('🔄 백그라운드 다운로드 시작...');
+async function downloadRemainingInBackground(fileId, initialChunks, startOffset, total, mimeType) {
+  console.log(`🔄 백그라운드 다운로드 시작... (${Math.round(startOffset / total * 100)}% → 100%)`);
 
-  const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB chunks
-  const chunks = [firstChunk];
-  let offset = firstChunk.byteLength;
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+  const chunks = [...initialChunks]; // 기존 청크 복사
+  let offset = startOffset;
 
   while (offset < total) {
     const end = Math.min(offset + CHUNK_SIZE - 1, total - 1);
@@ -1566,7 +1506,7 @@ function submitComment() {
     startFrame: frame,
     endFrame: frame + state.frameRate * 4, // 4초간 표시
     text: text,
-    author: '웹 사용자',
+    author: '모바일 사용자',
     createdAt: new Date().toISOString(),
     resolved: false,
     replies: []
@@ -1776,7 +1716,7 @@ function submitReply() {
   comment.replies.push({
     id: generateId(),
     text: text,
-    author: '웹 사용자',
+    author: '모바일 사용자',
     timestamp: Date.now()
   });
 
@@ -2338,6 +2278,8 @@ function hideThumbnail() {
 
 // 컨트롤 자동 숨김 타이머
 let controlsHideTimer = null;
+let lastTapTime = 0;
+let lastTapPos = { x: 0, y: 0 };
 
 /**
  * 전체화면 토글
@@ -2498,8 +2440,68 @@ function clearFullscreenControls() {
 /**
  * 전체화면 터치/클릭 핸들러
  */
-function handleFullscreenTouch() {
+function handleFullscreenTouch(e) {
+  const now = Date.now();
+  const DOUBLE_TAP_DELAY = 300; // 더블탭 인식 시간 (ms)
+
+  // 터치 위치 가져오기
+  let touchX = 0, touchY = 0;
+  if (e.touches && e.touches.length > 0) {
+    touchX = e.touches[0].clientX;
+    touchY = e.touches[0].clientY;
+  }
+
+  // 더블탭 감지
+  if (now - lastTapTime < DOUBLE_TAP_DELAY) {
+    // 더블탭! → 마커 추가 모드 진입
+    handleDoubleTapMarker(lastTapPos.x, lastTapPos.y);
+    lastTapTime = 0; // 리셋
+    return;
+  }
+
+  // 첫 번째 탭 저장
+  lastTapTime = now;
+  lastTapPos = { x: touchX, y: touchY };
+
+  // 싱글 탭: 컨트롤 토글
   toggleFullscreenControls();
+}
+
+/**
+ * 더블탭으로 마커 추가 (전체화면에서)
+ */
+function handleDoubleTapMarker(screenX, screenY) {
+  const videoContainer = elements.videoContainer;
+  const video = elements.videoPlayer;
+  if (!videoContainer || !video) return;
+
+  // 비디오 영역 기준 상대 좌표 계산
+  const rect = videoContainer.getBoundingClientRect();
+  const relativeX = (screenX - rect.left) / rect.width;
+  const relativeY = (screenY - rect.top) / rect.height;
+
+  // 0~1 범위로 클램핑
+  const x = Math.max(0, Math.min(1, relativeX));
+  const y = Math.max(0, Math.min(1, relativeY));
+
+  // 댓글 추가 모드 진입
+  state.isCommentMode = true;
+  state.pendingCommentPos = { x, y };
+
+  // 마커 프리뷰 표시
+  const markerOverlay = document.getElementById('markerOverlay');
+  const markerPreview = document.getElementById('markerPreview');
+  if (markerOverlay && markerPreview) {
+    markerOverlay.classList.add('active');
+    markerPreview.style.left = `${x * 100}%`;
+    markerPreview.style.top = `${y * 100}%`;
+  }
+
+  // 컨트롤 표시
+  showFullscreenControls();
+
+  // 댓글 작성 모달 열기
+  openCommentModal();
 }
 
 function handleFullscreenClick(e) {

@@ -999,6 +999,14 @@ async function initApp() {
     e.stopPropagation();
   });
 
+  // 이름 변경 버튼 클릭
+  const btnChangeUserName = document.getElementById('btnChangeUserName');
+  btnChangeUserName?.addEventListener('click', () => {
+    commentSettingsDropdown?.classList.remove('open');
+    btnCommentSettings?.classList.remove('active');
+    openUserSettingsModal();
+  });
+
   // 썸네일 토글 변경
   toggleCommentThumbnails?.addEventListener('change', () => {
     const show = toggleCommentThumbnails.checked;
@@ -2359,7 +2367,7 @@ async function initApp() {
             💬
           </button>
           <button class="comment-action-btn resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
-            ${marker.resolved ? '↩️ 미해결' : '✓ 해결'}
+            ${marker.resolved ? `✓ 해결됨 <span class="resolved-time">(${marker.resolvedAt ? formatRelativeTime(marker.resolvedAt) : ''})</span>` : '✓ 해결'}
           </button>
           <button class="comment-action-btn delete-btn" title="삭제">
             🗑️
@@ -2602,25 +2610,42 @@ async function initApp() {
   }
 
   /**
-   * 리사이저 설정
+   * 리사이저 설정 (마우스 커서 추적 개선)
    */
   function setupResizer(resizer, direction, onResize) {
     let isResizing = false;
     let startPos = 0;
+    let rafId = null;
+    let pendingDelta = 0;
+
+    const applyResize = () => {
+      if (pendingDelta !== 0) {
+        onResize(pendingDelta);
+        pendingDelta = 0;
+      }
+      rafId = null;
+    };
 
     resizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
       isResizing = true;
       startPos = direction === 'col' ? e.clientX : e.clientY;
       resizer.classList.add('dragging');
       document.body.style.cursor = direction === 'col' ? 'col-resize' : 'row-resize';
+      document.body.style.userSelect = 'none';
     });
 
     document.addEventListener('mousemove', (e) => {
       if (!isResizing) return;
+
       const currentPos = direction === 'col' ? e.clientX : e.clientY;
-      const delta = currentPos - startPos;
+      pendingDelta = currentPos - startPos;
       startPos = currentPos;
-      onResize(delta);
+
+      // requestAnimationFrame으로 부드럽게 리사이징
+      if (!rafId) {
+        rafId = requestAnimationFrame(applyResize);
+      }
     });
 
     document.addEventListener('mouseup', () => {
@@ -2628,6 +2653,11 @@ async function initApp() {
         isResizing = false;
         resizer.classList.remove('dragging');
         document.body.style.cursor = 'default';
+        document.body.style.userSelect = '';
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
       }
     });
   }
@@ -3034,8 +3064,8 @@ async function initApp() {
     }
   });
 
-  // 익명 사용자인 경우 최초 한 번 이름 설정 요청
-  if (userSettings.getUserSource() === 'anonymous' || userName === '익명') {
+  // 최초 한 번만 이름 설정 요청 (이미 설정한 적이 있으면 표시하지 않음)
+  if (!userSettings.hasSetNameOnce() && (userSettings.getUserSource() === 'anonymous' || userName === '익명')) {
     // 약간의 딜레이 후 모달 열기
     setTimeout(() => {
       openUserSettingsModal();

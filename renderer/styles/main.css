@@ -1721,6 +1721,39 @@ body {
   pointer-events: none;
 }
 
+/* 설정 드롭다운 구분선 및 버튼 */
+.settings-dropdown-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 8px 14px;
+}
+
+.settings-dropdown-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 28px);
+  margin: 8px 14px 14px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.settings-dropdown-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.settings-dropdown-btn svg {
+  opacity: 0.7;
+}
+
 .filter-bar {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
@@ -2649,6 +2682,13 @@ body {
   color: var(--accent-primary);
   border-color: var(--accent-primary);
   background: rgba(var(--accent-primary-rgb), 0.1);
+}
+
+/* 해결 시간 표시 */
+.resolved-time {
+  font-size: 0.75em;
+  opacity: 0.7;
+  margin-left: 2px;
 }
 
 .comment-empty {
