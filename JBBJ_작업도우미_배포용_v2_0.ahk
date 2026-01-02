@@ -63,6 +63,8 @@ global checkPathToLink := 1      ; 경로→링크 자동변환 토글 (기본 O
 global isConvertingClipboard := false  ; 클립보드 변환 중 플래그 (무한루프 방지)
 global g_LastOriginalPath := ""  ; Slack 하이퍼링크용 원본 경로
 global g_LastJbbjLink := ""      ; Slack 하이퍼링크용 jbbj:// 링크
+global g_LastWebShareUrl := ""   ; [BAEFRAME] 웹 공유 URL (모바일/웹 버전)
+global g_LastFileName := ""      ; [BAEFRAME] 파일명
 
 
 ; --- 추가: 툴팁용 전역 핸들 변수 (각 버튼에 대한 hWnd) ---
@@ -978,13 +980,13 @@ return
 #IfWinActive ahk_exe slack.exe
 
 ^+v::
-    global g_LastOriginalPath, g_LastJbbjLink
+    global g_LastOriginalPath, g_LastJbbjLink, g_LastWebShareUrl, g_LastFileName
 
     ; ─────────────────────────────────────────────
     ; [디버그] 어떤 값이 저장되어 있는지 확인
     ; 문제 해결 후 이 줄을 주석 처리하세요
     ; ─────────────────────────────────────────────
-    ; MsgBox, 64, 디버그, 텍스트: %g_LastOriginalPath%`n`n링크: %g_LastJbbjLink%
+    ; MsgBox, 64, 디버그, 텍스트: %g_LastOriginalPath%`n링크: %g_LastJbbjLink%`n웹URL: %g_LastWebShareUrl%`n파일명: %g_LastFileName%
 
     ; 저장된 경로가 없으면 일반 붙여넣기
     if (g_LastOriginalPath = "" || g_LastJbbjLink = "")
@@ -995,6 +997,84 @@ return
 
     ; 클립보드 백업
     savedClip := ClipboardAll
+
+    ; ─────────────────────────────────────────────────────────────────
+    ; [BAEFRAME 듀얼 링크] 웹 공유 URL이 있으면 두 개의 하이퍼링크 생성
+    ; 형식:
+    ;   배프레임 파일이름  (baeframe:// 링크)
+    ;
+    ;   모바일/웹 버전 링크  (웹 공유 URL)
+    ; ─────────────────────────────────────────────────────────────────
+    if (g_LastWebShareUrl != "")
+    {
+        ; === 첫 번째 하이퍼링크: BAEFRAME 앱 링크 ===
+        ; 1. 하이퍼링크 다이얼로그 열기 (Ctrl+Shift+U)
+        Send, ^+u
+        Sleep, 300
+
+        ; 2. 텍스트 필드에 파일명 입력
+        Clipboard := "배프레임 " . g_LastFileName
+        ClipWait, 1
+        Send, ^v
+        Sleep, 100
+
+        ; 3. Tab으로 링크 필드로 이동
+        Send, {Tab}
+        Sleep, 100
+
+        ; 4. 링크 필드에 baeframe:// 링크 붙여넣기
+        Clipboard := g_LastJbbjLink
+        ClipWait, 1
+        Send, ^v
+        Sleep, 50
+
+        ; 5. 엔터로 확인
+        Send, {Enter}
+        Sleep, 200
+
+        ; === 빈 줄 추가 ===
+        Send, {Enter}
+        Sleep, 100
+
+        ; === 두 번째 하이퍼링크: 웹/모바일 버전 링크 ===
+        ; 1. 하이퍼링크 다이얼로그 열기 (Ctrl+Shift+U)
+        Send, ^+u
+        Sleep, 300
+
+        ; 2. 텍스트 필드에 "모바일/웹 버전 링크" 입력
+        Clipboard := "모바일/웹 버전 링크"
+        ClipWait, 1
+        Send, ^v
+        Sleep, 100
+
+        ; 3. Tab으로 링크 필드로 이동
+        Send, {Tab}
+        Sleep, 100
+
+        ; 4. 링크 필드에 웹 공유 URL 붙여넣기
+        Clipboard := g_LastWebShareUrl
+        ClipWait, 1
+        Send, ^v
+        Sleep, 50
+
+        ; 5. 엔터로 확인
+        Send, {Enter}
+
+        ; 클립보드 복원
+        Clipboard := savedClip
+        savedClip := ""
+
+        ; 전역 변수 초기화 (중복 붙여넣기 방지)
+        g_LastWebShareUrl := ""
+
+        ToolTip, 🎬 BAEFRAME 듀얼 링크 생성 완료`n(앱 링크 + 웹 링크)
+        SetTimer, RemoveToolTip, -2000
+        return
+    }
+
+    ; ─────────────────────────────────────────────────────────────────
+    ; [일반 모드] 웹 공유 URL 없으면 기존 방식 (단일 하이퍼링크)
+    ; ─────────────────────────────────────────────────────────────────
 
     ; 1. 하이퍼링크 다이얼로그 먼저 열기 (Ctrl+Shift+U)
     Send, ^+u
@@ -1338,6 +1418,7 @@ CheckAndRegisterBaeframeProtocol() {
 ; --------------------------------------------------------------------------
 ClipboardPathConverter(clipType) {
     global checkPathToLink, isConvertingClipboard, g_LastOriginalPath, g_LastJbbjLink
+    global g_LastWebShareUrl, g_LastFileName
 
     ; 비활성화 상태면 스킵
     if (checkPathToLink != 1)
@@ -1360,6 +1441,49 @@ ClipboardPathConverter(clipType) {
     ; 이미 jbbj:// 링크면 스킵
     if (SubStr(clipText, 1, 7) = "jbbj://")
         return
+
+    ; ─────────────────────────────────────────────────────────────────
+    ; [BAEFRAME 앱 연동] 파이프 구분 형식 감지: 경로|웹공유URL|파일명
+    ; BAEFRAME 데스크톱 앱에서 '링크 복사' 시 이 형식으로 복사됨
+    ; ─────────────────────────────────────────────────────────────────
+    if (InStr(clipText, "|") && RegExMatch(clipText, "i)^[G-Z]:\\.*\|https?://"))
+    {
+        ; 파이프로 분리: 경로|웹URL|파일명
+        StringSplit, parts, clipText, |
+
+        if (parts0 >= 3)
+        {
+            bframePath := parts1      ; .bframe 파일 경로
+            webShareUrl := parts2     ; 웹 공유 URL
+            fileName := parts3        ; 파일명
+
+            ; 경로 정제
+            cleanPath := Trim(bframePath)
+            cleanPath := RegExReplace(cleanPath, "[\r\n]+$", "")
+
+            ; URL용 슬래시 변환
+            urlPath := StrReplace(cleanPath, "\", "/")
+
+            ; baeframe:// 링크 생성
+            protocolLink := "baeframe://" . urlPath
+
+            ; 전역 변수에 저장
+            g_LastOriginalPath := fileName           ; 표시 텍스트 = 파일명
+            g_LastJbbjLink := protocolLink           ; baeframe:// 링크
+            g_LastWebShareUrl := Trim(webShareUrl)   ; 웹 공유 URL
+            g_LastFileName := Trim(fileName)         ; 파일명 (백업)
+
+            ; 클립보드는 원본 경로만 유지 (앱에서 일반 붙여넣기용)
+            isConvertingClipboard := true
+            Clipboard := cleanPath
+            ClipWait, 1
+            isConvertingClipboard := false
+
+            ToolTip, 🎬 BAEFRAME 링크 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기`n(앱 + 웹 링크 모두 포함)
+            SetTimer, RemoveToolTip, -3000
+            return
+        }
+    }
 
     ; G:\ ~ Z:\ 드라이브 경로인지 확인 (공유 드라이브 포함)
     if RegExMatch(clipText, "i)^[G-Z]:\\")
