@@ -444,6 +444,7 @@ body {
 }
 
 .timeline-container {
+  position: relative;
   margin-bottom: 0.75rem;
 }
 
@@ -582,15 +583,17 @@ body {
 /* 타임라인 썸네일 미리보기 */
 .timeline-thumbnail {
   position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
   background: var(--bg-secondary);
   border: 2px solid var(--accent-color);
   border-radius: 8px;
   padding: 4px;
   z-index: 100;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  /* 위치는 JS에서 동적으로 설정 */
 }
 
 .timeline-thumbnail.hidden {
