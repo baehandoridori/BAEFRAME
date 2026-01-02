@@ -12,6 +12,7 @@ const state = {
   gisLoaded: false,
   tokenClient: null,
   accessToken: null,
+  isRefreshing: false, // 토큰 갱신 중 플래그
 
   // 파일 정보
   videoFileId: null,
@@ -150,16 +151,17 @@ function restoreAccessToken() {
       const expiryTime = parseInt(tokenExpiry, 10);
       const now = Date.now();
 
-      // 토큰이 아직 유효한 경우 (만료 5분 전까지)
-      if (expiryTime > now + 300000) {
+      // 로컬 캐시 만료 전이면 일단 토큰 복원 (365일)
+      // 실제 Google 토큰 만료 시 API 호출에서 자동 갱신 시도됨
+      if (expiryTime > now) {
         state.accessToken = savedToken;
-        console.log('✅ 저장된 토큰 복원 성공');
+        console.log('✅ 저장된 토큰 복원 성공 (API 호출 시 유효성 확인)');
         return true;
       } else {
-        // 만료된 토큰 삭제
+        // 캐시도 만료됨 - 재로그인 필요
         localStorage.removeItem('baeframe_access_token');
         localStorage.removeItem('baeframe_token_expiry');
-        console.log('⏰ 토큰 만료됨, 재로그인 필요');
+        console.log('⏰ 토큰 캐시 만료됨 (365일 초과), 재로그인 필요');
       }
     }
   } catch (error) {
@@ -169,15 +171,16 @@ function restoreAccessToken() {
 }
 
 /**
- * 토큰 저장 (7일 유효 - 로컬 캐시용, 만료 시 재로그인 필요)
+ * 토큰 저장 (365일 유효 - 로컬 캐시용)
+ * Google 토큰 자체는 1시간마다 만료되지만, 자동 갱신을 시도함
  */
 function saveAccessToken(token) {
   try {
     localStorage.setItem('baeframe_access_token', token);
-    // 7일 유효 (604800000ms = 7 * 24 * 60 * 60 * 1000)
-    const expiry = Date.now() + 604800000;
+    // 365일 유효 (31536000000ms = 365 * 24 * 60 * 60 * 1000)
+    const expiry = Date.now() + 31536000000;
     localStorage.setItem('baeframe_token_expiry', expiry.toString());
-    console.log('💾 토큰 저장됨 (7일 유효)');
+    console.log('💾 토큰 저장됨 (365일 유효)');
   } catch (error) {
     console.error('토큰 저장 실패:', error);
   }
@@ -300,6 +303,7 @@ function cacheElements() {
 
   // 댓글
   elements.btnAddComment = document.getElementById('btnAddComment');
+  elements.btnFullscreenMarker = document.getElementById('btnFullscreenMarker');
   elements.commentsList = document.getElementById('commentsList');
   elements.commentCount = document.getElementById('commentCount');
 
@@ -368,6 +372,7 @@ function setupEventListeners() {
 
   // 댓글
   elements.btnAddComment?.addEventListener('click', handleAddComment);
+  elements.btnFullscreenMarker?.addEventListener('click', handleFullscreenMarkerButton);
   elements.btnCloseModal?.addEventListener('click', closeCommentModal);
   elements.btnCancelComment?.addEventListener('click', closeCommentModal);
   elements.btnSubmitComment?.addEventListener('click', submitComment);
@@ -497,23 +502,73 @@ async function handleGoogleLogin(forceSilent = false) {
 
 /**
  * 저장된 토큰이 만료된 경우 자동으로 토큰 갱신 시도
+ * Google API 호출 실패 시에도 호출됨
  */
 async function tryAutoRefreshToken() {
-  if (state.accessToken) return; // 이미 토큰이 있음
+  // 이미 갱신 시도 중이면 중복 방지
+  if (state.isRefreshing) return false;
+  state.isRefreshing = true;
 
-  const savedToken = localStorage.getItem('baeframe_access_token');
-  const tokenExpiry = localStorage.getItem('baeframe_token_expiry');
+  try {
+    console.log('🔄 토큰 자동 갱신 시도 (silent)...');
 
-  if (savedToken && tokenExpiry) {
-    const expiryTime = parseInt(tokenExpiry, 10);
-    const now = Date.now();
-
-    // 토큰이 만료되었거나 곧 만료될 예정이면 자동 갱신 시도
-    if (expiryTime <= now + 300000) {
-      console.log('🔄 토큰 만료 임박, 자동 갱신 시도...');
-      // Google GIS는 자동 갱신을 직접 지원하지 않음
-      // 사용자가 다음 로그인 시 갱신됨
+    // TokenClient가 없으면 초기화
+    if (!state.tokenClient) {
+      state.tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CONFIG.CLIENT_ID,
+        scope: CONFIG.SCOPES,
+        callback: (response) => {
+          state.isRefreshing = false;
+          if (response.error) {
+            console.log('⚠️ Silent 갱신 실패, 사용자 재인증 필요');
+            return;
+          }
+          state.accessToken = response.access_token;
+          saveAccessToken(response.access_token);
+          console.log('✅ 토큰 자동 갱신 성공!');
+          updateLoginButtonState();
+        }
+      });
     }
+
+    // prompt: '' 또는 'none'으로 사일런트 갱신 시도
+    state.tokenClient.requestAccessToken({ prompt: '' });
+    return true;
+  } catch (error) {
+    console.log('⚠️ 자동 갱신 실패:', error);
+    state.isRefreshing = false;
+    return false;
+  }
+}
+
+/**
+ * API 호출 래퍼 - 401 에러 시 자동 재인증 시도
+ */
+async function fetchWithAutoRefresh(url, options = {}) {
+  try {
+    const response = await fetch(url, options);
+
+    // 401/403 에러 시 토큰 갱신 시도 후 재요청
+    if (response.status === 401 || response.status === 403) {
+      console.log('🔐 인증 만료, 자동 갱신 시도...');
+      await tryAutoRefreshToken();
+
+      // 잠시 대기 후 재시도
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      if (state.accessToken) {
+        // 새 토큰으로 재요청
+        options.headers = {
+          ...options.headers,
+          'Authorization': `Bearer ${state.accessToken}`
+        };
+        return fetch(url, options);
+      }
+    }
+
+    return response;
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -2573,6 +2628,58 @@ function handleFullscreenClick(e) {
   if (!state.isCommentMode && document.body.classList.contains('fullscreen-mode')) {
     toggleFullscreenControls();
   }
+}
+
+// 마커 추가 모드 상태
+let isMarkerAddMode = false;
+
+/**
+ * 전체화면 마커 추가 버튼 클릭 핸들러 (iOS 대안)
+ */
+function handleFullscreenMarkerButton() {
+  const btn = elements.btnFullscreenMarker;
+
+  if (isMarkerAddMode) {
+    // 마커 추가 모드 종료
+    isMarkerAddMode = false;
+    btn?.classList.remove('active');
+    elements.videoContainer?.removeEventListener('click', handleMarkerPlacement);
+    showToast('마커 추가 모드 종료');
+  } else {
+    // 마커 추가 모드 시작
+    isMarkerAddMode = true;
+    btn?.classList.add('active');
+    elements.videoContainer?.addEventListener('click', handleMarkerPlacement, { once: true });
+    showToast('화면을 터치하여 마커를 추가하세요');
+
+    // 컨트롤 자동 숨김 방지
+    if (controlsHideTimer) {
+      clearTimeout(controlsHideTimer);
+    }
+  }
+}
+
+/**
+ * 마커 위치 선택 핸들러 (전체화면 마커 버튼용)
+ */
+function handleMarkerPlacement(e) {
+  // 버튼 자체를 클릭한 경우 무시
+  if (e.target.closest('.btn-fullscreen-marker')) {
+    elements.videoContainer?.addEventListener('click', handleMarkerPlacement, { once: true });
+    return;
+  }
+
+  // 마커 모드 종료
+  isMarkerAddMode = false;
+  elements.btnFullscreenMarker?.classList.remove('active');
+
+  // 터치/클릭 위치 계산
+  const rect = elements.videoContainer.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+  // 마커 추가 처리
+  handleLongPressMarker(clientX, clientY);
 }
 
 /**
