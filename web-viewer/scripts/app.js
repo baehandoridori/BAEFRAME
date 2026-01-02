@@ -695,6 +695,19 @@ function saveRecentFile(videoUrl, bframeUrl) {
 function extractDriveFileId(url) {
   console.log('🔍 URL 파싱 시작:', url);
 
+  if (!url) {
+    console.error('❌ URL이 비어있음');
+    return null;
+  }
+
+  // URL 디코딩 (혹시 인코딩된 경우)
+  try {
+    url = decodeURIComponent(url);
+    console.log('🔗 디코딩된 URL:', url);
+  } catch (e) {
+    console.log('URL 디코딩 스킵 (이미 디코딩됨)');
+  }
+
   // Google Drive URL에서 파일 ID 추출
   const patterns = [
     /\/file\/d\/([a-zA-Z0-9_-]+)/,
@@ -712,7 +725,7 @@ function extractDriveFileId(url) {
     }
   }
 
-  console.error('❌ 파일 ID 추출 실패');
+  console.error('❌ 파일 ID 추출 실패. URL 패턴 확인 필요:', url);
   return null;
 }
 
@@ -729,24 +742,27 @@ async function loadBframeFile(url) {
     throw new Error('올바른 Google Drive URL이 아닙니다');
   }
 
-  console.log('bframe 파일 ID:', fileId);
-  console.log('Access Token:', state.accessToken ? '있음 (' + state.accessToken.substring(0, 20) + '...)' : '없음');
+  console.log('📁 bframe 파일 ID:', fileId);
+  console.log('🔑 Access Token:', state.accessToken ? '있음 (' + state.accessToken.substring(0, 20) + '...)' : '없음');
 
   // 인증된 fetch 사용 (Shared Drive 지원)
   if (state.accessToken) {
     try {
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
-        {
-          headers: {
-            'Authorization': `Bearer ${state.accessToken}`
-          }
+      const apiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
+      console.log('🌐 API 요청 URL:', apiUrl);
+
+      const response = await fetch(apiUrl, {
+        headers: {
+          'Authorization': `Bearer ${state.accessToken}`
         }
-      );
+      });
+
+      console.log('📡 API 응답 상태:', response.status, response.statusText);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('API 에러 응답:', errorText);
+        console.error('❌ API 에러 응답:', errorText);
+        console.error('❌ 파일 ID 확인:', fileId, '(길이:', fileId.length, ')');
 
         // 에러 코드별 메시지
         if (response.status === 401) {
