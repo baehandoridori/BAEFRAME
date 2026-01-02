@@ -44,10 +44,11 @@ const CONFIG = {
   DISCOVERY_DOC: 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'
 };
 
-// 개발 모드 확인
+// 개발 모드 확인 (localhost 또는 GitHub Pages)
 const IS_DEV_MODE = window.location.hostname === 'localhost' ||
                     window.location.hostname === '127.0.0.1' ||
-                    window.location.protocol === 'file:';
+                    window.location.protocol === 'file:' ||
+                    window.location.hostname.includes('github.io'); // GitHub Pages도 데모 모드
 
 // 테스트용 공개 비디오 URL
 const TEST_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
