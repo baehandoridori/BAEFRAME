@@ -568,10 +568,13 @@ async function initApp() {
     commentManager.startMarkerCreation(x, y);
   });
 
-  // 링크 복사 (.bframe 파일 경로 - JBBJ 방식과 동일)
+  // 링크 복사 (.bframe 파일 경로 + 웹 뷰어 링크)
   // 원시 경로를 복사하면 AutoHotkey가 baeframe:// 링크로 변환
+  // 웹 공유 링크도 함께 생성하여 복사
   elements.btnCopyLink.addEventListener('click', async () => {
     const bframePath = reviewDataManager.getBframePath();
+    const videoPath = reviewDataManager.getVideoPath();
+
     if (!bframePath) {
       showToast('먼저 파일을 열어주세요.', 'warn');
       return;
@@ -579,10 +582,53 @@ async function initApp() {
 
     // Windows 경로 형식으로 통일 (백슬래시 사용)
     const windowsPath = bframePath.replace(/\//g, '\\');
+    const fileName = windowsPath.split('\\').pop() || 'bframe 파일';
 
-    await window.electronAPI.copyToClipboard(windowsPath);
-    showToast('.bframe 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
-    log.info('경로 복사됨', { path: windowsPath });
+    // Google Drive 경로인 경우 웹 공유 링크도 생성
+    const isGDrive = isGoogleDrivePath(videoPath) || isGoogleDrivePath(bframePath);
+    let webShareUrl = null;
+
+    if (isGDrive && videoPath) {
+      try {
+        // 이미 저장된 링크가 있으면 사용
+        if (storedDriveLinks.videoUrl && storedDriveLinks.bframeUrl) {
+          const result = await window.electronAPI.generateWebShareLink(
+            storedDriveLinks.videoUrl,
+            storedDriveLinks.bframeUrl
+          );
+          if (result.success) {
+            webShareUrl = result.webShareUrl;
+          }
+        } else {
+          // 자동으로 Google Drive 파일 ID 추출 시도
+          const result = await window.electronAPI.generateGDriveShareLink(videoPath, bframePath);
+          if (result.success) {
+            storedDriveLinks.videoUrl = result.videoUrl;
+            storedDriveLinks.bframeUrl = result.bframeUrl;
+            webShareUrl = result.webShareUrl;
+          }
+        }
+      } catch (error) {
+        log.warn('웹 공유 링크 생성 실패 (무시)', error);
+      }
+    }
+
+    // 클립보드에 복사할 내용 생성
+    // 형식: .bframe경로|웹공유URL|파일명
+    // AutoHotkey가 이 형식을 파싱하여 Slack 메시지 생성
+    let clipboardContent = windowsPath;
+    if (webShareUrl) {
+      clipboardContent = `${windowsPath}|${webShareUrl}|${fileName}`;
+    }
+
+    await window.electronAPI.copyToClipboard(clipboardContent);
+
+    if (webShareUrl) {
+      showToast('링크가 복사되었습니다! Slack에서 Ctrl+Shift+V로 붙여넣기 (웹 뷰어 링크 포함)', 'success');
+    } else {
+      showToast('.bframe 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
+    }
+    log.info('경로 복사됨', { path: windowsPath, webShareUrl });
   });
 
   // ====== 웹 공유 모달 ======

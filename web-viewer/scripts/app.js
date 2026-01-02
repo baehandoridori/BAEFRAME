@@ -27,6 +27,7 @@ const state = {
   // UI 상태
   currentTab: 'comments',
   isDrawMode: false,
+  isFullscreen: false,
   drawTool: 'pen',
   drawColor: '#ffff00',
 
@@ -819,7 +820,7 @@ async function loadVideo(url) {
 
 async function loadVideoFromDrive(fileId) {
   console.log('Google Drive 영상 로드 시작:', fileId);
-  updateLoadingStatus('영상 다운로드 중... (0%)');
+  updateLoadingStatus('영상 정보 확인 중...');
 
   try {
     // 파일 메타데이터 먼저 가져오기 (Shared Drive 지원)
@@ -848,60 +849,206 @@ async function loadVideoFromDrive(fileId) {
     console.log('파일 정보:', meta);
     elements.fileName.textContent = meta.name || '영상';
 
-    // 영상 다운로드 (진행률 표시, Shared Drive 지원)
-    const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
-      {
-        headers: { 'Authorization': `Bearer ${state.accessToken}` }
-      }
-    );
+    // 🎬 스트리밍 URL로 즉시 재생 시작
+    const streamUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
+    updateLoadingStatus('스트리밍 준비 중...');
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('영상 다운로드 에러:', response.status, errorText);
+    // 비디오 소스 설정 (Authorization 헤더가 필요하므로 Blob으로 시작)
+    // Google Drive는 직접 스트리밍을 지원하지 않으므로 Range request 사용
+    await loadVideoWithStreaming(fileId, meta);
 
-      if (response.status === 403) {
-        throw new Error('영상 파일 접근 권한이 없습니다.');
-      } else if (response.status === 404) {
-        throw new Error('영상 파일을 찾을 수 없습니다.');
-      }
-      throw new Error(`영상 다운로드 실패 (${response.status})`);
-    }
-
-    const contentLength = response.headers.get('content-length');
-    const total = parseInt(contentLength, 10) || parseInt(meta.size, 10) || 0;
-    let loaded = 0;
-
-    // 스트림으로 읽기 (진행률 표시)
-    const reader = response.body.getReader();
-    const chunks = [];
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      chunks.push(value);
-      loaded += value.length;
-
-      if (total > 0) {
-        const percent = Math.round((loaded / total) * 100);
-        updateLoadingStatus(`영상 다운로드 중... (${percent}%)`);
-      }
-    }
-
-    // Blob 생성
-    const blob = new Blob(chunks, { type: meta.mimeType || 'video/mp4' });
-    const videoUrl = URL.createObjectURL(blob);
-
-    console.log('✅ 영상 다운로드 완료, Blob URL 생성');
-
-    // 비디오 로드
-    return loadVideoFromUrl(videoUrl);
+    console.log('✅ 영상 스트리밍 시작');
 
   } catch (error) {
     console.error('Google Drive 영상 로드 실패:', error);
-    // 원래 에러 메시지 유지
     throw error;
+  }
+}
+
+/**
+ * 스트리밍 방식으로 영상 로드 (먼저 재생 시작, 백그라운드에서 완전 다운로드)
+ */
+async function loadVideoWithStreaming(fileId, meta) {
+  const total = parseInt(meta.size, 10) || 0;
+  const mimeType = meta.mimeType || 'video/mp4';
+
+  // MediaSource API 지원 확인
+  if ('MediaSource' in window && MediaSource.isTypeSupported(mimeType)) {
+    try {
+      await loadWithMediaSource(fileId, meta);
+      return;
+    } catch (err) {
+      console.log('MediaSource 실패, 폴백 사용:', err);
+    }
+  }
+
+  // 폴백: 청크 방식으로 빠르게 시작
+  updateLoadingStatus('영상 로드 중...');
+
+  // 처음 1MB만 먼저 다운로드해서 빠르게 시작
+  const INITIAL_CHUNK_SIZE = 1024 * 1024; // 1MB
+  const initialEnd = Math.min(INITIAL_CHUNK_SIZE - 1, total - 1);
+
+  // 첫 청크 다운로드
+  const firstChunkResponse = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+    {
+      headers: {
+        'Authorization': `Bearer ${state.accessToken}`,
+        'Range': `bytes=0-${initialEnd}`
+      }
+    }
+  );
+
+  if (!firstChunkResponse.ok && firstChunkResponse.status !== 206) {
+    throw new Error(`영상 다운로드 실패 (${firstChunkResponse.status})`);
+  }
+
+  const firstChunk = await firstChunkResponse.arrayBuffer();
+  console.log(`✅ 첫 ${(firstChunk.byteLength / 1024 / 1024).toFixed(2)}MB 로드 완료`);
+
+  // 첫 청크로 Blob 생성하여 재생 시작
+  let currentBlob = new Blob([firstChunk], { type: mimeType });
+  let currentUrl = URL.createObjectURL(currentBlob);
+
+  await loadVideoFromUrl(currentUrl);
+  updateLoadingStatus('');
+
+  // 백그라운드에서 나머지 다운로드
+  if (total > INITIAL_CHUNK_SIZE) {
+    downloadRemainingInBackground(fileId, firstChunk, total, mimeType);
+  }
+}
+
+/**
+ * MediaSource API를 사용한 스트리밍 (지원되는 경우)
+ */
+async function loadWithMediaSource(fileId, meta) {
+  return new Promise((resolve, reject) => {
+    const mediaSource = new MediaSource();
+    const videoUrl = URL.createObjectURL(mediaSource);
+
+    elements.videoPlayer.src = videoUrl;
+
+    mediaSource.addEventListener('sourceopen', async () => {
+      try {
+        const mimeType = meta.mimeType || 'video/mp4';
+        const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+
+        const total = parseInt(meta.size, 10) || 0;
+        const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+        let offset = 0;
+
+        const appendNextChunk = async () => {
+          if (offset >= total) {
+            if (mediaSource.readyState === 'open') {
+              mediaSource.endOfStream();
+            }
+            resolve();
+            return;
+          }
+
+          const end = Math.min(offset + CHUNK_SIZE - 1, total - 1);
+
+          const response = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+            {
+              headers: {
+                'Authorization': `Bearer ${state.accessToken}`,
+                'Range': `bytes=${offset}-${end}`
+              }
+            }
+          );
+
+          const chunk = await response.arrayBuffer();
+
+          sourceBuffer.appendBuffer(chunk);
+          offset = end + 1;
+
+          const percent = Math.round((offset / total) * 100);
+          if (percent < 100) {
+            updateLoadingStatus(`로드 중... (${percent}%)`);
+          } else {
+            updateLoadingStatus('');
+          }
+        };
+
+        sourceBuffer.addEventListener('updateend', appendNextChunk);
+        await appendNextChunk();
+
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    mediaSource.addEventListener('error', (e) => {
+      reject(new Error('MediaSource error'));
+    });
+  });
+}
+
+/**
+ * 백그라운드에서 나머지 영상 다운로드
+ */
+async function downloadRemainingInBackground(fileId, firstChunk, total, mimeType) {
+  console.log('🔄 백그라운드 다운로드 시작...');
+
+  const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB chunks
+  const chunks = [firstChunk];
+  let offset = firstChunk.byteLength;
+
+  while (offset < total) {
+    const end = Math.min(offset + CHUNK_SIZE - 1, total - 1);
+
+    try {
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+        {
+          headers: {
+            'Authorization': `Bearer ${state.accessToken}`,
+            'Range': `bytes=${offset}-${end}`
+          }
+        }
+      );
+
+      if (!response.ok && response.status !== 206) {
+        console.error('백그라운드 다운로드 실패:', response.status);
+        break;
+      }
+
+      const chunk = await response.arrayBuffer();
+      chunks.push(chunk);
+      offset = end + 1;
+
+      const percent = Math.round((offset / total) * 100);
+      console.log(`📥 백그라운드 다운로드: ${percent}%`);
+
+    } catch (error) {
+      console.error('백그라운드 다운로드 에러:', error);
+      break;
+    }
+  }
+
+  // 전체 다운로드 완료 시 Blob URL 교체
+  if (offset >= total) {
+    console.log('✅ 백그라운드 다운로드 완료, Blob URL 교체');
+
+    const fullBlob = new Blob(chunks, { type: mimeType });
+    const fullUrl = URL.createObjectURL(fullBlob);
+
+    // 현재 재생 위치 저장
+    const currentTime = elements.videoPlayer.currentTime;
+    const wasPlaying = !elements.videoPlayer.paused;
+
+    // URL 교체
+    elements.videoPlayer.src = fullUrl;
+    elements.videoPlayer.currentTime = currentTime;
+
+    if (wasPlaying) {
+      elements.videoPlayer.play().catch(() => {});
+    }
+
+    console.log('✅ 전체 영상 캐시 완료');
   }
 }
 
@@ -2119,9 +2266,13 @@ function updateThumbnailPreview(e) {
   const progress = Math.max(0, Math.min(1, x / rect.width));
   const previewTime = progress * state.duration;
 
-  // 썸네일 위치 업데이트
+  // 썸네일 위치 업데이트 (화면 밖으로 나가지 않도록 클램핑)
+  const thumbnailWidth = 168; // 160px canvas + 8px padding
+  const maxLeft = rect.width - thumbnailWidth;
+  const clampedX = Math.max(0, Math.min(maxLeft, x - thumbnailWidth / 2));
+
   elements.timelineThumbnail.classList.remove('hidden');
-  elements.timelineThumbnail.style.left = `${x}px`;
+  elements.timelineThumbnail.style.left = `${clampedX}px`;
 
   // 시간 표시 업데이트
   if (elements.thumbnailTime) {
@@ -2193,52 +2344,99 @@ let controlsHideTimer = null;
  */
 function toggleFullscreen() {
   const viewerScreen = elements.viewerScreen;
+  const video = elements.videoPlayer;
 
-  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-    // 전체화면 진입
-    const enterFullscreen = viewerScreen.requestFullscreen ||
-                            viewerScreen.webkitRequestFullscreen ||
-                            viewerScreen.mozRequestFullScreen ||
-                            viewerScreen.msRequestFullscreen;
+  // 이미 전체화면인 경우 해제
+  if (document.fullscreenElement || document.webkitFullscreenElement || state.isFullscreen) {
+    exitFullscreenMode();
+    return;
+  }
 
-    if (enterFullscreen) {
-      enterFullscreen.call(viewerScreen).then(() => {
-        // 모바일: 가로 모드 강제
-        if (IS_MOBILE && screen.orientation && screen.orientation.lock) {
-          screen.orientation.lock('landscape').catch(() => {
-            console.log('화면 회전 잠금 실패 (권한 없음)');
-          });
-        }
-      }).catch((err) => {
-        console.log('전체화면 진입 실패:', err);
-        // 폴백: CSS 기반 전체화면
-        document.body.classList.add('fullscreen-mode');
-        document.body.classList.add('landscape-lock');
-      });
-    }
-  } else {
-    // 전체화면 해제
-    const exitFullscreen = document.exitFullscreen ||
-                           document.webkitExitFullscreen ||
-                           document.mozCancelFullScreen ||
-                           document.msExitFullscreen;
-
-    if (exitFullscreen) {
-      exitFullscreen.call(document).catch(() => {});
-    }
-
-    // 화면 회전 잠금 해제
-    if (screen.orientation && screen.orientation.unlock) {
-      screen.orientation.unlock();
+  // iOS Safari: 비디오 요소의 webkitEnterFullscreen 사용
+  if (IS_MOBILE && video && video.webkitEnterFullscreen) {
+    try {
+      video.webkitEnterFullscreen();
+      state.isFullscreen = true;
+      return;
+    } catch (err) {
+      console.log('iOS 전체화면 진입 실패:', err);
     }
   }
+
+  // 표준 Fullscreen API 시도
+  const enterFullscreen = viewerScreen.requestFullscreen ||
+                          viewerScreen.webkitRequestFullscreen ||
+                          viewerScreen.mozRequestFullScreen ||
+                          viewerScreen.msRequestFullscreen;
+
+  if (enterFullscreen) {
+    enterFullscreen.call(viewerScreen).then(() => {
+      state.isFullscreen = true;
+      // 모바일: 가로 모드 강제
+      if (IS_MOBILE && screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(() => {
+          console.log('화면 회전 잠금 실패 (권한 없음)');
+        });
+      }
+    }).catch((err) => {
+      console.log('전체화면 진입 실패:', err);
+      // 폴백: CSS 기반 전체화면
+      enterCSSFullscreen();
+    });
+  } else {
+    // Fullscreen API 미지원: CSS 기반 전체화면
+    enterCSSFullscreen();
+  }
+}
+
+/**
+ * CSS 기반 전체화면 진입
+ */
+function enterCSSFullscreen() {
+  document.body.classList.add('fullscreen-mode');
+  document.body.classList.add('landscape-lock');
+  state.isFullscreen = true;
+
+  // 모바일: 가로 모드 강제
+  if (IS_MOBILE && screen.orientation && screen.orientation.lock) {
+    screen.orientation.lock('landscape').catch(() => {});
+  }
+
+  handleFullscreenChange();
+}
+
+/**
+ * 전체화면 해제
+ */
+function exitFullscreenMode() {
+  const exitFullscreen = document.exitFullscreen ||
+                         document.webkitExitFullscreen ||
+                         document.mozCancelFullScreen ||
+                         document.msExitFullscreen;
+
+  if (exitFullscreen && (document.fullscreenElement || document.webkitFullscreenElement)) {
+    exitFullscreen.call(document).catch(() => {});
+  }
+
+  // CSS 기반 전체화면도 해제
+  document.body.classList.remove('fullscreen-mode');
+  document.body.classList.remove('landscape-lock');
+  state.isFullscreen = false;
+
+  // 화면 회전 잠금 해제
+  if (screen.orientation && screen.orientation.unlock) {
+    screen.orientation.unlock();
+  }
+
+  handleFullscreenChange();
 }
 
 /**
  * 전체화면 상태 변경 핸들러
  */
 function handleFullscreenChange() {
-  const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || state.isFullscreen);
+  state.isFullscreen = isFullscreen;
   document.body.classList.toggle('fullscreen-mode', isFullscreen);
   document.body.classList.toggle('landscape-lock', isFullscreen && IS_MOBILE);
 
