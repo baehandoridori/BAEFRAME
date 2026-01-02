@@ -1384,4 +1384,51 @@ body.fullscreen-mode .controls-overlay {
   .reply-count {
     font-size: 0.7rem;
   }
+
+  /* 모바일 메인 페이지 최적화 */
+  .select-content h1 {
+    font-size: 1.5rem;
+  }
+
+  .description {
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .input-group {
+    margin-bottom: 1rem;
+  }
+
+  .input-group label {
+    font-size: 0.8rem;
+  }
+
+  .input-group input {
+    padding: 0.75rem;
+    font-size: 0.9rem;
+  }
+
+  .recent-files {
+    margin-top: 1.5rem;
+  }
+
+  .recent-files h3 {
+    font-size: 0.9rem;
+  }
+
+  /* 모바일 헤더 로고 */
+  .top-bar .logo-small {
+    font-size: 1.1rem;
+  }
+
+  .btn-login {
+    font-size: 0.8rem;
+    padding: 0.4rem 0.8rem;
+  }
+
+  /* 모바일 최근 파일 목록 */
+  .recent-files ul li {
+    padding: 0.6rem;
+    font-size: 0.85rem;
+  }
 }

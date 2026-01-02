@@ -570,8 +570,11 @@ function validateInputs() {
   }
 }
 
-// 개발 모드용 데모 버튼 추가
+// 개발 모드용 데모 버튼 추가 (데스크톱 전용)
 function addDemoButton() {
+  // 모바일에서는 데모 버튼 표시 안 함
+  if (IS_MOBILE) return;
+
   const selectContent = document.querySelector('.select-content');
   if (!selectContent) return;
 
@@ -969,26 +972,21 @@ async function downloadRemainingInBackground(fileId, initialChunks, startOffset,
     }
   }
 
-  // 전체 다운로드 완료 시 Blob URL 교체
+  // 전체 다운로드 완료 시 전체 Blob 캐시 (URL 교체 없이)
   if (offset >= total) {
-    console.log('✅ 백그라운드 다운로드 완료, Blob URL 교체');
+    console.log('✅ 백그라운드 다운로드 완료');
 
+    // 전체 Blob 생성 및 캐시 (나중에 필요할 때 사용)
     const fullBlob = new Blob(chunks, { type: mimeType });
-    const fullUrl = URL.createObjectURL(fullBlob);
+    state.fullVideoBlob = fullBlob;
+    state.fullVideoBlobUrl = URL.createObjectURL(fullBlob);
 
-    // 현재 재생 위치 저장
-    const currentTime = elements.videoPlayer.currentTime;
-    const wasPlaying = !elements.videoPlayer.paused;
+    console.log('✅ 전체 영상 캐시 완료 (백그라운드)');
 
-    // URL 교체
-    elements.videoPlayer.src = fullUrl;
-    elements.videoPlayer.currentTime = currentTime;
-
-    if (wasPlaying) {
-      elements.videoPlayer.play().catch(() => {});
-    }
-
-    console.log('✅ 전체 영상 캐시 완료');
+    // 참고: Blob URL 교체는 불안정할 수 있어서 수행하지 않음
+    // 사용자가 뒷부분 seek 시 자동으로 처리됨
+  } else {
+    console.log(`⚠️ 백그라운드 다운로드 중단됨 (${Math.round(offset / total * 100)}%)`);
   }
 }
 
@@ -2278,8 +2276,12 @@ function hideThumbnail() {
 
 // 컨트롤 자동 숨김 타이머
 let controlsHideTimer = null;
-let lastTapTime = 0;
-let lastTapPos = { x: 0, y: 0 };
+
+// 롱프레스 마커 추가용 변수
+let longPressTimer = null;
+let longPressPos = { x: 0, y: 0 };
+let isLongPressActive = false;
+const LONG_PRESS_DURATION = 600; // 600ms 길게 누르기
 
 /**
  * 전체화면 토글
@@ -2415,8 +2417,10 @@ function setupFullscreenControls() {
   // 컨트롤 초기 표시
   showFullscreenControls();
 
-  // 비디오 영역 터치 시 컨트롤 토글
-  videoContainer.addEventListener('touchstart', handleFullscreenTouch, { passive: true });
+  // 롱프레스 + 일반 탭 이벤트
+  videoContainer.addEventListener('touchstart', handleFullscreenTouchStart, { passive: false });
+  videoContainer.addEventListener('touchend', handleFullscreenTouchEnd, { passive: true });
+  videoContainer.addEventListener('touchmove', handleFullscreenTouchMove, { passive: true });
   videoContainer.addEventListener('click', handleFullscreenClick);
 }
 
@@ -2432,45 +2436,75 @@ function clearFullscreenControls() {
     controlsHideTimer = null;
   }
 
-  videoContainer.removeEventListener('touchstart', handleFullscreenTouch);
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+
+  videoContainer.removeEventListener('touchstart', handleFullscreenTouchStart);
+  videoContainer.removeEventListener('touchend', handleFullscreenTouchEnd);
+  videoContainer.removeEventListener('touchmove', handleFullscreenTouchMove);
   videoContainer.removeEventListener('click', handleFullscreenClick);
   document.body.classList.remove('controls-visible');
 }
 
 /**
- * 전체화면 터치/클릭 핸들러
+ * 전체화면 터치 시작 핸들러 (롱프레스 감지)
  */
-function handleFullscreenTouch(e) {
-  const now = Date.now();
-  const DOUBLE_TAP_DELAY = 300; // 더블탭 인식 시간 (ms)
-
-  // 터치 위치 가져오기
-  let touchX = 0, touchY = 0;
+function handleFullscreenTouchStart(e) {
+  // 터치 위치 저장
   if (e.touches && e.touches.length > 0) {
-    touchX = e.touches[0].clientX;
-    touchY = e.touches[0].clientY;
+    longPressPos.x = e.touches[0].clientX;
+    longPressPos.y = e.touches[0].clientY;
   }
 
-  // 더블탭 감지
-  if (now - lastTapTime < DOUBLE_TAP_DELAY) {
-    // 더블탭! → 마커 추가 모드 진입
-    handleDoubleTapMarker(lastTapPos.x, lastTapPos.y);
-    lastTapTime = 0; // 리셋
-    return;
-  }
+  isLongPressActive = false;
 
-  // 첫 번째 탭 저장
-  lastTapTime = now;
-  lastTapPos = { x: touchX, y: touchY };
-
-  // 싱글 탭: 컨트롤 토글
-  toggleFullscreenControls();
+  // 롱프레스 타이머 시작
+  longPressTimer = setTimeout(() => {
+    isLongPressActive = true;
+    // 햅틱 피드백 (지원되는 경우)
+    if (navigator.vibrate) {
+      navigator.vibrate(50);
+    }
+    // 롱프레스 → 마커 추가
+    handleLongPressMarker(longPressPos.x, longPressPos.y);
+  }, LONG_PRESS_DURATION);
 }
 
 /**
- * 더블탭으로 마커 추가 (전체화면에서)
+ * 전체화면 터치 끝 핸들러
  */
-function handleDoubleTapMarker(screenX, screenY) {
+function handleFullscreenTouchEnd(e) {
+  // 롱프레스 타이머 취소
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+
+  // 롱프레스가 발동되지 않았으면 일반 탭 처리
+  if (!isLongPressActive) {
+    toggleFullscreenControls();
+  }
+
+  isLongPressActive = false;
+}
+
+/**
+ * 전체화면 터치 이동 핸들러 (롱프레스 취소)
+ */
+function handleFullscreenTouchMove(e) {
+  // 손가락이 움직이면 롱프레스 취소
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}
+
+/**
+ * 롱프레스로 마커 추가 (전체화면에서)
+ */
+function handleLongPressMarker(screenX, screenY) {
   const videoContainer = elements.videoContainer;
   const video = elements.videoPlayer;
   if (!videoContainer || !video) return;

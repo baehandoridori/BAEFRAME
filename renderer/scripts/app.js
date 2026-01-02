@@ -1004,7 +1004,7 @@ async function initApp() {
   btnChangeUserName?.addEventListener('click', () => {
     commentSettingsDropdown?.classList.remove('open');
     btnCommentSettings?.classList.remove('active');
-    openUserSettingsModal();
+    openUserSettingsModal(false); // 필수 모드 아님
   });
 
   // 썸네일 토글 변경
@@ -2269,7 +2269,23 @@ async function initApp() {
     return '';
   }
 
+  // 댓글 목록 업데이트 디바운싱
+  let commentListUpdateTimeout = null;
+  let pendingCommentListFilter = 'all';
+
   function updateCommentList(filter = 'all') {
+    pendingCommentListFilter = filter;
+
+    // 디바운싱: 연속 호출 시 마지막 호출만 실행 (50ms)
+    if (commentListUpdateTimeout) {
+      cancelAnimationFrame(commentListUpdateTimeout);
+    }
+    commentListUpdateTimeout = requestAnimationFrame(() => {
+      updateCommentListImmediate(pendingCommentListFilter);
+    });
+  }
+
+  function updateCommentListImmediate(filter = 'all') {
     const container = elements.commentsList;
     if (!container) return;
 
@@ -3009,16 +3025,31 @@ async function initApp() {
   const cancelUserSettings = document.getElementById('cancelUserSettings');
   const saveUserSettings = document.getElementById('saveUserSettings');
 
+  // 필수 입력 모드 (최초 설정 시 닫기 방지)
+  let isRequiredNameInput = false;
+
   // 모달 열기
-  function openUserSettingsModal() {
-    userNameInput.value = userSettings.getUserName();
+  function openUserSettingsModal(required = false) {
+    isRequiredNameInput = required;
+    userNameInput.value = required ? '' : userSettings.getUserName();
     userSettingsModal.classList.add('active');
+
+    // 필수 모드일 때 닫기 버튼 숨기기
+    if (closeUserSettings) closeUserSettings.style.display = required ? 'none' : '';
+    if (cancelUserSettings) cancelUserSettings.style.display = required ? 'none' : '';
+
     userNameInput.focus();
-    userNameInput.select();
+    if (!required) userNameInput.select();
   }
 
-  // 모달 닫기
+  // 모달 닫기 (필수 모드가 아닐 때만)
   function closeUserSettingsModal() {
+    if (isRequiredNameInput) {
+      // 필수 모드에서는 이름을 입력해야만 닫을 수 있음
+      showToast('이름을 입력해주세요.', 'warning');
+      userNameInput.focus();
+      return;
+    }
     userSettingsModal.classList.remove('active');
   }
 
@@ -3029,7 +3060,11 @@ async function initApp() {
       userSettings.setUserName(newName);
       updateUserName(newName);
       showToast(`이름이 "${newName}"(으)로 변경되었습니다.`, 'success');
-      closeUserSettingsModal();
+      isRequiredNameInput = false; // 저장 성공 시 필수 모드 해제
+      userSettingsModal.classList.remove('active');
+      // 닫기 버튼 복원
+      if (closeUserSettings) closeUserSettings.style.display = '';
+      if (cancelUserSettings) cancelUserSettings.style.display = '';
     } else {
       showToast('이름을 입력해주세요.', 'warning');
       userNameInput.focus();
@@ -3047,28 +3082,28 @@ async function initApp() {
   // 저장 버튼
   saveUserSettings?.addEventListener('click', saveUserName);
 
-  // Enter 키로 저장
+  // Enter 키로 저장, Escape는 필수 모드가 아닐 때만 닫기
   userNameInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       saveUserName();
-    } else if (e.key === 'Escape') {
+    } else if (e.key === 'Escape' && !isRequiredNameInput) {
       closeUserSettingsModal();
     }
   });
 
-  // 오버레이 클릭으로 닫기
+  // 오버레이 클릭으로 닫기 (필수 모드가 아닐 때만)
   userSettingsModal?.addEventListener('click', (e) => {
-    if (e.target === userSettingsModal) {
+    if (e.target === userSettingsModal && !isRequiredNameInput) {
       closeUserSettingsModal();
     }
   });
 
   // 최초 한 번만 이름 설정 요청 (이미 설정한 적이 있으면 표시하지 않음)
-  if (!userSettings.hasSetNameOnce() && (userSettings.getUserSource() === 'anonymous' || userName === '익명')) {
-    // 약간의 딜레이 후 모달 열기
+  if (!userSettings.hasSetNameOnce()) {
+    // 약간의 딜레이 후 모달 열기 (필수 모드)
     setTimeout(() => {
-      openUserSettingsModal();
+      openUserSettingsModal(true); // required = true
       showToast('댓글에 표시될 이름을 설정해주세요.', 'info');
     }, 500);
   }
