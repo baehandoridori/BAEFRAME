@@ -3067,6 +3067,45 @@ body {
   border-color: var(--border-default);
 }
 
+/* Web Share Modal */
+.web-share-modal {
+  max-width: 500px;
+}
+
+.modal-description {
+  margin-bottom: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.web-share-url-container {
+  display: flex;
+  gap: 8px;
+}
+
+.web-share-url-container input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: monospace;
+}
+
+.web-share-url-container .btn {
+  flex-shrink: 0;
+  padding: 10px 16px;
+}
+
+.web-share-result {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 /* ============================================
    Author Color Rules
    ============================================ */
