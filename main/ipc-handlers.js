@@ -499,51 +499,82 @@ async function getGoogleDriveFileId(localPath) {
       try {
         // 테이블 구조 확인 (디버깅용)
         const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
-        log.debug('DB 테이블 목록', { tables: tables.map(t => t.name) });
+        log.info('DB 테이블 목록', { tables: tables.map(t => t.name) });
 
-        // items 테이블에서 파일명으로 검색
-        // Google Drive DB 스키마: stable_id가 파일 ID
-        const query = `
-          SELECT stable_id, local_title, local_path
-          FROM items
-          WHERE local_title = ? OR local_path LIKE ?
-          LIMIT 5
-        `;
+        // items 테이블 컬럼 확인
+        try {
+          const columns = db.prepare("PRAGMA table_info(items)").all();
+          log.info('items 테이블 컬럼', { columns: columns.map(c => c.name) });
+        } catch (e) {
+          log.warn('items 테이블 없음, 다른 테이블 확인');
+        }
 
-        const rows = db.prepare(query).all(fileName, `%${fileName}`);
-        log.info('검색 결과', { count: rows.length, rows });
+        // 모든 테이블에서 파일명 관련 데이터 찾기
+        let rows = [];
+
+        // items 테이블 시도
+        try {
+          const query = `
+            SELECT * FROM items
+            WHERE local_title LIKE ? OR filename LIKE ?
+            LIMIT 10
+          `;
+          rows = db.prepare(query).all(`%${fileName}%`, `%${fileName}%`);
+          log.info('items 테이블 검색 결과', { count: rows.length, sample: rows[0] });
+        } catch (e) {
+          log.warn('items 쿼리 실패', { error: e.message });
+        }
+
+        // cloud_entry 테이블 시도 (다른 스키마일 수 있음)
+        if (rows.length === 0) {
+          try {
+            const query2 = `
+              SELECT * FROM cloud_entry
+              WHERE filename LIKE ?
+              LIMIT 10
+            `;
+            rows = db.prepare(query2).all(`%${fileName}%`);
+            log.info('cloud_entry 테이블 검색 결과', { count: rows.length, sample: rows[0] });
+          } catch (e) {
+            log.warn('cloud_entry 쿼리 실패', { error: e.message });
+          }
+        }
+
+        // local_entry 테이블 시도
+        if (rows.length === 0) {
+          try {
+            const query3 = `
+              SELECT * FROM local_entry
+              WHERE filename LIKE ?
+              LIMIT 10
+            `;
+            rows = db.prepare(query3).all(`%${fileName}%`);
+            log.info('local_entry 테이블 검색 결과', { count: rows.length, sample: rows[0] });
+          } catch (e) {
+            log.warn('local_entry 쿼리 실패', { error: e.message });
+          }
+        }
+        log.info('최종 검색 결과', { count: rows.length, firstRow: rows[0] });
 
         if (rows.length > 0) {
-          // 정확한 경로 매칭 우선
-          for (const row of rows) {
-            if (row.local_path && normalizedPath.includes(row.local_path)) {
-              log.info('경로 매칭으로 파일 ID 찾음', { fileId: row.stable_id });
-              db.close();
+          // 파일 ID를 찾을 수 있는 컬럼들 (다양한 스키마 지원)
+          const row = rows[0];
+          const fileId = row.stable_id || row.id || row.doc_id || row.inode;
 
-              // 임시 파일 정리
-              try {
-                fs.unlinkSync(tempDbPath);
-                if (fs.existsSync(tempDbPath + '-wal')) fs.unlinkSync(tempDbPath + '-wal');
-                if (fs.existsSync(tempDbPath + '-shm')) fs.unlinkSync(tempDbPath + '-shm');
-              } catch (e) {}
+          log.info('파일 ID 찾음', { fileId, rowKeys: Object.keys(row) });
 
-              return row.stable_id;
-            }
+          if (fileId) {
+            db.close();
+
+            // 임시 파일 정리
+            try {
+              fs.unlinkSync(tempDbPath);
+              if (fs.existsSync(tempDbPath + '-wal')) fs.unlinkSync(tempDbPath + '-wal');
+              if (fs.existsSync(tempDbPath + '-shm')) fs.unlinkSync(tempDbPath + '-shm');
+            } catch (e) {}
+
+            return fileId;
           }
-
-          // 파일명만 매칭
-          const fileId = rows[0].stable_id;
-          log.info('파일명 매칭으로 파일 ID 찾음', { fileId });
-          db.close();
-
-          // 임시 파일 정리
-          try {
-            fs.unlinkSync(tempDbPath);
-            if (fs.existsSync(tempDbPath + '-wal')) fs.unlinkSync(tempDbPath + '-wal');
-            if (fs.existsSync(tempDbPath + '-shm')) fs.unlinkSync(tempDbPath + '-shm');
-          } catch (e) {}
-
-          return fileId;
         }
 
         db.close();
