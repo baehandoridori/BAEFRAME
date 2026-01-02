@@ -441,16 +441,23 @@ async function getGoogleDriveFileId(localPath) {
     const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
     const driveFsPath = path.join(localAppData, 'Google', 'DriveFS');
 
+    log.info('Google Drive 경로 확인', { driveFsPath, exists: fs.existsSync(driveFsPath) });
+
     try {
       const accounts = fs.readdirSync(driveFsPath);
+      log.info('발견된 계정 폴더', { accounts });
+
       for (const account of accounts) {
         const dbPath = path.join(driveFsPath, account, 'metadata_sqlite_db');
-        if (fs.existsSync(dbPath)) {
+        const dbExists = fs.existsSync(dbPath);
+        log.info('DB 경로 확인', { account, dbPath, exists: dbExists });
+
+        if (dbExists) {
           driveDbPaths.push(dbPath);
         }
       }
     } catch (error) {
-      log.warn('Google Drive 폴더 읽기 실패', { error: error.message });
+      log.warn('Google Drive 폴더 읽기 실패', { driveFsPath, error: error.message });
     }
   } else if (process.platform === 'darwin') {
     // Mac: ~/Library/Application Support/Google/DriveFS/<account_id>/metadata_sqlite_db
@@ -469,8 +476,10 @@ async function getGoogleDriveFileId(localPath) {
     }
   }
 
+  log.info('찾은 DB 경로 목록', { count: driveDbPaths.length, paths: driveDbPaths });
+
   if (driveDbPaths.length === 0) {
-    log.warn('Google Drive 메타데이터 DB를 찾을 수 없음');
+    log.warn('Google Drive 메타데이터 DB를 찾을 수 없음 - Google Drive for Desktop이 설치되어 있나요?');
     return null;
   }
 
