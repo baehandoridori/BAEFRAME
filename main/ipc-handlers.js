@@ -423,7 +423,7 @@ async function getSlackUserInfo() {
 async function getGoogleDriveFileId(localPath) {
   const os = require('os');
   const path = require('path');
-  const Database = require('better-sqlite3');
+  const initSqlJs = require('sql.js');
 
   if (!localPath) return null;
 
@@ -483,90 +483,71 @@ async function getGoogleDriveFileId(localPath) {
     return null;
   }
 
+  // sql.js 초기화
+  let SQL;
+  try {
+    SQL = await initSqlJs();
+  } catch (e) {
+    log.error('sql.js 초기화 실패', { error: e.message });
+    return null;
+  }
+
   // 각 DB에서 파일 검색
   for (const dbPath of driveDbPaths) {
     try {
       log.info('DB 검색 중', { dbPath });
 
-      // DB를 읽기 전용으로 열기 (원본 파일이 잠겨있을 수 있음)
-      // WAL 모드로 열린 DB는 복사 후 읽기
-      const tempDbPath = path.join(os.tmpdir(), `baeframe_gdrive_${Date.now()}.db`);
-      fs.copyFileSync(dbPath, tempDbPath);
-
-      // WAL과 SHM 파일도 복사 (있는 경우)
-      const walPath = dbPath + '-wal';
-      const shmPath = dbPath + '-shm';
-      if (fs.existsSync(walPath)) {
-        fs.copyFileSync(walPath, tempDbPath + '-wal');
-      }
-      if (fs.existsSync(shmPath)) {
-        fs.copyFileSync(shmPath, tempDbPath + '-shm');
-      }
-
-      const db = new Database(tempDbPath, { readonly: true });
+      // DB 파일 읽기
+      const dbBuffer = fs.readFileSync(dbPath);
+      const db = new SQL.Database(dbBuffer);
 
       try {
         // 테이블 구조 확인 (디버깅용)
-        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
-        log.info('DB 테이블 목록', { tables: tables.map(t => t.name) });
-
-        // items 테이블 컬럼 확인
-        try {
-          const columns = db.prepare("PRAGMA table_info(items)").all();
-          log.info('items 테이블 컬럼', { columns: columns.map(c => c.name) });
-        } catch (e) {
-          log.warn('items 테이블 없음, 다른 테이블 확인');
-        }
+        const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+        const tables = tablesResult[0]?.values?.map(v => v[0]) || [];
+        log.info('DB 테이블 목록', { tables });
 
         // 모든 테이블에서 파일명 관련 데이터 찾기
         let rows = [];
+        let columns = [];
 
         // items 테이블 시도
         try {
-          const query = `
-            SELECT * FROM items
-            WHERE local_title LIKE ? OR filename LIKE ?
-            LIMIT 10
-          `;
-          rows = db.prepare(query).all(`%${fileName}%`, `%${fileName}%`);
-          log.info('items 테이블 검색 결과', { count: rows.length, sample: rows[0] });
+          const result = db.exec(`SELECT * FROM items WHERE local_title LIKE '%${fileName}%' LIMIT 10`);
+          if (result[0]) {
+            columns = result[0].columns;
+            rows = result[0].values.map(v => {
+              const obj = {};
+              columns.forEach((col, i) => obj[col] = v[i]);
+              return obj;
+            });
+          }
+          log.info('items 테이블 검색 결과', { count: rows.length, columns, sample: rows[0] });
         } catch (e) {
           log.warn('items 쿼리 실패', { error: e.message });
         }
 
-        // cloud_entry 테이블 시도 (다른 스키마일 수 있음)
+        // cloud_entry 테이블 시도
         if (rows.length === 0) {
           try {
-            const query2 = `
-              SELECT * FROM cloud_entry
-              WHERE filename LIKE ?
-              LIMIT 10
-            `;
-            rows = db.prepare(query2).all(`%${fileName}%`);
-            log.info('cloud_entry 테이블 검색 결과', { count: rows.length, sample: rows[0] });
+            const result = db.exec(`SELECT * FROM cloud_entry WHERE filename LIKE '%${fileName}%' LIMIT 10`);
+            if (result[0]) {
+              columns = result[0].columns;
+              rows = result[0].values.map(v => {
+                const obj = {};
+                columns.forEach((col, i) => obj[col] = v[i]);
+                return obj;
+              });
+            }
+            log.info('cloud_entry 테이블 검색 결과', { count: rows.length, columns });
           } catch (e) {
             log.warn('cloud_entry 쿼리 실패', { error: e.message });
           }
         }
 
-        // local_entry 테이블 시도
-        if (rows.length === 0) {
-          try {
-            const query3 = `
-              SELECT * FROM local_entry
-              WHERE filename LIKE ?
-              LIMIT 10
-            `;
-            rows = db.prepare(query3).all(`%${fileName}%`);
-            log.info('local_entry 테이블 검색 결과', { count: rows.length, sample: rows[0] });
-          } catch (e) {
-            log.warn('local_entry 쿼리 실패', { error: e.message });
-          }
-        }
         log.info('최종 검색 결과', { count: rows.length, firstRow: rows[0] });
 
         if (rows.length > 0) {
-          // 파일 ID를 찾을 수 있는 컬럼들 (다양한 스키마 지원)
           const row = rows[0];
           const fileId = row.stable_id || row.id || row.doc_id || row.inode;
 
@@ -574,26 +555,11 @@ async function getGoogleDriveFileId(localPath) {
 
           if (fileId) {
             db.close();
-
-            // 임시 파일 정리
-            try {
-              fs.unlinkSync(tempDbPath);
-              if (fs.existsSync(tempDbPath + '-wal')) fs.unlinkSync(tempDbPath + '-wal');
-              if (fs.existsSync(tempDbPath + '-shm')) fs.unlinkSync(tempDbPath + '-shm');
-            } catch (e) {}
-
             return fileId;
           }
         }
 
         db.close();
-
-        // 임시 파일 정리
-        try {
-          fs.unlinkSync(tempDbPath);
-          if (fs.existsSync(tempDbPath + '-wal')) fs.unlinkSync(tempDbPath + '-wal');
-          if (fs.existsSync(tempDbPath + '-shm')) fs.unlinkSync(tempDbPath + '-shm');
-        } catch (e) {}
 
       } catch (queryError) {
         log.error('DB 쿼리 오류', { error: queryError.message });
