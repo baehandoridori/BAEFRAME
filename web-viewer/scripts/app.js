@@ -748,10 +748,11 @@ function getSampleBframeData() {
 
 function handleVideoLoaded() {
   state.duration = elements.videoPlayer.duration;
-  state.frameRate = state.bframeData?.frameRate || 24;
+  // fps는 comments.fps 또는 최상위 frameRate에서 가져옴
+  state.frameRate = state.bframeData?.comments?.fps || state.bframeData?.frameRate || 24;
 
   // 파일명 표시
-  const fileName = state.bframeData?.videoFile || '영상';
+  const fileName = state.bframeData?.videoName || state.bframeData?.videoFile || '영상';
   elements.fileName.textContent = fileName;
 
   // 캔버스 크기 설정
@@ -834,20 +835,51 @@ function handleTimelineClick(e) {
 // 댓글
 // ============================================
 
-function updateCommentsList() {
-  // comments가 배열인지 확인 (객체일 수도 있음)
-  let comments = state.bframeData?.comments;
-  if (!Array.isArray(comments)) {
-    comments = [];
+/**
+ * bframe 파일에서 모든 댓글(마커) 추출
+ * 데스크톱 앱 구조: comments.layers[].markers[]
+ */
+function getAllComments() {
+  const commentsData = state.bframeData?.comments;
+
+  // 새 구조: comments.layers[].markers[]
+  if (commentsData?.layers && Array.isArray(commentsData.layers)) {
+    const allMarkers = [];
+    for (const layer of commentsData.layers) {
+      if (layer.markers && Array.isArray(layer.markers)) {
+        for (const marker of layer.markers) {
+          allMarkers.push({
+            ...marker,
+            frame: marker.startFrame, // startFrame을 frame으로 매핑
+            layerName: layer.name,
+            layerColor: layer.color
+          });
+        }
+      }
+    }
+    return allMarkers.sort((a, b) => a.frame - b.frame);
   }
+
+  // 이전 구조 (배열): comments[]
+  if (Array.isArray(commentsData)) {
+    return commentsData;
+  }
+
+  // comments가 없거나 알 수 없는 구조
+  return [];
+}
+
+function updateCommentsList() {
+  const comments = getAllComments();
   elements.commentCount.textContent = comments.length;
 
   elements.commentsList.innerHTML = comments.map(comment => {
-    const time = formatTime(comment.frame / state.frameRate);
+    const frame = comment.frame || comment.startFrame || 0;
+    const time = formatTime(frame / state.frameRate);
     const replyCount = comment.replies?.length || 0;
 
     return `
-      <div class="comment-card" data-id="${comment.id}" data-frame="${comment.frame}">
+      <div class="comment-card" data-id="${comment.id}" data-frame="${frame}">
         <div class="comment-header">
           <span class="comment-time">${time}</span>
           <span class="comment-author">${comment.author || '익명'}</span>
@@ -889,14 +921,13 @@ function updateCommentsList() {
 }
 
 function renderTimelineMarkers() {
-  let comments = state.bframeData?.comments;
-  if (!Array.isArray(comments)) {
-    comments = [];
-  }
+  const comments = getAllComments();
 
   elements.timelineMarkers.innerHTML = comments.map(comment => {
-    const progress = (comment.frame / state.frameRate / state.duration) * 100;
-    return `<div class="timeline-marker" style="left: ${progress}%" data-frame="${comment.frame}"></div>`;
+    const frame = comment.frame || comment.startFrame || 0;
+    const progress = (frame / state.frameRate / state.duration) * 100;
+    const color = comment.layerColor || '#ff6b6b';
+    return `<div class="timeline-marker" style="left: ${progress}%; background-color: ${color}" data-frame="${frame}"></div>`;
   }).join('');
 
   // 마커 클릭 이벤트
