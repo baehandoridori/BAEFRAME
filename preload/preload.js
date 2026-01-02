@@ -33,6 +33,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ====== 외부 링크 열기 ======
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
 
+  // ====== Google Drive 파일 ID 추출 ======
+  getGDriveFileId: (localPath) => ipcRenderer.invoke('gdrive:get-file-id', localPath),
+  generateGDriveShareLink: (videoPath, bframePath) =>
+    ipcRenderer.invoke('gdrive:generate-share-link', videoPath, bframePath),
+
   // ====== 클립보드 관련 ======
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   readGDriveLink: () => ipcRenderer.invoke('clipboard:read-gdrive-link'),
