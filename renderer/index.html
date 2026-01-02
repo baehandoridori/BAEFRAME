@@ -793,30 +793,28 @@
         <button class="modal-close" id="closeWebShare">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="modal-description">
-          모바일이나 앱이 설치되지 않은 환경에서도 볼 수 있는 웹 링크를 생성합니다.<br>
-          Google Drive에서 파일의 공유 링크를 복사하여 붙여넣어 주세요.
-        </p>
-
         <!-- 현재 파일 정보 (Google Drive인 경우) -->
         <div id="webShareFileInfo" class="web-share-file-info" style="display: none;"></div>
 
-        <!-- Google Drive 열기 버튼 -->
-        <div class="form-group">
-          <button class="btn btn-secondary btn-full" id="btnOpenGoogleDrive" onclick="window.electronAPI.openExternal('https://drive.google.com/drive/shared-drives')">
-            <span>🌐</span> Google Drive 열기 (브라우저)
+        <!-- 클립보드에서 붙여넣기 버튼 (핵심 기능) -->
+        <div class="form-group" style="margin-bottom: 16px;">
+          <button class="btn btn-primary btn-full btn-large" id="pasteFromClipboard">
+            📋 클립보드에서 붙여넣기
           </button>
+          <p class="form-hint" style="text-align: center; margin-top: 8px;">
+            파일 탐색기에서 링크를 복사한 후 이 버튼을 누르세요
+          </p>
         </div>
 
+        <hr style="border-color: #333; margin: 16px 0;">
+
         <div class="form-group">
-          <label for="webShareVideoUrl">영상 파일 URL (Google Drive)</label>
-          <input type="text" id="webShareVideoUrl" placeholder="https://drive.google.com/file/d/.../view">
-          <p class="form-hint">Google Drive에서 영상 파일 우클릭 → 링크 가져오기</p>
+          <label for="webShareVideoUrl">1️⃣ 영상 파일 URL</label>
+          <input type="text" id="webShareVideoUrl" placeholder="Google Drive 링크 붙여넣기..." style="transition: border-color 0.2s;">
         </div>
         <div class="form-group">
-          <label for="webShareBframeUrl">.bframe 파일 URL (Google Drive)</label>
-          <input type="text" id="webShareBframeUrl" placeholder="https://drive.google.com/file/d/.../view">
-          <p class="form-hint">Google Drive에서 .bframe 파일 우클릭 → 링크 가져오기</p>
+          <label for="webShareBframeUrl">2️⃣ .bframe 파일 URL</label>
+          <input type="text" id="webShareBframeUrl" placeholder="Google Drive 링크 붙여넣기..." style="transition: border-color 0.2s;">
         </div>
         <div class="form-group web-share-result" id="webShareResultGroup" style="display: none;">
           <label>생성된 웹 공유 링크</label>

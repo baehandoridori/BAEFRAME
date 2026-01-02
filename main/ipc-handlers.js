@@ -200,82 +200,28 @@ function setupIpcHandlers() {
     }
   });
 
-  // ====== Google 인증 관련 ======
+  // ====== 클립보드 Google Drive 링크 감지 ======
 
-  const googleAuth = require('./google-auth');
-
-  // Google 로그인 (OAuth)
-  ipcMain.handle('google:login', async () => {
-    const trace = log.trace('google:login');
-    try {
-      const token = await googleAuth.authenticate();
-      trace.end({ success: true });
-      return { success: true, token };
-    } catch (error) {
-      trace.error(error);
-      return { success: false, error: error.message };
+  // 클립보드에서 Google Drive 링크 읽기
+  ipcMain.handle('clipboard:read-gdrive-link', () => {
+    const text = clipboard.readText();
+    // Google Drive 링크 패턴 감지
+    const drivePattern = /https:\/\/drive\.google\.com\/(file\/d\/[a-zA-Z0-9_-]+|open\?id=[a-zA-Z0-9_-]+)/;
+    if (drivePattern.test(text)) {
+      return { hasLink: true, link: text.trim() };
     }
+    return { hasLink: false, link: null };
   });
 
-  // 로그인 상태 확인
-  ipcMain.handle('google:is-authenticated', async () => {
-    return googleAuth.isAuthenticated();
+  // 클립보드 텍스트 읽기
+  ipcMain.handle('clipboard:read', () => {
+    return clipboard.readText();
   });
 
-  // 로그아웃
-  ipcMain.handle('google:logout', async () => {
-    googleAuth.clearToken();
-    return { success: true };
-  });
-
-  // 파일 검색
-  ipcMain.handle('google:search-file', async (event, fileName) => {
-    const trace = log.trace('google:search-file');
-    try {
-      const files = await googleAuth.searchFile(fileName);
-      trace.end({ count: files.length });
-      return { success: true, files };
-    } catch (error) {
-      trace.error(error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // 웹 공유 링크 자동 생성
-  ipcMain.handle('google:generate-web-share-link', async (event, videoFileName, bframeFileName) => {
-    const trace = log.trace('google:generate-web-share-link');
-    try {
-      // 파일 검색
-      const videoResults = await googleAuth.searchFile(videoFileName);
-      const bframeResults = await googleAuth.searchFile(bframeFileName);
-
-      if (videoResults.length === 0) {
-        throw new Error(`영상 파일을 찾을 수 없습니다: ${videoFileName}`);
-      }
-      if (bframeResults.length === 0) {
-        throw new Error(`Bframe 파일을 찾을 수 없습니다: ${bframeFileName}`);
-      }
-
-      // 첫 번째 결과 사용
-      const videoUrl = googleAuth.getShareLink(videoResults[0].id);
-      const bframeUrl = googleAuth.getShareLink(bframeResults[0].id);
-
-      // 웹 공유 링크 생성
-      const webShareUrl = `https://baeframe.vercel.app/open.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
-
-      trace.end({ success: true });
-      return {
-        success: true,
-        videoUrl,
-        bframeUrl,
-        webShareUrl,
-        videoFile: videoResults[0],
-        bframeFile: bframeResults[0]
-      };
-    } catch (error) {
-      trace.error(error);
-      return { success: false, error: error.message };
-    }
+  // 웹 공유 링크 생성 (URL에서)
+  ipcMain.handle('webshare:generate-link', (event, videoUrl, bframeUrl) => {
+    const webShareUrl = `https://baeframe.vercel.app/open.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+    return { success: true, webShareUrl };
   });
 
   // ====== 로그 관련 ======
