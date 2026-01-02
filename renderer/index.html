@@ -40,6 +40,10 @@
         <span>🔗</span>
         링크 복사
       </button>
+      <button class="btn btn-secondary" id="btnWebShare" title="웹 공유 링크 생성">
+        <span>🌐</span>
+        웹 공유
+      </button>
     </div>
   </header>
 
@@ -777,6 +781,43 @@
             </svg>
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Web Share Modal -->
+  <div class="modal-overlay" id="webShareModal">
+    <div class="modal-content web-share-modal">
+      <div class="modal-header">
+        <h3>🌐 웹 공유 링크 생성</h3>
+        <button class="modal-close" id="closeWebShare">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-description">
+          모바일이나 앱이 설치되지 않은 환경에서도 볼 수 있는 웹 링크를 생성합니다.<br>
+          Google Drive에서 파일의 공유 링크를 복사하여 붙여넣어 주세요.
+        </p>
+        <div class="form-group">
+          <label for="webShareVideoUrl">영상 파일 URL (Google Drive)</label>
+          <input type="text" id="webShareVideoUrl" placeholder="https://drive.google.com/file/d/.../view">
+          <p class="form-hint">Google Drive에서 영상 파일 우클릭 → 링크 가져오기</p>
+        </div>
+        <div class="form-group">
+          <label for="webShareBframeUrl">.bframe 파일 URL (Google Drive)</label>
+          <input type="text" id="webShareBframeUrl" placeholder="https://drive.google.com/file/d/.../view">
+          <p class="form-hint">Google Drive에서 .bframe 파일 우클릭 → 링크 가져오기</p>
+        </div>
+        <div class="form-group web-share-result" id="webShareResultGroup" style="display: none;">
+          <label>생성된 웹 공유 링크</label>
+          <div class="web-share-url-container">
+            <input type="text" id="webShareResultUrl" readonly>
+            <button class="btn btn-primary" id="btnCopyWebShareUrl">복사</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelWebShare">취소</button>
+        <button class="btn btn-primary" id="generateWebShareLink">링크 생성</button>
       </div>
     </div>
   </div>

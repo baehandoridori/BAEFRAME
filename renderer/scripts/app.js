@@ -31,8 +31,20 @@ async function initApp() {
     versionBadge: document.getElementById('versionBadge'),
     btnVersionHistory: document.getElementById('btnVersionHistory'),
     btnCopyLink: document.getElementById('btnCopyLink'),
+    btnWebShare: document.getElementById('btnWebShare'),
     btnOpenFolder: document.getElementById('btnOpenFolder'),
     btnOpenOther: document.getElementById('btnOpenOther'),
+
+    // 웹 공유 모달
+    webShareModal: document.getElementById('webShareModal'),
+    closeWebShare: document.getElementById('closeWebShare'),
+    cancelWebShare: document.getElementById('cancelWebShare'),
+    webShareVideoUrl: document.getElementById('webShareVideoUrl'),
+    webShareBframeUrl: document.getElementById('webShareBframeUrl'),
+    webShareResultGroup: document.getElementById('webShareResultGroup'),
+    webShareResultUrl: document.getElementById('webShareResultUrl'),
+    btnCopyWebShareUrl: document.getElementById('btnCopyWebShareUrl'),
+    generateWebShareLink: document.getElementById('generateWebShareLink'),
 
     // 뷰어
     dropZone: document.getElementById('dropZone'),
@@ -571,6 +583,69 @@ async function initApp() {
     await window.electronAPI.copyToClipboard(windowsPath);
     showToast('.bframe 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
     log.info('경로 복사됨', { path: windowsPath });
+  });
+
+  // ====== 웹 공유 모달 ======
+  const WEB_VIEWER_BASE_URL = 'https://baeframe.vercel.app';
+
+  // 웹 공유 버튼 클릭 - 모달 열기
+  elements.btnWebShare.addEventListener('click', () => {
+    elements.webShareModal.classList.add('active');
+    elements.webShareResultGroup.style.display = 'none';
+    elements.webShareVideoUrl.value = '';
+    elements.webShareBframeUrl.value = '';
+    elements.webShareResultUrl.value = '';
+    log.info('웹 공유 모달 열림');
+  });
+
+  // 모달 닫기
+  function closeWebShareModal() {
+    elements.webShareModal.classList.remove('active');
+  }
+
+  elements.closeWebShare.addEventListener('click', closeWebShareModal);
+  elements.cancelWebShare.addEventListener('click', closeWebShareModal);
+
+  // 모달 외부 클릭 시 닫기
+  elements.webShareModal.addEventListener('click', (e) => {
+    if (e.target === elements.webShareModal) {
+      closeWebShareModal();
+    }
+  });
+
+  // 링크 생성 버튼 클릭
+  elements.generateWebShareLink.addEventListener('click', () => {
+    const videoUrl = elements.webShareVideoUrl.value.trim();
+    const bframeUrl = elements.webShareBframeUrl.value.trim();
+
+    if (!videoUrl || !bframeUrl) {
+      showToast('영상 URL과 .bframe URL을 모두 입력해주세요.', 'warn');
+      return;
+    }
+
+    // Google Drive URL 유효성 검사
+    const drivePattern = /drive\.google\.com/;
+    if (!drivePattern.test(videoUrl) || !drivePattern.test(bframeUrl)) {
+      showToast('Google Drive URL 형식이 올바르지 않습니다.', 'warn');
+      return;
+    }
+
+    // 웹 공유 URL 생성
+    const shareUrl = `${WEB_VIEWER_BASE_URL}/open.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
+
+    elements.webShareResultUrl.value = shareUrl;
+    elements.webShareResultGroup.style.display = 'block';
+    log.info('웹 공유 링크 생성됨', { shareUrl });
+  });
+
+  // 생성된 링크 복사 버튼
+  elements.btnCopyWebShareUrl.addEventListener('click', async () => {
+    const shareUrl = elements.webShareResultUrl.value;
+    if (shareUrl) {
+      await window.electronAPI.copyToClipboard(shareUrl);
+      showToast('웹 공유 링크가 복사되었습니다!', 'success');
+      log.info('웹 공유 링크 복사됨', { shareUrl });
+    }
   });
 
   // 파일 경로 열기 (현재 파일이 있는 폴더를 탐색기에서 열기)
