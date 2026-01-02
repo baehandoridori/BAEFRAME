@@ -145,9 +145,16 @@ export class UserSettings extends EventTarget {
   /**
    * 사용자 이름 초기화
    * - 이미 수동으로 설정된 이름이 있으면 사용
+   * - hasSetNameOnce가 true면 기존 이름 유지
    * - 없으면 익명으로 설정 (모달에서 수동 입력 유도)
    */
   async initialize() {
+    // 이미 한 번 이름을 설정한 적이 있으면 기존 이름 사용
+    if (this.settings.hasSetNameOnce && this.settings.userName) {
+      log.info('기존 사용자 이름 사용 (hasSetNameOnce)', { userName: this.settings.userName });
+      return this.settings.userName;
+    }
+
     // 이미 수동으로 설정된 이름이 있으면 사용
     if (this.settings.userName && this.settings.userSource === 'manual') {
       log.info('기존 사용자 이름 사용', { userName: this.settings.userName });
@@ -157,6 +164,7 @@ export class UserSettings extends EventTarget {
     // 익명으로 설정 (앱에서 모달을 통해 수동 입력 유도)
     this.settings.userName = '익명';
     this.settings.userSource = 'anonymous';
+    // hasSetNameOnce는 변경하지 않음 - 사용자가 직접 설정해야 함
     this._saveToStorage();
     log.info('익명 사용자로 설정됨 (수동 입력 필요)');
     this._emit('userDetected', { userName: '익명', source: 'anonymous' });
