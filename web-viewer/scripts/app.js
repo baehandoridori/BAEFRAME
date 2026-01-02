@@ -971,7 +971,13 @@ function renderVideoMarkers() {
     const markerEl = document.createElement('div');
     markerEl.className = `video-marker${comment.resolved ? ' resolved' : ''}`;
     markerEl.dataset.markerId = comment.id;
-    markerEl.dataset.frame = comment.frame || comment.startFrame || 0;
+
+    const startFrame = comment.frame || comment.startFrame || 0;
+    markerEl.dataset.frame = startFrame;
+    // endFrame이 있으면 사용, 없으면 updateVideoMarkersVisibility에서 기본값 적용
+    if (comment.endFrame) {
+      markerEl.dataset.endFrame = comment.endFrame;
+    }
 
     // x, y 위치 (0-1 정규화 좌표)
     const x = (comment.x || 0.5) * 100;
@@ -1010,11 +1016,13 @@ function updateVideoMarkersVisibility() {
   if (!elements.videoMarkers) return;
 
   const currentFrame = Math.floor(state.currentTime * state.frameRate);
+  // 마커 표시 시간: 4초 (프레임레이트 * 4)
+  const markerDurationFrames = state.frameRate * 4;
 
   elements.videoMarkers.querySelectorAll('.video-marker').forEach(marker => {
     const startFrame = parseInt(marker.dataset.frame);
-    // 마커의 표시 범위: startFrame부터 startFrame + 24프레임 (1초)
-    const endFrame = startFrame + state.frameRate;
+    // endFrame이 설정되어 있으면 사용, 아니면 기본 4초
+    const endFrame = parseInt(marker.dataset.endFrame) || (startFrame + markerDurationFrames);
 
     if (currentFrame >= startFrame && currentFrame < endFrame) {
       marker.classList.remove('hidden');
@@ -1133,7 +1141,7 @@ function submitComment() {
     x: state.pendingCommentPos?.x || 0.5,
     y: state.pendingCommentPos?.y || 0.5,
     startFrame: frame,
-    endFrame: frame + state.frameRate, // 1초간 표시
+    endFrame: frame + state.frameRate * 4, // 4초간 표시
     text: text,
     author: '웹 사용자',
     createdAt: new Date().toISOString(),
@@ -1275,13 +1283,14 @@ function findCommentById(commentId) {
 let currentThreadId = null;
 
 function openThread(commentId) {
-  const comment = state.bframeData.comments.find(c => c.id === commentId);
+  const comment = findCommentById(commentId);
   if (!comment) return;
 
   currentThreadId = commentId;
 
   // 원본 댓글 표시
-  const time = formatTime(comment.frame / state.frameRate);
+  const frame = comment.startFrame || comment.frame || 0;
+  const time = formatTime(frame / state.frameRate);
   elements.threadOriginal.innerHTML = `
     <div class="comment-time">${time}</div>
     <div class="comment-author">${comment.author || '익명'}</div>
@@ -1312,7 +1321,20 @@ function submitReply() {
   const text = elements.replyInput.value.trim();
   if (!text) return;
 
-  const comment = state.bframeData.comments.find(c => c.id === currentThreadId);
+  // layers 구조에서 실제 마커 객체 찾기
+  const layers = state.bframeData?.comments?.layers || [];
+  let comment = null;
+
+  for (const layer of layers) {
+    comment = layer.markers?.find(m => m.id === currentThreadId);
+    if (comment) break;
+  }
+
+  // 이전 구조 (배열)
+  if (!comment && Array.isArray(state.bframeData?.comments)) {
+    comment = state.bframeData.comments.find(c => c.id === currentThreadId);
+  }
+
   if (!comment) return;
 
   if (!comment.replies) {
@@ -1445,12 +1467,15 @@ function renderDrawingForCurrentFrame() {
   if (!state.drawingContext) return;
 
   const frame = Math.floor(state.currentTime * state.frameRate);
-  const drawings = state.bframeData?.drawings || [];
-  const frameDrawing = drawings.find(d => d.frame === frame);
+  const drawings = state.bframeData?.drawings;
 
   // 캔버스 클리어
   state.drawingContext.clearRect(0, 0, elements.drawingCanvas.width, elements.drawingCanvas.height);
 
+  // drawings가 배열인지 확인
+  if (!Array.isArray(drawings)) return;
+
+  const frameDrawing = drawings.find(d => d.frame === frame);
   if (!frameDrawing) return;
 
   // 스트로크 그리기

@@ -45,8 +45,9 @@ export class CommentMarker {
 
     // 시간 범위 (프레임 단위)
     this.startFrame = options.startFrame || 0;
-    this.endFrame = options.endFrame || (options.startFrame + options.fps || 24); // 기본 1초
-    this.fps = options.fps || 24;
+    const fps = options.fps || 24;
+    this.endFrame = options.endFrame || (this.startFrame + fps * 4); // 기본 4초
+    this.fps = fps;
 
     // 내용
     this.text = options.text || '';
@@ -375,7 +376,7 @@ export class CommentManager extends EventTarget {
       x,
       y,
       startFrame: this.currentFrame,
-      endFrame: this.currentFrame + this.fps, // 기본 1초
+      endFrame: this.currentFrame + this.fps * 4, // 기본 4초
       fps: this.fps,
       layerId: this.activeLayerId,
       author: this.author
