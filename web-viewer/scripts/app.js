@@ -407,6 +407,15 @@ async function handleOpenFiles() {
     return;
   }
 
+  // Google Drive URL인 경우 로그인 체크
+  const isGoogleDriveVideo = videoUrl.includes('drive.google.com');
+  const isGoogleDriveBframe = bframeUrl.includes('drive.google.com');
+
+  if ((isGoogleDriveVideo || isGoogleDriveBframe) && !state.accessToken) {
+    showToast('Google Drive 파일을 열려면 먼저 로그인하세요', 'error');
+    return;
+  }
+
   showScreen('loading');
   updateLoadingStatus('파일 로드 중...');
 
@@ -430,10 +439,33 @@ async function handleOpenFiles() {
     updateCommentsList();
     renderTimelineMarkers();
 
+    // 최근 파일에 추가
+    saveRecentFile(videoUrl, bframeUrl);
+
   } catch (error) {
     console.error('파일 로드 실패:', error);
     showToast('파일 로드 실패: ' + error.message, 'error');
     showScreen('select');
+  }
+}
+
+// 최근 파일 저장
+function saveRecentFile(videoUrl, bframeUrl) {
+  try {
+    const recent = JSON.parse(localStorage.getItem('recentFiles') || '[]');
+    const newEntry = {
+      videoUrl,
+      bframeUrl,
+      name: state.bframeData?.videoFile || 'Unknown',
+      date: new Date().toISOString()
+    };
+    // 중복 제거 후 맨 앞에 추가
+    const filtered = recent.filter(r => r.bframeUrl !== bframeUrl);
+    filtered.unshift(newEntry);
+    // 최대 10개
+    localStorage.setItem('recentFiles', JSON.stringify(filtered.slice(0, 10)));
+  } catch (e) {
+    console.warn('최근 파일 저장 실패:', e);
   }
 }
 
@@ -466,35 +498,120 @@ async function loadBframeFile(url) {
     throw new Error('올바른 Google Drive URL이 아닙니다');
   }
 
-  try {
-    const response = await gapi.client.drive.files.get({
-      fileId: fileId,
-      alt: 'media'
-    });
-    state.bframeData = JSON.parse(response.body);
-  } catch (error) {
-    // 공개 링크로 시도
-    const directUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-    const response = await fetch(directUrl);
-    if (!response.ok) throw new Error('파일을 불러올 수 없습니다');
-    state.bframeData = await response.json();
+  console.log('bframe 파일 ID:', fileId);
+
+  // 인증된 fetch 사용
+  if (state.accessToken) {
+    try {
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        {
+          headers: {
+            'Authorization': `Bearer ${state.accessToken}`
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      state.bframeData = await response.json();
+      console.log('✅ bframe 로드 완료:', state.bframeData);
+      return;
+    } catch (error) {
+      console.error('인증된 접근 실패:', error);
+      throw new Error('파일을 불러올 수 없습니다. 파일 공유 설정을 확인해주세요.');
+    }
   }
 
-  console.log('bframe 로드 완료:', state.bframeData);
+  throw new Error('로그인이 필요합니다');
 }
 
 async function loadVideo(url) {
-  return new Promise((resolve, reject) => {
-    let videoSrc = url;
+  const fileId = extractDriveFileId(url);
 
-    // Google Drive URL 변환
-    const fileId = extractDriveFileId(url);
-    if (fileId) {
-      // Google Drive 스트리밍 URL (여러 형식 시도)
-      videoSrc = `https://drive.google.com/uc?export=download&id=${fileId}`;
+  // Google Drive 영상인 경우 인증된 다운로드
+  if (fileId && state.accessToken) {
+    return loadVideoFromDrive(fileId);
+  }
+
+  // 일반 URL인 경우 직접 로드
+  return loadVideoFromUrl(url);
+}
+
+async function loadVideoFromDrive(fileId) {
+  console.log('Google Drive 영상 로드 시작:', fileId);
+  updateLoadingStatus('영상 다운로드 중... (0%)');
+
+  try {
+    // 파일 메타데이터 먼저 가져오기
+    const metaResponse = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,size,mimeType`,
+      {
+        headers: { 'Authorization': `Bearer ${state.accessToken}` }
+      }
+    );
+
+    if (!metaResponse.ok) {
+      throw new Error('파일 정보를 가져올 수 없습니다');
     }
 
-    console.log('영상 로드 시도:', videoSrc);
+    const meta = await metaResponse.json();
+    console.log('파일 정보:', meta);
+    elements.fileName.textContent = meta.name || '영상';
+
+    // 영상 다운로드 (진행률 표시)
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+      {
+        headers: { 'Authorization': `Bearer ${state.accessToken}` }
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`다운로드 실패: ${response.status}`);
+    }
+
+    const contentLength = response.headers.get('content-length');
+    const total = parseInt(contentLength, 10) || parseInt(meta.size, 10) || 0;
+    let loaded = 0;
+
+    // 스트림으로 읽기 (진행률 표시)
+    const reader = response.body.getReader();
+    const chunks = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      chunks.push(value);
+      loaded += value.length;
+
+      if (total > 0) {
+        const percent = Math.round((loaded / total) * 100);
+        updateLoadingStatus(`영상 다운로드 중... (${percent}%)`);
+      }
+    }
+
+    // Blob 생성
+    const blob = new Blob(chunks, { type: meta.mimeType || 'video/mp4' });
+    const videoUrl = URL.createObjectURL(blob);
+
+    console.log('✅ 영상 다운로드 완료, Blob URL 생성');
+
+    // 비디오 로드
+    return loadVideoFromUrl(videoUrl);
+
+  } catch (error) {
+    console.error('Google Drive 영상 로드 실패:', error);
+    throw new Error('영상을 불러올 수 없습니다. 파일 공유 설정을 확인해주세요.');
+  }
+}
+
+function loadVideoFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    console.log('영상 로드 시도:', url.substring(0, 100));
 
     // 기존 이벤트 제거
     elements.videoPlayer.oncanplay = null;
@@ -523,7 +640,7 @@ async function loadVideo(url) {
     elements.videoPlayer.onerror = handleError;
 
     // 소스 설정 및 로드
-    elements.videoPlayer.src = videoSrc;
+    elements.videoPlayer.src = url;
     elements.videoPlayer.load();
 
     // 타임아웃 (60초)
