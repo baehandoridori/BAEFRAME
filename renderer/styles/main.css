@@ -3106,6 +3106,39 @@ body {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* 웹 공유 파일 정보 */
+.web-share-file-info {
+  margin-bottom: 16px;
+}
+
+.file-info-box {
+  padding: 12px 16px;
+  background: rgba(74, 158, 255, 0.1);
+  border: 1px solid rgba(74, 158, 255, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.file-info-box strong {
+  color: var(--accent-primary);
+}
+
+.file-info-box small {
+  color: var(--text-tertiary);
+  display: block;
+  margin-top: 8px;
+}
+
+/* 전체 너비 버튼 */
+.btn-full {
+  width: 100%;
+  justify-content: center;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* ============================================
    Author Color Rules
    ============================================ */

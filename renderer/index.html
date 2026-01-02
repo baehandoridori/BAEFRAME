@@ -797,6 +797,17 @@
           모바일이나 앱이 설치되지 않은 환경에서도 볼 수 있는 웹 링크를 생성합니다.<br>
           Google Drive에서 파일의 공유 링크를 복사하여 붙여넣어 주세요.
         </p>
+
+        <!-- 현재 파일 정보 (Google Drive인 경우) -->
+        <div id="webShareFileInfo" class="web-share-file-info" style="display: none;"></div>
+
+        <!-- Google Drive 열기 버튼 -->
+        <div class="form-group">
+          <button class="btn btn-secondary btn-full" id="btnOpenGoogleDrive" onclick="window.electronAPI.openExternal('https://drive.google.com/drive/shared-drives')">
+            <span>🌐</span> Google Drive 열기 (브라우저)
+          </button>
+        </div>
+
         <div class="form-group">
           <label for="webShareVideoUrl">영상 파일 URL (Google Drive)</label>
           <input type="text" id="webShareVideoUrl" placeholder="https://drive.google.com/file/d/.../view">

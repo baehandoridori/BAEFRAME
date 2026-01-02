@@ -155,6 +155,21 @@ function setupIpcHandlers() {
     }
   });
 
+  // ====== 외부 링크 열기 ======
+
+  // 외부 URL 브라우저에서 열기
+  ipcMain.handle('shell:open-external', async (event, url) => {
+    const trace = log.trace('shell:open-external');
+    try {
+      await shell.openExternal(url);
+      trace.end({ url });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      throw error;
+    }
+  });
+
   // ====== 사용자 정보 관련 ======
 
   // OS 사용자 이름 가져오기

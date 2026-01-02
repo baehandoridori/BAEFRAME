@@ -68,9 +68,24 @@
         <button id="btnBack" class="btn-icon">←</button>
         <div class="file-name" id="fileName">파일명</div>
         <div class="header-actions">
-          <button id="btnShare" class="btn-icon" title="공유 링크 복사">🔗</button>
-          <button id="btnFullscreen" class="btn-icon" title="전체화면">⛶</button>
-          <button id="btnSave" class="btn-icon">💾</button>
+          <button id="btnShare" class="btn-icon" title="공유 링크 복사">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          </button>
+          <button id="btnFullscreen" class="btn-icon" title="전체화면">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+            </svg>
+          </button>
+          <button id="btnSave" class="btn-icon" title="저장">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+              <polyline points="17 21 17 13 7 13 7 21"/>
+              <polyline points="7 3 7 8 15 8"/>
+            </svg>
+          </button>
         </div>
       </header>
 
