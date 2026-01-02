@@ -72,23 +72,17 @@ async function init() {
   // Google API 로드
   updateLoadingStatus('Google API 로드 중...');
 
-  // 개발 모드: Google API 없이 테스트
-  if (IS_DEV_MODE) {
-    console.log('🔧 개발 모드: Google API 스킵');
-    console.log('💡 팁: "데모 보기" 버튼을 클릭하면 샘플 영상으로 테스트할 수 있습니다.');
-    setTimeout(() => {
-      showScreen('select');
-      addDemoButton(); // 데모 버튼 추가
-    }, 500);
-    return;
-  }
-
   try {
     await loadGoogleAPI();
+    console.log('✅ Google API 로드 완료');
     showScreen('select');
+    addDemoButton(); // 데모 버튼도 추가 (폴백용)
   } catch (error) {
     console.error('Google API 로드 실패:', error);
-    updateLoadingStatus('Google API 로드 실패. 새로고침 해주세요.');
+    // 실패해도 데모 모드로 사용 가능
+    console.log('🔧 데모 모드로 전환');
+    showScreen('select');
+    addDemoButton();
   }
 }
 
