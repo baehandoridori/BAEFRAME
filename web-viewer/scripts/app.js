@@ -276,10 +276,21 @@ function cacheElements() {
   elements.timelineProgress = document.getElementById('timelineProgress');
   elements.timelineMarkers = document.getElementById('timelineMarkers');
   elements.playhead = document.getElementById('playhead');
+  elements.btnSkipBack = document.getElementById('btnSkipBack');
   elements.btnPrevFrame = document.getElementById('btnPrevFrame');
   elements.btnPlayPause = document.getElementById('btnPlayPause');
   elements.btnNextFrame = document.getElementById('btnNextFrame');
+  elements.btnSkipForward = document.getElementById('btnSkipForward');
   elements.timeDisplay = document.getElementById('timeDisplay');
+
+  // 재생/일시정지 아이콘
+  elements.iconPlay = document.getElementById('iconPlay');
+  elements.iconPause = document.getElementById('iconPause');
+
+  // 타임라인 썸네일
+  elements.timelineThumbnail = document.getElementById('timelineThumbnail');
+  elements.thumbnailCanvas = document.getElementById('thumbnailCanvas');
+  elements.thumbnailTime = document.getElementById('thumbnailTime');
 
   // 탭
   elements.tabBtns = document.querySelectorAll('.tab-btn');
@@ -340,9 +351,14 @@ function setupEventListeners() {
   elements.videoPlayer?.addEventListener('ended', () => updatePlayButton(false));
 
   elements.timeline?.addEventListener('click', handleTimelineClick);
+  elements.btnSkipBack?.addEventListener('click', () => seekSeconds(-5));
   elements.btnPrevFrame?.addEventListener('click', () => seekFrame(-1));
   elements.btnPlayPause?.addEventListener('click', togglePlayPause);
   elements.btnNextFrame?.addEventListener('click', () => seekFrame(1));
+  elements.btnSkipForward?.addEventListener('click', () => seekSeconds(5));
+
+  // 타임라인 썸네일 미리보기
+  setupTimelineThumbnail();
 
   // 탭
   elements.tabBtns?.forEach(btn => {
@@ -384,6 +400,7 @@ function setupEventListeners() {
   // 전체화면 버튼
   document.getElementById('btnFullscreen')?.addEventListener('click', toggleFullscreen);
   document.addEventListener('fullscreenchange', handleFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 }
 
 // ============================================
@@ -1027,7 +1044,20 @@ function updatePlayhead() {
 
 function updatePlayButton(isPlaying) {
   state.isPlaying = isPlaying;
-  elements.btnPlayPause.textContent = isPlaying ? '⏸' : '▶';
+
+  // SVG 아이콘 토글
+  if (elements.iconPlay && elements.iconPause) {
+    if (isPlaying) {
+      elements.iconPlay.classList.add('hidden');
+      elements.iconPause.classList.remove('hidden');
+    } else {
+      elements.iconPlay.classList.remove('hidden');
+      elements.iconPause.classList.add('hidden');
+    }
+  } else {
+    // 폴백: 이모지 사용
+    elements.btnPlayPause.textContent = isPlaying ? '⏸' : '▶';
+  }
 }
 
 function togglePlayPause() {
@@ -1051,6 +1081,14 @@ function seekToTime(time) {
 function seekToFrame(frame) {
   const time = frame / state.frameRate;
   seekToTime(time);
+}
+
+/**
+ * 초 단위로 탐색 (5초 건너뛰기용)
+ */
+function seekSeconds(seconds) {
+  const newTime = Math.max(0, Math.min(state.duration, state.currentTime + seconds));
+  elements.videoPlayer.currentTime = newTime;
 }
 
 function handleTimelineClick(e) {
@@ -2020,8 +2058,135 @@ window.addEventListener('resize', () => {
 });
 
 // ============================================
+// 타임라인 썸네일 미리보기
+// ============================================
+
+/**
+ * 타임라인 썸네일 미리보기 설정
+ */
+function setupTimelineThumbnail() {
+  if (!elements.timeline || !elements.thumbnailCanvas) return;
+
+  let isDragging = false;
+  let thumbnailVisible = false;
+
+  // 마우스 이벤트
+  elements.timeline.addEventListener('mouseenter', () => {
+    if (state.duration > 0) {
+      thumbnailVisible = true;
+    }
+  });
+
+  elements.timeline.addEventListener('mouseleave', () => {
+    thumbnailVisible = false;
+    hideThumbnail();
+  });
+
+  elements.timeline.addEventListener('mousemove', (e) => {
+    if (thumbnailVisible && state.duration > 0) {
+      updateThumbnailPreview(e);
+    }
+  });
+
+  // 터치 이벤트
+  elements.timeline.addEventListener('touchstart', (e) => {
+    isDragging = true;
+    if (state.duration > 0) {
+      updateThumbnailPreview(e.touches[0]);
+    }
+  }, { passive: true });
+
+  elements.timeline.addEventListener('touchmove', (e) => {
+    if (isDragging && state.duration > 0) {
+      updateThumbnailPreview(e.touches[0]);
+    }
+  }, { passive: true });
+
+  elements.timeline.addEventListener('touchend', () => {
+    isDragging = false;
+    setTimeout(hideThumbnail, 500);
+  });
+}
+
+/**
+ * 썸네일 미리보기 업데이트
+ */
+function updateThumbnailPreview(e) {
+  if (!elements.timelineThumbnail || !elements.thumbnailCanvas || !elements.videoPlayer) return;
+
+  const rect = elements.timeline.getBoundingClientRect();
+  const x = (e.clientX || e.pageX) - rect.left;
+  const progress = Math.max(0, Math.min(1, x / rect.width));
+  const previewTime = progress * state.duration;
+
+  // 썸네일 위치 업데이트
+  elements.timelineThumbnail.classList.remove('hidden');
+  elements.timelineThumbnail.style.left = `${x}px`;
+
+  // 시간 표시 업데이트
+  if (elements.thumbnailTime) {
+    elements.thumbnailTime.textContent = formatTime(previewTime);
+  }
+
+  // 캔버스에 해당 시간의 프레임 그리기
+  drawThumbnailFrame(previewTime);
+}
+
+/**
+ * 썸네일 프레임 그리기
+ */
+function drawThumbnailFrame(time) {
+  if (!elements.thumbnailCanvas || !elements.videoPlayer) return;
+
+  const canvas = elements.thumbnailCanvas;
+  const ctx = canvas.getContext('2d');
+  const video = elements.videoPlayer;
+
+  // 캔버스 크기 설정 (16:9 비율)
+  canvas.width = 160;
+  canvas.height = 90;
+
+  // 현재 비디오 위치에서 프레임 캡처
+  // 참고: 실시간 시크 없이 현재 프레임 사용 (성능상 이유)
+  // 더 정확한 썸네일을 원하면 별도의 비디오 엘리먼트 필요
+  try {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // 해당 시간 마커 오버레이
+    ctx.fillStyle = 'rgba(74, 158, 255, 0.3)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 시간 위치 인디케이터
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(formatTime(time), canvas.width / 2, canvas.height / 2 + 4);
+  } catch (error) {
+    // 크로스 오리진 비디오는 캡처 불가
+    ctx.fillStyle = '#333';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(formatTime(time), canvas.width / 2, canvas.height / 2);
+  }
+}
+
+/**
+ * 썸네일 숨기기
+ */
+function hideThumbnail() {
+  if (elements.timelineThumbnail) {
+    elements.timelineThumbnail.classList.add('hidden');
+  }
+}
+
+// ============================================
 // 전체화면 모드
 // ============================================
+
+// 컨트롤 자동 숨김 타이머
+let controlsHideTimer = null;
 
 /**
  * 전체화면 토글
@@ -2029,34 +2194,42 @@ window.addEventListener('resize', () => {
 function toggleFullscreen() {
   const viewerScreen = elements.viewerScreen;
 
-  if (!document.fullscreenElement) {
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
     // 전체화면 진입
-    if (viewerScreen.requestFullscreen) {
-      viewerScreen.requestFullscreen();
-    } else if (viewerScreen.webkitRequestFullscreen) {
-      viewerScreen.webkitRequestFullscreen();
-    } else if (viewerScreen.mozRequestFullScreen) {
-      viewerScreen.mozRequestFullScreen();
-    } else if (viewerScreen.msRequestFullscreen) {
-      viewerScreen.msRequestFullscreen();
-    }
+    const enterFullscreen = viewerScreen.requestFullscreen ||
+                            viewerScreen.webkitRequestFullscreen ||
+                            viewerScreen.mozRequestFullScreen ||
+                            viewerScreen.msRequestFullscreen;
 
-    // 가로 모드 강제 (모바일)
-    if (screen.orientation && screen.orientation.lock) {
-      screen.orientation.lock('landscape').catch(() => {
-        // 권한 없으면 무시
+    if (enterFullscreen) {
+      enterFullscreen.call(viewerScreen).then(() => {
+        // 모바일: 가로 모드 강제
+        if (IS_MOBILE && screen.orientation && screen.orientation.lock) {
+          screen.orientation.lock('landscape').catch(() => {
+            console.log('화면 회전 잠금 실패 (권한 없음)');
+          });
+        }
+      }).catch((err) => {
+        console.log('전체화면 진입 실패:', err);
+        // 폴백: CSS 기반 전체화면
+        document.body.classList.add('fullscreen-mode');
+        document.body.classList.add('landscape-lock');
       });
     }
   } else {
     // 전체화면 해제
-    if (document.exitFullscreen) {
-      document.exitFullscreen();
-    } else if (document.webkitExitFullscreen) {
-      document.webkitExitFullscreen();
-    } else if (document.mozCancelFullScreen) {
-      document.mozCancelFullScreen();
-    } else if (document.msExitFullscreen) {
-      document.msExitFullscreen();
+    const exitFullscreen = document.exitFullscreen ||
+                           document.webkitExitFullscreen ||
+                           document.mozCancelFullScreen ||
+                           document.msExitFullscreen;
+
+    if (exitFullscreen) {
+      exitFullscreen.call(document).catch(() => {});
+    }
+
+    // 화면 회전 잠금 해제
+    if (screen.orientation && screen.orientation.unlock) {
+      screen.orientation.unlock();
     }
   }
 }
@@ -2065,14 +2238,24 @@ function toggleFullscreen() {
  * 전체화면 상태 변경 핸들러
  */
 function handleFullscreenChange() {
-  const isFullscreen = !!document.fullscreenElement;
+  const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
   document.body.classList.toggle('fullscreen-mode', isFullscreen);
+  document.body.classList.toggle('landscape-lock', isFullscreen && IS_MOBILE);
 
   // 전체화면 버튼 아이콘 변경
   const btnFullscreen = document.getElementById('btnFullscreen');
   if (btnFullscreen) {
-    btnFullscreen.textContent = isFullscreen ? '⛶' : '⛶';
+    btnFullscreen.innerHTML = isFullscreen ?
+      '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14h6m0 0v6m0-6L3 21M20 10h-6m0 0V4m0 6l7-7M14 14l7 7M4 4l6 6"/></svg>' :
+      '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
     btnFullscreen.title = isFullscreen ? '전체화면 해제' : '전체화면';
+  }
+
+  // 모바일 전체화면: 컨트롤 자동 숨김 설정
+  if (isFullscreen && IS_MOBILE) {
+    setupFullscreenControls();
+  } else {
+    clearFullscreenControls();
   }
 
   // 캔버스 리사이즈
@@ -2080,6 +2263,82 @@ function handleFullscreenChange() {
     resizeCanvas();
     renderDrawingForCurrentFrame();
   }, 100);
+}
+
+/**
+ * 모바일 전체화면 컨트롤 설정
+ */
+function setupFullscreenControls() {
+  const videoContainer = elements.videoContainer;
+  if (!videoContainer) return;
+
+  // 컨트롤 초기 표시
+  showFullscreenControls();
+
+  // 비디오 영역 터치 시 컨트롤 토글
+  videoContainer.addEventListener('touchstart', handleFullscreenTouch, { passive: true });
+  videoContainer.addEventListener('click', handleFullscreenClick);
+}
+
+/**
+ * 모바일 전체화면 컨트롤 정리
+ */
+function clearFullscreenControls() {
+  const videoContainer = elements.videoContainer;
+  if (!videoContainer) return;
+
+  if (controlsHideTimer) {
+    clearTimeout(controlsHideTimer);
+    controlsHideTimer = null;
+  }
+
+  videoContainer.removeEventListener('touchstart', handleFullscreenTouch);
+  videoContainer.removeEventListener('click', handleFullscreenClick);
+  document.body.classList.remove('controls-visible');
+}
+
+/**
+ * 전체화면 터치/클릭 핸들러
+ */
+function handleFullscreenTouch() {
+  toggleFullscreenControls();
+}
+
+function handleFullscreenClick(e) {
+  // 댓글 모드가 아닐 때만 컨트롤 토글
+  if (!state.isCommentMode && document.body.classList.contains('fullscreen-mode')) {
+    toggleFullscreenControls();
+  }
+}
+
+/**
+ * 전체화면 컨트롤 토글
+ */
+function toggleFullscreenControls() {
+  if (document.body.classList.contains('controls-visible')) {
+    document.body.classList.remove('controls-visible');
+  } else {
+    showFullscreenControls();
+  }
+}
+
+/**
+ * 전체화면 컨트롤 표시 (자동 숨김 타이머 시작)
+ */
+function showFullscreenControls() {
+  document.body.classList.add('controls-visible');
+
+  // 기존 타이머 취소
+  if (controlsHideTimer) {
+    clearTimeout(controlsHideTimer);
+  }
+
+  // 3초 후 자동 숨김
+  controlsHideTimer = setTimeout(() => {
+    if (document.body.classList.contains('fullscreen-mode') && state.isPlaying) {
+      document.body.classList.remove('controls-visible');
+    }
+  }, 3000);
 }
 
 // ============================================
