@@ -2021,7 +2021,18 @@ body {
 
 .comment-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 댓글 액션 바에 있는 작성자 이름 */
+.comment-author-inline {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-right: auto;
+  padding-right: 8px;
 }
 
 .comment-action {
