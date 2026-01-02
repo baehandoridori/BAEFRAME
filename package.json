@@ -21,7 +21,11 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+<<<<<<< Updated upstream
     "better-sqlite3": "^9.4.3",
+=======
+    "better-sqlite3": "^12.5.0",
+>>>>>>> Stashed changes
     "electron-store": "^8.1.0"
   },
   "devDependencies": {
