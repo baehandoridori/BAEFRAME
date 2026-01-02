@@ -480,6 +480,8 @@ function saveRecentFile(videoUrl, bframeUrl) {
 }
 
 function extractDriveFileId(url) {
+  console.log('🔍 URL 파싱 시작:', url);
+
   // Google Drive URL에서 파일 ID 추출
   const patterns = [
     /\/file\/d\/([a-zA-Z0-9_-]+)/,
@@ -489,9 +491,15 @@ function extractDriveFileId(url) {
 
   for (const pattern of patterns) {
     const match = url.match(pattern);
-    if (match) return match[1];
+    if (match) {
+      const fileId = match[1];
+      console.log('✅ 추출된 파일 ID:', fileId);
+      console.log('📋 ID 길이:', fileId.length, '문자');
+      return fileId;
+    }
   }
 
+  console.error('❌ 파일 ID 추출 실패');
   return null;
 }
 
