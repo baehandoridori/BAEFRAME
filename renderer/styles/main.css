@@ -2031,8 +2031,14 @@ body {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-right: auto;
   padding-right: 8px;
+}
+
+.comment-time-inline {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-right: auto;
+  padding-right: 12px;
 }
 
 .comment-action {
@@ -4259,4 +4265,59 @@ body.resizing .comment-panel {
 .thread-editor pre code {
   background: none;
   padding: 0;
+}
+
+/* ========================================
+   앱 전체화면 모드
+   ======================================== */
+
+body.app-fullscreen {
+  overflow: hidden;
+}
+
+body.app-fullscreen .header-bar,
+body.app-fullscreen .timeline-section,
+body.app-fullscreen .comments-section {
+  display: none !important;
+}
+
+body.app-fullscreen .main-content {
+  height: 100vh;
+}
+
+body.app-fullscreen .video-section {
+  flex: 1;
+  height: 100vh;
+  max-height: 100vh;
+}
+
+body.app-fullscreen .video-wrapper {
+  height: calc(100vh - 44px); /* 컨트롤바 높이 제외 */
+}
+
+body.app-fullscreen .control-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: rgba(26, 26, 26, 0.95);
+  backdrop-filter: blur(10px);
+}
+
+/* 전체화면에서 댓글 모드 표시 */
+body.app-fullscreen .video-wrapper.comment-mode::after {
+  content: '화면을 클릭하여 마커 위치 지정';
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 208, 0, 0.9);
+  color: #000;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 200;
+  pointer-events: none;
 }

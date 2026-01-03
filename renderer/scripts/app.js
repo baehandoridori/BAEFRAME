@@ -127,6 +127,7 @@ async function initApp() {
   const state = {
     isDrawMode: false,
     isCommentMode: false, // 댓글 추가 모드
+    isFullscreen: false, // 전체화면 모드
     currentFile: null,
     // 비디오 줌 상태
     videoZoom: 100,
@@ -1981,6 +1982,20 @@ async function initApp() {
   }
 
   /**
+   * 전체화면 모드 토글
+   */
+  function toggleFullscreen() {
+    state.isFullscreen = !state.isFullscreen;
+    document.body.classList.toggle('app-fullscreen', state.isFullscreen);
+
+    if (state.isFullscreen) {
+      showToast('전체화면 모드 (C: 댓글 추가, F 또는 ESC: 해제)', 'info');
+    }
+
+    log.debug('전체화면 모드 변경', { isFullscreen: state.isFullscreen });
+  }
+
+  /**
    * Pending 마커 렌더링 (클릭 후 텍스트 입력 대기 상태)
    */
   function renderPendingMarker(marker) {
@@ -2362,8 +2377,6 @@ async function initApp() {
         ${thumbnailHtml}
         <div class="comment-header">
           <span class="comment-timecode">${marker.startTimecode}</span>
-          <span class="comment-author ${authorClass}" ${authorStyle}>${marker.author}</span>
-          <span class="comment-time">${formatRelativeTime(marker.createdAt)}</span>
         </div>
         <div class="comment-content">
           <p class="comment-text">${escapeHtml(marker.text)}</p>
@@ -2377,6 +2390,7 @@ async function initApp() {
         </div>
         <div class="comment-actions">
           <span class="comment-author-inline ${authorClass}" ${authorStyle}>${marker.author}</span>
+          <span class="comment-time-inline">${formatRelativeTime(marker.createdAt)}</span>
           <button class="comment-action-btn edit-btn" title="수정">
             수정
           </button>
@@ -2720,6 +2734,23 @@ async function initApp() {
         toggleCommentMode();
       }
       return;
+
+    case 'KeyF':
+      // F: 전체화면 토글
+      if (!e.ctrlKey) {
+        e.preventDefault();
+        toggleFullscreen();
+      }
+      return;
+
+    case 'Escape':
+      // ESC: 전체화면 해제 (전체화면일 때)
+      if (state.isFullscreen) {
+        e.preventDefault();
+        toggleFullscreen();
+        return;
+      }
+      break; // 다른 ESC 핸들러로 전달
 
     case 'KeyI':
       // 시작점 설정
