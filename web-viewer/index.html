@@ -22,6 +22,10 @@
         <div class="subtitle">웹 뷰어</div>
         <div class="loader"></div>
         <p id="loadingStatus">초기화 중...</p>
+        <div class="loading-quotes" id="loadingQuotes">
+          <p class="quote-text" id="quoteText">"두려움을 느끼는 것은 용기가 없는 것이 아니다. 두려움에도 불구하고 행동하는 것이 진정한 용기다."</p>
+          <p class="quote-author" id="quoteAuthor">— 마크 트웨인</p>
+        </div>
       </div>
     </div>
 
@@ -174,14 +178,23 @@
         </div>
       </div>
 
-      <!-- 전체화면 마커 추가 버튼 (모바일용) -->
-      <button id="btnFullscreenMarker" class="btn-fullscreen-marker" title="마커 추가">
-        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.5">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="12" y1="8" x2="12" y2="16"/>
-          <line x1="8" y1="12" x2="16" y2="12"/>
-        </svg>
-      </button>
+      <!-- 전체화면 플로팅 버튼들 (모바일용) -->
+      <div class="fullscreen-floating-controls">
+        <!-- 전체화면 해제 버튼 -->
+        <button id="btnExitFullscreen" class="btn-fullscreen-exit" title="전체화면 해제">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+          </svg>
+        </button>
+        <!-- 마커 추가 버튼 -->
+        <button id="btnFullscreenMarker" class="btn-fullscreen-marker" title="마커 추가">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="16"/>
+            <line x1="8" y1="12" x2="16" y2="12"/>
+          </svg>
+        </button>
+      </div>
 
       <!-- 하단 탭 -->
       <div class="bottom-tabs">

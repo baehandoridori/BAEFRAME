@@ -29,7 +29,8 @@ export class Timeline extends EventTarget {
     this.currentTime = 0;
     this.zoom = 100; // 100% = 기본
     this.minZoom = 25;
-    this.maxZoom = 800;  // 확대 상한 800%로 증가
+    this.maxZoom = 800;  // 기본값 (영상 길이에 따라 동적 조정됨)
+    this.baseMaxZoom = 800;  // 최소 maxZoom 보장
 
     // 프레임 그리드 설정
     this.frameGridContainer = null;
@@ -349,9 +350,56 @@ export class Timeline extends EventTarget {
     this.duration = duration;
     this.fps = fps;
     this.totalFrames = Math.floor(duration * fps);
+
+    // 영상 길이에 따라 maxZoom 동적 계산
+    // 프레임이 4px 이상일 때 개별 프레임 그리드가 표시됨
+    // 목표: maxZoom에서 frameWidth >= 5px (여유있게)
+    this._calculateDynamicMaxZoom();
+
     this._updateRuler();
     this._updateFrameGrid();
-    log.info('비디오 정보 설정', { duration, fps, totalFrames: this.totalFrames });
+    log.info('비디오 정보 설정', { duration, fps, totalFrames: this.totalFrames, maxZoom: this.maxZoom });
+  }
+
+  /**
+   * 영상 길이에 따른 동적 maxZoom 계산
+   * 프레임 단위가 잘 보이도록 설정
+   */
+  _calculateDynamicMaxZoom() {
+    if (this.totalFrames === 0) {
+      this.maxZoom = this.baseMaxZoom;
+      return;
+    }
+
+    // 기준 컨테이너 너비 (100% 줌일 때)
+    // tracksContainer가 아직 렌더링 안됐을 수 있으므로 기본값 사용
+    const baseContainerWidth = this.tracksContainer?.offsetWidth || 1200;
+
+    // 100% 줌에서 프레임당 픽셀
+    const baseFrameWidth = baseContainerWidth / this.totalFrames;
+
+    // 목표 프레임 너비: 5px (개별 프레임이 잘 보이도록)
+    const targetFrameWidth = 5;
+
+    // 필요한 줌 레벨 계산
+    // frameWidth = baseContainerWidth * (zoom/100) / totalFrames
+    // targetFrameWidth = baseContainerWidth * (maxZoom/100) / totalFrames
+    // maxZoom = targetFrameWidth * totalFrames * 100 / baseContainerWidth
+    const calculatedMaxZoom = (targetFrameWidth * this.totalFrames * 100) / baseContainerWidth;
+
+    // 최소 baseMaxZoom (800%) 보장, 최대 10000%로 제한 (성능)
+    this.maxZoom = Math.max(this.baseMaxZoom, Math.min(calculatedMaxZoom, 10000));
+
+    // 줌 슬라이더 업데이트
+    this._updateZoomDisplay();
+
+    log.debug('동적 maxZoom 계산', {
+      totalFrames: this.totalFrames,
+      baseContainerWidth,
+      baseFrameWidth: baseFrameWidth.toFixed(4),
+      calculatedMaxZoom: calculatedMaxZoom.toFixed(0),
+      finalMaxZoom: this.maxZoom
+    });
   }
 
   /**

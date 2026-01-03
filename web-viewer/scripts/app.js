@@ -65,6 +65,91 @@ const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini
 // 테스트용 공개 비디오 URL
 const TEST_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
+// 로딩 화면 명언 목록 (정신건강 + 용감한 역사적 발언)
+const LOADING_QUOTES = [
+  { text: "두려움을 느끼는 것은 용기가 없는 것이 아니다. 두려움에도 불구하고 행동하는 것이 진정한 용기다.", author: "마크 트웨인" },
+  { text: "우리가 두려워해야 할 유일한 것은 두려움 그 자체다.", author: "프랭클린 D. 루스벨트" },
+  { text: "불가능은 소심한 자의 환상이다.", author: "나폴레옹 보나파르트" },
+  { text: "오늘 할 수 있는 일에 최선을 다하라. 그러면 내일은 한 걸음 더 나아갈 수 있다.", author: "아이작 뉴턴" },
+  { text: "승리는 가장 끈기 있는 자에게 돌아간다.", author: "나폴레옹 보나파르트" },
+  { text: "위대한 영광은 넘어지지 않는 것이 아니라, 넘어질 때마다 일어서는 데 있다.", author: "공자" },
+  { text: "먼저 자신을 믿어라. 그러면 다른 모든 것이 따라온다.", author: "괴테" },
+  { text: "행동은 두려움을 치유하고, 우유부단함은 두려움을 키운다.", author: "윌리엄 제임스" },
+  { text: "여기서 죽으면 뭐가 남나? 싸워라! 적어도 죽기 전에 발자국을 남겨라.", author: "윌리엄 월러스" },
+  { text: "나는 왔고, 보았고, 이겼다.", author: "율리우스 카이사르" },
+  { text: "적을 용서할 수는 있지만, 그 전에 먼저 그들을 무력화해야 한다.", author: "마하트마 간디" },
+  { text: "어둠을 저주하기보다 촛불 하나를 켜는 것이 낫다.", author: "엘리너 루스벨트" },
+  { text: "삶이 레몬을 주면 레모네이드를 만들어라.", author: "미국 속담" },
+  { text: "지금 흘리는 땀은 전쟁에서 흘릴 피를 줄여준다.", author: "에르빈 롬멜" },
+  { text: "우리는 해변에서 싸울 것이다. 우리는 결코 항복하지 않을 것이다.", author: "윈스턴 처칠" },
+  { text: "고통은 일시적이다. 포기는 영원하다.", author: "랜스 암스트롱" },
+  { text: "가장 어두운 밤도 끝나고 태양은 뜬다.", author: "빅토르 위고" },
+  { text: "매 순간 새로운 시작이다.", author: "T.S. 엘리엇" },
+  { text: "자신의 한계를 아는 것이 지혜의 시작이다.", author: "소크라테스" },
+  { text: "포기하지 않는 한 실패란 없다.", author: "앤 래투로" },
+  { text: "시련은 그것을 견딜 수 있는 자에게 주어진다.", author: "탈무드" },
+  { text: "스파르타인은 적이 몇 명인지 묻지 않는다. 어디 있는지만 묻는다.", author: "아게시라오스 2세" },
+  { text: "죽음을 두려워하면 아무것도 시작할 수 없다.", author: "세네카" },
+  { text: "모든 위대한 업적은 처음에는 불가능해 보였다.", author: "토마스 칼라일" },
+  { text: "오늘의 고통은 내일의 힘이 된다.", author: "아놀드 슈워제네거" },
+  { text: "진정한 용기는 두려움 속에서도 앞으로 나아가는 것이다.", author: "넬슨 만델라" },
+  { text: "휴식은 게으름이 아니다. 여름의 나른한 오후에 풀밭에 누워 물소리를 듣는 것은 결코 시간 낭비가 아니다.", author: "존 러버드" },
+  { text: "자신을 돌보는 것은 이기적인 게 아니라 생존이다.", author: "오드리 로드" },
+  { text: "가끔은 가장 생산적인 일이 휴식을 취하는 것이다.", author: "마크 트웨인" },
+  { text: "완벽하지 않아도 괜찮다. 성장하고 있으면 충분하다.", author: "작자 미상" }
+];
+
+let quoteInterval = null;
+
+/**
+ * 로딩 화면 명언 로테이션 시작
+ */
+function startQuoteRotation() {
+  const quotesContainer = document.getElementById('loadingQuotes');
+  const quoteText = document.getElementById('quoteText');
+  const quoteAuthor = document.getElementById('quoteAuthor');
+
+  if (!quotesContainer || !quoteText || !quoteAuthor) return;
+
+  // 랜덤 시작
+  let currentIndex = Math.floor(Math.random() * LOADING_QUOTES.length);
+  const showQuote = (index) => {
+    const quote = LOADING_QUOTES[index];
+    quoteText.textContent = `"${quote.text}"`;
+    quoteAuthor.textContent = `— ${quote.author}`;
+  };
+
+  // 첫 번째 명언 표시
+  showQuote(currentIndex);
+
+  // 4초마다 명언 변경 (페이드 애니메이션)
+  quoteInterval = setInterval(() => {
+    // 페이드 아웃
+    quotesContainer.classList.remove('fade-in');
+    quotesContainer.classList.add('fade-out');
+
+    setTimeout(() => {
+      // 다음 명언 (순환)
+      currentIndex = (currentIndex + 1) % LOADING_QUOTES.length;
+      showQuote(currentIndex);
+
+      // 페이드 인
+      quotesContainer.classList.remove('fade-out');
+      quotesContainer.classList.add('fade-in');
+    }, 300);
+  }, 4000);
+}
+
+/**
+ * 로딩 화면 명언 로테이션 중지
+ */
+function stopQuoteRotation() {
+  if (quoteInterval) {
+    clearInterval(quoteInterval);
+    quoteInterval = null;
+  }
+}
+
 // 모바일 자동 저장 (debounced)
 let autoSaveTimeout = null;
 function scheduleAutoSave() {
@@ -97,6 +182,9 @@ document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
   console.log('BAEFRAME 웹 뷰어 초기화...');
+
+  // 로딩 화면 명언 로테이션 시작
+  startQuoteRotation();
 
   // 화면 요소 캐싱
   cacheElements();
@@ -304,6 +392,7 @@ function cacheElements() {
   // 댓글
   elements.btnAddComment = document.getElementById('btnAddComment');
   elements.btnFullscreenMarker = document.getElementById('btnFullscreenMarker');
+  elements.btnExitFullscreen = document.getElementById('btnExitFullscreen');
   elements.commentsList = document.getElementById('commentsList');
   elements.commentCount = document.getElementById('commentCount');
 
@@ -373,6 +462,7 @@ function setupEventListeners() {
   // 댓글
   elements.btnAddComment?.addEventListener('click', handleAddComment);
   elements.btnFullscreenMarker?.addEventListener('click', handleFullscreenMarkerButton);
+  elements.btnExitFullscreen?.addEventListener('click', exitFullscreenMode);
   elements.btnCloseModal?.addEventListener('click', closeCommentModal);
   elements.btnCancelComment?.addEventListener('click', closeCommentModal);
   elements.btnSubmitComment?.addEventListener('click', submitComment);
@@ -581,9 +671,15 @@ function showScreen(screenName) {
   elements.selectScreen?.classList.remove('active');
   elements.viewerScreen?.classList.remove('active');
 
+  // 로딩 화면에서 벗어날 때 명언 로테이션 중지
+  if (screenName !== 'loading') {
+    stopQuoteRotation();
+  }
+
   switch (screenName) {
     case 'loading':
       elements.loadingScreen?.classList.add('active');
+      startQuoteRotation(); // 로딩 화면으로 돌아오면 다시 시작
       break;
     case 'select':
       elements.selectScreen?.classList.add('active');
@@ -925,23 +1021,21 @@ async function loadVideoFromDrive(fileId) {
 
 /**
  * 프로그레시브 다운로드 방식으로 영상 로드
- * - 파일의 50%를 먼저 다운로드
+ * - 파일의 80%를 먼저 다운로드 (필수)
  * - 재생 시작
- * - 백그라운드에서 나머지 50% 다운로드
+ * - 백그라운드에서 나머지 20% 다운로드
  */
 async function loadVideoWithStreaming(fileId, meta) {
   const total = parseInt(meta.size, 10) || 0;
   const mimeType = meta.mimeType || 'video/mp4';
 
-  // 50% 또는 최대 50MB 중 작은 값을 초기 다운로드 크기로 설정
-  const MAX_INITIAL_SIZE = 50 * 1024 * 1024; // 50MB
-  const HALF_SIZE = Math.floor(total / 2);
-  const initialSize = Math.min(HALF_SIZE, MAX_INITIAL_SIZE);
+  // 항상 80%를 초기 다운로드 (용량 제한 없음)
+  const initialSize = Math.floor(total * 0.8);
 
-  console.log(`📥 프로그레시브 다운로드 시작: 전체 ${(total / 1024 / 1024).toFixed(1)}MB, 초기 ${(initialSize / 1024 / 1024).toFixed(1)}MB`);
+  console.log(`📥 프로그레시브 다운로드 시작: 전체 ${(total / 1024 / 1024).toFixed(1)}MB, 초기 ${(initialSize / 1024 / 1024).toFixed(1)}MB (80%)`);
 
-  // 초기 50% 다운로드 (여러 청크로 분할)
-  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB 청크
+  // 초기 다운로드 (더 큰 청크로 분할)
+  const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB 청크 (기존 5MB → 10MB)
   const chunks = [];
   let offset = 0;
 
@@ -986,12 +1080,12 @@ async function loadVideoWithStreaming(fileId, meta) {
 }
 
 /**
- * 백그라운드에서 나머지 영상 다운로드
+ * 백그라운드에서 나머지 영상 다운로드 (병렬 청크 다운로드로 개선)
  */
 async function downloadRemainingInBackground(fileId, initialChunks, startOffset, total, mimeType) {
   console.log(`🔄 백그라운드 다운로드 시작... (${Math.round(startOffset / total * 100)}% → 100%)`);
 
-  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+  const CHUNK_SIZE = 15 * 1024 * 1024; // 15MB chunks (기존 5MB → 15MB로 개선)
   const chunks = [...initialChunks]; // 기존 청크 복사
   let offset = startOffset;
 
@@ -1289,17 +1383,15 @@ function updateCommentsList() {
     return `
       <div class="comment-card" data-id="${comment.id}" data-frame="${frame}">
         <div class="comment-header">
-          <span class="comment-time">${time}</span>
           <span class="comment-author">${comment.author || '익명'}</span>
-        </div>
-        <div class="comment-text">${escapeHtml(comment.text)}</div>
-        <div class="comment-footer">
-          <span class="reply-count">${replyCount > 0 ? `💬 답글 ${replyCount}개` : ''}</span>
+          <span class="comment-time">${time}</span>
           <div class="comment-actions">
             <button data-action="edit">수정</button>
             <button data-action="delete">삭제</button>
           </div>
         </div>
+        <div class="comment-text">${escapeHtml(comment.text)}</div>
+        ${replyCount > 0 ? `<div class="comment-footer"><span class="reply-count">💬 답글 ${replyCount}개</span></div>` : ''}
       </div>
     `;
   }).join('');
@@ -2353,18 +2445,14 @@ function toggleFullscreen() {
     return;
   }
 
-  // iOS Safari: 비디오 요소의 webkitEnterFullscreen 사용
-  if (IS_MOBILE && video && video.webkitEnterFullscreen) {
-    try {
-      video.webkitEnterFullscreen();
-      state.isFullscreen = true;
-      return;
-    } catch (err) {
-      console.log('iOS 전체화면 진입 실패:', err);
-    }
+  // 모바일: 항상 CSS 기반 전체화면 사용 (앱 UI 유지, 마커 추가 가능)
+  // 네이티브 전체화면(webkitEnterFullscreen)은 OS UI만 표시되어 마커 추가 불가
+  if (IS_MOBILE) {
+    enterCSSFullscreen();
+    return;
   }
 
-  // 표준 Fullscreen API 시도
+  // 데스크톱: 표준 Fullscreen API 시도
   const enterFullscreen = viewerScreen.requestFullscreen ||
                           viewerScreen.webkitRequestFullscreen ||
                           viewerScreen.mozRequestFullScreen ||
@@ -2373,12 +2461,6 @@ function toggleFullscreen() {
   if (enterFullscreen) {
     enterFullscreen.call(viewerScreen).then(() => {
       state.isFullscreen = true;
-      // 모바일: 가로 모드 강제
-      if (IS_MOBILE && screen.orientation && screen.orientation.lock) {
-        screen.orientation.lock('landscape').catch(() => {
-          console.log('화면 회전 잠금 실패 (권한 없음)');
-        });
-      }
     }).catch((err) => {
       console.log('전체화면 진입 실패:', err);
       // 폴백: CSS 기반 전체화면
