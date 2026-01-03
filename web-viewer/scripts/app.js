@@ -105,6 +105,9 @@ let quoteInterval = null;
  * 로딩 화면 명언 로테이션 시작
  */
 function startQuoteRotation() {
+  // 기존 인터벌 정리 (중복 방지)
+  stopQuoteRotation();
+
   const quotesContainer = document.getElementById('loadingQuotes');
   const quoteText = document.getElementById('quoteText');
   const quoteAuthor = document.getElementById('quoteAuthor');
