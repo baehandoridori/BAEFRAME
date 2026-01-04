@@ -34,7 +34,25 @@ const DEFAULT_SHORTCUTS = {
 
   // 실행취소
   undo: { key: 'KeyZ', ctrl: true, shift: false, alt: false, label: '실행취소' },
-  redo: { key: 'KeyY', ctrl: true, shift: false, alt: false, label: '다시실행' }
+  redo: { key: 'KeyY', ctrl: true, shift: false, alt: false, label: '다시실행' },
+
+  // 키프레임 관련 (그리기 모드)
+  keyframeAddWithCopy: { key: 'F6', ctrl: false, shift: false, alt: false, label: '키프레임 추가 (복사)' },
+  keyframeAddBlank: { key: 'F7', ctrl: false, shift: false, alt: false, label: '빈 키프레임 추가' },
+  keyframeAddBlank2: { key: 'Digit2', ctrl: false, shift: false, alt: false, label: '빈 키프레임 삽입 (2)' },
+  keyframeDelete: { key: 'Delete', ctrl: false, shift: false, alt: false, label: '키프레임 삭제' },
+  keyframeDeleteAlt: { key: 'Digit3', ctrl: false, shift: true, alt: false, label: '키프레임 삭제 (Shift+3)' },
+  prevKeyframe: { key: 'KeyA', ctrl: false, shift: false, alt: false, label: '이전 키프레임' },
+  nextKeyframe: { key: 'KeyD', ctrl: false, shift: false, alt: false, label: '다음 키프레임' },
+
+  // 프레임 편집
+  insertFrame: { key: 'Digit3', ctrl: false, shift: false, alt: false, label: '프레임 삽입 (홀드)' },
+  deleteFrame: { key: 'Digit4', ctrl: false, shift: false, alt: false, label: '프레임 삭제' },
+
+  // 그리기 보조
+  onionSkinToggle: { key: 'Digit1', ctrl: false, shift: false, alt: false, label: '어니언 스킨 토글' },
+  prevFrameDraw: { key: 'KeyA', ctrl: false, shift: true, alt: false, label: '1프레임 이전 (Shift+A)' },
+  nextFrameDraw: { key: 'KeyD', ctrl: false, shift: true, alt: false, label: '1프레임 다음 (Shift+D)' }
 };
 
 // 이름별 테마 매핑

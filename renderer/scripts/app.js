@@ -3037,24 +3037,6 @@ async function initApp() {
       btnLoopToggle.click();
       return;
 
-    case 'F6':
-      // 키프레임 복제 추가 (이전 내용 복사)
-      e.preventDefault();
-      if (state.isDrawMode) {
-        drawingManager.addKeyframeWithContent();
-        showToast('키프레임 추가됨', 'success');
-      }
-      return;
-
-    case 'F7':
-      // 빈 키프레임 추가
-      e.preventDefault();
-      if (state.isDrawMode) {
-        drawingManager.addBlankKeyframe();
-        showToast('빈 키프레임 추가됨', 'success');
-      }
-      return;
-
     case 'Delete':
     case 'Backspace':
       // 키프레임 삭제 (그리기 모드에서만)
@@ -3118,6 +3100,28 @@ async function initApp() {
         timeline.zoomOut();
       }
       return;
+
+    // 사용자 정의 단축키 처리 (F6, F7 등)
+    default:
+      // 키프레임 추가 (복사) - F6
+      if (userSettings.matchShortcut('keyframeAddWithCopy', e)) {
+        e.preventDefault();
+        if (state.isDrawMode) {
+          drawingManager.addKeyframeWithContent();
+          showToast('키프레임 추가됨', 'success');
+        }
+        return;
+      }
+      // 빈 키프레임 추가 - F7
+      if (userSettings.matchShortcut('keyframeAddBlank', e)) {
+        e.preventDefault();
+        if (state.isDrawMode) {
+          drawingManager.addBlankKeyframe();
+          showToast('빈 키프레임 추가됨', 'success');
+        }
+        return;
+      }
+      break;
     }
 
     // ====== Set 1: 기존 단축키 (화살표 기반) ======
@@ -3169,80 +3173,88 @@ async function initApp() {
         }
         break;
 
-      case 'KeyA':
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Shift+A: 1프레임 이전
+      // 사용자 정의 단축키를 통한 처리
+      default:
+        // Shift+A: 1프레임 이전
+        if (userSettings.matchShortcut('prevFrameDraw', e)) {
+          e.preventDefault();
           videoPlayer.prevFrame();
-        } else {
-          // A: 이전 키프레임으로 이동
+          break;
+        }
+        // Shift+D: 1프레임 다음
+        if (userSettings.matchShortcut('nextFrameDraw', e)) {
+          e.preventDefault();
+          videoPlayer.nextFrame();
+          break;
+        }
+        // A: 이전 키프레임으로 이동
+        if (userSettings.matchShortcut('prevKeyframe', e)) {
+          e.preventDefault();
           const prevKf = drawingManager.getPrevKeyframeFrame();
           if (prevKf !== null) {
             videoPlayer.seekToFrame(prevKf);
           }
+          break;
         }
-        break;
-
-      case 'KeyD':
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Shift+D: 1프레임 다음
-          videoPlayer.nextFrame();
-        } else {
-          // D: 다음 키프레임으로 이동
+        // D: 다음 키프레임으로 이동
+        if (userSettings.matchShortcut('nextKeyframe', e)) {
+          e.preventDefault();
           const nextKf = drawingManager.getNextKeyframeFrame();
           if (nextKf !== null) {
             videoPlayer.seekToFrame(nextKf);
           }
+          break;
         }
-        break;
-
-      case 'Digit1':
-        // 1: 어니언 스킨 토글 (UI 버튼과 동기화)
-        e.preventDefault();
-        toggleOnionSkinWithUI();
-        break;
-
-      case 'Digit2':
+        // 1: 어니언 스킨 토글
+        if (userSettings.matchShortcut('onionSkinToggle', e)) {
+          e.preventDefault();
+          toggleOnionSkinWithUI();
+          break;
+        }
         // 2: 빈 키프레임 삽입
-        e.preventDefault();
-        drawingManager.addBlankKeyframe();
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
-
-      case 'Digit3':
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Shift+3: 현재 키프레임 삭제
+        if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
+          e.preventDefault();
+          drawingManager.addBlankKeyframe();
+          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+          break;
+        }
+        // Shift+3: 현재 키프레임 삭제
+        if (userSettings.matchShortcut('keyframeDeleteAlt', e)) {
+          e.preventDefault();
           drawingManager.removeKeyframe();
           showToast('키프레임이 삭제되었습니다.', 'info');
-        } else {
-          // 3: 프레임 삽입 (홀드 추가)
+          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+          break;
+        }
+        // 3: 프레임 삽입 (홀드 추가)
+        if (userSettings.matchShortcut('insertFrame', e)) {
+          e.preventDefault();
           drawingManager.insertFrame();
+          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+          break;
         }
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
-
-      case 'Digit4':
         // 4: 프레임 삭제
-        e.preventDefault();
-        drawingManager.deleteFrame();
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
-
-      case 'KeyB':
-        // B: 브러시 모드 (드로잉 모드 켜기)
-        e.preventDefault();
-        if (!state.isDrawMode) {
-          toggleDrawMode();
+        if (userSettings.matchShortcut('deleteFrame', e)) {
+          e.preventDefault();
+          drawingManager.deleteFrame();
+          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+          break;
         }
-        break;
-
-      case 'KeyV':
+        // B: 브러시 모드 (드로잉 모드 켜기)
+        if (e.code === 'KeyB') {
+          e.preventDefault();
+          if (!state.isDrawMode) {
+            toggleDrawMode();
+          }
+          break;
+        }
         // V: 선택 모드 (드로잉 모드 끄기)
-        e.preventDefault();
-        if (state.isDrawMode) {
-          toggleDrawMode();
+        if (e.code === 'KeyV') {
+          e.preventDefault();
+          if (state.isDrawMode) {
+            toggleDrawMode();
+          }
+          break;
         }
         break;
       }
