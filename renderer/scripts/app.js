@@ -143,6 +143,59 @@ async function initApp() {
     panInitialY: 0
   };
 
+  // ====== 글로벌 Undo/Redo 시스템 ======
+  const undoStack = [];
+  const redoStack = [];
+  const MAX_UNDO_STACK = 50;
+
+  /**
+   * Undo 스택에 작업 추가
+   * @param {Object} action - { type, data, undo, redo }
+   */
+  function pushUndo(action) {
+    undoStack.push(action);
+    if (undoStack.length > MAX_UNDO_STACK) {
+      undoStack.shift();
+    }
+    redoStack.length = 0; // Redo 스택 초기화
+  }
+
+  /**
+   * 글로벌 Undo 실행
+   */
+  function globalUndo() {
+    if (undoStack.length === 0) {
+      // 댓글 스택이 비어있으면 그리기 Undo 시도
+      return drawingManager.undo();
+    }
+
+    const action = undoStack.pop();
+    if (action && action.undo) {
+      action.undo();
+      redoStack.push(action);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 글로벌 Redo 실행
+   */
+  function globalRedo() {
+    if (redoStack.length === 0) {
+      // Redo 스택이 비어있으면 그리기 Redo 시도
+      return drawingManager.redo();
+    }
+
+    const action = redoStack.pop();
+    if (action && action.redo) {
+      action.redo();
+      undoStack.push(action);
+      return true;
+    }
+    return false;
+  }
+
   // 마커 컨테이너 생성 (영상 위에 마커 표시용)
   const markerContainer = document.createElement('div');
   markerContainer.className = 'comment-markers-container';
@@ -434,6 +487,25 @@ async function initApp() {
     updateTimelineMarkers();
     updateCommentList();
     log.info('마커 추가됨', { id: marker.id, text: marker.text });
+
+    // Undo 스택에 추가
+    const markerData = marker.toJSON();
+    pushUndo({
+      type: 'ADD_COMMENT',
+      data: markerData,
+      undo: () => {
+        commentManager.deleteMarker(markerData.id);
+        updateCommentList();
+        updateTimelineMarkers();
+        updateVideoMarkers();
+      },
+      redo: () => {
+        commentManager.restoreMarker(markerData);
+        updateCommentList();
+        updateTimelineMarkers();
+        updateVideoMarkers();
+      }
+    });
   });
 
   // 마커 삭제됨
@@ -1028,6 +1100,16 @@ async function initApp() {
 
   // 초기 스케일 CSS 변수 설정
   document.documentElement.style.setProperty('--comment-thumbnail-scale', userSettings.getCommentThumbnailScale() / 100);
+
+  // 토스트 알림 토글
+  const toggleToastNotifications = document.getElementById('toggleToastNotifications');
+  if (toggleToastNotifications) {
+    toggleToastNotifications.checked = userSettings.getShowToastNotifications();
+  }
+  toggleToastNotifications?.addEventListener('change', () => {
+    const show = toggleToastNotifications.checked;
+    userSettings.setShowToastNotifications(show);
+  });
 
   // 도구별 설정 저장 (크기, 불투명도)
   const toolSettings = {
@@ -2188,7 +2270,25 @@ async function initApp() {
     tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', (e) => {
       e.stopPropagation();
       if (confirm('댓글을 삭제하시겠습니까?')) {
+        const markerData = marker.toJSON();
         commentManager.deleteMarker(marker.id);
+        // Undo 스택에 추가
+        pushUndo({
+          type: 'DELETE_COMMENT',
+          data: markerData,
+          undo: () => {
+            commentManager.restoreMarker(markerData);
+            updateCommentList();
+            updateTimelineMarkers();
+            updateVideoMarkers();
+          },
+          redo: () => {
+            commentManager.deleteMarker(markerData.id);
+            updateCommentList();
+            updateTimelineMarkers();
+            updateVideoMarkers();
+          }
+        });
         showToast('댓글이 삭제되었습니다.', 'info');
       }
     });
@@ -2451,8 +2551,30 @@ async function initApp() {
       item.querySelector('.delete-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
         if (confirm('댓글을 삭제하시겠습니까?')) {
-          commentManager.deleteMarker(item.dataset.markerId);
-          showToast('댓글이 삭제되었습니다.', 'info');
+          const markerId = item.dataset.markerId;
+          const marker = commentManager.getMarker(markerId);
+          if (marker) {
+            const markerData = marker.toJSON();
+            commentManager.deleteMarker(markerId);
+            // Undo 스택에 추가
+            pushUndo({
+              type: 'DELETE_COMMENT',
+              data: markerData,
+              undo: () => {
+                commentManager.restoreMarker(markerData);
+                updateCommentList();
+                updateTimelineMarkers();
+                updateVideoMarkers();
+              },
+              redo: () => {
+                commentManager.deleteMarker(markerData.id);
+                updateCommentList();
+                updateTimelineMarkers();
+                updateVideoMarkers();
+              }
+            });
+            showToast('댓글이 삭제되었습니다.', 'info');
+          }
         }
       });
 
@@ -2478,8 +2600,26 @@ async function initApp() {
         e.stopPropagation();
         const newText = editTextarea.value.trim();
         if (newText) {
-          commentManager.updateMarker(item.dataset.markerId, { text: newText });
-          showToast('댓글이 수정되었습니다.', 'success');
+          const markerId = item.dataset.markerId;
+          const marker = commentManager.getMarker(markerId);
+          if (marker) {
+            const oldText = marker.text;
+            commentManager.updateMarker(markerId, { text: newText });
+            // Undo 스택에 추가
+            pushUndo({
+              type: 'EDIT_COMMENT',
+              data: { markerId, oldText, newText },
+              undo: () => {
+                commentManager.updateMarker(markerId, { text: oldText });
+                updateCommentList();
+              },
+              redo: () => {
+                commentManager.updateMarker(markerId, { text: newText });
+                updateCommentList();
+              }
+            });
+            showToast('댓글이 수정되었습니다.', 'success');
+          }
         }
       });
 
@@ -2627,8 +2767,17 @@ async function initApp() {
 
   /**
    * 토스트 메시지 표시
+   * @param {string} message - 표시할 메시지
+   * @param {string} type - 타입 ('info', 'success', 'warning', 'error')
+   * @param {number} duration - 표시 시간 (ms)
+   * @param {boolean} force - 설정과 무관하게 강제 표시
    */
-  function showToast(message, type = 'info', duration = 3000) {
+  function showToast(message, type = 'info', duration = 3000, force = false) {
+    // 토스트 알림이 비활성화된 경우 (단, error와 force는 항상 표시)
+    if (!force && type !== 'error' && !userSettings.getShowToastNotifications()) {
+      return;
+    }
+
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
@@ -2814,12 +2963,12 @@ async function initApp() {
         e.preventDefault();
         if (e.shiftKey) {
           // Ctrl+Shift+Z: Redo
-          if (drawingManager.redo()) {
+          if (globalRedo()) {
             showToast('다시 실행됨', 'info');
           }
         } else {
           // Ctrl+Z: Undo
-          if (drawingManager.undo()) {
+          if (globalUndo()) {
             showToast('실행 취소됨', 'info');
           }
         }
@@ -2830,7 +2979,7 @@ async function initApp() {
       if (e.ctrlKey || e.metaKey) {
         // Ctrl+Y: Redo (alternative)
         e.preventDefault();
-        if (drawingManager.redo()) {
+        if (globalRedo()) {
           showToast('다시 실행됨', 'info');
         }
       }
@@ -3126,12 +3275,8 @@ async function initApp() {
     }
   });
 
-  // 오버레이 클릭으로 닫기 (필수 모드가 아닐 때만)
-  userSettingsModal?.addEventListener('click', (e) => {
-    if (e.target === userSettingsModal && !isRequiredNameInput) {
-      closeUserSettingsModal();
-    }
-  });
+  // 오버레이 클릭으로 닫기 비활성화 - 명시적으로 닫기/취소 버튼만 사용
+  // (이름 입력 중 실수로 외부 클릭 시 닫히는 문제 방지)
 
   // 최초 한 번만 이름 설정 요청 (이미 설정한 적이 있으면 표시하지 않음)
   if (!userSettings.hasSetNameOnce()) {

@@ -2355,14 +2355,18 @@ body {
    ======================================== */
 .toast-container {
   position: fixed;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 60px;
+  left: 16px;
   z-index: 1000;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  align-items: center;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.toast-container .toast {
+  pointer-events: auto;
 }
 
 .toast {
@@ -2397,7 +2401,7 @@ body {
 @keyframes toastIn {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(-10px);
   }
   to {
     opacity: 1;
@@ -2412,7 +2416,7 @@ body {
   }
   to {
     opacity: 0;
-    transform: translateY(-20px);
+    transform: translateY(-10px);
   }
 }
 

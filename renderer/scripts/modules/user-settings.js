@@ -96,6 +96,8 @@ export class UserSettings extends EventTarget {
       // 댓글 썸네일 설정
       showCommentThumbnails: true,
       commentThumbnailScale: 50, // 50 ~ 200 (기본값: 50%)
+      // 토스트 알림 표시 여부
+      showToastNotifications: true,
       // 최초 이름 설정 여부 (모달 한 번만 표시)
       hasSetNameOnce: false
     };
@@ -238,6 +240,22 @@ export class UserSettings extends EventTarget {
    */
   hasSetNameOnce() {
     return this.settings.hasSetNameOnce === true;
+  }
+
+  /**
+   * 토스트 알림 표시 여부 가져오기
+   */
+  getShowToastNotifications() {
+    return this.settings.showToastNotifications !== false;
+  }
+
+  /**
+   * 토스트 알림 표시 여부 설정
+   */
+  setShowToastNotifications(show) {
+    this.settings.showToastNotifications = show;
+    this._saveToStorage();
+    log.info('토스트 알림 설정 변경됨', { show });
   }
 
   /**
