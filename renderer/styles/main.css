@@ -4321,8 +4321,27 @@ body.app-fullscreen .header,
 body.app-fullscreen .timeline-section,
 body.app-fullscreen .comment-panel,
 body.app-fullscreen .resizer,
-body.app-fullscreen .controls-bar {
+body.app-fullscreen .video-zoom-controls {
   display: none !important;
+}
+
+/* 전체화면에서 컨트롤바 - 기본 숨김 (JS로 show-controls 클래스 토글) */
+body.app-fullscreen .controls-bar {
+  position: fixed !important;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.9)) !important;
+  opacity: 0;
+  transform: translateY(100%);
+  transition: all 0.3s ease;
+}
+
+/* 마우스가 하단에 있을 때 컨트롤바 표시 */
+body.app-fullscreen.show-controls .controls-bar {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 body.app-fullscreen .main-container {

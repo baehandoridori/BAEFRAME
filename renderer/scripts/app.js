@@ -2066,6 +2066,9 @@ async function initApp() {
   /**
    * 전체화면 모드 토글 (시스템 전체화면)
    */
+  let fullscreenMouseHandler = null;
+  let fullscreenHideTimeout = null;
+
   async function toggleFullscreen() {
     // Electron 시스템 전체화면 API 호출
     await window.electronAPI.toggleFullscreen();
@@ -2076,6 +2079,41 @@ async function initApp() {
 
     if (isFullscreen) {
       showToast('전체화면 모드 (C: 댓글 추가, F 또는 ESC: 해제)', 'info');
+
+      // 마우스 이동 감지 - 하단 80px 이내면 컨트롤바 표시
+      fullscreenMouseHandler = (e) => {
+        const bottomThreshold = 80;
+        const isNearBottom = window.innerHeight - e.clientY < bottomThreshold;
+
+        if (isNearBottom) {
+          document.body.classList.add('show-controls');
+          // 타이머 초기화
+          if (fullscreenHideTimeout) {
+            clearTimeout(fullscreenHideTimeout);
+            fullscreenHideTimeout = null;
+          }
+        } else {
+          // 마우스가 위로 이동하면 2초 후 숨김
+          if (!fullscreenHideTimeout) {
+            fullscreenHideTimeout = setTimeout(() => {
+              document.body.classList.remove('show-controls');
+              fullscreenHideTimeout = null;
+            }, 2000);
+          }
+        }
+      };
+      document.addEventListener('mousemove', fullscreenMouseHandler);
+    } else {
+      // 전체화면 해제 시 이벤트 리스너 제거
+      if (fullscreenMouseHandler) {
+        document.removeEventListener('mousemove', fullscreenMouseHandler);
+        fullscreenMouseHandler = null;
+      }
+      if (fullscreenHideTimeout) {
+        clearTimeout(fullscreenHideTimeout);
+        fullscreenHideTimeout = null;
+      }
+      document.body.classList.remove('show-controls');
     }
 
     log.debug('전체화면 모드 변경', { isFullscreen });
