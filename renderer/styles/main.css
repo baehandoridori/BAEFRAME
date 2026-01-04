@@ -4316,34 +4316,32 @@ body.app-fullscreen {
   overflow: hidden;
 }
 
-body.app-fullscreen .header-bar,
+/* 전체화면에서 모든 UI 숨기기 */
+body.app-fullscreen .header,
 body.app-fullscreen .timeline-section,
-body.app-fullscreen .comments-section {
+body.app-fullscreen .comment-panel,
+body.app-fullscreen .resizer,
+body.app-fullscreen .controls-bar {
   display: none !important;
 }
 
-body.app-fullscreen .main-content {
+body.app-fullscreen .main-container {
   height: 100vh;
 }
 
-body.app-fullscreen .video-section {
+body.app-fullscreen .viewer-section {
   flex: 1;
+  width: 100vw;
   height: 100vh;
   max-height: 100vh;
 }
 
-body.app-fullscreen .video-wrapper {
-  height: calc(100vh - 44px); /* 컨트롤바 높이 제외 */
+body.app-fullscreen .viewer-container {
+  height: 100vh;
 }
 
-body.app-fullscreen .control-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
-  background: rgba(26, 26, 26, 0.95);
-  backdrop-filter: blur(10px);
+body.app-fullscreen .video-wrapper {
+  height: 100vh;
 }
 
 /* 전체화면에서 댓글 모드 표시 */
