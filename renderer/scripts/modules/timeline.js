@@ -1189,14 +1189,43 @@ export class Timeline extends EventTarget {
   /**
    * 댓글 마커 추가
    */
-  addCommentMarker(time, resolved = false, frame = 0) {
+  addCommentMarker(time, resolved = false, frame = 0, markerInfos = []) {
     const percent = (time / this.duration) * 100;
     const marker = document.createElement('div');
     marker.className = `comment-marker-track${resolved ? ' resolved' : ''}`;
     marker.style.left = `${percent}%`;
     marker.dataset.time = time;
     marker.dataset.frame = frame;
-    marker.title = `댓글 (프레임 ${frame})`;
+
+    // 호버 툴팁 생성
+    const tooltip = document.createElement('div');
+    tooltip.className = 'comment-marker-tooltip';
+
+    // 댓글 내용 표시 (여러 개일 수 있음)
+    if (markerInfos.length > 0) {
+      const content = markerInfos.map(info => {
+        const text = info.text || '';
+        const preview = text.length > 50 ? text.substring(0, 50) + '...' : text;
+        return `<div class="tooltip-comment">${this._escapeHtml(preview)}</div>`;
+      }).join('');
+      tooltip.innerHTML = `
+        <div class="tooltip-frame">프레임 ${frame}</div>
+        <div class="tooltip-comments">${content}</div>
+        ${markerInfos.length > 1 ? `<div class="tooltip-count">${markerInfos.length}개 댓글</div>` : ''}
+      `;
+    } else {
+      tooltip.innerHTML = `<div class="tooltip-frame">프레임 ${frame}</div>`;
+    }
+
+    marker.appendChild(tooltip);
+
+    // 호버 이벤트
+    marker.addEventListener('mouseenter', () => {
+      tooltip.classList.add('visible');
+    });
+    marker.addEventListener('mouseleave', () => {
+      tooltip.classList.remove('visible');
+    });
 
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1205,6 +1234,15 @@ export class Timeline extends EventTarget {
 
     this.tracksContainer?.appendChild(marker);
     return marker;
+  }
+
+  /**
+   * HTML 이스케이프
+   */
+  _escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   /**

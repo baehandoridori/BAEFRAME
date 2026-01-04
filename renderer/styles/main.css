@@ -2985,6 +2985,43 @@ body.resizing .comment-panel {
   border-color: var(--error);
 }
 
+/* 타임라인 댓글 마커 툴팁 */
+.tooltip-frame {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: var(--accent-glow);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-bottom: 6px;
+  display: inline-block;
+}
+
+.tooltip-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tooltip-comment {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  word-break: break-word;
+  padding: 4px 6px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  border-left: 2px solid var(--accent-primary);
+}
+
+.tooltip-count {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  text-align: right;
+}
+
 /* ============================================
    Modal Styles
    ============================================ */

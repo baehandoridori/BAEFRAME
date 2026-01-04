@@ -2351,7 +2351,9 @@ async function initApp() {
       if (!frameSet.has(range.startFrame)) {
         frameSet.add(range.startFrame);
         const time = range.startFrame / fps;
-        timeline.addCommentMarker(time, range.resolved, range.startFrame);
+        // 마커 정보 전달 (프레임별 댓글 정보)
+        const markersAtFrame = ranges.filter(r => r.startFrame === range.startFrame);
+        timeline.addCommentMarker(time, range.resolved, range.startFrame, markersAtFrame);
       }
     });
   }
