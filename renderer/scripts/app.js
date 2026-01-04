@@ -3789,6 +3789,147 @@ async function initApp() {
   // 전역으로 노출
   window.openThreadPopup = openThreadPopup;
 
+  // ====== 단축키 설정 모달 ======
+  const shortcutSettingsModal = document.getElementById('shortcutSettingsModal');
+  const shortcutList = document.getElementById('shortcutList');
+  const btnShortcutSettings = document.getElementById('btnShortcutSettings');
+  const closeShortcutSettings = document.getElementById('closeShortcutSettings');
+  const closeShortcutSettingsBtn = document.getElementById('closeShortcutSettingsBtn');
+  const resetAllShortcuts = document.getElementById('resetAllShortcuts');
+
+  let editingShortcut = null; // 현재 편집 중인 단축키
+
+  // 키 코드를 표시용 문자열로 변환
+  function formatKeyCode(code) {
+    const keyMap = {
+      'Space': 'Space',
+      'ArrowLeft': '←',
+      'ArrowRight': '→',
+      'ArrowUp': '↑',
+      'ArrowDown': '↓',
+      'Home': 'Home',
+      'End': 'End',
+      'Escape': 'Esc'
+    };
+    if (keyMap[code]) return keyMap[code];
+    if (code.startsWith('Key')) return code.substring(3);
+    if (code.startsWith('Digit')) return code.substring(5);
+    return code;
+  }
+
+  // 단축키 표시 문자열 생성
+  function formatShortcut(shortcut) {
+    const parts = [];
+    if (shortcut.ctrl) parts.push('Ctrl');
+    if (shortcut.shift) parts.push('Shift');
+    if (shortcut.alt) parts.push('Alt');
+    parts.push(formatKeyCode(shortcut.key));
+    return parts.join(' + ');
+  }
+
+  // 단축키 리스트 렌더링
+  function renderShortcutList() {
+    const shortcuts = userSettings.getShortcuts();
+    shortcutList.innerHTML = Object.entries(shortcuts).map(([action, shortcut]) => `
+      <div class="shortcut-item" data-action="${action}">
+        <span class="shortcut-label">${shortcut.label}</span>
+        <div class="shortcut-key" data-action="${action}">${formatShortcut(shortcut)}</div>
+      </div>
+    `).join('');
+
+    // 클릭 이벤트 추가
+    shortcutList.querySelectorAll('.shortcut-key').forEach(el => {
+      el.addEventListener('click', () => startEditingShortcut(el));
+    });
+  }
+
+  // 단축키 편집 시작
+  function startEditingShortcut(el) {
+    // 기존 편집 취소
+    if (editingShortcut) {
+      editingShortcut.classList.remove('editing');
+    }
+    editingShortcut = el;
+    el.classList.add('editing');
+    el.textContent = '키 입력 대기...';
+  }
+
+  // 단축키 편집 완료
+  function finishEditingShortcut(event) {
+    if (!editingShortcut) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const action = editingShortcut.dataset.action;
+    const newShortcut = {
+      key: event.code,
+      ctrl: event.ctrlKey,
+      shift: event.shiftKey,
+      alt: event.altKey
+    };
+
+    userSettings.setShortcut(action, newShortcut);
+    editingShortcut.classList.remove('editing');
+    editingShortcut.textContent = formatShortcut(userSettings.getShortcut(action));
+    editingShortcut = null;
+
+    showToast('단축키가 변경되었습니다.', 'success');
+  }
+
+  // 단축키 설정 모달 열기
+  function openShortcutSettingsModal() {
+    renderShortcutList();
+    shortcutSettingsModal?.classList.add('active');
+  }
+
+  // 단축키 설정 모달 닫기
+  function closeShortcutSettingsModal() {
+    if (editingShortcut) {
+      editingShortcut.classList.remove('editing');
+      editingShortcut = null;
+    }
+    shortcutSettingsModal?.classList.remove('active');
+  }
+
+  // 이벤트 리스너
+  btnShortcutSettings?.addEventListener('click', () => {
+    // 설정 드롭다운 닫기
+    document.getElementById('commentSettingsDropdown')?.classList.remove('show');
+    openShortcutSettingsModal();
+  });
+
+  closeShortcutSettings?.addEventListener('click', closeShortcutSettingsModal);
+  closeShortcutSettingsBtn?.addEventListener('click', closeShortcutSettingsModal);
+
+  resetAllShortcuts?.addEventListener('click', () => {
+    userSettings.resetAllShortcuts();
+    renderShortcutList();
+    showToast('모든 단축키가 기본값으로 초기화되었습니다.', 'info');
+  });
+
+  // 모달 외부 클릭 시 닫기
+  shortcutSettingsModal?.addEventListener('click', (e) => {
+    if (e.target === shortcutSettingsModal) {
+      closeShortcutSettingsModal();
+    }
+  });
+
+  // 키 입력 감지 (단축키 편집 중일 때)
+  document.addEventListener('keydown', (e) => {
+    if (editingShortcut && shortcutSettingsModal?.classList.contains('active')) {
+      // ESC는 편집 취소
+      if (e.code === 'Escape') {
+        editingShortcut.classList.remove('editing');
+        renderShortcutList(); // 원래 값으로 복원
+        editingShortcut = null;
+        return;
+      }
+      // 그 외의 키는 단축키로 설정
+      finishEditingShortcut(e);
+    }
+  });
+
   log.info('앱 초기화 완료');
 
   // 버전 표시

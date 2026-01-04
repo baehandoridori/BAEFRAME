@@ -10,6 +10,33 @@ const log = createLogger('UserSettings');
 // 로컬 스토리지 키
 const STORAGE_KEY = 'baeframe_user_settings';
 
+// 기본 단축키 매핑
+const DEFAULT_SHORTCUTS = {
+  // 재생 관련
+  playPause: { key: 'Space', ctrl: false, shift: false, alt: false, label: '재생/일시정지' },
+  prevFrame: { key: 'ArrowLeft', ctrl: false, shift: false, alt: false, label: '이전 프레임' },
+  nextFrame: { key: 'ArrowRight', ctrl: false, shift: false, alt: false, label: '다음 프레임' },
+  prevFrameFast: { key: 'ArrowLeft', ctrl: false, shift: true, alt: false, label: '10프레임 뒤로' },
+  nextFrameFast: { key: 'ArrowRight', ctrl: false, shift: true, alt: false, label: '10프레임 앞으로' },
+  goToStart: { key: 'Home', ctrl: false, shift: false, alt: false, label: '처음으로' },
+  goToEnd: { key: 'End', ctrl: false, shift: false, alt: false, label: '끝으로' },
+
+  // 모드 관련
+  commentMode: { key: 'KeyC', ctrl: false, shift: false, alt: false, label: '댓글 모드' },
+  drawMode: { key: 'KeyD', ctrl: false, shift: false, alt: false, label: '그리기 모드' },
+  fullscreen: { key: 'KeyF', ctrl: false, shift: false, alt: false, label: '전체화면' },
+
+  // 구간 반복
+  setInPoint: { key: 'KeyI', ctrl: false, shift: false, alt: false, label: '시작점 설정' },
+  setOutPoint: { key: 'KeyO', ctrl: false, shift: false, alt: false, label: '종료점 설정' },
+  toggleLoop: { key: 'KeyL', ctrl: false, shift: false, alt: false, label: '구간 반복 토글' },
+  clearLoop: { key: 'KeyL', ctrl: false, shift: true, alt: false, label: '구간 반복 해제' },
+
+  // 실행취소
+  undo: { key: 'KeyZ', ctrl: true, shift: false, alt: false, label: '실행취소' },
+  redo: { key: 'KeyY', ctrl: true, shift: false, alt: false, label: '다시실행' }
+};
+
 // 이름별 테마 매핑
 const NAME_THEMES = {
   // 파란색 테마
@@ -99,10 +126,13 @@ export class UserSettings extends EventTarget {
       // 토스트 알림 표시 여부
       showToastNotifications: true,
       // 최초 이름 설정 여부 (모달 한 번만 표시)
-      hasSetNameOnce: false
+      hasSetNameOnce: false,
+      // 사용자 정의 단축키 (기본값 위에 덮어씀)
+      customShortcuts: {}
     };
 
     this._loadFromStorage();
+    this._loadFromFile(); // 파일에서도 로드 시도
   }
 
   /**
@@ -138,10 +168,150 @@ export class UserSettings extends EventTarget {
   _saveToStorage() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.settings));
-      log.info('설정 저장됨');
+      log.info('설정 저장됨 (localStorage)');
     } catch (error) {
       log.error('설정 저장 실패', error);
     }
+  }
+
+  /**
+   * 파일에서 설정 로드 (비동기)
+   */
+  async _loadFromFile() {
+    try {
+      if (window.electronAPI?.loadSettings) {
+        const result = await window.electronAPI.loadSettings();
+        if (result.success && result.data) {
+          this.settings = { ...this.settings, ...result.data };
+          log.info('설정 파일에서 로드됨', { userName: this.settings.userName });
+        }
+      }
+    } catch (error) {
+      log.warn('설정 파일 로드 실패', error);
+    }
+  }
+
+  /**
+   * 파일에 설정 저장 (비동기)
+   */
+  async _saveToFile() {
+    try {
+      if (window.electronAPI?.saveSettings) {
+        const result = await window.electronAPI.saveSettings(this.settings);
+        if (result.success) {
+          log.info('설정 파일에 저장됨');
+        } else {
+          log.error('설정 파일 저장 실패', result.error);
+        }
+      }
+    } catch (error) {
+      log.error('설정 파일 저장 실패', error);
+    }
+  }
+
+  /**
+   * 설정 저장 (localStorage + 파일)
+   */
+  _save() {
+    this._saveToStorage();
+    this._saveToFile();
+  }
+
+  // ====== 단축키 관련 메서드 ======
+
+  /**
+   * 모든 단축키 가져오기 (기본값 + 사용자 정의)
+   */
+  getShortcuts() {
+    return { ...DEFAULT_SHORTCUTS, ...this.settings.customShortcuts };
+  }
+
+  /**
+   * 특정 단축키 가져오기
+   */
+  getShortcut(action) {
+    return this.settings.customShortcuts[action] || DEFAULT_SHORTCUTS[action] || null;
+  }
+
+  /**
+   * 단축키 설정
+   */
+  setShortcut(action, shortcut) {
+    if (!DEFAULT_SHORTCUTS[action]) {
+      log.warn('알 수 없는 단축키 액션', { action });
+      return false;
+    }
+    this.settings.customShortcuts[action] = {
+      ...DEFAULT_SHORTCUTS[action],
+      ...shortcut,
+      label: DEFAULT_SHORTCUTS[action].label // 라벨은 유지
+    };
+    this._save();
+    this._emit('shortcutChanged', { action, shortcut: this.settings.customShortcuts[action] });
+    log.info('단축키 변경됨', { action, shortcut });
+    return true;
+  }
+
+  /**
+   * 단축키 기본값으로 초기화
+   */
+  resetShortcut(action) {
+    if (this.settings.customShortcuts[action]) {
+      delete this.settings.customShortcuts[action];
+      this._save();
+      this._emit('shortcutChanged', { action, shortcut: DEFAULT_SHORTCUTS[action] });
+      log.info('단축키 초기화됨', { action });
+    }
+  }
+
+  /**
+   * 모든 단축키 기본값으로 초기화
+   */
+  resetAllShortcuts() {
+    this.settings.customShortcuts = {};
+    this._save();
+    this._emit('shortcutsReset');
+    log.info('모든 단축키 초기화됨');
+  }
+
+  /**
+   * 키 이벤트가 특정 단축키와 일치하는지 확인
+   */
+  matchShortcut(action, event) {
+    const shortcut = this.getShortcut(action);
+    if (!shortcut) return false;
+
+    return (
+      event.code === shortcut.key &&
+      event.ctrlKey === shortcut.ctrl &&
+      event.shiftKey === shortcut.shift &&
+      event.altKey === shortcut.alt
+    );
+  }
+
+  /**
+   * 키 이벤트로 액션 찾기
+   */
+  findActionByEvent(event) {
+    const shortcuts = this.getShortcuts();
+    for (const [action, shortcut] of Object.entries(shortcuts)) {
+      if (
+        event.code === shortcut.key &&
+        event.ctrlKey === shortcut.ctrl &&
+        event.shiftKey === shortcut.shift &&
+        event.altKey === shortcut.alt
+      ) {
+        return action;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 기본 단축키 목록 가져오기
+   */
+  getDefaultShortcuts() {
+    return { ...DEFAULT_SHORTCUTS };
   }
 
   /**
@@ -167,7 +337,7 @@ export class UserSettings extends EventTarget {
     this.settings.userName = '익명';
     this.settings.userSource = 'anonymous';
     // hasSetNameOnce는 변경하지 않음 - 사용자가 직접 설정해야 함
-    this._saveToStorage();
+    this._save();
     log.info('익명 사용자로 설정됨 (수동 입력 필요)');
     this._emit('userDetected', { userName: '익명', source: 'anonymous' });
     return '익명';
@@ -223,7 +393,7 @@ export class UserSettings extends EventTarget {
       this.settings.userName = name.trim();
       this.settings.userSource = 'manual';
       this.settings.hasSetNameOnce = true; // 이름 설정 완료 표시
-      this._saveToStorage();
+      this._save();
       this._emit('userNameChanged', { userName: this.settings.userName });
       log.info('사용자 이름 수동 설정됨', { userName: this.settings.userName });
 
@@ -254,7 +424,7 @@ export class UserSettings extends EventTarget {
    */
   setShowToastNotifications(show) {
     this.settings.showToastNotifications = show;
-    this._saveToStorage();
+    this._save();
     log.info('토스트 알림 설정 변경됨', { show });
   }
 
@@ -283,7 +453,7 @@ export class UserSettings extends EventTarget {
       slackWorkspace: null,
       shortcutSet: 'set2'
     };
-    this._saveToStorage();
+    this._save();
     return await this.initialize();
   }
 
@@ -302,7 +472,7 @@ export class UserSettings extends EventTarget {
   setShortcutSet(set) {
     if (set === 'set1' || set === 'set2') {
       this.settings.shortcutSet = set;
-      this._saveToStorage();
+      this._save();
       this._emit('shortcutSetChanged', { shortcutSet: set });
       log.info('단축키 세트 변경됨', { shortcutSet: set });
     }
@@ -412,7 +582,7 @@ export class UserSettings extends EventTarget {
    */
   setShowCommentThumbnails(show) {
     this.settings.showCommentThumbnails = !!show;
-    this._saveToStorage();
+    this._save();
     this._emit('commentThumbnailsChanged', { show: this.settings.showCommentThumbnails });
     log.info('댓글 썸네일 설정 변경됨', { show });
   }
@@ -430,7 +600,7 @@ export class UserSettings extends EventTarget {
   setCommentThumbnailScale(scale) {
     const clampedScale = Math.max(50, Math.min(200, scale));
     this.settings.commentThumbnailScale = clampedScale;
-    this._saveToStorage();
+    this._save();
     this._emit('commentThumbnailScaleChanged', { scale: clampedScale });
     log.info('댓글 썸네일 스케일 변경됨', { scale: clampedScale });
   }

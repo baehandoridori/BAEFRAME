@@ -278,6 +278,55 @@ function setupIpcHandlers() {
     return { success: true, webShareUrl };
   });
 
+  // ====== 설정 파일 관련 ======
+
+  // 설정 파일 경로 가져오기
+  const getSettingsFilePath = () => {
+    const settingsDir = path.join(app.getPath('userData'), 'settings');
+    if (!fs.existsSync(settingsDir)) {
+      fs.mkdirSync(settingsDir, { recursive: true });
+    }
+    return path.join(settingsDir, 'user-settings.json');
+  };
+
+  // 설정 파일 로드
+  ipcMain.handle('settings:load', async () => {
+    const trace = log.trace('settings:load');
+    try {
+      const filePath = getSettingsFilePath();
+      if (fs.existsSync(filePath)) {
+        const content = await fs.promises.readFile(filePath, 'utf-8');
+        const data = JSON.parse(content);
+        trace.end({ success: true });
+        return { success: true, data };
+      }
+      trace.end({ success: true, empty: true });
+      return { success: true, data: null };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 설정 파일 저장
+  ipcMain.handle('settings:save', async (event, data) => {
+    const trace = log.trace('settings:save');
+    try {
+      const filePath = getSettingsFilePath();
+      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+      trace.end({ success: true });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 설정 파일 경로 반환
+  ipcMain.handle('settings:get-path', () => {
+    return getSettingsFilePath();
+  });
+
   // ====== 로그 관련 ======
 
   ipcMain.on('log:write', (event, logData) => {
