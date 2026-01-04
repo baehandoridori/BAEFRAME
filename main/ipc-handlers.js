@@ -6,7 +6,7 @@ const { ipcMain, dialog, app, clipboard, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { createLogger } = require('./logger');
-const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized } = require('./window');
+const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized, toggleFullscreen, isFullscreen } = require('./window');
 
 const log = createLogger('IPC');
 
@@ -107,6 +107,14 @@ function setupIpcHandlers() {
 
   ipcMain.handle('window:is-maximized', () => {
     return isMaximized();
+  });
+
+  ipcMain.handle('window:toggle-fullscreen', () => {
+    toggleFullscreen();
+  });
+
+  ipcMain.handle('window:is-fullscreen', () => {
+    return isFullscreen();
   });
 
   // ====== 앱 관련 ======

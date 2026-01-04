@@ -2064,17 +2064,21 @@ async function initApp() {
   }
 
   /**
-   * 전체화면 모드 토글
+   * 전체화면 모드 토글 (시스템 전체화면)
    */
-  function toggleFullscreen() {
-    state.isFullscreen = !state.isFullscreen;
-    document.body.classList.toggle('app-fullscreen', state.isFullscreen);
+  async function toggleFullscreen() {
+    // Electron 시스템 전체화면 API 호출
+    await window.electronAPI.toggleFullscreen();
+    const isFullscreen = await window.electronAPI.isFullscreen();
 
-    if (state.isFullscreen) {
+    state.isFullscreen = isFullscreen;
+    document.body.classList.toggle('app-fullscreen', isFullscreen);
+
+    if (isFullscreen) {
       showToast('전체화면 모드 (C: 댓글 추가, F 또는 ESC: 해제)', 'info');
     }
 
-    log.debug('전체화면 모드 변경', { isFullscreen: state.isFullscreen });
+    log.debug('전체화면 모드 변경', { isFullscreen });
   }
 
   /**

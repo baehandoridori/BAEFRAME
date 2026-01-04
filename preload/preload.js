@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximizeWindow: () => ipcRenderer.invoke('window:maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  toggleFullscreen: () => ipcRenderer.invoke('window:toggle-fullscreen'),
+  isFullscreen: () => ipcRenderer.invoke('window:is-fullscreen'),
 
   // ====== 앱 관련 ======
   getVersion: () => ipcRenderer.invoke('app:get-version'),
