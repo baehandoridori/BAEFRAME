@@ -94,3 +94,6 @@ if exist "%APPDATA%\Electron\Cache" (
 :: Electron 실행
 echo [baeframe] 앱 시작... (%LOCAL_DIR%)
 start "" npx electron .
+
+:: 앱 실행 후 DOS 창 자동 종료
+exit

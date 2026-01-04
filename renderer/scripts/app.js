@@ -291,6 +291,8 @@ async function initApp() {
     const { currentTime, currentFrame } = e.detail;
     timeline.setCurrentTime(currentTime);
     updateTimecodeDisplay();
+    updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
+    updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
 
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
@@ -2067,7 +2069,7 @@ async function initApp() {
    * 전체화면 모드 토글 (시스템 전체화면)
    */
   let fullscreenMouseHandler = null;
-  let fullscreenHideTimeout = null;
+  let fullscreenTimecodeOverlay = null;
 
   async function toggleFullscreen() {
     // Electron 시스템 전체화면 API 호출
@@ -2080,6 +2082,17 @@ async function initApp() {
     if (isFullscreen) {
       showToast('전체화면 모드 (C: 댓글 추가, F 또는 ESC: 해제)', 'info');
 
+      // 타임코드 오버레이 생성
+      fullscreenTimecodeOverlay = document.createElement('div');
+      fullscreenTimecodeOverlay.className = 'fullscreen-timecode-overlay';
+      fullscreenTimecodeOverlay.innerHTML = `
+        <span class="current-time">00:00:00:00</span>
+        <span class="separator">/</span>
+        <span class="total-time">00:00:00:00</span>
+      `;
+      document.body.appendChild(fullscreenTimecodeOverlay);
+      updateFullscreenTimecode();
+
       // 마우스 이동 감지 - 하단 80px 이내면 컨트롤바 표시
       fullscreenMouseHandler = (e) => {
         const bottomThreshold = 80;
@@ -2087,19 +2100,8 @@ async function initApp() {
 
         if (isNearBottom) {
           document.body.classList.add('show-controls');
-          // 타이머 초기화
-          if (fullscreenHideTimeout) {
-            clearTimeout(fullscreenHideTimeout);
-            fullscreenHideTimeout = null;
-          }
         } else {
-          // 마우스가 위로 이동하면 2초 후 숨김
-          if (!fullscreenHideTimeout) {
-            fullscreenHideTimeout = setTimeout(() => {
-              document.body.classList.remove('show-controls');
-              fullscreenHideTimeout = null;
-            }, 2000);
-          }
+          document.body.classList.remove('show-controls');
         }
       };
       document.addEventListener('mousemove', fullscreenMouseHandler);
@@ -2109,14 +2111,86 @@ async function initApp() {
         document.removeEventListener('mousemove', fullscreenMouseHandler);
         fullscreenMouseHandler = null;
       }
-      if (fullscreenHideTimeout) {
-        clearTimeout(fullscreenHideTimeout);
-        fullscreenHideTimeout = null;
+      // 타임코드 오버레이 제거
+      if (fullscreenTimecodeOverlay) {
+        fullscreenTimecodeOverlay.remove();
+        fullscreenTimecodeOverlay = null;
       }
       document.body.classList.remove('show-controls');
     }
 
     log.debug('전체화면 모드 변경', { isFullscreen });
+  }
+
+  /**
+   * 전체화면 타임코드 업데이트
+   */
+  function updateFullscreenTimecode() {
+    if (!fullscreenTimecodeOverlay) return;
+
+    const currentTime = videoPlayer.currentTime || 0;
+    const duration = videoPlayer.duration || 0;
+    const fps = videoPlayer.fps || 24;
+
+    const formatTimecode = (seconds) => {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      const f = Math.floor((seconds % 1) * fps);
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
+    };
+
+    fullscreenTimecodeOverlay.querySelector('.current-time').textContent = formatTimecode(currentTime);
+    fullscreenTimecodeOverlay.querySelector('.total-time').textContent = formatTimecode(duration);
+  }
+
+  /**
+   * 전체화면 시크바 업데이트
+   */
+  function updateFullscreenSeekbar() {
+    const seekbarProgress = document.getElementById('seekbarProgress');
+    const seekbarHandle = document.getElementById('seekbarHandle');
+    if (!seekbarProgress || !seekbarHandle) return;
+
+    const duration = videoPlayer.duration || 0;
+    const currentTime = videoPlayer.currentTime || 0;
+    if (duration === 0) return;
+
+    const percent = (currentTime / duration) * 100;
+    seekbarProgress.style.width = `${percent}%`;
+    seekbarHandle.style.left = `${percent}%`;
+  }
+
+  // 전체화면 시크바 이벤트 설정
+  const fullscreenSeekbar = document.getElementById('fullscreenSeekbar');
+  if (fullscreenSeekbar) {
+    let isSeeking = false;
+
+    const seekToPosition = (e) => {
+      const rect = fullscreenSeekbar.getBoundingClientRect();
+      const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const duration = videoPlayer.duration || 0;
+      if (duration > 0) {
+        videoPlayer.seek(percent * duration);
+      }
+    };
+
+    fullscreenSeekbar.addEventListener('mousedown', (e) => {
+      isSeeking = true;
+      seekToPosition(e);
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (isSeeking) {
+        seekToPosition(e);
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      isSeeking = false;
+    });
+
+    fullscreenSeekbar.addEventListener('click', seekToPosition);
   }
 
   /**
