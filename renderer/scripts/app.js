@@ -3321,6 +3321,8 @@ async function initApp() {
   });
 
   // ====== 사용자 이름 초기화 ======
+  // 설정 파일 로드 완료 대기 (파일에서 hasSetNameOnce 등 로드)
+  await userSettings.waitForReady();
   let userName = await userSettings.initialize();
   log.info('사용자 이름 감지됨', { userName, source: userSettings.getUserSource() });
 
