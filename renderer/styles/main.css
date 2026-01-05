@@ -1310,20 +1310,6 @@ body {
   transform: scale(1.1);
 }
 
-/* Comment Markers */
-.comment-marker-track {
-  position: absolute;
-  top: 0;
-  height: 100%;
-  width: 2px;
-  background: var(--error);
-  z-index: 50;
-}
-
-.comment-marker-track.resolved {
-  background: var(--success);
-}
-
 /* 구간 반복 마커 */
 .loop-region {
   position: absolute;
@@ -2017,13 +2003,15 @@ body {
   line-height: 1.5;
   color: var(--text-primary);
   margin-bottom: 12px;
+  overflow: hidden;
 }
 
 .comment-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 /* 댓글 액션 바에 있는 작성자 이름 */
@@ -2714,6 +2702,8 @@ body.resizing .comment-panel {
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .comment-action-btn:hover {
@@ -2742,9 +2732,12 @@ body.resizing .comment-panel {
 
 /* 해결 시간 표시 */
 .resolved-time {
-  font-size: 0.75em;
-  opacity: 0.7;
-  margin-left: 2px;
+  font-size: 10px;
+  opacity: 0.6;
+  margin-left: 4px;
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .comment-empty {
@@ -3275,69 +3268,6 @@ body.resizing .comment-panel {
   background: var(--bg-hover);
   color: var(--text-primary);
   border-color: var(--border-default);
-}
-
-/* Web Share Modal */
-.web-share-modal {
-  max-width: 500px;
-}
-
-.modal-description {
-  margin-bottom: 20px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-.web-share-url-container {
-  display: flex;
-  gap: 8px;
-}
-
-.web-share-url-container input {
-  flex: 1;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 10px 12px;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-family: monospace;
-}
-
-.web-share-url-container .btn {
-  flex-shrink: 0;
-  padding: 10px 16px;
-}
-
-.web-share-result {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-subtle);
-}
-
-/* 웹 공유 파일 정보 */
-.web-share-file-info {
-  margin-bottom: 16px;
-}
-
-.file-info-box {
-  padding: 12px 16px;
-  background: rgba(74, 158, 255, 0.1);
-  border: 1px solid rgba(74, 158, 255, 0.3);
-  border-radius: 8px;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.file-info-box strong {
-  color: var(--accent-primary);
-}
-
-.file-info-box small {
-  color: var(--text-tertiary);
-  display: block;
-  margin-top: 8px;
 }
 
 /* 전체 너비 버튼 */
@@ -4629,7 +4559,8 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
 .comment-attached-image {
   margin-top: 8px;
   position: relative;
-  display: inline-block;
+  display: block;
+  overflow: hidden;
 }
 
 .comment-attached-image img {
@@ -4639,6 +4570,8 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   cursor: pointer;
   transition: all var(--transition-fast);
   border: 1px solid var(--border-subtle);
+  display: block;
+  object-fit: contain;
 }
 
 .comment-attached-image img:hover {
@@ -4654,6 +4587,7 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
 .thread-reply-image {
   margin-top: 8px;
   max-width: 100%;
+  overflow: hidden;
 }
 
 .thread-comment-image img,
@@ -4664,6 +4598,7 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   cursor: pointer;
   transition: all var(--transition-fast);
   border: 1px solid var(--border-subtle);
+  display: block;
 }
 
 .thread-comment-image img:hover,
