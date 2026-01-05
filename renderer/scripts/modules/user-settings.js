@@ -153,7 +153,12 @@ export class UserSettings extends EventTarget {
     this._loadFromFile().then(() => {
       this._ready = true;
       this._emit('ready', { settings: this.settings });
-      log.info('설정 로드 완료', { userName: this.settings.userName, customShortcuts: Object.keys(this.settings.customShortcuts || {}) });
+      log.info('설정 로드 완료', {
+        userName: this.settings.userName,
+        hasSetNameOnce: this.settings.hasSetNameOnce,
+        userSource: this.settings.userSource,
+        customShortcuts: Object.keys(this.settings.customShortcuts || {}).length
+      });
     });
   }
 
@@ -360,26 +365,38 @@ export class UserSettings extends EventTarget {
    * - 없으면 익명으로 설정 (모달에서 수동 입력 유도)
    */
   async initialize() {
+    log.info('initialize 호출', {
+      hasSetNameOnce: this.settings.hasSetNameOnce,
+      userName: this.settings.userName,
+      userSource: this.settings.userSource
+    });
+
     // 이미 한 번 이름을 설정한 적이 있으면 기존 이름 사용
-    if (this.settings.hasSetNameOnce && this.settings.userName) {
+    if (this.settings.hasSetNameOnce) {
       log.info('기존 사용자 이름 사용 (hasSetNameOnce)', { userName: this.settings.userName });
-      return this.settings.userName;
+      return this.settings.userName || '익명';
     }
 
     // 이미 수동으로 설정된 이름이 있으면 사용
     if (this.settings.userName && this.settings.userSource === 'manual') {
       log.info('기존 사용자 이름 사용', { userName: this.settings.userName });
+      // hasSetNameOnce가 false지만 수동 설정된 이름이 있으면 true로 설정
+      this.settings.hasSetNameOnce = true;
+      this._save();
       return this.settings.userName;
     }
 
     // 익명으로 설정 (앱에서 모달을 통해 수동 입력 유도)
-    this.settings.userName = '익명';
-    this.settings.userSource = 'anonymous';
-    // hasSetNameOnce는 변경하지 않음 - 사용자가 직접 설정해야 함
-    this._save();
-    log.info('익명 사용자로 설정됨 (수동 입력 필요)');
-    this._emit('userDetected', { userName: '익명', source: 'anonymous' });
-    return '익명';
+    // 주의: hasSetNameOnce는 건드리지 않음 (사용자가 모달에서 설정해야 함)
+    if (!this.settings.userName || this.settings.userName === '익명') {
+      this.settings.userName = '익명';
+      this.settings.userSource = 'anonymous';
+      // hasSetNameOnce는 변경하지 않음 - 저장도 하지 않음 (불필요한 덮어쓰기 방지)
+      log.info('익명 사용자로 설정됨 (수동 입력 필요)');
+      this._emit('userDetected', { userName: '익명', source: 'anonymous' });
+    }
+
+    return this.settings.userName || '익명';
   }
 
   /**
