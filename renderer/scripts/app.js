@@ -2475,15 +2475,13 @@ async function initApp() {
         <button class="comment-resolve-toggle resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
           ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
         </button>
-        <div class="comment-media-row">
-          ${thumbnailHtml}
-          ${marker.image ? `<div class="comment-attached-image"><img src="${marker.image}" alt="첨부 이미지" data-full-image="${marker.image}"></div>` : ''}
-        </div>
+        ${thumbnailHtml}
         <div class="comment-header">
           <span class="comment-timecode">${marker.startTimecode}</span>
         </div>
         <div class="comment-content">
           <p class="comment-text">${escapeHtml(marker.text)}</p>
+          ${marker.image ? `<div class="comment-attached-image"><img src="${marker.image}" alt="첨부 이미지" data-full-image="${marker.image}"></div>` : ''}
         </div>
         <div class="comment-edit-form" style="display: none;">
           <textarea class="comment-edit-textarea" rows="3">${escapeHtml(marker.text)}</textarea>

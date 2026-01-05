@@ -139,7 +139,7 @@ export class UserSettings extends EventTarget {
       slackWorkspace: null,
       // 댓글 썸네일 설정
       showCommentThumbnails: true,
-      commentThumbnailScale: 50, // 50 ~ 200 (기본값: 50%)
+      commentThumbnailScale: 35, // 35 ~ 200 (기본값: 35%)
       // 토스트 알림 표시 여부
       showToastNotifications: true,
       // 최초 이름 설정 여부 (모달 한 번만 표시)
@@ -396,6 +396,9 @@ export class UserSettings extends EventTarget {
       this._emit('userDetected', { userName: '익명', source: 'anonymous' });
     }
 
+    // 현재 사용자 이름에 맞는 테마 적용
+    this.applyThemeForCurrentUser();
+
     return this.settings.userName || '익명';
   }
 
@@ -622,17 +625,17 @@ export class UserSettings extends EventTarget {
   }
 
   /**
-   * 댓글 썸네일 스케일 가져오기 (50 ~ 200)
+   * 댓글 썸네일 스케일 가져오기 (35 ~ 200)
    */
   getCommentThumbnailScale() {
-    return this.settings.commentThumbnailScale ?? 50;
+    return this.settings.commentThumbnailScale ?? 35;
   }
 
   /**
-   * 댓글 썸네일 스케일 설정 (50 ~ 200)
+   * 댓글 썸네일 스케일 설정 (35 ~ 200)
    */
   setCommentThumbnailScale(scale) {
-    const clampedScale = Math.max(50, Math.min(200, scale));
+    const clampedScale = Math.max(35, Math.min(200, scale));
     this.settings.commentThumbnailScale = clampedScale;
     this._save();
     this._emit('commentThumbnailScaleChanged', { scale: clampedScale });

@@ -1899,50 +1899,9 @@ body {
   z-index: 1;
 }
 
-/* 미디어 영역 (썸네일 + 첨부 이미지) */
-.comment-media-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.comment-media-row:empty {
-  display: none;
-}
-
-/* 하나만 있을 때는 100% */
-.comment-media-row > *:only-child {
-  max-width: 100%;
-}
-
-/* 첨부 이미지 (미디어 영역 내) */
-.comment-media-row .comment-attached-image {
-  flex: 1;
-  max-width: 50%;
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.comment-media-row .comment-attached-image img {
-  width: 100%;
-  max-height: 120px;
-  object-fit: cover;
-  border-radius: 6px;
-  cursor: pointer;
-  border: 1px solid var(--border-subtle);
-  transition: all var(--transition-fast);
-  display: block;
-}
-
-.comment-media-row .comment-attached-image img:hover {
-  border-color: var(--accent-primary);
-}
-
 /* 댓글 썸네일 */
 .comment-thumbnail-wrapper {
-  flex: 1;
-  max-width: 50%;
-  margin-bottom: 0;
+  margin-bottom: 8px;
   border-radius: 6px;
   overflow: hidden;
   background: var(--bg-primary);
@@ -2990,7 +2949,7 @@ body.resizing .comment-panel {
   opacity: 0;
   visibility: hidden;
   transition: all 0.2s ease;
-  z-index: 100;
+  z-index: 1000;
   pointer-events: none;
 }
 
@@ -3104,6 +3063,11 @@ body.resizing .comment-panel {
   background: var(--bg-tertiary);
   border-radius: 4px;
   border-left: 2px solid var(--accent-primary);
+}
+
+.tooltip-image-icon {
+  margin-right: 4px;
+  font-size: 11px;
 }
 
 .tooltip-count {

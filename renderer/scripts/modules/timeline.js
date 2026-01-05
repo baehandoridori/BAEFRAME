@@ -1205,8 +1205,13 @@ export class Timeline extends EventTarget {
     if (markerInfos.length > 0) {
       const content = markerInfos.map(info => {
         const text = info.text || '';
-        const preview = text.length > 50 ? text.substring(0, 50) + '...' : text;
-        return `<div class="tooltip-comment">${this._escapeHtml(preview)}</div>`;
+        const hasImage = !!info.image;
+        // "(이미지)"만 있으면 아이콘으로 대체
+        const displayText = text === '(이미지)' ? '' : text;
+        const preview = displayText.length > 50 ? displayText.substring(0, 50) + '...' : displayText;
+        const imageIcon = hasImage ? '<span class="tooltip-image-icon">🖼</span>' : '';
+        const textHtml = preview ? this._escapeHtml(preview) : '';
+        return `<div class="tooltip-comment">${imageIcon}${textHtml || (hasImage ? '이미지' : '')}</div>`;
       }).join('');
       tooltip.innerHTML = `
         <div class="tooltip-frame">프레임 ${frame}</div>
