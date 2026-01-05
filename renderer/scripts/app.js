@@ -319,6 +319,12 @@ async function initApp() {
   userSettings.addEventListener('shortcutChanged', updateShortcutHints);
   userSettings.addEventListener('shortcutsReset', updateShortcutHints);
 
+  // 설정 파일 로드 완료 시 힌트 업데이트
+  userSettings.addEventListener('ready', () => {
+    log.info('설정 파일 로드 완료, UI 업데이트');
+    updateShortcutHints();
+  });
+
   // ====== 모듈 이벤트 연결 ======
 
   // 비디오 메타데이터 로드됨

@@ -148,8 +148,30 @@ export class UserSettings extends EventTarget {
       customShortcuts: {}
     };
 
+    this._ready = false;
     this._loadFromStorage();
-    this._loadFromFile(); // 파일에서도 로드 시도
+    this._loadFromFile().then(() => {
+      this._ready = true;
+      this._emit('ready', { settings: this.settings });
+      log.info('설정 로드 완료', { userName: this.settings.userName, customShortcuts: Object.keys(this.settings.customShortcuts || {}) });
+    });
+  }
+
+  /**
+   * 설정 로드 완료 여부
+   */
+  isReady() {
+    return this._ready;
+  }
+
+  /**
+   * 설정 로드 완료 대기
+   */
+  async waitForReady() {
+    if (this._ready) return;
+    return new Promise(resolve => {
+      this.addEventListener('ready', () => resolve(), { once: true });
+    });
   }
 
   /**
