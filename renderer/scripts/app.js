@@ -2472,6 +2472,9 @@ async function initApp() {
       return `
       <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
+        <button class="comment-resolve-toggle resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
+          ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
+        </button>
         ${thumbnailHtml}
         <div class="comment-header">
           <span class="comment-timecode">${marker.startTimecode}</span>
@@ -2490,18 +2493,9 @@ async function initApp() {
         <div class="comment-actions">
           <span class="comment-author-inline ${authorClass}" ${authorStyle}>${marker.author}</span>
           <span class="comment-time-inline">${formatRelativeTime(marker.createdAt)}</span>
-          <button class="comment-action-btn edit-btn" title="수정">
-            수정
-          </button>
-          <button class="comment-action-btn reply-btn" title="답글">
-            답글
-          </button>
-          <button class="comment-action-btn resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
-            ${marker.resolved ? `해결됨 <span class="resolved-time">(${marker.resolvedAt ? formatRelativeTime(marker.resolvedAt) : ''})</span>` : '해결'}
-          </button>
-          <button class="comment-action-btn delete-btn" title="삭제">
-            삭제
-          </button>
+          <button class="comment-action-btn edit-btn" title="수정">수정</button>
+          <button class="comment-action-btn reply-btn" title="답글">답글</button>
+          <button class="comment-action-btn delete-btn" title="삭제">삭제</button>
         </div>
         ${replyCount > 0 ? `
         <button class="comment-thread-toggle" data-marker-id="${marker.id}">
