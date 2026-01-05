@@ -1869,6 +1869,9 @@ async function initApp() {
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
 
       // ====== 이전 데이터 초기화 ======
+      // 자동 저장 일시 중지 (초기화 중 빈 데이터가 저장되는 것 방지)
+      reviewDataManager.pauseAutoSave();
+
       // 댓글 매니저 초기화
       commentManager.clear();
       // 그리기 매니저 초기화
@@ -1932,6 +1935,8 @@ async function initApp() {
 
     } catch (error) {
       trace.error(error);
+      // 에러 발생 시에도 자동 저장 재개
+      reviewDataManager.resumeAutoSave();
       showToast('파일을 로드할 수 없습니다.', 'error');
     }
   }
@@ -3303,7 +3308,13 @@ async function initApp() {
       }
     } else if (filePath.startsWith('baeframe://')) {
       // 프로토콜 링크: baeframe://G:/경로/파일.bframe 또는 baeframe://G:/경로/영상.mp4
-      const actualPath = filePath.replace('baeframe://', '');
+      let actualPath = filePath.replace('baeframe://', '');
+      // URL 인코딩 디코딩 (공백 등 특수문자 처리)
+      try {
+        actualPath = decodeURIComponent(actualPath);
+      } catch (e) {
+        log.warn('URL 디코딩 실패, 원본 경로 사용', { actualPath, error: e.message });
+      }
       log.info('프로토콜 링크에서 경로 추출', { actualPath });
 
       // 실제 경로로 다시 처리 (재귀)
