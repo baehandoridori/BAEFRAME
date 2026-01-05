@@ -1827,27 +1827,32 @@ body {
   position: absolute;
   top: 8px;
   right: 8px;
-  padding: 4px 8px;
+  padding: 5px 10px;
   font-size: 11px;
-  background: transparent;
-  border: 1px solid var(--border-subtle);
+  font-weight: 600;
+  background: rgba(255, 152, 0, 0.15);
+  border: 1px solid rgba(255, 152, 0, 0.5);
   border-radius: 12px;
-  color: var(--text-tertiary);
+  color: #ff9800;
   cursor: pointer;
   transition: all var(--transition-fast);
   z-index: 2;
 }
 
 .comment-resolve-toggle:hover {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  border-color: var(--border-default);
+  background: rgba(255, 152, 0, 0.3);
+  border-color: #ff9800;
 }
 
 .comment-item.resolved .comment-resolve-toggle {
-  background: var(--success-bg);
-  border-color: var(--success);
-  color: var(--success);
+  background: rgba(76, 175, 80, 0.15);
+  border: 1px solid rgba(76, 175, 80, 0.5);
+  color: #4caf50;
+}
+
+.comment-item.resolved .comment-resolve-toggle:hover {
+  background: rgba(76, 175, 80, 0.3);
+  border-color: #4caf50;
 }
 
 .comment-item:hover {
