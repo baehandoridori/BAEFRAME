@@ -143,6 +143,59 @@ async function initApp() {
     panInitialY: 0
   };
 
+  // ====== 글로벌 Undo/Redo 시스템 ======
+  const undoStack = [];
+  const redoStack = [];
+  const MAX_UNDO_STACK = 50;
+
+  /**
+   * Undo 스택에 작업 추가
+   * @param {Object} action - { type, data, undo, redo }
+   */
+  function pushUndo(action) {
+    undoStack.push(action);
+    if (undoStack.length > MAX_UNDO_STACK) {
+      undoStack.shift();
+    }
+    redoStack.length = 0; // Redo 스택 초기화
+  }
+
+  /**
+   * 글로벌 Undo 실행
+   */
+  function globalUndo() {
+    if (undoStack.length === 0) {
+      // 댓글 스택이 비어있으면 그리기 Undo 시도
+      return drawingManager.undo();
+    }
+
+    const action = undoStack.pop();
+    if (action && action.undo) {
+      action.undo();
+      redoStack.push(action);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 글로벌 Redo 실행
+   */
+  function globalRedo() {
+    if (redoStack.length === 0) {
+      // Redo 스택이 비어있으면 그리기 Redo 시도
+      return drawingManager.redo();
+    }
+
+    const action = redoStack.pop();
+    if (action && action.redo) {
+      action.redo();
+      undoStack.push(action);
+      return true;
+    }
+    return false;
+  }
+
   // 마커 컨테이너 생성 (영상 위에 마커 표시용)
   const markerContainer = document.createElement('div');
   markerContainer.className = 'comment-markers-container';
@@ -200,8 +253,77 @@ async function initApp() {
   });
   reviewDataManager.connect();
 
-  // 사용자 설정 (단축키 세트 등)
+  // 사용자 설정
   const userSettings = getUserSettings();
+
+  // ====== 단축키 힌트 동적 업데이트 ======
+
+  /**
+   * 키 코드를 표시 문자열로 변환
+   */
+  function keyCodeToDisplay(keyCode) {
+    const keyMap = {
+      'Space': 'Space',
+      'ArrowLeft': '←',
+      'ArrowRight': '→',
+      'ArrowUp': '↑',
+      'ArrowDown': '↓',
+      'Delete': 'Del',
+      'Backspace': '⌫',
+      'Enter': '↵',
+      'Escape': 'Esc',
+      'Tab': 'Tab',
+      'Home': 'Home',
+      'End': 'End',
+      'PageUp': 'PgUp',
+      'PageDown': 'PgDn'
+    };
+
+    if (keyMap[keyCode]) return keyMap[keyCode];
+    if (keyCode.startsWith('Key')) return keyCode.slice(3);
+    if (keyCode.startsWith('Digit')) return keyCode.slice(5);
+    if (keyCode.startsWith('Numpad')) return 'Num' + keyCode.slice(6);
+    if (keyCode.startsWith('F') && keyCode.length <= 3) return keyCode;
+    return keyCode;
+  }
+
+  /**
+   * 단축키 힌트 UI 업데이트
+   */
+  function updateShortcutHints() {
+    const drawHint = document.getElementById('btnDrawModeHint');
+    const commentHint = document.getElementById('btnAddCommentHint');
+    const hintDrawMode = document.getElementById('hintDrawMode');
+    const hintCommentMode = document.getElementById('hintCommentMode');
+
+    const drawShortcut = userSettings.getShortcut('drawMode');
+    const commentShortcut = userSettings.getShortcut('commentMode');
+
+    if (drawShortcut) {
+      const displayKey = keyCodeToDisplay(drawShortcut.key);
+      if (drawHint) drawHint.textContent = displayKey;
+      if (hintDrawMode) hintDrawMode.textContent = displayKey;
+    }
+
+    if (commentShortcut) {
+      const displayKey = keyCodeToDisplay(commentShortcut.key);
+      if (commentHint) commentHint.textContent = displayKey;
+      if (hintCommentMode) hintCommentMode.textContent = displayKey;
+    }
+  }
+
+  // 초기 힌트 업데이트
+  updateShortcutHints();
+
+  // 단축키 변경 시 힌트 업데이트
+  userSettings.addEventListener('shortcutChanged', updateShortcutHints);
+  userSettings.addEventListener('shortcutsReset', updateShortcutHints);
+
+  // 설정 파일 로드 완료 시 힌트 업데이트
+  userSettings.addEventListener('ready', () => {
+    log.info('설정 파일 로드 완료, UI 업데이트');
+    updateShortcutHints();
+  });
 
   // ====== 모듈 이벤트 연결 ======
 
@@ -238,6 +360,8 @@ async function initApp() {
     const { currentTime, currentFrame } = e.detail;
     timeline.setCurrentTime(currentTime);
     updateTimecodeDisplay();
+    updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
+    updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
 
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
@@ -434,6 +558,25 @@ async function initApp() {
     updateTimelineMarkers();
     updateCommentList();
     log.info('마커 추가됨', { id: marker.id, text: marker.text });
+
+    // Undo 스택에 추가
+    const markerData = marker.toJSON();
+    pushUndo({
+      type: 'ADD_COMMENT',
+      data: markerData,
+      undo: () => {
+        commentManager.deleteMarker(markerData.id);
+        updateCommentList();
+        updateTimelineMarkers();
+        updateVideoMarkers();
+      },
+      redo: () => {
+        commentManager.restoreMarker(markerData);
+        updateCommentList();
+        updateTimelineMarkers();
+        updateVideoMarkers();
+      }
+    });
   });
 
   // 마커 삭제됨
@@ -918,35 +1061,6 @@ async function initApp() {
     }
   });
 
-  // ====== 단축키 세트 선택 ======
-  const shortcutSet1Btn = document.getElementById('shortcutSet1');
-  const shortcutSet2Btn = document.getElementById('shortcutSet2');
-
-  // 초기 단축키 세트 UI 설정
-  function updateShortcutSetUI() {
-    const currentSet = userSettings.getShortcutSet();
-    elements.shortcutsMenu.dataset.set = currentSet;
-
-    shortcutSet1Btn?.classList.toggle('active', currentSet === 'set1');
-    shortcutSet2Btn?.classList.toggle('active', currentSet === 'set2');
-  }
-
-  // 단축키 세트 버튼 클릭 이벤트
-  shortcutSet1Btn?.addEventListener('click', () => {
-    userSettings.setShortcutSet('set1');
-    updateShortcutSetUI();
-    showToast('단축키 Set 1 (기본) 활성화', 'info');
-  });
-
-  shortcutSet2Btn?.addEventListener('click', () => {
-    userSettings.setShortcutSet('set2');
-    updateShortcutSetUI();
-    showToast('단축키 Set 2 (애니메이션) 활성화', 'info');
-  });
-
-  // 초기 UI 업데이트
-  updateShortcutSetUI();
-
   // 필터 칩 (댓글 목록 필터링)
   document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', function() {
@@ -1028,6 +1142,16 @@ async function initApp() {
 
   // 초기 스케일 CSS 변수 설정
   document.documentElement.style.setProperty('--comment-thumbnail-scale', userSettings.getCommentThumbnailScale() / 100);
+
+  // 토스트 알림 토글
+  const toggleToastNotifications = document.getElementById('toggleToastNotifications');
+  if (toggleToastNotifications) {
+    toggleToastNotifications.checked = userSettings.getShowToastNotifications();
+  }
+  toggleToastNotifications?.addEventListener('change', () => {
+    const show = toggleToastNotifications.checked;
+    userSettings.setShowToastNotifications(show);
+  });
 
   // 도구별 설정 저장 (크기, 불투명도)
   const toolSettings = {
@@ -1745,6 +1869,9 @@ async function initApp() {
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
 
       // ====== 이전 데이터 초기화 ======
+      // 자동 저장 일시 중지 (초기화 중 빈 데이터가 저장되는 것 방지)
+      reviewDataManager.pauseAutoSave();
+
       // 댓글 매니저 초기화
       commentManager.clear();
       // 그리기 매니저 초기화
@@ -1808,6 +1935,8 @@ async function initApp() {
 
     } catch (error) {
       trace.error(error);
+      // 에러 발생 시에도 자동 저장 재개
+      reviewDataManager.resumeAutoSave();
       showToast('파일을 로드할 수 없습니다.', 'error');
     }
   }
@@ -1982,17 +2111,131 @@ async function initApp() {
   }
 
   /**
-   * 전체화면 모드 토글
+   * 전체화면 모드 토글 (시스템 전체화면)
    */
-  function toggleFullscreen() {
-    state.isFullscreen = !state.isFullscreen;
-    document.body.classList.toggle('app-fullscreen', state.isFullscreen);
+  let fullscreenMouseHandler = null;
+  let fullscreenTimecodeOverlay = null;
 
-    if (state.isFullscreen) {
+  async function toggleFullscreen() {
+    // Electron 시스템 전체화면 API 호출
+    await window.electronAPI.toggleFullscreen();
+    const isFullscreen = await window.electronAPI.isFullscreen();
+
+    state.isFullscreen = isFullscreen;
+    document.body.classList.toggle('app-fullscreen', isFullscreen);
+
+    if (isFullscreen) {
       showToast('전체화면 모드 (C: 댓글 추가, F 또는 ESC: 해제)', 'info');
+
+      // 타임코드 오버레이 생성
+      fullscreenTimecodeOverlay = document.createElement('div');
+      fullscreenTimecodeOverlay.className = 'fullscreen-timecode-overlay';
+      fullscreenTimecodeOverlay.innerHTML = `
+        <span class="current-time">00:00:00:00</span>
+        <span class="separator">/</span>
+        <span class="total-time">00:00:00:00</span>
+      `;
+      document.body.appendChild(fullscreenTimecodeOverlay);
+      updateFullscreenTimecode();
+
+      // 마우스 이동 감지 - 하단 80px 이내면 컨트롤바 표시
+      fullscreenMouseHandler = (e) => {
+        const bottomThreshold = 80;
+        const isNearBottom = window.innerHeight - e.clientY < bottomThreshold;
+
+        if (isNearBottom) {
+          document.body.classList.add('show-controls');
+        } else {
+          document.body.classList.remove('show-controls');
+        }
+      };
+      document.addEventListener('mousemove', fullscreenMouseHandler);
+    } else {
+      // 전체화면 해제 시 이벤트 리스너 제거
+      if (fullscreenMouseHandler) {
+        document.removeEventListener('mousemove', fullscreenMouseHandler);
+        fullscreenMouseHandler = null;
+      }
+      // 타임코드 오버레이 제거
+      if (fullscreenTimecodeOverlay) {
+        fullscreenTimecodeOverlay.remove();
+        fullscreenTimecodeOverlay = null;
+      }
+      document.body.classList.remove('show-controls');
     }
 
-    log.debug('전체화면 모드 변경', { isFullscreen: state.isFullscreen });
+    log.debug('전체화면 모드 변경', { isFullscreen });
+  }
+
+  /**
+   * 전체화면 타임코드 업데이트
+   */
+  function updateFullscreenTimecode() {
+    if (!fullscreenTimecodeOverlay) return;
+
+    const currentTime = videoPlayer.currentTime || 0;
+    const duration = videoPlayer.duration || 0;
+    const fps = videoPlayer.fps || 24;
+
+    const formatTimecode = (seconds) => {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      const f = Math.floor((seconds % 1) * fps);
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
+    };
+
+    fullscreenTimecodeOverlay.querySelector('.current-time').textContent = formatTimecode(currentTime);
+    fullscreenTimecodeOverlay.querySelector('.total-time').textContent = formatTimecode(duration);
+  }
+
+  /**
+   * 전체화면 시크바 업데이트
+   */
+  function updateFullscreenSeekbar() {
+    const seekbarProgress = document.getElementById('seekbarProgress');
+    const seekbarHandle = document.getElementById('seekbarHandle');
+    if (!seekbarProgress || !seekbarHandle) return;
+
+    const duration = videoPlayer.duration || 0;
+    const currentTime = videoPlayer.currentTime || 0;
+    if (duration === 0) return;
+
+    const percent = (currentTime / duration) * 100;
+    seekbarProgress.style.width = `${percent}%`;
+    seekbarHandle.style.left = `${percent}%`;
+  }
+
+  // 전체화면 시크바 이벤트 설정
+  const fullscreenSeekbar = document.getElementById('fullscreenSeekbar');
+  if (fullscreenSeekbar) {
+    let isSeeking = false;
+
+    const seekToPosition = (e) => {
+      const rect = fullscreenSeekbar.getBoundingClientRect();
+      const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const duration = videoPlayer.duration || 0;
+      if (duration > 0) {
+        videoPlayer.seek(percent * duration);
+      }
+    };
+
+    fullscreenSeekbar.addEventListener('mousedown', (e) => {
+      isSeeking = true;
+      seekToPosition(e);
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (isSeeking) {
+        seekToPosition(e);
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      isSeeking = false;
+    });
+
+    fullscreenSeekbar.addEventListener('click', seekToPosition);
   }
 
   /**
@@ -2188,7 +2431,25 @@ async function initApp() {
     tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', (e) => {
       e.stopPropagation();
       if (confirm('댓글을 삭제하시겠습니까?')) {
+        const markerData = marker.toJSON();
         commentManager.deleteMarker(marker.id);
+        // Undo 스택에 추가
+        pushUndo({
+          type: 'DELETE_COMMENT',
+          data: markerData,
+          undo: () => {
+            commentManager.restoreMarker(markerData);
+            updateCommentList();
+            updateTimelineMarkers();
+            updateVideoMarkers();
+          },
+          redo: () => {
+            commentManager.deleteMarker(markerData.id);
+            updateCommentList();
+            updateTimelineMarkers();
+            updateVideoMarkers();
+          }
+        });
         showToast('댓글이 삭제되었습니다.', 'info');
       }
     });
@@ -2251,7 +2512,9 @@ async function initApp() {
       if (!frameSet.has(range.startFrame)) {
         frameSet.add(range.startFrame);
         const time = range.startFrame / fps;
-        timeline.addCommentMarker(time, range.resolved, range.startFrame);
+        // 마커 정보 전달 (프레임별 댓글 정보)
+        const markersAtFrame = ranges.filter(r => r.startFrame === range.startFrame);
+        timeline.addCommentMarker(time, range.resolved, range.startFrame, markersAtFrame);
       }
     });
   }
@@ -2451,8 +2714,30 @@ async function initApp() {
       item.querySelector('.delete-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
         if (confirm('댓글을 삭제하시겠습니까?')) {
-          commentManager.deleteMarker(item.dataset.markerId);
-          showToast('댓글이 삭제되었습니다.', 'info');
+          const markerId = item.dataset.markerId;
+          const marker = commentManager.getMarker(markerId);
+          if (marker) {
+            const markerData = marker.toJSON();
+            commentManager.deleteMarker(markerId);
+            // Undo 스택에 추가
+            pushUndo({
+              type: 'DELETE_COMMENT',
+              data: markerData,
+              undo: () => {
+                commentManager.restoreMarker(markerData);
+                updateCommentList();
+                updateTimelineMarkers();
+                updateVideoMarkers();
+              },
+              redo: () => {
+                commentManager.deleteMarker(markerData.id);
+                updateCommentList();
+                updateTimelineMarkers();
+                updateVideoMarkers();
+              }
+            });
+            showToast('댓글이 삭제되었습니다.', 'info');
+          }
         }
       });
 
@@ -2478,8 +2763,26 @@ async function initApp() {
         e.stopPropagation();
         const newText = editTextarea.value.trim();
         if (newText) {
-          commentManager.updateMarker(item.dataset.markerId, { text: newText });
-          showToast('댓글이 수정되었습니다.', 'success');
+          const markerId = item.dataset.markerId;
+          const marker = commentManager.getMarker(markerId);
+          if (marker) {
+            const oldText = marker.text;
+            commentManager.updateMarker(markerId, { text: newText });
+            // Undo 스택에 추가
+            pushUndo({
+              type: 'EDIT_COMMENT',
+              data: { markerId, oldText, newText },
+              undo: () => {
+                commentManager.updateMarker(markerId, { text: oldText });
+                updateCommentList();
+              },
+              redo: () => {
+                commentManager.updateMarker(markerId, { text: newText });
+                updateCommentList();
+              }
+            });
+            showToast('댓글이 수정되었습니다.', 'success');
+          }
         }
       });
 
@@ -2627,8 +2930,17 @@ async function initApp() {
 
   /**
    * 토스트 메시지 표시
+   * @param {string} message - 표시할 메시지
+   * @param {string} type - 타입 ('info', 'success', 'warning', 'error')
+   * @param {number} duration - 표시 시간 (ms)
+   * @param {boolean} force - 설정과 무관하게 강제 표시
    */
-  function showToast(message, type = 'info', duration = 3000) {
+  function showToast(message, type = 'info', duration = 3000, force = false) {
+    // 토스트 알림이 비활성화된 경우 (단, error와 force는 항상 표시)
+    if (!force && type !== 'error' && !userSettings.getShowToastNotifications()) {
+      return;
+    }
+
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
@@ -2709,9 +3021,7 @@ async function initApp() {
     const threadOverlay = document.getElementById('threadOverlay');
     if (threadOverlay?.classList.contains('open')) return;
 
-    const shortcutSet = userSettings.getShortcutSet();
-
-    // ====== 공통 단축키 (모든 세트에서 동일) ======
+    // ====== 공통 단축키 ======
     switch (e.code) {
     case 'Space':
       e.preventDefault();
@@ -2770,24 +3080,6 @@ async function initApp() {
       btnLoopToggle.click();
       return;
 
-    case 'F6':
-      // 키프레임 복제 추가 (이전 내용 복사)
-      e.preventDefault();
-      if (state.isDrawMode) {
-        drawingManager.addKeyframeWithContent();
-        showToast('키프레임 추가됨', 'success');
-      }
-      return;
-
-    case 'F7':
-      // 빈 키프레임 추가
-      e.preventDefault();
-      if (state.isDrawMode) {
-        drawingManager.addBlankKeyframe();
-        showToast('빈 키프레임 추가됨', 'success');
-      }
-      return;
-
     case 'Delete':
     case 'Backspace':
       // 키프레임 삭제 (그리기 모드에서만)
@@ -2814,12 +3106,12 @@ async function initApp() {
         e.preventDefault();
         if (e.shiftKey) {
           // Ctrl+Shift+Z: Redo
-          if (drawingManager.redo()) {
+          if (globalRedo()) {
             showToast('다시 실행됨', 'info');
           }
         } else {
           // Ctrl+Z: Undo
-          if (drawingManager.undo()) {
+          if (globalUndo()) {
             showToast('실행 취소됨', 'info');
           }
         }
@@ -2830,7 +3122,7 @@ async function initApp() {
       if (e.ctrlKey || e.metaKey) {
         // Ctrl+Y: Redo (alternative)
         e.preventDefault();
-        if (drawingManager.redo()) {
+        if (globalRedo()) {
           showToast('다시 실행됨', 'info');
         }
       }
@@ -2851,134 +3143,134 @@ async function initApp() {
         timeline.zoomOut();
       }
       return;
-    }
 
-    // ====== Set 1: 기존 단축키 (화살표 기반) ======
-    if (shortcutSet === 'set1') {
-      switch (e.code) {
-      case 'ArrowLeft':
+    // 사용자 정의 단축키 처리 (F6, F7 등)
+    default:
+      // 키프레임 추가 (복사) - F6
+      if (userSettings.matchShortcut('keyframeAddWithCopy', e)) {
         e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.rewind(1); // 1초 뒤로
-        } else {
-          videoPlayer.prevFrame();
+        if (state.isDrawMode) {
+          drawingManager.addKeyframeWithContent();
+          showToast('키프레임 추가됨', 'success');
         }
-        break;
-
-      case 'ArrowRight':
-        e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.forward(1); // 1초 앞으로
-        } else {
-          videoPlayer.nextFrame();
-        }
-        break;
-
-      case 'KeyD':
-        e.preventDefault();
-        toggleDrawMode();
-        break;
+        return;
       }
+      // 빈 키프레임 추가 - F7
+      if (userSettings.matchShortcut('keyframeAddBlank', e)) {
+        e.preventDefault();
+        if (state.isDrawMode) {
+          drawingManager.addBlankKeyframe();
+          showToast('빈 키프레임 추가됨', 'success');
+        }
+        return;
+      }
+      break;
     }
 
-    // ====== Set 2: 새 단축키 (A/D 기반, 애니메이션 작업용) ======
-    if (shortcutSet === 'set2') {
-      switch (e.code) {
-      case 'ArrowLeft':
-        e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.rewind(1);
-        } else {
-          videoPlayer.prevFrame();
-        }
-        break;
+    // ====== 프레임 이동 및 그리기 모드 단축키 ======
+    switch (e.code) {
+    case 'ArrowLeft':
+      e.preventDefault();
+      if (e.shiftKey) {
+        videoPlayer.rewind(1);
+      } else {
+        videoPlayer.prevFrame();
+      }
+      break;
 
-      case 'ArrowRight':
-        e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.forward(1);
-        } else {
+    case 'ArrowRight':
+      e.preventDefault();
+      if (e.shiftKey) {
+        videoPlayer.forward(1);
+      } else {
+        videoPlayer.nextFrame();
+      }
+      break;
+
+    // 사용자 정의 단축키를 통한 처리
+    default:
+        // Shift+A: 1프레임 이전
+        if (userSettings.matchShortcut('prevFrameDraw', e)) {
+          e.preventDefault();
+          videoPlayer.prevFrame();
+          break;
+        }
+        // Shift+D: 1프레임 다음
+        if (userSettings.matchShortcut('nextFrameDraw', e)) {
+          e.preventDefault();
           videoPlayer.nextFrame();
+          break;
         }
-        break;
-
-      case 'KeyA':
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Shift+A: 1프레임 이전
-          videoPlayer.prevFrame();
-        } else {
-          // A: 이전 키프레임으로 이동
+        // A: 이전 키프레임으로 이동
+        if (userSettings.matchShortcut('prevKeyframe', e)) {
+          e.preventDefault();
           const prevKf = drawingManager.getPrevKeyframeFrame();
           if (prevKf !== null) {
             videoPlayer.seekToFrame(prevKf);
           }
+          break;
         }
-        break;
-
-      case 'KeyD':
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Shift+D: 1프레임 다음
-          videoPlayer.nextFrame();
-        } else {
-          // D: 다음 키프레임으로 이동
+        // D: 다음 키프레임으로 이동
+        if (userSettings.matchShortcut('nextKeyframe', e)) {
+          e.preventDefault();
           const nextKf = drawingManager.getNextKeyframeFrame();
           if (nextKf !== null) {
             videoPlayer.seekToFrame(nextKf);
           }
+          break;
         }
-        break;
-
-      case 'Digit1':
-        // 1: 어니언 스킨 토글 (UI 버튼과 동기화)
-        e.preventDefault();
-        toggleOnionSkinWithUI();
-        break;
-
-      case 'Digit2':
+        // 1: 어니언 스킨 토글
+        if (userSettings.matchShortcut('onionSkinToggle', e)) {
+          e.preventDefault();
+          toggleOnionSkinWithUI();
+          break;
+        }
         // 2: 빈 키프레임 삽입
-        e.preventDefault();
-        drawingManager.addBlankKeyframe();
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
-
-      case 'Digit3':
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Shift+3: 현재 키프레임 삭제
+        if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
+          e.preventDefault();
+          drawingManager.addBlankKeyframe();
+          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+          break;
+        }
+        // Shift+3: 현재 키프레임 삭제
+        if (userSettings.matchShortcut('keyframeDeleteAlt', e)) {
+          e.preventDefault();
           drawingManager.removeKeyframe();
           showToast('키프레임이 삭제되었습니다.', 'info');
-        } else {
-          // 3: 프레임 삽입 (홀드 추가)
+          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+          break;
+        }
+        // 3: 프레임 삽입 (홀드 추가)
+        if (userSettings.matchShortcut('insertFrame', e)) {
+          e.preventDefault();
           drawingManager.insertFrame();
+          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+          break;
         }
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
-
-      case 'Digit4':
         // 4: 프레임 삭제
-        e.preventDefault();
-        drawingManager.deleteFrame();
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
-
-      case 'KeyB':
+        if (userSettings.matchShortcut('deleteFrame', e)) {
+          e.preventDefault();
+          drawingManager.deleteFrame();
+          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+          break;
+        }
         // B: 브러시 모드 (드로잉 모드 켜기)
-        e.preventDefault();
-        if (!state.isDrawMode) {
-          toggleDrawMode();
+        if (e.code === 'KeyB') {
+          e.preventDefault();
+          if (!state.isDrawMode) {
+            toggleDrawMode();
+          }
+          break;
         }
-        break;
-
-      case 'KeyV':
         // V: 선택 모드 (드로잉 모드 끄기)
-        e.preventDefault();
-        if (state.isDrawMode) {
-          toggleDrawMode();
+        if (e.code === 'KeyV') {
+          e.preventDefault();
+          if (state.isDrawMode) {
+            toggleDrawMode();
+          }
+          break;
         }
         break;
-      }
     }
   }
 
@@ -3016,7 +3308,13 @@ async function initApp() {
       }
     } else if (filePath.startsWith('baeframe://')) {
       // 프로토콜 링크: baeframe://G:/경로/파일.bframe 또는 baeframe://G:/경로/영상.mp4
-      const actualPath = filePath.replace('baeframe://', '');
+      let actualPath = filePath.replace('baeframe://', '');
+      // URL 인코딩 디코딩 (공백 등 특수문자 처리)
+      try {
+        actualPath = decodeURIComponent(actualPath);
+      } catch (e) {
+        log.warn('URL 디코딩 실패, 원본 경로 사용', { actualPath, error: e.message });
+      }
       log.info('프로토콜 링크에서 경로 추출', { actualPath });
 
       // 실제 경로로 다시 처리 (재귀)
@@ -3034,6 +3332,8 @@ async function initApp() {
   });
 
   // ====== 사용자 이름 초기화 ======
+  // 설정 파일 로드 완료 대기 (파일에서 hasSetNameOnce 등 로드)
+  await userSettings.waitForReady();
   let userName = await userSettings.initialize();
   log.info('사용자 이름 감지됨', { userName, source: userSettings.getUserSource() });
 
@@ -3126,12 +3426,8 @@ async function initApp() {
     }
   });
 
-  // 오버레이 클릭으로 닫기 (필수 모드가 아닐 때만)
-  userSettingsModal?.addEventListener('click', (e) => {
-    if (e.target === userSettingsModal && !isRequiredNameInput) {
-      closeUserSettingsModal();
-    }
-  });
+  // 오버레이 클릭으로 닫기 비활성화 - 명시적으로 닫기/취소 버튼만 사용
+  // (이름 입력 중 실수로 외부 클릭 시 닫히는 문제 방지)
 
   // 최초 한 번만 이름 설정 요청 (이미 설정한 적이 있으면 표시하지 않음)
   if (!userSettings.hasSetNameOnce()) {
@@ -3525,6 +3821,154 @@ async function initApp() {
 
   // 전역으로 노출
   window.openThreadPopup = openThreadPopup;
+
+  // ====== 단축키 설정 모달 ======
+  const shortcutSettingsModal = document.getElementById('shortcutSettingsModal');
+  const shortcutList = document.getElementById('shortcutList');
+  const btnShortcutSettings = document.getElementById('btnShortcutSettings');
+  const closeShortcutSettings = document.getElementById('closeShortcutSettings');
+  const closeShortcutSettingsBtn = document.getElementById('closeShortcutSettingsBtn');
+  const resetAllShortcuts = document.getElementById('resetAllShortcuts');
+
+  let editingShortcut = null; // 현재 편집 중인 단축키
+
+  // 키 코드를 표시용 문자열로 변환
+  function formatKeyCode(code) {
+    const keyMap = {
+      'Space': 'Space',
+      'ArrowLeft': '←',
+      'ArrowRight': '→',
+      'ArrowUp': '↑',
+      'ArrowDown': '↓',
+      'Home': 'Home',
+      'End': 'End',
+      'Escape': 'Esc'
+    };
+    if (keyMap[code]) return keyMap[code];
+    if (code.startsWith('Key')) return code.substring(3);
+    if (code.startsWith('Digit')) return code.substring(5);
+    return code;
+  }
+
+  // 단축키 표시 문자열 생성
+  function formatShortcut(shortcut) {
+    const parts = [];
+    if (shortcut.ctrl) parts.push('Ctrl');
+    if (shortcut.shift) parts.push('Shift');
+    if (shortcut.alt) parts.push('Alt');
+    parts.push(formatKeyCode(shortcut.key));
+    return parts.join(' + ');
+  }
+
+  // 단축키 리스트 렌더링
+  function renderShortcutList() {
+    const shortcuts = userSettings.getShortcuts();
+    shortcutList.innerHTML = Object.entries(shortcuts).map(([action, shortcut]) => `
+      <div class="shortcut-item" data-action="${action}">
+        <span class="shortcut-label">${shortcut.label}</span>
+        <div class="shortcut-key" data-action="${action}">${formatShortcut(shortcut)}</div>
+      </div>
+    `).join('');
+
+    // 클릭 이벤트 추가
+    shortcutList.querySelectorAll('.shortcut-key').forEach(el => {
+      el.addEventListener('click', () => startEditingShortcut(el));
+    });
+  }
+
+  // 단축키 편집 시작
+  function startEditingShortcut(el) {
+    // 기존 편집 취소
+    if (editingShortcut) {
+      editingShortcut.classList.remove('editing');
+    }
+    editingShortcut = el;
+    el.classList.add('editing');
+    el.textContent = '키 입력 대기...';
+  }
+
+  // 단축키 편집 완료
+  function finishEditingShortcut(event) {
+    if (!editingShortcut) return;
+
+    // 수정자 키만 누른 경우 무시 (실제 키 입력 대기)
+    const modifierKeys = ['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
+                          'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'];
+    if (modifierKeys.includes(event.code)) {
+      return; // 수정자 키만 눌렀으면 무시하고 계속 대기
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const action = editingShortcut.dataset.action;
+    const newShortcut = {
+      key: event.code,
+      ctrl: event.ctrlKey,
+      shift: event.shiftKey,
+      alt: event.altKey
+    };
+
+    userSettings.setShortcut(action, newShortcut);
+    editingShortcut.classList.remove('editing');
+    editingShortcut.textContent = formatShortcut(userSettings.getShortcut(action));
+    editingShortcut = null;
+
+    showToast('단축키가 변경되었습니다.', 'success');
+  }
+
+  // 단축키 설정 모달 열기
+  function openShortcutSettingsModal() {
+    renderShortcutList();
+    shortcutSettingsModal?.classList.add('active');
+  }
+
+  // 단축키 설정 모달 닫기
+  function closeShortcutSettingsModal() {
+    if (editingShortcut) {
+      editingShortcut.classList.remove('editing');
+      editingShortcut = null;
+    }
+    shortcutSettingsModal?.classList.remove('active');
+  }
+
+  // 이벤트 리스너
+  btnShortcutSettings?.addEventListener('click', () => {
+    // 설정 드롭다운 닫기
+    document.getElementById('commentSettingsDropdown')?.classList.remove('show');
+    openShortcutSettingsModal();
+  });
+
+  closeShortcutSettings?.addEventListener('click', closeShortcutSettingsModal);
+  closeShortcutSettingsBtn?.addEventListener('click', closeShortcutSettingsModal);
+
+  resetAllShortcuts?.addEventListener('click', () => {
+    userSettings.resetAllShortcuts();
+    renderShortcutList();
+    showToast('모든 단축키가 기본값으로 초기화되었습니다.', 'info');
+  });
+
+  // 모달 외부 클릭 시 닫기
+  shortcutSettingsModal?.addEventListener('click', (e) => {
+    if (e.target === shortcutSettingsModal) {
+      closeShortcutSettingsModal();
+    }
+  });
+
+  // 키 입력 감지 (단축키 편집 중일 때)
+  document.addEventListener('keydown', (e) => {
+    if (editingShortcut && shortcutSettingsModal?.classList.contains('active')) {
+      // ESC는 편집 취소
+      if (e.code === 'Escape') {
+        editingShortcut.classList.remove('editing');
+        renderShortcutList(); // 원래 값으로 복원
+        editingShortcut = null;
+        return;
+      }
+      // 그 외의 키는 단축키로 설정
+      finishEditingShortcut(e);
+    }
+  });
 
   log.info('앱 초기화 완료');
 

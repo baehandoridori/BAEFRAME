@@ -2305,64 +2305,23 @@ body {
   color: var(--text-primary);
 }
 
-/* 단축키 세트 선택 버튼 */
-.shortcut-set-selector {
-  display: flex;
-  gap: 8px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.shortcut-set-btn {
-  flex: 1;
-  padding: 6px 12px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.shortcut-set-btn:hover {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
-
-.shortcut-set-btn.active {
-  background: var(--accent-primary);
-  border-color: var(--accent-primary);
-  color: var(--bg-primary);
-}
-
-/* 세트별 단축키 표시/숨김 */
-.shortcut-set1-only,
-.shortcut-set2-only {
-  display: none;
-}
-
-.shortcuts-menu[data-set="set1"] .shortcut-set1-only {
-  display: block;
-}
-
-.shortcuts-menu[data-set="set2"] .shortcut-set2-only {
-  display: block;
-}
-
 /* ========================================
    Toast
    ======================================== */
 .toast-container {
   position: fixed;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 60px;
+  left: 16px;
   z-index: 1000;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  align-items: center;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.toast-container .toast {
+  pointer-events: auto;
 }
 
 .toast {
@@ -2397,7 +2356,7 @@ body {
 @keyframes toastIn {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(-10px);
   }
   to {
     opacity: 1;
@@ -2412,7 +2371,7 @@ body {
   }
   to {
     opacity: 0;
-    transform: translateY(-20px);
+    transform: translateY(-10px);
   }
 }
 
@@ -2981,6 +2940,43 @@ body.resizing .comment-panel {
   border-color: var(--error);
 }
 
+/* 타임라인 댓글 마커 툴팁 */
+.tooltip-frame {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: var(--accent-glow);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-bottom: 6px;
+  display: inline-block;
+}
+
+.tooltip-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tooltip-comment {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  word-break: break-word;
+  padding: 4px 6px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  border-left: 2px solid var(--accent-primary);
+}
+
+.tooltip-count {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  text-align: right;
+}
+
 /* ============================================
    Modal Styles
    ============================================ */
@@ -3015,6 +3011,83 @@ body.resizing .comment-panel {
   box-shadow: var(--shadow-xl);
   transform: scale(0.95);
   transition: transform 0.2s ease;
+}
+
+.modal-content.modal-lg {
+  max-width: 600px;
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-content.modal-lg .modal-body {
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* 단축키 설정 리스트 */
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  gap: 12px;
+}
+
+.shortcut-label {
+  font-size: 13px;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.shortcut-key {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-width: 100px;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.shortcut-key:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.shortcut-key.editing {
+  border-color: var(--accent-primary);
+  background: var(--accent-glow);
+  color: var(--accent-primary);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.shortcut-key kbd {
+  padding: 2px 6px;
+  background: var(--bg-hover);
+  border-radius: 3px;
+  font-size: 11px;
 }
 
 .modal-overlay.active .modal-content {
@@ -4275,34 +4348,141 @@ body.app-fullscreen {
   overflow: hidden;
 }
 
-body.app-fullscreen .header-bar,
+/* 전체화면에서 모든 UI 숨기기 */
+body.app-fullscreen .header,
 body.app-fullscreen .timeline-section,
-body.app-fullscreen .comments-section {
+body.app-fullscreen .comment-panel,
+body.app-fullscreen .resizer,
+body.app-fullscreen .video-zoom-controls {
   display: none !important;
 }
 
-body.app-fullscreen .main-content {
+/* 전체화면에서 컨트롤바 - 기본 숨김 (JS로 show-controls 클래스 토글) */
+body.app-fullscreen .controls-bar {
+  position: fixed !important;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.9)) !important;
+  opacity: 0;
+  transform: translateY(100%);
+  transition: all 0.3s ease;
+}
+
+/* 마우스가 하단에 있을 때 컨트롤바 표시 */
+body.app-fullscreen.show-controls .controls-bar {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 전체화면 시크바 (평소에는 숨김) */
+.fullscreen-seekbar {
+  display: none;
+}
+
+body.app-fullscreen .fullscreen-seekbar {
+  display: block;
+  position: absolute;
+  top: -8px;
+  left: 0;
+  right: 0;
+  height: 16px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.seekbar-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  transition: height 0.1s ease;
+}
+
+.fullscreen-seekbar:hover .seekbar-track {
+  height: 6px;
+}
+
+.seekbar-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: var(--accent-primary);
+  border-radius: 2px;
+  width: 0%;
+}
+
+.seekbar-handle {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 12px;
+  background: var(--accent-primary);
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  left: 0%;
+}
+
+.fullscreen-seekbar:hover .seekbar-handle {
+  opacity: 1;
+}
+
+body.app-fullscreen .main-container {
   height: 100vh;
 }
 
-body.app-fullscreen .video-section {
+body.app-fullscreen .viewer-section {
   flex: 1;
+  width: 100vw;
   height: 100vh;
   max-height: 100vh;
 }
 
-body.app-fullscreen .video-wrapper {
-  height: calc(100vh - 44px); /* 컨트롤바 높이 제외 */
+body.app-fullscreen .viewer-container {
+  height: 100vh;
 }
 
-body.app-fullscreen .control-bar {
+body.app-fullscreen .video-wrapper {
+  height: 100vh;
+}
+
+/* 전체화면 타임코드 오버레이 */
+.fullscreen-timecode-overlay {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
-  background: rgba(26, 26, 26, 0.95);
-  backdrop-filter: blur(10px);
+  top: 16px;
+  left: 16px;
+  z-index: 1001;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: #fff;
+  pointer-events: none;
+  display: none;
+}
+
+body.app-fullscreen .fullscreen-timecode-overlay {
+  display: block;
+}
+
+.fullscreen-timecode-overlay .current-time {
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+.fullscreen-timecode-overlay .separator {
+  color: var(--text-secondary);
+  margin: 0 6px;
+}
+
+.fullscreen-timecode-overlay .total-time {
+  color: var(--text-secondary);
 }
 
 /* 전체화면에서 댓글 모드 표시 */

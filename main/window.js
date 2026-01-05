@@ -129,11 +129,32 @@ function isMaximized() {
   return mainWindow ? mainWindow.isMaximized() : false;
 }
 
+/**
+ * 전체화면 토글
+ */
+function toggleFullscreen() {
+  if (mainWindow) {
+    const isFullscreen = mainWindow.isFullScreen();
+    mainWindow.setFullScreen(!isFullscreen);
+    log.info('전체화면 토글', { isFullscreen: !isFullscreen });
+  }
+}
+
+/**
+ * 전체화면 상태 확인
+ * @returns {boolean}
+ */
+function isFullscreen() {
+  return mainWindow ? mainWindow.isFullScreen() : false;
+}
+
 module.exports = {
   createMainWindow,
   getMainWindow,
   minimizeWindow,
   toggleMaximize,
   closeWindow,
-  isMaximized
+  isMaximized,
+  toggleFullscreen,
+  isFullscreen
 };

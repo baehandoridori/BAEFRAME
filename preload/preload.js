@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximizeWindow: () => ipcRenderer.invoke('window:maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  toggleFullscreen: () => ipcRenderer.invoke('window:toggle-fullscreen'),
+  isFullscreen: () => ipcRenderer.invoke('window:is-fullscreen'),
 
   // ====== 앱 관련 ======
   getVersion: () => ipcRenderer.invoke('app:get-version'),
@@ -47,6 +49,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ====== 사용자 정보 관련 ======
   getOSUser: () => ipcRenderer.invoke('user:get-os-user'),
   getSlackUser: () => ipcRenderer.invoke('user:get-slack-user'),
+
+  // ====== 설정 파일 관련 ======
+  loadSettings: () => ipcRenderer.invoke('settings:load'),
+  saveSettings: (data) => ipcRenderer.invoke('settings:save', data),
+  getSettingsPath: () => ipcRenderer.invoke('settings:get-path'),
 
   // ====== 로그 관련 ======
   writeLog: (logData) => ipcRenderer.send('log:write', logData),

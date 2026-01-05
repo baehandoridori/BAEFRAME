@@ -465,6 +465,22 @@ export class CommentManager extends EventTarget {
   }
 
   /**
+   * JSON 데이터로 마커 복원 (Undo용)
+   */
+  restoreMarker(markerData) {
+    const marker = CommentMarker.fromJSON(markerData);
+    const layer = this.layers.find(l => l.id === marker.layerId) || this.getActiveLayer();
+    if (layer) {
+      layer.addMarker(marker);
+      log.info('마커 복원됨', { id: marker.id });
+      this._emit('markerAdded', { marker });
+      this._emit('markersChanged');
+      return marker;
+    }
+    return null;
+  }
+
+  /**
    * 마커 업데이트
    */
   updateMarker(markerId, updates) {

@@ -91,6 +91,9 @@ if exist "%APPDATA%\Electron\Cache" (
     rd /s /q "%APPDATA%\Electron\Cache" 2>nul
 )
 
-:: Electron 실행
+:: Electron 실행 (새 창에서도 UTF-8 인코딩 적용)
 echo [baeframe] 앱 시작... (%LOCAL_DIR%)
-start "" npx electron .
+start "" cmd /c "chcp 65001 >nul && npx electron ."
+
+:: 앱 실행 후 DOS 창 자동 종료
+exit

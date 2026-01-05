@@ -115,6 +115,10 @@ export class ReviewDataManager extends EventTarget {
    * @param {string} videoPath - 영상 파일 경로
    */
   async setVideoFile(videoPath) {
+    // 자동 저장 일시 중지 및 대기 중인 저장 취소
+    this._cancelAutoSave();
+    this.isLoading = true;
+
     // 이전 파일의 변경사항 저장
     if (this.isDirty && this.currentBframePath) {
       await this.save();
@@ -131,6 +135,9 @@ export class ReviewDataManager extends EventTarget {
 
     // 기존 .bframe 파일이 있으면 로드
     const loaded = await this.load();
+
+    // 로딩 완료 후 isLoading 해제 (load() 내부에서도 설정하지만 여기서 확실히 해제)
+    this.isLoading = false;
 
     this._emit('videoFileSet', {
       videoPath: this.currentVideoPath,
@@ -302,6 +309,23 @@ export class ReviewDataManager extends EventTarget {
       clearTimeout(this.autoSaveTimer);
       this.autoSaveTimer = null;
     }
+  }
+
+  /**
+   * 자동 저장 일시 중지 (로딩 중 데이터 초기화 시 사용)
+   */
+  pauseAutoSave() {
+    this._cancelAutoSave();
+    this.isLoading = true;
+    log.info('자동 저장 일시 중지');
+  }
+
+  /**
+   * 자동 저장 재개
+   */
+  resumeAutoSave() {
+    this.isLoading = false;
+    log.info('자동 저장 재개');
   }
 
   /**

@@ -261,6 +261,13 @@
 
       <!-- Playback Controls -->
       <div class="controls-bar">
+        <!-- 전체화면 시크바 -->
+        <div class="fullscreen-seekbar" id="fullscreenSeekbar">
+          <div class="seekbar-track">
+            <div class="seekbar-progress" id="seekbarProgress"></div>
+            <div class="seekbar-handle" id="seekbarHandle"></div>
+          </div>
+        </div>
         <div class="playback-controls">
           <button class="control-btn" id="btnFirst" title="처음으로 (Home)">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
@@ -293,12 +300,12 @@
           <button class="action-btn" id="btnDrawMode">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
             그리기
-            <span class="shortcut-hint">D</span>
+            <span class="shortcut-hint" id="btnDrawModeHint">D</span>
           </button>
           <button class="action-btn" id="btnAddComment">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             댓글 추가
-            <span class="shortcut-hint">C</span>
+            <span class="shortcut-hint" id="btnAddCommentHint">C</span>
           </button>
         </div>
 
@@ -445,9 +452,21 @@
               </div>
             </div>
             <div class="settings-dropdown-divider"></div>
+            <div class="settings-dropdown-item">
+              <label class="settings-toggle">
+                <input type="checkbox" id="toggleToastNotifications" checked>
+                <span class="toggle-slider"></span>
+                <span class="toggle-label">알림 표시</span>
+              </label>
+            </div>
+            <div class="settings-dropdown-divider"></div>
             <button class="settings-dropdown-btn" id="btnChangeUserName">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
               이름 변경
+            </button>
+            <button class="settings-dropdown-btn" id="btnShortcutSettings">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h12M6 16h8"/></svg>
+              단축키 설정
             </button>
           </div>
         </div>
@@ -492,15 +511,10 @@
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="6" y1="16" x2="18" y2="16"/></svg>
       키보드 단축키
     </div>
-    <!-- 단축키 세트 선택 -->
-    <div class="shortcut-set-selector">
-      <button class="shortcut-set-btn" data-set="set1" id="shortcutSet1">Set 1 (기본)</button>
-      <button class="shortcut-set-btn active" data-set="set2" id="shortcutSet2">Set 2 (애니)</button>
-    </div>
     <div class="shortcuts-menu-content">
-      <!-- 공통 단축키 -->
+      <!-- 재생 -->
       <div class="shortcut-category">
-        <div class="shortcut-category-title">재생 (공통)</div>
+        <div class="shortcut-category-title">재생</div>
         <div class="shortcut-row">
           <span class="shortcut-label">재생/정지</span>
           <div class="shortcut-keys"><span class="shortcut-key">Space</span></div>
@@ -519,48 +533,34 @@
         </div>
       </div>
 
-      <!-- Set 1 전용 단축키 -->
-      <div class="shortcut-category shortcut-set1-only">
-        <div class="shortcut-category-title">도구 (Set 1)</div>
+      <!-- 도구 -->
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">도구</div>
         <div class="shortcut-row">
-          <span class="shortcut-label">그리기 모드 토글</span>
-          <div class="shortcut-keys"><span class="shortcut-key">D</span></div>
+          <span class="shortcut-label">그리기 모드</span>
+          <div class="shortcut-keys"><span class="shortcut-key" id="hintDrawMode">D</span></div>
         </div>
         <div class="shortcut-row">
           <span class="shortcut-label">댓글 추가</span>
-          <div class="shortcut-keys"><span class="shortcut-key">C</span></div>
+          <div class="shortcut-keys"><span class="shortcut-key" id="hintCommentMode">C</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">브러시 모드</span>
+          <div class="shortcut-keys"><span class="shortcut-key">B</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">선택 모드</span>
+          <div class="shortcut-keys"><span class="shortcut-key">V</span></div>
         </div>
       </div>
 
-      <!-- Set 2 전용 단축키 -->
-      <div class="shortcut-category shortcut-set2-only">
-        <div class="shortcut-category-title">탐색 (Set 2)</div>
-        <div class="shortcut-row">
-          <span class="shortcut-label">1프레임 이전/다음</span>
-          <div class="shortcut-keys"><span class="shortcut-key">Shift</span><span class="shortcut-key">A/D</span></div>
-        </div>
+      <!-- 키프레임 -->
+      <div class="shortcut-category">
+        <div class="shortcut-category-title">키프레임 (그리기 모드)</div>
         <div class="shortcut-row">
           <span class="shortcut-label">이전/다음 키프레임</span>
           <div class="shortcut-keys"><span class="shortcut-key">A</span><span class="shortcut-key">D</span></div>
         </div>
-      </div>
-      <div class="shortcut-category shortcut-set2-only">
-        <div class="shortcut-category-title">도구 (Set 2)</div>
-        <div class="shortcut-row">
-          <span class="shortcut-label">브러시 모드 (그리기)</span>
-          <div class="shortcut-keys"><span class="shortcut-key">B</span></div>
-        </div>
-        <div class="shortcut-row">
-          <span class="shortcut-label">선택 모드 (그리기 해제)</span>
-          <div class="shortcut-keys"><span class="shortcut-key">V</span></div>
-        </div>
-        <div class="shortcut-row">
-          <span class="shortcut-label">댓글 추가</span>
-          <div class="shortcut-keys"><span class="shortcut-key">C</span></div>
-        </div>
-      </div>
-      <div class="shortcut-category shortcut-set2-only">
-        <div class="shortcut-category-title">키프레임 (Set 2, 그리기 모드)</div>
         <div class="shortcut-row">
           <span class="shortcut-label">어니언 스킨 토글</span>
           <div class="shortcut-keys"><span class="shortcut-key">1</span></div>
@@ -579,9 +579,9 @@
         </div>
       </div>
 
-      <!-- 공통 도구 -->
+      <!-- 편집 -->
       <div class="shortcut-category">
-        <div class="shortcut-category-title">편집 (공통)</div>
+        <div class="shortcut-category-title">편집</div>
         <div class="shortcut-row">
           <span class="shortcut-label">실행 취소</span>
           <div class="shortcut-keys"><span class="shortcut-key">Ctrl</span><span class="shortcut-key">Z</span></div>
@@ -649,6 +649,26 @@
       <div class="modal-footer">
         <button class="btn-secondary" id="cancelUserSettings">취소</button>
         <button class="btn-primary" id="saveUserSettings">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 단축키 설정 Modal -->
+  <div class="modal-overlay" id="shortcutSettingsModal">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h3>단축키 설정</h3>
+        <button class="modal-close" id="closeShortcutSettings">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="shortcut-list" id="shortcutList">
+          <!-- JS에서 렌더링 -->
+        </div>
+        <p class="form-hint">변경하려는 단축키를 클릭한 후 새로운 키 조합을 입력하세요.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="resetAllShortcuts">기본값으로 초기화</button>
+        <button class="btn-primary" id="closeShortcutSettingsBtn">닫기</button>
       </div>
     </div>
   </div>
