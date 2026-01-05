@@ -294,9 +294,11 @@ function setupIpcHandlers() {
     const trace = log.trace('settings:load');
     try {
       const filePath = getSettingsFilePath();
+      log.info('설정 파일 경로', { filePath, exists: fs.existsSync(filePath) });
       if (fs.existsSync(filePath)) {
         const content = await fs.promises.readFile(filePath, 'utf-8');
         const data = JSON.parse(content);
+        log.info('설정 파일 로드됨', { userName: data?.userName, hasSetNameOnce: data?.hasSetNameOnce });
         trace.end({ success: true });
         return { success: true, data };
       }
@@ -313,6 +315,7 @@ function setupIpcHandlers() {
     const trace = log.trace('settings:save');
     try {
       const filePath = getSettingsFilePath();
+      log.info('설정 파일 저장', { filePath, userName: data?.userName, hasSetNameOnce: data?.hasSetNameOnce });
       await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
       trace.end({ success: true });
       return { success: true };
