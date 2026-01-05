@@ -43,7 +43,7 @@ export class ReviewDataManager extends EventTarget {
 
     // 자동 저장 설정
     this.autoSaveEnabled = options.autoSave !== false;
-    this.autoSaveDelay = options.autoSaveDelay || 2000; // 2초 디바운스
+    this.autoSaveDelay = options.autoSaveDelay || 100; // 100ms (즉시 저장 체감)
     this.autoSaveTimer = null;
 
     // 이벤트 바인딩

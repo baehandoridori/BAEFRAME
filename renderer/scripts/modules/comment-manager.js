@@ -54,6 +54,11 @@ export class CommentMarker {
     this.author = options.author || '익명';
     this.createdAt = options.createdAt || new Date();
 
+    // 첨부 이미지 (Base64)
+    this.image = options.image || null;
+    this.imageWidth = options.imageWidth || null;
+    this.imageHeight = options.imageHeight || null;
+
     // 상태
     this.resolved = options.resolved || false;
     this.resolvedAt = options.resolvedAt ? new Date(options.resolvedAt) : null; // 해결된 시간
@@ -74,13 +79,22 @@ export class CommentMarker {
    * 답글 추가
    */
   addReply(reply) {
-    this.replies.push({
+    const newReply = {
       id: generateUUID(),
       text: reply.text,
       author: reply.author || '익명',
       createdAt: new Date()
-    });
-    return this.replies[this.replies.length - 1];
+    };
+
+    // 이미지 첨부 지원
+    if (reply.image) {
+      newReply.image = reply.image;
+      newReply.imageWidth = reply.imageWidth || null;
+      newReply.imageHeight = reply.imageHeight || null;
+    }
+
+    this.replies.push(newReply);
+    return newReply;
   }
 
   /**
@@ -140,7 +154,7 @@ export class CommentMarker {
    * JSON으로 변환
    */
   toJSON() {
-    return {
+    const json = {
       id: this.id,
       x: this.x,
       y: this.y,
@@ -158,6 +172,15 @@ export class CommentMarker {
         createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt
       }))
     };
+
+    // 이미지가 있으면 포함
+    if (this.image) {
+      json.image = this.image;
+      json.imageWidth = this.imageWidth;
+      json.imageHeight = this.imageHeight;
+    }
+
+    return json;
   }
 
   /**
@@ -412,12 +435,22 @@ export class CommentManager extends EventTarget {
       return null;
     }
 
-    if (!text || !text.trim()) {
+    // 이미지만 있는 경우도 허용
+    const hasImage = this._pendingImage && this._pendingImage.base64;
+    if ((!text || !text.trim()) && !hasImage) {
       this._cancelPendingMarker();
       return null;
     }
 
-    this.pendingMarker.text = text.trim();
+    this.pendingMarker.text = text ? text.trim() : '';
+
+    // 이미지 첨부
+    if (hasImage) {
+      this.pendingMarker.image = this._pendingImage.base64;
+      this.pendingMarker.imageWidth = this._pendingImage.width;
+      this.pendingMarker.imageHeight = this._pendingImage.height;
+      this._pendingImage = null; // 초기화
+    }
 
     // 활성 레이어에 추가
     const layer = this.getActiveLayer();
@@ -428,7 +461,7 @@ export class CommentManager extends EventTarget {
     const confirmedMarker = this.pendingMarker;
     this.pendingMarker = null;
 
-    log.info('마커 확정됨', { id: confirmedMarker.id, text: confirmedMarker.text });
+    log.info('마커 확정됨', { id: confirmedMarker.id, text: confirmedMarker.text, hasImage: !!confirmedMarker.image });
 
     this._emit('markerAdded', { marker: confirmedMarker });
     this._emit('markersChanged');

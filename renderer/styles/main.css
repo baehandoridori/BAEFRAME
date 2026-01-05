@@ -2139,12 +2139,14 @@ body {
 
 .comment-input-wrapper {
   position: relative;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
 }
 
 .comment-input {
-  width: 100%;
+  flex: 1;
   padding: 12px;
-  padding-right: 80px;
   background: var(--bg-primary);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
@@ -2164,14 +2166,33 @@ body {
   color: var(--text-tertiary);
 }
 
+.comment-input-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.comment-image-btn {
+  padding: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.comment-image-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
 .comment-submit {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  padding: 6px 12px;
+  padding: 8px 14px;
   background: var(--accent-primary);
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--bg-primary);
   font-size: 12px;
   font-weight: 600;
@@ -2181,6 +2202,45 @@ body {
 
 .comment-submit:hover {
   background: var(--accent-secondary);
+}
+
+/* Comment Image Preview */
+.comment-image-preview {
+  position: relative;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.comment-image-preview img {
+  max-width: 100%;
+  max-height: 150px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.comment-image-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.comment-image-remove:hover {
+  background: var(--status-danger);
 }
 
 .input-hint {
@@ -4500,4 +4560,179 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   font-weight: 600;
   z-index: 200;
   pointer-events: none;
+}
+
+/* ========================================
+   Image Viewer Modal
+   ======================================== */
+
+.image-viewer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.9);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+
+.image-viewer-overlay.open {
+  display: flex;
+}
+
+.image-viewer-content {
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-viewer-img {
+  max-width: 100%;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.image-viewer-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.image-viewer-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ========================================
+   Comment Thumbnail in List
+   ======================================== */
+
+.comment-attached-image {
+  margin-top: 8px;
+  position: relative;
+  display: inline-block;
+}
+
+.comment-attached-image img {
+  max-width: 100%;
+  max-height: 120px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  border: 1px solid var(--border-subtle);
+}
+
+.comment-attached-image img:hover {
+  border-color: var(--accent-primary);
+  transform: scale(1.02);
+}
+
+/* ========================================
+   Thread Image Styles
+   ======================================== */
+
+.thread-comment-image,
+.thread-reply-image {
+  margin-top: 8px;
+  max-width: 100%;
+}
+
+.thread-comment-image img,
+.thread-reply-image img {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  border: 1px solid var(--border-subtle);
+}
+
+.thread-comment-image img:hover,
+.thread-reply-image img:hover {
+  border-color: var(--accent-primary);
+}
+
+/* Thread Editor Image Preview */
+.thread-image-preview {
+  margin: 8px 0;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  position: relative;
+}
+
+.thread-image-preview img {
+  max-width: 100%;
+  max-height: 120px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.thread-image-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+}
+
+.thread-image-remove:hover {
+  background: var(--status-danger);
+}
+
+/* Thread Editor Image Button */
+.thread-editor-toolbar .editor-btn.image-btn {
+  color: var(--text-secondary);
+}
+
+.thread-editor-toolbar .editor-btn.image-btn:hover {
+  color: var(--accent-primary);
+}
+
+/* Thread Image Button */
+.thread-image-btn {
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+}
+
+.thread-image-btn:hover {
+  color: var(--accent-primary);
+  background: var(--bg-hover);
+}
+
+.thread-input-footer {
+  justify-content: space-between !important;
 }
