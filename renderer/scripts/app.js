@@ -11,6 +11,7 @@ import { ReviewDataManager } from './modules/review-data-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
+import { getImageFromClipboard, selectImageFile, isValidImageBase64 } from './modules/image-utils.js';
 
 const log = createLogger('App');
 
@@ -84,6 +85,15 @@ async function initApp() {
     commentsList: document.getElementById('commentsList'),
     commentInput: document.getElementById('commentInput'),
     btnSubmitComment: document.getElementById('btnSubmitComment'),
+    btnCommentImage: document.getElementById('btnCommentImage'),
+    commentImagePreview: document.getElementById('commentImagePreview'),
+    commentPreviewImg: document.getElementById('commentPreviewImg'),
+    commentImageRemove: document.getElementById('commentImageRemove'),
+
+    // 이미지 뷰어
+    imageViewerOverlay: document.getElementById('imageViewerOverlay'),
+    imageViewerImg: document.getElementById('imageViewerImg'),
+    imageViewerClose: document.getElementById('imageViewerClose'),
 
     // 리사이저
     panelResizer: document.getElementById('panelResizer'),
@@ -129,6 +139,7 @@ async function initApp() {
     isCommentMode: false, // 댓글 추가 모드
     isFullscreen: false, // 전체화면 모드
     currentFile: null,
+    pendingCommentImage: null, // 댓글 첨부 이미지 { base64, width, height }
     // 비디오 줌 상태
     videoZoom: 100,
     minVideoZoom: 25,
@@ -687,13 +698,63 @@ async function initApp() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const text = elements.commentInput.value.trim();
-      if (text) {
-        // 텍스트를 pending으로 설정하고 댓글 모드 활성화
-        commentManager.setPendingText(text);
+      if (text || state.pendingCommentImage) {
+        // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
+        commentManager.setPendingText(text || '(이미지)');
+        // 이미지가 있으면 commentManager에 임시 저장
+        if (state.pendingCommentImage) {
+          commentManager._pendingImage = state.pendingCommentImage;
+        }
         elements.commentInput.value = '';
+        clearCommentImage();
         showToast('영상에서 마커를 찍어주세요', 'info');
       }
     }
+  });
+
+  // ====== 댓글 이미지 기능 ======
+
+  /**
+   * 댓글 이미지 미리보기 표시
+   */
+  function showCommentImagePreview(imageData) {
+    state.pendingCommentImage = imageData;
+    elements.commentPreviewImg.src = imageData.base64;
+    elements.commentImagePreview.style.display = 'block';
+    log.info('댓글 이미지 첨부됨', { width: imageData.width, height: imageData.height });
+  }
+
+  /**
+   * 댓글 이미지 초기화
+   */
+  function clearCommentImage() {
+    state.pendingCommentImage = null;
+    elements.commentPreviewImg.src = '';
+    elements.commentImagePreview.style.display = 'none';
+  }
+
+  // 댓글 입력창 이미지 붙여넣기
+  elements.commentInput.addEventListener('paste', async (e) => {
+    const imageData = await getImageFromClipboard(e);
+    if (imageData) {
+      e.preventDefault();
+      showCommentImagePreview(imageData);
+      showToast('이미지가 첨부되었습니다', 'success');
+    }
+  });
+
+  // 이미지 버튼 클릭 (파일 선택)
+  elements.btnCommentImage?.addEventListener('click', async () => {
+    const imageData = await selectImageFile();
+    if (imageData) {
+      showCommentImagePreview(imageData);
+      showToast('이미지가 첨부되었습니다', 'success');
+    }
+  });
+
+  // 이미지 제거 버튼
+  elements.commentImageRemove?.addEventListener('click', () => {
+    clearCommentImage();
   });
 
   // 마커 컨테이너 클릭 (영상 위 클릭으로 마커 생성)
@@ -2643,6 +2704,7 @@ async function initApp() {
         </div>
         <div class="comment-content">
           <p class="comment-text">${escapeHtml(marker.text)}</p>
+          ${marker.image ? `<div class="comment-attached-image"><img src="${marker.image}" alt="첨부 이미지" data-full-image="${marker.image}"></div>` : ''}
         </div>
         <div class="comment-edit-form" style="display: none;">
           <textarea class="comment-edit-textarea" rows="3">${escapeHtml(marker.text)}</textarea>
@@ -3520,8 +3582,13 @@ async function initApp() {
   const threadReplies = document.getElementById('threadReplies');
   const threadEditor = document.getElementById('threadEditor');
   const threadSubmit = document.getElementById('threadSubmit');
+  const threadImageBtn = document.getElementById('threadImageBtn');
+  const threadImagePreview = document.getElementById('threadImagePreview');
+  const threadPreviewImg = document.getElementById('threadPreviewImg');
+  const threadImageRemove = document.getElementById('threadImageRemove');
 
   let currentThreadMarkerId = null;
+  let pendingThreadImage = null; // 스레드 답글 첨부 이미지
 
   /**
    * 스레드 팝업 열기
@@ -3552,6 +3619,7 @@ async function initApp() {
           </div>
         </div>
         <div class="thread-comment-text">${formatMarkdown(marker.text)}</div>
+        ${marker.image ? `<div class="thread-comment-image"><img src="${marker.image}" alt="첨부 이미지" data-full-image="${marker.image}"></div>` : ''}
         <div class="thread-comment-reactions">
           <button class="thread-reaction">
             <span class="thread-reaction-emoji">✅</span>
@@ -3584,6 +3652,7 @@ async function initApp() {
             <span class="thread-reply-time">${formatRelativeTime(reply.createdAt)}</span>
           </div>
           <div class="thread-reply-text">${formatMarkdown(reply.text)}</div>
+          ${reply.image ? `<div class="thread-reply-image"><img src="${reply.image}" alt="첨부 이미지" data-full-image="${reply.image}"></div>` : ''}
         </div>
       </div>
     `).join('');
@@ -3604,6 +3673,26 @@ async function initApp() {
     threadOverlay.classList.remove('open');
     currentThreadMarkerId = null;
     threadEditor.innerHTML = '';
+    clearThreadImage();
+  }
+
+  /**
+   * 스레드 이미지 미리보기 표시
+   */
+  function showThreadImagePreview(imageData) {
+    pendingThreadImage = imageData;
+    threadPreviewImg.src = imageData.base64;
+    threadImagePreview.style.display = 'block';
+    log.info('스레드 이미지 첨부됨', { width: imageData.width, height: imageData.height });
+  }
+
+  /**
+   * 스레드 이미지 초기화
+   */
+  function clearThreadImage() {
+    pendingThreadImage = null;
+    if (threadPreviewImg) threadPreviewImg.src = '';
+    if (threadImagePreview) threadImagePreview.style.display = 'none';
   }
 
   /**
@@ -3705,7 +3794,8 @@ async function initApp() {
    */
   function updateSubmitButtonState() {
     const hasContent = threadEditor.textContent.trim().length > 0;
-    threadSubmit.classList.toggle('active', hasContent);
+    const hasImage = pendingThreadImage && pendingThreadImage.base64;
+    threadSubmit.classList.toggle('active', hasContent || hasImage);
   }
 
   /**
@@ -3713,36 +3803,53 @@ async function initApp() {
    */
   function submitThreadReply() {
     const text = threadEditor.innerText.trim();
-    if (!text || !currentThreadMarkerId) return;
+    const hasImage = pendingThreadImage && pendingThreadImage.base64;
 
-    commentManager.addReplyToMarker(currentThreadMarkerId, text);
+    if ((!text && !hasImage) || !currentThreadMarkerId) return;
 
-    // UI 업데이트
-    const marker = commentManager.getMarker(currentThreadMarkerId);
-    if (marker) {
-      // 답글 개수 업데이트
-      const replyCount = marker.replies?.length || 0;
-      threadReplyCount.textContent = `${replyCount}개의 댓글`;
-      threadReplyCount.style.display = 'flex';
+    // 이미지와 함께 답글 추가
+    const replyData = {
+      text: text || '',
+      author: commentManager.getAuthor()
+    };
 
-      // 새 답글 추가
-      const newReply = marker.replies[marker.replies.length - 1];
-      threadReplies.innerHTML += `
-        <div class="thread-reply-item">
-          <div class="thread-reply-avatar">${newReply.author.charAt(0)}</div>
-          <div class="thread-reply-content">
-            <div class="thread-reply-header">
-              <span class="thread-reply-author" ${getAuthorColorStyle(newReply.author)}>${newReply.author}</span>
-              <span class="thread-reply-time">${formatRelativeTime(newReply.createdAt)}</span>
-            </div>
-            <div class="thread-reply-text">${formatMarkdown(newReply.text)}</div>
-          </div>
-        </div>
-      `;
+    if (hasImage) {
+      replyData.image = pendingThreadImage.base64;
+      replyData.imageWidth = pendingThreadImage.width;
+      replyData.imageHeight = pendingThreadImage.height;
     }
 
-    // 에디터 초기화
+    // 직접 마커의 addReply 호출 (이미지 포함)
+    const marker = commentManager.getMarker(currentThreadMarkerId);
+    if (!marker) return;
+
+    const newReply = marker.addReply(replyData);
+    commentManager._emit('replyAdded', { marker, reply: newReply });
+    commentManager._emit('markersChanged');
+
+    // UI 업데이트 - 답글 개수
+    const replyCount = marker.replies?.length || 0;
+    threadReplyCount.textContent = `${replyCount}개의 댓글`;
+    threadReplyCount.style.display = 'flex';
+
+    // UI 업데이트 - 새 답글 추가
+    threadReplies.innerHTML += `
+      <div class="thread-reply-item">
+        <div class="thread-reply-avatar">${newReply.author.charAt(0)}</div>
+        <div class="thread-reply-content">
+          <div class="thread-reply-header">
+            <span class="thread-reply-author" ${getAuthorColorStyle(newReply.author)}>${newReply.author}</span>
+            <span class="thread-reply-time">${formatRelativeTime(newReply.createdAt)}</span>
+          </div>
+          <div class="thread-reply-text">${formatMarkdown(newReply.text)}</div>
+          ${newReply.image ? `<div class="thread-reply-image"><img src="${newReply.image}" alt="첨부 이미지" data-full-image="${newReply.image}"></div>` : ''}
+        </div>
+      </div>
+    `;
+
+    // 에디터 및 이미지 초기화
     threadEditor.innerHTML = '';
+    clearThreadImage();
     updateSubmitButtonState();
     showToast('답글이 추가되었습니다.', 'success');
   }
@@ -3819,8 +3926,93 @@ async function initApp() {
   // 전송 버튼 클릭
   threadSubmit?.addEventListener('click', submitThreadReply);
 
+  // 스레드 이미지 버튼 클릭
+  threadImageBtn?.addEventListener('click', async () => {
+    const imageData = await selectImageFile();
+    if (imageData) {
+      showThreadImagePreview(imageData);
+      showToast('이미지가 첨부되었습니다', 'success');
+    }
+  });
+
+  // 스레드 이미지 제거 버튼
+  threadImageRemove?.addEventListener('click', () => {
+    clearThreadImage();
+  });
+
+  // 스레드 에디터 이미지 붙여넣기
+  threadEditor?.addEventListener('paste', async (e) => {
+    const imageData = await getImageFromClipboard(e);
+    if (imageData) {
+      e.preventDefault();
+      showThreadImagePreview(imageData);
+      showToast('이미지가 첨부되었습니다', 'success');
+    }
+  });
+
   // 전역으로 노출
   window.openThreadPopup = openThreadPopup;
+
+  // ========================================
+  // Image Viewer Modal
+  // ========================================
+
+  /**
+   * 이미지 뷰어 열기
+   */
+  function openImageViewer(imageSrc) {
+    if (!imageSrc) return;
+    elements.imageViewerImg.src = imageSrc;
+    elements.imageViewerOverlay.classList.add('open');
+    log.info('이미지 뷰어 열림');
+  }
+
+  /**
+   * 이미지 뷰어 닫기
+   */
+  function closeImageViewer() {
+    elements.imageViewerOverlay.classList.remove('open');
+    elements.imageViewerImg.src = '';
+  }
+
+  // 이미지 뷰어 닫기 버튼
+  elements.imageViewerClose?.addEventListener('click', closeImageViewer);
+
+  // 배경 클릭으로 이미지 뷰어 닫기
+  elements.imageViewerOverlay?.addEventListener('click', (e) => {
+    if (e.target === elements.imageViewerOverlay) {
+      closeImageViewer();
+    }
+  });
+
+  // ESC 키로 이미지 뷰어 닫기
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && elements.imageViewerOverlay?.classList.contains('open')) {
+      closeImageViewer();
+    }
+  });
+
+  // 댓글/스레드 이미지 클릭 이벤트 위임
+  document.addEventListener('click', (e) => {
+    // 댓글 이미지 클릭
+    const commentImg = e.target.closest('.comment-attached-image img');
+    if (commentImg) {
+      e.stopPropagation();
+      openImageViewer(commentImg.dataset.fullImage || commentImg.src);
+      return;
+    }
+
+    // 스레드 이미지 클릭
+    const threadImg = e.target.closest('.thread-comment-image img, .thread-reply-image img');
+    if (threadImg) {
+      e.stopPropagation();
+      openImageViewer(threadImg.dataset.fullImage || threadImg.src);
+      return;
+    }
+  });
+
+  // 전역 노출
+  window.openImageViewer = openImageViewer;
 
   // ====== 단축키 설정 모달 ======
   const shortcutSettingsModal = document.getElementById('shortcutSettingsModal');
