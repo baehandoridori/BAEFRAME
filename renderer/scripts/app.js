@@ -3872,6 +3872,13 @@ async function initApp() {
   function finishEditingShortcut(event) {
     if (!editingShortcut) return;
 
+    // 수정자 키만 누른 경우 무시 (실제 키 입력 대기)
+    const modifierKeys = ['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
+                          'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'];
+    if (modifierKeys.includes(event.code)) {
+      return; // 수정자 키만 눌렀으면 무시하고 계속 대기
+    }
+
     event.preventDefault();
     event.stopPropagation();
 
