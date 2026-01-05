@@ -1222,15 +1222,27 @@ export class Timeline extends EventTarget {
       tooltip.innerHTML = `<div class="tooltip-frame">프레임 ${frame}</div>`;
     }
 
-    marker.appendChild(tooltip);
+    // 툴팁을 body에 추가 (overflow: hidden에 의한 클리핑 방지)
+    document.body.appendChild(tooltip);
 
-    // 호버 이벤트
+    // 호버 이벤트 - 툴팁 위치 동적 계산
     marker.addEventListener('mouseenter', () => {
+      const markerRect = marker.getBoundingClientRect();
+      // 마커 오른쪽에 툴팁 표시
+      tooltip.style.left = `${markerRect.right + 10}px`;
+      tooltip.style.top = `${markerRect.top + markerRect.height / 2}px`;
       tooltip.classList.add('visible');
     });
     marker.addEventListener('mouseleave', () => {
       tooltip.classList.remove('visible');
     });
+
+    // 마커 제거 시 툴팁도 함께 제거
+    const originalRemove = marker.remove.bind(marker);
+    marker.remove = () => {
+      tooltip.remove();
+      originalRemove();
+    };
 
     marker.addEventListener('click', (e) => {
       e.stopPropagation();

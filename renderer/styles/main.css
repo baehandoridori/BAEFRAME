@@ -1212,7 +1212,8 @@ body {
 .timeline-tracks {
   flex: 1;
   position: relative;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .timeline-ruler {
@@ -1868,7 +1869,6 @@ body {
 /* 특별 아바타가 있는 댓글 카드 */
 .comment-item.has-avatar {
   position: relative;
-  overflow: hidden;
 }
 
 .comment-avatar-bg {
@@ -2692,14 +2692,7 @@ body.resizing .comment-panel {
   color: var(--text-tertiary);
 }
 
-.comment-content {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
 .comment-text {
-  flex: 1;
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
@@ -2708,7 +2701,6 @@ body.resizing .comment-panel {
 
 .comment-drawing-badge {
   font-size: 14px;
-  flex-shrink: 0;
 }
 
 .comment-snapshot {
@@ -2935,9 +2927,7 @@ body.resizing .comment-panel {
 
 /* 마커 말풍선 (툴팁) */
 .comment-marker-tooltip {
-  position: absolute;
-  left: 30px;
-  top: 50%;
+  position: fixed;
   transform: translateY(-50%);
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
@@ -2948,8 +2938,8 @@ body.resizing .comment-panel {
   box-shadow: var(--shadow-lg);
   opacity: 0;
   visibility: hidden;
-  transition: all 0.2s ease;
-  z-index: 1000;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  z-index: 10000;
   pointer-events: none;
 }
 

@@ -915,19 +915,8 @@ async function initApp() {
   const thumbnailScaleValue = document.getElementById('thumbnailScaleValue');
   const thumbnailScaleItem = document.getElementById('thumbnailScaleItem');
 
-  // 설정 초기값 로드 (요소가 있을 경우에만)
-  if (toggleCommentThumbnails) {
-    toggleCommentThumbnails.checked = userSettings.getShowCommentThumbnails();
-  }
-  if (thumbnailScaleSlider) {
-    thumbnailScaleSlider.value = userSettings.getCommentThumbnailScale();
-  }
-  if (thumbnailScaleValue) {
-    thumbnailScaleValue.textContent = `${userSettings.getCommentThumbnailScale()}%`;
-  }
-  if (thumbnailScaleItem && toggleCommentThumbnails) {
-    thumbnailScaleItem.classList.toggle('disabled', !toggleCommentThumbnails.checked);
-  }
+  // 설정 초기값 로드는 waitForReady() 이후에 수행 (initializeCommentSettings 함수 참조)
+  // 여기서는 DOM 요소만 참조하고, 실제 값 설정은 나중에 수행
 
   // 설정 버튼 클릭 - 드롭다운 토글
   btnCommentSettings?.addEventListener('click', (e) => {
@@ -3180,6 +3169,30 @@ async function initApp() {
 
   // 사용자 이름을 헤더에 표시 (옵션)
   updateUserName(userName);
+
+  // ====== 댓글 설정 초기화 (waitForReady 이후) ======
+  // 썸네일 표시 설정
+  if (toggleCommentThumbnails) {
+    toggleCommentThumbnails.checked = userSettings.getShowCommentThumbnails();
+  }
+  // 썸네일 크기 설정
+  if (thumbnailScaleSlider) {
+    const scale = userSettings.getCommentThumbnailScale();
+    thumbnailScaleSlider.value = scale;
+    if (thumbnailScaleValue) {
+      thumbnailScaleValue.textContent = `${scale}%`;
+    }
+    // 썸네일 크기 즉시 적용
+    document.documentElement.style.setProperty('--comment-thumbnail-scale', `${scale}%`);
+  }
+  // 썸네일 크기 조절 항목 활성화/비활성화
+  if (thumbnailScaleItem && toggleCommentThumbnails) {
+    thumbnailScaleItem.classList.toggle('disabled', !toggleCommentThumbnails.checked);
+  }
+  log.info('댓글 설정 초기화 완료', {
+    showThumbnails: userSettings.getShowCommentThumbnails(),
+    thumbnailScale: userSettings.getCommentThumbnailScale()
+  });
 
   // ====== 사용자 설정 모달 ======
   const userSettingsModal = document.getElementById('userSettingsModal');
