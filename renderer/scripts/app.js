@@ -253,8 +253,71 @@ async function initApp() {
   });
   reviewDataManager.connect();
 
-  // 사용자 설정 (단축키 세트 등)
+  // 사용자 설정
   const userSettings = getUserSettings();
+
+  // ====== 단축키 힌트 동적 업데이트 ======
+
+  /**
+   * 키 코드를 표시 문자열로 변환
+   */
+  function keyCodeToDisplay(keyCode) {
+    const keyMap = {
+      'Space': 'Space',
+      'ArrowLeft': '←',
+      'ArrowRight': '→',
+      'ArrowUp': '↑',
+      'ArrowDown': '↓',
+      'Delete': 'Del',
+      'Backspace': '⌫',
+      'Enter': '↵',
+      'Escape': 'Esc',
+      'Tab': 'Tab',
+      'Home': 'Home',
+      'End': 'End',
+      'PageUp': 'PgUp',
+      'PageDown': 'PgDn'
+    };
+
+    if (keyMap[keyCode]) return keyMap[keyCode];
+    if (keyCode.startsWith('Key')) return keyCode.slice(3);
+    if (keyCode.startsWith('Digit')) return keyCode.slice(5);
+    if (keyCode.startsWith('Numpad')) return 'Num' + keyCode.slice(6);
+    if (keyCode.startsWith('F') && keyCode.length <= 3) return keyCode;
+    return keyCode;
+  }
+
+  /**
+   * 단축키 힌트 UI 업데이트
+   */
+  function updateShortcutHints() {
+    const drawHint = document.getElementById('btnDrawModeHint');
+    const commentHint = document.getElementById('btnAddCommentHint');
+    const hintDrawMode = document.getElementById('hintDrawMode');
+    const hintCommentMode = document.getElementById('hintCommentMode');
+
+    const drawShortcut = userSettings.getShortcut('drawMode');
+    const commentShortcut = userSettings.getShortcut('commentMode');
+
+    if (drawShortcut) {
+      const displayKey = keyCodeToDisplay(drawShortcut.key);
+      if (drawHint) drawHint.textContent = displayKey;
+      if (hintDrawMode) hintDrawMode.textContent = displayKey;
+    }
+
+    if (commentShortcut) {
+      const displayKey = keyCodeToDisplay(commentShortcut.key);
+      if (commentHint) commentHint.textContent = displayKey;
+      if (hintCommentMode) hintCommentMode.textContent = displayKey;
+    }
+  }
+
+  // 초기 힌트 업데이트
+  updateShortcutHints();
+
+  // 단축키 변경 시 힌트 업데이트
+  userSettings.addEventListener('shortcutChanged', updateShortcutHints);
+  userSettings.addEventListener('shortcutsReset', updateShortcutHints);
 
   // ====== 모듈 이벤트 연결 ======
 
@@ -991,35 +1054,6 @@ async function initApp() {
       elements.shortcutsMenu.classList.remove('visible');
     }
   });
-
-  // ====== 단축키 세트 선택 ======
-  const shortcutSet1Btn = document.getElementById('shortcutSet1');
-  const shortcutSet2Btn = document.getElementById('shortcutSet2');
-
-  // 초기 단축키 세트 UI 설정
-  function updateShortcutSetUI() {
-    const currentSet = userSettings.getShortcutSet();
-    elements.shortcutsMenu.dataset.set = currentSet;
-
-    shortcutSet1Btn?.classList.toggle('active', currentSet === 'set1');
-    shortcutSet2Btn?.classList.toggle('active', currentSet === 'set2');
-  }
-
-  // 단축키 세트 버튼 클릭 이벤트
-  shortcutSet1Btn?.addEventListener('click', () => {
-    userSettings.setShortcutSet('set1');
-    updateShortcutSetUI();
-    showToast('단축키 Set 1 (기본) 활성화', 'info');
-  });
-
-  shortcutSet2Btn?.addEventListener('click', () => {
-    userSettings.setShortcutSet('set2');
-    updateShortcutSetUI();
-    showToast('단축키 Set 2 (애니메이션) 활성화', 'info');
-  });
-
-  // 초기 UI 업데이트
-  updateShortcutSetUI();
 
   // 필터 칩 (댓글 목록 필터링)
   document.querySelectorAll('.filter-chip').forEach(chip => {
@@ -2976,9 +3010,7 @@ async function initApp() {
     const threadOverlay = document.getElementById('threadOverlay');
     if (threadOverlay?.classList.contains('open')) return;
 
-    const shortcutSet = userSettings.getShortcutSet();
-
-    // ====== 공통 단축키 (모든 세트에서 동일) ======
+    // ====== 공통 단축키 ======
     switch (e.code) {
     case 'Space':
       e.preventDefault();
@@ -3124,57 +3156,28 @@ async function initApp() {
       break;
     }
 
-    // ====== Set 1: 기존 단축키 (화살표 기반) ======
-    if (shortcutSet === 'set1') {
-      switch (e.code) {
-      case 'ArrowLeft':
-        e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.rewind(1); // 1초 뒤로
-        } else {
-          videoPlayer.prevFrame();
-        }
-        break;
-
-      case 'ArrowRight':
-        e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.forward(1); // 1초 앞으로
-        } else {
-          videoPlayer.nextFrame();
-        }
-        break;
-
-      case 'KeyD':
-        e.preventDefault();
-        toggleDrawMode();
-        break;
+    // ====== 프레임 이동 및 그리기 모드 단축키 ======
+    switch (e.code) {
+    case 'ArrowLeft':
+      e.preventDefault();
+      if (e.shiftKey) {
+        videoPlayer.rewind(1);
+      } else {
+        videoPlayer.prevFrame();
       }
-    }
+      break;
 
-    // ====== Set 2: 새 단축키 (A/D 기반, 애니메이션 작업용) ======
-    if (shortcutSet === 'set2') {
-      switch (e.code) {
-      case 'ArrowLeft':
-        e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.rewind(1);
-        } else {
-          videoPlayer.prevFrame();
-        }
-        break;
+    case 'ArrowRight':
+      e.preventDefault();
+      if (e.shiftKey) {
+        videoPlayer.forward(1);
+      } else {
+        videoPlayer.nextFrame();
+      }
+      break;
 
-      case 'ArrowRight':
-        e.preventDefault();
-        if (e.shiftKey) {
-          videoPlayer.forward(1);
-        } else {
-          videoPlayer.nextFrame();
-        }
-        break;
-
-      // 사용자 정의 단축키를 통한 처리
-      default:
+    // 사용자 정의 단축키를 통한 처리
+    default:
         // Shift+A: 1프레임 이전
         if (userSettings.matchShortcut('prevFrameDraw', e)) {
           e.preventDefault();
@@ -3257,7 +3260,6 @@ async function initApp() {
           break;
         }
         break;
-      }
     }
   }
 

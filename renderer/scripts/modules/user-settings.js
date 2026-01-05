@@ -137,7 +137,6 @@ export class UserSettings extends EventTarget {
       userSource: null, // 'slack', 'os', 'manual', 'anonymous'
       slackUserId: null,
       slackWorkspace: null,
-      shortcutSet: 'set2', // 'set1' 또는 'set2' (기본값: set2)
       // 댓글 썸네일 설정
       showCommentThumbnails: true,
       commentThumbnailScale: 50, // 50 ~ 200 (기본값: 50%)
@@ -468,32 +467,10 @@ export class UserSettings extends EventTarget {
       userName: null,
       userSource: null,
       slackUserId: null,
-      slackWorkspace: null,
-      shortcutSet: 'set2'
+      slackWorkspace: null
     };
     this._save();
     return await this.initialize();
-  }
-
-  /**
-   * 현재 단축키 세트 가져오기
-   * @returns {string} 'set1' 또는 'set2'
-   */
-  getShortcutSet() {
-    return this.settings.shortcutSet || 'set2';
-  }
-
-  /**
-   * 단축키 세트 설정
-   * @param {string} set - 'set1' 또는 'set2'
-   */
-  setShortcutSet(set) {
-    if (set === 'set1' || set === 'set2') {
-      this.settings.shortcutSet = set;
-      this._save();
-      this._emit('shortcutSetChanged', { shortcutSet: set });
-      log.info('단축키 세트 변경됨', { shortcutSet: set });
-    }
   }
 
   /**
