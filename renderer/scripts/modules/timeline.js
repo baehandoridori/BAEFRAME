@@ -815,12 +815,6 @@ export class Timeline extends EventTarget {
       trackRow.appendChild(clip);
     });
 
-    // 트랙 클릭 이벤트 (프레임 이동)
-    trackRow.addEventListener('click', (e) => {
-      if (e.target.classList.contains('keyframe-marker')) return;
-      this._seekFromClick(e);
-    });
-
     this.tracksContainer.appendChild(trackRow);
   }
 
