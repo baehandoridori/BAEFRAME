@@ -159,10 +159,11 @@ export class Timeline extends EventTarget {
         return;
       }
 
-      // 빈 영역에서 마우스 다운 시 패닝 모드 (기본 동작)
+      // 빈 영역 또는 비디오 트랙에서 마우스 다운 시 패닝 모드 (기본 동작)
       if (e.target === this.tracksContainer ||
           e.target.classList.contains('track-row') ||
-          e.target.classList.contains('frame-grid-container')) {
+          e.target.classList.contains('frame-grid-container') ||
+          e.target.classList.contains('track-clip')) {
         this.isPanning = true;
         this.panStartX = e.clientX;
         this.panScrollLeft = this.timelineTracks.scrollLeft;
