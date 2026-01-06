@@ -34,6 +34,7 @@ export class ReviewDataManager extends EventTarget {
 
     this.commentManager = options.commentManager;
     this.drawingManager = options.drawingManager;
+    this.highlightManager = options.highlightManager;
 
     // 현재 상태
     this.currentVideoPath = null;
@@ -79,6 +80,10 @@ export class ReviewDataManager extends EventTarget {
       this.drawingManager.addEventListener('redo', this._onDataChanged);
     }
 
+    if (this.highlightManager) {
+      this.highlightManager.addEventListener('changed', this._onDataChanged);
+    }
+
     log.info('데이터 변경 이벤트 연결됨');
   }
 
@@ -104,6 +109,10 @@ export class ReviewDataManager extends EventTarget {
       this.drawingManager.removeEventListener('keyframeRemoved', this._onDataChanged);
       this.drawingManager.removeEventListener('undo', this._onDataChanged);
       this.drawingManager.removeEventListener('redo', this._onDataChanged);
+    }
+
+    if (this.highlightManager) {
+      this.highlightManager.removeEventListener('changed', this._onDataChanged);
     }
 
     this._cancelAutoSave();
@@ -252,7 +261,8 @@ export class ReviewDataManager extends EventTarget {
       createdAt: this._createdAt || now,
       modifiedAt: now,
       comments: this.commentManager?.toJSON() || null,
-      drawings: this.drawingManager?.exportData() || null
+      drawings: this.drawingManager?.exportData() || null,
+      highlights: this.highlightManager?.toJSON() || null
     };
   }
 
@@ -268,6 +278,10 @@ export class ReviewDataManager extends EventTarget {
 
     if (data.drawings && this.drawingManager) {
       this.drawingManager.importData(data.drawings);
+    }
+
+    if (data.highlights && this.highlightManager) {
+      this.highlightManager.fromJSON(data.highlights);
     }
   }
 

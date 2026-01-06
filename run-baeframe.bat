@@ -91,9 +91,11 @@ if exist "%APPDATA%\Electron\Cache" (
     rd /s /q "%APPDATA%\Electron\Cache" 2>nul
 )
 
-:: Electron 실행 (새 창에서도 UTF-8 인코딩 적용)
+:: Electron 실행 (같은 창에서 디버그 로그 표시)
 echo [baeframe] 앱 시작... (%LOCAL_DIR%)
-start "" cmd /c "chcp 65001 >nul && npx electron ."
-
-:: 앱 실행 후 DOS 창 자동 종료
-exit
+echo.
+echo ============================================
+echo   디버그 로그 (앱 종료 시 창이 닫힙니다)
+echo ============================================
+echo.
+npx electron .

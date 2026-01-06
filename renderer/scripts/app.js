@@ -8,6 +8,7 @@ import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { CommentManager } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
+import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
@@ -243,10 +244,14 @@ async function initApp() {
     container: markerContainer
   });
 
+  // 하이라이트 매니저
+  const highlightManager = new HighlightManager();
+
   // 리뷰 데이터 매니저 (.bframe 파일 저장/로드)
   const reviewDataManager = new ReviewDataManager({
     commentManager,
     drawingManager,
+    highlightManager,
     autoSave: true,
     autoSaveDelay: 2000 // 2초 디바운스
   });
@@ -1380,6 +1385,274 @@ async function initApp() {
     timeline.setLoopRegion(inPoint, outPoint, enabled);
   });
 
+  // ====== 하이라이트 ======
+  const btnAddHighlight = document.getElementById('btnAddHighlight');
+  const highlightTrack = document.getElementById('highlightTrack');
+  const highlightLayerHeader = document.getElementById('highlightLayerHeader');
+  const highlightPopup = document.getElementById('highlightPopup');
+  const highlightNoteInput = document.getElementById('highlightNoteInput');
+  const highlightColorPicker = document.getElementById('highlightColorPicker');
+  const highlightCopyBtn = document.getElementById('highlightCopyBtn');
+  const highlightDeleteBtn = document.getElementById('highlightDeleteBtn');
+
+  // 하이라이트 트랙 연결 (좌측 레이어 헤더도 연동)
+  timeline.setHighlightTrack(highlightTrack, highlightLayerHeader);
+
+  // 현재 선택된 하이라이트 ID
+  let selectedHighlightId = null;
+
+  // 하이라이트 생성 버튼
+  btnAddHighlight.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+    const currentTime = videoPlayer.currentTime || 0;
+    const highlight = highlightManager.createHighlight(currentTime);
+    renderHighlights();
+    showToast('하이라이트가 추가되었습니다', 'info');
+  });
+
+  // 하이라이트 렌더링 함수
+  function renderHighlights() {
+    const highlights = highlightManager.getAllHighlights();
+    timeline.renderHighlights(highlights);
+    setupHighlightInteractions();
+  }
+
+  // 하이라이트 상호작용 설정 (드래그, 우클릭)
+  function setupHighlightInteractions() {
+    const items = highlightTrack.querySelectorAll('.highlight-item');
+
+    items.forEach(item => {
+      const highlightId = item.dataset.highlightId;
+
+      // 우클릭 - 팝업 메뉴
+      item.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showHighlightPopup(highlightId, e.clientX, e.clientY);
+      });
+
+      // 바 전체 드래그 (이동)
+      item.addEventListener('mousedown', (e) => {
+        // 핸들 클릭이면 무시 (핸들에서 처리)
+        if (e.target.classList.contains('highlight-handle')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        startHighlightDrag(highlightId, 'move', e);
+      });
+
+      // 드래그 핸들
+      const leftHandle = item.querySelector('.highlight-handle-left');
+      const rightHandle = item.querySelector('.highlight-handle-right');
+
+      if (leftHandle) {
+        leftHandle.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+          startHighlightDrag(highlightId, 'left', e);
+        });
+      }
+
+      if (rightHandle) {
+        rightHandle.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+          startHighlightDrag(highlightId, 'right', e);
+        });
+      }
+    });
+  }
+
+  // 하이라이트 드래그 시작
+  let highlightDragState = null;
+
+  function startHighlightDrag(highlightId, handle, e) {
+    const highlight = highlightManager.getHighlight(highlightId);
+    if (!highlight) return;
+
+    highlightDragState = {
+      highlightId,
+      handle,
+      startX: e.clientX,
+      startTime: highlight.startTime,
+      endTime: highlight.endTime,
+      duration: highlight.endTime - highlight.startTime
+    };
+
+    document.addEventListener('mousemove', onHighlightDrag);
+    document.addEventListener('mouseup', endHighlightDrag);
+  }
+
+  function onHighlightDrag(e) {
+    if (!highlightDragState) return;
+
+    const { highlightId, handle, startX, startTime, endTime, duration } = highlightDragState;
+    const deltaX = e.clientX - startX;
+    const trackRect = highlightTrack.getBoundingClientRect();
+    const deltaTime = (deltaX / trackRect.width) * videoPlayer.duration;
+
+    let updates;
+    if (handle === 'move') {
+      // 전체 이동
+      let newStart = startTime + deltaTime;
+      let newEnd = endTime + deltaTime;
+
+      // 경계 체크
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = duration;
+      }
+      if (newEnd > videoPlayer.duration) {
+        newEnd = videoPlayer.duration;
+        newStart = videoPlayer.duration - duration;
+      }
+
+      updates = { startTime: newStart, endTime: newEnd };
+    } else if (handle === 'left') {
+      const newTime = Math.max(0, Math.min(endTime - 0.1, startTime + deltaTime));
+      updates = { startTime: newTime };
+    } else {
+      const newTime = Math.max(startTime + 0.1, Math.min(videoPlayer.duration, endTime + deltaTime));
+      updates = { endTime: newTime };
+    }
+
+    highlightManager.updateHighlight(highlightId, updates);
+
+    // UI 즉시 업데이트
+    const highlight = highlightManager.getHighlight(highlightId);
+    timeline.updateHighlightElement(highlight);
+  }
+
+  function endHighlightDrag() {
+    highlightDragState = null;
+    document.removeEventListener('mousemove', onHighlightDrag);
+    document.removeEventListener('mouseup', endHighlightDrag);
+  }
+
+  // 하이라이트 팝업 표시
+  function showHighlightPopup(highlightId, x, y) {
+    const highlight = highlightManager.getHighlight(highlightId);
+    if (!highlight) return;
+
+    selectedHighlightId = highlightId;
+
+    // 입력값 설정
+    highlightNoteInput.value = highlight.note || '';
+
+    // 색상 버튼 선택 상태
+    highlightColorPicker.querySelectorAll('.highlight-color-btn').forEach(btn => {
+      btn.classList.toggle('selected', btn.dataset.color === highlight.colorKey);
+    });
+
+    // 위치 설정 (화면 경계 고려)
+    const popupWidth = 220;
+    const popupHeight = 180;
+    const adjustedX = Math.min(x, window.innerWidth - popupWidth - 10);
+    const adjustedY = Math.min(y, window.innerHeight - popupHeight - 10);
+
+    highlightPopup.style.left = `${adjustedX}px`;
+    highlightPopup.style.top = `${adjustedY}px`;
+    highlightPopup.style.display = 'block';
+
+    // 입력 필드에 포커스
+    setTimeout(() => highlightNoteInput.focus(), 50);
+  }
+
+  // 팝업 숨기기
+  function hideHighlightPopup() {
+    highlightPopup.style.display = 'none';
+    selectedHighlightId = null;
+  }
+
+  // 팝업 외부 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    if (highlightPopup.style.display === 'block' &&
+        !highlightPopup.contains(e.target) &&
+        !e.target.closest('.highlight-item')) {
+      hideHighlightPopup();
+    }
+  });
+
+  // 주석 입력
+  highlightNoteInput.addEventListener('input', (e) => {
+    if (selectedHighlightId) {
+      highlightManager.updateHighlight(selectedHighlightId, { note: e.target.value });
+      const highlight = highlightManager.getHighlight(selectedHighlightId);
+      timeline.updateHighlightElement(highlight);
+    }
+  });
+
+  // 색상 선택
+  highlightColorPicker.addEventListener('click', (e) => {
+    const btn = e.target.closest('.highlight-color-btn');
+    if (!btn || !selectedHighlightId) return;
+
+    const colorKey = btn.dataset.color;
+    highlightManager.updateHighlight(selectedHighlightId, { colorKey });
+
+    // 버튼 선택 상태 업데이트
+    highlightColorPicker.querySelectorAll('.highlight-color-btn').forEach(b => {
+      b.classList.toggle('selected', b === btn);
+    });
+
+    // UI 업데이트
+    const highlight = highlightManager.getHighlight(selectedHighlightId);
+    timeline.updateHighlightElement(highlight);
+  });
+
+  // 복사 버튼
+  highlightCopyBtn.addEventListener('click', () => {
+    if (selectedHighlightId) {
+      highlightManager.copyHighlight(selectedHighlightId);
+      hideHighlightPopup();
+      showToast('하이라이트가 복사되었습니다 (Ctrl+V로 붙여넣기)', 'info');
+    }
+  });
+
+  // 삭제 버튼
+  highlightDeleteBtn.addEventListener('click', () => {
+    if (selectedHighlightId) {
+      highlightManager.deleteHighlight(selectedHighlightId);
+      hideHighlightPopup();
+      renderHighlights();
+      showToast('하이라이트가 삭제되었습니다', 'info');
+    }
+  });
+
+  // 하이라이트 변경 이벤트 수신
+  highlightManager.addEventListener('loaded', () => {
+    renderHighlights();
+  });
+
+  // 하이라이트 복사/붙여넣기 키보드 단축키
+  document.addEventListener('keydown', (e) => {
+    // input, textarea에서는 무시
+    if (e.target.matches('input, textarea')) return;
+
+    // Ctrl+C: 선택된 하이라이트 복사
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      // 하이라이트 팝업이 열려있고 선택된 하이라이트가 있으면 복사
+      if (highlightPopup.style.display === 'block' && selectedHighlightId) {
+        e.preventDefault();
+        highlightManager.copyHighlight(selectedHighlightId);
+        showToast('하이라이트가 복사되었습니다', 'info');
+      }
+    }
+
+    // Ctrl+V: 하이라이트 붙여넣기
+    if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      if (highlightManager.hasClipboard() && videoPlayer.duration) {
+        e.preventDefault();
+        const currentTime = videoPlayer.currentTime || 0;
+        const highlight = highlightManager.pasteHighlight(currentTime);
+        if (highlight) {
+          renderHighlights();
+          showToast('하이라이트가 붙여넣기 되었습니다', 'info');
+        }
+      }
+    }
+  });
+
   // ====== 비디오 줌/패닝 ======
 
   /**
@@ -1700,6 +1973,8 @@ async function initApp() {
       commentManager.clear();
       // 그리기 매니저 초기화
       drawingManager.reset();
+      // 하이라이트 매니저 초기화
+      highlightManager.reset();
       // 타임라인 마커 초기화
       timeline.clearMarkers();
       // 영상 위 마커 UI 초기화
@@ -1754,6 +2029,10 @@ async function initApp() {
       // 그리기 레이어 UI 및 캔버스 다시 렌더링
       timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
       drawingManager.renderFrame(videoPlayer.currentFrame);
+
+      // 하이라이트 매니저 영상 정보 설정 및 렌더링
+      highlightManager.setVideoInfo(videoPlayer.duration, videoPlayer.fps);
+      renderHighlights();
 
       trace.end({ filePath, hasExistingData });
 
@@ -2322,6 +2601,7 @@ async function initApp() {
 
   /**
    * 타임라인 마커 업데이트
+   * 최적화: O(n²) → O(n) - Map을 사용한 프레임별 그룹화
    */
   function updateTimelineMarkers() {
     const ranges = commentManager.getMarkerRanges();
@@ -2330,16 +2610,21 @@ async function initApp() {
     // 기존 마커 제거
     timeline.clearCommentMarkers();
 
-    // 새 마커 추가 (각 마커의 시작 프레임에)
-    const frameSet = new Set();
+    // O(n): 프레임별로 마커 그룹화
+    const frameMap = new Map();
     ranges.forEach(range => {
-      if (!frameSet.has(range.startFrame)) {
-        frameSet.add(range.startFrame);
-        const time = range.startFrame / fps;
-        // 마커 정보 전달 (프레임별 댓글 정보)
-        const markersAtFrame = ranges.filter(r => r.startFrame === range.startFrame);
-        timeline.addCommentMarker(time, range.resolved, range.startFrame, markersAtFrame);
+      if (!frameMap.has(range.startFrame)) {
+        frameMap.set(range.startFrame, []);
       }
+      frameMap.get(range.startFrame).push(range);
+    });
+
+    // O(n): 그룹화된 마커 추가
+    frameMap.forEach((markersAtFrame, frame) => {
+      const time = frame / fps;
+      // 해당 프레임의 모든 마커 중 하나라도 resolved가 아니면 미해결 상태
+      const allResolved = markersAtFrame.every(m => m.resolved);
+      timeline.addCommentMarker(time, allResolved, frame, markersAtFrame);
     });
   }
 
@@ -2897,6 +3182,12 @@ async function initApp() {
       // 구간 반복 토글
       e.preventDefault();
       btnLoopToggle.click();
+      return;
+
+    case 'KeyH':
+      // 하이라이트 추가
+      e.preventDefault();
+      btnAddHighlight.click();
       return;
 
     case 'Delete':

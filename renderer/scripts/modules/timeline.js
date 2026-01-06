@@ -135,25 +135,22 @@ export class Timeline extends EventTarget {
       document.body.style.cursor = 'ew-resize';
     });
 
-    // 룰러 클릭으로 시간 이동
-    this.timelineRuler?.addEventListener('click', (e) => {
-      if (this.isDraggingPlayhead) return;
+    // 룰러 커서 설정
+    if (this.timelineRuler) {
+      this.timelineRuler.style.cursor = 'ew-resize';
+    }
+
+    // 룰러 클릭/드래그로 시간 이동
+    this.timelineRuler?.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      this.isDraggingPlayhead = true;
       this._seekFromClick(e);
+      document.body.style.cursor = 'ew-resize';
     });
 
-    // 트랙 영역 마우스 이벤트 (드래그 seek + 패닝 + 선택)
+    // 트랙 영역 마우스 이벤트 (패닝 + 선택)
     this.tracksContainer?.addEventListener('mousedown', (e) => {
       if (this.isDraggingPlayhead) return;
-
-      // Space 키를 누른 상태면 패닝 모드
-      if (this._isSpacePressed) {
-        this.isPanning = true;
-        this.panStartX = e.clientX;
-        this.panScrollLeft = this.timelineTracks.scrollLeft;
-        this.tracksContainer.classList.add('panning');
-        e.preventDefault();
-        return;
-      }
 
       // Alt 키를 누른 상태면 선택 박스 모드
       if (e.altKey) {
@@ -162,46 +159,27 @@ export class Timeline extends EventTarget {
         return;
       }
 
-      // 빈 영역에서 마우스 다운 시 드래그 seek 시작
+      // 빈 영역에서 마우스 다운 시 패닝 모드 (기본 동작)
       if (e.target === this.tracksContainer ||
           e.target.classList.contains('track-row') ||
           e.target.classList.contains('frame-grid-container')) {
-        this.isDraggingSeeking = true;
-        this._seekFromClick(e);
-        document.body.style.cursor = 'ew-resize';
+        this.isPanning = true;
+        this.panStartX = e.clientX;
+        this.panScrollLeft = this.timelineTracks.scrollLeft;
+        this.tracksContainer.classList.add('panning');
+        e.preventDefault();
       }
     });
 
-    // Space 키 추적 (패닝 모드용)
-    this._isSpacePressed = false;
-    document.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' && !e.target.matches('input, textarea')) {
-        this._isSpacePressed = true;
-        if (this.tracksContainer) {
-          this.tracksContainer.style.cursor = 'grab';
-        }
-      }
-    });
-
-    document.addEventListener('keyup', (e) => {
-      if (e.code === 'Space') {
-        this._isSpacePressed = false;
-        if (this.tracksContainer && !this.isPanning) {
-          this.tracksContainer.style.cursor = 'grab';
-        }
-      }
-    });
+    // 트랙 영역 기본 커서를 grab으로 설정
+    if (this.tracksContainer) {
+      this.tracksContainer.style.cursor = 'grab';
+    }
 
     // 전역 마우스 이벤트 (드래그용)
     document.addEventListener('mousemove', (e) => {
       // 플레이헤드 드래그 (스크러빙 모드)
       if (this.isDraggingPlayhead) {
-        this._scrubFromClick(e);
-        return;
-      }
-
-      // 드래그 seek (스크러빙 모드)
-      if (this.isDraggingSeeking) {
         this._scrubFromClick(e);
         return;
       }
@@ -228,13 +206,6 @@ export class Timeline extends EventTarget {
         // 드래그 종료 시 실제 seek 수행
         this._finishScrubbing(e);
         this.isDraggingPlayhead = false;
-        document.body.style.cursor = 'default';
-      }
-
-      if (this.isDraggingSeeking) {
-        // 드래그 종료 시 실제 seek 수행
-        this._finishScrubbing(e);
-        this.isDraggingSeeking = false;
         document.body.style.cursor = 'default';
       }
 
@@ -844,12 +815,6 @@ export class Timeline extends EventTarget {
       trackRow.appendChild(clip);
     });
 
-    // 트랙 클릭 이벤트 (프레임 이동)
-    trackRow.addEventListener('click', (e) => {
-      if (e.target.classList.contains('keyframe-marker')) return;
-      this._seekFromClick(e);
-    });
-
     this.tracksContainer.appendChild(trackRow);
   }
 
@@ -1303,6 +1268,166 @@ export class Timeline extends EventTarget {
    */
   zoomOut() {
     this.setZoom(this.zoom - 25);
+  }
+
+  // ==========================================
+  // 하이라이트 관련
+  // ==========================================
+
+  /**
+   * 하이라이트 트랙 요소 참조 설정
+   * @param {HTMLElement} trackElement - 하이라이트 트랙 요소
+   * @param {HTMLElement} layerHeaderElement - 좌측 하이라이트 레이어 헤더 요소 (선택)
+   */
+  setHighlightTrack(trackElement, layerHeaderElement = null) {
+    this.highlightTrack = trackElement;
+    this.highlightLayerHeader = layerHeaderElement;
+  }
+
+  /**
+   * 하이라이트 렌더링
+   * @param {Array} highlights - 하이라이트 배열
+   */
+  renderHighlights(highlights) {
+    if (!this.highlightTrack) return;
+
+    // 기존 하이라이트 제거
+    this.highlightTrack.innerHTML = '';
+
+    // 하이라이트가 없으면 트랙 및 레이어 헤더 숨김
+    if (!highlights || highlights.length === 0) {
+      this.highlightTrack.style.display = 'none';
+      if (this.highlightLayerHeader) {
+        this.highlightLayerHeader.style.display = 'none';
+      }
+      return;
+    }
+
+    // 트랙 및 레이어 헤더 표시
+    this.highlightTrack.style.display = 'block';
+    if (this.highlightLayerHeader) {
+      this.highlightLayerHeader.style.display = 'flex';
+    }
+
+    // 각 하이라이트 렌더링
+    highlights.forEach(highlight => {
+      const element = this._createHighlightElement(highlight);
+      this.highlightTrack.appendChild(element);
+    });
+  }
+
+  /**
+   * 하이라이트 요소 생성
+   * @param {object} highlight - 하이라이트 데이터
+   * @returns {HTMLElement}
+   */
+  _createHighlightElement(highlight) {
+    const element = document.createElement('div');
+    element.className = 'highlight-item';
+    element.dataset.highlightId = highlight.id;
+
+    // 위치 및 크기 계산 (duration이 0이면 기본값 사용)
+    const duration = this.duration || 1;
+    const leftPercent = (highlight.startTime / duration) * 100;
+    const widthPercent = ((highlight.endTime - highlight.startTime) / duration) * 100;
+
+    // 색상 정보 (colorInfo가 없으면 기본 노랑색 사용)
+    const colorInfo = highlight.colorInfo || { color: '#ffdd59', bgColor: 'rgba(255, 221, 89, 0.3)' };
+
+    element.style.left = `${leftPercent}%`;
+    element.style.width = `${widthPercent}%`;
+    element.style.background = colorInfo.bgColor;
+    element.style.borderLeft = `3px solid ${colorInfo.color}`;
+    element.style.borderRight = `3px solid ${colorInfo.color}`;
+
+    // 드래그 핸들 추가
+    const leftHandle = document.createElement('div');
+    leftHandle.className = 'highlight-handle highlight-handle-left';
+    leftHandle.dataset.handle = 'left';
+
+    const rightHandle = document.createElement('div');
+    rightHandle.className = 'highlight-handle highlight-handle-right';
+    rightHandle.dataset.handle = 'right';
+
+    element.appendChild(leftHandle);
+    element.appendChild(rightHandle);
+
+    // 주석 표시
+    if (highlight.note) {
+      const noteIndicator = document.createElement('div');
+      noteIndicator.className = 'highlight-note-indicator';
+      noteIndicator.textContent = highlight.note;
+      // 글자색은 항상 흰색
+      noteIndicator.style.color = '#ffffff';
+      noteIndicator.style.textShadow = '0 1px 2px rgba(0, 0, 0, 0.5)';
+      element.appendChild(noteIndicator);
+    }
+
+    return element;
+  }
+
+  /**
+   * 단일 하이라이트 업데이트
+   * @param {object} highlight - 하이라이트 데이터
+   */
+  updateHighlightElement(highlight) {
+    if (!this.highlightTrack) return;
+
+    const element = this.highlightTrack.querySelector(`[data-highlight-id="${highlight.id}"]`);
+    if (!element) return;
+
+    // 위치 및 크기 업데이트 (duration이 0이면 기본값 사용)
+    const duration = this.duration || 1;
+    const leftPercent = (highlight.startTime / duration) * 100;
+    const widthPercent = ((highlight.endTime - highlight.startTime) / duration) * 100;
+
+    // 색상 정보 (colorInfo가 없으면 기본 노랑색 사용)
+    const colorInfo = highlight.colorInfo || { color: '#ffdd59', bgColor: 'rgba(255, 221, 89, 0.3)' };
+
+    element.style.left = `${leftPercent}%`;
+    element.style.width = `${widthPercent}%`;
+    element.style.background = colorInfo.bgColor;
+    element.style.borderLeft = `3px solid ${colorInfo.color}`;
+    element.style.borderRight = `3px solid ${colorInfo.color}`;
+
+    // 주석 업데이트
+    let noteIndicator = element.querySelector('.highlight-note-indicator');
+    if (highlight.note) {
+      if (!noteIndicator) {
+        noteIndicator = document.createElement('div');
+        noteIndicator.className = 'highlight-note-indicator';
+        element.appendChild(noteIndicator);
+      }
+      noteIndicator.textContent = highlight.note;
+      // 글자색은 항상 흰색
+      noteIndicator.style.color = '#ffffff';
+      noteIndicator.style.textShadow = '0 1px 2px rgba(0, 0, 0, 0.5)';
+    } else if (noteIndicator) {
+      noteIndicator.remove();
+    }
+  }
+
+  /**
+   * 픽셀 위치를 시간으로 변환
+   * @param {number} pixelX - 픽셀 X 좌표
+   * @returns {number} - 시간 (초)
+   */
+  pixelToTime(pixelX) {
+    if (!this.tracksContainer) return 0;
+    const trackWidth = this.tracksContainer.scrollWidth;
+    const ratio = pixelX / trackWidth;
+    return ratio * this.duration;
+  }
+
+  /**
+   * 시간을 픽셀 위치로 변환
+   * @param {number} time - 시간 (초)
+   * @returns {number} - 픽셀 X 좌표
+   */
+  timeToPixel(time) {
+    if (!this.tracksContainer) return 0;
+    const trackWidth = this.tracksContainer.scrollWidth;
+    return (time / this.duration) * trackWidth;
   }
 
   // ==========================================
