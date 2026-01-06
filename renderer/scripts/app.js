@@ -626,6 +626,11 @@ async function initApp() {
     videoPlayer.seek(time);
   });
 
+  // 타임라인 줌 변경 시 마커 다시 렌더링 (클러스터링 재계산)
+  timeline.addEventListener('zoomChanged', () => {
+    updateTimelineMarkers();
+  });
+
   // ====== 이벤트 리스너 설정 ======
 
   // 파일 열기 버튼
@@ -2601,16 +2606,13 @@ async function initApp() {
 
   /**
    * 타임라인 마커 업데이트
-   * 최적화: O(n²) → O(n) - Map을 사용한 프레임별 그룹화
+   * 클러스터링 기반 렌더링 - 줌 레벨에 따라 가까운 마커 그룹화
    */
   function updateTimelineMarkers() {
     const ranges = commentManager.getMarkerRanges();
     const fps = videoPlayer.fps || 24;
 
-    // 기존 마커 제거
-    timeline.clearCommentMarkers();
-
-    // O(n): 프레임별로 마커 그룹화
+    // 프레임별로 마커 그룹화
     const frameMap = new Map();
     ranges.forEach(range => {
       if (!frameMap.has(range.startFrame)) {
@@ -2619,13 +2621,21 @@ async function initApp() {
       frameMap.get(range.startFrame).push(range);
     });
 
-    // O(n): 그룹화된 마커 추가
+    // 클러스터링용 마커 데이터 배열 생성
+    const allMarkerData = [];
     frameMap.forEach((markersAtFrame, frame) => {
       const time = frame / fps;
-      // 해당 프레임의 모든 마커 중 하나라도 resolved가 아니면 미해결 상태
       const allResolved = markersAtFrame.every(m => m.resolved);
-      timeline.addCommentMarker(time, allResolved, frame, markersAtFrame);
+      allMarkerData.push({
+        time,
+        frame,
+        resolved: allResolved,
+        infos: markersAtFrame
+      });
     });
+
+    // 클러스터링된 마커 렌더링
+    timeline.renderClusteredCommentMarkers(allMarkerData);
   }
 
   /**

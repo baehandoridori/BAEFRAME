@@ -519,6 +519,9 @@ export class Timeline extends EventTarget {
     this._updatePlayheadPosition();
     this._updateRuler();
     this._updateFrameGrid();
+
+    // 줌 변경 이벤트 발생 (마커 클러스터링 재계산용)
+    this._emit('zoomChanged', { zoom: this.zoom });
   }
 
   /**
@@ -1225,6 +1228,176 @@ export class Timeline extends EventTarget {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  /**
+   * 타임코드 포맷 (HH:MM:SS:FF)
+   * @param {number} time - 시간 (초)
+   * @returns {string} 타임코드 문자열
+   */
+  _formatTimecode(time) {
+    const fps = this.fps || 24;
+    const totalFrames = Math.floor(time * fps);
+    const hours = Math.floor(time / 3600);
+    const minutes = Math.floor((time % 3600) / 60);
+    const seconds = Math.floor(time % 60);
+    const frames = totalFrames % fps;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}:${frames.toString().padStart(2, '0')}`;
+  }
+
+  /**
+   * 클러스터링된 댓글 마커 렌더링
+   * 픽셀 거리 기반으로 가까운 마커들을 그룹화
+   * @param {Array} allMarkerData - 모든 마커 데이터 배열 [{time, frame, resolved, infos}, ...]
+   */
+  renderClusteredCommentMarkers(allMarkerData) {
+    // 기존 마커 제거
+    this.clearCommentMarkers();
+
+    if (!allMarkerData || allMarkerData.length === 0) return;
+    if (!this.tracksContainer || this.duration === 0) return;
+
+    // 픽셀 거리 계산을 위한 컨테이너 너비
+    const containerWidth = this.tracksContainer.offsetWidth || 1000;
+    const minClusterDistance = 20; // 20px 미만이면 클러스터링
+
+    // 시간순 정렬
+    const sortedMarkers = [...allMarkerData].sort((a, b) => a.time - b.time);
+
+    // 클러스터 그룹화
+    const clusters = [];
+    let currentCluster = null;
+
+    sortedMarkers.forEach(markerData => {
+      const pixelX = (markerData.time / this.duration) * containerWidth;
+
+      if (!currentCluster) {
+        // 첫 클러스터 시작
+        currentCluster = {
+          markers: [markerData],
+          startPixelX: pixelX,
+          endPixelX: pixelX
+        };
+      } else {
+        // 이전 클러스터와의 거리 확인
+        const distance = pixelX - currentCluster.endPixelX;
+
+        if (distance < minClusterDistance) {
+          // 클러스터에 추가
+          currentCluster.markers.push(markerData);
+          currentCluster.endPixelX = pixelX;
+        } else {
+          // 새 클러스터 시작
+          clusters.push(currentCluster);
+          currentCluster = {
+            markers: [markerData],
+            startPixelX: pixelX,
+            endPixelX: pixelX
+          };
+        }
+      }
+    });
+
+    // 마지막 클러스터 추가
+    if (currentCluster) {
+      clusters.push(currentCluster);
+    }
+
+    // 클러스터별로 마커 렌더링
+    clusters.forEach(cluster => {
+      const count = cluster.markers.length;
+      // 클러스터의 대표 위치 (중앙)
+      const centerTime = cluster.markers.reduce((sum, m) => sum + m.time, 0) / count;
+      // 모든 마커 정보 병합
+      const allInfos = cluster.markers.flatMap(m => m.infos || []);
+      // 모든 마커가 resolved인 경우에만 resolved
+      const allResolved = cluster.markers.every(m => m.resolved);
+      // 대표 프레임 (첫 번째 마커의 프레임)
+      const representativeFrame = cluster.markers[0].frame;
+
+      this._addClusteredMarker(centerTime, allResolved, representativeFrame, allInfos, count);
+    });
+  }
+
+  /**
+   * 클러스터된 마커 추가 (내부용)
+   */
+  _addClusteredMarker(time, resolved, frame, markerInfos, clusterCount) {
+    const percent = (time / this.duration) * 100;
+    const marker = document.createElement('div');
+    marker.className = `comment-marker-track${resolved ? ' resolved' : ''}`;
+    marker.style.left = `${percent}%`;
+    marker.dataset.time = time;
+    marker.dataset.frame = frame;
+
+    // 클러스터 카운트가 2 이상이면 배지 표시
+    if (clusterCount > 1) {
+      marker.dataset.count = clusterCount;
+      marker.classList.add('clustered');
+    }
+
+    // 호버 툴팁 생성
+    const tooltip = document.createElement('div');
+    tooltip.className = 'comment-marker-tooltip';
+
+    // 타임코드 + 프레임 표시
+    const timecode = this._formatTimecode(time);
+
+    // 댓글 내용 표시
+    if (markerInfos.length > 0) {
+      const content = markerInfos.slice(0, 5).map(info => {
+        const text = info.text || '';
+        const hasImage = !!info.image;
+        const displayText = text === '(이미지)' ? '' : text;
+        const preview = displayText.length > 50 ? displayText.substring(0, 50) + '...' : displayText;
+        const imageIcon = hasImage ? '<span class="tooltip-image-icon">🖼</span>' : '';
+        const textHtml = preview ? this._escapeHtml(preview) : '';
+        return `<div class="tooltip-comment">${imageIcon}${textHtml || (hasImage ? '이미지' : '')}</div>`;
+      }).join('');
+
+      const moreText = markerInfos.length > 5 ? `<div class="tooltip-more">...외 ${markerInfos.length - 5}개</div>` : '';
+
+      tooltip.innerHTML = `
+        <div class="tooltip-timecode">${timecode}</div>
+        <div class="tooltip-frame">프레임 ${frame}</div>
+        <div class="tooltip-comments">${content}${moreText}</div>
+        ${markerInfos.length > 1 ? `<div class="tooltip-count">${markerInfos.length}개 댓글</div>` : ''}
+      `;
+    } else {
+      tooltip.innerHTML = `
+        <div class="tooltip-timecode">${timecode}</div>
+        <div class="tooltip-frame">프레임 ${frame}</div>
+      `;
+    }
+
+    // 툴팁을 body에 추가
+    document.body.appendChild(tooltip);
+
+    // 호버 이벤트
+    marker.addEventListener('mouseenter', () => {
+      const markerRect = marker.getBoundingClientRect();
+      tooltip.style.left = `${markerRect.right + 10}px`;
+      tooltip.style.top = `${markerRect.top + markerRect.height / 2}px`;
+      tooltip.classList.add('visible');
+    });
+    marker.addEventListener('mouseleave', () => {
+      tooltip.classList.remove('visible');
+    });
+
+    // 마커 제거 시 툴팁도 함께 제거
+    const originalRemove = marker.remove.bind(marker);
+    marker.remove = () => {
+      tooltip.remove();
+      originalRemove();
+    };
+
+    marker.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._emit('commentMarkerClick', { time, frame });
+    });
+
+    this.tracksContainer?.appendChild(marker);
+    return marker;
   }
 
   /**

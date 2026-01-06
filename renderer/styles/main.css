@@ -3081,6 +3081,61 @@ body.resizing .comment-panel {
   color: var(--success);
 }
 
+/* 클러스터된 마커 (여러 마커 겹침) */
+.comment-marker-track.clustered {
+  width: 5px;
+  background: var(--warning, #f59e0b);
+  z-index: 15;
+}
+
+.comment-marker-track.clustered::before {
+  content: '📌';
+}
+
+.comment-marker-track.clustered::after {
+  content: attr(data-count);
+  position: absolute;
+  top: -8px;
+  left: 8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--error);
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  z-index: 16;
+}
+
+/* 툴팁 타임코드 스타일 */
+.tooltip-timecode {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  color: var(--accent-primary);
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+
+.tooltip-frame {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tooltip-count {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 /* ========================================
    Comment Markers (Video Overlay)
    ======================================== */
