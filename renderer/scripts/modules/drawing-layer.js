@@ -60,6 +60,32 @@ export class Keyframe {
 export class DrawingLayer {
   static nextId = 1;
 
+  /**
+   * nextId 초기화 (새 파일 로드 시 호출)
+   */
+  static resetNextId() {
+    DrawingLayer.nextId = 1;
+  }
+
+  /**
+   * 로드된 레이어들의 ID를 기반으로 nextId 업데이트
+   * ID 충돌 방지를 위해 가장 높은 ID + 1로 설정
+   * @param {DrawingLayer[]} layers - 로드된 레이어 배열
+   */
+  static updateNextIdFromLayers(layers) {
+    let maxId = 0;
+    layers.forEach(layer => {
+      const match = layer.id.match(/^layer-(\d+)$/);
+      if (match) {
+        const idNum = parseInt(match[1], 10);
+        if (idNum > maxId) {
+          maxId = idNum;
+        }
+      }
+    });
+    DrawingLayer.nextId = maxId + 1;
+  }
+
   constructor(options = {}) {
     this.id = options.id || `layer-${DrawingLayer.nextId++}`;
     this.name = options.name || `드로잉 ${DrawingLayer.nextId - 1}`;

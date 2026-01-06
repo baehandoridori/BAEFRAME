@@ -727,6 +727,9 @@ export class DrawingManager extends EventTarget {
     this.totalFrames = data.totalFrames || this.totalFrames;
     this.fps = data.fps || this.fps;
 
+    // ID 충돌 방지: 로드된 레이어들의 ID를 기반으로 nextId 업데이트
+    DrawingLayer.updateNextIdFromLayers(this.layers);
+
     this._emit('layersChanged');
     this.renderFrame(this.currentFrame);
 
@@ -753,6 +756,9 @@ export class DrawingManager extends EventTarget {
     this.activeLayerId = null;
     this.drawingCanvas.clear();
     this.clearHistory();
+
+    // ID 충돌 방지: nextId를 1로 리셋
+    DrawingLayer.resetNextId();
 
     // 기본 레이어 생성
     this.createLayer({ name: '레이어 1' }, false);

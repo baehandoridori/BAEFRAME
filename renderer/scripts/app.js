@@ -2322,6 +2322,7 @@ async function initApp() {
 
   /**
    * 타임라인 마커 업데이트
+   * 최적화: O(n²) → O(n) - Map을 사용한 프레임별 그룹화
    */
   function updateTimelineMarkers() {
     const ranges = commentManager.getMarkerRanges();
@@ -2330,16 +2331,21 @@ async function initApp() {
     // 기존 마커 제거
     timeline.clearCommentMarkers();
 
-    // 새 마커 추가 (각 마커의 시작 프레임에)
-    const frameSet = new Set();
+    // O(n): 프레임별로 마커 그룹화
+    const frameMap = new Map();
     ranges.forEach(range => {
-      if (!frameSet.has(range.startFrame)) {
-        frameSet.add(range.startFrame);
-        const time = range.startFrame / fps;
-        // 마커 정보 전달 (프레임별 댓글 정보)
-        const markersAtFrame = ranges.filter(r => r.startFrame === range.startFrame);
-        timeline.addCommentMarker(time, range.resolved, range.startFrame, markersAtFrame);
+      if (!frameMap.has(range.startFrame)) {
+        frameMap.set(range.startFrame, []);
       }
+      frameMap.get(range.startFrame).push(range);
+    });
+
+    // O(n): 그룹화된 마커 추가
+    frameMap.forEach((markersAtFrame, frame) => {
+      const time = frame / fps;
+      // 해당 프레임의 모든 마커 중 하나라도 resolved가 아니면 미해결 상태
+      const allResolved = markersAtFrame.every(m => m.resolved);
+      timeline.addCommentMarker(time, allResolved, frame, markersAtFrame);
     });
   }
 
