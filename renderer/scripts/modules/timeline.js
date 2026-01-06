@@ -1359,15 +1359,19 @@ export class Timeline extends EventTarget {
       const moreText = markerInfos.length > 5 ? `<div class="tooltip-more">...외 ${markerInfos.length - 5}개</div>` : '';
 
       tooltip.innerHTML = `
-        <div class="tooltip-timecode">${timecode}</div>
-        <div class="tooltip-frame">프레임 ${frame}</div>
+        <div class="tooltip-header">
+          <span class="tooltip-timecode">${timecode}</span>
+          <span class="tooltip-frame">${frame}f</span>
+        </div>
         <div class="tooltip-comments">${content}${moreText}</div>
         ${markerInfos.length > 1 ? `<div class="tooltip-count">${markerInfos.length}개 댓글</div>` : ''}
       `;
     } else {
       tooltip.innerHTML = `
-        <div class="tooltip-timecode">${timecode}</div>
-        <div class="tooltip-frame">프레임 ${frame}</div>
+        <div class="tooltip-header">
+          <span class="tooltip-timecode">${timecode}</span>
+          <span class="tooltip-frame">${frame}f</span>
+        </div>
       `;
     }
 

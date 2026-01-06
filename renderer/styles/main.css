@@ -3116,21 +3116,28 @@ body.resizing .comment-panel {
   z-index: 16;
 }
 
-/* 툴팁 타임코드 스타일 */
+/* 툴팁 헤더 (타임코드 + 프레임) */
+.tooltip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
 .tooltip-timecode {
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 11px;
   color: var(--accent-primary);
   font-weight: bold;
-  margin-bottom: 2px;
 }
 
 .tooltip-frame {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  margin-bottom: 6px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border-subtle);
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .tooltip-count {
