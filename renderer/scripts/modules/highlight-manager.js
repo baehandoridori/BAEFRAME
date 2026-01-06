@@ -3,7 +3,7 @@
  * 타임라인 하이라이트 관리 모듈
  */
 
-import { createLogger } from './logger.js';
+import { createLogger } from '../logger.js';
 
 const log = createLogger('HighlightManager');
 
