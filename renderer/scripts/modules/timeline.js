@@ -1352,15 +1352,19 @@ export class Timeline extends EventTarget {
     element.className = 'highlight-item';
     element.dataset.highlightId = highlight.id;
 
-    // 위치 및 크기 계산
-    const leftPercent = (highlight.startTime / this.duration) * 100;
-    const widthPercent = ((highlight.endTime - highlight.startTime) / this.duration) * 100;
+    // 위치 및 크기 계산 (duration이 0이면 기본값 사용)
+    const duration = this.duration || 1;
+    const leftPercent = (highlight.startTime / duration) * 100;
+    const widthPercent = ((highlight.endTime - highlight.startTime) / duration) * 100;
+
+    // 색상 정보 (colorInfo가 없으면 기본 노랑색 사용)
+    const colorInfo = highlight.colorInfo || { color: '#ffdd59', bgColor: 'rgba(255, 221, 89, 0.3)' };
 
     element.style.left = `${leftPercent}%`;
     element.style.width = `${widthPercent}%`;
-    element.style.background = highlight.colorInfo.bgColor;
-    element.style.borderLeft = `3px solid ${highlight.colorInfo.color}`;
-    element.style.borderRight = `3px solid ${highlight.colorInfo.color}`;
+    element.style.background = colorInfo.bgColor;
+    element.style.borderLeft = `3px solid ${colorInfo.color}`;
+    element.style.borderRight = `3px solid ${colorInfo.color}`;
 
     // 드래그 핸들 추가
     const leftHandle = document.createElement('div');
@@ -1395,15 +1399,19 @@ export class Timeline extends EventTarget {
     const element = this.highlightTrack.querySelector(`[data-highlight-id="${highlight.id}"]`);
     if (!element) return;
 
-    // 위치 및 크기 업데이트
-    const leftPercent = (highlight.startTime / this.duration) * 100;
-    const widthPercent = ((highlight.endTime - highlight.startTime) / this.duration) * 100;
+    // 위치 및 크기 업데이트 (duration이 0이면 기본값 사용)
+    const duration = this.duration || 1;
+    const leftPercent = (highlight.startTime / duration) * 100;
+    const widthPercent = ((highlight.endTime - highlight.startTime) / duration) * 100;
+
+    // 색상 정보 (colorInfo가 없으면 기본 노랑색 사용)
+    const colorInfo = highlight.colorInfo || { color: '#ffdd59', bgColor: 'rgba(255, 221, 89, 0.3)' };
 
     element.style.left = `${leftPercent}%`;
     element.style.width = `${widthPercent}%`;
-    element.style.background = highlight.colorInfo.bgColor;
-    element.style.borderLeft = `3px solid ${highlight.colorInfo.color}`;
-    element.style.borderRight = `3px solid ${highlight.colorInfo.color}`;
+    element.style.background = colorInfo.bgColor;
+    element.style.borderLeft = `3px solid ${colorInfo.color}`;
+    element.style.borderRight = `3px solid ${colorInfo.color}`;
 
     // 주석 업데이트
     let noteIndicator = element.querySelector('.highlight-note-indicator');
