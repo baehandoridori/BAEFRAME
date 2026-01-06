@@ -1306,6 +1306,143 @@ export class Timeline extends EventTarget {
   }
 
   // ==========================================
+  // 하이라이트 관련
+  // ==========================================
+
+  /**
+   * 하이라이트 트랙 요소 참조 설정
+   */
+  setHighlightTrack(trackElement) {
+    this.highlightTrack = trackElement;
+  }
+
+  /**
+   * 하이라이트 렌더링
+   * @param {Array} highlights - 하이라이트 배열
+   */
+  renderHighlights(highlights) {
+    if (!this.highlightTrack) return;
+
+    // 기존 하이라이트 제거
+    this.highlightTrack.innerHTML = '';
+
+    // 하이라이트가 없으면 트랙 숨김
+    if (!highlights || highlights.length === 0) {
+      this.highlightTrack.style.display = 'none';
+      return;
+    }
+
+    // 트랙 표시
+    this.highlightTrack.style.display = 'block';
+
+    // 각 하이라이트 렌더링
+    highlights.forEach(highlight => {
+      const element = this._createHighlightElement(highlight);
+      this.highlightTrack.appendChild(element);
+    });
+  }
+
+  /**
+   * 하이라이트 요소 생성
+   * @param {object} highlight - 하이라이트 데이터
+   * @returns {HTMLElement}
+   */
+  _createHighlightElement(highlight) {
+    const element = document.createElement('div');
+    element.className = 'highlight-item';
+    element.dataset.highlightId = highlight.id;
+
+    // 위치 및 크기 계산
+    const leftPercent = (highlight.startTime / this.duration) * 100;
+    const widthPercent = ((highlight.endTime - highlight.startTime) / this.duration) * 100;
+
+    element.style.left = `${leftPercent}%`;
+    element.style.width = `${widthPercent}%`;
+    element.style.background = highlight.colorInfo.bgColor;
+    element.style.borderLeft = `3px solid ${highlight.colorInfo.color}`;
+    element.style.borderRight = `3px solid ${highlight.colorInfo.color}`;
+
+    // 드래그 핸들 추가
+    const leftHandle = document.createElement('div');
+    leftHandle.className = 'highlight-handle highlight-handle-left';
+    leftHandle.dataset.handle = 'left';
+
+    const rightHandle = document.createElement('div');
+    rightHandle.className = 'highlight-handle highlight-handle-right';
+    rightHandle.dataset.handle = 'right';
+
+    element.appendChild(leftHandle);
+    element.appendChild(rightHandle);
+
+    // 주석 표시
+    if (highlight.note) {
+      const noteIndicator = document.createElement('div');
+      noteIndicator.className = 'highlight-note-indicator';
+      noteIndicator.textContent = highlight.note;
+      element.appendChild(noteIndicator);
+    }
+
+    return element;
+  }
+
+  /**
+   * 단일 하이라이트 업데이트
+   * @param {object} highlight - 하이라이트 데이터
+   */
+  updateHighlightElement(highlight) {
+    if (!this.highlightTrack) return;
+
+    const element = this.highlightTrack.querySelector(`[data-highlight-id="${highlight.id}"]`);
+    if (!element) return;
+
+    // 위치 및 크기 업데이트
+    const leftPercent = (highlight.startTime / this.duration) * 100;
+    const widthPercent = ((highlight.endTime - highlight.startTime) / this.duration) * 100;
+
+    element.style.left = `${leftPercent}%`;
+    element.style.width = `${widthPercent}%`;
+    element.style.background = highlight.colorInfo.bgColor;
+    element.style.borderLeft = `3px solid ${highlight.colorInfo.color}`;
+    element.style.borderRight = `3px solid ${highlight.colorInfo.color}`;
+
+    // 주석 업데이트
+    let noteIndicator = element.querySelector('.highlight-note-indicator');
+    if (highlight.note) {
+      if (!noteIndicator) {
+        noteIndicator = document.createElement('div');
+        noteIndicator.className = 'highlight-note-indicator';
+        element.appendChild(noteIndicator);
+      }
+      noteIndicator.textContent = highlight.note;
+    } else if (noteIndicator) {
+      noteIndicator.remove();
+    }
+  }
+
+  /**
+   * 픽셀 위치를 시간으로 변환
+   * @param {number} pixelX - 픽셀 X 좌표
+   * @returns {number} - 시간 (초)
+   */
+  pixelToTime(pixelX) {
+    if (!this.tracksContainer) return 0;
+    const trackWidth = this.tracksContainer.scrollWidth;
+    const ratio = pixelX / trackWidth;
+    return ratio * this.duration;
+  }
+
+  /**
+   * 시간을 픽셀 위치로 변환
+   * @param {number} time - 시간 (초)
+   * @returns {number} - 픽셀 X 좌표
+   */
+  timeToPixel(time) {
+    if (!this.tracksContainer) return 0;
+    const trackWidth = this.tracksContainer.scrollWidth;
+    return (time / this.duration) * trackWidth;
+  }
+
+  // ==========================================
   // 썸네일 프리뷰 관련
   // ==========================================
 

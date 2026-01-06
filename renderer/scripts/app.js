@@ -8,6 +8,7 @@ import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { CommentManager } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
+import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
@@ -243,10 +244,14 @@ async function initApp() {
     container: markerContainer
   });
 
+  // 하이라이트 매니저
+  const highlightManager = new HighlightManager();
+
   // 리뷰 데이터 매니저 (.bframe 파일 저장/로드)
   const reviewDataManager = new ReviewDataManager({
     commentManager,
     drawingManager,
+    highlightManager,
     autoSave: true,
     autoSaveDelay: 2000 // 2초 디바운스
   });
@@ -1380,6 +1385,203 @@ async function initApp() {
     timeline.setLoopRegion(inPoint, outPoint, enabled);
   });
 
+  // ====== 하이라이트 ======
+  const btnAddHighlight = document.getElementById('btnAddHighlight');
+  const highlightTrack = document.getElementById('highlightTrack');
+  const highlightPopup = document.getElementById('highlightPopup');
+  const highlightNoteInput = document.getElementById('highlightNoteInput');
+  const highlightColorPicker = document.getElementById('highlightColorPicker');
+  const highlightDeleteBtn = document.getElementById('highlightDeleteBtn');
+
+  // 하이라이트 트랙 연결
+  timeline.setHighlightTrack(highlightTrack);
+
+  // 현재 선택된 하이라이트 ID
+  let selectedHighlightId = null;
+
+  // 하이라이트 생성 버튼
+  btnAddHighlight.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+    const currentTime = videoPlayer.currentTime || 0;
+    const highlight = highlightManager.createHighlight(currentTime);
+    renderHighlights();
+    showToast('하이라이트가 추가되었습니다', 'info');
+  });
+
+  // 하이라이트 렌더링 함수
+  function renderHighlights() {
+    const highlights = highlightManager.getAllHighlights();
+    timeline.renderHighlights(highlights);
+    setupHighlightInteractions();
+  }
+
+  // 하이라이트 상호작용 설정 (드래그, 우클릭)
+  function setupHighlightInteractions() {
+    const items = highlightTrack.querySelectorAll('.highlight-item');
+
+    items.forEach(item => {
+      const highlightId = item.dataset.highlightId;
+
+      // 우클릭 - 팝업 메뉴
+      item.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showHighlightPopup(highlightId, e.clientX, e.clientY);
+      });
+
+      // 드래그 핸들
+      const leftHandle = item.querySelector('.highlight-handle-left');
+      const rightHandle = item.querySelector('.highlight-handle-right');
+
+      if (leftHandle) {
+        leftHandle.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+          startHighlightDrag(highlightId, 'left', e);
+        });
+      }
+
+      if (rightHandle) {
+        rightHandle.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+          startHighlightDrag(highlightId, 'right', e);
+        });
+      }
+    });
+  }
+
+  // 하이라이트 드래그 시작
+  let highlightDragState = null;
+
+  function startHighlightDrag(highlightId, handle, e) {
+    const highlight = highlightManager.getHighlight(highlightId);
+    if (!highlight) return;
+
+    highlightDragState = {
+      highlightId,
+      handle,
+      startX: e.clientX,
+      startTime: handle === 'left' ? highlight.startTime : highlight.endTime
+    };
+
+    document.addEventListener('mousemove', onHighlightDrag);
+    document.addEventListener('mouseup', endHighlightDrag);
+  }
+
+  function onHighlightDrag(e) {
+    if (!highlightDragState) return;
+
+    const { highlightId, handle, startX, startTime } = highlightDragState;
+    const deltaX = e.clientX - startX;
+    const trackRect = highlightTrack.getBoundingClientRect();
+    const deltaTime = (deltaX / trackRect.width) * videoPlayer.duration;
+    const newTime = Math.max(0, Math.min(videoPlayer.duration, startTime + deltaTime));
+
+    const updates = handle === 'left'
+      ? { startTime: newTime }
+      : { endTime: newTime };
+
+    highlightManager.updateHighlight(highlightId, updates);
+
+    // UI 즉시 업데이트
+    const highlight = highlightManager.getHighlight(highlightId);
+    timeline.updateHighlightElement(highlight);
+  }
+
+  function endHighlightDrag() {
+    highlightDragState = null;
+    document.removeEventListener('mousemove', onHighlightDrag);
+    document.removeEventListener('mouseup', endHighlightDrag);
+  }
+
+  // 하이라이트 팝업 표시
+  function showHighlightPopup(highlightId, x, y) {
+    const highlight = highlightManager.getHighlight(highlightId);
+    if (!highlight) return;
+
+    selectedHighlightId = highlightId;
+
+    // 입력값 설정
+    highlightNoteInput.value = highlight.note || '';
+
+    // 색상 버튼 선택 상태
+    highlightColorPicker.querySelectorAll('.highlight-color-btn').forEach(btn => {
+      btn.classList.toggle('selected', btn.dataset.color === highlight.colorKey);
+    });
+
+    // 위치 설정 (화면 경계 고려)
+    const popupWidth = 220;
+    const popupHeight = 180;
+    const adjustedX = Math.min(x, window.innerWidth - popupWidth - 10);
+    const adjustedY = Math.min(y, window.innerHeight - popupHeight - 10);
+
+    highlightPopup.style.left = `${adjustedX}px`;
+    highlightPopup.style.top = `${adjustedY}px`;
+    highlightPopup.style.display = 'block';
+
+    // 입력 필드에 포커스
+    setTimeout(() => highlightNoteInput.focus(), 50);
+  }
+
+  // 팝업 숨기기
+  function hideHighlightPopup() {
+    highlightPopup.style.display = 'none';
+    selectedHighlightId = null;
+  }
+
+  // 팝업 외부 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    if (highlightPopup.style.display === 'block' &&
+        !highlightPopup.contains(e.target) &&
+        !e.target.closest('.highlight-item')) {
+      hideHighlightPopup();
+    }
+  });
+
+  // 주석 입력
+  highlightNoteInput.addEventListener('input', (e) => {
+    if (selectedHighlightId) {
+      highlightManager.updateHighlight(selectedHighlightId, { note: e.target.value });
+      const highlight = highlightManager.getHighlight(selectedHighlightId);
+      timeline.updateHighlightElement(highlight);
+    }
+  });
+
+  // 색상 선택
+  highlightColorPicker.addEventListener('click', (e) => {
+    const btn = e.target.closest('.highlight-color-btn');
+    if (!btn || !selectedHighlightId) return;
+
+    const colorKey = btn.dataset.color;
+    highlightManager.updateHighlight(selectedHighlightId, { colorKey });
+
+    // 버튼 선택 상태 업데이트
+    highlightColorPicker.querySelectorAll('.highlight-color-btn').forEach(b => {
+      b.classList.toggle('selected', b === btn);
+    });
+
+    // UI 업데이트
+    const highlight = highlightManager.getHighlight(selectedHighlightId);
+    timeline.updateHighlightElement(highlight);
+  });
+
+  // 삭제 버튼
+  highlightDeleteBtn.addEventListener('click', () => {
+    if (selectedHighlightId) {
+      highlightManager.deleteHighlight(selectedHighlightId);
+      hideHighlightPopup();
+      renderHighlights();
+      showToast('하이라이트가 삭제되었습니다', 'info');
+    }
+  });
+
+  // 하이라이트 변경 이벤트 수신
+  highlightManager.addEventListener('loaded', () => {
+    renderHighlights();
+  });
+
   // ====== 비디오 줌/패닝 ======
 
   /**
@@ -1700,6 +1902,8 @@ async function initApp() {
       commentManager.clear();
       // 그리기 매니저 초기화
       drawingManager.reset();
+      // 하이라이트 매니저 초기화
+      highlightManager.reset();
       // 타임라인 마커 초기화
       timeline.clearMarkers();
       // 영상 위 마커 UI 초기화
@@ -1754,6 +1958,10 @@ async function initApp() {
       // 그리기 레이어 UI 및 캔버스 다시 렌더링
       timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
       drawingManager.renderFrame(videoPlayer.currentFrame);
+
+      // 하이라이트 매니저 영상 정보 설정 및 렌더링
+      highlightManager.setVideoInfo(videoPlayer.duration, videoPlayer.fps);
+      renderHighlights();
 
       trace.end({ filePath, hasExistingData });
 
@@ -2903,6 +3111,12 @@ async function initApp() {
       // 구간 반복 토글
       e.preventDefault();
       btnLoopToggle.click();
+      return;
+
+    case 'KeyH':
+      // 하이라이트 추가
+      e.preventDefault();
+      btnAddHighlight.click();
       return;
 
     case 'Delete':

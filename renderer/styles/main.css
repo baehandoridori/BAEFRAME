@@ -1373,6 +1373,214 @@ body {
 }
 
 /* ========================================
+   Highlight Controls & Track
+   ======================================== */
+
+/* 하이라이트 컨트롤 버튼 */
+.highlight-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.highlight-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.highlight-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.highlight-btn:active {
+  transform: scale(0.95);
+}
+
+.highlight-btn svg {
+  flex-shrink: 0;
+}
+
+/* 하이라이트 트랙 */
+.highlight-track {
+  position: relative;
+  width: 100%;
+  height: 24px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 2px;
+}
+
+/* 하이라이트 아이템 */
+.highlight-item {
+  position: absolute;
+  top: 2px;
+  height: 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+  z-index: 10;
+}
+
+.highlight-item:hover {
+  opacity: 0.9;
+}
+
+.highlight-item.selected {
+  box-shadow: 0 0 0 2px var(--accent-primary);
+}
+
+/* 하이라이트 핸들 (드래그용) */
+.highlight-handle {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 15;
+}
+
+.highlight-handle-left {
+  left: -4px;
+  border-radius: 4px 0 0 4px;
+}
+
+.highlight-handle-right {
+  right: -4px;
+  border-radius: 0 4px 4px 0;
+}
+
+.highlight-handle:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* 하이라이트 주석 표시 */
+.highlight-note-indicator {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 9px;
+  color: rgba(0, 0, 0, 0.7);
+  max-width: calc(100% - 8px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 하이라이트 팝업 메뉴 */
+.highlight-popup {
+  position: fixed;
+  z-index: 10000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  min-width: 200px;
+  padding: 12px;
+}
+
+.highlight-popup-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.highlight-popup-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.highlight-popup-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.highlight-popup-input {
+  padding: 8px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.highlight-popup-input:focus {
+  border-color: var(--accent-primary);
+}
+
+.highlight-popup-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* 색상 선택 버튼 */
+.highlight-color-picker {
+  display: flex;
+  gap: 6px;
+}
+
+.highlight-color-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.highlight-color-btn:hover {
+  transform: scale(1.1);
+}
+
+.highlight-color-btn.selected {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px currentColor;
+}
+
+/* 삭제 버튼 */
+.highlight-popup-actions {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.highlight-popup-delete {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid var(--error);
+  border-radius: 6px;
+  color: var(--error);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.highlight-popup-delete:hover {
+  background: var(--error);
+  color: white;
+}
+
+/* ========================================
    Drawing Layers
    ======================================== */
 

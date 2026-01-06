@@ -332,6 +332,18 @@
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
+
+        <!-- 하이라이트 컨트롤 -->
+        <div class="highlight-controls" id="highlightControls">
+          <button class="highlight-btn" id="btnAddHighlight" title="하이라이트 추가 (H)">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="10" width="18" height="4" rx="1" fill="currentColor" opacity="0.3"/>
+              <line x1="12" y1="6" x2="12" y2="18"/>
+              <line x1="6" y1="12" x2="18" y2="12"/>
+            </svg>
+            <span>하이라이트</span>
+          </button>
+        </div>
       </div>
 
       <!-- Timeline -->
@@ -398,6 +410,10 @@
 
             <div class="timeline-ruler" id="timelineRuler"></div>
             <div class="tracks-container" id="tracksContainer">
+              <!-- 하이라이트 트랙 (하이라이트가 있을 때만 표시) -->
+              <div class="highlight-track" id="highlightTrack" style="display: none;">
+                <!-- 하이라이트 요소들이 여기에 동적으로 추가됨 -->
+              </div>
               <div class="track-row">
                 <div class="track-clip video" id="videoTrackClip">영상을 로드하세요</div>
               </div>
@@ -511,6 +527,33 @@
   <button class="shortcuts-toggle" id="shortcutsToggle" title="단축키 (?)">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="6" y1="16" x2="18" y2="16"/></svg>
   </button>
+
+  <!-- 하이라이트 팝업 메뉴 -->
+  <div class="highlight-popup" id="highlightPopup" style="display: none;">
+    <div class="highlight-popup-content">
+      <div class="highlight-popup-row">
+        <label class="highlight-popup-label">주석</label>
+        <input type="text" class="highlight-popup-input" id="highlightNoteInput" placeholder="메모 입력...">
+      </div>
+      <div class="highlight-popup-row">
+        <label class="highlight-popup-label">색상</label>
+        <div class="highlight-color-picker" id="highlightColorPicker">
+          <button class="highlight-color-btn" data-color="red" title="빨강" style="background: #ff5555;"></button>
+          <button class="highlight-color-btn" data-color="yellow" title="노랑" style="background: #ffdd59;"></button>
+          <button class="highlight-color-btn" data-color="green" title="초록" style="background: #2ed573;"></button>
+          <button class="highlight-color-btn" data-color="blue" title="파랑" style="background: #4a9eff;"></button>
+          <button class="highlight-color-btn" data-color="gray" title="회색" style="background: #a0a0a0;"></button>
+          <button class="highlight-color-btn" data-color="white" title="흰색" style="background: #ffffff;"></button>
+        </div>
+      </div>
+      <div class="highlight-popup-actions">
+        <button class="highlight-popup-delete" id="highlightDeleteBtn">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          삭제
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Shortcuts Menu -->
   <div class="shortcuts-menu" id="shortcutsMenu">
