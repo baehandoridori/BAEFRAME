@@ -24,13 +24,13 @@
       </div>
     </div>
     <div class="header-right">
-      <button class="btn btn-secondary" id="btnOpenFolder" title="파일 경로 열기" style="display: none;">
-        <span>📁</span>
-        파일 경로 열기
-      </button>
-      <button class="btn btn-secondary" id="btnOpenOther" title="다른 파일 열기" style="display: none;">
+      <button class="btn btn-secondary" id="btnOpenFolder" title="폴더 열기 (탐색기에서 보기)" style="display: none;">
         <span>📂</span>
-        다른 파일 열기
+        폴더 열기
+      </button>
+      <button class="btn btn-secondary" id="btnOpenOther" title="다른 영상 파일 열기" style="display: none;">
+        <span>🎬</span>
+        다른 파일
       </button>
       <button class="btn btn-secondary" id="btnVersionHistory">
         <span>📋</span>
@@ -39,10 +39,6 @@
       <button class="btn btn-primary" id="btnCopyLink">
         <span>🔗</span>
         링크 복사
-      </button>
-      <button class="btn btn-secondary" id="btnWebShare" title="웹 공유 링크 생성">
-        <span>🌐</span>
-        웹 공유
       </button>
     </div>
   </header>
@@ -62,8 +58,8 @@
               <div class="drop-zone-text">영상 파일을 여기에 드롭하세요</div>
               <div class="drop-zone-hint">MOV, MP4, H.264/265 지원</div>
               <button class="btn btn-primary" id="btnOpenFile" style="margin-top: 16px;">
-                <span>📂</span>
-                파일 열기
+                <span>🎬</span>
+                영상 열기
               </button>
             </div>
           </div>
@@ -90,7 +86,7 @@
             <div class="codec-error-title">지원하지 않는 코덱</div>
             <div class="codec-error-message">이 영상은 지원하지 않는 코덱(MPEG-4 Part 2, HEVC 등)입니다.</div>
             <div class="codec-error-hint">H.264 코덱으로 변환 후 다시 열어주세요.</div>
-            <button class="btn btn-secondary" id="btnCodecErrorClose">다른 파일 열기</button>
+            <button class="btn btn-secondary" id="btnCodecErrorClose">다른 영상 열기</button>
           </div>
 
           <!-- Onion Skin Canvas (그리기 캔버스 아래에 표시) -->
@@ -447,8 +443,8 @@
             <div class="settings-dropdown-item thumbnail-scale-item" id="thumbnailScaleItem">
               <label class="settings-label">썸네일 크기</label>
               <div class="settings-scale-control">
-                <input type="range" id="thumbnailScaleSlider" min="50" max="200" value="50" step="10">
-                <span class="scale-value" id="thumbnailScaleValue">50%</span>
+                <input type="range" id="thumbnailScaleSlider" min="35" max="200" value="35" step="5">
+                <span class="scale-value" id="thumbnailScaleValue">35%</span>
               </div>
             </div>
             <div class="settings-dropdown-divider"></div>
@@ -841,52 +837,6 @@
         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
       </svg>
     </button>
-  </div>
-
-  <!-- Web Share Modal -->
-  <div class="modal-overlay" id="webShareModal">
-    <div class="modal-content web-share-modal">
-      <div class="modal-header">
-        <h3>🌐 웹 공유 링크 생성</h3>
-        <button class="modal-close" id="closeWebShare">&times;</button>
-      </div>
-      <div class="modal-body">
-        <!-- 현재 파일 정보 (Google Drive인 경우) -->
-        <div id="webShareFileInfo" class="web-share-file-info" style="display: none;"></div>
-
-        <!-- 클립보드에서 붙여넣기 버튼 (핵심 기능) -->
-        <div class="form-group" style="margin-bottom: 16px;">
-          <button class="btn btn-primary btn-full btn-large" id="pasteFromClipboard">
-            📋 클립보드에서 붙여넣기
-          </button>
-          <p class="form-hint" style="text-align: center; margin-top: 8px;">
-            파일 탐색기에서 링크를 복사한 후 이 버튼을 누르세요
-          </p>
-        </div>
-
-        <hr style="border-color: #333; margin: 16px 0;">
-
-        <div class="form-group">
-          <label for="webShareVideoUrl">1️⃣ 영상 파일 URL</label>
-          <input type="text" id="webShareVideoUrl" placeholder="Google Drive 링크 붙여넣기..." style="transition: border-color 0.2s;">
-        </div>
-        <div class="form-group">
-          <label for="webShareBframeUrl">2️⃣ .bframe 파일 URL</label>
-          <input type="text" id="webShareBframeUrl" placeholder="Google Drive 링크 붙여넣기..." style="transition: border-color 0.2s;">
-        </div>
-        <div class="form-group web-share-result" id="webShareResultGroup" style="display: none;">
-          <label>생성된 웹 공유 링크</label>
-          <div class="web-share-url-container">
-            <input type="text" id="webShareResultUrl" readonly>
-            <button class="btn btn-primary" id="btnCopyWebShareUrl">복사</button>
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="cancelWebShare">취소</button>
-        <button class="btn btn-primary" id="generateWebShareLink">링크 생성</button>
-      </div>
-    </div>
   </div>
 
   <script type="module" src="scripts/app.js"></script>

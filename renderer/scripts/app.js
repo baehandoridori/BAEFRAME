@@ -32,20 +32,8 @@ async function initApp() {
     versionBadge: document.getElementById('versionBadge'),
     btnVersionHistory: document.getElementById('btnVersionHistory'),
     btnCopyLink: document.getElementById('btnCopyLink'),
-    btnWebShare: document.getElementById('btnWebShare'),
     btnOpenFolder: document.getElementById('btnOpenFolder'),
     btnOpenOther: document.getElementById('btnOpenOther'),
-
-    // 웹 공유 모달
-    webShareModal: document.getElementById('webShareModal'),
-    closeWebShare: document.getElementById('closeWebShare'),
-    cancelWebShare: document.getElementById('cancelWebShare'),
-    webShareVideoUrl: document.getElementById('webShareVideoUrl'),
-    webShareBframeUrl: document.getElementById('webShareBframeUrl'),
-    webShareResultGroup: document.getElementById('webShareResultGroup'),
-    webShareResultUrl: document.getElementById('webShareResultUrl'),
-    btnCopyWebShareUrl: document.getElementById('btnCopyWebShareUrl'),
-    generateWebShareLink: document.getElementById('generateWebShareLink'),
 
     // 뷰어
     dropZone: document.getElementById('dropZone'),
@@ -836,9 +824,6 @@ async function initApp() {
     log.info('경로 복사됨', { path: windowsPath, webShareUrl });
   });
 
-  // ====== 웹 공유 모달 ======
-  const WEB_VIEWER_BASE_URL = 'https://baeframe.vercel.app';
-
   // Google Drive 경로 감지
   function isGoogleDrivePath(path) {
     if (!path) return false;
@@ -851,222 +836,11 @@ async function initApp() {
            lowerPath.includes('google drive');
   }
 
-  // 파일명 추출
-  function getFileName(path) {
-    if (!path) return '';
-    return path.split(/[/\\]/).pop() || '';
-  }
-
   // 저장된 Google Drive 링크 (파일별)
   const storedDriveLinks = {
     videoUrl: null,
     bframeUrl: null
   };
-
-  // 클립보드 모니터링 상태
-  let clipboardMonitorInterval = null;
-  let currentLinkTarget = null; // 'video' | 'bframe'
-
-  // 웹 공유 버튼 클릭
-  elements.btnWebShare.addEventListener('click', async () => {
-    const videoPath = reviewDataManager.getVideoPath();
-    const bframePath = reviewDataManager.getBframePath();
-
-    if (!videoPath || !bframePath) {
-      showToast('먼저 파일을 열어주세요.', 'warn');
-      return;
-    }
-
-    const isGDrive = isGoogleDrivePath(videoPath) || isGoogleDrivePath(bframePath);
-
-    if (!isGDrive) {
-      showToast('Google Drive 파일만 웹 공유가 가능합니다.', 'warn');
-      return;
-    }
-
-    // 이미 두 링크가 저장되어 있으면 바로 생성
-    if (storedDriveLinks.videoUrl && storedDriveLinks.bframeUrl) {
-      const result = await window.electronAPI.generateWebShareLink(
-        storedDriveLinks.videoUrl,
-        storedDriveLinks.bframeUrl
-      );
-      if (result.success) {
-        await window.electronAPI.copyToClipboard(result.webShareUrl);
-        showToast('✅ 웹 공유 링크가 클립보드에 복사되었습니다!', 'success');
-        log.info('웹 공유 링크 생성 완료', { url: result.webShareUrl });
-        return;
-      }
-    }
-
-    // 1️⃣ 먼저 로컬 경로에서 자동으로 Google Drive 파일 ID 추출 시도
-    showToast('웹 공유 링크 생성 중...', 'info');
-    log.info('Google Drive 파일 ID 자동 추출 시도', { videoPath, bframePath });
-
-    try {
-      const result = await window.electronAPI.generateGDriveShareLink(videoPath, bframePath);
-
-      if (result.success) {
-        // 성공! 링크 저장 및 클립보드 복사
-        storedDriveLinks.videoUrl = result.videoUrl;
-        storedDriveLinks.bframeUrl = result.bframeUrl;
-
-        await window.electronAPI.copyToClipboard(result.webShareUrl);
-        showToast('✅ 웹 공유 링크가 클립보드에 복사되었습니다!', 'success');
-        log.info('자동 웹 공유 링크 생성 완료', { url: result.webShareUrl });
-        return;
-      }
-
-      // 자동 추출 실패 → 수동 모달 열기
-      log.warn('자동 파일 ID 추출 실패', { error: result.error });
-      showToast('자동 링크 생성 실패. 수동으로 입력해주세요.', 'warn');
-    } catch (error) {
-      log.error('자동 링크 생성 중 오류', error);
-      showToast('자동 링크 생성 실패. 수동으로 입력해주세요.', 'warn');
-    }
-
-    // 2️⃣ 자동 실패 시 수동 모달 열기
-    openWebShareModal();
-  });
-
-  // 웹 공유 모달 열기
-  function openWebShareModal() {
-    elements.webShareModal.classList.add('active');
-    elements.webShareResultGroup.style.display = 'none';
-
-    const videoPath = reviewDataManager.getVideoPath();
-    const bframePath = reviewDataManager.getBframePath();
-    const videoName = getFileName(videoPath);
-    const bframeName = getFileName(bframePath);
-
-    // 저장된 링크가 있으면 표시
-    elements.webShareVideoUrl.value = storedDriveLinks.videoUrl || '';
-    elements.webShareBframeUrl.value = storedDriveLinks.bframeUrl || '';
-
-    const fileInfoEl = document.getElementById('webShareFileInfo');
-    if (fileInfoEl) {
-      fileInfoEl.innerHTML = `
-        <div class="file-info-box">
-          <strong>📁 Google Drive 파일</strong><br>
-          <span>1️⃣ 영상: <code>${videoName || '(알 수 없음)'}</code></span><br>
-          <span>2️⃣ Bframe: <code>${bframeName || '(알 수 없음)'}</code></span>
-          <hr style="border-color:#444; margin:8px 0">
-          <small style="color:#aaa">
-            💡 파일 탐색기에서 각 파일을 우클릭 →<br>
-            <strong style="color:#fff">"Google 드라이브 링크 복사"</strong> 클릭 후<br>
-            아래 "클립보드에서 붙여넣기" 버튼을 누르세요.
-          </small>
-        </div>
-      `;
-      fileInfoEl.style.display = 'block';
-    }
-
-    // 어떤 링크가 없는지 확인하고 해당 필드 강조
-    updateLinkFieldHighlight();
-
-    log.info('웹 공유 모달 열림');
-  }
-
-  // 링크 필드 강조 업데이트
-  function updateLinkFieldHighlight() {
-    const videoEmpty = !elements.webShareVideoUrl.value.trim();
-    const bframeEmpty = !elements.webShareBframeUrl.value.trim();
-
-    elements.webShareVideoUrl.style.borderColor = videoEmpty ? '#f39c12' : '#27ae60';
-    elements.webShareBframeUrl.style.borderColor = bframeEmpty ? '#f39c12' : '#27ae60';
-
-    // 자동으로 다음 타겟 설정
-    if (videoEmpty) {
-      currentLinkTarget = 'video';
-    } else if (bframeEmpty) {
-      currentLinkTarget = 'bframe';
-    } else {
-      currentLinkTarget = null;
-    }
-  }
-
-  // 클립보드에서 붙여넣기 버튼 추가
-  const pasteFromClipboardBtn = document.getElementById('pasteFromClipboard');
-  if (pasteFromClipboardBtn) {
-    pasteFromClipboardBtn.addEventListener('click', async () => {
-      const result = await window.electronAPI.readGDriveLink();
-      if (result.hasLink) {
-        // 어떤 필드에 붙여넣을지 결정
-        const videoEmpty = !elements.webShareVideoUrl.value.trim();
-        const bframeEmpty = !elements.webShareBframeUrl.value.trim();
-
-        if (videoEmpty) {
-          elements.webShareVideoUrl.value = result.link;
-          storedDriveLinks.videoUrl = result.link;
-          showToast('✅ 영상 링크가 붙여넣기 되었습니다!', 'success');
-        } else if (bframeEmpty) {
-          elements.webShareBframeUrl.value = result.link;
-          storedDriveLinks.bframeUrl = result.link;
-          showToast('✅ Bframe 링크가 붙여넣기 되었습니다!', 'success');
-        } else {
-          showToast('두 링크가 이미 입력되어 있습니다.', 'info');
-        }
-
-        updateLinkFieldHighlight();
-
-        // 두 링크가 모두 있으면 자동으로 결과 표시
-        if (elements.webShareVideoUrl.value && elements.webShareBframeUrl.value) {
-          elements.generateWebShareLink.click();
-        }
-      } else {
-        showToast('클립보드에 Google Drive 링크가 없습니다.', 'warn');
-      }
-    });
-  }
-
-  // 모달 닫기
-  function closeWebShareModal() {
-    elements.webShareModal.classList.remove('active');
-  }
-
-  elements.closeWebShare.addEventListener('click', closeWebShareModal);
-  elements.cancelWebShare.addEventListener('click', closeWebShareModal);
-
-  // 모달 외부 클릭 시 닫기
-  elements.webShareModal.addEventListener('click', (e) => {
-    if (e.target === elements.webShareModal) {
-      closeWebShareModal();
-    }
-  });
-
-  // 링크 생성 버튼 클릭
-  elements.generateWebShareLink.addEventListener('click', () => {
-    const videoUrl = elements.webShareVideoUrl.value.trim();
-    const bframeUrl = elements.webShareBframeUrl.value.trim();
-
-    if (!videoUrl || !bframeUrl) {
-      showToast('영상 URL과 .bframe URL을 모두 입력해주세요.', 'warn');
-      return;
-    }
-
-    // Google Drive URL 유효성 검사
-    const drivePattern = /drive\.google\.com/;
-    if (!drivePattern.test(videoUrl) || !drivePattern.test(bframeUrl)) {
-      showToast('Google Drive URL 형식이 올바르지 않습니다.', 'warn');
-      return;
-    }
-
-    // 웹 공유 URL 생성
-    const shareUrl = `${WEB_VIEWER_BASE_URL}/open.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;
-
-    elements.webShareResultUrl.value = shareUrl;
-    elements.webShareResultGroup.style.display = 'block';
-    log.info('웹 공유 링크 생성됨', { shareUrl });
-  });
-
-  // 생성된 링크 복사 버튼
-  elements.btnCopyWebShareUrl.addEventListener('click', async () => {
-    const shareUrl = elements.webShareResultUrl.value;
-    if (shareUrl) {
-      await window.electronAPI.copyToClipboard(shareUrl);
-      showToast('웹 공유 링크가 복사되었습니다!', 'success');
-      log.info('웹 공유 링크 복사됨', { shareUrl });
-    }
-  });
 
   // 파일 경로 열기 (현재 파일이 있는 폴더를 탐색기에서 열기)
   elements.btnOpenFolder.addEventListener('click', async () => {
@@ -1141,19 +915,8 @@ async function initApp() {
   const thumbnailScaleValue = document.getElementById('thumbnailScaleValue');
   const thumbnailScaleItem = document.getElementById('thumbnailScaleItem');
 
-  // 설정 초기값 로드 (요소가 있을 경우에만)
-  if (toggleCommentThumbnails) {
-    toggleCommentThumbnails.checked = userSettings.getShowCommentThumbnails();
-  }
-  if (thumbnailScaleSlider) {
-    thumbnailScaleSlider.value = userSettings.getCommentThumbnailScale();
-  }
-  if (thumbnailScaleValue) {
-    thumbnailScaleValue.textContent = `${userSettings.getCommentThumbnailScale()}%`;
-  }
-  if (thumbnailScaleItem && toggleCommentThumbnails) {
-    thumbnailScaleItem.classList.toggle('disabled', !toggleCommentThumbnails.checked);
-  }
+  // 설정 초기값 로드는 waitForReady() 이후에 수행 (initializeCommentSettings 함수 참조)
+  // 여기서는 DOM 요소만 참조하고, 실제 값 설정은 나중에 수행
 
   // 설정 버튼 클릭 - 드롭다운 토글
   btnCommentSettings?.addEventListener('click', (e) => {
@@ -2696,8 +2459,11 @@ async function initApp() {
       ` : '';
 
       return `
-      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
+        <button class="comment-resolve-toggle resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
+          ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
+        </button>
         ${thumbnailHtml}
         <div class="comment-header">
           <span class="comment-timecode">${marker.startTimecode}</span>
@@ -2716,18 +2482,9 @@ async function initApp() {
         <div class="comment-actions">
           <span class="comment-author-inline ${authorClass}" ${authorStyle}>${marker.author}</span>
           <span class="comment-time-inline">${formatRelativeTime(marker.createdAt)}</span>
-          <button class="comment-action-btn edit-btn" title="수정">
-            수정
-          </button>
-          <button class="comment-action-btn reply-btn" title="답글">
-            답글
-          </button>
-          <button class="comment-action-btn resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
-            ${marker.resolved ? `해결됨 <span class="resolved-time">(${marker.resolvedAt ? formatRelativeTime(marker.resolvedAt) : ''})</span>` : '해결'}
-          </button>
-          <button class="comment-action-btn delete-btn" title="삭제">
-            삭제
-          </button>
+          <button class="comment-action-btn edit-btn" title="수정">수정</button>
+          <button class="comment-action-btn reply-btn" title="답글">답글</button>
+          <button class="comment-action-btn delete-btn" title="삭제">삭제</button>
         </div>
         ${replyCount > 0 ? `
         <button class="comment-thread-toggle" data-marker-id="${marker.id}">
@@ -3412,6 +3169,30 @@ async function initApp() {
 
   // 사용자 이름을 헤더에 표시 (옵션)
   updateUserName(userName);
+
+  // ====== 댓글 설정 초기화 (waitForReady 이후) ======
+  // 썸네일 표시 설정
+  if (toggleCommentThumbnails) {
+    toggleCommentThumbnails.checked = userSettings.getShowCommentThumbnails();
+  }
+  // 썸네일 크기 설정
+  if (thumbnailScaleSlider) {
+    const scale = userSettings.getCommentThumbnailScale();
+    thumbnailScaleSlider.value = scale;
+    if (thumbnailScaleValue) {
+      thumbnailScaleValue.textContent = `${scale}%`;
+    }
+    // 썸네일 크기 즉시 적용
+    document.documentElement.style.setProperty('--comment-thumbnail-scale', `${scale}%`);
+  }
+  // 썸네일 크기 조절 항목 활성화/비활성화
+  if (thumbnailScaleItem && toggleCommentThumbnails) {
+    thumbnailScaleItem.classList.toggle('disabled', !toggleCommentThumbnails.checked);
+  }
+  log.info('댓글 설정 초기화 완료', {
+    showThumbnails: userSettings.getShowCommentThumbnails(),
+    thumbnailScale: userSettings.getCommentThumbnailScale()
+  });
 
   // ====== 사용자 설정 모달 ======
   const userSettingsModal = document.getElementById('userSettingsModal');

@@ -44,9 +44,9 @@ if exist "%LOCAL_DIR%\node_modules" (
     set NEED_INSTALL=1
 )
 
-:: 소스 파일 동기화 (node_modules, logs, .git 제외)
+:: 소스 파일 동기화 (node_modules, logs, .git, settings 제외)
 echo [baeframe] 소스 동기화 중...
-robocopy "%SOURCE_DIR%" "%LOCAL_DIR%" /MIR /XD node_modules logs .git /XF *.log .package-hash /NFL /NDL /NJH /NJS
+robocopy "%SOURCE_DIR%" "%LOCAL_DIR%" /MIR /XD node_modules logs .git settings /XF *.log .package-hash /NFL /NDL /NJH /NJS
 
 :: robocopy는 성공해도 errorlevel이 0이 아닐 수 있음 (1-7은 정상)
 if errorlevel 8 (
