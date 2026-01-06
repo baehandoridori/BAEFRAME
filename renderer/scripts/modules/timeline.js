@@ -141,19 +141,9 @@ export class Timeline extends EventTarget {
       this._seekFromClick(e);
     });
 
-    // 트랙 영역 마우스 이벤트 (드래그 seek + 패닝 + 선택)
+    // 트랙 영역 마우스 이벤트 (패닝 + 선택)
     this.tracksContainer?.addEventListener('mousedown', (e) => {
       if (this.isDraggingPlayhead) return;
-
-      // Space 키를 누른 상태면 패닝 모드
-      if (this._isSpacePressed) {
-        this.isPanning = true;
-        this.panStartX = e.clientX;
-        this.panScrollLeft = this.timelineTracks.scrollLeft;
-        this.tracksContainer.classList.add('panning');
-        e.preventDefault();
-        return;
-      }
 
       // Alt 키를 누른 상태면 선택 박스 모드
       if (e.altKey) {
@@ -162,46 +152,27 @@ export class Timeline extends EventTarget {
         return;
       }
 
-      // 빈 영역에서 마우스 다운 시 드래그 seek 시작
+      // 빈 영역에서 마우스 다운 시 패닝 모드 (기본 동작)
       if (e.target === this.tracksContainer ||
           e.target.classList.contains('track-row') ||
           e.target.classList.contains('frame-grid-container')) {
-        this.isDraggingSeeking = true;
-        this._seekFromClick(e);
-        document.body.style.cursor = 'ew-resize';
+        this.isPanning = true;
+        this.panStartX = e.clientX;
+        this.panScrollLeft = this.timelineTracks.scrollLeft;
+        this.tracksContainer.classList.add('panning');
+        e.preventDefault();
       }
     });
 
-    // Space 키 추적 (패닝 모드용)
-    this._isSpacePressed = false;
-    document.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' && !e.target.matches('input, textarea')) {
-        this._isSpacePressed = true;
-        if (this.tracksContainer) {
-          this.tracksContainer.style.cursor = 'grab';
-        }
-      }
-    });
-
-    document.addEventListener('keyup', (e) => {
-      if (e.code === 'Space') {
-        this._isSpacePressed = false;
-        if (this.tracksContainer && !this.isPanning) {
-          this.tracksContainer.style.cursor = 'grab';
-        }
-      }
-    });
+    // 트랙 영역 기본 커서를 grab으로 설정
+    if (this.tracksContainer) {
+      this.tracksContainer.style.cursor = 'grab';
+    }
 
     // 전역 마우스 이벤트 (드래그용)
     document.addEventListener('mousemove', (e) => {
       // 플레이헤드 드래그 (스크러빙 모드)
       if (this.isDraggingPlayhead) {
-        this._scrubFromClick(e);
-        return;
-      }
-
-      // 드래그 seek (스크러빙 모드)
-      if (this.isDraggingSeeking) {
         this._scrubFromClick(e);
         return;
       }
@@ -228,13 +199,6 @@ export class Timeline extends EventTarget {
         // 드래그 종료 시 실제 seek 수행
         this._finishScrubbing(e);
         this.isDraggingPlayhead = false;
-        document.body.style.cursor = 'default';
-      }
-
-      if (this.isDraggingSeeking) {
-        // 드래그 종료 시 실제 seek 수행
-        this._finishScrubbing(e);
-        this.isDraggingSeeking = false;
         document.body.style.cursor = 'default';
       }
 
@@ -1392,24 +1356,13 @@ export class Timeline extends EventTarget {
       const noteIndicator = document.createElement('div');
       noteIndicator.className = 'highlight-note-indicator';
       noteIndicator.textContent = highlight.note;
-      // 색상별 글자색 설정 (밝은 배경은 어두운 글씨, 어두운 배경은 밝은 글씨)
-      const textColor = this._getHighlightTextColor(highlight.colorKey);
-      noteIndicator.style.color = textColor;
+      // 글자색은 항상 흰색
+      noteIndicator.style.color = '#ffffff';
+      noteIndicator.style.textShadow = '0 1px 2px rgba(0, 0, 0, 0.5)';
       element.appendChild(noteIndicator);
     }
 
     return element;
-  }
-
-  /**
-   * 하이라이트 색상에 따른 글자색 반환
-   * @param {string} colorKey - 색상 키
-   * @returns {string} 글자색
-   */
-  _getHighlightTextColor(colorKey) {
-    // 밝은 배경 색상들은 어두운 글씨, 어두운 배경은 밝은 글씨
-    const lightBgColors = ['yellow', 'white', 'gray'];
-    return lightBgColors.includes(colorKey) ? 'rgba(0, 0, 0, 0.85)' : 'rgba(255, 255, 255, 0.95)';
   }
 
   /**
@@ -1445,9 +1398,9 @@ export class Timeline extends EventTarget {
         element.appendChild(noteIndicator);
       }
       noteIndicator.textContent = highlight.note;
-      // 색상별 글자색 설정
-      const textColor = this._getHighlightTextColor(highlight.colorKey);
-      noteIndicator.style.color = textColor;
+      // 글자색은 항상 흰색
+      noteIndicator.style.color = '#ffffff';
+      noteIndicator.style.textShadow = '0 1px 2px rgba(0, 0, 0, 0.5)';
     } else if (noteIndicator) {
       noteIndicator.remove();
     }

@@ -1586,25 +1586,42 @@ body {
   box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px currentColor;
 }
 
-/* 삭제 버튼 */
+/* 버튼 영역 */
 .highlight-popup-actions {
+  display: flex;
+  gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border-subtle);
 }
 
+.highlight-popup-copy,
 .highlight-popup-delete {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  width: 100%;
+  flex: 1;
   padding: 8px 12px;
   background: transparent;
-  border: 1px solid var(--error);
   border-radius: 6px;
-  color: var(--error);
   font-size: 12px;
   cursor: pointer;
   transition: all var(--transition-fast);
+}
+
+.highlight-popup-copy {
+  border: 1px solid var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.highlight-popup-copy:hover {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.highlight-popup-delete {
+  border: 1px solid var(--error);
+  color: var(--error);
 }
 
 .highlight-popup-delete:hover {

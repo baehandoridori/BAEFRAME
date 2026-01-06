@@ -250,6 +250,68 @@ export class HighlightManager extends EventTarget {
   }
 
   /**
+   * 하이라이트 복사 (클립보드에 저장)
+   * @param {string} id - 복사할 하이라이트 ID
+   * @returns {boolean} - 복사 성공 여부
+   */
+  copyHighlight(id) {
+    const highlight = this.getHighlight(id);
+    if (!highlight) {
+      log.warn('복사할 하이라이트를 찾을 수 없음', { id });
+      return false;
+    }
+
+    // 클립보드에 하이라이트 정보 저장 (duration 포함)
+    this._clipboard = {
+      duration: highlight.duration,
+      colorKey: highlight.colorKey,
+      note: highlight.note
+    };
+
+    log.info('하이라이트 복사됨', { id, duration: highlight.duration });
+    return true;
+  }
+
+  /**
+   * 하이라이트 붙여넣기
+   * @param {number} currentTime - 붙여넣을 시작 시간
+   * @returns {Highlight|null} - 생성된 하이라이트 또는 null
+   */
+  pasteHighlight(currentTime) {
+    if (!this._clipboard) {
+      log.warn('클립보드에 복사된 하이라이트가 없음');
+      return null;
+    }
+
+    const startTime = currentTime;
+    const endTime = Math.min(currentTime + this._clipboard.duration, this.duration);
+
+    const highlight = new Highlight({
+      startTime,
+      endTime,
+      colorKey: this._clipboard.colorKey,
+      note: this._clipboard.note
+    });
+
+    this.highlights.push(highlight);
+    this._sortHighlights();
+
+    log.info('하이라이트 붙여넣기됨', { id: highlight.id, startTime, endTime });
+    this._emit('highlightCreated', { highlight });
+    this._emit('changed');
+
+    return highlight;
+  }
+
+  /**
+   * 클립보드에 하이라이트가 있는지 확인
+   * @returns {boolean}
+   */
+  hasClipboard() {
+    return !!this._clipboard;
+  }
+
+  /**
    * 모든 하이라이트 초기화
    */
   clear() {

@@ -1392,6 +1392,7 @@ async function initApp() {
   const highlightPopup = document.getElementById('highlightPopup');
   const highlightNoteInput = document.getElementById('highlightNoteInput');
   const highlightColorPicker = document.getElementById('highlightColorPicker');
+  const highlightCopyBtn = document.getElementById('highlightCopyBtn');
   const highlightDeleteBtn = document.getElementById('highlightDeleteBtn');
 
   // 하이라이트 트랙 연결 (좌측 레이어 헤더도 연동)
@@ -1599,6 +1600,15 @@ async function initApp() {
     timeline.updateHighlightElement(highlight);
   });
 
+  // 복사 버튼
+  highlightCopyBtn.addEventListener('click', () => {
+    if (selectedHighlightId) {
+      highlightManager.copyHighlight(selectedHighlightId);
+      hideHighlightPopup();
+      showToast('하이라이트가 복사되었습니다 (Ctrl+V로 붙여넣기)', 'info');
+    }
+  });
+
   // 삭제 버튼
   highlightDeleteBtn.addEventListener('click', () => {
     if (selectedHighlightId) {
@@ -1612,6 +1622,35 @@ async function initApp() {
   // 하이라이트 변경 이벤트 수신
   highlightManager.addEventListener('loaded', () => {
     renderHighlights();
+  });
+
+  // 하이라이트 복사/붙여넣기 키보드 단축키
+  document.addEventListener('keydown', (e) => {
+    // input, textarea에서는 무시
+    if (e.target.matches('input, textarea')) return;
+
+    // Ctrl+C: 선택된 하이라이트 복사
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      // 하이라이트 팝업이 열려있고 선택된 하이라이트가 있으면 복사
+      if (highlightPopup.style.display === 'block' && selectedHighlightId) {
+        e.preventDefault();
+        highlightManager.copyHighlight(selectedHighlightId);
+        showToast('하이라이트가 복사되었습니다', 'info');
+      }
+    }
+
+    // Ctrl+V: 하이라이트 붙여넣기
+    if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      if (highlightManager.hasClipboard() && videoPlayer.duration) {
+        e.preventDefault();
+        const currentTime = videoPlayer.currentTime || 0;
+        const highlight = highlightManager.pasteHighlight(currentTime);
+        if (highlight) {
+          renderHighlights();
+          showToast('하이라이트가 붙여넣기 되었습니다', 'info');
+        }
+      }
+    }
   });
 
   // ====== 비디오 줌/패닝 ======
