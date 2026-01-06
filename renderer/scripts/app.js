@@ -1388,13 +1388,14 @@ async function initApp() {
   // ====== 하이라이트 ======
   const btnAddHighlight = document.getElementById('btnAddHighlight');
   const highlightTrack = document.getElementById('highlightTrack');
+  const highlightLayerHeader = document.getElementById('highlightLayerHeader');
   const highlightPopup = document.getElementById('highlightPopup');
   const highlightNoteInput = document.getElementById('highlightNoteInput');
   const highlightColorPicker = document.getElementById('highlightColorPicker');
   const highlightDeleteBtn = document.getElementById('highlightDeleteBtn');
 
-  // 하이라이트 트랙 연결
-  timeline.setHighlightTrack(highlightTrack);
+  // 하이라이트 트랙 연결 (좌측 레이어 헤더도 연동)
+  timeline.setHighlightTrack(highlightTrack, highlightLayerHeader);
 
   // 현재 선택된 하이라이트 ID
   let selectedHighlightId = null;
@@ -1432,6 +1433,15 @@ async function initApp() {
         showHighlightPopup(highlightId, e.clientX, e.clientY);
       });
 
+      // 바 전체 드래그 (이동)
+      item.addEventListener('mousedown', (e) => {
+        // 핸들 클릭이면 무시 (핸들에서 처리)
+        if (e.target.classList.contains('highlight-handle')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        startHighlightDrag(highlightId, 'move', e);
+      });
+
       // 드래그 핸들
       const leftHandle = item.querySelector('.highlight-handle-left');
       const rightHandle = item.querySelector('.highlight-handle-right');
@@ -1463,7 +1473,9 @@ async function initApp() {
       highlightId,
       handle,
       startX: e.clientX,
-      startTime: handle === 'left' ? highlight.startTime : highlight.endTime
+      startTime: highlight.startTime,
+      endTime: highlight.endTime,
+      duration: highlight.endTime - highlight.startTime
     };
 
     document.addEventListener('mousemove', onHighlightDrag);
@@ -1473,15 +1485,35 @@ async function initApp() {
   function onHighlightDrag(e) {
     if (!highlightDragState) return;
 
-    const { highlightId, handle, startX, startTime } = highlightDragState;
+    const { highlightId, handle, startX, startTime, endTime, duration } = highlightDragState;
     const deltaX = e.clientX - startX;
     const trackRect = highlightTrack.getBoundingClientRect();
     const deltaTime = (deltaX / trackRect.width) * videoPlayer.duration;
-    const newTime = Math.max(0, Math.min(videoPlayer.duration, startTime + deltaTime));
 
-    const updates = handle === 'left'
-      ? { startTime: newTime }
-      : { endTime: newTime };
+    let updates;
+    if (handle === 'move') {
+      // 전체 이동
+      let newStart = startTime + deltaTime;
+      let newEnd = endTime + deltaTime;
+
+      // 경계 체크
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = duration;
+      }
+      if (newEnd > videoPlayer.duration) {
+        newEnd = videoPlayer.duration;
+        newStart = videoPlayer.duration - duration;
+      }
+
+      updates = { startTime: newStart, endTime: newEnd };
+    } else if (handle === 'left') {
+      const newTime = Math.max(0, Math.min(endTime - 0.1, startTime + deltaTime));
+      updates = { startTime: newTime };
+    } else {
+      const newTime = Math.max(startTime + 0.1, Math.min(videoPlayer.duration, endTime + deltaTime));
+      updates = { endTime: newTime };
+    }
 
     highlightManager.updateHighlight(highlightId, updates);
 

@@ -1125,6 +1125,26 @@ body {
   gap: 4px;
 }
 
+/* 하이라이트 레이어 헤더 (좌측 - 하이라이트 트랙과 연동) */
+.highlight-layer-header {
+  height: 24px;
+  min-height: 24px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.highlight-layer-header .highlight-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .layer-action-btn {
   width: 24px;
   height: 24px;
@@ -1429,13 +1449,20 @@ body {
   top: 2px;
   height: 20px;
   border-radius: 4px;
-  cursor: pointer;
+  cursor: grab;
   transition: opacity var(--transition-fast);
   z-index: 10;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
 }
 
 .highlight-item:hover {
   opacity: 0.9;
+}
+
+.highlight-item:active {
+  cursor: grabbing;
 }
 
 .highlight-item.selected {
@@ -1450,6 +1477,7 @@ body {
   height: 100%;
   cursor: ew-resize;
   z-index: 15;
+  flex-shrink: 0;
 }
 
 .highlight-handle-left {
@@ -1469,15 +1497,19 @@ body {
 /* 하이라이트 주석 표시 */
 .highlight-note-indicator {
   position: absolute;
-  top: 2px;
-  left: 4px;
-  font-size: 9px;
-  color: rgba(0, 0, 0, 0.7);
-  max-width: calc(100% - 8px);
+  top: 0;
+  left: 8px;
+  right: 8px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   pointer-events: none;
+  /* 기본 색상은 JS에서 동적 설정 */
 }
 
 /* 하이라이트 팝업 메뉴 */

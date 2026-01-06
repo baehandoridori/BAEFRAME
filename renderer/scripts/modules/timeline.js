@@ -1311,9 +1311,12 @@ export class Timeline extends EventTarget {
 
   /**
    * 하이라이트 트랙 요소 참조 설정
+   * @param {HTMLElement} trackElement - 하이라이트 트랙 요소
+   * @param {HTMLElement} layerHeaderElement - 좌측 하이라이트 레이어 헤더 요소 (선택)
    */
-  setHighlightTrack(trackElement) {
+  setHighlightTrack(trackElement, layerHeaderElement = null) {
     this.highlightTrack = trackElement;
+    this.highlightLayerHeader = layerHeaderElement;
   }
 
   /**
@@ -1326,14 +1329,20 @@ export class Timeline extends EventTarget {
     // 기존 하이라이트 제거
     this.highlightTrack.innerHTML = '';
 
-    // 하이라이트가 없으면 트랙 숨김
+    // 하이라이트가 없으면 트랙 및 레이어 헤더 숨김
     if (!highlights || highlights.length === 0) {
       this.highlightTrack.style.display = 'none';
+      if (this.highlightLayerHeader) {
+        this.highlightLayerHeader.style.display = 'none';
+      }
       return;
     }
 
-    // 트랙 표시
+    // 트랙 및 레이어 헤더 표시
     this.highlightTrack.style.display = 'block';
+    if (this.highlightLayerHeader) {
+      this.highlightLayerHeader.style.display = 'flex';
+    }
 
     // 각 하이라이트 렌더링
     highlights.forEach(highlight => {
@@ -1383,10 +1392,24 @@ export class Timeline extends EventTarget {
       const noteIndicator = document.createElement('div');
       noteIndicator.className = 'highlight-note-indicator';
       noteIndicator.textContent = highlight.note;
+      // 색상별 글자색 설정 (밝은 배경은 어두운 글씨, 어두운 배경은 밝은 글씨)
+      const textColor = this._getHighlightTextColor(highlight.colorKey);
+      noteIndicator.style.color = textColor;
       element.appendChild(noteIndicator);
     }
 
     return element;
+  }
+
+  /**
+   * 하이라이트 색상에 따른 글자색 반환
+   * @param {string} colorKey - 색상 키
+   * @returns {string} 글자색
+   */
+  _getHighlightTextColor(colorKey) {
+    // 밝은 배경 색상들은 어두운 글씨, 어두운 배경은 밝은 글씨
+    const lightBgColors = ['yellow', 'white', 'gray'];
+    return lightBgColors.includes(colorKey) ? 'rgba(0, 0, 0, 0.85)' : 'rgba(255, 255, 255, 0.95)';
   }
 
   /**
@@ -1422,6 +1445,9 @@ export class Timeline extends EventTarget {
         element.appendChild(noteIndicator);
       }
       noteIndicator.textContent = highlight.note;
+      // 색상별 글자색 설정
+      const textColor = this._getHighlightTextColor(highlight.colorKey);
+      noteIndicator.style.color = textColor;
     } else if (noteIndicator) {
       noteIndicator.remove();
     }
