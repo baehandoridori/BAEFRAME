@@ -135,10 +135,17 @@ export class Timeline extends EventTarget {
       document.body.style.cursor = 'ew-resize';
     });
 
-    // 룰러 클릭으로 시간 이동
-    this.timelineRuler?.addEventListener('click', (e) => {
-      if (this.isDraggingPlayhead) return;
+    // 룰러 커서 설정
+    if (this.timelineRuler) {
+      this.timelineRuler.style.cursor = 'ew-resize';
+    }
+
+    // 룰러 클릭/드래그로 시간 이동
+    this.timelineRuler?.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      this.isDraggingPlayhead = true;
       this._seekFromClick(e);
+      document.body.style.cursor = 'ew-resize';
     });
 
     // 트랙 영역 마우스 이벤트 (패닝 + 선택)

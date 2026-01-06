@@ -1245,6 +1245,7 @@ body {
   top: 0;
   z-index: 10;
   min-width: 100%;
+  cursor: ew-resize;
 }
 
 .tracks-container {
