@@ -374,6 +374,8 @@ export class UserSettings extends EventTarget {
     // 이미 한 번 이름을 설정한 적이 있으면 기존 이름 사용
     if (this.settings.hasSetNameOnce) {
       log.info('기존 사용자 이름 사용 (hasSetNameOnce)', { userName: this.settings.userName });
+      // 저장된 사용자에 맞는 테마 적용
+      this.applyThemeForCurrentUser();
       return this.settings.userName || '익명';
     }
 
