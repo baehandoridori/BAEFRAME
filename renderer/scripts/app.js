@@ -162,10 +162,28 @@ async function initApp() {
 
   /**
    * 글로벌 Undo 실행
+   * 드로잉 모드일 때는 그리기 Undo를 먼저 시도
    */
   function globalUndo() {
+    // 드로잉 모드: 그리기 Undo 먼저 시도
+    if (state.isDrawMode) {
+      if (drawingManager.undo()) {
+        return true;
+      }
+      // 그리기 히스토리가 없으면 댓글 Undo 시도
+      if (undoStack.length > 0) {
+        const action = undoStack.pop();
+        if (action && action.undo) {
+          action.undo();
+          redoStack.push(action);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // 일반 모드: 댓글 Undo 먼저 시도
     if (undoStack.length === 0) {
-      // 댓글 스택이 비어있으면 그리기 Undo 시도
       return drawingManager.undo();
     }
 
@@ -180,10 +198,28 @@ async function initApp() {
 
   /**
    * 글로벌 Redo 실행
+   * 드로잉 모드일 때는 그리기 Redo를 먼저 시도
    */
   function globalRedo() {
+    // 드로잉 모드: 그리기 Redo 먼저 시도
+    if (state.isDrawMode) {
+      if (drawingManager.redo()) {
+        return true;
+      }
+      // 그리기 히스토리가 없으면 댓글 Redo 시도
+      if (redoStack.length > 0) {
+        const action = redoStack.pop();
+        if (action && action.redo) {
+          action.redo();
+          undoStack.push(action);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // 일반 모드: 댓글 Redo 먼저 시도
     if (redoStack.length === 0) {
-      // Redo 스택이 비어있으면 그리기 Redo 시도
       return drawingManager.redo();
     }
 
