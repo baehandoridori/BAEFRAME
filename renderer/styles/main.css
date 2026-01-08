@@ -3078,12 +3078,21 @@ body.resizing .comment-panel {
 
 .comment-marker-track.resolved {
   background: var(--success);
-  opacity: 0.6;
+  opacity: 0.8;
 }
 
 .comment-marker-track.resolved::before {
   content: '✓';
-  color: var(--success);
+  color: white;
+  background: var(--success);
+  font-size: 10px;
+  font-weight: bold;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 /* 클러스터된 마커 (여러 마커 겹침) */
