@@ -2185,7 +2185,7 @@ body {
 }
 
 .comments-list.compact .comment-attached-image,
-.comments-list.compact .comment-thumbnail-card,
+.comments-list.compact .comment-thumbnail-wrapper,
 .comments-list.compact .comment-avatar-bg,
 .comments-list.compact .comment-edit-form,
 .comments-list.compact .comment-replies,
