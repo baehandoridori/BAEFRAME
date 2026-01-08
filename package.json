@@ -35,7 +35,7 @@
   },
   "build": {
     "appId": "com.baeframe.app",
-    "productName": "BFRAME_alpha_v1",
+    "productName": "BFRAME_alpha_v2",
     "directories": {
       "output": "dist"
     },

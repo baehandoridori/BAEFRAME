@@ -18,6 +18,7 @@ const log = createLogger('Main');
  * - URL 디코딩 (한글 등 인코딩된 문자 복원)
  * - Slack이 G:/ → G/ 로 변환하는 문제 수정
  * - 슬래시를 백슬래시로 변환 (Windows)
+ * - 공유 링크 형식(경로|웹URL|파일명)에서 경로만 추출
  *
  * @param {string} url - baeframe://... 형식의 URL
  * @returns {string} 실제 파일 경로
@@ -37,6 +38,15 @@ function parseBaeframeUrl(url) {
     filePath = decodeURIComponent(filePath);
   } catch (e) {
     log.warn('URL 디코딩 실패, 원본 사용', { error: e.message });
+  }
+
+  // 공유 링크 형식: 경로|웹URL|파일명
+  // AutoHotkey가 전체 문자열을 baeframe:// URL로 만들 수 있음
+  // 첫 번째 | 이전의 경로만 추출
+  if (filePath.includes('|')) {
+    const parts = filePath.split('|');
+    filePath = parts[0]; // 파일 경로만 사용
+    log.debug('공유 링크에서 경로 추출', { originalParts: parts.length, extractedPath: filePath });
   }
 
   // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
@@ -176,6 +186,15 @@ if (!gotTheLock) {
   // 앱 종료 전
   app.on('before-quit', () => {
     log.info('앱 종료 중...');
+  });
+
+  // 앱 종료 완료 - 프로세스 강제 종료
+  app.on('quit', () => {
+    log.info('앱 종료됨, 프로세스 정리');
+    // GPU 프로세스 등이 남아있을 수 있으므로 강제 종료
+    setTimeout(() => {
+      process.exit(0);
+    }, 500);
   });
 
   // 에러 핸들링
