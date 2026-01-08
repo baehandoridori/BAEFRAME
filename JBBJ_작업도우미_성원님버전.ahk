@@ -1,11 +1,11 @@
 ﻿; =================================================================================================
-;  JBBJ 작업도우미 스크립트 (주석 강화 버전)
-;  - 목적: 작업 편의 기능(자동 한영전환, CapsLock 더블탭 폴더 열기, AlwaysOnTop 등) 제공
-;          + 타임 트래커(ProgressBar)로 주요 작업 시간 체크/시각화
+;  JBBJ 작업도우미 스크립트 (성원님 버전 - 간소화)
+;  - 자동 한영전환, 파일주석시스템, AlwaysOnTop 기능 제거
+;  - 목적: 파일공유, 타임트래커 등 핵심 기능만 제공
 ;  - 작성자: 
-;  - 개요: 
+;  - 개요:
 ;    1) 메인 GUI / 각종 기능 구현
-;    2) program_classes.txt / alias.ini 연동 (특정 프로그램에서만 한영전환 등)
+;    2) alias.ini 연동 (프로세스 별칭)
 ;    3) 상위 5개 사용 프로세스 목록 표시
 ;    4) 추가 실행 스크립트 (예: 익명칭찬, 피드백, 스네이크게임 등)
 ;
@@ -41,22 +41,12 @@ g_WorkerFullPath := A_ScriptFullPath
 
 
 ; --- 메인 스크립트용 전역 ---
-global lastX := 0            ; 마우스 X좌표 기록(한영전환 체크용)
-global lastY := 0            ; 마우스 Y좌표 기록(한영전환 체크용)
-global alwaysOnTopWindow := "" ; AlwaysOnTop 활성화된 창의 HWND(식별자)
 global fileSharePID := 0     ; 파일공유_JBBJ 체크박스용 PID (외부 스크립트 실행 시 PID)
-global FilecommentPID := 0            ; 파일주석시스템 토글 (기본 on)
 
 global isMouseHookOn := false ; 자리비움 상태일때 마우스 훅을 키고 해제되면 끄는 방식을 위한 전역변수
 
-;  ※ programClassList: 자동 한영전환 대상 프로그램의 클래스 목록(문서화)
-global programClassList := []
-
 ; --- 추가: 옵션 토글을 위한 전역 체크박스 상태 ---
-global checkAutoIME := 1         ; 자동 한영전환 토글 (기본 On)
-global checkAlwaysOnTop := 1     ; alwaysOnTop 토글 (기본 On)
 global FileShareChecked := 1     ; 파일공유_JBBJ 토글 (기본 On)
-global FilecommentChecked := 1   ; 파일주석시스템 토글 (기본 On)
 global checkPathToLink := 1      ; 경로→링크 자동변환 토글 (기본 On)
 global isConvertingClipboard := false  ; 클립보드 변환 중 플래그 (무한루프 방지)
 global g_LastOriginalPath := ""  ; Slack 하이퍼링크용 원본 경로
@@ -64,7 +54,7 @@ global g_LastJbbjLink := ""      ; Slack 하이퍼링크용 jbbj:// 링크
 
 
 ; --- 추가: 툴팁용 전역 핸들 변수 (각 버튼에 대한 hWnd) ---
-global HFileShare, HAutoIME, HAlwaysOnTop, HFilecomment, HSvg, Hfeedback, HColor, HAp, Hsnake, H2048, Hmenuchcun, Hfortune, Hcutnumber, Hhelp, Hsetup, HPathToLink
+global HFileShare, HSvg, Hfeedback, HColor, HAp, Hsnake, H2048, Hmenuchcun, Hfortune, Hcutnumber, Hhelp, Hsetup, HPathToLink
 
 ; --- 타임 트래커(ProgressBar)용 전역 ---
 global totalUsage := 0           ; 전체 누적 사용 시간(초)
@@ -97,7 +87,6 @@ global g_LibDir := ""            ; 라이브러리 폴더 경로
 ; settings.ini에서 읽어올 외부 경로들
 global g_JBBJLibrary := ""       ; JBBJ 자료실 경로
 global g_InstallFiles := ""      ; 설치 파일 경로
-global g_FileCommentSystem := "" ; 파일 주석 시스템 경로
 global g_SVGConverter := ""      ; SVG 변환기 경로
 global g_AHKv2Path := ""         ; AutoHotkey v2 경로
 global g_UserGuideURL := ""      ; 사용설명서 URL
@@ -155,6 +144,9 @@ Menu, Tray, Icon, Shell32.dll, 283
 Gui, Font, S14 CDefault, Verdana
 Gui, Add, Text, x152 y9 w150 h20 , JBBJ 작업 도우미
 
+Gui, Font, S8 cgray italic, Verdana
+Gui, Add, Text, x302 y12 w100 h20 , (성원님 버전ㅋ)
+
 Gui, Font, S9 cgray italic, Verdana
 Gui, Add, Text, x12 y40 w340 h20 , 만든놈 = 한솔배
 
@@ -164,45 +156,18 @@ Gui, Add, Text, x12 y40 w340 h20 , 만든놈 = 한솔배
 ; [새로운 GUI (탭 형태)]
 ; ---------------------------------------------------------------------------------
 Gui, Font, S11 CDefault norm, Verdana
-Gui, Add, Tab, x12 y69 w330 h160 vBasicTab, 자동한영전환|파일공유JBBJ|AOT
+Gui, Add, Tab, x12 y69 w330 h160 vBasicTab, 파일공유JBBJ
 
 ; ---------------------------------------------------------------------------------
-; [첫 번째 탭: 자동한영전환]
+; [첫 번째 탭: 파일공유JBBJ]
 ; ---------------------------------------------------------------------------------
 Gui, Tab, 1
-Gui, Font, S12 CDefault norm, Verdana
-
-
-Gui, Font, S8 CDefault norm, Verdana
-Gui, Add, Text, x22 y130 w310 h50 , 단축키를 입력할 때 한글로 입력되는 경우를 방지해 줍니다.`n지원 프로그램 목록을 참고해주세요.
-Gui, Font, S13 Cgreen Bold, Verdana
-Gui, Add, Text, x22 y100 w110 h30 , 자동 한/영전환
-; "초기 설정" 버튼 + "지원 프로그램 목록" 버튼
-Gui, Font, S8 norm, Verdana
-Gui, Add, Button, x132 y100 w80 h25 gInitialSetup, 초기 설정
-Gui, Add, Button, x212 y100 w120 h25 gShowSupportedPrograms, 지원 프로그램 목록
-
-; ---------------------------------------------------------------------------------
-; [두 번째 탭: 파일공유JBBJ]
-; ---------------------------------------------------------------------------------
-Gui, Tab, 2
 
 
 Gui, Font, S8 CDefault norm, Verdana
 Gui, Add, Text, x22 y130 w310 h40 , 공유할 파일을 선택한 후, Alt+F12 키를 누르면 뜨는 창에 공유 대상/채널을 선택합니다.`n복수의 파일을 선택하고 기능을 실행할 수 있습니다.
 Gui, Font, S13 Cgreen Bold, Verdana
 Gui, Add, Text, x22 y100 w150 h30 , 파일공유 JBBJ
-
-; ---------------------------------------------------------------------------------
-; [세 번째 탭: AOT]
-; ---------------------------------------------------------------------------------
-Gui, Tab, 3
-
-
-Gui, Font, S8 CDefault norm, Verdana
-Gui, Add, Text, x22 y130 w310 h40 , 활성된 창을 누르고 "Alt+`" 키를 누르면 맨 위에 고정됩니다. `n동일한 키를 한번 더 눌러 창 고정을 해제할 수 있습니다.
-Gui, Font, S13 Cgreen Bold, Verdana
-Gui, Add, Text, x22 y100 w150 h30 , AlwaysOnTop
 
 
 
@@ -217,20 +182,14 @@ Gui, Tab
 ; [★ 추가: "기능 토글"용 버튼(박스형) 그룹박스 및 버튼들 ]
 ; --------------------------------------------------------------------------
 Gui, Font, S10 CDefault norm, Verdana
-Gui, Add, GroupBox, x350 y69 w100 h145 , 기능 토글  ; 새 그룹박스
+Gui, Add, GroupBox, x350 y69 w100 h75 , 기능 토글  ; 새 그룹박스
 Gui, Font, cGreen
 
 Gui, Font, S7, Verdana
 ; - [파일공유_JBBJ] 버튼
 Gui, Add, Button, x360 y85 w80 h22 hwndHFileShare vBtnFileShare gToggleFileShare +%BS_PUSHLIKE%, 파일공유_JBBJ
-; - [자동 한영전환] 버튼
-Gui, Add, Button, x360 y110 w80 h22 hwndHAutoIME vBtnAutoIME gToggleAutoIME +%BS_PUSHLIKE%, 자동 한영전환
-; - [AlwaysOnTop] 버튼
-Gui, Add, Button, x360 y135 w80 h22 hwndHAlwaysOnTop vBtnAlwaysOnTop gToggleAlwaysOnTop +%BS_PUSHLIKE%, AlwaysOnTop
-; = [EDPS] 버튼
-Gui, Add, Button, x360 y160 w80 h22 hwndHFilecomment vBtnFilecomment gToggleFilecomment +%BS_PUSHLIKE%, 파일주석시스템
 ; - [경로→링크] 버튼
-Gui, Add, Button, x360 y185 w80 h22 hwndHPathToLink vBtnPathToLink gTogglePathToLink +%BS_PUSHLIKE%, 경로→링크
+Gui, Add, Button, x360 y110 w80 h22 hwndHPathToLink vBtnPathToLink gTogglePathToLink +%BS_PUSHLIKE%, 경로→링크
 
 
 ; --------------------------------------------------------------------------
@@ -329,12 +288,6 @@ if (checkPathToLink = 1) {
 
 
 
-; =============================================================================
-; [한영 전환 기능 초기화]
-; =============================================================================
-SetTimer, Check, 100  ; 0.1초 간격(마우스 이동 시 한영 자동 전환)
-
-
 ; =====================================================================
 ; [ 추가 ] 구글 드라이브 로딩창 + 파일 체크
 ; =====================================================================
@@ -400,10 +353,8 @@ FakeLoadingDriveCheck() {
 
 ; =============================================================================
 ; (1) 별칭 로드: alias.ini
-; (2) program_classes.txt 로드
 ; =============================================================================
 LoadAliases()
-LoadProgramClasses()
 
 
 ; 체크 상태 초기 반영(파일공유_JBBJ 스크립트 실행 등)
@@ -412,12 +363,6 @@ if (FileShareChecked = 1) {
     Run, "%g_AHKv2Path%" "%fileShareScript%",, fileSharePID
 }
 
-if (FilecommentChecked = 1) {
-    if (g_FileCommentSystem != "" && FileExist(g_FileCommentSystem))
-        Run, "%g_FileCommentSystem%",, FilecommentPID
-    else
-        FilecommentChecked := 0  ; 파일 없으면 비활성화
-}
 
 ; =============================================================================
 ; (2) 1초마다 작업 시간 누적 & 상위 4개 표시
@@ -468,65 +413,6 @@ return
 
 
 
-ToggleAutoIME:
-{
-    global checkAutoIME
-    checkAutoIME := !checkAutoIME
-    
-    if (checkAutoIME) {
-        GuiControl, +Background00FF00, BtnAutoIME
-        GuiControl,, BtnAutoIME, ON 한영전환
-    } else {
-        GuiControl, +BackgroundFF0000, BtnAutoIME
-        GuiControl,, BtnAutoIME, OFF 한영전환
-    }
-}
-return
-
-ToggleAlwaysOnTop:
-{
-    global checkAlwaysOnTop
-    checkAlwaysOnTop := !checkAlwaysOnTop
-    
-    if (checkAlwaysOnTop) {
-        GuiControl, +Background00FF00, BtnAlwaysOnTop
-        GuiControl,, BtnAlwaysOnTop, ON 창 고정
-    } else {
-        GuiControl, +BackgroundFF0000, BtnAlwaysOnTop
-        GuiControl,, BtnAlwaysOnTop, OFF 창 고정
-    }
-}
-return
-
-ToggleFilecomment:
-{
-    global FilecommentChecked, FilecommentPID, g_FileCommentSystem
-    ; "Filecomment" 변수를 ! 연산(토글)
-    FilecommentChecked := !FilecommentChecked
-
-    if (FilecommentChecked) {
-        GuiControl, +Background00FF00, BtnFilecomment
-        GuiControl,, BtnFilecomment, ON 파일주석
-        Run, "%g_FileCommentSystem%",, FilecommentPID
-    } else {
-        GuiControl, +BackgroundFF0000, BtnFilecomment
-        GuiControl,, BtnFilecomment, OFF 파일주석
-        ; 실행 중인 "경로공유_최종.ahk" 스크립트를 종료
-        DetectHiddenWindows, On
-        WinGet, AHKList, List, ahk_class AutoHotkey
-        Loop %AHKList% {
-            WinGetTitle, title, % "ahk_id " AHKList%A_Index%
-            if (InStr(title, "파일_주석_시스템.ahk")) {
-                WinClose, %title%
-                WinKill, %title%
-            }
-        }
-        DetectHiddenWindows, Off
-        FilecommentPID := 0
-    }
-}
-return
-
 ; --------------------------------------------------------------------------
 ; [경로→링크 변환 토글]
 ; --------------------------------------------------------------------------
@@ -570,11 +456,6 @@ Anonymous_praise:
     Run, % g_UtilsDir . "\익명_칭찬합시다.ahk"
 return
 
-InitialSetup:
-    ; 초기 IME 설정 등 사용자 준비
-    Run, % g_UtilsDir . "\first_setup.ahk"
-return
-
 Setuphelp:
     ; JBBJ 자료실 설치도우미 실행
     Run, % A_ScriptDir . "\JBBJ_설치도우미_1_4.ahk"
@@ -587,11 +468,6 @@ OpenUserGuide:
         Run, %userGuideFile%
     else
         Run, % g_UserGuideURL  ; HTML 파일 없으면 기존 URL 사용
-return
-
-ShowSupportedPrograms:
-    ; 지원 프로그램 목록 표시
-    ShowSupportedProgramsList()
 return
 
 Cutnumberinsert:
@@ -642,7 +518,6 @@ ReloadDriveFiles:
 {
     FakeLoadingDriveCheck()
     LoadAliases()
-    LoadProgramClasses()
     return
 }
 
@@ -658,12 +533,6 @@ WM_MOUSEMOVE(wParam, lParam, msg, hwnd) {
         
         if (hwnd = HFileShare)
             ToolTip, 단축키: "Alt + F12"
-        else if (hwnd = HAutoIME)
-            ToolTip, 단축키: "마우스를 움직일 때 자동으로 영문으로 전환됩니다"
-        else if (hwnd = HAlwaysOnTop)
-            ToolTip, 단축키: "Alt + `"
-        else if (hwnd = HFilecomment) 
-            ToolTip, 단축키: "마우스 휠 버튼 = 주석확인.`n 마우스 휠 더블클릭 = 주석생성/수정"
         else if (hwnd = Hfeedback)
             ToolTip,  익명으로 스크립트에 대한 피드백을 전송합니다.
         else if (hwnd = HSvg)
@@ -689,7 +558,7 @@ WM_MOUSEMOVE(wParam, lParam, msg, hwnd) {
         else
             ToolTip  ; 다른 컨트롤 위에서는 툴팁 제거
         
-        if (hwnd = HFileShare || hwnd = HAutoIME || hwnd = HAlwaysOnTop || hwnd = HFilecomment || hwnd = Hsvg || hwnd = Hfeedback || hwnd = HColor || hwnd = Hsetup || hwnd = Hcutnumber || hwnd = Hhelp || hwnd = HAp || hwnd = Hsnake || hwnd = H2048 || hwnd = Hmenuchcun || hwnd = Hfortune)
+        if (hwnd = HFileShare || hwnd = Hsvg || hwnd = Hfeedback || hwnd = HColor || hwnd = Hsetup || hwnd = Hcutnumber || hwnd = Hhelp || hwnd = HAp || hwnd = Hsnake || hwnd = H2048 || hwnd = Hmenuchcun || hwnd = Hfortune)
             SetTimer, RemoveToolTip, -3000
     }
 }
@@ -698,81 +567,6 @@ RemoveToolTip:
 ToolTip
 return
 
-; --------------------------------------------------------------------------
-; [ 한영 전환 기능 ]
-; --------------------------------------------------------------------------
-; ※ 참고: Windows 11 새 IME에서는 불안정할 수 있음
-;   → 문제 시 성원님버전.ahk 사용 권장
-; --------------------------------------------------------------------------
-Check:
-   ; 자동 한영전환이 꺼져 있으면 스킵
-   if (checkAutoIME != 1)
-       return
-
-   ; ─────────────────────────────────────────────
-   ; [마우스 버튼 또는 수정자 키가 눌려 있으면 스킵]
-   ; 드래그 중이거나 다른 스크립트와 충돌 방지
-   ; ─────────────────────────────────────────────
-   ; 마우스 버튼 체크 (왼쪽, 오른쪽, 가운데)
-   if (GetKeyState("LButton", "P") || GetKeyState("RButton", "P") || GetKeyState("MButton", "P"))
-       return
-
-   ; 수정자 키 체크 (Ctrl, Shift, Alt)
-   if (GetKeyState("Ctrl", "P") || GetKeyState("Shift", "P") || GetKeyState("Alt", "P"))
-       return
-
-   MouseGetPos, cx, cy
-   if (cx != lastX or cy != lastY) {
-       ; IME 체크 (현재 IME가 한글이면 영문으로 전환)
-       ; ret = -1: 새 IME (감지 불가), ret = 0: 영문, ret > 0: 한글
-       ret := IME_CHECK("A")
-       if (ret > 0) {
-           ; programClassList에 등록된 클래스 중 현재 활성창과 일치하면 전환
-           for index, classValue in programClassList {
-               if WinActive(classValue) {
-                   Send, {vk15sc138}
-                   break
-               }
-           }
-       }
-       lastX := cx
-       lastY := cy
-   }
-return
-
-IME_CHECK(WinTitle) {
-    WinGet, hWnd, ID, %WinTitle%
-    DefaultIMEWnd := ImmGetDefaultIMEWnd(hWnd)
-    ; 새 IME 사용 시 (Windows 11 기본 IME) DefaultIMEWnd가 0 반환
-    ; 이 경우 한영 상태 감지 불가능하므로 -1 반환하여 한영전환 스킵
-    if (DefaultIMEWnd = 0)
-        Return -1
-    Return Send_ImeControl(DefaultIMEWnd, 0x005, "")
-}
-
-Send_ImeControl(DefaultIMEWnd, wParam, lParam) {
-    DetectSave := A_DetectHiddenWindows
-    DetectHiddenWindows, ON
-    SendMessage 0x283, wParam, lParam,, ahk_id %DefaultIMEWnd%
-    if (DetectSave <> A_DetectHiddenWindows)
-        DetectHiddenWindows, %DetectSave%
-    return ErrorLevel
-}
-
-ImmGetDefaultIMEWnd(hWnd) {
-    return DllCall("imm32\ImmGetDefaultIMEWnd", Uint, hWnd, Uint)
-}
-
-; --------------------------------------------------------------------------
-; [초기 사용자 설정 기능 없애버림 ㅋ
-; --------------------------------------------------------------------------
-
-
-ShowSupportedProgramsList() {
-    ; 지원 프로그램 목록을 메시지박스로 표시
-    supportedPrograms := "지원 프로그램 목록`n`nAdobe After Effect (2024)`nAdobe After Effect (2025)`nAdobe Animate (2024)`nAdobe Premiere pro (2024)`nAdobe Premiere pro (2025)`nAdobe Photoshop (2024)`nMoho 14`nClip studio`n`n별도의 프로그램 지원 원하시면 빨간바지한테 말해주세요"
-    MsgBox, %supportedPrograms%
-}
 
 ; --------------------------------------------------------------------------
 ; [스크립트 종료 함수]
@@ -796,11 +590,10 @@ CleanupOnExit(ExitReason, ExitCode) {
 ; [관련 스크립트 종료 함수]
 ; --------------------------------------------------------------------------
 CloseRelatedScripts() {
-    global fileSharePID, FilecommentPID
+    global fileSharePID
 
     ; 종료할 스크립트 목록 (작업마법사가 실행한 것들)
     scriptsToClose := ["경로공유_UIA최종_수정1.ahk"
-                     , "파일_주석_시스템.ahk"
                      , "숫자게임.ahk"
                      , "스네이크게임.ahk"
                      , "숫자야구게임"
@@ -850,9 +643,6 @@ CloseRelatedScripts() {
     if (fileSharePID > 0) {
         Process, Close, %fileSharePID%
     }
-    if (FilecommentPID > 0) {
-        Process, Close, %FilecommentPID%
-    }
 }
 
 ; --------------------------------------------------------------------------
@@ -880,43 +670,6 @@ $%::
 return
 
 #IfWinActive  ; 컨텍스트 해제
-
-; --------------------------------------------------------------------------
-; [창을 항상 위에 고정하는 기능] (Alt+`)
-; --------------------------------------------------------------------------
-
-#IfWinNotActive ahk_class LM_Wnd  ; LM_Wnd가 활성일 때는 이 아래 핫키 무효
-
-!`::
-    ; alwaysOnTop이 OFF 상태라면 스킵
-    if (checkAlwaysOnTop != 1)
-        return
-
-    WinGet, activeWindow, ID, A
-
-    if (alwaysOnTopWindow = activeWindow)
-    {
-        ; 이미 고정되어 있는 창이면 해제
-        WinSet, AlwaysOnTop, Off, ahk_id %activeWindow%
-        alwaysOnTopWindow := ""
-        ToolTip, 창 고정이 해제되었습니다
-        SetTimer, RemoveToolTip, -500
-    }
-    else
-    {
-        ; 다른 창 고정되어 있으면 먼저 해제하고, 현재 창 고정
-        if (alwaysOnTopWindow != "")
-        {
-            WinSet, AlwaysOnTop, Off, ahk_id %alwaysOnTopWindow%
-        }
-        WinSet, AlwaysOnTop, On, ahk_id %activeWindow%
-        alwaysOnTopWindow := activeWindow
-        ToolTip, 창이 고정되었습니다
-        SetTimer, RemoveToolTip, -500
-    }
-return
-
-#IfWinNotActive  ; 컨텍스트 설정 해제
 
 ; --------------------------------------------------------------------------
 ; [Slack 하이퍼링크 붙여넣기] (Ctrl+Shift+V) - Slack 창에서만 동작
@@ -1103,7 +856,7 @@ FormatSeconds(sec) {
 ; =================================================================================================
 InitializePaths() {
     global g_RootDir, g_SettingsDir, g_UtilsDir, g_GamesDir, g_LibDir
-    global g_JBBJLibrary, g_InstallFiles, g_FileCommentSystem, g_SVGConverter
+    global g_JBBJLibrary, g_InstallFiles, g_SVGConverter
     global g_AHKv2Path, g_UserGuideURL
 
     ; 스크립트가 루트 폴더에 직접 위치 (옵션 B: 소스 폴더 없음)
@@ -1119,7 +872,6 @@ InitializePaths() {
     if FileExist(settingsFile) {
         IniRead, g_JBBJLibrary, %settingsFile%, 경로, 자료실
         IniRead, g_InstallFiles, %settingsFile%, 경로, 설치파일
-        IniRead, g_FileCommentSystem, %settingsFile%, 경로, 파일주석시스템
         IniRead, g_SVGConverter, %settingsFile%, 경로, SVG변환기
         IniRead, g_AHKv2Path, %settingsFile%, AutoHotkey, AHKv2
         IniRead, g_UserGuideURL, %settingsFile%, 기타, 사용설명서URL
@@ -1127,7 +879,6 @@ InitializePaths() {
         ; 기본값 사용 (settings.ini 없을 경우)
         g_JBBJLibrary := "G:\공유 드라이브\JBBJ 자료실"
         g_InstallFiles := g_JBBJLibrary . "\PC 설치 자료들"
-        g_FileCommentSystem := g_JBBJLibrary . "\MOHO universal\JBBJ작업도우미\주석시스템\JBBJ_FileCommnetSystem\파일_주석_시스템.ahk"
         g_SVGConverter := ""
         g_AHKv2Path := "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
         g_UserGuideURL := "https://studio-jbbj.slack.com/docs/T03HKE9MNCV/F086ZGRSBB4"
@@ -1487,15 +1238,6 @@ LoadAliases() {
     }
 }
 
-LoadProgramClasses() {
-    global programClassList, g_SettingsDir
-    classFile := g_SettingsDir . "\program_classes.txt"
-    Loop, Read, %classFile%
-    {
-        if (A_LoopReadLine != "")
-            programClassList.Push(A_LoopReadLine)
-    }
-}
 
 
 ; --------------------------------------------------------------------------
