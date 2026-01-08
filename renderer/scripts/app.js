@@ -79,6 +79,7 @@ async function initApp() {
     commentImagePreview: document.getElementById('commentImagePreview'),
     commentPreviewImg: document.getElementById('commentPreviewImg'),
     commentImageRemove: document.getElementById('commentImageRemove'),
+    btnCompactView: document.getElementById('btnCompactView'),
 
     // 이미지 뷰어
     imageViewerOverlay: document.getElementById('imageViewerOverlay'),
@@ -128,6 +129,7 @@ async function initApp() {
     isDrawMode: false,
     isCommentMode: false, // 댓글 추가 모드
     isFullscreen: false, // 전체화면 모드
+    isCompactView: false, // 댓글 컴팩트 뷰
     currentFile: null,
     pendingCommentImage: null, // 댓글 첨부 이미지 { base64, width, height }
     // 비디오 줌 상태
@@ -790,6 +792,14 @@ async function initApp() {
   // 이미지 제거 버튼
   elements.commentImageRemove?.addEventListener('click', () => {
     clearCommentImage();
+  });
+
+  // 컴팩트 뷰 토글 버튼
+  elements.btnCompactView?.addEventListener('click', () => {
+    state.isCompactView = !state.isCompactView;
+    elements.commentsList?.classList.toggle('compact', state.isCompactView);
+    elements.btnCompactView.classList.toggle('active', state.isCompactView);
+    elements.btnCompactView.title = state.isCompactView ? '일반 뷰로 전환' : '컴팩트 뷰로 전환';
   });
 
   // 마커 컨테이너 클릭 (영상 위 클릭으로 마커 생성)
@@ -2571,11 +2581,12 @@ async function initApp() {
       }
     });
 
-    // 클릭 - 고정 토글
+    // 클릭 - 우측 댓글로 스크롤 및 고정 토글
     markerEl.addEventListener('click', (e) => {
       e.stopPropagation();
       if (e.target.closest('.tooltip-btn')) return;
-      commentManager.toggleMarkerPinned(marker.id);
+      // 우측 댓글 패널로 스크롤 및 글로우 효과
+      scrollToCommentWithGlow(marker.id);
     });
 
     // 해결 버튼
@@ -3054,6 +3065,34 @@ async function initApp() {
 
   // 전역으로 노출 (마커에서 호출용)
   window.scrollToCommentAndExpandThread = scrollToCommentAndExpandThread;
+
+  /**
+   * 특정 댓글로 스크롤하고 글로우 효과 표시
+   */
+  function scrollToCommentWithGlow(markerId) {
+    const container = elements.commentsList;
+    if (!container) return;
+
+    const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
+    if (commentItem) {
+      // 댓글 패널 열기
+      const commentPanel = document.getElementById('commentPanel');
+      commentPanel?.classList.add('open');
+
+      // 스크롤
+      commentItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      // 선택 표시
+      container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
+      commentItem.classList.add('selected');
+
+      // 글로우 효과
+      commentItem.classList.add('glow');
+      setTimeout(() => {
+        commentItem.classList.remove('glow');
+      }, 1500);
+    }
+  }
 
   /**
    * 상대 시간 포맷

@@ -2129,6 +2129,95 @@ body {
   background: var(--accent-glow);
 }
 
+.comment-item.glow {
+  animation: commentGlow 1.5s ease-out;
+}
+
+@keyframes commentGlow {
+  0% {
+    box-shadow: 0 0 20px var(--accent-primary), 0 0 40px var(--accent-primary);
+  }
+  100% {
+    box-shadow: none;
+  }
+}
+
+/* 컴팩트 뷰 */
+.comments-list.compact .comment-item {
+  padding: 8px 12px;
+  padding-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.comments-list.compact .comment-resolve-toggle {
+  position: static;
+  padding: 2px 6px;
+  font-size: 10px;
+  min-width: auto;
+  flex-shrink: 0;
+}
+
+.comments-list.compact .comment-header {
+  order: 3;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.comments-list.compact .comment-timecode {
+  font-size: 10px;
+  padding: 2px 4px;
+}
+
+.comments-list.compact .comment-content {
+  flex: 1;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.comments-list.compact .comment-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+  font-size: 12px;
+}
+
+.comments-list.compact .comment-attached-image,
+.comments-list.compact .comment-thumbnail-card,
+.comments-list.compact .comment-avatar-bg,
+.comments-list.compact .comment-edit-form,
+.comments-list.compact .comment-replies,
+.comments-list.compact .comment-thread-toggle {
+  display: none !important;
+}
+
+.comments-list.compact .comment-actions {
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.comments-list.compact .comment-actions .comment-action-btn {
+  display: none;
+}
+
+.comments-list.compact .comment-timecode-compact {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.comments-list.compact .comment-author-inline {
+  font-size: 11px;
+  max-width: 60px;
+}
+
+.comments-list.compact .comment-time-inline {
+  display: none;
+}
+
 /* 특별 아바타가 있는 댓글 카드 */
 .comment-item.has-avatar {
   position: relative;
