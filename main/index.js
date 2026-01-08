@@ -91,8 +91,8 @@ app.removeAsDefaultProtocolClient('baeframe');
 
 if (process.defaultApp) {
   // 개발 모드 (npm start / npx electron .)
-  // 현재 프로젝트의 node_modules 내 electron 사용
-  const projectDir = path.resolve(__dirname, '..');
+  // process.cwd()를 사용해 실제 프로젝트 경로 얻기 (__dirname은 npm 전역 경로일 수 있음)
+  const projectDir = process.cwd();
   const localElectron = path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe');
 
   log.info('개발 모드 프로토콜 등록', {
