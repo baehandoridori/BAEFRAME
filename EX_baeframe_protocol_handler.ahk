@@ -19,11 +19,18 @@ SetBatchLines, -1    ; 최대 속도로 실행
 ; ║  여러 경로를 설정하면 순서대로 확인하여 먼저 찾은 경로를 사용합니다.       ║
 ; ╚═══════════════════════════════════════════════════════════════════════════╝
 global BAEFRAME_PATHS := []
+BAEFRAME_PATHS.Push("G:\공유 드라이브\JBBJ 자료실\한솔이의 두근두근 실험실\BFRAME_테스트빌드")          ; 테스트 빌드 경로 (최우선)
 BAEFRAME_PATHS.Push("C:\BAEframe\BAEFRAME")                                                            ; 테스트용 경로
 BAEFRAME_PATHS.Push("G:\공유 드라이브\개인작업일지 배한솔\BAEFRAME")                                    ; 실제 배포 경로
 BAEFRAME_PATHS.Push("G:\공유 드라이브\개인작업일지 모음\개인작업일지_배한솔\02_업무\프로젝트\BAEFRAME")  ; 프로젝트 경로
 BAEFRAME_PATHS.Push("G:\공유 드라이브\JBBJ 자료실\한솔이의 두근두근 실험실\BAEFRAME")                   ; JBBJ 자료실 경로
 ; BAEFRAME_PATHS.Push("여기에 추가 경로...")                                                            ; 필요시 추가
+
+; EXE 파일명 목록 (순서대로 검색)
+global BAEFRAME_EXES := []
+BAEFRAME_EXES.Push("BFRAME_alpha_v2.exe")   ; 테스트 빌드 v2
+BAEFRAME_EXES.Push("BFRAME_alpha_v1.exe")   ; 테스트 빌드 v1
+BAEFRAME_EXES.Push("BAEFRAME.exe")          ; 정식 빌드
 
 ; 명령줄 인자 받기 (baeframe://G:/경로/파일.bframe 또는 G:\경로\파일.bframe)
 fullArg := A_Args[1]
@@ -70,14 +77,19 @@ path := Trim(path)
 ; BAEFRAME 앱 경로 탐색 (설정된 경로들을 순서대로 확인)
 ; ─────────────────────────────────────────────
 baeframeDir := ""
+baeframeExeName := ""
 
-for index, tryPath in BAEFRAME_PATHS
+for pathIdx, tryPath in BAEFRAME_PATHS
 {
-    ; 1순위: BAEFRAME.exe (빌드된 앱)
-    if FileExist(tryPath . "\BAEFRAME.exe")
+    ; 1순위: EXE 파일 검색 (BAEFRAME_EXES 목록 순서대로)
+    for exeIdx, exeName in BAEFRAME_EXES
     {
-        baeframeDir := tryPath
-        break
+        if FileExist(tryPath . "\" . exeName)
+        {
+            baeframeDir := tryPath
+            baeframeExeName := exeName
+            break 2  ; 두 루프 모두 탈출
+        }
     }
     ; 2순위: package.json (개발 모드)
     if FileExist(tryPath . "\package.json")
@@ -99,14 +111,14 @@ if (baeframeDir = "")
 }
 
 ; BAEFRAME 실행
-baeframeExe := baeframeDir . "\BAEFRAME.exe"
-
-if FileExist(baeframeExe)
+if (baeframeExeName != "")
 {
+    baeframeExe := baeframeDir . "\" . baeframeExeName
+
     ; 빌드된 exe가 있으면 실행
     Run, "%baeframeExe%" "%path%",, UseErrorLevel
     if (ErrorLevel = "ERROR")
-        MsgBox, 48, BAEFRAME, BAEFRAME.exe 실행 실패`n`n경로: %baeframeExe%
+        MsgBox, 48, BAEFRAME, %baeframeExeName% 실행 실패`n`n경로: %baeframeExe%
     ExitApp
 }
 
