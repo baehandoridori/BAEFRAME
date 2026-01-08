@@ -32,6 +32,7 @@ async function initApp() {
     filePath: document.getElementById('filePath'),
     versionBadge: document.getElementById('versionBadge'),
     btnVersionHistory: document.getElementById('btnVersionHistory'),
+    btnSave: document.getElementById('btnSave'),
     btnCopyLink: document.getElementById('btnCopyLink'),
     btnOpenFolder: document.getElementById('btnOpenFolder'),
     btnOpenOther: document.getElementById('btnOpenOther'),
@@ -78,6 +79,7 @@ async function initApp() {
     commentImagePreview: document.getElementById('commentImagePreview'),
     commentPreviewImg: document.getElementById('commentPreviewImg'),
     commentImageRemove: document.getElementById('commentImageRemove'),
+    btnCompactView: document.getElementById('btnCompactView'),
 
     // 이미지 뷰어
     imageViewerOverlay: document.getElementById('imageViewerOverlay'),
@@ -127,6 +129,7 @@ async function initApp() {
     isDrawMode: false,
     isCommentMode: false, // 댓글 추가 모드
     isFullscreen: false, // 전체화면 모드
+    isCompactView: false, // 댓글 컴팩트 뷰
     currentFile: null,
     pendingCommentImage: null, // 댓글 첨부 이미지 { base64, width, height }
     // 비디오 줌 상태
@@ -162,10 +165,28 @@ async function initApp() {
 
   /**
    * 글로벌 Undo 실행
+   * 드로잉 모드일 때는 그리기 Undo를 먼저 시도
    */
   function globalUndo() {
+    // 드로잉 모드: 그리기 Undo 먼저 시도
+    if (state.isDrawMode) {
+      if (drawingManager.undo()) {
+        return true;
+      }
+      // 그리기 히스토리가 없으면 댓글 Undo 시도
+      if (undoStack.length > 0) {
+        const action = undoStack.pop();
+        if (action && action.undo) {
+          action.undo();
+          redoStack.push(action);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // 일반 모드: 댓글 Undo 먼저 시도
     if (undoStack.length === 0) {
-      // 댓글 스택이 비어있으면 그리기 Undo 시도
       return drawingManager.undo();
     }
 
@@ -180,10 +201,28 @@ async function initApp() {
 
   /**
    * 글로벌 Redo 실행
+   * 드로잉 모드일 때는 그리기 Redo를 먼저 시도
    */
   function globalRedo() {
+    // 드로잉 모드: 그리기 Redo 먼저 시도
+    if (state.isDrawMode) {
+      if (drawingManager.redo()) {
+        return true;
+      }
+      // 그리기 히스토리가 없으면 댓글 Redo 시도
+      if (redoStack.length > 0) {
+        const action = redoStack.pop();
+        if (action && action.redo) {
+          action.redo();
+          undoStack.push(action);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // 일반 모드: 댓글 Redo 먼저 시도
     if (redoStack.length === 0) {
-      // Redo 스택이 비어있으면 그리기 Redo 시도
       return drawingManager.redo();
     }
 
@@ -253,7 +292,7 @@ async function initApp() {
     drawingManager,
     highlightManager,
     autoSave: true,
-    autoSaveDelay: 2000 // 2초 디바운스
+    autoSaveDelay: 500 // 500ms 디바운스
   });
   reviewDataManager.connect();
 
@@ -626,6 +665,11 @@ async function initApp() {
     videoPlayer.seek(time);
   });
 
+  // 타임라인 줌 변경 시 마커 다시 렌더링 (클러스터링 재계산)
+  timeline.addEventListener('zoomChanged', () => {
+    updateTimelineMarkers();
+  });
+
   // ====== 이벤트 리스너 설정 ======
 
   // 파일 열기 버튼
@@ -750,6 +794,14 @@ async function initApp() {
     clearCommentImage();
   });
 
+  // 컴팩트 뷰 토글 버튼
+  elements.btnCompactView?.addEventListener('click', () => {
+    state.isCompactView = !state.isCompactView;
+    elements.commentsList?.classList.toggle('compact', state.isCompactView);
+    elements.btnCompactView.classList.toggle('active', state.isCompactView);
+    elements.btnCompactView.title = state.isCompactView ? '일반 뷰로 전환' : '컴팩트 뷰로 전환';
+  });
+
   // 마커 컨테이너 클릭 (영상 위 클릭으로 마커 생성)
   markerContainer.addEventListener('click', (e) => {
     if (!state.isCommentMode) return;
@@ -764,6 +816,18 @@ async function initApp() {
 
     // 마커 생성 시작
     commentManager.startMarkerCreation(x, y);
+  });
+
+  // 수동 저장 버튼
+  elements.btnSave?.addEventListener('click', async () => {
+    if (!reviewDataManager.getBframePath()) {
+      showToast('저장할 파일이 없습니다', 'warn');
+      return;
+    }
+    const saved = await reviewDataManager.save();
+    if (saved) {
+      showToast('저장되었습니다', 'success');
+    }
   });
 
   // 링크 복사 (.bframe 파일 경로 + 웹 뷰어 링크)
@@ -799,11 +863,15 @@ async function initApp() {
           }
         } else {
           // 자동으로 Google Drive 파일 ID 추출 시도
+          log.info('Google Drive 파일 ID 검색 중...');
           const result = await window.electronAPI.generateGDriveShareLink(videoPath, bframePath);
           if (result.success) {
             storedDriveLinks.videoUrl = result.videoUrl;
             storedDriveLinks.bframeUrl = result.bframeUrl;
             webShareUrl = result.webShareUrl;
+          } else if (result.error) {
+            log.warn('웹 공유 링크 생성 실패', result.error);
+            // 사용자에게 피드백 (토스트 아님 - 로그만)
           }
         }
       } catch (error) {
@@ -812,11 +880,11 @@ async function initApp() {
     }
 
     // 클립보드에 복사할 내용 생성
-    // 형식: .bframe경로|웹공유URL|파일명
-    // AutoHotkey가 이 형식을 파싱하여 Slack 메시지 생성
+    // 형식: .bframe경로\n웹공유URL\n파일명 (줄바꿈 구분)
+    // AutoHotkey가 첫 줄만 baeframe:// URL로 사용
     let clipboardContent = windowsPath;
     if (webShareUrl) {
-      clipboardContent = `${windowsPath}|${webShareUrl}|${fileName}`;
+      clipboardContent = `${windowsPath}\n${webShareUrl}\n${fileName}`;
     }
 
     await window.electronAPI.copyToClipboard(clipboardContent);
@@ -2517,11 +2585,12 @@ async function initApp() {
       }
     });
 
-    // 클릭 - 고정 토글
+    // 클릭 - 우측 댓글로 스크롤 및 고정 토글
     markerEl.addEventListener('click', (e) => {
       e.stopPropagation();
       if (e.target.closest('.tooltip-btn')) return;
-      commentManager.toggleMarkerPinned(marker.id);
+      // 우측 댓글 패널로 스크롤 및 글로우 효과
+      scrollToCommentWithGlow(marker.id);
     });
 
     // 해결 버튼
@@ -2601,16 +2670,13 @@ async function initApp() {
 
   /**
    * 타임라인 마커 업데이트
-   * 최적화: O(n²) → O(n) - Map을 사용한 프레임별 그룹화
+   * 클러스터링 기반 렌더링 - 줌 레벨에 따라 가까운 마커 그룹화
    */
   function updateTimelineMarkers() {
     const ranges = commentManager.getMarkerRanges();
     const fps = videoPlayer.fps || 24;
 
-    // 기존 마커 제거
-    timeline.clearCommentMarkers();
-
-    // O(n): 프레임별로 마커 그룹화
+    // 프레임별로 마커 그룹화
     const frameMap = new Map();
     ranges.forEach(range => {
       if (!frameMap.has(range.startFrame)) {
@@ -2619,13 +2685,21 @@ async function initApp() {
       frameMap.get(range.startFrame).push(range);
     });
 
-    // O(n): 그룹화된 마커 추가
+    // 클러스터링용 마커 데이터 배열 생성
+    const allMarkerData = [];
     frameMap.forEach((markersAtFrame, frame) => {
       const time = frame / fps;
-      // 해당 프레임의 모든 마커 중 하나라도 resolved가 아니면 미해결 상태
       const allResolved = markersAtFrame.every(m => m.resolved);
-      timeline.addCommentMarker(time, allResolved, frame, markersAtFrame);
+      allMarkerData.push({
+        time,
+        frame,
+        resolved: allResolved,
+        infos: markersAtFrame
+      });
     });
+
+    // 클러스터링된 마커 렌더링
+    timeline.renderClusteredCommentMarkers(allMarkerData);
   }
 
   /**
@@ -2997,6 +3071,34 @@ async function initApp() {
   window.scrollToCommentAndExpandThread = scrollToCommentAndExpandThread;
 
   /**
+   * 특정 댓글로 스크롤하고 글로우 효과 표시
+   */
+  function scrollToCommentWithGlow(markerId) {
+    const container = elements.commentsList;
+    if (!container) return;
+
+    const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
+    if (commentItem) {
+      // 댓글 패널 열기
+      const commentPanel = document.getElementById('commentPanel');
+      commentPanel?.classList.add('open');
+
+      // 스크롤
+      commentItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      // 선택 표시
+      container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
+      commentItem.classList.add('selected');
+
+      // 글로우 효과
+      commentItem.classList.add('glow');
+      setTimeout(() => {
+        commentItem.classList.remove('glow');
+      }, 1500);
+    }
+  }
+
+  /**
    * 상대 시간 포맷
    */
   function formatRelativeTime(date) {
@@ -3234,6 +3336,22 @@ async function initApp() {
         e.preventDefault();
         if (globalRedo()) {
           showToast('다시 실행됨', 'info');
+        }
+      }
+      return;
+
+    case 'KeyS':
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+S: 수동 저장
+        e.preventDefault();
+        if (reviewDataManager.getBframePath()) {
+          reviewDataManager.save().then(saved => {
+            if (saved) {
+              showToast('저장되었습니다', 'success');
+            }
+          });
+        } else {
+          showToast('저장할 파일이 없습니다', 'warn');
         }
       }
       return;

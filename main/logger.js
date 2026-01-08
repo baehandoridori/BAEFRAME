@@ -13,6 +13,25 @@ const LOG_LEVELS = {
   ERROR: 3
 };
 
+/**
+ * 로그 디렉토리 경로 결정
+ * - 패키징된 앱: AppData/Roaming/baeframe/logs
+ * - 개발 모드: 프로젝트/logs
+ */
+function getDefaultLogDir() {
+  // 패키징된 앱인지 확인 (app.asar가 경로에 포함되어 있는지)
+  const isPackaged = __dirname.includes('app.asar');
+
+  if (isPackaged) {
+    // Windows: %APPDATA%/baeframe/logs
+    const appData = process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming');
+    return path.join(appData, 'baeframe', 'logs');
+  } else {
+    // 개발 모드: 프로젝트 폴더 내 logs
+    return path.join(__dirname, '..', 'logs');
+  }
+}
+
 class MainLogger {
   constructor(module, options = {}) {
     this.module = module;
@@ -20,9 +39,7 @@ class MainLogger {
     this.enableConsole = options.console ?? true;
     this.enableFile = options.file ?? true;
 
-    // __dirname 기반 경로 사용 (프로토콜 핸들러로 실행 시 process.cwd()가 system32가 됨)
-    // app.getPath()는 app ready 전에 호출하면 에러 발생할 수 있음
-    this.logDir = options.logDir ?? path.join(__dirname, '..', 'logs');
+    this.logDir = options.logDir ?? getDefaultLogDir();
     this.logFile = null;
 
     this._ensureLogDir();
@@ -77,10 +94,12 @@ class MainLogger {
       );
     }
 
-    // 파일 출력
+    // 파일 출력 (비동기 - 이벤트 루프 블로킹 방지)
     if (this.enableFile) {
       const logLine = JSON.stringify(log) + '\n';
-      fs.appendFileSync(this._getLogFilePath(), logLine, 'utf-8');
+      fs.appendFile(this._getLogFilePath(), logLine, 'utf-8', (err) => {
+        if (err) console.error('로그 파일 쓰기 실패:', err.message);
+      });
     }
   }
 

@@ -1299,6 +1299,11 @@ body {
   left: 0;
   right: 0;
   border: 1px solid var(--border-default);
+  cursor: grab;
+}
+
+.track-clip.video:active {
+  cursor: grabbing;
 }
 
 /* Playhead - 핸들과 라인이 timeline-tracks의 자식으로 동일한 left 값 공유 */
@@ -2122,6 +2127,95 @@ body {
 .comment-item.selected {
   border-color: var(--accent-primary);
   background: var(--accent-glow);
+}
+
+.comment-item.glow {
+  animation: commentGlow 1.5s ease-out;
+}
+
+@keyframes commentGlow {
+  0% {
+    box-shadow: 0 0 20px var(--accent-primary), 0 0 40px var(--accent-primary);
+  }
+  100% {
+    box-shadow: none;
+  }
+}
+
+/* 컴팩트 뷰 */
+.comments-list.compact .comment-item {
+  padding: 8px 12px;
+  padding-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.comments-list.compact .comment-resolve-toggle {
+  position: static;
+  padding: 2px 6px;
+  font-size: 10px;
+  min-width: auto;
+  flex-shrink: 0;
+}
+
+.comments-list.compact .comment-header {
+  order: 3;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.comments-list.compact .comment-timecode {
+  font-size: 10px;
+  padding: 2px 4px;
+}
+
+.comments-list.compact .comment-content {
+  flex: 1;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.comments-list.compact .comment-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+  font-size: 12px;
+}
+
+.comments-list.compact .comment-attached-image,
+.comments-list.compact .comment-thumbnail-wrapper,
+.comments-list.compact .comment-avatar-bg,
+.comments-list.compact .comment-edit-form,
+.comments-list.compact .comment-replies,
+.comments-list.compact .comment-thread-toggle {
+  display: none !important;
+}
+
+.comments-list.compact .comment-actions {
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.comments-list.compact .comment-actions .comment-action-btn {
+  display: none;
+}
+
+.comments-list.compact .comment-timecode-compact {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.comments-list.compact .comment-author-inline {
+  font-size: 11px;
+  max-width: 60px;
+}
+
+.comments-list.compact .comment-time-inline {
+  display: none;
 }
 
 /* 특별 아바타가 있는 댓글 카드 */
@@ -3073,12 +3167,83 @@ body.resizing .comment-panel {
 
 .comment-marker-track.resolved {
   background: var(--success);
-  opacity: 0.6;
+  opacity: 0.8;
 }
 
 .comment-marker-track.resolved::before {
   content: '✓';
-  color: var(--success);
+  color: white;
+  background: var(--success);
+  font-size: 10px;
+  font-weight: bold;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* 클러스터된 마커 (여러 마커 겹침) */
+.comment-marker-track.clustered {
+  width: 5px;
+  background: var(--warning, #f59e0b);
+  z-index: 15;
+}
+
+.comment-marker-track.clustered::before {
+  content: '💬';
+}
+
+.comment-marker-track.clustered::after {
+  content: attr(data-count);
+  position: absolute;
+  top: -8px;
+  left: 8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--error);
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  z-index: 16;
+}
+
+/* 툴팁 헤더 (타임코드 + 프레임) */
+.tooltip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tooltip-timecode {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  color: var(--accent-primary);
+  font-weight: bold;
+}
+
+.tooltip-frame {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.tooltip-count {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* ========================================

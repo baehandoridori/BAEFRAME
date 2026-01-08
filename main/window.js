@@ -51,11 +51,13 @@ function createMainWindow() {
   }
 
   // 준비되면 보여주기
+  const windowCreateTime = Date.now();
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     log.info('메인 윈도우 표시됨', {
       width: windowWidth,
-      height: windowHeight
+      height: windowHeight,
+      loadTime: `${Date.now() - windowCreateTime}ms`
     });
     trace.end();
   });

@@ -2,13 +2,39 @@
  * baeframe - Electron Main Process Entry Point
  */
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+// ============================================
+// 시작 디버깅 (프로토콜 링크 문제 진단용)
+// ============================================
+const fs = require('fs');
 const path = require('path');
+const startupDebugPath = path.join(process.env.APPDATA || '', 'baeframe', 'startup-debug.log');
+
+function debugLog(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try {
+    fs.appendFileSync(startupDebugPath, line);
+  } catch (e) { /* ignore */ }
+}
+
+debugLog('========== 앱 시작 ==========');
+debugLog(`argv: ${JSON.stringify(process.argv)}`);
+debugLog(`cwd: ${process.cwd()}`);
+debugLog(`__dirname: ${__dirname}`);
+
+// 앱 시작 시간 측정
+const appStartTime = Date.now();
+
+const { app, BrowserWindow, ipcMain } = require('electron');
+debugLog('electron 모듈 로드 완료');
+
 const { createLogger } = require('./logger');
 const { createMainWindow, getMainWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
+debugLog('내부 모듈 로드 완료');
 
 const log = createLogger('Main');
+log.info(`앱 모듈 로딩 완료: ${Date.now() - appStartTime}ms`);
+debugLog(`로거 초기화 완료: ${Date.now() - appStartTime}ms`);
 
 // ============================================
 // baeframe:// 프로토콜 URL 파싱 헬퍼
@@ -18,6 +44,7 @@ const log = createLogger('Main');
  * - URL 디코딩 (한글 등 인코딩된 문자 복원)
  * - Slack이 G:/ → G/ 로 변환하는 문제 수정
  * - 슬래시를 백슬래시로 변환 (Windows)
+ * - 공유 링크 형식(경로|웹URL|파일명)에서 경로만 추출
  *
  * @param {string} url - baeframe://... 형식의 URL
  * @returns {string} 실제 파일 경로
@@ -37,6 +64,18 @@ function parseBaeframeUrl(url) {
     filePath = decodeURIComponent(filePath);
   } catch (e) {
     log.warn('URL 디코딩 실패, 원본 사용', { error: e.message });
+  }
+
+  // 공유 링크 형식: 경로\n웹URL\n파일명 또는 경로|웹URL|파일명
+  // 첫 번째 줄 또는 | 이전의 경로만 추출
+  if (filePath.includes('\n')) {
+    const parts = filePath.split('\n');
+    filePath = parts[0]; // 파일 경로만 사용
+    log.debug('공유 링크에서 경로 추출 (줄바꿈)', { extractedPath: filePath });
+  } else if (filePath.includes('|')) {
+    const parts = filePath.split('|');
+    filePath = parts[0]; // 파일 경로만 사용 (하위호환)
+    log.debug('공유 링크에서 경로 추출 (|)', { extractedPath: filePath });
   }
 
   // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
@@ -69,29 +108,95 @@ log.info('비디오 하드웨어 가속 플래그 적용됨');
 // ============================================
 // baeframe:// 프로토콜 등록 (Electron 내장)
 // ============================================
-// 개발 모드: process.execPath = electron.exe, process.argv[1] = "."
-// 빌드 모드: process.execPath = BAEFRAME.exe
+
+/**
+ * 실제 프로젝트 디렉토리 찾기
+ * - process.argv에서 프로젝트 경로 추출 (electron이 실행될 때 전달됨)
+ * - 글로벌 npm 설치 시에도 올바른 경로를 찾음
+ */
+function findProjectDir() {
+  const fs = require('fs');
+
+  // process.argv에서 프로젝트 경로 찾기
+  // electron . 또는 electron /path/to/project 형식으로 실행됨
+  for (let i = 1; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    // baeframe:// URL이나 옵션은 스킵
+    if (arg.startsWith('baeframe://') || arg.startsWith('-')) continue;
+
+    // 상대 경로(예: ".")를 절대 경로로 변환
+    const resolvedArg = path.resolve(arg);
+
+    // package.json이 있는 디렉토리인지 확인
+    const pkgPath = path.join(resolvedArg, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      return resolvedArg;  // 항상 절대 경로 반환
+    }
+  }
+
+  // __dirname에서 상위 디렉토리 (main 폴더의 부모)
+  const parentDir = path.resolve(__dirname, '..');
+  if (fs.existsSync(path.join(parentDir, 'package.json'))) {
+    return parentDir;
+  }
+
+  // 최후의 수단: process.cwd() (절대 경로)
+  return path.resolve(process.cwd());
+}
+
+// 기존 등록 제거 후 새로 등록 (항상 현재 경로로 강제 등록)
+app.removeAsDefaultProtocolClient('baeframe');
+
 if (process.defaultApp) {
-  // 개발 모드 (npm start / npx electron .)
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('baeframe', process.execPath, [path.resolve(process.argv[1])]);
+  // 개발 모드: 런처 bat 파일 사용 (소스 동기화 + electron 실행)
+  const projectDir = findProjectDir();
+  const launcherBat = path.join(projectDir, 'baeframe-protocol-launcher.bat');
+  const launcherExists = fs.existsSync(launcherBat);
+
+  log.info('개발 모드 프로토콜 등록', {
+    projectDir,
+    launcherBat,
+    launcherExists,
+    argv: process.argv
+  });
+
+  if (launcherExists) {
+    // cmd.exe /c 를 사용해서 bat 파일 실행
+    app.setAsDefaultProtocolClient('baeframe', process.env.ComSpec || 'cmd.exe', ['/c', launcherBat]);
+  } else {
+    // 런처가 없으면 기존 방식 (electron 직접 실행)
+    const localElectron = path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe');
+    if (fs.existsSync(localElectron)) {
+      app.setAsDefaultProtocolClient('baeframe', localElectron, [projectDir]);
+    } else {
+      app.setAsDefaultProtocolClient('baeframe', process.execPath, [projectDir]);
+    }
   }
 } else {
-  // 빌드된 exe
+  // 빌드된 exe - 현재 실행 파일로 등록
   app.setAsDefaultProtocolClient('baeframe');
 }
 
-log.info('baeframe:// 프로토콜 등록됨 (Electron 내장)');
+log.info('baeframe:// 프로토콜 등록됨', {
+  execPath: process.execPath,
+  defaultApp: process.defaultApp
+});
 
 // 단일 인스턴스 잠금
+debugLog('단일 인스턴스 잠금 요청 중...');
 const gotTheLock = app.requestSingleInstanceLock();
+debugLog(`잠금 결과: ${gotTheLock}`);
 
 if (!gotTheLock) {
+  debugLog('다른 인스턴스 실행 중 - 종료');
   log.warn('다른 인스턴스가 이미 실행 중입니다. 종료합니다.');
   app.quit();
 } else {
+  debugLog('잠금 획득 성공 - 메인 인스턴스로 실행');
+
   // 두 번째 인스턴스가 실행되려 할 때
   app.on('second-instance', (event, commandLine, workingDirectory) => {
+    debugLog(`second-instance 이벤트: ${JSON.stringify(commandLine)}`);
     log.info('두 번째 인스턴스 감지', { commandLine });
     const mainWindow = getMainWindow();
     if (mainWindow) {
@@ -121,14 +226,19 @@ if (!gotTheLock) {
   });
 
   // 앱 준비 완료
+  debugLog('whenReady 대기 중...');
   app.whenReady().then(() => {
-    log.info('앱 시작', { version: app.getVersion() });
+    debugLog(`앱 준비 완료: ${Date.now() - appStartTime}ms`);
+    log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
     // IPC 핸들러 설정
+    debugLog('IPC 핸들러 설정 중...');
     setupIpcHandlers();
 
     // 메인 윈도우 생성
+    debugLog('메인 윈도우 생성 중...');
     createMainWindow();
+    debugLog('메인 윈도우 생성 완료');
 
     // 시작 시 전달된 파일/프로토콜 인자 처리
     let fileArg = process.argv.find(arg =>
@@ -176,6 +286,15 @@ if (!gotTheLock) {
   // 앱 종료 전
   app.on('before-quit', () => {
     log.info('앱 종료 중...');
+  });
+
+  // 앱 종료 완료 - 프로세스 강제 종료
+  app.on('quit', () => {
+    log.info('앱 종료됨, 프로세스 정리');
+    // GPU 프로세스 등이 남아있을 수 있으므로 강제 종료
+    setTimeout(() => {
+      process.exit(0);
+    }, 500);
   });
 
   // 에러 핸들링
