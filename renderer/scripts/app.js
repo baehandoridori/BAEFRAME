@@ -32,6 +32,7 @@ async function initApp() {
     filePath: document.getElementById('filePath'),
     versionBadge: document.getElementById('versionBadge'),
     btnVersionHistory: document.getElementById('btnVersionHistory'),
+    btnSave: document.getElementById('btnSave'),
     btnCopyLink: document.getElementById('btnCopyLink'),
     btnOpenFolder: document.getElementById('btnOpenFolder'),
     btnOpenOther: document.getElementById('btnOpenOther'),
@@ -289,7 +290,7 @@ async function initApp() {
     drawingManager,
     highlightManager,
     autoSave: true,
-    autoSaveDelay: 2000 // 2초 디바운스
+    autoSaveDelay: 500 // 500ms 디바운스
   });
   reviewDataManager.connect();
 
@@ -805,6 +806,18 @@ async function initApp() {
 
     // 마커 생성 시작
     commentManager.startMarkerCreation(x, y);
+  });
+
+  // 수동 저장 버튼
+  elements.btnSave?.addEventListener('click', async () => {
+    if (!reviewDataManager.getBframePath()) {
+      showToast('저장할 파일이 없습니다', 'warn');
+      return;
+    }
+    const saved = await reviewDataManager.save();
+    if (saved) {
+      showToast('저장되었습니다', 'success');
+    }
   });
 
   // 링크 복사 (.bframe 파일 경로 + 웹 뷰어 링크)
