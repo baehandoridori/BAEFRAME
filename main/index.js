@@ -86,19 +86,36 @@ log.info('비디오 하드웨어 가속 플래그 적용됨');
 // ============================================
 // baeframe:// 프로토콜 등록 (Electron 내장)
 // ============================================
-// 개발 모드: process.execPath = electron.exe, process.argv[1] = "."
-// 빌드 모드: process.execPath = BAEFRAME.exe
+// 기존 등록 제거 후 새로 등록 (항상 현재 경로로 강제 등록)
+app.removeAsDefaultProtocolClient('baeframe');
+
 if (process.defaultApp) {
   // 개발 모드 (npm start / npx electron .)
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('baeframe', process.execPath, [path.resolve(process.argv[1])]);
+  // 현재 프로젝트의 node_modules 내 electron 사용
+  const projectDir = path.resolve(__dirname, '..');
+  const localElectron = path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe');
+
+  log.info('개발 모드 프로토콜 등록', {
+    projectDir,
+    localElectron,
+    exists: require('fs').existsSync(localElectron)
+  });
+
+  if (require('fs').existsSync(localElectron)) {
+    app.setAsDefaultProtocolClient('baeframe', localElectron, [projectDir]);
+  } else {
+    // 로컬 electron이 없으면 process.execPath 사용
+    app.setAsDefaultProtocolClient('baeframe', process.execPath, [projectDir]);
   }
 } else {
-  // 빌드된 exe
+  // 빌드된 exe - 현재 실행 파일로 등록
   app.setAsDefaultProtocolClient('baeframe');
 }
 
-log.info('baeframe:// 프로토콜 등록됨 (Electron 내장)');
+log.info('baeframe:// 프로토콜 등록됨', {
+  execPath: process.execPath,
+  defaultApp: process.defaultApp
+});
 
 // 단일 인스턴스 잠금
 const gotTheLock = app.requestSingleInstanceLock();
