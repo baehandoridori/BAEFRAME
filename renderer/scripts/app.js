@@ -876,11 +876,11 @@ async function initApp() {
     }
 
     // 클립보드에 복사할 내용 생성
-    // 형식: .bframe경로|웹공유URL|파일명
-    // AutoHotkey가 이 형식을 파싱하여 Slack 메시지 생성
+    // 형식: .bframe경로\n웹공유URL\n파일명 (줄바꿈 구분)
+    // AutoHotkey가 첫 줄만 baeframe:// URL로 사용
     let clipboardContent = windowsPath;
     if (webShareUrl) {
-      clipboardContent = `${windowsPath}|${webShareUrl}|${fileName}`;
+      clipboardContent = `${windowsPath}\n${webShareUrl}\n${fileName}`;
     }
 
     await window.electronAPI.copyToClipboard(clipboardContent);
