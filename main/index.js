@@ -148,22 +148,29 @@ function findProjectDir() {
 app.removeAsDefaultProtocolClient('baeframe');
 
 if (process.defaultApp) {
-  // 개발 모드 (npm start / npx electron .)
+  // 개발 모드: 런처 bat 파일 사용 (소스 동기화 + electron 실행)
   const projectDir = findProjectDir();
-  const localElectron = path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe');
+  const launcherBat = path.join(projectDir, 'baeframe-protocol-launcher.bat');
+  const launcherExists = fs.existsSync(launcherBat);
 
   log.info('개발 모드 프로토콜 등록', {
     projectDir,
-    localElectron,
-    argv: process.argv,
-    exists: require('fs').existsSync(localElectron)
+    launcherBat,
+    launcherExists,
+    argv: process.argv
   });
 
-  if (require('fs').existsSync(localElectron)) {
-    app.setAsDefaultProtocolClient('baeframe', localElectron, [projectDir]);
+  if (launcherExists) {
+    // cmd.exe /c 를 사용해서 bat 파일 실행
+    app.setAsDefaultProtocolClient('baeframe', process.env.ComSpec || 'cmd.exe', ['/c', launcherBat]);
   } else {
-    // 로컬 electron이 없으면 process.execPath 사용
-    app.setAsDefaultProtocolClient('baeframe', process.execPath, [projectDir]);
+    // 런처가 없으면 기존 방식 (electron 직접 실행)
+    const localElectron = path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe');
+    if (fs.existsSync(localElectron)) {
+      app.setAsDefaultProtocolClient('baeframe', localElectron, [projectDir]);
+    } else {
+      app.setAsDefaultProtocolClient('baeframe', process.execPath, [projectDir]);
+    }
   }
 } else {
   // 빌드된 exe - 현재 실행 파일로 등록
