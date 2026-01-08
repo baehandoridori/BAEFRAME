@@ -681,7 +681,7 @@ return
 #IfWinActive ahk_exe slack.exe
 
 ^+v::
-    global g_LastOriginalPath, g_LastJbbjLink, g_LastWebUrl
+    global g_LastOriginalPath, g_LastJbbjLink, g_LastWebUrl, isConvertingClipboard
 
     ; ─────────────────────────────────────────────
     ; [디버그] 어떤 값이 저장되어 있는지 확인
@@ -695,6 +695,12 @@ return
         Send, ^v
         return
     }
+
+    ; ★ 클립보드 변환 방지 (이 핫키 실행 중에는 ClipboardPathConverter가 덮어쓰지 않도록)
+    isConvertingClipboard := true
+
+    ; 웹 URL 미리 저장 (클립보드 변경 전에)
+    savedWebUrl := g_LastWebUrl
 
     ; 클립보드 백업
     savedClip := ClipboardAll
@@ -726,14 +732,14 @@ return
     ; ─────────────────────────────────────────────
     ; 6. 웹 뷰어 URL이 있으면 새 줄에 추가
     ; ─────────────────────────────────────────────
-    if (g_LastWebUrl != "")
+    if (savedWebUrl != "")
     {
         ; 새 줄로 이동
         Send, {Enter}
         Sleep, 50
 
         ; 웹 뷰어 URL 붙여넣기 (일반 텍스트)
-        Clipboard := "📱 모바일/웹: " . g_LastWebUrl
+        Clipboard := "📱 모바일/웹: " . savedWebUrl
         ClipWait, 1
         Send, ^v
     }
@@ -742,7 +748,10 @@ return
     Clipboard := savedClip
     savedClip := ""
 
-    if (g_LastWebUrl != "") {
+    ; ★ 클립보드 변환 다시 활성화
+    isConvertingClipboard := false
+
+    if (savedWebUrl != "") {
         ToolTip, 하이퍼링크 + 웹링크 생성 완료
     } else {
         ToolTip, 하이퍼링크 생성 완료

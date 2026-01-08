@@ -578,8 +578,8 @@ async function getGoogleDriveFileId(localPath) {
     try {
       log.info('DB 검색 중', { dbPath });
 
-      // DB 파일 읽기
-      const dbBuffer = fs.readFileSync(dbPath);
+      // DB 파일 읽기 (비동기 - 이벤트 루프 블로킹 방지)
+      const dbBuffer = await fs.promises.readFile(dbPath);
       const db = new SQL.Database(dbBuffer);
 
       try {

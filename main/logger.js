@@ -94,10 +94,12 @@ class MainLogger {
       );
     }
 
-    // 파일 출력
+    // 파일 출력 (비동기 - 이벤트 루프 블로킹 방지)
     if (this.enableFile) {
       const logLine = JSON.stringify(log) + '\n';
-      fs.appendFileSync(this._getLogFilePath(), logLine, 'utf-8');
+      fs.appendFile(this._getLogFilePath(), logLine, 'utf-8', (err) => {
+        if (err) console.error('로그 파일 쓰기 실패:', err.message);
+      });
     }
   }
 
