@@ -1146,8 +1146,13 @@ ClipboardPathConverter(clipType) {
     ; G:\ ~ Z:\ 드라이브 경로인지 확인 (공유 드라이브 포함)
     if RegExMatch(clipText, "i)^[G-Z]:\\")
     {
-        ; 경로 정제 (앞뒤 공백, 줄바꿈 제거)
+        ; BAEFRAME 새 형식: 경로\n웹URL\n파일명 (줄바꿈 구분)
+        ; 첫 줄(경로)만 추출
         cleanPath := Trim(clipText)
+        if (InStr(cleanPath, "`n")) {
+            StringSplit, lines, cleanPath, `n
+            cleanPath := Trim(lines1)  ; 첫 번째 줄 = 파일 경로
+        }
         cleanPath := RegExReplace(cleanPath, "[\r\n]+$", "")
         cleanPath := RegExReplace(cleanPath, "^[\r\n]+", "")
 
