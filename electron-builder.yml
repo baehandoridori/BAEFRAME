@@ -25,9 +25,14 @@ fileAssociations:
     description: BAEFRAME Review File
     role: Editor
 
+protocols:
+  - name: BFRAME Protocol
+    schemes:
+      - baeframe
+
 win:
   target:
-    - target: portable
+    - target: dir
       arch: x64
   icon: build/icon.ico
 
