@@ -108,79 +108,35 @@ log.info('비디오 하드웨어 가속 플래그 적용됨');
 // ============================================
 // baeframe:// 프로토콜 등록 (Electron 내장)
 // ============================================
-
-/**
- * 실제 프로젝트 디렉토리 찾기
- * - process.argv에서 프로젝트 경로 추출 (electron이 실행될 때 전달됨)
- * - 글로벌 npm 설치 시에도 올바른 경로를 찾음
- */
-function findProjectDir() {
-  const fs = require('fs');
-
-  // process.argv에서 프로젝트 경로 찾기
-  // electron . 또는 electron /path/to/project 형식으로 실행됨
-  for (let i = 1; i < process.argv.length; i++) {
-    const arg = process.argv[i];
-    // baeframe:// URL이나 옵션은 스킵
-    if (arg.startsWith('baeframe://') || arg.startsWith('-')) continue;
-
-    // 상대 경로(예: ".")를 절대 경로로 변환
-    const resolvedArg = path.resolve(arg);
-
-    // package.json이 있는 디렉토리인지 확인
-    const pkgPath = path.join(resolvedArg, 'package.json');
-    if (fs.existsSync(pkgPath)) {
-      return resolvedArg;  // 항상 절대 경로 반환
-    }
-  }
-
-  // __dirname에서 상위 디렉토리 (main 폴더의 부모)
-  const parentDir = path.resolve(__dirname, '..');
-  if (fs.existsSync(path.join(parentDir, 'package.json'))) {
-    return parentDir;
-  }
-
-  // 최후의 수단: process.cwd() (절대 경로)
-  return path.resolve(process.cwd());
-}
-
-// 기존 등록 제거 후 새로 등록 (항상 현재 경로로 강제 등록)
-app.removeAsDefaultProtocolClient('baeframe');
+//
+// 중요: 개발 모드에서는 프로토콜을 등록하지 않음
+// - 개발 모드와 빌드된 앱이 프로토콜을 서로 덮어쓰는 문제 방지
+// - 팀원들이 공유 드라이브의 빌드된 exe를 사용할 때 충돌 방지
+//
+// 프로토콜 등록 규칙:
+// - 빌드된 앱(process.defaultApp !== true)에서만 등록
+// - 개발 모드에서는 기존 등록을 유지
+// ============================================
 
 if (process.defaultApp) {
-  // 개발 모드: 런처 bat 파일 사용 (소스 동기화 + electron 실행)
-  const projectDir = findProjectDir();
-  const launcherBat = path.join(projectDir, 'baeframe-protocol-launcher.bat');
-  const launcherExists = fs.existsSync(launcherBat);
-
-  log.info('개발 모드 프로토콜 등록', {
-    projectDir,
-    launcherBat,
-    launcherExists,
-    argv: process.argv
+  // 개발 모드: 프로토콜 등록하지 않음 (팀원들의 프로토콜 설정 보호)
+  log.info('개발 모드 - 프로토콜 등록 건너뜀', {
+    execPath: process.execPath,
+    reason: '빌드된 앱의 프로토콜 설정을 덮어쓰지 않기 위함'
   });
-
-  if (launcherExists) {
-    // cmd.exe /c 를 사용해서 bat 파일 실행
-    app.setAsDefaultProtocolClient('baeframe', process.env.ComSpec || 'cmd.exe', ['/c', launcherBat]);
-  } else {
-    // 런처가 없으면 기존 방식 (electron 직접 실행)
-    const localElectron = path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe');
-    if (fs.existsSync(localElectron)) {
-      app.setAsDefaultProtocolClient('baeframe', localElectron, [projectDir]);
-    } else {
-      app.setAsDefaultProtocolClient('baeframe', process.execPath, [projectDir]);
-    }
-  }
+  debugLog('개발 모드 - 프로토콜 등록 건너뜀');
 } else {
   // 빌드된 exe - 현재 실행 파일로 등록
+  // 기존 등록 제거 후 새로 등록
+  app.removeAsDefaultProtocolClient('baeframe');
   app.setAsDefaultProtocolClient('baeframe');
-}
 
-log.info('baeframe:// 프로토콜 등록됨', {
-  execPath: process.execPath,
-  defaultApp: process.defaultApp
-});
+  log.info('baeframe:// 프로토콜 등록됨', {
+    execPath: process.execPath,
+    defaultApp: process.defaultApp
+  });
+  debugLog(`프로토콜 등록됨: ${process.execPath}`);
+}
 
 // 단일 인스턴스 잠금
 debugLog('단일 인스턴스 잠금 요청 중...');
