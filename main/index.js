@@ -102,10 +102,13 @@ function findProjectDir() {
     // baeframe:// URL이나 옵션은 스킵
     if (arg.startsWith('baeframe://') || arg.startsWith('-')) continue;
 
+    // 상대 경로(예: ".")를 절대 경로로 변환
+    const resolvedArg = path.resolve(arg);
+
     // package.json이 있는 디렉토리인지 확인
-    const pkgPath = path.join(arg, 'package.json');
+    const pkgPath = path.join(resolvedArg, 'package.json');
     if (fs.existsSync(pkgPath)) {
-      return arg;
+      return resolvedArg;  // 항상 절대 경로 반환
     }
   }
 
@@ -115,8 +118,8 @@ function findProjectDir() {
     return parentDir;
   }
 
-  // 최후의 수단: process.cwd()
-  return process.cwd();
+  // 최후의 수단: process.cwd() (절대 경로)
+  return path.resolve(process.cwd());
 }
 
 // 기존 등록 제거 후 새로 등록 (항상 현재 경로로 강제 등록)
