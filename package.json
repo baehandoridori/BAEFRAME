@@ -34,46 +34,6 @@
     "prettier": "^3.2.0"
   },
   "build": {
-    "appId": "com.baeframe.app",
-    "productName": "BFRAME_alpha_v2",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "main/**/*",
-      "preload/**/*",
-      "renderer/**/*",
-      "!**/*.md"
-    ],
-    "extraResources": [
-      {
-        "from": "mpv",
-        "to": "mpv",
-        "filter": ["**/*"]
-      }
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "dir",
-          "arch": ["x64"]
-        }
-      ],
-      "icon": "BFRAME_ico.ico"
-    },
-    "protocols": [
-      {
-        "name": "BFRAME Protocol",
-        "schemes": ["baeframe"]
-      }
-    ],
-    "fileAssociations": [
-      {
-        "ext": "bframe",
-        "name": "BFRAME Review File",
-        "description": "BFRAME 리뷰 파일",
-        "role": "Editor"
-      }
-    ]
+    "extends": null
   }
 }
