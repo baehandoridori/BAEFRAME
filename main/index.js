@@ -2,17 +2,39 @@
  * baeframe - Electron Main Process Entry Point
  */
 
+// ============================================
+// 시작 디버깅 (프로토콜 링크 문제 진단용)
+// ============================================
+const fs = require('fs');
+const path = require('path');
+const startupDebugPath = path.join(process.env.APPDATA || '', 'baeframe', 'startup-debug.log');
+
+function debugLog(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try {
+    fs.appendFileSync(startupDebugPath, line);
+  } catch (e) { /* ignore */ }
+}
+
+debugLog('========== 앱 시작 ==========');
+debugLog(`argv: ${JSON.stringify(process.argv)}`);
+debugLog(`cwd: ${process.cwd()}`);
+debugLog(`__dirname: ${__dirname}`);
+
 // 앱 시작 시간 측정
 const appStartTime = Date.now();
 
 const { app, BrowserWindow, ipcMain } = require('electron');
-const path = require('path');
+debugLog('electron 모듈 로드 완료');
+
 const { createLogger } = require('./logger');
 const { createMainWindow, getMainWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
+debugLog('내부 모듈 로드 완료');
 
 const log = createLogger('Main');
 log.info(`앱 모듈 로딩 완료: ${Date.now() - appStartTime}ms`);
+debugLog(`로거 초기화 완료: ${Date.now() - appStartTime}ms`);
 
 // ============================================
 // baeframe:// 프로토콜 URL 파싱 헬퍼
@@ -154,14 +176,20 @@ log.info('baeframe:// 프로토콜 등록됨', {
 });
 
 // 단일 인스턴스 잠금
+debugLog('단일 인스턴스 잠금 요청 중...');
 const gotTheLock = app.requestSingleInstanceLock();
+debugLog(`잠금 결과: ${gotTheLock}`);
 
 if (!gotTheLock) {
+  debugLog('다른 인스턴스 실행 중 - 종료');
   log.warn('다른 인스턴스가 이미 실행 중입니다. 종료합니다.');
   app.quit();
 } else {
+  debugLog('잠금 획득 성공 - 메인 인스턴스로 실행');
+
   // 두 번째 인스턴스가 실행되려 할 때
   app.on('second-instance', (event, commandLine, workingDirectory) => {
+    debugLog(`second-instance 이벤트: ${JSON.stringify(commandLine)}`);
     log.info('두 번째 인스턴스 감지', { commandLine });
     const mainWindow = getMainWindow();
     if (mainWindow) {
@@ -191,14 +219,19 @@ if (!gotTheLock) {
   });
 
   // 앱 준비 완료
+  debugLog('whenReady 대기 중...');
   app.whenReady().then(() => {
+    debugLog(`앱 준비 완료: ${Date.now() - appStartTime}ms`);
     log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
     // IPC 핸들러 설정
+    debugLog('IPC 핸들러 설정 중...');
     setupIpcHandlers();
 
     // 메인 윈도우 생성
+    debugLog('메인 윈도우 생성 중...');
     createMainWindow();
+    debugLog('메인 윈도우 생성 완료');
 
     // 시작 시 전달된 파일/프로토콜 인자 처리
     let fileArg = process.argv.find(arg =>
