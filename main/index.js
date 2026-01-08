@@ -86,18 +86,51 @@ log.info('비디오 하드웨어 가속 플래그 적용됨');
 // ============================================
 // baeframe:// 프로토콜 등록 (Electron 내장)
 // ============================================
+
+/**
+ * 실제 프로젝트 디렉토리 찾기
+ * - process.argv에서 프로젝트 경로 추출 (electron이 실행될 때 전달됨)
+ * - 글로벌 npm 설치 시에도 올바른 경로를 찾음
+ */
+function findProjectDir() {
+  const fs = require('fs');
+
+  // process.argv에서 프로젝트 경로 찾기
+  // electron . 또는 electron /path/to/project 형식으로 실행됨
+  for (let i = 1; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    // baeframe:// URL이나 옵션은 스킵
+    if (arg.startsWith('baeframe://') || arg.startsWith('-')) continue;
+
+    // package.json이 있는 디렉토리인지 확인
+    const pkgPath = path.join(arg, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      return arg;
+    }
+  }
+
+  // __dirname에서 상위 디렉토리 (main 폴더의 부모)
+  const parentDir = path.resolve(__dirname, '..');
+  if (fs.existsSync(path.join(parentDir, 'package.json'))) {
+    return parentDir;
+  }
+
+  // 최후의 수단: process.cwd()
+  return process.cwd();
+}
+
 // 기존 등록 제거 후 새로 등록 (항상 현재 경로로 강제 등록)
 app.removeAsDefaultProtocolClient('baeframe');
 
 if (process.defaultApp) {
   // 개발 모드 (npm start / npx electron .)
-  // process.cwd()를 사용해 실제 프로젝트 경로 얻기 (__dirname은 npm 전역 경로일 수 있음)
-  const projectDir = process.cwd();
+  const projectDir = findProjectDir();
   const localElectron = path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe');
 
   log.info('개발 모드 프로토콜 등록', {
     projectDir,
     localElectron,
+    argv: process.argv,
     exists: require('fs').existsSync(localElectron)
   });
 
