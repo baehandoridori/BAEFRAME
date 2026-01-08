@@ -3297,6 +3297,22 @@ async function initApp() {
       }
       return;
 
+    case 'KeyS':
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+S: 수동 저장
+        e.preventDefault();
+        if (reviewDataManager.getBframePath()) {
+          reviewDataManager.save().then(saved => {
+            if (saved) {
+              showToast('저장되었습니다', 'success');
+            }
+          });
+        } else {
+          showToast('저장할 파일이 없습니다', 'warn');
+        }
+      }
+      return;
+
     case 'Equal':
     case 'NumpadAdd':
       if (e.ctrlKey || e.metaKey) {
