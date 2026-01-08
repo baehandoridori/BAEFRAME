@@ -863,11 +863,15 @@ async function initApp() {
           }
         } else {
           // 자동으로 Google Drive 파일 ID 추출 시도
+          log.info('Google Drive 파일 ID 검색 중...');
           const result = await window.electronAPI.generateGDriveShareLink(videoPath, bframePath);
           if (result.success) {
             storedDriveLinks.videoUrl = result.videoUrl;
             storedDriveLinks.bframeUrl = result.bframeUrl;
             webShareUrl = result.webShareUrl;
+          } else if (result.error) {
+            log.warn('웹 공유 링크 생성 실패', result.error);
+            // 사용자에게 피드백 (토스트 아님 - 로그만)
           }
         }
       } catch (error) {

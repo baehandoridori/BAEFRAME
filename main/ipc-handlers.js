@@ -229,17 +229,38 @@ function setupIpcHandlers() {
   });
 
   // 웹 공유 링크 자동 생성 (로컬 경로에서)
+  // 재시도 로직 포함 - Google Drive 동기화 대기
   ipcMain.handle('gdrive:generate-share-link', async (event, videoPath, bframePath) => {
     const trace = log.trace('gdrive:generate-share-link');
-    try {
-      const videoResult = await getGoogleDriveFileId(videoPath);
-      const bframeResult = await getGoogleDriveFileId(bframePath);
+    const maxRetries = 3;
+    const retryDelay = 1000; // 1초 대기
 
-      if (!videoResult) {
-        throw new Error('영상 파일의 Drive ID를 찾을 수 없습니다');
+    // 재시도 로직을 포함한 파일 ID 검색
+    const getFileIdWithRetry = async (filePath, fileType) => {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        const fileId = await getGoogleDriveFileId(filePath);
+        if (fileId) {
+          return fileId;
+        }
+        if (attempt < maxRetries) {
+          log.info(`${fileType} 파일 ID 검색 재시도 (${attempt}/${maxRetries})`, { filePath });
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
       }
+      return null;
+    };
+
+    try {
+      log.info('Google Drive 공유 링크 생성 시작', { videoPath, bframePath });
+
+      const videoResult = await getFileIdWithRetry(videoPath, '영상');
+      if (!videoResult) {
+        throw new Error('영상 파일의 Drive ID를 찾을 수 없습니다. Google Drive 동기화를 확인해주세요.');
+      }
+
+      const bframeResult = await getFileIdWithRetry(bframePath, 'Bframe');
       if (!bframeResult) {
-        throw new Error('Bframe 파일의 Drive ID를 찾을 수 없습니다');
+        throw new Error('Bframe 파일의 Drive ID를 찾을 수 없습니다. 파일 저장 후 잠시 기다려주세요 (Google Drive 동기화 필요).');
       }
 
       const videoUrl = `https://drive.google.com/file/d/${videoResult}/view?usp=sharing`;

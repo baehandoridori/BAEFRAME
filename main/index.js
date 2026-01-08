@@ -2,6 +2,9 @@
  * baeframe - Electron Main Process Entry Point
  */
 
+// 앱 시작 시간 측정
+const appStartTime = Date.now();
+
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { createLogger } = require('./logger');
@@ -9,6 +12,7 @@ const { createMainWindow, getMainWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
 
 const log = createLogger('Main');
+log.info(`앱 모듈 로딩 완료: ${Date.now() - appStartTime}ms`);
 
 // ============================================
 // baeframe:// 프로토콜 URL 파싱 헬퍼
@@ -135,7 +139,7 @@ if (!gotTheLock) {
 
   // 앱 준비 완료
   app.whenReady().then(() => {
-    log.info('앱 시작', { version: app.getVersion() });
+    log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
     // IPC 핸들러 설정
     setupIpcHandlers();
