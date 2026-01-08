@@ -40,13 +40,16 @@ function parseBaeframeUrl(url) {
     log.warn('URL 디코딩 실패, 원본 사용', { error: e.message });
   }
 
-  // 공유 링크 형식: 경로|웹URL|파일명
-  // AutoHotkey가 전체 문자열을 baeframe:// URL로 만들 수 있음
-  // 첫 번째 | 이전의 경로만 추출
-  if (filePath.includes('|')) {
-    const parts = filePath.split('|');
+  // 공유 링크 형식: 경로\n웹URL\n파일명 또는 경로|웹URL|파일명
+  // 첫 번째 줄 또는 | 이전의 경로만 추출
+  if (filePath.includes('\n')) {
+    const parts = filePath.split('\n');
     filePath = parts[0]; // 파일 경로만 사용
-    log.debug('공유 링크에서 경로 추출', { originalParts: parts.length, extractedPath: filePath });
+    log.debug('공유 링크에서 경로 추출 (줄바꿈)', { extractedPath: filePath });
+  } else if (filePath.includes('|')) {
+    const parts = filePath.split('|');
+    filePath = parts[0]; // 파일 경로만 사용 (하위호환)
+    log.debug('공유 링크에서 경로 추출 (|)', { extractedPath: filePath });
   }
 
   // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
