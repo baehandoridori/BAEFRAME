@@ -4,7 +4,7 @@
 
 **개발 진행 상황 추적**
 
-`Last Updated: 2024-12-30`
+`Last Updated: 2025-01-09`
 
 </div>
 
@@ -245,7 +245,7 @@ graph LR
     style P5 fill:#fbbf24,stroke:#333,color:#000
     style P6 fill:#4ade80,stroke:#333,color:#000
     style P7 fill:#f87171,stroke:#333,color:#000
-    style P8 fill:#fbbf24,stroke:#333,color:#000
+    style P8 fill:#4ade80,stroke:#333,color:#000
     style P9 fill:#fbbf24,stroke:#333,color:#000
     style P10 fill:#f87171,stroke:#333,color:#000
 ```
@@ -260,7 +260,7 @@ graph LR
 | 5 | `WIP` | Undo/Redo |
 | 6 | `DONE` | 타임라인 고급 기능 |
 | 7 | `TODO` | 버전 관리 |
-| 8 | `WIP` | 링크 공유 (일부 완료) |
+| 8 | `DONE` | 링크 공유 (슬랙 프로토콜 완료) |
 | 9 | `WIP` | 사용자 설정 (일부 완료) |
 | 10 | `TODO` | 마무리 & 테스트 |
 
@@ -285,7 +285,7 @@ graph LR
 - [ ] 전체 기능 통합 테스트
 - [ ] 에러 핸들링 보강
 - [ ] 성능 최적화
-- [ ] 배포 스크립트 (포터블)
+- [x] 배포 빌드 (dir 빌드, 공유 드라이브 배포)
 
 ---
 
@@ -363,7 +363,7 @@ graph TD
 | 버전 | 빌드 일시 | 비고 |
 |:----:|:---------:|------|
 | alpha_v1 | 2025-01-09 01:18 | 첫 테스트 빌드, 로그 경로 버그 발견 |
-| alpha_v2 | 2025-01-09 (예정) | 프로세스 종료 + 공유 링크 파싱 수정 |
+| alpha_v2 | 2025-01-09 07:02 | 슬랙 프로토콜 수정, 아이콘 적용, dir 빌드 |
 
 ---
 
