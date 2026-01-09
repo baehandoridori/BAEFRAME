@@ -13,6 +13,7 @@
 ## 진행 상태 요약
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'pie1': '#86efac', 'pie2': '#fcd34d', 'pie3': '#fdba74'}}}%%
 pie title 전체 진행률
     "완료" : 45
     "진행 중" : 3
