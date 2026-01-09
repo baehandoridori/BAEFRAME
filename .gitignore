@@ -3,8 +3,12 @@ node_modules/
 
 # Build output
 dist/
-build/
 out/
+
+# Build resources (아이콘 등은 추적)
+!build/
+build/*
+!build/icon.*
 
 # Logs
 logs/*.log
