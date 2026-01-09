@@ -14,30 +14,30 @@
 
 ```mermaid
 pie title 전체 진행률
-    "완료" : 35
-    "진행 중" : 5
-    "예정" : 15
+    "완료" : 45
+    "진행 중" : 3
+    "예정" : 7
 ```
 
 | 상태 | 개수 | 비고 |
 |:----:|:----:|------|
-| `DONE` | 35 | 핵심 기능 완료 |
-| `WIP` | 5 | 웹 뷰어, Undo/Redo |
-| `TODO` | 15 | 버전 관리, 고급 기능 |
+| `DONE` | 45 | 핵심 기능 + UI/UX 완료 |
+| `WIP` | 3 | 웹 뷰어 |
+| `TODO` | 7 | 버전 관리, 문서화 |
 
 ---
 
-## 최근 완료 (2024-12-30)
+## 최근 완료 (2025-01-09)
 
 | 기능 | 상세 |
 |------|------|
-| 입력 필드 먹통 수정 | pointerdown 방식으로 업계 표준 적용 |
-| 특수 이름 볼드 표시 | 색상 이름별 스타일 적용 |
-| 키프레임 드래그 프리뷰 | 투명도 0.5 클론 + 툴팁 |
-| 프레임 삭제 버그 수정 | 키프레임 겹침 이슈 해결 |
-| Shift+3 단축키 | 키프레임 삭제 단축키 추가 |
-| 댓글 프레임 썸네일 | 토글 + 스케일 조절 |
-| run-baeframe.bat 개선 | package.json 변경 감지, 자동 npm install, 캐시 정리 |
+| 슬랙 프로토콜 링크 | 빌드된 앱에서 baeframe:// 링크 정상 작동 |
+| 앱 아이콘 적용 | 커스텀 아이콘 빌드에 적용 |
+| Undo/Redo 시스템 | UndoManager, Ctrl+Z/Y 단축키 |
+| 댓글 이미지 삽입 | 댓글에 이미지 첨부 기능 |
+| 단축키 커스텀 | 사용자 지정 단축키 설정 |
+| 웹 링크 복사 버튼 | Desktop에서 웹 뷰어 링크 생성 |
+| UI 개선 | 레이어 패널 높이 확장, 댓글 섹션 리사이즈 수정 |
 
 ---
 
@@ -168,27 +168,30 @@ graph LR
 
 ---
 
-### 기능 추가 `MED`
+### 기능 추가 `DONE`
 
-| 기능 | 상세 | 우선순위 |
-|------|------|:--------:|
-| 댓글 이미지 삽입 | 댓글에 이미지 첨부 기능 | `MED` |
-| 영상 내보내기 | 그리기 레이어 포함 내보내기 | `LOW` |
-| 단축키 커스텀 | 사용자 지정 단축키 설정 | `LOW` |
-| 웹 링크 복사 버튼 | Desktop에서 웹 뷰어 링크 생성 | `HIGH` |
+| 기능 | 상세 | 상태 |
+|------|------|:----:|
+| ~~댓글 이미지 삽입~~ | 댓글에 이미지 첨부 기능 | ✅ |
+| 영상 내보내기 | 그리기 레이어 포함 내보내기 | `TODO` |
+| ~~단축키 커스텀~~ | 사용자 지정 단축키 설정 | ✅ |
+| ~~웹 링크 복사 버튼~~ | Desktop에서 웹 뷰어 링크 생성 | ✅ |
 
 ---
 
-### UI 개선 `MED`
+### UI 개선 `DONE`
 
-- [ ] 레이어 패널 상하 높이 확장
-- [ ] 댓글 섹션 리사이즈 버그 수정 (왼쪽 확장 시 느림)
+- [x] 레이어 패널 상하 높이 확장
+- [x] 댓글 섹션 리사이즈 버그 수정 (왼쪽 확장 시 느림)
 
 ---
 
 ### 버그 수정
 
-> 현재 알려진 버그 없음
+| 버그 | 상세 | 상태 |
+|------|------|:----:|
+| 그리기 모드 클릭 전환 | 간헐적으로 그리기 모드에서 마우스가 클릭 모드로 전환됨 | `WIP` |
+| 댓글 선택 문제 | 클릭 시 의도치 않게 댓글이 선택되는 경우 있음 | `WIP` |
 
 ---
 
@@ -207,16 +210,16 @@ graph LR
 
 ---
 
-### 사용자 설정 `LOW`
+### 사용자 설정 `DONE`
 
-- [ ] 앱 실행 시 이름 입력 자동 표시 수정
+- [x] 앱 실행 시 이름 입력 자동 표시 수정
 
 ---
 
-### 문서화 `LOW`
+### 문서화 `WIP`
 
-- [ ] README.md 작성
-- [ ] 사용자 가이드 작성
+- [ ] 위키 페이지 추가
+- [ ] 발표용 슬라이드/PPT 작성
 
 ---
 
@@ -237,17 +240,17 @@ graph LR
     P8 --> P9[Phase 9<br/>사용자 설정]
     P9 --> P10[Phase 10<br/>마무리]
 
-    style P0 fill:#4ade80,stroke:#333,color:#000
-    style P1 fill:#4ade80,stroke:#333,color:#000
-    style P2 fill:#4ade80,stroke:#333,color:#000
-    style P3 fill:#4ade80,stroke:#333,color:#000
-    style P4 fill:#4ade80,stroke:#333,color:#000
-    style P5 fill:#fbbf24,stroke:#333,color:#000
-    style P6 fill:#4ade80,stroke:#333,color:#000
-    style P7 fill:#f87171,stroke:#333,color:#000
-    style P8 fill:#4ade80,stroke:#333,color:#000
-    style P9 fill:#fbbf24,stroke:#333,color:#000
-    style P10 fill:#f87171,stroke:#333,color:#000
+    style P0 fill:#86efac,stroke:#333,color:#000
+    style P1 fill:#86efac,stroke:#333,color:#000
+    style P2 fill:#86efac,stroke:#333,color:#000
+    style P3 fill:#86efac,stroke:#333,color:#000
+    style P4 fill:#86efac,stroke:#333,color:#000
+    style P5 fill:#86efac,stroke:#333,color:#000
+    style P6 fill:#86efac,stroke:#333,color:#000
+    style P7 fill:#fcd34d,stroke:#333,color:#000
+    style P8 fill:#86efac,stroke:#333,color:#000
+    style P9 fill:#86efac,stroke:#333,color:#000
+    style P10 fill:#fcd34d,stroke:#333,color:#000
 ```
 
 | Phase | 상태 | 상세 |
@@ -257,21 +260,21 @@ graph LR
 | 2 | `DONE` | UI 레이아웃 |
 | 3 | `DONE` | 그리기 기능 |
 | 4 | `DONE` | 댓글 시스템 |
-| 5 | `WIP` | Undo/Redo |
+| 5 | `DONE` | Undo/Redo |
 | 6 | `DONE` | 타임라인 고급 기능 |
 | 7 | `TODO` | 버전 관리 |
 | 8 | `DONE` | 링크 공유 (슬랙 프로토콜 완료) |
-| 9 | `WIP` | 사용자 설정 (일부 완료) |
+| 9 | `DONE` | 사용자 설정 |
 | 10 | `TODO` | 마무리 & 테스트 |
 
 ---
 
-### Phase 5: Undo/Redo `WIP`
+### Phase 5: Undo/Redo `DONE`
 
-- [ ] UndoManager 구현
-- [ ] 그리기 Undo/Redo
-- [ ] 댓글 Undo/Redo
-- [ ] Ctrl+Z / Ctrl+Y 단축키
+- [x] UndoManager 구현
+- [x] 그리기 Undo/Redo
+- [x] 댓글 Undo/Redo
+- [x] Ctrl+Z / Ctrl+Y 단축키
 
 ### Phase 7: 버전 관리 `TODO`
 
@@ -363,7 +366,7 @@ graph TD
 | 버전 | 빌드 일시 | 비고 |
 |:----:|:---------:|------|
 | alpha_v1 | 2025-01-09 01:18 | 첫 테스트 빌드, 로그 경로 버그 발견 |
-| alpha_v2 | 2025-01-09 07:02 | 슬랙 프로토콜 수정, 아이콘 적용, dir 빌드 |
+| alpha_v2 | 2025-01-09 05:30 | 슬랙 프로토콜 수정, 아이콘 적용, dir 빌드 |
 
 ---
 
