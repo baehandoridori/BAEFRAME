@@ -301,8 +301,26 @@ export class VersionDropdown {
       manualBadge.className = 'version-item-manual';
       manualBadge.textContent = '수동';
       badge.appendChild(manualBadge);
+    }
 
-      // 삭제 버튼 (수동 버전만)
+    // 버튼 컨테이너
+    const btnContainer = document.createElement('div');
+    btnContainer.className = 'version-item-actions';
+
+    // 편집 버튼 (모든 버전)
+    const editBtn = document.createElement('button');
+    editBtn.className = 'version-item-edit';
+    editBtn.title = '버전 번호 편집';
+    editBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._handleEditVersion(versionInfo);
+    });
+    btnContainer.appendChild(editBtn);
+
+    // 삭제 버튼 (수동 버전만)
+    if (versionInfo.isManual) {
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'version-item-delete';
       deleteBtn.title = '제거';
@@ -312,8 +330,10 @@ export class VersionDropdown {
         e.stopPropagation();
         this._handleRemoveManualVersion(versionInfo.path);
       });
-      badge.appendChild(deleteBtn);
+      btnContainer.appendChild(deleteBtn);
     }
+
+    badge.appendChild(btnContainer);
 
     // 조립
     item.appendChild(icon);
@@ -415,63 +435,96 @@ export class VersionDropdown {
         properties: ['openFile']
       });
 
-      if (result && !result.canceled && result.filePaths && result.filePaths.length > 0) {
-        const filePath = result.filePaths[0];
-        const fileName = this._extractFileName(filePath);
+      // 디버깅: 결과 확인
+      log.info('파일 다이얼로그 결과', result);
+      console.log('[VersionDropdown] 파일 다이얼로그 결과:', result);
 
-        // 기존 버전 목록에서 다음 버전 번호 제안
-        const allVersions = this._versionManager.getAllVersions();
-        const maxVersion = allVersions.reduce(
-          (max, v) => Math.max(max, v.version || 0),
-          0
+      if (!result) {
+        log.warn('파일 다이얼로그 결과가 없음');
+        return;
+      }
+
+      if (result.canceled) {
+        log.info('파일 선택 취소됨');
+        return;
+      }
+
+      if (!result.filePaths || result.filePaths.length === 0) {
+        log.warn('선택된 파일이 없음', result);
+        return;
+      }
+
+      const filePath = result.filePaths[0];
+      const fileName = this._extractFileName(filePath);
+      log.info('선택된 파일', { filePath, fileName });
+
+      // 기존 버전 목록에서 다음 버전 번호 제안
+      const allVersions = this._versionManager.getAllVersions();
+      const maxVersion = allVersions.reduce(
+        (max, v) => Math.max(max, v.version || 0),
+        0
+      );
+      const suggestedVersion = maxVersion + 1;
+
+      // 버전 번호 입력 받기 (간단한 prompt 사용)
+      const versionStr = prompt(
+        `"${fileName}"의 버전 번호를 입력하세요:`,
+        String(suggestedVersion)
+      );
+
+      log.info('버전 번호 입력', { versionStr });
+
+      if (versionStr === null) {
+        log.info('버전 번호 입력 취소됨');
+        return;
+      }
+
+      const version = parseInt(versionStr, 10);
+
+      if (isNaN(version) || version <= 0) {
+        alert('유효한 버전 번호를 입력해주세요 (1 이상의 숫자)');
+        return;
+      }
+
+      // 중복 버전 번호 검증
+      const existingVersion = allVersions.find((v) => v.version === version);
+      if (existingVersion) {
+        const retry = confirm(
+          `버전 ${version}은(는) 이미 "${existingVersion.fileName}"에 할당되어 있습니다.\n다른 번호를 사용하시겠습니까?`
         );
-        const suggestedVersion = maxVersion + 1;
-
-        // 버전 번호 입력 받기 (간단한 prompt 사용)
-        const versionStr = prompt(
-          `"${fileName}"의 버전 번호를 입력하세요:`,
-          String(suggestedVersion)
-        );
-
-        if (versionStr !== null) {
-          const version = parseInt(versionStr, 10);
-
-          if (!isNaN(version) && version > 0) {
-            // 중복 버전 번호 검증
-            const existingVersion = allVersions.find((v) => v.version === version);
-            if (existingVersion) {
-              const overwrite = confirm(
-                `버전 ${version}은(는) 이미 "${existingVersion.fileName}"에 할당되어 있습니다.\n다른 번호를 사용하시겠습니까?`
-              );
-              if (overwrite) {
-                // 다시 입력 받도록 재귀 호출
-                this._handleAddManualVersion();
-                return;
-              }
-            }
-
-            const manualVersionData = {
-              version,
-              fileName,
-              filePath,
-              addedAt: new Date().toISOString()
-            };
-
-            const added = this._versionManager.addManualVersion(manualVersionData);
-
-            if (added) {
-              log.info('수동 버전 추가 성공', { version, fileName, filePath });
-
-              // ReviewDataManager에도 저장 (영구 저장)
-              if (reviewDataManagerRef) {
-                reviewDataManagerRef.addManualVersion(manualVersionData);
-                log.info('수동 버전이 .bframe에 저장됨');
-              }
-            }
-          } else {
-            alert('유효한 버전 번호를 입력해주세요 (1 이상의 숫자)');
-          }
+        if (retry) {
+          // 다시 입력 받도록 재귀 호출
+          this._handleAddManualVersion();
         }
+        return;
+      }
+
+      const manualVersionData = {
+        version,
+        fileName,
+        filePath,
+        addedAt: new Date().toISOString()
+      };
+
+      log.info('수동 버전 데이터 생성', manualVersionData);
+
+      const added = this._versionManager.addManualVersion(manualVersionData);
+
+      if (added) {
+        log.info('수동 버전 추가 성공', { version, fileName, filePath });
+
+        // ReviewDataManager에도 저장 (영구 저장)
+        if (reviewDataManagerRef) {
+          reviewDataManagerRef.addManualVersion(manualVersionData);
+          log.info('수동 버전이 .bframe에 저장됨');
+        }
+
+        // 드롭다운 다시 열어서 결과 확인
+        this._render();
+        this.open();
+      } else {
+        log.warn('수동 버전 추가 실패 (이미 존재하는 파일)');
+        alert('이미 추가된 파일입니다.');
       }
     } catch (error) {
       log.error('수동 버전 추가 실패', error);
@@ -492,6 +545,103 @@ export class VersionDropdown {
         log.info('수동 버전이 .bframe에서 제거됨');
       }
     }
+  }
+
+  /**
+   * 버전 번호 편집 처리
+   * @param {Object} versionInfo
+   */
+  _handleEditVersion(versionInfo) {
+    log.info('버전 편집 요청', versionInfo);
+
+    const currentVersion = versionInfo.version;
+    const fileName = versionInfo.fileName || '';
+
+    // 새 버전 번호 입력
+    const newVersionStr = prompt(
+      `"${fileName}"의 버전 번호를 변경합니다.\n현재: v${currentVersion || '?'}\n\n새 버전 번호:`,
+      String(currentVersion || 1)
+    );
+
+    if (newVersionStr === null) {
+      log.info('버전 편집 취소됨');
+      return;
+    }
+
+    const newVersion = parseInt(newVersionStr, 10);
+
+    if (isNaN(newVersion) || newVersion <= 0) {
+      alert('유효한 버전 번호를 입력해주세요 (1 이상의 숫자)');
+      return;
+    }
+
+    if (newVersion === currentVersion) {
+      log.info('버전 번호 변경 없음');
+      return;
+    }
+
+    // 중복 버전 번호 검증
+    const allVersions = this._versionManager.getAllVersions();
+    const existingVersion = allVersions.find(
+      (v) => v.version === newVersion && v.path !== versionInfo.path
+    );
+
+    if (existingVersion) {
+      alert(
+        `버전 ${newVersion}은(는) 이미 "${existingVersion.fileName}"에 할당되어 있습니다.`
+      );
+      return;
+    }
+
+    // 수동 버전인 경우 VersionManager에서 업데이트
+    if (versionInfo.isManual) {
+      // 기존 버전 제거 후 새 버전으로 추가
+      this._versionManager.removeManualVersion(versionInfo.path);
+      this._versionManager.addManualVersion({
+        version: newVersion,
+        fileName: versionInfo.fileName,
+        filePath: versionInfo.path,
+        addedAt: new Date().toISOString()
+      });
+
+      // ReviewDataManager에도 반영
+      if (reviewDataManagerRef) {
+        reviewDataManagerRef.removeManualVersion(versionInfo.path);
+        reviewDataManagerRef.addManualVersion({
+          version: newVersion,
+          fileName: versionInfo.fileName,
+          filePath: versionInfo.path,
+          addedAt: new Date().toISOString()
+        });
+        log.info('수동 버전 번호가 .bframe에 업데이트됨', { oldVersion: currentVersion, newVersion });
+      }
+    } else {
+      // 자동 스캔된 버전은 수동 버전으로 변환하여 저장
+      // (원본 파일의 이름은 변경하지 않고, 오버라이드 정보만 저장)
+      this._versionManager.addManualVersion({
+        version: newVersion,
+        fileName: versionInfo.fileName,
+        filePath: versionInfo.path,
+        addedAt: new Date().toISOString(),
+        isOverride: true,
+        originalVersion: currentVersion
+      });
+
+      if (reviewDataManagerRef) {
+        reviewDataManagerRef.addManualVersion({
+          version: newVersion,
+          fileName: versionInfo.fileName,
+          filePath: versionInfo.path,
+          addedAt: new Date().toISOString(),
+          isOverride: true,
+          originalVersion: currentVersion
+        });
+        log.info('스캔 버전 오버라이드 저장됨', { originalVersion: currentVersion, newVersion });
+      }
+    }
+
+    log.info('버전 번호 변경 완료', { oldVersion: currentVersion, newVersion });
+    this._render();
   }
 
   /**
