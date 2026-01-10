@@ -3313,6 +3313,10 @@ async function initApp() {
     const threadOverlay = document.getElementById('threadOverlay');
     if (threadOverlay?.classList.contains('open')) return;
 
+    // 스플릿 뷰가 열려있으면 단축키 무시 (스플릿 뷰에서 자체 처리)
+    const splitViewManager = getSplitViewManager();
+    if (splitViewManager.isOpen()) return;
+
     // ====== 공통 단축키 ======
     switch (e.code) {
     case 'Space':

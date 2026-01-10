@@ -110,10 +110,53 @@ export class SplitViewManager {
     // 타임라인 컨트롤
     this._bindTimelineControls();
 
-    // ESC 키로 닫기
+    // 키보드 이벤트
+    this._bindKeyboardEvents();
+  }
+
+  /**
+   * 키보드 이벤트 바인딩
+   */
+  _bindKeyboardEvents() {
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this._isOpen) {
+      if (!this._isOpen) return;
+
+      // 입력 필드에서는 무시
+      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+
+      switch (e.code) {
+      case 'Escape':
+        e.preventDefault();
         this.close();
+        break;
+
+      case 'Space':
+        e.preventDefault();
+        this._togglePlay();
+        break;
+
+      case 'ArrowLeft':
+        e.preventDefault();
+        this._stepFrame(-1);
+        break;
+
+      case 'ArrowRight':
+        e.preventDefault();
+        this._stepFrame(1);
+        break;
+
+      case 'Home':
+        e.preventDefault();
+        this._seekToFrame(0);
+        break;
+
+      case 'End':
+        e.preventDefault();
+        this._seekToEnd();
+        break;
+
+      default:
+        break;
       }
     });
   }
