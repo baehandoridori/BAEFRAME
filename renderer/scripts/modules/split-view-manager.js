@@ -224,12 +224,22 @@ export class SplitViewManager {
    * @param {Object} options - { leftVersion, rightVersion }
    */
   async open(options = {}) {
-    if (this._isOpen) return;
+    if (this._isOpen) {
+      log.warn('스플릿 뷰가 이미 열려 있음');
+      return;
+    }
 
-    log.info('스플릿 뷰 열기', options);
+    log.info('스플릿 뷰 열기 시작', options);
+
+    // 오버레이 확인
+    if (!this._overlay) {
+      log.error('스플릿 뷰 오버레이를 찾을 수 없음');
+      return;
+    }
 
     // 버전 목록 가져오기
     const versions = this._versionManager.getAllVersions();
+    log.info('버전 목록', { count: versions.length, versions });
 
     if (versions.length < 2) {
       log.warn('비교할 버전이 2개 이상 필요합니다');
@@ -241,12 +251,16 @@ export class SplitViewManager {
     this._leftVersion = options.leftVersion || versions[0];
     this._rightVersion = options.rightVersion || versions[1];
 
+    log.info('초기 버전 설정', { left: this._leftVersion, right: this._rightVersion });
+
     // 같은 버전이면 다른 버전으로 설정
     if (this._leftVersion.path === this._rightVersion.path && versions.length > 1) {
       this._rightVersion = versions.find((v) => v.path !== this._leftVersion.path) || versions[1];
+      log.info('우측 버전 변경 (중복 방지)', { right: this._rightVersion });
     }
 
     // 오버레이 표시
+    log.info('오버레이 표시');
     this._overlay.classList.add('open');
     this._isOpen = true;
 
@@ -259,13 +273,17 @@ export class SplitViewManager {
     this._renderVersionSelector('Right', this._rightVersion);
 
     // 비디오 로드
-    await this._loadVideo('left', this._leftVersion);
-    await this._loadVideo('right', this._rightVersion);
+    try {
+      await this._loadVideo('left', this._leftVersion);
+      await this._loadVideo('right', this._rightVersion);
+    } catch (error) {
+      log.error('비디오 로드 실패', error);
+    }
 
     // 보조 패널(우측) 음소거
     this._setMuted('right', true);
 
-    log.info('스플릿 뷰 열림');
+    log.info('스플릿 뷰 열림 완료');
   }
 
   /**
