@@ -14,6 +14,8 @@ import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
 import { getImageFromClipboard, selectImageFile, isValidImageBase64 } from './modules/image-utils.js';
 import { parseVersion, toVersionInfo } from './modules/version-parser.js';
+import { getVersionManager } from './modules/version-manager.js';
+import { getVersionDropdown } from './modules/version-dropdown.js';
 
 const log = createLogger('App');
 
@@ -32,7 +34,7 @@ async function initApp() {
     fileName: document.getElementById('fileName'),
     filePath: document.getElementById('filePath'),
     versionBadge: document.getElementById('versionBadge'),
-    btnVersionHistory: document.getElementById('btnVersionHistory'),
+    // btnVersionHistory 제거됨 - 버전 드롭다운으로 대체
     btnSave: document.getElementById('btnSave'),
     btnCopyLink: document.getElementById('btnCopyLink'),
     btnOpenFolder: document.getElementById('btnOpenFolder'),
@@ -2084,15 +2086,35 @@ async function initApp() {
       elements.btnOpenFolder.style.display = 'flex';
       elements.btnOpenOther.style.display = 'flex';
 
-      // 버전 감지 (version-parser 모듈 사용)
+      // 버전 감지 및 드롭다운 초기화 (version-parser/manager/dropdown 모듈 사용)
       const versionResult = parseVersion(fileInfo.name);
+      const versionManager = getVersionManager();
+      const versionDropdown = getVersionDropdown();
+
+      // VersionManager에 현재 파일 설정 (폴더 스캔 포함)
+      await versionManager.setCurrentFile(filePath);
+
+      // versionInfo를 reviewDataManager에 설정
+      reviewDataManager.setVersionInfo(toVersionInfo(fileInfo.name));
+
+      // 버전 드롭다운 표시 및 버전 선택 콜백 설정
       if (versionResult.version !== null) {
-        elements.versionBadge.textContent = versionResult.displayLabel;
-        elements.versionBadge.style.display = 'inline-block';
-        // versionInfo를 reviewDataManager에 설정
-        reviewDataManager.setVersionInfo(toVersionInfo(fileInfo.name));
+        versionDropdown.show(versionResult.version);
+        versionDropdown.onVersionSelect(async (versionInfo) => {
+          log.info('버전 전환 요청', versionInfo);
+          if (versionInfo.path) {
+            await loadVideo(versionInfo.path);
+          }
+        });
       } else {
-        elements.versionBadge.style.display = 'none';
+        // 버전 없는 파일도 드롭다운은 표시 (수동 버전 추가 가능)
+        versionDropdown.show(null);
+        versionDropdown.onVersionSelect(async (versionInfo) => {
+          log.info('버전 전환 요청', versionInfo);
+          if (versionInfo.path) {
+            await loadVideo(versionInfo.path);
+          }
+        });
       }
 
       // 비디오 트랙 업데이트
@@ -4393,6 +4415,10 @@ async function initApp() {
       finishEditingShortcut(e);
     }
   });
+
+  // 버전 드롭다운 DOM 초기화
+  const versionDropdown = getVersionDropdown();
+  versionDropdown.init();
 
   log.info('앱 초기화 완료');
 

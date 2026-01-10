@@ -20,7 +20,38 @@
         <span class="file-icon">🎬</span>
         <span class="file-name" id="fileName">파일을 열어주세요</span>
         <span class="file-path" id="filePath"></span>
-        <span class="version-badge" id="versionBadge" style="display: none;">v1</span>
+        <!-- Version Dropdown -->
+        <div class="version-dropdown" id="versionDropdown" style="display: none;">
+          <button class="version-dropdown-trigger" id="versionDropdownTrigger">
+            <span class="version-badge-icon">📦</span>
+            <span class="version-badge-label" id="versionBadge">v1</span>
+            <svg class="version-dropdown-arrow" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="version-dropdown-menu" id="versionDropdownMenu">
+            <div class="version-dropdown-header">
+              <span>버전 목록</span>
+              <span class="version-count" id="versionCount">0</span>
+            </div>
+            <div class="version-list" id="versionList">
+              <!-- 버전 목록이 여기에 렌더링됨 -->
+            </div>
+            <div class="version-dropdown-divider"></div>
+            <button class="version-dropdown-action" id="btnAddManualVersion">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              수동 버전 추가
+            </button>
+            <button class="version-dropdown-action" id="btnRescanVersions">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+              폴더 다시 스캔
+            </button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="header-right">
@@ -31,10 +62,6 @@
       <button class="btn btn-secondary" id="btnOpenOther" title="다른 영상 파일 열기" style="display: none;">
         <span>🎬</span>
         다른 파일
-      </button>
-      <button class="btn btn-secondary" id="btnVersionHistory">
-        <span>📋</span>
-        버전 히스토리
       </button>
       <button class="btn btn-secondary" id="btnSave">
         <span>💾</span>
