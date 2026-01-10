@@ -503,6 +503,11 @@ export class SplitViewManager {
       rightBadge.textContent = panel === 'right' ? '활성' : '';
     }
 
+    // 독립 모드일 때 타임코드 업데이트 (활성 패널 표시 및 해당 패널의 프레임 정보)
+    if (this._mode === 'independent') {
+      this._updateTimecode();
+    }
+
     log.debug('활성 패널 변경됨', { panel });
   }
 
