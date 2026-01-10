@@ -5411,14 +5411,21 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   border-radius: 6px;
   font-size: 14px;
   flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+/* 수동 버전 아이콘 (SVG) */
+.version-item-icon svg {
+  stroke: currentColor;
 }
 
 .version-item.active .version-item-icon {
   background: var(--accent-primary);
+  color: var(--bg-primary);
 }
 
 .version-item.active .version-item-icon svg {
-  color: var(--bg-primary);
+  stroke: var(--bg-primary);
 }
 
 .version-item-info {

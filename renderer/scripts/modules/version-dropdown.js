@@ -46,6 +46,15 @@ function showPromptModal(message, defaultValue = '', title = '입력') {
     inputEl.focus();
     inputEl.select();
 
+    // 입력 중 다른 키보드 핸들러 방지
+    const handleKeypress = (e) => {
+      e.stopPropagation();
+    };
+
+    const handleInput = (e) => {
+      e.stopPropagation();
+    };
+
     // 클린업 함수
     const cleanup = () => {
       overlay.classList.remove('open');
@@ -53,7 +62,8 @@ function showPromptModal(message, defaultValue = '', title = '입력') {
       cancelBtn.removeEventListener('click', handleCancel);
       closeBtn.removeEventListener('click', handleCancel);
       inputEl.removeEventListener('keydown', handleKeydown);
-      overlay.removeEventListener('click', handleOverlayClick);
+      inputEl.removeEventListener('keypress', handleKeypress);
+      inputEl.removeEventListener('input', handleInput);
     };
 
     // 확인
@@ -68,8 +78,10 @@ function showPromptModal(message, defaultValue = '', title = '입력') {
       resolve(null);
     };
 
-    // 키보드 이벤트
+    // 키보드 이벤트 (input)
     const handleKeydown = (e) => {
+      // 다른 핸들러가 가로채지 않도록 전파 중지
+      e.stopPropagation();
       if (e.key === 'Enter') {
         e.preventDefault();
         handleConfirm();
@@ -79,19 +91,14 @@ function showPromptModal(message, defaultValue = '', title = '입력') {
       }
     };
 
-    // 오버레이 클릭 (배경 클릭 시 닫기)
-    const handleOverlayClick = (e) => {
-      if (e.target === overlay) {
-        handleCancel();
-      }
-    };
-
     // 이벤트 리스너 등록
     confirmBtn.addEventListener('click', handleConfirm);
     cancelBtn.addEventListener('click', handleCancel);
     closeBtn.addEventListener('click', handleCancel);
     inputEl.addEventListener('keydown', handleKeydown);
-    overlay.addEventListener('click', handleOverlayClick);
+    inputEl.addEventListener('keypress', handleKeypress);
+    inputEl.addEventListener('input', handleInput);
+    // 배경 클릭 시 닫히지 않도록 제거함 (사용자 요청)
   });
 }
 
@@ -357,7 +364,12 @@ export class VersionDropdown {
 
     const label = document.createElement('div');
     label.className = 'version-item-label';
-    label.textContent = versionInfo.displayLabel || `v${versionInfo.version}`;
+    // 버전이 null이면 "기준"으로 표시
+    if (versionInfo.version === null || versionInfo.version === undefined) {
+      label.textContent = versionInfo.displayLabel || '기준';
+    } else {
+      label.textContent = versionInfo.displayLabel || `v${versionInfo.version}`;
+    }
 
     const filename = document.createElement('div');
     filename.className = 'version-item-filename';
@@ -633,10 +645,14 @@ export class VersionDropdown {
     if (confirm('이 수동 버전을 제거하시겠습니까?')) {
       const removed = this._versionManager.removeManualVersion(filePath);
 
-      if (removed && reviewDataManagerRef) {
+      if (removed) {
         // ReviewDataManager에서도 제거 (영구 저장)
-        reviewDataManagerRef.removeManualVersion(filePath);
-        log.info('수동 버전이 .bframe에서 제거됨');
+        if (reviewDataManagerRef) {
+          reviewDataManagerRef.removeManualVersion(filePath);
+          log.info('수동 버전이 .bframe에서 제거됨');
+        }
+        // 목록 즉시 갱신
+        this._render();
       }
     }
   }
