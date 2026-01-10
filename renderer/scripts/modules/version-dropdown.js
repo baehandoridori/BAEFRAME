@@ -339,7 +339,8 @@ export class VersionDropdown {
       if (version !== null && version !== undefined) {
         this._badgeLabel.textContent = `v${version}`;
       } else {
-        this._badgeLabel.textContent = 'v?';
+        // 버전 번호가 없으면 "버전" 으로 표시
+        this._badgeLabel.textContent = '버전';
       }
     }
   }
@@ -414,8 +415,8 @@ export class VersionDropdown {
         properties: ['openFile']
       });
 
-      if (result && result.length > 0) {
-        const filePath = result[0];
+      if (result && !result.canceled && result.filePaths && result.filePaths.length > 0) {
+        const filePath = result.filePaths[0];
         const fileName = this._extractFileName(filePath);
 
         // 기존 버전 목록에서 다음 버전 번호 제안

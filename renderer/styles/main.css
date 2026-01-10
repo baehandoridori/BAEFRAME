@@ -5363,23 +5363,20 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
 
 /* Version Item Delete (Manual Only) */
 .version-item-delete {
-  opacity: 0;
-  padding: 4px;
-  background: transparent;
-  border: none;
-  color: var(--text-tertiary);
+  padding: 4px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
   cursor: pointer;
   border-radius: 4px;
   transition: all var(--transition-fast);
-}
-
-.version-item:hover .version-item-delete {
-  opacity: 1;
+  margin-left: 4px;
 }
 
 .version-item-delete:hover {
   color: var(--error);
   background: var(--error-bg);
+  border-color: var(--error);
 }
 
 /* Divider */
