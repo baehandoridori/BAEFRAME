@@ -2032,9 +2032,10 @@ async function initApp() {
    * @param {string} filePath - 파일 경로
    * @param {Object} options - 옵션
    * @param {boolean} options.keepVersionContext - 버전 컨텍스트 유지 (수동 버전 전환 시 사용)
+   * @param {number} options.targetVersion - 전환할 버전 번호 (수동 버전 선택 시)
    */
   async function loadVideo(filePath, options = {}) {
-    const { keepVersionContext = false } = options;
+    const { keepVersionContext = false, targetVersion = null } = options;
     const trace = log.trace('loadVideo');
     try {
       // 파일 정보 가져오기
@@ -2107,14 +2108,19 @@ async function initApp() {
       reviewDataManager.setVersionInfo(toVersionInfo(fileInfo.name));
 
       // 버전 드롭다운 표시 및 버전 선택 콜백 설정
-      const currentVersion = keepVersionContext ? versionResult.version : versionResult.version;
-      versionDropdown.show(currentVersion);
+      // keepVersionContext일 때는 targetVersion 사용, 아니면 파일명에서 파싱한 버전 사용
+      const displayVersion = keepVersionContext && targetVersion !== null
+        ? targetVersion
+        : versionResult.version;
+      versionDropdown.show(displayVersion);
       versionDropdown.onVersionSelect(async (versionInfo) => {
         log.info('버전 전환 요청', versionInfo);
         if (versionInfo.path) {
-          // 수동 버전이면 버전 컨텍스트 유지
-          const isManualVersion = versionInfo.isManual === true;
-          await loadVideo(versionInfo.path, { keepVersionContext: isManualVersion });
+          // 버전 컨텍스트 유지하고, 해당 버전 번호도 함께 전달
+          await loadVideo(versionInfo.path, {
+            keepVersionContext: true,
+            targetVersion: versionInfo.version
+          });
         }
       });
 
