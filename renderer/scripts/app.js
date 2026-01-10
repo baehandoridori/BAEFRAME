@@ -2125,6 +2125,16 @@ async function initApp() {
 
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
+
+      // .bframe에서 manualVersions 복원 → version-manager에 설정
+      const savedManualVersions = reviewDataManager.getManualVersions();
+      if (savedManualVersions && savedManualVersions.length > 0) {
+        versionManager.setManualVersions(savedManualVersions);
+        log.info('수동 버전 목록 복원됨', { count: savedManualVersions.length });
+        // 드롭다운 다시 렌더링
+        versionDropdown._render();
+      }
+
       if (hasExistingData) {
         showToast(`"${fileInfo.name}" 로드됨 (리뷰 데이터 복원)`, 'success');
       } else {
@@ -4419,6 +4429,7 @@ async function initApp() {
   // 버전 드롭다운 DOM 초기화
   const versionDropdown = getVersionDropdown();
   versionDropdown.init();
+  versionDropdown.setReviewDataManager(reviewDataManager);
 
   log.info('앱 초기화 완료');
 

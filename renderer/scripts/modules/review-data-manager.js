@@ -474,6 +474,34 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
+   * 수동 버전 목록 설정 (전체 교체)
+   * @param {Array} manualVersions
+   */
+  setManualVersions(manualVersions) {
+    this._manualVersions = manualVersions || [];
+    this.isDirty = true;
+  }
+
+  /**
+   * 수동 버전 제거
+   * @param {string} filePath - 제거할 버전의 파일 경로
+   * @returns {boolean}
+   */
+  removeManualVersion(filePath) {
+    if (!this._manualVersions) return false;
+
+    const index = this._manualVersions.findIndex(
+      (v) => v.filePath === filePath || v.path === filePath
+    );
+
+    if (index === -1) return false;
+
+    this._manualVersions.splice(index, 1);
+    this.isDirty = true;
+    return true;
+  }
+
+  /**
    * 데이터 변경 이벤트 핸들러
    */
   _onDataChanged(e) {
