@@ -91,6 +91,86 @@ function setupIpcHandlers() {
     }
   });
 
+  // 버전 파일 스캔 (같은 폴더에서 같은 시리즈의 버전 파일들을 찾음)
+  ipcMain.handle('file:scan-versions', async (event, filePath) => {
+    const trace = log.trace('file:scan-versions');
+    try {
+      const directory = path.dirname(filePath);
+      const currentFileName = path.basename(filePath);
+      const currentBaseName = extractBaseName(currentFileName);
+
+      if (!currentBaseName) {
+        trace.end({ versions: [], reason: 'no base name' });
+        return { baseName: '', currentVersion: null, versions: [] };
+      }
+
+      // 폴더의 모든 파일 읽기
+      const files = await fs.promises.readdir(directory);
+
+      // 지원하는 비디오 확장자
+      const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+
+      // 같은 시리즈의 버전 파일들 필터링
+      const versions = [];
+      let currentVersion = null;
+
+      for (const file of files) {
+        const ext = path.extname(file).toLowerCase();
+        if (!videoExtensions.includes(ext)) continue;
+
+        const fileBaseName = extractBaseName(file);
+        if (fileBaseName !== currentBaseName) continue;
+
+        const versionInfo = parseVersionFromFileName(file);
+        const fullPath = path.join(directory, file);
+
+        try {
+          const stats = await fs.promises.stat(fullPath);
+          const versionEntry = {
+            version: versionInfo.version,
+            fileName: file,
+            path: fullPath,
+            displayLabel: versionInfo.displayLabel,
+            suffix: versionInfo.suffix,
+            mtime: stats.mtime.toISOString(),
+            size: stats.size
+          };
+
+          versions.push(versionEntry);
+
+          // 현재 파일인지 확인
+          if (file === currentFileName) {
+            currentVersion = versionInfo.version;
+          }
+        } catch (statError) {
+          log.warn('파일 정보 읽기 실패', { file, error: statError.message });
+        }
+      }
+
+      // 버전순 정렬
+      versions.sort((a, b) => {
+        const vA = a.version ?? -1;
+        const vB = b.version ?? -1;
+        return vA - vB;
+      });
+
+      trace.end({
+        baseName: currentBaseName,
+        currentVersion,
+        count: versions.length
+      });
+
+      return {
+        baseName: currentBaseName,
+        currentVersion,
+        versions
+      };
+    } catch (error) {
+      trace.error(error);
+      throw error;
+    }
+  });
+
   // ====== 윈도우 관련 ======
 
   ipcMain.handle('window:minimize', () => {
@@ -682,6 +762,70 @@ async function getGoogleDriveFileId(localPath) {
   }
 
   return null;
+}
+
+// ============================================================================
+// 버전 파싱 유틸리티 (Main Process용)
+// ============================================================================
+
+/**
+ * 버전 패턴 목록
+ */
+const VERSION_PATTERNS = [
+  { regex: /_v(\d+)/i, extract: (m) => parseInt(m[1], 10), suffix: (m) => m[0], type: 'version' },
+  { regex: /_re(\d+)/i, extract: (m) => parseInt(m[1], 10) + 1, suffix: (m) => m[0], type: 'retake' },
+  { regex: /_re$/i, extract: () => 2, suffix: () => '_re', type: 'retake' },
+  { regex: /_final/i, extract: () => 999, suffix: (m) => m[0], type: 'final' }
+];
+
+/**
+ * 파일명에서 버전 정보 파싱
+ */
+function parseVersionFromFileName(fileName) {
+  if (!fileName) {
+    return { version: null, suffix: null, displayLabel: '-', type: null };
+  }
+
+  const nameWithoutExt = fileName.replace(/\.[^.]+$/, '');
+
+  for (const pattern of VERSION_PATTERNS) {
+    const match = nameWithoutExt.match(pattern.regex);
+    if (match) {
+      const version = pattern.extract(match);
+      const suffix = pattern.suffix(match);
+      let displayLabel;
+
+      if (pattern.type === 'final') {
+        displayLabel = 'FINAL';
+      } else if (pattern.type === 'retake') {
+        displayLabel = `v${version} (${suffix})`;
+      } else {
+        displayLabel = `v${version}`;
+      }
+
+      return { version, suffix, displayLabel, type: pattern.type };
+    }
+  }
+
+  return { version: null, suffix: null, displayLabel: '-', type: null };
+}
+
+/**
+ * 파일명에서 기본 이름 추출 (버전 접미사 제거)
+ */
+function extractBaseName(fileName) {
+  if (!fileName) return '';
+
+  const nameWithoutExt = fileName.replace(/\.[^.]+$/, '');
+
+  for (const pattern of VERSION_PATTERNS) {
+    const match = nameWithoutExt.match(pattern.regex);
+    if (match) {
+      return nameWithoutExt.replace(pattern.regex, '');
+    }
+  }
+
+  return nameWithoutExt;
 }
 
 module.exports = { setupIpcHandlers };
