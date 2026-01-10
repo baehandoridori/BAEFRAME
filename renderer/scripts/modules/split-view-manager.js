@@ -146,12 +146,24 @@ export class SplitViewManager {
 
       case 'ArrowLeft':
         e.preventDefault();
-        this._stepFrame(-1);
+        if (e.shiftKey) {
+          // Shift+← : 1초 뒤로
+          this._stepSeconds(-1);
+        } else {
+          // ← : 1프레임 뒤로
+          this._stepFrame(-1);
+        }
         break;
 
       case 'ArrowRight':
         e.preventDefault();
-        this._stepFrame(1);
+        if (e.shiftKey) {
+          // Shift+→ : 1초 앞으로
+          this._stepSeconds(1);
+        } else {
+          // → : 1프레임 앞으로
+          this._stepFrame(1);
+        }
         break;
 
       case 'Home':
@@ -332,10 +344,37 @@ export class SplitViewManager {
       log.error('비디오 로드 실패', error);
     }
 
-    // 보조 패널(우측) 음소거
-    this._setMuted('right', true);
+    // 오디오 상태 초기화: 좌측 활성화, 우측 음소거
+    this._resetAudioState();
 
     log.info('스플릿 뷰 열림 완료');
+  }
+
+  /**
+   * 오디오 상태 초기화
+   * 좌측: 볼륨 100%, 음소거 해제
+   * 우측: 볼륨 100%, 음소거
+   */
+  _resetAudioState() {
+    // 좌측 패널: 음소거 해제, 볼륨 100%
+    if (this._leftVideo) {
+      this._leftVideo.volume = 1;
+      this._leftVideo.muted = false;
+    }
+    this._setMuted('left', false);
+
+    // 우측 패널: 음소거, 볼륨 100% (음소거 해제 시 바로 들리도록)
+    if (this._rightVideo) {
+      this._rightVideo.volume = 1;
+      this._rightVideo.muted = true;
+    }
+    this._setMuted('right', true);
+
+    // 볼륨 슬라이더 초기화
+    const sliderLeft = document.getElementById('volumeSliderLeft');
+    const sliderRight = document.getElementById('volumeSliderRight');
+    if (sliderLeft) sliderLeft.value = 100;
+    if (sliderRight) sliderRight.value = 0;
   }
 
   /**
@@ -849,6 +888,33 @@ export class SplitViewManager {
       const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
       if (video) {
         video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + frameTime * delta));
+      }
+    }
+
+    this._updateTimecode();
+  }
+
+  /**
+   * 초 단위 이동
+   * @param {number} delta - 이동할 초 수
+   */
+  _stepSeconds(delta) {
+    if (this._mode === 'sync') {
+      // 동기 모드: 양쪽 모두 같은 시간으로 이동
+      if (this._leftVideo) {
+        const newTime = Math.max(0, Math.min(this._leftVideo.duration, this._leftVideo.currentTime + delta));
+        this._leftVideo.currentTime = newTime;
+        if (this._rightVideo) {
+          // 프레임 기준 동기화
+          const targetFrame = Math.round(newTime * this._fps);
+          this._rightVideo.currentTime = targetFrame / this._fps;
+        }
+      }
+    } else {
+      // 독립 모드: 활성 패널만 이동
+      const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
+      if (video) {
+        video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + delta));
       }
     }
 
