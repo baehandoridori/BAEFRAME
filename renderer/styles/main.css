@@ -6249,10 +6249,12 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   animation: splitPanelInRight 0.3s ease 0.1s forwards;
 }
 
-/* Independent Mode - Show individual play buttons */
+/* Independent Mode - 타임라인 유지 (활성 패널 표시로 구분) */
+/*
 .split-view-overlay.independent-mode .split-view-timeline {
   display: none;
 }
+*/
 
 .split-panel-individual-controls {
   position: absolute;
