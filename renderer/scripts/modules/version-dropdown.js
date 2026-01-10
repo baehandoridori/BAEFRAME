@@ -14,6 +14,88 @@ const log = createLogger('VersionDropdown');
 let reviewDataManagerRef = null;
 
 /**
+ * 커스텀 Prompt 모달 (Electron에서 window.prompt() 미지원)
+ * @param {string} message - 표시할 메시지
+ * @param {string} defaultValue - 기본값
+ * @param {string} title - 모달 제목 (선택사항)
+ * @returns {Promise<string|null>} - 입력값 또는 취소 시 null
+ */
+function showPromptModal(message, defaultValue = '', title = '입력') {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('promptModalOverlay');
+    const titleEl = document.getElementById('promptModalTitle');
+    const labelEl = document.getElementById('promptModalLabel');
+    const inputEl = document.getElementById('promptModalInput');
+    const confirmBtn = document.getElementById('promptModalConfirm');
+    const cancelBtn = document.getElementById('promptModalCancel');
+    const closeBtn = document.getElementById('promptModalClose');
+
+    if (!overlay || !inputEl) {
+      console.error('[VersionDropdown] 프롬프트 모달 요소를 찾을 수 없음');
+      resolve(null);
+      return;
+    }
+
+    // 초기화
+    titleEl.textContent = title;
+    labelEl.textContent = message;
+    inputEl.value = defaultValue;
+
+    // 모달 열기
+    overlay.classList.add('open');
+    inputEl.focus();
+    inputEl.select();
+
+    // 클린업 함수
+    const cleanup = () => {
+      overlay.classList.remove('open');
+      confirmBtn.removeEventListener('click', handleConfirm);
+      cancelBtn.removeEventListener('click', handleCancel);
+      closeBtn.removeEventListener('click', handleCancel);
+      inputEl.removeEventListener('keydown', handleKeydown);
+      overlay.removeEventListener('click', handleOverlayClick);
+    };
+
+    // 확인
+    const handleConfirm = () => {
+      cleanup();
+      resolve(inputEl.value);
+    };
+
+    // 취소
+    const handleCancel = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    // 키보드 이벤트
+    const handleKeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleConfirm();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+
+    // 오버레이 클릭 (배경 클릭 시 닫기)
+    const handleOverlayClick = (e) => {
+      if (e.target === overlay) {
+        handleCancel();
+      }
+    };
+
+    // 이벤트 리스너 등록
+    confirmBtn.addEventListener('click', handleConfirm);
+    cancelBtn.addEventListener('click', handleCancel);
+    closeBtn.addEventListener('click', handleCancel);
+    inputEl.addEventListener('keydown', handleKeydown);
+    overlay.addEventListener('click', handleOverlayClick);
+  });
+}
+
+/**
  * 버전 드롭다운 UI 컨트롤러
  */
 export class VersionDropdown {
@@ -475,19 +557,14 @@ export class VersionDropdown {
       const suggestedVersion = maxVersion + 1;
       console.log('[VersionDropdown] 제안 버전:', suggestedVersion);
 
-      // 버전 번호 입력 받기 (간단한 prompt 사용)
-      console.log('[VersionDropdown] prompt 호출 전...');
-      let versionStr;
-      try {
-        versionStr = window.prompt(
-          `"${fileName}"의 버전 번호를 입력하세요:`,
-          String(suggestedVersion)
-        );
-        console.log('[VersionDropdown] prompt 결과:', versionStr);
-      } catch (promptErr) {
-        console.error('[VersionDropdown] prompt 에러:', promptErr);
-        return;
-      }
+      // 버전 번호 입력 받기 (커스텀 모달 사용)
+      console.log('[VersionDropdown] 버전 번호 입력 모달 호출...');
+      const versionStr = await showPromptModal(
+        `"${fileName}"의 버전 번호를 입력하세요:`,
+        String(suggestedVersion),
+        '버전 번호 입력'
+      );
+      console.log('[VersionDropdown] 입력 결과:', versionStr);
 
       log.info('버전 번호 입력', { versionStr });
 
@@ -568,28 +645,22 @@ export class VersionDropdown {
    * 버전 번호 편집 처리
    * @param {Object} versionInfo
    */
-  _handleEditVersion(versionInfo) {
+  async _handleEditVersion(versionInfo) {
     console.log('[VersionDropdown] _handleEditVersion 호출됨', versionInfo);
     log.info('버전 편집 요청', versionInfo);
 
     const currentVersion = versionInfo.version;
     const fileName = versionInfo.fileName || '';
 
-    console.log('[VersionDropdown] prompt 호출 전', { currentVersion, fileName });
+    console.log('[VersionDropdown] 버전 편집 모달 호출', { currentVersion, fileName });
 
-    // 새 버전 번호 입력
-    let newVersionStr;
-    try {
-      newVersionStr = window.prompt(
-        `"${fileName}"의 버전 번호를 변경합니다.\n현재: v${currentVersion || '?'}\n\n새 버전 번호:`,
-        String(currentVersion || 1)
-      );
-      console.log('[VersionDropdown] prompt 결과:', newVersionStr);
-    } catch (promptError) {
-      console.error('[VersionDropdown] prompt 에러:', promptError);
-      alert('버전 번호 입력 중 오류가 발생했습니다.');
-      return;
-    }
+    // 새 버전 번호 입력 (커스텀 모달 사용)
+    const newVersionStr = await showPromptModal(
+      `"${fileName}"의 버전 번호를 변경합니다.\n현재: v${currentVersion || '?'}\n\n새 버전 번호:`,
+      String(currentVersion || 1),
+      '버전 번호 편집'
+    );
+    console.log('[VersionDropdown] 입력 결과:', newVersionStr);
 
     if (newVersionStr === null) {
       log.info('버전 편집 취소됨');

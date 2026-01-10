@@ -921,6 +921,28 @@
     </button>
   </div>
 
+  <!-- 커스텀 Prompt 모달 -->
+  <div class="prompt-modal-overlay" id="promptModalOverlay">
+    <div class="prompt-modal">
+      <div class="prompt-modal-header">
+        <span class="prompt-modal-title" id="promptModalTitle">입력</span>
+        <button class="prompt-modal-close" id="promptModalClose">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="prompt-modal-body">
+        <label class="prompt-modal-label" id="promptModalLabel">값을 입력하세요:</label>
+        <input type="text" class="prompt-modal-input" id="promptModalInput" />
+      </div>
+      <div class="prompt-modal-footer">
+        <button class="btn btn-secondary prompt-modal-cancel" id="promptModalCancel">취소</button>
+        <button class="btn btn-primary prompt-modal-confirm" id="promptModalConfirm">확인</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="scripts/app.js"></script>
 </body>
 </html>
