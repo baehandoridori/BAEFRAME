@@ -13,6 +13,7 @@ import { getUserSettings } from './modules/user-settings.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
 import { getImageFromClipboard, selectImageFile, isValidImageBase64 } from './modules/image-utils.js';
+import { parseVersion, toVersionInfo } from './modules/version-parser.js';
 
 const log = createLogger('App');
 
@@ -2067,11 +2068,13 @@ async function initApp() {
       elements.btnOpenFolder.style.display = 'flex';
       elements.btnOpenOther.style.display = 'flex';
 
-      // 버전 감지
-      const versionMatch = fileInfo.name.match(/_v(\d+)/i);
-      if (versionMatch) {
-        elements.versionBadge.textContent = `v${versionMatch[1]}`;
+      // 버전 감지 (version-parser 모듈 사용)
+      const versionResult = parseVersion(fileInfo.name);
+      if (versionResult.version !== null) {
+        elements.versionBadge.textContent = versionResult.displayLabel;
         elements.versionBadge.style.display = 'inline-block';
+        // versionInfo를 reviewDataManager에 설정
+        reviewDataManager.setVersionInfo(toVersionInfo(fileInfo.name));
       } else {
         elements.versionBadge.style.display = 'none';
       }
