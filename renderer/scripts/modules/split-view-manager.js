@@ -473,6 +473,9 @@ export class SplitViewManager {
     // 오버레이 클래스 업데이트
     this._overlay.classList.toggle('independent-mode', mode === 'independent');
 
+    // 타임코드 업데이트 (독립 모드에서 [좌]/[우] 표시)
+    this._updateTimecode();
+
     log.info('모드 변경됨', { mode });
   }
 
