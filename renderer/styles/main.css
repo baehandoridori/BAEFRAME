@@ -5620,3 +5620,623 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
     left: auto;
   }
 }
+
+/* ============================================
+   Split View Styles
+   ============================================ */
+
+/* 버전 비교 버튼 */
+.version-compare-btn {
+  color: var(--accent-primary);
+  font-weight: 500;
+}
+
+.version-compare-btn:hover {
+  background: var(--accent-glow);
+}
+
+.version-compare-btn svg {
+  stroke: var(--accent-primary);
+}
+
+/* Split View Overlay */
+.split-view-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-primary);
+  z-index: 1000;
+  display: none;
+  flex-direction: column;
+  opacity: 0;
+  transform: scale(0.98);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.split-view-overlay.open {
+  display: flex;
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Split View Header */
+.split-view-header {
+  height: 52px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+.split-view-mode-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.split-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.split-mode-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.split-mode-btn.active {
+  background: var(--accent-glow);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.split-mode-btn.active svg {
+  stroke: var(--accent-primary);
+}
+
+.split-view-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.split-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.split-action-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.split-close-btn:hover {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: var(--error);
+  color: var(--error);
+}
+
+/* Split View Body */
+.split-view-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Split Panels */
+.split-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 300px;
+  background: var(--bg-primary);
+  position: relative;
+}
+
+.split-panel.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 2px solid var(--accent-primary);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Split Panel Header */
+.split-panel-header {
+  height: 44px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 12px;
+}
+
+.split-panel-left .split-panel-header {
+  border-right: 1px solid var(--border-subtle);
+}
+
+/* Split Version Selector */
+.split-version-selector {
+  position: relative;
+}
+
+.split-version-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.split-version-trigger:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+}
+
+.split-version-selector.open .split-version-trigger {
+  background: var(--accent-glow);
+  border-color: var(--accent-primary);
+}
+
+.split-version-arrow {
+  transition: transform 0.2s ease;
+}
+
+.split-version-selector.open .split-version-arrow {
+  transform: rotate(180deg);
+}
+
+/* Split Version Menu */
+.split-version-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 200px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  margin-top: 4px;
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.split-version-selector.open .split-version-menu {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.split-version-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.split-version-item:hover {
+  background: var(--bg-hover);
+}
+
+.split-version-item.active {
+  background: var(--accent-glow);
+  color: var(--accent-primary);
+}
+
+.split-version-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.split-version-item-label {
+  font-weight: 600;
+}
+
+.split-version-item-filename {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.split-version-item-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--accent-glow);
+  color: var(--accent-primary);
+}
+
+/* Split Panel Badge */
+.split-panel-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: transparent;
+  color: transparent;
+}
+
+.split-panel-badge.active-badge {
+  background: var(--accent-glow);
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+/* Split Panel Controls */
+.split-panel-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.split-control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.split-control-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.split-control-btn.muted {
+  color: var(--error);
+}
+
+.split-control-btn.muted:hover {
+  background: var(--error-bg);
+  border-color: var(--error);
+}
+
+/* Split Video Container */
+.split-video-container {
+  flex: 1;
+  position: relative;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.split-video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.split-drawing-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Split Loading/Empty States */
+.split-loading-overlay,
+.split-empty-state {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.split-loading-overlay {
+  display: none;
+}
+
+.split-loading-overlay.active {
+  display: flex;
+}
+
+.split-empty-state {
+  display: none;
+}
+
+.split-empty-state.active {
+  display: flex;
+}
+
+.split-empty-icon {
+  font-size: 40px;
+  opacity: 0.6;
+}
+
+/* Split Resizer */
+.split-resizer {
+  width: 6px;
+  background: var(--bg-secondary);
+  cursor: col-resize;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.split-resizer:hover {
+  background: var(--accent-primary);
+}
+
+.split-resizer-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 40px;
+  background: var(--border-default);
+  border-radius: 2px;
+  transition: background 0.15s ease;
+}
+
+.split-resizer:hover .split-resizer-handle {
+  background: var(--bg-primary);
+}
+
+/* Split View Timeline */
+.split-view-timeline {
+  height: 56px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.split-playback-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.split-playback-controls .control-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.split-playback-controls .play-btn {
+  width: 40px;
+  height: 40px;
+  background: var(--accent-primary);
+  color: var(--bg-primary);
+  border-radius: 50%;
+}
+
+.split-playback-controls .play-btn:hover {
+  transform: scale(1.05);
+  box-shadow: var(--shadow-glow);
+}
+
+.split-seekbar-container {
+  flex: 1;
+  padding: 0 8px;
+}
+
+.split-seekbar {
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  position: relative;
+  cursor: pointer;
+}
+
+.split-seekbar-progress {
+  height: 100%;
+  background: var(--accent-primary);
+  border-radius: 3px;
+  width: 0%;
+  transition: width 0.05s linear;
+}
+
+.split-seekbar-handle {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  background: var(--accent-primary);
+  border: 2px solid var(--bg-secondary);
+  border-radius: 50%;
+  cursor: grab;
+  left: 0%;
+  transition: transform 0.1s ease;
+}
+
+.split-seekbar-handle:hover {
+  transform: translate(-50%, -50%) scale(1.2);
+}
+
+.split-timecode {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.split-timecode-sep {
+  color: var(--text-tertiary);
+  margin: 0 4px;
+}
+
+.split-frame-info {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Split View Animations */
+@keyframes splitPanelIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes splitPanelInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.split-view-overlay.open .split-panel-left {
+  animation: splitPanelIn 0.3s ease forwards;
+}
+
+.split-view-overlay.open .split-panel-right {
+  animation: splitPanelInRight 0.3s ease 0.1s forwards;
+}
+
+/* Independent Mode - Show individual play buttons */
+.split-view-overlay.independent-mode .split-view-timeline {
+  display: none;
+}
+
+.split-panel-individual-controls {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.8);
+  border-radius: 24px;
+  backdrop-filter: blur(8px);
+}
+
+.split-view-overlay.independent-mode .split-panel-individual-controls {
+  display: flex;
+}
+
+.split-individual-btn {
+  width: 32px;
+  height: 32px;
+  background: var(--bg-tertiary);
+  border: none;
+  border-radius: 50%;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.split-individual-btn:hover {
+  background: var(--accent-primary);
+  color: var(--bg-primary);
+}
+
+.split-individual-btn.play-btn {
+  width: 36px;
+  height: 36px;
+  background: var(--accent-primary);
+  color: var(--bg-primary);
+}
+
+/* Split View Responsive */
+@media (max-width: 900px) {
+  .split-view-body {
+    flex-direction: column;
+  }
+
+  .split-panel {
+    min-width: 100%;
+    min-height: 200px;
+  }
+
+  .split-resizer {
+    width: 100%;
+    height: 6px;
+    cursor: row-resize;
+  }
+
+  .split-resizer-handle {
+    width: 40px;
+    height: 4px;
+  }
+}

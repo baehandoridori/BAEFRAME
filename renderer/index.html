@@ -50,6 +50,14 @@
               </svg>
               폴더 다시 스캔
             </button>
+            <div class="version-dropdown-divider"></div>
+            <button class="version-dropdown-action version-compare-btn" id="btnCompareVersions">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="18" rx="1"/>
+                <rect x="14" y="3" width="7" height="18" rx="1"/>
+              </svg>
+              버전 비교
+            </button>
           </div>
         </div>
       </div>
@@ -919,6 +927,163 @@
         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
       </svg>
     </button>
+  </div>
+
+  <!-- 스플릿 뷰 오버레이 -->
+  <div class="split-view-overlay" id="splitViewOverlay">
+    <!-- 스플릿 뷰 헤더 (컨트롤 바) -->
+    <div class="split-view-header">
+      <div class="split-view-mode-controls">
+        <button class="split-mode-btn active" id="btnSyncMode" title="동기 재생 - 두 영상이 같은 프레임에서 함께 재생됩니다">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+          </svg>
+          동기 재생
+        </button>
+        <button class="split-mode-btn" id="btnIndependentMode" title="독립 재생 - 각 영상을 개별적으로 제어합니다">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"/>
+            <rect x="14" y="14" width="7" height="7"/>
+          </svg>
+          독립 재생
+        </button>
+      </div>
+      <div class="split-view-actions">
+        <button class="split-action-btn" id="btnSwapPanels" title="좌우 패널 교환">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="7 16 3 12 7 8"/>
+            <polyline points="17 8 21 12 17 16"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+          </svg>
+        </button>
+        <button class="split-action-btn split-close-btn" id="btnCloseSplitView" title="스플릿 뷰 닫기">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 스플릿 뷰 본체 -->
+    <div class="split-view-body">
+      <!-- 좌측 패널 (Primary) -->
+      <div class="split-panel split-panel-left" id="splitPanelLeft" data-panel="left">
+        <div class="split-panel-header">
+          <div class="split-version-selector" id="splitVersionSelectorLeft">
+            <button class="split-version-trigger" id="splitVersionTriggerLeft">
+              <span class="split-version-label" id="splitVersionLabelLeft">v1</span>
+              <svg class="split-version-arrow" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+            <div class="split-version-menu" id="splitVersionMenuLeft">
+              <!-- 버전 목록은 JS에서 동적 생성 -->
+            </div>
+          </div>
+          <div class="split-panel-badge active-badge" id="splitBadgeLeft">활성</div>
+          <div class="split-panel-controls">
+            <button class="split-control-btn" id="btnMuteLeft" title="음소거 토글">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="split-video-container" id="splitVideoContainerLeft">
+          <video class="split-video" id="splitVideoLeft"></video>
+          <canvas class="split-drawing-canvas" id="splitDrawingCanvasLeft"></canvas>
+          <div class="split-loading-overlay" id="splitLoadingLeft">
+            <div class="loading-spinner"></div>
+            <span>로딩 중...</span>
+          </div>
+          <div class="split-empty-state" id="splitEmptyLeft">
+            <div class="split-empty-icon">📁</div>
+            <span>버전을 선택하세요</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 리사이저 -->
+      <div class="split-resizer" id="splitResizer">
+        <div class="split-resizer-handle"></div>
+      </div>
+
+      <!-- 우측 패널 (Secondary) -->
+      <div class="split-panel split-panel-right" id="splitPanelRight" data-panel="right">
+        <div class="split-panel-header">
+          <div class="split-version-selector" id="splitVersionSelectorRight">
+            <button class="split-version-trigger" id="splitVersionTriggerRight">
+              <span class="split-version-label" id="splitVersionLabelRight">v2</span>
+              <svg class="split-version-arrow" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+            <div class="split-version-menu" id="splitVersionMenuRight">
+              <!-- 버전 목록은 JS에서 동적 생성 -->
+            </div>
+          </div>
+          <div class="split-panel-badge" id="splitBadgeRight"></div>
+          <div class="split-panel-controls">
+            <button class="split-control-btn muted" id="btnMuteRight" title="음소거 토글">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <line x1="23" y1="9" x2="17" y2="15"/>
+                <line x1="17" y1="9" x2="23" y2="15"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="split-video-container" id="splitVideoContainerRight">
+          <video class="split-video" id="splitVideoRight"></video>
+          <canvas class="split-drawing-canvas" id="splitDrawingCanvasRight"></canvas>
+          <div class="split-loading-overlay" id="splitLoadingRight">
+            <div class="loading-spinner"></div>
+            <span>로딩 중...</span>
+          </div>
+          <div class="split-empty-state" id="splitEmptyRight">
+            <div class="split-empty-icon">📁</div>
+            <span>버전을 선택하세요</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 스플릿 뷰 공유 타임라인 (동기 모드) -->
+    <div class="split-view-timeline" id="splitViewTimeline">
+      <div class="split-playback-controls">
+        <button class="control-btn" id="splitBtnFirst" title="처음으로">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+        </button>
+        <button class="control-btn" id="splitBtnPrevFrame" title="이전 프레임">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>
+        </button>
+        <button class="control-btn play-btn" id="splitBtnPlay" title="재생/일시정지">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" id="splitPlayIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+        <button class="control-btn" id="splitBtnNextFrame" title="다음 프레임">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>
+        </button>
+        <button class="control-btn" id="splitBtnLast" title="끝으로">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+        </button>
+      </div>
+      <div class="split-seekbar-container">
+        <div class="split-seekbar" id="splitSeekbar">
+          <div class="split-seekbar-progress" id="splitSeekbarProgress"></div>
+          <div class="split-seekbar-handle" id="splitSeekbarHandle"></div>
+        </div>
+      </div>
+      <div class="split-timecode" id="splitTimecode">
+        <span id="splitTimecodeCurrent">00:00:00:00</span>
+        <span class="split-timecode-sep">/</span>
+        <span id="splitTimecodeTotal">00:00:00:00</span>
+      </div>
+      <div class="split-frame-info" id="splitFrameInfo">24fps · Frame 0</div>
+    </div>
   </div>
 
   <!-- 커스텀 Prompt 모달 -->

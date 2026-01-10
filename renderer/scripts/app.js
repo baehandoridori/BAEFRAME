@@ -16,6 +16,7 @@ import { getImageFromClipboard, selectImageFile, isValidImageBase64 } from './mo
 import { parseVersion, toVersionInfo } from './modules/version-parser.js';
 import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
+import { getSplitViewManager } from './modules/split-view-manager.js';
 
 const log = createLogger('App');
 
@@ -4441,6 +4442,29 @@ async function initApp() {
   const versionDropdown = getVersionDropdown();
   versionDropdown.init();
   versionDropdown.setReviewDataManager(reviewDataManager);
+
+  // 스플릿 뷰 매니저 초기화
+  const splitViewManager = getSplitViewManager();
+  splitViewManager.init();
+
+  // 버전 비교 버튼 이벤트
+  const btnCompareVersions = document.getElementById('btnCompareVersions');
+  if (btnCompareVersions) {
+    btnCompareVersions.addEventListener('click', () => {
+      log.info('버전 비교 버튼 클릭됨');
+      versionDropdown.close();
+      const versionManager = getVersionManager();
+      const versions = versionManager.getAllVersions();
+      if (versions.length >= 2) {
+        splitViewManager.open({
+          leftVersion: versions.find((v) => v.path === currentVideoPath) || versions[0],
+          rightVersion: versions.find((v) => v.path !== currentVideoPath) || versions[1]
+        });
+      } else {
+        showToast('버전 비교를 위해서는 2개 이상의 버전이 필요합니다.', 'warning');
+      }
+    });
+  }
 
   log.info('앱 초기화 완료');
 
