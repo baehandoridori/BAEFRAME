@@ -2034,6 +2034,22 @@ async function initApp() {
       // 파일 정보 가져오기
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
 
+      // ====== 이전 데이터 저장 (clear 전에 수행!) ======
+      // 저장되지 않은 변경사항이 있으면 먼저 저장
+      if (reviewDataManager.hasUnsavedChanges()) {
+        log.info('파일 전환 전 변경사항 저장 시도');
+        const saved = await reviewDataManager.save();
+        if (!saved) {
+          // 저장 실패 시 사용자에게 확인
+          const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
+          if (!proceed) {
+            log.info('사용자가 파일 전환 취소');
+            return;
+          }
+          log.warn('저장 실패했지만 사용자가 전환 진행 선택');
+        }
+      }
+
       // ====== 이전 데이터 초기화 ======
       // 자동 저장 일시 중지 (초기화 중 빈 데이터가 저장되는 것 방지)
       reviewDataManager.pauseAutoSave();
@@ -2085,8 +2101,8 @@ async function initApp() {
       // 썸네일 생성 시작
       await generateThumbnails(filePath);
 
-      // .bframe 파일 로드 시도
-      const hasExistingData = await reviewDataManager.setVideoFile(filePath);
+      // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
+      const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
       if (hasExistingData) {
         showToast(`"${fileInfo.name}" 로드됨 (리뷰 데이터 복원)`, 'success');
       } else {
@@ -2115,6 +2131,13 @@ async function initApp() {
     }
   }
 
+  // 썸네일 리스너 참조 저장 (파일 전환 시 정리용)
+  let thumbnailListeners = {
+    progress: null,
+    quickReady: null,
+    complete: null
+  };
+
   /**
    * 썸네일 생성
    */
@@ -2137,6 +2160,17 @@ async function initApp() {
         detailInterval: 1,  // 2단계: 1초 간격 (세부)
         quality: 0.6
       });
+
+      // 이전 리스너 정리 (파일 전환 시 누적 방지)
+      if (thumbnailListeners.progress) {
+        thumbnailGenerator.removeEventListener('progress', thumbnailListeners.progress);
+      }
+      if (thumbnailListeners.quickReady) {
+        thumbnailGenerator.removeEventListener('quickReady', thumbnailListeners.quickReady);
+      }
+      if (thumbnailListeners.complete) {
+        thumbnailGenerator.removeEventListener('complete', thumbnailListeners.complete);
+      }
 
       // 기존 썸네일 정리
       thumbnailGenerator.clear();
@@ -2179,6 +2213,11 @@ async function initApp() {
 
         log.info('썸네일 2단계 완료 - 모든 세부 생성 완료');
       };
+
+      // 리스너 참조 저장 (다음 파일 전환 시 정리용)
+      thumbnailListeners.progress = onProgress;
+      thumbnailListeners.quickReady = onQuickReady;
+      thumbnailListeners.complete = onComplete;
 
       thumbnailGenerator.addEventListener('progress', onProgress);
       thumbnailGenerator.addEventListener('quickReady', onQuickReady);
@@ -2548,7 +2587,7 @@ async function initApp() {
     tooltip.innerHTML = `
       <div class="tooltip-header">
         <span class="tooltip-timecode">${marker.startTimecode}</span>
-        <span class="tooltip-author ${authorClass}">${marker.author}</span>
+        <span class="tooltip-author ${authorClass}">${escapeHtml(marker.author)}</span>
       </div>
       <div class="tooltip-text">${escapeHtml(marker.text)}</div>
       <div class="tooltip-actions">
@@ -2795,7 +2834,7 @@ async function initApp() {
       const repliesHtml = (marker.replies || []).map(reply => `
         <div class="comment-reply">
           <div class="comment-reply-header">
-            <span class="comment-reply-author ${getAuthorColorClass(reply.author)}" ${getAuthorColorStyle(reply.author)}>${reply.author}</span>
+            <span class="comment-reply-author ${getAuthorColorClass(reply.author)}" ${getAuthorColorStyle(reply.author)}>${escapeHtml(reply.author)}</span>
             <span class="comment-reply-time">${formatRelativeTime(reply.createdAt)}</span>
           </div>
           <p class="comment-reply-text">${escapeHtml(reply.text)}</p>
@@ -2842,7 +2881,7 @@ async function initApp() {
           </div>
         </div>
         <div class="comment-actions">
-          <span class="comment-author-inline ${authorClass}" ${authorStyle}>${marker.author}</span>
+          <span class="comment-author-inline ${authorClass}" ${authorStyle}>${escapeHtml(marker.author)}</span>
           <span class="comment-time-inline">${formatRelativeTime(marker.createdAt)}</span>
           <button class="comment-action-btn edit-btn" title="수정">수정</button>
           <button class="comment-action-btn reply-btn" title="답글">답글</button>

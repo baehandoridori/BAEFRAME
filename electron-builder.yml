@@ -1,5 +1,5 @@
 appId: com.baeframe.app
-productName: baeframe
+productName: BFRAME_alpha_v2
 copyright: Copyright © 2024
 
 directories:
@@ -25,23 +25,25 @@ fileAssociations:
     description: BAEFRAME Review File
     role: Editor
 
+protocols:
+  - name: BFRAME Protocol
+    schemes:
+      - baeframe
+
 win:
   target:
-    - target: portable
+    - target: dir
       arch: x64
-  icon: build/icon.ico
 
 mac:
   target:
     - target: dir
       arch: x64
-  icon: build/icon.icns
 
 linux:
   target:
     - target: AppImage
       arch: x64
-  icon: build/icon.png
 
 portable:
   artifactName: ${productName}-portable.exe

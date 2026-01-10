@@ -51,7 +51,7 @@ export class ReviewDataManager extends EventTarget {
 
     // 자동 저장 설정
     this.autoSaveEnabled = options.autoSave !== false;
-    this.autoSaveDelay = options.autoSaveDelay || 100; // 100ms (즉시 저장 체감)
+    this.autoSaveDelay = options.autoSaveDelay || 500; // 500ms (타이핑 완료 후 저장)
     this.autoSaveTimer = null;
 
     // 이벤트 바인딩
@@ -129,14 +129,16 @@ export class ReviewDataManager extends EventTarget {
   /**
    * 새 영상 파일 설정
    * @param {string} videoPath - 영상 파일 경로
+   * @param {Object} options - 옵션
+   * @param {boolean} options.skipSave - true면 이전 파일 저장 건너뛰기 (외부에서 이미 저장한 경우)
    */
-  async setVideoFile(videoPath) {
+  async setVideoFile(videoPath, options = {}) {
     // 자동 저장 일시 중지 및 대기 중인 저장 취소
     this._cancelAutoSave();
     this.isLoading = true;
 
-    // 이전 파일의 변경사항 저장
-    if (this.isDirty && this.currentBframePath) {
+    // 이전 파일의 변경사항 저장 (skipSave가 true면 건너뛰기)
+    if (!options.skipSave && this.isDirty && this.currentBframePath) {
       await this.save();
     }
 

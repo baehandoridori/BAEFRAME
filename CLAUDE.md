@@ -203,3 +203,96 @@ python -m http.server 8080
 
 - [GitHub Wiki](https://github.com/baehandoridori/BAEFRAME/wiki)
 - [Web Viewer](https://baeframe.vercel.app)
+
+---
+
+## 개발 워크플로우
+
+### 개발 환경
+
+| 항목 | 경로/정보 |
+|------|----------|
+| 개발자 | baehandoridori |
+| 로컬 개발 경로 | 개인 PC의 프로젝트 폴더 |
+| 원격 저장소 | `github.com/baehandoridori/BAEFRAME` |
+| 메인 브랜치 | `main` |
+
+### 브랜치 전략
+
+```
+main (안정 버전)
+  └── feature/기능명 (기능 개발)
+  └── fix/버그명 (버그 수정)
+  └── claude/작업명-세션ID (AI 작업용)
+```
+
+- **main**: 팀원에게 배포되는 안정 버전
+- **feature/fix**: 수동 개발 브랜치
+- **claude/**: Claude Code가 작업하는 브랜치 (PR 후 main 머지)
+
+### 개발 → 배포 흐름
+
+```
+1. 브랜치 생성 (feature/fix/claude)
+2. 개발 및 테스트
+3. PR 생성 → main 머지
+4. main에서 빌드: npm run build:installer
+5. 생성된 설치 파일을 팀원에게 전달
+```
+
+---
+
+## 팀 배포
+
+### 배포 방식
+
+| 항목 | 내용 |
+|------|------|
+| 배포 대상 | 스튜디오 팀원들 (비개발자) |
+| 배포 형태 | Windows 설치 파일 (.exe) |
+| 배포 경로 | Google Drive 공유 폴더 또는 직접 전달 |
+| 업데이트 | 수동 (새 버전 설치 파일 전달) |
+
+### 왜 이렇게 배포하나?
+
+1. **팀원들이 비개발자**: npm, git 등 개발 도구 사용 불가
+2. **오프라인 환경**: 일부 작업 환경에서 인터넷 제한
+3. **간편함**: 설치 파일 하나로 바로 사용 가능
+4. **Google Drive 연동**: .bframe 파일이 Drive에서 자동 동기화되므로 앱만 설치하면 됨
+
+### 빌드 명령어
+
+```bash
+# 설치 파일 생성 (dist/ 폴더에 생성됨)
+npm run build:installer
+
+# 빌드만 (설치 파일 없이)
+npm run build
+```
+
+### 배포 체크리스트
+
+- [ ] main 브랜치 최신 상태 확인
+- [ ] `npm run build:installer` 실행
+- [ ] `dist/` 폴더에서 설치 파일 확인
+- [ ] 버전 번호 확인 (package.json)
+- [ ] 팀 공유 폴더에 업로드 또는 직접 전달
+- [ ] 팀원에게 업데이트 안내
+
+---
+
+## AI 작업 시 주의사항
+
+### 변경 금지 항목
+- `mpv/` 폴더 (바이너리 파일)
+- `.bframe` 파일 포맷 (하위 호환성 유지 필요)
+
+### 변경 시 주의 항목
+- `main/` 폴더: Electron 메인 프로세스, 보안 관련
+- `preload/` 폴더: IPC 통신, 보안 관련
+- `web-viewer/`: Vercel 배포에 영향
+
+### 작업 완료 후
+1. DEVLOG에 작업 내용 기록
+2. 커밋 메시지 한글로 상세 작성
+3. PR 생성 또는 main 머지 대기
