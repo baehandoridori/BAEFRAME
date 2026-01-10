@@ -2029,8 +2029,12 @@ async function initApp() {
 
   /**
    * 비디오 파일 로드
+   * @param {string} filePath - 파일 경로
+   * @param {Object} options - 옵션
+   * @param {boolean} options.keepVersionContext - 버전 컨텍스트 유지 (수동 버전 전환 시 사용)
    */
-  async function loadVideo(filePath) {
+  async function loadVideo(filePath, options = {}) {
+    const { keepVersionContext = false } = options;
     const trace = log.trace('loadVideo');
     try {
       // 파일 정보 가져오기
@@ -2091,31 +2095,28 @@ async function initApp() {
       const versionManager = getVersionManager();
       const versionDropdown = getVersionDropdown();
 
-      // VersionManager에 현재 파일 설정 (폴더 스캔 포함)
-      await versionManager.setCurrentFile(filePath);
+      // keepVersionContext가 true면 폴더 스캔 건너뛰기 (버전 목록 유지)
+      if (!keepVersionContext) {
+        // VersionManager에 현재 파일 설정 (폴더 스캔 포함)
+        await versionManager.setCurrentFile(filePath);
+      } else {
+        log.info('버전 컨텍스트 유지 모드 - 폴더 스캔 건너뜀');
+      }
 
       // versionInfo를 reviewDataManager에 설정
       reviewDataManager.setVersionInfo(toVersionInfo(fileInfo.name));
 
       // 버전 드롭다운 표시 및 버전 선택 콜백 설정
-      if (versionResult.version !== null) {
-        versionDropdown.show(versionResult.version);
-        versionDropdown.onVersionSelect(async (versionInfo) => {
-          log.info('버전 전환 요청', versionInfo);
-          if (versionInfo.path) {
-            await loadVideo(versionInfo.path);
-          }
-        });
-      } else {
-        // 버전 없는 파일도 드롭다운은 표시 (수동 버전 추가 가능)
-        versionDropdown.show(null);
-        versionDropdown.onVersionSelect(async (versionInfo) => {
-          log.info('버전 전환 요청', versionInfo);
-          if (versionInfo.path) {
-            await loadVideo(versionInfo.path);
-          }
-        });
-      }
+      const currentVersion = keepVersionContext ? versionResult.version : versionResult.version;
+      versionDropdown.show(currentVersion);
+      versionDropdown.onVersionSelect(async (versionInfo) => {
+        log.info('버전 전환 요청', versionInfo);
+        if (versionInfo.path) {
+          // 수동 버전이면 버전 컨텍스트 유지
+          const isManualVersion = versionInfo.isManual === true;
+          await loadVideo(versionInfo.path, { keepVersionContext: isManualVersion });
+        }
+      });
 
       // 비디오 트랙 업데이트
       elements.videoTrackClip.textContent = `📹 ${fileInfo.name}`;
@@ -2126,14 +2127,18 @@ async function initApp() {
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
 
-      // .bframe에서 manualVersions 복원 → version-manager에 설정
-      const savedManualVersions = reviewDataManager.getManualVersions();
-      if (savedManualVersions && savedManualVersions.length > 0) {
-        versionManager.setManualVersions(savedManualVersions);
-        log.info('수동 버전 목록 복원됨', { count: savedManualVersions.length });
-        // 드롭다운 다시 렌더링
-        versionDropdown._render();
+      // keepVersionContext가 false일 때만 manualVersions 복원
+      // (true면 기존 버전 목록 유지)
+      if (!keepVersionContext) {
+        // .bframe에서 manualVersions 복원 → version-manager에 설정
+        const savedManualVersions = reviewDataManager.getManualVersions();
+        if (savedManualVersions && savedManualVersions.length > 0) {
+          versionManager.setManualVersions(savedManualVersions);
+          log.info('수동 버전 목록 복원됨', { count: savedManualVersions.length });
+        }
       }
+      // 드롭다운 다시 렌더링 (버전 목록 갱신)
+      versionDropdown._render();
 
       if (hasExistingData) {
         showToast(`"${fileInfo.name}" 로드됨 (리뷰 데이터 복원)`, 'success');
