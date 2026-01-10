@@ -314,8 +314,14 @@ export class VersionDropdown {
     editBtn.innerHTML =
       '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
     editBtn.addEventListener('click', (e) => {
+      console.log('[VersionDropdown] 편집 버튼 클릭됨', versionInfo);
       e.stopPropagation();
-      this._handleEditVersion(versionInfo);
+      e.preventDefault();
+      try {
+        this._handleEditVersion(versionInfo);
+      } catch (err) {
+        console.error('[VersionDropdown] _handleEditVersion 에러:', err);
+      }
     });
     btnContainer.appendChild(editBtn);
 
@@ -457,20 +463,31 @@ export class VersionDropdown {
       const filePath = result.filePaths[0];
       const fileName = this._extractFileName(filePath);
       log.info('선택된 파일', { filePath, fileName });
+      console.log('[VersionDropdown] 선택된 파일:', { filePath, fileName });
 
       // 기존 버전 목록에서 다음 버전 번호 제안
       const allVersions = this._versionManager.getAllVersions();
+      console.log('[VersionDropdown] 현재 버전 목록:', allVersions);
       const maxVersion = allVersions.reduce(
         (max, v) => Math.max(max, v.version || 0),
         0
       );
       const suggestedVersion = maxVersion + 1;
+      console.log('[VersionDropdown] 제안 버전:', suggestedVersion);
 
       // 버전 번호 입력 받기 (간단한 prompt 사용)
-      const versionStr = prompt(
-        `"${fileName}"의 버전 번호를 입력하세요:`,
-        String(suggestedVersion)
-      );
+      console.log('[VersionDropdown] prompt 호출 전...');
+      let versionStr;
+      try {
+        versionStr = window.prompt(
+          `"${fileName}"의 버전 번호를 입력하세요:`,
+          String(suggestedVersion)
+        );
+        console.log('[VersionDropdown] prompt 결과:', versionStr);
+      } catch (promptErr) {
+        console.error('[VersionDropdown] prompt 에러:', promptErr);
+        return;
+      }
 
       log.info('버전 번호 입력', { versionStr });
 
@@ -552,16 +569,27 @@ export class VersionDropdown {
    * @param {Object} versionInfo
    */
   _handleEditVersion(versionInfo) {
+    console.log('[VersionDropdown] _handleEditVersion 호출됨', versionInfo);
     log.info('버전 편집 요청', versionInfo);
 
     const currentVersion = versionInfo.version;
     const fileName = versionInfo.fileName || '';
 
+    console.log('[VersionDropdown] prompt 호출 전', { currentVersion, fileName });
+
     // 새 버전 번호 입력
-    const newVersionStr = prompt(
-      `"${fileName}"의 버전 번호를 변경합니다.\n현재: v${currentVersion || '?'}\n\n새 버전 번호:`,
-      String(currentVersion || 1)
-    );
+    let newVersionStr;
+    try {
+      newVersionStr = window.prompt(
+        `"${fileName}"의 버전 번호를 변경합니다.\n현재: v${currentVersion || '?'}\n\n새 버전 번호:`,
+        String(currentVersion || 1)
+      );
+      console.log('[VersionDropdown] prompt 결과:', newVersionStr);
+    } catch (promptError) {
+      console.error('[VersionDropdown] prompt 에러:', promptError);
+      alert('버전 번호 입력 중 오류가 발생했습니다.');
+      return;
+    }
 
     if (newVersionStr === null) {
       log.info('버전 편집 취소됨');
