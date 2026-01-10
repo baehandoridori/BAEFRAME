@@ -33,12 +33,14 @@ export class SplitViewManager {
     this._fps = 24;
     this._isPlaying = false;
     this._isDraggingResizer = false;
+    this._animationFrameId = null;
 
     // Version Manager
     this._versionManager = getVersionManager();
 
     // Callbacks
     this._onClose = null;
+    this._onBeforeClose = null;
 
     log.info('SplitViewManager 생성됨');
   }
@@ -95,6 +97,13 @@ export class SplitViewManager {
 
     btnMuteLeft?.addEventListener('click', () => this._toggleMute('left'));
     btnMuteRight?.addEventListener('click', () => this._toggleMute('right'));
+
+    // 볼륨 슬라이더
+    const volumeSliderLeft = document.getElementById('volumeSliderLeft');
+    const volumeSliderRight = document.getElementById('volumeSliderRight');
+
+    volumeSliderLeft?.addEventListener('input', (e) => this._setVolume('left', e.target.value / 100));
+    volumeSliderRight?.addEventListener('input', (e) => this._setVolume('right', e.target.value / 100));
 
     // 패널 클릭 - 활성화
     this._panelLeft?.addEventListener('click', () => this._setActivePanel('left'));
@@ -331,14 +340,28 @@ export class SplitViewManager {
 
   /**
    * 스플릿 뷰 닫기
+   * @param {Object} options - { skipSave: boolean }
    */
-  close() {
+  async close(options = {}) {
     if (!this._isOpen) return;
 
     log.info('스플릿 뷰 닫기');
 
     // 재생 중지
     this._pause();
+
+    // 닫기 전 콜백 호출 (저장 등 처리)
+    // 향후 독립적인 댓글/드로잉 편집 기능 추가 시 여기서 양쪽 .bframe 저장
+    if (this._onBeforeClose && !options.skipSave) {
+      try {
+        await this._onBeforeClose({
+          leftVersion: this._leftVersion,
+          rightVersion: this._rightVersion
+        });
+      } catch (error) {
+        log.error('닫기 전 콜백 실패', error);
+      }
+    }
 
     // 비디오 정리
     if (this._leftVideo) {
@@ -354,9 +377,12 @@ export class SplitViewManager {
     this._overlay.classList.remove('open');
     this._isOpen = false;
 
-    // 콜백 호출
+    // 닫기 완료 콜백 호출
     if (this._onClose) {
-      this._onClose();
+      this._onClose({
+        leftVersion: this._leftVersion,
+        rightVersion: this._rightVersion
+      });
     }
 
     log.info('스플릿 뷰 닫힘');
@@ -368,6 +394,14 @@ export class SplitViewManager {
    */
   onClose(callback) {
     this._onClose = callback;
+  }
+
+  /**
+   * 닫기 전 콜백 설정 (저장 등 처리용)
+   * @param {Function} callback - async function({ leftVersion, rightVersion })
+   */
+  onBeforeClose(callback) {
+    this._onBeforeClose = callback;
   }
 
   /**
@@ -579,17 +613,54 @@ export class SplitViewManager {
    * 좌우 패널 교환
    */
   _swapPanels() {
+    // 현재 재생 위치와 상태 저장
+    const leftTime = this._leftVideo?.currentTime || 0;
+    const rightTime = this._rightVideo?.currentTime || 0;
+    const leftMuted = this._leftVideo?.muted || false;
+    const rightMuted = this._rightVideo?.muted || true;
+    const wasPlaying = this._isPlaying;
+
+    // 일시정지
+    if (wasPlaying) this._pause();
+
+    // 버전 정보 교환
     const tempVersion = this._leftVersion;
     this._leftVersion = this._rightVersion;
     this._rightVersion = tempVersion;
 
+    // 비디오 소스 교환
+    if (this._leftVideo && this._rightVideo) {
+      const tempSrc = this._leftVideo.src;
+      this._leftVideo.src = this._rightVideo.src;
+      this._rightVideo.src = tempSrc;
+
+      // 메타데이터 로드 후 재생 위치 복원
+      const restorePlayback = () => {
+        this._leftVideo.currentTime = rightTime;
+        this._rightVideo.currentTime = leftTime;
+
+        // 음소거 상태 교환
+        this._setMuted('left', rightMuted);
+        this._setMuted('right', leftMuted);
+
+        // 이전에 재생 중이었으면 재생 재개
+        if (wasPlaying) this._play();
+      };
+
+      // 비디오 로드 대기
+      let loadCount = 0;
+      const onLoaded = () => {
+        loadCount++;
+        if (loadCount >= 2) restorePlayback();
+      };
+
+      this._leftVideo.onloadedmetadata = onLoaded;
+      this._rightVideo.onloadedmetadata = onLoaded;
+    }
+
     // 셀렉터 다시 렌더링
     this._renderVersionSelector('Left', this._leftVersion);
     this._renderVersionSelector('Right', this._rightVersion);
-
-    // 비디오 다시 로드
-    this._loadVideo('left', this._leftVersion);
-    this._loadVideo('right', this._rightVersion);
 
     log.info('패널 교환됨');
   }
@@ -601,14 +672,86 @@ export class SplitViewManager {
   _toggleMute(panel) {
     const video = panel === 'left' ? this._leftVideo : this._rightVideo;
     const btn = document.getElementById(`btnMute${panel === 'left' ? 'Left' : 'Right'}`);
+    const slider = document.getElementById(`volumeSlider${panel === 'left' ? 'Left' : 'Right'}`);
 
     if (!video || !btn) return;
 
     video.muted = !video.muted;
     btn.classList.toggle('muted', video.muted);
+    this._updateMuteIcon(btn, video.muted);
 
-    // 아이콘 교체
-    if (video.muted) {
+    // 음소거 해제 시 볼륨이 0이면 50%로 설정
+    if (!video.muted && video.volume === 0) {
+      video.volume = 0.5;
+      if (slider) slider.value = 50;
+    }
+
+    log.debug('음소거 토글', { panel, muted: video.muted });
+  }
+
+  /**
+   * 음소거 설정
+   * @param {'left'|'right'} panel
+   * @param {boolean} muted
+   */
+  _setMuted(panel, muted) {
+    const video = panel === 'left' ? this._leftVideo : this._rightVideo;
+    const btn = document.getElementById(`btnMute${panel === 'left' ? 'Left' : 'Right'}`);
+    const slider = document.getElementById(`volumeSlider${panel === 'left' ? 'Left' : 'Right'}`);
+
+    if (!video) return;
+
+    video.muted = muted;
+    btn?.classList.toggle('muted', muted);
+    this._updateMuteIcon(btn, muted);
+
+    // 슬라이더 동기화 (음소거 시 0, 해제 시 현재 볼륨 또는 100)
+    if (slider) {
+      slider.value = muted ? 0 : (video.volume * 100 || 100);
+    }
+  }
+
+  /**
+   * 볼륨 설정
+   * @param {'left'|'right'} panel
+   * @param {number} volume - 0~1
+   */
+  _setVolume(panel, volume) {
+    const video = panel === 'left' ? this._leftVideo : this._rightVideo;
+    const btn = document.getElementById(`btnMute${panel === 'left' ? 'Left' : 'Right'}`);
+    const slider = document.getElementById(`volumeSlider${panel === 'left' ? 'Left' : 'Right'}`);
+
+    if (!video) return;
+
+    video.volume = Math.max(0, Math.min(1, volume));
+
+    // 볼륨이 0이면 음소거 상태로 표시
+    if (volume === 0) {
+      video.muted = true;
+      btn?.classList.add('muted');
+      this._updateMuteIcon(btn, true);
+    } else if (video.muted) {
+      // 볼륨을 올리면 음소거 해제
+      video.muted = false;
+      btn?.classList.remove('muted');
+      this._updateMuteIcon(btn, false);
+    }
+
+    // 슬라이더 동기화
+    if (slider) slider.value = volume * 100;
+
+    log.debug('볼륨 설정', { panel, volume });
+  }
+
+  /**
+   * 음소거 아이콘 업데이트
+   * @param {HTMLElement} btn
+   * @param {boolean} muted
+   */
+  _updateMuteIcon(btn, muted) {
+    if (!btn) return;
+
+    if (muted) {
       btn.innerHTML = `
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
@@ -624,44 +767,6 @@ export class SplitViewManager {
           <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
         </svg>
       `;
-    }
-
-    log.debug('음소거 토글', { panel, muted: video.muted });
-  }
-
-  /**
-   * 음소거 설정
-   * @param {'left'|'right'} panel
-   * @param {boolean} muted
-   */
-  _setMuted(panel, muted) {
-    const video = panel === 'left' ? this._leftVideo : this._rightVideo;
-    const btn = document.getElementById(`btnMute${panel === 'left' ? 'Left' : 'Right'}`);
-
-    if (!video) return;
-
-    video.muted = muted;
-    btn?.classList.toggle('muted', muted);
-
-    // 아이콘 업데이트
-    if (btn) {
-      if (muted) {
-        btn.innerHTML = `
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-            <line x1="23" y1="9" x2="17" y2="15"/>
-            <line x1="17" y1="9" x2="23" y2="15"/>
-          </svg>
-        `;
-      } else {
-        btn.innerHTML = `
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-          </svg>
-        `;
-      }
     }
   }
 
@@ -727,13 +832,23 @@ export class SplitViewManager {
    */
   _stepFrame(delta) {
     const frameTime = 1 / this._fps;
-    const video = this._leftVideo;
 
-    if (video) {
-      video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + frameTime * delta));
-
-      if (this._mode === 'sync' && this._rightVideo) {
-        this._rightVideo.currentTime = video.currentTime;
+    if (this._mode === 'sync') {
+      // 동기 모드: 양쪽 모두 같은 프레임으로 이동
+      if (this._leftVideo) {
+        const newTime = Math.max(0, Math.min(this._leftVideo.duration, this._leftVideo.currentTime + frameTime * delta));
+        this._leftVideo.currentTime = newTime;
+        if (this._rightVideo) {
+          // 프레임 기준 동기화: 같은 프레임 번호로 설정
+          const targetFrame = Math.round(newTime * this._fps);
+          this._rightVideo.currentTime = targetFrame / this._fps;
+        }
+      }
+    } else {
+      // 독립 모드: 활성 패널만 이동
+      const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
+      if (video) {
+        video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + frameTime * delta));
       }
     }
 
@@ -745,11 +860,15 @@ export class SplitViewManager {
    * @param {number} frame
    */
   _seekToFrame(frame) {
-    const frameTime = 1 / this._fps;
-    const time = frame * frameTime;
+    const time = frame / this._fps;
 
-    if (this._leftVideo) this._leftVideo.currentTime = time;
-    if (this._mode === 'sync' && this._rightVideo) this._rightVideo.currentTime = time;
+    if (this._mode === 'sync') {
+      if (this._leftVideo) this._leftVideo.currentTime = time;
+      if (this._rightVideo) this._rightVideo.currentTime = time;
+    } else {
+      const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
+      if (video) video.currentTime = time;
+    }
 
     this._updateTimecode();
   }
@@ -758,12 +877,12 @@ export class SplitViewManager {
    * 끝으로 이동
    */
   _seekToEnd() {
-    const video = this._leftVideo;
-    if (video) {
-      video.currentTime = video.duration;
-      if (this._mode === 'sync' && this._rightVideo) {
-        this._rightVideo.currentTime = this._rightVideo.duration;
-      }
+    if (this._mode === 'sync') {
+      if (this._leftVideo) this._leftVideo.currentTime = this._leftVideo.duration;
+      if (this._rightVideo) this._rightVideo.currentTime = this._rightVideo.duration;
+    } else {
+      const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
+      if (video) video.currentTime = video.duration;
     }
     this._updateTimecode();
   }
@@ -773,12 +892,18 @@ export class SplitViewManager {
    * @param {number} percent - 0~1
    */
   _seekToPercent(percent) {
-    const video = this._leftVideo;
-    if (video) {
-      video.currentTime = video.duration * percent;
-      if (this._mode === 'sync' && this._rightVideo) {
-        this._rightVideo.currentTime = this._rightVideo.duration * percent;
+    if (this._mode === 'sync') {
+      // 동기 모드: 같은 프레임 번호 기준으로 이동
+      if (this._leftVideo) {
+        const targetFrame = Math.round(this._leftVideo.duration * percent * this._fps);
+        const time = targetFrame / this._fps;
+        this._leftVideo.currentTime = time;
+        if (this._rightVideo) this._rightVideo.currentTime = time;
       }
+    } else {
+      // 독립 모드: 활성 패널만 이동
+      const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
+      if (video) video.currentTime = video.duration * percent;
     }
     this._updateTimecode();
   }
@@ -787,23 +912,35 @@ export class SplitViewManager {
    * 타임 업데이트 시작
    */
   _startTimeUpdate() {
-    this._timeUpdateInterval = setInterval(() => {
+    const updateLoop = () => {
+      if (!this._isPlaying) return;
+
       this._updateTimecode();
 
-      // 동기 모드에서 프레임 동기화
+      // 동기 모드에서 프레임 기준 동기화
       if (this._mode === 'sync' && this._leftVideo && this._rightVideo) {
-        this._rightVideo.currentTime = this._leftVideo.currentTime;
+        const leftFrame = Math.round(this._leftVideo.currentTime * this._fps);
+        const rightFrame = Math.round(this._rightVideo.currentTime * this._fps);
+
+        // 프레임 차이가 1 이상이면 동기화
+        if (Math.abs(leftFrame - rightFrame) >= 1) {
+          this._rightVideo.currentTime = leftFrame / this._fps;
+        }
       }
-    }, 1000 / 30); // 30fps로 업데이트
+
+      this._animationFrameId = requestAnimationFrame(updateLoop);
+    };
+
+    this._animationFrameId = requestAnimationFrame(updateLoop);
   }
 
   /**
    * 타임 업데이트 중지
    */
   _stopTimeUpdate() {
-    if (this._timeUpdateInterval) {
-      clearInterval(this._timeUpdateInterval);
-      this._timeUpdateInterval = null;
+    if (this._animationFrameId) {
+      cancelAnimationFrame(this._animationFrameId);
+      this._animationFrameId = null;
     }
   }
 
@@ -811,7 +948,11 @@ export class SplitViewManager {
    * 타임코드 업데이트
    */
   _updateTimecode() {
-    const video = this._leftVideo;
+    // 독립 모드에서는 활성 패널 기준, 동기 모드에서는 좌측 기준
+    const video = this._mode === 'independent'
+      ? (this._activePanel === 'left' ? this._leftVideo : this._rightVideo)
+      : this._leftVideo;
+
     if (!video) return;
 
     const current = video.currentTime || 0;
@@ -828,7 +969,12 @@ export class SplitViewManager {
 
     const currentFrame = Math.floor(current * this._fps);
     const totalFrames = Math.floor(duration * this._fps);
-    if (frameInfoEl) frameInfoEl.textContent = `${this._fps}fps · Frame ${currentFrame} / ${totalFrames}`;
+
+    // 독립 모드에서는 어떤 패널인지 표시
+    const panelIndicator = this._mode === 'independent'
+      ? `[${this._activePanel === 'left' ? '좌' : '우'}] `
+      : '';
+    if (frameInfoEl) frameInfoEl.textContent = `${panelIndicator}${this._fps}fps · Frame ${currentFrame} / ${totalFrames}`;
 
     // 시크바 업데이트
     const progress = document.getElementById('splitSeekbarProgress');
