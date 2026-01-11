@@ -406,10 +406,14 @@ export class SplitViewManager {
     if (this._leftVideo) {
       this._leftVideo.pause();
       this._leftVideo.src = '';
+      this._leftVideo.muted = false;
+      this._leftVideo.volume = 1;
     }
     if (this._rightVideo) {
       this._rightVideo.pause();
       this._rightVideo.src = '';
+      this._rightVideo.muted = false;
+      this._rightVideo.volume = 1;
     }
 
     // 오버레이 숨기기
@@ -646,6 +650,10 @@ export class SplitViewManager {
       });
 
       log.info('비디오 로드 완료', { panel, path: versionInfo.path });
+
+      // 오디오 초기 상태 설정 (좌측: 소리 켜짐, 우측: 음소거)
+      video.volume = 1;
+      video.muted = panel === 'right';
 
       // 타임코드 업데이트
       this._updateTimecode();
