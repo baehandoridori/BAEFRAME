@@ -444,16 +444,21 @@ async function initApp() {
   videoPlayer.addEventListener('play', () => {
     elements.btnPlay.innerHTML = pauseIconSVG;
     drawingManager.setPlaying(true);
+    timeline.setPlayingState(true);
+    // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
+    timeline.scrollToPlayhead();
   });
 
   videoPlayer.addEventListener('pause', () => {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
+    timeline.setPlayingState(false);
   });
 
   videoPlayer.addEventListener('ended', () => {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
+    timeline.setPlayingState(false);
   });
 
   // 비디오 에러

@@ -28,9 +28,12 @@ export class Timeline extends EventTarget {
     this.totalFrames = 0;
     this.currentTime = 0;
     this.zoom = 100; // 100% = 기본
-    this.minZoom = 10; // 긴 영상에서 더 축소 가능하도록 (기존 25)
+    this.minZoom = 100; // 최소 100% (타임라인이 꽉 차게)
     this.maxZoom = 800;  // 기본값 (영상 길이에 따라 동적 조정됨)
     this.baseMaxZoom = 800;  // 최소 maxZoom 보장
+
+    // 재생 중 플레이헤드 따라가기 상태
+    this.isPlaying = false;
 
     // 프레임 그리드 설정
     this.frameGridContainer = null;
@@ -80,9 +83,27 @@ export class Timeline extends EventTarget {
   _setupResizeObserver() {
     if (!this.timelineTracks) return;
 
-    const resizeObserver = new ResizeObserver(() => {
-      // 줌 상태에서 리사이즈 시 플레이헤드 위치 업데이트
-      this._updatePlayheadPosition();
+    let prevContainerWidth = 0;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      // DOM이 완전히 업데이트된 후 처리
+      requestAnimationFrame(() => {
+        const newContainerWidth = this.tracksContainer?.offsetWidth || 0;
+
+        // 스크롤 위치 비율 유지 (리사이즈 전 비율로 새 위치 계산)
+        if (prevContainerWidth > 0 && newContainerWidth > 0 && prevContainerWidth !== newContainerWidth) {
+          const scrollRatio = this.timelineTracks.scrollLeft / prevContainerWidth;
+          this.timelineTracks.scrollLeft = scrollRatio * newContainerWidth;
+        }
+
+        prevContainerWidth = newContainerWidth;
+
+        // 플레이헤드 위치 업데이트
+        this._updatePlayheadPosition();
+
+        // 구간 반복 마커도 업데이트 (이벤트 발생)
+        this._emit('resize', { width: newContainerWidth });
+      });
     });
 
     resizeObserver.observe(this.timelineTracks);
@@ -98,6 +119,14 @@ export class Timeline extends EventTarget {
       this.zoom = this.minZoom + (value / 100) * (this.maxZoom - this.minZoom);
       this._applyZoom();
       this._updateZoomDisplay();
+    });
+
+    // 줌 슬라이더 사용 후 포커스 해제 (스페이스바가 재생으로 작동하도록)
+    this.zoomSlider?.addEventListener('mouseup', (e) => {
+      e.target.blur();
+    });
+    this.zoomSlider?.addEventListener('change', (e) => {
+      e.target.blur();
     });
 
     // 타임라인 휠 이벤트
@@ -350,8 +379,8 @@ export class Timeline extends EventTarget {
     // 100% 줌에서 프레임당 픽셀
     const baseFrameWidth = baseContainerWidth / this.totalFrames;
 
-    // 목표 프레임 너비: 5px (개별 프레임이 잘 보이도록)
-    const targetFrameWidth = 5;
+    // 목표 프레임 너비: 15px (개별 프레임이 편하게 보이도록 - 기존 5px에서 증가)
+    const targetFrameWidth = 15;
 
     // 필요한 줌 레벨 계산
     // frameWidth = baseContainerWidth * (zoom/100) / totalFrames
@@ -359,8 +388,8 @@ export class Timeline extends EventTarget {
     // maxZoom = targetFrameWidth * totalFrames * 100 / baseContainerWidth
     const calculatedMaxZoom = (targetFrameWidth * this.totalFrames * 100) / baseContainerWidth;
 
-    // 최소 baseMaxZoom (800%) 보장, 최대 10000%로 제한 (성능)
-    this.maxZoom = Math.max(this.baseMaxZoom, Math.min(calculatedMaxZoom, 10000));
+    // 최소 baseMaxZoom (800%) 보장, 최대 50000%로 제한 (긴 영상도 충분히 확대 가능)
+    this.maxZoom = Math.max(this.baseMaxZoom, Math.min(calculatedMaxZoom, 50000));
 
     // 줌 슬라이더 업데이트
     this._updateZoomDisplay();
@@ -375,11 +404,74 @@ export class Timeline extends EventTarget {
   }
 
   /**
+   * 재생 상태 설정
+   * @param {boolean} isPlaying - 재생 중 여부
+   */
+  setPlayingState(isPlaying) {
+    this.isPlaying = isPlaying;
+  }
+
+  /**
    * 현재 시간 설정 (플레이헤드 위치 업데이트)
    */
   setCurrentTime(time) {
     this.currentTime = time;
     this._updatePlayheadPosition();
+
+    // 재생 중일 때 플레이헤드가 화면 밖으로 나가면 자동 스크롤
+    if (this.isPlaying && this.timelineTracks) {
+      this._autoScrollToPlayhead();
+    }
+  }
+
+  /**
+   * 플레이헤드가 보이도록 자동 스크롤
+   */
+  _autoScrollToPlayhead() {
+    if (!this.timelineTracks || this.duration === 0) return;
+
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (containerWidth === 0) return;
+
+    const percent = this.currentTime / this.duration;
+    const playheadPx = containerWidth * percent;
+
+    const scrollLeft = this.timelineTracks.scrollLeft;
+    const viewportWidth = this.timelineTracks.clientWidth;
+
+    // 플레이헤드가 화면 오른쪽 밖으로 나갔으면 스크롤
+    // 여유 공간 50px을 두고 체크
+    const margin = 50;
+    if (playheadPx > scrollLeft + viewportWidth - margin) {
+      // 플레이헤드를 왼쪽에 두고 스크롤 (부드러운 전환)
+      this.timelineTracks.scrollLeft = playheadPx - margin;
+    }
+    // 플레이헤드가 화면 왼쪽 밖에 있으면 스크롤
+    else if (playheadPx < scrollLeft + margin) {
+      this.timelineTracks.scrollLeft = Math.max(0, playheadPx - margin);
+    }
+  }
+
+  /**
+   * 플레이헤드 위치로 스크롤 (재생 시작 시)
+   */
+  scrollToPlayhead() {
+    if (!this.timelineTracks || this.duration === 0) return;
+
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (containerWidth === 0) return;
+
+    const percent = this.currentTime / this.duration;
+    const playheadPx = containerWidth * percent;
+
+    const scrollLeft = this.timelineTracks.scrollLeft;
+    const viewportWidth = this.timelineTracks.clientWidth;
+
+    // 플레이헤드가 현재 뷰포트 내에 없으면 왼쪽에 오도록 스크롤
+    if (playheadPx < scrollLeft || playheadPx > scrollLeft + viewportWidth) {
+      const margin = 50;
+      this.timelineTracks.scrollLeft = Math.max(0, playheadPx - margin);
+    }
   }
 
   /**
@@ -835,10 +927,9 @@ export class Timeline extends EventTarget {
     });
 
     // 셀 너비 계산 (줌에 따라)
-    const scale = this.zoom / 100;
-    const containerWidth = this.container?.clientWidth || 1000;
-    const totalWidth = containerWidth * scale;
-    const cellWidth = totalWidth / this.totalFrames;
+    // tracksContainer의 실제 너비를 사용 (줌이 적용된 상태)
+    const containerWidth = this.tracksContainer?.offsetWidth || 1000;
+    const cellWidth = containerWidth / this.totalFrames;
 
     // 최소 셀 너비 (성능을 위해 너무 작으면 그룹화)
     const minCellWidth = 4;
@@ -847,12 +938,6 @@ export class Timeline extends EventTarget {
     if (showNumbers) {
       cellsContainer.classList.add('show-numbers');
     }
-
-    // 프레임 셀 생성 (가상 스크롤링 - 보이는 영역 + 버퍼)
-    const visibleFrames = Math.ceil(containerWidth / cellWidth) + 20;
-    const scrollLeft = this.container?.scrollLeft || 0;
-    const startFrame = Math.max(0, Math.floor((scrollLeft / totalWidth) * this.totalFrames) - 10);
-    const endFrame = Math.min(this.totalFrames - 1, startFrame + visibleFrames);
 
     // 셀 렌더링
     if (cellWidth >= minCellWidth) {
