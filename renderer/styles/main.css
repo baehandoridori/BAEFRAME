@@ -1945,6 +1945,104 @@ body.app-fullscreen .video-comment-overlay-controls {
   background: rgba(255, 208, 0, 0.05);
 }
 
+/* ====== 키프레임 셀 방식 (애니메이트 스타일) ====== */
+
+/* 키프레임 범위 배경 블록 */
+.keyframe-range-block {
+  position: absolute;
+  top: 6px;
+  height: 24px;
+  border-radius: 3px;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+/* 키프레임 셀 (고정 위치 마커) */
+.keyframe-cell {
+  position: absolute;
+  top: 4px;
+  width: 20px;
+  height: 28px;
+  margin-left: -10px; /* 중앙 정렬 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+}
+
+.keyframe-cell:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.1);
+}
+
+.keyframe-cell.selected {
+  background: rgba(255, 208, 0, 0.2);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* 키프레임 점 */
+.keyframe-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid white;
+  cursor: grab;
+  transition: all var(--transition-fast);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.keyframe-dot:hover {
+  transform: scale(1.2);
+}
+
+.keyframe-dot:active {
+  cursor: grabbing;
+}
+
+.keyframe-dot.empty {
+  background: transparent !important;
+  border-style: dashed;
+}
+
+/* 프레임 번호 (줌이 높을 때만 표시) */
+.keyframe-frame-num {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+/* 줌이 200% 이상일 때 프레임 번호 표시 */
+.timeline-tracks[style*="width: 2"] .keyframe-frame-num,
+.timeline-tracks[style*="width: 3"] .keyframe-frame-num,
+.timeline-tracks[style*="width: 4"] .keyframe-frame-num,
+.timeline-tracks[style*="width: 5"] .keyframe-frame-num,
+.timeline-tracks[style*="width: 6"] .keyframe-frame-num,
+.timeline-tracks[style*="width: 7"] .keyframe-frame-num,
+.timeline-tracks[style*="width: 8"] .keyframe-frame-num,
+.timeline-tracks[style*="width: 9"] .keyframe-frame-num {
+  opacity: 1;
+}
+
+/* 선택된 키프레임 */
+.keyframe-cell.selected .keyframe-dot {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-glow-strong);
+}
+
+.keyframe-cell.selected .keyframe-frame-num {
+  color: var(--accent-primary);
+  opacity: 1;
+}
+
+/* ====== 기존 키프레임 클립 (호환성 유지) ====== */
+
 /* 키프레임 클립 */
 .drawing-clip {
   position: absolute;
@@ -1963,7 +2061,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   filter: brightness(1.2);
 }
 
-/* 키프레임 마커 */
+/* 키프레임 마커 (기존) */
 .keyframe-marker {
   font-size: 12px;
   color: white;
