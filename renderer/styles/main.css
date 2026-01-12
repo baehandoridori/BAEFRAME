@@ -1945,103 +1945,158 @@ body.app-fullscreen .video-comment-overlay-controls {
   background: rgba(255, 208, 0, 0.05);
 }
 
-/* ====== 키프레임 셀 방식 (애니메이트 스타일) ====== */
+/* ====== Adobe Animate 스타일 키프레임 격자 ====== */
 
-/* 키프레임 범위 배경 블록 */
-.keyframe-range-block {
-  position: absolute;
-  top: 6px;
-  height: 24px;
-  border-radius: 3px;
-  pointer-events: none;
-  opacity: 0.6;
+/* 그리기 트랙 - 격자 배경 */
+.drawing-track-row {
+  position: relative;
+  background: var(--bg-tertiary);
+  min-height: 36px;
+  /* 격자 패턴은 JS에서 동적으로 설정 (줌에 따라 변경) */
 }
 
-/* 키프레임 셀 (고정 위치 마커) */
-.keyframe-cell {
+/* 프레임 셀 컨테이너 */
+.frame-cells-container {
   position: absolute;
-  top: 4px;
-  width: 20px;
-  height: 28px;
-  margin-left: -10px; /* 중앙 정렬 */
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
-  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 개별 프레임 셀 */
+.frame-cell {
+  flex: 0 0 auto;
+  height: 100%;
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  z-index: 10;
-  border-radius: 4px;
-  transition: all var(--transition-fast);
+  position: relative;
+  transition: background var(--transition-fast);
 }
 
-.keyframe-cell:hover {
-  background: rgba(255, 255, 255, 0.1);
-  transform: scale(1.1);
+.frame-cell:hover {
+  background: rgba(255, 255, 255, 0.05);
 }
 
-.keyframe-cell.selected {
-  background: rgba(255, 208, 0, 0.2);
-  box-shadow: 0 0 8px var(--accent-glow);
+/* 내용이 있는 프레임 (범위 내) */
+.frame-cell.has-content {
+  background: rgba(100, 100, 100, 0.3);
 }
 
-/* 키프레임 점 */
-.keyframe-dot {
-  width: 12px;
-  height: 12px;
+.frame-cell.has-content:hover {
+  background: rgba(100, 100, 100, 0.4);
+}
+
+/* 키프레임이 있는 셀 */
+.frame-cell.is-keyframe {
+  background: rgba(74, 158, 255, 0.2);
+}
+
+.frame-cell.is-keyframe:hover {
+  background: rgba(74, 158, 255, 0.3);
+}
+
+/* 키프레임 마커 (다이아몬드/원형) */
+.keyframe-marker-dot {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
+  background: #4a9eff;
   border: 2px solid white;
   cursor: grab;
   transition: all var(--transition-fast);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  z-index: 5;
 }
 
-.keyframe-dot:hover {
-  transform: scale(1.2);
+.keyframe-marker-dot:hover {
+  transform: scale(1.3);
+  box-shadow: 0 0 8px rgba(74, 158, 255, 0.8);
 }
 
-.keyframe-dot:active {
+.keyframe-marker-dot:active {
   cursor: grabbing;
 }
 
-.keyframe-dot.empty {
-  background: transparent !important;
-  border-style: dashed;
+/* 빈 키프레임 */
+.keyframe-marker-dot.empty {
+  background: transparent;
+  border: 2px dashed white;
 }
 
-/* 프레임 번호 (줌이 높을 때만 표시) */
-.keyframe-frame-num {
-  font-size: 9px;
+/* 선택된 프레임 셀 */
+.frame-cell.selected {
+  background: rgba(255, 208, 0, 0.25);
+  box-shadow: inset 0 0 0 2px var(--accent-primary);
+}
+
+.frame-cell.selected .keyframe-marker-dot {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-glow-strong);
+}
+
+/* 5프레임마다 강조 세로선 */
+.frame-cell.frame-5 {
+  border-right: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* 10프레임마다 더 강조 */
+.frame-cell.frame-10 {
+  border-right: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+/* 프레임 번호 (셀 상단) */
+.frame-cell-number {
+  position: absolute;
+  top: 2px;
+  font-size: 8px;
   color: var(--text-muted);
-  margin-top: 2px;
   font-family: var(--font-mono);
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
 
-/* 줌이 200% 이상일 때 프레임 번호 표시 */
-.timeline-tracks[style*="width: 2"] .keyframe-frame-num,
-.timeline-tracks[style*="width: 3"] .keyframe-frame-num,
-.timeline-tracks[style*="width: 4"] .keyframe-frame-num,
-.timeline-tracks[style*="width: 5"] .keyframe-frame-num,
-.timeline-tracks[style*="width: 6"] .keyframe-frame-num,
-.timeline-tracks[style*="width: 7"] .keyframe-frame-num,
-.timeline-tracks[style*="width: 8"] .keyframe-frame-num,
-.timeline-tracks[style*="width: 9"] .keyframe-frame-num {
-  opacity: 1;
-}
-
-/* 선택된 키프레임 */
-.keyframe-cell.selected .keyframe-dot {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 8px var(--accent-glow-strong);
-}
-
-.keyframe-cell.selected .keyframe-frame-num {
-  color: var(--accent-primary);
+/* 줌이 높을 때 프레임 번호 표시 */
+.frame-cells-container.show-numbers .frame-cell-number {
   opacity: 1;
 }
 
 /* ====== 기존 키프레임 클립 (호환성 유지) ====== */
+
+/* 키프레임 클립 */
+.drawing-clip {
+  position: absolute;
+  top: 4px;
+  height: 28px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+  min-width: 24px;
+}
+
+.drawing-clip:hover {
+  filter: brightness(1.2);
+}
+
+/* 키프레임 마커 (기존) */
+.keyframe-marker {
+  font-size: 12px;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  margin-right: 4px;
+  cursor: grab;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+/* ====== 기존 키프레임 클립 (레거시/호환성) ====== */
 
 /* 키프레임 클립 */
 .drawing-clip {

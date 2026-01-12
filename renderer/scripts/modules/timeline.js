@@ -804,53 +804,165 @@ export class Timeline extends EventTarget {
   }
 
   /**
-   * 레이어 트랙 렌더링 (오른쪽 타임라인) - 프레임 셀 방식
+   * 레이어 트랙 렌더링 (오른쪽 타임라인) - Adobe Animate 격자 스타일
    */
   _renderLayerTrack(layer, isActive) {
     const trackRow = document.createElement('div');
     trackRow.className = `track-row drawing-track-row${isActive ? ' active-layer' : ''}`;
     trackRow.dataset.layerId = layer.id;
 
-    // 키프레임 범위 가져오기
+    // 프레임 셀 컨테이너
+    const cellsContainer = document.createElement('div');
+    cellsContainer.className = 'frame-cells-container';
+    cellsContainer.dataset.layerId = layer.id;
+
+    // 키프레임 범위 정보 가져오기
     const ranges = layer.getKeyframeRanges(this.totalFrames);
 
-    // 각 키프레임 범위에 대해 배경 블록 + 키프레임 마커 생성
+    // 키프레임 프레임 번호 집합 생성
+    const keyframeFrames = new Map(); // frame -> { isEmpty, range }
+    const contentFrames = new Set(); // 내용이 있는 프레임
+
     ranges.forEach(range => {
-      // 범위 배경 블록 (키프레임부터 다음 키프레임 전까지)
-      const rangeBlock = document.createElement('div');
-      rangeBlock.className = 'keyframe-range-block';
-      rangeBlock.dataset.layerId = layer.id;
-      rangeBlock.dataset.startFrame = range.start;
-      rangeBlock.dataset.endFrame = range.end;
-
-      const startPercent = (range.start / this.totalFrames) * 100;
-      const widthPercent = ((range.end - range.start + 1) / this.totalFrames) * 100;
-
-      rangeBlock.style.cssText = `
-        left: ${startPercent}%;
-        width: ${widthPercent}%;
-        background: ${layer.color}33;
-      `;
-      trackRow.appendChild(rangeBlock);
-
-      // 키프레임 마커 (프레임 셀)
-      const keyframeCell = this._createKeyframeCell(layer, range);
-      trackRow.appendChild(keyframeCell);
+      keyframeFrames.set(range.start, {
+        isEmpty: range.keyframe.isEmpty,
+        range: range
+      });
+      // 범위 내 모든 프레임에 내용 표시
+      for (let f = range.start; f <= range.end; f++) {
+        contentFrames.add(f);
+      }
     });
 
+    // 셀 너비 계산 (줌에 따라)
+    const scale = this.zoom / 100;
+    const containerWidth = this.container?.clientWidth || 1000;
+    const totalWidth = containerWidth * scale;
+    const cellWidth = totalWidth / this.totalFrames;
+
+    // 최소 셀 너비 (성능을 위해 너무 작으면 그룹화)
+    const minCellWidth = 4;
+    const showNumbers = cellWidth >= 20;
+
+    if (showNumbers) {
+      cellsContainer.classList.add('show-numbers');
+    }
+
+    // 프레임 셀 생성 (가상 스크롤링 - 보이는 영역 + 버퍼)
+    const visibleFrames = Math.ceil(containerWidth / cellWidth) + 20;
+    const scrollLeft = this.container?.scrollLeft || 0;
+    const startFrame = Math.max(0, Math.floor((scrollLeft / totalWidth) * this.totalFrames) - 10);
+    const endFrame = Math.min(this.totalFrames - 1, startFrame + visibleFrames);
+
+    // 셀 렌더링
+    if (cellWidth >= minCellWidth) {
+      // 개별 셀 렌더링
+      for (let frame = 0; frame < this.totalFrames; frame++) {
+        const cell = this._createFrameCell(layer, frame, keyframeFrames, contentFrames, cellWidth);
+        cellsContainer.appendChild(cell);
+      }
+    } else {
+      // 줌이 너무 축소되면 키프레임만 렌더링
+      ranges.forEach(range => {
+        const cell = this._createKeyframeOnlyCell(layer, range, cellWidth);
+        cellsContainer.appendChild(cell);
+      });
+    }
+
+    trackRow.appendChild(cellsContainer);
     this.tracksContainer.appendChild(trackRow);
   }
 
   /**
-   * 키프레임 셀 생성 (고정 위치 마커)
+   * 개별 프레임 셀 생성 (Adobe Animate 스타일)
    */
-  _createKeyframeCell(layer, range) {
+  _createFrameCell(layer, frame, keyframeFrames, contentFrames, cellWidth) {
     const cell = document.createElement('div');
-    cell.className = 'keyframe-cell';
+    cell.className = 'frame-cell';
+    cell.dataset.frame = frame;
     cell.dataset.layerId = layer.id;
-    cell.dataset.frame = range.start;
+    cell.style.width = `${cellWidth}px`;
 
-    // 선택된 키프레임인지 확인
+    // 5프레임, 10프레임 강조
+    if (frame % 10 === 0) {
+      cell.classList.add('frame-10');
+    } else if (frame % 5 === 0) {
+      cell.classList.add('frame-5');
+    }
+
+    // 내용이 있는 프레임
+    if (contentFrames.has(frame)) {
+      cell.classList.add('has-content');
+    }
+
+    // 키프레임인 경우
+    const kfInfo = keyframeFrames.get(frame);
+    if (kfInfo) {
+      cell.classList.add('is-keyframe');
+
+      // 키프레임 마커 (점)
+      const marker = document.createElement('div');
+      marker.className = `keyframe-marker-dot${kfInfo.isEmpty ? ' empty' : ''}`;
+      marker.style.background = kfInfo.isEmpty ? 'transparent' : layer.color;
+      marker.title = `F${frame}${kfInfo.isEmpty ? ' (빈 키프레임)' : ''}`;
+      cell.appendChild(marker);
+
+      // 선택 상태
+      const isSelected = this.selectedKeyframes.some(
+        kf => kf.layerId === layer.id && kf.frame === frame
+      );
+      if (isSelected) {
+        cell.classList.add('selected');
+      }
+
+      // 키프레임 드래그
+      cell.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        this._startKeyframeDrag(e, layer.id, frame, cell);
+      });
+
+      // 클릭으로 선택
+      cell.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._toggleKeyframeSelection(layer.id, frame, e.ctrlKey || e.metaKey);
+      });
+    }
+
+    // 프레임 번호 (10프레임마다)
+    if (frame % 10 === 0 && cellWidth >= 15) {
+      const numSpan = document.createElement('span');
+      numSpan.className = 'frame-cell-number';
+      numSpan.textContent = frame;
+      cell.appendChild(numSpan);
+    }
+
+    return cell;
+  }
+
+  /**
+   * 줌이 축소되었을 때 키프레임만 표시하는 셀
+   */
+  _createKeyframeOnlyCell(layer, range, cellWidth) {
+    const cell = document.createElement('div');
+    cell.className = 'frame-cell is-keyframe';
+    cell.dataset.frame = range.start;
+    cell.dataset.layerId = layer.id;
+
+    // 위치 계산
+    const leftPercent = (range.start / this.totalFrames) * 100;
+    cell.style.position = 'absolute';
+    cell.style.left = `${leftPercent}%`;
+    cell.style.width = `${Math.max(cellWidth, 12)}px`;
+    cell.style.marginLeft = `-${Math.max(cellWidth, 12) / 2}px`;
+
+    // 키프레임 마커
+    const marker = document.createElement('div');
+    marker.className = `keyframe-marker-dot${range.keyframe.isEmpty ? ' empty' : ''}`;
+    marker.style.background = range.keyframe.isEmpty ? 'transparent' : layer.color;
+    cell.appendChild(marker);
+
+    // 선택 상태
     const isSelected = this.selectedKeyframes.some(
       kf => kf.layerId === layer.id && kf.frame === range.start
     );
@@ -858,32 +970,13 @@ export class Timeline extends EventTarget {
       cell.classList.add('selected');
     }
 
-    // 위치 계산 (프레임 중앙에 배치)
-    const posPercent = (range.start / this.totalFrames) * 100;
-    cell.style.left = `${posPercent}%`;
-    cell.style.borderColor = layer.color;
-
-    // 키프레임 점 (채워짐/빈)
-    const dot = document.createElement('div');
-    dot.className = `keyframe-dot${range.keyframe.isEmpty ? ' empty' : ''}`;
-    dot.style.background = range.keyframe.isEmpty ? 'transparent' : layer.color;
-    dot.title = `키프레임 F${range.start}${range.keyframe.isEmpty ? ' (빈)' : ''}`;
-    cell.appendChild(dot);
-
-    // 프레임 번호 (줌이 높을 때만 표시 - CSS로 제어)
-    const frameNum = document.createElement('span');
-    frameNum.className = 'keyframe-frame-num';
-    frameNum.textContent = range.start;
-    cell.appendChild(frameNum);
-
-    // 드래그 시작
+    // 이벤트
     cell.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       e.stopPropagation();
       this._startKeyframeDrag(e, layer.id, range.start, cell);
     });
 
-    // 클릭으로 선택
     cell.addEventListener('click', (e) => {
       e.stopPropagation();
       this._toggleKeyframeSelection(layer.id, range.start, e.ctrlKey || e.metaKey);
