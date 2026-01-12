@@ -919,29 +919,31 @@ export class Timeline extends EventTarget {
     // 격자 배경 패턴 생성 (CSS)
     this._applyGridBackground(trackRow, pixelsPerFrame);
 
-    // 콘텐츠 범위 표시 (키프레임 간 구간)
+    // 콘텐츠 범위 표시 (키프레임 간 구간) - 빈 키프레임이 아닌 경우만 채움
     ranges.forEach(range => {
-      // 콘텐츠 범위 바
-      const rangeBar = document.createElement('div');
-      rangeBar.className = 'keyframe-range-bar';
+      // 빈 키프레임이 아닌 경우에만 범위 바 표시
+      if (!range.keyframe.isEmpty) {
+        const rangeBar = document.createElement('div');
+        rangeBar.className = 'keyframe-range-bar';
 
-      const startPercent = (range.start / this.totalFrames) * 100;
-      const widthPercent = ((range.end - range.start + 1) / this.totalFrames) * 100;
+        const startPercent = (range.start / this.totalFrames) * 100;
+        const widthPercent = ((range.end - range.start + 1) / this.totalFrames) * 100;
 
-      rangeBar.style.left = `${startPercent}%`;
-      rangeBar.style.width = `${widthPercent}%`;
-      rangeBar.style.background = `${layer.color}33`; // 레이어 색상 + 투명도
+        rangeBar.style.left = `${startPercent}%`;
+        rangeBar.style.width = `${widthPercent}%`;
+        rangeBar.style.background = `${layer.color}40`; // 레이어 색상 + 투명도
 
-      keyframeContainer.appendChild(rangeBar);
+        keyframeContainer.appendChild(rangeBar);
+      }
 
-      // 키프레임 마커
+      // 키프레임 마커 - 격자 칸 중앙에 배치
       const marker = document.createElement('div');
       marker.className = `keyframe-marker-dot${range.keyframe.isEmpty ? ' empty' : ''}`;
       marker.dataset.frame = range.start;
       marker.dataset.layerId = layer.id;
 
-      // 정확한 픽셀 위치 계산
-      const markerLeft = (range.start / this.totalFrames) * 100;
+      // 프레임 중앙에 배치 (프레임 시작 + 0.5프레임)
+      const markerLeft = ((range.start + 0.5) / this.totalFrames) * 100;
       marker.style.left = `${markerLeft}%`;
       marker.style.background = range.keyframe.isEmpty ? 'transparent' : layer.color;
       marker.title = `F${range.start}${range.keyframe.isEmpty ? ' (빈 키프레임)' : ''}`;
