@@ -1607,6 +1607,9 @@ async function initApp() {
   }
 
   function snapToPlayhead(time, shiftKey = false) {
+    // Shift 키를 눌렀을 때만 스냅
+    if (!shiftKey) return time;
+
     const fps = videoPlayer.fps || 24;
     const playheadTime = videoPlayer.currentTime || 0;
     const thresholdFrames = getSnapThresholdFrames(shiftKey);
@@ -1619,6 +1622,9 @@ async function initApp() {
   }
 
   function snapFrameToPlayhead(frame, shiftKey = false) {
+    // Shift 키를 눌렀을 때만 스냅
+    if (!shiftKey) return frame;
+
     const currentFrame = videoPlayer.currentFrame || 0;
     const thresholdFrames = getSnapThresholdFrames(shiftKey);
     if (Math.abs(frame - currentFrame) <= thresholdFrames) {
