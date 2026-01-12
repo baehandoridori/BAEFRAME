@@ -28,7 +28,7 @@ export class Timeline extends EventTarget {
     this.totalFrames = 0;
     this.currentTime = 0;
     this.zoom = 100; // 100% = 기본
-    this.minZoom = 25;
+    this.minZoom = 10; // 긴 영상에서 더 축소 가능하도록 (기존 25)
     this.maxZoom = 800;  // 기본값 (영상 길이에 따라 동적 조정됨)
     this.baseMaxZoom = 800;  // 최소 maxZoom 보장
 

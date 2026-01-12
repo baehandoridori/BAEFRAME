@@ -758,6 +758,22 @@ async function initApp() {
     }
   });
 
+  // 전송 버튼 클릭 처리 (Enter와 동일한 동작)
+  elements.btnSubmitComment?.addEventListener('click', () => {
+    const text = elements.commentInput.value.trim();
+    if (text || state.pendingCommentImage) {
+      // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
+      commentManager.setPendingText(text || '(이미지)');
+      // 이미지가 있으면 commentManager에 임시 저장
+      if (state.pendingCommentImage) {
+        commentManager._pendingImage = state.pendingCommentImage;
+      }
+      elements.commentInput.value = '';
+      clearCommentImage();
+      showToast('영상에서 마커를 찍어주세요', 'info');
+    }
+  });
+
   // ====== 댓글 이미지 기능 ======
 
   /**
