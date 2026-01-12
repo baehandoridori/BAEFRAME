@@ -1955,49 +1955,37 @@ body.app-fullscreen .video-comment-overlay-controls {
   /* 격자 패턴은 JS에서 동적으로 설정 (줌에 따라 변경) */
 }
 
-/* 프레임 셀 컨테이너 */
-.frame-cells-container {
+/* 키프레임 컨테이너 (성능 최적화 버전) */
+.keyframe-container {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  display: flex;
-  overflow: hidden;
+  pointer-events: none;
 }
 
-/* 개별 프레임 셀 */
-.frame-cell {
-  flex: 0 0 auto;
-  height: 100%;
-  border-right: 1px solid var(--border-subtle);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  transition: background var(--transition-fast);
+/* 키프레임 범위 바 (콘텐츠 구간 표시) */
+.keyframe-range-bar {
+  position: absolute;
+  top: 4px;
+  height: calc(100% - 8px);
+  border-radius: 3px;
+  pointer-events: auto;
 }
 
-.frame-cell:hover {
-  background: rgba(255, 255, 255, 0.05);
+/* 키프레임 마커 - 절대 위치 */
+.keyframe-container .keyframe-marker-dot {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
 }
 
-/* 내용이 있는 프레임 (범위 내) */
-.frame-cell.has-content {
-  background: rgba(100, 100, 100, 0.3);
-}
-
-.frame-cell.has-content:hover {
-  background: rgba(100, 100, 100, 0.4);
-}
-
-/* 키프레임이 있는 셀 */
-.frame-cell.is-keyframe {
-  background: rgba(74, 158, 255, 0.2);
-}
-
-.frame-cell.is-keyframe:hover {
-  background: rgba(74, 158, 255, 0.3);
+/* 선택된 키프레임 마커 */
+.keyframe-container .keyframe-marker-dot.selected {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-glow-strong);
 }
 
 /* 키프레임 마커 (다이아몬드/원형) */
@@ -2014,8 +2002,12 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .keyframe-marker-dot:hover {
-  transform: scale(1.3);
   box-shadow: 0 0 8px rgba(74, 158, 255, 0.8);
+}
+
+/* 절대 위치 키프레임 마커 hover */
+.keyframe-container .keyframe-marker-dot:hover {
+  transform: translate(-50%, -50%) scale(1.3);
 }
 
 .keyframe-marker-dot:active {

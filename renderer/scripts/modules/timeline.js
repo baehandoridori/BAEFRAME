@@ -897,177 +897,158 @@ export class Timeline extends EventTarget {
 
   /**
    * 레이어 트랙 렌더링 (오른쪽 타임라인) - Adobe Animate 격자 스타일
+   * 성능 최적화: CSS 배경 패턴 + 키프레임만 DOM 요소로 렌더링
    */
   _renderLayerTrack(layer, isActive) {
     const trackRow = document.createElement('div');
     trackRow.className = `track-row drawing-track-row${isActive ? ' active-layer' : ''}`;
     trackRow.dataset.layerId = layer.id;
 
-    // 프레임 셀 컨테이너
-    const cellsContainer = document.createElement('div');
-    cellsContainer.className = 'frame-cells-container';
-    cellsContainer.dataset.layerId = layer.id;
+    // 키프레임 컨테이너 (키프레임만 DOM 요소로)
+    const keyframeContainer = document.createElement('div');
+    keyframeContainer.className = 'keyframe-container';
+    keyframeContainer.dataset.layerId = layer.id;
 
     // 키프레임 범위 정보 가져오기
     const ranges = layer.getKeyframeRanges(this.totalFrames);
 
-    // 키프레임 프레임 번호 집합 생성
-    const keyframeFrames = new Map(); // frame -> { isEmpty, range }
-    const contentFrames = new Set(); // 내용이 있는 프레임
+    // 컨테이너 너비와 프레임당 픽셀 계산
+    const containerWidth = this.tracksContainer?.offsetWidth || 1000;
+    const pixelsPerFrame = containerWidth / this.totalFrames;
 
+    // 격자 배경 패턴 생성 (CSS)
+    this._applyGridBackground(trackRow, pixelsPerFrame);
+
+    // 콘텐츠 범위 표시 (키프레임 간 구간)
     ranges.forEach(range => {
-      keyframeFrames.set(range.start, {
-        isEmpty: range.keyframe.isEmpty,
-        range: range
-      });
-      // 범위 내 모든 프레임에 내용 표시
-      for (let f = range.start; f <= range.end; f++) {
-        contentFrames.add(f);
+      // 콘텐츠 범위 바
+      const rangeBar = document.createElement('div');
+      rangeBar.className = 'keyframe-range-bar';
+
+      const startPercent = (range.start / this.totalFrames) * 100;
+      const widthPercent = ((range.end - range.start + 1) / this.totalFrames) * 100;
+
+      rangeBar.style.left = `${startPercent}%`;
+      rangeBar.style.width = `${widthPercent}%`;
+      rangeBar.style.background = `${layer.color}33`; // 레이어 색상 + 투명도
+
+      keyframeContainer.appendChild(rangeBar);
+
+      // 키프레임 마커
+      const marker = document.createElement('div');
+      marker.className = `keyframe-marker-dot${range.keyframe.isEmpty ? ' empty' : ''}`;
+      marker.dataset.frame = range.start;
+      marker.dataset.layerId = layer.id;
+
+      // 정확한 픽셀 위치 계산
+      const markerLeft = (range.start / this.totalFrames) * 100;
+      marker.style.left = `${markerLeft}%`;
+      marker.style.background = range.keyframe.isEmpty ? 'transparent' : layer.color;
+      marker.title = `F${range.start}${range.keyframe.isEmpty ? ' (빈 키프레임)' : ''}`;
+
+      // 선택 상태
+      const isSelected = this.selectedKeyframes.some(
+        kf => kf.layerId === layer.id && kf.frame === range.start
+      );
+      if (isSelected) {
+        marker.classList.add('selected');
       }
+
+      // 키프레임 드래그
+      marker.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        this._startKeyframeDrag(e, layer.id, range.start, marker);
+      });
+
+      // 클릭으로 선택
+      marker.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._toggleKeyframeSelection(layer.id, range.start, e.ctrlKey || e.metaKey);
+      });
+
+      keyframeContainer.appendChild(marker);
     });
 
-    // 셀 너비 계산 (줌에 따라)
-    // tracksContainer의 실제 너비를 사용 (줌이 적용된 상태)
-    const containerWidth = this.tracksContainer?.offsetWidth || 1000;
-    const cellWidth = containerWidth / this.totalFrames;
-
-    // 최소 셀 너비 (성능을 위해 너무 작으면 그룹화)
-    const minCellWidth = 4;
-    const showNumbers = cellWidth >= 20;
-
-    if (showNumbers) {
-      cellsContainer.classList.add('show-numbers');
-    }
-
-    // 셀 렌더링
-    if (cellWidth >= minCellWidth) {
-      // 개별 셀 렌더링
-      for (let frame = 0; frame < this.totalFrames; frame++) {
-        const cell = this._createFrameCell(layer, frame, keyframeFrames, contentFrames, cellWidth);
-        cellsContainer.appendChild(cell);
-      }
-    } else {
-      // 줌이 너무 축소되면 키프레임만 렌더링
-      ranges.forEach(range => {
-        const cell = this._createKeyframeOnlyCell(layer, range, cellWidth);
-        cellsContainer.appendChild(cell);
-      });
-    }
-
-    trackRow.appendChild(cellsContainer);
+    trackRow.appendChild(keyframeContainer);
     this.tracksContainer.appendChild(trackRow);
   }
 
   /**
-   * 개별 프레임 셀 생성 (Adobe Animate 스타일)
+   * 트랙에 격자 배경 패턴 적용
    */
-  _createFrameCell(layer, frame, keyframeFrames, contentFrames, cellWidth) {
-    const cell = document.createElement('div');
-    cell.className = 'frame-cell';
-    cell.dataset.frame = frame;
-    cell.dataset.layerId = layer.id;
-    cell.style.width = `${cellWidth}px`;
+  _applyGridBackground(trackRow, pixelsPerFrame) {
+    // 프레임 너비에 따른 격자 표시 결정
+    const frameWidth = pixelsPerFrame;
 
-    // 5프레임, 10프레임 강조
-    if (frame % 10 === 0) {
-      cell.classList.add('frame-10');
-    } else if (frame % 5 === 0) {
-      cell.classList.add('frame-5');
+    if (frameWidth >= 4) {
+      // 개별 프레임 격자 + 5/10프레임 강조
+      const frame5Width = frameWidth * 5;
+      const frame10Width = frameWidth * 10;
+
+      trackRow.style.backgroundImage = `
+        repeating-linear-gradient(
+          to right,
+          rgba(255, 255, 255, 0.25) 0px,
+          rgba(255, 255, 255, 0.25) 1px,
+          transparent 1px,
+          transparent ${frame10Width}px
+        ),
+        repeating-linear-gradient(
+          to right,
+          rgba(255, 255, 255, 0.12) 0px,
+          rgba(255, 255, 255, 0.12) 1px,
+          transparent 1px,
+          transparent ${frame5Width}px
+        ),
+        repeating-linear-gradient(
+          to right,
+          rgba(255, 255, 255, 0.06) 0px,
+          rgba(255, 255, 255, 0.06) 1px,
+          transparent 1px,
+          transparent ${frameWidth}px
+        )
+      `;
+      trackRow.style.backgroundSize = `${frame10Width}px 100%, ${frame5Width}px 100%, ${frameWidth}px 100%`;
+    } else if (frameWidth >= 1) {
+      // 5프레임/10프레임 단위만 표시
+      const frame5Width = frameWidth * 5;
+      const frame10Width = frameWidth * 10;
+
+      trackRow.style.backgroundImage = `
+        repeating-linear-gradient(
+          to right,
+          rgba(255, 255, 255, 0.25) 0px,
+          rgba(255, 255, 255, 0.25) 1px,
+          transparent 1px,
+          transparent ${frame10Width}px
+        ),
+        repeating-linear-gradient(
+          to right,
+          rgba(255, 255, 255, 0.12) 0px,
+          rgba(255, 255, 255, 0.12) 1px,
+          transparent 1px,
+          transparent ${frame5Width}px
+        )
+      `;
+      trackRow.style.backgroundSize = `${frame10Width}px 100%, ${frame5Width}px 100%`;
+    } else {
+      // 매우 축소된 상태 - 1초 단위만
+      const secondWidth = frameWidth * this.fps;
+      trackRow.style.backgroundImage = `
+        repeating-linear-gradient(
+          to right,
+          rgba(255, 208, 0, 0.4) 0px,
+          rgba(255, 208, 0, 0.4) 1px,
+          transparent 1px,
+          transparent ${secondWidth}px
+        )
+      `;
+      trackRow.style.backgroundSize = `${secondWidth}px 100%`;
     }
 
-    // 내용이 있는 프레임
-    if (contentFrames.has(frame)) {
-      cell.classList.add('has-content');
-    }
-
-    // 키프레임인 경우
-    const kfInfo = keyframeFrames.get(frame);
-    if (kfInfo) {
-      cell.classList.add('is-keyframe');
-
-      // 키프레임 마커 (점)
-      const marker = document.createElement('div');
-      marker.className = `keyframe-marker-dot${kfInfo.isEmpty ? ' empty' : ''}`;
-      marker.style.background = kfInfo.isEmpty ? 'transparent' : layer.color;
-      marker.title = `F${frame}${kfInfo.isEmpty ? ' (빈 키프레임)' : ''}`;
-      cell.appendChild(marker);
-
-      // 선택 상태
-      const isSelected = this.selectedKeyframes.some(
-        kf => kf.layerId === layer.id && kf.frame === frame
-      );
-      if (isSelected) {
-        cell.classList.add('selected');
-      }
-
-      // 키프레임 드래그
-      cell.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return;
-        e.stopPropagation();
-        this._startKeyframeDrag(e, layer.id, frame, cell);
-      });
-
-      // 클릭으로 선택
-      cell.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._toggleKeyframeSelection(layer.id, frame, e.ctrlKey || e.metaKey);
-      });
-    }
-
-    // 프레임 번호 (10프레임마다)
-    if (frame % 10 === 0 && cellWidth >= 15) {
-      const numSpan = document.createElement('span');
-      numSpan.className = 'frame-cell-number';
-      numSpan.textContent = frame;
-      cell.appendChild(numSpan);
-    }
-
-    return cell;
-  }
-
-  /**
-   * 줌이 축소되었을 때 키프레임만 표시하는 셀
-   */
-  _createKeyframeOnlyCell(layer, range, cellWidth) {
-    const cell = document.createElement('div');
-    cell.className = 'frame-cell is-keyframe';
-    cell.dataset.frame = range.start;
-    cell.dataset.layerId = layer.id;
-
-    // 위치 계산
-    const leftPercent = (range.start / this.totalFrames) * 100;
-    cell.style.position = 'absolute';
-    cell.style.left = `${leftPercent}%`;
-    cell.style.width = `${Math.max(cellWidth, 12)}px`;
-    cell.style.marginLeft = `-${Math.max(cellWidth, 12) / 2}px`;
-
-    // 키프레임 마커
-    const marker = document.createElement('div');
-    marker.className = `keyframe-marker-dot${range.keyframe.isEmpty ? ' empty' : ''}`;
-    marker.style.background = range.keyframe.isEmpty ? 'transparent' : layer.color;
-    cell.appendChild(marker);
-
-    // 선택 상태
-    const isSelected = this.selectedKeyframes.some(
-      kf => kf.layerId === layer.id && kf.frame === range.start
-    );
-    if (isSelected) {
-      cell.classList.add('selected');
-    }
-
-    // 이벤트
-    cell.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      e.stopPropagation();
-      this._startKeyframeDrag(e, layer.id, range.start, cell);
-    });
-
-    cell.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this._toggleKeyframeSelection(layer.id, range.start, e.ctrlKey || e.metaKey);
-    });
-
-    return cell;
+    trackRow.style.backgroundRepeat = 'repeat-x';
+    trackRow.style.backgroundPosition = '0 0';
   }
 
   /**
