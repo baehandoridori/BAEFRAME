@@ -413,6 +413,11 @@ async function initApp() {
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
 
+    // 비디오 댓글 범위 오버레이 플레이헤드 업데이트
+    if (typeof updateVideoCommentPlayhead === 'function') {
+      updateVideoCommentPlayhead();
+    }
+
     // 재생 중이 아닐 때 (seeking)만 그리기 업데이트
     // 재생 중에는 frameUpdate 이벤트에서 처리
     if (!videoPlayer.isPlaying) {
@@ -1738,11 +1743,112 @@ async function initApp() {
   // 댓글 드래그 상태
   let commentDragState = null;
 
-  // 댓글 범위 렌더링 함수
+  // ====== 비디오 댓글 범위 오버레이 ======
+  const videoCommentRangeOverlay = document.getElementById('videoCommentRangeOverlay');
+  let videoCommentPlayhead = null;
+
+  // 비디오 오버레이에 댓글 범위 렌더링
+  function renderVideoCommentRanges() {
+    if (!videoCommentRangeOverlay) return;
+
+    const ranges = commentManager.getMarkerRanges();
+
+    // 기존 요소 제거
+    videoCommentRangeOverlay.innerHTML = '';
+
+    // 댓글이 없으면 숨김
+    if (!ranges || ranges.length === 0) {
+      videoCommentRangeOverlay.classList.remove('visible');
+      return;
+    }
+
+    // 오버레이 표시
+    videoCommentRangeOverlay.classList.add('visible');
+
+    const totalFrames = timeline.totalFrames || 1;
+
+    // 플레이헤드 추가
+    videoCommentPlayhead = document.createElement('div');
+    videoCommentPlayhead.className = 'video-comment-range-playhead';
+    videoCommentRangeOverlay.appendChild(videoCommentPlayhead);
+
+    // 댓글 범위 바 생성
+    ranges.forEach(comment => {
+      const bar = document.createElement('div');
+      bar.className = 'video-comment-range-bar';
+      bar.dataset.layerId = comment.layerId;
+      bar.dataset.markerId = comment.markerId;
+
+      // resolved 상태
+      if (comment.resolved) {
+        bar.classList.add('resolved');
+      }
+
+      // 위치 및 크기 계산
+      const leftPercent = (comment.startFrame / totalFrames) * 100;
+      const widthPercent = ((comment.endFrame - comment.startFrame) / totalFrames) * 100;
+
+      // 최소 너비 보장
+      const minWidthPercent = Math.max(widthPercent, 1);
+
+      // 색상 (레이어 색상)
+      const color = comment.color || '#4a9eff';
+      bar.style.left = `${leftPercent}%`;
+      bar.style.width = `${minWidthPercent}%`;
+      bar.style.background = hexToRgba(color, 0.6);
+      bar.style.borderColor = hexToRgba(color, 0.8);
+
+      // 클릭 이벤트 - 해당 프레임으로 이동
+      bar.addEventListener('click', () => {
+        const marker = commentManager.getMarker(comment.markerId);
+        if (marker) {
+          const time = marker.startFrame / videoPlayer.fps;
+          videoPlayer.seek(time);
+        }
+      });
+
+      videoCommentRangeOverlay.appendChild(bar);
+    });
+
+    // 초기 플레이헤드 위치 업데이트
+    updateVideoCommentPlayhead();
+  }
+
+  // 플레이헤드 위치 업데이트
+  function updateVideoCommentPlayhead() {
+    if (!videoCommentPlayhead || !videoCommentRangeOverlay.classList.contains('visible')) return;
+
+    const totalFrames = timeline.totalFrames || 1;
+    const currentFrame = videoPlayer.currentFrame || 0;
+    const leftPercent = (currentFrame / totalFrames) * 100;
+    videoCommentPlayhead.style.left = `${leftPercent}%`;
+
+    // 현재 프레임에 활성화된 댓글 범위 하이라이트
+    const bars = videoCommentRangeOverlay.querySelectorAll('.video-comment-range-bar');
+    bars.forEach(bar => {
+      const markerId = bar.dataset.markerId;
+      const marker = commentManager.getMarker(markerId);
+      if (marker) {
+        const isActive = currentFrame >= marker.startFrame && currentFrame <= marker.endFrame;
+        bar.classList.toggle('active', isActive);
+      }
+    });
+  }
+
+  // HEX to RGBA 변환 헬퍼
+  function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  // 댓글 범위 렌더링 함수 (타임라인 + 비디오 오버레이)
   function renderCommentRanges() {
     const ranges = commentManager.getMarkerRanges();
     timeline.renderCommentRanges(ranges);
     setupCommentRangeInteractions();
+    renderVideoCommentRanges();
   }
 
   // 댓글 범위 상호작용 설정 (드래그, 리사이즈, 클릭)
