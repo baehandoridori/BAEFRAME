@@ -540,7 +540,7 @@ body.app-fullscreen .video-comment-range-overlay.position-top {
 .video-comment-overlay-controls {
   position: absolute;
   bottom: 40px;
-  right: 16px;
+  left: 16px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -591,6 +591,7 @@ body.app-fullscreen .video-comment-range-overlay.position-top {
 /* 전체화면에서 컨트롤 위치 조정 */
 body.app-fullscreen .video-comment-overlay-controls {
   bottom: 100px;
+  left: 16px;
 }
 
 /* Drawing Tools - 이동/접기 가능한 플로팅 패널 */
