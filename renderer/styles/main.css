@@ -520,6 +520,76 @@ body.app-fullscreen .video-comment-range-overlay {
   bottom: 60px;
 }
 
+/* 상단 위치 */
+.video-comment-range-overlay.position-top {
+  bottom: auto;
+  top: 8px;
+}
+
+body.app-fullscreen .video-comment-range-overlay.position-top {
+  top: 60px;
+  bottom: auto;
+}
+
+/* 숨김 상태 */
+.video-comment-range-overlay.hidden {
+  display: none !important;
+}
+
+/* 댓글 오버레이 컨트롤 버튼 */
+.video-comment-overlay-controls {
+  position: absolute;
+  bottom: 40px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 6;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.video-container:hover .video-comment-overlay-controls {
+  opacity: 1;
+}
+
+.overlay-control-btn {
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.overlay-control-btn:hover {
+  background: rgba(0, 0, 0, 0.8);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.overlay-control-btn.active {
+  background: var(--accent-primary);
+  color: white;
+  border-color: var(--accent-primary);
+}
+
+.overlay-control-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* 전체화면에서 컨트롤 위치 조정 */
+body.app-fullscreen .video-comment-overlay-controls {
+  bottom: 100px;
+}
+
 /* Drawing Tools - 이동/접기 가능한 플로팅 패널 */
 .drawing-tools {
   position: absolute;

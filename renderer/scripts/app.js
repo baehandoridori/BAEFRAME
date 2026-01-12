@@ -1584,6 +1584,28 @@ async function initApp() {
     document.addEventListener('mouseup', endHighlightDrag);
   }
 
+  // 마그넷 스냅 - 플레이헤드에 달라붙기
+  const SNAP_THRESHOLD_FRAMES = 5; // 5프레임 이내면 스냅
+
+  function snapToPlayhead(time) {
+    const fps = videoPlayer.fps || 24;
+    const playheadTime = videoPlayer.currentTime || 0;
+    const thresholdTime = SNAP_THRESHOLD_FRAMES / fps;
+
+    if (Math.abs(time - playheadTime) <= thresholdTime) {
+      return playheadTime;
+    }
+    return time;
+  }
+
+  function snapFrameToPlayhead(frame) {
+    const currentFrame = videoPlayer.currentFrame || 0;
+    if (Math.abs(frame - currentFrame) <= SNAP_THRESHOLD_FRAMES) {
+      return currentFrame;
+    }
+    return frame;
+  }
+
   function onHighlightDrag(e) {
     if (!highlightDragState) return;
 
@@ -1608,12 +1630,26 @@ async function initApp() {
         newStart = videoPlayer.duration - duration;
       }
 
+      // 마그넷 스냅 (시작점 또는 끝점이 플레이헤드에 가까우면 스냅)
+      const snappedStart = snapToPlayhead(newStart);
+      const snappedEnd = snapToPlayhead(newEnd);
+
+      if (snappedStart !== newStart) {
+        newStart = snappedStart;
+        newEnd = snappedStart + duration;
+      } else if (snappedEnd !== newEnd) {
+        newEnd = snappedEnd;
+        newStart = snappedEnd - duration;
+      }
+
       updates = { startTime: newStart, endTime: newEnd };
     } else if (handle === 'left') {
-      const newTime = Math.max(0, Math.min(endTime - 0.1, startTime + deltaTime));
+      let newTime = Math.max(0, Math.min(endTime - 0.1, startTime + deltaTime));
+      newTime = snapToPlayhead(newTime); // 마그넷 스냅
       updates = { startTime: newTime };
     } else {
-      const newTime = Math.max(startTime + 0.1, Math.min(videoPlayer.duration, endTime + deltaTime));
+      let newTime = Math.max(startTime + 0.1, Math.min(videoPlayer.duration, endTime + deltaTime));
+      newTime = snapToPlayhead(newTime); // 마그넷 스냅
       updates = { endTime: newTime };
     }
 
@@ -1830,7 +1866,38 @@ async function initApp() {
 
   // ====== 비디오 댓글 범위 오버레이 ======
   const videoCommentRangeOverlay = document.getElementById('videoCommentRangeOverlay');
+  const btnOverlayToggle = document.getElementById('btnOverlayToggle');
+  const btnOverlayPosition = document.getElementById('btnOverlayPosition');
   let videoCommentPlayhead = null;
+  let overlayEnabled = true;
+  let overlayPositionTop = false;
+
+  // 오버레이 토글 버튼
+  if (btnOverlayToggle) {
+    // 초기 상태: 활성화
+    btnOverlayToggle.classList.add('active');
+
+    btnOverlayToggle.addEventListener('click', () => {
+      overlayEnabled = !overlayEnabled;
+      btnOverlayToggle.classList.toggle('active', overlayEnabled);
+
+      if (videoCommentRangeOverlay) {
+        videoCommentRangeOverlay.classList.toggle('hidden', !overlayEnabled);
+      }
+    });
+  }
+
+  // 오버레이 위치 전환 버튼
+  if (btnOverlayPosition) {
+    btnOverlayPosition.addEventListener('click', () => {
+      overlayPositionTop = !overlayPositionTop;
+      btnOverlayPosition.classList.toggle('active', overlayPositionTop);
+
+      if (videoCommentRangeOverlay) {
+        videoCommentRangeOverlay.classList.toggle('position-top', overlayPositionTop);
+      }
+    });
+  }
 
   // 비디오 오버레이에 댓글 범위 렌더링
   function renderVideoCommentRanges() {
@@ -2032,18 +2099,34 @@ async function initApp() {
 
     if (handle === 'move') {
       // 전체 이동
-      const newStart = Math.max(0, Math.min(totalFrames - duration, startFrame + deltaFrames));
+      let newStart = Math.max(0, Math.min(totalFrames - duration, startFrame + deltaFrames));
+      let newEnd = newStart + duration;
+
+      // 마그넷 스냅 (시작점 또는 끝점이 플레이헤드에 가까우면 스냅)
+      const snappedStart = snapFrameToPlayhead(newStart);
+      const snappedEnd = snapFrameToPlayhead(newEnd);
+
+      if (snappedStart !== newStart) {
+        newStart = snappedStart;
+        newEnd = snappedStart + duration;
+      } else if (snappedEnd !== newEnd) {
+        newEnd = snappedEnd;
+        newStart = snappedEnd - duration;
+      }
+
       updates = {
         startFrame: newStart,
-        endFrame: newStart + duration
+        endFrame: newEnd
       };
     } else if (handle === 'left') {
       // 왼쪽 핸들 (시작점 조정)
-      const newStart = Math.max(0, Math.min(endFrame - 1, startFrame + deltaFrames));
+      let newStart = Math.max(0, Math.min(endFrame - 1, startFrame + deltaFrames));
+      newStart = snapFrameToPlayhead(newStart); // 마그넷 스냅
       updates = { startFrame: newStart };
     } else if (handle === 'right') {
       // 오른쪽 핸들 (종료점 조정)
-      const newEnd = Math.max(startFrame + 1, Math.min(totalFrames, endFrame + deltaFrames));
+      let newEnd = Math.max(startFrame + 1, Math.min(totalFrames, endFrame + deltaFrames));
+      newEnd = snapFrameToPlayhead(newEnd); // 마그넷 스냅
       updates = { endFrame: newEnd };
     }
 
