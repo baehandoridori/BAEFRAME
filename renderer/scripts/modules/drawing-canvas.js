@@ -36,6 +36,11 @@ export class DrawingCanvas extends EventTarget {
     this.lineWidth = 3;
     this.opacity = 1;
 
+    // 외곽선 설정
+    this.strokeEnabled = false;  // 외곽선 활성화
+    this.strokeWidth = 3;        // 외곽선 두께 (기본 3px)
+    this.strokeColor = '#ffffff'; // 외곽선 색상 (기본 흰색)
+
     // 상태
     this.isDrawing = false;
     this.lastX = 0;
@@ -210,8 +215,18 @@ export class DrawingCanvas extends EventTarget {
    */
   _drawPoint(x, y) {
     this.ctx.save();
-    this._setupContext();
 
+    // 외곽선 먼저 그리기 (지우개가 아니고 외곽선이 활성화된 경우)
+    if (this.strokeEnabled && this.tool !== DrawingTool.ERASER) {
+      this.ctx.globalAlpha = this.opacity;
+      this.ctx.fillStyle = this.strokeColor;
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, (this.lineWidth / 2) + this.strokeWidth, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+
+    // 메인 색상
+    this._setupContext();
     this.ctx.beginPath();
     this.ctx.arc(x, y, this.lineWidth / 2, 0, Math.PI * 2);
     this.ctx.fill();
@@ -224,8 +239,22 @@ export class DrawingCanvas extends EventTarget {
    */
   _drawLine(x1, y1, x2, y2) {
     this.ctx.save();
-    this._setupContext();
 
+    // 외곽선 먼저 그리기 (지우개가 아니고 외곽선이 활성화된 경우)
+    if (this.strokeEnabled && this.tool !== DrawingTool.ERASER) {
+      this.ctx.lineCap = 'round';
+      this.ctx.lineJoin = 'round';
+      this.ctx.lineWidth = this.lineWidth + (this.strokeWidth * 2);
+      this.ctx.globalAlpha = this.opacity;
+      this.ctx.strokeStyle = this.strokeColor;
+      this.ctx.beginPath();
+      this.ctx.moveTo(x1, y1);
+      this.ctx.lineTo(x2, y2);
+      this.ctx.stroke();
+    }
+
+    // 메인 색상
+    this._setupContext();
     this.ctx.beginPath();
     this.ctx.moveTo(x1, y1);
     this.ctx.lineTo(x2, y2);
@@ -435,6 +464,30 @@ export class DrawingCanvas extends EventTarget {
    */
   setOpacity(opacity) {
     this.opacity = opacity;
+  }
+
+  /**
+   * 외곽선 활성화/비활성화
+   */
+  setStrokeEnabled(enabled) {
+    this.strokeEnabled = enabled;
+    log.debug('외곽선 활성화', { enabled });
+  }
+
+  /**
+   * 외곽선 두께 설정
+   */
+  setStrokeWidth(width) {
+    this.strokeWidth = width;
+    log.debug('외곽선 두께 변경', { width });
+  }
+
+  /**
+   * 외곽선 색상 설정
+   */
+  setStrokeColor(color) {
+    this.strokeColor = color;
+    log.debug('외곽선 색상 변경', { color });
   }
 
   /**

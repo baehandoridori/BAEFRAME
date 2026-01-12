@@ -230,6 +230,30 @@
                 </div>
               </div>
 
+              <!-- 브러시 외곽선 -->
+              <div class="tools-section" id="strokeSection">
+                <div class="section-label">
+                  외곽선
+                  <button class="stroke-toggle" id="strokeToggle" title="외곽선 토글">OFF</button>
+                </div>
+                <div class="stroke-controls" id="strokeControls">
+                  <div class="stroke-row">
+                    <span>두께</span>
+                    <input type="range" class="size-slider" id="strokeWidthSlider" min="1" max="10" value="3">
+                    <span id="strokeWidthValue">3px</span>
+                  </div>
+                  <div class="stroke-row">
+                    <span>색상</span>
+                    <div class="stroke-colors">
+                      <button class="stroke-color-btn active" data-stroke-color="#ffffff" style="background: #ffffff; border: 1px solid #555" title="하양"></button>
+                      <button class="stroke-color-btn" data-stroke-color="#000000" style="background: #000000" title="검정"></button>
+                      <button class="stroke-color-btn" data-stroke-color="#ff4757" style="background: #ff4757" title="빨강"></button>
+                      <button class="stroke-color-btn" data-stroke-color="#ffd000" style="background: #ffd000" title="노랑"></button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- 색상 선택 -->
               <div class="tools-section">
                 <div class="section-label">색상</div>

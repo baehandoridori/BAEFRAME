@@ -1194,6 +1194,38 @@ async function initApp() {
   // 초기 사이즈 프리뷰 설정
   updateSizePreview();
 
+  // ====== 브러시 외곽선 ======
+  const strokeToggle = document.getElementById('strokeToggle');
+  const strokeControls = document.getElementById('strokeControls');
+  const strokeWidthSlider = document.getElementById('strokeWidthSlider');
+  const strokeWidthValue = document.getElementById('strokeWidthValue');
+
+  // 외곽선 토글
+  strokeToggle?.addEventListener('click', () => {
+    const isActive = !strokeToggle.classList.contains('active');
+    strokeToggle.classList.toggle('active', isActive);
+    strokeToggle.textContent = isActive ? 'ON' : 'OFF';
+    strokeControls?.classList.toggle('visible', isActive);
+    drawingManager.setStrokeEnabled(isActive);
+  });
+
+  // 외곽선 두께
+  strokeWidthSlider?.addEventListener('input', function() {
+    const width = parseInt(this.value);
+    strokeWidthValue.textContent = `${width}px`;
+    drawingManager.setStrokeWidth(width);
+  });
+
+  // 외곽선 색상
+  document.querySelectorAll('.stroke-color-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.stroke-color-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      const color = this.dataset.strokeColor;
+      drawingManager.setStrokeColor(color);
+    });
+  });
+
   // Undo 버튼
   elements.btnUndo?.addEventListener('click', () => {
     if (drawingManager.undo()) {

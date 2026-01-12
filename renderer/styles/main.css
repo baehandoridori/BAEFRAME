@@ -879,6 +879,80 @@ body.app-fullscreen .video-comment-overlay-controls {
   cursor: pointer;
 }
 
+/* 외곽선 컨트롤 */
+.stroke-toggle {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.stroke-toggle.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--bg-primary);
+}
+
+.stroke-controls {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+.stroke-controls.visible {
+  display: flex;
+}
+
+.stroke-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.stroke-row span:first-child {
+  width: 32px;
+  flex-shrink: 0;
+}
+
+.stroke-row input[type="range"] {
+  flex: 1;
+  min-width: 60px;
+}
+
+.stroke-colors {
+  display: flex;
+  gap: 4px;
+}
+
+.stroke-color-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.stroke-color-btn:hover {
+  transform: scale(1.1);
+}
+
+.stroke-color-btn.active {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
 /* 액션 버튼 */
 .tools-actions {
   display: flex;
