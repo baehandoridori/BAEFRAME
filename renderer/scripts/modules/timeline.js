@@ -1585,6 +1585,170 @@ export class Timeline extends EventTarget {
     }
   }
 
+  // ==========================================
+  // 댓글 범위 트랙 관련
+  // ==========================================
+
+  /**
+   * 댓글 트랙 요소 참조 설정
+   * @param {HTMLElement} trackElement - 댓글 트랙 요소
+   * @param {HTMLElement} layerHeaderElement - 좌측 댓글 레이어 헤더 요소 (선택)
+   */
+  setCommentTrack(trackElement, layerHeaderElement = null) {
+    this.commentTrack = trackElement;
+    this.commentLayerHeader = layerHeaderElement;
+  }
+
+  /**
+   * 댓글 범위 렌더링
+   * @param {Array} comments - 댓글 범위 배열 (getMarkerRanges() 결과)
+   */
+  renderCommentRanges(comments) {
+    if (!this.commentTrack) return;
+
+    // 기존 댓글 제거
+    this.commentTrack.innerHTML = '';
+
+    // 댓글이 없으면 트랙 및 레이어 헤더 숨김
+    if (!comments || comments.length === 0) {
+      this.commentTrack.style.display = 'none';
+      if (this.commentLayerHeader) {
+        this.commentLayerHeader.style.display = 'none';
+      }
+      return;
+    }
+
+    // 트랙 및 레이어 헤더 표시
+    this.commentTrack.style.display = 'block';
+    if (this.commentLayerHeader) {
+      this.commentLayerHeader.style.display = 'flex';
+    }
+
+    // 각 댓글 범위 렌더링
+    comments.forEach(comment => {
+      const element = this._createCommentRangeElement(comment);
+      this.commentTrack.appendChild(element);
+    });
+  }
+
+  /**
+   * 댓글 범위 요소 생성
+   * @param {object} comment - 댓글 범위 데이터 {layerId, markerId, startFrame, endFrame, color, text, resolved}
+   * @returns {HTMLElement}
+   */
+  _createCommentRangeElement(comment) {
+    const element = document.createElement('div');
+    element.className = 'comment-range-item';
+    element.dataset.layerId = comment.layerId;
+    element.dataset.markerId = comment.markerId;
+
+    // resolved 상태 추가
+    if (comment.resolved) {
+      element.classList.add('resolved');
+    }
+
+    // 위치 및 크기 계산 (프레임 기반)
+    const totalFrames = this.totalFrames || 1;
+    const leftPercent = (comment.startFrame / totalFrames) * 100;
+    const widthPercent = ((comment.endFrame - comment.startFrame) / totalFrames) * 100;
+
+    // 최소 너비 보장 (클릭 가능하도록)
+    const minWidthPercent = Math.max(widthPercent, 0.5);
+
+    // 색상 정보 (레이어 색상 사용)
+    const color = comment.color || '#4a9eff';
+    const bgColor = this._hexToRgba(color, 0.25);
+
+    element.style.left = `${leftPercent}%`;
+    element.style.width = `${minWidthPercent}%`;
+    element.style.background = bgColor;
+    element.style.borderLeftColor = color;
+    element.style.borderRightColor = color;
+
+    // 드래그 핸들 추가
+    const leftHandle = document.createElement('div');
+    leftHandle.className = 'comment-handle comment-handle-left';
+    leftHandle.dataset.handle = 'left';
+
+    const rightHandle = document.createElement('div');
+    rightHandle.className = 'comment-handle comment-handle-right';
+    rightHandle.dataset.handle = 'right';
+
+    element.appendChild(leftHandle);
+    element.appendChild(rightHandle);
+
+    // 텍스트 표시 (줄임 처리)
+    if (comment.text) {
+      const textIndicator = document.createElement('div');
+      textIndicator.className = 'comment-range-text';
+      // 짧은 텍스트로 표시 (첫 줄만)
+      const shortText = comment.text.split('\n')[0].slice(0, 30);
+      textIndicator.textContent = shortText + (comment.text.length > 30 ? '...' : '');
+      element.appendChild(textIndicator);
+    }
+
+    return element;
+  }
+
+  /**
+   * 단일 댓글 범위 업데이트
+   * @param {object} comment - 댓글 범위 데이터
+   */
+  updateCommentRangeElement(comment) {
+    if (!this.commentTrack) return;
+
+    const element = this.commentTrack.querySelector(
+      `[data-layer-id="${comment.layerId}"][data-marker-id="${comment.markerId}"]`
+    );
+    if (!element) return;
+
+    // resolved 상태 업데이트
+    element.classList.toggle('resolved', comment.resolved);
+
+    // 위치 및 크기 업데이트
+    const totalFrames = this.totalFrames || 1;
+    const leftPercent = (comment.startFrame / totalFrames) * 100;
+    const widthPercent = ((comment.endFrame - comment.startFrame) / totalFrames) * 100;
+    const minWidthPercent = Math.max(widthPercent, 0.5);
+
+    // 색상 정보
+    const color = comment.color || '#4a9eff';
+    const bgColor = this._hexToRgba(color, 0.25);
+
+    element.style.left = `${leftPercent}%`;
+    element.style.width = `${minWidthPercent}%`;
+    element.style.background = bgColor;
+    element.style.borderLeftColor = color;
+    element.style.borderRightColor = color;
+
+    // 텍스트 업데이트
+    let textIndicator = element.querySelector('.comment-range-text');
+    if (comment.text) {
+      if (!textIndicator) {
+        textIndicator = document.createElement('div');
+        textIndicator.className = 'comment-range-text';
+        element.appendChild(textIndicator);
+      }
+      const shortText = comment.text.split('\n')[0].slice(0, 30);
+      textIndicator.textContent = shortText + (comment.text.length > 30 ? '...' : '');
+    } else if (textIndicator) {
+      textIndicator.remove();
+    }
+  }
+
+  /**
+   * HEX 색상을 RGBA로 변환
+   * @param {string} hex - HEX 색상
+   * @param {number} alpha - 투명도
+   * @returns {string} - RGBA 색상
+   */
+  _hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
   /**
    * 픽셀 위치를 시간으로 변환
    * @param {number} pixelX - 픽셀 X 좌표

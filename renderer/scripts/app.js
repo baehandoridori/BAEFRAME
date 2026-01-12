@@ -1725,6 +1725,186 @@ async function initApp() {
     }
   });
 
+  // ====== 댓글 범위 트랙 ======
+  const commentTrack = document.getElementById('commentTrack');
+  const commentLayerHeader = document.getElementById('commentLayerHeader');
+
+  // 댓글 트랙 연결
+  timeline.setCommentTrack(commentTrack, commentLayerHeader);
+
+  // 현재 선택된 댓글 범위
+  let selectedCommentRange = null; // { layerId, markerId }
+
+  // 댓글 드래그 상태
+  let commentDragState = null;
+
+  // 댓글 범위 렌더링 함수
+  function renderCommentRanges() {
+    const ranges = commentManager.getMarkerRanges();
+    timeline.renderCommentRanges(ranges);
+    setupCommentRangeInteractions();
+  }
+
+  // 댓글 범위 상호작용 설정 (드래그, 리사이즈, 클릭)
+  function setupCommentRangeInteractions() {
+    const items = commentTrack.querySelectorAll('.comment-range-item');
+
+    items.forEach(item => {
+      const layerId = item.dataset.layerId;
+      const markerId = item.dataset.markerId;
+
+      // 클릭 - 해당 댓글로 이동 및 선택
+      item.addEventListener('click', (e) => {
+        if (e.target.classList.contains('comment-handle')) return;
+
+        // 해당 프레임으로 이동
+        const marker = commentManager.getMarker(markerId);
+        if (marker) {
+          const time = marker.startFrame / videoPlayer.fps;
+          videoPlayer.seek(time);
+          videoPlayer.pause();
+        }
+
+        // 선택 표시
+        items.forEach(i => i.classList.remove('selected'));
+        item.classList.add('selected');
+        selectedCommentRange = { layerId, markerId };
+      });
+
+      // 드래그 시작 (전체 이동)
+      item.addEventListener('mousedown', (e) => {
+        if (e.target.classList.contains('comment-handle')) return;
+        if (e.button !== 0) return;
+
+        e.preventDefault();
+        const marker = commentManager.getMarker(markerId);
+        if (!marker) return;
+
+        commentDragState = {
+          layerId,
+          markerId,
+          handle: 'move',
+          startX: e.clientX,
+          startFrame: marker.startFrame,
+          endFrame: marker.endFrame,
+          duration: marker.endFrame - marker.startFrame
+        };
+
+        item.classList.add('dragging');
+        document.body.style.cursor = 'grabbing';
+      });
+
+      // 핸들 드래그 시작 (리사이즈)
+      const handles = item.querySelectorAll('.comment-handle');
+      handles.forEach(handle => {
+        handle.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+
+          const marker = commentManager.getMarker(markerId);
+          if (!marker) return;
+
+          commentDragState = {
+            layerId,
+            markerId,
+            handle: handle.dataset.handle, // 'left' or 'right'
+            startX: e.clientX,
+            startFrame: marker.startFrame,
+            endFrame: marker.endFrame,
+            duration: marker.endFrame - marker.startFrame
+          };
+
+          item.classList.add('dragging');
+          document.body.style.cursor = 'ew-resize';
+        });
+      });
+    });
+  }
+
+  // 댓글 드래그 처리 (mousemove)
+  document.addEventListener('mousemove', (e) => {
+    if (!commentDragState) return;
+
+    const { layerId, markerId, handle, startX, startFrame, endFrame, duration } = commentDragState;
+    const trackRect = commentTrack.getBoundingClientRect();
+    const totalFrames = timeline.totalFrames || 1;
+    const deltaX = e.clientX - startX;
+    const deltaFrames = Math.round((deltaX / trackRect.width) * totalFrames);
+
+    let updates;
+
+    if (handle === 'move') {
+      // 전체 이동
+      const newStart = Math.max(0, Math.min(totalFrames - duration, startFrame + deltaFrames));
+      updates = {
+        startFrame: newStart,
+        endFrame: newStart + duration
+      };
+    } else if (handle === 'left') {
+      // 왼쪽 핸들 (시작점 조정)
+      const newStart = Math.max(0, Math.min(endFrame - 1, startFrame + deltaFrames));
+      updates = { startFrame: newStart };
+    } else if (handle === 'right') {
+      // 오른쪽 핸들 (종료점 조정)
+      const newEnd = Math.max(startFrame + 1, Math.min(totalFrames, endFrame + deltaFrames));
+      updates = { endFrame: newEnd };
+    }
+
+    // 마커 업데이트
+    if (updates) {
+      commentManager.updateMarker(markerId, updates);
+
+      // 범위 정보로 업데이트
+      const marker = commentManager.getMarker(markerId);
+      const layer = commentManager.layers.find(l => l.id === layerId);
+      if (marker && layer) {
+        timeline.updateCommentRangeElement({
+          layerId,
+          markerId,
+          startFrame: marker.startFrame,
+          endFrame: marker.endFrame,
+          color: layer.color,
+          text: marker.text,
+          resolved: marker.resolved
+        });
+      }
+    }
+  });
+
+  // 댓글 드래그 종료
+  document.addEventListener('mouseup', () => {
+    if (commentDragState) {
+      const item = commentTrack.querySelector(
+        `[data-layer-id="${commentDragState.layerId}"][data-marker-id="${commentDragState.markerId}"]`
+      );
+      if (item) {
+        item.classList.remove('dragging');
+      }
+      commentDragState = null;
+      document.body.style.cursor = '';
+
+      // 데이터 저장
+      saveCurrentAnnotations('comment-drag');
+    }
+  });
+
+  // 댓글 매니저 이벤트 수신 - 마커 변경 시 렌더링
+  commentManager.addEventListener('markerAdded', () => {
+    renderCommentRanges();
+  });
+
+  commentManager.addEventListener('markerUpdated', () => {
+    renderCommentRanges();
+  });
+
+  commentManager.addEventListener('markerDeleted', () => {
+    renderCommentRanges();
+  });
+
+  commentManager.addEventListener('loaded', () => {
+    renderCommentRanges();
+  });
+
   // ====== 비디오 줌/패닝 ======
 
   /**
@@ -2164,6 +2344,9 @@ async function initApp() {
       // 하이라이트 매니저 영상 정보 설정 및 렌더링
       highlightManager.setVideoInfo(videoPlayer.duration, videoPlayer.fps);
       renderHighlights();
+
+      // 댓글 범위 렌더링
+      renderCommentRanges();
 
       trace.end({ filePath, hasExistingData });
 
