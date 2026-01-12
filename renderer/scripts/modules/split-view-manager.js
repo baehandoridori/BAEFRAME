@@ -671,8 +671,8 @@ export class SplitViewManager {
     // 현재 재생 위치와 상태 저장
     const leftTime = this._leftVideo?.currentTime || 0;
     const rightTime = this._rightVideo?.currentTime || 0;
-    const leftMuted = this._leftVideo?.muted || false;
-    const rightMuted = this._rightVideo?.muted || true;
+    const leftMuted = this._leftVideo ? this._leftVideo.muted : false;
+    const rightMuted = this._rightVideo ? this._rightVideo.muted : true;
     const wasPlaying = this._isPlaying;
 
     // 일시정지
