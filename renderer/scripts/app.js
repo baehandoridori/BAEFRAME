@@ -1488,6 +1488,27 @@ async function initApp() {
     const highlight = highlightManager.createHighlight(currentTime);
     renderHighlights();
     showToast('하이라이트가 추가되었습니다', 'info');
+
+    // Undo 스택에 추가
+    pushUndo({
+      type: 'highlight-add',
+      data: { highlightId: highlight.id },
+      undo: () => {
+        highlightManager.deleteHighlight(highlight.id);
+        renderHighlights();
+        saveCurrentAnnotations('highlight-undo');
+      },
+      redo: () => {
+        // 하이라이트 복원 (같은 속성으로)
+        const restored = highlightManager.createHighlight(highlight.startTime);
+        restored.id = highlight.id;
+        restored.endTime = highlight.endTime;
+        restored.note = highlight.note;
+        restored.colorInfo = highlight.colorInfo;
+        renderHighlights();
+        saveCurrentAnnotations('highlight-redo');
+      }
+    });
   });
 
   // 하이라이트 렌더링 함수
@@ -1553,7 +1574,10 @@ async function initApp() {
       startX: e.clientX,
       startTime: highlight.startTime,
       endTime: highlight.endTime,
-      duration: highlight.endTime - highlight.startTime
+      duration: highlight.endTime - highlight.startTime,
+      // Undo용 원본 값 저장
+      originalStartTime: highlight.startTime,
+      originalEndTime: highlight.endTime
     };
 
     document.addEventListener('mousemove', onHighlightDrag);
@@ -1601,6 +1625,40 @@ async function initApp() {
   }
 
   function endHighlightDrag() {
+    if (highlightDragState) {
+      const { highlightId, originalStartTime, originalEndTime } = highlightDragState;
+      const highlight = highlightManager.getHighlight(highlightId);
+
+      if (highlight) {
+        const newStartTime = highlight.startTime;
+        const newEndTime = highlight.endTime;
+
+        // 값이 변경된 경우에만 Undo 스택에 추가
+        if (newStartTime !== originalStartTime || newEndTime !== originalEndTime) {
+          pushUndo({
+            type: 'highlight-drag',
+            data: { highlightId },
+            undo: () => {
+              highlightManager.updateHighlight(highlightId, {
+                startTime: originalStartTime,
+                endTime: originalEndTime
+              });
+              renderHighlights();
+              saveCurrentAnnotations('highlight-undo');
+            },
+            redo: () => {
+              highlightManager.updateHighlight(highlightId, {
+                startTime: newStartTime,
+                endTime: newEndTime
+              });
+              renderHighlights();
+              saveCurrentAnnotations('highlight-redo');
+            }
+          });
+        }
+      }
+    }
+
     highlightDragState = null;
     document.removeEventListener('mousemove', onHighlightDrag);
     document.removeEventListener('mouseup', endHighlightDrag);
@@ -1689,10 +1747,37 @@ async function initApp() {
   // 삭제 버튼
   highlightDeleteBtn.addEventListener('click', () => {
     if (selectedHighlightId) {
+      // Undo를 위해 삭제 전 하이라이트 정보 저장
+      const highlight = highlightManager.getHighlight(selectedHighlightId);
+      const deletedHighlight = { ...highlight };
+      const deletedId = selectedHighlightId;
+
       highlightManager.deleteHighlight(selectedHighlightId);
       hideHighlightPopup();
       renderHighlights();
       showToast('하이라이트가 삭제되었습니다', 'info');
+
+      // Undo 스택에 추가
+      pushUndo({
+        type: 'highlight-delete',
+        data: { highlightId: deletedId },
+        undo: () => {
+          // 하이라이트 복원
+          const restored = highlightManager.createHighlight(deletedHighlight.startTime);
+          restored.id = deletedHighlight.id;
+          restored.endTime = deletedHighlight.endTime;
+          restored.note = deletedHighlight.note;
+          restored.colorKey = deletedHighlight.colorKey;
+          restored.colorInfo = deletedHighlight.colorInfo;
+          renderHighlights();
+          saveCurrentAnnotations('highlight-undo');
+        },
+        redo: () => {
+          highlightManager.deleteHighlight(deletedId);
+          renderHighlights();
+          saveCurrentAnnotations('highlight-redo');
+        }
+      });
     }
   });
 
@@ -1893,7 +1978,10 @@ async function initApp() {
           startX: e.clientX,
           startFrame: marker.startFrame,
           endFrame: marker.endFrame,
-          duration: marker.endFrame - marker.startFrame
+          duration: marker.endFrame - marker.startFrame,
+          // Undo용 원본 값 저장
+          originalStartFrame: marker.startFrame,
+          originalEndFrame: marker.endFrame
         };
 
         item.classList.add('dragging');
@@ -1917,7 +2005,10 @@ async function initApp() {
             startX: e.clientX,
             startFrame: marker.startFrame,
             endFrame: marker.endFrame,
-            duration: marker.endFrame - marker.startFrame
+            duration: marker.endFrame - marker.startFrame,
+            // Undo용 원본 값 저장
+            originalStartFrame: marker.startFrame,
+            originalEndFrame: marker.endFrame
           };
 
           item.classList.add('dragging');
@@ -1980,12 +2071,46 @@ async function initApp() {
   // 댓글 드래그 종료
   document.addEventListener('mouseup', () => {
     if (commentDragState) {
+      const { layerId, markerId, originalStartFrame, originalEndFrame } = commentDragState;
+
       const item = commentTrack.querySelector(
-        `[data-layer-id="${commentDragState.layerId}"][data-marker-id="${commentDragState.markerId}"]`
+        `[data-layer-id="${layerId}"][data-marker-id="${markerId}"]`
       );
       if (item) {
         item.classList.remove('dragging');
       }
+
+      // 현재 마커의 새 값 가져오기
+      const marker = commentManager.getMarker(markerId);
+      if (marker) {
+        const newStartFrame = marker.startFrame;
+        const newEndFrame = marker.endFrame;
+
+        // 값이 실제로 변경되었을 때만 Undo 스택에 추가
+        if (newStartFrame !== originalStartFrame || newEndFrame !== originalEndFrame) {
+          pushUndo({
+            type: 'comment-range',
+            data: { markerId, layerId },
+            undo: () => {
+              commentManager.updateMarker(markerId, {
+                startFrame: originalStartFrame,
+                endFrame: originalEndFrame
+              });
+              renderCommentRanges();
+              saveCurrentAnnotations('comment-undo');
+            },
+            redo: () => {
+              commentManager.updateMarker(markerId, {
+                startFrame: newStartFrame,
+                endFrame: newEndFrame
+              });
+              renderCommentRanges();
+              saveCurrentAnnotations('comment-redo');
+            }
+          });
+        }
+      }
+
       commentDragState = null;
       document.body.style.cursor = '';
 
