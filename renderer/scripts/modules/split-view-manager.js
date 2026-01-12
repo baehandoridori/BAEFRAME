@@ -35,6 +35,14 @@ export class SplitViewManager {
     this._isDraggingResizer = false;
     this._animationFrameId = null;
 
+    // 하이브리드 동기화 상태 (GPT 권장)
+    this._timeUpdateType = null; // 'rvfc' | 'raf'
+    this._timeUpdateVideo = null; // RVFC cancel용
+    this._lastSeekPerf = 0; // 마지막 seek 시간 (쿨다운용)
+    this._lastUiFrame = -1; // UI 업데이트 최적화
+    this._soloAudio = true; // 한쪽 언뮤트 시 반대쪽 자동 뮤트
+    this._loadSeq = 0; // 비디오 로드 시퀀스 (레이스 방지)
+
     // Version Manager
     this._versionManager = getVersionManager();
 
@@ -402,19 +410,27 @@ export class SplitViewManager {
       }
     }
 
-    // 비디오 정리
+    // 비디오 정리 (GPT 권장: 리소스 완전 해제)
     if (this._leftVideo) {
       this._leftVideo.pause();
-      this._leftVideo.src = '';
+      this._leftVideo.playbackRate = 1.0; // 속도 초기화
+      this._leftVideo.removeAttribute('src');
+      this._leftVideo.load(); // GPU/디코더 리소스 해제 트리거
       this._leftVideo.muted = false;
       this._leftVideo.volume = 1;
     }
     if (this._rightVideo) {
       this._rightVideo.pause();
-      this._rightVideo.src = '';
+      this._rightVideo.playbackRate = 1.0;
+      this._rightVideo.removeAttribute('src');
+      this._rightVideo.load();
       this._rightVideo.muted = false;
       this._rightVideo.volume = 1;
     }
+
+    // 동기화 상태 초기화
+    this._lastSeekPerf = 0;
+    this._lastUiFrame = -1;
 
     // 오버레이 숨기기
     this._overlay.classList.remove('open');
@@ -731,14 +747,27 @@ export class SplitViewManager {
 
     if (!video || !btn) return;
 
+    const wasMuted = video.muted;
     video.muted = !video.muted;
     btn.classList.toggle('muted', video.muted);
     this._updateMuteIcon(btn, video.muted);
+
+    // Solo Audio: 방금 언뮤트 했다면 반대쪽은 뮤트 (GPT 권장)
+    if (this._soloAudio && wasMuted === true && video.muted === false) {
+      const otherPanel = panel === 'left' ? 'right' : 'left';
+      this._setMuted(otherPanel, true);
+      log.debug('Solo Audio: 반대쪽 자동 뮤트', { otherPanel });
+    }
 
     // 음소거 해제 시 볼륨이 0이면 50%로 설정
     if (!video.muted && video.volume === 0) {
       video.volume = 0.5;
       if (slider) slider.value = 50;
+    }
+
+    // 재생 중이면 타임 업데이트 루프 재시작 (마스터 변경 반영)
+    if (this._isPlaying && this._mode === 'sync') {
+      this._startTimeUpdate();
     }
 
     log.debug('음소거 토글', { panel, muted: video.muted });
@@ -887,23 +916,24 @@ export class SplitViewManager {
    */
   _stepFrame(delta) {
     const frameTime = 1 / this._fps;
+    const EPS = 0.001; // 프레임 경계 오차 방지 (GPT 권장)
 
     if (this._mode === 'sync') {
       // 동기 모드: 양쪽 모두 같은 프레임으로 이동
       if (this._leftVideo) {
-        const newTime = Math.max(0, Math.min(this._leftVideo.duration, this._leftVideo.currentTime + frameTime * delta));
+        const newTime = Math.max(0, Math.min(this._leftVideo.duration - EPS, this._leftVideo.currentTime + frameTime * delta));
         this._leftVideo.currentTime = newTime;
         if (this._rightVideo) {
-          // 프레임 기준 동기화: 같은 프레임 번호로 설정
-          const targetFrame = Math.round(newTime * this._fps);
-          this._rightVideo.currentTime = targetFrame / this._fps;
+          // 프레임 기준 동기화: floor 사용 (round 대신, 경계 떨림 방지)
+          const targetFrame = Math.floor(newTime * this._fps);
+          this._rightVideo.currentTime = targetFrame / this._fps + EPS;
         }
       }
     } else {
       // 독립 모드: 활성 패널만 이동
       const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
       if (video) {
-        video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + frameTime * delta));
+        video.currentTime = Math.max(0, Math.min(video.duration - EPS, video.currentTime + frameTime * delta));
       }
     }
 
@@ -990,40 +1020,190 @@ export class SplitViewManager {
     this._updateTimecode();
   }
 
+  // ============================================
+  // 하이브리드 동기화 헬퍼 메서드 (GPT 권장)
+  // ============================================
+
   /**
-   * 타임 업데이트 시작
+   * 오디오 마스터 측 결정
+   * 소리가 나는 비디오를 마스터로, 동기화는 슬레이브에만 적용
+   * @returns {'left'|'right'}
+   */
+  _getAudioMasterSide() {
+    const left = this._leftVideo;
+    const right = this._rightVideo;
+    if (!left || !right) return 'left';
+
+    const leftAudible = !left.muted && left.volume > 0;
+    const rightAudible = !right.muted && right.volume > 0;
+
+    if (leftAudible && !rightAudible) return 'left';
+    if (rightAudible && !leftAudible) return 'right';
+
+    // 둘 다 뮤트거나 둘 다 들리면: 기본은 left
+    return 'left';
+  }
+
+  /**
+   * 안전한 시크 (fastSeek 지원 시 사용)
+   * @param {HTMLVideoElement} video
+   * @param {number} timeSec
+   */
+  _seekMedia(video, timeSec) {
+    if (!video || !Number.isFinite(timeSec)) return;
+
+    const duration = Number.isFinite(video.duration) ? video.duration : timeSec;
+    const EPS = 0.001; // 프레임 경계 오차 방지
+    const clamped = Math.max(0, Math.min(timeSec, Math.max(0, duration - EPS)));
+
+    try {
+      if (typeof video.fastSeek === 'function') {
+        video.fastSeek(clamped);
+      } else {
+        video.currentTime = clamped;
+      }
+    } catch (e) {
+      log.warn('시크 실패', e);
+    }
+  }
+
+  /**
+   * 선형 보간
+   */
+  _lerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  /**
+   * 값 제한
+   */
+  _clamp(x, min, max) {
+    return Math.max(min, Math.min(max, x));
+  }
+
+  // ============================================
+  // 타임 업데이트 (하이브리드 동기화)
+  // ============================================
+
+  /**
+   * 타임 업데이트 시작 (하이브리드 동기화)
+   * - 오디오 마스터 규칙: 소리 나는 쪽은 건드리지 않음
+   * - playbackRate로 부드럽게 수렴, 큰 차이만 seek로 복구
+   * - requestVideoFrameCallback 우선 사용
    */
   _startTimeUpdate() {
-    const updateLoop = () => {
+    // 중복 루프 방지
+    this._stopTimeUpdate();
+
+    const tick = (now) => {
       if (!this._isPlaying) return;
 
-      this._updateTimecode();
+      // 동기화 상수 (GPT 권장값)
+      const fps = this._fps;
+      const deadbandSec = 0.5 / fps;     // 0.5프레임 이내는 무시
+      const seekThresholdSec = 2 / fps;  // 2프레임 이상 벌어지면 seek 고려
+      const seekCooldownMs = 250;        // seek 최소 간격
+      const RATE_GAIN = 0.35;            // diff(초)에 비례한 보정
+      const MAX_ADJUST = 0.06;           // ±6%
+      const SMOOTH = 0.25;               // rate 변화 스무딩
 
-      // 동기 모드에서 프레임 기준 동기화
+      // 1) UI 업데이트 최적화: 프레임이 바뀔 때만
+      if (this._mode === 'sync' && this._leftVideo) {
+        const masterSide = this._getAudioMasterSide();
+        const master = masterSide === 'left' ? this._leftVideo : this._rightVideo;
+        if (master) {
+          const frame = Math.floor(master.currentTime * fps);
+          if (frame !== this._lastUiFrame) {
+            this._lastUiFrame = frame;
+            this._updateTimecode();
+          }
+        }
+      } else {
+        // independent 모드는 기존대로
+        this._updateTimecode();
+      }
+
+      // 2) 하이브리드 동기화 (sync 모드에서만)
       if (this._mode === 'sync' && this._leftVideo && this._rightVideo) {
-        const leftFrame = Math.round(this._leftVideo.currentTime * this._fps);
-        const rightFrame = Math.round(this._rightVideo.currentTime * this._fps);
+        const masterSide = this._getAudioMasterSide();
+        const master = masterSide === 'left' ? this._leftVideo : this._rightVideo;
+        const slave = masterSide === 'left' ? this._rightVideo : this._leftVideo;
 
-        // 프레임 차이가 1 이상이면 동기화
-        if (Math.abs(leftFrame - rightFrame) >= 1) {
-          this._rightVideo.currentTime = leftFrame / this._fps;
+        // seeking 중에는 싸우지 않기
+        if (!master.seeking && !slave.seeking) {
+          const diff = master.currentTime - slave.currentTime;
+          const absDiff = Math.abs(diff);
+
+          // (A) 큰 차이: 드물게 seek로 즉시 복구
+          if (absDiff >= seekThresholdSec) {
+            const sinceLastSeek = now - (this._lastSeekPerf || 0);
+            if (sinceLastSeek >= seekCooldownMs) {
+              this._seekMedia(slave, master.currentTime);
+              slave.playbackRate = 1.0;
+              this._lastSeekPerf = now;
+              log.debug('동기화 seek', { diff: diff.toFixed(3), masterSide });
+            }
+          }
+          // (B) 작은 차이: playbackRate로 부드럽게 수렴
+          else if (absDiff > deadbandSec) {
+            const targetRate = 1 + this._clamp(diff * RATE_GAIN, -MAX_ADJUST, +MAX_ADJUST);
+            slave.playbackRate = this._lerp(slave.playbackRate || 1, targetRate, SMOOTH);
+          }
+          // (C) 충분히 붙었으면 1.0으로 복귀
+          else {
+            slave.playbackRate = this._lerp(slave.playbackRate || 1, 1.0, SMOOTH);
+          }
+
+          // 마스터는 항상 1.0 유지
+          master.playbackRate = 1.0;
         }
       }
 
-      this._animationFrameId = requestAnimationFrame(updateLoop);
+      // 3) 다음 틱 스케줄
+      this._scheduleNextTick(tick);
     };
 
-    this._animationFrameId = requestAnimationFrame(updateLoop);
+    // 최초 스케줄
+    this._scheduleNextTick(tick);
+  }
+
+  /**
+   * 다음 틱 스케줄 (RVFC 우선, 없으면 RAF)
+   * @param {Function} tick
+   */
+  _scheduleNextTick(tick) {
+    const masterSide = this._getAudioMasterSide();
+    const master = (this._mode === 'sync')
+      ? (masterSide === 'left' ? this._leftVideo : this._rightVideo)
+      : null;
+
+    // requestVideoFrameCallback 사용 가능하면 우선 사용
+    if (master && typeof master.requestVideoFrameCallback === 'function') {
+      this._timeUpdateType = 'rvfc';
+      this._timeUpdateVideo = master;
+      this._animationFrameId = master.requestVideoFrameCallback((now) => tick(now));
+    } else {
+      this._timeUpdateType = 'raf';
+      this._timeUpdateVideo = null;
+      this._animationFrameId = requestAnimationFrame((t) => tick(t));
+    }
   }
 
   /**
    * 타임 업데이트 중지
    */
   _stopTimeUpdate() {
-    if (this._animationFrameId) {
+    if (!this._animationFrameId) return;
+
+    if (this._timeUpdateType === 'rvfc' && this._timeUpdateVideo?.cancelVideoFrameCallback) {
+      this._timeUpdateVideo.cancelVideoFrameCallback(this._animationFrameId);
+    } else {
       cancelAnimationFrame(this._animationFrameId);
-      this._animationFrameId = null;
     }
+
+    this._animationFrameId = null;
+    this._timeUpdateType = null;
+    this._timeUpdateVideo = null;
   }
 
   /**
