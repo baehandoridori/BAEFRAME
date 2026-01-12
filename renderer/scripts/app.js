@@ -1585,12 +1585,18 @@ async function initApp() {
   }
 
   // 마그넷 스냅 - 플레이헤드에 달라붙기
-  const SNAP_THRESHOLD_FRAMES = 5; // 5프레임 이내면 스냅
+  const SNAP_THRESHOLD_FRAMES = 5; // 기본 5프레임
+  const SNAP_THRESHOLD_FRAMES_SHIFT = 20; // Shift 누르면 20프레임
 
-  function snapToPlayhead(time) {
+  function getSnapThreshold(shiftKey) {
+    return shiftKey ? SNAP_THRESHOLD_FRAMES_SHIFT : SNAP_THRESHOLD_FRAMES;
+  }
+
+  function snapToPlayhead(time, shiftKey = false) {
     const fps = videoPlayer.fps || 24;
     const playheadTime = videoPlayer.currentTime || 0;
-    const thresholdTime = SNAP_THRESHOLD_FRAMES / fps;
+    const threshold = getSnapThreshold(shiftKey);
+    const thresholdTime = threshold / fps;
 
     if (Math.abs(time - playheadTime) <= thresholdTime) {
       return playheadTime;
@@ -1598,9 +1604,10 @@ async function initApp() {
     return time;
   }
 
-  function snapFrameToPlayhead(frame) {
+  function snapFrameToPlayhead(frame, shiftKey = false) {
     const currentFrame = videoPlayer.currentFrame || 0;
-    if (Math.abs(frame - currentFrame) <= SNAP_THRESHOLD_FRAMES) {
+    const threshold = getSnapThreshold(shiftKey);
+    if (Math.abs(frame - currentFrame) <= threshold) {
       return currentFrame;
     }
     return frame;
@@ -1613,6 +1620,7 @@ async function initApp() {
     const deltaX = e.clientX - startX;
     const trackRect = highlightTrack.getBoundingClientRect();
     const deltaTime = (deltaX / trackRect.width) * videoPlayer.duration;
+    const shiftKey = e.shiftKey; // Shift 키로 스냅 범위 확대
 
     let updates;
     if (handle === 'move') {
@@ -1631,8 +1639,8 @@ async function initApp() {
       }
 
       // 마그넷 스냅 (시작점 또는 끝점이 플레이헤드에 가까우면 스냅)
-      const snappedStart = snapToPlayhead(newStart);
-      const snappedEnd = snapToPlayhead(newEnd);
+      const snappedStart = snapToPlayhead(newStart, shiftKey);
+      const snappedEnd = snapToPlayhead(newEnd, shiftKey);
 
       if (snappedStart !== newStart) {
         newStart = snappedStart;
@@ -1645,11 +1653,11 @@ async function initApp() {
       updates = { startTime: newStart, endTime: newEnd };
     } else if (handle === 'left') {
       let newTime = Math.max(0, Math.min(endTime - 0.1, startTime + deltaTime));
-      newTime = snapToPlayhead(newTime); // 마그넷 스냅
+      newTime = snapToPlayhead(newTime, shiftKey); // 마그넷 스냅
       updates = { startTime: newTime };
     } else {
       let newTime = Math.max(startTime + 0.1, Math.min(videoPlayer.duration, endTime + deltaTime));
-      newTime = snapToPlayhead(newTime); // 마그넷 스냅
+      newTime = snapToPlayhead(newTime, shiftKey); // 마그넷 스냅
       updates = { endTime: newTime };
     }
 
@@ -2094,6 +2102,7 @@ async function initApp() {
     const totalFrames = timeline.totalFrames || 1;
     const deltaX = e.clientX - startX;
     const deltaFrames = Math.round((deltaX / trackRect.width) * totalFrames);
+    const shiftKey = e.shiftKey; // Shift 키로 스냅 범위 확대
 
     let updates;
 
@@ -2103,8 +2112,8 @@ async function initApp() {
       let newEnd = newStart + duration;
 
       // 마그넷 스냅 (시작점 또는 끝점이 플레이헤드에 가까우면 스냅)
-      const snappedStart = snapFrameToPlayhead(newStart);
-      const snappedEnd = snapFrameToPlayhead(newEnd);
+      const snappedStart = snapFrameToPlayhead(newStart, shiftKey);
+      const snappedEnd = snapFrameToPlayhead(newEnd, shiftKey);
 
       if (snappedStart !== newStart) {
         newStart = snappedStart;
@@ -2121,12 +2130,12 @@ async function initApp() {
     } else if (handle === 'left') {
       // 왼쪽 핸들 (시작점 조정)
       let newStart = Math.max(0, Math.min(endFrame - 1, startFrame + deltaFrames));
-      newStart = snapFrameToPlayhead(newStart); // 마그넷 스냅
+      newStart = snapFrameToPlayhead(newStart, shiftKey); // 마그넷 스냅
       updates = { startFrame: newStart };
     } else if (handle === 'right') {
       // 오른쪽 핸들 (종료점 조정)
       let newEnd = Math.max(startFrame + 1, Math.min(totalFrames, endFrame + deltaFrames));
-      newEnd = snapFrameToPlayhead(newEnd); // 마그넷 스냅
+      newEnd = snapFrameToPlayhead(newEnd, shiftKey); // 마그넷 스냅
       updates = { endFrame: newEnd };
     }
 

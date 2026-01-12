@@ -543,9 +543,9 @@ body.app-fullscreen .video-comment-range-overlay.position-top {
   right: 16px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   z-index: 6;
-  opacity: 0;
+  opacity: 0.6;
   transition: opacity var(--transition-fast);
 }
 
@@ -554,35 +554,38 @@ body.app-fullscreen .video-comment-range-overlay.position-top {
 }
 
 .overlay-control-btn {
-  width: 28px;
-  height: 28px;
-  padding: 4px;
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
-  color: var(--text-secondary);
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  background: rgba(30, 30, 30, 0.9);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.8);
   cursor: pointer;
   transition: all var(--transition-fast);
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 .overlay-control-btn:hover {
-  background: rgba(0, 0, 0, 0.8);
-  color: var(--text-primary);
-  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(50, 50, 50, 0.95);
+  color: white;
+  border-color: rgba(255, 255, 255, 0.6);
+  transform: scale(1.1);
 }
 
 .overlay-control-btn.active {
   background: var(--accent-primary);
   color: white;
   border-color: var(--accent-primary);
+  box-shadow: 0 2px 12px rgba(74, 158, 255, 0.5);
 }
 
 .overlay-control-btn svg {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
 }
 
 /* 전체화면에서 컨트롤 위치 조정 */
