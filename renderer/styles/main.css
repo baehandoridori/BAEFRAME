@@ -2010,24 +2010,18 @@ body.app-fullscreen .video-comment-overlay-controls {
   opacity: 1;
 }
 
-/* 그리기 레이어 트랙 */
-.drawing-track-row {
-  background: var(--bg-tertiary);
-  min-height: 28px;
-}
-
-.drawing-track-row.active-layer {
-  background: rgba(255, 208, 0, 0.05);
-}
-
 /* ====== Adobe Animate 스타일 키프레임 격자 ====== */
 
-/* 그리기 트랙 - 격자 배경 */
+/* 그리기 레이어 트랙 - 격자 배경 */
 .drawing-track-row {
   position: relative;
   background: var(--bg-tertiary);
   min-height: 36px;
   /* 격자 패턴은 JS에서 동적으로 설정 (줌에 따라 변경) */
+}
+
+.drawing-track-row.active-layer {
+  background: rgba(255, 208, 0, 0.05);
 }
 
 /* 키프레임 컨테이너 (성능 최적화 버전) */
@@ -2133,37 +2127,6 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 /* ====== 기존 키프레임 클립 (호환성 유지) ====== */
-
-/* 키프레임 클립 */
-.drawing-clip {
-  position: absolute;
-  top: 4px;
-  height: 28px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  padding-left: 6px;
-  cursor: pointer;
-  transition: filter var(--transition-fast);
-  min-width: 24px;
-}
-
-.drawing-clip:hover {
-  filter: brightness(1.2);
-}
-
-/* 키프레임 마커 (기존) */
-.keyframe-marker {
-  font-size: 12px;
-  color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-  margin-right: 4px;
-  cursor: grab;
-  padding: 2px 4px;
-  border-radius: 3px;
-}
-
-/* ====== 기존 키프레임 클립 (레거시/호환성) ====== */
 
 /* 키프레임 클립 */
 .drawing-clip {

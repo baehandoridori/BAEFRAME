@@ -985,65 +985,49 @@ export class Timeline extends EventTarget {
 
     if (frameWidth >= 4) {
       // 개별 프레임 격자 + 5/10프레임 강조
+      // 각 프레임의 오른쪽 경계에 선을 그림 (프레임 너비 - 1px 위치)
       const frame5Width = frameWidth * 5;
       const frame10Width = frameWidth * 10;
 
+      // 단일 패턴으로 통합하여 중첩 방지
       trackRow.style.backgroundImage = `
         repeating-linear-gradient(
           to right,
-          rgba(255, 255, 255, 0.25) 0px,
-          rgba(255, 255, 255, 0.25) 1px,
-          transparent 1px,
-          transparent ${frame10Width}px
-        ),
-        repeating-linear-gradient(
-          to right,
-          rgba(255, 255, 255, 0.12) 0px,
-          rgba(255, 255, 255, 0.12) 1px,
-          transparent 1px,
-          transparent ${frame5Width}px
-        ),
-        repeating-linear-gradient(
-          to right,
-          rgba(255, 255, 255, 0.06) 0px,
-          rgba(255, 255, 255, 0.06) 1px,
-          transparent 1px,
-          transparent ${frameWidth}px
+          transparent 0px,
+          transparent ${frameWidth - 1}px,
+          rgba(255, 255, 255, 0.06) ${frameWidth - 1}px,
+          rgba(255, 255, 255, 0.06) ${frameWidth}px
         )
       `;
-      trackRow.style.backgroundSize = `${frame10Width}px 100%, ${frame5Width}px 100%, ${frameWidth}px 100%`;
+      trackRow.style.backgroundSize = `${frameWidth}px 100%`;
+
+      // 5프레임, 10프레임 강조선은 별도 요소로 추가 (옵션)
+      // 또는 기존 패턴 유지하되 위치 오프셋 적용
+      trackRow.style.backgroundPosition = '0 0';
     } else if (frameWidth >= 1) {
-      // 5프레임/10프레임 단위만 표시
+      // 5프레임 단위만 표시
       const frame5Width = frameWidth * 5;
-      const frame10Width = frameWidth * 10;
 
       trackRow.style.backgroundImage = `
         repeating-linear-gradient(
           to right,
-          rgba(255, 255, 255, 0.25) 0px,
-          rgba(255, 255, 255, 0.25) 1px,
-          transparent 1px,
-          transparent ${frame10Width}px
-        ),
-        repeating-linear-gradient(
-          to right,
-          rgba(255, 255, 255, 0.12) 0px,
-          rgba(255, 255, 255, 0.12) 1px,
-          transparent 1px,
-          transparent ${frame5Width}px
+          transparent 0px,
+          transparent ${frame5Width - 1}px,
+          rgba(255, 255, 255, 0.12) ${frame5Width - 1}px,
+          rgba(255, 255, 255, 0.12) ${frame5Width}px
         )
       `;
-      trackRow.style.backgroundSize = `${frame10Width}px 100%, ${frame5Width}px 100%`;
+      trackRow.style.backgroundSize = `${frame5Width}px 100%`;
     } else {
       // 매우 축소된 상태 - 1초 단위만
-      const secondWidth = frameWidth * this.fps;
+      const secondWidth = Math.max(frameWidth * this.fps, 1);
       trackRow.style.backgroundImage = `
         repeating-linear-gradient(
           to right,
-          rgba(255, 208, 0, 0.4) 0px,
-          rgba(255, 208, 0, 0.4) 1px,
-          transparent 1px,
-          transparent ${secondWidth}px
+          transparent 0px,
+          transparent ${secondWidth - 1}px,
+          rgba(255, 208, 0, 0.4) ${secondWidth - 1}px,
+          rgba(255, 208, 0, 0.4) ${secondWidth}px
         )
       `;
       trackRow.style.backgroundSize = `${secondWidth}px 100%`;
