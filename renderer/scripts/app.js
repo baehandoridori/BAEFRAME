@@ -1584,19 +1584,33 @@ async function initApp() {
     document.addEventListener('mouseup', endHighlightDrag);
   }
 
-  // 마그넷 스냅 - 플레이헤드에 달라붙기
-  const SNAP_THRESHOLD_FRAMES = 5; // 기본 5프레임
-  const SNAP_THRESHOLD_FRAMES_SHIFT = 20; // Shift 누르면 20프레임
+  // 마그넷 스냅 - 플레이헤드에 달라붙기 (픽셀 기반)
+  const SNAP_THRESHOLD_PIXELS = 15; // 기본 15픽셀
+  const SNAP_THRESHOLD_PIXELS_SHIFT = 50; // Shift 누르면 50픽셀
 
-  function getSnapThreshold(shiftKey) {
-    return shiftKey ? SNAP_THRESHOLD_FRAMES_SHIFT : SNAP_THRESHOLD_FRAMES;
+  // 현재 타임라인 줌에 따른 프레임당 픽셀 계산
+  function getPixelsPerFrame() {
+    const zoom = timeline.zoom || 100;
+    const totalFrames = timeline.totalFrames || 1;
+    const containerWidth = timeline.container?.clientWidth || 1000;
+    // 줌 100%일 때 컨테이너 너비가 전체 프레임을 표시
+    // 줌이 높아지면 프레임당 픽셀이 증가
+    return (containerWidth * (zoom / 100)) / totalFrames;
+  }
+
+  // 픽셀 범위를 프레임으로 변환
+  function getSnapThresholdFrames(shiftKey) {
+    const pixelThreshold = shiftKey ? SNAP_THRESHOLD_PIXELS_SHIFT : SNAP_THRESHOLD_PIXELS;
+    const pixelsPerFrame = getPixelsPerFrame();
+    // 최소 1프레임, 최대 없음 (줌 축소 시 넓은 범위)
+    return Math.max(1, Math.round(pixelThreshold / pixelsPerFrame));
   }
 
   function snapToPlayhead(time, shiftKey = false) {
     const fps = videoPlayer.fps || 24;
     const playheadTime = videoPlayer.currentTime || 0;
-    const threshold = getSnapThreshold(shiftKey);
-    const thresholdTime = threshold / fps;
+    const thresholdFrames = getSnapThresholdFrames(shiftKey);
+    const thresholdTime = thresholdFrames / fps;
 
     if (Math.abs(time - playheadTime) <= thresholdTime) {
       return playheadTime;
@@ -1606,8 +1620,8 @@ async function initApp() {
 
   function snapFrameToPlayhead(frame, shiftKey = false) {
     const currentFrame = videoPlayer.currentFrame || 0;
-    const threshold = getSnapThreshold(shiftKey);
-    if (Math.abs(frame - currentFrame) <= threshold) {
+    const thresholdFrames = getSnapThresholdFrames(shiftKey);
+    if (Math.abs(frame - currentFrame) <= thresholdFrames) {
       return currentFrame;
     }
     return frame;
