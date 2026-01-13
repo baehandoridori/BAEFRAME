@@ -2932,6 +2932,8 @@ async function initApp() {
     elements.btnDrawMode.classList.toggle('active', state.isDrawMode);
     elements.drawingTools.classList.toggle('visible', state.isDrawMode);
     elements.drawingCanvas.classList.toggle('active', state.isDrawMode);
+    // 그리기 모드에서 댓글 마커 클릭 방지
+    markerContainer.classList.toggle('drawing-active', state.isDrawMode);
     log.debug('그리기 모드 변경', { isDrawMode: state.isDrawMode });
   }
 

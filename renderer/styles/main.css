@@ -3718,6 +3718,12 @@ body.resizing .comment-panel {
   pointer-events: none;
 }
 
+/* 그리기 모드에서 댓글 마커 클릭 방지 */
+.comment-markers-container.drawing-active .comment-marker {
+  pointer-events: none;
+  cursor: crosshair;
+}
+
 /* 마커 동그라미 */
 .comment-marker {
   width: 24px;
