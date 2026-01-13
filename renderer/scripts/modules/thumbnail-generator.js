@@ -21,6 +21,7 @@ export class ThumbnailGenerator extends EventTarget {
     this.quickInterval = options.quickInterval || 5; // 1단계: 빠른 스캔 간격 (초)
     this.detailInterval = options.detailInterval || 1; // 2단계: 세부 간격 (초)
     this.quality = options.quality || 0.6; // JPEG 품질 (약간 낮춤)
+    this.useCache = options.useCache !== false; // 디스크 캐싱 사용 여부 (기본: true)
 
     // 상태
     this.isGenerating = false;
@@ -28,8 +29,10 @@ export class ThumbnailGenerator extends EventTarget {
     this.isFullReady = false;  // 2단계 완료 여부
     this.progress = 0;
     this.thumbnailMap = new Map(); // time -> dataUrl (빠른 검색용)
+    this.sortedTimes = []; // 이진 탐색용 정렬된 시간 배열
     this.duration = 0;
     this.videoSrc = null;
+    this.currentVideoHash = null; // 캐시 키
 
     // 캔버스 (오프스크린)
     this.canvas = document.createElement('canvas');
@@ -46,7 +49,8 @@ export class ThumbnailGenerator extends EventTarget {
     log.info('ThumbnailGenerator 초기화됨', {
       thumbnailSize: `${this.thumbnailWidth}x${this.thumbnailHeight}`,
       quickInterval: this.quickInterval,
-      detailInterval: this.detailInterval
+      detailInterval: this.detailInterval,
+      useCache: this.useCache
     });
   }
 
@@ -67,11 +71,49 @@ export class ThumbnailGenerator extends EventTarget {
     this.isFullReady = false;
     this.progress = 0;
     this.thumbnailMap.clear();
+    this.sortedTimes = [];
     this.videoSrc = videoSrc;
+    this.currentVideoHash = null;
 
     this._emit('start');
 
     try {
+      // ===== 캐시 확인 =====
+      if (this.useCache && window.electronAPI?.thumbnailCheckValid) {
+        const cacheCheck = await window.electronAPI.thumbnailCheckValid(videoSrc);
+        log.info('캐시 확인 결과', cacheCheck);
+
+        if (cacheCheck.valid) {
+          // 캐시에서 로드
+          this.currentVideoHash = cacheCheck.videoHash;
+          const cacheData = await window.electronAPI.thumbnailLoadAll(cacheCheck.videoHash);
+
+          if (cacheData.success) {
+            // 캐시된 썸네일 적용
+            for (const [time, dataUrl] of Object.entries(cacheData.thumbnails)) {
+              const roundedTime = Math.round(parseFloat(time) * 10) / 10;
+              this.thumbnailMap.set(roundedTime, dataUrl);
+            }
+            this._rebuildSortedTimes();
+            this.duration = cacheData.duration;
+
+            this.isQuickReady = true;
+            this.isFullReady = true;
+            this.isGenerating = false;
+            this.progress = 1;
+
+            log.info('캐시에서 썸네일 로드 완료', { count: this.thumbnailMap.size });
+            this._emit('quickReady', { count: this.thumbnailMap.size, fromCache: true });
+            this._emit('complete', { count: this.thumbnailMap.size, fromCache: true });
+            return;
+          }
+        } else {
+          // 캐시가 없거나 무효 - videoHash 저장
+          this.currentVideoHash = cacheCheck.videoHash;
+        }
+      }
+
+      // ===== 새로 생성 =====
       // 비디오 요소 생성
       this.video = document.createElement('video');
       this.video.muted = true;
@@ -109,6 +151,9 @@ export class ThumbnailGenerator extends EventTarget {
       // 비디오 요소 정리
       this._cleanupVideo();
 
+      // ===== 캐시 저장 =====
+      await this._saveToCache();
+
       log.info('모든 썸네일 생성 완료', { count: this.thumbnailMap.size });
       this._emit('complete', { count: this.thumbnailMap.size });
 
@@ -121,6 +166,50 @@ export class ThumbnailGenerator extends EventTarget {
       this.isGenerating = false;
       this._emit('error', { error });
     }
+  }
+
+  /**
+   * 캐시에 썸네일 저장
+   */
+  async _saveToCache() {
+    if (!this.useCache || !window.electronAPI?.thumbnailSaveBatch) {
+      return;
+    }
+
+    if (!this.currentVideoHash || !this.videoSrc) {
+      log.warn('캐시 저장 불가: videoHash 또는 videoSrc 없음');
+      return;
+    }
+
+    try {
+      // Map을 Object로 변환
+      const thumbnails = {};
+      for (const [time, dataUrl] of this.thumbnailMap.entries()) {
+        thumbnails[time] = dataUrl;
+      }
+
+      const result = await window.electronAPI.thumbnailSaveBatch({
+        videoPath: this.videoSrc,
+        videoHash: this.currentVideoHash,
+        duration: this.duration,
+        thumbnails
+      });
+
+      if (result.success) {
+        log.info('썸네일 캐시 저장 완료', { savedCount: result.savedCount });
+      } else {
+        log.warn('썸네일 캐시 저장 실패', result.error);
+      }
+    } catch (error) {
+      log.error('썸네일 캐시 저장 오류', error);
+    }
+  }
+
+  /**
+   * 정렬된 시간 배열 재구성 (캐시 로드 시 사용)
+   */
+  _rebuildSortedTimes() {
+    this.sortedTimes = Array.from(this.thumbnailMap.keys()).sort((a, b) => a - b);
   }
 
   /**
@@ -205,6 +294,29 @@ export class ThumbnailGenerator extends EventTarget {
     await this._seekTo(time);
     const dataUrl = this._captureFrame();
     this.thumbnailMap.set(roundedTime, dataUrl);
+
+    // 정렬된 배열에 삽입 (이진 탐색 위치 찾기)
+    this._insertSorted(roundedTime);
+  }
+
+  /**
+   * 정렬된 배열에 시간 삽입
+   */
+  _insertSorted(time) {
+    // 이진 탐색으로 삽입 위치 찾기
+    let left = 0;
+    let right = this.sortedTimes.length;
+
+    while (left < right) {
+      const mid = Math.floor((left + right) / 2);
+      if (this.sortedTimes[mid] < time) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+
+    this.sortedTimes.splice(left, 0, time);
   }
 
   /**
@@ -264,20 +376,66 @@ export class ThumbnailGenerator extends EventTarget {
   }
 
   /**
-   * 특정 시간의 썸네일 dataUrl 가져오기
+   * 특정 시간의 썸네일 dataUrl 가져오기 (이진 탐색)
    */
   getThumbnailUrlAt(time) {
     if (this.thumbnailMap.size === 0) {
       return null;
     }
 
-    // 정확한 시간 먼저 찾기
+    // 정확한 시간 먼저 찾기 (O(1))
     const roundedTime = Math.round(time * 10) / 10;
     if (this.thumbnailMap.has(roundedTime)) {
       return this.thumbnailMap.get(roundedTime);
     }
 
-    // 없으면 가장 가까운 것 찾기
+    // 정렬된 배열이 비어있으면 선형 탐색 (폴백)
+    if (this.sortedTimes.length === 0) {
+      return this._findClosestLinear(time);
+    }
+
+    // 이진 탐색으로 가장 가까운 시간 찾기 (O(log n))
+    const closestTime = this._binarySearchClosest(time);
+    return this.thumbnailMap.get(closestTime) || null;
+  }
+
+  /**
+   * 이진 탐색으로 가장 가까운 시간 찾기
+   */
+  _binarySearchClosest(target) {
+    const arr = this.sortedTimes;
+    if (arr.length === 0) return 0;
+    if (arr.length === 1) return arr[0];
+
+    let left = 0;
+    let right = arr.length - 1;
+
+    // target이 범위 밖인 경우
+    if (target <= arr[0]) return arr[0];
+    if (target >= arr[right]) return arr[right];
+
+    // 이진 탐색
+    while (left < right - 1) {
+      const mid = Math.floor((left + right) / 2);
+      if (arr[mid] === target) {
+        return arr[mid];
+      } else if (arr[mid] < target) {
+        left = mid;
+      } else {
+        right = mid;
+      }
+    }
+
+    // left와 right 중 더 가까운 것 반환
+    const leftDiff = Math.abs(arr[left] - target);
+    const rightDiff = Math.abs(arr[right] - target);
+    return leftDiff <= rightDiff ? arr[left] : arr[right];
+  }
+
+  /**
+   * 선형 탐색 (폴백용)
+   */
+  _findClosestLinear(time) {
     let closestTime = 0;
     let minDiff = Infinity;
 
@@ -308,6 +466,8 @@ export class ThumbnailGenerator extends EventTarget {
     }
     this._cleanupVideo();
     this.thumbnailMap.clear();
+    this.sortedTimes = [];
+    this.currentVideoHash = null;
     this.isQuickReady = false;
     this.isFullReady = false;
     this.progress = 0;

@@ -5,6 +5,7 @@
 const { ipcMain, dialog, app, clipboard, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { createLogger } = require('./logger');
 const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized, toggleFullscreen, isFullscreen } = require('./window');
 
@@ -431,6 +432,231 @@ function setupIpcHandlers() {
     return getSettingsFilePath();
   });
 
+  // ====== 썸네일 캐시 관련 ======
+
+  /**
+   * 비디오 파일의 해시 생성 (캐시 키)
+   */
+  const getThumbnailCacheDir = () => {
+    const cacheDir = path.join(app.getPath('userData'), 'thumbnails');
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    return cacheDir;
+  };
+
+  const getVideoHash = (filePath, fileSize, mtime) => {
+    const data = `${filePath}|${fileSize}|${mtime}`;
+    return crypto.createHash('md5').update(data).digest('hex').slice(0, 16);
+  };
+
+  // 썸네일 캐시 경로 가져오기
+  ipcMain.handle('thumbnail:get-cache-path', () => {
+    return getThumbnailCacheDir();
+  });
+
+  // 캐시 유효성 검사 (비디오 파일의 mtime이 바뀌었는지 확인)
+  ipcMain.handle('thumbnail:check-valid', async (event, videoPath) => {
+    const trace = log.trace('thumbnail:check-valid');
+    try {
+      const stats = await fs.promises.stat(videoPath);
+      const videoHash = getVideoHash(videoPath, stats.size, stats.mtimeMs);
+      const cachePath = path.join(getThumbnailCacheDir(), videoHash);
+      const metaPath = path.join(cachePath, 'meta.json');
+
+      if (!fs.existsSync(metaPath)) {
+        trace.end({ valid: false, reason: 'no cache' });
+        return { valid: false, videoHash };
+      }
+
+      const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf-8'));
+
+      // mtime 비교
+      if (meta.mtime !== stats.mtimeMs) {
+        trace.end({ valid: false, reason: 'mtime mismatch' });
+        return { valid: false, videoHash };
+      }
+
+      trace.end({ valid: true, count: meta.frameCount });
+      return {
+        valid: true,
+        videoHash,
+        frameCount: meta.frameCount,
+        duration: meta.duration
+      };
+    } catch (error) {
+      trace.error(error);
+      return { valid: false, error: error.message };
+    }
+  });
+
+  // 캐시된 썸네일 전체 로드
+  ipcMain.handle('thumbnail:load-all', async (event, videoHash) => {
+    const trace = log.trace('thumbnail:load-all');
+    try {
+      const cachePath = path.join(getThumbnailCacheDir(), videoHash);
+      const metaPath = path.join(cachePath, 'meta.json');
+
+      if (!fs.existsSync(metaPath)) {
+        trace.end({ success: false, reason: 'no cache' });
+        return { success: false };
+      }
+
+      const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf-8'));
+      const thumbnails = {};
+
+      // 썸네일 파일들 로드
+      const files = await fs.promises.readdir(cachePath);
+      for (const file of files) {
+        if (file === 'meta.json') continue;
+        if (!file.endsWith('.jpg')) continue;
+
+        const time = parseFloat(file.replace('.jpg', '')) / 1000; // ms → sec
+        const filePath = path.join(cachePath, file);
+        const buffer = await fs.promises.readFile(filePath);
+        const dataUrl = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+        thumbnails[time] = dataUrl;
+      }
+
+      trace.end({ success: true, count: Object.keys(thumbnails).length });
+      return {
+        success: true,
+        thumbnails,
+        duration: meta.duration
+      };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 썸네일 일괄 저장
+  ipcMain.handle('thumbnail:save-batch', async (event, { videoPath, videoHash, duration, thumbnails }) => {
+    const trace = log.trace('thumbnail:save-batch');
+    try {
+      const stats = await fs.promises.stat(videoPath);
+      const cachePath = path.join(getThumbnailCacheDir(), videoHash);
+
+      // 캐시 디렉토리 생성
+      if (!fs.existsSync(cachePath)) {
+        fs.mkdirSync(cachePath, { recursive: true });
+      }
+
+      // 메타데이터 저장
+      const meta = {
+        videoPath,
+        mtime: stats.mtimeMs,
+        frameCount: Object.keys(thumbnails).length,
+        duration,
+        quality: 0.6,
+        createdAt: Date.now()
+      };
+      await fs.promises.writeFile(
+        path.join(cachePath, 'meta.json'),
+        JSON.stringify(meta, null, 2)
+      );
+
+      // 썸네일 파일 저장 (data URL → JPEG 파일)
+      let savedCount = 0;
+      for (const [time, dataUrl] of Object.entries(thumbnails)) {
+        const timeMs = Math.round(parseFloat(time) * 1000);
+        const fileName = `${timeMs}.jpg`;
+        const filePath = path.join(cachePath, fileName);
+
+        // data URL에서 base64 추출
+        const base64Data = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+        await fs.promises.writeFile(filePath, Buffer.from(base64Data, 'base64'));
+        savedCount++;
+      }
+
+      trace.end({ success: true, savedCount });
+      return { success: true, savedCount };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 특정 비디오의 캐시 삭제
+  ipcMain.handle('thumbnail:clear-video-cache', async (event, videoHash) => {
+    const trace = log.trace('thumbnail:clear-video-cache');
+    try {
+      const cachePath = path.join(getThumbnailCacheDir(), videoHash);
+      if (fs.existsSync(cachePath)) {
+        await fs.promises.rm(cachePath, { recursive: true });
+        trace.end({ success: true });
+        return { success: true };
+      }
+      trace.end({ success: true, reason: 'no cache' });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 전체 썸네일 캐시 삭제
+  ipcMain.handle('thumbnail:clear-all-cache', async () => {
+    const trace = log.trace('thumbnail:clear-all-cache');
+    try {
+      const cacheDir = getThumbnailCacheDir();
+      const entries = await fs.promises.readdir(cacheDir);
+      let deletedCount = 0;
+
+      for (const entry of entries) {
+        const entryPath = path.join(cacheDir, entry);
+        const stat = await fs.promises.stat(entryPath);
+        if (stat.isDirectory()) {
+          await fs.promises.rm(entryPath, { recursive: true });
+          deletedCount++;
+        }
+      }
+
+      trace.end({ success: true, deletedCount });
+      return { success: true, deletedCount };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 캐시 용량 확인
+  ipcMain.handle('thumbnail:get-cache-size', async () => {
+    const trace = log.trace('thumbnail:get-cache-size');
+    try {
+      const cacheDir = getThumbnailCacheDir();
+      let totalSize = 0;
+      let videoCount = 0;
+
+      const getDirSize = async (dirPath) => {
+        const entries = await fs.promises.readdir(dirPath);
+        for (const entry of entries) {
+          const entryPath = path.join(dirPath, entry);
+          const stat = await fs.promises.stat(entryPath);
+          if (stat.isDirectory()) {
+            videoCount++;
+            await getDirSize(entryPath);
+          } else {
+            totalSize += stat.size;
+          }
+        }
+      };
+
+      await getDirSize(cacheDir);
+
+      trace.end({ totalSize, videoCount });
+      return {
+        success: true,
+        totalSize,
+        videoCount,
+        formattedSize: formatBytes(totalSize)
+      };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // ====== 로그 관련 ======
 
   ipcMain.on('log:write', (event, logData) => {
@@ -826,6 +1052,17 @@ function extractBaseName(fileName) {
   }
 
   return nameWithoutExt;
+}
+
+/**
+ * 바이트를 읽기 쉬운 형식으로 변환
+ */
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 module.exports = { setupIpcHandlers };

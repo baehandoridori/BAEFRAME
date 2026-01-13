@@ -56,6 +56,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveSettings: (data) => ipcRenderer.invoke('settings:save', data),
   getSettingsPath: () => ipcRenderer.invoke('settings:get-path'),
 
+  // ====== 썸네일 캐시 관련 ======
+  thumbnailGetCachePath: () => ipcRenderer.invoke('thumbnail:get-cache-path'),
+  thumbnailCheckValid: (videoPath) => ipcRenderer.invoke('thumbnail:check-valid', videoPath),
+  thumbnailLoadAll: (videoHash) => ipcRenderer.invoke('thumbnail:load-all', videoHash),
+  thumbnailSaveBatch: (data) => ipcRenderer.invoke('thumbnail:save-batch', data),
+  thumbnailClearVideoCache: (videoHash) => ipcRenderer.invoke('thumbnail:clear-video-cache', videoHash),
+  thumbnailClearAllCache: () => ipcRenderer.invoke('thumbnail:clear-all-cache'),
+  thumbnailGetCacheSize: () => ipcRenderer.invoke('thumbnail:get-cache-size'),
+
   // ====== 로그 관련 ======
   writeLog: (logData) => ipcRenderer.send('log:write', logData),
 
