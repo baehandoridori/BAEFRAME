@@ -2604,6 +2604,88 @@ async function initApp() {
 
   // ====== 헬퍼 함수 ======
 
+  // ====== 트랜스코딩 상태 관리 ======
+  let isTranscoding = false;
+  let transcodeResolve = null;
+
+  /**
+   * 트랜스코딩 오버레이 표시 및 진행
+   * @param {string} filePath - 원본 파일 경로
+   * @param {string} codecName - 원본 코덱 이름
+   * @returns {Promise<{success: boolean, outputPath?: string, error?: string}>}
+   */
+  async function showTranscodeOverlay(filePath, codecName) {
+    const overlay = document.getElementById('transcodeOverlay');
+    const subtitle = document.getElementById('transcodeSubtitle');
+    const progressFill = document.getElementById('transcodeProgressFill');
+    const percentText = document.getElementById('transcodePercent');
+    const statusText = document.getElementById('transcodeStatus');
+    const cancelBtn = document.getElementById('btnCancelTranscode');
+
+    // UI 초기화
+    subtitle.textContent = `${codecName.toUpperCase()} → H.264`;
+    progressFill.style.width = '0%';
+    percentText.textContent = '0%';
+    statusText.textContent = '변환 준비 중...';
+    overlay.classList.add('active');
+    isTranscoding = true;
+
+    // 진행률 이벤트 리스너
+    const progressHandler = (data) => {
+      if (data.filePath === filePath) {
+        progressFill.style.width = `${data.progress}%`;
+        percentText.textContent = `${data.progress}%`;
+        statusText.textContent = data.progress < 100 ? '변환 중...' : '완료 처리 중...';
+      }
+    };
+    window.electronAPI.onTranscodeProgress(progressHandler);
+
+    // 취소 버튼 핸들러
+    const handleCancel = async () => {
+      log.info('사용자가 트랜스코딩 취소 요청');
+      await window.electronAPI.ffmpegCancel();
+      isTranscoding = false;
+      overlay.classList.remove('active');
+      window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+      if (transcodeResolve) {
+        transcodeResolve({ success: false, error: '사용자 취소' });
+        transcodeResolve = null;
+      }
+    };
+    cancelBtn.addEventListener('click', handleCancel, { once: true });
+
+    return new Promise(async (resolve) => {
+      transcodeResolve = resolve;
+
+      try {
+        const result = await window.electronAPI.ffmpegTranscode(filePath);
+
+        isTranscoding = false;
+        overlay.classList.remove('active');
+        window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+        cancelBtn.removeEventListener('click', handleCancel);
+
+        if (result.success) {
+          log.info('트랜스코딩 완료', { outputPath: result.outputPath, fromCache: result.fromCache });
+          resolve({ success: true, outputPath: result.outputPath });
+        } else {
+          log.error('트랜스코딩 실패', { error: result.error });
+          resolve({ success: false, error: result.error });
+        }
+      } catch (error) {
+        isTranscoding = false;
+        overlay.classList.remove('active');
+        window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+        cancelBtn.removeEventListener('click', handleCancel);
+
+        log.error('트랜스코딩 예외', { error: error.message });
+        resolve({ success: false, error: error.message });
+      }
+
+      transcodeResolve = null;
+    });
+  }
+
   /**
    * 비디오 파일 로드
    * @param {string} filePath - 파일 경로
@@ -2617,6 +2699,38 @@ async function initApp() {
     try {
       // 파일 정보 가져오기
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
+
+      // ====== 코덱 확인 및 트랜스코딩 ======
+      let actualVideoPath = filePath;
+      const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
+
+      if (ffmpegAvailable) {
+        const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
+
+        if (codecInfo.success && !codecInfo.isSupported) {
+          log.info('미지원 코덱 감지, 트랜스코딩 필요', { codec: codecInfo.codecName });
+
+          // 캐시 확인
+          const cacheResult = await window.electronAPI.ffmpegCheckCache(filePath);
+          if (cacheResult.valid) {
+            log.info('캐시된 변환 파일 사용', { path: cacheResult.convertedPath });
+            actualVideoPath = cacheResult.convertedPath;
+          } else {
+            // 트랜스코딩 필요 - UI 표시
+            const transcoded = await showTranscodeOverlay(filePath, codecInfo.codecName);
+            if (transcoded.success) {
+              actualVideoPath = transcoded.outputPath;
+            } else {
+              // 트랜스코딩 실패 또는 취소
+              log.warn('트랜스코딩 실패 또는 취소', { error: transcoded.error });
+              showToast(`코덱 변환 실패: ${transcoded.error || '취소됨'}`, 'error');
+              return;
+            }
+          }
+        }
+      } else {
+        log.debug('FFmpeg 사용 불가, 코덱 변환 건너뜀');
+      }
 
       // ====== 이전 데이터 저장 (clear 전에 수행!) ======
       // 저장되지 않은 변경사항이 있으면 먼저 저장
@@ -2656,9 +2770,10 @@ async function initApp() {
       // 코덱 에러 오버레이 숨기기
       codecErrorOverlay?.classList.remove('active');
 
-      // 비디오 플레이어에 로드
-      await videoPlayer.load(filePath);
+      // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
+      await videoPlayer.load(actualVideoPath);
 
+      // 원본 파일 경로 저장 (UI/메타데이터용)
       state.currentFile = filePath;
       elements.fileName.textContent = fileInfo.name;
       elements.filePath.textContent = fileInfo.dir;
@@ -4230,6 +4345,54 @@ async function initApp() {
     handleExternalFile(arg);
   });
 
+  // ====== 앱 종료 전 저장 처리 ======
+  window.electronAPI.onRequestSaveBeforeQuit(async () => {
+    log.info('앱 종료 전 저장 요청 수신');
+    const savingOverlay = document.getElementById('appSavingOverlay');
+
+    // 미저장 변경사항 확인
+    if (!reviewDataManager.hasUnsavedChanges()) {
+      log.info('저장할 변경사항 없음, 바로 종료');
+      await window.electronAPI.confirmQuit();
+      return;
+    }
+
+    // 저장 오버레이 표시
+    savingOverlay?.classList.add('active');
+
+    try {
+      log.info('종료 전 저장 시작');
+      const saved = await reviewDataManager.save();
+
+      if (saved) {
+        log.info('저장 완료, 앱 종료 진행');
+        await window.electronAPI.confirmQuit();
+      } else {
+        // 저장 실패 - 사용자 선택
+        savingOverlay?.classList.remove('active');
+        const forceQuit = confirm(
+          '저장에 실패했습니다.\n\n저장하지 않고 종료하시겠습니까?'
+        );
+        if (forceQuit) {
+          await window.electronAPI.confirmQuit();
+        } else {
+          await window.electronAPI.cancelQuit();
+        }
+      }
+    } catch (error) {
+      log.error('종료 전 저장 오류', error);
+      savingOverlay?.classList.remove('active');
+      const forceQuit = confirm(
+        `저장 중 오류가 발생했습니다: ${error.message}\n\n저장하지 않고 종료하시겠습니까?`
+      );
+      if (forceQuit) {
+        await window.electronAPI.confirmQuit();
+      } else {
+        await window.electronAPI.cancelQuit();
+      }
+    }
+  });
+
   // ====== 사용자 이름 초기화 ======
   // 설정 파일 로드 완료 대기 (파일에서 hasSetNameOnce 등 로드)
   await userSettings.waitForReady();
@@ -5020,6 +5183,126 @@ async function initApp() {
       }
       // 그 외의 키는 단축키로 설정
       finishEditingShortcut(e);
+    }
+  });
+
+  // ====== 캐시 설정 모달 ======
+  const cacheSettingsModal = document.getElementById('cacheSettingsModal');
+  const btnCacheSettings = document.getElementById('btnCacheSettings');
+  const closeCacheSettings = document.getElementById('closeCacheSettings');
+  const closeCacheSettingsBtn = document.getElementById('closeCacheSettingsBtn');
+  const thumbnailCacheSizeEl = document.getElementById('thumbnailCacheSize');
+  const transcodeCacheSizeEl = document.getElementById('transcodeCacheSize');
+  const cacheLimitSlider = document.getElementById('cacheLimitSlider');
+  const cacheLimitValue = document.getElementById('cacheLimitValue');
+  const btnClearThumbnailCache = document.getElementById('btnClearThumbnailCache');
+  const btnClearTranscodeCache = document.getElementById('btnClearTranscodeCache');
+  const btnClearAllCache = document.getElementById('btnClearAllCache');
+
+  // 캐시 크기 업데이트
+  async function updateCacheSizes() {
+    try {
+      // 썸네일 캐시
+      const thumbResult = await window.electronAPI.thumbnailGetCacheSize();
+      if (thumbResult.success) {
+        thumbnailCacheSizeEl.textContent = `${thumbResult.formattedSize} (${thumbResult.videoCount}개 영상)`;
+      }
+
+      // 트랜스코딩 캐시
+      const transcodeResult = await window.electronAPI.ffmpegGetCacheSize();
+      if (transcodeResult.success) {
+        transcodeCacheSizeEl.textContent = `${transcodeResult.formatted} (${transcodeResult.count}개 파일)`;
+        cacheLimitSlider.value = transcodeResult.limitBytes / (1024 * 1024 * 1024);
+        cacheLimitValue.textContent = `${cacheLimitSlider.value} GB`;
+      }
+    } catch (error) {
+      log.error('캐시 크기 조회 실패', { error: error.message });
+    }
+  }
+
+  // 캐시 설정 모달 열기
+  function openCacheSettingsModal() {
+    cacheSettingsModal?.classList.add('active');
+    updateCacheSizes();
+  }
+
+  // 캐시 설정 모달 닫기
+  function closeCacheSettingsModal() {
+    cacheSettingsModal?.classList.remove('active');
+  }
+
+  // 이벤트 리스너
+  btnCacheSettings?.addEventListener('click', () => {
+    document.getElementById('commentSettingsDropdown')?.classList.remove('show');
+    openCacheSettingsModal();
+  });
+
+  closeCacheSettings?.addEventListener('click', closeCacheSettingsModal);
+  closeCacheSettingsBtn?.addEventListener('click', closeCacheSettingsModal);
+
+  // 캐시 용량 제한 슬라이더
+  cacheLimitSlider?.addEventListener('input', () => {
+    cacheLimitValue.textContent = `${cacheLimitSlider.value} GB`;
+  });
+
+  cacheLimitSlider?.addEventListener('change', async () => {
+    const limitGB = parseInt(cacheLimitSlider.value);
+    await window.electronAPI.ffmpegSetCacheLimit(limitGB);
+    showToast(`캐시 용량 제한이 ${limitGB}GB로 설정되었습니다.`, 'info');
+  });
+
+  // 썸네일 캐시 비우기
+  btnClearThumbnailCache?.addEventListener('click', async () => {
+    if (!confirm('썸네일 캐시를 모두 삭제하시겠습니까?\n다음에 영상을 열 때 썸네일이 다시 생성됩니다.')) return;
+
+    try {
+      const result = await window.electronAPI.thumbnailClearAllCache();
+      if (result.success) {
+        showToast('썸네일 캐시가 삭제되었습니다.', 'success');
+        updateCacheSizes();
+      } else {
+        showToast('캐시 삭제 실패', 'error');
+      }
+    } catch (error) {
+      showToast(`오류: ${error.message}`, 'error');
+    }
+  });
+
+  // 트랜스코딩 캐시 비우기
+  btnClearTranscodeCache?.addEventListener('click', async () => {
+    if (!confirm('트랜스코딩 캐시를 모두 삭제하시겠습니까?\n다음에 미지원 코덱 영상을 열 때 다시 변환됩니다.')) return;
+
+    try {
+      const result = await window.electronAPI.ffmpegClearAllCache();
+      if (result.success) {
+        showToast(`트랜스코딩 캐시가 삭제되었습니다. (${result.formatted} 확보)`, 'success');
+        updateCacheSizes();
+      } else {
+        showToast('캐시 삭제 실패', 'error');
+      }
+    } catch (error) {
+      showToast(`오류: ${error.message}`, 'error');
+    }
+  });
+
+  // 전체 캐시 비우기
+  btnClearAllCache?.addEventListener('click', async () => {
+    if (!confirm('모든 캐시를 삭제하시겠습니까?\n(썸네일 + 트랜스코딩 캐시)')) return;
+
+    try {
+      await window.electronAPI.thumbnailClearAllCache();
+      await window.electronAPI.ffmpegClearAllCache();
+      showToast('모든 캐시가 삭제되었습니다.', 'success');
+      updateCacheSizes();
+    } catch (error) {
+      showToast(`오류: ${error.message}`, 'error');
+    }
+  });
+
+  // 모달 외부 클릭 시 닫기
+  cacheSettingsModal?.addEventListener('click', (e) => {
+    if (e.target === cacheSettingsModal) {
+      closeCacheSettingsModal();
     }
   });
 

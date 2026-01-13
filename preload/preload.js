@@ -68,9 +68,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ====== 로그 관련 ======
   writeLog: (logData) => ipcRenderer.send('log:write', logData),
 
+  // ====== 앱 종료 관련 ======
+  confirmQuit: () => ipcRenderer.invoke('app:quit-confirmed'),
+  cancelQuit: () => ipcRenderer.invoke('app:quit-cancelled'),
+
+  // ====== FFmpeg 트랜스코딩 관련 ======
+  ffmpegIsAvailable: () => ipcRenderer.invoke('ffmpeg:is-available'),
+  ffmpegProbeCodec: (filePath) => ipcRenderer.invoke('ffmpeg:probe-codec', filePath),
+  ffmpegCheckCache: (filePath) => ipcRenderer.invoke('ffmpeg:check-cache', filePath),
+  ffmpegTranscode: (filePath) => ipcRenderer.invoke('ffmpeg:transcode', filePath),
+  ffmpegCancel: () => ipcRenderer.invoke('ffmpeg:cancel'),
+  ffmpegGetCacheSize: () => ipcRenderer.invoke('ffmpeg:get-cache-size'),
+  ffmpegSetCacheLimit: (limitGB) => ipcRenderer.invoke('ffmpeg:set-cache-limit', limitGB),
+  ffmpegClearVideoCache: (filePath) => ipcRenderer.invoke('ffmpeg:clear-video-cache', filePath),
+  ffmpegClearAllCache: () => ipcRenderer.invoke('ffmpeg:clear-all-cache'),
+  ffmpegGetSupportedCodecs: () => ipcRenderer.invoke('ffmpeg:get-supported-codecs'),
+
   // ====== 이벤트 리스너 ======
   onOpenFromProtocol: (callback) => {
     ipcRenderer.on('open-from-protocol', (event, arg) => callback(arg));
+  },
+  onRequestSaveBeforeQuit: (callback) => {
+    ipcRenderer.on('app:request-save-before-quit', () => callback());
+  },
+  onTranscodeProgress: (callback) => {
+    ipcRenderer.on('ffmpeg:transcode-progress', (event, data) => callback(data));
   },
 
   // 이벤트 리스너 제거

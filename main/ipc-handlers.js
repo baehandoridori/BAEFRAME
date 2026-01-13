@@ -657,6 +657,119 @@ function setupIpcHandlers() {
     }
   });
 
+  // ====== FFmpeg 트랜스코딩 관련 ======
+
+  const { ffmpegManager, SUPPORTED_CODECS } = require('./ffmpeg-manager');
+
+  // FFmpeg 사용 가능 여부 확인
+  ipcMain.handle('ffmpeg:is-available', async () => {
+    await ffmpegManager.initialize();
+    return ffmpegManager.isAvailable();
+  });
+
+  // 비디오 코덱 정보 조회
+  ipcMain.handle('ffmpeg:probe-codec', async (event, filePath) => {
+    const trace = log.trace('ffmpeg:probe-codec');
+    try {
+      const codecInfo = await ffmpegManager.probeCodec(filePath);
+      trace.end({ codec: codecInfo.codecName, isSupported: codecInfo.isSupported });
+      return { success: true, ...codecInfo };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 캐시 확인
+  ipcMain.handle('ffmpeg:check-cache', async (event, filePath) => {
+    const trace = log.trace('ffmpeg:check-cache');
+    try {
+      const result = await ffmpegManager.checkCache(filePath);
+      trace.end({ valid: result.valid });
+      return { success: true, ...result };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 트랜스코딩 실행 (진행률은 별도 이벤트로 전송)
+  ipcMain.handle('ffmpeg:transcode', async (event, filePath) => {
+    const trace = log.trace('ffmpeg:transcode');
+    const mainWindow = getMainWindow();
+
+    try {
+      const result = await ffmpegManager.transcode(filePath, (progress) => {
+        // 진행률을 Renderer에 전송
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ffmpeg:transcode-progress', { filePath, progress });
+        }
+      });
+
+      trace.end({ success: result.success, fromCache: result.fromCache });
+      return { success: true, ...result };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 트랜스코딩 취소
+  ipcMain.handle('ffmpeg:cancel', async () => {
+    ffmpegManager.cancelAll();
+    return { success: true };
+  });
+
+  // 캐시 크기 조회
+  ipcMain.handle('ffmpeg:get-cache-size', async () => {
+    const trace = log.trace('ffmpeg:get-cache-size');
+    try {
+      const result = await ffmpegManager.getCacheSize();
+      trace.end({ bytes: result.bytes, count: result.count });
+      return { success: true, ...result };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 캐시 용량 제한 설정
+  ipcMain.handle('ffmpeg:set-cache-limit', async (event, limitGB) => {
+    ffmpegManager.setCacheLimit(limitGB);
+    return { success: true, limitGB };
+  });
+
+  // 특정 비디오 캐시 삭제
+  ipcMain.handle('ffmpeg:clear-video-cache', async (event, filePath) => {
+    const trace = log.trace('ffmpeg:clear-video-cache');
+    try {
+      const deleted = await ffmpegManager.clearVideoCache(filePath);
+      trace.end({ deleted });
+      return { success: true, deleted };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 전체 캐시 삭제
+  ipcMain.handle('ffmpeg:clear-all-cache', async () => {
+    const trace = log.trace('ffmpeg:clear-all-cache');
+    try {
+      const result = await ffmpegManager.clearAllCache();
+      trace.end(result);
+      return { success: true, ...result };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 지원 코덱 목록 반환
+  ipcMain.handle('ffmpeg:get-supported-codecs', () => {
+    return { success: true, codecs: SUPPORTED_CODECS };
+  });
+
   // ====== 로그 관련 ======
 
   ipcMain.on('log:write', (event, logData) => {

@@ -127,6 +127,28 @@
             <button class="btn btn-secondary" id="btnCodecErrorClose">다른 영상 열기</button>
           </div>
 
+          <!-- App Saving Overlay (종료 전 저장) -->
+          <div class="app-saving-overlay" id="appSavingOverlay">
+            <div class="saving-spinner"></div>
+            <div class="saving-text">저장 중...</div>
+            <div class="saving-hint">잠시만 기다려주세요</div>
+          </div>
+
+          <!-- Transcode Overlay (코덱 변환) -->
+          <div class="transcode-overlay" id="transcodeOverlay">
+            <div class="transcode-icon">🔄</div>
+            <div class="transcode-title">비디오 변환 중</div>
+            <div class="transcode-subtitle" id="transcodeSubtitle">MPEG-4 → H.264</div>
+            <div class="transcode-progress-bar">
+              <div class="transcode-progress-fill" id="transcodeProgressFill"></div>
+            </div>
+            <div class="transcode-info">
+              <span id="transcodePercent">0%</span>
+              <span id="transcodeStatus">변환 준비 중...</span>
+            </div>
+            <button class="btn btn-secondary" id="btnCancelTranscode">취소</button>
+          </div>
+
           <!-- Onion Skin Canvas (그리기 캔버스 아래에 표시) -->
           <canvas id="onionSkinCanvas" class="drawing-overlay onion-skin-layer"></canvas>
 
@@ -574,6 +596,11 @@
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h12M6 16h8"/></svg>
               단축키 설정
             </button>
+            <div class="settings-dropdown-divider"></div>
+            <button class="settings-dropdown-btn" id="btnCacheSettings">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+              캐시 설정
+            </button>
           </div>
         </div>
       </div>
@@ -817,6 +844,55 @@
       <div class="modal-footer">
         <button class="btn-secondary" id="resetAllShortcuts">기본값으로 초기화</button>
         <button class="btn-primary" id="closeShortcutSettingsBtn">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cache Settings Modal -->
+  <div class="modal-overlay" id="cacheSettingsModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>캐시 설정</h3>
+        <button class="modal-close" id="closeCacheSettings">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- 썸네일 캐시 -->
+        <div class="cache-section">
+          <div class="cache-section-header">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <span>썸네일 캐시</span>
+          </div>
+          <div class="cache-info">
+            <span class="cache-label">현재 사용량</span>
+            <span class="cache-value" id="thumbnailCacheSize">계산 중...</span>
+          </div>
+          <button class="btn-secondary btn-sm" id="btnClearThumbnailCache">썸네일 캐시 비우기</button>
+        </div>
+
+        <!-- 트랜스코딩 캐시 -->
+        <div class="cache-section">
+          <div class="cache-section-header">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+            <span>트랜스코딩 캐시</span>
+          </div>
+          <div class="cache-info">
+            <span class="cache-label">현재 사용량</span>
+            <span class="cache-value" id="transcodeCacheSize">계산 중...</span>
+          </div>
+          <div class="cache-info">
+            <span class="cache-label">용량 제한</span>
+            <div class="cache-limit-control">
+              <input type="range" id="cacheLimitSlider" min="1" max="50" value="10" step="1">
+              <span class="cache-limit-value" id="cacheLimitValue">10 GB</span>
+            </div>
+          </div>
+          <p class="form-hint">용량 제한 초과 시 오래된 캐시가 자동 삭제됩니다.</p>
+          <button class="btn-secondary btn-sm" id="btnClearTranscodeCache">트랜스코딩 캐시 비우기</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-danger btn-sm" id="btnClearAllCache">전체 캐시 비우기</button>
+        <button class="btn-primary" id="closeCacheSettingsBtn">닫기</button>
       </div>
     </div>
   </div>
