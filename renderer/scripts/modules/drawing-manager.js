@@ -796,6 +796,27 @@ export class DrawingManager extends EventTarget {
   }
 
   /**
+   * 외곽선 활성화/비활성화
+   */
+  setStrokeEnabled(enabled) {
+    this.drawingCanvas.setStrokeEnabled(enabled);
+  }
+
+  /**
+   * 외곽선 두께 설정
+   */
+  setStrokeWidth(width) {
+    this.drawingCanvas.setStrokeWidth(width);
+  }
+
+  /**
+   * 외곽선 색상 설정
+   */
+  setStrokeColor(color) {
+    this.drawingCanvas.setStrokeColor(color);
+  }
+
+  /**
    * 현재 도구 가져오기
    */
   getCurrentTool() {

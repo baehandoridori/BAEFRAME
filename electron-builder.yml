@@ -18,6 +18,11 @@ extraResources:
     to: mpv/
     filter:
       - "**/*"
+  - from: ffmpeg/
+    to: ffmpeg/
+    filter:
+      - "**/*.exe"
+      - "**/*.dll"
 
 fileAssociations:
   - ext: bframe

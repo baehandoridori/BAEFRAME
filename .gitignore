@@ -38,6 +38,12 @@ mpv/win32/
 mpv/darwin/
 mpv/linux/
 
+# FFmpeg binaries (downloaded separately)
+ffmpeg/win32/*.exe
+ffmpeg/win32/*.dll
+ffmpeg/darwin/
+ffmpeg/linux/
+
 # Temporary files
 *.tmp
 *.temp

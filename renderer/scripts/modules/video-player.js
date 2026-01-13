@@ -370,6 +370,12 @@ export class VideoPlayer extends EventTarget {
 
     this.videoElement.currentTime = time;
 
+    // 즉시 timeupdate 이벤트 발생 (일시정지 상태에서도 UI 즉시 업데이트)
+    this._emit('timeupdate', {
+      currentTime: this.currentTime,
+      currentFrame: this.currentFrame
+    });
+
     // 100ms 후 seeking 플래그 해제
     this._seekTimeout = setTimeout(() => {
       this._isSeeking = false;
