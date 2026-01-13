@@ -286,6 +286,7 @@ class FFmpegManager {
       const args = [
         '-i', filePath,
         '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',  // HTML5 Video 호환 픽셀 포맷
         '-preset', 'fast',
         '-crf', '18',
         '-c:a', 'aac',
