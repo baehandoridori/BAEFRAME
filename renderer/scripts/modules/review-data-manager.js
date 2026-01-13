@@ -1,14 +1,21 @@
 /**
  * baeframe - Review Data Manager
  * .bframe 파일 저장/로드 관리
+ *
+ * @version 2.0 - 스키마 통합 및 마이그레이션 지원
  */
 
 import { createLogger } from '../logger.js';
+import {
+  BFRAME_VERSION,
+  getDataVersion,
+  needsMigration,
+  migrateToV2,
+  extractFileName,
+  extractFileNameWithoutExt
+} from '../../../shared/schema.js';
 
 const log = createLogger('ReviewDataManager');
-
-// .bframe 파일 버전
-const BFRAME_VERSION = '1.0';
 
 /**
  * 영상 파일 경로에서 .bframe 경로 생성
@@ -202,7 +209,7 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
-   * .bframe 파일에서 데이터 로드
+   * .bframe 파일에서 데이터 로드 (마이그레이션 포함)
    */
   async load() {
     if (!this.currentBframePath) {
@@ -221,25 +228,62 @@ export class ReviewDataManager extends EventTarget {
         return false;
       }
 
-      // 버전 체크
-      if (data.version && data.version !== BFRAME_VERSION) {
-        log.warn('버전 불일치', { file: data.version, current: BFRAME_VERSION });
+      // 버전 확인 및 마이그레이션
+      const dataVersion = getDataVersion(data);
+      let migratedData = data;
+
+      if (needsMigration(data)) {
+        log.info('마이그레이션 필요', { from: dataVersion, to: BFRAME_VERSION });
+
+        // 마이그레이션 전 백업 생성
+        const backupCreated = await this._createBackup();
+        if (!backupCreated) {
+          log.warn('백업 생성 실패, 마이그레이션 계속 진행');
+        }
+
+        try {
+          migratedData = migrateToV2(data);
+          log.info('마이그레이션 성공', { version: migratedData.bframeVersion });
+
+          // 마이그레이션 후 자동 저장 (새 스키마로 업데이트)
+          this._shouldSaveAfterMigration = true;
+        } catch (migrationError) {
+          log.error('마이그레이션 실패', migrationError);
+
+          // 백업에서 복구 시도
+          if (backupCreated) {
+            const restored = await this._restoreFromBackup();
+            if (restored) {
+              log.info('백업에서 복구됨');
+              migratedData = restored;
+            }
+          }
+
+          this._emit('migrationError', { error: migrationError });
+        }
       }
 
       // 데이터 적용
-      this._applyData(data);
+      this._applyData(migratedData);
 
       this.isDirty = false;
       this.isLoading = false;
 
       log.info('.bframe 파일 로드됨', {
         path: this.currentBframePath,
-        version: data.version,
-        commentLayers: data.comments?.layers?.length || 0,
-        drawingLayers: data.drawings?.layers?.length || 0
+        version: migratedData.bframeVersion || migratedData.version,
+        commentLayers: migratedData.comments?.layers?.length || 0,
+        drawingLayers: migratedData.drawings?.layers?.length || 0
       });
 
-      this._emit('loaded', { path: this.currentBframePath, data });
+      this._emit('loaded', { path: this.currentBframePath, data: migratedData });
+
+      // 마이그레이션 후 자동 저장
+      if (this._shouldSaveAfterMigration) {
+        this._shouldSaveAfterMigration = false;
+        // 약간의 딜레이 후 저장 (데이터 적용 완료 보장)
+        setTimeout(() => this.save(), 100);
+      }
 
       return true;
     } catch (error) {
@@ -251,29 +295,115 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
-   * 현재 모든 데이터 수집
+   * .bframe 파일 백업 생성
+   * @returns {Promise<boolean>} 백업 성공 여부
+   */
+  async _createBackup() {
+    if (!this.currentBframePath) return false;
+
+    const backupPath = this.currentBframePath + '.bak';
+
+    try {
+      await window.electronAPI.copyFile(this.currentBframePath, backupPath);
+      log.info('백업 생성됨', { path: backupPath });
+      return true;
+    } catch (error) {
+      // copyFile API가 없으면 읽고 쓰기로 대체
+      try {
+        const data = await window.electronAPI.loadReview(this.currentBframePath);
+        if (data) {
+          await window.electronAPI.saveReview(backupPath, data);
+          log.info('백업 생성됨 (대체 방식)', { path: backupPath });
+          return true;
+        }
+      } catch (fallbackError) {
+        log.warn('백업 생성 실패', fallbackError);
+      }
+      return false;
+    }
+  }
+
+  /**
+   * 백업에서 데이터 복구
+   * @returns {Promise<Object|null>} 복구된 데이터 또는 null
+   */
+  async _restoreFromBackup() {
+    if (!this.currentBframePath) return null;
+
+    const backupPath = this.currentBframePath + '.bak';
+
+    try {
+      const data = await window.electronAPI.loadReview(backupPath);
+      if (data) {
+        log.info('백업에서 복구됨', { path: backupPath });
+        return data;
+      }
+    } catch (error) {
+      log.warn('백업 복구 실패', error);
+    }
+
+    return null;
+  }
+
+  /**
+   * 백업 파일 삭제
+   * @returns {Promise<boolean>}
+   */
+  async _deleteBackup() {
+    if (!this.currentBframePath) return false;
+
+    const backupPath = this.currentBframePath + '.bak';
+
+    try {
+      await window.electronAPI.deleteFile(backupPath);
+      log.info('백업 삭제됨', { path: backupPath });
+      return true;
+    } catch (error) {
+      // 백업 파일이 없으면 무시
+      return false;
+    }
+  }
+
+  /**
+   * 현재 모든 데이터 수집 (v2.0 스키마)
    */
   _collectData() {
     const now = new Date().toISOString();
+    const videoFile = extractFileName(this.currentVideoPath);
 
     return {
-      version: BFRAME_VERSION,
+      // v2.0 스키마 필드
+      bframeVersion: BFRAME_VERSION,
+      videoFile: videoFile,
       videoPath: this.currentVideoPath,
-      videoName: this._getFileName(this.currentVideoPath),
+      fps: this._fps || 24,
       createdAt: this._createdAt || now,
       modifiedAt: now,
-      comments: this.commentManager?.toJSON() || null,
-      drawings: this.drawingManager?.exportData() || null,
-      highlights: this.highlightManager?.toJSON() || null
+
+      // 버전 관리 필드
+      versionInfo: this._versionInfo || null,
+      manualVersions: this._manualVersions || [],
+
+      // 리뷰 데이터
+      comments: this.commentManager?.toJSON() || { layers: [] },
+      drawings: this.drawingManager?.exportData() || { layers: [] },
+      highlights: this.highlightManager?.toJSON() || []
     };
   }
 
   /**
-   * 로드한 데이터 적용
+   * 로드한 데이터 적용 (v2.0 스키마)
    */
   _applyData(data) {
+    // 메타데이터
     this._createdAt = data.createdAt;
+    this._fps = data.fps || 24;
 
+    // 버전 관리 정보
+    this._versionInfo = data.versionInfo || null;
+    this._manualVersions = data.manualVersions || [];
+
+    // 리뷰 데이터
     if (data.comments && this.commentManager) {
       this.commentManager.fromJSON(data.comments);
     }
@@ -285,6 +415,90 @@ export class ReviewDataManager extends EventTarget {
     if (data.highlights && this.highlightManager) {
       this.highlightManager.fromJSON(data.highlights);
     }
+  }
+
+  /**
+   * FPS 설정
+   * @param {number} fps
+   */
+  setFps(fps) {
+    if (typeof fps === 'number' && fps > 0) {
+      this._fps = fps;
+      this.isDirty = true;
+    }
+  }
+
+  /**
+   * 현재 FPS 가져오기
+   * @returns {number}
+   */
+  getFps() {
+    return this._fps || 24;
+  }
+
+  /**
+   * 버전 정보 설정
+   * @param {Object} versionInfo
+   */
+  setVersionInfo(versionInfo) {
+    this._versionInfo = versionInfo;
+    this.isDirty = true;
+  }
+
+  /**
+   * 현재 버전 정보 가져오기
+   * @returns {Object|null}
+   */
+  getVersionInfo() {
+    return this._versionInfo;
+  }
+
+  /**
+   * 수동 버전 추가
+   * @param {Object} manualVersion
+   */
+  addManualVersion(manualVersion) {
+    if (!this._manualVersions) {
+      this._manualVersions = [];
+    }
+    this._manualVersions.push(manualVersion);
+    this.isDirty = true;
+  }
+
+  /**
+   * 수동 버전 목록 가져오기
+   * @returns {Array}
+   */
+  getManualVersions() {
+    return this._manualVersions || [];
+  }
+
+  /**
+   * 수동 버전 목록 설정 (전체 교체)
+   * @param {Array} manualVersions
+   */
+  setManualVersions(manualVersions) {
+    this._manualVersions = manualVersions || [];
+    this.isDirty = true;
+  }
+
+  /**
+   * 수동 버전 제거
+   * @param {string} filePath - 제거할 버전의 파일 경로
+   * @returns {boolean}
+   */
+  removeManualVersion(filePath) {
+    if (!this._manualVersions) return false;
+
+    const index = this._manualVersions.findIndex(
+      (v) => v.filePath === filePath || v.path === filePath
+    );
+
+    if (index === -1) return false;
+
+    this._manualVersions.splice(index, 1);
+    this.isDirty = true;
+    return true;
   }
 
   /**
@@ -345,14 +559,11 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
-   * 파일 경로에서 파일명 추출
+   * 파일 경로에서 파일명 추출 (확장자 제외)
+   * @deprecated schema.js의 extractFileNameWithoutExt 사용 권장
    */
   _getFileName(filePath) {
-    if (!filePath) return '';
-    const parts = filePath.replace(/\\/g, '/').split('/');
-    const fileName = parts[parts.length - 1];
-    const lastDot = fileName.lastIndexOf('.');
-    return lastDot > 0 ? fileName.substring(0, lastDot) : fileName;
+    return extractFileNameWithoutExt(filePath);
   }
 
   /**

@@ -28,9 +28,12 @@ export class Timeline extends EventTarget {
     this.totalFrames = 0;
     this.currentTime = 0;
     this.zoom = 100; // 100% = 기본
-    this.minZoom = 25;
+    this.minZoom = 100; // 최소 100% (타임라인이 꽉 차게)
     this.maxZoom = 800;  // 기본값 (영상 길이에 따라 동적 조정됨)
     this.baseMaxZoom = 800;  // 최소 maxZoom 보장
+
+    // 재생 중 플레이헤드 따라가기 상태
+    this.isPlaying = false;
 
     // 프레임 그리드 설정
     this.frameGridContainer = null;
@@ -80,9 +83,27 @@ export class Timeline extends EventTarget {
   _setupResizeObserver() {
     if (!this.timelineTracks) return;
 
-    const resizeObserver = new ResizeObserver(() => {
-      // 줌 상태에서 리사이즈 시 플레이헤드 위치 업데이트
-      this._updatePlayheadPosition();
+    let prevContainerWidth = 0;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      // DOM이 완전히 업데이트된 후 처리
+      requestAnimationFrame(() => {
+        const newContainerWidth = this.tracksContainer?.offsetWidth || 0;
+
+        // 스크롤 위치 비율 유지 (리사이즈 전 비율로 새 위치 계산)
+        if (prevContainerWidth > 0 && newContainerWidth > 0 && prevContainerWidth !== newContainerWidth) {
+          const scrollRatio = this.timelineTracks.scrollLeft / prevContainerWidth;
+          this.timelineTracks.scrollLeft = scrollRatio * newContainerWidth;
+        }
+
+        prevContainerWidth = newContainerWidth;
+
+        // 플레이헤드 위치 업데이트
+        this._updatePlayheadPosition();
+
+        // 구간 반복 마커도 업데이트 (이벤트 발생)
+        this._emit('resize', { width: newContainerWidth });
+      });
     });
 
     resizeObserver.observe(this.timelineTracks);
@@ -98,6 +119,14 @@ export class Timeline extends EventTarget {
       this.zoom = this.minZoom + (value / 100) * (this.maxZoom - this.minZoom);
       this._applyZoom();
       this._updateZoomDisplay();
+    });
+
+    // 줌 슬라이더 사용 후 포커스 해제 (스페이스바가 재생으로 작동하도록)
+    this.zoomSlider?.addEventListener('mouseup', (e) => {
+      e.target.blur();
+    });
+    this.zoomSlider?.addEventListener('change', (e) => {
+      e.target.blur();
     });
 
     // 타임라인 휠 이벤트
@@ -350,8 +379,8 @@ export class Timeline extends EventTarget {
     // 100% 줌에서 프레임당 픽셀
     const baseFrameWidth = baseContainerWidth / this.totalFrames;
 
-    // 목표 프레임 너비: 5px (개별 프레임이 잘 보이도록)
-    const targetFrameWidth = 5;
+    // 목표 프레임 너비: 15px (개별 프레임이 편하게 보이도록 - 기존 5px에서 증가)
+    const targetFrameWidth = 15;
 
     // 필요한 줌 레벨 계산
     // frameWidth = baseContainerWidth * (zoom/100) / totalFrames
@@ -359,8 +388,8 @@ export class Timeline extends EventTarget {
     // maxZoom = targetFrameWidth * totalFrames * 100 / baseContainerWidth
     const calculatedMaxZoom = (targetFrameWidth * this.totalFrames * 100) / baseContainerWidth;
 
-    // 최소 baseMaxZoom (800%) 보장, 최대 10000%로 제한 (성능)
-    this.maxZoom = Math.max(this.baseMaxZoom, Math.min(calculatedMaxZoom, 10000));
+    // 최소 baseMaxZoom (800%) 보장, 최대 50000%로 제한 (긴 영상도 충분히 확대 가능)
+    this.maxZoom = Math.max(this.baseMaxZoom, Math.min(calculatedMaxZoom, 50000));
 
     // 줌 슬라이더 업데이트
     this._updateZoomDisplay();
@@ -375,11 +404,74 @@ export class Timeline extends EventTarget {
   }
 
   /**
+   * 재생 상태 설정
+   * @param {boolean} isPlaying - 재생 중 여부
+   */
+  setPlayingState(isPlaying) {
+    this.isPlaying = isPlaying;
+  }
+
+  /**
    * 현재 시간 설정 (플레이헤드 위치 업데이트)
    */
   setCurrentTime(time) {
     this.currentTime = time;
     this._updatePlayheadPosition();
+
+    // 재생 중일 때 플레이헤드가 화면 밖으로 나가면 자동 스크롤
+    if (this.isPlaying && this.timelineTracks) {
+      this._autoScrollToPlayhead();
+    }
+  }
+
+  /**
+   * 플레이헤드가 보이도록 자동 스크롤
+   */
+  _autoScrollToPlayhead() {
+    if (!this.timelineTracks || this.duration === 0) return;
+
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (containerWidth === 0) return;
+
+    const percent = this.currentTime / this.duration;
+    const playheadPx = containerWidth * percent;
+
+    const scrollLeft = this.timelineTracks.scrollLeft;
+    const viewportWidth = this.timelineTracks.clientWidth;
+
+    // 플레이헤드가 화면 오른쪽 밖으로 나갔으면 스크롤
+    // 여유 공간 50px을 두고 체크
+    const margin = 50;
+    if (playheadPx > scrollLeft + viewportWidth - margin) {
+      // 플레이헤드를 왼쪽에 두고 스크롤 (부드러운 전환)
+      this.timelineTracks.scrollLeft = playheadPx - margin;
+    }
+    // 플레이헤드가 화면 왼쪽 밖에 있으면 스크롤
+    else if (playheadPx < scrollLeft + margin) {
+      this.timelineTracks.scrollLeft = Math.max(0, playheadPx - margin);
+    }
+  }
+
+  /**
+   * 플레이헤드 위치로 스크롤 (재생 시작 시)
+   */
+  scrollToPlayhead() {
+    if (!this.timelineTracks || this.duration === 0) return;
+
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (containerWidth === 0) return;
+
+    const percent = this.currentTime / this.duration;
+    const playheadPx = containerWidth * percent;
+
+    const scrollLeft = this.timelineTracks.scrollLeft;
+    const viewportWidth = this.timelineTracks.clientWidth;
+
+    // 플레이헤드가 현재 뷰포트 내에 없으면 왼쪽에 오도록 스크롤
+    if (playheadPx < scrollLeft || playheadPx > scrollLeft + viewportWidth) {
+      const margin = 50;
+      this.timelineTracks.scrollLeft = Math.max(0, playheadPx - margin);
+    }
   }
 
   /**
@@ -804,22 +896,145 @@ export class Timeline extends EventTarget {
   }
 
   /**
-   * 레이어 트랙 렌더링 (오른쪽 타임라인)
+   * 레이어 트랙 렌더링 (오른쪽 타임라인) - Adobe Animate 격자 스타일
+   * 성능 최적화: CSS 배경 패턴 + 키프레임만 DOM 요소로 렌더링
    */
   _renderLayerTrack(layer, isActive) {
     const trackRow = document.createElement('div');
     trackRow.className = `track-row drawing-track-row${isActive ? ' active-layer' : ''}`;
     trackRow.dataset.layerId = layer.id;
 
-    // 키프레임 범위 가져오기
+    // 키프레임 컨테이너 (키프레임만 DOM 요소로)
+    const keyframeContainer = document.createElement('div');
+    keyframeContainer.className = 'keyframe-container';
+    keyframeContainer.dataset.layerId = layer.id;
+
+    // 키프레임 범위 정보 가져오기
     const ranges = layer.getKeyframeRanges(this.totalFrames);
 
+    // 컨테이너 너비와 프레임당 픽셀 계산
+    const containerWidth = this.tracksContainer?.offsetWidth || 1000;
+    const pixelsPerFrame = containerWidth / this.totalFrames;
+
+    // 격자 배경 패턴 생성 (CSS)
+    this._applyGridBackground(trackRow, pixelsPerFrame);
+
+    // 콘텐츠 범위 표시 (키프레임 간 구간) - 빈 키프레임이 아닌 경우만 채움
     ranges.forEach(range => {
-      const clip = this._createKeyframeClip(layer, range);
-      trackRow.appendChild(clip);
+      // 빈 키프레임이 아닌 경우에만 범위 바 표시
+      if (!range.keyframe.isEmpty) {
+        const rangeBar = document.createElement('div');
+        rangeBar.className = 'keyframe-range-bar';
+
+        const startPercent = (range.start / this.totalFrames) * 100;
+        const widthPercent = ((range.end - range.start + 1) / this.totalFrames) * 100;
+
+        rangeBar.style.left = `${startPercent}%`;
+        rangeBar.style.width = `${widthPercent}%`;
+        rangeBar.style.background = `${layer.color}40`; // 레이어 색상 + 투명도
+
+        keyframeContainer.appendChild(rangeBar);
+      }
+
+      // 키프레임 마커 - 격자 칸 중앙에 배치
+      const marker = document.createElement('div');
+      marker.className = `keyframe-marker-dot${range.keyframe.isEmpty ? ' empty' : ''}`;
+      marker.dataset.frame = range.start;
+      marker.dataset.layerId = layer.id;
+
+      // 프레임 중앙에 배치 (프레임 시작 + 0.5프레임)
+      const markerLeft = ((range.start + 0.5) / this.totalFrames) * 100;
+      marker.style.left = `${markerLeft}%`;
+      marker.style.background = range.keyframe.isEmpty ? 'transparent' : layer.color;
+      marker.title = `F${range.start}${range.keyframe.isEmpty ? ' (빈 키프레임)' : ''}`;
+
+      // 선택 상태
+      const isSelected = this.selectedKeyframes.some(
+        kf => kf.layerId === layer.id && kf.frame === range.start
+      );
+      if (isSelected) {
+        marker.classList.add('selected');
+      }
+
+      // 키프레임 드래그
+      marker.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        this._startKeyframeDrag(e, layer.id, range.start, marker);
+      });
+
+      // 클릭으로 선택
+      marker.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._toggleKeyframeSelection(layer.id, range.start, e.ctrlKey || e.metaKey);
+      });
+
+      keyframeContainer.appendChild(marker);
     });
 
+    trackRow.appendChild(keyframeContainer);
     this.tracksContainer.appendChild(trackRow);
+  }
+
+  /**
+   * 트랙에 격자 배경 패턴 적용
+   */
+  _applyGridBackground(trackRow, pixelsPerFrame) {
+    // 프레임 너비에 따른 격자 표시 결정
+    const frameWidth = pixelsPerFrame;
+
+    if (frameWidth >= 4) {
+      // 개별 프레임 격자 + 5/10프레임 강조
+      // 각 프레임의 오른쪽 경계에 선을 그림 (프레임 너비 - 1px 위치)
+      const frame5Width = frameWidth * 5;
+      const frame10Width = frameWidth * 10;
+
+      // 단일 패턴으로 통합하여 중첩 방지
+      trackRow.style.backgroundImage = `
+        repeating-linear-gradient(
+          to right,
+          transparent 0px,
+          transparent ${frameWidth - 1}px,
+          rgba(255, 255, 255, 0.06) ${frameWidth - 1}px,
+          rgba(255, 255, 255, 0.06) ${frameWidth}px
+        )
+      `;
+      trackRow.style.backgroundSize = `${frameWidth}px 100%`;
+
+      // 5프레임, 10프레임 강조선은 별도 요소로 추가 (옵션)
+      // 또는 기존 패턴 유지하되 위치 오프셋 적용
+      trackRow.style.backgroundPosition = '0 0';
+    } else if (frameWidth >= 1) {
+      // 5프레임 단위만 표시
+      const frame5Width = frameWidth * 5;
+
+      trackRow.style.backgroundImage = `
+        repeating-linear-gradient(
+          to right,
+          transparent 0px,
+          transparent ${frame5Width - 1}px,
+          rgba(255, 255, 255, 0.12) ${frame5Width - 1}px,
+          rgba(255, 255, 255, 0.12) ${frame5Width}px
+        )
+      `;
+      trackRow.style.backgroundSize = `${frame5Width}px 100%`;
+    } else {
+      // 매우 축소된 상태 - 1초 단위만
+      const secondWidth = Math.max(frameWidth * this.fps, 1);
+      trackRow.style.backgroundImage = `
+        repeating-linear-gradient(
+          to right,
+          transparent 0px,
+          transparent ${secondWidth - 1}px,
+          rgba(255, 208, 0, 0.4) ${secondWidth - 1}px,
+          rgba(255, 208, 0, 0.4) ${secondWidth}px
+        )
+      `;
+      trackRow.style.backgroundSize = `${secondWidth}px 100%`;
+    }
+
+    trackRow.style.backgroundRepeat = 'repeat-x';
+    trackRow.style.backgroundPosition = '0 0';
   }
 
   /**
@@ -1583,6 +1798,170 @@ export class Timeline extends EventTarget {
     } else if (noteIndicator) {
       noteIndicator.remove();
     }
+  }
+
+  // ==========================================
+  // 댓글 범위 트랙 관련
+  // ==========================================
+
+  /**
+   * 댓글 트랙 요소 참조 설정
+   * @param {HTMLElement} trackElement - 댓글 트랙 요소
+   * @param {HTMLElement} layerHeaderElement - 좌측 댓글 레이어 헤더 요소 (선택)
+   */
+  setCommentTrack(trackElement, layerHeaderElement = null) {
+    this.commentTrack = trackElement;
+    this.commentLayerHeader = layerHeaderElement;
+  }
+
+  /**
+   * 댓글 범위 렌더링
+   * @param {Array} comments - 댓글 범위 배열 (getMarkerRanges() 결과)
+   */
+  renderCommentRanges(comments) {
+    if (!this.commentTrack) return;
+
+    // 기존 댓글 제거
+    this.commentTrack.innerHTML = '';
+
+    // 댓글이 없으면 트랙 및 레이어 헤더 숨김
+    if (!comments || comments.length === 0) {
+      this.commentTrack.style.display = 'none';
+      if (this.commentLayerHeader) {
+        this.commentLayerHeader.style.display = 'none';
+      }
+      return;
+    }
+
+    // 트랙 및 레이어 헤더 표시
+    this.commentTrack.style.display = 'block';
+    if (this.commentLayerHeader) {
+      this.commentLayerHeader.style.display = 'flex';
+    }
+
+    // 각 댓글 범위 렌더링
+    comments.forEach(comment => {
+      const element = this._createCommentRangeElement(comment);
+      this.commentTrack.appendChild(element);
+    });
+  }
+
+  /**
+   * 댓글 범위 요소 생성
+   * @param {object} comment - 댓글 범위 데이터 {layerId, markerId, startFrame, endFrame, color, text, resolved}
+   * @returns {HTMLElement}
+   */
+  _createCommentRangeElement(comment) {
+    const element = document.createElement('div');
+    element.className = 'comment-range-item';
+    element.dataset.layerId = comment.layerId;
+    element.dataset.markerId = comment.markerId;
+
+    // resolved 상태 추가
+    if (comment.resolved) {
+      element.classList.add('resolved');
+    }
+
+    // 위치 및 크기 계산 (프레임 기반)
+    const totalFrames = this.totalFrames || 1;
+    const leftPercent = (comment.startFrame / totalFrames) * 100;
+    const widthPercent = ((comment.endFrame - comment.startFrame) / totalFrames) * 100;
+
+    // 최소 너비 보장 (클릭 가능하도록)
+    const minWidthPercent = Math.max(widthPercent, 0.5);
+
+    // 색상 정보 (레이어 색상 사용)
+    const color = comment.color || '#4a9eff';
+    const bgColor = this._hexToRgba(color, 0.25);
+
+    element.style.left = `${leftPercent}%`;
+    element.style.width = `${minWidthPercent}%`;
+    element.style.background = bgColor;
+    element.style.borderLeftColor = color;
+    element.style.borderRightColor = color;
+
+    // 드래그 핸들 추가
+    const leftHandle = document.createElement('div');
+    leftHandle.className = 'comment-handle comment-handle-left';
+    leftHandle.dataset.handle = 'left';
+
+    const rightHandle = document.createElement('div');
+    rightHandle.className = 'comment-handle comment-handle-right';
+    rightHandle.dataset.handle = 'right';
+
+    element.appendChild(leftHandle);
+    element.appendChild(rightHandle);
+
+    // 텍스트 표시 (줄임 처리)
+    if (comment.text) {
+      const textIndicator = document.createElement('div');
+      textIndicator.className = 'comment-range-text';
+      // 짧은 텍스트로 표시 (첫 줄만)
+      const shortText = comment.text.split('\n')[0].slice(0, 30);
+      textIndicator.textContent = shortText + (comment.text.length > 30 ? '...' : '');
+      element.appendChild(textIndicator);
+    }
+
+    return element;
+  }
+
+  /**
+   * 단일 댓글 범위 업데이트
+   * @param {object} comment - 댓글 범위 데이터
+   */
+  updateCommentRangeElement(comment) {
+    if (!this.commentTrack) return;
+
+    const element = this.commentTrack.querySelector(
+      `[data-layer-id="${comment.layerId}"][data-marker-id="${comment.markerId}"]`
+    );
+    if (!element) return;
+
+    // resolved 상태 업데이트
+    element.classList.toggle('resolved', comment.resolved);
+
+    // 위치 및 크기 업데이트
+    const totalFrames = this.totalFrames || 1;
+    const leftPercent = (comment.startFrame / totalFrames) * 100;
+    const widthPercent = ((comment.endFrame - comment.startFrame) / totalFrames) * 100;
+    const minWidthPercent = Math.max(widthPercent, 0.5);
+
+    // 색상 정보
+    const color = comment.color || '#4a9eff';
+    const bgColor = this._hexToRgba(color, 0.25);
+
+    element.style.left = `${leftPercent}%`;
+    element.style.width = `${minWidthPercent}%`;
+    element.style.background = bgColor;
+    element.style.borderLeftColor = color;
+    element.style.borderRightColor = color;
+
+    // 텍스트 업데이트
+    let textIndicator = element.querySelector('.comment-range-text');
+    if (comment.text) {
+      if (!textIndicator) {
+        textIndicator = document.createElement('div');
+        textIndicator.className = 'comment-range-text';
+        element.appendChild(textIndicator);
+      }
+      const shortText = comment.text.split('\n')[0].slice(0, 30);
+      textIndicator.textContent = shortText + (comment.text.length > 30 ? '...' : '');
+    } else if (textIndicator) {
+      textIndicator.remove();
+    }
+  }
+
+  /**
+   * HEX 색상을 RGBA로 변환
+   * @param {string} hex - HEX 색상
+   * @param {number} alpha - 투명도
+   * @returns {string} - RGBA 색상
+   */
+  _hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
 
   /**

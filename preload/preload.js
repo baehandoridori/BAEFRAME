@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileInfo: (filePath) => ipcRenderer.invoke('file:get-info', filePath),
   saveReview: (filePath, data) => ipcRenderer.invoke('file:save-review', filePath, data),
   loadReview: (filePath) => ipcRenderer.invoke('file:load-review', filePath),
+  scanVersions: (filePath) => ipcRenderer.invoke('file:scan-versions', filePath),
 
   // ====== 윈도우 관련 ======
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
@@ -55,12 +56,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveSettings: (data) => ipcRenderer.invoke('settings:save', data),
   getSettingsPath: () => ipcRenderer.invoke('settings:get-path'),
 
+  // ====== 썸네일 캐시 관련 ======
+  thumbnailGetCachePath: () => ipcRenderer.invoke('thumbnail:get-cache-path'),
+  thumbnailCheckValid: (videoPath) => ipcRenderer.invoke('thumbnail:check-valid', videoPath),
+  thumbnailLoadAll: (videoHash) => ipcRenderer.invoke('thumbnail:load-all', videoHash),
+  thumbnailSaveBatch: (data) => ipcRenderer.invoke('thumbnail:save-batch', data),
+  thumbnailClearVideoCache: (videoHash) => ipcRenderer.invoke('thumbnail:clear-video-cache', videoHash),
+  thumbnailClearAllCache: () => ipcRenderer.invoke('thumbnail:clear-all-cache'),
+  thumbnailGetCacheSize: () => ipcRenderer.invoke('thumbnail:get-cache-size'),
+
   // ====== 로그 관련 ======
   writeLog: (logData) => ipcRenderer.send('log:write', logData),
+
+  // ====== 앱 종료 관련 ======
+  confirmQuit: () => ipcRenderer.invoke('app:quit-confirmed'),
+  cancelQuit: () => ipcRenderer.invoke('app:quit-cancelled'),
+
+  // ====== FFmpeg 트랜스코딩 관련 ======
+  ffmpegIsAvailable: () => ipcRenderer.invoke('ffmpeg:is-available'),
+  ffmpegProbeCodec: (filePath) => ipcRenderer.invoke('ffmpeg:probe-codec', filePath),
+  ffmpegCheckCache: (filePath) => ipcRenderer.invoke('ffmpeg:check-cache', filePath),
+  ffmpegTranscode: (filePath) => ipcRenderer.invoke('ffmpeg:transcode', filePath),
+  ffmpegCancel: () => ipcRenderer.invoke('ffmpeg:cancel'),
+  ffmpegGetCacheSize: () => ipcRenderer.invoke('ffmpeg:get-cache-size'),
+  ffmpegSetCacheLimit: (limitGB) => ipcRenderer.invoke('ffmpeg:set-cache-limit', limitGB),
+  ffmpegClearVideoCache: (filePath) => ipcRenderer.invoke('ffmpeg:clear-video-cache', filePath),
+  ffmpegClearAllCache: () => ipcRenderer.invoke('ffmpeg:clear-all-cache'),
+  ffmpegGetSupportedCodecs: () => ipcRenderer.invoke('ffmpeg:get-supported-codecs'),
 
   // ====== 이벤트 리스너 ======
   onOpenFromProtocol: (callback) => {
     ipcRenderer.on('open-from-protocol', (event, arg) => callback(arg));
+  },
+  onRequestSaveBeforeQuit: (callback) => {
+    ipcRenderer.on('app:request-save-before-quit', () => callback());
+  },
+  onTranscodeProgress: (callback) => {
+    ipcRenderer.on('ffmpeg:transcode-progress', (event, data) => callback(data));
   },
 
   // 이벤트 리스너 제거

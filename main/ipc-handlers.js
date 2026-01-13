@@ -5,6 +5,7 @@
 const { ipcMain, dialog, app, clipboard, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { createLogger } = require('./logger');
 const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized, toggleFullscreen, isFullscreen } = require('./window');
 
@@ -86,6 +87,86 @@ function setupIpcHandlers() {
         trace.end({ filePath, exists: false });
         return null;
       }
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  // 버전 파일 스캔 (같은 폴더에서 같은 시리즈의 버전 파일들을 찾음)
+  ipcMain.handle('file:scan-versions', async (event, filePath) => {
+    const trace = log.trace('file:scan-versions');
+    try {
+      const directory = path.dirname(filePath);
+      const currentFileName = path.basename(filePath);
+      const currentBaseName = extractBaseName(currentFileName);
+
+      if (!currentBaseName) {
+        trace.end({ versions: [], reason: 'no base name' });
+        return { baseName: '', currentVersion: null, versions: [] };
+      }
+
+      // 폴더의 모든 파일 읽기
+      const files = await fs.promises.readdir(directory);
+
+      // 지원하는 비디오 확장자
+      const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+
+      // 같은 시리즈의 버전 파일들 필터링
+      const versions = [];
+      let currentVersion = null;
+
+      for (const file of files) {
+        const ext = path.extname(file).toLowerCase();
+        if (!videoExtensions.includes(ext)) continue;
+
+        const fileBaseName = extractBaseName(file);
+        if (fileBaseName !== currentBaseName) continue;
+
+        const versionInfo = parseVersionFromFileName(file);
+        const fullPath = path.join(directory, file);
+
+        try {
+          const stats = await fs.promises.stat(fullPath);
+          const versionEntry = {
+            version: versionInfo.version,
+            fileName: file,
+            path: fullPath,
+            displayLabel: versionInfo.displayLabel,
+            suffix: versionInfo.suffix,
+            mtime: stats.mtime.toISOString(),
+            size: stats.size
+          };
+
+          versions.push(versionEntry);
+
+          // 현재 파일인지 확인
+          if (file === currentFileName) {
+            currentVersion = versionInfo.version;
+          }
+        } catch (statError) {
+          log.warn('파일 정보 읽기 실패', { file, error: statError.message });
+        }
+      }
+
+      // 버전순 정렬
+      versions.sort((a, b) => {
+        const vA = a.version ?? -1;
+        const vB = b.version ?? -1;
+        return vA - vB;
+      });
+
+      trace.end({
+        baseName: currentBaseName,
+        currentVersion,
+        count: versions.length
+      });
+
+      return {
+        baseName: currentBaseName,
+        currentVersion,
+        versions
+      };
+    } catch (error) {
       trace.error(error);
       throw error;
     }
@@ -349,6 +430,344 @@ function setupIpcHandlers() {
   // 설정 파일 경로 반환
   ipcMain.handle('settings:get-path', () => {
     return getSettingsFilePath();
+  });
+
+  // ====== 썸네일 캐시 관련 ======
+
+  /**
+   * 비디오 파일의 해시 생성 (캐시 키)
+   */
+  const getThumbnailCacheDir = () => {
+    const cacheDir = path.join(app.getPath('userData'), 'thumbnails');
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    return cacheDir;
+  };
+
+  const getVideoHash = (filePath, fileSize, mtime) => {
+    const data = `${filePath}|${fileSize}|${mtime}`;
+    return crypto.createHash('md5').update(data).digest('hex').slice(0, 16);
+  };
+
+  // 썸네일 캐시 경로 가져오기
+  ipcMain.handle('thumbnail:get-cache-path', () => {
+    return getThumbnailCacheDir();
+  });
+
+  // 캐시 유효성 검사 (비디오 파일의 mtime이 바뀌었는지 확인)
+  ipcMain.handle('thumbnail:check-valid', async (event, videoPath) => {
+    const trace = log.trace('thumbnail:check-valid');
+    try {
+      const stats = await fs.promises.stat(videoPath);
+      const videoHash = getVideoHash(videoPath, stats.size, stats.mtimeMs);
+      const cachePath = path.join(getThumbnailCacheDir(), videoHash);
+      const metaPath = path.join(cachePath, 'meta.json');
+
+      if (!fs.existsSync(metaPath)) {
+        trace.end({ valid: false, reason: 'no cache' });
+        return { valid: false, videoHash };
+      }
+
+      const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf-8'));
+
+      // mtime 비교
+      if (meta.mtime !== stats.mtimeMs) {
+        trace.end({ valid: false, reason: 'mtime mismatch' });
+        return { valid: false, videoHash };
+      }
+
+      trace.end({ valid: true, count: meta.frameCount });
+      return {
+        valid: true,
+        videoHash,
+        frameCount: meta.frameCount,
+        duration: meta.duration
+      };
+    } catch (error) {
+      trace.error(error);
+      return { valid: false, error: error.message };
+    }
+  });
+
+  // 캐시된 썸네일 전체 로드
+  ipcMain.handle('thumbnail:load-all', async (event, videoHash) => {
+    const trace = log.trace('thumbnail:load-all');
+    try {
+      const cachePath = path.join(getThumbnailCacheDir(), videoHash);
+      const metaPath = path.join(cachePath, 'meta.json');
+
+      if (!fs.existsSync(metaPath)) {
+        trace.end({ success: false, reason: 'no cache' });
+        return { success: false };
+      }
+
+      const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf-8'));
+      const thumbnails = {};
+
+      // 썸네일 파일들 로드
+      const files = await fs.promises.readdir(cachePath);
+      for (const file of files) {
+        if (file === 'meta.json') continue;
+        if (!file.endsWith('.jpg')) continue;
+
+        const time = parseFloat(file.replace('.jpg', '')) / 1000; // ms → sec
+        const filePath = path.join(cachePath, file);
+        const buffer = await fs.promises.readFile(filePath);
+        const dataUrl = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+        thumbnails[time] = dataUrl;
+      }
+
+      trace.end({ success: true, count: Object.keys(thumbnails).length });
+      return {
+        success: true,
+        thumbnails,
+        duration: meta.duration
+      };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 썸네일 일괄 저장
+  ipcMain.handle('thumbnail:save-batch', async (event, { videoPath, videoHash, duration, thumbnails }) => {
+    const trace = log.trace('thumbnail:save-batch');
+    try {
+      const stats = await fs.promises.stat(videoPath);
+      const cachePath = path.join(getThumbnailCacheDir(), videoHash);
+
+      // 캐시 디렉토리 생성
+      if (!fs.existsSync(cachePath)) {
+        fs.mkdirSync(cachePath, { recursive: true });
+      }
+
+      // 메타데이터 저장
+      const meta = {
+        videoPath,
+        mtime: stats.mtimeMs,
+        frameCount: Object.keys(thumbnails).length,
+        duration,
+        quality: 0.6,
+        createdAt: Date.now()
+      };
+      await fs.promises.writeFile(
+        path.join(cachePath, 'meta.json'),
+        JSON.stringify(meta, null, 2)
+      );
+
+      // 썸네일 파일 저장 (data URL → JPEG 파일)
+      let savedCount = 0;
+      for (const [time, dataUrl] of Object.entries(thumbnails)) {
+        const timeMs = Math.round(parseFloat(time) * 1000);
+        const fileName = `${timeMs}.jpg`;
+        const filePath = path.join(cachePath, fileName);
+
+        // data URL에서 base64 추출
+        const base64Data = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+        await fs.promises.writeFile(filePath, Buffer.from(base64Data, 'base64'));
+        savedCount++;
+      }
+
+      trace.end({ success: true, savedCount });
+      return { success: true, savedCount };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 특정 비디오의 캐시 삭제
+  ipcMain.handle('thumbnail:clear-video-cache', async (event, videoHash) => {
+    const trace = log.trace('thumbnail:clear-video-cache');
+    try {
+      const cachePath = path.join(getThumbnailCacheDir(), videoHash);
+      if (fs.existsSync(cachePath)) {
+        await fs.promises.rm(cachePath, { recursive: true });
+        trace.end({ success: true });
+        return { success: true };
+      }
+      trace.end({ success: true, reason: 'no cache' });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 전체 썸네일 캐시 삭제
+  ipcMain.handle('thumbnail:clear-all-cache', async () => {
+    const trace = log.trace('thumbnail:clear-all-cache');
+    try {
+      const cacheDir = getThumbnailCacheDir();
+      const entries = await fs.promises.readdir(cacheDir);
+      let deletedCount = 0;
+
+      for (const entry of entries) {
+        const entryPath = path.join(cacheDir, entry);
+        const stat = await fs.promises.stat(entryPath);
+        if (stat.isDirectory()) {
+          await fs.promises.rm(entryPath, { recursive: true });
+          deletedCount++;
+        }
+      }
+
+      trace.end({ success: true, deletedCount });
+      return { success: true, deletedCount };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 캐시 용량 확인
+  ipcMain.handle('thumbnail:get-cache-size', async () => {
+    const trace = log.trace('thumbnail:get-cache-size');
+    try {
+      const cacheDir = getThumbnailCacheDir();
+      let totalSize = 0;
+      let videoCount = 0;
+
+      const getDirSize = async (dirPath) => {
+        const entries = await fs.promises.readdir(dirPath);
+        for (const entry of entries) {
+          const entryPath = path.join(dirPath, entry);
+          const stat = await fs.promises.stat(entryPath);
+          if (stat.isDirectory()) {
+            videoCount++;
+            await getDirSize(entryPath);
+          } else {
+            totalSize += stat.size;
+          }
+        }
+      };
+
+      await getDirSize(cacheDir);
+
+      trace.end({ totalSize, videoCount });
+      return {
+        success: true,
+        totalSize,
+        videoCount,
+        formattedSize: formatBytes(totalSize)
+      };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ====== FFmpeg 트랜스코딩 관련 ======
+
+  const { ffmpegManager, SUPPORTED_CODECS } = require('./ffmpeg-manager');
+
+  // FFmpeg 사용 가능 여부 확인
+  ipcMain.handle('ffmpeg:is-available', async () => {
+    await ffmpegManager.initialize();
+    return ffmpegManager.isAvailable();
+  });
+
+  // 비디오 코덱 정보 조회
+  ipcMain.handle('ffmpeg:probe-codec', async (event, filePath) => {
+    const trace = log.trace('ffmpeg:probe-codec');
+    try {
+      const codecInfo = await ffmpegManager.probeCodec(filePath);
+      trace.end({ codec: codecInfo.codecName, isSupported: codecInfo.isSupported });
+      return { success: true, ...codecInfo };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 캐시 확인
+  ipcMain.handle('ffmpeg:check-cache', async (event, filePath) => {
+    const trace = log.trace('ffmpeg:check-cache');
+    try {
+      const result = await ffmpegManager.checkCache(filePath);
+      trace.end({ valid: result.valid });
+      return { success: true, ...result };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 트랜스코딩 실행 (진행률은 별도 이벤트로 전송)
+  ipcMain.handle('ffmpeg:transcode', async (event, filePath) => {
+    const trace = log.trace('ffmpeg:transcode');
+    const mainWindow = getMainWindow();
+
+    try {
+      const result = await ffmpegManager.transcode(filePath, (progress) => {
+        // 진행률을 Renderer에 전송
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ffmpeg:transcode-progress', { filePath, progress });
+        }
+      });
+
+      trace.end({ success: result.success, fromCache: result.fromCache });
+      return { success: true, ...result };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 트랜스코딩 취소
+  ipcMain.handle('ffmpeg:cancel', async () => {
+    ffmpegManager.cancelAll();
+    return { success: true };
+  });
+
+  // 캐시 크기 조회
+  ipcMain.handle('ffmpeg:get-cache-size', async () => {
+    const trace = log.trace('ffmpeg:get-cache-size');
+    try {
+      const result = await ffmpegManager.getCacheSize();
+      trace.end({ bytes: result.bytes, count: result.count });
+      return { success: true, ...result };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 캐시 용량 제한 설정
+  ipcMain.handle('ffmpeg:set-cache-limit', async (event, limitGB) => {
+    ffmpegManager.setCacheLimit(limitGB);
+    return { success: true, limitGB };
+  });
+
+  // 특정 비디오 캐시 삭제
+  ipcMain.handle('ffmpeg:clear-video-cache', async (event, filePath) => {
+    const trace = log.trace('ffmpeg:clear-video-cache');
+    try {
+      const deleted = await ffmpegManager.clearVideoCache(filePath);
+      trace.end({ deleted });
+      return { success: true, deleted };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 전체 캐시 삭제
+  ipcMain.handle('ffmpeg:clear-all-cache', async () => {
+    const trace = log.trace('ffmpeg:clear-all-cache');
+    try {
+      const result = await ffmpegManager.clearAllCache();
+      trace.end(result);
+      return { success: true, ...result };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 지원 코덱 목록 반환
+  ipcMain.handle('ffmpeg:get-supported-codecs', () => {
+    return { success: true, codecs: SUPPORTED_CODECS };
   });
 
   // ====== 로그 관련 ======
@@ -682,6 +1101,81 @@ async function getGoogleDriveFileId(localPath) {
   }
 
   return null;
+}
+
+// ============================================================================
+// 버전 파싱 유틸리티 (Main Process용)
+// ============================================================================
+
+/**
+ * 버전 패턴 목록
+ */
+const VERSION_PATTERNS = [
+  { regex: /_v(\d+)/i, extract: (m) => parseInt(m[1], 10), suffix: (m) => m[0], type: 'version' },
+  { regex: /_re(\d+)/i, extract: (m) => parseInt(m[1], 10) + 1, suffix: (m) => m[0], type: 'retake' },
+  { regex: /_re$/i, extract: () => 2, suffix: () => '_re', type: 'retake' },
+  { regex: /_final/i, extract: () => 999, suffix: (m) => m[0], type: 'final' }
+];
+
+/**
+ * 파일명에서 버전 정보 파싱
+ */
+function parseVersionFromFileName(fileName) {
+  if (!fileName) {
+    return { version: null, suffix: null, displayLabel: '-', type: null };
+  }
+
+  const nameWithoutExt = fileName.replace(/\.[^.]+$/, '');
+
+  for (const pattern of VERSION_PATTERNS) {
+    const match = nameWithoutExt.match(pattern.regex);
+    if (match) {
+      const version = pattern.extract(match);
+      const suffix = pattern.suffix(match);
+      let displayLabel;
+
+      if (pattern.type === 'final') {
+        displayLabel = 'FINAL';
+      } else if (pattern.type === 'retake') {
+        displayLabel = `v${version} (${suffix})`;
+      } else {
+        displayLabel = `v${version}`;
+      }
+
+      return { version, suffix, displayLabel, type: pattern.type };
+    }
+  }
+
+  return { version: null, suffix: null, displayLabel: '-', type: null };
+}
+
+/**
+ * 파일명에서 기본 이름 추출 (버전 접미사 제거)
+ */
+function extractBaseName(fileName) {
+  if (!fileName) return '';
+
+  const nameWithoutExt = fileName.replace(/\.[^.]+$/, '');
+
+  for (const pattern of VERSION_PATTERNS) {
+    const match = nameWithoutExt.match(pattern.regex);
+    if (match) {
+      return nameWithoutExt.replace(pattern.regex, '');
+    }
+  }
+
+  return nameWithoutExt;
+}
+
+/**
+ * 바이트를 읽기 쉬운 형식으로 변환
+ */
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 module.exports = { setupIpcHandlers };

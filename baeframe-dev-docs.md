@@ -355,27 +355,52 @@ comments.on('comment:add', (commentData) => {
 
 ## 4. 데이터 스키마
 
-### 4.1 .bframe 파일 구조
+### 4.1 .bframe 파일 구조 (v2.0)
+
+> **스키마 버전**: 2.0 (2026-01-10 업데이트)
+> **단일 소스**: `shared/schema.js`
 
 ```mermaid
 erDiagram
-    BFRAME_FILE ||--o{ COMMENT : contains
-    BFRAME_FILE ||--o{ VERSION : tracks
-    COMMENT ||--o{ DRAWING : has
-    COMMENT ||--o{ REPLY : has
+    BFRAME_FILE ||--o{ COMMENT_LAYER : contains
+    BFRAME_FILE ||--o{ DRAWING_LAYER : contains
+    BFRAME_FILE ||--o| VERSION_INFO : has
+    BFRAME_FILE ||--o{ MANUAL_VERSION : tracks
+    COMMENT_LAYER ||--o{ COMMENT_MARKER : has
+    COMMENT_MARKER ||--o{ DRAWING : has
+    COMMENT_MARKER ||--o{ REPLY : has
+    DRAWING_LAYER ||--o{ KEYFRAME : has
+    KEYFRAME ||--o{ DRAWING : contains
 
     BFRAME_FILE {
-        string version
+        string bframeVersion
         string videoFile
         string videoPath
-        datetime createdAt
-        datetime updatedAt
         int fps
-        int totalFrames
-        string duration
+        datetime createdAt
+        datetime modifiedAt
     }
 
-    COMMENT {
+    VERSION_INFO {
+        int detectedVersion
+        string originalSuffix
+        string baseName
+    }
+
+    MANUAL_VERSION {
+        int version
+        string fileName
+        string filePath
+        datetime addedAt
+    }
+
+    COMMENT_LAYER {
+        string id
+        string name
+        boolean visible
+    }
+
+    COMMENT_MARKER {
         string id
         int frame
         string timecode
@@ -385,6 +410,17 @@ erDiagram
         boolean resolved
         datetime createdAt
         datetime updatedAt
+    }
+
+    DRAWING_LAYER {
+        string id
+        string name
+        boolean visible
+        string color
+    }
+
+    KEYFRAME {
+        int frame
     }
 
     DRAWING {
@@ -398,68 +434,127 @@ erDiagram
         int width
         array points
     }
-
-    VERSION {
-        int version
-        string filename
-        datetime createdAt
-    }
 ```
 
-**전체 JSON 구조:**
+**전체 JSON 구조 (v2.0):**
 
 ```json
 {
-  "version": "1.0.0",
+  "bframeVersion": "2.0",
   "videoFile": "EP01_shot_015_animation_v3.mp4",
-  "videoPath": "G:/프로젝트/스튜디오장삐쭈야/EP01/",
-  "createdAt": "2024-12-20T10:30:00Z",
-  "updatedAt": "2024-12-20T15:45:00Z",
+  "videoPath": "G:/프로젝트/스튜디오장삐쭈야/EP01/EP01_shot_015_animation_v3.mp4",
   "fps": 24,
-  "totalFrames": 7920,
-  "duration": "00:05:30:00",
+  "createdAt": "2024-12-20T10:30:00Z",
+  "modifiedAt": "2024-12-20T15:45:00Z",
 
-  "comments": [
+  "versionInfo": {
+    "detectedVersion": 3,
+    "originalSuffix": "_v3",
+    "baseName": "EP01_shot_015_animation"
+  },
+
+  "manualVersions": [
     {
-      "id": "c_1703067000_hong",
-      "frame": 1008,
-      "timecode": "00:00:42:00",
-      "author": "홍길동",
-      "authorId": "hong",
-      "content": "캐릭터 손 위치가 조금 어색해 보여요.",
-      "resolved": false,
-      "createdAt": "2024-12-20T10:30:00Z",
-      "updatedAt": "2024-12-20T10:30:00Z",
-      "drawings": [
-        {
-          "id": "d_1703067000_1",
-          "type": "arrow",
-          "startX": 0.35,
-          "startY": 0.45,
-          "endX": 0.52,
-          "endY": 0.38,
-          "color": "#ff4757",
-          "width": 3
-        },
-        {
-          "id": "d_1703067000_2",
-          "type": "stroke",
-          "points": [[0.12, 0.34], [0.15, 0.36], [0.18, 0.35]],
-          "color": "#ffd000",
-          "width": 2
-        }
-      ],
-      "replies": []
+      "version": 1,
+      "fileName": "EP01_shot_015_animation_v1.mp4",
+      "filePath": "G:/프로젝트/스튜디오장삐쭈야/EP01/EP01_shot_015_animation_v1.mp4",
+      "addedAt": "2024-12-18T09:00:00Z"
     }
   ],
 
-  "versions": [
-    { "version": 1, "filename": "EP01_shot_015_animation_v1.mp4", "createdAt": "2024-12-18T09:00:00Z" },
-    { "version": 2, "filename": "EP01_shot_015_animation_v2.mp4", "createdAt": "2024-12-19T14:00:00Z" },
-    { "version": 3, "filename": "EP01_shot_015_animation_v3.mp4", "createdAt": "2024-12-20T10:00:00Z" }
+  "comments": {
+    "layers": [
+      {
+        "id": "layer_default",
+        "name": "기본 레이어",
+        "visible": true,
+        "markers": [
+          {
+            "id": "c_1703067000_hong",
+            "frame": 1008,
+            "timecode": "00:00:42:00",
+            "author": "홍길동",
+            "authorId": "hong",
+            "content": "캐릭터 손 위치가 조금 어색해 보여요.",
+            "resolved": false,
+            "createdAt": "2024-12-20T10:30:00Z",
+            "updatedAt": "2024-12-20T10:30:00Z",
+            "drawings": [
+              {
+                "id": "d_1703067000_1",
+                "type": "arrow",
+                "startX": 0.35,
+                "startY": 0.45,
+                "endX": 0.52,
+                "endY": 0.38,
+                "color": "#ff4757",
+                "width": 3
+              }
+            ],
+            "replies": []
+          }
+        ]
+      }
+    ]
+  },
+
+  "drawings": {
+    "layers": [
+      {
+        "id": "drawing_layer_1",
+        "name": "레이어 1",
+        "visible": true,
+        "color": "#ff4757",
+        "keyframes": [
+          {
+            "frame": 120,
+            "objects": [
+              {
+                "id": "d_1703067100_1",
+                "type": "stroke",
+                "points": [[0.12, 0.34], [0.15, 0.36], [0.18, 0.35]],
+                "color": "#ffd000",
+                "width": 2
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+
+  "highlights": [
+    {
+      "startFrame": 100,
+      "endFrame": 200,
+      "color": "#ffd000"
+    }
   ]
 }
 ```
+
+### 4.1.1 마이그레이션
+
+v1.0 → v2.0 자동 마이그레이션:
+
+```mermaid
+flowchart TD
+    A[.bframe 파일 로드] --> B{bframeVersion 확인}
+    B -->|2.0| C[그대로 사용]
+    B -->|1.0 또는 없음| D[백업 생성 .bframe.bak]
+    D --> E[마이그레이션 실행]
+    E --> F{성공?}
+    F -->|예| G[새 스키마로 저장]
+    F -->|아니오| H[백업에서 복구]
+    G --> I[정상 로드]
+    H --> I
+```
+
+**변경 사항:**
+- `version` → `bframeVersion`
+- `comments: [...]` → `comments: { layers: [...] }`
+- `versions: [...]` → `manualVersions: [...]` + `versionInfo`
+- `updatedAt` → `modifiedAt`
 
 ### 4.2 좌표 시스템
 

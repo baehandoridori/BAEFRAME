@@ -27,6 +27,12 @@ const appStartTime = Date.now();
 const { app, BrowserWindow, ipcMain } = require('electron');
 debugLog('electron 모듈 로드 완료');
 
+// ============================================
+// 앱 종료 상태 관리
+// ============================================
+let isQuitting = false;
+let forceQuit = false;
+
 const { createLogger } = require('./logger');
 const { createMainWindow, getMainWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
@@ -239,9 +245,44 @@ if (!gotTheLock) {
     }
   });
 
-  // 앱 종료 전
-  app.on('before-quit', () => {
-    log.info('앱 종료 중...');
+  // 앱 종료 전 - 저장 확인
+  app.on('before-quit', (event) => {
+    log.info('앱 종료 요청', { isQuitting, forceQuit });
+
+    // 이미 종료 처리 중이거나 강제 종료인 경우 진행
+    if (forceQuit) {
+      log.info('강제 종료 진행');
+      return;
+    }
+
+    // 아직 저장 확인 안 했으면 종료 지연
+    if (!isQuitting) {
+      event.preventDefault();
+      isQuitting = true;
+
+      const mainWindow = getMainWindow();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        log.info('Renderer에 저장 확인 요청');
+        mainWindow.webContents.send('app:request-save-before-quit');
+      } else {
+        // 윈도우가 없으면 바로 종료
+        forceQuit = true;
+        app.quit();
+      }
+    }
+  });
+
+  // Renderer에서 종료 확인 응답 처리
+  ipcMain.handle('app:quit-confirmed', () => {
+    log.info('Renderer 저장 완료, 앱 종료');
+    forceQuit = true;
+    app.quit();
+  });
+
+  ipcMain.handle('app:quit-cancelled', () => {
+    log.info('사용자가 종료 취소');
+    isQuitting = false;
+    forceQuit = false;
   });
 
   // 앱 종료 완료 - 프로세스 강제 종료
