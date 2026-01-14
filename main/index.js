@@ -42,7 +42,7 @@ let isQuitting = false;
 let forceQuit = false;
 
 const { createLogger } = require('./logger');
-const { createMainWindow, getMainWindow } = require('./window');
+const { createMainWindow, getMainWindow, createLoadingWindow, closeLoadingWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
 debugLog('내부 모듈 로드 완료');
 
@@ -233,16 +233,7 @@ if (!gotTheLock) {
     debugLog(`앱 준비 완료: ${Date.now() - appStartTime}ms`);
     log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
-    // IPC 핸들러 설정
-    debugLog('IPC 핸들러 설정 중...');
-    setupIpcHandlers();
-
-    // 메인 윈도우 생성
-    debugLog('메인 윈도우 생성 중...');
-    createMainWindow();
-    debugLog('메인 윈도우 생성 완료');
-
-    // 시작 시 전달된 파일/프로토콜 인자 처리
+    // 시작 시 전달된 파일/프로토콜 인자 확인
     let fileArg = process.argv.find(arg =>
       arg.startsWith('baeframe://') ||
       arg.endsWith('.bframe') ||
@@ -253,6 +244,7 @@ if (!gotTheLock) {
       arg.endsWith('.webm')
     );
 
+    // 파일 인자가 있으면 로딩 창 먼저 표시
     if (fileArg) {
       // baeframe:// URL이면 파일 경로로 변환
       if (fileArg.startsWith('baeframe://')) {
@@ -261,8 +253,22 @@ if (!gotTheLock) {
       } else {
         log.info('시작 인자로 파일 전달됨', { fileArg });
       }
+      // 로딩 창 표시
+      createLoadingWindow(fileArg);
+      debugLog('로딩 창 표시됨');
+    }
 
-      // 윈도우 로드 완료 후 파일 열기
+    // IPC 핸들러 설정
+    debugLog('IPC 핸들러 설정 중...');
+    setupIpcHandlers();
+
+    // 메인 윈도우 생성
+    debugLog('메인 윈도우 생성 중...');
+    createMainWindow();
+    debugLog('메인 윈도우 생성 완료');
+
+    // 파일 인자가 있으면 윈도우 로드 완료 후 파일 열기
+    if (fileArg) {
       const mainWindow = getMainWindow();
       mainWindow.webContents.once('did-finish-load', () => {
         mainWindow.webContents.send('open-from-protocol', fileArg);
