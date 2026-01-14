@@ -3571,6 +3571,10 @@ async function initApp() {
         clearTimeout(hideTimeout);
         hideTimeout = null;
       }
+      // 현재 프레임에서 마커가 보이지 않으면 툴팁 안보임
+      const currentFrame = videoPlayer.currentFrame;
+      if (!marker.isVisibleAtFrame(currentFrame)) return;
+
       if (!marker.pinned && !isDragging) {
         positionTooltip();
         tooltip.classList.add('visible');
@@ -3671,6 +3675,10 @@ async function initApp() {
         el.classList.remove('hidden');
       } else {
         el.classList.add('hidden');
+        // 마커가 숨겨지면 툴팁도 숨김
+        if (marker && marker.tooltipElement && !marker.pinned) {
+          marker.tooltipElement.classList.remove('visible');
+        }
       }
     });
   }
