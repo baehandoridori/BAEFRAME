@@ -72,12 +72,36 @@ function parseBaeframeUrl(url) {
 
   // baeframe:// 제거
   let filePath = url.replace(/^baeframe:\/\//, '');
+  log.info('baeframe:// 제거 후', { filePath });
 
   // URL 디코딩 (한글, 공백 등)
+  // Windows가 부분적으로 디코딩할 수 있으므로 반복 시도
   try {
-    filePath = decodeURIComponent(filePath);
+    const beforeDecode = filePath;
+    let decoded = filePath;
+    let prevDecoded = '';
+
+    // 더 이상 변화가 없을 때까지 디코딩 반복 (최대 3회)
+    for (let i = 0; i < 3 && decoded !== prevDecoded; i++) {
+      prevDecoded = decoded;
+      try {
+        decoded = decodeURIComponent(decoded);
+      } catch (innerErr) {
+        // 부분적으로 잘못된 인코딩이 있으면 개별 처리
+        decoded = decoded.replace(/%[0-9A-Fa-f]{2}/g, (match) => {
+          try {
+            return decodeURIComponent(match);
+          } catch (e) {
+            return match;
+          }
+        });
+      }
+    }
+
+    filePath = decoded;
+    log.info('URL 디코딩 결과', { before: beforeDecode, after: filePath, changed: beforeDecode !== filePath });
   } catch (e) {
-    log.warn('URL 디코딩 실패, 원본 사용', { error: e.message });
+    log.warn('URL 디코딩 실패, 원본 사용', { error: e.message, filePath });
   }
 
   // 공유 링크 형식: 경로\n웹URL\n파일명 또는 경로|웹URL|파일명
