@@ -58,6 +58,9 @@ export class DrawingCanvas extends EventTarget {
     // 현재 키프레임의 백업 (도형 그리기 중 사용)
     this.backupImageData = null;
 
+    // AbortController for event listener cleanup
+    this._abortController = new AbortController();
+
     // 이벤트 리스너 설정
     this._setupEventListeners();
 
@@ -68,16 +71,18 @@ export class DrawingCanvas extends EventTarget {
    * 이벤트 리스너 설정
    */
   _setupEventListeners() {
+    const signal = this._abortController.signal;
+
     // 마우스 이벤트
-    this.canvas.addEventListener('mousedown', (e) => this._onMouseDown(e));
-    this.canvas.addEventListener('mousemove', (e) => this._onMouseMove(e));
-    this.canvas.addEventListener('mouseup', (e) => this._onMouseUp(e));
-    this.canvas.addEventListener('mouseleave', (e) => this._onMouseUp(e));
+    this.canvas.addEventListener('mousedown', (e) => this._onMouseDown(e), { signal });
+    this.canvas.addEventListener('mousemove', (e) => this._onMouseMove(e), { signal });
+    this.canvas.addEventListener('mouseup', (e) => this._onMouseUp(e), { signal });
+    this.canvas.addEventListener('mouseleave', (e) => this._onMouseUp(e), { signal });
 
     // 터치 이벤트 (태블릿 지원)
-    this.canvas.addEventListener('touchstart', (e) => this._onTouchStart(e));
-    this.canvas.addEventListener('touchmove', (e) => this._onTouchMove(e));
-    this.canvas.addEventListener('touchend', (e) => this._onTouchEnd(e));
+    this.canvas.addEventListener('touchstart', (e) => this._onTouchStart(e), { signal });
+    this.canvas.addEventListener('touchmove', (e) => this._onTouchMove(e), { signal });
+    this.canvas.addEventListener('touchend', (e) => this._onTouchEnd(e), { signal });
   }
 
   /**
@@ -599,7 +604,17 @@ export class DrawingCanvas extends EventTarget {
    * 정리
    */
   destroy() {
-    // 이벤트 리스너 제거는 canvas 요소 제거 시 자동으로 됨
+    // AbortController를 통해 모든 이벤트 리스너 제거
+    if (this._abortController) {
+      this._abortController.abort();
+      this._abortController = null;
+    }
+
+    // 임시 캔버스 정리
+    this.tempCanvas = null;
+    this.tempCtx = null;
+    this.backupImageData = null;
+
     log.info('DrawingCanvas 정리됨');
   }
 }

@@ -113,12 +113,26 @@ export class Timeline extends EventTarget {
    * 이벤트 리스너 설정
    */
   _setupEventListeners() {
-    // 줌 슬라이더
+    // 줌 슬라이더 - 플레이헤드 중심으로 줌
     this.zoomSlider?.addEventListener('input', (e) => {
       const value = e.target.value;
-      this.zoom = this.minZoom + (value / 100) * (this.maxZoom - this.minZoom);
+      const newZoom = this.minZoom + (value / 100) * (this.maxZoom - this.minZoom);
+
+      // 현재 시간의 비율 (0~1) - 줌과 무관하게 항상 동일
+      const timeRatio = this.duration > 0 ? this.currentTime / this.duration : 0;
+
+      // 줌 적용
+      this.zoom = newZoom;
       this._applyZoom();
       this._updateZoomDisplay();
+
+      // 플레이헤드가 뷰포트 중앙에 오도록 스크롤
+      const newContainerWidth = this.tracksContainer?.offsetWidth || 1000;
+      const newPlayheadX = timeRatio * newContainerWidth;
+      const viewportWidth = this.timelineTracks?.clientWidth || 1000;
+      if (this.timelineTracks) {
+        this.timelineTracks.scrollLeft = Math.max(0, newPlayheadX - viewportWidth / 2);
+      }
     });
 
     // 줌 슬라이더 사용 후 포커스 해제 (스페이스바가 재생으로 작동하도록)
@@ -319,8 +333,36 @@ export class Timeline extends EventTarget {
     this.scrubTime = time;
     this._updatePlayheadPositionDirect(time);
 
+    // 플레이헤드가 뷰포트 경계에 가까우면 자동 스크롤
+    this._autoScrollWhileDragging(e.clientX, rect);
+
     // 스크러빙 프리뷰 이벤트 (썸네일 표시용)
     this._emit('scrubbing', { time, percent });
+  }
+
+  /**
+   * 플레이헤드 드래그 중 자동 스크롤
+   * @param {number} clientX - 마우스 X 좌표
+   * @param {DOMRect} rect - tracksContainer의 boundingRect
+   */
+  _autoScrollWhileDragging(clientX, rect) {
+    if (!this.timelineTracks) return;
+
+    const viewportLeft = rect.left;
+    const viewportRight = rect.right;
+    const edgeThreshold = 50; // 경계에서 50px 이내면 스크롤
+    const scrollSpeed = 15; // 스크롤 속도 (px)
+
+    // 왼쪽 경계에 가까우면 왼쪽으로 스크롤
+    if (clientX < viewportLeft + edgeThreshold) {
+      const intensity = 1 - (clientX - viewportLeft) / edgeThreshold;
+      this.timelineTracks.scrollLeft -= scrollSpeed * Math.max(0.2, intensity);
+    }
+    // 오른쪽 경계에 가까우면 오른쪽으로 스크롤
+    else if (clientX > viewportRight - edgeThreshold) {
+      const intensity = 1 - (viewportRight - clientX) / edgeThreshold;
+      this.timelineTracks.scrollLeft += scrollSpeed * Math.max(0.2, intensity);
+    }
   }
 
   /**
