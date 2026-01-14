@@ -3501,11 +3501,9 @@ async function initApp() {
         markerStartY = newY;
         // 타임라인 마커만 업데이트 (비디오 마커 재렌더링 안함)
         updateTimelineMarkers();
-        // 데이터 저장
-        if (window.reviewDataManager) {
-          window.reviewDataManager.save();
-        }
-        log.info('마커 위치 변경', { markerId: marker.id, x: newX, y: newY });
+        // 데이터 자동 저장
+        reviewDataManager.save();
+        log.info('마커 위치 변경 및 저장', { markerId: marker.id, x: newX, y: newY });
       }
 
       // 이벤트 리스너 제거
