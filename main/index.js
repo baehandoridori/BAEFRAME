@@ -7,7 +7,15 @@
 // ============================================
 const fs = require('fs');
 const path = require('path');
-const startupDebugPath = path.join(process.env.APPDATA || '', 'baeframe', 'startup-debug.log');
+const baeframeDataDir = path.join(process.env.APPDATA || '', 'baeframe');
+const startupDebugPath = path.join(baeframeDataDir, 'startup-debug.log');
+
+// 디버그 로그 폴더가 없으면 생성
+try {
+  if (!fs.existsSync(baeframeDataDir)) {
+    fs.mkdirSync(baeframeDataDir, { recursive: true });
+  }
+} catch (e) { /* ignore */ }
 
 function debugLog(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
