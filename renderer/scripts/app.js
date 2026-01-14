@@ -3768,6 +3768,17 @@ async function initApp() {
   let commentListUpdateTimeout = null;
   let pendingCommentListFilter = 'all';
 
+  // ========== 가상 스크롤 상태 ==========
+  const virtualScrollState = {
+    allMarkers: [],
+    filteredMarkers: [],
+    renderedRange: { start: 0, end: 0 },
+    itemHeight: 120, // 예상 아이템 높이
+    bufferSize: 5,   // 위아래 버퍼
+    currentFilter: 'all',
+    scrollHandler: null
+  };
+
   function updateCommentList(filter = 'all') {
     pendingCommentListFilter = filter;
 
@@ -3811,6 +3822,18 @@ async function initApp() {
         </div>
       `;
       return;
+    }
+
+    // 가상 스크롤 상태 저장
+    virtualScrollState.filteredMarkers = markers;
+    virtualScrollState.currentFilter = filter;
+
+    // 댓글 개수 경고 (성능 최적화 권장)
+    const COMMENT_THRESHOLD = 100;
+    if (markers.length > COMMENT_THRESHOLD) {
+      log.warn(`댓글 ${markers.length}개 - 성능 저하 가능`, {
+        threshold: COMMENT_THRESHOLD
+      });
     }
 
     const userSettings = getUserSettings();
