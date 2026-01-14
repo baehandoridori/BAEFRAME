@@ -163,17 +163,20 @@ log.info('비디오 하드웨어 가속 플래그 적용됨');
 // - 개발 모드에서는 기존 등록을 유지
 // ============================================
 
+// 개발 모드, 빌드된 앱 모두 프로토콜 등록
+// 개발 모드에서도 Slack 링크 테스트가 가능하도록 함
+// 팀원 배포 시 빌드된 exe 한 번 실행하면 해당 경로로 덮어씌워짐
 if (process.defaultApp) {
-  // 개발 모드: 프로토콜 등록하지 않음 (팀원들의 프로토콜 설정 보호)
-  log.info('개발 모드 - 프로토콜 등록 건너뜀', {
+  // 개발 모드: electron 실행 파일 + 스크립트 경로로 등록
+  app.setAsDefaultProtocolClient('baeframe', process.execPath, [path.resolve(process.argv[1])]);
+  log.info('개발 모드 - 프로토콜 등록됨', {
     execPath: process.execPath,
-    reason: '빌드된 앱의 프로토콜 설정을 덮어쓰지 않기 위함'
+    scriptPath: path.resolve(process.argv[1])
   });
-  debugLog('개발 모드 - 프로토콜 등록 건너뜀');
+  debugLog(`개발 모드 프로토콜 등록됨: ${process.execPath} ${path.resolve(process.argv[1])}`);
 } else {
   // 빌드된 exe - 현재 실행 파일로 등록
   app.setAsDefaultProtocolClient('baeframe');
-
   log.info('baeframe:// 프로토콜 등록됨', {
     execPath: process.execPath,
     defaultApp: process.defaultApp
