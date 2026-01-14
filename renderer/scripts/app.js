@@ -3391,6 +3391,8 @@ async function initApp() {
   function renderVideoMarkers() {
     // 기존 확정된 마커들 제거
     markerContainer.querySelectorAll('.comment-marker:not(.pending)').forEach(el => el.remove());
+    // body에 있는 기존 툴팁들도 제거
+    document.querySelectorAll('.comment-marker-tooltip').forEach(el => el.remove());
 
     // 모든 마커 렌더링
     const allMarkers = commentManager.getAllMarkers();
@@ -3416,9 +3418,10 @@ async function initApp() {
       pointer-events: auto;
     `;
 
-    // 말풍선 (툴팁)
+    // 말풍선 (툴팁) - body에 추가하여 transform 영향 안받게
     const tooltip = document.createElement('div');
     tooltip.className = 'comment-marker-tooltip';
+    tooltip.dataset.markerId = marker.id;
     const authorClass = getAuthorColorClass(marker.author);
     tooltip.innerHTML = `
       <div class="tooltip-header">
@@ -3434,7 +3437,8 @@ async function initApp() {
       </div>
     `;
 
-    markerEl.appendChild(tooltip);
+    // 툴팁을 body에 추가 (markerEl 내부가 아님)
+    document.body.appendChild(tooltip);
 
     // 답글 배지 (스레드 개수 표시)
     const replyCount = marker.replies?.length || 0;
@@ -3489,9 +3493,18 @@ async function initApp() {
       const newX = Math.max(0, Math.min(1, markerStartX + deltaX));
       const newY = Math.max(0, Math.min(1, markerStartY + deltaY));
 
-      // 위치가 변경되었으면 저장
+      // 위치가 변경되었으면 저장 (재렌더링 없이 직접 업데이트)
       if (newX !== markerStartX || newY !== markerStartY) {
-        commentManager.updateMarker(marker.id, { x: newX, y: newY });
+        marker.x = newX;
+        marker.y = newY;
+        markerStartX = newX;
+        markerStartY = newY;
+        // 타임라인 마커만 업데이트 (비디오 마커 재렌더링 안함)
+        updateTimelineMarkers();
+        // 데이터 저장
+        if (window.reviewDataManager) {
+          window.reviewDataManager.save();
+        }
         log.info('마커 위치 변경', { markerId: marker.id, x: newX, y: newY });
       }
 
@@ -3551,18 +3564,33 @@ async function initApp() {
     };
 
     // 호버 이벤트 - 말풍선 표시
-    markerEl.addEventListener('mouseenter', () => {
+    let hideTimeout = null;
+
+    const showTooltipHover = () => {
+      if (hideTimeout) {
+        clearTimeout(hideTimeout);
+        hideTimeout = null;
+      }
       if (!marker.pinned && !isDragging) {
         positionTooltip();
         tooltip.classList.add('visible');
       }
-    });
+    };
 
-    markerEl.addEventListener('mouseleave', () => {
+    const hideTooltipHover = () => {
       if (!marker.pinned && !isDragging) {
-        tooltip.classList.remove('visible');
+        hideTimeout = setTimeout(() => {
+          tooltip.classList.remove('visible');
+        }, 100); // 100ms 딜레이로 툴팁으로 이동할 시간 확보
       }
-    });
+    };
+
+    markerEl.addEventListener('mouseenter', showTooltipHover);
+    markerEl.addEventListener('mouseleave', hideTooltipHover);
+
+    // 툴팁 호버 시에도 유지
+    tooltip.addEventListener('mouseenter', showTooltipHover);
+    tooltip.addEventListener('mouseleave', hideTooltipHover);
 
     // 클릭 - 우측 댓글로 스크롤 및 고정 토글
     markerEl.addEventListener('click', (e) => {
