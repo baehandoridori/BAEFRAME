@@ -19,8 +19,11 @@
 
 ---
 
-<!-- 메인 스크린샷 위치 -->
-<!-- ![BAEFRAME 메인 화면](screenshots/main.png) -->
+<div align="center">
+<img src="mockups/screenshots/01-main-overview.png" alt="BAEFRAME 메인 화면" width="900" />
+
+*메인 인터페이스: 비디오 뷰어 + 타임라인 + 댓글 패널*
+</div>
 
 ---
 
@@ -172,6 +175,12 @@ mpv 플레이어 기반으로 **정확한 프레임 단위** 탐색이 가능합
 | **완료 표시** | 체크 버튼 → 초록색 + 취소선 |
 | **네비게이션** | `Shift+←/→` 이전/다음 댓글로 이동 |
 
+<div align="center">
+<img src="mockups/screenshots/02-comment-resolved.png" alt="댓글 해결 상태" width="700" />
+
+*미해결(주황) vs 해결됨(초록) 상태 비교*
+</div>
+
 </details>
 
 <details>
@@ -210,6 +219,12 @@ mpv 플레이어 기반으로 **정확한 프레임 단위** 탐색이 가능합
 - 6가지 색상 (빨강/노랑/초록/파랑/회색/흰색)
 - 드래그로 구간 조정
 - `Shift` + 드래그로 스냅
+
+<div align="center">
+<img src="mockups/screenshots/03-highlight.png" alt="하이라이트 기능" width="700" />
+
+*타임라인에서 색상별 구간 표시 + 드래그로 조정*
+</div>
 
 </details>
 
