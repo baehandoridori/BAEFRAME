@@ -78,9 +78,11 @@ function parseBaeframeUrl(url) {
   // decodeURIComponent가 한글을 제대로 처리하지 못하는 경우 수동 UTF-8 디코딩
   try {
     const beforeDecode = filePath;
+    log.info('디코딩 시작', { length: filePath.length, last20: filePath.slice(-20) });
 
     // 수동 UTF-8 디코딩: %XX 시퀀스를 바이트로 변환 후 UTF-8 문자열로
     const bytes = [];
+    let skippedPercent = [];
     for (let i = 0; i < filePath.length; i++) {
       if (filePath[i] === '%' && i + 2 < filePath.length) {
         const hex = filePath.substring(i + 1, i + 3);
@@ -88,14 +90,23 @@ function parseBaeframeUrl(url) {
           bytes.push(parseInt(hex, 16));
           i += 2;
           continue;
+        } else {
+          // hex가 유효하지 않은 경우 로깅
+          skippedPercent.push({ pos: i, hex, charCodes: [filePath.charCodeAt(i+1), filePath.charCodeAt(i+2)] });
         }
       }
       // 일반 ASCII 문자
       bytes.push(filePath.charCodeAt(i));
     }
+
+    if (skippedPercent.length > 0) {
+      log.warn('유효하지 않은 % 시퀀스 발견', { skippedPercent });
+    }
+
+    log.info('바이트 배열', { length: bytes.length, last10: bytes.slice(-10) });
     filePath = Buffer.from(bytes).toString('utf8');
 
-    log.info('URL 디코딩 결과', { before: beforeDecode, after: filePath, changed: beforeDecode !== filePath });
+    log.info('URL 디코딩 결과', { before: beforeDecode.slice(-30), after: filePath.slice(-30), changed: beforeDecode !== filePath });
   } catch (e) {
     log.warn('URL 디코딩 실패, 원본 사용', { error: e.message, filePath });
   }
