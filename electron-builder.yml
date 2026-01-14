@@ -30,10 +30,14 @@ fileAssociations:
     description: BAEFRAME Review File
     role: Editor
 
-protocols:
-  - name: BFRAME Protocol
-    schemes:
-      - baeframe
+# protocols 섹션 비활성화됨
+# Windows의 %XX 환경변수 해석 문제로 인해 VBScript 래퍼를 사용해야 함
+# 설치 후 register-protocol.bat를 관리자 권한으로 실행하세요
+#
+# protocols:
+#   - name: BFRAME Protocol
+#     schemes:
+#       - baeframe
 
 win:
   target:
