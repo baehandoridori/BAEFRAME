@@ -3792,7 +3792,9 @@ body.resizing .comment-panel {
 
 .comment-marker.hidden {
   opacity: 0;
-  pointer-events: none;
+  pointer-events: none !important;
+  cursor: default !important;
+  visibility: hidden;
 }
 
 .comment-marker.pending {
