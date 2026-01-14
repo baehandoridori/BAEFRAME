@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="renderer/assets/logo/baeframe.png" alt="BAEFRAME Logo" width="120" />
+<img src="renderer/assets/logo/baeframe.png" alt="BAEFRAME Logo" width="480" />
 
 # BAEFRAME
 
