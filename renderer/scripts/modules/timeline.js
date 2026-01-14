@@ -140,11 +140,14 @@ export class Timeline extends EventTarget {
           this.layerHeaders.scrollTop = this.timelineTracks.scrollTop;
         }
       } else {
-        // 기본 휠: 마우스 위치 기준 확대/축소
+        // 기본 휠: 플레이헤드(재생바) 위치 기준 확대/축소
         const delta = e.deltaY > 0 ? -15 : 15;
-        const rect = this.timelineTracks.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left + this.timelineTracks.scrollLeft;
-        this.setZoomAtPosition(this.zoom + delta, mouseX);
+        // 플레이헤드 위치 계산 (currentTime 기준)
+        const containerWidth = this.tracksContainer?.offsetWidth || 1000;
+        const playheadX = this.duration > 0
+          ? (this.currentTime / this.duration) * containerWidth
+          : 0;
+        this.setZoomAtPosition(this.zoom + delta, playheadX);
       }
     }, { passive: false });
 
@@ -931,7 +934,7 @@ export class Timeline extends EventTarget {
 
         rangeBar.style.left = `${startPercent}%`;
         rangeBar.style.width = `${widthPercent}%`;
-        rangeBar.style.background = `${layer.color}b0`; // 레이어 색상 + 불투명도 (#72: 투명도 25% → 69%로 증가)
+        rangeBar.style.background = '#5a5a5a'; // 회색 고정 (#72: 레이어 색상을 회색으로 변경)
 
         keyframeContainer.appendChild(rangeBar);
       }

@@ -33,8 +33,8 @@ function createLoadingWindow(filePath = '') {
   }
 
   loadingWindow = new BrowserWindow({
-    width: 320,
-    height: 180,
+    width: 400,
+    height: 220,
     frame: false,
     transparent: false,
     backgroundColor: '#1a1a1a',
@@ -42,7 +42,8 @@ function createLoadingWindow(filePath = '') {
     movable: true,
     center: true,
     alwaysOnTop: true,
-    skipTaskbar: true,
+    skipTaskbar: false, // 작업표시줄에 표시 (사용자가 로딩 중임을 인지할 수 있도록)
+    title: 'BAEFRAME 로딩 중...',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false

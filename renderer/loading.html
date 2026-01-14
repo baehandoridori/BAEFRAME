@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BAEFRAME</title>
+  <title>BAEFRAME 로딩 중...</title>
   <style>
     * {
       margin: 0;
@@ -12,7 +12,7 @@
     }
 
     body {
-      background: #1a1a1a;
+      background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
       color: #fff;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       display: flex;
@@ -26,21 +26,40 @@
     }
 
     .logo {
-      font-size: 24px;
+      font-size: 32px;
       font-weight: bold;
       color: #4a9eff;
+      margin-bottom: 24px;
+      letter-spacing: 3px;
+      text-shadow: 0 0 20px rgba(74, 158, 255, 0.5);
+    }
+
+    .spinner-container {
+      position: relative;
+      width: 60px;
+      height: 60px;
       margin-bottom: 20px;
-      letter-spacing: 2px;
     }
 
     .spinner {
+      width: 60px;
+      height: 60px;
+      border: 4px solid #333;
+      border-top: 4px solid #4a9eff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    .spinner-inner {
+      position: absolute;
+      top: 10px;
+      left: 10px;
       width: 40px;
       height: 40px;
       border: 3px solid #333;
-      border-top: 3px solid #4a9eff;
+      border-bottom: 3px solid #ffd700;
       border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-bottom: 16px;
+      animation: spin 0.8s linear infinite reverse;
     }
 
     @keyframes spin {
@@ -49,26 +68,71 @@
     }
 
     .message {
-      font-size: 13px;
+      font-size: 15px;
+      color: #ccc;
+      margin-bottom: 8px;
+    }
+
+    .sub-message {
+      font-size: 12px;
       color: #888;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
     }
 
     .file-path {
       font-size: 11px;
       color: #666;
-      margin-top: 8px;
-      max-width: 280px;
+      margin-top: 16px;
+      max-width: 360px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       text-align: center;
+      padding: 6px 12px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 4px;
+    }
+
+    .progress-bar {
+      width: 200px;
+      height: 3px;
+      background: #333;
+      border-radius: 2px;
+      margin-top: 16px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      width: 30%;
+      height: 100%;
+      background: linear-gradient(90deg, #4a9eff, #ffd700);
+      border-radius: 2px;
+      animation: loading 1.5s ease-in-out infinite;
+    }
+
+    @keyframes loading {
+      0% { width: 0%; margin-left: 0%; }
+      50% { width: 50%; margin-left: 25%; }
+      100% { width: 0%; margin-left: 100%; }
     }
   </style>
 </head>
 <body>
   <div class="logo">BAEFRAME</div>
-  <div class="spinner"></div>
+  <div class="spinner-container">
+    <div class="spinner"></div>
+    <div class="spinner-inner"></div>
+  </div>
   <div class="message">파일을 불러오는 중...</div>
+  <div class="sub-message">잠시만 기다려주세요</div>
+  <div class="progress-bar">
+    <div class="progress-fill"></div>
+  </div>
   <div class="file-path" id="filePath"></div>
 
   <script>
@@ -79,6 +143,8 @@
       // 파일명만 추출
       const fileName = filePath.split(/[/\\]/).pop();
       document.getElementById('filePath').textContent = fileName;
+    } else {
+      document.getElementById('filePath').style.display = 'none';
     }
   </script>
 </body>
