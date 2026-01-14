@@ -163,32 +163,22 @@ log.info('비디오 하드웨어 가속 플래그 적용됨');
 // - 개발 모드에서는 기존 등록을 유지
 // ============================================
 
-// ============================================
-// 프로토콜 등록은 register-protocol.bat 사용
-// ============================================
-// Windows의 %XX 환경변수 해석 문제로 인해 VBScript 래퍼를 통해 등록해야 함
-// app.setAsDefaultProtocolClient()는 URL의 한글 경로를 손상시킴
-//
-// 설치 방법:
-// 1. unregister-protocol.bat 관리자 권한으로 실행 (기존 등록 제거)
-// 2. register-protocol.bat 관리자 권한으로 실행 (VBScript 래퍼 등록)
-// ============================================
-
 if (process.defaultApp) {
-  log.info('개발 모드 - 프로토콜 자동 등록 건너뜀', {
+  // 개발 모드: 프로토콜 등록하지 않음 (팀원들의 프로토콜 설정 보호)
+  log.info('개발 모드 - 프로토콜 등록 건너뜀', {
     execPath: process.execPath,
-    hint: 'register-protocol.bat를 관리자 권한으로 실행하세요'
+    reason: '빌드된 앱의 프로토콜 설정을 덮어쓰지 않기 위함'
   });
-  debugLog('개발 모드 - 프로토콜 등록 건너뜀 (register-protocol.bat 사용)');
+  debugLog('개발 모드 - 프로토콜 등록 건너뜀');
 } else {
-  // 빌드된 앱에서도 자동 등록하지 않음
-  // Windows가 %XX를 환경변수로 해석하는 문제를 피하기 위해
-  // VBScript 래퍼(register-protocol.bat)를 사용해야 함
-  log.info('빌드 모드 - 프로토콜 자동 등록 비활성화됨', {
+  // 빌드된 exe - 현재 실행 파일로 등록
+  app.setAsDefaultProtocolClient('baeframe');
+
+  log.info('baeframe:// 프로토콜 등록됨', {
     execPath: process.execPath,
-    hint: '한글 경로 지원을 위해 register-protocol.bat를 관리자 권한으로 실행하세요'
+    defaultApp: process.defaultApp
   });
-  debugLog('프로토콜 자동 등록 비활성화 - register-protocol.bat 사용 필요');
+  debugLog(`프로토콜 등록됨: ${process.execPath}`);
 }
 
 // 단일 인스턴스 잠금
