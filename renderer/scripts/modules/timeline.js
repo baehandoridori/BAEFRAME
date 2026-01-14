@@ -334,7 +334,7 @@ export class Timeline extends EventTarget {
     this._updatePlayheadPositionDirect(time);
 
     // 플레이헤드가 뷰포트 경계에 가까우면 자동 스크롤
-    this._autoScrollWhileDragging(e.clientX, rect);
+    this._autoScrollWhileDragging(e.clientX);
 
     // 스크러빙 프리뷰 이벤트 (썸네일 표시용)
     this._emit('scrubbing', { time, percent });
@@ -343,25 +343,29 @@ export class Timeline extends EventTarget {
   /**
    * 플레이헤드 드래그 중 자동 스크롤
    * @param {number} clientX - 마우스 X 좌표
-   * @param {DOMRect} rect - tracksContainer의 boundingRect
    */
-  _autoScrollWhileDragging(clientX, rect) {
+  _autoScrollWhileDragging(clientX) {
     if (!this.timelineTracks) return;
 
-    const viewportLeft = rect.left;
-    const viewportRight = rect.right;
-    const edgeThreshold = 50; // 경계에서 50px 이내면 스크롤
-    const scrollSpeed = 15; // 스크롤 속도 (px)
+    // timelineTracks (스크롤 뷰포트)의 경계를 사용
+    const viewportRect = this.timelineTracks.getBoundingClientRect();
+    const viewportLeft = viewportRect.left;
+    const viewportRight = viewportRect.right;
+    const edgeThreshold = 60; // 경계에서 60px 이내면 스크롤
+    const scrollSpeed = 20; // 스크롤 속도 (px)
 
     // 왼쪽 경계에 가까우면 왼쪽으로 스크롤
-    if (clientX < viewportLeft + edgeThreshold) {
-      const intensity = 1 - (clientX - viewportLeft) / edgeThreshold;
-      this.timelineTracks.scrollLeft -= scrollSpeed * Math.max(0.2, intensity);
+    if (clientX < viewportLeft + edgeThreshold && this.timelineTracks.scrollLeft > 0) {
+      const intensity = 1 - Math.max(0, clientX - viewportLeft) / edgeThreshold;
+      this.timelineTracks.scrollLeft -= scrollSpeed * Math.max(0.3, intensity);
     }
     // 오른쪽 경계에 가까우면 오른쪽으로 스크롤
     else if (clientX > viewportRight - edgeThreshold) {
-      const intensity = 1 - (viewportRight - clientX) / edgeThreshold;
-      this.timelineTracks.scrollLeft += scrollSpeed * Math.max(0.2, intensity);
+      const maxScroll = this.timelineTracks.scrollWidth - this.timelineTracks.clientWidth;
+      if (this.timelineTracks.scrollLeft < maxScroll) {
+        const intensity = 1 - Math.max(0, viewportRight - clientX) / edgeThreshold;
+        this.timelineTracks.scrollLeft += scrollSpeed * Math.max(0.3, intensity);
+      }
     }
   }
 
