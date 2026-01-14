@@ -142,12 +142,24 @@ export class Timeline extends EventTarget {
       } else {
         // 기본 휠: 플레이헤드(재생바) 위치 기준 확대/축소
         const delta = e.deltaY > 0 ? -15 : 15;
-        // 플레이헤드 위치 계산 (currentTime 기준)
-        const containerWidth = this.tracksContainer?.offsetWidth || 1000;
-        const playheadX = this.duration > 0
-          ? (this.currentTime / this.duration) * containerWidth
-          : 0;
-        this.setZoomAtPosition(this.zoom + delta, playheadX);
+        const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom + delta));
+
+        if (newZoom === this.zoom) return;
+
+        // 현재 시간의 비율 (0~1) - 줌과 무관하게 항상 동일
+        const timeRatio = this.duration > 0 ? this.currentTime / this.duration : 0;
+
+        // 줌 적용
+        this.zoom = newZoom;
+        this._applyZoom();
+        this._updateZoomDisplay();
+        this._showZoomIndicator();
+
+        // 새 줌에서 플레이헤드가 뷰포트 중앙에 오도록 스크롤
+        const newContainerWidth = this.tracksContainer?.offsetWidth || 1000;
+        const newPlayheadX = timeRatio * newContainerWidth;
+        const viewportWidth = this.timelineTracks.clientWidth;
+        this.timelineTracks.scrollLeft = Math.max(0, newPlayheadX - viewportWidth / 2);
       }
     }, { passive: false });
 
