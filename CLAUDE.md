@@ -174,24 +174,6 @@ python -m http.server 8080
 | `run-baeframe.bat` | 실행 (Google Drive 동기화 + npm install 자동) |
 | `run-baeframe-dev.bat` | 개발 모드 실행 |
 | `install.bat` | 첫 설치 |
-| `register-protocol.bat` | `baeframe://` 프로토콜 등록 (관리자 권한 필요) |
-| `unregister-protocol.bat` | 프로토콜 등록 해제 (관리자 권한 필요) |
-| `protocol-launcher.vbs` | 프로토콜 핸들러 래퍼 (한글 경로 지원) |
-
-### 프로토콜 등록 방법
-
-한글 경로가 포함된 baeframe:// 링크를 사용하려면 VBScript 래퍼를 통해 프로토콜을 등록해야 합니다:
-
-```bash
-# 1. 기존 등록 제거 (관리자 권한)
-unregister-protocol.bat
-
-# 2. VBScript 래퍼로 등록 (관리자 권한)
-register-protocol.bat
-```
-
-> **참고**: Windows는 URL의 `%XX` 인코딩을 환경변수로 해석하여 한글 경로가 손상됩니다.
-> VBScript 래퍼는 이 문제를 우회하여 URL을 온전히 앱에 전달합니다.
 
 ---
 
@@ -213,7 +195,7 @@ register-protocol.bat
 |------|------|------|
 | 어니언 스킨 | BLOCKED | 캔버스 오버레이가 비디오 가림 |
 | Slack 링크 | 해결됨 | `G:/` → `G/` 변환 → 앱에서 자동 복원 |
-| 한글 경로 | 해결됨 | `register-protocol.bat` 실행 필요 |
+| 한글 경로 | 해결됨 | 앱 실행 시 자동 프로토콜 등록 |
 
 ---
 
