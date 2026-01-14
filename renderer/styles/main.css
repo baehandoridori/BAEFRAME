@@ -1088,6 +1088,49 @@ body.app-fullscreen .video-comment-overlay-controls {
   color: var(--accent-primary);
 }
 
+/* 댓글/하이라이트 네비게이션 그룹 */
+.comment-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 네비게이션 화살표 버튼 */
+.nav-arrow-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 32px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.nav-arrow-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.nav-arrow-btn:active {
+  background: var(--accent-glow);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.nav-arrow-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.nav-arrow-btn svg {
+  flex-shrink: 0;
+}
+
 .shortcut-hint {
   font-size: 10px;
   color: var(--text-tertiary);

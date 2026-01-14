@@ -92,6 +92,16 @@ function setupIpcHandlers() {
     }
   });
 
+  // 파일 존재 여부 확인
+  ipcMain.handle('file:exists', async (event, filePath) => {
+    try {
+      await fs.promises.access(filePath, fs.constants.F_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   // 버전 파일 스캔 (같은 폴더에서 같은 시리즈의 버전 파일들을 찾음)
   ipcMain.handle('file:scan-versions', async (event, filePath) => {
     const trace = log.trace('file:scan-versions');

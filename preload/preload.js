@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileInfo: (filePath) => ipcRenderer.invoke('file:get-info', filePath),
   saveReview: (filePath, data) => ipcRenderer.invoke('file:save-review', filePath, data),
   loadReview: (filePath) => ipcRenderer.invoke('file:load-review', filePath),
+  fileExists: (filePath) => ipcRenderer.invoke('file:exists', filePath),
   scanVersions: (filePath) => ipcRenderer.invoke('file:scan-versions', filePath),
 
   // ====== 윈도우 관련 ======

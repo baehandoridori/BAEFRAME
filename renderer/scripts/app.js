@@ -61,6 +61,10 @@ async function initApp() {
     frameIndicator: document.getElementById('frameIndicator'),
     btnDrawMode: document.getElementById('btnDrawMode'),
     btnAddComment: document.getElementById('btnAddComment'),
+    btnPrevComment: document.getElementById('btnPrevComment'),
+    btnNextComment: document.getElementById('btnNextComment'),
+    btnPrevHighlight: document.getElementById('btnPrevHighlight'),
+    btnNextHighlight: document.getElementById('btnNextHighlight'),
 
     // 타임라인
     timelineSection: document.getElementById('timelineSection'),
@@ -744,6 +748,44 @@ async function initApp() {
     toggleCommentMode();
   });
 
+  // 이전 댓글로 이동
+  elements.btnPrevComment?.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+
+    const currentFrame = videoPlayer.currentFrame || 0;
+    const prevFrame = commentManager.getPrevMarkerFrame(currentFrame);
+
+    if (prevFrame !== null) {
+      videoPlayer.seekToFrame(prevFrame);
+      timeline.scrollToPlayhead();
+      log.info('이전 댓글로 이동', { frame: prevFrame });
+    } else {
+      showToast('이전 댓글이 없습니다', 'info');
+    }
+  });
+
+  // 다음 댓글로 이동
+  elements.btnNextComment?.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+
+    const currentFrame = videoPlayer.currentFrame || 0;
+    const nextFrame = commentManager.getNextMarkerFrame(currentFrame);
+
+    if (nextFrame !== null) {
+      videoPlayer.seekToFrame(nextFrame);
+      timeline.scrollToPlayhead();
+      log.info('다음 댓글로 이동', { frame: nextFrame });
+    } else {
+      showToast('다음 댓글이 없습니다', 'info');
+    }
+  });
+
   // 사이드바 댓글 입력 Enter 처리 (역순 플로우: 텍스트 입력 → 마커 찍기)
   elements.commentInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -870,6 +912,22 @@ async function initApp() {
     if (!bframePath) {
       showToast('먼저 파일을 열어주세요.', 'warn');
       return;
+    }
+
+    // #70: .bframe 파일 자동 생성 - 저장되지 않은 변경사항이 있거나 파일이 없으면 저장
+    try {
+      const fileExists = await window.electronAPI.fileExists(bframePath);
+      if (!fileExists || reviewDataManager.hasUnsavedChanges()) {
+        log.info('링크 복사 전 .bframe 파일 자동 저장', {
+          fileExists,
+          hasUnsavedChanges: reviewDataManager.hasUnsavedChanges()
+        });
+        await reviewDataManager.save();
+        showToast('.bframe 파일이 자동 저장되었습니다.', 'info');
+      }
+    } catch (error) {
+      log.warn('.bframe 파일 자동 저장 실패', error);
+      // 저장 실패해도 링크 복사는 진행
     }
 
     // Windows 경로 형식으로 통일 (백슬래시 사용)
@@ -1562,6 +1620,44 @@ async function initApp() {
         saveCurrentAnnotations('highlight-redo');
       }
     });
+  });
+
+  // 이전 하이라이트로 이동
+  elements.btnPrevHighlight?.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+
+    const currentTime = videoPlayer.currentTime || 0;
+    const prevTime = highlightManager.getPrevHighlightTime(currentTime);
+
+    if (prevTime !== null) {
+      videoPlayer.seek(prevTime);
+      timeline.scrollToPlayhead();
+      log.info('이전 하이라이트로 이동', { time: prevTime });
+    } else {
+      showToast('이전 하이라이트가 없습니다', 'info');
+    }
+  });
+
+  // 다음 하이라이트로 이동
+  elements.btnNextHighlight?.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+
+    const currentTime = videoPlayer.currentTime || 0;
+    const nextTime = highlightManager.getNextHighlightTime(currentTime);
+
+    if (nextTime !== null) {
+      videoPlayer.seek(nextTime);
+      timeline.scrollToPlayhead();
+      log.info('다음 하이라이트로 이동', { time: nextTime });
+    } else {
+      showToast('다음 하이라이트가 없습니다', 'info');
+    }
   });
 
   // 하이라이트 렌더링 함수
@@ -3371,6 +3467,19 @@ async function initApp() {
     markerEl.addEventListener('click', (e) => {
       e.stopPropagation();
       if (e.target.closest('.tooltip-btn')) return;
+
+      // 현재 프레임에서 마커가 보이지 않으면 클릭 무시
+      const currentFrame = videoPlayer.currentFrame;
+      if (!marker.isVisibleAtFrame(currentFrame)) {
+        log.debug('마커 클릭 무시 - 현재 프레임에서 보이지 않음', {
+          markerId: marker.id,
+          currentFrame,
+          startFrame: marker.startFrame,
+          endFrame: marker.endFrame
+        });
+        return;
+      }
+
       // 우측 댓글 패널로 스크롤 및 글로우 효과
       scrollToCommentWithGlow(marker.id);
     });
@@ -4186,7 +4295,25 @@ async function initApp() {
     case 'ArrowLeft':
       e.preventDefault();
       if (e.shiftKey) {
-        videoPlayer.rewind(1);
+        // Shift+←: 이전 댓글로 이동
+        const prevCommentFrame = commentManager.getPrevMarkerFrame(videoPlayer.currentFrame || 0);
+        if (prevCommentFrame !== null) {
+          videoPlayer.seekToFrame(prevCommentFrame);
+          timeline.scrollToPlayhead();
+          log.info('이전 댓글로 이동 (단축키)', { frame: prevCommentFrame });
+        } else {
+          showToast('이전 댓글이 없습니다', 'info');
+        }
+      } else if (e.altKey) {
+        // Alt+←: 이전 하이라이트로 이동
+        const prevHighlightTime = highlightManager.getPrevHighlightTime(videoPlayer.currentTime || 0);
+        if (prevHighlightTime !== null) {
+          videoPlayer.seek(prevHighlightTime);
+          timeline.scrollToPlayhead();
+          log.info('이전 하이라이트로 이동 (단축키)', { time: prevHighlightTime });
+        } else {
+          showToast('이전 하이라이트가 없습니다', 'info');
+        }
       } else {
         videoPlayer.prevFrame();
       }
@@ -4195,7 +4322,25 @@ async function initApp() {
     case 'ArrowRight':
       e.preventDefault();
       if (e.shiftKey) {
-        videoPlayer.forward(1);
+        // Shift+→: 다음 댓글로 이동
+        const nextCommentFrame = commentManager.getNextMarkerFrame(videoPlayer.currentFrame || 0);
+        if (nextCommentFrame !== null) {
+          videoPlayer.seekToFrame(nextCommentFrame);
+          timeline.scrollToPlayhead();
+          log.info('다음 댓글로 이동 (단축키)', { frame: nextCommentFrame });
+        } else {
+          showToast('다음 댓글이 없습니다', 'info');
+        }
+      } else if (e.altKey) {
+        // Alt+→: 다음 하이라이트로 이동
+        const nextHighlightTime = highlightManager.getNextHighlightTime(videoPlayer.currentTime || 0);
+        if (nextHighlightTime !== null) {
+          videoPlayer.seek(nextHighlightTime);
+          timeline.scrollToPlayhead();
+          log.info('다음 하이라이트로 이동 (단축키)', { time: nextHighlightTime });
+        } else {
+          showToast('다음 하이라이트가 없습니다', 'info');
+        }
       } else {
         videoPlayer.nextFrame();
       }

@@ -617,6 +617,44 @@ export class CommentManager extends EventTarget {
   }
 
   /**
+   * 현재 프레임 기준 이전 마커의 시작 프레임 찾기
+   * @param {number} currentFrame - 현재 프레임
+   * @returns {number|null} 이전 마커의 시작 프레임 또는 null
+   */
+  getPrevMarkerFrame(currentFrame) {
+    const markers = this.getAllMarkers();
+    // 현재 프레임보다 시작 프레임이 작은 마커들 중 가장 큰 것
+    let prevMarker = null;
+    for (const marker of markers) {
+      if (marker.startFrame < currentFrame) {
+        if (!prevMarker || marker.startFrame > prevMarker.startFrame) {
+          prevMarker = marker;
+        }
+      }
+    }
+    return prevMarker ? prevMarker.startFrame : null;
+  }
+
+  /**
+   * 현재 프레임 기준 다음 마커의 시작 프레임 찾기
+   * @param {number} currentFrame - 현재 프레임
+   * @returns {number|null} 다음 마커의 시작 프레임 또는 null
+   */
+  getNextMarkerFrame(currentFrame) {
+    const markers = this.getAllMarkers();
+    // 현재 프레임보다 시작 프레임이 큰 마커들 중 가장 작은 것
+    let nextMarker = null;
+    for (const marker of markers) {
+      if (marker.startFrame > currentFrame) {
+        if (!nextMarker || marker.startFrame < nextMarker.startFrame) {
+          nextMarker = marker;
+        }
+      }
+    }
+    return nextMarker ? nextMarker.startFrame : null;
+  }
+
+  /**
    * 활성 레이어 가져오기
    */
   getActiveLayer() {
