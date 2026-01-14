@@ -75,30 +75,26 @@ function parseBaeframeUrl(url) {
   log.info('baeframe:// 제거 후', { filePath });
 
   // URL 디코딩 (한글, 공백 등)
-  // Windows가 부분적으로 디코딩할 수 있으므로 반복 시도
+  // decodeURIComponent가 한글을 제대로 처리하지 못하는 경우 수동 UTF-8 디코딩
   try {
     const beforeDecode = filePath;
-    let decoded = filePath;
-    let prevDecoded = '';
 
-    // 더 이상 변화가 없을 때까지 디코딩 반복 (최대 3회)
-    for (let i = 0; i < 3 && decoded !== prevDecoded; i++) {
-      prevDecoded = decoded;
-      try {
-        decoded = decodeURIComponent(decoded);
-      } catch (innerErr) {
-        // 부분적으로 잘못된 인코딩이 있으면 개별 처리
-        decoded = decoded.replace(/%[0-9A-Fa-f]{2}/g, (match) => {
-          try {
-            return decodeURIComponent(match);
-          } catch (e) {
-            return match;
-          }
-        });
+    // 수동 UTF-8 디코딩: %XX 시퀀스를 바이트로 변환 후 UTF-8 문자열로
+    const bytes = [];
+    for (let i = 0; i < filePath.length; i++) {
+      if (filePath[i] === '%' && i + 2 < filePath.length) {
+        const hex = filePath.substring(i + 1, i + 3);
+        if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
+          bytes.push(parseInt(hex, 16));
+          i += 2;
+          continue;
+        }
       }
+      // 일반 ASCII 문자
+      bytes.push(filePath.charCodeAt(i));
     }
+    filePath = Buffer.from(bytes).toString('utf8');
 
-    filePath = decoded;
     log.info('URL 디코딩 결과', { before: beforeDecode, after: filePath, changed: beforeDecode !== filePath });
   } catch (e) {
     log.warn('URL 디코딩 실패, 원본 사용', { error: e.message, filePath });
