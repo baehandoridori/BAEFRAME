@@ -129,7 +129,7 @@ export class Timeline extends EventTarget {
       e.target.blur();
     });
 
-    // 타임라인 휠 이벤트
+    // 타임라인 휠 이벤트 (passive: false로 preventDefault 사용 가능하게)
     this.timelineTracks?.addEventListener('wheel', (e) => {
       e.preventDefault();
 
@@ -146,7 +146,7 @@ export class Timeline extends EventTarget {
         const mouseX = e.clientX - rect.left + this.timelineTracks.scrollLeft;
         this.setZoomAtPosition(this.zoom + delta, mouseX);
       }
-    });
+    }, { passive: false });
 
     // 레이어 헤더 스크롤 동기화
     this.layerHeaders?.addEventListener('wheel', (e) => {
@@ -155,7 +155,7 @@ export class Timeline extends EventTarget {
       if (this.timelineTracks) {
         this.timelineTracks.scrollTop = this.layerHeaders.scrollTop;
       }
-    });
+    }, { passive: false });
 
     // 플레이헤드 드래그
     this.playheadHandle?.addEventListener('mousedown', (e) => {

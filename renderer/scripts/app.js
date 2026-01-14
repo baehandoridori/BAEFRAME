@@ -3450,15 +3450,91 @@ async function initApp() {
       markerEl.appendChild(replyBadge);
     }
 
+    // 드래그 상태
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let markerStartX = marker.x;
+    let markerStartY = marker.y;
+
+    // 드래그 중 (마우스 이동)
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+
+      const rect = markerContainer.getBoundingClientRect();
+      const deltaX = (e.clientX - dragStartX) / rect.width;
+      const deltaY = (e.clientY - dragStartY) / rect.height;
+
+      // 새 위치 계산 (0~1 범위로 제한)
+      const newX = Math.max(0, Math.min(1, markerStartX + deltaX));
+      const newY = Math.max(0, Math.min(1, markerStartY + deltaY));
+
+      // 마커 요소 위치 업데이트
+      markerEl.style.left = `${newX * 100}%`;
+      markerEl.style.top = `${newY * 100}%`;
+    };
+
+    // 드래그 종료 (마우스 업)
+    const onMouseUp = (e) => {
+      if (!isDragging) return;
+
+      isDragging = false;
+      markerEl.classList.remove('dragging');
+      document.body.style.cursor = '';
+
+      const rect = markerContainer.getBoundingClientRect();
+      const deltaX = (e.clientX - dragStartX) / rect.width;
+      const deltaY = (e.clientY - dragStartY) / rect.height;
+
+      const newX = Math.max(0, Math.min(1, markerStartX + deltaX));
+      const newY = Math.max(0, Math.min(1, markerStartY + deltaY));
+
+      // 위치가 변경되었으면 저장
+      if (newX !== markerStartX || newY !== markerStartY) {
+        commentManager.updateMarker(marker.id, { x: newX, y: newY });
+        log.info('마커 위치 변경', { markerId: marker.id, x: newX, y: newY });
+      }
+
+      // 이벤트 리스너 제거
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    // 드래그 시작 (마우스 다운)
+    markerEl.addEventListener('mousedown', (e) => {
+      // 툴팁 버튼 클릭은 무시
+      if (e.target.closest('.tooltip-btn') || e.target.closest('.marker-replies-badge')) return;
+
+      // 현재 프레임에서 마커가 보이지 않으면 드래그 무시
+      const currentFrame = videoPlayer.currentFrame;
+      if (!marker.isVisibleAtFrame(currentFrame)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      markerStartX = marker.x;
+      markerStartY = marker.y;
+
+      markerEl.classList.add('dragging');
+      document.body.style.cursor = 'grabbing';
+
+      // document에 이벤트 추가
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
     // 호버 이벤트 - 말풍선 표시
     markerEl.addEventListener('mouseenter', () => {
-      if (!marker.pinned) {
+      if (!marker.pinned && !isDragging) {
         tooltip.classList.add('visible');
       }
     });
 
     markerEl.addEventListener('mouseleave', () => {
-      if (!marker.pinned) {
+      if (!marker.pinned && !isDragging) {
         tooltip.classList.remove('visible');
       }
     });
@@ -3467,6 +3543,9 @@ async function initApp() {
     markerEl.addEventListener('click', (e) => {
       e.stopPropagation();
       if (e.target.closest('.tooltip-btn')) return;
+
+      // 드래그 후 클릭은 무시 (드래그 종료 시 클릭 이벤트 발생 방지)
+      if (markerEl.classList.contains('dragging')) return;
 
       // 현재 프레임에서 마커가 보이지 않으면 클릭 무시
       const currentFrame = videoPlayer.currentFrame;

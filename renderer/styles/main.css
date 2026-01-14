@@ -3800,6 +3800,14 @@ body.resizing .comment-panel {
   animation: pulse 1.5s infinite;
 }
 
+.comment-marker.dragging {
+  cursor: grabbing;
+  z-index: 1000;
+  transform: translate(-50%, -50%) scale(1.2);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+  opacity: 1 !important;
+}
+
 @keyframes pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(255, 208, 0, 0.5);
