@@ -916,8 +916,8 @@ export class Timeline extends EventTarget {
     const containerWidth = this.tracksContainer?.offsetWidth || 1000;
     const pixelsPerFrame = containerWidth / this.totalFrames;
 
-    // 격자 배경 패턴 생성 (CSS)
-    this._applyGridBackground(trackRow, pixelsPerFrame);
+    // 격자 배경 패턴 제거 (#72: 그리기 레이어에 별도 격자 패턴 불필요)
+    // this._applyGridBackground(trackRow, pixelsPerFrame);
 
     // 콘텐츠 범위 표시 (키프레임 간 구간) - 빈 키프레임이 아닌 경우만 채움
     ranges.forEach(range => {
@@ -931,7 +931,7 @@ export class Timeline extends EventTarget {
 
         rangeBar.style.left = `${startPercent}%`;
         rangeBar.style.width = `${widthPercent}%`;
-        rangeBar.style.background = `${layer.color}40`; // 레이어 색상 + 투명도
+        rangeBar.style.background = `${layer.color}b0`; // 레이어 색상 + 불투명도 (#72: 투명도 25% → 69%로 증가)
 
         keyframeContainer.appendChild(rangeBar);
       }
