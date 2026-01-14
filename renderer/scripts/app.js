@@ -3518,6 +3518,8 @@ async function initApp() {
       markerStartX = marker.x;
       markerStartY = marker.y;
 
+      // 드래그 중 툴팁 숨기기
+      tooltip.classList.remove('visible');
       markerEl.classList.add('dragging');
       document.body.style.cursor = 'grabbing';
 
@@ -3526,9 +3528,32 @@ async function initApp() {
       document.addEventListener('mouseup', onMouseUp);
     });
 
+    // 툴팁 위치 계산 함수
+    const positionTooltip = () => {
+      const markerRect = markerEl.getBoundingClientRect();
+      const tooltipWidth = 280; // CSS max-width
+      const padding = 12;
+
+      // 기본: 마커 오른쪽에 배치
+      let left = markerRect.right + padding;
+      const top = markerRect.top + markerRect.height / 2;
+
+      // 화면 오른쪽 밖으로 나가면 왼쪽에 배치
+      if (left + tooltipWidth > window.innerWidth - 20) {
+        left = markerRect.left - tooltipWidth - padding;
+        tooltip.classList.add('left-side');
+      } else {
+        tooltip.classList.remove('left-side');
+      }
+
+      tooltip.style.left = `${Math.max(10, left)}px`;
+      tooltip.style.top = `${top}px`;
+    };
+
     // 호버 이벤트 - 말풍선 표시
     markerEl.addEventListener('mouseenter', () => {
       if (!marker.pinned && !isDragging) {
+        positionTooltip();
         tooltip.classList.add('visible');
       }
     });
@@ -3599,6 +3624,7 @@ async function initApp() {
     // 마커 객체에 DOM 요소 참조 저장
     marker.element = markerEl;
     marker.tooltipElement = tooltip;
+    marker.positionTooltip = positionTooltip;
 
     markerContainer.appendChild(markerEl);
   }
@@ -3627,6 +3653,10 @@ async function initApp() {
   function updateMarkerTooltipState(marker) {
     if (marker.tooltipElement) {
       if (marker.pinned) {
+        // 핀 상태일 때 위치 재계산
+        if (marker.positionTooltip) {
+          marker.positionTooltip();
+        }
         marker.tooltipElement.classList.add('visible', 'pinned');
       } else {
         marker.tooltipElement.classList.remove('pinned');

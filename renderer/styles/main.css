@@ -3902,6 +3902,14 @@ body.resizing .comment-panel {
   border-right-color: var(--bg-elevated);
 }
 
+/* 왼쪽에 표시될 때 화살표 방향 반전 */
+.comment-marker-tooltip.left-side::before {
+  left: auto;
+  right: -6px;
+  border-right-color: transparent;
+  border-left-color: var(--bg-elevated);
+}
+
 .tooltip-header {
   display: flex;
   align-items: center;
