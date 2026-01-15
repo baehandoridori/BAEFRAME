@@ -2930,8 +2930,8 @@ async function initApp() {
       // 비디오 트랙 업데이트
       elements.videoTrackClip.textContent = `📹 ${fileInfo.name}`;
 
-      // 썸네일 생성 시작
-      await generateThumbnails(filePath);
+      // 썸네일 생성 시작 (트랜스코딩된 경우 변환된 파일 사용)
+      await generateThumbnails(actualVideoPath);
 
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
@@ -4335,6 +4335,9 @@ async function initApp() {
 
     // contenteditable 요소에서는 단축키 무시 (스레드 에디터 등)
     if (e.target.isContentEditable) return;
+
+    // pending 마커 입력 중이면 단축키 무시 (textarea 포커스 전에도 적용)
+    if (commentManager.pendingMarker) return;
 
     // 스레드 팝업이 열려있으면 단축키 무시
     const threadOverlay = document.getElementById('threadOverlay');
