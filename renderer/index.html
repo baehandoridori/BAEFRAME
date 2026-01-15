@@ -62,6 +62,19 @@
       </div>
     </div>
     <div class="header-right">
+      <!-- 협업자 표시 -->
+      <div class="collaborators-indicator" id="collaboratorsIndicator" style="display: none;">
+        <div class="collaborators-avatars" id="collaboratorsAvatars">
+          <!-- 협업자 아바타가 여기에 동적으로 추가됨 -->
+        </div>
+        <div class="collaborators-info">
+          <span class="collaborators-count" id="collaboratorsCount">0</span>
+          <span class="collaborators-label">명 작업 중</span>
+        </div>
+        <div class="sync-status" id="syncStatus" title="동기화 상태">
+          <span class="sync-icon">🔄</span>
+        </div>
+      </div>
       <button class="btn btn-secondary" id="btnOpenFolder" title="폴더 열기 (탐색기에서 보기)" style="display: none;">
         <span>📂</span>
         폴더 열기

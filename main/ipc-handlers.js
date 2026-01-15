@@ -102,6 +102,47 @@ function setupIpcHandlers() {
     }
   });
 
+  // 파일 상태 정보 조회 (협업 동기화용)
+  ipcMain.handle('file:get-stats', async (event, filePath) => {
+    try {
+      const stats = await fs.promises.stat(filePath);
+      return {
+        size: stats.size,
+        mtime: stats.mtime.toISOString(),
+        mtimeMs: stats.mtimeMs
+      };
+    } catch {
+      return null;
+    }
+  });
+
+  // ====== 협업 파일 관련 ======
+
+  // 협업 파일 읽기 (.bframe.collab)
+  ipcMain.handle('collab:read', async (event, filePath) => {
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      return JSON.parse(content);
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return null; // 파일 없음
+      }
+      log.warn('협업 파일 읽기 실패', { filePath, error: error.message });
+      return null;
+    }
+  });
+
+  // 협업 파일 쓰기 (.bframe.collab)
+  ipcMain.handle('collab:write', async (event, filePath, data) => {
+    try {
+      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+      return { success: true };
+    } catch (error) {
+      log.error('협업 파일 쓰기 실패', { filePath, error: error.message });
+      throw error;
+    }
+  });
+
   // 버전 파일 스캔 (같은 폴더에서 같은 시리즈의 버전 파일들을 찾음)
   ipcMain.handle('file:scan-versions', async (event, filePath) => {
     const trace = log.trace('file:scan-versions');
@@ -944,7 +985,7 @@ async function getGoogleDriveFileId(localPath) {
   log.info('Google Drive 파일 ID 검색 시작', { localPath, fileName });
 
   // Google Drive 메타데이터 DB 경로 찾기
-  let driveDbPaths = [];
+  const driveDbPaths = [];
 
   if (process.platform === 'win32') {
     // Windows: %LOCALAPPDATA%\Google\DriveFS\<account_id>\metadata_sqlite_db

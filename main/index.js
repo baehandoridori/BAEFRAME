@@ -82,7 +82,7 @@ function parseBaeframeUrl(url) {
 
     // 수동 UTF-8 디코딩: %XX 시퀀스를 바이트로 변환 후 UTF-8 문자열로
     const bytes = [];
-    let skippedPercent = [];
+    const skippedPercent = [];
     for (let i = 0; i < filePath.length; i++) {
       if (filePath[i] === '%' && i + 2 < filePath.length) {
         const hex = filePath.substring(i + 1, i + 3);
@@ -92,7 +92,7 @@ function parseBaeframeUrl(url) {
           continue;
         } else {
           // hex가 유효하지 않은 경우 로깅
-          skippedPercent.push({ pos: i, hex, charCodes: [filePath.charCodeAt(i+1), filePath.charCodeAt(i+2)] });
+          skippedPercent.push({ pos: i, hex, charCodes: [filePath.charCodeAt(i + 1), filePath.charCodeAt(i + 2)] });
         }
       }
       // 일반 ASCII 문자

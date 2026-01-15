@@ -85,6 +85,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ffmpegClearAllCache: () => ipcRenderer.invoke('ffmpeg:clear-all-cache'),
   ffmpegGetSupportedCodecs: () => ipcRenderer.invoke('ffmpeg:get-supported-codecs'),
 
+  // ====== 협업 관련 ======
+  readCollabFile: (filePath) => ipcRenderer.invoke('collab:read', filePath),
+  writeCollabFile: (filePath, data) => ipcRenderer.invoke('collab:write', filePath, data),
+  getFileStats: (filePath) => ipcRenderer.invoke('file:get-stats', filePath),
+
   // ====== 이벤트 리스너 ======
   onOpenFromProtocol: (callback) => {
     ipcRenderer.on('open-from-protocol', (event, arg) => callback(arg));
