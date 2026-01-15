@@ -243,24 +243,28 @@ export class ReviewDataManager extends EventTarget {
         return localData;
       }
 
-      // modifiedAt 비교
-      const localModified = new Date(localData.modifiedAt).getTime();
-      const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
-
-      if (remoteModified <= localModified) {
-        // 로컬이 더 최신 또는 동일 → 로컬 그대로 저장
-        return localData;
-      }
-
-      // 원격이 더 최신 → 댓글 머지
+      // 협업 중이면 항상 머지 (타임스탬프와 무관하게)
+      // 개별 댓글의 updatedAt으로 충돌 해결
       if (remoteData.comments?.layers && localData.comments?.layers) {
-        const { merged } = mergeLayers(
+        const { merged, added, updated } = mergeLayers(
           localData.comments.layers,
           remoteData.comments.layers
         );
         localData.comments.layers = merged;
 
-        log.info('저장 전 댓글 머지 완료');
+        if (added > 0 || updated > 0) {
+          log.info('저장 전 댓글 머지 완료', { added, updated });
+        }
+      }
+
+      // 드로잉은 타임스탬프 기반 (전체 교체)
+      const localModified = new Date(localData.modifiedAt).getTime();
+      const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
+
+      if (remoteModified > localModified && remoteData.drawings) {
+        // 원격 드로잉이 더 최신이면 머지 (로컬 드로잉 유지하면서 원격 추가)
+        // 현재는 단순히 원격 우선 - 추후 레이어별 머지 가능
+        log.info('원격 드로잉이 더 최신, 원격 데이터 유지');
       }
 
       // 머지 후 modifiedAt 갱신

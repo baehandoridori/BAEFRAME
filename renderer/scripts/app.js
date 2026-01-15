@@ -5794,16 +5794,18 @@ async function initApp() {
       // ReviewDataManager의 reloadAndMerge 사용 (비디오 유지하면서 데이터만 머지)
       const result = await reviewDataManager.reloadAndMerge({ merge: true });
 
-      if (result.success && (result.added > 0 || result.updated > 0)) {
-        log.info('원격 변경사항 머지됨', { added: result.added, updated: result.updated });
-
-        // UI 업데이트
+      if (result.success) {
+        // 항상 UI 업데이트 (변경 감지 누락 방지)
         renderVideoMarkers();
         updateTimelineMarkers();
         updateCommentList();
 
-        if (result.added > 0) {
-          showToast(`새 댓글 ${result.added}개가 동기화되었습니다`, 'info');
+        if (result.added > 0 || result.updated > 0) {
+          log.info('원격 변경사항 머지됨', { added: result.added, updated: result.updated });
+
+          if (result.added > 0) {
+            showToast(`새 댓글 ${result.added}개가 동기화되었습니다`, 'info');
+          }
         }
       }
     } catch (error) {
