@@ -697,16 +697,12 @@ async function initApp() {
   // 타임라인 댓글 마커 클릭
   timeline.addEventListener('commentMarkerClick', (e) => {
     const { frame, markerInfos } = e.detail;
-    log.info('타임라인 댓글 마커 클릭', { frame, markerInfos });
     videoPlayer.seekToFrame(frame);
 
     // 프리뷰 마커 클릭과 동일한 효과 (패널 열기 + 스크롤 + 글로우)
     if (markerInfos && markerInfos.length > 0) {
       const firstMarkerId = markerInfos[0].markerId;
-      log.info('scrollToCommentWithGlow 호출', { firstMarkerId });
       scrollToCommentWithGlow(firstMarkerId);
-    } else {
-      log.warn('markerInfos 없음', { markerInfos });
     }
   });
 
@@ -2154,11 +2150,12 @@ async function initApp() {
       bar.style.background = hexToRgba(color, 0.6);
       bar.style.borderColor = hexToRgba(color, 0.8);
 
-      // 클릭 이벤트 - 해당 프레임으로 이동
+      // 클릭 이벤트 - 해당 프레임으로 이동 + 댓글 하이라이트
       bar.addEventListener('click', () => {
         const marker = commentManager.getMarker(comment.markerId);
         if (marker) {
           videoPlayer.seekToFrame(marker.startFrame);
+          scrollToCommentWithGlow(comment.markerId);
         }
       });
 
@@ -2214,7 +2211,7 @@ async function initApp() {
       const layerId = item.dataset.layerId;
       const markerId = item.dataset.markerId;
 
-      // 클릭 - 해당 댓글로 이동 및 선택
+      // 클릭 - 해당 댓글로 이동 및 선택 + 댓글 하이라이트
       item.addEventListener('click', (e) => {
         if (e.target.classList.contains('comment-handle')) return;
 
@@ -2223,6 +2220,8 @@ async function initApp() {
         if (marker) {
           videoPlayer.seekToFrame(marker.startFrame);
           videoPlayer.pause();
+          // 프리뷰 마커 클릭과 동일한 효과
+          scrollToCommentWithGlow(markerId);
         }
 
         // 선택 표시
@@ -4225,15 +4224,10 @@ async function initApp() {
    * 특정 댓글로 스크롤하고 글로우 효과 표시
    */
   function scrollToCommentWithGlow(markerId) {
-    log.info('scrollToCommentWithGlow 시작', { markerId });
     const container = elements.commentsList;
-    if (!container) {
-      log.warn('commentsList 컨테이너 없음');
-      return;
-    }
+    if (!container) return;
 
     const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
-    log.info('commentItem 검색 결과', { found: !!commentItem, markerId });
     if (commentItem) {
       // 댓글 패널 열기
       const commentPanel = document.getElementById('commentPanel');
@@ -4251,7 +4245,6 @@ async function initApp() {
       setTimeout(() => {
         commentItem.classList.remove('glow');
       }, 1500);
-      log.info('글로우 효과 적용됨');
     }
   }
 
