@@ -648,9 +648,10 @@ export function mergeComments(localComments, remoteComments) {
       } else if (remoteTime > localTime) {
         // 원격이 더 최신 → 원격 사용
         merged.push(remote);
-        // 삭제 상태 변경 추적
+        // 변경 추적 (삭제도 updated로 카운트 - fromJSON 호출 트리거용)
         if (remote.deleted && !local.deleted) {
           deleted++;
+          updated++; // 삭제도 변경으로 카운트해야 fromJSON 호출됨
         } else if (!remote.deleted) {
           updated++;
         }
