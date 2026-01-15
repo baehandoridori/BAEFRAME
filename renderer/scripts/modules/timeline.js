@@ -1514,11 +1514,13 @@ export class Timeline extends EventTarget {
    */
   _formatTimecode(time) {
     const fps = this.fps || 24;
-    const totalFrames = Math.floor(time * fps);
-    const hours = Math.floor(time / 3600);
-    const minutes = Math.floor((time % 3600) / 60);
-    const seconds = Math.floor(time % 60);
+    // Math.round로 부동소수점 오차 방지
+    const totalFrames = Math.round(time * fps);
     const frames = totalFrames % fps;
+    const totalSeconds = Math.floor(totalFrames / fps);
+    const seconds = totalSeconds % 60;
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const hours = Math.floor(totalSeconds / 3600);
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}:${frames.toString().padStart(2, '0')}`;
   }
 

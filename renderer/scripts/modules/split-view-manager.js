@@ -1254,10 +1254,13 @@ export class SplitViewManager {
   _formatTimecode(seconds) {
     if (!seconds || isNaN(seconds)) return '00:00:00:00';
 
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    const f = Math.floor((seconds % 1) * this._fps);
+    // Math.round로 부동소수점 오차 방지
+    const totalFrames = Math.round(seconds * this._fps);
+    const f = totalFrames % this._fps;
+    const totalSeconds = Math.floor(totalFrames / this._fps);
+    const s = totalSeconds % 60;
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const h = Math.floor(totalSeconds / 3600);
 
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
   }

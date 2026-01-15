@@ -3117,10 +3117,13 @@ async function initApp() {
    * 시간을 타임코드로 변환
    */
   function formatTimecode(seconds, fps = 24) {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    const f = Math.floor((seconds % 1) * fps);
+    // Math.round로 부동소수점 오차 방지
+    const totalFrames = Math.round(seconds * fps);
+    const f = totalFrames % fps;
+    const totalSeconds = Math.floor(totalFrames / fps);
+    const s = totalSeconds % 60;
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const h = Math.floor(totalSeconds / 3600);
 
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
   }
@@ -3227,10 +3230,12 @@ async function initApp() {
     const fps = videoPlayer.fps || 24;
 
     const formatTimecode = (seconds) => {
-      const h = Math.floor(seconds / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const f = Math.floor((seconds % 1) * fps);
+      const totalFrames = Math.round(seconds * fps);
+      const f = totalFrames % fps;
+      const totalSeconds = Math.floor(totalFrames / fps);
+      const s = totalSeconds % 60;
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      const h = Math.floor(totalSeconds / 3600);
       return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
     };
 

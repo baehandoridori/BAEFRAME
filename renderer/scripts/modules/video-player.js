@@ -486,9 +486,11 @@ export class VideoPlayer extends EventTarget {
    * @returns {string} HH:MM:SS:FF 형식
    */
   timeToTimecode(time) {
-    const totalFrames = Math.floor(time * this.fps);
+    // Math.round 사용: 부동소수점 오차로 인한 프레임 계산 오류 방지
+    // 예: time=134.666666, fps=24 → 134.666666*24=3231.9999... → floor=3231 (오류), round=3232 (정확)
+    const totalFrames = Math.round(time * this.fps);
     const frames = totalFrames % this.fps;
-    const totalSeconds = Math.floor(time);
+    const totalSeconds = Math.floor(totalFrames / this.fps);
     const seconds = totalSeconds % 60;
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const hours = Math.floor(totalSeconds / 3600);
