@@ -404,10 +404,19 @@ class FFmpegManager {
       const taskId = `transcode_${Date.now()}`;
 
       // 인코더에 따른 args 구성
+      // 색 공간 변환 필터: 비표준 색공간 → BT.709 표준으로 변환
+      const colorFilter = 'colorspace=all=bt709:iall=bt601-6-625:fast=1';
+
       const args = [
         '-i', filePath,
+        '-vf', colorFilter,     // 색 공간 변환 필터
         '-c:v', encoder.name,
         '-pix_fmt', 'yuv420p',  // HTML5 Video 호환 픽셀 포맷
+        // 출력 색 공간 메타데이터 설정
+        '-colorspace', 'bt709',
+        '-color_primaries', 'bt709',
+        '-color_trc', 'bt709',
+        '-color_range', 'tv',   // 제한 범위 (16-235)
         ...encoder.args,        // 인코더별 옵션
         '-c:a', 'aac',
         '-b:a', '192k',
