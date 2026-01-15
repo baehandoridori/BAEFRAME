@@ -1622,7 +1622,7 @@ async function initApp() {
       undo: () => {
         highlightManager.deleteHighlight(highlight.id);
         renderHighlights();
-        saveCurrentAnnotations('highlight-undo');
+        reviewDataManager.save();
       },
       redo: () => {
         // 하이라이트 복원 (같은 속성으로)
@@ -1632,7 +1632,7 @@ async function initApp() {
         restored.note = highlight.note;
         restored.colorInfo = highlight.colorInfo;
         renderHighlights();
-        saveCurrentAnnotations('highlight-redo');
+        reviewDataManager.save();
       }
     });
   });
@@ -1872,7 +1872,7 @@ async function initApp() {
                 endTime: originalEndTime
               });
               renderHighlights();
-              saveCurrentAnnotations('highlight-undo');
+              reviewDataManager.save();
             },
             redo: () => {
               highlightManager.updateHighlight(highlightId, {
@@ -1880,7 +1880,7 @@ async function initApp() {
                 endTime: newEndTime
               });
               renderHighlights();
-              saveCurrentAnnotations('highlight-redo');
+              reviewDataManager.save();
             }
           });
         }
@@ -1998,12 +1998,12 @@ async function initApp() {
           restored.colorKey = deletedHighlight.colorKey;
           restored.colorInfo = deletedHighlight.colorInfo;
           renderHighlights();
-          saveCurrentAnnotations('highlight-undo');
+          reviewDataManager.save();
         },
         redo: () => {
           highlightManager.deleteHighlight(deletedId);
           renderHighlights();
-          saveCurrentAnnotations('highlight-redo');
+          reviewDataManager.save();
         }
       });
     }
@@ -2371,7 +2371,7 @@ async function initApp() {
                 endFrame: originalEndFrame
               });
               renderCommentRanges();
-              saveCurrentAnnotations('comment-undo');
+              reviewDataManager.save();
             },
             redo: () => {
               commentManager.updateMarker(markerId, {
@@ -2379,7 +2379,7 @@ async function initApp() {
                 endFrame: newEndFrame
               });
               renderCommentRanges();
-              saveCurrentAnnotations('comment-redo');
+              reviewDataManager.save();
             }
           });
         }
@@ -2389,7 +2389,7 @@ async function initApp() {
       document.body.style.cursor = '';
 
       // 데이터 저장
-      saveCurrentAnnotations('comment-drag');
+      reviewDataManager.save();
     }
   });
 
