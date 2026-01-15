@@ -147,7 +147,17 @@ class FFmpegManager {
         filePath
       ];
 
-      execFile(this.ffprobePath, args, { timeout: 30000 }, (error, stdout) => {
+      // 경로에 특수문자가 있는지 확인
+      const hasSpecialChars = /[^\x00-\x7F]|[ ]/.test(filePath);
+      const execOptions = { timeout: 30000 };
+
+      // Windows에서 특수문자 경로는 shell 모드 사용
+      if (process.platform === 'win32' && hasSpecialChars) {
+        execOptions.shell = true;
+        args[args.length - 1] = `"${filePath}"`;
+      }
+
+      execFile(this.ffprobePath, args, execOptions, (error, stdout) => {
         if (error) {
           log.error('ffprobe 실행 실패', { error: error.message, filePath });
           reject(error);
@@ -311,16 +321,68 @@ class FFmpegManager {
         return;
       }
 
-      const ffmpegProcess = spawn(this.ffmpegPath, args);
+      // 입력 파일 접근 가능 여부 확인
+      try {
+        fs.accessSync(filePath, fs.constants.R_OK);
+      } catch (accessError) {
+        log.error('입력 파일에 접근할 수 없음', {
+          filePath,
+          error: accessError.message,
+          hint: 'Google Drive 파일이 다운로드되지 않았거나 접근 권한이 없을 수 있습니다'
+        });
+        reject(new Error('파일에 접근할 수 없습니다. Google Drive 파일인 경우 다운로드가 완료되었는지 확인하세요.'));
+        return;
+      }
+
+      // 네트워크 경로 감지 및 경고
+      const isNetworkPath = filePath.startsWith('\\\\') ||
+                           (filePath.length > 2 && filePath[1] === ':' && filePath.includes('공유 드라이브'));
+      if (isNetworkPath) {
+        log.warn('네트워크 경로 감지됨 - 트랜스코딩이 느리거나 실패할 수 있습니다', { filePath });
+      }
+
+      // Windows에서 spawn 옵션 설정
+      const spawnOptions = {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true // 콘솔 창 숨기기
+      };
+
+      // 경로에 특수문자(한글, 공백 등)가 있으면 shell 모드 사용
+      const hasSpecialChars = /[^\x00-\x7F]|[ ]/.test(filePath) || /[^\x00-\x7F]|[ ]/.test(this.ffmpegPath);
+      if (process.platform === 'win32' && hasSpecialChars) {
+        // shell 모드에서는 경로를 따옴표로 감싸야 함
+        spawnOptions.shell = true;
+        // args 배열의 파일 경로들을 따옴표로 감싸기
+        args[1] = `"${filePath}"`;  // -i 다음의 입력 파일
+        args[args.length - 1] = `"${tempPath}"`; // 출력 파일
+        log.info('특수문자 경로 감지, shell 모드 사용', { filePath });
+      }
+
+      const ffmpegProcess = spawn(this.ffmpegPath, args, spawnOptions);
       this.activeProcesses.set(taskId, { process: ffmpegProcess, filePath });
 
       let lastProgress = 0;
       const duration = codecInfo.duration || 0;
       let stderrOutput = ''; // stderr 출력 캡처 (오류 분석용)
+      let receivedAnyOutput = false;
+
+      // FFmpeg 시작 타임아웃 (10초 내에 아무 출력도 없으면 문제)
+      const startupTimeout = setTimeout(() => {
+        if (!receivedAnyOutput) {
+          log.error('FFmpeg 시작 타임아웃 - 응답 없음', {
+            ffmpegPath: this.ffmpegPath,
+            filePath,
+            hint: 'FFmpeg가 시작되지 않았습니다. 네트워크 드라이브나 파일 접근 문제일 수 있습니다.'
+          });
+          ffmpegProcess.kill('SIGKILL');
+          reject(new Error('FFmpeg가 응답하지 않습니다. 파일이 Google Drive에 있다면 먼저 로컬에 다운로드해 주세요.'));
+        }
+      }, 10000);
 
       // FFmpeg는 stderr로 진행률 출력
       ffmpegProcess.stderr.on('data', (data) => {
         const line = data.toString();
+        receivedAnyOutput = true;
 
         // 마지막 5000자만 저장 (메모리 절약)
         stderrOutput += line;
@@ -345,6 +407,7 @@ class FFmpegManager {
       });
 
       ffmpegProcess.on('close', (code, signal) => {
+        clearTimeout(startupTimeout);
         this.activeProcesses.delete(taskId);
 
         // 신호로 종료된 경우 (예: 사용자 취소)
@@ -389,9 +452,13 @@ class FFmpegManager {
           // 오류 원인 파싱
           let errorReason = '알 수 없는 오류';
 
-          // 비정상적으로 큰 종료 코드는 크래시 의미
+          // 비정상적으로 큰 종료 코드는 크래시 의미 (Windows 에러 코드 또는 메모리 접근 오류)
           if (code > 255 || code < 0) {
-            errorReason = 'FFmpeg가 비정상 종료되었습니다';
+            if (!receivedAnyOutput) {
+              errorReason = 'FFmpeg가 시작되지 못했습니다. 파일 경로나 네트워크 드라이브 문제일 수 있습니다.';
+            } else {
+              errorReason = 'FFmpeg가 비정상 종료되었습니다';
+            }
           } else if (stderrOutput.includes('No such file or directory')) {
             errorReason = '파일을 찾을 수 없습니다';
           } else if (stderrOutput.includes('Permission denied')) {
@@ -420,6 +487,7 @@ class FFmpegManager {
       });
 
       ffmpegProcess.on('error', (error) => {
+        clearTimeout(startupTimeout);
         this.activeProcesses.delete(taskId);
         let errorMsg = 'FFmpeg 실행 오류';
         if (error.code === 'ENOENT') {
