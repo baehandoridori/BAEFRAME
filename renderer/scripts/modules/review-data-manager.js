@@ -565,6 +565,7 @@ export class ReviewDataManager extends EventTarget {
   _applyData(data) {
     // 메타데이터
     this._createdAt = data.createdAt;
+    this._modifiedAt = data.modifiedAt;  // 머지 비교용
     this._fps = data.fps || 24;
 
     // 버전 관리 정보

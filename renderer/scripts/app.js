@@ -314,6 +314,11 @@ async function initApp() {
   // ReviewDataManager에 CollaborationManager 연결 (저장 시 머지용)
   reviewDataManager.setCollaborationManager(collaborationManager);
 
+  // 앱 종료/새로고침 시 편집 잠금 해제
+  window.addEventListener('beforeunload', () => {
+    collaborationManager.releaseAllEditingLocks();
+  });
+
   // 사용자 설정
   const userSettings = getUserSettings();
 
@@ -4006,14 +4011,7 @@ async function initApp() {
         e.stopPropagation();
         const markerId = item.dataset.markerId;
 
-        // 협업 중이면 잠금 체크
-        const lockStatus = await collaborationManager.isBeingEdited(markerId);
-        if (lockStatus.isLocked) {
-          showToast(`${lockStatus.lockedBy}님이 수정 중입니다`, 'warn');
-          return;
-        }
-
-        // 편집 잠금 획득 시도
+        // 편집 잠금 획득 시도 (이미 잠금 여부 체크 포함)
         const startResult = await collaborationManager.startEditing(markerId);
         if (!startResult.success) {
           showToast(`${startResult.lockedBy}님이 수정 중입니다`, 'warn');
@@ -4086,14 +4084,23 @@ async function initApp() {
 
       // Textarea에서 Escape로 취소
       editTextarea?.addEventListener('keydown', (e) => {
+        // 이미 처리 중이면 무시 (중복 호출 방지)
+        if (editFormEl.style.display === 'none') return;
+
         if (e.key === 'Escape') {
           e.stopPropagation();
-          item.querySelector('.comment-edit-cancel').click();
+          const cancelBtn = item.querySelector('.comment-edit-cancel');
+          if (!cancelBtn.disabled) {
+            cancelBtn.click();
+          }
         } else if (e.key === 'Enter' && e.ctrlKey) {
           // Ctrl+Enter로 저장
           e.stopPropagation();
           e.preventDefault();
-          item.querySelector('.comment-edit-save').click();
+          const saveBtn = item.querySelector('.comment-edit-save');
+          if (!saveBtn.disabled) {
+            saveBtn.click();
+          }
         }
       });
 
