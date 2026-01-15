@@ -16,6 +16,15 @@ const log = createLogger('FFmpegManager');
 // 지원되는 코덱 (변환 불필요)
 const SUPPORTED_CODECS = ['h264', 'avc1', 'vp8', 'vp9', 'av1'];
 
+// H.264 인코더 우선순위 (앞에 있을수록 우선)
+const H264_ENCODERS = [
+  { name: 'libx264', args: ['-preset', 'fast', '-crf', '18'] },  // 소프트웨어 (가장 호환성 좋음)
+  { name: 'h264_nvenc', args: ['-preset', 'fast', '-cq', '18'] }, // NVIDIA GPU
+  { name: 'h264_amf', args: ['-quality', 'balanced', '-rc', 'cqp', '-qp', '18'] }, // AMD GPU
+  { name: 'h264_qsv', args: ['-preset', 'fast', '-global_quality', '18'] }, // Intel Quick Sync
+  { name: 'h264_mf', args: ['-q:v', '80'] } // Windows Media Foundation (항상 사용 가능)
+];
+
 // 캐시 설정
 const DEFAULT_CACHE_LIMIT_GB = 10;
 const CACHE_FOLDER_NAME = 'transcoded';
@@ -28,6 +37,7 @@ class FFmpegManager {
     this.activeProcesses = new Map();
     this.initialized = false;
     this.cacheLimitBytes = DEFAULT_CACHE_LIMIT_GB * 1024 * 1024 * 1024;
+    this.availableEncoder = null; // 감지된 사용 가능한 인코더
   }
 
   /**
@@ -113,6 +123,83 @@ class FFmpegManager {
         } else {
           const paths = stdout.trim().split('\n');
           resolve(paths[0] || null);
+        }
+      });
+    });
+  }
+
+  /**
+   * 사용 가능한 H.264 인코더 감지
+   */
+  async _detectAvailableEncoder() {
+    if (this.availableEncoder) {
+      return this.availableEncoder;
+    }
+
+    if (!this.ffmpegPath) {
+      return null;
+    }
+
+    log.info('H.264 인코더 감지 시작');
+
+    for (const encoder of H264_ENCODERS) {
+      try {
+        const isAvailable = await this._checkEncoderAvailable(encoder.name);
+        if (isAvailable) {
+          this.availableEncoder = encoder;
+          log.info('사용 가능한 인코더 발견', { encoder: encoder.name });
+          return encoder;
+        }
+      } catch (e) {
+        log.debug('인코더 확인 실패', { encoder: encoder.name, error: e.message });
+      }
+    }
+
+    log.error('사용 가능한 H.264 인코더를 찾을 수 없습니다');
+    return null;
+  }
+
+  /**
+   * 특정 인코더 사용 가능 여부 확인
+   */
+  _checkEncoderAvailable(encoderName) {
+    return new Promise((resolve) => {
+      // ffmpeg -encoders 로 확인하는 것보다 실제 테스트가 더 정확
+      const args = [
+        '-f', 'lavfi',
+        '-i', 'nullsrc=s=16x16:d=0.1',
+        '-c:v', encoderName,
+        '-f', 'null',
+        '-'
+      ];
+
+      const testProcess = spawn(this.ffmpegPath, args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true
+      });
+
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          testProcess.kill();
+          resolve(false);
+        }
+      }, 5000);
+
+      testProcess.on('close', (code) => {
+        clearTimeout(timeout);
+        if (!resolved) {
+          resolved = true;
+          resolve(code === 0);
+        }
+      });
+
+      testProcess.on('error', () => {
+        clearTimeout(timeout);
+        if (!resolved) {
+          resolved = true;
+          resolve(false);
         }
       });
     });
@@ -290,15 +377,21 @@ class FFmpegManager {
       fs.unlinkSync(tempPath);
     }
 
+    // 사용 가능한 인코더 감지
+    const encoder = await this._detectAvailableEncoder();
+    if (!encoder) {
+      throw new Error('사용 가능한 H.264 인코더가 없습니다. FFmpeg 빌드를 확인하세요.');
+    }
+
     return new Promise((resolve, reject) => {
       const taskId = `transcode_${Date.now()}`;
 
+      // 인코더에 따른 args 구성
       const args = [
         '-i', filePath,
-        '-c:v', 'libx264',
+        '-c:v', encoder.name,
         '-pix_fmt', 'yuv420p',  // HTML5 Video 호환 픽셀 포맷
-        '-preset', 'fast',
-        '-crf', '18',
+        ...encoder.args,        // 인코더별 옵션
         '-c:a', 'aac',
         '-b:a', '192k',
         '-movflags', '+faststart',
@@ -310,6 +403,7 @@ class FFmpegManager {
         filePath,
         taskId,
         codec: codecInfo.codecName,
+        encoder: encoder.name,
         ffmpegPath: this.ffmpegPath,
         args: args.join(' ')
       });
@@ -428,7 +522,7 @@ class FFmpegManager {
               originalMtime: stats.mtimeMs,
               originalCodec: codecInfo.codecName,
               convertedAt: new Date().toISOString(),
-              settings: { codec: 'libx264', crf: 18, preset: 'fast' }
+              settings: { encoder: encoder.name, args: encoder.args }
             };
             fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
@@ -452,8 +546,13 @@ class FFmpegManager {
           // 오류 원인 파싱
           let errorReason = '알 수 없는 오류';
 
+          // 인코더 관련 오류 (가장 먼저 체크)
+          if (stderrOutput.includes('Unknown encoder') || stderrOutput.includes('Encoder not found')) {
+            errorReason = 'FFmpeg에 필요한 인코더가 없습니다. 앱을 재시작해 주세요.';
+            // 캐시된 인코더 정보 초기화 (다음에 다시 감지)
+            this.availableEncoder = null;
           // 비정상적으로 큰 종료 코드는 크래시 의미 (Windows 에러 코드 또는 메모리 접근 오류)
-          if (code > 255 || code < 0) {
+          } else if (code > 255 || code < 0) {
             if (!receivedAnyOutput) {
               errorReason = 'FFmpeg가 시작되지 못했습니다. 파일 경로나 네트워크 드라이브 문제일 수 있습니다.';
             } else {
