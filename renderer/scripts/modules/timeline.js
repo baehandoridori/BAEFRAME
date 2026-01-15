@@ -1491,7 +1491,7 @@ export class Timeline extends EventTarget {
 
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
-      this._emit('commentMarkerClick', { time, frame });
+      this._emit('commentMarkerClick', { time, frame, markerInfos });
     });
 
     this.tracksContainer?.appendChild(marker);
@@ -1676,7 +1676,7 @@ export class Timeline extends EventTarget {
 
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
-      this._emit('commentMarkerClick', { time, frame });
+      this._emit('commentMarkerClick', { time, frame, markerInfos });
     });
 
     this.tracksContainer?.appendChild(marker);

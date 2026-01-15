@@ -640,17 +640,19 @@ async function initApp() {
     pushUndo({
       type: 'ADD_COMMENT',
       data: markerData,
-      undo: () => {
+      undo: async () => {
         commentManager.deleteMarker(markerData.id);
         updateCommentList();
         updateTimelineMarkers();
         updateVideoMarkers();
+        await reviewDataManager.save();
       },
-      redo: () => {
+      redo: async () => {
         commentManager.restoreMarker(markerData);
         updateCommentList();
         updateTimelineMarkers();
         updateVideoMarkers();
+        await reviewDataManager.save();
       }
     });
   });
@@ -694,8 +696,24 @@ async function initApp() {
 
   // 타임라인 댓글 마커 클릭
   timeline.addEventListener('commentMarkerClick', (e) => {
-    const { time, frame } = e.detail;
-    videoPlayer.seek(time);
+    const { time, frame, markerInfos } = e.detail;
+    videoPlayer.seekToFrame(frame);
+
+    // 댓글 리스트에서 해당 댓글 하이라이트
+    if (markerInfos && markerInfos.length > 0) {
+      const container = elements.commentListContent;
+      // 기존 선택 해제
+      container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
+
+      // 첫 번째 마커의 댓글 아이템 찾아서 하이라이트 및 스크롤
+      const firstMarkerId = markerInfos[0].markerId;
+      const commentItem = container.querySelector(`.comment-item[data-marker-id="${firstMarkerId}"]`);
+      if (commentItem) {
+        commentItem.classList.add('selected');
+        // 댓글 리스트 내에서 스크롤하여 보이도록
+        commentItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
   });
 
   // 타임라인 줌 변경 시 마커 다시 렌더링 (클러스터링 재계산)
@@ -3653,7 +3671,7 @@ async function initApp() {
     });
 
     // 삭제 버튼
-    tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', (e) => {
+    tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (confirm('댓글을 삭제하시겠습니까?')) {
         const markerData = marker.toJSON();
@@ -3664,21 +3682,26 @@ async function initApp() {
         updateTimelineMarkers();
         renderVideoMarkers();
 
+        // 삭제 상태 저장 (협업 동기화용)
+        await reviewDataManager.save();
+
         // Undo 스택에 추가
         pushUndo({
           type: 'DELETE_COMMENT',
           data: markerData,
-          undo: () => {
+          undo: async () => {
             commentManager.restoreMarker(markerData);
             updateCommentList();
             updateTimelineMarkers();
             renderVideoMarkers();
+            await reviewDataManager.save();
           },
-          redo: () => {
+          redo: async () => {
             commentManager.deleteMarker(markerData.id);
             updateCommentList();
             updateTimelineMarkers();
             renderVideoMarkers();
+            await reviewDataManager.save();
           }
         });
         showToast('댓글이 삭제되었습니다.', 'info');
@@ -3979,7 +4002,7 @@ async function initApp() {
       });
 
       // 삭제 버튼
-      item.querySelector('.delete-btn')?.addEventListener('click', (e) => {
+      item.querySelector('.delete-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (confirm('댓글을 삭제하시겠습니까?')) {
           const markerId = item.dataset.markerId;
@@ -3993,21 +4016,26 @@ async function initApp() {
             updateTimelineMarkers();
             renderVideoMarkers();
 
+            // 삭제 상태 저장 (협업 동기화용)
+            await reviewDataManager.save();
+
             // Undo 스택에 추가
             pushUndo({
               type: 'DELETE_COMMENT',
               data: markerData,
-              undo: () => {
+              undo: async () => {
                 commentManager.restoreMarker(markerData);
                 updateCommentList();
                 updateTimelineMarkers();
                 renderVideoMarkers();
+                await reviewDataManager.save();
               },
-              redo: () => {
+              redo: async () => {
                 commentManager.deleteMarker(markerData.id);
                 updateCommentList();
                 updateTimelineMarkers();
                 renderVideoMarkers();
+                await reviewDataManager.save();
               }
             });
             showToast('댓글이 삭제되었습니다.', 'info');

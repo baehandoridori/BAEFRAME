@@ -147,7 +147,7 @@ function setupIpcHandlers() {
   // 파일 변경 시 즉시 동기화를 위한 기능
 
   const fileWatchers = new Map(); // filePath -> watcher
-  let watchDebounceTimers = new Map(); // filePath -> timer
+  const watchDebounceTimers = new Map(); // filePath -> timer
 
   // 파일 감시 시작
   ipcMain.handle('file:watch-start', async (event, filePath) => {
