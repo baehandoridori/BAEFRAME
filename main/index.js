@@ -184,9 +184,13 @@ if (process.defaultApp) {
   debugLog(`프로토콜 등록됨: ${process.execPath}`);
 }
 
-// 단일 인스턴스 잠금
+// 단일 인스턴스 잠금 (개발 모드에서는 다중 인스턴스 허용)
+const isDev = process.env.NODE_ENV === 'development';
+debugLog(`개발 모드: ${isDev}`);
 debugLog('단일 인스턴스 잠금 요청 중...');
-const gotTheLock = app.requestSingleInstanceLock();
+
+// 개발 모드에서는 잠금 건너뜀 (협업 테스트용)
+const gotTheLock = isDev ? true : app.requestSingleInstanceLock();
 debugLog(`잠금 결과: ${gotTheLock}`);
 
 if (!gotTheLock) {
