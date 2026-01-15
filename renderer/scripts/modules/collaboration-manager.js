@@ -17,8 +17,15 @@ const log = createLogger('CollaborationManager');
 // 상수 정의
 const PRESENCE_UPDATE_INTERVAL = 5000;    // 5초마다 presence 업데이트
 const PRESENCE_TIMEOUT = 15000;           // 15초 동안 업데이트 없으면 오프라인으로 간주
-const SYNC_INTERVAL = 10000;              // 협업자 있을 때 10초마다 동기화
 const COLLAB_FILE_EXTENSION = '.collab';  // presence 파일 확장자
+const EDITING_TIMEOUT = 60000;            // 편집 잠금 60초 후 자동 해제
+
+// 동기화 간격 설정 (동적 조정)
+const SYNC_INTERVAL_SOLO = 10000;         // 혼자일 때: 10초 (동기화 안 함, 값만 유지)
+const SYNC_INTERVAL_COLLAB = 5000;        // 협업자 있을 때: 5초
+const SYNC_INTERVAL_ACTIVE = 3000;        // 활발한 편집 시: 3초
+const ACTIVITY_WINDOW = 60000;            // 활동량 측정 윈도우: 1분
+const ACTIVITY_THRESHOLD = 5;             // 활발 판단 기준: 1분 내 5회 이상
 
 /**
  * 협업 관리자
@@ -28,7 +35,7 @@ export class CollaborationManager extends EventTarget {
     super();
 
     // 설정
-    this.syncInterval = options.syncInterval || SYNC_INTERVAL;
+    this.syncInterval = options.syncInterval || SYNC_INTERVAL_COLLAB;
     this.presenceUpdateInterval = options.presenceUpdateInterval || PRESENCE_UPDATE_INTERVAL;
     this.presenceTimeout = options.presenceTimeout || PRESENCE_TIMEOUT;
 
@@ -49,6 +56,9 @@ export class CollaborationManager extends EventTarget {
 
     // 콜백
     this._onRemoteDataLoaded = null;  // 원격 데이터 로드 콜백
+
+    // 활동량 추적 (동기화 간격 동적 조정용)
+    this._activityTimestamps = [];
 
     log.info('CollaborationManager 초기화됨', { sessionId: this.sessionId });
   }
@@ -96,6 +106,9 @@ export class CollaborationManager extends EventTarget {
    */
   async stop() {
     if (!this._isActive) return;
+
+    // 편집 잠금 먼저 해제 (_isActive가 true일 때 해야 함)
+    await this.releaseAllEditingLocks();
 
     this._isActive = false;
 
@@ -165,6 +178,210 @@ export class CollaborationManager extends EventTarget {
 
     log.info('수동 동기화 시작');
     await this._performSync();
+  }
+
+  /**
+   * 활동 기록 (데이터 변경 시 외부에서 호출)
+   * 동기화 간격 동적 조정에 사용
+   */
+  recordActivity() {
+    const now = Date.now();
+    this._activityTimestamps.push(now);
+
+    // 오래된 기록 정리 (ACTIVITY_WINDOW 밖의 기록 제거)
+    this._activityTimestamps = this._activityTimestamps.filter(
+      t => now - t < ACTIVITY_WINDOW
+    );
+
+    // 협업자 있으면 간격 재조정
+    if (this.hasOtherCollaborators()) {
+      this._adjustSyncInterval();
+    }
+  }
+
+  /**
+   * 최근 활동 횟수 반환
+   */
+  get recentActivityCount() {
+    const now = Date.now();
+    return this._activityTimestamps.filter(t => now - t < ACTIVITY_WINDOW).length;
+  }
+
+  /**
+   * 동기화 간격 동적 조정
+   */
+  _adjustSyncInterval() {
+    let newInterval;
+
+    if (!this.hasOtherCollaborators()) {
+      newInterval = SYNC_INTERVAL_SOLO;
+    } else if (this.recentActivityCount >= ACTIVITY_THRESHOLD) {
+      newInterval = SYNC_INTERVAL_ACTIVE;
+    } else {
+      newInterval = SYNC_INTERVAL_COLLAB;
+    }
+
+    // 간격이 변경되었으면 타이머 재시작
+    if (newInterval !== this.syncInterval) {
+      log.info('동기화 간격 조정', {
+        from: this.syncInterval,
+        to: newInterval,
+        activityCount: this.recentActivityCount
+      });
+      this.syncInterval = newInterval;
+      this._restartSyncTimer();
+    }
+  }
+
+  /**
+   * 동기화 타이머 재시작
+   */
+  _restartSyncTimer() {
+    this._stopSyncTimer();
+    if (this.hasOtherCollaborators()) {
+      this._startSyncTimer();
+    }
+  }
+
+  // ============================================================================
+  // 댓글 편집 잠금 메서드
+  // ============================================================================
+
+  /**
+   * 댓글 편집 시작 (잠금 획득 시도)
+   * @param {string} markerId - 편집할 마커 ID
+   * @returns {Promise<{success: boolean, lockedBy?: string}>}
+   */
+  async startEditing(markerId) {
+    // 협업 중이 아니면 바로 성공
+    if (!this._isActive || !this.collabPath || !this.hasOtherCollaborators()) {
+      return { success: true };
+    }
+
+    try {
+      const collabData = await this._readCollabFile() || {
+        version: '1.1',
+        presence: {},
+        editingState: {}
+      };
+
+      // 기존 편집 상태 확인
+      const existing = collabData.editingState?.[markerId];
+      if (existing && existing.sessionId !== this.sessionId) {
+        // 타임아웃 체크
+        const elapsed = Date.now() - new Date(existing.startedAt).getTime();
+        if (elapsed < EDITING_TIMEOUT) {
+          log.info('편집 잠금 실패: 다른 사용자가 편집 중', {
+            markerId,
+            lockedBy: existing.userName
+          });
+          return { success: false, lockedBy: existing.userName };
+        }
+        // 타임아웃됨 - 잠금 해제하고 새로 획득
+      }
+
+      // 편집 상태 설정
+      if (!collabData.editingState) {
+        collabData.editingState = {};
+      }
+
+      collabData.editingState[markerId] = {
+        sessionId: this.sessionId,
+        userName: this.userName,
+        startedAt: new Date().toISOString()
+      };
+
+      await this._writeCollabFile(collabData);
+
+      log.info('편집 잠금 획득', { markerId });
+      return { success: true };
+
+    } catch (error) {
+      log.warn('편집 잠금 설정 실패', { error: error.message });
+      // 실패 시에도 편집 허용 (fail-open)
+      return { success: true };
+    }
+  }
+
+  /**
+   * 댓글 편집 종료 (잠금 해제)
+   * @param {string} markerId - 편집 완료한 마커 ID
+   */
+  async stopEditing(markerId) {
+    if (!this._isActive || !this.collabPath) return;
+
+    try {
+      const collabData = await this._readCollabFile();
+
+      if (collabData?.editingState?.[markerId]?.sessionId === this.sessionId) {
+        delete collabData.editingState[markerId];
+        await this._writeCollabFile(collabData);
+        log.info('편집 잠금 해제', { markerId });
+      }
+    } catch (error) {
+      log.warn('편집 잠금 해제 실패', { error: error.message });
+    }
+  }
+
+  /**
+   * 다른 사람이 편집 중인지 확인
+   * @param {string} markerId
+   * @returns {Promise<{isLocked: boolean, lockedBy?: string}>}
+   */
+  async isBeingEdited(markerId) {
+    // 협업 중이 아니면 잠금 없음
+    if (!this._isActive || !this.collabPath || !this.hasOtherCollaborators()) {
+      return { isLocked: false };
+    }
+
+    try {
+      const collabData = await this._readCollabFile();
+      const existing = collabData?.editingState?.[markerId];
+
+      if (!existing || existing.sessionId === this.sessionId) {
+        return { isLocked: false };
+      }
+
+      // 타임아웃 체크
+      const elapsed = Date.now() - new Date(existing.startedAt).getTime();
+      if (elapsed >= EDITING_TIMEOUT) {
+        return { isLocked: false };
+      }
+
+      return { isLocked: true, lockedBy: existing.userName };
+
+    } catch {
+      return { isLocked: false };
+    }
+  }
+
+  /**
+   * 앱 종료 시 모든 편집 잠금 해제
+   */
+  async releaseAllEditingLocks() {
+    if (!this._isActive || !this.collabPath) return;
+
+    try {
+      const collabData = await this._readCollabFile();
+
+      if (collabData?.editingState) {
+        // 내 세션의 모든 편집 잠금 해제
+        let changed = false;
+        for (const [markerId, info] of Object.entries(collabData.editingState)) {
+          if (info.sessionId === this.sessionId) {
+            delete collabData.editingState[markerId];
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          await this._writeCollabFile(collabData);
+          log.info('모든 편집 잠금 해제됨');
+        }
+      }
+    } catch (error) {
+      log.warn('편집 잠금 일괄 해제 실패', { error: error.message });
+    }
   }
 
   // ============================================================================

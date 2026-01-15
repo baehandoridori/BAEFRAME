@@ -679,6 +679,11 @@ export class ReviewDataManager extends EventTarget {
     this.isDirty = true;
     this._emit('dataChanged', { event: e.type });
 
+    // 협업 매니저에 활동 기록 (동기화 간격 동적 조정용)
+    if (this._collaborationManager) {
+      this._collaborationManager.recordActivity();
+    }
+
     // 자동 저장 스케줄
     if (this.autoSaveEnabled) {
       this._scheduleAutoSave();

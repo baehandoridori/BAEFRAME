@@ -4002,8 +4002,24 @@ async function initApp() {
       const editTextarea = item.querySelector('.comment-edit-textarea');
       const actionsEl = item.querySelector('.comment-actions');
 
-      editBtn?.addEventListener('click', (e) => {
+      editBtn?.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const markerId = item.dataset.markerId;
+
+        // 협업 중이면 잠금 체크
+        const lockStatus = await collaborationManager.isBeingEdited(markerId);
+        if (lockStatus.isLocked) {
+          showToast(`${lockStatus.lockedBy}님이 수정 중입니다`, 'warn');
+          return;
+        }
+
+        // 편집 잠금 획득 시도
+        const startResult = await collaborationManager.startEditing(markerId);
+        if (!startResult.success) {
+          showToast(`${startResult.lockedBy}님이 수정 중입니다`, 'warn');
+          return;
+        }
+
         // 수정 모드 진입
         contentEl.style.display = 'none';
         actionsEl.style.display = 'none';
@@ -4013,11 +4029,12 @@ async function initApp() {
       });
 
       // 수정 저장
-      item.querySelector('.comment-edit-save')?.addEventListener('click', (e) => {
+      item.querySelector('.comment-edit-save')?.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const markerId = item.dataset.markerId;
         const newText = editTextarea.value.trim();
+
         if (newText) {
-          const markerId = item.dataset.markerId;
           const marker = commentManager.getMarker(markerId);
           if (marker) {
             const oldText = marker.text;
@@ -4038,17 +4055,30 @@ async function initApp() {
             showToast('댓글이 수정되었습니다.', 'success');
           }
         }
+
+        // 편집 잠금 해제
+        await collaborationManager.stopEditing(markerId);
+
+        // UI 복원
+        contentEl.style.display = 'block';
+        actionsEl.style.display = 'flex';
+        editFormEl.style.display = 'none';
       });
 
       // 수정 취소
-      item.querySelector('.comment-edit-cancel')?.addEventListener('click', (e) => {
+      item.querySelector('.comment-edit-cancel')?.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const markerId = item.dataset.markerId;
+
+        // 편집 잠금 해제
+        await collaborationManager.stopEditing(markerId);
+
         // 원래 상태로 복원
         contentEl.style.display = 'block';
         actionsEl.style.display = 'flex';
         editFormEl.style.display = 'none';
         // 원래 텍스트로 복원
-        const marker = commentManager.getMarker(item.dataset.markerId);
+        const marker = commentManager.getMarker(markerId);
         if (marker) {
           editTextarea.value = marker.text;
         }
