@@ -296,17 +296,37 @@ class FFmpegManager {
         tempPath
       ];
 
-      log.info('트랜스코딩 시작', { filePath, taskId, codec: codecInfo.codecName });
+      log.info('트랜스코딩 시작', {
+        filePath,
+        taskId,
+        codec: codecInfo.codecName,
+        ffmpegPath: this.ffmpegPath,
+        args: args.join(' ')
+      });
+
+      // FFmpeg 바이너리 존재 확인
+      if (!fs.existsSync(this.ffmpegPath)) {
+        log.error('FFmpeg 바이너리가 존재하지 않음', { ffmpegPath: this.ffmpegPath });
+        reject(new Error('FFmpeg를 찾을 수 없습니다'));
+        return;
+      }
 
       const ffmpegProcess = spawn(this.ffmpegPath, args);
       this.activeProcesses.set(taskId, { process: ffmpegProcess, filePath });
 
       let lastProgress = 0;
       const duration = codecInfo.duration || 0;
+      let stderrOutput = ''; // stderr 출력 캡처 (오류 분석용)
 
       // FFmpeg는 stderr로 진행률 출력
       ffmpegProcess.stderr.on('data', (data) => {
         const line = data.toString();
+
+        // 마지막 5000자만 저장 (메모리 절약)
+        stderrOutput += line;
+        if (stderrOutput.length > 5000) {
+          stderrOutput = stderrOutput.slice(-5000);
+        }
 
         // 진행률 파싱: time=00:00:51.23
         const timeMatch = line.match(/time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
@@ -324,8 +344,15 @@ class FFmpegManager {
         }
       });
 
-      ffmpegProcess.on('close', (code) => {
+      ffmpegProcess.on('close', (code, signal) => {
         this.activeProcesses.delete(taskId);
+
+        // 신호로 종료된 경우 (예: 사용자 취소)
+        if (signal) {
+          log.info('FFmpeg가 신호로 종료됨', { signal });
+          reject(new Error(`변환이 취소되었습니다 (신호: ${signal})`));
+          return;
+        }
 
         if (code === 0) {
           // 변환 성공 - 파일 이름 변경 및 메타 저장
@@ -358,15 +385,50 @@ class FFmpegManager {
           if (fs.existsSync(tempPath)) {
             fs.unlinkSync(tempPath);
           }
-          log.error('트랜스코딩 실패', { filePath, code });
-          reject(new Error(`FFmpeg 종료 코드: ${code}`));
+
+          // 오류 원인 파싱
+          let errorReason = '알 수 없는 오류';
+
+          // 비정상적으로 큰 종료 코드는 크래시 의미
+          if (code > 255 || code < 0) {
+            errorReason = 'FFmpeg가 비정상 종료되었습니다';
+          } else if (stderrOutput.includes('No such file or directory')) {
+            errorReason = '파일을 찾을 수 없습니다';
+          } else if (stderrOutput.includes('Permission denied')) {
+            errorReason = '파일 접근 권한이 없습니다';
+          } else if (stderrOutput.includes('Invalid data')) {
+            errorReason = '손상된 파일입니다';
+          } else if (stderrOutput.includes('Decoder') || stderrOutput.includes('codec')) {
+            errorReason = '지원하지 않는 코덱입니다';
+          } else if (stderrOutput.includes('moov atom not found')) {
+            errorReason = '손상된 MP4 파일입니다 (moov atom 없음)';
+          } else if (stderrOutput.includes('Error opening')) {
+            errorReason = '파일을 열 수 없습니다';
+          } else if (code === 1) {
+            errorReason = '변환 중 오류가 발생했습니다';
+          }
+
+          log.error('트랜스코딩 실패', {
+            filePath,
+            code,
+            errorReason,
+            stderr: stderrOutput.slice(-1000) // 로그에 마지막 1000자만
+          });
+
+          reject(new Error(`${errorReason} (코드: ${code})`));
         }
       });
 
       ffmpegProcess.on('error', (error) => {
         this.activeProcesses.delete(taskId);
-        log.error('FFmpeg 프로세스 오류', { error: error.message });
-        reject(error);
+        let errorMsg = 'FFmpeg 실행 오류';
+        if (error.code === 'ENOENT') {
+          errorMsg = 'FFmpeg를 찾을 수 없습니다. 프로그램이 설치되어 있는지 확인하세요.';
+        } else if (error.code === 'EACCES') {
+          errorMsg = 'FFmpeg 실행 권한이 없습니다.';
+        }
+        log.error('FFmpeg 프로세스 오류', { error: error.message, code: error.code, ffmpegPath: this.ffmpegPath });
+        reject(new Error(errorMsg));
       });
     });
   }
