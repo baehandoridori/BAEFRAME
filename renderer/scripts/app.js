@@ -8,7 +8,7 @@ import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { CommentManager } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
-import { CollaborationManager, mergeLayers } from './modules/collaboration-manager.js';
+import { CollaborationManager } from './modules/collaboration-manager.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
@@ -310,6 +310,9 @@ async function initApp() {
     syncInterval: 10000,  // 10초마다 동기화
     presenceUpdateInterval: 5000  // 5초마다 presence 업데이트
   });
+
+  // ReviewDataManager에 CollaborationManager 연결 (저장 시 머지용)
+  reviewDataManager.setCollaborationManager(collaborationManager);
 
   // 사용자 설정
   const userSettings = getUserSettings();
@@ -5751,34 +5754,19 @@ async function initApp() {
     if (!reviewDataManager.currentBframePath) return;
 
     try {
-      // 원격 데이터 로드
-      const remoteData = await window.electronAPI.loadReview(reviewDataManager.currentBframePath);
-      if (!remoteData) return;
+      // ReviewDataManager의 reloadAndMerge 사용 (비디오 유지하면서 데이터만 머지)
+      const result = await reviewDataManager.reloadAndMerge({ merge: true });
 
-      // 로컬 데이터와 머지
-      const localData = reviewDataManager._collectData();
+      if (result.success && (result.added > 0 || result.updated > 0)) {
+        log.info('원격 변경사항 머지됨', { added: result.added, updated: result.updated });
 
-      // 댓글 레이어 머지
-      if (remoteData.comments?.layers && localData.comments?.layers) {
-        const mergeResult = mergeLayers(localData.comments.layers, remoteData.comments.layers);
+        // UI 업데이트
+        renderVideoMarkers();
+        updateTimelineMarkers();
+        updateCommentList();
 
-        if (mergeResult.added > 0 || mergeResult.updated > 0) {
-          log.info('원격 변경사항 머지됨', { added: mergeResult.added, updated: mergeResult.updated });
-
-          // 머지된 데이터로 댓글 매니저 업데이트
-          commentManager.clear();
-          for (const layer of mergeResult.merged) {
-            commentManager.addLayer(layer);
-          }
-
-          // UI 업데이트
-          renderVideoMarkers();
-          updateTimelineMarkers();
-          updateCommentList();
-
-          if (mergeResult.added > 0) {
-            showToast(`새 댓글 ${mergeResult.added}개가 동기화되었습니다`, 'info');
-          }
+        if (result.added > 0) {
+          showToast(`새 댓글 ${result.added}개가 동기화되었습니다`, 'info');
         }
       }
     } catch (error) {

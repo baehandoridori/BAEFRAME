@@ -14,6 +14,7 @@ import {
   extractFileName,
   extractFileNameWithoutExt
 } from '../../../shared/schema.js';
+import { mergeLayers } from './collaboration-manager.js';
 
 const log = createLogger('ReviewDataManager');
 
@@ -57,10 +58,22 @@ export class ReviewDataManager extends EventTarget {
     // 이벤트 바인딩
     this._onDataChanged = this._onDataChanged.bind(this);
 
+    // 협업 매니저 연결 (저장 전 머지용)
+    this._collaborationManager = null;
+
     log.info('ReviewDataManager 초기화됨', {
       autoSave: this.autoSaveEnabled,
       autoSaveDelay: this.autoSaveDelay
     });
+  }
+
+  /**
+   * CollaborationManager 연결 (협업 중 저장 시 머지용)
+   * @param {CollaborationManager} manager
+   */
+  setCollaborationManager(manager) {
+    this._collaborationManager = manager;
+    log.info('CollaborationManager 연결됨');
   }
 
   /**
@@ -176,8 +189,10 @@ export class ReviewDataManager extends EventTarget {
 
   /**
    * 현재 데이터를 .bframe 파일로 저장
+   * @param {Object} options
+   * @param {boolean} options.skipMerge - true면 머지 없이 저장 (초기 저장 등)
    */
-  async save() {
+  async save(options = {}) {
     if (!this.currentBframePath) {
       log.warn('저장할 파일 경로가 없음');
       return false;
@@ -186,7 +201,12 @@ export class ReviewDataManager extends EventTarget {
     this._cancelAutoSave();
 
     try {
-      const data = this._collectData();
+      let data = this._collectData();
+
+      // 협업 중이면 머지 후 저장 (덮어쓰기 방지)
+      if (!options.skipMerge && this._collaborationManager?.hasOtherCollaborators()) {
+        data = await this._mergeBeforeSave(data);
+      }
 
       await window.electronAPI.saveReview(this.currentBframePath, data);
 
@@ -195,7 +215,8 @@ export class ReviewDataManager extends EventTarget {
       log.info('.bframe 파일 저장됨', {
         path: this.currentBframePath,
         commentLayers: data.comments?.layers?.length || 0,
-        drawingLayers: data.drawings?.layers?.length || 0
+        drawingLayers: data.drawings?.layers?.length || 0,
+        merged: !options.skipMerge && this._collaborationManager?.hasOtherCollaborators()
       });
 
       this._emit('saved', { path: this.currentBframePath });
@@ -205,6 +226,51 @@ export class ReviewDataManager extends EventTarget {
       log.error('.bframe 저장 실패', error);
       this._emit('saveError', { error });
       return false;
+    }
+  }
+
+  /**
+   * 저장 전 원격 데이터와 머지
+   * @param {Object} localData - 로컬에서 수집한 데이터
+   * @returns {Promise<Object>} 머지된 데이터
+   */
+  async _mergeBeforeSave(localData) {
+    try {
+      const remoteData = await window.electronAPI.loadReview(this.currentBframePath);
+
+      if (!remoteData) {
+        // 원격 파일 없음 → 로컬 데이터 그대로 저장
+        return localData;
+      }
+
+      // modifiedAt 비교
+      const localModified = new Date(localData.modifiedAt).getTime();
+      const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
+
+      if (remoteModified <= localModified) {
+        // 로컬이 더 최신 또는 동일 → 로컬 그대로 저장
+        return localData;
+      }
+
+      // 원격이 더 최신 → 댓글 머지
+      if (remoteData.comments?.layers && localData.comments?.layers) {
+        const { merged } = mergeLayers(
+          localData.comments.layers,
+          remoteData.comments.layers
+        );
+        localData.comments.layers = merged;
+
+        log.info('저장 전 댓글 머지 완료');
+      }
+
+      // 머지 후 modifiedAt 갱신
+      localData.modifiedAt = new Date().toISOString();
+
+      return localData;
+
+    } catch (error) {
+      log.warn('저장 전 머지 실패, 로컬 데이터로 저장', { error: error.message });
+      return localData;
     }
   }
 
@@ -291,6 +357,108 @@ export class ReviewDataManager extends EventTarget {
       this.isLoading = false;
       this._emit('loadError', { error });
       return false;
+    }
+  }
+
+  /**
+   * 원격 데이터를 로드하고 로컬 데이터와 머지 (비디오 유지)
+   * 협업 중 동기화에 사용
+   *
+   * @param {Object} options
+   * @param {boolean} options.merge - true면 머지, false면 덮어쓰기
+   * @returns {Promise<{success: boolean, added: number, updated: number}>}
+   */
+  async reloadAndMerge(options = { merge: true }) {
+    if (!this.currentBframePath) {
+      log.warn('reloadAndMerge: 파일 경로가 없음');
+      return { success: false, added: 0, updated: 0 };
+    }
+
+    // 자동저장 일시 중지
+    this._cancelAutoSave();
+    const wasLoading = this.isLoading;
+    this.isLoading = true;
+
+    try {
+      // 원격 데이터 로드
+      const remoteData = await window.electronAPI.loadReview(this.currentBframePath);
+
+      if (!remoteData) {
+        log.info('reloadAndMerge: 원격 파일 없음');
+        this.isLoading = wasLoading;
+        return { success: false, added: 0, updated: 0 };
+      }
+
+      const result = { added: 0, updated: 0 };
+
+      if (options.merge && this.commentManager) {
+        // 로컬 댓글 데이터 수집
+        const localComments = this.commentManager.toJSON();
+
+        // 원격과 머지
+        if (remoteData.comments?.layers && localComments.layers) {
+          const mergeResult = mergeLayers(
+            localComments.layers,
+            remoteData.comments.layers
+          );
+
+          result.added = mergeResult.added;
+          result.updated = mergeResult.updated;
+
+          // 변경이 있으면 머지된 데이터 적용
+          if (mergeResult.added > 0 || mergeResult.updated > 0) {
+            // 댓글 매니저에 머지된 데이터 적용
+            this.commentManager.fromJSON({ layers: mergeResult.merged });
+
+            log.info('reloadAndMerge: 댓글 머지 완료', {
+              added: result.added,
+              updated: result.updated
+            });
+          }
+        }
+
+        // 드로잉 데이터 머지 (원격이 더 최신이면 적용)
+        if (remoteData.drawings && this.drawingManager) {
+          const localModified = new Date(this._modifiedAt || 0).getTime();
+          const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
+
+          if (remoteModified > localModified) {
+            this.drawingManager.importData(remoteData.drawings);
+            log.info('reloadAndMerge: 드로잉 데이터 업데이트됨');
+          }
+        }
+
+        // 하이라이트 데이터 (원격이 더 최신이면 적용)
+        if (remoteData.highlights && this.highlightManager) {
+          const localModified = new Date(this._modifiedAt || 0).getTime();
+          const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
+
+          if (remoteModified > localModified) {
+            this.highlightManager.fromJSON(remoteData.highlights);
+            log.info('reloadAndMerge: 하이라이트 데이터 업데이트됨');
+          }
+        }
+
+      } else {
+        // 덮어쓰기 모드: 원격 데이터로 전체 교체
+        this._applyData(remoteData);
+        log.info('reloadAndMerge: 데이터 덮어쓰기 완료');
+      }
+
+      this.isLoading = wasLoading;
+      this._emit('reloaded', {
+        merged: options.merge,
+        added: result.added,
+        updated: result.updated
+      });
+
+      return { success: true, ...result };
+
+    } catch (error) {
+      log.error('reloadAndMerge 실패', error);
+      this.isLoading = wasLoading;
+      this._emit('reloadError', { error });
+      return { success: false, added: 0, updated: 0 };
     }
   }
 
