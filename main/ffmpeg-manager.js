@@ -142,6 +142,14 @@ class FFmpegManager {
 
     log.info('H.264 인코더 감지 시작');
 
+    // 먼저 사용 가능한 H.264 인코더 목록 로깅
+    try {
+      const allEncoders = await this._listH264Encoders();
+      log.info('FFmpeg에서 발견된 H.264 인코더', { encoders: allEncoders });
+    } catch (e) {
+      log.warn('인코더 목록 조회 실패', { error: e.message });
+    }
+
     for (const encoder of H264_ENCODERS) {
       try {
         const isAvailable = await this._checkEncoderAvailable(encoder.name);
@@ -155,8 +163,37 @@ class FFmpegManager {
       }
     }
 
-    log.error('사용 가능한 H.264 인코더를 찾을 수 없습니다');
-    return null;
+    // 모든 감지 실패 시, libx264를 기본값으로 시도 (대부분의 FFmpeg 빌드에 포함)
+    log.warn('인코더 감지 실패, libx264를 기본값으로 시도합니다');
+    const fallbackEncoder = H264_ENCODERS[0]; // libx264
+    this.availableEncoder = fallbackEncoder;
+    return fallbackEncoder;
+  }
+
+  /**
+   * FFmpeg에서 사용 가능한 H.264 인코더 목록 조회
+   */
+  _listH264Encoders() {
+    return new Promise((resolve, reject) => {
+      execFile(this.ffmpegPath, ['-encoders'], { timeout: 10000, windowsHide: true }, (error, stdout) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        // h264 관련 인코더만 필터링
+        const lines = stdout.split('\n');
+        const h264Encoders = lines
+          .filter(line => /h264|x264|264/i.test(line) && line.trim().startsWith('V'))
+          .map(line => {
+            const match = line.match(/V[.\w]+\s+(\S+)/);
+            return match ? match[1] : null;
+          })
+          .filter(Boolean);
+
+        resolve(h264Encoders);
+      });
+    });
   }
 
   /**
@@ -164,43 +201,23 @@ class FFmpegManager {
    */
   _checkEncoderAvailable(encoderName) {
     return new Promise((resolve) => {
-      // ffmpeg -encoders 로 확인하는 것보다 실제 테스트가 더 정확
-      const args = [
-        '-f', 'lavfi',
-        '-i', 'nullsrc=s=16x16:d=0.1',
-        '-c:v', encoderName,
-        '-f', 'null',
-        '-'
-      ];
+      // ffmpeg -encoders 출력에서 인코더 확인
+      const args = ['-encoders'];
 
-      const testProcess = spawn(this.ffmpegPath, args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true
-      });
-
-      let resolved = false;
-      const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          testProcess.kill();
+      execFile(this.ffmpegPath, args, { timeout: 10000, windowsHide: true }, (error, stdout) => {
+        if (error) {
+          log.debug('인코더 목록 조회 실패', { error: error.message });
           resolve(false);
+          return;
         }
-      }, 5000);
 
-      testProcess.on('close', (code) => {
-        clearTimeout(timeout);
-        if (!resolved) {
-          resolved = true;
-          resolve(code === 0);
-        }
-      });
+        // 인코더 이름이 출력에 있는지 확인
+        // 형식: " V..... libx264" 또는 " V....D h264_mf"
+        const encoderPattern = new RegExp(`\\s${encoderName}\\s`, 'i');
+        const isAvailable = encoderPattern.test(stdout);
 
-      testProcess.on('error', () => {
-        clearTimeout(timeout);
-        if (!resolved) {
-          resolved = true;
-          resolve(false);
-        }
+        log.debug('인코더 확인', { encoderName, isAvailable });
+        resolve(isAvailable);
       });
     });
   }
