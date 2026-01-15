@@ -53,6 +53,7 @@ export class CommentMarker {
     this.text = options.text || '';
     this.author = options.author || '익명';
     this.createdAt = options.createdAt || new Date();
+    this.updatedAt = options.updatedAt || this.createdAt; // 수정 시간 (협업 머지용)
 
     // 첨부 이미지 (Base64)
     this.image = options.image || null;
@@ -139,6 +140,8 @@ export class CommentMarker {
     this.resolved = !this.resolved;
     // 해결됨으로 변경 시 시간 기록, 미해결로 변경 시 시간 초기화
     this.resolvedAt = this.resolved ? new Date() : null;
+    // 변경 시간 갱신 (협업 머지용)
+    this.updatedAt = new Date();
     return this.resolved;
   }
 
@@ -164,6 +167,7 @@ export class CommentMarker {
       text: this.text,
       author: this.author,
       createdAt: this.createdAt instanceof Date ? this.createdAt.toISOString() : this.createdAt,
+      updatedAt: this.updatedAt instanceof Date ? this.updatedAt.toISOString() : this.updatedAt,
       resolved: this.resolved,
       resolvedAt: this.resolvedAt instanceof Date ? this.resolvedAt.toISOString() : this.resolvedAt,
       layerId: this.layerId,
@@ -190,6 +194,7 @@ export class CommentMarker {
     return new CommentMarker({
       ...json,
       createdAt: new Date(json.createdAt),
+      updatedAt: json.updatedAt ? new Date(json.updatedAt) : new Date(json.createdAt),
       resolvedAt: json.resolvedAt ? new Date(json.resolvedAt) : null,
       replies: (json.replies || []).map(r => ({
         ...r,
@@ -522,11 +527,19 @@ export class CommentManager extends EventTarget {
 
     // 허용된 필드만 업데이트
     const allowedFields = ['text', 'startFrame', 'endFrame', 'resolved', 'x', 'y'];
+    let hasChanges = false;
+
     allowedFields.forEach(field => {
-      if (updates[field] !== undefined) {
+      if (updates[field] !== undefined && marker[field] !== updates[field]) {
         marker[field] = updates[field];
+        hasChanges = true;
       }
     });
+
+    // 변경이 있으면 updatedAt 갱신 (협업 머지용)
+    if (hasChanges) {
+      marker.updatedAt = new Date();
+    }
 
     this._emit('markerUpdated', { marker });
     this._emit('markersChanged');

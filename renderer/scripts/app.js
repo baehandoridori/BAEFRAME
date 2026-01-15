@@ -5798,10 +5798,15 @@ async function initApp() {
       const result = await reviewDataManager.reloadAndMerge({ merge: true });
 
       if (result.success) {
-        // 항상 UI 업데이트 (변경 감지 누락 방지)
+        // 타임라인/비디오 마커는 항상 업데이트
         renderVideoMarkers();
         updateTimelineMarkers();
-        updateCommentList();
+
+        // 댓글 수정 중이면 댓글 목록 업데이트 건너뛰기 (편집 폼 유지)
+        const isEditingComment = document.querySelector('.comment-edit-form[style*="display: block"]');
+        if (!isEditingComment) {
+          updateCommentList();
+        }
 
         if (result.added > 0 || result.updated > 0) {
           log.info('원격 변경사항 머지됨', { added: result.added, updated: result.updated });

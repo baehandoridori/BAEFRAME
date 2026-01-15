@@ -250,7 +250,8 @@ body {
 }
 
 .sync-status .sync-icon {
-  font-size: 12px;
+  width: 14px;
+  height: 14px;
 }
 
 .sync-status.syncing .sync-icon {
