@@ -1491,6 +1491,7 @@ export class Timeline extends EventTarget {
 
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
+      log.info('타임라인 마커 클릭됨 (단일)', { time, frame, markerInfos });
       this._emit('commentMarkerClick', { time, frame, markerInfos });
     });
 
@@ -1676,6 +1677,7 @@ export class Timeline extends EventTarget {
 
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
+      log.info('타임라인 마커 클릭됨 (클러스터)', { time, frame, markerInfos });
       this._emit('commentMarkerClick', { time, frame, markerInfos });
     });
 
