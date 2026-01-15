@@ -2146,8 +2146,7 @@ async function initApp() {
       bar.addEventListener('click', () => {
         const marker = commentManager.getMarker(comment.markerId);
         if (marker) {
-          const time = marker.startFrame / videoPlayer.fps;
-          videoPlayer.seek(time);
+          videoPlayer.seekToFrame(marker.startFrame);
         }
       });
 
@@ -2210,8 +2209,7 @@ async function initApp() {
         // 해당 프레임으로 이동
         const marker = commentManager.getMarker(markerId);
         if (marker) {
-          const time = marker.startFrame / videoPlayer.fps;
-          videoPlayer.seek(time);
+          videoPlayer.seekToFrame(marker.startFrame);
           videoPlayer.pause();
         }
 
@@ -3654,6 +3652,12 @@ async function initApp() {
       if (confirm('댓글을 삭제하시겠습니까?')) {
         const markerData = marker.toJSON();
         commentManager.deleteMarker(marker.id);
+
+        // UI 업데이트
+        updateCommentList();
+        updateTimelineMarkers();
+        renderVideoMarkers();
+
         // Undo 스택에 추가
         pushUndo({
           type: 'DELETE_COMMENT',
@@ -3662,13 +3666,13 @@ async function initApp() {
             commentManager.restoreMarker(markerData);
             updateCommentList();
             updateTimelineMarkers();
-            updateVideoMarkers();
+            renderVideoMarkers();
           },
           redo: () => {
             commentManager.deleteMarker(markerData.id);
             updateCommentList();
             updateTimelineMarkers();
-            updateVideoMarkers();
+            renderVideoMarkers();
           }
         });
         showToast('댓글이 삭제되었습니다.', 'info');
@@ -3949,8 +3953,7 @@ async function initApp() {
       item.addEventListener('click', (e) => {
         if (e.target.closest('.comment-action-btn')) return;
         const frame = parseInt(item.dataset.startFrame);
-        const time = frame / videoPlayer.fps;
-        videoPlayer.seek(time);
+        videoPlayer.seekToFrame(frame);
         container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
       });
@@ -3978,6 +3981,12 @@ async function initApp() {
           if (marker) {
             const markerData = marker.toJSON();
             commentManager.deleteMarker(markerId);
+
+            // UI 업데이트
+            updateCommentList();
+            updateTimelineMarkers();
+            renderVideoMarkers();
+
             // Undo 스택에 추가
             pushUndo({
               type: 'DELETE_COMMENT',
@@ -3986,13 +3995,13 @@ async function initApp() {
                 commentManager.restoreMarker(markerData);
                 updateCommentList();
                 updateTimelineMarkers();
-                updateVideoMarkers();
+                renderVideoMarkers();
               },
               redo: () => {
                 commentManager.deleteMarker(markerData.id);
                 updateCommentList();
                 updateTimelineMarkers();
-                updateVideoMarkers();
+                renderVideoMarkers();
               }
             });
             showToast('댓글이 삭제되었습니다.', 'info');
@@ -4050,17 +4059,18 @@ async function initApp() {
                 updateCommentList();
               }
             });
+
+            // 수정 후 UI 업데이트
+            updateCommentList();
+            renderVideoMarkers();
+            updateTimelineMarkers();
+
             showToast('댓글이 수정되었습니다.', 'success');
           }
         }
 
         // 편집 잠금 해제
         await collaborationManager.stopEditing(markerId);
-
-        // UI 복원
-        contentEl.style.display = 'block';
-        actionsEl.style.display = 'flex';
-        editFormEl.style.display = 'none';
       });
 
       // 수정 취소

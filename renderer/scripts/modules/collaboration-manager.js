@@ -619,6 +619,7 @@ export function mergeComments(localComments, remoteComments) {
   const conflicts = [];
   let added = 0;
   let updated = 0;
+  let deleted = 0;
 
   // 모든 ID 수집
   const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
@@ -628,14 +629,16 @@ export function mergeComments(localComments, remoteComments) {
     const remote = remoteMap.get(id);
 
     if (!local && remote) {
-      // 원격에만 있음 → 추가
+      // 원격에만 있음 → 추가 (삭제된 마커도 포함)
       merged.push(remote);
-      added++;
+      if (!remote.deleted) {
+        added++;
+      }
     } else if (local && !remote) {
       // 로컬에만 있음 → 유지
       merged.push(local);
     } else if (local && remote) {
-      // 둘 다 있음 → 비교
+      // 둘 다 있음 → updatedAt 비교로 최신 버전 선택
       const localTime = new Date(local.updatedAt || local.createdAt).getTime();
       const remoteTime = new Date(remote.updatedAt || remote.createdAt).getTime();
 
@@ -645,7 +648,12 @@ export function mergeComments(localComments, remoteComments) {
       } else if (remoteTime > localTime) {
         // 원격이 더 최신 → 원격 사용
         merged.push(remote);
-        updated++;
+        // 삭제 상태 변경 추적
+        if (remote.deleted && !local.deleted) {
+          deleted++;
+        } else if (!remote.deleted) {
+          updated++;
+        }
       } else {
         // 로컬이 더 최신 → 로컬 유지
         merged.push(local);
@@ -653,7 +661,7 @@ export function mergeComments(localComments, remoteComments) {
     }
   }
 
-  return { merged, conflicts, added, updated };
+  return { merged, conflicts, added, updated, deleted };
 }
 
 /**

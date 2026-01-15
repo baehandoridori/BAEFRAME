@@ -64,6 +64,8 @@ export class CommentMarker {
     this.resolved = options.resolved || false;
     this.resolvedAt = options.resolvedAt ? new Date(options.resolvedAt) : null; // 해결된 시간
     this.pinned = options.pinned || false; // 말풍선 고정 상태
+    this.deleted = options.deleted || false; // 삭제됨 (협업 동기화용)
+    this.deletedAt = options.deletedAt ? new Date(options.deletedAt) : null; // 삭제 시간
 
     // 레이어
     this.layerId = options.layerId || 'comment-layer-1';
@@ -170,6 +172,8 @@ export class CommentMarker {
       updatedAt: this.updatedAt instanceof Date ? this.updatedAt.toISOString() : this.updatedAt,
       resolved: this.resolved,
       resolvedAt: this.resolvedAt instanceof Date ? this.resolvedAt.toISOString() : this.resolvedAt,
+      deleted: this.deleted,
+      deletedAt: this.deletedAt instanceof Date ? this.deletedAt.toISOString() : this.deletedAt,
       layerId: this.layerId,
       replies: this.replies.map(r => ({
         ...r,
@@ -196,6 +200,7 @@ export class CommentMarker {
       createdAt: new Date(json.createdAt),
       updatedAt: json.updatedAt ? new Date(json.updatedAt) : new Date(json.createdAt),
       resolvedAt: json.resolvedAt ? new Date(json.resolvedAt) : null,
+      deletedAt: json.deletedAt ? new Date(json.deletedAt) : null,
       replies: (json.replies || []).map(r => ({
         ...r,
         createdAt: new Date(r.createdAt)
@@ -230,8 +235,9 @@ export class CommentLayer {
     return this.markers.get(markerId);
   }
 
-  getAllMarkers() {
-    return Array.from(this.markers.values());
+  getAllMarkers(includeDeleted = false) {
+    const markers = Array.from(this.markers.values());
+    return includeDeleted ? markers : markers.filter(m => !m.deleted);
   }
 
   getMarkersAtFrame(frame) {
@@ -488,14 +494,29 @@ export class CommentManager extends EventTarget {
   }
 
   /**
-   * 마커 삭제
+   * 마커 삭제 (soft delete - 협업 동기화용)
    */
   deleteMarker(markerId) {
+    const marker = this.getMarker(markerId);
+    if (marker) {
+      marker.deleted = true;
+      marker.deletedAt = new Date();
+      marker.updatedAt = new Date(); // 머지 비교용
+      log.info('마커 삭제됨 (soft delete)', { id: markerId });
+      this._emit('markerDeleted', { markerId });
+      this._emit('markersChanged');
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 마커 완전 삭제 (Map에서 제거)
+   */
+  hardDeleteMarker(markerId) {
     for (const layer of this.layers) {
       if (layer.removeMarker(markerId)) {
-        log.info('마커 삭제됨', { id: markerId });
-        this._emit('markerDeleted', { markerId });
-        this._emit('markersChanged');
+        log.info('마커 완전 삭제됨', { id: markerId });
         return true;
       }
     }
@@ -776,7 +797,8 @@ export class CommentManager extends EventTarget {
         color: layer.color,
         visible: layer.visible,
         locked: layer.locked,
-        markers: layer.getAllMarkers().map(m => m.toJSON())
+        // 삭제된 마커도 포함 (협업 동기화용)
+        markers: layer.getAllMarkers(true).map(m => m.toJSON())
       }))
     };
   }
