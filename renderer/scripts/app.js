@@ -2957,6 +2957,12 @@ async function initApp() {
       const userName = userSettings.userName || '익명';
       await collaborationManager.start(reviewDataManager.currentBframePath, userName);
 
+      // ====== 파일 감시 시작 (실시간 동기화) ======
+      if (reviewDataManager.currentBframePath) {
+        await window.electronAPI.watchFileStart(reviewDataManager.currentBframePath);
+        log.info('파일 감시 시작됨', { path: reviewDataManager.currentBframePath });
+      }
+
       // 마커 및 그리기 렌더링 업데이트 (항상 실행)
       renderVideoMarkers();
       updateTimelineMarkers();
@@ -5838,6 +5844,45 @@ async function initApp() {
       return;
     }
     await collaborationManager.syncNow();
+  });
+
+  // ====== 파일 변경 감지 (실시간 동기화) ======
+  // 다른 사용자가 저장하면 즉시 동기화
+  let lastSyncTime = 0;
+  const MIN_SYNC_INTERVAL = 500; // 최소 500ms 간격
+
+  window.electronAPI.onFileChanged(async ({ filePath }) => {
+    // 현재 열린 파일이 아니면 무시
+    if (filePath !== reviewDataManager.currentBframePath) return;
+
+    // 너무 빠른 연속 호출 방지
+    const now = Date.now();
+    if (now - lastSyncTime < MIN_SYNC_INTERVAL) return;
+    lastSyncTime = now;
+
+    log.info('파일 변경 감지됨, 즉시 동기화', { filePath });
+
+    try {
+      // ReviewDataManager의 reloadAndMerge 사용
+      const result = await reviewDataManager.reloadAndMerge({ merge: true });
+
+      if (result.success) {
+        renderVideoMarkers();
+        updateTimelineMarkers();
+
+        // 편집 중이 아닐 때만 댓글 목록 업데이트
+        const isEditingComment = document.querySelector('.comment-edit-form[style*="display: block"]');
+        if (!isEditingComment) {
+          updateCommentList();
+        }
+
+        if (result.added > 0 || result.updated > 0) {
+          showToast(`동기화 완료 (${result.added > 0 ? `추가 ${result.added}` : ''}${result.updated > 0 ? ` 수정 ${result.updated}` : ''})`, 'info');
+        }
+      }
+    } catch (error) {
+      log.warn('파일 변경 동기화 실패', { error: error.message });
+    }
   });
 
   log.info('앱 초기화 완료');

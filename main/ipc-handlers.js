@@ -143,6 +143,91 @@ function setupIpcHandlers() {
     }
   });
 
+  // ====== 파일 감시 (File Watching) ======
+  // 파일 변경 시 즉시 동기화를 위한 기능
+
+  const fileWatchers = new Map(); // filePath -> watcher
+  let watchDebounceTimers = new Map(); // filePath -> timer
+
+  // 파일 감시 시작
+  ipcMain.handle('file:watch-start', async (event, filePath) => {
+    try {
+      // 이미 감시 중이면 무시
+      if (fileWatchers.has(filePath)) {
+        return { success: true, alreadyWatching: true };
+      }
+
+      const watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
+        // 디바운스 (같은 파일의 연속 이벤트 방지)
+        if (watchDebounceTimers.has(filePath)) {
+          clearTimeout(watchDebounceTimers.get(filePath));
+        }
+
+        const timer = setTimeout(() => {
+          watchDebounceTimers.delete(filePath);
+
+          // 렌더러에 파일 변경 알림
+          const mainWindow = getMainWindow();
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('file:changed', {
+              filePath,
+              eventType
+            });
+            log.info('파일 변경 감지됨', { filePath, eventType });
+          }
+        }, 300); // 300ms 디바운스
+
+        watchDebounceTimers.set(filePath, timer);
+      });
+
+      watcher.on('error', (error) => {
+        log.warn('파일 감시 에러', { filePath, error: error.message });
+        fileWatchers.delete(filePath);
+      });
+
+      fileWatchers.set(filePath, watcher);
+      log.info('파일 감시 시작', { filePath });
+      return { success: true };
+    } catch (error) {
+      log.error('파일 감시 시작 실패', { filePath, error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 파일 감시 중지
+  ipcMain.handle('file:watch-stop', async (event, filePath) => {
+    try {
+      const watcher = fileWatchers.get(filePath);
+      if (watcher) {
+        watcher.close();
+        fileWatchers.delete(filePath);
+        log.info('파일 감시 중지', { filePath });
+      }
+
+      // 타이머도 정리
+      if (watchDebounceTimers.has(filePath)) {
+        clearTimeout(watchDebounceTimers.get(filePath));
+        watchDebounceTimers.delete(filePath);
+      }
+
+      return { success: true };
+    } catch (error) {
+      log.error('파일 감시 중지 실패', { filePath, error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 모든 파일 감시 중지 (앱 종료 시)
+  ipcMain.handle('file:watch-stop-all', async () => {
+    for (const [filePath, watcher] of fileWatchers) {
+      watcher.close();
+      log.info('파일 감시 중지', { filePath });
+    }
+    fileWatchers.clear();
+    watchDebounceTimers.clear();
+    return { success: true };
+  });
+
   // 버전 파일 스캔 (같은 폴더에서 같은 시리즈의 버전 파일들을 찾음)
   ipcMain.handle('file:scan-versions', async (event, filePath) => {
     const trace = log.trace('file:scan-versions');

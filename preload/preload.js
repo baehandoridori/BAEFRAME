@@ -90,6 +90,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeCollabFile: (filePath, data) => ipcRenderer.invoke('collab:write', filePath, data),
   getFileStats: (filePath) => ipcRenderer.invoke('file:get-stats', filePath),
 
+  // ====== 파일 감시 (실시간 동기화) ======
+  watchFileStart: (filePath) => ipcRenderer.invoke('file:watch-start', filePath),
+  watchFileStop: (filePath) => ipcRenderer.invoke('file:watch-stop', filePath),
+  watchFileStopAll: () => ipcRenderer.invoke('file:watch-stop-all'),
+
   // ====== 이벤트 리스너 ======
   onOpenFromProtocol: (callback) => {
     ipcRenderer.on('open-from-protocol', (event, arg) => callback(arg));
@@ -99,6 +104,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onTranscodeProgress: (callback) => {
     ipcRenderer.on('ffmpeg:transcode-progress', (event, data) => callback(data));
+  },
+  onFileChanged: (callback) => {
+    ipcRenderer.on('file:changed', (event, data) => callback(data));
   },
 
   // 이벤트 리스너 제거
