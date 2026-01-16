@@ -653,20 +653,15 @@ body {
   box-shadow: 0 0 4px var(--accent-primary);
 }
 
-/* 전체화면에서도 표시 */
+/* 전체화면에서 댓글 오버레이 숨기기 */
 body.app-fullscreen .video-comment-range-overlay {
-  bottom: 60px;
+  display: none !important;
 }
 
 /* 상단 위치 */
 .video-comment-range-overlay.position-top {
   bottom: auto;
   top: 8px;
-}
-
-body.app-fullscreen .video-comment-range-overlay.position-top {
-  top: 60px;
-  bottom: auto;
 }
 
 /* 숨김 상태 */
@@ -726,10 +721,9 @@ body.app-fullscreen .video-comment-range-overlay.position-top {
   height: 20px;
 }
 
-/* 전체화면에서 컨트롤 위치 조정 */
+/* 전체화면에서 오버레이 컨트롤 숨기기 */
 body.app-fullscreen .video-comment-overlay-controls {
-  bottom: 100px;
-  left: 16px;
+  display: none !important;
 }
 
 /* Drawing Tools - 이동/접기 가능한 플로팅 패널 */
@@ -5869,6 +5863,19 @@ body.app-fullscreen .viewer-container {
 
 body.app-fullscreen .video-wrapper {
   height: 100vh;
+}
+
+/* 전체화면에서 댓글 마커 숨기기 */
+body.app-fullscreen .comment-markers-container {
+  display: none !important;
+}
+
+/* 전체화면에서 비디오 꽉 채우기 */
+body.app-fullscreen video,
+body.app-fullscreen #mpvContainer {
+  width: 100vw !important;
+  height: 100vh !important;
+  object-fit: contain;
 }
 
 /* 전체화면 타임코드 오버레이 */

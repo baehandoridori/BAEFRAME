@@ -4713,18 +4713,17 @@ async function initApp() {
         }
         // 드로잉 모드에서 브러시 도구로 전환
         drawingManager.setTool(DrawingTool.BRUSH);
-        showToast('브러시 도구', 'info');
         break;
       }
-      // E: 지우개 모드 (드로잉 모드에서만)
+      // E: 지우개 모드 (드로잉 모드에서만 작동)
       if (e.code === 'KeyE') {
-        e.preventDefault();
+        // 드로잉 모드가 아니면 무시
         if (!state.isDrawMode) {
-          toggleDrawMode();
+          break;
         }
+        e.preventDefault();
         // 드로잉 모드에서 지우개 도구로 전환
         drawingManager.setTool(DrawingTool.ERASER);
-        showToast('지우개 도구', 'info');
         break;
       }
       // V: 선택 모드 (드로잉 모드 끄기)
