@@ -4711,8 +4711,11 @@ async function initApp() {
         if (!state.isDrawMode) {
           toggleDrawMode();
         }
-        // 드로잉 모드에서 브러시 도구로 전환
-        drawingManager.setTool(DrawingTool.BRUSH);
+        // 브러시 버튼 클릭으로 UI와 도구 함께 전환
+        const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
+        if (brushBtn) {
+          brushBtn.click();
+        }
         break;
       }
       // E: 지우개 모드 (드로잉 모드에서만 작동)
@@ -4722,8 +4725,11 @@ async function initApp() {
           break;
         }
         e.preventDefault();
-        // 드로잉 모드에서 지우개 도구로 전환
-        drawingManager.setTool(DrawingTool.ERASER);
+        // 지우개 버튼 클릭으로 UI와 도구 함께 전환
+        const eraserBtn = document.querySelector('.tool-btn[data-tool="eraser"]');
+        if (eraserBtn) {
+          eraserBtn.click();
+        }
         break;
       }
       // V: 선택 모드 (드로잉 모드 끄기)
