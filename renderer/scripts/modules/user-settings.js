@@ -16,14 +16,16 @@ const DEFAULT_SHORTCUTS = {
   playPause: { key: 'Space', ctrl: false, shift: false, alt: false, label: '재생/일시정지' },
   prevFrame: { key: 'ArrowLeft', ctrl: false, shift: false, alt: false, label: '이전 프레임' },
   nextFrame: { key: 'ArrowRight', ctrl: false, shift: false, alt: false, label: '다음 프레임' },
-  prevFrameFast: { key: 'ArrowLeft', ctrl: false, shift: true, alt: false, label: '10프레임 뒤로' },
-  nextFrameFast: { key: 'ArrowRight', ctrl: false, shift: true, alt: false, label: '10프레임 앞으로' },
+  prevFrameFast: { key: 'ArrowLeft', ctrl: false, shift: true, alt: false, label: '프레임 빨리 뒤로' },
+  nextFrameFast: { key: 'ArrowRight', ctrl: false, shift: true, alt: false, label: '프레임 빨리 앞으로' },
+  prevSecond: { key: 'ArrowLeft', ctrl: true, shift: false, alt: false, label: '초 단위 뒤로' },
+  nextSecond: { key: 'ArrowRight', ctrl: true, shift: false, alt: false, label: '초 단위 앞으로' },
   goToStart: { key: 'Home', ctrl: false, shift: false, alt: false, label: '처음으로' },
   goToEnd: { key: 'End', ctrl: false, shift: false, alt: false, label: '끝으로' },
 
   // 모드 관련
   commentMode: { key: 'KeyC', ctrl: false, shift: false, alt: false, label: '댓글 모드' },
-  drawMode: { key: 'KeyD', ctrl: false, shift: false, alt: false, label: '그리기 모드' },
+  drawMode: { key: 'KeyB', ctrl: false, shift: false, alt: false, label: '그리기 모드' },
   fullscreen: { key: 'KeyF', ctrl: false, shift: false, alt: false, label: '전체화면' },
 
   // 구간 반복
@@ -145,7 +147,10 @@ export class UserSettings extends EventTarget {
       // 최초 이름 설정 여부 (모달 한 번만 표시)
       hasSetNameOnce: false,
       // 사용자 정의 단축키 (기본값 위에 덮어씀)
-      customShortcuts: {}
+      customShortcuts: {},
+      // 프레임/초 이동 설정
+      frameSkipAmount: 10, // Shift+화살표로 이동할 프레임 수
+      secondSkipAmount: 1  // Ctrl+화살표로 이동할 초 수
     };
 
     this._ready = false;
@@ -642,6 +647,44 @@ export class UserSettings extends EventTarget {
     this._save();
     this._emit('commentThumbnailScaleChanged', { scale: clampedScale });
     log.info('댓글 썸네일 스케일 변경됨', { scale: clampedScale });
+  }
+
+  // ====== 프레임/초 이동 설정 ======
+
+  /**
+   * 프레임 빠른 이동량 가져오기 (기본값: 10)
+   */
+  getFrameSkipAmount() {
+    return this.settings.frameSkipAmount ?? 10;
+  }
+
+  /**
+   * 프레임 빠른 이동량 설정 (1 ~ 100)
+   */
+  setFrameSkipAmount(amount) {
+    const clampedAmount = Math.max(1, Math.min(100, Math.round(amount)));
+    this.settings.frameSkipAmount = clampedAmount;
+    this._save();
+    this._emit('frameSkipAmountChanged', { amount: clampedAmount });
+    log.info('프레임 이동량 변경됨', { amount: clampedAmount });
+  }
+
+  /**
+   * 초 단위 이동량 가져오기 (기본값: 1)
+   */
+  getSecondSkipAmount() {
+    return this.settings.secondSkipAmount ?? 1;
+  }
+
+  /**
+   * 초 단위 이동량 설정 (0.1 ~ 10)
+   */
+  setSecondSkipAmount(amount) {
+    const clampedAmount = Math.max(0.1, Math.min(10, amount));
+    this.settings.secondSkipAmount = clampedAmount;
+    this._save();
+    this._emit('secondSkipAmountChanged', { amount: clampedAmount });
+    log.info('초 이동량 변경됨', { amount: clampedAmount });
   }
 
   /**

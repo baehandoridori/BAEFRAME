@@ -17,8 +17,19 @@
         <span>baeframe</span>
       </div>
       <div class="file-info" id="fileInfo">
-        <span class="file-icon">🎬</span>
-        <span class="file-name" id="fileName">파일을 열어주세요</span>
+        <span class="file-icon">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>
+            <line x1="7" y1="2" x2="7" y2="22"/>
+            <line x1="17" y1="2" x2="17" y2="22"/>
+            <line x1="2" y1="12" x2="22" y2="12"/>
+            <line x1="2" y1="7" x2="7" y2="7"/>
+            <line x1="2" y1="17" x2="7" y2="17"/>
+            <line x1="17" y1="7" x2="22" y2="7"/>
+            <line x1="17" y1="17" x2="22" y2="17"/>
+          </svg>
+        </span>
+        <span class="file-name file-name-clickable" id="fileName">파일을 열어주세요</span>
         <span class="file-path" id="filePath"></span>
         <!-- Version Dropdown -->
         <div class="version-dropdown" id="versionDropdown" style="display: none;">
@@ -81,19 +92,32 @@
         </div>
       </div>
       <button class="btn btn-secondary" id="btnOpenFolder" title="폴더 열기 (탐색기에서 보기)" style="display: none;">
-        <span>📂</span>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
         폴더 열기
       </button>
       <button class="btn btn-secondary" id="btnOpenOther" title="다른 영상 파일 열기" style="display: none;">
-        <span>🎬</span>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <polygon points="10 12 10 18 15 15 10 12"/>
+        </svg>
         다른 파일
       </button>
       <button class="btn btn-secondary" id="btnSave">
-        <span>💾</span>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+          <polyline points="17 21 17 13 7 13 7 21"/>
+          <polyline points="7 3 7 8 15 8"/>
+        </svg>
         저장
       </button>
       <button class="btn btn-primary" id="btnCopyLink">
-        <span>🔗</span>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
         링크 복사
       </button>
     </div>
@@ -110,11 +134,24 @@
           <div class="drop-zone" id="dropZone">
             <div class="drop-zone-content">
               <img class="drop-zone-logo" src="assets/logo/baeframe.png" alt="BAEFRAME" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-              <div class="drop-zone-icon" style="display: none;">🎬</div>
+              <div class="drop-zone-icon" style="display: none;">
+                <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>
+                  <line x1="7" y1="2" x2="7" y2="22"/>
+                  <line x1="17" y1="2" x2="17" y2="22"/>
+                  <line x1="2" y1="12" x2="22" y2="12"/>
+                  <line x1="2" y1="7" x2="7" y2="7"/>
+                  <line x1="2" y1="17" x2="7" y2="17"/>
+                  <line x1="17" y1="7" x2="22" y2="7"/>
+                  <line x1="17" y1="17" x2="22" y2="17"/>
+                </svg>
+              </div>
               <div class="drop-zone-text">영상 파일을 여기에 드롭하세요</div>
               <div class="drop-zone-hint">MOV, MP4, H.264/265 지원</div>
-              <button class="btn btn-primary" id="btnOpenFile" style="margin-top: 16px;">
-                <span>🎬</span>
+              <button class="btn btn-primary btn-large" id="btnOpenFile">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
                 영상 열기
               </button>
             </div>
@@ -731,8 +768,12 @@
           <div class="shortcut-keys"><span class="shortcut-key">←</span><span class="shortcut-key">→</span></div>
         </div>
         <div class="shortcut-row">
-          <span class="shortcut-label">1초 이동</span>
+          <span class="shortcut-label">10프레임 이동</span>
           <div class="shortcut-keys"><span class="shortcut-key">Shift</span><span class="shortcut-key">←→</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">1초 이동</span>
+          <div class="shortcut-keys"><span class="shortcut-key">Ctrl</span><span class="shortcut-key">←→</span></div>
         </div>
         <div class="shortcut-row">
           <span class="shortcut-label">처음/끝으로</span>
@@ -744,19 +785,19 @@
       <div class="shortcut-category">
         <div class="shortcut-category-title">도구</div>
         <div class="shortcut-row">
-          <span class="shortcut-label">그리기 모드</span>
-          <div class="shortcut-keys"><span class="shortcut-key" id="hintDrawMode">D</span></div>
+          <span class="shortcut-label">그리기 모드 / 브러시</span>
+          <div class="shortcut-keys"><span class="shortcut-key" id="hintDrawMode">B</span></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-label">지우개 모드</span>
+          <div class="shortcut-keys"><span class="shortcut-key">E</span></div>
         </div>
         <div class="shortcut-row">
           <span class="shortcut-label">댓글 추가</span>
           <div class="shortcut-keys"><span class="shortcut-key" id="hintCommentMode">C</span></div>
         </div>
         <div class="shortcut-row">
-          <span class="shortcut-label">브러시 모드</span>
-          <div class="shortcut-keys"><span class="shortcut-key">B</span></div>
-        </div>
-        <div class="shortcut-row">
-          <span class="shortcut-label">선택 모드</span>
+          <span class="shortcut-label">선택 모드 (그리기 종료)</span>
           <div class="shortcut-keys"><span class="shortcut-key">V</span></div>
         </div>
       </div>
@@ -868,6 +909,24 @@
         <button class="modal-close" id="closeShortcutSettings">&times;</button>
       </div>
       <div class="modal-body">
+        <!-- 프레임/초 이동 설정 -->
+        <div class="skip-settings-section">
+          <div class="skip-settings-title">이동량 설정</div>
+          <div class="skip-settings-row">
+            <label for="frameSkipInput">Shift+화살표 이동 프레임 수</label>
+            <div class="skip-input-group">
+              <input type="number" id="frameSkipInput" min="1" max="100" value="10">
+              <span class="skip-unit">프레임</span>
+            </div>
+          </div>
+          <div class="skip-settings-row">
+            <label for="secondSkipInput">Ctrl+화살표 이동 초</label>
+            <div class="skip-input-group">
+              <input type="number" id="secondSkipInput" min="0.1" max="10" step="0.1" value="1">
+              <span class="skip-unit">초</span>
+            </div>
+          </div>
+        </div>
         <div class="shortcut-list" id="shortcutList">
           <!-- JS에서 렌더링 -->
         </div>

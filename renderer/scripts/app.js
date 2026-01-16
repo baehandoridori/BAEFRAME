@@ -727,6 +727,23 @@ async function initApp() {
     }
   });
 
+  // "파일을 열어주세요" 텍스트 클릭 시 파일 열기
+  elements.fileName?.addEventListener('click', async () => {
+    // 파일이 로드된 상태면 무시 (클릭 가능한 상태일 때만)
+    if (!elements.fileName.classList.contains('file-name-clickable')) return;
+
+    log.info('파일명 텍스트 클릭 - 파일 열기');
+    try {
+      const result = await window.electronAPI.openFileDialog();
+      if (!result.canceled && result.filePaths.length > 0) {
+        await loadVideo(result.filePaths[0]);
+      }
+    } catch (error) {
+      log.error('파일 열기 실패', error);
+      showToast('파일을 열 수 없습니다.', 'error');
+    }
+  });
+
   // 드래그 앤 드롭
   elements.dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -2896,6 +2913,7 @@ async function initApp() {
       // 원본 파일 경로 저장 (UI/메타데이터용)
       state.currentFile = filePath;
       elements.fileName.textContent = fileInfo.name;
+      elements.fileName.classList.remove('file-name-clickable'); // 파일 로드 후 클릭 가능 상태 제거
       elements.filePath.textContent = fileInfo.dir;
       elements.dropZone.classList.add('hidden');
 
@@ -4556,16 +4574,21 @@ async function initApp() {
     switch (e.code) {
     case 'ArrowLeft':
       e.preventDefault();
-      if (e.shiftKey) {
-        // Shift+←: 이전 댓글로 이동
-        const prevCommentFrame = commentManager.getPrevMarkerFrame(videoPlayer.currentFrame || 0);
-        if (prevCommentFrame !== null) {
-          videoPlayer.seekToFrame(prevCommentFrame);
-          timeline.scrollToPlayhead();
-          log.info('이전 댓글로 이동 (단축키)', { frame: prevCommentFrame });
-        } else {
-          showToast('이전 댓글이 없습니다', 'info');
-        }
+      if (e.ctrlKey) {
+        // Ctrl+←: 초 단위 뒤로 이동
+        const secondAmount = userSettings.getSecondSkipAmount();
+        const newTime = Math.max(0, (videoPlayer.currentTime || 0) - secondAmount);
+        videoPlayer.seek(newTime);
+        timeline.scrollToPlayhead();
+        log.info('초 단위 뒤로 이동 (단축키)', { seconds: secondAmount, newTime });
+      } else if (e.shiftKey) {
+        // Shift+←: 프레임 빨리 뒤로 이동
+        const frameAmount = userSettings.getFrameSkipAmount();
+        const currentFrame = videoPlayer.currentFrame || 0;
+        const newFrame = Math.max(0, currentFrame - frameAmount);
+        videoPlayer.seekToFrame(newFrame);
+        timeline.scrollToPlayhead();
+        log.info('프레임 빨리 뒤로 이동 (단축키)', { frames: frameAmount, newFrame });
       } else if (e.altKey) {
         // Alt+←: 이전 하이라이트로 이동
         const prevHighlightTime = highlightManager.getPrevHighlightTime(videoPlayer.currentTime || 0);
@@ -4583,16 +4606,23 @@ async function initApp() {
 
     case 'ArrowRight':
       e.preventDefault();
-      if (e.shiftKey) {
-        // Shift+→: 다음 댓글로 이동
-        const nextCommentFrame = commentManager.getNextMarkerFrame(videoPlayer.currentFrame || 0);
-        if (nextCommentFrame !== null) {
-          videoPlayer.seekToFrame(nextCommentFrame);
-          timeline.scrollToPlayhead();
-          log.info('다음 댓글로 이동 (단축키)', { frame: nextCommentFrame });
-        } else {
-          showToast('다음 댓글이 없습니다', 'info');
-        }
+      if (e.ctrlKey) {
+        // Ctrl+→: 초 단위 앞으로 이동
+        const secondAmount = userSettings.getSecondSkipAmount();
+        const duration = videoPlayer.duration || 0;
+        const newTime = Math.min(duration, (videoPlayer.currentTime || 0) + secondAmount);
+        videoPlayer.seek(newTime);
+        timeline.scrollToPlayhead();
+        log.info('초 단위 앞으로 이동 (단축키)', { seconds: secondAmount, newTime });
+      } else if (e.shiftKey) {
+        // Shift+→: 프레임 빨리 앞으로 이동
+        const frameAmount = userSettings.getFrameSkipAmount();
+        const currentFrame = videoPlayer.currentFrame || 0;
+        const totalFrames = videoPlayer.totalFrames || 0;
+        const newFrame = Math.min(totalFrames - 1, currentFrame + frameAmount);
+        videoPlayer.seekToFrame(newFrame);
+        timeline.scrollToPlayhead();
+        log.info('프레임 빨리 앞으로 이동 (단축키)', { frames: frameAmount, newFrame });
       } else if (e.altKey) {
         // Alt+→: 다음 하이라이트로 이동
         const nextHighlightTime = highlightManager.getNextHighlightTime(videoPlayer.currentTime || 0);
@@ -4675,12 +4705,26 @@ async function initApp() {
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
         break;
       }
-      // B: 브러시 모드 (드로잉 모드 켜기)
+      // B: 브러시 모드 (드로잉 모드 켜기 + 브러시 도구)
       if (e.code === 'KeyB') {
         e.preventDefault();
         if (!state.isDrawMode) {
           toggleDrawMode();
         }
+        // 드로잉 모드에서 브러시 도구로 전환
+        drawingManager.setTool(DrawingTool.BRUSH);
+        showToast('브러시 도구', 'info');
+        break;
+      }
+      // E: 지우개 모드 (드로잉 모드에서만)
+      if (e.code === 'KeyE') {
+        e.preventDefault();
+        if (!state.isDrawMode) {
+          toggleDrawMode();
+        }
+        // 드로잉 모드에서 지우개 도구로 전환
+        drawingManager.setTool(DrawingTool.ERASER);
+        showToast('지우개 도구', 'info');
         break;
       }
       // V: 선택 모드 (드로잉 모드 끄기)
@@ -5543,9 +5587,41 @@ async function initApp() {
     showToast('단축키가 변경되었습니다.', 'success');
   }
 
+  // 프레임/초 이동 설정 요소
+  const frameSkipInput = document.getElementById('frameSkipInput');
+  const secondSkipInput = document.getElementById('secondSkipInput');
+
+  // 프레임/초 이동 설정 로드
+  function loadSkipSettings() {
+    if (frameSkipInput) {
+      frameSkipInput.value = userSettings.getFrameSkipAmount();
+    }
+    if (secondSkipInput) {
+      secondSkipInput.value = userSettings.getSecondSkipAmount();
+    }
+  }
+
+  // 프레임/초 이동 설정 이벤트 리스너
+  frameSkipInput?.addEventListener('change', () => {
+    const value = parseInt(frameSkipInput.value, 10);
+    if (!isNaN(value) && value >= 1 && value <= 100) {
+      userSettings.setFrameSkipAmount(value);
+      showToast(`프레임 이동량: ${value}프레임`, 'info');
+    }
+  });
+
+  secondSkipInput?.addEventListener('change', () => {
+    const value = parseFloat(secondSkipInput.value);
+    if (!isNaN(value) && value >= 0.1 && value <= 10) {
+      userSettings.setSecondSkipAmount(value);
+      showToast(`초 이동량: ${value}초`, 'info');
+    }
+  });
+
   // 단축키 설정 모달 열기
   function openShortcutSettingsModal() {
     renderShortcutList();
+    loadSkipSettings();
     shortcutSettingsModal?.classList.add('active');
   }
 

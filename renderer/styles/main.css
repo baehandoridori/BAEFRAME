@@ -140,11 +140,28 @@ body {
 
 .file-icon {
   color: var(--accent-primary);
+  display: flex;
+  align-items: center;
+}
+
+.file-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .file-name {
   color: var(--text-primary);
   font-weight: 500;
+}
+
+/* 클릭 가능한 파일명 (파일 없을 때) */
+.file-name-clickable {
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.file-name-clickable:hover {
+  color: var(--accent-primary);
 }
 
 .file-path {
@@ -308,6 +325,24 @@ body {
 .btn-primary:hover {
   background: var(--accent-secondary);
   box-shadow: var(--shadow-glow);
+}
+
+/* 큰 버튼 (시작화면용) */
+.btn-large {
+  padding: 14px 28px;
+  font-size: 16px;
+  border-radius: 10px;
+  margin-top: 20px;
+}
+
+.btn-large svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* 버튼 내 SVG 아이콘 스타일 */
+.btn svg {
+  flex-shrink: 0;
 }
 
 /* 아이콘 전용 버튼 */
@@ -4166,6 +4201,62 @@ body.resizing .comment-panel {
 .modal-content.modal-lg .modal-body {
   overflow-y: auto;
   flex: 1;
+}
+
+/* 프레임/초 이동 설정 */
+.skip-settings-section {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border-subtle);
+}
+
+.skip-settings-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  margin-bottom: 12px;
+}
+
+.skip-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+
+.skip-settings-row label {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.skip-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skip-input-group input[type="number"] {
+  width: 70px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.skip-input-group input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.skip-unit {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  min-width: 40px;
 }
 
 /* 단축키 설정 리스트 */
