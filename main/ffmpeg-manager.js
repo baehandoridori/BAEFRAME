@@ -627,12 +627,12 @@ class FFmpegManager {
   }
 
   /**
-   * 트랜스코딩 취소
+   * 트랜스코딩 취소 (스트림 정리 + 타임아웃 후 SIGKILL)
    */
   cancelTranscode(taskId) {
     const task = this.activeProcesses.get(taskId);
     if (task) {
-      task.process.kill('SIGTERM');
+      this._killProcess(task.process, taskId);
       this.activeProcesses.delete(taskId);
       log.info('트랜스코딩 취소됨', { taskId });
       return true;
@@ -645,10 +645,45 @@ class FFmpegManager {
    */
   cancelAll() {
     for (const [taskId, task] of this.activeProcesses) {
-      task.process.kill('SIGTERM');
+      this._killProcess(task.process, taskId);
       log.info('트랜스코딩 취소됨', { taskId });
     }
     this.activeProcesses.clear();
+  }
+
+  /**
+   * 프로세스 강제 종료 (스트림 정리 포함)
+   */
+  _killProcess(process, taskId) {
+    try {
+      // 스트림 정리
+      if (process.stdin && !process.stdin.destroyed) {
+        process.stdin.destroy();
+      }
+      if (process.stdout && !process.stdout.destroyed) {
+        process.stdout.destroy();
+      }
+      if (process.stderr && !process.stderr.destroyed) {
+        process.stderr.destroy();
+      }
+
+      // SIGTERM으로 graceful 종료 시도
+      process.kill('SIGTERM');
+
+      // 5초 후에도 종료되지 않으면 SIGKILL로 강제 종료
+      setTimeout(() => {
+        try {
+          if (!process.killed) {
+            log.warn('프로세스가 SIGTERM에 응답하지 않음, SIGKILL 전송', { taskId });
+            process.kill('SIGKILL');
+          }
+        } catch (e) {
+          // 이미 종료된 경우 무시
+        }
+      }, 5000);
+    } catch (e) {
+      log.warn('프로세스 종료 중 오류', { taskId, error: e.message });
+    }
   }
 
   /**
@@ -660,7 +695,7 @@ class FFmpegManager {
   }
 
   /**
-   * 캐시 용량 제한 초과 시 정리
+   * 캐시 용량 제한 초과 시 정리 (비동기)
    */
   async _cleanupCacheIfNeeded() {
     const cacheSize = await this.getCacheSize();
@@ -674,20 +709,27 @@ class FFmpegManager {
       limit: this._formatBytes(this.cacheLimitBytes)
     });
 
-    // 캐시 폴더들을 접근 시간 순으로 정렬
-    const folders = fs.readdirSync(this.cacheDir)
-      .map(name => {
-        const folderPath = path.join(this.cacheDir, name);
-        const convertedPath = path.join(folderPath, 'converted.mp4');
-        try {
-          const stats = fs.statSync(convertedPath);
-          return { name, folderPath, atime: stats.atimeMs, size: stats.size };
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.atime - b.atime); // 가장 오래된 것 먼저
+    // 캐시 폴더들을 접근 시간 순으로 정렬 (비동기)
+    let folderNames;
+    try {
+      folderNames = await fs.promises.readdir(this.cacheDir);
+    } catch {
+      return;
+    }
+
+    const folders = [];
+    for (const name of folderNames) {
+      const folderPath = path.join(this.cacheDir, name);
+      const convertedPath = path.join(folderPath, 'converted.mp4');
+      try {
+        const stats = await fs.promises.stat(convertedPath);
+        folders.push({ name, folderPath, atime: stats.atimeMs, size: stats.size });
+      } catch {
+        // 무시
+      }
+    }
+
+    folders.sort((a, b) => a.atime - b.atime); // 가장 오래된 것 먼저
 
     let freedBytes = 0;
     const targetFree = cacheSize.bytes - this.cacheLimitBytes + (1024 * 1024 * 500); // 500MB 여유
@@ -696,7 +738,7 @@ class FFmpegManager {
       if (freedBytes >= targetFree) break;
 
       try {
-        fs.rmSync(folder.folderPath, { recursive: true, force: true });
+        await fs.promises.rm(folder.folderPath, { recursive: true, force: true });
         freedBytes += folder.size;
         log.info('오래된 캐시 삭제', { folder: folder.name, size: this._formatBytes(folder.size) });
       } catch (e) {
@@ -708,26 +750,36 @@ class FFmpegManager {
   }
 
   /**
-   * 캐시 크기 조회
+   * 캐시 크기 조회 (비동기)
    */
   async getCacheSize() {
-    if (!this.cacheDir || !fs.existsSync(this.cacheDir)) {
+    if (!this.cacheDir) {
+      return { bytes: 0, formatted: '0 Bytes', count: 0 };
+    }
+
+    try {
+      await fs.promises.access(this.cacheDir);
+    } catch {
       return { bytes: 0, formatted: '0 Bytes', count: 0 };
     }
 
     let totalSize = 0;
     let count = 0;
 
-    const folders = fs.readdirSync(this.cacheDir);
-    for (const folder of folders) {
-      const convertedPath = path.join(this.cacheDir, folder, 'converted.mp4');
-      try {
-        const stats = fs.statSync(convertedPath);
-        totalSize += stats.size;
-        count++;
-      } catch {
-        // 무시
+    try {
+      const folders = await fs.promises.readdir(this.cacheDir);
+      for (const folder of folders) {
+        const convertedPath = path.join(this.cacheDir, folder, 'converted.mp4');
+        try {
+          const stats = await fs.promises.stat(convertedPath);
+          totalSize += stats.size;
+          count++;
+        } catch {
+          // 무시
+        }
       }
+    } catch {
+      // 무시
     }
 
     return {
@@ -740,35 +792,50 @@ class FFmpegManager {
   }
 
   /**
-   * 특정 비디오의 캐시 삭제
+   * 특정 비디오의 캐시 삭제 (비동기)
    */
   async clearVideoCache(filePath) {
-    if (!fs.existsSync(filePath)) {
+    try {
+      await fs.promises.access(filePath);
+    } catch {
       return false;
     }
 
-    const stats = fs.statSync(filePath);
+    const stats = await fs.promises.stat(filePath);
     const fileHash = this._getFileHash(filePath, stats);
     const cacheFolder = path.join(this.cacheDir, fileHash);
 
-    if (fs.existsSync(cacheFolder)) {
-      fs.rmSync(cacheFolder, { recursive: true, force: true });
+    try {
+      await fs.promises.access(cacheFolder);
+      await fs.promises.rm(cacheFolder, { recursive: true, force: true });
       log.info('비디오 캐시 삭제됨', { filePath, fileHash });
       return true;
+    } catch {
+      return false;
     }
-
-    return false;
   }
 
   /**
-   * 전체 캐시 삭제
+   * 전체 캐시 삭제 (비동기)
    */
   async clearAllCache() {
-    if (!this.cacheDir || !fs.existsSync(this.cacheDir)) {
+    if (!this.cacheDir) {
       return { deleted: 0, freedBytes: 0 };
     }
 
-    const folders = fs.readdirSync(this.cacheDir);
+    try {
+      await fs.promises.access(this.cacheDir);
+    } catch {
+      return { deleted: 0, freedBytes: 0 };
+    }
+
+    let folders;
+    try {
+      folders = await fs.promises.readdir(this.cacheDir);
+    } catch {
+      return { deleted: 0, freedBytes: 0 };
+    }
+
     let deleted = 0;
     let freedBytes = 0;
 
@@ -776,10 +843,13 @@ class FFmpegManager {
       const folderPath = path.join(this.cacheDir, folder);
       try {
         const convertedPath = path.join(folderPath, 'converted.mp4');
-        if (fs.existsSync(convertedPath)) {
-          freedBytes += fs.statSync(convertedPath).size;
+        try {
+          const stats = await fs.promises.stat(convertedPath);
+          freedBytes += stats.size;
+        } catch {
+          // 무시
         }
-        fs.rmSync(folderPath, { recursive: true, force: true });
+        await fs.promises.rm(folderPath, { recursive: true, force: true });
         deleted++;
       } catch (e) {
         log.warn('캐시 폴더 삭제 실패', { folder, error: e.message });

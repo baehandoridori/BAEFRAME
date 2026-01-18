@@ -296,12 +296,18 @@ if (!gotTheLock) {
   });
 
   // 앱 종료 전 - 저장 확인
+  let quitTimeout = null;
+
   app.on('before-quit', (event) => {
     log.info('앱 종료 요청', { isQuitting, forceQuit });
 
     // 이미 종료 처리 중이거나 강제 종료인 경우 진행
     if (forceQuit) {
       log.info('강제 종료 진행');
+      if (quitTimeout) {
+        clearTimeout(quitTimeout);
+        quitTimeout = null;
+      }
       return;
     }
 
@@ -314,6 +320,13 @@ if (!gotTheLock) {
       if (mainWindow && !mainWindow.isDestroyed()) {
         log.info('Renderer에 저장 확인 요청');
         mainWindow.webContents.send('app:request-save-before-quit');
+
+        // 30초 타임아웃 - 렌더러가 응답하지 않으면 강제 종료
+        quitTimeout = setTimeout(() => {
+          log.warn('종료 타임아웃 - 렌더러 응답 없음, 강제 종료');
+          forceQuit = true;
+          app.quit();
+        }, 30000);
       } else {
         // 윈도우가 없으면 바로 종료
         forceQuit = true;
@@ -325,12 +338,20 @@ if (!gotTheLock) {
   // Renderer에서 종료 확인 응답 처리
   ipcMain.handle('app:quit-confirmed', () => {
     log.info('Renderer 저장 완료, 앱 종료');
+    if (quitTimeout) {
+      clearTimeout(quitTimeout);
+      quitTimeout = null;
+    }
     forceQuit = true;
     app.quit();
   });
 
   ipcMain.handle('app:quit-cancelled', () => {
     log.info('사용자가 종료 취소');
+    if (quitTimeout) {
+      clearTimeout(quitTimeout);
+      quitTimeout = null;
+    }
     isQuitting = false;
     forceQuit = false;
   });
