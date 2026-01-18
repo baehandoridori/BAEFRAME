@@ -314,9 +314,12 @@ async function initApp() {
   // ReviewDataManager에 CollaborationManager 연결 (저장 시 머지용)
   reviewDataManager.setCollaborationManager(collaborationManager);
 
-  // 앱 종료/새로고침 시 편집 잠금 해제
+  // 앱 종료/새로고침 시 정리
   window.addEventListener('beforeunload', () => {
+    // 협업 편집 잠금 해제
     collaborationManager.releaseAllEditingLocks();
+    // 모든 파일 감시 중지 (누적 방지)
+    window.electronAPI.watchFileStopAll();
   });
 
   // 사용자 설정
@@ -2883,6 +2886,14 @@ async function initApp() {
           }
           log.warn('저장 실패했지만 사용자가 전환 진행 선택');
         }
+      }
+
+      // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
+      if (reviewDataManager.currentBframePath) {
+        await window.electronAPI.watchFileStop(reviewDataManager.currentBframePath);
+        log.info('이전 파일 감시 중지', { path: reviewDataManager.currentBframePath });
+        await collaborationManager.stop();
+        log.info('이전 협업 세션 종료');
       }
 
       // ====== 이전 데이터 초기화 ======
