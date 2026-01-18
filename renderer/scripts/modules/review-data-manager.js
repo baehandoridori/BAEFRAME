@@ -55,6 +55,9 @@ export class ReviewDataManager extends EventTarget {
     this.autoSaveDelay = options.autoSaveDelay || 500; // 500ms (타이핑 완료 후 저장)
     this.autoSaveTimer = null;
 
+    // 저장 동시성 제어
+    this._savePromise = null;  // 저장 중인 Promise (락)
+
     // 이벤트 바인딩
     this._onDataChanged = this._onDataChanged.bind(this);
 
@@ -189,6 +192,7 @@ export class ReviewDataManager extends EventTarget {
 
   /**
    * 현재 데이터를 .bframe 파일로 저장
+   * 저장 동시성 제어: 이미 저장 중이면 대기 후 반환
    * @param {Object} options
    * @param {boolean} options.skipMerge - true면 머지 없이 저장 (초기 저장 등)
    */
@@ -198,8 +202,28 @@ export class ReviewDataManager extends EventTarget {
       return false;
     }
 
+    // 저장 동시성 제어: 이미 저장 중이면 해당 Promise 반환
+    if (this._savePromise) {
+      log.debug('저장 중 - 기존 저장 완료 대기');
+      return this._savePromise;
+    }
+
     this._cancelAutoSave();
 
+    // 저장 Promise 생성 (락)
+    this._savePromise = this._doSave(options);
+
+    try {
+      return await this._savePromise;
+    } finally {
+      this._savePromise = null;
+    }
+  }
+
+  /**
+   * 실제 저장 수행 (내부용)
+   */
+  async _doSave(options = {}) {
     try {
       let data = this._collectData();
 
@@ -370,12 +394,21 @@ export class ReviewDataManager extends EventTarget {
    *
    * @param {Object} options
    * @param {boolean} options.merge - true면 머지, false면 덮어쓰기
-   * @returns {Promise<{success: boolean, added: number, updated: number}>}
+   * @param {boolean} options.force - true면 isDirty 무시하고 강제 진행
+   * @returns {Promise<{success: boolean, added: number, updated: number, skipped?: boolean}>}
    */
   async reloadAndMerge(options = { merge: true }) {
     if (!this.currentBframePath) {
       log.warn('reloadAndMerge: 파일 경로가 없음');
       return { success: false, added: 0, updated: 0 };
+    }
+
+    // 미저장 작업 보호: isDirty이고 force가 아니면 머지만 하고 덮어쓰기 방지
+    if (this.isDirty && !options.force) {
+      log.info('reloadAndMerge: 미저장 작업 있음 - 안전 머지 모드');
+      // 강제 머지 모드로 전환 (로컬 데이터 유지하면서 원격 추가분만 반영)
+      options.merge = true;
+      options.preserveLocal = true;
     }
 
     // 자동저장 일시 중지
