@@ -800,7 +800,15 @@ function setupIpcHandlers() {
   // FFmpeg 사용 가능 여부 확인
   ipcMain.handle('ffmpeg:is-available', async () => {
     await ffmpegManager.initialize();
-    return ffmpegManager.isAvailable();
+    const available = ffmpegManager.isAvailable();
+    return {
+      available,
+      ffmpegPath: ffmpegManager.ffmpegPath,
+      ffprobePath: ffmpegManager.ffprobePath,
+      hint: available
+        ? null
+        : 'FFmpeg가 설치되어 있지 않습니다. ffmpeg/win32/ 폴더에 ffmpeg.exe와 ffprobe.exe를 넣거나 시스템에 FFmpeg를 설치하세요.'
+    };
   });
 
   // 비디오 코덱 정보 조회
@@ -833,6 +841,18 @@ function setupIpcHandlers() {
   ipcMain.handle('ffmpeg:transcode', async (event, filePath) => {
     const trace = log.trace('ffmpeg:transcode');
     const mainWindow = getMainWindow();
+
+    // FFmpeg 사용 가능 여부 먼저 확인
+    await ffmpegManager.initialize();
+    if (!ffmpegManager.isAvailable()) {
+      const errorMsg = 'FFmpeg가 설치되어 있지 않아 영상 변환이 불가능합니다.\n\n' +
+        '해결 방법:\n' +
+        '1. ffmpeg/win32/ 폴더에 ffmpeg.exe와 ffprobe.exe를 넣어주세요.\n' +
+        '2. 또는 시스템에 FFmpeg를 설치하고 PATH에 추가하세요.\n\n' +
+        '다운로드: https://github.com/BtbN/FFmpeg-Builds/releases';
+      trace.end({ success: false, reason: 'FFmpeg not available' });
+      return { success: false, error: errorMsg, ffmpegMissing: true };
+    }
 
     try {
       const result = await ffmpegManager.transcode(filePath, (progress) => {

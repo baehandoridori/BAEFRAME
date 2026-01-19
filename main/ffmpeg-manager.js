@@ -76,24 +76,67 @@ class FFmpegManager {
    * FFmpeg 바이너리 경로 감지
    */
   async _detectFFmpeg() {
+    const exeName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    const probeName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+
     // 1. 번들된 바이너리 확인 (extraResources)
-    const resourcesPath = process.resourcesPath || path.join(__dirname, '..');
-    const bundledPaths = [
-      path.join(resourcesPath, 'ffmpeg', 'win32'),
-      path.join(resourcesPath, 'ffmpeg'),
+    // 여러 가지 경로를 시도하여 다양한 실행 환경에서 작동하도록 함
+    const bundledPaths = [];
+
+    // process.resourcesPath (패키징된 앱에서 설정됨)
+    if (process.resourcesPath) {
+      bundledPaths.push(
+        path.join(process.resourcesPath, 'ffmpeg', 'win32'),
+        path.join(process.resourcesPath, 'ffmpeg')
+      );
+    }
+
+    // app.getPath('exe') 기반 경로 (앱 실행 파일 위치 기준)
+    // 공유 드라이브나 네트워크 경로에서 더 안정적
+    try {
+      const exePath = app.getPath('exe');
+      const exeDir = path.dirname(exePath);
+      bundledPaths.push(
+        path.join(exeDir, 'resources', 'ffmpeg', 'win32'),
+        path.join(exeDir, 'resources', 'ffmpeg'),
+        path.join(exeDir, 'ffmpeg', 'win32'),
+        path.join(exeDir, 'ffmpeg')
+      );
+    } catch (e) {
+      log.debug('app.getPath("exe") 실패', { error: e.message });
+    }
+
+    // 개발 환경 fallback
+    bundledPaths.push(
       path.join(__dirname, '..', 'ffmpeg', 'win32'),
       path.join(__dirname, '..', 'ffmpeg')
-    ];
+    );
+
+    log.info('FFmpeg 경로 탐색 시작', {
+      resourcesPath: process.resourcesPath,
+      searchPaths: bundledPaths
+    });
 
     for (const dir of bundledPaths) {
-      const ffmpegExe = path.join(dir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
-      const ffprobeExe = path.join(dir, process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
+      const ffmpegExe = path.join(dir, exeName);
+      const ffprobeExe = path.join(dir, probeName);
 
-      if (fs.existsSync(ffmpegExe) && fs.existsSync(ffprobeExe)) {
-        log.info('번들된 FFmpeg 발견', { dir });
-        return { ffmpeg: ffmpegExe, ffprobe: ffprobeExe };
+      try {
+        const ffmpegExists = fs.existsSync(ffmpegExe);
+        const ffprobeExists = fs.existsSync(ffprobeExe);
+
+        log.debug('경로 확인', { dir, ffmpegExists, ffprobeExists });
+
+        if (ffmpegExists && ffprobeExists) {
+          log.info('번들된 FFmpeg 발견', { dir, ffmpeg: ffmpegExe, ffprobe: ffprobeExe });
+          return { ffmpeg: ffmpegExe, ffprobe: ffprobeExe };
+        }
+      } catch (e) {
+        log.debug('경로 확인 실패', { dir, error: e.message });
       }
     }
+
+    log.warn('번들된 FFmpeg를 찾을 수 없음, 시스템 PATH에서 검색');
 
     // 2. 시스템 PATH에서 찾기
     try {
@@ -107,6 +150,11 @@ class FFmpegManager {
     } catch (e) {
       log.debug('시스템 FFmpeg 찾기 실패', { error: e.message });
     }
+
+    log.error('FFmpeg를 찾을 수 없습니다', {
+      hint: 'ffmpeg/win32/ 폴더에 ffmpeg.exe와 ffprobe.exe를 넣거나, 시스템 PATH에 FFmpeg를 설치하세요.',
+      searchedPaths: bundledPaths
+    });
 
     return null;
   }
