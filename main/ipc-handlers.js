@@ -798,17 +798,20 @@ function setupIpcHandlers() {
   const { ffmpegManager, SUPPORTED_CODECS } = require('./ffmpeg-manager');
 
   // FFmpeg 사용 가능 여부 확인
+  // 반환값: boolean (renderer 호환성 유지)
   ipcMain.handle('ffmpeg:is-available', async () => {
     await ffmpegManager.initialize();
     const available = ffmpegManager.isAvailable();
-    return {
-      available,
-      ffmpegPath: ffmpegManager.ffmpegPath,
-      ffprobePath: ffmpegManager.ffprobePath,
-      hint: available
-        ? null
-        : 'FFmpeg가 설치되어 있지 않습니다. ffmpeg/win32/ 폴더에 ffmpeg.exe와 ffprobe.exe를 넣거나 시스템에 FFmpeg를 설치하세요.'
-    };
+
+    if (!available) {
+      log.warn('FFmpeg 사용 불가', {
+        ffmpegPath: ffmpegManager.ffmpegPath,
+        ffprobePath: ffmpegManager.ffprobePath,
+        hint: 'ffmpeg/win32/ 폴더에 ffmpeg.exe와 ffprobe.exe를 넣거나 시스템에 FFmpeg를 설치하세요.'
+      });
+    }
+
+    return available;
   });
 
   // 비디오 코덱 정보 조회

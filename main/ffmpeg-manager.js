@@ -122,12 +122,40 @@ class FFmpegManager {
       const ffprobeExe = path.join(dir, probeName);
 
       try {
-        const ffmpegExists = fs.existsSync(ffmpegExe);
-        const ffprobeExists = fs.existsSync(ffprobeExe);
+        // fs.accessSync로 파일 접근 가능 여부 확인 (더 안정적)
+        // R_OK: 읽기 가능, X_OK: 실행 가능 (Windows에서는 R_OK만으로 충분)
+        let ffmpegAccessible = false;
+        let ffprobeAccessible = false;
 
-        log.debug('경로 확인', { dir, ffmpegExists, ffprobeExists });
+        try {
+          fs.accessSync(ffmpegExe, fs.constants.R_OK);
+          ffmpegAccessible = true;
+        } catch (accessErr) {
+          log.debug('ffmpeg 접근 불가', { path: ffmpegExe, error: accessErr.code || accessErr.message });
+        }
 
-        if (ffmpegExists && ffprobeExists) {
+        try {
+          fs.accessSync(ffprobeExe, fs.constants.R_OK);
+          ffprobeAccessible = true;
+        } catch (accessErr) {
+          log.debug('ffprobe 접근 불가', { path: ffprobeExe, error: accessErr.code || accessErr.message });
+        }
+
+        log.debug('경로 확인', { dir, ffmpegAccessible, ffprobeAccessible });
+
+        if (ffmpegAccessible && ffprobeAccessible) {
+          // 추가 검증: 파일 크기 확인 (빈 파일이나 placeholder 감지)
+          const ffmpegStats = fs.statSync(ffmpegExe);
+          const ffprobeStats = fs.statSync(ffprobeExe);
+
+          if (ffmpegStats.size < 1000000 || ffprobeStats.size < 1000000) {
+            log.warn('FFmpeg 파일이 너무 작음 (placeholder 가능성)', {
+              ffmpegSize: ffmpegStats.size,
+              ffprobeSize: ffprobeStats.size
+            });
+            continue; // 다음 경로 시도
+          }
+
           log.info('번들된 FFmpeg 발견', { dir, ffmpeg: ffmpegExe, ffprobe: ffprobeExe });
           return { ffmpeg: ffmpegExe, ffprobe: ffprobeExe };
         }
