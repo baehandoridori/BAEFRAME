@@ -39,8 +39,6 @@ win:
   target:
     - target: dir
       arch: x64
-  fileVersion: 1.1.0
-  productVersion: 1.1.0
 
 mac:
   target:
