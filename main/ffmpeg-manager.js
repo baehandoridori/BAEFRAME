@@ -5,7 +5,7 @@
  */
 
 const { app } = require('electron');
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -319,6 +319,30 @@ class FFmpegManager {
     }
 
     return new Promise((resolve, reject) => {
+      // 경로에 특수문자(한글, 공백 등)가 있는지 확인
+      const hasSpecialChars = /[^\x00-\x7F]|[ ]/.test(filePath) ||
+                              /[^\x00-\x7F]|[ ]/.test(this.ffprobePath);
+
+      const execOptions = { timeout: 30000, windowsHide: true };
+
+      // Windows에서 특수문자 경로는 exec로 전체 명령 문자열 실행
+      // (execFile + shell:true는 실행파일 경로에 공백이 있으면 실패)
+      if (process.platform === 'win32' && hasSpecialChars) {
+        const command = `"${this.ffprobePath}" -v quiet -print_format json -show_streams -select_streams v:0 "${filePath}"`;
+        log.debug('exec 명령 실행', { command });
+
+        exec(command, execOptions, (error, stdout) => {
+          if (error) {
+            log.error('ffprobe 실행 실패 (exec)', { error: error.message, filePath });
+            reject(error);
+            return;
+          }
+          this._parseProbeOutput(stdout, filePath, resolve, reject);
+        });
+        return;
+      }
+
+      // 일반 경로: execFile 사용
       const args = [
         '-v', 'quiet',
         '-print_format', 'json',
@@ -327,51 +351,47 @@ class FFmpegManager {
         filePath
       ];
 
-      // 경로에 특수문자가 있는지 확인
-      const hasSpecialChars = /[^\x00-\x7F]|[ ]/.test(filePath);
-      const execOptions = { timeout: 30000 };
-
-      // Windows에서 특수문자 경로는 shell 모드 사용
-      if (process.platform === 'win32' && hasSpecialChars) {
-        execOptions.shell = true;
-        args[args.length - 1] = `"${filePath}"`;
-      }
-
       execFile(this.ffprobePath, args, execOptions, (error, stdout) => {
         if (error) {
           log.error('ffprobe 실행 실패', { error: error.message, filePath });
           reject(error);
           return;
         }
-
-        try {
-          const data = JSON.parse(stdout);
-          const videoStream = data.streams?.[0];
-
-          if (!videoStream) {
-            reject(new Error('비디오 스트림을 찾을 수 없습니다'));
-            return;
-          }
-
-          const codecInfo = {
-            codecName: videoStream.codec_name?.toLowerCase(),
-            codecLongName: videoStream.codec_long_name,
-            width: videoStream.width,
-            height: videoStream.height,
-            duration: parseFloat(videoStream.duration) || 0,
-            bitRate: parseInt(videoStream.bit_rate) || 0,
-            frameRate: this._parseFrameRate(videoStream.r_frame_rate),
-            isSupported: SUPPORTED_CODECS.includes(videoStream.codec_name?.toLowerCase())
-          };
-
-          log.info('코덱 정보 조회 완료', { filePath, codec: codecInfo.codecName, isSupported: codecInfo.isSupported });
-          resolve(codecInfo);
-        } catch (parseError) {
-          log.error('ffprobe 출력 파싱 실패', { error: parseError.message });
-          reject(parseError);
-        }
+        this._parseProbeOutput(stdout, filePath, resolve, reject);
       });
     });
+  }
+
+  /**
+   * ffprobe 출력 파싱
+   */
+  _parseProbeOutput(stdout, filePath, resolve, reject) {
+    try {
+      const data = JSON.parse(stdout);
+      const videoStream = data.streams?.[0];
+
+      if (!videoStream) {
+        reject(new Error('비디오 스트림을 찾을 수 없습니다'));
+        return;
+      }
+
+      const codecInfo = {
+        codecName: videoStream.codec_name?.toLowerCase(),
+        codecLongName: videoStream.codec_long_name,
+        width: videoStream.width,
+        height: videoStream.height,
+        duration: parseFloat(videoStream.duration) || 0,
+        bitRate: parseInt(videoStream.bit_rate) || 0,
+        frameRate: this._parseFrameRate(videoStream.r_frame_rate),
+        isSupported: SUPPORTED_CODECS.includes(videoStream.codec_name?.toLowerCase())
+      };
+
+      log.info('코덱 정보 조회 완료', { filePath, codec: codecInfo.codecName, isSupported: codecInfo.isSupported });
+      resolve(codecInfo);
+    } catch (parseError) {
+      log.error('ffprobe 출력 파싱 실패', { error: parseError.message });
+      reject(parseError);
+    }
   }
 
   /**
@@ -544,17 +564,24 @@ class FFmpegManager {
       };
 
       // 경로에 특수문자(한글, 공백 등)가 있으면 shell 모드 사용
-      const hasSpecialChars = /[^\x00-\x7F]|[ ]/.test(filePath) || /[^\x00-\x7F]|[ ]/.test(this.ffmpegPath);
+      const hasSpecialChars = /[^\x00-\x7F]|[ ]/.test(filePath) ||
+                              /[^\x00-\x7F]|[ ]/.test(this.ffmpegPath) ||
+                              /[^\x00-\x7F]|[ ]/.test(tempPath);
+
+      let ffmpegProcess;
       if (process.platform === 'win32' && hasSpecialChars) {
-        // shell 모드에서는 경로를 따옴표로 감싸야 함
+        // shell 모드에서는 실행 파일과 모든 경로를 따옴표로 감싸야 함
         spawnOptions.shell = true;
-        // args 배열의 파일 경로들을 따옴표로 감싸기
         args[1] = `"${filePath}"`;  // -i 다음의 입력 파일
         args[args.length - 1] = `"${tempPath}"`; // 출력 파일
-        log.info('특수문자 경로 감지, shell 모드 사용', { filePath });
-      }
 
-      const ffmpegProcess = spawn(this.ffmpegPath, args, spawnOptions);
+        // 실행 파일 경로도 따옴표로 감싸서 전달
+        const quotedFfmpeg = `"${this.ffmpegPath}"`;
+        log.info('특수문자 경로 감지, shell 모드 사용', { ffmpegPath: quotedFfmpeg, filePath });
+        ffmpegProcess = spawn(quotedFfmpeg, args, spawnOptions);
+      } else {
+        ffmpegProcess = spawn(this.ffmpegPath, args, spawnOptions);
+      }
       this.activeProcesses.set(taskId, { process: ffmpegProcess, filePath });
 
       let lastProgress = 0;
