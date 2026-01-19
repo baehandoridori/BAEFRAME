@@ -1,6 +1,6 @@
 {
   "name": "baeframe",
-  "version": "0.1.0-alpha",
+  "version": "1.1.0-beta",
   "description": "애니메이션 스튜디오를 위한 비디오 리뷰/피드백 도구",
   "main": "main/index.js",
   "scripts": {
@@ -20,7 +20,7 @@
     "electron",
     "mpv"
   ],
-  "author": "",
+  "author": "배한솔 <bhs@studiojbbj.com>",
   "license": "MIT",
   "dependencies": {
     "electron-store": "^8.1.0",
