@@ -15,10 +15,13 @@ import { createLogger } from '../logger.js';
 const log = createLogger('CollaborationManager');
 
 // 상수 정의
-const PRESENCE_UPDATE_INTERVAL = 5000;    // 5초마다 presence 업데이트
-const PRESENCE_TIMEOUT = 15000;           // 15초 동안 업데이트 없으면 오프라인으로 간주
+// 공유 드라이브(Google Drive, 네트워크 드라이브)의 동기화 지연을 고려하여 값 조정
+const PRESENCE_UPDATE_INTERVAL = 10000;   // 10초마다 presence 업데이트 (I/O 부하 감소)
+const PRESENCE_TIMEOUT = 45000;           // 45초 동안 업데이트 없으면 오프라인으로 간주 (공유 드라이브 지연 고려)
 const COLLAB_FILE_EXTENSION = '.collab';  // presence 파일 확장자
 const EDITING_TIMEOUT = 60000;            // 편집 잠금 60초 후 자동 해제
+const COLLAB_FILE_RETRY_COUNT = 3;        // collab 파일 읽기/쓰기 재시도 횟수
+const COLLAB_FILE_RETRY_DELAY = 500;      // 재시도 간격 (ms)
 
 // 동기화 간격 설정 (동적 조정)
 const SYNC_INTERVAL_SOLO = 10000;         // 혼자일 때: 10초 (동기화 안 함, 값만 유지)
@@ -556,22 +559,87 @@ export class CollaborationManager extends EventTarget {
   }
 
   /**
-   * Collab 파일 읽기
+   * Collab 파일 읽기 (재시도 로직 포함)
+   * 공유 드라이브에서 동기화 지연이나 일시적 오류에 대응
    */
   async _readCollabFile() {
-    try {
-      const data = await window.electronAPI.readCollabFile(this.collabPath);
-      return data;
-    } catch {
-      return null;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= COLLAB_FILE_RETRY_COUNT; attempt++) {
+      try {
+        const data = await window.electronAPI.readCollabFile(this.collabPath);
+        return data;
+      } catch (error) {
+        lastError = error;
+        log.debug('Collab 파일 읽기 실패', {
+          attempt,
+          maxAttempts: COLLAB_FILE_RETRY_COUNT,
+          error: error.message
+        });
+
+        // 마지막 시도가 아니면 재시도 대기
+        if (attempt < COLLAB_FILE_RETRY_COUNT) {
+          await this._delay(COLLAB_FILE_RETRY_DELAY * attempt); // 지수 백오프
+        }
+      }
+    }
+
+    // 모든 재시도 실패 시 로그 기록
+    if (lastError) {
+      log.warn('Collab 파일 읽기 최종 실패', {
+        path: this.collabPath,
+        error: lastError.message
+      });
+    }
+    return null;
+  }
+
+  /**
+   * Collab 파일 쓰기 (재시도 로직 포함)
+   * 공유 드라이브에서 동기화 지연이나 파일 잠금 오류에 대응
+   */
+  async _writeCollabFile(data) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= COLLAB_FILE_RETRY_COUNT; attempt++) {
+      try {
+        await window.electronAPI.writeCollabFile(this.collabPath, data);
+        return; // 성공 시 종료
+      } catch (error) {
+        lastError = error;
+        log.debug('Collab 파일 쓰기 실패', {
+          attempt,
+          maxAttempts: COLLAB_FILE_RETRY_COUNT,
+          error: error.message
+        });
+
+        // 마지막 시도가 아니면 재시도 대기
+        if (attempt < COLLAB_FILE_RETRY_COUNT) {
+          await this._delay(COLLAB_FILE_RETRY_DELAY * attempt); // 지수 백오프
+        }
+      }
+    }
+
+    // 모든 재시도 실패 시 에러 기록 및 이벤트 발생
+    if (lastError) {
+      log.warn('Collab 파일 쓰기 최종 실패', {
+        path: this.collabPath,
+        error: lastError.message
+      });
+      // 쓰기 실패 이벤트 발생 (UI에서 사용자에게 알릴 수 있도록)
+      this._emit('collabWriteError', {
+        error: lastError.message,
+        path: this.collabPath
+      });
     }
   }
 
   /**
-   * Collab 파일 쓰기
+   * 지연 헬퍼 함수
+   * @param {number} ms - 대기 시간 (밀리초)
    */
-  async _writeCollabFile(data) {
-    await window.electronAPI.writeCollabFile(this.collabPath, data);
+  _delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
