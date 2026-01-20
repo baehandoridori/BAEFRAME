@@ -399,13 +399,13 @@ export class CollaborationManager extends EventTarget {
 
     try {
       // 현재 collab 데이터 읽기
-      let collabData = await this._readCollabFile();
+      const collabData = await this._readCollabFile();
 
+      // 읽기 실패 시 기존 협업자 목록 유지 (타임아웃 체크만 수행)
       if (!collabData) {
-        collabData = {
-          version: '1.0',
-          presence: {}
-        };
+        log.debug('Collab 파일 읽기 실패, 기존 협업자 목록 유지하며 타임아웃만 체크');
+        this._cleanupTimeoutCollaborators();
+        return;
       }
 
       // 내 presence 업데이트
@@ -436,7 +436,9 @@ export class CollaborationManager extends EventTarget {
       this._updateCollaboratorsList(activePresence);
 
     } catch (error) {
-      log.warn('Presence 업데이트 실패', { error: error.message });
+      log.warn('Presence 업데이트 실패, 기존 협업자 목록 유지', { error: error.message });
+      // 실패 시에도 타임아웃 체크는 수행
+      this._cleanupTimeoutCollaborators();
     }
   }
 
@@ -459,14 +461,59 @@ export class CollaborationManager extends EventTarget {
   }
 
   /**
+   * 타임아웃된 협업자만 제거 (collab 파일 읽기 실패 시 사용)
+   * 기존 협업자 목록은 유지하면서 타임아웃된 사용자만 제거
+   */
+  _cleanupTimeoutCollaborators() {
+    const now = Date.now();
+    let removedCount = 0;
+    const hadOthers = this.hasOtherCollaborators();
+
+    for (const [sessionId, info] of this.collaborators) {
+      // 자신은 제거하지 않음
+      if (sessionId === this.sessionId) continue;
+
+      const lastSeen = new Date(info.lastSeen).getTime();
+      if (now - lastSeen >= this.presenceTimeout) {
+        this.collaborators.delete(sessionId);
+        removedCount++;
+        log.debug('타임아웃된 협업자 제거', { sessionId, name: info.name });
+      }
+    }
+
+    // 협업자가 제거되었으면 이벤트 발생
+    if (removedCount > 0) {
+      this._emit('collaboratorsChanged', {
+        collaborators: this.getCollaborators(),
+        count: this.collaborators.size
+      });
+
+      // 혼자 남았으면 동기화 중지
+      if (hadOthers && !this.hasOtherCollaborators()) {
+        log.info('혼자 남음 (타임아웃 정리), 자동 동기화 중지');
+        this._stopSyncTimer();
+        this._emit('collaborationEnded', {});
+      }
+    }
+  }
+
+  /**
    * 협업자 목록 업데이트 및 이벤트 발생
    */
   _updateCollaboratorsList(presenceData) {
-    const previousCount = this.collaborators.size;
     const hadOthers = this.hasOtherCollaborators();
 
-    this.collaborators.clear();
+    // 기존 협업자 sessionId 목록
+    const previousIds = new Set(this.collaborators.keys());
+    const newIds = new Set(Object.keys(presenceData));
 
+    // 실제 변경 여부 확인 (sessionId 기준)
+    const hasChanged = previousIds.size !== newIds.size ||
+      [...previousIds].some(id => !newIds.has(id)) ||
+      [...newIds].some(id => !previousIds.has(id));
+
+    // 협업자 목록 업데이트
+    this.collaborators.clear();
     for (const [sessionId, info] of Object.entries(presenceData)) {
       this.collaborators.set(sessionId, {
         name: info.name,
@@ -478,8 +525,8 @@ export class CollaborationManager extends EventTarget {
 
     const hasOthersNow = this.hasOtherCollaborators();
 
-    // 협업자 목록이 변경되었으면 이벤트 발생
-    if (previousCount !== this.collaborators.size) {
+    // 협업자 목록이 실제로 변경되었을 때만 이벤트 발생
+    if (hasChanged) {
       this._emit('collaboratorsChanged', {
         collaborators: this.getCollaborators(),
         count: this.collaborators.size
