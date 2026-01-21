@@ -6,7 +6,7 @@ import { createLogger, setupGlobalErrorHandlers } from './logger.js';
 import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
-import { CommentManager } from './modules/comment-manager.js';
+import { CommentManager, MARKER_COLORS } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
 import { CollaborationManager } from './modules/collaboration-manager.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
@@ -89,6 +89,9 @@ async function initApp() {
     commentPreviewImg: document.getElementById('commentPreviewImg'),
     commentImageRemove: document.getElementById('commentImageRemove'),
     btnCompactView: document.getElementById('btnCompactView'),
+    feedbackProgress: document.getElementById('feedbackProgress'),
+    feedbackProgressValue: document.getElementById('feedbackProgressValue'),
+    feedbackProgressFill: document.getElementById('feedbackProgressFill'),
 
     // 이미지 뷰어
     imageViewerOverlay: document.getElementById('imageViewerOverlay'),
@@ -1626,6 +1629,13 @@ async function initApp() {
   const highlightCopyBtn = document.getElementById('highlightCopyBtn');
   const highlightDeleteBtn = document.getElementById('highlightDeleteBtn');
 
+  // 마커 팝업 관련 요소
+  const markerPopup = document.getElementById('markerPopup');
+  const markerColorPicker = document.getElementById('markerColorPicker');
+
+  // 현재 선택된 마커 ID
+  let selectedMarkerId = null;
+
   // 하이라이트 트랙 연결 (좌측 레이어 헤더도 연동)
   timeline.setHighlightTrack(highlightTrack, highlightLayerHeader);
 
@@ -2071,6 +2081,67 @@ async function initApp() {
     }
   });
 
+  // ====== 마커 색상 팝업 ======
+
+  // 마커 팝업 표시
+  function showMarkerPopup(markerId, x, y) {
+    const marker = commentManager.getMarker(markerId);
+    if (!marker) return;
+
+    selectedMarkerId = markerId;
+
+    // 색상 버튼 선택 상태
+    markerColorPicker.querySelectorAll('.marker-color-btn').forEach(btn => {
+      btn.classList.toggle('selected', btn.dataset.color === (marker.colorKey || 'default'));
+    });
+
+    // 위치 설정 (화면 경계 고려)
+    const popupWidth = 200;
+    const popupHeight = 80;
+    const adjustedX = Math.min(x, window.innerWidth - popupWidth - 10);
+    const adjustedY = Math.min(y, window.innerHeight - popupHeight - 10);
+
+    markerPopup.style.left = `${adjustedX}px`;
+    markerPopup.style.top = `${adjustedY}px`;
+    markerPopup.style.display = 'block';
+  }
+
+  // 마커 팝업 숨기기
+  function hideMarkerPopup() {
+    markerPopup.style.display = 'none';
+    selectedMarkerId = null;
+  }
+
+  // 마커 팝업 외부 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    if (markerPopup.style.display === 'block' &&
+        !markerPopup.contains(e.target) &&
+        !e.target.closest('.comment-range-item') &&
+        !e.target.closest('.video-comment-range-bar')) {
+      hideMarkerPopup();
+    }
+  });
+
+  // 마커 색상 선택
+  markerColorPicker.addEventListener('click', (e) => {
+    const btn = e.target.closest('.marker-color-btn');
+    if (!btn || !selectedMarkerId) return;
+
+    const colorKey = btn.dataset.color;
+    commentManager.updateMarker(selectedMarkerId, { colorKey });
+
+    // 버튼 선택 상태 업데이트
+    markerColorPicker.querySelectorAll('.marker-color-btn').forEach(b => {
+      b.classList.toggle('selected', b === btn);
+    });
+
+    // UI 업데이트 (타임라인 + 비디오 오버레이)
+    renderCommentRanges();
+    updateCommentList();
+    hideMarkerPopup();
+    showToast('마커 색상이 변경되었습니다', 'info');
+  });
+
   // ====== 댓글 범위 트랙 ======
   const commentTrack = document.getElementById('commentTrack');
   const commentLayerHeader = document.getElementById('commentLayerHeader');
@@ -2179,6 +2250,13 @@ async function initApp() {
         }
       });
 
+      // 우클릭 이벤트 - 마커 색상 팝업
+      bar.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showMarkerPopup(comment.markerId, e.clientX, e.clientY);
+      });
+
       videoCommentRangeOverlay.appendChild(bar);
     });
 
@@ -2248,6 +2326,13 @@ async function initApp() {
         items.forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
         selectedCommentRange = { layerId, markerId };
+      });
+
+      // 우클릭 - 마커 색상 팝업
+      item.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showMarkerPopup(markerId, e.clientX, e.clientY);
       });
 
       // 드래그 시작 (전체 이동)
@@ -3858,6 +3943,23 @@ async function initApp() {
     scrollHandler: null
   };
 
+  // 피드백 완료율 업데이트
+  function updateFeedbackProgress(total, resolved) {
+    if (!elements.feedbackProgress) return;
+
+    // 댓글이 없으면 프로그레스 바 숨김
+    if (total === 0) {
+      elements.feedbackProgress.classList.add('hidden');
+      return;
+    }
+
+    elements.feedbackProgress.classList.remove('hidden');
+
+    const percent = Math.round((resolved / total) * 100);
+    elements.feedbackProgressValue.textContent = `${percent}% (${resolved}/${total})`;
+    elements.feedbackProgressFill.style.width = `${percent}%`;
+  }
+
   function updateCommentList(filter = 'all') {
     pendingCommentListFilter = filter;
 
@@ -3886,11 +3988,15 @@ async function initApp() {
     // 개수 업데이트
     const allMarkers = commentManager.getAllMarkers();
     const unresolvedCount = allMarkers.filter(m => !m.resolved).length;
+    const resolvedCount = allMarkers.filter(m => m.resolved).length;
     if (elements.commentCount) {
       elements.commentCount.textContent = allMarkers.length > 0
         ? `${unresolvedCount > 0 ? unresolvedCount + ' 미해결 / ' : ''}${allMarkers.length}개`
         : '0';
     }
+
+    // 피드백 완료율 업데이트
+    updateFeedbackProgress(allMarkers.length, resolvedCount);
 
     if (markers.length === 0) {
       container.innerHTML = `

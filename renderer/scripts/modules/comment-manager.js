@@ -7,6 +7,17 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('CommentManager');
 
+// 마커 색상 정의
+export const MARKER_COLORS = {
+  default: { name: '기본', color: '#4a9eff', bgColor: 'rgba(74, 158, 255, 0.3)' },
+  yellow: { name: '노랑', color: '#ffdd59', bgColor: 'rgba(255, 221, 89, 0.3)' },
+  red: { name: '빨강', color: '#ff5555', bgColor: 'rgba(255, 85, 85, 0.3)' },
+  pink: { name: '핑크', color: '#ff6b9d', bgColor: 'rgba(255, 107, 157, 0.3)' },
+  green: { name: '초록', color: '#2ed573', bgColor: 'rgba(46, 213, 115, 0.3)' },
+  gray: { name: '회색', color: '#a0a0a0', bgColor: 'rgba(160, 160, 160, 0.3)' },
+  white: { name: '흰색', color: '#ffffff', bgColor: 'rgba(255, 255, 255, 0.3)' }
+};
+
 /**
  * UUID 생성
  */
@@ -70,6 +81,9 @@ export class CommentMarker {
     // 레이어
     this.layerId = options.layerId || 'comment-layer-1';
 
+    // 색상 (개별 마커 색상)
+    this.colorKey = options.colorKey || 'default';
+
     // 답글 (스레드)
     this.replies = options.replies || [];
 
@@ -119,6 +133,13 @@ export class CommentMarker {
    */
   get duration() {
     return this.endFrame - this.startFrame;
+  }
+
+  /**
+   * 색상 정보 반환
+   */
+  get colorInfo() {
+    return MARKER_COLORS[this.colorKey] || MARKER_COLORS.default;
   }
 
   /**
@@ -175,6 +196,7 @@ export class CommentMarker {
       deleted: this.deleted,
       deletedAt: this.deletedAt instanceof Date ? this.deletedAt.toISOString() : this.deletedAt,
       layerId: this.layerId,
+      colorKey: this.colorKey,
       replies: this.replies.map(r => ({
         ...r,
         createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt
@@ -547,7 +569,7 @@ export class CommentManager extends EventTarget {
     if (!marker) return null;
 
     // 허용된 필드만 업데이트
-    const allowedFields = ['text', 'startFrame', 'endFrame', 'resolved', 'x', 'y'];
+    const allowedFields = ['text', 'startFrame', 'endFrame', 'resolved', 'x', 'y', 'colorKey'];
     let hasChanges = false;
 
     allowedFields.forEach(field => {
@@ -763,12 +785,15 @@ export class CommentManager extends EventTarget {
     for (const layer of layersToCheck) {
       if (!layer) continue;
       for (const marker of layer.getAllMarkers()) {
+        // 마커 개별 색상 사용 (없으면 레이어 색상)
+        const markerColor = marker.colorInfo?.color || layer.color;
         ranges.push({
           layerId: layer.id,
           markerId: marker.id,
           startFrame: marker.startFrame,
           endFrame: marker.endFrame,
-          color: layer.color,
+          color: markerColor,
+          colorKey: marker.colorKey || 'default',
           text: marker.text,
           resolved: marker.resolved
         });

@@ -2040,6 +2040,63 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 /* ========================================
+   Marker Popup (마커 색상 팝업)
+   ======================================== */
+.marker-popup {
+  position: fixed;
+  z-index: 10000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 12px;
+  min-width: 180px;
+}
+
+.marker-popup-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.marker-popup-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.marker-popup-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.marker-color-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.marker-color-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.marker-color-btn:hover {
+  transform: scale(1.1);
+}
+
+.marker-color-btn.selected {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px currentColor;
+}
+
+/* ========================================
    Comment Range (타임라인 댓글 범위)
    ======================================== */
 
@@ -2640,6 +2697,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   font-size: 13px;
   cursor: pointer;
   transition: all var(--transition-fast);
+  white-space: nowrap;
 }
 
 .settings-dropdown-btn:hover {
@@ -2652,11 +2710,59 @@ body.app-fullscreen .video-comment-overlay-controls {
   opacity: 0.7;
 }
 
+/* 피드백 완료율 프로그레스 바 */
+.feedback-progress {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.feedback-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.feedback-progress-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.feedback-progress-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  font-family: var(--font-mono);
+}
+
+.feedback-progress-bar {
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.feedback-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary), var(--success));
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.feedback-progress.hidden {
+  display: none;
+}
+
 .filter-bar {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   gap: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 .filter-chip {
@@ -2668,6 +2774,8 @@ body.app-fullscreen .video-comment-overlay-controls {
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .filter-chip:hover {
@@ -3214,6 +3322,8 @@ body.app-fullscreen .video-comment-overlay-controls {
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .comment-submit:hover {

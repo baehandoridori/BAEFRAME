@@ -674,6 +674,17 @@
         </div>
       </div>
 
+      <!-- 피드백 완료율 프로그레스 바 -->
+      <div class="feedback-progress" id="feedbackProgress">
+        <div class="feedback-progress-header">
+          <span class="feedback-progress-label">피드백 진행률</span>
+          <span class="feedback-progress-value" id="feedbackProgressValue">0%</span>
+        </div>
+        <div class="feedback-progress-bar">
+          <div class="feedback-progress-fill" id="feedbackProgressFill" style="width: 0%"></div>
+        </div>
+      </div>
+
       <div class="filter-bar">
         <button class="filter-chip active" data-filter="all">전체</button>
         <button class="filter-chip" data-filter="unresolved">미해결</button>
@@ -717,6 +728,24 @@
   <button class="shortcuts-toggle" id="shortcutsToggle" title="단축키 (?)">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="6" y1="16" x2="18" y2="16"/></svg>
   </button>
+
+  <!-- 마커 색상 팝업 메뉴 -->
+  <div class="marker-popup" id="markerPopup" style="display: none;">
+    <div class="marker-popup-content">
+      <div class="marker-popup-row">
+        <label class="marker-popup-label">색상</label>
+        <div class="marker-color-picker" id="markerColorPicker">
+          <button class="marker-color-btn" data-color="default" title="기본" style="background: #4a9eff;"></button>
+          <button class="marker-color-btn" data-color="yellow" title="노랑" style="background: #ffdd59;"></button>
+          <button class="marker-color-btn" data-color="red" title="빨강" style="background: #ff5555;"></button>
+          <button class="marker-color-btn" data-color="pink" title="핑크" style="background: #ff6b9d;"></button>
+          <button class="marker-color-btn" data-color="green" title="초록" style="background: #2ed573;"></button>
+          <button class="marker-color-btn" data-color="gray" title="회색" style="background: #a0a0a0;"></button>
+          <button class="marker-color-btn" data-color="white" title="흰색" style="background: #ffffff;"></button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- 하이라이트 팝업 메뉴 -->
   <div class="highlight-popup" id="highlightPopup" style="display: none;">
