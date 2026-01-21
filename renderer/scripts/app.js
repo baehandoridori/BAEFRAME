@@ -5207,14 +5207,14 @@ async function initApp() {
     // 아바타 이미지 가져오기
     const avatarImage = userSettings.getAvatarForName(marker.author);
 
-    // 원본 댓글 렌더링
+    // 원본 댓글 렌더링 (XSS 방지: author 필드 이스케이프)
     threadOriginal.innerHTML = `
       ${avatarImage ? `<div class="thread-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
       <div class="thread-original-inner">
         <div class="thread-comment-header">
-          <div class="thread-comment-avatar">${marker.author.charAt(0)}</div>
+          <div class="thread-comment-avatar">${escapeHtml(marker.author.charAt(0))}</div>
           <div class="thread-comment-info">
-            <div class="thread-comment-author" ${getAuthorColorStyle(marker.author)}>${marker.author}</div>
+            <div class="thread-comment-author" ${getAuthorColorStyle(marker.author)}>${escapeHtml(marker.author)}</div>
             <div class="thread-comment-time">${formatRelativeTime(marker.createdAt)}</div>
           </div>
         </div>
@@ -5242,13 +5242,13 @@ async function initApp() {
     threadReplyCount.textContent = replyCount > 0 ? `${replyCount}개의 댓글` : '';
     threadReplyCount.style.display = replyCount > 0 ? 'flex' : 'none';
 
-    // 답글들 렌더링
+    // 답글들 렌더링 (XSS 방지: author 필드 이스케이프)
     threadReplies.innerHTML = (marker.replies || []).map(reply => `
       <div class="thread-reply-item">
-        <div class="thread-reply-avatar">${reply.author.charAt(0)}</div>
+        <div class="thread-reply-avatar">${escapeHtml(reply.author.charAt(0))}</div>
         <div class="thread-reply-content">
           <div class="thread-reply-header">
-            <span class="thread-reply-author" ${getAuthorColorStyle(reply.author)}>${reply.author}</span>
+            <span class="thread-reply-author" ${getAuthorColorStyle(reply.author)}>${escapeHtml(reply.author)}</span>
             <span class="thread-reply-time">${formatRelativeTime(reply.createdAt)}</span>
           </div>
           <div class="thread-reply-text">${formatMarkdown(reply.text)}</div>
@@ -5432,13 +5432,13 @@ async function initApp() {
     threadReplyCount.textContent = `${replyCount}개의 댓글`;
     threadReplyCount.style.display = 'flex';
 
-    // UI 업데이트 - 새 답글 추가
+    // UI 업데이트 - 새 답글 추가 (XSS 방지: author 필드 이스케이프)
     threadReplies.innerHTML += `
       <div class="thread-reply-item">
-        <div class="thread-reply-avatar">${newReply.author.charAt(0)}</div>
+        <div class="thread-reply-avatar">${escapeHtml(newReply.author.charAt(0))}</div>
         <div class="thread-reply-content">
           <div class="thread-reply-header">
-            <span class="thread-reply-author" ${getAuthorColorStyle(newReply.author)}>${newReply.author}</span>
+            <span class="thread-reply-author" ${getAuthorColorStyle(newReply.author)}>${escapeHtml(newReply.author)}</span>
             <span class="thread-reply-time">${formatRelativeTime(newReply.createdAt)}</span>
           </div>
           <div class="thread-reply-text">${formatMarkdown(newReply.text)}</div>

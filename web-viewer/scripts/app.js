@@ -1386,7 +1386,7 @@ function updateCommentsList() {
     return `
       <div class="comment-card" data-id="${comment.id}" data-frame="${frame}">
         <div class="comment-header">
-          <span class="comment-author">${comment.author || '익명'}</span>
+          <span class="comment-author">${escapeHtml(comment.author || '익명')}</span>
           <span class="comment-time">${time}</span>
           <div class="comment-actions">
             <button data-action="edit">수정</button>
@@ -1813,15 +1813,15 @@ function openThread(commentId) {
   const time = formatTime(frame / state.frameRate);
   elements.threadOriginal.innerHTML = `
     <div class="comment-time">${time}</div>
-    <div class="comment-author">${comment.author || '익명'}</div>
+    <div class="comment-author">${escapeHtml(comment.author || '익명')}</div>
     <div class="comment-text">${escapeHtml(comment.text)}</div>
   `;
 
-  // 답글 표시
+  // 답글 표시 (XSS 방지: author 필드 이스케이프)
   const replies = comment.replies || [];
   elements.threadReplies.innerHTML = replies.map(reply => `
     <div class="reply-item">
-      <div class="reply-author">${reply.author || '익명'}</div>
+      <div class="reply-author">${escapeHtml(reply.author || '익명')}</div>
       <div class="comment-text">${escapeHtml(reply.text)}</div>
     </div>
   `).join('');

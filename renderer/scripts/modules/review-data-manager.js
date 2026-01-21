@@ -282,13 +282,15 @@ export class ReviewDataManager extends EventTarget {
       }
 
       // 드로잉은 타임스탬프 기반 (전체 교체)
-      const localModified = new Date(localData.modifiedAt).getTime();
+      // 주의: localData.modifiedAt은 _collectData()에서 now로 설정되므로 사용 불가
+      // 파일에서 로드된 원래 시간인 this._modifiedAt을 사용해야 원격 최신 변경 보호 가능
+      const localModified = new Date(this._modifiedAt || 0).getTime();
       const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
 
       if (remoteModified > localModified && remoteData.drawings) {
-        // 원격 드로잉이 더 최신이면 머지 (로컬 드로잉 유지하면서 원격 추가)
-        // 현재는 단순히 원격 우선 - 추후 레이어별 머지 가능
-        log.info('원격 드로잉이 더 최신, 원격 데이터 유지');
+        // 원격 드로잉이 더 최신이면 원격 데이터로 교체 (다른 협업자 작업 보호)
+        localData.drawings = remoteData.drawings;
+        log.info('원격 드로잉이 더 최신, 원격 데이터로 교체');
       }
 
       // 머지 후 modifiedAt 갱신

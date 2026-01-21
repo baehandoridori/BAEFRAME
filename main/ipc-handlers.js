@@ -12,6 +12,41 @@ const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized,
 const log = createLogger('IPC');
 
 /**
+ * 허용된 파일 확장자 목록
+ */
+const ALLOWED_EXTENSIONS = ['.bframe', '.json', '.bak'];
+
+/**
+ * IPC 경로 검증 (보안)
+ * - 허용된 확장자만 허용
+ * - 경로 이탈(..) 방지
+ * @param {string} filePath - 검증할 파일 경로
+ * @returns {string} 정규화된 경로
+ * @throws {Error} 유효하지 않은 경로
+ */
+function validateFilePath(filePath) {
+  if (!filePath || typeof filePath !== 'string') {
+    throw new Error('유효하지 않은 파일 경로');
+  }
+
+  // 경로 정규화
+  const normalized = path.normalize(filePath);
+
+  // 경로 이탈 방지 (.. 포함 시 원래 경로와 다를 수 있음)
+  if (normalized.includes('..')) {
+    throw new Error('경로 이탈 시도 감지');
+  }
+
+  // 확장자 검증
+  const ext = path.extname(normalized).toLowerCase();
+  if (!ALLOWED_EXTENSIONS.includes(ext)) {
+    throw new Error(`허용되지 않은 파일 형식: ${ext}`);
+  }
+
+  return normalized;
+}
+
+/**
  * IPC 핸들러 설정
  */
 function setupIpcHandlers() {
@@ -61,12 +96,14 @@ function setupIpcHandlers() {
     }
   });
 
-  // 리뷰 데이터 저장
+  // 리뷰 데이터 저장 (경로 검증 포함)
   ipcMain.handle('file:save-review', async (event, filePath, data) => {
     const trace = log.trace('file:save-review');
     try {
-      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-      trace.end({ filePath });
+      // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
+      const validatedPath = validateFilePath(filePath);
+      await fs.promises.writeFile(validatedPath, JSON.stringify(data, null, 2), 'utf-8');
+      trace.end({ filePath: validatedPath });
       return { success: true };
     } catch (error) {
       trace.error(error);
@@ -74,19 +111,45 @@ function setupIpcHandlers() {
     }
   });
 
-  // 리뷰 데이터 로드
+  // 리뷰 데이터 로드 (경로 검증 + 손상 시 백업 복구)
   ipcMain.handle('file:load-review', async (event, filePath) => {
     const trace = log.trace('file:load-review');
     try {
-      const content = await fs.promises.readFile(filePath, 'utf-8');
+      // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
+      const validatedPath = validateFilePath(filePath);
+      const content = await fs.promises.readFile(validatedPath, 'utf-8');
       const data = JSON.parse(content);
-      trace.end({ filePath });
+      trace.end({ filePath: validatedPath });
       return data;
     } catch (error) {
       if (error.code === 'ENOENT') {
         trace.end({ filePath, exists: false });
         return null;
       }
+
+      // JSON 파싱 실패 시 .bak 파일에서 복구 시도
+      if (error instanceof SyntaxError) {
+        const backupPath = filePath + '.bak';
+        log.warn('JSON 파싱 실패, 백업에서 복구 시도', { filePath, backupPath });
+
+        try {
+          const backupContent = await fs.promises.readFile(backupPath, 'utf-8');
+          const backupData = JSON.parse(backupContent);
+
+          // 복구 성공 - 손상된 원본을 .corrupted로 이동하고 백업을 원본으로 복원
+          const corruptedPath = filePath + '.corrupted';
+          await fs.promises.rename(filePath, corruptedPath);
+          await fs.promises.writeFile(filePath, JSON.stringify(backupData, null, 2), 'utf-8');
+
+          log.info('백업에서 복구 성공', { filePath, backupPath });
+          trace.end({ filePath, recoveredFromBackup: true });
+          return backupData;
+        } catch (backupError) {
+          log.error('백업 복구 실패', { filePath, backupError: backupError.message });
+          // 백업도 실패하면 원래 오류 던지기
+        }
+      }
+
       trace.error(error);
       throw error;
     }
