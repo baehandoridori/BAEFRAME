@@ -645,6 +645,7 @@ export class SplitViewManager {
     const video = panel === 'left' ? this._leftVideo : this._rightVideo;
     const loadingOverlay = document.getElementById(`splitLoading${panel === 'left' ? 'Left' : 'Right'}`);
     const emptyState = document.getElementById(`splitEmpty${panel === 'left' ? 'Left' : 'Right'}`);
+    const statusText = loadingOverlay?.querySelector('.split-loading-text');
 
     if (!video || !versionInfo?.path) {
       emptyState?.classList.add('active');
@@ -654,18 +655,65 @@ export class SplitViewManager {
     // 로딩 표시
     loadingOverlay?.classList.add('active');
     emptyState?.classList.remove('active');
+    if (statusText) statusText.textContent = '로딩 중...';
 
     try {
-      // 비디오 소스 설정
-      video.src = versionInfo.path;
+      // ====== 코덱 확인 및 트랜스코딩 ======
+      let actualVideoPath = versionInfo.path;
+
+      // FFmpeg 사용 가능 여부 확인
+      const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
+
+      if (ffmpegAvailable) {
+        const codecInfo = await window.electronAPI.ffmpegProbeCodec(versionInfo.path);
+
+        if (codecInfo.success && !codecInfo.isSupported) {
+          log.info('Split View: 미지원 코덱 감지', { panel, codec: codecInfo.codecName });
+          if (statusText) statusText.textContent = `코덱 변환 중... (${codecInfo.codecName})`;
+
+          // 캐시 확인
+          const cacheResult = await window.electronAPI.ffmpegCheckCache(versionInfo.path);
+          if (cacheResult.valid) {
+            log.info('Split View: 캐시된 변환 파일 사용', { panel, path: cacheResult.convertedPath });
+            actualVideoPath = cacheResult.convertedPath;
+          } else {
+            // 트랜스코딩 필요 - 진행률 표시
+            const progressHandler = (data) => {
+              if (data.filePath === versionInfo.path && statusText) {
+                statusText.textContent = `코덱 변환 중... ${data.progress}%`;
+              }
+            };
+            window.electronAPI.onTranscodeProgress(progressHandler);
+
+            try {
+              const transcodeResult = await window.electronAPI.ffmpegTranscode(versionInfo.path);
+
+              if (transcodeResult.success) {
+                log.info('Split View: 트랜스코딩 완료', { panel, outputPath: transcodeResult.outputPath });
+                actualVideoPath = transcodeResult.outputPath;
+              } else {
+                throw new Error(transcodeResult.error || '변환 실패');
+              }
+            } finally {
+              // 리스너 정리
+              window.electronAPI.removeAllListeners?.('ffmpeg:transcode-progress');
+            }
+          }
+        }
+      }
+
+      if (statusText) statusText.textContent = '비디오 로딩 중...';
+
+      // 비디오 소스 설정 (변환된 경로 또는 원본 경로)
+      video.src = actualVideoPath;
 
       // 메타데이터 로드 대기
       await new Promise((resolve, reject) => {
         video.onloadedmetadata = resolve;
-        video.onerror = reject;
+        video.onerror = (e) => reject(new Error('비디오 로드 실패: ' + (e.message || '알 수 없는 오류')));
       });
 
-      log.info('비디오 로드 완료', { panel, path: versionInfo.path });
+      log.info('비디오 로드 완료', { panel, path: actualVideoPath, originalPath: versionInfo.path });
 
       // 오디오 초기 상태 설정 (좌측: 소리 켜짐, 우측: 음소거)
       video.volume = 1;
@@ -674,7 +722,14 @@ export class SplitViewManager {
       // 타임코드 업데이트
       this._updateTimecode();
     } catch (error) {
-      log.error('비디오 로드 실패', { panel, error });
+      log.error('비디오 로드 실패', { panel, error: error.message });
+      emptyState?.classList.add('active');
+
+      // 에러 메시지 표시
+      const emptyText = emptyState?.querySelector('.split-empty-text');
+      if (emptyText) {
+        emptyText.textContent = `로드 실패: ${error.message}`;
+      }
     } finally {
       loadingOverlay?.classList.remove('active');
     }
@@ -1254,10 +1309,13 @@ export class SplitViewManager {
   _formatTimecode(seconds) {
     if (!seconds || isNaN(seconds)) return '00:00:00:00';
 
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    const f = Math.floor((seconds % 1) * this._fps);
+    // Math.round로 부동소수점 오차 방지
+    const totalFrames = Math.round(seconds * this._fps);
+    const f = totalFrames % this._fps;
+    const totalSeconds = Math.floor(totalFrames / this._fps);
+    const s = totalSeconds % 60;
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const h = Math.floor(totalSeconds / 3600);
 
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
   }

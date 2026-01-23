@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BAEFRAME 목업 - 하이라이트 구간</title>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* 실제 main.css 변수 */
+    :root {
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --bg-hover: #2a2a2a;
+      --border-subtle: #2a2a2a;
+      --border-default: #3a3a3a;
+      --text-primary: #f5f5f5;
+      --text-secondary: #a0a0a0;
+      --text-tertiary: #666666;
+      --accent-primary: #ffd000;
+      --accent-glow: rgba(255, 208, 0, 0.15);
+      --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      --font-mono: 'SF Mono', 'Consolas', monospace;
+
+      /* 하이라이트 색상 */
+      --highlight-red: #ff6b6b;
+      --highlight-yellow: #fbbf24;
+      --highlight-green: #4ade80;
+      --highlight-blue: #60a5fa;
+      --highlight-gray: #9ca3af;
+      --highlight-white: #f5f5f5;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font-family);
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      padding: 40px;
+      min-height: 100vh;
+    }
+
+    .mockup-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--accent-primary);
+    }
+
+    .mockup-subtitle {
+      font-size: 14px;
+      color: var(--text-tertiary);
+      margin-bottom: 32px;
+    }
+
+    /* 타임라인 데모 - 실제 스타일 기반 */
+    .timeline-demo {
+      background: var(--bg-primary);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 32px;
+    }
+
+    .timeline-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .timeline-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .timeline-title-icon {
+      color: var(--accent-primary);
+    }
+
+    .timeline-info {
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    /* 눈금자 */
+    .ruler {
+      display: flex;
+      margin-bottom: 8px;
+      padding-left: 120px;
+    }
+
+    .ruler-mark {
+      flex: 1;
+      font-size: 10px;
+      color: var(--text-tertiary);
+      font-family: var(--font-mono);
+    }
+
+    /* 트랙 컨테이너 */
+    .track-container {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .track-label {
+      width: 120px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+    }
+
+    .track {
+      flex: 1;
+      height: 36px;
+      background: var(--bg-tertiary);
+      border-radius: 4px;
+      position: relative;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    /* 하이라이트 바 */
+    .highlight-bar {
+      position: absolute;
+      top: 6px;
+      height: 24px;
+      border-radius: 4px;
+      opacity: 0.7;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 600;
+      color: rgba(0,0,0,0.8);
+    }
+
+    .highlight-bar:hover {
+      opacity: 1;
+      transform: scaleY(1.1);
+    }
+
+    .highlight-bar.red { background: var(--highlight-red); }
+    .highlight-bar.yellow { background: var(--highlight-yellow); }
+    .highlight-bar.green { background: var(--highlight-green); }
+    .highlight-bar.blue { background: var(--highlight-blue); }
+    .highlight-bar.gray { background: var(--highlight-gray); }
+    .highlight-bar.white { background: var(--highlight-white); }
+
+    /* 핸들 */
+    .highlight-handle {
+      position: absolute;
+      top: 0;
+      width: 8px;
+      height: 100%;
+      background: rgba(255,255,255,0.3);
+      cursor: ew-resize;
+    }
+
+    .highlight-handle.left { left: 0; border-radius: 4px 0 0 4px; }
+    .highlight-handle.right { right: 0; border-radius: 0 4px 4px 0; }
+
+    /* 플레이헤드 - 실제 스타일 */
+    .playhead {
+      position: absolute;
+      top: 0;
+      width: 2px;
+      height: 100%;
+      background: var(--accent-primary);
+      z-index: 10;
+    }
+
+    .playhead::before {
+      content: '';
+      position: absolute;
+      top: -4px;
+      left: -5px;
+      width: 12px;
+      height: 8px;
+      background: var(--accent-primary);
+      clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
+    }
+
+    /* 댓글 트랙 마커 - 실제 스타일 (main.css:468-504) */
+    .comment-bar {
+      position: absolute;
+      top: 6px;
+      height: 24px;
+      background: rgba(74, 158, 255, 0.6);
+      border: 1px solid rgba(74, 158, 255, 0.8);
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    .comment-bar.resolved {
+      background: rgba(74, 222, 128, 0.5);
+      border-color: rgba(74, 222, 128, 0.7);
+    }
+
+    /* 색상 팔레트 */
+    .color-section {
+      margin-top: 48px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .color-palette {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .color-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .color-swatch {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border: 3px solid transparent;
+    }
+
+    .color-swatch:hover {
+      transform: scale(1.1);
+    }
+
+    .color-swatch.active {
+      border-color: var(--text-primary);
+      box-shadow: 0 0 12px rgba(255,255,255,0.3);
+    }
+
+    .color-name {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    /* 인터랙션 설명 */
+    .interaction-section {
+      margin-top: 48px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .interaction-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 16px;
+    }
+
+    .interaction-item {
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      padding: 16px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .interaction-key {
+      display: inline-block;
+      background: var(--bg-hover);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--accent-primary);
+      margin-right: 8px;
+    }
+
+    .interaction-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 8px;
+    }
+
+    .mockup-watermark {
+      position: fixed;
+      bottom: 8px;
+      left: 8px;
+      font-size: 10px;
+      color: var(--text-tertiary);
+      opacity: 0.5;
+    }
+  </style>
+</head>
+<body>
+  <h1 class="mockup-title">하이라이트 구간</h1>
+  <p class="mockup-subtitle">특정 구간을 색상으로 표시하여 중요한 부분을 한눈에 파악할 수 있습니다</p>
+
+  <!-- 타임라인 데모 -->
+  <div class="timeline-demo">
+    <div class="timeline-header">
+      <span class="timeline-title">
+        <span class="timeline-title-icon">🎬</span>
+        타임라인
+      </span>
+      <span class="timeline-info">shot_042_animation_v3.mp4 - 24fps - 12.5초</span>
+    </div>
+
+    <div class="ruler">
+      <span class="ruler-mark">0s</span>
+      <span class="ruler-mark">2s</span>
+      <span class="ruler-mark">4s</span>
+      <span class="ruler-mark">6s</span>
+      <span class="ruler-mark">8s</span>
+      <span class="ruler-mark">10s</span>
+      <span class="ruler-mark">12s</span>
+    </div>
+
+    <!-- 하이라이트 트랙 -->
+    <div class="track-container">
+      <div class="track-label">
+        <span>🎨</span>
+        <span>하이라이트</span>
+      </div>
+      <div class="track">
+        <!-- 하이라이트 바들 -->
+        <div class="highlight-bar red" style="left: 5%; width: 12%;">
+          수정 필요
+          <div class="highlight-handle left"></div>
+          <div class="highlight-handle right"></div>
+        </div>
+        <div class="highlight-bar yellow" style="left: 25%; width: 15%;">
+          확인 요청
+          <div class="highlight-handle left"></div>
+          <div class="highlight-handle right"></div>
+        </div>
+        <div class="highlight-bar green" style="left: 50%; width: 10%;">
+          완료
+          <div class="highlight-handle left"></div>
+          <div class="highlight-handle right"></div>
+        </div>
+        <div class="highlight-bar blue" style="left: 70%; width: 18%;">
+          참고
+          <div class="highlight-handle left"></div>
+          <div class="highlight-handle right"></div>
+        </div>
+
+        <!-- 플레이헤드 -->
+        <div class="playhead" style="left: 42%;"></div>
+      </div>
+    </div>
+
+    <!-- 댓글 트랙 (참고용) -->
+    <div class="track-container" style="opacity: 0.5;">
+      <div class="track-label">
+        <span>💬</span>
+        <span>댓글</span>
+      </div>
+      <div class="track">
+        <div class="comment-bar" style="left: 8%; width: 8%;"></div>
+        <div class="comment-bar" style="left: 35%; width: 12%;"></div>
+        <div class="comment-bar resolved" style="left: 75%; width: 6%;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 색상 팔레트 -->
+  <div class="color-section">
+    <h2 class="section-title">색상 선택</h2>
+    <div class="color-palette">
+      <div class="color-item">
+        <div class="color-swatch" style="background: var(--highlight-red);"></div>
+        <span class="color-name">빨강</span>
+      </div>
+      <div class="color-item">
+        <div class="color-swatch active" style="background: var(--highlight-yellow);"></div>
+        <span class="color-name">노랑 (기본)</span>
+      </div>
+      <div class="color-item">
+        <div class="color-swatch" style="background: var(--highlight-green);"></div>
+        <span class="color-name">초록</span>
+      </div>
+      <div class="color-item">
+        <div class="color-swatch" style="background: var(--highlight-blue);"></div>
+        <span class="color-name">파랑</span>
+      </div>
+      <div class="color-item">
+        <div class="color-swatch" style="background: var(--highlight-gray);"></div>
+        <span class="color-name">회색</span>
+      </div>
+      <div class="color-item">
+        <div class="color-swatch" style="background: var(--highlight-white); border: 1px solid var(--border-subtle);"></div>
+        <span class="color-name">흰색</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 인터랙션 설명 -->
+  <div class="interaction-section">
+    <h2 class="section-title">조작법</h2>
+    <div class="interaction-list">
+      <div class="interaction-item">
+        <span class="interaction-key">H</span>
+        <strong>하이라이트 추가</strong>
+        <p class="interaction-desc">현재 플레이헤드 위치에 새 하이라이트 (기본 5초)</p>
+      </div>
+      <div class="interaction-item">
+        <span class="interaction-key">Alt + ←</span>
+        <strong>이전 하이라이트</strong>
+        <p class="interaction-desc">이전 하이라이트 시작점으로 이동</p>
+      </div>
+      <div class="interaction-item">
+        <span class="interaction-key">Alt + →</span>
+        <strong>다음 하이라이트</strong>
+        <p class="interaction-desc">다음 하이라이트 시작점으로 이동</p>
+      </div>
+      <div class="interaction-item">
+        <span class="interaction-key">드래그</span>
+        <strong>구간 이동</strong>
+        <p class="interaction-desc">하이라이트 전체를 드래그해서 위치 변경</p>
+      </div>
+      <div class="interaction-item">
+        <span class="interaction-key">핸들 드래그</span>
+        <strong>구간 조정</strong>
+        <p class="interaction-desc">좌우 핸들을 드래그해서 시작/끝 조정</p>
+      </div>
+      <div class="interaction-item">
+        <span class="interaction-key">Shift + 드래그</span>
+        <strong>스냅</strong>
+        <p class="interaction-desc">플레이헤드, 다른 구간에 자동 정렬</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup-watermark">BAEFRAME Mockup - 하이라이트</div>
+</body>
+</html>

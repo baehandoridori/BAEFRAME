@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BAEFRAME 목업 - 메인 인터페이스</title>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* 실제 main.css의 변수들 그대로 사용 */
+    :root {
+      /* 배경 */
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --bg-elevated: #222222;
+      --bg-hover: #2a2a2a;
+
+      /* 테두리 */
+      --border-subtle: #2a2a2a;
+      --border-default: #3a3a3a;
+
+      /* 텍스트 */
+      --text-primary: #f5f5f5;
+      --text-secondary: #a0a0a0;
+      --text-tertiary: #666666;
+
+      /* 액센트 (노란색) */
+      --accent-primary: #ffd000;
+      --accent-secondary: #e6bb00;
+      --accent-glow: rgba(255, 208, 0, 0.15);
+      --accent-glow-strong: rgba(255, 208, 0, 0.25);
+
+      /* 상태 */
+      --success: #4ade80;
+      --success-bg: rgba(74, 222, 128, 0.15);
+      --error: #f87171;
+      --error-bg: rgba(248, 113, 113, 0.15);
+
+      /* 타이포그래피 */
+      --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      --font-mono: 'SF Mono', 'Consolas', monospace;
+
+      /* 그림자 */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
+      --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.7);
+
+      /* 레이아웃 */
+      --header-height: 52px;
+      --controls-height: 56px;
+      --timeline-height: 180px;
+      --panel-width: 340px;
+      --layer-header-width: 160px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font-family);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    /* Header - 실제 스타일 */
+    .header {
+      height: var(--header-height);
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--accent-primary);
+    }
+
+    .logo-icon {
+      width: 28px;
+      height: 28px;
+      background: var(--accent-primary);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      color: var(--bg-primary);
+      font-weight: 800;
+    }
+
+    .file-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--bg-tertiary);
+      border-radius: 6px;
+      font-size: 13px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .file-icon { color: var(--accent-primary); }
+    .file-name { color: var(--text-primary); font-weight: 500; }
+
+    .version-badge {
+      background: var(--accent-glow-strong);
+      color: var(--accent-primary);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid var(--accent-primary);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 버튼 - 실제 스타일 */
+    .btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .btn-primary {
+      background: var(--accent-primary);
+      color: var(--bg-primary);
+      font-weight: 600;
+    }
+
+    /* Main Layout */
+    .main-container {
+      display: flex;
+      height: calc(100vh - var(--header-height));
+    }
+
+    .viewer-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-primary);
+      min-width: 400px;
+    }
+
+    /* Video Viewer */
+    .viewer-container {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      overflow: hidden;
+      min-height: 300px;
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 목업용 비디오 플레이스홀더 */
+    .video-placeholder {
+      width: 640px;
+      height: 360px;
+      background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .video-placeholder-text {
+      color: var(--text-tertiary);
+      font-size: 14px;
+    }
+
+    /* 댓글 마커 - 실제 스타일 (main.css:3771-3791) */
+    .comment-marker {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      background: var(--error);
+      border: 2px solid white;
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+      transform: translate(-50%, -50%);
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+      color: white;
+    }
+
+    .comment-marker.resolved {
+      background: var(--success);
+      opacity: 0.7;
+    }
+
+    /* Playback Controls - 실제 스타일 (main.css:968-999) */
+    .controls-bar {
+      height: var(--controls-height);
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+
+    .playback-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .control-btn {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .control-btn.active {
+      color: var(--accent-primary);
+    }
+
+    .play-btn {
+      width: 40px;
+      height: 40px;
+      background: var(--accent-primary);
+      color: var(--bg-primary);
+      border-radius: 50%;
+      border: none;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .time-display {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .frame-display {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--accent-primary);
+      background: var(--accent-glow);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    /* Mode Toggles */
+    .mode-toggles {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+    }
+
+    .mode-btn {
+      padding: 8px 12px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mode-btn.active {
+      background: var(--accent-glow-strong);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+    }
+
+    /* Timeline - 실제 스타일 (main.css:1242-1500) */
+    .timeline-section {
+      height: var(--timeline-height);
+      min-height: 160px;
+      background: var(--bg-tertiary);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .timeline-toolbar {
+      height: 40px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+
+    .timeline-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .timeline-title-icon { color: var(--accent-primary); }
+
+    .zoom-control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .zoom-label {
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    .zoom-display {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      font-family: var(--font-mono);
+      min-width: 45px;
+      text-align: right;
+    }
+
+    .timeline-main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Layer Headers - 실제 스타일 (main.css:1371-1500) */
+    .layer-headers {
+      width: var(--layer-header-width);
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .layer-header-ruler {
+      height: 32px;
+      min-height: 32px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+
+    .layer-action-btn {
+      width: 24px;
+      height: 24px;
+      border: none;
+      border-radius: 4px;
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+
+    .layer-header {
+      height: 36px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 8px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .layer-header.selected {
+      background: var(--accent-glow);
+    }
+
+    .layer-color {
+      width: 4px;
+      height: 16px;
+      border-radius: 2px;
+    }
+
+    .layer-visibility {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: var(--text-tertiary);
+    }
+
+    .layer-name {
+      flex: 1;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    /* Timeline Content */
+    .timeline-content {
+      flex: 1;
+      overflow: auto;
+      position: relative;
+    }
+
+    .timeline-ruler {
+      height: 32px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: flex-end;
+      padding: 0 8px;
+      min-width: 800px;
+      position: relative;
+    }
+
+    .ruler-mark {
+      font-size: 10px;
+      color: var(--text-tertiary);
+      position: absolute;
+      transform: translateX(-50%);
+      bottom: 4px;
+    }
+
+    .timeline-tracks {
+      min-width: 800px;
+      position: relative;
+    }
+
+    .timeline-track {
+      height: 36px;
+      border-bottom: 1px solid var(--border-subtle);
+      position: relative;
+    }
+
+    /* 댓글 트랙 마커 - 실제 스타일 (main.css:468-504) */
+    .track-marker {
+      position: absolute;
+      top: 6px;
+      height: 24px;
+      background: rgba(74, 158, 255, 0.6);
+      border: 1px solid rgba(74, 158, 255, 0.8);
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    .track-marker.resolved {
+      background: rgba(74, 222, 128, 0.5);
+      border-color: rgba(74, 222, 128, 0.7);
+    }
+
+    /* 플레이헤드 - 실제 스타일 */
+    .playhead {
+      position: absolute;
+      top: 0;
+      width: 2px;
+      height: 100%;
+      background: var(--accent-primary);
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    .playhead::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -5px;
+      width: 12px;
+      height: 12px;
+      background: var(--accent-primary);
+      clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
+    }
+
+    /* Resizer - 실제 스타일 (main.css:262-301) */
+    .resizer {
+      width: 6px;
+      background: var(--bg-secondary);
+      cursor: col-resize;
+      position: relative;
+    }
+
+    .resizer::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 2px;
+      height: 40px;
+      background: var(--border-default);
+      border-radius: 1px;
+    }
+
+    /* Comment Panel */
+    .comment-panel {
+      width: var(--panel-width);
+      background: var(--bg-secondary);
+      border-left: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .panel-title {
+      font-size: 15px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .comment-count {
+      background: var(--accent-glow-strong);
+      color: var(--accent-primary);
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    /* Filter Bar - 실제 스타일 (main.css:2523-2550) */
+    .filter-bar {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      gap: 8px;
+    }
+
+    .filter-chip {
+      padding: 6px 12px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    .filter-chip.active {
+      background: var(--accent-glow-strong);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+    }
+
+    /* Comments List */
+    .comments-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    /* Comment Item - 실제 스타일 (main.css:2579-2632) */
+    .comment-item {
+      position: relative;
+      padding: 12px;
+      padding-top: 32px;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+
+    .comment-item:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-subtle);
+    }
+
+    .comment-item.selected {
+      border-color: var(--accent-primary);
+      background: var(--accent-glow);
+    }
+
+    /* 해결 상태 토글 버튼 - 실제 스타일 (main.css:2591-2622) */
+    .comment-resolve-toggle {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      padding: 5px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(255, 152, 0, 0.15);
+      border: 1px solid rgba(255, 152, 0, 0.5);
+      border-radius: 12px;
+      color: #ff9800;
+      cursor: pointer;
+      z-index: 2;
+    }
+
+    .comment-item.resolved .comment-resolve-toggle {
+      background: rgba(76, 175, 80, 0.15);
+      border: 1px solid rgba(76, 175, 80, 0.5);
+      color: #4caf50;
+    }
+
+    .comment-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    /* Timestamp - 실제 스타일 (main.css:2852-2871) */
+    .comment-timestamp {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-primary);
+    }
+
+    .timestamp-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--error);
+    }
+
+    .timestamp-dot.resolved {
+      background: var(--success);
+    }
+
+    .comment-meta {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .comment-author {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .comment-time {
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    .comment-content {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+
+    .comment-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .comment-action-btn {
+      padding: 6px 10px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    /* Comment Thumbnail */
+    .comment-thumbnail-wrapper {
+      margin-bottom: 8px;
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--bg-primary);
+    }
+
+    .comment-thumbnail {
+      width: 100%;
+      height: 80px;
+      background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+      font-size: 11px;
+    }
+
+    /* Watermark */
+    .mockup-watermark {
+      position: fixed;
+      bottom: 8px;
+      left: 8px;
+      font-size: 10px;
+      color: var(--text-tertiary);
+      opacity: 0.5;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">
+        <div class="logo-icon">B</div>
+        <span>baeframe</span>
+      </div>
+      <div class="file-info">
+        <span class="file-icon">🎬</span>
+        <span class="file-name">shot_042_animation_v3.mp4</span>
+        <span class="version-badge">v3</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="btn btn-secondary">
+        <span>💾</span>
+        저장
+      </button>
+      <button class="btn btn-primary">
+        <span>🔗</span>
+        링크 복사
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="main-container">
+    <!-- Viewer Section -->
+    <div class="viewer-section">
+      <!-- Video Viewer -->
+      <div class="viewer-container">
+        <div class="video-wrapper">
+          <div class="video-placeholder">
+            <span class="video-placeholder-text">shot_042_animation_v3.mp4 (1920×1080)</span>
+            <!-- 댓글 마커들 -->
+            <div class="comment-marker" style="left: 30%; top: 40%;">1</div>
+            <div class="comment-marker resolved" style="left: 70%; top: 60%;">✓</div>
+            <div class="comment-marker" style="left: 50%; top: 30%;">2</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls-bar">
+        <div class="playback-controls">
+          <button class="control-btn">⏮</button>
+          <button class="control-btn">◀</button>
+          <button class="play-btn">▶</button>
+          <button class="control-btn">▶</button>
+          <button class="control-btn">⏭</button>
+        </div>
+        <div class="time-display">
+          <span>00:02:14</span>
+          <span style="color: var(--text-tertiary);">/</span>
+          <span>00:05:30</span>
+        </div>
+        <div class="frame-display">F 154 / 792</div>
+        <div class="mode-toggles">
+          <button class="mode-btn">
+            <span>✏️</span> 그리기
+          </button>
+          <button class="mode-btn active">
+            <span>💬</span> 댓글
+          </button>
+          <button class="mode-btn">
+            <span>🖼</span> 전체화면
+          </button>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="timeline-section">
+        <div class="timeline-toolbar">
+          <div class="timeline-title">
+            <span class="timeline-title-icon">🎬</span>
+            <span>타임라인</span>
+          </div>
+          <div class="zoom-control">
+            <span class="zoom-label">줌</span>
+            <span class="zoom-display">100%</span>
+          </div>
+        </div>
+        <div class="timeline-main">
+          <div class="layer-headers">
+            <div class="layer-header-ruler">
+              <button class="layer-action-btn">+</button>
+              <button class="layer-action-btn">−</button>
+            </div>
+            <div class="layer-header selected">
+              <div class="layer-color" style="background: #ffd000;"></div>
+              <span class="layer-visibility">👁</span>
+              <span class="layer-name">그리기 1</span>
+            </div>
+            <div class="layer-header">
+              <div class="layer-color" style="background: #4a9eff;"></div>
+              <span class="layer-visibility">👁</span>
+              <span class="layer-name">💬 댓글</span>
+            </div>
+          </div>
+          <div class="timeline-content">
+            <div class="timeline-ruler">
+              <span class="ruler-mark" style="left: 0%;">0</span>
+              <span class="ruler-mark" style="left: 12.5%;">100</span>
+              <span class="ruler-mark" style="left: 25%;">200</span>
+              <span class="ruler-mark" style="left: 37.5%;">300</span>
+              <span class="ruler-mark" style="left: 50%;">400</span>
+              <span class="ruler-mark" style="left: 62.5%;">500</span>
+              <span class="ruler-mark" style="left: 75%;">600</span>
+              <span class="ruler-mark" style="left: 87.5%;">700</span>
+            </div>
+            <div class="timeline-tracks" style="height: 100px;">
+              <!-- 그리기 트랙 -->
+              <div class="timeline-track"></div>
+              <!-- 댓글 트랙 -->
+              <div class="timeline-track">
+                <div class="track-marker" style="left: 10%; width: 5%;"></div>
+                <div class="track-marker" style="left: 30%; width: 8%;"></div>
+                <div class="track-marker resolved" style="left: 55%; width: 4%;"></div>
+                <div class="track-marker" style="left: 75%; width: 6%;"></div>
+              </div>
+              <!-- 플레이헤드 -->
+              <div class="playhead" style="left: 19.5%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resizer -->
+    <div class="resizer"></div>
+
+    <!-- Comment Panel -->
+    <div class="comment-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>💬</span>
+          <span>댓글</span>
+          <span class="comment-count">4</span>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <div class="filter-chip active">전체</div>
+        <div class="filter-chip">미해결</div>
+        <div class="filter-chip">해결됨</div>
+      </div>
+
+      <div class="comments-list">
+        <!-- 댓글 1 - 선택됨 -->
+        <div class="comment-item selected">
+          <button class="comment-resolve-toggle">미해결</button>
+          <div class="comment-thumbnail-wrapper">
+            <div class="comment-thumbnail">썸네일 F 36</div>
+          </div>
+          <div class="comment-header">
+            <div class="comment-timestamp">
+              <div class="timestamp-dot"></div>
+              <span>F 36~72</span>
+            </div>
+            <div class="comment-meta">
+              <span class="comment-author">윤성원</span>
+              <span class="comment-time">2분 전</span>
+            </div>
+          </div>
+          <div class="comment-content">
+            손 위치가 어색해요. 좀 더 위로 올려주세요.
+          </div>
+          <div class="comment-actions">
+            <button class="comment-action-btn">💬 답글</button>
+            <button class="comment-action-btn">✏️ 수정</button>
+          </div>
+        </div>
+
+        <!-- 댓글 2 - 해결됨 -->
+        <div class="comment-item resolved">
+          <button class="comment-resolve-toggle">해결됨</button>
+          <div class="comment-header">
+            <div class="comment-timestamp">
+              <div class="timestamp-dot resolved"></div>
+              <span>F 120~180</span>
+            </div>
+            <div class="comment-meta">
+              <span class="comment-author">배씨</span>
+              <span class="comment-time">1시간 전</span>
+            </div>
+          </div>
+          <div class="comment-content">
+            타이밍 수정 완료했습니다
+          </div>
+        </div>
+
+        <!-- 댓글 3 -->
+        <div class="comment-item">
+          <button class="comment-resolve-toggle">미해결</button>
+          <div class="comment-header">
+            <div class="comment-timestamp">
+              <div class="timestamp-dot"></div>
+              <span>F 250</span>
+            </div>
+            <div class="comment-meta">
+              <span class="comment-author">김감독</span>
+              <span class="comment-time">3시간 전</span>
+            </div>
+          </div>
+          <div class="comment-content">
+            여기 이펙트 더 강하게 해주세요. 폭발감이 부족합니다.
+          </div>
+          <div class="comment-actions">
+            <button class="comment-action-btn">💬 답글</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup-watermark">BAEFRAME Mockup - 메인 인터페이스</div>
+</body>
+</html>

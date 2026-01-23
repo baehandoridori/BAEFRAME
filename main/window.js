@@ -19,6 +19,59 @@ function debugLog(msg) {
 }
 
 let mainWindow = null;
+let loadingWindow = null;
+
+/**
+ * 로딩 창 생성
+ * @param {string} [filePath] - 로딩 중인 파일 경로 (표시용)
+ * @returns {BrowserWindow}
+ */
+function createLoadingWindow(filePath = '') {
+  // 이미 로딩 창이 있으면 반환
+  if (loadingWindow && !loadingWindow.isDestroyed()) {
+    return loadingWindow;
+  }
+
+  loadingWindow = new BrowserWindow({
+    width: 400,
+    height: 220,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#1a1a1a',
+    resizable: false,
+    movable: true,
+    center: true,
+    alwaysOnTop: true,
+    skipTaskbar: false, // 작업표시줄에 표시 (사용자가 로딩 중임을 인지할 수 있도록)
+    title: 'BAEFRAME 로딩 중...',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  const loadingPath = path.join(__dirname, '..', 'renderer', 'loading.html');
+  const fileParam = filePath ? `?file=${encodeURIComponent(filePath)}` : '';
+  loadingWindow.loadFile(loadingPath, { search: fileParam.slice(1) });
+
+  loadingWindow.on('closed', () => {
+    loadingWindow = null;
+  });
+
+  debugLog('로딩 창 생성됨');
+  return loadingWindow;
+}
+
+/**
+ * 로딩 창 닫기
+ */
+function closeLoadingWindow() {
+  if (loadingWindow && !loadingWindow.isDestroyed()) {
+    loadingWindow.close();
+    loadingWindow = null;
+    debugLog('로딩 창 닫힘');
+  }
+}
 
 /**
  * 메인 윈도우 생성
@@ -66,6 +119,7 @@ function createMainWindow() {
     debugLog(`로드 실패! errorCode: ${errorCode}, desc: ${errorDescription}, url: ${validatedURL}`);
     log.error('렌더러 로드 실패', { errorCode, errorDescription, validatedURL });
     // 로드 실패해도 창은 표시
+    closeLoadingWindow();
     mainWindow.show();
   });
 
@@ -78,6 +132,8 @@ function createMainWindow() {
   const windowCreateTime = Date.now();
   mainWindow.once('ready-to-show', () => {
     debugLog('ready-to-show 이벤트 발생');
+    // 로딩 창 닫기
+    closeLoadingWindow();
     mainWindow.show();
     log.info('메인 윈도우 표시됨', {
       width: windowWidth,
@@ -92,6 +148,7 @@ function createMainWindow() {
     if (mainWindow && !mainWindow.isVisible()) {
       debugLog('타임아웃 - 강제로 창 표시');
       log.warn('ready-to-show 타임아웃, 강제 표시');
+      closeLoadingWindow();
       mainWindow.show();
     }
   }, 5000);
@@ -198,6 +255,8 @@ function isFullscreen() {
 module.exports = {
   createMainWindow,
   getMainWindow,
+  createLoadingWindow,
+  closeLoadingWindow,
   minimizeWindow,
   toggleMaximize,
   closeWindow,

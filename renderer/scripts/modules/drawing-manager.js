@@ -49,6 +49,7 @@ export class DrawingManager extends EventTarget {
     this.preloadedFrames = new Map();  // 프리로드된 이미지 캐시
     this.isPlaying = false;
     this.preloadRange = 10;  // 앞뒤로 프리로드할 프레임 수
+    this.maxCacheSize = 100;  // 최대 캐시 프레임 수 (LRU 방식)
 
     // 렌더링 상태 관리
     this._renderingId = 0;  // 렌더링 취소용 ID
@@ -312,7 +313,8 @@ export class DrawingManager extends EventTarget {
     this._isUndoingOrRedoing = true;
 
     this.historyIndex++;
-    const snapshot = this.history[this.historyIndex + 1] || this.history[this.historyIndex];
+    // 수정: historyIndex+1이 아닌 historyIndex 사용 (인덱스 증가 후이므로)
+    const snapshot = this.history[this.historyIndex];
     this._restoreSnapshot(snapshot);
 
     this._isUndoingOrRedoing = false;
@@ -974,6 +976,52 @@ export class DrawingManager extends EventTarget {
       }
 
       this.preloadedFrames.set(frame, true);
+    }
+
+    // LRU 방식 캐시 정리: 프리로드 범위 밖의 오래된 캐시 삭제
+    this._cleanupCacheOutsideRange(startFrame, endFrame);
+  }
+
+  /**
+   * 프리로드 범위 밖의 캐시 정리 (LRU)
+   */
+  _cleanupCacheOutsideRange(startFrame, endFrame) {
+    // preloadedFrames 맵에서 범위 밖 항목 제거
+    const framesToRemove = [];
+    for (const frame of this.preloadedFrames.keys()) {
+      if (frame < startFrame - this.preloadRange || frame > endFrame + this.preloadRange) {
+        framesToRemove.push(frame);
+      }
+    }
+
+    // 최대 캐시 크기 초과 시 추가 정리
+    if (this.preloadedFrames.size > this.maxCacheSize) {
+      const excess = this.preloadedFrames.size - this.maxCacheSize;
+      const iterator = this.preloadedFrames.keys();
+      for (let i = 0; i < excess; i++) {
+        const frame = iterator.next().value;
+        if (!framesToRemove.includes(frame)) {
+          framesToRemove.push(frame);
+        }
+      }
+    }
+
+    // 캐시 삭제 및 해당 프레임의 키프레임 이미지 캐시도 정리
+    for (const frame of framesToRemove) {
+      this.preloadedFrames.delete(frame);
+
+      // 해당 프레임의 레이어별 키프레임 이미지 캐시 정리
+      for (const layer of this.layers) {
+        const keyframe = layer.getKeyframeAtFrame(frame);
+        if (keyframe && keyframe._cachedImage) {
+          keyframe._cachedImage = null;
+          keyframe._cachedSrc = null;
+        }
+      }
+    }
+
+    if (framesToRemove.length > 0) {
+      log.debug('캐시 정리', { removed: framesToRemove.length, remaining: this.preloadedFrames.size });
     }
   }
 

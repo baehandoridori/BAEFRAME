@@ -6,8 +6,9 @@ import { createLogger, setupGlobalErrorHandlers } from './logger.js';
 import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
-import { CommentManager } from './modules/comment-manager.js';
+import { CommentManager, MARKER_COLORS } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
+import { CollaborationManager } from './modules/collaboration-manager.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
@@ -61,6 +62,10 @@ async function initApp() {
     frameIndicator: document.getElementById('frameIndicator'),
     btnDrawMode: document.getElementById('btnDrawMode'),
     btnAddComment: document.getElementById('btnAddComment'),
+    btnPrevComment: document.getElementById('btnPrevComment'),
+    btnNextComment: document.getElementById('btnNextComment'),
+    btnPrevHighlight: document.getElementById('btnPrevHighlight'),
+    btnNextHighlight: document.getElementById('btnNextHighlight'),
 
     // 타임라인
     timelineSection: document.getElementById('timelineSection'),
@@ -84,6 +89,9 @@ async function initApp() {
     commentPreviewImg: document.getElementById('commentPreviewImg'),
     commentImageRemove: document.getElementById('commentImageRemove'),
     btnCompactView: document.getElementById('btnCompactView'),
+    feedbackProgress: document.getElementById('feedbackProgress'),
+    feedbackProgressValue: document.getElementById('feedbackProgressValue'),
+    feedbackProgressFill: document.getElementById('feedbackProgressFill'),
 
     // 이미지 뷰어
     imageViewerOverlay: document.getElementById('imageViewerOverlay'),
@@ -299,6 +307,23 @@ async function initApp() {
     autoSaveDelay: 500 // 500ms 디바운스
   });
   reviewDataManager.connect();
+
+  // 협업 매니저 (실시간 동기화)
+  const collaborationManager = new CollaborationManager({
+    syncInterval: 10000,  // 10초마다 동기화
+    presenceUpdateInterval: 5000  // 5초마다 presence 업데이트
+  });
+
+  // ReviewDataManager에 CollaborationManager 연결 (저장 시 머지용)
+  reviewDataManager.setCollaborationManager(collaborationManager);
+
+  // 앱 종료/새로고침 시 정리
+  window.addEventListener('beforeunload', () => {
+    // 협업 편집 잠금 해제
+    collaborationManager.releaseAllEditingLocks();
+    // 모든 파일 감시 중지 (누적 방지)
+    window.electronAPI.watchFileStopAll();
+  });
 
   // 사용자 설정
   const userSettings = getUserSettings();
@@ -621,17 +646,19 @@ async function initApp() {
     pushUndo({
       type: 'ADD_COMMENT',
       data: markerData,
-      undo: () => {
+      undo: async () => {
         commentManager.deleteMarker(markerData.id);
         updateCommentList();
         updateTimelineMarkers();
         updateVideoMarkers();
+        await reviewDataManager.save();
       },
-      redo: () => {
+      redo: async () => {
         commentManager.restoreMarker(markerData);
         updateCommentList();
         updateTimelineMarkers();
         updateVideoMarkers();
+        await reviewDataManager.save();
       }
     });
   });
@@ -675,8 +702,14 @@ async function initApp() {
 
   // 타임라인 댓글 마커 클릭
   timeline.addEventListener('commentMarkerClick', (e) => {
-    const { time, frame } = e.detail;
-    videoPlayer.seek(time);
+    const { frame, markerInfos } = e.detail;
+    videoPlayer.seekToFrame(frame);
+
+    // 프리뷰 마커 클릭과 동일한 효과 (패널 열기 + 스크롤 + 글로우)
+    if (markerInfos && markerInfos.length > 0) {
+      const firstMarkerId = markerInfos[0].markerId;
+      scrollToCommentWithGlow(firstMarkerId);
+    }
   });
 
   // 타임라인 줌 변경 시 마커 다시 렌더링 (클러스터링 재계산)
@@ -689,6 +722,23 @@ async function initApp() {
   // 파일 열기 버튼
   elements.btnOpenFile?.addEventListener('click', async () => {
     log.info('파일 열기 버튼 클릭');
+    try {
+      const result = await window.electronAPI.openFileDialog();
+      if (!result.canceled && result.filePaths.length > 0) {
+        await loadVideo(result.filePaths[0]);
+      }
+    } catch (error) {
+      log.error('파일 열기 실패', error);
+      showToast('파일을 열 수 없습니다.', 'error');
+    }
+  });
+
+  // "파일을 열어주세요" 텍스트 클릭 시 파일 열기
+  elements.fileName?.addEventListener('click', async () => {
+    // 파일이 로드된 상태면 무시 (클릭 가능한 상태일 때만)
+    if (!elements.fileName.classList.contains('file-name-clickable')) return;
+
+    log.info('파일명 텍스트 클릭 - 파일 열기');
     try {
       const result = await window.electronAPI.openFileDialog();
       if (!result.canceled && result.filePaths.length > 0) {
@@ -742,6 +792,44 @@ async function initApp() {
   // 댓글 추가 버튼 (댓글 모드 토글)
   elements.btnAddComment.addEventListener('click', () => {
     toggleCommentMode();
+  });
+
+  // 이전 댓글로 이동
+  elements.btnPrevComment?.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+
+    const currentFrame = videoPlayer.currentFrame || 0;
+    const prevFrame = commentManager.getPrevMarkerFrame(currentFrame);
+
+    if (prevFrame !== null) {
+      videoPlayer.seekToFrame(prevFrame);
+      timeline.scrollToPlayhead();
+      log.info('이전 댓글로 이동', { frame: prevFrame });
+    } else {
+      showToast('이전 댓글이 없습니다', 'info');
+    }
+  });
+
+  // 다음 댓글로 이동
+  elements.btnNextComment?.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+
+    const currentFrame = videoPlayer.currentFrame || 0;
+    const nextFrame = commentManager.getNextMarkerFrame(currentFrame);
+
+    if (nextFrame !== null) {
+      videoPlayer.seekToFrame(nextFrame);
+      timeline.scrollToPlayhead();
+      log.info('다음 댓글로 이동', { frame: nextFrame });
+    } else {
+      showToast('다음 댓글이 없습니다', 'info');
+    }
   });
 
   // 사이드바 댓글 입력 Enter 처리 (역순 플로우: 텍스트 입력 → 마커 찍기)
@@ -870,6 +958,22 @@ async function initApp() {
     if (!bframePath) {
       showToast('먼저 파일을 열어주세요.', 'warn');
       return;
+    }
+
+    // #70: .bframe 파일 자동 생성 - 저장되지 않은 변경사항이 있거나 파일이 없으면 저장
+    try {
+      const fileExists = await window.electronAPI.fileExists(bframePath);
+      if (!fileExists || reviewDataManager.hasUnsavedChanges()) {
+        log.info('링크 복사 전 .bframe 파일 자동 저장', {
+          fileExists,
+          hasUnsavedChanges: reviewDataManager.hasUnsavedChanges()
+        });
+        await reviewDataManager.save();
+        showToast('.bframe 파일이 자동 저장되었습니다.', 'info');
+      }
+    } catch (error) {
+      log.warn('.bframe 파일 자동 저장 실패', error);
+      // 저장 실패해도 링크 복사는 진행
     }
 
     // Windows 경로 형식으로 통일 (백슬래시 사용)
@@ -1525,6 +1629,13 @@ async function initApp() {
   const highlightCopyBtn = document.getElementById('highlightCopyBtn');
   const highlightDeleteBtn = document.getElementById('highlightDeleteBtn');
 
+  // 마커 팝업 관련 요소
+  const markerPopup = document.getElementById('markerPopup');
+  const markerColorPicker = document.getElementById('markerColorPicker');
+
+  // 현재 선택된 마커 ID
+  let selectedMarkerId = null;
+
   // 하이라이트 트랙 연결 (좌측 레이어 헤더도 연동)
   timeline.setHighlightTrack(highlightTrack, highlightLayerHeader);
 
@@ -1549,7 +1660,7 @@ async function initApp() {
       undo: () => {
         highlightManager.deleteHighlight(highlight.id);
         renderHighlights();
-        saveCurrentAnnotations('highlight-undo');
+        reviewDataManager.save();
       },
       redo: () => {
         // 하이라이트 복원 (같은 속성으로)
@@ -1559,9 +1670,47 @@ async function initApp() {
         restored.note = highlight.note;
         restored.colorInfo = highlight.colorInfo;
         renderHighlights();
-        saveCurrentAnnotations('highlight-redo');
+        reviewDataManager.save();
       }
     });
+  });
+
+  // 이전 하이라이트로 이동
+  elements.btnPrevHighlight?.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+
+    const currentTime = videoPlayer.currentTime || 0;
+    const prevTime = highlightManager.getPrevHighlightTime(currentTime);
+
+    if (prevTime !== null) {
+      videoPlayer.seek(prevTime);
+      timeline.scrollToPlayhead();
+      log.info('이전 하이라이트로 이동', { time: prevTime });
+    } else {
+      showToast('이전 하이라이트가 없습니다', 'info');
+    }
+  });
+
+  // 다음 하이라이트로 이동
+  elements.btnNextHighlight?.addEventListener('click', () => {
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+
+    const currentTime = videoPlayer.currentTime || 0;
+    const nextTime = highlightManager.getNextHighlightTime(currentTime);
+
+    if (nextTime !== null) {
+      videoPlayer.seek(nextTime);
+      timeline.scrollToPlayhead();
+      log.info('다음 하이라이트로 이동', { time: nextTime });
+    } else {
+      showToast('다음 하이라이트가 없습니다', 'info');
+    }
   });
 
   // 하이라이트 렌더링 함수
@@ -1761,7 +1910,7 @@ async function initApp() {
                 endTime: originalEndTime
               });
               renderHighlights();
-              saveCurrentAnnotations('highlight-undo');
+              reviewDataManager.save();
             },
             redo: () => {
               highlightManager.updateHighlight(highlightId, {
@@ -1769,7 +1918,7 @@ async function initApp() {
                 endTime: newEndTime
               });
               renderHighlights();
-              saveCurrentAnnotations('highlight-redo');
+              reviewDataManager.save();
             }
           });
         }
@@ -1887,12 +2036,12 @@ async function initApp() {
           restored.colorKey = deletedHighlight.colorKey;
           restored.colorInfo = deletedHighlight.colorInfo;
           renderHighlights();
-          saveCurrentAnnotations('highlight-undo');
+          reviewDataManager.save();
         },
         redo: () => {
           highlightManager.deleteHighlight(deletedId);
           renderHighlights();
-          saveCurrentAnnotations('highlight-redo');
+          reviewDataManager.save();
         }
       });
     }
@@ -1930,6 +2079,67 @@ async function initApp() {
         }
       }
     }
+  });
+
+  // ====== 마커 색상 팝업 ======
+
+  // 마커 팝업 표시
+  function showMarkerPopup(markerId, x, y) {
+    const marker = commentManager.getMarker(markerId);
+    if (!marker) return;
+
+    selectedMarkerId = markerId;
+
+    // 색상 버튼 선택 상태
+    markerColorPicker.querySelectorAll('.marker-color-btn').forEach(btn => {
+      btn.classList.toggle('selected', btn.dataset.color === (marker.colorKey || 'default'));
+    });
+
+    // 위치 설정 (화면 경계 고려)
+    const popupWidth = 200;
+    const popupHeight = 80;
+    const adjustedX = Math.min(x, window.innerWidth - popupWidth - 10);
+    const adjustedY = Math.min(y, window.innerHeight - popupHeight - 10);
+
+    markerPopup.style.left = `${adjustedX}px`;
+    markerPopup.style.top = `${adjustedY}px`;
+    markerPopup.style.display = 'block';
+  }
+
+  // 마커 팝업 숨기기
+  function hideMarkerPopup() {
+    markerPopup.style.display = 'none';
+    selectedMarkerId = null;
+  }
+
+  // 마커 팝업 외부 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    if (markerPopup.style.display === 'block' &&
+        !markerPopup.contains(e.target) &&
+        !e.target.closest('.comment-range-item') &&
+        !e.target.closest('.video-comment-range-bar')) {
+      hideMarkerPopup();
+    }
+  });
+
+  // 마커 색상 선택
+  markerColorPicker.addEventListener('click', (e) => {
+    const btn = e.target.closest('.marker-color-btn');
+    if (!btn || !selectedMarkerId) return;
+
+    const colorKey = btn.dataset.color;
+    commentManager.updateMarker(selectedMarkerId, { colorKey });
+
+    // 버튼 선택 상태 업데이트
+    markerColorPicker.querySelectorAll('.marker-color-btn').forEach(b => {
+      b.classList.toggle('selected', b === btn);
+    });
+
+    // UI 업데이트 (타임라인 + 비디오 오버레이)
+    renderCommentRanges();
+    updateCommentList();
+    hideMarkerPopup();
+    showToast('마커 색상이 변경되었습니다', 'info');
   });
 
   // ====== 댓글 범위 트랙 ======
@@ -2031,13 +2241,20 @@ async function initApp() {
       bar.style.background = hexToRgba(color, 0.6);
       bar.style.borderColor = hexToRgba(color, 0.8);
 
-      // 클릭 이벤트 - 해당 프레임으로 이동
+      // 클릭 이벤트 - 해당 프레임으로 이동 + 댓글 하이라이트
       bar.addEventListener('click', () => {
         const marker = commentManager.getMarker(comment.markerId);
         if (marker) {
-          const time = marker.startFrame / videoPlayer.fps;
-          videoPlayer.seek(time);
+          videoPlayer.seekToFrame(marker.startFrame);
+          scrollToCommentWithGlow(comment.markerId);
         }
+      });
+
+      // 우클릭 이벤트 - 마커 색상 팝업
+      bar.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showMarkerPopup(comment.markerId, e.clientX, e.clientY);
       });
 
       videoCommentRangeOverlay.appendChild(bar);
@@ -2092,22 +2309,30 @@ async function initApp() {
       const layerId = item.dataset.layerId;
       const markerId = item.dataset.markerId;
 
-      // 클릭 - 해당 댓글로 이동 및 선택
+      // 클릭 - 해당 댓글로 이동 및 선택 + 댓글 하이라이트
       item.addEventListener('click', (e) => {
         if (e.target.classList.contains('comment-handle')) return;
 
         // 해당 프레임으로 이동
         const marker = commentManager.getMarker(markerId);
         if (marker) {
-          const time = marker.startFrame / videoPlayer.fps;
-          videoPlayer.seek(time);
+          videoPlayer.seekToFrame(marker.startFrame);
           videoPlayer.pause();
+          // 프리뷰 마커 클릭과 동일한 효과
+          scrollToCommentWithGlow(markerId);
         }
 
         // 선택 표시
         items.forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
         selectedCommentRange = { layerId, markerId };
+      });
+
+      // 우클릭 - 마커 색상 팝업
+      item.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showMarkerPopup(markerId, e.clientX, e.clientY);
       });
 
       // 드래그 시작 (전체 이동)
@@ -2262,7 +2487,7 @@ async function initApp() {
                 endFrame: originalEndFrame
               });
               renderCommentRanges();
-              saveCurrentAnnotations('comment-undo');
+              reviewDataManager.save();
             },
             redo: () => {
               commentManager.updateMarker(markerId, {
@@ -2270,7 +2495,7 @@ async function initApp() {
                 endFrame: newEndFrame
               });
               renderCommentRanges();
-              saveCurrentAnnotations('comment-redo');
+              reviewDataManager.save();
             }
           });
         }
@@ -2280,7 +2505,7 @@ async function initApp() {
       document.body.style.cursor = '';
 
       // 데이터 저장
-      saveCurrentAnnotations('comment-drag');
+      reviewDataManager.save();
     }
   });
 
@@ -2748,6 +2973,14 @@ async function initApp() {
         }
       }
 
+      // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
+      if (reviewDataManager.currentBframePath) {
+        await window.electronAPI.watchFileStop(reviewDataManager.currentBframePath);
+        log.info('이전 파일 감시 중지', { path: reviewDataManager.currentBframePath });
+        await collaborationManager.stop();
+        log.info('이전 협업 세션 종료');
+      }
+
       // ====== 이전 데이터 초기화 ======
       // 자동 저장 일시 중지 (초기화 중 빈 데이터가 저장되는 것 방지)
       reviewDataManager.pauseAutoSave();
@@ -2776,6 +3009,7 @@ async function initApp() {
       // 원본 파일 경로 저장 (UI/메타데이터용)
       state.currentFile = filePath;
       elements.fileName.textContent = fileInfo.name;
+      elements.fileName.classList.remove('file-name-clickable'); // 파일 로드 후 클릭 가능 상태 제거
       elements.filePath.textContent = fileInfo.dir;
       elements.dropZone.classList.add('hidden');
 
@@ -2819,8 +3053,8 @@ async function initApp() {
       // 비디오 트랙 업데이트
       elements.videoTrackClip.textContent = `📹 ${fileInfo.name}`;
 
-      // 썸네일 생성 시작
-      await generateThumbnails(filePath);
+      // 썸네일 생성 시작 (트랜스코딩된 경우 변환된 파일 사용)
+      await generateThumbnails(actualVideoPath);
 
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
@@ -2842,6 +3076,16 @@ async function initApp() {
         showToast(`"${fileInfo.name}" 로드됨 (리뷰 데이터 복원)`, 'success');
       } else {
         showToast(`"${fileInfo.name}" 로드됨`, 'success');
+      }
+
+      // ====== 협업 세션 시작 ======
+      const userName = userSettings.userName || '익명';
+      await collaborationManager.start(reviewDataManager.currentBframePath, userName);
+
+      // ====== 파일 감시 시작 (실시간 동기화) ======
+      if (reviewDataManager.currentBframePath) {
+        await window.electronAPI.watchFileStart(reviewDataManager.currentBframePath);
+        log.info('파일 감시 시작됨', { path: reviewDataManager.currentBframePath });
       }
 
       // 마커 및 그리기 렌더링 업데이트 (항상 실행)
@@ -2870,7 +3114,7 @@ async function initApp() {
   }
 
   // 썸네일 리스너 참조 저장 (파일 전환 시 정리용)
-  let thumbnailListeners = {
+  const thumbnailListeners = {
     progress: null,
     quickReady: null,
     complete: null
@@ -3021,10 +3265,13 @@ async function initApp() {
    * 시간을 타임코드로 변환
    */
   function formatTimecode(seconds, fps = 24) {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    const f = Math.floor((seconds % 1) * fps);
+    // Math.round로 부동소수점 오차 방지
+    const totalFrames = Math.round(seconds * fps);
+    const f = totalFrames % fps;
+    const totalSeconds = Math.floor(totalFrames / fps);
+    const s = totalSeconds % 60;
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const h = Math.floor(totalSeconds / 3600);
 
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
   }
@@ -3131,10 +3378,12 @@ async function initApp() {
     const fps = videoPlayer.fps || 24;
 
     const formatTimecode = (seconds) => {
-      const h = Math.floor(seconds / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const f = Math.floor((seconds % 1) * fps);
+      const totalFrames = Math.round(seconds * fps);
+      const f = totalFrames % fps;
+      const totalSeconds = Math.floor(totalFrames / fps);
+      const s = totalSeconds % 60;
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      const h = Math.floor(totalSeconds / 3600);
       return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
     };
 
@@ -3295,6 +3544,8 @@ async function initApp() {
   function renderVideoMarkers() {
     // 기존 확정된 마커들 제거
     markerContainer.querySelectorAll('.comment-marker:not(.pending)').forEach(el => el.remove());
+    // body에 있는 기존 툴팁들도 제거
+    document.querySelectorAll('.comment-marker-tooltip').forEach(el => el.remove());
 
     // 모든 마커 렌더링
     const allMarkers = commentManager.getAllMarkers();
@@ -3320,9 +3571,10 @@ async function initApp() {
       pointer-events: auto;
     `;
 
-    // 말풍선 (툴팁)
+    // 말풍선 (툴팁) - body에 추가하여 transform 영향 안받게
     const tooltip = document.createElement('div');
     tooltip.className = 'comment-marker-tooltip';
+    tooltip.dataset.markerId = marker.id;
     const authorClass = getAuthorColorClass(marker.author);
     tooltip.innerHTML = `
       <div class="tooltip-header">
@@ -3338,7 +3590,8 @@ async function initApp() {
       </div>
     `;
 
-    markerEl.appendChild(tooltip);
+    // 툴팁을 body에 추가 (markerEl 내부가 아님)
+    document.body.appendChild(tooltip);
 
     // 답글 배지 (스레드 개수 표시)
     const replyCount = marker.replies?.length || 0;
@@ -3354,23 +3607,166 @@ async function initApp() {
       markerEl.appendChild(replyBadge);
     }
 
-    // 호버 이벤트 - 말풍선 표시
-    markerEl.addEventListener('mouseenter', () => {
-      if (!marker.pinned) {
-        tooltip.classList.add('visible');
+    // 드래그 상태
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let markerStartX = marker.x;
+    let markerStartY = marker.y;
+
+    // 드래그 중 (마우스 이동)
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+
+      const rect = markerContainer.getBoundingClientRect();
+      const deltaX = (e.clientX - dragStartX) / rect.width;
+      const deltaY = (e.clientY - dragStartY) / rect.height;
+
+      // 새 위치 계산 (0~1 범위로 제한)
+      const newX = Math.max(0, Math.min(1, markerStartX + deltaX));
+      const newY = Math.max(0, Math.min(1, markerStartY + deltaY));
+
+      // 마커 요소 위치 업데이트
+      markerEl.style.left = `${newX * 100}%`;
+      markerEl.style.top = `${newY * 100}%`;
+    };
+
+    // 드래그 종료 (마우스 업)
+    const onMouseUp = (e) => {
+      if (!isDragging) return;
+
+      isDragging = false;
+      markerEl.classList.remove('dragging');
+      document.body.style.cursor = '';
+
+      const rect = markerContainer.getBoundingClientRect();
+      const deltaX = (e.clientX - dragStartX) / rect.width;
+      const deltaY = (e.clientY - dragStartY) / rect.height;
+
+      const newX = Math.max(0, Math.min(1, markerStartX + deltaX));
+      const newY = Math.max(0, Math.min(1, markerStartY + deltaY));
+
+      // 위치가 변경되었으면 저장 (재렌더링 없이 직접 업데이트)
+      if (newX !== markerStartX || newY !== markerStartY) {
+        marker.x = newX;
+        marker.y = newY;
+        markerStartX = newX;
+        markerStartY = newY;
+        // 타임라인 마커만 업데이트 (비디오 마커 재렌더링 안함)
+        updateTimelineMarkers();
+        // 데이터 자동 저장
+        reviewDataManager.save();
+        log.info('마커 위치 변경 및 저장', { markerId: marker.id, x: newX, y: newY });
       }
+
+      // 이벤트 리스너 제거
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    // 드래그 시작 (마우스 다운)
+    markerEl.addEventListener('mousedown', (e) => {
+      // 툴팁 버튼 클릭은 무시
+      if (e.target.closest('.tooltip-btn') || e.target.closest('.marker-replies-badge')) return;
+
+      // 현재 프레임에서 마커가 보이지 않으면 드래그 무시
+      const currentFrame = videoPlayer.currentFrame;
+      if (!marker.isVisibleAtFrame(currentFrame)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      markerStartX = marker.x;
+      markerStartY = marker.y;
+
+      // 드래그 중 툴팁 숨기기
+      tooltip.classList.remove('visible');
+      markerEl.classList.add('dragging');
+      document.body.style.cursor = 'grabbing';
+
+      // document에 이벤트 추가
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
     });
 
-    markerEl.addEventListener('mouseleave', () => {
-      if (!marker.pinned) {
-        tooltip.classList.remove('visible');
+    // 툴팁 위치 계산 함수
+    const positionTooltip = () => {
+      const markerRect = markerEl.getBoundingClientRect();
+      const tooltipWidth = 280; // CSS max-width
+      const padding = 12;
+
+      // 기본: 마커 오른쪽에 배치
+      let left = markerRect.right + padding;
+      const top = markerRect.top + markerRect.height / 2;
+
+      // 화면 오른쪽 밖으로 나가면 왼쪽에 배치
+      if (left + tooltipWidth > window.innerWidth - 20) {
+        left = markerRect.left - tooltipWidth - padding;
+        tooltip.classList.add('left-side');
+      } else {
+        tooltip.classList.remove('left-side');
       }
-    });
+
+      tooltip.style.left = `${Math.max(10, left)}px`;
+      tooltip.style.top = `${top}px`;
+    };
+
+    // 호버 이벤트 - 말풍선 표시
+    let hideTimeout = null;
+
+    const showTooltipHover = () => {
+      if (hideTimeout) {
+        clearTimeout(hideTimeout);
+        hideTimeout = null;
+      }
+      // 현재 프레임에서 마커가 보이지 않으면 툴팁 안보임
+      const currentFrame = videoPlayer.currentFrame;
+      if (!marker.isVisibleAtFrame(currentFrame)) return;
+
+      if (!marker.pinned && !isDragging) {
+        positionTooltip();
+        tooltip.classList.add('visible');
+      }
+    };
+
+    const hideTooltipHover = () => {
+      if (!marker.pinned && !isDragging) {
+        hideTimeout = setTimeout(() => {
+          tooltip.classList.remove('visible');
+        }, 100); // 100ms 딜레이로 툴팁으로 이동할 시간 확보
+      }
+    };
+
+    markerEl.addEventListener('mouseenter', showTooltipHover);
+    markerEl.addEventListener('mouseleave', hideTooltipHover);
+
+    // 툴팁 호버 시에도 유지
+    tooltip.addEventListener('mouseenter', showTooltipHover);
+    tooltip.addEventListener('mouseleave', hideTooltipHover);
 
     // 클릭 - 우측 댓글로 스크롤 및 고정 토글
     markerEl.addEventListener('click', (e) => {
       e.stopPropagation();
       if (e.target.closest('.tooltip-btn')) return;
+
+      // 드래그 후 클릭은 무시 (드래그 종료 시 클릭 이벤트 발생 방지)
+      if (markerEl.classList.contains('dragging')) return;
+
+      // 현재 프레임에서 마커가 보이지 않으면 클릭 무시
+      const currentFrame = videoPlayer.currentFrame;
+      if (!marker.isVisibleAtFrame(currentFrame)) {
+        log.debug('마커 클릭 무시 - 현재 프레임에서 보이지 않음', {
+          markerId: marker.id,
+          currentFrame,
+          startFrame: marker.startFrame,
+          endFrame: marker.endFrame
+        });
+        return;
+      }
+
       // 우측 댓글 패널로 스크롤 및 글로우 효과
       scrollToCommentWithGlow(marker.id);
     });
@@ -3382,26 +3778,37 @@ async function initApp() {
     });
 
     // 삭제 버튼
-    tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', (e) => {
+    tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (confirm('댓글을 삭제하시겠습니까?')) {
         const markerData = marker.toJSON();
         commentManager.deleteMarker(marker.id);
+
+        // UI 업데이트
+        updateCommentList();
+        updateTimelineMarkers();
+        renderVideoMarkers();
+
+        // 삭제 상태 저장 (협업 동기화용)
+        await reviewDataManager.save();
+
         // Undo 스택에 추가
         pushUndo({
           type: 'DELETE_COMMENT',
           data: markerData,
-          undo: () => {
+          undo: async () => {
             commentManager.restoreMarker(markerData);
             updateCommentList();
             updateTimelineMarkers();
-            updateVideoMarkers();
+            renderVideoMarkers();
+            await reviewDataManager.save();
           },
-          redo: () => {
+          redo: async () => {
             commentManager.deleteMarker(markerData.id);
             updateCommentList();
             updateTimelineMarkers();
-            updateVideoMarkers();
+            renderVideoMarkers();
+            await reviewDataManager.save();
           }
         });
         showToast('댓글이 삭제되었습니다.', 'info');
@@ -3411,6 +3818,7 @@ async function initApp() {
     // 마커 객체에 DOM 요소 참조 저장
     marker.element = markerEl;
     marker.tooltipElement = tooltip;
+    marker.positionTooltip = positionTooltip;
 
     markerContainer.appendChild(markerEl);
   }
@@ -3429,6 +3837,10 @@ async function initApp() {
         el.classList.remove('hidden');
       } else {
         el.classList.add('hidden');
+        // 마커가 숨겨지면 툴팁도 숨김
+        if (marker && marker.tooltipElement && !marker.pinned) {
+          marker.tooltipElement.classList.remove('visible');
+        }
       }
     });
   }
@@ -3439,6 +3851,10 @@ async function initApp() {
   function updateMarkerTooltipState(marker) {
     if (marker.tooltipElement) {
       if (marker.pinned) {
+        // 핀 상태일 때 위치 재계산
+        if (marker.positionTooltip) {
+          marker.positionTooltip();
+        }
         marker.tooltipElement.classList.add('visible', 'pinned');
       } else {
         marker.tooltipElement.classList.remove('pinned');
@@ -3516,6 +3932,34 @@ async function initApp() {
   let commentListUpdateTimeout = null;
   let pendingCommentListFilter = 'all';
 
+  // ========== 가상 스크롤 상태 ==========
+  const virtualScrollState = {
+    allMarkers: [],
+    filteredMarkers: [],
+    renderedRange: { start: 0, end: 0 },
+    itemHeight: 120, // 예상 아이템 높이
+    bufferSize: 5,   // 위아래 버퍼
+    currentFilter: 'all',
+    scrollHandler: null
+  };
+
+  // 피드백 완료율 업데이트
+  function updateFeedbackProgress(total, resolved) {
+    if (!elements.feedbackProgress) return;
+
+    // 댓글이 없으면 프로그레스 바 숨김
+    if (total === 0) {
+      elements.feedbackProgress.classList.add('hidden');
+      return;
+    }
+
+    elements.feedbackProgress.classList.remove('hidden');
+
+    const percent = Math.round((resolved / total) * 100);
+    elements.feedbackProgressValue.textContent = `${percent}% (${resolved}/${total})`;
+    elements.feedbackProgressFill.style.width = `${percent}%`;
+  }
+
   function updateCommentList(filter = 'all') {
     pendingCommentListFilter = filter;
 
@@ -3544,11 +3988,15 @@ async function initApp() {
     // 개수 업데이트
     const allMarkers = commentManager.getAllMarkers();
     const unresolvedCount = allMarkers.filter(m => !m.resolved).length;
+    const resolvedCount = allMarkers.filter(m => m.resolved).length;
     if (elements.commentCount) {
       elements.commentCount.textContent = allMarkers.length > 0
         ? `${unresolvedCount > 0 ? unresolvedCount + ' 미해결 / ' : ''}${allMarkers.length}개`
         : '0';
     }
+
+    // 피드백 완료율 업데이트
+    updateFeedbackProgress(allMarkers.length, resolvedCount);
 
     if (markers.length === 0) {
       container.innerHTML = `
@@ -3559,6 +4007,18 @@ async function initApp() {
         </div>
       `;
       return;
+    }
+
+    // 가상 스크롤 상태 저장
+    virtualScrollState.filteredMarkers = markers;
+    virtualScrollState.currentFilter = filter;
+
+    // 댓글 개수 경고 (성능 최적화 권장)
+    const COMMENT_THRESHOLD = 100;
+    if (markers.length > COMMENT_THRESHOLD) {
+      log.warn(`댓글 ${markers.length}개 - 성능 저하 가능`, {
+        threshold: COMMENT_THRESHOLD
+      });
     }
 
     const userSettings = getUserSettings();
@@ -3650,8 +4110,7 @@ async function initApp() {
       item.addEventListener('click', (e) => {
         if (e.target.closest('.comment-action-btn')) return;
         const frame = parseInt(item.dataset.startFrame);
-        const time = frame / videoPlayer.fps;
-        videoPlayer.seek(time);
+        videoPlayer.seekToFrame(frame);
         container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
       });
@@ -3671,7 +4130,7 @@ async function initApp() {
       });
 
       // 삭제 버튼
-      item.querySelector('.delete-btn')?.addEventListener('click', (e) => {
+      item.querySelector('.delete-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (confirm('댓글을 삭제하시겠습니까?')) {
           const markerId = item.dataset.markerId;
@@ -3679,21 +4138,32 @@ async function initApp() {
           if (marker) {
             const markerData = marker.toJSON();
             commentManager.deleteMarker(markerId);
+
+            // UI 업데이트
+            updateCommentList();
+            updateTimelineMarkers();
+            renderVideoMarkers();
+
+            // 삭제 상태 저장 (협업 동기화용)
+            await reviewDataManager.save();
+
             // Undo 스택에 추가
             pushUndo({
               type: 'DELETE_COMMENT',
               data: markerData,
-              undo: () => {
+              undo: async () => {
                 commentManager.restoreMarker(markerData);
                 updateCommentList();
                 updateTimelineMarkers();
-                updateVideoMarkers();
+                renderVideoMarkers();
+                await reviewDataManager.save();
               },
-              redo: () => {
+              redo: async () => {
                 commentManager.deleteMarker(markerData.id);
                 updateCommentList();
                 updateTimelineMarkers();
-                updateVideoMarkers();
+                renderVideoMarkers();
+                await reviewDataManager.save();
               }
             });
             showToast('댓글이 삭제되었습니다.', 'info');
@@ -3708,8 +4178,17 @@ async function initApp() {
       const editTextarea = item.querySelector('.comment-edit-textarea');
       const actionsEl = item.querySelector('.comment-actions');
 
-      editBtn?.addEventListener('click', (e) => {
+      editBtn?.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const markerId = item.dataset.markerId;
+
+        // 편집 잠금 획득 시도 (이미 잠금 여부 체크 포함)
+        const startResult = await collaborationManager.startEditing(markerId);
+        if (!startResult.success) {
+          showToast(`${startResult.lockedBy}님이 수정 중입니다`, 'warn');
+          return;
+        }
+
         // 수정 모드 진입
         contentEl.style.display = 'none';
         actionsEl.style.display = 'none';
@@ -3719,11 +4198,12 @@ async function initApp() {
       });
 
       // 수정 저장
-      item.querySelector('.comment-edit-save')?.addEventListener('click', (e) => {
+      item.querySelector('.comment-edit-save')?.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const markerId = item.dataset.markerId;
         const newText = editTextarea.value.trim();
+
         if (newText) {
-          const markerId = item.dataset.markerId;
           const marker = commentManager.getMarker(markerId);
           if (marker) {
             const oldText = marker.text;
@@ -3741,20 +4221,34 @@ async function initApp() {
                 updateCommentList();
               }
             });
+
+            // 수정 후 UI 업데이트
+            updateCommentList();
+            renderVideoMarkers();
+            updateTimelineMarkers();
+
             showToast('댓글이 수정되었습니다.', 'success');
           }
         }
+
+        // 편집 잠금 해제
+        await collaborationManager.stopEditing(markerId);
       });
 
       // 수정 취소
-      item.querySelector('.comment-edit-cancel')?.addEventListener('click', (e) => {
+      item.querySelector('.comment-edit-cancel')?.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const markerId = item.dataset.markerId;
+
+        // 편집 잠금 해제
+        await collaborationManager.stopEditing(markerId);
+
         // 원래 상태로 복원
         contentEl.style.display = 'block';
         actionsEl.style.display = 'flex';
         editFormEl.style.display = 'none';
         // 원래 텍스트로 복원
-        const marker = commentManager.getMarker(item.dataset.markerId);
+        const marker = commentManager.getMarker(markerId);
         if (marker) {
           editTextarea.value = marker.text;
         }
@@ -3762,14 +4256,23 @@ async function initApp() {
 
       // Textarea에서 Escape로 취소
       editTextarea?.addEventListener('keydown', (e) => {
+        // 이미 처리 중이면 무시 (중복 호출 방지)
+        if (editFormEl.style.display === 'none') return;
+
         if (e.key === 'Escape') {
           e.stopPropagation();
-          item.querySelector('.comment-edit-cancel').click();
+          const cancelBtn = item.querySelector('.comment-edit-cancel');
+          if (!cancelBtn.disabled) {
+            cancelBtn.click();
+          }
         } else if (e.key === 'Enter' && e.ctrlKey) {
           // Ctrl+Enter로 저장
           e.stopPropagation();
           e.preventDefault();
-          item.querySelector('.comment-edit-save').click();
+          const saveBtn = item.querySelector('.comment-edit-save');
+          if (!saveBtn.disabled) {
+            saveBtn.click();
+          }
         }
       });
 
@@ -4005,6 +4508,9 @@ async function initApp() {
     // contenteditable 요소에서는 단축키 무시 (스레드 에디터 등)
     if (e.target.isContentEditable) return;
 
+    // pending 마커 입력 중이면 단축키 무시 (textarea 포커스 전에도 적용)
+    if (commentManager.pendingMarker) return;
+
     // 스레드 팝업이 열려있으면 단축키 무시
     const threadOverlay = document.getElementById('threadOverlay');
     if (threadOverlay?.classList.contains('open')) return;
@@ -4185,8 +4691,31 @@ async function initApp() {
     switch (e.code) {
     case 'ArrowLeft':
       e.preventDefault();
-      if (e.shiftKey) {
-        videoPlayer.rewind(1);
+      if (e.ctrlKey) {
+        // Ctrl+←: 초 단위 뒤로 이동
+        const secondAmount = userSettings.getSecondSkipAmount();
+        const newTime = Math.max(0, (videoPlayer.currentTime || 0) - secondAmount);
+        videoPlayer.seek(newTime);
+        timeline.scrollToPlayhead();
+        log.info('초 단위 뒤로 이동 (단축키)', { seconds: secondAmount, newTime });
+      } else if (e.shiftKey) {
+        // Shift+←: 프레임 빨리 뒤로 이동
+        const frameAmount = userSettings.getFrameSkipAmount();
+        const currentFrame = videoPlayer.currentFrame || 0;
+        const newFrame = Math.max(0, currentFrame - frameAmount);
+        videoPlayer.seekToFrame(newFrame);
+        timeline.scrollToPlayhead();
+        log.info('프레임 빨리 뒤로 이동 (단축키)', { frames: frameAmount, newFrame });
+      } else if (e.altKey) {
+        // Alt+←: 이전 하이라이트로 이동
+        const prevHighlightTime = highlightManager.getPrevHighlightTime(videoPlayer.currentTime || 0);
+        if (prevHighlightTime !== null) {
+          videoPlayer.seek(prevHighlightTime);
+          timeline.scrollToPlayhead();
+          log.info('이전 하이라이트로 이동 (단축키)', { time: prevHighlightTime });
+        } else {
+          showToast('이전 하이라이트가 없습니다', 'info');
+        }
       } else {
         videoPlayer.prevFrame();
       }
@@ -4194,8 +4723,33 @@ async function initApp() {
 
     case 'ArrowRight':
       e.preventDefault();
-      if (e.shiftKey) {
-        videoPlayer.forward(1);
+      if (e.ctrlKey) {
+        // Ctrl+→: 초 단위 앞으로 이동
+        const secondAmount = userSettings.getSecondSkipAmount();
+        const duration = videoPlayer.duration || 0;
+        const newTime = Math.min(duration, (videoPlayer.currentTime || 0) + secondAmount);
+        videoPlayer.seek(newTime);
+        timeline.scrollToPlayhead();
+        log.info('초 단위 앞으로 이동 (단축키)', { seconds: secondAmount, newTime });
+      } else if (e.shiftKey) {
+        // Shift+→: 프레임 빨리 앞으로 이동
+        const frameAmount = userSettings.getFrameSkipAmount();
+        const currentFrame = videoPlayer.currentFrame || 0;
+        const totalFrames = videoPlayer.totalFrames || 0;
+        const newFrame = Math.min(totalFrames - 1, currentFrame + frameAmount);
+        videoPlayer.seekToFrame(newFrame);
+        timeline.scrollToPlayhead();
+        log.info('프레임 빨리 앞으로 이동 (단축키)', { frames: frameAmount, newFrame });
+      } else if (e.altKey) {
+        // Alt+→: 다음 하이라이트로 이동
+        const nextHighlightTime = highlightManager.getNextHighlightTime(videoPlayer.currentTime || 0);
+        if (nextHighlightTime !== null) {
+          videoPlayer.seek(nextHighlightTime);
+          timeline.scrollToPlayhead();
+          log.info('다음 하이라이트로 이동 (단축키)', { time: nextHighlightTime });
+        } else {
+          showToast('다음 하이라이트가 없습니다', 'info');
+        }
       } else {
         videoPlayer.nextFrame();
       }
@@ -4203,88 +4757,107 @@ async function initApp() {
 
     // 사용자 정의 단축키를 통한 처리
     default:
-        // Shift+A: 1프레임 이전
-        if (userSettings.matchShortcut('prevFrameDraw', e)) {
-          e.preventDefault();
-          videoPlayer.prevFrame();
-          break;
-        }
-        // Shift+D: 1프레임 다음
-        if (userSettings.matchShortcut('nextFrameDraw', e)) {
-          e.preventDefault();
-          videoPlayer.nextFrame();
-          break;
-        }
-        // A: 이전 키프레임으로 이동
-        if (userSettings.matchShortcut('prevKeyframe', e)) {
-          e.preventDefault();
-          const prevKf = drawingManager.getPrevKeyframeFrame();
-          if (prevKf !== null) {
-            videoPlayer.seekToFrame(prevKf);
-          }
-          break;
-        }
-        // D: 다음 키프레임으로 이동
-        if (userSettings.matchShortcut('nextKeyframe', e)) {
-          e.preventDefault();
-          const nextKf = drawingManager.getNextKeyframeFrame();
-          if (nextKf !== null) {
-            videoPlayer.seekToFrame(nextKf);
-          }
-          break;
-        }
-        // 1: 어니언 스킨 토글
-        if (userSettings.matchShortcut('onionSkinToggle', e)) {
-          e.preventDefault();
-          toggleOnionSkinWithUI();
-          break;
-        }
-        // 2: 빈 키프레임 삽입
-        if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
-          e.preventDefault();
-          drawingManager.addBlankKeyframe();
-          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-          break;
-        }
-        // Shift+3: 현재 키프레임 삭제
-        if (userSettings.matchShortcut('keyframeDeleteAlt', e)) {
-          e.preventDefault();
-          drawingManager.removeKeyframe();
-          showToast('키프레임이 삭제되었습니다.', 'info');
-          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-          break;
-        }
-        // 3: 프레임 삽입 (홀드 추가)
-        if (userSettings.matchShortcut('insertFrame', e)) {
-          e.preventDefault();
-          drawingManager.insertFrame();
-          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-          break;
-        }
-        // 4: 프레임 삭제
-        if (userSettings.matchShortcut('deleteFrame', e)) {
-          e.preventDefault();
-          drawingManager.deleteFrame();
-          timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-          break;
-        }
-        // B: 브러시 모드 (드로잉 모드 켜기)
-        if (e.code === 'KeyB') {
-          e.preventDefault();
-          if (!state.isDrawMode) {
-            toggleDrawMode();
-          }
-          break;
-        }
-        // V: 선택 모드 (드로잉 모드 끄기)
-        if (e.code === 'KeyV') {
-          e.preventDefault();
-          if (state.isDrawMode) {
-            toggleDrawMode();
-          }
-          break;
+      // Shift+A: 1프레임 이전
+      if (userSettings.matchShortcut('prevFrameDraw', e)) {
+        e.preventDefault();
+        videoPlayer.prevFrame();
+        break;
+      }
+      // Shift+D: 1프레임 다음
+      if (userSettings.matchShortcut('nextFrameDraw', e)) {
+        e.preventDefault();
+        videoPlayer.nextFrame();
+        break;
+      }
+      // A: 이전 키프레임으로 이동
+      if (userSettings.matchShortcut('prevKeyframe', e)) {
+        e.preventDefault();
+        const prevKf = drawingManager.getPrevKeyframeFrame();
+        if (prevKf !== null) {
+          videoPlayer.seekToFrame(prevKf);
         }
         break;
+      }
+      // D: 다음 키프레임으로 이동
+      if (userSettings.matchShortcut('nextKeyframe', e)) {
+        e.preventDefault();
+        const nextKf = drawingManager.getNextKeyframeFrame();
+        if (nextKf !== null) {
+          videoPlayer.seekToFrame(nextKf);
+        }
+        break;
+      }
+      // 1: 어니언 스킨 토글
+      if (userSettings.matchShortcut('onionSkinToggle', e)) {
+        e.preventDefault();
+        toggleOnionSkinWithUI();
+        break;
+      }
+      // 2: 빈 키프레임 삽입
+      if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
+        e.preventDefault();
+        drawingManager.addBlankKeyframe();
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        break;
+      }
+      // Shift+3: 현재 키프레임 삭제
+      if (userSettings.matchShortcut('keyframeDeleteAlt', e)) {
+        e.preventDefault();
+        drawingManager.removeKeyframe();
+        showToast('키프레임이 삭제되었습니다.', 'info');
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        break;
+      }
+      // 3: 프레임 삽입 (홀드 추가)
+      if (userSettings.matchShortcut('insertFrame', e)) {
+        e.preventDefault();
+        drawingManager.insertFrame();
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        break;
+      }
+      // 4: 프레임 삭제
+      if (userSettings.matchShortcut('deleteFrame', e)) {
+        e.preventDefault();
+        drawingManager.deleteFrame();
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        break;
+      }
+      // B: 브러시 모드 (드로잉 모드 켜기 + 브러시 도구)
+      if (e.code === 'KeyB') {
+        e.preventDefault();
+        if (!state.isDrawMode) {
+          toggleDrawMode();
+        }
+        // 브러시 버튼 클릭으로 UI와 도구 함께 전환
+        const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
+        if (brushBtn) {
+          brushBtn.click();
+        }
+        break;
+      }
+      // E: 지우개 모드 (드로잉 모드에서만 작동)
+      if (e.code === 'KeyE') {
+        // 드로잉 모드가 아니면 무시
+        if (!state.isDrawMode) {
+          break;
+        }
+        e.preventDefault();
+        // 지우개 버튼 클릭으로 UI와 도구 함께 전환
+        const eraserBtn = document.querySelector('.tool-btn[data-tool="eraser"]');
+        if (eraserBtn) {
+          eraserBtn.click();
+        }
+        break;
+      }
+      // V: 선택 모드 (드로잉 모드 끄기)
+      if (e.code === 'KeyV') {
+        e.preventDefault();
+        if (state.isDrawMode) {
+          toggleDrawMode();
+        }
+        break;
+      }
+      break;
     }
   }
 
@@ -4349,6 +4922,9 @@ async function initApp() {
   window.electronAPI.onRequestSaveBeforeQuit(async () => {
     log.info('앱 종료 전 저장 요청 수신');
     const savingOverlay = document.getElementById('appSavingOverlay');
+
+    // 협업 세션 종료 (presence 제거)
+    await collaborationManager.stop();
 
     // 미저장 변경사항 확인
     if (!reviewDataManager.hasUnsavedChanges()) {
@@ -4631,14 +5207,14 @@ async function initApp() {
     // 아바타 이미지 가져오기
     const avatarImage = userSettings.getAvatarForName(marker.author);
 
-    // 원본 댓글 렌더링
+    // 원본 댓글 렌더링 (XSS 방지: author 필드 이스케이프)
     threadOriginal.innerHTML = `
       ${avatarImage ? `<div class="thread-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
       <div class="thread-original-inner">
         <div class="thread-comment-header">
-          <div class="thread-comment-avatar">${marker.author.charAt(0)}</div>
+          <div class="thread-comment-avatar">${escapeHtml(marker.author.charAt(0))}</div>
           <div class="thread-comment-info">
-            <div class="thread-comment-author" ${getAuthorColorStyle(marker.author)}>${marker.author}</div>
+            <div class="thread-comment-author" ${getAuthorColorStyle(marker.author)}>${escapeHtml(marker.author)}</div>
             <div class="thread-comment-time">${formatRelativeTime(marker.createdAt)}</div>
           </div>
         </div>
@@ -4666,13 +5242,13 @@ async function initApp() {
     threadReplyCount.textContent = replyCount > 0 ? `${replyCount}개의 댓글` : '';
     threadReplyCount.style.display = replyCount > 0 ? 'flex' : 'none';
 
-    // 답글들 렌더링
+    // 답글들 렌더링 (XSS 방지: author 필드 이스케이프)
     threadReplies.innerHTML = (marker.replies || []).map(reply => `
       <div class="thread-reply-item">
-        <div class="thread-reply-avatar">${reply.author.charAt(0)}</div>
+        <div class="thread-reply-avatar">${escapeHtml(reply.author.charAt(0))}</div>
         <div class="thread-reply-content">
           <div class="thread-reply-header">
-            <span class="thread-reply-author" ${getAuthorColorStyle(reply.author)}>${reply.author}</span>
+            <span class="thread-reply-author" ${getAuthorColorStyle(reply.author)}>${escapeHtml(reply.author)}</span>
             <span class="thread-reply-time">${formatRelativeTime(reply.createdAt)}</span>
           </div>
           <div class="thread-reply-text">${formatMarkdown(reply.text)}</div>
@@ -4769,45 +5345,45 @@ async function initApp() {
     }
 
     switch (format) {
-      case 'bold':
-        document.execCommand('bold', false, null);
-        break;
-      case 'italic':
-        document.execCommand('italic', false, null);
-        break;
-      case 'underline':
-        document.execCommand('underline', false, null);
-        break;
-      case 'strike':
-        document.execCommand('strikeThrough', false, null);
-        break;
-      case 'bullet':
-        document.execCommand('insertUnorderedList', false, null);
-        break;
-      case 'numbered':
-        document.execCommand('insertOrderedList', false, null);
-        break;
-      case 'code':
-        if (selection.rangeCount > 0) {
-          const range = selection.getRangeAt(0);
-          const selectedText = range.toString();
-          if (selectedText) {
-            document.execCommand('insertHTML', false, `<code>${escapeHtml(selectedText)}</code>`);
-          }
+    case 'bold':
+      document.execCommand('bold', false, null);
+      break;
+    case 'italic':
+      document.execCommand('italic', false, null);
+      break;
+    case 'underline':
+      document.execCommand('underline', false, null);
+      break;
+    case 'strike':
+      document.execCommand('strikeThrough', false, null);
+      break;
+    case 'bullet':
+      document.execCommand('insertUnorderedList', false, null);
+      break;
+    case 'numbered':
+      document.execCommand('insertOrderedList', false, null);
+      break;
+    case 'code':
+      if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        const selectedText = range.toString();
+        if (selectedText) {
+          document.execCommand('insertHTML', false, `<code>${escapeHtml(selectedText)}</code>`);
         }
-        break;
-      case 'link':
-        // prompt() 전에 selection 백업
-        const savedRange = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
-        const url = prompt('링크 URL을 입력하세요:');
-        if (url && savedRange) {
-          // selection 복원 후 링크 적용
-          threadEditor.focus();
-          selection.removeAllRanges();
-          selection.addRange(savedRange);
-          document.execCommand('createLink', false, url);
-        }
-        break;
+      }
+      break;
+    case 'link':
+      // prompt() 전에 selection 백업
+      const savedRange = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
+      const url = prompt('링크 URL을 입력하세요:');
+      if (url && savedRange) {
+        // selection 복원 후 링크 적용
+        threadEditor.focus();
+        selection.removeAllRanges();
+        selection.addRange(savedRange);
+        document.execCommand('createLink', false, url);
+      }
+      break;
     }
 
     updateSubmitButtonState();
@@ -4856,13 +5432,13 @@ async function initApp() {
     threadReplyCount.textContent = `${replyCount}개의 댓글`;
     threadReplyCount.style.display = 'flex';
 
-    // UI 업데이트 - 새 답글 추가
+    // UI 업데이트 - 새 답글 추가 (XSS 방지: author 필드 이스케이프)
     threadReplies.innerHTML += `
       <div class="thread-reply-item">
-        <div class="thread-reply-avatar">${newReply.author.charAt(0)}</div>
+        <div class="thread-reply-avatar">${escapeHtml(newReply.author.charAt(0))}</div>
         <div class="thread-reply-content">
           <div class="thread-reply-header">
-            <span class="thread-reply-author" ${getAuthorColorStyle(newReply.author)}>${newReply.author}</span>
+            <span class="thread-reply-author" ${getAuthorColorStyle(newReply.author)}>${escapeHtml(newReply.author)}</span>
             <span class="thread-reply-time">${formatRelativeTime(newReply.createdAt)}</span>
           </div>
           <div class="thread-reply-text">${formatMarkdown(newReply.text)}</div>
@@ -5109,7 +5685,7 @@ async function initApp() {
 
     // 수정자 키만 누른 경우 무시 (실제 키 입력 대기)
     const modifierKeys = ['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
-                          'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'];
+      'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'];
     if (modifierKeys.includes(event.code)) {
       return; // 수정자 키만 눌렀으면 무시하고 계속 대기
     }
@@ -5133,9 +5709,41 @@ async function initApp() {
     showToast('단축키가 변경되었습니다.', 'success');
   }
 
+  // 프레임/초 이동 설정 요소
+  const frameSkipInput = document.getElementById('frameSkipInput');
+  const secondSkipInput = document.getElementById('secondSkipInput');
+
+  // 프레임/초 이동 설정 로드
+  function loadSkipSettings() {
+    if (frameSkipInput) {
+      frameSkipInput.value = userSettings.getFrameSkipAmount();
+    }
+    if (secondSkipInput) {
+      secondSkipInput.value = userSettings.getSecondSkipAmount();
+    }
+  }
+
+  // 프레임/초 이동 설정 이벤트 리스너
+  frameSkipInput?.addEventListener('change', () => {
+    const value = parseInt(frameSkipInput.value, 10);
+    if (!isNaN(value) && value >= 1 && value <= 100) {
+      userSettings.setFrameSkipAmount(value);
+      showToast(`프레임 이동량: ${value}프레임`, 'info');
+    }
+  });
+
+  secondSkipInput?.addEventListener('change', () => {
+    const value = parseFloat(secondSkipInput.value);
+    if (!isNaN(value) && value >= 0.1 && value <= 10) {
+      userSettings.setSecondSkipAmount(value);
+      showToast(`초 이동량: ${value}초`, 'info');
+    }
+  });
+
   // 단축키 설정 모달 열기
   function openShortcutSettingsModal() {
     renderShortcutList();
+    loadSkipSettings();
     shortcutSettingsModal?.classList.add('active');
   }
 
@@ -5336,6 +5944,165 @@ async function initApp() {
       }
     });
   }
+
+  // ====== 협업 시스템 초기화 ======
+
+  // 협업 UI 요소
+  const collaboratorsIndicator = document.getElementById('collaboratorsIndicator');
+  const collaboratorsAvatars = document.getElementById('collaboratorsAvatars');
+  const collaboratorsCount = document.getElementById('collaboratorsCount');
+  const syncStatus = document.getElementById('syncStatus');
+
+  /**
+   * 협업자 UI 업데이트
+   */
+  function updateCollaboratorsUI(collaborators) {
+    if (!collaboratorsIndicator) return;
+
+    if (collaborators.length === 0) {
+      collaboratorsIndicator.style.display = 'none';
+      return;
+    }
+
+    collaboratorsIndicator.style.display = 'flex';
+    collaboratorsCount.textContent = collaborators.length;
+
+    // 아바타 렌더링
+    collaboratorsAvatars.innerHTML = collaborators.map(collab => {
+      const initials = collab.name.substring(0, 2);
+      const isMe = collab.isMe ? 'is-me' : '';
+      return `<div class="collaborator-avatar ${isMe}"
+                   style="background-color: ${collab.color}"
+                   title="${collab.name}${collab.isMe ? ' (나)' : ''}">
+                ${initials}
+              </div>`;
+    }).reverse().join(''); // reverse for proper stacking order
+  }
+
+  /**
+   * 동기화 상태 UI 업데이트
+   */
+  function updateSyncStatusUI(status) {
+    if (!syncStatus) return;
+
+    syncStatus.classList.remove('syncing', 'synced', 'error');
+
+    if (status === 'syncing') {
+      syncStatus.classList.add('syncing');
+      syncStatus.title = '동기화 중...';
+    } else if (status === 'synced') {
+      syncStatus.classList.add('synced');
+      syncStatus.title = '동기화 완료';
+    } else if (status === 'error') {
+      syncStatus.classList.add('error');
+      syncStatus.title = '동기화 오류';
+    }
+  }
+
+  // 협업 이벤트 리스너
+  collaborationManager.addEventListener('collaboratorsChanged', (e) => {
+    log.info('협업자 목록 변경', e.detail);
+    updateCollaboratorsUI(e.detail.collaborators);
+  });
+
+  collaborationManager.addEventListener('collaborationStarted', (e) => {
+    log.info('협업 시작됨', e.detail);
+    showToast(`${e.detail.collaborators.length}명이 이 파일을 보고 있습니다`, 'info');
+  });
+
+  collaborationManager.addEventListener('syncStarted', () => {
+    updateSyncStatusUI('syncing');
+  });
+
+  collaborationManager.addEventListener('syncCompleted', () => {
+    updateSyncStatusUI('synced');
+    // 3초 후 아이콘 원래대로
+    setTimeout(() => updateSyncStatusUI(''), 3000);
+  });
+
+  collaborationManager.addEventListener('syncError', () => {
+    updateSyncStatusUI('error');
+  });
+
+  // 원격 데이터 로드 콜백 설정 (동기화 시 호출됨)
+  collaborationManager.setRemoteDataLoader(async () => {
+    if (!reviewDataManager.currentBframePath) return;
+
+    try {
+      // ReviewDataManager의 reloadAndMerge 사용 (비디오 유지하면서 데이터만 머지)
+      const result = await reviewDataManager.reloadAndMerge({ merge: true });
+
+      if (result.success) {
+        // 타임라인/비디오 마커는 항상 업데이트
+        renderVideoMarkers();
+        updateTimelineMarkers();
+
+        // 댓글 수정 중이면 댓글 목록 업데이트 건너뛰기 (편집 폼 유지)
+        const isEditingComment = document.querySelector('.comment-edit-form[style*="display: block"]');
+        if (!isEditingComment) {
+          updateCommentList();
+        }
+
+        if (result.added > 0 || result.updated > 0) {
+          log.info('원격 변경사항 머지됨', { added: result.added, updated: result.updated });
+
+          if (result.added > 0) {
+            showToast(`새 댓글 ${result.added}개가 동기화되었습니다`, 'info');
+          }
+        }
+      }
+    } catch (error) {
+      log.warn('원격 데이터 머지 실패', { error: error.message });
+    }
+  });
+
+  // 수동 동기화 버튼 (sync status 클릭)
+  syncStatus?.addEventListener('click', async () => {
+    if (!collaborationManager.hasOtherCollaborators()) {
+      showToast('다른 협업자가 없습니다', 'info');
+      return;
+    }
+    await collaborationManager.syncNow();
+  });
+
+  // ====== 파일 변경 감지 (실시간 동기화) ======
+  // 다른 사용자가 저장하면 즉시 동기화
+  let lastSyncTime = 0;
+  const MIN_SYNC_INTERVAL = 500; // 최소 500ms 간격
+
+  window.electronAPI.onFileChanged(async ({ filePath }) => {
+    // 현재 열린 파일이 아니면 무시
+    if (filePath !== reviewDataManager.currentBframePath) return;
+
+    // 너무 빠른 연속 호출 방지
+    const now = Date.now();
+    if (now - lastSyncTime < MIN_SYNC_INTERVAL) return;
+    lastSyncTime = now;
+
+    log.info('파일 변경 감지됨, 즉시 동기화', { filePath });
+
+    try {
+      // ReviewDataManager의 reloadAndMerge 사용
+      const result = await reviewDataManager.reloadAndMerge({ merge: true });
+
+      if (result.success) {
+        renderVideoMarkers();
+        updateTimelineMarkers();
+
+        // 편집 중이 아닐 때만 댓글 목록 업데이트
+        const isEditingComment = document.querySelector('.comment-edit-form[style*="display: block"]');
+        if (!isEditingComment) {
+          updateCommentList();
+        }
+
+        if (result.added > 0 || result.updated > 0) {
+          showToast(`동기화 완료 (${result.added > 0 ? `추가 ${result.added}` : ''}${result.updated > 0 ? ` 수정 ${result.updated}` : ''})`, 'info');
+        }
+      }
+    } catch (error) {
+      log.warn('파일 변경 동기화 실패', { error: error.message });
+    }
+  });
 
   log.info('앱 초기화 완료');
 

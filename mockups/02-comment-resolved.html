@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BAEFRAME 목업 - 댓글 해결 상태</title>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* 실제 main.css 변수 */
+    :root {
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --bg-hover: #2a2a2a;
+      --border-subtle: #2a2a2a;
+      --text-primary: #f5f5f5;
+      --text-secondary: #a0a0a0;
+      --text-tertiary: #666666;
+      --accent-primary: #ffd000;
+      --accent-glow: rgba(255, 208, 0, 0.15);
+      --accent-glow-strong: rgba(255, 208, 0, 0.25);
+      --success: #4ade80;
+      --success-bg: rgba(74, 222, 128, 0.15);
+      --error: #f87171;
+      --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      --font-mono: 'SF Mono', 'Consolas', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font-family);
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      padding: 40px;
+      min-height: 100vh;
+    }
+
+    .mockup-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--accent-primary);
+    }
+
+    .mockup-subtitle {
+      font-size: 14px;
+      color: var(--text-tertiary);
+      margin-bottom: 32px;
+    }
+
+    .comparison {
+      display: flex;
+      gap: 40px;
+      flex-wrap: wrap;
+    }
+
+    .comparison-item {
+      flex: 1;
+      min-width: 320px;
+    }
+
+    .comparison-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* Comment Item - 실제 스타일 (main.css:2579-2632) */
+    .comment-item {
+      position: relative;
+      padding: 12px;
+      padding-top: 32px;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+
+    .comment-item:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-subtle);
+    }
+
+    /* 해결 상태 토글 버튼 - 실제 스타일 (main.css:2591-2622) */
+    .comment-resolve-toggle {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      padding: 5px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(255, 152, 0, 0.15);
+      border: 1px solid rgba(255, 152, 0, 0.5);
+      border-radius: 12px;
+      color: #ff9800;
+      cursor: pointer;
+      z-index: 2;
+    }
+
+    .comment-item.resolved .comment-resolve-toggle {
+      background: rgba(76, 175, 80, 0.15);
+      border: 1px solid rgba(76, 175, 80, 0.5);
+      color: #4caf50;
+    }
+
+    .comment-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    /* Timestamp - 실제 스타일 (main.css:2852-2871) */
+    .comment-timestamp {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-primary);
+    }
+
+    .timestamp-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--error);
+    }
+
+    .timestamp-dot.resolved {
+      background: var(--success);
+    }
+
+    .comment-meta {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .comment-author {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .comment-time {
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    .comment-content {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+
+    .comment-image {
+      width: 100%;
+      height: 100px;
+      background: var(--bg-hover);
+      border-radius: 6px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+      font-size: 12px;
+      border: 1px dashed var(--border-subtle);
+    }
+
+    .comment-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .comment-action-btn {
+      padding: 6px 10px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    /* 마커 비교 */
+    .marker-comparison {
+      display: flex;
+      gap: 60px;
+      margin-top: 48px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border-subtle);
+      align-items: center;
+    }
+
+    .marker-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* 마커 - 실제 스타일 (main.css:3771-3791) */
+    .marker {
+      width: 24px;
+      height: 24px;
+      background: var(--error);
+      border: 2px solid white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+      color: white;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    }
+
+    .marker.resolved {
+      background: var(--success);
+      opacity: 0.7;
+    }
+
+    .marker-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .arrow {
+      font-size: 24px;
+      color: var(--text-tertiary);
+    }
+
+    /* 타임라인 마커 비교 */
+    .timeline-comparison {
+      margin-top: 48px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .timeline-track-demo {
+      height: 36px;
+      background: var(--bg-primary);
+      border-radius: 6px;
+      position: relative;
+      margin-top: 16px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 24px;
+    }
+
+    /* 타임라인 바 - 실제 스타일 (main.css:468-504) */
+    .timeline-bar {
+      height: 24px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+    }
+
+    .timeline-bar.normal {
+      background: rgba(74, 158, 255, 0.6);
+      border: 1px solid rgba(74, 158, 255, 0.8);
+      width: 100px;
+    }
+
+    .timeline-bar.resolved {
+      background: rgba(74, 222, 128, 0.5);
+      border: 1px solid rgba(74, 222, 128, 0.7);
+      width: 100px;
+    }
+
+    .mockup-watermark {
+      position: fixed;
+      bottom: 8px;
+      left: 8px;
+      font-size: 10px;
+      color: var(--text-tertiary);
+      opacity: 0.5;
+    }
+  </style>
+</head>
+<body>
+  <h1 class="mockup-title">댓글 해결 상태</h1>
+  <p class="mockup-subtitle">댓글이 해결되면 시각적으로 구분됩니다 - 초록색 토글 버튼 + 녹색 타임스탬프 점</p>
+
+  <div class="comparison">
+    <!-- 미해결 상태 -->
+    <div class="comparison-item">
+      <div class="comparison-label">미해결 상태</div>
+      <div class="comment-item">
+        <button class="comment-resolve-toggle">미해결</button>
+        <div class="comment-header">
+          <div class="comment-timestamp">
+            <div class="timestamp-dot"></div>
+            <span>F 36~72</span>
+          </div>
+          <div class="comment-meta">
+            <span class="comment-author">윤성원</span>
+            <span class="comment-time">2분 전</span>
+          </div>
+        </div>
+        <div class="comment-content">
+          손 위치가 어색해요. 좀 더 위로 올려주세요. 참고 이미지 첨부했습니다.
+        </div>
+        <div class="comment-image">첨부 이미지 (reference_hand.png)</div>
+        <div class="comment-actions">
+          <button class="comment-action-btn">답글</button>
+          <button class="comment-action-btn">수정</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 해결 상태 -->
+    <div class="comparison-item">
+      <div class="comparison-label">해결됨 상태</div>
+      <div class="comment-item resolved">
+        <button class="comment-resolve-toggle">해결됨</button>
+        <div class="comment-header">
+          <div class="comment-timestamp">
+            <div class="timestamp-dot resolved"></div>
+            <span>F 36~72</span>
+          </div>
+          <div class="comment-meta">
+            <span class="comment-author">윤성원</span>
+            <span class="comment-time">2분 전 - 해결됨</span>
+          </div>
+        </div>
+        <div class="comment-content">
+          손 위치가 어색해요. 좀 더 위로 올려주세요. 참고 이미지 첨부했습니다.
+        </div>
+        <div class="comment-image" style="opacity: 0.5;">첨부 이미지 (reference_hand.png)</div>
+        <div class="comment-actions">
+          <button class="comment-action-btn">답글</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 마커 비교 -->
+  <div class="marker-comparison">
+    <div class="marker-item">
+      <div class="marker">1</div>
+      <span class="marker-label">미해결 마커</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="marker-item">
+      <div class="marker resolved">✓</div>
+      <span class="marker-label">해결됨 마커</span>
+    </div>
+  </div>
+
+  <!-- 타임라인 비교 -->
+  <div class="timeline-comparison">
+    <div class="comparison-label">타임라인에서의 표시</div>
+    <div class="timeline-track-demo">
+      <div class="timeline-bar normal">미해결</div>
+      <span class="arrow">→</span>
+      <div class="timeline-bar resolved">해결됨</div>
+    </div>
+  </div>
+
+  <div class="mockup-watermark">BAEFRAME Mockup - 댓글 해결 상태</div>
+</body>
+</html>

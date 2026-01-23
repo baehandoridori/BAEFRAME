@@ -303,7 +303,21 @@ export class VideoPlayer extends EventTarget {
       log.warn('비디오가 로드되지 않음');
       return;
     }
-    this.videoElement.play();
+    // play()는 Promise를 반환하므로 에러 처리 필요
+    const playPromise = this.videoElement.play();
+    if (playPromise !== undefined) {
+      playPromise.catch((error) => {
+        // AbortError: 재생 시작 전 pause() 호출됨 (정상적인 상황)
+        // NotAllowedError: 자동 재생 정책으로 차단됨
+        if (error.name === 'AbortError') {
+          log.debug('재생이 중단됨 (pause 호출)');
+        } else if (error.name === 'NotAllowedError') {
+          log.warn('자동 재생이 차단됨 - 사용자 상호작용 필요');
+        } else {
+          log.error('비디오 재생 실패', { error: error.message, name: error.name });
+        }
+      });
+    }
     log.debug('재생');
   }
 
@@ -472,9 +486,11 @@ export class VideoPlayer extends EventTarget {
    * @returns {string} HH:MM:SS:FF 형식
    */
   timeToTimecode(time) {
-    const totalFrames = Math.floor(time * this.fps);
+    // Math.round 사용: 부동소수점 오차로 인한 프레임 계산 오류 방지
+    // 예: time=134.666666, fps=24 → 134.666666*24=3231.9999... → floor=3231 (오류), round=3232 (정확)
+    const totalFrames = Math.round(time * this.fps);
     const frames = totalFrames % this.fps;
-    const totalSeconds = Math.floor(time);
+    const totalSeconds = Math.floor(totalFrames / this.fps);
     const seconds = totalSeconds % 60;
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const hours = Math.floor(totalSeconds / 3600);

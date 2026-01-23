@@ -12,6 +12,41 @@ const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized,
 const log = createLogger('IPC');
 
 /**
+ * 허용된 파일 확장자 목록
+ */
+const ALLOWED_EXTENSIONS = ['.bframe', '.json', '.bak'];
+
+/**
+ * IPC 경로 검증 (보안)
+ * - 허용된 확장자만 허용
+ * - 경로 이탈(..) 방지
+ * @param {string} filePath - 검증할 파일 경로
+ * @returns {string} 정규화된 경로
+ * @throws {Error} 유효하지 않은 경로
+ */
+function validateFilePath(filePath) {
+  if (!filePath || typeof filePath !== 'string') {
+    throw new Error('유효하지 않은 파일 경로');
+  }
+
+  // 경로 정규화
+  const normalized = path.normalize(filePath);
+
+  // 경로 이탈 방지 (.. 포함 시 원래 경로와 다를 수 있음)
+  if (normalized.includes('..')) {
+    throw new Error('경로 이탈 시도 감지');
+  }
+
+  // 확장자 검증
+  const ext = path.extname(normalized).toLowerCase();
+  if (!ALLOWED_EXTENSIONS.includes(ext)) {
+    throw new Error(`허용되지 않은 파일 형식: ${ext}`);
+  }
+
+  return normalized;
+}
+
+/**
  * IPC 핸들러 설정
  */
 function setupIpcHandlers() {
@@ -61,12 +96,14 @@ function setupIpcHandlers() {
     }
   });
 
-  // 리뷰 데이터 저장
+  // 리뷰 데이터 저장 (경로 검증 포함)
   ipcMain.handle('file:save-review', async (event, filePath, data) => {
     const trace = log.trace('file:save-review');
     try {
-      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-      trace.end({ filePath });
+      // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
+      const validatedPath = validateFilePath(filePath);
+      await fs.promises.writeFile(validatedPath, JSON.stringify(data, null, 2), 'utf-8');
+      trace.end({ filePath: validatedPath });
       return { success: true };
     } catch (error) {
       trace.error(error);
@@ -74,22 +111,184 @@ function setupIpcHandlers() {
     }
   });
 
-  // 리뷰 데이터 로드
+  // 리뷰 데이터 로드 (경로 검증 + 손상 시 백업 복구)
   ipcMain.handle('file:load-review', async (event, filePath) => {
     const trace = log.trace('file:load-review');
     try {
-      const content = await fs.promises.readFile(filePath, 'utf-8');
+      // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
+      const validatedPath = validateFilePath(filePath);
+      const content = await fs.promises.readFile(validatedPath, 'utf-8');
       const data = JSON.parse(content);
-      trace.end({ filePath });
+      trace.end({ filePath: validatedPath });
       return data;
     } catch (error) {
       if (error.code === 'ENOENT') {
         trace.end({ filePath, exists: false });
         return null;
       }
+
+      // JSON 파싱 실패 시 .bak 파일에서 복구 시도
+      if (error instanceof SyntaxError) {
+        const backupPath = filePath + '.bak';
+        log.warn('JSON 파싱 실패, 백업에서 복구 시도', { filePath, backupPath });
+
+        try {
+          const backupContent = await fs.promises.readFile(backupPath, 'utf-8');
+          const backupData = JSON.parse(backupContent);
+
+          // 복구 성공 - 손상된 원본을 .corrupted로 이동하고 백업을 원본으로 복원
+          const corruptedPath = filePath + '.corrupted';
+          await fs.promises.rename(filePath, corruptedPath);
+          await fs.promises.writeFile(filePath, JSON.stringify(backupData, null, 2), 'utf-8');
+
+          log.info('백업에서 복구 성공', { filePath, backupPath });
+          trace.end({ filePath, recoveredFromBackup: true });
+          return backupData;
+        } catch (backupError) {
+          log.error('백업 복구 실패', { filePath, backupError: backupError.message });
+          // 백업도 실패하면 원래 오류 던지기
+        }
+      }
+
       trace.error(error);
       throw error;
     }
+  });
+
+  // 파일 존재 여부 확인
+  ipcMain.handle('file:exists', async (event, filePath) => {
+    try {
+      await fs.promises.access(filePath, fs.constants.F_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  // 파일 상태 정보 조회 (협업 동기화용)
+  ipcMain.handle('file:get-stats', async (event, filePath) => {
+    try {
+      const stats = await fs.promises.stat(filePath);
+      return {
+        size: stats.size,
+        mtime: stats.mtime.toISOString(),
+        mtimeMs: stats.mtimeMs
+      };
+    } catch {
+      return null;
+    }
+  });
+
+  // ====== 협업 파일 관련 ======
+
+  // 협업 파일 읽기 (.bframe.collab)
+  ipcMain.handle('collab:read', async (event, filePath) => {
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      return JSON.parse(content);
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return null; // 파일 없음
+      }
+      log.warn('협업 파일 읽기 실패', { filePath, error: error.message });
+      return null;
+    }
+  });
+
+  // 협업 파일 쓰기 (.bframe.collab)
+  ipcMain.handle('collab:write', async (event, filePath, data) => {
+    try {
+      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+      return { success: true };
+    } catch (error) {
+      log.error('협업 파일 쓰기 실패', { filePath, error: error.message });
+      throw error;
+    }
+  });
+
+  // ====== 파일 감시 (File Watching) ======
+  // 파일 변경 시 즉시 동기화를 위한 기능
+
+  const fileWatchers = new Map(); // filePath -> watcher
+  const watchDebounceTimers = new Map(); // filePath -> timer
+
+  // 파일 감시 시작
+  ipcMain.handle('file:watch-start', async (event, filePath) => {
+    try {
+      // 이미 감시 중이면 무시
+      if (fileWatchers.has(filePath)) {
+        return { success: true, alreadyWatching: true };
+      }
+
+      const watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
+        // 디바운스 (같은 파일의 연속 이벤트 방지)
+        if (watchDebounceTimers.has(filePath)) {
+          clearTimeout(watchDebounceTimers.get(filePath));
+        }
+
+        const timer = setTimeout(() => {
+          watchDebounceTimers.delete(filePath);
+
+          // 렌더러에 파일 변경 알림
+          const mainWindow = getMainWindow();
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('file:changed', {
+              filePath,
+              eventType
+            });
+            log.info('파일 변경 감지됨', { filePath, eventType });
+          }
+        }, 300); // 300ms 디바운스
+
+        watchDebounceTimers.set(filePath, timer);
+      });
+
+      watcher.on('error', (error) => {
+        log.warn('파일 감시 에러', { filePath, error: error.message });
+        fileWatchers.delete(filePath);
+      });
+
+      fileWatchers.set(filePath, watcher);
+      log.info('파일 감시 시작', { filePath });
+      return { success: true };
+    } catch (error) {
+      log.error('파일 감시 시작 실패', { filePath, error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 파일 감시 중지
+  ipcMain.handle('file:watch-stop', async (event, filePath) => {
+    try {
+      const watcher = fileWatchers.get(filePath);
+      if (watcher) {
+        watcher.close();
+        fileWatchers.delete(filePath);
+        log.info('파일 감시 중지', { filePath });
+      }
+
+      // 타이머도 정리
+      if (watchDebounceTimers.has(filePath)) {
+        clearTimeout(watchDebounceTimers.get(filePath));
+        watchDebounceTimers.delete(filePath);
+      }
+
+      return { success: true };
+    } catch (error) {
+      log.error('파일 감시 중지 실패', { filePath, error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 모든 파일 감시 중지 (앱 종료 시)
+  ipcMain.handle('file:watch-stop-all', async () => {
+    for (const [filePath, watcher] of fileWatchers) {
+      watcher.close();
+      log.info('파일 감시 중지', { filePath });
+    }
+    fileWatchers.clear();
+    watchDebounceTimers.clear();
+    return { success: true };
   });
 
   // 버전 파일 스캔 (같은 폴더에서 같은 시리즈의 버전 파일들을 찾음)
@@ -662,9 +861,20 @@ function setupIpcHandlers() {
   const { ffmpegManager, SUPPORTED_CODECS } = require('./ffmpeg-manager');
 
   // FFmpeg 사용 가능 여부 확인
+  // 반환값: boolean (renderer 호환성 유지)
   ipcMain.handle('ffmpeg:is-available', async () => {
     await ffmpegManager.initialize();
-    return ffmpegManager.isAvailable();
+    const available = ffmpegManager.isAvailable();
+
+    if (!available) {
+      log.warn('FFmpeg 사용 불가', {
+        ffmpegPath: ffmpegManager.ffmpegPath,
+        ffprobePath: ffmpegManager.ffprobePath,
+        hint: 'ffmpeg/win32/ 폴더에 ffmpeg.exe와 ffprobe.exe를 넣거나 시스템에 FFmpeg를 설치하세요.'
+      });
+    }
+
+    return available;
   });
 
   // 비디오 코덱 정보 조회
@@ -697,6 +907,18 @@ function setupIpcHandlers() {
   ipcMain.handle('ffmpeg:transcode', async (event, filePath) => {
     const trace = log.trace('ffmpeg:transcode');
     const mainWindow = getMainWindow();
+
+    // FFmpeg 사용 가능 여부 먼저 확인
+    await ffmpegManager.initialize();
+    if (!ffmpegManager.isAvailable()) {
+      const errorMsg = 'FFmpeg가 설치되어 있지 않아 영상 변환이 불가능합니다.\n\n' +
+        '해결 방법:\n' +
+        '1. ffmpeg/win32/ 폴더에 ffmpeg.exe와 ffprobe.exe를 넣어주세요.\n' +
+        '2. 또는 시스템에 FFmpeg를 설치하고 PATH에 추가하세요.\n\n' +
+        '다운로드: https://github.com/BtbN/FFmpeg-Builds/releases';
+      trace.end({ success: false, reason: 'FFmpeg not available' });
+      return { success: false, error: errorMsg, ffmpegMissing: true };
+    }
 
     try {
       const result = await ffmpegManager.transcode(filePath, (progress) => {
@@ -934,7 +1156,7 @@ async function getGoogleDriveFileId(localPath) {
   log.info('Google Drive 파일 ID 검색 시작', { localPath, fileName });
 
   // Google Drive 메타데이터 DB 경로 찾기
-  let driveDbPaths = [];
+  const driveDbPaths = [];
 
   if (process.platform === 'win32') {
     // Windows: %LOCALAPPDATA%\Google\DriveFS\<account_id>\metadata_sqlite_db

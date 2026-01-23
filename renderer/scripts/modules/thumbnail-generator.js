@@ -80,7 +80,20 @@ export class ThumbnailGenerator extends EventTarget {
     try {
       // ===== 캐시 확인 =====
       if (this.useCache && window.electronAPI?.thumbnailCheckValid) {
-        const cacheCheck = await window.electronAPI.thumbnailCheckValid(videoSrc);
+        // file:// URL에서 순수 파일 경로 추출 (main process의 fs 모듈은 URL을 처리 못함)
+        let filePath = videoSrc;
+        if (filePath.startsWith('file:///')) {
+          filePath = filePath.slice(8); // file:/// 제거
+        } else if (filePath.startsWith('file://')) {
+          filePath = filePath.slice(7); // file:// 제거
+        }
+        // URL 디코딩 (공백 등 특수문자)
+        try {
+          filePath = decodeURIComponent(filePath);
+        } catch (e) {
+          log.warn('URL 디코딩 실패', e);
+        }
+        const cacheCheck = await window.electronAPI.thumbnailCheckValid(filePath);
         log.info('캐시 확인 결과', cacheCheck);
 
         if (cacheCheck.valid) {
@@ -182,6 +195,20 @@ export class ThumbnailGenerator extends EventTarget {
     }
 
     try {
+      // file:// URL에서 순수 파일 경로 추출
+      let filePath = this.videoSrc;
+      if (filePath.startsWith('file:///')) {
+        filePath = filePath.slice(8);
+      } else if (filePath.startsWith('file://')) {
+        filePath = filePath.slice(7);
+      }
+      // URL 디코딩
+      try {
+        filePath = decodeURIComponent(filePath);
+      } catch (e) {
+        log.warn('URL 디코딩 실패', e);
+      }
+
       // Map을 Object로 변환
       const thumbnails = {};
       for (const [time, dataUrl] of this.thumbnailMap.entries()) {
@@ -189,7 +216,7 @@ export class ThumbnailGenerator extends EventTarget {
       }
 
       const result = await window.electronAPI.thumbnailSaveBatch({
-        videoPath: this.videoSrc,
+        videoPath: filePath,
         videoHash: this.currentVideoHash,
         duration: this.duration,
         thumbnails

@@ -233,6 +233,42 @@ export class HighlightManager extends EventTarget {
   }
 
   /**
+   * 현재 시간 기준 이전 하이라이트의 시작 시간 찾기
+   * @param {number} currentTime - 현재 시간 (초)
+   * @returns {number|null} 이전 하이라이트의 시작 시간 또는 null
+   */
+  getPrevHighlightTime(currentTime) {
+    // 현재 시간보다 시작 시간이 작은 하이라이트들 중 가장 큰 것
+    let prevHighlight = null;
+    for (const highlight of this.highlights) {
+      if (highlight.startTime < currentTime) {
+        if (!prevHighlight || highlight.startTime > prevHighlight.startTime) {
+          prevHighlight = highlight;
+        }
+      }
+    }
+    return prevHighlight ? prevHighlight.startTime : null;
+  }
+
+  /**
+   * 현재 시간 기준 다음 하이라이트의 시작 시간 찾기
+   * @param {number} currentTime - 현재 시간 (초)
+   * @returns {number|null} 다음 하이라이트의 시작 시간 또는 null
+   */
+  getNextHighlightTime(currentTime) {
+    // 현재 시간보다 시작 시간이 큰 하이라이트들 중 가장 작은 것
+    let nextHighlight = null;
+    for (const highlight of this.highlights) {
+      if (highlight.startTime > currentTime) {
+        if (!nextHighlight || highlight.startTime < nextHighlight.startTime) {
+          nextHighlight = highlight;
+        }
+      }
+    }
+    return nextHighlight ? nextHighlight.startTime : null;
+  }
+
+  /**
    * 특정 시간에 있는 하이라이트 조회
    * @param {number} time - 시간 (초)
    * @returns {Highlight[]}

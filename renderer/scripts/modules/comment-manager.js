@@ -7,6 +7,17 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('CommentManager');
 
+// 마커 색상 정의
+export const MARKER_COLORS = {
+  default: { name: '기본', color: '#4a9eff', bgColor: 'rgba(74, 158, 255, 0.3)' },
+  yellow: { name: '노랑', color: '#ffdd59', bgColor: 'rgba(255, 221, 89, 0.3)' },
+  red: { name: '빨강', color: '#ff5555', bgColor: 'rgba(255, 85, 85, 0.3)' },
+  pink: { name: '핑크', color: '#ff6b9d', bgColor: 'rgba(255, 107, 157, 0.3)' },
+  green: { name: '초록', color: '#2ed573', bgColor: 'rgba(46, 213, 115, 0.3)' },
+  gray: { name: '회색', color: '#a0a0a0', bgColor: 'rgba(160, 160, 160, 0.3)' },
+  white: { name: '흰색', color: '#ffffff', bgColor: 'rgba(255, 255, 255, 0.3)' }
+};
+
 /**
  * UUID 생성
  */
@@ -53,6 +64,7 @@ export class CommentMarker {
     this.text = options.text || '';
     this.author = options.author || '익명';
     this.createdAt = options.createdAt || new Date();
+    this.updatedAt = options.updatedAt || this.createdAt; // 수정 시간 (협업 머지용)
 
     // 첨부 이미지 (Base64)
     this.image = options.image || null;
@@ -63,9 +75,14 @@ export class CommentMarker {
     this.resolved = options.resolved || false;
     this.resolvedAt = options.resolvedAt ? new Date(options.resolvedAt) : null; // 해결된 시간
     this.pinned = options.pinned || false; // 말풍선 고정 상태
+    this.deleted = options.deleted || false; // 삭제됨 (협업 동기화용)
+    this.deletedAt = options.deletedAt ? new Date(options.deletedAt) : null; // 삭제 시간
 
     // 레이어
     this.layerId = options.layerId || 'comment-layer-1';
+
+    // 색상 (개별 마커 색상)
+    this.colorKey = options.colorKey || 'default';
 
     // 답글 (스레드)
     this.replies = options.replies || [];
@@ -119,6 +136,13 @@ export class CommentMarker {
   }
 
   /**
+   * 색상 정보 반환
+   */
+  get colorInfo() {
+    return MARKER_COLORS[this.colorKey] || MARKER_COLORS.default;
+  }
+
+  /**
    * duration 설정
    */
   setDuration(frames) {
@@ -139,6 +163,8 @@ export class CommentMarker {
     this.resolved = !this.resolved;
     // 해결됨으로 변경 시 시간 기록, 미해결로 변경 시 시간 초기화
     this.resolvedAt = this.resolved ? new Date() : null;
+    // 변경 시간 갱신 (협업 머지용)
+    this.updatedAt = new Date();
     return this.resolved;
   }
 
@@ -164,9 +190,13 @@ export class CommentMarker {
       text: this.text,
       author: this.author,
       createdAt: this.createdAt instanceof Date ? this.createdAt.toISOString() : this.createdAt,
+      updatedAt: this.updatedAt instanceof Date ? this.updatedAt.toISOString() : this.updatedAt,
       resolved: this.resolved,
       resolvedAt: this.resolvedAt instanceof Date ? this.resolvedAt.toISOString() : this.resolvedAt,
+      deleted: this.deleted,
+      deletedAt: this.deletedAt instanceof Date ? this.deletedAt.toISOString() : this.deletedAt,
       layerId: this.layerId,
+      colorKey: this.colorKey,
       replies: this.replies.map(r => ({
         ...r,
         createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt
@@ -190,7 +220,9 @@ export class CommentMarker {
     return new CommentMarker({
       ...json,
       createdAt: new Date(json.createdAt),
+      updatedAt: json.updatedAt ? new Date(json.updatedAt) : new Date(json.createdAt),
       resolvedAt: json.resolvedAt ? new Date(json.resolvedAt) : null,
+      deletedAt: json.deletedAt ? new Date(json.deletedAt) : null,
       replies: (json.replies || []).map(r => ({
         ...r,
         createdAt: new Date(r.createdAt)
@@ -225,8 +257,9 @@ export class CommentLayer {
     return this.markers.get(markerId);
   }
 
-  getAllMarkers() {
-    return Array.from(this.markers.values());
+  getAllMarkers(includeDeleted = false) {
+    const markers = Array.from(this.markers.values());
+    return includeDeleted ? markers : markers.filter(m => !m.deleted);
   }
 
   getMarkersAtFrame(frame) {
@@ -483,14 +516,29 @@ export class CommentManager extends EventTarget {
   }
 
   /**
-   * 마커 삭제
+   * 마커 삭제 (soft delete - 협업 동기화용)
    */
   deleteMarker(markerId) {
+    const marker = this.getMarker(markerId);
+    if (marker) {
+      marker.deleted = true;
+      marker.deletedAt = new Date();
+      marker.updatedAt = new Date(); // 머지 비교용
+      log.info('마커 삭제됨 (soft delete)', { id: markerId });
+      this._emit('markerDeleted', { markerId });
+      this._emit('markersChanged');
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 마커 완전 삭제 (Map에서 제거)
+   */
+  hardDeleteMarker(markerId) {
     for (const layer of this.layers) {
       if (layer.removeMarker(markerId)) {
-        log.info('마커 삭제됨', { id: markerId });
-        this._emit('markerDeleted', { markerId });
-        this._emit('markersChanged');
+        log.info('마커 완전 삭제됨', { id: markerId });
         return true;
       }
     }
@@ -521,12 +569,20 @@ export class CommentManager extends EventTarget {
     if (!marker) return null;
 
     // 허용된 필드만 업데이트
-    const allowedFields = ['text', 'startFrame', 'endFrame', 'resolved', 'x', 'y'];
+    const allowedFields = ['text', 'startFrame', 'endFrame', 'resolved', 'x', 'y', 'colorKey'];
+    let hasChanges = false;
+
     allowedFields.forEach(field => {
-      if (updates[field] !== undefined) {
+      if (updates[field] !== undefined && marker[field] !== updates[field]) {
         marker[field] = updates[field];
+        hasChanges = true;
       }
     });
+
+    // 변경이 있으면 updatedAt 갱신 (협업 머지용)
+    if (hasChanges) {
+      marker.updatedAt = new Date();
+    }
 
     this._emit('markerUpdated', { marker });
     this._emit('markersChanged');
@@ -617,6 +673,44 @@ export class CommentManager extends EventTarget {
   }
 
   /**
+   * 현재 프레임 기준 이전 마커의 시작 프레임 찾기
+   * @param {number} currentFrame - 현재 프레임
+   * @returns {number|null} 이전 마커의 시작 프레임 또는 null
+   */
+  getPrevMarkerFrame(currentFrame) {
+    const markers = this.getAllMarkers();
+    // 현재 프레임보다 시작 프레임이 작은 마커들 중 가장 큰 것
+    let prevMarker = null;
+    for (const marker of markers) {
+      if (marker.startFrame < currentFrame) {
+        if (!prevMarker || marker.startFrame > prevMarker.startFrame) {
+          prevMarker = marker;
+        }
+      }
+    }
+    return prevMarker ? prevMarker.startFrame : null;
+  }
+
+  /**
+   * 현재 프레임 기준 다음 마커의 시작 프레임 찾기
+   * @param {number} currentFrame - 현재 프레임
+   * @returns {number|null} 다음 마커의 시작 프레임 또는 null
+   */
+  getNextMarkerFrame(currentFrame) {
+    const markers = this.getAllMarkers();
+    // 현재 프레임보다 시작 프레임이 큰 마커들 중 가장 작은 것
+    let nextMarker = null;
+    for (const marker of markers) {
+      if (marker.startFrame > currentFrame) {
+        if (!nextMarker || marker.startFrame < nextMarker.startFrame) {
+          nextMarker = marker;
+        }
+      }
+    }
+    return nextMarker ? nextMarker.startFrame : null;
+  }
+
+  /**
    * 활성 레이어 가져오기
    */
   getActiveLayer() {
@@ -691,12 +785,15 @@ export class CommentManager extends EventTarget {
     for (const layer of layersToCheck) {
       if (!layer) continue;
       for (const marker of layer.getAllMarkers()) {
+        // 마커 개별 색상 사용 (없으면 레이어 색상)
+        const markerColor = marker.colorInfo?.color || layer.color;
         ranges.push({
           layerId: layer.id,
           markerId: marker.id,
           startFrame: marker.startFrame,
           endFrame: marker.endFrame,
-          color: layer.color,
+          color: markerColor,
+          colorKey: marker.colorKey || 'default',
           text: marker.text,
           resolved: marker.resolved
         });
@@ -725,7 +822,8 @@ export class CommentManager extends EventTarget {
         color: layer.color,
         visible: layer.visible,
         locked: layer.locked,
-        markers: layer.getAllMarkers().map(m => m.toJSON())
+        // 삭제된 마커도 포함 (협업 동기화용)
+        markers: layer.getAllMarkers(true).map(m => m.toJSON())
       }))
     };
   }

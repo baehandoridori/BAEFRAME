@@ -7,7 +7,15 @@
 // ============================================
 const fs = require('fs');
 const path = require('path');
-const startupDebugPath = path.join(process.env.APPDATA || '', 'baeframe', 'startup-debug.log');
+const baeframeDataDir = path.join(process.env.APPDATA || '', 'baeframe');
+const startupDebugPath = path.join(baeframeDataDir, 'startup-debug.log');
+
+// 디버그 로그 폴더가 없으면 생성
+try {
+  if (!fs.existsSync(baeframeDataDir)) {
+    fs.mkdirSync(baeframeDataDir, { recursive: true });
+  }
+} catch (e) { /* ignore */ }
 
 function debugLog(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -34,7 +42,7 @@ let isQuitting = false;
 let forceQuit = false;
 
 const { createLogger } = require('./logger');
-const { createMainWindow, getMainWindow } = require('./window');
+const { createMainWindow, getMainWindow, createLoadingWindow, closeLoadingWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
 debugLog('내부 모듈 로드 완료');
 
@@ -64,12 +72,43 @@ function parseBaeframeUrl(url) {
 
   // baeframe:// 제거
   let filePath = url.replace(/^baeframe:\/\//, '');
+  log.info('baeframe:// 제거 후', { filePath });
 
   // URL 디코딩 (한글, 공백 등)
+  // decodeURIComponent가 한글을 제대로 처리하지 못하는 경우 수동 UTF-8 디코딩
   try {
-    filePath = decodeURIComponent(filePath);
+    const beforeDecode = filePath;
+    log.info('디코딩 시작', { length: filePath.length, last20: filePath.slice(-20) });
+
+    // 수동 UTF-8 디코딩: %XX 시퀀스를 바이트로 변환 후 UTF-8 문자열로
+    const bytes = [];
+    const skippedPercent = [];
+    for (let i = 0; i < filePath.length; i++) {
+      if (filePath[i] === '%' && i + 2 < filePath.length) {
+        const hex = filePath.substring(i + 1, i + 3);
+        if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
+          bytes.push(parseInt(hex, 16));
+          i += 2;
+          continue;
+        } else {
+          // hex가 유효하지 않은 경우 로깅
+          skippedPercent.push({ pos: i, hex, charCodes: [filePath.charCodeAt(i + 1), filePath.charCodeAt(i + 2)] });
+        }
+      }
+      // 일반 ASCII 문자
+      bytes.push(filePath.charCodeAt(i));
+    }
+
+    if (skippedPercent.length > 0) {
+      log.warn('유효하지 않은 % 시퀀스 발견', { skippedPercent });
+    }
+
+    log.info('바이트 배열', { length: bytes.length, last10: bytes.slice(-10) });
+    filePath = Buffer.from(bytes).toString('utf8');
+
+    log.info('URL 디코딩 결과', { before: beforeDecode.slice(-30), after: filePath.slice(-30), changed: beforeDecode !== filePath });
   } catch (e) {
-    log.warn('URL 디코딩 실패, 원본 사용', { error: e.message });
+    log.warn('URL 디코딩 실패, 원본 사용', { error: e.message, filePath });
   }
 
   // 공유 링크 형식: 경로\n웹URL\n파일명 또는 경로|웹URL|파일명
@@ -124,19 +163,20 @@ log.info('비디오 하드웨어 가속 플래그 적용됨');
 // - 개발 모드에서는 기존 등록을 유지
 // ============================================
 
+// 개발 모드, 빌드된 앱 모두 프로토콜 등록
+// 개발 모드에서도 Slack 링크 테스트가 가능하도록 함
+// 팀원 배포 시 빌드된 exe 한 번 실행하면 해당 경로로 덮어씌워짐
 if (process.defaultApp) {
-  // 개발 모드: 프로토콜 등록하지 않음 (팀원들의 프로토콜 설정 보호)
-  log.info('개발 모드 - 프로토콜 등록 건너뜀', {
+  // 개발 모드: electron 실행 파일 + 스크립트 경로로 등록
+  app.setAsDefaultProtocolClient('baeframe', process.execPath, [path.resolve(process.argv[1])]);
+  log.info('개발 모드 - 프로토콜 등록됨', {
     execPath: process.execPath,
-    reason: '빌드된 앱의 프로토콜 설정을 덮어쓰지 않기 위함'
+    scriptPath: path.resolve(process.argv[1])
   });
-  debugLog('개발 모드 - 프로토콜 등록 건너뜀');
+  debugLog(`개발 모드 프로토콜 등록됨: ${process.execPath} ${path.resolve(process.argv[1])}`);
 } else {
   // 빌드된 exe - 현재 실행 파일로 등록
-  // 기존 등록 제거 후 새로 등록
-  app.removeAsDefaultProtocolClient('baeframe');
   app.setAsDefaultProtocolClient('baeframe');
-
   log.info('baeframe:// 프로토콜 등록됨', {
     execPath: process.execPath,
     defaultApp: process.defaultApp
@@ -144,9 +184,13 @@ if (process.defaultApp) {
   debugLog(`프로토콜 등록됨: ${process.execPath}`);
 }
 
-// 단일 인스턴스 잠금
+// 단일 인스턴스 잠금 (개발 모드에서는 다중 인스턴스 허용)
+const isDev = process.env.NODE_ENV === 'development';
+debugLog(`개발 모드: ${isDev}`);
 debugLog('단일 인스턴스 잠금 요청 중...');
-const gotTheLock = app.requestSingleInstanceLock();
+
+// 개발 모드에서는 잠금 건너뜀 (협업 테스트용)
+const gotTheLock = isDev ? true : app.requestSingleInstanceLock();
 debugLog(`잠금 결과: ${gotTheLock}`);
 
 if (!gotTheLock) {
@@ -193,16 +237,7 @@ if (!gotTheLock) {
     debugLog(`앱 준비 완료: ${Date.now() - appStartTime}ms`);
     log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
-    // IPC 핸들러 설정
-    debugLog('IPC 핸들러 설정 중...');
-    setupIpcHandlers();
-
-    // 메인 윈도우 생성
-    debugLog('메인 윈도우 생성 중...');
-    createMainWindow();
-    debugLog('메인 윈도우 생성 완료');
-
-    // 시작 시 전달된 파일/프로토콜 인자 처리
+    // 시작 시 전달된 파일/프로토콜 인자 확인
     let fileArg = process.argv.find(arg =>
       arg.startsWith('baeframe://') ||
       arg.endsWith('.bframe') ||
@@ -213,6 +248,7 @@ if (!gotTheLock) {
       arg.endsWith('.webm')
     );
 
+    // 파일 인자가 있으면 로딩 창 먼저 표시
     if (fileArg) {
       // baeframe:// URL이면 파일 경로로 변환
       if (fileArg.startsWith('baeframe://')) {
@@ -221,8 +257,22 @@ if (!gotTheLock) {
       } else {
         log.info('시작 인자로 파일 전달됨', { fileArg });
       }
+      // 로딩 창 표시
+      createLoadingWindow(fileArg);
+      debugLog('로딩 창 표시됨');
+    }
 
-      // 윈도우 로드 완료 후 파일 열기
+    // IPC 핸들러 설정
+    debugLog('IPC 핸들러 설정 중...');
+    setupIpcHandlers();
+
+    // 메인 윈도우 생성
+    debugLog('메인 윈도우 생성 중...');
+    createMainWindow();
+    debugLog('메인 윈도우 생성 완료');
+
+    // 파일 인자가 있으면 윈도우 로드 완료 후 파일 열기
+    if (fileArg) {
       const mainWindow = getMainWindow();
       mainWindow.webContents.once('did-finish-load', () => {
         mainWindow.webContents.send('open-from-protocol', fileArg);
@@ -246,12 +296,18 @@ if (!gotTheLock) {
   });
 
   // 앱 종료 전 - 저장 확인
+  let quitTimeout = null;
+
   app.on('before-quit', (event) => {
     log.info('앱 종료 요청', { isQuitting, forceQuit });
 
     // 이미 종료 처리 중이거나 강제 종료인 경우 진행
     if (forceQuit) {
       log.info('강제 종료 진행');
+      if (quitTimeout) {
+        clearTimeout(quitTimeout);
+        quitTimeout = null;
+      }
       return;
     }
 
@@ -264,6 +320,13 @@ if (!gotTheLock) {
       if (mainWindow && !mainWindow.isDestroyed()) {
         log.info('Renderer에 저장 확인 요청');
         mainWindow.webContents.send('app:request-save-before-quit');
+
+        // 30초 타임아웃 - 렌더러가 응답하지 않으면 강제 종료
+        quitTimeout = setTimeout(() => {
+          log.warn('종료 타임아웃 - 렌더러 응답 없음, 강제 종료');
+          forceQuit = true;
+          app.quit();
+        }, 30000);
       } else {
         // 윈도우가 없으면 바로 종료
         forceQuit = true;
@@ -275,12 +338,20 @@ if (!gotTheLock) {
   // Renderer에서 종료 확인 응답 처리
   ipcMain.handle('app:quit-confirmed', () => {
     log.info('Renderer 저장 완료, 앱 종료');
+    if (quitTimeout) {
+      clearTimeout(quitTimeout);
+      quitTimeout = null;
+    }
     forceQuit = true;
     app.quit();
   });
 
   ipcMain.handle('app:quit-cancelled', () => {
     log.info('사용자가 종료 취소');
+    if (quitTimeout) {
+      clearTimeout(quitTimeout);
+      quitTimeout = null;
+    }
     isQuitting = false;
     forceQuit = false;
   });

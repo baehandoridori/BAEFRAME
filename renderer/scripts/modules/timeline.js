@@ -113,12 +113,26 @@ export class Timeline extends EventTarget {
    * 이벤트 리스너 설정
    */
   _setupEventListeners() {
-    // 줌 슬라이더
+    // 줌 슬라이더 - 플레이헤드 중심으로 줌
     this.zoomSlider?.addEventListener('input', (e) => {
       const value = e.target.value;
-      this.zoom = this.minZoom + (value / 100) * (this.maxZoom - this.minZoom);
+      const newZoom = this.minZoom + (value / 100) * (this.maxZoom - this.minZoom);
+
+      // 현재 시간의 비율 (0~1) - 줌과 무관하게 항상 동일
+      const timeRatio = this.duration > 0 ? this.currentTime / this.duration : 0;
+
+      // 줌 적용
+      this.zoom = newZoom;
       this._applyZoom();
       this._updateZoomDisplay();
+
+      // 플레이헤드가 뷰포트 중앙에 오도록 스크롤
+      const newContainerWidth = this.tracksContainer?.offsetWidth || 1000;
+      const newPlayheadX = timeRatio * newContainerWidth;
+      const viewportWidth = this.timelineTracks?.clientWidth || 1000;
+      if (this.timelineTracks) {
+        this.timelineTracks.scrollLeft = Math.max(0, newPlayheadX - viewportWidth / 2);
+      }
     });
 
     // 줌 슬라이더 사용 후 포커스 해제 (스페이스바가 재생으로 작동하도록)
@@ -129,7 +143,7 @@ export class Timeline extends EventTarget {
       e.target.blur();
     });
 
-    // 타임라인 휠 이벤트
+    // 타임라인 휠 이벤트 (passive: false로 preventDefault 사용 가능하게)
     this.timelineTracks?.addEventListener('wheel', (e) => {
       e.preventDefault();
 
@@ -140,13 +154,28 @@ export class Timeline extends EventTarget {
           this.layerHeaders.scrollTop = this.timelineTracks.scrollTop;
         }
       } else {
-        // 기본 휠: 마우스 위치 기준 확대/축소
+        // 기본 휠: 플레이헤드(재생바) 위치 기준 확대/축소
         const delta = e.deltaY > 0 ? -15 : 15;
-        const rect = this.timelineTracks.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left + this.timelineTracks.scrollLeft;
-        this.setZoomAtPosition(this.zoom + delta, mouseX);
+        const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom + delta));
+
+        if (newZoom === this.zoom) return;
+
+        // 현재 시간의 비율 (0~1) - 줌과 무관하게 항상 동일
+        const timeRatio = this.duration > 0 ? this.currentTime / this.duration : 0;
+
+        // 줌 적용
+        this.zoom = newZoom;
+        this._applyZoom();
+        this._updateZoomDisplay();
+        this._showZoomIndicator();
+
+        // 새 줌에서 플레이헤드가 뷰포트 중앙에 오도록 스크롤
+        const newContainerWidth = this.tracksContainer?.offsetWidth || 1000;
+        const newPlayheadX = timeRatio * newContainerWidth;
+        const viewportWidth = this.timelineTracks.clientWidth;
+        this.timelineTracks.scrollLeft = Math.max(0, newPlayheadX - viewportWidth / 2);
       }
-    });
+    }, { passive: false });
 
     // 레이어 헤더 스크롤 동기화
     this.layerHeaders?.addEventListener('wheel', (e) => {
@@ -155,7 +184,7 @@ export class Timeline extends EventTarget {
       if (this.timelineTracks) {
         this.timelineTracks.scrollTop = this.layerHeaders.scrollTop;
       }
-    });
+    }, { passive: false });
 
     // 플레이헤드 드래그
     this.playheadHandle?.addEventListener('mousedown', (e) => {
@@ -304,8 +333,40 @@ export class Timeline extends EventTarget {
     this.scrubTime = time;
     this._updatePlayheadPositionDirect(time);
 
+    // 플레이헤드가 뷰포트 경계에 가까우면 자동 스크롤
+    this._autoScrollWhileDragging(e.clientX);
+
     // 스크러빙 프리뷰 이벤트 (썸네일 표시용)
     this._emit('scrubbing', { time, percent });
+  }
+
+  /**
+   * 플레이헤드 드래그 중 자동 스크롤
+   * @param {number} clientX - 마우스 X 좌표
+   */
+  _autoScrollWhileDragging(clientX) {
+    if (!this.timelineTracks) return;
+
+    // timelineTracks (스크롤 뷰포트)의 경계를 사용
+    const viewportRect = this.timelineTracks.getBoundingClientRect();
+    const viewportLeft = viewportRect.left;
+    const viewportRight = viewportRect.right;
+    const edgeThreshold = 60; // 경계에서 60px 이내면 스크롤
+    const scrollSpeed = 20; // 스크롤 속도 (px)
+
+    // 왼쪽 경계에 가까우면 왼쪽으로 스크롤
+    if (clientX < viewportLeft + edgeThreshold && this.timelineTracks.scrollLeft > 0) {
+      const intensity = 1 - Math.max(0, clientX - viewportLeft) / edgeThreshold;
+      this.timelineTracks.scrollLeft -= scrollSpeed * Math.max(0.3, intensity);
+    }
+    // 오른쪽 경계에 가까우면 오른쪽으로 스크롤
+    else if (clientX > viewportRight - edgeThreshold) {
+      const maxScroll = this.timelineTracks.scrollWidth - this.timelineTracks.clientWidth;
+      if (this.timelineTracks.scrollLeft < maxScroll) {
+        const intensity = 1 - Math.max(0, viewportRight - clientX) / edgeThreshold;
+        this.timelineTracks.scrollLeft += scrollSpeed * Math.max(0.3, intensity);
+      }
+    }
   }
 
   /**
@@ -916,8 +977,8 @@ export class Timeline extends EventTarget {
     const containerWidth = this.tracksContainer?.offsetWidth || 1000;
     const pixelsPerFrame = containerWidth / this.totalFrames;
 
-    // 격자 배경 패턴 생성 (CSS)
-    this._applyGridBackground(trackRow, pixelsPerFrame);
+    // 격자 배경 패턴 제거 (#72: 그리기 레이어에 별도 격자 패턴 불필요)
+    // this._applyGridBackground(trackRow, pixelsPerFrame);
 
     // 콘텐츠 범위 표시 (키프레임 간 구간) - 빈 키프레임이 아닌 경우만 채움
     ranges.forEach(range => {
@@ -931,7 +992,7 @@ export class Timeline extends EventTarget {
 
         rangeBar.style.left = `${startPercent}%`;
         rangeBar.style.width = `${widthPercent}%`;
-        rangeBar.style.background = `${layer.color}40`; // 레이어 색상 + 투명도
+        rangeBar.style.background = '#5a5a5a'; // 회색 고정 (#72: 레이어 색상을 회색으로 변경)
 
         keyframeContainer.appendChild(rangeBar);
       }
@@ -1430,7 +1491,7 @@ export class Timeline extends EventTarget {
 
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
-      this._emit('commentMarkerClick', { time, frame });
+      this._emit('commentMarkerClick', { time, frame, markerInfos });
     });
 
     this.tracksContainer?.appendChild(marker);
@@ -1453,11 +1514,13 @@ export class Timeline extends EventTarget {
    */
   _formatTimecode(time) {
     const fps = this.fps || 24;
-    const totalFrames = Math.floor(time * fps);
-    const hours = Math.floor(time / 3600);
-    const minutes = Math.floor((time % 3600) / 60);
-    const seconds = Math.floor(time % 60);
+    // Math.round로 부동소수점 오차 방지
+    const totalFrames = Math.round(time * fps);
     const frames = totalFrames % fps;
+    const totalSeconds = Math.floor(totalFrames / fps);
+    const seconds = totalSeconds % 60;
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const hours = Math.floor(totalSeconds / 3600);
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}:${frames.toString().padStart(2, '0')}`;
   }
 
@@ -1613,7 +1676,7 @@ export class Timeline extends EventTarget {
 
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
-      this._emit('commentMarkerClick', { time, frame });
+      this._emit('commentMarkerClick', { time, frame, markerInfos });
     });
 
     this.tracksContainer?.appendChild(marker);

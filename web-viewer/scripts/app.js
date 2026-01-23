@@ -67,36 +67,36 @@ const TEST_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-buck
 
 // 로딩 화면 명언 목록 (정신건강 + 용감한 역사적 발언)
 const LOADING_QUOTES = [
-  { text: "두려움을 느끼는 것은 용기가 없는 것이 아니다. 두려움에도 불구하고 행동하는 것이 진정한 용기다.", author: "마크 트웨인" },
-  { text: "우리가 두려워해야 할 유일한 것은 두려움 그 자체다.", author: "프랭클린 D. 루스벨트" },
-  { text: "불가능은 소심한 자의 환상이다.", author: "나폴레옹 보나파르트" },
-  { text: "오늘 할 수 있는 일에 최선을 다하라. 그러면 내일은 한 걸음 더 나아갈 수 있다.", author: "아이작 뉴턴" },
-  { text: "승리는 가장 끈기 있는 자에게 돌아간다.", author: "나폴레옹 보나파르트" },
-  { text: "위대한 영광은 넘어지지 않는 것이 아니라, 넘어질 때마다 일어서는 데 있다.", author: "공자" },
-  { text: "먼저 자신을 믿어라. 그러면 다른 모든 것이 따라온다.", author: "괴테" },
-  { text: "행동은 두려움을 치유하고, 우유부단함은 두려움을 키운다.", author: "윌리엄 제임스" },
-  { text: "여기서 죽으면 뭐가 남나? 싸워라! 적어도 죽기 전에 발자국을 남겨라.", author: "윌리엄 월러스" },
-  { text: "나는 왔고, 보았고, 이겼다.", author: "율리우스 카이사르" },
-  { text: "적을 용서할 수는 있지만, 그 전에 먼저 그들을 무력화해야 한다.", author: "마하트마 간디" },
-  { text: "어둠을 저주하기보다 촛불 하나를 켜는 것이 낫다.", author: "엘리너 루스벨트" },
-  { text: "삶이 레몬을 주면 레모네이드를 만들어라.", author: "미국 속담" },
-  { text: "지금 흘리는 땀은 전쟁에서 흘릴 피를 줄여준다.", author: "에르빈 롬멜" },
-  { text: "우리는 해변에서 싸울 것이다. 우리는 결코 항복하지 않을 것이다.", author: "윈스턴 처칠" },
-  { text: "고통은 일시적이다. 포기는 영원하다.", author: "랜스 암스트롱" },
-  { text: "가장 어두운 밤도 끝나고 태양은 뜬다.", author: "빅토르 위고" },
-  { text: "매 순간 새로운 시작이다.", author: "T.S. 엘리엇" },
-  { text: "자신의 한계를 아는 것이 지혜의 시작이다.", author: "소크라테스" },
-  { text: "포기하지 않는 한 실패란 없다.", author: "앤 래투로" },
-  { text: "시련은 그것을 견딜 수 있는 자에게 주어진다.", author: "탈무드" },
-  { text: "스파르타인은 적이 몇 명인지 묻지 않는다. 어디 있는지만 묻는다.", author: "아게시라오스 2세" },
-  { text: "죽음을 두려워하면 아무것도 시작할 수 없다.", author: "세네카" },
-  { text: "모든 위대한 업적은 처음에는 불가능해 보였다.", author: "토마스 칼라일" },
-  { text: "오늘의 고통은 내일의 힘이 된다.", author: "아놀드 슈워제네거" },
-  { text: "진정한 용기는 두려움 속에서도 앞으로 나아가는 것이다.", author: "넬슨 만델라" },
-  { text: "휴식은 게으름이 아니다. 여름의 나른한 오후에 풀밭에 누워 물소리를 듣는 것은 결코 시간 낭비가 아니다.", author: "존 러버드" },
-  { text: "자신을 돌보는 것은 이기적인 게 아니라 생존이다.", author: "오드리 로드" },
-  { text: "가끔은 가장 생산적인 일이 휴식을 취하는 것이다.", author: "마크 트웨인" },
-  { text: "완벽하지 않아도 괜찮다. 성장하고 있으면 충분하다.", author: "작자 미상" }
+  { text: '두려움을 느끼는 것은 용기가 없는 것이 아니다. 두려움에도 불구하고 행동하는 것이 진정한 용기다.', author: '마크 트웨인' },
+  { text: '우리가 두려워해야 할 유일한 것은 두려움 그 자체다.', author: '프랭클린 D. 루스벨트' },
+  { text: '불가능은 소심한 자의 환상이다.', author: '나폴레옹 보나파르트' },
+  { text: '오늘 할 수 있는 일에 최선을 다하라. 그러면 내일은 한 걸음 더 나아갈 수 있다.', author: '아이작 뉴턴' },
+  { text: '승리는 가장 끈기 있는 자에게 돌아간다.', author: '나폴레옹 보나파르트' },
+  { text: '위대한 영광은 넘어지지 않는 것이 아니라, 넘어질 때마다 일어서는 데 있다.', author: '공자' },
+  { text: '먼저 자신을 믿어라. 그러면 다른 모든 것이 따라온다.', author: '괴테' },
+  { text: '행동은 두려움을 치유하고, 우유부단함은 두려움을 키운다.', author: '윌리엄 제임스' },
+  { text: '여기서 죽으면 뭐가 남나? 싸워라! 적어도 죽기 전에 발자국을 남겨라.', author: '윌리엄 월러스' },
+  { text: '나는 왔고, 보았고, 이겼다.', author: '율리우스 카이사르' },
+  { text: '적을 용서할 수는 있지만, 그 전에 먼저 그들을 무력화해야 한다.', author: '마하트마 간디' },
+  { text: '어둠을 저주하기보다 촛불 하나를 켜는 것이 낫다.', author: '엘리너 루스벨트' },
+  { text: '삶이 레몬을 주면 레모네이드를 만들어라.', author: '미국 속담' },
+  { text: '지금 흘리는 땀은 전쟁에서 흘릴 피를 줄여준다.', author: '에르빈 롬멜' },
+  { text: '우리는 해변에서 싸울 것이다. 우리는 결코 항복하지 않을 것이다.', author: '윈스턴 처칠' },
+  { text: '고통은 일시적이다. 포기는 영원하다.', author: '랜스 암스트롱' },
+  { text: '가장 어두운 밤도 끝나고 태양은 뜬다.', author: '빅토르 위고' },
+  { text: '매 순간 새로운 시작이다.', author: 'T.S. 엘리엇' },
+  { text: '자신의 한계를 아는 것이 지혜의 시작이다.', author: '소크라테스' },
+  { text: '포기하지 않는 한 실패란 없다.', author: '앤 래투로' },
+  { text: '시련은 그것을 견딜 수 있는 자에게 주어진다.', author: '탈무드' },
+  { text: '스파르타인은 적이 몇 명인지 묻지 않는다. 어디 있는지만 묻는다.', author: '아게시라오스 2세' },
+  { text: '죽음을 두려워하면 아무것도 시작할 수 없다.', author: '세네카' },
+  { text: '모든 위대한 업적은 처음에는 불가능해 보였다.', author: '토마스 칼라일' },
+  { text: '오늘의 고통은 내일의 힘이 된다.', author: '아놀드 슈워제네거' },
+  { text: '진정한 용기는 두려움 속에서도 앞으로 나아가는 것이다.', author: '넬슨 만델라' },
+  { text: '휴식은 게으름이 아니다. 여름의 나른한 오후에 풀밭에 누워 물소리를 듣는 것은 결코 시간 낭비가 아니다.', author: '존 러버드' },
+  { text: '자신을 돌보는 것은 이기적인 게 아니라 생존이다.', author: '오드리 로드' },
+  { text: '가끔은 가장 생산적인 일이 휴식을 취하는 것이다.', author: '마크 트웨인' },
+  { text: '완벽하지 않아도 괜찮다. 성장하고 있으면 충분하다.', author: '작자 미상' }
 ];
 
 let quoteInterval = null;
@@ -680,16 +680,16 @@ function showScreen(screenName) {
   }
 
   switch (screenName) {
-    case 'loading':
-      elements.loadingScreen?.classList.add('active');
-      startQuoteRotation(); // 로딩 화면으로 돌아오면 다시 시작
-      break;
-    case 'select':
-      elements.selectScreen?.classList.add('active');
-      break;
-    case 'viewer':
-      elements.viewerScreen?.classList.add('active');
-      break;
+  case 'loading':
+    elements.loadingScreen?.classList.add('active');
+    startQuoteRotation(); // 로딩 화면으로 돌아오면 다시 시작
+    break;
+  case 'select':
+    elements.selectScreen?.classList.add('active');
+    break;
+  case 'viewer':
+    elements.viewerScreen?.classList.add('active');
+    break;
   }
 }
 
@@ -1386,7 +1386,7 @@ function updateCommentsList() {
     return `
       <div class="comment-card" data-id="${comment.id}" data-frame="${frame}">
         <div class="comment-header">
-          <span class="comment-author">${comment.author || '익명'}</span>
+          <span class="comment-author">${escapeHtml(comment.author || '익명')}</span>
           <span class="comment-time">${time}</span>
           <div class="comment-actions">
             <button data-action="edit">수정</button>
@@ -1813,15 +1813,15 @@ function openThread(commentId) {
   const time = formatTime(frame / state.frameRate);
   elements.threadOriginal.innerHTML = `
     <div class="comment-time">${time}</div>
-    <div class="comment-author">${comment.author || '익명'}</div>
+    <div class="comment-author">${escapeHtml(comment.author || '익명')}</div>
     <div class="comment-text">${escapeHtml(comment.text)}</div>
   `;
 
-  // 답글 표시
+  // 답글 표시 (XSS 방지: author 필드 이스케이프)
   const replies = comment.replies || [];
   elements.threadReplies.innerHTML = replies.map(reply => `
     <div class="reply-item">
-      <div class="reply-author">${reply.author || '익명'}</div>
+      <div class="reply-author">${escapeHtml(reply.author || '익명')}</div>
       <div class="comment-text">${escapeHtml(reply.text)}</div>
     </div>
   `).join('');
@@ -2198,37 +2198,37 @@ function handleKeydown(e) {
   }
 
   switch (e.code) {
-    case 'Space':
+  case 'Space':
+    e.preventDefault();
+    togglePlayPause();
+    break;
+
+  case 'ArrowLeft':
+    e.preventDefault();
+    seekFrame(e.shiftKey ? -10 : -1);
+    break;
+
+  case 'ArrowRight':
+    e.preventDefault();
+    seekFrame(e.shiftKey ? 10 : 1);
+    break;
+
+  case 'KeyC':
+    if (!e.ctrlKey && !e.metaKey) {
+      handleAddComment();
+    }
+    break;
+
+  case 'KeyD':
+    switchTab('draw');
+    break;
+
+  case 'KeyS':
+    if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
-      togglePlayPause();
-      break;
-
-    case 'ArrowLeft':
-      e.preventDefault();
-      seekFrame(e.shiftKey ? -10 : -1);
-      break;
-
-    case 'ArrowRight':
-      e.preventDefault();
-      seekFrame(e.shiftKey ? 10 : 1);
-      break;
-
-    case 'KeyC':
-      if (!e.ctrlKey && !e.metaKey) {
-        handleAddComment();
-      }
-      break;
-
-    case 'KeyD':
-      switchTab('draw');
-      break;
-
-    case 'KeyS':
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        handleSave();
-      }
-      break;
+      handleSave();
+    }
+    break;
   }
 }
 
@@ -2429,8 +2429,8 @@ let controlsHideTimer = null;
 
 // 롱프레스 마커 추가용 변수
 let longPressTimer = null;
-let longPressPos = { x: 0, y: 0 };
-let longPressStartPos = { x: 0, y: 0 }; // 터치 시작 위치 (이동 감지용)
+const longPressPos = { x: 0, y: 0 };
+const longPressStartPos = { x: 0, y: 0 }; // 터치 시작 위치 (이동 감지용)
 let isLongPressActive = false;
 const LONG_PRESS_DURATION = 500; // 500ms 길게 누르기
 const LONG_PRESS_MOVE_THRESHOLD = 15; // 15px 이내 이동은 허용
