@@ -4,6 +4,7 @@
  */
 
 import { createLogger } from '../logger.js';
+import { MARKER_COLORS } from './comment-manager.js';
 
 const log = createLogger('Timeline');
 
@@ -1593,20 +1594,28 @@ export class Timeline extends EventTarget {
       const allResolved = cluster.markers.every(m => m.resolved);
       // 대표 프레임 (첫 번째 마커의 프레임)
       const representativeFrame = cluster.markers[0].frame;
+      // 대표 색상 (첫 번째 마커의 colorKey 사용)
+      const representativeColorKey = allInfos[0]?.colorKey || 'default';
 
-      this._addClusteredMarker(centerTime, allResolved, representativeFrame, allInfos, count);
+      this._addClusteredMarker(centerTime, allResolved, representativeFrame, allInfos, count, representativeColorKey);
     });
   }
 
   /**
    * 클러스터된 마커 추가 (내부용)
    */
-  _addClusteredMarker(time, resolved, frame, markerInfos, clusterCount) {
+  _addClusteredMarker(time, resolved, frame, markerInfos, clusterCount, colorKey = 'default') {
     const percent = (time / this.duration) * 100;
     const marker = document.createElement('div');
     marker.className = `comment-marker-track${resolved ? ' resolved' : ''}`;
     marker.style.left = `${percent}%`;
     marker.dataset.time = time;
+
+    // 마커 색상 적용 (resolved가 아닌 경우에만)
+    if (!resolved) {
+      const markerColor = MARKER_COLORS[colorKey]?.color || MARKER_COLORS.default.color;
+      marker.style.backgroundColor = markerColor;
+    }
     marker.dataset.frame = frame;
 
     // 클러스터 카운트가 2 이상이면 배지 표시
