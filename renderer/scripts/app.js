@@ -6810,16 +6810,24 @@ async function initApp() {
 
       e.preventDefault();
 
-      // 새 인덱스 계산
-      const items = [...container.querySelectorAll('.playlist-item:not(.dragging)')];
-      let toIndex = items.indexOf(placeholder.nextElementSibling);
-      if (toIndex === -1) toIndex = items.length;
+      // 플레이스홀더의 DOM 위치로 새 인덱스 계산
+      // 플레이스홀더 앞에 있는 모든 playlist-item 개수를 셈
+      let newIndex = 0;
+      let sibling = placeholder.previousElementSibling;
+      while (sibling) {
+        if (sibling.classList.contains('playlist-item') && sibling !== draggedItem) {
+          newIndex++;
+        }
+        sibling = sibling.previousElementSibling;
+      }
 
       placeholder.remove();
 
-      if (toIndex !== draggedIndex) {
+      // 드래그한 아이템이 플레이스홀더보다 앞에 있었으면 조정 불필요
+      // 뒤에 있었으면 자기 자리가 빠지므로 이미 반영됨
+      if (newIndex !== draggedIndex) {
         const playlistManager = getPlaylistManager();
-        playlistManager.reorderItem(draggedIndex, toIndex > draggedIndex ? toIndex - 1 : toIndex);
+        playlistManager.reorderItem(draggedIndex, newIndex);
         updatePlaylistUI();
       }
     });
