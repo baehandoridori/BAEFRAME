@@ -452,9 +452,11 @@ class FFmpegManager {
    * 트랜스코딩 실행
    * @param {string} filePath - 입력 파일 경로
    * @param {Function} onProgress - 진행률 콜백 (0-100)
+   * @param {Object} _options - 내부 옵션 (재시도용)
    * @returns {Promise<{success: boolean, outputPath: string}>}
    */
-  async transcode(filePath, onProgress = null) {
+  async transcode(filePath, onProgress = null, _options = {}) {
+    const { forceEncoder = null, isRetry = false } = _options;
     if (!this.initialized) {
       await this.initialize();
     }
@@ -490,10 +492,16 @@ class FFmpegManager {
       fs.unlinkSync(tempPath);
     }
 
-    // 사용 가능한 인코더 감지
-    const encoder = await this._detectAvailableEncoder();
-    if (!encoder) {
-      throw new Error('사용 가능한 H.264 인코더가 없습니다. FFmpeg 빌드를 확인하세요.');
+    // 사용 가능한 인코더 감지 (forceEncoder가 있으면 강제 사용)
+    let encoder;
+    if (forceEncoder) {
+      encoder = forceEncoder;
+      log.info('강제 인코더 사용', { encoder: encoder.name, reason: 'fallback' });
+    } else {
+      encoder = await this._detectAvailableEncoder();
+      if (!encoder) {
+        throw new Error('사용 가능한 H.264 인코더가 없습니다. FFmpeg 빌드를 확인하세요.');
+      }
     }
 
     return new Promise((resolve, reject) => {
@@ -672,6 +680,36 @@ class FFmpegManager {
             fs.unlinkSync(tempPath);
           }
 
+          // 하드웨어 인코더 실패 감지 (GPU 없음, 드라이버 문제 등)
+          const isHardwareEncoderError =
+            stderrOutput.includes('Error while opening encoder') ||
+            stderrOutput.includes('Function not implemented') ||
+            stderrOutput.includes('Cannot load') ||
+            stderrOutput.includes('Driver does not support') ||
+            stderrOutput.includes('No capable devices found');
+
+          const isHardwareEncoder = encoder.name !== 'libx264';
+
+          // 하드웨어 인코더 실패 시 libx264로 자동 재시도
+          if (isHardwareEncoderError && isHardwareEncoder && !isRetry) {
+            log.warn('하드웨어 인코더 실패, libx264로 재시도합니다', {
+              failedEncoder: encoder.name,
+              stderr: stderrOutput.slice(-500)
+            });
+
+            // libx264 인코더 가져오기
+            const softwareEncoder = H264_ENCODERS.find(e => e.name === 'libx264') || H264_ENCODERS[0];
+
+            // 캐시된 인코더 정보를 libx264로 업데이트 (이후 트랜스코딩에도 적용)
+            this.availableEncoder = softwareEncoder;
+
+            // libx264로 재시도
+            this.transcode(filePath, onProgress, { forceEncoder: softwareEncoder, isRetry: true })
+              .then(resolve)
+              .catch(reject);
+            return;
+          }
+
           // 오류 원인 파싱
           let errorReason = '알 수 없는 오류';
 
@@ -707,6 +745,7 @@ class FFmpegManager {
             filePath,
             code,
             errorReason,
+            encoder: encoder.name,
             stderr: stderrOutput.slice(-1000) // 로그에 마지막 1000자만
           });
 
