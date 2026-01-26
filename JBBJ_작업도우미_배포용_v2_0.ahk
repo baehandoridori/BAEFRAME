@@ -1460,14 +1460,17 @@ ClipboardPathConverter(clipType) {
         urlPath := StrReplace(cleanPath, "\", "/")
 
         ; ─────────────────────────────────────────────────────────────────
-        ; [BAEFRAME 연동] .bframe 파일 감지 시 baeframe:// 링크 생성
+        ; [BAEFRAME 연동] .bframe 또는 .bplaylist 파일 감지 시 baeframe:// 링크 생성
         ; ─────────────────────────────────────────────────────────────────
         SplitPath, cleanPath,,, ext
-        if (ext = "bframe")
+        if (ext = "bframe" || ext = "bplaylist")
         {
-            ; baeframe:// 링크 생성
-            ; 예: G:\공유\파일.bframe → baeframe://G:/공유/파일.bframe
-            protocolLink := "baeframe://" . urlPath
+            ; baeframe:// 링크 생성 (.bframe과 .bplaylist 동일한 형식)
+            ; G:/ → G/ 로 변환 (Slack이 G:를 보면 file:///로 변환하는 문제 방지)
+            ; 예: G:\공유\파일.bframe → baeframe://G/공유/파일.bframe
+            ; 예: G:\공유\재생목록.bplaylist → baeframe://G/공유/재생목록.bplaylist
+            urlPathNoColon := RegExReplace(urlPath, "^([A-Za-z]):", "$1")
+            protocolLink := "baeframe://" . urlPathNoColon
 
             ; 전역 변수에 저장 (Slack Ctrl+Shift+V용)
             ; g_LastOriginalPath = 표시 텍스트 (G:\...\파일.bframe)
@@ -1478,7 +1481,9 @@ ClipboardPathConverter(clipType) {
             g_LastWebUrl := webUrl  ; 웹 뷰어 URL 저장
 
             ; 사용자에게 감지됨 알림
-            if (webUrl != "") {
+            if (ext = "bplaylist") {
+                ToolTip, 📋 BAEFRAME 재생목록 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
+            } else if (webUrl != "") {
                 ToolTip, 🎬 BAEFRAME 경로 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 + 웹링크 붙여넣기
             } else {
                 ToolTip, 🎬 BAEFRAME 경로 감지됨`nSlack: Ctrl+Shift+V로 하이퍼링크 붙여넣기
