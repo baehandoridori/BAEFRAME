@@ -1460,7 +1460,7 @@ ClipboardPathConverter(clipType) {
         urlPath := StrReplace(cleanPath, "\", "/")
 
         ; ─────────────────────────────────────────────────────────────────
-        ; [BAEFRAME 연동] .bframe/.bplaylist 파일 감지 시 baeframe:// 링크 생성
+        ; [BAEFRAME 연동] .bframe 또는 .bplaylist 파일 감지 시 baeframe:// 링크 생성
         ; ─────────────────────────────────────────────────────────────────
         SplitPath, cleanPath,,, ext
         if (ext = "bframe" || ext = "bplaylist")
