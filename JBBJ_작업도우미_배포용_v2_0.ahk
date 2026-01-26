@@ -964,14 +964,20 @@ return
         ; .bplaylist: 링크 먼저 입력 (Slack 자동완성 방지)
         Send, {Tab}
         Sleep, 50
+        ; 클립보드 비우고 baeframe:// 링크 설정
+        Clipboard := ""
+        Sleep, 50
         Clipboard := g_LastJbbjLink
-        Sleep, 100
+        Sleep, 200
         Send, ^v
         Sleep, 100
         Send, +{Tab}
         Sleep, 50
+        ; 클립보드 비우고 경로 설정
+        Clipboard := ""
+        Sleep, 50
         Clipboard := g_LastOriginalPath
-        Sleep, 100
+        Sleep, 200
         Send, ^v
         Sleep, 50
     }
