@@ -962,7 +962,7 @@ return
 
     ; 3. 링크 필드에 baeframe:// 링크 먼저 입력
     Clipboard := g_LastJbbjLink
-    ClipWait, 1
+    Sleep, 100
     Send, ^v
     Sleep, 100
 
@@ -972,7 +972,7 @@ return
 
     ; 5. 텍스트 필드에 원본 경로 붙여넣기
     Clipboard := g_LastOriginalPath
-    ClipWait, 1
+    Sleep, 100
     Send, ^v
     Sleep, 50
 
