@@ -18,6 +18,7 @@ import { parseVersion, toVersionInfo } from './modules/version-parser.js';
 import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
+import { getPlaylistManager } from './modules/playlist-manager.js';
 
 const log = createLogger('App');
 
@@ -133,7 +134,27 @@ async function initApp() {
 
     // 레이어 추가/삭제 버튼
     btnAddLayer: document.getElementById('btnAddLayer'),
-    btnDeleteLayer: document.getElementById('btnDeleteLayer')
+    btnDeleteLayer: document.getElementById('btnDeleteLayer'),
+
+    // 재생목록 관련
+    btnPlaylist: document.getElementById('btnPlaylist'),
+    playlistSidebar: document.getElementById('playlistSidebar'),
+    playlistResizer: document.getElementById('playlistResizer'),
+    playlistNameInput: document.getElementById('playlistNameInput'),
+    btnPlaylistAdd: document.getElementById('btnPlaylistAdd'),
+    btnPlaylistCopyLink: document.getElementById('btnPlaylistCopyLink'),
+    btnPlaylistClose: document.getElementById('btnPlaylistClose'),
+    playlistProgressFill: document.getElementById('playlistProgressFill'),
+    playlistProgressText: document.getElementById('playlistProgressText'),
+    btnPlaylistPrev: document.getElementById('btnPlaylistPrev'),
+    btnPlaylistNext: document.getElementById('btnPlaylistNext'),
+    playlistPosition: document.getElementById('playlistPosition'),
+    playlistAutoPlay: document.getElementById('playlistAutoPlay'),
+    playlistItems: document.getElementById('playlistItems'),
+    playlistDropzone: document.getElementById('playlistDropzone'),
+    playlistEmpty: document.getElementById('playlistEmpty'),
+    playlistAddArea: document.getElementById('playlistAddArea'),
+    playlistAddZone: document.getElementById('playlistAddZone')
   };
 
   // 상태
@@ -753,6 +774,16 @@ async function initApp() {
   // 드래그 앤 드롭
   elements.dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
+    // 재생목록 사이드바가 열려있고 드래그가 그 위에서 발생하면 메인 드롭존 비활성화
+    const playlistSidebar = elements.playlistSidebar;
+    if (playlistSidebar && !playlistSidebar.classList.contains('hidden')) {
+      const rect = playlistSidebar.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        elements.dropZone.classList.remove('dragging');
+        return;
+      }
+    }
     elements.dropZone.classList.add('dragging');
   });
 
@@ -763,6 +794,16 @@ async function initApp() {
   elements.dropZone.addEventListener('drop', async (e) => {
     e.preventDefault();
     elements.dropZone.classList.remove('dragging');
+
+    // 재생목록 사이드바 위에서 드롭된 경우 무시 (사이드바에서 처리)
+    const playlistSidebar = elements.playlistSidebar;
+    if (playlistSidebar && !playlistSidebar.classList.contains('hidden')) {
+      const rect = playlistSidebar.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        return;
+      }
+    }
 
     const files = e.dataTransfer.files;
     if (files.length > 0) {
@@ -6113,6 +6154,9 @@ async function initApp() {
     }
   });
 
+  // ====== 재생목록 초기화 ======
+  initPlaylistFeature();
+
   log.info('앱 초기화 완료');
 
   // 버전 표시
@@ -6121,6 +6165,759 @@ async function initApp() {
     log.info('앱 버전', { version });
   } catch (e) {
     log.warn('버전 정보를 가져올 수 없습니다.');
+  }
+
+  // ============================================================================
+  // 재생목록 기능
+  // ============================================================================
+
+  function initPlaylistFeature() {
+    const playlistManager = getPlaylistManager();
+
+    // 콜백 설정
+    playlistManager.onPlaylistLoaded = (playlist) => {
+      log.info('재생목록 로드됨', { name: playlist.name });
+      updatePlaylistUI();
+    };
+
+    playlistManager.onPlaylistModified = () => {
+      updatePlaylistUI();
+      // 자동 저장 (딜레이)
+      clearTimeout(playlistManager._autoSaveTimeout);
+      playlistManager._autoSaveTimeout = setTimeout(async () => {
+        if (playlistManager.isModified && playlistManager.playlistPath) {
+          try {
+            await playlistManager.save();
+            log.info('재생목록 자동 저장');
+          } catch (err) {
+            log.warn('재생목록 자동 저장 실패', err);
+          }
+        }
+      }, 2000);
+    };
+
+    playlistManager.onItemSelected = async (item, index) => {
+      log.info('재생목록 아이템 선택', { index, fileName: item.fileName });
+      await loadVideoFromPlaylist(item);
+      updatePlaylistCurrentItem();
+      updatePlaylistPosition();
+    };
+
+    playlistManager.onPlaylistClosed = () => {
+      hidePlaylistSidebar();
+    };
+
+    playlistManager.onError = (error) => {
+      showToast(error.message, 'error');
+    };
+
+    // 리뷰 데이터 저장 시 재생목록 진행률 업데이트
+    reviewDataManager.addEventListener('saved', async (e) => {
+      if (playlistManager.isActive()) {
+        // 현재 아이템의 bframePath 업데이트 (새로 생성된 경우)
+        const currentItem = playlistManager.getCurrentItem();
+        if (currentItem && (!currentItem.bframePath || currentItem.bframePath === '')) {
+          currentItem.bframePath = e.detail.path;
+          playlistManager.isModified = true;
+        }
+
+        // 현재 아이템의 진행률 업데이트
+        await updatePlaylistItemProgress(e.detail.path);
+        await updatePlaylistProgress();
+      }
+    });
+
+    // 헤더 재생목록 버튼
+    elements.btnPlaylist?.addEventListener('click', () => {
+      if (elements.playlistSidebar.classList.contains('hidden')) {
+        showPlaylistSidebar();
+        if (!playlistManager.isActive()) {
+          playlistManager.createNew();
+          // 현재 영상이 있으면 추가
+          if (state.currentFile) {
+            playlistManager.addItems([state.currentFile.videoPath]).then(updatePlaylistUI);
+          }
+        }
+      } else {
+        hidePlaylistSidebar();
+      }
+    });
+
+    // 닫기 버튼
+    elements.btnPlaylistClose?.addEventListener('click', async () => {
+      await playlistManager.close();
+      hidePlaylistSidebar();
+    });
+
+    // 이름 변경
+    elements.playlistNameInput?.addEventListener('change', (e) => {
+      playlistManager.setName(e.target.value);
+    });
+
+    // 파일 추가 버튼 - 추가 모드 토글
+    elements.btnPlaylistAdd?.addEventListener('click', () => {
+      togglePlaylistAddMode();
+    });
+
+    // 추가 영역 클릭 - 파일 선택 대화상자
+    elements.playlistAddZone?.addEventListener('click', async () => {
+      const result = await window.electronAPI.openFileDialog({
+        title: '재생목록에 추가할 영상 선택',
+        filters: [
+          { name: '비디오 파일', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] }
+        ],
+        properties: ['openFile', 'multiSelections']
+      });
+
+      if (!result.canceled && result.filePaths.length > 0) {
+        try {
+          await playlistManager.addItems(result.filePaths);
+          exitPlaylistAddMode();
+          updatePlaylistUI();
+          showToast(`${result.filePaths.length}개 파일이 추가되었습니다.`, 'success');
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+    });
+
+    // 추가 영역 드래그 앤 드롭
+    initPlaylistAddZoneDragDrop();
+
+    // 링크 복사 버튼
+    elements.btnPlaylistCopyLink?.addEventListener('click', async () => {
+      if (playlistManager.isEmpty()) {
+        showToast('재생목록에 영상을 먼저 추가해주세요.', 'warning');
+        return;
+      }
+
+      try {
+        // 저장 안 된 상태면 먼저 저장
+        if (!playlistManager.playlistPath) {
+          await playlistManager.save();
+          showToast('재생목록이 저장되었습니다.', 'info');
+        }
+
+        // .bframe과 동일한 형식으로 클립보드에 복사 (여러 줄)
+        // Slack이 1줄짜리 파일 경로를 자동완성하는 문제 방지
+        const windowsPath = playlistManager.playlistPath.replace(/\//g, '\\');
+        const fileName = windowsPath.split('\\').pop() || '재생목록.bplaylist';
+        const clipboardContent = `${windowsPath}\n\n${fileName}`;
+        await window.electronAPI.copyToClipboard(clipboardContent);
+        showToast('재생목록 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    });
+
+    // 이전/다음 버튼
+    elements.btnPlaylistPrev?.addEventListener('click', () => {
+      playlistManager.prev();
+    });
+
+    elements.btnPlaylistNext?.addEventListener('click', () => {
+      playlistManager.next();
+    });
+
+    // 자동 재생 토글
+    elements.playlistAutoPlay?.addEventListener('change', (e) => {
+      playlistManager.setAutoPlay(e.target.checked);
+    });
+
+    // 드래그 앤 드롭 - 파일 추가
+    initPlaylistDragDrop();
+
+    // 드래그 앤 드롭 - 순서 변경
+    initPlaylistDragReorder();
+
+    // 재생목록 리사이저
+    initPlaylistResizer();
+
+    // 단축키 추가
+    document.addEventListener('keydown', (e) => {
+      if (!playlistManager.isActive()) return;
+
+      // Ctrl+왼쪽: 이전 영상
+      if (e.ctrlKey && e.key === 'ArrowLeft') {
+        e.preventDefault();
+        playlistManager.prev();
+      }
+
+      // Ctrl+오른쪽: 다음 영상
+      if (e.ctrlKey && e.key === 'ArrowRight') {
+        e.preventDefault();
+        playlistManager.next();
+      }
+
+      // P: 재생목록 토글 (입력 필드가 아닐 때)
+      if (e.key === 'p' || e.key === 'P') {
+        if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+          e.preventDefault();
+          elements.btnPlaylist?.click();
+        }
+      }
+    });
+
+    // 재생목록 링크로 열기 이벤트 리스너
+    window.electronAPI.onOpenPlaylist?.(async (path) => {
+      log.info('재생목록 링크로 열기', { path });
+      try {
+        await playlistManager.open(path);
+        showPlaylistSidebar();
+        // 첫 번째 아이템 자동 로드
+        if (playlistManager.getItemCount() > 0) {
+          playlistManager.selectItem(0);
+        }
+      } catch (error) {
+        showToast(`재생목록을 열 수 없습니다: ${error.message}`, 'error');
+      }
+    });
+  }
+
+  // 재생목록에서 영상 로드
+  async function loadVideoFromPlaylist(item) {
+    // 파일 존재 확인
+    const exists = await window.electronAPI.fileExists(item.videoPath);
+    if (!exists) {
+      showToast(`파일을 찾을 수 없습니다: ${item.fileName}`, 'error');
+      markPlaylistItemAsMissing(item.id);
+      return false;
+    }
+
+    // 현재 영상 저장
+    if (reviewDataManager.isModified) {
+      await reviewDataManager.save();
+    }
+
+    // 새 영상 로드
+    await loadVideo(item.videoPath);
+    return true;
+  }
+
+  // 사이드바 표시
+  function showPlaylistSidebar() {
+    elements.playlistSidebar?.classList.remove('hidden');
+    updatePlaylistUI();
+  }
+
+  // 사이드바 숨김
+  function hidePlaylistSidebar() {
+    elements.playlistSidebar?.classList.add('hidden');
+    exitPlaylistAddMode();
+  }
+
+  // 추가 모드 토글
+  function togglePlaylistAddMode() {
+    elements.playlistSidebar?.classList.toggle('add-mode');
+  }
+
+  // 추가 모드 종료
+  function exitPlaylistAddMode() {
+    elements.playlistSidebar?.classList.remove('add-mode');
+  }
+
+  // 추가 모드 확인
+  function isPlaylistAddMode() {
+    return elements.playlistSidebar?.classList.contains('add-mode');
+  }
+
+  // 재생목록 UI 업데이트 (디바운스 적용)
+  let updatePlaylistUITimer = null;
+  let isUpdatingPlaylistUI = false;
+
+  async function updatePlaylistUI() {
+    // 이미 업데이트 중이면 다음 사이클에 다시 시도
+    if (isUpdatingPlaylistUI) {
+      clearTimeout(updatePlaylistUITimer);
+      updatePlaylistUITimer = setTimeout(() => updatePlaylistUI(), 50);
+      return;
+    }
+
+    isUpdatingPlaylistUI = true;
+
+    try {
+      const playlistManager = getPlaylistManager();
+
+      if (!playlistManager.isActive()) {
+        elements.playlistSidebar?.classList.add('empty');
+        return;
+      }
+
+      elements.playlistSidebar?.classList.remove('empty');
+
+      // 이름 (입력 중이 아닐 때만 업데이트)
+      if (elements.playlistNameInput && document.activeElement !== elements.playlistNameInput) {
+        elements.playlistNameInput.value = playlistManager.getName();
+      }
+
+      // 자동 재생 체크박스
+      if (elements.playlistAutoPlay) {
+        elements.playlistAutoPlay.checked = playlistManager.getAutoPlay();
+      }
+
+      // 아이템 렌더링
+      await renderPlaylistItems();
+
+      // 위치 업데이트
+      updatePlaylistPosition();
+
+      // 전체 진행률 업데이트
+      await updatePlaylistProgress();
+    } finally {
+      isUpdatingPlaylistUI = false;
+    }
+  }
+
+  // 아이템 렌더링
+  async function renderPlaylistItems() {
+    const playlistManager = getPlaylistManager();
+    const container = elements.playlistItems;
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    if (playlistManager.isEmpty()) {
+      elements.playlistSidebar?.classList.add('empty');
+      return;
+    }
+
+    elements.playlistSidebar?.classList.remove('empty');
+
+    const items = playlistManager.getItems();
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const progress = await playlistManager.getItemProgress(item.bframePath);
+
+      const el = document.createElement('div');
+      el.className = 'playlist-item' + (i === playlistManager.currentIndex ? ' active' : '');
+      el.dataset.id = item.id;
+      el.dataset.index = i;
+      el.draggable = true;
+
+      // 썸네일: 파일 경로 또는 Data URL 지원
+      let thumbnailHtml;
+      if (item.thumbnailPath) {
+        const isDataUrl = item.thumbnailPath.startsWith('data:');
+        const thumbnailSrc = isDataUrl
+          ? item.thumbnailPath
+          : `file://${item.thumbnailPath.replace(/\\/g, '/')}`;
+        thumbnailHtml = `<img src="${thumbnailSrc}" alt="" onerror="this.parentElement.innerHTML='<div class=\\'thumbnail-placeholder\\'></div>'">`;
+      } else {
+        thumbnailHtml = '<div class="thumbnail-placeholder"></div>';
+      }
+
+      el.innerHTML = `
+        <div class="playlist-item-drag-handle">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+            <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+            <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+          </svg>
+        </div>
+        <div class="playlist-item-thumbnail">
+          ${thumbnailHtml}
+        </div>
+        <div class="playlist-item-info">
+          <div class="playlist-item-name" title="${item.fileName}">${item.fileName}</div>
+          <div class="playlist-item-stats">
+            <span class="playlist-item-comments" title="피드백 개수">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              ${progress.total > 0 ? progress.total : '-'}
+            </span>
+            <span class="playlist-item-progress ${progress.percent === 100 ? 'completed' : ''}" title="완료율">
+              <div class="mini-progress-bar">
+                <div class="mini-progress-fill" style="width: ${progress.percent}%"></div>
+              </div>
+              ${progress.total > 0 ? `${progress.percent}%` : '-'}
+            </span>
+          </div>
+        </div>
+        <button class="playlist-item-remove" title="제거">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      `;
+
+      // 클릭 이벤트
+      el.addEventListener('click', (e) => {
+        if (!e.target.closest('.playlist-item-remove') && !e.target.closest('.playlist-item-drag-handle')) {
+          playlistManager.selectItem(i);
+        }
+      });
+
+      // 제거 버튼
+      el.querySelector('.playlist-item-remove').addEventListener('click', (e) => {
+        e.stopPropagation();
+        playlistManager.removeItem(item.id);
+        updatePlaylistUI();
+      });
+
+      container.appendChild(el);
+    }
+  }
+
+  // 현재 아이템 하이라이트
+  function updatePlaylistCurrentItem() {
+    const playlistManager = getPlaylistManager();
+    document.querySelectorAll('.playlist-item').forEach((el, index) => {
+      el.classList.toggle('active', index === playlistManager.currentIndex);
+    });
+  }
+
+  // 현재 아이템의 진행률만 업데이트 (실시간)
+  async function updatePlaylistItemProgress(bframePath = null) {
+    const playlistManager = getPlaylistManager();
+    if (!playlistManager.isActive()) return;
+
+    const currentIndex = playlistManager.currentIndex;
+    const items = playlistManager.getItems();
+    if (currentIndex < 0 || currentIndex >= items.length) return;
+
+    const item = items[currentIndex];
+    // bframePath가 전달되면 사용, 아니면 아이템의 bframePath 사용
+    const pathToUse = bframePath || item.bframePath;
+    const progress = await playlistManager.getItemProgress(pathToUse);
+
+    // 현재 아이템의 DOM 요소 찾기
+    const el = document.querySelector(`.playlist-item[data-index="${currentIndex}"]`);
+    if (!el) return;
+
+    // 댓글 수 업데이트
+    const commentsEl = el.querySelector('.playlist-item-comments');
+    if (commentsEl) {
+      const svg = commentsEl.querySelector('svg').outerHTML;
+      commentsEl.innerHTML = `${svg}\n              ${progress.total > 0 ? progress.total : '-'}`;
+    }
+
+    // 진행률 업데이트
+    const progressEl = el.querySelector('.playlist-item-progress');
+    if (progressEl) {
+      progressEl.className = `playlist-item-progress ${progress.percent === 100 ? 'completed' : ''}`;
+      const progressBar = progressEl.querySelector('.mini-progress-fill');
+      if (progressBar) {
+        progressBar.style.width = `${progress.percent}%`;
+      }
+      // 퍼센트 텍스트 업데이트
+      const textNode = progressEl.lastChild;
+      if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+        textNode.textContent = `\n              ${progress.total > 0 ? `${progress.percent}%` : '-'}`;
+      }
+    }
+  }
+
+  // 위치 표시 업데이트
+  function updatePlaylistPosition() {
+    const playlistManager = getPlaylistManager();
+    const pos = playlistManager.currentIndex + 1;
+    const total = playlistManager.getItemCount();
+
+    if (elements.playlistPosition) {
+      elements.playlistPosition.textContent = total > 0 ? `${pos} / ${total}` : '- / -';
+    }
+
+    // 이전/다음 버튼 활성화 상태
+    if (elements.btnPlaylistPrev) {
+      elements.btnPlaylistPrev.disabled = !playlistManager.hasPrev();
+    }
+    if (elements.btnPlaylistNext) {
+      elements.btnPlaylistNext.disabled = !playlistManager.hasNext();
+    }
+  }
+
+  // 전체 진행률 업데이트
+  async function updatePlaylistProgress() {
+    const playlistManager = getPlaylistManager();
+    const progress = await playlistManager.getTotalProgress();
+
+    if (elements.playlistProgressFill) {
+      elements.playlistProgressFill.style.width = `${progress.percent}%`;
+    }
+    if (elements.playlistProgressText) {
+      if (progress.total > 0) {
+        elements.playlistProgressText.textContent = `${progress.resolved}/${progress.total} 완료 (${progress.percent}%)`;
+      } else {
+        elements.playlistProgressText.textContent = '피드백 없음';
+      }
+    }
+  }
+
+  // 파일 누락 표시
+  function markPlaylistItemAsMissing(itemId) {
+    const el = document.querySelector(`.playlist-item[data-id="${itemId}"]`);
+    if (el) {
+      el.classList.add('missing');
+    }
+  }
+
+  // 파일 추가 드래그 앤 드롭
+  function initPlaylistDragDrop() {
+    const sidebar = elements.playlistSidebar;
+    const dropzone = elements.playlistDropzone;
+    if (!sidebar || !dropzone) return;
+
+    sidebar.addEventListener('dragenter', (e) => {
+      // 외부 파일인지 확인
+      if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        e.stopPropagation(); // 메인 드롭존 활성화 방지
+        dropzone.classList.add('active');
+      }
+    });
+
+    sidebar.addEventListener('dragleave', (e) => {
+      if (!sidebar.contains(e.relatedTarget)) {
+        dropzone.classList.remove('active');
+      }
+    });
+
+    sidebar.addEventListener('dragover', (e) => {
+      if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        e.stopPropagation(); // 메인 드롭존 활성화 방지
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    });
+
+    sidebar.addEventListener('drop', async (e) => {
+      dropzone.classList.remove('active');
+      exitPlaylistAddMode(); // 추가 모드 해제
+
+      if (!e.dataTransfer.types.includes('Files')) return;
+
+      e.preventDefault();
+      e.stopPropagation(); // 메인 영역으로 이벤트 전파 방지
+
+      const files = Array.from(e.dataTransfer.files);
+      const videoPaths = files
+        .filter(f => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.path))
+        .map(f => f.path);
+
+      if (videoPaths.length > 0) {
+        const playlistManager = getPlaylistManager();
+
+        if (!playlistManager.isActive()) {
+          playlistManager.createNew();
+        }
+
+        try {
+          const added = await playlistManager.addItems(videoPaths);
+          if (added.length > 0) {
+            showToast(`${added.length}개 파일이 추가되었습니다.`, 'success');
+          }
+          updatePlaylistUI();
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+    });
+  }
+
+  // 추가 영역 드래그 앤 드롭
+  function initPlaylistAddZoneDragDrop() {
+    const addZone = elements.playlistAddZone;
+    if (!addZone) return;
+
+    addZone.addEventListener('dragenter', (e) => {
+      if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        addZone.classList.add('drag-over');
+      }
+    });
+
+    addZone.addEventListener('dragover', (e) => {
+      if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    });
+
+    addZone.addEventListener('dragleave', (e) => {
+      if (!addZone.contains(e.relatedTarget)) {
+        addZone.classList.remove('drag-over');
+      }
+    });
+
+    addZone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      addZone.classList.remove('drag-over');
+      e.stopPropagation(); // 메인 영역으로 이벤트 전파 방지
+
+      const files = Array.from(e.dataTransfer.files);
+      const videoPaths = files
+        .filter(f => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.path))
+        .map(f => f.path);
+
+      if (videoPaths.length > 0) {
+        const playlistManager = getPlaylistManager();
+
+        if (!playlistManager.isActive()) {
+          playlistManager.createNew();
+        }
+
+        try {
+          const added = await playlistManager.addItems(videoPaths);
+          if (added.length > 0) {
+            showToast(`${added.length}개 파일이 추가되었습니다.`, 'success');
+          }
+          exitPlaylistAddMode();
+          updatePlaylistUI();
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+    });
+  }
+
+  // 순서 변경 드래그 앤 드롭
+  function initPlaylistDragReorder() {
+    const container = elements.playlistItems;
+    if (!container) return;
+
+    let draggedItem = null;
+    let draggedIndex = -1;
+    let isDragFromHandle = false;
+
+    // 드래그 핸들에서 mousedown 시 플래그 설정
+    container.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.playlist-item-drag-handle')) {
+        isDragFromHandle = true;
+      } else {
+        isDragFromHandle = false;
+      }
+    });
+
+    container.addEventListener('dragstart', (e) => {
+      const item = e.target.closest('.playlist-item');
+      if (!item) return;
+
+      // 드래그 핸들에서 시작한 경우만 허용
+      if (!isDragFromHandle) {
+        e.preventDefault();
+        return;
+      }
+
+      draggedItem = item;
+      draggedIndex = parseInt(item.dataset.index);
+
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.dataset.id);
+    });
+
+    container.addEventListener('dragend', () => {
+      if (draggedItem) {
+        draggedItem.classList.remove('dragging');
+        draggedItem = null;
+        draggedIndex = -1;
+      }
+      isDragFromHandle = false;
+
+      // 플레이스홀더 제거
+      container.querySelectorAll('.drag-placeholder').forEach(el => el.remove());
+    });
+
+    container.addEventListener('dragover', (e) => {
+      if (!draggedItem) return;
+      e.preventDefault();
+
+      const afterElement = getDragAfterElement(container, e.clientY);
+      let placeholder = container.querySelector('.drag-placeholder');
+
+      if (!placeholder) {
+        placeholder = document.createElement('div');
+        placeholder.className = 'drag-placeholder';
+      }
+
+      if (afterElement) {
+        container.insertBefore(placeholder, afterElement);
+      } else {
+        container.appendChild(placeholder);
+      }
+    });
+
+    container.addEventListener('drop', (e) => {
+      const placeholder = container.querySelector('.drag-placeholder');
+      if (!placeholder || draggedIndex === -1) return;
+
+      e.preventDefault();
+
+      // 플레이스홀더의 DOM 위치로 새 인덱스 계산
+      // 플레이스홀더 앞에 있는 모든 playlist-item 개수를 셈
+      let newIndex = 0;
+      let sibling = placeholder.previousElementSibling;
+      while (sibling) {
+        if (sibling.classList.contains('playlist-item') && sibling !== draggedItem) {
+          newIndex++;
+        }
+        sibling = sibling.previousElementSibling;
+      }
+
+      placeholder.remove();
+
+      // 드래그한 아이템이 플레이스홀더보다 앞에 있었으면 조정 불필요
+      // 뒤에 있었으면 자기 자리가 빠지므로 이미 반영됨
+      if (newIndex !== draggedIndex) {
+        const playlistManager = getPlaylistManager();
+        playlistManager.reorderItem(draggedIndex, newIndex);
+        updatePlaylistUI();
+      }
+    });
+
+    function getDragAfterElement(container, y) {
+      const items = [...container.querySelectorAll('.playlist-item:not(.dragging)')];
+
+      return items.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+
+        if (offset < 0 && offset > closest.offset) {
+          return { offset, element: child };
+        } else {
+          return closest;
+        }
+      }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+  }
+
+  // 리사이저
+  function initPlaylistResizer() {
+    const resizer = elements.playlistResizer;
+    const sidebar = elements.playlistSidebar;
+    if (!resizer || !sidebar) return;
+
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    resizer.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      startX = e.clientX;
+      startWidth = sidebar.offsetWidth;
+      resizer.classList.add('active');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+
+      const diff = e.clientX - startX;
+      const newWidth = Math.max(240, Math.min(400, startWidth + diff));
+      sidebar.style.width = `${newWidth}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        resizer.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
   }
 }
 

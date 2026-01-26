@@ -952,7 +952,7 @@ return
     ; 클립보드 백업
     savedClip := ClipboardAll
 
-    ; 1. 하이퍼링크 다이얼로그 먼저 열기 (Ctrl+Shift+U)
+    ; 1. 하이퍼링크 다이얼로그 열기 (Ctrl+Shift+U)
     Send, ^+u
     Sleep, 300
 

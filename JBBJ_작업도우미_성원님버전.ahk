@@ -705,11 +705,12 @@ return
     ; 클립보드 백업
     savedClip := ClipboardAll
 
-    ; 1. 하이퍼링크 다이얼로그 먼저 열기 (Ctrl+Shift+U)
+    ; 1. 하이퍼링크 다이얼로그 열기 (Ctrl+Shift+U)
     Send, ^+u
     Sleep, 300
 
     ; 2. 텍스트 필드에 원본 경로 붙여넣기
+    ; (.bframe과 .bplaylist 모두 앱에서 여러 줄로 복사하므로 Slack 자동완성 방지됨)
     Clipboard := g_LastOriginalPath
     ClipWait, 1
     Send, ^v

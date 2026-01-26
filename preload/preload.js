@@ -90,6 +90,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeCollabFile: (filePath, data) => ipcRenderer.invoke('collab:write', filePath, data),
   getFileStats: (filePath) => ipcRenderer.invoke('file:get-stats', filePath),
 
+  // ====== 재생목록 관련 ======
+  readPlaylist: (filePath) => ipcRenderer.invoke('playlist:read', filePath),
+  writePlaylist: (filePath, data) => ipcRenderer.invoke('playlist:write', filePath, data),
+  deletePlaylist: (filePath) => ipcRenderer.invoke('playlist:delete', filePath),
+  generatePlaylistLink: (playlistPath) => ipcRenderer.invoke('playlist:generate-link', playlistPath),
+  scanPlaylistsInFolder: (folderPath) => ipcRenderer.invoke('playlist:scan-folder', folderPath),
+
+  // ====== 영상 썸네일 관련 (재생목록용) ======
+  generateVideoThumbnail: (videoPath) => ipcRenderer.invoke('thumbnail:generate-video', videoPath),
+  checkVideoThumbnail: (videoPath) => ipcRenderer.invoke('thumbnail:check-video-thumb', videoPath),
+  getVideoThumbnailPath: (videoPath) => ipcRenderer.invoke('thumbnail:get-video-thumb-path', videoPath),
+
+  // ====== 경로 유틸리티 ======
+  pathDirname: (filePath) => ipcRenderer.invoke('path:dirname', filePath),
+  pathBasename: (filePath) => ipcRenderer.invoke('path:basename', filePath),
+  pathJoin: (...paths) => ipcRenderer.invoke('path:join', ...paths),
+
   // ====== 파일 감시 (실시간 동기화) ======
   watchFileStart: (filePath) => ipcRenderer.invoke('file:watch-start', filePath),
   watchFileStop: (filePath) => ipcRenderer.invoke('file:watch-stop', filePath),
@@ -107,6 +124,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onFileChanged: (callback) => {
     ipcRenderer.on('file:changed', (event, data) => callback(data));
+  },
+  onOpenPlaylist: (callback) => {
+    ipcRenderer.on('open-playlist', (event, path) => callback(path));
   },
 
   // 이벤트 리스너 제거
