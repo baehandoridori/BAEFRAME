@@ -721,10 +721,13 @@ return
 
     ; 4. 링크 필드에 baeframe:// 링크 붙여넣기
     ; Slack이 텍스트 필드의 경로를 보고 자동으로 file:///로 채우므로
-    ; Ctrl+A로 전체 선택 후 덮어쓰기
+    ; Home + Shift+End로 링크 필드 내용만 선택 후 덮어쓰기
+    ; (Ctrl+A는 다이얼로그 전체를 선택할 수 있음)
     Clipboard := g_LastJbbjLink
     ClipWait, 1
-    Send, ^a
+    Send, {Home}
+    Sleep, 30
+    Send, +{End}
     Sleep, 50
     Send, ^v
     Sleep, 50
