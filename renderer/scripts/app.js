@@ -6298,8 +6298,12 @@ async function initApp() {
           showToast('재생목록이 저장되었습니다.', 'info');
         }
 
-        // 파일 경로를 직접 복사 (AHK가 .bplaylist 감지하여 Ctrl+Shift+V로 하이퍼링크 생성)
-        await window.electronAPI.copyToClipboard(playlistManager.playlistPath);
+        // .bframe과 동일한 형식으로 클립보드에 복사 (여러 줄)
+        // Slack이 1줄짜리 파일 경로를 자동완성하는 문제 방지
+        const windowsPath = playlistManager.playlistPath.replace(/\//g, '\\');
+        const fileName = windowsPath.split('\\').pop() || '재생목록.bplaylist';
+        const clipboardContent = `${windowsPath}\n\n${fileName}`;
+        await window.electronAPI.copyToClipboard(clipboardContent);
         showToast('재생목록 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
       } catch (error) {
         showToast(error.message, 'error');
