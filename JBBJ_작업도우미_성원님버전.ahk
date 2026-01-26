@@ -1218,8 +1218,12 @@ ClipboardPathConverter(clipType) {
         {
             ; baeframe:// 링크 생성
             ; 예: G:\공유\파일.bframe → baeframe://G:/공유/파일.bframe
-            ; 예: G:\공유\재생목록.bplaylist → baeframe://G:/공유/재생목록.bplaylist
-            protocolLink := "baeframe://" . urlPath
+            ; 예: G:\공유\재생목록.bplaylist → baeframe://playlist?file=G:/공유/재생목록.bplaylist
+            if (ext = "bplaylist") {
+                protocolLink := "baeframe://playlist?file=" . urlPath
+            } else {
+                protocolLink := "baeframe://" . urlPath
+            }
 
             ; 전역 변수에 저장 (Slack Ctrl+Shift+V용)
             ; g_LastOriginalPath = 표시 텍스트 (G:\...\파일.bframe)
