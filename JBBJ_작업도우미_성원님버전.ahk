@@ -705,34 +705,31 @@ return
     ; 클립보드 백업
     savedClip := ClipboardAll
 
-    ; 1. 하이퍼링크 다이얼로그 먼저 열기 (Ctrl+Shift+U)
+    ; 1. 하이퍼링크 다이얼로그 열기 (Ctrl+Shift+U)
     Send, ^+u
     Sleep, 300
 
-    ; 2. 텍스트 필드에 원본 경로 붙여넣기
+    ; 2. Tab으로 링크 필드로 먼저 이동 (Slack 자동완성 방지)
+    Send, {Tab}
+    Sleep, 50
+
+    ; 3. 링크 필드에 baeframe:// 링크 먼저 입력
+    Clipboard := g_LastJbbjLink
+    ClipWait, 1
+    Send, ^v
+    Sleep, 100
+
+    ; 4. Shift+Tab으로 텍스트 필드로 이동
+    Send, +{Tab}
+    Sleep, 50
+
+    ; 5. 텍스트 필드에 원본 경로 붙여넣기
     Clipboard := g_LastOriginalPath
     ClipWait, 1
     Send, ^v
-    Sleep, 100
-
-    ; 3. Tab으로 링크 필드로 이동
-    Send, {Tab}
-    Sleep, 100
-
-    ; 4. 링크 필드에 baeframe:// 링크 붙여넣기
-    ; Slack이 텍스트 필드의 경로를 보고 자동으로 file:///로 채우므로
-    ; Home + Shift+End로 링크 필드 내용만 선택 후 덮어쓰기
-    ; (Ctrl+A는 다이얼로그 전체를 선택할 수 있음)
-    Clipboard := g_LastJbbjLink
-    ClipWait, 1
-    Send, {Home}
-    Sleep, 30
-    Send, +{End}
-    Sleep, 50
-    Send, ^v
     Sleep, 50
 
-    ; 5. 엔터로 확인
+    ; 6. 엔터로 확인
     Send, {Enter}
     Sleep, 100
 
