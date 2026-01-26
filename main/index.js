@@ -222,9 +222,9 @@ if (!gotTheLock) {
       );
 
       if (arg) {
-        // 재생목록 URL인지 확인
-        if (arg.startsWith('baeframe://playlist?file=')) {
-          const match = arg.match(/playlist\?file=(.+)/);
+        // 재생목록 URL인지 확인 (playlist?file= 또는 playlist/?file= 둘 다 지원)
+        if (arg.match(/^baeframe:\/\/playlist\/?(\?|%3F)file=/i)) {
+          const match = arg.match(/playlist\/?(?:\?|%3F)file=(.+)/i);
           if (match) {
             let playlistPath = decodeURIComponent(match[1]);
             // Windows 경로 처리
@@ -232,7 +232,7 @@ if (!gotTheLock) {
               playlistPath = playlistPath.replace(/\//g, '\\');
             }
             // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
-            if (/^[A-Za-z]\//.test(playlistPath)) {
+            if (/^[A-Za-z][\/\\]/.test(playlistPath)) {
               playlistPath = playlistPath[0] + ':' + playlistPath.slice(1);
             }
             log.info('재생목록 URL 처리됨', { playlistPath });
@@ -279,17 +279,25 @@ if (!gotTheLock) {
     // (재생목록 URL/파일은 제외 - 별도 처리)
     let isPlaylistArg = false;
     if (fileArg) {
-      // 재생목록 URL인지 확인
-      if (fileArg.startsWith('baeframe://playlist?file=')) {
+      // 재생목록 URL인지 확인 (playlist?file= 또는 playlist/?file= 둘 다 지원)
+      if (fileArg.match(/^baeframe:\/\/playlist\/?(\?|%3F)file=/i)) {
         isPlaylistArg = true;
         log.info('재생목록 URL로 시작됨', { fileArg });
       } else if (fileArg.endsWith('.bplaylist')) {
         isPlaylistArg = true;
         log.info('재생목록 파일로 시작됨', { fileArg });
       } else if (fileArg.startsWith('baeframe://')) {
-        // 일반 baeframe:// URL
-        fileArg = parseBaeframeUrl(fileArg);
-        log.info('프로토콜 URL로 시작됨', { filePath: fileArg });
+        // baeframe://G:/path/file.bplaylist 형식 체크
+        const parsedPath = parseBaeframeUrl(fileArg);
+        if (parsedPath.endsWith('.bplaylist')) {
+          isPlaylistArg = true;
+          fileArg = parsedPath;
+          log.info('재생목록 경로 URL로 시작됨', { fileArg });
+        } else {
+          // 일반 baeframe:// URL
+          fileArg = parsedPath;
+          log.info('프로토콜 URL로 시작됨', { filePath: fileArg });
+        }
       } else {
         log.info('시작 인자로 파일 전달됨', { fileArg });
       }
@@ -317,17 +325,16 @@ if (!gotTheLock) {
         if (isPlaylistArg) {
           // 재생목록 URL 또는 파일
           let playlistPath = fileArg;
-          if (fileArg.startsWith('baeframe://playlist?file=')) {
-            const match = fileArg.match(/playlist\?file=(.+)/);
-            if (match) {
-              playlistPath = decodeURIComponent(match[1]);
-              if (process.platform === 'win32') {
-                playlistPath = playlistPath.replace(/\//g, '\\');
-              }
-              // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
-              if (/^[A-Za-z]\//.test(playlistPath)) {
-                playlistPath = playlistPath[0] + ':' + playlistPath.slice(1);
-              }
+          // playlist?file= 또는 playlist/?file= 형식 처리
+          const match = fileArg.match(/playlist\/?(?:\?|%3F)file=(.+)/i);
+          if (match) {
+            playlistPath = decodeURIComponent(match[1]);
+            if (process.platform === 'win32') {
+              playlistPath = playlistPath.replace(/\//g, '\\');
+            }
+            // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
+            if (/^[A-Za-z][\/\\]/.test(playlistPath)) {
+              playlistPath = playlistPath[0] + ':' + playlistPath.slice(1);
             }
           }
           log.info('재생목록 열기 이벤트 전송', { playlistPath });
