@@ -934,7 +934,7 @@ return
     ; [디버그] 어떤 값이 저장되어 있는지 확인
     ; 문제 해결 후 이 줄을 주석 처리하세요
     ; ─────────────────────────────────────────────
-    MsgBox, 64, 디버그, 텍스트: %g_LastOriginalPath%`n`n링크: %g_LastJbbjLink%`n`n웹: %g_LastWebUrl%
+    ; MsgBox, 64, 디버그, 텍스트: %g_LastOriginalPath%`n`n링크: %g_LastJbbjLink%`n`n웹: %g_LastWebUrl%
 
     ; 저장된 경로가 없으면 일반 붙여넣기
     if (g_LastOriginalPath = "" || g_LastJbbjLink = "")
@@ -1466,9 +1466,11 @@ ClipboardPathConverter(clipType) {
         if (ext = "bframe" || ext = "bplaylist")
         {
             ; baeframe:// 링크 생성 (.bframe과 .bplaylist 동일한 형식)
-            ; 예: G:\공유\파일.bframe → baeframe://G:/공유/파일.bframe
-            ; 예: G:\공유\재생목록.bplaylist → baeframe://G:/공유/재생목록.bplaylist
-            protocolLink := "baeframe://" . urlPath
+            ; G:/ → G/ 로 변환 (Slack이 G:를 보면 file:///로 변환하는 문제 방지)
+            ; 예: G:\공유\파일.bframe → baeframe://G/공유/파일.bframe
+            ; 예: G:\공유\재생목록.bplaylist → baeframe://G/공유/재생목록.bplaylist
+            urlPathNoColon := RegExReplace(urlPath, "^([A-Za-z]):", "$1")
+            protocolLink := "baeframe://" . urlPathNoColon
 
             ; 전역 변수에 저장 (Slack Ctrl+Shift+V용)
             ; g_LastOriginalPath = 표시 텍스트 (G:\...\파일.bframe)
