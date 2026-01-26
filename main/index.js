@@ -222,11 +222,24 @@ if (!gotTheLock) {
       );
 
       if (arg) {
-        // 재생목록 URL인지 확인 (playlist?file= 또는 playlist/?file= 둘 다 지원)
-        if (arg.match(/^baeframe:\/\/playlist\/?(\?|%3F)file=/i)) {
-          const match = arg.match(/playlist\/?(?:\?|%3F)file=(.+)/i);
-          if (match) {
-            let playlistPath = decodeURIComponent(match[1]);
+        // 재생목록 URL인지 확인
+        // 형식1: baeframe://playlist/G:/경로/파일.bplaylist (Slack 호환)
+        // 형식2: baeframe://playlist?file=경로 (레거시)
+        if (arg.match(/^baeframe:\/\/playlist[\/\?%]/i)) {
+          let playlistPath = '';
+
+          // 형식1: playlist/ 뒤에 경로가 오는 형식
+          const slashMatch = arg.match(/^baeframe:\/\/playlist\/(.+)/i);
+          // 형식2: playlist?file= 또는 playlist/?file= 형식 (레거시)
+          const queryMatch = arg.match(/playlist\/?(?:\?|%3F)file=(.+)/i);
+
+          if (slashMatch) {
+            playlistPath = decodeURIComponent(slashMatch[1]);
+          } else if (queryMatch) {
+            playlistPath = decodeURIComponent(queryMatch[1]);
+          }
+
+          if (playlistPath) {
             // Windows 경로 처리
             if (process.platform === 'win32') {
               playlistPath = playlistPath.replace(/\//g, '\\');
@@ -279,8 +292,8 @@ if (!gotTheLock) {
     // (재생목록 URL/파일은 제외 - 별도 처리)
     let isPlaylistArg = false;
     if (fileArg) {
-      // 재생목록 URL인지 확인 (playlist?file= 또는 playlist/?file= 둘 다 지원)
-      if (fileArg.match(/^baeframe:\/\/playlist\/?(\?|%3F)file=/i)) {
+      // 재생목록 URL인지 확인 (playlist/ 또는 playlist?file= 형식)
+      if (fileArg.match(/^baeframe:\/\/playlist[\/\?%]/i)) {
         isPlaylistArg = true;
         log.info('재생목록 URL로 시작됨', { fileArg });
       } else if (fileArg.endsWith('.bplaylist')) {
@@ -325,17 +338,25 @@ if (!gotTheLock) {
         if (isPlaylistArg) {
           // 재생목록 URL 또는 파일
           let playlistPath = fileArg;
-          // playlist?file= 또는 playlist/?file= 형식 처리
-          const match = fileArg.match(/playlist\/?(?:\?|%3F)file=(.+)/i);
-          if (match) {
-            playlistPath = decodeURIComponent(match[1]);
-            if (process.platform === 'win32') {
-              playlistPath = playlistPath.replace(/\//g, '\\');
-            }
-            // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
-            if (/^[A-Za-z][\/\\]/.test(playlistPath)) {
-              playlistPath = playlistPath[0] + ':' + playlistPath.slice(1);
-            }
+
+          // 형식1: playlist/ 뒤에 경로가 오는 형식
+          const slashMatch = fileArg.match(/^baeframe:\/\/playlist\/(.+)/i);
+          // 형식2: playlist?file= 형식 (레거시)
+          const queryMatch = fileArg.match(/playlist\/?(?:\?|%3F)file=(.+)/i);
+
+          if (slashMatch) {
+            playlistPath = decodeURIComponent(slashMatch[1]);
+          } else if (queryMatch) {
+            playlistPath = decodeURIComponent(queryMatch[1]);
+          }
+
+          // Windows 경로 처리
+          if (process.platform === 'win32' && playlistPath !== fileArg) {
+            playlistPath = playlistPath.replace(/\//g, '\\');
+          }
+          // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
+          if (/^[A-Za-z][\/\\]/.test(playlistPath)) {
+            playlistPath = playlistPath[0] + ':' + playlistPath.slice(1);
           }
           log.info('재생목록 열기 이벤트 전송', { playlistPath });
           mainWindow.webContents.send('open-playlist', playlistPath);

@@ -1467,9 +1467,9 @@ ClipboardPathConverter(clipType) {
         {
             ; baeframe:// 링크 생성
             ; 예: G:\공유\파일.bframe → baeframe://G:/공유/파일.bframe
-            ; 예: G:\공유\재생목록.bplaylist → baeframe://playlist?file=G:/공유/재생목록.bplaylist
+            ; 예: G:\공유\재생목록.bplaylist → baeframe://playlist/G:/공유/재생목록.bplaylist
             if (ext = "bplaylist") {
-                protocolLink := "baeframe://playlist?file=" . urlPath
+                protocolLink := "baeframe://playlist/" . urlPath
             } else {
                 protocolLink := "baeframe://" . urlPath
             }
