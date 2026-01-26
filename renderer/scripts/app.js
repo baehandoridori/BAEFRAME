@@ -2445,12 +2445,14 @@ async function initApp() {
       const marker = commentManager.getMarker(markerId);
       const layer = commentManager.layers.find(l => l.id === layerId);
       if (marker && layer) {
+        // 마커 개별 색상 사용 (없으면 레이어 색상)
+        const markerColor = marker.colorInfo?.color || layer.color;
         timeline.updateCommentRangeElement({
           layerId,
           markerId,
           startFrame: marker.startFrame,
           endFrame: marker.endFrame,
-          color: layer.color,
+          color: markerColor,
           text: marker.text,
           resolved: marker.resolved
         });
@@ -3769,6 +3771,13 @@ async function initApp() {
 
       // 우측 댓글 패널로 스크롤 및 글로우 효과
       scrollToCommentWithGlow(marker.id);
+    });
+
+    // 우클릭 - 마커 색상 팝업
+    markerEl.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showMarkerPopup(marker.id, e.clientX, e.clientY);
     });
 
     // 해결 버튼
