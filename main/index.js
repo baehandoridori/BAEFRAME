@@ -213,6 +213,7 @@ if (!gotTheLock) {
       let arg = commandLine.find(a =>
         a.startsWith('baeframe://') ||
         a.endsWith('.bframe') ||
+        a.endsWith('.bplaylist') ||
         a.endsWith('.mp4') ||
         a.endsWith('.mov') ||
         a.endsWith('.avi') ||
@@ -221,12 +222,37 @@ if (!gotTheLock) {
       );
 
       if (arg) {
+        // 재생목록 URL인지 확인
+        if (arg.startsWith('baeframe://playlist?file=')) {
+          const match = arg.match(/playlist\?file=(.+)/);
+          if (match) {
+            let playlistPath = decodeURIComponent(match[1]);
+            // Windows 경로 처리
+            if (process.platform === 'win32') {
+              playlistPath = playlistPath.replace(/\//g, '\\');
+            }
+            // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
+            if (/^[A-Za-z]\//.test(playlistPath)) {
+              playlistPath = playlistPath[0] + ':' + playlistPath.slice(1);
+            }
+            log.info('재생목록 URL 처리됨', { playlistPath });
+            mainWindow.webContents.send('open-playlist', playlistPath);
+            return;
+          }
+        }
+
         // baeframe:// URL이면 파일 경로로 변환
         if (arg.startsWith('baeframe://')) {
           arg = parseBaeframeUrl(arg);
           log.info('프로토콜 URL 처리됨', { filePath: arg });
         }
-        mainWindow.webContents.send('open-from-protocol', arg);
+
+        // .bplaylist 파일이면 재생목록으로 열기
+        if (arg.endsWith('.bplaylist')) {
+          mainWindow.webContents.send('open-playlist', arg);
+        } else {
+          mainWindow.webContents.send('open-from-protocol', arg);
+        }
       }
     }
   });

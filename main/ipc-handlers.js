@@ -14,7 +14,7 @@ const log = createLogger('IPC');
 /**
  * 허용된 파일 확장자 목록
  */
-const ALLOWED_EXTENSIONS = ['.bframe', '.json', '.bak'];
+const ALLOWED_EXTENSIONS = ['.bframe', '.json', '.bak', '.bplaylist'];
 
 /**
  * IPC 경로 검증 (보안)
@@ -1003,6 +1003,9 @@ function setupIpcHandlers() {
     }
   });
 
+  // 재생목록 관련 핸들러 등록
+  setupPlaylistHandlers();
+
   log.info('IPC 핸들러 등록 완료');
 }
 
@@ -1398,6 +1401,213 @@ function formatBytes(bytes) {
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// ============================================================================
+// 재생목록 관련 IPC 핸들러
+// ============================================================================
+
+/**
+ * setupIpcHandlers 함수 내에서 호출되어야 하는 재생목록 핸들러들
+ * 이 함수를 setupIpcHandlers() 내부에서 호출합니다.
+ */
+function setupPlaylistHandlers() {
+  // 재생목록 파일 읽기
+  ipcMain.handle('playlist:read', async (event, filePath) => {
+    const trace = log.trace('playlist:read');
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      const data = JSON.parse(content);
+      trace.end({ filePath });
+      return data;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        trace.end({ filePath, exists: false });
+        return null;
+      }
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  // 재생목록 파일 쓰기
+  ipcMain.handle('playlist:write', async (event, filePath, data) => {
+    const trace = log.trace('playlist:write');
+    try {
+      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+      trace.end({ filePath });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  // 재생목록 파일 삭제
+  ipcMain.handle('playlist:delete', async (event, filePath) => {
+    const trace = log.trace('playlist:delete');
+    try {
+      await fs.promises.unlink(filePath);
+      trace.end({ filePath });
+      return { success: true };
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        trace.end({ filePath, exists: false });
+        return { success: true }; // 이미 없으면 성공으로 처리
+      }
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  // 재생목록 공유 링크 생성
+  ipcMain.handle('playlist:generate-link', async (event, playlistPath) => {
+    const encodedPath = encodeURIComponent(playlistPath);
+    return `baeframe://playlist?file=${encodedPath}`;
+  });
+
+  // 폴더에서 재생목록 파일들 스캔
+  ipcMain.handle('playlist:scan-folder', async (event, folderPath) => {
+    const trace = log.trace('playlist:scan-folder');
+    try {
+      const files = await fs.promises.readdir(folderPath);
+      const playlists = files.filter(f => f.endsWith('.bplaylist'));
+      trace.end({ folderPath, count: playlists.length });
+      return playlists.map(f => path.join(folderPath, f));
+    } catch (error) {
+      trace.error(error);
+      return [];
+    }
+  });
+
+  // ====== 영상 썸네일 관련 ======
+
+  // 썸네일 저장 경로 가져오기
+  ipcMain.handle('thumbnail:get-video-thumb-path', async (event, videoPath) => {
+    const hash = createPathHash(videoPath);
+    const thumbnailDir = path.join(app.getPath('userData'), 'thumbnails');
+    return path.join(thumbnailDir, `${hash}_thumb.jpg`);
+  });
+
+  // 영상 첫 프레임 썸네일 생성
+  ipcMain.handle('thumbnail:generate-video', async (event, videoPath) => {
+    const trace = log.trace('thumbnail:generate-video');
+    try {
+      const hash = createPathHash(videoPath);
+      const thumbnailDir = path.join(app.getPath('userData'), 'thumbnails');
+      const thumbPath = path.join(thumbnailDir, `${hash}_thumb.jpg`);
+
+      // 이미 존재하면 경로만 반환
+      try {
+        await fs.promises.access(thumbPath, fs.constants.F_OK);
+        trace.end({ videoPath, exists: true, path: thumbPath });
+        return { success: true, path: thumbPath, cached: true };
+      } catch {
+        // 존재하지 않음 - 생성 필요
+      }
+
+      // 썸네일 디렉토리 생성
+      await fs.promises.mkdir(thumbnailDir, { recursive: true });
+
+      // ffmpeg 경로 확인
+      const ffmpegPath = path.join(__dirname, '..', 'mpv', 'ffmpeg.exe');
+      try {
+        await fs.promises.access(ffmpegPath, fs.constants.F_OK);
+      } catch {
+        // ffmpeg가 없으면 실패
+        trace.end({ videoPath, error: 'ffmpeg not found' });
+        return { success: false, error: 'ffmpeg not found', path: null };
+      }
+
+      // ffmpeg로 첫 프레임 추출
+      const { spawn } = require('child_process');
+
+      return new Promise((resolve) => {
+        const args = [
+          '-i', videoPath,
+          '-ss', '00:00:00.000',
+          '-vframes', '1',
+          '-vf', 'scale=160:90:force_original_aspect_ratio=decrease,pad=160:90:(ow-iw)/2:(oh-ih)/2',
+          '-q:v', '2',
+          '-y',
+          thumbPath
+        ];
+
+        const proc = spawn(ffmpegPath, args, {
+          windowsHide: true,
+          stdio: ['ignore', 'ignore', 'ignore']
+        });
+
+        proc.on('close', (code) => {
+          if (code === 0) {
+            trace.end({ videoPath, generated: true, path: thumbPath });
+            resolve({ success: true, path: thumbPath, cached: false });
+          } else {
+            trace.end({ videoPath, error: `ffmpeg exited with code ${code}` });
+            resolve({ success: false, error: `ffmpeg exited with code ${code}`, path: null });
+          }
+        });
+
+        proc.on('error', (err) => {
+          trace.error(err);
+          resolve({ success: false, error: err.message, path: null });
+        });
+
+        // 타임아웃 (10초)
+        setTimeout(() => {
+          proc.kill();
+          resolve({ success: false, error: 'timeout', path: null });
+        }, 10000);
+      });
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message, path: null };
+    }
+  });
+
+  // 썸네일 존재 여부 확인
+  ipcMain.handle('thumbnail:check-video-thumb', async (event, videoPath) => {
+    try {
+      const hash = createPathHash(videoPath);
+      const thumbnailDir = path.join(app.getPath('userData'), 'thumbnails');
+      const thumbPath = path.join(thumbnailDir, `${hash}_thumb.jpg`);
+
+      try {
+        await fs.promises.access(thumbPath, fs.constants.F_OK);
+        return { exists: true, path: thumbPath };
+      } catch {
+        return { exists: false, path: null };
+      }
+    } catch {
+      return { exists: false, path: null };
+    }
+  });
+
+  // ====== 경로 유틸리티 ======
+
+  // dirname 가져오기
+  ipcMain.handle('path:dirname', async (event, filePath) => {
+    return path.dirname(filePath);
+  });
+
+  // basename 가져오기
+  ipcMain.handle('path:basename', async (event, filePath) => {
+    return path.basename(filePath);
+  });
+
+  // 경로 합치기
+  ipcMain.handle('path:join', async (event, ...paths) => {
+    return path.join(...paths);
+  });
+}
+
+/**
+ * 경로 해시 생성 (썸네일 캐시 키용)
+ */
+function createPathHash(filePath) {
+  // 경로 정규화 (대소문자, 슬래시 통일)
+  const normalized = filePath.toLowerCase().replace(/\\/g, '/');
+  return crypto.createHash('md5').update(normalized).digest('hex').substring(0, 16);
 }
 
 module.exports = { setupIpcHandlers };
