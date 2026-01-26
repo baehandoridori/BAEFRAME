@@ -6298,9 +6298,9 @@ async function initApp() {
           showToast('재생목록이 저장되었습니다.', 'info');
         }
 
-        const link = await window.electronAPI.generatePlaylistLink(playlistManager.playlistPath);
-        await window.electronAPI.copyToClipboard(link);
-        showToast('재생목록 링크가 복사되었습니다!', 'success');
+        // 파일 경로를 직접 복사 (AHK가 .bplaylist 감지하여 Ctrl+Shift+V로 하이퍼링크 생성)
+        await window.electronAPI.copyToClipboard(playlistManager.playlistPath);
+        showToast('재생목록 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
       } catch (error) {
         showToast(error.message, 'error');
       }
