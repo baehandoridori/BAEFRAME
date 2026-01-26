@@ -934,7 +934,7 @@ return
     ; [디버그] 어떤 값이 저장되어 있는지 확인
     ; 문제 해결 후 이 줄을 주석 처리하세요
     ; ─────────────────────────────────────────────
-    ; MsgBox, 64, 디버그, 텍스트: %g_LastOriginalPath%`n`n링크: %g_LastJbbjLink%`n`n웹: %g_LastWebUrl%
+    MsgBox, 64, 디버그, 텍스트: %g_LastOriginalPath%`n`n링크: %g_LastJbbjLink%`n`n웹: %g_LastWebUrl%
 
     ; 저장된 경로가 없으면 일반 붙여넣기
     if (g_LastOriginalPath = "" || g_LastJbbjLink = "")
