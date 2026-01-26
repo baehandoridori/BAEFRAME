@@ -1509,12 +1509,30 @@ function setupPlaylistHandlers() {
       // 썸네일 디렉토리 생성
       await fs.promises.mkdir(thumbnailDir, { recursive: true });
 
-      // ffmpeg 경로 확인
-      const ffmpegPath = path.join(__dirname, '..', 'mpv', 'ffmpeg.exe');
-      try {
-        await fs.promises.access(ffmpegPath, fs.constants.F_OK);
-      } catch {
+      // ffmpeg 경로 확인 (여러 위치 시도)
+      const isWindows = process.platform === 'win32';
+      const ffmpegName = isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+      const possiblePaths = [
+        path.join(__dirname, '..', 'mpv', ffmpegName),
+        path.join(__dirname, '..', 'mpv', 'ffmpeg.exe'),  // Windows fallback
+        path.join(process.resourcesPath || '', 'mpv', ffmpegName),
+        isWindows ? 'ffmpeg.exe' : 'ffmpeg'  // 시스템 PATH에서 찾기
+      ];
+
+      let ffmpegPath = null;
+      for (const p of possiblePaths) {
+        try {
+          await fs.promises.access(p, fs.constants.F_OK);
+          ffmpegPath = p;
+          break;
+        } catch {
+          // 다음 경로 시도
+        }
+      }
+
+      if (!ffmpegPath) {
         // ffmpeg가 없으면 실패
+        log.warn('ffmpeg를 찾을 수 없음', { possiblePaths });
         trace.end({ videoPath, error: 'ffmpeg not found' });
         return { success: false, error: 'ffmpeg not found', path: null };
       }
@@ -1533,22 +1551,32 @@ function setupPlaylistHandlers() {
           thumbPath
         ];
 
+        let stderrData = '';
+
         const proc = spawn(ffmpegPath, args, {
           windowsHide: true,
-          stdio: ['ignore', 'ignore', 'ignore']
+          stdio: ['ignore', 'ignore', 'pipe']  // stderr 캡처
         });
+
+        if (proc.stderr) {
+          proc.stderr.on('data', (data) => {
+            stderrData += data.toString();
+          });
+        }
 
         proc.on('close', (code) => {
           if (code === 0) {
             trace.end({ videoPath, generated: true, path: thumbPath });
             resolve({ success: true, path: thumbPath, cached: false });
           } else {
+            log.warn('ffmpeg 썸네일 생성 실패', { videoPath, code, stderr: stderrData.slice(-500) });
             trace.end({ videoPath, error: `ffmpeg exited with code ${code}` });
             resolve({ success: false, error: `ffmpeg exited with code ${code}`, path: null });
           }
         });
 
         proc.on('error', (err) => {
+          log.error('ffmpeg 실행 오류', { videoPath, error: err.message });
           trace.error(err);
           resolve({ success: false, error: err.message, path: null });
         });
@@ -1556,6 +1584,7 @@ function setupPlaylistHandlers() {
         // 타임아웃 (10초)
         setTimeout(() => {
           proc.kill();
+          log.warn('ffmpeg 썸네일 생성 타임아웃', { videoPath });
           resolve({ success: false, error: 'timeout', path: null });
         }, 10000);
       });

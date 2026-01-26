@@ -508,29 +508,37 @@ export class PlaylistManager {
    */
   async getItemProgress(bframePath) {
     if (!bframePath) {
-      return { total: 0, resolved: 0, percent: 0 };
+      return { total: 0, resolved: 0, percent: 0, hasData: false };
     }
 
     try {
       const bframeData = await window.electronAPI.loadReview(bframePath);
 
+      if (!bframeData) {
+        return { total: 0, resolved: 0, percent: 0, hasData: false };
+      }
+
       let total = 0;
       let resolved = 0;
 
-      if (bframeData?.comments?.layers) {
+      // comments.layers 구조 확인
+      if (bframeData?.comments?.layers && Array.isArray(bframeData.comments.layers)) {
         for (const layer of bframeData.comments.layers) {
-          for (const marker of layer.markers || []) {
-            total++;
-            if (marker.resolved) resolved++;
+          if (layer?.markers && Array.isArray(layer.markers)) {
+            for (const marker of layer.markers) {
+              total++;
+              if (marker.resolved) resolved++;
+            }
           }
         }
       }
 
       const percent = total > 0 ? Math.round((resolved / total) * 100) : 0;
-      return { total, resolved, percent };
+      return { total, resolved, percent, hasData: true };
 
     } catch (error) {
-      return { total: 0, resolved: 0, percent: 0 };
+      log.warn('피드백 완료율 계산 실패', { bframePath, error: error.message });
+      return { total: 0, resolved: 0, percent: 0, hasData: false };
     }
   }
 
@@ -595,7 +603,12 @@ export class PlaylistManager {
 
   _isDuplicate(videoPath) {
     if (!this.currentPlaylist) return false;
-    return this.currentPlaylist.items.some(item => item.videoPath === videoPath);
+    // 경로 정규화하여 비교 (대소문자, 슬래시 통일)
+    const normalizedPath = videoPath.replace(/\\/g, '/').toLowerCase();
+    return this.currentPlaylist.items.some(item => {
+      const itemPath = item.videoPath.replace(/\\/g, '/').toLowerCase();
+      return itemPath === normalizedPath;
+    });
   }
 
   async _findBframePath(videoPath) {
@@ -613,27 +626,48 @@ export class PlaylistManager {
   async _validateThumbnails() {
     if (!this.currentPlaylist) return;
 
+    let thumbnailsUpdated = false;
+
     for (const item of this.currentPlaylist.items) {
       if (item.thumbnailPath) {
         try {
           const exists = await window.electronAPI.fileExists(item.thumbnailPath);
           if (!exists) {
             // 썸네일 재생성
+            log.info('썸네일 재생성 시도', { fileName: item.fileName });
             const result = await window.electronAPI.generateVideoThumbnail(item.videoPath);
-            item.thumbnailPath = result.success ? result.path : '';
+            const newPath = result.success ? result.path : '';
+            if (newPath !== item.thumbnailPath) {
+              item.thumbnailPath = newPath;
+              thumbnailsUpdated = true;
+            }
           }
-        } catch {
+        } catch (err) {
+          log.warn('썸네일 검증 실패', { fileName: item.fileName, error: err.message });
           item.thumbnailPath = '';
+          thumbnailsUpdated = true;
         }
       } else {
         // 썸네일이 없으면 생성
         try {
+          log.info('새 썸네일 생성 시도', { fileName: item.fileName });
           const result = await window.electronAPI.generateVideoThumbnail(item.videoPath);
-          item.thumbnailPath = result.success ? result.path : '';
-        } catch {
-          // 무시
+          if (result.success) {
+            item.thumbnailPath = result.path;
+            thumbnailsUpdated = true;
+            log.info('썸네일 생성 성공', { fileName: item.fileName, path: result.path });
+          } else {
+            log.warn('썸네일 생성 실패', { fileName: item.fileName, error: result.error });
+          }
+        } catch (err) {
+          log.warn('썸네일 생성 오류', { fileName: item.fileName, error: err.message });
         }
       }
+    }
+
+    // 썸네일이 업데이트되었으면 저장 필요 표시
+    if (thumbnailsUpdated) {
+      this.isModified = true;
     }
   }
 

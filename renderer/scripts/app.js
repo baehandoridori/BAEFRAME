@@ -152,7 +152,9 @@ async function initApp() {
     playlistAutoPlay: document.getElementById('playlistAutoPlay'),
     playlistItems: document.getElementById('playlistItems'),
     playlistDropzone: document.getElementById('playlistDropzone'),
-    playlistEmpty: document.getElementById('playlistEmpty')
+    playlistEmpty: document.getElementById('playlistEmpty'),
+    playlistAddArea: document.getElementById('playlistAddArea'),
+    playlistAddZone: document.getElementById('playlistAddZone')
   };
 
   // 상태
@@ -6216,8 +6218,13 @@ async function initApp() {
       playlistManager.setName(e.target.value);
     });
 
-    // 파일 추가 버튼
-    elements.btnPlaylistAdd?.addEventListener('click', async () => {
+    // 파일 추가 버튼 - 추가 모드 토글
+    elements.btnPlaylistAdd?.addEventListener('click', () => {
+      togglePlaylistAddMode();
+    });
+
+    // 추가 영역 클릭 - 파일 선택 대화상자
+    elements.playlistAddZone?.addEventListener('click', async () => {
       const result = await window.electronAPI.openFileDialog({
         title: '재생목록에 추가할 영상 선택',
         filters: [
@@ -6229,6 +6236,7 @@ async function initApp() {
       if (!result.canceled && result.filePaths.length > 0) {
         try {
           await playlistManager.addItems(result.filePaths);
+          exitPlaylistAddMode();
           updatePlaylistUI();
           showToast(`${result.filePaths.length}개 파일이 추가되었습니다.`, 'success');
         } catch (error) {
@@ -6236,6 +6244,9 @@ async function initApp() {
         }
       }
     });
+
+    // 추가 영역 드래그 앤 드롭
+    initPlaylistAddZoneDragDrop();
 
     // 링크 복사 버튼
     elements.btnPlaylistCopyLink?.addEventListener('click', async () => {
@@ -6352,37 +6363,69 @@ async function initApp() {
   // 사이드바 숨김
   function hidePlaylistSidebar() {
     elements.playlistSidebar?.classList.add('hidden');
+    exitPlaylistAddMode();
   }
 
-  // 재생목록 UI 업데이트
-  async function updatePlaylistUI() {
-    const playlistManager = getPlaylistManager();
+  // 추가 모드 토글
+  function togglePlaylistAddMode() {
+    elements.playlistSidebar?.classList.toggle('add-mode');
+  }
 
-    if (!playlistManager.isActive()) {
-      elements.playlistSidebar?.classList.add('empty');
+  // 추가 모드 종료
+  function exitPlaylistAddMode() {
+    elements.playlistSidebar?.classList.remove('add-mode');
+  }
+
+  // 추가 모드 확인
+  function isPlaylistAddMode() {
+    return elements.playlistSidebar?.classList.contains('add-mode');
+  }
+
+  // 재생목록 UI 업데이트 (디바운스 적용)
+  let updatePlaylistUITimer = null;
+  let isUpdatingPlaylistUI = false;
+
+  async function updatePlaylistUI() {
+    // 이미 업데이트 중이면 다음 사이클에 다시 시도
+    if (isUpdatingPlaylistUI) {
+      clearTimeout(updatePlaylistUITimer);
+      updatePlaylistUITimer = setTimeout(() => updatePlaylistUI(), 50);
       return;
     }
 
-    elements.playlistSidebar?.classList.remove('empty');
+    isUpdatingPlaylistUI = true;
 
-    // 이름
-    if (elements.playlistNameInput) {
-      elements.playlistNameInput.value = playlistManager.getName();
+    try {
+      const playlistManager = getPlaylistManager();
+
+      if (!playlistManager.isActive()) {
+        elements.playlistSidebar?.classList.add('empty');
+        return;
+      }
+
+      elements.playlistSidebar?.classList.remove('empty');
+
+      // 이름 (입력 중이 아닐 때만 업데이트)
+      if (elements.playlistNameInput && document.activeElement !== elements.playlistNameInput) {
+        elements.playlistNameInput.value = playlistManager.getName();
+      }
+
+      // 자동 재생 체크박스
+      if (elements.playlistAutoPlay) {
+        elements.playlistAutoPlay.checked = playlistManager.getAutoPlay();
+      }
+
+      // 아이템 렌더링
+      await renderPlaylistItems();
+
+      // 위치 업데이트
+      updatePlaylistPosition();
+
+      // 전체 진행률 업데이트
+      await updatePlaylistProgress();
+    } finally {
+      isUpdatingPlaylistUI = false;
     }
-
-    // 자동 재생 체크박스
-    if (elements.playlistAutoPlay) {
-      elements.playlistAutoPlay.checked = playlistManager.getAutoPlay();
-    }
-
-    // 아이템 렌더링
-    await renderPlaylistItems();
-
-    // 위치 업데이트
-    updatePlaylistPosition();
-
-    // 전체 진행률 업데이트
-    await updatePlaylistProgress();
   }
 
   // 아이템 렌더링
@@ -6430,17 +6473,17 @@ async function initApp() {
         <div class="playlist-item-info">
           <div class="playlist-item-name" title="${item.fileName}">${item.fileName}</div>
           <div class="playlist-item-stats">
-            <span class="playlist-item-comments">
+            <span class="playlist-item-comments" title="피드백 개수">
               <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
-              ${progress.total}
+              ${progress.total > 0 ? progress.total : '-'}
             </span>
-            <span class="playlist-item-progress ${progress.percent === 100 ? 'completed' : ''}">
+            <span class="playlist-item-progress ${progress.percent === 100 ? 'completed' : ''}" title="완료율">
               <div class="mini-progress-bar">
                 <div class="mini-progress-fill" style="width: ${progress.percent}%"></div>
               </div>
-              ${progress.percent}%
+              ${progress.total > 0 ? `${progress.percent}%` : '-'}
             </span>
           </div>
         </div>
@@ -6505,7 +6548,11 @@ async function initApp() {
       elements.playlistProgressFill.style.width = `${progress.percent}%`;
     }
     if (elements.playlistProgressText) {
-      elements.playlistProgressText.textContent = `${progress.resolved}/${progress.total} 완료 (${progress.percent}%)`;
+      if (progress.total > 0) {
+        elements.playlistProgressText.textContent = `${progress.resolved}/${progress.total} 완료 (${progress.percent}%)`;
+      } else {
+        elements.playlistProgressText.textContent = '피드백 없음';
+      }
     }
   }
 
@@ -6576,6 +6623,61 @@ async function initApp() {
     });
   }
 
+  // 추가 영역 드래그 앤 드롭
+  function initPlaylistAddZoneDragDrop() {
+    const addZone = elements.playlistAddZone;
+    if (!addZone) return;
+
+    addZone.addEventListener('dragenter', (e) => {
+      if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        addZone.classList.add('drag-over');
+      }
+    });
+
+    addZone.addEventListener('dragover', (e) => {
+      if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    });
+
+    addZone.addEventListener('dragleave', (e) => {
+      if (!addZone.contains(e.relatedTarget)) {
+        addZone.classList.remove('drag-over');
+      }
+    });
+
+    addZone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      addZone.classList.remove('drag-over');
+
+      const files = Array.from(e.dataTransfer.files);
+      const videoPaths = files
+        .filter(f => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.path))
+        .map(f => f.path);
+
+      if (videoPaths.length > 0) {
+        const playlistManager = getPlaylistManager();
+
+        if (!playlistManager.isActive()) {
+          playlistManager.createNew();
+        }
+
+        try {
+          const added = await playlistManager.addItems(videoPaths);
+          if (added.length > 0) {
+            showToast(`${added.length}개 파일이 추가되었습니다.`, 'success');
+          }
+          exitPlaylistAddMode();
+          updatePlaylistUI();
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+    });
+  }
+
   // 순서 변경 드래그 앤 드롭
   function initPlaylistDragReorder() {
     const container = elements.playlistItems;
@@ -6583,13 +6685,23 @@ async function initApp() {
 
     let draggedItem = null;
     let draggedIndex = -1;
+    let isDragFromHandle = false;
+
+    // 드래그 핸들에서 mousedown 시 플래그 설정
+    container.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.playlist-item-drag-handle')) {
+        isDragFromHandle = true;
+      } else {
+        isDragFromHandle = false;
+      }
+    });
 
     container.addEventListener('dragstart', (e) => {
       const item = e.target.closest('.playlist-item');
       if (!item) return;
 
       // 드래그 핸들에서 시작한 경우만 허용
-      if (!e.target.closest('.playlist-item-drag-handle')) {
+      if (!isDragFromHandle) {
         e.preventDefault();
         return;
       }
@@ -6608,6 +6720,7 @@ async function initApp() {
         draggedItem = null;
         draggedIndex = -1;
       }
+      isDragFromHandle = false;
 
       // 플레이스홀더 제거
       container.querySelectorAll('.drag-placeholder').forEach(el => el.remove());

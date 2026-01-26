@@ -204,6 +204,18 @@
         <!-- 재생목록 아이템들이 여기에 렌더링됨 -->
       </div>
 
+      <!-- 파일 추가 영역 (+ 버튼 클릭 시 표시) -->
+      <div class="playlist-add-area" id="playlistAddArea">
+        <div class="playlist-add-zone" id="playlistAddZone">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          <span>클릭하거나 파일을 여기에 드롭하세요</span>
+        </div>
+      </div>
+
+      <!-- 드래그 오버레이 (외부 파일 드래그 시 표시) -->
       <div class="playlist-dropzone" id="playlistDropzone">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>

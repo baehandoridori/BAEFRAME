@@ -464,6 +464,66 @@
 }
 
 /* ============================================================================
+   파일 추가 영역 (+ 버튼 클릭 시 표시)
+   ============================================================================ */
+
+.playlist-add-area {
+  display: none;
+  flex: 1;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.playlist-add-area.active {
+  display: block;
+}
+
+.playlist-add-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 200px;
+  height: 100%;
+  background: var(--bg-tertiary);
+  border: 2px dashed var(--border-default);
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+  padding: 20px;
+}
+
+.playlist-add-zone:hover {
+  background: var(--bg-elevated);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.playlist-add-zone.drag-over {
+  background: rgba(255, 208, 0, 0.1);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+/* 추가 모드에서는 아이템 목록 숨김 */
+.playlist-sidebar.add-mode .playlist-items {
+  display: none;
+}
+
+.playlist-sidebar.add-mode .playlist-empty {
+  display: none;
+}
+
+.playlist-sidebar.add-mode .playlist-add-area {
+  display: block;
+}
+
+/* ============================================================================
    드롭존 (파일 드래그 오버레이)
    ============================================================================ */
 
