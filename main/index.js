@@ -267,6 +267,7 @@ if (!gotTheLock) {
     let fileArg = process.argv.find(arg =>
       arg.startsWith('baeframe://') ||
       arg.endsWith('.bframe') ||
+      arg.endsWith('.bplaylist') ||
       arg.endsWith('.mp4') ||
       arg.endsWith('.mov') ||
       arg.endsWith('.avi') ||
@@ -275,17 +276,29 @@ if (!gotTheLock) {
     );
 
     // 파일 인자가 있으면 로딩 창 먼저 표시
+    // (재생목록 URL/파일은 제외 - 별도 처리)
+    let isPlaylistArg = false;
     if (fileArg) {
-      // baeframe:// URL이면 파일 경로로 변환
-      if (fileArg.startsWith('baeframe://')) {
+      // 재생목록 URL인지 확인
+      if (fileArg.startsWith('baeframe://playlist?file=')) {
+        isPlaylistArg = true;
+        log.info('재생목록 URL로 시작됨', { fileArg });
+      } else if (fileArg.endsWith('.bplaylist')) {
+        isPlaylistArg = true;
+        log.info('재생목록 파일로 시작됨', { fileArg });
+      } else if (fileArg.startsWith('baeframe://')) {
+        // 일반 baeframe:// URL
         fileArg = parseBaeframeUrl(fileArg);
         log.info('프로토콜 URL로 시작됨', { filePath: fileArg });
       } else {
         log.info('시작 인자로 파일 전달됨', { fileArg });
       }
-      // 로딩 창 표시
-      createLoadingWindow(fileArg);
-      debugLog('로딩 창 표시됨');
+
+      // 재생목록이 아닌 경우만 로딩 창 표시
+      if (!isPlaylistArg) {
+        createLoadingWindow(fileArg);
+        debugLog('로딩 창 표시됨');
+      }
     }
 
     // IPC 핸들러 설정
@@ -301,7 +314,27 @@ if (!gotTheLock) {
     if (fileArg) {
       const mainWindow = getMainWindow();
       mainWindow.webContents.once('did-finish-load', () => {
-        mainWindow.webContents.send('open-from-protocol', fileArg);
+        if (isPlaylistArg) {
+          // 재생목록 URL 또는 파일
+          let playlistPath = fileArg;
+          if (fileArg.startsWith('baeframe://playlist?file=')) {
+            const match = fileArg.match(/playlist\?file=(.+)/);
+            if (match) {
+              playlistPath = decodeURIComponent(match[1]);
+              if (process.platform === 'win32') {
+                playlistPath = playlistPath.replace(/\//g, '\\');
+              }
+              // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
+              if (/^[A-Za-z]\//.test(playlistPath)) {
+                playlistPath = playlistPath[0] + ':' + playlistPath.slice(1);
+              }
+            }
+          }
+          log.info('재생목록 열기 이벤트 전송', { playlistPath });
+          mainWindow.webContents.send('open-playlist', playlistPath);
+        } else {
+          mainWindow.webContents.send('open-from-protocol', fileArg);
+        }
       });
     }
 
