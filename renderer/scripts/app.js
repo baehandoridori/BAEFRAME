@@ -6191,6 +6191,15 @@ async function initApp() {
       showToast(error.message, 'error');
     };
 
+    // 리뷰 데이터 저장 시 재생목록 진행률 업데이트
+    reviewDataManager.addEventListener('saved', () => {
+      if (playlistManager.isActive()) {
+        // 현재 아이템의 진행률만 빠르게 업데이트
+        updatePlaylistItemProgress();
+        updatePlaylistProgress();
+      }
+    });
+
     // 헤더 재생목록 버튼
     elements.btnPlaylist?.addEventListener('click', () => {
       if (elements.playlistSidebar.classList.contains('hidden')) {
@@ -6455,9 +6464,17 @@ async function initApp() {
       el.dataset.index = i;
       el.draggable = true;
 
-      const thumbnailHtml = item.thumbnailPath
-        ? `<img src="file://${item.thumbnailPath.replace(/\\/g, '/')}" alt="" onerror="this.parentElement.innerHTML='<div class=\\'thumbnail-placeholder\\'></div>'">`
-        : '<div class="thumbnail-placeholder"></div>';
+      // 썸네일: 파일 경로 또는 Data URL 지원
+      let thumbnailHtml;
+      if (item.thumbnailPath) {
+        const isDataUrl = item.thumbnailPath.startsWith('data:');
+        const thumbnailSrc = isDataUrl
+          ? item.thumbnailPath
+          : `file://${item.thumbnailPath.replace(/\\/g, '/')}`;
+        thumbnailHtml = `<img src="${thumbnailSrc}" alt="" onerror="this.parentElement.innerHTML='<div class=\\'thumbnail-placeholder\\'></div>'">`;
+      } else {
+        thumbnailHtml = '<div class="thumbnail-placeholder"></div>';
+      }
 
       el.innerHTML = `
         <div class="playlist-item-drag-handle">
@@ -6518,6 +6535,45 @@ async function initApp() {
     document.querySelectorAll('.playlist-item').forEach((el, index) => {
       el.classList.toggle('active', index === playlistManager.currentIndex);
     });
+  }
+
+  // 현재 아이템의 진행률만 업데이트 (실시간)
+  async function updatePlaylistItemProgress() {
+    const playlistManager = getPlaylistManager();
+    if (!playlistManager.isActive()) return;
+
+    const currentIndex = playlistManager.currentIndex;
+    const items = playlistManager.getItems();
+    if (currentIndex < 0 || currentIndex >= items.length) return;
+
+    const item = items[currentIndex];
+    const progress = await playlistManager.getItemProgress(item.bframePath);
+
+    // 현재 아이템의 DOM 요소 찾기
+    const el = document.querySelector(`.playlist-item[data-index="${currentIndex}"]`);
+    if (!el) return;
+
+    // 댓글 수 업데이트
+    const commentsEl = el.querySelector('.playlist-item-comments');
+    if (commentsEl) {
+      const svg = commentsEl.querySelector('svg').outerHTML;
+      commentsEl.innerHTML = `${svg}\n              ${progress.total > 0 ? progress.total : '-'}`;
+    }
+
+    // 진행률 업데이트
+    const progressEl = el.querySelector('.playlist-item-progress');
+    if (progressEl) {
+      progressEl.className = `playlist-item-progress ${progress.percent === 100 ? 'completed' : ''}`;
+      const progressBar = progressEl.querySelector('.mini-progress-fill');
+      if (progressBar) {
+        progressBar.style.width = `${progress.percent}%`;
+      }
+      // 퍼센트 텍스트 업데이트
+      const textNode = progressEl.lastChild;
+      if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+        textNode.textContent = `\n              ${progress.total > 0 ? `${progress.percent}%` : '-'}`;
+      }
+    }
   }
 
   // 위치 표시 업데이트
@@ -6593,10 +6649,12 @@ async function initApp() {
 
     sidebar.addEventListener('drop', async (e) => {
       dropzone.classList.remove('active');
+      exitPlaylistAddMode(); // 추가 모드 해제
 
       if (!e.dataTransfer.types.includes('Files')) return;
 
       e.preventDefault();
+      e.stopPropagation(); // 메인 영역으로 이벤트 전파 방지
 
       const files = Array.from(e.dataTransfer.files);
       const videoPaths = files
@@ -6651,6 +6709,7 @@ async function initApp() {
     addZone.addEventListener('drop', async (e) => {
       e.preventDefault();
       addZone.classList.remove('drag-over');
+      e.stopPropagation(); // 메인 영역으로 이벤트 전파 방지
 
       const files = Array.from(e.dataTransfer.files);
       const videoPaths = files

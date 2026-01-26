@@ -314,15 +314,7 @@ export class PlaylistManager {
       const bframePath = await this._findBframePath(filePath);
 
       // 썸네일 생성 (비동기, 실패해도 계속)
-      let thumbnailPath = '';
-      try {
-        const thumbnailResult = await window.electronAPI.generateVideoThumbnail(filePath);
-        if (thumbnailResult.success) {
-          thumbnailPath = thumbnailResult.path;
-        }
-      } catch (err) {
-        log.warn('썸네일 생성 실패', { filePath, error: err.message });
-      }
+      const thumbnailPath = await this._tryGenerateThumbnail(filePath);
 
       const item = createPlaylistItem(filePath, bframePath);
       item.order = this.currentPlaylist.items.length;
@@ -623,20 +615,117 @@ export class PlaylistManager {
     }
   }
 
+  /**
+   * Canvas API를 사용하여 썸네일 생성 (ffmpeg 대체)
+   * @param {string} videoPath - 비디오 파일 경로
+   * @returns {Promise<string>} 썸네일 Data URL 또는 빈 문자열
+   */
+  async _generateThumbnailWithCanvas(videoPath) {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
+
+      // 파일 URL로 변환
+      const fileUrl = `file://${videoPath.replace(/\\/g, '/')}`;
+
+      const cleanup = () => {
+        video.removeEventListener('loadeddata', onLoaded);
+        video.removeEventListener('error', onError);
+        video.src = '';
+        video.remove();
+      };
+
+      const onLoaded = () => {
+        // 첫 프레임 이동
+        video.currentTime = 0.1;
+      };
+
+      const onSeeked = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const width = 160;
+          const height = 90;
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            // 비율 유지하면서 중앙 정렬
+            const videoRatio = video.videoWidth / video.videoHeight;
+            const canvasRatio = width / height;
+
+            let drawWidth, drawHeight, offsetX, offsetY;
+            if (videoRatio > canvasRatio) {
+              drawHeight = height;
+              drawWidth = height * videoRatio;
+              offsetX = (width - drawWidth) / 2;
+              offsetY = 0;
+            } else {
+              drawWidth = width;
+              drawHeight = width / videoRatio;
+              offsetX = 0;
+              offsetY = (height - drawHeight) / 2;
+            }
+
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, width, height);
+            ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+            cleanup();
+            resolve(dataUrl);
+          } else {
+            cleanup();
+            resolve('');
+          }
+        } catch (err) {
+          log.warn('Canvas 렌더링 오류', { error: err.message });
+          cleanup();
+          resolve('');
+        }
+      };
+
+      const onError = () => {
+        log.warn('비디오 로드 실패 (Canvas 방식)', { videoPath });
+        cleanup();
+        resolve('');
+      };
+
+      video.addEventListener('loadeddata', onLoaded);
+      video.addEventListener('seeked', onSeeked, { once: true });
+      video.addEventListener('error', onError);
+
+      // 타임아웃
+      setTimeout(() => {
+        cleanup();
+        resolve('');
+      }, 5000);
+
+      video.src = fileUrl;
+      video.load();
+    });
+  }
+
   async _validateThumbnails() {
     if (!this.currentPlaylist) return;
 
     let thumbnailsUpdated = false;
 
     for (const item of this.currentPlaylist.items) {
+      // Data URL은 항상 유효
+      if (item.thumbnailPath && item.thumbnailPath.startsWith('data:')) {
+        continue;
+      }
+
       if (item.thumbnailPath) {
         try {
           const exists = await window.electronAPI.fileExists(item.thumbnailPath);
           if (!exists) {
             // 썸네일 재생성
             log.info('썸네일 재생성 시도', { fileName: item.fileName });
-            const result = await window.electronAPI.generateVideoThumbnail(item.videoPath);
-            const newPath = result.success ? result.path : '';
+            const newPath = await this._tryGenerateThumbnail(item.videoPath);
             if (newPath !== item.thumbnailPath) {
               item.thumbnailPath = newPath;
               thumbnailsUpdated = true;
@@ -649,18 +738,12 @@ export class PlaylistManager {
         }
       } else {
         // 썸네일이 없으면 생성
-        try {
-          log.info('새 썸네일 생성 시도', { fileName: item.fileName });
-          const result = await window.electronAPI.generateVideoThumbnail(item.videoPath);
-          if (result.success) {
-            item.thumbnailPath = result.path;
-            thumbnailsUpdated = true;
-            log.info('썸네일 생성 성공', { fileName: item.fileName, path: result.path });
-          } else {
-            log.warn('썸네일 생성 실패', { fileName: item.fileName, error: result.error });
-          }
-        } catch (err) {
-          log.warn('썸네일 생성 오류', { fileName: item.fileName, error: err.message });
+        log.info('새 썸네일 생성 시도', { fileName: item.fileName });
+        const newPath = await this._tryGenerateThumbnail(item.videoPath);
+        if (newPath) {
+          item.thumbnailPath = newPath;
+          thumbnailsUpdated = true;
+          log.info('썸네일 생성 성공', { fileName: item.fileName });
         }
       }
     }
@@ -668,6 +751,32 @@ export class PlaylistManager {
     // 썸네일이 업데이트되었으면 저장 필요 표시
     if (thumbnailsUpdated) {
       this.isModified = true;
+    }
+  }
+
+  /**
+   * 썸네일 생성 시도 (ffmpeg 먼저, 실패 시 Canvas)
+   * @param {string} videoPath - 비디오 파일 경로
+   * @returns {Promise<string>} 썸네일 경로/URL 또는 빈 문자열
+   */
+  async _tryGenerateThumbnail(videoPath) {
+    try {
+      // ffmpeg 시도
+      const result = await window.electronAPI.generateVideoThumbnail(videoPath);
+      if (result.success) {
+        return result.path;
+      }
+    } catch (err) {
+      log.warn('ffmpeg 썸네일 생성 실패', { error: err.message });
+    }
+
+    // Canvas API 대체
+    try {
+      const dataUrl = await this._generateThumbnailWithCanvas(videoPath);
+      return dataUrl || '';
+    } catch (err) {
+      log.warn('Canvas 썸네일 생성 실패', { error: err.message });
+      return '';
     }
   }
 
