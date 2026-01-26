@@ -1216,14 +1216,10 @@ ClipboardPathConverter(clipType) {
         SplitPath, cleanPath,,, ext
         if (ext = "bframe" || ext = "bplaylist")
         {
-            ; baeframe:// 링크 생성
+            ; baeframe:// 링크 생성 (.bframe과 .bplaylist 동일한 형식)
             ; 예: G:\공유\파일.bframe → baeframe://G:/공유/파일.bframe
-            ; 예: G:\공유\재생목록.bplaylist → baeframe://playlist/G:/공유/재생목록.bplaylist
-            if (ext = "bplaylist") {
-                protocolLink := "baeframe://playlist/" . urlPath
-            } else {
-                protocolLink := "baeframe://" . urlPath
-            }
+            ; 예: G:\공유\재생목록.bplaylist → baeframe://G:/공유/재생목록.bplaylist
+            protocolLink := "baeframe://" . urlPath
 
             ; 전역 변수에 저장 (Slack Ctrl+Shift+V용)
             ; g_LastOriginalPath = 표시 텍스트 (G:\...\파일.bframe)
