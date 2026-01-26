@@ -952,31 +952,45 @@ return
     ; 클립보드 백업
     savedClip := ClipboardAll
 
+    ; 파일 확장자 확인 (.bplaylist인지 체크)
+    SplitPath, g_LastOriginalPath,,, fileExt
+
     ; 1. 하이퍼링크 다이얼로그 열기 (Ctrl+Shift+U)
     Send, ^+u
     Sleep, 300
 
-    ; 2. Tab으로 링크 필드로 먼저 이동 (Slack 자동완성 방지)
-    Send, {Tab}
-    Sleep, 50
+    if (fileExt = "bplaylist")
+    {
+        ; .bplaylist: 링크 먼저 입력 (Slack 자동완성 방지)
+        Send, {Tab}
+        Sleep, 50
+        Clipboard := g_LastJbbjLink
+        Sleep, 100
+        Send, ^v
+        Sleep, 100
+        Send, +{Tab}
+        Sleep, 50
+        Clipboard := g_LastOriginalPath
+        Sleep, 100
+        Send, ^v
+        Sleep, 50
+    }
+    else
+    {
+        ; .bframe: 기존 방식 (텍스트 먼저)
+        Clipboard := g_LastOriginalPath
+        ClipWait, 1
+        Send, ^v
+        Sleep, 100
+        Send, {Tab}
+        Sleep, 100
+        Clipboard := g_LastJbbjLink
+        ClipWait, 1
+        Send, ^v
+        Sleep, 50
+    }
 
-    ; 3. 링크 필드에 baeframe:// 링크 먼저 입력
-    Clipboard := g_LastJbbjLink
-    Sleep, 100
-    Send, ^v
-    Sleep, 100
-
-    ; 4. Shift+Tab으로 텍스트 필드로 이동
-    Send, +{Tab}
-    Sleep, 50
-
-    ; 5. 텍스트 필드에 원본 경로 붙여넣기
-    Clipboard := g_LastOriginalPath
-    Sleep, 100
-    Send, ^v
-    Sleep, 50
-
-    ; 6. 엔터로 확인
+    ; 엔터로 확인
     Send, {Enter}
     Sleep, 100
 
