@@ -18,12 +18,16 @@ const SUPPORTED_CODECS = ['h264', 'avc1', 'vp8', 'vp9', 'av1'];
 
 // H.264 인코더 우선순위 (앞에 있을수록 우선)
 const H264_ENCODERS = [
-  { name: 'libx264', args: ['-preset', 'fast', '-crf', '18'] },  // 소프트웨어 (가장 호환성 좋음)
+  { name: 'libx264', args: ['-preset', 'fast', '-crf', '18'] },  // 소프트웨어 (GPL 빌드)
+  { name: 'libopenh264', args: ['-b:v', '5M'] }, // 소프트웨어 (LGPL 빌드, Cisco OpenH264)
   { name: 'h264_nvenc', args: ['-preset', 'fast', '-cq', '18'] }, // NVIDIA GPU
   { name: 'h264_amf', args: ['-quality', 'balanced', '-rc', 'cqp', '-qp', '18'] }, // AMD GPU
   { name: 'h264_qsv', args: ['-preset', 'fast', '-global_quality', '18'] }, // Intel Quick Sync
   { name: 'h264_mf', args: ['-q:v', '80'] } // Windows Media Foundation (항상 사용 가능)
 ];
+
+// 소프트웨어 인코더 목록 (폴백용)
+const SOFTWARE_ENCODERS = ['libx264', 'libopenh264', 'h264_mf'];
 
 // 캐시 설정
 const DEFAULT_CACHE_LIMIT_GB = 10;
@@ -296,6 +300,23 @@ class FFmpegManager {
         resolve(isAvailable);
       });
     });
+  }
+
+  /**
+   * 사용 가능한 소프트웨어 인코더 찾기 (폴백용)
+   */
+  async _findAvailableSoftwareEncoder() {
+    for (const encoderName of SOFTWARE_ENCODERS) {
+      const isAvailable = await this._checkEncoderAvailable(encoderName);
+      if (isAvailable) {
+        const encoder = H264_ENCODERS.find(e => e.name === encoderName);
+        if (encoder) {
+          log.info('사용 가능한 소프트웨어 인코더 발견', { encoder: encoderName });
+          return encoder;
+        }
+      }
+    }
+    return null;
   }
 
   /**
@@ -688,25 +709,35 @@ class FFmpegManager {
             stderrOutput.includes('Driver does not support') ||
             stderrOutput.includes('No capable devices found');
 
-          const isHardwareEncoder = encoder.name !== 'libx264';
+          const isSoftwareEncoder = SOFTWARE_ENCODERS.includes(encoder.name);
 
-          // 하드웨어 인코더 실패 시 libx264로 자동 재시도
-          if (isHardwareEncoderError && isHardwareEncoder && !isRetry) {
-            log.warn('하드웨어 인코더 실패, libx264로 재시도합니다', {
+          // 하드웨어 인코더 실패 시 소프트웨어 인코더로 자동 재시도
+          if (isHardwareEncoderError && !isSoftwareEncoder && !isRetry) {
+            log.warn('하드웨어 인코더 실패, 소프트웨어 인코더로 재시도합니다', {
               failedEncoder: encoder.name,
               stderr: stderrOutput.slice(-500)
             });
 
-            // libx264 인코더 가져오기
-            const softwareEncoder = H264_ENCODERS.find(e => e.name === 'libx264') || H264_ENCODERS[0];
-
-            // 캐시된 인코더 정보를 libx264로 업데이트 (이후 트랜스코딩에도 적용)
-            this.availableEncoder = softwareEncoder;
-
-            // libx264로 재시도
-            this.transcode(filePath, onProgress, { forceEncoder: softwareEncoder, isRetry: true })
-              .then(resolve)
-              .catch(reject);
+            // 사용 가능한 소프트웨어 인코더 찾기
+            this._findAvailableSoftwareEncoder()
+              .then(softwareEncoder => {
+                if (softwareEncoder) {
+                  log.info('소프트웨어 인코더로 폴백', { encoder: softwareEncoder.name });
+                  // 캐시된 인코더 정보 업데이트
+                  this.availableEncoder = softwareEncoder;
+                  // 소프트웨어 인코더로 재시도
+                  this.transcode(filePath, onProgress, { forceEncoder: softwareEncoder, isRetry: true })
+                    .then(resolve)
+                    .catch(reject);
+                } else {
+                  log.error('사용 가능한 소프트웨어 인코더 없음');
+                  reject(new Error('사용 가능한 인코더가 없습니다. FFmpeg 빌드를 확인하세요.'));
+                }
+              })
+              .catch(err => {
+                log.error('소프트웨어 인코더 탐색 실패', { error: err.message });
+                reject(new Error('인코더 탐색 중 오류가 발생했습니다.'));
+              });
             return;
           }
 
