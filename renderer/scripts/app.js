@@ -6361,8 +6361,33 @@ async function initApp() {
     // 재생목록 링크로 열기 이벤트 리스너
     window.electronAPI.onOpenPlaylist?.(async (path) => {
       log.info('재생목록 링크로 열기', { path });
+
+      // baeframe:// URL이면 파일 경로로 변환
+      let filePath = path;
+      if (path && path.startsWith('baeframe://')) {
+        // baeframe:// 제거
+        filePath = path.replace(/^baeframe:\/\//, '');
+
+        // URL 디코딩 (한글 등)
+        try {
+          filePath = decodeURIComponent(filePath);
+        } catch (e) {
+          log.warn('URL 디코딩 실패', e);
+        }
+
+        // G/ → G:/ 변환 (AHK가 Slack file:/// 방지를 위해 콜론 제거)
+        if (/^[A-Za-z]\//.test(filePath)) {
+          filePath = filePath[0] + ':' + filePath.slice(1);
+        }
+
+        // 슬래시 → 백슬래시 (Windows)
+        filePath = filePath.replace(/\//g, '\\');
+
+        log.info('URL 변환 완료', { original: path, converted: filePath });
+      }
+
       try {
-        await playlistManager.open(path);
+        await playlistManager.open(filePath);
         showPlaylistSidebar();
         // 첫 번째 아이템 자동 로드
         if (playlistManager.getItemCount() > 0) {
