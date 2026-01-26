@@ -6212,11 +6212,18 @@ async function initApp() {
     };
 
     // 리뷰 데이터 저장 시 재생목록 진행률 업데이트
-    reviewDataManager.addEventListener('saved', () => {
+    reviewDataManager.addEventListener('saved', async (e) => {
       if (playlistManager.isActive()) {
-        // 현재 아이템의 진행률만 빠르게 업데이트
-        updatePlaylistItemProgress();
-        updatePlaylistProgress();
+        // 현재 아이템의 bframePath 업데이트 (새로 생성된 경우)
+        const currentItem = playlistManager.getCurrentItem();
+        if (currentItem && (!currentItem.bframePath || currentItem.bframePath === '')) {
+          currentItem.bframePath = e.detail.path;
+          playlistManager.isModified = true;
+        }
+
+        // 현재 아이템의 진행률 업데이트
+        await updatePlaylistItemProgress(e.detail.path);
+        await updatePlaylistProgress();
       }
     });
 
@@ -6558,7 +6565,7 @@ async function initApp() {
   }
 
   // 현재 아이템의 진행률만 업데이트 (실시간)
-  async function updatePlaylistItemProgress() {
+  async function updatePlaylistItemProgress(bframePath = null) {
     const playlistManager = getPlaylistManager();
     if (!playlistManager.isActive()) return;
 
@@ -6567,7 +6574,9 @@ async function initApp() {
     if (currentIndex < 0 || currentIndex >= items.length) return;
 
     const item = items[currentIndex];
-    const progress = await playlistManager.getItemProgress(item.bframePath);
+    // bframePath가 전달되면 사용, 아니면 아이템의 bframePath 사용
+    const pathToUse = bframePath || item.bframePath;
+    const progress = await playlistManager.getItemProgress(pathToUse);
 
     // 현재 아이템의 DOM 요소 찾기
     const el = document.querySelector(`.playlist-item[data-index="${currentIndex}"]`);
