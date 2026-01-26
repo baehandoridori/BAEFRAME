@@ -774,6 +774,16 @@ async function initApp() {
   // 드래그 앤 드롭
   elements.dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
+    // 재생목록 사이드바가 열려있고 드래그가 그 위에서 발생하면 메인 드롭존 비활성화
+    const playlistSidebar = elements.playlistSidebar;
+    if (playlistSidebar && !playlistSidebar.classList.contains('hidden')) {
+      const rect = playlistSidebar.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        elements.dropZone.classList.remove('dragging');
+        return;
+      }
+    }
     elements.dropZone.classList.add('dragging');
   });
 
@@ -784,6 +794,16 @@ async function initApp() {
   elements.dropZone.addEventListener('drop', async (e) => {
     e.preventDefault();
     elements.dropZone.classList.remove('dragging');
+
+    // 재생목록 사이드바 위에서 드롭된 경우 무시 (사이드바에서 처리)
+    const playlistSidebar = elements.playlistSidebar;
+    if (playlistSidebar && !playlistSidebar.classList.contains('hidden')) {
+      const rect = playlistSidebar.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        return;
+      }
+    }
 
     const files = e.dataTransfer.files;
     if (files.length > 0) {
@@ -6630,6 +6650,7 @@ async function initApp() {
       // 외부 파일인지 확인
       if (e.dataTransfer.types.includes('Files')) {
         e.preventDefault();
+        e.stopPropagation(); // 메인 드롭존 활성화 방지
         dropzone.classList.add('active');
       }
     });
@@ -6643,6 +6664,7 @@ async function initApp() {
     sidebar.addEventListener('dragover', (e) => {
       if (e.dataTransfer.types.includes('Files')) {
         e.preventDefault();
+        e.stopPropagation(); // 메인 드롭존 활성화 방지
         e.dataTransfer.dropEffect = 'copy';
       }
     });
