@@ -87,6 +87,22 @@ export class P2PSync extends EventTarget {
       }
     }
 
+    // Glare 방지: Session ID 비교로 Offerer 결정
+    // 더 작은 Session ID를 가진 피어만 Offer를 보냄
+    const shouldBeOfferer = this.sessionId < peer.id;
+    if (!shouldBeOfferer) {
+      log.info('Glare 방지: 상대방이 Offerer가 됨 (대기)', {
+        myId: this.sessionId.substring(0, 20),
+        peerId: peer.id.substring(0, 20)
+      });
+      return; // 상대방의 Offer를 기다림
+    }
+
+    log.info('Glare 방지: 내가 Offerer', {
+      myId: this.sessionId.substring(0, 20),
+      peerId: peer.id.substring(0, 20)
+    });
+
     try {
       log.info('피어 연결 시도', { peer: peer.name, ip: peer.ip });
 
@@ -209,11 +225,20 @@ export class P2PSync extends EventTarget {
   async _handleIncomingSignal(signal) {
     const fromPeerId = signal.from;
 
+    // 시그널 수신 로그 (디버깅용)
+    log.info('시그널 수신', {
+      type: signal.type,
+      from: fromPeerId?.substring(0, 20),
+      hasConnection: this.connections.has(fromPeerId)
+    });
+
     if (signal.type === 'offer') {
       // Offer 수신 (Answerer)
+      log.info('Offer 수신됨, Answerer로 응답', { from: fromPeerId?.substring(0, 20) });
       await this._handleOffer(fromPeerId, signal);
     } else if (signal.type === 'answer') {
       // Answer 수신
+      log.info('Answer 수신됨', { from: fromPeerId?.substring(0, 20) });
       const conn = this.connections.get(fromPeerId);
       if (conn?.pc) {
         try {
@@ -222,12 +247,16 @@ export class P2PSync extends EventTarget {
             log.error('Answer 수신 실패: 잘못된 SDP 형식', { sdp: signal.sdp });
             return;
           }
+          log.info('Answer 적용 중...');
           await conn.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          log.info('Answer 적용 완료, ICE 후보 적용 중...');
           // 대기 중인 ICE 후보 적용
           await this._applyPendingCandidates(fromPeerId);
         } catch (error) {
           log.error('Answer 처리 실패', { error: error.message, sdp: signal.sdp });
         }
+      } else {
+        log.warn('Answer 수신했으나 연결 없음', { from: fromPeerId });
       }
     } else if (signal.type === 'ice-candidate') {
       // ICE 후보 수신
