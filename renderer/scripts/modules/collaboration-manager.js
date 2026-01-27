@@ -126,6 +126,9 @@ export class CollaborationManager extends EventTarget {
       userName: this.userName,
       userColor: this.userColor
     });
+
+    // 협업자 UI 초기 업데이트 (자신 포함)
+    this._updateCollaboratorsFromP2P();
   }
 
   /**
@@ -402,8 +405,21 @@ export class CollaborationManager extends EventTarget {
   getCollaborators() {
     const result = [];
 
+    // 현재 사용자 추가 (항상 맨 앞에)
+    if (this._isActive) {
+      result.push({
+        sessionId: this.sessionId,
+        name: this.userName || '나',
+        color: this.userColor,
+        isMe: true,
+        connectionType: this.p2pEnabled ? 'p2p' : 'drive'
+      });
+    }
+
     // Drive 협업자 (기존 .collab 파일 기반)
     for (const [sessionId, info] of this.collaborators) {
+      // 자기 자신은 이미 추가했으므로 제외
+      if (sessionId === this.sessionId) continue;
       // P2P로 연결된 피어는 제외 (중복 방지)
       if (this.p2pPeers.has(sessionId)) continue;
 
@@ -411,7 +427,7 @@ export class CollaborationManager extends EventTarget {
         sessionId,
         name: info.name,
         color: info.color,
-        isMe: sessionId === this.sessionId,
+        isMe: false,
         connectionType: 'drive',
         lastSeen: info.lastSeen
       });

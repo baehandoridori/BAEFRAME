@@ -128,8 +128,16 @@ class P2PService extends EventEmitter {
       this.browser = this.bonjour.find({ type: SERVICE_TYPE });
 
       this.browser.on('up', (service) => {
-        // 자기 자신은 제외
+        // mDNS로 발견된 모든 서비스 로깅
         const peerId = service.txt?.sessionId;
+        log.info('mDNS 서비스 발견', {
+          name: service.name,
+          host: service.host,
+          peerId: peerId || '(없음)',
+          isSelf: peerId === this.sessionId
+        });
+
+        // 자기 자신은 제외
         if (!peerId || peerId === this.sessionId) {
           return;
         }
@@ -154,10 +162,11 @@ class P2PService extends EventEmitter {
             this.emit('peer:found', peer);
           }
         } else {
-          log.debug('피어 발견 (다른 파일)', {
+          // 디버깅을 위해 info 레벨로 출력
+          log.info('피어 발견 (다른 파일 - 무시됨)', {
             peer: peer.name,
-            theirFile: peer.fileHash?.substring(0, 8),
-            myFile: this.currentFileHash?.substring(0, 8)
+            theirFile: peer.fileHash,
+            myFile: this.currentFileHash
           });
         }
       });
