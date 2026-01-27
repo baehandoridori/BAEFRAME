@@ -174,7 +174,14 @@ export class CollaborationManager extends EventTarget {
     // 피어 발견 시 연결 시도
     lanDiscovery.addEventListener('peer:found', async (e) => {
       const peer = e.detail;
-      log.info('P2P 피어 발견, 연결 시도', { name: peer.name });
+      log.info('P2P 피어 발견, 연결 시도', { name: peer.name, id: peer.id?.substring(0, 20) });
+
+      // p2pSync가 준비되었는지 확인
+      if (!p2pSync.isRunning) {
+        log.warn('P2P Sync가 아직 시작되지 않음');
+        return;
+      }
+
       await p2pSync.connectToPeer(peer);
     });
 

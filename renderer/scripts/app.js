@@ -3122,7 +3122,7 @@ async function initApp() {
       }
 
       // ====== 협업 세션 시작 ======
-      const userName = userSettings.userName || '익명';
+      const userName = userSettings.getUserName();
       await collaborationManager.start(reviewDataManager.currentBframePath, userName);
 
       // ====== 파일 감시 시작 (실시간 동기화) ======
