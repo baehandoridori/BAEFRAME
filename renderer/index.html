@@ -92,6 +92,58 @@
           </svg>
         </div>
       </div>
+
+      <!-- 협업 상태 패널 (클릭 시 펼쳐짐) -->
+      <div class="collab-status-panel" id="collabStatusPanel" style="display: none;">
+        <div class="collab-status-header">
+          <h3>협업 상태</h3>
+          <button class="collab-status-close" id="collabStatusClose">&times;</button>
+        </div>
+        <div class="collab-status-content">
+          <!-- 현재 파일 정보 -->
+          <div class="collab-file-info">
+            <div class="collab-file-name" id="collabFileName">-</div>
+            <div class="collab-user-name">내 이름: <span id="collabMyName">-</span></div>
+          </div>
+          <div class="collab-divider"></div>
+          <!-- P2P 연결 목록 -->
+          <div class="collab-section">
+            <div class="collab-section-title">
+              <span class="collab-status-dot p2p"></span>
+              실시간 연결 (P2P)
+            </div>
+            <div class="collab-peer-list" id="collabP2PPeers">
+              <div class="collab-empty">P2P 연결된 사용자 없음</div>
+            </div>
+          </div>
+          <!-- Drive 동기화 목록 -->
+          <div class="collab-section">
+            <div class="collab-section-title">
+              <span class="collab-status-dot drive"></span>
+              Drive 동기화
+            </div>
+            <div class="collab-peer-list" id="collabDrivePeers">
+              <div class="collab-empty">Drive 동기화 사용자 없음</div>
+            </div>
+          </div>
+          <div class="collab-divider"></div>
+          <!-- 연결 정보 -->
+          <div class="collab-stats">
+            <div class="collab-stat">
+              <span class="collab-stat-label">P2P 연결:</span>
+              <span class="collab-stat-value" id="collabP2PCount">0명</span>
+            </div>
+            <div class="collab-stat">
+              <span class="collab-stat-label">Drive 동기화:</span>
+              <span class="collab-stat-value" id="collabDriveCount">0명</span>
+            </div>
+            <div class="collab-stat">
+              <span class="collab-stat-label">발견된 피어:</span>
+              <span class="collab-stat-value" id="collabDiscoveredCount">0명</span>
+            </div>
+          </div>
+        </div>
+      </div>
       <button class="btn btn-secondary" id="btnOpenFolder" title="폴더 열기 (탐색기에서 보기)" style="display: none;">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -1476,6 +1528,9 @@
       </div>
     </div>
   </div>
+
+  <!-- 토스트 메시지 컨테이너 -->
+  <div class="toast-container" id="toastContainer"></div>
 
   <script type="module" src="scripts/app.js"></script>
 </body>

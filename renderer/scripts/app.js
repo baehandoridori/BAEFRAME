@@ -6074,6 +6074,212 @@ async function initApp() {
     updateSyncStatusUI('error');
   });
 
+  // ====== P2P 협업 상태 패널 ======
+
+  const collabStatusPanel = document.getElementById('collabStatusPanel');
+  const collabStatusClose = document.getElementById('collabStatusClose');
+  const toastContainer = document.getElementById('toastContainer');
+
+  // 협업자 표시 클릭 시 패널 토글
+  if (collaboratorsIndicator) {
+    collaboratorsIndicator.addEventListener('click', () => {
+      if (!collabStatusPanel) return;
+      const isVisible = collabStatusPanel.style.display !== 'none';
+      collabStatusPanel.style.display = isVisible ? 'none' : 'block';
+      if (!isVisible) {
+        updateCollabStatusPanel();
+      }
+    });
+  }
+
+  // 닫기 버튼
+  if (collabStatusClose) {
+    collabStatusClose.addEventListener('click', () => {
+      if (collabStatusPanel) {
+        collabStatusPanel.style.display = 'none';
+      }
+    });
+  }
+
+  /**
+   * 협업 상태 패널 업데이트
+   */
+  function updateCollabStatusPanel() {
+    if (!collabStatusPanel) return;
+
+    const collaborators = collaborationManager.getCollaborators();
+    const p2pStatus = collaborationManager.getP2PStatus();
+
+    // 파일 정보
+    const collabFileName = document.getElementById('collabFileName');
+    const collabMyName = document.getElementById('collabMyName');
+
+    if (collabFileName) {
+      collabFileName.textContent =
+        reviewDataManager.currentBframePath?.split(/[/\\]/).pop() || '-';
+    }
+    if (collabMyName) {
+      collabMyName.textContent = userSettings.getUserName();
+    }
+
+    // P2P 피어 목록
+    const p2pPeers = collaborators.filter(c => c.connectionType === 'p2p');
+    const p2pList = document.getElementById('collabP2PPeers');
+
+    if (p2pList) {
+      if (p2pPeers.length === 0) {
+        p2pList.innerHTML = '<div class="collab-empty">P2P 연결된 사용자 없음</div>';
+      } else {
+        p2pList.innerHTML = p2pPeers.map(peer => `
+          <div class="collab-peer-item" data-peer-id="${peer.sessionId}">
+            <div class="collab-peer-avatar" style="background: ${peer.color || '#888'}">
+              ${(peer.name || '?').substring(0, 1)}
+            </div>
+            <div class="collab-peer-info">
+              <div class="collab-peer-name">${escapeHtml(peer.name || '알 수 없음')}</div>
+              <div class="collab-peer-status">
+                ${peer.currentFrame !== undefined ? `<span class="frame-position">${peer.currentFrame}프레임</span> • ` : ''}
+                ${getRelativeTime(peer.lastActivity)}
+              </div>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+
+    // Drive 피어 목록
+    const drivePeers = collaborators.filter(c => c.connectionType === 'drive' && !c.isMe);
+    const driveList = document.getElementById('collabDrivePeers');
+
+    if (driveList) {
+      if (drivePeers.length === 0) {
+        driveList.innerHTML = '<div class="collab-empty">Drive 동기화 사용자 없음</div>';
+      } else {
+        driveList.innerHTML = drivePeers.map(peer => `
+          <div class="collab-peer-item">
+            <div class="collab-peer-avatar" style="background: ${peer.color || '#888'}">
+              ${(peer.name || '?').substring(0, 1)}
+            </div>
+            <div class="collab-peer-info">
+              <div class="collab-peer-name">${escapeHtml(peer.name || '알 수 없음')}</div>
+              <div class="collab-peer-status">
+                마지막 동기화: ${getRelativeTime(peer.lastSeen)}
+              </div>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+
+    // 통계
+    const collabP2PCount = document.getElementById('collabP2PCount');
+    const collabDriveCount = document.getElementById('collabDriveCount');
+    const collabDiscoveredCount = document.getElementById('collabDiscoveredCount');
+
+    if (collabP2PCount) collabP2PCount.textContent = `${p2pPeers.length}명`;
+    if (collabDriveCount) collabDriveCount.textContent = `${drivePeers.length}명`;
+    if (collabDiscoveredCount) collabDiscoveredCount.textContent = `${p2pStatus.discoveredPeers}명`;
+
+    // 동기화 상태 아이콘 업데이트
+    if (syncStatus) {
+      syncStatus.classList.remove('p2p', 'drive');
+      if (p2pPeers.length > 0) {
+        syncStatus.classList.add('p2p');
+        syncStatus.title = '실시간 P2P 연결됨';
+      } else if (drivePeers.length > 0) {
+        syncStatus.classList.add('drive');
+        syncStatus.title = 'Drive 동기화 중';
+      }
+    }
+  }
+
+  /**
+   * 상대 시간 포맷
+   */
+  function getRelativeTime(timestamp) {
+    if (!timestamp) return '알 수 없음';
+    const now = new Date();
+    const then = new Date(timestamp);
+    const diffSec = Math.floor((now - then) / 1000);
+
+    if (diffSec < 5) return '방금 전';
+    if (diffSec < 60) return `${diffSec}초 전`;
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}분 전`;
+    return `${Math.floor(diffSec / 3600)}시간 전`;
+  }
+
+  /**
+   * 토스트 메시지 표시 (P2P 이벤트용)
+   */
+  function showP2PToast(message, type = 'info') {
+    if (!toastContainer) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `
+      <span class="toast-icon"></span>
+      <span class="toast-message">${escapeHtml(message)}</span>
+      <button class="toast-close">&times;</button>
+    `;
+
+    toast.querySelector('.toast-close').addEventListener('click', () => {
+      toast.style.animation = 'toastOut 0.3s ease forwards';
+      setTimeout(() => toast.remove(), 300);
+    });
+
+    toastContainer.appendChild(toast);
+
+    // 5초 후 자동 제거
+    setTimeout(() => {
+      if (toast.parentNode) {
+        toast.style.animation = 'toastOut 0.3s ease forwards';
+        setTimeout(() => toast.remove(), 300);
+      }
+    }, 5000);
+  }
+
+  // P2P 이벤트 리스너
+  collaborationManager.addEventListener('p2pPeerConnected', (e) => {
+    log.info('P2P 피어 연결됨', e.detail);
+    updateCollabStatusPanel();
+  });
+
+  collaborationManager.addEventListener('p2pPeerDisconnected', (e) => {
+    log.info('P2P 피어 연결 해제', e.detail);
+    updateCollabStatusPanel();
+  });
+
+  collaborationManager.addEventListener('peerPresenceUpdated', (e) => {
+    // 협업 상태 패널이 열려 있을 때만 업데이트
+    if (collabStatusPanel && collabStatusPanel.style.display !== 'none') {
+      updateCollabStatusPanel();
+    }
+  });
+
+  collaborationManager.addEventListener('showToast', (e) => {
+    const { type, message } = e.detail;
+    showP2PToast(message, type);
+  });
+
+  // 원격 댓글 추가 시 UI 업데이트
+  collaborationManager.addEventListener('remoteCommentAdded', () => {
+    renderVideoMarkers();
+    updateTimelineMarkers();
+    updateCommentList();
+  });
+
+  collaborationManager.addEventListener('remoteCommentUpdated', () => {
+    renderVideoMarkers();
+    updateTimelineMarkers();
+    updateCommentList();
+  });
+
+  collaborationManager.addEventListener('remoteCommentDeleted', () => {
+    renderVideoMarkers();
+    updateTimelineMarkers();
+    updateCommentList();
+  });
+
   // 원격 데이터 로드 콜백 설정 (동기화 시 호출됨)
   collaborationManager.setRemoteDataLoader(async () => {
     if (!reviewDataManager.currentBframePath) return;

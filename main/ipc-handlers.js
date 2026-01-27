@@ -1628,6 +1628,155 @@ function setupPlaylistHandlers() {
   ipcMain.handle('path:join', async (event, ...paths) => {
     return path.join(...paths);
   });
+
+  // ====== P2P 협업 관련 ======
+
+  // 로컬 IP 주소 가져오기
+  ipcMain.handle('network:get-local-ip', async () => {
+    const trace = log.trace('network:get-local-ip');
+    try {
+      const { networkInterfaces } = require('os');
+      const nets = networkInterfaces();
+
+      for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+          // IPv4이고 내부 루프백이 아닌 경우
+          if (net.family === 'IPv4' && !net.internal) {
+            trace.end({ ip: net.address });
+            return { success: true, ip: net.address };
+          }
+        }
+      }
+      trace.end({ ip: null });
+      return { success: false, error: 'No network interface found' };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 머신 고유 ID 가져오기 (세션 식별용)
+  ipcMain.handle('network:get-machine-id', async () => {
+    const trace = log.trace('network:get-machine-id');
+    try {
+      const { machineIdSync } = require('node-machine-id');
+      const id = machineIdSync();
+      trace.end({ id: id.substring(0, 8) + '...' });
+      return { success: true, id };
+    } catch (error) {
+      trace.error(error);
+      // 폴백: crypto로 랜덤 ID 생성
+      const fallbackId = crypto.randomBytes(16).toString('hex');
+      return { success: true, id: fallbackId, fallback: true };
+    }
+  });
+
+  // 네트워크 정보 가져오기 (진단용)
+  ipcMain.handle('network:get-info', async () => {
+    const trace = log.trace('network:get-info');
+    try {
+      const { networkInterfaces, hostname } = require('os');
+      const nets = networkInterfaces();
+      const interfaces = [];
+
+      for (const [name, netInfo] of Object.entries(nets)) {
+        for (const net of netInfo) {
+          if (net.family === 'IPv4' && !net.internal) {
+            interfaces.push({
+              name,
+              address: net.address,
+              netmask: net.netmask,
+              mac: net.mac
+            });
+          }
+        }
+      }
+
+      const result = {
+        hostname: hostname(),
+        interfaces
+      };
+      trace.end(result);
+      return { success: true, ...result };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ====== P2P 서비스 관련 ======
+  const { p2pService } = require('./p2p-service');
+
+  // P2P 서비스 시작
+  ipcMain.handle('p2p:start', async (event, options) => {
+    const trace = log.trace('p2p:start');
+    try {
+      const result = await p2pService.start(options);
+      trace.end(result);
+      return result;
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // P2P 서비스 중지
+  ipcMain.handle('p2p:stop', async () => {
+    const trace = log.trace('p2p:stop');
+    try {
+      const result = await p2pService.stop();
+      trace.end(result);
+      return result;
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // P2P 상태 조회
+  ipcMain.handle('p2p:get-status', async () => {
+    return p2pService.getStatus();
+  });
+
+  // P2P 피어 목록 조회
+  ipcMain.handle('p2p:get-peers', async () => {
+    return { success: true, peers: p2pService.getPeers() };
+  });
+
+  // P2P 파일 해시 업데이트
+  ipcMain.handle('p2p:update-file-hash', async (event, fileHash) => {
+    p2pService.updateFileHash(fileHash);
+    return { success: true };
+  });
+
+  // P2P 시그널 전송
+  ipcMain.handle('p2p:send-signal', async (event, peerId, signal) => {
+    return await p2pService.sendSignal(peerId, signal);
+  });
+
+  // P2P 이벤트를 렌더러로 전달
+  const mainWindow = getMainWindow();
+
+  p2pService.on('peer:found', (peer) => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('p2p:peer-found', peer);
+    }
+  });
+
+  p2pService.on('peer:lost', (peer) => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('p2p:peer-lost', peer);
+    }
+  });
+
+  p2pService.on('signal', (signal) => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('p2p:signal', signal);
+    }
+  });
 }
 
 /**

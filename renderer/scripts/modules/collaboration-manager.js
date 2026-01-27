@@ -6,11 +6,15 @@
  * - 협업자 presence 추적 (누가 파일을 열고 있는지)
  * - 협업자 감지 시 자동 동기화
  * - 댓글 머지 (충돌 해결)
+ * - P2P 실시간 동기화 (LAN 내)
  *
- * @version 1.0
+ * @version 2.0
  */
 
 import { createLogger } from '../logger.js';
+import { lanDiscovery, LANDiscovery } from './lan-discovery.js';
+import { p2pSync } from './p2p-sync.js';
+import { MessageTypes, createMessage, compareTimestamps } from './sync-protocol.js';
 
 const log = createLogger('CollaborationManager');
 
@@ -29,6 +33,10 @@ const SYNC_INTERVAL_COLLAB = 5000;        // 협업자 있을 때: 5초
 const SYNC_INTERVAL_ACTIVE = 3000;        // 활발한 편집 시: 3초
 const ACTIVITY_WINDOW = 60000;            // 활동량 측정 윈도우: 1분
 const ACTIVITY_THRESHOLD = 5;             // 활발 판단 기준: 1분 내 5회 이상
+
+// P2P 관련 상수
+const P2P_PRESENCE_UPDATE_INTERVAL = 1000;  // P2P presence 업데이트 간격 (1초)
+const P2P_PRESENCE_THROTTLE = 500;          // P2P presence 스로틀링 (500ms)
 
 /**
  * 협업 관리자
@@ -62,6 +70,19 @@ export class CollaborationManager extends EventTarget {
 
     // 활동량 추적 (동기화 간격 동적 조정용)
     this._activityTimestamps = [];
+
+    // P2P 관련 상태
+    this.p2pEnabled = false;
+    this.p2pPeers = new Map(); // P2P 연결된 피어
+    this.p2pPresence = new Map(); // P2P 피어 presence (프레임 위치 등)
+    this._p2pPresenceTimer = null;
+    this._lastPresenceUpdate = 0;
+    this._currentFrame = 0;
+    this._isPlaying = false;
+
+    // 데이터 매니저 참조 (외부에서 설정)
+    this._commentManager = null;
+    this._drawingManager = null;
 
     log.info('CollaborationManager 초기화됨', { sessionId: this.sessionId });
   }
@@ -97,10 +118,226 @@ export class CollaborationManager extends EventTarget {
       });
     }, this.presenceUpdateInterval);
 
+    // P2P 시작
+    await this._startP2P(userName);
+
     this._emit('sessionStarted', {
       sessionId: this.sessionId,
       userName: this.userName,
       userColor: this.userColor
+    });
+  }
+
+  /**
+   * 매니저 참조 설정 (외부에서 호출)
+   */
+  setManagers(commentManager, drawingManager) {
+    this._commentManager = commentManager;
+    this._drawingManager = drawingManager;
+  }
+
+  /**
+   * P2P 동기화 시작
+   * @private
+   */
+  async _startP2P(userName) {
+    try {
+      // 파일 해시 생성 (같은 파일 식별용)
+      const fileHash = LANDiscovery.createFileHash(this.bframePath);
+
+      // mDNS 시작
+      await lanDiscovery.start(this.sessionId, userName, fileHash);
+
+      // P2P Sync 시작
+      await p2pSync.start(this.sessionId, userName);
+
+      // 이벤트 연결
+      this._setupP2PEvents();
+
+      this.p2pEnabled = true;
+      log.info('P2P 협업 시작됨', { fileHash: fileHash?.substring(0, 8) });
+
+    } catch (error) {
+      log.warn('P2P 시작 실패, Drive 모드로 동작', { error: error.message });
+      this.p2pEnabled = false;
+    }
+  }
+
+  /**
+   * P2P 이벤트 핸들러 설정
+   * @private
+   */
+  _setupP2PEvents() {
+    // 피어 발견 시 연결 시도
+    lanDiscovery.addEventListener('peer:found', async (e) => {
+      const peer = e.detail;
+      log.info('P2P 피어 발견, 연결 시도', { name: peer.name });
+      await p2pSync.connectToPeer(peer);
+    });
+
+    // 피어 연결됨
+    p2pSync.addEventListener('peer:connected', (e) => {
+      const { peer } = e.detail;
+      this.p2pPeers.set(peer.id, peer);
+      this._updateCollaboratorsFromP2P();
+      this._emit('p2pPeerConnected', { peer });
+
+      // 토스트 메시지용 이벤트
+      this._emit('showToast', {
+        type: 'success',
+        message: `${peer.name}님과 실시간 연결되었습니다`
+      });
+
+      log.info('P2P 피어 연결됨', { name: peer.name });
+    });
+
+    // 피어 연결 해제
+    p2pSync.addEventListener('peer:disconnected', (e) => {
+      const { peer, reason } = e.detail;
+      if (peer) {
+        this.p2pPeers.delete(peer.id);
+        this.p2pPresence.delete(peer.id);
+        this._updateCollaboratorsFromP2P();
+        this._emit('p2pPeerDisconnected', { peer, reason });
+
+        // 토스트 메시지용 이벤트
+        this._emit('showToast', {
+          type: 'warning',
+          message: `${peer.name}님과의 연결이 끊겼습니다`
+        });
+
+        log.info('P2P 피어 연결 해제', { name: peer.name, reason });
+      }
+    });
+
+    // P2P 메시지 핸들러 등록
+    this._setupP2PMessageHandlers();
+  }
+
+  /**
+   * P2P 메시지 핸들러 설정
+   * @private
+   */
+  _setupP2PMessageHandlers() {
+    // 댓글 추가
+    p2pSync.onMessage(MessageTypes.COMMENT_ADD, (peerId, message) => {
+      const marker = message.data;
+      if (this._commentManager && !this._commentManager.getMarker(marker.id)) {
+        this._commentManager.addMarkerFromRemote(marker);
+        this._emit('remoteCommentAdded', { marker, from: peerId });
+        log.debug('원격 댓글 추가', { id: marker.id, from: message.fromName });
+      }
+    });
+
+    // 댓글 수정
+    p2pSync.onMessage(MessageTypes.COMMENT_UPDATE, (peerId, message) => {
+      const { id, changes, updatedAt } = message.data;
+      if (this._commentManager) {
+        this._commentManager.updateMarkerFromRemote(id, changes, updatedAt);
+        this._emit('remoteCommentUpdated', { id, changes, from: peerId });
+        log.debug('원격 댓글 수정', { id, from: message.fromName });
+      }
+    });
+
+    // 댓글 삭제
+    p2pSync.onMessage(MessageTypes.COMMENT_DELETE, (peerId, message) => {
+      const { id } = message.data;
+      if (this._commentManager) {
+        this._commentManager.deleteMarkerFromRemote(id);
+        this._emit('remoteCommentDeleted', { id, from: peerId });
+        log.debug('원격 댓글 삭제', { id, from: message.fromName });
+      }
+    });
+
+    // resolved 상태 변경
+    p2pSync.onMessage(MessageTypes.COMMENT_RESOLVE, (peerId, message) => {
+      const { id, resolved } = message.data;
+      if (this._commentManager) {
+        this._commentManager.updateMarkerFromRemote(id, { resolved }, message.data.updatedAt);
+        this._emit('remoteCommentResolved', { id, resolved, from: peerId });
+        log.debug('원격 댓글 resolved 변경', { id, resolved, from: message.fromName });
+      }
+    });
+
+    // 답글 추가
+    p2pSync.onMessage(MessageTypes.REPLY_ADD, (peerId, message) => {
+      const { markerId, reply } = message.data;
+      if (this._commentManager) {
+        this._commentManager.addReplyFromRemote(markerId, reply);
+        this._emit('remoteReplyAdded', { markerId, reply, from: peerId });
+        log.debug('원격 답글 추가', { markerId, from: message.fromName });
+      }
+    });
+
+    // Presence 업데이트
+    p2pSync.onMessage(MessageTypes.PRESENCE_UPDATE, (peerId, message) => {
+      const { userName, currentFrame, isPlaying, updatedAt } = message.data;
+      this.p2pPresence.set(peerId, {
+        userName,
+        currentFrame,
+        isPlaying,
+        updatedAt
+      });
+      this._emit('peerPresenceUpdated', { peerId, ...message.data });
+    });
+
+    // Heartbeat
+    p2pSync.onMessage(MessageTypes.HEARTBEAT, (peerId, message) => {
+      // 피어가 살아있음 확인
+      const peer = this.p2pPeers.get(peerId);
+      if (peer) {
+        peer.lastActivity = new Date().toISOString();
+      }
+    });
+
+    // 전체 동기화 요청
+    p2pSync.onMessage(MessageTypes.SYNC_REQUEST, (peerId, message) => {
+      this._handleSyncRequest(peerId);
+    });
+
+    // 전체 동기화 응답
+    p2pSync.onMessage(MessageTypes.SYNC_RESPONSE, (peerId, message) => {
+      this._handleSyncResponse(peerId, message.data);
+    });
+  }
+
+  /**
+   * 전체 동기화 요청 처리
+   * @private
+   */
+  _handleSyncRequest(peerId) {
+    if (!this._commentManager) return;
+
+    const comments = this._commentManager.getAllMarkers();
+    const drawings = this._drawingManager?.getAllDrawings() || [];
+
+    const message = createMessage.syncResponse(comments, drawings, null);
+    p2pSync.sendTo(peerId, message);
+    log.info('동기화 데이터 전송', { peerId, commentCount: comments.length });
+  }
+
+  /**
+   * 전체 동기화 응답 처리
+   * @private
+   */
+  _handleSyncResponse(peerId, data) {
+    log.info('동기화 데이터 수신', {
+      from: peerId,
+      commentCount: data.comments?.length || 0
+    });
+    // 실제 머지 로직은 기존 mergeComments 활용
+    // 여기서는 이벤트만 발생시키고 외부에서 처리
+    this._emit('syncDataReceived', { from: peerId, ...data });
+  }
+
+  /**
+   * P2P 피어 목록으로 협업자 목록 업데이트
+   * @private
+   */
+  _updateCollaboratorsFromP2P() {
+    this._emit('collaboratorsChanged', {
+      collaborators: this.getCollaborators(),
+      count: this.collaborators.size + this.p2pPeers.size
     });
   }
 
@@ -123,6 +360,19 @@ export class CollaborationManager extends EventTarget {
     if (this._syncTimer) {
       clearInterval(this._syncTimer);
       this._syncTimer = null;
+    }
+    if (this._p2pPresenceTimer) {
+      clearInterval(this._p2pPresenceTimer);
+      this._p2pPresenceTimer = null;
+    }
+
+    // P2P 정리
+    if (this.p2pEnabled) {
+      await lanDiscovery.stop();
+      await p2pSync.stop();
+      this.p2pEnabled = false;
+      this.p2pPeers.clear();
+      this.p2pPresence.clear();
     }
 
     // 자신의 presence 제거
@@ -152,16 +402,124 @@ export class CollaborationManager extends EventTarget {
   getCollaborators() {
     const result = [];
 
+    // Drive 협업자 (기존 .collab 파일 기반)
     for (const [sessionId, info] of this.collaborators) {
+      // P2P로 연결된 피어는 제외 (중복 방지)
+      if (this.p2pPeers.has(sessionId)) continue;
+
       result.push({
         sessionId,
         name: info.name,
         color: info.color,
-        isMe: sessionId === this.sessionId
+        isMe: sessionId === this.sessionId,
+        connectionType: 'drive',
+        lastSeen: info.lastSeen
+      });
+    }
+
+    // P2P 연결된 피어
+    for (const [peerId, peer] of this.p2pPeers) {
+      const presence = this.p2pPresence.get(peerId);
+      result.push({
+        sessionId: peerId,
+        name: peer.name,
+        color: peer.color || this._generateUserColor(),
+        isMe: false,
+        connectionType: 'p2p',
+        currentFrame: presence?.currentFrame,
+        isPlaying: presence?.isPlaying,
+        lastActivity: peer.lastActivity || peer.connectedAt
       });
     }
 
     return result;
+  }
+
+  /**
+   * 변경 사항 P2P 동기화
+   * @param {string} changeType - 변경 타입 (comment:add, comment:update 등)
+   * @param {Object} data - 변경 데이터
+   */
+  async syncChange(changeType, data) {
+    // P2P로 즉시 전송
+    if (this.p2pEnabled && p2pSync.hasConnectedPeers()) {
+      let message;
+      switch (changeType) {
+      case 'comment:add':
+        message = createMessage.commentAdd(data);
+        break;
+      case 'comment:update':
+        message = createMessage.commentUpdate(data.id, data.changes);
+        break;
+      case 'comment:delete':
+        message = createMessage.commentDelete(data.id);
+        break;
+      case 'comment:resolve':
+        message = createMessage.commentResolve(data.id, data.resolved);
+        break;
+      case 'reply:add':
+        message = createMessage.replyAdd(data.markerId, data.reply);
+        break;
+      case 'drawing:add':
+        message = createMessage.drawingAdd(data);
+        break;
+      case 'drawing:delete':
+        message = createMessage.drawingDelete(data.id);
+        break;
+      }
+
+      if (message) {
+        const sentCount = p2pSync.broadcast(message);
+        log.debug('P2P 브로드캐스트', { type: changeType, sentCount });
+      }
+    }
+
+    // Drive에도 저장 (백업 + WAN 사용자용)
+    // 저장은 외부에서 처리 (reviewDataManager.save())
+    this.recordActivity();
+  }
+
+  /**
+   * Presence 업데이트 (프레임 위치 공유)
+   * @param {number} currentFrame - 현재 프레임
+   * @param {boolean} isPlaying - 재생 중 여부
+   */
+  updatePresenceFrame(currentFrame, isPlaying) {
+    // 스로틀링
+    const now = Date.now();
+    if (now - this._lastPresenceUpdate < P2P_PRESENCE_THROTTLE) {
+      return;
+    }
+
+    this._currentFrame = currentFrame;
+    this._isPlaying = isPlaying;
+    this._lastPresenceUpdate = now;
+
+    // P2P로 전송
+    if (this.p2pEnabled && p2pSync.hasConnectedPeers()) {
+      const message = createMessage.presenceUpdate(this.userName, currentFrame, isPlaying);
+      p2pSync.broadcast(message);
+    }
+  }
+
+  /**
+   * P2P 연결 상태 반환
+   * @returns {Object}
+   */
+  getP2PStatus() {
+    return {
+      enabled: this.p2pEnabled,
+      connectedPeers: p2pSync.getConnectedPeers().length,
+      discoveredPeers: lanDiscovery.getPeers().length
+    };
+  }
+
+  /**
+   * P2P 피어 presence 정보 반환
+   * @returns {Map}
+   */
+  getP2PPresence() {
+    return this.p2pPresence;
   }
 
   /**

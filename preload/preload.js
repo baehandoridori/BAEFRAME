@@ -107,6 +107,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pathBasename: (filePath) => ipcRenderer.invoke('path:basename', filePath),
   pathJoin: (...paths) => ipcRenderer.invoke('path:join', ...paths),
 
+  // ====== P2P 협업 관련 ======
+  getLocalIP: () => ipcRenderer.invoke('network:get-local-ip'),
+  getMachineId: () => ipcRenderer.invoke('network:get-machine-id'),
+  getNetworkInfo: () => ipcRenderer.invoke('network:get-info'),
+
+  // P2P 서비스
+  p2pStart: (options) => ipcRenderer.invoke('p2p:start', options),
+  p2pStop: () => ipcRenderer.invoke('p2p:stop'),
+  p2pGetStatus: () => ipcRenderer.invoke('p2p:get-status'),
+  p2pGetPeers: () => ipcRenderer.invoke('p2p:get-peers'),
+  p2pUpdateFileHash: (fileHash) => ipcRenderer.invoke('p2p:update-file-hash', fileHash),
+  p2pSendSignal: (peerId, signal) => ipcRenderer.invoke('p2p:send-signal', peerId, signal),
+
+  // P2P 이벤트 리스너
+  onP2PPeerFound: (callback) => {
+    ipcRenderer.on('p2p:peer-found', (event, peer) => callback(peer));
+  },
+  onP2PPeerLost: (callback) => {
+    ipcRenderer.on('p2p:peer-lost', (event, peer) => callback(peer));
+  },
+  onP2PSignal: (callback) => {
+    ipcRenderer.on('p2p:signal', (event, signal) => callback(signal));
+  },
+
   // ====== 파일 감시 (실시간 동기화) ======
   watchFileStart: (filePath) => ipcRenderer.invoke('file:watch-start', filePath),
   watchFileStop: (filePath) => ipcRenderer.invoke('file:watch-stop', filePath),

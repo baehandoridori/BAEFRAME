@@ -870,6 +870,114 @@ export class CommentManager extends EventTarget {
     this._emit('layersChanged');
   }
 
+  // ============================================================================
+  // P2P 원격 동기화 메서드
+  // ============================================================================
+
+  /**
+   * 원격에서 받은 마커 추가 (P2P)
+   * @param {Object} markerData - 마커 데이터
+   * @returns {boolean} 추가 성공 여부
+   */
+  addMarkerFromRemote(markerData) {
+    // 중복 체크
+    if (this.getMarker(markerData.id)) {
+      return false;
+    }
+
+    // 레이어 찾기 또는 기본 레이어 사용
+    let layer = this.layers.find(l => l.id === markerData.layerId);
+    if (!layer) {
+      layer = this.getActiveLayer() || this.layers[0];
+    }
+
+    if (!layer) {
+      log.warn('마커를 추가할 레이어가 없음');
+      return false;
+    }
+
+    const marker = CommentMarker.fromJSON(markerData);
+    layer.addMarker(marker);
+
+    this._emit('markerAdded', { marker, remote: true });
+    this._emit('markersChanged');
+    log.debug('원격 마커 추가됨', { id: marker.id });
+    return true;
+  }
+
+  /**
+   * 원격에서 받은 마커 수정 (P2P)
+   * @param {string} markerId - 마커 ID
+   * @param {Object} changes - 변경 내용
+   * @param {string} remoteUpdatedAt - 원격 수정 시간
+   * @returns {boolean} 수정 성공 여부
+   */
+  updateMarkerFromRemote(markerId, changes, remoteUpdatedAt) {
+    const marker = this.getMarker(markerId);
+    if (!marker) return false;
+
+    // 충돌 해결: 더 최신 것 적용
+    if (marker.updatedAt && remoteUpdatedAt) {
+      if (new Date(marker.updatedAt) > new Date(remoteUpdatedAt)) {
+        log.debug('로컬이 더 최신, 원격 변경 무시', { markerId });
+        return false;
+      }
+    }
+
+    Object.assign(marker, changes);
+    marker.updatedAt = remoteUpdatedAt;
+
+    this._emit('markerUpdated', { marker, remote: true });
+    this._emit('markersChanged');
+    log.debug('원격 마커 수정됨', { id: markerId });
+    return true;
+  }
+
+  /**
+   * 원격에서 받은 마커 삭제 (P2P)
+   * @param {string} markerId - 마커 ID
+   * @returns {boolean} 삭제 성공 여부
+   */
+  deleteMarkerFromRemote(markerId) {
+    const marker = this.getMarker(markerId);
+    if (!marker) return false;
+
+    // 삭제 마킹 (실제 삭제는 저장 시)
+    marker.deleted = true;
+
+    this._emit('markerDeleted', { markerId, remote: true });
+    this._emit('markersChanged');
+    log.debug('원격 마커 삭제됨', { id: markerId });
+    return true;
+  }
+
+  /**
+   * 원격에서 받은 답글 추가 (P2P)
+   * @param {string} markerId - 부모 마커 ID
+   * @param {Object} replyData - 답글 데이터
+   * @returns {boolean} 추가 성공 여부
+   */
+  addReplyFromRemote(markerId, replyData) {
+    const marker = this.getMarker(markerId);
+    if (!marker) return false;
+
+    // 중복 체크
+    if (marker.replies?.some(r => r.id === replyData.id)) {
+      return false;
+    }
+
+    if (!marker.replies) {
+      marker.replies = [];
+    }
+
+    marker.replies.push(replyData);
+
+    this._emit('replyAdded', { markerId, reply: replyData, remote: true });
+    this._emit('markersChanged');
+    log.debug('원격 답글 추가됨', { markerId, replyId: replyData.id });
+    return true;
+  }
+
   /**
    * 모든 마커/레이어 초기화 (새 파일 로드 시)
    */
