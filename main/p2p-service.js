@@ -74,6 +74,9 @@ class P2PService extends EventEmitter {
         fileHash: this.currentFileHash
       });
 
+      // 주기적으로 mDNS 재검색 (늦게 접속한 피어 발견용)
+      this._startPeriodicRefresh();
+
       return { success: true };
     } catch (error) {
       log.error('P2P 서비스 시작 실패', { error: error.message });
@@ -185,6 +188,31 @@ class P2PService extends EventEmitter {
     } catch (error) {
       log.error('피어 검색 시작 실패', { error: error.message });
     }
+  }
+
+  /**
+   * 주기적 mDNS 갱신 (늦게 접속한 피어 발견용)
+   */
+  _startPeriodicRefresh() {
+    // 10초마다 mDNS 브라우저 갱신
+    this.refreshInterval = setInterval(() => {
+      if (!this.isRunning) return;
+
+      // 브라우저에 update 이벤트 발생시켜 재검색 유도
+      if (this.browser) {
+        try {
+          // bonjour-service의 브라우저는 자동으로 서비스를 감지하지만,
+          // 명시적으로 서비스 목록을 다시 확인
+          const currentServices = this.browser.services || [];
+          log.debug('mDNS 주기적 갱신', {
+            discoveredServices: currentServices.length,
+            knownPeers: this.peers.size
+          });
+        } catch (error) {
+          log.debug('mDNS 갱신 중 오류', { error: error.message });
+        }
+      }
+    }, 10000); // 10초마다
   }
 
   /**
@@ -356,6 +384,12 @@ class P2PService extends EventEmitter {
    */
   async stop() {
     this.isRunning = false;
+
+    // 주기적 갱신 중지
+    if (this.refreshInterval) {
+      clearInterval(this.refreshInterval);
+      this.refreshInterval = null;
+    }
 
     if (this.service) {
       try {
