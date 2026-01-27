@@ -90,9 +90,13 @@ export class P2PSync extends EventTarget {
     try {
       log.info('피어 연결 시도', { peer: peer.name, ip: peer.ip });
 
-      // RTCPeerConnection 생성 (LAN에서는 STUN 불필요)
+      // RTCPeerConnection 생성
+      // LAN에서도 STUN을 사용하면 host candidate 수집이 더 안정적
       const pc = new RTCPeerConnection({
-        iceServers: [] // LAN 환경이므로 STUN/TURN 불필요
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' }
+        ],
+        iceCandidatePoolSize: 10
       });
 
       // 연결 정보 저장
@@ -106,9 +110,21 @@ export class P2PSync extends EventTarget {
       };
       this.connections.set(peer.id, connectionInfo);
 
+      // ICE 수집 상태 변경 로깅
+      pc.onicegatheringstatechange = () => {
+        log.debug('ICE 수집 상태', { peer: peer.name, state: pc.iceGatheringState });
+      };
+
       // ICE 후보 수집
       pc.onicecandidate = (event) => {
         if (event.candidate) {
+          // 디버깅: ICE candidate 내용 로깅
+          log.debug('ICE 후보 생성', {
+            peer: peer.name,
+            type: event.candidate.type,
+            address: event.candidate.address,
+            protocol: event.candidate.protocol
+          });
           // RTCIceCandidate를 plain object로 변환 (JSON 직렬화 호환성)
           this._sendSignal(peer.id, {
             type: 'ice-candidate',
@@ -123,16 +139,22 @@ export class P2PSync extends EventTarget {
 
       // ICE 연결 상태 변경
       pc.oniceconnectionstatechange = () => {
-        log.debug('ICE 상태 변경', { peer: peer.name, state: pc.iceConnectionState });
+        log.info('ICE 상태 변경', { peer: peer.name, state: pc.iceConnectionState });
 
-        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+        if (pc.iceConnectionState === 'failed') {
+          log.error('ICE 연결 실패', { peer: peer.name });
           this._handleDisconnection(peer.id, 'ICE failed');
+        } else if (pc.iceConnectionState === 'disconnected') {
+          log.warn('ICE 연결 끊김', { peer: peer.name });
+          this._handleDisconnection(peer.id, 'ICE disconnected');
+        } else if (pc.iceConnectionState === 'connected') {
+          log.info('ICE 연결 성공!', { peer: peer.name });
         }
       };
 
       // 연결 상태 변경
       pc.onconnectionstatechange = () => {
-        log.debug('연결 상태 변경', { peer: peer.name, state: pc.connectionState });
+        log.info('연결 상태 변경', { peer: peer.name, state: pc.connectionState });
         connectionInfo.state = pc.connectionState;
 
         if (pc.connectionState === 'connected') {
@@ -266,8 +288,12 @@ export class P2PSync extends EventTarget {
       };
 
       // RTCPeerConnection 생성
+      // LAN에서도 STUN을 사용하면 host candidate 수집이 더 안정적
       const pc = new RTCPeerConnection({
-        iceServers: []
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' }
+        ],
+        iceCandidatePoolSize: 10
       });
 
       const connectionInfo = {
@@ -280,9 +306,21 @@ export class P2PSync extends EventTarget {
       };
       this.connections.set(peerId, connectionInfo);
 
+      // ICE 수집 상태 변경 로깅
+      pc.onicegatheringstatechange = () => {
+        log.debug('ICE 수집 상태 (Answerer)', { peer: peerInfo.name, state: pc.iceGatheringState });
+      };
+
       // ICE 후보 수집
       pc.onicecandidate = (event) => {
         if (event.candidate) {
+          // 디버깅: ICE candidate 내용 로깅
+          log.debug('ICE 후보 생성 (Answerer)', {
+            peer: peerInfo.name,
+            type: event.candidate.type,
+            address: event.candidate.address,
+            protocol: event.candidate.protocol
+          });
           // RTCIceCandidate를 plain object로 변환 (JSON 직렬화 호환성)
           this._sendSignal(peerId, {
             type: 'ice-candidate',
