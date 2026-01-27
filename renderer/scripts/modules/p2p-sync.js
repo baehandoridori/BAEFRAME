@@ -109,9 +109,14 @@ export class P2PSync extends EventTarget {
       // ICE 후보 수집
       pc.onicecandidate = (event) => {
         if (event.candidate) {
+          // RTCIceCandidate를 plain object로 변환 (JSON 직렬화 호환성)
           this._sendSignal(peer.id, {
             type: 'ice-candidate',
-            candidate: event.candidate
+            candidate: {
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex
+            }
           });
         }
       };
@@ -278,9 +283,14 @@ export class P2PSync extends EventTarget {
       // ICE 후보 수집
       pc.onicecandidate = (event) => {
         if (event.candidate) {
+          // RTCIceCandidate를 plain object로 변환 (JSON 직렬화 호환성)
           this._sendSignal(peerId, {
             type: 'ice-candidate',
-            candidate: event.candidate
+            candidate: {
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex
+            }
           });
         }
       };
