@@ -151,9 +151,13 @@ export class P2PSync extends EventTarget {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
+      // RTCSessionDescription을 plain object로 변환 (JSON 직렬화 호환성)
       await this._sendSignal(peer.id, {
         type: 'offer',
-        sdp: pc.localDescription
+        sdp: {
+          type: pc.localDescription.type,
+          sdp: pc.localDescription.sdp
+        }
       });
 
       // 타임아웃 설정
@@ -186,11 +190,16 @@ export class P2PSync extends EventTarget {
       const conn = this.connections.get(fromPeerId);
       if (conn?.pc) {
         try {
+          // signal.sdp가 유효한지 확인
+          if (!signal.sdp || !signal.sdp.type || !signal.sdp.sdp) {
+            log.error('Answer 수신 실패: 잘못된 SDP 형식', { sdp: signal.sdp });
+            return;
+          }
           await conn.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
           // 대기 중인 ICE 후보 적용
           await this._applyPendingCandidates(fromPeerId);
         } catch (error) {
-          log.error('Answer 처리 실패', { error: error.message });
+          log.error('Answer 처리 실패', { error: error.message, sdp: signal.sdp });
         }
       }
     } else if (signal.type === 'ice-candidate') {
@@ -294,16 +303,25 @@ export class P2PSync extends EventTarget {
         }
       };
 
-      // Remote description 설정
+      // Remote description 설정 (signal.sdp 유효성 검사)
+      if (!signal.sdp || !signal.sdp.type || !signal.sdp.sdp) {
+        log.error('Offer 수신 실패: 잘못된 SDP 형식', { sdp: signal.sdp });
+        return;
+      }
+      log.debug('Offer SDP 수신', { type: signal.sdp.type, sdpLength: signal.sdp.sdp?.length });
       await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
 
       // Answer 생성 및 전송
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
+      // RTCSessionDescription을 plain object로 변환 (JSON 직렬화 호환성)
       await this._sendSignal(peerId, {
         type: 'answer',
-        sdp: pc.localDescription
+        sdp: {
+          type: pc.localDescription.type,
+          sdp: pc.localDescription.sdp
+        }
       });
 
       log.info('Offer 수락, Answer 전송', { peer: peerInfo.name });
