@@ -182,9 +182,12 @@ export class P2PSync extends EventTarget {
         }
       };
 
-      // 데이터 채널 생성 (Offerer)
+      // 데이터 채널 생성 (negotiated 모드 - 양쪽에서 같은 설정 사용)
       const channel = pc.createDataChannel('baeframe-sync', {
-        ordered: true // 순서 보장
+        negotiated: true,  // 양쪽에서 미리 생성
+        id: 0,             // 채널 ID 명시
+        ordered: false,    // 순서 보장 없음 (더 안정적)
+        maxRetransmits: 10 // 재전송 제한
       });
 
       this._setupDataChannel(channel, peer.id);
@@ -362,11 +365,16 @@ export class P2PSync extends EventTarget {
         }
       };
 
-      // 데이터 채널 수신
-      pc.ondatachannel = (event) => {
-        this._setupDataChannel(event.channel, peerId);
-        connectionInfo.channel = event.channel;
-      };
+      // 데이터 채널 생성 (negotiated 모드 - Offerer와 같은 설정)
+      const channel = pc.createDataChannel('baeframe-sync', {
+        negotiated: true,  // 양쪽에서 미리 생성
+        id: 0,             // 채널 ID 명시
+        ordered: false,    // 순서 보장 없음 (더 안정적)
+        maxRetransmits: 10 // 재전송 제한
+      });
+
+      this._setupDataChannel(channel, peerId);
+      connectionInfo.channel = channel;
 
       // 연결 상태 변경
       pc.onconnectionstatechange = () => {
