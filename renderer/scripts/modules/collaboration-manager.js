@@ -282,6 +282,7 @@ export class CollaborationManager extends EventTarget {
     // Presence 업데이트
     p2pSync.onMessage(MessageTypes.PRESENCE_UPDATE, (peerId, message) => {
       const { userName, currentFrame, isPlaying, updatedAt } = message.data;
+      log.debug('Presence 수신', { from: userName, currentFrame, peerId: peerId?.substring(0, 15) });
       this.p2pPresence.set(peerId, {
         userName,
         currentFrame,
@@ -521,7 +522,8 @@ export class CollaborationManager extends EventTarget {
     // P2P로 전송
     if (this.p2pEnabled && p2pSync.hasConnectedPeers()) {
       const message = createMessage.presenceUpdate(this.userName, currentFrame, isPlaying);
-      p2pSync.broadcast(message);
+      const sentCount = p2pSync.broadcast(message);
+      log.debug('Presence 브로드캐스트', { currentFrame, sentCount });
     }
   }
 
