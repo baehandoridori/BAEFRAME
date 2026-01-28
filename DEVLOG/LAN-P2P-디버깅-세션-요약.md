@@ -217,6 +217,7 @@ netsh advfirewall firewall add rule name="BAEFRAME Broadcast" dir=in action=allo
 | 날짜 | 내용 |
 |------|------|
 | 2026-01-28 | mDNS 브라우저 재시작 로직 + UDP 브로드캐스트 폴백 추가 |
+| 2026-01-28 | 실시간 프레임 위치 동기화 구현 (updatePresenceFrame 호출 + 타임라인 피어 마커 UI) |
 
 ---
 

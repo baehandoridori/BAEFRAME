@@ -469,6 +469,9 @@ async function initApp() {
     if (!videoPlayer.isPlaying) {
       drawingManager.setCurrentFrame(currentFrame);
     }
+
+    // P2P 협업자에게 현재 프레임 위치 전송
+    collaborationManager.updatePresenceFrame(currentFrame, videoPlayer.isPlaying);
   });
 
   // 프레임 정확한 업데이트 (requestVideoFrameCallback 기반 - 그리기 동기화용)
@@ -3951,6 +3954,65 @@ async function initApp() {
   }
 
   /**
+   * 피어 프레임 위치 마커 업데이트 (타임라인에 협업자 위치 표시)
+   */
+  function updatePeerFrameMarkers() {
+    const totalFrames = videoPlayer.totalFrames || 1;
+    const trackEl = document.querySelector('.timeline-track');
+    if (!trackEl) return;
+
+    // 기존 피어 마커 제거
+    trackEl.querySelectorAll('.peer-frame-marker').forEach(el => el.remove());
+
+    // P2P 피어 presence 정보로 마커 생성
+    const p2pPresence = collaborationManager.getP2PPresence();
+    const peers = collaborationManager.getCollaborators().filter(c => !c.isMe && c.connectionType === 'p2p');
+
+    peers.forEach(peer => {
+      const presence = p2pPresence.get(peer.sessionId);
+      if (!presence || presence.currentFrame === undefined) return;
+
+      const leftPercent = (presence.currentFrame / totalFrames) * 100;
+
+      const marker = document.createElement('div');
+      marker.className = 'peer-frame-marker';
+      marker.style.cssText = `
+        position: absolute;
+        left: ${leftPercent}%;
+        top: 0;
+        width: 2px;
+        height: 100%;
+        background-color: ${peer.color || '#4ECDC4'};
+        opacity: 0.8;
+        z-index: 15;
+        pointer-events: none;
+        transition: left 0.1s ease-out;
+      `;
+
+      // 이름 태그
+      const nameTag = document.createElement('div');
+      nameTag.className = 'peer-name-tag';
+      nameTag.textContent = peer.name;
+      nameTag.style.cssText = `
+        position: absolute;
+        top: -18px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        background: ${peer.color || '#4ECDC4'};
+        color: white;
+        padding: 1px 4px;
+        border-radius: 2px;
+        white-space: nowrap;
+        pointer-events: none;
+      `;
+      marker.appendChild(nameTag);
+
+      trackEl.appendChild(marker);
+    });
+  }
+
+  /**
    * 댓글 목록 업데이트 (사이드 패널)
    */
 
@@ -6242,14 +6304,19 @@ async function initApp() {
   collaborationManager.addEventListener('p2pPeerConnected', (e) => {
     log.info('P2P 피어 연결됨', e.detail);
     updateCollabStatusPanel();
+    updatePeerFrameMarkers();
   });
 
   collaborationManager.addEventListener('p2pPeerDisconnected', (e) => {
     log.info('P2P 피어 연결 해제', e.detail);
     updateCollabStatusPanel();
+    updatePeerFrameMarkers();
   });
 
   collaborationManager.addEventListener('peerPresenceUpdated', (e) => {
+    // 타임라인에 피어 프레임 위치 마커 업데이트
+    updatePeerFrameMarkers();
+
     // 협업 상태 패널이 열려 있을 때만 업데이트
     if (collabStatusPanel && collabStatusPanel.style.display !== 'none') {
       updateCollabStatusPanel();
