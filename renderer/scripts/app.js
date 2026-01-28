@@ -3958,7 +3958,7 @@ async function initApp() {
    */
   function updatePeerFrameMarkers() {
     const totalFrames = videoPlayer.totalFrames || 1;
-    const trackEl = document.querySelector('.timeline-track');
+    const trackEl = document.getElementById('timelineTracks');
     if (!trackEl) return;
 
     // 기존 피어 마커 제거
@@ -3968,9 +3968,21 @@ async function initApp() {
     const p2pPresence = collaborationManager.getP2PPresence();
     const peers = collaborationManager.getCollaborators().filter(c => !c.isMe && c.connectionType === 'p2p');
 
+    // 디버그: 피어 정보 확인
+    if (peers.length > 0) {
+      log.debug('피어 프레임 마커 업데이트', {
+        peerCount: peers.length,
+        presenceCount: p2pPresence.size,
+        peers: peers.map(p => ({ name: p.name, id: p.sessionId?.substring(0, 15) }))
+      });
+    }
+
     peers.forEach(peer => {
       const presence = p2pPresence.get(peer.sessionId);
-      if (!presence || presence.currentFrame === undefined) return;
+      if (!presence || presence.currentFrame === undefined) {
+        log.debug('피어 presence 없음', { peer: peer.name, sessionId: peer.sessionId?.substring(0, 15) });
+        return;
+      }
 
       const leftPercent = (presence.currentFrame / totalFrames) * 100;
 
