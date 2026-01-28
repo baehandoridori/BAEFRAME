@@ -8,6 +8,7 @@
 
 const { Bonjour } = require('bonjour-service');
 const http = require('http');
+const dgram = require('dgram');
 const { EventEmitter } = require('events');
 const { createLogger } = require('./logger');
 
@@ -17,6 +18,7 @@ const log = createLogger('P2PService');
 const SERVICE_TYPE = 'baeframe';
 const SERVICE_PORT = 45678;
 const SIGNALING_PORT = 45679;
+const BROADCAST_PORT = 45680; // UDP 브로드캐스트용 포트
 
 /**
  * P2P 서비스 클래스
@@ -28,12 +30,14 @@ class P2PService extends EventEmitter {
     this.service = null;
     this.browser = null;
     this.signalingServer = null;
+    this.udpSocket = null; // UDP 브로드캐스트 소켓
     this.peers = new Map(); // peerId -> peerInfo
     this.sessionId = null;
     this.userName = null;
     this.currentFileHash = null;
     this.localIP = null;
     this.isRunning = false;
+    this.browserRestartCount = 0; // 브라우저 재시작 카운트
   }
 
   /**
@@ -67,6 +71,9 @@ class P2PService extends EventEmitter {
       // 시그널링 서버 시작
       await this._startSignalingServer();
 
+      // UDP 브로드캐스트 서버 시작 (mDNS 보완용)
+      await this._startBroadcastDiscovery();
+
       this.isRunning = true;
       log.info('P2P 서비스 시작됨', {
         sessionId: this.sessionId,
@@ -76,6 +83,11 @@ class P2PService extends EventEmitter {
 
       // 주기적으로 mDNS 재검색 (늦게 접속한 피어 발견용)
       this._startPeriodicRefresh();
+
+      // 초기 UDP 브로드캐스트 발송 (즉시 + 1초 후 + 3초 후)
+      this._sendBroadcastAnnounce();
+      setTimeout(() => this._sendBroadcastAnnounce(), 1000);
+      setTimeout(() => this._sendBroadcastAnnounce(), 3000);
 
       return { success: true };
     } catch (error) {
@@ -192,27 +204,57 @@ class P2PService extends EventEmitter {
 
   /**
    * 주기적 mDNS 갱신 (늦게 접속한 피어 발견용)
+   * mDNS 브라우저를 재시작하여 새로운 mDNS 쿼리를 발송
    */
   _startPeriodicRefresh() {
-    // 10초마다 mDNS 브라우저 갱신
+    // 5초마다 mDNS 브라우저 재시작 및 UDP 브로드캐스트
     this.refreshInterval = setInterval(() => {
       if (!this.isRunning) return;
 
-      // 브라우저에 update 이벤트 발생시켜 재검색 유도
+      this.browserRestartCount++;
+
+      // 피어가 없으면 브라우저 재시작 (새 mDNS 쿼리 발송)
+      if (this.peers.size === 0 && this.browserRestartCount <= 12) {
+        // 1분간만 적극적으로 재시작 (5초 * 12 = 60초)
+        this._restartBrowser();
+      }
+
+      // UDP 브로드캐스트도 함께 발송
+      this._sendBroadcastAnnounce();
+
+      log.debug('주기적 피어 검색', {
+        restartCount: this.browserRestartCount,
+        knownPeers: this.peers.size
+      });
+    }, 5000); // 5초마다
+  }
+
+  /**
+   * mDNS 브라우저 재시작 (새 mDNS 쿼리 발송)
+   */
+  _restartBrowser() {
+    try {
+      // 기존 브라우저 중지
       if (this.browser) {
         try {
-          // bonjour-service의 브라우저는 자동으로 서비스를 감지하지만,
-          // 명시적으로 서비스 목록을 다시 확인
-          const currentServices = this.browser.services || [];
-          log.debug('mDNS 주기적 갱신', {
-            discoveredServices: currentServices.length,
-            knownPeers: this.peers.size
-          });
-        } catch (error) {
-          log.debug('mDNS 갱신 중 오류', { error: error.message });
+          this.browser.stop();
+        } catch (e) {
+          /* ignore */
         }
+        this.browser = null;
       }
-    }, 10000); // 10초마다
+
+      // 짧은 딜레이 후 새 브라우저 시작
+      setTimeout(() => {
+        if (!this.isRunning) return;
+        this._startDiscovery();
+        log.info('mDNS 브라우저 재시작됨', {
+          restartCount: this.browserRestartCount
+        });
+      }, 100);
+    } catch (error) {
+      log.warn('mDNS 브라우저 재시작 실패', { error: error.message });
+    }
   }
 
   /**
@@ -279,6 +321,130 @@ class P2PService extends EventEmitter {
         resolve(); // 실패해도 계속 진행
       }
     });
+  }
+
+  /**
+   * UDP 브로드캐스트 발견 서버 시작 (mDNS 보완용)
+   * mDNS가 실패해도 UDP 브로드캐스트로 피어 발견 가능
+   */
+  async _startBroadcastDiscovery() {
+    return new Promise((resolve) => {
+      try {
+        this.udpSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+        this.udpSocket.on('message', (msg, rinfo) => {
+          try {
+            const data = JSON.parse(msg.toString());
+
+            // 자기 자신은 무시
+            if (data.sessionId === this.sessionId) {
+              return;
+            }
+
+            // BAEFRAME 프로토콜 확인
+            if (data.protocol !== 'baeframe-discovery') {
+              return;
+            }
+
+            log.debug('UDP 브로드캐스트 수신', {
+              from: data.userName,
+              ip: rinfo.address,
+              type: data.type
+            });
+
+            // announce 메시지: 피어 정보 처리
+            if (data.type === 'announce') {
+              const peer = {
+                id: data.sessionId,
+                name: data.userName || '알 수 없음',
+                fileHash: data.fileHash || '',
+                ip: rinfo.address,
+                port: data.signalingPort || SIGNALING_PORT,
+                host: rinfo.address,
+                discoveredAt: new Date().toISOString(),
+                source: 'udp-broadcast'
+              };
+
+              // 같은 파일을 열고 있는 피어만 저장
+              if (peer.fileHash && peer.fileHash === this.currentFileHash) {
+                const isNew = !this.peers.has(peer.id);
+                this.peers.set(peer.id, peer);
+
+                if (isNew) {
+                  log.info('UDP로 피어 발견 (같은 파일)', {
+                    peer: peer.name,
+                    ip: peer.ip
+                  });
+                  this.emit('peer:found', peer);
+
+                  // 응답으로 자신의 정보도 전송 (양방향 발견)
+                  this._sendBroadcastAnnounce();
+                }
+              }
+            }
+          } catch (e) {
+            // JSON 파싱 실패 등 무시
+          }
+        });
+
+        this.udpSocket.on('error', (err) => {
+          log.warn('UDP 소켓 오류', { error: err.message });
+          resolve(); // 실패해도 계속 진행
+        });
+
+        this.udpSocket.bind(BROADCAST_PORT, () => {
+          this.udpSocket.setBroadcast(true);
+          log.info('UDP 브로드캐스트 서버 시작됨', { port: BROADCAST_PORT });
+          resolve();
+        });
+      } catch (error) {
+        log.warn('UDP 브로드캐스트 서버 시작 실패', { error: error.message });
+        resolve(); // 실패해도 계속 진행
+      }
+    });
+  }
+
+  /**
+   * UDP 브로드캐스트로 자신의 존재 알림
+   */
+  _sendBroadcastAnnounce() {
+    if (!this.udpSocket || !this.isRunning) return;
+
+    try {
+      const message = JSON.stringify({
+        protocol: 'baeframe-discovery',
+        type: 'announce',
+        sessionId: this.sessionId,
+        userName: this.userName,
+        fileHash: this.currentFileHash || '',
+        signalingPort: this.signalingServer?.address()?.port || SIGNALING_PORT,
+        timestamp: Date.now()
+      });
+
+      const buffer = Buffer.from(message);
+
+      // 브로드캐스트 주소로 전송 (255.255.255.255)
+      this.udpSocket.send(buffer, 0, buffer.length, BROADCAST_PORT, '255.255.255.255', (err) => {
+        if (err) {
+          log.debug('UDP 브로드캐스트 전송 실패', { error: err.message });
+        } else {
+          log.debug('UDP 브로드캐스트 전송됨');
+        }
+      });
+
+      // 서브넷 브로드캐스트도 시도 (예: 172.30.1.255)
+      if (this.localIP) {
+        const parts = this.localIP.split('.');
+        if (parts.length === 4) {
+          const subnetBroadcast = `${parts[0]}.${parts[1]}.${parts[2]}.255`;
+          this.udpSocket.send(buffer, 0, buffer.length, BROADCAST_PORT, subnetBroadcast, () => {
+            // 서브넷 브로드캐스트 결과는 무시
+          });
+        }
+      }
+    } catch (error) {
+      log.debug('UDP 브로드캐스트 예외', { error: error.message });
+    }
   }
 
   /**
@@ -354,6 +520,7 @@ class P2PService extends EventEmitter {
    */
   updateFileHash(fileHash) {
     this.currentFileHash = fileHash;
+    this.browserRestartCount = 0; // 재시작 카운트 초기화
 
     // 서비스 재등록 (TXT 레코드 업데이트)
     if (this.service && this.isRunning) {
@@ -368,6 +535,12 @@ class P2PService extends EventEmitter {
         this.emit('peer:lost', peer);
       }
     }
+
+    // UDP 브로드캐스트로 새 파일 알림
+    this._sendBroadcastAnnounce();
+
+    // mDNS 브라우저도 재시작
+    this._restartBrowser();
 
     log.info('파일 해시 업데이트됨', { fileHash: fileHash?.substring(0, 8) });
   }
@@ -419,7 +592,15 @@ class P2PService extends EventEmitter {
       this.signalingServer = null;
     }
 
+    if (this.udpSocket) {
+      try {
+        this.udpSocket.close();
+      } catch (e) { /* ignore */ }
+      this.udpSocket = null;
+    }
+
     this.peers.clear();
+    this.browserRestartCount = 0;
     log.info('P2P 서비스 중지됨');
 
     return { success: true };

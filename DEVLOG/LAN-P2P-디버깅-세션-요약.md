@@ -116,65 +116,38 @@ const pc = new RTCPeerConnection({
 
 ---
 
-## 5. 현재 문제점 (미해결)
+## 5. 현재 문제점 및 해결 상황
 
-### 문제: P2P 연결이 완료되지 않음
+### 5.1 문제: mDNS 비대칭 발견 🔄 해결 중
 
 **증상:**
-- mDNS로 서로 발견됨 ✅
-- Glare 방지 로직 정상 동작 ✅
-- ICE candidate 수집 완료 ✅
-- 하지만 WebRTC 연결이 'connected' 상태에 도달하지 않음 ❌
-
-**최근 로그 분석 (CMD 창 - 메인 프로세스):**
-
-**PC1 (류성철, 먼저 시작):**
-```
-[07:32:48.090] P2P 서비스 시작됨 {sessionId:"session_mkxpjqj6_vuennclls", userName:"류성철"}
-[07:32:48.091] mDNS 서비스 발견 {isSelf:true}  ← 자기 자신만 발견
-[07:33:26.324] mDNS 서비스 발견 {peerId:"session_mkx...", isSelf:true}  ← 여전히 자기 자신
-... knownPeers: 0 계속 ...
-```
-
-**PC2 (나중에 시작):**
-```
-[07:33:29.726] P2P 서비스 시작됨 {sessionId:"session_mkxprsej_pe3ear3l1"}
-[07:33:29.964] mDNS 서비스 발견 {isSelf:false}  ← PC1 발견!
-[07:33:29.964] 피어 발견 (같은 파일) {peer:"류성철", ip:"172.30.1.4"}
-... knownPeers: 1 ...
-```
-
-**핵심 문제:**
-- PC2는 PC1을 발견함
-- 하지만 PC1은 PC2를 발견하지 못함 (knownPeers: 0 유지)
+- PC2는 PC1을 발견함 ✅
+- PC1은 PC2를 발견하지 못함 ❌
 - mDNS 발견이 **비대칭적**
 
-**추정 원인:**
-1. PC1의 방화벽이 들어오는 mDNS 쿼리/응답을 차단
-2. 또는 네트워크 스위치/공유기의 mDNS 릴레이 문제
-3. 또는 bonjour-service 라이브러리의 타이밍 이슈
+**원인 분석:**
+1. bonjour-service 브라우저는 시작 시점에만 mDNS 쿼리 발송
+2. PC1이 먼저 시작하면 PC2가 아직 없어서 발견 불가
+3. PC2가 나중에 시작하면 PC1이 이미 광고 중이라 발견됨
+
+**해결책 (2026-01-28 구현):**
+1. **mDNS 브라우저 재시작 로직** - 피어가 없으면 5초마다 브라우저 재시작 (1분간)
+2. **UDP 브로드캐스트 폴백** - mDNS 보완용 발견 메커니즘 추가 (포트 45680)
+   - 양방향 발견 보장: 피어 발견 시 자신의 정보도 브로드캐스트
+   - 서브넷 브로드캐스트 (예: 172.30.1.255) + 전역 브로드캐스트 (255.255.255.255)
 
 ---
 
-## 6. 시도해볼 것들
+## 6. 방화벽 설정 (필요시)
 
-### 6.1 방화벽 규칙 추가
+### 6.1 Windows 방화벽 규칙 추가
 ```batch
 :: 관리자 권한 CMD에서
 netsh advfirewall firewall add rule name="mDNS In" dir=in action=allow protocol=UDP localport=5353
 netsh advfirewall firewall add rule name="mDNS Out" dir=out action=allow protocol=UDP localport=5353
 netsh advfirewall firewall add rule name="BAEFRAME Signal" dir=in action=allow protocol=TCP localport=45679
+netsh advfirewall firewall add rule name="BAEFRAME Broadcast" dir=in action=allow protocol=UDP localport=45680
 ```
-
-### 6.2 mDNS 대신 직접 IP 연결 시도
-- 피어 IP를 수동으로 입력받는 방식 검토
-- 또는 같은 .bframe 파일의 .collab 파일에서 IP 정보 공유
-
-### 6.3 mDNS 브라우저 재시작 로직
-- 피어를 찾지 못하면 mDNS 브라우저를 주기적으로 재시작
-
-### 6.4 WebSocket 시그널링 서버 검토
-- HTTP 대신 WebSocket으로 실시간 시그널링
 
 ---
 
@@ -222,19 +195,28 @@ netsh advfirewall firewall add rule name="BAEFRAME Signal" dir=in action=allow p
 
 ## 10. 다음 세션에서 할 일
 
-1. **mDNS 비대칭 발견 문제 해결**
-   - PC1이 PC2를 발견하지 못하는 원인 파악
-   - 방화벽/네트워크 설정 확인
+1. **피어 발견 테스트** (최우선)
+   - mDNS 브라우저 재시작 + UDP 브로드캐스트 조합 테스트
+   - 양방향 발견 확인 (PC1 ↔ PC2)
 
-2. **대안 검토**
-   - mDNS 대신 다른 발견 메커니즘 (IP 브로드캐스트, .collab 파일 활용 등)
+2. **WebRTC 연결 완료 테스트**
+   - 피어 발견 성공 후 실제 P2P 연결 테스트
+   - DataChannel 통신 확인
 
-3. **WebRTC 연결 완료 테스트**
-   - mDNS 문제 해결 후 실제 P2P 연결 테스트
-
-4. **UI 테스트**
+3. **UI 테스트**
    - 협업 상태 패널 동작 확인
    - 토스트 알림 확인
+
+4. **방화벽 규칙 추가** (필요시)
+   - UDP 45680 포트 (브로드캐스트) 허용 필요할 수 있음
+
+---
+
+## 11. 변경 이력
+
+| 날짜 | 내용 |
+|------|------|
+| 2026-01-28 | mDNS 브라우저 재시작 로직 + UDP 브로드캐스트 폴백 추가 |
 
 ---
 
