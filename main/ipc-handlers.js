@@ -685,7 +685,13 @@ function setupIpcHandlers() {
       };
     } catch (error) {
       trace.error(error);
-      return { valid: false, error: error.message };
+      // stat 실패해도 경로 기반 hash를 생성하여 반환 (캐시 저장 가능하도록)
+      try {
+        const fallbackHash = crypto.createHash('md5').update(videoPath).digest('hex').slice(0, 16);
+        return { valid: false, error: error.message, videoHash: fallbackHash };
+      } catch {
+        return { valid: false, error: error.message };
+      }
     }
   });
 

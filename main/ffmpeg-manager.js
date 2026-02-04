@@ -486,6 +486,14 @@ class FFmpegManager {
       throw new Error('FFmpeg를 찾을 수 없습니다');
     }
 
+    // 동일 파일이 이미 변환 중인지 확인 (사전 변환과의 충돌 방지)
+    for (const [, task] of this.activeProcesses) {
+      if (task.filePath === filePath && task.promise) {
+        log.info('동일 파일 변환 진행 중, 완료 대기', { filePath });
+        return task.promise;
+      }
+    }
+
     // 캐시 확인
     const cacheCheck = await this.checkCache(filePath);
     if (cacheCheck.valid) {
@@ -508,10 +516,8 @@ class FFmpegManager {
       fs.mkdirSync(cacheFolder, { recursive: true });
     }
 
-    // 기존 임시 파일 삭제
-    if (fs.existsSync(tempPath)) {
-      fs.unlinkSync(tempPath);
-    }
+    // 기존 임시 파일 삭제 (EBUSY 대응: 비동기 retry)
+    await this._retryUnlink(tempPath);
 
     // 사용 가능한 인코더 감지 (forceEncoder가 있으면 강제 사용)
     let encoder;
@@ -525,9 +531,8 @@ class FFmpegManager {
       }
     }
 
-    return new Promise((resolve, reject) => {
-      const taskId = `transcode_${Date.now()}`;
-
+    const taskId = `transcode_${Date.now()}`;
+    const transcodePromise = new Promise((resolve, reject) => {
       // 인코더에 따른 args 구성
       // 색 공간 변환 필터: 비표준 색공간 → BT.709 표준으로 변환
       const colorFilter = 'colorspace=all=bt709:iall=bt601-6-625:fast=1';
@@ -611,7 +616,7 @@ class FFmpegManager {
       } else {
         ffmpegProcess = spawn(this.ffmpegPath, args, spawnOptions);
       }
-      this.activeProcesses.set(taskId, { process: ffmpegProcess, filePath });
+      this.activeProcesses.set(taskId, { process: ffmpegProcess, filePath, promise: transcodePromise });
 
       let lastProgress = 0;
       const duration = codecInfo.duration || 0;
@@ -699,10 +704,8 @@ class FFmpegManager {
           };
           postProcess();
         } else {
-          // 변환 실패
-          if (fs.existsSync(tempPath)) {
-            fs.unlinkSync(tempPath);
-          }
+          // 변환 실패 - 임시 파일 정리 (비동기, 실패해도 무시)
+          this._retryUnlink(tempPath).catch(() => {});
 
           // 하드웨어 인코더 실패 감지 (GPU 없음, 드라이버 문제 등)
           const isHardwareEncoderError =
@@ -800,6 +803,8 @@ class FFmpegManager {
         reject(new Error(errorMsg));
       });
     });
+
+    return transcodePromise;
   }
 
   /**
@@ -828,6 +833,30 @@ class FFmpegManager {
 
     // 변환 실행 (onProgress 콜백 전달)
     return this.transcode(filePath, onProgress);
+  }
+
+  /**
+   * 비동기 retry unlink (EBUSY 대응)
+   * Windows에서 파일 핸들이 즉시 해제되지 않을 수 있음
+   */
+  async _retryUnlink(filePath, maxRetries = 5, delay = 300) {
+    if (!fs.existsSync(filePath)) return;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await fs.promises.unlink(filePath);
+        return;
+      } catch (err) {
+        if ((err.code === 'EBUSY' || err.code === 'EPERM') && attempt < maxRetries - 1) {
+          log.warn(`unlink 재시도 (${attempt + 1}/${maxRetries})`, {
+            filePath, error: err.code
+          });
+          await new Promise(r => setTimeout(r, delay * (attempt + 1)));
+        } else {
+          throw err;
+        }
+      }
+    }
   }
 
   /**

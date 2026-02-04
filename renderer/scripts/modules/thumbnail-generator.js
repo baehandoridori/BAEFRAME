@@ -120,9 +120,14 @@ export class ThumbnailGenerator extends EventTarget {
             this._emit('complete', { count: this.thumbnailMap.size, fromCache: true });
             return;
           }
-        } else {
+        } else if (cacheCheck.videoHash) {
           // 캐시가 없거나 무효 - videoHash 저장
           this.currentVideoHash = cacheCheck.videoHash;
+        } else {
+          // stat 실패 등으로 videoHash 미반환 시 → 캐시 없이 진행
+          log.warn('캐시 확인에서 videoHash 미반환, 캐시 비활성', {
+            error: cacheCheck.error
+          });
         }
       }
 

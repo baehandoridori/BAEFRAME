@@ -516,6 +516,17 @@ async function initApp() {
 
   // 비디오 에러
   videoPlayer.addEventListener('error', (e) => {
+    const errorDetail = e.detail?.error;
+    const code = errorDetail?.code;
+    const message = errorDetail?.message || '';
+
+    // PIPELINE_ERROR_DECODE (code 3): 오디오 패킷 디코딩 실패는 비치명적
+    // 비디오는 정상 재생되므로 토스트를 표시하지 않음
+    if (code === 3 && message.includes('audio')) {
+      log.warn('오디오 디코딩 에러 (비치명적, 무시)', { code, message });
+      return;
+    }
+
     showToast('비디오 재생 오류가 발생했습니다.', 'error');
   });
 
