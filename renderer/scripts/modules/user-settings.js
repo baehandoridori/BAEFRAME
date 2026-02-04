@@ -4,6 +4,7 @@
  */
 
 import { createLogger } from '../logger.js';
+import { getAuthManager } from './auth-manager.js';
 
 const log = createLogger('UserSettings');
 
@@ -524,12 +525,28 @@ export class UserSettings extends EventTarget {
 
   /**
    * 이름에 맞는 테마 찾기
+   * 인증 파일의 theme 필드를 우선 사용, 없으면 하드코딩된 매핑 참조
    * @param {string} name - 사용자 이름
    * @returns {string} 테마 키 ('default', 'blue', 'pink', 'red')
    */
   getThemeForName(name) {
     if (!name) return 'default';
 
+    // 1. 인증 파일의 테마 확인 (우선)
+    try {
+      const authManager = getAuthManager();
+      if (authManager.isReady()) {
+        const registeredUsers = authManager.getRegisteredUsers();
+        const authUser = registeredUsers.find(u => u.name.trim() === name.trim());
+        if (authUser && authUser.theme) {
+          return authUser.theme;
+        }
+      }
+    } catch (e) {
+      // 인증 매니저 사용 불가 시 기존 로직 사용
+    }
+
+    // 2. 하드코딩된 매핑 (기존 호환성)
     const lowerName = name.toLowerCase();
 
     for (const [theme, names] of Object.entries(NAME_THEMES)) {
@@ -593,12 +610,29 @@ export class UserSettings extends EventTarget {
 
   /**
    * 이름에 맞는 색상 반환
+   * 인증 파일의 theme 필드를 우선 참조
    * @param {string} name - 사용자 이름
    * @returns {string|null} 색상 코드 또는 null
    */
   getColorForName(name) {
     if (!name) return null;
 
+    // 1. 인증 파일의 테마로 색상 결정
+    try {
+      const authManager = getAuthManager();
+      if (authManager.isReady()) {
+        const registeredUsers = authManager.getRegisteredUsers();
+        const authUser = registeredUsers.find(u => u.name.trim() === name.trim());
+        if (authUser && authUser.theme) {
+          const themeColors = THEME_COLORS[authUser.theme];
+          if (themeColors) return themeColors.primary;
+        }
+      }
+    } catch (e) {
+      // 인증 매니저 사용 불가 시 기존 로직 사용
+    }
+
+    // 2. 하드코딩된 매핑 (기존 호환성)
     const lowerName = name.toLowerCase();
 
     for (const colorData of Object.values(NAME_COLORS)) {

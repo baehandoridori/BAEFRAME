@@ -11,6 +11,7 @@ import { ReviewDataManager } from './modules/review-data-manager.js';
 import { CollaborationManager } from './modules/collaboration-manager.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
+import { getAuthManager } from './modules/auth-manager.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
 import { getImageFromClipboard, selectImageFile, isValidImageBase64 } from './modules/image-utils.js';
@@ -737,6 +738,13 @@ async function initApp() {
   commentManager.addEventListener('pendingTextSet', (e) => {
     const { text } = e.detail;
     log.info('Pending 텍스트 설정됨 (역순 플로우)', { text });
+  });
+
+  // 권한 없음 이벤트
+  commentManager.addEventListener('permissionDenied', (e) => {
+    const { action } = e.detail;
+    const actionLabel = action === 'delete' ? '삭제' : action === 'deleteReply' ? '삭제' : '수정';
+    showToast(`본인 ${action.includes('Reply') ? '답글' : '코멘트'}만 ${actionLabel}할 수 있습니다.`, 'warning');
   });
 
   // 타임라인 댓글 마커 클릭
@@ -5040,6 +5048,16 @@ async function initApp() {
   // ====== 사용자 이름 초기화 ======
   // 설정 파일 로드 완료 대기 (파일에서 hasSetNameOnce 등 로드)
   await userSettings.waitForReady();
+
+  // AuthManager 초기화
+  const authManager = getAuthManager();
+  await authManager.init();
+
+  if (!authManager.isAuthAvailable()) {
+    log.warn('인증 파일 접근 불가 - 비보호 모드로 실행');
+    // 비보호 모드 알림은 사용자 이름 설정 이후에 표시
+  }
+
   let userName = await userSettings.initialize();
   log.info('사용자 이름 감지됨', { userName, source: userSettings.getUserSource() });
 
@@ -5052,10 +5070,36 @@ async function initApp() {
       userNameDisplay.title = `출처: ${userSettings.getUserSource()}`;
     }
     commentManager.setAuthor(name);
+    // 보호 사용자 메뉴 토글
+    updateAuthMenuVisibility();
+  }
+
+  // 인증 관련 메뉴 표시/숨기기
+  function updateAuthMenuVisibility() {
+    const btnChangePassword = document.getElementById('btnChangePassword');
+    const btnChangeTheme = document.getElementById('btnChangeTheme');
+    const isProtected = authManager.isCurrentUserProtected();
+    if (btnChangePassword) btnChangePassword.style.display = isProtected ? '' : 'none';
+    if (btnChangeTheme) btnChangeTheme.style.display = isProtected ? '' : 'none';
   }
 
   // 사용자 이름을 헤더에 표시 (옵션)
   updateUserName(userName);
+
+  // 인증 상태 복원: 저장된 이름이 보호 사용자이면 세션에 로그인 상태로 처리
+  if (userSettings.hasSetNameOnce() && userName && userName !== '익명') {
+    if (authManager.isProtectedUser(userName)) {
+      // 이전에 로그인했던 보호 사용자 - 세션 유지 (재인증 없이)
+      authManager.currentUser = { name: userName, protected: true, theme: authManager._findUser?.(userName)?.theme || null };
+      authManager.isAuthenticated = true;
+      updateAuthMenuVisibility();
+      log.info('보호 사용자 세션 복원', { name: userName });
+    } else {
+      // 비보호 사용자
+      authManager.currentUser = { name: userName, protected: false, theme: null };
+      authManager.isAuthenticated = true;
+    }
+  }
 
   // ====== 댓글 설정 초기화 (waitForReady 이후) ======
   // 썸네일 표시 설정
@@ -5117,22 +5161,48 @@ async function initApp() {
     userSettingsModal.classList.remove('active');
   }
 
-  // 저장
-  function saveUserName() {
+  // 저장 (인증 시스템 연동)
+  async function saveUserName() {
     const newName = userNameInput.value.trim();
-    if (newName) {
-      userSettings.setUserName(newName);
-      updateUserName(newName);
-      showToast(`이름이 "${newName}"(으)로 변경되었습니다.`, 'success');
-      isRequiredNameInput = false; // 저장 성공 시 필수 모드 해제
-      userSettingsModal.classList.remove('active');
-      // 닫기 버튼 복원
-      if (closeUserSettings) closeUserSettings.style.display = '';
-      if (cancelUserSettings) cancelUserSettings.style.display = '';
-    } else {
+    if (!newName) {
       showToast('이름을 입력해주세요.', 'warning');
       userNameInput.focus();
+      return;
     }
+
+    // 보호된 사용자인지 확인
+    if (authManager.isProtectedUser(newName)) {
+      // 이미 현재 로그인한 사용자와 같으면 그냥 통과
+      if (authManager.getCurrentUserName() === newName) {
+        userSettings.setUserName(newName);
+        updateUserName(newName);
+        showToast(`이름이 "${newName}"(으)로 변경되었습니다.`, 'success');
+        isRequiredNameInput = false;
+        userSettingsModal.classList.remove('active');
+        if (closeUserSettings) closeUserSettings.style.display = '';
+        if (cancelUserSettings) cancelUserSettings.style.display = '';
+        return;
+      }
+
+      // 로그인 모달 표시
+      userSettingsModal.classList.remove('active');
+      isRequiredNameInput = false;
+      if (closeUserSettings) closeUserSettings.style.display = '';
+      if (cancelUserSettings) cancelUserSettings.style.display = '';
+      openLoginModal(newName);
+      return;
+    }
+
+    // 비보호 사용자 - 바로 설정
+    authManager.logout();
+    await authManager.login(newName, null);
+    userSettings.setUserName(newName);
+    updateUserName(newName);
+    showToast(`이름이 "${newName}"(으)로 변경되었습니다.`, 'success');
+    isRequiredNameInput = false;
+    userSettingsModal.classList.remove('active');
+    if (closeUserSettings) closeUserSettings.style.display = '';
+    if (cancelUserSettings) cancelUserSettings.style.display = '';
   }
 
   // 설정 버튼 클릭
@@ -5167,6 +5237,320 @@ async function initApp() {
       showToast('댓글에 표시될 이름을 설정해주세요.', 'info');
     }, 500);
   }
+
+  // ====== 로그인 모달 ======
+  const loginModal = document.getElementById('loginModal');
+  const loginUserDisplay = document.getElementById('loginUserDisplay');
+  const loginPasswordInput = document.getElementById('loginPasswordInput');
+  const loginHint = document.getElementById('loginHint');
+  let _loginTargetName = null;
+
+  function openLoginModal(targetName) {
+    _loginTargetName = targetName;
+    if (loginUserDisplay) loginUserDisplay.textContent = targetName;
+    if (loginPasswordInput) loginPasswordInput.value = '';
+    if (loginHint) loginHint.textContent = '등록된 사용자입니다. 비밀번호를 입력해주세요.';
+    loginModal?.classList.add('active');
+    setTimeout(() => loginPasswordInput?.focus(), 100);
+  }
+
+  function closeLoginModalFn() {
+    loginModal?.classList.remove('active');
+    _loginTargetName = null;
+  }
+
+  async function doLogin() {
+    if (!_loginTargetName) return;
+    const password = loginPasswordInput?.value || '';
+    if (!password) {
+      showToast('비밀번호를 입력해주세요.', 'warning');
+      loginPasswordInput?.focus();
+      return;
+    }
+
+    try {
+      authManager.logout();
+      const result = await authManager.login(_loginTargetName, password);
+      userSettings.setUserName(_loginTargetName);
+      updateUserName(_loginTargetName);
+
+      // 테마 적용
+      if (result.theme) {
+        userSettings.applyTheme(result.theme);
+      } else {
+        userSettings.applyThemeForCurrentUser();
+      }
+
+      showToast(`"${_loginTargetName}"(으)로 로그인했습니다.`, 'success');
+      closeLoginModalFn();
+    } catch (error) {
+      if (loginHint) {
+        loginHint.textContent = error.message;
+        loginHint.style.color = '#ff5555';
+      }
+      loginPasswordInput?.focus();
+      loginPasswordInput?.select();
+    }
+  }
+
+  document.getElementById('confirmLogin')?.addEventListener('click', doLogin);
+  document.getElementById('cancelLogin')?.addEventListener('click', closeLoginModalFn);
+  document.getElementById('closeLogin')?.addEventListener('click', closeLoginModalFn);
+  loginPasswordInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doLogin(); }
+    else if (e.key === 'Escape') closeLoginModalFn();
+  });
+
+  // ====== 비밀번호 변경 모달 ======
+  const changePasswordModal = document.getElementById('changePasswordModal');
+  const currentPasswordInput = document.getElementById('currentPasswordInput');
+  const newPasswordInput = document.getElementById('newPasswordInput');
+  const confirmPasswordInput = document.getElementById('confirmPasswordInput');
+
+  function openChangePasswordModal() {
+    if (currentPasswordInput) currentPasswordInput.value = '';
+    if (newPasswordInput) newPasswordInput.value = '';
+    if (confirmPasswordInput) confirmPasswordInput.value = '';
+    changePasswordModal?.classList.add('active');
+    setTimeout(() => currentPasswordInput?.focus(), 100);
+  }
+
+  function closeChangePasswordModalFn() {
+    changePasswordModal?.classList.remove('active');
+  }
+
+  async function doChangePassword() {
+    const oldPw = currentPasswordInput?.value || '';
+    const newPw = newPasswordInput?.value || '';
+    const confirmPw = confirmPasswordInput?.value || '';
+
+    if (!oldPw) {
+      showToast('현재 비밀번호를 입력해주세요.', 'warning');
+      currentPasswordInput?.focus();
+      return;
+    }
+    if (!newPw) {
+      showToast('새 비밀번호를 입력해주세요.', 'warning');
+      newPasswordInput?.focus();
+      return;
+    }
+    if (newPw !== confirmPw) {
+      showToast('새 비밀번호가 일치하지 않습니다.', 'warning');
+      confirmPasswordInput?.focus();
+      return;
+    }
+
+    try {
+      await authManager.changePassword(oldPw, newPw);
+      showToast('비밀번호가 변경되었습니다.', 'success');
+      closeChangePasswordModalFn();
+    } catch (error) {
+      showToast(error.message, 'error');
+      currentPasswordInput?.focus();
+      currentPasswordInput?.select();
+    }
+  }
+
+  document.getElementById('confirmChangePassword')?.addEventListener('click', doChangePassword);
+  document.getElementById('cancelChangePassword')?.addEventListener('click', closeChangePasswordModalFn);
+  document.getElementById('closeChangePassword')?.addEventListener('click', closeChangePasswordModalFn);
+  confirmPasswordInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doChangePassword(); }
+    else if (e.key === 'Escape') closeChangePasswordModalFn();
+  });
+
+  // 드롭다운에서 비밀번호 변경 클릭
+  document.getElementById('btnChangePassword')?.addEventListener('click', () => {
+    commentSettingsDropdown?.classList.remove('open');
+    btnCommentSettings?.classList.remove('active');
+    openChangePasswordModal();
+  });
+
+  // ====== 테마 변경 모달 ======
+  const changeThemeModal = document.getElementById('changeThemeModal');
+  const changeThemeSelector = document.getElementById('changeThemeSelector');
+  let _selectedTheme = '';
+
+  function openChangeThemeModal() {
+    // 현재 테마 선택 표시
+    const currentTheme = authManager.getCurrentUserTheme() || '';
+    _selectedTheme = currentTheme;
+    if (changeThemeSelector) {
+      changeThemeSelector.querySelectorAll('.theme-btn').forEach(btn => {
+        btn.classList.toggle('active', (btn.dataset.theme || '') === currentTheme);
+      });
+    }
+    changeThemeModal?.classList.add('active');
+  }
+
+  function closeChangeThemeModalFn() {
+    changeThemeModal?.classList.remove('active');
+  }
+
+  changeThemeSelector?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.theme-btn');
+    if (!btn) return;
+    _selectedTheme = btn.dataset.theme || '';
+    changeThemeSelector.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+
+  async function doChangeTheme() {
+    try {
+      const saved = await authManager.changeTheme(_selectedTheme || null);
+      if (saved) {
+        userSettings.applyTheme(_selectedTheme || 'default');
+        showToast('테마가 변경되었습니다.', 'success');
+      } else {
+        showToast('테마를 변경할 수 없습니다.', 'warning');
+      }
+      closeChangeThemeModalFn();
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  }
+
+  document.getElementById('confirmChangeTheme')?.addEventListener('click', doChangeTheme);
+  document.getElementById('cancelChangeTheme')?.addEventListener('click', closeChangeThemeModalFn);
+  document.getElementById('closeChangeTheme')?.addEventListener('click', closeChangeThemeModalFn);
+
+  // 드롭다운에서 테마 변경 클릭
+  document.getElementById('btnChangeTheme')?.addEventListener('click', () => {
+    commentSettingsDropdown?.classList.remove('open');
+    btnCommentSettings?.classList.remove('active');
+    openChangeThemeModal();
+  });
+
+  // ====== 사용자 관리 모달 ======
+  const userManagementModal = document.getElementById('userManagementModal');
+  const registeredUsersList = document.getElementById('registeredUsersList');
+
+  const THEME_COLOR_MAP = {
+    '': '#ffd000',
+    'red': '#ff5555',
+    'blue': '#4a9eff',
+    'pink': '#ffaaaa',
+    'green': '#2ed573'
+  };
+
+  function renderRegisteredUsers() {
+    if (!registeredUsersList) return;
+    const users = authManager.getRegisteredUsers();
+
+    if (users.length === 0) {
+      registeredUsersList.innerHTML = '<div class="registered-users-empty">등록된 사용자가 없습니다.</div>';
+      return;
+    }
+
+    registeredUsersList.innerHTML = users.map(u => {
+      const themeColor = THEME_COLOR_MAP[u.theme || ''] || '#ffd000';
+      const themeName = u.theme ? (u.theme === 'red' ? '빨강' : u.theme === 'blue' ? '파랑' : u.theme === 'pink' ? '핑크' : u.theme === 'green' ? '초록' : '기본') : '기본';
+      return `
+        <div class="registered-user-item" data-name="${u.name}">
+          <div class="registered-user-info">
+            <span class="registered-user-theme" style="background: ${themeColor};" title="${themeName}"></span>
+            <span class="registered-user-name">${u.name}</span>
+          </div>
+          <button class="registered-user-delete" data-name="${u.name}">삭제</button>
+        </div>
+      `;
+    }).join('');
+
+    // 삭제 버튼 이벤트
+    registeredUsersList.querySelectorAll('.registered-user-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const name = e.target.dataset.name;
+        if (!name) return;
+        const confirmed = confirm(`"${name}" 사용자를 삭제하시겠습니까?\n삭제 후 해당 이름으로 비밀번호 없이 사용할 수 있습니다.`);
+        if (!confirmed) return;
+
+        try {
+          await authManager.deleteUser(name);
+          showToast(`"${name}" 사용자가 삭제되었습니다.`, 'success');
+          renderRegisteredUsers();
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      });
+    });
+  }
+
+  function openUserManagementModal() {
+    renderRegisteredUsers();
+    userManagementModal?.classList.add('active');
+  }
+
+  function closeUserManagementModalFn() {
+    userManagementModal?.classList.remove('active');
+  }
+
+  document.getElementById('closeUserManagement')?.addEventListener('click', closeUserManagementModalFn);
+  document.getElementById('closeUserManagementBtn')?.addEventListener('click', closeUserManagementModalFn);
+
+  // 드롭다운에서 사용자 관리 클릭
+  document.getElementById('btnUserManagement')?.addEventListener('click', () => {
+    commentSettingsDropdown?.classList.remove('open');
+    btnCommentSettings?.classList.remove('active');
+    openUserManagementModal();
+  });
+
+  // ====== 사용자 등록 모달 ======
+  const registerUserModal = document.getElementById('registerUserModal');
+  const registerNameInput = document.getElementById('registerNameInput');
+  const registerThemeSelector = document.getElementById('registerThemeSelector');
+  let _registerTheme = '';
+
+  function openRegisterUserModal() {
+    if (registerNameInput) registerNameInput.value = '';
+    _registerTheme = '';
+    if (registerThemeSelector) {
+      registerThemeSelector.querySelectorAll('.theme-btn').forEach(btn => {
+        btn.classList.toggle('active', (btn.dataset.theme || '') === '');
+      });
+    }
+    registerUserModal?.classList.add('active');
+    setTimeout(() => registerNameInput?.focus(), 100);
+  }
+
+  function closeRegisterUserModalFn() {
+    registerUserModal?.classList.remove('active');
+  }
+
+  registerThemeSelector?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.theme-btn');
+    if (!btn) return;
+    _registerTheme = btn.dataset.theme || '';
+    registerThemeSelector.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+
+  async function doRegisterUser() {
+    const name = registerNameInput?.value?.trim() || '';
+    if (!name) {
+      showToast('이름을 입력해주세요.', 'warning');
+      registerNameInput?.focus();
+      return;
+    }
+
+    try {
+      await authManager.registerUser(name, _registerTheme || null);
+      showToast(`"${name}" 사용자가 등록되었습니다. (초기 비밀번호: 1234)`, 'success');
+      closeRegisterUserModalFn();
+      renderRegisteredUsers(); // 사용자 관리 목록 갱신
+    } catch (error) {
+      showToast(error.message, 'error');
+      registerNameInput?.focus();
+    }
+  }
+
+  document.getElementById('btnOpenRegisterUser')?.addEventListener('click', openRegisterUserModal);
+  document.getElementById('confirmRegisterUser')?.addEventListener('click', doRegisterUser);
+  document.getElementById('cancelRegisterUser')?.addEventListener('click', closeRegisterUserModalFn);
+  document.getElementById('closeRegisterUser')?.addEventListener('click', closeRegisterUserModalFn);
+  registerNameInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doRegisterUser(); }
+    else if (e.key === 'Escape') closeRegisterUserModalFn();
+  });
 
   // ====== 크레딧 모달 ======
   const creditsOverlay = document.getElementById('creditsOverlay');

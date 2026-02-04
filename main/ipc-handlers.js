@@ -579,6 +579,58 @@ function setupIpcHandlers() {
     return { success: true, webShareUrl };
   });
 
+  // ====== 인증 파일 관련 ======
+
+  // 인증 파일 경로 (exe와 같은 폴더)
+  const getAuthFilePath = () => {
+    const basePath = app.isPackaged
+      ? path.dirname(process.execPath)
+      : app.getAppPath();
+    return path.join(basePath, 'baeframe-auth.dat');
+  };
+
+  // 인증 데이터 로드
+  ipcMain.handle('auth:load', async () => {
+    const trace = log.trace('auth:load');
+    try {
+      const filePath = getAuthFilePath();
+      log.info('인증 파일 경로', { filePath, exists: fs.existsSync(filePath) });
+
+      if (!fs.existsSync(filePath)) {
+        trace.end({ success: true, data: null });
+        return { success: true, data: null };
+      }
+
+      const encoded = await fs.promises.readFile(filePath, 'utf-8');
+      const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
+      const data = JSON.parse(decoded);
+      trace.end({ success: true, userCount: data?.users?.length || 0 });
+      return { success: true, data };
+    } catch (error) {
+      trace.error(error);
+      log.error('인증 데이터 로드 실패', { error: error.message });
+      return { success: false, error: error.message, data: null };
+    }
+  });
+
+  // 인증 데이터 저장
+  ipcMain.handle('auth:save', async (event, data) => {
+    const trace = log.trace('auth:save');
+    try {
+      const filePath = getAuthFilePath();
+      const json = JSON.stringify(data, null, 2);
+      const encoded = Buffer.from(json).toString('base64');
+      await fs.promises.writeFile(filePath, encoded, 'utf-8');
+      log.info('인증 데이터 저장됨', { filePath, userCount: data?.users?.length || 0 });
+      trace.end({ success: true });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      log.error('인증 데이터 저장 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
   // ====== 설정 파일 관련 ======
 
   // 설정 파일 경로 가져오기

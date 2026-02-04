@@ -4,6 +4,7 @@
  */
 
 import { createLogger } from '../logger.js';
+import { getAuthManager } from './auth-manager.js';
 
 const log = createLogger('CommentManager');
 
@@ -517,19 +518,27 @@ export class CommentManager extends EventTarget {
 
   /**
    * 마커 삭제 (soft delete - 협업 동기화용)
+   * 권한 체크: 본인 코멘트만 삭제 가능
    */
   deleteMarker(markerId) {
     const marker = this.getMarker(markerId);
-    if (marker) {
-      marker.deleted = true;
-      marker.deletedAt = new Date();
-      marker.updatedAt = new Date(); // 머지 비교용
-      log.info('마커 삭제됨 (soft delete)', { id: markerId });
-      this._emit('markerDeleted', { markerId });
-      this._emit('markersChanged');
-      return true;
+    if (!marker) return false;
+
+    // 권한 체크
+    const authManager = getAuthManager();
+    if (authManager.isAuthenticated && !authManager.canEditComment(marker)) {
+      log.warn('권한 없음: 본인 코멘트만 삭제할 수 있습니다', { markerId, author: marker.author });
+      this._emit('permissionDenied', { action: 'delete', marker });
+      return false;
     }
-    return false;
+
+    marker.deleted = true;
+    marker.deletedAt = new Date();
+    marker.updatedAt = new Date(); // 머지 비교용
+    log.info('마커 삭제됨 (soft delete)', { id: markerId });
+    this._emit('markerDeleted', { markerId });
+    this._emit('markersChanged');
+    return true;
   }
 
   /**
@@ -563,10 +572,24 @@ export class CommentManager extends EventTarget {
 
   /**
    * 마커 업데이트
+   * 권한 체크: resolved 변경은 누구나 가능, 나머지는 본인만
    */
   updateMarker(markerId, updates) {
     const marker = this.getMarker(markerId);
     if (!marker) return null;
+
+    // resolved 변경만 하는 경우는 누구나 가능
+    const isOnlyResolved = Object.keys(updates).length === 1 && 'resolved' in updates;
+
+    // resolved 이외의 변경은 본인만 가능
+    if (!isOnlyResolved) {
+      const authManager = getAuthManager();
+      if (authManager.isAuthenticated && !authManager.canEditComment(marker)) {
+        log.warn('권한 없음: 본인 코멘트만 수정할 수 있습니다', { markerId, author: marker.author });
+        this._emit('permissionDenied', { action: 'update', marker });
+        return null;
+      }
+    }
 
     // 허용된 필드만 업데이트
     const allowedFields = ['text', 'startFrame', 'endFrame', 'resolved', 'x', 'y', 'colorKey'];
@@ -635,6 +658,75 @@ export class CommentManager extends EventTarget {
     this._emit('markersChanged');
 
     return reply;
+  }
+
+  /**
+   * 답글 수정
+   * 권한 체크: 본인 답글만 수정 가능
+   */
+  updateReply(markerId, replyId, updates) {
+    const marker = this.getMarker(markerId);
+    if (!marker) return false;
+
+    const reply = marker.replies?.find(r => r.id === replyId);
+    if (!reply) return false;
+
+    // 권한 체크
+    const authManager = getAuthManager();
+    if (authManager.isAuthenticated && !authManager.canEditComment(reply)) {
+      log.warn('권한 없음: 본인 답글만 수정할 수 있습니다', { markerId, replyId, author: reply.author });
+      this._emit('permissionDenied', { action: 'updateReply', reply });
+      return false;
+    }
+
+    if (updates.text !== undefined) {
+      reply.text = updates.text;
+    }
+    marker.updatedAt = new Date();
+
+    this._emit('markerUpdated', { marker });
+    this._emit('markersChanged');
+    return true;
+  }
+
+  /**
+   * 답글 삭제
+   * 권한 체크: 본인 답글만 삭제 가능
+   */
+  deleteReply(markerId, replyId) {
+    const marker = this.getMarker(markerId);
+    if (!marker) return false;
+
+    const replyIndex = marker.replies?.findIndex(r => r.id === replyId);
+    if (replyIndex === -1 || replyIndex === undefined) return false;
+
+    const reply = marker.replies[replyIndex];
+
+    // 권한 체크
+    const authManager = getAuthManager();
+    if (authManager.isAuthenticated && !authManager.canEditComment(reply)) {
+      log.warn('권한 없음: 본인 답글만 삭제할 수 있습니다', { markerId, replyId, author: reply.author });
+      this._emit('permissionDenied', { action: 'deleteReply', reply });
+      return false;
+    }
+
+    marker.replies.splice(replyIndex, 1);
+    marker.updatedAt = new Date();
+
+    this._emit('replyDeleted', { marker, replyId });
+    this._emit('markersChanged');
+    return true;
+  }
+
+  /**
+   * 코멘트/답글 수정/삭제 가능 여부 확인 (UI 표시용)
+   * @param {{ author: string }} item - 코멘트 또는 답글
+   * @returns {boolean}
+   */
+  canEdit(item) {
+    const authManager = getAuthManager();
+    if (!authManager.isAuthenticated) return true; // 인증 미사용 시 모두 허용
+    return authManager.canEditComment(item);
   }
 
   /**
