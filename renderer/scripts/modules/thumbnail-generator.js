@@ -148,6 +148,10 @@ export class ThumbnailGenerator extends EventTarget {
       log.info('1단계 완료 - UI 사용 가능', { count: this.thumbnailMap.size });
       this._emit('quickReady', { count: this.thumbnailMap.size });
 
+      // ===== Phase 1 캐시 저장 (Phase 2 abort 대비) =====
+      await this._saveToCache();
+      log.info('Phase 1 캐시 저장 완료', { count: this.thumbnailMap.size });
+
       // ===== 2단계: 백그라운드에서 세부 채움 =====
       // 약간의 딜레이 후 시작 (UI 반응성 확보)
       await this._delay(100);
@@ -164,7 +168,7 @@ export class ThumbnailGenerator extends EventTarget {
       // 비디오 요소 정리
       this._cleanupVideo();
 
-      // ===== 캐시 저장 =====
+      // ===== Phase 2 완료 시 최종 캐시 저장 (Phase 1 + Phase 2 모든 썸네일) =====
       await this._saveToCache();
 
       log.info('모든 썸네일 생성 완료', { count: this.thumbnailMap.size });

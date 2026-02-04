@@ -987,6 +987,27 @@ function setupIpcHandlers() {
     }
   });
 
+  // 백그라운드 사전 변환 (진행률은 별도 이벤트로 전송)
+  ipcMain.handle('ffmpeg:pre-transcode', async (event, filePath) => {
+    const mainWindow = getMainWindow();
+
+    await ffmpegManager.initialize();
+    if (!ffmpegManager.isAvailable()) {
+      return { success: false, error: 'FFmpeg 미설치' };
+    }
+
+    try {
+      const result = await ffmpegManager.preTranscode(filePath, (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ffmpeg:pre-transcode-progress', { filePath, progress });
+        }
+      });
+      return { success: true, ...result };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
   // 지원 코덱 목록 반환
   ipcMain.handle('ffmpeg:get-supported-codecs', () => {
     return { success: true, codecs: SUPPORTED_CODECS };

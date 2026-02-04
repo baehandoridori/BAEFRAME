@@ -670,31 +670,34 @@ class FFmpegManager {
         }
 
         if (code === 0) {
-          // 변환 성공 - 파일 이름 변경 및 메타 저장
-          try {
-            fs.renameSync(tempPath, outputPath);
+          // 변환 성공 - 파일 이름 변경 및 메타 저장 (비동기 retry)
+          const postProcess = async () => {
+            try {
+              await this._retryRename(tempPath, outputPath, 5, 200);
 
-            const meta = {
-              originalPath: filePath,
-              originalSize: stats.size,
-              originalMtime: stats.mtimeMs,
-              originalCodec: codecInfo.codecName,
-              convertedAt: new Date().toISOString(),
-              settings: { encoder: encoder.name, args: encoder.args }
-            };
-            fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+              const meta = {
+                originalPath: filePath,
+                originalSize: stats.size,
+                originalMtime: stats.mtimeMs,
+                originalCodec: codecInfo.codecName,
+                convertedAt: new Date().toISOString(),
+                settings: { encoder: encoder.name, args: encoder.args }
+              };
+              fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
-            log.info('트랜스코딩 완료', { filePath, outputPath });
+              log.info('트랜스코딩 완료', { filePath, outputPath });
 
-            // 캐시 정리 (비동기)
-            this._cleanupCacheIfNeeded().catch(() => {});
+              // 캐시 정리 (비동기)
+              this._cleanupCacheIfNeeded().catch(() => {});
 
-            if (onProgress) onProgress(100);
-            resolve({ success: true, outputPath, fromCache: false });
-          } catch (e) {
-            log.error('트랜스코딩 후처리 실패', { error: e.message });
-            reject(e);
-          }
+              if (onProgress) onProgress(100);
+              resolve({ success: true, outputPath, fromCache: false });
+            } catch (e) {
+              log.error('트랜스코딩 후처리 실패', { error: e.message });
+              reject(e);
+            }
+          };
+          postProcess();
         } else {
           // 변환 실패
           if (fs.existsSync(tempPath)) {
@@ -797,6 +800,56 @@ class FFmpegManager {
         reject(new Error(errorMsg));
       });
     });
+  }
+
+  /**
+   * 사전 변환 시작 (백그라운드, 낮은 우선순위)
+   * 이미 변환 중이면 스킵
+   */
+  async preTranscode(filePath, onProgress = null) {
+    // 캐시 확인 - 이미 변환되어 있으면 스킵
+    const cacheCheck = await this.checkCache(filePath);
+    if (cacheCheck.valid) {
+      return { success: true, outputPath: cacheCheck.convertedPath, fromCache: true };
+    }
+
+    // 코덱 확인 - 변환 불필요하면 스킵
+    const codecInfo = await this.probeCodec(filePath);
+    if (codecInfo.isSupported) {
+      return { success: true, noConversionNeeded: true };
+    }
+
+    // 이미 해당 파일이 변환 중인지 확인
+    for (const [, task] of this.activeProcesses) {
+      if (task.filePath === filePath) {
+        return { success: false, reason: 'already-in-progress' };
+      }
+    }
+
+    // 변환 실행 (onProgress 콜백 전달)
+    return this.transcode(filePath, onProgress);
+  }
+
+  /**
+   * 비동기 retry rename (EBUSY 대응)
+   * Windows에서 FFmpeg close 후 파일 핸들이 즉시 해제되지 않을 수 있음
+   */
+  async _retryRename(src, dest, maxRetries = 5, delay = 200) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await fs.promises.rename(src, dest);
+        return;
+      } catch (err) {
+        if (err.code === 'EBUSY' && attempt < maxRetries - 1) {
+          log.warn(`rename 재시도 (${attempt + 1}/${maxRetries})`, {
+            src, dest, error: err.code
+          });
+          await new Promise(r => setTimeout(r, delay * (attempt + 1)));
+        } else {
+          throw err;
+        }
+      }
+    }
   }
 
   /**

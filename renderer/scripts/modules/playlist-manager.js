@@ -238,8 +238,13 @@ export class PlaylistManager {
    * 재생목록 닫기
    */
   async close() {
+    // 수정되었고 저장 경로가 있으면 파일로 저장
     if (this.isModified && this.playlistPath) {
       await this.save();
+    }
+    // 아이템이 있지만 파일로 저장되지 않은 경우 → localStorage 임시 저장
+    else if (this.currentPlaylist && this.currentPlaylist.items.length > 0 && !this.playlistPath) {
+      this._saveToLocalStorage();
     }
 
     log.info('재생목록 닫기');
@@ -778,6 +783,50 @@ export class PlaylistManager {
       log.warn('Canvas 썸네일 생성 실패', { error: err.message });
       return '';
     }
+  }
+
+  // ========================================
+  // localStorage 임시 저장/복원
+  // ========================================
+
+  _saveToLocalStorage() {
+    try {
+      const data = JSON.stringify({
+        playlist: this.currentPlaylist,
+        currentIndex: this.currentIndex,
+        savedAt: new Date().toISOString()
+      });
+      localStorage.setItem('baeframe_temp_playlist', data);
+      log.info('재생목록 임시 저장 (localStorage)');
+    } catch (err) {
+      log.warn('localStorage 저장 실패', { error: err.message });
+    }
+  }
+
+  _restoreFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem('baeframe_temp_playlist');
+      if (!raw) return null;
+
+      const data = JSON.parse(raw);
+      if (!data.playlist || !validatePlaylistData(data.playlist)) return null;
+
+      // 24시간 이상 된 데이터는 무시
+      const savedAt = new Date(data.savedAt);
+      if (Date.now() - savedAt.getTime() > 24 * 60 * 60 * 1000) {
+        localStorage.removeItem('baeframe_temp_playlist');
+        return null;
+      }
+
+      return data;
+    } catch (err) {
+      log.warn('localStorage 복원 실패', { error: err.message });
+      return null;
+    }
+  }
+
+  _clearLocalStorage() {
+    localStorage.removeItem('baeframe_temp_playlist');
   }
 
   // ========================================

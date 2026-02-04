@@ -84,6 +84,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ffmpegClearVideoCache: (filePath) => ipcRenderer.invoke('ffmpeg:clear-video-cache', filePath),
   ffmpegClearAllCache: () => ipcRenderer.invoke('ffmpeg:clear-all-cache'),
   ffmpegGetSupportedCodecs: () => ipcRenderer.invoke('ffmpeg:get-supported-codecs'),
+  ffmpegPreTranscode: (filePath) => ipcRenderer.invoke('ffmpeg:pre-transcode', filePath),
+  onPreTranscodeProgress: (callback) => {
+    ipcRenderer.on('ffmpeg:pre-transcode-progress', (event, data) => callback(data));
+  },
 
   // ====== 협업 관련 ======
   readCollabFile: (filePath) => ipcRenderer.invoke('collab:read', filePath),
