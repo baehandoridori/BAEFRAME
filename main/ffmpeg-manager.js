@@ -456,7 +456,9 @@ class FFmpegManager {
       }
 
       // 캐시된 파일 접근 시간 업데이트 (LRU용)
-      fs.utimesSync(convertedPath, new Date(), new Date());
+      // 주의: mtime은 보존해야 함 (썸네일 캐시 해시가 mtime 기반)
+      const convertedStats = fs.statSync(convertedPath);
+      fs.utimesSync(convertedPath, new Date(), convertedStats.mtime);
 
       return {
         valid: true,
