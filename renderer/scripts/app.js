@@ -505,10 +505,28 @@ async function initApp() {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
+
+    // 재생목록 자동 재생
+    const playlistManager = getPlaylistManager();
+    if (playlistManager.isActive() && playlistManager.getAutoPlay() && playlistManager.hasNext()) {
+      log.info('자동 재생: 다음 아이템으로 이동');
+      playlistManager.next();
+    }
   });
 
   // 비디오 에러
   videoPlayer.addEventListener('error', (e) => {
+    const errorDetail = e.detail?.error;
+    const code = errorDetail?.code;
+    const message = errorDetail?.message || '';
+
+    // PIPELINE_ERROR_DECODE (code 3): 오디오 패킷 디코딩 실패는 비치명적
+    // 비디오는 정상 재생되므로 토스트를 표시하지 않음
+    if (code === 3 && message.includes('audio')) {
+      log.warn('오디오 디코딩 에러 (비치명적, 무시)', { code, message });
+      return;
+    }
+
     showToast('비디오 재생 오류가 발생했습니다.', 'error');
   });
 
@@ -6168,6 +6186,54 @@ async function initApp() {
   }
 
   // ============================================================================
+  // 재생목록 사전 변환
+  // ============================================================================
+
+  async function preTranscodePlaylistItems() {
+    const playlistManager = getPlaylistManager();
+    if (!playlistManager.isActive()) return;
+
+    const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
+    if (!ffmpegAvailable) return;
+
+    const items = playlistManager.getItems();
+    const currentIndex = playlistManager.currentIndex;
+
+    // 현재 아이템 다음부터 순서대로 확인 (우선순위: 바로 다음 아이템)
+    for (let offset = 1; offset < items.length; offset++) {
+      const targetIndex = (currentIndex + offset) % items.length;
+      const item = items[targetIndex];
+
+      try {
+        // 코덱 확인
+        const codecInfo = await window.electronAPI.ffmpegProbeCodec(item.videoPath);
+        if (!codecInfo.success || codecInfo.isSupported) continue;
+
+        // 캐시 확인
+        const cacheResult = await window.electronAPI.ffmpegCheckCache(item.videoPath);
+        if (cacheResult.valid) continue;
+
+        // 변환 필요 - 백그라운드 시작
+        log.info('사전 변환 시작', { fileName: item.fileName, index: targetIndex });
+        window.electronAPI.ffmpegPreTranscode(item.videoPath)
+          .then(result => {
+            if (result.success) {
+              log.info('사전 변환 완료', { fileName: item.fileName });
+            }
+          })
+          .catch(err => {
+            log.warn('사전 변환 실패', { fileName: item.fileName, error: err.message });
+          });
+
+        // 한 번에 하나만 사전 변환 (시스템 부하 방지)
+        break;
+      } catch (err) {
+        log.warn('사전 변환 코덱 확인 실패', { fileName: item.fileName, error: err.message });
+      }
+    }
+  }
+
+  // ============================================================================
   // 재생목록 기능
   // ============================================================================
 
@@ -6175,9 +6241,12 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
 
     // 콜백 설정
-    playlistManager.onPlaylistLoaded = (playlist) => {
+    playlistManager.onPlaylistLoaded = async (playlist) => {
       log.info('재생목록 로드됨', { name: playlist.name });
       updatePlaylistUI();
+
+      // 모든 아이템의 코덱을 확인하고 필요한 것들을 사전 변환
+      preTranscodePlaylistItems();
     };
 
     playlistManager.onPlaylistModified = () => {
@@ -6185,12 +6254,23 @@ async function initApp() {
       // 자동 저장 (딜레이)
       clearTimeout(playlistManager._autoSaveTimeout);
       playlistManager._autoSaveTimeout = setTimeout(async () => {
-        if (playlistManager.isModified && playlistManager.playlistPath) {
-          try {
-            await playlistManager.save();
-            log.info('재생목록 자동 저장');
-          } catch (err) {
-            log.warn('재생목록 자동 저장 실패', err);
+        if (playlistManager.isModified) {
+          if (playlistManager.playlistPath) {
+            try {
+              await playlistManager.save();
+              log.info('재생목록 자동 저장');
+            } catch (err) {
+              log.warn('재생목록 자동 저장 실패', err);
+            }
+          } else if (playlistManager.getItemCount() > 0) {
+            // 경로 없는 경우: save()가 첫 아이템 기준으로 경로를 자동 생성
+            try {
+              await playlistManager.save();
+              log.info('재생목록 최초 자동 저장 완료');
+            } catch (err) {
+              // 저장 경로 생성 실패 시 localStorage로 대체
+              playlistManager._saveToLocalStorage();
+            }
           }
         }
       }, 2000);
@@ -6201,6 +6281,9 @@ async function initApp() {
       await loadVideoFromPlaylist(item);
       updatePlaylistCurrentItem();
       updatePlaylistPosition();
+
+      // 다음 아이템 사전 변환 트리거
+      preTranscodePlaylistItems();
     };
 
     playlistManager.onPlaylistClosed = () => {
@@ -6232,10 +6315,21 @@ async function initApp() {
       if (elements.playlistSidebar.classList.contains('hidden')) {
         showPlaylistSidebar();
         if (!playlistManager.isActive()) {
-          playlistManager.createNew();
-          // 현재 영상이 있으면 추가
-          if (state.currentFile) {
-            playlistManager.addItems([state.currentFile.videoPath]).then(updatePlaylistUI);
+          // localStorage에서 임시 저장된 재생목록 복원 시도
+          const tempData = playlistManager._restoreFromLocalStorage();
+          if (tempData) {
+            playlistManager.currentPlaylist = tempData.playlist;
+            playlistManager.currentIndex = tempData.currentIndex;
+            playlistManager.isModified = true;
+            playlistManager._clearLocalStorage();
+            playlistManager.onPlaylistLoaded?.(playlistManager.currentPlaylist);
+            log.info('임시 저장된 재생목록 복원');
+          } else {
+            playlistManager.createNew();
+            // 현재 영상이 있으면 추가 (state.currentFile은 문자열)
+            if (state.currentFile) {
+              playlistManager.addItems([state.currentFile]).then(updatePlaylistUI);
+            }
           }
         }
       } else {

@@ -685,7 +685,13 @@ function setupIpcHandlers() {
       };
     } catch (error) {
       trace.error(error);
-      return { valid: false, error: error.message };
+      // stat 실패해도 경로 기반 hash를 생성하여 반환 (캐시 저장 가능하도록)
+      try {
+        const fallbackHash = crypto.createHash('md5').update(videoPath).digest('hex').slice(0, 16);
+        return { valid: false, error: error.message, videoHash: fallbackHash };
+      } catch {
+        return { valid: false, error: error.message };
+      }
     }
   });
 
@@ -983,6 +989,27 @@ function setupIpcHandlers() {
       return { success: true, ...result };
     } catch (error) {
       trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 백그라운드 사전 변환 (진행률은 별도 이벤트로 전송)
+  ipcMain.handle('ffmpeg:pre-transcode', async (event, filePath) => {
+    const mainWindow = getMainWindow();
+
+    await ffmpegManager.initialize();
+    if (!ffmpegManager.isAvailable()) {
+      return { success: false, error: 'FFmpeg 미설치' };
+    }
+
+    try {
+      const result = await ffmpegManager.preTranscode(filePath, (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ffmpeg:pre-transcode-progress', { filePath, progress });
+        }
+      });
+      return { success: true, ...result };
+    } catch (error) {
       return { success: false, error: error.message };
     }
   });
