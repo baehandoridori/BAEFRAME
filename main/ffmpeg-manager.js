@@ -39,6 +39,7 @@ class FFmpegManager {
     this.ffprobePath = null;
     this.cacheDir = null;
     this.activeProcesses = new Map();
+    this.pendingTranscodes = new Map(); // filePath → Promise (중복 변환 방지)
     this.initialized = false;
     this.cacheLimitBytes = DEFAULT_CACHE_LIMIT_GB * 1024 * 1024 * 1024;
     this.availableEncoder = null; // 감지된 사용 가능한 인코더
@@ -487,11 +488,9 @@ class FFmpegManager {
     }
 
     // 동일 파일이 이미 변환 중인지 확인 (사전 변환과의 충돌 방지)
-    for (const [, task] of this.activeProcesses) {
-      if (task.filePath === filePath && task.promise) {
-        log.info('동일 파일 변환 진행 중, 완료 대기', { filePath });
-        return task.promise;
-      }
+    if (this.pendingTranscodes.has(filePath)) {
+      log.info('동일 파일 변환 진행 중, 완료 대기', { filePath });
+      return this.pendingTranscodes.get(filePath);
     }
 
     // 캐시 확인
@@ -616,7 +615,7 @@ class FFmpegManager {
       } else {
         ffmpegProcess = spawn(this.ffmpegPath, args, spawnOptions);
       }
-      this.activeProcesses.set(taskId, { process: ffmpegProcess, filePath, promise: transcodePromise });
+      this.activeProcesses.set(taskId, { process: ffmpegProcess, filePath });
 
       let lastProgress = 0;
       const duration = codecInfo.duration || 0;
@@ -804,6 +803,12 @@ class FFmpegManager {
       });
     });
 
+    // 중복 변환 방지: filePath → Promise 등록
+    this.pendingTranscodes.set(filePath, transcodePromise);
+    transcodePromise.finally(() => {
+      this.pendingTranscodes.delete(filePath);
+    });
+
     return transcodePromise;
   }
 
@@ -825,10 +830,8 @@ class FFmpegManager {
     }
 
     // 이미 해당 파일이 변환 중인지 확인
-    for (const [, task] of this.activeProcesses) {
-      if (task.filePath === filePath) {
-        return { success: false, reason: 'already-in-progress' };
-      }
+    if (this.pendingTranscodes.has(filePath)) {
+      return { success: false, reason: 'already-in-progress' };
     }
 
     // 변환 실행 (onProgress 콜백 전달)
