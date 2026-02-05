@@ -525,30 +525,31 @@ export class UserSettings extends EventTarget {
 
   /**
    * 이름에 맞는 테마 찾기
-   * 인증 파일의 theme 필드를 우선 사용, 없으면 하드코딩된 매핑 참조
+   * 인증 파일에 명시적 테마가 있으면 우선, "기본"(null)이면 하드코딩 매핑 참조
    * @param {string} name - 사용자 이름
-   * @returns {string} 테마 키 ('default', 'blue', 'pink', 'red')
+   * @returns {string} 테마 키 ('default', 'blue', 'pink', 'red', 'green')
    */
   getThemeForName(name) {
     if (!name) return 'default';
 
-    // 1. 등록된 사용자면 인증 파일의 테마를 무조건 사용
-    //    theme이 null이면 'default' (기본 노랑) 반환
-    //    → 허혜원이 "기본"을 선택하면 하드코딩 핑크가 아닌 노랑 적용
+    // 1. 등록된 사용자가 명시적으로 테마를 설정한 경우만 오버라이드
+    //    theme이 null("기본")이면 하드코딩 매핑으로 fallback
+    //    → 허혜원이 "기본" 선택 시 하드코딩 핑크 유지
+    //    → 허혜원이 "파랑" 선택 시 파랑으로 오버라이드
     try {
       const authManager = getAuthManager();
       if (authManager.isReady()) {
         const registeredUsers = authManager.getRegisteredUsers();
         const authUser = registeredUsers.find(u => u.name.trim() === name.trim());
-        if (authUser) {
-          return authUser.theme || 'default';
+        if (authUser && authUser.theme) {
+          return authUser.theme;
         }
       }
     } catch (e) {
       // 인증 매니저 사용 불가 시 기존 로직 사용
     }
 
-    // 2. 미등록 사용자 → 하드코딩된 매핑 (기존 호환성)
+    // 2. 하드코딩된 매핑 (등록 사용자의 "기본" 선택 또는 미등록 사용자)
     const lowerName = name.toLowerCase();
 
     for (const [theme, names] of Object.entries(NAME_THEMES)) {
@@ -619,16 +620,15 @@ export class UserSettings extends EventTarget {
   getColorForName(name) {
     if (!name) return null;
 
-    // 1. 등록된 사용자면 인증 파일의 테마로 색상 결정
-    //    theme이 null이면 기본 테마(노랑) 색상 반환
+    // 1. 등록된 사용자가 명시적으로 테마를 설정한 경우만 오버라이드
+    //    theme이 null("기본")이면 하드코딩 매핑으로 fallback
     try {
       const authManager = getAuthManager();
       if (authManager.isReady()) {
         const registeredUsers = authManager.getRegisteredUsers();
         const authUser = registeredUsers.find(u => u.name.trim() === name.trim());
-        if (authUser) {
-          const themeKey = authUser.theme || 'default';
-          const themeColors = THEME_COLORS[themeKey];
+        if (authUser && authUser.theme) {
+          const themeColors = THEME_COLORS[authUser.theme];
           if (themeColors) return themeColors.primary;
         }
       }
@@ -636,7 +636,7 @@ export class UserSettings extends EventTarget {
       // 인증 매니저 사용 불가 시 기존 로직 사용
     }
 
-    // 2. 하드코딩된 매핑 (기존 호환성)
+    // 2. 하드코딩된 매핑 (등록 사용자의 "기본" 선택 또는 미등록 사용자)
     const lowerName = name.toLowerCase();
 
     for (const colorData of Object.values(NAME_COLORS)) {
