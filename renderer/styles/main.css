@@ -7561,3 +7561,19 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   color: var(--text-tertiary);
   font-size: 13px;
 }
+
+/* 비밀번호 일치 힌트 */
+.password-match-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  min-height: 18px;
+  transition: color 0.15s ease;
+}
+
+.password-match-hint.match {
+  color: #2ed573;
+}
+
+.password-match-hint.mismatch {
+  color: #ff5555;
+}

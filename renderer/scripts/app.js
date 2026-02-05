@@ -5306,11 +5306,40 @@ async function initApp() {
   const currentPasswordInput = document.getElementById('currentPasswordInput');
   const newPasswordInput = document.getElementById('newPasswordInput');
   const confirmPasswordInput = document.getElementById('confirmPasswordInput');
+  const passwordMatchHint = document.getElementById('passwordMatchHint');
+
+  // 비밀번호 일치 여부 실시간 체크
+  function checkPasswordMatch() {
+    if (!passwordMatchHint) return;
+    const newPw = newPasswordInput?.value || '';
+    const confirmPw = confirmPasswordInput?.value || '';
+
+    if (!confirmPw) {
+      passwordMatchHint.textContent = '';
+      passwordMatchHint.className = 'password-match-hint';
+      return;
+    }
+
+    if (newPw === confirmPw) {
+      passwordMatchHint.textContent = '비밀번호가 일치합니다!';
+      passwordMatchHint.className = 'password-match-hint match';
+    } else {
+      passwordMatchHint.textContent = '비밀번호가 일치하지 않습니다.';
+      passwordMatchHint.className = 'password-match-hint mismatch';
+    }
+  }
+
+  newPasswordInput?.addEventListener('input', checkPasswordMatch);
+  confirmPasswordInput?.addEventListener('input', checkPasswordMatch);
 
   function openChangePasswordModal() {
     if (currentPasswordInput) currentPasswordInput.value = '';
     if (newPasswordInput) newPasswordInput.value = '';
     if (confirmPasswordInput) confirmPasswordInput.value = '';
+    if (passwordMatchHint) {
+      passwordMatchHint.textContent = '';
+      passwordMatchHint.className = 'password-match-hint';
+    }
     changePasswordModal?.classList.add('active');
     setTimeout(() => currentPasswordInput?.focus(), 100);
   }

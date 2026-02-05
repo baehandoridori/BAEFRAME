@@ -532,21 +532,23 @@ export class UserSettings extends EventTarget {
   getThemeForName(name) {
     if (!name) return 'default';
 
-    // 1. 인증 파일의 테마 확인 (우선)
+    // 1. 등록된 사용자면 인증 파일의 테마를 무조건 사용
+    //    theme이 null이면 'default' (기본 노랑) 반환
+    //    → 허혜원이 "기본"을 선택하면 하드코딩 핑크가 아닌 노랑 적용
     try {
       const authManager = getAuthManager();
       if (authManager.isReady()) {
         const registeredUsers = authManager.getRegisteredUsers();
         const authUser = registeredUsers.find(u => u.name.trim() === name.trim());
-        if (authUser && authUser.theme) {
-          return authUser.theme;
+        if (authUser) {
+          return authUser.theme || 'default';
         }
       }
     } catch (e) {
       // 인증 매니저 사용 불가 시 기존 로직 사용
     }
 
-    // 2. 하드코딩된 매핑 (기존 호환성)
+    // 2. 미등록 사용자 → 하드코딩된 매핑 (기존 호환성)
     const lowerName = name.toLowerCase();
 
     for (const [theme, names] of Object.entries(NAME_THEMES)) {
@@ -617,14 +619,16 @@ export class UserSettings extends EventTarget {
   getColorForName(name) {
     if (!name) return null;
 
-    // 1. 인증 파일의 테마로 색상 결정
+    // 1. 등록된 사용자면 인증 파일의 테마로 색상 결정
+    //    theme이 null이면 기본 테마(노랑) 색상 반환
     try {
       const authManager = getAuthManager();
       if (authManager.isReady()) {
         const registeredUsers = authManager.getRegisteredUsers();
         const authUser = registeredUsers.find(u => u.name.trim() === name.trim());
-        if (authUser && authUser.theme) {
-          const themeColors = THEME_COLORS[authUser.theme];
+        if (authUser) {
+          const themeKey = authUser.theme || 'default';
+          const themeColors = THEME_COLORS[themeKey];
           if (themeColors) return themeColors.primary;
         }
       }
