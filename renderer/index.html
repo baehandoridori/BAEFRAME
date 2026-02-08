@@ -807,22 +807,43 @@
         <button class="filter-chip" data-filter="resolved">해결됨</button>
       </div>
 
-      <div class="comment-search-bar">
-        <div class="comment-search-input-wrap">
-          <input
-            type="text"
-            id="commentSearchInput"
-            class="comment-search-input"
-            placeholder="Search comments, authors, replies, frames"
-            autocomplete="off"
-          >
-          <button
-            type="button"
-            class="comment-search-clear"
-            id="commentSearchClear"
-            title="Clear search"
-            aria-label="Clear search"
-          >x</button>
+      <div class="comment-search-bar" id="commentSearchBar">
+        <button
+          type="button"
+          class="comment-search-toggle"
+          id="commentSearchToggle"
+          aria-label="댓글 검색 열기"
+          title="댓글 검색 열기"
+          aria-expanded="false"
+          aria-controls="commentSearchPanel"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"></circle>
+            <line x1="20" y1="20" x2="16.65" y2="16.65"></line>
+          </svg>
+        </button>
+        <div class="comment-search-panel" id="commentSearchPanel">
+          <div class="comment-search-input-wrap" id="commentSearchInputWrap">
+            <input
+              type="text"
+              id="commentSearchInput"
+              class="comment-search-input"
+              placeholder="댓글, 작성자, 답글, 프레임 검색"
+              autocomplete="off"
+              aria-label="댓글 검색"
+            >
+            <span class="comment-search-placeholder" id="commentSearchPlaceholder" aria-hidden="true">
+              <span class="comment-search-placeholder-prefix">예시: </span>
+              <span class="comment-search-placeholder-word" id="commentSearchPlaceholderWord">도윤이</span>
+            </span>
+            <button
+              type="button"
+              class="comment-search-clear"
+              id="commentSearchClear"
+              title="검색 지우기"
+              aria-label="검색 지우기"
+            >&times;</button>
+          </div>
         </div>
       </div>
 
