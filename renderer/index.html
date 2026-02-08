@@ -807,6 +807,25 @@
         <button class="filter-chip" data-filter="resolved">해결됨</button>
       </div>
 
+      <div class="comment-search-bar">
+        <div class="comment-search-input-wrap">
+          <input
+            type="text"
+            id="commentSearchInput"
+            class="comment-search-input"
+            placeholder="Search comments, authors, replies, frames"
+            autocomplete="off"
+          >
+          <button
+            type="button"
+            class="comment-search-clear"
+            id="commentSearchClear"
+            title="Clear search"
+            aria-label="Clear search"
+          >x</button>
+        </div>
+      </div>
+
       <div class="comments-list" id="commentsList">
         <!-- 댓글들이 여기에 렌더링됨 -->
         <div class="empty-comments">

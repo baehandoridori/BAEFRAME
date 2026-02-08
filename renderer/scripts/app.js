@@ -93,6 +93,8 @@ async function initApp() {
     feedbackProgress: document.getElementById('feedbackProgress'),
     feedbackProgressValue: document.getElementById('feedbackProgressValue'),
     feedbackProgressFill: document.getElementById('feedbackProgressFill'),
+    commentSearchInput: document.getElementById('commentSearchInput'),
+    commentSearchClear: document.getElementById('commentSearchClear'),
 
     // 이미지 뷰어
     imageViewerOverlay: document.getElementById('imageViewerOverlay'),
@@ -1163,6 +1165,10 @@ async function initApp() {
   });
 
   // 필터 칩 (댓글 목록 필터링)
+  function getActiveCommentFilter() {
+    return document.querySelector('.filter-chip.active')?.dataset.filter || 'all';
+  }
+
   document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', function() {
       document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
@@ -1174,6 +1180,33 @@ async function initApp() {
   });
 
   // ====== 댓글 설정 드롭다운 ======
+  elements.commentSearchInput?.addEventListener('input', () => {
+    const keyword = elements.commentSearchInput.value.trim();
+    commentSearchKeyword = keyword;
+    elements.commentSearchClear?.classList.toggle('visible', keyword.length > 0);
+    updateCommentList(getActiveCommentFilter());
+  });
+
+  elements.commentSearchInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && elements.commentSearchInput.value) {
+      elements.commentSearchInput.value = '';
+      commentSearchKeyword = '';
+      elements.commentSearchClear?.classList.remove('visible');
+      updateCommentList(getActiveCommentFilter());
+    }
+  });
+
+  elements.commentSearchClear?.addEventListener('click', () => {
+    if (!elements.commentSearchInput) return;
+    elements.commentSearchInput.value = '';
+    commentSearchKeyword = '';
+    elements.commentSearchClear.classList.remove('visible');
+    updateCommentList(getActiveCommentFilter());
+    elements.commentSearchInput.focus();
+  });
+
+  elements.commentSearchClear?.classList.toggle('visible', !!elements.commentSearchInput?.value.trim());
+
   const btnCommentSettings = document.getElementById('btnCommentSettings');
   const commentSettingsDropdown = document.getElementById('commentSettingsDropdown');
   const toggleCommentThumbnails = document.getElementById('toggleCommentThumbnails');
@@ -1217,7 +1250,7 @@ async function initApp() {
     const show = toggleCommentThumbnails.checked;
     userSettings.setShowCommentThumbnails(show);
     thumbnailScaleItem.classList.toggle('disabled', !show);
-    updateCommentList(document.querySelector('.filter-chip.active')?.dataset.filter || 'all');
+    updateCommentList(getActiveCommentFilter());
   });
 
   // 썸네일 스케일 변경
@@ -1227,7 +1260,7 @@ async function initApp() {
     userSettings.setCommentThumbnailScale(scale);
     // CSS 변수로 스케일 적용
     document.documentElement.style.setProperty('--comment-thumbnail-scale', scale / 100);
-    updateCommentList(document.querySelector('.filter-chip.active')?.dataset.filter || 'all');
+    updateCommentList(getActiveCommentFilter());
   });
 
   // 초기 스케일 CSS 변수 설정
@@ -3240,7 +3273,7 @@ async function initApp() {
         timeline.setThumbnailGenerator(thumbnailGenerator);
 
         // 댓글 리스트 업데이트 (썸네일 표시를 위해)
-        updateCommentList(document.querySelector('.filter-chip.active')?.dataset.filter || 'all');
+        updateCommentList(getActiveCommentFilter());
 
         // 로딩 오버레이 숨김
         loadingOverlay?.classList.remove('active');
@@ -3999,6 +4032,7 @@ async function initApp() {
   // 댓글 목록 업데이트 디바운싱
   let commentListUpdateTimeout = null;
   let pendingCommentListFilter = 'all';
+  let commentSearchKeyword = '';
 
   // ========== 가상 스크롤 상태 ==========
   const virtualScrollState = {
@@ -4008,10 +4042,40 @@ async function initApp() {
     itemHeight: 120, // 예상 아이템 높이
     bufferSize: 5,   // 위아래 버퍼
     currentFilter: 'all',
+    currentSearch: '',
     scrollHandler: null
   };
 
   // 피드백 완료율 업데이트
+  function normalizeCommentSearch(value) {
+    return (value || '').toString().trim().toLowerCase();
+  }
+
+  function markerMatchesCommentSearch(marker, normalizedQuery) {
+    if (!normalizedQuery) return true;
+
+    const searchTargets = [
+      marker?.text,
+      marker?.author,
+      marker?.frame,
+      marker?.startFrame,
+      marker?.endFrame
+    ];
+
+    if (Array.isArray(marker?.replies)) {
+      for (const reply of marker.replies) {
+        searchTargets.push(reply?.text, reply?.author);
+      }
+    }
+
+    const haystack = searchTargets
+      .filter((value) => value !== undefined && value !== null)
+      .map((value) => String(value).toLowerCase())
+      .join(' ');
+
+    return haystack.includes(normalizedQuery);
+  }
+
   function updateFeedbackProgress(total, resolved) {
     if (!elements.feedbackProgress) return;
 
@@ -4053,25 +4117,39 @@ async function initApp() {
       markers = markers.filter(m => m.resolved);
     }
 
+    const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
+    if (normalizedSearch) {
+      markers = markers.filter((marker) => markerMatchesCommentSearch(marker, normalizedSearch));
+    }
+
     // 개수 업데이트
     const allMarkers = commentManager.getAllMarkers();
     const unresolvedCount = allMarkers.filter(m => !m.resolved).length;
     const resolvedCount = allMarkers.filter(m => m.resolved).length;
     if (elements.commentCount) {
-      elements.commentCount.textContent = allMarkers.length > 0
-        ? `${unresolvedCount > 0 ? unresolvedCount + ' 미해결 / ' : ''}${allMarkers.length}개`
-        : '0';
+      if (normalizedSearch) {
+        elements.commentCount.textContent = `${markers.length} matched / total ${allMarkers.length}`;
+      } else {
+        elements.commentCount.textContent = allMarkers.length > 0
+          ? `${unresolvedCount > 0 ? unresolvedCount + ' unresolved / ' : ''}${allMarkers.length} comments`
+          : '0';
+      }
     }
 
     // 피드백 완료율 업데이트
     updateFeedbackProgress(allMarkers.length, resolvedCount);
 
     if (markers.length === 0) {
+      const emptyTitle = normalizedSearch ? 'No matching comments' : 'No comments yet';
+      const emptyHint = normalizedSearch
+        ? `No comments match "${escapeHtml(commentSearchKeyword)}".`
+        : 'Press C and click on the video to add a comment.';
+
       container.innerHTML = `
         <div class="comment-empty">
-          <span style="font-size: 32px; margin-bottom: 8px;">💬</span>
-          <p>댓글이 없습니다</p>
-          <p style="font-size: 11px; color: var(--text-muted);">C키를 눌러 영상 위에 댓글을 추가하세요</p>
+          <span style="font-size: 32px; margin-bottom: 8px;">#</span>
+          <p>${emptyTitle}</p>
+          <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
         </div>
       `;
       return;
@@ -4080,6 +4158,7 @@ async function initApp() {
     // 가상 스크롤 상태 저장
     virtualScrollState.filteredMarkers = markers;
     virtualScrollState.currentFilter = filter;
+    virtualScrollState.currentSearch = normalizedSearch;
 
     // 댓글 개수 경고 (성능 최적화 권장)
     const COMMENT_THRESHOLD = 100;
