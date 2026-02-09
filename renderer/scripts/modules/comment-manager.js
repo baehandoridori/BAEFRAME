@@ -530,7 +530,7 @@ export class CommentManager extends EventTarget {
 
     // 권한 체크
     const authManager = getAuthManager();
-    if (authManager.isAuthenticated && !authManager.canEditComment(marker)) {
+    if (authManager.isAuthAvailable() && !authManager.canEditComment(marker)) {
       log.warn('권한 없음: 본인 코멘트만 삭제할 수 있습니다', { markerId, author: marker.author });
       this._emit('permissionDenied', { action: 'delete', marker });
       return false;
@@ -588,7 +588,7 @@ export class CommentManager extends EventTarget {
     // resolved 이외의 변경은 본인만 가능
     if (!isOnlyResolved) {
       const authManager = getAuthManager();
-      if (authManager.isAuthenticated && !authManager.canEditComment(marker)) {
+      if (authManager.isAuthAvailable() && !authManager.canEditComment(marker)) {
         log.warn('권한 없음: 본인 코멘트만 수정할 수 있습니다', { markerId, author: marker.author });
         this._emit('permissionDenied', { action: 'update', marker });
         return null;
@@ -679,7 +679,7 @@ export class CommentManager extends EventTarget {
 
     // 권한 체크
     const authManager = getAuthManager();
-    if (authManager.isAuthenticated && !authManager.canEditComment(reply)) {
+    if (authManager.isAuthAvailable() && !authManager.canEditComment(reply)) {
       log.warn('권한 없음: 본인 답글만 수정할 수 있습니다', { markerId, replyId, author: reply.author });
       this._emit('permissionDenied', { action: 'updateReply', reply });
       return false;
@@ -710,7 +710,7 @@ export class CommentManager extends EventTarget {
 
     // 권한 체크
     const authManager = getAuthManager();
-    if (authManager.isAuthenticated && !authManager.canEditComment(reply)) {
+    if (authManager.isAuthAvailable() && !authManager.canEditComment(reply)) {
       log.warn('권한 없음: 본인 답글만 삭제할 수 있습니다', { markerId, replyId, author: reply.author });
       this._emit('permissionDenied', { action: 'deleteReply', reply });
       return false;
@@ -731,7 +731,10 @@ export class CommentManager extends EventTarget {
    */
   canEdit(item) {
     const authManager = getAuthManager();
-    if (!authManager.isAuthenticated) return true; // 인증 미사용 시 모두 허용
+    // 인증 시스템 자체가 없으면 모두 허용 (웹 뷰어 등)
+    if (!authManager.isAuthAvailable()) return true;
+    // 인증 시스템이 있으면 로그인 여부와 작성자 일치 확인
+    if (!authManager.isAuthenticated) return false;
     return authManager.canEditComment(item);
   }
 
