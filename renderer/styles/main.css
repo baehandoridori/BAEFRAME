@@ -2864,10 +2864,6 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 /* 해결됨 호버 툴팁 */
-.comment-resolve-toggle {
-  position: relative;
-}
-
 .resolve-tooltip {
   display: none;
   position: absolute;

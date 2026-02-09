@@ -3856,12 +3856,16 @@ async function initApp() {
     // 삭제 버튼
     tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', async (e) => {
       e.stopPropagation();
+
+      // 권한 체크 (본인 코멘트만 삭제 가능)
+      if (!commentManager.canEdit(marker)) {
+        showToast('본인 코멘트만 삭제할 수 있습니다.', 'warning');
+        return;
+      }
+
       if (confirm('댓글을 삭제하시겠습니까?')) {
         const markerData = marker.toJSON();
-        const deleted = commentManager.deleteMarker(marker.id);
-
-        // 권한 없음 시 중단 (permissionDenied 이벤트에서 토스트 표시됨)
-        if (deleted === false) return;
+        commentManager.deleteMarker(marker.id);
 
         // UI 업데이트
         updateCommentList();
@@ -4212,15 +4216,20 @@ async function initApp() {
       // 삭제 버튼
       item.querySelector('.delete-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation();
+
+        // 권한 체크 (본인 코멘트만 삭제 가능)
+        const markerToDelete = commentManager.getMarker(item.dataset.markerId);
+        if (markerToDelete && !commentManager.canEdit(markerToDelete)) {
+          showToast('본인 코멘트만 삭제할 수 있습니다.', 'warning');
+          return;
+        }
+
         if (confirm('댓글을 삭제하시겠습니까?')) {
           const markerId = item.dataset.markerId;
           const marker = commentManager.getMarker(markerId);
           if (marker) {
             const markerData = marker.toJSON();
-            const deleted = commentManager.deleteMarker(markerId);
-
-            // 권한 없음 시 중단 (permissionDenied 이벤트에서 토스트 표시됨)
-            if (deleted === false) return;
+            commentManager.deleteMarker(markerId);
 
             // UI 업데이트
             updateCommentList();
@@ -4299,8 +4308,9 @@ async function initApp() {
             const oldText = marker.text;
             const updated = commentManager.updateMarker(markerId, { text: newText });
 
-            // 권한 없음 시 중단 (permissionDenied 이벤트에서 토스트 표시됨)
+            // 권한 없음 시 중단
             if (!updated) {
+              showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
               // 편집 잠금 해제
               await collaborationManager.stopEditing(markerId);
               return;
