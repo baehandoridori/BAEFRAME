@@ -2762,6 +2762,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
   overflow-x: auto;
@@ -2791,12 +2792,14 @@ body.app-fullscreen .video-comment-overlay-controls {
   color: var(--accent-primary);
 }
 
+.filter-bar .comment-search-toggle {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .comment-search-bar {
-  padding: 8px 16px 10px;
-  border-bottom: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  padding: 0;
+  border-bottom: 0;
 }
 
 .comment-search-toggle {
@@ -2811,7 +2814,6 @@ body.app-fullscreen .video-comment-overlay-controls {
   justify-content: center;
   cursor: pointer;
   transition: all var(--transition-fast);
-  align-self: flex-end;
 }
 
 .comment-search-toggle:hover {
@@ -2820,8 +2822,8 @@ body.app-fullscreen .video-comment-overlay-controls {
   background: var(--bg-hover);
 }
 
-.comment-search-bar.open .comment-search-toggle,
-.comment-search-bar.search-active .comment-search-toggle {
+.comment-search-toggle.search-open,
+.comment-search-toggle.search-active {
   border-color: var(--accent-primary);
   color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.14);
@@ -2834,6 +2836,12 @@ body.app-fullscreen .video-comment-overlay-controls {
   transform: translateY(-6px);
   pointer-events: none;
   transition: max-height 0.24s ease, opacity 0.2s ease, transform 0.2s ease;
+  padding: 0 16px;
+}
+
+.comment-search-bar.open {
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .comment-search-bar.open .comment-search-panel {
@@ -2860,7 +2868,7 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .comment-search-input::placeholder {
-  color: rgba(200, 200, 200, 0.72);
+  color: transparent;
 }
 
 .comment-search-input:focus {

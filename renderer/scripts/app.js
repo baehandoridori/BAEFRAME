@@ -1203,12 +1203,13 @@ async function initApp() {
     const hasKeyword = !!elements.commentSearchInput?.value.trim();
     elements.commentSearchInputWrap?.classList.toggle('has-text', hasKeyword);
     elements.commentSearchClear?.classList.toggle('visible', hasKeyword);
-    elements.commentSearchBar?.classList.toggle('search-active', hasKeyword);
+    elements.commentSearchToggle?.classList.toggle('search-active', hasKeyword);
   }
 
   function setCommentSearchOpen(isOpen, options = {}) {
     const shouldFocus = !!options.focus;
     elements.commentSearchBar?.classList.toggle('open', isOpen);
+    elements.commentSearchToggle?.classList.toggle('search-open', isOpen);
 
     if (elements.commentSearchToggle) {
       elements.commentSearchToggle.setAttribute('aria-expanded', String(isOpen));
@@ -1296,7 +1297,10 @@ async function initApp() {
   });
 
   document.addEventListener('click', (e) => {
-    if (!elements.commentSearchBar?.contains(e.target) && !commentSearchKeyword) {
+    const clickedSearchPanel = !!elements.commentSearchBar?.contains(e.target);
+    const clickedSearchToggle = !!elements.commentSearchToggle?.contains(e.target);
+
+    if (!clickedSearchPanel && !clickedSearchToggle && !commentSearchKeyword) {
       setCommentSearchOpen(false);
     }
   });
