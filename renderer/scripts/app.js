@@ -3850,7 +3850,7 @@ async function initApp() {
     // 해결 버튼
     tooltip.querySelector('.tooltip-btn.resolve')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      commentManager.toggleMarkerResolved(marker.id);
+      commentManager.toggleMarkerResolved(marker.id, userName);
     });
 
     // 삭제 버튼
@@ -3858,7 +3858,10 @@ async function initApp() {
       e.stopPropagation();
       if (confirm('댓글을 삭제하시겠습니까?')) {
         const markerData = marker.toJSON();
-        commentManager.deleteMarker(marker.id);
+        const deleted = commentManager.deleteMarker(marker.id);
+
+        // 권한 없음 시 중단 (permissionDenied 이벤트에서 토스트 표시됨)
+        if (deleted === false) return;
 
         // UI 업데이트
         updateCommentList();
@@ -4140,6 +4143,7 @@ async function initApp() {
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
         <button class="comment-resolve-toggle resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
           ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
+          ${marker.resolved && marker.resolvedBy ? `<span class="resolve-tooltip"><span class="resolve-tooltip-who">해결됨 by ${escapeHtml(marker.resolvedBy)}</span><span class="resolve-tooltip-date">${formatResolvedDate(marker.resolvedAt)}</span></span>` : ''}
         </button>
         ${thumbnailHtml}
         <div class="comment-header">
@@ -4202,7 +4206,7 @@ async function initApp() {
       // 해결 버튼
       item.querySelector('.resolve-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        commentManager.toggleMarkerResolved(item.dataset.markerId);
+        commentManager.toggleMarkerResolved(item.dataset.markerId, userName);
       });
 
       // 삭제 버튼
@@ -4213,7 +4217,10 @@ async function initApp() {
           const marker = commentManager.getMarker(markerId);
           if (marker) {
             const markerData = marker.toJSON();
-            commentManager.deleteMarker(markerId);
+            const deleted = commentManager.deleteMarker(markerId);
+
+            // 권한 없음 시 중단 (permissionDenied 이벤트에서 토스트 표시됨)
+            if (deleted === false) return;
 
             // UI 업데이트
             updateCommentList();
@@ -4258,6 +4265,13 @@ async function initApp() {
         e.stopPropagation();
         const markerId = item.dataset.markerId;
 
+        // 권한 체크 (본인 코멘트만 수정 가능)
+        const markerToEdit = commentManager.getMarker(markerId);
+        if (markerToEdit && !commentManager.canEdit(markerToEdit)) {
+          showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
+          return;
+        }
+
         // 편집 잠금 획득 시도 (이미 잠금 여부 체크 포함)
         const startResult = await collaborationManager.startEditing(markerId);
         if (!startResult.success) {
@@ -4283,7 +4297,15 @@ async function initApp() {
           const marker = commentManager.getMarker(markerId);
           if (marker) {
             const oldText = marker.text;
-            commentManager.updateMarker(markerId, { text: newText });
+            const updated = commentManager.updateMarker(markerId, { text: newText });
+
+            // 권한 없음 시 중단 (permissionDenied 이벤트에서 토스트 표시됨)
+            if (!updated) {
+              // 편집 잠금 해제
+              await collaborationManager.stopEditing(markerId);
+              return;
+            }
+
             // Undo 스택에 추가
             pushUndo({
               type: 'EDIT_COMMENT',
@@ -4476,6 +4498,21 @@ async function initApp() {
     if (diffDay < 7) return `${diffDay}일 전`;
 
     return new Date(date).toLocaleDateString('ko-KR');
+  }
+
+  /**
+   * 해결됨 날짜/시간 포맷 (예: 2월 9일 3:30 PM)
+   */
+  function formatResolvedDate(date) {
+    if (!date) return '';
+    const d = new Date(date);
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    let hours = d.getHours();
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12 || 12;
+    return `${month}월 ${day}일 ${hours}:${minutes} ${ampm}`;
   }
 
   /**

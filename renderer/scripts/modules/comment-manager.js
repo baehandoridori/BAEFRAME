@@ -75,6 +75,7 @@ export class CommentMarker {
     // 상태
     this.resolved = options.resolved || false;
     this.resolvedAt = options.resolvedAt ? new Date(options.resolvedAt) : null; // 해결된 시간
+    this.resolvedBy = options.resolvedBy || null; // 해결한 사용자
     this.pinned = options.pinned || false; // 말풍선 고정 상태
     this.deleted = options.deleted || false; // 삭제됨 (협업 동기화용)
     this.deletedAt = options.deletedAt ? new Date(options.deletedAt) : null; // 삭제 시간
@@ -159,11 +160,13 @@ export class CommentMarker {
 
   /**
    * 해결 상태 토글
+   * @param {string|null} userName - 해결한 사용자 이름
    */
-  toggleResolved() {
+  toggleResolved(userName = null) {
     this.resolved = !this.resolved;
-    // 해결됨으로 변경 시 시간 기록, 미해결로 변경 시 시간 초기화
+    // 해결됨으로 변경 시 시간/사용자 기록, 미해결로 변경 시 초기화
     this.resolvedAt = this.resolved ? new Date() : null;
+    this.resolvedBy = this.resolved ? userName : null;
     // 변경 시간 갱신 (협업 머지용)
     this.updatedAt = new Date();
     return this.resolved;
@@ -194,6 +197,7 @@ export class CommentMarker {
       updatedAt: this.updatedAt instanceof Date ? this.updatedAt.toISOString() : this.updatedAt,
       resolved: this.resolved,
       resolvedAt: this.resolvedAt instanceof Date ? this.resolvedAt.toISOString() : this.resolvedAt,
+      resolvedBy: this.resolvedBy,
       deleted: this.deleted,
       deletedAt: this.deletedAt instanceof Date ? this.deletedAt.toISOString() : this.deletedAt,
       layerId: this.layerId,
@@ -615,12 +619,14 @@ export class CommentManager extends EventTarget {
 
   /**
    * 마커 해결 상태 토글
+   * @param {string} markerId
+   * @param {string|null} userName - 해결한 사용자 이름
    */
-  toggleMarkerResolved(markerId) {
+  toggleMarkerResolved(markerId, userName = null) {
     const marker = this.getMarker(markerId);
     if (!marker) return null;
 
-    marker.toggleResolved();
+    marker.toggleResolved(userName);
 
     this._emit('markerUpdated', { marker });
     this._emit('markersChanged');

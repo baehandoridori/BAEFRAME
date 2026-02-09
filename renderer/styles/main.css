@@ -2863,6 +2863,55 @@ body.app-fullscreen .video-comment-overlay-controls {
   border-color: #4caf50;
 }
 
+/* 해결됨 호버 툴팁 */
+.comment-resolve-toggle {
+  position: relative;
+}
+
+.resolve-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-primary, #1a1a2e);
+  border: 1px solid var(--border-default, #333);
+  border-radius: 6px;
+  padding: 6px 10px;
+  white-space: nowrap;
+  z-index: 100;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  text-align: center;
+}
+
+.resolve-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--border-default, #333);
+}
+
+.comment-resolve-toggle:hover .resolve-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resolve-tooltip-who {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.resolve-tooltip-date {
+  font-size: 9px;
+  color: var(--text-secondary, #888);
+}
+
 .comment-item:hover {
   background: var(--bg-hover);
   border-color: var(--border-subtle);
