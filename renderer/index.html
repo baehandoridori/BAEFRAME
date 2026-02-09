@@ -805,9 +805,6 @@
         <button class="filter-chip active" data-filter="all">전체</button>
         <button class="filter-chip" data-filter="unresolved">미해결</button>
         <button class="filter-chip" data-filter="resolved">해결됨</button>
-      </div>
-
-      <div class="comment-search-bar" id="commentSearchBar">
         <button
           type="button"
           class="comment-search-toggle"
@@ -822,13 +819,16 @@
             <line x1="20" y1="20" x2="16.65" y2="16.65"></line>
           </svg>
         </button>
+      </div>
+
+      <div class="comment-search-bar" id="commentSearchBar">
         <div class="comment-search-panel" id="commentSearchPanel">
           <div class="comment-search-input-wrap" id="commentSearchInputWrap">
             <input
               type="text"
               id="commentSearchInput"
               class="comment-search-input"
-              placeholder="댓글, 작성자, 답글, 프레임 검색"
+              placeholder=""
               autocomplete="off"
               aria-label="댓글 검색"
             >
