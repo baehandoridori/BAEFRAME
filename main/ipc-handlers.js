@@ -1755,6 +1755,7 @@ function setupPlaylistHandlers() {
   });
 
   // P2P 이벤트를 렌더러로 전달
+  log.info('P2P 이벤트 리스너 등록 중...');
   const mainWindow = getMainWindow();
 
   p2pService.on('peer:found', (peer) => {
@@ -1772,11 +1773,17 @@ function setupPlaylistHandlers() {
   });
 
   p2pService.on('signal', (signal) => {
+    log.info('P2P 시그널 이벤트 수신 (IPC 핸들러)', { from: signal.from, type: signal.type });
     const win = getMainWindow();
     if (win && !win.isDestroyed()) {
+      log.info('렌더러로 시그널 전달 중', { type: signal.type });
       win.webContents.send('p2p:signal', signal);
+    } else {
+      log.warn('메인 윈도우가 없거나 파괴됨, 시그널 전달 실패');
     }
   });
+
+  log.info('P2P 이벤트 리스너 등록 완료');
 }
 
 /**

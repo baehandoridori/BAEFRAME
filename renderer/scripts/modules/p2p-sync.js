@@ -45,8 +45,10 @@ export class P2PSync extends EventTarget {
    * 시그널 핸들러 설정
    */
   _setupSignalHandler() {
+    log.info('P2PSync 시그널 핸들러 등록');
     lanDiscovery.addEventListener('signal', async (e) => {
       const signal = e.detail;
+      log.info('LANDiscovery에서 시그널 이벤트 수신', { type: signal?.type, from: signal?.from?.substring(0, 15) });
       await this._handleIncomingSignal(signal);
     });
   }

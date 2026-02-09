@@ -58,7 +58,7 @@ export class LANDiscovery extends EventTarget {
 
     // 시그널 수신 (WebRTC 연결용)
     window.electronAPI.onP2PSignal((signal) => {
-      log.debug('시그널 수신', { from: signal.from, type: signal.type });
+      log.info('IPC 시그널 수신!', { from: signal.from, type: signal.type, fromName: signal.fromName });
       this._emit('signal', signal);
     });
   }

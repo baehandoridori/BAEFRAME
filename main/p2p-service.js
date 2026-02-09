@@ -281,7 +281,7 @@ class P2PService extends EventEmitter {
             req.on('end', () => {
               try {
                 const signal = JSON.parse(body);
-                log.debug('시그널 수신', { from: signal.from, type: signal.type });
+                log.info('시그널 수신 → emit 전달', { from: signal.from, type: signal.type });
                 this.emit('signal', signal);
                 res.writeHead(200);
                 res.end(JSON.stringify({ success: true }));
