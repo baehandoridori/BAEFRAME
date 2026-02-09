@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getOSUser: () => ipcRenderer.invoke('user:get-os-user'),
   getSlackUser: () => ipcRenderer.invoke('user:get-slack-user'),
 
+  // ====== 인증 파일 관련 ======
+  loadAuthData: () => ipcRenderer.invoke('auth:load'),
+  saveAuthData: (data) => ipcRenderer.invoke('auth:save', data),
+
   // ====== 설정 파일 관련 ======
   loadSettings: () => ipcRenderer.invoke('settings:load'),
   saveSettings: (data) => ipcRenderer.invoke('settings:save', data),
