@@ -23,18 +23,21 @@ let loadingWindow = null;
 
 /**
  * 로딩 창 생성
- * @param {string} [filePath] - 로딩 중인 파일 경로 (표시용)
+ * @param {object} [options] - 로딩창 옵션
+ * @param {string} [options.filePath] - 로딩 중인 파일 경로 (표시용)
+ * @param {string} [options.launchContext] - app | deeplink
  * @returns {BrowserWindow}
  */
-function createLoadingWindow(filePath = '') {
+function createLoadingWindow(options = {}) {
+  const { filePath = '', launchContext = 'app' } = options;
   // 이미 로딩 창이 있으면 반환
   if (loadingWindow && !loadingWindow.isDestroyed()) {
     return loadingWindow;
   }
 
   loadingWindow = new BrowserWindow({
-    width: 400,
-    height: 220,
+    width: 460,
+    height: 300,
     frame: false,
     transparent: false,
     backgroundColor: '#1a1a1a',
@@ -51,8 +54,13 @@ function createLoadingWindow(filePath = '') {
   });
 
   const loadingPath = path.join(__dirname, '..', 'renderer', 'loading.html');
-  const fileParam = filePath ? `?file=${encodeURIComponent(filePath)}` : '';
-  loadingWindow.loadFile(loadingPath, { search: fileParam.slice(1) });
+  const search = new URLSearchParams();
+  if (filePath) {
+    search.set('file', filePath);
+  }
+  search.set('context', launchContext);
+
+  loadingWindow.loadFile(loadingPath, { search: search.toString() });
 
   loadingWindow.on('closed', () => {
     loadingWindow = null;
