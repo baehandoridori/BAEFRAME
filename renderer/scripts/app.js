@@ -1304,14 +1304,7 @@ async function initApp() {
     elements.commentSearchInput.focus();
   });
 
-  document.addEventListener('click', (e) => {
-    const clickedSearchPanel = !!elements.commentSearchBar?.contains(e.target);
-    const clickedSearchToggle = !!elements.commentSearchToggle?.contains(e.target);
-
-    if (!clickedSearchPanel && !clickedSearchToggle && !commentSearchKeyword) {
-      setCommentSearchOpen(false);
-    }
-  });
+  // Search panel closes only by toggle button.
 
   syncCommentSearchUiState();
   setCommentSearchOpen(!!elements.commentSearchInput?.value.trim());
