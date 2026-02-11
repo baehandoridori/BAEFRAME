@@ -317,13 +317,24 @@ if (!gotTheLock) {
 
       // 재생목록이 아닌 경우만 로딩 창 표시
       if (!isPlaylistArg) {
-        createLoadingWindow(fileArg);
+        createLoadingWindow({
+          filePath: fileArg,
+          launchContext: 'deeplink'
+        });
         debugLog('로딩 창 표시됨');
       }
     }
 
     // IPC 핸들러 설정
     debugLog('IPC 핸들러 설정 중...');
+    if (!fileArg || isPlaylistArg) {
+      createLoadingWindow({
+        filePath: '',
+        launchContext: fileArg ? 'deeplink' : 'app'
+      });
+      debugLog('로딩 창 표시됨 (일반/재생목록 시작)');
+    }
+
     setupIpcHandlers();
 
     // 메인 윈도우 생성
