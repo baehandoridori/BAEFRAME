@@ -2,7 +2,11 @@
 param(
   [string]$AppPath,
   [switch]$UseSharePath,
-  [switch]$EnableLegacyFallback
+  [switch]$EnableLegacyFallback,
+  [switch]$Provision,
+  [string]$CertPath,
+  [switch]$SkipCertificateInstall,
+  [switch]$SkipPolicySetup
 )
 
 Set-StrictMode -Version Latest
@@ -10,6 +14,31 @@ $ErrorActionPreference = 'Stop'
 
 $configPath = Join-Path $PSScriptRoot 'setup-paths.json'
 $installScriptPath = Join-Path $PSScriptRoot 'install-integration.ps1'
+$provisionScriptPath = Join-Path $PSScriptRoot 'provision-machine-prereqs.ps1'
+
+function Resolve-ExistingPath {
+  param(
+    [string]$PathCandidate,
+    [string]$RelativeBase
+  )
+
+  if ([string]::IsNullOrWhiteSpace($PathCandidate)) {
+    return $null
+  }
+
+  if (Test-Path $PathCandidate) {
+    return (Resolve-Path $PathCandidate).Path
+  }
+
+  if (-not [System.IO.Path]::IsPathRooted($PathCandidate)) {
+    $relativeCandidate = Join-Path $RelativeBase $PathCandidate
+    if (Test-Path $relativeCandidate) {
+      return (Resolve-Path $relativeCandidate).Path
+    }
+  }
+
+  return $null
+}
 
 if (-not (Test-Path $installScriptPath)) {
   throw "Installer script not found: $installScriptPath"
@@ -19,6 +48,8 @@ $config = [ordered]@{
   activeProfile = 'test'
   mode = 'Auto'
   enableLegacyFallback = $false
+  provisionPolicyAndCert = $false
+  certPath = ''
   testAppPath = ''
   shareAppPath = ''
 }
@@ -29,6 +60,8 @@ if (Test-Path $configPath) {
     if ($loaded.activeProfile) { $config.activeProfile = [string]$loaded.activeProfile }
     if ($loaded.mode) { $config.mode = [string]$loaded.mode }
     if ($null -ne $loaded.enableLegacyFallback) { $config.enableLegacyFallback = [bool]$loaded.enableLegacyFallback }
+    if ($null -ne $loaded.provisionPolicyAndCert) { $config.provisionPolicyAndCert = [bool]$loaded.provisionPolicyAndCert }
+    if ($loaded.certPath) { $config.certPath = [string]$loaded.certPath }
     if ($loaded.testAppPath) { $config.testAppPath = [string]$loaded.testAppPath }
     if ($loaded.shareAppPath) { $config.shareAppPath = [string]$loaded.shareAppPath }
   } catch {
@@ -54,8 +87,9 @@ if ($AppPath) {
 $candidatePaths = $candidatePaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
 foreach ($candidate in $candidatePaths) {
-  if (Test-Path $candidate) {
-    $resolvedAppPath = (Resolve-Path $candidate).Path
+  $resolved = Resolve-ExistingPath -PathCandidate $candidate -RelativeBase $PSScriptRoot
+  if ($resolved) {
+    $resolvedAppPath = $resolved
     break
   }
 }
@@ -67,6 +101,55 @@ if (-not $resolvedAppPath) {
 
 $mode = if ($config.mode) { [string]$config.mode } else { 'Auto' }
 $allowLegacyFallback = if ($EnableLegacyFallback) { $true } else { [bool]$config.enableLegacyFallback }
+$runProvision = if ($Provision) { $true } else { [bool]$config.provisionPolicyAndCert }
+$certPathInput = if ($CertPath) { $CertPath } elseif ($config.certPath) { [string]$config.certPath } else { $null }
+$resolvedCertPath = Resolve-ExistingPath -PathCandidate $certPathInput -RelativeBase $PSScriptRoot
+
+Write-Host "[integration-setup] AppPath = $resolvedAppPath"
+Write-Host "[integration-setup] Mode = $mode"
+Write-Host "[integration-setup] EnableLegacyFallback = $allowLegacyFallback"
+Write-Host "[integration-setup] ProvisionPolicyAndCert = $runProvision"
+if ($resolvedCertPath) {
+  Write-Host "[integration-setup] CertPath = $resolvedCertPath"
+}
+
+if ($runProvision) {
+  if (-not (Test-Path $provisionScriptPath)) {
+    throw "Provision script not found: $provisionScriptPath"
+  }
+
+  $provisionArgs = @(
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', $provisionScriptPath
+  )
+
+  if ($resolvedCertPath) {
+    $provisionArgs += @('-CertPath', $resolvedCertPath)
+  } elseif ($certPathInput) {
+    $provisionArgs += @('-CertPath', $certPathInput)
+  }
+
+  if ($SkipCertificateInstall) {
+    $provisionArgs += '-SkipCertificateInstall'
+  }
+
+  if ($SkipPolicySetup) {
+    $provisionArgs += '-SkipPolicySetup'
+  }
+
+  Write-Host '[integration-setup] Provision step started'
+  $provisionOutput = & powershell.exe @provisionArgs 2>&1
+  $provisionExitCode = $LASTEXITCODE
+
+  if ($provisionOutput) {
+    $provisionOutput | ForEach-Object { Write-Host $_ }
+  }
+
+  if ($provisionExitCode -ne 0) {
+    throw "Provision step failed with exit code $provisionExitCode"
+  }
+}
 
 $installArgs = @(
   '-NoProfile',
@@ -79,10 +162,6 @@ $installArgs = @(
 if ($allowLegacyFallback) {
   $installArgs += '-EnableLegacyFallback'
 }
-
-Write-Host "[integration-setup] AppPath = $resolvedAppPath"
-Write-Host "[integration-setup] Mode = $mode"
-Write-Host "[integration-setup] EnableLegacyFallback = $allowLegacyFallback"
 
 & powershell.exe @installArgs
 exit $LASTEXITCODE

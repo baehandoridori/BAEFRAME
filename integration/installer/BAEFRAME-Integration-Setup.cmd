@@ -4,7 +4,11 @@ cd /d "%~dp0"
 
 echo [BAEFRAME Integration Setup]
 echo Running...
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\run-integration-setup.ps1"
+if "%~1"=="" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File ".\run-integration-setup.ps1"
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File ".\run-integration-setup.ps1" %*
+)
 set EXIT_CODE=%ERRORLEVEL%
 
 echo.

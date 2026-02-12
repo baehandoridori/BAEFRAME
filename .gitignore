@@ -55,3 +55,7 @@ coverage/
 # .NET shell extension outputs
 integration/shell/BAEFRAME.ContextMenu/bin/
 integration/shell/BAEFRAME.ContextMenu/obj/
+
+# Integration certificate private keys
+*.pfx
+*.p12

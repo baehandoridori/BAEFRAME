@@ -48,8 +48,10 @@ function Resolve-BaeframePath {
   $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
   $candidates = @(
     (Join-Path $repoRoot 'BAEFRAME.exe'),
+    (Join-Path $repoRoot 'BFRAME_alpha_v2.exe'),
     (Join-Path $repoRoot 'dist\win-unpacked\BAEFRAME.exe'),
-    (Join-Path $repoRoot 'dist\win-unpacked\baeframe.exe')
+    (Join-Path $repoRoot 'dist\win-unpacked\baeframe.exe'),
+    (Join-Path $repoRoot 'dist\win-unpacked\BFRAME_alpha_v2.exe')
   )
 
   foreach ($candidatePath in $candidates) {
@@ -58,7 +60,7 @@ function Resolve-BaeframePath {
     }
   }
 
-  throw 'Unable to locate BAEFRAME executable. Re-run with -AppPath "C:\path\to\BAEFRAME.exe".'
+  throw 'Unable to locate app executable. Re-run with -AppPath "C:\path\to\BFRAME_alpha_v2.exe".'
 }
 
 function Invoke-PowerShellFile {
