@@ -51,3 +51,7 @@ ffmpeg/linux/
 
 # Test coverage
 coverage/
+
+# .NET shell extension outputs
+integration/shell/BAEFRAME.ContextMenu/bin/
+integration/shell/BAEFRAME.ContextMenu/obj/

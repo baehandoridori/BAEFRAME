@@ -288,6 +288,40 @@ npm run dev  # DevTools 자동 열림
 npm run build:installer  # Windows 설치 파일 생성
 ```
 
+### Windows 11 우클릭 통합 (이슈 #88)
+
+BAEFRAME를 영상 파일 우클릭으로 바로 열려면 통합 설치를 한 번 실행해야 합니다.
+
+```powershell
+# 프로젝트 루트에서 실행 (Auto: sparse 우선, 실패 시 legacy fallback)
+powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1
+```
+
+통합 상태 점검/복구:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\integration\installer\detect-integration.ps1
+powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1
+```
+
+모드 지정:
+
+```powershell
+# Win11 1차 메뉴 경로만 강제
+powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -Mode Sparse
+
+# 레거시 컨텍스트 메뉴만 강제
+powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -Mode Legacy
+```
+
+제거:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\integration\installer\uninstall-integration.ps1
+```
+
+앱 내부에서는 설정 메뉴의 `Windows 통합 진단/복구` 버튼으로 동일한 설치기를 실행할 수 있습니다.
+
 ---
 
 ## ⌨️ 단축키 총정리
@@ -512,3 +546,4 @@ Windows 레지스트리에 자동 등록 → 설정 필요 없음
 [웹 뷰어](https://baeframe.vercel.app) · [GitHub](https://github.com/baehandoridori/BAEFRAME)
 
 </div>
+
