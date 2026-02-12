@@ -4,7 +4,9 @@ param(
   [string]$AppPath,
 
   [ValidateSet('Auto', 'Sparse', 'Legacy')]
-  [string]$Mode = 'Auto'
+  [string]$Mode = 'Auto',
+
+  [switch]$EnableLegacyFallback
 )
 
 Set-StrictMode -Version Latest
@@ -15,7 +17,7 @@ $VerbKeyName = 'BAEFRAME.Open'
 $VerbLabel = ('BAEFRAME' + [string][char]0xB85C + ' ' + [string][char]0xC5F4 + [string][char]0xAE30)
 $ShellExtensionClsid = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
 $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
-$InstallerVersion = '1.2.0'
+$InstallerVersion = '1.3.0'
 
 $AppDataDir = Join-Path $env:APPDATA 'baeframe'
 $LogPath = Join-Path $AppDataDir 'integration-setup.log'
@@ -69,10 +71,14 @@ function Resolve-BaeframePath {
   $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
   $candidates = @(
     (Join-Path $PSScriptRoot 'BAEFRAME.exe'),
+    (Join-Path $PSScriptRoot 'BFRAME_alpha_v2.exe'),
     (Join-Path (Split-Path -Parent $PSScriptRoot) 'BAEFRAME.exe'),
+    (Join-Path (Split-Path -Parent $PSScriptRoot) 'BFRAME_alpha_v2.exe'),
     (Join-Path $repoRoot 'BAEFRAME.exe'),
+    (Join-Path $repoRoot 'BFRAME_alpha_v2.exe'),
     (Join-Path $repoRoot 'dist\win-unpacked\BAEFRAME.exe'),
-    (Join-Path $repoRoot 'dist\win-unpacked\baeframe.exe')
+    (Join-Path $repoRoot 'dist\win-unpacked\baeframe.exe'),
+    (Join-Path $repoRoot 'dist\win-unpacked\BFRAME_alpha_v2.exe')
   )
 
   foreach ($pathCandidate in $candidates) {
@@ -81,7 +87,7 @@ function Resolve-BaeframePath {
     }
   }
 
-  throw 'Unable to locate BAEFRAME executable. Re-run with -AppPath "C:\path\to\BAEFRAME.exe".'
+  throw 'Unable to locate app executable. Re-run with -AppPath "C:\path\to\BFRAME_alpha_v2.exe".'
 }
 
 function Test-Windows11 {
@@ -152,6 +158,7 @@ try {
     psVersion = $PSVersionTable.PSVersion.ToString()
     requestedAppPath = $AppPath
     requestedMode = $Mode
+    enableLegacyFallback = [bool]$EnableLegacyFallback
   }
 
   if (-not (Test-Windows11)) {
@@ -159,7 +166,7 @@ try {
   }
 
   $resolvedAppPath = Resolve-BaeframePath -Candidate $AppPath
-  $resolvedMode = 'legacy-shell'
+  $resolvedMode = 'none'
   $sparseInstall = [ordered]@{
     attempted = $false
     installed = $false
@@ -196,12 +203,20 @@ try {
       if ($Mode -eq 'Sparse') {
         throw "Sparse package mode requested but install failed: $($sparseInstall.error)"
       }
+
+      if ($Mode -eq 'Auto' -and -not $EnableLegacyFallback) {
+        throw "Sparse install failed. Legacy fallback is disabled by policy. Error: $($sparseInstall.error)"
+      }
     }
   }
 
   if ($resolvedMode -ne 'sparse-package') {
-    Register-LegacyShellVerbs -ResolvedAppPath $resolvedAppPath
-    $resolvedMode = 'legacy-shell'
+    if ($Mode -eq 'Legacy' -or $EnableLegacyFallback) {
+      Register-LegacyShellVerbs -ResolvedAppPath $resolvedAppPath
+      $resolvedMode = 'legacy-shell'
+    } else {
+      throw 'Legacy fallback is disabled. No context menu was registered.'
+    }
   }
 
   if ($PSCmdlet.ShouldProcess($IntegrationConfigKey, 'Write integration app path config')) {
@@ -220,6 +235,7 @@ try {
       installedAt = (Get-Date).ToString('o')
       mode = $resolvedMode
       requestedMode = $Mode
+      enableLegacyFallback = [bool]$EnableLegacyFallback
       windowsBuild = [int][Environment]::OSVersion.Version.Build
       appPath = $resolvedAppPath
       extensions = $SupportedExtensions
@@ -236,6 +252,7 @@ try {
     mode = $resolvedMode
     shellClsid = $ShellExtensionClsid
     packageName = $PackageName
+    enableLegacyFallback = [bool]$EnableLegacyFallback
   }
 
   [ordered]@{
@@ -243,6 +260,7 @@ try {
     appPath = $resolvedAppPath
     mode = $resolvedMode
     requestedMode = $Mode
+    enableLegacyFallback = [bool]$EnableLegacyFallback
     shellClsid = $ShellExtensionClsid
     packageName = $PackageName
     sparseInstall = $sparseInstall
@@ -257,15 +275,16 @@ try {
   Write-SetupLog -Level 'ERROR' -Message 'Integration install failed' -Data @{
     error = $_.Exception.Message
     requestedMode = $Mode
+    enableLegacyFallback = [bool]$EnableLegacyFallback
   }
 
   [ordered]@{
     success = $false
     error = $_.Exception.Message
     requestedMode = $Mode
+    enableLegacyFallback = [bool]$EnableLegacyFallback
     logPath = $LogPath
   } | ConvertTo-Json -Depth 4
 
   exit 1
 }
-

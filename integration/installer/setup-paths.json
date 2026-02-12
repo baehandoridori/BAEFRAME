@@ -1,0 +1,7 @@
+{
+  "activeProfile": "test",
+  "mode": "Auto",
+  "enableLegacyFallback": false,
+  "testAppPath": "C:\\BAEframe\\BAEFRAME\\dist\\win-unpacked\\BFRAME_alpha_v2.exe",
+  "shareAppPath": ""
+}

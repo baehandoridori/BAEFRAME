@@ -123,6 +123,18 @@ function resolveIntegrationInstaller() {
         : path.join(appPath, 'dist', 'BAEFRAME-Integration-Setup.exe')
     },
     {
+      kind: 'cmd',
+      path: app.isPackaged
+        ? path.join(process.resourcesPath, 'integration', 'installer', 'BAEFRAME-Integration-Setup.cmd')
+        : path.join(appPath, 'integration', 'installer', 'BAEFRAME-Integration-Setup.cmd')
+    },
+    {
+      kind: 'script',
+      path: app.isPackaged
+        ? path.join(process.resourcesPath, 'integration', 'installer', 'run-integration-setup.ps1')
+        : path.join(appPath, 'integration', 'installer', 'run-integration-setup.ps1')
+    },
+    {
       kind: 'script',
       path: app.isPackaged
         ? path.join(process.resourcesPath, 'integration', 'installer', 'install-integration.ps1')
@@ -896,7 +908,7 @@ function setupIpcHandlers() {
         const result = {
           success: false,
           launched: false,
-          error: '통합 설치기를 찾지 못했습니다. integration/installer/install-integration.ps1 또는 BAEFRAME-Integration-Setup.exe를 확인해주세요.'
+          error: '통합 설치기를 찾지 못했습니다. integration/installer/BAEFRAME-Integration-Setup.cmd 또는 run-integration-setup.ps1을 확인해주세요.'
         };
         trace.end(result);
         return result;
@@ -905,7 +917,7 @@ function setupIpcHandlers() {
       const escapedInstallerPath = escapePowerShellSingleQuote(installer.path);
       let launchCommand;
 
-      if (installer.kind === 'exe') {
+      if (installer.kind === 'exe' || installer.kind === 'cmd') {
         launchCommand = `Start-Process -FilePath '${escapedInstallerPath}' -Verb RunAs`;
       } else {
         const scriptArgs = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer.path];
@@ -1980,4 +1992,5 @@ function createPathHash(filePath) {
 }
 
 module.exports = { setupIpcHandlers };
+
 

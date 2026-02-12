@@ -290,34 +290,33 @@ npm run build:installer  # Windows 설치 파일 생성
 
 ### Windows 11 우클릭 통합 (이슈 #88)
 
-BAEFRAME를 영상 파일 우클릭으로 바로 열려면 통합 설치를 한 번 실행해야 합니다.
+BAEFRAME를 영상 파일 우클릭으로 바로 열려면 통합 설치를 실행해야 합니다.
+
+가장 쉬운 방법(프로그램처럼 실행):
 
 ```powershell
-# 프로젝트 루트에서 실행 (Auto: sparse 우선, 실패 시 legacy fallback)
-powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1
+.\integration\installer\BAEFRAME-Integration-Setup.cmd
 ```
 
-통합 상태 점검/복구:
+기본 정책은 **Win11 1차 우클릭(sparse) 우선**이며, 실패 시 자동으로 legacy(2차 메뉴)를 만들지 않습니다.
+
+수동 실행:
 
 ```powershell
+# 설치 (sparse-only 기본)
+powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -AppPath "C:\BAEframe\BAEFRAME\dist\win-unpacked\BFRAME_alpha_v2.exe"
+
+# 상태 확인
 powershell -ExecutionPolicy Bypass -File .\integration\installer\detect-integration.ps1
-powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1
-```
 
-모드 지정:
-
-```powershell
-# Win11 1차 메뉴 경로만 강제
-powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -Mode Sparse
-
-# 레거시 컨텍스트 메뉴만 강제
-powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -Mode Legacy
-```
-
-제거:
-
-```powershell
+# 제거
 powershell -ExecutionPolicy Bypass -File .\integration\installer\uninstall-integration.ps1
+```
+
+legacy를 정말 써야 할 때만 fallback 허용:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -AppPath "C:\path\to\BFRAME_alpha_v2.exe" -Mode Auto -EnableLegacyFallback
 ```
 
 앱 내부에서는 설정 메뉴의 `Windows 통합 진단/복구` 버튼으로 동일한 설치기를 실행할 수 있습니다.
@@ -546,4 +545,5 @@ Windows 레지스트리에 자동 등록 → 설정 필요 없음
 [웹 뷰어](https://baeframe.vercel.app) · [GitHub](https://github.com/baehandoridori/BAEFRAME)
 
 </div>
+
 
