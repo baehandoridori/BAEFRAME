@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 
 $SupportedExtensions = @('.mp4', '.mov', '.avi', '.mkv', '.webm')
 $VerbKeyName = 'BAEFRAME.Open'
-$VerbLabel = 'BAEFRAME로 열기'
+$VerbLabel = ('BAEFRAME' + [string][char]0xB85C + ' ' + [string][char]0xC5F4 + [string][char]0xAE30)
 $ShellExtensionClsid = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
 $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
 $InstallerVersion = '1.2.0'
@@ -268,3 +268,4 @@ try {
 
   exit 1
 }
+

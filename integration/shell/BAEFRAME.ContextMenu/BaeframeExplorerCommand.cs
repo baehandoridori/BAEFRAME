@@ -13,8 +13,8 @@ internal static class CommandConfig
   public const string Clsid = "E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4";
   public static readonly Guid CanonicalName = new("534055C0-B005-42C6-BD2A-B64966B6D4E9");
 
-  public const string VerbLabel = "BAEFRAME로 열기";
-  public const string ToolTip = "BAEFRAME에서 이 영상 열기";
+  public const string VerbLabel = "BAEFRAME\uB85C \uC5F4\uAE30";
+  public const string ToolTip = "BAEFRAME\uC5D0\uC11C \uC774 \uC601\uC0C1 \uC5F4\uAE30";
 
   public static readonly string[] SupportedExtensions = { ".mp4", ".mov", ".avi", ".mkv", ".webm" };
   private static readonly HashSet<string> SupportedExtensionSet = new(SupportedExtensions, StringComparer.OrdinalIgnoreCase);
@@ -489,4 +489,5 @@ internal static class AppPathResolver
     yield return Path.Combine(baseDir, "baeframe.exe");
   }
 }
+
 
