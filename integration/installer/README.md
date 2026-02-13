@@ -4,6 +4,15 @@ Windows 우클릭 진입(이슈 #88) 설치/진단/제거 스크립트입니다.
 
 ## 가장 쉬운 실행 방법 (프로그램처럼 실행)
 
+### 원클릭 관리자 설치 (추천)
+
+- `integration/installer/BAEFRAME-Integration-Setup-Admin.cmd` 더블클릭
+- UAC(관리자 권한) 승인
+- 끝
+
+이 파일은 자동으로 관리자 권한으로 재실행되며, 내부적으로 `-Provision`(정책/인증서) + 설치를 순서대로 실행합니다.
+인증서(.cer)가 준비되지 않은 경우에는 인증서 단계는 자동으로 스킵하고 설치는 계속 진행합니다.
+
 1. `integration/installer/BAEFRAME-Integration-Setup.cmd` 더블클릭
 2. 콘솔 창 결과(JSON + 성공/실패 문구) 확인
 

@@ -60,9 +60,9 @@ function Resolve-CertificatePath {
   }
 
   $candidates = @(
-    (Join-Path $PSScriptRoot 'certs\StudioJBBJ.BAEFRAME.Integration.cer'),
-    (Join-Path $PSScriptRoot 'certs\studiojbbj-baeframe-integration.cer'),
-    (Join-Path $PSScriptRoot 'certs\BAEFRAME-Integration.cer')
+    (Join-Path  'certs\\StudioJBBJ.BAEFRAME.Integration.cer'),
+    (Join-Path  'certs\\studiojbbj-baeframe-integration.cer'),
+    (Join-Path  'certs\\BAEFRAME-Integration.cer')
   )
 
   foreach ($pathCandidate in $candidates) {
@@ -71,23 +71,7 @@ function Resolve-CertificatePath {
     }
   }
 
-  throw 'Certificate file not found. Re-run with -CertPath "C:\path\to\StudioJBBJ.BAEFRAME.Integration.cer".'
-}
-
-function Set-DwordValue {
-  param(
-    [string]$Path,
-    [string]$Name,
-    [int]$Value
-  )
-
-  if ($PSCmdlet.ShouldProcess("$Path::$Name", "Set DWORD value to $Value")) {
-    if (-not (Test-Path $Path)) {
-      New-Item -Path $Path -Force | Out-Null
-    }
-
-    New-ItemProperty -Path $Path -Name $Name -PropertyType DWord -Value $Value -Force | Out-Null
-  }
+  return $null
 }
 
 try {
@@ -110,30 +94,46 @@ try {
     thumbprint = $null
     installedTo = @()
     skipped = [bool]$SkipCertificateInstall
+    skippedReason = $null
   }
 
   if (-not $SkipCertificateInstall) {
     $resolvedCertPath = Resolve-CertificatePath -Candidate $CertPath
-    $certificateResult.attempted = $true
-    $certificateResult.path = $resolvedCertPath
 
-    $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($resolvedCertPath)
-    $certificateResult.thumbprint = $certificate.Thumbprint
+    if (-not $resolvedCertPath) {
+      $certificateResult.skipped = $true
+      $certificateResult.skippedReason = 'No certificate configured (CertPath not provided and no default .cer found).'
 
-    $targetStores = @(
-      'Cert:\LocalMachine\Root',
-      'Cert:\LocalMachine\TrustedPublisher'
-    )
-
-    foreach ($store in $targetStores) {
-      $exists = Get-ChildItem -Path $store | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
-      if (-not $exists) {
-        if ($PSCmdlet.ShouldProcess($store, "Import certificate $($certificate.Thumbprint)")) {
-          Import-Certificate -FilePath $resolvedCertPath -CertStoreLocation $store | Out-Null
-        }
+      Write-ProvisionLog -Level 'WARN' -Message 'Certificate install skipped' -Data @{
+        reason = $certificateResult.skippedReason
+        expectedPaths = @(
+          (Join-Path  'certs\\StudioJBBJ.BAEFRAME.Integration.cer'),
+          (Join-Path  'certs\\studiojbbj-baeframe-integration.cer'),
+          (Join-Path  'certs\\BAEFRAME-Integration.cer')
+        )
       }
+    } else {
+      $certificateResult.attempted = $true
+      $certificateResult.path = $resolvedCertPath
 
-      $certificateResult.installedTo += $store
+      $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($resolvedCertPath)
+      $certificateResult.thumbprint = $certificate.Thumbprint
+
+      $targetStores = @(
+        'Cert:\LocalMachine\Root',
+        'Cert:\LocalMachine\TrustedPublisher'
+      )
+
+      foreach ($store in $targetStores) {
+        $exists = Get-ChildItem -Path $store | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
+        if (-not $exists) {
+          if ($PSCmdlet.ShouldProcess($store, "Import certificate $($certificate.Thumbprint)")) {
+            Import-Certificate -FilePath $resolvedCertPath -CertStoreLocation $store | Out-Null
+          }
+        }
+
+        $certificateResult.installedTo += $store
+      }
     }
   }
 
@@ -194,4 +194,5 @@ try {
 
   exit 1
 }
+
 
