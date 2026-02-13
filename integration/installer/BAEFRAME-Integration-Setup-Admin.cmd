@@ -13,7 +13,7 @@ if %errorlevel% NEQ 0 (
   echo UAC가 안 보이면 Alt+Tab 또는 작업표시줄을 확인하세요.
   echo.
 
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Start-Process -FilePath '%ComSpec%' -ArgumentList '/c','""%~f0""' -Verb RunAs | Out-Null; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Start-Process -FilePath '%ComSpec%' -ArgumentList '/c','""%~f0"" %*' -Verb RunAs | Out-Null; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
   if %errorlevel% NEQ 0 (
     echo.
     echo [FAILED] 관리자 권한 요청에 실패했습니다.
@@ -31,7 +31,7 @@ if %errorlevel% NEQ 0 (
 )
 
 echo Running...
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\run-integration-setup.ps1" -Provision
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\run-integration-setup.ps1" -Provision %*
 set EXIT_CODE=%ERRORLEVEL%
 
 echo.

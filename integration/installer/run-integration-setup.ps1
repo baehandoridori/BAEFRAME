@@ -2,6 +2,9 @@
 param(
   [string]$AppPath,
   [switch]$UseSharePath,
+  [ValidateSet('Msix', 'Register')]
+  [string]$SparseInstallMethod,
+  [switch]$EnableRegistryFallback,
   [switch]$EnableLegacyFallback,
   [switch]$Provision,
   [string]$CertPath,
@@ -47,6 +50,8 @@ if (-not (Test-Path $installScriptPath)) {
 $config = [ordered]@{
   activeProfile = 'test'
   mode = 'Auto'
+  sparseInstallMethod = 'Msix'
+  enableRegistryFallback = $false
   enableLegacyFallback = $false
   provisionPolicyAndCert = $false
   certPath = ''
@@ -59,6 +64,8 @@ if (Test-Path $configPath) {
     $loaded = Get-Content -Raw $configPath | ConvertFrom-Json
     if ($loaded.activeProfile) { $config.activeProfile = [string]$loaded.activeProfile }
     if ($loaded.mode) { $config.mode = [string]$loaded.mode }
+    if ($loaded.sparseInstallMethod) { $config.sparseInstallMethod = [string]$loaded.sparseInstallMethod }
+    if ($null -ne $loaded.enableRegistryFallback) { $config.enableRegistryFallback = [bool]$loaded.enableRegistryFallback }
     if ($null -ne $loaded.enableLegacyFallback) { $config.enableLegacyFallback = [bool]$loaded.enableLegacyFallback }
     if ($null -ne $loaded.provisionPolicyAndCert) { $config.provisionPolicyAndCert = [bool]$loaded.provisionPolicyAndCert }
     if ($loaded.certPath) { $config.certPath = [string]$loaded.certPath }
@@ -100,6 +107,8 @@ if (-not $resolvedAppPath) {
 }
 
 $mode = if ($config.mode) { [string]$config.mode } else { 'Auto' }
+$resolvedSparseMethod = if ($SparseInstallMethod) { [string]$SparseInstallMethod } elseif ($config.sparseInstallMethod) { [string]$config.sparseInstallMethod } else { 'Msix' }
+$allowRegistryFallback = if ($EnableRegistryFallback) { $true } else { [bool]$config.enableRegistryFallback }
 $allowLegacyFallback = if ($EnableLegacyFallback) { $true } else { [bool]$config.enableLegacyFallback }
 $runProvision = if ($Provision) { $true } else { [bool]$config.provisionPolicyAndCert }
 $certPathInput = if ($CertPath) { $CertPath } elseif ($config.certPath) { [string]$config.certPath } else { $null }
@@ -107,6 +116,8 @@ $resolvedCertPath = Resolve-ExistingPath -PathCandidate $certPathInput -Relative
 
 Write-Host "[integration-setup] AppPath = $resolvedAppPath"
 Write-Host "[integration-setup] Mode = $mode"
+Write-Host "[integration-setup] SparseInstallMethod = $resolvedSparseMethod"
+Write-Host "[integration-setup] EnableRegistryFallback = $allowRegistryFallback"
 Write-Host "[integration-setup] EnableLegacyFallback = $allowLegacyFallback"
 Write-Host "[integration-setup] ProvisionPolicyAndCert = $runProvision"
 if ($resolvedCertPath) {
@@ -156,8 +167,13 @@ $installArgs = @(
   '-ExecutionPolicy', 'Bypass',
   '-File', $installScriptPath,
   '-AppPath', $resolvedAppPath,
-  '-Mode', $mode
+  '-Mode', $mode,
+  '-SparseInstallMethod', $resolvedSparseMethod
 )
+
+if ($allowRegistryFallback) {
+  $installArgs += '-EnableRegistryFallback'
+}
 
 if ($allowLegacyFallback) {
   $installArgs += '-EnableLegacyFallback'

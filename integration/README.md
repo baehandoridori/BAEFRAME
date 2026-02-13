@@ -15,6 +15,7 @@ Windows 통합(이슈 #88) 관련 아티팩트입니다.
 ## 빠른 실행 (코딩 몰라도 되는 방법)
 
 1. `integration/installer/BAEFRAME-Integration-Setup.cmd` 더블클릭
+   - UAC(관리자 권한) 창이 뜨면 `예`를 눌러주세요.
 2. 끝나면 Explorer 재시작 여부(Y/N) 선택
 3. `.mp4` 파일 우클릭 -> `BAEFRAME로 열기` 확인
 
@@ -35,4 +36,5 @@ powershell -ExecutionPolicy Bypass -File .\integration\installer\uninstall-integ
 팀 전체 자동 반영은 개별 더블클릭이 아니라 IT 배포 시스템(GPO/Intune/SCCM)으로
 `run-integration-setup.ps1` 실행을 배포하는 방식이 안정적입니다.
 
-정책 제약이 많은 환경에서는 `setup-paths.json`의 `mode`를 `Registry`로 고정하는 구성이 운영이 쉽습니다.
+정책/권한 제약이 많은 환경에서는 `setup-paths.json`의 `mode`를 `Registry`로 고정하는 구성이 차선책이 될 수 있습니다
+(Windows 11 1차 메뉴 목표는 `Sparse + signed MSIX` 설치가 필요합니다).

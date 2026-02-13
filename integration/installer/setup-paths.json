@@ -1,6 +1,8 @@
 {
   "activeProfile": "test",
   "mode": "Auto",
+  "sparseInstallMethod": "Msix",
+  "enableRegistryFallback": false,
   "enableLegacyFallback": false,
   "provisionPolicyAndCert": false,
   "certPath": "",

@@ -6,6 +6,11 @@ param(
   [ValidateSet('Auto', 'Sparse', 'Registry', 'Legacy')]
   [string]$Mode = 'Auto',
 
+  [ValidateSet('Msix', 'Register')]
+  [string]$SparseInstallMethod = 'Msix',
+
+  [switch]$EnableRegistryFallback,
+
   [switch]$EnableLegacyFallback
 )
 
@@ -24,6 +29,7 @@ $LogPath = Join-Path $AppDataDir 'integration-setup.log'
 $StatePath = Join-Path $AppDataDir 'integration-state.json'
 $IntegrationConfigKey = 'Registry::HKEY_CURRENT_USER\Software\BAEFRAME\Integration'
 $SparseInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-sparse-package.ps1'
+$SparseMsixInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-sparse-msix.ps1'
 $SparseUninstallScriptPath = Join-Path $PSScriptRoot '..\package\uninstall-sparse-package.ps1'
 
 $ShellBuildScriptPath = Join-Path $PSScriptRoot '..\shell\build-shell.ps1'
@@ -313,6 +319,65 @@ function Register-LegacyShellVerbs {
   }
 }
 
+function Remove-ClassicShellArtifacts {
+  foreach ($ext in $SupportedExtensions) {
+    $verbKey = "Registry::HKEY_CURRENT_USER\Software\Classes\SystemFileAssociations\$ext\shell\$VerbKeyName"
+
+    if ((Test-Path $verbKey) -and $PSCmdlet.ShouldProcess($verbKey, 'Remove classic registry verb')) {
+      Remove-Item -Path $verbKey -Recurse -Force
+    }
+  }
+
+  $clsidKey = "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\$ShellExtensionClsid"
+  if ((Test-Path $clsidKey) -and $PSCmdlet.ShouldProcess($clsidKey, 'Remove classic registry COM registration')) {
+    Remove-Item -Path $clsidKey -Recurse -Force
+  }
+
+  if ((Test-Path $RegistryShellInstallDir) -and $PSCmdlet.ShouldProcess($RegistryShellInstallDir, 'Remove classic registry shell artifacts dir')) {
+    Remove-Item -Path $RegistryShellInstallDir -Recurse -Force
+  }
+}
+
+function Test-PackagedComActivation {
+  param(
+    [string]$PackageFamilyName,
+    [string]$AppId = 'BAEFRAME',
+    [string]$Clsid = $ShellExtensionClsid
+  )
+
+  $cmdlet = Get-Command Invoke-CommandInDesktopPackage -ErrorAction SilentlyContinue
+  if (-not $cmdlet) {
+    return $false
+  }
+
+  $inner = @"
+`$ErrorActionPreference = 'Stop'
+try {
+  `$t = [type]::GetTypeFromCLSID([guid]'$Clsid')
+  [void][activator]::CreateInstance(`$t)
+  'BAEFRAME_PACKAGED_COM_OK'
+  exit 0
+} catch {
+  'BAEFRAME_PACKAGED_COM_FAIL'
+  `$hr = if (`$_.Exception -and `$_.Exception.HResult) { `$_.Exception.HResult } else { 0 }
+  Write-Output ("HR=" + `$hr)
+  Write-Output (`$_.Exception.Message)
+  exit 1
+}
+"@
+
+  $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($inner))
+
+  try {
+    $out = Invoke-CommandInDesktopPackage -PackageFamilyName $PackageFamilyName -AppId $AppId -Command 'powershell.exe' -Args "-NoProfile -EncodedCommand $encoded" 2>&1
+    $text = ($out | ForEach-Object { $_.ToString() }) -join "`n"
+    return ($text -match 'BAEFRAME_PACKAGED_COM_OK')
+  } catch {
+    Write-SetupLog -Level 'WARN' -Message 'Invoke-CommandInDesktopPackage failed' -Data @{ error = $_.Exception.Message; packageFamilyName = $PackageFamilyName }
+    return $false
+  }
+}
+
 try {
   Ensure-Directory -Path $AppDataDir
 
@@ -320,6 +385,8 @@ try {
     psVersion = $PSVersionTable.PSVersion.ToString()
     requestedAppPath = $AppPath
     requestedMode = $Mode
+    sparseInstallMethod = $SparseInstallMethod
+    enableRegistryFallback = [bool]$EnableRegistryFallback
     enableLegacyFallback = [bool]$EnableLegacyFallback
   }
 
@@ -334,7 +401,8 @@ try {
   $sparseInstall = [ordered]@{
     attempted = $false
     installed = $false
-    scriptPath = $SparseInstallerScriptPath
+    scriptPath = $null
+    installMethod = $SparseInstallMethod
     error = $null
   }
 
@@ -350,35 +418,63 @@ try {
     $sparseInstall.attempted = $true
 
     try {
+      Remove-ClassicShellArtifacts
+
       $sparseArgs = @('-AppPath', $resolvedAppPath)
       if ($WhatIfPreference) {
         $sparseArgs += '-WhatIf'
       }
 
-      $sparseInstallResult = Invoke-PowerShellFile -ScriptPath $SparseInstallerScriptPath -Arguments $sparseArgs -AllowedExitCodes @(0)
-      $sparseInstall.installed = $true
+      $installerScript = $SparseInstallerScriptPath
+      if ($SparseInstallMethod -eq 'Msix') {
+        $installerScript = $SparseMsixInstallerScriptPath
+      }
+      $sparseInstall.scriptPath = $installerScript
+
+      $sparseInstallResult = Invoke-PowerShellFile -ScriptPath $installerScript -Arguments $sparseArgs -AllowedExitCodes @(0)
       $resolvedMode = 'sparse-package'
 
       Write-SetupLog -Level 'INFO' -Message 'Sparse package install completed' -Data @{
-        scriptPath = $SparseInstallerScriptPath
+        installMethod = $SparseInstallMethod
+        scriptPath = $installerScript
         outputTail = ($sparseInstallResult.output | Select-Object -Last 1)
       }
 
-      if (-not (Test-ContextMenuVerbVisible -Extension '.mp4')) {
-        $warning = 'Sparse package installed, but BAEFRAME context menu verb is not visible. Falling back to registry-based ExplorerCommand integration.'
-        Write-SetupLog -Level 'WARN' -Message $warning
+      $pkg = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ((-not $WhatIfPreference) -and (-not $pkg)) {
+        throw "Sparse package registration did not appear in Get-AppxPackage: $PackageName"
+      }
+
+      $activationOk = $false
+      if ($pkg -and $pkg.PackageFamilyName) {
+        $activationOk = Test-PackagedComActivation -PackageFamilyName $pkg.PackageFamilyName
+      }
+
+      if (-not $activationOk) {
+        $warning = 'Sparse package installed, but packaged COM activation failed. This usually means the Windows 11 modern (primary) context menu integration did not take effect.'
+        Write-SetupLog -Level 'WARN' -Message $warning -Data @{
+          installMethod = $SparseInstallMethod
+          packageFullName = if ($pkg) { $pkg.PackageFullName } else { $null }
+          isDevelopmentMode = if ($pkg -and $null -ne $pkg.IsDevelopmentMode) { [bool]$pkg.IsDevelopmentMode } else { $null }
+        }
 
         if (Test-Path $SparseUninstallScriptPath) {
           try {
             Invoke-PowerShellFile -ScriptPath $SparseUninstallScriptPath -Arguments @('-PackageName', $PackageName) -AllowedExitCodes @(0) | Out-Null
           } catch {
-            Write-SetupLog -Level 'WARN' -Message 'Sparse package uninstall after verification failure failed' -Data @{ error = $_.Exception.Message }
+            Write-SetupLog -Level 'WARN' -Message 'Sparse package uninstall after activation failure failed' -Data @{ error = $_.Exception.Message }
           }
         }
 
         $sparseInstall.installed = $false
         $sparseInstall.error = $warning
         $resolvedMode = 'none'
+
+        if ($Mode -eq 'Sparse') {
+          throw $warning
+        }
+      } else {
+        $sparseInstall.installed = $true
       }
     } catch {
       $sparseInstall.error = $_.Exception.Message
@@ -394,7 +490,7 @@ try {
     }
   }
 
-  $preferRegistry = ($resolvedMode -eq 'none') -and ($Mode -eq 'Auto' -or $Mode -eq 'Registry')
+  $preferRegistry = ($resolvedMode -eq 'none') -and ($Mode -eq 'Registry' -or (($Mode -eq 'Auto') -and $EnableRegistryFallback))
   if ($preferRegistry) {
     $registryShell.attempted = $true
 
@@ -420,7 +516,16 @@ try {
       Register-LegacyShellVerbs -ResolvedAppPath $resolvedAppPath
       $resolvedMode = 'legacy-shell'
     } else {
-      throw 'Legacy fallback is disabled. No context menu was registered.'
+      $details = @()
+      if ($sparseInstall.attempted -and $sparseInstall.error) {
+        $details += ("Sparse: " + $sparseInstall.error)
+      }
+      if ($registryShell.attempted -and $registryShell.error) {
+        $details += ("Registry: " + $registryShell.error)
+      }
+
+      $detailText = if ($details.Count -gt 0) { ' Details: ' + ($details -join ' | ') } else { '' }
+      throw ('No context menu was registered. Legacy fallback is disabled.' + $detailText)
     }
   }
 
@@ -440,6 +545,8 @@ try {
       installedAt = (Get-Date).ToString('o')
       mode = $resolvedMode
       requestedMode = $Mode
+      sparseInstallMethod = $SparseInstallMethod
+      enableRegistryFallback = [bool]$EnableRegistryFallback
       enableLegacyFallback = [bool]$EnableLegacyFallback
       windowsBuild = [int][Environment]::OSVersion.Version.Build
       appPath = $resolvedAppPath
@@ -466,6 +573,8 @@ try {
     appPath = $resolvedAppPath
     mode = $resolvedMode
     requestedMode = $Mode
+    sparseInstallMethod = $SparseInstallMethod
+    enableRegistryFallback = [bool]$EnableRegistryFallback
     enableLegacyFallback = [bool]$EnableLegacyFallback
     shellClsid = $ShellExtensionClsid
     packageName = $PackageName

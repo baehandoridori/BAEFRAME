@@ -14,6 +14,8 @@ $AppDataDir = Join-Path $env:APPDATA 'baeframe'
 $LogPath = Join-Path $AppDataDir 'integration-provision.log'
 $PolicyKeyPath = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\Appx'
 $UnlockKeyPath = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+$CreateCertScriptPath = Join-Path $PSScriptRoot 'create-team-signing-cert.ps1'
+$DefaultCertPath = Join-Path $PSScriptRoot 'certs\StudioJBBJ.BAEFRAME.Integration.cer'
 
 function Ensure-Directory {
   param([string]$Path)
@@ -48,21 +50,70 @@ function Test-IsAdministrator {
   return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Set-DwordValue {
+  param(
+    [string]$Path,
+    [string]$Name,
+    [int]$Value
+  )
+
+  if (-not (Test-Path $Path)) {
+    if ($PSCmdlet.ShouldProcess($Path, 'Create registry key')) {
+      New-Item -Path $Path -Force | Out-Null
+    }
+  }
+
+  $current = $null
+  try {
+    $current = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
+  } catch {
+    $current = $null
+  }
+
+  if ($null -eq $current -or [int]$current -ne $Value) {
+    if ($PSCmdlet.ShouldProcess("$Path\\$Name", "Set DWORD value to $Value")) {
+      New-ItemProperty -Path $Path -Name $Name -PropertyType DWord -Value $Value -Force | Out-Null
+    }
+  }
+}
+
+function Resolve-ExistingPath {
+  param([string]$PathCandidate)
+
+  if ([string]::IsNullOrWhiteSpace($PathCandidate)) {
+    return $null
+  }
+
+  if (Test-Path $PathCandidate) {
+    return (Resolve-Path $PathCandidate).Path
+  }
+
+  if (-not [System.IO.Path]::IsPathRooted($PathCandidate)) {
+    $relativeCandidate = Join-Path $PSScriptRoot $PathCandidate
+    if (Test-Path $relativeCandidate) {
+      return (Resolve-Path $relativeCandidate).Path
+    }
+  }
+
+  return $null
+}
+
 function Resolve-CertificatePath {
   param([string]$Candidate)
 
   if ($Candidate) {
-    if (-not (Test-Path $Candidate)) {
+    $resolved = Resolve-ExistingPath -PathCandidate $Candidate
+    if (-not $resolved) {
       throw "Specified certificate path does not exist: $Candidate"
     }
 
-    return (Resolve-Path $Candidate).Path
+    return $resolved
   }
 
   $candidates = @(
-    (Join-Path  'certs\\StudioJBBJ.BAEFRAME.Integration.cer'),
-    (Join-Path  'certs\\studiojbbj-baeframe-integration.cer'),
-    (Join-Path  'certs\\BAEFRAME-Integration.cer')
+    (Join-Path $PSScriptRoot 'certs\\StudioJBBJ.BAEFRAME.Integration.cer'),
+    (Join-Path $PSScriptRoot 'certs\\studiojbbj-baeframe-integration.cer'),
+    (Join-Path $PSScriptRoot 'certs\\BAEFRAME-Integration.cer')
   )
 
   foreach ($pathCandidate in $candidates) {
@@ -101,39 +152,54 @@ try {
     $resolvedCertPath = Resolve-CertificatePath -Candidate $CertPath
 
     if (-not $resolvedCertPath) {
-      $certificateResult.skipped = $true
-      $certificateResult.skippedReason = 'No certificate configured (CertPath not provided and no default .cer found).'
-
-      Write-ProvisionLog -Level 'WARN' -Message 'Certificate install skipped' -Data @{
-        reason = $certificateResult.skippedReason
-        expectedPaths = @(
-          (Join-Path  'certs\\StudioJBBJ.BAEFRAME.Integration.cer'),
-          (Join-Path  'certs\\studiojbbj-baeframe-integration.cer'),
-          (Join-Path  'certs\\BAEFRAME-Integration.cer')
-        )
+      Write-ProvisionLog -Level 'WARN' -Message 'Certificate not found. Creating a self-signed team certificate.' -Data @{
+        defaultCertPath = $DefaultCertPath
+        createScriptPath = $CreateCertScriptPath
       }
-    } else {
-      $certificateResult.attempted = $true
-      $certificateResult.path = $resolvedCertPath
 
-      $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($resolvedCertPath)
-      $certificateResult.thumbprint = $certificate.Thumbprint
+      if (-not (Test-Path $CreateCertScriptPath)) {
+        throw "Certificate creation script not found: $CreateCertScriptPath"
+      }
 
-      $targetStores = @(
-        'Cert:\LocalMachine\Root',
-        'Cert:\LocalMachine\TrustedPublisher'
-      )
+      $createOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $CreateCertScriptPath -Subject 'CN=StudioJBBJ' -OutputDir (Split-Path -Parent $DefaultCertPath) -BaseName 'StudioJBBJ.BAEFRAME.Integration' 2>&1
+      $createExit = $LASTEXITCODE
+      if ($createOutput) {
+        $createOutput | ForEach-Object { Write-ProvisionLog -Level 'INFO' -Message 'create-team-signing-cert output' -Data @{ line = $_.ToString() } }
+      }
+      if ($createExit -ne 0) {
+        throw "Self-signed certificate creation failed with exit code $createExit."
+      }
 
-      foreach ($store in $targetStores) {
-        $exists = Get-ChildItem -Path $store | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
-        if (-not $exists) {
-          if ($PSCmdlet.ShouldProcess($store, "Import certificate $($certificate.Thumbprint)")) {
-            Import-Certificate -FilePath $resolvedCertPath -CertStoreLocation $store | Out-Null
-          }
+      $resolvedCertPath = Resolve-CertificatePath -Candidate $DefaultCertPath
+      if (-not $resolvedCertPath) {
+        throw "Certificate creation reported success, but .cer file is still missing: $DefaultCertPath"
+      }
+    }
+
+    $certificateResult.attempted = $true
+    $certificateResult.path = $resolvedCertPath
+
+    $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($resolvedCertPath)
+    $certificateResult.thumbprint = $certificate.Thumbprint
+
+    $targetStores = @(
+      'Cert:\CurrentUser\Root',
+      'Cert:\CurrentUser\TrustedPeople',
+      'Cert:\CurrentUser\TrustedPublisher',
+      'Cert:\LocalMachine\Root',
+      'Cert:\LocalMachine\TrustedPeople',
+      'Cert:\LocalMachine\TrustedPublisher'
+    )
+
+    foreach ($store in $targetStores) {
+      $exists = Get-ChildItem -Path $store | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
+      if (-not $exists) {
+        if ($PSCmdlet.ShouldProcess($store, "Import certificate $($certificate.Thumbprint)")) {
+          Import-Certificate -FilePath $resolvedCertPath -CertStoreLocation $store | Out-Null
         }
-
-        $certificateResult.installedTo += $store
       }
+
+      $certificateResult.installedTo += $store
     }
   }
 

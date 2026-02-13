@@ -5,27 +5,31 @@ Windows 우클릭 진입(이슈 #88) 설치/진단/제거 스크립트입니다.
 ## 가장 쉬운 실행 방법 (더블클릭)
 
 1. `integration/installer/BAEFRAME-Integration-Setup.cmd` 더블클릭
+   - UAC(관리자 권한) 창이 뜨면 `예`를 눌러주세요.
 2. 끝나면 Explorer 재시작 여부(Y/N) 선택
 3. `.mp4` 파일 우클릭 -> `BAEFRAME로 열기` 확인
 
 ## 설치 방식 (자동 선택)
 
-설치기는 Windows 환경/정책에 따라 아래 순서로 자동 시도합니다.
+Windows 11 **1차(신규) 우클릭 메뉴** 노출을 목표로 하기 때문에, 기본값은 아래로 동작합니다.
 
-1. `sparse-package` (Windows 11 신규 우클릭 모델)
-2. sparse가 정책/환경 때문에 막히거나 메뉴가 보이지 않으면 자동으로 `registry-shell`로 전환
-   - 사용자(HKCU) 범위로 COM(`IExplorerCommand`) + 우클릭 Verb를 등록합니다.
-   - 관리자 권한/정책 변경 없이도 동작하도록 만든 플로우입니다.
+1. `sparse-package` (signed MSIX 기반)만 시도
+2. 설치는 성공했는데 Packaged COM 활성화가 실패하면 **실패 처리**하고 자동 롤백(패키지 제거)합니다.
 
-`legacy-shell`(추가 옵션 표시/클래식 메뉴)은 기본값으로는 만들지 않습니다.
+즉, 기본값은 **"2차(추가 옵션 표시) 메뉴에만 뜨는 통합"을 만들지 않습니다.**
+
+원하면 아래 중 하나로 2차 메뉴 fallback을 **명시적으로** 켤 수 있습니다.
+- `setup-paths.json`에서 `enableRegistryFallback=true`
+- 또는 `mode=Registry` (Appx/sparse 없이 레지스트리 방식만 사용)
+
+`legacy-shell`(클래식 command verb)은 기본값으로는 만들지 않습니다.
 
 ## 파일 구성
 
 - `BAEFRAME-Integration-Setup.cmd`
-  - 더블클릭용 런처 (설치 후 Explorer 재시작 선택 포함)
+  - 더블클릭용 런처 (관리자 승격 + 인증서/정책 프로비저닝 + 설치 + Explorer 재시작 선택 포함)
 - `BAEFRAME-Integration-Setup-Admin.cmd`
-  - (선택) 관리자 권한 프로비저닝 + 설치
-  - 원격(예: Parsec) 환경에서는 UAC 보안 데스크톱 때문에 창이 안 보일 수 있습니다.
+  - (선택) 관리자 권한 프로비저닝 + 설치 (동작은 `BAEFRAME-Integration-Setup.cmd`와 동일한 목적)
 - `run-integration-setup.ps1`
   - 경로 프리셋(`setup-paths.json`) 기반 자동 설치
   - `-Provision`으로 인증서/정책 선적용 가능
@@ -43,6 +47,8 @@ Windows 우클릭 진입(이슈 #88) 설치/진단/제거 스크립트입니다.
 {
   "activeProfile": "test",
   "mode": "Auto",
+  "sparseInstallMethod": "Msix",
+  "enableRegistryFallback": false,
   "enableLegacyFallback": false,
   "provisionPolicyAndCert": false,
   "certPath": "",
@@ -55,12 +61,17 @@ Windows 우클릭 진입(이슈 #88) 설치/진단/제거 스크립트입니다.
 - `testAppPath`: 로컬 테스트 exe 경로
 - `shareAppPath`: 공유 드라이브 exe 경로
 - `mode`:
-  - `Auto` (기본): sparse 시도 -> 안 되면 registry-shell로 자동 전환
+  - `Auto` (기본): sparse(signed MSIX)만 시도 (fallback 없음)
   - `Registry`: Appx/sparse 없이 레지스트리 방식만 사용
   - `Sparse`: sparse만 강제(정책 차단 시 실패)
   - `Legacy`: 클래식(2차) 메뉴 방식만 사용
+- `sparseInstallMethod`:
+  - `Msix` (기본): signed MSIX 기반 설치
+  - `Register`: dev-mode `Add-AppxPackage -Register` (Windows 빌드에 따라 1차 메뉴가 안 뜰 수 있어 개발용으로만 권장)
+- `enableRegistryFallback`:
+  - `true`면 Auto에서 sparse 실패 시 `registry-shell`로 2차 메뉴 fallback 허용
 
-팀 PC에서 정책 이슈를 피하려면 `mode=Registry`로 고정하는 것을 권장합니다.
+팀 PC에서 정책/권한 제약으로 1차 메뉴가 불가능하면 `mode=Registry`가 차선책입니다.
 
 ## (선택) 인증서 + 정책까지 한 번에 적용 (관리자 권한)
 
