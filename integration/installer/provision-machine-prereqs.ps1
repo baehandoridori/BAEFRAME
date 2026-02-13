@@ -41,7 +41,7 @@ function Write-ProvisionLog {
     data = $Data
   }
 
-  Add-Content -Path $LogPath -Value ($payload | ConvertTo-Json -Compress) -Encoding UTF8
+  Add-Content -Path $LogPath -Value ($payload | ConvertTo-Json -Compress -Depth 6) -Encoding UTF8
 }
 
 function Test-IsAdministrator {
@@ -136,7 +136,7 @@ try {
 
   $isAdmin = Test-IsAdministrator
   if (-not $isAdmin) {
-    throw 'Administrator privileges are required. Right-click CMD/PowerShell and run as administrator.'
+    Write-ProvisionLog -Level 'WARN' -Message 'Not running as administrator. Policy setup and LocalMachine certificate install will be skipped.' -Data @{}
   }
 
   $certificateResult = [ordered]@{
@@ -183,13 +183,16 @@ try {
     $certificateResult.thumbprint = $certificate.Thumbprint
 
     $targetStores = @(
-      'Cert:\CurrentUser\Root',
       'Cert:\CurrentUser\TrustedPeople',
-      'Cert:\CurrentUser\TrustedPublisher',
-      'Cert:\LocalMachine\Root',
-      'Cert:\LocalMachine\TrustedPeople',
-      'Cert:\LocalMachine\TrustedPublisher'
+      'Cert:\CurrentUser\TrustedPublisher'
     )
+
+    if ($isAdmin) {
+      $targetStores += @(
+        'Cert:\LocalMachine\TrustedPeople',
+        'Cert:\LocalMachine\TrustedPublisher'
+      )
+    }
 
     foreach ($store in $targetStores) {
       $exists = Get-ChildItem -Path $store | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
@@ -206,6 +209,7 @@ try {
   $policyResult = [ordered]@{
     attempted = $false
     skipped = [bool]$SkipPolicySetup
+    skippedReason = $null
     appxPolicy = [ordered]@{
       allowAllTrustedApps = 1
       allowDevelopmentWithoutDevLicense = 1
@@ -219,15 +223,21 @@ try {
   }
 
   if (-not $SkipPolicySetup) {
-    $policyResult.attempted = $true
+    if (-not $isAdmin) {
+      $policyResult.skipped = $true
+      $policyResult.skippedReason = 'Administrator privileges are required for policy setup. Continuing without policy changes.'
+      Write-ProvisionLog -Level 'WARN' -Message 'Policy setup skipped (not admin)' -Data @{}
+    } else {
+      $policyResult.attempted = $true
 
-    Set-DwordValue -Path $PolicyKeyPath -Name 'AllowAllTrustedApps' -Value 1
-    Set-DwordValue -Path $PolicyKeyPath -Name 'AllowDevelopmentWithoutDevLicense' -Value 1
-    Set-DwordValue -Path $PolicyKeyPath -Name 'BlockNonAdminUserInstall' -Value 0
-    Set-DwordValue -Path $PolicyKeyPath -Name 'AllowDeploymentInSpecialProfiles' -Value 1
+      Set-DwordValue -Path $PolicyKeyPath -Name 'AllowAllTrustedApps' -Value 1
+      Set-DwordValue -Path $PolicyKeyPath -Name 'AllowDevelopmentWithoutDevLicense' -Value 1
+      Set-DwordValue -Path $PolicyKeyPath -Name 'BlockNonAdminUserInstall' -Value 0
+      Set-DwordValue -Path $PolicyKeyPath -Name 'AllowDeploymentInSpecialProfiles' -Value 1
 
-    Set-DwordValue -Path $UnlockKeyPath -Name 'AllowAllTrustedApps' -Value 1
-    Set-DwordValue -Path $UnlockKeyPath -Name 'AllowDevelopmentWithoutDevLicense' -Value 1
+      Set-DwordValue -Path $UnlockKeyPath -Name 'AllowAllTrustedApps' -Value 1
+      Set-DwordValue -Path $UnlockKeyPath -Name 'AllowDevelopmentWithoutDevLicense' -Value 1
+    }
   }
 
   Write-ProvisionLog -Level 'INFO' -Message 'Provisioning completed' -Data @{
@@ -237,7 +247,7 @@ try {
 
   [ordered]@{
     success = $true
-    isAdmin = $true
+    isAdmin = [bool]$isAdmin
     certificate = $certificateResult
     policy = $policyResult
     logPath = $LogPath

@@ -15,6 +15,7 @@ $LogPath = Join-Path $AppDataDir 'integration-setup.log'
 $StatePath = Join-Path $AppDataDir 'integration-state.json'
 $IntegrationConfigKey = 'Registry::HKEY_CURRENT_USER\Software\BAEFRAME\Integration'
 $SparseUninstallScriptPath = Join-Path $PSScriptRoot '..\package\uninstall-sparse-package.ps1'
+$FullStageRoot = Join-Path $env:LOCALAPPDATA 'baeframe\integration-msix-package'
 
 function Ensure-Directory {
   param([string]$Path)
@@ -40,7 +41,7 @@ function Write-SetupLog {
     data = $Data
   }
 
-  Add-Content -Path $LogPath -Value ($payload | ConvertTo-Json -Compress) -Encoding UTF8
+  Add-Content -Path $LogPath -Value ($payload | ConvertTo-Json -Compress -Depth 6) -Encoding UTF8
 }
 
 function Invoke-PowerShellFile {
@@ -104,6 +105,11 @@ try {
       $sparseUninstall.error = $_.Exception.Message
       Write-SetupLog -Level 'WARN' -Message 'Sparse package uninstall failed' -Data @{ error = $sparseUninstall.error }
     }
+  }
+
+  if ((Test-Path $FullStageRoot) -and $PSCmdlet.ShouldProcess($FullStageRoot, 'Remove MSIX package stage files')) {
+    Remove-Item -Path $FullStageRoot -Recurse -Force
+    Write-SetupLog -Level 'INFO' -Message 'Removed MSIX stage files' -Data @{ stageRoot = $FullStageRoot }
   }
 
   foreach ($ext in $SupportedExtensions) {

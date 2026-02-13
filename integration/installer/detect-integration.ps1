@@ -136,6 +136,24 @@ try {
 $sparseInstalled = $null -ne $sparsePackage
 $legacyInstalled = ($missingLegacy.Count -eq 0)
 
+$packagedCom = [ordered]@{
+  ok = $false
+  error = $null
+}
+
+try {
+  $t = [type]::GetTypeFromCLSID([guid]$shellClsid)
+  $obj = [Activator]::CreateInstance($t)
+  if ($obj) {
+    try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($obj) } catch { }
+  }
+
+  $packagedCom.ok = $true
+} catch {
+  $packagedCom.ok = $false
+  $packagedCom.error = $_.Exception.Message
+}
+
 $comInprocKey = "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\$shellClsid\InprocServer32"
 $comInprocExists = Test-Path $comInprocKey
 $comHostPath = $null
@@ -177,6 +195,7 @@ $result = [ordered]@{
     fullName = if ($sparseInstalled) { $sparsePackage.PackageFullName } else { $null }
     installLocation = if ($sparseInstalled) { $sparsePackage.InstallLocation } else { $null }
   }
+  packagedCom = $packagedCom
   registryShell = [ordered]@{
     installed = $registryInstalled
     comInprocKey = $comInprocKey

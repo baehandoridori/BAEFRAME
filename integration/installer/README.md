@@ -5,16 +5,18 @@ Windows 우클릭 진입(이슈 #88) 설치/진단/제거 스크립트입니다.
 ## 가장 쉬운 실행 방법 (더블클릭)
 
 1. `integration/installer/BAEFRAME-Integration-Setup.cmd` 더블클릭
-   - UAC(관리자 권한) 창이 뜨면 `예`를 눌러주세요.
 2. 끝나면 Explorer 재시작 여부(Y/N) 선택
 3. `.mp4` 파일 우클릭 -> `BAEFRAME로 열기` 확인
+
+만약 정책/권한 문제로 설치가 실패하면 아래 파일을 "관리자 권한으로 실행"으로 다시 시도하세요.
+- `integration/installer/BAEFRAME-Integration-Setup-Admin.cmd`
 
 ## 설치 방식 (자동 선택)
 
 Windows 11 **1차(신규) 우클릭 메뉴** 노출을 목표로 하기 때문에, 기본값은 아래로 동작합니다.
 
-1. `sparse-package` (signed MSIX 기반)만 시도
-2. 설치는 성공했는데 Packaged COM 활성화가 실패하면 **실패 처리**하고 자동 롤백(패키지 제거)합니다.
+1. `package-msix` (일반 MSIX, ExternalLocation 없음)만 시도
+2. 설치는 성공했는데 Packaged COM(IExplorerCommand) 활성화가 실패하면 **실패 처리**하고 자동 롤백(패키지 제거)합니다.
 
 즉, 기본값은 **"2차(추가 옵션 표시) 메뉴에만 뜨는 통합"을 만들지 않습니다.**
 
@@ -27,15 +29,15 @@ Windows 11 **1차(신규) 우클릭 메뉴** 노출을 목표로 하기 때문�
 ## 파일 구성
 
 - `BAEFRAME-Integration-Setup.cmd`
-  - 더블클릭용 런처 (관리자 승격 + 인증서/정책 프로비저닝 + 설치 + Explorer 재시작 선택 포함)
+  - 더블클릭용 런처 (인증서 프로비저닝 + 설치 + Explorer 재시작 선택 포함)
 - `BAEFRAME-Integration-Setup-Admin.cmd`
-  - (선택) 관리자 권한 프로비저닝 + 설치 (동작은 `BAEFRAME-Integration-Setup.cmd`와 동일한 목적)
+  - (선택) 관리자 권한 프로비저닝 + 설치 (정책(Appx)까지 설정하고 싶을 때 사용)
 - `run-integration-setup.ps1`
   - 경로 프리셋(`setup-paths.json`) 기반 자동 설치
   - `-Provision`으로 인증서/정책 선적용 가능
 - `install-integration.ps1`
   - 실제 통합 설치 엔진
-  - 모드: `Auto` / `Sparse` / `Registry` / `Legacy`
+  - 모드: `Auto` / `Package` / `Sparse` / `Registry` / `Legacy`
 - `detect-integration.ps1`
   - 설치 상태 JSON 출력
 - `uninstall-integration.ps1`
@@ -61,15 +63,16 @@ Windows 11 **1차(신규) 우클릭 메뉴** 노출을 목표로 하기 때문�
 - `testAppPath`: 로컬 테스트 exe 경로
 - `shareAppPath`: 공유 드라이브 exe 경로
 - `mode`:
-  - `Auto` (기본): sparse(signed MSIX)만 시도 (fallback 없음)
+  - `Auto` (기본): `Package`만 시도 (fallback 없음)
+  - `Package`: 일반 MSIX만 강제
   - `Registry`: Appx/sparse 없이 레지스트리 방식만 사용
-  - `Sparse`: sparse만 강제(정책 차단 시 실패)
+  - `Sparse`: (참고/구버전) sparse만 강제(Windows 정책/버전에 따라 동작하지 않을 수 있어 권장하지 않음)
   - `Legacy`: 클래식(2차) 메뉴 방식만 사용
 - `sparseInstallMethod`:
   - `Msix` (기본): signed MSIX 기반 설치
   - `Register`: dev-mode `Add-AppxPackage -Register` (Windows 빌드에 따라 1차 메뉴가 안 뜰 수 있어 개발용으로만 권장)
 - `enableRegistryFallback`:
-  - `true`면 Auto에서 sparse 실패 시 `registry-shell`로 2차 메뉴 fallback 허용
+  - `true`면 Auto에서 `package-msix` 실패 시 `registry-shell`로 2차 메뉴 fallback 허용
 
 팀 PC에서 정책/권한 제약으로 1차 메뉴가 불가능하면 `mode=Registry`가 차선책입니다.
 

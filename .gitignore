@@ -56,6 +56,13 @@ coverage/
 integration/shell/BAEFRAME.ContextMenu/bin/
 integration/shell/BAEFRAME.ContextMenu/obj/
 
+# .NET integration host outputs
+integration/host/**/bin/
+integration/host/**/obj/
+
 # Integration certificate private keys
 *.pfx
 *.p12
+
+# Integration certificates (public, generated per-machine by installer)
+integration/installer/certs/*.cer

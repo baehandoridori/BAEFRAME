@@ -3,7 +3,7 @@ param(
   [Parameter(Mandatory = $false)]
   [string]$AppPath,
 
-  [ValidateSet('Auto', 'Sparse', 'Registry', 'Legacy')]
+  [ValidateSet('Auto', 'Package', 'Sparse', 'Registry', 'Legacy')]
   [string]$Mode = 'Auto',
 
   [ValidateSet('Msix', 'Register')]
@@ -22,7 +22,7 @@ $VerbKeyName = 'BAEFRAME.Open'
 $VerbLabel = ('BAEFRAME' + [string][char]0xB85C + ' ' + [string][char]0xC5F4 + [string][char]0xAE30)
 $ShellExtensionClsid = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
 $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
-$InstallerVersion = '1.4.0'
+$InstallerVersion = '1.5.0'
 
 $AppDataDir = Join-Path $env:APPDATA 'baeframe'
 $LogPath = Join-Path $AppDataDir 'integration-setup.log'
@@ -31,6 +31,7 @@ $IntegrationConfigKey = 'Registry::HKEY_CURRENT_USER\Software\BAEFRAME\Integrati
 $SparseInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-sparse-package.ps1'
 $SparseMsixInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-sparse-msix.ps1'
 $SparseUninstallScriptPath = Join-Path $PSScriptRoot '..\package\uninstall-sparse-package.ps1'
+$FullMsixInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-full-msix.ps1'
 
 $ShellBuildScriptPath = Join-Path $PSScriptRoot '..\shell\build-shell.ps1'
 $ShellBuildOutputDir = Join-Path $PSScriptRoot '..\shell\BAEFRAME.ContextMenu\bin\x64\Release\net6.0-windows'
@@ -60,7 +61,7 @@ function Write-SetupLog {
     data = $Data
   }
 
-  Add-Content -Path $LogPath -Value ($payload | ConvertTo-Json -Compress) -Encoding UTF8
+  Add-Content -Path $LogPath -Value ($payload | ConvertTo-Json -Compress -Depth 6) -Encoding UTF8
 }
 
 function Resolve-BaeframePath {
@@ -345,35 +346,26 @@ function Test-PackagedComActivation {
     [string]$Clsid = $ShellExtensionClsid
   )
 
-  $cmdlet = Get-Command Invoke-CommandInDesktopPackage -ErrorAction SilentlyContinue
-  if (-not $cmdlet) {
-    return $false
-  }
-
-  $inner = @"
-`$ErrorActionPreference = 'Stop'
-try {
-  `$t = [type]::GetTypeFromCLSID([guid]'$Clsid')
-  [void][activator]::CreateInstance(`$t)
-  'BAEFRAME_PACKAGED_COM_OK'
-  exit 0
-} catch {
-  'BAEFRAME_PACKAGED_COM_FAIL'
-  `$hr = if (`$_.Exception -and `$_.Exception.HResult) { `$_.Exception.HResult } else { 0 }
-  Write-Output ("HR=" + `$hr)
-  Write-Output (`$_.Exception.Message)
-  exit 1
-}
-"@
-
-  $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($inner))
-
+  # Explorer is not inside the package, so the COM server must be activatable from the
+  # normal (non-packaged) context. Prefer testing activation directly to avoid relying on
+  # Invoke-CommandInDesktopPackage output capture quirks.
   try {
-    $out = Invoke-CommandInDesktopPackage -PackageFamilyName $PackageFamilyName -AppId $AppId -Command 'powershell.exe' -Args "-NoProfile -EncodedCommand $encoded" 2>&1
-    $text = ($out | ForEach-Object { $_.ToString() }) -join "`n"
-    return ($text -match 'BAEFRAME_PACKAGED_COM_OK')
+    $t = [type]::GetTypeFromCLSID([guid]$Clsid)
+    $obj = [Activator]::CreateInstance($t)
+    if ($obj) {
+      try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($obj) } catch { }
+    }
+
+    return $true
   } catch {
-    Write-SetupLog -Level 'WARN' -Message 'Invoke-CommandInDesktopPackage failed' -Data @{ error = $_.Exception.Message; packageFamilyName = $PackageFamilyName }
+    $hr = if ($_.Exception -and $null -ne $_.Exception.HResult) { [int]$_.Exception.HResult } else { 0 }
+    Write-SetupLog -Level 'WARN' -Message 'Packaged COM activation test failed' -Data @{
+      error = $_.Exception.Message
+      hr = ('0x{0:X8}' -f $hr)
+      packageFamilyName = $PackageFamilyName
+      appId = $AppId
+      clsid = $Clsid
+    }
     return $false
   }
 }
@@ -413,9 +405,82 @@ try {
     error = $null
   }
 
-  $preferSparse = ($Mode -eq 'Auto' -or $Mode -eq 'Sparse')
-  if ($preferSparse) {
+  $preferPackage = ($Mode -eq 'Auto' -or $Mode -eq 'Package')
+  $preferSparse = ($Mode -eq 'Sparse')
+
+  if ($preferPackage) {
     $sparseInstall.attempted = $true
+    $sparseInstall.installMethod = 'FullMsix'
+
+    try {
+      Remove-ClassicShellArtifacts
+
+      $msixArgs = @()
+      if ($WhatIfPreference) {
+        $msixArgs += '-WhatIf'
+      }
+
+      $installerScript = $FullMsixInstallerScriptPath
+      $sparseInstall.scriptPath = $installerScript
+
+      $msixResult = Invoke-PowerShellFile -ScriptPath $installerScript -Arguments $msixArgs -AllowedExitCodes @(0)
+      $resolvedMode = 'package-msix'
+
+      Write-SetupLog -Level 'INFO' -Message 'MSIX package install completed' -Data @{
+        scriptPath = $installerScript
+        outputTail = ($msixResult.output | Select-Object -Last 1)
+      }
+
+      $pkg = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ((-not $WhatIfPreference) -and (-not $pkg)) {
+        throw "Package did not appear in Get-AppxPackage after install: $PackageName"
+      }
+
+      $activationOk = $false
+      if ($pkg -and $pkg.PackageFamilyName) {
+        $activationOk = Test-PackagedComActivation -PackageFamilyName $pkg.PackageFamilyName
+      }
+
+      if (-not $activationOk) {
+        $warning = 'MSIX package installed, but packaged COM activation failed. This usually means the Windows 11 modern (primary) context menu integration did not take effect.'
+        Write-SetupLog -Level 'WARN' -Message $warning -Data @{
+          packageFullName = if ($pkg) { $pkg.PackageFullName } else { $null }
+          isDevelopmentMode = if ($pkg -and $null -ne $pkg.IsDevelopmentMode) { [bool]$pkg.IsDevelopmentMode } else { $null }
+        }
+
+        try {
+          if ($pkg -and $pkg.PackageFullName) {
+            Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
+          }
+        } catch {
+          Write-SetupLog -Level 'WARN' -Message 'Package uninstall after activation failure failed' -Data @{ error = $_.Exception.Message }
+        }
+
+        $sparseInstall.installed = $false
+        $sparseInstall.error = $warning
+        $resolvedMode = 'none'
+
+        throw $warning
+      }
+
+      $sparseInstall.installed = $true
+    } catch {
+      $sparseInstall.error = $_.Exception.Message
+
+      Write-SetupLog -Level 'WARN' -Message 'MSIX package install failed' -Data @{
+        scriptPath = $sparseInstall.scriptPath
+        error = $sparseInstall.error
+      }
+
+      if ($Mode -eq 'Package') {
+        throw "MSIX package mode requested but install failed: $($sparseInstall.error)"
+      }
+    }
+  }
+
+  if ($preferSparse -and ($resolvedMode -eq 'none')) {
+    $sparseInstall.attempted = $true
+    $sparseInstall.installMethod = $SparseInstallMethod
 
     try {
       Remove-ClassicShellArtifacts
@@ -470,12 +535,10 @@ try {
         $sparseInstall.error = $warning
         $resolvedMode = 'none'
 
-        if ($Mode -eq 'Sparse') {
-          throw $warning
-        }
-      } else {
-        $sparseInstall.installed = $true
+        throw $warning
       }
+
+      $sparseInstall.installed = $true
     } catch {
       $sparseInstall.error = $_.Exception.Message
 

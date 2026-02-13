@@ -10,12 +10,12 @@ Windows 통합(이슈 #88) 관련 아티팩트입니다.
 - `shell/`
   - `IExplorerCommand` COM 구현 (`BAEFRAME.ContextMenu`)
 - `package/`
-  - (선택) sparse package 매니페스트/에셋/등록 스크립트
+  - MSIX 패키지(Windows 11 1차 우클릭 메뉴) 매니페스트/에셋/설치 스크립트
+  - (참고) sparse package 스크립트도 남겨두었지만 Windows 정책/버전에 따라 동작하지 않을 수 있습니다.
 
 ## 빠른 실행 (코딩 몰라도 되는 방법)
 
 1. `integration/installer/BAEFRAME-Integration-Setup.cmd` 더블클릭
-   - UAC(관리자 권한) 창이 뜨면 `예`를 눌러주세요.
 2. 끝나면 Explorer 재시작 여부(Y/N) 선택
 3. `.mp4` 파일 우클릭 -> `BAEFRAME로 열기` 확인
 
@@ -37,4 +37,4 @@ powershell -ExecutionPolicy Bypass -File .\integration\installer\uninstall-integ
 `run-integration-setup.ps1` 실행을 배포하는 방식이 안정적입니다.
 
 정책/권한 제약이 많은 환경에서는 `setup-paths.json`의 `mode`를 `Registry`로 고정하는 구성이 차선책이 될 수 있습니다
-(Windows 11 1차 메뉴 목표는 `Sparse + signed MSIX` 설치가 필요합니다).
+(Windows 11 1차 메뉴 목표는 `Package(MSIX)` 설치가 필요합니다).
