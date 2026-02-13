@@ -2,12 +2,13 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
   xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
-  IgnorableNamespaces="uap rescap desktop desktop4 desktop5 com">
+  IgnorableNamespaces="uap rescap desktop desktop4 desktop5 com uap10">
 
   <Identity
     Name="StudioJBBJ.BAEFRAME.Integration"
@@ -19,6 +20,7 @@
     <DisplayName>BAEFRAME Integration</DisplayName>
     <PublisherDisplayName>Studio JBBJ</PublisherDisplayName>
     <Logo>assets\StoreLogo.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
   </Properties>
 
   <Resources>
@@ -78,8 +80,11 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>
+
+
 
 
 
