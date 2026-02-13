@@ -1,0 +1,12 @@
+{
+  "activeProfile": "share",
+  "mode": "Auto",
+  "sparseInstallMethod": "Msix",
+  "enableRegistryFallback": false,
+  "enableLegacyFallback": false,
+  "provisionPolicyAndCert": false,
+  "certPath": "",
+  "testAppPath": "",
+  "shareAppPath": "G:\\공유 드라이브\\BAEFRAME\\BFRAME_alpha_v2.exe"
+}
+

@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$AppPath,
+  [string]$ConfigPath,
   [switch]$UseSharePath,
   [ValidateSet('Msix', 'Register')]
   [string]$SparseInstallMethod,
@@ -41,6 +42,15 @@ function Resolve-ExistingPath {
   }
 
   return $null
+}
+
+if ($ConfigPath) {
+  $resolvedConfigPath = Resolve-ExistingPath -PathCandidate $ConfigPath -RelativeBase $PSScriptRoot
+  if (-not $resolvedConfigPath) {
+    throw "Config file not found: $ConfigPath"
+  }
+
+  $configPath = $resolvedConfigPath
 }
 
 if (-not (Test-Path $installScriptPath)) {
