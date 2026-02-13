@@ -143,6 +143,8 @@ try {
     appxPolicy = [ordered]@{
       allowAllTrustedApps = 1
       allowDevelopmentWithoutDevLicense = 1
+      blockNonAdminUserInstall = 0
+      allowDeploymentInSpecialProfiles = 1
     }
     appModelUnlock = [ordered]@{
       allowAllTrustedApps = 1
@@ -155,6 +157,8 @@ try {
 
     Set-DwordValue -Path $PolicyKeyPath -Name 'AllowAllTrustedApps' -Value 1
     Set-DwordValue -Path $PolicyKeyPath -Name 'AllowDevelopmentWithoutDevLicense' -Value 1
+    Set-DwordValue -Path $PolicyKeyPath -Name 'BlockNonAdminUserInstall' -Value 0
+    Set-DwordValue -Path $PolicyKeyPath -Name 'AllowDeploymentInSpecialProfiles' -Value 1
 
     Set-DwordValue -Path $UnlockKeyPath -Name 'AllowAllTrustedApps' -Value 1
     Set-DwordValue -Path $UnlockKeyPath -Name 'AllowDevelopmentWithoutDevLicense' -Value 1
@@ -190,3 +194,4 @@ try {
 
   exit 1
 }
+

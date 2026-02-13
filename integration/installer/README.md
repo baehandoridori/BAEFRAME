@@ -41,6 +41,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 정책 설정:
   - `HKLM\SOFTWARE\Policies\Microsoft\Windows\Appx\AllowAllTrustedApps=1`
   - `HKLM\SOFTWARE\Policies\Microsoft\Windows\Appx\AllowDevelopmentWithoutDevLicense=1`
+  - `HKLM\SOFTWARE\Policies\Microsoft\Windows\Appx\BlockNonAdminUserInstall=0`
+  - `HKLM\SOFTWARE\Policies\Microsoft\Windows\Appx\AllowDeploymentInSpecialProfiles=1`
   - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock\AllowAllTrustedApps=1`
   - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock\AllowDevelopmentWithoutDevLicense=1`
 
@@ -50,7 +52,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ```powershell
 # .cer + .pfx 생성 (pfx는 절대 저장소 커밋 금지)
-.\integration\installer\create-team-signing-cert.ps1 -PfxPassword "강한비밀번호"
+.\integration\installer\create-team-signing-cert.ps1 -Subject "CN=StudioJBBJ" -PfxPassword "강한비밀번호"
 ```
 
 생성된 `.cer`를 각 PC에 신뢰 배포하고, 패키지 서명은 `.pfx`로 수행합니다.

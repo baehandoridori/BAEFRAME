@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$Subject = 'CN=StudioJBBJ Development Team',
+  [string]$Subject = 'CN=StudioJBBJ',
   [int]$ValidYears = 5,
   [string]$OutputDir = (Join-Path $PSScriptRoot 'certs'),
   [string]$PfxPassword
@@ -66,3 +66,4 @@ try {
 
   exit 1
 }
+
