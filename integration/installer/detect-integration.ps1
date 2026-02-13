@@ -8,6 +8,7 @@ $SupportedExtensions = @('.mp4', '.mov', '.avi', '.mkv', '.webm')
 $VerbKeyName = 'BAEFRAME.Open'
 $IntegrationConfigKey = 'Registry::HKEY_CURRENT_USER\Software\BAEFRAME\Integration'
 $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
+$ShellClsidDefault = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
 $AppDataDir = Join-Path $env:APPDATA 'baeframe'
 $StatePath = Join-Path $AppDataDir 'integration-state.json'
 
@@ -33,6 +34,8 @@ $appPath = $null
 $configMode = $null
 $shellClsid = $null
 $missing = @()
+$missingLegacy = @()
+$missingRegistry = @()
 
 if (Test-Path $IntegrationConfigKey) {
   try {
@@ -45,33 +48,63 @@ if (Test-Path $IntegrationConfigKey) {
   }
 }
 
+if (-not $shellClsid) {
+  $shellClsid = $ShellClsidDefault
+}
+
 foreach ($ext in $SupportedExtensions) {
   $verbKey = "Registry::HKEY_CURRENT_USER\Software\Classes\SystemFileAssociations\$ext\shell\$VerbKeyName"
   $commandKey = Join-Path $verbKey 'command'
 
-  $present = (Test-Path $verbKey) -and (Test-Path $commandKey)
-  $command = $null
+  $legacyPresent = (Test-Path $verbKey) -and (Test-Path $commandKey)
+  $legacyCommand = $null
 
-  if ($present) {
+  if ($legacyPresent) {
     try {
       $commandItem = Get-Item -Path $commandKey
-      $command = $commandItem.GetValue('')
+      $legacyCommand = $commandItem.GetValue('')
 
       if (-not $appPath) {
-        $appPath = Get-AppPathFromCommand -CommandText $command
+        $appPath = Get-AppPathFromCommand -CommandText $legacyCommand
       }
     } catch {
-      $present = $false
+      $legacyPresent = $false
+      $legacyCommand = $null
     }
   }
 
-  if (-not $present) {
+  $registryPresent = $false
+  $explorerCommandHandler = $null
+
+  if (Test-Path $verbKey) {
+    try {
+      $props = Get-ItemProperty -Path $verbKey
+      $explorerCommandHandler = $props.ExplorerCommandHandler
+      if ($explorerCommandHandler -and (-not [string]::IsNullOrWhiteSpace([string]$explorerCommandHandler))) {
+        $registryPresent = $true
+      }
+    } catch {
+      $registryPresent = $false
+      $explorerCommandHandler = $null
+    }
+  }
+
+  if (-not $legacyPresent) {
+    $missingLegacy += $ext
+  }
+  if (-not $registryPresent) {
+    $missingRegistry += $ext
+  }
+  if (-not ($legacyPresent -or $registryPresent)) {
     $missing += $ext
   }
 
   $extensions[$ext] = [ordered]@{
-    present = $present
-    command = $command
+    present = ($legacyPresent -or $registryPresent)
+    legacyPresent = $legacyPresent
+    legacyCommand = $legacyCommand
+    registryPresent = $registryPresent
+    explorerCommandHandler = $explorerCommandHandler
   }
 }
 
@@ -89,7 +122,7 @@ if ((-not $appPath) -and (Test-Path $StatePath)) {
       $shellClsid = [string]$state.shellClsid
     }
   } catch {
-    # Ignore malformed state file
+    # ignore malformed state file
   }
 }
 
@@ -101,18 +134,32 @@ try {
 }
 
 $sparseInstalled = $null -ne $sparsePackage
-$legacyInstalled = ($missing.Count -eq 0)
-$installed = $sparseInstalled -or $legacyInstalled
-$mode = 'none'
+$legacyInstalled = ($missingLegacy.Count -eq 0)
 
-if ($sparseInstalled) {
-  $mode = 'sparse-package'
-} elseif ($legacyInstalled) {
-  if ($configMode) {
-    $mode = [string]$configMode
-  } else {
-    $mode = 'legacy-shell'
+$comInprocKey = "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\$shellClsid\InprocServer32"
+$comInprocExists = Test-Path $comInprocKey
+$comHostPath = $null
+if ($comInprocExists) {
+  try {
+    $inproc = Get-Item -Path $comInprocKey
+    $comHostPath = $inproc.GetValue('')
+  } catch {
+    $comHostPath = $null
   }
+}
+
+$registryInstalled = ($missingRegistry.Count -eq 0) -and $comInprocExists
+$installed = $sparseInstalled -or $registryInstalled -or $legacyInstalled
+
+$mode = 'none'
+if ($configMode) {
+  $mode = [string]$configMode
+} elseif ($sparseInstalled) {
+  $mode = 'sparse-package'
+} elseif ($registryInstalled) {
+  $mode = 'registry-shell'
+} elseif ($legacyInstalled) {
+  $mode = 'legacy-shell'
 }
 
 $result = [ordered]@{
@@ -130,14 +177,20 @@ $result = [ordered]@{
     fullName = if ($sparseInstalled) { $sparsePackage.PackageFullName } else { $null }
     installLocation = if ($sparseInstalled) { $sparsePackage.InstallLocation } else { $null }
   }
+  registryShell = [ordered]@{
+    installed = $registryInstalled
+    comInprocKey = $comInprocKey
+    comHostPath = $comHostPath
+    missingExtensions = $missingRegistry
+  }
   legacyShell = [ordered]@{
     installed = $legacyInstalled
-    missingExtensions = $missing
+    missingExtensions = $missingLegacy
     extensions = $extensions
   }
   configKey = $IntegrationConfigKey
   statePath = $StatePath
 }
 
-$result | ConvertTo-Json -Depth 8
+$result | ConvertTo-Json -Depth 10
 if ($installed) { exit 0 } else { exit 1 }

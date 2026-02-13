@@ -184,15 +184,15 @@ public sealed class BaeframeExplorerCommand : IExplorerCommand
 
   public int GetIcon(IShellItemArray? psiItemArray, out IntPtr ppszIcon)
   {
-    if (!AppPathResolver.TryResolveAppExecutable(out var appPath))
-    {
-      ppszIcon = IntPtr.Zero;
-      return HResults.E_FAIL;
-    }
+    // Explorer may drop the command entirely if GetIcon fails.
+    // Always return a valid icon path to keep the menu item visible, even if the app path
+    // is not resolvable yet (registry/file system virtualization, first-run timing, etc).
+    var iconPath = AppPathResolver.TryResolveAppExecutable(out var appPath)
+      ? appPath
+      : $"{Path.Combine(Environment.SystemDirectory, "shell32.dll")},-154";
 
-    return TryAllocString(appPath, out ppszIcon);
+    return TryAllocString(iconPath, out ppszIcon);
   }
-
   public int GetToolTip(IShellItemArray? psiItemArray, out IntPtr ppszInfotip)
   {
     return TryAllocString(CommandConfig.ToolTip, out ppszInfotip);
@@ -312,17 +312,6 @@ public sealed class BaeframeExplorerCommand : IExplorerCommand
       {
         return false;
       }
-
-      if (!File.Exists(selectedPath))
-      {
-        return false;
-      }
-
-      if (Directory.Exists(selectedPath))
-      {
-        return false;
-      }
-
       filePath = selectedPath;
       return true;
     }

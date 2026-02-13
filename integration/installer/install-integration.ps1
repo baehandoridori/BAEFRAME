@@ -3,7 +3,7 @@ param(
   [Parameter(Mandatory = $false)]
   [string]$AppPath,
 
-  [ValidateSet('Auto', 'Sparse', 'Legacy')]
+  [ValidateSet('Auto', 'Sparse', 'Registry', 'Legacy')]
   [string]$Mode = 'Auto',
 
   [switch]$EnableLegacyFallback
@@ -17,13 +17,18 @@ $VerbKeyName = 'BAEFRAME.Open'
 $VerbLabel = ('BAEFRAME' + [string][char]0xB85C + ' ' + [string][char]0xC5F4 + [string][char]0xAE30)
 $ShellExtensionClsid = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
 $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
-$InstallerVersion = '1.3.0'
+$InstallerVersion = '1.4.0'
 
 $AppDataDir = Join-Path $env:APPDATA 'baeframe'
 $LogPath = Join-Path $AppDataDir 'integration-setup.log'
 $StatePath = Join-Path $AppDataDir 'integration-state.json'
 $IntegrationConfigKey = 'Registry::HKEY_CURRENT_USER\Software\BAEFRAME\Integration'
 $SparseInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-sparse-package.ps1'
+$SparseUninstallScriptPath = Join-Path $PSScriptRoot '..\package\uninstall-sparse-package.ps1'
+
+$ShellBuildScriptPath = Join-Path $PSScriptRoot '..\shell\build-shell.ps1'
+$ShellBuildOutputDir = Join-Path $PSScriptRoot '..\shell\BAEFRAME.ContextMenu\bin\x64\Release\net6.0-windows'
+$RegistryShellInstallDir = Join-Path $env:LOCALAPPDATA 'baeframe\integration-shell'
 
 function Ensure-Directory {
   param([string]$Path)
@@ -125,6 +130,166 @@ function Invoke-PowerShellFile {
   }
 }
 
+function Get-VerbNamesForTestFile {
+  param([string]$Extension)
+
+  $testName = "integration_probe$Extension"
+  $testPath = Join-Path $env:TEMP $testName
+
+  if (-not (Test-Path $testPath)) {
+    New-Item -ItemType File -Path $testPath -Force | Out-Null
+  }
+
+  $shell = New-Object -ComObject Shell.Application
+  $folder = $shell.Namespace((Split-Path $testPath))
+  if ($null -eq $folder) {
+    return @()
+  }
+
+  $item = $folder.ParseName((Split-Path $testPath -Leaf))
+  if ($null -eq $item) {
+    return @()
+  }
+
+  return @($item.Verbs() | ForEach-Object { $_.Name })
+}
+
+function Test-ContextMenuVerbVisible {
+  param([string]$Extension = '.mp4')
+
+  try {
+    $verbs = Get-VerbNamesForTestFile -Extension $Extension
+    return (@($verbs | Where-Object { $_ -match 'BAEFRAME' }).Count -gt 0)
+  } catch {
+    return $false
+  }
+}
+
+function Test-ShellArtifactsPresent {
+  param([string]$Dir)
+
+  $requiredFiles = @(
+    'BAEFRAME.ContextMenu.comhost.dll',
+    'BAEFRAME.ContextMenu.dll',
+    'BAEFRAME.ContextMenu.deps.json',
+    'BAEFRAME.ContextMenu.runtimeconfig.json'
+  )
+
+  foreach ($fileName in $requiredFiles) {
+    if (-not (Test-Path (Join-Path $Dir $fileName))) {
+      return $false
+    }
+  }
+
+  return $true
+}
+
+function Ensure-ShellArtifacts {
+  param([string]$OutputDir)
+
+  if (Test-ShellArtifactsPresent -Dir $OutputDir) {
+    return
+  }
+
+  if (-not (Test-Path $ShellBuildScriptPath)) {
+    throw "Shell build script not found: $ShellBuildScriptPath"
+  }
+
+  Invoke-PowerShellFile -ScriptPath $ShellBuildScriptPath -Arguments @('-Configuration', 'Release') -AllowedExitCodes @(0) | Out-Null
+
+  if (-not (Test-ShellArtifactsPresent -Dir $OutputDir)) {
+    throw "Shell build did not produce required artifacts in: $OutputDir"
+  }
+}
+
+function Copy-ShellArtifacts {
+  param(
+    [string]$SourceDir,
+    [string]$DestinationDir
+  )
+
+  $requiredFiles = @(
+    'BAEFRAME.ContextMenu.comhost.dll',
+    'BAEFRAME.ContextMenu.dll',
+    'BAEFRAME.ContextMenu.deps.json',
+    'BAEFRAME.ContextMenu.runtimeconfig.json'
+  )
+
+  Ensure-Directory -Path $DestinationDir
+
+  foreach ($fileName in $requiredFiles) {
+    $sourcePath = Join-Path $SourceDir $fileName
+    if (-not (Test-Path $sourcePath)) {
+      throw "Missing shell artifact: $sourcePath"
+    }
+
+    Copy-Item -Path $sourcePath -Destination (Join-Path $DestinationDir $fileName) -Force
+  }
+}
+
+function Register-RegistryComServer {
+  param([string]$ComHostPath)
+
+  $clsidKey = "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\$ShellExtensionClsid"
+  $inprocKey = Join-Path $clsidKey 'InprocServer32'
+
+  if ($PSCmdlet.ShouldProcess($clsidKey, 'Register COM server (HKCU)')) {
+    New-Item -Path $clsidKey -Force | Out-Null
+    New-Item -Path $inprocKey -Force | Out-Null
+
+    Set-ItemProperty -Path $inprocKey -Name '(default)' -Value $ComHostPath -Force
+    New-ItemProperty -Path $inprocKey -Name 'ThreadingModel' -PropertyType String -Value 'Apartment' -Force | Out-Null
+  }
+}
+
+function Register-RegistryShellVerbs {
+  param([string]$ResolvedAppPath)
+
+  foreach ($ext in $SupportedExtensions) {
+    $verbKey = "Registry::HKEY_CURRENT_USER\Software\Classes\SystemFileAssociations\$ext\shell\$VerbKeyName"
+    $commandKey = Join-Path $verbKey 'command'
+
+    if ($PSCmdlet.ShouldProcess($verbKey, "Register ExplorerCommand verb for $ext")) {
+      New-Item -Path $verbKey -Force | Out-Null
+
+      if (Test-Path $commandKey) {
+        Remove-Item -Path $commandKey -Recurse -Force
+      }
+
+      New-ItemProperty -Path $verbKey -Name 'MUIVerb' -PropertyType String -Value $VerbLabel -Force | Out-Null
+      New-ItemProperty -Path $verbKey -Name 'Icon' -PropertyType String -Value ("$ResolvedAppPath,0") -Force | Out-Null
+      New-ItemProperty -Path $verbKey -Name 'ExplorerCommandHandler' -PropertyType String -Value $ShellExtensionClsid -Force | Out-Null
+      New-ItemProperty -Path $verbKey -Name 'CommandStateSync' -PropertyType String -Value '' -Force | Out-Null
+      New-ItemProperty -Path $verbKey -Name 'MultiSelectModel' -PropertyType String -Value 'Single' -Force | Out-Null
+
+      Write-SetupLog -Level 'INFO' -Message 'Registered registry ExplorerCommand verb' -Data @{ extension = $ext; key = $verbKey }
+    }
+  }
+}
+
+function Install-RegistryShellIntegration {
+  param([string]$ResolvedAppPath)
+
+  Ensure-ShellArtifacts -OutputDir $ShellBuildOutputDir
+
+  if ($PSCmdlet.ShouldProcess($RegistryShellInstallDir, 'Deploy shell artifacts for registry integration')) {
+    if (Test-Path $RegistryShellInstallDir) {
+      Remove-Item -Path $RegistryShellInstallDir -Recurse -Force
+    }
+
+    Ensure-Directory -Path $RegistryShellInstallDir
+    Copy-ShellArtifacts -SourceDir $ShellBuildOutputDir -DestinationDir $RegistryShellInstallDir
+  }
+
+  $comHostPath = Join-Path $RegistryShellInstallDir 'BAEFRAME.ContextMenu.comhost.dll'
+  Register-RegistryComServer -ComHostPath $comHostPath
+  Register-RegistryShellVerbs -ResolvedAppPath $ResolvedAppPath
+
+  if (-not (Test-ContextMenuVerbVisible -Extension '.mp4')) {
+    throw 'Registry-based ExplorerCommand handler was installed, but BAEFRAME verb is still not visible. Explorer restart may be required, or the COM server may have failed to load.'
+  }
+}
+
 function Register-LegacyShellVerbs {
   param([string]$ResolvedAppPath)
 
@@ -134,7 +299,7 @@ function Register-LegacyShellVerbs {
     $verbKey = "Registry::HKEY_CURRENT_USER\Software\Classes\SystemFileAssociations\$ext\shell\$VerbKeyName"
     $commandKey = Join-Path $verbKey 'command'
 
-    if ($PSCmdlet.ShouldProcess($verbKey, "Register context menu for $ext")) {
+    if ($PSCmdlet.ShouldProcess($verbKey, "Register legacy command verb for $ext")) {
       New-Item -Path $verbKey -Force | Out-Null
       New-ItemProperty -Path $verbKey -Name 'MUIVerb' -PropertyType String -Value $VerbLabel -Force | Out-Null
       New-ItemProperty -Path $verbKey -Name 'Icon' -PropertyType String -Value $ResolvedAppPath -Force | Out-Null
@@ -143,10 +308,7 @@ function Register-LegacyShellVerbs {
       New-Item -Path $commandKey -Force | Out-Null
       Set-ItemProperty -Path $commandKey -Name '(default)' -Value $escapedCommand -Force
 
-      Write-SetupLog -Level 'INFO' -Message 'Registered legacy extension verb' -Data @{
-        extension = $ext
-        key = $verbKey
-      }
+      Write-SetupLog -Level 'INFO' -Message 'Registered legacy extension verb' -Data @{ extension = $ext; key = $verbKey }
     }
   }
 }
@@ -166,7 +328,9 @@ try {
   }
 
   $resolvedAppPath = Resolve-BaeframePath -Candidate $AppPath
+
   $resolvedMode = 'none'
+
   $sparseInstall = [ordered]@{
     attempted = $false
     installed = $false
@@ -174,7 +338,14 @@ try {
     error = $null
   }
 
-  $preferSparse = $Mode -ne 'Legacy'
+  $registryShell = [ordered]@{
+    attempted = $false
+    installed = $false
+    installDir = $RegistryShellInstallDir
+    error = $null
+  }
+
+  $preferSparse = ($Mode -eq 'Auto' -or $Mode -eq 'Sparse')
   if ($preferSparse) {
     $sparseInstall.attempted = $true
 
@@ -192,6 +363,23 @@ try {
         scriptPath = $SparseInstallerScriptPath
         outputTail = ($sparseInstallResult.output | Select-Object -Last 1)
       }
+
+      if (-not (Test-ContextMenuVerbVisible -Extension '.mp4')) {
+        $warning = 'Sparse package installed, but BAEFRAME context menu verb is not visible. Falling back to registry-based ExplorerCommand integration.'
+        Write-SetupLog -Level 'WARN' -Message $warning
+
+        if (Test-Path $SparseUninstallScriptPath) {
+          try {
+            Invoke-PowerShellFile -ScriptPath $SparseUninstallScriptPath -Arguments @('-PackageName', $PackageName) -AllowedExitCodes @(0) | Out-Null
+          } catch {
+            Write-SetupLog -Level 'WARN' -Message 'Sparse package uninstall after verification failure failed' -Data @{ error = $_.Exception.Message }
+          }
+        }
+
+        $sparseInstall.installed = $false
+        $sparseInstall.error = $warning
+        $resolvedMode = 'none'
+      }
     } catch {
       $sparseInstall.error = $_.Exception.Message
 
@@ -203,14 +391,31 @@ try {
       if ($Mode -eq 'Sparse') {
         throw "Sparse package mode requested but install failed: $($sparseInstall.error)"
       }
+    }
+  }
 
-      if ($Mode -eq 'Auto' -and -not $EnableLegacyFallback) {
-        throw "Sparse install failed. Legacy fallback is disabled by policy. Error: $($sparseInstall.error)"
+  $preferRegistry = ($resolvedMode -eq 'none') -and ($Mode -eq 'Auto' -or $Mode -eq 'Registry')
+  if ($preferRegistry) {
+    $registryShell.attempted = $true
+
+    try {
+      Install-RegistryShellIntegration -ResolvedAppPath $resolvedAppPath
+      $registryShell.installed = $true
+      $resolvedMode = 'registry-shell'
+
+      Write-SetupLog -Level 'INFO' -Message 'Registry-based shell integration completed' -Data @{ installDir = $RegistryShellInstallDir }
+    } catch {
+      $registryShell.error = $_.Exception.Message
+
+      Write-SetupLog -Level 'WARN' -Message 'Registry-based shell integration failed' -Data @{ error = $registryShell.error }
+
+      if ($Mode -eq 'Registry') {
+        throw "Registry mode requested but install failed: $($registryShell.error)"
       }
     }
   }
 
-  if ($resolvedMode -ne 'sparse-package') {
+  if ($resolvedMode -eq 'none') {
     if ($Mode -eq 'Legacy' -or $EnableLegacyFallback) {
       Register-LegacyShellVerbs -ResolvedAppPath $resolvedAppPath
       $resolvedMode = 'legacy-shell'
@@ -242,9 +447,10 @@ try {
       shellClsid = $ShellExtensionClsid
       packageName = $PackageName
       sparseInstall = $sparseInstall
+      registryShell = $registryShell
     }
 
-    $state | ConvertTo-Json -Depth 6 | Set-Content -Path $StatePath -Encoding UTF8
+    $state | ConvertTo-Json -Depth 7 | Set-Content -Path $StatePath -Encoding UTF8
   }
 
   Write-SetupLog -Level 'INFO' -Message 'Integration install completed' -Data @{
@@ -264,11 +470,12 @@ try {
     shellClsid = $ShellExtensionClsid
     packageName = $PackageName
     sparseInstall = $sparseInstall
+    registryShell = $registryShell
     extensions = $SupportedExtensions
     configKey = $IntegrationConfigKey
     logPath = $LogPath
     statePath = $StatePath
-  } | ConvertTo-Json -Depth 6
+  } | ConvertTo-Json -Depth 7
 
   exit 0
 } catch {
@@ -288,3 +495,4 @@ try {
 
   exit 1
 }
+

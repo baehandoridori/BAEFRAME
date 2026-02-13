@@ -7,6 +7,8 @@ $ErrorActionPreference = 'Stop'
 $SupportedExtensions = @('.mp4', '.mov', '.avi', '.mkv', '.webm')
 $VerbKeyName = 'BAEFRAME.Open'
 $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
+$ShellExtensionClsid = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
+$RegistryShellInstallDir = Join-Path $env:LOCALAPPDATA 'baeframe\integration-shell'
 
 $AppDataDir = Join-Path $env:APPDATA 'baeframe'
 $LogPath = Join-Path $AppDataDir 'integration-setup.log'
@@ -113,6 +115,17 @@ try {
     }
   }
 
+  $clsidKey = "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\$ShellExtensionClsid"
+  if ((Test-Path $clsidKey) -and $PSCmdlet.ShouldProcess($clsidKey, 'Remove registry COM registration')) {
+    Remove-Item -Path $clsidKey -Recurse -Force
+    Write-SetupLog -Level 'INFO' -Message 'Removed registry COM registration' -Data @{ clsid = $ShellExtensionClsid }
+  }
+
+  if ((Test-Path $RegistryShellInstallDir) -and $PSCmdlet.ShouldProcess($RegistryShellInstallDir, 'Remove registry shell artifacts')) {
+    Remove-Item -Path $RegistryShellInstallDir -Recurse -Force
+    Write-SetupLog -Level 'INFO' -Message 'Removed registry shell artifacts' -Data @{ installDir = $RegistryShellInstallDir }
+  }
+
   if ((Test-Path $IntegrationConfigKey) -and $PSCmdlet.ShouldProcess($IntegrationConfigKey, 'Remove integration app config')) {
     Remove-Item -Path $IntegrationConfigKey -Recurse -Force
     Write-SetupLog -Level 'INFO' -Message 'Removed integration config key' -Data @{ key = $IntegrationConfigKey }
@@ -126,6 +139,8 @@ try {
   [ordered]@{
     success = $true
     removedExtensions = $SupportedExtensions
+    removedComClsid = $ShellExtensionClsid
+    removedArtifactsDir = $RegistryShellInstallDir
     removedConfigKey = $IntegrationConfigKey
     sparseUninstall = $sparseUninstall
     logPath = $LogPath
