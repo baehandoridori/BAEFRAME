@@ -81,11 +81,11 @@ function Read-SetupConfigJson {
     $fixed = $raw
     $pathKeys = @('certPath', 'testAppPath', 'shareAppPath')
     foreach ($key in $pathKeys) {
-      $pattern = '("' + [regex]::Escape($key) + '"\\s*:\\s*")([^"]*)(")'
+      $pattern = '("' + [regex]::Escape($key) + '"\s*:\s*")([^"]*)(")'
       $fixed = [regex]::Replace($fixed, $pattern, {
         param($m)
         $value = $m.Groups[2].Value
-        $value = $value -replace '\\', '\\\\'
+        $value = $value -replace '\\', '\\'
         return $m.Groups[1].Value + $value + $m.Groups[3].Value
       })
     }

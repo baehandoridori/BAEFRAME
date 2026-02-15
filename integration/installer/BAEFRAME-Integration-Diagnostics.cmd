@@ -9,85 +9,23 @@ if %errorlevel% NEQ 0 (
   exit /b 1
 )
 
-echo [BAEFRAME Integration Diagnostics]
+echo Running diagnostics...
 echo.
 
-echo [1/5] OS check
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$b=[Environment]::OSVersion.Version.Build; Write-Host ('WindowsBuild = ' + $b)"
-
-echo.
-echo [2/5] Config check (setup-paths.team.json)
-if exist "%~dp0setup-paths.team.json" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$path = '.\\setup-paths.team.json'; " ^
-    "$bytes = [System.IO.File]::ReadAllBytes($path); " ^
-    "$raw = $null; " ^
-    "try { $utf8 = New-Object System.Text.UTF8Encoding($false, $true); $raw = $utf8.GetString($bytes) } catch { $raw = [System.Text.Encoding]::Default.GetString($bytes) }; " ^
-    "if ($raw -and $raw.Length -gt 0 -and $raw[0] -eq [char]0xFEFF) { $raw = $raw.Substring(1) }; " ^
-    "$m = [regex]::Match($raw, '\"shareAppPath\"\\s*:\\s*\"([^\"]*)\"'); " ^
-    "$p = $null; if ($m.Success) { $p = [string]$m.Groups[1].Value }; " ^
-    "if ($p) { $p = $p.Replace('\\', '\') }; " ^
-    "Write-Host ('shareAppPath = ' + $p); " ^
-    "if ($p) { Write-Host ('exists = ' + (Test-Path $p)) } else { Write-Host 'exists = (n/a)' }"
-) else (
-  echo Missing file: setup-paths.team.json
+if not exist "%~dp0diagnose-integration.ps1" (
+  echo [FAILED] Missing file: diagnose-integration.ps1
+  echo Extract the whole ZIP and try again.
+  echo.
+  pause
+  popd
+  exit /b 1
 )
 
-echo.
-echo [3/5] Detect integration
-if exist "%~dp0detect-integration.ps1" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File ".\\detect-integration.ps1"
-) else (
-  echo Missing file: detect-integration.ps1
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\\diagnose-integration.ps1" %*
+set EXIT_CODE=%ERRORLEVEL%
 
-echo.
-echo [4/5] Policy snapshot
-echo HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Appx
-reg query "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Appx" /v AllowAllTrustedApps 2>nul
-reg query "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Appx" /v AllowDevelopmentWithoutDevLicense 2>nul
-reg query "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Appx" /v BlockNonAdminUserInstall 2>nul
-
-echo.
-echo HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock
-reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock" /v AllowAllTrustedApps 2>nul
-reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock" /v AllowDevelopmentWithoutDevLicense 2>nul
-
-echo.
-echo [.NET runtime check]
-if exist "%ProgramFiles%\\dotnet\\dotnet.exe" (
-  "%ProgramFiles%\\dotnet\\dotnet.exe" --list-runtimes | findstr /i "Microsoft.WindowsDesktop.App"
-) else (
-  echo dotnet.exe not found at: %ProgramFiles%\\dotnet\\dotnet.exe
-  echo If installation fails with COM activation errors, installing .NET 6 Desktop Runtime (x64) may be required.
-)
-
-echo.
-echo [5/5] Log tails
-set SETUP_LOG=%APPDATA%\\baeframe\\integration-setup.log
-set PROVISION_LOG=%APPDATA%\\baeframe\\integration-provision.log
-echo setup log: %SETUP_LOG%
-echo provision log: %PROVISION_LOG%
-
-if exist "%SETUP_LOG%" (
-  echo --- setup log tail ---
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Path (Join-Path $env:APPDATA 'baeframe\\integration-setup.log') -Tail 15"
-) else (
-  echo (setup log missing)
-)
-
-echo.
-if exist "%PROVISION_LOG%" (
-  echo --- provision log tail ---
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Path (Join-Path $env:APPDATA 'baeframe\\integration-provision.log') -Tail 15"
-) else (
-  echo (provision log missing)
-)
-
-echo.
-echo Done.
 echo.
 pause
 popd
-exit /b 0
+exit /b %EXIT_CODE%
+
