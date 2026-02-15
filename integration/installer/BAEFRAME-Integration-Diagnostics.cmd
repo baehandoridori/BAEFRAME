@@ -50,12 +50,12 @@ reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock" /
 
 echo.
 echo [.NET runtime check]
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$base='HKLM:\\SOFTWARE\\dotnet\\Setup\\InstalledVersions\\x64\\sharedfx\\Microsoft.WindowsDesktop.App'; " ^
-  "if (Test-Path $base) { " ^
-  "  $v = Get-ChildItem $base | Select-Object -ExpandProperty PSChildName; " ^
-  "  if ($v) { Write-Host ('Microsoft.WindowsDesktop.App = ' + ($v -join ', ')) } else { Write-Host 'Microsoft.WindowsDesktop.App = (none)' } " ^
-  "} else { Write-Host 'Microsoft.WindowsDesktop.App = (not found)' }"
+if exist "%ProgramFiles%\\dotnet\\dotnet.exe" (
+  "%ProgramFiles%\\dotnet\\dotnet.exe" --list-runtimes | findstr /i "Microsoft.WindowsDesktop.App"
+) else (
+  echo dotnet.exe not found at: %ProgramFiles%\\dotnet\\dotnet.exe
+  echo If installation fails with COM activation errors, installing .NET 6 Desktop Runtime (x64) may be required.
+)
 
 echo.
 echo [5/5] Log tails
