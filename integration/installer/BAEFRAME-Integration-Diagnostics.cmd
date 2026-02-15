@@ -20,10 +20,16 @@ echo.
 echo [2/5] Config check (setup-paths.team.json)
 if exist "%~dp0setup-paths.team.json" (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$cfg = Get-Content -Raw '.\\setup-paths.team.json' | ConvertFrom-Json; " ^
-    "$p = [string]$cfg.shareAppPath; " ^
+    "$path = '.\\setup-paths.team.json'; " ^
+    "$bytes = [System.IO.File]::ReadAllBytes($path); " ^
+    "$raw = $null; " ^
+    "try { $utf8 = New-Object System.Text.UTF8Encoding($false, $true); $raw = $utf8.GetString($bytes) } catch { $raw = [System.Text.Encoding]::Default.GetString($bytes) }; " ^
+    "if ($raw -and $raw.Length -gt 0 -and $raw[0] -eq [char]0xFEFF) { $raw = $raw.Substring(1) }; " ^
+    "$m = [regex]::Match($raw, '\"shareAppPath\"\\s*:\\s*\"([^\"]*)\"'); " ^
+    "$p = $null; if ($m.Success) { $p = [string]$m.Groups[1].Value }; " ^
+    "if ($p) { $p = $p.Replace('\\', '\') }; " ^
     "Write-Host ('shareAppPath = ' + $p); " ^
-    "Write-Host ('exists = ' + (Test-Path $p));"
+    "if ($p) { Write-Host ('exists = ' + (Test-Path $p)) } else { Write-Host 'exists = (n/a)' }"
 ) else (
   echo Missing file: setup-paths.team.json
 )

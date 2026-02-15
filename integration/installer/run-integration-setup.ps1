@@ -44,6 +44,56 @@ function Resolve-ExistingPath {
   return $null
 }
 
+function Read-TextFileAutoEncoding {
+  param([string]$Path)
+
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+
+  # Prefer UTF-8 because our config files contain Korean paths and are normally stored as UTF-8.
+  # Fall back to the system default encoding if the file is not valid UTF-8 (e.g., saved as ANSI).
+  $text = $null
+  try {
+    $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    $text = $utf8.GetString($bytes)
+  } catch {
+    $text = [System.Text.Encoding]::Default.GetString($bytes)
+  }
+
+  # Strip BOM if present.
+  if ($text -and $text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) {
+    $text = $text.Substring(1)
+  }
+
+  return $text
+}
+
+function Read-SetupConfigJson {
+  param([string]$Path)
+
+  $raw = Read-TextFileAutoEncoding -Path $Path
+
+  try {
+    return ($raw | ConvertFrom-Json)
+  } catch {
+    # Common user mistake: writing Windows paths with single backslashes in JSON.
+    # Example: "C:\Temp\app.exe" (invalid JSON) should be "C:\\Temp\\app.exe" or "C:/Temp/app.exe".
+    # Attempt a targeted repair on known path fields, then re-parse.
+    $fixed = $raw
+    $pathKeys = @('certPath', 'testAppPath', 'shareAppPath')
+    foreach ($key in $pathKeys) {
+      $pattern = '("' + [regex]::Escape($key) + '"\\s*:\\s*")([^"]*)(")'
+      $fixed = [regex]::Replace($fixed, $pattern, {
+        param($m)
+        $value = $m.Groups[2].Value
+        $value = $value -replace '\\', '\\\\'
+        return $m.Groups[1].Value + $value + $m.Groups[3].Value
+      })
+    }
+
+    return ($fixed | ConvertFrom-Json)
+  }
+}
+
 if ($ConfigPath) {
   $resolvedConfigPath = Resolve-ExistingPath -PathCandidate $ConfigPath -RelativeBase $PSScriptRoot
   if (-not $resolvedConfigPath) {
@@ -71,7 +121,7 @@ $config = [ordered]@{
 
 if (Test-Path $configFilePath) {
   try {
-    $loaded = Get-Content -Raw $configFilePath | ConvertFrom-Json
+    $loaded = Read-SetupConfigJson -Path $configFilePath
     if ($loaded.activeProfile) { $config.activeProfile = [string]$loaded.activeProfile }
     if ($loaded.mode) { $config.mode = [string]$loaded.mode }
     if ($loaded.sparseInstallMethod) { $config.sparseInstallMethod = [string]$loaded.sparseInstallMethod }
@@ -82,7 +132,7 @@ if (Test-Path $configFilePath) {
     if ($loaded.testAppPath) { $config.testAppPath = [string]$loaded.testAppPath }
     if ($loaded.shareAppPath) { $config.shareAppPath = [string]$loaded.shareAppPath }
   } catch {
-    throw "Failed to read setup config: $configFilePath"
+    throw "Failed to read setup config: $configFilePath`n$($_.Exception.Message)"
   }
 }
 
