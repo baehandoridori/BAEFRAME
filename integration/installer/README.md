@@ -30,7 +30,7 @@ Windows 우클릭 진입(이슈 #88) 설치/진단/제거 스크립트입니다.
 3. 팀원들은 `배프레임 레지스트리 등록.cmd`만 더블클릭해서 1회 설치하면 됩니다.
 
 기본값은 아래 경로를 기대합니다(Google Drive 공유드라이브 기준).
-- `G:\\공유 드라이브\\BAEFRAME\\BFRAME_alpha_v2.exe`
+- `G:\\공유 드라이브\\JBBJ 자료실\\한솔이의 두근두근 실험실\\BAEFRAME\\테스트버전 빌드\\BFRAME_alpha_v2.exe`
 
 만약 정책/권한 문제로 설치가 실패하면 아래 파일을 "관리자 권한으로 실행"으로 다시 시도하세요.
 - `integration/installer/BAEFRAME-Integration-Setup-Admin.cmd`
