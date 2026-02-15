@@ -32,6 +32,8 @@ $SparseInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-sparse-
 $SparseMsixInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-sparse-msix.ps1'
 $SparseUninstallScriptPath = Join-Path $PSScriptRoot '..\package\uninstall-sparse-package.ps1'
 $FullMsixInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-full-msix.ps1'
+$PrebuiltMsixInstallerScriptPath = Join-Path $PSScriptRoot '..\package\install-prebuilt-msix.ps1'
+$PrebuiltMsixPath = Join-Path $PSScriptRoot ('..\package\' + $PackageName + '.msix')
 
 $ShellBuildScriptPath = Join-Path $PSScriptRoot '..\shell\build-shell.ps1'
 $ShellBuildOutputDir = Join-Path $PSScriptRoot '..\shell\BAEFRAME.ContextMenu\bin\x64\Release\net6.0-windows'
@@ -410,17 +412,25 @@ try {
 
   if ($preferPackage) {
     $sparseInstall.attempted = $true
-    $sparseInstall.installMethod = 'FullMsix'
 
     try {
       Remove-ClassicShellArtifacts
 
       $msixArgs = @()
+      $installerScript = $FullMsixInstallerScriptPath
+
+      if ((Test-Path $PrebuiltMsixInstallerScriptPath) -and (Test-Path $PrebuiltMsixPath)) {
+        $installerScript = $PrebuiltMsixInstallerScriptPath
+        $msixArgs += @('-MsixPath', $PrebuiltMsixPath)
+        $sparseInstall.installMethod = 'PrebuiltMsix'
+      } else {
+        $sparseInstall.installMethod = 'FullMsix'
+      }
+
       if ($WhatIfPreference) {
         $msixArgs += '-WhatIf'
       }
 
-      $installerScript = $FullMsixInstallerScriptPath
       $sparseInstall.scriptPath = $installerScript
 
       $msixResult = Invoke-PowerShellFile -ScriptPath $installerScript -Arguments $msixArgs -AllowedExitCodes @(0)

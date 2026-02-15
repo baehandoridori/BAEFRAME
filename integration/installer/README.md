@@ -12,8 +12,13 @@ Windows 우클릭 진입(이슈 #88) 설치/진단/제거 스크립트입니다.
 
 팀원들에게는 아래 파일을 안내하면 됩니다.
 - `integration/installer/배프레임 레지스트리 등록.cmd`
+  - (파일명이 깨지는 환경이면) `integration/installer/BAEFRAME-Registry-Install.cmd`를 대신 사용해도 됩니다.
 
 이 파일은 내부적으로 `setup-paths.team.json`에 적힌 `shareAppPath`를 사용해 설치합니다.
+
+중요: `installer` 폴더만 따로 압축해서 전달하면 설치가 실패합니다.
+- 설치 스크립트가 `..\package`를 참조합니다.
+- 최소 `integration` 폴더 전체(권장) 또는 `installer` + `package` 폴더를 **같은 구조**로 압축해서 전달하세요.
 
 1. 공유드라이브에 BAEFRAME 실행 파일을 올립니다.
 2. `integration/installer/setup-paths.team.json`의 `shareAppPath`를 그 위치로 맞춥니다.

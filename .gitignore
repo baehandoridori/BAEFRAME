@@ -66,3 +66,7 @@ integration/host/**/obj/
 
 # Integration certificates (public, generated per-machine by installer)
 integration/installer/certs/*.cer
+
+# Integration build/release artifacts (built locally)
+integration/package/*.msix
+integration/*.zip
