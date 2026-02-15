@@ -23,6 +23,8 @@ import { getPlaylistManager } from './modules/playlist-manager.js';
 
 const log = createLogger('App');
 
+const SUPPORTED_VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
 
@@ -4739,7 +4741,7 @@ async function initApp() {
    */
   function isVideoFile(filename) {
     const ext = filename.toLowerCase().split('.').pop();
-    return ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext);
+    return SUPPORTED_VIDEO_EXTENSIONS.includes(ext);
   }
 
   /**
@@ -6487,7 +6489,8 @@ async function initApp() {
   // 이벤트 리스너
   btnShortcutSettings?.addEventListener('click', () => {
     // 설정 드롭다운 닫기
-    document.getElementById('commentSettingsDropdown')?.classList.remove('show');
+    commentSettingsDropdown?.classList.remove('open');
+    btnCommentSettings?.classList.remove('active');
     openShortcutSettingsModal();
   });
 
@@ -6534,7 +6537,52 @@ async function initApp() {
   const btnClearThumbnailCache = document.getElementById('btnClearThumbnailCache');
   const btnClearTranscodeCache = document.getElementById('btnClearTranscodeCache');
   const btnClearAllCache = document.getElementById('btnClearAllCache');
+  const btnWindowsIntegrationRepair = document.getElementById('btnWindowsIntegrationRepair');
 
+  async function runWindowsIntegrationRepairFlow() {
+    commentSettingsDropdown?.classList.remove('open');
+    btnCommentSettings?.classList.remove('active');
+
+    if (!window.platform?.isWindows) {
+      showToast('Windows에서만 사용할 수 있는 기능입니다.', 'warning', 4000, true);
+      return;
+    }
+
+    try {
+      const detectResult = await window.electronAPI.detectWindowsIntegration?.();
+      if (!detectResult?.success) {
+        showToast(`통합 상태 확인 실패: ${detectResult?.error || '알 수 없는 오류'}`, 'error', 5000, true);
+        return;
+      }
+
+      if (!detectResult.installer?.exists) {
+        showToast('통합 설치기를 찾을 수 없습니다. integration/installer 폴더를 확인해주세요.', 'error', 6000, true);
+        return;
+      }
+
+      if (detectResult.integrationStatus?.installed) {
+        const proceed = confirm('Windows 통합이 이미 설치된 것으로 보입니다. 복구(재설치)를 계속할까요?');
+        if (!proceed) {
+          return;
+        }
+      }
+
+      const repairResult = await window.electronAPI.runWindowsIntegrationRepair?.();
+      if (repairResult?.success) {
+        showToast('Windows 통합 설치기를 실행했습니다. 관리자 권한 승인 후 설치를 진행하세요.', 'info', 6000, true);
+      } else {
+        const message = repairResult?.error || '설치기 실행 실패';
+        const isCancelled = /cancel|취소/i.test(message);
+        if (isCancelled) {
+          showToast('관리자 권한 요청이 취소되었습니다.', 'warning', 5000, true);
+        } else {
+          showToast(`통합 복구 실행 실패: ${message}`, 'error', 6000, true);
+        }
+      }
+    } catch (error) {
+      showToast(`통합 복구 실행 중 오류: ${error.message}`, 'error', 6000, true);
+    }
+  }
   // 캐시 크기 업데이트
   async function updateCacheSizes() {
     try {
@@ -6568,8 +6616,11 @@ async function initApp() {
   }
 
   // 이벤트 리스너
+  btnWindowsIntegrationRepair?.addEventListener('click', runWindowsIntegrationRepairFlow);
+
   btnCacheSettings?.addEventListener('click', () => {
-    document.getElementById('commentSettingsDropdown')?.classList.remove('show');
+    commentSettingsDropdown?.classList.remove('open');
+    btnCommentSettings?.classList.remove('active');
     openCacheSettingsModal();
   });
 
@@ -7018,7 +7069,7 @@ async function initApp() {
       const result = await window.electronAPI.openFileDialog({
         title: '재생목록에 추가할 영상 선택',
         filters: [
-          { name: '비디오 파일', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] }
+          { name: '비디오 파일', extensions: SUPPORTED_VIDEO_EXTENSIONS }
         ],
         properties: ['openFile', 'multiSelections']
       });
@@ -7472,7 +7523,7 @@ async function initApp() {
 
       const files = Array.from(e.dataTransfer.files);
       const videoPaths = files
-        .filter(f => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.path))
+        .filter(f => isVideoFile(f.path))
         .map(f => f.path);
 
       if (videoPaths.length > 0) {
@@ -7527,7 +7578,7 @@ async function initApp() {
 
       const files = Array.from(e.dataTransfer.files);
       const videoPaths = files
-        .filter(f => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.path))
+        .filter(f => isVideoFile(f.path))
         .map(f => f.path);
 
       if (videoPaths.length > 0) {

@@ -6,6 +6,7 @@ const { ipcMain, dialog, app, clipboard, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { createLogger } = require('./logger');
 const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized, toggleFullscreen, isFullscreen } = require('./window');
 
@@ -15,6 +16,159 @@ const log = createLogger('IPC');
  * 허용된 파일 확장자 목록
  */
 const ALLOWED_EXTENSIONS = ['.bframe', '.json', '.bak', '.bplaylist'];
+const VIDEO_FILE_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+const VIDEO_FILE_EXTENSION_SET = new Set(VIDEO_FILE_EXTENSIONS.map((ext) => '.' + ext));
+
+function escapePowerShellSingleQuote(value) {
+  return String(value || '').replace(/'/g, "''");
+}
+
+function parseJsonPayload(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      try {
+        return JSON.parse(lines[i]);
+      } catch {
+        // keep trying
+      }
+    }
+  }
+
+  return null;
+}
+
+function runPowerShellScript(scriptPath, args = [], allowedExitCodes = [0]) {
+  return new Promise((resolve, reject) => {
+    const psArgs = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...args];
+    const child = spawn('powershell.exe', psArgs, { windowsHide: true });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout?.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => reject(error));
+
+    child.on('close', (code) => {
+      if (allowedExitCodes.includes(code)) {
+        resolve({ code, stdout, stderr });
+      } else {
+        const message = stderr.trim() || stdout.trim() || 'PowerShell exited with code ' + code;
+        reject(new Error(message));
+      }
+    });
+  });
+}
+
+function runPowerShellCommand(commandText) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', commandText],
+      { windowsHide: true }
+    );
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout?.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => reject(error));
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({ code, stdout, stderr });
+      } else {
+        const message = stderr.trim() || stdout.trim() || 'PowerShell exited with code ' + code;
+        reject(new Error(message));
+      }
+    });
+  });
+}
+
+function resolveIntegrationInstaller() {
+  const appPath = app.getAppPath();
+
+  const candidates = [
+    {
+      kind: 'exe',
+      path: app.isPackaged
+        ? path.join(path.dirname(process.execPath), 'BAEFRAME-Integration-Setup.exe')
+        : path.join(appPath, 'integration', 'installer', 'BAEFRAME-Integration-Setup.exe')
+    },
+    {
+      kind: 'exe',
+      path: app.isPackaged
+        ? path.join(process.resourcesPath, 'integration', 'installer', 'BAEFRAME-Integration-Setup.exe')
+        : path.join(appPath, 'dist', 'BAEFRAME-Integration-Setup.exe')
+    },
+    {
+      kind: 'cmd',
+      path: app.isPackaged
+        ? path.join(process.resourcesPath, 'integration', 'installer', 'BAEFRAME-Integration-Setup.cmd')
+        : path.join(appPath, 'integration', 'installer', 'BAEFRAME-Integration-Setup.cmd')
+    },
+    {
+      kind: 'script',
+      path: app.isPackaged
+        ? path.join(process.resourcesPath, 'integration', 'installer', 'run-integration-setup.ps1')
+        : path.join(appPath, 'integration', 'installer', 'run-integration-setup.ps1')
+    },
+    {
+      kind: 'script',
+      path: app.isPackaged
+        ? path.join(process.resourcesPath, 'integration', 'installer', 'install-integration.ps1')
+        : path.join(appPath, 'integration', 'installer', 'install-integration.ps1')
+    }
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate.path)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function resolveIntegrationDetectScript() {
+  const appPath = app.getAppPath();
+
+  const candidates = [
+    app.isPackaged
+      ? path.join(process.resourcesPath, 'integration', 'installer', 'detect-integration.ps1')
+      : path.join(appPath, 'integration', 'installer', 'detect-integration.ps1'),
+    path.join(appPath, 'integration', 'installer', 'detect-integration.ps1')
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
 
 /**
  * IPC 경로 검증 (보안)
@@ -61,7 +215,7 @@ function setupIpcHandlers() {
       const result = await dialog.showOpenDialog(getMainWindow(), {
         title: '영상 파일 열기',
         filters: [
-          { name: '비디오 파일', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] },
+          { name: '비디오 파일', extensions: VIDEO_FILE_EXTENSIONS },
           { name: '모든 파일', extensions: ['*'] }
         ],
         properties: ['openFile'],
@@ -307,8 +461,7 @@ function setupIpcHandlers() {
       // 폴더의 모든 파일 읽기
       const files = await fs.promises.readdir(directory);
 
-      // 지원하는 비디오 확장자
-      const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+      // 지원하는 비디오 확장자 (단일 소스)
 
       // 같은 시리즈의 버전 파일들 필터링
       const versions = [];
@@ -316,7 +469,7 @@ function setupIpcHandlers() {
 
       for (const file of files) {
         const ext = path.extname(file).toLowerCase();
-        if (!videoExtensions.includes(ext)) continue;
+        if (!VIDEO_FILE_EXTENSION_SET.has(ext)) continue;
 
         const fileBaseName = extractBaseName(file);
         if (fileBaseName !== currentBaseName) continue;
@@ -683,6 +836,126 @@ function setupIpcHandlers() {
     return getSettingsFilePath();
   });
 
+  // ====== Windows 통합(우클릭) 관련 ======
+
+  ipcMain.handle('integration:detect', async () => {
+    const trace = log.trace('integration:detect');
+
+    try {
+      if (process.platform !== 'win32') {
+        const result = {
+          success: false,
+          supported: false,
+          error: 'Windows 전용 기능입니다.'
+        };
+        trace.end(result);
+        return result;
+      }
+
+      const installer = resolveIntegrationInstaller();
+      const detectScriptPath = resolveIntegrationDetectScript();
+
+      let integrationStatus = null;
+      if (detectScriptPath) {
+        const detectResult = await runPowerShellScript(detectScriptPath, [], [0, 1]);
+        integrationStatus = parseJsonPayload(detectResult.stdout);
+      }
+
+      const response = {
+        success: true,
+        supported: true,
+        installer: {
+          exists: !!installer,
+          kind: installer?.kind || null,
+          path: installer?.path || null
+        },
+        detectScriptPath,
+        integrationStatus
+      };
+
+      trace.end({
+        installerExists: response.installer.exists,
+        statusLoaded: !!integrationStatus
+      });
+
+      return response;
+    } catch (error) {
+      trace.error(error);
+      return {
+        success: false,
+        supported: true,
+        error: error.message
+      };
+    }
+  });
+
+  ipcMain.handle('integration:run-repair', async () => {
+    const trace = log.trace('integration:run-repair');
+
+    try {
+      if (process.platform !== 'win32') {
+        const result = {
+          success: false,
+          launched: false,
+          error: 'Windows 전용 기능입니다.'
+        };
+        trace.end(result);
+        return result;
+      }
+
+      const installer = resolveIntegrationInstaller();
+      if (!installer) {
+        const result = {
+          success: false,
+          launched: false,
+          error: '통합 설치기를 찾지 못했습니다. integration/installer/BAEFRAME-Integration-Setup.cmd 또는 run-integration-setup.ps1을 확인해주세요.'
+        };
+        trace.end(result);
+        return result;
+      }
+
+      const escapedInstallerPath = escapePowerShellSingleQuote(installer.path);
+      let launchCommand;
+
+      if (installer.kind === 'exe' || installer.kind === 'cmd') {
+        launchCommand = `Start-Process -FilePath '${escapedInstallerPath}' -Verb RunAs`;
+      } else {
+        const scriptArgs = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer.path];
+
+        // 개발 모드에서는 process.execPath가 electron.exe이므로 강제 전달하지 않는다.
+        if (app.isPackaged) {
+          scriptArgs.push('-AppPath', process.execPath);
+        }
+
+        const escapedArgs = scriptArgs
+          .map((arg) => `'${escapePowerShellSingleQuote(arg)}'`)
+          .join(',');
+
+        launchCommand = `Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(${escapedArgs})`;
+      }
+
+      await runPowerShellCommand(launchCommand);
+
+      const result = {
+        success: true,
+        launched: true,
+        installer: {
+          kind: installer.kind,
+          path: installer.path
+        }
+      };
+
+      trace.end(result);
+      return result;
+    } catch (error) {
+      trace.error(error);
+      return {
+        success: false,
+        launched: false,
+        error: error.message
+      };
+    }
+  });
   // ====== 썸네일 캐시 관련 ======
 
   /**
@@ -1719,3 +1992,5 @@ function createPathHash(filePath) {
 }
 
 module.exports = { setupIpcHandlers };
+
+

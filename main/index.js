@@ -138,6 +138,26 @@ function parseBaeframeUrl(url) {
   return filePath;
 }
 
+const SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+
+function hasExtension(filePath, ext) {
+  return typeof filePath === 'string' && filePath.toLowerCase().endsWith(ext);
+}
+
+function isSupportedVideoPath(filePath) {
+  return SUPPORTED_VIDEO_EXTENSIONS.some((ext) => hasExtension(filePath, ext));
+}
+
+function isLaunchArgument(arg) {
+  if (typeof arg !== 'string' || arg.length === 0) {
+    return false;
+  }
+
+  return arg.startsWith('baeframe://') ||
+    hasExtension(arg, '.bframe') ||
+    hasExtension(arg, '.bplaylist') ||
+    isSupportedVideoPath(arg);
+}
 // ============================================
 // 비디오 코덱 지원 향상을 위한 Chromium 플래그
 // ============================================
@@ -210,16 +230,7 @@ if (!gotTheLock) {
       mainWindow.focus();
 
       // 프로토콜 링크나 파일 경로가 있으면 처리
-      let arg = commandLine.find(a =>
-        a.startsWith('baeframe://') ||
-        a.endsWith('.bframe') ||
-        a.endsWith('.bplaylist') ||
-        a.endsWith('.mp4') ||
-        a.endsWith('.mov') ||
-        a.endsWith('.avi') ||
-        a.endsWith('.mkv') ||
-        a.endsWith('.webm')
-      );
+      let arg = commandLine.find(isLaunchArgument);
 
       if (arg) {
         // 재생목록 URL인지 확인
@@ -261,7 +272,7 @@ if (!gotTheLock) {
         }
 
         // .bplaylist 파일이면 재생목록으로 열기
-        if (arg.endsWith('.bplaylist')) {
+        if (hasExtension(arg, '.bplaylist')) {
           mainWindow.webContents.send('open-playlist', arg);
         } else {
           mainWindow.webContents.send('open-from-protocol', arg);
@@ -277,16 +288,7 @@ if (!gotTheLock) {
     log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
     // 시작 시 전달된 파일/프로토콜 인자 확인
-    let fileArg = process.argv.find(arg =>
-      arg.startsWith('baeframe://') ||
-      arg.endsWith('.bframe') ||
-      arg.endsWith('.bplaylist') ||
-      arg.endsWith('.mp4') ||
-      arg.endsWith('.mov') ||
-      arg.endsWith('.avi') ||
-      arg.endsWith('.mkv') ||
-      arg.endsWith('.webm')
-    );
+    let fileArg = process.argv.find(isLaunchArgument);
 
     // 파일 인자가 있으면 로딩 창 먼저 표시
     // (재생목록 URL/파일은 제외 - 별도 처리)
@@ -296,13 +298,13 @@ if (!gotTheLock) {
       if (fileArg.match(/^baeframe:\/\/playlist[\/\?%]/i)) {
         isPlaylistArg = true;
         log.info('재생목록 URL로 시작됨', { fileArg });
-      } else if (fileArg.endsWith('.bplaylist')) {
+      } else if (hasExtension(fileArg, '.bplaylist')) {
         isPlaylistArg = true;
         log.info('재생목록 파일로 시작됨', { fileArg });
       } else if (fileArg.startsWith('baeframe://')) {
         // baeframe://G:/path/file.bplaylist 형식 체크
         const parsedPath = parseBaeframeUrl(fileArg);
-        if (parsedPath.endsWith('.bplaylist')) {
+        if (hasExtension(parsedPath, '.bplaylist')) {
           isPlaylistArg = true;
           fileArg = parsedPath;
           log.info('재생목록 경로 URL로 시작됨', { fileArg });

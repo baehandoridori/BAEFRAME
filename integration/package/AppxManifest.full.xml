@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap rescap desktop4 desktop5 com">
+
+  <Identity
+    Name="StudioJBBJ.BAEFRAME.Integration"
+    Publisher="CN=StudioJBBJ"
+    Version="1.0.0.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>BAEFRAME Integration</DisplayName>
+    <PublisherDisplayName>Studio JBBJ</PublisherDisplayName>
+    <Logo>assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Resources>
+    <Resource Language="ko-kr" />
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Applications>
+    <Application Id="BAEFRAMEIntegration" Executable="BAEFRAME.IntegrationHost.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="BAEFRAME Integration"
+        Description="BAEFRAME desktop integration package"
+        BackgroundColor="transparent"
+        Square150x150Logo="assets\Square150x150Logo.png"
+        Square44x44Logo="assets\Square44x44Logo.png"
+        AppListEntry="none" />
+
+      <Extensions>
+        <!-- File Explorer context menu registration for supported video file types -->
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type=".mp4">
+              <desktop5:Verb Id="BAEFRAMEOpen" Clsid="E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".mov">
+              <desktop5:Verb Id="BAEFRAMEOpen" Clsid="E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".avi">
+              <desktop5:Verb Id="BAEFRAMEOpen" Clsid="E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".mkv">
+              <desktop5:Verb Id="BAEFRAMEOpen" Clsid="E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".webm">
+              <desktop5:Verb Id="BAEFRAMEOpen" Clsid="E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+
+        <!-- COM server for IExplorerCommand implementation -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="BAEFRAME Context Menu Handler">
+              <com:Class
+                Id="E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4"
+                Path="BAEFRAME.ContextMenu.comhost.dll"
+                ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+</Package>
+
