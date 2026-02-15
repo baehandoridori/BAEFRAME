@@ -35,6 +35,9 @@ Windows 우클릭 진입(이슈 #88) 설치/진단/제거 스크립트입니다.
 만약 정책/권한 문제로 설치가 실패하면 아래 파일을 "관리자 권한으로 실행"으로 다시 시도하세요.
 - `integration/installer/BAEFRAME-Integration-Setup-Admin.cmd`
 
+실패한 PC에서 원인을 확인하려면 아래 파일을 실행해서 출력 내용을 보내주세요.
+- `integration/installer/BAEFRAME-Integration-Diagnostics.cmd`
+
 ## 설치 방식 (자동 선택)
 
 Windows 11 **1차(신규) 우클릭 메뉴** 노출을 목표로 하기 때문에, 기본값은 아래로 동작합니다.
