@@ -6,6 +6,6 @@
   "enableLegacyFallback": false,
   "provisionPolicyAndCert": false,
   "certPath": "",
-  "testAppPath": "C:\\BAEframe\\BAEFRAME\\dist\\win-unpacked\\BFRAME_alpha_v2.exe",
+  "testAppPath": "C:/BAEframe/BAEFRAME/dist/win-unpacked/BFRAME_alpha_v2.exe",
   "shareAppPath": ""
 }
