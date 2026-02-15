@@ -6196,8 +6196,17 @@ body.app-fullscreen .video-wrapper {
   height: 100vh;
 }
 
-/* 전체화면에서 댓글 마커 숨기기 */
+/* 전체화면에서 댓글 마커 숨기기 (댓글 모드에서는 표시) */
 body.app-fullscreen .comment-markers-container {
+  display: none !important;
+}
+
+body.app-fullscreen .video-wrapper.comment-mode .comment-markers-container {
+  display: block !important;
+}
+
+/* 전체화면에서 단축키 토글 버튼 숨기기 */
+body.app-fullscreen .shortcuts-toggle {
   display: none !important;
 }
 
