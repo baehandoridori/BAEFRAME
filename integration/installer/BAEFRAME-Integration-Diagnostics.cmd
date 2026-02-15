@@ -12,7 +12,12 @@ if %errorlevel% NEQ 0 (
 echo [BAEFRAME Integration Diagnostics]
 echo.
 
-echo [1/4] Config check (setup-paths.team.json)
+echo [1/5] OS check
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$b=[Environment]::OSVersion.Version.Build; Write-Host ('WindowsBuild = ' + $b)"
+
+echo.
+echo [2/5] Config check (setup-paths.team.json)
 if exist "%~dp0setup-paths.team.json" (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$cfg = Get-Content -Raw '.\\setup-paths.team.json' | ConvertFrom-Json; " ^
@@ -24,7 +29,7 @@ if exist "%~dp0setup-paths.team.json" (
 )
 
 echo.
-echo [2/4] Detect integration
+echo [3/5] Detect integration
 if exist "%~dp0detect-integration.ps1" (
   powershell -NoProfile -ExecutionPolicy Bypass -File ".\\detect-integration.ps1"
 ) else (
@@ -32,7 +37,7 @@ if exist "%~dp0detect-integration.ps1" (
 )
 
 echo.
-echo [3/4] Policy snapshot
+echo [4/5] Policy snapshot
 echo HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Appx
 reg query "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Appx" /v AllowAllTrustedApps 2>nul
 reg query "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Appx" /v AllowDevelopmentWithoutDevLicense 2>nul
@@ -44,7 +49,16 @@ reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock" /
 reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock" /v AllowDevelopmentWithoutDevLicense 2>nul
 
 echo.
-echo [4/4] Log tails
+echo [.NET runtime check]
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$base='HKLM:\\SOFTWARE\\dotnet\\Setup\\InstalledVersions\\x64\\sharedfx\\Microsoft.WindowsDesktop.App'; " ^
+  "if (Test-Path $base) { " ^
+  "  $v = Get-ChildItem $base | Select-Object -ExpandProperty PSChildName; " ^
+  "  if ($v) { Write-Host ('Microsoft.WindowsDesktop.App = ' + ($v -join ', ')) } else { Write-Host 'Microsoft.WindowsDesktop.App = (none)' } " ^
+  "} else { Write-Host 'Microsoft.WindowsDesktop.App = (not found)' }"
+
+echo.
+echo [5/5] Log tails
 set SETUP_LOG=%APPDATA%\\baeframe\\integration-setup.log
 set PROVISION_LOG=%APPDATA%\\baeframe\\integration-provision.log
 echo setup log: %SETUP_LOG%
@@ -71,4 +85,3 @@ echo.
 pause
 popd
 exit /b 0
-
