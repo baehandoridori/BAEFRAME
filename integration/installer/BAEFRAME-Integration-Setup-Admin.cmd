@@ -1,6 +1,13 @@
 @echo off
 setlocal EnableExtensions
-cd /d "%~dp0"
+pushd "%~dp0" >nul 2>&1
+if %errorlevel% NEQ 0 (
+  echo [FAILED] Failed to open the installer folder.
+  echo If you are running from a network path, copy this folder to Desktop and try again.
+  echo.
+  pause
+  exit /b 1
+)
 
 echo [BAEFRAME Integration Setup - Admin]
 echo.
@@ -27,6 +34,7 @@ if %errorlevel% NEQ 0 (
   echo After you approve UAC, setup will continue in a new window.
   echo This window will close in 3 seconds.
   timeout /t 3 >nul
+  popd
   exit /b 0
 )
 
@@ -43,4 +51,5 @@ if %EXIT_CODE% EQU 0 (
 
 echo.
 pause
+popd
 exit /b %EXIT_CODE%
