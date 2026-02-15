@@ -16,7 +16,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$configPath = Join-Path $PSScriptRoot 'setup-paths.json'
+$configFilePath = Join-Path $PSScriptRoot 'setup-paths.json'
 $installScriptPath = Join-Path $PSScriptRoot 'install-integration.ps1'
 $provisionScriptPath = Join-Path $PSScriptRoot 'provision-machine-prereqs.ps1'
 
@@ -50,7 +50,7 @@ if ($ConfigPath) {
     throw "Config file not found: $ConfigPath"
   }
 
-  $configPath = $resolvedConfigPath
+  $configFilePath = $resolvedConfigPath
 }
 
 if (-not (Test-Path $installScriptPath)) {
@@ -69,9 +69,9 @@ $config = [ordered]@{
   shareAppPath = ''
 }
 
-if (Test-Path $configPath) {
+if (Test-Path $configFilePath) {
   try {
-    $loaded = Get-Content -Raw $configPath | ConvertFrom-Json
+    $loaded = Get-Content -Raw $configFilePath | ConvertFrom-Json
     if ($loaded.activeProfile) { $config.activeProfile = [string]$loaded.activeProfile }
     if ($loaded.mode) { $config.mode = [string]$loaded.mode }
     if ($loaded.sparseInstallMethod) { $config.sparseInstallMethod = [string]$loaded.sparseInstallMethod }
@@ -82,7 +82,7 @@ if (Test-Path $configPath) {
     if ($loaded.testAppPath) { $config.testAppPath = [string]$loaded.testAppPath }
     if ($loaded.shareAppPath) { $config.shareAppPath = [string]$loaded.shareAppPath }
   } catch {
-    throw "Failed to read setup config: $configPath"
+    throw "Failed to read setup config: $configFilePath"
   }
 }
 
@@ -125,6 +125,7 @@ $certPathInput = if ($CertPath) { $CertPath } elseif ($config.certPath) { [strin
 $resolvedCertPath = Resolve-ExistingPath -PathCandidate $certPathInput -RelativeBase $PSScriptRoot
 
 Write-Host "[integration-setup] AppPath = $resolvedAppPath"
+Write-Host "[integration-setup] ConfigPath = $configFilePath"
 Write-Host "[integration-setup] Mode = $mode"
 Write-Host "[integration-setup] SparseInstallMethod = $resolvedSparseMethod"
 Write-Host "[integration-setup] EnableRegistryFallback = $allowRegistryFallback"
