@@ -47,6 +47,7 @@ if %EXIT_CODE% EQU 0 (
   echo [SUCCESS] Integration install completed.
 ) else (
   echo [FAILED] Integration install failed. Check output above.
+  echo If the error mentions ".NET 6 Runtime", run BAEFRAME-Install-DotNet6.cmd first.
 )
 
 echo.

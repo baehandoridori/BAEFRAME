@@ -19,6 +19,9 @@ Windows 11 1차 우클릭 COM 핸들러는 `.NET 6` 런타임이 필요합니다
   - 진단에서 `dotnet.exe not found`
   - COM 활성화 오류 `HRESULT 0x80008083`
 
+`BAEFRAME-Integration-Setup.cmd`는 `-Provision` 단계에서 런타임 누락을 자동으로 감지합니다.
+필요하면 `BAEFRAME-Install-DotNet6.cmd`를 먼저 실행해 런타임만 선설치할 수 있습니다.
+
 ## 팀 배포용 (공유드라이브 경로 고정, 더블클릭 1번)
 
 팀원들에게는 아래 파일을 안내하면 됩니다.
@@ -70,6 +73,8 @@ Windows 11 **1차(신규) 우클릭 메뉴** 노출을 목표로 하기 때문�
   - 더블클릭용 런처 (인증서 프로비저닝 + 설치 + Explorer 재시작 선택 포함)
 - `BAEFRAME-Integration-Setup-Admin.cmd`
   - (선택) 관리자 권한 프로비저닝 + 설치 (정책(Appx)까지 설정하고 싶을 때 사용)
+- `BAEFRAME-Install-DotNet6.cmd`
+  - .NET 6 런타임 누락 시 선설치용 런처
 - `run-integration-setup.ps1`
   - 경로 프리셋(`setup-paths.json`) 기반 자동 설치
   - `-Provision`으로 인증서/정책 선적용 가능

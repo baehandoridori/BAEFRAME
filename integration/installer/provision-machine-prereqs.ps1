@@ -4,7 +4,9 @@ param(
   [string]$CertPath,
 
   [switch]$SkipCertificateInstall,
-  [switch]$SkipPolicySetup
+  [switch]$SkipPolicySetup,
+  [switch]$SkipDotNetRuntimeInstall,
+  [string]$DotNetRuntimeInstallerUrl = 'https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe'
 )
 
 Set-StrictMode -Version Latest
@@ -48,6 +50,107 @@ function Test-IsAdministrator {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   $principal = New-Object Security.Principal.WindowsPrincipal($identity)
   return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-DotNetCoreRuntime6Installed {
+  $roots = @()
+  if ($env:ProgramFiles) {
+    $roots += (Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.NETCore.App')
+  }
+  if (${env:ProgramFiles(x86)}) {
+    $x86Root = Join-Path ${env:ProgramFiles(x86)} 'dotnet\shared\Microsoft.NETCore.App'
+    if ($roots -notcontains $x86Root) {
+      $roots += $x86Root
+    }
+  }
+
+  foreach ($root in $roots) {
+    if (Test-Path $root) {
+      $versions = @(Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+      if (@($versions | Where-Object { $_ -match '^6\.' }).Count -gt 0) {
+        return $true
+      }
+    }
+  }
+
+  return $false
+}
+
+function Install-DotNetRuntime6 {
+  param(
+    [string]$InstallerUrl,
+    [bool]$IsAdmin
+  )
+
+  $result = [ordered]@{
+    attempted = $false
+    installed = $false
+    skipped = [bool]$SkipDotNetRuntimeInstall
+    skippedReason = $null
+    installerUrl = $InstallerUrl
+    installerPath = $null
+    exitCode = $null
+    error = $null
+  }
+
+  if ($SkipDotNetRuntimeInstall) {
+    $result.skippedReason = 'Skipped by option -SkipDotNetRuntimeInstall.'
+    return $result
+  }
+
+  if (Test-DotNetCoreRuntime6Installed) {
+    $result.installed = $true
+    $result.skipped = $true
+    $result.skippedReason = '.NET 6 runtime already installed.'
+    return $result
+  }
+
+  $result.attempted = $true
+
+  try {
+    if ([string]::IsNullOrWhiteSpace($InstallerUrl)) {
+      throw 'DotNetRuntimeInstallerUrl is empty.'
+    }
+
+    $downloadPath = Join-Path $env:TEMP 'BAEFRAME-dotnet-desktop-runtime-6-x64.exe'
+    $result.installerPath = $downloadPath
+
+    Write-ProvisionLog -Level 'INFO' -Message 'Downloading .NET 6 runtime installer' -Data @{
+      url = $InstallerUrl
+      path = $downloadPath
+    }
+
+    Invoke-WebRequest -Uri $InstallerUrl -OutFile $downloadPath -UseBasicParsing -ErrorAction Stop
+    if (-not (Test-Path $downloadPath)) {
+      throw "Runtime installer download failed: $downloadPath"
+    }
+
+    $args = @('/install', '/quiet', '/norestart')
+    $proc = $null
+
+    if ($IsAdmin) {
+      $proc = Start-Process -FilePath $downloadPath -ArgumentList $args -PassThru -Wait -ErrorAction Stop
+    } else {
+      Write-ProvisionLog -Level 'WARN' -Message 'Runtime install requires elevation; requesting UAC.' -Data @{}
+      $proc = Start-Process -FilePath $downloadPath -ArgumentList $args -PassThru -Wait -Verb RunAs -ErrorAction Stop
+    }
+
+    $result.exitCode = if ($proc) { [int]$proc.ExitCode } else { $null }
+
+    if (($result.exitCode -ne 0) -and ($result.exitCode -ne 3010) -and ($result.exitCode -ne 1641)) {
+      throw "Runtime installer exited with code $($result.exitCode)"
+    }
+
+    if (-not (Test-DotNetCoreRuntime6Installed)) {
+      throw '.NET 6 runtime still not detected after installer execution.'
+    }
+
+    $result.installed = $true
+    return $result
+  } catch {
+    $result.error = $_.Exception.Message
+    return $result
+  }
 }
 
 function Set-DwordValue {
@@ -132,11 +235,27 @@ try {
     requestedCertPath = $CertPath
     skipCertificateInstall = [bool]$SkipCertificateInstall
     skipPolicySetup = [bool]$SkipPolicySetup
+    skipDotNetRuntimeInstall = [bool]$SkipDotNetRuntimeInstall
+    dotNetRuntimeInstallerUrl = $DotNetRuntimeInstallerUrl
   }
 
   $isAdmin = Test-IsAdministrator
   if (-not $isAdmin) {
     Write-ProvisionLog -Level 'WARN' -Message 'Not running as administrator. Policy setup and LocalMachine certificate install will be skipped.' -Data @{}
+  }
+
+  $dotNetRuntimeResult = Install-DotNetRuntime6 -InstallerUrl $DotNetRuntimeInstallerUrl -IsAdmin ([bool]$isAdmin)
+  if ($dotNetRuntimeResult.error) {
+    Write-ProvisionLog -Level 'ERROR' -Message '.NET 6 runtime provisioning failed' -Data @{
+      result = $dotNetRuntimeResult
+    }
+
+    throw ('.NET 6 runtime provisioning failed. ' + $dotNetRuntimeResult.error + "`n" +
+      'Run installer\BAEFRAME-Install-DotNet6.cmd, then retry the integration setup.')
+  }
+
+  Write-ProvisionLog -Level 'INFO' -Message '.NET runtime check completed' -Data @{
+    result = $dotNetRuntimeResult
   }
 
   $certificateResult = [ordered]@{
@@ -241,6 +360,7 @@ try {
   }
 
   Write-ProvisionLog -Level 'INFO' -Message 'Provisioning completed' -Data @{
+    dotNetRuntime = $dotNetRuntimeResult
     certificate = $certificateResult
     policy = $policyResult
   }
@@ -248,6 +368,7 @@ try {
   [ordered]@{
     success = $true
     isAdmin = [bool]$isAdmin
+    dotNetRuntime = $dotNetRuntimeResult
     certificate = $certificateResult
     policy = $policyResult
     logPath = $LogPath
@@ -260,6 +381,8 @@ try {
     requestedCertPath = $CertPath
     skipCertificateInstall = [bool]$SkipCertificateInstall
     skipPolicySetup = [bool]$SkipPolicySetup
+    skipDotNetRuntimeInstall = [bool]$SkipDotNetRuntimeInstall
+    dotNetRuntimeInstallerUrl = $DotNetRuntimeInstallerUrl
   }
 
   [ordered]@{
