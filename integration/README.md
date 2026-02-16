@@ -19,6 +19,8 @@ Windows 통합(이슈 #88) 관련 아티팩트입니다.
 2. 끝나면 Explorer 재시작 여부(Y/N) 선택
 3. `.mp4` 파일 우클릭 -> `BAEFRAME로 열기` 확인
 
+참고: 일부 PC에서 COM 활성화가 `HRESULT 0x80008083`로 실패하면 `.NET 6 Runtime (x64)` 또는 `.NET Desktop Runtime 6 (x64)`가 없는 경우가 많습니다.
+
 ## 개발자용
 
 ```powershell

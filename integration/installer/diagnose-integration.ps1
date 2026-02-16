@@ -173,22 +173,34 @@ try {
   if (Test-Path $dotnetExe) {
     $lines = & $dotnetExe --list-runtimes 2>$null
     if ($lines) {
+      $coreAll = @($lines | Where-Object { $_ -match '^Microsoft\.NETCore\.App\s+' })
+      $core6 = @($coreAll | Where-Object { $_ -match '^Microsoft\.NETCore\.App\s+6\.' })
       $desktopAll = @($lines | Where-Object { $_ -match '^Microsoft\.WindowsDesktop\.App\s+' })
-      if ($desktopAll.Count -gt 0) {
-        $desktopAll | ForEach-Object { Write-Host $_ }
+      $desktop6 = @($desktopAll | Where-Object { $_ -match '^Microsoft\.WindowsDesktop\.App\s+6\.' })
 
-        $desktop6 = @($desktopAll | Where-Object { $_ -match '^Microsoft\.WindowsDesktop\.App\s+6\.' })
-        if ($desktop6.Count -eq 0) {
-          Write-Host 'Note: .NET 6 WindowsDesktop runtime was not detected. The context menu COM host targets .NET 6.'
-        }
+      if ($coreAll.Count -gt 0) {
+        Write-Host 'Microsoft.NETCore.App:'
+        $coreAll | ForEach-Object { Write-Host ('  ' + $_) }
       } else {
-        Write-Host 'Microsoft.WindowsDesktop.App not found in dotnet --list-runtimes output.'
+        Write-Host 'Microsoft.NETCore.App not found in dotnet --list-runtimes output.'
+      }
+
+      if ($desktopAll.Count -gt 0) {
+        Write-Host 'Microsoft.WindowsDesktop.App:'
+        $desktopAll | ForEach-Object { Write-Host ('  ' + $_) }
+      }
+
+      if ($core6.Count -eq 0) {
+        Write-Host 'Note: .NET 6 runtime (Microsoft.NETCore.App 6.x) was not detected.'
+      } elseif ($desktop6.Count -eq 0) {
+        Write-Host 'Note: .NET 6 Desktop runtime is not installed, but .NET 6 runtime is present.'
       }
     } else {
       Write-Host 'dotnet --list-runtimes returned no output.'
     }
   } else {
     Write-Host ("dotnet.exe not found at: $dotnetExe")
+    Write-Host 'Note: packaged COM activation can fail with HRESULT 0x80008083 if .NET 6 runtime is missing.'
   }
 } catch {
   Write-Host (".NET check failed: " + $_.Exception.Message)

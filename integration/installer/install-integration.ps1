@@ -22,7 +22,7 @@ $VerbKeyName = 'BAEFRAME.Open'
 $VerbLabel = ('BAEFRAME' + [string][char]0xB85C + ' ' + [string][char]0xC5F4 + [string][char]0xAE30)
 $ShellExtensionClsid = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
 $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
-$InstallerVersion = '1.5.0'
+$InstallerVersion = '1.5.1'
 
 $AppDataDir = Join-Path $env:APPDATA 'baeframe'
 $LogPath = Join-Path $AppDataDir 'integration-setup.log'
@@ -107,6 +107,40 @@ function Resolve-BaeframePath {
 function Test-Windows11 {
   $build = [int][Environment]::OSVersion.Version.Build
   return $build -ge 22000
+}
+
+function Test-DotNetCoreRuntime6Installed {
+  $roots = @()
+  if ($env:ProgramFiles) {
+    $roots += (Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.NETCore.App')
+  }
+  if (${env:ProgramFiles(x86)}) {
+    $x86Root = Join-Path ${env:ProgramFiles(x86)} 'dotnet\shared\Microsoft.NETCore.App'
+    if ($roots -notcontains $x86Root) {
+      $roots += $x86Root
+    }
+  }
+
+  foreach ($root in $roots) {
+    if (Test-Path $root) {
+      $versions = @(Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+      if (@($versions | Where-Object { $_ -match '^6\.' }).Count -gt 0) {
+        return $true
+      }
+    }
+  }
+
+  return $false
+}
+
+function Get-DotNetRuntimeRequirementMessage {
+  return @(
+    '.NET 6 Runtime (x64) is required for Windows 11 primary context menu integration.',
+    'Install one of the following on this PC, then run setup again:',
+    '  - .NET Runtime 6 (x64)',
+    '  - .NET Desktop Runtime 6 (x64)',
+    'Hint: HRESULT 0x80008083 during COM activation usually means the required .NET runtime is missing.'
+  ) -join "`n"
 }
 
 function Invoke-PowerShellFile {
@@ -386,6 +420,11 @@ try {
 
   if (-not (Test-Windows11)) {
     throw 'Windows 11 is required for the official integration flow.'
+  }
+
+  $requiresPackagedCom = ($Mode -eq 'Auto' -or $Mode -eq 'Package' -or $Mode -eq 'Sparse')
+  if ($requiresPackagedCom -and (-not (Test-DotNetCoreRuntime6Installed))) {
+    throw (Get-DotNetRuntimeRequirementMessage)
   }
 
   $resolvedAppPath = Resolve-BaeframePath -Candidate $AppPath

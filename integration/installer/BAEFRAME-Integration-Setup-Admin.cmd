@@ -12,8 +12,8 @@ if %errorlevel% NEQ 0 (
 echo [BAEFRAME Integration Setup - Admin]
 echo.
 
-rem Admin check (more reliable than `net session`)
-fltmc >nul 2>&1
+rem Admin check via WindowsPrincipal (fltmc can return success even without elevation)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$id=[Security.Principal.WindowsIdentity]::GetCurrent(); $p=New-Object Security.Principal.WindowsPrincipal($id); if($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 1}"
 if %errorlevel% NEQ 0 (
   echo Admin privileges are required.
   echo A UAC prompt will appear. Click "Yes" to continue.

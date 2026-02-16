@@ -57,10 +57,20 @@ try {
   $buildResult = $buildText | ConvertFrom-Json
   if (-not $buildResult.msixPath) { throw 'Build result missing msixPath.' }
 
+  $removeWarnings = @()
   $existingPackages = @(Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue)
   foreach ($pkg in $existingPackages) {
     if ($PSCmdlet.ShouldProcess($pkg.PackageFullName, 'Remove existing package before MSIX install')) {
-      Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
+      try {
+        Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
+      } catch {
+        $message = $_.Exception.Message
+        if ($message -match '0x80073CF1') {
+          $removeWarnings += ("Remove-AppxPackage skipped for " + $pkg.PackageFullName + " (0x80073CF1)")
+        } else {
+          throw
+        }
+      }
     }
   }
 
@@ -82,6 +92,7 @@ try {
     packageFullName = if ($installed) { $installed.PackageFullName } else { $null }
     isDevelopmentMode = if ($installed -and $null -ne $installed.IsDevelopmentMode) { [bool]$installed.IsDevelopmentMode } else { $null }
     signatureKind = if ($installed -and $installed.PSObject.Properties.Match('SignatureKind').Count -gt 0) { [string]$installed.SignatureKind } else { $null }
+    removeWarnings = $removeWarnings
     dryRun = [bool]$WhatIfPreference
   } | ConvertTo-Json -Depth 6
 
@@ -98,4 +109,3 @@ try {
 
   exit 1
 }
-
