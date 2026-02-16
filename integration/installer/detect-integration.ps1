@@ -12,6 +12,49 @@ $ShellClsidDefault = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
 $AppDataDir = Join-Path $env:APPDATA 'baeframe'
 $StatePath = Join-Path $AppDataDir 'integration-state.json'
 
+function Get-WindowsPowerShellPath64 {
+  $sysnative = Join-Path $env:WINDIR 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+  if (Test-Path $sysnative) {
+    return $sysnative
+  }
+
+  $system32 = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  return $system32
+}
+
+function Test-PackagedComActivation {
+  param([string]$Clsid)
+
+  try {
+    if ([Environment]::Is64BitProcess) {
+      $t = [type]::GetTypeFromCLSID([guid]$Clsid)
+      $obj = [Activator]::CreateInstance($t)
+      if ($obj) {
+        try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($obj) } catch { }
+      }
+      return [ordered]@{ ok = $true; error = $null }
+    }
+
+    $psExe = Get-WindowsPowerShellPath64
+    $probe = @(
+      '$ErrorActionPreference = ''Stop'''
+      ('$t = [type]::GetTypeFromCLSID([guid]''' + $Clsid + ''')')
+      '$obj = [Activator]::CreateInstance($t)'
+      'if ($obj) { try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($obj) } catch { } }'
+    ) -join '; '
+
+    $out = & $psExe -NoProfile -ExecutionPolicy Bypass -Command $probe 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      $message = ($out | ForEach-Object { $_.ToString() }) -join "`n"
+      return [ordered]@{ ok = $false; error = $message }
+    }
+
+    return [ordered]@{ ok = $true; error = $null }
+  } catch {
+    return [ordered]@{ ok = $false; error = $_.Exception.Message }
+  }
+}
+
 function Get-AppPathFromCommand {
   param([string]$CommandText)
 
@@ -136,23 +179,7 @@ try {
 $sparseInstalled = $null -ne $sparsePackage
 $legacyInstalled = ($missingLegacy.Count -eq 0)
 
-$packagedCom = [ordered]@{
-  ok = $false
-  error = $null
-}
-
-try {
-  $t = [type]::GetTypeFromCLSID([guid]$shellClsid)
-  $obj = [Activator]::CreateInstance($t)
-  if ($obj) {
-    try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($obj) } catch { }
-  }
-
-  $packagedCom.ok = $true
-} catch {
-  $packagedCom.ok = $false
-  $packagedCom.error = $_.Exception.Message
-}
+$packagedCom = Test-PackagedComActivation -Clsid $shellClsid
 
 $comInprocKey = "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\$shellClsid\InprocServer32"
 $comInprocExists = Test-Path $comInprocKey
@@ -189,6 +216,7 @@ $result = [ordered]@{
   appPath = $appPath
   appPathExists = if ($appPath) { Test-Path $appPath } else { $false }
   shellClsid = $shellClsid
+  processIs64Bit = [Environment]::Is64BitProcess
   packageName = $PackageName
   sparsePackage = [ordered]@{
     installed = $sparseInstalled

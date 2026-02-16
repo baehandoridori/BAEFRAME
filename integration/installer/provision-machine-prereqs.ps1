@@ -19,6 +19,16 @@ $UnlockKeyPath = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Curren
 $CreateCertScriptPath = Join-Path $PSScriptRoot 'create-team-signing-cert.ps1'
 $DefaultCertPath = Join-Path $PSScriptRoot 'certs\StudioJBBJ.BAEFRAME.Integration.cer'
 
+function Get-WindowsPowerShellPath64 {
+  $sysnative = Join-Path $env:WINDIR 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+  if (Test-Path $sysnative) {
+    return $sysnative
+  }
+
+  $system32 = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  return $system32
+}
+
 function Ensure-Directory {
   param([string]$Path)
 
@@ -54,13 +64,17 @@ function Test-IsAdministrator {
 
 function Test-DotNetCoreRuntime6Installed {
   $roots = @()
-  if ($env:ProgramFiles) {
-    $roots += (Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.NETCore.App')
-  }
-  if (${env:ProgramFiles(x86)}) {
-    $x86Root = Join-Path ${env:ProgramFiles(x86)} 'dotnet\shared\Microsoft.NETCore.App'
-    if ($roots -notcontains $x86Root) {
-      $roots += $x86Root
+  $programFilesCandidates = @(
+    $env:ProgramW6432,
+    $env:ProgramFiles,
+    ${env:ProgramFiles(x86)},
+    'C:\Program Files'
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+  foreach ($pf in $programFilesCandidates) {
+    $root = Join-Path $pf 'dotnet\shared\Microsoft.NETCore.App'
+    if ($roots -notcontains $root) {
+      $roots += $root
     }
   }
 
@@ -180,6 +194,37 @@ function Set-DwordValue {
   }
 }
 
+function Import-CertificateWithCertUtil {
+  param(
+    [string]$CertFilePath,
+    [bool]$IsAdmin
+  )
+
+  $stores = @(
+    [ordered]@{ scope = 'CurrentUser'; name = 'TrustedPeople'; args = @('-f', '-user', '-addstore', 'TrustedPeople', $CertFilePath) },
+    [ordered]@{ scope = 'CurrentUser'; name = 'TrustedPublisher'; args = @('-f', '-user', '-addstore', 'TrustedPublisher', $CertFilePath) }
+  )
+
+  if ($IsAdmin) {
+    $stores += @(
+      [ordered]@{ scope = 'LocalMachine'; name = 'TrustedPeople'; args = @('-f', '-addstore', 'TrustedPeople', $CertFilePath) },
+      [ordered]@{ scope = 'LocalMachine'; name = 'TrustedPublisher'; args = @('-f', '-addstore', 'TrustedPublisher', $CertFilePath) }
+    )
+  }
+
+  $installedTargets = @()
+  foreach ($s in $stores) {
+    & certutil.exe @($s.args) >$null 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "certutil failed for $($s.scope)\\$($s.name) with exit code $LASTEXITCODE"
+    }
+
+    $installedTargets += ('CertUtil:' + $s.scope + '\' + $s.name)
+  }
+
+  return $installedTargets
+}
+
 function Resolve-ExistingPath {
   param([string]$PathCandidate)
 
@@ -280,7 +325,8 @@ try {
         throw "Certificate creation script not found: $CreateCertScriptPath"
       }
 
-      $createOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $CreateCertScriptPath -Subject 'CN=StudioJBBJ' -OutputDir (Split-Path -Parent $DefaultCertPath) -BaseName 'StudioJBBJ.BAEFRAME.Integration' 2>&1
+      $psExe = Get-WindowsPowerShellPath64
+      $createOutput = & $psExe -NoProfile -ExecutionPolicy Bypass -File $CreateCertScriptPath -Subject 'CN=StudioJBBJ' -OutputDir (Split-Path -Parent $DefaultCertPath) -BaseName 'StudioJBBJ.BAEFRAME.Integration' 2>&1
       $createExit = $LASTEXITCODE
       if ($createOutput) {
         $createOutput | ForEach-Object { Write-ProvisionLog -Level 'INFO' -Message 'create-team-signing-cert output' -Data @{ line = $_.ToString() } }
@@ -301,27 +347,42 @@ try {
     $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($resolvedCertPath)
     $certificateResult.thumbprint = $certificate.Thumbprint
 
-    $targetStores = @(
-      'Cert:\CurrentUser\TrustedPeople',
-      'Cert:\CurrentUser\TrustedPublisher'
-    )
-
-    if ($isAdmin) {
-      $targetStores += @(
-        'Cert:\LocalMachine\TrustedPeople',
-        'Cert:\LocalMachine\TrustedPublisher'
-      )
+    $certDriveReady = $false
+    try {
+      if (-not (Get-PSDrive -Name 'Cert' -ErrorAction SilentlyContinue)) {
+        Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue
+      }
+      $certDriveReady = [bool](Get-PSDrive -Name 'Cert' -ErrorAction SilentlyContinue)
+    } catch {
+      $certDriveReady = $false
     }
 
-    foreach ($store in $targetStores) {
-      $exists = Get-ChildItem -Path $store | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
-      if (-not $exists) {
-        if ($PSCmdlet.ShouldProcess($store, "Import certificate $($certificate.Thumbprint)")) {
-          Import-Certificate -FilePath $resolvedCertPath -CertStoreLocation $store | Out-Null
-        }
+    if ($certDriveReady) {
+      $targetStores = @(
+        'Cert:\CurrentUser\TrustedPeople',
+        'Cert:\CurrentUser\TrustedPublisher'
+      )
+
+      if ($isAdmin) {
+        $targetStores += @(
+          'Cert:\LocalMachine\TrustedPeople',
+          'Cert:\LocalMachine\TrustedPublisher'
+        )
       }
 
-      $certificateResult.installedTo += $store
+      foreach ($store in $targetStores) {
+        $exists = Get-ChildItem -Path $store | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
+        if (-not $exists) {
+          if ($PSCmdlet.ShouldProcess($store, "Import certificate $($certificate.Thumbprint)")) {
+            Import-Certificate -FilePath $resolvedCertPath -CertStoreLocation $store | Out-Null
+          }
+        }
+
+        $certificateResult.installedTo += $store
+      }
+    } else {
+      Write-ProvisionLog -Level 'WARN' -Message 'Cert: drive is unavailable. Falling back to certutil-based certificate import.' -Data @{}
+      $certificateResult.installedTo = Import-CertificateWithCertUtil -CertFilePath $resolvedCertPath -IsAdmin ([bool]$isAdmin)
     }
   }
 

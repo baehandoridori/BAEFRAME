@@ -109,15 +109,29 @@ function Test-Windows11 {
   return $build -ge 22000
 }
 
+function Get-WindowsPowerShellPath64 {
+  $sysnative = Join-Path $env:WINDIR 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+  if (Test-Path $sysnative) {
+    return $sysnative
+  }
+
+  $system32 = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  return $system32
+}
+
 function Test-DotNetCoreRuntime6Installed {
   $roots = @()
-  if ($env:ProgramFiles) {
-    $roots += (Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.NETCore.App')
-  }
-  if (${env:ProgramFiles(x86)}) {
-    $x86Root = Join-Path ${env:ProgramFiles(x86)} 'dotnet\shared\Microsoft.NETCore.App'
-    if ($roots -notcontains $x86Root) {
-      $roots += $x86Root
+  $programFilesCandidates = @(
+    $env:ProgramW6432,
+    $env:ProgramFiles,
+    ${env:ProgramFiles(x86)},
+    'C:\Program Files'
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+  foreach ($pf in $programFilesCandidates) {
+    $root = Join-Path $pf 'dotnet\shared\Microsoft.NETCore.App'
+    if ($roots -notcontains $root) {
+      $roots += $root
     }
   }
 
@@ -154,8 +168,9 @@ function Invoke-PowerShellFile {
     throw "Script not found: $ScriptPath"
   }
 
+  $psExe = Get-WindowsPowerShellPath64
   $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + $Arguments
-  $output = & powershell.exe @psArgs 2>&1
+  $output = & $psExe @psArgs 2>&1
   $exitCode = $LASTEXITCODE
   $outputText = ($output | ForEach-Object { $_.ToString() }) -join "`n"
 
@@ -379,31 +394,72 @@ function Test-PackagedComActivation {
   param(
     [string]$PackageFamilyName,
     [string]$AppId = 'BAEFRAME',
-    [string]$Clsid = $ShellExtensionClsid
+    [string]$Clsid = $ShellExtensionClsid,
+    [int]$MaxAttempts = 20,
+    [int]$DelayMilliseconds = 750
   )
 
   # Explorer is not inside the package, so the COM server must be activatable from the
-  # normal (non-packaged) context. Prefer testing activation directly to avoid relying on
-  # Invoke-CommandInDesktopPackage output capture quirks.
-  try {
-    $t = [type]::GetTypeFromCLSID([guid]$Clsid)
-    $obj = [Activator]::CreateInstance($t)
-    if ($obj) {
-      try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($obj) } catch { }
-    }
+  # normal (non-packaged) context.
+  $lastError = $null
+  $lastHr = 0
+  $ps64 = Get-WindowsPowerShellPath64
 
-    return $true
-  } catch {
-    $hr = if ($_.Exception -and $null -ne $_.Exception.HResult) { [int]$_.Exception.HResult } else { 0 }
-    Write-SetupLog -Level 'WARN' -Message 'Packaged COM activation test failed' -Data @{
-      error = $_.Exception.Message
-      hr = ('0x{0:X8}' -f $hr)
-      packageFamilyName = $PackageFamilyName
-      appId = $AppId
-      clsid = $Clsid
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    try {
+      if ([Environment]::Is64BitProcess) {
+        $t = [type]::GetTypeFromCLSID([guid]$Clsid)
+        $obj = [Activator]::CreateInstance($t)
+        if ($obj) {
+          try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($obj) } catch { }
+        }
+      } else {
+        $probe = @(
+          '$ErrorActionPreference = ''Stop'''
+          ('$t = [type]::GetTypeFromCLSID([guid]''' + $Clsid + ''')')
+          '$obj = [Activator]::CreateInstance($t)'
+          'if ($obj) { try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($obj) } catch { } }'
+        ) -join '; '
+
+        $probeOutput = & $ps64 -NoProfile -ExecutionPolicy Bypass -Command $probe 2>&1
+        if ($LASTEXITCODE -ne 0) {
+          $message = ($probeOutput | ForEach-Object { $_.ToString() }) -join "`n"
+          throw $message
+        }
+      }
+
+      if ($attempt -gt 1) {
+        Write-SetupLog -Level 'INFO' -Message 'Packaged COM activation eventually succeeded' -Data @{
+          attempts = $attempt
+          packageFamilyName = $PackageFamilyName
+          clsid = $Clsid
+          processIs64Bit = [Environment]::Is64BitProcess
+        }
+      }
+
+      return $true
+    } catch {
+      $lastError = $_.Exception.Message
+      $lastHr = if ($_.Exception -and $null -ne $_.Exception.HResult) { [int]$_.Exception.HResult } else { 0 }
+
+      if ($attempt -lt $MaxAttempts) {
+        Start-Sleep -Milliseconds $DelayMilliseconds
+      }
     }
-    return $false
   }
+
+  Write-SetupLog -Level 'WARN' -Message 'Packaged COM activation test failed' -Data @{
+    error = $lastError
+    hr = ('0x{0:X8}' -f $lastHr)
+    attempts = $MaxAttempts
+    delayMilliseconds = $DelayMilliseconds
+    packageFamilyName = $PackageFamilyName
+    appId = $AppId
+    clsid = $Clsid
+    processIs64Bit = [Environment]::Is64BitProcess
+  }
+
+  return $false
 }
 
 try {
@@ -497,14 +553,6 @@ try {
           isDevelopmentMode = if ($pkg -and $null -ne $pkg.IsDevelopmentMode) { [bool]$pkg.IsDevelopmentMode } else { $null }
         }
 
-        try {
-          if ($pkg -and $pkg.PackageFullName) {
-            Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
-          }
-        } catch {
-          Write-SetupLog -Level 'WARN' -Message 'Package uninstall after activation failure failed' -Data @{ error = $_.Exception.Message }
-        }
-
         $sparseInstall.installed = $false
         $sparseInstall.error = $warning
         $resolvedMode = 'none'
@@ -570,14 +618,6 @@ try {
           installMethod = $SparseInstallMethod
           packageFullName = if ($pkg) { $pkg.PackageFullName } else { $null }
           isDevelopmentMode = if ($pkg -and $null -ne $pkg.IsDevelopmentMode) { [bool]$pkg.IsDevelopmentMode } else { $null }
-        }
-
-        if (Test-Path $SparseUninstallScriptPath) {
-          try {
-            Invoke-PowerShellFile -ScriptPath $SparseUninstallScriptPath -Arguments @('-PackageName', $PackageName) -AllowedExitCodes @(0) | Out-Null
-          } catch {
-            Write-SetupLog -Level 'WARN' -Message 'Sparse package uninstall after activation failure failed' -Data @{ error = $_.Exception.Message }
-          }
         }
 
         $sparseInstall.installed = $false

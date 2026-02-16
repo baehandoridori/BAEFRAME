@@ -10,6 +10,16 @@ $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
 $SetupLogPath = Join-Path $env:APPDATA 'baeframe\integration-setup.log'
 $ProvisionLogPath = Join-Path $env:APPDATA 'baeframe\integration-provision.log'
 
+function Get-WindowsPowerShellPath64 {
+  $sysnative = Join-Path $env:WINDIR 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+  if (Test-Path $sysnative) {
+    return $sysnative
+  }
+
+  $system32 = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  return $system32
+}
+
 function Write-Section {
   param([string]$Title)
   Write-Host ''
@@ -86,6 +96,8 @@ try {
 }
 try {
   Write-Host ("PSVersion = " + $PSVersionTable.PSVersion.ToString())
+  Write-Host ("ProcessIs64Bit = " + [string][Environment]::Is64BitProcess)
+  Write-Host ("PowerShell64Path = " + (Get-WindowsPowerShellPath64))
 } catch {
 }
 
@@ -169,8 +181,24 @@ Write-Host ("AllowDevelopmentWithoutDevLicense = " + (Read-RegistryDwordOrNull -
 
 Write-Section -Title '.NET Runtime'
 try {
-  $dotnetExe = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
-  if (Test-Path $dotnetExe) {
+  $dotnetExe = $null
+  $pfCandidates = @(
+    $env:ProgramW6432,
+    $env:ProgramFiles,
+    ${env:ProgramFiles(x86)},
+    'C:\Program Files'
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+  foreach ($pf in $pfCandidates) {
+    $candidate = Join-Path $pf 'dotnet\dotnet.exe'
+    if (Test-Path $candidate) {
+      $dotnetExe = $candidate
+      break
+    }
+  }
+
+  if ($dotnetExe -and (Test-Path $dotnetExe)) {
+    Write-Host ("dotnet.exe = " + $dotnetExe)
     $lines = & $dotnetExe --list-runtimes 2>$null
     if ($lines) {
       $coreAll = @($lines | Where-Object { $_ -match '^Microsoft\.NETCore\.App\s+' })
@@ -199,7 +227,7 @@ try {
       Write-Host 'dotnet --list-runtimes returned no output.'
     }
   } else {
-    Write-Host ("dotnet.exe not found at: $dotnetExe")
+    Write-Host ("dotnet.exe not found. Checked: " + ($pfCandidates | ForEach-Object { Join-Path $_ 'dotnet\dotnet.exe' } | Select-Object -Unique -join '; '))
     Write-Host 'Note: packaged COM activation can fail with HRESULT 0x80008083 if .NET 6 runtime is missing.'
   }
 } catch {
@@ -210,7 +238,8 @@ Write-Section -Title 'Detect Integration'
 try {
   $detectScript = Join-Path $PSScriptRoot 'detect-integration.ps1'
   if (Test-Path $detectScript) {
-    $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $detectScript 2>&1
+    $psExe = Get-WindowsPowerShellPath64
+    $out = & $psExe -NoProfile -ExecutionPolicy Bypass -File $detectScript 2>&1
     if ($out) {
       $out | ForEach-Object { Write-Host $_.ToString() }
     }

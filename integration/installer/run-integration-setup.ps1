@@ -20,6 +20,16 @@ $configFilePath = Join-Path $PSScriptRoot 'setup-paths.json'
 $installScriptPath = Join-Path $PSScriptRoot 'install-integration.ps1'
 $provisionScriptPath = Join-Path $PSScriptRoot 'provision-machine-prereqs.ps1'
 
+function Get-WindowsPowerShellPath64 {
+  $sysnative = Join-Path $env:WINDIR 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+  if (Test-Path $sysnative) {
+    return $sysnative
+  }
+
+  $system32 = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  return $system32
+}
+
 function Resolve-ExistingPath {
   param(
     [string]$PathCandidate,
@@ -211,7 +221,8 @@ if ($runProvision) {
   }
 
   Write-Host '[integration-setup] Provision step started'
-  $provisionOutput = & powershell.exe @provisionArgs 2>&1
+  $psExe = Get-WindowsPowerShellPath64
+  $provisionOutput = & $psExe @provisionArgs 2>&1
   $provisionExitCode = $LASTEXITCODE
 
   if ($provisionOutput) {
@@ -240,5 +251,32 @@ if ($allowLegacyFallback) {
   $installArgs += '-EnableLegacyFallback'
 }
 
-& powershell.exe @installArgs
-exit $LASTEXITCODE
+$psExe = Get-WindowsPowerShellPath64
+$installOutput = & $psExe @installArgs 2>&1
+$installExitCode = $LASTEXITCODE
+
+if ($installOutput) {
+  $installOutput | ForEach-Object { Write-Host $_ }
+}
+
+if ($installExitCode -ne 0) {
+  $installOutputText = ($installOutput | ForEach-Object { $_.ToString() }) -join "`n"
+  $shouldRetry = $false
+  if ($installOutputText -match 'Packaged COM activation failed') { $shouldRetry = $true }
+  if ($installOutputText -match 'No context menu was registered') { $shouldRetry = $true }
+
+  if ($shouldRetry) {
+    Write-Host '[integration-setup] First install attempt failed. Retrying once after a short delay...'
+    Start-Sleep -Seconds 3
+
+    $retryOutput = & $psExe @installArgs 2>&1
+    $retryExitCode = $LASTEXITCODE
+    if ($retryOutput) {
+      $retryOutput | ForEach-Object { Write-Host $_ }
+    }
+
+    exit $retryExitCode
+  }
+}
+
+exit $installExitCode

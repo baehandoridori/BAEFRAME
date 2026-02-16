@@ -21,6 +21,7 @@ Windows 통합(이슈 #88) 관련 아티팩트입니다.
 
 참고: 일부 PC에서 COM 활성화가 `HRESULT 0x80008083`로 실패하면 `.NET 6 Runtime (x64)` 또는 `.NET Desktop Runtime 6 (x64)`가 없는 경우가 많습니다.
 이 경우 `integration/installer/BAEFRAME-Install-DotNet6.cmd`를 먼저 실행한 뒤 설치를 다시 시도합니다.
+설치 스크립트는 x64 PowerShell 강제 + COM 활성화 자동 재시도(1회)를 포함합니다.
 
 ## 개발자용
 
