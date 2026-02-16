@@ -605,6 +605,12 @@ async function initApp() {
     drawingManager.toggleLayerLock(e.detail.layerId);
   });
 
+  // 레이어 투명도 변경
+  timeline.addEventListener('layerOpacityChange', (e) => {
+    const { layerId, opacity } = e.detail;
+    drawingManager.setLayerOpacity(layerId, opacity);
+  });
+
   // 키프레임 이동
   timeline.addEventListener('keyframesMove', (e) => {
     const { keyframes, frameDelta } = e.detail;
@@ -3704,6 +3710,12 @@ async function initApp() {
     textarea?.addEventListener('blur', () => {
       setTimeout(() => {
         if (commentManager.pendingMarker && !clickedInsideMarker) {
+          // pending 마커 내 입력 필드에 포커스가 이동한 경우 모드 해제하지 않음
+          const pendingInput = markerEl?.querySelector('textarea, input');
+          if (pendingInput && document.activeElement === pendingInput) {
+            clickedInsideMarker = false;
+            return;
+          }
           commentManager.setCommentMode(false);
         }
         clickedInsideMarker = false; // 리셋
@@ -5485,6 +5497,20 @@ async function initApp() {
     }, 500);
   }
 
+  // ====== 포커스 저장/복원 유틸리티 ======
+  let _previousFocusElement = null;
+
+  function saveFocus() {
+    _previousFocusElement = document.activeElement;
+  }
+
+  function restoreFocus() {
+    if (_previousFocusElement && document.contains(_previousFocusElement)) {
+      _previousFocusElement.focus();
+      _previousFocusElement = null;
+    }
+  }
+
   // ====== 로그인 모달 ======
   const loginModal = document.getElementById('loginModal');
   const loginUserDisplay = document.getElementById('loginUserDisplay');
@@ -5493,17 +5519,34 @@ async function initApp() {
   let _loginTargetName = null;
 
   function openLoginModal(targetName) {
+    saveFocus();
     _loginTargetName = targetName;
     if (loginUserDisplay) loginUserDisplay.textContent = targetName;
     if (loginPasswordInput) loginPasswordInput.value = '';
     if (loginHint) loginHint.textContent = '등록된 사용자입니다. 비밀번호를 입력해주세요.';
     loginModal?.classList.add('active');
-    setTimeout(() => loginPasswordInput?.focus(), 100);
+    // transitionend 이벤트로 안정적 포커스 이동 (setTimeout 레이스 컨디션 제거)
+    const onTransitionEnd = () => {
+      loginPasswordInput?.focus();
+      loginModal?.removeEventListener('transitionend', onTransitionEnd);
+    };
+    if (loginModal) {
+      loginModal.addEventListener('transitionend', onTransitionEnd, { once: true });
+      // transition이 없는 경우를 대비한 폴백
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (document.activeElement !== loginPasswordInput) {
+            loginPasswordInput?.focus();
+          }
+        });
+      });
+    }
   }
 
   function closeLoginModalFn() {
     loginModal?.classList.remove('active');
     _loginTargetName = null;
+    restoreFocus();
   }
 
   async function doLogin() {
@@ -5530,6 +5573,16 @@ async function initApp() {
 
       showToast(`"${_loginTargetName}"(으)로 로그인했습니다.`, 'success');
       closeLoginModalFn();
+
+      // 기본 비밀번호(1234) 사용 시 변경 권유
+      if (password === '1234') {
+        showToast(
+          '초기 비밀번호로 로그인했습니다. 보안을 위해 비밀번호를 변경해주세요.',
+          'warning',
+          5000,
+          true
+        );
+      }
     } catch (error) {
       if (loginHint) {
         loginHint.textContent = error.message;
@@ -5989,7 +6042,8 @@ async function initApp() {
     threadEditor.innerHTML = '';
     updateSubmitButtonState();
 
-    // 팝업 열기
+    // 팝업 열기 (이전 포커스 저장)
+    saveFocus();
     threadOverlay.classList.add('open');
     threadEditor.focus();
   }
@@ -6002,6 +6056,7 @@ async function initApp() {
     currentThreadMarkerId = null;
     threadEditor.innerHTML = '';
     clearThreadImage();
+    restoreFocus();
   }
 
   /**

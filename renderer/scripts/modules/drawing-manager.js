@@ -798,6 +798,19 @@ export class DrawingManager extends EventTarget {
   }
 
   /**
+   * 레이어 투명도 설정
+   */
+  setLayerOpacity(layerId, opacity) {
+    const layer = this.layers.find(l => l.id === layerId);
+    if (!layer) return;
+
+    layer.opacity = Math.max(0, Math.min(1, opacity));
+    this.renderFrame(this.currentFrame);
+    this._emit('layersChanged');
+    log.debug('레이어 투명도 변경', { layerId, opacity: layer.opacity });
+  }
+
+  /**
    * 외곽선 활성화/비활성화
    */
   setStrokeEnabled(enabled) {

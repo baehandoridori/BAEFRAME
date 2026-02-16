@@ -154,12 +154,18 @@ export class Timeline extends EventTarget {
         if (this.layerHeaders) {
           this.layerHeaders.scrollTop = this.timelineTracks.scrollTop;
         }
+      } else if (e.ctrlKey) {
+        // Ctrl + 휠: 가로 스크롤 (긴 영상에서 빠른 위치 이동)
+        const scrollAmount = e.deltaY * 3;
+        this.timelineTracks.scrollLeft += scrollAmount;
       } else {
         // 기본 휠: 플레이헤드(재생바) 위치 기준 확대/축소
-        const delta = e.deltaY > 0 ? -15 : 15;
+        // 비율 기반 줌: 현재 줌 레벨의 5%씩 변화 (고배율일수록 변화량 증가)
+        const zoomStep = Math.max(15, this.zoom * 0.05);
+        const delta = e.deltaY > 0 ? -zoomStep : zoomStep;
         const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom + delta));
 
-        if (newZoom === this.zoom) return;
+        if (Math.abs(newZoom - this.zoom) < 0.1) return;
 
         // 현재 시간의 비율 (0~1) - 줌과 무관하게 항상 동일
         const timeRatio = this.duration > 0 ? this.currentTime / this.duration : 0;
@@ -925,12 +931,19 @@ export class Timeline extends EventTarget {
     header.className = `layer-header drawing-layer-header${isActive ? ' selected' : ''}`;
     header.dataset.layerId = layer.id;
 
+    const opacityPercent = Math.round((layer.opacity ?? 1) * 100);
     header.innerHTML = `
       <div class="layer-color" style="background: ${layer.color}"></div>
       <span class="layer-visibility" data-action="visibility">
         ${layer.visible ? '👁' : '👁‍🗨'}
       </span>
       <span class="layer-name">${layer.name}</span>
+      <div class="layer-opacity-control" data-action="opacity">
+        <input type="range" class="layer-opacity-slider"
+               min="0" max="100"
+               value="${opacityPercent}"
+               title="${opacityPercent}%">
+      </div>
       <span class="layer-lock" data-action="lock">
         ${layer.locked ? '🔒' : ''}
       </span>
@@ -938,7 +951,7 @@ export class Timeline extends EventTarget {
 
     // 레이어 선택 클릭
     header.addEventListener('click', (e) => {
-      if (e.target.dataset.action) return;
+      if (e.target.dataset.action || e.target.closest('[data-action]')) return;
       this._emit('layerSelect', { layerId: layer.id });
     });
 
@@ -947,6 +960,16 @@ export class Timeline extends EventTarget {
       e.stopPropagation();
       this._emit('layerVisibilityToggle', { layerId: layer.id });
     });
+
+    // 투명도 슬라이더
+    const opacitySlider = header.querySelector('.layer-opacity-slider');
+    opacitySlider?.addEventListener('input', (e) => {
+      e.stopPropagation();
+      const val = parseInt(e.target.value);
+      e.target.title = `${val}%`;
+      this._emit('layerOpacityChange', { layerId: layer.id, opacity: val / 100 });
+    });
+    opacitySlider?.addEventListener('click', (e) => e.stopPropagation());
 
     // 잠금 토글
     header.querySelector('[data-action="lock"]').addEventListener('click', (e) => {
@@ -1765,6 +1788,8 @@ export class Timeline extends EventTarget {
       if (this.highlightLayerHeader) {
         this.highlightLayerHeader.style.display = 'none';
       }
+      // 하이라이트 없으면 마커 오프셋 제거
+      this.tracksContainer?.style.setProperty('--marker-top-offset', '0px');
       return;
     }
 
@@ -1773,6 +1798,9 @@ export class Timeline extends EventTarget {
     if (this.highlightLayerHeader) {
       this.highlightLayerHeader.style.display = 'flex';
     }
+
+    // 하이라이트 트랙 높이만큼 마커 오프셋 설정 (24px + 2px margin)
+    this.tracksContainer?.style.setProperty('--marker-top-offset', '26px');
 
     // 각 하이라이트 렌더링
     highlights.forEach(highlight => {
