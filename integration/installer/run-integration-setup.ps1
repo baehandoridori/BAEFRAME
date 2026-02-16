@@ -151,7 +151,7 @@ if ($AppPath) {
   }
 }
 
-$candidatePaths = $candidatePaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+$candidatePaths = @($candidatePaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
 foreach ($candidate in $candidatePaths) {
   $resolved = Resolve-ExistingPath -PathCandidate $candidate -RelativeBase $PSScriptRoot
@@ -162,7 +162,7 @@ foreach ($candidate in $candidatePaths) {
 }
 
 if (-not $resolvedAppPath) {
-  $joinedCandidates = if ($candidatePaths.Count -gt 0) { ($candidatePaths -join '; ') } else { '(no configured paths)' }
+  $joinedCandidates = if (@($candidatePaths).Count -gt 0) { (@($candidatePaths) -join '; ') } else { '(no configured paths)' }
   throw "No runnable app path found. Checked: $joinedCandidates"
 }
 
