@@ -1634,20 +1634,110 @@ body.app-fullscreen .video-comment-overlay-controls {
   color: var(--text-tertiary);
 }
 
-/* 레이어 투명도 슬라이더 */
-.layer-opacity-control {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  max-width: 60px;
-  margin: 0 4px;
+/* 레이어 불투명도 배지 (헤더 인라인) */
+.layer-opacity-badge {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  background: var(--bg-quaternary, #333);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.layer-opacity-slider {
-  width: 100%;
-  height: 3px;
+/* ====== 레이어 설정 말풍선 팝업 ====== */
+.layer-settings-popup {
+  position: fixed;
+  z-index: 10000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  min-width: 220px;
+  padding: 14px;
+}
+
+.layer-settings-arrow {
+  position: absolute;
+  top: -6px;
+  left: 20px;
+  width: 12px;
+  height: 12px;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-color);
+  border-top: 1px solid var(--border-color);
+  transform: rotate(45deg);
+}
+
+.layer-settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.layer-settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.layer-settings-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.layer-settings-input {
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.layer-settings-input:focus {
+  border-color: var(--accent-primary);
+}
+
+/* 색상 선택 버튼 */
+.layer-color-picker {
+  display: flex;
+  gap: 6px;
+}
+
+.layer-color-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
   cursor: pointer;
-  accent-color: var(--accent-primary);
+  transition: all var(--transition-fast);
+}
+
+.layer-color-btn:hover {
+  transform: scale(1.15);
+}
+
+.layer-color-btn.selected {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px currentColor;
+}
+
+/* 불투명도 슬라이더 */
+.layer-settings-opacity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.layer-settings-opacity-slider {
+  flex: 1;
+  height: 4px;
+  cursor: pointer;
   -webkit-appearance: none;
   appearance: none;
   background: var(--bg-quaternary, #444);
@@ -1655,13 +1745,26 @@ body.app-fullscreen .video-comment-overlay-controls {
   outline: none;
 }
 
-.layer-opacity-slider::-webkit-slider-thumb {
+.layer-settings-opacity-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: var(--accent-primary);
   cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.layer-settings-opacity-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.layer-settings-opacity-value {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  min-width: 36px;
+  text-align: right;
 }
 
 /* Timeline Tracks */

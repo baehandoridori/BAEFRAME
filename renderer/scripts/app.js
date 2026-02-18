@@ -605,10 +605,128 @@ async function initApp() {
     drawingManager.toggleLayerLock(e.detail.layerId);
   });
 
-  // 레이어 투명도 변경
-  timeline.addEventListener('layerOpacityChange', (e) => {
-    const { layerId, opacity } = e.detail;
-    drawingManager.setLayerOpacity(layerId, opacity);
+  // ====== 레이어 설정 팝업 (우클릭 말풍선) ======
+
+  const layerSettingsPopup = document.getElementById('layerSettingsPopup');
+  const layerSettingsArrow = layerSettingsPopup.querySelector('.layer-settings-arrow');
+  const layerNameInput = document.getElementById('layerNameInput');
+  const layerColorPicker = document.getElementById('layerColorPicker');
+  const layerOpacitySlider = document.getElementById('layerOpacitySlider');
+  const layerOpacityValue = document.getElementById('layerOpacityValue');
+  let selectedLayerIdForPopup = null;
+
+  function showLayerSettingsPopup(layerId, x, y) {
+    const layer = drawingManager.layers.find(l => l.id === layerId);
+    if (!layer) return;
+
+    selectedLayerIdForPopup = layerId;
+
+    // 입력값 설정
+    layerNameInput.value = layer.name || '';
+    layerOpacitySlider.value = Math.round((layer.opacity ?? 1) * 100);
+    layerOpacityValue.textContent = `${layerOpacitySlider.value}%`;
+
+    // 색상 버튼 선택 상태
+    layerColorPicker.querySelectorAll('.layer-color-btn').forEach(btn => {
+      btn.classList.toggle('selected', btn.dataset.color === layer.color);
+    });
+
+    // 팝업 크기 측정을 위해 임시 표시
+    layerSettingsPopup.style.display = 'block';
+    layerSettingsPopup.style.visibility = 'hidden';
+
+    requestAnimationFrame(() => {
+      const popupRect = layerSettingsPopup.getBoundingClientRect();
+      const popupWidth = popupRect.width;
+      const popupHeight = popupRect.height;
+
+      // 화면 경계 고려하여 위치 조정
+      let popupX = x - 30;
+      let popupY = y + 12;
+
+      // 오른쪽 넘침 방지
+      if (popupX + popupWidth > window.innerWidth - 10) {
+        popupX = window.innerWidth - popupWidth - 10;
+      }
+      // 왼쪽 넘침 방지
+      if (popupX < 10) popupX = 10;
+
+      // 아래쪽 넘침 → 위쪽에 표시
+      if (popupY + popupHeight > window.innerHeight - 10) {
+        popupY = y - popupHeight - 12;
+        // 화살표를 아래로 이동
+        layerSettingsArrow.style.top = '';
+        layerSettingsArrow.style.bottom = '-6px';
+        layerSettingsArrow.style.transform = 'rotate(225deg)';
+      } else {
+        layerSettingsArrow.style.top = '-6px';
+        layerSettingsArrow.style.bottom = '';
+        layerSettingsArrow.style.transform = 'rotate(45deg)';
+      }
+
+      // 화살표 위치 (클릭 위치 기준)
+      const arrowLeft = Math.max(12, Math.min(x - popupX, popupWidth - 24));
+      layerSettingsArrow.style.left = `${arrowLeft}px`;
+
+      layerSettingsPopup.style.left = `${popupX}px`;
+      layerSettingsPopup.style.top = `${popupY}px`;
+      layerSettingsPopup.style.visibility = '';
+    });
+  }
+
+  function hideLayerSettingsPopup() {
+    layerSettingsPopup.style.display = 'none';
+    selectedLayerIdForPopup = null;
+  }
+
+  // 레이어 우클릭 → 팝업 표시
+  timeline.addEventListener('layerContextMenu', (e) => {
+    const { layerId, x, y } = e.detail;
+    showLayerSettingsPopup(layerId, x, y);
+  });
+
+  // 팝업 외부 클릭 시 닫기
+  document.addEventListener('mousedown', (e) => {
+    if (layerSettingsPopup.style.display === 'block' &&
+        !layerSettingsPopup.contains(e.target) &&
+        !e.target.closest('.drawing-layer-header')) {
+      hideLayerSettingsPopup();
+    }
+  });
+
+  // 레이어 이름 변경
+  layerNameInput.addEventListener('input', () => {
+    if (selectedLayerIdForPopup) {
+      drawingManager.setLayerName(selectedLayerIdForPopup, layerNameInput.value);
+    }
+  });
+
+  // 레이어 색상 변경
+  layerColorPicker.addEventListener('click', (e) => {
+    const btn = e.target.closest('.layer-color-btn');
+    if (!btn || !selectedLayerIdForPopup) return;
+
+    const color = btn.dataset.color;
+    drawingManager.setLayerColor(selectedLayerIdForPopup, color);
+
+    // 선택 상태 갱신
+    layerColorPicker.querySelectorAll('.layer-color-btn').forEach(b => {
+      b.classList.toggle('selected', b === btn);
+    });
+  });
+
+  // 레이어 불투명도 변경 (팝업 슬라이더)
+  layerOpacitySlider.addEventListener('input', () => {
+    if (!selectedLayerIdForPopup) return;
+    const val = parseInt(layerOpacitySlider.value);
+    layerOpacityValue.textContent = `${val}%`;
+    drawingManager.setLayerOpacity(selectedLayerIdForPopup, val / 100);
+
+    // 헤더의 불투명도 배지도 실시간 업데이트
+    const badge = document.querySelector(
+      `.drawing-layer-header[data-layer-id="${selectedLayerIdForPopup}"] .layer-opacity-badge`
+    );
+    if (badge) badge.textContent = `${val}%`;
   });
 
   // 키프레임 이동

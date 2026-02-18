@@ -806,8 +806,32 @@ export class DrawingManager extends EventTarget {
 
     layer.opacity = Math.max(0, Math.min(1, opacity));
     this.renderFrame(this.currentFrame);
-    this._emit('layersChanged');
+    // layersChanged를 발행하지 않음 → 전체 레이어 헤더 재렌더링 방지 (슬라이더 버벅임 해결)
     log.debug('레이어 투명도 변경', { layerId, opacity: layer.opacity });
+  }
+
+  /**
+   * 레이어 이름 변경
+   */
+  setLayerName(layerId, name) {
+    const layer = this.layers.find(l => l.id === layerId);
+    if (!layer) return;
+
+    layer.name = name;
+    this._emit('layersChanged');
+    log.debug('레이어 이름 변경', { layerId, name });
+  }
+
+  /**
+   * 레이어 색상 변경
+   */
+  setLayerColor(layerId, color) {
+    const layer = this.layers.find(l => l.id === layerId);
+    if (!layer) return;
+
+    layer.color = color;
+    this._emit('layersChanged');
+    log.debug('레이어 색상 변경', { layerId, color });
   }
 
   /**

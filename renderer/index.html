@@ -916,6 +916,36 @@
     </div>
   </div>
 
+  <!-- 레이어 설정 말풍선 팝업 -->
+  <div class="layer-settings-popup" id="layerSettingsPopup" style="display: none;">
+    <div class="layer-settings-arrow"></div>
+    <div class="layer-settings-content">
+      <div class="layer-settings-row">
+        <label class="layer-settings-label">이름</label>
+        <input type="text" class="layer-settings-input" id="layerNameInput" placeholder="레이어 이름...">
+      </div>
+      <div class="layer-settings-row">
+        <label class="layer-settings-label">색상</label>
+        <div class="layer-color-picker" id="layerColorPicker">
+          <button class="layer-color-btn" data-color="#ff4757" title="빨강" style="background: #ff4757;"></button>
+          <button class="layer-color-btn" data-color="#ffa502" title="주황" style="background: #ffa502;"></button>
+          <button class="layer-color-btn" data-color="#ffdd59" title="노랑" style="background: #ffdd59;"></button>
+          <button class="layer-color-btn" data-color="#2ed573" title="초록" style="background: #2ed573;"></button>
+          <button class="layer-color-btn" data-color="#1e90ff" title="파랑" style="background: #1e90ff;"></button>
+          <button class="layer-color-btn" data-color="#a55eea" title="보라" style="background: #a55eea;"></button>
+        </div>
+      </div>
+      <div class="layer-settings-row">
+        <label class="layer-settings-label">불투명도</label>
+        <div class="layer-settings-opacity">
+          <input type="range" class="layer-settings-opacity-slider" id="layerOpacitySlider"
+                 min="0" max="100" value="100">
+          <span class="layer-settings-opacity-value" id="layerOpacityValue">100%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 하이라이트 팝업 메뉴 -->
   <div class="highlight-popup" id="highlightPopup" style="display: none;">
     <div class="highlight-popup-content">

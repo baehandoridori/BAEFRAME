@@ -938,12 +938,7 @@ export class Timeline extends EventTarget {
         ${layer.visible ? '👁' : '👁‍🗨'}
       </span>
       <span class="layer-name">${layer.name}</span>
-      <div class="layer-opacity-control" data-action="opacity">
-        <input type="range" class="layer-opacity-slider"
-               min="0" max="100"
-               value="${opacityPercent}"
-               title="${opacityPercent}%">
-      </div>
+      <span class="layer-opacity-badge">${opacityPercent}%</span>
       <span class="layer-lock" data-action="lock">
         ${layer.locked ? '🔒' : ''}
       </span>
@@ -955,21 +950,22 @@ export class Timeline extends EventTarget {
       this._emit('layerSelect', { layerId: layer.id });
     });
 
+    // 우클릭 → 레이어 설정 팝업
+    header.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._emit('layerContextMenu', {
+        layerId: layer.id,
+        x: e.clientX,
+        y: e.clientY,
+      });
+    });
+
     // 가시성 토글
     header.querySelector('[data-action="visibility"]').addEventListener('click', (e) => {
       e.stopPropagation();
       this._emit('layerVisibilityToggle', { layerId: layer.id });
     });
-
-    // 투명도 슬라이더
-    const opacitySlider = header.querySelector('.layer-opacity-slider');
-    opacitySlider?.addEventListener('input', (e) => {
-      e.stopPropagation();
-      const val = parseInt(e.target.value);
-      e.target.title = `${val}%`;
-      this._emit('layerOpacityChange', { layerId: layer.id, opacity: val / 100 });
-    });
-    opacitySlider?.addEventListener('click', (e) => e.stopPropagation());
 
     // 잠금 토글
     header.querySelector('[data-action="lock"]').addEventListener('click', (e) => {
