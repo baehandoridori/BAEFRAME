@@ -937,8 +937,8 @@ export class Timeline extends EventTarget {
       <span class="layer-visibility" data-action="visibility">
         ${layer.visible ? '👁' : '👁‍🗨'}
       </span>
-      <span class="layer-name">${layer.name}</span>
-      <span class="layer-opacity-badge">${opacityPercent}%</span>
+      <span class="layer-name" title="${layer.name}">${layer.name}</span>
+      <span class="layer-opacity-badge" title="불투명도 ${opacityPercent}%">${opacityPercent}%</span>
       <span class="layer-lock" data-action="lock">
         ${layer.locked ? '🔒' : ''}
       </span>

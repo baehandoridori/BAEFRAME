@@ -1481,7 +1481,6 @@ body.app-fullscreen .video-comment-overlay-controls {
   border-radius: 6px;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 14px;
   transition: all var(--transition-fast);
 }
 
@@ -1489,6 +1488,10 @@ body.app-fullscreen .video-comment-overlay-controls {
   background: var(--bg-hover);
   color: var(--text-primary);
   border-color: var(--border-default);
+}
+
+.zoom-btn:active {
+  transform: scale(0.95);
 }
 
 .zoom-btn svg {
@@ -1578,8 +1581,8 @@ body.app-fullscreen .video-comment-overlay-controls {
   height: 36px;
   display: flex;
   align-items: center;
-  padding: 0 12px;
-  gap: 8px;
+  padding: 0 8px;
+  gap: 4px;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 13px;
   cursor: pointer;
@@ -1601,14 +1604,15 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .layer-visibility {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-tertiary);
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .layer-visibility:hover {
@@ -1617,29 +1621,32 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .layer-name {
   flex: 1;
+  min-width: 0;
   color: var(--text-secondary);
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 12px;
 }
 
 .layer-lock {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-tertiary);
+  flex-shrink: 0;
 }
 
 /* 레이어 불투명도 배지 (헤더 인라인) */
 .layer-opacity-badge {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-tertiary);
   background: var(--bg-quaternary, #333);
-  padding: 1px 5px;
+  padding: 1px 4px;
   border-radius: 3px;
   white-space: nowrap;
   flex-shrink: 0;

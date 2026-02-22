@@ -5934,11 +5934,12 @@ async function initApp() {
   document.getElementById('closeUserManagement')?.addEventListener('click', closeUserManagementModalFn);
   document.getElementById('closeUserManagementBtn')?.addEventListener('click', closeUserManagementModalFn);
 
-  // 드롭다운에서 사용자 관리 클릭
-  document.getElementById('btnUserManagement')?.addEventListener('click', () => {
-    commentSettingsDropdown?.classList.remove('open');
-    btnCommentSettings?.classList.remove('active');
-    openUserManagementModal();
+  // Ctrl+Alt+U 단축키로 사용자 관리 모달 열기
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.altKey && e.code === 'KeyU') {
+      e.preventDefault();
+      openUserManagementModal();
+    }
   });
 
   // ====== 사용자 등록 모달 ======

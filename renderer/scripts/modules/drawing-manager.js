@@ -664,20 +664,69 @@ export class DrawingManager extends EventTarget {
 
   /**
    * 동기적 프레임 렌더링 (재생 중 성능 최적화)
-   * 캐시된 이미지만 사용, 없으면 스킵
+   * 캐시된 이미지 우선 사용, 캐시 미스 시 비동기 로드 후 재렌더링
    */
   _renderFrameSync(frame) {
+    let hasCacheMiss = false;
+
     for (const layer of this.layers) {
       if (!layer.visible) continue;
 
       const keyframe = layer.getKeyframeAtFrame(frame);
       if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
-      // 캐시된 이미지만 사용 (없으면 스킵)
+      // 캐시된 이미지 사용
       if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
         this.drawingCanvas.ctx.globalAlpha = layer.opacity;
         this.drawingCanvas.ctx.drawImage(keyframe._cachedImage, 0, 0);
         this.drawingCanvas.ctx.globalAlpha = 1;
+      } else {
+        hasCacheMiss = true;
+      }
+    }
+
+    // 캐시 미스가 있으면 비동기로 로드 후 해당 프레임이면 다시 렌더링
+    if (hasCacheMiss) {
+      this._renderFrameSyncFallback(frame);
+    }
+  }
+
+  /**
+   * 캐시 미스 프레임 비동기 로드 후 재렌더링
+   */
+  async _renderFrameSyncFallback(frame) {
+    const currentRenderingId = this._renderingId;
+
+    for (const layer of this.layers) {
+      if (!layer.visible) continue;
+
+      const keyframe = layer.getKeyframeAtFrame(frame);
+      if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
+
+      // 이미 캐시되어 있으면 스킵
+      if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) continue;
+
+      // 비동기 로드
+      await this._loadImage(keyframe.canvasData, keyframe);
+
+      // 프레임이 바뀌었거나 렌더링이 취소되었으면 중단
+      if (this._renderingId !== currentRenderingId || this.currentFrame !== frame) return;
+    }
+
+    // 프레임이 아직 같고 재생 중이면 다시 동기 렌더링
+    if (this.currentFrame === frame && this.isPlaying && this._renderingId === currentRenderingId) {
+      this.drawingCanvas.clear();
+      for (const layer of this.layers) {
+        if (!layer.visible) continue;
+
+        const keyframe = layer.getKeyframeAtFrame(frame);
+        if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
+
+        if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
+          this.drawingCanvas.ctx.globalAlpha = layer.opacity;
+          this.drawingCanvas.ctx.drawImage(keyframe._cachedImage, 0, 0);
+          this.drawingCanvas.ctx.globalAlpha = 1;
+        }
       }
     }
   }
