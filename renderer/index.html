@@ -547,7 +547,7 @@
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>
           </button>
           <button class="control-btn play-btn" id="btnPlay" title="재생/일시정지 (Space)">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" id="playIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" stroke="none" id="playIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           </button>
           <button class="control-btn" id="btnNextFrame" title="다음 프레임 (→)">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>
@@ -557,13 +557,14 @@
           </button>
         </div>
 
-        <div class="timecode" id="timecode">
-          <span class="timecode-current" id="timecodeCurrent">00:00:00:00</span>
-          <span class="timecode-separator">/</span>
-          <span class="timecode-total" id="timecodeTotal">00:00:00:00</span>
+        <div class="playback-info-stack">
+          <div class="timecode" id="timecode">
+            <span class="timecode-current" id="timecodeCurrent">00:00:00:00</span>
+            <span class="timecode-separator">/</span>
+            <span class="timecode-total" id="timecodeTotal">00:00:00:00</span>
+          </div>
+          <div class="frame-indicator" id="frameIndicator">24fps · Frame 0 / 0</div>
         </div>
-
-        <div class="frame-indicator" id="frameIndicator">24fps · Frame 0 / 0</div>
 
         <div class="controls-spacer"></div>
 
@@ -579,7 +580,7 @@
             </button>
             <button class="action-btn" id="btnAddComment">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              댓글 추가
+              댓글
               <span class="shortcut-hint" id="btnAddCommentHint">C</span>
             </button>
             <button class="nav-arrow-btn" id="btnNextComment" title="다음 댓글 (Shift+→)">
@@ -647,13 +648,13 @@
           <div class="timeline-toolbar-right">
             <div class="zoom-buttons">
               <button class="zoom-btn" id="btnTimelineZoomOut" title="축소">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
               </button>
               <button class="zoom-btn" id="btnTimelineZoomReset" title="원본 (100%)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
               </button>
               <button class="zoom-btn" id="btnTimelineZoomIn" title="확대">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
               </button>
             </div>
             <div class="zoom-control">
@@ -786,10 +787,6 @@
               테마 변경
             </button>
             <div class="settings-dropdown-divider"></div>
-            <button class="settings-dropdown-btn" id="btnUserManagement">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              사용자 관리
-            </button>
             <button class="settings-dropdown-btn" id="btnShortcutSettings">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h12M6 16h8"/></svg>
               단축키 설정
@@ -916,6 +913,36 @@
           <button class="marker-color-btn" data-color="green" title="초록" style="background: #2ed573;"></button>
           <button class="marker-color-btn" data-color="gray" title="회색" style="background: #a0a0a0;"></button>
           <button class="marker-color-btn" data-color="white" title="흰색" style="background: #ffffff;"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 레이어 설정 말풍선 팝업 -->
+  <div class="layer-settings-popup" id="layerSettingsPopup" style="display: none;">
+    <div class="layer-settings-arrow"></div>
+    <div class="layer-settings-content">
+      <div class="layer-settings-row">
+        <label class="layer-settings-label">이름</label>
+        <input type="text" class="layer-settings-input" id="layerNameInput" placeholder="레이어 이름...">
+      </div>
+      <div class="layer-settings-row">
+        <label class="layer-settings-label">색상</label>
+        <div class="layer-color-picker" id="layerColorPicker">
+          <button class="layer-color-btn" data-color="#ff4757" title="빨강" style="background: #ff4757;"></button>
+          <button class="layer-color-btn" data-color="#ffa502" title="주황" style="background: #ffa502;"></button>
+          <button class="layer-color-btn" data-color="#ffdd59" title="노랑" style="background: #ffdd59;"></button>
+          <button class="layer-color-btn" data-color="#2ed573" title="초록" style="background: #2ed573;"></button>
+          <button class="layer-color-btn" data-color="#1e90ff" title="파랑" style="background: #1e90ff;"></button>
+          <button class="layer-color-btn" data-color="#a55eea" title="보라" style="background: #a55eea;"></button>
+        </div>
+      </div>
+      <div class="layer-settings-row">
+        <label class="layer-settings-label">불투명도</label>
+        <div class="layer-settings-opacity">
+          <input type="range" class="layer-settings-opacity-slider" id="layerOpacitySlider"
+                 min="0" max="100" value="100">
+          <span class="layer-settings-opacity-value" id="layerOpacityValue">100%</span>
         </div>
       </div>
     </div>
@@ -1622,7 +1649,7 @@
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>
         </button>
         <button class="control-btn play-btn" id="splitBtnPlay" title="재생/일시정지">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" id="splitPlayIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none" id="splitPlayIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </button>
         <button class="control-btn" id="splitBtnNextFrame" title="다음 프레임">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>

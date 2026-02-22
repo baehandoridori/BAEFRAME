@@ -490,11 +490,14 @@ async function initApp() {
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
+
+    // 타임코드/프레임레이트 실시간 업데이트 (스플릿 뷰와 동일하게)
+    updateTimecodeDisplay();
   });
 
   // 재생 아이콘 SVG
-  const playIconSVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
-  const pauseIconSVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+  const playIconSVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+  const pauseIconSVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
 
   // 비디오 재생 상태 변경
   videoPlayer.addEventListener('play', () => {
@@ -605,6 +608,130 @@ async function initApp() {
   // 레이어 잠금 토글
   timeline.addEventListener('layerLockToggle', (e) => {
     drawingManager.toggleLayerLock(e.detail.layerId);
+  });
+
+  // ====== 레이어 설정 팝업 (우클릭 말풍선) ======
+
+  const layerSettingsPopup = document.getElementById('layerSettingsPopup');
+  const layerSettingsArrow = layerSettingsPopup.querySelector('.layer-settings-arrow');
+  const layerNameInput = document.getElementById('layerNameInput');
+  const layerColorPicker = document.getElementById('layerColorPicker');
+  const layerOpacitySlider = document.getElementById('layerOpacitySlider');
+  const layerOpacityValue = document.getElementById('layerOpacityValue');
+  let selectedLayerIdForPopup = null;
+
+  function showLayerSettingsPopup(layerId, x, y) {
+    const layer = drawingManager.layers.find(l => l.id === layerId);
+    if (!layer) return;
+
+    selectedLayerIdForPopup = layerId;
+
+    // 입력값 설정
+    layerNameInput.value = layer.name || '';
+    layerOpacitySlider.value = Math.round((layer.opacity ?? 1) * 100);
+    layerOpacityValue.textContent = `${layerOpacitySlider.value}%`;
+
+    // 색상 버튼 선택 상태
+    layerColorPicker.querySelectorAll('.layer-color-btn').forEach(btn => {
+      btn.classList.toggle('selected', btn.dataset.color === layer.color);
+    });
+
+    // 팝업 크기 측정을 위해 임시 표시
+    layerSettingsPopup.style.display = 'block';
+    layerSettingsPopup.style.visibility = 'hidden';
+
+    requestAnimationFrame(() => {
+      const popupRect = layerSettingsPopup.getBoundingClientRect();
+      const popupWidth = popupRect.width;
+      const popupHeight = popupRect.height;
+
+      // 화면 경계 고려하여 위치 조정
+      let popupX = x - 30;
+      let popupY = y + 12;
+
+      // 오른쪽 넘침 방지
+      if (popupX + popupWidth > window.innerWidth - 10) {
+        popupX = window.innerWidth - popupWidth - 10;
+      }
+      // 왼쪽 넘침 방지
+      if (popupX < 10) popupX = 10;
+
+      // 아래쪽 넘침 → 위쪽에 표시
+      if (popupY + popupHeight > window.innerHeight - 10) {
+        popupY = y - popupHeight - 12;
+        // 화살표를 아래로 이동
+        layerSettingsArrow.style.top = '';
+        layerSettingsArrow.style.bottom = '-6px';
+        layerSettingsArrow.style.transform = 'rotate(225deg)';
+      } else {
+        layerSettingsArrow.style.top = '-6px';
+        layerSettingsArrow.style.bottom = '';
+        layerSettingsArrow.style.transform = 'rotate(45deg)';
+      }
+
+      // 화살표 위치 (클릭 위치 기준)
+      const arrowLeft = Math.max(12, Math.min(x - popupX, popupWidth - 24));
+      layerSettingsArrow.style.left = `${arrowLeft}px`;
+
+      layerSettingsPopup.style.left = `${popupX}px`;
+      layerSettingsPopup.style.top = `${popupY}px`;
+      layerSettingsPopup.style.visibility = '';
+    });
+  }
+
+  function hideLayerSettingsPopup() {
+    layerSettingsPopup.style.display = 'none';
+    selectedLayerIdForPopup = null;
+  }
+
+  // 레이어 우클릭 → 팝업 표시
+  timeline.addEventListener('layerContextMenu', (e) => {
+    const { layerId, x, y } = e.detail;
+    showLayerSettingsPopup(layerId, x, y);
+  });
+
+  // 팝업 외부 클릭 시 닫기
+  document.addEventListener('mousedown', (e) => {
+    if (layerSettingsPopup.style.display === 'block' &&
+        !layerSettingsPopup.contains(e.target) &&
+        !e.target.closest('.drawing-layer-header')) {
+      hideLayerSettingsPopup();
+    }
+  });
+
+  // 레이어 이름 변경
+  layerNameInput.addEventListener('input', () => {
+    if (selectedLayerIdForPopup) {
+      drawingManager.setLayerName(selectedLayerIdForPopup, layerNameInput.value);
+    }
+  });
+
+  // 레이어 색상 변경
+  layerColorPicker.addEventListener('click', (e) => {
+    const btn = e.target.closest('.layer-color-btn');
+    if (!btn || !selectedLayerIdForPopup) return;
+
+    const color = btn.dataset.color;
+    drawingManager.setLayerColor(selectedLayerIdForPopup, color);
+
+    // 선택 상태 갱신
+    layerColorPicker.querySelectorAll('.layer-color-btn').forEach(b => {
+      b.classList.toggle('selected', b === btn);
+    });
+  });
+
+  // 레이어 불투명도 변경 (팝업 슬라이더)
+  layerOpacitySlider.addEventListener('input', () => {
+    if (!selectedLayerIdForPopup) return;
+    const val = parseInt(layerOpacitySlider.value);
+    layerOpacityValue.textContent = `${val}%`;
+    drawingManager.setLayerOpacity(selectedLayerIdForPopup, val / 100);
+
+    // 헤더의 불투명도 배지도 실시간 업데이트
+    const badge = document.querySelector(
+      `.drawing-layer-header[data-layer-id="${selectedLayerIdForPopup}"] .layer-opacity-badge`
+    );
+    if (badge) badge.textContent = `${val}%`;
   });
 
   // 키프레임 이동
@@ -3706,6 +3833,12 @@ async function initApp() {
     textarea?.addEventListener('blur', () => {
       setTimeout(() => {
         if (commentManager.pendingMarker && !clickedInsideMarker) {
+          // pending 마커 내 입력 필드에 포커스가 이동한 경우 모드 해제하지 않음
+          const pendingInput = markerEl?.querySelector('textarea, input');
+          if (pendingInput && document.activeElement === pendingInput) {
+            clickedInsideMarker = false;
+            return;
+          }
           commentManager.setCommentMode(false);
         }
         clickedInsideMarker = false; // 리셋
@@ -5487,6 +5620,20 @@ async function initApp() {
     }, 500);
   }
 
+  // ====== 포커스 저장/복원 유틸리티 ======
+  let _previousFocusElement = null;
+
+  function saveFocus() {
+    _previousFocusElement = document.activeElement;
+  }
+
+  function restoreFocus() {
+    if (_previousFocusElement && document.contains(_previousFocusElement)) {
+      _previousFocusElement.focus();
+      _previousFocusElement = null;
+    }
+  }
+
   // ====== 로그인 모달 ======
   const loginModal = document.getElementById('loginModal');
   const loginUserDisplay = document.getElementById('loginUserDisplay');
@@ -5495,17 +5642,34 @@ async function initApp() {
   let _loginTargetName = null;
 
   function openLoginModal(targetName) {
+    saveFocus();
     _loginTargetName = targetName;
     if (loginUserDisplay) loginUserDisplay.textContent = targetName;
     if (loginPasswordInput) loginPasswordInput.value = '';
     if (loginHint) loginHint.textContent = '등록된 사용자입니다. 비밀번호를 입력해주세요.';
     loginModal?.classList.add('active');
-    setTimeout(() => loginPasswordInput?.focus(), 100);
+    // transitionend 이벤트로 안정적 포커스 이동 (setTimeout 레이스 컨디션 제거)
+    const onTransitionEnd = () => {
+      loginPasswordInput?.focus();
+      loginModal?.removeEventListener('transitionend', onTransitionEnd);
+    };
+    if (loginModal) {
+      loginModal.addEventListener('transitionend', onTransitionEnd, { once: true });
+      // transition이 없는 경우를 대비한 폴백
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (document.activeElement !== loginPasswordInput) {
+            loginPasswordInput?.focus();
+          }
+        });
+      });
+    }
   }
 
   function closeLoginModalFn() {
     loginModal?.classList.remove('active');
     _loginTargetName = null;
+    restoreFocus();
   }
 
   async function doLogin() {
@@ -5532,6 +5696,16 @@ async function initApp() {
 
       showToast(`"${_loginTargetName}"(으)로 로그인했습니다.`, 'success');
       closeLoginModalFn();
+
+      // 기본 비밀번호(1234) 사용 시 변경 권유
+      if (password === '1234') {
+        showToast(
+          '초기 비밀번호로 로그인했습니다. 보안을 위해 비밀번호를 변경해주세요.',
+          'warning',
+          5000,
+          true
+        );
+      }
     } catch (error) {
       if (loginHint) {
         loginHint.textContent = error.message;
@@ -5765,11 +5939,12 @@ async function initApp() {
   document.getElementById('closeUserManagement')?.addEventListener('click', closeUserManagementModalFn);
   document.getElementById('closeUserManagementBtn')?.addEventListener('click', closeUserManagementModalFn);
 
-  // 드롭다운에서 사용자 관리 클릭
-  document.getElementById('btnUserManagement')?.addEventListener('click', () => {
-    commentSettingsDropdown?.classList.remove('open');
-    btnCommentSettings?.classList.remove('active');
-    openUserManagementModal();
+  // Ctrl+Alt+U 단축키로 사용자 관리 모달 열기
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.altKey && e.code === 'KeyU') {
+      e.preventDefault();
+      openUserManagementModal();
+    }
   });
 
   // ====== 사용자 등록 모달 ======
@@ -5991,7 +6166,8 @@ async function initApp() {
     threadEditor.innerHTML = '';
     updateSubmitButtonState();
 
-    // 팝업 열기
+    // 팝업 열기 (이전 포커스 저장)
+    saveFocus();
     threadOverlay.classList.add('open');
     threadEditor.focus();
   }
@@ -6004,6 +6180,7 @@ async function initApp() {
     currentThreadMarkerId = null;
     threadEditor.innerHTML = '';
     clearThreadImage();
+    restoreFocus();
   }
 
   /**
