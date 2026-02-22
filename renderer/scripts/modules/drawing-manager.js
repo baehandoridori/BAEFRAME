@@ -1053,6 +1053,9 @@ export class DrawingManager extends EventTarget {
 
   /**
    * 프리로드 범위 밖의 캐시 정리 (LRU)
+   * 주의: 키프레임의 이미지 캐시(_cachedImage)는 삭제하지 않음
+   * getKeyframeAtFrame()이 여러 프레임에서 같은 키프레임을 공유하므로,
+   * 범위 밖 프레임의 캐시를 삭제하면 범위 안 프레임에서도 이미지가 사라질 수 있음
    */
   _cleanupCacheOutsideRange(startFrame, endFrame) {
     // preloadedFrames 맵에서 범위 밖 항목 제거
@@ -1075,18 +1078,9 @@ export class DrawingManager extends EventTarget {
       }
     }
 
-    // 캐시 삭제 및 해당 프레임의 키프레임 이미지 캐시도 정리
+    // preloadedFrames 맵에서만 제거 (키프레임 이미지 캐시는 유지)
     for (const frame of framesToRemove) {
       this.preloadedFrames.delete(frame);
-
-      // 해당 프레임의 레이어별 키프레임 이미지 캐시 정리
-      for (const layer of this.layers) {
-        const keyframe = layer.getKeyframeAtFrame(frame);
-        if (keyframe && keyframe._cachedImage) {
-          keyframe._cachedImage = null;
-          keyframe._cachedSrc = null;
-        }
-      }
     }
 
     if (framesToRemove.length > 0) {
