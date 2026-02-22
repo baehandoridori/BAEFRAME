@@ -50,6 +50,21 @@
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.7);
   --shadow-glow: 0 0 20px rgba(255, 208, 0, 0.3);
+  --shadow-xl: 0 12px 40px rgba(0, 0, 0, 0.8);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  /* 글래스모피즘 */
+  --glass-bg: rgba(17, 17, 17, 0.75);
+  --glass-bg-heavy: rgba(17, 17, 17, 0.85);
+  --glass-bg-light: rgba(17, 17, 17, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-border-bright: rgba(255, 255, 255, 0.1);
+  --glass-blur: blur(12px);
+  --glass-blur-heavy: blur(20px);
+  --glass-blur-light: blur(8px);
+  --accent-glow-soft: rgba(255, 208, 0, 0.08);
+  --accent-gradient: linear-gradient(135deg, #ffd000, #e6bb00);
+  --accent-gradient-radial: radial-gradient(circle, rgba(255, 208, 0, 0.2) 0%, transparent 70%);
 
   /* 레이아웃 */
   --header-height: 52px;
@@ -84,12 +99,16 @@ body {
    ======================================== */
 .header {
   height: var(--header-height);
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-subtle);
+  background: var(--glass-bg-heavy);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--glass-border-bright);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+  position: relative;
+  z-index: 100;
 }
 
 .header-left {
@@ -110,7 +129,7 @@ body {
 .logo-icon {
   width: 28px;
   height: 28px;
-  background: var(--accent-primary);
+  background: var(--accent-gradient);
   border-radius: 6px;
   display: flex;
   align-items: center;
@@ -120,11 +139,12 @@ body {
   font-weight: 800;
   cursor: pointer;
   transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(255, 208, 0, 0.2);
 }
 
 .logo-icon:hover {
   transform: scale(1.1);
-  box-shadow: 0 0 16px rgba(255, 208, 0, 0.5);
+  box-shadow: 0 0 20px rgba(255, 208, 0, 0.5), 0 0 40px rgba(255, 208, 0, 0.2);
 }
 
 .file-info {
@@ -132,10 +152,12 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  background: var(--bg-tertiary);
-  border-radius: 6px;
+  background: rgba(26, 26, 26, 0.6);
+  backdrop-filter: var(--glass-blur-light);
+  -webkit-backdrop-filter: var(--glass-blur-light);
+  border-radius: 8px;
   font-size: 13px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--glass-border);
 }
 
 .file-icon {
@@ -170,13 +192,13 @@ body {
 }
 
 .version-badge {
-  background: var(--accent-glow-strong);
+  background: rgba(255, 208, 0, 0.12);
   color: var(--accent-primary);
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
-  border: 1px solid var(--accent-primary);
+  border: 1px solid rgba(255, 208, 0, 0.3);
 }
 
 .header-right {
@@ -308,14 +330,14 @@ body {
 }
 
 .btn-secondary {
-  background: var(--bg-tertiary);
+  background: rgba(26, 26, 26, 0.7);
   color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--glass-border);
 }
 
 .btn-secondary:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-default);
+  background: rgba(34, 34, 34, 0.8);
+  border-color: var(--glass-border-bright);
 }
 
 .btn-primary {
@@ -355,8 +377,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-subtle);
+  background: rgba(26, 26, 26, 0.5);
+  border: 1px solid var(--glass-border);
   border-radius: 8px;
   color: var(--text-secondary);
   cursor: pointer;
@@ -364,15 +386,16 @@ body {
 }
 
 .btn-icon:hover {
-  background: var(--bg-hover);
+  background: rgba(34, 34, 34, 0.7);
   color: var(--text-primary);
-  border-color: var(--border-default);
+  border-color: var(--glass-border-bright);
 }
 
 .btn-icon.active {
   background: var(--accent-glow-strong);
   color: var(--accent-primary);
   border-color: var(--accent-primary);
+  box-shadow: 0 0 8px rgba(255, 208, 0, 0.15);
 }
 
 .btn-icon svg {
@@ -734,20 +757,24 @@ body.app-fullscreen .video-comment-overlay-controls {
   top: 16px;
   left: 16px;
   width: 220px;
-  background: var(--bg-elevated);
-  border-radius: 10px;
-  box-shadow: var(--shadow-lg);
-  border: 1px solid var(--border-subtle);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-heavy);
+  -webkit-backdrop-filter: var(--glass-blur-heavy);
+  border-radius: 12px;
+  box-shadow: var(--shadow-glass);
+  border: 1px solid var(--glass-border-bright);
   opacity: 0;
   visibility: hidden;
-  transition: opacity var(--transition-normal), visibility var(--transition-normal);
+  transition: opacity var(--transition-normal), visibility var(--transition-normal), transform var(--transition-normal);
   z-index: 100;
   user-select: none;
+  transform: translateY(-4px);
 }
 
 .drawing-tools.visible {
   opacity: 1;
   visibility: visible;
+  transform: translateY(0);
 }
 
 /* 헤더 (드래그 핸들) */
@@ -755,14 +782,14 @@ body.app-fullscreen .video-comment-overlay-controls {
   display: flex;
   align-items: center;
   padding: 8px 10px;
-  background: var(--bg-tertiary);
-  border-radius: 10px 10px 0 0;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px 12px 0 0;
   cursor: move;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--glass-border);
 }
 
 .drawing-tools.collapsed .drawing-tools-header {
-  border-radius: 10px;
+  border-radius: 12px;
   border-bottom: none;
 }
 
@@ -1101,14 +1128,17 @@ body.app-fullscreen .video-comment-overlay-controls {
    ======================================== */
 .controls-bar {
   height: var(--controls-height);
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border-subtle);
+  background: var(--glass-bg-heavy);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-top: 1px solid var(--glass-border-bright);
   display: flex;
   align-items: center;
   padding: 0 16px;
   gap: 16px;
   overflow-x: auto;
   flex-shrink: 0;
+  position: relative;
 }
 
 .playback-controls {
@@ -1133,22 +1163,45 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .control-btn:hover {
-  background: var(--bg-hover);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
 }
 
 .control-btn.play-btn {
   width: 44px;
   height: 44px;
-  background: var(--accent-primary);
+  background: var(--accent-gradient);
   color: var(--bg-primary);
   font-size: 18px;
   border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(255, 208, 0, 0.3);
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.control-btn.play-btn::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: var(--accent-gradient-radial);
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 0.3s ease;
 }
 
 .control-btn.play-btn:hover {
-  background: var(--accent-secondary);
-  box-shadow: var(--shadow-glow);
+  background: var(--accent-gradient);
+  box-shadow: 0 4px 20px rgba(255, 208, 0, 0.5);
+  transform: scale(1.05);
+}
+
+.control-btn.play-btn:hover::after {
+  opacity: 1;
+}
+
+.control-btn.play-btn:active {
+  transform: scale(0.97);
 }
 
 .timecode {
@@ -1156,10 +1209,12 @@ body.app-fullscreen .video-comment-overlay-controls {
   font-size: 13px;
   color: var(--text-primary);
   min-width: 180px;
-  background: var(--bg-tertiary);
+  background: rgba(10, 10, 10, 0.6);
+  backdrop-filter: var(--glass-blur-light);
+  -webkit-backdrop-filter: var(--glass-blur-light);
   padding: 6px 12px;
-  border-radius: 4px;
-  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
 }
 
 .timecode-current {
@@ -1179,9 +1234,12 @@ body.app-fullscreen .video-comment-overlay-controls {
 .frame-indicator {
   font-size: 11px;
   color: var(--text-tertiary);
-  background: var(--bg-tertiary);
-  padding: 4px 8px;
-  border-radius: 4px;
+  background: rgba(10, 10, 10, 0.5);
+  backdrop-filter: var(--glass-blur-light);
+  -webkit-backdrop-filter: var(--glass-blur-light);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
 }
 
 .controls-spacer {
@@ -1200,8 +1258,10 @@ body.app-fullscreen .video-comment-overlay-controls {
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-subtle);
+  background: rgba(26, 26, 26, 0.7);
+  backdrop-filter: var(--glass-blur-light);
+  -webkit-backdrop-filter: var(--glass-blur-light);
+  border: 1px solid var(--glass-border);
   border-radius: 6px;
   color: var(--text-primary);
   font-family: inherit;
@@ -1212,14 +1272,15 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .action-btn:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-default);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--glass-border-bright);
 }
 
 .action-btn.active {
-  background: var(--accent-glow-strong);
+  background: rgba(255, 208, 0, 0.12);
   border-color: var(--accent-primary);
   color: var(--accent-primary);
+  box-shadow: 0 0 12px rgba(255, 208, 0, 0.15);
 }
 
 /* 댓글/하이라이트 네비게이션 그룹 */
@@ -1388,12 +1449,16 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .timeline-toolbar {
   height: 40px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-subtle);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-light);
+  -webkit-backdrop-filter: var(--glass-blur-light);
+  border-bottom: 1px solid var(--glass-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+  position: relative;
+  z-index: 5;
 }
 
 .timeline-toolbar-left {
@@ -1656,10 +1721,12 @@ body.app-fullscreen .video-comment-overlay-controls {
 .layer-settings-popup {
   position: fixed;
   z-index: 10000;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-heavy);
+  -webkit-backdrop-filter: var(--glass-blur-heavy);
+  border: 1px solid var(--glass-border-bright);
   border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-glass);
   min-width: 220px;
   padding: 14px;
 }
@@ -1785,8 +1852,8 @@ body.app-fullscreen .video-comment-overlay-controls {
 .timeline-ruler {
   height: 32px;
   min-height: 32px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(26, 26, 26, 0.8);
+  border-bottom: 1px solid var(--glass-border);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -1811,12 +1878,12 @@ body.app-fullscreen .video-comment-overlay-controls {
 .track-row {
   height: 36px;
   position: relative;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-primary);
+  border-bottom: 1px solid rgba(42, 42, 42, 0.5);
+  background: rgba(10, 10, 10, 0.5);
 }
 
 .track-row:nth-child(odd) {
-  background: var(--bg-tertiary);
+  background: rgba(26, 26, 26, 0.5);
 }
 
 .track-clip {
@@ -1863,7 +1930,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   background: var(--accent-primary);
   z-index: 100;
   pointer-events: none;
-  box-shadow: 0 0 8px rgba(255, 208, 0, 0.5);
+  box-shadow: 0 0 6px rgba(255, 208, 0, 0.5), 0 0 12px rgba(255, 208, 0, 0.2);
 }
 
 .playhead-handle {
@@ -1873,15 +1940,17 @@ body.app-fullscreen .video-comment-overlay-controls {
   width: 14px;
   height: 32px;
   margin-left: -7px; /* 핸들 중앙 정렬 */
-  background: var(--accent-primary);
+  background: var(--accent-gradient);
   clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
   cursor: ew-resize;
   z-index: 101;
-  transition: transform var(--transition-fast);
+  transition: transform var(--transition-fast), filter var(--transition-fast);
+  filter: drop-shadow(0 0 4px rgba(255, 208, 0, 0.4));
 }
 
 .playhead-handle:hover {
-  transform: scale(1.1);
+  transform: scale(1.15);
+  filter: drop-shadow(0 0 8px rgba(255, 208, 0, 0.6));
 }
 
 /* 구간 반복 마커 */
@@ -2605,15 +2674,18 @@ body.app-fullscreen .video-comment-overlay-controls {
   width: 320px;
   min-width: 260px;
   max-width: 500px;
-  background: var(--bg-secondary);
-  border-left: 1px solid var(--border-subtle);
+  background: var(--glass-bg-heavy);
+  backdrop-filter: var(--glass-blur-light);
+  -webkit-backdrop-filter: var(--glass-blur-light);
+  border-left: 1px solid var(--glass-border-bright);
   display: flex;
   flex-direction: column;
 }
 
 .panel-header {
   padding: 16px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.02);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2680,15 +2752,17 @@ body.app-fullscreen .video-comment-overlay-controls {
   right: 0;
   margin-top: 8px;
   width: 220px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  box-shadow: var(--shadow-lg);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border-bright);
+  border-radius: 10px;
+  box-shadow: var(--shadow-glass);
   z-index: 1000;
   opacity: 0;
   visibility: hidden;
   transform: translateY(-8px);
-  transition: all 0.15s ease;
+  transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .comment-settings-dropdown.open {
@@ -2911,8 +2985,8 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .filter-chip {
   padding: 6px 12px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-subtle);
+  background: rgba(26, 26, 26, 0.6);
+  border: 1px solid var(--glass-border);
   border-radius: 16px;
   font-size: 12px;
   color: var(--text-secondary);
@@ -3116,12 +3190,16 @@ body.app-fullscreen .video-comment-overlay-controls {
   position: relative;
   padding: 12px;
   padding-top: 32px;
-  background: var(--bg-tertiary);
+  background: rgba(26, 26, 26, 0.5);
   border-radius: 8px;
   margin-bottom: 8px;
   cursor: pointer;
   transition: all var(--transition-fast);
   border: 1px solid transparent;
+}
+
+.comment-item:hover {
+  border-color: var(--glass-border-bright);
 }
 
 /* 해결 상태 토글 버튼 (우상단) */
@@ -3201,8 +3279,8 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .comment-item:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-subtle);
+  background: rgba(30, 30, 30, 0.6);
+  border-color: var(--glass-border-bright);
 }
 
 .comment-item.selected {
@@ -3851,26 +3929,28 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .toast {
   padding: 12px 20px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
   font-size: 13px;
-  box-shadow: var(--shadow-lg);
-  animation: toastIn 0.3s ease;
+  box-shadow: var(--shadow-glass);
+  animation: toastIn 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .toast.success {
-  border-color: var(--success);
+  border-left: 3px solid var(--success);
   color: var(--success);
 }
 
 .toast.error {
-  border-color: var(--error);
+  border-left: 3px solid var(--error);
   color: var(--error);
 }
 
 .toast.warn {
-  border-color: var(--warning);
+  border-left: 3px solid var(--warning);
   color: var(--warning);
 }
 
@@ -3881,22 +3961,22 @@ body.app-fullscreen .video-comment-overlay-controls {
 @keyframes toastIn {
   from {
     opacity: 0;
-    transform: translateY(-10px);
+    transform: translateX(-20px) scale(0.95);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(0) scale(1);
   }
 }
 
 @keyframes toastOut {
   from {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(0) scale(1);
   }
   to {
     opacity: 0;
-    transform: translateY(-10px);
+    transform: translateX(-20px) scale(0.95);
   }
 }
 
@@ -3968,11 +4048,13 @@ body.resizing .comment-panel {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   padding: 8px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  border: 1px solid var(--glass-border-bright);
+  box-shadow: var(--shadow-glass);
   z-index: 50;
   opacity: 0;
   visibility: hidden;
@@ -4062,21 +4144,21 @@ body.resizing .comment-panel {
    Scrollbar
    ======================================== */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-primary);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--bg-hover);
-  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-default);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 /* ========================================
@@ -4630,14 +4712,16 @@ body.resizing .comment-panel {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
   opacity: 0;
   visibility: hidden;
-  transition: all 0.2s ease;
+  transition: all 0.25s ease;
 }
 
 .modal-overlay.active {
@@ -4646,14 +4730,20 @@ body.resizing .comment-panel {
 }
 
 .modal-content {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
+  background: var(--glass-bg-heavy);
+  backdrop-filter: var(--glass-blur-heavy);
+  -webkit-backdrop-filter: var(--glass-blur-heavy);
+  border: 1px solid var(--glass-border-bright);
+  border-radius: 14px;
   width: 90%;
   max-width: 400px;
-  box-shadow: var(--shadow-xl);
-  transform: scale(0.95);
-  transition: transform 0.2s ease;
+  box-shadow: var(--shadow-xl), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transform: scale(0.95) translateY(8px);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.modal-overlay.active .modal-content {
+  transform: scale(1) translateY(0);
 }
 
 .modal-content.modal-lg {
@@ -5762,14 +5852,16 @@ body.resizing .comment-panel {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2000;
   opacity: 0;
   visibility: hidden;
-  transition: all 0.2s ease;
+  transition: all 0.25s ease;
 }
 
 .thread-overlay.open {
@@ -5781,13 +5873,16 @@ body.resizing .comment-panel {
   width: 520px;
   max-width: 90vw;
   max-height: 85vh;
-  background: #1a1a1a;
-  border-radius: 12px;
+  background: var(--glass-bg-heavy);
+  backdrop-filter: var(--glass-blur-heavy);
+  -webkit-backdrop-filter: var(--glass-blur-heavy);
+  border: 1px solid var(--glass-border-bright);
+  border-radius: 14px;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-xl), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   transform: scale(0.95) translateY(20px);
-  transition: transform 0.2s ease;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .thread-overlay.open .thread-modal {
