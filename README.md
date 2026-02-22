@@ -288,6 +288,59 @@ npm run dev  # DevTools 자동 열림
 npm run build:installer  # Windows 설치 파일 생성
 ```
 
+### Windows 11 우클릭 통합 (이슈 #88)
+
+BAEFRAME를 영상 파일 우클릭으로 바로 열려면 통합 설치를 실행해야 합니다.
+
+가장 쉬운 방법(프로그램처럼 실행):
+
+```powershell
+.\integration\installer\BAEFRAME-Integration-Setup.cmd
+```
+
+기본 정책은 **Win11 1차 우클릭(sparse) 우선**이며, 실패 시 자동으로 legacy(2차 메뉴)를 만들지 않습니다.
+
+사내 인증서+정책까지 포함해 설치하려면(관리자 PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\integration\installer\run-integration-setup.ps1 -Provision
+```
+
+또는 CMD 런처 인자로 실행:
+
+```cmd
+.\integration\installer\BAEFRAME-Integration-Setup.cmd -Provision -UseSharePath -CertPath "\\server\share\certs\StudioJBBJ.BAEFRAME.Integration.cer"
+```
+
+공유 드라이브 프로필로 실행하려면:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\integration\installer\run-integration-setup.ps1 -Provision -UseSharePath -CertPath "\\server\share\certs\StudioJBBJ.BAEFRAME.Integration.cer"
+```
+
+수동 실행:
+
+```powershell
+# 설치 (sparse-only 기본)
+powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -AppPath "C:\BAEframe\BAEFRAME\dist\win-unpacked\BFRAME_alpha_v2.exe"
+
+# 상태 확인
+powershell -ExecutionPolicy Bypass -File .\integration\installer\detect-integration.ps1
+
+# 제거
+powershell -ExecutionPolicy Bypass -File .\integration\installer\uninstall-integration.ps1
+```
+
+legacy를 정말 써야 할 때만 fallback 허용:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -AppPath "C:\path\to\BFRAME_alpha_v2.exe" -Mode Auto -EnableLegacyFallback
+```
+
+팀 전체 자동 적용은 개별 CMD 실행이 아니라 GPO/Intune/SCCM으로 위 프로비저닝 명령을 배포하는 방식을 권장합니다.
+
+앱 내부에서는 설정 메뉴의 `Windows 통합 진단/복구` 버튼으로 동일한 설치기를 실행할 수 있습니다.
+
 ---
 
 ## ⌨️ 단축키 총정리
@@ -512,3 +565,4 @@ Windows 레지스트리에 자동 등록 → 설정 필요 없음
 [웹 뷰어](https://baeframe.vercel.app) · [GitHub](https://github.com/baehandoridori/BAEFRAME)
 
 </div>
+

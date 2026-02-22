@@ -60,6 +60,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadSettings: () => ipcRenderer.invoke('settings:load'),
   saveSettings: (data) => ipcRenderer.invoke('settings:save', data),
   getSettingsPath: () => ipcRenderer.invoke('settings:get-path'),
+  // ====== Windows 통합(우클릭) 관련 ======
+  detectWindowsIntegration: () => ipcRenderer.invoke('integration:detect'),
+  runWindowsIntegrationRepair: () => ipcRenderer.invoke('integration:run-repair'),
+
 
   // ====== 썸네일 캐시 관련 ======
   thumbnailGetCachePath: () => ipcRenderer.invoke('thumbnail:get-cache-path'),
