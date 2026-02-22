@@ -1128,10 +1128,11 @@ body.app-fullscreen .video-comment-overlay-controls {
    ======================================== */
 .controls-bar {
   height: var(--controls-height);
-  background: var(--glass-bg-heavy);
+  background: linear-gradient(180deg, rgba(20, 20, 20, 0.9) 0%, rgba(12, 12, 12, 0.95) 100%);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  border-top: 1px solid var(--glass-border-bright);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 -4px 16px rgba(0, 0, 0, 0.3);
   display: flex;
   align-items: center;
   padding: 0 16px;
@@ -1206,15 +1207,18 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .timecode {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: clamp(11px, 1.2vw, 13px);
   color: var(--text-primary);
-  min-width: 180px;
+  min-width: 140px;
+  width: fit-content;
   background: rgba(10, 10, 10, 0.6);
   backdrop-filter: var(--glass-blur-light);
   -webkit-backdrop-filter: var(--glass-blur-light);
-  padding: 6px 12px;
+  padding: 6px clamp(8px, 1vw, 12px);
   border-radius: 6px;
   border: 1px solid var(--glass-border);
+  white-space: nowrap;
+  flex-shrink: 1;
 }
 
 .timecode-current {
@@ -1232,14 +1236,16 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .frame-indicator {
-  font-size: 11px;
+  font-size: clamp(10px, 1vw, 11px);
   color: var(--text-tertiary);
   background: rgba(10, 10, 10, 0.5);
   backdrop-filter: var(--glass-blur-light);
   -webkit-backdrop-filter: var(--glass-blur-light);
-  padding: 4px 10px;
+  padding: 4px clamp(6px, 0.8vw, 10px);
   border-radius: 6px;
   border: 1px solid var(--glass-border);
+  white-space: nowrap;
+  flex-shrink: 1;
 }
 
 .controls-spacer {
@@ -2671,9 +2677,9 @@ body.app-fullscreen .video-comment-overlay-controls {
    Comment Panel
    ======================================== */
 .comment-panel {
-  width: 320px;
-  min-width: 260px;
-  max-width: 500px;
+  width: 380px;
+  min-width: 300px;
+  max-width: 560px;
   background: var(--glass-bg-heavy);
   backdrop-filter: var(--glass-blur-light);
   -webkit-backdrop-filter: var(--glass-blur-light);
@@ -4166,7 +4172,7 @@ body.resizing .comment-panel {
    ======================================== */
 @media (max-width: 1200px) {
   .comment-panel {
-    width: 280px;
+    width: 320px;
   }
 }
 
