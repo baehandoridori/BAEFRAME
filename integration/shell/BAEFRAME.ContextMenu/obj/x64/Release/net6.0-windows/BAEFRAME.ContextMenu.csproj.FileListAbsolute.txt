@@ -1,0 +1,15 @@
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.csproj.AssemblyReference.cache
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.GeneratedMSBuildEditorConfig.editorconfig
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.AssemblyInfoInputs.cache
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.AssemblyInfo.cs
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.csproj.CoreCompileInputs.cache
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\bin\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.comhost.dll
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\bin\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.deps.json
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\bin\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.runtimeconfig.json
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\bin\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.dll
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\bin\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.pdb
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.dll
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\refint\BAEFRAME.ContextMenu.dll
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.pdb
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\BAEFRAME.ContextMenu.genruntimeconfig.cache
+C:\BAEframe\BAEFRAME\integration\shell\BAEFRAME.ContextMenu\obj\x64\Release\net6.0-windows\ref\BAEFRAME.ContextMenu.dll
