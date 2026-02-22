@@ -593,16 +593,16 @@ export class DrawingManager extends EventTarget {
     // 렌더링 ID 증가 (이전 렌더링 취소용)
     const currentRenderingId = ++this._renderingId;
 
-    // 캔버스 초기화 (그리기 캔버스 + 어니언 스킨 캔버스)
-    this.drawingCanvas.clear();
-    this._clearOnionSkinCanvas();
-
-    // 재생 중이면 빠른 동기 렌더링
+    // 재생 중이면 빠른 동기 렌더링 (clear 없이 먼저 그린 뒤 교체)
     if (this.isPlaying) {
       this._renderFrameSync(frame);
       this._preloadFrames(frame);
       return;
     }
+
+    // 일시정지 상태에서만 캔버스 초기화
+    this.drawingCanvas.clear();
+    this._clearOnionSkinCanvas();
 
     log.debug('renderFrame 시작', {
       frame,
@@ -664,21 +664,53 @@ export class DrawingManager extends EventTarget {
 
   /**
    * 동기적 프레임 렌더링 (재생 중 성능 최적화)
-   * 캐시된 이미지만 사용, 없으면 스킵
+   * clear → draw를 원자적으로 수행하여 깜빡임 방지
+   * 캐시된 이미지만 사용, 캐시 미스 시 비동기 프리로드 후 다음 기회에 표시
    */
   _renderFrameSync(frame) {
+    // 캐시된 이미지를 먼저 수집
+    const images = [];
+    let hasCacheMiss = false;
+
     for (const layer of this.layers) {
       if (!layer.visible) continue;
 
       const keyframe = layer.getKeyframeAtFrame(frame);
       if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
-      // 캐시된 이미지만 사용 (없으면 스킵)
       if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
-        this.drawingCanvas.ctx.globalAlpha = layer.opacity;
-        this.drawingCanvas.ctx.drawImage(keyframe._cachedImage, 0, 0);
-        this.drawingCanvas.ctx.globalAlpha = 1;
+        images.push({ img: keyframe._cachedImage, opacity: layer.opacity });
+      } else {
+        hasCacheMiss = true;
       }
+    }
+
+    // clear + draw를 원자적으로 수행 (깜빡임 방지)
+    this.drawingCanvas.clear();
+    for (const { img, opacity } of images) {
+      this.drawingCanvas.ctx.globalAlpha = opacity;
+      this.drawingCanvas.ctx.drawImage(img, 0, 0);
+      this.drawingCanvas.ctx.globalAlpha = 1;
+    }
+
+    // 캐시 미스가 있으면 백그라운드에서 로드 (다음 프레임에서 사용됨)
+    if (hasCacheMiss) {
+      this._preloadMissingImages(frame);
+    }
+  }
+
+  /**
+   * 캐시 미스 이미지 백그라운드 로드 (fire-and-forget)
+   */
+  async _preloadMissingImages(frame) {
+    for (const layer of this.layers) {
+      if (!layer.visible) continue;
+
+      const keyframe = layer.getKeyframeAtFrame(frame);
+      if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
+      if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) continue;
+
+      await this._loadImage(keyframe.canvasData, keyframe);
     }
   }
 
@@ -795,6 +827,43 @@ export class DrawingManager extends EventTarget {
    */
   setOpacity(opacity) {
     this.drawingCanvas.setOpacity(opacity);
+  }
+
+  /**
+   * 레이어 투명도 설정
+   */
+  setLayerOpacity(layerId, opacity) {
+    const layer = this.layers.find(l => l.id === layerId);
+    if (!layer) return;
+
+    layer.opacity = Math.max(0, Math.min(1, opacity));
+    this.renderFrame(this.currentFrame);
+    // layersChanged를 발행하지 않음 → 전체 레이어 헤더 재렌더링 방지 (슬라이더 버벅임 해결)
+    log.debug('레이어 투명도 변경', { layerId, opacity: layer.opacity });
+  }
+
+  /**
+   * 레이어 이름 변경
+   */
+  setLayerName(layerId, name) {
+    const layer = this.layers.find(l => l.id === layerId);
+    if (!layer) return;
+
+    layer.name = name;
+    this._emit('layersChanged');
+    log.debug('레이어 이름 변경', { layerId, name });
+  }
+
+  /**
+   * 레이어 색상 변경
+   */
+  setLayerColor(layerId, color) {
+    const layer = this.layers.find(l => l.id === layerId);
+    if (!layer) return;
+
+    layer.color = color;
+    this._emit('layersChanged');
+    log.debug('레이어 색상 변경', { layerId, color });
   }
 
   /**
@@ -984,6 +1053,9 @@ export class DrawingManager extends EventTarget {
 
   /**
    * 프리로드 범위 밖의 캐시 정리 (LRU)
+   * 주의: 키프레임의 이미지 캐시(_cachedImage)는 삭제하지 않음
+   * getKeyframeAtFrame()이 여러 프레임에서 같은 키프레임을 공유하므로,
+   * 범위 밖 프레임의 캐시를 삭제하면 범위 안 프레임에서도 이미지가 사라질 수 있음
    */
   _cleanupCacheOutsideRange(startFrame, endFrame) {
     // preloadedFrames 맵에서 범위 밖 항목 제거
@@ -1006,18 +1078,9 @@ export class DrawingManager extends EventTarget {
       }
     }
 
-    // 캐시 삭제 및 해당 프레임의 키프레임 이미지 캐시도 정리
+    // preloadedFrames 맵에서만 제거 (키프레임 이미지 캐시는 유지)
     for (const frame of framesToRemove) {
       this.preloadedFrames.delete(frame);
-
-      // 해당 프레임의 레이어별 키프레임 이미지 캐시 정리
-      for (const layer of this.layers) {
-        const keyframe = layer.getKeyframeAtFrame(frame);
-        if (keyframe && keyframe._cachedImage) {
-          keyframe._cachedImage = null;
-          keyframe._cachedSrc = null;
-        }
-      }
     }
 
     if (framesToRemove.length > 0) {

@@ -154,12 +154,18 @@ export class Timeline extends EventTarget {
         if (this.layerHeaders) {
           this.layerHeaders.scrollTop = this.timelineTracks.scrollTop;
         }
+      } else if (e.ctrlKey) {
+        // Ctrl + 휠: 가로 스크롤 (긴 영상에서 빠른 위치 이동)
+        const scrollAmount = e.deltaY * 3;
+        this.timelineTracks.scrollLeft += scrollAmount;
       } else {
         // 기본 휠: 플레이헤드(재생바) 위치 기준 확대/축소
-        const delta = e.deltaY > 0 ? -15 : 15;
+        // 비율 기반 줌: 현재 줌 레벨의 5%씩 변화 (고배율일수록 변화량 증가)
+        const zoomStep = Math.max(15, this.zoom * 0.05);
+        const delta = e.deltaY > 0 ? -zoomStep : zoomStep;
         const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom + delta));
 
-        if (newZoom === this.zoom) return;
+        if (Math.abs(newZoom - this.zoom) < 0.1) return;
 
         // 현재 시간의 비율 (0~1) - 줌과 무관하게 항상 동일
         const timeRatio = this.duration > 0 ? this.currentTime / this.duration : 0;
@@ -701,7 +707,7 @@ export class Timeline extends EventTarget {
 
     const indicator = document.createElement('div');
     indicator.className = 'zoom-indicator';
-    indicator.textContent = `🔍 ${Math.round(this.zoom)}%`;
+    indicator.textContent = `${Math.round(this.zoom)}%`;
     indicator.style.cssText = `
       position: absolute;
       top: 50%;
@@ -820,7 +826,8 @@ export class Timeline extends EventTarget {
 
     // CSS background로 효율적인 그리드 렌더링
     // 가시성 개선: 투명도를 높임
-    const majorLineColor = 'rgba(255, 208, 0, 0.6)'; // 1초 단위 (노란색, 더 진하게)
+    const accentShadowStrong = getComputedStyle(document.documentElement).getPropertyValue('--accent-shadow-strong').trim() || 'rgba(255, 208, 0, 0.5)';
+    const majorLineColor = accentShadowStrong; // 1초 단위 (테마 색상)
     const minorLineColor = 'rgba(255, 255, 255, 0.25)'; // 일반 프레임 (더 잘 보이게)
 
     // 1초 단위 강조선 계산
@@ -925,12 +932,14 @@ export class Timeline extends EventTarget {
     header.className = `layer-header drawing-layer-header${isActive ? ' selected' : ''}`;
     header.dataset.layerId = layer.id;
 
+    const opacityPercent = Math.round((layer.opacity ?? 1) * 100);
     header.innerHTML = `
       <div class="layer-color" style="background: ${layer.color}"></div>
       <span class="layer-visibility" data-action="visibility">
         ${layer.visible ? '👁' : '👁‍🗨'}
       </span>
-      <span class="layer-name">${layer.name}</span>
+      <span class="layer-name" title="${layer.name}">${layer.name}</span>
+      <span class="layer-opacity-badge" title="불투명도 ${opacityPercent}%">${opacityPercent}%</span>
       <span class="layer-lock" data-action="lock">
         ${layer.locked ? '🔒' : ''}
       </span>
@@ -938,8 +947,19 @@ export class Timeline extends EventTarget {
 
     // 레이어 선택 클릭
     header.addEventListener('click', (e) => {
-      if (e.target.dataset.action) return;
+      if (e.target.dataset.action || e.target.closest('[data-action]')) return;
       this._emit('layerSelect', { layerId: layer.id });
+    });
+
+    // 우클릭 → 레이어 설정 팝업
+    header.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._emit('layerContextMenu', {
+        layerId: layer.id,
+        x: e.clientX,
+        y: e.clientY,
+      });
     });
 
     // 가시성 토글
@@ -1088,8 +1108,8 @@ export class Timeline extends EventTarget {
           to right,
           transparent 0px,
           transparent ${secondWidth - 1}px,
-          rgba(255, 208, 0, 0.4) ${secondWidth - 1}px,
-          rgba(255, 208, 0, 0.4) ${secondWidth}px
+          ${getComputedStyle(document.documentElement).getPropertyValue('--accent-shadow').trim() || 'rgba(255, 208, 0, 0.3)'} ${secondWidth - 1}px,
+          ${getComputedStyle(document.documentElement).getPropertyValue('--accent-shadow').trim() || 'rgba(255, 208, 0, 0.3)'} ${secondWidth}px
         )
       `;
       trackRow.style.backgroundSize = `${secondWidth}px 100%`;
@@ -1765,6 +1785,8 @@ export class Timeline extends EventTarget {
       if (this.highlightLayerHeader) {
         this.highlightLayerHeader.style.display = 'none';
       }
+      // 하이라이트 없으면 마커 오프셋 제거
+      this.tracksContainer?.style.setProperty('--marker-top-offset', '0px');
       return;
     }
 
@@ -1773,6 +1795,9 @@ export class Timeline extends EventTarget {
     if (this.highlightLayerHeader) {
       this.highlightLayerHeader.style.display = 'flex';
     }
+
+    // 하이라이트 트랙 높이만큼 마커 오프셋 설정 (24px + 2px margin)
+    this.tracksContainer?.style.setProperty('--marker-top-offset', '26px');
 
     // 각 하이라이트 렌더링
     highlights.forEach(highlight => {
