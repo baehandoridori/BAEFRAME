@@ -103,28 +103,40 @@ const THEME_COLORS = {
     secondary: '#e6bb00',
     tertiary: '#ccaa00',
     glow: 'rgba(255, 208, 0, 0.15)',
-    glowStrong: 'rgba(255, 208, 0, 0.25)'
+    glowStrong: 'rgba(255, 208, 0, 0.25)',
+    glowSubtle: 'rgba(255, 208, 0, 0.06)',
+    shadow: 'rgba(255, 208, 0, 0.3)',
+    shadowStrong: 'rgba(255, 208, 0, 0.5)'
   },
   blue: {
     primary: '#4a9eff',
     secondary: '#3d8ae6',
     tertiary: '#3075cc',
     glow: 'rgba(74, 158, 255, 0.15)',
-    glowStrong: 'rgba(74, 158, 255, 0.25)'
+    glowStrong: 'rgba(74, 158, 255, 0.25)',
+    glowSubtle: 'rgba(74, 158, 255, 0.06)',
+    shadow: 'rgba(74, 158, 255, 0.3)',
+    shadowStrong: 'rgba(74, 158, 255, 0.5)'
   },
   pink: {
     primary: '#ffaaaa',
     secondary: '#e69999',
     tertiary: '#cc8888',
     glow: 'rgba(255, 170, 170, 0.15)',
-    glowStrong: 'rgba(255, 170, 170, 0.25)'
+    glowStrong: 'rgba(255, 170, 170, 0.25)',
+    glowSubtle: 'rgba(255, 170, 170, 0.06)',
+    shadow: 'rgba(255, 170, 170, 0.3)',
+    shadowStrong: 'rgba(255, 170, 170, 0.5)'
   },
   red: {
     primary: '#ff5555',
     secondary: '#e64a4a',
     tertiary: '#cc4040',
     glow: 'rgba(255, 85, 85, 0.15)',
-    glowStrong: 'rgba(255, 85, 85, 0.25)'
+    glowStrong: 'rgba(255, 85, 85, 0.25)',
+    glowSubtle: 'rgba(255, 85, 85, 0.06)',
+    shadow: 'rgba(255, 85, 85, 0.3)',
+    shadowStrong: 'rgba(255, 85, 85, 0.5)'
   }
 };
 
@@ -576,6 +588,9 @@ export class UserSettings extends EventTarget {
     root.style.setProperty('--accent-tertiary', colors.tertiary);
     root.style.setProperty('--accent-glow', colors.glow);
     root.style.setProperty('--accent-glow-strong', colors.glowStrong);
+    root.style.setProperty('--accent-glow-subtle', colors.glowSubtle);
+    root.style.setProperty('--accent-shadow', colors.shadow);
+    root.style.setProperty('--accent-shadow-strong', colors.shadowStrong);
 
     log.info('테마 적용됨', { theme: themeName, colors });
     this._emit('themeChanged', { theme: themeName, colors });

@@ -826,7 +826,8 @@ export class Timeline extends EventTarget {
 
     // CSS background로 효율적인 그리드 렌더링
     // 가시성 개선: 투명도를 높임
-    const majorLineColor = 'rgba(255, 208, 0, 0.6)'; // 1초 단위 (노란색, 더 진하게)
+    const accentShadowStrong = getComputedStyle(document.documentElement).getPropertyValue('--accent-shadow-strong').trim() || 'rgba(255, 208, 0, 0.5)';
+    const majorLineColor = accentShadowStrong; // 1초 단위 (테마 색상)
     const minorLineColor = 'rgba(255, 255, 255, 0.25)'; // 일반 프레임 (더 잘 보이게)
 
     // 1초 단위 강조선 계산
@@ -1107,8 +1108,8 @@ export class Timeline extends EventTarget {
           to right,
           transparent 0px,
           transparent ${secondWidth - 1}px,
-          rgba(255, 208, 0, 0.4) ${secondWidth - 1}px,
-          rgba(255, 208, 0, 0.4) ${secondWidth}px
+          ${getComputedStyle(document.documentElement).getPropertyValue('--accent-shadow').trim() || 'rgba(255, 208, 0, 0.3)'} ${secondWidth - 1}px,
+          ${getComputedStyle(document.documentElement).getPropertyValue('--accent-shadow').trim() || 'rgba(255, 208, 0, 0.3)'} ${secondWidth}px
         )
       `;
       trackRow.style.backgroundSize = `${secondWidth}px 100%`;
