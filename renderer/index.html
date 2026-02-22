@@ -547,7 +547,7 @@
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>
           </button>
           <button class="control-btn play-btn" id="btnPlay" title="재생/일시정지 (Space)">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" id="playIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" stroke="none" id="playIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           </button>
           <button class="control-btn" id="btnNextFrame" title="다음 프레임 (→)">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>
@@ -557,13 +557,14 @@
           </button>
         </div>
 
-        <div class="timecode" id="timecode">
-          <span class="timecode-current" id="timecodeCurrent">00:00:00:00</span>
-          <span class="timecode-separator">/</span>
-          <span class="timecode-total" id="timecodeTotal">00:00:00:00</span>
+        <div class="playback-info-stack">
+          <div class="timecode" id="timecode">
+            <span class="timecode-current" id="timecodeCurrent">00:00:00:00</span>
+            <span class="timecode-separator">/</span>
+            <span class="timecode-total" id="timecodeTotal">00:00:00:00</span>
+          </div>
+          <div class="frame-indicator" id="frameIndicator">24fps · Frame 0 / 0</div>
         </div>
-
-        <div class="frame-indicator" id="frameIndicator">24fps · Frame 0 / 0</div>
 
         <div class="controls-spacer"></div>
 
@@ -579,7 +580,7 @@
             </button>
             <button class="action-btn" id="btnAddComment">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              댓글 추가
+              댓글
               <span class="shortcut-hint" id="btnAddCommentHint">C</span>
             </button>
             <button class="nav-arrow-btn" id="btnNextComment" title="다음 댓글 (Shift+→)">
@@ -1643,7 +1644,7 @@
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>
         </button>
         <button class="control-btn play-btn" id="splitBtnPlay" title="재생/일시정지">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" id="splitPlayIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none" id="splitPlayIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </button>
         <button class="control-btn" id="splitBtnNextFrame" title="다음 프레임">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>

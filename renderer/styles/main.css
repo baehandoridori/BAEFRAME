@@ -1206,18 +1206,18 @@ body.app-fullscreen .video-comment-overlay-controls {
   transform: scale(0.97);
 }
 
+.playback-info-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 1;
+}
+
 .timecode {
   font-family: var(--font-mono);
   font-size: clamp(11px, 1.2vw, 13px);
   color: var(--text-primary);
-  min-width: 140px;
-  width: fit-content;
-  background: rgba(10, 10, 10, 0.6);
-  backdrop-filter: var(--glass-blur-light);
-  -webkit-backdrop-filter: var(--glass-blur-light);
-  padding: 6px clamp(8px, 1vw, 12px);
-  border-radius: 6px;
-  border: 1px solid var(--glass-border);
   white-space: nowrap;
   flex-shrink: 1;
 }
@@ -1237,14 +1237,8 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .frame-indicator {
-  font-size: clamp(10px, 1vw, 11px);
+  font-size: 10px;
   color: var(--text-tertiary);
-  background: rgba(10, 10, 10, 0.5);
-  backdrop-filter: var(--glass-blur-light);
-  -webkit-backdrop-filter: var(--glass-blur-light);
-  padding: 4px clamp(6px, 0.8vw, 10px);
-  border-radius: 6px;
-  border: 1px solid var(--glass-border);
   white-space: nowrap;
   flex-shrink: 1;
 }
