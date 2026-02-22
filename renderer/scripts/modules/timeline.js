@@ -707,7 +707,7 @@ export class Timeline extends EventTarget {
 
     const indicator = document.createElement('div');
     indicator.className = 'zoom-indicator';
-    indicator.textContent = `🔍 ${Math.round(this.zoom)}%`;
+    indicator.textContent = `${Math.round(this.zoom)}%`;
     indicator.style.cssText = `
       position: absolute;
       top: 50%;

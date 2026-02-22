@@ -488,6 +488,9 @@ async function initApp() {
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
+
+    // 타임코드/프레임레이트 실시간 업데이트 (스플릿 뷰와 동일하게)
+    updateTimecodeDisplay();
   });
 
   // 재생 아이콘 SVG

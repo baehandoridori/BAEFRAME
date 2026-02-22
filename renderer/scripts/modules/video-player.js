@@ -39,6 +39,15 @@ export class VideoPlayer extends EventTarget {
     this._isSeeking = false;
     this._seekTimeout = null;
 
+    // seeked 이벤트 핸들러 (seek 완료 시 플래그 해제)
+    this._onSeeked = () => {
+      if (this._seekTimeout) {
+        clearTimeout(this._seekTimeout);
+        this._seekTimeout = null;
+      }
+      this._isSeeking = false;
+    };
+
     // 프레임 콜백 상태
     this._frameCallbackId = null;
     this._lastEmittedFrame = -1;
@@ -54,6 +63,9 @@ export class VideoPlayer extends EventTarget {
    */
   _setupEventListeners() {
     const video = this.videoElement;
+
+    // seek 완료 이벤트 (프레임 이동 반응성 개선)
+    video.addEventListener('seeked', this._onSeeked);
 
     // 메타데이터 로드됨
     video.addEventListener('loadedmetadata', () => {
@@ -390,10 +402,10 @@ export class VideoPlayer extends EventTarget {
       currentFrame: this.currentFrame
     });
 
-    // 100ms 후 seeking 플래그 해제
+    // seeked 이벤트가 발생하면 플래그 해제 (폴백: 50ms 후 해제)
     this._seekTimeout = setTimeout(() => {
       this._isSeeking = false;
-    }, 100);
+    }, 50);
 
     log.debug('프레임 이동', { frame, time });
   }

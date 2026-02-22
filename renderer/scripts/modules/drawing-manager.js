@@ -593,16 +593,16 @@ export class DrawingManager extends EventTarget {
     // 렌더링 ID 증가 (이전 렌더링 취소용)
     const currentRenderingId = ++this._renderingId;
 
-    // 캔버스 초기화 (그리기 캔버스 + 어니언 스킨 캔버스)
-    this.drawingCanvas.clear();
-    this._clearOnionSkinCanvas();
-
-    // 재생 중이면 빠른 동기 렌더링
+    // 재생 중이면 빠른 동기 렌더링 (clear 없이 먼저 그린 뒤 교체)
     if (this.isPlaying) {
       this._renderFrameSync(frame);
       this._preloadFrames(frame);
       return;
     }
+
+    // 일시정지 상태에서만 캔버스 초기화
+    this.drawingCanvas.clear();
+    this._clearOnionSkinCanvas();
 
     log.debug('renderFrame 시작', {
       frame,
@@ -664,9 +664,12 @@ export class DrawingManager extends EventTarget {
 
   /**
    * 동기적 프레임 렌더링 (재생 중 성능 최적화)
-   * 캐시된 이미지 우선 사용, 캐시 미스 시 비동기 로드 후 재렌더링
+   * clear → draw를 원자적으로 수행하여 깜빡임 방지
+   * 캐시된 이미지만 사용, 캐시 미스 시 비동기 프리로드 후 다음 기회에 표시
    */
   _renderFrameSync(frame) {
+    // 캐시된 이미지를 먼저 수집
+    const images = [];
     let hasCacheMiss = false;
 
     for (const layer of this.layers) {
@@ -675,59 +678,39 @@ export class DrawingManager extends EventTarget {
       const keyframe = layer.getKeyframeAtFrame(frame);
       if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
-      // 캐시된 이미지 사용
       if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
-        this.drawingCanvas.ctx.globalAlpha = layer.opacity;
-        this.drawingCanvas.ctx.drawImage(keyframe._cachedImage, 0, 0);
-        this.drawingCanvas.ctx.globalAlpha = 1;
+        images.push({ img: keyframe._cachedImage, opacity: layer.opacity });
       } else {
         hasCacheMiss = true;
       }
     }
 
-    // 캐시 미스가 있으면 비동기로 로드 후 해당 프레임이면 다시 렌더링
+    // clear + draw를 원자적으로 수행 (깜빡임 방지)
+    this.drawingCanvas.clear();
+    for (const { img, opacity } of images) {
+      this.drawingCanvas.ctx.globalAlpha = opacity;
+      this.drawingCanvas.ctx.drawImage(img, 0, 0);
+      this.drawingCanvas.ctx.globalAlpha = 1;
+    }
+
+    // 캐시 미스가 있으면 백그라운드에서 로드 (다음 프레임에서 사용됨)
     if (hasCacheMiss) {
-      this._renderFrameSyncFallback(frame);
+      this._preloadMissingImages(frame);
     }
   }
 
   /**
-   * 캐시 미스 프레임 비동기 로드 후 재렌더링
+   * 캐시 미스 이미지 백그라운드 로드 (fire-and-forget)
    */
-  async _renderFrameSyncFallback(frame) {
-    const currentRenderingId = this._renderingId;
-
+  async _preloadMissingImages(frame) {
     for (const layer of this.layers) {
       if (!layer.visible) continue;
 
       const keyframe = layer.getKeyframeAtFrame(frame);
       if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
-
-      // 이미 캐시되어 있으면 스킵
       if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) continue;
 
-      // 비동기 로드
       await this._loadImage(keyframe.canvasData, keyframe);
-
-      // 프레임이 바뀌었거나 렌더링이 취소되었으면 중단
-      if (this._renderingId !== currentRenderingId || this.currentFrame !== frame) return;
-    }
-
-    // 프레임이 아직 같고 재생 중이면 다시 동기 렌더링
-    if (this.currentFrame === frame && this.isPlaying && this._renderingId === currentRenderingId) {
-      this.drawingCanvas.clear();
-      for (const layer of this.layers) {
-        if (!layer.visible) continue;
-
-        const keyframe = layer.getKeyframeAtFrame(frame);
-        if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
-
-        if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
-          this.drawingCanvas.ctx.globalAlpha = layer.opacity;
-          this.drawingCanvas.ctx.drawImage(keyframe._cachedImage, 0, 0);
-          this.drawingCanvas.ctx.globalAlpha = 1;
-        }
-      }
     }
   }
 
