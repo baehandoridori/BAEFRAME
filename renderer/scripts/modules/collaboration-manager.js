@@ -231,11 +231,18 @@ export class CollaborationManager extends EventTarget {
     try {
       const result = await window.electronAPI.wsReadSession(this.sessionPath);
       if (result.success && result.data) {
-        log.info('딜레이 후 session.json 발견, Client 모드로 전환');
         const session = result.data;
-        const connected = await wsClient.connect(`ws://${session.hostIp}:${session.port}`);
-        if (connected) {
-          return { role: 'client', hostIp: session.hostIp, port: session.port };
+
+        // 만료된 session.json은 무시 (이전 Host의 잔여 파일)
+        const elapsed = Date.now() - new Date(session.createdAt).getTime();
+        if (elapsed > SESSION_EXPIRY_MS) {
+          log.info('딜레이 후 session.json 만료됨, 무시하고 Host 진행', { elapsed });
+        } else {
+          log.info('딜레이 후 session.json 발견, Client 모드로 전환');
+          const connected = await wsClient.connect(`ws://${session.hostIp}:${session.port}`);
+          if (connected) {
+            return { role: 'client', hostIp: session.hostIp, port: session.port };
+          }
         }
       }
     } catch {

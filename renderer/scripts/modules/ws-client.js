@@ -16,6 +16,7 @@ const log = createLogger('WSClient');
 // 상수
 const MAX_RECONNECT_ATTEMPTS = 4;
 const RECONNECT_DELAYS = [0, 1000, 2000, 4000, 8000]; // 지수 백오프
+const CONNECT_TIMEOUT_MS = 5000; // 연결 타임아웃 (5초)
 
 /**
  * WebSocket Client 클래스
@@ -48,6 +49,7 @@ export class WSClient extends EventTarget {
       this.url = url;
       this._shouldReconnect = true;
       this.reconnectAttempts = 0;
+      let settled = false;
 
       log.info('WebSocket 연결 시도', { url });
 
@@ -59,7 +61,27 @@ export class WSClient extends EventTarget {
         return;
       }
 
+      // 연결 타임아웃 (공인 IP 등 NAT 문제로 TCP SYN이 멈추는 경우 방지)
+      const connectTimer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          log.warn('WebSocket 연결 타임아웃', { url, timeout: CONNECT_TIMEOUT_MS });
+          try {
+            if (this.ws) {
+              this.ws.close();
+              this.ws = null;
+            }
+          } catch (e) { /* ignore */ }
+          this.isConnected = false;
+          resolve(false);
+        }
+      }, CONNECT_TIMEOUT_MS);
+
       this.ws.onopen = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(connectTimer);
+
         this.isConnected = true;
         this.reconnectAttempts = 0;
         log.info('WebSocket 연결 성공', { url });
@@ -100,7 +122,9 @@ export class WSClient extends EventTarget {
         }
 
         // 첫 연결 시도 실패
-        if (!wasConnected) {
+        if (!wasConnected && !settled) {
+          settled = true;
+          clearTimeout(connectTimer);
           resolve(false);
         }
       };
