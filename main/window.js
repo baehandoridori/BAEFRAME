@@ -109,7 +109,7 @@ function createMainWindow() {
   debugLog(`파일 존재 여부: ${fs.existsSync(indexPath)}`);
 
   // 개발 모드에서 DevTools 열기
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.NODE_ENV === 'development' || process.argv.includes('--dev-mode')) {
     mainWindow.webContents.openDevTools();
     log.info('개발 모드 - DevTools 열림');
   }

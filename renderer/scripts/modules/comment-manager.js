@@ -979,6 +979,50 @@ export class CommentManager extends EventTarget {
   }
 
   /**
+   * 원격에서 받은 답글 수정
+   * @param {string} markerId - 부모 마커 ID
+   * @param {string} replyId - 답글 ID
+   * @param {string} text - 수정된 텍스트
+   * @returns {boolean} 수정 성공 여부
+   */
+  updateReplyFromRemote(markerId, replyId, text) {
+    const marker = this.getMarker(markerId);
+    if (!marker || !marker.replies) return false;
+
+    const reply = marker.replies.find(r => r.id === replyId);
+    if (!reply) return false;
+
+    reply.text = text;
+    reply.updatedAt = new Date().toISOString();
+
+    this._emit('replyUpdated', { markerId, replyId, remote: true });
+    this._emit('markersChanged');
+    log.debug('원격 답글 수정됨', { markerId, replyId });
+    return true;
+  }
+
+  /**
+   * 원격에서 받은 답글 삭제
+   * @param {string} markerId - 부모 마커 ID
+   * @param {string} replyId - 답글 ID
+   * @returns {boolean} 삭제 성공 여부
+   */
+  deleteReplyFromRemote(markerId, replyId) {
+    const marker = this.getMarker(markerId);
+    if (!marker || !marker.replies) return false;
+
+    const index = marker.replies.findIndex(r => r.id === replyId);
+    if (index === -1) return false;
+
+    marker.replies.splice(index, 1);
+
+    this._emit('replyDeleted', { markerId, replyId, remote: true });
+    this._emit('markersChanged');
+    log.debug('원격 답글 삭제됨', { markerId, replyId });
+    return true;
+  }
+
+  /**
    * 모든 마커/레이어 초기화 (새 파일 로드 시)
    */
   clear() {

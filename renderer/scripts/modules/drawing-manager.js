@@ -1032,6 +1032,89 @@ export class DrawingManager extends EventTarget {
     this.preloadedFrames.clear();
   }
 
+  // ============================================================================
+  // 원격 동기화 메서드
+  // ============================================================================
+
+  /**
+   * 원격에서 받은 드로잉 데이터 추가
+   * @param {Object} data - { frame, layerId, canvasData }
+   * @returns {boolean}
+   */
+  addStrokeFromRemote(data) {
+    if (!data || data.frame === undefined) return false;
+
+    let layer = this.layers.find(l => l.id === data.layerId);
+    if (!layer) {
+      layer = this.getActiveLayer() || this.layers[0];
+    }
+    if (!layer) return false;
+
+    const keyframe = layer.getOrCreateKeyframe(data.frame, true);
+    if (data.canvasData) {
+      keyframe.setCanvasData(data.canvasData);
+    }
+
+    // 현재 프레임이면 화면 갱신
+    if (this.currentFrame === data.frame) {
+      this.renderFrame(this.currentFrame);
+    }
+
+    this._emit('layersChanged');
+    log.debug('원격 드로잉 추가됨', { frame: data.frame, layerId: layer.id });
+    return true;
+  }
+
+  /**
+   * 원격에서 받은 드로잉 삭제
+   * @param {string} id - "layerId:frame" 형식 또는 키프레임 식별자
+   * @returns {boolean}
+   */
+  deleteStrokeFromRemote(id) {
+    if (!id) return false;
+
+    // id 형식: "layerId:frame"
+    const [layerId, frameStr] = id.split(':');
+    const frame = parseInt(frameStr, 10);
+
+    const layer = this.layers.find(l => l.id === layerId);
+    if (!layer || isNaN(frame)) return false;
+
+    layer.removeKeyframe(frame);
+
+    if (this.currentFrame === frame) {
+      this.renderFrame(this.currentFrame);
+    }
+
+    this._emit('layersChanged');
+    log.debug('원격 드로잉 삭제됨', { layerId, frame });
+    return true;
+  }
+
+  /**
+   * 원격에서 받은 프레임 클리어
+   * @param {number} frame - 프레임 번호
+   * @param {string} layerId - 레이어 ID
+   * @returns {boolean}
+   */
+  clearFrameFromRemote(frame, layerId) {
+    const layer = this.layers.find(l => l.id === layerId);
+    if (!layer) return false;
+
+    const keyframe = layer.keyframes.find(kf => kf.frame === frame);
+    if (keyframe) {
+      keyframe.setCanvasData(null);
+    }
+
+    if (this.currentFrame === frame) {
+      this.renderFrame(this.currentFrame);
+    }
+
+    this._emit('layersChanged');
+    log.debug('원격 프레임 클리어됨', { frame, layerId });
+    return true;
+  }
+
   /**
    * 커스텀 이벤트 발생
    */

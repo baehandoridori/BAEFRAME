@@ -185,7 +185,7 @@ if (process.defaultApp) {
 }
 
 // 단일 인스턴스 잠금 (개발 모드에서는 다중 인스턴스 허용)
-const isDev = process.env.NODE_ENV === 'development';
+const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev-mode');
 debugLog(`개발 모드: ${isDev}`);
 debugLog('단일 인스턴스 잠금 요청 중...');
 
