@@ -151,6 +151,20 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 log.info('비디오 하드웨어 가속 플래그 적용됨');
 
 // ============================================
+// 다중 인스턴스 지원 (협업 테스트용)
+// --instance=2 플래그로 실행 시 별도 userData 사용
+// ============================================
+const instanceArg = process.argv.find(a => a.startsWith('--instance='));
+if (instanceArg) {
+  const instanceNum = instanceArg.split('=')[1];
+  const originalUserData = app.getPath('userData');
+  const newUserData = `${originalUserData}-instance${instanceNum}`;
+  app.setPath('userData', newUserData);
+  log.info(`다중 인스턴스 모드: userData 경로 변경`, { instanceNum, newUserData });
+  debugLog(`인스턴스 ${instanceNum}: userData → ${newUserData}`);
+}
+
+// ============================================
 // baeframe:// 프로토콜 등록 (Electron 내장)
 // ============================================
 //

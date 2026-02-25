@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev-mode",
+    "dev2": "electron . --dev-mode --instance=2",
     "build": "electron-builder --dir",
     "build:installer": "electron-builder",
     "lint": "eslint .",
