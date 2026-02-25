@@ -64,10 +64,85 @@ export class ReviewDataManager extends EventTarget {
     // 협업 매니저 연결 (저장 전 머지용)
     this._collaborationManager = null;
 
+    // 협업 역할 기반 저장 전략
+    this.role = 'solo';                // 'host' | 'client' | 'solo'
+    this.maxSaveInterval = 30000;      // 30초 최대 저장 간격 (Host 전용)
+    this._maxSaveTimer = null;
+    this._lastSavedAt = Date.now();
+
     log.info('ReviewDataManager 초기화됨', {
       autoSave: this.autoSaveEnabled,
       autoSaveDelay: this.autoSaveDelay
     });
+  }
+
+  /**
+   * 협업 역할 설정 (저장 전략 변경)
+   * @param {string} role - 'host' | 'client' | 'solo'
+   */
+  setRole(role) {
+    const prevRole = this.role;
+    this.role = role;
+
+    if (role === 'host') {
+      this.autoSaveDelay = 3000;  // Host: 3초 debounce
+      this._startMaxSaveInterval();
+    } else if (role === 'client') {
+      // Client는 디스크에 직접 쓰지 않음
+      this._cancelAutoSave();
+      this._stopMaxSaveInterval();
+    } else {
+      this.autoSaveDelay = 500;  // Solo: 기존과 동일
+      this._stopMaxSaveInterval();
+    }
+
+    log.info('저장 역할 변경', { from: prevRole, to: role, autoSaveDelay: this.autoSaveDelay });
+  }
+
+  /**
+   * 강제 저장 (Debounce 무시, Host 전용)
+   * @returns {Promise<boolean>}
+   */
+  async forceSave() {
+    if (this.role === 'client') return false;
+    this._cancelAutoSave();
+    return await this.save({ skipMerge: true });
+  }
+
+  /**
+   * isDirty 설정 (외부에서 호출 가능 - 원격 변경 수신 시)
+   */
+  markDirty() {
+    this.isDirty = true;
+
+    if (this.role === 'host') {
+      this._scheduleAutoSave();
+    }
+  }
+
+  /**
+   * 30초 최대 저장 간격 시작 (Host 전용)
+   * @private
+   */
+  _startMaxSaveInterval() {
+    this._stopMaxSaveInterval();
+    this._maxSaveTimer = setInterval(async () => {
+      if (this.isDirty && this.role === 'host') {
+        log.info('최대 저장 간격 도달, 강제 저장');
+        await this.forceSave();
+      }
+    }, this.maxSaveInterval);
+  }
+
+  /**
+   * 최대 저장 간격 정지
+   * @private
+   */
+  _stopMaxSaveInterval() {
+    if (this._maxSaveTimer) {
+      clearInterval(this._maxSaveTimer);
+      this._maxSaveTimer = null;
+    }
   }
 
   /**
@@ -724,7 +799,12 @@ export class ReviewDataManager extends EventTarget {
       this._collaborationManager.recordActivity();
     }
 
-    // 자동 저장 스케줄
+    // Client는 디스크 저장 안 함 → WebSocket으로 변경 전파만
+    if (this.role === 'client') {
+      return;
+    }
+
+    // Host 또는 Solo → 기존 debounce 저장
     if (this.autoSaveEnabled) {
       this._scheduleAutoSave();
     }

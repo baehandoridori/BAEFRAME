@@ -3,40 +3,36 @@
  * 실시간 협업 및 동기화 관리
  *
  * 기능:
- * - 협업자 presence 추적 (누가 파일을 열고 있는지)
- * - 협업자 감지 시 자동 동기화
- * - 댓글 머지 (충돌 해결)
- * - P2P 실시간 동기화 (LAN 내)
+ * - 협업자 presence 추적
+ * - WebSocket 기반 실시간 동기화 (LAN 내)
+ * - Host-Client 아키텍처
+ * - Host Migration (방장 승계)
+ * - 편집 잠금 (Optimistic Locking)
  *
- * @version 2.0
+ * @version 3.0 - WebSocket 리팩토링
  */
 
 import { createLogger } from '../logger.js';
-import { lanDiscovery, LANDiscovery } from './lan-discovery.js';
-import { p2pSync } from './p2p-sync.js';
+import { wsClient } from './ws-client.js';
 import { MessageTypes, createMessage, compareTimestamps } from './sync-protocol.js';
 
 const log = createLogger('CollaborationManager');
 
-// 상수 정의
-// 공유 드라이브(Google Drive, 네트워크 드라이브)의 동기화 지연을 고려하여 값 조정
-const PRESENCE_UPDATE_INTERVAL = 10000;   // 10초마다 presence 업데이트 (I/O 부하 감소)
-const PRESENCE_TIMEOUT = 45000;           // 45초 동안 업데이트 없으면 오프라인으로 간주 (공유 드라이브 지연 고려)
-const COLLAB_FILE_EXTENSION = '.collab';  // presence 파일 확장자
-const EDITING_TIMEOUT = 60000;            // 편집 잠금 60초 후 자동 해제
-const COLLAB_FILE_RETRY_COUNT = 3;        // collab 파일 읽기/쓰기 재시도 횟수
-const COLLAB_FILE_RETRY_DELAY = 500;      // 재시도 간격 (ms)
+// WebSocket 관련 상수
+const WS_PORT = 12345;
+const SESSION_FILE_EXTENSION = '.session.json';
+const SESSION_EXPIRY_MS = 180000;        // session.json 3분 만료
+const HOST_CANDIDATE_DELAY_MIN = 500;    // Host 후보 최소 딜레이 (ms)
+const HOST_CANDIDATE_DELAY_MAX = 2000;   // Host 후보 최대 딜레이 (ms)
+const PRESENCE_THROTTLE = 500;           // Presence 스로틀링 (500ms)
+const CURSOR_THROTTLE = 33;              // 커서 스로틀링 (~30fps)
+const ELECTION_WAIT_MS = 5000;           // Host 선출 대기 시간 (5초)
+const ELECTION_POLL_MS = 1000;           // session.json 폴링 간격 (1초)
+const SESSION_REFRESH_INTERVAL = 60000;  // session.json 갱신 간격 (1분)
 
-// 동기화 간격 설정 (동적 조정)
-const SYNC_INTERVAL_SOLO = 10000;         // 혼자일 때: 10초 (동기화 안 함, 값만 유지)
-const SYNC_INTERVAL_COLLAB = 5000;        // 협업자 있을 때: 5초
-const SYNC_INTERVAL_ACTIVE = 3000;        // 활발한 편집 시: 3초
+// 동기화 간격 설정
 const ACTIVITY_WINDOW = 60000;            // 활동량 측정 윈도우: 1분
 const ACTIVITY_THRESHOLD = 5;             // 활발 판단 기준: 1분 내 5회 이상
-
-// P2P 관련 상수
-const P2P_PRESENCE_UPDATE_INTERVAL = 1000;  // P2P presence 업데이트 간격 (1초)
-const P2P_PRESENCE_THROTTLE = 500;          // P2P presence 스로틀링 (500ms)
 
 /**
  * 협업 관리자
@@ -45,44 +41,51 @@ export class CollaborationManager extends EventTarget {
   constructor(options = {}) {
     super();
 
-    // 설정
-    this.syncInterval = options.syncInterval || SYNC_INTERVAL_COLLAB;
-    this.presenceUpdateInterval = options.presenceUpdateInterval || PRESENCE_UPDATE_INTERVAL;
-    this.presenceTimeout = options.presenceTimeout || PRESENCE_TIMEOUT;
-
     // 상태
     this.bframePath = null;
-    this.collabPath = null;
+    this.sessionPath = null;           // .session.json 경로
+    this.collabPath = null;            // 호환성 유지
     this.sessionId = this._generateSessionId();
     this.userName = null;
     this.userColor = this._generateUserColor();
 
-    // 협업자 목록
-    this.collaborators = new Map(); // sessionId -> { name, color, lastSeen }
+    // WebSocket 역할 (host / client / solo)
+    this.role = 'solo';
+    this.p2pEnabled = false;           // WebSocket 연결 활성화 여부 (호환성)
+
+    // 참가자 목록
+    this.collaborators = new Map();    // sessionId -> { name, color, lastSeen }
+    this.participants = [];            // WebSocket 참가자 목록 [{sessionId, name, color}]
+    this.p2pPeers = new Map();         // 호환성: WebSocket 피어
+    this.p2pPresence = new Map();      // 피어 presence (프레임 위치 등)
+
+    // 편집 잠금 (markerId -> { sessionId, userName })
+    this._editLocks = new Map();
 
     // 타이머
-    this._presenceTimer = null;
     this._syncTimer = null;
+    this._sessionRefreshTimer = null;
     this._isActive = false;
 
     // 콜백
-    this._onRemoteDataLoaded = null;  // 원격 데이터 로드 콜백
+    this._onRemoteDataLoaded = null;
 
-    // 활동량 추적 (동기화 간격 동적 조정용)
+    // 활동량 추적
     this._activityTimestamps = [];
 
-    // P2P 관련 상태
-    this.p2pEnabled = false;
-    this.p2pPeers = new Map(); // P2P 연결된 피어
-    this.p2pPresence = new Map(); // P2P 피어 presence (프레임 위치 등)
-    this._p2pPresenceTimer = null;
+    // Presence 관련
     this._lastPresenceUpdate = 0;
+    this._lastCursorSend = 0;
     this._currentFrame = 0;
     this._isPlaying = false;
 
     // 데이터 매니저 참조 (외부에서 설정)
     this._commentManager = null;
     this._drawingManager = null;
+    this._highlightManager = null;
+
+    // ReviewDataManager 참조 (저장 전략용)
+    this._reviewDataManager = null;
 
     log.info('CollaborationManager 초기화됨', { sessionId: this.sessionId });
   }
@@ -98,257 +101,1091 @@ export class CollaborationManager extends EventTarget {
     }
 
     this.bframePath = bframePath;
-    this.collabPath = bframePath + COLLAB_FILE_EXTENSION;
+    this.sessionPath = bframePath + SESSION_FILE_EXTENSION;
+    this.collabPath = bframePath + '.collab'; // 호환성
     this.userName = userName;
     this._isActive = true;
 
-    log.info('협업 세션 시작', {
-      bframePath,
-      collabPath: this.collabPath,
-      userName
-    });
+    log.info('협업 세션 시작', { bframePath, userName });
 
-    // 즉시 presence 업데이트
-    await this._updatePresence();
-
-    // 주기적 presence 업데이트 시작
-    this._presenceTimer = setInterval(() => {
-      this._updatePresence().catch(err => {
-        log.warn('Presence 업데이트 실패', { error: err.message });
-      });
-    }, this.presenceUpdateInterval);
-
-    // P2P 시작
-    await this._startP2P(userName);
+    // WebSocket 연결 시작 (Host/Client 자동 결정)
+    await this._startWebSocket();
 
     this._emit('sessionStarted', {
       sessionId: this.sessionId,
       userName: this.userName,
-      userColor: this.userColor
+      userColor: this.userColor,
+      role: this.role
     });
 
     // 협업자 UI 초기 업데이트 (자신 포함)
-    this._updateCollaboratorsFromP2P();
+    this._updateCollaboratorsUI();
   }
 
   /**
    * 매니저 참조 설정 (외부에서 호출)
    */
-  setManagers(commentManager, drawingManager) {
+  setManagers(commentManager, drawingManager, highlightManager) {
     this._commentManager = commentManager;
     this._drawingManager = drawingManager;
+    this._highlightManager = highlightManager;
   }
 
   /**
-   * P2P 동기화 시작
+   * ReviewDataManager 참조 설정
+   */
+  setReviewDataManager(manager) {
+    this._reviewDataManager = manager;
+  }
+
+  /**
+   * 현재 역할 반환
+   * @returns {string} 'host' | 'client' | 'solo'
+   */
+  getRole() {
+    return this.role;
+  }
+
+  // ============================================================================
+  // WebSocket 연결 관리
+  // ============================================================================
+
+  /**
+   * WebSocket 연결 시작 (Host/Client 자동 결정)
    * @private
    */
-  async _startP2P(userName) {
+  async _startWebSocket() {
     try {
-      // 파일 해시 생성 (같은 파일 식별용)
-      const fileHash = LANDiscovery.createFileHash(this.bframePath);
+      const roleInfo = await this._determineRole();
 
-      // mDNS 시작
-      await lanDiscovery.start(this.sessionId, userName, fileHash);
-
-      // P2P Sync 시작
-      await p2pSync.start(this.sessionId, userName);
-
-      // 이벤트 연결
-      this._setupP2PEvents();
-
-      this.p2pEnabled = true;
-      log.info('P2P 협업 시작됨', { fileHash: fileHash?.substring(0, 8) });
-
+      if (roleInfo.role === 'host') {
+        await this._startAsHost();
+      } else if (roleInfo.role === 'client') {
+        await this._startAsClient(roleInfo.hostIp, roleInfo.port);
+      }
     } catch (error) {
-      log.warn('P2P 시작 실패, Drive 모드로 동작', { error: error.message });
+      log.warn('WebSocket 시작 실패, Solo 모드로 동작', { error: error.message });
+      this.role = 'solo';
       this.p2pEnabled = false;
     }
   }
 
   /**
-   * P2P 이벤트 핸들러 설정
+   * Host/Client 결정 로직
+   * session.json 확인 → 존재하면 Client, 없으면 Host 후보
+   * @private
+   * @returns {Promise<{role: string, hostIp?: string, port?: number}>}
+   */
+  async _determineRole() {
+    try {
+      // 1. session.json 읽기 시도
+      const result = await window.electronAPI.wsReadSession(this.sessionPath);
+
+      if (result.success && result.data) {
+        const session = result.data;
+
+        // 2. 3분 만료 확인
+        const elapsed = Date.now() - new Date(session.createdAt).getTime();
+        if (elapsed > SESSION_EXPIRY_MS) {
+          log.info('session.json 만료됨, Host 후보 진입', { elapsed });
+          return await this._tryBecomeHost();
+        }
+
+        // 3. WebSocket 연결 시도
+        log.info('session.json 발견, Client 연결 시도', {
+          hostIp: session.hostIp,
+          port: session.port,
+          hostName: session.hostName
+        });
+
+        const connected = await wsClient.connect(`ws://${session.hostIp}:${session.port}`);
+        if (connected) {
+          return { role: 'client', hostIp: session.hostIp, port: session.port };
+        }
+
+        // 연결 실패 → 오래된 session.json (이전 Host 비정상 종료)
+        log.info('WebSocket 연결 실패, session.json 삭제 후 Host 후보 진입');
+        await window.electronAPI.wsDeleteSession(this.sessionPath);
+        return await this._tryBecomeHost();
+      }
+    } catch (error) {
+      log.debug('session.json 읽기 실패 (정상: 첫 접속)', { error: error.message });
+    }
+
+    // session.json 없음 → Host 후보 진입
+    return await this._tryBecomeHost();
+  }
+
+  /**
+   * Host 후보 진입 (Race Condition 방지)
    * @private
    */
-  _setupP2PEvents() {
-    // 피어 발견 시 연결 시도
-    lanDiscovery.addEventListener('peer:found', async (e) => {
-      const peer = e.detail;
-      log.info('P2P 피어 발견, 연결 시도', { name: peer.name, id: peer.id?.substring(0, 20) });
+  async _tryBecomeHost() {
+    // 랜덤 딜레이 (500~2000ms) - Drive 동기화 대기
+    const delay = HOST_CANDIDATE_DELAY_MIN +
+      Math.random() * (HOST_CANDIDATE_DELAY_MAX - HOST_CANDIDATE_DELAY_MIN);
+    log.info('Host 후보 딜레이', { delay: Math.round(delay) });
+    await this._delay(delay);
 
-      // p2pSync가 준비되었는지 확인
-      if (!p2pSync.isRunning) {
-        log.warn('P2P Sync가 아직 시작되지 않음');
+    // session.json 재확인 (다른 사람이 먼저 Host가 되었을 수 있음)
+    try {
+      const result = await window.electronAPI.wsReadSession(this.sessionPath);
+      if (result.success && result.data) {
+        log.info('딜레이 후 session.json 발견, Client 모드로 전환');
+        const session = result.data;
+        const connected = await wsClient.connect(`ws://${session.hostIp}:${session.port}`);
+        if (connected) {
+          return { role: 'client', hostIp: session.hostIp, port: session.port };
+        }
+      }
+    } catch {
+      // session.json 아직 없음 → Host 진행
+    }
+
+    return { role: 'host' };
+  }
+
+  /**
+   * Host 모드로 시작
+   * @private
+   */
+  async _startAsHost() {
+    // 1. Main Process에서 WS 서버 시작
+    const result = await window.electronAPI.wsStartServer(WS_PORT);
+    if (!result.success) {
+      throw new Error(`WS 서버 시작 실패: ${result.error}`);
+    }
+
+    // 2. session.json 작성
+    await window.electronAPI.wsWriteSession(this.sessionPath, {
+      hostIp: result.ip,
+      port: result.port,
+      hostSessionId: this.sessionId,
+      hostName: this.userName,
+      projectPath: this.bframePath,
+      createdAt: new Date().toISOString(),
+      version: '1.0'
+    });
+
+    // 3. Host 자신도 localhost WS에 연결 (브라우저 WebSocket)
+    const connected = await wsClient.connect(`ws://127.0.0.1:${result.port}`);
+    if (!connected) {
+      throw new Error('Host localhost WS 연결 실패');
+    }
+
+    // 4. JOIN 메시지 전송 (자기 자신 등록)
+    wsClient.send(createMessage.join(this.sessionId, this.userName, this.userColor));
+
+    // 5. Main Process WS 서버 이벤트 수신 설정
+    this._setupHostEventListeners();
+
+    // 6. wsClient 메시지 수신 설정
+    this._setupWsClientEvents();
+
+    // 7. session.json 주기적 갱신 (만료 방지)
+    this._startSessionRefresh();
+
+    this.role = 'host';
+    this.p2pEnabled = true;
+
+    // ReviewDataManager 역할 설정
+    if (this._reviewDataManager) {
+      this._reviewDataManager.setRole('host');
+    }
+
+    log.info('Host 모드로 시작', { ip: result.ip, port: result.port });
+
+    this._emit('showToast', {
+      type: 'success',
+      message: `협업 Host 모드 (${result.ip}:${result.port})`
+    });
+  }
+
+  /**
+   * Client 모드로 시작
+   * @private
+   */
+  async _startAsClient(hostIp, port) {
+    // wsClient.connect는 이미 _determineRole에서 호출되었을 수 있음
+    if (!wsClient.isConnected) {
+      const connected = await wsClient.connect(`ws://${hostIp}:${port}`);
+      if (!connected) {
+        throw new Error(`Client WS 연결 실패: ${hostIp}:${port}`);
+      }
+    }
+
+    // JOIN 메시지 전송
+    wsClient.send(createMessage.join(this.sessionId, this.userName, this.userColor));
+
+    // wsClient 메시지 수신 설정
+    this._setupWsClientEvents();
+
+    this.role = 'client';
+    this.p2pEnabled = true;
+
+    // ReviewDataManager 역할 설정
+    if (this._reviewDataManager) {
+      this._reviewDataManager.setRole('client');
+    }
+
+    log.info('Client 모드로 시작', { hostIp, port });
+
+    this._emit('showToast', {
+      type: 'success',
+      message: `협업 Client 모드 (${hostIp}에 연결)`
+    });
+  }
+
+  /**
+   * Host의 Main Process 이벤트 리스너 설정
+   * WS 서버의 연결/해제 이벤트를 IPC로 수신
+   * @private
+   */
+  _setupHostEventListeners() {
+    window.electronAPI.onWsClientJoined((data) => {
+      // Host 자신은 무시
+      if (data.sessionId === this.sessionId) return;
+
+      log.info('클라이언트 참가', { name: data.name, sessionId: data.sessionId });
+
+      // 참가자 목록에 추가
+      this.p2pPeers.set(data.sessionId, {
+        name: data.name,
+        color: data.color,
+        joinedAt: new Date().toISOString()
+      });
+
+      this._updateCollaboratorsUI();
+
+      // WELCOME 메시지 전송 (새 Client에게 현재 상태 + 전체 데이터)
+      const fullState = this._collectFullState();
+      window.electronAPI.wsSendTo(data.sessionId,
+        createMessage.welcome(this.getCollaborators(), this.sessionId, fullState)
+      );
+
+      // 다른 Client들에게 PEER_JOINED 알림
+      window.electronAPI.wsBroadcast(
+        createMessage.peerJoined(data.sessionId, data.name, data.color),
+        data.sessionId
+      );
+
+      // 현재 편집 잠금 상태 전송
+      for (const [markerId, lock] of this._editLocks) {
+        window.electronAPI.wsSendTo(data.sessionId,
+          createMessage.editLockState(markerId, true, lock.userName)
+        );
+      }
+    });
+
+    window.electronAPI.onWsClientLeft((data) => {
+      log.info('클라이언트 이탈', { name: data.name, sessionId: data.sessionId });
+
+      this.p2pPeers.delete(data.sessionId);
+      this.p2pPresence.delete(data.sessionId);
+
+      // 이탈한 사용자의 편집 잠금 해제
+      this._releaseLocksForSession(data.sessionId);
+
+      this._updateCollaboratorsUI();
+
+      // 다른 Client들에게 PEER_LEFT 알림
+      window.electronAPI.wsBroadcast(
+        createMessage.peerLeft(data.sessionId, data.name)
+      );
+
+      this._emit('showToast', {
+        type: 'warning',
+        message: `${data.name}님이 이탈했습니다`
+      });
+    });
+  }
+
+  /**
+   * wsClient 메시지 수신 이벤트 설정
+   * Host/Client 공통으로 사용
+   * @private
+   */
+  _setupWsClientEvents() {
+    wsClient.addEventListener('message', (e) => {
+      this._handleWsMessage(e.detail);
+    });
+
+    wsClient.addEventListener('close', (e) => {
+      if (e.detail.wasConnected && this.role === 'client') {
+        log.warn('Host와의 연결 끊김, 재접속 시도 중...');
+        this._emit('showToast', {
+          type: 'warning',
+          message: 'Host와의 연결이 끊겼습니다. 재접속 중...'
+        });
+      }
+    });
+
+    wsClient.addEventListener('reconnectFailed', () => {
+      if (this.role === 'client') {
+        log.warn('재접속 실패, Host 승계 시도');
+        this._startElection();
+      }
+    });
+  }
+
+  /**
+   * session.json 주기적 갱신 (Host 전용)
+   * @private
+   */
+  _startSessionRefresh() {
+    this._sessionRefreshTimer = setInterval(async () => {
+      if (this.role !== 'host' || !this.sessionPath) return;
+
+      try {
+        const result = await window.electronAPI.wsReadSession(this.sessionPath);
+        if (result.success && result.data) {
+          result.data.createdAt = new Date().toISOString();
+          await window.electronAPI.wsWriteSession(this.sessionPath, result.data);
+        }
+      } catch (error) {
+        log.warn('session.json 갱신 실패', { error: error.message });
+      }
+    }, SESSION_REFRESH_INTERVAL);
+  }
+
+  // ============================================================================
+  // Host Migration (Phase 2)
+  // ============================================================================
+
+  /**
+   * Host 선출 프로토콜 시작
+   * sessionId가 가장 작은 Client가 새 Host가 됨
+   * @private
+   */
+  async _startElection() {
+    log.info('Host 선출 시작', { mySessionId: this.sessionId });
+
+    // 현재 참가자 목록에서 sessionId 정렬
+    const allParticipants = [
+      { sessionId: this.sessionId },
+      ...Array.from(this.p2pPeers.entries()).map(([id]) => ({ sessionId: id }))
+    ].sort((a, b) => a.sessionId.localeCompare(b.sessionId));
+
+    if (allParticipants.length === 0) {
+      // 혼자 남음 → Solo 모드
+      this.role = 'solo';
+      this.p2pEnabled = false;
+      if (this._reviewDataManager) {
+        this._reviewDataManager.setRole('solo');
+      }
+      return;
+    }
+
+    if (allParticipants[0].sessionId === this.sessionId) {
+      // 내가 새 Host
+      log.info('내가 새 Host로 선출됨');
+      await this._promoteToHost();
+    } else {
+      // 다른 사람이 Host → session.json 폴링으로 대기
+      log.info('다른 Client가 Host 예정, session.json 폴링 시작');
+      await this._waitForNewHost();
+    }
+  }
+
+  /**
+   * Host로 승격
+   * @private
+   */
+  async _promoteToHost() {
+    try {
+      // 1. WS 서버 시작
+      const result = await window.electronAPI.wsStartServer(WS_PORT);
+      if (!result.success) {
+        log.error('Host 승격 실패: WS 서버 시작 실패', { error: result.error });
+        this.role = 'solo';
+        this.p2pEnabled = false;
         return;
       }
 
-      await p2pSync.connectToPeer(peer);
-    });
+      // 2. session.json 갱신
+      await window.electronAPI.wsWriteSession(this.sessionPath, {
+        hostIp: result.ip,
+        port: result.port,
+        hostSessionId: this.sessionId,
+        hostName: this.userName,
+        projectPath: this.bframePath,
+        createdAt: new Date().toISOString(),
+        version: '1.0'
+      });
 
-    // 피어 연결됨
-    p2pSync.addEventListener('peer:connected', (e) => {
-      const { peer } = e.detail;
-      this.p2pPeers.set(peer.id, peer);
-      this._updateCollaboratorsFromP2P();
-      this._emit('p2pPeerConnected', { peer });
+      // 3. 역할 전환
+      this.role = 'host';
+      if (this._reviewDataManager) {
+        this._reviewDataManager.setRole('host');
+      }
 
-      // 토스트 메시지용 이벤트
+      // 4. Host 이벤트 리스너 설정
+      this._setupHostEventListeners();
+
+      // 5. session.json 갱신 시작
+      this._startSessionRefresh();
+
+      // 6. localhost WS 연결
+      const connected = await wsClient.connect(`ws://127.0.0.1:${result.port}`);
+      if (connected) {
+        wsClient.send(createMessage.join(this.sessionId, this.userName, this.userColor));
+      }
+
+      log.info('Host로 승격 완료', { ip: result.ip, port: result.port });
+
       this._emit('showToast', {
-        type: 'success',
-        message: `${peer.name}님과 실시간 연결되었습니다`
+        type: 'info',
+        message: 'Host로 승격되었습니다'
       });
 
-      log.info('P2P 피어 연결됨', { name: peer.name });
-    });
-
-    // 피어 연결 해제
-    p2pSync.addEventListener('peer:disconnected', (e) => {
-      const { peer, reason } = e.detail;
-      if (peer) {
-        this.p2pPeers.delete(peer.id);
-        this.p2pPresence.delete(peer.id);
-        this._updateCollaboratorsFromP2P();
-        this._emit('p2pPeerDisconnected', { peer, reason });
-
-        // 토스트 메시지용 이벤트
-        this._emit('showToast', {
-          type: 'warning',
-          message: `${peer.name}님과의 연결이 끊겼습니다`
-        });
-
-        log.info('P2P 피어 연결 해제', { name: peer.name, reason });
-      }
-    });
-
-    // P2P 메시지 핸들러 등록
-    this._setupP2PMessageHandlers();
+    } catch (error) {
+      log.error('Host 승격 중 오류', { error: error.message });
+      this.role = 'solo';
+      this.p2pEnabled = false;
+    }
   }
 
   /**
-   * P2P 메시지 핸들러 설정
+   * 새 Host가 session.json을 작성할 때까지 폴링
    * @private
    */
-  _setupP2PMessageHandlers() {
-    // 댓글 추가
-    p2pSync.onMessage(MessageTypes.COMMENT_ADD, (peerId, message) => {
-      const marker = message.data;
-      if (this._commentManager && !this._commentManager.getMarker(marker.id)) {
-        this._commentManager.addMarkerFromRemote(marker);
-        this._emit('remoteCommentAdded', { marker, from: peerId });
-        log.debug('원격 댓글 추가', { id: marker.id, from: message.fromName });
+  async _waitForNewHost() {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < ELECTION_WAIT_MS) {
+      await this._delay(ELECTION_POLL_MS);
+
+      try {
+        const result = await window.electronAPI.wsReadSession(this.sessionPath);
+        if (result.success && result.data) {
+          const session = result.data;
+          const elapsed = Date.now() - new Date(session.createdAt).getTime();
+
+          // 새로 작성된 session.json인지 확인 (3초 이내)
+          if (elapsed < 3000) {
+            log.info('새 Host 발견, 재접속 시도', {
+              hostIp: session.hostIp,
+              port: session.port
+            });
+
+            const connected = await wsClient.connect(`ws://${session.hostIp}:${session.port}`);
+            if (connected) {
+              wsClient.send(createMessage.join(this.sessionId, this.userName, this.userColor));
+              this.role = 'client';
+              if (this._reviewDataManager) {
+                this._reviewDataManager.setRole('client');
+              }
+
+              this._emit('showToast', {
+                type: 'info',
+                message: '새 Host에 연결되었습니다'
+              });
+              return;
+            }
+          }
+        }
+      } catch {
+        // session.json 아직 없음 → 대기 계속
       }
+    }
+
+    // 타임아웃 → 내가 Host가 되어야 함
+    log.warn('새 Host 대기 타임아웃, 직접 Host 승격');
+    await this._promoteToHost();
+  }
+
+  // ============================================================================
+  // WebSocket 메시지 핸들링 (Phase 3)
+  // ============================================================================
+
+  /**
+   * WebSocket 메시지 핸들러
+   * @private
+   */
+  _handleWsMessage(message) {
+    // 축약 메시지 타입 처리
+    const type = message.type || message.t;
+
+    switch (type) {
+    case 'WELCOME':
+      this._handleWelcome(message);
+      break;
+    case 'PEER_JOINED':
+      this._handlePeerJoined(message);
+      break;
+    case 'PEER_LEFT':
+      this._handlePeerLeft(message);
+      break;
+    case 'HOST_SHUTDOWN':
+      this._handleHostShutdown(message);
+      break;
+    case 'STATE_CHANGE':
+      if (this.role === 'host') this._handleStateChange(message);
+      break;
+    case 'STATE_BROADCAST':
+      this._handleStateBroadcast(message);
+      break;
+    case 'FULL_STATE_SYNC':
+      this._handleFullStateSync(message);
+      break;
+    case 'EDIT_LOCK':
+      if (this.role === 'host') this._handleEditLockRequest(message);
+      break;
+    case 'EDIT_UNLOCK':
+      if (this.role === 'host') this._handleEditUnlockRequest(message);
+      break;
+    case 'EDIT_LOCK_STATE':
+      this._handleEditLockState(message);
+      break;
+    case 'REDIRECT':
+      this._handleRedirect(message);
+      break;
+    case 'CM': // CURSOR_MOVE
+      this._handleCursorMove(message);
+      break;
+    case 'PU': // PRESENCE_UPDATE
+      this._handlePresenceUpdate(message);
+      break;
+    default:
+      log.debug('알 수 없는 메시지 타입', { type });
+      break;
+    }
+  }
+
+  /**
+   * WELCOME 메시지 처리 (Client가 수신)
+   * @private
+   */
+  _handleWelcome(message) {
+    log.info('WELCOME 수신', {
+      participants: message.participants?.length,
+      hostSessionId: message.hostSessionId,
+      hasFullState: !!message.fullState
     });
 
-    // 댓글 수정
-    p2pSync.onMessage(MessageTypes.COMMENT_UPDATE, (peerId, message) => {
-      const { id, changes, updatedAt } = message.data;
-      if (this._commentManager) {
-        this._commentManager.updateMarkerFromRemote(id, changes, updatedAt);
-        this._emit('remoteCommentUpdated', { id, changes, from: peerId });
-        log.debug('원격 댓글 수정', { id, from: message.fromName });
+    // 참가자 목록 업데이트
+    if (message.participants) {
+      for (const p of message.participants) {
+        if (p.sessionId !== this.sessionId) {
+          this.p2pPeers.set(p.sessionId, {
+            name: p.name,
+            color: p.color,
+            joinedAt: new Date().toISOString()
+          });
+        }
       }
+    }
+
+    // 전체 상태 동기화 (새 Client 접속 시 Host의 인메모리 상태 수신)
+    if (message.fullState) {
+      this._applyFullState(message.fullState);
+    }
+
+    this._updateCollaboratorsUI();
+  }
+
+  /**
+   * PEER_JOINED 메시지 처리
+   * @private
+   */
+  _handlePeerJoined(message) {
+    if (message.sessionId === this.sessionId) return; // 자기 자신 무시
+
+    this.p2pPeers.set(message.sessionId, {
+      name: message.name,
+      color: message.color,
+      joinedAt: new Date().toISOString()
     });
 
-    // 댓글 삭제
-    p2pSync.onMessage(MessageTypes.COMMENT_DELETE, (peerId, message) => {
-      const { id } = message.data;
-      if (this._commentManager) {
-        this._commentManager.deleteMarkerFromRemote(id);
-        this._emit('remoteCommentDeleted', { id, from: peerId });
-        log.debug('원격 댓글 삭제', { id, from: message.fromName });
-      }
+    this._updateCollaboratorsUI();
+
+    this._emit('showToast', {
+      type: 'success',
+      message: `${message.name}님이 참가했습니다`
+    });
+  }
+
+  /**
+   * PEER_LEFT 메시지 처리
+   * @private
+   */
+  _handlePeerLeft(message) {
+    this.p2pPeers.delete(message.sessionId);
+    this.p2pPresence.delete(message.sessionId);
+    this._updateCollaboratorsUI();
+
+    this._emit('peerCursorRemoved', { peerId: message.sessionId });
+  }
+
+  /**
+   * HOST_SHUTDOWN 메시지 처리
+   * @private
+   */
+  _handleHostShutdown(message) {
+    log.info('Host 정상 종료 알림 수신');
+    this._emit('showToast', {
+      type: 'warning',
+      message: 'Host가 종료되었습니다. 새 Host 선출 중...'
     });
 
-    // resolved 상태 변경
-    p2pSync.onMessage(MessageTypes.COMMENT_RESOLVE, (peerId, message) => {
-      const { id, resolved } = message.data;
-      if (this._commentManager) {
-        this._commentManager.updateMarkerFromRemote(id, { resolved }, message.data.updatedAt);
-        this._emit('remoteCommentResolved', { id, resolved, from: peerId });
-        log.debug('원격 댓글 resolved 변경', { id, resolved, from: message.fromName });
-      }
+    // Host 승계 시작
+    this._startElection();
+  }
+
+  /**
+   * STATE_CHANGE 메시지 처리 (Host만)
+   * Client가 보낸 변경사항을 인메모리에 반영 후 브로드캐스트
+   * @private
+   */
+  _handleStateChange(message) {
+    // 인메모리 상태 업데이트
+    this._applyRemoteChange(message.changeType, message.data);
+
+    // 발신자 제외 전체 브로드캐스트
+    window.electronAPI.wsBroadcast(
+      createMessage.stateBroadcast(message.sessionId, message.changeType, message.data),
+      message.sessionId
+    );
+
+    // isDirty 설정 → Debounce 저장 트리거
+    if (this._reviewDataManager) {
+      this._reviewDataManager.markDirty();
+    }
+  }
+
+  /**
+   * STATE_BROADCAST 메시지 처리 (Client가 수신)
+   * @private
+   */
+  _handleStateBroadcast(message) {
+    if (message.sessionId === this.sessionId) return; // 자기 변경 무시
+    this._applyRemoteChange(message.changeType, message.data);
+  }
+
+  /**
+   * FULL_STATE_SYNC 메시지 처리
+   * @private
+   */
+  _handleFullStateSync(message) {
+    if (message.data) {
+      this._applyFullState(message.data);
+    }
+  }
+
+  /**
+   * REDIRECT 메시지 처리 (새 Host로 리다이렉트)
+   * @private
+   */
+  _handleRedirect(message) {
+    log.info('새 Host로 리다이렉트', { hostIp: message.hostIp, port: message.port });
+    wsClient.disconnect();
+    this._startAsClient(message.hostIp, message.port);
+  }
+
+  /**
+   * 커서 이동 메시지 처리
+   * @private
+   */
+  _handleCursorMove(message) {
+    if (message.s === this.sessionId) return;
+
+    this._emit('peerCursorMoved', {
+      peerId: message.s,
+      x: message.x,
+      y: message.y,
+      name: message.n,
+      color: message.c
+    });
+  }
+
+  /**
+   * Presence 업데이트 메시지 처리
+   * @private
+   */
+  _handlePresenceUpdate(message) {
+    if (message.s === this.sessionId) return;
+
+    this.p2pPresence.set(message.s, {
+      currentFrame: message.f,
+      isPlaying: message.p,
+      updatedAt: Date.now()
     });
 
-    // 답글 추가
-    p2pSync.onMessage(MessageTypes.REPLY_ADD, (peerId, message) => {
-      const { markerId, reply } = message.data;
-      if (this._commentManager) {
-        this._commentManager.addReplyFromRemote(markerId, reply);
-        this._emit('remoteReplyAdded', { markerId, reply, from: peerId });
-        log.debug('원격 답글 추가', { markerId, from: message.fromName });
-      }
+    this._emit('peerPresenceUpdated', {
+      peerId: message.s,
+      currentFrame: message.f,
+      isPlaying: message.p
     });
+  }
 
-    // Presence 업데이트
-    p2pSync.onMessage(MessageTypes.PRESENCE_UPDATE, (peerId, message) => {
-      const { userName, currentFrame, isPlaying, updatedAt } = message.data;
-      log.debug('Presence 수신', { from: userName, currentFrame, peerId: peerId?.substring(0, 15) });
-      this.p2pPresence.set(peerId, {
-        userName,
-        currentFrame,
-        isPlaying,
-        updatedAt
+  // ============================================================================
+  // 데이터 동기화 (Phase 3)
+  // ============================================================================
+
+  /**
+   * 변경 사항 동기화
+   * @param {string} changeType - 변경 타입 (comment:add, comment:update 등)
+   * @param {Object} data - 변경 데이터
+   */
+  async syncChange(changeType, data) {
+    if (!this.p2pEnabled) return;
+
+    if (this.role === 'host') {
+      // Host는 직접 브로드캐스트
+      window.electronAPI.wsBroadcast(
+        createMessage.stateBroadcast(this.sessionId, changeType, data),
+        this.sessionId
+      );
+    } else {
+      // Client는 Host에게 STATE_CHANGE 전송
+      wsClient.send(createMessage.stateChange(this.sessionId, changeType, data));
+    }
+
+    this.recordActivity();
+  }
+
+  /**
+   * 원격 변경사항을 인메모리에 적용
+   * @private
+   */
+  _applyRemoteChange(changeType, data) {
+    if (!changeType || !data) return;
+
+    const wasLoading = this._reviewDataManager?.isLoading;
+    if (this._reviewDataManager) {
+      this._reviewDataManager.isLoading = true; // 이벤트 루프 방지
+    }
+
+    try {
+      switch (changeType) {
+      // 댓글 관련
+      case 'comment:add':
+        if (this._commentManager) {
+          this._commentManager.addMarkerFromRemote(data);
+          this._emit('remoteCommentAdded', { data });
+        }
+        break;
+
+      case 'comment:update':
+        if (this._commentManager) {
+          this._commentManager.updateMarkerFromRemote(data.id, data.changes);
+          this._emit('remoteCommentUpdated', { data });
+        }
+        break;
+
+      case 'comment:delete':
+        if (this._commentManager) {
+          this._commentManager.deleteMarkerFromRemote(data.id);
+          this._emit('remoteCommentDeleted', { data });
+        }
+        break;
+
+      case 'comment:resolve':
+        if (this._commentManager) {
+          this._commentManager.updateMarkerFromRemote(data.id, { resolved: data.resolved });
+          this._emit('remoteCommentUpdated', { data });
+        }
+        break;
+
+      case 'reply:add':
+        if (this._commentManager) {
+          this._commentManager.addReplyFromRemote(data.markerId, data.reply);
+          this._emit('remoteCommentUpdated', { data });
+        }
+        break;
+
+      case 'reply:update':
+        if (this._commentManager) {
+          this._commentManager.updateReplyFromRemote(data.markerId, data.replyId, data.text);
+          this._emit('remoteCommentUpdated', { data });
+        }
+        break;
+
+      case 'reply:delete':
+        if (this._commentManager) {
+          this._commentManager.deleteReplyFromRemote(data.markerId, data.replyId);
+          this._emit('remoteCommentUpdated', { data });
+        }
+        break;
+
+      // 드로잉 관련
+      case 'drawing:add':
+        if (this._drawingManager) {
+          this._drawingManager.addStrokeFromRemote(data);
+          this._emit('remoteDrawingChanged', { data });
+        }
+        break;
+
+      case 'drawing:delete':
+        if (this._drawingManager) {
+          this._drawingManager.deleteStrokeFromRemote(data.id);
+          this._emit('remoteDrawingChanged', { data });
+        }
+        break;
+
+      case 'drawing:clear':
+        if (this._drawingManager) {
+          this._drawingManager.clearFrameFromRemote(data.frame, data.layerId);
+          this._emit('remoteDrawingChanged', { data });
+        }
+        break;
+
+      // 하이라이트 관련
+      case 'highlight:add':
+      case 'highlight:update':
+      case 'highlight:delete':
+        if (this._highlightManager) {
+          // 하이라이트는 전체 교체 방식
+          if (data.highlights) {
+            this._highlightManager.fromJSON(data.highlights);
+          }
+          this._emit('remoteHighlightChanged', { data });
+        }
+        break;
+
+      default:
+        log.debug('알 수 없는 변경 타입', { changeType });
+        break;
+      }
+    } finally {
+      if (this._reviewDataManager) {
+        this._reviewDataManager.isLoading = wasLoading;
+      }
+    }
+  }
+
+  /**
+   * 전체 상태 수집 (Host → WELCOME 응답용)
+   * @private
+   */
+  _collectFullState() {
+    return {
+      comments: this._commentManager?.toJSON() || { layers: [] },
+      drawings: this._drawingManager?.exportData() || { layers: [] },
+      highlights: this._highlightManager?.toJSON() || [],
+      syncedAt: new Date().toISOString()
+    };
+  }
+
+  /**
+   * 전체 상태 적용 (Client: WELCOME/FULL_STATE_SYNC 수신 시)
+   * @private
+   */
+  _applyFullState(state) {
+    if (!state) return;
+
+    const wasLoading = this._reviewDataManager?.isLoading;
+    if (this._reviewDataManager) {
+      this._reviewDataManager.isLoading = true;
+    }
+
+    try {
+      if (state.comments && this._commentManager) {
+        this._commentManager.fromJSON(state.comments);
+        log.info('전체 상태 동기화: 댓글 적용');
+      }
+
+      if (state.drawings && this._drawingManager) {
+        this._drawingManager.importData(state.drawings);
+        log.info('전체 상태 동기화: 드로잉 적용');
+      }
+
+      if (state.highlights && this._highlightManager) {
+        this._highlightManager.fromJSON(state.highlights);
+        log.info('전체 상태 동기화: 하이라이트 적용');
+      }
+
+      this._emit('remoteDataSynced', { syncedAt: state.syncedAt });
+    } finally {
+      if (this._reviewDataManager) {
+        this._reviewDataManager.isLoading = wasLoading;
+      }
+    }
+  }
+
+  // ============================================================================
+  // 편집 잠금 (Phase 3)
+  // ============================================================================
+
+  /**
+   * 댓글 편집 시작 (잠금 획득 시도)
+   * @param {string} markerId - 편집할 마커 ID
+   * @returns {Promise<{success: boolean, lockedBy?: string}>}
+   */
+  async startEditing(markerId) {
+    if (!this.p2pEnabled) return { success: true };
+
+    if (this.role === 'host') {
+      // Host는 직접 잠금 설정
+      const existing = this._editLocks.get(markerId);
+      if (existing && existing.sessionId !== this.sessionId) {
+        return { success: false, lockedBy: existing.userName };
+      }
+      this._editLocks.set(markerId, { sessionId: this.sessionId, userName: this.userName });
+
+      // 잠금 상태 브로드캐스트
+      window.electronAPI.wsBroadcast(
+        createMessage.editLockState(markerId, true, this.userName),
+        this.sessionId
+      );
+      return { success: true };
+    } else {
+      // Client는 Host에게 잠금 요청
+      wsClient.send(createMessage.editLock(this.sessionId, markerId, this.userName));
+
+      // 응답 대기 (1초 타임아웃)
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve({ success: true }); // 타임아웃 시 낙관적으로 허용
+        }, 1000);
+
+        const handler = (e) => {
+          const msg = e.detail;
+          if (msg.type === 'EDIT_LOCK_STATE' && msg.markerId === markerId) {
+            clearTimeout(timeout);
+            wsClient.removeEventListener('message', handler);
+            resolve({ success: !msg.isLocked || msg.lockedBy === this.userName, lockedBy: msg.lockedBy });
+          }
+        };
+        wsClient.addEventListener('message', handler);
       });
-      this._emit('peerPresenceUpdated', { peerId, ...message.data });
-    });
+    }
+  }
 
-    // Heartbeat
-    p2pSync.onMessage(MessageTypes.HEARTBEAT, (peerId, message) => {
-      // 피어가 살아있음 확인
-      const peer = this.p2pPeers.get(peerId);
-      if (peer) {
-        peer.lastActivity = new Date().toISOString();
+  /**
+   * 댓글 편집 종료 (잠금 해제)
+   * @param {string} markerId - 편집 완료한 마커 ID
+   */
+  async stopEditing(markerId) {
+    if (!this.p2pEnabled) return;
+
+    if (this.role === 'host') {
+      this._editLocks.delete(markerId);
+      window.electronAPI.wsBroadcast(
+        createMessage.editLockState(markerId, false, null),
+        this.sessionId
+      );
+    } else {
+      wsClient.send(createMessage.editUnlock(this.sessionId, markerId));
+    }
+  }
+
+  /**
+   * 다른 사람이 편집 중인지 확인
+   * @param {string} markerId
+   * @returns {Promise<{isLocked: boolean, lockedBy?: string}>}
+   */
+  async isBeingEdited(markerId) {
+    const lock = this._editLocks.get(markerId);
+    if (lock && lock.sessionId !== this.sessionId) {
+      return { isLocked: true, lockedBy: lock.userName };
+    }
+    return { isLocked: false };
+  }
+
+  /**
+   * 앱 종료 시 모든 편집 잠금 해제
+   */
+  async releaseAllEditingLocks() {
+    if (!this.p2pEnabled) return;
+
+    for (const [markerId] of this._editLocks) {
+      await this.stopEditing(markerId);
+    }
+    this._editLocks.clear();
+  }
+
+  /**
+   * Host: 편집 잠금 요청 처리
+   * @private
+   */
+  _handleEditLockRequest(message) {
+    const existing = this._editLocks.get(message.markerId);
+    if (existing && existing.sessionId !== message.sessionId) {
+      // 이미 다른 사람이 잠금 중
+      window.electronAPI.wsSendTo(message.sessionId,
+        createMessage.editLockState(message.markerId, true, existing.userName)
+      );
+    } else {
+      // 잠금 승인
+      this._editLocks.set(message.markerId, {
+        sessionId: message.sessionId,
+        userName: message.userName
+      });
+      // 요청자에게 잠금 확인
+      window.electronAPI.wsSendTo(message.sessionId,
+        createMessage.editLockState(message.markerId, false, null)
+      );
+      // 다른 모든 Client에게 잠금 상태 알림
+      window.electronAPI.wsBroadcast(
+        createMessage.editLockState(message.markerId, true, message.userName),
+        message.sessionId
+      );
+    }
+  }
+
+  /**
+   * Host: 편집 잠금 해제 요청 처리
+   * @private
+   */
+  _handleEditUnlockRequest(message) {
+    const existing = this._editLocks.get(message.markerId);
+    if (existing && existing.sessionId === message.sessionId) {
+      this._editLocks.delete(message.markerId);
+      window.electronAPI.wsBroadcast(
+        createMessage.editLockState(message.markerId, false, null)
+      );
+    }
+  }
+
+  /**
+   * 편집 잠금 상태 변경 처리 (Client)
+   * @private
+   */
+  _handleEditLockState(message) {
+    if (message.isLocked) {
+      this._editLocks.set(message.markerId, {
+        sessionId: null, // Client는 sessionId 모름
+        userName: message.lockedBy
+      });
+    } else {
+      this._editLocks.delete(message.markerId);
+    }
+
+    this._emit('editLockChanged', {
+      markerId: message.markerId,
+      isLocked: message.isLocked,
+      lockedBy: message.lockedBy
+    });
+  }
+
+  /**
+   * 특정 세션의 편집 잠금 모두 해제 (이탈 시)
+   * @private
+   */
+  _releaseLocksForSession(sessionId) {
+    for (const [markerId, lock] of this._editLocks) {
+      if (lock.sessionId === sessionId) {
+        this._editLocks.delete(markerId);
+        window.electronAPI.wsBroadcast(
+          createMessage.editLockState(markerId, false, null)
+        );
       }
-    });
-
-    // 전체 동기화 요청
-    p2pSync.onMessage(MessageTypes.SYNC_REQUEST, (peerId, message) => {
-      this._handleSyncRequest(peerId);
-    });
-
-    // 전체 동기화 응답
-    p2pSync.onMessage(MessageTypes.SYNC_RESPONSE, (peerId, message) => {
-      this._handleSyncResponse(peerId, message.data);
-    });
+    }
   }
 
-  /**
-   * 전체 동기화 요청 처리
-   * @private
-   */
-  _handleSyncRequest(peerId) {
-    if (!this._commentManager) return;
-
-    const comments = this._commentManager.getAllMarkers();
-    const drawings = this._drawingManager?.getAllDrawings() || [];
-
-    const message = createMessage.syncResponse(comments, drawings, null);
-    p2pSync.sendTo(peerId, message);
-    log.info('동기화 데이터 전송', { peerId, commentCount: comments.length });
-  }
+  // ============================================================================
+  // Presence & Cursor
+  // ============================================================================
 
   /**
-   * 전체 동기화 응답 처리
+   * 협업자 UI 업데이트
    * @private
    */
-  _handleSyncResponse(peerId, data) {
-    log.info('동기화 데이터 수신', {
-      from: peerId,
-      commentCount: data.comments?.length || 0
-    });
-    // 실제 머지 로직은 기존 mergeComments 활용
-    // 여기서는 이벤트만 발생시키고 외부에서 처리
-    this._emit('syncDataReceived', { from: peerId, ...data });
-  }
-
-  /**
-   * P2P 피어 목록으로 협업자 목록 업데이트
-   * @private
-   */
-  _updateCollaboratorsFromP2P() {
+  _updateCollaboratorsUI() {
     this._emit('collaboratorsChanged', {
       collaborators: this.getCollaborators(),
-      count: this.collaborators.size + this.p2pPeers.size
+      count: 1 + this.p2pPeers.size
     });
   }
 
@@ -358,38 +1195,60 @@ export class CollaborationManager extends EventTarget {
   async stop() {
     if (!this._isActive) return;
 
-    // 편집 잠금 먼저 해제 (_isActive가 true일 때 해야 함)
+    // 편집 잠금 먼저 해제
     await this.releaseAllEditingLocks();
 
     this._isActive = false;
 
     // 타이머 정리
-    if (this._presenceTimer) {
-      clearInterval(this._presenceTimer);
-      this._presenceTimer = null;
-    }
     if (this._syncTimer) {
       clearInterval(this._syncTimer);
       this._syncTimer = null;
     }
-    if (this._p2pPresenceTimer) {
-      clearInterval(this._p2pPresenceTimer);
-      this._p2pPresenceTimer = null;
+    if (this._sessionRefreshTimer) {
+      clearInterval(this._sessionRefreshTimer);
+      this._sessionRefreshTimer = null;
     }
 
-    // P2P 정리
-    if (this.p2pEnabled) {
-      await lanDiscovery.stop();
-      await p2pSync.stop();
-      this.p2pEnabled = false;
-      this.p2pPeers.clear();
-      this.p2pPresence.clear();
+    // WebSocket 정리
+    if (this.role === 'host') {
+      // Host: 미저장 데이터 즉시 저장 → HOST_SHUTDOWN 브로드캐스트 → session.json 삭제 → WS 서버 종료
+      try {
+        if (this._reviewDataManager?.isDirty) {
+          await this._reviewDataManager.forceSave();
+        }
+        await window.electronAPI.wsBroadcast(
+          createMessage.hostShutdown(this.sessionId)
+        );
+        await window.electronAPI.wsDeleteSession(this.sessionPath);
+        await window.electronAPI.wsStopServer();
+      } catch (error) {
+        log.warn('Host 종료 정리 실패', { error: error.message });
+      }
+    } else if (this.role === 'client') {
+      // Client: LEAVE 메시지 전송
+      wsClient.send({
+        type: 'LEAVE',
+        sessionId: this.sessionId
+      });
     }
 
-    // 자신의 presence 제거
-    await this._removePresence();
+    // wsClient 연결 종료
+    wsClient.disconnect();
 
+    // 역할 초기화
+    const prevRole = this.role;
+    this.role = 'solo';
+    this.p2pEnabled = false;
+    this.p2pPeers.clear();
+    this.p2pPresence.clear();
     this.collaborators.clear();
+    this._editLocks.clear();
+
+    // ReviewDataManager 역할 리셋
+    if (this._reviewDataManager && prevRole !== 'solo') {
+      this._reviewDataManager.setRole('solo');
+    }
 
     log.info('협업 세션 종료됨');
 
@@ -420,87 +1279,29 @@ export class CollaborationManager extends EventTarget {
         name: this.userName || '나',
         color: this.userColor,
         isMe: true,
-        connectionType: this.p2pEnabled ? 'p2p' : 'drive'
+        connectionType: this.p2pEnabled ? 'websocket' : 'solo',
+        role: this.role
       });
     }
 
-    // Drive 협업자 (기존 .collab 파일 기반)
-    for (const [sessionId, info] of this.collaborators) {
-      // 자기 자신은 이미 추가했으므로 제외
-      if (sessionId === this.sessionId) continue;
-      // P2P로 연결된 피어는 제외 (중복 방지)
-      if (this.p2pPeers.has(sessionId)) continue;
-
-      result.push({
-        sessionId,
-        name: info.name,
-        color: info.color,
-        isMe: false,
-        connectionType: 'drive',
-        lastSeen: info.lastSeen
-      });
-    }
-
-    // P2P 연결된 피어
+    // WebSocket 연결된 피어
     for (const [peerId, peer] of this.p2pPeers) {
+      if (peerId === this.sessionId) continue; // 자기 자신 제외
+
       const presence = this.p2pPresence.get(peerId);
       result.push({
         sessionId: peerId,
         name: peer.name,
         color: peer.color || this._generateUserColor(),
         isMe: false,
-        connectionType: 'p2p',
+        connectionType: 'websocket',
         currentFrame: presence?.currentFrame,
         isPlaying: presence?.isPlaying,
-        lastActivity: peer.lastActivity || peer.connectedAt
+        lastActivity: peer.joinedAt
       });
     }
 
     return result;
-  }
-
-  /**
-   * 변경 사항 P2P 동기화
-   * @param {string} changeType - 변경 타입 (comment:add, comment:update 등)
-   * @param {Object} data - 변경 데이터
-   */
-  async syncChange(changeType, data) {
-    // P2P로 즉시 전송
-    if (this.p2pEnabled && p2pSync.hasConnectedPeers()) {
-      let message;
-      switch (changeType) {
-      case 'comment:add':
-        message = createMessage.commentAdd(data);
-        break;
-      case 'comment:update':
-        message = createMessage.commentUpdate(data.id, data.changes);
-        break;
-      case 'comment:delete':
-        message = createMessage.commentDelete(data.id);
-        break;
-      case 'comment:resolve':
-        message = createMessage.commentResolve(data.id, data.resolved);
-        break;
-      case 'reply:add':
-        message = createMessage.replyAdd(data.markerId, data.reply);
-        break;
-      case 'drawing:add':
-        message = createMessage.drawingAdd(data);
-        break;
-      case 'drawing:delete':
-        message = createMessage.drawingDelete(data.id);
-        break;
-      }
-
-      if (message) {
-        const sentCount = p2pSync.broadcast(message);
-        log.debug('P2P 브로드캐스트', { type: changeType, sentCount });
-      }
-    }
-
-    // Drive에도 저장 (백업 + WAN 사용자용)
-    // 저장은 외부에서 처리 (reviewDataManager.save())
-    this.recordActivity();
   }
 
   /**
@@ -509,33 +1310,46 @@ export class CollaborationManager extends EventTarget {
    * @param {boolean} isPlaying - 재생 중 여부
    */
   updatePresenceFrame(currentFrame, isPlaying) {
-    // 스로틀링
-    const now = Date.now();
-    if (now - this._lastPresenceUpdate < P2P_PRESENCE_THROTTLE) {
-      return;
-    }
-
     this._currentFrame = currentFrame;
     this._isPlaying = isPlaying;
+
+    if (!this.p2pEnabled) return;
+
+    // 스로틀링
+    const now = Date.now();
+    if (now - this._lastPresenceUpdate < PRESENCE_THROTTLE) return;
     this._lastPresenceUpdate = now;
 
-    // P2P로 전송
-    if (this.p2pEnabled && p2pSync.hasConnectedPeers()) {
-      const message = createMessage.presenceUpdate(this.userName, currentFrame, isPlaying);
-      const sentCount = p2pSync.broadcast(message);
-      log.debug('Presence 브로드캐스트', { currentFrame, sentCount });
-    }
+    // 축약 메시지로 전송
+    wsClient.send(createMessage.presenceUpdate(this.sessionId, currentFrame, isPlaying));
   }
 
   /**
-   * P2P 연결 상태 반환
+   * 커서 이동 전송
+   * @param {number} x - normalized x (0~1)
+   * @param {number} y - normalized y (0~1)
+   */
+  sendCursorMove(x, y) {
+    if (!this.p2pEnabled) return;
+
+    const now = Date.now();
+    if (now - this._lastCursorSend < CURSOR_THROTTLE) return;
+    this._lastCursorSend = now;
+
+    wsClient.send(createMessage.cursorMove(
+      this.sessionId, x, y, this.userName, this.userColor
+    ));
+  }
+
+  /**
+   * 연결 상태 반환
    * @returns {Object}
    */
   getP2PStatus() {
     return {
       enabled: this.p2pEnabled,
-      connectedPeers: p2pSync.getConnectedPeers().length,
-      discoveredPeers: lanDiscovery.getPeers().length
+      connectedPeers: this.p2pPeers.size,
+      discoveredPeers: 0
     };
   }
 
@@ -552,8 +1366,7 @@ export class CollaborationManager extends EventTarget {
    * @returns {boolean}
    */
   hasOtherCollaborators() {
-    return this.collaborators.size > 1 ||
-           (this.collaborators.size === 1 && !this.collaborators.has(this.sessionId));
+    return this.p2pPeers.size > 0;
   }
 
   /**
@@ -561,14 +1374,11 @@ export class CollaborationManager extends EventTarget {
    */
   async syncNow() {
     if (!this._isActive || !this.bframePath) return;
-
-    log.info('수동 동기화 시작');
-    await this._performSync();
+    log.info('수동 동기화 요청');
   }
 
   /**
    * 활동 기록 (데이터 변경 시 외부에서 호출)
-   * 동기화 간격 동적 조정에 사용
    */
   recordActivity() {
     const now = Date.now();
@@ -578,11 +1388,6 @@ export class CollaborationManager extends EventTarget {
     this._activityTimestamps = this._activityTimestamps.filter(
       t => now - t < ACTIVITY_WINDOW
     );
-
-    // 협업자 있으면 간격 재조정
-    if (this.hasOtherCollaborators()) {
-      this._adjustSyncInterval();
-    }
   }
 
   /**
@@ -593,476 +1398,9 @@ export class CollaborationManager extends EventTarget {
     return this._activityTimestamps.filter(t => now - t < ACTIVITY_WINDOW).length;
   }
 
-  /**
-   * 동기화 간격 동적 조정
-   */
-  _adjustSyncInterval() {
-    let newInterval;
-
-    if (!this.hasOtherCollaborators()) {
-      newInterval = SYNC_INTERVAL_SOLO;
-    } else if (this.recentActivityCount >= ACTIVITY_THRESHOLD) {
-      newInterval = SYNC_INTERVAL_ACTIVE;
-    } else {
-      newInterval = SYNC_INTERVAL_COLLAB;
-    }
-
-    // 간격이 변경되었으면 타이머 재시작
-    if (newInterval !== this.syncInterval) {
-      log.info('동기화 간격 조정', {
-        from: this.syncInterval,
-        to: newInterval,
-        activityCount: this.recentActivityCount
-      });
-      this.syncInterval = newInterval;
-      this._restartSyncTimer();
-    }
-  }
-
-  /**
-   * 동기화 타이머 재시작
-   */
-  _restartSyncTimer() {
-    this._stopSyncTimer();
-    if (this.hasOtherCollaborators()) {
-      this._startSyncTimer();
-    }
-  }
-
-  // ============================================================================
-  // 댓글 편집 잠금 메서드
-  // ============================================================================
-
-  /**
-   * 댓글 편집 시작 (잠금 획득 시도)
-   * @param {string} markerId - 편집할 마커 ID
-   * @returns {Promise<{success: boolean, lockedBy?: string}>}
-   */
-  async startEditing(markerId) {
-    // 협업 중이 아니면 바로 성공
-    if (!this._isActive || !this.collabPath || !this.hasOtherCollaborators()) {
-      return { success: true };
-    }
-
-    try {
-      const collabData = await this._readCollabFile() || {
-        version: '1.1',
-        presence: {},
-        editingState: {}
-      };
-
-      // 기존 편집 상태 확인
-      const existing = collabData.editingState?.[markerId];
-      if (existing && existing.sessionId !== this.sessionId) {
-        // 타임아웃 체크
-        const elapsed = Date.now() - new Date(existing.startedAt).getTime();
-        if (elapsed < EDITING_TIMEOUT) {
-          log.info('편집 잠금 실패: 다른 사용자가 편집 중', {
-            markerId,
-            lockedBy: existing.userName
-          });
-          return { success: false, lockedBy: existing.userName };
-        }
-        // 타임아웃됨 - 잠금 해제하고 새로 획득
-      }
-
-      // 편집 상태 설정
-      if (!collabData.editingState) {
-        collabData.editingState = {};
-      }
-
-      collabData.editingState[markerId] = {
-        sessionId: this.sessionId,
-        userName: this.userName,
-        startedAt: new Date().toISOString()
-      };
-
-      await this._writeCollabFile(collabData);
-
-      log.info('편집 잠금 획득', { markerId });
-      return { success: true };
-
-    } catch (error) {
-      log.warn('편집 잠금 설정 실패', { error: error.message });
-      // 실패 시에도 편집 허용 (fail-open)
-      return { success: true };
-    }
-  }
-
-  /**
-   * 댓글 편집 종료 (잠금 해제)
-   * @param {string} markerId - 편집 완료한 마커 ID
-   */
-  async stopEditing(markerId) {
-    if (!this._isActive || !this.collabPath) return;
-
-    try {
-      const collabData = await this._readCollabFile();
-
-      if (collabData?.editingState?.[markerId]?.sessionId === this.sessionId) {
-        delete collabData.editingState[markerId];
-        await this._writeCollabFile(collabData);
-        log.info('편집 잠금 해제', { markerId });
-      }
-    } catch (error) {
-      log.warn('편집 잠금 해제 실패', { error: error.message });
-    }
-  }
-
-  /**
-   * 다른 사람이 편집 중인지 확인
-   * @param {string} markerId
-   * @returns {Promise<{isLocked: boolean, lockedBy?: string}>}
-   */
-  async isBeingEdited(markerId) {
-    // 협업 중이 아니면 잠금 없음
-    if (!this._isActive || !this.collabPath || !this.hasOtherCollaborators()) {
-      return { isLocked: false };
-    }
-
-    try {
-      const collabData = await this._readCollabFile();
-      const existing = collabData?.editingState?.[markerId];
-
-      if (!existing || existing.sessionId === this.sessionId) {
-        return { isLocked: false };
-      }
-
-      // 타임아웃 체크
-      const elapsed = Date.now() - new Date(existing.startedAt).getTime();
-      if (elapsed >= EDITING_TIMEOUT) {
-        return { isLocked: false };
-      }
-
-      return { isLocked: true, lockedBy: existing.userName };
-
-    } catch {
-      return { isLocked: false };
-    }
-  }
-
-  /**
-   * 앱 종료 시 모든 편집 잠금 해제
-   */
-  async releaseAllEditingLocks() {
-    if (!this._isActive || !this.collabPath) return;
-
-    try {
-      const collabData = await this._readCollabFile();
-
-      if (collabData?.editingState) {
-        // 내 세션의 모든 편집 잠금 해제
-        let changed = false;
-        for (const [markerId, info] of Object.entries(collabData.editingState)) {
-          if (info.sessionId === this.sessionId) {
-            delete collabData.editingState[markerId];
-            changed = true;
-          }
-        }
-
-        if (changed) {
-          await this._writeCollabFile(collabData);
-          log.info('모든 편집 잠금 해제됨');
-        }
-      }
-    } catch (error) {
-      log.warn('편집 잠금 일괄 해제 실패', { error: error.message });
-    }
-  }
-
   // ============================================================================
   // Private Methods
   // ============================================================================
-
-  /**
-   * Presence 업데이트 (내 상태를 collab 파일에 기록)
-   */
-  async _updatePresence() {
-    if (!this._isActive || !this.collabPath) return;
-
-    try {
-      // 현재 collab 데이터 읽기
-      const collabData = await this._readCollabFile();
-
-      // 읽기 실패 시 기존 협업자 목록 유지 (타임아웃 체크만 수행)
-      if (!collabData) {
-        log.debug('Collab 파일 읽기 실패, 기존 협업자 목록 유지하며 타임아웃만 체크');
-        this._cleanupTimeoutCollaborators();
-        return;
-      }
-
-      // 내 presence 업데이트
-      collabData.presence[this.sessionId] = {
-        name: this.userName,
-        color: this.userColor,
-        lastSeen: new Date().toISOString(),
-        startedAt: collabData.presence[this.sessionId]?.startedAt || new Date().toISOString()
-      };
-
-      // 오래된 presence 정리 (타임아웃된 사용자 제거)
-      const now = Date.now();
-      const activePresence = {};
-
-      for (const [sessionId, info] of Object.entries(collabData.presence)) {
-        const lastSeen = new Date(info.lastSeen).getTime();
-        if (now - lastSeen < this.presenceTimeout) {
-          activePresence[sessionId] = info;
-        }
-      }
-
-      collabData.presence = activePresence;
-
-      // collab 파일 저장
-      await this._writeCollabFile(collabData);
-
-      // 협업자 목록 업데이트
-      this._updateCollaboratorsList(activePresence);
-
-    } catch (error) {
-      log.warn('Presence 업데이트 실패, 기존 협업자 목록 유지', { error: error.message });
-      // 실패 시에도 타임아웃 체크는 수행
-      this._cleanupTimeoutCollaborators();
-    }
-  }
-
-  /**
-   * 자신의 Presence 제거
-   */
-  async _removePresence() {
-    if (!this.collabPath) return;
-
-    try {
-      const collabData = await this._readCollabFile();
-
-      if (collabData?.presence) {
-        delete collabData.presence[this.sessionId];
-        await this._writeCollabFile(collabData);
-      }
-    } catch (error) {
-      log.warn('Presence 제거 실패', { error: error.message });
-    }
-  }
-
-  /**
-   * 타임아웃된 협업자만 제거 (collab 파일 읽기 실패 시 사용)
-   * 기존 협업자 목록은 유지하면서 타임아웃된 사용자만 제거
-   */
-  _cleanupTimeoutCollaborators() {
-    const now = Date.now();
-    let removedCount = 0;
-    const hadOthers = this.hasOtherCollaborators();
-
-    for (const [sessionId, info] of this.collaborators) {
-      // 자신은 제거하지 않음
-      if (sessionId === this.sessionId) continue;
-
-      const lastSeen = new Date(info.lastSeen).getTime();
-      if (now - lastSeen >= this.presenceTimeout) {
-        this.collaborators.delete(sessionId);
-        removedCount++;
-        log.debug('타임아웃된 협업자 제거', { sessionId, name: info.name });
-      }
-    }
-
-    // 협업자가 제거되었으면 이벤트 발생
-    if (removedCount > 0) {
-      this._emit('collaboratorsChanged', {
-        collaborators: this.getCollaborators(),
-        count: this.collaborators.size
-      });
-
-      // 혼자 남았으면 동기화 중지
-      if (hadOthers && !this.hasOtherCollaborators()) {
-        log.info('혼자 남음 (타임아웃 정리), 자동 동기화 중지');
-        this._stopSyncTimer();
-        this._emit('collaborationEnded', {});
-      }
-    }
-  }
-
-  /**
-   * 협업자 목록 업데이트 및 이벤트 발생
-   */
-  _updateCollaboratorsList(presenceData) {
-    const hadOthers = this.hasOtherCollaborators();
-
-    // 기존 협업자 sessionId 목록
-    const previousIds = new Set(this.collaborators.keys());
-    const newIds = new Set(Object.keys(presenceData));
-
-    // 실제 변경 여부 확인 (sessionId 기준)
-    const hasChanged = previousIds.size !== newIds.size ||
-      [...previousIds].some(id => !newIds.has(id)) ||
-      [...newIds].some(id => !previousIds.has(id));
-
-    // 협업자 목록 업데이트
-    this.collaborators.clear();
-    for (const [sessionId, info] of Object.entries(presenceData)) {
-      this.collaborators.set(sessionId, {
-        name: info.name,
-        color: info.color,
-        lastSeen: info.lastSeen,
-        startedAt: info.startedAt
-      });
-    }
-
-    const hasOthersNow = this.hasOtherCollaborators();
-
-    // 협업자 목록이 실제로 변경되었을 때만 이벤트 발생
-    if (hasChanged) {
-      this._emit('collaboratorsChanged', {
-        collaborators: this.getCollaborators(),
-        count: this.collaborators.size
-      });
-    }
-
-    // 다른 협업자가 생겼으면 동기화 시작
-    if (!hadOthers && hasOthersNow) {
-      log.info('다른 협업자 감지됨, 자동 동기화 시작');
-      this._startSyncTimer();
-      this._emit('collaborationStarted', {
-        collaborators: this.getCollaborators()
-      });
-    }
-
-    // 혼자 남았으면 동기화 중지
-    if (hadOthers && !hasOthersNow) {
-      log.info('혼자 남음, 자동 동기화 중지');
-      this._stopSyncTimer();
-      this._emit('collaborationEnded', {});
-    }
-  }
-
-  /**
-   * 동기화 타이머 시작
-   */
-  _startSyncTimer() {
-    if (this._syncTimer) return;
-
-    this._syncTimer = setInterval(() => {
-      this._performSync().catch(err => {
-        log.warn('자동 동기화 실패', { error: err.message });
-      });
-    }, this.syncInterval);
-
-    // 즉시 한 번 동기화
-    this._performSync().catch(() => {});
-  }
-
-  /**
-   * 동기화 타이머 중지
-   */
-  _stopSyncTimer() {
-    if (this._syncTimer) {
-      clearInterval(this._syncTimer);
-      this._syncTimer = null;
-    }
-  }
-
-  /**
-   * 동기화 수행
-   */
-  async _performSync() {
-    if (!this._isActive || !this.bframePath) return;
-
-    try {
-      // 원격 파일의 수정 시간 확인
-      const remoteStats = await window.electronAPI.getFileStats(this.bframePath);
-
-      if (!remoteStats) {
-        return; // 파일이 없음
-      }
-
-      // 원격 데이터 로드 콜백 호출
-      if (this._onRemoteDataLoaded) {
-        this._emit('syncStarted', {});
-        await this._onRemoteDataLoaded();
-        this._emit('syncCompleted', {
-          timestamp: new Date().toISOString()
-        });
-      }
-
-    } catch (error) {
-      log.warn('동기화 실패', { error: error.message });
-      this._emit('syncError', { error: error.message });
-    }
-  }
-
-  /**
-   * Collab 파일 읽기 (재시도 로직 포함)
-   * 공유 드라이브에서 동기화 지연이나 일시적 오류에 대응
-   */
-  async _readCollabFile() {
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= COLLAB_FILE_RETRY_COUNT; attempt++) {
-      try {
-        const data = await window.electronAPI.readCollabFile(this.collabPath);
-        return data;
-      } catch (error) {
-        lastError = error;
-        log.debug('Collab 파일 읽기 실패', {
-          attempt,
-          maxAttempts: COLLAB_FILE_RETRY_COUNT,
-          error: error.message
-        });
-
-        // 마지막 시도가 아니면 재시도 대기
-        if (attempt < COLLAB_FILE_RETRY_COUNT) {
-          await this._delay(COLLAB_FILE_RETRY_DELAY * attempt); // 지수 백오프
-        }
-      }
-    }
-
-    // 모든 재시도 실패 시 로그 기록
-    if (lastError) {
-      log.warn('Collab 파일 읽기 최종 실패', {
-        path: this.collabPath,
-        error: lastError.message
-      });
-    }
-    return null;
-  }
-
-  /**
-   * Collab 파일 쓰기 (재시도 로직 포함)
-   * 공유 드라이브에서 동기화 지연이나 파일 잠금 오류에 대응
-   */
-  async _writeCollabFile(data) {
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= COLLAB_FILE_RETRY_COUNT; attempt++) {
-      try {
-        await window.electronAPI.writeCollabFile(this.collabPath, data);
-        return; // 성공 시 종료
-      } catch (error) {
-        lastError = error;
-        log.debug('Collab 파일 쓰기 실패', {
-          attempt,
-          maxAttempts: COLLAB_FILE_RETRY_COUNT,
-          error: error.message
-        });
-
-        // 마지막 시도가 아니면 재시도 대기
-        if (attempt < COLLAB_FILE_RETRY_COUNT) {
-          await this._delay(COLLAB_FILE_RETRY_DELAY * attempt); // 지수 백오프
-        }
-      }
-    }
-
-    // 모든 재시도 실패 시 에러 기록 및 이벤트 발생
-    if (lastError) {
-      log.warn('Collab 파일 쓰기 최종 실패', {
-        path: this.collabPath,
-        error: lastError.message
-      });
-      // 쓰기 실패 이벤트 발생 (UI에서 사용자에게 알릴 수 있도록)
-      this._emit('collabWriteError', {
-        error: lastError.message,
-        path: this.collabPath
-      });
-    }
-  }
 
   /**
    * 지연 헬퍼 함수

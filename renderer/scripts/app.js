@@ -9,6 +9,7 @@ import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { CommentManager, MARKER_COLORS } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
 import { CollaborationManager } from './modules/collaboration-manager.js';
+import { CursorOverlay } from './modules/cursor-overlay.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
@@ -338,10 +339,19 @@ async function initApp() {
   // ReviewDataManager에 CollaborationManager 연결 (저장 시 머지용)
   reviewDataManager.setCollaborationManager(collaborationManager);
 
+  // CollaborationManager에 매니저 참조 설정
+  collaborationManager.setManagers(commentManager, drawingManager, highlightManager);
+  collaborationManager.setReviewDataManager(reviewDataManager);
+
+  // 커서 오버레이 초기화 (Phase 5)
+  let cursorOverlay = null;
+
   // 앱 종료/새로고침 시 정리
   window.addEventListener('beforeunload', () => {
     // 협업 편집 잠금 해제
     collaborationManager.releaseAllEditingLocks();
+    // 커서 오버레이 정리
+    if (cursorOverlay) cursorOverlay.destroy();
     // 모든 파일 감시 중지 (누적 방지)
     window.electronAPI.watchFileStopAll();
   });
@@ -6312,6 +6322,28 @@ async function initApp() {
     }, 5000);
   }
 
+  // ====== 커서 오버레이 초기화 ======
+  if (elements.videoWrapper) {
+    cursorOverlay = new CursorOverlay(elements.videoWrapper, getVideoRenderArea);
+
+    // 비디오 플레이어 위 마우스 이동 → 커서 위치 전송
+    elements.videoWrapper.addEventListener('mousemove', (e) => {
+      const area = getVideoRenderArea();
+      if (!area) return;
+
+      const rect = elements.videoWrapper.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const x = (mouseX - area.left) / area.width;
+      const y = (mouseY - area.top) / area.height;
+
+      if (x >= 0 && x <= 1 && y >= 0 && y <= 1) {
+        collaborationManager.sendCursorMove(x, y);
+      }
+    });
+  }
+
   // P2P 이벤트 리스너
   collaborationManager.addEventListener('p2pPeerConnected', (e) => {
     log.info('P2P 피어 연결됨', e.detail);
@@ -6357,6 +6389,46 @@ async function initApp() {
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
+  });
+
+  // 원격 드로잉 변경 시 UI 업데이트
+  collaborationManager.addEventListener('remoteDrawingChanged', () => {
+    drawingManager.renderFrame(videoPlayer.currentFrame);
+    timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+  });
+
+  // 원격 하이라이트 변경 시 UI 업데이트
+  collaborationManager.addEventListener('remoteHighlightChanged', () => {
+    if (typeof renderHighlights === 'function') renderHighlights();
+  });
+
+  // 전체 상태 동기화 완료 시 UI 업데이트
+  collaborationManager.addEventListener('remoteDataSynced', () => {
+    renderVideoMarkers();
+    updateTimelineMarkers();
+    updateCommentList();
+    drawingManager.renderFrame(videoPlayer.currentFrame);
+    timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+    if (typeof renderHighlights === 'function') renderHighlights();
+  });
+
+  // 원격 커서 이동 수신 → 커서 오버레이 업데이트
+  collaborationManager.addEventListener('peerCursorMoved', (e) => {
+    if (cursorOverlay) {
+      cursorOverlay.updateCursor(e.detail.peerId, {
+        x: e.detail.x,
+        y: e.detail.y,
+        name: e.detail.name,
+        color: e.detail.color
+      });
+    }
+  });
+
+  // 피어 이탈 시 커서 제거
+  collaborationManager.addEventListener('peerCursorRemoved', (e) => {
+    if (cursorOverlay) {
+      cursorOverlay.removeCursor(e.detail.peerId);
+    }
   });
 
   // 원격 데이터 로드 콜백 설정 (동기화 시 호출됨)

@@ -8,13 +8,13 @@
 
 | Phase | 항목 | 수정 파일 | 이유 | 우선순위 | 상태 |
 |-------|------|----------|------|---------|------|
-| 0 | 기존 mDNS/WebRTC 코드 제거 | p2p-service.js, lan-discovery.js, p2p-sync.js | 새 아키텍처와 충돌 방지 | 높음 | ⬜ 대기 |
-| 1 | WebSocket 서버 + IP Drop | main/ws-server.js (신규), ipc-handlers.js | Host-Client 연결 기반 구축 | 높음 | ⬜ 대기 |
-| 2 | Host Migration (방장 승계) | ws-server.js, collaboration-manager.js | Gemini 리뷰 반영 - 장애 복구 | 높음 | ⬜ 대기 |
-| 3 | 실시간 동기화 프로토콜 | sync-protocol.js, collaboration-manager.js | WebSocket 기반 메시지 교환 | 높음 | ⬜ 대기 |
-| 4 | 저장 전략 (Host-Only Write + Debounce) | review-data-manager.js | Gemini 리뷰 반영 - 저장 일원화 | 높음 | ⬜ 대기 |
-| 5 | 실시간 커서 + Presence UI | collaboration-manager.js, app.js, CSS | Figma 스타일 커서 동기화 | 중간 | ⬜ 대기 |
-| 6 | 에지케이스 처리 | 전체 | 재접속, Split-brain, 네트워크 끊김 | 중간 | ⬜ 대기 |
+| 0 | 기존 mDNS/WebRTC 코드 제거 | p2p-service.js, lan-discovery.js, p2p-sync.js | 새 아키텍처와 충돌 방지 | 높음 | ✅ 완료 |
+| 1 | WebSocket 서버 + IP Drop | main/ws-server.js (신규), ipc-handlers.js | Host-Client 연결 기반 구축 | 높음 | ✅ 완료 |
+| 2 | Host Migration (방장 승계) | ws-server.js, collaboration-manager.js | Gemini 리뷰 반영 - 장애 복구 | 높음 | ✅ 완료 |
+| 3 | 실시간 동기화 프로토콜 | sync-protocol.js, collaboration-manager.js | WebSocket 기반 메시지 교환 | 높음 | ✅ 완료 |
+| 4 | 저장 전략 (Host-Only Write + Debounce) | review-data-manager.js | Gemini 리뷰 반영 - 저장 일원화 | 높음 | ✅ 완료 |
+| 5 | 실시간 커서 + Presence UI | collaboration-manager.js, app.js, CSS | Figma 스타일 커서 동기화 | 중간 | ✅ 완료 |
+| 6 | 에지케이스 처리 | 전체 | 재접속, Split-brain, 네트워크 끊김 | 중간 | ✅ 완료 |
 | 7 | 통합 테스트 | 전체 | 2PC + 3PC 시나리오 테스트 | 높음 | ⬜ 대기 |
 
 ---

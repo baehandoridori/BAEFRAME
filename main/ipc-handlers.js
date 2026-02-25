@@ -1704,14 +1704,24 @@ function setupPlaylistHandlers() {
     }
   });
 
-  // ====== P2P 서비스 관련 ======
+  // ====== P2P 서비스 관련 (Stub - 호환성 유지) ======
   const { p2pService } = require('./p2p-service');
 
-  // P2P 서비스 시작
-  ipcMain.handle('p2p:start', async (event, options) => {
-    const trace = log.trace('p2p:start');
+  ipcMain.handle('p2p:start', async () => ({ success: true }));
+  ipcMain.handle('p2p:stop', async () => ({ success: true }));
+  ipcMain.handle('p2p:get-status', async () => ({ isRunning: false }));
+  ipcMain.handle('p2p:get-peers', async () => ({ success: true, peers: [] }));
+  ipcMain.handle('p2p:update-file-hash', async () => ({ success: true }));
+  ipcMain.handle('p2p:send-signal', async () => ({ success: true }));
+
+  // ====== WebSocket 서버 관련 ======
+  const { wsServer } = require('./ws-server');
+
+  // WebSocket 서버 시작 (Host용)
+  ipcMain.handle('ws:start-server', async (event, port) => {
+    const trace = log.trace('ws:start-server');
     try {
-      const result = await p2pService.start(options);
+      const result = await wsServer.start(port || 12345);
       trace.end(result);
       return result;
     } catch (error) {
@@ -1720,11 +1730,11 @@ function setupPlaylistHandlers() {
     }
   });
 
-  // P2P 서비스 중지
-  ipcMain.handle('p2p:stop', async () => {
-    const trace = log.trace('p2p:stop');
+  // WebSocket 서버 종료
+  ipcMain.handle('ws:stop-server', async () => {
+    const trace = log.trace('ws:stop-server');
     try {
-      const result = await p2pService.stop();
+      const result = await wsServer.stop();
       trace.end(result);
       return result;
     } catch (error) {
@@ -1733,57 +1743,89 @@ function setupPlaylistHandlers() {
     }
   });
 
-  // P2P 상태 조회
-  ipcMain.handle('p2p:get-status', async () => {
-    return p2pService.getStatus();
+  // 전체 브로드캐스트
+  ipcMain.handle('ws:broadcast', async (event, message, excludeSessionId) => {
+    const sentCount = wsServer.broadcast(message, excludeSessionId);
+    return { success: true, sentCount };
   });
 
-  // P2P 피어 목록 조회
-  ipcMain.handle('p2p:get-peers', async () => {
-    return { success: true, peers: p2pService.getPeers() };
+  // 특정 클라이언트에 전송
+  ipcMain.handle('ws:send-to', async (event, sessionId, message) => {
+    const sent = wsServer.sendTo(sessionId, message);
+    return { success: sent };
   });
 
-  // P2P 파일 해시 업데이트
-  ipcMain.handle('p2p:update-file-hash', async (event, fileHash) => {
-    p2pService.updateFileHash(fileHash);
-    return { success: true };
+  // 참가자 목록 조회
+  ipcMain.handle('ws:get-participants', async () => {
+    return wsServer.getParticipants();
   });
 
-  // P2P 시그널 전송
-  ipcMain.handle('p2p:send-signal', async (event, peerId, signal) => {
-    return await p2pService.sendSignal(peerId, signal);
-  });
-
-  // P2P 이벤트를 렌더러로 전달
-  log.info('P2P 이벤트 리스너 등록 중...');
-  const mainWindow = getMainWindow();
-
-  p2pService.on('peer:found', (peer) => {
-    const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('p2p:peer-found', peer);
+  // session.json 파일 I/O
+  ipcMain.handle('ws:write-session', async (event, filePath, data) => {
+    const trace = log.trace('ws:write-session');
+    try {
+      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+      trace.end({ path: filePath });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
     }
   });
 
-  p2pService.on('peer:lost', (peer) => {
-    const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('p2p:peer-lost', peer);
+  ipcMain.handle('ws:read-session', async (event, filePath) => {
+    const trace = log.trace('ws:read-session');
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      const data = JSON.parse(content);
+      trace.end({ path: filePath });
+      return { success: true, data };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
     }
   });
 
-  p2pService.on('signal', (signal) => {
-    log.info('P2P 시그널 이벤트 수신 (IPC 핸들러)', { from: signal.from, type: signal.type });
-    const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
-      log.info('렌더러로 시그널 전달 중', { type: signal.type });
-      win.webContents.send('p2p:signal', signal);
-    } else {
-      log.warn('메인 윈도우가 없거나 파괴됨, 시그널 전달 실패');
+  ipcMain.handle('ws:delete-session', async (event, filePath) => {
+    const trace = log.trace('ws:delete-session');
+    try {
+      await fs.promises.unlink(filePath);
+      trace.end({ path: filePath });
+      return { success: true };
+    } catch (error) {
+      // 파일이 없어도 성공으로 처리
+      if (error.code === 'ENOENT') {
+        trace.end({ path: filePath, note: 'already deleted' });
+        return { success: true };
+      }
+      trace.error(error);
+      return { success: false, error: error.message };
     }
   });
 
-  log.info('P2P 이벤트 리스너 등록 완료');
+  // WebSocket 서버 이벤트를 Renderer로 전달
+  wsServer.on('message', (data) => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('ws:message', data);
+    }
+  });
+
+  wsServer.on('client:joined', (data) => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('ws:client-joined', data);
+    }
+  });
+
+  wsServer.on('client:left', (data) => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('ws:client-left', data);
+    }
+  });
+
+  log.info('WebSocket IPC 핸들러 등록 완료');
 }
 
 /**

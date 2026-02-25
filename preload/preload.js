@@ -131,6 +131,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('p2p:signal', (event, signal) => callback(signal));
   },
 
+  // ====== WebSocket 서버 관련 (Host용, Main Process) ======
+  wsStartServer: (port) => ipcRenderer.invoke('ws:start-server', port),
+  wsStopServer: () => ipcRenderer.invoke('ws:stop-server'),
+  wsBroadcast: (message, excludeSessionId) =>
+    ipcRenderer.invoke('ws:broadcast', message, excludeSessionId),
+  wsSendTo: (sessionId, message) =>
+    ipcRenderer.invoke('ws:send-to', sessionId, message),
+  wsGetParticipants: () => ipcRenderer.invoke('ws:get-participants'),
+
+  // session.json 파일 I/O
+  wsWriteSession: (filePath, data) =>
+    ipcRenderer.invoke('ws:write-session', filePath, data),
+  wsReadSession: (filePath) =>
+    ipcRenderer.invoke('ws:read-session', filePath),
+  wsDeleteSession: (filePath) =>
+    ipcRenderer.invoke('ws:delete-session', filePath),
+
+  // WebSocket 서버 이벤트 리스너 (Host의 Renderer에서 수신)
+  onWsMessage: (callback) => {
+    ipcRenderer.on('ws:message', (event, data) => callback(data));
+  },
+  onWsClientJoined: (callback) => {
+    ipcRenderer.on('ws:client-joined', (event, data) => callback(data));
+  },
+  onWsClientLeft: (callback) => {
+    ipcRenderer.on('ws:client-left', (event, data) => callback(data));
+  },
+
   // ====== 파일 감시 (실시간 동기화) ======
   watchFileStart: (filePath) => ipcRenderer.invoke('file:watch-start', filePath),
   watchFileStop: (filePath) => ipcRenderer.invoke('file:watch-stop', filePath),
