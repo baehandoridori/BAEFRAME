@@ -289,7 +289,7 @@ class WSServer extends EventEmitter {
     }
 
     // 모든 클라이언트 연결 종료
-    for (const [sessionId, client] of this.clients) {
+    for (const [, client] of this.clients) {
       try {
         client.ws.close(1000, 'Server shutting down');
       } catch (e) { /* ignore */ }

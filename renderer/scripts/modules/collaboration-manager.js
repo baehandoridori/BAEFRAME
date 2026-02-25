@@ -14,7 +14,7 @@
 
 import { createLogger } from '../logger.js';
 import { wsClient } from './ws-client.js';
-import { MessageTypes, createMessage, compareTimestamps } from './sync-protocol.js';
+import { createMessage } from './sync-protocol.js';
 
 const log = createLogger('CollaborationManager');
 
@@ -32,13 +32,13 @@ const SESSION_REFRESH_INTERVAL = 60000;  // session.json 갱신 간격 (1분)
 
 // 동기화 간격 설정
 const ACTIVITY_WINDOW = 60000;            // 활동량 측정 윈도우: 1분
-const ACTIVITY_THRESHOLD = 5;             // 활발 판단 기준: 1분 내 5회 이상
+// const ACTIVITY_THRESHOLD = 5;          // 활발 판단 기준: 1분 내 5회 이상 (향후 사용)
 
 /**
  * 협업 관리자
  */
 export class CollaborationManager extends EventTarget {
-  constructor(options = {}) {
+  constructor() {
     super();
 
     // 상태
@@ -721,7 +721,7 @@ export class CollaborationManager extends EventTarget {
    * HOST_SHUTDOWN 메시지 처리
    * @private
    */
-  _handleHostShutdown(message) {
+  _handleHostShutdown(_message) {
     log.info('Host 정상 종료 알림 수신');
     this._emit('showToast', {
       type: 'warning',

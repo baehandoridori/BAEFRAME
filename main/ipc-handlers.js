@@ -1705,7 +1705,6 @@ function setupPlaylistHandlers() {
   });
 
   // ====== P2P 서비스 관련 (Stub - 호환성 유지) ======
-  const { p2pService } = require('./p2p-service');
 
   ipcMain.handle('p2p:start', async () => ({ success: true }));
   ipcMain.handle('p2p:stop', async () => ({ success: true }));
