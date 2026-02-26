@@ -24,6 +24,8 @@ const SESSION_FILE_EXTENSION = '.session.json';
 const SESSION_EXPIRY_MS = 180000;        // session.json 3분 만료
 const HOST_CANDIDATE_DELAY_MIN = 500;    // Host 후보 최소 딜레이 (ms)
 const HOST_CANDIDATE_DELAY_MAX = 2000;   // Host 후보 최대 딜레이 (ms)
+const DRIVE_SYNC_RETRY_INTERVAL = 2000;  // Drive 동기화 재시도 간격 (2초)
+const DRIVE_SYNC_MAX_RETRIES = 5;        // Drive 동기화 최대 재시도 (총 ~10초 대기)
 const PRESENCE_THROTTLE = 500;           // Presence 스로틀링 (500ms)
 const CURSOR_THROTTLE = 33;              // 커서 스로틀링 (~30fps)
 const ELECTION_WAIT_MS = 5000;           // Host 선출 대기 시간 (5초)
@@ -234,24 +236,28 @@ export class CollaborationManager extends EventTarget {
    * @private
    */
   async _tryBecomeHost() {
-    // 랜덤 딜레이 (500~2000ms) - Drive 동기화 대기
-    const delay = HOST_CANDIDATE_DELAY_MIN +
+    // 초기 랜덤 딜레이 (500~2000ms) - Race Condition 방지
+    const initialDelay = HOST_CANDIDATE_DELAY_MIN +
       Math.random() * (HOST_CANDIDATE_DELAY_MAX - HOST_CANDIDATE_DELAY_MIN);
-    log.info('Host 후보 딜레이', { delay: Math.round(delay) });
-    await this._delay(delay);
+    log.info('Host 후보 초기 딜레이', { delay: Math.round(initialDelay) });
+    await this._delay(initialDelay);
 
-    // session.json 재확인 (다른 사람이 먼저 Host가 되었을 수 있음)
-    try {
-      const result = await window.electronAPI.wsReadSession(this.sessionPath);
-      if (result.success && result.data) {
-        const session = result.data;
+    // Google Drive 동기화 대기: 반복 확인
+    // Drive가 다른 PC의 session.json을 동기화하는 데 수 초~십수 초 걸릴 수 있음
+    for (let retry = 0; retry < DRIVE_SYNC_MAX_RETRIES; retry++) {
+      try {
+        const result = await window.electronAPI.wsReadSession(this.sessionPath);
+        if (result.success && result.data) {
+          const session = result.data;
 
-        // 만료된 session.json은 무시 (이전 Host의 잔여 파일)
-        const elapsed = Date.now() - new Date(session.createdAt).getTime();
-        if (elapsed > SESSION_EXPIRY_MS) {
-          log.info('딜레이 후 session.json 만료됨, 무시하고 Host 진행', { elapsed });
-        } else {
-          log.info('딜레이 후 session.json 발견, Client 모드로 전환');
+          // 만료된 session.json은 무시 (이전 Host의 잔여 파일)
+          const elapsed = Date.now() - new Date(session.createdAt).getTime();
+          if (elapsed > SESSION_EXPIRY_MS) {
+            log.info('session.json 만료됨, 무시하고 Host 진행', { elapsed, retry });
+            break;
+          }
+
+          log.info('session.json 발견, Client 모드로 전환', { retry, hostIp: session.hostIp });
           // localhost 우선 시도 (같은 PC 테스트용)
           let connected = await wsClient.connect(`ws://127.0.0.1:${session.port}`);
           if (!connected) {
@@ -260,12 +266,24 @@ export class CollaborationManager extends EventTarget {
           if (connected) {
             return { role: 'client', hostIp: session.hostIp, port: session.port };
           }
+          // 연결 실패 → 오래된 session (Host 비정상 종료) → Host 진행
+          log.info('session.json 있지만 연결 실패, Host 진행', { retry });
+          break;
         }
+      } catch {
+        // session.json 없음 → 다음 재시도에서 다시 확인
       }
-    } catch {
-      // session.json 아직 없음 → Host 진행
+
+      // 마지막 시도가 아니면 Drive 동기화 대기
+      if (retry < DRIVE_SYNC_MAX_RETRIES - 1) {
+        log.info('session.json 미발견, Drive 동기화 대기', {
+          retry, nextRetryIn: DRIVE_SYNC_RETRY_INTERVAL
+        });
+        await this._delay(DRIVE_SYNC_RETRY_INTERVAL);
+      }
     }
 
+    log.info('Drive 동기화 재시도 완료, Host로 진행');
     return { role: 'host' };
   }
 
