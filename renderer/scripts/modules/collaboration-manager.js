@@ -192,13 +192,26 @@ export class CollaborationManager extends EventTarget {
         }
 
         // 3. WebSocket 연결 시도
+        // 같은 PC에서 테스트할 때 물리 IP(예: 172.30.1.4)로 접속하면
+        // Windows 방화벽이 차단하므로, localhost(127.0.0.1)를 먼저 시도한다.
+        // localhost 연결 실패 시(다른 PC인 경우) 물리 IP로 재시도.
         log.info('session.json 발견, Client 연결 시도', {
           hostIp: session.hostIp,
           port: session.port,
           hostName: session.hostName
         });
 
-        const connected = await wsClient.connect(`ws://${session.hostIp}:${session.port}`);
+        // 먼저 localhost로 시도 (같은 PC면 바로 성공, 다른 PC면 빠르게 실패)
+        log.info('localhost 우선 연결 시도 (같은 PC 테스트용)');
+        let connected = await wsClient.connect(`ws://127.0.0.1:${session.port}`);
+        if (connected) {
+          log.info('localhost 연결 성공 (같은 PC)');
+          return { role: 'client', hostIp: session.hostIp, port: session.port };
+        }
+
+        // localhost 실패 → 물리 IP로 재시도 (다른 PC인 경우)
+        log.info('localhost 연결 실패, 물리 IP로 재시도', { hostIp: session.hostIp });
+        connected = await wsClient.connect(`ws://${session.hostIp}:${session.port}`);
         if (connected) {
           return { role: 'client', hostIp: session.hostIp, port: session.port };
         }
@@ -239,7 +252,11 @@ export class CollaborationManager extends EventTarget {
           log.info('딜레이 후 session.json 만료됨, 무시하고 Host 진행', { elapsed });
         } else {
           log.info('딜레이 후 session.json 발견, Client 모드로 전환');
-          const connected = await wsClient.connect(`ws://${session.hostIp}:${session.port}`);
+          // localhost 우선 시도 (같은 PC 테스트용)
+          let connected = await wsClient.connect(`ws://127.0.0.1:${session.port}`);
+          if (!connected) {
+            connected = await wsClient.connect(`ws://${session.hostIp}:${session.port}`);
+          }
           if (connected) {
             return { role: 'client', hostIp: session.hostIp, port: session.port };
           }
