@@ -58,6 +58,11 @@ export class ReviewDataManager extends EventTarget {
     // 저장 동시성 제어
     this._savePromise = null;  // 저장 중인 Promise (락)
 
+    // 파일 동기화 루프 방지
+    this._lastRemoteSyncAt = 0;  // 마지막 원격 동기화 시각
+    this._lastSaveAt = 0;        // 마지막 저장 시각
+    this._remoteSyncCooldown = 3000; // 원격 동기화 후 자동저장 쿨다운 (3초)
+
     // 이벤트 바인딩
     this._onDataChanged = this._onDataChanged.bind(this);
 
@@ -310,6 +315,7 @@ export class ReviewDataManager extends EventTarget {
       await window.electronAPI.saveReview(this.currentBframePath, data);
 
       this.isDirty = false;
+      this._lastSaveAt = Date.now();
 
       log.info('.bframe 파일 저장됨', {
         path: this.currentBframePath,
@@ -492,6 +498,9 @@ export class ReviewDataManager extends EventTarget {
     this._cancelAutoSave();
     const wasLoading = this.isLoading;
     this.isLoading = true;
+
+    // 원격 동기화 시각 기록 (자동저장 루프 방지)
+    this._lastRemoteSyncAt = Date.now();
 
     try {
       // 원격 데이터 로드
@@ -818,6 +827,16 @@ export class ReviewDataManager extends EventTarget {
 
     this.autoSaveTimer = setTimeout(async () => {
       if (this.isDirty) {
+        // 원격 동기화 직후에는 자동저장 억제 (Drive 동기화 루프 방지)
+        const sincRemoteSync = Date.now() - this._lastRemoteSyncAt;
+        if (sincRemoteSync < this._remoteSyncCooldown) {
+          log.info('자동 저장 억제: 원격 동기화 직후', {
+            sincRemoteSync,
+            cooldown: this._remoteSyncCooldown
+          });
+          return;
+        }
+
         log.info('자동 저장 실행');
         await this.save();
       }

@@ -6486,6 +6486,13 @@ async function initApp() {
     if (now - lastSyncTime < MIN_SYNC_INTERVAL) return;
     lastSyncTime = now;
 
+    // 로컬 저장 직후 파일 변경 감지 무시 (자기 자신의 저장에 반응하지 않음)
+    const sinceLastSave = now - (reviewDataManager._lastSaveAt || 0);
+    if (sinceLastSave < 2000) {
+      log.debug('파일 변경 무시: 로컬 저장 직후', { sinceLastSave });
+      return;
+    }
+
     log.info('파일 변경 감지됨, 즉시 동기화', { filePath });
 
     try {

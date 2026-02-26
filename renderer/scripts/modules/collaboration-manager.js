@@ -356,11 +356,11 @@ export class CollaborationManager extends EventTarget {
       }
     }
 
+    // 메시지 수신 설정을 JOIN 전에 등록 (WELCOME 유실 방지)
+    this._setupWsClientEvents();
+
     // JOIN 메시지 전송
     wsClient.send(createMessage.join(this.sessionId, this.userName, this.userColor));
-
-    // wsClient 메시지 수신 설정
-    this._setupWsClientEvents();
 
     this.role = 'client';
     this.p2pEnabled = true;
