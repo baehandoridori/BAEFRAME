@@ -271,7 +271,8 @@ export class LiveblocksManager extends EventTarget {
    */
   getOthers() {
     if (!this._room) return [];
-    return this._room.getOthers().toArray();
+    const others = this._room.getOthers();
+    return Array.isArray(others) ? others : [...others];
   }
 
   /**
