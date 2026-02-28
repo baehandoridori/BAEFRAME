@@ -277,13 +277,21 @@ export class CommentSync {
   // ============================================================================
 
   _onStorageChanged(updates, commentLayers) {
-    this._isRemoteUpdate = true;
-    try {
-      // Storage 전체를 CommentManager에 반영 (단순하고 안정적)
-      this._loadStorageToLocal(commentLayers);
-    } finally {
-      this._isRemoteUpdate = false;
+    // 빠른 연속 변경 시 debounce하여 재구축 최소화 (150ms)
+    this._pendingCommentLayers = commentLayers;
+    if (this._storageDebounceTimer) {
+      clearTimeout(this._storageDebounceTimer);
     }
+    this._storageDebounceTimer = setTimeout(() => {
+      this._storageDebounceTimer = null;
+      this._isRemoteUpdate = true;
+      try {
+        this._loadStorageToLocal(this._pendingCommentLayers);
+      } finally {
+        this._isRemoteUpdate = false;
+        this._pendingCommentLayers = null;
+      }
+    }, 150);
   }
 
   _onHighlightsChanged(highlights) {

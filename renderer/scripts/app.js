@@ -7073,13 +7073,16 @@ async function initApp() {
    * 타임라인에 원격 재생헤드 표시
    */
   function renderRemotePlayheads(collaborators) {
-    const tracksContainer = document.querySelector('.timeline-tracks-container');
-    if (!tracksContainer) return;
+    const timelineTracks = document.getElementById('timelineTracks');
+    if (!timelineTracks) return;
 
     // 기존 원격 플레이헤드 제거
-    tracksContainer.querySelectorAll('.remote-playhead').forEach(el => el.remove());
+    timelineTracks.querySelectorAll('.remote-playhead').forEach(el => el.remove());
 
     if (!timeline.duration || timeline.duration <= 0) return;
+
+    const tracksContainer = document.getElementById('tracksContainer');
+    const containerWidth = tracksContainer?.offsetWidth || timelineTracks.offsetWidth || 1000;
 
     for (const collab of collaborators) {
       if (collab.currentFrame === null || collab.currentFrame === undefined) continue;
@@ -7087,7 +7090,6 @@ async function initApp() {
       const fps = timeline.fps || 24;
       const time = collab.currentFrame / fps;
       const percent = time / timeline.duration;
-      const containerWidth = tracksContainer.offsetWidth || 1000;
       const positionPx = percent * containerWidth;
 
       const line = document.createElement('div');
@@ -7102,17 +7104,24 @@ async function initApp() {
       label.textContent = collab.userName.substring(0, 2);
       line.appendChild(label);
 
-      tracksContainer.appendChild(line);
+      timelineTracks.appendChild(line);
     }
   }
 
   // Liveblocks 협업 이벤트 리스너
   liveblocksManager.addEventListener('collaboratorsChanged', (e) => {
-    updateCollaboratorsUI(e.detail.collaborators.map(c => ({
+    // 자기 자신 + 다른 사용자 모두 표시
+    const me = {
+      name: userSettings.getUserName(),
+      color: userSettings.getColorForName(userSettings.getUserName()) || '#4a9eff',
+      isMe: true
+    };
+    const others = e.detail.collaborators.map(c => ({
       name: c.userName,
       color: c.userColor,
       isMe: false
-    })));
+    }));
+    updateCollaboratorsUI([me, ...others]);
 
     // 원격 커서 렌더링
     renderRemoteCursors(e.detail.collaborators);
