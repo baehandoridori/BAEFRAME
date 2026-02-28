@@ -3324,6 +3324,11 @@ async function initApp() {
         await liveblocksManager.stop();
         commentSync.stop();
         drawingSync.stop();
+        // 협업 UI 초기화 (이전 세션의 아바타/인원 표시 제거)
+        updateCollaboratorsUI([]);
+        // 원격 커서 및 재생헤드 제거
+        document.querySelectorAll('.remote-cursor').forEach(el => el.remove());
+        document.querySelectorAll('.remote-playhead').forEach(el => el.remove());
         log.info('이전 협업 세션 종료');
       }
 
@@ -7170,15 +7175,22 @@ async function initApp() {
     // 현재 열린 파일이 아니면 무시
     if (filePath !== reviewDataManager.currentBframePath) return;
 
+    // Liveblocks 연결 중이면 파일 기반 동기화 건너뛰기
+    // (Liveblocks CRDT가 실시간으로 처리하므로 파일 감시 불필요)
+    if (liveblocksManager.isConnected) {
+      log.debug('파일 변경 감지됨, Liveblocks 연결 중이므로 건너뛰기', { filePath });
+      return;
+    }
+
     // 너무 빠른 연속 호출 방지
     const now = Date.now();
     if (now - lastSyncTime < MIN_SYNC_INTERVAL) return;
     lastSyncTime = now;
 
-    log.info('파일 변경 감지됨, 즉시 동기화', { filePath });
+    log.info('파일 변경 감지됨, 오프라인 모드 동기화', { filePath });
 
     try {
-      // ReviewDataManager의 reloadAndMerge 사용
+      // ReviewDataManager의 reloadAndMerge 사용 (오프라인 모드 전용)
       const result = await reviewDataManager.reloadAndMerge({ merge: true });
 
       if (result.success) {
