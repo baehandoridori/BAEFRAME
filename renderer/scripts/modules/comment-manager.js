@@ -912,6 +912,123 @@ export class CommentManager extends EventTarget {
   }
 
   /**
+   * 원격 델타: 마커 필드 직접 갱신 (fromJSON 없이)
+   * @param {string} markerId
+   * @param {Object} fields - 변경된 필드들 { text, resolved, x, y, ... }
+   */
+  applyRemoteMarkerUpdate(markerId, fields) {
+    const marker = this.getMarker(markerId);
+    if (!marker) return false;
+
+    const allowedFields = [
+      'text', 'startFrame', 'endFrame', 'resolved', 'x', 'y',
+      'colorKey', 'updatedAt', 'image', 'author', 'authorId'
+    ];
+    for (const key of allowedFields) {
+      if (fields[key] !== undefined) {
+        marker[key] = fields[key];
+      }
+    }
+
+    this._emit('markerUpdated', { marker, remote: true });
+    return true;
+  }
+
+  /**
+   * 원격 델타: 마커 추가 (fromJSON 없이)
+   * @param {Object} markerData - 마커 데이터
+   * @param {string} layerId - 대상 레이어 ID
+   */
+  applyRemoteMarkerAdd(markerData, layerId) {
+    // 중복 체크
+    if (this.getMarker(markerData.id)) return false;
+
+    const layer = this.layers.find(l => l.id === layerId) || this.getActiveLayer();
+    if (!layer) return false;
+
+    const marker = CommentMarker.fromJSON(markerData);
+    layer.addMarker(marker);
+    this._emit('markerAdded', { marker, remote: true });
+    return true;
+  }
+
+  /**
+   * 원격 델타: 마커 삭제 (fromJSON 없이)
+   */
+  applyRemoteMarkerDelete(markerId) {
+    const marker = this.getMarker(markerId);
+    if (!marker) return false;
+
+    marker.deleted = true;
+    marker.deletedAt = new Date();
+    this._emit('markerDeleted', { markerId, remote: true });
+    return true;
+  }
+
+  /**
+   * 원격 델타: 답글 추가
+   */
+  applyRemoteReplyAdd(markerId, replyData) {
+    const marker = this.getMarker(markerId);
+    if (!marker) return false;
+
+    // 중복 체크
+    if (marker.replies?.find(r => r.id === replyData.id)) return false;
+
+    const reply = {
+      ...replyData,
+      createdAt: replyData.createdAt ? new Date(replyData.createdAt) : new Date()
+    };
+    if (!marker.replies) marker.replies = [];
+    marker.replies.push(reply);
+    this._emit('replyAdded', { marker, reply, remote: true });
+    return true;
+  }
+
+  /**
+   * 원격 델타: 답글 삭제
+   */
+  applyRemoteReplyDelete(markerId, replyId) {
+    const marker = this.getMarker(markerId);
+    if (!marker || !marker.replies) return false;
+
+    const idx = marker.replies.findIndex(r => r.id === replyId);
+    if (idx === -1) return false;
+
+    marker.replies.splice(idx, 1);
+    this._emit('replyDeleted', { marker, replyId, remote: true });
+    return true;
+  }
+
+  /**
+   * 원격 델타: 레이어 추가
+   */
+  applyRemoteLayerAdd(layerData) {
+    if (this.layers.find(l => l.id === layerData.id)) return false;
+
+    const layer = new CommentLayer({
+      id: layerData.id,
+      name: layerData.name,
+      visible: layerData.visible
+    });
+    this.layers.push(layer);
+    this._emit('layersChanged', { remote: true });
+    return true;
+  }
+
+  /**
+   * 원격 델타: 레이어 삭제
+   */
+  applyRemoteLayerDelete(layerId) {
+    const idx = this.layers.findIndex(l => l.id === layerId);
+    if (idx === -1) return false;
+
+    this.layers.splice(idx, 1);
+    this._emit('layersChanged', { remote: true });
+    return true;
+  }
+
+  /**
    * JSON으로 내보내기
    */
   toJSON() {

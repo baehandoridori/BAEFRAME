@@ -276,22 +276,208 @@ export class CommentSync {
   // Remote → Local (Liveblocks Storage → CommentManager)
   // ============================================================================
 
+  /**
+   * Storage 변경 감지 → 델타 적용
+   * Liveblocks의 updates 배열을 분석하여 변경된 항목만 갱신
+   */
   _onStorageChanged(updates, commentLayers) {
-    // 빠른 연속 변경 시 debounce하여 재구축 최소화 (150ms)
-    this._pendingCommentLayers = commentLayers;
-    if (this._storageDebounceTimer) {
-      clearTimeout(this._storageDebounceTimer);
-    }
-    this._storageDebounceTimer = setTimeout(() => {
-      this._storageDebounceTimer = null;
-      this._isRemoteUpdate = true;
-      try {
-        this._loadStorageToLocal(this._pendingCommentLayers);
-      } finally {
-        this._isRemoteUpdate = false;
-        this._pendingCommentLayers = null;
+    this._isRemoteUpdate = true;
+    try {
+      // updates가 유효한 배열이면 델타 적용 시도
+      if (Array.isArray(updates) && updates.length > 0 && this._applyDelta(updates, commentLayers)) {
+        log.debug('델타 적용 성공', { updateCount: updates.length });
+        return;
       }
-    }, 150);
+
+      // 델타 적용 실패 시 전체 재구축 (폴백)
+      log.debug('전체 재구축 (폴백)');
+      this._loadStorageToLocal(commentLayers);
+    } finally {
+      this._isRemoteUpdate = false;
+    }
+  }
+
+  /**
+   * 델타(차분) 적용 - 변경된 마커/레이어만 갱신
+   * @returns {boolean} 성공 여부 (실패 시 false → 전체 재구축으로 폴백)
+   */
+  _applyDelta(updates, commentLayers) {
+    try {
+      for (const update of updates) {
+        const node = update.node || update;
+
+        // LiveList 변경 (아이템 추가/삭제)
+        if (update.type === 'LiveList') {
+          this._handleListUpdate(update, commentLayers);
+          continue;
+        }
+
+        // LiveObject 변경 (필드 업데이트)
+        if (update.type === 'LiveObject' || update.updates) {
+          this._handleObjectUpdate(update, commentLayers);
+          continue;
+        }
+
+        // 알 수 없는 타입 → 폴백
+        if (node && typeof node.get === 'function') {
+          // Liveblocks 노드로 추정 → 변경 타입 추론
+          const nodeId = node.get?.('id');
+          if (nodeId) {
+            this._handleNodeChange(node, nodeId, commentLayers);
+            continue;
+          }
+        }
+
+        // 처리 불가 → 폴백
+        log.debug('델타 처리 불가, 폴백', { updateType: update.type });
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      log.warn('델타 적용 중 오류, 폴백', { error: e.message });
+      return false;
+    }
+  }
+
+  /**
+   * LiveList 변경 처리 (마커/레이어 추가/삭제)
+   */
+  _handleListUpdate(update, commentLayers) {
+    // LiveList에 삽입/삭제 발생 시, 구조 변경이므로 전체 동기화
+    // 하지만 CommentManager의 applyRemote 메서드로 효율적으로 처리
+    this._syncStructureFromStorage(commentLayers);
+  }
+
+  /**
+   * LiveObject 변경 처리 (마커 필드 업데이트)
+   */
+  _handleObjectUpdate(update, _commentLayers) {
+    const node = update.node;
+    const changes = update.updates;
+
+    if (!node || typeof node.get !== 'function') return;
+
+    const nodeId = node.get('id');
+    if (!nodeId) return;
+
+    // 마커 업데이트인지 확인
+    const marker = this._cm.getMarker(nodeId);
+    if (marker && changes) {
+      // 변경된 필드만 추출
+      const fields = {};
+      for (const key of Object.keys(changes)) {
+        fields[key] = node.get(key);
+      }
+      this._cm.applyRemoteMarkerUpdate(nodeId, fields);
+      return;
+    }
+
+    // 마커가 아닌 경우 (레이어 등) → 구조 동기화
+    this._handleNodeChange(node, nodeId, _commentLayers);
+  }
+
+  /**
+   * 노드 변경 처리 (ID 기반 추론)
+   */
+  _handleNodeChange(node, nodeId, commentLayers) {
+    // 마커인지 확인
+    const marker = this._cm.getMarker(nodeId);
+    if (marker) {
+      // 마커 전체 필드를 Storage에서 읽어서 업데이트
+      const obj = node.toObject ? node.toObject() : node;
+      const repliesLive = node.get?.('replies');
+      const replies = repliesLive?.toArray?.().map(r =>
+        r.toObject ? r.toObject() : r
+      ) || [];
+      this._cm.applyRemoteMarkerUpdate(nodeId, { ...obj, replies });
+      return;
+    }
+
+    // 마커가 아니면 구조 변경 (레이어 추가/삭제 등)
+    this._syncStructureFromStorage(commentLayers);
+  }
+
+  /**
+   * 구조적 변경 시 효율적 동기화
+   * fromJSON 대신, 추가/삭제된 항목만 반영
+   */
+  _syncStructureFromStorage(commentLayers) {
+    if (!commentLayers) return;
+
+    const storageLayers = commentLayers.toArray();
+    const localLayerIds = new Set(this._cm.layers.map(l => l.id));
+    const storageLayerIds = new Set();
+
+    for (const liveLayer of storageLayers) {
+      const layerId = liveLayer.get('id');
+      storageLayerIds.add(layerId);
+
+      // 새 레이어 추가
+      if (!localLayerIds.has(layerId)) {
+        this._cm.applyRemoteLayerAdd({
+          id: layerId,
+          name: liveLayer.get('name'),
+          visible: liveLayer.get('visible')
+        });
+      }
+
+      // 마커 동기화
+      const markersLive = liveLayer.get('markers');
+      if (!markersLive) continue;
+
+      const localLayer = this._cm.layers.find(l => l.id === layerId);
+      const localMarkerIds = localLayer ? new Set(localLayer.getAllMarkers(true).map(m => m.id)) : new Set();
+
+      const storageMarkers = markersLive.toArray();
+      const storageMarkerIds = new Set();
+
+      for (const liveMarker of storageMarkers) {
+        const markerId = liveMarker.get('id');
+        const isDeleted = liveMarker.get('deleted');
+        storageMarkerIds.add(markerId);
+
+        if (isDeleted) {
+          // 삭제된 마커
+          if (localMarkerIds.has(markerId)) {
+            this._cm.applyRemoteMarkerDelete(markerId);
+          }
+          continue;
+        }
+
+        if (!localMarkerIds.has(markerId)) {
+          // 새 마커 추가
+          const obj = liveMarker.toObject ? liveMarker.toObject() : liveMarker;
+          const repliesLive = liveMarker.get('replies');
+          const replies = repliesLive?.toArray?.().map(r =>
+            r.toObject ? r.toObject() : r
+          ) || [];
+          this._cm.applyRemoteMarkerAdd({ ...obj, replies }, layerId);
+        } else {
+          // 기존 마커 업데이트
+          const obj = liveMarker.toObject ? liveMarker.toObject() : liveMarker;
+          const repliesLive = liveMarker.get('replies');
+          const replies = repliesLive?.toArray?.().map(r =>
+            r.toObject ? r.toObject() : r
+          ) || [];
+          this._cm.applyRemoteMarkerUpdate(markerId, { ...obj, replies });
+        }
+      }
+
+      // 로컬에만 있고 Storage에 없는 마커 삭제
+      for (const localId of localMarkerIds) {
+        if (!storageMarkerIds.has(localId)) {
+          this._cm.applyRemoteMarkerDelete(localId);
+        }
+      }
+    }
+
+    // 로컬에만 있고 Storage에 없는 레이어 삭제
+    for (const localId of localLayerIds) {
+      if (!storageLayerIds.has(localId)) {
+        this._cm.applyRemoteLayerDelete(localId);
+      }
+    }
   }
 
   _onHighlightsChanged(highlights) {

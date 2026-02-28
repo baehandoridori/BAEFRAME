@@ -26,7 +26,14 @@ export class DrawingSync {
     this._isRemoteUpdate = false;
     this._isSyncingToStorage = false;
 
+    // 실시간 스트로크 스트리밍용
+    this._strokeBuffer = [];
+    this._strokeFlushTimer = null;
+    this._isStroking = false;
+
     // 이벤트 핸들러 바인딩
+    this._onDrawStart = this._onDrawStart.bind(this);
+    this._onDrawMove = this._onDrawMove.bind(this);
     this._onDrawEnd = this._onDrawEnd.bind(this);
     this._onLayerCreated = this._onLayerCreated.bind(this);
     this._onLayerDeleted = this._onLayerDeleted.bind(this);
@@ -56,7 +63,12 @@ export class DrawingSync {
     // 로컬 그리기 메타데이터를 Storage에 업로드
     this._uploadMetaToStorage();
 
-    // Local → Remote 이벤트 리스너
+    // Local → Remote 이벤트 리스너 (스트로크 스트리밍 포함)
+    const drawingCanvas = this._dm.drawingCanvas;
+    if (drawingCanvas) {
+      drawingCanvas.addEventListener('drawstart', this._onDrawStart);
+      drawingCanvas.addEventListener('drawmove', this._onDrawMove);
+    }
     this._dm.addEventListener('drawend', this._onDrawEnd);
     this._dm.addEventListener('layerCreated', this._onLayerCreated);
     this._dm.addEventListener('layerDeleted', this._onLayerDeleted);
@@ -91,6 +103,11 @@ export class DrawingSync {
     });
     this._unsubscribers = [];
 
+    const drawingCanvas = this._dm.drawingCanvas;
+    if (drawingCanvas) {
+      drawingCanvas.removeEventListener('drawstart', this._onDrawStart);
+      drawingCanvas.removeEventListener('drawmove', this._onDrawMove);
+    }
     this._dm.removeEventListener('drawend', this._onDrawEnd);
     this._dm.removeEventListener('layerCreated', this._onLayerCreated);
     this._dm.removeEventListener('layerDeleted', this._onLayerDeleted);
@@ -115,9 +132,77 @@ export class DrawingSync {
   // ============================================================================
 
   /**
+   * 스트로크 시작 → 상대방에게 브러시 설정 전송
+   */
+  _onDrawStart(e) {
+    if (this._isRemoteUpdate) return;
+    if (!this._lm.hasOtherCollaborators()) return;
+
+    const { x, y, tool } = e.detail || {};
+    const layer = this._dm.getActiveLayer?.() || this._dm.activeLayer;
+    if (!layer) return;
+
+    const canvas = this._dm.drawingCanvas;
+    this._isStroking = true;
+    this._strokeBuffer = [];
+
+    this._lm.broadcastEvent({
+      type: 'STROKE_START',
+      layerId: layer.id,
+      frame: this._dm.currentFrame ?? 0,
+      x, y, tool,
+      color: canvas?.color || '#ff4757',
+      lineWidth: canvas?.lineWidth || 3,
+      opacity: canvas?.opacity ?? 1
+    });
+  }
+
+  /**
+   * 스트로크 진행 → 50ms 스로틀로 포인트 묶어서 전송
+   */
+  _onDrawMove(e) {
+    if (this._isRemoteUpdate || !this._isStroking) return;
+    if (!this._lm.hasOtherCollaborators()) return;
+
+    const { x, y } = e.detail || {};
+    this._strokeBuffer.push({ x, y });
+
+    // 50ms 스로틀: 포인트를 묶어서 한 번에 전송
+    if (!this._strokeFlushTimer) {
+      this._strokeFlushTimer = setTimeout(() => {
+        this._strokeFlushTimer = null;
+        if (this._strokeBuffer.length > 0) {
+          this._lm.broadcastEvent({
+            type: 'STROKE_MOVE',
+            points: this._strokeBuffer
+          });
+          this._strokeBuffer = [];
+        }
+      }, 50);
+    }
+  }
+
+  /**
    * 그리기 완료 시 캔버스 데이터 브로드캐스트
    */
   _onDrawEnd(_e) {
+    // 스트로크 종료 전송
+    if (this._isStroking && this._lm.hasOtherCollaborators()) {
+      // 남은 버퍼 플러시
+      if (this._strokeFlushTimer) {
+        clearTimeout(this._strokeFlushTimer);
+        this._strokeFlushTimer = null;
+      }
+      if (this._strokeBuffer.length > 0) {
+        this._lm.broadcastEvent({
+          type: 'STROKE_MOVE',
+          points: this._strokeBuffer
+        });
+        this._strokeBuffer = [];
+      }
+      this._lm.broadcastEvent({ type: 'STROKE_END' });
+    }
+    this._isStroking = false;
     if (this._isRemoteUpdate) return;
     if (!this._lm.hasOtherCollaborators()) return;
 
@@ -232,6 +317,15 @@ export class DrawingSync {
     case 'DRAWING_KEYFRAME_REMOVED':
       this._applyRemoteKeyframeRemoved(event);
       break;
+    case 'STROKE_START':
+      this._onRemoteStrokeStart(event);
+      break;
+    case 'STROKE_MOVE':
+      this._onRemoteStrokeMove(event);
+      break;
+    case 'STROKE_END':
+      this._onRemoteStrokeEnd();
+      break;
     }
   }
 
@@ -322,6 +416,112 @@ export class DrawingSync {
     } finally {
       this._isRemoteUpdate = false;
     }
+  }
+
+  // ============================================================================
+  // Remote Stroke Streaming (실시간 스트로크 수신)
+  // ============================================================================
+
+  /**
+   * 원격 스트로크 시작 → 임시 오버레이 캔버스 생성
+   */
+  _onRemoteStrokeStart(event) {
+    const { layerId, frame, x, y, color, lineWidth, opacity, tool } = event;
+
+    // 현재 프레임이 아니면 무시
+    const currentFrame = this._dm.currentFrame ?? 0;
+    if (frame !== currentFrame) return;
+
+    // 임시 오버레이 캔버스 생성/재사용
+    if (!this._remoteOverlay) {
+      this._createRemoteOverlay();
+    }
+    if (!this._remoteOverlay) return;
+
+    const ctx = this._remoteOverlay.getContext('2d');
+    ctx.clearRect(0, 0, this._remoteOverlay.width, this._remoteOverlay.height);
+
+    // 브러시 설정 저장
+    this._remoteStroke = {
+      layerId, frame, tool,
+      color: color || '#ff4757',
+      lineWidth: lineWidth || 3,
+      opacity: opacity ?? 1,
+      lastX: x,
+      lastY: y
+    };
+
+    this._remoteOverlay.style.display = 'block';
+    this._remoteOverlay.style.opacity = String(this._remoteStroke.opacity);
+  }
+
+  /**
+   * 원격 스트로크 이동 → 임시 캔버스에 선분 그리기
+   */
+  _onRemoteStrokeMove(event) {
+    const { points } = event;
+    if (!points?.length || !this._remoteStroke || !this._remoteOverlay) return;
+
+    const ctx = this._remoteOverlay.getContext('2d');
+    const stroke = this._remoteStroke;
+
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = stroke.lineWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
+
+    ctx.beginPath();
+    ctx.moveTo(stroke.lastX, stroke.lastY);
+
+    for (const pt of points) {
+      ctx.lineTo(pt.x, pt.y);
+    }
+    ctx.stroke();
+
+    // 마지막 포인트 저장
+    const lastPt = points[points.length - 1];
+    stroke.lastX = lastPt.x;
+    stroke.lastY = lastPt.y;
+  }
+
+  /**
+   * 원격 스트로크 종료 → 오버레이 클리어 (이후 최종 PNG가 옴)
+   */
+  _onRemoteStrokeEnd() {
+    this._remoteStroke = null;
+    if (this._remoteOverlay) {
+      const ctx = this._remoteOverlay.getContext('2d');
+      ctx.clearRect(0, 0, this._remoteOverlay.width, this._remoteOverlay.height);
+      this._remoteOverlay.style.display = 'none';
+    }
+  }
+
+  /**
+   * 원격 스트로크용 오버레이 캔버스 생성
+   */
+  _createRemoteOverlay() {
+    const drawingCanvas = this._dm.drawingCanvas?.canvas || document.getElementById('drawingCanvas');
+    if (!drawingCanvas) return;
+
+    const overlay = document.createElement('canvas');
+    overlay.id = 'remoteStrokeOverlay';
+    overlay.className = 'drawing-overlay remote-stroke-overlay';
+    overlay.width = drawingCanvas.width;
+    overlay.height = drawingCanvas.height;
+    overlay.style.cssText = `
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 25;
+      display: none;
+    `;
+
+    drawingCanvas.parentElement?.appendChild(overlay);
+    this._remoteOverlay = overlay;
+
+    log.debug('원격 스트로크 오버레이 캔버스 생성');
   }
 
   // ============================================================================

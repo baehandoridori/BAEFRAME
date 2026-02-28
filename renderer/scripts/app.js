@@ -818,12 +818,15 @@ async function initApp() {
 
   // 마커 추가됨
   commentManager.addEventListener('markerAdded', (e) => {
-    const { marker } = e.detail;
+    const { marker, remote } = e.detail;
     removePendingMarkerUI();
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
-    log.info('마커 추가됨', { id: marker.id, text: marker.text });
+    log.info('마커 추가됨', { id: marker.id, text: marker.text, remote: !!remote });
+
+    // 원격 변경은 Undo 스택에 넣지 않음
+    if (remote) return;
 
     // Undo 스택에 추가
     const markerData = marker.toJSON();
