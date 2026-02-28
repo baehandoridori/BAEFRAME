@@ -14,8 +14,66 @@ import {
   extractFileName,
   extractFileNameWithoutExt
 } from '../../../shared/schema.js';
-// mergeLayers는 오프라인 폴백에서만 사용 (Liveblocks 비활성 시)
-// import { mergeLayers } from './collaboration-manager.js';
+// 오프라인 머지 유틸리티 (Liveblocks 비활성 시 폴백)
+function mergeComments(localComments, remoteComments) {
+  const localMap = new Map(localComments.map(c => [c.id, c]));
+  const remoteMap = new Map(remoteComments.map(c => [c.id, c]));
+  const merged = [];
+  let added = 0;
+  let updated = 0;
+  const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+
+  for (const id of allIds) {
+    const local = localMap.get(id);
+    const remote = remoteMap.get(id);
+
+    if (!local && remote) {
+      merged.push(remote);
+      if (!remote.deleted) added++;
+    } else if (local && !remote) {
+      merged.push(local);
+    } else if (local && remote) {
+      const localTime = new Date(local.updatedAt || local.createdAt).getTime();
+      const remoteTime = new Date(remote.updatedAt || remote.createdAt).getTime();
+      if (remoteTime > localTime) {
+        merged.push(remote);
+        updated++;
+      } else {
+        merged.push(local);
+      }
+    }
+  }
+  return { merged, added, updated };
+}
+
+function mergeLayers(localLayers, remoteLayers) {
+  const localMap = new Map(localLayers.map(l => [l.id, l]));
+  const remoteMap = new Map(remoteLayers.map(l => [l.id, l]));
+  const merged = [];
+  let totalAdded = 0;
+  let totalUpdated = 0;
+  const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+
+  for (const id of allIds) {
+    const local = localMap.get(id);
+    const remote = remoteMap.get(id);
+
+    if (!local && remote) {
+      merged.push(remote);
+      totalAdded += remote.markers?.length || 0;
+    } else if (local && !remote) {
+      merged.push(local);
+    } else if (local && remote) {
+      const { merged: mergedMarkers, added, updated } = mergeComments(
+        local.markers || [], remote.markers || []
+      );
+      merged.push({ ...local, markers: mergedMarkers });
+      totalAdded += added;
+      totalUpdated += updated;
+    }
+  }
+  return { merged, added: totalAdded, updated: totalUpdated };
+}
 
 const log = createLogger('ReviewDataManager');
 
