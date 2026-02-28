@@ -368,6 +368,36 @@ body {
 }
 
 /* ========================================
+   Remote Playheads (타임라인 원격 재생헤드)
+   ======================================== */
+
+.remote-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid;
+  opacity: 0.6;
+  pointer-events: none;
+  z-index: 15;
+  transition: left 120ms ease-out;
+}
+
+.remote-playhead-label {
+  position: absolute;
+  top: 0;
+  left: -1px;
+  display: block;
+  padding: 1px 3px;
+  border-radius: 0 0 3px 0;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* ========================================
    Buttons
    ======================================== */
 .btn {

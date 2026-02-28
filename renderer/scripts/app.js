@@ -472,6 +472,11 @@ async function initApp() {
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
 
+    // Liveblocks Presence에 현재 프레임 전달 (원격 타임라인 표시용)
+    if (liveblocksManager.isConnected) {
+      liveblocksManager.updatePresence({ currentFrame });
+    }
+
     // 비디오 댓글 범위 오버레이 플레이헤드 업데이트
     if (typeof updateVideoCommentPlayhead === 'function') {
       updateVideoCommentPlayhead();
@@ -859,6 +864,13 @@ async function initApp() {
   // 답글 추가됨
   commentManager.addEventListener('replyAdded', (e) => {
     renderVideoMarkers();
+    updateCommentList();
+  });
+
+  // 원격 동기화로 인한 전체 갱신 (CommentSync의 fromJSON 호출 시)
+  commentManager.addEventListener('markersChanged', () => {
+    renderVideoMarkers();
+    updateTimelineMarkers();
     updateCommentList();
   });
 
@@ -3410,8 +3422,8 @@ async function initApp() {
       }
 
       // ====== Liveblocks 실시간 협업 세션 시작 ======
-      const userName = userSettings.userName || '익명';
-      const userColor = userSettings.themeColor || '#4a9eff';
+      const userName = userSettings.getUserName();
+      const userColor = userSettings.getColorForName(userName) || '#4a9eff';
       try {
         // .bframe에서 기존 Room ID 확인
         const bframeData = await window.electronAPI.loadReview(reviewDataManager.currentBframePath);
@@ -7057,9 +7069,45 @@ async function initApp() {
     liveblocksManager.updatePresence({ cursor: null });
   });
 
+  /**
+   * 타임라인에 원격 재생헤드 표시
+   */
+  function renderRemotePlayheads(collaborators) {
+    const tracksContainer = document.querySelector('.timeline-tracks-container');
+    if (!tracksContainer) return;
+
+    // 기존 원격 플레이헤드 제거
+    tracksContainer.querySelectorAll('.remote-playhead').forEach(el => el.remove());
+
+    if (!timeline.duration || timeline.duration <= 0) return;
+
+    for (const collab of collaborators) {
+      if (collab.currentFrame === null || collab.currentFrame === undefined) continue;
+
+      const fps = timeline.fps || 24;
+      const time = collab.currentFrame / fps;
+      const percent = time / timeline.duration;
+      const containerWidth = tracksContainer.offsetWidth || 1000;
+      const positionPx = percent * containerWidth;
+
+      const line = document.createElement('div');
+      line.className = 'remote-playhead';
+      line.style.left = `${positionPx}px`;
+      line.style.borderColor = collab.userColor;
+      line.title = collab.userName;
+
+      const label = document.createElement('span');
+      label.className = 'remote-playhead-label';
+      label.style.backgroundColor = collab.userColor;
+      label.textContent = collab.userName.substring(0, 2);
+      line.appendChild(label);
+
+      tracksContainer.appendChild(line);
+    }
+  }
+
   // Liveblocks 협업 이벤트 리스너
   liveblocksManager.addEventListener('collaboratorsChanged', (e) => {
-    log.info('협업자 목록 변경', e.detail);
     updateCollaboratorsUI(e.detail.collaborators.map(c => ({
       name: c.userName,
       color: c.userColor,
@@ -7068,6 +7116,9 @@ async function initApp() {
 
     // 원격 커서 렌더링
     renderRemoteCursors(e.detail.collaborators);
+
+    // 타임라인에 원격 재생헤드 표시
+    renderRemotePlayheads(e.detail.collaborators);
   });
 
   liveblocksManager.addEventListener('collaborationStarted', (e) => {
