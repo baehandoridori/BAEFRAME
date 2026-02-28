@@ -33,6 +33,10 @@ Thumbs.db
 # Liveblocks config (API Key 포함)
 renderer/scripts/config/liveblocks-config.js
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Electron
 electron-builder.yml.bak
 
