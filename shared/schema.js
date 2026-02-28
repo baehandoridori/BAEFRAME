@@ -98,6 +98,7 @@ export const SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.web
  * @property {number} fps - 프레임 레이트
  * @property {string} createdAt - 생성 시각 (ISO 8601)
  * @property {string} modifiedAt - 수정 시각 (ISO 8601)
+ * @property {string} [liveblocksRoomId] - Liveblocks Room ID (실시간 협업용)
  * @property {VersionInfo} [versionInfo] - 버전 정보 (Phase 1 이후)
  * @property {Array<ManualVersion>} [manualVersions] - 수동 추가된 버전 목록
  * @property {Object} comments - 댓글 데이터 { layers: CommentLayer[] }
@@ -128,6 +129,7 @@ export function createDefaultBframeData(options = {}) {
     fps: options.fps || 24,
     createdAt: now,
     modifiedAt: now,
+    liveblocksRoomId: null,
     versionInfo: null,
     manualVersions: [],
     comments: { layers: [] },

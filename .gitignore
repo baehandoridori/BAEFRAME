@@ -30,6 +30,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Liveblocks config (API Key 포함)
+renderer/scripts/config/liveblocks-config.js
+
 # Electron
 electron-builder.yml.bak
 

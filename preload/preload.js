@@ -97,9 +97,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('ffmpeg:pre-transcode-progress', (event, data) => callback(data));
   },
 
-  // ====== 협업 관련 ======
-  readCollabFile: (filePath) => ipcRenderer.invoke('collab:read', filePath),
-  writeCollabFile: (filePath, data) => ipcRenderer.invoke('collab:write', filePath, data),
+  // ====== 파일 관련 (유틸리티) ======
   getFileStats: (filePath) => ipcRenderer.invoke('file:get-stats', filePath),
 
   // ====== 재생목록 관련 ======

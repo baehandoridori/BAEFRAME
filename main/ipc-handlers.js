@@ -333,33 +333,6 @@ function setupIpcHandlers() {
     }
   });
 
-  // ====== 협업 파일 관련 ======
-
-  // 협업 파일 읽기 (.bframe.collab)
-  ipcMain.handle('collab:read', async (event, filePath) => {
-    try {
-      const content = await fs.promises.readFile(filePath, 'utf-8');
-      return JSON.parse(content);
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        return null; // 파일 없음
-      }
-      log.warn('협업 파일 읽기 실패', { filePath, error: error.message });
-      return null;
-    }
-  });
-
-  // 협업 파일 쓰기 (.bframe.collab)
-  ipcMain.handle('collab:write', async (event, filePath, data) => {
-    try {
-      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-      return { success: true };
-    } catch (error) {
-      log.error('협업 파일 쓰기 실패', { filePath, error: error.message });
-      throw error;
-    }
-  });
-
   // ====== 파일 감시 (File Watching) ======
   // 파일 변경 시 즉시 동기화를 위한 기능
 

@@ -8,13 +8,14 @@
 
 | Phase | 항목 | 수정 파일 | 이유 | 우선순위 | 상태 |
 |-------|------|----------|------|---------|------|
-| Phase 1 | 인프라 & 인증 | `package.json`, `liveblocks-manager.js`(신규), `liveblocks-auth.js`(신규), `ipc-handlers.js`, `preload.js` | SDK 설치, 인증 기반, Room 관리 | 높음 | ⬜ 대기 |
-| Phase 2 | 실시간 Presence & 커서 | `liveblocks-manager.js`, `app.js`, `app.css` | 마우스 커서 공유, 온라인 상태 표시 | 높음 | ⬜ 대기 |
-| Phase 3 | 댓글 CRDT 동기화 | `comment-sync.js`(신규), `comment-manager.js`, `review-data-manager.js` | CRDT 기반 충돌 없는 댓글 동기화 | 높음 | ⬜ 대기 |
-| Phase 4 | 그리기 브로드캐스트 | `drawing-sync.js`(신규), `drawing-manager.js` | 실시간 드로잉 동기화 | 중간 | ⬜ 대기 |
-| Phase 5 | 로컬 저장 통합 | `review-data-manager.js` | 오프라인 백업, 하이라이트 동기화 | 중간 | ⬜ 대기 |
-| Phase 6 | 웹 뷰어 통합 | `web-viewer/scripts/` | 데스크톱-웹 동일 Room 실시간 연동 | 낮음 | ⬜ 대기 |
-| Phase 7 | 기존 시스템 정리 | `collaboration-manager.js`, `app.js` | .collab 파일 기반 코드 제거 | 낮음 | ⬜ 대기 |
+| Phase 1 | 인프라 & SDK | `package.json`, `liveblocks-client.js`(번들), `liveblocks-config.js`(신규), `liveblocks-manager.js`(신규) | SDK 설치, esbuild 번들링, Public Key 인증, Room 관리 | 높음 | ✅ 완료 |
+| Phase 2 | 실시간 Presence & 커서 | `liveblocks-manager.js`, `app.js`, `main.css` | 마우스 커서 공유, 온라인 상태 표시 | 높음 | ✅ 완료 |
+| Phase 3 | 댓글 CRDT 동기화 | `comment-sync.js`(신규), `review-data-manager.js` | CRDT 기반 충돌 없는 댓글 동기화 | 높음 | ✅ 완료 |
+| Phase 4 | 그리기 브로드캐스트 | `drawing-sync.js`(신규) | 실시간 드로잉 동기화 (Broadcast + Storage 이원화) | 중간 | ✅ 완료 |
+| Phase 5 | 로컬 저장 통합 | `review-data-manager.js` | 오프라인 백업, liveblocksRoomId 저장, CRDT 머지 비활성화 | 중간 | ✅ 완료 |
+| Phase 6 | 기존 시스템 정리 | `collaboration-manager.js`(삭제), `app.js`, `ipc-handlers.js`, `preload.js` | .collab 파일 기반 코드 제거 | 높음 | ✅ 완료 |
+| Phase 7 | 스키마 업데이트 | `shared/schema.js` | liveblocksRoomId 필드 추가 | 중간 | ✅ 완료 |
+| Phase 8 | 웹 뷰어 통합 | `web-viewer/scripts/` | 데스크톱-웹 동일 Room 실시간 연동 | 낮음 | ⬜ 대기 (향후) |
 
 ---
 

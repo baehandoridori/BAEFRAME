@@ -14,7 +14,8 @@ import {
   extractFileName,
   extractFileNameWithoutExt
 } from '../../../shared/schema.js';
-import { mergeLayers } from './collaboration-manager.js';
+// mergeLayers는 오프라인 폴백에서만 사용 (Liveblocks 비활성 시)
+// import { mergeLayers } from './collaboration-manager.js';
 
 const log = createLogger('ReviewDataManager');
 
@@ -61,8 +62,8 @@ export class ReviewDataManager extends EventTarget {
     // 이벤트 바인딩
     this._onDataChanged = this._onDataChanged.bind(this);
 
-    // 협업 매니저 연결 (저장 전 머지용)
-    this._collaborationManager = null;
+    // Liveblocks 매니저 연결 (실시간 협업용)
+    this._liveblocksManager = null;
 
     log.info('ReviewDataManager 초기화됨', {
       autoSave: this.autoSaveEnabled,
@@ -71,12 +72,12 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
-   * CollaborationManager 연결 (협업 중 저장 시 머지용)
-   * @param {CollaborationManager} manager
+   * LiveblocksManager 연결 (실시간 협업용)
+   * @param {LiveblocksManager} manager
    */
-  setCollaborationManager(manager) {
-    this._collaborationManager = manager;
-    log.info('CollaborationManager 연결됨');
+  setLiveblocksManager(manager) {
+    this._liveblocksManager = manager;
+    log.info('LiveblocksManager 연결됨');
   }
 
   /**
@@ -223,13 +224,15 @@ export class ReviewDataManager extends EventTarget {
   /**
    * 실제 저장 수행 (내부용)
    */
-  async _doSave(options = {}) {
+  async _doSave(_options = {}) {
     try {
-      let data = this._collectData();
+      const data = this._collectData();
 
-      // 협업 중이면 머지 후 저장 (덮어쓰기 방지)
-      if (!options.skipMerge && this._collaborationManager?.hasOtherCollaborators()) {
-        data = await this._mergeBeforeSave(data);
+      // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
+      // 로컬 .bframe 스냅샷만 저장 (오프라인 백업 역할)
+      if (this._liveblocksManager?.isConnected) {
+        // liveblocksRoomId 포함
+        data.liveblocksRoomId = this._liveblocksManager.roomId || null;
       }
 
       await window.electronAPI.saveReview(this.currentBframePath, data);
@@ -240,7 +243,7 @@ export class ReviewDataManager extends EventTarget {
         path: this.currentBframePath,
         commentLayers: data.comments?.layers?.length || 0,
         drawingLayers: data.drawings?.layers?.length || 0,
-        merged: !options.skipMerge && this._collaborationManager?.hasOtherCollaborators()
+        liveblocksConnected: !!this._liveblocksManager?.isConnected
       });
 
       this._emit('saved', { path: this.currentBframePath });
@@ -587,6 +590,9 @@ export class ReviewDataManager extends EventTarget {
       createdAt: this._createdAt || now,
       modifiedAt: now,
 
+      // Liveblocks Room ID (실시간 협업용)
+      liveblocksRoomId: this._liveblocksRoomId || null,
+
       // 버전 관리 필드
       versionInfo: this._versionInfo || null,
       manualVersions: this._manualVersions || [],
@@ -606,6 +612,9 @@ export class ReviewDataManager extends EventTarget {
     this._createdAt = data.createdAt;
     this._modifiedAt = data.modifiedAt;  // 머지 비교용
     this._fps = data.fps || 24;
+
+    // Liveblocks Room ID
+    this._liveblocksRoomId = data.liveblocksRoomId || null;
 
     // 버전 관리 정보
     this._versionInfo = data.versionInfo || null;
@@ -642,6 +651,23 @@ export class ReviewDataManager extends EventTarget {
    */
   getFps() {
     return this._fps || 24;
+  }
+
+  /**
+   * Liveblocks Room ID 가져오기
+   * @returns {string|null}
+   */
+  getLiveblocksRoomId() {
+    return this._liveblocksRoomId || null;
+  }
+
+  /**
+   * Liveblocks Room ID 설정
+   * @param {string} roomId
+   */
+  setLiveblocksRoomId(roomId) {
+    this._liveblocksRoomId = roomId;
+    this.isDirty = true;
   }
 
   /**
@@ -719,10 +745,7 @@ export class ReviewDataManager extends EventTarget {
     this.isDirty = true;
     this._emit('dataChanged', { event: e.type });
 
-    // 협업 매니저에 활동 기록 (동기화 간격 동적 조정용)
-    if (this._collaborationManager) {
-      this._collaborationManager.recordActivity();
-    }
+    // Liveblocks는 자동으로 활동을 감지하므로 별도 기록 불필요
 
     // 자동 저장 스케줄
     if (this.autoSaveEnabled) {
