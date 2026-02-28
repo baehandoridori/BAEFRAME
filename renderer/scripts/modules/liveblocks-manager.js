@@ -13,14 +13,8 @@
 import { createClient, LiveList, LiveObject, LiveMap } from '../lib/liveblocks-client.js';
 import { createLogger } from '../logger.js';
 
-// config 파일에서 Public Key 로드 (gitignored — 없을 수 있음)
-let LIVEBLOCKS_PUBLIC_KEY = null;
-try {
-  const config = await import('../config/liveblocks-config.js');
-  LIVEBLOCKS_PUBLIC_KEY = config.LIVEBLOCKS_PUBLIC_KEY;
-} catch {
-  console.warn('[LiveblocksManager] liveblocks-config.js를 찾을 수 없습니다. 실시간 협업이 비활성화됩니다.');
-}
+// Liveblocks Public Key (클라이언트용 공개 키 — 코드에 포함해도 안전)
+const LIVEBLOCKS_PUBLIC_KEY = 'pk_dev_lKwyJLI2vKSI63mnDwK1zh6yKWzLflm_YbNPjY-l7VVLNS7q8M5hWdlbPO1TieUO';
 
 // CommentSync, DrawingSync에서 LiveObject/LiveList를 사용할 수 있도록 global에 등록
 globalThis.__LiveObject = LiveObject;
@@ -103,12 +97,6 @@ export class LiveblocksManager extends EventTarget {
   async start(bframePath, userName, userColor, existingRoomId) {
     if (this._room) {
       await this.stop();
-    }
-
-    // Public Key가 없으면 실시간 협업 비활성화
-    if (!LIVEBLOCKS_PUBLIC_KEY) {
-      log.warn('Liveblocks Public Key가 설정되지 않음. 실시간 협업이 비활성화됩니다.');
-      return { roomId: null, isNewRoom: false };
     }
 
     this._bframePath = bframePath;

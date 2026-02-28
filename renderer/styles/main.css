@@ -45,7 +45,7 @@
   --draw-white: #ffffff;
 
   /* 타이포그래피 */
-  --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: 'SF Mono', 'Consolas', monospace;
 
   /* 그림자 */

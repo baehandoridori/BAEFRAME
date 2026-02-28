@@ -3424,22 +3424,18 @@ async function initApp() {
           existingRoomId
         );
 
-        if (roomId) {
-          // 새 Room이면 Room ID를 .bframe에 저장
-          if (isNewRoom && reviewDataManager.currentBframePath) {
-            reviewDataManager.setLiveblocksRoomId(roomId);
-            await reviewDataManager.save({ skipMerge: true });
-          }
-
-          // 댓글/그리기 동기화 시작
-          const storageEmpty = (liveblocksManager.getStorage()?.get('commentLayers')?.toArray()?.length || 0) === 0;
-          await commentSync.start({ uploadLocal: storageEmpty });
-          drawingSync.start();
-
-          log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
-        } else {
-          log.info('Liveblocks 비활성 - 로컬 모드로 작동');
+        // 새 Room이면 Room ID를 .bframe에 저장
+        if (isNewRoom && reviewDataManager.currentBframePath) {
+          reviewDataManager.setLiveblocksRoomId(roomId);
+          await reviewDataManager.save({ skipMerge: true });
         }
+
+        // 댓글/그리기 동기화 시작
+        const storageEmpty = (liveblocksManager.getStorage()?.get('commentLayers')?.toArray()?.length || 0) === 0;
+        await commentSync.start({ uploadLocal: storageEmpty });
+        drawingSync.start();
+
+        log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
       } catch (error) {
         log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
       }
