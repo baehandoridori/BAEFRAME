@@ -210,10 +210,14 @@ export class LiveblocksManager extends EventTarget {
     });
     this._unsubscribers = [];
 
-    // 스로틀 타이머 정리
+    // 스로틀 타이머 정리 및 미전송 Presence flush
     if (this._presenceThrottleTimer) {
       clearTimeout(this._presenceThrottleTimer);
       this._presenceThrottleTimer = null;
+    }
+    if (this._pendingPresence && this._room) {
+      try { this._room.updatePresence(this._pendingPresence); } catch (e) { /* 무시 */ }
+      this._pendingPresence = null;
     }
 
     // Room 퇴장
@@ -389,6 +393,7 @@ export class LiveblocksManager extends EventTarget {
     const unsubConnection = this._room.subscribe('lost-connection', (event) => {
       if (event === 'lost') {
         this._connectionStatus = 'reconnecting';
+        this._isConnected = false;
         this._emit('connectionStatusChanged', { status: 'reconnecting' });
         log.warn('연결 끊김, 재연결 시도 중');
       } else if (event === 'restored') {

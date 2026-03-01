@@ -30,6 +30,7 @@ export class CommentSync {
     this._onMarkerDeleted = this._onMarkerDeleted.bind(this);
     this._onReplyAdded = this._onReplyAdded.bind(this);
     this._onReplyDeleted = this._onReplyDeleted.bind(this);
+    this._onReplyUpdated = this._onReplyUpdated.bind(this);
     this._onLayerAdded = this._onLayerAdded.bind(this);
     this._onLayerRemoved = this._onLayerRemoved.bind(this);
     this._onBroadcast = this._onBroadcast.bind(this);
@@ -51,6 +52,7 @@ export class CommentSync {
     this._cm.addEventListener('markerDeleted', this._onMarkerDeleted);
     this._cm.addEventListener('replyAdded', this._onReplyAdded);
     this._cm.addEventListener('replyDeleted', this._onReplyDeleted);
+    this._cm.addEventListener('replyUpdated', this._onReplyUpdated);
     this._cm.addEventListener('layerAdded', this._onLayerAdded);
     this._cm.addEventListener('layerRemoved', this._onLayerRemoved);
 
@@ -71,6 +73,7 @@ export class CommentSync {
     this._cm.removeEventListener('markerDeleted', this._onMarkerDeleted);
     this._cm.removeEventListener('replyAdded', this._onReplyAdded);
     this._cm.removeEventListener('replyDeleted', this._onReplyDeleted);
+    this._cm.removeEventListener('replyUpdated', this._onReplyUpdated);
     this._cm.removeEventListener('layerAdded', this._onLayerAdded);
     this._cm.removeEventListener('layerRemoved', this._onLayerRemoved);
     this._lm.removeEventListener('broadcastReceived', this._onBroadcast);
@@ -146,8 +149,24 @@ export class CommentSync {
         id: reply.id,
         text: reply.text || reply.content || '',
         author: reply.author || '',
-        createdAt: reply.createdAt || new Date().toISOString()
+        createdAt: this._toISOString(reply.createdAt) || new Date().toISOString(),
+        image: reply.image || null,
+        imageWidth: reply.imageWidth || null,
+        imageHeight: reply.imageHeight || null
       }
+    });
+  }
+
+  _onReplyUpdated(e) {
+    if (this._isRemoteUpdate) return;
+    const { markerId, replyId, updates } = e.detail || {};
+    if (!markerId || !replyId) return;
+
+    this._lm.broadcastEvent({
+      type: 'COMMENT_REPLY_UPDATED',
+      markerId,
+      replyId,
+      updates: { text: updates?.text }
     });
   }
 
@@ -215,6 +234,9 @@ export class CommentSync {
       case 'COMMENT_REPLY_ADDED':
         this._applyRemoteReplyAdd(event);
         break;
+      case 'COMMENT_REPLY_UPDATED':
+        this._applyRemoteReplyUpdate(event);
+        break;
       case 'COMMENT_REPLY_DELETED':
         this._applyRemoteReplyDelete(event);
         break;
@@ -268,6 +290,26 @@ export class CommentSync {
     log.debug('원격 답글 추가 적용', { markerId, replyId: reply.id });
   }
 
+  _applyRemoteReplyUpdate(event) {
+    const { markerId, replyId, updates } = event;
+    if (!markerId || !replyId || !updates) return;
+
+    const marker = this._cm.getMarker(markerId);
+    if (!marker) return;
+
+    const reply = marker.replies?.find(r => r.id === replyId);
+    if (!reply) return;
+
+    if (updates.text !== undefined) {
+      reply.text = updates.text;
+    }
+    marker.updatedAt = new Date().toISOString();
+
+    this._cm._emit('markerUpdated', { marker });
+    this._cm._emit('markersChanged');
+    log.debug('원격 답글 수정 적용', { markerId, replyId });
+  }
+
   _applyRemoteReplyDelete(event) {
     const { markerId, replyId } = event;
     if (!markerId || !replyId) return;
@@ -304,7 +346,10 @@ export class CommentSync {
       id: r.id,
       text: r.text || r.content || '',
       author: r.author || '',
-      createdAt: r.createdAt || new Date().toISOString()
+      createdAt: this._toISOString(r.createdAt) || new Date().toISOString(),
+      image: r.image || null,
+      imageWidth: r.imageWidth || null,
+      imageHeight: r.imageHeight || null
     }));
 
     return {
@@ -316,12 +361,21 @@ export class CommentSync {
       text: marker.text || marker.content || '',
       author: marker.author || '',
       authorId: marker.authorId || '',
-      createdAt: marker.createdAt || new Date().toISOString(),
-      updatedAt: marker.updatedAt || new Date().toISOString(),
+      createdAt: this._toISOString(marker.createdAt) || new Date().toISOString(),
+      updatedAt: this._toISOString(marker.updatedAt) || new Date().toISOString(),
       resolved: marker.resolved || false,
       colorKey: marker.colorKey || 'default',
       image: marker.image || null,
       replies
     };
+  }
+
+  /**
+   * Date 객체/문자열을 ISO 문자열로 변환
+   */
+  _toISOString(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value.toISOString();
+    return value;
   }
 }

@@ -690,6 +690,7 @@ export class CommentManager extends EventTarget {
     }
     marker.updatedAt = new Date();
 
+    this._emit('replyUpdated', { markerId, replyId, updates });
     this._emit('markerUpdated', { marker });
     this._emit('markersChanged');
     return true;
@@ -828,6 +829,7 @@ export class CommentManager extends EventTarget {
       color: colors[this.layers.length % colors.length]
     });
     this.layers.push(layer);
+    this._emit('layerAdded', { layer });
     this._emit('layersChanged');
     return layer;
   }
@@ -848,6 +850,7 @@ export class CommentManager extends EventTarget {
       this.activeLayerId = this.layers[0].id;
     }
 
+    this._emit('layerRemoved', { layerId });
     this._emit('layersChanged');
     this._emit('markersChanged');
     return true;

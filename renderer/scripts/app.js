@@ -3321,9 +3321,14 @@ async function initApp() {
       if (reviewDataManager.currentBframePath) {
         await window.electronAPI.watchFileStop(reviewDataManager.currentBframePath);
         log.info('이전 파일 감시 중지', { path: reviewDataManager.currentBframePath });
-        await liveblocksManager.stop();
-        commentSync.stop();
-        drawingSync.stop();
+        try {
+          await liveblocksManager.stop();
+        } catch (e) {
+          log.warn('Liveblocks 세션 종료 중 오류', { error: e.message });
+        } finally {
+          commentSync.stop();
+          drawingSync.stop();
+        }
         // 협업 UI 초기화 (이전 세션의 아바타/인원 표시 제거)
         updateCollaboratorsUI([]);
         // 원격 커서 및 재생헤드 제거

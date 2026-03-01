@@ -153,7 +153,7 @@ export class DrawingSync {
   /**
    * 그리기 완료 시 캔버스 데이터 브로드캐스트
    */
-  _onDrawEnd(_e) {
+  async _onDrawEnd(_e) {
     // 스트로크 종료 전송
     if (this._isStroking && this._lm.hasOtherCollaborators()) {
       // 남은 버퍼 플러시
@@ -181,26 +181,30 @@ export class DrawingSync {
     const keyframe = layer.getKeyframeAtFrame?.(currentFrame);
     if (!keyframe?.canvasData) return;
 
-    const canvasData = keyframe.canvasData;
-    const dataSize = typeof canvasData === 'string' ? canvasData.length : 0;
+    let sendData = keyframe.canvasData;
+    const dataSize = typeof sendData === 'string' ? sendData.length : 0;
 
     if (dataSize > MAX_BROADCAST_SIZE) {
       log.warn('캔버스 데이터가 1MB 초과, 품질 낮춰서 전송', {
         size: (dataSize / 1024).toFixed(0) + 'KB'
       });
+      const reduced = await this._reduceCanvasData(sendData);
+      if (reduced) {
+        sendData = reduced;
+      }
     }
 
     this._lm.broadcastEvent({
       type: 'DRAWING_KEYFRAME_UPDATE',
       layerId: layer.id,
       frame: keyframe.frame,
-      canvasData
+      canvasData: sendData
     });
 
     log.debug('그리기 브로드캐스트 전송', {
       layerId: layer.id,
       frame: keyframe.frame,
-      size: (dataSize / 1024).toFixed(0) + 'KB'
+      size: ((typeof sendData === 'string' ? sendData.length : 0) / 1024).toFixed(0) + 'KB'
     });
   }
 
@@ -280,17 +284,23 @@ export class DrawingSync {
     }
   }
 
-  _applyRemoteKeyframe(event) {
+  async _applyRemoteKeyframe(event) {
     const { layerId, frame, canvasData } = event;
     if (!layerId || frame === undefined || !canvasData) return;
 
     this._isRemoteUpdate = true;
     try {
       const layers = this._dm.getLayers?.() || this._dm.layers || [];
-      const layer = layers.find(l => l.id === layerId);
+      let layer = layers.find(l => l.id === layerId);
       if (!layer) {
-        log.debug('원격 키프레임: 레이어를 찾을 수 없음', { layerId });
-        return;
+        // 레이어 생성 Broadcast가 아직 도착하지 않았을 수 있음 — 잠시 대기
+        await new Promise(r => setTimeout(r, 200));
+        const retryLayers = this._dm.getLayers?.() || this._dm.layers || [];
+        layer = retryLayers.find(l => l.id === layerId);
+        if (!layer) {
+          log.debug('원격 키프레임: 레이어를 찾을 수 없음', { layerId });
+          return;
+        }
       }
 
       // 키프레임 찾기 또는 생성
@@ -301,6 +311,8 @@ export class DrawingSync {
 
       if (keyframe) {
         keyframe.setCanvasData?.(canvasData) || (keyframe.canvasData = canvasData);
+        keyframe._cachedImage = null;
+        keyframe._cachedSrc = null;
         keyframe.isEmpty = false;
 
         // 현재 프레임이면 화면 갱신
@@ -445,6 +457,34 @@ export class DrawingSync {
       const ctx = this._remoteOverlay.getContext('2d');
       ctx.clearRect(0, 0, this._remoteOverlay.width, this._remoteOverlay.height);
       this._remoteOverlay.style.display = 'none';
+    }
+  }
+
+  /**
+   * 캔버스 데이터를 낮은 품질로 재인코딩 (1MB 초과 시)
+   */
+  async _reduceCanvasData(canvasData) {
+    try {
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = canvasData;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const reduced = canvas.toDataURL('image/png');
+      log.debug('캔버스 품질 축소 완료', {
+        before: (canvasData.length / 1024).toFixed(0) + 'KB',
+        after: (reduced.length / 1024).toFixed(0) + 'KB'
+      });
+      return reduced.length < canvasData.length ? reduced : null;
+    } catch (e) {
+      log.warn('캔버스 품질 축소 실패', { error: e.message });
+      return null;
     }
   }
 
