@@ -306,7 +306,7 @@ export class DrawingSync {
         // 현재 프레임이면 화면 갱신
         const currentFrame = this._dm.currentFrame ?? 0;
         if (frame === currentFrame || (layer.getKeyframeAtFrame?.(currentFrame) === keyframe)) {
-          this._dm.renderFrame?.();
+          this._dm.renderFrame?.(currentFrame);
         }
 
         log.debug('원격 키프레임 적용', { layerId, frame });
@@ -361,7 +361,7 @@ export class DrawingSync {
       const layer = layers.find(l => l.id === layerId);
       if (layer?.removeKeyframe) {
         layer.removeKeyframe(frame);
-        this._dm.renderFrame?.();
+        this._dm.renderFrame?.(this._dm.currentFrame ?? 0);
       }
       log.debug('원격 키프레임 삭제 적용', { layerId, frame });
     } finally {
