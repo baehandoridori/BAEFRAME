@@ -282,12 +282,29 @@ export class SplitViewManager {
     document.getElementById('splitBtnNextFrame')?.addEventListener('click', () => this._stepFrame(1));
     document.getElementById('splitBtnLast')?.addEventListener('click', () => this._seekToEnd());
 
-    // 시크바
+    // 시크바 (클릭 + 드래그 지원)
     const seekbar = document.getElementById('splitSeekbar');
-    seekbar?.addEventListener('click', (e) => {
+    let isDraggingSplitSeek = false;
+
+    const seekFromEvent = (e) => {
+      if (!seekbar) return;
       const rect = seekbar.getBoundingClientRect();
-      const percent = (e.clientX - rect.left) / rect.width;
+      const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       this._seekToPercent(percent);
+    };
+
+    seekbar?.addEventListener('mousedown', (e) => {
+      isDraggingSplitSeek = true;
+      seekFromEvent(e);
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (isDraggingSplitSeek) seekFromEvent(e);
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDraggingSplitSeek = false;
     });
   }
 
@@ -646,6 +663,9 @@ export class SplitViewManager {
     const loadingOverlay = document.getElementById(`splitLoading${panel === 'left' ? 'Left' : 'Right'}`);
     const emptyState = document.getElementById(`splitEmpty${panel === 'left' ? 'Left' : 'Right'}`);
     const statusText = loadingOverlay?.querySelector('.split-loading-text');
+    const panelSuffix = panel === 'left' ? 'Left' : 'Right';
+    const progressBar = document.getElementById(`splitLoadingProgress${panelSuffix}`);
+    const progressFill = document.getElementById(`splitLoadingProgressFill${panelSuffix}`);
 
     if (!video || !versionInfo?.path) {
       emptyState?.classList.add('active');
@@ -656,6 +676,8 @@ export class SplitViewManager {
     loadingOverlay?.classList.add('active');
     emptyState?.classList.remove('active');
     if (statusText) statusText.textContent = '로딩 중...';
+    progressBar?.classList.remove('visible');
+    if (progressFill) progressFill.style.width = '0%';
 
     try {
       // ====== 코덱 확인 및 트랜스코딩 ======
@@ -670,6 +692,7 @@ export class SplitViewManager {
         if (codecInfo.success && !codecInfo.isSupported) {
           log.info('Split View: 미지원 코덱 감지', { panel, codec: codecInfo.codecName });
           if (statusText) statusText.textContent = `코덱 변환 중... (${codecInfo.codecName})`;
+          progressBar?.classList.add('visible');
 
           // 캐시 확인
           const cacheResult = await window.electronAPI.ffmpegCheckCache(versionInfo.path);
@@ -679,8 +702,9 @@ export class SplitViewManager {
           } else {
             // 트랜스코딩 필요 - 진행률 표시
             const progressHandler = (data) => {
-              if (data.filePath === versionInfo.path && statusText) {
-                statusText.textContent = `코덱 변환 중... ${data.progress}%`;
+              if (data.filePath === versionInfo.path) {
+                if (statusText) statusText.textContent = `코덱 변환 중... ${data.progress}%`;
+                if (progressFill) progressFill.style.width = `${data.progress}%`;
               }
             };
             window.electronAPI.onTranscodeProgress(progressHandler);
@@ -970,25 +994,31 @@ export class SplitViewManager {
    * @param {number} delta - 이동할 프레임 수
    */
   _stepFrame(delta) {
-    const frameTime = 1 / this._fps;
-    const EPS = 0.001; // 프레임 경계 오차 방지 (GPT 권장)
+    const EPS = 0.001;
+
+    // 수동 프레임 이동 시 동기화 루프 쿨다운 설정
+    this._manualStepUntil = performance.now() + 100;
 
     if (this._mode === 'sync') {
-      // 동기 모드: 양쪽 모두 같은 프레임으로 이동
+      // 동기 모드: 프레임 기반 계산으로 양쪽 동일한 시간 적용
       if (this._leftVideo) {
-        const newTime = Math.max(0, Math.min(this._leftVideo.duration - EPS, this._leftVideo.currentTime + frameTime * delta));
-        this._leftVideo.currentTime = newTime;
+        const currentFrame = Math.floor(this._leftVideo.currentTime * this._fps);
+        const targetFrame = Math.max(0, currentFrame + delta);
+        const newTime = targetFrame / this._fps + EPS;
+        const clampedTime = Math.min(newTime, this._leftVideo.duration - EPS);
+
+        this._leftVideo.currentTime = clampedTime;
         if (this._rightVideo) {
-          // 프레임 기준 동기화: floor 사용 (round 대신, 경계 떨림 방지)
-          const targetFrame = Math.floor(newTime * this._fps);
-          this._rightVideo.currentTime = targetFrame / this._fps + EPS;
+          this._rightVideo.currentTime = Math.min(clampedTime, this._rightVideo.duration - EPS);
         }
       }
     } else {
-      // 독립 모드: 활성 패널만 이동
+      // 독립 모드: 프레임 기반 계산
       const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
       if (video) {
-        video.currentTime = Math.max(0, Math.min(video.duration - EPS, video.currentTime + frameTime * delta));
+        const currentFrame = Math.floor(video.currentTime * this._fps);
+        const targetFrame = Math.max(0, currentFrame + delta);
+        video.currentTime = Math.min(targetFrame / this._fps + EPS, video.duration - EPS);
       }
     }
 
@@ -1059,6 +1089,13 @@ export class SplitViewManager {
    * @param {number} percent - 0~1
    */
   _seekToPercent(percent) {
+    // 스크러빙 중 동기화 바이패스
+    this._isScrubbing = true;
+    clearTimeout(this._scrubTimeout);
+    this._scrubTimeout = setTimeout(() => {
+      this._isScrubbing = false;
+    }, 150);
+
     if (this._mode === 'sync') {
       // 동기 모드: 같은 프레임 번호 기준으로 이동
       if (this._leftVideo) {
@@ -1153,14 +1190,14 @@ export class SplitViewManager {
     const tick = (now) => {
       if (!this._isPlaying) return;
 
-      // 동기화 상수 (GPT 권장값)
+      // 동기화 상수 (성능 최적화)
       const fps = this._fps;
       const deadbandSec = 0.5 / fps;     // 0.5프레임 이내는 무시
       const seekThresholdSec = 2 / fps;  // 2프레임 이상 벌어지면 seek 고려
-      const seekCooldownMs = 250;        // seek 최소 간격
-      const RATE_GAIN = 0.35;            // diff(초)에 비례한 보정
+      const seekCooldownMs = 100;        // seek 최소 간격 (250→100)
+      const RATE_GAIN = 0.5;             // diff(초)에 비례한 보정 (0.35→0.5)
       const MAX_ADJUST = 0.06;           // ±6%
-      const SMOOTH = 0.25;               // rate 변화 스무딩
+      const SMOOTH = 0.4;                // rate 변화 스무딩 (0.25→0.4)
 
       // 1) UI 업데이트 최적화: 프레임이 바뀔 때만
       if (this._mode === 'sync' && this._leftVideo) {
@@ -1180,6 +1217,12 @@ export class SplitViewManager {
 
       // 2) 하이브리드 동기화 (sync 모드에서만)
       if (this._mode === 'sync' && this._leftVideo && this._rightVideo) {
+        // 수동 프레임 이동 또는 스크러빙 중에는 동기화 보정 스킵
+        if ((this._manualStepUntil && now < this._manualStepUntil) || this._isScrubbing) {
+          this._scheduleNextTick(tick);
+          return;
+        }
+
         const masterSide = this._getAudioMasterSide();
         const master = masterSide === 'left' ? this._leftVideo : this._rightVideo;
         const slave = masterSide === 'left' ? this._rightVideo : this._leftVideo;

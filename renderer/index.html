@@ -291,7 +291,13 @@
 
           <!-- Codec Unsupported Overlay -->
           <div class="codec-error-overlay" id="codecErrorOverlay">
-            <div class="codec-error-icon">⚠️</div>
+            <div class="codec-error-icon">
+              <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="var(--status-warning, #f59e0b)" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            </div>
             <div class="codec-error-title">지원하지 않는 코덱</div>
             <div class="codec-error-message">이 영상은 지원하지 않는 코덱(MPEG-4 Part 2, HEVC 등)입니다.</div>
             <div class="codec-error-hint">H.264 코덱으로 변환 후 다시 열어주세요.</div>
@@ -307,7 +313,12 @@
 
           <!-- Transcode Overlay (코덱 변환) -->
           <div class="transcode-overlay" id="transcodeOverlay">
-            <div class="transcode-icon">🔄</div>
+            <div class="transcode-icon">
+              <svg class="transcode-spinner" viewBox="0 0 60 60" width="60" height="60">
+                <circle class="transcode-spinner-track" cx="30" cy="30" r="25" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="4"/>
+                <circle class="transcode-spinner-arc" cx="30" cy="30" r="25" fill="none" stroke="var(--accent-primary)" stroke-width="4" stroke-linecap="round" stroke-dasharray="100 60"/>
+              </svg>
+            </div>
             <div class="transcode-title">비디오 변환 중</div>
             <div class="transcode-subtitle" id="transcodeSubtitle">MPEG-4 → H.264</div>
             <div class="transcode-progress-bar">
@@ -599,22 +610,27 @@
         </button>
         -->
 
-        <!-- 구간 반복 컨트롤 -->
+        <!-- 구간 반복 컨트롤 (접기/열기 토글) -->
         <div class="loop-controls" id="loopControls">
-          <button class="loop-btn" id="btnSetInPoint" title="시작점 설정 (I)">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 19l-7-7 7-7"/><line x1="4" y1="12" x2="20" y2="12"/></svg>
-            <span class="loop-timecode" id="inPointDisplay">--:--</span>
-          </button>
-          <button class="loop-btn loop-toggle" id="btnLoopToggle" title="구간 반복 (L)">
+          <button class="loop-collapse-btn" id="btnLoopControlsToggle" title="구간 반복 컨트롤 열기/닫기">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
           </button>
-          <button class="loop-btn" id="btnSetOutPoint" title="종료점 설정 (O)">
-            <span class="loop-timecode" id="outPointDisplay">--:--</span>
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 5l7 7-7 7"/><line x1="20" y1="12" x2="4" y2="12"/></svg>
-          </button>
-          <button class="loop-btn loop-clear" id="btnClearLoop" title="구간 초기화">
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
+          <div class="loop-controls-expanded" id="loopControlsExpanded">
+            <button class="loop-btn" id="btnSetInPoint" title="시작점 설정 (I)">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 19l-7-7 7-7"/><line x1="4" y1="12" x2="20" y2="12"/></svg>
+              <span class="loop-timecode" id="inPointDisplay">--:--</span>
+            </button>
+            <button class="loop-btn loop-toggle" id="btnLoopToggle" title="구간 반복 (L)">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+            </button>
+            <button class="loop-btn" id="btnSetOutPoint" title="종료점 설정 (O)">
+              <span class="loop-timecode" id="outPointDisplay">--:--</span>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 5l7 7-7 7"/><line x1="20" y1="12" x2="4" y2="12"/></svg>
+            </button>
+            <button class="loop-btn loop-clear" id="btnClearLoop" title="구간 초기화">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
         </div>
 
         <!-- 하이라이트 컨트롤 -->
@@ -628,11 +644,22 @@
               <line x1="12" y1="6" x2="12" y2="18"/>
               <line x1="6" y1="12" x2="18" y2="12"/>
             </svg>
-            <span>하이라이트</span>
           </button>
           <button class="nav-arrow-btn" id="btnNextHighlight" title="다음 하이라이트 (Alt+→)">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
           </button>
+        </div>
+
+        <!-- 볼륨 컨트롤 -->
+        <div class="main-volume-control" id="mainVolumeControl">
+          <button class="control-btn" id="btnMainMute" title="음소거 토글">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" id="mainVolumeIcon">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            </svg>
+          </button>
+          <input type="range" class="main-volume-slider" id="mainVolumeSlider" min="0" max="100" value="100" title="볼륨">
         </div>
       </div>
 
@@ -1582,10 +1609,17 @@
           <canvas class="split-drawing-canvas" id="splitDrawingCanvasLeft"></canvas>
           <div class="split-loading-overlay" id="splitLoadingLeft">
             <div class="loading-spinner"></div>
-            <span>로딩 중...</span>
+            <span class="split-loading-text">로딩 중...</span>
+            <div class="split-loading-progress" id="splitLoadingProgressLeft">
+              <div class="split-loading-progress-fill" id="splitLoadingProgressFillLeft"></div>
+            </div>
           </div>
           <div class="split-empty-state" id="splitEmptyLeft">
-            <div class="split-empty-icon">📁</div>
+            <div class="split-empty-icon">
+              <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+            </div>
             <span>버전을 선택하세요</span>
           </div>
         </div>
@@ -1629,10 +1663,17 @@
           <canvas class="split-drawing-canvas" id="splitDrawingCanvasRight"></canvas>
           <div class="split-loading-overlay" id="splitLoadingRight">
             <div class="loading-spinner"></div>
-            <span>로딩 중...</span>
+            <span class="split-loading-text">로딩 중...</span>
+            <div class="split-loading-progress" id="splitLoadingProgressRight">
+              <div class="split-loading-progress-fill" id="splitLoadingProgressFillRight"></div>
+            </div>
           </div>
           <div class="split-empty-state" id="splitEmptyRight">
-            <div class="split-empty-icon">📁</div>
+            <div class="split-empty-icon">
+              <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+            </div>
             <span>버전을 선택하세요</span>
           </div>
         </div>

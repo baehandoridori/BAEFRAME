@@ -1457,11 +1457,52 @@ body.app-fullscreen .video-comment-overlay-controls {
   align-items: center;
   gap: 3px;
   margin-left: 12px;
+  flex-shrink: 0;
+}
+
+.loop-collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: rgba(26, 26, 26, 0.6);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.loop-collapse-btn:hover {
+  background: rgba(34, 34, 34, 0.8);
+  border-color: var(--glass-border-bright);
+  color: var(--text-primary);
+}
+
+.loop-controls.expanded .loop-collapse-btn {
+  background: var(--accent-glow);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.loop-controls-expanded {
+  display: none;
+  align-items: center;
+  gap: 3px;
   padding: 3px 6px;
   border: 1px solid var(--accent-glow);
   border-radius: 8px;
   background: var(--accent-glow-subtle);
-  flex-shrink: 0;
+  animation: loopExpandIn 0.15s ease-out;
+}
+
+.loop-controls.expanded .loop-controls-expanded {
+  display: flex;
+}
+
+@keyframes loopExpandIn {
+  from { opacity: 0; transform: scaleX(0.8); }
+  to { opacity: 1; transform: scaleX(1); }
 }
 
 .loop-btn {
@@ -2126,8 +2167,8 @@ body.app-fullscreen .video-comment-overlay-controls {
 .highlight-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  justify-content: center;
+  padding: 6px 8px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
@@ -2149,6 +2190,50 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .highlight-btn svg {
   flex-shrink: 0;
+}
+
+/* 볼륨 컨트롤 (메인 뷰) */
+.main-volume-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.main-volume-slider {
+  width: 70px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.main-volume-slider:hover {
+  opacity: 1;
+}
+
+.main-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  background: var(--accent-primary);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.main-volume-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.2);
+}
+
+.main-volume-control .control-btn.muted {
+  color: var(--status-error);
 }
 
 /* 하이라이트 트랙 */
@@ -3011,6 +3096,20 @@ body.app-fullscreen .video-comment-overlay-controls {
   cursor: pointer;
   transition: all var(--transition-fast);
   white-space: nowrap;
+}
+
+/* 관리자 뱃지 */
+.admin-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--accent-primary);
+  color: var(--bg-primary);
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+  margin-left: 6px;
+  vertical-align: middle;
 }
 
 .settings-dropdown-btn:hover {
@@ -5527,8 +5626,8 @@ body.resizing .comment-panel {
 }
 
 .codec-error-icon {
-  font-size: 48px;
   margin-bottom: 16px;
+  opacity: 0.9;
 }
 
 .codec-error-title {
@@ -5628,14 +5727,27 @@ body.resizing .comment-panel {
 }
 
 .transcode-icon {
-  font-size: 48px;
   margin-bottom: 16px;
-  animation: rotate 2s linear infinite;
+}
+
+.transcode-spinner {
+  animation: rotate 1.4s linear infinite;
+}
+
+.transcode-spinner-arc {
+  animation: transcode-arc-dash 1.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 6px var(--accent-shadow));
 }
 
 @keyframes rotate {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+@keyframes transcode-arc-dash {
+  0% { stroke-dasharray: 1 160; stroke-dashoffset: 0; }
+  50% { stroke-dasharray: 100 160; stroke-dashoffset: -35; }
+  100% { stroke-dasharray: 100 160; stroke-dashoffset: -124; }
 }
 
 .transcode-title {
@@ -6457,10 +6569,6 @@ body.app-fullscreen.show-controls .controls-bar {
 
 /* 전체화면 시크바 (평소에는 숨김) */
 .fullscreen-seekbar {
-  display: none;
-}
-
-body.app-fullscreen .fullscreen-seekbar {
   display: block;
   position: absolute;
   top: -8px;
@@ -6469,6 +6577,11 @@ body.app-fullscreen .fullscreen-seekbar {
   height: 16px;
   padding: 6px 0;
   cursor: pointer;
+  z-index: 5;
+}
+
+body.app-fullscreen .fullscreen-seekbar {
+  top: -8px;
 }
 
 .seekbar-track {
@@ -7741,8 +7854,37 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
 }
 
 .split-empty-icon {
-  font-size: 40px;
-  opacity: 0.6;
+  opacity: 0.4;
+  color: var(--text-tertiary);
+}
+
+.split-loading-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: opacity 0.2s ease;
+}
+
+.split-loading-progress {
+  display: none;
+  width: 60%;
+  max-width: 200px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.split-loading-overlay.active .split-loading-progress.visible {
+  display: block;
+}
+
+.split-loading-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent-primary);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  box-shadow: 0 0 6px var(--accent-shadow);
 }
 
 /* Split Resizer */
