@@ -8,7 +8,9 @@ import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { CommentManager, MARKER_COLORS } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
-import { CollaborationManager } from './modules/collaboration-manager.js';
+import { LiveblocksManager } from './modules/liveblocks-manager.js';
+import { CommentSync } from './modules/comment-sync.js';
+import { DrawingSync } from './modules/drawing-sync.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getAuthManager } from './modules/auth-manager.js';
@@ -339,19 +341,20 @@ async function initApp() {
   });
   reviewDataManager.connect();
 
-  // 협업 매니저 (실시간 동기화)
-  const collaborationManager = new CollaborationManager({
-    syncInterval: 10000,  // 10초마다 동기화
-    presenceUpdateInterval: 5000  // 5초마다 presence 업데이트
-  });
+  // Liveblocks 실시간 협업 매니저
+  const liveblocksManager = new LiveblocksManager();
 
-  // ReviewDataManager에 CollaborationManager 연결 (저장 시 머지용)
-  reviewDataManager.setCollaborationManager(collaborationManager);
+  // 댓글/그리기 동기화 매니저
+  const commentSync = new CommentSync({ liveblocksManager, commentManager });
+  const drawingSync = new DrawingSync({ liveblocksManager, drawingManager });
+
+  // ReviewDataManager에 LiveblocksManager 연결
+  reviewDataManager.setLiveblocksManager(liveblocksManager);
 
   // 앱 종료/새로고침 시 정리
   window.addEventListener('beforeunload', () => {
-    // 협업 편집 잠금 해제
-    collaborationManager.releaseAllEditingLocks();
+    // Liveblocks Room 퇴장 시 Presence 자동 정리됨
+    liveblocksManager.releaseAllEditingLocks();
     // 모든 파일 감시 중지 (누적 방지)
     window.electronAPI.watchFileStopAll();
   });
@@ -468,6 +471,11 @@ async function initApp() {
 
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
+
+    // Liveblocks Presence에 현재 프레임 전달 (원격 타임라인 표시용)
+    if (liveblocksManager.isConnected) {
+      liveblocksManager.updatePresence({ currentFrame });
+    }
 
     // 비디오 댓글 범위 오버레이 플레이헤드 업데이트
     if (typeof updateVideoCommentPlayhead === 'function') {
@@ -810,12 +818,15 @@ async function initApp() {
 
   // 마커 추가됨
   commentManager.addEventListener('markerAdded', (e) => {
-    const { marker } = e.detail;
+    const { marker, remote } = e.detail;
     removePendingMarkerUI();
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
-    log.info('마커 추가됨', { id: marker.id, text: marker.text });
+    log.info('마커 추가됨', { id: marker.id, text: marker.text, remote: !!remote });
+
+    // 원격 변경은 Undo 스택에 넣지 않음
+    if (remote) return;
 
     // Undo 스택에 추가
     const markerData = marker.toJSON();
@@ -856,6 +867,13 @@ async function initApp() {
   // 답글 추가됨
   commentManager.addEventListener('replyAdded', (e) => {
     renderVideoMarkers();
+    updateCommentList();
+  });
+
+  // 원격 동기화로 인한 전체 갱신 (CommentSync의 fromJSON 호출 시)
+  commentManager.addEventListener('markersChanged', () => {
+    renderVideoMarkers();
+    updateTimelineMarkers();
     updateCommentList();
   });
 
@@ -3303,7 +3321,19 @@ async function initApp() {
       if (reviewDataManager.currentBframePath) {
         await window.electronAPI.watchFileStop(reviewDataManager.currentBframePath);
         log.info('이전 파일 감시 중지', { path: reviewDataManager.currentBframePath });
-        await collaborationManager.stop();
+        try {
+          await liveblocksManager.stop();
+        } catch (e) {
+          log.warn('Liveblocks 세션 종료 중 오류', { error: e.message });
+        } finally {
+          commentSync.stop();
+          drawingSync.stop();
+        }
+        // 협업 UI 초기화 (이전 세션의 아바타/인원 표시 제거)
+        updateCollaboratorsUI([]);
+        // 원격 커서 및 재생헤드 제거
+        document.querySelectorAll('.remote-cursor').forEach(el => el.remove());
+        document.querySelectorAll('.remote-playhead').forEach(el => el.remove());
         log.info('이전 협업 세션 종료');
       }
 
@@ -3404,9 +3434,35 @@ async function initApp() {
         showToast(`"${fileInfo.name}" 로드됨`, 'success');
       }
 
-      // ====== 협업 세션 시작 ======
-      const userName = userSettings.userName || '익명';
-      await collaborationManager.start(reviewDataManager.currentBframePath, userName);
+      // ====== Liveblocks 실시간 협업 세션 시작 ======
+      const userName = userSettings.getUserName();
+      const userColor = userSettings.getColorForName(userName) || '#4a9eff';
+      try {
+        // .bframe에서 기존 Room ID 확인
+        const bframeData = await window.electronAPI.loadReview(reviewDataManager.currentBframePath);
+        const existingRoomId = bframeData?.liveblocksRoomId || null;
+
+        const { roomId, isNewRoom } = await liveblocksManager.start(
+          reviewDataManager.currentBframePath,
+          userName,
+          userColor,
+          existingRoomId
+        );
+
+        // 새 Room이면 Room ID를 .bframe에 저장
+        if (isNewRoom && reviewDataManager.currentBframePath) {
+          reviewDataManager.setLiveblocksRoomId(roomId);
+          await reviewDataManager.save({ skipMerge: true });
+        }
+
+        // 댓글/그리기 동기화 시작 (Broadcast 기반)
+        await commentSync.start();
+        drawingSync.start();
+
+        log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
+      } catch (error) {
+        log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
+      }
 
       // ====== 파일 감시 시작 (실시간 동기화) ======
       if (reviewDataManager.currentBframePath) {
@@ -4616,12 +4672,13 @@ async function initApp() {
           return;
         }
 
-        // 편집 잠금 획득 시도 (이미 잠금 여부 체크 포함)
-        const startResult = await collaborationManager.startEditing(markerId);
-        if (!startResult.success) {
-          showToast(`${startResult.lockedBy}님이 수정 중입니다`, 'warn');
+        // Presence 기반 편집 잠금 확인
+        const lockCheck = liveblocksManager.checkEditLock(markerId);
+        if (lockCheck.isLocked) {
+          showToast(`${lockCheck.lockedBy}님이 수정 중입니다`, 'warn');
           return;
         }
+        liveblocksManager.updatePresence({ activeComment: markerId });
 
         // 수정 모드 진입
         contentEl.style.display = 'none';
@@ -4647,7 +4704,7 @@ async function initApp() {
             if (!updated) {
               showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
               // 편집 잠금 해제
-              await collaborationManager.stopEditing(markerId);
+              liveblocksManager.updatePresence({ activeComment: null });
               return;
             }
 
@@ -4675,7 +4732,7 @@ async function initApp() {
         }
 
         // 편집 잠금 해제
-        await collaborationManager.stopEditing(markerId);
+        liveblocksManager.updatePresence({ activeComment: null });
       });
 
       // 수정 취소
@@ -4684,7 +4741,7 @@ async function initApp() {
         const markerId = item.dataset.markerId;
 
         // 편집 잠금 해제
-        await collaborationManager.stopEditing(markerId);
+        liveblocksManager.updatePresence({ activeComment: null });
 
         // 원래 상태로 복원
         contentEl.style.display = 'block';
@@ -5382,7 +5439,9 @@ async function initApp() {
     const savingOverlay = document.getElementById('appSavingOverlay');
 
     // 협업 세션 종료 (presence 제거)
-    await collaborationManager.stop();
+    commentSync.stop();
+    drawingSync.stop();
+    await liveblocksManager.stop();
 
     // 미저장 변경사항 확인
     if (!reviewDataManager.hasUnsavedChanges()) {
@@ -6955,70 +7014,160 @@ async function initApp() {
     }
   }
 
-  // 협업 이벤트 리스너
-  collaborationManager.addEventListener('collaboratorsChanged', (e) => {
-    log.info('협업자 목록 변경', e.detail);
-    updateCollaboratorsUI(e.detail.collaborators);
-  });
+  /**
+   * 원격 커서 렌더링
+   */
+  const remoteCursorsContainer = (() => {
+    let container = document.getElementById('remoteCursorsContainer');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'remoteCursorsContainer';
+      container.className = 'remote-cursors-container';
+      elements.videoWrapper?.appendChild(container);
+    }
+    return container;
+  })();
 
-  collaborationManager.addEventListener('collaborationStarted', (e) => {
-    log.info('협업 시작됨', e.detail);
-    showToast(`${e.detail.collaborators.length}명이 이 파일을 보고 있습니다`, 'info');
-  });
+  function renderRemoteCursors(collaborators) {
+    if (!remoteCursorsContainer) return;
 
-  collaborationManager.addEventListener('syncStarted', () => {
-    updateSyncStatusUI('syncing');
-  });
+    // 기존 커서 중 더 이상 없는 것 제거
+    const activeIds = new Set(collaborators.map(c => `cursor-${c.connectionId}`));
+    remoteCursorsContainer.querySelectorAll('.remote-cursor').forEach(el => {
+      if (!activeIds.has(el.id)) el.remove();
+    });
 
-  collaborationManager.addEventListener('syncCompleted', () => {
-    updateSyncStatusUI('synced');
-    // 3초 후 아이콘 원래대로
-    setTimeout(() => updateSyncStatusUI(''), 3000);
-  });
+    for (const collab of collaborators) {
+      if (!collab.cursor) continue;
 
-  collaborationManager.addEventListener('syncError', () => {
-    updateSyncStatusUI('error');
-  });
+      const cursorId = `cursor-${collab.connectionId}`;
+      let cursorEl = document.getElementById(cursorId);
 
-  // 원격 데이터 로드 콜백 설정 (동기화 시 호출됨)
-  collaborationManager.setRemoteDataLoader(async () => {
-    if (!reviewDataManager.currentBframePath) return;
-
-    try {
-      // ReviewDataManager의 reloadAndMerge 사용 (비디오 유지하면서 데이터만 머지)
-      const result = await reviewDataManager.reloadAndMerge({ merge: true });
-
-      if (result.success) {
-        // 타임라인/비디오 마커는 항상 업데이트
-        renderVideoMarkers();
-        updateTimelineMarkers();
-
-        // 댓글 수정 중이면 댓글 목록 업데이트 건너뛰기 (편집 폼 유지)
-        const isEditingComment = document.querySelector('.comment-edit-form[style*="display: block"]');
-        if (!isEditingComment) {
-          updateCommentList();
-        }
-
-        if (result.added > 0 || result.updated > 0) {
-          log.info('원격 변경사항 머지됨', { added: result.added, updated: result.updated });
-
-          if (result.added > 0) {
-            showToast(`새 댓글 ${result.added}개가 동기화되었습니다`, 'info');
-          }
-        }
+      if (!cursorEl) {
+        cursorEl = document.createElement('div');
+        cursorEl.id = cursorId;
+        cursorEl.className = 'remote-cursor';
+        cursorEl.innerHTML = `
+          <svg class="remote-cursor-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M1 1L6 14L8 8L14 6L1 1Z" fill="${collab.userColor}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>
+          </svg>
+          <span class="remote-cursor-label" style="background-color: ${collab.userColor}">${collab.userName}</span>
+        `;
+        remoteCursorsContainer.appendChild(cursorEl);
       }
-    } catch (error) {
-      log.warn('원격 데이터 머지 실패', { error: error.message });
+
+      // 정규화 좌표를 실제 픽셀로 변환
+      const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
+      if (wrapperRect) {
+        const x = collab.cursor.x * wrapperRect.width;
+        const y = collab.cursor.y * wrapperRect.height;
+        cursorEl.style.transform = `translate(${x}px, ${y}px)`;
+        cursorEl.style.display = 'block';
+      }
+    }
+  }
+
+  // 로컬 커서 → Presence 전송 (videoWrapper 위에서만)
+  elements.videoWrapper?.addEventListener('mousemove', (e) => {
+    if (!liveblocksManager.isConnected) return;
+    const rect = elements.videoWrapper.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    liveblocksManager.updatePresence({ cursor: { x, y } });
+  });
+
+  elements.videoWrapper?.addEventListener('mouseleave', () => {
+    if (!liveblocksManager.isConnected) return;
+    liveblocksManager.updatePresence({ cursor: null });
+  });
+
+  /**
+   * 타임라인에 원격 재생헤드 표시
+   */
+  function renderRemotePlayheads(collaborators) {
+    const timelineTracks = document.getElementById('timelineTracks');
+    if (!timelineTracks) return;
+
+    // 기존 원격 플레이헤드 제거
+    timelineTracks.querySelectorAll('.remote-playhead').forEach(el => el.remove());
+
+    if (!timeline.duration || timeline.duration <= 0) return;
+
+    const tracksContainer = document.getElementById('tracksContainer');
+    const containerWidth = tracksContainer?.offsetWidth || timelineTracks.offsetWidth || 1000;
+
+    for (const collab of collaborators) {
+      if (collab.currentFrame === null || collab.currentFrame === undefined) continue;
+
+      const fps = timeline.fps || 24;
+      const time = collab.currentFrame / fps;
+      const percent = time / timeline.duration;
+      const positionPx = percent * containerWidth;
+
+      const line = document.createElement('div');
+      line.className = 'remote-playhead';
+      line.style.left = `${positionPx}px`;
+      line.style.borderColor = collab.userColor;
+      line.title = collab.userName;
+
+      const label = document.createElement('span');
+      label.className = 'remote-playhead-label';
+      label.style.backgroundColor = collab.userColor;
+      label.textContent = collab.userName.substring(0, 2);
+      line.appendChild(label);
+
+      timelineTracks.appendChild(line);
+    }
+  }
+
+  // Liveblocks 협업 이벤트 리스너
+  liveblocksManager.addEventListener('collaboratorsChanged', (e) => {
+    // 자기 자신 + 다른 사용자 모두 표시
+    const me = {
+      name: userSettings.getUserName(),
+      color: userSettings.getColorForName(userSettings.getUserName()) || '#4a9eff',
+      isMe: true
+    };
+    const others = e.detail.collaborators.map(c => ({
+      name: c.userName,
+      color: c.userColor,
+      isMe: false
+    }));
+    updateCollaboratorsUI([me, ...others]);
+
+    // 원격 커서 렌더링
+    renderRemoteCursors(e.detail.collaborators);
+
+    // 타임라인에 원격 재생헤드 표시
+    renderRemotePlayheads(e.detail.collaborators);
+  });
+
+  liveblocksManager.addEventListener('collaborationStarted', (e) => {
+    log.info('협업 시작됨 (Liveblocks)', e.detail);
+    if (!e.detail.isNewRoom) {
+      showToast('실시간 협업 세션에 참여했습니다', 'info');
     }
   });
 
-  // 수동 동기화 버튼 (sync status 클릭)
-  syncStatus?.addEventListener('click', async () => {
-    if (!collaborationManager.hasOtherCollaborators()) {
+  liveblocksManager.addEventListener('connectionStatusChanged', (e) => {
+    const { status } = e.detail;
+    if (status === 'connected') {
+      updateSyncStatusUI('synced');
+      setTimeout(() => updateSyncStatusUI(''), 3000);
+    } else if (status === 'reconnecting') {
+      updateSyncStatusUI('syncing');
+    } else if (status === 'disconnected') {
+      updateSyncStatusUI('error');
+    }
+  });
+
+  // 수동 동기화 버튼 → Liveblocks에서는 항상 실시간이므로 상태 표시만
+  syncStatus?.addEventListener('click', () => {
+    if (!liveblocksManager.hasOtherCollaborators()) {
       showToast('다른 협업자가 없습니다', 'info');
       return;
     }
-    await collaborationManager.syncNow();
+    showToast('실시간 동기화 중입니다', 'info');
   });
 
   // ====== 파일 변경 감지 (실시간 동기화) ======
@@ -7030,15 +7179,22 @@ async function initApp() {
     // 현재 열린 파일이 아니면 무시
     if (filePath !== reviewDataManager.currentBframePath) return;
 
+    // Liveblocks 연결 중이면 Broadcast가 실시간 동기화를 담당하므로
+    // 파일 기반 동기화 건너뛰기 (구버전 파일로 덮어쓰는 것 방지)
+    if (liveblocksManager.isConnected) {
+      return;
+    }
+
+    // 오프라인 모드: 파일 기반 동기화 실행
     // 너무 빠른 연속 호출 방지
     const now = Date.now();
     if (now - lastSyncTime < MIN_SYNC_INTERVAL) return;
     lastSyncTime = now;
 
-    log.info('파일 변경 감지됨, 즉시 동기화', { filePath });
+    log.info('파일 변경 감지됨, 오프라인 모드 동기화', { filePath });
 
     try {
-      // ReviewDataManager의 reloadAndMerge 사용
+      // ReviewDataManager의 reloadAndMerge 사용 (오프라인 모드 전용)
       const result = await reviewDataManager.reloadAndMerge({ merge: true });
 
       if (result.success) {

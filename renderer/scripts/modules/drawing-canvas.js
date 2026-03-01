@@ -156,6 +156,9 @@ export class DrawingCanvas extends EventTarget {
 
     const coords = this._getCanvasCoords(e);
 
+    // 실시간 스트로크 포인트 이벤트 (협업 스트리밍용)
+    this._emit('drawmove', { x: coords.x, y: coords.y, tool: this.tool });
+
     if (this._isShapeTool()) {
       // 도형 도구: 실시간 미리보기
       this._drawShapePreview(coords.x, coords.y);

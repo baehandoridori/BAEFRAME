@@ -30,6 +30,10 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Electron
 electron-builder.yml.bak
 

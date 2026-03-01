@@ -45,7 +45,7 @@
   --draw-white: #ffffff;
 
   /* 타이포그래피 */
-  --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: 'SF Mono', 'Consolas', monospace;
 
   /* 그림자 */
@@ -311,6 +311,90 @@ body {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* ========================================
+   Remote Cursors (Liveblocks 실시간 협업)
+   ======================================== */
+
+.remote-cursors-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 50;
+  overflow: hidden;
+}
+
+.remote-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: none;
+  transition: transform 120ms ease-out;
+  will-change: transform;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+}
+
+.remote-cursor-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.remote-cursor-label {
+  position: absolute;
+  top: 16px;
+  left: 10px;
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: #fff;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  opacity: 0.92;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-cursor {
+    transition: none;
+  }
+}
+
+/* ========================================
+   Remote Playheads (타임라인 원격 재생헤드)
+   ======================================== */
+
+.remote-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid;
+  opacity: 0.6;
+  pointer-events: none;
+  z-index: 15;
+  transition: left 120ms ease-out;
+}
+
+.remote-playhead-label {
+  position: absolute;
+  top: 0;
+  left: -1px;
+  display: block;
+  padding: 1px 3px;
+  border-radius: 0 0 3px 0;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 /* ========================================
