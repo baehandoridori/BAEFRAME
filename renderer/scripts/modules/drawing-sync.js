@@ -229,7 +229,8 @@ export class DrawingSync {
   _onLayerDeleted(e) {
     if (this._isRemoteUpdate) return;
 
-    const { layerId } = e.detail || {};
+    const { layer } = e.detail || {};
+    const layerId = layer?.id;
     if (layerId) {
       this._lm.broadcastEvent({
         type: 'DRAWING_LAYER_DELETED',
@@ -241,7 +242,8 @@ export class DrawingSync {
   _onKeyframeRemoved(e) {
     if (this._isRemoteUpdate) return;
 
-    const { layerId, frame } = e.detail || {};
+    const { layer, frame } = e.detail || {};
+    const layerId = layer?.id;
     if (layerId && frame !== undefined) {
       this._lm.broadcastEvent({
         type: 'DRAWING_KEYFRAME_REMOVED',
@@ -339,8 +341,8 @@ export class DrawingSync {
       if (exists) return;
 
       // DrawingManager에 레이어 추가
-      if (this._dm.addLayer) {
-        this._dm.addLayer(layerData);
+      if (this._dm.createLayer) {
+        this._dm.createLayer(layerData);
       }
       log.debug('원격 레이어 생성 적용', { id: layerData.id });
     } finally {
