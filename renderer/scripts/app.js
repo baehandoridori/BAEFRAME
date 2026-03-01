@@ -3450,9 +3450,8 @@ async function initApp() {
           await reviewDataManager.save({ skipMerge: true });
         }
 
-        // 댓글/그리기 동기화 시작
-        const storageEmpty = (liveblocksManager.getStorage()?.get('commentLayers')?.toArray()?.length || 0) === 0;
-        await commentSync.start({ uploadLocal: storageEmpty });
+        // 댓글/그리기 동기화 시작 (Broadcast 기반)
+        await commentSync.start();
         drawingSync.start();
 
         log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
@@ -7175,12 +7174,8 @@ async function initApp() {
     // 현재 열린 파일이 아니면 무시
     if (filePath !== reviewDataManager.currentBframePath) return;
 
-    // Liveblocks 연결 중이면 파일 기반 동기화 건너뛰기
-    // (Liveblocks CRDT가 실시간으로 처리하므로 파일 감시 불필요)
-    if (liveblocksManager.isConnected) {
-      log.debug('파일 변경 감지됨, Liveblocks 연결 중이므로 건너뛰기', { filePath });
-      return;
-    }
+    // 파일 기반 동기화는 항상 실행 (Broadcast가 놓친 변경을 잡는 안전망)
+    // Liveblocks Broadcast가 실시간을 담당하고, 파일 감시는 폴백 역할
 
     // 너무 빠른 연속 호출 방지
     const now = Date.now();

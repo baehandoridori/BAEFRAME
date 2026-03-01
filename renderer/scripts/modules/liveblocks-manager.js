@@ -326,7 +326,11 @@ export class LiveblocksManager extends EventTarget {
    * @param {Object} data - 전송할 데이터 (type 필드 필수)
    */
   broadcastEvent(data) {
-    if (!this._room) return;
+    if (!this._room) {
+      log.warn('Broadcast 실패: Room 없음', { type: data?.type });
+      return;
+    }
+    log.debug('Broadcast 전송', { type: data?.type });
     this._room.broadcastEvent(data);
   }
 
@@ -403,6 +407,7 @@ export class LiveblocksManager extends EventTarget {
 
     // Broadcast 이벤트 수신
     const unsubEvent = this._room.subscribe('event', (eventData) => {
+      log.debug('Broadcast 수신', { type: eventData?.event?.type });
       this._emit('broadcastReceived', eventData);
     });
     this._unsubscribers.push(unsubEvent);
