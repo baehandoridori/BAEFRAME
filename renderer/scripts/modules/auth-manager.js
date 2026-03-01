@@ -288,6 +288,8 @@ class AuthManager extends EventTarget {
    * @returns {boolean}
    */
   isProtectedUser(name) {
+    if (!name) return false;
+    if (name.trim() === ADMIN_CREDENTIALS.name) return true;
     return !!this._findUser(name);
   }
 
