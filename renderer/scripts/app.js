@@ -7174,9 +7174,13 @@ async function initApp() {
     // 현재 열린 파일이 아니면 무시
     if (filePath !== reviewDataManager.currentBframePath) return;
 
-    // 파일 기반 동기화는 항상 실행 (Broadcast가 놓친 변경을 잡는 안전망)
-    // Liveblocks Broadcast가 실시간을 담당하고, 파일 감시는 폴백 역할
+    // Liveblocks 연결 중이면 Broadcast가 실시간 동기화를 담당하므로
+    // 파일 기반 동기화 건너뛰기 (구버전 파일로 덮어쓰는 것 방지)
+    if (liveblocksManager.isConnected) {
+      return;
+    }
 
+    // 오프라인 모드: 파일 기반 동기화 실행
     // 너무 빠른 연속 호출 방지
     const now = Date.now();
     if (now - lastSyncTime < MIN_SYNC_INTERVAL) return;
