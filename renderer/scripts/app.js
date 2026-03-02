@@ -2736,6 +2736,12 @@ async function initApp() {
         const marker = commentManager.getMarker(markerId);
         if (!marker) return;
 
+        // 권한 체크 (본인 코멘트만 이동 가능)
+        if (!commentManager.canEdit(marker)) {
+          showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
+          return;
+        }
+
         commentDragState = {
           layerId,
           markerId,
@@ -2762,6 +2768,12 @@ async function initApp() {
 
           const marker = commentManager.getMarker(markerId);
           if (!marker) return;
+
+          // 권한 체크 (본인 코멘트만 리사이즈 가능)
+          if (!commentManager.canEdit(marker)) {
+            showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
+            return;
+          }
 
           commentDragState = {
             layerId,
