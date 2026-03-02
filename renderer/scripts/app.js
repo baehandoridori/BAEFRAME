@@ -1031,6 +1031,7 @@ async function initApp() {
       lastVolumeBeforeMute = videoPlayer.videoElement.volume || 1;
     } else if (mainVolumeSlider) {
       mainVolumeSlider.value = lastVolumeBeforeMute * 100;
+      videoPlayer.setVolume(lastVolumeBeforeMute);
     }
   });
 
