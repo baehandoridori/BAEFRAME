@@ -704,6 +704,11 @@ export class SplitViewManager {
    * 와이프 모드 진입
    */
   _enterWipeMode() {
+    // 오버레이 모드에서 전환 시 불투명도 리셋 (100%로 복원)
+    if (this._panelRight) {
+      this._panelRight.style.opacity = '';
+    }
+
     // 와이프 위치 적용
     this._applyWipePosition();
   }
