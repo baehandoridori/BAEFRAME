@@ -1007,6 +1007,46 @@ async function initApp() {
   elements.btnNextFrame.addEventListener('click', () => videoPlayer.nextFrame());
   elements.btnLast.addEventListener('click', () => videoPlayer.seekToEnd());
 
+  // ====== 메인 뷰 볼륨 컨트롤 ======
+  const btnMainMute = document.getElementById('btnMainMute');
+  const mainVolumeSlider = document.getElementById('mainVolumeSlider');
+  const mainVolumeIcon = document.getElementById('mainVolumeIcon');
+  let lastVolumeBeforeMute = 1;
+
+  const updateMainVolumeIcon = (muted) => {
+    if (!mainVolumeIcon) return;
+    if (muted) {
+      mainVolumeIcon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>';
+      btnMainMute?.classList.add('muted');
+    } else {
+      mainVolumeIcon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>';
+      btnMainMute?.classList.remove('muted');
+    }
+  };
+
+  btnMainMute?.addEventListener('click', () => {
+    const muted = videoPlayer.toggleMute();
+    updateMainVolumeIcon(muted);
+    if (muted) {
+      lastVolumeBeforeMute = videoPlayer.videoElement.volume || 1;
+    } else if (mainVolumeSlider) {
+      mainVolumeSlider.value = lastVolumeBeforeMute * 100;
+      videoPlayer.setVolume(lastVolumeBeforeMute);
+    }
+  });
+
+  mainVolumeSlider?.addEventListener('input', (e) => {
+    const volume = e.target.value / 100;
+    videoPlayer.setVolume(volume);
+    if (volume === 0) {
+      videoPlayer.videoElement.muted = true;
+      updateMainVolumeIcon(true);
+    } else if (videoPlayer.videoElement.muted) {
+      videoPlayer.videoElement.muted = false;
+      updateMainVolumeIcon(false);
+    }
+  });
+
   // 그리기 모드 토글
   elements.btnDrawMode.addEventListener('click', toggleDrawMode);
 
@@ -1903,6 +1943,8 @@ async function initApp() {
   */
 
   // ====== 구간 반복 ======
+  const loopControlsEl = document.getElementById('loopControls');
+  const btnLoopControlsToggle = document.getElementById('btnLoopControlsToggle');
   const btnSetInPoint = document.getElementById('btnSetInPoint');
   const btnSetOutPoint = document.getElementById('btnSetOutPoint');
   const btnLoopToggle = document.getElementById('btnLoopToggle');
@@ -1910,11 +1952,17 @@ async function initApp() {
   const inPointDisplay = document.getElementById('inPointDisplay');
   const outPointDisplay = document.getElementById('outPointDisplay');
 
+  // 구간 반복 컨트롤 접기/열기 토글
+  btnLoopControlsToggle?.addEventListener('click', () => {
+    loopControlsEl?.classList.toggle('expanded');
+  });
+
   // 시작점 설정
   btnSetInPoint.addEventListener('click', () => {
     const time = videoPlayer.setInPointAtCurrent();
     inPointDisplay.textContent = videoPlayer.formatTimeShort(time);
     btnSetInPoint.classList.add('has-point');
+    loopControlsEl?.classList.add('expanded');
     showToast(`시작점 설정: ${videoPlayer.formatTimeShort(time)}`, 'info');
   });
 
@@ -1923,6 +1971,7 @@ async function initApp() {
     const time = videoPlayer.setOutPointAtCurrent();
     outPointDisplay.textContent = videoPlayer.formatTimeShort(time);
     btnSetOutPoint.classList.add('has-point');
+    loopControlsEl?.classList.add('expanded');
     showToast(`종료점 설정: ${videoPlayer.formatTimeShort(time)}`, 'info');
   });
 
@@ -1946,6 +1995,7 @@ async function initApp() {
     btnSetInPoint.classList.remove('has-point');
     btnSetOutPoint.classList.remove('has-point');
     btnLoopToggle.classList.remove('active');
+    loopControlsEl?.classList.remove('expanded');
     showToast('구간 초기화', 'info');
   });
 
@@ -2686,6 +2736,12 @@ async function initApp() {
         const marker = commentManager.getMarker(markerId);
         if (!marker) return;
 
+        // 권한 체크 (본인 코멘트만 이동 가능)
+        if (!commentManager.canEdit(marker)) {
+          showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
+          return;
+        }
+
         commentDragState = {
           layerId,
           markerId,
@@ -2712,6 +2768,12 @@ async function initApp() {
 
           const marker = commentManager.getMarker(markerId);
           if (!marker) return;
+
+          // 권한 체크 (본인 코멘트만 리사이즈 가능)
+          if (!commentManager.canEdit(marker)) {
+            showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
+            return;
+          }
 
           commentDragState = {
             layerId,
@@ -5509,6 +5571,20 @@ async function initApp() {
     if (userNameDisplay) {
       userNameDisplay.textContent = name;
       userNameDisplay.title = `출처: ${userSettings.getUserSource()}`;
+
+      // 어드민 뱃지 표시
+      let adminBadge = userNameDisplay.parentElement?.querySelector('.admin-badge');
+      if (authManager.isAdmin()) {
+        if (!adminBadge) {
+          adminBadge = document.createElement('span');
+          adminBadge.className = 'admin-badge';
+          adminBadge.textContent = 'ADMIN';
+          userNameDisplay.parentElement?.appendChild(adminBadge);
+        }
+        adminBadge.style.display = '';
+      } else if (adminBadge) {
+        adminBadge.style.display = 'none';
+      }
     }
     commentManager.setAuthor(name);
     // 보호 사용자 메뉴 토글
@@ -5753,7 +5829,11 @@ async function initApp() {
         userSettings.applyThemeForCurrentUser();
       }
 
-      showToast(`"${_loginTargetName}"(으)로 로그인했습니다.`, 'success');
+      if (result.isAdmin) {
+        showToast('관리자로 로그인했습니다.', 'success');
+      } else {
+        showToast(`"${_loginTargetName}"(으)로 로그인했습니다.`, 'success');
+      }
       closeLoginModalFn();
 
       // 기본 비밀번호(1234) 사용 시 변경 권유

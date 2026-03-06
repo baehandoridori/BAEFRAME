@@ -16,6 +16,12 @@ const AUTH_THEME_COLORS = {
   green: { name: '초록', color: '#2ed573' }
 };
 
+// 관리자 계정 (하드코딩 - 모든 빌드에서 동일)
+const ADMIN_CREDENTIALS = {
+  name: 'admin',
+  password: '1q2w3e4r!A'
+};
+
 /**
  * Auth Manager
  * 인증 파일 기반 사용자 관리
@@ -36,6 +42,7 @@ class AuthManager extends EventTarget {
    */
   async init() {
     log.info('AuthManager 초기화 시작');
+    this._adminHash = await this._hashPassword(ADMIN_CREDENTIALS.password);
     await this._loadAuthData();
     this._ready = true;
     log.info('AuthManager 초기화 완료', {
@@ -70,6 +77,11 @@ class AuthManager extends EventTarget {
 
     const trimmedName = name.trim();
 
+    // 관리자 이름은 사용 불가
+    if (trimmedName === ADMIN_CREDENTIALS.name) {
+      throw new Error('이 이름은 사용할 수 없습니다');
+    }
+
     // 중복 체크
     if (this._findUser(trimmedName)) {
       throw new Error('이미 등록된 사용자입니다');
@@ -100,6 +112,11 @@ class AuthManager extends EventTarget {
    * @param {string} name - 삭제할 사용자 이름
    */
   async deleteUser(name) {
+    // 관리자 계정 삭제 차단
+    if (name === ADMIN_CREDENTIALS.name) {
+      throw new Error('관리자 계정은 삭제할 수 없습니다');
+    }
+
     if (!this.authData?.users) {
       throw new Error('인증 데이터가 없습니다');
     }
@@ -123,6 +140,23 @@ class AuthManager extends EventTarget {
    */
   async login(name, password) {
     const trimmedName = name.trim();
+
+    // 관리자 계정 확인 (하드코딩, 인증 파일 무관)
+    if (trimmedName === ADMIN_CREDENTIALS.name) {
+      if (!password) {
+        throw new Error('비밀번호가 필요합니다');
+      }
+      const hash = await this._hashPassword(password);
+      if (hash !== this._adminHash) {
+        throw new Error('비밀번호가 일치하지 않습니다');
+      }
+      this.currentUser = { name: ADMIN_CREDENTIALS.name, protected: true, theme: null, isAdmin: true };
+      this.isAuthenticated = true;
+      log.info('관리자 로그인 성공');
+      this._emit('loginSuccess', { name: ADMIN_CREDENTIALS.name, protected: true, theme: null, isAdmin: true });
+      return { protected: true, theme: null, isAdmin: true };
+    }
+
     const user = this._findUser(trimmedName);
 
     // 보호된 사용자
@@ -242,6 +276,8 @@ class AuthManager extends EventTarget {
    */
   canEditComment(item) {
     if (!this.isAuthenticated || !this.currentUser?.name) return false;
+    // 관리자는 모든 댓글 수정/삭제 가능
+    if (this.currentUser.isAdmin === true) return true;
     if (!item?.author) return false;
     return item.author.trim() === this.currentUser.name.trim();
   }
@@ -252,6 +288,8 @@ class AuthManager extends EventTarget {
    * @returns {boolean}
    */
   isProtectedUser(name) {
+    if (!name) return false;
+    if (name.trim() === ADMIN_CREDENTIALS.name) return true;
     return !!this._findUser(name);
   }
 
@@ -261,6 +299,14 @@ class AuthManager extends EventTarget {
    */
   isCurrentUserProtected() {
     return this.currentUser?.protected === true;
+  }
+
+  /**
+   * 현재 사용자가 관리자인지
+   * @returns {boolean}
+   */
+  isAdmin() {
+    return this.currentUser?.isAdmin === true;
   }
 
   /**
