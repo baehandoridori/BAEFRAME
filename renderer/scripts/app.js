@@ -5447,45 +5447,66 @@ async function initApp() {
   async function handleExternalFile(filePath) {
     log.info('외부 파일 열기', { filePath });
 
-    if (filePath.endsWith('.bframe')) {
-      // .bframe 파일인 경우: 내부의 videoPath를 읽어서 영상 로드
-      try {
-        const bframeData = await window.electronAPI.loadReview(filePath);
-        if (bframeData && bframeData.videoPath) {
-          // 영상 파일이 같은 폴더에 있는지 확인 (상대 경로 처리)
-          let videoPath = bframeData.videoPath;
+    // 재귀 호출(baeframe:// → 실제 경로)의 경우 오버레이 중복 방지
+    const isRecursive = filePath.startsWith('baeframe://');
 
-          // 상대 경로인 경우 .bframe 파일 기준으로 절대 경로 생성
-          if (!videoPath.includes(':') && !videoPath.startsWith('/')) {
-            const bframeDir = filePath.substring(0, filePath.lastIndexOf(filePath.includes('/') ? '/' : '\\'));
-            videoPath = bframeDir + (filePath.includes('/') ? '/' : '\\') + videoPath;
+    // 로딩 오버레이 표시 (최상위 호출에서만)
+    const loadingOverlay = document.getElementById('videoLoadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+
+    if (!isRecursive && loadingOverlay && !loadingOverlay.classList.contains('active')) {
+      loadingOverlay.classList.add('active');
+      if (loadingText) loadingText.textContent = '파일을 불러오는 중...';
+    }
+
+    try {
+      if (filePath.endsWith('.bframe')) {
+        // .bframe 파일인 경우: 내부의 videoPath를 읽어서 영상 로드
+        try {
+          const bframeData = await window.electronAPI.loadReview(filePath);
+          if (bframeData && bframeData.videoPath) {
+            // 영상 파일이 같은 폴더에 있는지 확인 (상대 경로 처리)
+            let videoPath = bframeData.videoPath;
+
+            // 상대 경로인 경우 .bframe 파일 기준으로 절대 경로 생성
+            if (!videoPath.includes(':') && !videoPath.startsWith('/')) {
+              const bframeDir = filePath.substring(0, filePath.lastIndexOf(filePath.includes('/') ? '/' : '\\'));
+              videoPath = bframeDir + (filePath.includes('/') ? '/' : '\\') + videoPath;
+            }
+
+            await loadVideo(videoPath);
+            showToast('.bframe 파일에서 영상 로드됨', 'success');
+          } else {
+            showToast('.bframe 파일에 영상 경로가 없습니다', 'warn');
+            loadingOverlay?.classList.remove('active');
           }
-
-          await loadVideo(videoPath);
-          showToast('.bframe 파일에서 영상 로드됨', 'success');
-        } else {
-          showToast('.bframe 파일에 영상 경로가 없습니다', 'warn');
+        } catch (error) {
+          log.error('.bframe 파일 처리 실패', error);
+          showToast('.bframe 파일을 열 수 없습니다', 'error');
+          loadingOverlay?.classList.remove('active');
         }
-      } catch (error) {
-        log.error('.bframe 파일 처리 실패', error);
-        showToast('.bframe 파일을 열 수 없습니다', 'error');
-      }
-    } else if (filePath.startsWith('baeframe://')) {
-      // 프로토콜 링크: baeframe://G:/경로/파일.bframe 또는 baeframe://G:/경로/영상.mp4
-      let actualPath = filePath.replace('baeframe://', '');
-      // URL 인코딩 디코딩 (공백 등 특수문자 처리)
-      try {
-        actualPath = decodeURIComponent(actualPath);
-      } catch (e) {
-        log.warn('URL 디코딩 실패, 원본 경로 사용', { actualPath, error: e.message });
-      }
-      log.info('프로토콜 링크에서 경로 추출', { actualPath });
+      } else if (filePath.startsWith('baeframe://')) {
+        // 프로토콜 링크: baeframe://G:/경로/파일.bframe 또는 baeframe://G:/경로/영상.mp4
+        let actualPath = filePath.replace('baeframe://', '');
+        // URL 인코딩 디코딩 (공백 등 특수문자 처리)
+        try {
+          actualPath = decodeURIComponent(actualPath);
+        } catch (e) {
+          log.warn('URL 디코딩 실패, 원본 경로 사용', { actualPath, error: e.message });
+        }
+        log.info('프로토콜 링크에서 경로 추출', { actualPath });
 
-      // 실제 경로로 다시 처리 (재귀)
-      await handleExternalFile(actualPath);
-    } else {
-      // 일반 영상 파일
-      await loadVideo(filePath);
+        // 실제 경로로 다시 처리 (재귀)
+        await handleExternalFile(actualPath);
+      } else {
+        // 일반 영상 파일
+        // loadVideo → generateThumbnails 내부에서 오버레이 텍스트 변경 및 해제 처리
+        await loadVideo(filePath);
+      }
+    } catch (error) {
+      log.error('외부 파일 열기 실패', error);
+      showToast('파일을 열 수 없습니다', 'error');
+      loadingOverlay?.classList.remove('active');
     }
   }
 

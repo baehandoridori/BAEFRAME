@@ -52,6 +52,9 @@ export class VideoPlayer extends EventTarget {
     this._frameCallbackId = null;
     this._lastEmittedFrame = -1;
 
+    // 프레임 이동 디바운싱 (빠른 연속 입력 시 마지막 프레임만 실제 seek)
+    this._seekDebounceId = null;
+
     // 초기화
     this._setupEventListeners();
 
@@ -379,10 +382,13 @@ export class VideoPlayer extends EventTarget {
     frame = Math.max(0, Math.min(frame, this.totalFrames - 1));
 
     // 프레임의 시작 시간 + 작은 오프셋 (프레임 경계 부동소수점 오차 방지)
-    // 프레임 N의 정확한 시작: N / fps
-    // 프레임 내부로 확실히 들어가기 위해 0.001초 추가
     const frameDuration = 1 / this.fps;
     const time = (frame * frameDuration) + 0.001;
+
+    // 이전 rAF seek 취소 (빠른 연속 입력 시 마지막 프레임만 실제 seek)
+    if (this._seekDebounceId) {
+      cancelAnimationFrame(this._seekDebounceId);
+    }
 
     // seeking 플래그 설정 (timeupdate가 프레임을 덮어쓰지 않도록)
     this._isSeeking = true;
@@ -390,11 +396,9 @@ export class VideoPlayer extends EventTarget {
       clearTimeout(this._seekTimeout);
     }
 
-    // 프레임 번호 직접 설정 (시간에서 재계산하지 않음)
+    // 프레임 번호 & 타임코드 즉시 업데이트 (UI 반응성)
     this.currentFrame = frame;
-    this.currentTime = frame * frameDuration;  // 표시용 시간은 정확한 프레임 시작점
-
-    this.videoElement.currentTime = time;
+    this.currentTime = frame * frameDuration;
 
     // 즉시 timeupdate 이벤트 발생 (일시정지 상태에서도 UI 즉시 업데이트)
     this._emit('timeupdate', {
@@ -402,10 +406,16 @@ export class VideoPlayer extends EventTarget {
       currentFrame: this.currentFrame
     });
 
-    // seeked 이벤트가 발생하면 플래그 해제 (폴백: 50ms 후 해제)
+    // 실제 video seek는 rAF로 배치 (빠른 연속 입력 시 마지막 프레임만 seek)
+    this._seekDebounceId = requestAnimationFrame(() => {
+      this._seekDebounceId = null;
+      this.videoElement.currentTime = time;
+    });
+
+    // seeked 이벤트 또는 타임아웃으로 플래그 해제
     this._seekTimeout = setTimeout(() => {
       this._isSeeking = false;
-    }, 50);
+    }, 200);
 
     log.debug('프레임 이동', { frame, time });
   }

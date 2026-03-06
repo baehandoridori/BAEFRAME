@@ -543,6 +543,7 @@ body {
   height: 6px;
   width: 100%;
   cursor: row-resize;
+  z-index: 10; /* 시크바(z-index: 5)보다 높게 - 이벤트 충돌 방지 */
 }
 
 .resizer-h::after {
@@ -7974,6 +7975,10 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   border-radius: 3px;
   position: relative;
   cursor: pointer;
+  /* 히트 영역 확대: 위아래 10px 패딩 → 실제 클릭 가능 영역 26px */
+  padding: 10px 0;
+  margin: -10px 0;
+  background-clip: content-box;
 }
 
 .split-seekbar-progress {

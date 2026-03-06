@@ -43,6 +43,11 @@ export class SplitViewManager {
     this._soloAudio = true; // 한쪽 언뮤트 시 반대쪽 자동 뮤트
     this._loadSeq = 0; // 비디오 로드 시퀀스 (레이스 방지)
 
+    // 프레임 이동 디바운싱 (빠른 연속 입력 시 마지막 프레임만 실제 seek)
+    this._frameStepRafId = null;
+    this._pendingFrame = undefined;
+    this._seekbarRafId = null;
+
     // Version Manager
     this._versionManager = getVersionManager();
 
@@ -282,29 +287,66 @@ export class SplitViewManager {
     document.getElementById('splitBtnNextFrame')?.addEventListener('click', () => this._stepFrame(1));
     document.getElementById('splitBtnLast')?.addEventListener('click', () => this._seekToEnd());
 
-    // 시크바 (클릭 + 드래그 지원)
+    // 시크바 (rAF 스로틀링 + 시각적 업데이트 분리로 드래그 개선)
     const seekbar = document.getElementById('splitSeekbar');
+    const seekbarProgress = document.getElementById('splitSeekbarProgress');
+    const seekbarHandle = document.getElementById('splitSeekbarHandle');
     let isDraggingSplitSeek = false;
+    let lastSeekPercent = 0;
 
-    const seekFromEvent = (e) => {
-      if (!seekbar) return;
+    const getPercentFromEvent = (e) => {
+      if (!seekbar) return 0;
       const rect = seekbar.getBoundingClientRect();
-      const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      this._seekToPercent(percent);
+      return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    };
+
+    const updateSeekbarVisual = (percent) => {
+      // 시각적 업데이트 (즉시 - 실제 seek 없이)
+      if (seekbarProgress) seekbarProgress.style.width = `${percent * 100}%`;
+      if (seekbarHandle) seekbarHandle.style.left = `${percent * 100}%`;
+      lastSeekPercent = percent;
+
+      // 타임코드도 퍼센트 기반으로 즉시 업데이트
+      const video = this._mode === 'independent'
+        ? (this._activePanel === 'left' ? this._leftVideo : this._rightVideo)
+        : this._leftVideo;
+      if (video && video.duration) {
+        const previewTime = video.duration * percent;
+        const currentEl = document.getElementById('splitTimecodeCurrent');
+        if (currentEl) currentEl.textContent = this._formatTimecode(previewTime);
+      }
     };
 
     seekbar?.addEventListener('mousedown', (e) => {
       isDraggingSplitSeek = true;
-      seekFromEvent(e);
+      const percent = getPercentFromEvent(e);
+      updateSeekbarVisual(percent);
+      this._seekToPercent(percent); // 첫 클릭은 즉시 seek
       e.preventDefault();
     });
 
     document.addEventListener('mousemove', (e) => {
-      if (isDraggingSplitSeek) seekFromEvent(e);
+      if (!isDraggingSplitSeek) return;
+      const percent = getPercentFromEvent(e);
+      updateSeekbarVisual(percent);
+      // rAF 스로틀링: 프레임당 최대 1회 seek
+      if (!this._seekbarRafId) {
+        this._seekbarRafId = requestAnimationFrame(() => {
+          this._seekbarRafId = null;
+          this._seekToPercent(lastSeekPercent);
+        });
+      }
     });
 
     document.addEventListener('mouseup', () => {
-      isDraggingSplitSeek = false;
+      if (isDraggingSplitSeek) {
+        isDraggingSplitSeek = false;
+        this._seekToPercent(lastSeekPercent); // 최종 위치 정확 seek
+        if (this._seekbarRafId) {
+          cancelAnimationFrame(this._seekbarRafId);
+          this._seekbarRafId = null;
+        }
+      }
     });
   }
 
@@ -448,6 +490,13 @@ export class SplitViewManager {
     // 동기화 상태 초기화
     this._lastSeekPerf = 0;
     this._lastUiFrame = -1;
+
+    // 프레임 이동 디바운싱 상태 초기화
+    if (this._frameStepRafId) cancelAnimationFrame(this._frameStepRafId);
+    this._frameStepRafId = null;
+    this._pendingFrame = undefined;
+    if (this._seekbarRafId) cancelAnimationFrame(this._seekbarRafId);
+    this._seekbarRafId = null;
 
     // 오버레이 숨기기
     this._overlay.classList.remove('open');
@@ -999,30 +1048,57 @@ export class SplitViewManager {
     // 수동 프레임 이동 시 동기화 루프 쿨다운 설정
     this._manualStepUntil = performance.now() + 100;
 
-    if (this._mode === 'sync') {
-      // 동기 모드: 프레임 기반 계산으로 양쪽 동일한 시간 적용
-      if (this._leftVideo) {
-        const currentFrame = Math.floor(this._leftVideo.currentTime * this._fps);
-        const targetFrame = Math.max(0, currentFrame + delta);
-        const newTime = targetFrame / this._fps + EPS;
-        const clampedTime = Math.min(newTime, this._leftVideo.duration - EPS);
-
-        this._leftVideo.currentTime = clampedTime;
-        if (this._rightVideo) {
-          this._rightVideo.currentTime = Math.min(clampedTime, this._rightVideo.duration - EPS);
-        }
-      }
-    } else {
-      // 독립 모드: 프레임 기반 계산
-      const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
-      if (video) {
-        const currentFrame = Math.floor(video.currentTime * this._fps);
-        const targetFrame = Math.max(0, currentFrame + delta);
-        video.currentTime = Math.min(targetFrame / this._fps + EPS, video.duration - EPS);
-      }
+    // 이전 seek rAF 취소 (빠른 연속 입력 시 마지막 프레임만 실제 seek)
+    if (this._frameStepRafId) {
+      cancelAnimationFrame(this._frameStepRafId);
     }
 
-    this._updateTimecode();
+    // 현재 프레임 계산 기준: _pendingFrame이 있으면 그 값 사용 (연속 입력 대응)
+    let baseFrame;
+    if (this._mode === 'sync') {
+      if (!this._leftVideo) return;
+      baseFrame = this._pendingFrame !== undefined
+        ? this._pendingFrame
+        : Math.floor(this._leftVideo.currentTime * this._fps);
+    } else {
+      const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
+      if (!video) return;
+      baseFrame = this._pendingFrame !== undefined
+        ? this._pendingFrame
+        : Math.floor(video.currentTime * this._fps);
+    }
+
+    const targetFrame = Math.max(0, baseFrame + delta);
+    const targetTime = targetFrame / this._fps + EPS;
+
+    // pending 프레임 저장 (연속 입력 시 누적 계산용)
+    this._pendingFrame = targetFrame;
+
+    // 타임코드 즉시 업데이트 (pending 프레임 기반 - video.currentTime 미사용)
+    this._updateTimecodeForFrame(targetFrame);
+
+    // 실제 video seek는 rAF로 배치
+    this._frameStepRafId = requestAnimationFrame(() => {
+      this._frameStepRafId = null;
+      this._pendingFrame = undefined; // seek 완료 후 초기화
+
+      if (this._mode === 'sync') {
+        if (this._leftVideo) {
+          const clampedTime = Math.min(targetTime, this._leftVideo.duration - EPS);
+          this._leftVideo.currentTime = clampedTime;
+          if (this._rightVideo) {
+            this._rightVideo.currentTime = Math.min(clampedTime, this._rightVideo.duration - EPS);
+          }
+        }
+      } else {
+        const video = this._activePanel === 'left' ? this._leftVideo : this._rightVideo;
+        if (video) {
+          video.currentTime = Math.min(targetTime, video.duration - EPS);
+        }
+      }
+
+      this._updateTimecode(); // 실제 seek 후 정확한 타임코드 반영
+    });
   }
 
   /**
@@ -1340,6 +1416,40 @@ export class SplitViewManager {
     const progress = document.getElementById('splitSeekbarProgress');
     const handle = document.getElementById('splitSeekbarHandle');
 
+    if (progress) progress.style.width = `${percent}%`;
+    if (handle) handle.style.left = `${percent}%`;
+  }
+
+  /**
+   * 특정 프레임 기준으로 타임코드 즉시 업데이트 (video.currentTime 미사용)
+   * 빠른 프레임 이동 시 rAF 지연 전에 UI를 즉시 반영하기 위해 사용
+   * @param {number} frame - 표시할 프레임 번호
+   */
+  _updateTimecodeForFrame(frame) {
+    const video = this._mode === 'independent'
+      ? (this._activePanel === 'left' ? this._leftVideo : this._rightVideo)
+      : this._leftVideo;
+    if (!video) return;
+
+    const duration = video.duration || 0;
+    const current = frame / this._fps;
+    const percent = duration > 0 ? (current / duration) * 100 : 0;
+
+    const currentEl = document.getElementById('splitTimecodeCurrent');
+    const totalEl = document.getElementById('splitTimecodeTotal');
+    const frameInfoEl = document.getElementById('splitFrameInfo');
+
+    if (currentEl) currentEl.textContent = this._formatTimecode(current);
+    if (totalEl) totalEl.textContent = this._formatTimecode(duration);
+
+    const totalFrames = Math.floor(duration * this._fps);
+    const panelIndicator = this._mode === 'independent'
+      ? `[${this._activePanel === 'left' ? '좌' : '우'}] ` : '';
+    if (frameInfoEl) frameInfoEl.textContent = `${panelIndicator}${this._fps}fps · Frame ${frame} / ${totalFrames}`;
+
+    // 시크바도 업데이트
+    const progress = document.getElementById('splitSeekbarProgress');
+    const handle = document.getElementById('splitSeekbarHandle');
     if (progress) progress.style.width = `${percent}%`;
     if (handle) handle.style.left = `${percent}%`;
   }

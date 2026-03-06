@@ -538,11 +538,16 @@ class FFmpegManager {
       // 색 공간 변환 필터: 비표준 색공간 → BT.709 표준으로 변환
       const colorFilter = 'colorspace=all=bt709:iall=bt601-6-625:fast=1';
 
+      // 키프레임 간격 설정: 1초마다 키프레임 삽입 (프레임 단위 seek 성능 향상)
+      const gopSize = Math.round(codecInfo.frameRate || 24);
+
       const args = [
         '-i', filePath,
         '-vf', colorFilter,     // 색 공간 변환 필터
         '-c:v', encoder.name,
         '-pix_fmt', 'yuv420p',  // HTML5 Video 호환 픽셀 포맷
+        '-g', String(gopSize),           // 1초마다 키프레임 (프레임 이동 반응속도 개선)
+        '-keyint_min', String(gopSize),  // 최소 키프레임 간격
         // 출력 색 공간 메타데이터 설정
         '-colorspace', 'bt709',
         '-color_primaries', 'bt709',
