@@ -8057,6 +8057,309 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   animation: splitPanelInRight 0.3s ease 0.1s forwards;
 }
 
+/* ========================================
+   뷰 모드: 오버레이 / 와이프
+   ======================================== */
+
+/* 재생 모드 버튼 (동기/독립) - 나란히 보기에서만 표시 */
+.split-playback-mode-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.split-mode-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-subtle);
+  margin: 0 8px;
+}
+
+.split-mode-btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* 오버레이/와이프 모드: 통합 버전 바 */
+.split-overlay-version-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 16px;
+}
+
+.split-overlay-version {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.split-overlay-version-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  letter-spacing: 0.5px;
+}
+
+.split-overlay-version-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.split-overlay-swap-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.split-overlay-swap-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+/* 오버레이 모드: body 레이아웃 변경 */
+.split-view-overlay.view-overlay .split-view-body,
+.split-view-overlay.view-wipe .split-view-body {
+  position: relative;
+}
+
+/* 오버레이/와이프: 패널을 겹치기 (absolute) */
+.split-view-overlay.view-overlay .split-panel,
+.split-view-overlay.view-wipe .split-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  flex: none;
+  min-width: 0;
+}
+
+/* 오버레이/와이프: 패널 헤더 숨기기 */
+.split-view-overlay.view-overlay .split-panel-header,
+.split-view-overlay.view-wipe .split-panel-header {
+  display: none;
+}
+
+/* 오버레이/와이프: 리사이저 숨기기 */
+.split-view-overlay.view-overlay .split-resizer,
+.split-view-overlay.view-wipe .split-resizer {
+  display: none;
+}
+
+/* 오버레이 모드: 레이어 순서 */
+.split-view-overlay.view-overlay .split-panel-left {
+  z-index: 1;
+}
+
+.split-view-overlay.view-overlay .split-panel-right {
+  z-index: 2;
+}
+
+/* 와이프 모드: 두 패널 모두 표시, clip-path로 분할 */
+.split-view-overlay.view-wipe .split-panel-left {
+  z-index: 1;
+  clip-path: inset(0 50% 0 0);
+  transition: clip-path 0s;
+}
+
+.split-view-overlay.view-wipe .split-panel-right {
+  z-index: 2;
+  clip-path: inset(0 0 0 50%);
+  transition: clip-path 0s;
+}
+
+/* 오버레이: 스왑 버튼 숨김 (통합 바에서 스왑) */
+.split-view-overlay.view-overlay #btnSwapPanels,
+.split-view-overlay.view-wipe #btnSwapPanels {
+  display: none;
+}
+
+/* 오버레이/와이프: 입장 애니메이션 비활성화 */
+.split-view-overlay.view-overlay.open .split-panel-left,
+.split-view-overlay.view-overlay.open .split-panel-right,
+.split-view-overlay.view-wipe.open .split-panel-left,
+.split-view-overlay.view-wipe.open .split-panel-right {
+  animation: none;
+}
+
+/* 불투명도 슬라이더 컨트롤 (플로팅) */
+.split-overlay-controls {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+  pointer-events: auto;
+}
+
+.split-overlay-controls.auto-hide {
+  opacity: 0;
+}
+
+.split-overlay-controls:hover,
+.split-overlay-controls.active {
+  opacity: 1;
+}
+
+.split-overlay-slider-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 28px;
+  backdrop-filter: blur(12px);
+}
+
+.split-overlay-slider-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 20px;
+  text-align: center;
+  user-select: none;
+}
+
+.split-overlay-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 200px;
+  height: 4px;
+  background: linear-gradient(to right, var(--accent-primary) 0%, var(--accent-primary) 50%, var(--bg-tertiary) 50%, var(--bg-tertiary) 100%);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.split-overlay-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--text-primary);
+  border: 2px solid var(--accent-primary);
+  border-radius: 50%;
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.split-overlay-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 8px var(--accent-shadow);
+}
+
+.split-overlay-slider::-webkit-slider-thumb:active {
+  cursor: grabbing;
+}
+
+.split-overlay-slider-value {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--accent-primary);
+  min-width: 32px;
+  text-align: right;
+  user-select: none;
+}
+
+/* 와이프 모드: 커튼 디바이더 */
+.split-wipe-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  z-index: 5;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.split-wipe-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.8);
+  transform: translateX(-50%);
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.5);
+}
+
+.split-wipe-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 36px;
+  height: 36px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  pointer-events: auto;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  backdrop-filter: blur(4px);
+}
+
+.split-wipe-handle:hover {
+  background: rgba(0, 0, 0, 0.85);
+  border-color: var(--accent-primary);
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+.split-wipe-handle:active {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+}
+
+.split-wipe-handle svg {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.split-wipe-label {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+  user-select: none;
+}
+
+.split-wipe-label-left {
+  right: calc(50% + 28px);
+}
+
+.split-wipe-label-right {
+  left: calc(50% + 28px);
+}
+
 /* Independent Mode - 타임라인 유지 (활성 패널 표시로 구분) */
 /*
 .split-view-overlay.independent-mode .split-view-timeline {

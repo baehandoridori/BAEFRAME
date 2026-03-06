@@ -25,6 +25,7 @@ export class SplitViewManager {
     // State
     this._isOpen = false;
     this._mode = 'sync'; // 'sync' | 'independent'
+    this._viewMode = 'side-by-side'; // 'side-by-side' | 'overlay' | 'wipe'
     this._activePanel = 'left';
     this._leftVersion = null;
     this._rightVersion = null;
@@ -34,6 +35,12 @@ export class SplitViewManager {
     this._isPlaying = false;
     this._isDraggingResizer = false;
     this._animationFrameId = null;
+
+    // 오버레이/와이프 모드 상태
+    this._overlayOpacity = 50; // 0~100
+    this._wipePosition = 50; // 0~100 (퍼센트)
+    this._isDraggingWipe = false;
+    this._overlayAutoHideTimer = null;
 
     // 하이브리드 동기화 상태 (GPT 권장)
     this._timeUpdateType = null; // 'rvfc' | 'raf'
@@ -90,7 +97,12 @@ export class SplitViewManager {
    * 이벤트 바인딩
    */
   _bindEvents() {
-    // 모드 버튼
+    // 뷰 모드 버튼
+    document.getElementById('btnViewSideBySide')?.addEventListener('click', () => this._setViewMode('side-by-side'));
+    document.getElementById('btnViewOverlay')?.addEventListener('click', () => this._setViewMode('overlay'));
+    document.getElementById('btnViewWipe')?.addEventListener('click', () => this._setViewMode('wipe'));
+
+    // 재생 모드 버튼 (동기/독립)
     const btnSyncMode = document.getElementById('btnSyncMode');
     const btnIndependentMode = document.getElementById('btnIndependentMode');
 
@@ -131,6 +143,13 @@ export class SplitViewManager {
 
     // 타임라인 컨트롤
     this._bindTimelineControls();
+
+    // 오버레이/와이프 컨트롤
+    this._bindOverlayControls();
+    this._bindWipeControls();
+
+    // 오버레이 모드 스왑 버튼
+    document.getElementById('btnOverlaySwap')?.addEventListener('click', () => this._swapPanels());
 
     // 키보드 이벤트
     this._bindKeyboardEvents();
@@ -187,6 +206,41 @@ export class SplitViewManager {
       case 'End':
         e.preventDefault();
         this._seekToEnd();
+        break;
+
+      // 뷰 모드 전환: 1/2/3
+      case 'Digit1':
+        e.preventDefault();
+        this._setViewMode('side-by-side');
+        break;
+
+      case 'Digit2':
+        e.preventDefault();
+        this._setViewMode('overlay');
+        break;
+
+      case 'Digit3':
+        e.preventDefault();
+        this._setViewMode('wipe');
+        break;
+
+      // [ ] 키: 오버레이 불투명도 / 와이프 위치 조절
+      case 'BracketLeft':
+        e.preventDefault();
+        if (this._viewMode === 'overlay') {
+          this._setOverlayOpacity(Math.max(0, this._overlayOpacity - 10));
+        } else if (this._viewMode === 'wipe') {
+          this._setWipePosition(Math.max(0, this._wipePosition - 5));
+        }
+        break;
+
+      case 'BracketRight':
+        e.preventDefault();
+        if (this._viewMode === 'overlay') {
+          this._setOverlayOpacity(Math.min(100, this._overlayOpacity + 10));
+        } else if (this._viewMode === 'wipe') {
+          this._setWipePosition(Math.min(100, this._wipePosition + 5));
+        }
         break;
 
       default:
@@ -403,6 +457,11 @@ export class SplitViewManager {
     this._renderVersionSelector('Left', this._leftVersion);
     this._renderVersionSelector('Right', this._rightVersion);
 
+    // 뷰 모드 초기 버튼 상태 리셋
+    document.getElementById('btnViewSideBySide')?.classList.add('active');
+    document.getElementById('btnViewOverlay')?.classList.remove('active');
+    document.getElementById('btnViewWipe')?.classList.remove('active');
+
     // 비디오 로드
     try {
       await this._loadVideo('left', this._leftVersion);
@@ -413,6 +472,9 @@ export class SplitViewManager {
 
     // 오디오 상태 초기화: 좌측 활성화, 우측 음소거
     this._resetAudioState();
+
+    // 오버레이 버전 라벨 초기화
+    this._updateOverlayVersionLabels();
 
     log.info('스플릿 뷰 열림 완료');
   }
@@ -498,6 +560,19 @@ export class SplitViewManager {
     if (this._seekbarRafId) cancelAnimationFrame(this._seekbarRafId);
     this._seekbarRafId = null;
 
+    // 뷰 모드 초기화
+    if (this._viewMode !== 'side-by-side') {
+      this._exitOverlayLayout();
+      this._overlay.classList.remove('view-overlay', 'view-wipe');
+      this._viewMode = 'side-by-side';
+    }
+
+    // 자동 숨김 타이머 정리
+    if (this._overlayAutoHideTimer) {
+      clearTimeout(this._overlayAutoHideTimer);
+      this._overlayAutoHideTimer = null;
+    }
+
     // 오버레이 숨기기
     this._overlay.classList.remove('open');
     this._isOpen = false;
@@ -537,6 +612,353 @@ export class SplitViewManager {
     return this._isOpen;
   }
 
+  // ============================================
+  // 뷰 모드 (나란히 / 오버레이 / 와이프)
+  // ============================================
+
+  /**
+   * 뷰 모드 설정
+   * @param {'side-by-side'|'overlay'|'wipe'} viewMode
+   */
+  _setViewMode(viewMode) {
+    if (this._viewMode === viewMode) return;
+
+    const prevMode = this._viewMode;
+    this._viewMode = viewMode;
+
+    log.info('뷰 모드 변경', { from: prevMode, to: viewMode });
+
+    // 뷰 모드 버튼 상태 업데이트
+    document.getElementById('btnViewSideBySide')?.classList.toggle('active', viewMode === 'side-by-side');
+    document.getElementById('btnViewOverlay')?.classList.toggle('active', viewMode === 'overlay');
+    document.getElementById('btnViewWipe')?.classList.toggle('active', viewMode === 'wipe');
+
+    // 오버레이 CSS 클래스 업데이트
+    this._overlay.classList.remove('view-overlay', 'view-wipe');
+    if (viewMode === 'overlay') {
+      this._overlay.classList.add('view-overlay');
+    } else if (viewMode === 'wipe') {
+      this._overlay.classList.add('view-wipe');
+    }
+
+    // 재생 모드 컨트롤: 나란히 보기에서만 표시
+    const playbackControls = document.getElementById('splitPlaybackModeControls');
+    if (playbackControls) {
+      playbackControls.style.display = viewMode === 'side-by-side' ? 'flex' : 'none';
+    }
+
+    // 통합 버전 바: 오버레이/와이프에서만 표시
+    const versionBar = document.getElementById('splitOverlayVersionBar');
+    if (versionBar) {
+      versionBar.style.display = viewMode === 'side-by-side' ? 'none' : 'flex';
+    }
+
+    // 기존 스왑 버튼: 나란히 보기에서만 표시 (CSS로도 숨기지만 명시적)
+    const btnSwap = document.getElementById('btnSwapPanels');
+    if (btnSwap) {
+      btnSwap.style.display = viewMode === 'side-by-side' ? '' : 'none';
+    }
+
+    // 오버레이/와이프 모드에서는 동기 재생 강제
+    if (viewMode !== 'side-by-side' && this._mode !== 'sync') {
+      this._setMode('sync');
+    }
+
+    // 오버레이 컨트롤 표시/숨기기
+    const overlayControls = document.getElementById('splitOverlayControls');
+    if (overlayControls) {
+      overlayControls.style.display = viewMode === 'overlay' ? '' : 'none';
+    }
+
+    // 와이프 디바이더 표시/숨기기
+    const wipeDivider = document.getElementById('splitWipeDivider');
+    if (wipeDivider) {
+      wipeDivider.style.display = viewMode === 'wipe' ? '' : 'none';
+    }
+
+    // 모드별 초기화
+    if (viewMode === 'side-by-side') {
+      this._exitOverlayLayout();
+    } else if (viewMode === 'overlay') {
+      this._enterOverlayMode();
+    } else if (viewMode === 'wipe') {
+      this._enterWipeMode();
+    }
+
+    // 통합 버전 라벨 업데이트
+    this._updateOverlayVersionLabels();
+  }
+
+  /**
+   * 오버레이 모드 진입
+   */
+  _enterOverlayMode() {
+    // 불투명도 적용
+    this._applyOverlayOpacity();
+
+    // 슬라이더 자동 숨김 시작
+    this._startOverlayAutoHide();
+  }
+
+  /**
+   * 와이프 모드 진입
+   */
+  _enterWipeMode() {
+    // 와이프 위치 적용
+    this._applyWipePosition();
+  }
+
+  /**
+   * 오버레이/와이프 레이아웃 종료 → 나란히 보기 복원
+   */
+  _exitOverlayLayout() {
+    // 오른쪽 패널 불투명도 복원
+    if (this._panelRight) {
+      this._panelRight.style.opacity = '';
+    }
+
+    // 패널 clip-path 제거
+    if (this._panelLeft) this._panelLeft.style.clipPath = '';
+    if (this._panelRight) this._panelRight.style.clipPath = '';
+
+    // 패널 크기 복원
+    this._resetPanelSizes();
+
+    // 자동 숨김 타이머 제거
+    if (this._overlayAutoHideTimer) {
+      clearTimeout(this._overlayAutoHideTimer);
+      this._overlayAutoHideTimer = null;
+    }
+  }
+
+  /**
+   * 통합 버전 라벨 업데이트
+   */
+  _updateOverlayVersionLabels() {
+    const getVersionLabel = (version) => {
+      if (!version) return '?';
+      return version.version !== null && version.version !== undefined
+        ? `v${version.version}`
+        : '기준';
+    };
+
+    const leftLabel = getVersionLabel(this._leftVersion);
+    const rightLabel = getVersionLabel(this._rightVersion);
+
+    // 통합 바 라벨
+    const overlayLabelLeft = document.getElementById('splitOverlayLabelLeft');
+    const overlayLabelRight = document.getElementById('splitOverlayLabelRight');
+    if (overlayLabelLeft) overlayLabelLeft.textContent = leftLabel;
+    if (overlayLabelRight) overlayLabelRight.textContent = rightLabel;
+
+    // 불투명도 슬라이더 라벨
+    const sliderLabelLeft = document.getElementById('splitOverlaySliderLabelLeft');
+    const sliderLabelRight = document.getElementById('splitOverlaySliderLabelRight');
+    if (sliderLabelLeft) sliderLabelLeft.textContent = leftLabel;
+    if (sliderLabelRight) sliderLabelRight.textContent = rightLabel;
+
+    // 와이프 라벨
+    const wipeLabelLeft = document.getElementById('splitWipeLabelLeft');
+    const wipeLabelRight = document.getElementById('splitWipeLabelRight');
+    if (wipeLabelLeft) wipeLabelLeft.textContent = leftLabel;
+    if (wipeLabelRight) wipeLabelRight.textContent = rightLabel;
+  }
+
+  // ============================================
+  // 불투명도 오버레이 컨트롤
+  // ============================================
+
+  /**
+   * 불투명도 컨트롤 바인딩
+   */
+  _bindOverlayControls() {
+    const slider = document.getElementById('splitOverlayOpacity');
+    const controls = document.getElementById('splitOverlayControls');
+
+    slider?.addEventListener('input', (e) => {
+      this._setOverlayOpacity(parseInt(e.target.value, 10));
+    });
+
+    // 마우스 호버 시 자동 숨김 해제
+    controls?.addEventListener('mouseenter', () => {
+      controls.classList.remove('auto-hide');
+      controls.classList.add('active');
+      if (this._overlayAutoHideTimer) {
+        clearTimeout(this._overlayAutoHideTimer);
+      }
+    });
+
+    controls?.addEventListener('mouseleave', () => {
+      controls.classList.remove('active');
+      this._startOverlayAutoHide();
+    });
+
+    // 영상 영역에서 마우스 이동 시 슬라이더 표시
+    const body = this._overlay?.querySelector('.split-view-body');
+    body?.addEventListener('mousemove', () => {
+      if (this._viewMode !== 'overlay') return;
+      if (controls) {
+        controls.classList.remove('auto-hide');
+        this._startOverlayAutoHide();
+      }
+    });
+  }
+
+  /**
+   * 불투명도 설정
+   * @param {number} value - 0~100
+   */
+  _setOverlayOpacity(value) {
+    this._overlayOpacity = value;
+
+    // 슬라이더 동기화
+    const slider = document.getElementById('splitOverlayOpacity');
+    if (slider) slider.value = value;
+
+    // 값 표시
+    const valueEl = document.getElementById('splitOverlayOpacityValue');
+    if (valueEl) valueEl.textContent = `${value}%`;
+
+    // 슬라이더 배경 그라데이션 업데이트
+    if (slider) {
+      slider.style.background = `linear-gradient(to right, var(--accent-primary) 0%, var(--accent-primary) ${value}%, var(--bg-tertiary) ${value}%, var(--bg-tertiary) 100%)`;
+    }
+
+    this._applyOverlayOpacity();
+
+    // 자동 숨김 리셋
+    const controls = document.getElementById('splitOverlayControls');
+    if (controls) {
+      controls.classList.remove('auto-hide');
+      this._startOverlayAutoHide();
+    }
+  }
+
+  /**
+   * 불투명도를 비디오에 적용
+   */
+  _applyOverlayOpacity() {
+    if (this._viewMode !== 'overlay') return;
+
+    // 오른쪽(상단) 패널 전체의 불투명도 조절 (비디오 + 캔버스 포함)
+    if (this._panelRight) {
+      this._panelRight.style.opacity = this._overlayOpacity / 100;
+    }
+  }
+
+  /**
+   * 슬라이더 자동 숨김 시작 (3초 후)
+   */
+  _startOverlayAutoHide() {
+    if (this._overlayAutoHideTimer) {
+      clearTimeout(this._overlayAutoHideTimer);
+    }
+    this._overlayAutoHideTimer = setTimeout(() => {
+      const controls = document.getElementById('splitOverlayControls');
+      if (controls && !controls.classList.contains('active')) {
+        controls.classList.add('auto-hide');
+      }
+    }, 3000);
+  }
+
+  // ============================================
+  // 커튼 와이프 컨트롤
+  // ============================================
+
+  /**
+   * 와이프 컨트롤 바인딩
+   */
+  _bindWipeControls() {
+    const handle = document.getElementById('splitWipeHandle');
+    const body = this._overlay?.querySelector('.split-view-body');
+
+    if (!handle || !body) return;
+
+    const onMouseDown = (e) => {
+      if (this._viewMode !== 'wipe') return;
+      e.preventDefault();
+      this._isDraggingWipe = true;
+      handle.style.cursor = 'ew-resize';
+      document.body.style.cursor = 'ew-resize';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    };
+
+    const onMouseMove = (e) => {
+      if (!this._isDraggingWipe) return;
+
+      const bodyRect = body.getBoundingClientRect();
+      const percent = ((e.clientX - bodyRect.left) / bodyRect.width) * 100;
+      const clamped = Math.max(2, Math.min(98, percent));
+
+      requestAnimationFrame(() => {
+        this._setWipePosition(clamped);
+      });
+    };
+
+    const onMouseUp = () => {
+      this._isDraggingWipe = false;
+      handle.style.cursor = '';
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    handle.addEventListener('mousedown', onMouseDown);
+
+    // 와이프 영역 클릭으로도 위치 변경
+    body.addEventListener('mousedown', (e) => {
+      if (this._viewMode !== 'wipe') return;
+      // 핸들 자체 클릭은 무시 (핸들 드래그로 처리)
+      if (e.target.closest('.split-wipe-handle')) return;
+      // 와이프 디바이더 영역에서만 처리
+      if (!e.target.closest('.split-wipe-divider') && !e.target.closest('.split-video-container') && !e.target.closest('.split-panel')) return;
+
+      const bodyRect = body.getBoundingClientRect();
+      const percent = ((e.clientX - bodyRect.left) / bodyRect.width) * 100;
+      const clamped = Math.max(2, Math.min(98, percent));
+      this._setWipePosition(clamped);
+
+      // 클릭 후 드래그 가능하도록
+      this._isDraggingWipe = true;
+      document.body.style.cursor = 'ew-resize';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  }
+
+  /**
+   * 와이프 위치 설정
+   * @param {number} percent - 0~100
+   */
+  _setWipePosition(percent) {
+    this._wipePosition = percent;
+    this._applyWipePosition();
+  }
+
+  /**
+   * 와이프 위치를 DOM에 적용
+   */
+  _applyWipePosition() {
+    if (this._viewMode !== 'wipe') return;
+
+    const percent = this._wipePosition;
+
+    // 패널 clip-path 업데이트
+    if (this._panelLeft) {
+      this._panelLeft.style.clipPath = `inset(0 ${100 - percent}% 0 0)`;
+    }
+    if (this._panelRight) {
+      this._panelRight.style.clipPath = `inset(0 0 0 ${percent}%)`;
+    }
+
+    // 디바이더 위치 업데이트
+    const divider = document.getElementById('splitWipeDivider');
+    if (divider) {
+      divider.style.left = `${percent}%`;
+    }
+  }
+
   /**
    * 패널 크기 초기화 (50:50)
    */
@@ -550,6 +972,12 @@ export class SplitViewManager {
    * @param {'sync'|'independent'} mode
    */
   _setMode(mode) {
+    // 오버레이/와이프 모드에서는 독립 모드 불가
+    if (this._viewMode !== 'side-by-side' && mode === 'independent') {
+      log.warn('오버레이/와이프 모드에서는 독립 재생을 사용할 수 없습니다');
+      return;
+    }
+
     this._mode = mode;
 
     // 버튼 상태 업데이트
@@ -700,6 +1128,9 @@ export class SplitViewManager {
     } else {
       this._renderVersionSelector('Left', this._leftVersion);
     }
+
+    // 오버레이 버전 라벨 업데이트
+    this._updateOverlayVersionLabels();
   }
 
   /**
@@ -860,6 +1291,9 @@ export class SplitViewManager {
     // 셀렉터 다시 렌더링
     this._renderVersionSelector('Left', this._leftVersion);
     this._renderVersionSelector('Right', this._rightVersion);
+
+    // 오버레이 버전 라벨 업데이트
+    this._updateOverlayVersionLabels();
 
     log.info('패널 교환됨');
   }

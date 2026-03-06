@@ -1541,22 +1541,71 @@
   <div class="split-view-overlay" id="splitViewOverlay">
     <!-- 스플릿 뷰 헤더 (컨트롤 바) -->
     <div class="split-view-header">
+      <!-- 뷰 모드 선택 (나란히 / 오버레이 / 와이프) -->
       <div class="split-view-mode-controls">
-        <button class="split-mode-btn active" id="btnSyncMode" title="동기 재생 - 두 영상이 같은 프레임에서 함께 재생됩니다">
+        <button class="split-mode-btn active" id="btnViewSideBySide" title="나란히 보기 (1)">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="8" height="18" rx="1"/>
+            <rect x="13" y="3" width="8" height="18" rx="1"/>
+          </svg>
+          나란히
+        </button>
+        <button class="split-mode-btn" id="btnViewOverlay" title="오버레이 - 불투명도로 비교 (2)">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="4" width="14" height="14" rx="2" opacity="0.6"/>
+            <rect x="8" y="6" width="14" height="14" rx="2" opacity="0.6"/>
+          </svg>
+          오버레이
+        </button>
+        <button class="split-mode-btn" id="btnViewWipe" title="커튼 와이프 - 드래그로 비교 (3)">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="1"/>
+            <line x1="12" y1="3" x2="12" y2="21" stroke-dasharray="3 2"/>
+            <polygon points="10,10 8,12 10,14" fill="currentColor" stroke="none"/>
+            <polygon points="14,10 16,12 14,14" fill="currentColor" stroke="none"/>
+          </svg>
+          와이프
+        </button>
+      </div>
+
+      <!-- 나란히 보기 전용: 재생 모드 (동기/독립) -->
+      <div class="split-playback-mode-controls" id="splitPlaybackModeControls">
+        <div class="split-mode-divider"></div>
+        <button class="split-mode-btn split-mode-btn-sm active" id="btnSyncMode" title="동기 재생 - 두 영상이 같은 프레임에서 함께 재생됩니다">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
           </svg>
-          동기 재생
+          동기
         </button>
-        <button class="split-mode-btn" id="btnIndependentMode" title="독립 재생 - 각 영상을 개별적으로 제어합니다">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+        <button class="split-mode-btn split-mode-btn-sm" id="btnIndependentMode" title="독립 재생 - 각 영상을 개별적으로 제어합니다">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="7" height="7"/>
             <rect x="14" y="14" width="7" height="7"/>
           </svg>
-          독립 재생
+          독립
         </button>
       </div>
+
+      <!-- 오버레이/와이프 모드: 통합 버전 표시 -->
+      <div class="split-overlay-version-bar" id="splitOverlayVersionBar" style="display:none;">
+        <div class="split-overlay-version" id="splitOverlayVersionLeft">
+          <span class="split-overlay-version-badge">아래</span>
+          <span class="split-overlay-version-label" id="splitOverlayLabelLeft">v1</span>
+        </div>
+        <button class="split-overlay-swap-btn" id="btnOverlaySwap" title="좌우 교환">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="7 16 3 12 7 8"/>
+            <polyline points="17 8 21 12 17 16"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+          </svg>
+        </button>
+        <div class="split-overlay-version" id="splitOverlayVersionRight">
+          <span class="split-overlay-version-badge">위</span>
+          <span class="split-overlay-version-label" id="splitOverlayLabelRight">v2</span>
+        </div>
+      </div>
+
       <div class="split-view-actions">
         <button class="split-action-btn" id="btnSwapPanels" title="좌우 패널 교환">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -1677,6 +1726,29 @@
             <span>버전을 선택하세요</span>
           </div>
         </div>
+      </div>
+
+      <!-- 오버레이/와이프 모드: 불투명도 슬라이더 (영상 위에 플로팅) -->
+      <div class="split-overlay-controls" id="splitOverlayControls" style="display:none;">
+        <div class="split-overlay-slider-container">
+          <span class="split-overlay-slider-label" id="splitOverlaySliderLabelLeft">v1</span>
+          <input type="range" class="split-overlay-slider" id="splitOverlayOpacity" min="0" max="100" value="50" title="불투명도">
+          <span class="split-overlay-slider-label" id="splitOverlaySliderLabelRight">v2</span>
+          <span class="split-overlay-slider-value" id="splitOverlayOpacityValue">50%</span>
+        </div>
+      </div>
+
+      <!-- 와이프 모드: 커튼 디바이더 -->
+      <div class="split-wipe-divider" id="splitWipeDivider" style="display:none;">
+        <div class="split-wipe-line"></div>
+        <div class="split-wipe-handle" id="splitWipeHandle">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="9,8 7,12 9,16"/>
+            <polyline points="15,8 17,12 15,16"/>
+          </svg>
+        </div>
+        <div class="split-wipe-label split-wipe-label-left" id="splitWipeLabelLeft">v1</div>
+        <div class="split-wipe-label split-wipe-label-right" id="splitWipeLabelRight">v2</div>
       </div>
     </div>
 
