@@ -321,11 +321,24 @@ class FFmpegManager {
   }
 
   /**
-   * 파일 해시 생성 (캐시 키)
+   * 파일 해시 생성 (캐시 키) - 파일 내용 기반
+   * 파일 앞부분 1MB + 파일 크기로 해시 생성
+   * (경로/mtime 미사용 → Google Drive 동기화 후에도 캐시 유지)
    */
   _getFileHash(filePath, stats) {
-    const data = `${filePath}|${stats.size}|${stats.mtimeMs}`;
-    return crypto.createHash('md5').update(data).digest('hex').slice(0, 16);
+    const CHUNK_SIZE = 1024 * 1024; // 1MB
+    const readSize = Math.min(CHUNK_SIZE, stats.size);
+    const buffer = Buffer.alloc(readSize);
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      fs.readSync(fd, buffer, 0, readSize, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const hash = crypto.createHash('md5');
+    hash.update(buffer);
+    hash.update(String(stats.size));
+    return hash.digest('hex').slice(0, 16);
   }
 
   /**
@@ -449,9 +462,10 @@ class FFmpegManager {
     try {
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
 
-      // 원본 파일이 변경되었는지 확인
-      if (meta.originalMtime !== stats.mtimeMs || meta.originalSize !== stats.size) {
-        log.info('캐시 무효화: 원본 파일 변경됨', { filePath });
+      // 원본 파일이 변경되었는지 확인 (크기만 체크, mtime은 무시)
+      // 내용이 바뀌면 해시 자체가 달라져 다른 캐시 폴더를 찾게 됨
+      if (meta.originalSize !== stats.size) {
+        log.info('캐시 무효화: 원본 파일 크기 변경됨', { filePath });
         return { valid: false, reason: '원본 파일 변경됨', fileHash };
       }
 
