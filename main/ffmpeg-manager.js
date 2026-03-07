@@ -473,9 +473,16 @@ class FFmpegManager {
     const convertedPath = path.join(cacheFolder, 'converted.mp4');
 
     if (!fs.existsSync(metaPath) || !fs.existsSync(convertedPath)) {
+      const cacheFolderExists = fs.existsSync(cacheFolder);
+      let cacheFolderContents = [];
+      if (cacheFolderExists) {
+        try { cacheFolderContents = fs.readdirSync(cacheFolder); } catch { /* 무시 */ }
+      }
       log.debug('캐시 미스', {
         fileHash,
         cacheFolder,
+        cacheFolderExists,
+        cacheFolderContents,
         metaExists: fs.existsSync(metaPath),
         convertedExists: fs.existsSync(convertedPath)
       });
@@ -734,6 +741,17 @@ class FFmpegManager {
               fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
               log.info('트랜스코딩 완료', { filePath, outputPath });
+
+              // 캐시 파일 저장 검증
+              const outputExists = fs.existsSync(outputPath);
+              const metaSaved = fs.existsSync(metaPath);
+              log.info('캐시 저장 검증', {
+                outputPath,
+                outputExists,
+                metaPath,
+                metaSaved,
+                outputSize: outputExists ? fs.statSync(outputPath).size : 0
+              });
 
               // 캐시 정리 (비동기)
               this._cleanupCacheIfNeeded().catch(() => {});
@@ -1013,7 +1031,8 @@ class FFmpegManager {
 
     log.info('캐시 용량 초과, 정리 시작', {
       current: cacheSize.formatted,
-      limit: this._formatBytes(this.cacheLimitBytes)
+      limit: this._formatBytes(this.cacheLimitBytes),
+      count: cacheSize.count
     });
 
     // 캐시 폴더들을 접근 시간 순으로 정렬 (비동기)
@@ -1041,7 +1060,14 @@ class FFmpegManager {
     let freedBytes = 0;
     const targetFree = cacheSize.bytes - this.cacheLimitBytes + (1024 * 1024 * 500); // 500MB 여유
 
-    for (const folder of folders) {
+    // 최소 1개의 캐시는 유지 (방금 만든 캐시 보호)
+    const deletableFolders = folders.length > 1 ? folders.slice(0, -1) : [];
+    if (deletableFolders.length === 0) {
+      log.info('캐시 정리 건너뜀: 삭제 가능한 캐시 없음 (최소 1개 유지)');
+      return;
+    }
+
+    for (const folder of deletableFolders) {
       if (freedBytes >= targetFree) break;
 
       try {
