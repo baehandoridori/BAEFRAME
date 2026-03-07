@@ -3572,10 +3572,8 @@ async function initApp() {
     const loadingText = document.getElementById('loadingText');
     const loadingProgress = document.getElementById('loadingProgressFill');
 
-    // 로딩 오버레이 표시
-    loadingOverlay?.classList.add('active');
-    loadingText.textContent = '썸네일 생성 중...';
-    loadingProgress.style.width = '0%';
+    // 로딩 오버레이는 실제 생성 시에만 표시 (캐시 히트 시 표시 안 함)
+    let overlayShown = false;
 
     try {
       // 썸네일 생성기 초기화 (2단계 생성 방식)
@@ -3601,23 +3599,30 @@ async function initApp() {
       // 기존 썸네일 정리
       thumbnailGenerator.clear();
 
-      // 진행률 이벤트 리스너
+      // 진행률 이벤트 리스너 (실제 생성 시에만 발생)
       const onProgress = (e) => {
         const { progress, phase, current, total } = e.detail;
+
+        // 첫 progress 이벤트에서 오버레이 표시 (캐시 히트 시에는 progress가 발생하지 않음)
+        if (!overlayShown) {
+          overlayShown = true;
+          loadingOverlay?.classList.add('active');
+          loadingProgress.style.width = '0%';
+        }
+
         loadingProgress.style.width = `${progress * 100}%`;
 
         if (phase === 1) {
           loadingText.textContent = `썸네일 빠른 생성 중... (${current}/${total})`;
         } else {
-          // 2단계는 로딩 오버레이가 이미 해제된 상태
-          // 하지만 혹시 모르니 처리
           loadingText.textContent = `썸네일 세부 생성 중... (${current}/${total})`;
         }
       };
 
-      // 1단계 완료 시 (빠른 스캔 완료) - 즉시 로딩 해제
-      const onQuickReady = () => {
+      // 1단계 완료 시 (빠른 스캔 완료 또는 캐시 로드 완료) - 즉시 로딩 해제
+      const onQuickReady = (e) => {
         thumbnailGenerator.removeEventListener('quickReady', onQuickReady);
+        const fromCache = e.detail?.fromCache;
 
         // 타임라인에 썸네일 생성기 연결 (1단계 완료 즉시)
         timeline.setThumbnailGenerator(thumbnailGenerator);
@@ -3625,11 +3630,17 @@ async function initApp() {
         // 댓글 리스트 업데이트 (썸네일 표시를 위해)
         updateCommentList(getActiveCommentFilter());
 
-        // 로딩 오버레이 숨김
-        loadingOverlay?.classList.remove('active');
+        // 로딩 오버레이 숨김 (표시된 경우에만)
+        if (overlayShown) {
+          loadingOverlay?.classList.remove('active');
+        }
 
-        log.info('썸네일 1단계 완료 - UI 사용 가능');
-        showToast('미리보기 준비 완료! (세부 생성 중...)', 'success');
+        if (fromCache) {
+          log.info('썸네일 캐시에서 로드 완료');
+        } else {
+          log.info('썸네일 1단계 완료 - UI 사용 가능');
+          showToast('미리보기 준비 완료! (세부 생성 중...)', 'success');
+        }
       };
 
       // 2단계 완료 시 (모든 세부 썸네일 생성 완료)
