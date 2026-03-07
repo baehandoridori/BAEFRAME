@@ -942,9 +942,31 @@ function setupIpcHandlers() {
     return cacheDir;
   };
 
-  const getVideoHash = (filePath, fileSize, mtime) => {
-    const data = `${filePath}|${fileSize}|${mtime}`;
-    return crypto.createHash('md5').update(data).digest('hex').slice(0, 16);
+  /**
+   * 콘텐츠 기반 비디오 해시 생성 (파일 앞부분 1MB + 파일 크기)
+   * mtime 미사용 → Google Drive 동기화 후에도 캐시 유지
+   */
+  const getVideoHash = (filePath, fileSize) => {
+    try {
+      const CHUNK_SIZE = 1024 * 1024; // 1MB
+      const readSize = Math.min(CHUNK_SIZE, fileSize);
+      const buffer = Buffer.alloc(readSize);
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        fs.readSync(fd, buffer, 0, readSize, 0);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const hash = crypto.createHash('md5');
+      hash.update(buffer);
+      hash.update(String(fileSize));
+      return hash.digest('hex').slice(0, 16);
+    } catch (e) {
+      // 파일 읽기 실패 시 경로+크기 폴백
+      log.warn('썸네일 해시: 파일 내용 읽기 실패, 폴백 사용', { filePath, error: e.message });
+      const data = `${filePath}|${fileSize}`;
+      return crypto.createHash('md5').update(data).digest('hex').slice(0, 16);
+    }
   };
 
   // 썸네일 캐시 경로 가져오기
@@ -952,12 +974,12 @@ function setupIpcHandlers() {
     return getThumbnailCacheDir();
   });
 
-  // 캐시 유효성 검사 (비디오 파일의 mtime이 바뀌었는지 확인)
+  // 캐시 유효성 검사 (콘텐츠 기반 해시로 확인)
   ipcMain.handle('thumbnail:check-valid', async (event, videoPath) => {
     const trace = log.trace('thumbnail:check-valid');
     try {
       const stats = await fs.promises.stat(videoPath);
-      const videoHash = getVideoHash(videoPath, stats.size, stats.mtimeMs);
+      const videoHash = getVideoHash(videoPath, stats.size);
       const cachePath = path.join(getThumbnailCacheDir(), videoHash);
       const metaPath = path.join(cachePath, 'meta.json');
 
@@ -967,12 +989,6 @@ function setupIpcHandlers() {
       }
 
       const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf-8'));
-
-      // mtime 비교
-      if (meta.mtime !== stats.mtimeMs) {
-        trace.end({ valid: false, reason: 'mtime mismatch' });
-        return { valid: false, videoHash };
-      }
 
       trace.end({ valid: true, count: meta.frameCount });
       return {
@@ -1037,7 +1053,6 @@ function setupIpcHandlers() {
   ipcMain.handle('thumbnail:save-batch', async (event, { videoPath, videoHash, duration, thumbnails }) => {
     const trace = log.trace('thumbnail:save-batch');
     try {
-      const stats = await fs.promises.stat(videoPath);
       const cachePath = path.join(getThumbnailCacheDir(), videoHash);
 
       // 캐시 디렉토리 생성
@@ -1045,10 +1060,9 @@ function setupIpcHandlers() {
         fs.mkdirSync(cachePath, { recursive: true });
       }
 
-      // 메타데이터 저장
+      // 메타데이터 저장 (콘텐츠 기반 해시 사용으로 mtime 불필요)
       const meta = {
         videoPath,
-        mtime: stats.mtimeMs,
         frameCount: Object.keys(thumbnails).length,
         duration,
         quality: 0.6,
