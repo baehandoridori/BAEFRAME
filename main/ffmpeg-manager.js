@@ -321,11 +321,31 @@ class FFmpegManager {
   }
 
   /**
-   * 파일 해시 생성 (캐시 키)
+   * 파일 해시 생성 (캐시 키) - 파일 내용 기반
+   * 파일 앞부분 1MB + 파일 크기로 해시 생성
+   * (경로/mtime 미사용 → Google Drive 동기화 후에도 캐시 유지)
    */
   _getFileHash(filePath, stats) {
-    const data = `${filePath}|${stats.size}|${stats.mtimeMs}`;
-    return crypto.createHash('md5').update(data).digest('hex').slice(0, 16);
+    try {
+      const CHUNK_SIZE = 1024 * 1024; // 1MB
+      const readSize = Math.min(CHUNK_SIZE, stats.size);
+      const buffer = Buffer.alloc(readSize);
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        fs.readSync(fd, buffer, 0, readSize, 0);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const hash = crypto.createHash('md5');
+      hash.update(buffer);
+      hash.update(String(stats.size));
+      return hash.digest('hex').slice(0, 16);
+    } catch (e) {
+      // 파일 읽기 실패 시 크기+mtime 폴백 (Google Drive 스트리밍 파일 등)
+      log.warn('파일 내용 해시 실패, 폴백 사용', { filePath, error: e.message });
+      const data = `${stats.size}|${stats.mtimeMs}`;
+      return crypto.createHash('md5').update(data).digest('hex').slice(0, 16);
+    }
   }
 
   /**
@@ -432,6 +452,16 @@ class FFmpegManager {
    * 캐시 유효성 확인
    */
   async checkCache(filePath) {
+    // cacheDir 초기화 보장
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    if (!this.cacheDir) {
+      log.warn('캐시 디렉토리 미설정, 캐시 확인 불가');
+      return { valid: false, reason: '캐시 디렉토리 미설정' };
+    }
+
     if (!fs.existsSync(filePath)) {
       return { valid: false, reason: '원본 파일 없음' };
     }
@@ -443,15 +473,29 @@ class FFmpegManager {
     const convertedPath = path.join(cacheFolder, 'converted.mp4');
 
     if (!fs.existsSync(metaPath) || !fs.existsSync(convertedPath)) {
+      const cacheFolderExists = fs.existsSync(cacheFolder);
+      let cacheFolderContents = [];
+      if (cacheFolderExists) {
+        try { cacheFolderContents = fs.readdirSync(cacheFolder); } catch { /* 무시 */ }
+      }
+      log.debug('캐시 미스', {
+        fileHash,
+        cacheFolder,
+        cacheFolderExists,
+        cacheFolderContents,
+        metaExists: fs.existsSync(metaPath),
+        convertedExists: fs.existsSync(convertedPath)
+      });
       return { valid: false, reason: '캐시 없음', fileHash };
     }
 
     try {
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
 
-      // 원본 파일이 변경되었는지 확인
-      if (meta.originalMtime !== stats.mtimeMs || meta.originalSize !== stats.size) {
-        log.info('캐시 무효화: 원본 파일 변경됨', { filePath });
+      // 원본 파일이 변경되었는지 확인 (크기만 체크, mtime은 무시)
+      // 내용이 바뀌면 해시 자체가 달라져 다른 캐시 폴더를 찾게 됨
+      if (meta.originalSize !== stats.size) {
+        log.info('캐시 무효화: 원본 파일 크기 변경됨', { filePath });
         return { valid: false, reason: '원본 파일 변경됨', fileHash };
       }
 
@@ -538,11 +582,16 @@ class FFmpegManager {
       // 색 공간 변환 필터: 비표준 색공간 → BT.709 표준으로 변환
       const colorFilter = 'colorspace=all=bt709:iall=bt601-6-625:fast=1';
 
+      // 키프레임 간격 설정: 1초마다 키프레임 삽입 (프레임 단위 seek 성능 향상)
+      const gopSize = Math.round(codecInfo.frameRate || 24);
+
       const args = [
         '-i', filePath,
         '-vf', colorFilter,     // 색 공간 변환 필터
         '-c:v', encoder.name,
         '-pix_fmt', 'yuv420p',  // HTML5 Video 호환 픽셀 포맷
+        '-g', String(gopSize),           // 1초마다 키프레임 (프레임 이동 반응속도 개선)
+        '-keyint_min', String(gopSize),  // 최소 키프레임 간격
         // 출력 색 공간 메타데이터 설정
         '-colorspace', 'bt709',
         '-color_primaries', 'bt709',
@@ -693,6 +742,17 @@ class FFmpegManager {
 
               log.info('트랜스코딩 완료', { filePath, outputPath });
 
+              // 캐시 파일 저장 검증
+              const outputExists = fs.existsSync(outputPath);
+              const metaSaved = fs.existsSync(metaPath);
+              log.info('캐시 저장 검증', {
+                outputPath,
+                outputExists,
+                metaPath,
+                metaSaved,
+                outputSize: outputExists ? fs.statSync(outputPath).size : 0
+              });
+
               // 캐시 정리 (비동기)
               this._cleanupCacheIfNeeded().catch(() => {});
 
@@ -819,6 +879,11 @@ class FFmpegManager {
    * 이미 변환 중이면 스킵
    */
   async preTranscode(filePath, onProgress = null) {
+    // 초기화 보장
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
     // 캐시 확인 - 이미 변환되어 있으면 스킵
     const cacheCheck = await this.checkCache(filePath);
     if (cacheCheck.valid) {
@@ -966,7 +1031,8 @@ class FFmpegManager {
 
     log.info('캐시 용량 초과, 정리 시작', {
       current: cacheSize.formatted,
-      limit: this._formatBytes(this.cacheLimitBytes)
+      limit: this._formatBytes(this.cacheLimitBytes),
+      count: cacheSize.count
     });
 
     // 캐시 폴더들을 접근 시간 순으로 정렬 (비동기)
@@ -994,7 +1060,14 @@ class FFmpegManager {
     let freedBytes = 0;
     const targetFree = cacheSize.bytes - this.cacheLimitBytes + (1024 * 1024 * 500); // 500MB 여유
 
-    for (const folder of folders) {
+    // 최소 1개의 캐시는 유지 (방금 만든 캐시 보호)
+    const deletableFolders = folders.length > 1 ? folders.slice(0, -1) : [];
+    if (deletableFolders.length === 0) {
+      log.info('캐시 정리 건너뜀: 삭제 가능한 캐시 없음 (최소 1개 유지)');
+      return;
+    }
+
+    for (const folder of deletableFolders) {
       if (freedBytes >= targetFree) break;
 
       try {

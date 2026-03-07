@@ -3572,10 +3572,8 @@ async function initApp() {
     const loadingText = document.getElementById('loadingText');
     const loadingProgress = document.getElementById('loadingProgressFill');
 
-    // 로딩 오버레이 표시
-    loadingOverlay?.classList.add('active');
-    loadingText.textContent = '썸네일 생성 중...';
-    loadingProgress.style.width = '0%';
+    // 로딩 오버레이는 실제 생성 시에만 표시 (캐시 히트 시 표시 안 함)
+    let overlayShown = false;
 
     try {
       // 썸네일 생성기 초기화 (2단계 생성 방식)
@@ -3601,23 +3599,30 @@ async function initApp() {
       // 기존 썸네일 정리
       thumbnailGenerator.clear();
 
-      // 진행률 이벤트 리스너
+      // 진행률 이벤트 리스너 (실제 생성 시에만 발생)
       const onProgress = (e) => {
         const { progress, phase, current, total } = e.detail;
+
+        // 첫 progress 이벤트에서 오버레이 표시 (캐시 히트 시에는 progress가 발생하지 않음)
+        if (!overlayShown) {
+          overlayShown = true;
+          loadingOverlay?.classList.add('active');
+          loadingProgress.style.width = '0%';
+        }
+
         loadingProgress.style.width = `${progress * 100}%`;
 
         if (phase === 1) {
           loadingText.textContent = `썸네일 빠른 생성 중... (${current}/${total})`;
         } else {
-          // 2단계는 로딩 오버레이가 이미 해제된 상태
-          // 하지만 혹시 모르니 처리
           loadingText.textContent = `썸네일 세부 생성 중... (${current}/${total})`;
         }
       };
 
-      // 1단계 완료 시 (빠른 스캔 완료) - 즉시 로딩 해제
-      const onQuickReady = () => {
+      // 1단계 완료 시 (빠른 스캔 완료 또는 캐시 로드 완료) - 즉시 로딩 해제
+      const onQuickReady = (e) => {
         thumbnailGenerator.removeEventListener('quickReady', onQuickReady);
+        const fromCache = e.detail?.fromCache;
 
         // 타임라인에 썸네일 생성기 연결 (1단계 완료 즉시)
         timeline.setThumbnailGenerator(thumbnailGenerator);
@@ -3625,11 +3630,15 @@ async function initApp() {
         // 댓글 리스트 업데이트 (썸네일 표시를 위해)
         updateCommentList(getActiveCommentFilter());
 
-        // 로딩 오버레이 숨김
+        // 로딩 오버레이 숨김 (외부 파일 열기 등에서 미리 표시된 경우도 포함)
         loadingOverlay?.classList.remove('active');
 
-        log.info('썸네일 1단계 완료 - UI 사용 가능');
-        showToast('미리보기 준비 완료! (세부 생성 중...)', 'success');
+        if (fromCache) {
+          log.info('썸네일 캐시에서 로드 완료');
+        } else {
+          log.info('썸네일 1단계 완료 - UI 사용 가능');
+          showToast('미리보기 준비 완료! (세부 생성 중...)', 'success');
+        }
       };
 
       // 2단계 완료 시 (모든 세부 썸네일 생성 완료)
@@ -5447,45 +5456,66 @@ async function initApp() {
   async function handleExternalFile(filePath) {
     log.info('외부 파일 열기', { filePath });
 
-    if (filePath.endsWith('.bframe')) {
-      // .bframe 파일인 경우: 내부의 videoPath를 읽어서 영상 로드
-      try {
-        const bframeData = await window.electronAPI.loadReview(filePath);
-        if (bframeData && bframeData.videoPath) {
-          // 영상 파일이 같은 폴더에 있는지 확인 (상대 경로 처리)
-          let videoPath = bframeData.videoPath;
+    // 재귀 호출(baeframe:// → 실제 경로)의 경우 오버레이 중복 방지
+    const isRecursive = filePath.startsWith('baeframe://');
 
-          // 상대 경로인 경우 .bframe 파일 기준으로 절대 경로 생성
-          if (!videoPath.includes(':') && !videoPath.startsWith('/')) {
-            const bframeDir = filePath.substring(0, filePath.lastIndexOf(filePath.includes('/') ? '/' : '\\'));
-            videoPath = bframeDir + (filePath.includes('/') ? '/' : '\\') + videoPath;
+    // 로딩 오버레이 표시 (최상위 호출에서만)
+    const loadingOverlay = document.getElementById('videoLoadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+
+    if (!isRecursive && loadingOverlay && !loadingOverlay.classList.contains('active')) {
+      loadingOverlay.classList.add('active');
+      if (loadingText) loadingText.textContent = '파일을 불러오는 중...';
+    }
+
+    try {
+      if (filePath.endsWith('.bframe')) {
+        // .bframe 파일인 경우: 내부의 videoPath를 읽어서 영상 로드
+        try {
+          const bframeData = await window.electronAPI.loadReview(filePath);
+          if (bframeData && bframeData.videoPath) {
+            // 영상 파일이 같은 폴더에 있는지 확인 (상대 경로 처리)
+            let videoPath = bframeData.videoPath;
+
+            // 상대 경로인 경우 .bframe 파일 기준으로 절대 경로 생성
+            if (!videoPath.includes(':') && !videoPath.startsWith('/')) {
+              const bframeDir = filePath.substring(0, filePath.lastIndexOf(filePath.includes('/') ? '/' : '\\'));
+              videoPath = bframeDir + (filePath.includes('/') ? '/' : '\\') + videoPath;
+            }
+
+            await loadVideo(videoPath);
+            showToast('.bframe 파일에서 영상 로드됨', 'success');
+          } else {
+            showToast('.bframe 파일에 영상 경로가 없습니다', 'warn');
+            loadingOverlay?.classList.remove('active');
           }
-
-          await loadVideo(videoPath);
-          showToast('.bframe 파일에서 영상 로드됨', 'success');
-        } else {
-          showToast('.bframe 파일에 영상 경로가 없습니다', 'warn');
+        } catch (error) {
+          log.error('.bframe 파일 처리 실패', error);
+          showToast('.bframe 파일을 열 수 없습니다', 'error');
+          loadingOverlay?.classList.remove('active');
         }
-      } catch (error) {
-        log.error('.bframe 파일 처리 실패', error);
-        showToast('.bframe 파일을 열 수 없습니다', 'error');
-      }
-    } else if (filePath.startsWith('baeframe://')) {
-      // 프로토콜 링크: baeframe://G:/경로/파일.bframe 또는 baeframe://G:/경로/영상.mp4
-      let actualPath = filePath.replace('baeframe://', '');
-      // URL 인코딩 디코딩 (공백 등 특수문자 처리)
-      try {
-        actualPath = decodeURIComponent(actualPath);
-      } catch (e) {
-        log.warn('URL 디코딩 실패, 원본 경로 사용', { actualPath, error: e.message });
-      }
-      log.info('프로토콜 링크에서 경로 추출', { actualPath });
+      } else if (filePath.startsWith('baeframe://')) {
+        // 프로토콜 링크: baeframe://G:/경로/파일.bframe 또는 baeframe://G:/경로/영상.mp4
+        let actualPath = filePath.replace('baeframe://', '');
+        // URL 인코딩 디코딩 (공백 등 특수문자 처리)
+        try {
+          actualPath = decodeURIComponent(actualPath);
+        } catch (e) {
+          log.warn('URL 디코딩 실패, 원본 경로 사용', { actualPath, error: e.message });
+        }
+        log.info('프로토콜 링크에서 경로 추출', { actualPath });
 
-      // 실제 경로로 다시 처리 (재귀)
-      await handleExternalFile(actualPath);
-    } else {
-      // 일반 영상 파일
-      await loadVideo(filePath);
+        // 실제 경로로 다시 처리 (재귀)
+        await handleExternalFile(actualPath);
+      } else {
+        // 일반 영상 파일
+        // loadVideo → generateThumbnails 내부에서 오버레이 텍스트 변경 및 해제 처리
+        await loadVideo(filePath);
+      }
+    } catch (error) {
+      log.error('외부 파일 열기 실패', error);
+      showToast('파일을 열 수 없습니다', 'error');
+      loadingOverlay?.classList.remove('active');
     }
   }
 
