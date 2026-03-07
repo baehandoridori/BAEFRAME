@@ -326,19 +326,26 @@ class FFmpegManager {
    * (경로/mtime 미사용 → Google Drive 동기화 후에도 캐시 유지)
    */
   _getFileHash(filePath, stats) {
-    const CHUNK_SIZE = 1024 * 1024; // 1MB
-    const readSize = Math.min(CHUNK_SIZE, stats.size);
-    const buffer = Buffer.alloc(readSize);
-    const fd = fs.openSync(filePath, 'r');
     try {
-      fs.readSync(fd, buffer, 0, readSize, 0);
-    } finally {
-      fs.closeSync(fd);
+      const CHUNK_SIZE = 1024 * 1024; // 1MB
+      const readSize = Math.min(CHUNK_SIZE, stats.size);
+      const buffer = Buffer.alloc(readSize);
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        fs.readSync(fd, buffer, 0, readSize, 0);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const hash = crypto.createHash('md5');
+      hash.update(buffer);
+      hash.update(String(stats.size));
+      return hash.digest('hex').slice(0, 16);
+    } catch (e) {
+      // 파일 읽기 실패 시 크기+mtime 폴백 (Google Drive 스트리밍 파일 등)
+      log.warn('파일 내용 해시 실패, 폴백 사용', { filePath, error: e.message });
+      const data = `${stats.size}|${stats.mtimeMs}`;
+      return crypto.createHash('md5').update(data).digest('hex').slice(0, 16);
     }
-    const hash = crypto.createHash('md5');
-    hash.update(buffer);
-    hash.update(String(stats.size));
-    return hash.digest('hex').slice(0, 16);
   }
 
   /**
@@ -445,6 +452,16 @@ class FFmpegManager {
    * 캐시 유효성 확인
    */
   async checkCache(filePath) {
+    // cacheDir 초기화 보장
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    if (!this.cacheDir) {
+      log.warn('캐시 디렉토리 미설정, 캐시 확인 불가');
+      return { valid: false, reason: '캐시 디렉토리 미설정' };
+    }
+
     if (!fs.existsSync(filePath)) {
       return { valid: false, reason: '원본 파일 없음' };
     }
@@ -456,6 +473,12 @@ class FFmpegManager {
     const convertedPath = path.join(cacheFolder, 'converted.mp4');
 
     if (!fs.existsSync(metaPath) || !fs.existsSync(convertedPath)) {
+      log.debug('캐시 미스', {
+        fileHash,
+        cacheFolder,
+        metaExists: fs.existsSync(metaPath),
+        convertedExists: fs.existsSync(convertedPath)
+      });
       return { valid: false, reason: '캐시 없음', fileHash };
     }
 
@@ -838,6 +861,11 @@ class FFmpegManager {
    * 이미 변환 중이면 스킵
    */
   async preTranscode(filePath, onProgress = null) {
+    // 초기화 보장
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
     // 캐시 확인 - 이미 변환되어 있으면 스킵
     const cacheCheck = await this.checkCache(filePath);
     if (cacheCheck.valid) {
