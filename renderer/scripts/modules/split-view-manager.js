@@ -560,11 +560,9 @@ export class SplitViewManager {
     if (this._seekbarRafId) cancelAnimationFrame(this._seekbarRafId);
     this._seekbarRafId = null;
 
-    // 뷰 모드 초기화
+    // 뷰 모드 초기화 (_setViewMode를 통해 컨트롤 표시 상태도 정상 복원)
     if (this._viewMode !== 'side-by-side') {
-      this._exitOverlayLayout();
-      this._overlay.classList.remove('view-overlay', 'view-wipe');
-      this._viewMode = 'side-by-side';
+      this._setViewMode('side-by-side');
     }
 
     // 자동 숨김 타이머 정리

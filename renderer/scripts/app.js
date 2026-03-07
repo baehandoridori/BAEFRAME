@@ -3630,10 +3630,8 @@ async function initApp() {
         // 댓글 리스트 업데이트 (썸네일 표시를 위해)
         updateCommentList(getActiveCommentFilter());
 
-        // 로딩 오버레이 숨김 (표시된 경우에만)
-        if (overlayShown) {
-          loadingOverlay?.classList.remove('active');
-        }
+        // 로딩 오버레이 숨김 (외부 파일 열기 등에서 미리 표시된 경우도 포함)
+        loadingOverlay?.classList.remove('active');
 
         if (fromCache) {
           log.info('썸네일 캐시에서 로드 완료');
