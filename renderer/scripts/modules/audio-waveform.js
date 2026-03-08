@@ -535,8 +535,8 @@ export class AudioWaveform extends EventTarget {
 
   _onResize() {
     this._resize();
-    if (this.audioBuffer) {
-      this._generateWaveformData();
+    if (this._rawWaveformData) {
+      this._resampleFromRaw();
       this._drawWaveform();
       this._drawOverlay();
     }
