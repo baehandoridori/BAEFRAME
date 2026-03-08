@@ -348,8 +348,7 @@ export class AudioWaveform extends EventTarget {
       ctx.stroke();
     }
 
-    // ─── 파티클 렌더링 ───
-    this._updateAndDrawParticles(ctx, w, h, centerY, playX, accentColor);
+    // ─── 파티클 렌더링 (오버레이에서 처리) ───
   }
 
   /**
@@ -475,6 +474,9 @@ export class AudioWaveform extends EventTarget {
       ctx.fill();
     }
 
+    // ─── 파티클 (오버레이 위에 렌더링) ───
+    this._updateAndDrawParticles(ctx, w, h, centerY, playX, accentColor);
+
     // 시간 표시 업데이트
     if (this._timeDisplay) {
       this._timeDisplay.textContent = this._formatTime(this.currentTime) +
@@ -507,24 +509,24 @@ export class AudioWaveform extends EventTarget {
    * 파티클 업데이트 및 렌더링
    */
   _updateAndDrawParticles(ctx, w, h, centerY, playX, accentColor) {
-    const now = performance.now();
-
     // 재생 중일 때 파티클 생성 (재생 헤드 근처)
     if (this.isPlaying && playX > 0 && this._particles.length < this._maxParticles) {
-      // 프레임당 0~2개 생성
-      const spawnCount = Math.random() < 0.6 ? 1 : (Math.random() < 0.3 ? 2 : 0);
+      // 프레임당 1~3개 생성
+      const spawnCount = 1 + Math.floor(Math.random() * 3);
       for (let s = 0; s < spawnCount; s++) {
-        const spread = (Math.random() - 0.5) * 60;
+        const spread = (Math.random() - 0.5) * 40;
+        // 웨이브폼 바 영역 근처에서 생성
+        const barAreaTop = centerY * 0.2;
+        const spawnY = barAreaTop + Math.random() * (centerY - barAreaTop);
         this._particles.push({
           x: playX + spread,
-          y: centerY + (Math.random() - 0.5) * h * 0.5,
-          vx: (Math.random() - 0.5) * 0.8,
-          vy: -0.3 - Math.random() * 0.8, // 위로 떠오름
+          y: spawnY,
+          vx: (Math.random() - 0.5) * 1.2,
+          vy: -0.5 - Math.random() * 1.5, // 위로 떠오름
           life: 1,
-          decay: 0.008 + Math.random() * 0.012,
-          size: 1 + Math.random() * 2.5,
-          type: Math.random() < 0.7 ? 'dot' : 'star', // 점 또는 별
-          born: now,
+          decay: 0.005 + Math.random() * 0.008, // 더 오래 지속
+          size: 1.5 + Math.random() * 3,
+          type: Math.random() < 0.5 ? 'dot' : 'star',
         });
       }
     }
@@ -534,7 +536,7 @@ export class AudioWaveform extends EventTarget {
       const p = this._particles[i];
       p.x += p.vx;
       p.y += p.vy;
-      p.vy *= 0.995; // 약간의 감속
+      p.vy *= 0.99;
       p.life -= p.decay;
 
       if (p.life <= 0 || p.x < -10 || p.x > w + 10 || p.y < -10 || p.y > h + 10) {
@@ -542,22 +544,31 @@ export class AudioWaveform extends EventTarget {
         continue;
       }
 
-      const alpha = p.life * 0.7;
+      const alpha = p.life * 0.9;
       ctx.globalAlpha = alpha;
 
       if (p.type === 'star') {
-        // 별 모양 파티클
+        // 별 모양 파티클 - 밝고 글로우 강하게
         ctx.fillStyle = accentColor;
         ctx.shadowColor = accentColor;
-        ctx.shadowBlur = 4;
-        this._drawStar(ctx, p.x, p.y, p.size, 4);
+        ctx.shadowBlur = 8;
+        this._drawStar(ctx, p.x, p.y, p.size * (0.6 + p.life * 0.4), 4);
         ctx.shadowBlur = 0;
       } else {
-        // 원형 파티클
+        // 원형 파티클 - 밝은 코어 + 글로우
+        const r = p.size * (0.5 + p.life * 0.5);
+        ctx.shadowColor = accentColor;
+        ctx.shadowBlur = 6;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-        ctx.fillStyle = this._hexToRgba(accentColor, alpha);
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = accentColor;
         ctx.fill();
+        // 밝은 중심점
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r * 0.4, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.8})`;
+        ctx.fill();
+        ctx.shadowBlur = 0;
       }
     }
 
