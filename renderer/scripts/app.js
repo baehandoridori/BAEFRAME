@@ -3504,11 +3504,10 @@ async function initApp() {
         await new Promise(resolve => requestAnimationFrame(resolve));
 
         try {
-          // 원본 파일 경로로 바이너리 읽기 (file:// URL이 아닌 fs 경로 필요)
           await audioWaveform.loadAudio(filePath);
         } catch (err) {
           log.error('웨이브폼 로드 실패', { error: err.message, stack: err.stack });
-          showToast('오디오 웨이브폼 로드에 실패했습니다.', 'error');
+          showToast(`웨이브폼 로드 실패: ${err.message}`, 'error');
         }
 
         // 웨이브폼 스크러빙 → videoPlayer seek 연동
