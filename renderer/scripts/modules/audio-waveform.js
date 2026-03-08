@@ -187,11 +187,10 @@ export class AudioWaveform extends EventTarget {
       });
 
       // 렌더링
+      this._isVisible = true;
       this._drawWaveform();
       this._drawOverlay();
       this.startAnimation();
-
-      this._isVisible = true;
 
       log.info('오디오 파일 로드 완료', {
         duration: this.duration,

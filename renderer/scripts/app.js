@@ -7747,6 +7747,7 @@ async function initApp() {
   }
 
   // Liveblocks 협업 이벤트 리스너
+  let _previousOthersCount = 0;
   liveblocksManager.addEventListener('collaboratorsChanged', (e) => {
     // 자기 자신 + 다른 사용자 모두 표시
     const me = {
@@ -7761,6 +7762,14 @@ async function initApp() {
     }));
     updateCollaboratorsUI([me, ...others]);
 
+    // 다른 사용자가 새로 참여했을 때 리플 효과 (0→1 이상)
+    const currentOthersCount = others.length;
+    if (currentOthersCount > 0 && _previousOthersCount === 0) {
+      showToast('실시간 협업 세션에 참여했습니다', 'info');
+      _triggerCollabRipple();
+    }
+    _previousOthersCount = currentOthersCount;
+
     // 원격 커서 렌더링
     renderRemoteCursors(e.detail.collaborators);
 
@@ -7770,11 +7779,14 @@ async function initApp() {
 
   liveblocksManager.addEventListener('collaborationStarted', (e) => {
     log.info('협업 시작됨 (Liveblocks)', e.detail);
-    if (!e.detail.isNewRoom) {
-      showToast('실시간 협업 세션에 참여했습니다', 'info');
+    // 다른 협업자가 있을 때만 알림 표시 (단일 세션에서는 무시)
+    if (liveblocksManager.hasOtherCollaborators()) {
+      if (!e.detail.isNewRoom) {
+        showToast('실시간 협업 세션에 참여했습니다', 'info');
+      }
+      // AirDrop 스타일 리플 효과
+      _triggerCollabRipple();
     }
-    // AirDrop 스타일 리플 효과
-    _triggerCollabRipple();
   });
 
   liveblocksManager.addEventListener('connectionStatusChanged', (e) => {
