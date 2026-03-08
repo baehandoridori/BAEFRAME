@@ -146,49 +146,17 @@ export class AudioWaveform extends EventTarget {
         containerRect: this.container?.getBoundingClientRect()
       });
 
-      // 오디오 바이너리 데이터 획득 (두 가지 방법 시도)
-      let arrayBuffer;
+      // 커스텀 프로토콜로 파일 읽기 (IPC 대용량 바이너리 전송 시 크래시 방지)
+      // baeframe-file:/// 프로토콜은 main process에서 net.fetch로 로컬 파일 제공
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      const fetchUrl = `baeframe-file:///${encodeURIComponent(normalizedPath).replace(/%2F/g, '/')}`;
+      log.info('커스텀 프로토콜로 파일 요청', { fetchUrl });
 
-      try {
-        // 방법 1: Electron IPC로 파일 읽기
-        const ipcResult = await window.electronAPI.readBinaryFile(filePath);
-        log.info('IPC 결과', {
-          type: typeof ipcResult,
-          constructor: ipcResult?.constructor?.name,
-          byteLength: ipcResult?.byteLength || ipcResult?.length
-        });
-
-        if (ipcResult instanceof ArrayBuffer) {
-          arrayBuffer = ipcResult;
-        } else if (ipcResult instanceof Uint8Array) {
-          arrayBuffer = ipcResult.buffer.slice(
-            ipcResult.byteOffset, ipcResult.byteOffset + ipcResult.byteLength
-          );
-        } else if (ipcResult && ipcResult.buffer instanceof ArrayBuffer) {
-          arrayBuffer = ipcResult.buffer.slice(
-            ipcResult.byteOffset, ipcResult.byteOffset + ipcResult.byteLength
-          );
-        } else if (ipcResult && typeof ipcResult.length === 'number') {
-          // contextBridge가 일반 객체로 변환한 경우 (key-value)
-          log.warn('IPC 결과가 일반 객체로 도착, 수동 변환 시도');
-          const len = ipcResult.length || Object.keys(ipcResult).length;
-          const arr = new Uint8Array(len);
-          for (let i = 0; i < len; i++) {
-            arr[i] = ipcResult[i];
-          }
-          arrayBuffer = arr.buffer;
-        } else {
-          throw new Error(`IPC 응답 형식 불명: ${typeof ipcResult}, ${ipcResult?.constructor?.name}`);
-        }
-      } catch (ipcErr) {
-        // 방법 2: file:// fetch 폴백
-        log.warn('IPC 바이너리 읽기 실패, fetch 폴백 시도', { error: ipcErr.message });
-        const fileUrl = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
-        const response = await fetch(fileUrl);
-        if (!response.ok) throw new Error(`파일 fetch 실패: ${response.status}`);
-        arrayBuffer = await response.arrayBuffer();
+      const response = await fetch(fetchUrl);
+      if (!response.ok) {
+        throw new Error(`파일 fetch 실패: ${response.status} ${response.statusText}`);
       }
-
+      const arrayBuffer = await response.arrayBuffer();
       log.info('오디오 바이너리 읽기 완료', { bytes: arrayBuffer.byteLength });
 
       // Web Audio API로 디코딩

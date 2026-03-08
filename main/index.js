@@ -32,7 +32,7 @@ debugLog(`__dirname: ${__dirname}`);
 // 앱 시작 시간 측정
 const appStartTime = Date.now();
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net } = require('electron');
 debugLog('electron 모듈 로드 완료');
 
 // ============================================
@@ -326,6 +326,16 @@ if (!gotTheLock) {
         debugLog('로딩 창 표시됨');
       }
     }
+
+    // 로컬 파일 접근용 커스텀 프로토콜 등록 (오디오 웨이브폼 등)
+    // IPC로 대용량 바이너리 전송 시 렌더러 크래시 방지
+    protocol.handle('baeframe-file', (request) => {
+      // baeframe-file:///C:/path/to/file.wav → file:///C:/path/to/file.wav
+      const filePath = decodeURIComponent(request.url.replace('baeframe-file:///', ''));
+      log.info('커스텀 프로토콜 파일 요청', { filePath });
+      return net.fetch(`file:///${filePath}`);
+    });
+    debugLog('커스텀 프로토콜 등록 완료');
 
     // IPC 핸들러 설정
     debugLog('IPC 핸들러 설정 중...');
