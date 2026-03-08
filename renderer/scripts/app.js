@@ -3467,10 +3467,30 @@ async function initApp() {
         videoPlayer.isAudioMode = true;
         log.info('오디오 모드 활성화', { filePath });
 
-        // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
-        await videoPlayer.load(actualVideoPath);
+        // 비디오 엘리먼트 숨기기 (오디오에서는 불필요)
+        elements.videoPlayer.style.display = 'none';
 
-        // videoPlayer.load()가 display:block을 강제하므로 다시 숨김
+        // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
+        try {
+          await videoPlayer.load(actualVideoPath);
+        } catch (loadErr) {
+          log.warn('videoPlayer.load 실패, 직접 src 설정으로 폴백', { error: loadErr.message });
+          // 폴백: 직접 src 설정 (loadedmetadata 이벤트 없이)
+          const videoUrl = actualVideoPath.startsWith('file://') ? actualVideoPath : `file://${actualVideoPath}`;
+          elements.videoPlayer.src = videoUrl;
+          // 로드 대기
+          await new Promise((resolve) => {
+            const onReady = () => {
+              elements.videoPlayer.removeEventListener('canplay', onReady);
+              resolve();
+            };
+            elements.videoPlayer.addEventListener('canplay', onReady);
+            // 3초 타임아웃
+            setTimeout(resolve, 3000);
+          });
+        }
+
+        // videoPlayer.load()가 display:block을 강제할 수 있으므로 다시 숨김
         elements.videoPlayer.style.display = 'none';
 
         // 웨이브폼 마운트 및 로드
@@ -3479,6 +3499,10 @@ async function initApp() {
         }
         // 컨테이너를 먼저 표시해야 캔버스 크기가 확보됨
         audioWaveform.show();
+
+        // 리사이즈가 안정적으로 반영될 때까지 한 프레임 대기
+        await new Promise(resolve => requestAnimationFrame(resolve));
+
         try {
           // 원본 파일 경로로 바이너리 읽기 (file:// URL이 아닌 fs 경로 필요)
           await audioWaveform.loadAudio(filePath);

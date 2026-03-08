@@ -146,32 +146,49 @@ export class AudioWaveform extends EventTarget {
         containerRect: this.container?.getBoundingClientRect()
       });
 
-      // Electron IPC로 파일 읽기 (fetch는 file:// URL 차단됨)
-      const ipcResult = await window.electronAPI.readBinaryFile(filePath);
-      log.info('IPC 결과 타입', {
-        type: typeof ipcResult,
-        isArrayBuffer: ipcResult instanceof ArrayBuffer,
-        isUint8Array: ipcResult instanceof Uint8Array,
-        hasBuffer: !!(ipcResult && ipcResult.buffer),
-        constructor: ipcResult?.constructor?.name,
-        byteLength: ipcResult?.byteLength || ipcResult?.length
-      });
-
-      // IPC 결과가 ArrayBuffer, Buffer, Uint8Array 등 다양할 수 있음
+      // 오디오 바이너리 데이터 획득 (두 가지 방법 시도)
       let arrayBuffer;
-      if (ipcResult instanceof ArrayBuffer) {
-        arrayBuffer = ipcResult;
-      } else if (ipcResult && ipcResult.buffer instanceof ArrayBuffer) {
-        // Uint8Array / Buffer → ArrayBuffer 변환
-        arrayBuffer = ipcResult.buffer.slice(
-          ipcResult.byteOffset, ipcResult.byteOffset + ipcResult.byteLength
-        );
-      } else if (ipcResult && typeof ipcResult.byteLength === 'number') {
-        // 기타 TypedArray-like 객체
-        arrayBuffer = new Uint8Array(ipcResult).buffer;
-      } else {
-        throw new Error(`예상하지 못한 IPC 응답 형식: ${ipcResult?.constructor?.name}`);
+
+      try {
+        // 방법 1: Electron IPC로 파일 읽기
+        const ipcResult = await window.electronAPI.readBinaryFile(filePath);
+        log.info('IPC 결과', {
+          type: typeof ipcResult,
+          constructor: ipcResult?.constructor?.name,
+          byteLength: ipcResult?.byteLength || ipcResult?.length
+        });
+
+        if (ipcResult instanceof ArrayBuffer) {
+          arrayBuffer = ipcResult;
+        } else if (ipcResult instanceof Uint8Array) {
+          arrayBuffer = ipcResult.buffer.slice(
+            ipcResult.byteOffset, ipcResult.byteOffset + ipcResult.byteLength
+          );
+        } else if (ipcResult && ipcResult.buffer instanceof ArrayBuffer) {
+          arrayBuffer = ipcResult.buffer.slice(
+            ipcResult.byteOffset, ipcResult.byteOffset + ipcResult.byteLength
+          );
+        } else if (ipcResult && typeof ipcResult.length === 'number') {
+          // contextBridge가 일반 객체로 변환한 경우 (key-value)
+          log.warn('IPC 결과가 일반 객체로 도착, 수동 변환 시도');
+          const len = ipcResult.length || Object.keys(ipcResult).length;
+          const arr = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            arr[i] = ipcResult[i];
+          }
+          arrayBuffer = arr.buffer;
+        } else {
+          throw new Error(`IPC 응답 형식 불명: ${typeof ipcResult}, ${ipcResult?.constructor?.name}`);
+        }
+      } catch (ipcErr) {
+        // 방법 2: file:// fetch 폴백
+        log.warn('IPC 바이너리 읽기 실패, fetch 폴백 시도', { error: ipcErr.message });
+        const fileUrl = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
+        const response = await fetch(fileUrl);
+        if (!response.ok) throw new Error(`파일 fetch 실패: ${response.status}`);
+        arrayBuffer = await response.arrayBuffer();
       }
+
       log.info('오디오 바이너리 읽기 완료', { bytes: arrayBuffer.byteLength });
 
       // Web Audio API로 디코딩

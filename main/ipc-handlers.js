@@ -328,7 +328,14 @@ function setupIpcHandlers() {
   ipcMain.handle('file:read-binary', async (event, filePath) => {
     try {
       const buffer = await fs.promises.readFile(filePath);
-      return buffer;
+      // Buffer → Uint8Array 명시적 복사 (contextBridge 직렬화 안정성)
+      // Node.js Buffer는 ArrayBuffer의 뷰일 수 있어 직렬화 시 문제 발생 가능
+      const uint8 = new Uint8Array(buffer.length);
+      for (let i = 0; i < buffer.length; i++) {
+        uint8[i] = buffer[i];
+      }
+      log.info('바이너리 파일 읽기 성공', { filePath, bytes: uint8.length });
+      return uint8;
     } catch (err) {
       log.error('바이너리 파일 읽기 실패', { filePath, error: err.message });
       throw err;
