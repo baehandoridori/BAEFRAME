@@ -91,6 +91,14 @@
             <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
           </svg>
         </div>
+        <!-- 플렉서스 확장 패널 -->
+        <div class="collab-plexus-panel" id="collabPlexusPanel">
+          <canvas class="collab-plexus-canvas" id="collabPlexusCanvas"></canvas>
+          <div class="collab-plexus-users" id="collabPlexusUsers">
+            <!-- 연결된 사용자 목록이 동적으로 추가됨 -->
+          </div>
+          <div class="collab-plexus-label">실시간 협업 중</div>
+        </div>
       </div>
       <button class="btn btn-secondary" id="btnOpenFolder" title="폴더 열기 (탐색기에서 보기)" style="display: none;">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -262,19 +270,32 @@
                   <line x1="17" y1="17" x2="22" y2="17"/>
                 </svg>
               </div>
-              <div class="drop-zone-text">영상 파일을 여기에 드롭하세요</div>
-              <div class="drop-zone-hint">MOV, MP4, H.264/265 지원</div>
+              <div class="drop-zone-text">미디어 파일을 여기에 드롭하세요</div>
+              <div class="drop-zone-hint">MOV, MP4, MP3, WAV 등 지원</div>
               <button class="btn btn-primary btn-large" id="btnOpenFile">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polygon points="5 3 19 12 5 21 5 3"/>
                 </svg>
-                영상 열기
+                파일 열기
               </button>
             </div>
           </div>
 
           <!-- Video Element (추후 mpv로 대체) -->
           <video id="videoPlayer" style="display: none;"></video>
+
+          <!-- Audio Waveform Container (오디오 모드) -->
+          <div class="audio-waveform-container" id="audioWaveformContainer">
+            <div class="audio-waveform-bg">
+              <div class="audio-mode-icon">
+                <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 18V5l12-2v13"/>
+                  <circle cx="6" cy="18" r="3"/>
+                  <circle cx="18" cy="16" r="3"/>
+                </svg>
+              </div>
+            </div>
+          </div>
 
           <!-- TODO: 영상 어니언 스킨 캔버스 - 비디오 가림 문제로 임시 비활성화
           <canvas id="videoOnionSkinCanvas"></canvas>
@@ -798,6 +819,13 @@
                 <input type="checkbox" id="toggleToastNotifications" checked>
                 <span class="toggle-slider"></span>
                 <span class="toggle-label">알림 표시</span>
+              </label>
+            </div>
+            <div class="settings-dropdown-item">
+              <label class="settings-toggle">
+                <input type="checkbox" id="togglePlexusPanel" checked>
+                <span class="toggle-slider"></span>
+                <span class="toggle-label">협업 패널 효과</span>
               </label>
             </div>
             <div class="settings-dropdown-divider"></div>

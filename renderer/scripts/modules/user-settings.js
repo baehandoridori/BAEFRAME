@@ -163,7 +163,9 @@ export class UserSettings extends EventTarget {
       customShortcuts: {},
       // 프레임/초 이동 설정
       frameSkipAmount: 10, // Shift+화살표로 이동할 프레임 수
-      secondSkipAmount: 1  // Ctrl+화살표로 이동할 초 수
+      secondSkipAmount: 1,  // Ctrl+화살표로 이동할 초 수
+      // 협업 플렉서스 패널 표시 여부
+      showPlexusPanel: true
     };
 
     this._ready = false;

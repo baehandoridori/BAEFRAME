@@ -8599,3 +8599,277 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
 .password-match-hint.mismatch {
   color: #ff5555;
 }
+
+/* ========================================
+   Audio Waveform (오디오 웨이브폼)
+   ======================================== */
+
+.audio-waveform-container {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  cursor: pointer;
+}
+
+.audio-waveform-container.active {
+  display: block;
+}
+
+.audio-waveform-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 208, 0, 0.03) 0%,
+    var(--bg-primary) 70%
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.audio-mode-icon {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  opacity: 0.15;
+  color: var(--accent-primary);
+  pointer-events: none;
+}
+
+.audio-waveform-canvas,
+.audio-waveform-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.audio-waveform-overlay {
+  z-index: 2;
+  cursor: pointer;
+}
+
+.audio-waveform-overlay:hover {
+  cursor: grab;
+}
+
+.audio-waveform-overlay:active {
+  cursor: grabbing;
+}
+
+.audio-waveform-time {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  padding: 4px 14px;
+  border-radius: 20px;
+  pointer-events: none;
+  letter-spacing: 0.5px;
+}
+
+.audio-waveform-hover-label {
+  position: absolute;
+  top: 8px;
+  z-index: 3;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.7);
+  padding: 2px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 0.15s ease-out;
+}
+
+.audio-waveform-hover-label.visible {
+  opacity: 1;
+}
+
+/* 오디오 모드일 때 비디오 wrapper 스타일 */
+.video-wrapper.audio-mode {
+  background: var(--bg-primary);
+}
+
+.video-wrapper.audio-mode video {
+  display: none !important;
+}
+
+/* ========================================
+   Initial Password Badge (초기비밀번호 배지)
+   ======================================== */
+
+.initial-password-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #ff9f43;
+  background: rgba(255, 159, 67, 0.12);
+  border: 1px solid rgba(255, 159, 67, 0.25);
+  border-radius: 4px;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+/* ========================================
+   Collaborators Plexus Panel (협업 플렉서스 패널)
+   ======================================== */
+
+.collaborators-indicator {
+  position: relative;
+}
+
+.collab-plexus-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: 280px;
+  height: 0;
+  margin-top: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+  transition:
+    height 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.25s ease-out,
+    transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+  z-index: 100;
+}
+
+.collab-plexus-panel.active {
+  height: 240px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.collab-plexus-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.4;
+}
+
+.collab-plexus-users {
+  position: relative;
+  z-index: 2;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.collab-plexus-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  transition: background 0.2s ease-out;
+}
+
+.collab-plexus-user:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.collab-plexus-user-me {
+  border: 1px solid rgba(var(--accent-primary-rgb, 255, 208, 0), 0.2);
+}
+
+.collab-plexus-user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.8);
+  flex-shrink: 0;
+}
+
+.collab-plexus-user-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collab-plexus-user-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2ed573;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(46, 213, 115, 0.5);
+}
+
+.collab-plexus-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  padding: 8px;
+  background: linear-gradient(transparent, var(--bg-elevated));
+  letter-spacing: 0.5px;
+}
+
+/* prefers-reduced-motion 대응 */
+@media (prefers-reduced-motion: reduce) {
+  .collab-plexus-panel {
+    transition:
+      opacity 0.15s ease-out;
+  }
+
+  .collab-plexus-panel.active {
+    transform: translateY(0);
+  }
+
+  .audio-waveform-hover-label {
+    transition: none;
+  }
+}

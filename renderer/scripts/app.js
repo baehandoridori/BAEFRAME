@@ -22,10 +22,13 @@ import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
+import { getAudioWaveform } from './modules/audio-waveform.js';
 
 const log = createLogger('App');
 
 const SUPPORTED_VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+const SUPPORTED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
+const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -166,7 +169,15 @@ async function initApp() {
     playlistDropzone: document.getElementById('playlistDropzone'),
     playlistEmpty: document.getElementById('playlistEmpty'),
     playlistAddArea: document.getElementById('playlistAddArea'),
-    playlistAddZone: document.getElementById('playlistAddZone')
+    playlistAddZone: document.getElementById('playlistAddZone'),
+
+    // 오디오 웨이브폼
+    audioWaveformContainer: document.getElementById('audioWaveformContainer'),
+
+    // 협업 플렉서스 패널
+    collabPlexusPanel: document.getElementById('collabPlexusPanel'),
+    collabPlexusCanvas: document.getElementById('collabPlexusCanvas'),
+    collabPlexusUsers: document.getElementById('collabPlexusUsers')
   };
 
   // 상태
@@ -188,7 +199,9 @@ async function initApp() {
     panStartX: 0,
     panStartY: 0,
     panInitialX: 0,
-    panInitialY: 0
+    panInitialY: 0,
+    // 오디오 모드
+    isAudioMode: false
   };
 
   // ====== 글로벌 Undo/Redo 시스템 ======
@@ -468,6 +481,13 @@ async function initApp() {
     updateTimecodeDisplay();
     updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
     updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
+
+    // 오디오 웨이브폼 동기화
+    if (state.isAudioMode) {
+      const audioWaveform = getAudioWaveform();
+      audioWaveform.updateTime(currentTime);
+      audioWaveform.setPlaying(videoPlayer.isPlaying);
+    }
 
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
@@ -988,7 +1008,7 @@ async function initApp() {
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       const file = files[0];
-      if (isVideoFile(file.name)) {
+      if (isMediaFile(file.name)) {
         await loadVideo(file.path);
       } else {
         showToast('지원하지 않는 파일 형식입니다.', 'error');
@@ -1564,6 +1584,19 @@ async function initApp() {
   toggleToastNotifications?.addEventListener('change', () => {
     const show = toggleToastNotifications.checked;
     userSettings.setShowToastNotifications(show);
+  });
+
+  // 플렉서스 패널 토글
+  const togglePlexusPanel = document.getElementById('togglePlexusPanel');
+  if (togglePlexusPanel) {
+    togglePlexusPanel.checked = userSettings.settings.showPlexusPanel !== false;
+  }
+  togglePlexusPanel?.addEventListener('change', () => {
+    userSettings.settings.showPlexusPanel = togglePlexusPanel.checked;
+    userSettings._save();
+    if (!togglePlexusPanel.checked) {
+      elements.collabPlexusPanel?.classList.remove('active');
+    }
   });
 
   // 도구별 설정 저장 (크기, 불투명도)
@@ -3331,9 +3364,12 @@ async function initApp() {
       // 파일 정보 가져오기
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
 
-      // ====== 코덱 확인 및 트랜스코딩 ======
+      // ====== 오디오 파일 감지 ======
+      const fileIsAudio = isAudioFile(fileInfo.name);
+
+      // ====== 코덱 확인 및 트랜스코딩 (비디오만) ======
       let actualVideoPath = filePath;
-      const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
+      const ffmpegAvailable = !fileIsAudio && await window.electronAPI.ffmpegIsAvailable();
 
       if (ffmpegAvailable) {
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
@@ -3421,8 +3457,60 @@ async function initApp() {
       // 코덱 에러 오버레이 숨기기
       codecErrorOverlay?.classList.remove('active');
 
-      // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
-      await videoPlayer.load(actualVideoPath);
+      // ====== 오디오/비디오 모드 분기 ======
+      const audioWaveform = getAudioWaveform();
+
+      if (fileIsAudio) {
+        // 오디오 모드 활성화
+        state.isAudioMode = true;
+        log.info('오디오 모드 활성화', { filePath });
+
+        // 비디오 엘리먼트 숨기기
+        elements.videoPlayer.style.display = 'none';
+        elements.videoPlayer.src = '';
+
+        // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
+        await videoPlayer.load(actualVideoPath);
+
+        // 웨이브폼 마운트 및 로드
+        if (!audioWaveform.canvas) {
+          audioWaveform.mount(elements.audioWaveformContainer);
+        }
+        await audioWaveform.loadAudio(actualVideoPath);
+        audioWaveform.show();
+
+        // 웨이브폼 스크러빙 → videoPlayer seek 연동
+        audioWaveform.addEventListener('seek', (e) => {
+          videoPlayer.seek(e.detail.time);
+        });
+
+        // 그리기 모드 비활성화 (오디오에서는 의미 없음)
+        if (state.isDrawMode) {
+          state.isDrawMode = false;
+          elements.btnDrawMode?.classList.remove('active');
+          drawingManager.disable();
+        }
+        elements.btnDrawMode?.setAttribute('disabled', 'true');
+
+        // 비디오 줌 컨트롤 숨기기
+        elements.videoZoomControls?.classList.add('hidden');
+
+        elements.videoWrapper?.classList.add('audio-mode');
+      } else {
+        // 비디오 모드
+        state.isAudioMode = false;
+
+        // 오디오 웨이브폼 숨기기
+        audioWaveform.hide();
+        audioWaveform.reset();
+
+        elements.videoWrapper?.classList.remove('audio-mode');
+        elements.btnDrawMode?.removeAttribute('disabled');
+        elements.videoZoomControls?.classList.remove('hidden');
+
+        // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
+        await videoPlayer.load(actualVideoPath);
+      }
 
       // 원본 파일 경로 저장 (UI/메타데이터용)
       state.currentFile = filePath;
@@ -3469,10 +3557,12 @@ async function initApp() {
       });
 
       // 비디오 트랙 업데이트
-      elements.videoTrackClip.textContent = `📹 ${fileInfo.name}`;
+      elements.videoTrackClip.textContent = fileIsAudio ? `🎵 ${fileInfo.name}` : `📹 ${fileInfo.name}`;
 
-      // 썸네일 생성 시작 (트랜스코딩된 경우 변환된 파일 사용)
-      await generateThumbnails(actualVideoPath);
+      // 썸네일 생성 시작 (비디오만, 트랜스코딩된 경우 변환된 파일 사용)
+      if (!fileIsAudio) {
+        await generateThumbnails(actualVideoPath);
+      }
 
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
@@ -5006,6 +5096,21 @@ async function initApp() {
   }
 
   /**
+   * 오디오 파일 확인
+   */
+  function isAudioFile(filename) {
+    const ext = filename.toLowerCase().split('.').pop();
+    return SUPPORTED_AUDIO_EXTENSIONS.includes(ext);
+  }
+
+  /**
+   * 미디어 파일 확인 (비디오 + 오디오)
+   */
+  function isMediaFile(filename) {
+    return isVideoFile(filename) || isAudioFile(filename);
+  }
+
+  /**
    * 토스트 메시지 표시
    * @param {string} message - 표시할 메시지
    * @param {string} type - 타입 ('info', 'success', 'warning', 'error')
@@ -6066,11 +6171,15 @@ async function initApp() {
     registeredUsersList.innerHTML = users.map(u => {
       const themeColor = THEME_COLOR_MAP[u.theme || ''] || '#ffd000';
       const themeName = u.theme ? (u.theme === 'red' ? '빨강' : u.theme === 'blue' ? '파랑' : u.theme === 'pink' ? '핑크' : u.theme === 'green' ? '초록' : '기본') : '기본';
+      const initialPwBadge = u.hasInitialPassword
+        ? '<span class="initial-password-badge" title="초기 비밀번호(1234) 사용 중">초기PW</span>'
+        : '';
       return `
         <div class="registered-user-item" data-name="${u.name}">
           <div class="registered-user-info">
             <span class="registered-user-theme" style="background: ${themeColor};" title="${themeName}"></span>
             <span class="registered-user-name">${u.name}</span>
+            ${initialPwBadge}
           </div>
           <button class="registered-user-delete" data-name="${u.name}">삭제</button>
         </div>
@@ -7078,14 +7187,22 @@ async function initApp() {
   const collaboratorsCount = document.getElementById('collaboratorsCount');
   const syncStatus = document.getElementById('syncStatus');
 
+  // ====== 플렉서스 패널 관련 ======
+  let _collabPlexusEffect = null;
+  let _collabPanelHoverTimer = null;
+  let _currentCollaborators = [];
+
   /**
    * 협업자 UI 업데이트
    */
   function updateCollaboratorsUI(collaborators) {
     if (!collaboratorsIndicator) return;
 
+    _currentCollaborators = collaborators;
+
     if (collaborators.length === 0) {
       collaboratorsIndicator.style.display = 'none';
+      _hideCollabPlexusPanel();
       return;
     }
 
@@ -7102,7 +7219,96 @@ async function initApp() {
                 ${initials}
               </div>`;
     }).reverse().join(''); // reverse for proper stacking order
+
+    // 플렉서스 패널 사용자 목록도 업데이트
+    _updatePlexusUsers(collaborators);
   }
+
+  function _updatePlexusUsers(collaborators) {
+    const plexusUsers = elements.collabPlexusUsers;
+    if (!plexusUsers) return;
+
+    plexusUsers.innerHTML = collaborators.map(collab => {
+      const isMe = collab.isMe ? ' collab-plexus-user-me' : '';
+      return `<div class="collab-plexus-user${isMe}">
+                <div class="collab-plexus-user-avatar" style="background-color: ${collab.color}">
+                  ${collab.name.substring(0, 2)}
+                </div>
+                <span class="collab-plexus-user-name">${collab.name}${collab.isMe ? ' (나)' : ''}</span>
+                <span class="collab-plexus-user-status"></span>
+              </div>`;
+    }).join('');
+  }
+
+  function _showCollabPlexusPanel() {
+    const panel = elements.collabPlexusPanel;
+    if (!panel || _currentCollaborators.length === 0) return;
+
+    // 설정에서 비활성화된 경우
+    if (!userSettings.settings.showPlexusPanel) return;
+
+    panel.classList.add('active');
+
+    // 플렉서스 애니메이션 시작
+    if (!_collabPlexusEffect && elements.collabPlexusCanvas) {
+      _collabPlexusEffect = new PlexusEffect(elements.collabPlexusCanvas, {
+        particleCount: 40,
+        particleRadius: 1.5,
+        lineDistance: 100,
+        speed: 0.3,
+        baseOpacity: 0.6,
+        lineOpacity: 0.3,
+        fillOpacity: 0.05,
+        hueSpeed: 0.2,
+        lineWidth: 1
+      });
+    }
+
+    if (_collabPlexusEffect && !_collabPlexusEffect.isRunning) {
+      _collabPlexusEffect.start();
+    }
+  }
+
+  function _hideCollabPlexusPanel() {
+    const panel = elements.collabPlexusPanel;
+    if (!panel) return;
+
+    panel.classList.remove('active');
+
+    if (_collabPlexusEffect && _collabPlexusEffect.isRunning) {
+      _collabPlexusEffect.stop();
+    }
+  }
+
+  // 호버 이벤트 설정
+  collaboratorsIndicator?.addEventListener('mouseenter', () => {
+    clearTimeout(_collabPanelHoverTimer);
+    _collabPanelHoverTimer = setTimeout(() => {
+      _showCollabPlexusPanel();
+    }, 200); // 200ms 딜레이 (오발 방지)
+  });
+
+  collaboratorsIndicator?.addEventListener('mouseleave', (e) => {
+    clearTimeout(_collabPanelHoverTimer);
+    // 패널로 마우스가 이동한 경우 숨기지 않음
+    const panel = elements.collabPlexusPanel;
+    if (panel && panel.contains(e.relatedTarget)) return;
+
+    _collabPanelHoverTimer = setTimeout(() => {
+      _hideCollabPlexusPanel();
+    }, 300);
+  });
+
+  elements.collabPlexusPanel?.addEventListener('mouseenter', () => {
+    clearTimeout(_collabPanelHoverTimer);
+  });
+
+  elements.collabPlexusPanel?.addEventListener('mouseleave', () => {
+    clearTimeout(_collabPanelHoverTimer);
+    _collabPanelHoverTimer = setTimeout(() => {
+      _hideCollabPlexusPanel();
+    }, 300);
+  });
 
   /**
    * 동기화 상태 UI 업데이트

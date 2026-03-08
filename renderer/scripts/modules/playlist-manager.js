@@ -12,6 +12,8 @@ const log = createLogger('PlaylistManager');
 const PLAYLIST_VERSION = '1.0';
 const MAX_PLAYLIST_ITEMS = 50;
 const SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+const SUPPORTED_AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'];
+const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];
 
 /**
  * 고유 ID 생성
@@ -44,6 +46,15 @@ function extractFileName(filePath) {
  */
 function sanitizeFileName(name) {
   return name.replace(/[<>:"/\\|?*]/g, '_').trim() || '재생목록';
+}
+
+/**
+ * 미디어 파일 확인 (비디오 + 오디오)
+ */
+function isMediaFile(filePath) {
+  if (!filePath || typeof filePath !== 'string') return false;
+  const ext = filePath.toLowerCase().slice(filePath.lastIndexOf('.'));
+  return SUPPORTED_MEDIA_EXTENSIONS.includes(ext);
 }
 
 /**
@@ -304,8 +315,8 @@ export class PlaylistManager {
 
     for (const filePath of pathsToAdd) {
       // 영상 파일인지 확인
-      if (!isVideoFile(filePath)) {
-        log.warn('비디오 파일이 아님', { filePath });
+      if (!isMediaFile(filePath)) {
+        log.warn('미디어 파일이 아님', { filePath });
         continue;
       }
 

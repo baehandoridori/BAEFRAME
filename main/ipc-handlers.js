@@ -17,7 +17,10 @@ const log = createLogger('IPC');
  */
 const ALLOWED_EXTENSIONS = ['.bframe', '.json', '.bak', '.bplaylist'];
 const VIDEO_FILE_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+const AUDIO_FILE_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
+const MEDIA_FILE_EXTENSIONS = [...VIDEO_FILE_EXTENSIONS, ...AUDIO_FILE_EXTENSIONS];
 const VIDEO_FILE_EXTENSION_SET = new Set(VIDEO_FILE_EXTENSIONS.map((ext) => '.' + ext));
+const AUDIO_FILE_EXTENSION_SET = new Set(AUDIO_FILE_EXTENSIONS.map((ext) => '.' + ext));
 
 function escapePowerShellSingleQuote(value) {
   return String(value || '').replace(/'/g, "''");
@@ -213,9 +216,11 @@ function setupIpcHandlers() {
     const trace = log.trace('file:open-dialog');
     try {
       const result = await dialog.showOpenDialog(getMainWindow(), {
-        title: '영상 파일 열기',
+        title: '미디어 파일 열기',
         filters: [
+          { name: '미디어 파일', extensions: MEDIA_FILE_EXTENSIONS },
           { name: '비디오 파일', extensions: VIDEO_FILE_EXTENSIONS },
+          { name: '오디오 파일', extensions: AUDIO_FILE_EXTENSIONS },
           { name: '모든 파일', extensions: ['*'] }
         ],
         properties: ['openFile'],
