@@ -148,8 +148,8 @@ export class AudioWaveform extends EventTarget {
 
       // 커스텀 프로토콜로 파일 읽기 (IPC 대용량 바이너리 전송 시 크래시 방지)
       // baeframe-file:/// 프로토콜은 main process에서 net.fetch로 로컬 파일 제공
-      const normalizedPath = filePath.replace(/\\/g, '/');
-      const fetchUrl = `baeframe-file:///${encodeURIComponent(normalizedPath).replace(/%2F/g, '/')}`;
+      // 경로를 query parameter로 전달하여 URL 파싱 문제 회피
+      const fetchUrl = `baeframe-file:///audio?path=${encodeURIComponent(filePath)}`;
       log.info('커스텀 프로토콜로 파일 요청', { fetchUrl });
 
       const response = await fetch(fetchUrl);
@@ -172,10 +172,19 @@ export class AudioWaveform extends EventTarget {
       // 컨텍스트 닫기 (디코딩 용도로만 사용)
       await audioContext.close();
 
-      // 캔버스 크기가 0이면 리사이즈 재시도
+      // 캔버스 크기가 0이면 리사이즈 재시도 (display 전환 후 레이아웃 지연 대응)
       if (!this.canvas.width || !this.canvas.height) {
         log.warn('캔버스 크기 0 감지, 리사이즈 재시도');
         this._resize();
+        // 여전히 0이면 rAF 후 재시도
+        if (!this.canvas.width || !this.canvas.height) {
+          await new Promise(r => requestAnimationFrame(r));
+          this._resize();
+          log.info('rAF 후 캔버스 크기', {
+            canvasWidth: this.canvas.width,
+            canvasHeight: this.canvas.height
+          });
+        }
       }
 
       // 웨이브폼 데이터 생성
