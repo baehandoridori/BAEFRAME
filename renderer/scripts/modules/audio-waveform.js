@@ -123,6 +123,7 @@ export class AudioWaveform extends EventTarget {
     this._timeDisplay = null;
     this._hoverLabel = null;
     this.waveformData = null;
+    this._rawWaveformData = null;
     this._isVisible = false;
 
     log.info('AudioWaveform 언마운트됨');
@@ -137,41 +138,41 @@ export class AudioWaveform extends EventTarget {
     log.info('오디오 파일 로드 시작', { filePath });
 
     try {
-      // 캔버스 크기 확인 및 리사이즈
-      if (!this.canvas.width || !this.canvas.height) {
-        this._resize();
-        if (!this.canvas.width || !this.canvas.height) {
-          await new Promise(r => requestAnimationFrame(r));
-          this._resize();
-        }
-      }
-
-      log.info('캔버스 크기', {
-        canvasWidth: this.canvas?.width,
-        canvasHeight: this.canvas?.height
-      });
-
       // Main Process에서 WAV 파싱 + 웨이브폼 데이터 생성 (IPC)
       // 대용량 바이너리를 렌더러로 전송하지 않고, main에서 직접 파싱하여
-      // 소량의 웨이브폼 데이터(수 KB)만 전송 → 크래시 방지
-      const barCount = Math.floor(this.canvas.width / (this._barWidth + this._barGap)) || 800;
-      log.info('웨이브폼 생성 요청', { filePath, barCount });
+      // 소량의 웨이브폼 데이터(수 KB)만 전송
+      log.info('웨이브폼 생성 요청 (IPC)', { filePath });
 
-      const result = await window.electronAPI.generateAudioWaveform(filePath, barCount);
+      const result = await window.electronAPI.generateAudioWaveform(filePath, 800);
 
       if (!result.success) {
         throw new Error(result.error || '웨이브폼 생성 실패');
       }
 
       this.duration = result.duration;
-      this.waveformData = new Float32Array(result.waveformData);
+      this._rawWaveformData = Array.from(result.waveformData); // 원본 보관 (리사이즈용)
 
       log.info('웨이브폼 데이터 수신 완료', {
         duration: this.duration,
-        barCount: this.waveformData.length,
+        barCount: this._rawWaveformData.length,
         channels: result.channels,
         sampleRate: result.sampleRate
       });
+
+      // IPC 응답 후 캔버스 크기 재확인 (IPC 대기 동안 레이아웃 확정됨)
+      this._resize();
+      if (!this.canvas.width || !this.canvas.height) {
+        await new Promise(r => requestAnimationFrame(r));
+        this._resize();
+      }
+
+      log.info('캔버스 크기 (렌더링 직전)', {
+        canvasWidth: this.canvas.width,
+        canvasHeight: this.canvas.height
+      });
+
+      // 현재 캔버스 크기에 맞는 barCount로 리샘플링
+      this._resampleFromRaw();
 
       // 렌더링
       this._isVisible = true;
@@ -189,20 +190,17 @@ export class AudioWaveform extends EventTarget {
   }
 
   /**
-   * 웨이브폼 데이터 리샘플링 (창 크기 변경 시)
-   * 원본 waveformData를 새로운 barCount에 맞게 보간
+   * 원본 데이터에서 현재 캔버스 크기에 맞게 리샘플링
    */
-  _resampleWaveformData() {
-    if (!this.waveformData || !this.canvas) return;
+  _resampleFromRaw() {
+    if (!this._rawWaveformData || !this.canvas) return;
 
-    const newBarCount = Math.floor(this.canvas.width / (this._barWidth + this._barGap));
-    if (newBarCount <= 0 || newBarCount === this.waveformData.length) return;
+    const barCount = Math.max(1, Math.floor(this.canvas.width / (this._barWidth + this._barGap)));
+    const oldData = this._rawWaveformData;
+    const newData = new Float32Array(barCount);
+    const ratio = oldData.length / barCount;
 
-    const oldData = this.waveformData;
-    const newData = new Float32Array(newBarCount);
-    const ratio = oldData.length / newBarCount;
-
-    for (let i = 0; i < newBarCount; i++) {
+    for (let i = 0; i < barCount; i++) {
       const srcIdx = i * ratio;
       const lo = Math.floor(srcIdx);
       const hi = Math.min(lo + 1, oldData.length - 1);
@@ -434,8 +432,8 @@ export class AudioWaveform extends EventTarget {
       this._isVisible = true;
       this._resize();
       // 컨테이너가 display:none → block 전환 후 웨이브폼 재생성 필요
-      if (this.waveformData) {
-        this._resampleWaveformData();
+      if (this._rawWaveformData) {
+        this._resampleFromRaw();
         this._drawWaveform();
         this._drawOverlay();
       }
@@ -457,6 +455,7 @@ export class AudioWaveform extends EventTarget {
   reset() {
     this.stopAnimation();
     this.waveformData = null;
+    this._rawWaveformData = null;
     this.duration = 0;
     this.currentTime = 0;
     this.isPlaying = false;

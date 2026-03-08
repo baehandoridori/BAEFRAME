@@ -3527,7 +3527,12 @@ async function initApp() {
         // 비디오 줌 컨트롤 숨기기
         elements.videoZoomControls?.classList.add('hidden');
 
+        // 오디오 모드: 불필요한 비디오 컨트롤 숨기기
+        elements.btnDrawMode?.closest('.action-btn-wrapper, .action-btn')?.classList.add('audio-hidden');
+        document.getElementById('frameIndicator')?.classList.add('audio-hidden');
+
         elements.videoWrapper?.classList.add('audio-mode');
+        document.body.classList.add('audio-mode');
       } else {
         // 비디오 모드
         state.isAudioMode = false;
@@ -3538,8 +3543,13 @@ async function initApp() {
         audioWaveform.reset();
 
         elements.videoWrapper?.classList.remove('audio-mode');
+        document.body.classList.remove('audio-mode');
         elements.btnDrawMode?.removeAttribute('disabled');
         elements.videoZoomControls?.classList.remove('hidden');
+
+        // 오디오 모드에서 숨겼던 컨트롤 복원
+        elements.btnDrawMode?.closest('.action-btn-wrapper, .action-btn')?.classList.remove('audio-hidden');
+        document.getElementById('frameIndicator')?.classList.remove('audio-hidden');
 
         // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
         await videoPlayer.load(actualVideoPath);
