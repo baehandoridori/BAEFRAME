@@ -576,6 +576,8 @@ async function initApp() {
   const btnCodecErrorClose = document.getElementById('btnCodecErrorClose');
 
   videoPlayer.addEventListener('codecunsupported', (e) => {
+    // 오디오 모드에서는 videoWidth=0이 정상이므로 무시
+    if (state.isAudioMode) return;
     log.warn('코덱 미지원', e.detail);
     codecErrorOverlay?.classList.add('active');
   });
@@ -3463,11 +3465,11 @@ async function initApp() {
       if (fileIsAudio) {
         // 오디오 모드 활성화
         state.isAudioMode = true;
+        videoPlayer.isAudioMode = true;
         log.info('오디오 모드 활성화', { filePath });
 
         // 비디오 엘리먼트 숨기기
         elements.videoPlayer.style.display = 'none';
-        elements.videoPlayer.src = '';
 
         // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
         await videoPlayer.load(actualVideoPath);
@@ -3499,6 +3501,7 @@ async function initApp() {
       } else {
         // 비디오 모드
         state.isAudioMode = false;
+        videoPlayer.isAudioMode = false;
 
         // 오디오 웨이브폼 숨기기
         audioWaveform.hide();
@@ -7240,6 +7243,8 @@ async function initApp() {
     }).join('');
   }
 
+  let _plexusStartTimer = null;
+
   function _showCollabPlexusPanel() {
     const panel = elements.collabPlexusPanel;
     if (!panel || _currentCollaborators.length === 0) return;
@@ -7249,29 +7254,47 @@ async function initApp() {
 
     panel.classList.add('active');
 
-    // 플렉서스 애니메이션 시작
-    if (!_collabPlexusEffect && elements.collabPlexusCanvas) {
-      _collabPlexusEffect = new PlexusEffect(elements.collabPlexusCanvas, {
-        particleCount: 40,
-        particleRadius: 1.5,
-        lineDistance: 100,
-        speed: 0.3,
-        baseOpacity: 0.6,
-        lineOpacity: 0.3,
-        fillOpacity: 0.05,
-        hueSpeed: 0.2,
-        lineWidth: 1
-      });
+    // 이전 타이머 정리
+    if (_plexusStartTimer) {
+      clearTimeout(_plexusStartTimer);
     }
 
-    if (_collabPlexusEffect && !_collabPlexusEffect.isRunning) {
-      _collabPlexusEffect.start();
-    }
+    // CSS transition 완료 후 플렉서스 시작 (height: 0→240px, transition 350ms)
+    _plexusStartTimer = setTimeout(() => {
+      if (!elements.collabPlexusCanvas) return;
+
+      if (!_collabPlexusEffect) {
+        _collabPlexusEffect = new PlexusEffect(elements.collabPlexusCanvas, {
+          particleCount: 40,
+          particleRadius: 1.5,
+          lineDistance: 100,
+          speed: 0.3,
+          baseOpacity: 0.6,
+          lineOpacity: 0.3,
+          fillOpacity: 0.05,
+          hueSpeed: 0.2,
+          lineWidth: 1
+        });
+      }
+
+      // 패널 크기가 확보된 후 resize → particles 재생성 → 시작
+      _collabPlexusEffect._resize();
+      _collabPlexusEffect._createParticles();
+      if (!_collabPlexusEffect.isRunning) {
+        _collabPlexusEffect.start();
+      }
+    }, 380);
   }
 
   function _hideCollabPlexusPanel() {
     const panel = elements.collabPlexusPanel;
     if (!panel) return;
+
+    // 시작 타이머 정리
+    if (_plexusStartTimer) {
+      clearTimeout(_plexusStartTimer);
+      _plexusStartTimer = null;
+    }
 
     panel.classList.remove('active');
 
