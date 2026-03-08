@@ -28,8 +28,7 @@ export class AudioWaveform extends EventTarget {
     this.overlayCtx = null;
 
     // 오디오 데이터
-    this.audioBuffer = null;
-    this.waveformData = null; // 다운샘플링된 피크 데이터
+    this.waveformData = null; // Main Process에서 생성된 웨이브폼 데이터
     this.duration = 0;
 
     // 재생 상태
@@ -123,7 +122,6 @@ export class AudioWaveform extends EventTarget {
     this.overlayCtx = null;
     this._timeDisplay = null;
     this._hoverLabel = null;
-    this.audioBuffer = null;
     this.waveformData = null;
     this._isVisible = false;
 
@@ -139,60 +137,40 @@ export class AudioWaveform extends EventTarget {
     log.info('오디오 파일 로드 시작', { filePath });
 
     try {
-      // 캔버스 크기 확인
-      log.info('캔버스 크기', {
-        canvasWidth: this.canvas?.width,
-        canvasHeight: this.canvas?.height,
-        containerRect: this.container?.getBoundingClientRect()
-      });
-
-      // 커스텀 프로토콜로 파일 읽기 (IPC 대용량 바이너리 전송 시 크래시 방지)
-      // baeframe-file:/// 프로토콜은 main process에서 net.fetch로 로컬 파일 제공
-      // 경로를 query parameter로 전달하여 URL 파싱 문제 회피
-      const fetchUrl = `baeframe-file:///audio?path=${encodeURIComponent(filePath)}`;
-      log.info('커스텀 프로토콜로 파일 요청', { fetchUrl });
-
-      const response = await fetch(fetchUrl);
-      if (!response.ok) {
-        throw new Error(`파일 fetch 실패: ${response.status} ${response.statusText}`);
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      log.info('오디오 바이너리 읽기 완료', { bytes: arrayBuffer.byteLength });
-
-      // Web Audio API로 디코딩
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      this.audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      this.duration = this.audioBuffer.duration;
-      log.info('오디오 디코딩 완료', {
-        duration: this.duration,
-        channels: this.audioBuffer.numberOfChannels,
-        sampleRate: this.audioBuffer.sampleRate
-      });
-
-      // 컨텍스트 닫기 (디코딩 용도로만 사용)
-      await audioContext.close();
-
-      // 캔버스 크기가 0이면 리사이즈 재시도 (display 전환 후 레이아웃 지연 대응)
+      // 캔버스 크기 확인 및 리사이즈
       if (!this.canvas.width || !this.canvas.height) {
-        log.warn('캔버스 크기 0 감지, 리사이즈 재시도');
         this._resize();
-        // 여전히 0이면 rAF 후 재시도
         if (!this.canvas.width || !this.canvas.height) {
           await new Promise(r => requestAnimationFrame(r));
           this._resize();
-          log.info('rAF 후 캔버스 크기', {
-            canvasWidth: this.canvas.width,
-            canvasHeight: this.canvas.height
-          });
         }
       }
 
-      // 웨이브폼 데이터 생성
-      this._generateWaveformData();
-      log.info('웨이브폼 데이터 생성 완료', {
-        barCount: this.waveformData?.length,
-        canvasWidth: this.canvas.width,
-        canvasHeight: this.canvas.height
+      log.info('캔버스 크기', {
+        canvasWidth: this.canvas?.width,
+        canvasHeight: this.canvas?.height
+      });
+
+      // Main Process에서 WAV 파싱 + 웨이브폼 데이터 생성 (IPC)
+      // 대용량 바이너리를 렌더러로 전송하지 않고, main에서 직접 파싱하여
+      // 소량의 웨이브폼 데이터(수 KB)만 전송 → 크래시 방지
+      const barCount = Math.floor(this.canvas.width / (this._barWidth + this._barGap)) || 800;
+      log.info('웨이브폼 생성 요청', { filePath, barCount });
+
+      const result = await window.electronAPI.generateAudioWaveform(filePath, barCount);
+
+      if (!result.success) {
+        throw new Error(result.error || '웨이브폼 생성 실패');
+      }
+
+      this.duration = result.duration;
+      this.waveformData = new Float32Array(result.waveformData);
+
+      log.info('웨이브폼 데이터 수신 완료', {
+        duration: this.duration,
+        barCount: this.waveformData.length,
+        channels: result.channels,
+        sampleRate: result.sampleRate
       });
 
       // 렌더링
@@ -201,11 +179,7 @@ export class AudioWaveform extends EventTarget {
       this._drawOverlay();
       this.startAnimation();
 
-      log.info('오디오 파일 로드 완료', {
-        duration: this.duration,
-        channels: this.audioBuffer.numberOfChannels,
-        sampleRate: this.audioBuffer.sampleRate
-      });
+      log.info('오디오 파일 로드 완료', { duration: this.duration });
 
       return { duration: this.duration };
     } catch (error) {
@@ -215,50 +189,28 @@ export class AudioWaveform extends EventTarget {
   }
 
   /**
-   * 웨이브폼 데이터 생성 (다운샘플링)
+   * 웨이브폼 데이터 리샘플링 (창 크기 변경 시)
+   * 원본 waveformData를 새로운 barCount에 맞게 보간
    */
-  _generateWaveformData() {
-    if (!this.audioBuffer || !this.canvas) return;
+  _resampleWaveformData() {
+    if (!this.waveformData || !this.canvas) return;
 
-    const rawData = this.audioBuffer.getChannelData(0); // 모노 또는 첫 번째 채널
-    const totalSamples = rawData.length;
+    const newBarCount = Math.floor(this.canvas.width / (this._barWidth + this._barGap));
+    if (newBarCount <= 0 || newBarCount === this.waveformData.length) return;
 
-    // 바 개수 계산
-    const barCount = Math.floor(this.canvas.width / (this._barWidth + this._barGap));
-    const samplesPerBar = Math.floor(totalSamples / barCount);
+    const oldData = this.waveformData;
+    const newData = new Float32Array(newBarCount);
+    const ratio = oldData.length / newBarCount;
 
-    this.waveformData = new Float32Array(barCount);
-
-    for (let i = 0; i < barCount; i++) {
-      const start = i * samplesPerBar;
-      const end = Math.min(start + samplesPerBar, totalSamples);
-
-      // RMS (Root Mean Square) 기반 피크 계산 - 더 부드러운 결과
-      let sumSquares = 0;
-      let peak = 0;
-      for (let j = start; j < end; j++) {
-        const abs = Math.abs(rawData[j]);
-        sumSquares += abs * abs;
-        if (abs > peak) peak = abs;
-      }
-      const rms = Math.sqrt(sumSquares / (end - start));
-
-      // RMS와 피크의 블렌드 (70% RMS + 30% peak) - 자연스러운 느낌
-      this.waveformData[i] = rms * 0.7 + peak * 0.3;
+    for (let i = 0; i < newBarCount; i++) {
+      const srcIdx = i * ratio;
+      const lo = Math.floor(srcIdx);
+      const hi = Math.min(lo + 1, oldData.length - 1);
+      const frac = srcIdx - lo;
+      newData[i] = oldData[lo] * (1 - frac) + oldData[hi] * frac;
     }
 
-    // 정규화 (0~1 범위)
-    let maxVal = 0;
-    for (let i = 0; i < this.waveformData.length; i++) {
-      if (this.waveformData[i] > maxVal) maxVal = this.waveformData[i];
-    }
-    if (maxVal > 0) {
-      for (let i = 0; i < this.waveformData.length; i++) {
-        this.waveformData[i] /= maxVal;
-      }
-    }
-
-    log.debug('웨이브폼 데이터 생성 완료', { barCount, samplesPerBar });
+    this.waveformData = newData;
   }
 
   /**
@@ -482,8 +434,8 @@ export class AudioWaveform extends EventTarget {
       this._isVisible = true;
       this._resize();
       // 컨테이너가 display:none → block 전환 후 웨이브폼 재생성 필요
-      if (this.audioBuffer) {
-        this._generateWaveformData();
+      if (this.waveformData) {
+        this._resampleWaveformData();
         this._drawWaveform();
         this._drawOverlay();
       }
@@ -504,7 +456,6 @@ export class AudioWaveform extends EventTarget {
    */
   reset() {
     this.stopAnimation();
-    this.audioBuffer = null;
     this.waveformData = null;
     this.duration = 0;
     this.currentTime = 0;

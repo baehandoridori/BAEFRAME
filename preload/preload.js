@@ -101,6 +101,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readBinaryFile: (filePath) => ipcRenderer.invoke('file:read-binary', filePath),
   getFileStats: (filePath) => ipcRenderer.invoke('file:get-stats', filePath),
 
+  // ====== 오디오 웨이브폼 ======
+  generateAudioWaveform: (filePath, barCount) => ipcRenderer.invoke('audio:generate-waveform', filePath, barCount),
+
   // ====== 재생목록 관련 ======
   readPlaylist: (filePath) => ipcRenderer.invoke('playlist:read', filePath),
   writePlaylist: (filePath, data) => ipcRenderer.invoke('playlist:write', filePath, data),

@@ -32,23 +32,8 @@ debugLog(`__dirname: ${__dirname}`);
 // 앱 시작 시간 측정
 const appStartTime = Date.now();
 
-const { app, BrowserWindow, ipcMain, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol } = require('electron');
 debugLog('electron 모듈 로드 완료');
-
-// 커스텀 프로토콜 스킴 등록 (app ready 전에 호출 필수)
-// 오디오 웨이브폼에서 로컬 파일을 fetch()로 읽기 위해 사용
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'baeframe-file',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true
-    }
-  }
-]);
-debugLog('baeframe-file 프로토콜 스킴 등록 완료');
 
 // ============================================
 // 앱 종료 상태 관리
@@ -341,24 +326,6 @@ if (!gotTheLock) {
         debugLog('로딩 창 표시됨');
       }
     }
-
-    // 로컬 파일 접근용 커스텀 프로토콜 등록 (오디오 웨이브폼 등)
-    // IPC로 대용량 바이너리 전송 시 렌더러 크래시 방지
-    const { pathToFileURL } = require('url');
-    protocol.handle('baeframe-file', (request) => {
-      // baeframe-file:///audio?path=<encoded path> 형식에서 경로 추출
-      const url = new URL(request.url);
-      const filePath = url.searchParams.get('path');
-      if (!filePath) {
-        log.error('커스텀 프로토콜: path 파라미터 없음', { url: request.url });
-        return new Response('Missing path parameter', { status: 400 });
-      }
-      log.info('커스텀 프로토콜 파일 요청', { filePath });
-      const fileUrl = pathToFileURL(filePath).href;
-      log.info('file:// URL 변환됨', { fileUrl });
-      return net.fetch(fileUrl);
-    });
-    debugLog('커스텀 프로토콜 등록 완료');
 
     // IPC 핸들러 설정
     debugLog('IPC 핸들러 설정 중...');
