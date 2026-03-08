@@ -140,10 +140,20 @@ export class AudioWaveform extends EventTarget {
 
     try {
       // Electron IPC로 파일 읽기 (fetch는 file:// URL 차단됨)
-      const buffer = await window.electronAPI.readBinaryFile(filePath);
-      const arrayBuffer = buffer.buffer.slice(
-        buffer.byteOffset, buffer.byteOffset + buffer.byteLength
-      );
+      const ipcResult = await window.electronAPI.readBinaryFile(filePath);
+      // IPC 결과가 ArrayBuffer, Buffer, Uint8Array 등 다양할 수 있음
+      let arrayBuffer;
+      if (ipcResult instanceof ArrayBuffer) {
+        arrayBuffer = ipcResult;
+      } else if (ipcResult && ipcResult.buffer) {
+        // Uint8Array / Buffer → ArrayBuffer 변환
+        arrayBuffer = ipcResult.buffer.slice(
+          ipcResult.byteOffset, ipcResult.byteOffset + ipcResult.byteLength
+        );
+      } else {
+        throw new Error('예상하지 못한 IPC 응답 형식');
+      }
+      log.info('오디오 바이너리 읽기 완료', { bytes: arrayBuffer.byteLength });
 
       // Web Audio API로 디코딩
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -443,6 +453,12 @@ export class AudioWaveform extends EventTarget {
       this.container.classList.add('active');
       this._isVisible = true;
       this._resize();
+      // 컨테이너가 display:none → block 전환 후 웨이브폼 재생성 필요
+      if (this.audioBuffer) {
+        this._generateWaveformData();
+        this._drawWaveform();
+        this._drawOverlay();
+      }
       this.startAnimation();
     }
   }

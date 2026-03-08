@@ -3477,9 +3477,10 @@ async function initApp() {
         if (!audioWaveform.canvas) {
           audioWaveform.mount(elements.audioWaveformContainer);
         }
+        // 컨테이너를 먼저 표시해야 캔버스 크기가 확보됨
+        audioWaveform.show();
         try {
           await audioWaveform.loadAudio(actualVideoPath);
-          audioWaveform.show();
         } catch (err) {
           log.error('웨이브폼 로드 실패', { error: err.message });
           showToast('오디오 웨이브폼 로드에 실패했습니다.', 'error');
@@ -7459,33 +7460,139 @@ async function initApp() {
     }, 300);
   });
 
-  // ====== 협업 연결 리플 효과 ======
-  function _triggerCollabRipple() {
-    const overlay = document.getElementById('collabRippleOverlay');
-    if (!overlay) return;
+  // ====== 협업 연결 리플 효과 (캔버스 기반 화면 왜곡) ======
+  let _rippleAnimationId = null;
 
-    // 인디케이터 위치에서 시작
-    const indicator = collaboratorsIndicator;
-    if (indicator) {
-      const rect = indicator.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
-      overlay.querySelectorAll('.collab-ripple-ring').forEach(ring => {
-        ring.style.left = centerX + 'px';
-        ring.style.top = centerY + 'px';
-      });
-    }
+  function _triggerCollabRipple() {
+    const canvas = document.getElementById('collabRippleCanvas');
+    if (!canvas) return;
 
     // 이전 애니메이션 정리
-    overlay.classList.remove('active');
-    // reflow 트리거로 애니메이션 재시작
-    void overlay.offsetWidth;
-    overlay.classList.add('active');
+    if (_rippleAnimationId) {
+      cancelAnimationFrame(_rippleAnimationId);
+      _rippleAnimationId = null;
+    }
 
-    // 애니메이션 종료 후 정리 (1.5s + 0.4s delay = ~1.9s)
-    setTimeout(() => {
-      overlay.classList.remove('active');
-    }, 2000);
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    canvas.classList.add('active');
+
+    // 인디케이터 위치에서 시작
+    let originX = canvas.width / 2;
+    let originY = 0;
+    if (collaboratorsIndicator) {
+      const rect = collaboratorsIndicator.getBoundingClientRect();
+      originX = rect.left + rect.width / 2;
+      originY = rect.top + rect.height / 2;
+    }
+
+    const maxRadius = Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height);
+    const duration = 1800; // 1.8초
+    const startTime = performance.now();
+
+    // 3개의 파동 (시차 발사)
+    const waves = [
+      { delay: 0, thickness: 80, color: [255, 208, 0] },     // 골드
+      { delay: 120, thickness: 60, color: [255, 180, 40] },   // 오렌지
+      { delay: 280, thickness: 40, color: [255, 220, 100] }   // 밝은 골드
+    ];
+
+    function animateRipple(now) {
+      const elapsed = now - startTime;
+      if (elapsed > duration + 400) {
+        canvas.classList.remove('active');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        _rippleAnimationId = null;
+        return;
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (const wave of waves) {
+        const waveElapsed = elapsed - wave.delay;
+        if (waveElapsed < 0) continue;
+
+        const progress = Math.min(waveElapsed / duration, 1);
+        // ease-out cubic
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const radius = eased * maxRadius;
+        const thickness = wave.thickness * (1 - progress * 0.5);
+
+        // 페이드: 등장 → 유지 → 페이드아웃
+        let alpha;
+        if (progress < 0.1) {
+          alpha = progress / 0.1;
+        } else if (progress < 0.4) {
+          alpha = 1;
+        } else {
+          alpha = 1 - (progress - 0.4) / 0.6;
+        }
+        alpha *= 0.35;
+
+        const [r, g, b] = wave.color;
+
+        // 외곽 글로우 (넓은 반투명)
+        const glowGrad = ctx.createRadialGradient(
+          originX, originY, Math.max(0, radius - thickness * 2),
+          originX, originY, radius + thickness
+        );
+        glowGrad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0)`);
+        glowGrad.addColorStop(0.3, `rgba(${r}, ${g}, ${b}, ${alpha * 0.3})`);
+        glowGrad.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${alpha * 0.6})`);
+        glowGrad.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${alpha * 0.3})`);
+        glowGrad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+
+        ctx.beginPath();
+        ctx.arc(originX, originY, radius + thickness, 0, Math.PI * 2);
+        ctx.fillStyle = glowGrad;
+        ctx.fill();
+
+        // 선명한 중심 링
+        ctx.beginPath();
+        ctx.arc(originX, originY, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.8})`;
+        ctx.lineWidth = 2 * (1 - progress * 0.7);
+        ctx.stroke();
+
+        // 내부 빛 산란 효과 (screen-like glow)
+        if (progress < 0.6) {
+          const innerGrad = ctx.createRadialGradient(
+            originX, originY, 0,
+            originX, originY, radius * 0.5
+          );
+          const innerAlpha = alpha * 0.15 * (1 - progress / 0.6);
+          innerGrad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${innerAlpha})`);
+          innerGrad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+          ctx.beginPath();
+          ctx.arc(originX, originY, radius * 0.5, 0, Math.PI * 2);
+          ctx.fillStyle = innerGrad;
+          ctx.fill();
+        }
+      }
+
+      // 중앙 플래시 (초반에만)
+      const flashProgress = elapsed / 300;
+      if (flashProgress < 1) {
+        const flashAlpha = 0.4 * (1 - flashProgress);
+        const flashRadius = 30 + flashProgress * 60;
+        const flashGrad = ctx.createRadialGradient(
+          originX, originY, 0,
+          originX, originY, flashRadius
+        );
+        flashGrad.addColorStop(0, `rgba(255, 240, 200, ${flashAlpha})`);
+        flashGrad.addColorStop(0.5, `rgba(255, 208, 0, ${flashAlpha * 0.5})`);
+        flashGrad.addColorStop(1, 'rgba(255, 208, 0, 0)');
+        ctx.beginPath();
+        ctx.arc(originX, originY, flashRadius, 0, Math.PI * 2);
+        ctx.fillStyle = flashGrad;
+        ctx.fill();
+      }
+
+      _rippleAnimationId = requestAnimationFrame(animateRipple);
+    }
+
+    _rippleAnimationId = requestAnimationFrame(animateRipple);
   }
 
   /**

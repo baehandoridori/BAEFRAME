@@ -8794,58 +8794,20 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   letter-spacing: 0.5px;
 }
 
-/* ====== 협업 연결 리플 효과 ====== */
-.collab-ripple-overlay {
+/* ====== 협업 연결 리플 효과 (캔버스 기반 화면 왜곡) ====== */
+.collab-ripple-canvas {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   z-index: 9999;
   display: none;
 }
 
-.collab-ripple-overlay.active {
+.collab-ripple-canvas.active {
   display: block;
-}
-
-.collab-ripple-ring {
-  position: absolute;
-  border-radius: 50%;
-  border: 2px solid var(--accent-primary, #ffd000);
-  opacity: 0;
-  transform: translate(-50%, -50%);
-  width: 0;
-  height: 0;
-}
-
-.collab-ripple-overlay.active .collab-ripple-ring {
-  animation: collabRippleExpand 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
-}
-
-.collab-ripple-overlay.active .collab-ripple-ring:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.collab-ripple-overlay.active .collab-ripple-ring:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes collabRippleExpand {
-  0% {
-    width: 40px;
-    height: 40px;
-    opacity: 0.5;
-    border-width: 3px;
-  }
-  50% {
-    opacity: 0.3;
-    border-width: 2px;
-  }
-  100% {
-    width: 150vmax;
-    height: 150vmax;
-    opacity: 0;
-    border-width: 1px;
-  }
 }
 
 /* prefers-reduced-motion 대응 */
@@ -8861,9 +8823,5 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
 
   .audio-waveform-hover-label {
     transition: none;
-  }
-
-  .collab-ripple-overlay.active .collab-ripple-ring {
-    animation: none;
   }
 }
