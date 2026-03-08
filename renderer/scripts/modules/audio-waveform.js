@@ -47,6 +47,14 @@ export class AudioWaveform extends EventTarget {
     this._cornerRadius = 1.5;
     this._glowIntensity = 0.6;
 
+    // 파티클 시스템
+    this._particles = [];
+    this._maxParticles = 50;
+
+    // 애니메이션 타이밍
+    this._animStartTime = 0;
+    this._pulsePhase = 0;
+
     // 바운드 핸들러
     this._onMouseDown = this._onMouseDown.bind(this);
     this._onMouseMove = this._onMouseMove.bind(this);
@@ -212,7 +220,7 @@ export class AudioWaveform extends EventTarget {
   }
 
   /**
-   * 메인 웨이브폼 렌더링
+   * 메인 웨이브폼 렌더링 (리플렉션 + 글로우 + 펄스)
    */
   _drawWaveform() {
     if (!this.ctx || !this.waveformData || !this.canvas) return;
@@ -220,76 +228,132 @@ export class AudioWaveform extends EventTarget {
     const ctx = this.ctx;
     const w = this.canvas.width;
     const h = this.canvas.height;
-    const centerY = h / 2;
-    const maxBarHeight = (h / 2) * 0.85; // 중앙에서 위/아래 최대 높이
+    // 중심선을 살짝 위로 (리플렉션 공간 확보: 위 45% / 아래 55%)
+    const centerY = h * 0.42;
+    const maxBarHeight = centerY * 0.88;
+    const reflectionHeight = (h - centerY) * 0.6; // 리플렉션은 60% 높이
 
     ctx.clearRect(0, 0, w, h);
+
+    const now = performance.now();
+    this._pulsePhase = (now % 2000) / 2000; // 2초 주기
 
     // 현재 재생 위치 비율
     const playRatio = this.duration > 0 ? this.currentTime / this.duration : 0;
     const playX = playRatio * w;
 
-    // 그라데이션 생성 - 재생된 부분과 미재생 부분
+    // accent 색상
     const accentColor = getComputedStyle(document.documentElement)
       .getPropertyValue('--accent-primary').trim() || '#ffd000';
+    const accentShift1 = this._shiftHue(accentColor, 20);
+    const accentShift2 = this._shiftHue(accentColor, -15);
 
-    // 재생된 부분: accent → 따뜻한 오렌지
-    const playedGrad = ctx.createLinearGradient(0, 0, w, 0);
-    playedGrad.addColorStop(0, accentColor);
-    playedGrad.addColorStop(0.5, this._shiftHue(accentColor, 15));
-    playedGrad.addColorStop(1, this._shiftHue(accentColor, 30));
+    // 재생된 부분: 수평 + 수직 그라데이션 조합
+    const playedGrad = ctx.createLinearGradient(0, centerY - maxBarHeight, 0, centerY);
+    playedGrad.addColorStop(0, accentShift1);
+    playedGrad.addColorStop(0.5, accentColor);
+    playedGrad.addColorStop(1, accentShift2);
 
-    // 미재생 부분: 반투명
-    const unplayedColor = 'rgba(255, 255, 255, 0.2)';
-    const unplayedHighlight = 'rgba(255, 255, 255, 0.35)';
+    // ─── 배경 앰비언트 글로우 (재생 헤드 주변) ───
+    if (playX > 0) {
+      const ambientRadius = Math.max(80, h * 0.4);
+      const ambientGrad = ctx.createRadialGradient(
+        playX, centerY, 0,
+        playX, centerY, ambientRadius
+      );
+      ambientGrad.addColorStop(0, this._hexToRgba(accentColor, 0.08 + Math.sin(this._pulsePhase * Math.PI * 2) * 0.03));
+      ambientGrad.addColorStop(0.6, this._hexToRgba(accentColor, 0.02));
+      ambientGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = ambientGrad;
+      ctx.fillRect(playX - ambientRadius, 0, ambientRadius * 2, h);
+    }
 
+    // ─── 메인 바 + 리플렉션 ───
     for (let i = 0; i < this.waveformData.length; i++) {
       const x = i * (this._barWidth + this._barGap);
       const amplitude = this.waveformData[i];
 
-      // 최소 높이 보장 (무음 구간도 작은 바 표시)
-      const barHeight = Math.max(2, amplitude * maxBarHeight);
+      // 재생 헤드 근처 펄스 효과
+      const distToPlayhead = Math.abs(x - playX);
+      const pulseRange = 60;
+      let pulseFactor = 1;
+      if (distToPlayhead < pulseRange && this.isPlaying) {
+        const proximity = 1 - distToPlayhead / pulseRange;
+        pulseFactor = 1 + proximity * 0.15 * Math.sin(this._pulsePhase * Math.PI * 2);
+      }
 
+      const barHeight = Math.max(2, amplitude * maxBarHeight * pulseFactor);
       const isPlayed = x < playX;
-      const isNearPlayhead = Math.abs(x - playX) < 30;
+      const isNearPlayhead = distToPlayhead < 40;
 
+      // ── 위쪽 바 (메인) ──
       if (isPlayed) {
-        // 재생된 부분 - 풀 컬러 + 글로우
         ctx.fillStyle = playedGrad;
         ctx.globalAlpha = 0.9 + amplitude * 0.1;
 
         if (isNearPlayhead) {
-          // 재생 헤드 근처 글로우
           ctx.shadowColor = accentColor;
-          ctx.shadowBlur = 8 * this._glowIntensity;
+          ctx.shadowBlur = 12 * this._glowIntensity;
         }
       } else {
-        // 미재생 부분 - 반투명 흰색
-        ctx.fillStyle = isNearPlayhead ? unplayedHighlight : unplayedColor;
-        ctx.globalAlpha = 0.6 + amplitude * 0.3;
+        const baseAlpha = isNearPlayhead ? 0.35 : 0.18;
+        ctx.fillStyle = `rgba(255, 255, 255, ${baseAlpha + amplitude * 0.15})`;
+        ctx.globalAlpha = 1;
         ctx.shadowBlur = 0;
       }
 
-      // 위쪽 바 (둥근 모서리)
       this._drawRoundedBar(ctx, x, centerY - barHeight, this._barWidth, barHeight, this._cornerRadius);
-      // 아래쪽 바 (미러)
-      this._drawRoundedBar(ctx, x, centerY, this._barWidth, barHeight, this._cornerRadius);
-
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
+
+      // ── 아래쪽 바 (리플렉션) ──
+      const reflectBarHeight = Math.min(barHeight * 0.55, reflectionHeight);
+
+      if (isPlayed) {
+        // 리플렉션용 수직 그라데이션 (위에서 아래로 fade)
+        const refGrad = ctx.createLinearGradient(0, centerY + 2, 0, centerY + 2 + reflectBarHeight);
+        refGrad.addColorStop(0, this._hexToRgba(accentColor, 0.35));
+        refGrad.addColorStop(0.5, this._hexToRgba(accentColor, 0.12));
+        refGrad.addColorStop(1, this._hexToRgba(accentColor, 0));
+        ctx.fillStyle = refGrad;
+      } else {
+        const refGrad = ctx.createLinearGradient(0, centerY + 2, 0, centerY + 2 + reflectBarHeight);
+        refGrad.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
+        refGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.03)');
+        refGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = refGrad;
+      }
+
+      ctx.globalAlpha = 1;
+      this._drawRoundedBar(ctx, x, centerY + 2, this._barWidth, reflectBarHeight, this._cornerRadius);
     }
 
-    // 중앙선
+    ctx.globalAlpha = 1;
+
+    // ─── 중앙선 (글로우 포함) ───
     ctx.beginPath();
     ctx.moveTo(0, centerY);
     ctx.lineTo(w, centerY);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.lineWidth = 1;
     ctx.stroke();
+
+    // 중앙선 하이라이트 (재생된 구간)
+    if (playX > 0) {
+      ctx.beginPath();
+      ctx.moveTo(0, centerY);
+      ctx.lineTo(playX, centerY);
+      ctx.strokeStyle = this._hexToRgba(accentColor, 0.2);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // ─── 파티클 렌더링 ───
+    this._updateAndDrawParticles(ctx, w, h, centerY, playX, accentColor);
   }
 
   /**
-   * 오버레이 렌더링 (플레이헤드, 호버)
+   * 오버레이 렌더링 (플레이헤드 + 호버 - 프리미엄 디자인)
    */
   _drawOverlay() {
     if (!this.overlayCtx || !this.overlayCanvas) return;
@@ -297,6 +361,7 @@ export class AudioWaveform extends EventTarget {
     const ctx = this.overlayCtx;
     const w = this.overlayCanvas.width;
     const h = this.overlayCanvas.height;
+    const centerY = h * 0.42;
 
     ctx.clearRect(0, 0, w, h);
 
@@ -305,50 +370,109 @@ export class AudioWaveform extends EventTarget {
     const accentColor = getComputedStyle(document.documentElement)
       .getPropertyValue('--accent-primary').trim() || '#ffd000';
 
-    // 재생 헤드
     const playRatio = this.currentTime / this.duration;
     const playX = playRatio * w;
 
-    // 재생 헤드 글로우
-    const glowGrad = ctx.createRadialGradient(playX, h / 2, 0, playX, h / 2, 40);
-    glowGrad.addColorStop(0, this._hexToRgba(accentColor, 0.15));
-    glowGrad.addColorStop(1, 'transparent');
-    ctx.fillStyle = glowGrad;
-    ctx.fillRect(playX - 40, 0, 80, h);
+    // ─── 재생 헤드 네온 글로우 (다중 레이어) ───
+    // 외곽 글로우 (넓고 희미)
+    const outerGlow = ctx.createRadialGradient(playX, centerY, 0, playX, centerY, 60);
+    outerGlow.addColorStop(0, this._hexToRgba(accentColor, 0.12));
+    outerGlow.addColorStop(0.5, this._hexToRgba(accentColor, 0.04));
+    outerGlow.addColorStop(1, 'transparent');
+    ctx.fillStyle = outerGlow;
+    ctx.fillRect(playX - 60, 0, 120, h);
 
-    // 재생 헤드 라인
+    // 내부 글로우 (좁고 강렬)
+    const innerGlow = ctx.createRadialGradient(playX, centerY, 0, playX, centerY, 20);
+    innerGlow.addColorStop(0, this._hexToRgba(accentColor, 0.25));
+    innerGlow.addColorStop(1, 'transparent');
+    ctx.fillStyle = innerGlow;
+    ctx.fillRect(playX - 20, centerY - 30, 40, 60);
+
+    // ─── 재생 헤드 라인 (네온 더블 라인) ───
+    // 바깥쪽 글로우 라인
+    ctx.beginPath();
+    ctx.moveTo(playX, 0);
+    ctx.lineTo(playX, h);
+    ctx.strokeStyle = this._hexToRgba(accentColor, 0.3);
+    ctx.lineWidth = 4;
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 12;
+    ctx.stroke();
+
+    // 메인 라인
     ctx.beginPath();
     ctx.moveTo(playX, 0);
     ctx.lineTo(playX, h);
     ctx.strokeStyle = accentColor;
     ctx.lineWidth = 2;
-    ctx.shadowColor = accentColor;
     ctx.shadowBlur = 6;
     ctx.stroke();
-    ctx.shadowBlur = 0;
 
-    // 재생 헤드 원형 핸들
+    // 중심 밝은 라인
     ctx.beginPath();
-    ctx.arc(playX, h / 2, 5, 0, Math.PI * 2);
-    ctx.fillStyle = accentColor;
-    ctx.fill();
-    ctx.strokeStyle = '#1a1a2e';
-    ctx.lineWidth = 2;
+    ctx.moveTo(playX, 0);
+    ctx.lineTo(playX, h);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 0.5;
+    ctx.shadowBlur = 0;
     ctx.stroke();
 
-    // 호버 라인
+    // ─── 플레이헤드 다이아몬드 핸들 ───
+    const handleSize = 6;
+    const pulse = 1 + Math.sin(this._pulsePhase * Math.PI * 2) * 0.15;
+    const hs = handleSize * pulse;
+
+    // 다이아몬드 글로우
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(playX, centerY - hs);
+    ctx.lineTo(playX + hs, centerY);
+    ctx.lineTo(playX, centerY + hs);
+    ctx.lineTo(playX - hs, centerY);
+    ctx.closePath();
+    ctx.fillStyle = accentColor;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // 다이아몬드 하이라이트
+    ctx.beginPath();
+    ctx.moveTo(playX, centerY - hs * 0.5);
+    ctx.lineTo(playX + hs * 0.5, centerY);
+    ctx.lineTo(playX, centerY + hs * 0.5);
+    ctx.lineTo(playX - hs * 0.5, centerY);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.fill();
+
+    // ─── 호버 라인 (부드러운 그라데이션) ───
     if (this._hoverTime >= 0 && !this._isDragging) {
       const hoverRatio = this._hoverTime / this.duration;
       const hoverX = hoverRatio * w;
 
+      // 호버 글로우
+      const hoverGlow = ctx.createRadialGradient(hoverX, centerY, 0, hoverX, centerY, 30);
+      hoverGlow.addColorStop(0, 'rgba(255, 255, 255, 0.06)');
+      hoverGlow.addColorStop(1, 'transparent');
+      ctx.fillStyle = hoverGlow;
+      ctx.fillRect(hoverX - 30, 0, 60, h);
+
+      // 호버 라인
       ctx.beginPath();
       ctx.moveTo(hoverX, 0);
       ctx.lineTo(hoverX, h);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
       ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
+      ctx.setLineDash([3, 5]);
       ctx.stroke();
       ctx.setLineDash([]);
+
+      // 호버 위치 작은 원
+      ctx.beginPath();
+      ctx.arc(hoverX, centerY, 3, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.fill();
     }
 
     // 시간 표시 업데이트
@@ -375,6 +499,84 @@ export class AudioWaveform extends EventTarget {
     ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
     ctx.lineTo(x, y + radius);
     ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  /**
+   * 파티클 업데이트 및 렌더링
+   */
+  _updateAndDrawParticles(ctx, w, h, centerY, playX, accentColor) {
+    const now = performance.now();
+
+    // 재생 중일 때 파티클 생성 (재생 헤드 근처)
+    if (this.isPlaying && playX > 0 && this._particles.length < this._maxParticles) {
+      // 프레임당 0~2개 생성
+      const spawnCount = Math.random() < 0.6 ? 1 : (Math.random() < 0.3 ? 2 : 0);
+      for (let s = 0; s < spawnCount; s++) {
+        const spread = (Math.random() - 0.5) * 60;
+        this._particles.push({
+          x: playX + spread,
+          y: centerY + (Math.random() - 0.5) * h * 0.5,
+          vx: (Math.random() - 0.5) * 0.8,
+          vy: -0.3 - Math.random() * 0.8, // 위로 떠오름
+          life: 1,
+          decay: 0.008 + Math.random() * 0.012,
+          size: 1 + Math.random() * 2.5,
+          type: Math.random() < 0.7 ? 'dot' : 'star', // 점 또는 별
+          born: now,
+        });
+      }
+    }
+
+    // 파티클 업데이트 & 렌더링
+    for (let i = this._particles.length - 1; i >= 0; i--) {
+      const p = this._particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy *= 0.995; // 약간의 감속
+      p.life -= p.decay;
+
+      if (p.life <= 0 || p.x < -10 || p.x > w + 10 || p.y < -10 || p.y > h + 10) {
+        this._particles.splice(i, 1);
+        continue;
+      }
+
+      const alpha = p.life * 0.7;
+      ctx.globalAlpha = alpha;
+
+      if (p.type === 'star') {
+        // 별 모양 파티클
+        ctx.fillStyle = accentColor;
+        ctx.shadowColor = accentColor;
+        ctx.shadowBlur = 4;
+        this._drawStar(ctx, p.x, p.y, p.size, 4);
+        ctx.shadowBlur = 0;
+      } else {
+        // 원형 파티클
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+        ctx.fillStyle = this._hexToRgba(accentColor, alpha);
+        ctx.fill();
+      }
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
+  /**
+   * 별 모양 그리기
+   */
+  _drawStar(ctx, cx, cy, size, points) {
+    ctx.beginPath();
+    for (let i = 0; i < points * 2; i++) {
+      const angle = (i * Math.PI) / points - Math.PI / 2;
+      const r = i % 2 === 0 ? size : size * 0.4;
+      const x = cx + Math.cos(angle) * r;
+      const y = cy + Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
     ctx.closePath();
     ctx.fill();
   }
@@ -462,6 +664,7 @@ export class AudioWaveform extends EventTarget {
     this._isDragging = false;
     this._hoverTime = -1;
     this._isVisible = false;
+    this._particles = [];
 
     if (this.ctx && this.canvas) {
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
