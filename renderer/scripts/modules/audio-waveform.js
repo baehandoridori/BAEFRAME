@@ -229,9 +229,9 @@ export class AudioWaveform extends EventTarget {
     const w = this.canvas.width;
     const h = this.canvas.height;
     // 중심선을 살짝 위로 (리플렉션 공간 확보: 위 45% / 아래 55%)
-    const centerY = h * 0.42;
+    const centerY = h * 0.67;
     const maxBarHeight = centerY * 0.88;
-    const reflectionHeight = (h - centerY) * 0.6; // 리플렉션은 60% 높이
+    const reflectionHeight = (h - centerY) * 0.75; // 리플렉션은 남은 공간의 75%
 
     ctx.clearRect(0, 0, w, h);
 
@@ -361,7 +361,7 @@ export class AudioWaveform extends EventTarget {
     const ctx = this.overlayCtx;
     const w = this.overlayCanvas.width;
     const h = this.overlayCanvas.height;
-    const centerY = h * 0.42;
+    const centerY = h * 0.67;
 
     ctx.clearRect(0, 0, w, h);
 

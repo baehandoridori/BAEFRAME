@@ -531,6 +531,7 @@ async function initApp() {
     elements.btnPlay.innerHTML = pauseIconSVG;
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
+    audioWaveform.setPlaying(true);
     // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
     timeline.scrollToPlayhead();
   });
@@ -539,12 +540,14 @@ async function initApp() {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
+    audioWaveform.setPlaying(false);
   });
 
   videoPlayer.addEventListener('ended', () => {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
+    audioWaveform.setPlaying(false);
 
     // 재생목록 자동 재생
     const playlistManager = getPlaylistManager();
