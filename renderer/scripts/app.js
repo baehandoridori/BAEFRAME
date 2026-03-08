@@ -3467,11 +3467,11 @@ async function initApp() {
         videoPlayer.isAudioMode = true;
         log.info('오디오 모드 활성화', { filePath });
 
-        // 비디오 엘리먼트 숨기기
-        elements.videoPlayer.style.display = 'none';
-
         // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
         await videoPlayer.load(actualVideoPath);
+
+        // videoPlayer.load()가 display:block을 강제하므로 다시 숨김
+        elements.videoPlayer.style.display = 'none';
 
         // 웨이브폼 마운트 및 로드
         if (!audioWaveform.canvas) {
@@ -3480,9 +3480,10 @@ async function initApp() {
         // 컨테이너를 먼저 표시해야 캔버스 크기가 확보됨
         audioWaveform.show();
         try {
-          await audioWaveform.loadAudio(actualVideoPath);
+          // 원본 파일 경로로 바이너리 읽기 (file:// URL이 아닌 fs 경로 필요)
+          await audioWaveform.loadAudio(filePath);
         } catch (err) {
-          log.error('웨이브폼 로드 실패', { error: err.message });
+          log.error('웨이브폼 로드 실패', { error: err.message, stack: err.stack });
           showToast('오디오 웨이브폼 로드에 실패했습니다.', 'error');
         }
 

@@ -139,19 +139,38 @@ export class AudioWaveform extends EventTarget {
     log.info('오디오 파일 로드 시작', { filePath });
 
     try {
+      // 캔버스 크기 확인
+      log.info('캔버스 크기', {
+        canvasWidth: this.canvas?.width,
+        canvasHeight: this.canvas?.height,
+        containerRect: this.container?.getBoundingClientRect()
+      });
+
       // Electron IPC로 파일 읽기 (fetch는 file:// URL 차단됨)
       const ipcResult = await window.electronAPI.readBinaryFile(filePath);
+      log.info('IPC 결과 타입', {
+        type: typeof ipcResult,
+        isArrayBuffer: ipcResult instanceof ArrayBuffer,
+        isUint8Array: ipcResult instanceof Uint8Array,
+        hasBuffer: !!(ipcResult && ipcResult.buffer),
+        constructor: ipcResult?.constructor?.name,
+        byteLength: ipcResult?.byteLength || ipcResult?.length
+      });
+
       // IPC 결과가 ArrayBuffer, Buffer, Uint8Array 등 다양할 수 있음
       let arrayBuffer;
       if (ipcResult instanceof ArrayBuffer) {
         arrayBuffer = ipcResult;
-      } else if (ipcResult && ipcResult.buffer) {
+      } else if (ipcResult && ipcResult.buffer instanceof ArrayBuffer) {
         // Uint8Array / Buffer → ArrayBuffer 변환
         arrayBuffer = ipcResult.buffer.slice(
           ipcResult.byteOffset, ipcResult.byteOffset + ipcResult.byteLength
         );
+      } else if (ipcResult && typeof ipcResult.byteLength === 'number') {
+        // 기타 TypedArray-like 객체
+        arrayBuffer = new Uint8Array(ipcResult).buffer;
       } else {
-        throw new Error('예상하지 못한 IPC 응답 형식');
+        throw new Error(`예상하지 못한 IPC 응답 형식: ${ipcResult?.constructor?.name}`);
       }
       log.info('오디오 바이너리 읽기 완료', { bytes: arrayBuffer.byteLength });
 
@@ -159,12 +178,28 @@ export class AudioWaveform extends EventTarget {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       this.audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
       this.duration = this.audioBuffer.duration;
+      log.info('오디오 디코딩 완료', {
+        duration: this.duration,
+        channels: this.audioBuffer.numberOfChannels,
+        sampleRate: this.audioBuffer.sampleRate
+      });
 
       // 컨텍스트 닫기 (디코딩 용도로만 사용)
       await audioContext.close();
 
+      // 캔버스 크기가 0이면 리사이즈 재시도
+      if (!this.canvas.width || !this.canvas.height) {
+        log.warn('캔버스 크기 0 감지, 리사이즈 재시도');
+        this._resize();
+      }
+
       // 웨이브폼 데이터 생성
       this._generateWaveformData();
+      log.info('웨이브폼 데이터 생성 완료', {
+        barCount: this.waveformData?.length,
+        canvasWidth: this.canvas.width,
+        canvasHeight: this.canvas.height
+      });
 
       // 렌더링
       this._drawWaveform();
@@ -181,7 +216,7 @@ export class AudioWaveform extends EventTarget {
 
       return { duration: this.duration };
     } catch (error) {
-      log.error('오디오 파일 로드 실패', { error: error.message });
+      log.error('오디오 파일 로드 실패', { error: error.message, stack: error.stack });
       throw error;
     }
   }
