@@ -3909,6 +3909,15 @@ async function initApp() {
     state.isFullscreen = isFullscreen;
     document.body.classList.toggle('app-fullscreen', isFullscreen);
 
+    // 오디오 모드: 전체화면 전환 시 웨이브폼 캔버스 리사이즈
+    if (state.isAudioMode) {
+      const audioWaveform = getAudioWaveform();
+      // 레이아웃 변경이 반영될 때까지 대기 후 리사이즈
+      requestAnimationFrame(() => {
+        audioWaveform._onResize();
+      });
+    }
+
     if (isFullscreen) {
       showToast('전체화면 모드 (C: 댓글 추가, F 또는 ESC: 해제)', 'info');
 
