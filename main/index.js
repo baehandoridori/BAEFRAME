@@ -35,6 +35,21 @@ const appStartTime = Date.now();
 const { app, BrowserWindow, ipcMain, protocol, net } = require('electron');
 debugLog('electron 모듈 로드 완료');
 
+// 커스텀 프로토콜 스킴 등록 (app ready 전에 호출 필수)
+// 오디오 웨이브폼에서 로컬 파일을 fetch()로 읽기 위해 사용
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'baeframe-file',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  }
+]);
+debugLog('baeframe-file 프로토콜 스킴 등록 완료');
+
 // ============================================
 // 앱 종료 상태 관리
 // ============================================
