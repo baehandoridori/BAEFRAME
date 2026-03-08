@@ -176,8 +176,7 @@ async function initApp() {
 
     // 협업 플렉서스 패널
     collabPlexusPanel: document.getElementById('collabPlexusPanel'),
-    collabPlexusCanvas: document.getElementById('collabPlexusCanvas'),
-    collabPlexusUsers: document.getElementById('collabPlexusUsers')
+    collabPlexusCanvas: document.getElementById('collabPlexusCanvas')
   };
 
   // 상태
@@ -1597,7 +1596,7 @@ async function initApp() {
     userSettings.settings.showPlexusPanel = togglePlexusPanel.checked;
     userSettings._save();
     if (!togglePlexusPanel.checked) {
-      elements.collabPlexusPanel?.classList.remove('active');
+      _hideCollabPlexusPanel();
     }
   });
 
@@ -3478,8 +3477,13 @@ async function initApp() {
         if (!audioWaveform.canvas) {
           audioWaveform.mount(elements.audioWaveformContainer);
         }
-        await audioWaveform.loadAudio(actualVideoPath);
-        audioWaveform.show();
+        try {
+          await audioWaveform.loadAudio(actualVideoPath);
+          audioWaveform.show();
+        } catch (err) {
+          log.error('웨이브폼 로드 실패', { error: err.message });
+          showToast('오디오 웨이브폼 로드에 실패했습니다.', 'error');
+        }
 
         // 웨이브폼 스크러빙 → videoPlayer seek 연동
         audioWaveform.addEventListener('seek', (e) => {
@@ -7190,10 +7194,13 @@ async function initApp() {
   const collaboratorsCount = document.getElementById('collaboratorsCount');
   const syncStatus = document.getElementById('syncStatus');
 
-  // ====== 플렉서스 패널 관련 ======
-  let _collabPlexusEffect = null;
+  // ====== 사용자 연결 플렉서스 패널 관련 ======
   let _collabPanelHoverTimer = null;
   let _currentCollaborators = [];
+  let _plexusAnimationId = null;
+  let _plexusTime = 0;
+  let _plexusNodePositions = []; // 각 사용자 노드의 현재 위치
+  let _plexusFlowParticles = []; // 연결선 위 이동 파티클
 
   /**
    * 협업자 UI 업데이트
@@ -7222,28 +7229,171 @@ async function initApp() {
                 ${initials}
               </div>`;
     }).reverse().join(''); // reverse for proper stacking order
-
-    // 플렉서스 패널 사용자 목록도 업데이트
-    _updatePlexusUsers(collaborators);
-  }
-
-  function _updatePlexusUsers(collaborators) {
-    const plexusUsers = elements.collabPlexusUsers;
-    if (!plexusUsers) return;
-
-    plexusUsers.innerHTML = collaborators.map(collab => {
-      const isMe = collab.isMe ? ' collab-plexus-user-me' : '';
-      return `<div class="collab-plexus-user${isMe}">
-                <div class="collab-plexus-user-avatar" style="background-color: ${collab.color}">
-                  ${collab.name.substring(0, 2)}
-                </div>
-                <span class="collab-plexus-user-name">${collab.name}${collab.isMe ? ' (나)' : ''}</span>
-                <span class="collab-plexus-user-status"></span>
-              </div>`;
-    }).join('');
   }
 
   let _plexusStartTimer = null;
+
+  /**
+   * 사용자 노드 위치 계산 (원형 배치 + 부드러운 떠다님)
+   */
+  function _calculateNodePositions(w, h, count, time) {
+    const positions = [];
+    const centerX = w / 2;
+    const centerY = h / 2;
+    const radius = Math.min(w, h) * 0.3;
+
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+      // breathing 애니메이션 (각 노드마다 다른 위상)
+      const breathX = Math.sin(time * 0.008 + i * 1.7) * 6;
+      const breathY = Math.cos(time * 0.006 + i * 2.3) * 4;
+      positions.push({
+        x: centerX + Math.cos(angle) * radius + breathX,
+        y: centerY + Math.sin(angle) * radius + breathY
+      });
+    }
+    return positions;
+  }
+
+  /**
+   * 사용자 노드 네트워크 그래프 렌더링
+   */
+  function _drawUserPlexus(ctx, w, h, collaborators, time) {
+    ctx.clearRect(0, 0, w, h);
+    if (collaborators.length === 0) return;
+
+    const positions = _calculateNodePositions(w, h, collaborators.length, time);
+    _plexusNodePositions = positions;
+    const nodeRadius = 18;
+
+    // 1. 연결선 그리기 (모든 노드 쌍)
+    for (let i = 0; i < positions.length; i++) {
+      for (let j = i + 1; j < positions.length; j++) {
+        const p1 = positions[i];
+        const p2 = positions[j];
+
+        // 글로우 라인
+        const gradient = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
+        const c1 = collaborators[i].color || '#ffd000';
+        const c2 = collaborators[j].color || '#ffd000';
+        gradient.addColorStop(0, c1);
+        gradient.addColorStop(1, c2);
+
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.3 + Math.sin(time * 0.02 + i + j) * 0.1;
+        ctx.setLineDash([4, 4]);
+        ctx.lineDashOffset = -time * 0.3;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+
+        // 연결선 위 이동 파티클
+        const particleCount = 2;
+        for (let k = 0; k < particleCount; k++) {
+          const t = ((time * 0.005 + k * 0.5 + i * 0.3 + j * 0.7) % 1);
+          const px = p1.x + (p2.x - p1.x) * t;
+          const py = p1.y + (p2.y - p1.y) * t;
+          const particleGlow = 0.4 + Math.sin(t * Math.PI) * 0.4;
+
+          ctx.beginPath();
+          ctx.arc(px, py, 2, 0, Math.PI * 2);
+          ctx.fillStyle = gradient;
+          ctx.globalAlpha = particleGlow;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+
+    // 2. 노드 그리기 (원형 + 이니셜 + 글로우)
+    for (let i = 0; i < collaborators.length; i++) {
+      const pos = positions[i];
+      const collab = collaborators[i];
+      const color = collab.color || '#ffd000';
+
+      // 글로우 효과
+      const glowIntensity = 0.3 + Math.sin(time * 0.015 + i * 2) * 0.15;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, nodeRadius + 6, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = glowIntensity;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // 노드 배경
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      // 노드 테두리
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // 온라인 상태 인디케이터
+      const statusX = pos.x + nodeRadius * 0.6;
+      const statusY = pos.y - nodeRadius * 0.6;
+      ctx.beginPath();
+      ctx.arc(statusX, statusY, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#2ed573';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(statusX, statusY, 4, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 이니셜 텍스트
+      const initials = collab.name.substring(0, 2);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.font = 'bold 11px "Pretendard Variable", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(initials, pos.x, pos.y);
+
+      // 이름 레이블 (노드 아래)
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.font = '10px "Pretendard Variable", sans-serif';
+      const label = collab.isMe ? `${collab.name} (나)` : collab.name;
+      ctx.fillText(label, pos.x, pos.y + nodeRadius + 14);
+    }
+  }
+
+  function _startPlexusAnimation() {
+    if (_plexusAnimationId) return;
+
+    const canvas = elements.collabPlexusCanvas;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+
+    function animate() {
+      _plexusTime++;
+      const rect = canvas.parentElement.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+        _drawUserPlexus(ctx, rect.width, rect.height, _currentCollaborators, _plexusTime);
+      }
+      _plexusAnimationId = requestAnimationFrame(animate);
+    }
+
+    animate();
+  }
+
+  function _stopPlexusAnimation() {
+    if (_plexusAnimationId) {
+      cancelAnimationFrame(_plexusAnimationId);
+      _plexusAnimationId = null;
+    }
+  }
 
   function _showCollabPlexusPanel() {
     const panel = elements.collabPlexusPanel;
@@ -7259,30 +7409,9 @@ async function initApp() {
       clearTimeout(_plexusStartTimer);
     }
 
-    // CSS transition 완료 후 플렉서스 시작 (height: 0→240px, transition 350ms)
+    // CSS transition 완료 후 애니메이션 시작 (height: 0→240px, transition 350ms)
     _plexusStartTimer = setTimeout(() => {
-      if (!elements.collabPlexusCanvas) return;
-
-      if (!_collabPlexusEffect) {
-        _collabPlexusEffect = new PlexusEffect(elements.collabPlexusCanvas, {
-          particleCount: 40,
-          particleRadius: 1.5,
-          lineDistance: 100,
-          speed: 0.3,
-          baseOpacity: 0.6,
-          lineOpacity: 0.3,
-          fillOpacity: 0.05,
-          hueSpeed: 0.2,
-          lineWidth: 1
-        });
-      }
-
-      // 패널 크기가 확보된 후 resize → particles 재생성 → 시작
-      _collabPlexusEffect._resize();
-      _collabPlexusEffect._createParticles();
-      if (!_collabPlexusEffect.isRunning) {
-        _collabPlexusEffect.start();
-      }
+      _startPlexusAnimation();
     }, 380);
   }
 
@@ -7297,10 +7426,7 @@ async function initApp() {
     }
 
     panel.classList.remove('active');
-
-    if (_collabPlexusEffect && _collabPlexusEffect.isRunning) {
-      _collabPlexusEffect.stop();
-    }
+    _stopPlexusAnimation();
   }
 
   // 호버 이벤트 설정
@@ -7332,6 +7458,35 @@ async function initApp() {
       _hideCollabPlexusPanel();
     }, 300);
   });
+
+  // ====== 협업 연결 리플 효과 ======
+  function _triggerCollabRipple() {
+    const overlay = document.getElementById('collabRippleOverlay');
+    if (!overlay) return;
+
+    // 인디케이터 위치에서 시작
+    const indicator = collaboratorsIndicator;
+    if (indicator) {
+      const rect = indicator.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      overlay.querySelectorAll('.collab-ripple-ring').forEach(ring => {
+        ring.style.left = centerX + 'px';
+        ring.style.top = centerY + 'px';
+      });
+    }
+
+    // 이전 애니메이션 정리
+    overlay.classList.remove('active');
+    // reflow 트리거로 애니메이션 재시작
+    void overlay.offsetWidth;
+    overlay.classList.add('active');
+
+    // 애니메이션 종료 후 정리 (1.5s + 0.4s delay = ~1.9s)
+    setTimeout(() => {
+      overlay.classList.remove('active');
+    }, 2000);
+  }
 
   /**
    * 동기화 상태 UI 업데이트
@@ -7486,6 +7641,8 @@ async function initApp() {
     if (!e.detail.isNewRoom) {
       showToast('실시간 협업 세션에 참여했습니다', 'info');
     }
+    // AirDrop 스타일 리플 효과
+    _triggerCollabRipple();
   });
 
   liveblocksManager.addEventListener('connectionStatusChanged', (e) => {

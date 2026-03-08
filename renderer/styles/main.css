@@ -8777,70 +8777,6 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   left: 0;
   width: 100%;
   height: 100%;
-  opacity: 0.4;
-}
-
-.collab-plexus-users {
-  position: relative;
-  z-index: 2;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.collab-plexus-user {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 8px;
-  backdrop-filter: blur(4px);
-  transition: background 0.2s ease-out;
-}
-
-.collab-plexus-user:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.collab-plexus-user-me {
-  border: 1px solid rgba(var(--accent-primary-rgb, 255, 208, 0), 0.2);
-}
-
-.collab-plexus-user-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  color: rgba(0, 0, 0, 0.8);
-  flex-shrink: 0;
-}
-
-.collab-plexus-user-name {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-primary);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.collab-plexus-user-status {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #2ed573;
-  flex-shrink: 0;
-  box-shadow: 0 0 6px rgba(46, 213, 115, 0.5);
 }
 
 .collab-plexus-label {
@@ -8858,6 +8794,60 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   letter-spacing: 0.5px;
 }
 
+/* ====== 협업 연결 리플 효과 ====== */
+.collab-ripple-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  display: none;
+}
+
+.collab-ripple-overlay.active {
+  display: block;
+}
+
+.collab-ripple-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid var(--accent-primary, #ffd000);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+}
+
+.collab-ripple-overlay.active .collab-ripple-ring {
+  animation: collabRippleExpand 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+.collab-ripple-overlay.active .collab-ripple-ring:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.collab-ripple-overlay.active .collab-ripple-ring:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes collabRippleExpand {
+  0% {
+    width: 40px;
+    height: 40px;
+    opacity: 0.5;
+    border-width: 3px;
+  }
+  50% {
+    opacity: 0.3;
+    border-width: 2px;
+  }
+  100% {
+    width: 150vmax;
+    height: 150vmax;
+    opacity: 0;
+    border-width: 1px;
+  }
+}
+
 /* prefers-reduced-motion 대응 */
 @media (prefers-reduced-motion: reduce) {
   .collab-plexus-panel {
@@ -8871,5 +8861,9 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
 
   .audio-waveform-hover-label {
     transition: none;
+  }
+
+  .collab-ripple-overlay.active .collab-ripple-ring {
+    animation: none;
   }
 }

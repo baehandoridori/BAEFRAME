@@ -139,10 +139,11 @@ export class AudioWaveform extends EventTarget {
     log.info('오디오 파일 로드 시작', { filePath });
 
     try {
-      // fetch로 파일 읽기
-      const url = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
-      const response = await fetch(url);
-      const arrayBuffer = await response.arrayBuffer();
+      // Electron IPC로 파일 읽기 (fetch는 file:// URL 차단됨)
+      const buffer = await window.electronAPI.readBinaryFile(filePath);
+      const arrayBuffer = buffer.buffer.slice(
+        buffer.byteOffset, buffer.byteOffset + buffer.byteLength
+      );
 
       // Web Audio API로 디코딩
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -551,22 +552,8 @@ export class AudioWaveform extends EventTarget {
     if (!this.container || !this.canvas || !this.overlayCanvas) return;
 
     const rect = this.container.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
 
-    // 캔버스 크기 설정 (고해상도 대응)
-    this.canvas.width = rect.width * dpr;
-    this.canvas.height = rect.height * dpr;
-    this.canvas.style.width = rect.width + 'px';
-    this.canvas.style.height = rect.height + 'px';
-    this.ctx.scale(dpr, dpr);
-
-    this.overlayCanvas.width = rect.width * dpr;
-    this.overlayCanvas.height = rect.height * dpr;
-    this.overlayCanvas.style.width = rect.width + 'px';
-    this.overlayCanvas.style.height = rect.height + 'px';
-    this.overlayCtx.scale(dpr, dpr);
-
-    // 논리적 크기 저장 (렌더링용)
+    // 논리적 크기 사용 (CSS로 스케일링)
     this.canvas.width = rect.width;
     this.canvas.height = rect.height;
     this.overlayCanvas.width = rect.width;

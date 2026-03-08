@@ -98,6 +98,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // ====== 파일 관련 (유틸리티) ======
+  readBinaryFile: (filePath) => ipcRenderer.invoke('file:read-binary', filePath),
   getFileStats: (filePath) => ipcRenderer.invoke('file:get-stats', filePath),
 
   // ====== 재생목록 관련 ======

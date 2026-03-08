@@ -324,6 +324,17 @@ function setupIpcHandlers() {
     }
   });
 
+  // 바이너리 파일 읽기 (오디오 웨이브폼용)
+  ipcMain.handle('file:read-binary', async (event, filePath) => {
+    try {
+      const buffer = await fs.promises.readFile(filePath);
+      return buffer;
+    } catch (err) {
+      log.error('바이너리 파일 읽기 실패', { filePath, error: err.message });
+      throw err;
+    }
+  });
+
   // 파일 상태 정보 조회 (협업 동기화용)
   ipcMain.handle('file:get-stats', async (event, filePath) => {
     try {
