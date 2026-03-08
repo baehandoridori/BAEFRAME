@@ -365,7 +365,7 @@ function setupIpcHandlers() {
           throw new Error(`지원하지 않는 오디오 형식: ${riffTag}/${waveTag}`);
         }
 
-        const audioFormat = headerBuf.readUInt16LE(20); // 1 = PCM
+        const audioFormat = headerBuf.readUInt16LE(20); // 1 = PCM, 3 = IEEE Float
         const numChannels = headerBuf.readUInt16LE(22);
         const sampleRate = headerBuf.readUInt32LE(24);
         const bitsPerSample = headerBuf.readUInt16LE(34);
@@ -373,9 +373,10 @@ function setupIpcHandlers() {
 
         log.info('WAV 포맷', { audioFormat, numChannels, sampleRate, bitsPerSample });
 
-        if (audioFormat !== 1) {
-          throw new Error(`PCM 외 포맷 미지원 (format: ${audioFormat})`);
+        if (audioFormat !== 1 && audioFormat !== 3) {
+          throw new Error(`미지원 오디오 포맷 (format: ${audioFormat}, PCM/IEEE Float만 지원)`);
         }
+        const isFloat = audioFormat === 3;
 
         // data 청크 찾기 (일부 WAV는 44바이트 이후가 아닐 수 있음)
         let dataOffset = 12; // RIFF 헤더 이후
@@ -428,14 +429,17 @@ function setupIpcHandlers() {
             let sample;
 
             // 첫 번째 채널만 사용
-            if (bitsPerSample === 16) {
+            if (isFloat && bitsPerSample === 32) {
+              sample = readBuf.readFloatLE(offset);
+            } else if (isFloat && bitsPerSample === 64) {
+              sample = readBuf.readDoubleLE(offset);
+            } else if (bitsPerSample === 16) {
               sample = readBuf.readInt16LE(offset) / 32768;
             } else if (bitsPerSample === 24) {
-              // 24비트: 3바이트 리틀엔디안 → 부호 있는 정수
               const val = readBuf[offset] | (readBuf[offset + 1] << 8) | (readBuf[offset + 2] << 16);
               sample = ((val & 0x800000) ? val - 0x1000000 : val) / 8388608;
             } else if (bitsPerSample === 32) {
-              sample = readBuf.readFloatLE(offset);
+              sample = readBuf.readInt32LE(offset) / 2147483648;
             } else if (bitsPerSample === 8) {
               sample = (readBuf[offset] - 128) / 128;
             } else {
