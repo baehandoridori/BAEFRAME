@@ -275,14 +275,7 @@ export class AudioWaveform extends EventTarget {
 
       // 재생 헤드 근처 펄스 효과
       const distToPlayhead = Math.abs(x - playX);
-      const pulseRange = 60;
-      let pulseFactor = 1;
-      if (distToPlayhead < pulseRange && this.isPlaying) {
-        const proximity = 1 - distToPlayhead / pulseRange;
-        pulseFactor = 1 + proximity * 0.15 * Math.sin(this._pulsePhase * Math.PI * 2);
-      }
-
-      const barHeight = Math.max(2, amplitude * maxBarHeight * pulseFactor);
+      const barHeight = Math.max(2, amplitude * maxBarHeight);
       const isPlayed = x < playX;
       const isNearPlayhead = distToPlayhead < 40;
 
@@ -604,6 +597,9 @@ export class AudioWaveform extends EventTarget {
    */
   setPlaying(isPlaying) {
     this.isPlaying = isPlaying;
+    if (!isPlaying) {
+      this._particles = [];
+    }
   }
 
   /**
