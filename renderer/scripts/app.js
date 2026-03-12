@@ -3664,8 +3664,6 @@ async function initApp() {
         await commentSync.start();
         drawingSync.start();
         playbackSync.start();
-        playbackSync.setHost(isNewRoom); // 방을 만든 사용자가 호스트
-
         log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
       } catch (error) {
         log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
@@ -7849,6 +7847,24 @@ async function initApp() {
   const playbackSyncStatusInfo = document.getElementById('playbackSyncStatusInfo');
   const syncModeRadios = document.querySelectorAll('input[name="syncLeaderMode"]');
 
+  function updateSyncPanelStatus() {
+    const dot = playbackSyncStatusInfo?.querySelector('.playback-sync-dot');
+    const statusText = playbackSyncStatusInfo?.querySelector('.playback-sync-status-text');
+    if (!dot || !statusText) return;
+
+    dot.classList.remove('active', 'leading');
+
+    if (!playbackSync.syncEnabled) {
+      statusText.textContent = '동기화 꺼짐';
+    } else if (playbackSync.leaderMode === 'lead') {
+      dot.classList.add('leading');
+      statusText.textContent = '내가 주도 중';
+    } else {
+      dot.classList.add('active');
+      statusText.textContent = '팔로잉 중';
+    }
+  }
+
   // 협업 시작 시 동기화 패널 표시
   liveblocksManager.addEventListener('collaborationStarted', () => {
     if (syncPanel) syncPanel.style.display = '';
@@ -7856,36 +7872,16 @@ async function initApp() {
 
   // 동기화 토글
   chkPlaybackSync?.addEventListener('change', (e) => {
-    const enabled = e.target.checked;
-    playbackSync.setSyncEnabled(enabled);
-    lblPlaybackSyncStatus.textContent = enabled ? '동기화 켜짐' : '동기화 꺼짐';
-
-    const dot = playbackSyncStatusInfo?.querySelector('.playback-sync-dot');
-    const statusText = playbackSyncStatusInfo?.querySelector('.playback-sync-status-text');
-    if (enabled) {
-      dot?.classList.add('active');
-      statusText.textContent = '동기화 중';
-    } else {
-      dot?.classList.remove('active');
-      dot?.classList.remove('host-only');
-      statusText.textContent = '동기화 꺼짐';
-    }
+    playbackSync.setSyncEnabled(e.target.checked);
+    lblPlaybackSyncStatus.textContent = e.target.checked ? '동기화 켜짐' : '동기화 꺼짐';
+    updateSyncPanelStatus();
   });
 
   // 리더 모드 변경
   syncModeRadios.forEach(radio => {
     radio.addEventListener('change', (e) => {
       playbackSync.setLeaderMode(e.target.value);
-
-      const dot = playbackSyncStatusInfo?.querySelector('.playback-sync-dot');
-      const statusText = playbackSyncStatusInfo?.querySelector('.playback-sync-status-text');
-      if (e.target.value === 'host') {
-        dot?.classList.add('host-only');
-        statusText.textContent = '호스트 주도 모드';
-      } else {
-        dot?.classList.remove('host-only');
-        statusText.textContent = playbackSync.syncEnabled ? '동기화 중' : '동기화 꺼짐';
-      }
+      updateSyncPanelStatus();
     });
   });
 

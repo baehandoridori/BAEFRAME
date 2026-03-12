@@ -1837,6 +1837,7 @@
   <canvas class="collab-ripple-canvas" id="collabRippleCanvas"></canvas>
 
   <!-- 재생 동기화 플로팅 패널 -->
+  <!-- 재생 동기화 플로팅 패널 -->
   <div class="playback-sync-panel" id="playbackSyncPanel" style="display: none;">
     <div class="playback-sync-header">
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
@@ -1853,12 +1854,12 @@
       </label>
       <div class="playback-sync-mode" id="playbackSyncModeGroup">
         <label class="playback-sync-radio">
-          <input type="radio" name="syncLeaderMode" value="anyone" checked>
-          <span>누구나 주도</span>
+          <input type="radio" name="syncLeaderMode" value="lead" checked>
+          <span>내가 주도</span>
         </label>
         <label class="playback-sync-radio">
-          <input type="radio" name="syncLeaderMode" value="host">
-          <span>호스트만 주도</span>
+          <input type="radio" name="syncLeaderMode" value="follow">
+          <span>팔로잉하기</span>
         </label>
       </div>
       <div class="playback-sync-status" id="playbackSyncStatusInfo">

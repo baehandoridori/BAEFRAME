@@ -5,8 +5,8 @@
  * 기능:
  * - 재생/일시정지/탐색 브로드캐스트
  * - 동기화 on/off 토글
- * - 리더 모드: anyone (누구나 주도) / host (호스트만 주도)
- * - 무한 루프 방지 (isRemoteUpdate 플래그)
+ * - 리더 모드: lead (내가 주도) / follow (팔로잉)
+ * - 무한 루프 방지 (타이머 기반 isRemoteUpdate)
  * - 탐색 쓰로틀링 (100ms)
  */
 
@@ -14,8 +14,12 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('PlaybackSync');
 
-// 브로드캐스트 이벤트 타입 접두사
 const PREFIX = 'PLAYBACK_';
+
+// 리모트 업데이트 플래그 유지 시간 (ms)
+// videoPlayer.play()/pause()는 비동기로 native 이벤트를 발생시키므로
+// 동기적 플래그 리셋으로는 루프 방지 불가 → 타이머로 유지
+const REMOTE_UPDATE_GUARD_MS = 300;
 
 /**
  * 재생 동기화 매니저
@@ -28,11 +32,11 @@ export class PlaybackSync extends EventTarget {
 
     // 동기화 상태
     this._syncEnabled = false;
-    this._leaderMode = 'anyone'; // 'anyone' | 'host'
-    this._isHost = false;
+    this._leaderMode = 'lead'; // 'lead' | 'follow'
 
-    // 무한 루프 방지
+    // 무한 루프 방지 (타이머 기반)
     this._isRemoteUpdate = false;
+    this._remoteUpdateTimer = null;
 
     // 탐색 쓰로틀
     this._seekThrottleTimer = null;
@@ -51,32 +55,26 @@ export class PlaybackSync extends EventTarget {
   // 시작/중지
   // ============================================================================
 
-  /**
-   * 동기화 시작 (Liveblocks 연결 후 호출)
-   */
   start() {
     if (this._started) return;
-
     this._lm.addEventListener('broadcastReceived', this._onBroadcast);
     this._started = true;
-
     log.info('재생 동기화 시작됨');
   }
 
-  /**
-   * 동기화 중지
-   */
   stop() {
     this._lm.removeEventListener('broadcastReceived', this._onBroadcast);
-
     if (this._seekThrottleTimer) {
       clearTimeout(this._seekThrottleTimer);
       this._seekThrottleTimer = null;
     }
-
+    if (this._remoteUpdateTimer) {
+      clearTimeout(this._remoteUpdateTimer);
+      this._remoteUpdateTimer = null;
+    }
     this._started = false;
     this._syncEnabled = false;
-
+    this._isRemoteUpdate = false;
     log.info('재생 동기화 중지됨');
   }
 
@@ -84,13 +82,9 @@ export class PlaybackSync extends EventTarget {
   // 설정
   // ============================================================================
 
-  /**
-   * 동기화 활성/비활성
-   */
   setSyncEnabled(enabled) {
     this._syncEnabled = enabled;
     log.info(`동기화 ${enabled ? '활성화' : '비활성화'}`);
-
     this.dispatchEvent(new CustomEvent('syncStateChanged', {
       detail: { enabled }
     }));
@@ -100,22 +94,10 @@ export class PlaybackSync extends EventTarget {
     return this._syncEnabled;
   }
 
-  /**
-   * 리더 모드 설정
-   */
   setLeaderMode(mode) {
-    if (mode !== 'anyone' && mode !== 'host') return;
+    if (mode !== 'lead' && mode !== 'follow') return;
     this._leaderMode = mode;
     log.info(`리더 모드 변경: ${mode}`);
-
-    // 모드 변경을 다른 사용자에게 알림
-    if (this._canBroadcast()) {
-      this._lm.broadcastEvent({
-        type: `${PREFIX}SYNC_MODE`,
-        mode,
-      });
-    }
-
     this.dispatchEvent(new CustomEvent('leaderModeChanged', {
       detail: { mode }
     }));
@@ -125,53 +107,25 @@ export class PlaybackSync extends EventTarget {
     return this._leaderMode;
   }
 
-  /**
-   * 호스트 여부 설정
-   */
-  setHost(isHost) {
-    this._isHost = isHost;
-  }
-
   // ============================================================================
   // 로컬 → 리모트 (브로드캐스트 송신)
   // ============================================================================
 
-  /**
-   * 재생 브로드캐스트
-   */
   broadcastPlay(time) {
     if (!this._canSend()) return;
-
-    this._lm.broadcastEvent({
-      type: `${PREFIX}PLAY`,
-      time,
-    });
-
+    this._lm.broadcastEvent({ type: `${PREFIX}PLAY`, time });
     log.info('재생 브로드캐스트', { time });
   }
 
-  /**
-   * 일시정지 브로드캐스트
-   */
   broadcastPause(time) {
     if (!this._canSend()) return;
-
-    this._lm.broadcastEvent({
-      type: `${PREFIX}PAUSE`,
-      time,
-    });
-
+    this._lm.broadcastEvent({ type: `${PREFIX}PAUSE`, time });
     log.info('일시정지 브로드캐스트', { time });
   }
 
-  /**
-   * 탐색 브로드캐스트 (100ms 쓰로틀)
-   */
   broadcastSeek(time) {
     if (!this._canSend()) return;
-
     this._pendingSeekTime = time;
-
     if (!this._seekThrottleTimer) {
       this._flushSeek();
       this._seekThrottleTimer = setTimeout(() => {
@@ -185,14 +139,9 @@ export class PlaybackSync extends EventTarget {
 
   _flushSeek() {
     if (this._pendingSeekTime === null) return;
-
     const time = this._pendingSeekTime;
     this._pendingSeekTime = null;
-
-    this._lm.broadcastEvent({
-      type: `${PREFIX}SEEK`,
-      time,
-    });
+    this._lm.broadcastEvent({ type: `${PREFIX}SEEK`, time });
   }
 
   // ============================================================================
@@ -202,51 +151,36 @@ export class PlaybackSync extends EventTarget {
   _onBroadcast(e) {
     const event = e.detail?.event;
     if (!event || !event.type?.startsWith(PREFIX)) return;
-
-    // 동기화 비활성 시 무시
     if (!this._syncEnabled) return;
 
-    // 호스트 모드에서 비호스트 사용자의 조작 무시
-    // (호스트 모드라면, 보내는 쪽에서 이미 _canSend()로 차단하므로
-    //  여기서는 추가 필터링 불필요 — 수신된 건 항상 유효한 리더)
+    // follow 모드가 아니면 리모트 명령 무시
+    if (this._leaderMode !== 'follow') return;
 
     const type = event.type.replace(PREFIX, '');
 
     switch (type) {
       case 'PLAY':
         log.info('리모트 재생 수신', { time: event.time });
-        this._isRemoteUpdate = true;
+        this._setRemoteGuard();
         this.dispatchEvent(new CustomEvent('remotePlay', {
           detail: { time: event.time }
         }));
-        this._isRemoteUpdate = false;
         break;
 
       case 'PAUSE':
         log.info('리모트 일시정지 수신', { time: event.time });
-        this._isRemoteUpdate = true;
+        this._setRemoteGuard();
         this.dispatchEvent(new CustomEvent('remotePause', {
           detail: { time: event.time }
         }));
-        this._isRemoteUpdate = false;
         break;
 
       case 'SEEK':
         log.info('리모트 탐색 수신', { time: event.time });
-        this._isRemoteUpdate = true;
+        this._setRemoteGuard();
         this.dispatchEvent(new CustomEvent('remoteSeek', {
           detail: { time: event.time }
         }));
-        this._isRemoteUpdate = false;
-        break;
-
-      case 'SYNC_MODE':
-        if (event.mode === 'anyone' || event.mode === 'host') {
-          this._leaderMode = event.mode;
-          this.dispatchEvent(new CustomEvent('leaderModeChanged', {
-            detail: { mode: event.mode }
-          }));
-        }
         break;
     }
   }
@@ -256,29 +190,34 @@ export class PlaybackSync extends EventTarget {
   // ============================================================================
 
   /**
-   * 브로드캐스트 가능 여부 (연결 확인)
+   * 리모트 업데이트 가드 설정
+   * videoPlayer.play()/pause()는 비동기로 native 이벤트를 트리거하므로
+   * 동기 플래그 리셋으로는 루프 방지 불가 → 타이머로 일정 시간 유지
    */
+  _setRemoteGuard() {
+    this._isRemoteUpdate = true;
+    if (this._remoteUpdateTimer) {
+      clearTimeout(this._remoteUpdateTimer);
+    }
+    this._remoteUpdateTimer = setTimeout(() => {
+      this._isRemoteUpdate = false;
+      this._remoteUpdateTimer = null;
+    }, REMOTE_UPDATE_GUARD_MS);
+  }
+
   _canBroadcast() {
     return this._started && this._lm.isConnected && this._lm.hasOtherCollaborators();
   }
 
-  /**
-   * 송신 가능 여부 (동기화 + 리더 권한 + 루프 방지)
-   */
   _canSend() {
     if (!this._syncEnabled) return false;
     if (this._isRemoteUpdate) return false;
     if (!this._canBroadcast()) return false;
-
-    // 호스트 모드에서는 호스트만 송신 가능
-    if (this._leaderMode === 'host' && !this._isHost) return false;
-
+    // follow 모드에서는 송신 불가 (받기만 함)
+    if (this._leaderMode === 'follow') return false;
     return true;
   }
 
-  /**
-   * isRemoteUpdate getter (app.js에서 루프 방지용)
-   */
   get isRemoteUpdate() {
     return this._isRemoteUpdate;
   }
