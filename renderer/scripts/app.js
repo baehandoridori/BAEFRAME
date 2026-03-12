@@ -23,6 +23,7 @@ import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
+import { getPlaybackSync } from './modules/playback-sync.js';
 
 const log = createLogger('App');
 
@@ -356,9 +357,10 @@ async function initApp() {
   // Liveblocks 실시간 협업 매니저
   const liveblocksManager = new LiveblocksManager();
 
-  // 댓글/그리기 동기화 매니저
+  // 댓글/그리기/재생 동기화 매니저
   const commentSync = new CommentSync({ liveblocksManager, commentManager });
   const drawingSync = new DrawingSync({ liveblocksManager, drawingManager });
+  const playbackSync = getPlaybackSync(liveblocksManager);
 
   // ReviewDataManager에 LiveblocksManager 연결
   reviewDataManager.setLiveblocksManager(liveblocksManager);
@@ -532,6 +534,8 @@ async function initApp() {
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
     audioWaveform.setPlaying(true);
+    // 재생 동기화 브로드캐스트
+    playbackSync.broadcastPlay(videoPlayer.currentTime);
     // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
     timeline.scrollToPlayhead();
   });
@@ -541,6 +545,8 @@ async function initApp() {
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     audioWaveform.setPlaying(false);
+    // 재생 동기화 브로드캐스트
+    playbackSync.broadcastPause(videoPlayer.currentTime);
   });
 
   videoPlayer.addEventListener('ended', () => {
@@ -594,6 +600,7 @@ async function initApp() {
   // 타임라인에서 시간 이동 요청
   timeline.addEventListener('seek', (e) => {
     videoPlayer.seek(e.detail.time);
+    playbackSync.broadcastSeek(e.detail.time);
     hideScrubPreview();
   });
 
@@ -3516,6 +3523,7 @@ async function initApp() {
         // 웨이브폼 스크러빙 → videoPlayer seek 연동
         audioWaveform.addEventListener('seek', (e) => {
           videoPlayer.seek(e.detail.time);
+          playbackSync.broadcastSeek(e.detail.time);
         });
 
         // 그리기 모드 비활성화 (오디오에서는 의미 없음)
@@ -3652,9 +3660,11 @@ async function initApp() {
           await reviewDataManager.save({ skipMerge: true });
         }
 
-        // 댓글/그리기 동기화 시작 (Broadcast 기반)
+        // 댓글/그리기/재생 동기화 시작 (Broadcast 기반)
         await commentSync.start();
         drawingSync.start();
+        playbackSync.start();
+        playbackSync.setHost(isNewRoom); // 방을 만든 사용자가 호스트
 
         log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
       } catch (error) {
@@ -7829,6 +7839,85 @@ async function initApp() {
       return;
     }
     showToast('실시간 동기화 중입니다', 'info');
+  });
+
+  // ====== 재생 동기화 UI 초기화 ======
+  const syncPanel = document.getElementById('playbackSyncPanel');
+  const chkPlaybackSync = document.getElementById('chkPlaybackSync');
+  const lblPlaybackSyncStatus = document.getElementById('lblPlaybackSyncStatus');
+  const btnPlaybackSyncClose = document.getElementById('btnPlaybackSyncClose');
+  const playbackSyncStatusInfo = document.getElementById('playbackSyncStatusInfo');
+  const syncModeRadios = document.querySelectorAll('input[name="syncLeaderMode"]');
+
+  // 협업 시작 시 동기화 패널 표시
+  liveblocksManager.addEventListener('collaborationStarted', () => {
+    if (syncPanel) syncPanel.style.display = '';
+  });
+
+  // 동기화 토글
+  chkPlaybackSync?.addEventListener('change', (e) => {
+    const enabled = e.target.checked;
+    playbackSync.setSyncEnabled(enabled);
+    lblPlaybackSyncStatus.textContent = enabled ? '동기화 켜짐' : '동기화 꺼짐';
+
+    const dot = playbackSyncStatusInfo?.querySelector('.playback-sync-dot');
+    const statusText = playbackSyncStatusInfo?.querySelector('.playback-sync-status-text');
+    if (enabled) {
+      dot?.classList.add('active');
+      statusText.textContent = '동기화 중';
+    } else {
+      dot?.classList.remove('active');
+      dot?.classList.remove('host-only');
+      statusText.textContent = '동기화 꺼짐';
+    }
+  });
+
+  // 리더 모드 변경
+  syncModeRadios.forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      playbackSync.setLeaderMode(e.target.value);
+
+      const dot = playbackSyncStatusInfo?.querySelector('.playback-sync-dot');
+      const statusText = playbackSyncStatusInfo?.querySelector('.playback-sync-status-text');
+      if (e.target.value === 'host') {
+        dot?.classList.add('host-only');
+        statusText.textContent = '호스트 주도 모드';
+      } else {
+        dot?.classList.remove('host-only');
+        statusText.textContent = playbackSync.syncEnabled ? '동기화 중' : '동기화 꺼짐';
+      }
+    });
+  });
+
+  // 패널 닫기
+  btnPlaybackSyncClose?.addEventListener('click', () => {
+    if (syncPanel) syncPanel.style.display = 'none';
+  });
+
+  // 리모트 이벤트 수신 → 로컬 재생 제어
+  playbackSync.addEventListener('remotePlay', (e) => {
+    const { time } = e.detail;
+    videoPlayer.seek(time);
+    videoPlayer.play();
+  });
+
+  playbackSync.addEventListener('remotePause', (e) => {
+    const { time } = e.detail;
+    videoPlayer.pause();
+    videoPlayer.seek(time);
+  });
+
+  playbackSync.addEventListener('remoteSeek', (e) => {
+    const { time } = e.detail;
+    videoPlayer.seek(time);
+  });
+
+  // 리모트에서 리더 모드 변경 수신 → UI 반영
+  playbackSync.addEventListener('leaderModeChanged', (e) => {
+    const { mode } = e.detail;
+    syncModeRadios.forEach(radio => {
+      radio.checked = radio.value === mode;
+    });
   });
 
   // ====== 파일 변경 감지 (실시간 동기화) ======

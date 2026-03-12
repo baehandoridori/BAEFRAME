@@ -1836,6 +1836,38 @@
   <!-- 협업 연결 리플 오버레이 (화면 왜곡 효과) -->
   <canvas class="collab-ripple-canvas" id="collabRippleCanvas"></canvas>
 
+  <!-- 재생 동기화 플로팅 패널 -->
+  <div class="playback-sync-panel" id="playbackSyncPanel" style="display: none;">
+    <div class="playback-sync-header">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+      <span class="playback-sync-title">재생 동기화</span>
+      <button class="playback-sync-close" id="btnPlaybackSyncClose" title="패널 닫기">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="playback-sync-body">
+      <label class="playback-sync-toggle">
+        <input type="checkbox" id="chkPlaybackSync">
+        <span class="playback-sync-toggle-slider"></span>
+        <span class="playback-sync-toggle-label" id="lblPlaybackSyncStatus">동기화 꺼짐</span>
+      </label>
+      <div class="playback-sync-mode" id="playbackSyncModeGroup">
+        <label class="playback-sync-radio">
+          <input type="radio" name="syncLeaderMode" value="anyone" checked>
+          <span>누구나 주도</span>
+        </label>
+        <label class="playback-sync-radio">
+          <input type="radio" name="syncLeaderMode" value="host">
+          <span>호스트만 주도</span>
+        </label>
+      </div>
+      <div class="playback-sync-status" id="playbackSyncStatusInfo">
+        <span class="playback-sync-dot"></span>
+        <span class="playback-sync-status-text">대기 중</span>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="scripts/app.js"></script>
 </body>
 </html>
