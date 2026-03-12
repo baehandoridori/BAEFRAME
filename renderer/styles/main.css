@@ -8789,19 +8789,49 @@ body.audio-mode .frame-indicator {
   height: 100%;
 }
 
-.collab-plexus-label {
+.collab-plexus-footer {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
   z-index: 3;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: linear-gradient(transparent, var(--bg-elevated) 40%);
+}
+
+.collab-plexus-label {
   font-size: 10px;
   font-weight: 500;
   color: var(--text-tertiary);
-  padding: 8px;
-  background: linear-gradient(transparent, var(--bg-elevated));
   letter-spacing: 0.5px;
+}
+
+.collab-plexus-sync-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.collab-plexus-sync-btn:hover {
+  background: var(--accent-primary);
+  color: var(--bg-primary);
+  border-color: var(--accent-primary);
+}
+
+.collab-plexus-sync-btn svg {
+  flex-shrink: 0;
 }
 
 /* ====== 협업 연결 리플 효과 (캔버스 기반 화면 왜곡) ====== */

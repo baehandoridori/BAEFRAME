@@ -7330,89 +7330,238 @@ async function initApp() {
     _plexusNodePositions = positions;
     const nodeRadius = 18;
 
+    // 동기화 중인 사용자 확인
+    const hasSyncUsers = collaborators.some(c => c.syncActive);
+
     // 1. 연결선 그리기 (모든 노드 쌍)
     for (let i = 0; i < positions.length; i++) {
       for (let j = i + 1; j < positions.length; j++) {
         const p1 = positions[i];
         const p2 = positions[j];
-
-        // 글로우 라인
-        const gradient = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
         const c1 = collaborators[i].color || '#ffd000';
         const c2 = collaborators[j].color || '#ffd000';
-        gradient.addColorStop(0, c1);
-        gradient.addColorStop(1, c2);
+        const bothSyncing = collaborators[i].syncActive && collaborators[j].syncActive;
 
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.strokeStyle = gradient;
-        ctx.lineWidth = 1.5;
-        ctx.globalAlpha = 0.3 + Math.sin(time * 0.02 + i + j) * 0.1;
-        ctx.setLineDash([4, 4]);
-        ctx.lineDashOffset = -time * 0.3;
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
+        if (bothSyncing) {
+          // ===== 동기화 연결: 에너지 빔 =====
+          const dx = p2.x - p1.x;
+          const dy = p2.y - p1.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
 
-        // 연결선 위 이동 파티클
-        const particleCount = 2;
-        for (let k = 0; k < particleCount; k++) {
-          const t = ((time * 0.005 + k * 0.5 + i * 0.3 + j * 0.7) % 1);
-          const px = p1.x + (p2.x - p1.x) * t;
-          const py = p1.y + (p2.y - p1.y) * t;
-          const particleGlow = 0.4 + Math.sin(t * Math.PI) * 0.4;
+          // 넓은 에너지 필드 (배경)
+          const beamGrad = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
+          beamGrad.addColorStop(0, c1);
+          beamGrad.addColorStop(0.5, '#ffffff');
+          beamGrad.addColorStop(1, c2);
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.strokeStyle = beamGrad;
+          ctx.lineWidth = 3;
+          ctx.globalAlpha = 0.15 + Math.sin(time * 0.04 + i) * 0.05;
+          ctx.stroke();
+
+          // 중심 에너지 라인 (실선, 밝음)
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.strokeStyle = beamGrad;
+          ctx.lineWidth = 1.5;
+          ctx.globalAlpha = 0.5 + Math.sin(time * 0.03 + i + j) * 0.2;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+
+          // 에너지 파티클 (더 많고, 더 빠르고, 꼬리 있음)
+          const beamParticles = 4;
+          for (let k = 0; k < beamParticles; k++) {
+            const t = ((time * 0.012 + k / beamParticles + i * 0.2) % 1);
+            const px = p1.x + dx * t;
+            const py = p1.y + dy * t;
+            const glow = 0.5 + Math.sin(t * Math.PI) * 0.5;
+            const size = 2 + Math.sin(t * Math.PI) * 1.5;
+
+            // 파티클 트레일 (꼬리)
+            const trailLen = 0.08;
+            const t2 = Math.max(0, t - trailLen);
+            const tx = p1.x + dx * t2;
+            const ty = p1.y + dy * t2;
+            const trailGrad = ctx.createLinearGradient(tx, ty, px, py);
+            trailGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+            trailGrad.addColorStop(1, `rgba(255, 255, 255, ${glow * 0.6})`);
+            ctx.beginPath();
+            ctx.moveTo(tx, ty);
+            ctx.lineTo(px, py);
+            ctx.strokeStyle = trailGrad;
+            ctx.lineWidth = size * 0.8;
+            ctx.stroke();
+
+            // 파티클 헤드
+            ctx.beginPath();
+            ctx.arc(px, py, size, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.globalAlpha = glow;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+        } else {
+          // ===== 일반 연결: 기존 점선 =====
+          const gradient = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
+          gradient.addColorStop(0, c1);
+          gradient.addColorStop(1, c2);
 
           ctx.beginPath();
-          ctx.arc(px, py, 2, 0, Math.PI * 2);
-          ctx.fillStyle = gradient;
-          ctx.globalAlpha = particleGlow;
-          ctx.fill();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.strokeStyle = gradient;
+          ctx.lineWidth = 1.5;
+          ctx.globalAlpha = 0.3 + Math.sin(time * 0.02 + i + j) * 0.1;
+          ctx.setLineDash([4, 4]);
+          ctx.lineDashOffset = -time * 0.3;
+          ctx.stroke();
+          ctx.setLineDash([]);
           ctx.globalAlpha = 1;
+
+          // 연결선 위 이동 파티클
+          for (let k = 0; k < 2; k++) {
+            const t = ((time * 0.005 + k * 0.5 + i * 0.3 + j * 0.7) % 1);
+            const px = p1.x + (p2.x - p1.x) * t;
+            const py = p1.y + (p2.y - p1.y) * t;
+            const particleGlow = 0.4 + Math.sin(t * Math.PI) * 0.4;
+            ctx.beginPath();
+            ctx.arc(px, py, 2, 0, Math.PI * 2);
+            ctx.fillStyle = gradient;
+            ctx.globalAlpha = particleGlow;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
         }
       }
     }
 
-    // 2. 노드 그리기 (원형 + 이니셜 + 글로우)
+    // 2. 노드 그리기
     for (let i = 0; i < collaborators.length; i++) {
       const pos = positions[i];
       const collab = collaborators[i];
       const color = collab.color || '#ffd000';
+      const isSyncing = collab.syncActive;
 
-      // 글로우 효과
-      const glowIntensity = 0.3 + Math.sin(time * 0.015 + i * 2) * 0.15;
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, nodeRadius + 6, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.globalAlpha = glowIntensity;
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      if (isSyncing) {
+        // ===== 동기화 노드: 궤도 링 + 코멧 파티클 =====
 
-      // 노드 배경
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
+        // 외곽 궤도 링 1 (빠른 회전)
+        const orbitR1 = nodeRadius + 10;
+        const orbitAngle1 = time * 0.03 + i * 1.5;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, orbitR1, orbitAngle1, orbitAngle1 + Math.PI * 1.2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.5;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
 
-      // 노드 테두리
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+        // 외곽 궤도 링 2 (반대 방향, 느림)
+        const orbitR2 = nodeRadius + 14;
+        const orbitAngle2 = -time * 0.02 + i * 2.1;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, orbitR2, orbitAngle2, orbitAngle2 + Math.PI * 0.8);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.25;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
 
-      // 온라인 상태 인디케이터
-      const statusX = pos.x + nodeRadius * 0.6;
-      const statusY = pos.y - nodeRadius * 0.6;
-      ctx.beginPath();
-      ctx.arc(statusX, statusY, 4, 0, Math.PI * 2);
-      ctx.fillStyle = '#2ed573';
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(statusX, statusY, 4, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
+        // 코멧 파티클 (궤도 위 회전)
+        const cometCount = 3;
+        for (let c = 0; c < cometCount; c++) {
+          const cAngle = time * 0.04 + c * (Math.PI * 2 / cometCount) + i * 1.2;
+          const cR = nodeRadius + 10 + Math.sin(time * 0.02 + c) * 2;
+          const cx = pos.x + Math.cos(cAngle) * cR;
+          const cy = pos.y + Math.sin(cAngle) * cR;
+
+          // 코멧 트레일
+          const trailArc = 0.5;
+          const trailStartAngle = cAngle - trailArc;
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, cR, trailStartAngle, cAngle);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.3;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+
+          // 코멧 헤드
+          ctx.beginPath();
+          ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.globalAlpha = 0.9;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+
+        // 노드 배경 (약간 더 밝게)
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        // 노드 테두리 (밝은 흰색)
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 동기화 아이콘 배지 (기존 초록 점 대신)
+        const badgeX = pos.x + nodeRadius * 0.6;
+        const badgeY = pos.y - nodeRadius * 0.6;
+        ctx.beginPath();
+        ctx.arc(badgeX, badgeY, 5, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        // 작은 화살표 (동기화 심볼)
+        ctx.fillStyle = color;
+        ctx.font = 'bold 7px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('\u21BB', badgeX, badgeY + 0.5); // ↻ 회전 화살표
+
+      } else {
+        // ===== 일반 노드 =====
+        // 글로우 효과
+        const glowIntensity = 0.3 + Math.sin(time * 0.015 + i * 2) * 0.15;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius + 6, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = glowIntensity;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // 노드 배경
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        // 노드 테두리
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // 온라인 상태 인디케이터
+        const statusX = pos.x + nodeRadius * 0.6;
+        const statusY = pos.y - nodeRadius * 0.6;
+        ctx.beginPath();
+        ctx.arc(statusX, statusY, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#2ed573';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(statusX, statusY, 4, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
 
       // 이니셜 텍스트
       const initials = collab.name.substring(0, 2);
@@ -7423,10 +7572,17 @@ async function initApp() {
       ctx.fillText(initials, pos.x, pos.y);
 
       // 이름 레이블 (노드 아래)
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.font = '10px "Pretendard Variable", sans-serif';
+      ctx.fillStyle = isSyncing ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.8)';
+      ctx.font = isSyncing ? 'bold 10px "Pretendard Variable", sans-serif' : '10px "Pretendard Variable", sans-serif';
       const label = collab.isMe ? `${collab.name} (나)` : collab.name;
       ctx.fillText(label, pos.x, pos.y + nodeRadius + 14);
+
+      // 동기화 사용자: 이름 아래 "동기화 중" 라벨
+      if (isSyncing) {
+        ctx.fillStyle = color;
+        ctx.font = '8px "Pretendard Variable", sans-serif';
+        ctx.fillText('동기화 중', pos.x, pos.y + nodeRadius + 25);
+      }
     }
   }
 
@@ -7788,15 +7944,18 @@ async function initApp() {
   let _previousOthersCount = 0;
   liveblocksManager.addEventListener('collaboratorsChanged', (e) => {
     // 자기 자신 + 다른 사용자 모두 표시
+    const isSyncing = playbackSync.syncEnabled;
     const me = {
       name: userSettings.getUserName(),
       color: userSettings.getColorForName(userSettings.getUserName()) || '#4a9eff',
-      isMe: true
+      isMe: true,
+      syncActive: isSyncing
     };
     const others = e.detail.collaborators.map(c => ({
       name: c.userName,
       color: c.userColor,
-      isMe: false
+      isMe: false,
+      syncActive: isSyncing // 동기화 활성화 시 모든 참여자 동기화 상태
     }));
     updateCollaboratorsUI([me, ...others]);
 
@@ -7884,6 +8043,8 @@ async function initApp() {
     playbackSync.setSyncEnabled(e.target.checked);
     lblPlaybackSyncStatus.textContent = e.target.checked ? '동기화 켜짐' : '동기화 꺼짐';
     updateSyncPanelStatus();
+    // 플렉서스에서 동기화 상태 반영
+    _currentCollaborators.forEach(c => { c.syncActive = e.target.checked; });
   });
 
   // 리더 모드 변경
@@ -7897,6 +8058,11 @@ async function initApp() {
   // 패널 닫기
   btnPlaybackSyncClose?.addEventListener('click', () => {
     if (syncPanel) syncPanel.style.display = 'none';
+  });
+
+  // 플렉서스 패널에서 동기화 패널 열기
+  document.getElementById('btnOpenSyncFromPlexus')?.addEventListener('click', () => {
+    if (syncPanel) syncPanel.style.display = '';
   });
 
   // 패널 접기/펼치기
