@@ -1836,12 +1836,14 @@
   <!-- 협업 연결 리플 오버레이 (화면 왜곡 효과) -->
   <canvas class="collab-ripple-canvas" id="collabRippleCanvas"></canvas>
 
-  <!-- 재생 동기화 플로팅 패널 -->
-  <!-- 재생 동기화 플로팅 패널 -->
+  <!-- 동기화 작업 플로팅 패널 -->
   <div class="playback-sync-panel" id="playbackSyncPanel" style="display: none;">
-    <div class="playback-sync-header">
+    <div class="playback-sync-header" id="playbackSyncHeader">
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
-      <span class="playback-sync-title">재생 동기화</span>
+      <span class="playback-sync-title">동기화 작업</span>
+      <button class="playback-sync-collapse" id="btnPlaybackSyncCollapse" title="접기/펼치기">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
       <button class="playback-sync-close" id="btnPlaybackSyncClose" title="패널 닫기">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>

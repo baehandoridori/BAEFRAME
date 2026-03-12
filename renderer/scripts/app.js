@@ -534,8 +534,6 @@ async function initApp() {
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
     audioWaveform.setPlaying(true);
-    // 재생 동기화 브로드캐스트
-    playbackSync.broadcastPlay(videoPlayer.currentTime);
     // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
     timeline.scrollToPlayhead();
   });
@@ -545,8 +543,6 @@ async function initApp() {
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     audioWaveform.setPlaying(false);
-    // 재생 동기화 브로드캐스트
-    playbackSync.broadcastPause(videoPlayer.currentTime);
   });
 
   videoPlayer.addEventListener('ended', () => {
@@ -1029,7 +1025,13 @@ async function initApp() {
 
   // 재생/일시정지
   elements.btnPlay.addEventListener('click', () => {
+    const wasPlaying = videoPlayer.isPlaying;
     videoPlayer.togglePlay();
+    if (wasPlaying) {
+      playbackSync.broadcastPause(videoPlayer.currentTime);
+    } else {
+      playbackSync.broadcastPlay(videoPlayer.currentTime);
+    }
   });
 
   // 프레임 이동
@@ -5274,10 +5276,17 @@ async function initApp() {
 
     // ====== 공통 단축키 ======
     switch (e.code) {
-    case 'Space':
+    case 'Space': {
       e.preventDefault();
+      const wasPlaying = videoPlayer.isPlaying;
       videoPlayer.togglePlay();
+      if (wasPlaying) {
+        playbackSync.broadcastPause(videoPlayer.currentTime);
+      } else {
+        playbackSync.broadcastPlay(videoPlayer.currentTime);
+      }
       return;
+    }
 
     case 'Home':
       e.preventDefault();
@@ -7889,6 +7898,54 @@ async function initApp() {
   btnPlaybackSyncClose?.addEventListener('click', () => {
     if (syncPanel) syncPanel.style.display = 'none';
   });
+
+  // 패널 접기/펼치기
+  const btnPlaybackSyncCollapse = document.getElementById('btnPlaybackSyncCollapse');
+  btnPlaybackSyncCollapse?.addEventListener('click', () => {
+    syncPanel?.classList.toggle('collapsed');
+  });
+
+  // 패널 드래그 이동
+  const playbackSyncHeader = document.getElementById('playbackSyncHeader');
+  if (playbackSyncHeader && syncPanel) {
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let panelStartX = 0;
+    let panelStartY = 0;
+
+    playbackSyncHeader.addEventListener('mousedown', (e) => {
+      // 버튼 클릭은 드래그로 처리하지 않음
+      if (e.target.closest('button')) return;
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      const rect = syncPanel.getBoundingClientRect();
+      panelStartX = rect.left;
+      panelStartY = rect.top;
+      syncPanel.classList.add('dragging');
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      const newX = panelStartX + dx;
+      const newY = panelStartY + dy;
+      // position을 fixed left/top으로 전환
+      syncPanel.style.right = 'auto';
+      syncPanel.style.bottom = 'auto';
+      syncPanel.style.left = `${Math.max(0, Math.min(newX, window.innerWidth - syncPanel.offsetWidth))}px`;
+      syncPanel.style.top = `${Math.max(0, Math.min(newY, window.innerHeight - syncPanel.offsetHeight))}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+      syncPanel.classList.remove('dragging');
+    });
+  }
 
   // 리모트 이벤트 수신 → 로컬 재생 제어
   playbackSync.addEventListener('remotePlay', (e) => {

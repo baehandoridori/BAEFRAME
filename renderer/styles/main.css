@@ -8858,6 +8858,11 @@ body.audio-mode .frame-indicator {
   animation: playbackSyncSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.playback-sync-panel.dragging {
+  transition: none;
+  user-select: none;
+}
+
 @keyframes playbackSyncSlideIn {
   from {
     opacity: 0;
@@ -8876,6 +8881,11 @@ body.audio-mode .frame-indicator {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-subtle);
   user-select: none;
+  cursor: grab;
+}
+
+.playback-sync-header:active {
+  cursor: grabbing;
 }
 
 .playback-sync-header svg {
@@ -8887,6 +8897,32 @@ body.audio-mode .frame-indicator {
   font-weight: 600;
   font-size: 12px;
   flex: 1;
+}
+
+.playback-sync-collapse {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.playback-sync-collapse:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.playback-sync-collapse svg {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.playback-sync-panel.collapsed .playback-sync-collapse svg {
+  transform: rotate(-180deg);
 }
 
 .playback-sync-close {
@@ -8912,6 +8948,23 @@ body.audio-mode .frame-indicator {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 200px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.2s ease,
+              padding 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.playback-sync-panel.collapsed .playback-sync-body {
+  max-height: 0;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.playback-sync-panel.collapsed .playback-sync-header {
+  border-bottom-color: transparent;
 }
 
 /* 토글 스위치 */
