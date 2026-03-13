@@ -5202,6 +5202,8 @@ async function initApp() {
     for (let i = 0; i < toasts.length; i++) {
       const t = toasts[i];
       const fromTop = toasts.length - 1 - i; // 0 = 최신 (맨 앞)
+      // 최신 토스트가 항상 위에 표시되도록 z-index 설정
+      t.style.zIndex = toasts.length - fromTop;
       if (fromTop >= _toastState.maxVisible) {
         t.style.display = 'none';
       } else if (fromTop > 0) {
@@ -5250,7 +5252,9 @@ async function initApp() {
    * @param {number} duration - 표시 시간 (ms)
    * @param {boolean} force - 설정과 무관하게 강제 표시
    */
-  function showToast(message, type = 'info', duration = 3000, force = false) {
+  function showToast(message, type = 'info', duration = null, force = false) {
+    // 기본 지속시간: 설정에서 읽기 (loading은 수동 dismiss이므로 무관)
+    if (duration === null) duration = userSettings.getToastDuration();
     // 토스트 알림이 비활성화된 경우 (단, error와 force는 항상 표시)
     if (!force && type !== 'error' && !userSettings.getShowToastNotifications()) {
       return;
@@ -6171,6 +6175,155 @@ async function initApp() {
       showToast('댓글에 표시될 이름을 설정해주세요.', 'info');
     }, 500);
   }
+
+  // ====== 앱 설정 모달 ======
+  const appSettingsModal = document.getElementById('appSettingsModal');
+  const closeAppSettings = document.getElementById('closeAppSettings');
+  const btnAppSettings = document.getElementById('btnAppSettings');
+
+  function openAppSettingsModal() {
+    if (!appSettingsModal) return;
+    // 현재 값 로드
+    const nameInput = document.getElementById('appSettingsUserName');
+    if (nameInput) nameInput.value = userSettings.getUserName();
+
+    const toastEnabled = document.getElementById('appSettingsToastEnabled');
+    if (toastEnabled) toastEnabled.checked = userSettings.getShowToastNotifications();
+
+    const durationSlider = document.getElementById('appSettingsToastDuration');
+    const durationValue = document.getElementById('appSettingsToastDurationValue');
+    if (durationSlider) {
+      durationSlider.value = userSettings.getToastDuration();
+      if (durationValue) durationValue.textContent = `${userSettings.getToastDuration() / 1000}초`;
+    }
+
+    // 위치 버튼 활성화
+    const posGrid = document.getElementById('toastPositionGrid');
+    if (posGrid) {
+      posGrid.querySelectorAll('.toast-pos-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.pos === userSettings.getToastPosition());
+      });
+    }
+
+    // 미리보기 위치
+    _updateToastPreviewPosition(userSettings.getToastPosition());
+
+    appSettingsModal.classList.add('active');
+  }
+
+  function closeAppSettingsModal() {
+    if (!appSettingsModal) return;
+    appSettingsModal.classList.remove('active');
+  }
+
+  // 앱 설정 열기 버튼
+  btnAppSettings?.addEventListener('click', () => {
+    // 드롭다운 닫기
+    const dropdown = document.getElementById('commentSettingsDropdown');
+    if (dropdown) dropdown.classList.remove('show');
+    openAppSettingsModal();
+  });
+
+  closeAppSettings?.addEventListener('click', closeAppSettingsModal);
+
+  // 오버레이 클릭으로 닫기
+  appSettingsModal?.addEventListener('click', (e) => {
+    if (e.target === appSettingsModal) closeAppSettingsModal();
+  });
+
+  // Escape로 닫기
+  appSettingsModal?.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAppSettingsModal();
+  });
+
+  // 탭 전환
+  appSettingsModal?.querySelectorAll('.app-settings-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      appSettingsModal.querySelectorAll('.app-settings-tab').forEach(t => t.classList.remove('active'));
+      appSettingsModal.querySelectorAll('.app-settings-panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      const panel = appSettingsModal.querySelector(`.app-settings-panel[data-panel="${tab.dataset.tab}"]`);
+      if (panel) panel.classList.add('active');
+    });
+  });
+
+  // 개인정보 - 이름 변경 (blur 시 자동 저장)
+  document.getElementById('appSettingsUserName')?.addEventListener('change', (e) => {
+    const name = e.target.value.trim();
+    if (name) {
+      userSettings.setUserName(name);
+      showToast(`이름이 "${name}"으로 변경되었습니다.`, 'success');
+    }
+  });
+
+  // 알림 표시 토글
+  document.getElementById('appSettingsToastEnabled')?.addEventListener('change', (e) => {
+    userSettings.setShowToastNotifications(e.target.checked);
+    // 기존 드롭다운 체크박스와 동기화
+    const oldToggle = document.getElementById('toggleToastNotifications');
+    if (oldToggle) oldToggle.checked = e.target.checked;
+  });
+
+  // 알림 위치
+  document.getElementById('toastPositionGrid')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.toast-pos-btn');
+    if (!btn) return;
+    const pos = btn.dataset.pos;
+    document.querySelectorAll('.toast-pos-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    userSettings.setToastPosition(pos);
+    _applyToastPosition(pos);
+    _updateToastPreviewPosition(pos);
+  });
+
+  // 알림 지속시간 슬라이더
+  document.getElementById('appSettingsToastDuration')?.addEventListener('input', (e) => {
+    const ms = parseInt(e.target.value);
+    const label = document.getElementById('appSettingsToastDurationValue');
+    if (label) label.textContent = `${ms / 1000}초`;
+    userSettings.setToastDuration(ms);
+  });
+
+  // 미리보기 위치 업데이트
+  function _updateToastPreviewPosition(pos) {
+    const sample = document.getElementById('toastPreviewSample');
+    if (!sample) return;
+    // 기존 위치 속성 리셋
+    sample.style.top = sample.style.bottom = sample.style.left = sample.style.right = '';
+    sample.style.transform = '';
+    sample.dataset.pos = pos;
+  }
+
+  // 토스트 컨테이너 위치 동적 적용
+  function _applyToastPosition(pos) {
+    const c = elements.toastContainer;
+    if (!c) return;
+    // 리셋
+    c.style.top = c.style.bottom = c.style.left = c.style.right = '';
+    c.style.transform = '';
+    c.style.alignItems = '';
+
+    if (pos.includes('top')) {
+      c.style.top = '52px';
+    } else {
+      c.style.bottom = '52px';
+    }
+
+    if (pos.includes('left')) {
+      c.style.left = '16px';
+      c.style.alignItems = 'flex-start';
+    } else if (pos.includes('right')) {
+      c.style.right = '16px';
+      c.style.alignItems = 'flex-end';
+    } else {
+      c.style.left = '50%';
+      c.style.transform = 'translateX(-50%)';
+      c.style.alignItems = 'center';
+    }
+  }
+
+  // 초기 토스트 위치 적용
+  _applyToastPosition(userSettings.getToastPosition());
 
   // ====== 포커스 저장/복원 유틸리티 ======
   let _previousFocusElement = null;

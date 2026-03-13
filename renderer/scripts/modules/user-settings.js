@@ -155,8 +155,10 @@ export class UserSettings extends EventTarget {
       // 댓글 썸네일 설정
       showCommentThumbnails: true,
       commentThumbnailScale: 35, // 35 ~ 200 (기본값: 35%)
-      // 토스트 알림 표시 여부
+      // 토스트 알림 설정
       showToastNotifications: true,
+      toastPosition: 'top-center', // top-left, top-center, top-right, bottom-left, bottom-center, bottom-right
+      toastDuration: 3000, // ms
       // 최초 이름 설정 여부 (모달 한 번만 표시)
       hasSetNameOnce: false,
       // 사용자 정의 단축키 (기본값 위에 덮어씀)
@@ -507,6 +509,25 @@ export class UserSettings extends EventTarget {
     this.settings.showToastNotifications = show;
     this._save();
     log.info('토스트 알림 설정 변경됨', { show });
+  }
+
+  getToastPosition() {
+    return this.settings.toastPosition || 'top-center';
+  }
+
+  setToastPosition(position) {
+    this.settings.toastPosition = position;
+    this._save();
+    this._emit('toastPositionChanged', { position });
+  }
+
+  getToastDuration() {
+    return this.settings.toastDuration || 3000;
+  }
+
+  setToastDuration(duration) {
+    this.settings.toastDuration = duration;
+    this._save();
   }
 
   /**

@@ -859,6 +859,11 @@
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
               캐시 설정
             </button>
+            <div class="settings-dropdown-divider"></div>
+            <button class="settings-dropdown-btn" id="btnAppSettings">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15 1.65 1.65 0 0 0 3.09 14H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              앱 설정
+            </button>
           </div>
         </div>
       </div>
@@ -1166,6 +1171,94 @@
 
   <!-- Toast Container -->
   <div class="toast-container" id="toastContainer"></div>
+
+  <!-- 앱 설정 Modal -->
+  <div class="modal-overlay" id="appSettingsModal">
+    <div class="app-settings-modal">
+      <div class="app-settings-header">
+        <h3>앱 설정</h3>
+        <button class="modal-close" id="closeAppSettings">&times;</button>
+      </div>
+      <div class="app-settings-body">
+        <nav class="app-settings-nav">
+          <button class="app-settings-tab active" data-tab="profile">개인정보</button>
+          <button class="app-settings-tab" data-tab="notification">알람</button>
+          <button class="app-settings-tab" data-tab="theme">테마</button>
+        </nav>
+        <div class="app-settings-divider"></div>
+        <div class="app-settings-content">
+          <!-- 개인정보 탭 -->
+          <div class="app-settings-panel active" data-panel="profile">
+            <h4 class="app-settings-section-title">개인정보</h4>
+            <div class="app-settings-row">
+              <label for="appSettingsUserName">표시 이름</label>
+              <input type="text" id="appSettingsUserName" class="app-settings-input" placeholder="댓글에 표시될 이름" maxlength="20">
+            </div>
+            <p class="app-settings-hint">이 이름은 댓글 작성 시 표시됩니다.</p>
+          </div>
+          <!-- 알람 탭 -->
+          <div class="app-settings-panel" data-panel="notification">
+            <h4 class="app-settings-section-title">알림 설정</h4>
+            <div class="app-settings-row">
+              <label>알림 표시</label>
+              <label class="settings-toggle">
+                <input type="checkbox" id="appSettingsToastEnabled" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="app-settings-row">
+              <label>알림 위치</label>
+              <div class="toast-position-grid" id="toastPositionGrid">
+                <button class="toast-pos-btn" data-pos="top-left" title="좌상">
+                  <svg viewBox="0 0 20 20" width="16" height="16"><rect x="1" y="1" width="7" height="4" rx="1" fill="currentColor"/><rect x="0" y="0" width="20" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>
+                </button>
+                <button class="toast-pos-btn active" data-pos="top-center" title="상">
+                  <svg viewBox="0 0 20 20" width="16" height="16"><rect x="6" y="1" width="8" height="4" rx="1" fill="currentColor"/><rect x="0" y="0" width="20" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>
+                </button>
+                <button class="toast-pos-btn" data-pos="top-right" title="우상">
+                  <svg viewBox="0 0 20 20" width="16" height="16"><rect x="12" y="1" width="7" height="4" rx="1" fill="currentColor"/><rect x="0" y="0" width="20" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>
+                </button>
+                <button class="toast-pos-btn" data-pos="bottom-left" title="좌하">
+                  <svg viewBox="0 0 20 20" width="16" height="16"><rect x="1" y="15" width="7" height="4" rx="1" fill="currentColor"/><rect x="0" y="0" width="20" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>
+                </button>
+                <button class="toast-pos-btn" data-pos="bottom-center" title="하">
+                  <svg viewBox="0 0 20 20" width="16" height="16"><rect x="6" y="15" width="8" height="4" rx="1" fill="currentColor"/><rect x="0" y="0" width="20" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>
+                </button>
+                <button class="toast-pos-btn" data-pos="bottom-right" title="우하">
+                  <svg viewBox="0 0 20 20" width="16" height="16"><rect x="12" y="15" width="7" height="4" rx="1" fill="currentColor"/><rect x="0" y="0" width="20" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="app-settings-row">
+              <label>지속 시간</label>
+              <div class="toast-duration-control">
+                <input type="range" id="appSettingsToastDuration" min="1000" max="10000" step="500" value="3000">
+                <span class="toast-duration-value" id="appSettingsToastDurationValue">3초</span>
+              </div>
+            </div>
+            <div class="app-settings-row">
+              <label>미리보기</label>
+            </div>
+            <div class="toast-preview-container" id="toastPreviewContainer">
+              <div class="toast-preview-box" id="toastPreviewBox">
+                <div class="toast-preview-sample" id="toastPreviewSample">
+                  <span class="toast-preview-icon">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                  </span>
+                  <span class="toast-preview-text">알림 미리보기</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 테마 탭 -->
+          <div class="app-settings-panel" data-panel="theme">
+            <h4 class="app-settings-section-title">테마</h4>
+            <p class="app-settings-hint">추후 업데이트 예정입니다.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Scripts -->
   <!-- User Settings Modal -->

@@ -51,6 +51,13 @@ export class AudioWaveform extends EventTarget {
     this._particles = [];
     this._maxParticles = 50;
 
+    // 줌 상태
+    this._zoom = 1.0;           // 현재 줌 레벨 (1.0 = 100%)
+    this._targetZoom = 1.0;     // 애니메이션 목표 줌
+    this._scrollOffset = 0;     // 보이는 시작 비율 (0~1)
+    this._zoomIndicator = null; // 줌 % 표시 엘리먼트
+    this._zoomHideTimer = null;
+
     // 애니메이션 타이밍
     this._animStartTime = 0;
     this._pulsePhase = 0;
@@ -61,6 +68,7 @@ export class AudioWaveform extends EventTarget {
     this._onMouseUp = this._onMouseUp.bind(this);
     this._onMouseLeave = this._onMouseLeave.bind(this);
     this._onResize = this._onResize.bind(this);
+    this._onWheel = this._onWheel.bind(this);
     this._animate = this._animate.bind(this);
 
     log.info('AudioWaveform 초기화됨');
@@ -90,15 +98,21 @@ export class AudioWaveform extends EventTarget {
     this._hoverLabel = document.createElement('div');
     this._hoverLabel.className = 'audio-waveform-hover-label';
 
+    // 줌 인디케이터
+    this._zoomIndicator = document.createElement('div');
+    this._zoomIndicator.className = 'audio-zoom-indicator';
+
     container.appendChild(this.canvas);
     container.appendChild(this.overlayCanvas);
     container.appendChild(this._timeDisplay);
     container.appendChild(this._hoverLabel);
+    container.appendChild(this._zoomIndicator);
 
     // 이벤트 리스너
     this.overlayCanvas.addEventListener('mousedown', this._onMouseDown);
     this.overlayCanvas.addEventListener('mousemove', this._onMouseMove);
     this.overlayCanvas.addEventListener('mouseleave', this._onMouseLeave);
+    this.overlayCanvas.addEventListener('wheel', this._onWheel, { passive: false });
     window.addEventListener('mouseup', this._onMouseUp);
     window.addEventListener('resize', this._onResize);
 
@@ -116,6 +130,7 @@ export class AudioWaveform extends EventTarget {
       this.overlayCanvas.removeEventListener('mousedown', this._onMouseDown);
       this.overlayCanvas.removeEventListener('mousemove', this._onMouseMove);
       this.overlayCanvas.removeEventListener('mouseleave', this._onMouseLeave);
+      this.overlayCanvas.removeEventListener('wheel', this._onWheel);
     }
     window.removeEventListener('mouseup', this._onMouseUp);
     window.removeEventListener('resize', this._onResize);
@@ -258,17 +273,18 @@ export class AudioWaveform extends EventTarget {
   }
 
   /**
-   * 원본 데이터에서 현재 캔버스 크기에 맞게 리샘플링
+   * 원본 데이터에서 현재 캔버스 크기 × 줌에 맞게 리샘플링
    */
   _resampleFromRaw() {
     if (!this._rawWaveformData || !this.canvas) return;
 
-    const barCount = Math.max(1, Math.floor(this.canvas.width / (this._barWidth + this._barGap)));
+    // 줌 적용: 전체 바 수 = 캔버스 너비 × 줌 / (바폭 + 갭)
+    const totalBars = Math.max(1, Math.floor(this.canvas.width * this._zoom / (this._barWidth + this._barGap)));
     const oldData = this._rawWaveformData;
-    const newData = new Float32Array(barCount);
-    const ratio = oldData.length / barCount;
+    const newData = new Float32Array(totalBars);
+    const ratio = oldData.length / totalBars;
 
-    for (let i = 0; i < barCount; i++) {
+    for (let i = 0; i < totalBars; i++) {
       const srcIdx = i * ratio;
       const lo = Math.floor(srcIdx);
       const hi = Math.min(lo + 1, oldData.length - 1);
@@ -277,6 +293,7 @@ export class AudioWaveform extends EventTarget {
     }
 
     this.waveformData = newData;
+    this._totalBars = totalBars;
   }
 
   /**
@@ -288,19 +305,39 @@ export class AudioWaveform extends EventTarget {
     const ctx = this.ctx;
     const w = this.canvas.width;
     const h = this.canvas.height;
-    // 중심선 (수직 중앙 기준, 리플렉션 공간 약간 확보)
-    const centerY = h * 0.55;
-    const maxBarHeight = centerY * 0.55; // 파형 높이를 화면의 ~30%로 제한
+    // 중심선을 화면 2/3 지점에 배치
+    const centerY = h * 0.67;
+    const maxBarHeight = centerY * 0.55;
     const reflectionHeight = (h - centerY) * 0.45; // 리플렉션도 비례 축소
 
     ctx.clearRect(0, 0, w, h);
 
+    // 줌 부드러운 보간
+    if (Math.abs(this._zoom - this._targetZoom) > 0.001) {
+      const prevZoom = this._zoom;
+      this._zoom += (this._targetZoom - this._zoom) * 0.15;
+      // 줌 변경 시 리샘플링
+      if (Math.abs(this._zoom - prevZoom) > 0.005) {
+        this._resampleFromRaw();
+      }
+    } else {
+      this._zoom = this._targetZoom;
+    }
+
     const now = performance.now();
     this._pulsePhase = (now % 2000) / 2000; // 2초 주기
 
+    // 줌/스크롤 계산
+    const totalBars = this._totalBars || this.waveformData.length;
+    const visibleBars = Math.floor(w / (this._barWidth + this._barGap));
+    const maxScrollBars = Math.max(0, totalBars - visibleBars);
+    const startBar = Math.round(this._scrollOffset * maxScrollBars);
+
     // 현재 재생 위치 비율
     const playRatio = this.duration > 0 ? this.currentTime / this.duration : 0;
-    const playX = playRatio * w;
+    // 줌 적용된 재생 위치: 전체 바 중 재생 위치에서 스크롤 오프셋 빼기
+    const playBarIdx = playRatio * totalBars;
+    const playX = (playBarIdx - startBar) * (this._barWidth + this._barGap);
 
     // accent 색상
     const accentColor = getComputedStyle(document.documentElement)
@@ -328,10 +365,11 @@ export class AudioWaveform extends EventTarget {
       ctx.fillRect(playX - ambientRadius, 0, ambientRadius * 2, h);
     }
 
-    // ─── 메인 바 + 리플렉션 ───
-    for (let i = 0; i < this.waveformData.length; i++) {
-      const x = i * (this._barWidth + this._barGap);
-      const amplitude = this.waveformData[i];
+    // ─── 메인 바 + 리플렉션 (보이는 범위만) ───
+    const endBar = Math.min(startBar + visibleBars + 1, totalBars);
+    for (let i = startBar; i < endBar; i++) {
+      const x = (i - startBar) * (this._barWidth + this._barGap);
+      const amplitude = this.waveformData[i] || 0;
 
       // 재생 헤드 근처 펄스 효과
       const distToPlayhead = Math.abs(x - playX);
@@ -413,7 +451,7 @@ export class AudioWaveform extends EventTarget {
     const ctx = this.overlayCtx;
     const w = this.overlayCanvas.width;
     const h = this.overlayCanvas.height;
-    const centerY = h * 0.55;
+    const centerY = h * 0.67;
 
     ctx.clearRect(0, 0, w, h);
 
@@ -422,8 +460,15 @@ export class AudioWaveform extends EventTarget {
     const accentColor = getComputedStyle(document.documentElement)
       .getPropertyValue('--accent-primary').trim() || '#ffd000';
 
+    // 줌/스크롤 계산 (waveform과 동일)
+    const totalBars = this._totalBars || (this.waveformData ? this.waveformData.length : 1);
+    const visibleBars = Math.floor(w / (this._barWidth + this._barGap));
+    const maxScrollBars = Math.max(0, totalBars - visibleBars);
+    const startBar = Math.round(this._scrollOffset * maxScrollBars);
+
     const playRatio = this.currentTime / this.duration;
-    const playX = playRatio * w;
+    const playBarIdx = playRatio * totalBars;
+    const playX = (playBarIdx - startBar) * (this._barWidth + this._barGap);
 
     // ─── 재생 헤드 네온 글로우 (다중 레이어) ───
     // 외곽 글로우 (넓고 희미)
@@ -732,6 +777,9 @@ export class AudioWaveform extends EventTarget {
     this._hoverTime = -1;
     this._isVisible = false;
     this._particles = [];
+    this._zoom = 1.0;
+    this._targetZoom = 1.0;
+    this._scrollOffset = 0;
 
     if (this.ctx && this.canvas) {
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -759,7 +807,14 @@ export class AudioWaveform extends EventTarget {
 
     const rect = this.overlayCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const ratio = Math.max(0, Math.min(1, x / rect.width));
+
+    // 줌/스크롤 반영
+    const totalBars = this._totalBars || this.waveformData.length;
+    const visibleBars = Math.floor(rect.width / (this._barWidth + this._barGap));
+    const maxScrollBars = Math.max(0, totalBars - visibleBars);
+    const startBar = this._scrollOffset * maxScrollBars;
+    const barAtX = startBar + (x / rect.width) * visibleBars;
+    const ratio = Math.max(0, Math.min(1, barAtX / totalBars));
     this._hoverTime = ratio * this.duration;
 
     // 호버 라벨 위치 및 표시
@@ -793,7 +848,14 @@ export class AudioWaveform extends EventTarget {
   _seekFromEvent(e) {
     const rect = this.overlayCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const ratio = Math.max(0, Math.min(1, x / rect.width));
+
+    // 줌/스크롤 반영: 화면 x → 전체 비율
+    const totalBars = this._totalBars || (this.waveformData ? this.waveformData.length : 1);
+    const visibleBars = Math.floor(rect.width / (this._barWidth + this._barGap));
+    const maxScrollBars = Math.max(0, totalBars - visibleBars);
+    const startBar = this._scrollOffset * maxScrollBars;
+    const barAtX = startBar + (x / rect.width) * visibleBars;
+    const ratio = Math.max(0, Math.min(1, barAtX / totalBars));
     const time = ratio * this.duration;
 
     this.currentTime = time;
@@ -801,6 +863,54 @@ export class AudioWaveform extends EventTarget {
     this.dispatchEvent(new CustomEvent('seek', {
       detail: { time, ratio }
     }));
+  }
+
+  _onWheel(e) {
+    if (!this.waveformData || this.duration <= 0) return;
+    e.preventDefault();
+
+    const rect = this.overlayCanvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseRatio = mouseX / rect.width; // 마우스가 보이는 영역의 어디인지 (0~1)
+
+    // 줌 전: 마우스가 가리키는 전체 비율 계산
+    const totalBars = this._totalBars || this.waveformData.length;
+    const visibleBars = Math.floor(rect.width / (this._barWidth + this._barGap));
+    const maxScrollBars = Math.max(0, totalBars - visibleBars);
+    const cursorBar = this._scrollOffset * maxScrollBars + mouseRatio * visibleBars;
+    const cursorGlobalRatio = cursorBar / totalBars;
+
+    // 줌 레벨 변경 (부드러운 단계)
+    const zoomStep = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    this._targetZoom = Math.max(1.0, Math.min(8.0, this._targetZoom * zoomStep));
+
+    // 줌 후 스크롤 오프셋 조정: 마우스 커서 위치가 같은 시간을 가리키도록
+    const newTotalBars = Math.max(1, Math.floor(rect.width * this._targetZoom / (this._barWidth + this._barGap)));
+    const newVisibleBars = Math.floor(rect.width / (this._barWidth + this._barGap));
+    const newMaxScrollBars = Math.max(0, newTotalBars - newVisibleBars);
+    if (newMaxScrollBars > 0) {
+      const newCursorBar = cursorGlobalRatio * newTotalBars;
+      const newStartBar = newCursorBar - mouseRatio * newVisibleBars;
+      this._scrollOffset = Math.max(0, Math.min(1, newStartBar / newMaxScrollBars));
+    } else {
+      this._scrollOffset = 0;
+    }
+
+    // 줌 인디케이터 표시
+    this._showZoomIndicator();
+
+    log.debug('웨이브폼 줌', { zoom: Math.round(this._targetZoom * 100) + '%' });
+  }
+
+  _showZoomIndicator() {
+    if (!this._zoomIndicator) return;
+    this._zoomIndicator.textContent = `${Math.round(this._targetZoom * 100)}%`;
+    this._zoomIndicator.classList.add('visible');
+
+    clearTimeout(this._zoomHideTimer);
+    this._zoomHideTimer = setTimeout(() => {
+      this._zoomIndicator.classList.remove('visible');
+    }, 1500);
   }
 
   _onResize() {
