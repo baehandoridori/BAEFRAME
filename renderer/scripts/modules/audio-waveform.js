@@ -413,7 +413,7 @@ export class AudioWaveform extends EventTarget {
     const ctx = this.overlayCtx;
     const w = this.overlayCanvas.width;
     const h = this.overlayCanvas.height;
-    const centerY = h * 0.67;
+    const centerY = h * 0.55;
 
     ctx.clearRect(0, 0, w, h);
 
