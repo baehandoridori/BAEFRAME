@@ -5183,11 +5183,12 @@ async function initApp() {
   };
 
   const _toastIcons = {
-    info: '\u2139',    // ℹ
-    success: '\u2713', // ✓
-    error: '\u2715',   // ✕
-    warn: '\u0021',    // !
-    warning: '\u0021', // !
+    info: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+    success: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11.5 14.5 16 10"/></svg>',
+    error: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    warn: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    warning: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    loading: '<svg class="toast-spinner" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4"/><path d="M12 18v4" opacity=".3"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83" opacity=".3"/><path d="M2 12h4" opacity=".7"/><path d="M18 12h4" opacity=".3"/><path d="M4.93 19.07l2.83-2.83" opacity=".5"/><path d="M16.24 7.76l2.83-2.83" opacity=".7"/></svg>',
   };
 
   function _updateToastStack() {
@@ -5239,7 +5240,7 @@ async function initApp() {
   /**
    * 토스트 메시지 표시
    * @param {string} message - 표시할 메시지
-   * @param {string} type - 타입 ('info', 'success', 'warning', 'error')
+   * @param {string} type - 타입 ('info', 'success', 'warning', 'error', 'loading')
    * @param {number} duration - 표시 시간 (ms)
    * @param {boolean} force - 설정과 무관하게 강제 표시
    */
@@ -5258,7 +5259,7 @@ async function initApp() {
     // 아이콘
     const icon = document.createElement('span');
     icon.className = 'toast-icon';
-    icon.textContent = _toastIcons[normalType] || _toastIcons.info;
+    icon.innerHTML = _toastIcons[normalType] || _toastIcons.info;
     toast.appendChild(icon);
 
     // 메시지
@@ -5277,9 +5278,13 @@ async function initApp() {
     });
     toast.appendChild(closeBtn);
 
+    // loading 타입: 진행률 바 없이 스피너만 표시
+    const isLoading = normalType === 'loading';
+
     // 진행률 바
     const progress = document.createElement('div');
     progress.className = 'toast-progress';
+    if (isLoading) progress.style.display = 'none';
     toast.appendChild(progress);
 
     // 호버 일시정지
@@ -5288,6 +5293,7 @@ async function initApp() {
     let startTime = performance.now();
 
     function animateProgress() {
+      if (isLoading) return;
       if (paused) {
         toast._progressRaf = requestAnimationFrame(animateProgress);
         return;
@@ -5301,18 +5307,20 @@ async function initApp() {
     }
     toast._progressRaf = requestAnimationFrame(animateProgress);
 
-    toast.addEventListener('mouseenter', () => {
-      paused = true;
-      remaining = Math.max(0, duration - (performance.now() - startTime));
-      clearTimeout(toast._autoTimer);
-    });
+    if (!isLoading) {
+      toast.addEventListener('mouseenter', () => {
+        paused = true;
+        remaining = Math.max(0, duration - (performance.now() - startTime));
+        clearTimeout(toast._autoTimer);
+      });
 
-    toast.addEventListener('mouseleave', () => {
-      paused = false;
-      duration = remaining;
-      startTime = performance.now();
-      toast._autoTimer = setTimeout(() => _dismissToast(toast), remaining);
-    });
+      toast.addEventListener('mouseleave', () => {
+        paused = false;
+        duration = remaining;
+        startTime = performance.now();
+        toast._autoTimer = setTimeout(() => _dismissToast(toast), remaining);
+      });
+    }
 
     // 스와이프 제스처
     let swipeStartX = 0;
@@ -5364,8 +5372,35 @@ async function initApp() {
     _toastState.toasts.push(toast);
     _updateToastStack();
 
-    // 자동 닫기
-    toast._autoTimer = setTimeout(() => _dismissToast(toast), duration);
+    // 자동 닫기 (loading 타입은 수동 dismiss)
+    if (!isLoading) {
+      toast._autoTimer = setTimeout(() => _dismissToast(toast), duration);
+    }
+
+    // loading 타입: dismiss/update 핸들 반환
+    if (isLoading) {
+      return {
+        dismiss: () => _dismissToast(toast),
+        update: (newMessage, newType = 'success', newDuration = 3000) => {
+          const newNormalType = newType === 'warning' ? 'warn' : newType;
+          toast.className = `toast ${newNormalType}`;
+          icon.innerHTML = _toastIcons[newNormalType] || _toastIcons.info;
+          msg.textContent = newMessage;
+          progress.style.display = '';
+          // 자동 닫기 재설정
+          duration = newDuration;
+          remaining = newDuration;
+          startTime = performance.now();
+          toast._progressRaf = requestAnimationFrame(function tick() {
+            const elapsed = performance.now() - startTime;
+            const pct = Math.max(0, 1 - elapsed / newDuration);
+            progress.style.width = `${pct * 100}%`;
+            if (pct > 0) toast._progressRaf = requestAnimationFrame(tick);
+          });
+          toast._autoTimer = setTimeout(() => _dismissToast(toast), newDuration);
+        },
+      };
+    }
   }
 
   /**

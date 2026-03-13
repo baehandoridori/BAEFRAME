@@ -4172,34 +4172,46 @@ body.app-fullscreen .video-comment-overlay-controls {
   transform: translateY(-50%);
   width: 18px;
   height: 18px;
-  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
   flex-shrink: 0;
 }
 
+.toast-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
 .toast.info .toast-icon {
-  background: rgba(96, 165, 250, 0.2);
   color: #60a5fa;
 }
 
 .toast.success .toast-icon {
-  background: rgba(74, 222, 128, 0.2);
   color: var(--success);
 }
 
 .toast.error .toast-icon {
-  background: rgba(248, 113, 113, 0.2);
   color: var(--error);
 }
 
 .toast.warn .toast-icon,
 .toast.warning .toast-icon {
-  background: rgba(251, 191, 36, 0.2);
   color: var(--warning);
+}
+
+.toast.loading .toast-icon {
+  color: #a3a3a3;
+}
+
+/* 스피너 회전 애니메이션 */
+.toast-spinner {
+  animation: toastSpin 1s linear infinite;
+}
+
+@keyframes toastSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* 닫기 버튼 */
