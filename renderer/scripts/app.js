@@ -5175,6 +5175,68 @@ async function initApp() {
   }
 
   /**
+   * 토스트 알림 시스템 (Sonner-style)
+   */
+  const _toastState = {
+    toasts: [],     // 현재 활성 토스트 요소 배열
+    maxVisible: 3,  // 최대 표시 개수
+  };
+
+  const _toastIcons = {
+    info: '\u2139',    // ℹ
+    success: '\u2713', // ✓
+    error: '\u2715',   // ✕
+    warn: '\u0021',    // !
+    warning: '\u0021', // !
+  };
+
+  function _updateToastStack() {
+    const toasts = _toastState.toasts;
+    for (let i = 0; i < toasts.length; i++) {
+      const t = toasts[i];
+      const fromTop = toasts.length - 1 - i; // 0 = 최신 (맨 앞)
+      if (fromTop >= _toastState.maxVisible) {
+        t.style.display = 'none';
+      } else if (fromTop > 0) {
+        t.style.display = '';
+        t.classList.add('toast-stacked');
+        const s = 1 - fromTop * 0.05;
+        const o = 1 - fromTop * 0.2;
+        const b = 1 - fromTop * 0.08;
+        t.style.setProperty('--stack-scale', s);
+        t.style.setProperty('--stack-opacity', Math.max(o, 0.3));
+        t.style.setProperty('--stack-brightness', b);
+      } else {
+        t.style.display = '';
+        t.classList.remove('toast-stacked');
+        t.style.removeProperty('--stack-scale');
+        t.style.removeProperty('--stack-opacity');
+        t.style.removeProperty('--stack-brightness');
+      }
+    }
+  }
+
+  function _dismissToast(toast, swipeDir) {
+    if (toast._dismissed) return;
+    toast._dismissed = true;
+    clearTimeout(toast._autoTimer);
+    cancelAnimationFrame(toast._progressRaf);
+
+    if (swipeDir) {
+      toast.style.setProperty('--swipe-dir', swipeDir > 0 ? '120%' : '-120%');
+      toast.classList.add('toast-swipe-exit');
+    } else {
+      toast.classList.add('toast-exit');
+    }
+
+    const idx = _toastState.toasts.indexOf(toast);
+    if (idx !== -1) _toastState.toasts.splice(idx, 1);
+    _updateToastStack();
+
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+  }
+
+  /**
    * 토스트 메시지 표시
    * @param {string} message - 표시할 메시지
    * @param {string} type - 타입 ('info', 'success', 'warning', 'error')
@@ -5187,15 +5249,123 @@ async function initApp() {
       return;
     }
 
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    elements.toastContainer.appendChild(toast);
+    // warn/warning 통일
+    const normalType = type === 'warning' ? 'warn' : type;
 
-    setTimeout(() => {
-      toast.classList.add('fade-out');
-      setTimeout(() => toast.remove(), 300);
-    }, duration);
+    const toast = document.createElement('div');
+    toast.className = `toast ${normalType} toast-enter`;
+
+    // 아이콘
+    const icon = document.createElement('span');
+    icon.className = 'toast-icon';
+    icon.textContent = _toastIcons[normalType] || _toastIcons.info;
+    toast.appendChild(icon);
+
+    // 메시지
+    const msg = document.createElement('span');
+    msg.className = 'toast-message';
+    msg.textContent = message;
+    toast.appendChild(msg);
+
+    // 닫기 버튼
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'toast-close';
+    closeBtn.textContent = '\u00d7'; // ×
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _dismissToast(toast);
+    });
+    toast.appendChild(closeBtn);
+
+    // 진행률 바
+    const progress = document.createElement('div');
+    progress.className = 'toast-progress';
+    toast.appendChild(progress);
+
+    // 호버 일시정지
+    let paused = false;
+    let remaining = duration;
+    let startTime = performance.now();
+
+    function animateProgress() {
+      if (paused) {
+        toast._progressRaf = requestAnimationFrame(animateProgress);
+        return;
+      }
+      const elapsed = performance.now() - startTime;
+      const pct = Math.max(0, 1 - elapsed / duration);
+      progress.style.width = `${pct * 100}%`;
+      if (pct > 0) {
+        toast._progressRaf = requestAnimationFrame(animateProgress);
+      }
+    }
+    toast._progressRaf = requestAnimationFrame(animateProgress);
+
+    toast.addEventListener('mouseenter', () => {
+      paused = true;
+      remaining = Math.max(0, duration - (performance.now() - startTime));
+      clearTimeout(toast._autoTimer);
+    });
+
+    toast.addEventListener('mouseleave', () => {
+      paused = false;
+      duration = remaining;
+      startTime = performance.now();
+      toast._autoTimer = setTimeout(() => _dismissToast(toast), remaining);
+    });
+
+    // 스와이프 제스처
+    let swipeStartX = 0;
+    let swiping = false;
+    let swipeDx = 0;
+
+    toast.addEventListener('pointerdown', (e) => {
+      if (e.target === closeBtn) return;
+      swipeStartX = e.clientX;
+      swiping = false;
+      swipeDx = 0;
+      toast.setPointerCapture(e.pointerId);
+      toast.style.transition = 'none';
+    });
+
+    toast.addEventListener('pointermove', (e) => {
+      if (!swipeStartX) return;
+      const dx = e.clientX - swipeStartX;
+      const dy = e.clientY - (e._startY || e.clientY);
+      if (!swiping && Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) {
+        swiping = true;
+      }
+      if (swiping) {
+        swipeDx = dx;
+        const opacity = Math.max(0, 1 - Math.abs(dx) / 200);
+        toast.style.transform = `translateX(${dx}px) scale(${1 - Math.abs(dx) * 0.001})`;
+        toast.style.opacity = opacity;
+      }
+    });
+
+    toast.addEventListener('pointerup', () => {
+      swipeStartX = 0;
+      if (swiping) {
+        if (Math.abs(swipeDx) > 80) {
+          _dismissToast(toast, swipeDx);
+        } else {
+          toast.style.transition = '';
+          toast.style.transform = '';
+          toast.style.opacity = '';
+        }
+        swiping = false;
+      } else {
+        toast.style.transition = '';
+      }
+    });
+
+    // 컨테이너에 추가
+    elements.toastContainer.appendChild(toast);
+    _toastState.toasts.push(toast);
+    _updateToastStack();
+
+    // 자동 닫기
+    toast._autoTimer = setTimeout(() => _dismissToast(toast), duration);
   }
 
   /**
