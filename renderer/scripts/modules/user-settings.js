@@ -137,6 +137,16 @@ const THEME_COLORS = {
     glowSubtle: 'rgba(255, 85, 85, 0.06)',
     shadow: 'rgba(255, 85, 85, 0.3)',
     shadowStrong: 'rgba(255, 85, 85, 0.5)'
+  },
+  green: {
+    primary: '#2ed573',
+    secondary: '#27bd66',
+    tertiary: '#20a659',
+    glow: 'rgba(46, 213, 115, 0.15)',
+    glowStrong: 'rgba(46, 213, 115, 0.25)',
+    glowSubtle: 'rgba(46, 213, 115, 0.06)',
+    shadow: 'rgba(46, 213, 115, 0.3)',
+    shadowStrong: 'rgba(46, 213, 115, 0.5)'
   }
 };
 
@@ -159,6 +169,10 @@ export class UserSettings extends EventTarget {
       showToastNotifications: true,
       toastPosition: 'top-center', // top-left, top-center, top-right, bottom-left, bottom-center, bottom-right
       toastDuration: 3000, // ms
+      // 라이트 모드
+      lightMode: false,
+      // 로컬 테마 (인증 시스템과 별도, 개인 로컬 설정)
+      localTheme: 'default',
       // 최초 이름 설정 여부 (모달 한 번만 표시)
       hasSetNameOnce: false,
       // 사용자 정의 단축키 (기본값 위에 덮어씀)
@@ -527,6 +541,25 @@ export class UserSettings extends EventTarget {
 
   setToastDuration(duration) {
     this.settings.toastDuration = duration;
+    this._save();
+  }
+
+  getLightMode() {
+    return this.settings.lightMode === true;
+  }
+
+  setLightMode(enabled) {
+    this.settings.lightMode = enabled;
+    this._save();
+    this._emit('lightModeChanged', { enabled });
+  }
+
+  getLocalTheme() {
+    return this.settings.localTheme || 'default';
+  }
+
+  setLocalTheme(theme) {
+    this.settings.localTheme = theme;
     this._save();
   }
 

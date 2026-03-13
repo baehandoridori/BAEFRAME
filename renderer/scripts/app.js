@@ -6208,6 +6208,18 @@ async function initApp() {
     // 미리보기 위치
     _updateToastPreviewPosition(userSettings.getToastPosition());
 
+    // 테마 탭 초기값
+    const lmToggle = document.getElementById('appSettingsLightMode');
+    if (lmToggle) lmToggle.checked = userSettings.getLightMode();
+
+    const tGrid = document.getElementById('appThemeColorGrid');
+    if (tGrid) {
+      const curTheme = userSettings.getLocalTheme();
+      tGrid.querySelectorAll('.theme-color-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.theme === curTheme);
+      });
+    }
+
     appSettingsModal.classList.add('active');
   }
 
@@ -6288,35 +6300,49 @@ async function initApp() {
   function _updateToastPreviewPosition(pos) {
     const sample = document.getElementById('toastPreviewSample');
     if (!sample) return;
-    // 기존 위치 속성 리셋
     sample.style.top = sample.style.bottom = sample.style.left = sample.style.right = '';
     sample.style.transform = '';
     sample.dataset.pos = pos;
   }
 
+  // 미리보기 클릭 시 실제 토스트 표시
+  document.getElementById('toastPreviewBox')?.addEventListener('click', () => {
+    showToast('알림 미리보기', 'info', null, true);
+  });
+
   // 토스트 컨테이너 위치 동적 적용
   function _applyToastPosition(pos) {
     const c = elements.toastContainer;
     if (!c) return;
-    // 리셋
+    // 전체 리셋
     c.style.top = c.style.bottom = c.style.left = c.style.right = '';
     c.style.transform = '';
     c.style.alignItems = '';
+    c.style.flexDirection = '';
 
-    if (pos.includes('top')) {
-      c.style.top = '52px';
-    } else {
+    // 상/하 위치
+    if (pos.includes('bottom')) {
       c.style.bottom = '52px';
+      c.style.top = 'auto';
+      c.style.flexDirection = 'column-reverse';
+    } else {
+      c.style.top = '52px';
+      c.style.bottom = 'auto';
+      c.style.flexDirection = 'column';
     }
 
+    // 좌/우/중앙 위치
     if (pos.includes('left')) {
       c.style.left = '16px';
+      c.style.right = 'auto';
       c.style.alignItems = 'flex-start';
     } else if (pos.includes('right')) {
       c.style.right = '16px';
+      c.style.left = 'auto';
       c.style.alignItems = 'flex-end';
     } else {
       c.style.left = '50%';
+      c.style.right = 'auto';
       c.style.transform = 'translateX(-50%)';
       c.style.alignItems = 'center';
     }
@@ -6324,6 +6350,48 @@ async function initApp() {
 
   // 초기 토스트 위치 적용
   _applyToastPosition(userSettings.getToastPosition());
+
+  // ====== 테마 설정 (앱 설정 모달) ======
+  // 라이트 모드 토글
+  const lightModeToggle = document.getElementById('appSettingsLightMode');
+  function _applyLightMode(enabled) {
+    document.documentElement.classList.toggle('light-mode', enabled);
+  }
+  // 초기 라이트 모드 적용
+  _applyLightMode(userSettings.getLightMode());
+  if (lightModeToggle) lightModeToggle.checked = userSettings.getLightMode();
+
+  lightModeToggle?.addEventListener('change', (e) => {
+    userSettings.setLightMode(e.target.checked);
+    _applyLightMode(e.target.checked);
+  });
+
+  // 테마 색상 선택
+  const themeColorGrid = document.getElementById('appThemeColorGrid');
+  function _initThemeGrid() {
+    if (!themeColorGrid) return;
+    const current = userSettings.getLocalTheme();
+    themeColorGrid.querySelectorAll('.theme-color-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.theme === current);
+    });
+  }
+  _initThemeGrid();
+
+  themeColorGrid?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.theme-color-btn');
+    if (!btn) return;
+    const theme = btn.dataset.theme;
+    themeColorGrid.querySelectorAll('.theme-color-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    userSettings.setLocalTheme(theme);
+    userSettings.applyTheme(theme);
+  });
+
+  // 초기 로컬 테마 적용 (인증 테마보다 우선)
+  const savedLocalTheme = userSettings.getLocalTheme();
+  if (savedLocalTheme && savedLocalTheme !== 'default') {
+    userSettings.applyTheme(savedLocalTheme);
+  }
 
   // ====== 포커스 저장/복원 유틸리티 ======
   let _previousFocusElement = null;

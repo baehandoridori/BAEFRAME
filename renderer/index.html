@@ -819,13 +819,6 @@
             <div class="settings-dropdown-divider"></div>
             <div class="settings-dropdown-item">
               <label class="settings-toggle">
-                <input type="checkbox" id="toggleToastNotifications" checked>
-                <span class="toggle-slider"></span>
-                <span class="toggle-label">알림 표시</span>
-              </label>
-            </div>
-            <div class="settings-dropdown-item">
-              <label class="settings-toggle">
                 <input type="checkbox" id="togglePlexusPanel" checked>
                 <span class="toggle-slider"></span>
                 <span class="toggle-label">협업 패널 효과</span>
@@ -1253,7 +1246,38 @@
           <!-- 테마 탭 -->
           <div class="app-settings-panel" data-panel="theme">
             <h4 class="app-settings-section-title">테마</h4>
-            <p class="app-settings-hint">추후 업데이트 예정입니다.</p>
+            <div class="app-settings-row">
+              <label>라이트 모드</label>
+              <label class="settings-toggle">
+                <input type="checkbox" id="appSettingsLightMode">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="app-settings-row">
+              <label>테마 색상</label>
+            </div>
+            <div class="theme-color-grid" id="appThemeColorGrid">
+              <button class="theme-color-btn active" data-theme="default" title="기본 (노란색)">
+                <span class="theme-color-swatch" style="background: #ffd000"></span>
+                <span class="theme-color-label">기본</span>
+              </button>
+              <button class="theme-color-btn" data-theme="red" title="빨강">
+                <span class="theme-color-swatch" style="background: #ff5555"></span>
+                <span class="theme-color-label">빨강</span>
+              </button>
+              <button class="theme-color-btn" data-theme="blue" title="파랑">
+                <span class="theme-color-swatch" style="background: #4a9eff"></span>
+                <span class="theme-color-label">파랑</span>
+              </button>
+              <button class="theme-color-btn" data-theme="pink" title="핑크">
+                <span class="theme-color-swatch" style="background: #ffaaaa"></span>
+                <span class="theme-color-label">핑크</span>
+              </button>
+              <button class="theme-color-btn" data-theme="green" title="초록">
+                <span class="theme-color-swatch" style="background: #2ed573"></span>
+                <span class="theme-color-label">초록</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
