@@ -227,7 +227,7 @@ export class AudioWaveform extends EventTarget {
 
       // 800개 바로 다운샘플링
       const barCount = 800;
-      const samplesPerBar = Math.floor(channelData.length / barCount);
+      const samplesPerBar = Math.max(1, Math.floor(channelData.length / barCount));
       const waveformData = [];
       for (let i = 0; i < barCount; i++) {
         let sum = 0;

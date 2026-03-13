@@ -393,7 +393,8 @@ function setupIpcHandlers() {
             dataSize = chunkSize;
             break;
           }
-          dataOffset += 8 + chunkSize;
+          // RIFF 청크는 word-aligned: 홀수 크기 청크 뒤에 1바이트 패딩
+          dataOffset += 8 + chunkSize + (chunkSize % 2);
         }
 
         if (dataSize === 0) {
