@@ -139,6 +139,11 @@ export class PlaybackSync extends EventTarget {
 
   _flushSeek() {
     if (this._pendingSeekTime === null) return;
+    // 쓰로틀 대기 중 동기화 해제/follow 전환 등 대비 재검증
+    if (!this._canSend()) {
+      this._pendingSeekTime = null;
+      return;
+    }
     const time = this._pendingSeekTime;
     this._pendingSeekTime = null;
     this._lm.broadcastEvent({ type: `${PREFIX}SEEK`, time });

@@ -288,10 +288,10 @@ export class AudioWaveform extends EventTarget {
     const ctx = this.ctx;
     const w = this.canvas.width;
     const h = this.canvas.height;
-    // 중심선을 살짝 위로 (리플렉션 공간 확보: 위 45% / 아래 55%)
-    const centerY = h * 0.67;
-    const maxBarHeight = centerY * 0.88;
-    const reflectionHeight = (h - centerY) * 0.75; // 리플렉션은 남은 공간의 75%
+    // 중심선 (수직 중앙 기준, 리플렉션 공간 약간 확보)
+    const centerY = h * 0.55;
+    const maxBarHeight = centerY * 0.55; // 파형 높이를 화면의 ~30%로 제한
+    const reflectionHeight = (h - centerY) * 0.45; // 리플렉션도 비례 축소
 
     ctx.clearRect(0, 0, w, h);
 

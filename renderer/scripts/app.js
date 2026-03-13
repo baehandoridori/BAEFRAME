@@ -3892,6 +3892,8 @@ async function initApp() {
    * 그리기 모드 토글
    */
   function toggleDrawMode() {
+    // 오디오 모드에서는 그리기 모드 진입 차단
+    if (state.isAudioMode) return;
     state.isDrawMode = !state.isDrawMode;
     elements.btnDrawMode.classList.toggle('active', state.isDrawMode);
     elements.drawingTools.classList.toggle('visible', state.isDrawMode);
