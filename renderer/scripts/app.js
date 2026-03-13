@@ -5359,8 +5359,8 @@ async function initApp() {
       }
     });
 
-    // 컨테이너에 추가
-    elements.toastContainer.appendChild(toast);
+    // 컨테이너에 추가 (최신이 맨 위)
+    elements.toastContainer.prepend(toast);
     _toastState.toasts.push(toast);
     _updateToastStack();
 

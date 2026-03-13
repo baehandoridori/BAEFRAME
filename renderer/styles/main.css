@@ -4116,12 +4116,12 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .toast-container {
   position: fixed;
-  bottom: 24px;
+  top: 52px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10000;
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   align-items: center;
   pointer-events: none;
   width: 356px;
@@ -4262,7 +4262,7 @@ body.app-fullscreen .video-comment-overlay-controls {
 @keyframes toastSlideIn {
   from {
     opacity: 0;
-    transform: translateY(16px) scale(0.96);
+    transform: translateY(-16px) scale(0.96);
   }
   to {
     opacity: 1;
@@ -4279,11 +4279,11 @@ body.app-fullscreen .video-comment-overlay-controls {
 @keyframes toastSlideOut {
   from {
     opacity: 1;
-    transform: var(--toast-exit-x, translateX(0)) scale(1);
+    transform: translateX(0) scale(1);
   }
   to {
     opacity: 0;
-    transform: var(--toast-exit-x, translateX(0)) translateY(8px) scale(0.96);
+    transform: translateY(-8px) scale(0.96);
   }
 }
 
@@ -4304,7 +4304,8 @@ body.app-fullscreen .video-comment-overlay-controls {
 .toast.toast-stacked {
   scale: var(--stack-scale, 1);
   opacity: var(--stack-opacity, 1);
-  margin-bottom: calc(-40px + 8px);
+  margin-top: -32px;
+  margin-bottom: 0;
   pointer-events: none;
   filter: brightness(var(--stack-brightness, 1));
 }
