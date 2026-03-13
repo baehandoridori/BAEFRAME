@@ -146,41 +146,50 @@ export class AudioWaveform extends EventTarget {
     log.info('오디오 파일 로드 시작', { filePath });
 
     try {
-      // Main Process에서 WAV 파싱 + 웨이브폼 데이터 생성 (IPC)
+      // 1차: Main Process에서 WAV 파싱 + 웨이브폼 데이터 생성 (IPC)
       // 대용량 바이너리를 렌더러로 전송하지 않고, main에서 직접 파싱하여
       // 소량의 웨이브폼 데이터(수 KB)만 전송
-      log.info('웨이브폼 생성 요청 (IPC)', { filePath });
+      let useIpc = true;
+      try {
+        log.info('웨이브폼 생성 요청 (IPC)', { filePath });
+        const result = await window.electronAPI.generateAudioWaveform(filePath, 800);
 
-      const result = await window.electronAPI.generateAudioWaveform(filePath, 800);
+        if (!result.success) {
+          throw new Error(result.error || '웨이브폼 생성 실패');
+        }
 
-      if (!result.success) {
-        throw new Error(result.error || '웨이브폼 생성 실패');
+        this.duration = result.duration;
+        this._rawWaveformData = Array.from(result.waveformData);
+
+        log.info('웨이브폼 데이터 수신 완료 (IPC)', {
+          duration: this.duration,
+          barCount: this._rawWaveformData.length,
+          channels: result.channels,
+          sampleRate: result.sampleRate
+        });
+      } catch (ipcErr) {
+        // 2차: Web Audio API 폴백 (MP3/OGG/FLAC/AAC 등 지원)
+        log.info('IPC 웨이브폼 실패, Web Audio API 폴백 시도', { error: ipcErr.message });
+        useIpc = false;
+        await this._loadAudioFallback(filePath);
       }
 
-      this.duration = result.duration;
-      this._rawWaveformData = Array.from(result.waveformData); // 원본 보관 (리사이즈용)
-
-      log.info('웨이브폼 데이터 수신 완료', {
-        duration: this.duration,
-        barCount: this._rawWaveformData.length,
-        channels: result.channels,
-        sampleRate: result.sampleRate
-      });
-
-      // IPC 응답 후 캔버스 크기 재확인 (IPC 대기 동안 레이아웃 확정됨)
-      this._resize();
-      if (!this.canvas.width || !this.canvas.height) {
-        await new Promise(r => requestAnimationFrame(r));
+      if (useIpc) {
+        // IPC 응답 후 캔버스 크기 재확인 (IPC 대기 동안 레이아웃 확정됨)
         this._resize();
+        if (!this.canvas.width || !this.canvas.height) {
+          await new Promise(r => requestAnimationFrame(r));
+          this._resize();
+        }
+
+        log.info('캔버스 크기 (렌더링 직전)', {
+          canvasWidth: this.canvas.width,
+          canvasHeight: this.canvas.height
+        });
+
+        // 현재 캔버스 크기에 맞는 barCount로 리샘플링
+        this._resampleFromRaw();
       }
-
-      log.info('캔버스 크기 (렌더링 직전)', {
-        canvasWidth: this.canvas.width,
-        canvasHeight: this.canvas.height
-      });
-
-      // 현재 캔버스 크기에 맞는 barCount로 리샘플링
-      this._resampleFromRaw();
 
       // 렌더링
       this._isVisible = true;
@@ -194,6 +203,57 @@ export class AudioWaveform extends EventTarget {
     } catch (error) {
       log.error('오디오 파일 로드 실패', { error: error.message, stack: error.stack });
       throw error;
+    }
+  }
+
+  /**
+   * Web Audio API 폴백 - MP3/OGG/FLAC/AAC 등 비-WAV 오디오 지원
+   * IPC 바이너리 읽기 → AudioContext.decodeAudioData() → 웨이브폼 생성
+   */
+  async _loadAudioFallback(filePath) {
+    log.info('Web Audio API 폴백 로드 시작', { filePath });
+
+    // IPC로 파일 바이너리 읽기 (Uint8Array 반환)
+    const uint8 = await window.electronAPI.readBinaryFile(filePath);
+    // Uint8Array → ArrayBuffer 복사 (decodeAudioData 호환)
+    const arrayBuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength);
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    try {
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+      this.duration = audioBuffer.duration;
+      const channelData = audioBuffer.getChannelData(0);
+
+      // 800개 바로 다운샘플링
+      const barCount = 800;
+      const samplesPerBar = Math.floor(channelData.length / barCount);
+      const waveformData = [];
+      for (let i = 0; i < barCount; i++) {
+        let sum = 0;
+        const offset = i * samplesPerBar;
+        for (let j = 0; j < samplesPerBar; j++) {
+          sum += Math.abs(channelData[offset + j]);
+        }
+        waveformData.push(sum / samplesPerBar);
+      }
+      this._rawWaveformData = waveformData;
+
+      log.info('Web Audio API 웨이브폼 생성 완료', {
+        duration: this.duration,
+        barCount: waveformData.length,
+        sampleRate: audioBuffer.sampleRate
+      });
+
+      // 캔버스 크기 확인 후 리샘플링
+      this._resize();
+      if (!this.canvas.width || !this.canvas.height) {
+        await new Promise(r => requestAnimationFrame(r));
+        this._resize();
+      }
+      this._resampleFromRaw();
+    } finally {
+      await audioCtx.close();
     }
   }
 

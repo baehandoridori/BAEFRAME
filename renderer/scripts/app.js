@@ -533,7 +533,7 @@ async function initApp() {
     elements.btnPlay.innerHTML = pauseIconSVG;
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
-    audioWaveform.setPlaying(true);
+    getAudioWaveform()?.setPlaying(true);
     // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
     timeline.scrollToPlayhead();
   });
@@ -542,14 +542,14 @@ async function initApp() {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
-    audioWaveform.setPlaying(false);
+    getAudioWaveform()?.setPlaying(false);
   });
 
   videoPlayer.addEventListener('ended', () => {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
-    audioWaveform.setPlaying(false);
+    getAudioWaveform()?.setPlaying(false);
 
     // 재생목록 자동 재생
     const playlistManager = getPlaylistManager();
@@ -3522,11 +3522,15 @@ async function initApp() {
           showToast(`웨이브폼 로드 실패: ${err.message}`, 'error');
         }
 
-        // 웨이브폼 스크러빙 → videoPlayer seek 연동
-        audioWaveform.addEventListener('seek', (e) => {
+        // 웨이브폼 스크러빙 → videoPlayer seek 연동 (이전 핸들러 제거하여 중복 방지)
+        if (audioWaveform._seekHandler) {
+          audioWaveform.removeEventListener('seek', audioWaveform._seekHandler);
+        }
+        audioWaveform._seekHandler = (e) => {
           videoPlayer.seek(e.detail.time);
           playbackSync.broadcastSeek(e.detail.time);
-        });
+        };
+        audioWaveform.addEventListener('seek', audioWaveform._seekHandler);
 
         // 그리기 모드 비활성화 (오디오에서는 의미 없음)
         if (state.isDrawMode) {
