@@ -6224,6 +6224,13 @@ async function initApp() {
       });
     }
 
+    // 초기 비밀번호 경고 표시
+    const pwWarning = document.getElementById('appSettingsPasswordWarning');
+    if (pwWarning) {
+      const showWarning = authManager.isCurrentUserProtected() && authManager.currentUserHasInitialPassword();
+      pwWarning.style.display = showWarning ? 'flex' : 'none';
+    }
+
     appSettingsModal.classList.add('active');
   }
 
@@ -6329,6 +6336,8 @@ async function initApp() {
     c.style.transform = '';
     c.style.alignItems = '';
     c.style.flexDirection = '';
+    c.style.marginLeft = '';
+    c.style.marginRight = '';
 
     // 상/하 위치
     if (pos.includes('bottom')) {
@@ -6341,7 +6350,7 @@ async function initApp() {
       c.style.flexDirection = 'column';
     }
 
-    // 좌/우/중앙 위치
+    // 좌/우/중앙 위치 (뷰포트 넘침 방지)
     if (pos.includes('left')) {
       c.style.left = '16px';
       c.style.right = 'auto';
@@ -6351,9 +6360,10 @@ async function initApp() {
       c.style.left = 'auto';
       c.style.alignItems = 'flex-end';
     } else {
-      c.style.left = '50%';
-      c.style.right = 'auto';
-      c.style.transform = 'translateX(-50%)';
+      c.style.left = '0';
+      c.style.right = '0';
+      c.style.marginLeft = 'auto';
+      c.style.marginRight = 'auto';
       c.style.alignItems = 'center';
     }
   }

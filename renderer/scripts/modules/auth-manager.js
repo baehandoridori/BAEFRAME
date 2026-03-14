@@ -304,6 +304,17 @@ class AuthManager extends EventTarget {
   }
 
   /**
+   * 현재 사용자가 초기 비밀번호(1234)를 사용 중인지
+   * @returns {boolean}
+   */
+  currentUserHasInitialPassword() {
+    if (!this.currentUser?.name || !this.currentUser.protected) return false;
+    const user = this._findUser(this.currentUser.name);
+    if (!user) return false;
+    return user.passwordHash === this._initialPasswordHash;
+  }
+
+  /**
    * 현재 사용자가 관리자인지
    * @returns {boolean}
    */

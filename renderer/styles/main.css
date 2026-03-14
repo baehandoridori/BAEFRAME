@@ -4145,12 +4145,15 @@ body.app-fullscreen .video-comment-overlay-controls {
   flex-direction: column;
   align-items: center;
   pointer-events: none;
-  width: 356px;
-  max-width: calc(100vw - 32px);
-  /* 기본 위치 (JS _applyToastPosition에서 동적 설정) */
+  width: min(356px, calc(100vw - 32px));
+  max-height: calc(100vh - 104px);
+  overflow: hidden;
+  /* 기본 위치 - JS _applyToastPosition에서 동적 오버라이드 */
   top: 52px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .toast-container .toast {
@@ -4360,6 +4363,10 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 /* 호버 시 토스트 펼치기 */
+.toast-container:hover {
+  pointer-events: auto;
+}
+
 .toast-container:hover .toast.toast-stacked {
   margin-top: 6px;
   scale: 1;
@@ -9233,6 +9240,25 @@ body.audio-mode .frame-indicator {
   font-size: 11px;
   color: var(--text-tertiary);
   margin: 4px 0 12px;
+}
+
+.app-settings-password-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 171, 0, 0.1);
+  border: 1px solid rgba(255, 171, 0, 0.3);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #ffab00;
+  line-height: 1.4;
+}
+
+.app-settings-password-warning svg {
+  flex-shrink: 0;
+  stroke: #ffab00;
 }
 
 .app-settings-btn {
