@@ -106,6 +106,213 @@
   --glass-border-bright: rgba(0, 0, 0, 0.1);
 }
 
+/* ========================================
+   Light Mode - 요소별 오버라이드
+   ======================================== */
+
+/* 뷰어 / 비디오 영역 */
+.light-mode .viewer-container,
+.light-mode .video-wrapper {
+  background: #e0e0e0;
+}
+
+/* 드롭 존 */
+.light-mode .drop-zone-content {
+  color: var(--text-secondary);
+}
+
+/* 컨트롤 바 (하단 재생 컨트롤) */
+.light-mode .controls-bar {
+  background: linear-gradient(180deg, rgba(245, 245, 245, 0.95) 0%, rgba(235, 235, 235, 0.98) 100%);
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 -4px 16px rgba(0, 0, 0, 0.06);
+}
+
+/* 컨트롤 버튼 호버 */
+.light-mode .control-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* 액션 버튼 (그리기, 댓글 네비 등) */
+.light-mode .action-btn {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.light-mode .action-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* 보조 버튼 */
+.light-mode .btn-secondary {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.light-mode .btn-secondary:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* 파일 정보 바 */
+.light-mode .file-info {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+/* 타임라인 룰러 */
+.light-mode .timeline-ruler {
+  background: var(--bg-tertiary);
+}
+
+/* 트랙 행 */
+.light-mode .track-row {
+  background: rgba(240, 240, 240, 0.5);
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+.light-mode .track-row:nth-child(odd) {
+  background: rgba(230, 230, 230, 0.5);
+}
+
+/* 비디오 트랙 클립 */
+.light-mode .track-clip.video {
+  background: linear-gradient(90deg, #d0d0d0, #c0c0c0);
+  color: var(--text-primary);
+}
+
+/* 레이어 헤더 경계선 */
+.light-mode .layer-headers {
+  border-right-color: rgba(0, 0, 0, 0.06);
+}
+
+.light-mode .layer-header {
+  background-image: linear-gradient(to right, transparent 4px, rgba(0, 0, 0, 0.04) 30%, rgba(0, 0, 0, 0.04) 70%, transparent 100%);
+}
+
+/* 댓글 입력 영역 */
+.light-mode .comment-input {
+  background: rgba(245, 245, 245, 0.8);
+}
+
+/* 오버레이 컨트롤 버튼 (좌측 사이드 버튼) */
+.light-mode .overlay-control-btn {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(0, 0, 0, 0.15);
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.light-mode .overlay-control-btn:hover {
+  background: rgba(255, 255, 255, 1);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+/* 비디오 줌 컨트롤 */
+.light-mode .video-zoom-controls {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* 댓글 패널 토글 */
+.light-mode .comment-panel-toggle {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+  color: var(--text-primary) !important;
+}
+
+/* 타임코드 표시 */
+.light-mode .timecode-display {
+  color: var(--accent-primary);
+}
+
+/* 모달 오버레이 */
+.light-mode .modal-overlay,
+.light-mode .app-settings-overlay {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* 로딩 오버레이 */
+.light-mode .video-loading-overlay {
+  background: rgba(245, 245, 245, 0.85);
+}
+
+/* 코덱 에러 오버레이 */
+.light-mode .codec-error-overlay {
+  background: rgba(245, 245, 245, 0.95);
+}
+
+/* 저장 오버레이 */
+.light-mode .app-saving-overlay {
+  background: rgba(245, 245, 245, 0.9);
+}
+
+/* 변환 오버레이 */
+.light-mode .transcode-overlay {
+  background: rgba(245, 245, 245, 0.95);
+}
+
+/* 레이어 설정 팝업 */
+.light-mode .layer-settings-popup {
+  background: var(--bg-secondary);
+  border-color: var(--border-default);
+}
+
+/* 댓글 아이템 hover */
+.light-mode .comment-item:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* 오디오 파형 컨테이너 */
+.light-mode .audio-waveform-bg {
+  background: var(--bg-secondary);
+}
+
+/* 루프/반복 버튼 */
+.light-mode .loop-btn {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.light-mode .loop-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.light-mode .loop-collapse-btn {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.light-mode .loop-collapse-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* 댓글 설정 드롭다운 */
+.light-mode .comment-settings-dropdown {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+/* 댓글 필터 칩 */
+.light-mode .filter-chip {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.light-mode .filter-chip:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* 스크롤바 */
+.light-mode ::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+.light-mode ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.light-mode ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* 전체화면 컨트롤 바 - 전체화면은 항상 어두운 테마 유지 */
+.light-mode .app-fullscreen .controls-bar {
+  background: linear-gradient(180deg, rgba(20, 20, 20, 0.9) 0%, rgba(12, 12, 12, 0.95) 100%);
+}
+
 * {
   margin: 0;
   padding: 0;
