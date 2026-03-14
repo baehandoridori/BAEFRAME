@@ -310,12 +310,136 @@
 
 /* 댓글 아이템 */
 .light-mode .comment-item {
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 /* 스레드 입력 영역 */
 .light-mode .thread-input-area {
   background: var(--bg-tertiary);
+}
+
+/* 댓글 패널 */
+.light-mode .comment-panel {
+  background: var(--glass-bg-heavy);
+  border-left-color: rgba(0, 0, 0, 0.08);
+}
+
+/* 패널 헤더 */
+.light-mode .panel-header {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* 댓글 입력 textarea */
+.light-mode .comment-input {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+/* 새 댓글 영역 */
+.light-mode .new-comment {
+  background: var(--bg-secondary);
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+/* 전송 버튼 */
+.light-mode .comment-submit {
+  color: #ffffff;
+}
+
+/* 댓글 검색 토글 */
+.light-mode .comment-search-toggle {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+/* 댓글 검색 입력 */
+.light-mode .comment-search-input {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+/* 필터 바 */
+.light-mode .filter-bar {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+/* 재생 동기화 패널 */
+.light-mode .playback-sync-panel {
+  background: var(--bg-secondary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+.light-mode .playback-sync-header {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+/* 스레드 모달 */
+.light-mode .thread-modal {
+  background: var(--glass-bg-heavy);
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-xl), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+/* 스레드 오버레이 */
+.light-mode .thread-overlay {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* 타임라인 영역 */
+.light-mode .timeline-section {
+  background: var(--bg-secondary);
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+/* 타임라인 툴바 */
+.light-mode .timeline-toolbar {
+  background: rgba(255, 255, 255, 0.85);
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+/* 레이어 헤더 영역 */
+.light-mode .layer-headers {
+  background: var(--bg-secondary);
+}
+
+/* 타임라인 룰러 텍스트 */
+.light-mode .timeline-ruler canvas {
+  filter: invert(0);
+}
+
+/* 컨트롤 버튼 hover */
+.light-mode .control-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* 액션 버튼 border */
+.light-mode .action-btn {
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.light-mode .action-btn:hover {
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+/* 액션 버튼 active */
+.light-mode .action-btn.active {
+  background: var(--accent-glow);
+  border-color: var(--accent-primary);
+}
+
+/* 줌 슬라이더 */
+.light-mode .zoom-slider {
+  background: var(--bg-tertiary);
+}
+
+/* 볼륨 슬라이더 */
+.light-mode .main-volume-slider {
+  background: var(--bg-tertiary);
+}
+
+/* 댓글 이미지 삭제 버튼 */
+.light-mode .comment-image-remove {
+  background: rgba(0, 0, 0, 0.5);
 }
 
 /* 전체화면 컨트롤 바 - 전체화면은 항상 어두운 테마 유지 */
