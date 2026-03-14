@@ -308,6 +308,16 @@
   background: rgba(0, 0, 0, 0.25);
 }
 
+/* 댓글 아이템 */
+.light-mode .comment-item {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* 스레드 입력 영역 */
+.light-mode .thread-input-area {
+  background: var(--bg-tertiary);
+}
+
 /* 전체화면 컨트롤 바 - 전체화면은 항상 어두운 테마 유지 */
 .light-mode .app-fullscreen .controls-bar {
   background: linear-gradient(180deg, rgba(20, 20, 20, 0.9) 0%, rgba(12, 12, 12, 0.95) 100%);
