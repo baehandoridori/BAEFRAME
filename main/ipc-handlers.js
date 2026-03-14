@@ -327,7 +327,21 @@ function setupIpcHandlers() {
   // 바이너리 파일 읽기 (오디오 웨이브폼용)
   ipcMain.handle('file:read-binary', async (event, filePath) => {
     try {
-      const buffer = await fs.promises.readFile(filePath);
+      // 보안: 경로 검증 (미디어 파일만 허용)
+      if (!filePath || typeof filePath !== 'string') {
+        throw new Error('유효하지 않은 파일 경로');
+      }
+      const normalized = path.normalize(filePath);
+      if (normalized.includes('..')) {
+        throw new Error('경로 이탈 시도 감지');
+      }
+      const ext = path.extname(normalized).toLowerCase();
+      const MEDIA_EXTENSION_SET = new Set(MEDIA_FILE_EXTENSIONS.map((e) => '.' + e));
+      if (!MEDIA_EXTENSION_SET.has(ext)) {
+        throw new Error(`허용되지 않은 파일 형식: ${ext} (미디어 파일만 허용)`);
+      }
+
+      const buffer = await fs.promises.readFile(normalized);
       // Buffer → Uint8Array 명시적 복사 (contextBridge 직렬화 안정성)
       // Node.js Buffer는 ArrayBuffer의 뷰일 수 있어 직렬화 시 문제 발생 가능
       const uint8 = new Uint8Array(buffer.length);

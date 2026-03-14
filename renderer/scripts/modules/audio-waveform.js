@@ -544,7 +544,9 @@ export class AudioWaveform extends EventTarget {
     // ─── 호버 라인 (부드러운 그라데이션) ───
     if (this._hoverTime >= 0 && !this._isDragging) {
       const hoverRatio = this._hoverTime / this.duration;
-      const hoverX = hoverRatio * w;
+      // 줌/스크롤 반영: playhead와 동일한 매핑 사용
+      const hoverBarIdx = hoverRatio * totalBars;
+      const hoverX = (hoverBarIdx - startBar) * (this._barWidth + this._barGap);
 
       // 호버 글로우
       const hoverGlow = ctx.createRadialGradient(hoverX, centerY, 0, hoverX, centerY, 30);
