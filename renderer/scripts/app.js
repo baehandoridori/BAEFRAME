@@ -3621,6 +3621,9 @@ async function initApp() {
       // 썸네일 생성 시작 (비디오만, 트랜스코딩된 경우 변환된 파일 사용)
       if (!fileIsAudio) {
         await generateThumbnails(actualVideoPath);
+      } else {
+        // 오디오 파일 로드 시 이전 비디오의 썸네일 상태 정리
+        getThumbnailGenerator().clear();
       }
 
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
@@ -5338,12 +5341,14 @@ async function initApp() {
 
     // 스와이프 제스처
     let swipeStartX = 0;
+    let swipeStartY = 0;
     let swiping = false;
     let swipeDx = 0;
 
     toast.addEventListener('pointerdown', (e) => {
       if (e.target === closeBtn) return;
       swipeStartX = e.clientX;
+      swipeStartY = e.clientY;
       swiping = false;
       swipeDx = 0;
       toast.setPointerCapture(e.pointerId);
@@ -5353,7 +5358,7 @@ async function initApp() {
     toast.addEventListener('pointermove', (e) => {
       if (!swipeStartX) return;
       const dx = e.clientX - swipeStartX;
-      const dy = e.clientY - (e._startY || e.clientY);
+      const dy = e.clientY - swipeStartY;
       if (!swiping && Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) {
         swiping = true;
       }
