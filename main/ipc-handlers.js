@@ -21,6 +21,7 @@ const AUDIO_FILE_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
 const MEDIA_FILE_EXTENSIONS = [...VIDEO_FILE_EXTENSIONS, ...AUDIO_FILE_EXTENSIONS];
 const VIDEO_FILE_EXTENSION_SET = new Set(VIDEO_FILE_EXTENSIONS.map((ext) => '.' + ext));
 const AUDIO_FILE_EXTENSION_SET = new Set(AUDIO_FILE_EXTENSIONS.map((ext) => '.' + ext));
+const MEDIA_FILE_EXTENSION_SET = new Set(MEDIA_FILE_EXTENSIONS.map((ext) => '.' + ext));
 
 function escapePowerShellSingleQuote(value) {
   return String(value || '').replace(/'/g, "''");
@@ -626,7 +627,7 @@ function setupIpcHandlers() {
 
       for (const file of files) {
         const ext = path.extname(file).toLowerCase();
-        if (!VIDEO_FILE_EXTENSION_SET.has(ext)) continue;
+        if (!MEDIA_FILE_EXTENSION_SET.has(ext)) continue;
 
         const fileBaseName = extractBaseName(file);
         if (fileBaseName !== currentBaseName) continue;

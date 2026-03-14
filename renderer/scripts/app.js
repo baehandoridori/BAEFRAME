@@ -3490,15 +3490,34 @@ async function initApp() {
           // 폴백: 직접 src 설정 (loadedmetadata 이벤트 없이)
           const videoUrl = actualVideoPath.startsWith('file://') ? actualVideoPath : `file://${actualVideoPath}`;
           elements.videoPlayer.src = videoUrl;
-          // 로드 대기
-          await new Promise((resolve) => {
-            const onReady = () => {
+          // 로드 대기 (canplay 이벤트 또는 3초 타임아웃)
+          await new Promise((resolve, reject) => {
+            let settled = false;
+            const cleanup = () => {
               elements.videoPlayer.removeEventListener('canplay', onReady);
+              elements.videoPlayer.removeEventListener('error', onError);
+            };
+            const onReady = () => {
+              if (settled) return;
+              settled = true;
+              cleanup();
               resolve();
             };
+            const onError = (e) => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              reject(new Error(`미디어 로드 실패: ${e.target?.error?.message || '알 수 없는 오류'}`));
+            };
             elements.videoPlayer.addEventListener('canplay', onReady);
-            // 3초 타임아웃
-            setTimeout(resolve, 3000);
+            elements.videoPlayer.addEventListener('error', onError);
+            // 3초 타임아웃: canplay 없으면 실패 처리
+            setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              reject(new Error('미디어 로드 타임아웃 (3초)'));
+            }, 3000);
           });
         }
 
@@ -4653,7 +4672,7 @@ async function initApp() {
     elements.feedbackProgressFill.style.width = `${percent}%`;
   }
 
-  function updateCommentList(filter = 'all') {
+  function updateCommentList(filter = getActiveCommentFilter()) {
     pendingCommentListFilter = filter;
 
     // 디바운싱: 연속 호출 시 마지막 호출만 실행 (50ms)
@@ -4665,7 +4684,7 @@ async function initApp() {
     });
   }
 
-  function updateCommentListImmediate(filter = 'all') {
+  function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
 
