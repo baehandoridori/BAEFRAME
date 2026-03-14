@@ -5205,10 +5205,15 @@ async function initApp() {
       // 최신 토스트가 항상 위에 표시되도록 z-index 설정
       t.style.zIndex = toasts.length - fromTop;
       if (fromTop >= _toastState.maxVisible) {
-        t.style.display = 'none';
+        // 숨기지만 호버 시 보이도록 CSS 클래스 사용
+        t.classList.add('toast-stacked', 'toast-hidden');
+        const s = 1 - Math.min(fromTop, 3) * 0.05;
+        t.style.setProperty('--stack-scale', s);
+        t.style.setProperty('--stack-opacity', '0');
+        t.style.setProperty('--stack-brightness', '0.7');
       } else if (fromTop > 0) {
-        t.style.display = '';
         t.classList.add('toast-stacked');
+        t.classList.remove('toast-hidden');
         const s = 1 - fromTop * 0.05;
         const o = 1 - fromTop * 0.2;
         const b = 1 - fromTop * 0.08;
@@ -5216,8 +5221,7 @@ async function initApp() {
         t.style.setProperty('--stack-opacity', Math.max(o, 0.3));
         t.style.setProperty('--stack-brightness', b);
       } else {
-        t.style.display = '';
-        t.classList.remove('toast-stacked');
+        t.classList.remove('toast-stacked', 'toast-hidden');
         t.style.removeProperty('--stack-scale');
         t.style.removeProperty('--stack-opacity');
         t.style.removeProperty('--stack-brightness');
@@ -6266,6 +6270,12 @@ async function initApp() {
       userSettings.setUserName(name);
       showToast(`이름이 "${name}"으로 변경되었습니다.`, 'success');
     }
+  });
+
+  // 비밀번호 변경 (앱 설정 내)
+  document.getElementById('appSettingsChangePassword')?.addEventListener('click', () => {
+    closeAppSettingsModal();
+    openChangePasswordModal();
   });
 
   // 알림 표시 토글

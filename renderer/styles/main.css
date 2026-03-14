@@ -4140,9 +4140,6 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .toast-container {
   position: fixed;
-  top: 52px;
-  left: 50%;
-  transform: translateX(-50%);
   z-index: 10000;
   display: flex;
   flex-direction: column;
@@ -4150,6 +4147,10 @@ body.app-fullscreen .video-comment-overlay-controls {
   pointer-events: none;
   width: 356px;
   max-width: calc(100vw - 32px);
+  /* 기본 위치 (JS _applyToastPosition에서 동적 설정) */
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .toast-container .toast {
@@ -4341,10 +4342,39 @@ body.app-fullscreen .video-comment-overlay-controls {
 .toast.toast-stacked {
   scale: var(--stack-scale, 1);
   opacity: var(--stack-opacity, 1);
-  margin-top: -32px;
+  margin-top: -38px;
   margin-bottom: 0;
   pointer-events: none;
   filter: brightness(var(--stack-brightness, 1));
+  transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 숨겨진 토스트 (maxVisible 초과) */
+.toast.toast-hidden {
+  height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  overflow: hidden;
+  opacity: 0;
+}
+
+/* 호버 시 토스트 펼치기 */
+.toast-container:hover .toast.toast-stacked {
+  margin-top: 6px;
+  scale: 1;
+  opacity: 1 !important;
+  filter: brightness(1);
+  pointer-events: auto;
+}
+
+.toast-container:hover .toast.toast-hidden {
+  height: auto;
+  padding: 14px 40px 14px 44px;
+  margin-top: 6px;
+  border: 1px solid var(--glass-border-bright);
+  overflow: hidden;
+  opacity: 1 !important;
 }
 
 /* prefers-reduced-motion 대응 */
@@ -9203,6 +9233,25 @@ body.audio-mode .frame-indicator {
   font-size: 11px;
   color: var(--text-tertiary);
   margin: 4px 0 12px;
+}
+
+.app-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.app-settings-btn:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
 }
 
 /* 토스트 위치 그리드 */
