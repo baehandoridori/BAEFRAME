@@ -22,10 +22,14 @@ import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
+import { getAudioWaveform } from './modules/audio-waveform.js';
+import { getPlaybackSync } from './modules/playback-sync.js';
 
 const log = createLogger('App');
 
 const SUPPORTED_VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+const SUPPORTED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
+const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -166,7 +170,14 @@ async function initApp() {
     playlistDropzone: document.getElementById('playlistDropzone'),
     playlistEmpty: document.getElementById('playlistEmpty'),
     playlistAddArea: document.getElementById('playlistAddArea'),
-    playlistAddZone: document.getElementById('playlistAddZone')
+    playlistAddZone: document.getElementById('playlistAddZone'),
+
+    // 오디오 웨이브폼
+    audioWaveformContainer: document.getElementById('audioWaveformContainer'),
+
+    // 협업 플렉서스 패널
+    collabPlexusPanel: document.getElementById('collabPlexusPanel'),
+    collabPlexusCanvas: document.getElementById('collabPlexusCanvas')
   };
 
   // 상태
@@ -188,7 +199,9 @@ async function initApp() {
     panStartX: 0,
     panStartY: 0,
     panInitialX: 0,
-    panInitialY: 0
+    panInitialY: 0,
+    // 오디오 모드
+    isAudioMode: false
   };
 
   // ====== 글로벌 Undo/Redo 시스템 ======
@@ -344,9 +357,10 @@ async function initApp() {
   // Liveblocks 실시간 협업 매니저
   const liveblocksManager = new LiveblocksManager();
 
-  // 댓글/그리기 동기화 매니저
+  // 댓글/그리기/재생 동기화 매니저
   const commentSync = new CommentSync({ liveblocksManager, commentManager });
   const drawingSync = new DrawingSync({ liveblocksManager, drawingManager });
+  const playbackSync = getPlaybackSync(liveblocksManager);
 
   // ReviewDataManager에 LiveblocksManager 연결
   reviewDataManager.setLiveblocksManager(liveblocksManager);
@@ -469,6 +483,13 @@ async function initApp() {
     updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
     updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
 
+    // 오디오 웨이브폼 동기화
+    if (state.isAudioMode) {
+      const audioWaveform = getAudioWaveform();
+      audioWaveform.updateTime(currentTime);
+      audioWaveform.setPlaying(videoPlayer.isPlaying);
+    }
+
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
 
@@ -512,6 +533,7 @@ async function initApp() {
     elements.btnPlay.innerHTML = pauseIconSVG;
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
+    getAudioWaveform()?.setPlaying(true);
     // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
     timeline.scrollToPlayhead();
   });
@@ -520,12 +542,14 @@ async function initApp() {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
+    getAudioWaveform()?.setPlaying(false);
   });
 
   videoPlayer.addEventListener('ended', () => {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
+    getAudioWaveform()?.setPlaying(false);
 
     // 재생목록 자동 재생
     const playlistManager = getPlaylistManager();
@@ -556,6 +580,8 @@ async function initApp() {
   const btnCodecErrorClose = document.getElementById('btnCodecErrorClose');
 
   videoPlayer.addEventListener('codecunsupported', (e) => {
+    // 오디오 모드에서는 videoWidth=0이 정상이므로 무시
+    if (state.isAudioMode) return;
     log.warn('코덱 미지원', e.detail);
     codecErrorOverlay?.classList.add('active');
   });
@@ -570,6 +596,7 @@ async function initApp() {
   // 타임라인에서 시간 이동 요청
   timeline.addEventListener('seek', (e) => {
     videoPlayer.seek(e.detail.time);
+    playbackSync.broadcastSeek(e.detail.time);
     hideScrubPreview();
   });
 
@@ -988,7 +1015,7 @@ async function initApp() {
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       const file = files[0];
-      if (isVideoFile(file.name)) {
+      if (isMediaFile(file.name)) {
         await loadVideo(file.path);
       } else {
         showToast('지원하지 않는 파일 형식입니다.', 'error');
@@ -998,7 +1025,13 @@ async function initApp() {
 
   // 재생/일시정지
   elements.btnPlay.addEventListener('click', () => {
+    const wasPlaying = videoPlayer.isPlaying;
     videoPlayer.togglePlay();
+    if (wasPlaying) {
+      playbackSync.broadcastPause(videoPlayer.currentTime);
+    } else {
+      playbackSync.broadcastPlay(videoPlayer.currentTime);
+    }
   });
 
   // 프레임 이동
@@ -1564,6 +1597,19 @@ async function initApp() {
   toggleToastNotifications?.addEventListener('change', () => {
     const show = toggleToastNotifications.checked;
     userSettings.setShowToastNotifications(show);
+  });
+
+  // 플렉서스 패널 토글
+  const togglePlexusPanel = document.getElementById('togglePlexusPanel');
+  if (togglePlexusPanel) {
+    togglePlexusPanel.checked = userSettings.settings.showPlexusPanel !== false;
+  }
+  togglePlexusPanel?.addEventListener('change', () => {
+    userSettings.settings.showPlexusPanel = togglePlexusPanel.checked;
+    userSettings._save();
+    if (!togglePlexusPanel.checked) {
+      _hideCollabPlexusPanel();
+    }
   });
 
   // 도구별 설정 저장 (크기, 불투명도)
@@ -3331,9 +3377,12 @@ async function initApp() {
       // 파일 정보 가져오기
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
 
-      // ====== 코덱 확인 및 트랜스코딩 ======
+      // ====== 오디오 파일 감지 ======
+      const fileIsAudio = isAudioFile(fileInfo.name);
+
+      // ====== 코덱 확인 및 트랜스코딩 (비디오만) ======
       let actualVideoPath = filePath;
-      const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
+      const ffmpegAvailable = !fileIsAudio && await window.electronAPI.ffmpegIsAvailable();
 
       if (ffmpegAvailable) {
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
@@ -3421,8 +3470,125 @@ async function initApp() {
       // 코덱 에러 오버레이 숨기기
       codecErrorOverlay?.classList.remove('active');
 
-      // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
-      await videoPlayer.load(actualVideoPath);
+      // ====== 오디오/비디오 모드 분기 ======
+      const audioWaveform = getAudioWaveform();
+
+      if (fileIsAudio) {
+        // 오디오 모드 활성화
+        state.isAudioMode = true;
+        videoPlayer.isAudioMode = true;
+        log.info('오디오 모드 활성화', { filePath });
+
+        // 비디오 엘리먼트 숨기기 (오디오에서는 불필요)
+        elements.videoPlayer.style.display = 'none';
+
+        // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
+        try {
+          await videoPlayer.load(actualVideoPath);
+        } catch (loadErr) {
+          log.warn('videoPlayer.load 실패, 직접 src 설정으로 폴백', { error: loadErr.message });
+          // 폴백: 직접 src 설정 (loadedmetadata 이벤트 없이)
+          const videoUrl = actualVideoPath.startsWith('file://') ? actualVideoPath : `file://${actualVideoPath}`;
+          elements.videoPlayer.src = videoUrl;
+          // 로드 대기 (canplay 이벤트 또는 3초 타임아웃)
+          await new Promise((resolve, reject) => {
+            let settled = false;
+            const cleanup = () => {
+              elements.videoPlayer.removeEventListener('canplay', onReady);
+              elements.videoPlayer.removeEventListener('error', onError);
+            };
+            const onReady = () => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              resolve();
+            };
+            const onError = (e) => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              reject(new Error(`미디어 로드 실패: ${e.target?.error?.message || '알 수 없는 오류'}`));
+            };
+            elements.videoPlayer.addEventListener('canplay', onReady);
+            elements.videoPlayer.addEventListener('error', onError);
+            // 3초 타임아웃: canplay 없으면 실패 처리
+            setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              reject(new Error('미디어 로드 타임아웃 (3초)'));
+            }, 3000);
+          });
+        }
+
+        // videoPlayer.load()가 display:block을 강제할 수 있으므로 다시 숨김
+        elements.videoPlayer.style.display = 'none';
+
+        // 웨이브폼 마운트 및 로드
+        if (!audioWaveform.canvas) {
+          audioWaveform.mount(elements.audioWaveformContainer);
+        }
+        // 컨테이너를 먼저 표시해야 캔버스 크기가 확보됨
+        audioWaveform.show();
+
+        // 리사이즈가 안정적으로 반영될 때까지 한 프레임 대기
+        await new Promise(resolve => requestAnimationFrame(resolve));
+
+        try {
+          await audioWaveform.loadAudio(filePath);
+        } catch (err) {
+          log.error('웨이브폼 로드 실패', { error: err.message, stack: err.stack });
+          showToast(`웨이브폼 로드 실패: ${err.message}`, 'error');
+        }
+
+        // 웨이브폼 스크러빙 → videoPlayer seek 연동 (이전 핸들러 제거하여 중복 방지)
+        if (audioWaveform._seekHandler) {
+          audioWaveform.removeEventListener('seek', audioWaveform._seekHandler);
+        }
+        audioWaveform._seekHandler = (e) => {
+          videoPlayer.seek(e.detail.time);
+          playbackSync.broadcastSeek(e.detail.time);
+        };
+        audioWaveform.addEventListener('seek', audioWaveform._seekHandler);
+
+        // 그리기 모드 비활성화 (오디오에서는 의미 없음)
+        if (state.isDrawMode) {
+          state.isDrawMode = false;
+          elements.btnDrawMode?.classList.remove('active');
+          drawingManager.disable();
+        }
+        elements.btnDrawMode?.setAttribute('disabled', 'true');
+
+        // 비디오 줌 컨트롤 숨기기
+        elements.videoZoomControls?.classList.add('hidden');
+
+        // 오디오 모드: 불필요한 비디오 컨트롤 숨기기
+        elements.btnDrawMode?.closest('.action-btn-wrapper, .action-btn')?.classList.add('audio-hidden');
+        document.getElementById('frameIndicator')?.classList.add('audio-hidden');
+
+        elements.videoWrapper?.classList.add('audio-mode');
+        document.body.classList.add('audio-mode');
+      } else {
+        // 비디오 모드
+        state.isAudioMode = false;
+        videoPlayer.isAudioMode = false;
+
+        // 오디오 웨이브폼 숨기기
+        audioWaveform.hide();
+        audioWaveform.reset();
+
+        elements.videoWrapper?.classList.remove('audio-mode');
+        document.body.classList.remove('audio-mode');
+        elements.btnDrawMode?.removeAttribute('disabled');
+        elements.videoZoomControls?.classList.remove('hidden');
+
+        // 오디오 모드에서 숨겼던 컨트롤 복원
+        elements.btnDrawMode?.closest('.action-btn-wrapper, .action-btn')?.classList.remove('audio-hidden');
+        document.getElementById('frameIndicator')?.classList.remove('audio-hidden');
+
+        // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
+        await videoPlayer.load(actualVideoPath);
+      }
 
       // 원본 파일 경로 저장 (UI/메타데이터용)
       state.currentFile = filePath;
@@ -3469,10 +3635,15 @@ async function initApp() {
       });
 
       // 비디오 트랙 업데이트
-      elements.videoTrackClip.textContent = `📹 ${fileInfo.name}`;
+      elements.videoTrackClip.textContent = fileIsAudio ? `🎵 ${fileInfo.name}` : `📹 ${fileInfo.name}`;
 
-      // 썸네일 생성 시작 (트랜스코딩된 경우 변환된 파일 사용)
-      await generateThumbnails(actualVideoPath);
+      // 썸네일 생성 시작 (비디오만, 트랜스코딩된 경우 변환된 파일 사용)
+      if (!fileIsAudio) {
+        await generateThumbnails(actualVideoPath);
+      } else {
+        // 오디오 파일 로드 시 이전 비디오의 썸네일 상태 정리
+        getThumbnailGenerator().clear();
+      }
 
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
@@ -3517,10 +3688,10 @@ async function initApp() {
           await reviewDataManager.save({ skipMerge: true });
         }
 
-        // 댓글/그리기 동기화 시작 (Broadcast 기반)
+        // 댓글/그리기/재생 동기화 시작 (Broadcast 기반)
         await commentSync.start();
         drawingSync.start();
-
+        playbackSync.start();
         log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
       } catch (error) {
         log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
@@ -3743,6 +3914,8 @@ async function initApp() {
    * 그리기 모드 토글
    */
   function toggleDrawMode() {
+    // 오디오 모드에서는 그리기 모드 진입 차단
+    if (state.isAudioMode) return;
     state.isDrawMode = !state.isDrawMode;
     elements.btnDrawMode.classList.toggle('active', state.isDrawMode);
     elements.drawingTools.classList.toggle('visible', state.isDrawMode);
@@ -3776,6 +3949,15 @@ async function initApp() {
 
     state.isFullscreen = isFullscreen;
     document.body.classList.toggle('app-fullscreen', isFullscreen);
+
+    // 오디오 모드: 전체화면 전환 시 웨이브폼 캔버스 리사이즈
+    if (state.isAudioMode) {
+      const audioWaveform = getAudioWaveform();
+      // 레이아웃 변경이 반영될 때까지 대기 후 리사이즈
+      requestAnimationFrame(() => {
+        audioWaveform._onResize();
+      });
+    }
 
     if (isFullscreen) {
       showToast('전체화면 모드 (C: 댓글 추가, F 또는 ESC: 해제)', 'info');
@@ -4490,7 +4672,7 @@ async function initApp() {
     elements.feedbackProgressFill.style.width = `${percent}%`;
   }
 
-  function updateCommentList(filter = 'all') {
+  function updateCommentList(filter = getActiveCommentFilter()) {
     pendingCommentListFilter = filter;
 
     // 디바운싱: 연속 호출 시 마지막 호출만 실행 (50ms)
@@ -4502,7 +4684,7 @@ async function initApp() {
     });
   }
 
-  function updateCommentListImmediate(filter = 'all') {
+  function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
 
@@ -5006,27 +5188,257 @@ async function initApp() {
   }
 
   /**
+   * 오디오 파일 확인
+   */
+  function isAudioFile(filename) {
+    const ext = filename.toLowerCase().split('.').pop();
+    return SUPPORTED_AUDIO_EXTENSIONS.includes(ext);
+  }
+
+  /**
+   * 미디어 파일 확인 (비디오 + 오디오)
+   */
+  function isMediaFile(filename) {
+    return isVideoFile(filename) || isAudioFile(filename);
+  }
+
+  /**
+   * 토스트 알림 시스템 (Sonner-style)
+   */
+  const _toastState = {
+    toasts: [],     // 현재 활성 토스트 요소 배열
+    maxVisible: 3,  // 최대 표시 개수
+  };
+
+  const _toastIcons = {
+    info: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+    success: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11.5 14.5 16 10"/></svg>',
+    error: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    warn: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    warning: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    loading: '<svg class="toast-spinner" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4"/><path d="M12 18v4" opacity=".3"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83" opacity=".3"/><path d="M2 12h4" opacity=".7"/><path d="M18 12h4" opacity=".3"/><path d="M4.93 19.07l2.83-2.83" opacity=".5"/><path d="M16.24 7.76l2.83-2.83" opacity=".7"/></svg>',
+  };
+
+  function _updateToastStack() {
+    const toasts = _toastState.toasts;
+    for (let i = 0; i < toasts.length; i++) {
+      const t = toasts[i];
+      const fromTop = toasts.length - 1 - i; // 0 = 최신 (맨 앞)
+      // 최신 토스트가 항상 위에 표시되도록 z-index 설정
+      t.style.zIndex = toasts.length - fromTop;
+      if (fromTop >= _toastState.maxVisible) {
+        // 숨기지만 호버 시 보이도록 CSS 클래스 사용
+        t.classList.add('toast-stacked', 'toast-hidden');
+        const s = 1 - Math.min(fromTop, 3) * 0.05;
+        t.style.setProperty('--stack-scale', s);
+        t.style.setProperty('--stack-opacity', '0');
+        t.style.setProperty('--stack-brightness', '0.7');
+      } else if (fromTop > 0) {
+        t.classList.add('toast-stacked');
+        t.classList.remove('toast-hidden');
+        const s = 1 - fromTop * 0.05;
+        const o = 1 - fromTop * 0.2;
+        const b = 1 - fromTop * 0.08;
+        t.style.setProperty('--stack-scale', s);
+        t.style.setProperty('--stack-opacity', Math.max(o, 0.3));
+        t.style.setProperty('--stack-brightness', b);
+      } else {
+        t.classList.remove('toast-stacked', 'toast-hidden');
+        t.style.removeProperty('--stack-scale');
+        t.style.removeProperty('--stack-opacity');
+        t.style.removeProperty('--stack-brightness');
+      }
+    }
+  }
+
+  function _dismissToast(toast, swipeDir) {
+    if (toast._dismissed) return;
+    toast._dismissed = true;
+    clearTimeout(toast._autoTimer);
+    cancelAnimationFrame(toast._progressRaf);
+
+    if (swipeDir) {
+      toast.style.setProperty('--swipe-dir', swipeDir > 0 ? '120%' : '-120%');
+      toast.classList.add('toast-swipe-exit');
+    } else {
+      toast.classList.add('toast-exit');
+    }
+
+    const idx = _toastState.toasts.indexOf(toast);
+    if (idx !== -1) _toastState.toasts.splice(idx, 1);
+    _updateToastStack();
+
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+  }
+
+  /**
    * 토스트 메시지 표시
    * @param {string} message - 표시할 메시지
-   * @param {string} type - 타입 ('info', 'success', 'warning', 'error')
+   * @param {string} type - 타입 ('info', 'success', 'warning', 'error', 'loading')
    * @param {number} duration - 표시 시간 (ms)
    * @param {boolean} force - 설정과 무관하게 강제 표시
    */
-  function showToast(message, type = 'info', duration = 3000, force = false) {
+  function showToast(message, type = 'info', duration = null, force = false) {
+    // 기본 지속시간: 설정에서 읽기 (loading은 수동 dismiss이므로 무관)
+    if (duration === null) duration = userSettings.getToastDuration();
     // 토스트 알림이 비활성화된 경우 (단, error와 force는 항상 표시)
     if (!force && type !== 'error' && !userSettings.getShowToastNotifications()) {
       return;
     }
 
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    elements.toastContainer.appendChild(toast);
+    // warn/warning 통일
+    const normalType = type === 'warning' ? 'warn' : type;
 
-    setTimeout(() => {
-      toast.classList.add('fade-out');
-      setTimeout(() => toast.remove(), 300);
-    }, duration);
+    const toast = document.createElement('div');
+    toast.className = `toast ${normalType} toast-enter`;
+
+    // 아이콘
+    const icon = document.createElement('span');
+    icon.className = 'toast-icon';
+    icon.innerHTML = _toastIcons[normalType] || _toastIcons.info;
+    toast.appendChild(icon);
+
+    // 메시지
+    const msg = document.createElement('span');
+    msg.className = 'toast-message';
+    msg.textContent = message;
+    toast.appendChild(msg);
+
+    // 닫기 버튼
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'toast-close';
+    closeBtn.textContent = '\u00d7'; // ×
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _dismissToast(toast);
+    });
+    toast.appendChild(closeBtn);
+
+    // loading 타입: 진행률 바 없이 스피너만 표시
+    const isLoading = normalType === 'loading';
+
+    // 진행률 바
+    const progress = document.createElement('div');
+    progress.className = 'toast-progress';
+    if (isLoading) progress.style.display = 'none';
+    toast.appendChild(progress);
+
+    // 호버 일시정지
+    let paused = false;
+    let remaining = duration;
+    let startTime = performance.now();
+
+    function animateProgress() {
+      if (isLoading) return;
+      if (paused) {
+        toast._progressRaf = requestAnimationFrame(animateProgress);
+        return;
+      }
+      const elapsed = performance.now() - startTime;
+      const pct = Math.max(0, 1 - elapsed / duration);
+      progress.style.width = `${pct * 100}%`;
+      if (pct > 0) {
+        toast._progressRaf = requestAnimationFrame(animateProgress);
+      }
+    }
+    toast._progressRaf = requestAnimationFrame(animateProgress);
+
+    if (!isLoading) {
+      toast.addEventListener('mouseenter', () => {
+        paused = true;
+        remaining = Math.max(0, duration - (performance.now() - startTime));
+        clearTimeout(toast._autoTimer);
+      });
+
+      toast.addEventListener('mouseleave', () => {
+        paused = false;
+        duration = remaining;
+        startTime = performance.now();
+        toast._autoTimer = setTimeout(() => _dismissToast(toast), remaining);
+      });
+    }
+
+    // 스와이프 제스처
+    let swipeStartX = 0;
+    let swipeStartY = 0;
+    let swiping = false;
+    let swipeDx = 0;
+
+    toast.addEventListener('pointerdown', (e) => {
+      if (e.target === closeBtn) return;
+      swipeStartX = e.clientX;
+      swipeStartY = e.clientY;
+      swiping = false;
+      swipeDx = 0;
+      toast.setPointerCapture(e.pointerId);
+      toast.style.transition = 'none';
+    });
+
+    toast.addEventListener('pointermove', (e) => {
+      if (!swipeStartX) return;
+      const dx = e.clientX - swipeStartX;
+      const dy = e.clientY - swipeStartY;
+      if (!swiping && Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) {
+        swiping = true;
+      }
+      if (swiping) {
+        swipeDx = dx;
+        const opacity = Math.max(0, 1 - Math.abs(dx) / 200);
+        toast.style.transform = `translateX(${dx}px) scale(${1 - Math.abs(dx) * 0.001})`;
+        toast.style.opacity = opacity;
+      }
+    });
+
+    toast.addEventListener('pointerup', () => {
+      swipeStartX = 0;
+      if (swiping) {
+        if (Math.abs(swipeDx) > 80) {
+          _dismissToast(toast, swipeDx);
+        } else {
+          toast.style.transition = '';
+          toast.style.transform = '';
+          toast.style.opacity = '';
+        }
+        swiping = false;
+      } else {
+        toast.style.transition = '';
+      }
+    });
+
+    // 컨테이너에 추가 (최신이 맨 위)
+    elements.toastContainer.prepend(toast);
+    _toastState.toasts.push(toast);
+    _updateToastStack();
+
+    // 자동 닫기 (loading 타입은 수동 dismiss)
+    if (!isLoading) {
+      toast._autoTimer = setTimeout(() => _dismissToast(toast), duration);
+    }
+
+    // loading 타입: dismiss/update 핸들 반환
+    if (isLoading) {
+      return {
+        dismiss: () => _dismissToast(toast),
+        update: (newMessage, newType = 'success', newDuration = 3000) => {
+          const newNormalType = newType === 'warning' ? 'warn' : newType;
+          toast.className = `toast ${newNormalType}`;
+          icon.innerHTML = _toastIcons[newNormalType] || _toastIcons.info;
+          msg.textContent = newMessage;
+          progress.style.display = '';
+          // 자동 닫기 재설정
+          duration = newDuration;
+          remaining = newDuration;
+          startTime = performance.now();
+          toast._progressRaf = requestAnimationFrame(function tick() {
+            const elapsed = performance.now() - startTime;
+            const pct = Math.max(0, 1 - elapsed / newDuration);
+            progress.style.width = `${pct * 100}%`;
+            if (pct > 0) toast._progressRaf = requestAnimationFrame(tick);
+          });
+          toast._autoTimer = setTimeout(() => _dismissToast(toast), newDuration);
+        },
+      };
+    }
   }
 
   /**
@@ -5107,10 +5519,17 @@ async function initApp() {
 
     // ====== 공통 단축키 ======
     switch (e.code) {
-    case 'Space':
+    case 'Space': {
       e.preventDefault();
+      const wasPlaying = videoPlayer.isPlaying;
       videoPlayer.togglePlay();
+      if (wasPlaying) {
+        playbackSync.broadcastPause(videoPlayer.currentTime);
+      } else {
+        playbackSync.broadcastPlay(videoPlayer.currentTime);
+      }
       return;
+    }
 
     case 'Home':
       e.preventDefault();
@@ -5785,6 +6204,239 @@ async function initApp() {
     }, 500);
   }
 
+  // ====== 앱 설정 모달 ======
+  const appSettingsModal = document.getElementById('appSettingsModal');
+  const closeAppSettings = document.getElementById('closeAppSettings');
+  const btnAppSettings = document.getElementById('btnAppSettings');
+
+  function openAppSettingsModal() {
+    if (!appSettingsModal) return;
+    // 현재 값 로드
+    const nameInput = document.getElementById('appSettingsUserName');
+    if (nameInput) nameInput.value = userSettings.getUserName();
+
+    const toastEnabled = document.getElementById('appSettingsToastEnabled');
+    if (toastEnabled) toastEnabled.checked = userSettings.getShowToastNotifications();
+
+    const durationSlider = document.getElementById('appSettingsToastDuration');
+    const durationValue = document.getElementById('appSettingsToastDurationValue');
+    if (durationSlider) {
+      durationSlider.value = userSettings.getToastDuration();
+      if (durationValue) durationValue.textContent = `${userSettings.getToastDuration() / 1000}초`;
+    }
+
+    // 위치 버튼 활성화
+    const posGrid = document.getElementById('toastPositionGrid');
+    if (posGrid) {
+      posGrid.querySelectorAll('.toast-pos-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.pos === userSettings.getToastPosition());
+      });
+    }
+
+    // 미리보기 위치
+    _updateToastPreviewPosition(userSettings.getToastPosition());
+
+    // 테마 탭 초기값
+    const lmToggle = document.getElementById('appSettingsLightMode');
+    if (lmToggle) lmToggle.checked = userSettings.getLightMode();
+
+    const tGrid = document.getElementById('appThemeColorGrid');
+    if (tGrid) {
+      const curTheme = userSettings.getLocalTheme();
+      tGrid.querySelectorAll('.theme-color-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.theme === curTheme);
+      });
+    }
+
+    // 초기 비밀번호 경고 표시
+    const pwWarning = document.getElementById('appSettingsPasswordWarning');
+    if (pwWarning) {
+      const showWarning = authManager.isCurrentUserProtected() && authManager.currentUserHasInitialPassword();
+      pwWarning.style.display = showWarning ? 'flex' : 'none';
+    }
+
+    appSettingsModal.classList.add('active');
+  }
+
+  function closeAppSettingsModal() {
+    if (!appSettingsModal) return;
+    appSettingsModal.classList.remove('active');
+  }
+
+  // 앱 설정 열기 버튼
+  btnAppSettings?.addEventListener('click', () => {
+    // 드롭다운 닫기
+    const dropdown = document.getElementById('commentSettingsDropdown');
+    if (dropdown) dropdown.classList.remove('show');
+    openAppSettingsModal();
+  });
+
+  closeAppSettings?.addEventListener('click', closeAppSettingsModal);
+
+  // 오버레이 클릭으로 닫기
+  appSettingsModal?.addEventListener('click', (e) => {
+    if (e.target === appSettingsModal) closeAppSettingsModal();
+  });
+
+  // Escape로 닫기
+  appSettingsModal?.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAppSettingsModal();
+  });
+
+  // 탭 전환
+  appSettingsModal?.querySelectorAll('.app-settings-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      appSettingsModal.querySelectorAll('.app-settings-tab').forEach(t => t.classList.remove('active'));
+      appSettingsModal.querySelectorAll('.app-settings-panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      const panel = appSettingsModal.querySelector(`.app-settings-panel[data-panel="${tab.dataset.tab}"]`);
+      if (panel) panel.classList.add('active');
+    });
+  });
+
+  // 개인정보 - 이름 변경 (blur 시 자동 저장)
+  document.getElementById('appSettingsUserName')?.addEventListener('change', (e) => {
+    const name = e.target.value.trim();
+    if (name) {
+      userSettings.setUserName(name);
+      showToast(`이름이 "${name}"으로 변경되었습니다.`, 'success');
+    }
+  });
+
+  // 비밀번호 변경 (앱 설정 내)
+  document.getElementById('appSettingsChangePassword')?.addEventListener('click', () => {
+    closeAppSettingsModal();
+    openChangePasswordModal();
+  });
+
+  // 알림 표시 토글
+  document.getElementById('appSettingsToastEnabled')?.addEventListener('change', (e) => {
+    userSettings.setShowToastNotifications(e.target.checked);
+    // 기존 드롭다운 체크박스와 동기화
+    const oldToggle = document.getElementById('toggleToastNotifications');
+    if (oldToggle) oldToggle.checked = e.target.checked;
+  });
+
+  // 알림 위치
+  document.getElementById('toastPositionGrid')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.toast-pos-btn');
+    if (!btn) return;
+    const pos = btn.dataset.pos;
+    document.querySelectorAll('.toast-pos-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    userSettings.setToastPosition(pos);
+    _applyToastPosition(pos);
+    _updateToastPreviewPosition(pos);
+  });
+
+  // 알림 지속시간 슬라이더
+  document.getElementById('appSettingsToastDuration')?.addEventListener('input', (e) => {
+    const ms = parseInt(e.target.value);
+    const label = document.getElementById('appSettingsToastDurationValue');
+    if (label) label.textContent = `${ms / 1000}초`;
+    userSettings.setToastDuration(ms);
+  });
+
+  // 미리보기 위치 업데이트
+  function _updateToastPreviewPosition(pos) {
+    const sample = document.getElementById('toastPreviewSample');
+    if (!sample) return;
+    sample.style.top = sample.style.bottom = sample.style.left = sample.style.right = '';
+    sample.style.transform = '';
+    sample.dataset.pos = pos;
+  }
+
+  // 미리보기 클릭 시 실제 토스트 표시
+  document.getElementById('toastPreviewBox')?.addEventListener('click', () => {
+    showToast('알림 미리보기', 'info', null, true);
+  });
+
+  // 토스트 컨테이너 위치 동적 적용
+  function _applyToastPosition(pos) {
+    const c = elements.toastContainer;
+    if (!c) return;
+    // 전체 리셋
+    c.style.top = c.style.bottom = c.style.left = c.style.right = '';
+    c.style.transform = '';
+    c.style.alignItems = '';
+    c.style.flexDirection = '';
+    c.style.marginLeft = '';
+    c.style.marginRight = '';
+
+    // 상/하 위치
+    if (pos.includes('bottom')) {
+      c.style.bottom = '52px';
+      c.style.top = 'auto';
+      c.style.flexDirection = 'column-reverse';
+    } else {
+      c.style.top = '52px';
+      c.style.bottom = 'auto';
+      c.style.flexDirection = 'column';
+    }
+
+    // 좌/우/중앙 위치 (뷰포트 넘침 방지)
+    if (pos.includes('left')) {
+      c.style.left = '16px';
+      c.style.right = 'auto';
+      c.style.alignItems = 'flex-start';
+    } else if (pos.includes('right')) {
+      c.style.right = '16px';
+      c.style.left = 'auto';
+      c.style.alignItems = 'flex-end';
+    } else {
+      c.style.left = '0';
+      c.style.right = '0';
+      c.style.marginLeft = 'auto';
+      c.style.marginRight = 'auto';
+      c.style.alignItems = 'center';
+    }
+  }
+
+  // 초기 토스트 위치 적용
+  _applyToastPosition(userSettings.getToastPosition());
+
+  // ====== 테마 설정 (앱 설정 모달) ======
+  // 라이트 모드 토글
+  const lightModeToggle = document.getElementById('appSettingsLightMode');
+  function _applyLightMode(enabled) {
+    document.documentElement.classList.toggle('light-mode', enabled);
+  }
+  // 초기 라이트 모드 적용
+  _applyLightMode(userSettings.getLightMode());
+  if (lightModeToggle) lightModeToggle.checked = userSettings.getLightMode();
+
+  lightModeToggle?.addEventListener('change', (e) => {
+    userSettings.setLightMode(e.target.checked);
+    _applyLightMode(e.target.checked);
+  });
+
+  // 테마 색상 선택
+  const themeColorGrid = document.getElementById('appThemeColorGrid');
+  function _initThemeGrid() {
+    if (!themeColorGrid) return;
+    const current = userSettings.getLocalTheme();
+    themeColorGrid.querySelectorAll('.theme-color-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.theme === current);
+    });
+  }
+  _initThemeGrid();
+
+  themeColorGrid?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.theme-color-btn');
+    if (!btn) return;
+    const theme = btn.dataset.theme;
+    themeColorGrid.querySelectorAll('.theme-color-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    userSettings.setLocalTheme(theme);
+    userSettings.applyTheme(theme);
+  });
+
+  // 초기 로컬 테마 적용 (인증 테마보다 우선)
+  const savedLocalTheme = userSettings.getLocalTheme();
+  if (savedLocalTheme && savedLocalTheme !== 'default') {
+    userSettings.applyTheme(savedLocalTheme);
+  }
+
   // ====== 포커스 저장/복원 유틸리티 ======
   let _previousFocusElement = null;
 
@@ -6066,11 +6718,15 @@ async function initApp() {
     registeredUsersList.innerHTML = users.map(u => {
       const themeColor = THEME_COLOR_MAP[u.theme || ''] || '#ffd000';
       const themeName = u.theme ? (u.theme === 'red' ? '빨강' : u.theme === 'blue' ? '파랑' : u.theme === 'pink' ? '핑크' : u.theme === 'green' ? '초록' : '기본') : '기본';
+      const initialPwBadge = u.hasInitialPassword
+        ? '<span class="initial-password-badge" title="초기 비밀번호(1234) 사용 중">초기PW</span>'
+        : '';
       return `
         <div class="registered-user-item" data-name="${u.name}">
           <div class="registered-user-info">
             <span class="registered-user-theme" style="background: ${themeColor};" title="${themeName}"></span>
             <span class="registered-user-name">${u.name}</span>
+            ${initialPwBadge}
           </div>
           <button class="registered-user-delete" data-name="${u.name}">삭제</button>
         </div>
@@ -7078,14 +7734,25 @@ async function initApp() {
   const collaboratorsCount = document.getElementById('collaboratorsCount');
   const syncStatus = document.getElementById('syncStatus');
 
+  // ====== 사용자 연결 플렉서스 패널 관련 ======
+  let _collabPanelHoverTimer = null;
+  let _currentCollaborators = [];
+  let _plexusAnimationId = null;
+  let _plexusTime = 0;
+  let _plexusNodePositions = []; // 각 사용자 노드의 현재 위치
+  let _plexusFlowParticles = []; // 연결선 위 이동 파티클
+
   /**
    * 협업자 UI 업데이트
    */
   function updateCollaboratorsUI(collaborators) {
     if (!collaboratorsIndicator) return;
 
+    _currentCollaborators = collaborators;
+
     if (collaborators.length === 0) {
       collaboratorsIndicator.style.display = 'none';
+      _hideCollabPlexusPanel();
       return;
     }
 
@@ -7102,6 +7769,525 @@ async function initApp() {
                 ${initials}
               </div>`;
     }).reverse().join(''); // reverse for proper stacking order
+  }
+
+  let _plexusStartTimer = null;
+
+  /**
+   * 사용자 노드 위치 계산 (원형 배치 + 부드러운 떠다님)
+   */
+  function _calculateNodePositions(w, h, count, time) {
+    const positions = [];
+    const centerX = w / 2;
+    const centerY = h / 2;
+    const radius = Math.min(w, h) * 0.3;
+
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+      // breathing 애니메이션 (각 노드마다 다른 위상)
+      const breathX = Math.sin(time * 0.008 + i * 1.7) * 6;
+      const breathY = Math.cos(time * 0.006 + i * 2.3) * 4;
+      positions.push({
+        x: centerX + Math.cos(angle) * radius + breathX,
+        y: centerY + Math.sin(angle) * radius + breathY
+      });
+    }
+    return positions;
+  }
+
+  /**
+   * 사용자 노드 네트워크 그래프 렌더링
+   */
+  function _drawUserPlexus(ctx, w, h, collaborators, time) {
+    ctx.clearRect(0, 0, w, h);
+    if (collaborators.length === 0) return;
+
+    const positions = _calculateNodePositions(w, h, collaborators.length, time);
+    _plexusNodePositions = positions;
+    const nodeRadius = 18;
+
+    // 동기화 중인 사용자 확인
+    const hasSyncUsers = collaborators.some(c => c.syncActive);
+
+    // 1. 연결선 그리기 (모든 노드 쌍)
+    for (let i = 0; i < positions.length; i++) {
+      for (let j = i + 1; j < positions.length; j++) {
+        const p1 = positions[i];
+        const p2 = positions[j];
+        const c1 = collaborators[i].color || '#ffd000';
+        const c2 = collaborators[j].color || '#ffd000';
+        const bothSyncing = collaborators[i].syncActive && collaborators[j].syncActive;
+
+        if (bothSyncing) {
+          // ===== 동기화 연결: 에너지 빔 =====
+          const dx = p2.x - p1.x;
+          const dy = p2.y - p1.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          // 넓은 에너지 필드 (배경)
+          const beamGrad = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
+          beamGrad.addColorStop(0, c1);
+          beamGrad.addColorStop(0.5, '#ffffff');
+          beamGrad.addColorStop(1, c2);
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.strokeStyle = beamGrad;
+          ctx.lineWidth = 3;
+          ctx.globalAlpha = 0.15 + Math.sin(time * 0.04 + i) * 0.05;
+          ctx.stroke();
+
+          // 중심 에너지 라인 (실선, 밝음)
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.strokeStyle = beamGrad;
+          ctx.lineWidth = 1.5;
+          ctx.globalAlpha = 0.5 + Math.sin(time * 0.03 + i + j) * 0.2;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+
+          // 에너지 파티클 (더 많고, 더 빠르고, 꼬리 있음)
+          const beamParticles = 4;
+          for (let k = 0; k < beamParticles; k++) {
+            const t = ((time * 0.012 + k / beamParticles + i * 0.2) % 1);
+            const px = p1.x + dx * t;
+            const py = p1.y + dy * t;
+            const glow = 0.5 + Math.sin(t * Math.PI) * 0.5;
+            const size = 2 + Math.sin(t * Math.PI) * 1.5;
+
+            // 파티클 트레일 (꼬리)
+            const trailLen = 0.08;
+            const t2 = Math.max(0, t - trailLen);
+            const tx = p1.x + dx * t2;
+            const ty = p1.y + dy * t2;
+            const trailGrad = ctx.createLinearGradient(tx, ty, px, py);
+            trailGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+            trailGrad.addColorStop(1, `rgba(255, 255, 255, ${glow * 0.6})`);
+            ctx.beginPath();
+            ctx.moveTo(tx, ty);
+            ctx.lineTo(px, py);
+            ctx.strokeStyle = trailGrad;
+            ctx.lineWidth = size * 0.8;
+            ctx.stroke();
+
+            // 파티클 헤드
+            ctx.beginPath();
+            ctx.arc(px, py, size, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.globalAlpha = glow;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+        } else {
+          // ===== 일반 연결: 기존 점선 =====
+          const gradient = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
+          gradient.addColorStop(0, c1);
+          gradient.addColorStop(1, c2);
+
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.strokeStyle = gradient;
+          ctx.lineWidth = 1.5;
+          ctx.globalAlpha = 0.3 + Math.sin(time * 0.02 + i + j) * 0.1;
+          ctx.setLineDash([4, 4]);
+          ctx.lineDashOffset = -time * 0.3;
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
+
+          // 연결선 위 이동 파티클
+          for (let k = 0; k < 2; k++) {
+            const t = ((time * 0.005 + k * 0.5 + i * 0.3 + j * 0.7) % 1);
+            const px = p1.x + (p2.x - p1.x) * t;
+            const py = p1.y + (p2.y - p1.y) * t;
+            const particleGlow = 0.4 + Math.sin(t * Math.PI) * 0.4;
+            ctx.beginPath();
+            ctx.arc(px, py, 2, 0, Math.PI * 2);
+            ctx.fillStyle = gradient;
+            ctx.globalAlpha = particleGlow;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+        }
+      }
+    }
+
+    // 2. 노드 그리기
+    for (let i = 0; i < collaborators.length; i++) {
+      const pos = positions[i];
+      const collab = collaborators[i];
+      const color = collab.color || '#ffd000';
+      const isSyncing = collab.syncActive;
+
+      if (isSyncing) {
+        // ===== 동기화 노드: 궤도 링 + 코멧 파티클 =====
+
+        // 외곽 궤도 링 1 (빠른 회전)
+        const orbitR1 = nodeRadius + 10;
+        const orbitAngle1 = time * 0.03 + i * 1.5;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, orbitR1, orbitAngle1, orbitAngle1 + Math.PI * 1.2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.5;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        // 외곽 궤도 링 2 (반대 방향, 느림)
+        const orbitR2 = nodeRadius + 14;
+        const orbitAngle2 = -time * 0.02 + i * 2.1;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, orbitR2, orbitAngle2, orbitAngle2 + Math.PI * 0.8);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.25;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        // 코멧 파티클 (궤도 위 회전)
+        const cometCount = 3;
+        for (let c = 0; c < cometCount; c++) {
+          const cAngle = time * 0.04 + c * (Math.PI * 2 / cometCount) + i * 1.2;
+          const cR = nodeRadius + 10 + Math.sin(time * 0.02 + c) * 2;
+          const cx = pos.x + Math.cos(cAngle) * cR;
+          const cy = pos.y + Math.sin(cAngle) * cR;
+
+          // 코멧 트레일
+          const trailArc = 0.5;
+          const trailStartAngle = cAngle - trailArc;
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, cR, trailStartAngle, cAngle);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.3;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+
+          // 코멧 헤드
+          ctx.beginPath();
+          ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.globalAlpha = 0.9;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+
+        // 노드 배경 (약간 더 밝게)
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        // 노드 테두리 (밝은 흰색)
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 동기화 아이콘 배지 (기존 초록 점 대신)
+        const badgeX = pos.x + nodeRadius * 0.6;
+        const badgeY = pos.y - nodeRadius * 0.6;
+        ctx.beginPath();
+        ctx.arc(badgeX, badgeY, 5, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        // 작은 화살표 (동기화 심볼)
+        ctx.fillStyle = color;
+        ctx.font = 'bold 7px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('\u21BB', badgeX, badgeY + 0.5); // ↻ 회전 화살표
+
+      } else {
+        // ===== 일반 노드 =====
+        // 글로우 효과
+        const glowIntensity = 0.3 + Math.sin(time * 0.015 + i * 2) * 0.15;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius + 6, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = glowIntensity;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // 노드 배경
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        // 노드 테두리
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // 온라인 상태 인디케이터
+        const statusX = pos.x + nodeRadius * 0.6;
+        const statusY = pos.y - nodeRadius * 0.6;
+        ctx.beginPath();
+        ctx.arc(statusX, statusY, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#2ed573';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(statusX, statusY, 4, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      // 이니셜 텍스트
+      const initials = collab.name.substring(0, 2);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.font = 'bold 11px "Pretendard Variable", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(initials, pos.x, pos.y);
+
+      // 이름 레이블 (노드 아래)
+      ctx.fillStyle = isSyncing ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.8)';
+      ctx.font = isSyncing ? 'bold 10px "Pretendard Variable", sans-serif' : '10px "Pretendard Variable", sans-serif';
+      const label = collab.isMe ? `${collab.name} (나)` : collab.name;
+      ctx.fillText(label, pos.x, pos.y + nodeRadius + 14);
+
+      // 동기화 사용자: 이름 아래 "동기화 중" 라벨
+      if (isSyncing) {
+        ctx.fillStyle = color;
+        ctx.font = '8px "Pretendard Variable", sans-serif';
+        ctx.fillText('동기화 중', pos.x, pos.y + nodeRadius + 25);
+      }
+    }
+  }
+
+  function _startPlexusAnimation() {
+    if (_plexusAnimationId) return;
+
+    const canvas = elements.collabPlexusCanvas;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+
+    function animate() {
+      _plexusTime++;
+      const rect = canvas.parentElement.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+        _drawUserPlexus(ctx, rect.width, rect.height, _currentCollaborators, _plexusTime);
+      }
+      _plexusAnimationId = requestAnimationFrame(animate);
+    }
+
+    animate();
+  }
+
+  function _stopPlexusAnimation() {
+    if (_plexusAnimationId) {
+      cancelAnimationFrame(_plexusAnimationId);
+      _plexusAnimationId = null;
+    }
+  }
+
+  function _showCollabPlexusPanel() {
+    const panel = elements.collabPlexusPanel;
+    if (!panel || _currentCollaborators.length === 0) return;
+
+    // 설정에서 비활성화된 경우
+    if (!userSettings.settings.showPlexusPanel) return;
+
+    panel.classList.add('active');
+
+    // 이전 타이머 정리
+    if (_plexusStartTimer) {
+      clearTimeout(_plexusStartTimer);
+    }
+
+    // CSS transition 완료 후 애니메이션 시작 (height: 0→240px, transition 350ms)
+    _plexusStartTimer = setTimeout(() => {
+      _startPlexusAnimation();
+    }, 380);
+  }
+
+  function _hideCollabPlexusPanel() {
+    const panel = elements.collabPlexusPanel;
+    if (!panel) return;
+
+    // 시작 타이머 정리
+    if (_plexusStartTimer) {
+      clearTimeout(_plexusStartTimer);
+      _plexusStartTimer = null;
+    }
+
+    panel.classList.remove('active');
+    _stopPlexusAnimation();
+  }
+
+  // 호버 이벤트 설정
+  collaboratorsIndicator?.addEventListener('mouseenter', () => {
+    clearTimeout(_collabPanelHoverTimer);
+    _collabPanelHoverTimer = setTimeout(() => {
+      _showCollabPlexusPanel();
+    }, 200); // 200ms 딜레이 (오발 방지)
+  });
+
+  collaboratorsIndicator?.addEventListener('mouseleave', (e) => {
+    clearTimeout(_collabPanelHoverTimer);
+    // 패널로 마우스가 이동한 경우 숨기지 않음
+    const panel = elements.collabPlexusPanel;
+    if (panel && panel.contains(e.relatedTarget)) return;
+
+    _collabPanelHoverTimer = setTimeout(() => {
+      _hideCollabPlexusPanel();
+    }, 300);
+  });
+
+  elements.collabPlexusPanel?.addEventListener('mouseenter', () => {
+    clearTimeout(_collabPanelHoverTimer);
+  });
+
+  elements.collabPlexusPanel?.addEventListener('mouseleave', () => {
+    clearTimeout(_collabPanelHoverTimer);
+    _collabPanelHoverTimer = setTimeout(() => {
+      _hideCollabPlexusPanel();
+    }, 300);
+  });
+
+  // ====== 협업 연결 리플 효과 (캔버스 기반 화면 왜곡) ======
+  let _rippleAnimationId = null;
+
+  function _triggerCollabRipple() {
+    const canvas = document.getElementById('collabRippleCanvas');
+    if (!canvas) return;
+
+    // 이전 애니메이션 정리
+    if (_rippleAnimationId) {
+      cancelAnimationFrame(_rippleAnimationId);
+      _rippleAnimationId = null;
+    }
+
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    canvas.classList.add('active');
+
+    // 인디케이터 위치에서 시작
+    let originX = canvas.width / 2;
+    let originY = 0;
+    if (collaboratorsIndicator) {
+      const rect = collaboratorsIndicator.getBoundingClientRect();
+      originX = rect.left + rect.width / 2;
+      originY = rect.top + rect.height / 2;
+    }
+
+    const maxRadius = Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height);
+    const duration = 1800; // 1.8초
+    const startTime = performance.now();
+
+    // 3개의 파동 (시차 발사)
+    const waves = [
+      { delay: 0, thickness: 80, color: [255, 208, 0] },     // 골드
+      { delay: 120, thickness: 60, color: [255, 180, 40] },   // 오렌지
+      { delay: 280, thickness: 40, color: [255, 220, 100] }   // 밝은 골드
+    ];
+
+    function animateRipple(now) {
+      const elapsed = now - startTime;
+      if (elapsed > duration + 400) {
+        canvas.classList.remove('active');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        _rippleAnimationId = null;
+        return;
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (const wave of waves) {
+        const waveElapsed = elapsed - wave.delay;
+        if (waveElapsed < 0) continue;
+
+        const progress = Math.min(waveElapsed / duration, 1);
+        // ease-out cubic
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const radius = eased * maxRadius;
+        const thickness = wave.thickness * (1 - progress * 0.5);
+
+        // 페이드: 등장 → 유지 → 페이드아웃
+        let alpha;
+        if (progress < 0.1) {
+          alpha = progress / 0.1;
+        } else if (progress < 0.4) {
+          alpha = 1;
+        } else {
+          alpha = 1 - (progress - 0.4) / 0.6;
+        }
+        alpha *= 0.35;
+
+        const [r, g, b] = wave.color;
+
+        // 외곽 글로우 (넓은 반투명)
+        const glowGrad = ctx.createRadialGradient(
+          originX, originY, Math.max(0, radius - thickness * 2),
+          originX, originY, radius + thickness
+        );
+        glowGrad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0)`);
+        glowGrad.addColorStop(0.3, `rgba(${r}, ${g}, ${b}, ${alpha * 0.3})`);
+        glowGrad.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${alpha * 0.6})`);
+        glowGrad.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${alpha * 0.3})`);
+        glowGrad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+
+        ctx.beginPath();
+        ctx.arc(originX, originY, radius + thickness, 0, Math.PI * 2);
+        ctx.fillStyle = glowGrad;
+        ctx.fill();
+
+        // 선명한 중심 링
+        ctx.beginPath();
+        ctx.arc(originX, originY, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.8})`;
+        ctx.lineWidth = 2 * (1 - progress * 0.7);
+        ctx.stroke();
+
+        // 내부 빛 산란 효과 (screen-like glow)
+        if (progress < 0.6) {
+          const innerGrad = ctx.createRadialGradient(
+            originX, originY, 0,
+            originX, originY, radius * 0.5
+          );
+          const innerAlpha = alpha * 0.15 * (1 - progress / 0.6);
+          innerGrad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${innerAlpha})`);
+          innerGrad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+          ctx.beginPath();
+          ctx.arc(originX, originY, radius * 0.5, 0, Math.PI * 2);
+          ctx.fillStyle = innerGrad;
+          ctx.fill();
+        }
+      }
+
+      // 중앙 플래시 (초반에만)
+      const flashProgress = elapsed / 300;
+      if (flashProgress < 1) {
+        const flashAlpha = 0.4 * (1 - flashProgress);
+        const flashRadius = 30 + flashProgress * 60;
+        const flashGrad = ctx.createRadialGradient(
+          originX, originY, 0,
+          originX, originY, flashRadius
+        );
+        flashGrad.addColorStop(0, `rgba(255, 240, 200, ${flashAlpha})`);
+        flashGrad.addColorStop(0.5, `rgba(255, 208, 0, ${flashAlpha * 0.5})`);
+        flashGrad.addColorStop(1, 'rgba(255, 208, 0, 0)');
+        ctx.beginPath();
+        ctx.arc(originX, originY, flashRadius, 0, Math.PI * 2);
+        ctx.fillStyle = flashGrad;
+        ctx.fill();
+      }
+
+      _rippleAnimationId = requestAnimationFrame(animateRipple);
+    }
+
+    _rippleAnimationId = requestAnimationFrame(animateRipple);
   }
 
   /**
@@ -7231,19 +8417,31 @@ async function initApp() {
   }
 
   // Liveblocks 협업 이벤트 리스너
+  let _previousOthersCount = 0;
   liveblocksManager.addEventListener('collaboratorsChanged', (e) => {
     // 자기 자신 + 다른 사용자 모두 표시
+    const isSyncing = playbackSync.syncEnabled;
     const me = {
       name: userSettings.getUserName(),
       color: userSettings.getColorForName(userSettings.getUserName()) || '#4a9eff',
-      isMe: true
+      isMe: true,
+      syncActive: isSyncing
     };
     const others = e.detail.collaborators.map(c => ({
       name: c.userName,
       color: c.userColor,
-      isMe: false
+      isMe: false,
+      syncActive: isSyncing // 동기화 활성화 시 모든 참여자 동기화 상태
     }));
     updateCollaboratorsUI([me, ...others]);
+
+    // 다른 사용자가 새로 참여했을 때 리플 효과 (0→1 이상)
+    const currentOthersCount = others.length;
+    if (currentOthersCount > 0 && _previousOthersCount === 0) {
+      showToast('실시간 협업 세션에 참여했습니다', 'info');
+      _triggerCollabRipple();
+    }
+    _previousOthersCount = currentOthersCount;
 
     // 원격 커서 렌더링
     renderRemoteCursors(e.detail.collaborators);
@@ -7254,8 +8452,13 @@ async function initApp() {
 
   liveblocksManager.addEventListener('collaborationStarted', (e) => {
     log.info('협업 시작됨 (Liveblocks)', e.detail);
-    if (!e.detail.isNewRoom) {
-      showToast('실시간 협업 세션에 참여했습니다', 'info');
+    // 다른 협업자가 있을 때만 알림 표시 (단일 세션에서는 무시)
+    if (liveblocksManager.hasOtherCollaborators()) {
+      if (!e.detail.isNewRoom) {
+        showToast('실시간 협업 세션에 참여했습니다', 'info');
+      }
+      // AirDrop 스타일 리플 효과
+      _triggerCollabRipple();
     }
   });
 
@@ -7278,6 +8481,138 @@ async function initApp() {
       return;
     }
     showToast('실시간 동기화 중입니다', 'info');
+  });
+
+  // ====== 재생 동기화 UI 초기화 ======
+  const syncPanel = document.getElementById('playbackSyncPanel');
+  const chkPlaybackSync = document.getElementById('chkPlaybackSync');
+  const lblPlaybackSyncStatus = document.getElementById('lblPlaybackSyncStatus');
+  const btnPlaybackSyncClose = document.getElementById('btnPlaybackSyncClose');
+  const playbackSyncStatusInfo = document.getElementById('playbackSyncStatusInfo');
+  const syncModeRadios = document.querySelectorAll('input[name="syncLeaderMode"]');
+
+  function updateSyncPanelStatus() {
+    const dot = playbackSyncStatusInfo?.querySelector('.playback-sync-dot');
+    const statusText = playbackSyncStatusInfo?.querySelector('.playback-sync-status-text');
+    if (!dot || !statusText) return;
+
+    dot.classList.remove('active', 'leading');
+
+    if (!playbackSync.syncEnabled) {
+      statusText.textContent = '동기화 꺼짐';
+    } else if (playbackSync.leaderMode === 'lead') {
+      dot.classList.add('leading');
+      statusText.textContent = '내가 주도 중';
+    } else {
+      dot.classList.add('active');
+      statusText.textContent = '팔로잉 중';
+    }
+  }
+
+  // 협업 시작 시 동기화 패널 표시
+  liveblocksManager.addEventListener('collaborationStarted', () => {
+    if (syncPanel) syncPanel.style.display = '';
+  });
+
+  // 동기화 토글
+  chkPlaybackSync?.addEventListener('change', (e) => {
+    playbackSync.setSyncEnabled(e.target.checked);
+    lblPlaybackSyncStatus.textContent = e.target.checked ? '동기화 켜짐' : '동기화 꺼짐';
+    updateSyncPanelStatus();
+    // 플렉서스에서 동기화 상태 반영
+    _currentCollaborators.forEach(c => { c.syncActive = e.target.checked; });
+  });
+
+  // 리더 모드 변경
+  syncModeRadios.forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      playbackSync.setLeaderMode(e.target.value);
+      updateSyncPanelStatus();
+    });
+  });
+
+  // 패널 닫기
+  btnPlaybackSyncClose?.addEventListener('click', () => {
+    if (syncPanel) syncPanel.style.display = 'none';
+  });
+
+  // 플렉서스 패널에서 동기화 패널 열기
+  document.getElementById('btnOpenSyncFromPlexus')?.addEventListener('click', () => {
+    if (syncPanel) syncPanel.style.display = '';
+  });
+
+  // 패널 접기/펼치기
+  const btnPlaybackSyncCollapse = document.getElementById('btnPlaybackSyncCollapse');
+  btnPlaybackSyncCollapse?.addEventListener('click', () => {
+    syncPanel?.classList.toggle('collapsed');
+  });
+
+  // 패널 드래그 이동
+  const playbackSyncHeader = document.getElementById('playbackSyncHeader');
+  if (playbackSyncHeader && syncPanel) {
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let panelStartX = 0;
+    let panelStartY = 0;
+
+    playbackSyncHeader.addEventListener('mousedown', (e) => {
+      // 버튼 클릭은 드래그로 처리하지 않음
+      if (e.target.closest('button')) return;
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      const rect = syncPanel.getBoundingClientRect();
+      panelStartX = rect.left;
+      panelStartY = rect.top;
+      syncPanel.classList.add('dragging');
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      const newX = panelStartX + dx;
+      const newY = panelStartY + dy;
+      // position을 fixed left/top으로 전환
+      syncPanel.style.right = 'auto';
+      syncPanel.style.bottom = 'auto';
+      syncPanel.style.left = `${Math.max(0, Math.min(newX, window.innerWidth - syncPanel.offsetWidth))}px`;
+      syncPanel.style.top = `${Math.max(0, Math.min(newY, window.innerHeight - syncPanel.offsetHeight))}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+      syncPanel.classList.remove('dragging');
+    });
+  }
+
+  // 리모트 이벤트 수신 → 로컬 재생 제어
+  playbackSync.addEventListener('remotePlay', (e) => {
+    const { time } = e.detail;
+    videoPlayer.seek(time);
+    videoPlayer.play();
+  });
+
+  playbackSync.addEventListener('remotePause', (e) => {
+    const { time } = e.detail;
+    videoPlayer.pause();
+    videoPlayer.seek(time);
+  });
+
+  playbackSync.addEventListener('remoteSeek', (e) => {
+    const { time } = e.detail;
+    videoPlayer.seek(time);
+  });
+
+  // 리모트에서 리더 모드 변경 수신 → UI 반영
+  playbackSync.addEventListener('leaderModeChanged', (e) => {
+    const { mode } = e.detail;
+    syncModeRadios.forEach(radio => {
+      radio.checked = radio.value === mode;
+    });
   });
 
   // ====== 파일 변경 감지 (실시간 동기화) ======

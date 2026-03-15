@@ -32,7 +32,7 @@ debugLog(`__dirname: ${__dirname}`);
 // 앱 시작 시간 측정
 const appStartTime = Date.now();
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol } = require('electron');
 debugLog('electron 모듈 로드 완료');
 
 // ============================================

@@ -26,6 +26,16 @@ export const SUPPORTED_VERSIONS = ['1.0', '2.0'];
  */
 export const SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
 
+/**
+ * 지원하는 오디오 확장자
+ */
+export const SUPPORTED_AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'];
+
+/**
+ * 지원하는 미디어 확장자 (비디오 + 오디오)
+ */
+export const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];
+
 // ============================================================================
 // 스키마 정의 (TypeScript 스타일 JSDoc)
 // ============================================================================

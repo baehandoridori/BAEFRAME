@@ -28,6 +28,9 @@ export class VideoPlayer extends EventTarget {
     this.totalFrames = 0;
     this.filePath = null;
 
+    // 오디오 모드 플래그 (오디오 파일 재생 시 videoWidth 체크 건너뜀)
+    this.isAudioMode = false;
+
     // 구간 반복 설정
     this.loop = {
       enabled: false,
@@ -87,7 +90,8 @@ export class VideoPlayer extends EventTarget {
       });
 
       // 비디오 크기가 0이면 경고 (코덱 문제 가능성)
-      if (video.videoWidth === 0 || video.videoHeight === 0) {
+      // 오디오 모드에서는 videoWidth/Height가 항상 0이므로 건너뜀
+      if (!this.isAudioMode && (video.videoWidth === 0 || video.videoHeight === 0)) {
         log.warn('비디오 크기가 0입니다. 코덱 호환성 문제일 수 있습니다.');
         this._emit('codecunsupported', {
           message: '이 영상은 지원하지 않는 코덱입니다.\nH.264 코덱으로 변환해주세요.',

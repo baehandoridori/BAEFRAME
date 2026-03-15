@@ -43,6 +43,7 @@ class AuthManager extends EventTarget {
   async init() {
     log.info('AuthManager 초기화 시작');
     this._adminHash = await this._hashPassword(ADMIN_CREDENTIALS.password);
+    this._initialPasswordHash = await this._hashPassword('1234');
     await this._loadAuthData();
     this._ready = true;
     log.info('AuthManager 초기화 완료', {
@@ -259,13 +260,14 @@ class AuthManager extends EventTarget {
 
   /**
    * 등록된 사용자 목록 반환
-   * @returns {Array<{ name: string, theme: string|null, createdAt: string }>}
+   * @returns {Array<{ name: string, theme: string|null, createdAt: string, hasInitialPassword: boolean }>}
    */
   getRegisteredUsers() {
     return (this.authData?.users || []).map(u => ({
       name: u.name,
       theme: u.theme,
-      createdAt: u.createdAt
+      createdAt: u.createdAt,
+      hasInitialPassword: u.passwordHash === this._initialPasswordHash
     }));
   }
 
@@ -299,6 +301,17 @@ class AuthManager extends EventTarget {
    */
   isCurrentUserProtected() {
     return this.currentUser?.protected === true;
+  }
+
+  /**
+   * 현재 사용자가 초기 비밀번호(1234)를 사용 중인지
+   * @returns {boolean}
+   */
+  currentUserHasInitialPassword() {
+    if (!this.currentUser?.name || !this.currentUser.protected) return false;
+    const user = this._findUser(this.currentUser.name);
+    if (!user) return false;
+    return user.passwordHash === this._initialPasswordHash;
   }
 
   /**

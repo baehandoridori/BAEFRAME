@@ -17,7 +17,11 @@ const log = createLogger('IPC');
  */
 const ALLOWED_EXTENSIONS = ['.bframe', '.json', '.bak', '.bplaylist'];
 const VIDEO_FILE_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+const AUDIO_FILE_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
+const MEDIA_FILE_EXTENSIONS = [...VIDEO_FILE_EXTENSIONS, ...AUDIO_FILE_EXTENSIONS];
 const VIDEO_FILE_EXTENSION_SET = new Set(VIDEO_FILE_EXTENSIONS.map((ext) => '.' + ext));
+const AUDIO_FILE_EXTENSION_SET = new Set(AUDIO_FILE_EXTENSIONS.map((ext) => '.' + ext));
+const MEDIA_FILE_EXTENSION_SET = new Set(MEDIA_FILE_EXTENSIONS.map((ext) => '.' + ext));
 
 function escapePowerShellSingleQuote(value) {
   return String(value || '').replace(/'/g, "''");
@@ -213,9 +217,11 @@ function setupIpcHandlers() {
     const trace = log.trace('file:open-dialog');
     try {
       const result = await dialog.showOpenDialog(getMainWindow(), {
-        title: '영상 파일 열기',
+        title: '미디어 파일 열기',
         filters: [
+          { name: '미디어 파일', extensions: MEDIA_FILE_EXTENSIONS },
           { name: '비디오 파일', extensions: VIDEO_FILE_EXTENSIONS },
+          { name: '오디오 파일', extensions: AUDIO_FILE_EXTENSIONS },
           { name: '모든 파일', extensions: ['*'] }
         ],
         properties: ['openFile'],
@@ -316,6 +322,185 @@ function setupIpcHandlers() {
       return true;
     } catch {
       return false;
+    }
+  });
+
+  // 바이너리 파일 읽기 (오디오 웨이브폼용)
+  ipcMain.handle('file:read-binary', async (event, filePath) => {
+    try {
+      // 보안: 경로 검증 (미디어 파일만 허용)
+      if (!filePath || typeof filePath !== 'string') {
+        throw new Error('유효하지 않은 파일 경로');
+      }
+      const normalized = path.normalize(filePath);
+      if (normalized.includes('..')) {
+        throw new Error('경로 이탈 시도 감지');
+      }
+      const ext = path.extname(normalized).toLowerCase();
+      const MEDIA_EXTENSION_SET = new Set(MEDIA_FILE_EXTENSIONS.map((e) => '.' + e));
+      if (!MEDIA_EXTENSION_SET.has(ext)) {
+        throw new Error(`허용되지 않은 파일 형식: ${ext} (미디어 파일만 허용)`);
+      }
+
+      const buffer = await fs.promises.readFile(normalized);
+      // Buffer → Uint8Array 명시적 복사 (contextBridge 직렬화 안정성)
+      // Node.js Buffer는 ArrayBuffer의 뷰일 수 있어 직렬화 시 문제 발생 가능
+      const uint8 = new Uint8Array(buffer.length);
+      for (let i = 0; i < buffer.length; i++) {
+        uint8[i] = buffer[i];
+      }
+      log.info('바이너리 파일 읽기 성공', { filePath, bytes: uint8.length });
+      return uint8;
+    } catch (err) {
+      log.error('바이너리 파일 읽기 실패', { filePath, error: err.message });
+      throw err;
+    }
+  });
+
+  // ====== 오디오 웨이브폼 데이터 생성 (Main Process에서 WAV 직접 파싱) ======
+  // 대용량 오디오 파일을 IPC로 전송하면 크래시 → 여기서 직접 웨이브폼 데이터 생성 후 전송
+  ipcMain.handle('audio:generate-waveform', async (event, filePath, barCount = 800) => {
+    const trace = log.trace('audio:generate-waveform');
+    try {
+      log.info('웨이브폼 생성 시작', { filePath, barCount });
+
+      const stat = await fs.promises.stat(filePath);
+      log.info('파일 크기', { bytes: stat.size });
+
+      // WAV 헤더 읽기
+      const headerBuf = Buffer.alloc(44);
+      const fd = await fs.promises.open(filePath, 'r');
+      try {
+        await fd.read(headerBuf, 0, 44, 0);
+
+        // WAV 포맷 파싱
+        const riffTag = headerBuf.toString('ascii', 0, 4);
+        const waveTag = headerBuf.toString('ascii', 8, 12);
+        if (riffTag !== 'RIFF' || waveTag !== 'WAVE') {
+          throw new Error(`지원하지 않는 오디오 형식: ${riffTag}/${waveTag}`);
+        }
+
+        const audioFormat = headerBuf.readUInt16LE(20); // 1 = PCM, 3 = IEEE Float
+        const numChannels = headerBuf.readUInt16LE(22);
+        const sampleRate = headerBuf.readUInt32LE(24);
+        const bitsPerSample = headerBuf.readUInt16LE(34);
+        const bytesPerSample = bitsPerSample / 8;
+
+        log.info('WAV 포맷', { audioFormat, numChannels, sampleRate, bitsPerSample });
+
+        if (audioFormat !== 1 && audioFormat !== 3) {
+          throw new Error(`미지원 오디오 포맷 (format: ${audioFormat}, PCM/IEEE Float만 지원)`);
+        }
+        const isFloat = audioFormat === 3;
+
+        // data 청크 찾기 (일부 WAV는 44바이트 이후가 아닐 수 있음)
+        let dataOffset = 12; // RIFF 헤더 이후
+        let dataSize = 0;
+        const searchBuf = Buffer.alloc(8);
+
+        while (dataOffset < stat.size - 8) {
+          await fd.read(searchBuf, 0, 8, dataOffset);
+          const chunkId = searchBuf.toString('ascii', 0, 4);
+          const chunkSize = searchBuf.readUInt32LE(4);
+
+          if (chunkId === 'data') {
+            dataOffset += 8; // data 청크 헤더 건너뛰기
+            dataSize = chunkSize;
+            break;
+          }
+          // RIFF 청크는 word-aligned: 홀수 크기 청크 뒤에 1바이트 패딩
+          dataOffset += 8 + chunkSize + (chunkSize % 2);
+        }
+
+        if (dataSize === 0) {
+          throw new Error('WAV data 청크를 찾을 수 없음');
+        }
+
+        log.info('data 청크 발견', { dataOffset, dataSize });
+
+        const totalSamples = dataSize / (bytesPerSample * numChannels);
+        const duration = totalSamples / sampleRate;
+        const samplesPerBar = Math.floor(totalSamples / barCount);
+        const bytesPerBar = samplesPerBar * bytesPerSample * numChannels;
+
+        log.info('웨이브폼 계산 파라미터', { totalSamples, duration, samplesPerBar });
+
+        // 바 단위로 RMS + 피크 계산 (청크 읽기)
+        const waveformData = new Float32Array(barCount);
+        const readBuf = Buffer.alloc(Math.min(bytesPerBar, 4 * 1024 * 1024)); // 최대 4MB씩
+
+        for (let i = 0; i < barCount; i++) {
+          const barStartByte = dataOffset + i * bytesPerBar;
+          const bytesToRead = Math.min(bytesPerBar, readBuf.length);
+          const { bytesRead } = await fd.read(readBuf, 0, bytesToRead, barStartByte);
+
+          if (bytesRead === 0) break;
+
+          let sumSquares = 0;
+          let peak = 0;
+          const sampleCount = Math.floor(bytesRead / (bytesPerSample * numChannels));
+
+          for (let j = 0; j < sampleCount; j++) {
+            const offset = j * bytesPerSample * numChannels;
+            let sample;
+
+            // 첫 번째 채널만 사용
+            if (isFloat && bitsPerSample === 32) {
+              sample = readBuf.readFloatLE(offset);
+            } else if (isFloat && bitsPerSample === 64) {
+              sample = readBuf.readDoubleLE(offset);
+            } else if (bitsPerSample === 16) {
+              sample = readBuf.readInt16LE(offset) / 32768;
+            } else if (bitsPerSample === 24) {
+              const val = readBuf[offset] | (readBuf[offset + 1] << 8) | (readBuf[offset + 2] << 16);
+              sample = ((val & 0x800000) ? val - 0x1000000 : val) / 8388608;
+            } else if (bitsPerSample === 32) {
+              sample = readBuf.readInt32LE(offset) / 2147483648;
+            } else if (bitsPerSample === 8) {
+              sample = (readBuf[offset] - 128) / 128;
+            } else {
+              sample = 0;
+            }
+
+            const abs = Math.abs(sample);
+            sumSquares += abs * abs;
+            if (abs > peak) peak = abs;
+          }
+
+          const rms = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
+          waveformData[i] = rms * 0.7 + peak * 0.3;
+        }
+
+        // 정규화
+        let maxVal = 0;
+        for (let i = 0; i < waveformData.length; i++) {
+          if (waveformData[i] > maxVal) maxVal = waveformData[i];
+        }
+        if (maxVal > 0) {
+          for (let i = 0; i < waveformData.length; i++) {
+            waveformData[i] /= maxVal;
+          }
+        }
+
+        log.info('웨이브폼 생성 완료', { barCount, duration, maxVal });
+        trace.end();
+
+        // Float32Array → 일반 배열로 변환 (IPC 직렬화 안정성)
+        return {
+          success: true,
+          duration,
+          sampleRate,
+          channels: numChannels,
+          bitsPerSample,
+          waveformData: Array.from(waveformData)
+        };
+      } finally {
+        await fd.close();
+      }
+    } catch (err) {
+      log.error('웨이브폼 생성 실패', { filePath, error: err.message, stack: err.stack });
+      trace.end();
+      return { success: false, error: err.message };
     }
   });
 
@@ -442,7 +627,7 @@ function setupIpcHandlers() {
 
       for (const file of files) {
         const ext = path.extname(file).toLowerCase();
-        if (!VIDEO_FILE_EXTENSION_SET.has(ext)) continue;
+        if (!MEDIA_FILE_EXTENSION_SET.has(ext)) continue;
 
         const fileBaseName = extractBaseName(file);
         if (fileBaseName !== currentBaseName) continue;
