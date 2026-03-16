@@ -155,7 +155,6 @@ BAEFRAME/
 ├── integration/             # Windows 우클릭 통합 스크립트
 ├── docs/                    # 아키텍처, 기획 문서
 ├── DEVLOG/                  # 기능별 개발 계획 문서
-├── wiki/                    # 프로젝트 위키
 └── electron-builder.yml     # 빌드 설정
 ```
 

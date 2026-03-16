@@ -298,14 +298,17 @@ graph LR
     style C1 fill:#a78bfa,stroke:#333,color:#000
 ```
 
-### 문서 정비 (진행 중)
+### 문서 정비 (완료)
 
 - 시스템 아키텍처 문서 (`docs/architecture.md`) — 완료
 - .bframe 파일 포맷 명세 (`docs/bframe-schema.md`) — 완료
 - renderer 모듈 가이드 (`docs/modules.md`) — 완료
-- 개발 로드맵 (`docs/roadmap.md`) — 현재 작성 중
-- 위키 페이지 추가 — 예정
-- 발표용 슬라이드/PPT — 예정
+- 개발 로드맵 (`docs/roadmap.md`) — 완료
+- 웹 뷰어 문서 (`docs/web-viewer.md`) — 완료
+- 실시간 협업 문서 (`docs/collaboration.md`) — 완료
+- Windows 통합 가이드 (`docs/integration.md`) — 완료
+- GitHub 위키 업데이트 — 완료
+- 구식 루트 문서(TODO.md, baeframe-dev-docs.md, BAEFRAME-WEB-VIEWER.md) 삭제 — 완료
 
 ---
 
