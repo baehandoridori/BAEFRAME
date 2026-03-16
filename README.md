@@ -8,267 +8,203 @@
 
 *프레임 단위로 정확하게. 그림으로 직관적으로. 링크 하나로 간편하게.*
 
-[![Version](https://img.shields.io/badge/Version-1.1.0--beta-blue?style=flat-square)](https://github.com/baehandoridori/BAEFRAME)
-[![Electron](https://img.shields.io/badge/Electron-28.0-47848F?style=flat-square&logo=electron&logoColor=white)](https://www.electronjs.org/)
-[![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square&logo=windows&logoColor=white)](https://github.com/baehandoridori/BAEFRAME)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](https://github.com/baehandoridori/BAEFRAME)
-[![Commits](https://img.shields.io/badge/Commits-680+-brightgreen?style=flat-square)](https://github.com/baehandoridori/BAEFRAME/commits)
-[![PRs](https://img.shields.io/badge/PRs-102+-blueviolet?style=flat-square)](https://github.com/baehandoridori/BAEFRAME/pulls?q=is%3Amerged)
+[![Version](https://img.shields.io/badge/version-1.1.0--beta-0366d6?style=for-the-badge)](https://github.com/baehandoridori/BAEFRAME)
+[![Electron](https://img.shields.io/badge/Electron-28-47848F?style=for-the-badge&logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![Platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/baehandoridori/BAEFRAME)
+[![License](https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge)](LICENSE)
 
-[**웹 뷰어**](https://baeframe.vercel.app) · [**개발 문서**](docs/) · [**Wiki**](https://github.com/baehandoridori/BAEFRAME/wiki) · [**Issues**](https://github.com/baehandoridori/BAEFRAME/issues)
+[![Commits](https://img.shields.io/badge/Commits-680+-4c1?style=flat-square)](https://github.com/baehandoridori/BAEFRAME/commits)
+[![PRs](https://img.shields.io/badge/PRs-102+-7c3aed?style=flat-square)](https://github.com/baehandoridori/BAEFRAME/pulls?q=is%3Amerged)
+[![Modules](https://img.shields.io/badge/Modules-21-e67e22?style=flat-square)](docs/modules.md)
+[![Docs](https://img.shields.io/badge/Docs-7%20pages-0ea5e9?style=flat-square)](docs/)
+
+[**Web Viewer**](https://baeframe.vercel.app) &nbsp;&middot;&nbsp; [**Documentation**](docs/) &nbsp;&middot;&nbsp; [**Wiki**](https://github.com/baehandoridori/BAEFRAME/wiki) &nbsp;&middot;&nbsp; [**Issues**](https://github.com/baehandoridori/BAEFRAME/issues)
 
 </div>
 
 ---
 
 <div align="center">
-<img src="mockups/screenshots/01-main-overview.png" alt="BAEFRAME 메인 화면" width="900" />
+<img src="mockups/screenshots/01-main-overview.png" alt="BAEFRAME Main Interface" width="900" />
+<br/><br/>
 
-*메인 인터페이스: 비디오 뷰어 + 타임라인 + 댓글 패널*
+> **BF** = **B**ae**F**rame = **B**est **F**riend — 작업자들의 베스트 프렌드
 </div>
 
 ---
 
-## 🎬 이게 뭔데?
+## 왜 BAEFRAME인가
 
-**BAEFRAME**은 [스튜디오 장삐쭈](https://www.youtube.com/@Jangbbijju) 팀 내부에서 사용하는 영상 리뷰 도구입니다.
+### 우리 팀에 최적화된 인하우스 워크플로우 도구
 
-> **BF** = **B**ae**F**rame = **B**est **F**riend
-> 작업자들의 베스트 프렌드가 되고 싶은 마음으로 만들었습니다.
-
-[Monday.com](https://monday.com)의 버전 관리 + [SyncSketch](https://syncsketch.com)의 프레임 스케치 + [Frame.io](https://frame.io)의 리뷰 시스템을 합쳐서,
-**"씨바 까짓거 그냥 내가 만들고만다"** 라는 마음으로 3주 만에 뚝딱 만들었습니다.
-
----
-
-## 🤯 왜 만들었냐면
+BAEFRAME은 [스튜디오 장삐쭈](https://www.youtube.com/@Jangbbijju)에서 실제 제작 파이프라인에 맞춰 자체 개발한 영상 리뷰 도구입니다. 범용 SaaS 제품이 아닌, **팀의 실제 워크플로우를 관찰하고 그 고통을 직접 해결한 도구**입니다.
 
 <table>
 <tr>
-<td width="50%" valign="top">
+<th width="50%">기존 워크플로우의 문제</th>
+<th width="50%">BAEFRAME의 해결</th>
+</tr>
+<tr>
+<td>
 
-### 😵 기존의 고통
-
-```mermaid
-flowchart TD
-    A[🎬 영상 업로드] --> B[💬 스레드에 타임코드 적기]
-    B --> C[📸 스크린샷 찍기]
-    C --> D[🎨 그림판에서 표시]
-    D --> E[📋 다시 붙여넣기]
-    E --> F{이해됨?}
-    F -->|❌| G[🚶 자리에서 일어남]
-    G --> H[🗣️ 직접 가서 설명]
-    H --> F
-    F -->|✅| I[다음 피드백...]
-    I --> B
-
-    style A fill:#ff6b6b,color:#fff
-    style G fill:#ff6b6b,color:#fff
-    style H fill:#ff6b6b,color:#fff
-```
-
-**슬랙 스레드 지옥** 🔥
-- 영상1_v1 스레드 → 피드백 50개 (섞여있음)
-- 영상1_v2 스레드 → 피드백 30개 (또 섞여있음)
-- 어제 올린 영상 스레드 → 어딨더라...?
+- 슬랙 스레드에 타임코드를 텍스트로 기록
+- 스크린샷 → 그림판에서 표시 → 다시 붙여넣기
+- 피드백 위치가 불명확해 자리까지 가서 직접 설명
+- 버전별 스레드가 뒤섞여 피드백 추적 불가
+- 재택 환경에서 피드백 전달이 특히 비효율적
 
 </td>
-<td width="50%" valign="top">
+<td>
 
-### ✨ 이제는
-
-```mermaid
-flowchart TD
-    A[🎬 영상 열기] --> B[💬 프레임에서 바로 댓글 + 그림]
-    B --> C[🔗 링크 복사]
-    C --> D[📤 슬랙에 붙여넣기]
-    D --> E[✅ 끝!]
-
-    style A fill:#51cf66,color:#fff
-    style B fill:#51cf66,color:#fff
-    style C fill:#51cf66,color:#fff
-    style D fill:#51cf66,color:#fff
-    style E fill:#51cf66,color:#fff
-```
-
-**단일 `.bframe` 파일** 📄
-- ✅ 댓글 + 답글
-- ✅ 그리기 레이어
-- ✅ 하이라이트 구간
-- ✅ Google Drive 자동 동기화
+- **프레임에서 바로** 댓글 + 그리기 → 링크 공유
+- 영상 위에 직접 스케치하며 피드백
+- Slack 링크 클릭 한 번으로 정확한 프레임 이동
+- `.bframe` 파일 하나에 모든 리뷰 데이터 통합
+- 실시간 협업으로 원격에서도 동시 리뷰
 
 </td>
 </tr>
 </table>
 
-<div align="center">
+### 왜 SaaS가 아닌 자체 개발인가
 
-### ⏱️ 리뷰 왕복 시간
+| 비교 항목 | Frame.io / SyncSketch | BAEFRAME |
+|-----------|:---------------------:|:--------:|
+| **비용** | 월 $15~49 × 인원수 | 무료 (자체 개발) |
+| **커스터마이징** | 불가 | 팀 요청 즉시 반영 |
+| **대용량 파일** | 업로드 필수 (수 분~수십 분) | 로컬에서 즉시 재생 |
+| **오프라인** | 사용 불가 | 완전 지원 |
+| **Slack 연동** | 제한적 웹훅 | 딥링크 원클릭 실행 |
+| **워크플로우 적합도** | 범용 (타협 필요) | **우리 팀에 100% 맞춤** |
 
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'pie1': '#ff6b6b', 'pie2': '#51cf66'}}}%%
-pie showData
-    "기존 (수 시간)" : 180
-    "BAEFRAME (수 분)" : 10
+> Frame.io의 리뷰 시스템 + SyncSketch의 프레임 스케치 + Monday.com의 버전 관리를 하나의 도구에 통합했습니다.
+
+### 인하우스 도구의 대체 불가능한 가치
+
+```
+팀의 피드백  →  즉시 기능 반영  →  워크플로우 개선  →  더 나은 피드백  →  ...
 ```
 
-| | 기존 방식 | BAEFRAME |
-|:--:|:--:|:--:|
-| **시간** | 😵 수 시간 | ✨ 수 분 |
-| **앱 전환** | 슬랙 ↔ 그림판 ↔ 캡처도구 | 하나로 끝 |
-| **자리 이탈** | 설명하러 직접 이동 | 링크 하나로 공유 |
-| **피드백 찾기** | 스레드 뒤지기 | 타임라인에서 한눈에 |
-
-</div>
+외부 SaaS에서는 불가능한, **팀 고유 워크플로우에 맞춘 지속적 최적화**가 가능합니다.
+실제로 PR #97(첫 공식 사용 이슈)에서 보고된 13건의 현장 피드백이 당일 핫픽스로 반영되었습니다.
 
 ---
 
-## ✨ 주요 기능
+## 프로젝트 스케일
 
-<!-- 기능 한눈에 보기 -->
 <div align="center">
 
-| 🎬 재생 | 💬 댓글 | ✏️ 그리기 | 🎨 하이라이트 |
-|:--:|:--:|:--:|:--:|
-| 프레임 단위 탐색 | 마커로 피드백 | 영상 위에 직접 그리기 | 구간 색상 표시 |
-| 구간 반복 (I/O/L) | 이미지 첨부 | 어니언 스킨 | 드래그로 조정 |
-| mpv 기반 정밀 제어 | 스레드 답글 | 다중 레이어 | Shift로 스냅 |
-
-| 📊 타임라인 | 🔀 스플릿 뷰 | 📁 버전 관리 | 🔗 공유 |
-|:--:|:--:|:--:|:--:|
-| 줌/스크롤 | 두 영상 비교 | 자동 버전 감지 | 링크 복사 → 슬랙 |
-| 마커/키프레임 표시 | 동기화 재생 | 드롭다운 전환 | 웹 뷰어 지원 |
-| 플레이헤드 드래그 | 오버레이 비교 (와이프) | _v1, _v2, _re... | baeframe:// 프로토콜 |
-
-| 🎵 재생목록 | 🔄 실시간 협업 | 🎞️ 코덱 변환 | 🪟 Windows 통합 |
-|:--:|:--:|:--:|:--:|
-| 폴더/파일 관리 | Liveblocks 기반 | ffmpeg 자동 변환 | 우클릭 메뉴 통합 |
-| 드래그 정렬 | 댓글/그리기 동기화 | 트랜스코딩 캐시 | MSIX 패키징 |
-| 연속 재생 | 커서 위치 공유 | MOV/MPEG-4 지원 | 1차 메뉴 (sparse) |
+| 항목 | 수치 |
+|:----:|:----:|
+| **버전** | v1.1.0-beta |
+| **개발 기간** | 2024.12 ~ 현재 |
+| **총 커밋** | 680+ |
+| **총 PR** | 102+ (merged) |
+| **코드 모듈** | 21개 renderer 모듈 |
+| **개발 문서** | 7개 (2,500+ lines) |
+| **실사용** | 스튜디오 장삐쭈 15~20명 |
 
 </div>
 
+> 애니메이터가 AutoHotkey 자동화 스크립트를 만들다 시작한 프로젝트가,
+> 풀스택 데스크탑 앱 + 웹 뷰어 + 실시간 협업 시스템으로 성장했습니다.
+
 ---
 
-<details>
-<summary><b>🎬 재생 & 탐색</b> - 프레임 단위 정밀 제어</summary>
+## 주요 기능
 
-mpv 플레이어 기반으로 **정확한 프레임 단위** 탐색이 가능합니다.
+### 핵심 기능 한눈에
 
-| 키 | 동작 |
-|:--:|------|
-| `Space` | 재생/일시정지 |
-| `←` `→` | 1프레임 이동 |
-| `Shift+←` `→` | 10프레임 이동 |
-| `Home` / `End` | 처음/끝으로 |
-| `I` | 시작점(In) 설정 |
-| `O` | 종료점(Out) 설정 |
-| `L` | 구간 반복 토글 |
-
-</details>
-
-<details>
-<summary><b>💬 댓글 & 마커</b> - 프레임에 피드백 남기기</summary>
-
-영상 위 원하는 위치에 **댓글 마커**를 찍어 피드백을 남깁니다.
+<div align="center">
 
 | 기능 | 설명 |
-|------|------|
-| **마커 찍기** | `C` 키 → 영상 클릭 → 댓글 입력 |
-| **이미지 첨부** | 댓글에 스크린샷/이미지 붙여넣기 (Ctrl+V) |
-| **마커 이동** | 드래그해서 위치 변경 |
-| **구간 조정** | 마커 양 끝을 드래그 (시작/끝 프레임) |
-| **스냅** | `Shift` + 드래그 → 재생바/시작점/끝점/하이라이트에 스냅 |
-| **답글 달기** | 마커 더블클릭 → 스레드 팝업 |
-| **완료 표시** | 체크 버튼 → 초록색 + 취소선 |
-| **네비게이션** | `Shift+←/→` 이전/다음 댓글로 이동 |
+|:-----|:-----|
+| **프레임 단위 리뷰** | mpv 기반 정밀 재생. 1프레임 단위 탐색, 구간 반복(I/O/L) |
+| **댓글 마커** | 프레임 위 원하는 위치에 마커 배치. 이미지 첨부, 스레드 답글, 해결 표시 |
+| **화면 위 스케치** | Canvas API 기반 드로잉. 펜, 화살표, 사각형, 원. 다중 레이어 + 어니언 스킨 |
+| **실시간 협업** | Liveblocks Broadcast 기반. 댓글/그리기 즉시 동기화, 커서 공유, 편집 잠금 |
+| **버전 비교** | 스플릿 뷰(Side-by-side, Overlay, Wipe). 동기화 재생으로 프레임 단위 비교 |
+| **자동 버전 감지** | 폴더 내 `_v1`, `_v2`, `_re`, `_final` 자동 인식. 드롭다운으로 즉시 전환 |
+| **코덱 자동 변환** | FFmpeg 기반 트랜스코딩. MPEG-4/PNG MOV → H.264 자동 변환 + 캐시(10GB) |
+| **링크 공유** | `baeframe://` 프로토콜. Slack에서 클릭 한 번으로 앱 실행 + 파일 로드 |
+| **웹 뷰어** | 앱 설치 없이 브라우저에서 리뷰. 모바일 지원. Google Drive API 연동 |
+| **Windows 통합** | 영상 파일 우클릭 → "BAEFRAME로 열기". MSIX 기반 1차 메뉴 등록 |
+| **재생목록** | 여러 영상을 묶어 관리. 최대 50개, 드래그 정렬, 연속 재생 |
+| **하이라이트** | 타임라인 구간을 색상으로 마킹. "여기 수정", "여기 확인" 시각적 표현 |
 
-<div align="center">
-<img src="mockups/screenshots/02-comment-resolved.png" alt="댓글 해결 상태" width="700" />
-
-*미해결(주황) vs 해결됨(초록) 상태 비교*
 </div>
-
-</details>
-
-<details>
-<summary><b>✏️ 그리기 도구</b> - 영상 위에 직접 스케치</summary>
-
-프레임 위에 직접 그려서 피드백합니다. **"여기 이렇게 해주세요"**를 그림으로!
-
-**도구**: 🖊️ 펜 · ➡️ 화살표 · 🧹 지우개
-
-**설정**: 색상 6가지 · 굵기 1~50px · 불투명도 0~100%
-
-| 기능 | 단축키 |
-|------|:------:|
-| 그리기 모드 | `D` |
-| 어니언 스킨 | `1` |
-| 키프레임 추가 | `F7` (빈) / `F6` (복사) |
-| 키프레임 삭제 | `Shift+3` |
-| 키프레임 이동 | `A` / `D` |
-| 실행취소/다시 | `Ctrl+Z` / `Ctrl+Y` |
-
-**어니언 스킨**: 이전 2프레임 + 다음 1프레임 반투명 표시
-
-</details>
-
-<details>
-<summary><b>🎨 하이라이트</b> - 구간 색상 표시</summary>
-
-특정 구간을 색상으로 표시합니다. "여기 중요!", "여기 수정 필요"
-
-| 키 | 동작 |
-|:--:|------|
-| `H` | 현재 위치에 하이라이트 추가 |
-| `Alt+←` | 이전 하이라이트로 이동 |
-| `Alt+→` | 다음 하이라이트로 이동 |
-
-- 6가지 색상 (빨강/노랑/초록/파랑/회색/흰색)
-- 드래그로 구간 조정
-- `Shift` + 드래그로 스냅
-
-<div align="center">
-<img src="mockups/screenshots/03-highlight.png" alt="하이라이트 기능" width="700" />
-
-*타임라인에서 색상별 구간 표시 + 드래그로 조정*
-</div>
-
-</details>
-
-<details>
-<summary><b>📊 타임라인 & 기타</b></summary>
-
-**타임라인**
-| 기능 | 조작 |
-|------|------|
-| 줌 | `Ctrl+휠` 또는 슬라이더 |
-| 가로 스크롤 | `Shift+휠` |
-| 전체 보기 | `\` 키 |
-
-**스플릿 뷰**: 두 영상 나란히 비교, 동기화 재생, 오버레이 비교 (와이프/불투명도)
-
-**버전 관리**: 같은 폴더의 `_v1`, `_v2`, `_re` 등 자동 감지 → 드롭다운 전환
-
-**재생목록**: 폴더/파일 관리, 드래그 정렬, 연속 재생
-
-**실시간 협업**: Liveblocks 기반 댓글/그리기 실시간 동기화 ([상세](docs/collaboration.md))
-
-**코덱 자동 변환**: ffmpeg 기반 MOV/MPEG-4 자동 트랜스코딩 + 캐시
-
-**사용자 테마**: 이름별 테마 색상 + 고유 아바타
-| 사용자 | 테마 |
-|--------|------|
-| 윤성원 | 💙 파란색 |
-| 허혜원/모몽가 | 💗 핑크 |
-| 한솔 | ❤️ 빨간색 |
-| 기본 | 💛 노란색 |
-
-</details>
 
 ---
 
-## 🛠️ 설치
+### 서버리스 아키텍처 — Google Drive가 곧 서버
+
+별도의 백엔드 서버, 데이터베이스, 인프라 비용이 없습니다.
+
+```
+팀원 A ──┐                    ┌── .bframe (리뷰 데이터)
+팀원 B ──┼── Google Drive ────┤
+팀원 C ──┘                    └── .mp4 (영상 파일)
+```
+
+- `.bframe` 파일이 Google Drive에 있으면 팀원 간 자동 동기화
+- 서버 비용 **$0** — Google Workspace 요금만으로 충분
+- 오프라인에서도 로컬 파일로 작업 가능
+
+### 커스텀 프로토콜 — Slack에서 원클릭 실행
+
+```
+Slack 메시지:  "EP01_shot_015_v2 피드백 요청"
+              baeframe://G:/프로젝트/EP01/shot_015_v2.mp4
+                   ↓ 클릭
+              앱 자동 실행 → 해당 영상 + 리뷰 데이터 로드
+```
+
+Windows 레지스트리에 자동 등록되어 추가 설정 없이 동작합니다.
+
+### 자동 저장 — 모든 변경 즉시 반영
+
+댓글 작성, 그리기 완료, 마커 이동, 하이라이트 추가 — 모든 변경사항이 500ms debounce로 자동 저장됩니다. 저장 버튼을 누를 필요가 없습니다.
+
+---
+
+## 스크린샷
+
+<div align="center">
+
+<img src="mockups/screenshots/02-comment-resolved.png" alt="Comment System" width="700" />
+
+*댓글 마커 시스템 — 미해결(주황) vs 해결됨(초록) 상태가 타임라인에 시각적으로 표시됩니다*
+
+<br/>
+
+<img src="mockups/screenshots/03-highlight.png" alt="Highlight System" width="700" />
+
+*하이라이트 — 타임라인 구간을 색상별로 표시하고 드래그로 범위 조정*
+
+</div>
+
+---
+
+## 기술 스택
+
+<div align="center">
+
+| 분류 | 기술 | 역할 |
+|:----:|:----:|:-----|
+| **프레임워크** | Electron 28 | 데스크탑 앱 |
+| **비디오 엔진** | mpv | 고정밀 프레임 재생 |
+| **드로잉** | Canvas API | 벡터 그래픽 오버레이 |
+| **실시간 협업** | Liveblocks 2.0 | Broadcast 기반 동기화 |
+| **코덱 변환** | FFmpeg | 자동 트랜스코딩 |
+| **캐시 DB** | sql.js (SQLite WASM) | 썸네일 캐시 |
+| **번들러** | esbuild | Liveblocks 클라이언트 번들링 |
+| **웹 뷰어** | HTML5 + Google Drive API | 서버리스 웹 리뷰어 |
+
+</div>
+
+---
+
+## 시작하기
 
 ### 요구사항
 
@@ -276,17 +212,12 @@ mpv 플레이어 기반으로 **정확한 프레임 단위** 탐색이 가능합
 - Node.js 18+
 - Git
 
-### 설치 방법
+### 설치 및 실행
 
 ```bash
-# 1. 저장소 클론
 git clone https://github.com/baehandoridori/BAEFRAME.git
 cd BAEFRAME
-
-# 2. 의존성 설치
 npm install
-
-# 3. 실행
 npm start
 ```
 
@@ -314,64 +245,38 @@ npm run build:installer  # Windows 설치 파일 생성
 
 ---
 
-## ⌨️ 단축키 총정리
+## 단축키
 
 <details>
-<summary><b>📹 재생 제어</b></summary>
+<summary><b>재생 제어</b></summary>
 
 | 키 | 기능 |
 |:--:|------|
 | `Space` | 재생/일시정지 |
 | `←` `→` | 1프레임 이동 |
 | `Shift+←` `→` | 10프레임 이동 |
-| `Home` | 처음으로 |
-| `End` | 끝으로 |
-| `I` | 시작점 설정 |
-| `O` | 종료점 설정 |
-| `L` | 구간 반복 토글 |
+| `Home` / `End` | 처음/끝으로 |
+| `I` / `O` / `L` | 시작점/종료점/구간 반복 |
 
 </details>
 
 <details>
-<summary><b>💬 댓글 & 마커</b></summary>
+<summary><b>댓글 & 그리기</b></summary>
 
 | 키 | 기능 |
 |:--:|------|
 | `C` | 댓글 모드 토글 |
-| `Shift+←` | 이전 댓글로 이동 |
-| `Shift+→` | 다음 댓글로 이동 |
-
-</details>
-
-<details>
-<summary><b>✏️ 그리기</b></summary>
-
-| 키 | 기능 |
-|:--:|------|
 | `D` | 그리기 모드 토글 |
 | `1` | 어니언 스킨 토글 |
-| `F6` | 키프레임 추가 (복사) |
-| `F7` | 빈 키프레임 추가 |
+| `F6` / `F7` | 키프레임 추가 (복사/빈) |
 | `Shift+3` | 키프레임 삭제 |
-| `A` / `D` | 이전/다음 키프레임 |
-| `Ctrl+Z` | 실행 취소 |
-| `Ctrl+Y` | 다시 실행 |
-
-</details>
-
-<details>
-<summary><b>🎨 하이라이트</b></summary>
-
-| 키 | 기능 |
-|:--:|------|
+| `Ctrl+Z` / `Ctrl+Y` | 실행 취소 / 다시 실행 |
 | `H` | 하이라이트 추가 |
-| `Alt+←` | 이전 하이라이트 |
-| `Alt+→` | 다음 하이라이트 |
 
 </details>
 
 <details>
-<summary><b>📊 타임라인 & 뷰</b></summary>
+<summary><b>뷰 & 파일</b></summary>
 
 | 키 | 기능 |
 |:--:|------|
@@ -379,83 +284,27 @@ npm run build:installer  # Windows 설치 파일 생성
 | `Shift+휠` | 가로 스크롤 |
 | `\` | 전체 보기 |
 | `F` | 전체화면 |
+| `Ctrl+O` | 파일 열기 |
+| `Ctrl+S` | 저장 |
+| `Ctrl+Shift+C` | 링크 복사 |
 | `Shift+?` | 단축키 도움말 |
 
 </details>
 
-<details>
-<summary><b>💾 파일</b></summary>
-
-| 키 | 기능 |
-|:--:|------|
-| `Ctrl+O` | 파일 열기 |
-| `Ctrl+S` | 저장 |
-| `Ctrl+Shift+C` | 링크 복사 |
-
-</details>
-
 ---
 
-## 🧠 초천재 미스터배의 개쩌는 잔머리들
+## .bframe 파일 포맷
 
-### 💡 Google Drive = 서버
+모든 리뷰 데이터는 영상 옆에 `.bframe` JSON 파일로 저장됩니다.
 
-서버 구축? 그런 거 없음. **Google Drive가 서버**입니다.
-
-```mermaid
-flowchart LR
-    A[👨‍💻 팀원 A] --> D[(📁 Google Drive)]
-    B[👩‍💻 팀원 B] --> D
-    C[👨‍🎨 팀원 C] --> D
-    D --> E[shot_001.bframe]
-
-    style D fill:#4285f4,color:#fff
-    style E fill:#34a853,color:#fff
-```
-
-- `.bframe` 파일이 Google Drive 폴더에 있으면 **자동 동기화**
-- 별도 로그인/서버 비용 **제로**
-- 오프라인에서도 로컬 파일로 작업 가능
-
-### 🔗 baeframe:// 프로토콜
-
-슬랙에서 **링크 클릭 한 번**이면 앱이 열립니다.
-
-```mermaid
-flowchart LR
-    A[🔗 슬랙 링크 클릭] --> B[baeframe://경로/파일.mp4]
-    B --> C[🚀 앱 자동 실행]
-    C --> D[📂 파일 자동 로드]
-
-    style A fill:#4a154b,color:#fff
-    style D fill:#51cf66,color:#fff
-```
-
-Windows 레지스트리에 자동 등록 → 설정 필요 없음
-
-### 💾 자동 저장
-
-저장 버튼? 그런 거 안 눌러도 됩니다.
-
-- 댓글 작성 → **자동 저장**
-- 그리기 완료 → **자동 저장**
-- 마커 이동 → **자동 저장**
-- 하이라이트 추가 → **자동 저장**
-
----
-
-## 🗂️ .bframe 파일
-
-모든 리뷰 데이터(댓글, 그리기, 하이라이트)는 영상 옆에 `.bframe` JSON 파일로 저장됩니다.
-
-```javascript
+```json
 {
-  bframeVersion: "2.0",
-  videoFile: "shot_001.mp4",
-  fps: 24,
-  comments: { layers: [{ markers: [...] }] },   // 댓글 + 답글
-  drawings: { layers: [{ keyframes: [...] }] },  // 그리기 레이어
-  highlights: [{ startFrame, endFrame, color }]  // 구간 색상 표시
+  "bframeVersion": "2.0",
+  "videoFile": "shot_001.mp4",
+  "fps": 24,
+  "comments": { "layers": [{ "markers": ["..."] }] },
+  "drawings": { "layers": [{ "keyframes": ["..."] }] },
+  "highlights": [{ "startFrame": 48, "endFrame": 120, "color": "#ffa502" }]
 }
 ```
 
@@ -463,48 +312,20 @@ Windows 레지스트리에 자동 등록 → 설정 필요 없음
 
 ---
 
-## 🚀 향후 계획
+## 향후 계획
 
-- [ ] 📹 **영상 렌더링** - 댓글/그리기 포함된 영상 내보내기 (해상도/토글 옵션)
-- [ ] ⚡ **성능 최적화** - 대용량 영상/많은 댓글 처리, Timeline.destroy() 리스너 정리
-- [ ] 🌐 **웹 뷰어 고도화** - 간단한 그리기 도구, 키프레임 추가
-- [ ] 🔒 **보안 강화** - IPC 경로 검증, web-viewer XSS 수정
+| 우선순위 | 항목 | 설명 |
+|:--------:|------|------|
+| 높음 | 영상 렌더링 | 댓글/그리기 포함된 영상 내보내기 (해상도/토글 옵션) |
+| 높음 | 성능 최적화 | 대용량 영상/다수 댓글 처리, 이벤트 리스너 정리 |
+| 중간 | 웹 뷰어 고도화 | 키프레임 보기/추가, 실시간 협업 |
+| 중간 | 보안 강화 | IPC 경로 검증, web-viewer XSS 수정 |
 
 > 전체 로드맵은 [docs/roadmap.md](docs/roadmap.md) 참조
 
 ---
 
-## 📊 개발 현황
-
-| 항목 | 수치 |
-|------|------|
-| 버전 | **v1.1.0-beta** |
-| 개발 기간 | 2024.12.23 ~ (진행 중) |
-| 커밋 수 | **680+** |
-| PR 수 | **102+** |
-| 개발자 | 배한솔 (+ Claude Code AI 협업) |
-
-> 코딩 배우면서 만들었습니다.
-> AHK로 자동화 스크립트 만들다가 "이거 앱으로 만들면 되겠는데?" 싶어서 시작.
-
----
-
-## 👨‍💻 만든 사람
-
-<table>
-<tr>
-<td align="center" width="150">
-<img src="renderer/assets/avatars/hansol.png" width="80" alt="hansol" /><br />
-<b>배한솔</b><br />
-<sub>애니메이터 & 개발자</sub><br />
-<sub>스튜디오 장삐쭈</sub>
-</td>
-</tr>
-</table>
-
----
-
-## 📚 개발 문서
+## 개발 문서
 
 | 문서 | 설명 |
 |------|------|
@@ -518,19 +339,29 @@ Windows 레지스트리에 자동 등록 → 설정 필요 없음
 
 ---
 
-## 🙏 감사합니다
+## 만든 사람
 
-**스튜디오 장삐쭈** 팀원들에게 감사드립니다.
+<table>
+<tr>
+<td align="center" width="150">
+<img src="renderer/assets/avatars/hansol.png" width="80" alt="hansol" /><br />
+<b>배한솔</b><br />
+<sub>애니메이터 & 개발자</sub><br />
+<sub>스튜디오 장삐쭈</sub>
+</td>
+</tr>
+</table>
 
-> 훌륭한 팀은 훌륭한 도구를 사용해야 합니다.
+> 애니메이터로 일하면서 AutoHotkey로 팀 자동화 스크립트를 만들다,
+> "이걸 앱으로 만들면 팀 전체가 편해지겠다"는 생각에서 시작했습니다.
+> Claude Code AI와 함께 개발하고 있습니다.
 
 ---
 
 <div align="center">
 
-**BAEFRAME** - 작업자들의 베스트 프렌드 🎬
+**BAEFRAME** — 작업자들의 베스트 프렌드
 
-[웹 뷰어](https://baeframe.vercel.app) · [GitHub](https://github.com/baehandoridori/BAEFRAME)
+[Web Viewer](https://baeframe.vercel.app) &nbsp;&middot;&nbsp; [GitHub](https://github.com/baehandoridori/BAEFRAME) &nbsp;&middot;&nbsp; [Wiki](https://github.com/baehandoridori/BAEFRAME/wiki)
 
 </div>
-
