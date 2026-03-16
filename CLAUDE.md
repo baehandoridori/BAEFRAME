@@ -98,9 +98,13 @@ BAEFRAME/
 
 | 파일 | 설명 |
 |------|------|
-| `baeframe-dev-docs.md` | 개발 문서 (아키텍처, 기능 명세) |
-| `BAEFRAME-WEB-VIEWER.md` | 웹 뷰어 개발 계획 |
-| `TODO.md` | 개발 진행 상황 |
+| `docs/architecture.md` | 시스템 아키텍처 |
+| `docs/bframe-schema.md` | .bframe 파일 포맷 명세 |
+| `docs/modules.md` | Renderer 모듈 가이드 |
+| `docs/roadmap.md` | 개발 로드맵 및 진행 상황 |
+| `docs/web-viewer.md` | 웹 뷰어 아키텍처 및 배포 |
+| `docs/collaboration.md` | 실시간 협업 시스템 |
+| `docs/integration.md` | Windows 통합 가이드 |
 
 ---
 
