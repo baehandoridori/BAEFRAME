@@ -273,10 +273,9 @@ Google OAuth는 `localhost`를 기본 허용 원본으로 인식하지만, Googl
 
 | 문서 | 설명 |
 |------|------|
-| `BAEFRAME-WEB-VIEWER.md` | 웹 뷰어 초기 개발 계획 (원본 기획 문서) |
 | `docs/architecture.md` | 전체 시스템 아키텍처 |
 | `docs/modules.md` | Desktop 모듈 설명 |
-| `TODO.md` | 전체 개발 TODO |
+| `docs/roadmap.md` | 개발 로드맵 및 진행 상황 |
 | `web-viewer/index.html` | 웹 뷰어 HTML 구조 |
 | `web-viewer/scripts/app.js` | 웹 뷰어 메인 로직 |
 | `.github/workflows/deploy-web-viewer.yml` | 자동 배포 워크플로우 |

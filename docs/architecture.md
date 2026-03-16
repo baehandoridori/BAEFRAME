@@ -414,3 +414,115 @@ npm run bundle:liveblocks
 |------|------|
 | 일반 로그 | `%APPDATA%\baeframe\logs\` |
 | 시작 디버그 로그 | `%APPDATA%\baeframe\startup-debug.log` |
+
+---
+
+## 9. 로깅 시스템
+
+Main과 Renderer 각각 `logger.js`가 존재하며, 레벨별 로깅을 지원한다.
+
+### 로그 레벨
+
+| 레벨 | 용도 |
+|------|------|
+| `DEBUG` | 상세 디버그 정보 (프레임 이동 등) |
+| `INFO` | 일반 정보 (영상 로드, 저장 등) |
+| `WARN` | 경고 (자동 저장 지연, 파일 잠금 등) |
+| `ERROR` | 오류 (JSON 파싱 실패, 파일 읽기 오류 등) |
+
+### 로깅 가이드라인
+
+올바른 사용:
+```javascript
+log.info('영상 로드 시작', { path: videoPath, size: fileSize });
+log.warn('자동 저장 지연', { delay: ms, reason: 'file locked' });
+log.error('JSON 파싱 실패', { error: e.message, file: jsonPath });
+```
+
+피해야 할 사용:
+```javascript
+log.info('loading...');           // 컨텍스트 없음
+console.log('test');               // logger 미사용
+```
+
+### 전역 에러 핸들러
+
+```javascript
+window.onerror = (message, source, line, col, error) => { /* 로깅 */ };
+window.onunhandledrejection = (event) => { /* 로깅 */ };
+```
+
+---
+
+## 10. UI/UX 기본 명세
+
+### 레이아웃 구조
+
+```mermaid
+graph TB
+    subgraph "BAEFRAME Layout"
+        subgraph "Header [48px]"
+            H1[로고 / 파일명 / 버전 배지 / 링크 복사]
+        end
+        subgraph "Main Area"
+            V[Video Viewer + Drawing Overlay]
+            C[Comments Panel 320px]
+        end
+        subgraph "Controls Bar [52px]"
+            CB[재생 버튼 / 타임코드 / 그리기,댓글 버튼]
+        end
+        subgraph "Timeline [180px]"
+            T[레이어 헤더 / 트랙 / 플레이헤드 / 마커]
+        end
+    end
+```
+
+### 컬러 시스템 (CSS 변수)
+
+```css
+:root {
+  /* 배경 */
+  --bg-primary: #0a0a0a;      --bg-secondary: #111111;
+  --bg-tertiary: #1a1a1a;     --bg-elevated: #222222;
+  /* 텍스트 */
+  --text-primary: #f5f5f5;    --text-secondary: #a0a0a0;
+  /* 액센트 (브랜드 옐로우) */
+  --accent-primary: #ffd000;   --accent-secondary: #e6bb00;
+  /* 상태 */
+  --success: #4ade80;          --error: #f87171;          --warning: #fbbf24;
+  /* 그리기 팔레트 */
+  --draw-red: #ff4757;         --draw-yellow: #ffd000;
+  --draw-green: #26de81;       --draw-blue: #4a9eff;      --draw-white: #ffffff;
+}
+```
+
+### 단축키 전체 목록
+
+| 카테고리 | 키 | 기능 |
+|----------|-----|------|
+| **재생** | `Space` | 재생/일시정지 |
+| | `← / →` | 1프레임 이동 |
+| | `, / .` | 1프레임 이동 (대안) |
+| | `Shift + ← / →` | 10프레임 이동 |
+| | `Home / End` | 처음/끝으로 |
+| **구간 반복** | `I` | 시작점 설정 |
+| | `O` | 종료점 설정 |
+| | `L` | 구간 반복 토글 |
+| **타임라인** | `Ctrl + 휠` | 줌 인/아웃 |
+| | `Shift + 휠` | 가로 스크롤 |
+| | `\` | 전체 보기 |
+| **그리기** | `D` | 그리기 모드 토글 |
+| | `1` | 어니언 스킨 토글 |
+| | `F6` | 키프레임 추가 (복사) |
+| | `F7` | 빈 키프레임 추가 |
+| | `Shift+3` | 키프레임 삭제 |
+| | `Ctrl + Z / Y` | 실행 취소 / 다시 실행 |
+| **댓글** | `C` | 댓글 모드 토글 |
+| | `Shift + ← / →` | 이전/다음 댓글로 이동 |
+| **하이라이트** | `H` | 하이라이트 추가 |
+| | `Alt + ← / →` | 이전/다음 하이라이트 |
+| **파일** | `Ctrl + O` | 파일 열기 |
+| | `Ctrl + S` | 저장 |
+| | `Ctrl + Shift + C` | 링크 복사 |
+| **뷰** | `F` | 전체화면 |
+| | `Shift + ?` | 단축키 도움말 |
