@@ -2,7 +2,7 @@
  * baeframe - BrowserWindow 관리
  */
 
-const { BrowserWindow, screen } = require('electron');
+const { BrowserWindow, screen, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { createLogger } = require('./logger');
@@ -116,10 +116,13 @@ function createMainWindow() {
   debugLog(`렌더러 경로: ${indexPath}`);
   debugLog(`파일 존재 여부: ${fs.existsSync(indexPath)}`);
 
-  // 개발 모드에서 DevTools 열기
+  // 개발 모드에서 DevTools 열기, 프로덕션에서 메뉴바 숨기기
   if (process.env.NODE_ENV === 'development') {
     mainWindow.webContents.openDevTools();
     log.info('개발 모드 - DevTools 열림');
+  } else {
+    Menu.setApplicationMenu(null);
+    log.info('프로덕션 모드 - 메뉴바 숨김');
   }
 
   // 로드 실패 핸들러 (중요!)
