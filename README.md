@@ -8,12 +8,14 @@
 
 *프레임 단위로 정확하게. 그림으로 직관적으로. 링크 하나로 간편하게.*
 
+[![Version](https://img.shields.io/badge/Version-1.1.0--beta-blue?style=flat-square)](https://github.com/baehandoridori/BAEFRAME)
 [![Electron](https://img.shields.io/badge/Electron-28.0-47848F?style=flat-square&logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square&logo=windows&logoColor=white)](https://github.com/baehandoridori/BAEFRAME)
-[![License](https://img.shields.io/badge/License-Internal-orange?style=flat-square)](https://github.com/baehandoridori/BAEFRAME)
-[![Commits](https://img.shields.io/badge/Commits-255+-brightgreen?style=flat-square)](https://github.com/baehandoridori/BAEFRAME/commits)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](https://github.com/baehandoridori/BAEFRAME)
+[![Commits](https://img.shields.io/badge/Commits-680+-brightgreen?style=flat-square)](https://github.com/baehandoridori/BAEFRAME/commits)
+[![PRs](https://img.shields.io/badge/PRs-102+-blueviolet?style=flat-square)](https://github.com/baehandoridori/BAEFRAME/pulls?q=is%3Amerged)
 
-[**웹 뷰어**](https://baeframe.vercel.app) · [**Wiki**](https://github.com/baehandoridori/BAEFRAME/wiki) · [**Issues**](https://github.com/baehandoridori/BAEFRAME/issues)
+[**웹 뷰어**](https://baeframe.vercel.app) · [**개발 문서**](docs/) · [**Wiki**](https://github.com/baehandoridori/BAEFRAME/wiki) · [**Issues**](https://github.com/baehandoridori/BAEFRAME/issues)
 
 </div>
 
@@ -136,7 +138,13 @@ pie showData
 |:--:|:--:|:--:|:--:|
 | 줌/스크롤 | 두 영상 비교 | 자동 버전 감지 | 링크 복사 → 슬랙 |
 | 마커/키프레임 표시 | 동기화 재생 | 드롭다운 전환 | 웹 뷰어 지원 |
-| 플레이헤드 드래그 | 독립 마커/그리기 | _v1, _v2, _re... | baeframe:// 프로토콜 |
+| 플레이헤드 드래그 | 오버레이 비교 (와이프) | _v1, _v2, _re... | baeframe:// 프로토콜 |
+
+| 🎵 재생목록 | 🔄 실시간 협업 | 🎞️ 코덱 변환 | 🪟 Windows 통합 |
+|:--:|:--:|:--:|:--:|
+| 폴더/파일 관리 | Liveblocks 기반 | ffmpeg 자동 변환 | 우클릭 메뉴 통합 |
+| 드래그 정렬 | 댓글/그리기 동기화 | 트랜스코딩 캐시 | MSIX 패키징 |
+| 연속 재생 | 커서 위치 공유 | MOV/MPEG-4 지원 | 1차 메뉴 (sparse) |
 
 </div>
 
@@ -238,9 +246,15 @@ mpv 플레이어 기반으로 **정확한 프레임 단위** 탐색이 가능합
 | 가로 스크롤 | `Shift+휠` |
 | 전체 보기 | `\` 키 |
 
-**스플릿 뷰**: 두 영상 나란히 비교, 동기화 재생
+**스플릿 뷰**: 두 영상 나란히 비교, 동기화 재생, 오버레이 비교 (와이프/불투명도)
 
 **버전 관리**: 같은 폴더의 `_v1`, `_v2`, `_re` 등 자동 감지 → 드롭다운 전환
+
+**재생목록**: 폴더/파일 관리, 드래그 정렬, 연속 재생
+
+**실시간 협업**: Liveblocks 기반 댓글/그리기 실시간 동기화 ([상세](docs/collaboration.md))
+
+**코덱 자동 변환**: ffmpeg 기반 MOV/MPEG-4 자동 트랜스코딩 + 캐시
 
 **사용자 테마**: 이름별 테마 색상 + 고유 아바타
 | 사용자 | 테마 |
@@ -288,58 +302,15 @@ npm run dev  # DevTools 자동 열림
 npm run build:installer  # Windows 설치 파일 생성
 ```
 
-### Windows 11 우클릭 통합 (이슈 #88)
+### Windows 11 우클릭 통합
 
-BAEFRAME를 영상 파일 우클릭으로 바로 열려면 통합 설치를 실행해야 합니다.
-
-가장 쉬운 방법(프로그램처럼 실행):
+영상 파일 우클릭으로 BAEFRAME을 바로 열 수 있습니다.
 
 ```powershell
 .\integration\installer\BAEFRAME-Integration-Setup.cmd
 ```
 
-기본 정책은 **Win11 1차 우클릭(sparse) 우선**이며, 실패 시 자동으로 legacy(2차 메뉴)를 만들지 않습니다.
-
-사내 인증서+정책까지 포함해 설치하려면(관리자 PowerShell):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\integration\installer\run-integration-setup.ps1 -Provision
-```
-
-또는 CMD 런처 인자로 실행:
-
-```cmd
-.\integration\installer\BAEFRAME-Integration-Setup.cmd -Provision -UseSharePath -CertPath "\\server\share\certs\StudioJBBJ.BAEFRAME.Integration.cer"
-```
-
-공유 드라이브 프로필로 실행하려면:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\integration\installer\run-integration-setup.ps1 -Provision -UseSharePath -CertPath "\\server\share\certs\StudioJBBJ.BAEFRAME.Integration.cer"
-```
-
-수동 실행:
-
-```powershell
-# 설치 (sparse-only 기본)
-powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -AppPath "C:\BAEframe\BAEFRAME\dist\win-unpacked\BFRAME_alpha_v2.exe"
-
-# 상태 확인
-powershell -ExecutionPolicy Bypass -File .\integration\installer\detect-integration.ps1
-
-# 제거
-powershell -ExecutionPolicy Bypass -File .\integration\installer\uninstall-integration.ps1
-```
-
-legacy를 정말 써야 할 때만 fallback 허용:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\integration\installer\install-integration.ps1 -AppPath "C:\path\to\BFRAME_alpha_v2.exe" -Mode Auto -EnableLegacyFallback
-```
-
-팀 전체 자동 적용은 개별 CMD 실행이 아니라 GPO/Intune/SCCM으로 위 프로비저닝 명령을 배포하는 방식을 권장합니다.
-
-앱 내부에서는 설정 메뉴의 `Windows 통합 진단/복구` 버튼으로 동일한 설치기를 실행할 수 있습니다.
+> 상세 설치 옵션, 팀 배포, 트러블슈팅은 [docs/integration.md](docs/integration.md) 참조
 
 ---
 
@@ -473,51 +444,33 @@ Windows 레지스트리에 자동 등록 → 설정 필요 없음
 
 ---
 
-## 🗂️ .bframe 파일 구조
+## 🗂️ .bframe 파일
+
+모든 리뷰 데이터(댓글, 그리기, 하이라이트)는 영상 옆에 `.bframe` JSON 파일로 저장됩니다.
 
 ```javascript
 {
   bframeVersion: "2.0",
   videoFile: "shot_001.mp4",
   fps: 24,
-
-  comments: {
-    layers: [{
-      markers: [{
-        x: 0.5, y: 0.3,        // 영상 내 위치 (0~1)
-        startFrame: 120,
-        endFrame: 216,          // 4초 구간
-        text: "손 위치 확인",
-        author: "윤성원",
-        resolved: false,
-        replies: [...]
-      }]
-    }]
-  },
-
-  drawings: {
-    layers: [{
-      color: "#ff4757",
-      keyframes: [...]
-    }]
-  },
-
-  highlights: [{
-    startTime: 5.2,
-    endTime: 10.2,
-    colorKey: "yellow"
-  }]
+  comments: { layers: [{ markers: [...] }] },   // 댓글 + 답글
+  drawings: { layers: [{ keyframes: [...] }] },  // 그리기 레이어
+  highlights: [{ startFrame, endFrame, color }]  // 구간 색상 표시
 }
 ```
+
+> 전체 스키마 명세는 [docs/bframe-schema.md](docs/bframe-schema.md) 참조
 
 ---
 
 ## 🚀 향후 계획
 
-- [ ] 📹 **영상 렌더링** - 댓글/그리기 포함된 영상 출력
-- [ ] 💬 **Slack 내 재생** - 슬랙에서 바로 .bframe 영상 재생
-- [ ] 🎨 **테마 커스터마이징** - 더 다양한 테마와 인터랙션
-- [ ] ⚡ **성능 최적화** - 대용량 영상/많은 댓글 처리 개선
+- [ ] 📹 **영상 렌더링** - 댓글/그리기 포함된 영상 내보내기 (해상도/토글 옵션)
+- [ ] ⚡ **성능 최적화** - 대용량 영상/많은 댓글 처리, Timeline.destroy() 리스너 정리
+- [ ] 🌐 **웹 뷰어 고도화** - 간단한 그리기 도구, 키프레임 추가
+- [ ] 🔒 **보안 강화** - IPC 경로 검증, web-viewer XSS 수정
+
+> 전체 로드맵은 [docs/roadmap.md](docs/roadmap.md) 참조
 
 ---
 
@@ -525,10 +478,11 @@ Windows 레지스트리에 자동 등록 → 설정 필요 없음
 
 | 항목 | 수치 |
 |------|------|
+| 버전 | **v1.1.0-beta** |
 | 개발 기간 | 2024.12.23 ~ (진행 중) |
-| 커밋 수 | **255+** |
-| 일일 평균 커밋 | **12개** |
-| 개발자 | 1명 (배한솔) |
+| 커밋 수 | **680+** |
+| PR 수 | **102+** |
+| 개발자 | 배한솔 (+ Claude Code AI 협업) |
 
 > 코딩 배우면서 만들었습니다.
 > AHK로 자동화 스크립트 만들다가 "이거 앱으로 만들면 되겠는데?" 싶어서 시작.
@@ -547,6 +501,20 @@ Windows 레지스트리에 자동 등록 → 설정 필요 없음
 </td>
 </tr>
 </table>
+
+---
+
+## 📚 개발 문서
+
+| 문서 | 설명 |
+|------|------|
+| [시스템 아키텍처](docs/architecture.md) | 프로세스 구조, IPC 통신, 데이터 흐름 |
+| [.bframe 스키마](docs/bframe-schema.md) | 파일 포맷 명세, ER 다이어그램, 마이그레이션 |
+| [모듈 가이드](docs/modules.md) | 21개 renderer 모듈 역할 및 의존 관계 |
+| [개발 로드맵](docs/roadmap.md) | 마일스톤, 알려진 이슈, 향후 계획 |
+| [웹 뷰어](docs/web-viewer.md) | 웹 버전 아키텍처, Vercel 배포 |
+| [실시간 협업](docs/collaboration.md) | Liveblocks Broadcast 기반 동기화 |
+| [Windows 통합](docs/integration.md) | 우클릭 메뉴 설치/진단/팀배포 |
 
 ---
 
