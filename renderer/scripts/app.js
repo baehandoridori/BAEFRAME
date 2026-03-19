@@ -2751,7 +2751,19 @@ async function initApp() {
   function renderVideoCommentRanges() {
     if (!videoCommentRangeOverlay) return;
 
-    const ranges = commentManager.getMarkerRanges();
+    let ranges = commentManager.getMarkerRanges();
+
+    // 작성자 필터 적용
+    if (commentFilterState.authors.length > 0) {
+      const allowedIds = new Set();
+      commentManager.getAllMarkers().forEach(m => {
+        const id = m.authorId || m.author || 'unknown';
+        if (commentFilterState.authors.includes(id)) {
+          allowedIds.add(m.id);
+        }
+      });
+      ranges = ranges.filter(r => allowedIds.has(r.markerId));
+    }
 
     // 기존 요소 제거
     videoCommentRangeOverlay.innerHTML = '';
@@ -2791,8 +2803,12 @@ async function initApp() {
       // 최소 너비 보장
       const minWidthPercent = Math.max(widthPercent, 1);
 
-      // 색상 (레이어 색상)
-      const color = comment.color || '#4a9eff';
+      // 색상 (작성자 색상 기반)
+      const rangeMarker = commentManager.getMarker(comment.markerId);
+      const authorColorInfo = rangeMarker
+        ? getAuthorColor(rangeMarker.authorId || rangeMarker.author || 'unknown')
+        : { color: comment.color || '#4a9eff' };
+      const color = authorColorInfo.color;
       bar.style.left = `${leftPercent}%`;
       bar.style.width = `${minWidthPercent}%`;
       bar.style.background = hexToRgba(color, 0.6);
@@ -2852,7 +2868,20 @@ async function initApp() {
 
   // 댓글 범위 렌더링 함수 (타임라인 + 비디오 오버레이)
   function renderCommentRanges() {
-    const ranges = commentManager.getMarkerRanges();
+    let ranges = commentManager.getMarkerRanges();
+
+    // 작성자 필터 적용
+    if (commentFilterState.authors.length > 0) {
+      const allowedIds = new Set();
+      commentManager.getAllMarkers().forEach(m => {
+        const id = m.authorId || m.author || 'unknown';
+        if (commentFilterState.authors.includes(id)) {
+          allowedIds.add(m.id);
+        }
+      });
+      ranges = ranges.filter(r => allowedIds.has(r.markerId));
+    }
+
     timeline.renderCommentRanges(ranges);
     setupCommentRangeInteractions();
     renderVideoCommentRanges();
@@ -4307,8 +4336,22 @@ async function initApp() {
     // body에 있는 기존 툴팁들도 제거
     document.querySelectorAll('.comment-marker-tooltip').forEach(el => el.remove());
 
-    // 모든 마커 렌더링
-    const allMarkers = commentManager.getAllMarkers();
+    // 마커 토글이 꺼져있으면 렌더링 스킵
+    if (!commentFilterState.showMarkers) {
+      updateVideoMarkersVisibility();
+      return;
+    }
+
+    let allMarkers = commentManager.getAllMarkers();
+
+    // 작성자 필터 적용
+    if (commentFilterState.authors.length > 0) {
+      allMarkers = allMarkers.filter(m => {
+        const id = m.authorId || m.author || 'unknown';
+        return commentFilterState.authors.includes(id);
+      });
+    }
+
     allMarkers.forEach(marker => {
       renderSingleMarker(marker);
     });
@@ -4323,12 +4366,14 @@ async function initApp() {
     const markerEl = document.createElement('div');
     markerEl.className = `comment-marker${marker.resolved ? ' resolved' : ''}`;
     markerEl.dataset.markerId = marker.id;
+    const authorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
     markerEl.style.cssText = `
       position: absolute;
       left: ${marker.x * 100}%;
       top: ${marker.y * 100}%;
       transform: translate(-50%, -50%);
       pointer-events: auto;
+      ${!marker.resolved ? `background: ${authorColor.color};` : ''}
     `;
 
     // 말풍선 (툴팁) - body에 추가하여 transform 영향 안받게
@@ -4816,6 +4861,14 @@ async function initApp() {
       markers = markers.filter(m => m.resolved);
     }
 
+    // 작성자 필터 적용
+    if (commentFilterState.authors.length > 0) {
+      markers = markers.filter(m => {
+        const id = m.authorId || m.author || 'unknown';
+        return commentFilterState.authors.includes(id);
+      });
+    }
+
     const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
     if (normalizedSearch) {
       markers = markers.filter((marker) => markerMatchesCommentSearch(marker, normalizedSearch));
@@ -4875,6 +4928,7 @@ async function initApp() {
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
       const authorStyle = getAuthorColorStyle(marker.author);
+      const markerAuthorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
       const repliesHtml = (marker.replies || []).map(reply => `
@@ -4928,7 +4982,7 @@ async function initApp() {
           </div>
         </div>
         <div class="comment-actions">
-          <span class="comment-author-inline ${authorClass}" ${authorStyle}>${highlightCommentSearchMatches(marker.author, normalizedSearch)}</span>
+          <span class="comment-author-inline ${authorClass}" style="color: ${markerAuthorColor.color}; font-weight: bold;">${highlightCommentSearchMatches(marker.author, normalizedSearch)}</span>
           <span class="comment-time-inline">${formatRelativeTime(marker.createdAt)}</span>
           <button class="comment-action-btn edit-btn" title="수정">수정</button>
           <button class="comment-action-btn reply-btn" title="답글">답글</button>
