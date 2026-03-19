@@ -211,6 +211,20 @@ async function initApp() {
     showMarkers: true    // 뷰포트 마커 표시 여부
   };
 
+  /**
+   * 작성자 필터 적용 헬퍼
+   * @param {Array} items - authorId/author 필드를 가진 객체 배열
+   * @returns {Array} 필터링된 배열
+   */
+  function filterByAuthors(items) {
+    if (commentFilterState.authors.length === 0) return items;
+    const authorFilter = new Set(commentFilterState.authors);
+    return items.filter(m => {
+      const id = m.authorId || m.author || 'unknown';
+      return authorFilter.has(id);
+    });
+  }
+
   // ====== 글로벌 Undo/Redo 시스템 ======
   const undoStack = [];
   const redoStack = [];
@@ -2744,13 +2758,9 @@ async function initApp() {
 
     // 작성자 필터 적용
     if (commentFilterState.authors.length > 0) {
-      const allowedIds = new Set();
-      commentManager.getAllMarkers().forEach(m => {
-        const id = m.authorId || m.author || 'unknown';
-        if (commentFilterState.authors.includes(id)) {
-          allowedIds.add(m.id);
-        }
-      });
+      const allowedIds = new Set(
+        filterByAuthors(commentManager.getAllMarkers()).map(m => m.id)
+      );
       ranges = ranges.filter(r => allowedIds.has(r.markerId));
     }
 
@@ -2861,13 +2871,9 @@ async function initApp() {
 
     // 작성자 필터 적용
     if (commentFilterState.authors.length > 0) {
-      const allowedIds = new Set();
-      commentManager.getAllMarkers().forEach(m => {
-        const id = m.authorId || m.author || 'unknown';
-        if (commentFilterState.authors.includes(id)) {
-          allowedIds.add(m.id);
-        }
-      });
+      const allowedIds = new Set(
+        filterByAuthors(commentManager.getAllMarkers()).map(m => m.id)
+      );
       ranges = ranges.filter(r => allowedIds.has(r.markerId));
     }
 
@@ -4334,13 +4340,7 @@ async function initApp() {
     let allMarkers = commentManager.getAllMarkers();
 
     // 작성자 필터 적용
-    if (commentFilterState.authors.length > 0) {
-      const authorFilter = new Set(commentFilterState.authors);
-      allMarkers = allMarkers.filter(m => {
-        const id = m.authorId || m.author || 'unknown';
-        return authorFilter.has(id);
-      });
-    }
+    allMarkers = filterByAuthors(allMarkers);
 
     allMarkers.forEach(marker => {
       renderSingleMarker(marker);
@@ -4852,13 +4852,7 @@ async function initApp() {
     }
 
     // 작성자 필터 적용
-    if (commentFilterState.authors.length > 0) {
-      const authorFilter = new Set(commentFilterState.authors);
-      markers = markers.filter(m => {
-        const id = m.authorId || m.author || 'unknown';
-        return authorFilter.has(id);
-      });
-    }
+    markers = filterByAuthors(markers);
 
     const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
     if (normalizedSearch) {
