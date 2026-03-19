@@ -868,6 +868,35 @@
         <button class="filter-chip active" data-filter="all">전체</button>
         <button class="filter-chip" data-filter="unresolved">미해결</button>
         <button class="filter-chip" data-filter="resolved">해결됨</button>
+
+        <div class="filter-divider"></div>
+
+        <!-- 작성자 필터 드롭다운 -->
+        <div class="filter-dropdown-wrapper" id="authorFilterWrapper">
+          <button class="filter-chip" id="authorFilterBtn">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            작성자
+            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="filter-dropdown-menu" id="authorFilterMenu" style="display: none">
+          </div>
+        </div>
+
+        <div class="filter-divider"></div>
+
+        <!-- 뷰포트 마커 토글 -->
+        <button class="filter-chip active" id="markerToggleBtn" title="뷰포트 마커 표시/숨기기">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+
         <button
           type="button"
           class="comment-search-toggle"

@@ -6,7 +6,7 @@ import { createLogger, setupGlobalErrorHandlers } from './logger.js';
 import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
-import { CommentManager, MARKER_COLORS } from './modules/comment-manager.js';
+import { CommentManager, MARKER_COLORS, getAuthorColor } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
@@ -202,6 +202,13 @@ async function initApp() {
     panInitialY: 0,
     // 오디오 모드
     isAudioMode: false
+  };
+
+  // 댓글 필터 전역 상태
+  const commentFilterState = {
+    status: 'all',      // 'all' | 'unresolved' | 'resolved'
+    authors: [],         // 선택된 authorId 배열 (빈 배열 = 전체)
+    showMarkers: true    // 뷰포트 마커 표시 여부
   };
 
   // ====== 글로벌 Undo/Redo 시스템 ======
@@ -1399,12 +1406,129 @@ async function initApp() {
 
   document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', function() {
-      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      if (this.id === 'authorFilterBtn' || this.id === 'markerToggleBtn') return;
+      document.querySelectorAll('.filter-chip').forEach(c => {
+        if (c.id !== 'authorFilterBtn' && c.id !== 'markerToggleBtn') c.classList.remove('active');
+      });
       this.classList.add('active');
       const filter = this.dataset.filter;
+      commentFilterState.status = filter;
       updateCommentList(filter);
       log.debug('필터 변경', { filter });
     });
+  });
+
+  // ====== 작성자 필터 드롭다운 ======
+  function updateAuthorFilterMenu() {
+    const menu = document.getElementById('authorFilterMenu');
+    if (!menu) return;
+
+    const allMarkers = commentManager.getAllMarkers();
+    const authors = new Map();
+
+    allMarkers.forEach(m => {
+      if (m.deleted) return;
+      const id = m.authorId || m.author || 'unknown';
+      if (!authors.has(id)) {
+        authors.set(id, { name: m.author || '알 수 없음', count: 0 });
+      }
+      authors.get(id).count++;
+    });
+
+    const selectedAll = commentFilterState.authors.length === 0;
+
+    let html = '';
+    for (const [authorId, info] of authors) {
+      const color = getAuthorColor(authorId);
+      const isChecked = selectedAll || commentFilterState.authors.includes(authorId);
+      html += `
+        <div class="filter-dropdown-item" data-author-id="${authorId}">
+          <div class="filter-dropdown-check ${isChecked ? 'checked' : ''}">${isChecked ? '✓' : ''}</div>
+          <div class="filter-dropdown-dot" style="background: ${color.color}"></div>
+          ${info.name}
+          <span class="filter-dropdown-badge">${info.count}</span>
+        </div>`;
+    }
+
+    html += '<div class="filter-dropdown-divider"></div>';
+    html += `
+      <div class="filter-dropdown-item" data-author-id="__all__">
+        <div class="filter-dropdown-check ${selectedAll ? 'checked' : ''}">${selectedAll ? '✓' : ''}</div>
+        전체 선택/해제
+      </div>`;
+
+    menu.innerHTML = html;
+  }
+
+  function applyCommentFilters() {
+    updateCommentList(commentFilterState.status);
+    renderCommentRanges();
+    renderVideoMarkers();
+  }
+
+  // 작성자 필터 드롭다운 토글
+  document.getElementById('authorFilterBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('authorFilterMenu');
+    const isOpen = menu.style.display !== 'none';
+    menu.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) updateAuthorFilterMenu();
+  });
+
+  // 드롭다운 외부 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    const wrapper = document.getElementById('authorFilterWrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+      const menu = document.getElementById('authorFilterMenu');
+      if (menu) menu.style.display = 'none';
+    }
+  });
+
+  // 작성자 선택/해제
+  document.getElementById('authorFilterMenu')?.addEventListener('click', (e) => {
+    const item = e.target.closest('.filter-dropdown-item');
+    if (!item) return;
+
+    const authorId = item.dataset.authorId;
+
+    if (authorId === '__all__') {
+      commentFilterState.authors = [];
+    } else {
+      if (commentFilterState.authors.length === 0) {
+        // 현재 전체 선택 → 이 작성자만 해제
+        const allMarkers = commentManager.getAllMarkers();
+        const uniqueAuthors = new Set(
+          allMarkers.filter(m => !m.deleted).map(m => m.authorId || m.author || 'unknown')
+        );
+        commentFilterState.authors = [...uniqueAuthors].filter(id => id !== authorId);
+      } else {
+        const idx = commentFilterState.authors.indexOf(authorId);
+        if (idx !== -1) {
+          commentFilterState.authors.splice(idx, 1);
+        } else {
+          commentFilterState.authors.push(authorId);
+        }
+        // 모든 작성자가 선택되면 빈 배열(전체)로 리셋
+        const allMarkers = commentManager.getAllMarkers();
+        const uniqueAuthors = new Set(
+          allMarkers.filter(m => !m.deleted).map(m => m.authorId || m.author || 'unknown')
+        );
+        if (commentFilterState.authors.length >= uniqueAuthors.size) {
+          commentFilterState.authors = [];
+        }
+      }
+    }
+
+    updateAuthorFilterMenu();
+    applyCommentFilters();
+  });
+
+  // 뷰포트 마커 토글
+  document.getElementById('markerToggleBtn')?.addEventListener('click', () => {
+    commentFilterState.showMarkers = !commentFilterState.showMarkers;
+    const btn = document.getElementById('markerToggleBtn');
+    btn.classList.toggle('active', commentFilterState.showMarkers);
+    applyCommentFilters();
   });
 
   // ====== 댓글 검색 ======
