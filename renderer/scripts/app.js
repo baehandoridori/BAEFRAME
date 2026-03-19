@@ -207,7 +207,7 @@ async function initApp() {
   // 댓글 필터 전역 상태
   const commentFilterState = {
     status: 'all',      // 'all' | 'unresolved' | 'resolved'
-    authors: [],         // 선택된 authorId 배열 (빈 배열 = 전체)
+    authors: null,       // null = 전체 (필터 없음), [] = 아무도 선택 안 됨, [ids] = 특정 작성자
     showMarkers: true    // 뷰포트 마커 표시 여부
   };
 
@@ -217,7 +217,8 @@ async function initApp() {
    * @returns {Array} 필터링된 배열
    */
   function filterByAuthors(items) {
-    if (commentFilterState.authors.length === 0) return items;
+    if (commentFilterState.authors === null) return items;
+    if (commentFilterState.authors.length === 0) return []; // 아무도 선택 안 됨
     const authorFilter = new Set(commentFilterState.authors);
     return items.filter(m => {
       const id = m.authorId || m.author || 'unknown';
@@ -1449,7 +1450,7 @@ async function initApp() {
       authors.get(id).count++;
     });
 
-    const selectedAll = commentFilterState.authors.length === 0;
+    const selectedAll = commentFilterState.authors === null;
 
     let html = '';
     for (const [authorId, info] of authors) {
@@ -1476,7 +1477,7 @@ async function initApp() {
 
   function resetCommentFilters() {
     commentFilterState.status = 'all';
-    commentFilterState.authors = [];
+    commentFilterState.authors = null;
     commentFilterState.showMarkers = true;
 
     // UI 초기화
@@ -1548,9 +1549,9 @@ async function initApp() {
     const authorId = item.dataset.authorId;
 
     if (authorId === '__all__') {
-      commentFilterState.authors = [];
+      commentFilterState.authors = null;
     } else {
-      if (commentFilterState.authors.length === 0) {
+      if (commentFilterState.authors === null) {
         // 현재 전체 선택 → 이 작성자만 해제
         const allMarkers = commentManager.getAllMarkers();
         const uniqueAuthors = new Set(
@@ -1564,13 +1565,13 @@ async function initApp() {
         } else {
           commentFilterState.authors.push(authorId);
         }
-        // 모든 작성자가 선택되면 빈 배열(전체)로 리셋
+        // 모든 작성자가 선택되면 null(전체)로 리셋
         const allMarkers = commentManager.getAllMarkers();
         const uniqueAuthors = new Set(
           allMarkers.filter(m => !m.deleted).map(m => m.authorId || m.author || 'unknown')
         );
         if (commentFilterState.authors.length >= uniqueAuthors.size) {
-          commentFilterState.authors = [];
+          commentFilterState.authors = null;
         }
       }
     }
@@ -1581,7 +1582,7 @@ async function initApp() {
     // 작성자 필터 활성 상태 표시
     const btn = document.getElementById('authorFilterBtn');
     if (btn) {
-      btn.classList.toggle('active', commentFilterState.authors.length > 0);
+      btn.classList.toggle('active', commentFilterState.authors !== null);
     }
   });
 
@@ -2248,13 +2249,6 @@ async function initApp() {
   const highlightCopyBtn = document.getElementById('highlightCopyBtn');
   const highlightDeleteBtn = document.getElementById('highlightDeleteBtn');
 
-  // 마커 팝업 관련 요소
-  const markerPopup = document.getElementById('markerPopup');
-  const markerColorPicker = document.getElementById('markerColorPicker');
-
-  // 현재 선택된 마커 ID
-  let selectedMarkerId = null;
-
   // 하이라이트 트랙 연결 (좌측 레이어 헤더도 연동)
   timeline.setHighlightTrack(highlightTrack, highlightLayerHeader);
 
@@ -2701,48 +2695,7 @@ async function initApp() {
   });
 
   // ====== 마커 색상 팝업 ======
-
-  // 마커 팝업 표시
-  function showMarkerPopup(markerId, x, y) {
-    // colorKey 팝업 비활성화 (작성자 자동 색상으로 전환)
-    return;
-  }
-
-  // 마커 팝업 숨기기
-  function hideMarkerPopup() {
-    markerPopup.style.display = 'none';
-    selectedMarkerId = null;
-  }
-
-  // 마커 팝업 외부 클릭 시 닫기
-  document.addEventListener('click', (e) => {
-    if (markerPopup.style.display === 'block' &&
-        !markerPopup.contains(e.target) &&
-        !e.target.closest('.comment-range-item') &&
-        !e.target.closest('.video-comment-range-bar')) {
-      hideMarkerPopup();
-    }
-  });
-
-  // 마커 색상 선택
-  markerColorPicker.addEventListener('click', (e) => {
-    const btn = e.target.closest('.marker-color-btn');
-    if (!btn || !selectedMarkerId) return;
-
-    const colorKey = btn.dataset.color;
-    commentManager.updateMarker(selectedMarkerId, { colorKey });
-
-    // 버튼 선택 상태 업데이트
-    markerColorPicker.querySelectorAll('.marker-color-btn').forEach(b => {
-      b.classList.toggle('selected', b === btn);
-    });
-
-    // UI 업데이트 (타임라인 + 비디오 오버레이)
-    renderCommentRanges();
-    updateCommentList();
-    hideMarkerPopup();
-    showToast('마커 색상이 변경되었습니다', 'info');
-  });
+  // (마커 색상 팝업 비활성화 - 작성자 자동 색상으로 전환)
 
   // ====== 댓글 범위 트랙 ======
   const commentTrack = document.getElementById('commentTrack');
@@ -2799,7 +2752,7 @@ async function initApp() {
     let ranges = commentManager.getMarkerRanges();
 
     // 작성자 필터 적용
-    if (commentFilterState.authors.length > 0) {
+    if (commentFilterState.authors !== null) {
       const allowedIds = new Set(
         filterByAuthors(commentManager.getAllMarkers()).map(m => m.id)
       );
@@ -2864,13 +2817,6 @@ async function initApp() {
         }
       });
 
-      // 우클릭 이벤트 - 마커 색상 팝업
-      bar.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showMarkerPopup(comment.markerId, e.clientX, e.clientY);
-      });
-
       videoCommentRangeOverlay.appendChild(bar);
     });
 
@@ -2912,7 +2858,7 @@ async function initApp() {
     let ranges = commentManager.getMarkerRanges();
 
     // 작성자 필터 적용
-    if (commentFilterState.authors.length > 0) {
+    if (commentFilterState.authors !== null) {
       const allowedIds = new Set(
         filterByAuthors(commentManager.getAllMarkers()).map(m => m.id)
       );
@@ -2949,13 +2895,6 @@ async function initApp() {
         items.forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
         selectedCommentRange = { layerId, markerId };
-      });
-
-      // 우클릭 - 마커 색상 팝업
-      item.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showMarkerPopup(markerId, e.clientX, e.clientY);
       });
 
       // 드래그 시작 (전체 이동)
@@ -4613,13 +4552,6 @@ async function initApp() {
       scrollToCommentWithGlow(marker.id);
     });
 
-    // 우클릭 - 마커 색상 팝업
-    markerEl.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      showMarkerPopup(marker.id, e.clientX, e.clientY);
-    });
-
     // 해결 버튼
     tooltip.querySelector('.tooltip-btn.resolve')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -4733,7 +4665,7 @@ async function initApp() {
 
     // 작성자 필터 적용
     let filteredRanges = ranges;
-    if (commentFilterState.authors.length > 0) {
+    if (commentFilterState.authors !== null) {
       const filteredMarkers = filterByAuthors(commentManager.getAllMarkers());
       const allowedIds = new Set(filteredMarkers.map(m => m.id));
       filteredRanges = ranges.filter(r => allowedIds.has(r.markerId));
