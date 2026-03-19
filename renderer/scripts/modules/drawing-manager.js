@@ -54,11 +54,9 @@ export class DrawingManager extends EventTarget {
     // 렌더링 상태 관리
     this._renderingId = 0;  // 렌더링 취소용 ID
 
-    // Undo/Redo 히스토리
-    this.history = [];
-    this.historyIndex = -1;
-    this.maxHistorySize = 50;  // 최대 히스토리 개수
-    this._isUndoingOrRedoing = false;  // undo/redo 중인지 여부
+    // Undo/Redo — 외부 통합 스택과 연동
+    this._onUndoPush = null; // 외부에서 설정하는 콜백: (action) => void
+    this._isUndoingOrRedoing = false;
 
     // 이벤트 연결
     this._setupEvents();
@@ -251,77 +249,55 @@ export class DrawingManager extends EventTarget {
 
   // ====== Undo/Redo ======
 
-  /**
-   * 현재 상태를 히스토리에 저장
-   */
-  _saveToHistory() {
-    // 현재 위치 이후의 히스토리 제거 (새 변경 시 redo 히스토리 삭제)
-    if (this.historyIndex < this.history.length - 1) {
-      this.history = this.history.slice(0, this.historyIndex + 1);
-    }
-
-    // 현재 상태 스냅샷 생성
-    const snapshot = {
+  _createSnapshot() {
+    return {
       layers: this.layers.map(l => l.toJSON()),
       activeLayerId: this.activeLayerId,
       currentFrame: this.currentFrame
     };
-
-    this.history.push(snapshot);
-
-    // 최대 개수 초과 시 오래된 것 제거
-    if (this.history.length > this.maxHistorySize) {
-      this.history.shift();
-    } else {
-      this.historyIndex = this.history.length - 1;
-    }
-
-    log.debug('히스토리 저장', { index: this.historyIndex, total: this.history.length });
   }
 
   /**
-   * 실행 취소 (Undo)
+   * 현재 상태를 히스토리에 저장
+   */
+  _saveToHistory() {
+    if (this._isUndoingOrRedoing) return;
+
+    // 현재 상태 스냅샷 생성
+    const snapshotBefore = this._createSnapshot();
+
+    // 외부 통합 undo 스택에 push
+    if (this._onUndoPush) {
+      this._onUndoPush({
+        type: 'DRAWING',
+        timestamp: Date.now(),
+        undo: async () => {
+          this._isUndoingOrRedoing = true;
+          this._restoreSnapshot(snapshotBefore);
+          this._isUndoingOrRedoing = false;
+          this._emit('undo');
+        },
+        redo: null // DRAWING 타입은 globalRedo에서 _redoSnapshot으로 처리
+      });
+    }
+
+    log.debug('히스토리 저장 (통합 스택)');
+  }
+
+  /**
+   * @deprecated 통합 undo 사용
    */
   undo() {
-    if (this.historyIndex < 0) {
-      log.debug('Undo 불가: 히스토리 없음');
-      return false;
-    }
-
-    this._isUndoingOrRedoing = true;
-
-    const snapshot = this.history[this.historyIndex];
-    this._restoreSnapshot(snapshot);
-    this.historyIndex--;
-
-    this._isUndoingOrRedoing = false;
-
-    log.info('Undo 실행', { index: this.historyIndex });
-    this._emit('undo');
-    return true;
+    log.warn('DrawingManager.undo() deprecated — 통합 undo 사용');
+    return false;
   }
 
   /**
-   * 다시 실행 (Redo)
+   * @deprecated 통합 undo 사용
    */
   redo() {
-    if (this.historyIndex >= this.history.length - 1) {
-      log.debug('Redo 불가: 앞으로 갈 히스토리 없음');
-      return false;
-    }
-
-    this._isUndoingOrRedoing = true;
-
-    this.historyIndex++;
-    // 수정: historyIndex+1이 아닌 historyIndex 사용 (인덱스 증가 후이므로)
-    const snapshot = this.history[this.historyIndex];
-    this._restoreSnapshot(snapshot);
-
-    this._isUndoingOrRedoing = false;
-
-    log.info('Redo 실행', { index: this.historyIndex });
-    this._emit('redo');
-    return true;
+    log.warn('DrawingManager.redo() deprecated — 통합 undo 사용');
+    return false;
   }
 
   /**
@@ -340,26 +316,24 @@ export class DrawingManager extends EventTarget {
   }
 
   /**
-   * Undo 가능 여부
+   * Undo 가능 여부 (외부 스택에서 판단)
    */
   canUndo() {
-    return this.historyIndex >= 0;
+    return false;
   }
 
   /**
-   * Redo 가능 여부
+   * Redo 가능 여부 (외부 스택에서 판단)
    */
   canRedo() {
-    return this.historyIndex < this.history.length - 1;
+    return false;
   }
 
   /**
-   * 히스토리 초기화
+   * 히스토리 초기화 (no-op, 통합 스택에서 관리)
    */
   clearHistory() {
-    this.history = [];
-    this.historyIndex = -1;
-    log.debug('히스토리 초기화됨');
+    log.debug('히스토리 초기화 (통합 스택에서 관리)');
   }
 
   /**

@@ -3541,7 +3541,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .filter-chip {
@@ -3568,9 +3568,134 @@ body.app-fullscreen .video-comment-overlay-controls {
   color: var(--accent-primary);
 }
 
-.filter-bar .comment-search-toggle {
-  margin-left: auto;
+/* 필터 아이콘 버튼 */
+.filter-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(26, 26, 26, 0.6);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
   flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+
+.filter-icon-btn:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.filter-icon-btn.active {
+  background: var(--accent-glow-strong);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+/* 필터바 스페이서 */
+.filter-spacer {
+  flex: 1;
+}
+
+/* 필터 구분선 */
+.filter-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-subtle);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/* 작성자 드롭다운 래퍼 */
+.filter-dropdown-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* 작성자 드롭다운 메뉴 */
+.filter-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: var(--glass-bg-heavy);
+  backdrop-filter: var(--glass-blur-heavy);
+  -webkit-backdrop-filter: var(--glass-blur-heavy);
+  border: 1px solid var(--glass-border-bright);
+  border-radius: 10px;
+  padding: 6px;
+  min-width: 200px;
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  /* 애니메이션 */
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease-in-out, transform 0.15s ease-in-out;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.filter-dropdown-menu.open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+  visibility: visible;
+}
+
+.filter-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.filter-dropdown-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.filter-dropdown-check {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--border-default);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+.filter-dropdown-check.checked {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--bg-primary);
+}
+
+.filter-dropdown-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.filter-dropdown-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 6px;
+}
+
+.filter-dropdown-badge {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: auto;
 }
 
 .comment-search-bar {
@@ -3602,6 +3727,15 @@ body.app-fullscreen .video-comment-overlay-controls {
 .comment-search-toggle.search-active {
   border-color: var(--accent-primary);
   color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.14);
+}
+
+/* 검색 토글 — filter-icon-btn 호환 */
+.filter-icon-btn.search-open,
+.filter-icon-btn.search-active {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: var(--accent-glow-strong);
   box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.14);
 }
 
@@ -4690,7 +4824,10 @@ body.app-fullscreen .video-comment-overlay-controls {
   margin-bottom: 0;
   pointer-events: none;
   filter: brightness(var(--stack-brightness, 1));
-  transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: scale 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              filter 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              margin-top 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* 숨겨진 토스트 (maxVisible 초과) */

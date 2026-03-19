@@ -6,7 +6,7 @@ import { createLogger, setupGlobalErrorHandlers } from './logger.js';
 import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
-import { CommentManager, MARKER_COLORS } from './modules/comment-manager.js';
+import { CommentManager, MARKER_COLORS, getAuthorColor } from './modules/comment-manager.js';
 import { ReviewDataManager } from './modules/review-data-manager.js';
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
@@ -204,16 +204,40 @@ async function initApp() {
     isAudioMode: false
   };
 
+  // 댓글 필터 전역 상태
+  const commentFilterState = {
+    status: 'all',      // 'all' | 'unresolved' | 'resolved'
+    authors: null,       // null = 전체 (필터 없음), [] = 아무도 선택 안 됨, [ids] = 특정 작성자
+    showMarkers: true    // 뷰포트 마커 표시 여부
+  };
+
+  /**
+   * 작성자 필터 적용 헬퍼
+   * @param {Array} items - authorId/author 필드를 가진 객체 배열
+   * @returns {Array} 필터링된 배열
+   */
+  function filterByAuthors(items) {
+    if (commentFilterState.authors === null) return items;
+    if (commentFilterState.authors.length === 0) return []; // 아무도 선택 안 됨
+    const authorFilter = new Set(commentFilterState.authors);
+    return items.filter(m => {
+      const id = m.authorId || m.author || 'unknown';
+      return authorFilter.has(id);
+    });
+  }
+
   // ====== 글로벌 Undo/Redo 시스템 ======
   const undoStack = [];
   const redoStack = [];
   const MAX_UNDO_STACK = 50;
+  let _isProcessingUndo = false;
 
   /**
    * Undo 스택에 작업 추가
    * @param {Object} action - { type, data, undo, redo }
    */
   function pushUndo(action) {
+    if (!action.timestamp) action.timestamp = Date.now();
     undoStack.push(action);
     if (undoStack.length > MAX_UNDO_STACK) {
       undoStack.shift();
@@ -222,75 +246,65 @@ async function initApp() {
   }
 
   /**
-   * 글로벌 Undo 실행
-   * 드로잉 모드일 때는 그리기 Undo를 먼저 시도
+   * 글로벌 Undo 실행 (통합 타임라인)
    */
-  function globalUndo() {
-    // 드로잉 모드: 그리기 Undo 먼저 시도
-    if (state.isDrawMode) {
-      if (drawingManager.undo()) {
-        return true;
-      }
-      // 그리기 히스토리가 없으면 댓글 Undo 시도
-      if (undoStack.length > 0) {
-        const action = undoStack.pop();
-        if (action && action.undo) {
-          action.undo();
-          redoStack.push(action);
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // 일반 모드: 댓글 Undo 먼저 시도
-    if (undoStack.length === 0) {
-      return drawingManager.undo();
-    }
+  async function globalUndo() {
+    if (_isProcessingUndo || undoStack.length === 0) return false;
+    _isProcessingUndo = true;
 
     const action = undoStack.pop();
-    if (action && action.undo) {
-      action.undo();
-      redoStack.push(action);
-      return true;
+    try {
+      if (action && action.undo) {
+        // redo를 위해 현재 상태 캡처 (DRAWING 타입인 경우)
+        if (action.type === 'DRAWING') {
+          const currentSnapshot = drawingManager._createSnapshot();
+          action._redoSnapshot = currentSnapshot;
+        }
+        await action.undo();
+        redoStack.push(action);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      log.error('Undo 실패', err);
+      undoStack.push(action); // 롤백
+      return false;
+    } finally {
+      _isProcessingUndo = false;
     }
-    return false;
   }
 
   /**
-   * 글로벌 Redo 실행
-   * 드로잉 모드일 때는 그리기 Redo를 먼저 시도
+   * 글로벌 Redo 실행 (통합 타임라인)
    */
-  function globalRedo() {
-    // 드로잉 모드: 그리기 Redo 먼저 시도
-    if (state.isDrawMode) {
-      if (drawingManager.redo()) {
-        return true;
-      }
-      // 그리기 히스토리가 없으면 댓글 Redo 시도
-      if (redoStack.length > 0) {
-        const action = redoStack.pop();
-        if (action && action.redo) {
-          action.redo();
-          undoStack.push(action);
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // 일반 모드: 댓글 Redo 먼저 시도
-    if (redoStack.length === 0) {
-      return drawingManager.redo();
-    }
+  async function globalRedo() {
+    if (_isProcessingUndo || redoStack.length === 0) return false;
+    _isProcessingUndo = true;
 
     const action = redoStack.pop();
-    if (action && action.redo) {
-      action.redo();
-      undoStack.push(action);
-      return true;
+    try {
+      if (action) {
+        // DRAWING 타입의 경우 redo 콜백 대신 _redoSnapshot으로 복원
+        // (redo 콜백은 null — drawing-manager.js _saveToHistory 참고)
+        if (action.type === 'DRAWING' && action._redoSnapshot) {
+          drawingManager._isUndoingOrRedoing = true;
+          drawingManager._restoreSnapshot(action._redoSnapshot);
+          drawingManager._isUndoingOrRedoing = false;
+          drawingManager._emit('redo');
+        } else if (action.redo) {
+          await action.redo();
+        }
+        undoStack.push(action);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      log.error('Redo 실패', err);
+      redoStack.push(action); // 롤백
+      return false;
+    } finally {
+      _isProcessingUndo = false;
     }
-    return false;
   }
 
   // 마커 컨테이너 생성 (영상 위에 마커 표시용)
@@ -334,6 +348,9 @@ async function initApp() {
     canvas: elements.drawingCanvas,
     onionSkinCanvas: elements.onionSkinCanvas
   });
+
+  // DrawingManager → 통합 undo 스택 연동
+  drawingManager._onUndoPush = (action) => pushUndo(action);
 
   // 댓글 매니저
   const commentManager = new CommentManager({
@@ -1404,12 +1421,177 @@ async function initApp() {
 
   document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', function() {
-      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      if (this.id === 'authorFilterBtn' || this.id === 'markerToggleBtn') return;
+      document.querySelectorAll('.filter-chip').forEach(c => {
+        if (c.id !== 'authorFilterBtn' && c.id !== 'markerToggleBtn') c.classList.remove('active');
+      });
       this.classList.add('active');
       const filter = this.dataset.filter;
+      commentFilterState.status = filter;
       updateCommentList(filter);
       log.debug('필터 변경', { filter });
     });
+  });
+
+  // ====== 작성자 필터 드롭다운 ======
+  function updateAuthorFilterMenu() {
+    const menu = document.getElementById('authorFilterMenu');
+    if (!menu) return;
+
+    const allMarkers = commentManager.getAllMarkers();
+    const authors = new Map();
+
+    allMarkers.forEach(m => {
+      if (m.deleted) return;
+      const id = m.authorId || m.author || 'unknown';
+      if (!authors.has(id)) {
+        authors.set(id, { name: m.author || '알 수 없음', count: 0 });
+      }
+      authors.get(id).count++;
+    });
+
+    const selectedAll = commentFilterState.authors === null;
+
+    let html = '';
+    for (const [authorId, info] of authors) {
+      const color = getAuthorColor(authorId);
+      const isChecked = selectedAll || commentFilterState.authors.includes(authorId);
+      html += `
+        <div class="filter-dropdown-item" data-author-id="${escapeHtml(authorId)}">
+          <div class="filter-dropdown-check ${isChecked ? 'checked' : ''}">${isChecked ? '✓' : ''}</div>
+          <div class="filter-dropdown-dot" style="background: ${color.color}"></div>
+          ${escapeHtml(info.name)}
+          <span class="filter-dropdown-badge">${info.count}</span>
+        </div>`;
+    }
+
+    html += '<div class="filter-dropdown-divider"></div>';
+    html += `
+      <div class="filter-dropdown-item" data-author-id="__all__">
+        <div class="filter-dropdown-check ${selectedAll ? 'checked' : ''}">${selectedAll ? '✓' : ''}</div>
+        전체 선택/해제
+      </div>`;
+
+    menu.innerHTML = html;
+  }
+
+  function resetCommentFilters() {
+    commentFilterState.status = 'all';
+    commentFilterState.authors = null;
+    commentFilterState.showMarkers = true;
+
+    // UI 초기화
+    document.querySelectorAll('.filter-chip').forEach(c => {
+      if (c.id !== 'authorFilterBtn') {
+        c.classList.toggle('active', c.dataset.filter === 'all');
+      }
+    });
+    const authorBtn = document.getElementById('authorFilterBtn');
+    if (authorBtn) authorBtn.classList.remove('active');
+    const markerBtn = document.getElementById('markerToggleBtn');
+    if (markerBtn) markerBtn.classList.add('active');
+    const menu = document.getElementById('authorFilterMenu');
+    if (menu) menu.classList.remove('open');
+  }
+
+  function applyCommentFilters() {
+    updateCommentList(commentFilterState.status);
+    renderCommentRanges();
+    renderVideoMarkers();
+    updateTimelineMarkers();
+  }
+
+  // 작성자 필터 드롭다운 토글
+  document.getElementById('authorFilterBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('authorFilterMenu');
+    const isOpen = menu.classList.contains('open');
+    if (isOpen) {
+      menu.classList.remove('open');
+    } else {
+      updateAuthorFilterMenu();
+      menu.classList.add('open');
+    }
+  });
+
+  // 작성자 드롭다운 — 마우스 벗어나면 닫기
+  let _authorDropdownLeaveTimer = null;
+  const authorWrapper = document.getElementById('authorFilterWrapper');
+  if (authorWrapper) {
+    authorWrapper.addEventListener('mouseleave', () => {
+      _authorDropdownLeaveTimer = setTimeout(() => {
+        const menu = document.getElementById('authorFilterMenu');
+        if (menu) menu.classList.remove('open');
+      }, 300); // 300ms 딜레이
+    });
+    authorWrapper.addEventListener('mouseenter', () => {
+      if (_authorDropdownLeaveTimer) {
+        clearTimeout(_authorDropdownLeaveTimer);
+        _authorDropdownLeaveTimer = null;
+      }
+    });
+  }
+
+  // 드롭다운 외부 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    const wrapper = document.getElementById('authorFilterWrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+      const menu = document.getElementById('authorFilterMenu');
+      if (menu) menu.classList.remove('open');
+    }
+  });
+
+  // 작성자 선택/해제
+  document.getElementById('authorFilterMenu')?.addEventListener('click', (e) => {
+    const item = e.target.closest('.filter-dropdown-item');
+    if (!item) return;
+
+    const authorId = item.dataset.authorId;
+
+    if (authorId === '__all__') {
+      commentFilterState.authors = null;
+    } else {
+      if (commentFilterState.authors === null) {
+        // 현재 전체 선택 → 이 작성자만 해제
+        const allMarkers = commentManager.getAllMarkers();
+        const uniqueAuthors = new Set(
+          allMarkers.filter(m => !m.deleted).map(m => m.authorId || m.author || 'unknown')
+        );
+        commentFilterState.authors = [...uniqueAuthors].filter(id => id !== authorId);
+      } else {
+        const idx = commentFilterState.authors.indexOf(authorId);
+        if (idx !== -1) {
+          commentFilterState.authors.splice(idx, 1);
+        } else {
+          commentFilterState.authors.push(authorId);
+        }
+        // 모든 작성자가 선택되면 null(전체)로 리셋
+        const allMarkers = commentManager.getAllMarkers();
+        const uniqueAuthors = new Set(
+          allMarkers.filter(m => !m.deleted).map(m => m.authorId || m.author || 'unknown')
+        );
+        if (commentFilterState.authors.length >= uniqueAuthors.size) {
+          commentFilterState.authors = null;
+        }
+      }
+    }
+
+    updateAuthorFilterMenu();
+    applyCommentFilters();
+
+    // 작성자 필터 활성 상태 표시
+    const btn = document.getElementById('authorFilterBtn');
+    if (btn) {
+      btn.classList.toggle('active', commentFilterState.authors !== null);
+    }
+  });
+
+  // 뷰포트 마커 토글
+  document.getElementById('markerToggleBtn')?.addEventListener('click', () => {
+    commentFilterState.showMarkers = !commentFilterState.showMarkers;
+    const btn = document.getElementById('markerToggleBtn');
+    btn.classList.toggle('active', commentFilterState.showMarkers);
+    applyCommentFilters();
   });
 
   // ====== 댓글 검색 ======
@@ -1759,8 +1941,8 @@ async function initApp() {
   });
 
   // Undo 버튼
-  elements.btnUndo?.addEventListener('click', () => {
-    if (drawingManager.undo()) {
+  elements.btnUndo?.addEventListener('click', async () => {
+    if (await globalUndo()) {
       showToast('실행 취소됨', 'info');
     }
   });
@@ -2066,13 +2248,6 @@ async function initApp() {
   const highlightColorPicker = document.getElementById('highlightColorPicker');
   const highlightCopyBtn = document.getElementById('highlightCopyBtn');
   const highlightDeleteBtn = document.getElementById('highlightDeleteBtn');
-
-  // 마커 팝업 관련 요소
-  const markerPopup = document.getElementById('markerPopup');
-  const markerColorPicker = document.getElementById('markerColorPicker');
-
-  // 현재 선택된 마커 ID
-  let selectedMarkerId = null;
 
   // 하이라이트 트랙 연결 (좌측 레이어 헤더도 연동)
   timeline.setHighlightTrack(highlightTrack, highlightLayerHeader);
@@ -2520,65 +2695,7 @@ async function initApp() {
   });
 
   // ====== 마커 색상 팝업 ======
-
-  // 마커 팝업 표시
-  function showMarkerPopup(markerId, x, y) {
-    const marker = commentManager.getMarker(markerId);
-    if (!marker) return;
-
-    selectedMarkerId = markerId;
-
-    // 색상 버튼 선택 상태
-    markerColorPicker.querySelectorAll('.marker-color-btn').forEach(btn => {
-      btn.classList.toggle('selected', btn.dataset.color === (marker.colorKey || 'default'));
-    });
-
-    // 위치 설정 (화면 경계 고려)
-    const popupWidth = 200;
-    const popupHeight = 80;
-    const adjustedX = Math.min(x, window.innerWidth - popupWidth - 10);
-    const adjustedY = Math.min(y, window.innerHeight - popupHeight - 10);
-
-    markerPopup.style.left = `${adjustedX}px`;
-    markerPopup.style.top = `${adjustedY}px`;
-    markerPopup.style.display = 'block';
-  }
-
-  // 마커 팝업 숨기기
-  function hideMarkerPopup() {
-    markerPopup.style.display = 'none';
-    selectedMarkerId = null;
-  }
-
-  // 마커 팝업 외부 클릭 시 닫기
-  document.addEventListener('click', (e) => {
-    if (markerPopup.style.display === 'block' &&
-        !markerPopup.contains(e.target) &&
-        !e.target.closest('.comment-range-item') &&
-        !e.target.closest('.video-comment-range-bar')) {
-      hideMarkerPopup();
-    }
-  });
-
-  // 마커 색상 선택
-  markerColorPicker.addEventListener('click', (e) => {
-    const btn = e.target.closest('.marker-color-btn');
-    if (!btn || !selectedMarkerId) return;
-
-    const colorKey = btn.dataset.color;
-    commentManager.updateMarker(selectedMarkerId, { colorKey });
-
-    // 버튼 선택 상태 업데이트
-    markerColorPicker.querySelectorAll('.marker-color-btn').forEach(b => {
-      b.classList.toggle('selected', b === btn);
-    });
-
-    // UI 업데이트 (타임라인 + 비디오 오버레이)
-    renderCommentRanges();
-    updateCommentList();
-    hideMarkerPopup();
-    showToast('마커 색상이 변경되었습니다', 'info');
-  });
+  // (마커 색상 팝업 비활성화 - 작성자 자동 색상으로 전환)
 
   // ====== 댓글 범위 트랙 ======
   const commentTrack = document.getElementById('commentTrack');
@@ -2632,7 +2749,15 @@ async function initApp() {
   function renderVideoCommentRanges() {
     if (!videoCommentRangeOverlay) return;
 
-    const ranges = commentManager.getMarkerRanges();
+    let ranges = commentManager.getMarkerRanges();
+
+    // 작성자 필터 적용
+    if (commentFilterState.authors !== null) {
+      const allowedIds = new Set(
+        filterByAuthors(commentManager.getAllMarkers()).map(m => m.id)
+      );
+      ranges = ranges.filter(r => allowedIds.has(r.markerId));
+    }
 
     // 기존 요소 제거
     videoCommentRangeOverlay.innerHTML = '';
@@ -2672,8 +2797,12 @@ async function initApp() {
       // 최소 너비 보장
       const minWidthPercent = Math.max(widthPercent, 1);
 
-      // 색상 (레이어 색상)
-      const color = comment.color || '#4a9eff';
+      // 색상 (작성자 색상 기반)
+      const rangeMarker = commentManager.getMarker(comment.markerId);
+      const authorColorInfo = rangeMarker
+        ? getAuthorColor(rangeMarker.authorId || rangeMarker.author || 'unknown')
+        : { color: comment.color || '#4a9eff' };
+      const color = authorColorInfo.color;
       bar.style.left = `${leftPercent}%`;
       bar.style.width = `${minWidthPercent}%`;
       bar.style.background = hexToRgba(color, 0.6);
@@ -2686,13 +2815,6 @@ async function initApp() {
           videoPlayer.seekToFrame(marker.startFrame);
           scrollToCommentWithGlow(comment.markerId);
         }
-      });
-
-      // 우클릭 이벤트 - 마커 색상 팝업
-      bar.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showMarkerPopup(comment.markerId, e.clientX, e.clientY);
       });
 
       videoCommentRangeOverlay.appendChild(bar);
@@ -2733,7 +2855,16 @@ async function initApp() {
 
   // 댓글 범위 렌더링 함수 (타임라인 + 비디오 오버레이)
   function renderCommentRanges() {
-    const ranges = commentManager.getMarkerRanges();
+    let ranges = commentManager.getMarkerRanges();
+
+    // 작성자 필터 적용
+    if (commentFilterState.authors !== null) {
+      const allowedIds = new Set(
+        filterByAuthors(commentManager.getAllMarkers()).map(m => m.id)
+      );
+      ranges = ranges.filter(r => allowedIds.has(r.markerId));
+    }
+
     timeline.renderCommentRanges(ranges);
     setupCommentRangeInteractions();
     renderVideoCommentRanges();
@@ -2764,13 +2895,6 @@ async function initApp() {
         items.forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
         selectedCommentRange = { layerId, markerId };
-      });
-
-      // 우클릭 - 마커 색상 팝업
-      item.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showMarkerPopup(markerId, e.clientX, e.clientY);
       });
 
       // 드래그 시작 (전체 이동)
@@ -3454,6 +3578,11 @@ async function initApp() {
 
       // 댓글 매니저 초기화
       commentManager.clear();
+      // 댓글 필터 상태 초기화
+      resetCommentFilters();
+      // Undo/Redo 스택 초기화 (파일 전환 시 크로스파일 오염 방지)
+      undoStack.length = 0;
+      redoStack.length = 0;
       // 그리기 매니저 초기화
       drawingManager.reset();
       // 하이라이트 매니저 초기화
@@ -4188,8 +4317,17 @@ async function initApp() {
     // body에 있는 기존 툴팁들도 제거
     document.querySelectorAll('.comment-marker-tooltip').forEach(el => el.remove());
 
-    // 모든 마커 렌더링
-    const allMarkers = commentManager.getAllMarkers();
+    // 마커 토글이 꺼져있으면 렌더링 스킵
+    if (!commentFilterState.showMarkers) {
+      updateVideoMarkersVisibility();
+      return;
+    }
+
+    let allMarkers = commentManager.getAllMarkers();
+
+    // 작성자 필터 적용
+    allMarkers = filterByAuthors(allMarkers);
+
     allMarkers.forEach(marker => {
       renderSingleMarker(marker);
     });
@@ -4204,12 +4342,14 @@ async function initApp() {
     const markerEl = document.createElement('div');
     markerEl.className = `comment-marker${marker.resolved ? ' resolved' : ''}`;
     markerEl.dataset.markerId = marker.id;
+    const authorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
     markerEl.style.cssText = `
       position: absolute;
       left: ${marker.x * 100}%;
       top: ${marker.y * 100}%;
       transform: translate(-50%, -50%);
       pointer-events: auto;
+      ${!marker.resolved ? `background: ${authorColor.color};` : ''}
     `;
 
     // 말풍선 (툴팁) - body에 추가하여 transform 영향 안받게
@@ -4412,13 +4552,6 @@ async function initApp() {
       scrollToCommentWithGlow(marker.id);
     });
 
-    // 우클릭 - 마커 색상 팝업
-    markerEl.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      showMarkerPopup(marker.id, e.clientX, e.clientY);
-    });
-
     // 해결 버튼
     tooltip.querySelector('.tooltip-btn.resolve')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -4444,10 +4577,7 @@ async function initApp() {
         updateTimelineMarkers();
         renderVideoMarkers();
 
-        // 삭제 상태 저장 (협업 동기화용)
-        await reviewDataManager.save();
-
-        // Undo 스택에 추가
+        // Undo 스택에 추가 (save 전에 호출하여 시간순 보장)
         pushUndo({
           type: 'DELETE_COMMENT',
           data: markerData,
@@ -4466,6 +4596,10 @@ async function initApp() {
             await reviewDataManager.save();
           }
         });
+
+        // 삭제 상태 저장 (협업 동기화용)
+        await reviewDataManager.save();
+
         showToast('댓글이 삭제되었습니다.', 'info');
       }
     });
@@ -4529,9 +4663,17 @@ async function initApp() {
     const ranges = commentManager.getMarkerRanges();
     const fps = videoPlayer.fps || 24;
 
+    // 작성자 필터 적용
+    let filteredRanges = ranges;
+    if (commentFilterState.authors !== null) {
+      const filteredMarkers = filterByAuthors(commentManager.getAllMarkers());
+      const allowedIds = new Set(filteredMarkers.map(m => m.id));
+      filteredRanges = ranges.filter(r => allowedIds.has(r.markerId));
+    }
+
     // 프레임별로 마커 그룹화
     const frameMap = new Map();
-    ranges.forEach(range => {
+    filteredRanges.forEach(range => {
       if (!frameMap.has(range.startFrame)) {
         frameMap.set(range.startFrame, []);
       }
@@ -4697,6 +4839,9 @@ async function initApp() {
       markers = markers.filter(m => m.resolved);
     }
 
+    // 작성자 필터 적용
+    markers = filterByAuthors(markers);
+
     const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
     if (normalizedSearch) {
       markers = markers.filter((marker) => markerMatchesCommentSearch(marker, normalizedSearch));
@@ -4756,6 +4901,7 @@ async function initApp() {
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
       const authorStyle = getAuthorColorStyle(marker.author);
+      const markerAuthorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
       const repliesHtml = (marker.replies || []).map(reply => `
@@ -4809,7 +4955,7 @@ async function initApp() {
           </div>
         </div>
         <div class="comment-actions">
-          <span class="comment-author-inline ${authorClass}" ${authorStyle}>${highlightCommentSearchMatches(marker.author, normalizedSearch)}</span>
+          <span class="comment-author-inline ${authorClass}" style="color: ${markerAuthorColor.color}; font-weight: bold;">${highlightCommentSearchMatches(marker.author, normalizedSearch)}</span>
           <span class="comment-time-inline">${formatRelativeTime(marker.createdAt)}</span>
           <button class="comment-action-btn edit-btn" title="수정">수정</button>
           <button class="comment-action-btn reply-btn" title="답글">답글</button>
@@ -4880,10 +5026,7 @@ async function initApp() {
             updateTimelineMarkers();
             renderVideoMarkers();
 
-            // 삭제 상태 저장 (협업 동기화용)
-            await reviewDataManager.save();
-
-            // Undo 스택에 추가
+            // Undo 스택에 추가 (save 전에 호출하여 시간순 보장)
             pushUndo({
               type: 'DELETE_COMMENT',
               data: markerData,
@@ -4902,6 +5045,10 @@ async function initApp() {
                 await reviewDataManager.save();
               }
             });
+
+            // 삭제 상태 저장 (협업 동기화용)
+            await reviewDataManager.save();
+
             showToast('댓글이 삭제되었습니다.', 'info');
           }
         }
@@ -5264,11 +5411,15 @@ async function initApp() {
       toast.classList.add('toast-exit');
     }
 
+    // 배열에서 즉시 제거 (스택 계산에서 제외)
     const idx = _toastState.toasts.indexOf(toast);
     if (idx !== -1) _toastState.toasts.splice(idx, 1);
-    _updateToastStack();
 
-    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+    // 퇴장 애니메이션 완료 후 DOM 제거 + 스택 재정렬
+    toast.addEventListener('animationend', () => {
+      toast.remove();
+      _updateToastStack();
+    }, { once: true });
   }
 
   /**
@@ -5499,7 +5650,7 @@ async function initApp() {
   /**
    * 키보드 단축키 처리
    */
-  function handleKeydown(e) {
+  async function handleKeydown(e) {
     // 입력 필드에서는 단축키 무시
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
 
@@ -5615,12 +5766,12 @@ async function initApp() {
         e.preventDefault();
         if (e.shiftKey) {
           // Ctrl+Shift+Z: Redo
-          if (globalRedo()) {
+          if (await globalRedo()) {
             showToast('다시 실행됨', 'info');
           }
         } else {
           // Ctrl+Z: Undo
-          if (globalUndo()) {
+          if (await globalUndo()) {
             showToast('실행 취소됨', 'info');
           }
         }
@@ -5631,7 +5782,7 @@ async function initApp() {
       if (e.ctrlKey || e.metaKey) {
         // Ctrl+Y: Redo (alternative)
         e.preventDefault();
-        if (globalRedo()) {
+        if (await globalRedo()) {
           showToast('다시 실행됨', 'info');
         }
       }
