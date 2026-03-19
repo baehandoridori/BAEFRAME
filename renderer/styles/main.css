@@ -4690,7 +4690,10 @@ body.app-fullscreen .video-comment-overlay-controls {
   margin-bottom: 0;
   pointer-events: none;
   filter: brightness(var(--stack-brightness, 1));
-  transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: scale 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              filter 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              margin-top 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* 숨겨진 토스트 (maxVisible 초과) */
