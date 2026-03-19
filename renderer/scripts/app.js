@@ -3641,6 +3641,9 @@ async function initApp() {
       commentManager.clear();
       // 댓글 필터 상태 초기화
       resetCommentFilters();
+      // Undo/Redo 스택 초기화 (파일 전환 시 크로스파일 오염 방지)
+      undoStack.length = 0;
+      redoStack.length = 0;
       // 그리기 매니저 초기화
       drawingManager.reset();
       // 하이라이트 매니저 초기화
@@ -4642,10 +4645,7 @@ async function initApp() {
         updateTimelineMarkers();
         renderVideoMarkers();
 
-        // 삭제 상태 저장 (협업 동기화용)
-        await reviewDataManager.save();
-
-        // Undo 스택에 추가
+        // Undo 스택에 추가 (save 전에 호출하여 시간순 보장)
         pushUndo({
           type: 'DELETE_COMMENT',
           data: markerData,
@@ -4664,6 +4664,10 @@ async function initApp() {
             await reviewDataManager.save();
           }
         });
+
+        // 삭제 상태 저장 (협업 동기화용)
+        await reviewDataManager.save();
+
         showToast('댓글이 삭제되었습니다.', 'info');
       }
     });
@@ -5090,10 +5094,7 @@ async function initApp() {
             updateTimelineMarkers();
             renderVideoMarkers();
 
-            // 삭제 상태 저장 (협업 동기화용)
-            await reviewDataManager.save();
-
-            // Undo 스택에 추가
+            // Undo 스택에 추가 (save 전에 호출하여 시간순 보장)
             pushUndo({
               type: 'DELETE_COMMENT',
               data: markerData,
@@ -5112,6 +5113,10 @@ async function initApp() {
                 await reviewDataManager.save();
               }
             });
+
+            // 삭제 상태 저장 (협업 동기화용)
+            await reviewDataManager.save();
+
             showToast('댓글이 삭제되었습니다.', 'info');
           }
         }
