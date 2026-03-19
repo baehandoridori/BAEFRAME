@@ -208,6 +208,7 @@ async function initApp() {
   const undoStack = [];
   const redoStack = [];
   const MAX_UNDO_STACK = 50;
+  let _isProcessingUndo = false;
 
   /**
    * Undo 스택에 작업 추가
@@ -226,44 +227,62 @@ async function initApp() {
    * 글로벌 Undo 실행 (통합 타임라인)
    */
   async function globalUndo() {
-    if (undoStack.length === 0) return false;
+    if (_isProcessingUndo || undoStack.length === 0) return false;
+    _isProcessingUndo = true;
 
     const action = undoStack.pop();
-    if (action && action.undo) {
-      // redo를 위해 현재 상태 캡처 (DRAWING 타입인 경우)
-      if (action.type === 'DRAWING') {
-        const currentSnapshot = drawingManager._createSnapshot();
-        action._redoSnapshot = currentSnapshot;
+    try {
+      if (action && action.undo) {
+        // redo를 위해 현재 상태 캡처 (DRAWING 타입인 경우)
+        if (action.type === 'DRAWING') {
+          const currentSnapshot = drawingManager._createSnapshot();
+          action._redoSnapshot = currentSnapshot;
+        }
+        await action.undo();
+        redoStack.push(action);
+        return true;
       }
-      await action.undo();
-      redoStack.push(action);
-      return true;
+      return false;
+    } catch (err) {
+      log.error('Undo 실패', err);
+      undoStack.push(action); // 롤백
+      return false;
+    } finally {
+      _isProcessingUndo = false;
     }
-    return false;
   }
 
   /**
    * 글로벌 Redo 실행 (통합 타임라인)
    */
   async function globalRedo() {
-    if (redoStack.length === 0) return false;
+    if (_isProcessingUndo || redoStack.length === 0) return false;
+    _isProcessingUndo = true;
 
     const action = redoStack.pop();
-    if (action) {
-      // DRAWING 타입의 경우 redo 콜백 대신 _redoSnapshot으로 복원
-      // (redo 콜백은 null — drawing-manager.js _saveToHistory 참고)
-      if (action.type === 'DRAWING' && action._redoSnapshot) {
-        drawingManager._isUndoingOrRedoing = true;
-        drawingManager._restoreSnapshot(action._redoSnapshot);
-        drawingManager._isUndoingOrRedoing = false;
-        drawingManager._emit('redo');
-      } else if (action.redo) {
-        await action.redo();
+    try {
+      if (action) {
+        // DRAWING 타입의 경우 redo 콜백 대신 _redoSnapshot으로 복원
+        // (redo 콜백은 null — drawing-manager.js _saveToHistory 참고)
+        if (action.type === 'DRAWING' && action._redoSnapshot) {
+          drawingManager._isUndoingOrRedoing = true;
+          drawingManager._restoreSnapshot(action._redoSnapshot);
+          drawingManager._isUndoingOrRedoing = false;
+          drawingManager._emit('redo');
+        } else if (action.redo) {
+          await action.redo();
+        }
+        undoStack.push(action);
+        return true;
       }
-      undoStack.push(action);
-      return true;
+      return false;
+    } catch (err) {
+      log.error('Redo 실패', err);
+      redoStack.push(action); // 롤백
+      return false;
+    } finally {
+      _isProcessingUndo = false;
     }
-    return false;
   }
 
   // 마커 컨테이너 생성 (영상 위에 마커 표시용)
