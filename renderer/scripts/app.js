@@ -214,6 +214,7 @@ async function initApp() {
    * @param {Object} action - { type, data, undo, redo }
    */
   function pushUndo(action) {
+    if (!action.timestamp) action.timestamp = Date.now();
     undoStack.push(action);
     if (undoStack.length > MAX_UNDO_STACK) {
       undoStack.shift();
@@ -222,35 +223,19 @@ async function initApp() {
   }
 
   /**
-   * 글로벌 Undo 실행
-   * 드로잉 모드일 때는 그리기 Undo를 먼저 시도
+   * 글로벌 Undo 실행 (통합 타임라인)
    */
-  function globalUndo() {
-    // 드로잉 모드: 그리기 Undo 먼저 시도
-    if (state.isDrawMode) {
-      if (drawingManager.undo()) {
-        return true;
-      }
-      // 그리기 히스토리가 없으면 댓글 Undo 시도
-      if (undoStack.length > 0) {
-        const action = undoStack.pop();
-        if (action && action.undo) {
-          action.undo();
-          redoStack.push(action);
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // 일반 모드: 댓글 Undo 먼저 시도
-    if (undoStack.length === 0) {
-      return drawingManager.undo();
-    }
+  async function globalUndo() {
+    if (undoStack.length === 0) return false;
 
     const action = undoStack.pop();
     if (action && action.undo) {
-      action.undo();
+      // redo를 위해 현재 상태 캡처 (DRAWING 타입인 경우)
+      if (action.type === 'DRAWING') {
+        const currentSnapshot = drawingManager._createSnapshot();
+        action._redoSnapshot = currentSnapshot;
+      }
+      await action.undo();
       redoStack.push(action);
       return true;
     }
@@ -258,35 +243,22 @@ async function initApp() {
   }
 
   /**
-   * 글로벌 Redo 실행
-   * 드로잉 모드일 때는 그리기 Redo를 먼저 시도
+   * 글로벌 Redo 실행 (통합 타임라인)
    */
-  function globalRedo() {
-    // 드로잉 모드: 그리기 Redo 먼저 시도
-    if (state.isDrawMode) {
-      if (drawingManager.redo()) {
-        return true;
-      }
-      // 그리기 히스토리가 없으면 댓글 Redo 시도
-      if (redoStack.length > 0) {
-        const action = redoStack.pop();
-        if (action && action.redo) {
-          action.redo();
-          undoStack.push(action);
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // 일반 모드: 댓글 Redo 먼저 시도
-    if (redoStack.length === 0) {
-      return drawingManager.redo();
-    }
+  async function globalRedo() {
+    if (redoStack.length === 0) return false;
 
     const action = redoStack.pop();
     if (action && action.redo) {
-      action.redo();
+      // DRAWING 타입의 경우 redo 시 캡처된 스냅샷 복원
+      if (action.type === 'DRAWING' && action._redoSnapshot) {
+        drawingManager._isUndoingOrRedoing = true;
+        drawingManager._restoreSnapshot(action._redoSnapshot);
+        drawingManager._isUndoingOrRedoing = false;
+        drawingManager._emit('redo');
+      } else {
+        await action.redo();
+      }
       undoStack.push(action);
       return true;
     }
@@ -334,6 +306,9 @@ async function initApp() {
     canvas: elements.drawingCanvas,
     onionSkinCanvas: elements.onionSkinCanvas
   });
+
+  // DrawingManager → 통합 undo 스택 연동
+  drawingManager._onUndoPush = (action) => pushUndo(action);
 
   // 댓글 매니저
   const commentManager = new CommentManager({
@@ -1759,8 +1734,8 @@ async function initApp() {
   });
 
   // Undo 버튼
-  elements.btnUndo?.addEventListener('click', () => {
-    if (drawingManager.undo()) {
+  elements.btnUndo?.addEventListener('click', async () => {
+    if (await globalUndo()) {
       showToast('실행 취소됨', 'info');
     }
   });
@@ -5503,7 +5478,7 @@ async function initApp() {
   /**
    * 키보드 단축키 처리
    */
-  function handleKeydown(e) {
+  async function handleKeydown(e) {
     // 입력 필드에서는 단축키 무시
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
 
@@ -5619,12 +5594,12 @@ async function initApp() {
         e.preventDefault();
         if (e.shiftKey) {
           // Ctrl+Shift+Z: Redo
-          if (globalRedo()) {
+          if (await globalRedo()) {
             showToast('다시 실행됨', 'info');
           }
         } else {
           // Ctrl+Z: Undo
-          if (globalUndo()) {
+          if (await globalUndo()) {
             showToast('실행 취소됨', 'info');
           }
         }
@@ -5635,7 +5610,7 @@ async function initApp() {
       if (e.ctrlKey || e.metaKey) {
         // Ctrl+Y: Redo (alternative)
         e.preventDefault();
-        if (globalRedo()) {
+        if (await globalRedo()) {
           showToast('다시 실행됨', 'info');
         }
       }
