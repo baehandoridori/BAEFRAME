@@ -1442,10 +1442,10 @@ async function initApp() {
       const color = getAuthorColor(authorId);
       const isChecked = selectedAll || commentFilterState.authors.includes(authorId);
       html += `
-        <div class="filter-dropdown-item" data-author-id="${authorId}">
+        <div class="filter-dropdown-item" data-author-id="${escapeHtml(authorId)}">
           <div class="filter-dropdown-check ${isChecked ? 'checked' : ''}">${isChecked ? '✓' : ''}</div>
           <div class="filter-dropdown-dot" style="background: ${color.color}"></div>
-          ${info.name}
+          ${escapeHtml(info.name)}
           <span class="filter-dropdown-badge">${info.count}</span>
         </div>`;
     }
@@ -1521,6 +1521,12 @@ async function initApp() {
 
     updateAuthorFilterMenu();
     applyCommentFilters();
+
+    // 작성자 필터 활성 상태 표시
+    const btn = document.getElementById('authorFilterBtn');
+    if (btn) {
+      btn.classList.toggle('active', commentFilterState.authors.length > 0);
+    }
   });
 
   // 뷰포트 마커 토글
@@ -2642,25 +2648,8 @@ async function initApp() {
 
   // 마커 팝업 표시
   function showMarkerPopup(markerId, x, y) {
-    const marker = commentManager.getMarker(markerId);
-    if (!marker) return;
-
-    selectedMarkerId = markerId;
-
-    // 색상 버튼 선택 상태
-    markerColorPicker.querySelectorAll('.marker-color-btn').forEach(btn => {
-      btn.classList.toggle('selected', btn.dataset.color === (marker.colorKey || 'default'));
-    });
-
-    // 위치 설정 (화면 경계 고려)
-    const popupWidth = 200;
-    const popupHeight = 80;
-    const adjustedX = Math.min(x, window.innerWidth - popupWidth - 10);
-    const adjustedY = Math.min(y, window.innerHeight - popupHeight - 10);
-
-    markerPopup.style.left = `${adjustedX}px`;
-    markerPopup.style.top = `${adjustedY}px`;
-    markerPopup.style.display = 'block';
+    // colorKey 팝업 비활성화 (작성자 자동 색상으로 전환)
+    return;
   }
 
   // 마커 팝업 숨기기
@@ -4346,9 +4335,10 @@ async function initApp() {
 
     // 작성자 필터 적용
     if (commentFilterState.authors.length > 0) {
+      const authorFilter = new Set(commentFilterState.authors);
       allMarkers = allMarkers.filter(m => {
         const id = m.authorId || m.author || 'unknown';
-        return commentFilterState.authors.includes(id);
+        return authorFilter.has(id);
       });
     }
 
@@ -4863,9 +4853,10 @@ async function initApp() {
 
     // 작성자 필터 적용
     if (commentFilterState.authors.length > 0) {
+      const authorFilter = new Set(commentFilterState.authors);
       markers = markers.filter(m => {
         const id = m.authorId || m.author || 'unknown';
-        return commentFilterState.authors.includes(id);
+        return authorFilter.has(id);
       });
     }
 
