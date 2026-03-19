@@ -5264,11 +5264,15 @@ async function initApp() {
       toast.classList.add('toast-exit');
     }
 
+    // 배열에서 즉시 제거 (스택 계산에서 제외)
     const idx = _toastState.toasts.indexOf(toast);
     if (idx !== -1) _toastState.toasts.splice(idx, 1);
-    _updateToastStack();
 
-    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+    // 퇴장 애니메이션 완료 후 DOM 제거 + 스택 재정렬
+    toast.addEventListener('animationend', () => {
+      toast.remove();
+      _updateToastStack();
+    }, { once: true });
   }
 
   /**
