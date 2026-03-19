@@ -249,14 +249,15 @@ async function initApp() {
     if (redoStack.length === 0) return false;
 
     const action = redoStack.pop();
-    if (action && action.redo) {
-      // DRAWING 타입의 경우 redo 시 캡처된 스냅샷 복원
+    if (action) {
+      // DRAWING 타입의 경우 redo 콜백 대신 _redoSnapshot으로 복원
+      // (redo 콜백은 null — drawing-manager.js _saveToHistory 참고)
       if (action.type === 'DRAWING' && action._redoSnapshot) {
         drawingManager._isUndoingOrRedoing = true;
         drawingManager._restoreSnapshot(action._redoSnapshot);
         drawingManager._isUndoingOrRedoing = false;
         drawingManager._emit('redo');
-      } else {
+      } else if (action.redo) {
         await action.redo();
       }
       undoStack.push(action);

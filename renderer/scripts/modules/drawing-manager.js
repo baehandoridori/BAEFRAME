@@ -277,12 +277,7 @@ export class DrawingManager extends EventTarget {
           this._isUndoingOrRedoing = false;
           this._emit('undo');
         },
-        redo: async () => {
-          this._isUndoingOrRedoing = true;
-          this._restoreSnapshot(snapshotBefore);
-          this._isUndoingOrRedoing = false;
-          this._emit('redo');
-        }
+        redo: null // DRAWING 타입은 globalRedo에서 _redoSnapshot으로 처리
       });
     }
 
