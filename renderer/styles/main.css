@@ -3730,6 +3730,15 @@ body.app-fullscreen .video-comment-overlay-controls {
   box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.14);
 }
 
+/* 검색 토글 — filter-icon-btn 호환 */
+.filter-icon-btn.search-open,
+.filter-icon-btn.search-active {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: var(--accent-glow-strong);
+  box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.14);
+}
+
 .comment-search-panel {
   overflow: hidden;
   max-height: 0;
