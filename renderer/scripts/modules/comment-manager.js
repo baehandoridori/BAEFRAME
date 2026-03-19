@@ -19,6 +19,35 @@ export const MARKER_COLORS = {
   white: { name: '흰색', color: '#ffffff', bgColor: 'rgba(255, 255, 255, 0.3)' }
 };
 
+// 작성자별 자동 색상 팔레트
+export const AUTHOR_COLORS = [
+  { color: '#4a9eff', bgColor: 'rgba(74, 158, 255, 0.3)' },   // 파랑
+  { color: '#ff6b9d', bgColor: 'rgba(255, 107, 157, 0.3)' },  // 핑크
+  { color: '#2ed573', bgColor: 'rgba(46, 213, 115, 0.3)' },   // 초록
+  { color: '#ffd000', bgColor: 'rgba(255, 208, 0, 0.3)' },    // 노랑
+  { color: '#c084fc', bgColor: 'rgba(192, 132, 252, 0.3)' },  // 보라
+  { color: '#f97316', bgColor: 'rgba(249, 115, 22, 0.3)' },   // 주황
+  { color: '#38bdf8', bgColor: 'rgba(56, 189, 248, 0.3)' },   // 하늘
+  { color: '#fb7185', bgColor: 'rgba(251, 113, 133, 0.3)' },  // 장미
+];
+
+// authorId → 고정 색상 매핑 (해시 기반)
+const _authorColorCache = new Map();
+
+export function getAuthorColor(authorId) {
+  if (!authorId) return AUTHOR_COLORS[0];
+  if (_authorColorCache.has(authorId)) return _authorColorCache.get(authorId);
+
+  let hash = 0;
+  for (let i = 0; i < authorId.length; i++) {
+    hash = ((hash << 5) - hash + authorId.charCodeAt(i)) | 0;
+  }
+  const idx = Math.abs(hash) % AUTHOR_COLORS.length;
+  const color = AUTHOR_COLORS[idx];
+  _authorColorCache.set(authorId, color);
+  return color;
+}
+
 /**
  * UUID 생성
  */
