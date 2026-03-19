@@ -1474,27 +1474,69 @@ async function initApp() {
     menu.innerHTML = html;
   }
 
+  function resetCommentFilters() {
+    commentFilterState.status = 'all';
+    commentFilterState.authors = [];
+    commentFilterState.showMarkers = true;
+
+    // UI 초기화
+    document.querySelectorAll('.filter-chip').forEach(c => {
+      if (c.id !== 'authorFilterBtn') {
+        c.classList.toggle('active', c.dataset.filter === 'all');
+      }
+    });
+    const authorBtn = document.getElementById('authorFilterBtn');
+    if (authorBtn) authorBtn.classList.remove('active');
+    const markerBtn = document.getElementById('markerToggleBtn');
+    if (markerBtn) markerBtn.classList.add('active');
+    const menu = document.getElementById('authorFilterMenu');
+    if (menu) menu.classList.remove('open');
+  }
+
   function applyCommentFilters() {
     updateCommentList(commentFilterState.status);
     renderCommentRanges();
     renderVideoMarkers();
+    updateTimelineMarkers();
   }
 
   // 작성자 필터 드롭다운 토글
   document.getElementById('authorFilterBtn')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const menu = document.getElementById('authorFilterMenu');
-    const isOpen = menu.style.display !== 'none';
-    menu.style.display = isOpen ? 'none' : 'block';
-    if (!isOpen) updateAuthorFilterMenu();
+    const isOpen = menu.classList.contains('open');
+    if (isOpen) {
+      menu.classList.remove('open');
+    } else {
+      updateAuthorFilterMenu();
+      menu.classList.add('open');
+    }
   });
+
+  // 작성자 드롭다운 — 마우스 벗어나면 닫기
+  let _authorDropdownLeaveTimer = null;
+  const authorWrapper = document.getElementById('authorFilterWrapper');
+  if (authorWrapper) {
+    authorWrapper.addEventListener('mouseleave', () => {
+      _authorDropdownLeaveTimer = setTimeout(() => {
+        const menu = document.getElementById('authorFilterMenu');
+        if (menu) menu.classList.remove('open');
+      }, 300); // 300ms 딜레이
+    });
+    authorWrapper.addEventListener('mouseenter', () => {
+      if (_authorDropdownLeaveTimer) {
+        clearTimeout(_authorDropdownLeaveTimer);
+        _authorDropdownLeaveTimer = null;
+      }
+    });
+  }
 
   // 드롭다운 외부 클릭 시 닫기
   document.addEventListener('click', (e) => {
     const wrapper = document.getElementById('authorFilterWrapper');
     if (wrapper && !wrapper.contains(e.target)) {
       const menu = document.getElementById('authorFilterMenu');
-      if (menu) menu.style.display = 'none';
+      if (menu) menu.classList.remove('open');
     }
   });
 
@@ -3597,6 +3639,8 @@ async function initApp() {
 
       // 댓글 매니저 초기화
       commentManager.clear();
+      // 댓글 필터 상태 초기화
+      resetCommentFilters();
       // 그리기 매니저 초기화
       drawingManager.reset();
       // 하이라이트 매니저 초기화
@@ -4683,9 +4727,17 @@ async function initApp() {
     const ranges = commentManager.getMarkerRanges();
     const fps = videoPlayer.fps || 24;
 
+    // 작성자 필터 적용
+    let filteredRanges = ranges;
+    if (commentFilterState.authors.length > 0) {
+      const filteredMarkers = filterByAuthors(commentManager.getAllMarkers());
+      const allowedIds = new Set(filteredMarkers.map(m => m.id));
+      filteredRanges = ranges.filter(r => allowedIds.has(r.markerId));
+    }
+
     // 프레임별로 마커 그룹화
     const frameMap = new Map();
-    ranges.forEach(range => {
+    filteredRanges.forEach(range => {
       if (!frameMap.has(range.startFrame)) {
         frameMap.set(range.startFrame, []);
       }

@@ -3541,7 +3541,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .filter-chip {
@@ -3568,9 +3568,36 @@ body.app-fullscreen .video-comment-overlay-controls {
   color: var(--accent-primary);
 }
 
-.filter-bar .comment-search-toggle {
-  margin-left: auto;
+/* 필터 아이콘 버튼 */
+.filter-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(26, 26, 26, 0.6);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
   flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+
+.filter-icon-btn:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.filter-icon-btn.active {
+  background: var(--accent-glow-strong);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+/* 필터바 스페이서 */
+.filter-spacer {
+  flex: 1;
 }
 
 /* 필터 구분선 */
@@ -3602,6 +3629,19 @@ body.app-fullscreen .video-comment-overlay-controls {
   min-width: 200px;
   box-shadow: var(--shadow-lg);
   z-index: 100;
+  /* 애니메이션 */
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease-in-out, transform 0.15s ease-in-out;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.filter-dropdown-menu.open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+  visibility: visible;
 }
 
 .filter-dropdown-item {

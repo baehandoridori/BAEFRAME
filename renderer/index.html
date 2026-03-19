@@ -866,8 +866,14 @@
 
       <div class="filter-bar">
         <button class="filter-chip active" data-filter="all">전체</button>
-        <button class="filter-chip" data-filter="unresolved">미해결</button>
-        <button class="filter-chip" data-filter="resolved">해결됨</button>
+        <button class="filter-chip" data-filter="unresolved">
+          <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+          미해결
+        </button>
+        <button class="filter-chip" data-filter="resolved">
+          <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l2.5 2.5L16 9"/></svg>
+          해결
+        </button>
 
         <div class="filter-divider"></div>
 
@@ -878,35 +884,35 @@
               <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
               <circle cx="12" cy="7" r="4"/>
             </svg>
-            작성자
-            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2">
+            <svg viewBox="0 0 24 24" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2.5">
               <polyline points="6 9 12 15 18 9"/>
             </svg>
           </button>
-          <div class="filter-dropdown-menu" id="authorFilterMenu" style="display: none">
+          <div class="filter-dropdown-menu" id="authorFilterMenu">
           </div>
         </div>
 
-        <div class="filter-divider"></div>
+        <span class="filter-spacer"></span>
 
         <!-- 뷰포트 마커 토글 -->
-        <button class="filter-chip active" id="markerToggleBtn" title="뷰포트 마커 표시/숨기기">
+        <button class="filter-icon-btn active" id="markerToggleBtn" title="뷰포트 마커 표시/숨기기">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
             <circle cx="12" cy="12" r="3"/>
           </svg>
         </button>
 
+        <!-- 댓글 검색 -->
         <button
           type="button"
-          class="comment-search-toggle"
+          class="filter-icon-btn"
           id="commentSearchToggle"
           aria-label="댓글 검색 열기"
           title="댓글 검색 열기"
           aria-expanded="false"
           aria-controls="commentSearchPanel"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="7"></circle>
             <line x1="20" y1="20" x2="16.65" y2="16.65"></line>
           </svg>
