@@ -929,8 +929,9 @@ async function initApp() {
     updateCommentList();
 
     // Slack 알림: 원작성자 + 스레드 참여자에게 웹훅 전송
-    const { marker, reply } = e.detail;
-    if (marker && reply) {
+    // remote: true인 경우(다른 사용자로부터 동기화된 답글)는 알림 전송 안 함
+    const { marker, reply, remote } = e.detail;
+    if (marker && reply && !remote) {
       slackNotifier.notifyReply(marker, reply, commentManager.getAuthor(), {
         filePath: state.currentFile,
         fileName: elements.fileName?.textContent || '',
@@ -6491,6 +6492,18 @@ async function initApp() {
   function closeAppSettingsModal() {
     if (!appSettingsModal) return;
     appSettingsModal.classList.remove('active');
+
+    // 단축키 캡처 모드 해제 — 설정창 닫힐 때 캡처 중이면 원래 키 표시로 복원
+    if (capturingShortcutAction) {
+      const capturingBtn = document.querySelector(`.shortcut-key-btn.capturing[data-action="${capturingShortcutAction}"]`);
+      if (capturingBtn) {
+        const shortcuts = userSettings.getShortcuts();
+        const sc = shortcuts[capturingShortcutAction];
+        capturingBtn.textContent = sc ? formatShortcutDisplay(sc) : capturingShortcutAction;
+        capturingBtn.classList.remove('capturing');
+      }
+      capturingShortcutAction = null;
+    }
   }
 
   // 앱 설정 열기 버튼
@@ -6570,7 +6583,7 @@ async function initApp() {
   }
 
   function renderShortcutSettings() {
-    const container = document.getElementById('shortcutList');
+    const container = document.getElementById('settingsShortcutList');
     if (!container) return;
 
     const shortcuts = userSettings.getShortcuts();
@@ -6595,7 +6608,7 @@ async function initApp() {
     `).join('');
 
     // 전체 초기화 버튼
-    document.getElementById('resetAllShortcuts')?.addEventListener('click', () => {
+    document.getElementById('settingsResetAllShortcuts')?.addEventListener('click', () => {
       userSettings.resetAllShortcuts();
       renderShortcutSettings();
       showToast('모든 단축키가 초기화되었습니다.', 'success');
@@ -6603,7 +6616,7 @@ async function initApp() {
   }
 
   // 단축키 설정 패널 클릭 이벤트 위임
-  document.getElementById('shortcutList')?.addEventListener('click', (e) => {
+  document.getElementById('settingsShortcutList')?.addEventListener('click', (e) => {
     // 키 바인딩 버튼 클릭 → 캡처 모드
     const keyBtn = e.target.closest('.shortcut-key-btn');
     if (keyBtn) {
