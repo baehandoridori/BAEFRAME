@@ -24,6 +24,8 @@ import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
+import { getMentionManager } from './modules/mention-manager.js';
+import { getSlackNotifier } from './modules/slack-notifier.js';
 
 const log = createLogger('App');
 
@@ -357,6 +359,12 @@ async function initApp() {
     fps: 24,
     container: markerContainer
   });
+
+  // 멘션 매니저 (댓글 @멘션 자동완성)
+  const mentionManager = getMentionManager();
+
+  // Slack 알림 매니저
+  const slackNotifier = getSlackNotifier();
 
   // 하이라이트 매니저
   const highlightManager = new HighlightManager();
@@ -869,8 +877,15 @@ async function initApp() {
     updateCommentList();
     log.info('마커 추가됨', { id: marker.id, text: marker.text, remote: !!remote });
 
-    // 원격 변경은 Undo 스택에 넣지 않음
+    // 원격 변경은 알림/Undo 스킵
     if (remote) return;
+
+    // Slack 알림: @멘션 대상에게 웹훅 전송
+    slackNotifier.notifyNewComment(marker, commentManager.getAuthor(), {
+      filePath: state.currentFile,
+      fileName: elements.fileName?.textContent || '',
+      timecode: marker.startTimecode || ''
+    });
 
     // Undo 스택에 추가
     const markerData = marker.toJSON();
@@ -912,6 +927,16 @@ async function initApp() {
   commentManager.addEventListener('replyAdded', (e) => {
     renderVideoMarkers();
     updateCommentList();
+
+    // Slack 알림: 원작성자 + 스레드 참여자에게 웹훅 전송
+    const { marker, reply } = e.detail;
+    if (marker && reply) {
+      slackNotifier.notifyReply(marker, reply, commentManager.getAuthor(), {
+        filePath: state.currentFile,
+        fileName: elements.fileName?.textContent || '',
+        timecode: marker.startTimecode || ''
+      });
+    }
   });
 
   // 원격 동기화로 인한 전체 갱신 (CommentSync의 fromJSON 호출 시)
@@ -1143,8 +1168,16 @@ async function initApp() {
     }
   });
 
+  // 사이드바 댓글 입력에 멘션 자동완성 부착
+  mentionManager.attach(elements.commentInput);
+
+  // Slack 알림에 토스트 함수 주입
+  slackNotifier.setToastFunction(showToast);
+
   // 사이드바 댓글 입력 Enter 처리 (역순 플로우: 텍스트 입력 → 마커 찍기)
   elements.commentInput.addEventListener('keydown', (e) => {
+    // 멘션 드롭다운 열려있으면 Enter를 멘션 선택으로 처리 (댓글 제출 방지)
+    if (mentionManager.isVisible) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const text = elements.commentInput.value.trim();
@@ -4237,6 +4270,9 @@ async function initApp() {
     const textarea = inputWrapper.querySelector('textarea');
     setTimeout(() => textarea?.focus(), 50);
 
+    // 멘션 자동완성 부착
+    if (textarea) mentionManager.attach(textarea);
+
     // 자동 높이 조절 함수
     const autoResize = () => {
       textarea.style.height = 'auto';
@@ -4248,6 +4284,7 @@ async function initApp() {
 
     // Enter로 확정, Shift+Enter로 줄바꿈
     textarea?.addEventListener('keydown', (e) => {
+      if (mentionManager.isVisible) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const text = textarea.value.trim();
@@ -4362,7 +4399,7 @@ async function initApp() {
         <span class="tooltip-timecode">${marker.startTimecode}</span>
         <span class="tooltip-author ${authorClass}">${escapeHtml(marker.author)}</span>
       </div>
-      <div class="tooltip-text">${escapeHtml(marker.text)}</div>
+      <div class="tooltip-text">${renderGDriveLinks(escapeHtml(marker.text))}</div>
       <div class="tooltip-actions">
         <button class="tooltip-btn resolve" title="${marker.resolved ? '미해결로 변경' : '해결'}">
           ${marker.resolved ? '↩️' : '✓'}
@@ -4910,7 +4947,7 @@ async function initApp() {
             <span class="comment-reply-author ${getAuthorColorClass(reply.author)}" ${getAuthorColorStyle(reply.author)}>${highlightCommentSearchMatches(reply.author, normalizedSearch)}</span>
             <span class="comment-reply-time">${formatRelativeTime(reply.createdAt)}</span>
           </div>
-          <p class="comment-reply-text">${highlightCommentSearchMatches(reply.text, normalizedSearch)}</p>
+          <p class="comment-reply-text">${renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch))}</p>
         </div>
       `).join('');
 
@@ -4944,7 +4981,7 @@ async function initApp() {
           <span class="comment-timecode">${highlightCommentSearchMatches(marker.startTimecode, normalizedSearch)}</span>
         </div>
         <div class="comment-content">
-          <p class="comment-text">${highlightCommentSearchMatches(marker.text, normalizedSearch)}</p>
+          <p class="comment-text">${renderGDriveLinks(highlightCommentSearchMatches(marker.text, normalizedSearch))}</p>
           ${marker.image ? `<div class="comment-attached-image"><img src="${marker.image}" alt="첨부 이미지" data-full-image="${marker.image}"></div>` : ''}
         </div>
         <div class="comment-edit-form" style="display: none;">
@@ -5303,6 +5340,19 @@ async function initApp() {
   }
 
   /**
+   * G:/ 드라이브 경로를 클릭 가능한 버튼으로 변환
+   * escapeHtml 처리된 문자열에서 동작
+   */
+  function renderGDriveLinks(html) {
+    if (!html) return html;
+    // G:/ 또는 G:\ 뒤에 공백/태그시작/줄끝까지를 경로로 인식
+    return html.replace(/(G:[/\\][^\s<"']*)/gi, (match) => {
+      const normalizedPath = match.replace(/\//g, '\\');
+      return `<button class="gdrive-link-btn" data-path="${escapeHtml(normalizedPath)}" title="${escapeHtml(normalizedPath)}"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${escapeHtml(match)}</button>`;
+    });
+  }
+
+  /**
    * 해결됨 날짜/시간 포맷 (예: 2월 9일 3:30 PM)
    */
   function formatResolvedDate(date) {
@@ -5592,6 +5642,19 @@ async function initApp() {
     }
   }
 
+  // G:/ 드라이브 경로 버튼 클릭 이벤트 위임 (전역)
+  document.body.addEventListener('click', (e) => {
+    const btn = e.target.closest('.gdrive-link-btn');
+    if (btn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const path = btn.dataset.path;
+      if (path && window.electronAPI?.openFolder) {
+        window.electronAPI.openFolder(path);
+      }
+    }
+  });
+
   /**
    * 리사이저 설정 (마우스 커서 추적 개선)
    */
@@ -5717,27 +5780,40 @@ async function initApp() {
       break; // 다른 ESC 핸들러로 전달
 
     case 'KeyI':
-      // 시작점 설정
-      e.preventDefault();
-      btnSetInPoint.click();
+      // 시작점 설정 (수정자 키 없을 때만)
+      if (!e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        btnSetInPoint.click();
+      }
       return;
 
     case 'KeyO':
-      // 종료점 설정
-      e.preventDefault();
-      btnSetOutPoint.click();
+      // 종료점 설정 (수정자 키 없을 때만)
+      if (!e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        btnSetOutPoint.click();
+      }
       return;
 
     case 'KeyL':
-      // 구간 반복 토글
-      e.preventDefault();
-      btnLoopToggle.click();
+      // 구간 반복 토글 (Shift+L은 구간 해제)
+      if (!e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          // Shift+L: 구간 반복 해제
+          videoPlayer.clearLoop?.();
+        } else {
+          btnLoopToggle.click();
+        }
+      }
       return;
 
     case 'KeyH':
-      // 하이라이트 추가
-      e.preventDefault();
-      btnAddHighlight.click();
+      // 하이라이트 추가 (수정자 키 없을 때만)
+      if (!e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        btnAddHighlight.click();
+      }
       return;
 
     case 'Delete':
@@ -6406,6 +6482,9 @@ async function initApp() {
       pwWarning.style.display = showWarning ? 'flex' : 'none';
     }
 
+    // 단축키 설정 렌더링
+    renderShortcutSettings();
+
     appSettingsModal.classList.add('active');
   }
 
@@ -6444,6 +6523,141 @@ async function initApp() {
       if (panel) panel.classList.add('active');
     });
   });
+
+  // === 단축키 설정 UI ===
+  const SHORTCUT_CATEGORIES = {
+    '재생': ['playPause', 'prevFrame', 'nextFrame', 'prevFrameFast', 'nextFrameFast', 'prevSecond', 'nextSecond', 'goToStart', 'goToEnd'],
+    '모드': ['commentMode', 'drawMode', 'fullscreen'],
+    '구간 반복': ['setInPoint', 'setOutPoint', 'toggleLoop', 'clearLoop'],
+    '실행취소': ['undo', 'redo'],
+    '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeDelete', 'keyframeDeleteAlt', 'prevKeyframe', 'nextKeyframe'],
+    '프레임 편집': ['insertFrame', 'deleteFrame'],
+    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw']
+  };
+
+  let capturingShortcutAction = null;
+
+  function keyCodeToDisplay(code) {
+    const map = {
+      'Space': 'Space', 'ArrowLeft': '←', 'ArrowRight': '→', 'ArrowUp': '↑', 'ArrowDown': '↓',
+      'Home': 'Home', 'End': 'End', 'Delete': 'Del', 'Backspace': 'Back',
+      'Enter': 'Enter', 'Tab': 'Tab', 'Escape': 'Esc'
+    };
+    if (map[code]) return map[code];
+    if (code.startsWith('Key')) return code.slice(3);
+    if (code.startsWith('Digit')) return code.slice(5);
+    return code;
+  }
+
+  function formatShortcutDisplay(sc) {
+    const parts = [];
+    if (sc.ctrl) parts.push('Ctrl');
+    if (sc.shift) parts.push('Shift');
+    if (sc.alt) parts.push('Alt');
+    parts.push(keyCodeToDisplay(sc.key));
+    return parts.join(' + ');
+  }
+
+  function findShortcutConflict(newSc, excludeAction) {
+    const all = userSettings.getShortcuts();
+    for (const [action, sc] of Object.entries(all)) {
+      if (action === excludeAction) continue;
+      if (sc.key === newSc.key && sc.ctrl === newSc.ctrl && sc.shift === newSc.shift && sc.alt === newSc.alt) {
+        return { action, label: sc.label || action };
+      }
+    }
+    return null;
+  }
+
+  function renderShortcutSettings() {
+    const container = document.getElementById('shortcutList');
+    if (!container) return;
+
+    const shortcuts = userSettings.getShortcuts();
+    const customShortcuts = userSettings.settings?.customShortcuts || {};
+
+    container.innerHTML = Object.entries(SHORTCUT_CATEGORIES).map(([cat, actions]) => `
+      <div class="shortcut-category">
+        <h5 class="shortcut-category-title">${cat}</h5>
+        ${actions.filter(a => shortcuts[a]).map(action => {
+    const sc = shortcuts[action];
+    const isCustom = !!customShortcuts[action];
+    return `
+            <div class="shortcut-row ${isCustom ? 'custom' : ''}" data-action="${action}">
+              <span class="shortcut-label">${escapeHtml(sc.label || action)}</span>
+              <div class="shortcut-key-area">
+                <button class="shortcut-key-btn" data-action="${action}">${formatShortcutDisplay(sc)}</button>
+                ${isCustom ? `<button class="shortcut-reset-btn" data-action="${action}" title="기본값 복원">↩</button>` : ''}
+              </div>
+            </div>`;
+  }).join('')}
+      </div>
+    `).join('');
+
+    // 전체 초기화 버튼
+    document.getElementById('resetAllShortcuts')?.addEventListener('click', () => {
+      userSettings.resetAllShortcuts();
+      renderShortcutSettings();
+      showToast('모든 단축키가 초기화되었습니다.', 'success');
+    });
+  }
+
+  // 단축키 설정 패널 클릭 이벤트 위임
+  document.getElementById('shortcutList')?.addEventListener('click', (e) => {
+    // 키 바인딩 버튼 클릭 → 캡처 모드
+    const keyBtn = e.target.closest('.shortcut-key-btn');
+    if (keyBtn) {
+      capturingShortcutAction = keyBtn.dataset.action;
+      keyBtn.textContent = '키를 누르세요...';
+      keyBtn.classList.add('capturing');
+      return;
+    }
+
+    // 개별 초기화 버튼
+    const resetBtn = e.target.closest('.shortcut-reset-btn');
+    if (resetBtn) {
+      userSettings.resetShortcut(resetBtn.dataset.action);
+      renderShortcutSettings();
+      showToast('단축키가 초기화되었습니다.', 'success');
+    }
+  });
+
+  // 단축키 캡처 (capture phase)
+  document.addEventListener('keydown', (e) => {
+    if (!capturingShortcutAction) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Escape → 취소
+    if (e.key === 'Escape') {
+      capturingShortcutAction = null;
+      renderShortcutSettings();
+      return;
+    }
+
+    // 수정자 키만 누른 경우 무시
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+
+    const newShortcut = {
+      key: e.code,
+      ctrl: e.ctrlKey,
+      shift: e.shiftKey,
+      alt: e.altKey
+    };
+
+    // 충돌 감지
+    const conflict = findShortcutConflict(newShortcut, capturingShortcutAction);
+    if (conflict) {
+      showToast(`"${conflict.label}"과(와) 충돌합니다.`, 'warning');
+      return;
+    }
+
+    userSettings.setShortcut(capturingShortcutAction, newShortcut);
+    capturingShortcutAction = null;
+    renderShortcutSettings();
+    showToast('단축키가 변경되었습니다.', 'success');
+  }, true); // capture phase
 
   // 개인정보 - 이름 변경 (blur 시 자동 저장)
   document.getElementById('appSettingsUserName')?.addEventListener('change', (e) => {
@@ -7142,6 +7356,9 @@ async function initApp() {
     threadEditor.innerHTML = '';
     updateSubmitButtonState();
 
+    // 멘션 자동완성 부착
+    mentionManager.attach(threadEditor);
+
     // 팝업 열기 (이전 포커스 저장)
     saveFocus();
     threadOverlay.classList.add('open');
@@ -7207,6 +7424,9 @@ async function initApp() {
 
     // Line breaks
     html = html.replace(/\n/g, '<br>');
+
+    // G:/ 경로 링크 변환
+    html = renderGDriveLinks(html);
 
     return html;
   }
@@ -7376,8 +7596,8 @@ async function initApp() {
       e.preventDefault();
       applyFormat('underline');
     }
-    // Enter: Submit (without Shift)
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Enter: Submit (without Shift) — 멘션 드롭다운 열려있으면 무시
+    if (e.key === 'Enter' && !e.shiftKey && !mentionManager.isVisible) {
       e.preventDefault();
       submitThreadReply();
     }

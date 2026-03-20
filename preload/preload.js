@@ -116,6 +116,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkVideoThumbnail: (videoPath) => ipcRenderer.invoke('thumbnail:check-video-thumb', videoPath),
   getVideoThumbnailPath: (videoPath) => ipcRenderer.invoke('thumbnail:get-video-thumb-path', videoPath),
 
+  // ====== Slack 웹훅 ======
+  sendSlackWebhook: (url, payload) => ipcRenderer.invoke('slack:send-webhook', url, payload),
+
   // ====== 경로 유틸리티 ======
   pathDirname: (filePath) => ipcRenderer.invoke('path:dirname', filePath),
   pathBasename: (filePath) => ipcRenderer.invoke('path:basename', filePath),

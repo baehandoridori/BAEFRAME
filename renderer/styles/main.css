@@ -10160,3 +10160,169 @@ body.audio-mode .frame-indicator {
   font-size: 11px;
   color: var(--text-tertiary);
 }
+
+/* ==========================================
+   @멘션 자동완성 드롭다운
+   ========================================== */
+.mention-dropdown {
+  position: fixed;
+  z-index: 10000;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border-primary, #444);
+  border-radius: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  min-width: 160px;
+  max-width: 220px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.mention-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary, #eee);
+  transition: background 0.1s;
+}
+
+.mention-item:hover,
+.mention-item.active {
+  background: var(--accent-primary, #ffd000);
+  color: var(--bg-primary, #1a1a1a);
+}
+
+.mention-item-name {
+  font-weight: 500;
+}
+
+/* ==========================================
+   G:/ 드라이브 경로 링크 버튼
+   ========================================== */
+.gdrive-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  margin: 0 2px;
+  background: rgba(255, 208, 0, 0.15);
+  border: 1px solid rgba(255, 208, 0, 0.3);
+  border-radius: 4px;
+  color: var(--accent-primary, #ffd000);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  word-break: break-all;
+  line-height: 1.4;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.gdrive-link-btn:hover {
+  background: rgba(255, 208, 0, 0.25);
+  border-color: rgba(255, 208, 0, 0.5);
+}
+
+.gdrive-link-btn svg {
+  flex-shrink: 0;
+}
+
+/* ==========================================
+   단축키 설정 패널
+   ========================================== */
+.shortcut-actions {
+  margin-bottom: 12px;
+}
+
+.shortcut-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.shortcut-category {
+  margin-bottom: 16px;
+}
+
+.shortcut-category-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #999);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 6px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-primary, #333);
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  gap: 8px;
+}
+
+.shortcut-row.custom .shortcut-label {
+  color: var(--accent-primary, #ffd000);
+}
+
+.shortcut-label {
+  font-size: 13px;
+  color: var(--text-primary, #eee);
+  flex: 1;
+  min-width: 0;
+}
+
+.shortcut-key-area {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.shortcut-key-btn {
+  background: var(--bg-tertiary, #333);
+  border: 1px solid var(--border-primary, #444);
+  border-radius: 4px;
+  color: var(--text-primary, #eee);
+  font-size: 12px;
+  font-family: monospace;
+  padding: 3px 8px;
+  cursor: pointer;
+  min-width: 60px;
+  text-align: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.shortcut-key-btn:hover {
+  background: var(--bg-hover, #444);
+  border-color: var(--accent-primary, #ffd000);
+}
+
+.shortcut-key-btn.capturing {
+  background: var(--accent-primary, #ffd000);
+  color: var(--bg-primary, #1a1a1a);
+  border-color: var(--accent-primary, #ffd000);
+  font-family: inherit;
+  font-weight: 600;
+  animation: pulse-capture 1s ease-in-out infinite;
+}
+
+@keyframes pulse-capture {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.shortcut-reset-btn {
+  background: none;
+  border: 1px solid var(--border-primary, #444);
+  border-radius: 4px;
+  color: var(--text-secondary, #999);
+  font-size: 14px;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.shortcut-reset-btn:hover {
+  color: var(--accent-primary, #ffd000);
+  border-color: var(--accent-primary, #ffd000);
+}

@@ -305,9 +305,41 @@
       }, 1500);
     }
 
+    // Slack 웹훅 딥링크 처리: #open=baeframe://... 형식
+    function handleSlackDeepLink() {
+      const hash = window.location.hash;
+      if (!hash || !hash.startsWith('#open=')) return false;
+
+      const baeframeUrl = decodeURIComponent(hash.substring(6));
+      if (!baeframeUrl.startsWith('baeframe://')) return false;
+
+      statusText.textContent = 'BAEFRAME 앱 열기...';
+      statusDetail.textContent = baeframeUrl.replace('baeframe://', '');
+
+      // baeframe:// 프로토콜로 앱 열기 시도
+      window.location.href = baeframeUrl;
+
+      // 2초 후에도 페이지가 보이면 앱이 설치 안 된 상태
+      setTimeout(() => {
+        if (!document.hidden) {
+          statusText.textContent = 'BAEFRAME 앱을 찾을 수 없습니다';
+          statusDetail.textContent = '앱이 설치되어 있는지 확인해주세요';
+          buttons.classList.remove('hidden');
+          btnOpenApp.href = baeframeUrl;
+          btnOpenApp.textContent = '🖥️ 다시 시도';
+          btnOpenWeb.classList.add('hidden');
+        }
+      }, 2000);
+
+      return true;
+    }
+
     // 메인 로직
     function main() {
       showPlatform();
+
+      // Slack 딥링크 처리 (#open=baeframe://...)
+      if (handleSlackDeepLink()) return;
 
       if (!validateUrls()) {
         return;

@@ -741,6 +741,43 @@ function setupIpcHandlers() {
     }
   });
 
+  // Slack 웹훅 전송 (CSP 우회: 메인 프로세스에서 fetch)
+  ipcMain.handle('slack:send-webhook', async (event, url, payload) => {
+    const trace = log.trace('slack:send-webhook');
+    try {
+      const { net } = require('electron');
+      const request = net.request({
+        method: 'POST',
+        url: url
+      });
+
+      return new Promise((resolve) => {
+        request.setHeader('Content-Type', 'application/json');
+
+        request.on('response', (response) => {
+          let body = '';
+          response.on('data', (chunk) => { body += chunk.toString(); });
+          response.on('end', () => {
+            const success = response.statusCode >= 200 && response.statusCode < 300;
+            trace.end({ status: response.statusCode, body });
+            resolve({ success, status: response.statusCode, body });
+          });
+        });
+
+        request.on('error', (error) => {
+          trace.error(error);
+          resolve({ success: false, error: error.message });
+        });
+
+        request.write(JSON.stringify(payload));
+        request.end();
+      });
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // 파일 위치 보기 (탐색기에서 파일 선택된 상태로 열기)
   ipcMain.handle('folder:show-item', async (event, filePath) => {
     const trace = log.trace('folder:show-item');
