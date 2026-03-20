@@ -5650,8 +5650,8 @@ async function initApp() {
       e.preventDefault();
       e.stopPropagation();
       const path = btn.dataset.path;
-      if (path && window.electronAPI?.openFolder) {
-        window.electronAPI.openFolder(path);
+      if (path && window.electronAPI?.showInFolder) {
+        window.electronAPI.showInFolder(path);
       }
     }
   });

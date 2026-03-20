@@ -318,30 +318,82 @@ export class MentionManager {
    * contenteditable에 텍스트 삽입
    */
   _insertIntoContentEditable(element, replacement) {
-    const text = element.textContent || '';
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
 
-    // 전체 텍스트에서 @부터 커서까지 교체
-    const range = document.createRange();
-    range.setStart(element, 0);
-    range.setEnd(sel.anchorNode, sel.anchorOffset);
-    const beforeCursorLen = range.toString().length;
+    // 현재 커서 위치 기준으로 @멘션 시작점부터 커서까지의 Range 생성
+    const cursorRange = document.createRange();
+    cursorRange.setStart(element, 0);
+    cursorRange.setEnd(sel.anchorNode, sel.anchorOffset);
+    const beforeCursorText = cursorRange.toString();
 
-    // textContent 기반으로 교체
-    const before = text.substring(0, this._mentionStart);
-    const after = text.substring(beforeCursorLen);
-    element.textContent = before + replacement + after;
+    // @멘션 시작 위치를 찾아서 해당 범위만 삭제 후 교체
+    // TreeWalker로 텍스트 노드를 순회하며 정확한 위치를 찾음
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+    let charCount = 0;
+    let startNode = null, startOffset = 0;
+    let endNode = null, endOffset = 0;
+
+    // @멘션 시작 위치(mentionStart) 찾기
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const nodeLen = node.textContent.length;
+
+      // 시작 노드 찾기
+      if (!startNode && charCount + nodeLen > this._mentionStart) {
+        startNode = node;
+        startOffset = this._mentionStart - charCount;
+      }
+
+      // 끝 노드 찾기 (커서 위치 = beforeCursorText.length)
+      if (!endNode && charCount + nodeLen >= beforeCursorText.length) {
+        endNode = node;
+        endOffset = beforeCursorText.length - charCount;
+        break;
+      }
+
+      charCount += nodeLen;
+    }
+
+    if (!startNode || !endNode) {
+      // 폴백: 텍스트 노드를 못 찾으면 기존 방식으로 처리
+      const text = element.textContent || '';
+      const before = text.substring(0, this._mentionStart);
+      const after = text.substring(beforeCursorText.length);
+      element.textContent = before + replacement + after;
+    } else {
+      // @멘션 범위만 선택해서 교체 (서식 보존)
+      const replaceRange = document.createRange();
+      replaceRange.setStart(startNode, startOffset);
+      replaceRange.setEnd(endNode, endOffset);
+      replaceRange.deleteContents();
+      replaceRange.insertNode(document.createTextNode(replacement));
+    }
 
     // 커서를 삽입 텍스트 끝으로 이동
+    const newSel = window.getSelection();
     const newRange = document.createRange();
-    const textNode = element.firstChild;
-    if (textNode) {
-      const newPos = before.length + replacement.length;
-      newRange.setStart(textNode, Math.min(newPos, textNode.length));
-      newRange.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(newRange);
+
+    // 삽입된 텍스트 노드 찾기 — 마지막으로 삽입한 노드 바로 뒤
+    const insertedWalker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+    let targetNode = null;
+    let accumulated = 0;
+    const targetPos = this._mentionStart + replacement.length;
+
+    while (insertedWalker.nextNode()) {
+      const node = insertedWalker.currentNode;
+      if (accumulated + node.textContent.length >= targetPos) {
+        targetNode = node;
+        newRange.setStart(node, Math.min(targetPos - accumulated, node.textContent.length));
+        newRange.collapse(true);
+        break;
+      }
+      accumulated += node.textContent.length;
+    }
+
+    if (targetNode) {
+      newSel.removeAllRanges();
+      newSel.addRange(newRange);
     }
 
     element.focus();
