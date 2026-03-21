@@ -152,9 +152,11 @@ export class SlackNotifier {
       log.info('웹훅 응답', JSON.stringify(result));
       if (!result.success) {
         log.warn('웹훅 응답 오류', { status: result.status, body: result.body, error: result.error });
+        throw new Error(`Slack 웹훅 실패 (${result.status || result.error || 'unknown'})`);
       }
     } else {
       log.warn('electronAPI.sendSlackWebhook 사용 불가');
+      throw new Error('electronAPI.sendSlackWebhook 사용 불가');
     }
   }
 

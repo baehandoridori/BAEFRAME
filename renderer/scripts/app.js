@@ -5733,9 +5733,10 @@ async function initApp() {
     const splitViewManager = getSplitViewManager();
     if (splitViewManager.isOpen()) return;
 
-    // ====== 공통 단축키 ======
-    switch (e.code) {
-    case 'Space': {
+    // ====== 공통 단축키 (사용자 설정 기반) ======
+
+    // 재생/일시정지
+    if (userSettings.matchShortcut('playPause', e)) {
       e.preventDefault();
       const wasPlaying = videoPlayer.isPlaying;
       videoPlayer.togglePlay();
@@ -5747,31 +5748,71 @@ async function initApp() {
       return;
     }
 
-    case 'Home':
+    // 댓글 모드
+    if (userSettings.matchShortcut('commentMode', e)) {
+      e.preventDefault();
+      toggleCommentMode();
+      return;
+    }
+
+    // 전체화면
+    if (userSettings.matchShortcut('fullscreen', e)) {
+      e.preventDefault();
+      toggleFullscreen();
+      return;
+    }
+
+    // 시작점 설정
+    if (userSettings.matchShortcut('setInPoint', e)) {
+      e.preventDefault();
+      btnSetInPoint.click();
+      return;
+    }
+
+    // 종료점 설정
+    if (userSettings.matchShortcut('setOutPoint', e)) {
+      e.preventDefault();
+      btnSetOutPoint.click();
+      return;
+    }
+
+    // 구간 반복 토글
+    if (userSettings.matchShortcut('toggleLoop', e)) {
+      e.preventDefault();
+      btnLoopToggle.click();
+      return;
+    }
+
+    // 구간 반복 해제
+    if (userSettings.matchShortcut('clearLoop', e)) {
+      e.preventDefault();
+      videoPlayer.clearLoop?.();
+      return;
+    }
+
+    // 하이라이트 추가
+    if (userSettings.matchShortcut('addHighlight', e)) {
+      e.preventDefault();
+      btnAddHighlight.click();
+      return;
+    }
+
+    // 처음으로 이동
+    if (userSettings.matchShortcut('goToStart', e)) {
       e.preventDefault();
       videoPlayer.seekToStart();
       return;
+    }
 
-    case 'End':
+    // 끝으로 이동
+    if (userSettings.matchShortcut('goToEnd', e)) {
       e.preventDefault();
       videoPlayer.seekToEnd();
       return;
+    }
 
-    case 'KeyC':
-      if (!e.ctrlKey) {
-        e.preventDefault();
-        toggleCommentMode();
-      }
-      return;
-
-    case 'KeyF':
-      // F: 전체화면 토글
-      if (!e.ctrlKey) {
-        e.preventDefault();
-        toggleFullscreen();
-      }
-      return;
-
+    // ====== 하드코딩 유지 단축키 (시스템 조합키) ======
+    switch (e.code) {
     case 'Escape':
       // ESC: 전체화면 해제 (전체화면일 때)
       if (state.isFullscreen) {
@@ -5780,43 +5821,6 @@ async function initApp() {
         return;
       }
       break; // 다른 ESC 핸들러로 전달
-
-    case 'KeyI':
-      // 시작점 설정 (수정자 키 없을 때만)
-      if (!e.ctrlKey && !e.shiftKey && !e.altKey) {
-        e.preventDefault();
-        btnSetInPoint.click();
-      }
-      return;
-
-    case 'KeyO':
-      // 종료점 설정 (수정자 키 없을 때만)
-      if (!e.ctrlKey && !e.shiftKey && !e.altKey) {
-        e.preventDefault();
-        btnSetOutPoint.click();
-      }
-      return;
-
-    case 'KeyL':
-      // 구간 반복 토글 (Shift+L은 구간 해제)
-      if (!e.ctrlKey && !e.altKey) {
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Shift+L: 구간 반복 해제
-          videoPlayer.clearLoop?.();
-        } else {
-          btnLoopToggle.click();
-        }
-      }
-      return;
-
-    case 'KeyH':
-      // 하이라이트 추가 (수정자 키 없을 때만)
-      if (!e.ctrlKey && !e.shiftKey && !e.altKey) {
-        e.preventDefault();
-        btnAddHighlight.click();
-      }
-      return;
 
     case 'Delete':
     case 'Backspace':
@@ -6542,7 +6546,7 @@ async function initApp() {
   const SHORTCUT_CATEGORIES = {
     '재생': ['playPause', 'prevFrame', 'nextFrame', 'prevFrameFast', 'nextFrameFast', 'prevSecond', 'nextSecond', 'goToStart', 'goToEnd'],
     '모드': ['commentMode', 'drawMode', 'fullscreen'],
-    '구간 반복': ['setInPoint', 'setOutPoint', 'toggleLoop', 'clearLoop'],
+    '구간 반복': ['setInPoint', 'setOutPoint', 'toggleLoop', 'clearLoop', 'addHighlight'],
     '실행취소': ['undo', 'redo'],
     '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeDelete', 'keyframeDeleteAlt', 'prevKeyframe', 'nextKeyframe'],
     '프레임 편집': ['insertFrame', 'deleteFrame'],
