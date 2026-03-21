@@ -277,7 +277,7 @@ if (!gotTheLock) {
         }
 
         // baeframe://open?file=...&comment=... 형식 (Slack 딥링크)
-        if (arg.match(/^baeframe:\/\/open[?%]/i)) {
+        if (arg.match(/^baeframe:\/\/open\/?[?%]/i)) {
           // new URL()은 커스텀 프로토콜에서 불안정하므로 정규식 사용
           const fileMatch = arg.match(/[?&]file=([^&]+)/i) || arg.match(/[?%26]file[=%3D]([^&%]+)/i);
           const commentMatch = arg.match(/[?&]comment=([^&]+)/i);
@@ -337,7 +337,7 @@ if (!gotTheLock) {
       } else if (hasExtension(fileArg, '.bplaylist')) {
         isPlaylistArg = true;
         log.info('재생목록 파일로 시작됨', { fileArg });
-      } else if (fileArg.match(/^baeframe:\/\/open[?%]/i)) {
+      } else if (fileArg.match(/^baeframe:\/\/open\/?[?%]/i)) {
         // baeframe://open?file=...&comment=... 형식 (Slack 딥링크)
         const fileMatch = fileArg.match(/[?&]file=([^&]+)/i);
         const commentMatch = fileArg.match(/[?&]comment=([^&]+)/i);
