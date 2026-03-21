@@ -5467,11 +5467,18 @@ async function initApp() {
     const idx = _toastState.toasts.indexOf(toast);
     if (idx !== -1) _toastState.toasts.splice(idx, 1);
 
-    // 퇴장 애니메이션 완료 후 DOM 제거 + 스택 재정렬
+    // 즉시 스택 재정렬 (남은 토스트가 부드럽게 위로 올라감)
+    _updateToastStack();
+
+    // 퇴장 애니메이션 완료 후 DOM 제거
     toast.addEventListener('animationend', () => {
       toast.remove();
-      _updateToastStack();
     }, { once: true });
+
+    // 안전장치: animationend 미발생 시 DOM 제거
+    setTimeout(() => {
+      if (toast.parentNode) toast.remove();
+    }, 500);
   }
 
   /**

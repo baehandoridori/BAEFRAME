@@ -4650,9 +4650,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   line-height: 1.4;
   box-shadow:
     0 8px 40px rgba(0, 0, 0, 0.45),
-    0 2px 8px rgba(0, 0, 0, 0.25),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  overflow: hidden;
+    0 2px 8px rgba(0, 0, 0, 0.25);
   cursor: grab;
   user-select: none;
   transition:
@@ -4662,6 +4660,8 @@ body.app-fullscreen .video-comment-overlay-controls {
     scale 0.4s cubic-bezier(0.22, 1, 0.36, 1);
   margin-bottom: 8px;
   will-change: transform, opacity;
+  /* 진행률 바가 border-radius를 넘지 않도록 격리 */
+  isolation: isolate;
 }
 
 .toast:active {
@@ -4755,7 +4755,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   left: 0;
   height: 2px;
   background: var(--text-tertiary);
-  border-radius: 0 0 0 12px;
+  border-radius: 0 0 12px 12px;
   opacity: 0.4;
   transition: opacity 0.15s;
 }
@@ -4790,12 +4790,22 @@ body.app-fullscreen .video-comment-overlay-controls {
 .toast.toast-exit {
   animation: toastSlideOut 0.35s cubic-bezier(0.55, 0, 1, 0.45) forwards;
   pointer-events: none;
+  margin-bottom: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+  transition:
+    margin-bottom 0.35s cubic-bezier(0.55, 0, 1, 0.45),
+    max-height 0.35s cubic-bezier(0.55, 0, 1, 0.45),
+    padding 0.35s cubic-bezier(0.55, 0, 1, 0.45),
+    border-width 0.35s cubic-bezier(0.55, 0, 1, 0.45);
 }
 
 @keyframes toastSlideOut {
   from {
     opacity: 1;
-    transform: translateX(0) scale(1);
+    transform: scale(1);
   }
   to {
     opacity: 0;
@@ -4807,6 +4817,16 @@ body.app-fullscreen .video-comment-overlay-controls {
 .toast.toast-swipe-exit {
   animation: toastSwipeOut 0.3s cubic-bezier(0.55, 0, 1, 0.45) forwards;
   pointer-events: none;
+  margin-bottom: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+  transition:
+    margin-bottom 0.3s cubic-bezier(0.55, 0, 1, 0.45),
+    max-height 0.3s cubic-bezier(0.55, 0, 1, 0.45),
+    padding 0.3s cubic-bezier(0.55, 0, 1, 0.45),
+    border-width 0.3s cubic-bezier(0.55, 0, 1, 0.45);
 }
 
 @keyframes toastSwipeOut {
