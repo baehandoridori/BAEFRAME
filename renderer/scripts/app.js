@@ -6270,6 +6270,10 @@ async function initApp() {
     handleExternalFile(arg);
   });
 
+  // renderer 초기화 완료 → main process에 알림 (파일 인자 전송 트리거)
+  window.electronAPI.notifyRendererReady?.();
+  log.info('renderer 초기화 완료, renderer-ready 전송');
+
   // ====== 앱 종료 전 저장 처리 ======
   window.electronAPI.onRequestSaveBeforeQuit(async () => {
     log.info('앱 종료 전 저장 요청 수신');

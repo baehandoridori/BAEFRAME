@@ -395,10 +395,13 @@ if (!gotTheLock) {
     createMainWindow();
     debugLog('메인 윈도우 생성 완료');
 
-    // 파일 인자가 있으면 윈도우 로드 완료 후 파일 열기
+    // 파일 인자가 있으면 renderer 준비 완료 후 파일 열기
     if (fileArg) {
       const mainWindow = getMainWindow();
-      mainWindow.webContents.once('did-finish-load', () => {
+      // renderer에서 'renderer-ready' 신호를 보낼 때까지 대기
+      const { ipcMain } = require('electron');
+      ipcMain.once('renderer-ready', () => {
+        log.info('renderer 준비 완료, 파일 전송', { fileArg });
         if (isPlaylistArg) {
           // 재생목록 URL 또는 파일
           let playlistPath = fileArg;

@@ -129,6 +129,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   watchFileStop: (filePath) => ipcRenderer.invoke('file:watch-stop', filePath),
   watchFileStopAll: () => ipcRenderer.invoke('file:watch-stop-all'),
 
+  // renderer 초기화 완료 알림
+  notifyRendererReady: () => ipcRenderer.send('renderer-ready'),
+
   // ====== 이벤트 리스너 ======
   onOpenFromProtocol: (callback) => {
     ipcRenderer.on('open-from-protocol', (event, arg, commentId) => callback(arg, commentId));
