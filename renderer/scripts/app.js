@@ -880,7 +880,10 @@ async function initApp() {
     // 원격 변경은 알림/Undo 스킵
     if (remote) return;
 
-    // Slack 알림: @멘션 대상에게 웹훅 전송
+    // Slack 알림: @멘션 대상에게 웹훅 전송 (딥링크 전에 저장하여 최신 상태 보장)
+    if (reviewDataManager.getBframePath()) {
+      await reviewDataManager.save();
+    }
     slackNotifier.notifyNewComment(marker, commentManager.getAuthor(), {
       filePath: state.currentFile,
       fileName: elements.fileName?.textContent || '',
@@ -932,11 +935,18 @@ async function initApp() {
     // remote: true인 경우(다른 사용자로부터 동기화된 답글)는 알림 전송 안 함
     const { marker, reply, remote } = e.detail;
     if (marker && reply && !remote) {
-      slackNotifier.notifyReply(marker, reply, commentManager.getAuthor(), {
-        filePath: state.currentFile,
-        fileName: elements.fileName?.textContent || '',
-        timecode: marker.startTimecode || ''
-      });
+      // 딥링크 전에 저장하여 최신 상태 보장
+      const sendReplyNotification = async () => {
+        if (reviewDataManager.getBframePath()) {
+          await reviewDataManager.save();
+        }
+        slackNotifier.notifyReply(marker, reply, commentManager.getAuthor(), {
+          filePath: state.currentFile,
+          fileName: elements.fileName?.textContent || '',
+          timecode: marker.startTimecode || ''
+        });
+      };
+      sendReplyNotification();
     }
   });
 
@@ -5347,16 +5357,29 @@ async function initApp() {
    */
   function renderGDriveLinks(html) {
     if (!html) return html;
-    // G:/ 또는 G:\ 뒤에 경로 문자를 인식 (공백 포함, <mark> 태그 허용)
-    // 검색 하이라이트의 <mark>/<\/mark> 태그가 경로 중간에 삽입되어도 무시
     const TAG_RE = /<\/?mark[^>]*>/gi;
-    return html.replace(/(G:[/\\](?:[^<"']|<\/?mark[^>]*>)*[^<"'\s])/gi, (match) => {
-      // 경로에서 mark 태그 제거하여 실제 경로 추출
-      const cleanPath = match.replace(TAG_RE, '');
-      const normalizedPath = cleanPath.replace(/\//g, '\\');
-      // 표시 텍스트에는 mark 태그 유지 (검색 하이라이트 보존)
-      return `<button class="gdrive-link-btn" data-path="${escapeHtml(normalizedPath)}" title="${escapeHtml(normalizedPath)}"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${match}</button>`;
+
+    // 버튼 HTML 생성 헬퍼
+    function makeBtn(displayHtml, rawPath) {
+      const cleanPath = rawPath.replace(TAG_RE, '').replace(/\//g, '\\');
+      return `<button class="gdrive-link-btn" data-path="${escapeHtml(cleanPath)}" title="${escapeHtml(cleanPath)}"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${displayHtml}</button>`;
+    }
+
+    // 1단계: 따옴표로 감싼 경로 (공백/한글 자유롭게 포함)
+    //   &quot;G:/경로&quot;  또는  &#39;G:/경로&#39;  (escapeHtml 후의 따옴표)
+    //   "G:/경로" 또는 'G:/경로' (원본 따옴표)
+    html = html.replace(/(?:&quot;|&amp;quot;|"|&#39;|')\s*(G:[/\\](?:[^<"'&]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)*?)(?:\s*(?:&quot;|&amp;quot;|"|&#39;|'))/gi, (match, path) => {
+      return makeBtn(path, path);
     });
+
+    // 2단계: 따옴표 없는 경로 — 공백 불허, 경로 문자만
+    //   G:/path/to/file.ext 또는 G:\path\to\file.ext
+    //   <mark> 태그는 허용 (검색 하이라이트)
+    html = html.replace(/(G:[/\\](?:[^\s<"'&]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)+)/gi, (match) => {
+      return makeBtn(match, match);
+    });
+
+    return html;
   }
 
   /**
@@ -6567,7 +6590,27 @@ async function initApp() {
     return parts.join(' + ');
   }
 
+  // 시스템 예약 키 (handleKeydown에서 하드코딩, 사용자 설정보다 먼저 실행)
+  const RESERVED_SHORTCUTS = [
+    { key: 'Escape', ctrl: false, shift: false, alt: false, label: 'ESC (전체화면 해제)' },
+    { key: 'KeyS', ctrl: true, shift: false, alt: false, label: 'Ctrl+S (저장)' },
+    { key: 'Equal', ctrl: true, shift: false, alt: false, label: 'Ctrl++ (줌인)' },
+    { key: 'NumpadAdd', ctrl: true, shift: false, alt: false, label: 'Ctrl++ (줌인)' },
+    { key: 'Minus', ctrl: true, shift: false, alt: false, label: 'Ctrl+- (줌아웃)' },
+    { key: 'NumpadSubtract', ctrl: true, shift: false, alt: false, label: 'Ctrl+- (줌아웃)' },
+    { key: 'Slash', ctrl: false, shift: true, alt: false, label: 'Shift+/ (단축키 목록)' },
+    { key: 'Backslash', ctrl: false, shift: false, alt: false, label: '\\ (타임라인 맞춤)' },
+  ];
+
   function findShortcutConflict(newSc, excludeAction) {
+    // 시스템 예약 키 충돌 검사
+    for (const reserved of RESERVED_SHORTCUTS) {
+      if (newSc.key === reserved.key && newSc.ctrl === reserved.ctrl &&
+          newSc.shift === reserved.shift && newSc.alt === reserved.alt) {
+        return { action: '_reserved', label: `${reserved.label} [시스템 예약]` };
+      }
+    }
+    // 사용자 설정 간 충돌 검사
     const all = userSettings.getShortcuts();
     for (const [action, sc] of Object.entries(all)) {
       if (action === excludeAction) continue;
