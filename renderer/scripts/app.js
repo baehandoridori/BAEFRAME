@@ -6127,14 +6127,14 @@ async function initApp() {
       if (userSettings.matchShortcut('onionSkinToggle', e)) {
         e.preventDefault();
         toggleOnionSkinWithUI();
-        break;
+        return;
       }
       // 2: 빈 키프레임 삽입
       if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
         e.preventDefault();
         drawingManager.addBlankKeyframe();
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
+        return;
       }
       // Shift+3: 현재 키프레임 삭제
       if (userSettings.matchShortcut('keyframeDeleteAlt', e)) {
@@ -6142,35 +6142,33 @@ async function initApp() {
         drawingManager.removeKeyframe();
         showToast('키프레임이 삭제되었습니다.', 'info');
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
+        return;
       }
       // 3: 프레임 삽입 (홀드 추가)
       if (userSettings.matchShortcut('insertFrame', e)) {
         e.preventDefault();
         drawingManager.insertFrame();
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
+        return;
       }
       // 4: 프레임 삭제
       if (userSettings.matchShortcut('deleteFrame', e)) {
         e.preventDefault();
         drawingManager.deleteFrame();
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
+        return;
       }
       // E: 지우개 모드 (드로잉 모드에서만 작동)
       if (e.code === 'KeyE') {
         // 드로잉 모드가 아니면 무시
-        if (!state.isDrawMode) {
-          break;
-        }
+        if (!state.isDrawMode) return;
         e.preventDefault();
         // 지우개 버튼 클릭으로 UI와 도구 함께 전환
         const eraserBtn = document.querySelector('.tool-btn[data-tool="eraser"]');
         if (eraserBtn) {
           eraserBtn.click();
         }
-        break;
+        return;
       }
       // V: 선택 모드 (드로잉 모드 끄기)
       if (e.code === 'KeyV') {
@@ -6178,9 +6176,8 @@ async function initApp() {
         if (state.isDrawMode) {
           toggleDrawMode();
         }
-        break;
+        return;
       }
-      break;
     }
   }
 
