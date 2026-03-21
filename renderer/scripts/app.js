@@ -5332,7 +5332,7 @@ async function initApp() {
       commentItem.classList.add('glow');
       setTimeout(() => {
         commentItem.classList.remove('glow');
-      }, 1500);
+      }, 2500);
     }
   }
 
@@ -5567,7 +5567,7 @@ async function initApp() {
     // 안전장치: animationend 미발생 시 DOM 제거
     setTimeout(() => {
       if (toast.parentNode) toast.remove();
-    }, 500);
+    }, 600);
   }
 
   /**

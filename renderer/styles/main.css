@@ -3984,7 +3984,7 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .comment-item.glow {
-  animation: commentGlow 1.5s ease-out;
+  animation: commentGlow 2.5s ease-out;
 }
 
 @keyframes commentGlow {
@@ -4678,7 +4678,8 @@ body.app-fullscreen .video-comment-overlay-controls {
     scale 0.4s cubic-bezier(0.22, 1, 0.36, 1);
   margin-bottom: 8px;
   will-change: transform, opacity;
-  /* 진행률 바가 border-radius를 넘지 않도록 격리 */
+  /* 진행률 바가 border-radius를 넘지 않도록 */
+  overflow: hidden;
   isolation: isolate;
 }
 
@@ -4772,6 +4773,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   bottom: 0;
   left: 0;
   height: 2px;
+  max-width: 100%;
   background: var(--text-tertiary);
   border-radius: 0 0 12px 12px;
   opacity: 0.4;
@@ -4806,51 +4808,67 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 /* 퇴장 애니메이션 */
 .toast.toast-exit {
-  animation: toastSlideOut 0.35s cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  animation: toastFadeCollapse 0.4s cubic-bezier(0.55, 0, 1, 0.45) forwards;
   pointer-events: none;
-  margin-bottom: 0;
-  max-height: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  border-width: 0;
-  transition:
-    margin-bottom 0.35s cubic-bezier(0.55, 0, 1, 0.45),
-    max-height 0.35s cubic-bezier(0.55, 0, 1, 0.45),
-    padding 0.35s cubic-bezier(0.55, 0, 1, 0.45),
-    border-width 0.35s cubic-bezier(0.55, 0, 1, 0.45);
 }
 
-@keyframes toastSlideOut {
-  from {
+@keyframes toastFadeCollapse {
+  0% {
     opacity: 1;
     transform: scale(1);
+    max-height: 80px;
+    margin-bottom: 8px;
+    padding-top: 14px;
+    padding-bottom: 14px;
   }
-  to {
+  50% {
     opacity: 0;
     transform: translateY(-8px) scale(0.96);
+    max-height: 80px;
+    margin-bottom: 8px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
   }
 }
 
 /* 스와이프 퇴장 */
 .toast.toast-swipe-exit {
-  animation: toastSwipeOut 0.3s cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  animation: toastSwipeCollapse 0.4s cubic-bezier(0.55, 0, 1, 0.45) forwards;
   pointer-events: none;
-  margin-bottom: 0;
-  max-height: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  border-width: 0;
-  transition:
-    margin-bottom 0.3s cubic-bezier(0.55, 0, 1, 0.45),
-    max-height 0.3s cubic-bezier(0.55, 0, 1, 0.45),
-    padding 0.3s cubic-bezier(0.55, 0, 1, 0.45),
-    border-width 0.3s cubic-bezier(0.55, 0, 1, 0.45);
 }
 
-@keyframes toastSwipeOut {
-  to {
+@keyframes toastSwipeCollapse {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+    max-height: 80px;
+    margin-bottom: 8px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+  50% {
     opacity: 0;
     transform: translateX(var(--swipe-dir, 100%));
+    max-height: 80px;
+    margin-bottom: 8px;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(var(--swipe-dir, 100%));
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
   }
 }
 
