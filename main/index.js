@@ -322,7 +322,9 @@ if (!gotTheLock) {
     log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
     // 시작 시 전달된 파일/프로토콜 인자 확인
+    log.info('process.argv 전체', { argv: process.argv });
     let fileArg = process.argv.find(isLaunchArgument);
+    log.info('fileArg 결과', { fileArg: fileArg || '(없음)' });
 
     // 파일 인자가 있으면 로딩 창 먼저 표시
     // (재생목록 URL/파일은 제외 - 별도 처리)
