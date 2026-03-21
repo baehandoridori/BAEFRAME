@@ -5340,7 +5340,7 @@ async function initApp() {
   commentManager.addEventListener('markersChanged', () => {
     if (state.pendingCommentFocus) {
       const commentId = state.pendingCommentFocus;
-      const marker = commentManager.getMarkerById(commentId);
+      const marker = commentManager.getMarker(commentId);
       if (marker) {
         state.pendingCommentFocus = null;
         log.info('pendingCommentFocus 감지, 포커싱 실행', { commentId });
@@ -5362,7 +5362,7 @@ async function initApp() {
   function focusComment(markerId) {
     log.info('코멘트 포커싱', { markerId });
 
-    const marker = commentManager.getMarkerById(markerId);
+    const marker = commentManager.getMarker(markerId);
     if (!marker) {
       log.warn('포커싱할 코멘트를 찾을 수 없음', { markerId });
       showToast('해당 코멘트를 찾을 수 없습니다', 'warning');
