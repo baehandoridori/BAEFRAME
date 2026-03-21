@@ -872,19 +872,23 @@ async function initApp() {
 
   // 마커 추가됨
   commentManager.addEventListener('markerAdded', async (e) => {
-    const { marker, remote } = e.detail;
+    const { marker, remote, restored } = e.detail;
     removePendingMarkerUI();
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
     log.info('마커 추가됨', { id: marker.id, text: marker.text, remote: !!remote });
 
-    // 원격 변경은 알림/Undo 스킵
-    if (remote) return;
+    // 원격 변경 또는 Redo 복원은 알림/Undo 스킵
+    if (remote || restored) return;
 
     // Slack 알림: @멘션 대상에게 웹훅 전송 (딥링크 전에 저장하여 최신 상태 보장)
     if (reviewDataManager.getBframePath()) {
-      await reviewDataManager.save();
+      const saved = await reviewDataManager.save();
+      if (!saved) {
+        log.warn('bframe 저장 실패, Slack 알림 건너뜀');
+        return;
+      }
     }
     slackNotifier.notifyNewComment(marker, commentManager.getAuthor(), {
       filePath: state.currentFile,
@@ -941,7 +945,11 @@ async function initApp() {
       // 딥링크 전에 저장하여 최신 상태 보장
       const sendReplyNotification = async () => {
         if (reviewDataManager.getBframePath()) {
-          await reviewDataManager.save();
+          const saved = await reviewDataManager.save();
+          if (!saved) {
+            log.warn('bframe 저장 실패, 답글 Slack 알림 건너뜀');
+            return;
+          }
         }
         slackNotifier.notifyReply(marker, reply, commentManager.getAuthor(), {
           filePath: state.currentFile,
