@@ -209,12 +209,13 @@ export class SlackNotifier {
     // .bframe 경로 우선 사용 (댓글/리뷰 데이터 포함)
     const targetPath = videoInfo.bframePath || videoInfo.filePath;
     if (!targetPath) return '';
-    // HTTPS 리다이렉트 → baeframe:// (Slack 버튼/링크 호환)
-    let baeframeUrl = `baeframe://${targetPath}`;
+    // baeframe:// 직접 사용 (Bflow 방식 — Slack 버튼 호환)
+    // 경로를 encodeURIComponent로 인코딩하여 한글/공백/백슬래시 안전하게 전달
+    let url = `baeframe://open?file=${encodeURIComponent(targetPath)}`;
     if (markerId) {
-      baeframeUrl += `?comment=${encodeURIComponent(markerId)}`;
+      url += `&comment=${encodeURIComponent(markerId)}`;
     }
-    return `https://baeframe.vercel.app/open.html#open=${encodeURIComponent(baeframeUrl)}`;
+    return url;
   }
 
   /**

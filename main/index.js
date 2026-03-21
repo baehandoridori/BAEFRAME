@@ -276,7 +276,29 @@ if (!gotTheLock) {
           }
         }
 
-        // baeframe:// URL이면 파일 경로로 변환
+        // baeframe://open?file=...&comment=... 형식 (Slack 딥링크)
+        const openMatch = arg.match(/^baeframe:\/\/open[?%]/i);
+        if (openMatch) {
+          const url = new URL(arg.replace(/\\/g, '/'));
+          const filePath = url.searchParams.get('file');
+          const commentId = url.searchParams.get('comment');
+          if (filePath) {
+            let resolved = filePath.replace(/\//g, '\\');
+            // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
+            if (/^[A-Za-z][\/\\]/.test(resolved)) {
+              resolved = resolved[0] + ':' + resolved.slice(1);
+            }
+            log.info('Slack 딥링크 처리됨', { filePath: resolved, commentId });
+            if (hasExtension(resolved, '.bplaylist')) {
+              mainWindow.webContents.send('open-playlist', resolved);
+            } else {
+              mainWindow.webContents.send('open-from-protocol', resolved, commentId || null);
+            }
+            return;
+          }
+        }
+
+        // baeframe:// URL이면 파일 경로로 변환 (레거시)
         if (arg.startsWith('baeframe://')) {
           arg = parseBaeframeUrl(arg);
           log.info('프로토콜 URL 처리됨', { filePath: arg, commentId: parseBaeframeUrl._lastCommentId });
@@ -312,8 +334,27 @@ if (!gotTheLock) {
       } else if (hasExtension(fileArg, '.bplaylist')) {
         isPlaylistArg = true;
         log.info('재생목록 파일로 시작됨', { fileArg });
+      } else if (fileArg.match(/^baeframe:\/\/open[?%]/i)) {
+        // baeframe://open?file=...&comment=... 형식 (Slack 딥링크)
+        try {
+          const url = new URL(fileArg.replace(/\\/g, '/'));
+          const fp = url.searchParams.get('file');
+          if (fp) {
+            fileArg = fp.replace(/\//g, '\\');
+            if (/^[A-Za-z][\/\\]/.test(fileArg)) {
+              fileArg = fileArg[0] + ':' + fileArg.slice(1);
+            }
+            parseBaeframeUrl._lastCommentId = url.searchParams.get('comment') || null;
+            if (hasExtension(fileArg, '.bplaylist')) {
+              isPlaylistArg = true;
+            }
+            log.info('Slack 딥링크로 시작됨', { fileArg, commentId: parseBaeframeUrl._lastCommentId });
+          }
+        } catch (e) {
+          log.warn('Slack 딥링크 파싱 실패', { fileArg, error: e.message });
+        }
       } else if (fileArg.startsWith('baeframe://')) {
-        // baeframe://G:/path/file.bplaylist 형식 체크
+        // baeframe://G:/path/file.bplaylist 형식 체크 (레거시)
         const parsedPath = parseBaeframeUrl(fileArg);
         if (hasExtension(parsedPath, '.bplaylist')) {
           isPlaylistArg = true;
