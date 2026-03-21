@@ -357,9 +357,13 @@
 
     // 버튼 클릭 이벤트
     btnOpenApp.addEventListener('click', (e) => {
+      if (slackDeepLinkUrl) {
+        // Slack 딥링크: href에 baeframe:// 설정되어 있으므로 기본 동작 허용
+        // e.preventDefault() 호출하지 않음 → 브라우저가 프로토콜 핸들러 실행
+        return;
+      }
       e.preventDefault();
-      // Slack 딥링크 모드면 원본 URL로 재시도, 아니면 웹 뷰어용 URL
-      window.location.href = slackDeepLinkUrl || getAppUrl();
+      window.location.href = getAppUrl();
     });
 
     btnOpenWeb.addEventListener('click', (e) => {
