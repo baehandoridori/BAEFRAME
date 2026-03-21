@@ -320,19 +320,28 @@
       statusDetail.textContent = baeframeUrl.replace('baeframe://', '');
 
       // baeframe:// 프로토콜로 앱 열기 시도
-      window.location.href = baeframeUrl;
+      // 방법1: hidden iframe (브라우저 프로토콜 차단 우회)
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = baeframeUrl;
+      document.body.appendChild(iframe);
 
-      // 2초 후에도 페이지가 보이면 앱이 설치 안 된 상태
+      // 방법2: 클릭 가능한 링크도 동시에 시도
+      const link = document.createElement('a');
+      link.href = baeframeUrl;
+      link.click();
+
+      // 3초 후에도 페이지가 보이면 직접 클릭 버튼 표시
       setTimeout(() => {
         if (!document.hidden) {
-          statusText.textContent = 'BAEFRAME 앱을 찾을 수 없습니다';
-          statusDetail.textContent = '앱이 설치되어 있는지 확인해주세요';
+          statusText.textContent = '아래 버튼을 클릭하여 앱을 실행하세요';
+          statusDetail.textContent = '';
           buttons.classList.remove('hidden');
           btnOpenApp.href = baeframeUrl;
-          btnOpenApp.textContent = '🖥️ 다시 시도';
+          btnOpenApp.textContent = '🖥️ BAEFRAME 열기';
           btnOpenWeb.classList.add('hidden');
         }
-      }, 2000);
+      }, 3000);
 
       return true;
     }
