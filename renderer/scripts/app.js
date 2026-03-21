@@ -5545,29 +5545,45 @@ async function initApp() {
     clearTimeout(toast._autoTimer);
     cancelAnimationFrame(toast._progressRaf);
 
+    // 1단계: 페이드아웃 (opacity + transform)
+    toast.style.pointerEvents = 'none';
     if (swipeDir) {
-      toast.style.setProperty('--swipe-dir', swipeDir > 0 ? '120%' : '-120%');
-      toast.classList.add('toast-swipe-exit');
+      toast.style.transition = 'transform 0.25s ease-out, opacity 0.25s ease-out';
+      toast.style.transform = `translateX(${swipeDir > 0 ? '120%' : '-120%'})`;
+      toast.style.opacity = '0';
     } else {
-      toast.classList.add('toast-exit');
+      toast.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
+      toast.style.transform = 'translateY(-8px) scale(0.96)';
+      toast.style.opacity = '0';
     }
 
-    // 배열에서 즉시 제거 (스택 계산에서 제외)
-    const idx = _toastState.toasts.indexOf(toast);
-    if (idx !== -1) _toastState.toasts.splice(idx, 1);
-
-    // 즉시 스택 재정렬 (남은 토스트가 부드럽게 위로 올라감)
-    _updateToastStack();
-
-    // 퇴장 애니메이션 완료 후 DOM 제거
-    toast.addEventListener('animationend', () => {
-      toast.remove();
-    }, { once: true });
-
-    // 안전장치: animationend 미발생 시 DOM 제거
+    // 2단계: 페이드아웃 완료 후 공간 축소 (Sonner 방식)
+    const fadeTime = swipeDir ? 250 : 200;
     setTimeout(() => {
-      if (toast.parentNode) toast.remove();
-    }, 600);
+      // 현재 높이를 고정한 뒤 0으로 transition
+      const h = toast.offsetHeight;
+      toast.style.height = h + 'px';
+      toast.style.overflow = 'hidden';
+      // force reflow
+      void toast.offsetHeight;
+      toast.style.transition = 'height 0.2s ease-out, margin 0.2s ease-out, padding 0.2s ease-out';
+      toast.style.height = '0';
+      toast.style.marginBottom = '0';
+      toast.style.marginTop = '0';
+      toast.style.paddingTop = '0';
+      toast.style.paddingBottom = '0';
+      toast.style.borderWidth = '0';
+
+      // 배열에서 제거 + 스택 재정렬
+      const idx = _toastState.toasts.indexOf(toast);
+      if (idx !== -1) _toastState.toasts.splice(idx, 1);
+      _updateToastStack();
+
+      // 공간 축소 완료 후 DOM 제거
+      setTimeout(() => {
+        toast.remove();
+      }, 220);
+    }, fadeTime);
   }
 
   /**
