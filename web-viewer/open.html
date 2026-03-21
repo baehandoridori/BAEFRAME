@@ -310,18 +310,28 @@
       const hash = window.location.hash;
       if (!hash || !hash.startsWith('#open=')) return false;
 
-      const baeframeUrl = decodeURIComponent(hash.substring(6));
+      // hash에서 가져온 인코딩된 원본 유지 (브라우저 호환성)
+      const rawEncoded = hash.substring(6); // baeframe%3A%2F%2F...
+      const baeframeUrl = decodeURIComponent(rawEncoded);
       if (!baeframeUrl.startsWith('baeframe://')) return false;
 
       // 재시도 버튼용으로 원본 URL 저장
       slackDeepLinkUrl = baeframeUrl;
 
+      // 디코딩된 URL에서 파일명 추출 (표시용)
+      const displayName = baeframeUrl.replace('baeframe://', '').split('?')[0].split(/[/\\]/).pop();
+
+      // href용: 경로 부분을 인코딩된 상태로 유지
+      // baeframe:// 프로토콜 + 인코딩된 경로
+      const pathPart = baeframeUrl.substring('baeframe://'.length);
+      const encodedHref = 'baeframe://' + encodeURI(pathPart).replace(/%5C/gi, '\\');
+
       // 브라우저가 자동 프로토콜 실행을 차단하므로 버튼 클릭 방식 사용
       statusText.textContent = '아래 버튼을 클릭하여 앱을 실행하세요';
-      statusDetail.textContent = baeframeUrl.replace('baeframe://', '').split('?')[0].split(/[/\\]/).pop();
+      statusDetail.textContent = displayName;
 
       buttons.classList.remove('hidden');
-      btnOpenApp.href = baeframeUrl;
+      btnOpenApp.href = encodedHref;
       btnOpenApp.textContent = '🖥️ BAEFRAME에서 열기';
       btnOpenWeb.classList.add('hidden');
 
