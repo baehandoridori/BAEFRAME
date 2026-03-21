@@ -886,6 +886,7 @@ async function initApp() {
     }
     slackNotifier.notifyNewComment(marker, commentManager.getAuthor(), {
       filePath: state.currentFile,
+      bframePath: reviewDataManager.getBframePath() || '',
       fileName: elements.fileName?.textContent || '',
       timecode: marker.startTimecode || ''
     });
@@ -942,6 +943,7 @@ async function initApp() {
         }
         slackNotifier.notifyReply(marker, reply, commentManager.getAuthor(), {
           filePath: state.currentFile,
+          bframePath: reviewDataManager.getBframePath() || '',
           fileName: elements.fileName?.textContent || '',
           timecode: marker.startTimecode || ''
         });
@@ -5366,17 +5368,23 @@ async function initApp() {
     }
 
     // 1단계: 따옴표로 감싼 경로 (공백/한글 자유롭게 포함)
-    //   &quot;G:/경로&quot;  또는  &#39;G:/경로&#39;  (escapeHtml 후의 따옴표)
-    //   "G:/경로" 또는 'G:/경로' (원본 따옴표)
+    //   플레이스홀더로 교체하여 2단계에서 재매칭 방지
+    const placeholders = [];
     html = html.replace(/(?:&quot;|&amp;quot;|"|&#39;|')\s*(G:[/\\](?:[^<"'&]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)*?)(?:\s*(?:&quot;|&amp;quot;|"|&#39;|'))/gi, (match, path) => {
-      return makeBtn(path, path);
+      const placeholder = `\x00GDRIVE_${placeholders.length}\x00`;
+      placeholders.push(makeBtn(path, path));
+      return placeholder;
     });
 
     // 2단계: 따옴표 없는 경로 — 공백 불허, 경로 문자만
-    //   G:/path/to/file.ext 또는 G:\path\to\file.ext
     //   <mark> 태그는 허용 (검색 하이라이트)
-    html = html.replace(/(G:[/\\](?:[^\s<"'&]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)+)/gi, (match) => {
+    html = html.replace(/(G:[/\\](?:[^\s<"'&\x00]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)+)/gi, (match) => {
       return makeBtn(match, match);
+    });
+
+    // 3단계: 플레이스홀더를 실제 버튼으로 복원
+    placeholders.forEach((btn, i) => {
+      html = html.replace(`\x00GDRIVE_${i}\x00`, btn);
     });
 
     return html;

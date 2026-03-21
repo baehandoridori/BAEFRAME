@@ -205,8 +205,11 @@ export class SlackNotifier {
    * 웹 뷰어 URL에 baeframe:// 경로를 hash로 인코딩
    */
   _buildDeepLink(videoInfo) {
-    if (!videoInfo || !videoInfo.filePath) return 'https://baeframe.vercel.app';
-    const baeframeUrl = `baeframe://${videoInfo.filePath}`;
+    if (!videoInfo) return 'https://baeframe.vercel.app';
+    // .bframe 경로 우선 사용 (댓글/리뷰 데이터 포함)
+    const targetPath = videoInfo.bframePath || videoInfo.filePath;
+    if (!targetPath) return 'https://baeframe.vercel.app';
+    const baeframeUrl = `baeframe://${targetPath}`;
     return `https://baeframe.vercel.app/open.html#open=${encodeURIComponent(baeframeUrl)}`;
   }
 
