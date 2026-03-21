@@ -5347,8 +5347,8 @@ async function initApp() {
    */
   function renderGDriveLinks(html) {
     if (!html) return html;
-    // G:/ 또는 G:\ 뒤에 공백/태그시작/줄끝까지를 경로로 인식
-    return html.replace(/(G:[/\\][^\s<"']*)/gi, (match) => {
+    // G:/ 또는 G:\ 뒤에 태그시작/따옴표/줄끝까지를 경로로 인식 (공백 포함)
+    return html.replace(/(G:[/\\][^<"']*[^<"'\s])/gi, (match) => {
       const normalizedPath = match.replace(/\//g, '\\');
       return `<button class="gdrive-link-btn" data-path="${escapeHtml(normalizedPath)}" title="${escapeHtml(normalizedPath)}"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${escapeHtml(match)}</button>`;
     });
@@ -5818,28 +5818,18 @@ async function initApp() {
       return;
     }
 
-    // ====== 하드코딩 유지 단축키 (시스템 조합키) ======
+    // ====== 시스템 단축키 (변경 불가) ======
     switch (e.code) {
     case 'Escape':
-      // ESC: 전체화면 해제 (전체화면일 때)
       if (state.isFullscreen) {
         e.preventDefault();
         toggleFullscreen();
         return;
       }
-      break; // 다른 ESC 핸들러로 전달
-
-    case 'Delete':
-    case 'Backspace':
-      // 키프레임 삭제 (그리기 모드에서만)
-      if (state.isDrawMode && !e.ctrlKey) {
-        e.preventDefault();
-        drawingManager.removeKeyframe();
-      }
-      return;
+      break;
 
     case 'Slash':
-      if (e.shiftKey) { // ?
+      if (e.shiftKey) {
         e.preventDefault();
         elements.shortcutsToggle.click();
       }
@@ -5850,42 +5840,12 @@ async function initApp() {
       timeline.fitToView();
       return;
 
-    case 'KeyZ':
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Ctrl+Shift+Z: Redo
-          if (await globalRedo()) {
-            showToast('다시 실행됨', 'info');
-          }
-        } else {
-          // Ctrl+Z: Undo
-          if (await globalUndo()) {
-            showToast('실행 취소됨', 'info');
-          }
-        }
-      }
-      return;
-
-    case 'KeyY':
-      if (e.ctrlKey || e.metaKey) {
-        // Ctrl+Y: Redo (alternative)
-        e.preventDefault();
-        if (await globalRedo()) {
-          showToast('다시 실행됨', 'info');
-        }
-      }
-      return;
-
     case 'KeyS':
       if (e.ctrlKey || e.metaKey) {
-        // Ctrl+S: 수동 저장
         e.preventDefault();
         if (reviewDataManager.getBframePath()) {
           reviewDataManager.save().then(saved => {
-            if (saved) {
-              showToast('저장되었습니다', 'success');
-            }
+            if (saved) showToast('저장되었습니다', 'success');
           });
         } else {
           showToast('저장할 파일이 없습니다', 'warn');
@@ -5908,130 +5868,162 @@ async function initApp() {
         timeline.zoomOut();
       }
       return;
-
-    // 사용자 정의 단축키 처리 (F6, F7 등)
-    default:
-      // 키프레임 추가 (복사) - F6
-      if (userSettings.matchShortcut('keyframeAddWithCopy', e)) {
-        e.preventDefault();
-        if (state.isDrawMode) {
-          drawingManager.addKeyframeWithContent();
-          showToast('키프레임 추가됨', 'success');
-        }
-        return;
-      }
-      // 빈 키프레임 추가 - F7
-      if (userSettings.matchShortcut('keyframeAddBlank', e)) {
-        e.preventDefault();
-        if (state.isDrawMode) {
-          drawingManager.addBlankKeyframe();
-          showToast('빈 키프레임 추가됨', 'success');
-        }
-        return;
-      }
-      break;
     }
 
-    // ====== 프레임 이동 및 그리기 모드 단축키 ======
-    switch (e.code) {
-    case 'ArrowLeft':
-      e.preventDefault();
-      if (e.ctrlKey) {
-        // Ctrl+←: 초 단위 뒤로 이동
-        const secondAmount = userSettings.getSecondSkipAmount();
-        const newTime = Math.max(0, (videoPlayer.currentTime || 0) - secondAmount);
-        videoPlayer.seek(newTime);
-        timeline.scrollToPlayhead();
-        log.info('초 단위 뒤로 이동 (단축키)', { seconds: secondAmount, newTime });
-      } else if (e.shiftKey) {
-        // Shift+←: 프레임 빨리 뒤로 이동
-        const frameAmount = userSettings.getFrameSkipAmount();
-        const currentFrame = videoPlayer.currentFrame || 0;
-        const newFrame = Math.max(0, currentFrame - frameAmount);
-        videoPlayer.seekToFrame(newFrame);
-        timeline.scrollToPlayhead();
-        log.info('프레임 빨리 뒤로 이동 (단축키)', { frames: frameAmount, newFrame });
-      } else if (e.altKey) {
-        // Alt+←: 이전 하이라이트로 이동
-        const prevHighlightTime = highlightManager.getPrevHighlightTime(videoPlayer.currentTime || 0);
-        if (prevHighlightTime !== null) {
-          videoPlayer.seek(prevHighlightTime);
-          timeline.scrollToPlayhead();
-          log.info('이전 하이라이트로 이동 (단축키)', { time: prevHighlightTime });
-        } else {
-          showToast('이전 하이라이트가 없습니다', 'info');
-        }
-      } else {
-        videoPlayer.prevFrame();
-      }
-      break;
+    // ====== 사용자 설정 기반 단축키 (변경 가능) ======
 
-    case 'ArrowRight':
+    // 실행취소/다시실행
+    if (userSettings.matchShortcut('undo', e)) {
       e.preventDefault();
-      if (e.ctrlKey) {
-        // Ctrl+→: 초 단위 앞으로 이동
-        const secondAmount = userSettings.getSecondSkipAmount();
-        const duration = videoPlayer.duration || 0;
-        const newTime = Math.min(duration, (videoPlayer.currentTime || 0) + secondAmount);
-        videoPlayer.seek(newTime);
-        timeline.scrollToPlayhead();
-        log.info('초 단위 앞으로 이동 (단축키)', { seconds: secondAmount, newTime });
-      } else if (e.shiftKey) {
-        // Shift+→: 프레임 빨리 앞으로 이동
-        const frameAmount = userSettings.getFrameSkipAmount();
-        const currentFrame = videoPlayer.currentFrame || 0;
-        const totalFrames = videoPlayer.totalFrames || 0;
-        const newFrame = Math.min(totalFrames - 1, currentFrame + frameAmount);
-        videoPlayer.seekToFrame(newFrame);
-        timeline.scrollToPlayhead();
-        log.info('프레임 빨리 앞으로 이동 (단축키)', { frames: frameAmount, newFrame });
-      } else if (e.altKey) {
-        // Alt+→: 다음 하이라이트로 이동
-        const nextHighlightTime = highlightManager.getNextHighlightTime(videoPlayer.currentTime || 0);
-        if (nextHighlightTime !== null) {
-          videoPlayer.seek(nextHighlightTime);
-          timeline.scrollToPlayhead();
-          log.info('다음 하이라이트로 이동 (단축키)', { time: nextHighlightTime });
-        } else {
-          showToast('다음 하이라이트가 없습니다', 'info');
-        }
-      } else {
-        videoPlayer.nextFrame();
-      }
-      break;
+      if (await globalUndo()) showToast('실행 취소됨', 'info');
+      return;
+    }
+    if (userSettings.matchShortcut('redo', e)) {
+      e.preventDefault();
+      if (await globalRedo()) showToast('다시 실행됨', 'info');
+      return;
+    }
+    // Ctrl+Shift+Z도 Redo로 동작 (Ctrl+Y 외 대안)
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyZ') {
+      e.preventDefault();
+      if (await globalRedo()) showToast('다시 실행됨', 'info');
+      return;
+    }
 
-    // 사용자 정의 단축키를 통한 처리
-    default:
-      // Shift+A: 1프레임 이전
-      if (userSettings.matchShortcut('prevFrameDraw', e)) {
+    // 키프레임 삭제 (그리기 모드에서만)
+    if (userSettings.matchShortcut('keyframeDelete', e)) {
+      if (state.isDrawMode) {
         e.preventDefault();
-        videoPlayer.prevFrame();
-        break;
+        drawingManager.removeKeyframe();
       }
-      // Shift+D: 1프레임 다음
-      if (userSettings.matchShortcut('nextFrameDraw', e)) {
-        e.preventDefault();
-        videoPlayer.nextFrame();
-        break;
+      return;
+    }
+
+    // 키프레임 추가 (복사)
+    if (userSettings.matchShortcut('keyframeAddWithCopy', e)) {
+      e.preventDefault();
+      if (state.isDrawMode) {
+        drawingManager.addKeyframeWithContent();
+        showToast('키프레임 추가됨', 'success');
       }
-      // A: 이전 키프레임으로 이동
-      if (userSettings.matchShortcut('prevKeyframe', e)) {
-        e.preventDefault();
-        const prevKf = drawingManager.getPrevKeyframeFrame();
-        if (prevKf !== null) {
-          videoPlayer.seekToFrame(prevKf);
-        }
-        break;
+      return;
+    }
+
+    // 빈 키프레임 추가
+    if (userSettings.matchShortcut('keyframeAddBlank', e)) {
+      e.preventDefault();
+      if (state.isDrawMode) {
+        drawingManager.addBlankKeyframe();
+        showToast('빈 키프레임 추가됨', 'success');
       }
-      // D: 다음 키프레임으로 이동
-      if (userSettings.matchShortcut('nextKeyframe', e)) {
-        e.preventDefault();
-        const nextKf = drawingManager.getNextKeyframeFrame();
-        if (nextKf !== null) {
-          videoPlayer.seekToFrame(nextKf);
-        }
-        break;
+      return;
+    }
+
+    // 프레임 이동 단축키
+    if (userSettings.matchShortcut('prevSecond', e)) {
+      e.preventDefault();
+      const secondAmount = userSettings.getSecondSkipAmount();
+      const newTime = Math.max(0, (videoPlayer.currentTime || 0) - secondAmount);
+      videoPlayer.seek(newTime);
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (userSettings.matchShortcut('nextSecond', e)) {
+      e.preventDefault();
+      const secondAmount = userSettings.getSecondSkipAmount();
+      const duration = videoPlayer.duration || 0;
+      const newTime = Math.min(duration, (videoPlayer.currentTime || 0) + secondAmount);
+      videoPlayer.seek(newTime);
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (userSettings.matchShortcut('prevFrameFast', e)) {
+      e.preventDefault();
+      const frameAmount = userSettings.getFrameSkipAmount();
+      const currentFrame = videoPlayer.currentFrame || 0;
+      const newFrame = Math.max(0, currentFrame - frameAmount);
+      videoPlayer.seekToFrame(newFrame);
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (userSettings.matchShortcut('nextFrameFast', e)) {
+      e.preventDefault();
+      const frameAmount = userSettings.getFrameSkipAmount();
+      const currentFrame = videoPlayer.currentFrame || 0;
+      const totalFrames = videoPlayer.totalFrames || 0;
+      const newFrame = Math.min(totalFrames - 1, currentFrame + frameAmount);
+      videoPlayer.seekToFrame(newFrame);
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (userSettings.matchShortcut('prevFrame', e)) {
+      e.preventDefault();
+      videoPlayer.prevFrame();
+      return;
+    }
+    if (userSettings.matchShortcut('nextFrame', e)) {
+      e.preventDefault();
+      videoPlayer.nextFrame();
+      return;
+    }
+
+    // Alt+Arrow: 하이라이트 이동 (설정 기반 아님, 하드코딩 유지)
+    if (e.altKey && e.code === 'ArrowLeft') {
+      e.preventDefault();
+      const prevHighlightTime = highlightManager.getPrevHighlightTime(videoPlayer.currentTime || 0);
+      if (prevHighlightTime !== null) {
+        videoPlayer.seek(prevHighlightTime);
+        timeline.scrollToPlayhead();
+      } else {
+        showToast('이전 하이라이트가 없습니다', 'info');
       }
+      return;
+    }
+    if (e.altKey && e.code === 'ArrowRight') {
+      e.preventDefault();
+      const nextHighlightTime = highlightManager.getNextHighlightTime(videoPlayer.currentTime || 0);
+      if (nextHighlightTime !== null) {
+        videoPlayer.seek(nextHighlightTime);
+        timeline.scrollToPlayhead();
+      } else {
+        showToast('다음 하이라이트가 없습니다', 'info');
+      }
+      return;
+    }
+
+    // 그리기 모드 토글
+    if (userSettings.matchShortcut('drawMode', e)) {
+      e.preventDefault();
+      if (!state.isDrawMode) {
+        toggleDrawMode();
+      }
+      // 브러시 도구 선택
+      const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
+      if (brushBtn) brushBtn.click();
+      return;
+    }
+    if (userSettings.matchShortcut('prevFrameDraw', e)) {
+      e.preventDefault();
+      videoPlayer.prevFrame();
+      return;
+    }
+    if (userSettings.matchShortcut('nextFrameDraw', e)) {
+      e.preventDefault();
+      videoPlayer.nextFrame();
+      return;
+    }
+    if (userSettings.matchShortcut('prevKeyframe', e)) {
+      e.preventDefault();
+      const prevKf = drawingManager.getPrevKeyframeFrame();
+      if (prevKf !== null) videoPlayer.seekToFrame(prevKf);
+      return;
+    }
+    if (userSettings.matchShortcut('nextKeyframe', e)) {
+      e.preventDefault();
+      const nextKf = drawingManager.getNextKeyframeFrame();
+      if (nextKf !== null) videoPlayer.seekToFrame(nextKf);
+      return;
+    }
       // 1: 어니언 스킨 토글
       if (userSettings.matchShortcut('onionSkinToggle', e)) {
         e.preventDefault();
@@ -6065,19 +6057,6 @@ async function initApp() {
         e.preventDefault();
         drawingManager.deleteFrame();
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
-      }
-      // B: 브러시 모드 (드로잉 모드 켜기 + 브러시 도구)
-      if (e.code === 'KeyB') {
-        e.preventDefault();
-        if (!state.isDrawMode) {
-          toggleDrawMode();
-        }
-        // 브러시 버튼 클릭으로 UI와 도구 함께 전환
-        const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
-        if (brushBtn) {
-          brushBtn.click();
-        }
         break;
       }
       // E: 지우개 모드 (드로잉 모드에서만 작동)
