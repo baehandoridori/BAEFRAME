@@ -3998,16 +3998,19 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 /* Slack 딥링크 코멘트 포커싱 하이라이트 */
 .comment-item.focus-highlight {
-  animation: focusPulse 1.5s ease-in-out 2;
-  border-color: var(--accent-primary);
+  animation: focusPulse 1s ease-in-out 3;
+  border-color: #4a9eff;
+  background: rgba(74, 158, 255, 0.08);
 }
 
 @keyframes focusPulse {
   0%, 100% {
     box-shadow: 0 0 0 0 transparent;
+    border-color: #4a9eff;
   }
   50% {
-    box-shadow: 0 0 12px var(--accent-primary), 0 0 24px rgba(var(--accent-primary-rgb, 74, 158, 255), 0.3);
+    box-shadow: 0 0 12px #4a9eff, 0 0 28px rgba(74, 158, 255, 0.4);
+    border-color: #6db3ff;
   }
 }
 
