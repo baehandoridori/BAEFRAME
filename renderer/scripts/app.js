@@ -6178,7 +6178,6 @@ async function initApp() {
         }
         return;
       }
-    }
   }
 
   // 초기화 완료
