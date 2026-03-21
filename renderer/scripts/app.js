@@ -5376,9 +5376,20 @@ async function initApp() {
       return placeholder;
     });
 
-    // 2단계: 따옴표 없는 경로 — 공백 불허, 경로 문자만
+    // 2단계: 따옴표 없는 경로
+    //   2a: 파일 확장자로 끝나는 경우 — 공백 허용 (확장자까지만 매칭)
+    //   영상/이미지/작업파일 확장자: mov, mp4, avi, mkv, psd, exr, png, jpg, jpeg, tif, tiff, bmp, gif,
+    //                              ae, aep, prproj, blend, ma, mb, fbx, obj, abc, hip, nk, bframe, pdf, zip
+    const FILE_EXT_RE = /\.(mov|mp4|avi|mkv|wmv|mxf|psd|exr|dpx|png|jpe?g|tiff?|bmp|gif|svg|ae[pt]?|prproj|blend|ma|mb|fbx|obj|abc|hip|nk|bframe|pdf|zip|rar|7z|wav|mp3|aif)/i;
+    html = html.replace(/(G:[/\\](?:[^<"'&\x00]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)*?\.(?:mov|mp4|avi|mkv|wmv|mxf|psd|exr|dpx|png|jpe?g|tiff?|bmp|gif|svg|ae[pt]?|prproj|blend|ma|mb|fbx|obj|abc|hip|nk|bframe|pdf|zip|rar|7z|wav|mp3|aif))/gi, (match) => {
+      return makeBtn(match, match);
+    });
+
+    //   2b: 확장자 없는 경로 (폴더) — 공백 불허
     //   <mark> 태그는 허용 (검색 하이라이트)
     html = html.replace(/(G:[/\\](?:[^\s<"'&\x00]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)+)/gi, (match) => {
+      // 이미 버튼화된 경로 건너뛰기 (2a에서 처리된 것)
+      if (match.includes('gdrive-link-btn')) return match;
       return makeBtn(match, match);
     });
 
