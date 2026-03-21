@@ -209,12 +209,12 @@ export class SlackNotifier {
     // .bframe 경로 우선 사용 (댓글/리뷰 데이터 포함)
     const targetPath = videoInfo.bframePath || videoInfo.filePath;
     if (!targetPath) return '';
-    // baeframe:// 직접 사용 (Slack 메시지 본문에서 클릭 가능)
-    let url = `baeframe://${targetPath}`;
+    // HTTPS 리다이렉트 → baeframe:// (Slack 버튼/링크 호환)
+    let baeframeUrl = `baeframe://${targetPath}`;
     if (markerId) {
-      url += `?comment=${encodeURIComponent(markerId)}`;
+      baeframeUrl += `?comment=${encodeURIComponent(markerId)}`;
     }
-    return url;
+    return `https://baeframe.vercel.app/open.html#open=${encodeURIComponent(baeframeUrl)}`;
   }
 
   /**
