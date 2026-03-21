@@ -5369,29 +5369,11 @@ async function initApp() {
       return;
     }
 
-    // 댓글 패널 열기
-    const commentPanel = document.getElementById('commentPanel');
-    if (commentPanel && !commentPanel.classList.contains('open')) {
-      commentPanel.classList.add('open');
-    }
-
     // 해당 프레임으로 이동
     videoPlayer.seekToFrame(marker.startFrame);
 
-    // 댓글 목록에서 해당 아이템 찾아서 선택 + 스크롤
-    const container = document.getElementById('commentList');
-    if (!container) return;
-
-    const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
-    if (commentItem) {
-      container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
-      commentItem.classList.add('selected');
-      commentItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-      // 하이라이트 효과 (3초 후 제거)
-      commentItem.classList.add('focus-highlight');
-      setTimeout(() => commentItem.classList.remove('focus-highlight'), 3000);
-    }
+    // 기존 글로우 함수 재사용 (패널 열기 + 스크롤 + 선택 + 글로우)
+    scrollToCommentWithGlow(markerId);
   }
 
   /**
