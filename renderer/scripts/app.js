@@ -825,29 +825,7 @@ async function initApp() {
   reviewDataManager.addEventListener('loaded', (e) => {
     log.info('.bframe 로드됨', { path: e.detail.path });
 
-    // Slack 딥링크에서 코멘트 포커싱 요청이 있으면 처리
-    if (state.pendingCommentFocus) {
-      const commentId = state.pendingCommentFocus;
-      state.pendingCommentFocus = null;
-
-      // 댓글 목록 렌더링 완료까지 재시도 (최대 5초)
-      let retries = 0;
-      const tryFocus = () => {
-        retries++;
-        log.info('코멘트 포커싱 시도', { commentId, retries });
-        const marker = commentManager.getMarkerById(commentId);
-        if (marker) {
-          // 댓글 목록 렌더링 보장
-          updateCommentList();
-          setTimeout(() => focusComment(commentId), 200);
-        } else if (retries < 10) {
-          setTimeout(tryFocus, 500);
-        } else {
-          log.warn('코멘트 포커싱 실패 (최대 재시도 초과)', { commentId });
-        }
-      };
-      setTimeout(tryFocus, 500);
-    }
+    // pendingCommentFocus는 updateCommentListImmediate에서 처리
   });
 
   // 로드 에러
@@ -5357,6 +5335,23 @@ async function initApp() {
       }, 1500);
     }
   }
+
+  // 댓글 목록이 렌더링될 때마다 pendingCommentFocus 체크
+  commentManager.addEventListener('markersChanged', () => {
+    if (state.pendingCommentFocus) {
+      const commentId = state.pendingCommentFocus;
+      const marker = commentManager.getMarkerById(commentId);
+      if (marker) {
+        state.pendingCommentFocus = null;
+        log.info('pendingCommentFocus 감지, 포커싱 실행', { commentId });
+        // 댓글 목록 렌더링 후 포커싱
+        setTimeout(() => {
+          updateCommentList();
+          setTimeout(() => focusComment(commentId), 300);
+        }, 200);
+      }
+    }
+  });
 
   /**
    * Slack 딥링크에서 특정 코멘트로 포커싱
