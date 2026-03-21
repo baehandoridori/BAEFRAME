@@ -880,7 +880,7 @@ async function initApp() {
   });
 
   // 마커 추가됨
-  commentManager.addEventListener('markerAdded', (e) => {
+  commentManager.addEventListener('markerAdded', async (e) => {
     const { marker, remote } = e.detail;
     removePendingMarkerUI();
     renderVideoMarkers();
