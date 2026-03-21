@@ -326,13 +326,24 @@
       const pathPart = baeframeUrl.substring('baeframe://'.length);
       const encodedHref = 'baeframe://' + encodeURI(pathPart).replace(/%5C/gi, '\\');
 
-      // 브라우저가 자동 프로토콜 실행을 차단하므로 버튼 클릭 방식 사용
-      statusText.textContent = '아래 버튼을 클릭하여 앱을 실행하세요';
+      // 브라우저가 HTTPS→커스텀 프로토콜 이동을 차단하므로 복사 방식 사용
+      statusText.textContent = '아래 버튼으로 링크를 복사하세요';
       statusDetail.textContent = displayName;
 
       buttons.classList.remove('hidden');
-      btnOpenApp.href = encodedHref;
-      btnOpenApp.textContent = '🖥️ BAEFRAME에서 열기';
+      btnOpenApp.href = '#';
+      btnOpenApp.textContent = '📋 링크 복사';
+      btnOpenApp.onclick = (e) => {
+        e.preventDefault();
+        navigator.clipboard.writeText(baeframeUrl).then(() => {
+          btnOpenApp.textContent = '✅ 복사됨! 주소창에 붙여넣기 (Ctrl+L → Ctrl+V → Enter)';
+          btnOpenApp.classList.add('copied');
+          setTimeout(() => {
+            btnOpenApp.textContent = '📋 다시 복사';
+            btnOpenApp.classList.remove('copied');
+          }, 5000);
+        });
+      };
       btnOpenWeb.classList.add('hidden');
 
       return true;
