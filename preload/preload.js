@@ -131,7 +131,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ====== 이벤트 리스너 ======
   onOpenFromProtocol: (callback) => {
-    ipcRenderer.on('open-from-protocol', (event, arg) => callback(arg));
+    ipcRenderer.on('open-from-protocol', (event, arg, commentId) => callback(arg, commentId));
   },
   onRequestSaveBeforeQuit: (callback) => {
     ipcRenderer.on('app:request-save-before-quit', () => callback());

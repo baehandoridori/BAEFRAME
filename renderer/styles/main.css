@@ -3996,6 +3996,21 @@ body.app-fullscreen .video-comment-overlay-controls {
   }
 }
 
+/* Slack 딥링크 코멘트 포커싱 하이라이트 */
+.comment-item.focus-highlight {
+  animation: focusPulse 1.5s ease-in-out 2;
+  border-color: var(--accent-primary);
+}
+
+@keyframes focusPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 12px var(--accent-primary), 0 0 24px rgba(var(--accent-primary-rgb, 74, 158, 255), 0.3);
+  }
+}
+
 /* 컴팩트 뷰 */
 .comments-list.compact .comment-item {
   padding: 8px 12px;

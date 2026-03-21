@@ -824,6 +824,17 @@ async function initApp() {
   // 로드 완료
   reviewDataManager.addEventListener('loaded', (e) => {
     log.info('.bframe 로드됨', { path: e.detail.path });
+
+    // Slack 딥링크에서 코멘트 포커싱 요청이 있으면 처리
+    if (state.pendingCommentFocus) {
+      const commentId = state.pendingCommentFocus;
+      state.pendingCommentFocus = null;
+
+      // 댓글 목록 렌더링 완료 후 포커싱 (약간의 지연 필요)
+      setTimeout(() => {
+        focusComment(commentId);
+      }, 500);
+    }
   });
 
   // 로드 에러
@@ -5335,6 +5346,47 @@ async function initApp() {
   }
 
   /**
+   * Slack 딥링크에서 특정 코멘트로 포커싱
+   * - 댓글 패널 열기
+   * - 해당 코멘트로 스크롤 + 선택
+   * - 해당 프레임으로 이동
+   */
+  function focusComment(markerId) {
+    log.info('코멘트 포커싱', { markerId });
+
+    const marker = commentManager.getMarkerById(markerId);
+    if (!marker) {
+      log.warn('포커싱할 코멘트를 찾을 수 없음', { markerId });
+      showToast('해당 코멘트를 찾을 수 없습니다', 'warning');
+      return;
+    }
+
+    // 댓글 패널 열기
+    const commentPanel = document.getElementById('commentPanel');
+    if (commentPanel && !commentPanel.classList.contains('open')) {
+      commentPanel.classList.add('open');
+    }
+
+    // 해당 프레임으로 이동
+    videoPlayer.seekToFrame(marker.startFrame);
+
+    // 댓글 목록에서 해당 아이템 찾아서 선택 + 스크롤
+    const container = document.getElementById('commentList');
+    if (!container) return;
+
+    const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
+    if (commentItem) {
+      container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
+      commentItem.classList.add('selected');
+      commentItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      // 하이라이트 효과 (3초 후 제거)
+      commentItem.classList.add('focus-highlight');
+      setTimeout(() => commentItem.classList.remove('focus-highlight'), 3000);
+    }
+  }
+
+  /**
    * 상대 시간 포맷
    */
   function formatRelativeTime(date) {
@@ -6205,8 +6257,12 @@ async function initApp() {
   }
 
   // 프로토콜/파일 열기 이벤트 리스너
-  window.electronAPI.onOpenFromProtocol((arg) => {
-    log.info('프로토콜/파일 열기 이벤트 수신', { arg });
+  window.electronAPI.onOpenFromProtocol((arg, commentId) => {
+    log.info('프로토콜/파일 열기 이벤트 수신', { arg, commentId });
+    // commentId가 있으면 파일 로드 후 해당 코멘트로 포커싱
+    if (commentId) {
+      state.pendingCommentFocus = commentId;
+    }
     handleExternalFile(arg);
   });
 

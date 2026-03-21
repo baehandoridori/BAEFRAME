@@ -62,7 +62,7 @@ export class SlackNotifier {
           target_name: targetUid,
           time: this._formatTime(new Date()),
           file_name: this._formatFileName(videoInfo),
-          deep_link: this._buildDeepLink(videoInfo),
+          deep_link: this._buildDeepLink(videoInfo, marker.id),
           comment: marker.text,
           target_comment: ''
         };
@@ -138,7 +138,7 @@ export class SlackNotifier {
           target_name: targetUid,
           time: this._formatTime(new Date()),
           file_name: this._formatFileName(videoInfo),
-          deep_link: this._buildDeepLink(videoInfo),
+          deep_link: this._buildDeepLink(videoInfo, marker.id),
           comment: reply.text,
           target_comment: marker.text
         };
@@ -204,13 +204,17 @@ export class SlackNotifier {
    * 딥링크 생성 (Slack 버튼 URL은 https만 허용)
    * 웹 뷰어 URL에 baeframe:// 경로를 hash로 인코딩
    */
-  _buildDeepLink(videoInfo) {
-    if (!videoInfo) return 'https://baeframe.vercel.app';
+  _buildDeepLink(videoInfo, markerId) {
+    if (!videoInfo) return '';
     // .bframe 경로 우선 사용 (댓글/리뷰 데이터 포함)
     const targetPath = videoInfo.bframePath || videoInfo.filePath;
-    if (!targetPath) return 'https://baeframe.vercel.app';
-    const baeframeUrl = `baeframe://${targetPath}`;
-    return `https://baeframe.vercel.app/open.html#open=${encodeURIComponent(baeframeUrl)}`;
+    if (!targetPath) return '';
+    // baeframe:// 직접 사용 (Slack 메시지 본문에서 클릭 가능)
+    let url = `baeframe://${targetPath}`;
+    if (markerId) {
+      url += `?comment=${encodeURIComponent(markerId)}`;
+    }
+    return url;
   }
 
   /**

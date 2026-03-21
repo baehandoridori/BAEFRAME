@@ -72,6 +72,15 @@ function parseBaeframeUrl(url) {
 
   // baeframe:// 제거
   let filePath = url.replace(/^baeframe:\/\//, '');
+
+  // ?comment=xxx 파라미터 추출 (코멘트 포커싱용)
+  let commentId = null;
+  const commentMatch = filePath.match(/[?&]comment=([^&]+)/);
+  if (commentMatch) {
+    commentId = decodeURIComponent(commentMatch[1]);
+    filePath = filePath.replace(/[?&]comment=[^&]+/, '');
+    log.info('코멘트 ID 추출', { commentId });
+  }
   log.info('baeframe:// 제거 후', { filePath });
 
   // URL 디코딩 (한글, 공백 등)
@@ -134,7 +143,9 @@ function parseBaeframeUrl(url) {
     filePath = filePath.replace(/\//g, '\\');
   }
 
-  log.debug('프로토콜 URL 파싱 완료', { filePath });
+  log.debug('프로토콜 URL 파싱 완료', { filePath, commentId });
+  // commentId를 마지막 파싱 결과로 저장 (open-from-protocol 시 전달용)
+  parseBaeframeUrl._lastCommentId = commentId;
   return filePath;
 }
 
@@ -268,14 +279,14 @@ if (!gotTheLock) {
         // baeframe:// URL이면 파일 경로로 변환
         if (arg.startsWith('baeframe://')) {
           arg = parseBaeframeUrl(arg);
-          log.info('프로토콜 URL 처리됨', { filePath: arg });
+          log.info('프로토콜 URL 처리됨', { filePath: arg, commentId: parseBaeframeUrl._lastCommentId });
         }
 
         // .bplaylist 파일이면 재생목록으로 열기
         if (hasExtension(arg, '.bplaylist')) {
           mainWindow.webContents.send('open-playlist', arg);
         } else {
-          mainWindow.webContents.send('open-from-protocol', arg);
+          mainWindow.webContents.send('open-from-protocol', arg, parseBaeframeUrl._lastCommentId || null);
         }
       }
     }
@@ -374,7 +385,7 @@ if (!gotTheLock) {
           log.info('재생목록 열기 이벤트 전송', { playlistPath });
           mainWindow.webContents.send('open-playlist', playlistPath);
         } else {
-          mainWindow.webContents.send('open-from-protocol', fileArg);
+          mainWindow.webContents.send('open-from-protocol', fileArg, parseBaeframeUrl._lastCommentId || null);
         }
       });
     }
