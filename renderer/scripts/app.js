@@ -830,10 +830,23 @@ async function initApp() {
       const commentId = state.pendingCommentFocus;
       state.pendingCommentFocus = null;
 
-      // 댓글 목록 렌더링 완료 후 포커싱 (약간의 지연 필요)
-      setTimeout(() => {
-        focusComment(commentId);
-      }, 500);
+      // 댓글 목록 렌더링 완료까지 재시도 (최대 5초)
+      let retries = 0;
+      const tryFocus = () => {
+        retries++;
+        log.info('코멘트 포커싱 시도', { commentId, retries });
+        const marker = commentManager.getMarkerById(commentId);
+        if (marker) {
+          // 댓글 목록 렌더링 보장
+          updateCommentList();
+          setTimeout(() => focusComment(commentId), 200);
+        } else if (retries < 10) {
+          setTimeout(tryFocus, 500);
+        } else {
+          log.warn('코멘트 포커싱 실패 (최대 재시도 초과)', { commentId });
+        }
+      };
+      setTimeout(tryFocus, 500);
     }
   });
 
