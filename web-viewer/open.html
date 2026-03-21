@@ -313,6 +313,9 @@
       const baeframeUrl = decodeURIComponent(hash.substring(6));
       if (!baeframeUrl.startsWith('baeframe://')) return false;
 
+      // 재시도 버튼용으로 원본 URL 저장
+      slackDeepLinkUrl = baeframeUrl;
+
       statusText.textContent = 'BAEFRAME 앱 열기...';
       statusDetail.textContent = baeframeUrl.replace('baeframe://', '');
 
@@ -358,10 +361,14 @@
       }
     }
 
+    // Slack 딥링크 원본 URL 저장
+    let slackDeepLinkUrl = null;
+
     // 버튼 클릭 이벤트
     btnOpenApp.addEventListener('click', (e) => {
       e.preventDefault();
-      window.location.href = getAppUrl();
+      // Slack 딥링크 모드면 원본 URL로 재시도, 아니면 웹 뷰어용 URL
+      window.location.href = slackDeepLinkUrl || getAppUrl();
     });
 
     btnOpenWeb.addEventListener('click', (e) => {

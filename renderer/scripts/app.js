@@ -5021,6 +5021,7 @@ async function initApp() {
       // 클릭으로 해당 프레임 이동
       item.addEventListener('click', (e) => {
         if (e.target.closest('.comment-action-btn')) return;
+        if (e.target.closest('.gdrive-link-btn')) return;
         const frame = parseInt(item.dataset.startFrame);
         videoPlayer.seekToFrame(frame);
         container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
@@ -6607,13 +6608,14 @@ async function initApp() {
       </div>
     `).join('');
 
-    // 전체 초기화 버튼
-    document.getElementById('settingsResetAllShortcuts')?.addEventListener('click', () => {
-      userSettings.resetAllShortcuts();
-      renderShortcutSettings();
-      showToast('모든 단축키가 초기화되었습니다.', 'success');
-    });
   }
+
+  // 전체 초기화 버튼 (한 번만 등록)
+  document.getElementById('settingsResetAllShortcuts')?.addEventListener('click', () => {
+    userSettings.resetAllShortcuts();
+    renderShortcutSettings();
+    showToast('모든 단축키가 초기화되었습니다.', 'success');
+  });
 
   // 단축키 설정 패널 클릭 이벤트 위임
   document.getElementById('settingsShortcutList')?.addEventListener('click', (e) => {
