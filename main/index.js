@@ -277,13 +277,14 @@ if (!gotTheLock) {
         }
 
         // baeframe://open?file=...&comment=... 형식 (Slack 딥링크)
-        const openMatch = arg.match(/^baeframe:\/\/open[?%]/i);
-        if (openMatch) {
-          const url = new URL(arg.replace(/\\/g, '/'));
-          const filePath = url.searchParams.get('file');
-          const commentId = url.searchParams.get('comment');
-          if (filePath) {
-            let resolved = filePath.replace(/\//g, '\\');
+        if (arg.match(/^baeframe:\/\/open[?%]/i)) {
+          // new URL()은 커스텀 프로토콜에서 불안정하므로 정규식 사용
+          const fileMatch = arg.match(/[?&]file=([^&]+)/i) || arg.match(/[?%26]file[=%3D]([^&%]+)/i);
+          const commentMatch = arg.match(/[?&]comment=([^&]+)/i);
+          if (fileMatch) {
+            let resolved = decodeURIComponent(fileMatch[1]);
+            const commentId = commentMatch ? decodeURIComponent(commentMatch[1]) : null;
+            resolved = resolved.replace(/\//g, '\\');
             // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
             if (/^[A-Za-z][\/\\]/.test(resolved)) {
               resolved = resolved[0] + ':' + resolved.slice(1);
@@ -336,22 +337,18 @@ if (!gotTheLock) {
         log.info('재생목록 파일로 시작됨', { fileArg });
       } else if (fileArg.match(/^baeframe:\/\/open[?%]/i)) {
         // baeframe://open?file=...&comment=... 형식 (Slack 딥링크)
-        try {
-          const url = new URL(fileArg.replace(/\\/g, '/'));
-          const fp = url.searchParams.get('file');
-          if (fp) {
-            fileArg = fp.replace(/\//g, '\\');
-            if (/^[A-Za-z][\/\\]/.test(fileArg)) {
-              fileArg = fileArg[0] + ':' + fileArg.slice(1);
-            }
-            parseBaeframeUrl._lastCommentId = url.searchParams.get('comment') || null;
-            if (hasExtension(fileArg, '.bplaylist')) {
-              isPlaylistArg = true;
-            }
-            log.info('Slack 딥링크로 시작됨', { fileArg, commentId: parseBaeframeUrl._lastCommentId });
+        const fileMatch = fileArg.match(/[?&]file=([^&]+)/i);
+        const commentMatch = fileArg.match(/[?&]comment=([^&]+)/i);
+        if (fileMatch) {
+          fileArg = decodeURIComponent(fileMatch[1]).replace(/\//g, '\\');
+          if (/^[A-Za-z][\/\\]/.test(fileArg)) {
+            fileArg = fileArg[0] + ':' + fileArg.slice(1);
           }
-        } catch (e) {
-          log.warn('Slack 딥링크 파싱 실패', { fileArg, error: e.message });
+          parseBaeframeUrl._lastCommentId = commentMatch ? decodeURIComponent(commentMatch[1]) : null;
+          if (hasExtension(fileArg, '.bplaylist')) {
+            isPlaylistArg = true;
+          }
+          log.info('Slack 딥링크로 시작됨', { fileArg, commentId: parseBaeframeUrl._lastCommentId });
         }
       } else if (fileArg.startsWith('baeframe://')) {
         // baeframe://G:/path/file.bplaylist 형식 체크 (레거시)
