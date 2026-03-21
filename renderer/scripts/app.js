@@ -5347,10 +5347,15 @@ async function initApp() {
    */
   function renderGDriveLinks(html) {
     if (!html) return html;
-    // G:/ 또는 G:\ 뒤에 태그시작/따옴표/줄끝까지를 경로로 인식 (공백 포함)
-    return html.replace(/(G:[/\\][^<"']*[^<"'\s])/gi, (match) => {
-      const normalizedPath = match.replace(/\//g, '\\');
-      return `<button class="gdrive-link-btn" data-path="${escapeHtml(normalizedPath)}" title="${escapeHtml(normalizedPath)}"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${escapeHtml(match)}</button>`;
+    // G:/ 또는 G:\ 뒤에 경로 문자를 인식 (공백 포함, <mark> 태그 허용)
+    // 검색 하이라이트의 <mark>/<\/mark> 태그가 경로 중간에 삽입되어도 무시
+    const TAG_RE = /<\/?mark[^>]*>/gi;
+    return html.replace(/(G:[/\\](?:[^<"']|<\/?mark[^>]*>)*[^<"'\s])/gi, (match) => {
+      // 경로에서 mark 태그 제거하여 실제 경로 추출
+      const cleanPath = match.replace(TAG_RE, '');
+      const normalizedPath = cleanPath.replace(/\//g, '\\');
+      // 표시 텍스트에는 mark 태그 유지 (검색 하이라이트 보존)
+      return `<button class="gdrive-link-btn" data-path="${escapeHtml(normalizedPath)}" title="${escapeHtml(normalizedPath)}"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${match}</button>`;
     });
   }
 

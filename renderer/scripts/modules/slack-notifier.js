@@ -49,6 +49,7 @@ export class SlackNotifier {
         return;
       }
 
+      let failCount = 0;
       for (const name of mentionedNames) {
         // 본인 제외
         if (name === currentAuthor) continue;
@@ -66,10 +67,18 @@ export class SlackNotifier {
           target_comment: ''
         };
 
-        await this._sendWebhook(payload);
+        try {
+          await this._sendWebhook(payload);
+        } catch (err) {
+          log.warn(`댓글 알림 전송 실패 (${name})`, err);
+          failCount++;
+        }
+      }
+      if (failCount > 0) {
+        this._toast(`Slack 알림 ${failCount}건 전송 실패`, 'warning');
       }
     } catch (err) {
-      log.warn('댓글 알림 전송 실패', err);
+      log.warn('댓글 알림 처리 오류', err);
       this._toast('Slack 알림 전송 실패', 'warning');
     }
   }
@@ -119,6 +128,7 @@ export class SlackNotifier {
 
       if (targetNames.size === 0) return;
 
+      let failCount = 0;
       for (const name of targetNames) {
         const targetUid = getSlackUidByName(name);
         if (!targetUid) continue;
@@ -133,10 +143,18 @@ export class SlackNotifier {
           target_comment: marker.text
         };
 
-        await this._sendWebhook(payload);
+        try {
+          await this._sendWebhook(payload);
+        } catch (err) {
+          log.warn(`답글 알림 전송 실패 (${name})`, err);
+          failCount++;
+        }
+      }
+      if (failCount > 0) {
+        this._toast(`Slack 알림 ${failCount}건 전송 실패`, 'warning');
       }
     } catch (err) {
-      log.warn('답글 알림 전송 실패', err);
+      log.warn('답글 알림 처리 오류', err);
       this._toast('Slack 알림 전송 실패', 'warning');
     }
   }
