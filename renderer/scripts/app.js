@@ -1526,7 +1526,8 @@ async function initApp() {
         <div class="filter-dropdown-item" data-author-id="${escapeHtml(authorId)}">
           <div class="filter-dropdown-check ${isChecked ? 'checked' : ''}">${isChecked ? '✓' : ''}</div>
           <div class="filter-dropdown-dot" style="background: ${color.color}"></div>
-          ${escapeHtml(info.name)}
+          <span class="filter-dropdown-name">${escapeHtml(info.name)}</span>
+          <span class="filter-dropdown-solo-hint">솔로</span>
           <span class="filter-dropdown-badge">${info.count}</span>
         </div>`;
     }
@@ -1535,8 +1536,9 @@ async function initApp() {
     html += `
       <div class="filter-dropdown-item" data-author-id="__all__">
         <div class="filter-dropdown-check ${selectedAll ? 'checked' : ''}">${selectedAll ? '✓' : ''}</div>
-        전체 선택/해제
+        <span class="filter-dropdown-name">전체 선택/해제</span>
       </div>`;
+    html += `<div class="filter-dropdown-hint">☑ 체크박스 = 토글 &nbsp; 👤 이름 = 솔로</div>`;
 
     menu.innerHTML = html;
   }
@@ -1607,18 +1609,33 @@ async function initApp() {
     }
   });
 
-  // 작성자 선택/해제
+  // 작성자 선택/해제 (체크박스 토글 + 이름 솔로)
   document.getElementById('authorFilterMenu')?.addEventListener('click', (e) => {
+    e.stopPropagation(); // 드롭다운 닫힘 방지
+
     const item = e.target.closest('.filter-dropdown-item');
     if (!item) return;
 
     const authorId = item.dataset.authorId;
+    const clickedName = e.target.closest('.filter-dropdown-name');
 
+    // 전체 선택/해제
     if (authorId === '__all__') {
-      commentFilterState.authors = null;
-    } else {
+      commentFilterState.authors = commentFilterState.authors === null ? [] : null;
+    }
+    // 이름 클릭 → 솔로 모드
+    else if (clickedName) {
+      const isSolo = (
+        commentFilterState.authors !== null &&
+        commentFilterState.authors.length === 1 &&
+        commentFilterState.authors[0] === authorId
+      );
+      commentFilterState.authors = isSolo ? null : [authorId];
+    }
+    // 체크박스 클릭 → 개별 토글
+    else {
       if (commentFilterState.authors === null) {
-        // 현재 전체 선택 → 이 작성자만 해제
+        // 전체 선택 → 이 작성자만 해제
         const allMarkers = commentManager.getAllMarkers();
         const uniqueAuthors = new Set(
           allMarkers.filter(m => !m.deleted).map(m => m.authorId || m.author || 'unknown')
@@ -1645,7 +1662,6 @@ async function initApp() {
     updateAuthorFilterMenu();
     applyCommentFilters();
 
-    // 작성자 필터 활성 상태 표시
     const btn = document.getElementById('authorFilterBtn');
     if (btn) {
       btn.classList.toggle('active', commentFilterState.authors !== null);
