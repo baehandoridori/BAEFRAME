@@ -1257,11 +1257,21 @@ async function initApp() {
 
   // 댓글 입력창 이미지 붙여넣기
   elements.commentInput.addEventListener('paste', async (e) => {
+    // 드라이브 경로 자동 따옴표
+    if (handleDrivePathPaste(e)) return;
+
     const imageData = await getImageFromClipboard(e);
     if (imageData) {
       e.preventDefault();
       showCommentImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
+    }
+  });
+
+  // 동적 답글 입력의 경로 paste 처리 (이벤트 위임)
+  elements.commentsList?.addEventListener('paste', (e) => {
+    if (e.target.closest('.comment-reply-input')) {
+      handleDrivePathPaste(e);
     }
   });
 
@@ -1516,7 +1526,8 @@ async function initApp() {
         <div class="filter-dropdown-item" data-author-id="${escapeHtml(authorId)}">
           <div class="filter-dropdown-check ${isChecked ? 'checked' : ''}">${isChecked ? '✓' : ''}</div>
           <div class="filter-dropdown-dot" style="background: ${color.color}"></div>
-          ${escapeHtml(info.name)}
+          <span class="filter-dropdown-name">${escapeHtml(info.name)}</span>
+          <span class="filter-dropdown-solo-hint">솔로</span>
           <span class="filter-dropdown-badge">${info.count}</span>
         </div>`;
     }
@@ -1525,8 +1536,9 @@ async function initApp() {
     html += `
       <div class="filter-dropdown-item" data-author-id="__all__">
         <div class="filter-dropdown-check ${selectedAll ? 'checked' : ''}">${selectedAll ? '✓' : ''}</div>
-        전체 선택/해제
+        <span class="filter-dropdown-name">전체 선택/해제</span>
       </div>`;
+    html += `<div class="filter-dropdown-hint">☑ 체크박스 = 토글 &nbsp; 👤 이름 = 솔로</div>`;
 
     menu.innerHTML = html;
   }
@@ -1564,9 +1576,32 @@ async function initApp() {
     const isOpen = menu.classList.contains('open');
     if (isOpen) {
       menu.classList.remove('open');
+      // 위치 리셋
+      menu.style.top = '';
+      menu.style.bottom = '';
+      menu.style.left = '';
+      menu.style.right = '';
     } else {
       updateAuthorFilterMenu();
+      // 위치 리셋 후 열기
+      menu.style.top = '';
+      menu.style.bottom = '';
+      menu.style.left = '';
+      menu.style.right = '';
       menu.classList.add('open');
+
+      // 레이아웃 확정 후 overflow 보정
+      requestAnimationFrame(() => {
+        const rect = menu.getBoundingClientRect();
+        if (rect.bottom > window.innerHeight) {
+          menu.style.top = 'auto';
+          menu.style.bottom = 'calc(100% + 4px)';
+        }
+        if (rect.right > window.innerWidth) {
+          menu.style.left = 'auto';
+          menu.style.right = '0';
+        }
+      });
     }
   });
 
@@ -1597,18 +1632,33 @@ async function initApp() {
     }
   });
 
-  // 작성자 선택/해제
+  // 작성자 선택/해제 (체크박스 토글 + 이름 솔로)
   document.getElementById('authorFilterMenu')?.addEventListener('click', (e) => {
+    e.stopPropagation(); // 드롭다운 닫힘 방지
+
     const item = e.target.closest('.filter-dropdown-item');
     if (!item) return;
 
     const authorId = item.dataset.authorId;
+    const clickedName = e.target.closest('.filter-dropdown-name');
 
+    // 전체 선택/해제
     if (authorId === '__all__') {
-      commentFilterState.authors = null;
-    } else {
+      commentFilterState.authors = commentFilterState.authors === null ? [] : null;
+    }
+    // 이름 클릭 → 솔로 모드
+    else if (clickedName) {
+      const isSolo = (
+        commentFilterState.authors !== null &&
+        commentFilterState.authors.length === 1 &&
+        commentFilterState.authors[0] === authorId
+      );
+      commentFilterState.authors = isSolo ? null : [authorId];
+    }
+    // 체크박스 클릭 → 개별 토글
+    else {
       if (commentFilterState.authors === null) {
-        // 현재 전체 선택 → 이 작성자만 해제
+        // 전체 선택 → 이 작성자만 해제
         const allMarkers = commentManager.getAllMarkers();
         const uniqueAuthors = new Set(
           allMarkers.filter(m => !m.deleted).map(m => m.authorId || m.author || 'unknown')
@@ -1635,7 +1685,6 @@ async function initApp() {
     updateAuthorFilterMenu();
     applyCommentFilters();
 
-    // 작성자 필터 활성 상태 표시
     const btn = document.getElementById('authorFilterBtn');
     if (btn) {
       btn.classList.toggle('active', commentFilterState.authors !== null);
@@ -4890,6 +4939,13 @@ async function initApp() {
     const container = elements.commentsList;
     if (!container) return;
 
+    // 확장 상태 및 스크롤 위치 보존
+    const expandedIds = new Set(
+      [...container.querySelectorAll('.comment-thread-toggle.expanded')]
+        .map(el => el.dataset.markerId)
+    );
+    const savedScrollTop = container.scrollTop;
+
     let markers = commentManager.getAllMarkers();
 
     // 필터 적용
@@ -5022,12 +5078,12 @@ async function initApp() {
           <button class="comment-action-btn delete-btn" title="삭제">삭제</button>
         </div>
         ${replyCount > 0 ? `
-        <button class="comment-thread-toggle" data-marker-id="${marker.id}">
+        <button class="comment-thread-toggle${expandedIds.has(marker.id) ? ' expanded' : ''}" data-marker-id="${marker.id}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
           답글 ${replyCount}개
         </button>
         ` : ''}
-        <div class="comment-replies" data-marker-id="${marker.id}">
+        <div class="comment-replies${expandedIds.has(marker.id) ? ' expanded' : ''}" data-marker-id="${marker.id}">
           ${repliesHtml}
           <div class="comment-reply-input-wrapper">
             <textarea class="comment-reply-input" placeholder="답글 입력..." rows="1"></textarea>
@@ -5281,6 +5337,9 @@ async function initApp() {
         }
       });
     });
+
+    // 스크롤 위치 복원
+    container.scrollTop = savedScrollTop;
   }
 
   /**
@@ -5404,6 +5463,47 @@ async function initApp() {
   }
 
   /**
+   * paste 이벤트에서 드라이브 경로를 감지하여 첫 줄에 따옴표를 감싸는 헬퍼.
+   * 이미지 paste가 아닌 텍스트 paste에서만 동작.
+   * @returns {boolean} 경로가 감지되어 처리된 경우 true
+   */
+  function handleDrivePathPaste(e) {
+    // 이미지 데이터가 있으면 무시 (기존 이미지 paste 우선)
+    if (e.clipboardData?.files?.length > 0) return false;
+    if (e.clipboardData?.types?.includes('image/png')) return false;
+
+    const text = e.clipboardData?.getData('text');
+    if (!text) return false;
+
+    const trimmed = text.trim();
+    // 드라이브 경로 패턴: C:\ D:\ G:/ 등
+    if (!/^[A-Z]:[/\\]/i.test(trimmed)) return false;
+
+    // 이미 따옴표로 감싸져 있으면 무시
+    if (/^["']/.test(trimmed) && /["']$/.test(trimmed)) return false;
+
+    e.preventDefault();
+
+    const target = e.target;
+    const lines = text.split('\n');
+    // 첫 줄(경로)만 따옴표 감싸기, 나머지 줄은 그대로
+    lines[0] = `"${lines[0].trim()}"`;
+    const result = lines.join('\n');
+
+    // textarea/input에 삽입
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const value = target.value;
+    target.value = value.slice(0, start) + result + value.slice(end);
+    target.selectionStart = target.selectionEnd = start + result.length;
+
+    // input 이벤트 트리거 (auto-resize 등)
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+
+    return true;
+  }
+
+  /**
    * G:/ 드라이브 경로를 클릭 가능한 버튼으로 변환
    * escapeHtml 처리된 문자열에서 동작
    */
@@ -5437,10 +5537,10 @@ async function initApp() {
 
     //   2b: 확장자 없는 경로 (폴더) — 공백 불허
     //   <mark> 태그는 허용 (검색 하이라이트)
-    html = html.replace(/(G:[/\\](?:[^\s<"'&\x00]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)+)/gi, (match) => {
-      // 이미 버튼화된 경로 건너뛰기 (2a에서 처리된 것)
+    html = html.replace(/(G:[/\\](?:[^\n\r<"'&\x00]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)+)/gi, (match) => {
       if (match.includes('gdrive-link-btn')) return match;
-      return makeBtn(match, match);
+      const trimmed = match.replace(/\s+$/, '');
+      return makeBtn(trimmed, trimmed);
     });
 
     // 3단계: 플레이스홀더를 실제 버튼으로 복원
@@ -7787,6 +7887,9 @@ async function initApp() {
 
   // 스레드 에디터 이미지 붙여넣기
   threadEditor?.addEventListener('paste', async (e) => {
+    // 드라이브 경로 자동 따옴표
+    if (handleDrivePathPaste(e)) return;
+
     const imageData = await getImageFromClipboard(e);
     if (imageData) {
       e.preventDefault();

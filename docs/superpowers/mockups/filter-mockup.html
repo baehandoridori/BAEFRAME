@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>사용자 필터 드롭다운 - 시안</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 40px 20px;
+    min-height: 100vh;
+  }
+
+  .demo-container {
+    display: flex;
+    gap: 60px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .demo-section {
+    width: 320px;
+  }
+
+  .demo-section h2 {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .demo-section .label {
+    font-size: 11px;
+    color: #666;
+    margin-top: 8px;
+    margin-bottom: 16px;
+    line-height: 1.5;
+  }
+
+  /* Filter dropdown styles - matching BAEFRAME's glassmorphism */
+  .filter-dropdown-wrapper {
+    position: relative;
+    display: inline-block;
+  }
+
+  .filter-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.15s;
+  }
+
+  .filter-chip:hover {
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+  }
+
+  .filter-chip.active {
+    background: rgba(100, 180, 255, 0.15);
+    border-color: rgba(100, 180, 255, 0.3);
+    color: #8cc8ff;
+  }
+
+  .filter-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 220px;
+    background: rgba(30, 30, 50, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 4px;
+    z-index: 100;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+
+  .filter-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.1s;
+    user-select: none;
+  }
+
+  .filter-dropdown-item:hover {
+    background: rgba(255,255,255,0.08);
+  }
+
+  .filter-dropdown-check {
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+
+  .filter-dropdown-check.checked {
+    background: #5b9cf6;
+    border-color: #5b9cf6;
+  }
+
+  .filter-dropdown-check svg {
+    display: none;
+  }
+
+  .filter-dropdown-check.checked svg {
+    display: block;
+  }
+
+  .filter-dropdown-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .filter-dropdown-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .filter-dropdown-name:hover {
+    text-decoration: underline;
+  }
+
+  .filter-dropdown-badge {
+    font-size: 10px;
+    color: #666;
+    min-width: 18px;
+    text-align: right;
+  }
+
+  .filter-dropdown-divider {
+    height: 1px;
+    background: rgba(255,255,255,0.08);
+    margin: 4px 8px;
+  }
+
+  /* Solo indicator */
+  .solo-hint {
+    font-size: 9px;
+    color: #5b9cf6;
+    margin-left: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .filter-dropdown-item:hover .solo-hint {
+    opacity: 1;
+  }
+
+  /* Interaction hint */
+  .interaction-hint {
+    display: flex;
+    gap: 16px;
+    margin-top: 6px;
+    padding: 6px 8px;
+    font-size: 10px;
+    color: #555;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+
+  .interaction-hint span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* Arrow labels */
+  .arrow-label {
+    position: absolute;
+    font-size: 11px;
+    color: #f0a050;
+    white-space: nowrap;
+  }
+
+  .click-zone {
+    position: relative;
+  }
+
+  .zone-label {
+    position: absolute;
+    right: -120px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: #f0a050;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  .zone-label::before {
+    content: '←';
+  }
+</style>
+</head>
+<body>
+
+<div class="demo-container">
+
+  <!-- 현재 상태: 전체 선택 -->
+  <div class="demo-section">
+    <h2>기본 상태 (전체 선택)</h2>
+    <p class="label">모든 사용자 체크됨. 체크박스로 개별 토글, 이름 클릭으로 솔로 모드.</p>
+
+    <div class="filter-dropdown-wrapper">
+      <button class="filter-chip">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <svg viewBox="0 0 24 24" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+
+      <div class="filter-dropdown-menu">
+        <div class="filter-dropdown-item" style="position:relative">
+          <div class="filter-dropdown-check checked">
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2"><polyline points="2 6 5 9 10 3"/></svg>
+          </div>
+          <div class="filter-dropdown-dot" style="background:#4fc3f7"></div>
+          <div class="filter-dropdown-name">배한솔</div>
+          <span class="solo-hint">솔로</span>
+          <div class="filter-dropdown-badge">12</div>
+          <div class="zone-label" style="right:-140px">이름 클릭 = 솔로</div>
+        </div>
+
+        <div class="filter-dropdown-item">
+          <div class="filter-dropdown-check checked">
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2"><polyline points="2 6 5 9 10 3"/></svg>
+          </div>
+          <div class="filter-dropdown-dot" style="background:#f06292"></div>
+          <div class="filter-dropdown-name">김지은</div>
+          <span class="solo-hint">솔로</span>
+          <div class="filter-dropdown-badge">8</div>
+          <div class="zone-label" style="right:-140px">체크박스 = 토글</div>
+        </div>
+
+        <div class="filter-dropdown-item">
+          <div class="filter-dropdown-check checked">
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2"><polyline points="2 6 5 9 10 3"/></svg>
+          </div>
+          <div class="filter-dropdown-dot" style="background:#aed581"></div>
+          <div class="filter-dropdown-name">이정민</div>
+          <span class="solo-hint">솔로</span>
+          <div class="filter-dropdown-badge">5</div>
+        </div>
+
+        <div class="filter-dropdown-divider"></div>
+
+        <div class="filter-dropdown-item">
+          <div class="filter-dropdown-check checked">
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2"><polyline points="2 6 5 9 10 3"/></svg>
+          </div>
+          <div class="filter-dropdown-name" style="color:#999">전체 선택</div>
+        </div>
+
+        <div class="interaction-hint">
+          <span>☑ 체크박스 = 토글</span>
+          <span>👤 이름 = 솔로</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 솔로 모드 -->
+  <div class="demo-section">
+    <h2>솔로 모드 (이름 클릭 후)</h2>
+    <p class="label">"배한솔" 이름을 클릭 → 배한솔만 체크. 다시 이름 클릭 → 전체 복원.</p>
+
+    <div class="filter-dropdown-wrapper">
+      <button class="filter-chip active">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <svg viewBox="0 0 24 24" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+
+      <div class="filter-dropdown-menu">
+        <div class="filter-dropdown-item" style="background:rgba(91,156,246,0.1)">
+          <div class="filter-dropdown-check checked">
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2"><polyline points="2 6 5 9 10 3"/></svg>
+          </div>
+          <div class="filter-dropdown-dot" style="background:#4fc3f7"></div>
+          <div class="filter-dropdown-name" style="color:#8cc8ff; font-weight:600">배한솔</div>
+          <span class="solo-hint" style="opacity:1">솔로</span>
+          <div class="filter-dropdown-badge" style="color:#8cc8ff">12</div>
+        </div>
+
+        <div class="filter-dropdown-item" style="opacity:0.5">
+          <div class="filter-dropdown-check"></div>
+          <div class="filter-dropdown-dot" style="background:#f06292"></div>
+          <div class="filter-dropdown-name">김지은</div>
+          <div class="filter-dropdown-badge">8</div>
+        </div>
+
+        <div class="filter-dropdown-item" style="opacity:0.5">
+          <div class="filter-dropdown-check"></div>
+          <div class="filter-dropdown-dot" style="background:#aed581"></div>
+          <div class="filter-dropdown-name">이정민</div>
+          <div class="filter-dropdown-badge">5</div>
+        </div>
+
+        <div class="filter-dropdown-divider"></div>
+
+        <div class="filter-dropdown-item">
+          <div class="filter-dropdown-check">
+          </div>
+          <div class="filter-dropdown-name" style="color:#999">전체 선택</div>
+        </div>
+
+        <div class="interaction-hint">
+          <span>☑ 체크박스 = 토글</span>
+          <span>👤 이름 = 솔로</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 개별 토글 모드 -->
+  <div class="demo-section">
+    <h2>개별 토글 (체크박스 클릭)</h2>
+    <p class="label">체크박스를 클릭하여 여러 명을 조합. 드롭다운은 닫히지 않음.</p>
+
+    <div class="filter-dropdown-wrapper">
+      <button class="filter-chip active">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <svg viewBox="0 0 24 24" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+
+      <div class="filter-dropdown-menu">
+        <div class="filter-dropdown-item">
+          <div class="filter-dropdown-check checked">
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2"><polyline points="2 6 5 9 10 3"/></svg>
+          </div>
+          <div class="filter-dropdown-dot" style="background:#4fc3f7"></div>
+          <div class="filter-dropdown-name">배한솔</div>
+          <span class="solo-hint">솔로</span>
+          <div class="filter-dropdown-badge">12</div>
+        </div>
+
+        <div class="filter-dropdown-item">
+          <div class="filter-dropdown-check"></div>
+          <div class="filter-dropdown-dot" style="background:#f06292"></div>
+          <div class="filter-dropdown-name">김지은</div>
+          <span class="solo-hint">솔로</span>
+          <div class="filter-dropdown-badge">8</div>
+        </div>
+
+        <div class="filter-dropdown-item">
+          <div class="filter-dropdown-check checked">
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2"><polyline points="2 6 5 9 10 3"/></svg>
+          </div>
+          <div class="filter-dropdown-dot" style="background:#aed581"></div>
+          <div class="filter-dropdown-name">이정민</div>
+          <span class="solo-hint">솔로</span>
+          <div class="filter-dropdown-badge">5</div>
+        </div>
+
+        <div class="filter-dropdown-divider"></div>
+
+        <div class="filter-dropdown-item">
+          <div class="filter-dropdown-check">
+          </div>
+          <div class="filter-dropdown-name" style="color:#999">전체 선택</div>
+        </div>
+
+        <div class="interaction-hint">
+          <span>☑ 체크박스 = 토글</span>
+          <span>👤 이름 = 솔로</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

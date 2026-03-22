@@ -3698,6 +3698,38 @@ body.app-fullscreen .video-comment-overlay-controls {
   margin-left: auto;
 }
 
+.filter-dropdown-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.filter-dropdown-name:hover {
+  text-decoration: underline;
+}
+
+.filter-dropdown-solo-hint {
+  font-size: 9px;
+  color: var(--accent-primary);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  margin-left: -4px;
+}
+
+.filter-dropdown-item:hover .filter-dropdown-solo-hint {
+  opacity: 0.7;
+}
+
+.filter-dropdown-hint {
+  padding: 4px 10px 6px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 2px;
+}
+
 .comment-search-bar {
   padding: 0;
   border-bottom: 0;
