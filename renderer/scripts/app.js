@@ -1257,11 +1257,21 @@ async function initApp() {
 
   // 댓글 입력창 이미지 붙여넣기
   elements.commentInput.addEventListener('paste', async (e) => {
+    // 드라이브 경로 자동 따옴표
+    if (handleDrivePathPaste(e)) return;
+
     const imageData = await getImageFromClipboard(e);
     if (imageData) {
       e.preventDefault();
       showCommentImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
+    }
+  });
+
+  // 동적 답글 입력의 경로 paste 처리 (이벤트 위임)
+  elements.commentsList?.addEventListener('paste', (e) => {
+    if (e.target.closest('.comment-reply-input')) {
+      handleDrivePathPaste(e);
     }
   });
 
@@ -5404,6 +5414,47 @@ async function initApp() {
   }
 
   /**
+   * paste 이벤트에서 드라이브 경로를 감지하여 첫 줄에 따옴표를 감싸는 헬퍼.
+   * 이미지 paste가 아닌 텍스트 paste에서만 동작.
+   * @returns {boolean} 경로가 감지되어 처리된 경우 true
+   */
+  function handleDrivePathPaste(e) {
+    // 이미지 데이터가 있으면 무시 (기존 이미지 paste 우선)
+    if (e.clipboardData?.files?.length > 0) return false;
+    if (e.clipboardData?.types?.includes('image/png')) return false;
+
+    const text = e.clipboardData?.getData('text');
+    if (!text) return false;
+
+    const trimmed = text.trim();
+    // 드라이브 경로 패턴: C:\ D:\ G:/ 등
+    if (!/^[A-Z]:[/\\]/i.test(trimmed)) return false;
+
+    // 이미 따옴표로 감싸져 있으면 무시
+    if (/^["']/.test(trimmed) && /["']$/.test(trimmed)) return false;
+
+    e.preventDefault();
+
+    const target = e.target;
+    const lines = text.split('\n');
+    // 첫 줄(경로)만 따옴표 감싸기, 나머지 줄은 그대로
+    lines[0] = `"${lines[0].trim()}"`;
+    const result = lines.join('\n');
+
+    // textarea/input에 삽입
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const value = target.value;
+    target.value = value.slice(0, start) + result + value.slice(end);
+    target.selectionStart = target.selectionEnd = start + result.length;
+
+    // input 이벤트 트리거 (auto-resize 등)
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+
+    return true;
+  }
+
+  /**
    * G:/ 드라이브 경로를 클릭 가능한 버튼으로 변환
    * escapeHtml 처리된 문자열에서 동작
    */
@@ -7787,6 +7838,9 @@ async function initApp() {
 
   // 스레드 에디터 이미지 붙여넣기
   threadEditor?.addEventListener('paste', async (e) => {
+    // 드라이브 경로 자동 따옴표
+    if (handleDrivePathPaste(e)) return;
+
     const imageData = await getImageFromClipboard(e);
     if (imageData) {
       e.preventDefault();
