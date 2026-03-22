@@ -5437,10 +5437,10 @@ async function initApp() {
 
     //   2b: 확장자 없는 경로 (폴더) — 공백 불허
     //   <mark> 태그는 허용 (검색 하이라이트)
-    html = html.replace(/(G:[/\\](?:[^\s<"'&\x00]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)+)/gi, (match) => {
-      // 이미 버튼화된 경로 건너뛰기 (2a에서 처리된 것)
+    html = html.replace(/(G:[/\\](?:[^\n\r<"'&\x00]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)+)/gi, (match) => {
       if (match.includes('gdrive-link-btn')) return match;
-      return makeBtn(match, match);
+      const trimmed = match.replace(/\s+$/, '');
+      return makeBtn(trimmed, trimmed);
     });
 
     // 3단계: 플레이스홀더를 실제 버튼으로 복원
