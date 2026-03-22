@@ -1576,9 +1576,32 @@ async function initApp() {
     const isOpen = menu.classList.contains('open');
     if (isOpen) {
       menu.classList.remove('open');
+      // 위치 리셋
+      menu.style.top = '';
+      menu.style.bottom = '';
+      menu.style.left = '';
+      menu.style.right = '';
     } else {
       updateAuthorFilterMenu();
+      // 위치 리셋 후 열기
+      menu.style.top = '';
+      menu.style.bottom = '';
+      menu.style.left = '';
+      menu.style.right = '';
       menu.classList.add('open');
+
+      // 레이아웃 확정 후 overflow 보정
+      requestAnimationFrame(() => {
+        const rect = menu.getBoundingClientRect();
+        if (rect.bottom > window.innerHeight) {
+          menu.style.top = 'auto';
+          menu.style.bottom = 'calc(100% + 4px)';
+        }
+        if (rect.right > window.innerWidth) {
+          menu.style.left = 'auto';
+          menu.style.right = '0';
+        }
+      });
     }
   });
 
