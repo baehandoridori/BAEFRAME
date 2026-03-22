@@ -116,6 +116,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkVideoThumbnail: (videoPath) => ipcRenderer.invoke('thumbnail:check-video-thumb', videoPath),
   getVideoThumbnailPath: (videoPath) => ipcRenderer.invoke('thumbnail:get-video-thumb-path', videoPath),
 
+  // ====== Slack 웹훅 ======
+  sendSlackWebhook: (url, payload) => ipcRenderer.invoke('slack:send-webhook', url, payload),
+
   // ====== 경로 유틸리티 ======
   pathDirname: (filePath) => ipcRenderer.invoke('path:dirname', filePath),
   pathBasename: (filePath) => ipcRenderer.invoke('path:basename', filePath),
@@ -126,9 +129,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   watchFileStop: (filePath) => ipcRenderer.invoke('file:watch-stop', filePath),
   watchFileStopAll: () => ipcRenderer.invoke('file:watch-stop-all'),
 
+  // renderer 초기화 완료 알림
+  notifyRendererReady: () => ipcRenderer.send('renderer-ready'),
+
   // ====== 이벤트 리스너 ======
   onOpenFromProtocol: (callback) => {
-    ipcRenderer.on('open-from-protocol', (event, arg) => callback(arg));
+    ipcRenderer.on('open-from-protocol', (event, arg, commentId) => callback(arg, commentId));
   },
   onRequestSaveBeforeQuit: (callback) => {
     ipcRenderer.on('app:request-save-before-quit', () => callback());

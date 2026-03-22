@@ -3984,7 +3984,7 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .comment-item.glow {
-  animation: commentGlow 1.5s ease-out;
+  animation: commentGlow 2.5s ease-out;
 }
 
 @keyframes commentGlow {
@@ -3993,6 +3993,24 @@ body.app-fullscreen .video-comment-overlay-controls {
   }
   100% {
     box-shadow: none;
+  }
+}
+
+/* Slack 딥링크 코멘트 포커싱 하이라이트 */
+.comment-item.focus-highlight {
+  animation: focusPulse 1s ease-in-out 3;
+  border-color: #4a9eff;
+  background: rgba(74, 158, 255, 0.08);
+}
+
+@keyframes focusPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 transparent;
+    border-color: #4a9eff;
+  }
+  50% {
+    box-shadow: 0 0 12px #4a9eff, 0 0 28px rgba(74, 158, 255, 0.4);
+    border-color: #6db3ff;
   }
 }
 
@@ -4650,9 +4668,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   line-height: 1.4;
   box-shadow:
     0 8px 40px rgba(0, 0, 0, 0.45),
-    0 2px 8px rgba(0, 0, 0, 0.25),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  overflow: hidden;
+    0 2px 8px rgba(0, 0, 0, 0.25);
   cursor: grab;
   user-select: none;
   transition:
@@ -4662,6 +4678,9 @@ body.app-fullscreen .video-comment-overlay-controls {
     scale 0.4s cubic-bezier(0.22, 1, 0.36, 1);
   margin-bottom: 8px;
   will-change: transform, opacity;
+  /* 진행률 바가 border-radius를 넘지 않도록 */
+  overflow: hidden;
+  isolation: isolate;
 }
 
 .toast:active {
@@ -4754,8 +4773,9 @@ body.app-fullscreen .video-comment-overlay-controls {
   bottom: 0;
   left: 0;
   height: 2px;
+  max-width: 100%;
   background: var(--text-tertiary);
-  border-radius: 0 0 0 12px;
+  border-radius: 0 0 12px 12px;
   opacity: 0.4;
   transition: opacity 0.15s;
 }
@@ -4788,31 +4808,67 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 /* 퇴장 애니메이션 */
 .toast.toast-exit {
-  animation: toastSlideOut 0.35s cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  animation: toastFadeCollapse 0.4s cubic-bezier(0.55, 0, 1, 0.45) forwards;
   pointer-events: none;
 }
 
-@keyframes toastSlideOut {
-  from {
+@keyframes toastFadeCollapse {
+  0% {
     opacity: 1;
-    transform: translateX(0) scale(1);
+    transform: scale(1);
+    max-height: 80px;
+    margin-bottom: 8px;
+    padding-top: 14px;
+    padding-bottom: 14px;
   }
-  to {
+  50% {
     opacity: 0;
     transform: translateY(-8px) scale(0.96);
+    max-height: 80px;
+    margin-bottom: 8px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
   }
 }
 
 /* 스와이프 퇴장 */
 .toast.toast-swipe-exit {
-  animation: toastSwipeOut 0.3s cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  animation: toastSwipeCollapse 0.4s cubic-bezier(0.55, 0, 1, 0.45) forwards;
   pointer-events: none;
 }
 
-@keyframes toastSwipeOut {
-  to {
+@keyframes toastSwipeCollapse {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+    max-height: 80px;
+    margin-bottom: 8px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+  50% {
     opacity: 0;
     transform: translateX(var(--swipe-dir, 100%));
+    max-height: 80px;
+    margin-bottom: 8px;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(var(--swipe-dir, 100%));
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
   }
 }
 
@@ -10159,4 +10215,170 @@ body.audio-mode .frame-indicator {
 .playback-sync-status-text {
   font-size: 11px;
   color: var(--text-tertiary);
+}
+
+/* ==========================================
+   @멘션 자동완성 드롭다운
+   ========================================== */
+.mention-dropdown {
+  position: fixed;
+  z-index: 10000;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border-primary, #444);
+  border-radius: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  min-width: 160px;
+  max-width: 220px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.mention-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary, #eee);
+  transition: background 0.1s;
+}
+
+.mention-item:hover,
+.mention-item.active {
+  background: var(--accent-primary, #ffd000);
+  color: var(--bg-primary, #1a1a1a);
+}
+
+.mention-item-name {
+  font-weight: 500;
+}
+
+/* ==========================================
+   G:/ 드라이브 경로 링크 버튼
+   ========================================== */
+.gdrive-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  margin: 0 2px;
+  background: rgba(255, 208, 0, 0.15);
+  border: 1px solid rgba(255, 208, 0, 0.3);
+  border-radius: 4px;
+  color: var(--accent-primary, #ffd000);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  word-break: break-all;
+  line-height: 1.4;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.gdrive-link-btn:hover {
+  background: rgba(255, 208, 0, 0.25);
+  border-color: rgba(255, 208, 0, 0.5);
+}
+
+.gdrive-link-btn svg {
+  flex-shrink: 0;
+}
+
+/* ==========================================
+   단축키 설정 패널
+   ========================================== */
+.shortcut-actions {
+  margin-bottom: 12px;
+}
+
+.shortcut-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.shortcut-category {
+  margin-bottom: 16px;
+}
+
+.shortcut-category-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #999);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 6px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-primary, #333);
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  gap: 8px;
+}
+
+.shortcut-row.custom .shortcut-label {
+  color: var(--accent-primary, #ffd000);
+}
+
+.shortcut-label {
+  font-size: 13px;
+  color: var(--text-primary, #eee);
+  flex: 1;
+  min-width: 0;
+}
+
+.shortcut-key-area {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.shortcut-key-btn {
+  background: var(--bg-tertiary, #333);
+  border: 1px solid var(--border-primary, #444);
+  border-radius: 4px;
+  color: var(--text-primary, #eee);
+  font-size: 12px;
+  font-family: monospace;
+  padding: 3px 8px;
+  cursor: pointer;
+  min-width: 60px;
+  text-align: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.shortcut-key-btn:hover {
+  background: var(--bg-hover, #444);
+  border-color: var(--accent-primary, #ffd000);
+}
+
+.shortcut-key-btn.capturing {
+  background: var(--accent-primary, #ffd000);
+  color: var(--bg-primary, #1a1a1a);
+  border-color: var(--accent-primary, #ffd000);
+  font-family: inherit;
+  font-weight: 600;
+  animation: pulse-capture 1s ease-in-out infinite;
+}
+
+@keyframes pulse-capture {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.shortcut-reset-btn {
+  background: none;
+  border: 1px solid var(--border-primary, #444);
+  border-radius: 4px;
+  color: var(--text-secondary, #999);
+  font-size: 14px;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.shortcut-reset-btn:hover {
+  color: var(--accent-primary, #ffd000);
+  border-color: var(--accent-primary, #ffd000);
 }

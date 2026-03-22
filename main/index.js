@@ -72,6 +72,15 @@ function parseBaeframeUrl(url) {
 
   // baeframe:// 제거
   let filePath = url.replace(/^baeframe:\/\//, '');
+
+  // ?comment=xxx 파라미터 추출 (코멘트 포커싱용)
+  let commentId = null;
+  const commentMatch = filePath.match(/[?&]comment=([^&]+)/);
+  if (commentMatch) {
+    commentId = decodeURIComponent(commentMatch[1]);
+    filePath = filePath.replace(/[?&]comment=[^&]+/, '');
+    log.info('코멘트 ID 추출', { commentId });
+  }
   log.info('baeframe:// 제거 후', { filePath });
 
   // URL 디코딩 (한글, 공백 등)
@@ -134,7 +143,9 @@ function parseBaeframeUrl(url) {
     filePath = filePath.replace(/\//g, '\\');
   }
 
-  log.debug('프로토콜 URL 파싱 완료', { filePath });
+  log.debug('프로토콜 URL 파싱 완료', { filePath, commentId });
+  // commentId를 마지막 파싱 결과로 저장 (open-from-protocol 시 전달용)
+  parseBaeframeUrl._lastCommentId = commentId;
   return filePath;
 }
 
@@ -265,17 +276,40 @@ if (!gotTheLock) {
           }
         }
 
-        // baeframe:// URL이면 파일 경로로 변환
+        // baeframe://open?file=...&comment=... 형식 (Slack 딥링크)
+        if (arg.match(/^baeframe:\/\/open\/?[?%]/i)) {
+          // new URL()은 커스텀 프로토콜에서 불안정하므로 정규식 사용
+          const fileMatch = arg.match(/[?&]file=([^&]+)/i) || arg.match(/[?%26]file[=%3D]([^&%]+)/i);
+          const commentMatch = arg.match(/[?&]comment=([^&]+)/i);
+          if (fileMatch) {
+            let resolved = decodeURIComponent(fileMatch[1]);
+            const commentId = commentMatch ? decodeURIComponent(commentMatch[1]) : null;
+            resolved = resolved.replace(/\//g, '\\');
+            // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
+            if (/^[A-Za-z][\/\\]/.test(resolved)) {
+              resolved = resolved[0] + ':' + resolved.slice(1);
+            }
+            log.info('Slack 딥링크 처리됨', { filePath: resolved, commentId });
+            if (hasExtension(resolved, '.bplaylist')) {
+              mainWindow.webContents.send('open-playlist', resolved);
+            } else {
+              mainWindow.webContents.send('open-from-protocol', resolved, commentId || null);
+            }
+            return;
+          }
+        }
+
+        // baeframe:// URL이면 파일 경로로 변환 (레거시)
         if (arg.startsWith('baeframe://')) {
           arg = parseBaeframeUrl(arg);
-          log.info('프로토콜 URL 처리됨', { filePath: arg });
+          log.info('프로토콜 URL 처리됨', { filePath: arg, commentId: parseBaeframeUrl._lastCommentId });
         }
 
         // .bplaylist 파일이면 재생목록으로 열기
         if (hasExtension(arg, '.bplaylist')) {
           mainWindow.webContents.send('open-playlist', arg);
         } else {
-          mainWindow.webContents.send('open-from-protocol', arg);
+          mainWindow.webContents.send('open-from-protocol', arg, parseBaeframeUrl._lastCommentId || null);
         }
       }
     }
@@ -288,7 +322,9 @@ if (!gotTheLock) {
     log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
     // 시작 시 전달된 파일/프로토콜 인자 확인
+    log.info('process.argv 전체', { argv: process.argv });
     let fileArg = process.argv.find(isLaunchArgument);
+    log.info('fileArg 결과', { fileArg: fileArg || '(없음)' });
 
     // 파일 인자가 있으면 로딩 창 먼저 표시
     // (재생목록 URL/파일은 제외 - 별도 처리)
@@ -301,8 +337,23 @@ if (!gotTheLock) {
       } else if (hasExtension(fileArg, '.bplaylist')) {
         isPlaylistArg = true;
         log.info('재생목록 파일로 시작됨', { fileArg });
+      } else if (fileArg.match(/^baeframe:\/\/open\/?[?%]/i)) {
+        // baeframe://open?file=...&comment=... 형식 (Slack 딥링크)
+        const fileMatch = fileArg.match(/[?&]file=([^&]+)/i);
+        const commentMatch = fileArg.match(/[?&]comment=([^&]+)/i);
+        if (fileMatch) {
+          fileArg = decodeURIComponent(fileMatch[1]).replace(/\//g, '\\');
+          if (/^[A-Za-z][\/\\]/.test(fileArg)) {
+            fileArg = fileArg[0] + ':' + fileArg.slice(1);
+          }
+          parseBaeframeUrl._lastCommentId = commentMatch ? decodeURIComponent(commentMatch[1]) : null;
+          if (hasExtension(fileArg, '.bplaylist')) {
+            isPlaylistArg = true;
+          }
+          log.info('Slack 딥링크로 시작됨', { fileArg, commentId: parseBaeframeUrl._lastCommentId });
+        }
       } else if (fileArg.startsWith('baeframe://')) {
-        // baeframe://G:/path/file.bplaylist 형식 체크
+        // baeframe://G:/path/file.bplaylist 형식 체크 (레거시)
         const parsedPath = parseBaeframeUrl(fileArg);
         if (hasExtension(parsedPath, '.bplaylist')) {
           isPlaylistArg = true;
@@ -344,10 +395,13 @@ if (!gotTheLock) {
     createMainWindow();
     debugLog('메인 윈도우 생성 완료');
 
-    // 파일 인자가 있으면 윈도우 로드 완료 후 파일 열기
+    // 파일 인자가 있으면 renderer 준비 완료 후 파일 열기
     if (fileArg) {
       const mainWindow = getMainWindow();
-      mainWindow.webContents.once('did-finish-load', () => {
+      // renderer에서 'renderer-ready' 신호를 보낼 때까지 대기
+      const { ipcMain } = require('electron');
+      ipcMain.once('renderer-ready', () => {
+        log.info('renderer 준비 완료, 파일 전송', { fileArg });
         if (isPlaylistArg) {
           // 재생목록 URL 또는 파일
           let playlistPath = fileArg;
@@ -374,7 +428,7 @@ if (!gotTheLock) {
           log.info('재생목록 열기 이벤트 전송', { playlistPath });
           mainWindow.webContents.send('open-playlist', playlistPath);
         } else {
-          mainWindow.webContents.send('open-from-protocol', fileArg);
+          mainWindow.webContents.send('open-from-protocol', fileArg, parseBaeframeUrl._lastCommentId || null);
         }
       });
     }

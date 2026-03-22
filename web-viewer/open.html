@@ -305,56 +305,9 @@
       }, 1500);
     }
 
-    // Slack 웹훅 딥링크 처리: #open=baeframe://... 형식
-    function handleSlackDeepLink() {
-      const hash = window.location.hash;
-      if (!hash || !hash.startsWith('#open=')) return false;
-
-      // hash에서 가져온 인코딩된 원본 유지 (브라우저 호환성)
-      const rawEncoded = hash.substring(6); // baeframe%3A%2F%2F...
-      const baeframeUrl = decodeURIComponent(rawEncoded);
-      if (!baeframeUrl.startsWith('baeframe://')) return false;
-
-      // 재시도 버튼용으로 원본 URL 저장
-      slackDeepLinkUrl = baeframeUrl;
-
-      // 디코딩된 URL에서 파일명 추출 (표시용)
-      const displayName = baeframeUrl.replace('baeframe://', '').split('?')[0].split(/[/\\]/).pop();
-
-      // href용: 경로 부분을 인코딩된 상태로 유지
-      // baeframe:// 프로토콜 + 인코딩된 경로
-      const pathPart = baeframeUrl.substring('baeframe://'.length);
-      const encodedHref = 'baeframe://' + encodeURI(pathPart).replace(/%5C/gi, '\\');
-
-      // 브라우저가 HTTPS→커스텀 프로토콜 이동을 차단하므로 복사 방식 사용
-      statusText.textContent = '아래 버튼으로 링크를 복사하세요';
-      statusDetail.textContent = displayName;
-
-      buttons.classList.remove('hidden');
-      btnOpenApp.href = '#';
-      btnOpenApp.textContent = '📋 링크 복사';
-      btnOpenApp.onclick = (e) => {
-        e.preventDefault();
-        navigator.clipboard.writeText(baeframeUrl).then(() => {
-          btnOpenApp.textContent = '✅ 복사됨! 주소창에 붙여넣기 (Ctrl+L → Ctrl+V → Enter)';
-          btnOpenApp.classList.add('copied');
-          setTimeout(() => {
-            btnOpenApp.textContent = '📋 다시 복사';
-            btnOpenApp.classList.remove('copied');
-          }, 5000);
-        });
-      };
-      btnOpenWeb.classList.add('hidden');
-
-      return true;
-    }
-
     // 메인 로직
     function main() {
       showPlatform();
-
-      // Slack 딥링크 처리 (#open=baeframe://...)
-      if (handleSlackDeepLink()) return;
 
       if (!validateUrls()) {
         return;
@@ -373,16 +326,8 @@
       }
     }
 
-    // Slack 딥링크 원본 URL 저장
-    let slackDeepLinkUrl = null;
-
     // 버튼 클릭 이벤트
     btnOpenApp.addEventListener('click', (e) => {
-      if (slackDeepLinkUrl) {
-        // Slack 딥링크: href에 baeframe:// 설정되어 있으므로 기본 동작 허용
-        // e.preventDefault() 호출하지 않음 → 브라우저가 프로토콜 핸들러 실행
-        return;
-      }
       e.preventDefault();
       window.location.href = getAppUrl();
     });

@@ -34,6 +34,7 @@ const DEFAULT_SHORTCUTS = {
   setOutPoint: { key: 'KeyO', ctrl: false, shift: false, alt: false, label: '종료점 설정' },
   toggleLoop: { key: 'KeyL', ctrl: false, shift: false, alt: false, label: '구간 반복 토글' },
   clearLoop: { key: 'KeyL', ctrl: false, shift: true, alt: false, label: '구간 반복 해제' },
+  addHighlight: { key: 'KeyH', ctrl: false, shift: false, alt: false, label: '하이라이트 추가' },
 
   // 실행취소
   undo: { key: 'KeyZ', ctrl: true, shift: false, alt: false, label: '실행취소' },

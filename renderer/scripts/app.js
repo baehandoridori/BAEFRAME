@@ -24,6 +24,8 @@ import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
+import { getMentionManager } from './modules/mention-manager.js';
+import { getSlackNotifier } from './modules/slack-notifier.js';
 
 const log = createLogger('App');
 
@@ -357,6 +359,12 @@ async function initApp() {
     fps: 24,
     container: markerContainer
   });
+
+  // 멘션 매니저 (댓글 @멘션 자동완성)
+  const mentionManager = getMentionManager();
+
+  // Slack 알림 매니저
+  const slackNotifier = getSlackNotifier();
 
   // 하이라이트 매니저
   const highlightManager = new HighlightManager();
@@ -816,6 +824,8 @@ async function initApp() {
   // 로드 완료
   reviewDataManager.addEventListener('loaded', (e) => {
     log.info('.bframe 로드됨', { path: e.detail.path });
+
+    // pendingCommentFocus는 updateCommentListImmediate에서 처리
   });
 
   // 로드 에러
@@ -861,16 +871,31 @@ async function initApp() {
   });
 
   // 마커 추가됨
-  commentManager.addEventListener('markerAdded', (e) => {
-    const { marker, remote } = e.detail;
+  commentManager.addEventListener('markerAdded', async (e) => {
+    const { marker, remote, restored } = e.detail;
     removePendingMarkerUI();
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
     log.info('마커 추가됨', { id: marker.id, text: marker.text, remote: !!remote });
 
-    // 원격 변경은 Undo 스택에 넣지 않음
-    if (remote) return;
+    // 원격 변경 또는 Redo 복원은 알림/Undo 스킵
+    if (remote || restored) return;
+
+    // Slack 알림: @멘션 대상에게 웹훅 전송 (딥링크 전에 저장하여 최신 상태 보장)
+    if (reviewDataManager.getBframePath()) {
+      const saved = await reviewDataManager.save();
+      if (!saved) {
+        log.warn('bframe 저장 실패, Slack 알림 건너뜀');
+        return;
+      }
+    }
+    slackNotifier.notifyNewComment(marker, commentManager.getAuthor(), {
+      filePath: state.currentFile,
+      bframePath: reviewDataManager.getBframePath() || '',
+      fileName: elements.fileName?.textContent || '',
+      timecode: marker.startTimecode || ''
+    });
 
     // Undo 스택에 추가
     const markerData = marker.toJSON();
@@ -912,6 +937,29 @@ async function initApp() {
   commentManager.addEventListener('replyAdded', (e) => {
     renderVideoMarkers();
     updateCommentList();
+
+    // Slack 알림: 원작성자 + 스레드 참여자에게 웹훅 전송
+    // remote: true인 경우(다른 사용자로부터 동기화된 답글)는 알림 전송 안 함
+    const { marker, reply, remote } = e.detail;
+    if (marker && reply && !remote) {
+      // 딥링크 전에 저장하여 최신 상태 보장
+      const sendReplyNotification = async () => {
+        if (reviewDataManager.getBframePath()) {
+          const saved = await reviewDataManager.save();
+          if (!saved) {
+            log.warn('bframe 저장 실패, 답글 Slack 알림 건너뜀');
+            return;
+          }
+        }
+        slackNotifier.notifyReply(marker, reply, commentManager.getAuthor(), {
+          filePath: state.currentFile,
+          bframePath: reviewDataManager.getBframePath() || '',
+          fileName: elements.fileName?.textContent || '',
+          timecode: marker.startTimecode || ''
+        });
+      };
+      sendReplyNotification();
+    }
   });
 
   // 원격 동기화로 인한 전체 갱신 (CommentSync의 fromJSON 호출 시)
@@ -1143,8 +1191,16 @@ async function initApp() {
     }
   });
 
+  // 사이드바 댓글 입력에 멘션 자동완성 부착
+  mentionManager.attach(elements.commentInput);
+
+  // Slack 알림에 토스트 함수 주입
+  slackNotifier.setToastFunction(showToast);
+
   // 사이드바 댓글 입력 Enter 처리 (역순 플로우: 텍스트 입력 → 마커 찍기)
   elements.commentInput.addEventListener('keydown', (e) => {
+    // 멘션 드롭다운 열려있으면 Enter를 멘션 선택으로 처리 (댓글 제출 방지)
+    if (mentionManager.isVisible) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const text = elements.commentInput.value.trim();
@@ -4237,6 +4293,9 @@ async function initApp() {
     const textarea = inputWrapper.querySelector('textarea');
     setTimeout(() => textarea?.focus(), 50);
 
+    // 멘션 자동완성 부착
+    if (textarea) mentionManager.attach(textarea);
+
     // 자동 높이 조절 함수
     const autoResize = () => {
       textarea.style.height = 'auto';
@@ -4248,6 +4307,7 @@ async function initApp() {
 
     // Enter로 확정, Shift+Enter로 줄바꿈
     textarea?.addEventListener('keydown', (e) => {
+      if (mentionManager.isVisible) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const text = textarea.value.trim();
@@ -4362,7 +4422,7 @@ async function initApp() {
         <span class="tooltip-timecode">${marker.startTimecode}</span>
         <span class="tooltip-author ${authorClass}">${escapeHtml(marker.author)}</span>
       </div>
-      <div class="tooltip-text">${escapeHtml(marker.text)}</div>
+      <div class="tooltip-text">${renderGDriveLinks(escapeHtml(marker.text))}</div>
       <div class="tooltip-actions">
         <button class="tooltip-btn resolve" title="${marker.resolved ? '미해결로 변경' : '해결'}">
           ${marker.resolved ? '↩️' : '✓'}
@@ -4910,7 +4970,7 @@ async function initApp() {
             <span class="comment-reply-author ${getAuthorColorClass(reply.author)}" ${getAuthorColorStyle(reply.author)}>${highlightCommentSearchMatches(reply.author, normalizedSearch)}</span>
             <span class="comment-reply-time">${formatRelativeTime(reply.createdAt)}</span>
           </div>
-          <p class="comment-reply-text">${highlightCommentSearchMatches(reply.text, normalizedSearch)}</p>
+          <p class="comment-reply-text">${renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch))}</p>
         </div>
       `).join('');
 
@@ -4944,7 +5004,7 @@ async function initApp() {
           <span class="comment-timecode">${highlightCommentSearchMatches(marker.startTimecode, normalizedSearch)}</span>
         </div>
         <div class="comment-content">
-          <p class="comment-text">${highlightCommentSearchMatches(marker.text, normalizedSearch)}</p>
+          <p class="comment-text">${renderGDriveLinks(highlightCommentSearchMatches(marker.text, normalizedSearch))}</p>
           ${marker.image ? `<div class="comment-attached-image"><img src="${marker.image}" alt="첨부 이미지" data-full-image="${marker.image}"></div>` : ''}
         </div>
         <div class="comment-edit-form" style="display: none;">
@@ -4983,6 +5043,7 @@ async function initApp() {
       // 클릭으로 해당 프레임 이동
       item.addEventListener('click', (e) => {
         if (e.target.closest('.comment-action-btn')) return;
+        if (e.target.closest('.gdrive-link-btn')) return;
         const frame = parseInt(item.dataset.startFrame);
         videoPlayer.seekToFrame(frame);
         container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
@@ -5279,8 +5340,48 @@ async function initApp() {
       commentItem.classList.add('glow');
       setTimeout(() => {
         commentItem.classList.remove('glow');
-      }, 1500);
+      }, 2500);
     }
+  }
+
+  // 댓글 목록이 렌더링될 때마다 pendingCommentFocus 체크
+  commentManager.addEventListener('markersChanged', () => {
+    if (state.pendingCommentFocus) {
+      const commentId = state.pendingCommentFocus;
+      const marker = commentManager.getMarker(commentId);
+      if (marker) {
+        state.pendingCommentFocus = null;
+        log.info('pendingCommentFocus 감지, 포커싱 실행', { commentId });
+        // 댓글 목록 렌더링 후 포커싱
+        setTimeout(() => {
+          updateCommentList();
+          setTimeout(() => focusComment(commentId), 300);
+        }, 200);
+      }
+    }
+  });
+
+  /**
+   * Slack 딥링크에서 특정 코멘트로 포커싱
+   * - 댓글 패널 열기
+   * - 해당 코멘트로 스크롤 + 선택
+   * - 해당 프레임으로 이동
+   */
+  function focusComment(markerId) {
+    log.info('코멘트 포커싱', { markerId });
+
+    const marker = commentManager.getMarker(markerId);
+    if (!marker) {
+      log.warn('포커싱할 코멘트를 찾을 수 없음', { markerId });
+      showToast('해당 코멘트를 찾을 수 없습니다', 'warning');
+      return;
+    }
+
+    // 해당 프레임으로 이동
+    videoPlayer.seekToFrame(marker.startFrame);
+
+    // 기존 글로우 함수 재사용 (패널 열기 + 스크롤 + 선택 + 글로우)
+    scrollToCommentWithGlow(markerId);
   }
 
   /**
@@ -5300,6 +5401,54 @@ async function initApp() {
     if (diffDay < 7) return `${diffDay}일 전`;
 
     return new Date(date).toLocaleDateString('ko-KR');
+  }
+
+  /**
+   * G:/ 드라이브 경로를 클릭 가능한 버튼으로 변환
+   * escapeHtml 처리된 문자열에서 동작
+   */
+  function renderGDriveLinks(html) {
+    if (!html) return html;
+    const TAG_RE = /<\/?mark[^>]*>/gi;
+
+    // 버튼 HTML 생성 헬퍼
+    function makeBtn(displayHtml, rawPath) {
+      const cleanPath = rawPath.replace(TAG_RE, '').replace(/\//g, '\\');
+      return `<button class="gdrive-link-btn" data-path="${escapeHtml(cleanPath)}" title="${escapeHtml(cleanPath)}"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${displayHtml}</button>`;
+    }
+
+    // 1단계: 따옴표로 감싼 경로 (공백/한글 자유롭게 포함)
+    //   플레이스홀더로 교체하여 2단계에서 재매칭 방지
+    const placeholders = [];
+    html = html.replace(/(?:&quot;|&amp;quot;|"|&#39;|')\s*(G:[/\\](?:[^<"'&]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)*?)(?:\s*(?:&quot;|&amp;quot;|"|&#39;|'))/gi, (match, path) => {
+      const placeholder = `\x00GDRIVE_${placeholders.length}\x00`;
+      placeholders.push(makeBtn(path, path));
+      return placeholder;
+    });
+
+    // 2단계: 따옴표 없는 경로
+    //   2a: 파일 확장자로 끝나는 경우 — 공백 허용 (확장자까지만 매칭)
+    //   영상/이미지/작업파일 확장자: mov, mp4, avi, mkv, psd, exr, png, jpg, jpeg, tif, tiff, bmp, gif,
+    //                              ae, aep, prproj, blend, ma, mb, fbx, obj, abc, hip, nk, bframe, pdf, zip
+    const FILE_EXT_RE = /\.(mov|mp4|avi|mkv|wmv|mxf|psd|exr|dpx|png|jpe?g|tiff?|bmp|gif|svg|ae[pt]?|prproj|blend|ma|mb|fbx|obj|abc|hip|nk|bframe|pdf|zip|rar|7z|wav|mp3|aif)/i;
+    html = html.replace(/(G:[/\\](?:[^<"'&\x00]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)*?\.(?:mov|mp4|avi|mkv|wmv|mxf|psd|exr|dpx|png|jpe?g|tiff?|bmp|gif|svg|ae[pt]?|prproj|blend|ma|mb|fbx|obj|abc|hip|nk|bframe|pdf|zip|rar|7z|wav|mp3|aif))/gi, (match) => {
+      return makeBtn(match, match);
+    });
+
+    //   2b: 확장자 없는 경로 (폴더) — 공백 불허
+    //   <mark> 태그는 허용 (검색 하이라이트)
+    html = html.replace(/(G:[/\\](?:[^\s<"'&\x00]|&[^q#]|&q[^u]|&#[^3]|<\/?mark[^>]*>)+)/gi, (match) => {
+      // 이미 버튼화된 경로 건너뛰기 (2a에서 처리된 것)
+      if (match.includes('gdrive-link-btn')) return match;
+      return makeBtn(match, match);
+    });
+
+    // 3단계: 플레이스홀더를 실제 버튼으로 복원
+    placeholders.forEach((btn, i) => {
+      html = html.replace(`\x00GDRIVE_${i}\x00`, btn);
+    });
+
+    return html;
   }
 
   /**
@@ -5404,22 +5553,45 @@ async function initApp() {
     clearTimeout(toast._autoTimer);
     cancelAnimationFrame(toast._progressRaf);
 
+    // 1단계: 페이드아웃 (opacity + transform)
+    toast.style.pointerEvents = 'none';
     if (swipeDir) {
-      toast.style.setProperty('--swipe-dir', swipeDir > 0 ? '120%' : '-120%');
-      toast.classList.add('toast-swipe-exit');
+      toast.style.transition = 'transform 0.25s ease-out, opacity 0.25s ease-out';
+      toast.style.transform = `translateX(${swipeDir > 0 ? '120%' : '-120%'})`;
+      toast.style.opacity = '0';
     } else {
-      toast.classList.add('toast-exit');
+      toast.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
+      toast.style.transform = 'translateY(-8px) scale(0.96)';
+      toast.style.opacity = '0';
     }
 
-    // 배열에서 즉시 제거 (스택 계산에서 제외)
-    const idx = _toastState.toasts.indexOf(toast);
-    if (idx !== -1) _toastState.toasts.splice(idx, 1);
+    // 2단계: 페이드아웃 완료 후 공간 축소 (Sonner 방식)
+    const fadeTime = swipeDir ? 250 : 200;
+    setTimeout(() => {
+      // 현재 높이를 고정한 뒤 0으로 transition
+      const h = toast.offsetHeight;
+      toast.style.height = h + 'px';
+      toast.style.overflow = 'hidden';
+      // force reflow
+      void toast.offsetHeight;
+      toast.style.transition = 'height 0.2s ease-out, margin 0.2s ease-out, padding 0.2s ease-out';
+      toast.style.height = '0';
+      toast.style.marginBottom = '0';
+      toast.style.marginTop = '0';
+      toast.style.paddingTop = '0';
+      toast.style.paddingBottom = '0';
+      toast.style.borderWidth = '0';
 
-    // 퇴장 애니메이션 완료 후 DOM 제거 + 스택 재정렬
-    toast.addEventListener('animationend', () => {
-      toast.remove();
+      // 배열에서 제거 + 스택 재정렬
+      const idx = _toastState.toasts.indexOf(toast);
+      if (idx !== -1) _toastState.toasts.splice(idx, 1);
       _updateToastStack();
-    }, { once: true });
+
+      // 공간 축소 완료 후 DOM 제거
+      setTimeout(() => {
+        toast.remove();
+      }, 220);
+    }, fadeTime);
   }
 
   /**
@@ -5592,6 +5764,19 @@ async function initApp() {
     }
   }
 
+  // G:/ 드라이브 경로 버튼 클릭 이벤트 위임 (전역)
+  document.body.addEventListener('click', (e) => {
+    const btn = e.target.closest('.gdrive-link-btn');
+    if (btn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const path = btn.dataset.path;
+      if (path && window.electronAPI?.showInFolder) {
+        window.electronAPI.showInFolder(path);
+      }
+    }
+  });
+
   /**
    * 리사이저 설정 (마우스 커서 추적 개선)
    */
@@ -5668,9 +5853,10 @@ async function initApp() {
     const splitViewManager = getSplitViewManager();
     if (splitViewManager.isOpen()) return;
 
-    // ====== 공통 단축키 ======
-    switch (e.code) {
-    case 'Space': {
+    // ====== 공통 단축키 (사용자 설정 기반) ======
+
+    // 재생/일시정지
+    if (userSettings.matchShortcut('playPause', e)) {
       e.preventDefault();
       const wasPlaying = videoPlayer.isPlaying;
       videoPlayer.togglePlay();
@@ -5682,75 +5868,81 @@ async function initApp() {
       return;
     }
 
-    case 'Home':
+    // 댓글 모드
+    if (userSettings.matchShortcut('commentMode', e)) {
+      e.preventDefault();
+      toggleCommentMode();
+      return;
+    }
+
+    // 전체화면
+    if (userSettings.matchShortcut('fullscreen', e)) {
+      e.preventDefault();
+      toggleFullscreen();
+      return;
+    }
+
+    // 시작점 설정
+    if (userSettings.matchShortcut('setInPoint', e)) {
+      e.preventDefault();
+      btnSetInPoint.click();
+      return;
+    }
+
+    // 종료점 설정
+    if (userSettings.matchShortcut('setOutPoint', e)) {
+      e.preventDefault();
+      btnSetOutPoint.click();
+      return;
+    }
+
+    // 구간 반복 토글
+    if (userSettings.matchShortcut('toggleLoop', e)) {
+      e.preventDefault();
+      btnLoopToggle.click();
+      return;
+    }
+
+    // 구간 반복 해제
+    if (userSettings.matchShortcut('clearLoop', e)) {
+      e.preventDefault();
+      videoPlayer.clearLoop?.();
+      return;
+    }
+
+    // 하이라이트 추가
+    if (userSettings.matchShortcut('addHighlight', e)) {
+      e.preventDefault();
+      btnAddHighlight.click();
+      return;
+    }
+
+    // 처음으로 이동
+    if (userSettings.matchShortcut('goToStart', e)) {
       e.preventDefault();
       videoPlayer.seekToStart();
       return;
+    }
 
-    case 'End':
+    // 끝으로 이동
+    if (userSettings.matchShortcut('goToEnd', e)) {
       e.preventDefault();
       videoPlayer.seekToEnd();
       return;
+    }
 
-    case 'KeyC':
-      if (!e.ctrlKey) {
-        e.preventDefault();
-        toggleCommentMode();
-      }
-      return;
-
-    case 'KeyF':
-      // F: 전체화면 토글
-      if (!e.ctrlKey) {
-        e.preventDefault();
-        toggleFullscreen();
-      }
-      return;
-
+    // ====== 시스템 단축키 (변경 불가) ======
+    switch (e.code) {
     case 'Escape':
-      // ESC: 전체화면 해제 (전체화면일 때)
       if (state.isFullscreen) {
         e.preventDefault();
         toggleFullscreen();
         return;
       }
-      break; // 다른 ESC 핸들러로 전달
-
-    case 'KeyI':
-      // 시작점 설정
-      e.preventDefault();
-      btnSetInPoint.click();
-      return;
-
-    case 'KeyO':
-      // 종료점 설정
-      e.preventDefault();
-      btnSetOutPoint.click();
-      return;
-
-    case 'KeyL':
-      // 구간 반복 토글
-      e.preventDefault();
-      btnLoopToggle.click();
-      return;
-
-    case 'KeyH':
-      // 하이라이트 추가
-      e.preventDefault();
-      btnAddHighlight.click();
-      return;
-
-    case 'Delete':
-    case 'Backspace':
-      // 키프레임 삭제 (그리기 모드에서만)
-      if (state.isDrawMode && !e.ctrlKey) {
-        e.preventDefault();
-        drawingManager.removeKeyframe();
-      }
-      return;
+      break;
 
     case 'Slash':
-      if (e.shiftKey) { // ?
+      if (e.shiftKey) {
         e.preventDefault();
         elements.shortcutsToggle.click();
       }
@@ -5761,42 +5953,12 @@ async function initApp() {
       timeline.fitToView();
       return;
 
-    case 'KeyZ':
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Ctrl+Shift+Z: Redo
-          if (await globalRedo()) {
-            showToast('다시 실행됨', 'info');
-          }
-        } else {
-          // Ctrl+Z: Undo
-          if (await globalUndo()) {
-            showToast('실행 취소됨', 'info');
-          }
-        }
-      }
-      return;
-
-    case 'KeyY':
-      if (e.ctrlKey || e.metaKey) {
-        // Ctrl+Y: Redo (alternative)
-        e.preventDefault();
-        if (await globalRedo()) {
-          showToast('다시 실행됨', 'info');
-        }
-      }
-      return;
-
     case 'KeyS':
       if (e.ctrlKey || e.metaKey) {
-        // Ctrl+S: 수동 저장
         e.preventDefault();
         if (reviewDataManager.getBframePath()) {
           reviewDataManager.save().then(saved => {
-            if (saved) {
-              showToast('저장되었습니다', 'success');
-            }
+            if (saved) showToast('저장되었습니다', 'success');
           });
         } else {
           showToast('저장할 파일이 없습니다', 'warn');
@@ -5819,142 +5981,174 @@ async function initApp() {
         timeline.zoomOut();
       }
       return;
-
-    // 사용자 정의 단축키 처리 (F6, F7 등)
-    default:
-      // 키프레임 추가 (복사) - F6
-      if (userSettings.matchShortcut('keyframeAddWithCopy', e)) {
-        e.preventDefault();
-        if (state.isDrawMode) {
-          drawingManager.addKeyframeWithContent();
-          showToast('키프레임 추가됨', 'success');
-        }
-        return;
-      }
-      // 빈 키프레임 추가 - F7
-      if (userSettings.matchShortcut('keyframeAddBlank', e)) {
-        e.preventDefault();
-        if (state.isDrawMode) {
-          drawingManager.addBlankKeyframe();
-          showToast('빈 키프레임 추가됨', 'success');
-        }
-        return;
-      }
-      break;
     }
 
-    // ====== 프레임 이동 및 그리기 모드 단축키 ======
-    switch (e.code) {
-    case 'ArrowLeft':
-      e.preventDefault();
-      if (e.ctrlKey) {
-        // Ctrl+←: 초 단위 뒤로 이동
-        const secondAmount = userSettings.getSecondSkipAmount();
-        const newTime = Math.max(0, (videoPlayer.currentTime || 0) - secondAmount);
-        videoPlayer.seek(newTime);
-        timeline.scrollToPlayhead();
-        log.info('초 단위 뒤로 이동 (단축키)', { seconds: secondAmount, newTime });
-      } else if (e.shiftKey) {
-        // Shift+←: 프레임 빨리 뒤로 이동
-        const frameAmount = userSettings.getFrameSkipAmount();
-        const currentFrame = videoPlayer.currentFrame || 0;
-        const newFrame = Math.max(0, currentFrame - frameAmount);
-        videoPlayer.seekToFrame(newFrame);
-        timeline.scrollToPlayhead();
-        log.info('프레임 빨리 뒤로 이동 (단축키)', { frames: frameAmount, newFrame });
-      } else if (e.altKey) {
-        // Alt+←: 이전 하이라이트로 이동
-        const prevHighlightTime = highlightManager.getPrevHighlightTime(videoPlayer.currentTime || 0);
-        if (prevHighlightTime !== null) {
-          videoPlayer.seek(prevHighlightTime);
-          timeline.scrollToPlayhead();
-          log.info('이전 하이라이트로 이동 (단축키)', { time: prevHighlightTime });
-        } else {
-          showToast('이전 하이라이트가 없습니다', 'info');
-        }
-      } else {
-        videoPlayer.prevFrame();
-      }
-      break;
+    // ====== 사용자 설정 기반 단축키 (변경 가능) ======
 
-    case 'ArrowRight':
+    // 실행취소/다시실행
+    if (userSettings.matchShortcut('undo', e)) {
       e.preventDefault();
-      if (e.ctrlKey) {
-        // Ctrl+→: 초 단위 앞으로 이동
-        const secondAmount = userSettings.getSecondSkipAmount();
-        const duration = videoPlayer.duration || 0;
-        const newTime = Math.min(duration, (videoPlayer.currentTime || 0) + secondAmount);
-        videoPlayer.seek(newTime);
-        timeline.scrollToPlayhead();
-        log.info('초 단위 앞으로 이동 (단축키)', { seconds: secondAmount, newTime });
-      } else if (e.shiftKey) {
-        // Shift+→: 프레임 빨리 앞으로 이동
-        const frameAmount = userSettings.getFrameSkipAmount();
-        const currentFrame = videoPlayer.currentFrame || 0;
-        const totalFrames = videoPlayer.totalFrames || 0;
-        const newFrame = Math.min(totalFrames - 1, currentFrame + frameAmount);
-        videoPlayer.seekToFrame(newFrame);
-        timeline.scrollToPlayhead();
-        log.info('프레임 빨리 앞으로 이동 (단축키)', { frames: frameAmount, newFrame });
-      } else if (e.altKey) {
-        // Alt+→: 다음 하이라이트로 이동
-        const nextHighlightTime = highlightManager.getNextHighlightTime(videoPlayer.currentTime || 0);
-        if (nextHighlightTime !== null) {
-          videoPlayer.seek(nextHighlightTime);
-          timeline.scrollToPlayhead();
-          log.info('다음 하이라이트로 이동 (단축키)', { time: nextHighlightTime });
-        } else {
-          showToast('다음 하이라이트가 없습니다', 'info');
-        }
-      } else {
-        videoPlayer.nextFrame();
-      }
-      break;
+      if (await globalUndo()) showToast('실행 취소됨', 'info');
+      return;
+    }
+    if (userSettings.matchShortcut('redo', e)) {
+      e.preventDefault();
+      if (await globalRedo()) showToast('다시 실행됨', 'info');
+      return;
+    }
+    // Ctrl+Shift+Z도 Redo로 동작 (Ctrl+Y 외 대안)
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyZ') {
+      e.preventDefault();
+      if (await globalRedo()) showToast('다시 실행됨', 'info');
+      return;
+    }
 
-    // 사용자 정의 단축키를 통한 처리
-    default:
-      // Shift+A: 1프레임 이전
-      if (userSettings.matchShortcut('prevFrameDraw', e)) {
+    // 키프레임 삭제 (그리기 모드에서만)
+    if (userSettings.matchShortcut('keyframeDelete', e)) {
+      if (state.isDrawMode) {
         e.preventDefault();
-        videoPlayer.prevFrame();
-        break;
+        drawingManager.removeKeyframe();
       }
-      // Shift+D: 1프레임 다음
-      if (userSettings.matchShortcut('nextFrameDraw', e)) {
-        e.preventDefault();
-        videoPlayer.nextFrame();
-        break;
+      return;
+    }
+
+    // 키프레임 추가 (복사)
+    if (userSettings.matchShortcut('keyframeAddWithCopy', e)) {
+      e.preventDefault();
+      if (state.isDrawMode) {
+        drawingManager.addKeyframeWithContent();
+        showToast('키프레임 추가됨', 'success');
       }
-      // A: 이전 키프레임으로 이동
-      if (userSettings.matchShortcut('prevKeyframe', e)) {
-        e.preventDefault();
-        const prevKf = drawingManager.getPrevKeyframeFrame();
-        if (prevKf !== null) {
-          videoPlayer.seekToFrame(prevKf);
-        }
-        break;
+      return;
+    }
+
+    // 빈 키프레임 추가
+    if (userSettings.matchShortcut('keyframeAddBlank', e)) {
+      e.preventDefault();
+      if (state.isDrawMode) {
+        drawingManager.addBlankKeyframe();
+        showToast('빈 키프레임 추가됨', 'success');
       }
-      // D: 다음 키프레임으로 이동
-      if (userSettings.matchShortcut('nextKeyframe', e)) {
-        e.preventDefault();
-        const nextKf = drawingManager.getNextKeyframeFrame();
-        if (nextKf !== null) {
-          videoPlayer.seekToFrame(nextKf);
-        }
-        break;
+      return;
+    }
+
+    // 프레임 이동 단축키
+    if (userSettings.matchShortcut('prevSecond', e)) {
+      e.preventDefault();
+      const secondAmount = userSettings.getSecondSkipAmount();
+      const newTime = Math.max(0, (videoPlayer.currentTime || 0) - secondAmount);
+      videoPlayer.seek(newTime);
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (userSettings.matchShortcut('nextSecond', e)) {
+      e.preventDefault();
+      const secondAmount = userSettings.getSecondSkipAmount();
+      const duration = videoPlayer.duration || 0;
+      const newTime = Math.min(duration, (videoPlayer.currentTime || 0) + secondAmount);
+      videoPlayer.seek(newTime);
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (userSettings.matchShortcut('prevFrameFast', e)) {
+      e.preventDefault();
+      const frameAmount = userSettings.getFrameSkipAmount();
+      const currentFrame = videoPlayer.currentFrame || 0;
+      const newFrame = Math.max(0, currentFrame - frameAmount);
+      videoPlayer.seekToFrame(newFrame);
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (userSettings.matchShortcut('nextFrameFast', e)) {
+      e.preventDefault();
+      const frameAmount = userSettings.getFrameSkipAmount();
+      const currentFrame = videoPlayer.currentFrame || 0;
+      const totalFrames = videoPlayer.totalFrames || 0;
+      const newFrame = Math.min(totalFrames - 1, currentFrame + frameAmount);
+      videoPlayer.seekToFrame(newFrame);
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (userSettings.matchShortcut('prevFrame', e)) {
+      e.preventDefault();
+      videoPlayer.prevFrame();
+      return;
+    }
+    if (userSettings.matchShortcut('nextFrame', e)) {
+      e.preventDefault();
+      videoPlayer.nextFrame();
+      return;
+    }
+
+    // Alt+Arrow: 하이라이트 이동 (설정 기반 아님, 하드코딩 유지)
+    if (e.altKey && e.code === 'ArrowLeft') {
+      e.preventDefault();
+      const prevHighlightTime = highlightManager.getPrevHighlightTime(videoPlayer.currentTime || 0);
+      if (prevHighlightTime !== null) {
+        videoPlayer.seek(prevHighlightTime);
+        timeline.scrollToPlayhead();
+      } else {
+        showToast('이전 하이라이트가 없습니다', 'info');
       }
+      return;
+    }
+    if (e.altKey && e.code === 'ArrowRight') {
+      e.preventDefault();
+      const nextHighlightTime = highlightManager.getNextHighlightTime(videoPlayer.currentTime || 0);
+      if (nextHighlightTime !== null) {
+        videoPlayer.seek(nextHighlightTime);
+        timeline.scrollToPlayhead();
+      } else {
+        showToast('다음 하이라이트가 없습니다', 'info');
+      }
+      return;
+    }
+
+    // 그리기 모드 토글
+    if (userSettings.matchShortcut('drawMode', e)) {
+      e.preventDefault();
+      if (!state.isDrawMode) {
+        toggleDrawMode();
+      }
+      // 브러시 도구 선택
+      const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
+      if (brushBtn) brushBtn.click();
+      return;
+    }
+    if (userSettings.matchShortcut('prevFrameDraw', e)) {
+      e.preventDefault();
+      videoPlayer.prevFrame();
+      return;
+    }
+    if (userSettings.matchShortcut('nextFrameDraw', e)) {
+      e.preventDefault();
+      videoPlayer.nextFrame();
+      return;
+    }
+    if (userSettings.matchShortcut('prevKeyframe', e)) {
+      e.preventDefault();
+      const prevKf = drawingManager.getPrevKeyframeFrame();
+      if (prevKf !== null) videoPlayer.seekToFrame(prevKf);
+      return;
+    }
+    if (userSettings.matchShortcut('nextKeyframe', e)) {
+      e.preventDefault();
+      const nextKf = drawingManager.getNextKeyframeFrame();
+      if (nextKf !== null) videoPlayer.seekToFrame(nextKf);
+      return;
+    }
       // 1: 어니언 스킨 토글
       if (userSettings.matchShortcut('onionSkinToggle', e)) {
         e.preventDefault();
         toggleOnionSkinWithUI();
-        break;
+        return;
       }
       // 2: 빈 키프레임 삽입
       if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
         e.preventDefault();
         drawingManager.addBlankKeyframe();
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
+        return;
       }
       // Shift+3: 현재 키프레임 삭제
       if (userSettings.matchShortcut('keyframeDeleteAlt', e)) {
@@ -5962,48 +6156,33 @@ async function initApp() {
         drawingManager.removeKeyframe();
         showToast('키프레임이 삭제되었습니다.', 'info');
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
+        return;
       }
       // 3: 프레임 삽입 (홀드 추가)
       if (userSettings.matchShortcut('insertFrame', e)) {
         e.preventDefault();
         drawingManager.insertFrame();
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
+        return;
       }
       // 4: 프레임 삭제
       if (userSettings.matchShortcut('deleteFrame', e)) {
         e.preventDefault();
         drawingManager.deleteFrame();
         timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        break;
-      }
-      // B: 브러시 모드 (드로잉 모드 켜기 + 브러시 도구)
-      if (e.code === 'KeyB') {
-        e.preventDefault();
-        if (!state.isDrawMode) {
-          toggleDrawMode();
-        }
-        // 브러시 버튼 클릭으로 UI와 도구 함께 전환
-        const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
-        if (brushBtn) {
-          brushBtn.click();
-        }
-        break;
+        return;
       }
       // E: 지우개 모드 (드로잉 모드에서만 작동)
       if (e.code === 'KeyE') {
         // 드로잉 모드가 아니면 무시
-        if (!state.isDrawMode) {
-          break;
-        }
+        if (!state.isDrawMode) return;
         e.preventDefault();
         // 지우개 버튼 클릭으로 UI와 도구 함께 전환
         const eraserBtn = document.querySelector('.tool-btn[data-tool="eraser"]');
         if (eraserBtn) {
           eraserBtn.click();
         }
-        break;
+        return;
       }
       // V: 선택 모드 (드로잉 모드 끄기)
       if (e.code === 'KeyV') {
@@ -6011,10 +6190,8 @@ async function initApp() {
         if (state.isDrawMode) {
           toggleDrawMode();
         }
-        break;
+        return;
       }
-      break;
-    }
   }
 
   // 초기화 완료
@@ -6090,10 +6267,18 @@ async function initApp() {
   }
 
   // 프로토콜/파일 열기 이벤트 리스너
-  window.electronAPI.onOpenFromProtocol((arg) => {
-    log.info('프로토콜/파일 열기 이벤트 수신', { arg });
+  window.electronAPI.onOpenFromProtocol((arg, commentId) => {
+    log.info('프로토콜/파일 열기 이벤트 수신', { arg, commentId });
+    // commentId가 있으면 파일 로드 후 해당 코멘트로 포커싱
+    if (commentId) {
+      state.pendingCommentFocus = commentId;
+    }
     handleExternalFile(arg);
   });
+
+  // renderer 초기화 완료 → main process에 알림 (파일 인자 전송 트리거)
+  window.electronAPI.notifyRendererReady?.();
+  log.info('renderer 초기화 완료, renderer-ready 전송');
 
   // ====== 앱 종료 전 저장 처리 ======
   window.electronAPI.onRequestSaveBeforeQuit(async () => {
@@ -6406,12 +6591,27 @@ async function initApp() {
       pwWarning.style.display = showWarning ? 'flex' : 'none';
     }
 
+    // 단축키 설정 렌더링
+    renderShortcutSettings();
+
     appSettingsModal.classList.add('active');
   }
 
   function closeAppSettingsModal() {
     if (!appSettingsModal) return;
     appSettingsModal.classList.remove('active');
+
+    // 단축키 캡처 모드 해제 — 설정창 닫힐 때 캡처 중이면 원래 키 표시로 복원
+    if (capturingShortcutAction) {
+      const capturingBtn = document.querySelector(`.shortcut-key-btn.capturing[data-action="${capturingShortcutAction}"]`);
+      if (capturingBtn) {
+        const shortcuts = userSettings.getShortcuts();
+        const sc = shortcuts[capturingShortcutAction];
+        capturingBtn.textContent = sc ? formatShortcutDisplay(sc) : capturingShortcutAction;
+        capturingBtn.classList.remove('capturing');
+      }
+      capturingShortcutAction = null;
+    }
   }
 
   // 앱 설정 열기 버튼
@@ -6444,6 +6644,162 @@ async function initApp() {
       if (panel) panel.classList.add('active');
     });
   });
+
+  // === 단축키 설정 UI ===
+  const SHORTCUT_CATEGORIES = {
+    '재생': ['playPause', 'prevFrame', 'nextFrame', 'prevFrameFast', 'nextFrameFast', 'prevSecond', 'nextSecond', 'goToStart', 'goToEnd'],
+    '모드': ['commentMode', 'drawMode', 'fullscreen'],
+    '구간 반복': ['setInPoint', 'setOutPoint', 'toggleLoop', 'clearLoop', 'addHighlight'],
+    '실행취소': ['undo', 'redo'],
+    '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeDelete', 'keyframeDeleteAlt', 'prevKeyframe', 'nextKeyframe'],
+    '프레임 편집': ['insertFrame', 'deleteFrame'],
+    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw']
+  };
+
+  let capturingShortcutAction = null;
+
+  function keyCodeToDisplay(code) {
+    const map = {
+      'Space': 'Space', 'ArrowLeft': '←', 'ArrowRight': '→', 'ArrowUp': '↑', 'ArrowDown': '↓',
+      'Home': 'Home', 'End': 'End', 'Delete': 'Del', 'Backspace': 'Back',
+      'Enter': 'Enter', 'Tab': 'Tab', 'Escape': 'Esc'
+    };
+    if (map[code]) return map[code];
+    if (code.startsWith('Key')) return code.slice(3);
+    if (code.startsWith('Digit')) return code.slice(5);
+    return code;
+  }
+
+  function formatShortcutDisplay(sc) {
+    const parts = [];
+    if (sc.ctrl) parts.push('Ctrl');
+    if (sc.shift) parts.push('Shift');
+    if (sc.alt) parts.push('Alt');
+    parts.push(keyCodeToDisplay(sc.key));
+    return parts.join(' + ');
+  }
+
+  // 시스템 예약 키 (handleKeydown에서 하드코딩, 사용자 설정보다 먼저 실행)
+  const RESERVED_SHORTCUTS = [
+    { key: 'Escape', ctrl: false, shift: false, alt: false, label: 'ESC (전체화면 해제)' },
+    { key: 'KeyS', ctrl: true, shift: false, alt: false, label: 'Ctrl+S (저장)' },
+    { key: 'Equal', ctrl: true, shift: false, alt: false, label: 'Ctrl++ (줌인)' },
+    { key: 'NumpadAdd', ctrl: true, shift: false, alt: false, label: 'Ctrl++ (줌인)' },
+    { key: 'Minus', ctrl: true, shift: false, alt: false, label: 'Ctrl+- (줌아웃)' },
+    { key: 'NumpadSubtract', ctrl: true, shift: false, alt: false, label: 'Ctrl+- (줌아웃)' },
+    { key: 'Slash', ctrl: false, shift: true, alt: false, label: 'Shift+/ (단축키 목록)' },
+    { key: 'Backslash', ctrl: false, shift: false, alt: false, label: '\\ (타임라인 맞춤)' },
+  ];
+
+  function findShortcutConflict(newSc, excludeAction) {
+    // 시스템 예약 키 충돌 검사
+    for (const reserved of RESERVED_SHORTCUTS) {
+      if (newSc.key === reserved.key && newSc.ctrl === reserved.ctrl &&
+          newSc.shift === reserved.shift && newSc.alt === reserved.alt) {
+        return { action: '_reserved', label: `${reserved.label} [시스템 예약]` };
+      }
+    }
+    // 사용자 설정 간 충돌 검사
+    const all = userSettings.getShortcuts();
+    for (const [action, sc] of Object.entries(all)) {
+      if (action === excludeAction) continue;
+      if (sc.key === newSc.key && sc.ctrl === newSc.ctrl && sc.shift === newSc.shift && sc.alt === newSc.alt) {
+        return { action, label: sc.label || action };
+      }
+    }
+    return null;
+  }
+
+  function renderShortcutSettings() {
+    const container = document.getElementById('settingsShortcutList');
+    if (!container) return;
+
+    const shortcuts = userSettings.getShortcuts();
+    const customShortcuts = userSettings.settings?.customShortcuts || {};
+
+    container.innerHTML = Object.entries(SHORTCUT_CATEGORIES).map(([cat, actions]) => `
+      <div class="shortcut-category">
+        <h5 class="shortcut-category-title">${cat}</h5>
+        ${actions.filter(a => shortcuts[a]).map(action => {
+    const sc = shortcuts[action];
+    const isCustom = !!customShortcuts[action];
+    return `
+            <div class="shortcut-row ${isCustom ? 'custom' : ''}" data-action="${action}">
+              <span class="shortcut-label">${escapeHtml(sc.label || action)}</span>
+              <div class="shortcut-key-area">
+                <button class="shortcut-key-btn" data-action="${action}">${formatShortcutDisplay(sc)}</button>
+                ${isCustom ? `<button class="shortcut-reset-btn" data-action="${action}" title="기본값 복원">↩</button>` : ''}
+              </div>
+            </div>`;
+  }).join('')}
+      </div>
+    `).join('');
+
+  }
+
+  // 전체 초기화 버튼 (한 번만 등록)
+  document.getElementById('settingsResetAllShortcuts')?.addEventListener('click', () => {
+    userSettings.resetAllShortcuts();
+    renderShortcutSettings();
+    showToast('모든 단축키가 초기화되었습니다.', 'success');
+  });
+
+  // 단축키 설정 패널 클릭 이벤트 위임
+  document.getElementById('settingsShortcutList')?.addEventListener('click', (e) => {
+    // 키 바인딩 버튼 클릭 → 캡처 모드
+    const keyBtn = e.target.closest('.shortcut-key-btn');
+    if (keyBtn) {
+      capturingShortcutAction = keyBtn.dataset.action;
+      keyBtn.textContent = '키를 누르세요...';
+      keyBtn.classList.add('capturing');
+      return;
+    }
+
+    // 개별 초기화 버튼
+    const resetBtn = e.target.closest('.shortcut-reset-btn');
+    if (resetBtn) {
+      userSettings.resetShortcut(resetBtn.dataset.action);
+      renderShortcutSettings();
+      showToast('단축키가 초기화되었습니다.', 'success');
+    }
+  });
+
+  // 단축키 캡처 (capture phase)
+  document.addEventListener('keydown', (e) => {
+    if (!capturingShortcutAction) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Escape → 취소
+    if (e.key === 'Escape') {
+      capturingShortcutAction = null;
+      renderShortcutSettings();
+      return;
+    }
+
+    // 수정자 키만 누른 경우 무시
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+
+    const newShortcut = {
+      key: e.code,
+      ctrl: e.ctrlKey,
+      shift: e.shiftKey,
+      alt: e.altKey
+    };
+
+    // 충돌 감지
+    const conflict = findShortcutConflict(newShortcut, capturingShortcutAction);
+    if (conflict) {
+      showToast(`"${conflict.label}"과(와) 충돌합니다.`, 'warning');
+      return;
+    }
+
+    userSettings.setShortcut(capturingShortcutAction, newShortcut);
+    capturingShortcutAction = null;
+    renderShortcutSettings();
+    showToast('단축키가 변경되었습니다.', 'success');
+  }, true); // capture phase
 
   // 개인정보 - 이름 변경 (blur 시 자동 저장)
   document.getElementById('appSettingsUserName')?.addEventListener('change', (e) => {
@@ -7142,6 +7498,9 @@ async function initApp() {
     threadEditor.innerHTML = '';
     updateSubmitButtonState();
 
+    // 멘션 자동완성 부착
+    mentionManager.attach(threadEditor);
+
     // 팝업 열기 (이전 포커스 저장)
     saveFocus();
     threadOverlay.classList.add('open');
@@ -7207,6 +7566,9 @@ async function initApp() {
 
     // Line breaks
     html = html.replace(/\n/g, '<br>');
+
+    // G:/ 경로 링크 변환
+    html = renderGDriveLinks(html);
 
     return html;
   }
@@ -7376,8 +7738,8 @@ async function initApp() {
       e.preventDefault();
       applyFormat('underline');
     }
-    // Enter: Submit (without Shift)
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Enter: Submit (without Shift) — 멘션 드롭다운 열려있으면 무시
+    if (e.key === 'Enter' && !e.shiftKey && !mentionManager.isVisible) {
       e.preventDefault();
       submitThreadReply();
     }

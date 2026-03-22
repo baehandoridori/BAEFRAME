@@ -596,7 +596,7 @@ export class CommentManager extends EventTarget {
     if (layer) {
       layer.addMarker(marker);
       log.info('마커 복원됨', { id: marker.id });
-      this._emit('markerAdded', { marker });
+      this._emit('markerAdded', { marker, restored: true });
       this._emit('markersChanged');
       return marker;
     }
