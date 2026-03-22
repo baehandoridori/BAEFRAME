@@ -4900,6 +4900,13 @@ async function initApp() {
     const container = elements.commentsList;
     if (!container) return;
 
+    // 확장 상태 및 스크롤 위치 보존
+    const expandedIds = new Set(
+      [...container.querySelectorAll('.comment-thread-toggle.expanded')]
+        .map(el => el.dataset.markerId)
+    );
+    const savedScrollTop = container.scrollTop;
+
     let markers = commentManager.getAllMarkers();
 
     // 필터 적용
@@ -5032,12 +5039,12 @@ async function initApp() {
           <button class="comment-action-btn delete-btn" title="삭제">삭제</button>
         </div>
         ${replyCount > 0 ? `
-        <button class="comment-thread-toggle" data-marker-id="${marker.id}">
+        <button class="comment-thread-toggle${expandedIds.has(marker.id) ? ' expanded' : ''}" data-marker-id="${marker.id}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
           답글 ${replyCount}개
         </button>
         ` : ''}
-        <div class="comment-replies" data-marker-id="${marker.id}">
+        <div class="comment-replies${expandedIds.has(marker.id) ? ' expanded' : ''}" data-marker-id="${marker.id}">
           ${repliesHtml}
           <div class="comment-reply-input-wrapper">
             <textarea class="comment-reply-input" placeholder="답글 입력..." rows="1"></textarea>
@@ -5291,6 +5298,9 @@ async function initApp() {
         }
       });
     });
+
+    // 스크롤 위치 복원
+    container.scrollTop = savedScrollTop;
   }
 
   /**
