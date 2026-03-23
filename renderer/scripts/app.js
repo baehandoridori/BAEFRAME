@@ -8686,19 +8686,18 @@ async function initApp() {
         // 파싱
         const parsed = await window.electronAPI.parsePrproj(filePath);
 
-        // 여러 시퀀스가 있는 경우
+        // 여러 시퀀스가 있는 경우: "릴" 포함 시퀀스 자동 선택
         if (parsed.multipleSequences) {
-          const names = parsed.sequences.map(s => s.name);
-          const choice = prompt(
-            `여러 시퀀스가 발견되었습니다. 번호를 입력하세요:\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}`
-          );
-          if (!choice) return;
+          const seqs = parsed.sequences;
+          const reelSeq = seqs.find(s => s.name.includes('릴')) || seqs[0];
 
-          const idx = parseInt(choice, 10) - 1;
-          if (idx < 0 || idx >= parsed.sequences.length) return;
+          if (!reelSeq) {
+            alert('선택 가능한 시퀀스가 없습니다.');
+            return;
+          }
 
-          const selectedId = parsed.sequences[idx].id;
-          const reparsed = await window.electronAPI.parsePrprojWithSequenceId(filePath, selectedId);
+          console.log(`자동 선택된 시퀀스: ${reelSeq.name} (총 ${seqs.length}개 중)`);
+          const reparsed = await window.electronAPI.parsePrprojWithSequenceId(filePath, reelSeq.id);
           reparsed.source = filePath;
           cutMarkerManager.importFromPrproj(reparsed);
           return;
