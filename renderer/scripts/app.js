@@ -24,6 +24,7 @@ import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
+import { getCutMarkerManager } from './modules/cut-marker-manager.js';
 
 const log = createLogger('App');
 
@@ -177,7 +178,11 @@ async function initApp() {
 
     // 협업 플렉서스 패널
     collabPlexusPanel: document.getElementById('collabPlexusPanel'),
-    collabPlexusCanvas: document.getElementById('collabPlexusCanvas')
+    collabPlexusCanvas: document.getElementById('collabPlexusCanvas'),
+
+    // 컷 마커
+    cutMarkerOverlay: document.getElementById('cutMarkerOverlay'),
+    btnImportCutMarkers: document.getElementById('btnImportCutMarkers')
   };
 
   // 상태
@@ -376,6 +381,19 @@ async function initApp() {
   // 사용자 설정
   const userSettings = getUserSettings();
 
+  // 컷 마커 매니저 초기화
+  const cutMarkerManager = getCutMarkerManager({
+    overlayContainer: elements.cutMarkerOverlay,
+    videoPlayer: videoPlayer,
+    timeline: timeline,
+    settings: userSettings
+  });
+
+  // ReviewDataManager에 연결
+  if (reviewDataManager && reviewDataManager.setCutMarkerManager) {
+    reviewDataManager.setCutMarkerManager(cutMarkerManager);
+  }
+
   // ====== 단축키 힌트 동적 업데이트 ======
 
   /**
@@ -507,6 +525,15 @@ async function initApp() {
     // 재생 중에는 frameUpdate 이벤트에서 처리
     if (!videoPlayer.isPlaying) {
       drawingManager.setCurrentFrame(currentFrame);
+    }
+  });
+
+  // 컷 마커 오버레이 업데이트
+  videoPlayer.addEventListener('timeupdate', (e) => {
+    if (e.detail && e.detail.currentFrame !== undefined) {
+      cutMarkerManager.updateOverlay(e.detail.currentFrame);
+    } else {
+      cutMarkerManager.updateOverlayByTime(videoPlayer.currentTime);
     }
   });
 
@@ -5185,7 +5212,7 @@ async function initApp() {
    */
   const _toastState = {
     toasts: [],     // 현재 활성 토스트 요소 배열
-    maxVisible: 3,  // 최대 표시 개수
+    maxVisible: 3  // 최대 표시 개수
   };
 
   const _toastIcons = {
@@ -5194,7 +5221,7 @@ async function initApp() {
     error: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
     warn: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
     warning: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-    loading: '<svg class="toast-spinner" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4"/><path d="M12 18v4" opacity=".3"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83" opacity=".3"/><path d="M2 12h4" opacity=".7"/><path d="M18 12h4" opacity=".3"/><path d="M4.93 19.07l2.83-2.83" opacity=".5"/><path d="M16.24 7.76l2.83-2.83" opacity=".7"/></svg>',
+    loading: '<svg class="toast-spinner" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4"/><path d="M12 18v4" opacity=".3"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83" opacity=".3"/><path d="M2 12h4" opacity=".7"/><path d="M18 12h4" opacity=".3"/><path d="M4.93 19.07l2.83-2.83" opacity=".5"/><path d="M16.24 7.76l2.83-2.83" opacity=".7"/></svg>'
   };
 
   function _updateToastStack() {
@@ -5412,7 +5439,7 @@ async function initApp() {
             if (pct > 0) toast._progressRaf = requestAnimationFrame(tick);
           });
           toast._autoTimer = setTimeout(() => _dismissToast(toast), newDuration);
-        },
+        }
       };
     }
   }
@@ -7716,7 +7743,7 @@ async function initApp() {
   let _plexusAnimationId = null;
   let _plexusTime = 0;
   let _plexusNodePositions = []; // 각 사용자 노드의 현재 위치
-  let _plexusFlowParticles = []; // 연결선 위 이동 파티클
+  const _plexusFlowParticles = []; // 연결선 위 이동 파티클
 
   /**
    * 협업자 UI 업데이트
@@ -8636,6 +8663,54 @@ async function initApp() {
       log.warn('파일 변경 동기화 실패', { error: error.message });
     }
   });
+
+  // 릴 가져오기 버튼
+  if (elements.btnImportCutMarkers) {
+    elements.btnImportCutMarkers.addEventListener('click', async () => {
+      try {
+        // 기존 데이터 덮어쓰기 확인
+        if (cutMarkerManager.hasMarkers()) {
+          const confirmed = confirm('기존 컷 데이터를 덮어씁니다. 계속하시겠습니까?');
+          if (!confirmed) return;
+        }
+
+        // 파일 선택
+        const result = await window.electronAPI.openPrprojDialog();
+        if (result.canceled || !result.filePaths.length) return;
+
+        const filePath = result.filePaths[0];
+
+        // 파싱
+        const parsed = await window.electronAPI.parsePrproj(filePath);
+
+        // 여러 시퀀스가 있는 경우
+        if (parsed.multipleSequences) {
+          const names = parsed.sequences.map(s => s.name);
+          const choice = prompt(
+            `여러 시퀀스가 발견되었습니다. 번호를 입력하세요:\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}`
+          );
+          if (!choice) return;
+
+          const idx = parseInt(choice, 10) - 1;
+          if (idx < 0 || idx >= parsed.sequences.length) return;
+
+          const selectedId = parsed.sequences[idx].id;
+          const reparsed = await window.electronAPI.parsePrprojWithSequenceId(filePath, selectedId);
+          reparsed.source = filePath;
+          cutMarkerManager.importFromPrproj(reparsed);
+          return;
+        }
+
+        // 컷 마커 적용
+        parsed.source = filePath;
+        cutMarkerManager.importFromPrproj(parsed);
+
+      } catch (err) {
+        console.error('릴 가져오기 실패:', err.message);
+        alert(err.message);
+      }
+    });
+  }
 
   // ====== 재생목록 초기화 ======
   initPlaylistFeature();
