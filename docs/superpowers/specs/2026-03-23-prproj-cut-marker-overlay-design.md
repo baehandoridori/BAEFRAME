@@ -36,7 +36,7 @@ Main 프로세스에서 실행. Node.js `zlib`로 GZip 해제 후 XML 파싱.
 - ObjectID/ObjectRef/ObjectUID/ObjectURef 참조 그래프 탐색
 - 메인 시퀀스 자동 감지 (다른 시퀀스에 중첩되지 않은 최상위 시퀀스)
 - 중첩 시퀀스만 필터링 (SequenceSource vs MediaSource 구분)
-- tick → 초/프레임 변환 (254,016,000,000 ticks/sec)
+- tick → 초/프레임 변환 (기본값 254,016,000,000 ticks/sec, 시퀀스 XML의 TimeBase에서 자동 추출 우선)
 
 **Input:** .prproj 파일 경로
 **Output:**
@@ -145,7 +145,9 @@ cuts: {
 }
 ```
 
-마이그레이션: `cuts` 필드가 없는 기존 .bframe 파일은 `cuts: null`로 처리 (하위 호환).
+- `createDefaultBframeData()`에 `cuts: null` 추가
+- 마이그레이션: `cuts` 필드가 없는 기존 .bframe 파일은 `cuts: null`로 처리 (하위 호환)
+- 스키마 버전은 `2.0` 유지 (새 필드가 null 기본값이므로 하위 호환 보장)
 
 #### 4. `main/ipc-handlers.js` — IPC 핸들러 2개 추가
 
@@ -165,7 +167,38 @@ ipcMain.handle('prproj:parse', async (event, filePath) => {
 });
 ```
 
-#### 5. `renderer/scripts/app.js` — 모듈 통합
+#### 5. `preload/preload.js` — Preload Bridge 추가
+
+Renderer에서 Main 프로세스의 IPC 핸들러를 호출할 수 있도록 contextBridge에 메서드 추가.
+
+```javascript
+// ====== Premiere Pro 프로젝트 관련 ======
+openPrprojDialog: () => ipcRenderer.invoke('prproj:open-dialog'),
+parsePrproj: (filePath) => ipcRenderer.invoke('prproj:parse', filePath),
+```
+
+#### 6. `renderer/scripts/modules/review-data-manager.js` — 컷 데이터 저장/로드
+
+기존 `commentManager`, `drawingManager`, `highlightManager` 패턴을 따름.
+
+- constructor에 `cutMarkerManager` 참조 추가
+- `_collectData()` (line 638): `cuts: this.cutMarkerManager?.toJSON() || null` 추가
+- `_applyData()` (line 668): `if (data.cuts && this.cutMarkerManager) { this.cutMarkerManager.loadFromJSON(data.cuts); }` 추가
+
+`CutMarkerManager.toJSON()` 반환 형태:
+```javascript
+{
+  source: "/path/to/작품명_릴.prproj",
+  sequenceName: "작품명_릴",
+  fps: 24,
+  markers: [
+    { name: "a001", startFrame: 0, endFrame: 720, startTime: 0, endTime: 30 },
+    // ...
+  ]
+}
+```
+
+#### 7. `renderer/scripts/app.js` — 모듈 통합
 
 ```javascript
 // 초기화
@@ -174,20 +207,24 @@ const cutMarkerManager = new CutMarkerManager({
   videoPlayer, timeline, userSettings
 });
 
+// ReviewDataManager에 cutMarkerManager 참조 전달
+reviewDataManager.setCutMarkerManager(cutMarkerManager);
+
 // 이벤트 연결
 videoPlayer.addEventListener('timeupdate', (e) => {
   cutMarkerManager.updateOverlay(e.detail.currentFrame);
 });
-
-// .bframe 로드 시 컷 데이터 복원
-reviewDataManager.addEventListener('dataLoaded', (e) => {
-  if (e.detail.data.cuts) {
-    cutMarkerManager.loadFromJSON(e.detail.data.cuts);
-  }
-});
 ```
 
-#### 6. `renderer/index.html` — DOM 추가
+#### 8. `package.json` — fast-xml-parser 의존성 추가
+
+```bash
+npm install fast-xml-parser
+```
+
+`electron-builder`가 자동으로 번들링함 (순수 JS 패키지, 네이티브 모듈 없음).
+
+#### 9. `renderer/index.html` — DOM 추가
 
 ```html
 <!-- 영상 오버레이 (video-wrapper 내부) -->
@@ -201,7 +238,7 @@ reviewDataManager.addEventListener('dataLoaded', (e) => {
 </button>
 ```
 
-#### 7. `renderer/styles/main.css` — 오버레이 스타일
+#### 10. `renderer/styles/main.css` — 오버레이 스타일
 
 ```css
 .cut-marker-overlay {
@@ -226,7 +263,7 @@ reviewDataManager.addEventListener('dataLoaded', (e) => {
 - `.cut-marker-pos-bottom-center`
 - `.cut-marker-pos-bottom-right`
 
-#### 8. `user-settings.js` — 설정 3개 추가
+#### 11. `user-settings.js` — 설정 3개 추가
 
 | 설정 | 기본값 | 설명 |
 |------|--------|------|
@@ -234,7 +271,7 @@ reviewDataManager.addEventListener('dataLoaded', (e) => {
 | `cutMarkerPosition` | `"top-left"` | 오버레이 위치 (6가지) |
 | `cutMarkerFontSize` | `"medium"` | 글자 크기 (small/medium/large) |
 
-#### 9. `timeline.js` — 타임라인 컷 구분선
+#### 12. `timeline.js` — 타임라인 컷 구분선
 
 타임라인 룰러 영역에 각 컷의 시작 프레임 위치에 수직 구분선 + 라벨을 렌더링한다. 기존 타임라인의 프레임→픽셀 변환 로직을 재사용.
 
@@ -242,12 +279,25 @@ reviewDataManager.addEventListener('dataLoaded', (e) => {
 |a001    |a002      |a003  |a004        |a005    |
 ```
 
+**통합 방식**: `CutMarkerManager`가 `timeline.setCutMarkers(markers)`를 호출하면 Timeline이 자체적으로 마커를 렌더링한다. Timeline 클래스에 `setCutMarkers()` 및 `renderCutMarkers()` 메서드를 추가한다. 줌/리사이즈 시 자동 재렌더링.
+
 ## Overlay Display Behavior
 
 - 영상 재생 중 현재 프레임이 속한 컷의 이름을 오버레이로 표시
 - 컷이 바뀔 때 라벨 텍스트가 전환됨
 - `getCutAtFrame()`은 정렬된 배열에서 binary search로 O(log n) 탐색
+- 프레임이 어떤 컷 범위에도 속하지 않으면 `null` 반환 (오버레이 숨김)
 - 50~200개 컷 규모에서 성능 문제 없음
+
+## Re-import Behavior
+
+- 이미 컷 데이터가 있는 상태에서 새 .prproj를 가져오면 기존 데이터를 **교체**
+- 교체 전 "기존 컷 데이터를 덮어씁니다. 계속하시겠습니까?" 확인 다이얼로그 표시
+
+## Cleanup
+
+- 새 영상 파일 로드 시 `cutMarkerManager.clear()` 호출 (기존 패턴과 동일)
+- `_applyData()`에서 cuts 데이터가 없으면 `cutMarkerManager.clear()` 호출하여 이전 상태 정리
 
 ## Error Handling
 
