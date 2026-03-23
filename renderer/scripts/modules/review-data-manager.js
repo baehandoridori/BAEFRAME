@@ -102,6 +102,7 @@ export class ReviewDataManager extends EventTarget {
     this.commentManager = options.commentManager;
     this.drawingManager = options.drawingManager;
     this.highlightManager = options.highlightManager;
+    this.cutMarkerManager = options.cutMarkerManager || null;
 
     // 현재 상태
     this.currentVideoPath = null;
@@ -139,6 +140,18 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
+   * Cut Marker Manager 설정
+   * @param {CutMarkerManager} manager
+   */
+  setCutMarkerManager(manager) {
+    this.cutMarkerManager = manager;
+    if (manager) {
+      manager.addEventListener('imported', this._onDataChanged);
+      manager.addEventListener('cleared', this._onDataChanged);
+    }
+  }
+
+  /**
    * 매니저들 연결 및 이벤트 리스너 설정
    */
   connect() {
@@ -164,6 +177,11 @@ export class ReviewDataManager extends EventTarget {
 
     if (this.highlightManager) {
       this.highlightManager.addEventListener('changed', this._onDataChanged);
+    }
+
+    if (this.cutMarkerManager) {
+      this.cutMarkerManager.addEventListener('imported', this._onDataChanged);
+      this.cutMarkerManager.addEventListener('cleared', this._onDataChanged);
     }
 
     log.info('데이터 변경 이벤트 연결됨');
@@ -195,6 +213,11 @@ export class ReviewDataManager extends EventTarget {
 
     if (this.highlightManager) {
       this.highlightManager.removeEventListener('changed', this._onDataChanged);
+    }
+
+    if (this.cutMarkerManager) {
+      this.cutMarkerManager.removeEventListener('imported', this._onDataChanged);
+      this.cutMarkerManager.removeEventListener('cleared', this._onDataChanged);
     }
 
     this._cancelAutoSave();
@@ -658,7 +681,8 @@ export class ReviewDataManager extends EventTarget {
       // 리뷰 데이터
       comments: this.commentManager?.toJSON() || { layers: [] },
       drawings: this.drawingManager?.exportData() || { layers: [] },
-      highlights: this.highlightManager?.toJSON() || []
+      highlights: this.highlightManager?.toJSON() || [],
+      cuts: this.cutMarkerManager?.toJSON() || null
     };
   }
 
@@ -689,6 +713,15 @@ export class ReviewDataManager extends EventTarget {
 
     if (data.highlights && this.highlightManager) {
       this.highlightManager.fromJSON(data.highlights);
+    }
+
+    // 컷 마커 데이터
+    if (this.cutMarkerManager) {
+      if (data.cuts) {
+        this.cutMarkerManager.loadFromJSON(data.cuts);
+      } else {
+        this.cutMarkerManager.clear();
+      }
     }
   }
 
