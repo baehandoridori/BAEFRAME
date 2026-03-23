@@ -114,6 +114,7 @@ export const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUP
  * @property {Object} comments - 댓글 데이터 { layers: CommentLayer[] }
  * @property {Object} drawings - 그리기 데이터 { layers: DrawingLayer[] }
  * @property {Array<Highlight>} highlights - 하이라이트 목록
+ * @property {null} cuts - Premiere Pro 컷 마커 데이터
  */
 
 // ============================================================================
@@ -144,7 +145,8 @@ export function createDefaultBframeData(options = {}) {
     manualVersions: [],
     comments: { layers: [] },
     drawings: { layers: [] },
-    highlights: []
+    highlights: [],
+    cuts: null
   };
 }
 
@@ -261,7 +263,10 @@ export function migrateToV2(data) {
     drawings: migrateDrawings(data.drawings),
 
     // 하이라이트
-    highlights: Array.isArray(data.highlights) ? data.highlights : []
+    highlights: Array.isArray(data.highlights) ? data.highlights : [],
+
+    // Premiere Pro 컷 마커 데이터
+    cuts: data.cuts || null
   };
 
   // versions 필드가 있었다면 manualVersions로 변환 (문서 기반 레거시)
