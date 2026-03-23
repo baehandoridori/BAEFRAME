@@ -3605,9 +3605,12 @@ async function initApp() {
       elements.filePath.textContent = fileInfo.dir;
       elements.dropZone.classList.add('hidden');
 
-      // 폴더 열기 / 다른 파일 열기 버튼 표시
+      // 폴더 열기 / 다른 파일 열기 / 릴 가져오기 버튼 표시
       elements.btnOpenFolder.style.display = 'flex';
       elements.btnOpenOther.style.display = 'flex';
+      if (elements.btnImportCutMarkers) {
+        elements.btnImportCutMarkers.style.display = 'flex';
+      }
 
       // 버전 감지 및 드롭다운 초기화 (version-parser/manager/dropdown 모듈 사용)
       const versionResult = parseVersion(fileInfo.name);
