@@ -32,17 +32,28 @@ const ARRAY_TAGS = new Set([
 
 /**
  * 글로벌 ObjectID/ObjectUID → 객체 맵 구축
+ * .prproj XML은 플랫 구조 + 깊은 참조를 혼용하므로 재귀적으로 수집
  */
 function buildObjectMap(root) {
   const map = new Map();
-  for (const key of Object.keys(root)) {
-    for (const el of [].concat(root[key] || [])) {
-      if (el && typeof el === 'object') {
-        if (el['@_ObjectID'] !== undefined) map.set(String(el['@_ObjectID']), el);
-        if (el['@_ObjectUID'] !== undefined) map.set(String(el['@_ObjectUID']), el);
-      }
+
+  function collect(obj, depth) {
+    if (!obj || typeof obj !== 'object' || depth > 8) return;
+    if (Array.isArray(obj)) {
+      for (const item of obj) collect(item, depth);
+      return;
+    }
+    // 현재 객체에 ObjectID/ObjectUID가 있으면 등록
+    if (obj['@_ObjectID'] !== undefined) map.set(String(obj['@_ObjectID']), obj);
+    if (obj['@_ObjectUID'] !== undefined) map.set(String(obj['@_ObjectUID']), obj);
+    // 자식 탐색
+    for (const key of Object.keys(obj)) {
+      if (key.startsWith('@_')) continue;
+      collect(obj[key], depth + 1);
     }
   }
+
+  collect(root, 0);
   return map;
 }
 
@@ -201,52 +212,26 @@ function parseSequenceCuts(sequence, objectMap) {
 
   for (let t = 0; t < tracks.length; t++) {
     const rawTrack = tracks[t];
-    logger.info(`[DEBUG] 트랙[${t}] raw keys: ${rawTrack ? Object.keys(rawTrack).join(', ') : 'null'}`);
-
     const trackWrapper = resolve(rawTrack, objectMap);
-    if (!trackWrapper) { logger.info(`[DEBUG] 트랙[${t}] resolve 실패`); continue; }
-    logger.info(`[DEBUG] 트랙[${t}] resolved keys: ${Object.keys(trackWrapper).join(', ')}`);
+    if (!trackWrapper) continue;
 
-    // ClipTrack이 ObjectRef일 수도, 인라인 객체일 수도 있음
+    // ClipTrack resolve
     let clipTrack = trackWrapper.ClipTrack;
     if (clipTrack) {
       clipTrack = resolve(clipTrack, objectMap);
     } else {
-      // trackWrapper 자체가 ClipTrack일 수 있음 (ClipItems를 직접 가짐)
       clipTrack = trackWrapper.ClipItems ? trackWrapper : null;
     }
-    if (!clipTrack) { logger.info(`[DEBUG] 트랙[${t}] ClipTrack 없음`); continue; }
-    logger.info(`[DEBUG] 트랙[${t}] clipTrack keys: ${Object.keys(clipTrack).join(', ')}`);
+    if (!clipTrack) continue;
 
     // ClipItems.TrackItems.TrackItem 경로
     const clipItems = clipTrack.ClipItems;
-    if (!clipItems) { logger.info(`[DEBUG] 트랙[${t}] ClipItems 없음`); continue; }
-    logger.info(`[DEBUG] 트랙[${t}] ClipItems keys: ${Object.keys(clipItems).join(', ')}`);
+    if (!clipItems) continue;
 
     const trackItemsContainer = clipItems.TrackItems;
-    if (!trackItemsContainer) { logger.info(`[DEBUG] 트랙[${t}] TrackItems 없음`); continue; }
-    logger.info(`[DEBUG] 트랙[${t}] TrackItems keys: ${Object.keys(trackItemsContainer).join(', ')}`);
+    if (!trackItemsContainer) continue;
 
     const trackItems = [].concat(trackItemsContainer.TrackItem || []);
-    logger.info(`[DEBUG] 트랙[${t}] TrackItem 수: ${trackItems.length}`);
-
-    if (trackItems.length > 0) {
-      const first = trackItems[0];
-      logger.info(`[DEBUG] 트랙[${t}] 첫 아이템 raw keys: ${first ? Object.keys(first).join(', ') : 'null'}`);
-      const firstResolved = resolve(first, objectMap);
-      logger.info(`[DEBUG] 트랙[${t}] 첫 아이템 resolved keys: ${firstResolved ? Object.keys(firstResolved).join(', ') : 'null'}`);
-      if (firstResolved?.ClipTrackItem) {
-        const cti = firstResolved.ClipTrackItem;
-        logger.info(`[DEBUG] ClipTrackItem keys: ${Object.keys(cti).join(', ')}`);
-        if (cti.TrackItem) {
-          logger.info(`[DEBUG] TrackItem keys: ${Object.keys(cti.TrackItem).join(', ')}`);
-        }
-        if (cti.SubClip) {
-          const sc = resolve(cti.SubClip, objectMap);
-          logger.info(`[DEBUG] SubClip resolved Name: ${sc?.Name}`);
-        }
-      }
-    }
 
     for (const tiRef of trackItems) {
       const vcti = resolve(tiRef, objectMap);
