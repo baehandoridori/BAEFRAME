@@ -69,6 +69,9 @@ export class Timeline extends EventTarget {
     this.thumbnailTooltip = null;
     this.isThumbnailVisible = false;
 
+    // 컷 마커
+    this._cutMarkers = [];
+
     // 초기화
     this._setupEventListeners();
     this._setupThumbnailTooltip();
@@ -680,6 +683,7 @@ export class Timeline extends EventTarget {
     this._updatePlayheadPosition();
     this._updateRuler();
     this._updateFrameGrid();
+    this.renderCutMarkers();
 
     // 줌 변경 이벤트 발생 (마커 클러스터링 재계산용)
     this._emit('zoomChanged', { zoom: this.zoom });
@@ -958,7 +962,7 @@ export class Timeline extends EventTarget {
       this._emit('layerContextMenu', {
         layerId: layer.id,
         x: e.clientX,
-        y: e.clientY,
+        y: e.clientY
       });
     });
 
@@ -2200,6 +2204,46 @@ export class Timeline extends EventTarget {
       return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
     }
     return `${m}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+  }
+
+  /**
+   * 컷 마커를 설정하고 타임라인에 렌더링한다.
+   * @param {CutMarker[]} markers
+   */
+  setCutMarkers(markers) {
+    this._cutMarkers = markers || [];
+    this.renderCutMarkers();
+  }
+
+  /**
+   * 타임라인 룰러에 컷 구분선을 렌더링한다.
+   */
+  renderCutMarkers() {
+    // 기존 마커 제거
+    const existing = this.tracksContainer?.querySelectorAll('.timeline-cut-marker');
+    if (existing) {
+      existing.forEach(el => el.remove());
+    }
+
+    if (!this._cutMarkers.length || !this.tracksContainer || !this.duration) return;
+
+    const containerWidth = this.tracksContainer.scrollWidth;
+
+    for (const marker of this._cutMarkers) {
+      const ratio = marker.startTime / this.duration;
+      const xPos = ratio * containerWidth;
+
+      const line = document.createElement('div');
+      line.className = 'timeline-cut-marker';
+      line.style.left = `${xPos}px`;
+
+      const label = document.createElement('span');
+      label.className = 'timeline-cut-label';
+      label.textContent = marker.name;
+
+      line.appendChild(label);
+      this.tracksContainer.appendChild(line);
+    }
   }
 
   /**
