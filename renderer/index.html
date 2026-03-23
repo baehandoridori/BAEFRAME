@@ -382,14 +382,23 @@
 
           <!-- 컷 마커 설정 패널 -->
           <div id="cutMarkerSettings" class="cut-marker-settings">
-            <span class="settings-title">Cut Markers</span>
+            <div class="settings-title">
+              <span>CUT MARKERS</span>
+              <button class="settings-close" id="cutMarkerSettingsClose">&times;</button>
+            </div>
             <label>
               <span>오버레이</span>
-              <input type="checkbox" id="cutMarkerToggleOverlay" checked>
+              <div class="cut-marker-toggle">
+                <input type="checkbox" id="cutMarkerToggleOverlay" checked>
+                <span class="toggle-slider"></span>
+              </div>
             </label>
             <label>
               <span>타임라인</span>
-              <input type="checkbox" id="cutMarkerToggleTimeline" checked>
+              <div class="cut-marker-toggle">
+                <input type="checkbox" id="cutMarkerToggleTimeline" checked>
+                <span class="toggle-slider"></span>
+              </div>
             </label>
             <label>
               <span>위치</span>
@@ -415,6 +424,7 @@
               <span>불투명도</span>
               <input type="range" id="cutMarkerOpacityRange" min="0" max="100" value="80">
             </label>
+            <button class="cut-marker-reset-btn" id="cutMarkerResetBtn">컷 데이터 초기화</button>
           </div>
 
           <!-- Comment Range Overlay Controls -->

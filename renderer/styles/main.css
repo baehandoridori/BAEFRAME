@@ -10049,7 +10049,7 @@ body.audio-mode .frame-indicator {
 .cut-marker-pos-bottom-center { bottom: 16px; left: 50%; transform: translateX(-50%); }
 .cut-marker-pos-bottom-right { bottom: 16px; right: 16px; }
 
-/* 컷 마커 설정 패널 */
+/* 컷 마커 설정 패널 — overlay-control-btn 패턴 따름 */
 .cut-marker-settings {
   position: absolute;
   top: 8px;
@@ -10057,19 +10057,54 @@ body.audio-mode .frame-indicator {
   z-index: 20;
   display: none;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   background: rgba(30, 30, 30, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  padding: 10px 12px;
-  min-width: 180px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-width: 200px;
   font-size: 12px;
-  color: #ddd;
-  backdrop-filter: blur(8px);
+  color: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
 }
 
 .cut-marker-settings.visible {
   display: flex;
+}
+
+.cut-marker-settings .settings-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--accent-primary, #4a9eff);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.cut-marker-settings .settings-title .settings-close {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 14px;
+  transition: all 0.15s;
+}
+
+.cut-marker-settings .settings-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
 }
 
 .cut-marker-settings label {
@@ -10078,53 +10113,154 @@ body.audio-mode .frame-indicator {
   justify-content: space-between;
   gap: 8px;
   cursor: pointer;
+  padding: 2px 0;
 }
 
-.cut-marker-settings select,
-.cut-marker-settings input[type="range"] {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
+.cut-marker-settings label span {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.cut-marker-settings select {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
   color: #fff;
-  padding: 2px 4px;
+  padding: 3px 6px;
   font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.cut-marker-settings select:hover,
+.cut-marker-settings select:focus {
+  border-color: var(--accent-primary, #4a9eff);
 }
 
 .cut-marker-settings input[type="range"] {
-  width: 80px;
-  accent-color: #ff9800;
+  width: 85px;
+  height: 4px;
+  accent-color: var(--accent-primary, #4a9eff);
+  cursor: pointer;
 }
 
-.cut-marker-settings .settings-title {
-  font-weight: bold;
+/* 토글 스위치 — BAEframe 스타일 */
+.cut-marker-toggle {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.cut-marker-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.cut-marker-toggle .toggle-slider {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.cut-marker-toggle .toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 2px;
+  bottom: 2px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.cut-marker-toggle input:checked + .toggle-slider {
+  background: var(--accent-primary, #4a9eff);
+}
+
+.cut-marker-toggle input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+}
+
+/* 초기화 버튼 */
+.cut-marker-reset-btn {
+  margin-top: 4px;
+  padding: 5px 0;
+  background: rgba(255, 80, 80, 0.15);
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  border-radius: 5px;
+  color: #ff6b6b;
   font-size: 11px;
-  color: #ff9800;
-  margin-bottom: 2px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
 }
 
-/* 타임라인 컷 마커 */
+.cut-marker-reset-btn:hover {
+  background: rgba(255, 80, 80, 0.25);
+  border-color: rgba(255, 80, 80, 0.5);
+}
+
+/* 라이트 모드 대응 */
+.light-mode .cut-marker-settings {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: rgba(0, 0, 0, 0.8);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.light-mode .cut-marker-settings label span {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.light-mode .cut-marker-settings select {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #333;
+}
+
+.light-mode .cut-marker-toggle .toggle-slider {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* 타임라인 컷 마커 — 드래그 가능 */
 .timeline-cut-marker {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
-  background: rgba(255, 165, 0, 0.6);
-  pointer-events: none;
-  z-index: 2;
+  width: 3px;
+  margin-left: -1px;
+  background: rgba(255, 165, 0, 0.5);
+  pointer-events: auto;
+  z-index: 3;
+  cursor: col-resize;
+  transition: background 0.1s, width 0.1s;
+}
+
+.timeline-cut-marker:hover,
+.timeline-cut-marker.dragging {
+  width: 5px;
+  margin-left: -2px;
+  background: rgba(255, 165, 0, 0.9);
 }
 
 .timeline-cut-label {
   position: absolute;
-  top: 1px;
-  left: 3px;
+  top: 2px;
+  left: 6px;
   font-size: 9px;
   font-family: 'Consolas', monospace;
   color: rgba(255, 165, 0, 0.9);
   white-space: nowrap;
   pointer-events: none;
   user-select: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
 /* 라이트 모드 */

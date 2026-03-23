@@ -194,6 +194,11 @@ class CutMarkerManager extends EventTarget {
     if (this.timeline) {
       this.timeline.setCutMarkers(this.markers);
       this.timeline.setCutMarkersVisible(this._timelineVisible);
+
+      // 타임라인 드래그로 마커 이동 시 데이터 동기화
+      this.timeline.removeEventListener('cutMarkersChanged', this._onTimelineDrag);
+      this._onTimelineDrag = () => { this._emit('markersUpdated'); };
+      this.timeline.addEventListener('cutMarkersChanged', this._onTimelineDrag);
     }
 
     this._applyOverlaySettings();

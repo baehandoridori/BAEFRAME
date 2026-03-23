@@ -8769,6 +8769,25 @@ async function initApp() {
     });
   }
 
+  // 설정 패널 닫기 버튼
+  const cutMarkerSettingsClose = document.getElementById('cutMarkerSettingsClose');
+  if (cutMarkerSettingsClose) {
+    cutMarkerSettingsClose.addEventListener('click', () => {
+      if (cutMarkerSettingsPanel) cutMarkerSettingsPanel.classList.remove('visible');
+    });
+  }
+
+  // 컷 데이터 초기화 버튼
+  const cutMarkerResetBtn = document.getElementById('cutMarkerResetBtn');
+  if (cutMarkerResetBtn) {
+    cutMarkerResetBtn.addEventListener('click', () => {
+      if (confirm('컷 데이터를 초기화합니다. 계속하시겠습니까?')) {
+        cutMarkerManager.clear();
+        if (cutMarkerSettingsPanel) cutMarkerSettingsPanel.classList.remove('visible');
+      }
+    });
+  }
+
   // ====== 재생목록 초기화 ======
   initPlaylistFeature();
 

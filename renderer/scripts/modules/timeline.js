@@ -2237,13 +2237,15 @@ export class Timeline extends EventTarget {
 
     const containerWidth = this.tracksContainer.scrollWidth;
 
-    for (const marker of this._cutMarkers) {
+    for (let i = 0; i < this._cutMarkers.length; i++) {
+      const marker = this._cutMarkers[i];
       const ratio = marker.startTime / this.duration;
       const xPos = ratio * containerWidth;
 
       const line = document.createElement('div');
       line.className = 'timeline-cut-marker';
       line.style.left = `${xPos}px`;
+      line.dataset.markerIndex = i;
 
       const label = document.createElement('span');
       label.className = 'timeline-cut-label';
@@ -2251,7 +2253,77 @@ export class Timeline extends EventTarget {
 
       line.appendChild(label);
       this.tracksContainer.appendChild(line);
+
+      // 드래그 이벤트
+      this._setupCutMarkerDrag(line, marker, i);
     }
+
+    // 표시/숨김 상태 반영
+    if (this._cutMarkersVisible === false) {
+      this.setCutMarkersVisible(false);
+    }
+  }
+
+  /**
+   * 컷 마커 드래그 설정
+   */
+  _setupCutMarkerDrag(lineEl, marker, index) {
+    let isDragging = false;
+    let startX = 0;
+
+    const onMouseDown = (e) => {
+      if (e.button !== 0) return;
+      isDragging = true;
+      startX = e.clientX;
+      lineEl.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+      const containerWidth = this.tracksContainer.scrollWidth;
+      const rect = this.tracksContainer.getBoundingClientRect();
+      const x = e.clientX - rect.left + this.tracksContainer.scrollLeft;
+      const newTime = Math.max(0, (x / containerWidth) * this.duration);
+
+      lineEl.style.left = `${x}px`;
+
+      // 마커 시간 업데이트 (다음/이전 마커 경계 내에서)
+      const prevEnd = index > 0 ? this._cutMarkers[index - 1].startTime + 0.001 : 0;
+      const nextStart = index < this._cutMarkers.length - 1
+        ? this._cutMarkers[index + 1].startTime - 0.001
+        : this.duration;
+
+      const clampedTime = Math.max(prevEnd, Math.min(nextStart, newTime));
+      const fps = this.fps || 24;
+
+      marker.startTime = Math.round(clampedTime * 1000) / 1000;
+      marker.startFrame = Math.round(clampedTime * fps);
+
+      // 이전 마커의 endTime/endFrame도 업데이트
+      if (index > 0) {
+        this._cutMarkers[index - 1].endTime = marker.startTime;
+        this._cutMarkers[index - 1].endFrame = marker.startFrame;
+      }
+    };
+
+    const onMouseUp = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      lineEl.classList.remove('dragging');
+      document.body.style.cursor = '';
+
+      // 변경 이벤트 발행
+      this.dispatchEvent(new CustomEvent('cutMarkersChanged', {
+        detail: { markers: this._cutMarkers }
+      }));
+    };
+
+    lineEl.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
   }
 
   /**

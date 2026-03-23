@@ -182,6 +182,7 @@ export class ReviewDataManager extends EventTarget {
     if (this.cutMarkerManager) {
       this.cutMarkerManager.addEventListener('imported', this._onDataChanged);
       this.cutMarkerManager.addEventListener('cleared', this._onDataChanged);
+      this.cutMarkerManager.addEventListener('markersUpdated', this._onDataChanged);
     }
 
     log.info('데이터 변경 이벤트 연결됨');
