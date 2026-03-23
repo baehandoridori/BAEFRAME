@@ -217,7 +217,7 @@ function parseSequenceCuts(sequence, objectMap, sequenceNames) {
   for (let t = 0; t < tracks.length; t++) {
     const rawTrack = tracks[t];
     const trackWrapper = resolve(rawTrack, objectMap);
-    if (!trackWrapper) { logger.info(`T${t}: resolve 실패`); continue; }
+    if (!trackWrapper) continue;
 
     // ClipTrack resolve
     let clipTrack = trackWrapper.ClipTrack;
@@ -226,32 +226,15 @@ function parseSequenceCuts(sequence, objectMap, sequenceNames) {
     } else {
       clipTrack = trackWrapper.ClipItems ? trackWrapper : null;
     }
-    if (!clipTrack) { logger.info(`T${t}: ClipTrack 없음, keys=${Object.keys(trackWrapper)}`); continue; }
+    if (!clipTrack) continue;
 
     const clipItems = clipTrack.ClipItems;
-    if (!clipItems) { logger.info(`T${t}: ClipItems 없음, keys=${Object.keys(clipTrack)}`); continue; }
+    if (!clipItems) continue;
 
     const trackItemsContainer = clipItems.TrackItems;
-    if (!trackItemsContainer) { logger.info(`T${t}: TrackItems 없음, ClipItems keys=${Object.keys(clipItems)}`); continue; }
+    if (!trackItemsContainer) continue;
 
     const trackItems = [].concat(trackItemsContainer.TrackItem || []);
-    logger.info(`T${t}: ${trackItems.length}개 아이템`);
-
-    // 첫 아이템 상세 진단
-    if (trackItems.length > 0 && t === 0) {
-      const ti0 = trackItems[0];
-      logger.info(`T0[0] raw keys: ${ti0 ? Object.keys(ti0) : 'null'}`);
-      const r0 = resolve(ti0, objectMap);
-      logger.info(`T0[0] resolved: ${r0 ? Object.keys(r0) : 'null'}`);
-      if (r0?.ClipTrackItem) {
-        const cti = r0.ClipTrackItem;
-        logger.info(`T0[0] CTI keys: ${Object.keys(cti)}`);
-        logger.info(`T0[0] CTI.TrackItem: ${cti.TrackItem ? JSON.stringify(cti.TrackItem) : 'null'}`);
-        logger.info(`T0[0] CTI.SubClip: ${cti.SubClip ? JSON.stringify(cti.SubClip).substring(0, 100) : 'null'}`);
-        const sc = resolve(cti.SubClip, objectMap);
-        logger.info(`T0[0] SubClip.Name: ${sc?.Name}`);
-      }
-    }
 
     for (const tiRef of trackItems) {
       const vcti = resolve(tiRef, objectMap);
