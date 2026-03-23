@@ -127,7 +127,8 @@ async function parsePrproj(filePath) {
   }
 
   // 1개면 바로 파싱
-  return parseSequenceCuts(sequences[0], objectMap);
+  const seqNames = new Set(sequences.map(s => s.Name).filter(Boolean));
+  return parseSequenceCuts(sequences[0], objectMap, seqNames);
 }
 
 /**
@@ -166,7 +167,8 @@ async function parsePrprojWithSequenceId(filePath, sequenceId) {
     throw new Error('지정한 시퀀스를 찾을 수 없습니다.');
   }
 
-  return parseSequenceCuts(target, objectMap);
+  const seqNames = new Set(sequences.map(s => s.Name).filter(Boolean));
+  return parseSequenceCuts(target, objectMap, seqNames);
 }
 
 /**
@@ -180,7 +182,7 @@ async function parsePrprojWithSequenceId(filePath, sequenceId) {
  *         .ClipTrackItem.TrackItem.Start/End (ticks)
  *         .ClipTrackItem.SubClip → resolve → Name
  */
-function parseSequenceCuts(sequence, objectMap) {
+function parseSequenceCuts(sequence, objectMap, sequenceNames) {
   const seqName = sequence.Name || 'Unnamed';
   logger.info(`시퀀스 파싱: "${seqName}"`);
 
@@ -271,6 +273,9 @@ function parseSequenceCuts(sequence, objectMap) {
       if (Array.isArray(subClipRef)) subClipRef = subClipRef[0];
       const subClip = resolve(subClipRef, objectMap);
       const name = subClip?.Name || '?';
+
+      // 시퀀스 이름에 해당하는 것만 포함 (조정 레이어, 그래픽 등 제외)
+      if (sequenceNames && !sequenceNames.has(name)) continue;
 
       const startFrame = Math.round(startTicks / ticksPerFrame);
       const endFrame = Math.round(endTicks / ticksPerFrame);
