@@ -21,13 +21,15 @@ const logger = createLogger('PrprojParser');
 
 const DEFAULT_TICKS_PER_SECOND = 254016000000;
 
+// isArray에 등록하면 해당 태그명이 등장하는 모든 곳에서 배열로 파싱됨
+// TrackItem, SubClip, Track, TrackGroup은 컨텍스트에 따라 단일/복수가 달라서 제외
+// → 코드에서 [].concat()로 수동 처리
 const ARRAY_TAGS = new Set([
   'Sequence', 'VideoClipTrackItem', 'AudioClipTrackItem',
   'VideoSequenceSource', 'AudioSequenceSource',
   'VideoClipTrack', 'AudioClipTrack',
   'VideoTrackGroup', 'AudioTrackGroup',
-  'SubClip', 'MasterClip', 'TrackItem', 'Track'
-  // TrackGroup은 제외 — 외부(TrackGroups.TrackGroup[])와 내부(VideoTrackGroup.TrackGroup) 이름 충돌
+  'MasterClip'
 ]);
 
 /**
@@ -213,7 +215,7 @@ function parseSequenceCuts(sequence, objectMap) {
   for (let t = 0; t < tracks.length; t++) {
     const rawTrack = tracks[t];
     const trackWrapper = resolve(rawTrack, objectMap);
-    if (!trackWrapper) continue;
+    if (!trackWrapper) { logger.info(`T${t}: resolve 실패`); continue; }
 
     // ClipTrack resolve
     let clipTrack = trackWrapper.ClipTrack;
@@ -222,16 +224,32 @@ function parseSequenceCuts(sequence, objectMap) {
     } else {
       clipTrack = trackWrapper.ClipItems ? trackWrapper : null;
     }
-    if (!clipTrack) continue;
+    if (!clipTrack) { logger.info(`T${t}: ClipTrack 없음, keys=${Object.keys(trackWrapper)}`); continue; }
 
-    // ClipItems.TrackItems.TrackItem 경로
     const clipItems = clipTrack.ClipItems;
-    if (!clipItems) continue;
+    if (!clipItems) { logger.info(`T${t}: ClipItems 없음, keys=${Object.keys(clipTrack)}`); continue; }
 
     const trackItemsContainer = clipItems.TrackItems;
-    if (!trackItemsContainer) continue;
+    if (!trackItemsContainer) { logger.info(`T${t}: TrackItems 없음, ClipItems keys=${Object.keys(clipItems)}`); continue; }
 
     const trackItems = [].concat(trackItemsContainer.TrackItem || []);
+    logger.info(`T${t}: ${trackItems.length}개 아이템`);
+
+    // 첫 아이템 상세 진단
+    if (trackItems.length > 0 && t === 0) {
+      const ti0 = trackItems[0];
+      logger.info(`T0[0] raw keys: ${ti0 ? Object.keys(ti0) : 'null'}`);
+      const r0 = resolve(ti0, objectMap);
+      logger.info(`T0[0] resolved: ${r0 ? Object.keys(r0) : 'null'}`);
+      if (r0?.ClipTrackItem) {
+        const cti = r0.ClipTrackItem;
+        logger.info(`T0[0] CTI keys: ${Object.keys(cti)}`);
+        logger.info(`T0[0] CTI.TrackItem: ${cti.TrackItem ? JSON.stringify(cti.TrackItem) : 'null'}`);
+        logger.info(`T0[0] CTI.SubClip: ${cti.SubClip ? JSON.stringify(cti.SubClip).substring(0, 100) : 'null'}`);
+        const sc = resolve(cti.SubClip, objectMap);
+        logger.info(`T0[0] SubClip.Name: ${sc?.Name}`);
+      }
+    }
 
     for (const tiRef of trackItems) {
       const vcti = resolve(tiRef, objectMap);
@@ -240,15 +258,18 @@ function parseSequenceCuts(sequence, objectMap) {
       const clipTrackItem = vcti.ClipTrackItem;
       if (!clipTrackItem) continue;
 
-      // Start/End는 ClipTrackItem.TrackItem 안에 있음
-      const trackItemData = clipTrackItem.TrackItem;
+      // Start/End는 ClipTrackItem.TrackItem 안에 있음 (배열일 수 있음)
+      let trackItemData = clipTrackItem.TrackItem;
+      if (Array.isArray(trackItemData)) trackItemData = trackItemData[0];
       const startTicks = Number(trackItemData?.Start || 0);
       const endTicks = Number(trackItemData?.End || 0);
 
       if (endTicks === 0) continue;
 
-      // 이름: SubClip → resolve → Name
-      const subClip = resolve(clipTrackItem.SubClip, objectMap);
+      // 이름: SubClip → resolve → Name (배열일 수 있음)
+      let subClipRef = clipTrackItem.SubClip;
+      if (Array.isArray(subClipRef)) subClipRef = subClipRef[0];
+      const subClip = resolve(subClipRef, objectMap);
       const name = subClip?.Name || '?';
 
       const startFrame = Math.round(startTicks / ticksPerFrame);
