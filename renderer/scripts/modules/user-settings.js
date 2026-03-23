@@ -184,8 +184,10 @@ export class UserSettings extends EventTarget {
       showPlexusPanel: true,
       // 컷 마커 설정
       showCutMarkers: true,
+      showCutMarkersTimeline: true,
       cutMarkerPosition: 'top-left',
-      cutMarkerFontSize: 'medium'
+      cutMarkerFontSize: 'large',
+      cutMarkerOpacity: 0.8
     };
 
     this._ready = false;
