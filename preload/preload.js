@@ -97,6 +97,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('ffmpeg:pre-transcode-progress', (event, data) => callback(data));
   },
 
+  // ====== Premiere Pro 프로젝트 관련 ======
+  openPrprojDialog: () => ipcRenderer.invoke('prproj:open-dialog'),
+  parsePrproj: (filePath) => ipcRenderer.invoke('prproj:parse', filePath),
+  parsePrprojWithSequenceId: (filePath, sequenceId) =>
+    ipcRenderer.invoke('prproj:parse-with-sequence', filePath, sequenceId),
+
   // ====== 파일 관련 (유틸리티) ======
   readBinaryFile: (filePath) => ipcRenderer.invoke('file:read-binary', filePath),
   getFileStats: (filePath) => ipcRenderer.invoke('file:get-stats', filePath),

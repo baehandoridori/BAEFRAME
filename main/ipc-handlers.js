@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { createLogger } = require('./logger');
 const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized, toggleFullscreen, isFullscreen } = require('./window');
+const { parsePrproj, parsePrprojWithSequenceId } = require('./prproj-parser');
 
 const log = createLogger('IPC');
 
@@ -2136,6 +2137,34 @@ function setupPlaylistHandlers() {
   // 경로 합치기
   ipcMain.handle('path:join', async (event, ...paths) => {
     return path.join(...paths);
+  });
+
+  // ====== Premiere Pro 프로젝트 관련 ======
+  ipcMain.handle('prproj:open-dialog', async () => {
+    const result = await dialog.showOpenDialog(getMainWindow(), {
+      title: 'Premiere Pro 프로젝트 파일 열기',
+      filters: [{ name: 'Premiere Pro Project', extensions: ['prproj'] }],
+      properties: ['openFile']
+    });
+    return result;
+  });
+
+  ipcMain.handle('prproj:parse', async (event, filePath) => {
+    try {
+      return await parsePrproj(filePath);
+    } catch (err) {
+      log.error('prproj 파싱 실패:', err.message);
+      throw err;
+    }
+  });
+
+  ipcMain.handle('prproj:parse-with-sequence', async (event, filePath, sequenceId) => {
+    try {
+      return await parsePrprojWithSequenceId(filePath, sequenceId);
+    } catch (err) {
+      log.error('prproj 시퀀스 파싱 실패:', err.message);
+      throw err;
+    }
   });
 }
 
