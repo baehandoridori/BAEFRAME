@@ -26,7 +26,8 @@ const ARRAY_TAGS = new Set([
   'VideoSequenceSource', 'AudioSequenceSource',
   'VideoClipTrack', 'AudioClipTrack',
   'VideoTrackGroup', 'AudioTrackGroup',
-  'SubClip', 'MasterClip', 'TrackItem', 'Track', 'TrackGroup'
+  'SubClip', 'MasterClip', 'TrackItem', 'Track'
+  // TrackGroup은 제외 — 외부(TrackGroups.TrackGroup[])와 내부(VideoTrackGroup.TrackGroup) 이름 충돌
 ]);
 
 /**
@@ -178,7 +179,9 @@ function parseSequenceCuts(sequence, objectMap) {
     throw new Error('비디오 트랙 그룹을 찾을 수 없습니다.');
   }
 
-  const videoTrackGroupInner = videoTrackGroupOuter.TrackGroup;
+  // TrackGroup이 배열로 파싱될 수도 있고 단일 객체일 수도 있음
+  let videoTrackGroupInner = videoTrackGroupOuter.TrackGroup;
+  if (Array.isArray(videoTrackGroupInner)) videoTrackGroupInner = videoTrackGroupInner[0];
   if (!videoTrackGroupInner) {
     throw new Error('비디오 트랙 정보를 찾을 수 없습니다.');
   }
