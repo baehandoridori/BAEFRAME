@@ -8714,6 +8714,61 @@ async function initApp() {
     });
   }
 
+  // ====== 컷 마커 설정 패널 ======
+  const cutMarkerSettingsPanel = document.getElementById('cutMarkerSettings');
+  const cutMarkerToggleOverlay = document.getElementById('cutMarkerToggleOverlay');
+  const cutMarkerToggleTimeline = document.getElementById('cutMarkerToggleTimeline');
+  const cutMarkerPositionSelect = document.getElementById('cutMarkerPositionSelect');
+  const cutMarkerSizeSelect = document.getElementById('cutMarkerSizeSelect');
+  const cutMarkerOpacityRange = document.getElementById('cutMarkerOpacityRange');
+
+  // 설정 패널 토글: 가져오기 버튼 우클릭으로 열기
+  if (elements.btnImportCutMarkers) {
+    elements.btnImportCutMarkers.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (cutMarkerSettingsPanel) {
+        cutMarkerSettingsPanel.classList.toggle('visible');
+      }
+    });
+  }
+
+  // 설정 패널 초기값 반영
+  cutMarkerManager.addEventListener('imported', () => {
+    const s = cutMarkerManager.getSettings();
+    if (cutMarkerToggleOverlay) cutMarkerToggleOverlay.checked = s.visible;
+    if (cutMarkerToggleTimeline) cutMarkerToggleTimeline.checked = s.timelineVisible;
+    if (cutMarkerPositionSelect) cutMarkerPositionSelect.value = s.position;
+    if (cutMarkerSizeSelect) cutMarkerSizeSelect.value = s.fontSize;
+    if (cutMarkerOpacityRange) cutMarkerOpacityRange.value = Math.round(s.opacity * 100);
+    if (cutMarkerSettingsPanel) cutMarkerSettingsPanel.classList.add('visible');
+  });
+
+  if (cutMarkerToggleOverlay) {
+    cutMarkerToggleOverlay.addEventListener('change', (e) => {
+      cutMarkerManager.setVisible(e.target.checked);
+    });
+  }
+  if (cutMarkerToggleTimeline) {
+    cutMarkerToggleTimeline.addEventListener('change', (e) => {
+      cutMarkerManager.setTimelineVisible(e.target.checked);
+    });
+  }
+  if (cutMarkerPositionSelect) {
+    cutMarkerPositionSelect.addEventListener('change', (e) => {
+      cutMarkerManager.setPosition(e.target.value);
+    });
+  }
+  if (cutMarkerSizeSelect) {
+    cutMarkerSizeSelect.addEventListener('change', (e) => {
+      cutMarkerManager.setFontSize(e.target.value);
+    });
+  }
+  if (cutMarkerOpacityRange) {
+    cutMarkerOpacityRange.addEventListener('input', (e) => {
+      cutMarkerManager.setOpacity(Number(e.target.value) / 100);
+    });
+  }
+
   // ====== 재생목록 초기화 ======
   initPlaylistFeature();
 

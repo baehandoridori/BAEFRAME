@@ -2215,6 +2215,14 @@ export class Timeline extends EventTarget {
     this.renderCutMarkers();
   }
 
+  setCutMarkersVisible(visible) {
+    this._cutMarkersVisible = visible;
+    const els = this.tracksContainer?.querySelectorAll('.timeline-cut-marker');
+    if (els) {
+      els.forEach(el => { el.style.display = visible ? '' : 'none'; });
+    }
+  }
+
   /**
    * 타임라인 룰러에 컷 구분선을 렌더링한다.
    */

@@ -53,9 +53,10 @@ const POSITIONS = [
 ];
 
 const FONT_SIZES = {
-  small: '11px',
-  medium: '14px',
-  large: '18px'
+  small: '12px',
+  medium: '18px',
+  large: '26px',
+  xlarge: '36px'
 };
 
 class CutMarkerManager extends EventTarget {
@@ -76,8 +77,10 @@ class CutMarkerManager extends EventTarget {
     this.sourceFps = null;
 
     this._visible = true;
+    this._timelineVisible = true;
     this._position = 'top-left';
-    this._fontSize = 'medium';
+    this._fontSize = 'large';
+    this._opacity = 0.8;
 
     this._loadSettings();
 
@@ -91,8 +94,10 @@ class CutMarkerManager extends EventTarget {
   _loadSettings() {
     if (!this.settings) return;
     this._visible = this.settings.getSetting('showCutMarkers') !== false;
+    this._timelineVisible = this.settings.getSetting('showCutMarkersTimeline') !== false;
     this._position = this.settings.getSetting('cutMarkerPosition') || 'top-left';
-    this._fontSize = this.settings.getSetting('cutMarkerFontSize') || 'medium';
+    this._fontSize = this.settings.getSetting('cutMarkerFontSize') || 'large';
+    this._opacity = this.settings.getSetting('cutMarkerOpacity') ?? 0.8;
     this._applyOverlaySettings();
   }
 
@@ -125,16 +130,53 @@ class CutMarkerManager extends EventTarget {
     this._emit('fontSizeChanged', { size });
   }
 
+  setOpacity(opacity) {
+    this._opacity = Math.max(0, Math.min(1, opacity));
+    if (this.settings) {
+      this.settings.setSetting('cutMarkerOpacity', this._opacity);
+    }
+    this._applyOverlaySettings();
+    this._emit('opacityChanged', { opacity: this._opacity });
+  }
+
+  setTimelineVisible(show) {
+    this._timelineVisible = show;
+    if (this.settings) {
+      this.settings.setSetting('showCutMarkersTimeline', show);
+    }
+    if (this.timeline) {
+      this.timeline.setCutMarkersVisible(show);
+    }
+    this._emit('timelineVisibilityChanged', { visible: show });
+  }
+
+  // 현재 설정 값 가져오기
+  getSettings() {
+    return {
+      visible: this._visible,
+      timelineVisible: this._timelineVisible,
+      position: this._position,
+      fontSize: this._fontSize,
+      opacity: this._opacity
+    };
+  }
+
   _applyOverlaySettings() {
     if (!this.overlayContainer) return;
 
+    // 위치 클래스
     for (const pos of POSITIONS) {
       this.overlayContainer.classList.remove(`cut-marker-pos-${pos}`);
     }
     this.overlayContainer.classList.add(`cut-marker-pos-${this._position}`);
 
-    this.overlayContainer.style.fontSize = FONT_SIZES[this._fontSize] || FONT_SIZES.medium;
+    // 폰트 크기
+    this.overlayContainer.style.fontSize = FONT_SIZES[this._fontSize] || FONT_SIZES.large;
 
+    // 불투명도
+    this.overlayContainer.style.opacity = this._opacity;
+
+    // 표시/숨김
     this.overlayContainer.style.display =
       (this._visible && this.markers.length > 0) ? 'block' : 'none';
   }
@@ -151,6 +193,7 @@ class CutMarkerManager extends EventTarget {
 
     if (this.timeline) {
       this.timeline.setCutMarkers(this.markers);
+      this.timeline.setCutMarkersVisible(this._timelineVisible);
     }
 
     this._applyOverlaySettings();

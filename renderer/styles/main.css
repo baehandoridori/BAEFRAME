@@ -10030,22 +10030,79 @@ body.audio-mode .frame-indicator {
   z-index: 15;
   pointer-events: none;
   font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 14px;
+  font-size: 26px;
+  font-weight: bold;
+  letter-spacing: 1px;
   color: #ffffff;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
-  padding: 3px 8px;
-  border-radius: 3px;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95), 0 0 12px rgba(0, 0, 0, 0.4);
+  padding: 6px 14px;
+  border-radius: 4px;
   background: rgba(0, 0, 0, 0.55);
   transition: opacity 0.15s ease;
   user-select: none;
 }
 
-.cut-marker-pos-top-left { top: 12px; left: 12px; }
-.cut-marker-pos-top-center { top: 12px; left: 50%; transform: translateX(-50%); }
-.cut-marker-pos-top-right { top: 12px; right: 12px; }
-.cut-marker-pos-bottom-left { bottom: 12px; left: 12px; }
-.cut-marker-pos-bottom-center { bottom: 12px; left: 50%; transform: translateX(-50%); }
-.cut-marker-pos-bottom-right { bottom: 12px; right: 12px; }
+.cut-marker-pos-top-left { top: 16px; left: 16px; }
+.cut-marker-pos-top-center { top: 16px; left: 50%; transform: translateX(-50%); }
+.cut-marker-pos-top-right { top: 16px; right: 16px; }
+.cut-marker-pos-bottom-left { bottom: 16px; left: 16px; }
+.cut-marker-pos-bottom-center { bottom: 16px; left: 50%; transform: translateX(-50%); }
+.cut-marker-pos-bottom-right { bottom: 16px; right: 16px; }
+
+/* 컷 마커 설정 패널 */
+.cut-marker-settings {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(30, 30, 30, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-width: 180px;
+  font-size: 12px;
+  color: #ddd;
+  backdrop-filter: blur(8px);
+}
+
+.cut-marker-settings.visible {
+  display: flex;
+}
+
+.cut-marker-settings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.cut-marker-settings select,
+.cut-marker-settings input[type="range"] {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #fff;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+.cut-marker-settings input[type="range"] {
+  width: 80px;
+  accent-color: #ff9800;
+}
+
+.cut-marker-settings .settings-title {
+  font-weight: bold;
+  font-size: 11px;
+  color: #ff9800;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
 
 /* 타임라인 컷 마커 */
 .timeline-cut-marker {

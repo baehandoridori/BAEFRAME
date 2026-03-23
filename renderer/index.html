@@ -380,6 +380,43 @@
             <span class="cut-marker-label"></span>
           </div>
 
+          <!-- 컷 마커 설정 패널 -->
+          <div id="cutMarkerSettings" class="cut-marker-settings">
+            <span class="settings-title">Cut Markers</span>
+            <label>
+              <span>오버레이</span>
+              <input type="checkbox" id="cutMarkerToggleOverlay" checked>
+            </label>
+            <label>
+              <span>타임라인</span>
+              <input type="checkbox" id="cutMarkerToggleTimeline" checked>
+            </label>
+            <label>
+              <span>위치</span>
+              <select id="cutMarkerPositionSelect">
+                <option value="top-left">좌상단</option>
+                <option value="top-center">상단 중앙</option>
+                <option value="top-right">우상단</option>
+                <option value="bottom-left">좌하단</option>
+                <option value="bottom-center">하단 중앙</option>
+                <option value="bottom-right">우하단</option>
+              </select>
+            </label>
+            <label>
+              <span>크기</span>
+              <select id="cutMarkerSizeSelect">
+                <option value="small">S</option>
+                <option value="medium">M</option>
+                <option value="large" selected>L</option>
+                <option value="xlarge">XL</option>
+              </select>
+            </label>
+            <label>
+              <span>불투명도</span>
+              <input type="range" id="cutMarkerOpacityRange" min="0" max="100" value="80">
+            </label>
+          </div>
+
           <!-- Comment Range Overlay Controls -->
           <div class="video-comment-overlay-controls" id="videoCommentOverlayControls">
             <button class="overlay-control-btn" id="btnOverlayToggle" title="댓글 범위 표시 토글">
