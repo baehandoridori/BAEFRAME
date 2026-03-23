@@ -211,69 +211,110 @@ function parseSequenceCuts(sequence, objectMap, sequenceNames) {
   const tracks = [].concat(videoTrackGroupInner.Tracks?.Track || []);
   logger.info(`비디오 트랙 수: ${tracks.length}`);
 
-  // 모든 트랙에서 아이템 수집
-  const cuts = [];
-
-  for (let t = 0; t < tracks.length; t++) {
-    const rawTrack = tracks[t];
+  // 트랙에서 클립 아이템을 추출하는 헬퍼
+  function extractTrackItems(trackIndex) {
+    const rawTrack = tracks[trackIndex];
     const trackWrapper = resolve(rawTrack, objectMap);
-    if (!trackWrapper) continue;
+    if (!trackWrapper) return [];
 
-    // ClipTrack resolve
     let clipTrack = trackWrapper.ClipTrack;
     if (clipTrack) {
       clipTrack = resolve(clipTrack, objectMap);
     } else {
       clipTrack = trackWrapper.ClipItems ? trackWrapper : null;
     }
-    if (!clipTrack) continue;
+    if (!clipTrack) return [];
 
     const clipItems = clipTrack.ClipItems;
-    if (!clipItems) continue;
+    if (!clipItems) return [];
 
     const trackItemsContainer = clipItems.TrackItems;
-    if (!trackItemsContainer) continue;
+    if (!trackItemsContainer) return [];
 
-    const trackItems = [].concat(trackItemsContainer.TrackItem || []);
+    return [].concat(trackItemsContainer.TrackItem || []);
+  }
 
+  // 클립 아이템에서 이름과 타임코드를 추출하는 헬퍼
+  function parseClipItem(tiRef) {
+    const vcti = resolve(tiRef, objectMap);
+    if (!vcti) return null;
+
+    const clipTrackItem = vcti.ClipTrackItem;
+    if (!clipTrackItem) return null;
+
+    let trackItemData = clipTrackItem.TrackItem;
+    if (Array.isArray(trackItemData)) trackItemData = trackItemData[0];
+    const startTicks = Number(trackItemData?.Start || 0);
+    const endTicks = Number(trackItemData?.End || 0);
+    if (endTicks === 0) return null;
+
+    let subClipRef = clipTrackItem.SubClip;
+    if (Array.isArray(subClipRef)) subClipRef = subClipRef[0];
+    const subClip = resolve(subClipRef, objectMap);
+    const name = subClip?.Name || null;
+
+    return { name, startTicks, endTicks };
+  }
+
+  // 1차: 중첩 시퀀스 이름 매치 (V1 트랙 우선)
+  const cuts = [];
+
+  for (let t = 0; t < tracks.length; t++) {
+    const trackItems = extractTrackItems(t);
     for (const tiRef of trackItems) {
-      const vcti = resolve(tiRef, objectMap);
-      if (!vcti) continue;
+      const parsed = parseClipItem(tiRef);
+      if (!parsed || !parsed.name) continue;
+      // 시퀀스 이름에 해당하는 것만 (조정 레이어, 그래픽 등 제외)
+      if (sequenceNames && !sequenceNames.has(parsed.name)) continue;
 
-      const clipTrackItem = vcti.ClipTrackItem;
-      if (!clipTrackItem) continue;
+      const startFrame = Math.round(parsed.startTicks / ticksPerFrame);
+      const endFrame = Math.round(parsed.endTicks / ticksPerFrame);
+      const startTime = Math.round((parsed.startTicks / DEFAULT_TICKS_PER_SECOND) * 1000) / 1000;
+      const endTime = Math.round((parsed.endTicks / DEFAULT_TICKS_PER_SECOND) * 1000) / 1000;
 
-      // Start/End는 ClipTrackItem.TrackItem 안에 있음 (배열일 수 있음)
-      let trackItemData = clipTrackItem.TrackItem;
-      if (Array.isArray(trackItemData)) trackItemData = trackItemData[0];
-      const startTicks = Number(trackItemData?.Start || 0);
-      const endTicks = Number(trackItemData?.End || 0);
-
-      if (endTicks === 0) continue;
-
-      // 이름: SubClip → resolve → Name (배열일 수 있음)
-      let subClipRef = clipTrackItem.SubClip;
-      if (Array.isArray(subClipRef)) subClipRef = subClipRef[0];
-      const subClip = resolve(subClipRef, objectMap);
-      const name = subClip?.Name || '?';
-
-      // 시퀀스 이름에 해당하는 것만 포함 (조정 레이어, 그래픽 등 제외)
-      if (sequenceNames && !sequenceNames.has(name)) continue;
-
-      const startFrame = Math.round(startTicks / ticksPerFrame);
-      const endFrame = Math.round(endTicks / ticksPerFrame);
-      const startTime = Math.round((startTicks / DEFAULT_TICKS_PER_SECOND) * 1000) / 1000;
-      const endTime = Math.round((endTicks / DEFAULT_TICKS_PER_SECOND) * 1000) / 1000;
-
-      cuts.push({ name, startFrame, endFrame, startTime, endTime });
+      cuts.push({ name: parsed.name, startFrame, endFrame, startTime, endTime });
     }
+  }
+
+  // 2차: 중첩 시퀀스가 없으면 → V1 트랙의 모든 클립을 sc001, sc002... 자동 넘버링
+  if (cuts.length === 0) {
+    logger.info('중첩 시퀀스 없음 → V1 클립 자동 넘버링 모드');
+
+    // 가장 아이템이 많은 트랙 사용 (보통 V1)
+    let bestTrackItems = [];
+    for (let t = 0; t < tracks.length; t++) {
+      const items = extractTrackItems(t);
+      if (items.length > bestTrackItems.length) {
+        bestTrackItems = items;
+      }
+    }
+
+    for (const tiRef of bestTrackItems) {
+      const parsed = parseClipItem(tiRef);
+      if (!parsed) continue;
+
+      const startFrame = Math.round(parsed.startTicks / ticksPerFrame);
+      const endFrame = Math.round(parsed.endTicks / ticksPerFrame);
+      const startTime = Math.round((parsed.startTicks / DEFAULT_TICKS_PER_SECOND) * 1000) / 1000;
+      const endTime = Math.round((parsed.endTicks / DEFAULT_TICKS_PER_SECOND) * 1000) / 1000;
+
+      cuts.push({ name: null, startFrame, endFrame, startTime, endTime });
+    }
+
+    // 시작 프레임 정렬 후 자동 넘버링
+    cuts.sort((a, b) => a.startFrame - b.startFrame);
+    cuts.forEach((cut, i) => {
+      cut.name = `sc${String(i + 1).padStart(3, '0')}`;
+    });
+
+    logger.info(`자동 넘버링: ${cuts.length}개 클립 → sc001~sc${String(cuts.length).padStart(3, '0')}`);
   }
 
   // 시작 프레임 기준 정렬
   cuts.sort((a, b) => a.startFrame - b.startFrame);
 
   if (cuts.length === 0) {
-    throw new Error('선택한 프로젝트에 중첩 시퀀스가 없습니다.');
+    throw new Error('선택한 프로젝트에서 클립을 찾을 수 없습니다.');
   }
 
   const lastCut = cuts[cuts.length - 1];
