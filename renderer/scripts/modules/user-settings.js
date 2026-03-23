@@ -181,7 +181,11 @@ export class UserSettings extends EventTarget {
       frameSkipAmount: 10, // Shift+화살표로 이동할 프레임 수
       secondSkipAmount: 1,  // Ctrl+화살표로 이동할 초 수
       // 협업 플렉서스 패널 표시 여부
-      showPlexusPanel: true
+      showPlexusPanel: true,
+      // 컷 마커 설정
+      showCutMarkers: true,
+      cutMarkerPosition: 'top-left',
+      cutMarkerFontSize: 'medium'
     };
 
     this._ready = false;
@@ -794,6 +798,30 @@ export class UserSettings extends EventTarget {
     this._save();
     this._emit('secondSkipAmountChanged', { amount: clampedAmount });
     log.info('초 이동량 변경됨', { amount: clampedAmount });
+  }
+
+  // ====== 범용 설정 접근 ======
+
+  /**
+   * 범용 설정값 가져오기
+   * @param {string} key - 설정 키
+   * @returns {any} 설정값
+   */
+  getSetting(key) {
+    return this.settings[key];
+  }
+
+  /**
+   * 범용 설정값 설정
+   * @param {string} key - 설정 키
+   * @param {any} value - 설정값
+   */
+  setSetting(key, value) {
+    if (this.settings[key] !== value) {
+      this.settings[key] = value;
+      this._save();
+      this._emit('settingChanged', { key, value });
+    }
   }
 
   /**
