@@ -10028,7 +10028,8 @@ body.audio-mode .frame-indicator {
 .cut-marker-overlay {
   position: absolute;
   z-index: 15;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: move;
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 26px;
   font-weight: bold;
@@ -10162,10 +10163,10 @@ body.audio-mode .frame-indicator {
 .cut-marker-toggle .toggle-slider {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 80, 80, 0.5);
   border-radius: 9px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.25s ease;
 }
 
 .cut-marker-toggle .toggle-slider::before {
@@ -10181,7 +10182,7 @@ body.audio-mode .frame-indicator {
 }
 
 .cut-marker-toggle input:checked + .toggle-slider {
-  background: var(--accent-primary, #4a9eff);
+  background: #4caf50;
 }
 
 .cut-marker-toggle input:checked + .toggle-slider::before {

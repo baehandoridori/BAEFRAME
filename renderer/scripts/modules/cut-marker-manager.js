@@ -83,6 +83,7 @@ class CutMarkerManager extends EventTarget {
     this._opacity = 0.8;
 
     this._loadSettings();
+    this._setupOverlayDrag();
 
     logger.info('CutMarkerManager 초기화');
   }
@@ -179,6 +180,69 @@ class CutMarkerManager extends EventTarget {
     // 표시/숨김
     this.overlayContainer.style.display =
       (this._visible && this.markers.length > 0) ? 'block' : 'none';
+
+    // 드래그 가능하게
+    this.overlayContainer.style.pointerEvents =
+      (this._visible && this.markers.length > 0) ? 'auto' : 'none';
+  }
+
+  // ============================================================
+  // Overlay Drag & Resize
+  // ============================================================
+
+  _setupOverlayDrag() {
+    if (!this.overlayContainer) return;
+    if (this._dragSetup) return;
+    this._dragSetup = true;
+
+    let isDragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    this.overlayContainer.style.cursor = 'move';
+
+    this.overlayContainer.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      isDragging = true;
+      const rect = this.overlayContainer.getBoundingClientRect();
+      offsetX = e.clientX - rect.left;
+      offsetY = e.clientY - rect.top;
+
+      // 위치 클래스 제거하고 자유 위치로 전환
+      for (const pos of POSITIONS) {
+        this.overlayContainer.classList.remove(`cut-marker-pos-${pos}`);
+      }
+      this.overlayContainer.style.transform = 'none';
+
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const parent = this.overlayContainer.offsetParent;
+      if (!parent) return;
+      const parentRect = parent.getBoundingClientRect();
+      const x = e.clientX - parentRect.left - offsetX;
+      const y = e.clientY - parentRect.top - offsetY;
+      this.overlayContainer.style.left = `${Math.max(0, x)}px`;
+      this.overlayContainer.style.top = `${Math.max(0, y)}px`;
+      this.overlayContainer.style.right = 'auto';
+      this.overlayContainer.style.bottom = 'auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    // 마우스 휠로 크기 조정
+    this.overlayContainer.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const currentSize = parseFloat(getComputedStyle(this.overlayContainer).fontSize) || 26;
+      const delta = e.deltaY > 0 ? -2 : 2;
+      const newSize = Math.max(10, Math.min(80, currentSize + delta));
+      this.overlayContainer.style.fontSize = `${newSize}px`;
+    }, { passive: false });
   }
 
   // ============================================================

@@ -8732,15 +8732,22 @@ async function initApp() {
     });
   }
 
-  // 설정 패널 초기값 반영
-  cutMarkerManager.addEventListener('imported', () => {
+  // 설정 패널 초기값 반영 (imported + loaded 둘 다)
+  function syncCutMarkerSettingsUI() {
     const s = cutMarkerManager.getSettings();
     if (cutMarkerToggleOverlay) cutMarkerToggleOverlay.checked = s.visible;
     if (cutMarkerToggleTimeline) cutMarkerToggleTimeline.checked = s.timelineVisible;
     if (cutMarkerPositionSelect) cutMarkerPositionSelect.value = s.position;
     if (cutMarkerSizeSelect) cutMarkerSizeSelect.value = s.fontSize;
     if (cutMarkerOpacityRange) cutMarkerOpacityRange.value = Math.round(s.opacity * 100);
+  }
+  cutMarkerManager.addEventListener('imported', () => {
+    syncCutMarkerSettingsUI();
     if (cutMarkerSettingsPanel) cutMarkerSettingsPanel.classList.add('visible');
+  });
+  // .bframe에서 컷 데이터 로드 시에도 UI 동기화
+  cutMarkerManager.addEventListener('loaded', () => {
+    syncCutMarkerSettingsUI();
   });
 
   if (cutMarkerToggleOverlay) {
@@ -8769,11 +8776,50 @@ async function initApp() {
     });
   }
 
-  // 설정 패널 닫기 버튼
+  // 설정 패널 닫기/접기 버튼
   const cutMarkerSettingsClose = document.getElementById('cutMarkerSettingsClose');
   if (cutMarkerSettingsClose) {
     cutMarkerSettingsClose.addEventListener('click', () => {
       if (cutMarkerSettingsPanel) cutMarkerSettingsPanel.classList.remove('visible');
+    });
+  }
+
+  // 설정 패널 드래그 이동
+  if (cutMarkerSettingsPanel) {
+    let isDraggingPanel = false;
+    let panelDragOffsetX = 0;
+    let panelDragOffsetY = 0;
+
+    const titleBar = cutMarkerSettingsPanel.querySelector('.settings-title');
+    if (titleBar) {
+      titleBar.style.cursor = 'grab';
+      titleBar.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.settings-close')) return;
+        isDraggingPanel = true;
+        const rect = cutMarkerSettingsPanel.getBoundingClientRect();
+        const parentRect = cutMarkerSettingsPanel.offsetParent?.getBoundingClientRect() || { left: 0, top: 0 };
+        panelDragOffsetX = e.clientX - rect.left;
+        panelDragOffsetY = e.clientY - rect.top;
+        titleBar.style.cursor = 'grabbing';
+        e.preventDefault();
+      });
+    }
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDraggingPanel) return;
+      const parentRect = cutMarkerSettingsPanel.offsetParent?.getBoundingClientRect() || { left: 0, top: 0 };
+      const newLeft = e.clientX - parentRect.left - panelDragOffsetX;
+      const newTop = e.clientY - parentRect.top - panelDragOffsetY;
+      cutMarkerSettingsPanel.style.right = 'auto';
+      cutMarkerSettingsPanel.style.left = `${Math.max(0, newLeft)}px`;
+      cutMarkerSettingsPanel.style.top = `${Math.max(0, newTop)}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isDraggingPanel) {
+        isDraggingPanel = false;
+        if (titleBar) titleBar.style.cursor = 'grab';
+      }
     });
   }
 
