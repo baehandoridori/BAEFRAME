@@ -10146,25 +10146,30 @@ body.audio-mode .frame-indicator {
   cursor: pointer;
 }
 
-/* 토글 스위치 — BAEframe 스타일 */
+/* 토글 스위치 — BAEframe 테마 색상 */
 .cut-marker-toggle {
   position: relative;
-  width: 34px;
-  height: 18px;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
   flex-shrink: 0;
+  vertical-align: middle;
 }
 
 .cut-marker-toggle input {
+  position: absolute;
   opacity: 0;
   width: 0;
   height: 0;
+  margin: 0;
+  padding: 0;
 }
 
 .cut-marker-toggle .toggle-slider {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(255, 80, 80, 0.5);
-  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
   cursor: pointer;
   transition: background 0.25s ease;
 }
@@ -10172,17 +10177,18 @@ body.audio-mode .frame-indicator {
 .cut-marker-toggle .toggle-slider::before {
   content: '';
   position: absolute;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   left: 2px;
-  bottom: 2px;
-  background: white;
+  top: 2px;
+  background: #fff;
   border-radius: 50%;
-  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.25s ease;
 }
 
 .cut-marker-toggle input:checked + .toggle-slider {
-  background: #4caf50;
+  background: var(--accent-primary, #4a9eff);
 }
 
 .cut-marker-toggle input:checked + .toggle-slider::before {

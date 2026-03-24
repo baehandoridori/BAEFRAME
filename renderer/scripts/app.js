@@ -8748,6 +8748,10 @@ async function initApp() {
   // .bframe에서 컷 데이터 로드 시에도 UI 동기화
   cutMarkerManager.addEventListener('loaded', () => {
     syncCutMarkerSettingsUI();
+    // 컷 데이터가 있으면 설정 패널 표시
+    if (cutMarkerManager.hasMarkers() && cutMarkerSettingsPanel) {
+      cutMarkerSettingsPanel.classList.add('visible');
+    }
   });
 
   if (cutMarkerToggleOverlay) {
