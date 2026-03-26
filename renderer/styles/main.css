@@ -7161,6 +7161,96 @@ body.resizing .comment-panel {
   padding-left: 16px;
 }
 
+/* 답글 수정/삭제 버튼 */
+.thread-reply-actions {
+  display: none;
+  margin-left: auto;
+  gap: 4px;
+}
+
+.thread-reply-item:hover .thread-reply-actions {
+  display: flex;
+}
+
+.thread-reply-action-btn {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.thread-reply-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.thread-reply-delete-btn:hover {
+  color: #ff5555;
+}
+
+/* 답글 수정 폼 */
+.thread-reply-edit-form {
+  margin-top: 4px;
+}
+
+.thread-reply-edit-editor {
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border-primary, #444);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  min-height: 40px;
+  max-height: 120px;
+  overflow-y: auto;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.thread-reply-edit-editor:focus {
+  border-color: var(--accent-primary, #ffd000);
+}
+
+.thread-reply-edit-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  justify-content: flex-end;
+}
+
+.thread-reply-edit-actions button {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.thread-reply-edit-save {
+  background: var(--accent-primary, #ffd000);
+  color: var(--bg-primary, #1a1a1a);
+  font-weight: 600;
+}
+
+.thread-reply-edit-save:hover {
+  background: var(--accent-hover, #ffe44d);
+}
+
+.thread-reply-edit-cancel {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+}
+
+.thread-reply-edit-cancel:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
 /* Thread Input Area */
 .thread-input-area {
   border-top: 1px solid var(--border-subtle);
@@ -10281,6 +10371,11 @@ body.audio-mode .frame-indicator {
 
 .mention-item-name {
   font-weight: 500;
+}
+
+.mention-highlight {
+  color: var(--accent-primary, #ffd000);
+  font-weight: 600;
 }
 
 /* ==========================================
