@@ -7762,8 +7762,13 @@ async function initApp() {
     // Strikethrough: ~text~
     html = html.replace(/~(.+?)~/g, '<s>$1</s>');
 
-    // Code: `code`
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Code: `code` — 플레이스홀더로 보호 (멘션 하이라이팅 방지)
+    const codePlaceholders = [];
+    html = html.replace(/`([^`]+)`/g, (_, code) => {
+      const placeholder = `\x00CODE_${codePlaceholders.length}\x00`;
+      codePlaceholders.push(`<code>${code}</code>`);
+      return placeholder;
+    });
 
     // Bullet list: - item
     html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
@@ -7773,6 +7778,11 @@ async function initApp() {
 
     // @멘션 하이라이팅
     html = html.replace(/@([\p{L}\p{N}]+)/gu, '<span class="mention-highlight">@$1</span>');
+
+    // 코드 블록 복원
+    codePlaceholders.forEach((code, i) => {
+      html = html.replace(`\x00CODE_${i}\x00`, code);
+    });
 
     // Line breaks
     html = html.replace(/\n/g, '<br>');
