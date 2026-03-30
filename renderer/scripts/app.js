@@ -25,6 +25,7 @@ import { getPlaylistManager } from './modules/playlist-manager.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
 import { getMentionManager } from './modules/mention-manager.js';
+import { TEAM_MEMBERS } from './modules/team-members.js';
 import { getSlackNotifier } from './modules/slack-notifier.js';
 
 const log = createLogger('App');
@@ -4908,13 +4909,13 @@ async function initApp() {
   }
 
   /**
-   * HTML 문자열 내 @멘션을 하이라이팅
-   * 이미 이스케이프된 HTML에서 동작 (태그 내부는 건드리지 않음)
+   * HTML 문자열 내 @멘션을 하이라이팅 (TEAM_MEMBERS 이름만)
    */
   function highlightMentions(html) {
     if (!html) return html;
-    // HTML 태그 밖에서만 @이름 패턴을 매칭
-    return html.replace(/(@(?:[\p{L}\p{N}]+))(?![^<]*>)/gu, '<span class="mention-highlight">$1</span>');
+    const names = TEAM_MEMBERS.map(m => m.name).sort((a, b) => b.length - a.length);
+    const pattern = new RegExp(`@(${names.join('|')})(?![\\p{L}\\p{N}])`, 'gu');
+    return html.replace(pattern, '<span class="mention-highlight">@$1</span>');
   }
 
   function updateFeedbackProgress(total, resolved) {
@@ -7776,8 +7777,10 @@ async function initApp() {
     // Clean up consecutive ul tags
     html = html.replace(/<\/ul>\s*<ul>/g, '');
 
-    // @멘션 하이라이팅
-    html = html.replace(/@([\p{L}\p{N}]+)/gu, '<span class="mention-highlight">@$1</span>');
+    // @멘션 하이라이팅 (TEAM_MEMBERS 이름만)
+    const names = TEAM_MEMBERS.map(m => m.name).sort((a, b) => b.length - a.length);
+    const mentionPattern = new RegExp(`@(${names.join('|')})(?![\\p{L}\\p{N}])`, 'gu');
+    html = html.replace(mentionPattern, '<span class="mention-highlight">@$1</span>');
 
     // 코드 블록 복원
     codePlaceholders.forEach((code, i) => {
