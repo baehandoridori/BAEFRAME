@@ -230,7 +230,7 @@
 
 /* 로딩 오버레이 */
 .light-mode .video-loading-overlay {
-  background: rgba(245, 245, 245, 0.85);
+  background: rgba(245, 245, 245, 0.8);
 }
 
 /* 코덱 에러 오버레이 */
@@ -6324,19 +6324,21 @@ body.resizing .comment-panel {
 
 .video-loading-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.85);
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.75);
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-radius: 8px;
   z-index: 100;
   opacity: 0;
   visibility: hidden;
+  pointer-events: none;
   transition: all 0.3s ease;
+  backdrop-filter: blur(4px);
 }
 
 .video-loading-overlay.active {
@@ -6345,13 +6347,13 @@ body.resizing .comment-panel {
 }
 
 .loading-spinner {
-  width: 48px;
-  height: 48px;
-  border: 3px solid var(--border-subtle);
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-subtle);
   border-top-color: var(--accent-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 @keyframes spin {
@@ -6361,17 +6363,18 @@ body.resizing .comment-panel {
 }
 
 .loading-text {
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text-secondary);
-  margin-bottom: 12px;
+  white-space: nowrap;
 }
 
 .loading-progress-bar {
-  width: 200px;
-  height: 4px;
+  width: 80px;
+  height: 3px;
   background: var(--bg-tertiary);
   border-radius: 2px;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .loading-progress-fill {

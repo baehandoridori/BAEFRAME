@@ -4019,7 +4019,7 @@ async function initApp() {
         loadingProgress.style.width = `${progress * 100}%`;
 
         if (phase === 1) {
-          loadingText.textContent = `썸네일 빠른 생성 중... (${current}/${total})`;
+          loadingText.textContent = `썸네일 생성 중... (${current}/${total})`;
         } else {
           loadingText.textContent = `썸네일 세부 생성 중... (${current}/${total})`;
         }
