@@ -139,7 +139,9 @@ export class CommentSync {
 
   _onReplyAdded(e) {
     if (this._isRemoteUpdate) return;
-    const { markerId, reply } = e.detail || {};
+    const detail = e.detail || {};
+    const markerId = detail.markerId || detail.marker?.id;
+    const reply = detail.reply;
     if (!markerId || !reply) return;
 
     this._lm.broadcastEvent({
@@ -159,7 +161,10 @@ export class CommentSync {
 
   _onReplyUpdated(e) {
     if (this._isRemoteUpdate) return;
-    const { markerId, replyId, updates } = e.detail || {};
+    const detail = e.detail || {};
+    const markerId = detail.markerId || detail.marker?.id;
+    const replyId = detail.replyId;
+    const updates = detail.updates;
     if (!markerId || !replyId) return;
 
     this._lm.broadcastEvent({
@@ -172,7 +177,9 @@ export class CommentSync {
 
   _onReplyDeleted(e) {
     if (this._isRemoteUpdate) return;
-    const { markerId, replyId } = e.detail || {};
+    const detail = e.detail || {};
+    const markerId = detail.markerId || detail.marker?.id;
+    const replyId = detail.replyId;
     if (!markerId || !replyId) return;
 
     this._lm.broadcastEvent({
