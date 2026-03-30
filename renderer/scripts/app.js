@@ -5031,15 +5031,31 @@ async function initApp() {
       const markerAuthorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
-      const repliesHtml = (marker.replies || []).map(reply => `
-        <div class="comment-reply">
+      const repliesHtml = (marker.replies || []).map(reply => {
+        const canEditReply = commentManager.canEdit(reply);
+        return `
+        <div class="comment-reply" data-reply-id="${reply.id}" data-marker-id="${marker.id}">
           <div class="comment-reply-header">
             <span class="comment-reply-author ${getAuthorColorClass(reply.author)}" ${getAuthorColorStyle(reply.author)}>${highlightCommentSearchMatches(reply.author, normalizedSearch)}</span>
             <span class="comment-reply-time">${formatRelativeTime(reply.createdAt)}</span>
+            ${canEditReply ? `
+            <div class="comment-reply-actions">
+              <button class="comment-reply-action-btn comment-reply-edit-btn" title="수정">수정</button>
+              <button class="comment-reply-action-btn comment-reply-delete-btn" title="삭제">삭제</button>
+            </div>
+            ` : ''}
           </div>
           <p class="comment-reply-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch)))}</p>
+          <div class="comment-reply-edit-form" style="display: none;">
+            <textarea class="comment-reply-edit-textarea" rows="2">${escapeHtml(reply.text)}</textarea>
+            <div class="comment-reply-edit-actions">
+              <button class="comment-reply-edit-save">저장</button>
+              <button class="comment-reply-edit-cancel">취소</button>
+            </div>
+          </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
 
       // 썸네일 URL 가져오기
       const markerTime = marker.startFrame / videoPlayer.fps;
@@ -5349,6 +5365,59 @@ async function initApp() {
           e.stopPropagation();
           replySubmit?.click();
         }
+      });
+
+      // 답글 수정/삭제 이벤트 바인딩
+      item.querySelectorAll('.comment-reply').forEach(replyEl => {
+        const replyId = replyEl.dataset.replyId;
+        const markerId = replyEl.dataset.markerId;
+        if (!replyId) return;
+
+        const replyTextEl = replyEl.querySelector('.comment-reply-text');
+        const editForm = replyEl.querySelector('.comment-reply-edit-form');
+        const editTextarea = replyEl.querySelector('.comment-reply-edit-textarea');
+
+        // 수정 버튼
+        replyEl.querySelector('.comment-reply-edit-btn')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          replyTextEl.style.display = 'none';
+          editForm.style.display = 'block';
+          mentionManager.attach(editTextarea);
+          editTextarea.focus();
+        });
+
+        // 수정 저장
+        replyEl.querySelector('.comment-reply-edit-save')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const newText = editTextarea.value.trim();
+          if (!newText) return;
+          const success = commentManager.updateReply(markerId, replyId, { text: newText });
+          if (success) {
+            updateCommentList(getActiveCommentFilter());
+            showToast('답글이 수정되었습니다.', 'success');
+          }
+        });
+
+        // 수정 취소
+        replyEl.querySelector('.comment-reply-edit-cancel')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          editForm.style.display = 'none';
+          replyTextEl.style.display = '';
+          const marker = commentManager.getMarker(markerId);
+          const reply = marker?.replies?.find(r => r.id === replyId);
+          if (reply) editTextarea.value = reply.text;
+        });
+
+        // 삭제 버튼
+        replyEl.querySelector('.comment-reply-delete-btn')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!confirm('이 답글을 삭제하시겠습니까?')) return;
+          const success = commentManager.deleteReply(markerId, replyId);
+          if (success) {
+            updateCommentList(getActiveCommentFilter());
+            showToast('답글이 삭제되었습니다.', 'success');
+          }
+        });
       });
     });
 
