@@ -5112,9 +5112,18 @@ async function initApp() {
         ` : ''}
         <div class="comment-replies${expandedIds.has(marker.id) ? ' expanded' : ''}" data-marker-id="${marker.id}">
           ${repliesHtml}
+          <div class="comment-reply-image-preview" style="display: none;">
+            <img class="comment-reply-preview-img" src="" alt="첨부 이미지">
+            <button class="comment-reply-image-remove" title="이미지 제거">✕</button>
+          </div>
           <div class="comment-reply-input-wrapper">
-            <textarea class="comment-reply-input" placeholder="답글 입력..." rows="1"></textarea>
-            <button class="comment-reply-submit">전송</button>
+            <textarea class="comment-reply-input" placeholder="답글 입력... (Ctrl+V로 이미지 붙여넣기)" rows="1"></textarea>
+            <div class="comment-reply-input-actions">
+              <button class="comment-reply-image-btn" title="이미지 첨부">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              </button>
+              <button class="comment-reply-submit">전송</button>
+            </div>
           </div>
         </div>
       </div>
@@ -5326,9 +5335,54 @@ async function initApp() {
       const replyBtn = item.querySelector('.reply-btn');
       const replyInput = item.querySelector('.comment-reply-input');
       const replySubmit = item.querySelector('.comment-reply-submit');
+      const replyImageBtn = item.querySelector('.comment-reply-image-btn');
+      const replyImagePreview = item.querySelector('.comment-reply-image-preview');
+      const replyPreviewImg = item.querySelector('.comment-reply-preview-img');
+      const replyImageRemove = item.querySelector('.comment-reply-image-remove');
+
+      // 인라인 답글 이미지 상태
+      let pendingReplyImage = null;
+
+      function showReplyImagePreview(imageData) {
+        pendingReplyImage = imageData;
+        replyPreviewImg.src = imageData.base64;
+        replyImagePreview.style.display = 'block';
+      }
+
+      function clearReplyImage() {
+        pendingReplyImage = null;
+        if (replyPreviewImg) replyPreviewImg.src = '';
+        if (replyImagePreview) replyImagePreview.style.display = 'none';
+      }
 
       // 인라인 답글 textarea에 멘션 자동완성 부착
       if (replyInput) mentionManager.attach(replyInput);
+
+      // 답글 이미지 버튼 클릭
+      replyImageBtn?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const imageData = await selectImageFile();
+        if (imageData) {
+          showReplyImagePreview(imageData);
+          showToast('이미지가 첨부되었습니다', 'success');
+        }
+      });
+
+      // 답글 이미지 제거
+      replyImageRemove?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearReplyImage();
+      });
+
+      // 답글 이미지 붙여넣기
+      replyInput?.addEventListener('paste', async (e) => {
+        const imageData = await getImageFromClipboard(e);
+        if (imageData) {
+          e.preventDefault();
+          showReplyImagePreview(imageData);
+          showToast('이미지가 첨부되었습니다', 'success');
+        }
+      });
 
       // 스레드 토글 버튼
       threadToggle?.addEventListener('click', (e) => {
@@ -5347,15 +5401,33 @@ async function initApp() {
         replyInput?.focus();
       });
 
-      // 답글 제출
+      // 답글 제출 (이미지 포함)
       replySubmit?.addEventListener('click', (e) => {
         e.stopPropagation();
         const replyText = replyInput.value.trim();
-        if (replyText) {
-          commentManager.addReplyToMarker(item.dataset.markerId, replyText);
-          replyInput.value = '';
-          showToast('답글이 추가되었습니다.', 'success');
+        const hasImage = pendingReplyImage && pendingReplyImage.base64;
+        if (!replyText && !hasImage) return;
+
+        const marker = commentManager.getMarker(item.dataset.markerId);
+        if (!marker) return;
+
+        const replyData = {
+          text: replyText || '',
+          author: commentManager.getAuthor()
+        };
+        if (hasImage) {
+          replyData.image = pendingReplyImage.base64;
+          replyData.imageWidth = pendingReplyImage.width;
+          replyData.imageHeight = pendingReplyImage.height;
         }
+
+        const newReply = marker.addReply(replyData);
+        commentManager._emit('replyAdded', { marker, reply: newReply });
+        commentManager._emit('markersChanged');
+
+        replyInput.value = '';
+        clearReplyImage();
+        showToast('답글이 추가되었습니다.', 'success');
       });
 
       // Enter로 답글 제출

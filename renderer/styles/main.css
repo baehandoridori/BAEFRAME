@@ -6307,12 +6307,6 @@ body.resizing .comment-panel {
   background: rgba(255, 255, 255, 0.15);
 }
 
-.comment-reply-input-wrapper {
-  margin-top: 10px;
-  display: flex;
-  gap: 8px;
-}
-
 .comment-reply-input {
   flex: 1;
   padding: 8px 10px;
@@ -6344,6 +6338,77 @@ body.resizing .comment-panel {
 
 .comment-reply-submit:hover {
   background: var(--accent-secondary);
+}
+
+/* 인라인 답글 이미지 첨부 */
+.comment-reply-input-wrapper {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.comment-reply-input-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.comment-reply-image-btn {
+  padding: 6px;
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.comment-reply-image-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
+.comment-reply-image-preview {
+  position: relative;
+  margin-bottom: 6px;
+  max-width: 120px;
+}
+
+.comment-reply-preview-img {
+  max-width: 120px;
+  max-height: 80px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  object-fit: cover;
+}
+
+.comment-reply-image-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+
+.comment-reply-image-remove:hover {
+  background: #ff5555;
+  color: white;
+  border-color: #ff5555;
 }
 
 /* 마커 답글 표시 */
