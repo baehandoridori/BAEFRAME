@@ -26,6 +26,8 @@ import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
 import { getMentionManager } from './modules/mention-manager.js';
 import { getSlackNotifier } from './modules/slack-notifier.js';
+import { getRecentFilesManager } from './modules/recent-files-manager.js';
+import * as recentFilesView from './modules/recent-files-view.js';
 
 const log = createLogger('App');
 
@@ -179,7 +181,11 @@ async function initApp() {
 
     // 협업 플렉서스 패널
     collabPlexusPanel: document.getElementById('collabPlexusPanel'),
-    collabPlexusCanvas: document.getElementById('collabPlexusCanvas')
+    collabPlexusCanvas: document.getElementById('collabPlexusCanvas'),
+    // 최근 파일
+    btnRecentFiles: document.getElementById('btnRecentFiles'),
+    recentDropdownMenu: document.getElementById('recentDropdownMenu'),
+    recentFilesSection: document.getElementById('recentFilesSection')
   };
 
   // 상태
@@ -400,6 +406,80 @@ async function initApp() {
 
   // 사용자 설정
   const userSettings = getUserSettings();
+
+  // ====== 최근 파일 매니저 초기화 ======
+  const recentFilesManager = getRecentFilesManager();
+
+  // 빈 상태 & 드롭다운 재렌더링 헬퍼
+  function renderRecentFiles() {
+    const items = recentFilesManager.getCached();
+    recentFilesView.renderEmptyState(elements.recentFilesSection, items);
+    if (elements.recentDropdownMenu.classList.contains('open')) {
+      recentFilesView.renderDropdown(elements.recentDropdownMenu, items);
+    }
+  }
+
+  // 공통 핸들러 (빈 상태와 드롭다운 둘 다 공유)
+  const recentHandlers = {
+    onOpen: async ({ path, missing }) => {
+      if (missing) {
+        if (confirm('파일을 찾을 수 없습니다. 목록에서 제거할까요?')) {
+          const items = recentFilesManager.getCached();
+          const match = items.find(i => i.path === path);
+          if (match) await recentFilesManager.remove(match.id);
+        }
+        return;
+      }
+      // 드롭다운 닫기
+      elements.recentDropdownMenu.classList.remove('open');
+      elements.btnRecentFiles?.classList.remove('active');
+      await loadVideo(path);
+    },
+    onPin: async (id) => {
+      try {
+        await recentFilesManager.togglePin(id);
+      } catch (err) {
+        showToast(err.message || '고정 실패', 'error');
+      }
+    },
+    onRemove: async (id) => {
+      await recentFilesManager.remove(id);
+    },
+    onClearAll: async () => {
+      if (confirm('최근 파일 목록을 모두 지울까요?')) {
+        await recentFilesManager.clear();
+      }
+    },
+    onLoadMore: () => {
+      showToast('더 많은 항목은 헤더의 최근 파일 버튼에서 확인하세요.', 'info');
+    },
+    onOpenOther: async () => {
+      elements.recentDropdownMenu.classList.remove('open');
+      elements.btnRecentFiles?.classList.remove('active');
+      try {
+        const result = await window.electronAPI.openFileDialog();
+        if (!result.canceled && result.filePaths.length > 0) {
+          await loadVideo(result.filePaths[0]);
+        }
+      } catch (error) {
+        showToast('파일을 열 수 없습니다.', 'error');
+      }
+    }
+  };
+
+  // 이벤트 위임 바인딩 (두 컨테이너 모두)
+  if (elements.recentFilesSection) {
+    recentFilesView.bindEvents(elements.recentFilesSection, recentHandlers);
+  }
+  if (elements.recentDropdownMenu) {
+    recentFilesView.bindEvents(elements.recentDropdownMenu, recentHandlers);
+  }
+
+  // 매니저 updated 이벤트 구독
+  recentFilesManager.addEventListener('updated', renderRecentFiles);
+
+  // 초기 로드
+  recentFilesManager.refresh();
 
   // ====== 단축키 힌트 동적 업데이트 ======
 
@@ -1023,6 +1103,39 @@ async function initApp() {
     } catch (error) {
       log.error('파일 열기 실패', error);
       showToast('파일을 열 수 없습니다.', 'error');
+    }
+  });
+
+  // 헤더 최근 파일 버튼 토글
+  elements.btnRecentFiles?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = elements.recentDropdownMenu;
+    const isOpen = menu.classList.contains('open');
+    if (isOpen) {
+      menu.classList.remove('open');
+      elements.btnRecentFiles.classList.remove('active');
+    } else {
+      recentFilesView.renderDropdown(menu, recentFilesManager.getCached());
+      menu.classList.add('open');
+      elements.btnRecentFiles.classList.add('active');
+    }
+  });
+
+  // 바깥 클릭으로 드롭다운 닫기
+  document.addEventListener('click', (e) => {
+    const menu = elements.recentDropdownMenu;
+    if (!menu || !menu.classList.contains('open')) return;
+    if (menu.contains(e.target)) return;
+    if (elements.btnRecentFiles?.contains(e.target)) return;
+    menu.classList.remove('open');
+    elements.btnRecentFiles?.classList.remove('active');
+  });
+
+  // Esc로 드롭다운 닫기
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && elements.recentDropdownMenu?.classList.contains('open')) {
+      elements.recentDropdownMenu.classList.remove('open');
+      elements.btnRecentFiles?.classList.remove('active');
     }
   });
 
@@ -3951,6 +4064,20 @@ async function initApp() {
 
       // 댓글 범위 렌더링
       renderCommentRanges();
+
+      // ====== 최근 파일 목록에 추가 ======
+      try {
+        recentFilesManager.add({
+          path: filePath,
+          name: fileInfo.name,
+          dir: fileInfo.dir,
+          ext: fileInfo.ext,
+          size: fileInfo.size,
+          duration: videoPlayer.duration || 0
+        });
+      } catch (recErr) {
+        log.warn('최근 파일 기록 실패', { error: recErr.message });
+      }
 
       trace.end({ filePath, hasExistingData });
 
