@@ -5025,6 +5025,11 @@ async function initApp() {
     const thumbnailScale = userSettings.getCommentThumbnailScale();
     const thumbnailGenerator = getThumbnailGenerator();
 
+    // 재렌더링 전: 기존 요소들의 mentionManager 핸들러 정리 (메모리 누수 방지)
+    container.querySelectorAll('.comment-reply-input, .comment-reply-edit-textarea').forEach(el => {
+      mentionManager.detach(el);
+    });
+
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
       const authorStyle = getAuthorColorStyle(marker.author);

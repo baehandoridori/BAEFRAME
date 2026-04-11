@@ -147,6 +147,8 @@ export class ReviewDataManager extends EventTarget {
       this.commentManager.addEventListener('markerUpdated', this._onDataChanged);
       this.commentManager.addEventListener('markerDeleted', this._onDataChanged);
       this.commentManager.addEventListener('replyAdded', this._onDataChanged);
+      this.commentManager.addEventListener('replyUpdated', this._onDataChanged);
+      this.commentManager.addEventListener('replyDeleted', this._onDataChanged);
       this.commentManager.addEventListener('layerAdded', this._onDataChanged);
       this.commentManager.addEventListener('layerRemoved', this._onDataChanged);
     }
@@ -178,6 +180,8 @@ export class ReviewDataManager extends EventTarget {
       this.commentManager.removeEventListener('markerUpdated', this._onDataChanged);
       this.commentManager.removeEventListener('markerDeleted', this._onDataChanged);
       this.commentManager.removeEventListener('replyAdded', this._onDataChanged);
+      this.commentManager.removeEventListener('replyUpdated', this._onDataChanged);
+      this.commentManager.removeEventListener('replyDeleted', this._onDataChanged);
       this.commentManager.removeEventListener('layerAdded', this._onDataChanged);
       this.commentManager.removeEventListener('layerRemoved', this._onDataChanged);
     }
