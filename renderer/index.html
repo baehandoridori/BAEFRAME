@@ -17,6 +17,18 @@
         <div class="logo-icon">B</div>
         <span>baeframe</span>
       </div>
+      <button id="btnRecentFiles" title="최근 파일" aria-label="최근 파일 열기">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      <div class="recent-dropdown-menu" id="recentDropdownMenu" role="menu" aria-label="최근 파일">
+        <!-- renderDropdown()으로 동적 채움 -->
+      </div>
       <div class="file-info" id="fileInfo">
         <span class="file-icon">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -281,6 +293,9 @@
                 </svg>
                 파일 열기
               </button>
+              <section id="recentFilesSection" aria-label="최근 파일" style="display: none;">
+                <!-- renderEmptyState()으로 동적 채움 -->
+              </section>
             </div>
           </div>
 
