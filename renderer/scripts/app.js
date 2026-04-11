@@ -5165,7 +5165,7 @@ async function initApp() {
             </div>
             ` : ''}
           </div>
-          ${reply.text ? `<p class="comment-reply-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch)))}</p>` : ''}
+          <p class="comment-reply-text">${reply.text ? highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch))) : ''}</p>
           ${reply.image ? `<div class="comment-attached-image"><img src="${reply.image}" alt="첨부 이미지" data-full-image="${reply.image}"></div>` : ''}
         </div>
       `;
@@ -8106,7 +8106,10 @@ async function initApp() {
     threadReplyCount.style.display = 'flex';
 
     // UI 업데이트 - 새 답글 추가 (XSS 방지: author 필드 이스케이프)
-    threadReplies.innerHTML += `
+    // 주의: innerHTML += 를 쓰면 기존 DOM이 재파싱되면서 이벤트 리스너가
+    //       사라지고 data-bound 속성은 남아 이전 답글의 수정/삭제가 먹통됨
+    //       → insertAdjacentHTML로 기존 노드를 건드리지 않고 append
+    threadReplies.insertAdjacentHTML('beforeend', `
       <div class="thread-reply-item" data-reply-id="${newReply.id}">
         <div class="thread-reply-avatar">${escapeHtml(newReply.author.charAt(0))}</div>
         <div class="thread-reply-content">
@@ -8122,9 +8125,9 @@ async function initApp() {
           ${newReply.image ? `<div class="thread-reply-image"><img src="${newReply.image}" alt="첨부 이미지" data-full-image="${newReply.image}"></div>` : ''}
         </div>
       </div>
-    `;
+    `);
 
-    // 새 답글 수정/삭제 이벤트 바인딩
+    // 새 답글에만 이벤트 바인딩 (기존 답글은 data-bound로 스킵)
     bindThreadReplyActions(currentThreadMarkerId);
 
     // 에디터 및 이미지 초기화

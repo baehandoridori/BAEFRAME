@@ -6219,6 +6219,12 @@ body.resizing .comment-panel {
   white-space: pre-wrap;
 }
 
+/* 이미지만 있는 답글: 빈 텍스트 컨테이너는 높이를 차지하지 않음 */
+/* (수정 시 startReplyEdit가 querySelector로 찾을 수 있도록 DOM에는 존재) */
+.comment-reply-text:empty {
+  display: none;
+}
+
 /* 댓글 패널 답글 수정/삭제 버튼 */
 .comment-reply-actions {
   display: none;
