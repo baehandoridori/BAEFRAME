@@ -390,6 +390,18 @@ if (!gotTheLock) {
 
     setupIpcHandlers();
 
+    // 최근 파일 목록 정리 (경로가 없어진 항목 제거)
+    // 비동기로 실행하고 실패해도 앱 시작을 막지 않는다
+    setImmediate(async () => {
+      try {
+        const { pruneMissingRecentFiles } = require('./ipc-handlers');
+        const result = await pruneMissingRecentFiles();
+        log.info('시작 시 pruneMissing 완료', result);
+      } catch (err) {
+        log.warn('시작 시 pruneMissing 실패', { error: err.message });
+      }
+    });
+
     // 메인 윈도우 생성
     debugLog('메인 윈도우 생성 중...');
     createMainWindow();
