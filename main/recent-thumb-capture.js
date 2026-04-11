@@ -27,6 +27,9 @@ async function ensureThumbDir(userDataPath) {
 }
 
 function getThumbPath(userDataPath, id) {
+  if (!/^[0-9a-f]{40}$/.test(id)) {
+    throw new Error('Invalid thumbnail id');
+  }
   return path.join(userDataPath, 'recent-thumbs', `${id}.jpg`);
 }
 

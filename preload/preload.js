@@ -85,11 +85,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recentCaptureThumb: (videoPath, id, durationSec) =>
     ipcRenderer.invoke('recent:captureThumb', videoPath, id, durationSec),
   recentGetThumbUrl: (id) => ipcRenderer.invoke('recent:getThumbUrl', id),
-  onRecentUpdated: (callback) => {
-    const handler = (event, data) => callback(data);
-    ipcRenderer.on('recent:updated', handler);
-    return () => ipcRenderer.removeListener('recent:updated', handler);
-  },
 
   // ====== 로그 관련 ======
   writeLog: (logData) => ipcRenderer.send('log:write', logData),
