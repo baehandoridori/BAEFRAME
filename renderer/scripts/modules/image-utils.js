@@ -169,6 +169,21 @@ export async function createThumbnail(base64, size = IMAGE_CONFIG.thumbnailSize)
 }
 
 /**
+ * 클립보드 이벤트에 이미지가 포함되어 있는지 동기적으로 확인
+ * paste 이벤트 핸들러에서 preventDefault를 즉시 호출하기 위해 사용
+ * @param {ClipboardEvent} event
+ * @returns {boolean}
+ */
+export function hasImageInClipboard(event) {
+  const items = event.clipboardData?.items;
+  if (!items) return false;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) return true;
+  }
+  return false;
+}
+
+/**
  * 클립보드에서 이미지 가져오기
  * @param {ClipboardEvent} event - 붙여넣기 이벤트
  * @returns {Promise<{base64: string, width: number, height: number}|null>}

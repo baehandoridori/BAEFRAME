@@ -16,7 +16,7 @@ import { getUserSettings } from './modules/user-settings.js';
 import { getAuthManager } from './modules/auth-manager.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
-import { getImageFromClipboard, selectImageFile, isValidImageBase64 } from './modules/image-utils.js';
+import { getImageFromClipboard, hasImageInClipboard, selectImageFile, isValidImageBase64 } from './modules/image-utils.js';
 import { parseVersion, toVersionInfo } from './modules/version-parser.js';
 import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
@@ -1257,13 +1257,16 @@ async function initApp() {
   }
 
   // 댓글 입력창 이미지 붙여넣기
+  // 이미지가 있으면 동기적으로 preventDefault (async await 이후엔 이미 늦음)
   elements.commentInput.addEventListener('paste', async (e) => {
     // 드라이브 경로 자동 따옴표
     if (handleDrivePathPaste(e)) return;
 
+    if (!hasImageInClipboard(e)) return;
+    e.preventDefault();
+
     const imageData = await getImageFromClipboard(e);
     if (imageData) {
-      e.preventDefault();
       showCommentImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
     }
@@ -5486,10 +5489,13 @@ async function initApp() {
       });
 
       // 답글 이미지 붙여넣기
+      // 주의: async 핸들러의 await 이후 preventDefault는 이미 늦어서 무효함
+      //       → 이미지 유무를 먼저 동기 체크 후 즉시 preventDefault
       replyInput?.addEventListener('paste', async (e) => {
+        if (!hasImageInClipboard(e)) return;
+        e.preventDefault();
         const imageData = await getImageFromClipboard(e);
         if (imageData) {
-          e.preventDefault();
           showReplyImagePreview(imageData);
           showToast('이미지가 첨부되었습니다', 'success');
         }
@@ -8215,13 +8221,16 @@ async function initApp() {
   });
 
   // 스레드 에디터 이미지 붙여넣기
+  // 이미지가 있으면 동기적으로 preventDefault (async await 이후엔 이미 늦음)
   threadEditor?.addEventListener('paste', async (e) => {
     // 드라이브 경로 자동 따옴표
     if (handleDrivePathPaste(e)) return;
 
+    if (!hasImageInClipboard(e)) return;
+    e.preventDefault();
+
     const imageData = await getImageFromClipboard(e);
     if (imageData) {
-      e.preventDefault();
       showThreadImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
     }
