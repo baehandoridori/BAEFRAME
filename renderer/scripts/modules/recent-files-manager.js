@@ -75,6 +75,7 @@ export class RecentFilesManager extends EventTarget {
       await this.refresh();
       return result;
     } catch (err) {
+      log.warn('recent togglePin 실패', { error: err.message });
       throw err;
     }
   }

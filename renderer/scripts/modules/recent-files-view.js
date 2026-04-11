@@ -204,8 +204,7 @@ async function _loadThumbnails(root) {
       } else {
         const parent = img.parentElement;
         if (parent) {
-          parent.innerHTML = SVG.film;
-          parent.classList.add('recent-card-thumb-fallback');
+          parent.innerHTML = `<div class="recent-card-thumb-fallback">${SVG.film}</div>`;
         }
       }
     } catch (e) {
@@ -262,7 +261,7 @@ export function bindEvents(container, handlers = {}) {
   });
 
   container.addEventListener('keydown', (e) => {
-    const card = e.target.closest?.('.recent-card');
+    const card = e.target.closest('.recent-card');
     if (!card) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
