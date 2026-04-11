@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
+    "test:recent": "node --test scripts/tests/recent-files-store.test.js",
     "bundle:liveblocks": "esbuild ./node_modules/@liveblocks/client/dist/index.js --bundle --format=esm --outfile=renderer/scripts/lib/liveblocks-client.js",
     "postinstall": "npm run bundle:liveblocks"
   },
