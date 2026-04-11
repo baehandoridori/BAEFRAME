@@ -4066,18 +4066,15 @@ async function initApp() {
       renderCommentRanges();
 
       // ====== 최근 파일 목록에 추가 ======
-      try {
-        recentFilesManager.add({
-          path: filePath,
-          name: fileInfo.name,
-          dir: fileInfo.dir,
-          ext: fileInfo.ext,
-          size: fileInfo.size,
-          duration: videoPlayer.duration || 0
-        });
-      } catch (recErr) {
-        log.warn('최근 파일 기록 실패', { error: recErr.message });
-      }
+      // fire-and-forget: manager 내부에서 자체 에러 처리함
+      recentFilesManager.add({
+        path: filePath,
+        name: fileInfo.name,
+        dir: fileInfo.dir,
+        ext: fileInfo.ext,
+        size: fileInfo.size,
+        duration: videoPlayer.duration || 0
+      });
 
       trace.end({ filePath, hasExistingData });
 
