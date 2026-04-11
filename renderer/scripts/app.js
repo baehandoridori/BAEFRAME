@@ -4910,12 +4910,112 @@ async function initApp() {
 
   /**
    * HTML 문자열 내 @멘션을 하이라이팅 (TEAM_MEMBERS 이름만)
+   * 정규식은 모듈 로드 시 1회만 빌드 (성능 최적화)
    */
+  const _MENTION_PATTERN = (() => {
+    const names = TEAM_MEMBERS.map(m => m.name).sort((a, b) => b.length - a.length);
+    return new RegExp(`@(${names.join('|')})(?![\\p{L}\\p{N}])`, 'gu');
+  })();
+
   function highlightMentions(html) {
     if (!html) return html;
-    const names = TEAM_MEMBERS.map(m => m.name).sort((a, b) => b.length - a.length);
-    const pattern = new RegExp(`@(${names.join('|')})(?![\\p{L}\\p{N}])`, 'gu');
-    return html.replace(pattern, '<span class="mention-highlight">@$1</span>');
+    // replace는 stateful하지 않도록 lastIndex 리셋
+    _MENTION_PATTERN.lastIndex = 0;
+    return html.replace(_MENTION_PATTERN, '<span class="mention-highlight">@$1</span>');
+  }
+
+  /**
+   * 답글 수정 모드 시작 (편집 폼을 on-demand로 생성)
+   * @param {HTMLElement} replyItem - 답글 DOM 요소
+   * @param {string} markerId
+   * @param {string} replyId
+   * @param {object} config - UI 구성
+   * @param {Function} onSaved - 저장 성공 후 콜백 (newText: string) => void
+   */
+  function startReplyEdit(replyItem, markerId, replyId, config, onSaved) {
+    const textEl = replyItem.querySelector(config.textSelector);
+    if (!textEl) return;
+
+    // 이미 편집 중이면 무시
+    if (replyItem.querySelector('.' + config.formClass)) return;
+
+    const marker = commentManager.getMarker(markerId);
+    const reply = marker?.replies?.find(r => r.id === replyId);
+    if (!reply) return;
+
+    // 편집 폼 동적 생성
+    const form = document.createElement('div');
+    form.className = config.formClass;
+
+    let editor;
+    if (config.editorType === 'textarea') {
+      editor = document.createElement('textarea');
+      editor.rows = 2;
+      editor.value = reply.text;
+    } else {
+      editor = document.createElement('div');
+      editor.contentEditable = 'true';
+      editor.textContent = reply.text;
+    }
+    editor.className = config.editorClass;
+
+    const actions = document.createElement('div');
+    actions.className = config.actionsClass;
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = config.saveClass;
+    saveBtn.textContent = '저장';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = config.cancelClass;
+    cancelBtn.textContent = '취소';
+
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+    form.appendChild(editor);
+    form.appendChild(actions);
+
+    // 텍스트 숨기고 폼 삽입
+    textEl.style.display = 'none';
+    textEl.insertAdjacentElement('afterend', form);
+
+    mentionManager.attach(editor);
+    editor.focus();
+
+    const cleanup = () => {
+      mentionManager.detach(editor);
+      form.remove();
+      textEl.style.display = '';
+    };
+
+    saveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const newText = (config.editorType === 'textarea' ? editor.value : editor.innerText).trim();
+      if (!newText) return;
+      const success = commentManager.updateReply(markerId, replyId, { text: newText });
+      if (success) {
+        cleanup();
+        onSaved(newText);
+        showToast('답글이 수정되었습니다.', 'success');
+      }
+    });
+
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cleanup();
+    });
+  }
+
+  /**
+   * 답글 삭제 (확인 후 실행)
+   */
+  function handleReplyDelete(markerId, replyId, onDeleted) {
+    if (!confirm('이 답글을 삭제하시겠습니까?')) return;
+    const success = commentManager.deleteReply(markerId, replyId);
+    if (success) {
+      onDeleted();
+      showToast('답글이 삭제되었습니다.', 'success');
+    }
   }
 
   function updateFeedbackProgress(total, resolved) {
@@ -5051,13 +5151,6 @@ async function initApp() {
             ` : ''}
           </div>
           <p class="comment-reply-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch)))}</p>
-          <div class="comment-reply-edit-form" style="display: none;">
-            <textarea class="comment-reply-edit-textarea" rows="2">${escapeHtml(reply.text)}</textarea>
-            <div class="comment-reply-edit-actions">
-              <button class="comment-reply-edit-save">저장</button>
-              <button class="comment-reply-edit-cancel">취소</button>
-            </div>
-          </div>
         </div>
       `;
       }).join('');
@@ -5444,56 +5537,35 @@ async function initApp() {
         }
       });
 
-      // 답글 수정/삭제 이벤트 바인딩
+      // 답글 수정/삭제 이벤트 바인딩 (공통 헬퍼 사용)
+      const inlineEditConfig = {
+        textSelector: '.comment-reply-text',
+        editorType: 'textarea',
+        editorClass: 'comment-reply-edit-textarea',
+        formClass: 'comment-reply-edit-form',
+        actionsClass: 'comment-reply-edit-actions',
+        saveClass: 'comment-reply-edit-save',
+        cancelClass: 'comment-reply-edit-cancel'
+      };
+
       item.querySelectorAll('.comment-reply').forEach(replyEl => {
         const replyId = replyEl.dataset.replyId;
         const markerId = replyEl.dataset.markerId;
         if (!replyId) return;
 
-        const replyTextEl = replyEl.querySelector('.comment-reply-text');
-        const editForm = replyEl.querySelector('.comment-reply-edit-form');
-        const editTextarea = replyEl.querySelector('.comment-reply-edit-textarea');
-
-        // 수정 버튼
         replyEl.querySelector('.comment-reply-edit-btn')?.addEventListener('click', (e) => {
           e.stopPropagation();
-          replyTextEl.style.display = 'none';
-          editForm.style.display = 'block';
-          mentionManager.attach(editTextarea);
-          editTextarea.focus();
+          startReplyEdit(replyEl, markerId, replyId, inlineEditConfig, () => {
+            // commentManager가 markersChanged 이벤트를 발생시켜
+            // 댓글 목록이 자동 재렌더링되므로 별도 호출 불필요
+          });
         });
 
-        // 수정 저장
-        replyEl.querySelector('.comment-reply-edit-save')?.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const newText = editTextarea.value.trim();
-          if (!newText) return;
-          const success = commentManager.updateReply(markerId, replyId, { text: newText });
-          if (success) {
-            updateCommentList(getActiveCommentFilter());
-            showToast('답글이 수정되었습니다.', 'success');
-          }
-        });
-
-        // 수정 취소
-        replyEl.querySelector('.comment-reply-edit-cancel')?.addEventListener('click', (e) => {
-          e.stopPropagation();
-          editForm.style.display = 'none';
-          replyTextEl.style.display = '';
-          const marker = commentManager.getMarker(markerId);
-          const reply = marker?.replies?.find(r => r.id === replyId);
-          if (reply) editTextarea.value = reply.text;
-        });
-
-        // 삭제 버튼
         replyEl.querySelector('.comment-reply-delete-btn')?.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (!confirm('이 답글을 삭제하시겠습니까?')) return;
-          const success = commentManager.deleteReply(markerId, replyId);
-          if (success) {
-            updateCommentList(getActiveCommentFilter());
-            showToast('답글이 삭제되었습니다.', 'success');
-          }
+          handleReplyDelete(markerId, replyId, () => {
+            // markersChanged 이벤트로 자동 재렌더링
+          });
         });
       });
     });
@@ -7757,13 +7829,6 @@ async function initApp() {
             ` : ''}
           </div>
           <div class="thread-reply-text">${formatMarkdown(reply.text)}</div>
-          <div class="thread-reply-edit-form" style="display: none;">
-            <div class="thread-reply-edit-editor" contenteditable="true">${escapeHtml(reply.text)}</div>
-            <div class="thread-reply-edit-actions">
-              <button class="thread-reply-edit-save">저장</button>
-              <button class="thread-reply-edit-cancel">취소</button>
-            </div>
-          </div>
           ${reply.image ? `<div class="thread-reply-image"><img src="${reply.image}" alt="첨부 이미지" data-full-image="${reply.image}"></div>` : ''}
         </div>
       </div>
@@ -7798,8 +7863,25 @@ async function initApp() {
   }
 
   /**
-   * 스레드 답글 수정/삭제 이벤트 바인딩
+   * 스레드 답글 수정/삭제 이벤트 바인딩 (공통 헬퍼 사용)
    */
+  const _threadEditConfig = {
+    textSelector: '.thread-reply-text',
+    editorType: 'contenteditable',
+    editorClass: 'thread-reply-edit-editor',
+    formClass: 'thread-reply-edit-form',
+    actionsClass: 'thread-reply-edit-actions',
+    saveClass: 'thread-reply-edit-save',
+    cancelClass: 'thread-reply-edit-cancel'
+  };
+
+  function updateThreadReplyCount(markerId) {
+    const marker = commentManager.getMarker(markerId);
+    const replyCount = marker?.replies?.length || 0;
+    threadReplyCount.textContent = replyCount > 0 ? `${replyCount}개의 댓글` : '';
+    threadReplyCount.style.display = replyCount > 0 ? 'flex' : 'none';
+  }
+
   function bindThreadReplyActions(markerId) {
     threadReplies.querySelectorAll('.thread-reply-item').forEach(replyItem => {
       const replyId = replyItem.dataset.replyId;
@@ -7809,65 +7891,23 @@ async function initApp() {
       if (replyItem.dataset.bound) return;
       replyItem.dataset.bound = 'true';
 
-      const editBtn = replyItem.querySelector('.thread-reply-edit-btn');
-      const deleteBtn = replyItem.querySelector('.thread-reply-delete-btn');
-      const textEl = replyItem.querySelector('.thread-reply-text');
-      const editForm = replyItem.querySelector('.thread-reply-edit-form');
-      const editEditor = replyItem.querySelector('.thread-reply-edit-editor');
-      const saveBtn = replyItem.querySelector('.thread-reply-edit-save');
-      const cancelBtn = replyItem.querySelector('.thread-reply-edit-cancel');
-
       // 수정 버튼
-      editBtn?.addEventListener('click', (e) => {
+      replyItem.querySelector('.thread-reply-edit-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        textEl.style.display = 'none';
-        editForm.style.display = 'block';
-        // 멘션 자동완성 부착
-        mentionManager.attach(editEditor);
-        editEditor.focus();
-      });
-
-      // 수정 저장
-      saveBtn?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const newText = editEditor.innerText.trim();
-        if (!newText) return;
-
-        const success = commentManager.updateReply(markerId, replyId, { text: newText });
-        if (success) {
-          textEl.innerHTML = formatMarkdown(newText);
-          editForm.style.display = 'none';
-          textEl.style.display = '';
-          showToast('답글이 수정되었습니다.', 'success');
-        }
-      });
-
-      // 수정 취소
-      cancelBtn?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        editForm.style.display = 'none';
-        textEl.style.display = '';
-        // 원래 텍스트로 복원
-        const marker = commentManager.getMarker(markerId);
-        const reply = marker?.replies?.find(r => r.id === replyId);
-        if (reply) editEditor.textContent = reply.text;
+        startReplyEdit(replyItem, markerId, replyId, _threadEditConfig, (newText) => {
+          // 스레드 팝업은 별도 렌더링 경로라서 수동으로 텍스트 갱신
+          const textEl = replyItem.querySelector('.thread-reply-text');
+          if (textEl) textEl.innerHTML = formatMarkdown(newText);
+        });
       });
 
       // 삭제 버튼
-      deleteBtn?.addEventListener('click', (e) => {
+      replyItem.querySelector('.thread-reply-delete-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (!confirm('이 답글을 삭제하시겠습니까?')) return;
-
-        const success = commentManager.deleteReply(markerId, replyId);
-        if (success) {
+        handleReplyDelete(markerId, replyId, () => {
           replyItem.remove();
-          // 답글 개수 업데이트
-          const marker = commentManager.getMarker(markerId);
-          const replyCount = marker?.replies?.length || 0;
-          threadReplyCount.textContent = replyCount > 0 ? `${replyCount}개의 댓글` : '';
-          threadReplyCount.style.display = replyCount > 0 ? 'flex' : 'none';
-          showToast('답글이 삭제되었습니다.', 'success');
-        }
+          updateThreadReplyCount(markerId);
+        });
       });
     });
   }
@@ -8060,13 +8100,6 @@ async function initApp() {
             </div>
           </div>
           <div class="thread-reply-text">${formatMarkdown(newReply.text)}</div>
-          <div class="thread-reply-edit-form" style="display: none;">
-            <div class="thread-reply-edit-editor" contenteditable="true">${escapeHtml(newReply.text)}</div>
-            <div class="thread-reply-edit-actions">
-              <button class="thread-reply-edit-save">저장</button>
-              <button class="thread-reply-edit-cancel">취소</button>
-            </div>
-          </div>
           ${newReply.image ? `<div class="thread-reply-image"><img src="${newReply.image}" alt="첨부 이미지" data-full-image="${newReply.image}"></div>` : ''}
         </div>
       </div>
