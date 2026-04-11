@@ -74,6 +74,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   thumbnailClearAllCache: () => ipcRenderer.invoke('thumbnail:clear-all-cache'),
   thumbnailGetCacheSize: () => ipcRenderer.invoke('thumbnail:get-cache-size'),
 
+  // ====== 최근 파일 관련 ======
+  recentList: () => ipcRenderer.invoke('recent:list'),
+  recentAdd: (input) => ipcRenderer.invoke('recent:add', input),
+  recentRemove: (id) => ipcRenderer.invoke('recent:remove', id),
+  recentClear: () => ipcRenderer.invoke('recent:clear'),
+  recentTogglePin: (id) => ipcRenderer.invoke('recent:togglePin', id),
+  recentPruneMissing: () => ipcRenderer.invoke('recent:pruneMissing'),
+  recentOpenInFolder: (filePath) => ipcRenderer.invoke('recent:openInFolder', filePath),
+  recentCaptureThumb: (videoPath, id, durationSec) =>
+    ipcRenderer.invoke('recent:captureThumb', videoPath, id, durationSec),
+  recentGetThumbUrl: (id) => ipcRenderer.invoke('recent:getThumbUrl', id),
+  onRecentUpdated: (callback) => {
+    const handler = (event, data) => callback(data);
+    ipcRenderer.on('recent:updated', handler);
+    return () => ipcRenderer.removeListener('recent:updated', handler);
+  },
+
   // ====== 로그 관련 ======
   writeLog: (logData) => ipcRenderer.send('log:write', logData),
 
