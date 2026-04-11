@@ -4919,9 +4919,21 @@ async function initApp() {
 
   function highlightMentions(html) {
     if (!html) return html;
-    // replace는 stateful하지 않도록 lastIndex 리셋
+
+    // HTML 태그를 플레이스홀더로 치환 (태그 내부 속성 값이 매칭되는 것 방지)
+    const tagPlaceholders = [];
+    let protectedHtml = html.replace(/<[^>]+>/g, (tag) => {
+      const placeholder = `\x00TAG_${tagPlaceholders.length}\x00`;
+      tagPlaceholders.push(tag);
+      return placeholder;
+    });
+
+    // 태그 밖의 텍스트에서만 멘션 하이라이팅
     _MENTION_PATTERN.lastIndex = 0;
-    return html.replace(_MENTION_PATTERN, '<span class="mention-highlight">@$1</span>');
+    protectedHtml = protectedHtml.replace(_MENTION_PATTERN, '<span class="mention-highlight">@$1</span>');
+
+    // 태그 복원
+    return protectedHtml.replace(/\x00TAG_(\d+)\x00/g, (_, i) => tagPlaceholders[Number(i)]);
   }
 
   /**
@@ -5150,7 +5162,8 @@ async function initApp() {
             </div>
             ` : ''}
           </div>
-          <p class="comment-reply-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch)))}</p>
+          ${reply.text ? `<p class="comment-reply-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch)))}</p>` : ''}
+          ${reply.image ? `<div class="comment-attached-image"><img src="${reply.image}" alt="첨부 이미지" data-full-image="${reply.image}"></div>` : ''}
         </div>
       `;
       }).join('');
