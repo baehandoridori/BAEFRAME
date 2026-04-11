@@ -174,6 +174,18 @@ class RecentFilesStore {
   }
 
   /**
+   * 썸네일 경로만 갱신한다. openedAt/openCount는 건드리지 않는다.
+   */
+  updateThumbPath(id, thumbPath) {
+    const items = this._readItems();
+    const idx = items.findIndex(i => i.id === id);
+    if (idx < 0) return false;
+    items[idx] = { ...items[idx], thumbPath };
+    this._writeItems(items);
+    return true;
+  }
+
+  /**
    * 단일 항목 제거. 고정 배열에서도 함께 제거한다.
    */
   remove(id) {

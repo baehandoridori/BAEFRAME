@@ -293,3 +293,21 @@ test('경로 대소문자/구분자 정규화가 적용된다', () => {
   assert.equal(id1, id2, '같은 파일로 간주');
   assert.equal(store.list().length, 1);
 });
+
+// ========== updateThumbPath ==========
+
+test('updateThumbPath는 다른 필드를 건드리지 않는다', () => {
+  const store = createStore();
+  const { id } = store.upsert(makeItemInput('a.mp4'));
+  const before = store.getById(id);
+  store.updateThumbPath(id, 'abc.jpg');
+  const after = store.getById(id);
+  assert.equal(after.thumbPath, 'abc.jpg');
+  assert.equal(after.openedAt, before.openedAt);
+  assert.equal(after.openCount, before.openCount);
+});
+
+test('updateThumbPath는 존재하지 않는 id에 대해 false를 반환한다', () => {
+  const store = createStore();
+  assert.equal(store.updateThumbPath('nonexistent', 'x.jpg'), false);
+});

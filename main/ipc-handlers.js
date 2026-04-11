@@ -9,6 +9,9 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { createLogger } = require('./logger');
 const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized, toggleFullscreen, isFullscreen } = require('./window');
+const { RecentFilesStore } = require('./recent-files-store');
+const recentThumbCapture = require('./recent-thumb-capture');
+const Store = require('electron-store');
 
 const log = createLogger('IPC');
 
@@ -202,6 +205,41 @@ function validateFilePath(filePath) {
   }
 
   return normalized;
+}
+
+// ====== 최근 파일 저장소 (모듈 스코프, 지연 초기화) ======
+let recentStoreInstance = null;
+
+function getRecentStore() {
+  if (!recentStoreInstance) {
+    const electronStore = new Store({
+      name: 'recent-files',
+      defaults: { items: [], pinned: [] }
+    });
+    recentStoreInstance = new RecentFilesStore({ store: electronStore });
+  }
+  return recentStoreInstance;
+}
+
+/**
+ * 존재하지 않는 파일 경로를 일괄 정리. main에서 직접 호출 가능.
+ */
+async function pruneMissingRecentFiles() {
+  try {
+    const store = getRecentStore();
+    const fsSync = require('fs');
+    const existsFn = (p) => {
+      try { return fsSync.existsSync(p); } catch (e) { return false; }
+    };
+    const result = store.pruneMissing(existsFn);
+    for (const id of result.removedIds) {
+      await recentThumbCapture.deleteThumb(app.getPath('userData'), id);
+    }
+    return result;
+  } catch (err) {
+    log.warn('pruneMissingRecentFiles 실패', { error: err.message });
+    return { removedIds: [] };
+  }
 }
 
 /**
@@ -2189,6 +2227,111 @@ function setupPlaylistHandlers() {
   ipcMain.handle('path:join', async (event, ...paths) => {
     return path.join(...paths);
   });
+
+  // ====== 최근 파일 ======
+
+  ipcMain.handle('recent:list', async () => {
+    try {
+      return getRecentStore().list();
+    } catch (err) {
+      log.warn('recent:list 실패, 빈 배열 폴백', { error: err.message });
+      return [];
+    }
+  });
+
+  ipcMain.handle('recent:add', async (event, input) => {
+    const trace = log.trace('recent:add');
+    try {
+      const result = getRecentStore().upsert(input);
+      trace.end({ id: result.id });
+      return result;
+    } catch (err) {
+      trace.error(err);
+      throw err;
+    }
+  });
+
+  ipcMain.handle('recent:remove', async (event, id) => {
+    try {
+      await recentThumbCapture.deleteThumb(app.getPath('userData'), id);
+      getRecentStore().remove(id);
+      return { success: true };
+    } catch (err) {
+      log.warn('recent:remove 실패', { error: err.message });
+      return { success: false };
+    }
+  });
+
+  ipcMain.handle('recent:clear', async () => {
+    try {
+      const store = getRecentStore();
+      const items = store.list();
+      for (const item of items) {
+        await recentThumbCapture.deleteThumb(app.getPath('userData'), item.id);
+      }
+      store.clear();
+      return { success: true };
+    } catch (err) {
+      log.warn('recent:clear 실패', { error: err.message });
+      return { success: false };
+    }
+  });
+
+  ipcMain.handle('recent:togglePin', async (event, id) => {
+    try {
+      return getRecentStore().togglePin(id);
+    } catch (err) {
+      log.info('recent:togglePin 거부', { error: err.message });
+      throw err;
+    }
+  });
+
+  ipcMain.handle('recent:pruneMissing', async () => {
+    return await pruneMissingRecentFiles();
+  });
+
+  ipcMain.handle('recent:openInFolder', async (event, filePath) => {
+    try {
+      shell.showItemInFolder(filePath);
+      return { success: true };
+    } catch (err) {
+      return { success: false };
+    }
+  });
+
+  ipcMain.handle('recent:captureThumb', async (event, videoPath, id, durationSec) => {
+    try {
+      const userData = app.getPath('userData');
+      await recentThumbCapture.ensureThumbDir(userData);
+      const outputPath = recentThumbCapture.getThumbPath(userData, id);
+      const atSeconds = Math.max(0, (durationSec || 0) * 0.5);
+
+      const result = await recentThumbCapture.captureFrame({
+        videoPath, outputPath, atSeconds
+      });
+
+      if (result) {
+        getRecentStore().updateThumbPath(id, `${id}.jpg`);
+        return { thumbPath: `${id}.jpg` };
+      }
+      return { thumbPath: null };
+    } catch (err) {
+      log.warn('recent:captureThumb 실패', { error: err.message });
+      return { thumbPath: null };
+    }
+  });
+
+  ipcMain.handle('recent:getThumbUrl', async (event, id) => {
+    try {
+      const userData = app.getPath('userData');
+      const thumbPath = recentThumbCapture.getThumbPath(userData, id);
+      const fsSync = require('fs');
+      if (!fsSync.existsSync(thumbPath)) return null;
+      return 'file:///' + thumbPath.replace(/\\/g, '/');
+    } catch (err) {
+      return null;
+    }
+  });
 }
 
 /**
@@ -2200,6 +2343,6 @@ function createPathHash(filePath) {
   return crypto.createHash('md5').update(normalized).digest('hex').substring(0, 16);
 }
 
-module.exports = { setupIpcHandlers };
+module.exports = { setupIpcHandlers, pruneMissingRecentFiles };
 
 
