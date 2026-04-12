@@ -121,10 +121,27 @@ export function renderEmptyState(container, items, { onLoadMore } = {}) {
 
   container.style.display = '';
 
+  // 인라인 모드: 가로 나란히 카드만 표시
+  const isInline = container.classList.contains('recent-inline');
+
   const pinned = items.filter(i => i._pinned);
   const regular = items.filter(i => !i._pinned);
-  const VIEWPORT = 8;
+  const VIEWPORT = isInline ? 6 : 8;
   const visibleRegular = regular.slice(0, Math.max(0, VIEWPORT - pinned.length));
+  const allVisible = [...pinned, ...visibleRegular];
+
+  if (isInline) {
+    // 인라인: 플랫 카드 리스트 (고정 먼저, 이어서 최근)
+    container.innerHTML = `
+      <div class="recent-cards" role="list">
+        ${allVisible.map(i => renderCard(i)).join('')}
+      </div>
+    `;
+    _loadThumbnails(container);
+    return;
+  }
+
+  // 기존 세로 레이아웃 (드롭다운 폴백용)
   const hasMore = regular.length > visibleRegular.length;
 
   const pinnedSection = pinned.length > 0 ? `

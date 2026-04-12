@@ -5,13 +5,108 @@
  * 기존 version-dropdown 토큰과 시각적으로 일관되게 유지.
  * ============================================================ */
 
-/* ---------- 드롭존 내부 섹션 ---------- */
+/* ---------- 드롭존 가로 배치 컨테이너 ---------- */
 
-#recentFilesSection {
-  margin-top: 32px;
-  max-width: 720px;
-  width: 100%;
+.drop-zone-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
 }
+
+/* ---------- 드롭존 내부 인라인 최근 파일 ---------- */
+
+#recentFilesSection.recent-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+#recentFilesSection.recent-inline::-webkit-scrollbar {
+  height: 4px;
+}
+
+#recentFilesSection.recent-inline::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+}
+
+/* 인라인 모드에서 헤더/푸터/섹션라벨 숨기기 */
+#recentFilesSection.recent-inline .recent-empty-header,
+#recentFilesSection.recent-inline .recent-empty-footer,
+#recentFilesSection.recent-inline .recent-section-label,
+#recentFilesSection.recent-inline .recent-load-more {
+  display: none;
+}
+
+/* 인라인 모드: 카드 리스트는 가로 나열 */
+#recentFilesSection.recent-inline .recent-cards {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 인라인 모드: 세로형 컴팩트 카드 */
+#recentFilesSection.recent-inline .recent-card {
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  width: 100px;
+  min-width: 100px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: background 0.12s, border-color 0.15s;
+}
+
+#recentFilesSection.recent-inline .recent-card:hover,
+#recentFilesSection.recent-inline .recent-card:focus-visible {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+#recentFilesSection.recent-inline .recent-card-thumb {
+  width: 84px;
+  aspect-ratio: 16 / 9;
+}
+
+#recentFilesSection.recent-inline .recent-card-body {
+  width: 100%;
+  text-align: center;
+}
+
+#recentFilesSection.recent-inline .recent-card-name {
+  font-size: 11px;
+}
+
+#recentFilesSection.recent-inline .recent-card-meta,
+#recentFilesSection.recent-inline .recent-card-time {
+  display: none;
+}
+
+#recentFilesSection.recent-inline .recent-card-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  flex-direction: column;
+  gap: 1px;
+}
+
+#recentFilesSection.recent-inline .recent-card-action {
+  width: 20px;
+  height: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+}
+
+/* ---------- 드롭존 내부 섹션 (드롭다운 폴백용 유지) ---------- */
 
 .recent-empty-header {
   display: flex;
