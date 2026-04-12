@@ -39,9 +39,9 @@ function getThumbPath(userDataPath, id) {
  */
 function resolveFfmpegPath() {
   try {
-    const ffmpegManager = require('./ffmpeg-manager');
-    if (ffmpegManager.getFfmpegPath) {
-      return ffmpegManager.getFfmpegPath();
+    const { ffmpegManager } = require('./ffmpeg-manager');
+    if (ffmpegManager.isAvailable() && ffmpegManager.ffmpegPath) {
+      return ffmpegManager.ffmpegPath;
     }
   } catch (e) {
     // ffmpeg-manager가 없거나 실패

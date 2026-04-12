@@ -157,12 +157,13 @@ class RecentFilesStore {
     const pinnedSet = new Set(this._readPinned());
     const unpinned = items.filter(i => !pinnedSet.has(i.id));
 
+    let removedIds = [];
     if (unpinned.length > MAX_UNPINNED) {
-      const toRemove = unpinned
+      removedIds = unpinned
         .sort((a, b) => (a.openedAt || 0) - (b.openedAt || 0))
         .slice(0, unpinned.length - MAX_UNPINNED)
         .map(i => i.id);
-      const removeSet = new Set(toRemove);
+      const removeSet = new Set(removedIds);
       const trimmed = items.filter(i => !removeSet.has(i.id));
       this._writeItems(trimmed);
     } else {
@@ -170,7 +171,7 @@ class RecentFilesStore {
     }
 
     const savedItem = this._readItems().find(i => i.id === id);
-    return { id, item: savedItem };
+    return { id, item: savedItem, removedIds };
   }
 
   /**

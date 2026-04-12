@@ -2243,6 +2243,13 @@ function setupPlaylistHandlers() {
     const trace = log.trace('recent:add');
     try {
       const result = getRecentStore().upsert(input);
+      // 트림으로 밀려난 항목의 썸네일 정리
+      if (result.removedIds && result.removedIds.length > 0) {
+        const userData = app.getPath('userData');
+        for (const rid of result.removedIds) {
+          recentThumbCapture.deleteThumb(userData, rid).catch(() => {});
+        }
+      }
       trace.end({ id: result.id });
       return result;
     } catch (err) {
