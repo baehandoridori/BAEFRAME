@@ -16,7 +16,7 @@ import { getUserSettings } from './modules/user-settings.js';
 import { getAuthManager } from './modules/auth-manager.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
-import { getImageFromClipboard, selectImageFile, isValidImageBase64 } from './modules/image-utils.js';
+import { getImageFromClipboard, hasImageInClipboard, selectImageFile, isValidImageBase64 } from './modules/image-utils.js';
 import { parseVersion, toVersionInfo } from './modules/version-parser.js';
 import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
@@ -25,6 +25,7 @@ import { getPlaylistManager } from './modules/playlist-manager.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
 import { getMentionManager } from './modules/mention-manager.js';
+import { TEAM_MEMBERS } from './modules/team-members.js';
 import { getSlackNotifier } from './modules/slack-notifier.js';
 
 const log = createLogger('App');
@@ -1256,13 +1257,16 @@ async function initApp() {
   }
 
   // 댓글 입력창 이미지 붙여넣기
+  // 이미지가 있으면 동기적으로 preventDefault (async await 이후엔 이미 늦음)
   elements.commentInput.addEventListener('paste', async (e) => {
     // 드라이브 경로 자동 따옴표
     if (handleDrivePathPaste(e)) return;
 
+    if (!hasImageInClipboard(e)) return;
+    e.preventDefault();
+
     const imageData = await getImageFromClipboard(e);
     if (imageData) {
-      e.preventDefault();
       showCommentImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
     }
@@ -4018,7 +4022,7 @@ async function initApp() {
         loadingProgress.style.width = `${progress * 100}%`;
 
         if (phase === 1) {
-          loadingText.textContent = `썸네일 빠른 생성 중... (${current}/${total})`;
+          loadingText.textContent = `썸네일 생성 중... (${current}/${total})`;
         } else {
           loadingText.textContent = `썸네일 세부 생성 중... (${current}/${total})`;
         }
@@ -4907,6 +4911,128 @@ async function initApp() {
     return result;
   }
 
+  /**
+   * HTML 문자열 내 @멘션을 하이라이팅 (TEAM_MEMBERS 이름만)
+   * 정규식은 모듈 로드 시 1회만 빌드 (성능 최적화)
+   */
+  const _MENTION_PATTERN = (() => {
+    const names = TEAM_MEMBERS.map(m => m.name).sort((a, b) => b.length - a.length);
+    return new RegExp(`@(${names.join('|')})(?![\\p{L}\\p{N}])`, 'gu');
+  })();
+
+  function highlightMentions(html) {
+    if (!html) return html;
+
+    // HTML 태그를 플레이스홀더로 치환 (태그 내부 속성 값이 매칭되는 것 방지)
+    const tagPlaceholders = [];
+    let protectedHtml = html.replace(/<[^>]+>/g, (tag) => {
+      const placeholder = `\x00TAG_${tagPlaceholders.length}\x00`;
+      tagPlaceholders.push(tag);
+      return placeholder;
+    });
+
+    // 태그 밖의 텍스트에서만 멘션 하이라이팅
+    _MENTION_PATTERN.lastIndex = 0;
+    protectedHtml = protectedHtml.replace(_MENTION_PATTERN, '<span class="mention-highlight">@$1</span>');
+
+    // 태그 복원
+    return protectedHtml.replace(/\x00TAG_(\d+)\x00/g, (_, i) => tagPlaceholders[Number(i)]);
+  }
+
+  /**
+   * 답글 수정 모드 시작 (편집 폼을 on-demand로 생성)
+   * @param {HTMLElement} replyItem - 답글 DOM 요소
+   * @param {string} markerId
+   * @param {string} replyId
+   * @param {object} config - UI 구성
+   * @param {Function} onSaved - 저장 성공 후 콜백 (newText: string) => void
+   */
+  function startReplyEdit(replyItem, markerId, replyId, config, onSaved) {
+    const textEl = replyItem.querySelector(config.textSelector);
+    if (!textEl) return;
+
+    // 이미 편집 중이면 무시
+    if (replyItem.querySelector('.' + config.formClass)) return;
+
+    const marker = commentManager.getMarker(markerId);
+    const reply = marker?.replies?.find(r => r.id === replyId);
+    if (!reply) return;
+
+    // 편집 폼 동적 생성
+    const form = document.createElement('div');
+    form.className = config.formClass;
+
+    let editor;
+    if (config.editorType === 'textarea') {
+      editor = document.createElement('textarea');
+      editor.rows = 2;
+      editor.value = reply.text;
+    } else {
+      editor = document.createElement('div');
+      editor.contentEditable = 'true';
+      editor.textContent = reply.text;
+    }
+    editor.className = config.editorClass;
+
+    const actions = document.createElement('div');
+    actions.className = config.actionsClass;
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = config.saveClass;
+    saveBtn.textContent = '저장';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = config.cancelClass;
+    cancelBtn.textContent = '취소';
+
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+    form.appendChild(editor);
+    form.appendChild(actions);
+
+    // 텍스트 숨기고 폼 삽입
+    textEl.style.display = 'none';
+    textEl.insertAdjacentElement('afterend', form);
+
+    mentionManager.attach(editor);
+    editor.focus();
+
+    const cleanup = () => {
+      mentionManager.detach(editor);
+      form.remove();
+      textEl.style.display = '';
+    };
+
+    saveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const newText = (config.editorType === 'textarea' ? editor.value : editor.innerText).trim();
+      if (!newText) return;
+      const success = commentManager.updateReply(markerId, replyId, { text: newText });
+      if (success) {
+        cleanup();
+        onSaved(newText);
+        showToast('답글이 수정되었습니다.', 'success');
+      }
+    });
+
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cleanup();
+    });
+  }
+
+  /**
+   * 답글 삭제 (확인 후 실행)
+   */
+  function handleReplyDelete(markerId, replyId, onDeleted) {
+    if (!confirm('이 답글을 삭제하시겠습니까?')) return;
+    const success = commentManager.deleteReply(markerId, replyId);
+    if (success) {
+      onDeleted();
+      showToast('답글이 삭제되었습니다.', 'success');
+    }
+  }
+
   function updateFeedbackProgress(total, resolved) {
     if (!elements.feedbackProgress) return;
 
@@ -5014,21 +5140,36 @@ async function initApp() {
     const thumbnailScale = userSettings.getCommentThumbnailScale();
     const thumbnailGenerator = getThumbnailGenerator();
 
+    // 재렌더링 전: 기존 요소들의 mentionManager 핸들러 정리 (메모리 누수 방지)
+    container.querySelectorAll('.comment-reply-input, .comment-reply-edit-textarea').forEach(el => {
+      mentionManager.detach(el);
+    });
+
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
       const authorStyle = getAuthorColorStyle(marker.author);
       const markerAuthorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
-      const repliesHtml = (marker.replies || []).map(reply => `
-        <div class="comment-reply">
+      const repliesHtml = (marker.replies || []).map(reply => {
+        const canEditReply = commentManager.canEdit(reply);
+        return `
+        <div class="comment-reply" data-reply-id="${reply.id}" data-marker-id="${marker.id}">
           <div class="comment-reply-header">
             <span class="comment-reply-author ${getAuthorColorClass(reply.author)}" ${getAuthorColorStyle(reply.author)}>${highlightCommentSearchMatches(reply.author, normalizedSearch)}</span>
             <span class="comment-reply-time">${formatRelativeTime(reply.createdAt)}</span>
+            ${canEditReply ? `
+            <div class="comment-reply-actions">
+              <button class="comment-reply-action-btn comment-reply-edit-btn" title="수정">수정</button>
+              <button class="comment-reply-action-btn comment-reply-delete-btn" title="삭제">삭제</button>
+            </div>
+            ` : ''}
           </div>
-          <p class="comment-reply-text">${renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch))}</p>
+          <p class="comment-reply-text">${reply.text ? highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch))) : ''}</p>
+          ${reply.image ? `<div class="comment-attached-image"><img src="${reply.image}" alt="첨부 이미지" data-full-image="${reply.image}"></div>` : ''}
         </div>
-      `).join('');
+      `;
+      }).join('');
 
       // 썸네일 URL 가져오기
       const markerTime = marker.startFrame / videoPlayer.fps;
@@ -5060,7 +5201,7 @@ async function initApp() {
           <span class="comment-timecode">${highlightCommentSearchMatches(marker.startTimecode, normalizedSearch)}</span>
         </div>
         <div class="comment-content">
-          <p class="comment-text">${renderGDriveLinks(highlightCommentSearchMatches(marker.text, normalizedSearch))}</p>
+          <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(marker.text, normalizedSearch)))}</p>
           ${marker.image ? `<div class="comment-attached-image"><img src="${marker.image}" alt="첨부 이미지" data-full-image="${marker.image}"></div>` : ''}
         </div>
         <div class="comment-edit-form" style="display: none;">
@@ -5085,9 +5226,18 @@ async function initApp() {
         ` : ''}
         <div class="comment-replies${expandedIds.has(marker.id) ? ' expanded' : ''}" data-marker-id="${marker.id}">
           ${repliesHtml}
+          <div class="comment-reply-image-preview" style="display: none;">
+            <img class="comment-reply-preview-img" src="" alt="첨부 이미지">
+            <button class="comment-reply-image-remove" title="이미지 제거">✕</button>
+          </div>
           <div class="comment-reply-input-wrapper">
-            <textarea class="comment-reply-input" placeholder="답글 입력..." rows="1"></textarea>
-            <button class="comment-reply-submit">전송</button>
+            <textarea class="comment-reply-input" placeholder="답글 입력... (Ctrl+V로 이미지 붙여넣기)" rows="1"></textarea>
+            <div class="comment-reply-input-actions">
+              <button class="comment-reply-image-btn" title="이미지 첨부">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              </button>
+              <button class="comment-reply-submit">전송</button>
+            </div>
           </div>
         </div>
       </div>
@@ -5299,6 +5449,57 @@ async function initApp() {
       const replyBtn = item.querySelector('.reply-btn');
       const replyInput = item.querySelector('.comment-reply-input');
       const replySubmit = item.querySelector('.comment-reply-submit');
+      const replyImageBtn = item.querySelector('.comment-reply-image-btn');
+      const replyImagePreview = item.querySelector('.comment-reply-image-preview');
+      const replyPreviewImg = item.querySelector('.comment-reply-preview-img');
+      const replyImageRemove = item.querySelector('.comment-reply-image-remove');
+
+      // 인라인 답글 이미지 상태
+      let pendingReplyImage = null;
+
+      function showReplyImagePreview(imageData) {
+        pendingReplyImage = imageData;
+        replyPreviewImg.src = imageData.base64;
+        replyImagePreview.style.display = 'block';
+      }
+
+      function clearReplyImage() {
+        pendingReplyImage = null;
+        if (replyPreviewImg) replyPreviewImg.src = '';
+        if (replyImagePreview) replyImagePreview.style.display = 'none';
+      }
+
+      // 인라인 답글 textarea에 멘션 자동완성 부착
+      if (replyInput) mentionManager.attach(replyInput);
+
+      // 답글 이미지 버튼 클릭
+      replyImageBtn?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const imageData = await selectImageFile();
+        if (imageData) {
+          showReplyImagePreview(imageData);
+          showToast('이미지가 첨부되었습니다', 'success');
+        }
+      });
+
+      // 답글 이미지 제거
+      replyImageRemove?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearReplyImage();
+      });
+
+      // 답글 이미지 붙여넣기
+      // 주의: async 핸들러의 await 이후 preventDefault는 이미 늦어서 무효함
+      //       → 이미지 유무를 먼저 동기 체크 후 즉시 preventDefault
+      replyInput?.addEventListener('paste', async (e) => {
+        if (!hasImageInClipboard(e)) return;
+        e.preventDefault();
+        const imageData = await getImageFromClipboard(e);
+        if (imageData) {
+          showReplyImagePreview(imageData);
+          showToast('이미지가 첨부되었습니다', 'success');
+        }
+      });
 
       // 스레드 토글 버튼
       threadToggle?.addEventListener('click', (e) => {
@@ -5317,24 +5518,74 @@ async function initApp() {
         replyInput?.focus();
       });
 
-      // 답글 제출
+      // 답글 제출 (이미지 포함)
       replySubmit?.addEventListener('click', (e) => {
         e.stopPropagation();
         const replyText = replyInput.value.trim();
-        if (replyText) {
-          commentManager.addReplyToMarker(item.dataset.markerId, replyText);
-          replyInput.value = '';
-          showToast('답글이 추가되었습니다.', 'success');
+        const hasImage = pendingReplyImage && pendingReplyImage.base64;
+        if (!replyText && !hasImage) return;
+
+        const marker = commentManager.getMarker(item.dataset.markerId);
+        if (!marker) return;
+
+        const replyData = {
+          text: replyText || '',
+          author: commentManager.getAuthor()
+        };
+        if (hasImage) {
+          replyData.image = pendingReplyImage.base64;
+          replyData.imageWidth = pendingReplyImage.width;
+          replyData.imageHeight = pendingReplyImage.height;
         }
+
+        const newReply = marker.addReply(replyData);
+        commentManager._emit('replyAdded', { marker, reply: newReply });
+        commentManager._emit('markersChanged');
+
+        replyInput.value = '';
+        clearReplyImage();
+        showToast('답글이 추가되었습니다.', 'success');
       });
 
       // Enter로 답글 제출
       replyInput?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && !e.shiftKey && !mentionManager.isVisible) {
           e.preventDefault();
           e.stopPropagation();
           replySubmit?.click();
         }
+      });
+
+      // 답글 수정/삭제 이벤트 바인딩 (공통 헬퍼 사용)
+      const inlineEditConfig = {
+        textSelector: '.comment-reply-text',
+        editorType: 'textarea',
+        editorClass: 'comment-reply-edit-textarea',
+        formClass: 'comment-reply-edit-form',
+        actionsClass: 'comment-reply-edit-actions',
+        saveClass: 'comment-reply-edit-save',
+        cancelClass: 'comment-reply-edit-cancel'
+      };
+
+      item.querySelectorAll('.comment-reply').forEach(replyEl => {
+        const replyId = replyEl.dataset.replyId;
+        const markerId = replyEl.dataset.markerId;
+        if (!replyId) return;
+
+        replyEl.querySelector('.comment-reply-edit-btn')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          startReplyEdit(replyEl, markerId, replyId, inlineEditConfig, () => {
+            // commentManager가 markersChanged 이벤트를 발생시켜
+            // 댓글 목록이 자동 재렌더링되므로 별도 호출 불필요
+          });
+        });
+
+        replyEl.querySelector('.comment-reply-delete-btn')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          handleReplyDelete(markerId, replyId, () => {
+            // markersChanged 이벤트로 자동 재렌더링
+          });
+        });
       });
     });
 
@@ -7580,19 +7831,31 @@ async function initApp() {
     threadReplyCount.style.display = replyCount > 0 ? 'flex' : 'none';
 
     // 답글들 렌더링 (XSS 방지: author 필드 이스케이프)
-    threadReplies.innerHTML = (marker.replies || []).map(reply => `
-      <div class="thread-reply-item">
+    threadReplies.innerHTML = (marker.replies || []).map(reply => {
+      const canEditReply = commentManager.canEdit(reply);
+      return `
+      <div class="thread-reply-item" data-reply-id="${reply.id}">
         <div class="thread-reply-avatar">${escapeHtml(reply.author.charAt(0))}</div>
         <div class="thread-reply-content">
           <div class="thread-reply-header">
             <span class="thread-reply-author" ${getAuthorColorStyle(reply.author)}>${escapeHtml(reply.author)}</span>
             <span class="thread-reply-time">${formatRelativeTime(reply.createdAt)}</span>
+            ${canEditReply ? `
+            <div class="thread-reply-actions">
+              <button class="thread-reply-action-btn thread-reply-edit-btn" title="수정">수정</button>
+              <button class="thread-reply-action-btn thread-reply-delete-btn" title="삭제">삭제</button>
+            </div>
+            ` : ''}
           </div>
           <div class="thread-reply-text">${formatMarkdown(reply.text)}</div>
           ${reply.image ? `<div class="thread-reply-image"><img src="${reply.image}" alt="첨부 이미지" data-full-image="${reply.image}"></div>` : ''}
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
+
+    // 답글 수정/삭제 이벤트 바인딩
+    bindThreadReplyActions(markerId);
 
     // 에디터 초기화
     threadEditor.innerHTML = '';
@@ -7616,6 +7879,56 @@ async function initApp() {
     threadEditor.innerHTML = '';
     clearThreadImage();
     restoreFocus();
+  }
+
+  /**
+   * 스레드 답글 수정/삭제 이벤트 바인딩 (공통 헬퍼 사용)
+   */
+  const _threadEditConfig = {
+    textSelector: '.thread-reply-text',
+    editorType: 'contenteditable',
+    editorClass: 'thread-reply-edit-editor',
+    formClass: 'thread-reply-edit-form',
+    actionsClass: 'thread-reply-edit-actions',
+    saveClass: 'thread-reply-edit-save',
+    cancelClass: 'thread-reply-edit-cancel'
+  };
+
+  function updateThreadReplyCount(markerId) {
+    const marker = commentManager.getMarker(markerId);
+    const replyCount = marker?.replies?.length || 0;
+    threadReplyCount.textContent = replyCount > 0 ? `${replyCount}개의 댓글` : '';
+    threadReplyCount.style.display = replyCount > 0 ? 'flex' : 'none';
+  }
+
+  function bindThreadReplyActions(markerId) {
+    threadReplies.querySelectorAll('.thread-reply-item').forEach(replyItem => {
+      const replyId = replyItem.dataset.replyId;
+      if (!replyId) return;
+
+      // 이미 바인딩된 요소 건너뛰기
+      if (replyItem.dataset.bound) return;
+      replyItem.dataset.bound = 'true';
+
+      // 수정 버튼
+      replyItem.querySelector('.thread-reply-edit-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        startReplyEdit(replyItem, markerId, replyId, _threadEditConfig, (newText) => {
+          // 스레드 팝업은 별도 렌더링 경로라서 수동으로 텍스트 갱신
+          const textEl = replyItem.querySelector('.thread-reply-text');
+          if (textEl) textEl.innerHTML = formatMarkdown(newText);
+        });
+      });
+
+      // 삭제 버튼
+      replyItem.querySelector('.thread-reply-delete-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleReplyDelete(markerId, replyId, () => {
+          replyItem.remove();
+          updateThreadReplyCount(markerId);
+        });
+      });
+    });
   }
 
   /**
@@ -7655,14 +7968,29 @@ async function initApp() {
     // Strikethrough: ~text~
     html = html.replace(/~(.+?)~/g, '<s>$1</s>');
 
-    // Code: `code`
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Code: `code` — 플레이스홀더로 보호 (멘션 하이라이팅 방지)
+    const codePlaceholders = [];
+    html = html.replace(/`([^`]+)`/g, (_, code) => {
+      const placeholder = `\x00CODE_${codePlaceholders.length}\x00`;
+      codePlaceholders.push(`<code>${code}</code>`);
+      return placeholder;
+    });
 
     // Bullet list: - item
     html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
     html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
     // Clean up consecutive ul tags
     html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+    // @멘션 하이라이팅 (TEAM_MEMBERS 이름만)
+    const names = TEAM_MEMBERS.map(m => m.name).sort((a, b) => b.length - a.length);
+    const mentionPattern = new RegExp(`@(${names.join('|')})(?![\\p{L}\\p{N}])`, 'gu');
+    html = html.replace(mentionPattern, '<span class="mention-highlight">@$1</span>');
+
+    // 코드 블록 복원
+    codePlaceholders.forEach((code, i) => {
+      html = html.replace(`\x00CODE_${i}\x00`, code);
+    });
 
     // Line breaks
     html = html.replace(/\n/g, '<br>');
@@ -7778,19 +8106,29 @@ async function initApp() {
     threadReplyCount.style.display = 'flex';
 
     // UI 업데이트 - 새 답글 추가 (XSS 방지: author 필드 이스케이프)
-    threadReplies.innerHTML += `
-      <div class="thread-reply-item">
+    // 주의: innerHTML += 를 쓰면 기존 DOM이 재파싱되면서 이벤트 리스너가
+    //       사라지고 data-bound 속성은 남아 이전 답글의 수정/삭제가 먹통됨
+    //       → insertAdjacentHTML로 기존 노드를 건드리지 않고 append
+    threadReplies.insertAdjacentHTML('beforeend', `
+      <div class="thread-reply-item" data-reply-id="${newReply.id}">
         <div class="thread-reply-avatar">${escapeHtml(newReply.author.charAt(0))}</div>
         <div class="thread-reply-content">
           <div class="thread-reply-header">
             <span class="thread-reply-author" ${getAuthorColorStyle(newReply.author)}>${escapeHtml(newReply.author)}</span>
             <span class="thread-reply-time">${formatRelativeTime(newReply.createdAt)}</span>
+            <div class="thread-reply-actions">
+              <button class="thread-reply-action-btn thread-reply-edit-btn" title="수정">수정</button>
+              <button class="thread-reply-action-btn thread-reply-delete-btn" title="삭제">삭제</button>
+            </div>
           </div>
           <div class="thread-reply-text">${formatMarkdown(newReply.text)}</div>
           ${newReply.image ? `<div class="thread-reply-image"><img src="${newReply.image}" alt="첨부 이미지" data-full-image="${newReply.image}"></div>` : ''}
         </div>
       </div>
-    `;
+    `);
+
+    // 새 답글에만 이벤트 바인딩 (기존 답글은 data-bound로 스킵)
+    bindThreadReplyActions(currentThreadMarkerId);
 
     // 에디터 및 이미지 초기화
     threadEditor.innerHTML = '';
@@ -7886,13 +8224,16 @@ async function initApp() {
   });
 
   // 스레드 에디터 이미지 붙여넣기
+  // 이미지가 있으면 동기적으로 preventDefault (async await 이후엔 이미 늦음)
   threadEditor?.addEventListener('paste', async (e) => {
     // 드라이브 경로 자동 따옴표
     if (handleDrivePathPaste(e)) return;
 
+    if (!hasImageInClipboard(e)) return;
+    e.preventDefault();
+
     const imageData = await getImageFromClipboard(e);
     if (imageData) {
-      e.preventDefault();
       showThreadImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
     }
