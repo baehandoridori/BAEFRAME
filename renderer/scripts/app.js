@@ -1655,7 +1655,7 @@ async function initApp() {
         <div class="filter-dropdown-check ${selectedAll ? 'checked' : ''}">${selectedAll ? '✓' : ''}</div>
         <span class="filter-dropdown-name">전체 선택/해제</span>
       </div>`;
-    html += `<div class="filter-dropdown-hint">☑ 체크박스 = 토글 &nbsp; 👤 이름 = 솔로</div>`;
+    html += '<div class="filter-dropdown-hint">☑ 체크박스 = 토글 &nbsp; 👤 이름 = 솔로</div>';
 
     menu.innerHTML = html;
   }
@@ -5978,7 +5978,7 @@ async function initApp() {
    */
   const _toastState = {
     toasts: [],     // 현재 활성 토스트 요소 배열
-    maxVisible: 3,  // 최대 표시 개수
+    maxVisible: 3  // 최대 표시 개수
   };
 
   const _toastIcons = {
@@ -5987,7 +5987,7 @@ async function initApp() {
     error: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
     warn: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
     warning: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-    loading: '<svg class="toast-spinner" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4"/><path d="M12 18v4" opacity=".3"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83" opacity=".3"/><path d="M2 12h4" opacity=".7"/><path d="M18 12h4" opacity=".3"/><path d="M4.93 19.07l2.83-2.83" opacity=".5"/><path d="M16.24 7.76l2.83-2.83" opacity=".7"/></svg>',
+    loading: '<svg class="toast-spinner" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4"/><path d="M12 18v4" opacity=".3"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83" opacity=".3"/><path d="M2 12h4" opacity=".7"/><path d="M18 12h4" opacity=".3"/><path d="M4.93 19.07l2.83-2.83" opacity=".5"/><path d="M16.24 7.76l2.83-2.83" opacity=".7"/></svg>'
   };
 
   function _updateToastStack() {
@@ -6234,7 +6234,7 @@ async function initApp() {
             if (pct > 0) toast._progressRaf = requestAnimationFrame(tick);
           });
           toast._autoTimer = setTimeout(() => _dismissToast(toast), newDuration);
-        },
+        }
       };
     }
   }
@@ -6612,61 +6612,61 @@ async function initApp() {
       if (nextKf !== null) videoPlayer.seekToFrame(nextKf);
       return;
     }
-      // 1: 어니언 스킨 토글
-      if (userSettings.matchShortcut('onionSkinToggle', e)) {
-        e.preventDefault();
-        toggleOnionSkinWithUI();
-        return;
+    // 1: 어니언 스킨 토글
+    if (userSettings.matchShortcut('onionSkinToggle', e)) {
+      e.preventDefault();
+      toggleOnionSkinWithUI();
+      return;
+    }
+    // 2: 빈 키프레임 삽입
+    if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
+      e.preventDefault();
+      drawingManager.addBlankKeyframe();
+      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      return;
+    }
+    // Shift+3: 현재 키프레임 삭제
+    if (userSettings.matchShortcut('keyframeDeleteAlt', e)) {
+      e.preventDefault();
+      drawingManager.removeKeyframe();
+      showToast('키프레임이 삭제되었습니다.', 'info');
+      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      return;
+    }
+    // 3: 프레임 삽입 (홀드 추가)
+    if (userSettings.matchShortcut('insertFrame', e)) {
+      e.preventDefault();
+      drawingManager.insertFrame();
+      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      return;
+    }
+    // 4: 프레임 삭제
+    if (userSettings.matchShortcut('deleteFrame', e)) {
+      e.preventDefault();
+      drawingManager.deleteFrame();
+      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      return;
+    }
+    // E: 지우개 모드 (드로잉 모드에서만 작동)
+    if (e.code === 'KeyE') {
+      // 드로잉 모드가 아니면 무시
+      if (!state.isDrawMode) return;
+      e.preventDefault();
+      // 지우개 버튼 클릭으로 UI와 도구 함께 전환
+      const eraserBtn = document.querySelector('.tool-btn[data-tool="eraser"]');
+      if (eraserBtn) {
+        eraserBtn.click();
       }
-      // 2: 빈 키프레임 삽입
-      if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
-        e.preventDefault();
-        drawingManager.addBlankKeyframe();
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        return;
+      return;
+    }
+    // V: 선택 모드 (드로잉 모드 끄기)
+    if (e.code === 'KeyV') {
+      e.preventDefault();
+      if (state.isDrawMode) {
+        toggleDrawMode();
       }
-      // Shift+3: 현재 키프레임 삭제
-      if (userSettings.matchShortcut('keyframeDeleteAlt', e)) {
-        e.preventDefault();
-        drawingManager.removeKeyframe();
-        showToast('키프레임이 삭제되었습니다.', 'info');
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        return;
-      }
-      // 3: 프레임 삽입 (홀드 추가)
-      if (userSettings.matchShortcut('insertFrame', e)) {
-        e.preventDefault();
-        drawingManager.insertFrame();
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        return;
-      }
-      // 4: 프레임 삭제
-      if (userSettings.matchShortcut('deleteFrame', e)) {
-        e.preventDefault();
-        drawingManager.deleteFrame();
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-        return;
-      }
-      // E: 지우개 모드 (드로잉 모드에서만 작동)
-      if (e.code === 'KeyE') {
-        // 드로잉 모드가 아니면 무시
-        if (!state.isDrawMode) return;
-        e.preventDefault();
-        // 지우개 버튼 클릭으로 UI와 도구 함께 전환
-        const eraserBtn = document.querySelector('.tool-btn[data-tool="eraser"]');
-        if (eraserBtn) {
-          eraserBtn.click();
-        }
-        return;
-      }
-      // V: 선택 모드 (드로잉 모드 끄기)
-      if (e.code === 'KeyV') {
-        e.preventDefault();
-        if (state.isDrawMode) {
-          toggleDrawMode();
-        }
-        return;
-      }
+      return;
+    }
   }
 
   // 초기화 완료
@@ -7163,7 +7163,7 @@ async function initApp() {
     { key: 'Minus', ctrl: true, shift: false, alt: false, label: 'Ctrl+- (줌아웃)' },
     { key: 'NumpadSubtract', ctrl: true, shift: false, alt: false, label: 'Ctrl+- (줌아웃)' },
     { key: 'Slash', ctrl: false, shift: true, alt: false, label: 'Shift+/ (단축키 목록)' },
-    { key: 'Backslash', ctrl: false, shift: false, alt: false, label: '\\ (타임라인 맞춤)' },
+    { key: 'Backslash', ctrl: false, shift: false, alt: false, label: '\\ (타임라인 맞춤)' }
   ];
 
   function findShortcutConflict(newSc, excludeAction) {
@@ -8821,7 +8821,7 @@ async function initApp() {
   let _plexusAnimationId = null;
   let _plexusTime = 0;
   let _plexusNodePositions = []; // 각 사용자 노드의 현재 위치
-  let _plexusFlowParticles = []; // 연결선 위 이동 파티클
+  const _plexusFlowParticles = []; // 연결선 위 이동 파티클
 
   /**
    * 협업자 UI 업데이트
