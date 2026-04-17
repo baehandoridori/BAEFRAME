@@ -2105,17 +2105,6 @@ export class Timeline extends EventTarget {
       this.renderCommentRanges(this._lastComments || []);
     });
 
-    // 접근성: 키보드로 펼칠 수 있도록
-    el.setAttribute('role', 'button');
-    el.setAttribute('tabindex', '0');
-    el.setAttribute('aria-label', `겹친 코멘트 ${cluster.length}개 — 클릭하여 펼치기`);
-    el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        el.click();
-      }
-    });
-
     return el;
   }
 

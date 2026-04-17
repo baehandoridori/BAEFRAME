@@ -119,7 +119,14 @@ test('clusterKey: 단일 댓글 클러스터 → 해당 markerId', () => {
   assert.equal(mod.clusterKey([c('x', 0, 10)]), 'x');
 });
 
-test('clusterKey: 여러 댓글 클러스터 → 첫 댓글 markerId', () => {
+test('clusterKey: 여러 댓글 클러스터 → 정렬된 markerId 조합', () => {
   const cluster = [c('first', 0, 10), c('second', 5, 15)];
-  assert.equal(mod.clusterKey(cluster), 'first');
+  assert.equal(mod.clusterKey(cluster), 'first|second');
+});
+
+test('clusterKey: 멤버 순서가 달라도 동일한 키 반환 (안정성)', () => {
+  const k1 = mod.clusterKey([c('alpha', 0, 10), c('beta', 5, 15)]);
+  const k2 = mod.clusterKey([c('beta', 5, 15), c('alpha', 0, 10)]);
+  assert.equal(k1, k2);
+  assert.equal(k1, 'alpha|beta');
 });

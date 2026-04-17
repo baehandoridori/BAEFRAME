@@ -64,8 +64,12 @@ export function assignLanes(cluster) {
 }
 
 /**
- * 클러스터 고유 식별자 — 첫(가장 이른 start) 댓글의 markerId 사용.
+ * 클러스터 고유 식별자 — 클러스터 내 모든 markerId를 정렬해 조합.
+ * 정렬 순서가 바뀌거나 단일 댓글 위치가 이동해도 클러스터 구성원이 같은 한 안정된 키 반환.
+ * @param {Array} cluster
+ * @returns {string|null} "id1|id2|id3" 형태의 정렬 조합 / 빈 클러스터는 null
  */
 export function clusterKey(cluster) {
-  return cluster.length > 0 ? cluster[0].markerId : null;
+  if (!cluster || cluster.length === 0) return null;
+  return cluster.map(c => c.markerId).sort().join('|');
 }
