@@ -5,7 +5,8 @@
 
 import { createLogger } from '../logger.js';
 import { MARKER_COLORS } from './comment-manager.js';
-import { resolveFrameGridTier, TIER } from './frame-grid-tiers.js';
+import { resolveFrameGridTier } from './frame-grid-tiers.js';
+import { findRangeClusters, assignLanes, clusterKey } from './comment-cluster.js';
 
 const log = createLogger('Timeline');
 
@@ -41,6 +42,10 @@ export class Timeline extends EventTarget {
     this.frameGridContainer = null;
     this.gridVisible = true;          // 격자 표시 토글 (기본 ON)
     this._lastFrameGridTier = null;  // 히스테리시스용 직전 단계
+
+    // 클러스터 펼침/접힘 상태
+    this.expandedClusterId = null;  // 현재 펼친 클러스터의 키 (markerId)
+    this._lastComments = null;      // 펼치기/접기 재렌더용 캐시
 
     // 플레이헤드 드래그 상태
     this.isDraggingPlayhead = false;
@@ -824,8 +829,9 @@ export class Timeline extends EventTarget {
    * Note: tier 플래그 의미
    *   showFiveSec: "오직 5초만" (tier === FIVE_SEC, 가장 줌아웃 상태)
    *   showOneSec/showHalf/showQuarter/showFrame: "해당 단계 이상"(누산)
-   * 각 if 블록이 서로 겹치는 영역(예: 1초 선이 ½초 선 위치와 겹침)은
-   * CSS background repeating-linear-gradient가 중첩 그리되 동일 픽셀에 같은 색이므로 시각적 문제 없음.
+   * 각 if 블록이 서로 겹치는 영역(예: 1초 선이 ½초 선 위치와 겹침)은 먼저 push된 레이어가
+   * CSS 합성에서 상위에 그려져 하위 레이어를 가린다. 1초/5초(노란색, 2px)는 상위에,
+   * ½/¼/frame(파랑·흰색, 1px)은 하위에 배치돼 우선순위가 유지됨.
    */
   _renderFrameGridTiered(pxPerFrame, t) {
     this.frameGridContainer.style.display = 'block';
@@ -1894,6 +1900,16 @@ export class Timeline extends EventTarget {
   setCommentTrack(trackElement, layerHeaderElement = null) {
     this.commentTrack = trackElement;
     this.commentLayerHeader = layerHeaderElement;
+
+    // 타임라인 배경 클릭 시 펼친 클러스터 접기
+    if (this.commentTrack) {
+      this.commentTrack.addEventListener('click', (e) => {
+        if (e.target === this.commentTrack && this.expandedClusterId !== null) {
+          this.expandedClusterId = null;
+          this.renderCommentRanges(this._lastComments || []);
+        }
+      });
+    }
   }
 
   /**
@@ -1903,28 +1919,83 @@ export class Timeline extends EventTarget {
   renderCommentRanges(comments) {
     if (!this.commentTrack) return;
 
+    // 데이터 캐시 (펼침/접힘 재렌더용)
+    this._lastComments = comments;
+
     // 기존 댓글 제거
     this.commentTrack.innerHTML = '';
 
-    // 댓글이 없으면 트랙 및 레이어 헤더 숨김
+    // 댓글이 없으면 트랙 및 레이어 헤더 숨김 (기존 로직 유지)
     if (!comments || comments.length === 0) {
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      // 펼침 상태는 데이터가 없어진 상황이므로 리셋
+      this.expandedClusterId = null;
       return;
     }
 
-    // 트랙 및 레이어 헤더 표시
+    // 트랙 및 레이어 헤더 표시 (기존 로직 유지)
     this.commentTrack.style.display = 'block';
     if (this.commentLayerHeader) {
       this.commentLayerHeader.style.display = 'flex';
     }
 
-    // 각 댓글 범위 렌더링
-    comments.forEach(comment => {
-      const element = this._createCommentRangeElement(comment);
-      this.commentTrack.appendChild(element);
+    // 1) 클러스터링
+    const clusters = findRangeClusters(comments);
+
+    // 2) 펼침 상태 유효성 검증 — 해당 clusterKey가 더 이상 존재하지 않으면 리셋
+    if (this.expandedClusterId !== null) {
+      const stillExists = clusters.some(c =>
+        clusterKey(c) === this.expandedClusterId && c.length > 1
+      );
+      if (!stillExists) {
+        this.expandedClusterId = null;
+      }
+    }
+
+    // 3) 최대 레인 수 계산 — 펼친 클러스터가 있으면 그 클러스터의 레인 수
+    let maxLanes = 1;
+    clusters.forEach(cluster => {
+      if (clusterKey(cluster) === this.expandedClusterId && cluster.length > 1) {
+        const { maxLane } = assignLanes(cluster);
+        maxLanes = Math.max(maxLanes, maxLane);
+      }
+    });
+
+    // 4) 트랙 높이 동적 설정 (애니메이션)
+    const baseHeight = 24;
+    const laneHeight = 24;
+    const lanePadding = 6;
+    const targetHeight = maxLanes > 1
+      ? laneHeight * maxLanes + lanePadding
+      : baseHeight;
+    this.commentTrack.style.height = `${targetHeight}px`;
+
+    // 5) 각 클러스터 렌더
+    clusters.forEach(cluster => {
+      const key = clusterKey(cluster);
+      if (cluster.length === 1) {
+        // 단일 댓글 — 기존처럼
+        const el = this._createCommentRangeElement(cluster[0]);
+        el.style.top = '2px';
+        this.commentTrack.appendChild(el);
+      } else if (key === this.expandedClusterId) {
+        // 펼친 클러스터 — 레인별 렌더 + 접기 칩
+        assignLanes(cluster);
+        cluster.forEach(c => {
+          const el = this._createCommentRangeElement(c);
+          el.style.top = `${2 + c._lane * laneHeight}px`;
+          this.commentTrack.appendChild(el);
+        });
+        const chip = this._createCollapseChip(cluster, maxLanes);
+        this.commentTrack.appendChild(chip);
+      } else {
+        // 접힌 클러스터 — 배지
+        const badge = this._createClusterBadgeElement(cluster);
+        this.commentTrack.appendChild(badge);
+      }
     });
   }
 
@@ -1985,6 +2056,79 @@ export class Timeline extends EventTarget {
     }
 
     return element;
+  }
+
+  /**
+   * 접힌 클러스터의 배지 바 DOM 생성
+   */
+  _createClusterBadgeElement(cluster) {
+    const totalFrames = this.totalFrames || 1;
+    const minStart = Math.min(...cluster.map(c => c.startFrame));
+    const maxEnd = Math.max(...cluster.map(c => c.endFrame));
+    const leftPercent = (minStart / totalFrames) * 100;
+    const widthPercent = ((maxEnd - minStart) / totalFrames) * 100;
+
+    const el = document.createElement('div');
+    el.className = 'comment-cluster-badge';
+    el.dataset.clusterKey = clusterKey(cluster);
+    el.style.left = `${leftPercent}%`;
+    el.style.width = `${Math.max(widthPercent, 3)}%`;
+    el.style.top = '2px';
+
+    // 스택 힌트 (최대 3색)
+    const hint = document.createElement('div');
+    hint.className = 'comment-cluster-stack-hint';
+    cluster.slice(0, 3).forEach(c => {
+      const stripe = document.createElement('div');
+      stripe.style.background = c.color || '#4a9eff';
+      hint.appendChild(stripe);
+    });
+    el.appendChild(hint);
+
+    // 카운트 칩
+    const chip = document.createElement('span');
+    chip.className = 'comment-cluster-count';
+    chip.textContent = `⊕${cluster.length}`;
+    el.appendChild(chip);
+
+    // 라벨
+    const label = document.createElement('span');
+    label.className = 'comment-cluster-label';
+    label.textContent = '겹친 코멘트';
+    el.appendChild(label);
+
+    // 클릭 → 펼치기
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.expandedClusterId = clusterKey(cluster);
+      this.renderCommentRanges(this._lastComments || []);
+    });
+
+    return el;
+  }
+
+  /**
+   * 펼친 클러스터를 접는 칩 DOM
+   */
+  _createCollapseChip(cluster, maxLanes) {
+    const totalFrames = this.totalFrames || 1;
+    const minStart = Math.min(...cluster.map(c => c.startFrame));
+    const leftPercent = (minStart / totalFrames) * 100;
+
+    const chip = document.createElement('button');
+    chip.className = 'comment-collapse-chip';
+    chip.type = 'button';
+    chip.textContent = '▲ 접기';
+    chip.style.left = `${leftPercent}%`;
+    chip.style.top = `${24 * maxLanes + 2}px`;
+
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.expandedClusterId = null;
+      this.renderCommentRanges(this._lastComments || []);
+    });
+
+    return chip;
   }
 
   /**
