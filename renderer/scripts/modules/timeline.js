@@ -5,6 +5,7 @@
 
 import { createLogger } from '../logger.js';
 import { MARKER_COLORS } from './comment-manager.js';
+import { resolveFrameGridTier, TIER } from './frame-grid-tiers.js';
 
 const log = createLogger('Timeline');
 
@@ -38,6 +39,8 @@ export class Timeline extends EventTarget {
 
     // 프레임 그리드 설정
     this.frameGridContainer = null;
+    this.gridVisible = true;          // 격자 표시 토글 (기본 ON)
+    this._lastFrameGridTier = null;  // 히스테리시스용 직전 단계
 
     // 플레이헤드 드래그 상태
     this.isDraggingPlayhead = false;
@@ -419,6 +422,7 @@ export class Timeline extends EventTarget {
     this.duration = duration;
     this.fps = fps;
     this.totalFrames = Math.floor(duration * fps);
+    this._lastFrameGridTier = null;  // 재로드 시 히스테리시스 상태 리셋
 
     // 영상 길이에 따라 maxZoom 동적 계산
     // 프레임이 4px 이상일 때 개별 프레임 그리드가 표시됨
@@ -771,23 +775,28 @@ export class Timeline extends EventTarget {
 
   /**
    * 프레임 그리드 업데이트
-   * 줌 레벨에 따라 프레임 단위 격자선 표시 (프리미어 스타일)
+   * 줌 레벨에 따라 5단 계단식 격자선 표시 (히스테리시스 적용)
    */
   _updateFrameGrid() {
     if (!this.tracksContainer || this.duration === 0 || this.totalFrames === 0) return;
+
+    // 격자 토글 OFF면 즉시 숨김 후 리턴
+    if (!this.gridVisible) {
+      if (this.frameGridContainer) {
+        this.frameGridContainer.style.display = 'none';
+      }
+      this._lastFrameGridTier = null;
+      return;
+    }
 
     // 프레임 그리드 컨테이너 생성 또는 가져오기
     if (!this.frameGridContainer) {
       this.frameGridContainer = document.createElement('div');
       this.frameGridContainer.className = 'frame-grid-container';
       this.frameGridContainer.style.cssText = `
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-        z-index: 1;
+        position: absolute; top: 0; left: 0;
+        width: 100%; height: 100%;
+        pointer-events: none; z-index: 1;
       `;
       this.tracksContainer.appendChild(this.frameGridContainer);
     }
@@ -795,100 +804,76 @@ export class Timeline extends EventTarget {
     const containerWidth = this.tracksContainer.offsetWidth;
     const frameWidth = containerWidth / this.totalFrames;
 
-    // 프레임 너비에 따른 그리드 표시 결정
-    // 4px 이상: 개별 프레임 표시
-    // 2px 이상: 5프레임 단위 표시
-    // 그 이하: 숨김
-    const minFrameWidthForGrid = 4;
-    const minFrameWidthForSparse = 2;
+    const tierResult = resolveFrameGridTier(frameWidth, this._lastFrameGridTier ?? null);
+    this._lastFrameGridTier = tierResult.tier;
 
-    if (frameWidth >= minFrameWidthForGrid) {
-      // 개별 프레임 그리드 표시
-      this._renderFrameGrid(frameWidth, 1);
-    } else if (frameWidth >= minFrameWidthForSparse) {
-      // 5프레임 또는 10프레임 단위로 표시
-      const step = frameWidth * 5 >= minFrameWidthForGrid ? 5 : 10;
-      this._renderFrameGrid(frameWidth * step, step);
-    } else {
-      // 그리드 숨김
-      this.frameGridContainer.innerHTML = '';
-      this.frameGridContainer.style.display = 'none';
-    }
+    this._renderFrameGridTiered(frameWidth, tierResult);
   }
 
   /**
-   * 프레임 그리드 렌더링
-   * @param {number} gridWidth - 격자 간격 (픽셀)
-   * @param {number} frameStep - 프레임 단위 (1, 5, 10 등)
+   * 격자 표시 토글 설정
    */
-  _renderFrameGrid(gridWidth, frameStep) {
+  setGridVisible(visible) {
+    this.gridVisible = !!visible;
+    this._updateFrameGrid();
+  }
+
+  /**
+   * 단계별 프레임 격자 렌더링 — resolveFrameGridTier 결과를 CSS background로 합성
+   *
+   * Note: tier 플래그 의미
+   *   showFiveSec: "오직 5초만" (tier === FIVE_SEC, 가장 줌아웃 상태)
+   *   showOneSec/showHalf/showQuarter/showFrame: "해당 단계 이상"(누산)
+   * 각 if 블록이 서로 겹치는 영역(예: 1초 선이 ½초 선 위치와 겹침)은
+   * CSS background repeating-linear-gradient가 중첩 그리되 동일 픽셀에 같은 색이므로 시각적 문제 없음.
+   */
+  _renderFrameGridTiered(pxPerFrame, t) {
     this.frameGridContainer.style.display = 'block';
 
-    // CSS background로 효율적인 그리드 렌더링
-    // 가시성 개선: 투명도를 높임
-    const accentShadowStrong = getComputedStyle(document.documentElement).getPropertyValue('--accent-shadow-strong').trim() || 'rgba(255, 208, 0, 0.5)';
-    const majorLineColor = accentShadowStrong; // 1초 단위 (테마 색상)
-    const minorLineColor = 'rgba(255, 255, 255, 0.25)'; // 일반 프레임 (더 잘 보이게)
+    const fps = this.fps || 24;
+    const secPx = pxPerFrame * fps;
 
-    // 1초 단위 강조선 계산
-    const framesPerSecond = this.fps;
-    const secondWidth = gridWidth * (framesPerSecond / frameStep);
+    // 색상 정의
+    const colorSec = getComputedStyle(document.documentElement)
+      .getPropertyValue('--accent-shadow-strong').trim() || 'rgba(255, 208, 0, 0.75)';
+    const colorHalf = 'rgba(120, 180, 255, 0.55)';
+    const colorQuarter = 'rgba(120, 180, 255, 0.32)';
+    const colorFrame = 'rgba(255, 255, 255, 0.22)';
 
-    // 그리드 패턴 생성
-    let backgroundImage = '';
-    let backgroundSize = '';
+    const layers = [];
+    const sizes = [];
 
-    if (frameStep === 1) {
-      // 개별 프레임 표시 + 1초 단위 강조
-      backgroundImage = `
-        repeating-linear-gradient(
-          to right,
-          ${majorLineColor} 0px,
-          ${majorLineColor} 2px,
-          transparent 2px,
-          transparent ${secondWidth}px
-        ),
-        repeating-linear-gradient(
-          to right,
-          ${minorLineColor} 0px,
-          ${minorLineColor} 1px,
-          transparent 1px,
-          transparent ${gridWidth}px
-        )
-      `;
-      backgroundSize = `${secondWidth}px 100%, ${gridWidth}px 100%`;
-    } else {
-      // 스파스 그리드 (5프레임/10프레임 단위)
-      const sparseLineColor = 'rgba(255, 255, 255, 0.35)';
-      backgroundImage = `
-        repeating-linear-gradient(
-          to right,
-          ${majorLineColor} 0px,
-          ${majorLineColor} 2px,
-          transparent 2px,
-          transparent ${secondWidth}px
-        ),
-        repeating-linear-gradient(
-          to right,
-          ${sparseLineColor} 0px,
-          ${sparseLineColor} 1px,
-          transparent 1px,
-          transparent ${gridWidth}px
-        )
-      `;
-      backgroundSize = `${secondWidth}px 100%, ${gridWidth}px 100%`;
+    if (t.showFiveSec) {
+      // 5초 간격 2px 폭 강조선
+      const fiveSecPx = secPx * 5;
+      layers.push(`repeating-linear-gradient(to right, ${colorSec} 0px, ${colorSec} 2px, transparent 2px, transparent ${fiveSecPx}px)`);
+      sizes.push(`${fiveSecPx}px 100%`);
+    }
+    if (t.showOneSec) {
+      layers.push(`repeating-linear-gradient(to right, ${colorSec} 0px, ${colorSec} 2px, transparent 2px, transparent ${secPx}px)`);
+      sizes.push(`${secPx}px 100%`);
+    }
+    if (t.showHalf) {
+      const halfSecPx = secPx / 2;
+      layers.push(`repeating-linear-gradient(to right, ${colorHalf} 0px, ${colorHalf} 1px, transparent 1px, transparent ${halfSecPx}px)`);
+      sizes.push(`${halfSecPx}px 100%`);
+    }
+    if (t.showQuarter) {
+      // ¼초는 fps 인식: round(fps/4) 프레임마다
+      const quarterFrames = Math.max(1, Math.round(fps / 4));
+      const quarterPx = pxPerFrame * quarterFrames;
+      layers.push(`repeating-linear-gradient(to right, ${colorQuarter} 0px, ${colorQuarter} 1px, transparent 1px, transparent ${quarterPx}px)`);
+      sizes.push(`${quarterPx}px 100%`);
+    }
+    if (t.showFrame) {
+      layers.push(`repeating-linear-gradient(to right, ${colorFrame} 0px, ${colorFrame} 1px, transparent 1px, transparent ${pxPerFrame}px)`);
+      sizes.push(`${pxPerFrame}px 100%`);
     }
 
-    this.frameGridContainer.style.backgroundImage = backgroundImage;
-    this.frameGridContainer.style.backgroundSize = backgroundSize;
+    this.frameGridContainer.style.backgroundImage = layers.join(', ');
+    this.frameGridContainer.style.backgroundSize = sizes.join(', ');
     this.frameGridContainer.style.backgroundRepeat = 'repeat-x';
     this.frameGridContainer.style.backgroundPosition = '0 0';
-
-    log.debug('프레임 그리드 업데이트', {
-      frameStep,
-      gridWidth: gridWidth.toFixed(2),
-      zoom: this.zoom
-    });
   }
 
   /**
