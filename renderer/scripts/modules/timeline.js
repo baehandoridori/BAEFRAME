@@ -1978,7 +1978,6 @@ export class Timeline extends EventTarget {
 
     // 5) 각 클러스터 렌더
     clusters.forEach(cluster => {
-      const key = clusterKey(cluster);
       if (cluster.length === 1) {
         // 단일 댓글 — 기존처럼
         const el = this._createCommentRangeElement(cluster[0]);
