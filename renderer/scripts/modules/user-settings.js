@@ -557,6 +557,7 @@ export class UserSettings extends EventTarget {
   setShowFrameGrid(show) {
     this.settings.showFrameGrid = !!show;
     this._save();
+    // 향후 외부에서 설정 변경을 감지해야 할 경우를 위한 hook
     this._emit('showFrameGridChanged', { show: this.settings.showFrameGrid });
     log.info('프레임 격자 설정 변경됨', { show });
   }
