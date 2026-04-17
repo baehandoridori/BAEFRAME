@@ -1956,11 +1956,14 @@ export class Timeline extends EventTarget {
     }
 
     // 3) 최대 레인 수 계산 — 펼친 클러스터가 있으면 그 클러스터의 레인 수
+    //    assignLanes 호출 결과(_lane)를 여기서 메모이제이션하여 step 5에서 재호출하지 않음
     let maxLanes = 1;
+    const expandedClusters = new Set();
     clusters.forEach(cluster => {
       if (clusterKey(cluster) === this.expandedClusterId && cluster.length > 1) {
-        const { maxLane } = assignLanes(cluster);
+        const { maxLane } = assignLanes(cluster); // _lane이 여기서 1회 설정됨
         maxLanes = Math.max(maxLanes, maxLane);
+        expandedClusters.add(cluster);
       }
     });
 
@@ -1981,9 +1984,8 @@ export class Timeline extends EventTarget {
         const el = this._createCommentRangeElement(cluster[0]);
         el.style.top = '2px';
         this.commentTrack.appendChild(el);
-      } else if (key === this.expandedClusterId) {
-        // 펼친 클러스터 — 레인별 렌더 + 접기 칩
-        assignLanes(cluster);
+      } else if (expandedClusters.has(cluster)) {
+        // 펼친 클러스터 — step 3에서 assignLanes가 이미 실행되어 _lane이 설정된 상태
         cluster.forEach(c => {
           const el = this._createCommentRangeElement(c);
           el.style.top = `${2 + c._lane * laneHeight}px`;
@@ -2104,6 +2106,17 @@ export class Timeline extends EventTarget {
       this.renderCommentRanges(this._lastComments || []);
     });
 
+    // 접근성: 키보드로 펼칠 수 있도록
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', `겹친 코멘트 ${cluster.length}개 — 클릭하여 펼치기`);
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        el.click();
+      }
+    });
+
     return el;
   }
 
@@ -2133,6 +2146,12 @@ export class Timeline extends EventTarget {
 
   /**
    * 단일 댓글 범위 업데이트
+   *
+   * 주의: 클러스터로 접힌 상태의 댓글은 개별 .comment-range-item DOM이 없고
+   * 주황 배지로만 렌더됩니다. 따라서 접힌 상태에서 리사이즈 결과를 여기서
+   * 반영하려 하면 element가 null이라 조용히 무시됩니다. 접힌 클러스터의
+   * 리사이즈는 먼저 펼친 뒤 진행되는 것이 MVP 전제입니다.
+   *
    * @param {object} comment - 댓글 범위 데이터
    */
   updateCommentRangeElement(comment) {

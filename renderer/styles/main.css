@@ -3078,6 +3078,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   cursor: pointer;
   font-family: ui-monospace, monospace;
   height: 16px;
+  /* comment-range-item(z-index:10)보다 위에 표시되어야 접기 버튼이 가려지지 않음 */
   z-index: 20;
   transition: background 0.15s, color 0.15s;
 }
