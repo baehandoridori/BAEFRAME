@@ -182,7 +182,9 @@ export class UserSettings extends EventTarget {
       frameSkipAmount: 10, // Shift+화살표로 이동할 프레임 수
       secondSkipAmount: 1,  // Ctrl+화살표로 이동할 초 수
       // 협업 플렉서스 패널 표시 여부
-      showPlexusPanel: true
+      showPlexusPanel: true,
+      // 타임라인 프레임 격자 표시 여부
+      showFrameGrid: true
     };
 
     this._ready = false;
@@ -543,6 +545,20 @@ export class UserSettings extends EventTarget {
   setToastDuration(duration) {
     this.settings.toastDuration = duration;
     this._save();
+  }
+
+  /**
+   * 타임라인 프레임 격자 표시 여부
+   */
+  getShowFrameGrid() {
+    return this.settings.showFrameGrid !== false; // 명시적 false일 때만 OFF
+  }
+
+  setShowFrameGrid(show) {
+    this.settings.showFrameGrid = !!show;
+    this._save();
+    this._emit('showFrameGridChanged', { show: this.settings.showFrameGrid });
+    log.info('프레임 격자 설정 변경됨', { show });
   }
 
   getLightMode() {

@@ -2028,6 +2028,34 @@ body.app-fullscreen .video-comment-overlay-controls {
   font-family: var(--font-mono);
 }
 
+/* 타임라인 툴바 토글 버튼 (격자 등) */
+.timeline-toolbar-btn {
+  background: transparent;
+  border: 1px solid var(--border-default, #333);
+  border-radius: 4px;
+  color: var(--text-secondary, #aaa);
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  margin-right: 6px;
+}
+
+.timeline-toolbar-btn:hover {
+  background: var(--bg-elevated, #222);
+  color: var(--text-primary, #fff);
+  border-color: var(--accent-primary, #ffd000);
+}
+
+.timeline-toolbar-btn.active {
+  background: rgba(255, 208, 0, 0.12);
+  border-color: var(--accent-primary, #ffd000);
+  color: var(--accent-primary, #ffd000);
+}
+
 /* 타임라인 줌 버튼들 */
 .zoom-buttons {
   display: flex;

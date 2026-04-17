@@ -76,6 +76,7 @@ async function initApp() {
     timecodeTotal: document.getElementById('timecodeTotal'),
     frameIndicator: document.getElementById('frameIndicator'),
     btnDrawMode: document.getElementById('btnDrawMode'),
+    btnGridToggle: document.getElementById('btnGridToggle'),
     btnAddComment: document.getElementById('btnAddComment'),
     btnPrevComment: document.getElementById('btnPrevComment'),
     btnNextComment: document.getElementById('btnNextComment'),
@@ -6902,6 +6903,29 @@ async function initApp() {
     showThumbnails: userSettings.getShowCommentThumbnails(),
     thumbnailScale: userSettings.getCommentThumbnailScale()
   });
+
+  // ===== Phase 2c: 격자 토글 UI 배선 =====
+  {
+    const _syncGridToggleUI = (visible) => {
+      if (elements.btnGridToggle) {
+        elements.btnGridToggle.classList.toggle('active', visible);
+        elements.btnGridToggle.setAttribute('aria-pressed', String(visible));
+      }
+    };
+
+    const initGridVisible = userSettings.getShowFrameGrid();
+    timeline.setGridVisible(initGridVisible);
+    _syncGridToggleUI(initGridVisible);
+
+    if (elements.btnGridToggle) {
+      elements.btnGridToggle.addEventListener('click', () => {
+        const next = !userSettings.getShowFrameGrid();
+        userSettings.setShowFrameGrid(next);
+        timeline.setGridVisible(next);
+        _syncGridToggleUI(next);
+      });
+    }
+  }
 
   // ====== 사용자 설정 모달 ======
   const userSettingsModal = document.getElementById('userSettingsModal');
