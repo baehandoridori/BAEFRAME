@@ -12,6 +12,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "test:recent": "node --test scripts/tests/recent-files-store.test.js",
+    "test:frame-grid": "node --test scripts/tests/frame-grid-tiers.test.js",
     "bundle:liveblocks": "esbuild ./node_modules/@liveblocks/client/dist/index.js --bundle --format=esm --outfile=renderer/scripts/lib/liveblocks-client.js",
     "postinstall": "npm run bundle:liveblocks"
   },
