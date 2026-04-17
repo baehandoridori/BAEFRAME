@@ -76,6 +76,7 @@ async function initApp() {
     timecodeTotal: document.getElementById('timecodeTotal'),
     frameIndicator: document.getElementById('frameIndicator'),
     btnDrawMode: document.getElementById('btnDrawMode'),
+    btnGridToggle: document.getElementById('btnGridToggle'),
     btnAddComment: document.getElementById('btnAddComment'),
     btnPrevComment: document.getElementById('btnPrevComment'),
     btnNextComment: document.getElementById('btnNextComment'),
@@ -6582,12 +6583,13 @@ async function initApp() {
     // 그리기 모드 토글
     if (userSettings.matchShortcut('drawMode', e)) {
       e.preventDefault();
-      if (!state.isDrawMode) {
-        toggleDrawMode();
+      const wasOff = !state.isDrawMode;
+      toggleDrawMode();
+      if (wasOff) {
+        // 진입 시에만 브러시 자동 선택
+        const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
+        if (brushBtn) brushBtn.click();
       }
-      // 브러시 도구 선택
-      const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
-      if (brushBtn) brushBtn.click();
       return;
     }
     if (userSettings.matchShortcut('prevFrameDraw', e)) {
@@ -6901,6 +6903,27 @@ async function initApp() {
     showThumbnails: userSettings.getShowCommentThumbnails(),
     thumbnailScale: userSettings.getCommentThumbnailScale()
   });
+
+  // ===== Phase 2c: 격자 토글 UI 배선 =====
+  function _syncGridToggleUI(visible) {
+    if (elements.btnGridToggle) {
+      elements.btnGridToggle.classList.toggle('active', visible);
+      elements.btnGridToggle.setAttribute('aria-pressed', String(visible));
+    }
+  }
+
+  const initGridVisible = userSettings.getShowFrameGrid();
+  timeline.setGridVisible(initGridVisible);
+  _syncGridToggleUI(initGridVisible);
+
+  if (elements.btnGridToggle) {
+    elements.btnGridToggle.addEventListener('click', () => {
+      const next = !userSettings.getShowFrameGrid();
+      userSettings.setShowFrameGrid(next);
+      timeline.setGridVisible(next);
+      _syncGridToggleUI(next);
+    });
+  }
 
   // ====== 사용자 설정 모달 ======
   const userSettingsModal = document.getElementById('userSettingsModal');

@@ -5,6 +5,8 @@
 
 import { createLogger } from '../logger.js';
 import { MARKER_COLORS } from './comment-manager.js';
+import { resolveFrameGridTier } from './frame-grid-tiers.js';
+import { findRangeClusters, assignLanes, clusterKey } from './comment-cluster.js';
 
 const log = createLogger('Timeline');
 
@@ -38,6 +40,12 @@ export class Timeline extends EventTarget {
 
     // 프레임 그리드 설정
     this.frameGridContainer = null;
+    this.gridVisible = true;          // 격자 표시 토글 (기본 ON)
+    this._lastFrameGridTier = null;  // 히스테리시스용 직전 단계
+
+    // 클러스터 펼침/접힘 상태
+    this.expandedClusterId = null;  // 현재 펼친 클러스터의 키 (markerId)
+    this._lastComments = null;      // 펼치기/접기 재렌더용 캐시
 
     // 플레이헤드 드래그 상태
     this.isDraggingPlayhead = false;
@@ -419,6 +427,7 @@ export class Timeline extends EventTarget {
     this.duration = duration;
     this.fps = fps;
     this.totalFrames = Math.floor(duration * fps);
+    this._lastFrameGridTier = null;  // 재로드 시 히스테리시스 상태 리셋
 
     // 영상 길이에 따라 maxZoom 동적 계산
     // 프레임이 4px 이상일 때 개별 프레임 그리드가 표시됨
@@ -771,23 +780,28 @@ export class Timeline extends EventTarget {
 
   /**
    * 프레임 그리드 업데이트
-   * 줌 레벨에 따라 프레임 단위 격자선 표시 (프리미어 스타일)
+   * 줌 레벨에 따라 5단 계단식 격자선 표시 (히스테리시스 적용)
    */
   _updateFrameGrid() {
     if (!this.tracksContainer || this.duration === 0 || this.totalFrames === 0) return;
+
+    // 격자 토글 OFF면 즉시 숨김 후 리턴
+    if (!this.gridVisible) {
+      if (this.frameGridContainer) {
+        this.frameGridContainer.style.display = 'none';
+      }
+      this._lastFrameGridTier = null;
+      return;
+    }
 
     // 프레임 그리드 컨테이너 생성 또는 가져오기
     if (!this.frameGridContainer) {
       this.frameGridContainer = document.createElement('div');
       this.frameGridContainer.className = 'frame-grid-container';
       this.frameGridContainer.style.cssText = `
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-        z-index: 1;
+        position: absolute; top: 0; left: 0;
+        width: 100%; height: 100%;
+        pointer-events: none; z-index: 1;
       `;
       this.tracksContainer.appendChild(this.frameGridContainer);
     }
@@ -795,100 +809,77 @@ export class Timeline extends EventTarget {
     const containerWidth = this.tracksContainer.offsetWidth;
     const frameWidth = containerWidth / this.totalFrames;
 
-    // 프레임 너비에 따른 그리드 표시 결정
-    // 4px 이상: 개별 프레임 표시
-    // 2px 이상: 5프레임 단위 표시
-    // 그 이하: 숨김
-    const minFrameWidthForGrid = 4;
-    const minFrameWidthForSparse = 2;
+    const tierResult = resolveFrameGridTier(frameWidth, this._lastFrameGridTier ?? null);
+    this._lastFrameGridTier = tierResult.tier;
 
-    if (frameWidth >= minFrameWidthForGrid) {
-      // 개별 프레임 그리드 표시
-      this._renderFrameGrid(frameWidth, 1);
-    } else if (frameWidth >= minFrameWidthForSparse) {
-      // 5프레임 또는 10프레임 단위로 표시
-      const step = frameWidth * 5 >= minFrameWidthForGrid ? 5 : 10;
-      this._renderFrameGrid(frameWidth * step, step);
-    } else {
-      // 그리드 숨김
-      this.frameGridContainer.innerHTML = '';
-      this.frameGridContainer.style.display = 'none';
-    }
+    this._renderFrameGridTiered(frameWidth, tierResult);
   }
 
   /**
-   * 프레임 그리드 렌더링
-   * @param {number} gridWidth - 격자 간격 (픽셀)
-   * @param {number} frameStep - 프레임 단위 (1, 5, 10 등)
+   * 격자 표시 토글 설정
    */
-  _renderFrameGrid(gridWidth, frameStep) {
+  setGridVisible(visible) {
+    this.gridVisible = !!visible;
+    this._updateFrameGrid();
+  }
+
+  /**
+   * 단계별 프레임 격자 렌더링 — resolveFrameGridTier 결과를 CSS background로 합성
+   *
+   * Note: tier 플래그 의미
+   *   showFiveSec: "오직 5초만" (tier === FIVE_SEC, 가장 줌아웃 상태)
+   *   showOneSec/showHalf/showQuarter/showFrame: "해당 단계 이상"(누산)
+   * 각 if 블록이 서로 겹치는 영역(예: 1초 선이 ½초 선 위치와 겹침)은 먼저 push된 레이어가
+   * CSS 합성에서 상위에 그려져 하위 레이어를 가린다. 1초/5초(노란색, 2px)는 상위에,
+   * ½/¼/frame(파랑·흰색, 1px)은 하위에 배치돼 우선순위가 유지됨.
+   */
+  _renderFrameGridTiered(pxPerFrame, t) {
     this.frameGridContainer.style.display = 'block';
 
-    // CSS background로 효율적인 그리드 렌더링
-    // 가시성 개선: 투명도를 높임
-    const accentShadowStrong = getComputedStyle(document.documentElement).getPropertyValue('--accent-shadow-strong').trim() || 'rgba(255, 208, 0, 0.5)';
-    const majorLineColor = accentShadowStrong; // 1초 단위 (테마 색상)
-    const minorLineColor = 'rgba(255, 255, 255, 0.25)'; // 일반 프레임 (더 잘 보이게)
+    const fps = this.fps || 24;
+    const secPx = pxPerFrame * fps;
 
-    // 1초 단위 강조선 계산
-    const framesPerSecond = this.fps;
-    const secondWidth = gridWidth * (framesPerSecond / frameStep);
+    // 색상 정의
+    const colorSec = getComputedStyle(document.documentElement)
+      .getPropertyValue('--accent-shadow-strong').trim() || 'rgba(255, 208, 0, 0.75)';
+    const colorHalf = 'rgba(120, 180, 255, 0.55)';
+    const colorQuarter = 'rgba(120, 180, 255, 0.32)';
+    const colorFrame = 'rgba(255, 255, 255, 0.22)';
 
-    // 그리드 패턴 생성
-    let backgroundImage = '';
-    let backgroundSize = '';
+    const layers = [];
+    const sizes = [];
 
-    if (frameStep === 1) {
-      // 개별 프레임 표시 + 1초 단위 강조
-      backgroundImage = `
-        repeating-linear-gradient(
-          to right,
-          ${majorLineColor} 0px,
-          ${majorLineColor} 2px,
-          transparent 2px,
-          transparent ${secondWidth}px
-        ),
-        repeating-linear-gradient(
-          to right,
-          ${minorLineColor} 0px,
-          ${minorLineColor} 1px,
-          transparent 1px,
-          transparent ${gridWidth}px
-        )
-      `;
-      backgroundSize = `${secondWidth}px 100%, ${gridWidth}px 100%`;
-    } else {
-      // 스파스 그리드 (5프레임/10프레임 단위)
-      const sparseLineColor = 'rgba(255, 255, 255, 0.35)';
-      backgroundImage = `
-        repeating-linear-gradient(
-          to right,
-          ${majorLineColor} 0px,
-          ${majorLineColor} 2px,
-          transparent 2px,
-          transparent ${secondWidth}px
-        ),
-        repeating-linear-gradient(
-          to right,
-          ${sparseLineColor} 0px,
-          ${sparseLineColor} 1px,
-          transparent 1px,
-          transparent ${gridWidth}px
-        )
-      `;
-      backgroundSize = `${secondWidth}px 100%, ${gridWidth}px 100%`;
+    if (t.showFiveSec) {
+      // 5초 간격 2px 폭 강조선
+      const fiveSecPx = secPx * 5;
+      layers.push(`repeating-linear-gradient(to right, ${colorSec} 0px, ${colorSec} 2px, transparent 2px, transparent ${fiveSecPx}px)`);
+      sizes.push(`${fiveSecPx}px 100%`);
+    }
+    if (t.showOneSec) {
+      layers.push(`repeating-linear-gradient(to right, ${colorSec} 0px, ${colorSec} 2px, transparent 2px, transparent ${secPx}px)`);
+      sizes.push(`${secPx}px 100%`);
+    }
+    if (t.showHalf) {
+      const halfSecPx = secPx / 2;
+      layers.push(`repeating-linear-gradient(to right, ${colorHalf} 0px, ${colorHalf} 1px, transparent 1px, transparent ${halfSecPx}px)`);
+      sizes.push(`${halfSecPx}px 100%`);
+    }
+    if (t.showQuarter) {
+      // ¼초는 fps 인식: round(fps/4) 프레임마다
+      const quarterFrames = Math.max(1, Math.round(fps / 4));
+      const quarterPx = pxPerFrame * quarterFrames;
+      layers.push(`repeating-linear-gradient(to right, ${colorQuarter} 0px, ${colorQuarter} 1px, transparent 1px, transparent ${quarterPx}px)`);
+      sizes.push(`${quarterPx}px 100%`);
+    }
+    if (t.showFrame) {
+      layers.push(`repeating-linear-gradient(to right, ${colorFrame} 0px, ${colorFrame} 1px, transparent 1px, transparent ${pxPerFrame}px)`);
+      sizes.push(`${pxPerFrame}px 100%`);
     }
 
-    this.frameGridContainer.style.backgroundImage = backgroundImage;
-    this.frameGridContainer.style.backgroundSize = backgroundSize;
+    this.frameGridContainer.style.backgroundImage = layers.join(', ');
+    this.frameGridContainer.style.backgroundSize = sizes.join(', ');
     this.frameGridContainer.style.backgroundRepeat = 'repeat-x';
     this.frameGridContainer.style.backgroundPosition = '0 0';
-
-    log.debug('프레임 그리드 업데이트', {
-      frameStep,
-      gridWidth: gridWidth.toFixed(2),
-      zoom: this.zoom
-    });
   }
 
   /**
@@ -1909,6 +1900,16 @@ export class Timeline extends EventTarget {
   setCommentTrack(trackElement, layerHeaderElement = null) {
     this.commentTrack = trackElement;
     this.commentLayerHeader = layerHeaderElement;
+
+    // 타임라인 배경 클릭 시 펼친 클러스터 접기
+    if (this.commentTrack) {
+      this.commentTrack.addEventListener('click', (e) => {
+        if (e.target === this.commentTrack && this.expandedClusterId !== null) {
+          this.expandedClusterId = null;
+          this.renderCommentRanges(this._lastComments || []);
+        }
+      });
+    }
   }
 
   /**
@@ -1918,28 +1919,84 @@ export class Timeline extends EventTarget {
   renderCommentRanges(comments) {
     if (!this.commentTrack) return;
 
+    // 데이터 캐시 (펼침/접힘 재렌더용)
+    this._lastComments = comments;
+
     // 기존 댓글 제거
     this.commentTrack.innerHTML = '';
 
-    // 댓글이 없으면 트랙 및 레이어 헤더 숨김
+    // 댓글이 없으면 트랙 및 레이어 헤더 숨김 (기존 로직 유지)
     if (!comments || comments.length === 0) {
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      // 펼침 상태는 데이터가 없어진 상황이므로 리셋
+      this.expandedClusterId = null;
       return;
     }
 
-    // 트랙 및 레이어 헤더 표시
+    // 트랙 및 레이어 헤더 표시 (기존 로직 유지)
     this.commentTrack.style.display = 'block';
     if (this.commentLayerHeader) {
       this.commentLayerHeader.style.display = 'flex';
     }
 
-    // 각 댓글 범위 렌더링
-    comments.forEach(comment => {
-      const element = this._createCommentRangeElement(comment);
-      this.commentTrack.appendChild(element);
+    // 1) 클러스터링
+    const clusters = findRangeClusters(comments);
+
+    // 2) 펼침 상태 유효성 검증 — 해당 clusterKey가 더 이상 존재하지 않으면 리셋
+    if (this.expandedClusterId !== null) {
+      const stillExists = clusters.some(c =>
+        clusterKey(c) === this.expandedClusterId && c.length > 1
+      );
+      if (!stillExists) {
+        this.expandedClusterId = null;
+      }
+    }
+
+    // 3) 최대 레인 수 계산 — 펼친 클러스터가 있으면 그 클러스터의 레인 수
+    //    assignLanes 호출 결과(_lane)를 여기서 메모이제이션하여 step 5에서 재호출하지 않음
+    let maxLanes = 1;
+    const expandedClusters = new Set();
+    clusters.forEach(cluster => {
+      if (clusterKey(cluster) === this.expandedClusterId && cluster.length > 1) {
+        const { maxLane } = assignLanes(cluster); // _lane이 여기서 1회 설정됨
+        maxLanes = Math.max(maxLanes, maxLane);
+        expandedClusters.add(cluster);
+      }
+    });
+
+    // 4) 트랙 높이 동적 설정 (애니메이션)
+    const baseHeight = 24;
+    const laneHeight = 24;
+    const lanePadding = 6;
+    const targetHeight = maxLanes > 1
+      ? laneHeight * maxLanes + lanePadding
+      : baseHeight;
+    this.commentTrack.style.height = `${targetHeight}px`;
+
+    // 5) 각 클러스터 렌더
+    clusters.forEach(cluster => {
+      if (cluster.length === 1) {
+        // 단일 댓글 — 기존처럼
+        const el = this._createCommentRangeElement(cluster[0]);
+        el.style.top = '2px';
+        this.commentTrack.appendChild(el);
+      } else if (expandedClusters.has(cluster)) {
+        // 펼친 클러스터 — step 3에서 assignLanes가 이미 실행되어 _lane이 설정된 상태
+        cluster.forEach(c => {
+          const el = this._createCommentRangeElement(c);
+          el.style.top = `${2 + c._lane * laneHeight}px`;
+          this.commentTrack.appendChild(el);
+        });
+        const chip = this._createCollapseChip(cluster, maxLanes);
+        this.commentTrack.appendChild(chip);
+      } else {
+        // 접힌 클러스터 — 배지
+        const badge = this._createClusterBadgeElement(cluster);
+        this.commentTrack.appendChild(badge);
+      }
     });
   }
 
@@ -2003,7 +2060,86 @@ export class Timeline extends EventTarget {
   }
 
   /**
+   * 접힌 클러스터의 배지 바 DOM 생성
+   */
+  _createClusterBadgeElement(cluster) {
+    const totalFrames = this.totalFrames || 1;
+    const minStart = Math.min(...cluster.map(c => c.startFrame));
+    const maxEnd = Math.max(...cluster.map(c => c.endFrame));
+    const leftPercent = (minStart / totalFrames) * 100;
+    const widthPercent = ((maxEnd - minStart) / totalFrames) * 100;
+
+    const el = document.createElement('div');
+    el.className = 'comment-cluster-badge';
+    el.dataset.clusterKey = clusterKey(cluster);
+    el.style.left = `${leftPercent}%`;
+    el.style.width = `${Math.max(widthPercent, 3)}%`;
+    el.style.top = '2px';
+
+    // 스택 힌트 (최대 3색)
+    const hint = document.createElement('div');
+    hint.className = 'comment-cluster-stack-hint';
+    cluster.slice(0, 3).forEach(c => {
+      const stripe = document.createElement('div');
+      stripe.style.background = c.color || '#4a9eff';
+      hint.appendChild(stripe);
+    });
+    el.appendChild(hint);
+
+    // 카운트 칩
+    const chip = document.createElement('span');
+    chip.className = 'comment-cluster-count';
+    chip.textContent = `⊕${cluster.length}`;
+    el.appendChild(chip);
+
+    // 라벨
+    const label = document.createElement('span');
+    label.className = 'comment-cluster-label';
+    label.textContent = '겹친 코멘트';
+    el.appendChild(label);
+
+    // 클릭 → 펼치기
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.expandedClusterId = clusterKey(cluster);
+      this.renderCommentRanges(this._lastComments || []);
+    });
+
+    return el;
+  }
+
+  /**
+   * 펼친 클러스터를 접는 칩 DOM
+   */
+  _createCollapseChip(cluster, maxLanes) {
+    const totalFrames = this.totalFrames || 1;
+    const minStart = Math.min(...cluster.map(c => c.startFrame));
+    const leftPercent = (minStart / totalFrames) * 100;
+
+    const chip = document.createElement('button');
+    chip.className = 'comment-collapse-chip';
+    chip.type = 'button';
+    chip.textContent = '▲ 접기';
+    chip.style.left = `${leftPercent}%`;
+    chip.style.top = `${24 * maxLanes + 2}px`;
+
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.expandedClusterId = null;
+      this.renderCommentRanges(this._lastComments || []);
+    });
+
+    return chip;
+  }
+
+  /**
    * 단일 댓글 범위 업데이트
+   *
+   * 주의: 클러스터로 접힌 상태의 댓글은 개별 .comment-range-item DOM이 없고
+   * 주황 배지로만 렌더됩니다. 따라서 접힌 상태에서 리사이즈 결과를 여기서
+   * 반영하려 하면 element가 null이라 조용히 무시됩니다. 접힌 클러스터의
+   * 리사이즈는 먼저 펼친 뒤 진행되는 것이 MVP 전제입니다.
+   *
    * @param {object} comment - 댓글 범위 데이터
    */
   updateCommentRangeElement(comment) {
