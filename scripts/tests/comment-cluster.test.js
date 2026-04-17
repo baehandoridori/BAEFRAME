@@ -108,3 +108,18 @@ test('재사용 가능한 레인: A(0-10), B(5-15), C(12-20) → A,C는 레인 0
   assert.equal(cs[1]._lane, 1);
   assert.equal(cs[2]._lane, 0);
 });
+
+// --- clusterKey ---
+
+test('clusterKey: 빈 클러스터 → null', () => {
+  assert.equal(mod.clusterKey([]), null);
+});
+
+test('clusterKey: 단일 댓글 클러스터 → 해당 markerId', () => {
+  assert.equal(mod.clusterKey([c('x', 0, 10)]), 'x');
+});
+
+test('clusterKey: 여러 댓글 클러스터 → 첫 댓글 markerId', () => {
+  const cluster = [c('first', 0, 10), c('second', 5, 15)];
+  assert.equal(mod.clusterKey(cluster), 'first');
+});
