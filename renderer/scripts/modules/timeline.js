@@ -958,7 +958,7 @@ export class Timeline extends EventTarget {
       this._emit('layerContextMenu', {
         layerId: layer.id,
         x: e.clientX,
-        y: e.clientY,
+        y: e.clientY
       });
     });
 
