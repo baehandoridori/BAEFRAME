@@ -130,3 +130,71 @@ test('clusterKey: 멤버 순서가 달라도 동일한 키 반환 (안정성)', 
   assert.equal(k1, k2);
   assert.equal(k1, 'alpha|beta');
 });
+
+// --- splitClustersByPixelGap ---
+
+test('split: 빈 배열 입력 → 빈 배열 반환', () => {
+  assert.deepEqual(mod.splitClustersByPixelGap([], { pxPerFrame: 1, minGapPx: 8 }), []);
+});
+
+test('split: 단일 멤버 클러스터는 그대로 통과', () => {
+  const cluster = [c('a', 0, 10)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minGapPx: 8 });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].length, 1);
+  assert.equal(result[0][0].markerId, 'a');
+});
+
+test('split: 모든 gap이 minGapPx 미만 → 원본 클러스터 그대로', () => {
+  const cluster = [c('a', 0, 10), c('b', 12, 20)]; // gap=2 frames * 1px = 2px < 8px
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minGapPx: 8 });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].length, 2);
+});
+
+test('split: 한 지점만 gap ≥ minGapPx → 2개로 분리', () => {
+  const cluster = [c('a', 0, 10), c('b', 20, 30)]; // gap=10 frames * 1px = 10px ≥ 8px
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minGapPx: 8 });
+  assert.equal(result.length, 2);
+  assert.equal(result[0][0].markerId, 'a');
+  assert.equal(result[1][0].markerId, 'b');
+});
+
+test('split: 여러 gap ≥ minGapPx → N+1개로 분리', () => {
+  const cluster = [c('a', 0, 5), c('b', 15, 20), c('c', 30, 35)]; // 각 gap=10
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minGapPx: 8 });
+  assert.equal(result.length, 3);
+});
+
+test('split: pxPerFrame = 0 → 원본 그대로 (안전 가드)', () => {
+  const cluster = [c('a', 0, 10), c('b', 100, 110)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 0, minGapPx: 8 });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].length, 2);
+});
+
+test('split: pxPerFrame 음수 → 원본 그대로', () => {
+  const cluster = [c('a', 0, 10), c('b', 100, 110)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: -1, minGapPx: 8 });
+  assert.equal(result.length, 1);
+});
+
+test('split: minGapPx 옵션 생략 → 기본 8px 적용', () => {
+  const cluster = [c('a', 0, 10), c('b', 20, 30)]; // gap=10px ≥ 8px
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1 });
+  assert.equal(result.length, 2);
+});
+
+test('split: 정렬되지 않은 멤버도 처리', () => {
+  const cluster = [c('b', 20, 30), c('a', 0, 10)]; // gap=10, 입력 역순
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minGapPx: 8 });
+  assert.equal(result.length, 2);
+  assert.equal(result[0][0].markerId, 'a');
+  assert.equal(result[1][0].markerId, 'b');
+});
+
+test('split: pxPerFrame이 작으면 gap이 커도 묶임 유지 (줌 아웃)', () => {
+  const cluster = [c('a', 0, 10), c('b', 20, 30)]; // frame gap=10, pxPerFrame=0.1 → 1px < 8px
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 0.1, minGapPx: 8 });
+  assert.equal(result.length, 1);
+});

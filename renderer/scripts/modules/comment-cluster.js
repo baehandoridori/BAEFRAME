@@ -73,3 +73,42 @@ export function clusterKey(cluster) {
   if (!cluster || cluster.length === 0) return null;
   return cluster.map(c => c.markerId).sort().join('|');
 }
+
+/**
+ * 클러스터 내부에서 이웃 간 픽셀 거리가 minGapPx 이상이면 분리한다.
+ * 줌에 따라 pxPerFrame이 커지면 같은 프레임 클러스터가 자연스럽게 분리된다.
+ *
+ * @param {Array<Array>} clusters - findRangeClusters의 반환값
+ * @param {{pxPerFrame: number, minGapPx?: number}} [opts]
+ * @returns {Array<Array>} 분리된 클러스터 배열 (단일 멤버도 포함 가능)
+ */
+export function splitClustersByPixelGap(clusters, opts = {}) {
+  const { pxPerFrame, minGapPx = 8 } = opts;
+  if (!Array.isArray(clusters)) return clusters;
+  if (typeof pxPerFrame !== 'number' || !isFinite(pxPerFrame) || pxPerFrame <= 0) {
+    return clusters;
+  }
+  const result = [];
+  for (const cluster of clusters) {
+    if (!cluster || cluster.length < 2) {
+      result.push(cluster);
+      continue;
+    }
+    const sorted = [...cluster].sort((a, b) => a.startFrame - b.startFrame);
+    let current = [sorted[0]];
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      const gapFrames = curr.startFrame - prev.endFrame;
+      const gapPx = gapFrames * pxPerFrame;
+      if (gapPx >= minGapPx) {
+        result.push(current);
+        current = [curr];
+      } else {
+        current.push(curr);
+      }
+    }
+    result.push(current);
+  }
+  return result;
+}
