@@ -4274,6 +4274,9 @@ async function initApp() {
       if (thumbnailListeners.complete) {
         thumbnailGenerator.removeEventListener('complete', thumbnailListeners.complete);
       }
+      if (thumbnailListeners.exactCaptured) {
+        thumbnailGenerator.removeEventListener('exactCaptured', thumbnailListeners.exactCaptured);
+      }
 
       // 기존 썸네일 정리
       thumbnailGenerator.clear();
@@ -4333,12 +4336,8 @@ async function initApp() {
       thumbnailListeners.quickReady = onQuickReady;
       thumbnailListeners.complete = onComplete;
 
-      thumbnailGenerator.addEventListener('progress', onProgress);
-      thumbnailGenerator.addEventListener('quickReady', onQuickReady);
-      thumbnailGenerator.addEventListener('complete', onComplete);
-
       // 정확 프레임 온디맨드 캡처 완료 → 사이드바 댓글 썸네일 교체 (진적 갱신)
-      thumbnailGenerator.addEventListener('exactCaptured', (ev) => {
+      const onExactCaptured = (ev) => {
         const detail = ev.detail || {};
         const { time, dataUrl } = detail;
         if (!dataUrl || typeof time !== 'number') return;
@@ -4346,7 +4345,13 @@ async function initApp() {
         document.querySelectorAll(
           `.comment-item[data-start-frame="${frame}"] .comment-thumbnail`
         ).forEach(img => { img.src = dataUrl; });
-      });
+      };
+      thumbnailListeners.exactCaptured = onExactCaptured;
+
+      thumbnailGenerator.addEventListener('progress', onProgress);
+      thumbnailGenerator.addEventListener('quickReady', onQuickReady);
+      thumbnailGenerator.addEventListener('complete', onComplete);
+      thumbnailGenerator.addEventListener('exactCaptured', onExactCaptured);
 
       // 비디오 소스 경로 (file:// 프로토콜 추가)
       const videoSrc = filePath.startsWith('file://') ? filePath : `file://${filePath}`;

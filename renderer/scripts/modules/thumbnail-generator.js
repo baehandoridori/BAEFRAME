@@ -46,8 +46,9 @@ export class ThumbnailGenerator extends EventTarget {
     // 백그라운드 생성 제어
     this.abortController = null;
 
-    // 온디맨드 정확-프레임 캡처 큐
-    this._exactQueue = new Set();
+    // 온디맨드 정확-프레임 캡처 큐 + 정확 프레임 전용 맵 (반올림 없음)
+    this._exactMap = new Map();       // 정확한 time(float) -> dataUrl
+    this._exactQueue = new Set();     // 정확한 time 요청 큐
     this._exactDraining = false;
     this._exactAborted = false;
 
@@ -183,6 +184,9 @@ export class ThumbnailGenerator extends EventTarget {
 
       log.info('모든 썸네일 생성 완료', { count: this.thumbnailMap.size });
       this._emit('complete', { count: this.thumbnailMap.size });
+
+      // 생성 중 대기시켰던 온디맨드 캡처 요청 소진
+      if (this._exactQueue.size > 0) this._drainExactQueue();
 
     } catch (error) {
       if (error.name === 'AbortError') {
@@ -508,6 +512,9 @@ export class ThumbnailGenerator extends EventTarget {
     this._cleanupVideo();
     this.thumbnailMap.clear();
     this.sortedTimes = [];
+    this._exactMap.clear();
+    this._exactQueue.clear();
+    this._exactAborted = true; // 진행 중 루프 중단 신호
     this.currentVideoHash = null;
     this.isQuickReady = false;
     this.isFullReady = false;
@@ -523,38 +530,41 @@ export class ThumbnailGenerator extends EventTarget {
   }
 
   /**
-   * 정확한 시간의 썸네일만 반환 (근사 매칭 없음).
-   * 정확히 일치하는 키(roundedTime)가 맵에 없으면 null.
+   * 요청된 **정확한 time**에 대해 캐시된 썸네일만 반환 (근사 매칭 없음).
+   * `_exactMap`은 온디맨드 캡처로 채워지며 0.1초 반올림을 거치지 않아
+   * 프레임 단위 정확도를 유지한다.
    */
   getThumbnailUrlAtExact(time) {
     if (typeof time !== 'number' || !isFinite(time) || time < 0) return null;
-    const rounded = Math.round(time * 10) / 10;
-    return this.thumbnailMap.get(rounded) || null;
+    return this._exactMap.get(time) || null;
   }
 
   /**
    * 특정 시간의 정확한 프레임 썸네일을 비동기로 캡처 요청.
-   * 이미 캐시에 있거나 큐에 있으면 no-op. 재생 중이더라도 큐에만 쌓이며,
-   * 앱이 _drainExactQueue를 호출해야 실제 캡처가 진행된다.
+   * 반올림하지 않은 정확한 time을 키로 사용해 frame precision 유지.
    */
   requestExactCapture(time) {
     if (typeof time !== 'number' || !isFinite(time) || time < 0) return;
-    const rounded = Math.round(time * 10) / 10;
-    if (this.thumbnailMap.has(rounded)) return;
-    if (this._exactQueue.has(rounded)) return;
-    this._exactQueue.add(rounded);
-    // 기본 자동 드레인 — 앱 측 가드(pause 이벤트)가 있으면 덮어씀
+    if (this._exactMap.has(time)) return;
+    if (this._exactQueue.has(time)) return;
+    this._exactQueue.add(time);
     this._drainExactQueue();
   }
 
   /**
-   * 정확 캡처 큐 소진. 재생 중 호출되면 Phase 2가 해제된 경우 비디오를
-   * 임시 재생성해 캡처하고, 완료 후 정리한다.
+   * 정확 캡처 큐 소진.
+   * - Phase 1/2 생성 중에는 `this.video`를 공유하면 시크 경쟁이 생기므로
+   *   **`isGenerating`일 땐 early return**하여 대기. `generate()` 완료 시점에
+   *   다시 호출되도록 연결돼 있다.
+   * - Phase 2 완료 후 `this.video`가 정리된 상태에서는 임시 비디오 요소를
+   *   생성해 캡처하고, 완료 후 정리.
    */
   async _drainExactQueue() {
     if (this._exactDraining) return;
     if (!this.videoSrc) return;
     if (this._exactQueue.size === 0) return;
+    // Phase 1/2 진행 중이면 시크 경쟁 방지 위해 대기 (generate 완료 시 재시도됨)
+    if (this.isGenerating) return;
 
     this._exactDraining = true;
     this._exactAborted = false;
@@ -573,9 +583,19 @@ export class ThumbnailGenerator extends EventTarget {
         const t = this._exactQueue.values().next().value;
         this._exactQueue.delete(t);
         try {
-          await this._seekAndCapture(t);
-          const dataUrl = this.thumbnailMap.get(t);
-          if (dataUrl) this._emit('exactCaptured', { time: t, dataUrl });
+          // 반올림 없이 정확한 t에 seek + 캡처
+          await this._seekTo(t);
+          const dataUrl = this._captureFrame();
+          this._exactMap.set(t, dataUrl);
+
+          // 0.1초 버킷 맵에도 기록해 근사 조회(getThumbnailUrlAt)에서 재사용
+          const bucket = Math.round(t * 10) / 10;
+          if (!this.thumbnailMap.has(bucket)) {
+            this.thumbnailMap.set(bucket, dataUrl);
+            this._insertSorted(bucket);
+          }
+
+          this._emit('exactCaptured', { time: t, dataUrl });
         } catch (err) {
           log.warn('온디맨드 캡처 실패', { time: t, error: err?.message });
         }
