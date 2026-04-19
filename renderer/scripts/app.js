@@ -2935,6 +2935,10 @@ async function initApp() {
   let commentJustDragged = false; // 드래그 직후 click 차단용 1-tick 플래그
   let commentInteractionsBound = false; // 위임 리스너 1회 바인딩 가드
 
+  // 클러스터 호버 툴팁 상태
+  let clusterTooltipEl = null;
+  let clusterTooltipTimer = null;
+
   // ====== 비디오 댓글 범위 오버레이 ======
   const videoCommentRangeOverlay = document.getElementById('videoCommentRangeOverlay');
   const btnOverlayToggle = document.getElementById('btnOverlayToggle');
@@ -3220,6 +3224,91 @@ async function initApp() {
         document.body.style.cursor = 'grabbing';
       }
     });
+
+    // mouseover / mouseout — 접힌 클러스터 배지 호버 팝업
+    commentTrack.addEventListener('mouseover', (e) => {
+      const badge = e.target.closest('.comment-cluster-badge');
+      if (!badge) return;
+      if (timeline.expandedClusterId !== null) return; // 펼친 상태면 팝업 안 띄움
+      if (commentDragState) return;
+
+      cancelClusterTooltip();
+      clusterTooltipTimer = setTimeout(() => {
+        showClusterTooltip(badge);
+      }, 300);
+    });
+
+    commentTrack.addEventListener('mouseout', (e) => {
+      const badge = e.target.closest('.comment-cluster-badge');
+      if (!badge) return;
+      cancelClusterTooltip();
+      hideClusterTooltip();
+    });
+  }
+
+  function cancelClusterTooltip() {
+    if (clusterTooltipTimer) {
+      clearTimeout(clusterTooltipTimer);
+      clusterTooltipTimer = null;
+    }
+  }
+
+  function hideClusterTooltip() {
+    if (clusterTooltipEl) clusterTooltipEl.classList.remove('visible');
+  }
+
+  function ensureClusterTooltip() {
+    if (clusterTooltipEl) return clusterTooltipEl;
+    const el = document.createElement('div');
+    el.className = 'comment-cluster-tooltip';
+    el.setAttribute('role', 'tooltip');
+    document.body.appendChild(el);
+    clusterTooltipEl = el;
+    return el;
+  }
+
+  function escapeTooltipText(s) {
+    const d = document.createElement('div');
+    d.textContent = String(s ?? '');
+    return d.innerHTML;
+  }
+
+  function showClusterTooltip(badge) {
+    const key = badge.dataset.clusterKey;
+    if (!key) return;
+    // clusterKey로 해당 클러스터의 코멘트들 복구
+    const members = key.split('|').map(id => commentManager.getMarker(id)).filter(Boolean);
+    if (members.length === 0) return;
+
+    const tooltip = ensureClusterTooltip();
+    tooltip.innerHTML = '';
+    members.forEach(m => {
+      const row = document.createElement('div');
+      row.className = 'tooltip-row';
+      const color = m.color || '#4a9eff';
+      const author = m.author || m.createdBy || '익명';
+      const text = (m.text || '').split('\n')[0].slice(0, 80);
+      row.innerHTML = `
+        <span class="tooltip-color-dot" style="background:${escapeTooltipText(color)}"></span>
+        <span class="tooltip-author">${escapeTooltipText(author)}</span>
+        <span class="tooltip-range">${m.startFrame}–${m.endFrame}</span>
+        <span class="tooltip-text">${escapeTooltipText(text)}</span>
+      `;
+      tooltip.appendChild(row);
+    });
+
+    // 위치: 배지 위쪽 우선, 상단 근처면 아래로 폴백
+    tooltip.classList.add('visible');
+    const badgeRect = badge.getBoundingClientRect();
+    const tipRect = tooltip.getBoundingClientRect();
+
+    let top = badgeRect.top - tipRect.height - 8;
+    if (top < 10) top = badgeRect.bottom + 8;
+    let left = badgeRect.left + (badgeRect.width / 2) - (tipRect.width / 2);
+    left = Math.max(8, Math.min(window.innerWidth - tipRect.width - 8, left));
+
+    tooltip.style.top = `${top}px`;
+    tooltip.style.left = `${left}px`;
   }
 
   // 댓글 드래그 처리 (mousemove)
