@@ -130,3 +130,84 @@ test('clusterKey: 멤버 순서가 달라도 동일한 키 반환 (안정성)', 
   assert.equal(k1, k2);
   assert.equal(k1, 'alpha|beta');
 });
+
+// --- splitClustersByPixelGap ---
+// 기준: 이웃 구간의 startFrame 간격 (포인트 마커 클러스터링과 동일, 기본 20px)
+
+test('split: 빈 배열 입력 → 빈 배열 반환', () => {
+  assert.deepEqual(mod.splitClustersByPixelGap([], { pxPerFrame: 1, minSpacingPx: 20 }), []);
+});
+
+test('split: 단일 멤버 클러스터는 그대로 통과', () => {
+  const cluster = [c('a', 0, 10)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minSpacingPx: 20 });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].length, 1);
+  assert.equal(result[0][0].markerId, 'a');
+});
+
+test('split: 모든 spacing이 minSpacingPx 미만 → 원본 클러스터 그대로', () => {
+  // startFrame 0→15 = 15px < 20px
+  const cluster = [c('a', 0, 10), c('b', 15, 25)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minSpacingPx: 20 });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].length, 2);
+});
+
+test('split: 한 지점만 spacing ≥ minSpacingPx → 2개로 분리', () => {
+  // startFrame 0→25 = 25px ≥ 20px
+  const cluster = [c('a', 0, 10), c('b', 25, 35)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minSpacingPx: 20 });
+  assert.equal(result.length, 2);
+  assert.equal(result[0][0].markerId, 'a');
+  assert.equal(result[1][0].markerId, 'b');
+});
+
+test('split: 여러 spacing ≥ minSpacingPx → N+1개로 분리', () => {
+  // startFrame 0→25→50, 각 25px 간격
+  const cluster = [c('a', 0, 5), c('b', 25, 30), c('c', 50, 55)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minSpacingPx: 20 });
+  assert.equal(result.length, 3);
+});
+
+test('split: pxPerFrame = 0 → 원본 그대로 (안전 가드)', () => {
+  const cluster = [c('a', 0, 10), c('b', 100, 110)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 0, minSpacingPx: 20 });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].length, 2);
+});
+
+test('split: pxPerFrame 음수 → 원본 그대로', () => {
+  const cluster = [c('a', 0, 10), c('b', 100, 110)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: -1, minSpacingPx: 20 });
+  assert.equal(result.length, 1);
+});
+
+test('split: minSpacingPx 옵션 생략 → 기본 20px 적용', () => {
+  // startFrame 0→25 = 25px ≥ 20px
+  const cluster = [c('a', 0, 10), c('b', 25, 35)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1 });
+  assert.equal(result.length, 2);
+});
+
+test('split: 정렬되지 않은 멤버도 처리', () => {
+  const cluster = [c('b', 25, 35), c('a', 0, 10)]; // spacing=25px, 입력 역순
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minSpacingPx: 20 });
+  assert.equal(result.length, 2);
+  assert.equal(result[0][0].markerId, 'a');
+  assert.equal(result[1][0].markerId, 'b');
+});
+
+test('split: pxPerFrame이 작으면 spacing이 커도 묶임 유지 (줌 아웃)', () => {
+  // startFrame 차 100 * pxPerFrame 0.1 = 10px < 20px
+  const cluster = [c('a', 0, 10), c('b', 100, 110)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 0.1, minSpacingPx: 20 });
+  assert.equal(result.length, 1);
+});
+
+test('split: 긴 구간이 중간에 있어도 startFrame만 가까우면 같은 클러스터', () => {
+  // A는 긴 구간 [0,1000], B는 A 시작점 근처 [5,10]
+  const cluster = [c('a', 0, 1000), c('b', 5, 10)];
+  const result = mod.splitClustersByPixelGap([cluster], { pxPerFrame: 1, minSpacingPx: 20 });
+  assert.equal(result.length, 1, 'startFrame 간격 5px이므로 묶임 유지');
+});

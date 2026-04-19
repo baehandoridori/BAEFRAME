@@ -73,3 +73,47 @@ export function clusterKey(cluster) {
   if (!cluster || cluster.length === 0) return null;
   return cluster.map(c => c.markerId).sort().join('|');
 }
+
+/**
+ * 클러스터 내부에서 이웃 구간의 `startFrame` 간격이 minSpacingPx 이상이면 분리한다.
+ *
+ * 기준이 `startFrame` 간격인 이유: 타임라인의 포인트 댓글 마커 클러스터링이 동일한
+ * "20px 미만 시작점 거리" 기준을 사용한다(timeline.js _renderClusteredMarkers).
+ * 구간 코멘트도 같은 기준으로 묶어야 포인트 마커의 "(N)" 복수 배지와 구간 배지가
+ * 시각적으로 일관되게 나타난다.
+ *
+ * @param {Array<Array>} clusters - findRangeClusters의 반환값
+ * @param {{pxPerFrame: number, minSpacingPx?: number}} [opts]
+ * @returns {Array<Array>} 분리된 클러스터 배열 (단일 멤버도 포함 가능)
+ */
+export function splitClustersByPixelGap(clusters, opts = {}) {
+  const { pxPerFrame, minSpacingPx = 20 } = opts;
+  if (!Array.isArray(clusters)) return clusters;
+  if (typeof pxPerFrame !== 'number' || !isFinite(pxPerFrame) || pxPerFrame <= 0) {
+    return clusters;
+  }
+  const result = [];
+  for (const cluster of clusters) {
+    if (!cluster || cluster.length < 2) {
+      result.push(cluster);
+      continue;
+    }
+    const sorted = [...cluster].sort((a, b) => a.startFrame - b.startFrame);
+    let current = [sorted[0]];
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      // 포인트 마커 클러스터링과 동일: startFrame 간 픽셀 거리 기준
+      const spacingFrames = curr.startFrame - prev.startFrame;
+      const spacingPx = spacingFrames * pxPerFrame;
+      if (spacingPx >= minSpacingPx) {
+        result.push(current);
+        current = [curr];
+      } else {
+        current.push(curr);
+      }
+    }
+    result.push(current);
+  }
+  return result;
+}

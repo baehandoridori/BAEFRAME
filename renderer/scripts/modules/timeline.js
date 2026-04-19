@@ -6,7 +6,7 @@
 import { createLogger } from '../logger.js';
 import { MARKER_COLORS } from './comment-manager.js';
 import { resolveFrameGridTier } from './frame-grid-tiers.js';
-import { findRangeClusters, assignLanes, clusterKey } from './comment-cluster.js';
+import { findRangeClusters, assignLanes, clusterKey, splitClustersByPixelGap } from './comment-cluster.js';
 
 const log = createLogger('Timeline');
 
@@ -1900,16 +1900,8 @@ export class Timeline extends EventTarget {
   setCommentTrack(trackElement, layerHeaderElement = null) {
     this.commentTrack = trackElement;
     this.commentLayerHeader = layerHeaderElement;
-
-    // 타임라인 배경 클릭 시 펼친 클러스터 접기
-    if (this.commentTrack) {
-      this.commentTrack.addEventListener('click', (e) => {
-        if (e.target === this.commentTrack && this.expandedClusterId !== null) {
-          this.expandedClusterId = null;
-          this.renderCommentRanges(this._lastComments || []);
-        }
-      });
-    }
+    // 트랙 배경 클릭으로 펼친 클러스터 접기 / 배지 펼치기 등은 app.js의
+    // setupCommentRangeInteractions()에서 드래그 가드와 함께 위임 처리한다.
   }
 
   /**
@@ -1942,10 +1934,17 @@ export class Timeline extends EventTarget {
       this.commentLayerHeader.style.display = 'flex';
     }
 
-    // 1) 클러스터링
-    const clusters = findRangeClusters(comments);
+    // 1) 프레임 기반 클러스터링
+    const rawClusters = findRangeClusters(comments);
 
-    // 2) 펼침 상태 유효성 검증 — 해당 clusterKey가 더 이상 존재하지 않으면 리셋
+    // 1b) 픽셀 기반 split — 줌 반응형. 포인트 마커 클러스터링과 동일한 20px 기준.
+    const trackRect = this.commentTrack.getBoundingClientRect();
+    const pxPerFrame = this.totalFrames > 0 && trackRect.width > 0
+      ? trackRect.width / this.totalFrames
+      : 0;
+    const clusters = splitClustersByPixelGap(rawClusters, { pxPerFrame, minSpacingPx: 20 });
+
+    // 2) 펼침 상태 유효성 검증 — split 후 clusterKey 기준으로 판정
     if (this.expandedClusterId !== null) {
       const stillExists = clusters.some(c =>
         clusterKey(c) === this.expandedClusterId && c.length > 1
@@ -1979,7 +1978,7 @@ export class Timeline extends EventTarget {
     // 5) 각 클러스터 렌더
     clusters.forEach(cluster => {
       if (cluster.length === 1) {
-        // 단일 댓글 — 기존처럼
+        // 단일 댓글 (또는 split 후 단일 멤버로 쪼개진 조각)
         const el = this._createCommentRangeElement(cluster[0]);
         el.style.top = '2px';
         this.commentTrack.appendChild(el);
@@ -1990,8 +1989,8 @@ export class Timeline extends EventTarget {
           el.style.top = `${2 + c._lane * laneHeight}px`;
           this.commentTrack.appendChild(el);
         });
-        const chip = this._createCollapseChip(cluster, maxLanes);
-        this.commentTrack.appendChild(chip);
+        const closeBadge = this._createClusterCloseBadge(cluster);
+        this.commentTrack.appendChild(closeBadge);
       } else {
         // 접힌 클러스터 — 배지
         const badge = this._createClusterBadgeElement(cluster);
@@ -2060,7 +2059,7 @@ export class Timeline extends EventTarget {
   }
 
   /**
-   * 접힌 클러스터의 배지 바 DOM 생성
+   * 접힌 클러스터의 배지 바 DOM 생성 (이벤트는 위임 핸들러가 처리)
    */
   _createClusterBadgeElement(cluster) {
     const totalFrames = this.totalFrames || 1;
@@ -2076,60 +2075,33 @@ export class Timeline extends EventTarget {
     el.style.width = `${Math.max(widthPercent, 3)}%`;
     el.style.top = '2px';
 
-    // 스택 힌트 (최대 3색)
-    const hint = document.createElement('div');
-    hint.className = 'comment-cluster-stack-hint';
-    cluster.slice(0, 3).forEach(c => {
-      const stripe = document.createElement('div');
-      stripe.style.background = c.color || '#4a9eff';
-      hint.appendChild(stripe);
-    });
-    el.appendChild(hint);
-
-    // 카운트 칩
-    const chip = document.createElement('span');
-    chip.className = 'comment-cluster-count';
-    chip.textContent = `⊕${cluster.length}`;
-    el.appendChild(chip);
-
-    // 라벨
+    // "+N" 숫자 강조 레이블만 표시 (세로 스트라이프/라벨 제거)
     const label = document.createElement('span');
-    label.className = 'comment-cluster-label';
-    label.textContent = '겹친 코멘트';
+    label.className = 'comment-cluster-badge-label';
+    label.textContent = `+${cluster.length}`;
     el.appendChild(label);
-
-    // 클릭 → 펼치기
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.expandedClusterId = clusterKey(cluster);
-      this.renderCommentRanges(this._lastComments || []);
-    });
 
     return el;
   }
 
   /**
-   * 펼친 클러스터를 접는 칩 DOM
+   * 펼친 클러스터의 접기 배지 DOM (오른쪽 상단 고정, 이벤트는 위임)
    */
-  _createCollapseChip(cluster, maxLanes) {
+  _createClusterCloseBadge(cluster) {
     const totalFrames = this.totalFrames || 1;
     const minStart = Math.min(...cluster.map(c => c.startFrame));
+    const maxEnd = Math.max(...cluster.map(c => c.endFrame));
     const leftPercent = (minStart / totalFrames) * 100;
+    const widthPercent = ((maxEnd - minStart) / totalFrames) * 100;
 
-    const chip = document.createElement('button');
-    chip.className = 'comment-collapse-chip';
-    chip.type = 'button';
-    chip.textContent = '▲ 접기';
-    chip.style.left = `${leftPercent}%`;
-    chip.style.top = `${24 * maxLanes + 2}px`;
-
-    chip.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.expandedClusterId = null;
-      this.renderCommentRanges(this._lastComments || []);
-    });
-
-    return chip;
+    const el = document.createElement('div');
+    el.className = 'comment-cluster-close-badge';
+    el.textContent = '접기';
+    el.dataset.clusterKey = clusterKey(cluster);
+    // 클러스터 영역의 오른쪽 상단에 고정
+    el.style.left = `calc(${leftPercent}% + ${widthPercent}% - 60px)`;
+    el.style.top = '-22px';
+    return el;
   }
 
   /**

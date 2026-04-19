@@ -46,6 +46,12 @@ export class ThumbnailGenerator extends EventTarget {
     // 백그라운드 생성 제어
     this.abortController = null;
 
+    // 온디맨드 정확-프레임 캡처 큐 + 정확 프레임 전용 맵 (반올림 없음)
+    this._exactMap = new Map();       // 정확한 time(float) -> dataUrl
+    this._exactQueue = new Set();     // 정확한 time 요청 큐
+    this._exactDraining = false;
+    this._exactAborted = false;
+
     log.info('ThumbnailGenerator 초기화됨', {
       thumbnailSize: `${this.thumbnailWidth}x${this.thumbnailHeight}`,
       quickInterval: this.quickInterval,
@@ -178,6 +184,9 @@ export class ThumbnailGenerator extends EventTarget {
 
       log.info('모든 썸네일 생성 완료', { count: this.thumbnailMap.size });
       this._emit('complete', { count: this.thumbnailMap.size });
+
+      // 생성 중 대기시켰던 온디맨드 캡처 요청 소진
+      if (this._exactQueue.size > 0) this._drainExactQueue();
 
     } catch (error) {
       if (error.name === 'AbortError') {
@@ -503,6 +512,9 @@ export class ThumbnailGenerator extends EventTarget {
     this._cleanupVideo();
     this.thumbnailMap.clear();
     this.sortedTimes = [];
+    this._exactMap.clear();
+    this._exactQueue.clear();
+    this._exactAborted = true; // 진행 중 루프 중단 신호
     this.currentVideoHash = null;
     this.isQuickReady = false;
     this.isFullReady = false;
@@ -515,6 +527,103 @@ export class ThumbnailGenerator extends EventTarget {
    */
   _emit(type, detail = {}) {
     this.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+
+  /**
+   * 요청된 **정확한 time**에 대해 캐시된 썸네일만 반환 (근사 매칭 없음).
+   * `_exactMap`은 온디맨드 캡처로 채워지며 0.1초 반올림을 거치지 않아
+   * 프레임 단위 정확도를 유지한다.
+   */
+  getThumbnailUrlAtExact(time) {
+    if (typeof time !== 'number' || !isFinite(time) || time < 0) return null;
+    return this._exactMap.get(time) || null;
+  }
+
+  /**
+   * 특정 시간의 정확한 프레임 썸네일을 비동기로 캡처 요청.
+   * 반올림하지 않은 정확한 time을 키로 사용해 frame precision 유지.
+   */
+  requestExactCapture(time) {
+    if (typeof time !== 'number' || !isFinite(time) || time < 0) return;
+    if (this._exactMap.has(time)) return;
+    if (this._exactQueue.has(time)) return;
+    this._exactQueue.add(time);
+    this._drainExactQueue();
+  }
+
+  /**
+   * 정확 캡처 큐 소진.
+   * - Phase 1/2 생성 중에는 `this.video`를 공유하면 시크 경쟁이 생기므로
+   *   **`isGenerating`일 땐 early return**하여 대기. `generate()` 완료 시점에
+   *   다시 호출되도록 연결돼 있다.
+   * - Phase 2 완료 후 `this.video`가 정리된 상태에서는 임시 비디오 요소를
+   *   생성해 캡처하고, 완료 후 정리.
+   */
+  async _drainExactQueue() {
+    if (this._exactDraining) return;
+    if (!this.videoSrc) return;
+    if (this._exactQueue.size === 0) return;
+    // 시크 경쟁 방지:
+    // - isGenerating: Phase 1 진행 중
+    // - isQuickReady && !isFullReady: Phase 1 끝난 뒤 Phase 2가 백그라운드에서
+    //   this.video에 seek 중인 창. (generate()에서 isGenerating은 Phase 1 직후
+    //   false로 바뀌지만 Phase 2는 계속 돌고 있어 여기가 누락되면 경쟁 발생.)
+    // 두 조건 모두 generate() 완료 시점에 해소되며, 완료 후 자동으로 drain 재시도.
+    const inBackgroundGeneration =
+      this.isGenerating || (this.isQuickReady && !this.isFullReady);
+    if (inBackgroundGeneration) return;
+
+    this._exactDraining = true;
+    this._exactAborted = false;
+
+    const needsVideo = !this.video;
+    try {
+      if (needsVideo) {
+        this.video = document.createElement('video');
+        this.video.muted = true;
+        this.video.preload = 'auto';
+        await this._loadVideo(this.videoSrc);
+      }
+
+      while (this._exactQueue.size > 0) {
+        if (this._exactAborted) break;
+        const t = this._exactQueue.values().next().value;
+        this._exactQueue.delete(t);
+        try {
+          // 반올림 없이 정확한 t에 seek + 캡처
+          await this._seekTo(t);
+          const dataUrl = this._captureFrame();
+          this._exactMap.set(t, dataUrl);
+
+          // 0.1초 버킷 맵에도 기록해 근사 조회(getThumbnailUrlAt)에서 재사용
+          const bucket = Math.round(t * 10) / 10;
+          if (!this.thumbnailMap.has(bucket)) {
+            this.thumbnailMap.set(bucket, dataUrl);
+            this._insertSorted(bucket);
+          }
+
+          this._emit('exactCaptured', { time: t, dataUrl });
+        } catch (err) {
+          log.warn('온디맨드 캡처 실패', { time: t, error: err?.message });
+        }
+      }
+    } catch (err) {
+      log.warn('온디맨드 큐 드레인 오류', { error: err?.message });
+    } finally {
+      if (needsVideo) {
+        this._cleanupVideo();
+        try { await this._saveToCache(); } catch (_e) { /* 무시 */ }
+      }
+      this._exactDraining = false;
+      this._exactAborted = false;
+    }
+  }
+
+  /**
+   * 재생 시작 시 앱에서 호출 — 진행 중 드레인 루프를 다음 iteration에서 중단.
+   */
+  _abortExactDrain() {
+    this._exactAborted = true;
   }
 }
 
