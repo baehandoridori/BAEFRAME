@@ -563,8 +563,15 @@ export class ThumbnailGenerator extends EventTarget {
     if (this._exactDraining) return;
     if (!this.videoSrc) return;
     if (this._exactQueue.size === 0) return;
-    // Phase 1/2 진행 중이면 시크 경쟁 방지 위해 대기 (generate 완료 시 재시도됨)
-    if (this.isGenerating) return;
+    // 시크 경쟁 방지:
+    // - isGenerating: Phase 1 진행 중
+    // - isQuickReady && !isFullReady: Phase 1 끝난 뒤 Phase 2가 백그라운드에서
+    //   this.video에 seek 중인 창. (generate()에서 isGenerating은 Phase 1 직후
+    //   false로 바뀌지만 Phase 2는 계속 돌고 있어 여기가 누락되면 경쟁 발생.)
+    // 두 조건 모두 generate() 완료 시점에 해소되며, 완료 후 자동으로 drain 재시도.
+    const inBackgroundGeneration =
+      this.isGenerating || (this.isQuickReady && !this.isFullReady);
+    if (inBackgroundGeneration) return;
 
     this._exactDraining = true;
     this._exactAborted = false;
