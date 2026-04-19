@@ -83,6 +83,27 @@ PR #112에서 타임라인 구간 코멘트가 겹칠 때 **클러스터 배지 
 | `mouseover` | `.comment-cluster-badge` | 호버 팝업 예약 (300ms 후 표시) |
 | `mouseout` | `.comment-cluster-badge` | 호버 팝업 타이머 취소 / 즉시 숨김 |
 
+#### 4.1.1a 기존 리스너 정리 (중요)
+
+`timeline.js:1906-1911` `setCommentTrack()`에 이미 다음 `click` 리스너가 존재한다:
+
+```js
+this.commentTrack.addEventListener('click', (e) => {
+  if (e.target === this.commentTrack && this.expandedClusterId !== null) {
+    this.expandedClusterId = null;
+    this.renderCommentRanges(this._lastComments || []);
+  }
+});
+```
+
+이 리스너는 **드래그 가드가 없어** 이슈 B의 원인 중 하나다. **교체 방침**:
+
+1. `setCommentTrack()` 내부의 기존 `click` 리스너 **삭제**
+2. 같은 위치에서 `_bindCommentTrackDelegation()`을 호출
+3. 새 위임 `click` 핸들러가 `isDraggingComment`/`justDragged` 가드와 함께 동일 동작 수행
+
+또한 `_createClusterBadgeElement()`(라인 2065-2109), `_createCollapseChip()`(라인 2114-2133)에 현재 달려 있는 개별 `addEventListener` 호출도 **모두 제거**한다. 이벤트 라우팅은 위임 핸들러가 전담.
+
 #### 4.1.2 상태 필드 (timeline.js)
 
 ```js
@@ -180,6 +201,33 @@ for (const group of splitClusters) {
 }
 ```
 
+#### 4.3.4 펼친 상태 유효성 검증 — split 결과 반영 (중요)
+
+기존 `renderCommentRanges` (timeline.js:1948-1956)에 `expandedClusterId` 유효성 검증이 있다:
+
+```js
+if (this.expandedClusterId !== null) {
+  const stillExists = clusters.some(c =>
+    clusterKey(c) === this.expandedClusterId && c.length > 1
+  );
+  if (!stillExists) {
+    this.expandedClusterId = null;
+  }
+}
+```
+
+**split 도입 후 수정**: 이 검증은 `rawClusters`가 아닌 **split 결과**(`splitClusters`)에 대해 수행해야 한다. 줌 변경으로 split 결과가 달라져 펼친 클러스터의 구성원이 쪼개지면 `clusterKey`가 달라지고, 조용히 접힘 상태로 복귀한다 — 이건 의도된 동작이며 UX상 허용된다. 그러나 검증 순서를 반드시 split **이후**로 이동해야 한다.
+
+```js
+const splitClusters = splitClustersByPixelGap(rawClusters, { pxPerFrame, minGapPx: 8 });
+if (this.expandedClusterId !== null) {
+  const stillExists = splitClusters.some(c =>
+    clusterKey(c) === this.expandedClusterId && c.length > 1
+  );
+  if (!stillExists) this.expandedClusterId = null;
+}
+```
+
 ### 4.4 배지/팝업 DOM 구조
 
 #### 4.4.1 배지 (접힌 상태)
@@ -233,6 +281,8 @@ for (const group of splitClusters) {
 
 #### 4.5.1 `thumbnail-generator.js` 신규 API
 
+**실제 속성명**: 클래스는 `extends EventTarget`이며, 내부 비디오 요소의 속성명은 `this.video`(라인 44, 136)다. Phase 2가 완료되면 `_cleanupVideo()`(라인 174)가 `this.video = null`로 설정해 **해제**한다 — 따라서 온디맨드 캡처는 비디오가 해제된 후에도 작동해야 한다.
+
 ```js
 getThumbnailUrlAtExact(time) {
   const rounded = Math.round(time * 10) / 10;
@@ -250,9 +300,23 @@ requestExactCapture(time) {
 
 async _drainExactQueue() {
   if (this._exactDraining) return;
-  if (this.videoElement?.paused !== true) return;  // 재생 중이면 대기
+  if (!this.videoSrc) return;  // 아직 영상 로드 전
+
+  // 원본 영상이 재생 중이면 방해하지 않기 위해 대기
+  // (메인 player는 timeline.js가 보유하며 여기선 알 수 없으므로, 앱 측에서
+  //  pause 훅을 통해 trigger를 넣어준다 — 4.5.1a 참고)
+
   this._exactDraining = true;
   try {
+    // 비디오 요소가 없으면 온디맨드 캡처용으로 재생성 (기존 `generate()` 경로 재사용 금지)
+    const needsVideo = !this.video;
+    if (needsVideo) {
+      this.video = document.createElement('video');
+      this.video.muted = true;
+      this.video.preload = 'auto';
+      await this._loadVideo(this.videoSrc);
+    }
+
     while (this._exactQueue.size > 0) {
       const t = this._exactQueue.values().next().value;
       this._exactQueue.delete(t);
@@ -260,13 +324,40 @@ async _drainExactQueue() {
       const dataUrl = this.thumbnailMap.get(t);
       if (dataUrl) this._emit('exactCaptured', { time: t, dataUrl });
     }
+
+    // 임시 비디오였으면 정리 (캐시 재저장 포함)
+    if (needsVideo) {
+      this._cleanupVideo();
+      await this._saveToCache();
+    }
   } finally {
     this._exactDraining = false;
   }
 }
+
+// 재생 시작 시 앱에서 호출 — 진행 중 while 루프를 다음 iteration에서 중단
+_abortExactDrain() {
+  this._exactAborted = true;
+}
+// (while 루프 내에서 `if (this._exactAborted) { this._exactAborted = false; break; }` 체크)
 ```
 
-재생 중 캡처 방지: `videoElement`에 `pause` 이벤트 리스너 등록 → 일시정지 시 `_drainExactQueue()` 호출.
+#### 4.5.1a 재생 중 캡처 방지 — 앱 측 훅
+
+`thumbnail-generator.js`는 메인 `videoPlayer` 인스턴스에 접근하지 않는다(책임 분리). 따라서 **앱 계층에서 트리거**한다:
+
+- **요청만 쌓기**: `requestExactCapture(time)`은 `_drainExactQueue()`를 즉시 호출하지만, 내부에서 `_exactDraining` 가드로 중복 방지
+- **앱 측 drain 조건**: `app.js`에서 `videoPlayer`에 `pause` 이벤트 훅을 추가해 `thumbnailGenerator._drainExactQueue()`를 명시 호출하고, `play` 이벤트에서는 `_exactDraining` 플래그로 진행 중 드레인을 abort (안전하게 현재 `_seekAndCapture` 하나만 끝나고 큐 정지)
+
+간단화를 위해 이번 스코프에서는 **앱 측 조건부 호출**로 구현 (아래는 **의사코드** — 구현 시 `videoPlayer` 래퍼의 실제 이벤트 API를 확인해 `addEventListener`/`on`/직접 콜백 중 적합한 것을 선택):
+
+```js
+// app.js 기존 videoPlayer 이벤트 훅 근처에 추가 — 실 API 확인 후 적용
+videoPlayerBindOnPause(() => thumbnailGenerator._drainExactQueue?.());
+videoPlayerBindOnPlay (() => thumbnailGenerator._abortExactDrain?.());
+```
+
+`videoPlayer`가 HTML `<video>` 엘리먼트면 `addEventListener('pause'|'play', ...)`, 자체 래퍼면 래퍼의 구독 메서드를 사용. 구현 단계 첫 태스크에서 확인.
 
 #### 4.5.2 `app.js` 호출부 수정 (라인 ~5300)
 
@@ -284,8 +375,11 @@ if (showThumbnails && thumbnailGenerator?.isReady) {
 
 #### 4.5.3 정확 캡처 완료 이벤트 처리
 
+`ThumbnailGenerator`는 `extends EventTarget`이며 이벤트 발행은 `dispatchEvent(new CustomEvent(type, { detail }))` (라인 514-518). 따라서 소비자는 **`addEventListener` + `e.detail`** 패턴을 사용한다 (기존 `'progress'` 리스너와 동일한 방식, `app.js:4191-4193` 참고).
+
 ```js
-thumbnailGenerator.on('exactCaptured', ({ time, dataUrl }) => {
+thumbnailGenerator.addEventListener('exactCaptured', (e) => {
+  const { time, dataUrl } = e.detail;
   const frame = Math.round(time * videoPlayer.fps);
   document.querySelectorAll(
     `.comment-item[data-start-frame="${frame}"] .comment-thumbnail`
@@ -342,6 +436,8 @@ thumbnailGenerator.on('exactCaptured', ({ time, dataUrl }) => {
 12. Regression: 비클러스터 단일 코멘트 편집 정상 동작
 13. 실시간 동기화 이벤트 드래그 중 수신돼도 펼친 상태 유지
 14. ESC 키로도 클러스터 접힘 (선택적 기능)
+15. **펼친 상태에서 줌 변경** → 구성원 동일하면 펼친 상태 유지; split으로 구성원 변하면 자연스럽게 접힘 (regression 없음)
+16. Phase 2 완료 후 (`this.video === null` 상태)에도 온디맨드 캡처가 정상 동작 (재생성 경로)
 
 ### 6.3 Regression 확인
 
