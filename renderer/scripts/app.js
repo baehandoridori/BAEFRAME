@@ -643,6 +643,8 @@ async function initApp() {
     getAudioWaveform()?.setPlaying(true);
     // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
     timeline.scrollToPlayhead();
+    // 재생 중에는 온디맨드 썸네일 캡처를 중단해 재생 방해를 방지
+    getThumbnailGenerator()?._abortExactDrain?.();
   });
 
   videoPlayer.addEventListener('pause', () => {
@@ -650,6 +652,8 @@ async function initApp() {
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     getAudioWaveform()?.setPlaying(false);
+    // 일시정지 시점에 누적된 온디맨드 정확-프레임 큐를 소진
+    getThumbnailGenerator()?._drainExactQueue?.();
   });
 
   videoPlayer.addEventListener('ended', () => {
@@ -4319,6 +4323,17 @@ async function initApp() {
       thumbnailGenerator.addEventListener('quickReady', onQuickReady);
       thumbnailGenerator.addEventListener('complete', onComplete);
 
+      // 정확 프레임 온디맨드 캡처 완료 → 사이드바 댓글 썸네일 교체 (진적 갱신)
+      thumbnailGenerator.addEventListener('exactCaptured', (ev) => {
+        const detail = ev.detail || {};
+        const { time, dataUrl } = detail;
+        if (!dataUrl || typeof time !== 'number') return;
+        const frame = Math.round(time * (videoPlayer.fps || 24));
+        document.querySelectorAll(
+          `.comment-item[data-start-frame="${frame}"] .comment-thumbnail`
+        ).forEach(img => { img.src = dataUrl; });
+      });
+
       // 비디오 소스 경로 (file:// 프로토콜 추가)
       const videoSrc = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
 
@@ -5423,11 +5438,16 @@ async function initApp() {
       `;
       }).join('');
 
-      // 썸네일 URL 가져오기
+      // 썸네일 URL 가져오기 — 정확 프레임 우선, 없으면 근사치 + 온디맨드 캡처 요청
       const markerTime = marker.startFrame / videoPlayer.fps;
-      const thumbnailUrl = showThumbnails && thumbnailGenerator?.isReady
-        ? thumbnailGenerator.getThumbnailUrlAt(markerTime)
-        : null;
+      let thumbnailUrl = null;
+      if (showThumbnails && thumbnailGenerator?.isReady) {
+        thumbnailUrl = thumbnailGenerator.getThumbnailUrlAtExact(markerTime);
+        if (!thumbnailUrl) {
+          thumbnailGenerator.requestExactCapture(markerTime);
+          thumbnailUrl = thumbnailGenerator.getThumbnailUrlAt(markerTime);
+        }
+      }
 
       const thumbnailHtml = thumbnailUrl ? `
         <div class="comment-thumbnail-wrapper" style="max-width: ${thumbnailScale}%;">

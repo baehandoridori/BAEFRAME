@@ -46,6 +46,11 @@ export class ThumbnailGenerator extends EventTarget {
     // 백그라운드 생성 제어
     this.abortController = null;
 
+    // 온디맨드 정확-프레임 캡처 큐
+    this._exactQueue = new Set();
+    this._exactDraining = false;
+    this._exactAborted = false;
+
     log.info('ThumbnailGenerator 초기화됨', {
       thumbnailSize: `${this.thumbnailWidth}x${this.thumbnailHeight}`,
       quickInterval: this.quickInterval,
@@ -515,6 +520,83 @@ export class ThumbnailGenerator extends EventTarget {
    */
   _emit(type, detail = {}) {
     this.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+
+  /**
+   * 정확한 시간의 썸네일만 반환 (근사 매칭 없음).
+   * 정확히 일치하는 키(roundedTime)가 맵에 없으면 null.
+   */
+  getThumbnailUrlAtExact(time) {
+    if (typeof time !== 'number' || !isFinite(time) || time < 0) return null;
+    const rounded = Math.round(time * 10) / 10;
+    return this.thumbnailMap.get(rounded) || null;
+  }
+
+  /**
+   * 특정 시간의 정확한 프레임 썸네일을 비동기로 캡처 요청.
+   * 이미 캐시에 있거나 큐에 있으면 no-op. 재생 중이더라도 큐에만 쌓이며,
+   * 앱이 _drainExactQueue를 호출해야 실제 캡처가 진행된다.
+   */
+  requestExactCapture(time) {
+    if (typeof time !== 'number' || !isFinite(time) || time < 0) return;
+    const rounded = Math.round(time * 10) / 10;
+    if (this.thumbnailMap.has(rounded)) return;
+    if (this._exactQueue.has(rounded)) return;
+    this._exactQueue.add(rounded);
+    // 기본 자동 드레인 — 앱 측 가드(pause 이벤트)가 있으면 덮어씀
+    this._drainExactQueue();
+  }
+
+  /**
+   * 정확 캡처 큐 소진. 재생 중 호출되면 Phase 2가 해제된 경우 비디오를
+   * 임시 재생성해 캡처하고, 완료 후 정리한다.
+   */
+  async _drainExactQueue() {
+    if (this._exactDraining) return;
+    if (!this.videoSrc) return;
+    if (this._exactQueue.size === 0) return;
+
+    this._exactDraining = true;
+    this._exactAborted = false;
+
+    const needsVideo = !this.video;
+    try {
+      if (needsVideo) {
+        this.video = document.createElement('video');
+        this.video.muted = true;
+        this.video.preload = 'auto';
+        await this._loadVideo(this.videoSrc);
+      }
+
+      while (this._exactQueue.size > 0) {
+        if (this._exactAborted) break;
+        const t = this._exactQueue.values().next().value;
+        this._exactQueue.delete(t);
+        try {
+          await this._seekAndCapture(t);
+          const dataUrl = this.thumbnailMap.get(t);
+          if (dataUrl) this._emit('exactCaptured', { time: t, dataUrl });
+        } catch (err) {
+          log.warn('온디맨드 캡처 실패', { time: t, error: err?.message });
+        }
+      }
+    } catch (err) {
+      log.warn('온디맨드 큐 드레인 오류', { error: err?.message });
+    } finally {
+      if (needsVideo) {
+        this._cleanupVideo();
+        try { await this._saveToCache(); } catch (_e) { /* 무시 */ }
+      }
+      this._exactDraining = false;
+      this._exactAborted = false;
+    }
+  }
+
+  /**
+   * 재생 시작 시 앱에서 호출 — 진행 중 드레인 루프를 다음 iteration에서 중단.
+   */
+  _abortExactDrain() {
+    this._exactAborted = true;
   }
 }
 
