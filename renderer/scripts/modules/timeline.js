@@ -1900,16 +1900,8 @@ export class Timeline extends EventTarget {
   setCommentTrack(trackElement, layerHeaderElement = null) {
     this.commentTrack = trackElement;
     this.commentLayerHeader = layerHeaderElement;
-
-    // 타임라인 배경 클릭 시 펼친 클러스터 접기
-    if (this.commentTrack) {
-      this.commentTrack.addEventListener('click', (e) => {
-        if (e.target === this.commentTrack && this.expandedClusterId !== null) {
-          this.expandedClusterId = null;
-          this.renderCommentRanges(this._lastComments || []);
-        }
-      });
-    }
+    // 트랙 배경 클릭으로 펼친 클러스터 접기 / 배지 펼치기 등은 app.js의
+    // setupCommentRangeInteractions()에서 드래그 가드와 함께 위임 처리한다.
   }
 
   /**
@@ -1997,7 +1989,7 @@ export class Timeline extends EventTarget {
           el.style.top = `${2 + c._lane * laneHeight}px`;
           this.commentTrack.appendChild(el);
         });
-        const closeBadge = this._createClusterCloseBadge(cluster, maxLanes);
+        const closeBadge = this._createClusterCloseBadge(cluster);
         this.commentTrack.appendChild(closeBadge);
       } else {
         // 접힌 클러스터 — 배지
@@ -2095,7 +2087,7 @@ export class Timeline extends EventTarget {
   /**
    * 펼친 클러스터의 접기 배지 DOM (오른쪽 상단 고정, 이벤트는 위임)
    */
-  _createClusterCloseBadge(cluster, maxLanes) {
+  _createClusterCloseBadge(cluster) {
     const totalFrames = this.totalFrames || 1;
     const minStart = Math.min(...cluster.map(c => c.startFrame));
     const maxEnd = Math.max(...cluster.map(c => c.endFrame));
@@ -2108,7 +2100,7 @@ export class Timeline extends EventTarget {
     el.dataset.clusterKey = clusterKey(cluster);
     // 클러스터 영역의 오른쪽 상단에 고정
     el.style.left = `calc(${leftPercent}% + ${widthPercent}% - 60px)`;
-    el.style.top = `-22px`;
+    el.style.top = '-22px';
     return el;
   }
 

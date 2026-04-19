@@ -2932,6 +2932,8 @@ async function initApp() {
 
   // 댓글 드래그 상태
   let commentDragState = null;
+  let commentJustDragged = false; // 드래그 직후 click 차단용 1-tick 플래그
+  let commentInteractionsBound = false; // 위임 리스너 1회 바인딩 가드
 
   // ====== 비디오 댓글 범위 오버레이 ======
   const videoCommentRangeOverlay = document.getElementById('videoCommentRangeOverlay');
@@ -3093,48 +3095,116 @@ async function initApp() {
     renderVideoCommentRanges();
   }
 
-  // 댓글 범위 상호작용 설정 (드래그, 리사이즈, 클릭)
+  // 댓글 범위 상호작용 설정 — commentTrack 1곳에 이벤트 위임 (1회만 바인딩)
+  // 위임으로 전환한 이유: PR #112 이후 클러스터 펼침 시 .comment-range-item이 재생성되는데
+  // 요소별 바인딩 방식은 재렌더 후 이벤트가 비어 편집 regression이 발생했다.
   function setupCommentRangeInteractions() {
-    const items = commentTrack.querySelectorAll('.comment-range-item');
+    if (commentInteractionsBound) return;
+    if (!commentTrack) return;
+    commentInteractionsBound = true;
 
-    items.forEach(item => {
-      const layerId = item.dataset.layerId;
-      const markerId = item.dataset.markerId;
+    // 클릭 — 해당 댓글 선택 + 프레임 이동 + 댓글 하이라이트
+    // 트랙 배경 클릭은 펼친 클러스터 접기
+    commentTrack.addEventListener('click', (e) => {
+      if (commentDragState || commentJustDragged) return;
 
-      // 클릭 - 해당 댓글로 이동 및 선택 + 댓글 하이라이트
-      item.addEventListener('click', (e) => {
-        if (e.target.classList.contains('comment-handle')) return;
+      // 핸들/배지/접기 배지 클릭은 mousedown에서 처리하므로 무시
+      if (e.target.closest('.comment-handle')) return;
+      if (e.target.closest('.comment-cluster-badge')) return;
+      if (e.target.closest('.comment-cluster-close-badge')) return;
 
-        // 해당 프레임으로 이동
+      const item = e.target.closest('.comment-range-item');
+      if (item) {
+        const layerId = item.dataset.layerId;
+        const markerId = item.dataset.markerId;
         const marker = commentManager.getMarker(markerId);
         if (marker) {
           videoPlayer.seekToFrame(marker.startFrame);
           videoPlayer.pause();
-          // 프리뷰 마커 클릭과 동일한 효과
           scrollToCommentWithGlow(markerId);
         }
-
-        // 선택 표시
-        items.forEach(i => i.classList.remove('selected'));
+        commentTrack.querySelectorAll('.comment-range-item').forEach(i =>
+          i.classList.remove('selected')
+        );
         item.classList.add('selected');
         selectedCommentRange = { layerId, markerId };
-      });
+        return;
+      }
 
-      // 드래그 시작 (전체 이동)
-      item.addEventListener('mousedown', (e) => {
-        if (e.target.classList.contains('comment-handle')) return;
-        if (e.button !== 0) return;
+      // 트랙 배경 클릭 → 펼친 클러스터 접기
+      if (e.target === commentTrack && timeline.expandedClusterId !== null) {
+        timeline.expandedClusterId = null;
+        timeline.renderCommentRanges(timeline._lastComments || []);
+      }
+    });
 
+    // mousedown — 드래그/리사이즈/펼치기/접기 라우팅
+    commentTrack.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+
+      // 1) 접기 배지 → 클러스터 접기
+      if (e.target.closest('.comment-cluster-close-badge')) {
         e.preventDefault();
+        e.stopPropagation();
+        timeline.expandedClusterId = null;
+        timeline.renderCommentRanges(timeline._lastComments || []);
+        return;
+      }
+
+      // 2) 클러스터 배지 → 펼치기 토글
+      const clusterBadge = e.target.closest('.comment-cluster-badge');
+      if (clusterBadge) {
+        e.preventDefault();
+        e.stopPropagation();
+        const key = clusterBadge.dataset.clusterKey;
+        timeline.expandedClusterId = (timeline.expandedClusterId === key) ? null : key;
+        timeline.renderCommentRanges(timeline._lastComments || []);
+        return;
+      }
+
+      // 3) 핸들 mousedown → 리사이즈 시작
+      const handle = e.target.closest('.comment-handle');
+      if (handle) {
+        const item = handle.closest('.comment-range-item');
+        if (!item) return;
+        const markerId = item.dataset.markerId;
+        const layerId = item.dataset.layerId;
         const marker = commentManager.getMarker(markerId);
         if (!marker) return;
-
-        // 권한 체크 (본인 코멘트만 이동 가능)
         if (!commentManager.canEdit(marker)) {
           showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
           return;
         }
+        e.preventDefault();
+        e.stopPropagation();
+        commentDragState = {
+          layerId,
+          markerId,
+          handle: handle.dataset.handle, // 'left' or 'right'
+          startX: e.clientX,
+          startFrame: marker.startFrame,
+          endFrame: marker.endFrame,
+          duration: marker.endFrame - marker.startFrame,
+          originalStartFrame: marker.startFrame,
+          originalEndFrame: marker.endFrame
+        };
+        item.classList.add('dragging');
+        document.body.style.cursor = 'ew-resize';
+        return;
+      }
 
+      // 4) 코멘트 바 본체 mousedown → 이동 드래그 시작
+      const item = e.target.closest('.comment-range-item');
+      if (item) {
+        const markerId = item.dataset.markerId;
+        const layerId = item.dataset.layerId;
+        const marker = commentManager.getMarker(markerId);
+        if (!marker) return;
+        if (!commentManager.canEdit(marker)) {
+          showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
+          return;
+        }
+        e.preventDefault();
         commentDragState = {
           layerId,
           markerId,
@@ -3143,48 +3213,12 @@ async function initApp() {
           startFrame: marker.startFrame,
           endFrame: marker.endFrame,
           duration: marker.endFrame - marker.startFrame,
-          // Undo용 원본 값 저장
           originalStartFrame: marker.startFrame,
           originalEndFrame: marker.endFrame
         };
-
         item.classList.add('dragging');
         document.body.style.cursor = 'grabbing';
-      });
-
-      // 핸들 드래그 시작 (리사이즈)
-      const handles = item.querySelectorAll('.comment-handle');
-      handles.forEach(handle => {
-        handle.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-
-          const marker = commentManager.getMarker(markerId);
-          if (!marker) return;
-
-          // 권한 체크 (본인 코멘트만 리사이즈 가능)
-          if (!commentManager.canEdit(marker)) {
-            showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
-            return;
-          }
-
-          commentDragState = {
-            layerId,
-            markerId,
-            handle: handle.dataset.handle, // 'left' or 'right'
-            startX: e.clientX,
-            startFrame: marker.startFrame,
-            endFrame: marker.endFrame,
-            duration: marker.endFrame - marker.startFrame,
-            // Undo용 원본 값 저장
-            originalStartFrame: marker.startFrame,
-            originalEndFrame: marker.endFrame
-          };
-
-          item.classList.add('dragging');
-          document.body.style.cursor = 'ew-resize';
-        });
-      });
+      }
     });
   }
 
@@ -3302,6 +3336,10 @@ async function initApp() {
 
       commentDragState = null;
       document.body.style.cursor = '';
+
+      // 드래그 직후 click 이벤트 차단 (클릭으로 오인한 접힘/선택 방지)
+      commentJustDragged = true;
+      setTimeout(() => { commentJustDragged = false; }, 50);
 
       // 데이터 저장
       reviewDataManager.save();
