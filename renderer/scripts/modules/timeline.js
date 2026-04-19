@@ -1937,12 +1937,12 @@ export class Timeline extends EventTarget {
     // 1) 프레임 기반 클러스터링
     const rawClusters = findRangeClusters(comments);
 
-    // 1b) 픽셀 기반 split — 줌 반응형 클러스터 해제
+    // 1b) 픽셀 기반 split — 줌 반응형. 포인트 마커 클러스터링과 동일한 20px 기준.
     const trackRect = this.commentTrack.getBoundingClientRect();
     const pxPerFrame = this.totalFrames > 0 && trackRect.width > 0
       ? trackRect.width / this.totalFrames
       : 0;
-    const clusters = splitClustersByPixelGap(rawClusters, { pxPerFrame, minGapPx: 8 });
+    const clusters = splitClustersByPixelGap(rawClusters, { pxPerFrame, minSpacingPx: 20 });
 
     // 2) 펼침 상태 유효성 검증 — split 후 clusterKey 기준으로 판정
     if (this.expandedClusterId !== null) {
