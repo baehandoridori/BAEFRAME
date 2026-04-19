@@ -3264,7 +3264,8 @@ async function initApp() {
   function ensureClusterTooltip() {
     if (clusterTooltipEl) return clusterTooltipEl;
     const el = document.createElement('div');
-    el.className = 'comment-cluster-tooltip';
+    // 기존 단일 마커 툴팁과 동일한 시각 스타일 재사용
+    el.className = 'comment-marker-tooltip cluster-hover';
     el.setAttribute('role', 'tooltip');
     document.body.appendChild(el);
     clusterTooltipEl = el;
@@ -3280,28 +3281,41 @@ async function initApp() {
   function showClusterTooltip(badge) {
     const key = badge.dataset.clusterKey;
     if (!key) return;
-    // clusterKey로 해당 클러스터의 코멘트들 복구
     const members = key.split('|').map(id => commentManager.getMarker(id)).filter(Boolean);
     if (members.length === 0) return;
 
     const tooltip = ensureClusterTooltip();
-    tooltip.innerHTML = '';
-    members.forEach(m => {
-      const row = document.createElement('div');
-      row.className = 'tooltip-row';
-      const color = m.color || '#4a9eff';
-      const author = m.author || m.createdBy || '익명';
-      const text = (m.text || '').split('\n')[0].slice(0, 80);
-      row.innerHTML = `
-        <span class="tooltip-color-dot" style="background:${escapeTooltipText(color)}"></span>
-        <span class="tooltip-author">${escapeTooltipText(author)}</span>
-        <span class="tooltip-range">${m.startFrame}–${m.endFrame}</span>
-        <span class="tooltip-text">${escapeTooltipText(text)}</span>
-      `;
-      tooltip.appendChild(row);
-    });
 
-    // 위치: 배지 위쪽 우선, 상단 근처면 아래로 폴백
+    // 대표 시작 프레임과 타임코드 (최소 startFrame 기준)
+    const minStart = Math.min(...members.map(m => m.startFrame));
+    const repMember = members.find(m => m.startFrame === minStart) || members[0];
+    const startTimecode = repMember.startTimecode || '';
+
+    // 각 댓글 박스 (기존 .tooltip-comment 스타일: 왼쪽 accent border)
+    const commentsHtml = members.map(m => {
+      const text = m.text || '';
+      const hasImage = !!m.image;
+      const displayText = text === '(이미지)' ? '' : text;
+      const preview = displayText.length > 50
+        ? displayText.substring(0, 50) + '...'
+        : displayText;
+      const imageIcon = hasImage ? '<span class="tooltip-image-icon">🖼</span>' : '';
+      const textHtml = preview ? escapeTooltipText(preview) : '';
+      const body = textHtml || (hasImage ? '이미지' : '');
+      return `<div class="tooltip-comment">${imageIcon}${body}</div>`;
+    }).join('');
+
+    const headerHtml = startTimecode
+      ? `<div class="tooltip-header"><span class="tooltip-timecode">${escapeTooltipText(startTimecode)}</span><span class="tooltip-frame">${minStart}f</span></div>`
+      : `<div class="tooltip-frame">프레임 ${minStart}</div>`;
+
+    tooltip.innerHTML = `
+      ${headerHtml}
+      <div class="tooltip-comments">${commentsHtml}</div>
+      ${members.length > 1 ? `<div class="tooltip-count">${members.length}개 댓글</div>` : ''}
+    `;
+
+    // 위치: 배지 위쪽 우선, 상단 근처면 아래로 폴백 (translateY -50% 는 cluster-hover modifier로 무효화됨)
     tooltip.classList.add('visible');
     const badgeRect = badge.getBoundingClientRect();
     const tipRect = tooltip.getBoundingClientRect();

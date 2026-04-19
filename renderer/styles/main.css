@@ -3051,14 +3051,14 @@ body.app-fullscreen .video-comment-overlay-controls {
   pointer-events: none;
 }
 
-/* 접기 배지 (펼친 상태) */
+/* 접기 배지 (펼친 상태) — position은 JS에서 left만 설정, right/width는 content-driven */
 .comment-cluster-close-badge {
   position: absolute;
   top: -22px;
-  right: 0;
   height: 20px;
   padding: 0 10px;
   display: inline-flex;
+  width: auto;
   align-items: center;
   gap: 4px;
   background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
@@ -3070,6 +3070,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   cursor: pointer;
   z-index: 25;
   user-select: none;
+  white-space: nowrap;
   transition: filter 0.15s ease, transform 0.15s ease;
 }
 
@@ -3085,70 +3086,13 @@ body.app-fullscreen .video-comment-overlay-controls {
   transform: translateY(-1px);
 }
 
-/* 클러스터 호버 툴팁 (접힌 배지 전용) */
-.comment-cluster-tooltip {
-  position: fixed;
-  z-index: 10000;
-  max-width: 360px;
-  min-width: 200px;
-  padding: 6px 0;
-  background: rgba(30, 30, 30, 0.97);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
-  color: #e0e0e0;
-  font-size: 12px;
-  line-height: 1.4;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.15s ease;
+/* 클러스터 호버 툴팁 — .comment-marker-tooltip 스타일 재사용, 배지 위치 조정용 modifier */
+.comment-marker-tooltip.cluster-hover {
+  transform: none;
+}
+
+.comment-marker-tooltip.cluster-hover::before {
   display: none;
-}
-
-.comment-cluster-tooltip.visible {
-  opacity: 1;
-  display: block;
-}
-
-.comment-cluster-tooltip .tooltip-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.comment-cluster-tooltip .tooltip-row + .tooltip-row {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.comment-cluster-tooltip .tooltip-color-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.comment-cluster-tooltip .tooltip-author {
-  font-weight: 600;
-  color: #ffffff;
-  flex-shrink: 0;
-}
-
-.comment-cluster-tooltip .tooltip-range {
-  color: #888;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 11px;
-}
-
-.comment-cluster-tooltip .tooltip-text {
-  color: #bbb;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
 }
 
 /* ========================================
