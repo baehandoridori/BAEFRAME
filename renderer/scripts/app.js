@@ -29,7 +29,7 @@ import { TEAM_MEMBERS } from './modules/team-members.js';
 import { getSlackNotifier } from './modules/slack-notifier.js';
 import { getRecentFilesManager } from './modules/recent-files-manager.js';
 import * as recentFilesView from './modules/recent-files-view.js';
-import { computeToastStackLayout } from './modules/toast-stack-core.js';
+import { computeToastStackLayout, computeToastTimerPlan } from './modules/toast-stack-core.js';
 
 const log = createLogger('App');
 
@@ -6146,7 +6146,8 @@ async function initApp() {
    */
   const _toastState = {
     toasts: [],     // 현재 활성 토스트 요소 배열
-    maxVisible: 3  // 최대 표시 개수
+    maxVisible: 3,  // 최대 표시 개수
+    isHovered: false
   };
 
   const _toastIcons = {
@@ -6224,11 +6225,34 @@ async function initApp() {
     }, fadeTime);
   }
 
+  function _isToastContainerHovered() {
+    if (!elements.toastContainer) return false;
+    try {
+      return _toastState.isHovered || elements.toastContainer.matches(':hover');
+    } catch {
+      return _toastState.isHovered;
+    }
+  }
+
+  function _startToastProgress(toast) {
+    if (!toast || !toast._progress || toast._isLoading || toast._paused || toast._dismissed) return;
+    cancelAnimationFrame(toast._progressRaf);
+    toast._progressRaf = requestAnimationFrame(function tick() {
+      if (toast._isLoading || toast._dismissed) return;
+      if (toast._paused) return;
+      const elapsed = performance.now() - toast._startedAt;
+      const pct = Math.max(0, 1 - elapsed / toast._duration);
+      toast._progress.style.width = `${pct * 100}%`;
+      if (pct > 0) toast._progressRaf = requestAnimationFrame(tick);
+    });
+  }
+
   function _pauseToastTimer(toast) {
     if (!toast || toast._isLoading || toast._paused || toast._dismissed) return;
     toast._paused = true;
     toast._remaining = Math.max(0, toast._duration - (performance.now() - toast._startedAt));
     clearTimeout(toast._autoTimer);
+    cancelAnimationFrame(toast._progressRaf);
   }
 
   function _resumeToastTimer(toast) {
@@ -6237,15 +6261,18 @@ async function initApp() {
     toast._duration = toast._remaining;
     toast._startedAt = performance.now();
     toast._autoTimer = setTimeout(() => _dismissToast(toast), toast._remaining);
+    _startToastProgress(toast);
   }
 
   function _bindToastContainerPause() {
     if (!elements.toastContainer || elements.toastContainer._pauseBound) return;
     elements.toastContainer._pauseBound = true;
     elements.toastContainer.addEventListener('mouseenter', () => {
+      _toastState.isHovered = true;
       _toastState.toasts.forEach(_pauseToastTimer);
     });
     elements.toastContainer.addEventListener('mouseleave', () => {
+      _toastState.isHovered = false;
       _toastState.toasts.forEach(_resumeToastTimer);
     });
   }
@@ -6306,23 +6333,10 @@ async function initApp() {
     // 진행률 바
     const progress = document.createElement('div');
     progress.className = 'toast-progress';
+    progress.style.width = '100%';
     if (isLoading) progress.style.display = 'none';
     toast.appendChild(progress);
-
-    function animateProgress() {
-      if (isLoading) return;
-      if (toast._paused) {
-        toast._progressRaf = requestAnimationFrame(animateProgress);
-        return;
-      }
-      const elapsed = performance.now() - toast._startedAt;
-      const pct = Math.max(0, 1 - elapsed / toast._duration);
-      progress.style.width = `${pct * 100}%`;
-      if (pct > 0) {
-        toast._progressRaf = requestAnimationFrame(animateProgress);
-      }
-    }
-    toast._progressRaf = requestAnimationFrame(animateProgress);
+    toast._progress = progress;
 
     // 스와이프 제스처
     let swipeStartX = 0;
@@ -6376,8 +6390,17 @@ async function initApp() {
     _toastState.toasts.unshift(toast);
     _updateToastStack();
 
+    const timerPlan = computeToastTimerPlan({
+      isHovered: _isToastContainerHovered(),
+      isLoading
+    });
+    toast._paused = timerPlan.paused;
+
     // 자동 닫기 (loading 타입은 수동 dismiss)
-    if (!isLoading) {
+    if (timerPlan.shouldStartProgress) {
+      _startToastProgress(toast);
+    }
+    if (timerPlan.shouldScheduleAutoDismiss) {
       toast._autoTimer = setTimeout(() => _dismissToast(toast), duration);
     }
 
@@ -6391,23 +6414,24 @@ async function initApp() {
           icon.innerHTML = _toastIcons[newNormalType] || _toastIcons.info;
           msg.textContent = newMessage;
           progress.style.display = '';
+          clearTimeout(toast._autoTimer);
+          cancelAnimationFrame(toast._progressRaf);
           // 자동 닫기 재설정
           toast._duration = newDuration;
           toast._remaining = newDuration;
           toast._startedAt = performance.now();
           toast._isLoading = false;
-          toast._paused = false;
-          toast._progressRaf = requestAnimationFrame(function tick() {
-            if (toast._paused) {
-              toast._progressRaf = requestAnimationFrame(tick);
-              return;
-            }
-            const elapsed = performance.now() - toast._startedAt;
-            const pct = Math.max(0, 1 - elapsed / toast._duration);
-            progress.style.width = `${pct * 100}%`;
-            if (pct > 0) toast._progressRaf = requestAnimationFrame(tick);
+          const updateTimerPlan = computeToastTimerPlan({
+            isHovered: _isToastContainerHovered(),
+            isLoading: false
           });
-          toast._autoTimer = setTimeout(() => _dismissToast(toast), newDuration);
+          toast._paused = updateTimerPlan.paused;
+          if (updateTimerPlan.shouldStartProgress) {
+            _startToastProgress(toast);
+          }
+          if (updateTimerPlan.shouldScheduleAutoDismiss) {
+            toast._autoTimer = setTimeout(() => _dismissToast(toast), newDuration);
+          }
         }
       };
     }

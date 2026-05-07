@@ -25,3 +25,15 @@ export function computeToastStackLayout(toasts, options = {}) {
     };
   });
 }
+
+export function computeToastTimerPlan(options = {}) {
+  const isLoading = options.isLoading === true;
+  const isHovered = options.isHovered === true;
+  const paused = !isLoading && isHovered;
+
+  return {
+    paused,
+    shouldScheduleAutoDismiss: !isLoading && !paused,
+    shouldStartProgress: !isLoading && !paused
+  };
+}

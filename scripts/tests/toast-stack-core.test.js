@@ -44,3 +44,26 @@ test('DOM dismissed 토스트도 재정렬 중 위로 올라오지 않는다', (
   const dismissed = layout.find(item => item.id === 'b');
   assert.equal(dismissed.zIndex, 0);
 });
+
+test('hover 중 생성된 일반 토스트는 시작부터 일시정지된다', () => {
+  const plan = mod.computeToastTimerPlan({ isHovered: true, isLoading: false });
+
+  assert.equal(plan.paused, true);
+  assert.equal(plan.shouldScheduleAutoDismiss, false);
+  assert.equal(plan.shouldStartProgress, false);
+});
+
+test('hover 중 loading update로 일반 토스트가 되어도 타이머를 바로 시작하지 않는다', () => {
+  const plan = mod.computeToastTimerPlan({ isHovered: true, isLoading: false });
+
+  assert.equal(plan.shouldScheduleAutoDismiss, false);
+  assert.equal(plan.shouldStartProgress, false);
+});
+
+test('loading 토스트는 hover 상태와 무관하게 자동 닫기를 시작하지 않는다', () => {
+  const plan = mod.computeToastTimerPlan({ isHovered: false, isLoading: true });
+
+  assert.equal(plan.paused, false);
+  assert.equal(plan.shouldScheduleAutoDismiss, false);
+  assert.equal(plan.shouldStartProgress, false);
+});
