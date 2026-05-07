@@ -75,6 +75,20 @@ test('continuous playback skips item when playlist load fails', () => {
   assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(nextItem, sessionId\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
 });
 
+test('playlist loading returns the real loadVideo result', () => {
+  const loadVideoFromPlaylistMatch = appSource.match(/async function loadVideoFromPlaylist\(item\) \{([\s\S]*?)\n  \}/);
+  assert.ok(loadVideoFromPlaylistMatch, 'playlist loader should exist');
+
+  const playlistLoaderSource = loadVideoFromPlaylistMatch[1];
+  assert.match(playlistLoaderSource, /const loaded = await loadVideo\(item\.videoPath\);/);
+  assert.match(playlistLoaderSource, /return loaded === true;/);
+  assert.doesNotMatch(playlistLoaderSource, /await loadVideo\(item\.videoPath\);\s*return true;/);
+
+  assert.match(appSource, /showToast\(`코덱 변환 실패: \$\{transcoded\.error \|\| '취소됨'\}`, 'error'\);\s*return false;/);
+  assert.match(appSource, /showToast\('파일을 로드할 수 없습니다\.', 'error'\);\s*return false;/);
+  assert.match(appSource, /trace\.end\(\{ filePath, hasExistingData \}\);\s*return true;/);
+});
+
 test('playlist rows render and color continuous status text', () => {
   assert.match(appSource, /playlist-item-continuous-status/);
   assert.match(appSource, /el\.dataset\.continuousStatus = item\.continuousStatus;/);

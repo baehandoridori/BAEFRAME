@@ -3915,7 +3915,7 @@ async function initApp() {
               // 트랜스코딩 실패 또는 취소
               log.warn('트랜스코딩 실패 또는 취소', { error: transcoded.error });
               showToast(`코덱 변환 실패: ${transcoded.error || '취소됨'}`, 'error');
-              return;
+              return false;
             }
           }
         }
@@ -3933,7 +3933,7 @@ async function initApp() {
           const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
           if (!proceed) {
             log.info('사용자가 파일 전환 취소');
-            return;
+            return false;
           }
           log.warn('저장 실패했지만 사용자가 전환 진행 선택');
         }
@@ -4246,12 +4246,14 @@ async function initApp() {
       });
 
       trace.end({ filePath, hasExistingData });
+      return true;
 
     } catch (error) {
       trace.error(error);
       // 에러 발생 시에도 자동 저장 재개
       reviewDataManager.resumeAutoSave();
       showToast('파일을 로드할 수 없습니다.', 'error');
+      return false;
     }
   }
 
@@ -10678,8 +10680,8 @@ async function initApp() {
     }
 
     // 새 영상 로드
-    await loadVideo(item.videoPath);
-    return true;
+    const loaded = await loadVideo(item.videoPath);
+    return loaded === true;
   }
 
   // 사이드바 표시
