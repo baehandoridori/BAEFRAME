@@ -10135,9 +10135,39 @@ async function initApp() {
     for (const item of items) {
       if (state.currentFile === item.videoPath && videoPlayer.duration) {
         metadata.set(item.id, { duration: videoPlayer.duration, fps: videoPlayer.fps || 24 });
-      } else {
-        metadata.set(item.id, { duration: item.duration || 0, fps: item.fps || 24 });
+        continue;
       }
+
+      let duration = Number(item.duration);
+      let fps = Number(item.fps);
+      const hasDuration = Number.isFinite(duration) && duration > 0;
+
+      if (!hasDuration && item.videoPath) {
+        try {
+          const probe = await window.electronAPI.ffmpegProbeCodec(item.videoPath);
+          if (probe?.success) {
+            const probeDuration = Number(probe.duration);
+            const probeFps = Number(probe.frameRate);
+            if (Number.isFinite(probeDuration) && probeDuration > 0) {
+              duration = probeDuration;
+              fps = Number.isFinite(probeFps) && probeFps > 0
+                ? probeFps
+                : (Number.isFinite(fps) && fps > 0 ? fps : 24);
+              item.duration = duration;
+              item.fps = fps;
+            }
+          } else {
+            log.warn('이어보기 영상 메타데이터 수집 실패', { fileName: item.fileName, error: probe?.error || 'probe failed' });
+          }
+        } catch (error) {
+          log.warn('이어보기 영상 메타데이터 수집 실패', { fileName: item.fileName, error: error.message });
+        }
+      }
+
+      metadata.set(item.id, {
+        duration: Number.isFinite(duration) && duration > 0 ? duration : 0,
+        fps: Number.isFinite(fps) && fps > 0 ? fps : 24
+      });
     }
     return metadata;
   }

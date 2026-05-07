@@ -12,6 +12,19 @@ test('continuous runtime imports the shared helper module', () => {
   assert.match(appSource, /CONTINUOUS_STATUS[\s\S]+findNextPlayableIndex[\s\S]+createSkippedToastMessage[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
 });
 
+test('continuous metadata probes unloaded playlist items without saved duration', () => {
+  const metadataMatch = appSource.match(/async function collectPlaylistMetadata\(items\) \{([\s\S]*?)\n  \}\n\n  async function updatePlaylistContinuousTimeline/);
+  assert.ok(metadataMatch, 'collectPlaylistMetadata should exist');
+
+  const metadataSource = metadataMatch[1];
+  assert.match(metadataSource, /state\.currentFile === item\.videoPath && videoPlayer\.duration/);
+  assert.match(metadataSource, /ffmpegProbeCodec\(item\.videoPath\)/);
+  assert.match(metadataSource, /probe\.duration/);
+  assert.match(metadataSource, /probe\.frameRate/);
+  assert.match(metadataSource, /item\.duration = duration/);
+  assert.match(metadataSource, /item\.fps = fps/);
+});
+
 test('continuous selection does not auto-load before preparation finishes', () => {
   assert.match(appSource, /let suppressPlaylistSelectionLoad = false;/);
   assert.match(appSource, /function selectPlaylistItemForContinuous\(index\)/);
