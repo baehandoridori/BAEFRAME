@@ -210,6 +210,14 @@ test('modified-date sort is refreshed after every playlist add path', () => {
     'manual order guard should run before refreshing and reapplying modified-date sort'
   );
   assert.match(refreshActiveSource, /await refreshPlaylistModifiedTimes\(\);/);
+  assert.match(refreshActiveSource, /const nextContinuousSettings = playlistManager\.getContinuousSettings\(\);/);
+  assert.match(refreshActiveSource, /nextContinuousSettings\?\.sortMode !== 'modifiedAt'/);
+  assert.match(refreshActiveSource, /nextContinuousSettings\?\.manualOrder === true/);
+  assert.ok(
+    refreshActiveSource.indexOf('nextContinuousSettings?.manualOrder') > refreshActiveSource.indexOf('await refreshPlaylistModifiedTimes();') &&
+      refreshActiveSource.indexOf('nextContinuousSettings?.manualOrder') < refreshActiveSource.indexOf("applyPlaylistSortPreservingSelection('modifiedAt');"),
+    'manual order should be rechecked after stats refresh and before reapplying modified-date sort'
+  );
   assert.match(refreshActiveSource, /applyPlaylistSortPreservingSelection\('modifiedAt'\);/);
   assert.match(refreshActiveSource, /updatePlaylistUI\(\);/);
   assert.match(refreshActiveSource, /updatePlaylistContinuousTimeline\(\);/);

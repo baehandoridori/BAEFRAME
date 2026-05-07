@@ -10532,7 +10532,11 @@ async function initApp() {
     }
 
     await refreshPlaylistModifiedTimes();
-    if (playlistManager.getContinuousSettings()?.sortMode !== 'modifiedAt') {
+    const nextContinuousSettings = playlistManager.getContinuousSettings();
+    if (
+      nextContinuousSettings?.sortMode !== 'modifiedAt' ||
+      nextContinuousSettings?.manualOrder === true
+    ) {
       return;
     }
 
