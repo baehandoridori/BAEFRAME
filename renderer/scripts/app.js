@@ -29,6 +29,7 @@ import { TEAM_MEMBERS } from './modules/team-members.js';
 import { getSlackNotifier } from './modules/slack-notifier.js';
 import { getRecentFilesManager } from './modules/recent-files-manager.js';
 import * as recentFilesView from './modules/recent-files-view.js';
+import { computeToastStackLayout } from './modules/toast-stack-core.js';
 
 const log = createLogger('App');
 
@@ -6158,40 +6159,27 @@ async function initApp() {
   };
 
   function _updateToastStack() {
-    const toasts = _toastState.toasts;
-    for (let i = 0; i < toasts.length; i++) {
-      const t = toasts[i];
-      const fromTop = toasts.length - 1 - i; // 0 = 최신 (맨 앞)
-      // 최신 토스트가 항상 위에 표시되도록 z-index 설정
-      t.style.zIndex = toasts.length - fromTop;
-      if (fromTop >= _toastState.maxVisible) {
-        // 숨기지만 호버 시 보이도록 CSS 클래스 사용
-        t.classList.add('toast-stacked', 'toast-hidden');
-        const s = 1 - Math.min(fromTop, 3) * 0.05;
-        t.style.setProperty('--stack-scale', s);
-        t.style.setProperty('--stack-opacity', '0');
-        t.style.setProperty('--stack-brightness', '0.7');
-      } else if (fromTop > 0) {
-        t.classList.add('toast-stacked');
-        t.classList.remove('toast-hidden');
-        const s = 1 - fromTop * 0.05;
-        const o = 1 - fromTop * 0.2;
-        const b = 1 - fromTop * 0.08;
-        t.style.setProperty('--stack-scale', s);
-        t.style.setProperty('--stack-opacity', Math.max(o, 0.3));
-        t.style.setProperty('--stack-brightness', b);
-      } else {
-        t.classList.remove('toast-stacked', 'toast-hidden');
-        t.style.removeProperty('--stack-scale');
-        t.style.removeProperty('--stack-opacity');
-        t.style.removeProperty('--stack-brightness');
-      }
-    }
+    const layout = computeToastStackLayout(_toastState.toasts, {
+      maxVisible: _toastState.maxVisible
+    });
+
+    layout.forEach((entry) => {
+      const toast = _toastState.toasts[entry.index];
+      if (!toast) return;
+
+      toast.style.zIndex = String(entry.zIndex);
+      toast.classList.toggle('toast-stacked', entry.stacked);
+      toast.classList.toggle('toast-hidden', entry.hidden);
+      toast.style.setProperty('--stack-scale', entry.scale);
+      toast.style.setProperty('--stack-opacity', entry.opacity);
+      toast.style.setProperty('--stack-brightness', entry.brightness);
+    });
   }
 
   function _dismissToast(toast, swipeDir) {
     if (toast._dismissed) return;
     toast._dismissed = true;
+    toast.style.zIndex = '0';
     clearTimeout(toast._autoTimer);
     cancelAnimationFrame(toast._progressRaf);
 
@@ -6236,6 +6224,32 @@ async function initApp() {
     }, fadeTime);
   }
 
+  function _pauseToastTimer(toast) {
+    if (!toast || toast._isLoading || toast._paused || toast._dismissed) return;
+    toast._paused = true;
+    toast._remaining = Math.max(0, toast._duration - (performance.now() - toast._startedAt));
+    clearTimeout(toast._autoTimer);
+  }
+
+  function _resumeToastTimer(toast) {
+    if (!toast || toast._isLoading || !toast._paused || toast._dismissed) return;
+    toast._paused = false;
+    toast._duration = toast._remaining;
+    toast._startedAt = performance.now();
+    toast._autoTimer = setTimeout(() => _dismissToast(toast), toast._remaining);
+  }
+
+  function _bindToastContainerPause() {
+    if (!elements.toastContainer || elements.toastContainer._pauseBound) return;
+    elements.toastContainer._pauseBound = true;
+    elements.toastContainer.addEventListener('mouseenter', () => {
+      _toastState.toasts.forEach(_pauseToastTimer);
+    });
+    elements.toastContainer.addEventListener('mouseleave', () => {
+      _toastState.toasts.forEach(_resumeToastTimer);
+    });
+  }
+
   /**
    * 토스트 메시지 표시
    * @param {string} message - 표시할 메시지
@@ -6253,6 +6267,8 @@ async function initApp() {
 
     // warn/warning 통일
     const normalType = type === 'warning' ? 'warn' : type;
+
+    _bindToastContainerPause();
 
     const toast = document.createElement('div');
     toast.className = `toast ${normalType} toast-enter`;
@@ -6281,6 +6297,11 @@ async function initApp() {
 
     // loading 타입: 진행률 바 없이 스피너만 표시
     const isLoading = normalType === 'loading';
+    toast._duration = duration;
+    toast._remaining = duration;
+    toast._startedAt = performance.now();
+    toast._isLoading = isLoading;
+    toast._paused = false;
 
     // 진행률 바
     const progress = document.createElement('div');
@@ -6288,40 +6309,20 @@ async function initApp() {
     if (isLoading) progress.style.display = 'none';
     toast.appendChild(progress);
 
-    // 호버 일시정지
-    let paused = false;
-    let remaining = duration;
-    let startTime = performance.now();
-
     function animateProgress() {
       if (isLoading) return;
-      if (paused) {
+      if (toast._paused) {
         toast._progressRaf = requestAnimationFrame(animateProgress);
         return;
       }
-      const elapsed = performance.now() - startTime;
-      const pct = Math.max(0, 1 - elapsed / duration);
+      const elapsed = performance.now() - toast._startedAt;
+      const pct = Math.max(0, 1 - elapsed / toast._duration);
       progress.style.width = `${pct * 100}%`;
       if (pct > 0) {
         toast._progressRaf = requestAnimationFrame(animateProgress);
       }
     }
     toast._progressRaf = requestAnimationFrame(animateProgress);
-
-    if (!isLoading) {
-      toast.addEventListener('mouseenter', () => {
-        paused = true;
-        remaining = Math.max(0, duration - (performance.now() - startTime));
-        clearTimeout(toast._autoTimer);
-      });
-
-      toast.addEventListener('mouseleave', () => {
-        paused = false;
-        duration = remaining;
-        startTime = performance.now();
-        toast._autoTimer = setTimeout(() => _dismissToast(toast), remaining);
-      });
-    }
 
     // 스와이프 제스처
     let swipeStartX = 0;
@@ -6372,7 +6373,7 @@ async function initApp() {
 
     // 컨테이너에 추가 (최신이 맨 위)
     elements.toastContainer.prepend(toast);
-    _toastState.toasts.push(toast);
+    _toastState.toasts.unshift(toast);
     _updateToastStack();
 
     // 자동 닫기 (loading 타입은 수동 dismiss)
@@ -6391,12 +6392,18 @@ async function initApp() {
           msg.textContent = newMessage;
           progress.style.display = '';
           // 자동 닫기 재설정
-          duration = newDuration;
-          remaining = newDuration;
-          startTime = performance.now();
+          toast._duration = newDuration;
+          toast._remaining = newDuration;
+          toast._startedAt = performance.now();
+          toast._isLoading = false;
+          toast._paused = false;
           toast._progressRaf = requestAnimationFrame(function tick() {
-            const elapsed = performance.now() - startTime;
-            const pct = Math.max(0, 1 - elapsed / newDuration);
+            if (toast._paused) {
+              toast._progressRaf = requestAnimationFrame(tick);
+              return;
+            }
+            const elapsed = performance.now() - toast._startedAt;
+            const pct = Math.max(0, 1 - elapsed / toast._duration);
             progress.style.width = `${pct * 100}%`;
             if (pct > 0) toast._progressRaf = requestAnimationFrame(tick);
           });
