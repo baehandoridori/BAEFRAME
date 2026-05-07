@@ -6,6 +6,7 @@ const path = require('node:path');
 const rootDir = path.resolve(__dirname, '../..');
 const appSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8');
 const timelineSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/timeline.js'), 'utf8');
+const ffmpegManagerSource = fs.readFileSync(path.join(rootDir, 'main/ffmpeg-manager.js'), 'utf8');
 const playlistCss = fs.readFileSync(path.join(rootDir, 'renderer/styles/playlist-panel.css'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
@@ -81,6 +82,19 @@ test('ended event routes active continuous playback before normal autoplay', () 
   assert.match(appSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+playNextContinuousItem\(continuousPlaybackState\.sessionId\);[\s\S]+return;[\s\S]+if \(playlistManager\.isActive\(\) && playlistManager\.getAutoPlay\(\)/);
 });
 
+test('manual video loads cancel active continuous playback and stale loads', () => {
+  const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(loadVideoMatch, 'loadVideo should exist');
+
+  const loadVideoSource = loadVideoMatch[1];
+  assert.match(appSource, /let latestVideoLoadToken = 0;/);
+  assert.match(loadVideoSource, /preserveContinuousSession = false/);
+  assert.match(loadVideoSource, /const loadToken = \+\+latestVideoLoadToken;/);
+  assert.match(loadVideoSource, /if \(!preserveContinuousSession && continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
+  assert.match(loadVideoSource, /const isStaleVideoLoad = \(\) => loadToken !== latestVideoLoadToken;/);
+  assert.match(loadVideoSource, /if \(isStaleVideoLoad\(\)\) return false;/);
+});
+
 test('continuous completion flushes skipped batch before stopping playback', () => {
   const completionBranchMatch = appSource.match(/if \(nextIndex < 0\) \{([\s\S]*?)\n    \}/);
   assert.ok(completionBranchMatch, 'completion branch should exist');
@@ -127,7 +141,7 @@ test('continuous preflight handles per-item fileExists failures', () => {
 
 test('continuous playback skips item when playlist load fails', () => {
   assert.match(appSource, /async function loadContinuousPlaylistItem\(item, sessionId\)/);
-  assert.match(appSource, /const loaded = await loadVideoFromPlaylist\(item\);/);
+  assert.match(appSource, /const loaded = await loadVideoFromPlaylist\(item, \{ preserveContinuousSession: true \}\);/);
   assert.match(appSource, /markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.ERROR, '건너뜀'\);/);
   assert.match(appSource, /continuousPlaybackState\.skippedBatch\.push\(item\);/);
   assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(currentItem, sessionId\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
@@ -135,17 +149,47 @@ test('continuous playback skips item when playlist load fails', () => {
 });
 
 test('playlist loading returns the real loadVideo result', () => {
-  const loadVideoFromPlaylistMatch = appSource.match(/async function loadVideoFromPlaylist\(item\) \{([\s\S]*?)\n  \}/);
+  const loadVideoFromPlaylistMatch = appSource.match(/async function loadVideoFromPlaylist\(item, options = \{\}\) \{([\s\S]*?)\n  \}/);
   assert.ok(loadVideoFromPlaylistMatch, 'playlist loader should exist');
 
   const playlistLoaderSource = loadVideoFromPlaylistMatch[1];
-  assert.match(playlistLoaderSource, /const loaded = await loadVideo\(item\.videoPath\);/);
+  assert.match(playlistLoaderSource, /const loaded = await loadVideo\(item\.videoPath, options\);/);
   assert.match(playlistLoaderSource, /return loaded === true;/);
   assert.doesNotMatch(playlistLoaderSource, /await loadVideo\(item\.videoPath\);\s*return true;/);
 
   assert.match(appSource, /showToast\(`코덱 변환 실패: \$\{transcoded\.error \|\| '취소됨'\}`, 'error'\);\s*return false;/);
   assert.match(appSource, /showToast\('파일을 로드할 수 없습니다\.', 'error'\);\s*return false;/);
   assert.match(appSource, /trace\.end\(\{ filePath, hasExistingData \}\);\s*return true;/);
+});
+
+test('continuous timeline uses aggregate time for playback and seek', () => {
+  assert.match(appSource, /mapGlobalTimeToSegment[\s\S]+mapLocalTimeToGlobal[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
+  assert.match(appSource, /function getContinuousTimelinePlaybackTime\(localTime = videoPlayer\.currentTime\)/);
+  assert.match(appSource, /mapLocalTimeToGlobal\(segment, localTime\)/);
+  assert.match(appSource, /timeline\.setCurrentTime\(getContinuousTimelinePlaybackTime\(currentTime\)\);/);
+  assert.match(appSource, /timeline\.setCurrentTime\(getContinuousTimelinePlaybackTime\(time\)\);/);
+  assert.match(appSource, /async function seekContinuousTimeline\(globalTime\)/);
+  assert.match(appSource, /mapGlobalTimeToSegment\(timeline\.playlistSegments, globalTime\)/);
+  assert.match(appSource, /videoPlayer\.seek\(mapped\.localTime\);/);
+});
+
+test('playlist segment boundaries navigate through timeline seek', () => {
+  const boundaryRenderMatch = timelineSource.match(/_renderPlaylistSegments\(\) \{([\s\S]*?)\n  \}\n\n  renderPlaylistCommentRanges/);
+  assert.ok(boundaryRenderMatch, 'playlist segment renderer should exist');
+
+  const boundaryRenderSource = boundaryRenderMatch[1];
+  assert.match(boundaryRenderSource, /boundary\.addEventListener\('click', \(e\) => \{/);
+  assert.match(boundaryRenderSource, /this\._emit\('seek', \{ time, itemId: segment\.itemId \}\);/);
+});
+
+test('normal transcode overlay follows joined pre-transcode progress', () => {
+  const overlayMatch = appSource.match(/async function showTranscodeOverlay\(filePath, codecName\) \{([\s\S]*?)\n  \}/);
+  assert.ok(overlayMatch, 'showTranscodeOverlay should exist');
+
+  const overlaySource = overlayMatch[1];
+  assert.match(overlaySource, /window\.electronAPI\.onTranscodeProgress\(progressHandler\);/);
+  assert.match(overlaySource, /window\.electronAPI\.onPreTranscodeProgress\(progressHandler\);/);
+  assert.match(overlaySource, /removeAllListeners\('ffmpeg:transcode-progress'\);[\s\S]+removeAllListeners\('ffmpeg:pre-transcode-progress'\);/);
 });
 
 test('playlist rows render and color continuous status text', () => {
@@ -223,9 +267,23 @@ test('modified-date sort is refreshed after every playlist add path', () => {
   assert.match(refreshActiveSource, /updatePlaylistContinuousTimeline\(\);/);
 
   const addItemCalls = [...appSource.matchAll(/playlistManager\.addItems\(/g)].length;
-  const refreshAfterAddCalls = [...appSource.matchAll(/await refreshModifiedSortIfActive\(\);/g)].length;
+  const refreshAfterAddCalls = [...appSource.matchAll(/await playlistManager\.addItems\([\s\S]*?\);\s*await refreshModifiedSortIfActive\(\);/g)].length;
   assert.equal(addItemCalls, 4, 'expected the four known playlist add paths');
   assert.equal(refreshAfterAddCalls, addItemCalls, 'each playlist add path should refresh modified-date sort when active');
+});
+
+test('opened modified-date playlists refresh filesystem mtimes before first selection', () => {
+  assert.match(appSource, /playlistManager\.onPlaylistLoaded = async \(playlist\) => \{[\s\S]+await refreshModifiedSortIfActive\(\);[\s\S]+updatePlaylistUI\(\);/);
+  assert.match(appSource, /await playlistManager\.open\(filePath\);[\s\S]+playlistManager\.selectItem\(0\);/);
+});
+
+test('pre-transcode joins an existing pending transcode instead of marking it failed', () => {
+  const preTranscodeMatch = ffmpegManagerSource.match(/async preTranscode\(filePath, onProgress = null\) \{([\s\S]*?)\n  \}/);
+  assert.ok(preTranscodeMatch, 'preTranscode should exist');
+
+  const preTranscodeSource = preTranscodeMatch[1];
+  assert.match(preTranscodeSource, /if \(this\.pendingTranscodes\.has\(filePath\)\) \{[\s\S]+return this\.pendingTranscodes\.get\(filePath\);[\s\S]+\}/);
+  assert.doesNotMatch(preTranscodeSource, /already-in-progress/);
 });
 
 test('playlist test script includes continuous runtime coverage', () => {

@@ -26,7 +26,9 @@ import {
   buildPlaylistSegments,
   CONTINUOUS_STATUS,
   findNextPlayableIndex,
-  createSkippedToastMessage
+  createSkippedToastMessage,
+  mapGlobalTimeToSegment,
+  mapLocalTimeToGlobal
 } from './modules/playlist-continuous-core.js';
 import { extractPlaylistCommentRanges } from './modules/playlist-comment-index.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
@@ -601,7 +603,7 @@ async function initApp() {
   // 비디오 시간 업데이트 (일반 timeupdate - 타임라인 및 표시용)
   videoPlayer.addEventListener('timeupdate', (e) => {
     const { currentTime, currentFrame } = e.detail;
-    timeline.setCurrentTime(currentTime);
+    timeline.setCurrentTime(getContinuousTimelinePlaybackTime(currentTime));
     updateTimecodeDisplay();
     updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
     updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
@@ -638,7 +640,7 @@ async function initApp() {
     const { frame, time } = e.detail;
 
     // 타임라인 플레이헤드 실시간 업데이트 (재생 중)
-    timeline.setCurrentTime(time);
+    timeline.setCurrentTime(getContinuousTimelinePlaybackTime(time));
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
@@ -726,7 +728,13 @@ async function initApp() {
   });
 
   // 타임라인에서 시간 이동 요청
-  timeline.addEventListener('seek', (e) => {
+  timeline.addEventListener('seek', async (e) => {
+    if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+      await seekContinuousTimeline(e.detail.time);
+      hideScrubPreview();
+      return;
+    }
+
     videoPlayer.seek(e.detail.time);
     playbackSync.broadcastSeek(e.detail.time);
     hideScrubPreview();
@@ -3821,6 +3829,7 @@ async function initApp() {
   // ====== 트랜스코딩 상태 관리 ======
   let isTranscoding = false;
   let transcodeResolve = null;
+  let latestVideoLoadToken = 0;
 
   /**
    * 트랜스코딩 오버레이 표시 및 진행
@@ -3853,6 +3862,12 @@ async function initApp() {
       }
     };
     window.electronAPI.onTranscodeProgress(progressHandler);
+    window.electronAPI.onPreTranscodeProgress(progressHandler);
+
+    const cleanupTranscodeProgressListeners = () => {
+      window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+      window.electronAPI.removeAllListeners('ffmpeg:pre-transcode-progress');
+    };
 
     // 취소 버튼 핸들러
     const handleCancel = async () => {
@@ -3860,7 +3875,7 @@ async function initApp() {
       await window.electronAPI.ffmpegCancel();
       isTranscoding = false;
       overlay.classList.remove('active');
-      window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+      cleanupTranscodeProgressListeners();
       if (transcodeResolve) {
         transcodeResolve({ success: false, error: '사용자 취소' });
         transcodeResolve = null;
@@ -3876,7 +3891,7 @@ async function initApp() {
 
         isTranscoding = false;
         overlay.classList.remove('active');
-        window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+        cleanupTranscodeProgressListeners();
         cancelBtn.removeEventListener('click', handleCancel);
 
         if (result.success) {
@@ -3889,7 +3904,7 @@ async function initApp() {
       } catch (error) {
         isTranscoding = false;
         overlay.classList.remove('active');
-        window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+        cleanupTranscodeProgressListeners();
         cancelBtn.removeEventListener('click', handleCancel);
 
         log.error('트랜스코딩 예외', { error: error.message });
@@ -3906,13 +3921,25 @@ async function initApp() {
    * @param {Object} options - 옵션
    * @param {boolean} options.keepVersionContext - 버전 컨텍스트 유지 (수동 버전 전환 시 사용)
    * @param {number} options.targetVersion - 전환할 버전 번호 (수동 버전 선택 시)
+   * @param {boolean} options.preserveContinuousSession - 이어보기 내부 로드는 현재 세션 유지
    */
   async function loadVideo(filePath, options = {}) {
-    const { keepVersionContext = false, targetVersion = null } = options;
+    const {
+      keepVersionContext = false,
+      targetVersion = null,
+      preserveContinuousSession = false
+    } = options;
+    const loadToken = ++latestVideoLoadToken;
+    const isStaleVideoLoad = () => loadToken !== latestVideoLoadToken;
+    if (!preserveContinuousSession && continuousPlaybackState.active) {
+      stopContinuousPlayback();
+    }
+
     const trace = log.trace('loadVideo');
     try {
       // 파일 정보 가져오기
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
+      if (isStaleVideoLoad()) return false;
 
       // ====== 오디오 파일 감지 ======
       const fileIsAudio = isAudioFile(fileInfo.name);
@@ -3923,18 +3950,21 @@ async function initApp() {
 
       if (ffmpegAvailable) {
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
+        if (isStaleVideoLoad()) return false;
 
         if (codecInfo.success && !codecInfo.isSupported) {
           log.info('미지원 코덱 감지, 트랜스코딩 필요', { codec: codecInfo.codecName });
 
           // 캐시 확인
           const cacheResult = await window.electronAPI.ffmpegCheckCache(filePath);
+          if (isStaleVideoLoad()) return false;
           if (cacheResult.valid) {
             log.info('캐시된 변환 파일 사용', { path: cacheResult.convertedPath });
             actualVideoPath = cacheResult.convertedPath;
           } else {
             // 트랜스코딩 필요 - UI 표시
             const transcoded = await showTranscodeOverlay(filePath, codecInfo.codecName);
+            if (isStaleVideoLoad()) return false;
             if (transcoded.success) {
               actualVideoPath = transcoded.outputPath;
             } else {
@@ -3954,6 +3984,7 @@ async function initApp() {
       if (reviewDataManager.hasUnsavedChanges()) {
         log.info('파일 전환 전 변경사항 저장 시도');
         const saved = await reviewDataManager.save();
+        if (isStaleVideoLoad()) return false;
         if (!saved) {
           // 저장 실패 시 사용자에게 확인
           const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
@@ -3968,6 +3999,7 @@ async function initApp() {
       // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
       if (reviewDataManager.currentBframePath) {
         await window.electronAPI.watchFileStop(reviewDataManager.currentBframePath);
+        if (isStaleVideoLoad()) return false;
         log.info('이전 파일 감시 중지', { path: reviewDataManager.currentBframePath });
         try {
           await liveblocksManager.stop();
@@ -4027,6 +4059,7 @@ async function initApp() {
         // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
         try {
           await videoPlayer.load(actualVideoPath);
+          if (isStaleVideoLoad()) return false;
         } catch (loadErr) {
           log.warn('videoPlayer.load 실패, 직접 src 설정으로 폴백', { error: loadErr.message });
           // 폴백: 직접 src 설정 (loadedmetadata 이벤트 없이)
@@ -4061,6 +4094,7 @@ async function initApp() {
               reject(new Error('미디어 로드 타임아웃 (3초)'));
             }, 3000);
           });
+          if (isStaleVideoLoad()) return false;
         }
 
         // videoPlayer.load()가 display:block을 강제할 수 있으므로 다시 숨김
@@ -4078,6 +4112,7 @@ async function initApp() {
 
         try {
           await audioWaveform.loadAudio(filePath);
+          if (isStaleVideoLoad()) return false;
         } catch (err) {
           log.error('웨이브폼 로드 실패', { error: err.message, stack: err.stack });
           showToast(`웨이브폼 로드 실패: ${err.message}`, 'error');
@@ -4130,6 +4165,7 @@ async function initApp() {
 
         // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
         await videoPlayer.load(actualVideoPath);
+        if (isStaleVideoLoad()) return false;
       }
 
       // 원본 파일 경로 저장 (UI/메타데이터용)
@@ -4152,6 +4188,7 @@ async function initApp() {
       if (!keepVersionContext) {
         // VersionManager에 현재 파일 설정 (폴더 스캔 포함)
         await versionManager.setCurrentFile(filePath);
+        if (isStaleVideoLoad()) return false;
       } else {
         log.info('버전 컨텍스트 유지 모드 - 폴더 스캔 건너뜀');
       }
@@ -4182,6 +4219,7 @@ async function initApp() {
       // 썸네일 생성 시작 (비디오만, 트랜스코딩된 경우 변환된 파일 사용)
       if (!fileIsAudio) {
         await generateThumbnails(actualVideoPath);
+        if (isStaleVideoLoad()) return false;
       } else {
         // 오디오 파일 로드 시 이전 비디오의 썸네일 상태 정리
         getThumbnailGenerator().clear();
@@ -4189,6 +4227,7 @@ async function initApp() {
 
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
+      if (isStaleVideoLoad()) return false;
 
       // keepVersionContext가 false일 때만 manualVersions 복원
       // (true면 기존 버전 목록 유지)
@@ -4215,6 +4254,7 @@ async function initApp() {
       try {
         // .bframe에서 기존 Room ID 확인
         const bframeData = await window.electronAPI.loadReview(reviewDataManager.currentBframePath);
+        if (isStaleVideoLoad()) return false;
         const existingRoomId = bframeData?.liveblocksRoomId || null;
 
         const { roomId, isNewRoom } = await liveblocksManager.start(
@@ -4223,15 +4263,18 @@ async function initApp() {
           userColor,
           existingRoomId
         );
+        if (isStaleVideoLoad()) return false;
 
         // 새 Room이면 Room ID를 .bframe에 저장
         if (isNewRoom && reviewDataManager.currentBframePath) {
           reviewDataManager.setLiveblocksRoomId(roomId);
           await reviewDataManager.save({ skipMerge: true });
+          if (isStaleVideoLoad()) return false;
         }
 
         // 댓글/그리기/재생 동기화 시작 (Broadcast 기반)
         await commentSync.start();
+        if (isStaleVideoLoad()) return false;
         drawingSync.start();
         playbackSync.start();
         log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
@@ -4242,6 +4285,7 @@ async function initApp() {
       // ====== 파일 감시 시작 (실시간 동기화) ======
       if (reviewDataManager.currentBframePath) {
         await window.electronAPI.watchFileStart(reviewDataManager.currentBframePath);
+        if (isStaleVideoLoad()) return false;
         log.info('파일 감시 시작됨', { path: reviewDataManager.currentBframePath });
       }
 
@@ -4475,8 +4519,13 @@ async function initApp() {
    * 타임코드 디스플레이 업데이트
    */
   function updateTimecodeDisplay() {
-    elements.timecodeCurrent.textContent = videoPlayer.getCurrentTimecode();
-    elements.timecodeTotal.textContent = videoPlayer.getDurationTimecode();
+    if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+      elements.timecodeCurrent.textContent = videoPlayer.timeToTimecode(getContinuousTimelinePlaybackTime());
+      elements.timecodeTotal.textContent = videoPlayer.timeToTimecode(timeline.playlistDuration);
+    } else {
+      elements.timecodeCurrent.textContent = videoPlayer.getCurrentTimecode();
+      elements.timecodeTotal.textContent = videoPlayer.getDurationTimecode();
+    }
     elements.frameIndicator.textContent =
       `${videoPlayer.fps}fps · Frame ${videoPlayer.currentFrame} / ${videoPlayer.totalFrames}`;
   }
@@ -10089,6 +10138,57 @@ async function initApp() {
   let playlistTimelineUpdateToken = 0;
   let playlistSortChangeToken = 0;
 
+  function getCurrentContinuousSegment() {
+    if (playlistUIState.mode !== 'continuous' || !timeline.playlistDuration) return null;
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems?.() || [];
+    const currentItem = playlistManager.getCurrentItem?.();
+    const itemId = currentItem?.videoPath === state.currentFile
+      ? currentItem.id
+      : items.find(item => item.videoPath === state.currentFile)?.id;
+    if (!itemId) return null;
+    return timeline.playlistSegments?.find(segment => segment.itemId === itemId) || null;
+  }
+
+  function getContinuousTimelinePlaybackTime(localTime = videoPlayer.currentTime) {
+    const segment = getCurrentContinuousSegment();
+    if (!segment) return localTime;
+    return mapLocalTimeToGlobal(segment, localTime);
+  }
+
+  async function seekContinuousTimeline(globalTime) {
+    const playlistManager = getPlaylistManager();
+    const mapped = mapGlobalTimeToSegment(timeline.playlistSegments, globalTime);
+    if (!mapped) return false;
+
+    const item = playlistManager.getItems()[mapped.segment.index];
+    if (!item) return false;
+
+    if (playlistManager.getCurrentItem?.()?.id !== item.id) {
+      suppressPlaylistSelectionLoad = true;
+      try {
+        playlistManager.selectItemById(item.id);
+      } finally {
+        suppressPlaylistSelectionLoad = false;
+      }
+    }
+
+    const isAlreadyLoaded = state.currentFile === item.videoPath;
+    if (!isAlreadyLoaded) {
+      const loaded = await loadVideoFromPlaylist(item, {
+        preserveContinuousSession: continuousPlaybackState.active
+      });
+      if (!loaded) return false;
+    }
+
+    videoPlayer.seek(mapped.localTime);
+    playbackSync.broadcastSeek(mapped.localTime);
+    timeline.setCurrentTime(mapLocalTimeToGlobal(mapped.segment, mapped.localTime));
+    updatePlaylistCurrentItem();
+    updatePlaylistPosition();
+    return true;
+  }
+
   function stopContinuousPlayback() {
     continuousPlaybackState.sessionId += 1;
     continuousPlaybackState.active = false;
@@ -10185,6 +10285,7 @@ async function initApp() {
 
     const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
     timeline.setPlaylistTimeline(segments, totalDuration);
+    timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
 
     const aggregateRanges = [];
     const allowedAuthorIds = commentFilterState.authors === null ? null : new Set(commentFilterState.authors);
@@ -10364,7 +10465,7 @@ async function initApp() {
 
   async function loadContinuousPlaylistItem(item, sessionId) {
     if (!isContinuousSessionActive(sessionId)) return false;
-    const loaded = await loadVideoFromPlaylist(item);
+    const loaded = await loadVideoFromPlaylist(item, { preserveContinuousSession: true });
     if (!isContinuousSessionActive(sessionId)) return false;
     if (loaded === false) {
       markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
@@ -10551,6 +10652,7 @@ async function initApp() {
     // 콜백 설정
     playlistManager.onPlaylistLoaded = async (playlist) => {
       log.info('재생목록 로드됨', { name: playlist.name });
+      await refreshModifiedSortIfActive();
       updatePlaylistUI();
 
       // 모든 아이템의 코덱을 확인하고 필요한 것들을 사전 변환
@@ -10851,7 +10953,7 @@ async function initApp() {
   }
 
   // 재생목록에서 영상 로드
-  async function loadVideoFromPlaylist(item) {
+  async function loadVideoFromPlaylist(item, options = {}) {
     // 파일 존재 확인
     const exists = await window.electronAPI.fileExists(item.videoPath);
     if (!exists) {
@@ -10866,7 +10968,7 @@ async function initApp() {
     }
 
     // 새 영상 로드
-    const loaded = await loadVideo(item.videoPath);
+    const loaded = await loadVideo(item.videoPath, options);
     return loaded === true;
   }
 

@@ -215,7 +215,7 @@ export class PlaylistManager {
       // 썸네일 경로 검증 및 재생성
       await this._validateThumbnails();
 
-      this.onPlaylistLoaded?.(this.currentPlaylist);
+      await this.onPlaylistLoaded?.(this.currentPlaylist);
       log.info('재생목록 로드 완료', {
         name: data.name,
         itemCount: data.items.length

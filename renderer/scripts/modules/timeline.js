@@ -305,17 +305,23 @@ export class Timeline extends EventTarget {
   /**
    * 시간을 프레임 단위로 스냅
    */
+  _getTimelineDuration() {
+    return this.playlistDuration || this.duration;
+  }
+
   _snapTimeToFrame(time) {
+    const duration = this._getTimelineDuration();
     if (this.fps === 0) return time;
     const frame = Math.round(time * this.fps);
-    return Math.max(0, Math.min(frame / this.fps, this.duration));
+    return Math.max(0, Math.min(frame / this.fps, duration));
   }
 
   /**
    * 클릭 위치에서 시간 계산하여 이동
    */
   _seekFromClick(e) {
-    if (this.duration === 0) return;
+    const duration = this._getTimelineDuration();
+    if (duration === 0) return;
 
     const rect = this.tracksContainer?.getBoundingClientRect();
     if (!rect) return;
@@ -327,7 +333,7 @@ export class Timeline extends EventTarget {
     // tracksContainer의 실제 너비 (줌이 적용된 상태)
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = this._snapTimeToFrame(percent * this.duration);
+    const time = this._snapTimeToFrame(percent * duration);
 
     this._emit('seek', { time });
   }
@@ -336,7 +342,8 @@ export class Timeline extends EventTarget {
    * 스크러빙 중 (드래그 중 프리뷰만 표시, 실제 seek 없음)
    */
   _scrubFromClick(e) {
-    if (this.duration === 0) return;
+    const duration = this._getTimelineDuration();
+    if (duration === 0) return;
 
     const rect = this.tracksContainer?.getBoundingClientRect();
     if (!rect) return;
@@ -344,7 +351,7 @@ export class Timeline extends EventTarget {
     const x = e.clientX - rect.left;
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = this._snapTimeToFrame(percent * this.duration);
+    const time = this._snapTimeToFrame(percent * duration);
 
     // 플레이헤드 위치 업데이트 (시각적으로만)
     this.scrubTime = time;
@@ -401,9 +408,10 @@ export class Timeline extends EventTarget {
    * 플레이헤드 위치 직접 업데이트 (스크러빙용)
    */
   _updatePlayheadPositionDirect(time) {
-    if (this.duration === 0) return;
+    const duration = this._getTimelineDuration();
+    if (duration === 0) return;
 
-    const percent = time / this.duration;
+    const percent = time / duration;
     const containerWidth = this.tracksContainer?.offsetWidth || 1000;
     const positionPx = percent * containerWidth;
 
@@ -507,12 +515,13 @@ export class Timeline extends EventTarget {
    * 플레이헤드가 보이도록 자동 스크롤
    */
   _autoScrollToPlayhead() {
-    if (!this.timelineTracks || this.duration === 0) return;
+    const duration = this._getTimelineDuration();
+    if (!this.timelineTracks || duration === 0) return;
 
     const containerWidth = this.tracksContainer?.offsetWidth || 0;
     if (containerWidth === 0) return;
 
-    const percent = this.currentTime / this.duration;
+    const percent = this.currentTime / duration;
     const playheadPx = containerWidth * percent;
 
     const scrollLeft = this.timelineTracks.scrollLeft;
@@ -535,12 +544,13 @@ export class Timeline extends EventTarget {
    * 플레이헤드 위치로 스크롤 (재생 시작 시)
    */
   scrollToPlayhead() {
-    if (!this.timelineTracks || this.duration === 0) return;
+    const duration = this._getTimelineDuration();
+    if (!this.timelineTracks || duration === 0) return;
 
     const containerWidth = this.tracksContainer?.offsetWidth || 0;
     if (containerWidth === 0) return;
 
-    const percent = this.currentTime / this.duration;
+    const percent = this.currentTime / duration;
     const playheadPx = containerWidth * percent;
 
     const scrollLeft = this.timelineTracks.scrollLeft;
@@ -558,13 +568,14 @@ export class Timeline extends EventTarget {
    * 핸들과 라인 모두 동일한 left 값을 사용 (CSS에서 margin-left로 핸들 중앙 정렬)
    */
   _updatePlayheadPosition() {
-    if (this.duration === 0) return;
+    const duration = this._getTimelineDuration();
+    if (duration === 0) return;
 
     // tracksContainer의 실제 너비를 기준으로 픽셀 위치 계산
     const containerWidth = this.tracksContainer?.offsetWidth || 0;
     if (containerWidth === 0) return;
 
-    const percent = this.currentTime / this.duration;
+    const percent = this.currentTime / duration;
     const positionPx = containerWidth * percent;
 
     // 핸들과 라인 모두 동일한 픽셀 위치 설정
@@ -749,7 +760,8 @@ export class Timeline extends EventTarget {
    * 룰러 업데이트
    */
   _updateRuler() {
-    if (!this.timelineRuler || this.duration === 0) return;
+    const duration = this._getTimelineDuration();
+    if (!this.timelineRuler || duration === 0) return;
 
     // 기존 마크 제거
     const existingMarks = this.timelineRuler.querySelectorAll('.ruler-mark');
@@ -758,11 +770,11 @@ export class Timeline extends EventTarget {
     // 마크 간격 계산 (화면에 약 6~8개의 마크가 보이도록)
     const scale = this.zoom / 100;
     const numMarks = Math.ceil(6 * scale);
-    const interval = this.duration / numMarks;
+    const interval = duration / numMarks;
 
     for (let i = 0; i <= numMarks; i++) {
       const time = i * interval;
-      const percent = (time / this.duration) * 100;
+      const percent = (time / duration) * 100;
 
       const mark = document.createElement('span');
       mark.className = 'ruler-mark';
@@ -1909,6 +1921,8 @@ export class Timeline extends EventTarget {
   setPlaylistTimeline(segments, totalDuration) {
     this.playlistSegments = segments || [];
     this.playlistDuration = totalDuration || 0;
+    this._updateRuler();
+    this._updatePlayheadPosition();
     this._renderPlaylistSegments();
   }
 
@@ -1927,6 +1941,11 @@ export class Timeline extends EventTarget {
       boundary.title = `${segment.fileName} ${this._formatTime(segment.startTime)}`;
       boundary.dataset.itemId = segment.itemId;
       boundary.dataset.startTime = String(segment.startTime);
+      boundary.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const time = Number(boundary.dataset.startTime) || 0;
+        this._emit('seek', { time, itemId: segment.itemId });
+      });
       this.tracksContainer.appendChild(boundary);
     }
   }

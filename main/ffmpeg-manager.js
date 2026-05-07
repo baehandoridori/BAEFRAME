@@ -876,7 +876,7 @@ class FFmpegManager {
 
   /**
    * 사전 변환 시작 (백그라운드, 낮은 우선순위)
-   * 이미 변환 중이면 스킵
+   * 이미 변환 중이면 기존 작업 완료를 기다림
    */
   async preTranscode(filePath, onProgress = null) {
     // 초기화 보장
@@ -898,7 +898,8 @@ class FFmpegManager {
 
     // 이미 해당 파일이 변환 중인지 확인
     if (this.pendingTranscodes.has(filePath)) {
-      return { success: false, reason: 'already-in-progress' };
+      log.info('동일 파일 사전 변환 진행 중, 완료 대기', { filePath });
+      return this.pendingTranscodes.get(filePath);
     }
 
     // 변환 실행 (onProgress 콜백 전달)
