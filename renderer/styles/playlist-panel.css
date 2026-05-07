@@ -811,3 +811,40 @@ body.app-fullscreen .playlist-resizer {
 .playlist-item[data-continuous-status="missing"] .playlist-item-continuous-status {
   color: var(--error);
 }
+
+.playlist-segment-boundary {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  padding: 0;
+  border: 0;
+  background: rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  z-index: 8;
+}
+
+.playlist-segment-boundary:hover {
+  width: 2px;
+  background: var(--accent-primary);
+}
+
+.playlist-comment-range {
+  position: absolute;
+  top: 4px;
+  height: 10px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--comment-color, var(--accent-primary));
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+.playlist-comment-range:hover {
+  opacity: 1;
+  box-shadow: 0 0 0 1px var(--bg-primary), 0 0 0 2px var(--comment-color, var(--accent-primary));
+}
+
+.playlist-comment-range.resolved {
+  opacity: 0.35;
+}

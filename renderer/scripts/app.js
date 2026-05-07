@@ -23,10 +23,12 @@ import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
 import {
+  buildPlaylistSegments,
   CONTINUOUS_STATUS,
   findNextPlayableIndex,
   createSkippedToastMessage
 } from './modules/playlist-continuous-core.js';
+import { extractPlaylistCommentRanges } from './modules/playlist-comment-index.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
 import { getMentionManager } from './modules/mention-manager.js';
@@ -1708,6 +1710,7 @@ async function initApp() {
     renderCommentRanges();
     renderVideoMarkers();
     updateTimelineMarkers();
+    updatePlaylistContinuousTimeline();
   }
 
   // 작성자 필터 드롭다운 토글
@@ -3132,13 +3135,35 @@ async function initApp() {
 
     // 클릭 — 해당 댓글 선택 + 프레임 이동 + 댓글 하이라이트
     // 트랙 배경 클릭은 펼친 클러스터 접기
-    commentTrack.addEventListener('click', (e) => {
+    commentTrack.addEventListener('click', async (e) => {
       if (commentDragState || commentJustDragged) return;
 
       // 핸들/배지/접기 배지 클릭은 mousedown에서 처리하므로 무시
       if (e.target.closest('.comment-handle')) return;
       if (e.target.closest('.comment-cluster-badge')) return;
       if (e.target.closest('.comment-cluster-close-badge')) return;
+
+      const playlistCommentItem = e.target.closest('.playlist-comment-range');
+      if (playlistCommentItem) {
+        const playlistManager = getPlaylistManager();
+        const itemId = playlistCommentItem.dataset.itemId;
+        const localStartFrame = parseInt(playlistCommentItem.dataset.localStartFrame, 10) || 0;
+        suppressPlaylistSelectionLoad = true;
+        let item = null;
+        try {
+          item = playlistManager.selectItemById(itemId);
+        } finally {
+          suppressPlaylistSelectionLoad = false;
+        }
+        if (item) {
+          await loadVideoFromPlaylist(item);
+          videoPlayer.seekToFrame(localStartFrame);
+          videoPlayer.pause();
+          scrollToCommentWithGlow(playlistCommentItem.dataset.markerId);
+          updatePlaylistContinuousTimeline();
+        }
+        return;
+      }
 
       const item = e.target.closest('.comment-range-item');
       if (item) {
@@ -10105,8 +10130,55 @@ async function initApp() {
     continuousPlaybackState.skippedBatch = [];
   }
 
-  function updatePlaylistContinuousTimeline() {
-    // Task 7 replaces this placeholder with unified timeline updates.
+  async function collectPlaylistMetadata(items) {
+    const metadata = new Map();
+    for (const item of items) {
+      if (state.currentFile === item.videoPath && videoPlayer.duration) {
+        metadata.set(item.id, { duration: videoPlayer.duration, fps: videoPlayer.fps || 24 });
+      } else {
+        metadata.set(item.id, { duration: item.duration || 0, fps: item.fps || 24 });
+      }
+    }
+    return metadata;
+  }
+
+  async function updatePlaylistContinuousTimeline() {
+    if (playlistUIState.mode !== 'continuous') return;
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems();
+    const metadata = await collectPlaylistMetadata(items);
+    if (playlistUIState.mode !== 'continuous') return;
+
+    const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
+    timeline.setPlaylistTimeline(segments, totalDuration);
+
+    const aggregateRanges = [];
+    const allowedAuthorIds = commentFilterState.authors === null ? null : new Set(commentFilterState.authors);
+
+    for (const segment of segments) {
+      const item = items[segment.index];
+      if (!item?.bframePath) continue;
+      try {
+        const bframeData = await window.electronAPI.loadReview(item.bframePath);
+        if (!bframeData) continue;
+        aggregateRanges.push(...extractPlaylistCommentRanges({
+          bframeData,
+          segment,
+          visibleLayerIds: null,
+          allowedAuthorIds
+        }));
+      } catch (error) {
+        log.warn('이어보기 댓글 로드 실패', { fileName: item.fileName, error: error.message });
+      }
+    }
+
+    if (playlistUIState.mode !== 'continuous') return;
+    const filteredRanges = aggregateRanges.filter(range => {
+      if (commentFilterState.status === 'resolved') return range.resolved;
+      if (commentFilterState.status === 'unresolved') return !range.resolved;
+      return true;
+    });
+    timeline.renderPlaylistCommentRanges(filteredRanges, totalDuration);
   }
 
   async function quickCheckPlaylistForContinuous(sessionId) {
@@ -10375,6 +10447,8 @@ async function initApp() {
 
     if (nextMode === 'review') {
       stopContinuousPlayback({ keepCurrentVideo: true });
+      timeline.setPlaylistTimeline([], 0);
+      renderCommentRanges();
     } else {
       updatePlaylistContinuousTimeline();
     }
@@ -10430,6 +10504,7 @@ async function initApp() {
       await loadVideoFromPlaylist(item);
       updatePlaylistCurrentItem();
       updatePlaylistPosition();
+      updatePlaylistContinuousTimeline();
 
       // 다음 아이템 사전 변환 트리거
       preTranscodePlaylistItems();
@@ -10456,6 +10531,7 @@ async function initApp() {
         // 현재 아이템의 진행률 업데이트
         await updatePlaylistItemProgress(e.detail.path);
         await updatePlaylistProgress();
+        updatePlaylistContinuousTimeline();
       }
     });
 

@@ -46,6 +46,8 @@ export class Timeline extends EventTarget {
     // 클러스터 펼침/접힘 상태
     this.expandedClusterId = null;  // 현재 펼친 클러스터의 키 (markerId)
     this._lastComments = null;      // 펼치기/접기 재렌더용 캐시
+    this.playlistSegments = [];
+    this.playlistDuration = 0;
 
     // 플레이헤드 드래그 상태
     this.isDraggingPlayhead = false;
@@ -1902,6 +1904,63 @@ export class Timeline extends EventTarget {
     this.commentLayerHeader = layerHeaderElement;
     // 트랙 배경 클릭으로 펼친 클러스터 접기 / 배지 펼치기 등은 app.js의
     // setupCommentRangeInteractions()에서 드래그 가드와 함께 위임 처리한다.
+  }
+
+  setPlaylistTimeline(segments, totalDuration) {
+    this.playlistSegments = segments || [];
+    this.playlistDuration = totalDuration || 0;
+    this._renderPlaylistSegments();
+  }
+
+  _renderPlaylistSegments() {
+    if (!this.tracksContainer) return;
+    this.tracksContainer.querySelectorAll('.playlist-segment-boundary').forEach(el => el.remove());
+    const duration = this.playlistDuration || this.duration;
+    if (!duration) return;
+
+    for (const segment of this.playlistSegments || []) {
+      const left = (segment.startTime / duration) * 100;
+      const boundary = document.createElement('button');
+      boundary.type = 'button';
+      boundary.className = 'playlist-segment-boundary';
+      boundary.style.left = `${left}%`;
+      boundary.title = `${segment.fileName} ${this._formatTime(segment.startTime)}`;
+      boundary.dataset.itemId = segment.itemId;
+      boundary.dataset.startTime = String(segment.startTime);
+      this.tracksContainer.appendChild(boundary);
+    }
+  }
+
+  renderPlaylistCommentRanges(ranges, totalDuration) {
+    if (!this.commentTrack) return;
+    this.commentTrack.querySelectorAll(
+      '.playlist-comment-range, .comment-range-item, .comment-cluster-badge, .comment-cluster-close-badge'
+    ).forEach(el => el.remove());
+    this._lastComments = null;
+    this.expandedClusterId = null;
+    const duration = totalDuration || this.playlistDuration || this.duration;
+    if (!duration) {
+      this.commentTrack.style.display = 'none';
+      return;
+    }
+
+    for (const range of ranges || []) {
+      const left = (range.globalStartTime / duration) * 100;
+      const width = Math.max(0.2, ((range.globalEndTime - range.globalStartTime) / duration) * 100);
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = `playlist-comment-range${range.resolved ? ' resolved' : ''}`;
+      el.style.left = `${left}%`;
+      el.style.width = `${width}%`;
+      el.style.setProperty('--comment-color', range.color);
+      el.dataset.itemId = range.itemId;
+      el.dataset.markerId = range.markerId;
+      el.dataset.localStartFrame = String(range.localStartFrame);
+      el.title = `${range.fileName}: ${range.text || '댓글'}`;
+      this.commentTrack.appendChild(el);
+    }
+
+    this.commentTrack.style.display = ranges && ranges.length > 0 ? 'block' : 'none';
   }
 
   /**
