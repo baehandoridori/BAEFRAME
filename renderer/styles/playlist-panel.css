@@ -742,6 +742,38 @@ body.app-fullscreen .playlist-resizer {
   display: none;
 }
 
+.playlist-loop-toggle .toggle-slider {
+  width: 32px;
+  height: 18px;
+  background: var(--bg-tertiary);
+  border-radius: 9px;
+  position: relative;
+  transition: all 0.2s ease;
+  border: 1px solid var(--border-subtle);
+}
+
+.playlist-loop-toggle .toggle-slider::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  top: 1px;
+  left: 1px;
+  transition: all 0.2s ease;
+}
+
+.playlist-loop-toggle input:checked + .toggle-slider {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.playlist-loop-toggle input:checked + .toggle-slider::after {
+  left: 15px;
+  background: var(--bg-primary);
+}
+
 .playlist-continuous-play {
   grid-column: 1 / -1;
   height: 30px;
