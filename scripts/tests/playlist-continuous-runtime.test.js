@@ -88,6 +88,21 @@ test('continuous video loads preserve aggregate timeline comment ranges', () => 
   assert.doesNotMatch(loadVideoCommentRefreshMatch[1], /\n\s*renderCommentRanges\(\);/);
 });
 
+test('continuous state is initialized before startup file-open comment refresh paths', () => {
+  const stateIndex = appSource.indexOf('const playlistUIState = {');
+  const helperIndex = appSource.indexOf('async function refreshCommentRangesForCurrentMode()');
+  const loadVideoIndex = appSource.indexOf('async function loadVideo(filePath, options = {})');
+  const rendererReadyIndex = appSource.indexOf('window.electronAPI.notifyRendererReady?.();');
+
+  assert.notEqual(stateIndex, -1, 'playlist UI state should exist');
+  assert.notEqual(helperIndex, -1, 'comment refresh helper should exist');
+  assert.notEqual(loadVideoIndex, -1, 'loadVideo should exist');
+  assert.notEqual(rendererReadyIndex, -1, 'renderer ready notification should exist');
+  assert.ok(stateIndex < helperIndex, 'playlist UI state must be initialized before comment refresh helper can run');
+  assert.ok(stateIndex < loadVideoIndex, 'playlist UI state must be initialized before loadVideo can refresh comments');
+  assert.ok(stateIndex < rendererReadyIndex, 'playlist UI state must be initialized before startup file-open events can arrive');
+});
+
 test('continuous selection does not auto-load before preparation finishes', () => {
   assert.match(appSource, /let suppressPlaylistSelectionLoad = false;/);
   assert.match(appSource, /function selectPlaylistItemForContinuous\(index\)/);

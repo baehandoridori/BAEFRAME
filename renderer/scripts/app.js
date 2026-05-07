@@ -239,6 +239,22 @@ async function initApp() {
     showMarkers: true    // 뷰포트 마커 표시 여부
   };
 
+  const playlistUIState = {
+    mode: 'review'
+  };
+
+  const continuousPlaybackState = {
+    active: false,
+    waiting: false,
+    skippedBatch: [],
+    preparePromises: new Map(),
+    sessionId: 0
+  };
+
+  let suppressPlaylistSelectionLoad = false;
+  let playlistTimelineUpdateToken = 0;
+  let playlistSortChangeToken = 0;
+
   /**
    * 작성자 필터 적용 헬퍼
    * @param {Array} items - authorId/author 필드를 가진 객체 배열
@@ -10132,22 +10148,6 @@ async function initApp() {
   // ============================================================================
   // 재생목록 기능
   // ============================================================================
-
-  const playlistUIState = {
-    mode: 'review'
-  };
-
-  const continuousPlaybackState = {
-    active: false,
-    waiting: false,
-    skippedBatch: [],
-    preparePromises: new Map(),
-    sessionId: 0
-  };
-
-  let suppressPlaylistSelectionLoad = false;
-  let playlistTimelineUpdateToken = 0;
-  let playlistSortChangeToken = 0;
 
   function getCurrentContinuousSegment() {
     if (playlistUIState.mode !== 'continuous' || !timeline.playlistDuration) return null;
