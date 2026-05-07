@@ -10253,8 +10253,8 @@ async function initApp() {
     const nextIndex = findNextPlayableIndex(items, playlistManager.currentIndex, { loop: settings.loop });
 
     if (nextIndex < 0) {
-      stopContinuousPlayback();
       flushSkippedToastBatch();
+      stopContinuousPlayback();
       showToast('재생목록 재생 완료', 'success');
       return;
     }

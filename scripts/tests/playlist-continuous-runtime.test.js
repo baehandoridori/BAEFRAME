@@ -22,6 +22,21 @@ test('ended event routes active continuous playback before normal autoplay', () 
   assert.match(appSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+playNextContinuousItem\(\);[\s\S]+return;[\s\S]+if \(playlistManager\.isActive\(\) && playlistManager\.getAutoPlay\(\)/);
 });
 
+test('continuous completion flushes skipped batch before stopping playback', () => {
+  const completionBranchMatch = appSource.match(/if \(nextIndex < 0\) \{([\s\S]*?)\n    \}/);
+  assert.ok(completionBranchMatch, 'completion branch should exist');
+
+  const completionBranch = completionBranchMatch[1];
+  assert.ok(
+    completionBranch.indexOf('flushSkippedToastBatch();') < completionBranch.indexOf('stopContinuousPlayback();'),
+    'skipped batch must flush before stopContinuousPlayback clears it'
+  );
+  assert.ok(
+    completionBranch.indexOf('stopContinuousPlayback();') < completionBranch.indexOf("showToast('재생목록 재생 완료', 'success');"),
+    'completion toast should be shown after playback is stopped'
+  );
+});
+
 test('playlist rows render and color continuous status text', () => {
   assert.match(appSource, /playlist-item-continuous-status/);
   assert.match(appSource, /el\.dataset\.continuousStatus = item\.continuousStatus;/);
