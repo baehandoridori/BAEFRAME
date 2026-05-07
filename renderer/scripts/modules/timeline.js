@@ -1941,6 +1941,9 @@ export class Timeline extends EventTarget {
     const duration = totalDuration || this.playlistDuration || this.duration;
     if (!duration) {
       this.commentTrack.style.display = 'none';
+      if (this.commentLayerHeader) {
+        this.commentLayerHeader.style.display = 'none';
+      }
       return;
     }
 
@@ -1960,7 +1963,18 @@ export class Timeline extends EventTarget {
       this.commentTrack.appendChild(el);
     }
 
-    this.commentTrack.style.display = ranges && ranges.length > 0 ? 'block' : 'none';
+    const hasRanges = ranges && ranges.length > 0;
+    if (hasRanges) {
+      this.commentTrack.style.display = 'block';
+      if (this.commentLayerHeader) {
+        this.commentLayerHeader.style.display = 'flex';
+      }
+    } else {
+      this.commentTrack.style.display = 'none';
+      if (this.commentLayerHeader) {
+        this.commentLayerHeader.style.display = 'none';
+      }
+    }
   }
 
   /**

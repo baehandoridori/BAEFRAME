@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '../..');
 const appSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8');
+const timelineSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/timeline.js'), 'utf8');
 const playlistCss = fs.readFileSync(path.join(rootDir, 'renderer/styles/playlist-panel.css'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
@@ -23,6 +24,51 @@ test('continuous metadata probes unloaded playlist items without saved duration'
   assert.match(metadataSource, /probe\.frameRate/);
   assert.match(metadataSource, /item\.duration = duration/);
   assert.match(metadataSource, /item\.fps = fps/);
+});
+
+test('status filter chip changes route through shared comment filter refresh', () => {
+  const filterHandlerMatch = appSource.match(/document\.querySelectorAll\('\.filter-chip'\)\.forEach\(chip => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(filterHandlerMatch, 'filter chip handler should exist');
+
+  const filterHandlerSource = filterHandlerMatch[1];
+  assert.match(filterHandlerSource, /commentFilterState\.status = filter;/);
+  assert.match(filterHandlerSource, /applyCommentFilters\(\);/);
+  assert.doesNotMatch(filterHandlerSource, /updateCommentList\(filter\);/);
+});
+
+test('continuous timeline updates ignore stale async completions', () => {
+  const timelineUpdateMatch = appSource.match(/async function updatePlaylistContinuousTimeline\(\) \{([\s\S]*?)\n  \}\n\n  async function quickCheckPlaylistForContinuous/);
+  assert.ok(timelineUpdateMatch, 'updatePlaylistContinuousTimeline should exist');
+
+  const timelineUpdateSource = timelineUpdateMatch[1];
+  assert.match(appSource, /let playlistTimelineUpdateToken = 0;/);
+  assert.match(timelineUpdateSource, /const updateToken = \+\+playlistTimelineUpdateToken;/);
+  assert.match(timelineUpdateSource, /playlistTimelineUpdateToken !== updateToken/);
+  assert.match(timelineUpdateSource, /const metadata = await collectPlaylistMetadata\(items\);[\s\S]+playlistTimelineUpdateToken !== updateToken/);
+  assert.match(timelineUpdateSource, /const bframeData = await window\.electronAPI\.loadReview\(item\.bframePath\);[\s\S]+playlistTimelineUpdateToken !== updateToken/);
+});
+
+test('aggregate comment clicks stop when playlist item load fails', () => {
+  const clickMatch = appSource.match(/const playlistCommentItem = e\.target\.closest\('\.playlist-comment-range'\);([\s\S]*?)\n\n      const item = e\.target\.closest\('\.comment-range-item'\);/);
+  assert.ok(clickMatch, 'aggregate comment click path should exist');
+
+  const clickSource = clickMatch[1];
+  assert.match(clickSource, /const loaded = await loadVideoFromPlaylist\(item\);/);
+  assert.match(clickSource, /if \(!loaded\) return;/);
+  assert.ok(
+    clickSource.indexOf('if (!loaded) return;') < clickSource.indexOf('videoPlayer.seekToFrame(localStartFrame);'),
+    'load failure guard should run before seeking'
+  );
+});
+
+test('aggregate comment range rendering keeps the comment track header in sync', () => {
+  const renderMatch = timelineSource.match(/renderPlaylistCommentRanges\(ranges, totalDuration\) \{([\s\S]*?)\n  \}\n\n  \/\*\*/);
+  assert.ok(renderMatch, 'renderPlaylistCommentRanges should exist');
+
+  const renderSource = renderMatch[1];
+  assert.match(renderSource, /this\.commentLayerHeader/);
+  assert.match(renderSource, /this\.commentLayerHeader\.style\.display = 'none';/);
+  assert.match(renderSource, /this\.commentLayerHeader\.style\.display = 'flex';/);
 });
 
 test('continuous selection does not auto-load before preparation finishes', () => {

@@ -1637,7 +1637,7 @@ async function initApp() {
       this.classList.add('active');
       const filter = this.dataset.filter;
       commentFilterState.status = filter;
-      updateCommentList(filter);
+      applyCommentFilters();
       log.debug('필터 변경', { filter });
     });
   });
@@ -3156,7 +3156,8 @@ async function initApp() {
           suppressPlaylistSelectionLoad = false;
         }
         if (item) {
-          await loadVideoFromPlaylist(item);
+          const loaded = await loadVideoFromPlaylist(item);
+          if (!loaded) return;
           videoPlayer.seekToFrame(localStartFrame);
           videoPlayer.pause();
           scrollToCommentWithGlow(playlistCommentItem.dataset.markerId);
@@ -10085,6 +10086,7 @@ async function initApp() {
   };
 
   let suppressPlaylistSelectionLoad = false;
+  let playlistTimelineUpdateToken = 0;
 
   function stopContinuousPlayback() {
     continuousPlaybackState.sessionId += 1;
@@ -10174,10 +10176,11 @@ async function initApp() {
 
   async function updatePlaylistContinuousTimeline() {
     if (playlistUIState.mode !== 'continuous') return;
+    const updateToken = ++playlistTimelineUpdateToken;
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
     const metadata = await collectPlaylistMetadata(items);
-    if (playlistUIState.mode !== 'continuous') return;
+    if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
 
     const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
     timeline.setPlaylistTimeline(segments, totalDuration);
@@ -10190,6 +10193,7 @@ async function initApp() {
       if (!item?.bframePath) continue;
       try {
         const bframeData = await window.electronAPI.loadReview(item.bframePath);
+        if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
         if (!bframeData) continue;
         aggregateRanges.push(...extractPlaylistCommentRanges({
           bframeData,
@@ -10202,7 +10206,7 @@ async function initApp() {
       }
     }
 
-    if (playlistUIState.mode !== 'continuous') return;
+    if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
     const filteredRanges = aggregateRanges.filter(range => {
       if (commentFilterState.status === 'resolved') return range.resolved;
       if (commentFilterState.status === 'unresolved') return !range.resolved;
