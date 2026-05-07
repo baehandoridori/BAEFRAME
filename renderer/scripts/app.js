@@ -173,6 +173,14 @@ async function initApp() {
     btnPlaylistNext: document.getElementById('btnPlaylistNext'),
     playlistPosition: document.getElementById('playlistPosition'),
     playlistAutoPlay: document.getElementById('playlistAutoPlay'),
+    playlistTabReview: document.getElementById('playlistTabReview'),
+    playlistTabContinuous: document.getElementById('playlistTabContinuous'),
+    playlistContinuousTools: document.getElementById('playlistContinuousTools'),
+    playlistSortMode: document.getElementById('playlistSortMode'),
+    playlistContinuousLoop: document.getElementById('playlistContinuousLoop'),
+    btnPlaylistContinuousPlay: document.getElementById('btnPlaylistContinuousPlay'),
+    playlistPrepareSummary: document.getElementById('playlistPrepareSummary'),
+    playlistPrepareSummaryText: document.getElementById('playlistPrepareSummaryText'),
     playlistItems: document.getElementById('playlistItems'),
     playlistDropzone: document.getElementById('playlistDropzone'),
     playlistEmpty: document.getElementById('playlistEmpty'),
@@ -10027,6 +10035,45 @@ async function initApp() {
   // 재생목록 기능
   // ============================================================================
 
+  const playlistUIState = {
+    mode: 'review'
+  };
+
+  function stopContinuousPlayback() {
+    // Task 6 replaces this placeholder with real continuous playback cleanup.
+  }
+
+  function updatePlaylistContinuousTimeline() {
+    // Task 7 replaces this placeholder with unified timeline updates.
+  }
+
+  function startContinuousPlayback() {
+    // Task 6 replaces this placeholder with real continuous playback startup.
+  }
+
+  function setPlaylistMode(mode) {
+    const nextMode = mode === 'continuous' ? 'continuous' : 'review';
+    playlistUIState.mode = nextMode;
+
+    elements.playlistTabReview?.classList.toggle('active', nextMode === 'review');
+    elements.playlistTabContinuous?.classList.toggle('active', nextMode === 'continuous');
+    elements.playlistTabReview?.setAttribute('aria-selected', String(nextMode === 'review'));
+    elements.playlistTabContinuous?.setAttribute('aria-selected', String(nextMode === 'continuous'));
+
+    if (elements.playlistContinuousTools) {
+      elements.playlistContinuousTools.hidden = nextMode !== 'continuous';
+    }
+    if (elements.playlistPrepareSummary) {
+      elements.playlistPrepareSummary.hidden = nextMode !== 'continuous';
+    }
+
+    if (nextMode === 'review') {
+      stopContinuousPlayback({ keepCurrentVideo: true });
+    } else {
+      updatePlaylistContinuousTimeline();
+    }
+  }
+
   function initPlaylistFeature() {
     const playlistManager = getPlaylistManager();
 
@@ -10208,6 +10255,28 @@ async function initApp() {
       playlistManager.setAutoPlay(e.target.checked);
     });
 
+    elements.playlistTabReview?.addEventListener('click', () => {
+      setPlaylistMode('review');
+    });
+
+    elements.playlistTabContinuous?.addEventListener('click', () => {
+      setPlaylistMode('continuous');
+    });
+
+    elements.playlistSortMode?.addEventListener('change', (e) => {
+      playlistManager.setSortMode(e.target.value);
+      updatePlaylistUI();
+      updatePlaylistContinuousTimeline();
+    });
+
+    elements.playlistContinuousLoop?.addEventListener('change', (e) => {
+      playlistManager.setContinuousLoop(e.target.checked);
+    });
+
+    elements.btnPlaylistContinuousPlay?.addEventListener('click', () => {
+      startContinuousPlayback();
+    });
+
     // 드래그 앤 드롭 - 파일 추가
     initPlaylistDragDrop();
 
@@ -10362,6 +10431,16 @@ async function initApp() {
       // 자동 재생 체크박스
       if (elements.playlistAutoPlay) {
         elements.playlistAutoPlay.checked = playlistManager.getAutoPlay();
+      }
+
+      const continuousSettings = playlistManager.getContinuousSettings?.();
+      if (continuousSettings) {
+        if (elements.playlistSortMode) {
+          elements.playlistSortMode.value = continuousSettings.sortMode;
+        }
+        if (elements.playlistContinuousLoop) {
+          elements.playlistContinuousLoop.checked = continuousSettings.loop;
+        }
       }
 
       // 아이템 렌더링
