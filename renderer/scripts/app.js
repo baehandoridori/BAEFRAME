@@ -10087,6 +10087,7 @@ async function initApp() {
 
   let suppressPlaylistSelectionLoad = false;
   let playlistTimelineUpdateToken = 0;
+  let playlistSortChangeToken = 0;
 
   function stopContinuousPlayback() {
     continuousPlaybackState.sessionId += 1;
@@ -10505,6 +10506,37 @@ async function initApp() {
     }
   }
 
+  function applyPlaylistSortPreservingSelection(sortMode) {
+    const playlistManager = getPlaylistManager();
+    const currentItemId = playlistManager.getCurrentItem()?.id || null;
+
+    playlistManager.setSortMode(sortMode);
+    if (currentItemId) {
+      suppressPlaylistSelectionLoad = true;
+      try {
+        playlistManager.selectItemById(currentItemId);
+      } finally {
+        suppressPlaylistSelectionLoad = false;
+      }
+    }
+  }
+
+  async function refreshModifiedSortIfActive() {
+    const playlistManager = getPlaylistManager();
+    if (playlistManager.getContinuousSettings()?.sortMode !== 'modifiedAt') {
+      return;
+    }
+
+    await refreshPlaylistModifiedTimes();
+    if (playlistManager.getContinuousSettings()?.sortMode !== 'modifiedAt') {
+      return;
+    }
+
+    applyPlaylistSortPreservingSelection('modifiedAt');
+    updatePlaylistUI();
+    updatePlaylistContinuousTimeline();
+  }
+
   function initPlaylistFeature() {
     const playlistManager = getPlaylistManager();
 
@@ -10587,7 +10619,7 @@ async function initApp() {
     });
 
     // 헤더 재생목록 버튼
-    elements.btnPlaylist?.addEventListener('click', () => {
+    elements.btnPlaylist?.addEventListener('click', async () => {
       if (elements.playlistSidebar.classList.contains('hidden')) {
         showPlaylistSidebar();
         if (!playlistManager.isActive()) {
@@ -10604,7 +10636,13 @@ async function initApp() {
             playlistManager.createNew();
             // 현재 영상이 있으면 추가 (state.currentFile은 문자열)
             if (state.currentFile) {
-              playlistManager.addItems([state.currentFile]).then(updatePlaylistUI);
+              try {
+                await playlistManager.addItems([state.currentFile]);
+                await refreshModifiedSortIfActive();
+                updatePlaylistUI();
+              } catch (error) {
+                showToast(error.message, 'error');
+              }
             }
           }
         }
@@ -10642,6 +10680,7 @@ async function initApp() {
       if (!result.canceled && result.filePaths.length > 0) {
         try {
           await playlistManager.addItems(result.filePaths);
+          await refreshModifiedSortIfActive();
           exitPlaylistAddMode();
           updatePlaylistUI();
           showToast(`${result.filePaths.length}개 파일이 추가되었습니다.`, 'success');
@@ -10704,21 +10743,18 @@ async function initApp() {
 
     elements.playlistSortMode?.addEventListener('change', async (e) => {
       const sortMode = e.target.value;
-      const currentItemId = playlistManager.getCurrentItem()?.id || null;
+      const sortChangeToken = ++playlistSortChangeToken;
       if (sortMode === 'modifiedAt') {
         await refreshPlaylistModifiedTimes();
-      }
-
-      playlistManager.setSortMode(sortMode);
-      if (currentItemId) {
-        suppressPlaylistSelectionLoad = true;
-        try {
-          playlistManager.selectItemById(currentItemId);
-        } finally {
-          suppressPlaylistSelectionLoad = false;
+        if (
+          playlistSortChangeToken !== sortChangeToken ||
+          elements.playlistSortMode?.value !== sortMode
+        ) {
+          return;
         }
       }
 
+      applyPlaylistSortPreservingSelection(sortMode);
       updatePlaylistUI();
       updatePlaylistContinuousTimeline();
     });
@@ -11153,6 +11189,7 @@ async function initApp() {
 
         try {
           const added = await playlistManager.addItems(videoPaths);
+          await refreshModifiedSortIfActive();
           if (added.length > 0) {
             showToast(`${added.length}개 파일이 추가되었습니다.`, 'success');
           }
@@ -11208,6 +11245,7 @@ async function initApp() {
 
         try {
           const added = await playlistManager.addItems(videoPaths);
+          await refreshModifiedSortIfActive();
           if (added.length > 0) {
             showToast(`${added.length}개 파일이 추가되었습니다.`, 'success');
           }

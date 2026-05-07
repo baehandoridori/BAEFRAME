@@ -167,18 +167,17 @@ test('modified-date sort refreshes stats and preserves current selection without
   assert.match(refreshSource, /item\.modifiedAtMs = Number\(stats\?\.mtimeMs\) \|\| 0;/);
   assert.match(refreshSource, /catch \(error\) \{/);
 
+  assert.match(appSource, /let playlistSortChangeToken = 0;/);
   const sortHandlerMatch = appSource.match(/elements\.playlistSortMode\?\.addEventListener\('change', async \(e\) => \{([\s\S]*?)\n    \}\);/);
   assert.ok(sortHandlerMatch, 'sort change handler should be async');
 
   const sortHandlerSource = sortHandlerMatch[1];
-  assert.match(sortHandlerSource, /const currentItemId = playlistManager\.getCurrentItem\(\)\?\.id \|\| null;/);
-  assert.ok(
-    sortHandlerSource.indexOf('const currentItemId') < sortHandlerSource.indexOf('playlistManager.setSortMode'),
-    'current item id must be captured before sorting'
-  );
   assert.match(sortHandlerSource, /const sortMode = e\.target\.value;/);
+  assert.match(sortHandlerSource, /const sortChangeToken = \+\+playlistSortChangeToken;/);
   assert.match(sortHandlerSource, /if \(sortMode === 'modifiedAt'\) \{[\s\S]+await refreshPlaylistModifiedTimes\(\);/);
-  assert.match(sortHandlerSource, /suppressPlaylistSelectionLoad = true;[\s\S]+playlistManager\.selectItemById\(currentItemId\);[\s\S]+suppressPlaylistSelectionLoad = false;/);
+  assert.match(sortHandlerSource, /playlistSortChangeToken !== sortChangeToken/);
+  assert.match(sortHandlerSource, /elements\.playlistSortMode\?\.value !== sortMode/);
+  assert.match(sortHandlerSource, /applyPlaylistSortPreservingSelection\(sortMode\);/);
 });
 
 test('manual playlist reorder updates order without selecting an item directly', () => {
@@ -190,6 +189,29 @@ test('manual playlist reorder updates order without selecting an item directly',
   const reorderSource = appSource.slice(start, end);
   assert.match(reorderSource, /playlistManager\.reorderItem\(draggedIndex, newIndex\);/);
   assert.doesNotMatch(reorderSource, /playlistManager\.selectItem\(/);
+});
+
+test('modified-date sort is refreshed after every playlist add path', () => {
+  const applySortMatch = appSource.match(/function applyPlaylistSortPreservingSelection\(sortMode\) \{([\s\S]*?)\n  \}\n\n  async function refreshModifiedSortIfActive/);
+  assert.ok(applySortMatch, 'selection-preserving sort helper should exist');
+  const applySortSource = applySortMatch[1];
+  assert.match(applySortSource, /const currentItemId = playlistManager\.getCurrentItem\(\)\?\.id \|\| null;/);
+  assert.match(applySortSource, /playlistManager\.setSortMode\(sortMode\);/);
+  assert.match(applySortSource, /suppressPlaylistSelectionLoad = true;[\s\S]+playlistManager\.selectItemById\(currentItemId\);[\s\S]+suppressPlaylistSelectionLoad = false;/);
+
+  const refreshActiveMatch = appSource.match(/async function refreshModifiedSortIfActive\(\) \{([\s\S]*?)\n  \}\n\n  function initPlaylistFeature/);
+  assert.ok(refreshActiveMatch, 'active modified-date sort refresh helper should exist');
+  const refreshActiveSource = refreshActiveMatch[1];
+  assert.match(refreshActiveSource, /playlistManager\.getContinuousSettings\(\)\?\.sortMode !== 'modifiedAt'/);
+  assert.match(refreshActiveSource, /await refreshPlaylistModifiedTimes\(\);/);
+  assert.match(refreshActiveSource, /applyPlaylistSortPreservingSelection\('modifiedAt'\);/);
+  assert.match(refreshActiveSource, /updatePlaylistUI\(\);/);
+  assert.match(refreshActiveSource, /updatePlaylistContinuousTimeline\(\);/);
+
+  const addItemCalls = [...appSource.matchAll(/playlistManager\.addItems\(/g)].length;
+  const refreshAfterAddCalls = [...appSource.matchAll(/await refreshModifiedSortIfActive\(\);/g)].length;
+  assert.equal(addItemCalls, 4, 'expected the four known playlist add paths');
+  assert.equal(refreshAfterAddCalls, addItemCalls, 'each playlist add path should refresh modified-date sort when active');
 });
 
 test('playlist test script includes continuous runtime coverage', () => {
