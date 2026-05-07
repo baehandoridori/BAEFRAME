@@ -792,3 +792,22 @@ body.app-fullscreen .playlist-resizer {
   font-size: 11px;
   background: var(--bg-secondary);
 }
+
+.playlist-item-continuous-status {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.playlist-item[data-continuous-status="preparing"] .playlist-item-continuous-status {
+  color: var(--warning);
+}
+
+.playlist-item[data-continuous-status="ready"] .playlist-item-continuous-status {
+  color: var(--success);
+}
+
+.playlist-item[data-continuous-status="skipped"] .playlist-item-continuous-status,
+.playlist-item[data-continuous-status="error"] .playlist-item-continuous-status,
+.playlist-item[data-continuous-status="missing"] .playlist-item-continuous-status {
+  color: var(--error);
+}
