@@ -13,9 +13,13 @@ export function buildPlaylistSegments(items, metadataByItemId) {
   let cursor = 0;
 
   (items || []).forEach((item, index) => {
-    const metadata = metadataByItemId.get(item.id) || {};
-    const duration = Math.max(0, Number(metadata.duration) || Number(item.duration) || 0);
-    const fps = Number(metadata.fps) || Number(item.fps) || 24;
+    const metadata = metadataByItemId?.get?.(item.id) || {};
+    const durationSource = Object.prototype.hasOwnProperty.call(metadata, 'duration') ? metadata.duration : item.duration;
+    const fpsSource = Object.prototype.hasOwnProperty.call(metadata, 'fps') ? metadata.fps : item.fps;
+    const durationValue = Number(durationSource);
+    const fpsValue = Number(fpsSource);
+    const duration = Number.isFinite(durationValue) && durationValue > 0 ? durationValue : 0;
+    const fps = Number.isFinite(fpsValue) && fpsValue > 0 ? fpsValue : 24;
     const segment = {
       itemId: item.id,
       index,
@@ -47,7 +51,8 @@ export function mapGlobalTimeToSegment(segments, globalTime) {
 
 export function mapLocalTimeToGlobal(segment, localTime) {
   if (!segment) return 0;
-  return segment.startTime + Math.max(0, Number(localTime) || 0);
+  const time = Math.max(0, Number(localTime) || 0);
+  return segment.startTime + Math.min(segment.duration, time);
 }
 
 function isPlayable(item) {
