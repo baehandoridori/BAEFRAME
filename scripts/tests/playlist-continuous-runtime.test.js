@@ -72,6 +72,22 @@ test('aggregate comment range rendering keeps the comment track header in sync',
   assert.match(renderSource, /this\.commentLayerHeader\.style\.display = 'flex';/);
 });
 
+test('continuous video loads preserve aggregate timeline comment ranges', () => {
+  const helperMatch = appSource.match(/async function refreshCommentRangesForCurrentMode\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(helperMatch, 'current-mode comment range refresher should exist');
+
+  const helperSource = helperMatch[1];
+  assert.match(helperSource, /playlistUIState\.mode === 'continuous'/);
+  assert.match(helperSource, /renderVideoCommentRanges\(\);/);
+  assert.match(helperSource, /await updatePlaylistContinuousTimeline\(\);/);
+  assert.match(helperSource, /renderCommentRanges\(\);/);
+
+  const loadVideoCommentRefreshMatch = appSource.match(/renderHighlights\(\);\s*\n\s*\/\/ 댓글 범위 렌더링([\s\S]*?)\/\/ ====== 최근 파일 목록에 추가/);
+  assert.ok(loadVideoCommentRefreshMatch, 'loadVideo should refresh comment ranges before recent files');
+  assert.match(loadVideoCommentRefreshMatch[1], /await refreshCommentRangesForCurrentMode\(\);/);
+  assert.doesNotMatch(loadVideoCommentRefreshMatch[1], /\n\s*renderCommentRanges\(\);/);
+});
+
 test('continuous selection does not auto-load before preparation finishes', () => {
   assert.match(appSource, /let suppressPlaylistSelectionLoad = false;/);
   assert.match(appSource, /function selectPlaylistItemForContinuous\(index\)/);
@@ -275,6 +291,19 @@ test('modified-date sort is refreshed after every playlist add path', () => {
 test('opened modified-date playlists refresh filesystem mtimes before first selection', () => {
   assert.match(appSource, /playlistManager\.onPlaylistLoaded = async \(playlist\) => \{[\s\S]+await refreshModifiedSortIfActive\(\);[\s\S]+updatePlaylistUI\(\);/);
   assert.match(appSource, /await playlistManager\.open\(filePath\);[\s\S]+playlistManager\.selectItem\(0\);/);
+});
+
+test('playlist modifications rebuild the continuous aggregate timeline', () => {
+  const modifiedMatch = appSource.match(/playlistManager\.onPlaylistModified = \(\) => \{([\s\S]*?)\n    \};/);
+  assert.ok(modifiedMatch, 'playlist modified callback should exist');
+
+  const modifiedSource = modifiedMatch[1];
+  assert.match(modifiedSource, /updatePlaylistUI\(\);/);
+  assert.match(modifiedSource, /updatePlaylistContinuousTimeline\(\);/);
+  assert.ok(
+    modifiedSource.indexOf('updatePlaylistUI();') < modifiedSource.indexOf('updatePlaylistContinuousTimeline();'),
+    'continuous timeline should refresh after playlist UI updates'
+  );
 });
 
 test('pre-transcode joins an existing pending transcode instead of marking it failed', () => {

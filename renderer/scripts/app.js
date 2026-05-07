@@ -1715,10 +1715,9 @@ async function initApp() {
 
   function applyCommentFilters() {
     updateCommentList(commentFilterState.status);
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
     renderVideoMarkers();
     updateTimelineMarkers();
-    updatePlaylistContinuousTimeline();
   }
 
   // 작성자 필터 드롭다운 토글
@@ -3133,6 +3132,17 @@ async function initApp() {
     renderVideoCommentRanges();
   }
 
+  async function refreshCommentRangesForCurrentMode() {
+    if (playlistUIState.mode === 'continuous') {
+      setupCommentRangeInteractions();
+      renderVideoCommentRanges();
+      await updatePlaylistContinuousTimeline();
+      return;
+    }
+
+    renderCommentRanges();
+  }
+
   // 댓글 범위 상호작용 설정 — commentTrack 1곳에 이벤트 위임 (1회만 바인딩)
   // 위임으로 전환한 이유: PR #112 이후 클러스터 펼침 시 .comment-range-item이 재생성되는데
   // 요소별 바인딩 방식은 재렌더 후 이벤트가 비어 편집 regression이 발생했다.
@@ -3508,19 +3518,19 @@ async function initApp() {
 
   // 댓글 매니저 이벤트 수신 - 마커 변경 시 렌더링
   commentManager.addEventListener('markerAdded', () => {
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
   });
 
   commentManager.addEventListener('markerUpdated', () => {
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
   });
 
   commentManager.addEventListener('markerDeleted', () => {
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
   });
 
   commentManager.addEventListener('loaded', () => {
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
   });
 
   // ====== 비디오 줌/패닝 ======
@@ -4302,7 +4312,8 @@ async function initApp() {
       renderHighlights();
 
       // 댓글 범위 렌더링
-      renderCommentRanges();
+      await refreshCommentRangesForCurrentMode();
+      if (isStaleVideoLoad()) return false;
 
       // ====== 최근 파일 목록에 추가 ======
       // fire-and-forget: manager 내부에서 자체 에러 처리함
@@ -10661,6 +10672,7 @@ async function initApp() {
 
     playlistManager.onPlaylistModified = () => {
       updatePlaylistUI();
+      updatePlaylistContinuousTimeline();
       // 자동 저장 (딜레이)
       clearTimeout(playlistManager._autoSaveTimeout);
       playlistManager._autoSaveTimeout = setTimeout(async () => {
