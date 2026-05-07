@@ -32,6 +32,18 @@ test('추가한 순서 정렬: addedAt 기준으로 안정 정렬한다', () => 
   assert.deepEqual(sorted.map(item => item.id), ['a', 'b', 'c']);
 });
 
+test('추가한 순서 정렬: addedAt이 같으면 입력 순서를 유지한다', () => {
+  const items = [
+    { id: 'first', fileName: 'z.mp4', order: 0, addedAt: '2026-05-08T00:00:01.000Z' },
+    { id: 'second', fileName: 'a.mp4', order: 1, addedAt: '2026-05-08T00:00:01.000Z' },
+    { id: 'third', fileName: 'm.mp4', order: 2, addedAt: '2026-05-08T00:00:01.000Z' }
+  ];
+
+  const sorted = mod.sortPlaylistItems(items, mod.PLAYLIST_SORT_MODES.ADDED_AT);
+
+  assert.deepEqual(sorted.map(item => item.id), ['first', 'second', 'third']);
+});
+
 test('수동 순서가 있으면 새 항목만 파일명순으로 뒤에 붙인다', () => {
   const existing = [
     { id: 'manual-2', fileName: 'shot2.mp4', order: 0 },
