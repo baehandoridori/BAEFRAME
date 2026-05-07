@@ -60,6 +60,10 @@ export const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUP
  * @typedef {Object} PlaylistSettings
  * @property {boolean} autoPlay - 자동 재생 여부
  * @property {boolean} floatingMode - 플로팅 모드 여부
+ * @property {Object} continuous - 이어보기 설정
+ * @property {boolean} continuous.loop - 마지막 영상 후 반복 재생 여부
+ * @property {'fileName'|'addedAt'|'modifiedAt'} continuous.sortMode - 마지막 선택 정렬 기준
+ * @property {boolean} continuous.manualOrder - 사용자가 드래그로 수동 순서를 만든 상태
  */
 
 /**
@@ -132,7 +136,12 @@ export function createDefaultPlaylistData(options = {}) {
     items: [],
     settings: {
       autoPlay: false,
-      floatingMode: false
+      floatingMode: false,
+      continuous: {
+        loop: false,
+        sortMode: 'fileName',
+        manualOrder: false
+      }
     }
   };
 }

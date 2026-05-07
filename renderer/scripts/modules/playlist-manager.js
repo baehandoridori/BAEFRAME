@@ -5,6 +5,13 @@
  */
 
 import { createLogger } from '../logger.js';
+import {
+  PLAYLIST_SORT_MODES,
+  normalizePlaylistSettings,
+  normalizeItemOrders,
+  sortPlaylistItems,
+  appendSortedNewItems
+} from './playlist-ordering.js';
 
 const log = createLogger('PlaylistManager');
 
@@ -82,7 +89,12 @@ function createDefaultPlaylistData(options = {}) {
     items: [],
     settings: {
       autoPlay: false,
-      floatingMode: false
+      floatingMode: false,
+      continuous: {
+        loop: false,
+        sortMode: 'fileName',
+        manualOrder: false
+      }
     }
   };
 }
@@ -157,6 +169,7 @@ export class PlaylistManager {
       userName: window.appState?.userName || '',
       userId: window.appState?.sessionId || ''
     });
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
     this.playlistPath = null;
     this.currentIndex = -1;
     this.isModified = true;
@@ -188,8 +201,10 @@ export class PlaylistManager {
       }
 
       this.currentPlaylist = data;
+      this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+      this.currentPlaylist.items = normalizeItemOrders(this.currentPlaylist.items);
       this.playlistPath = filePath;
-      this.currentIndex = data.items.length > 0 ? 0 : -1;
+      this.currentIndex = this.currentPlaylist.items.length > 0 ? 0 : -1;
       this.isModified = false;
 
       // 썸네일 경로 검증 및 재생성
@@ -310,6 +325,7 @@ export class PlaylistManager {
 
     const pathsToAdd = filePaths.slice(0, availableSlots);
     const addedItems = [];
+    const createdItems = [];
 
     log.info('아이템 추가 시작', { count: pathsToAdd.length });
 
@@ -333,11 +349,19 @@ export class PlaylistManager {
       const thumbnailPath = await this._tryGenerateThumbnail(filePath);
 
       const item = createPlaylistItem(filePath, bframePath);
-      item.order = this.currentPlaylist.items.length;
       item.thumbnailPath = thumbnailPath;
+      createdItems.push(item);
+    }
 
-      this.currentPlaylist.items.push(item);
-      addedItems.push(item);
+    if (createdItems.length > 0) {
+      const settings = this.getContinuousSettings();
+      this.currentPlaylist.items = settings.manualOrder
+        ? appendSortedNewItems(this.currentPlaylist.items, createdItems)
+        : sortPlaylistItems(
+            [...this.currentPlaylist.items, ...createdItems],
+            settings.sortMode || PLAYLIST_SORT_MODES.FILE_NAME
+          );
+      addedItems.push(...createdItems);
     }
 
     if (addedItems.length > 0) {
@@ -410,6 +434,8 @@ export class PlaylistManager {
     items.forEach((item, i) => {
       item.order = i;
     });
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+    this.currentPlaylist.settings.continuous.manualOrder = true;
 
     // 현재 인덱스 조정
     if (this.currentIndex === fromIndex) {
@@ -577,6 +603,7 @@ export class PlaylistManager {
 
   setAutoPlay(enabled) {
     if (this.currentPlaylist) {
+      this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
       this.currentPlaylist.settings.autoPlay = enabled;
       this.isModified = true;
     }
@@ -588,9 +615,40 @@ export class PlaylistManager {
 
   setFloatingMode(enabled) {
     if (this.currentPlaylist) {
+      this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
       this.currentPlaylist.settings.floatingMode = enabled;
       this.isModified = true;
     }
+  }
+
+  getContinuousSettings() {
+    if (!this.currentPlaylist) {
+      return normalizePlaylistSettings({ settings: {} }).continuous;
+    }
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+    return this.currentPlaylist.settings.continuous;
+  }
+
+  setContinuousLoop(enabled) {
+    if (!this.currentPlaylist) return;
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+    this.currentPlaylist.settings.continuous.loop = enabled === true;
+    this.isModified = true;
+    this.onPlaylistModified?.();
+  }
+
+  setSortMode(sortMode) {
+    if (!this.currentPlaylist) return;
+    if (!Object.values(PLAYLIST_SORT_MODES).includes(sortMode)) return;
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+    this.currentPlaylist.settings.continuous.sortMode = sortMode;
+    this.currentPlaylist.settings.continuous.manualOrder = false;
+    this.currentPlaylist.items = sortPlaylistItems(this.currentPlaylist.items, sortMode);
+    this.currentIndex = this.currentPlaylist.items.length > 0
+      ? Math.min(this.currentIndex, this.currentPlaylist.items.length - 1)
+      : -1;
+    this.isModified = true;
+    this.onPlaylistModified?.();
   }
 
   setName(name) {
@@ -845,11 +903,11 @@ export class PlaylistManager {
   // ========================================
 
   isActive() {
-    return this.currentPlaylist !== null;
+    return !!this.currentPlaylist;
   }
 
   isEmpty() {
-    return !this.currentPlaylist || this.currentPlaylist.items.length === 0;
+    return this.getItemCount() === 0;
   }
 
   getItemCount() {
