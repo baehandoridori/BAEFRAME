@@ -10523,7 +10523,11 @@ async function initApp() {
 
   async function refreshModifiedSortIfActive() {
     const playlistManager = getPlaylistManager();
-    if (playlistManager.getContinuousSettings()?.sortMode !== 'modifiedAt') {
+    const continuousSettings = playlistManager.getContinuousSettings();
+    if (
+      continuousSettings?.sortMode !== 'modifiedAt' ||
+      continuousSettings?.manualOrder === true
+    ) {
       return;
     }
 

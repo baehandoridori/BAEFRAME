@@ -202,7 +202,13 @@ test('modified-date sort is refreshed after every playlist add path', () => {
   const refreshActiveMatch = appSource.match(/async function refreshModifiedSortIfActive\(\) \{([\s\S]*?)\n  \}\n\n  function initPlaylistFeature/);
   assert.ok(refreshActiveMatch, 'active modified-date sort refresh helper should exist');
   const refreshActiveSource = refreshActiveMatch[1];
-  assert.match(refreshActiveSource, /playlistManager\.getContinuousSettings\(\)\?\.sortMode !== 'modifiedAt'/);
+  assert.match(refreshActiveSource, /const continuousSettings = playlistManager\.getContinuousSettings\(\);/);
+  assert.match(refreshActiveSource, /continuousSettings\?\.sortMode !== 'modifiedAt'/);
+  assert.match(refreshActiveSource, /continuousSettings\?\.manualOrder === true/);
+  assert.ok(
+    refreshActiveSource.indexOf('manualOrder') < refreshActiveSource.indexOf('await refreshPlaylistModifiedTimes();'),
+    'manual order guard should run before refreshing and reapplying modified-date sort'
+  );
   assert.match(refreshActiveSource, /await refreshPlaylistModifiedTimes\(\);/);
   assert.match(refreshActiveSource, /applyPlaylistSortPreservingSelection\('modifiedAt'\);/);
   assert.match(refreshActiveSource, /updatePlaylistUI\(\);/);
