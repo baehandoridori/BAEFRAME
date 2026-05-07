@@ -130,3 +130,71 @@ test('PlaylistManager는 수동 순서 뒤에 새 항목만 정렬해서 붙인�
   ]);
   assert.equal(manager.getContinuousSettings().manualOrder, true);
 });
+
+test('PlaylistManager.addItems는 정렬 후에도 선택된 항목을 유지한다', async () => {
+  global.window = {
+    appState: { userName: 'tester', sessionId: 'session-1' },
+    electronAPI: { fileExists: async () => false }
+  };
+
+  const { PlaylistManager } = await import('../../renderer/scripts/modules/playlist-manager.js');
+  const manager = new PlaylistManager();
+  manager._tryGenerateThumbnail = async () => '';
+  manager.createNew('선택 유지 테스트');
+
+  await manager.addItems(['C:\\video\\shot2.mp4']);
+  const selectedId = manager.getCurrentItem().id;
+
+  await manager.addItems(['C:\\video\\shot1.mp4']);
+
+  assert.equal(manager.getCurrentItem().id, selectedId);
+  assert.equal(manager.getCurrentItem().fileName, 'shot2.mp4');
+  assert.equal(manager.currentIndex, 1);
+});
+
+test('PlaylistManager.setSortMode는 정렬 후에도 선택된 항목을 유지한다', async () => {
+  global.window = {
+    appState: { userName: 'tester', sessionId: 'session-1' },
+    electronAPI: { fileExists: async () => false }
+  };
+
+  const { PlaylistManager } = await import('../../renderer/scripts/modules/playlist-manager.js');
+  const manager = new PlaylistManager();
+  manager._tryGenerateThumbnail = async () => '';
+  manager.createNew('정렬 기준 변경 선택 유지 테스트');
+
+  await manager.addItems([
+    'C:\\video\\shot1.mp4',
+    'C:\\video\\shot2.mp4'
+  ]);
+  manager.selectItem(1);
+  const selectedId = manager.getCurrentItem().id;
+  manager.getItems()[0].addedAt = '2026-05-08T00:00:02.000Z';
+  manager.getItems()[1].addedAt = '2026-05-08T00:00:01.000Z';
+
+  manager.setSortMode(mod.PLAYLIST_SORT_MODES.ADDED_AT);
+
+  assert.equal(manager.getCurrentItem().id, selectedId);
+  assert.equal(manager.getCurrentItem().fileName, 'shot2.mp4');
+  assert.equal(manager.currentIndex, 0);
+});
+
+test('PlaylistManager.addItems는 같은 호출 안의 중복 경로를 제외한다', async () => {
+  global.window = {
+    appState: { userName: 'tester', sessionId: 'session-1' },
+    electronAPI: { fileExists: async () => false }
+  };
+
+  const { PlaylistManager } = await import('../../renderer/scripts/modules/playlist-manager.js');
+  const manager = new PlaylistManager();
+  manager._tryGenerateThumbnail = async () => '';
+  manager.createNew('중복 추가 테스트');
+
+  const addedItems = await manager.addItems([
+    'C:\\video\\shot1.mp4',
+    'C:\\video\\shot1.mp4'
+  ]);
+
+  assert.equal(addedItems.length, 1);
+  assert.deepEqual(manager.getItems().map(item => item.fileName), ['shot1.mp4']);
+});
