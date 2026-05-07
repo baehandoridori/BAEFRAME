@@ -679,7 +679,7 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
     if (continuousPlaybackState.active) {
       log.info('이어보기: 다음 재생 가능 항목으로 이동');
-      void playNextContinuousItem();
+      void playNextContinuousItem(continuousPlaybackState.sessionId);
       return;
     }
 
@@ -10053,18 +10053,25 @@ async function initApp() {
     active: false,
     waiting: false,
     skippedBatch: [],
-    preparePromises: new Map()
+    preparePromises: new Map(),
+    sessionId: 0
   };
 
   let suppressPlaylistSelectionLoad = false;
 
   function stopContinuousPlayback() {
+    continuousPlaybackState.sessionId += 1;
     continuousPlaybackState.active = false;
     continuousPlaybackState.waiting = false;
     continuousPlaybackState.skippedBatch = [];
+    continuousPlaybackState.preparePromises.clear();
     if (elements.btnPlaylistContinuousPlay) {
       elements.btnPlaylistContinuousPlay.textContent = '이어보기';
     }
+  }
+
+  function isContinuousSessionActive(sessionId) {
+    return continuousPlaybackState.active && continuousPlaybackState.sessionId === sessionId;
   }
 
   function updatePlaylistPrepareSummary() {
@@ -10100,26 +10107,40 @@ async function initApp() {
     // Task 7 replaces this placeholder with unified timeline updates.
   }
 
-  async function quickCheckPlaylistForContinuous() {
+  async function quickCheckPlaylistForContinuous(sessionId) {
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
 
     for (const item of items) {
+      if (!isContinuousSessionActive(sessionId)) return false;
       markPlaylistItemStatus(item, CONTINUOUS_STATUS.CHECKING, '확인 중');
-      const exists = await window.electronAPI.fileExists(item.videoPath);
-      if (!exists) {
-        markPlaylistItemStatus(item, CONTINUOUS_STATUS.MISSING, '문제 있음');
+      try {
+        const exists = await window.electronAPI.fileExists(item.videoPath);
+        if (!isContinuousSessionActive(sessionId)) return false;
+        if (!exists) {
+          markPlaylistItemStatus(item, CONTINUOUS_STATUS.MISSING, '문제 있음');
+          continue;
+        }
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.IDLE, '');
+      } catch (error) {
+        if (!isContinuousSessionActive(sessionId)) return false;
+        log.warn('이어보기 파일 확인 실패', { fileName: item.fileName, error: error.message });
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
         continue;
       }
-      markPlaylistItemStatus(item, CONTINUOUS_STATUS.IDLE, '');
     }
 
-    updatePlaylistUI();
+    if (!isContinuousSessionActive(sessionId)) return false;
+    await updatePlaylistUI();
+    return isContinuousSessionActive(sessionId);
   }
 
-  async function preparePlaylistItemInBackground(item) {
-    if (!item || continuousPlaybackState.preparePromises.has(item.id)) {
-      return continuousPlaybackState.preparePromises.get(item?.id);
+  async function preparePlaylistItemInBackground(item, sessionId = continuousPlaybackState.sessionId) {
+    if (!item) return undefined;
+
+    const existingPrepare = continuousPlaybackState.preparePromises.get(item.id);
+    if (existingPrepare?.sessionId === sessionId) {
+      return existingPrepare.promise;
     }
 
     if ([
@@ -10131,27 +10152,37 @@ async function initApp() {
     }
 
     const promise = (async () => {
+      const shouldContinuePreparing = () => (
+        isContinuousSessionActive(sessionId) &&
+        item.continuousStatus !== CONTINUOUS_STATUS.SKIPPED
+      );
+
       try {
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
         markPlaylistItemStatus(item, CONTINUOUS_STATUS.PREPARING, '준비 중');
         const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (!ffmpegAvailable) {
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
           return { ready: true };
         }
 
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(item.videoPath);
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (!codecInfo.success || codecInfo.isSupported) {
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
           return { ready: true };
         }
 
         const cacheResult = await window.electronAPI.ffmpegCheckCache(item.videoPath);
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (cacheResult.valid) {
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
           return { ready: true, cached: true };
         }
 
         const result = await window.electronAPI.ffmpegPreTranscode(item.videoPath);
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (result.success) {
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
           return { ready: true };
@@ -10160,43 +10191,51 @@ async function initApp() {
         markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
         return { ready: false, error: result.error || '변환 실패' };
       } catch (error) {
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
         markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
         return { ready: false, error: error.message };
       } finally {
-        continuousPlaybackState.preparePromises.delete(item.id);
+        const currentPrepare = continuousPlaybackState.preparePromises.get(item.id);
+        if (currentPrepare?.promise === promise) {
+          continuousPlaybackState.preparePromises.delete(item.id);
+        }
       }
     })();
 
-    continuousPlaybackState.preparePromises.set(item.id, promise);
+    continuousPlaybackState.preparePromises.set(item.id, { sessionId, promise });
     return promise;
   }
 
-  function prepareNextPlaylistItem() {
+  function prepareNextPlaylistItem(sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return;
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
     const settings = playlistManager.getContinuousSettings();
     const nextIndex = findNextPlayableIndex(items, playlistManager.currentIndex, { loop: settings.loop });
     if (nextIndex >= 0) {
-      preparePlaylistItemInBackground(items[nextIndex]);
+      preparePlaylistItemInBackground(items[nextIndex], sessionId);
     }
   }
 
-  async function waitForPreparedOrSkip(item) {
+  async function waitForPreparedOrSkip(item, sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return false;
     if ([
       CONTINUOUS_STATUS.MISSING,
       CONTINUOUS_STATUS.SKIPPED,
       CONTINUOUS_STATUS.ERROR
     ].includes(item?.continuousStatus)) {
+      if (!isContinuousSessionActive(sessionId)) return false;
       continuousPlaybackState.skippedBatch.push(item);
       return false;
     }
 
     continuousPlaybackState.waiting = true;
-    const preparePromise = preparePlaylistItemInBackground(item);
+    const preparePromise = preparePlaylistItemInBackground(item, sessionId);
     const timeoutPromise = new Promise(resolve => {
       setTimeout(() => resolve({ ready: false, timedOut: true }), 5000);
     });
     const result = await Promise.race([preparePromise, timeoutPromise]);
+    if (!isContinuousSessionActive(sessionId)) return false;
     continuousPlaybackState.waiting = false;
     if (result.ready) return true;
 
@@ -10214,6 +10253,18 @@ async function initApp() {
     }
   }
 
+  async function loadContinuousPlaylistItem(item, sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return false;
+    const loaded = await loadVideoFromPlaylist(item);
+    if (!isContinuousSessionActive(sessionId)) return false;
+    if (loaded === false) {
+      markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+      continuousPlaybackState.skippedBatch.push(item);
+      return false;
+    }
+    return true;
+  }
+
   async function startContinuousPlayback() {
     const playlistManager = getPlaylistManager();
     if (!playlistManager.isActive() || playlistManager.isEmpty()) {
@@ -10221,38 +10272,63 @@ async function initApp() {
       return;
     }
 
+    continuousPlaybackState.sessionId += 1;
+    const sessionId = continuousPlaybackState.sessionId;
     continuousPlaybackState.active = true;
+    continuousPlaybackState.waiting = false;
     continuousPlaybackState.skippedBatch = [];
+    continuousPlaybackState.preparePromises.clear();
     if (elements.btnPlaylistContinuousPlay) {
       elements.btnPlaylistContinuousPlay.textContent = '이어보기 중';
     }
 
-    await quickCheckPlaylistForContinuous();
-    const currentItem = playlistManager.getCurrentItem() || selectPlaylistItemForContinuous(0);
-    if (!currentItem) return;
+    try {
+      const checked = await quickCheckPlaylistForContinuous(sessionId);
+      if (!isContinuousSessionActive(sessionId) || !checked) return;
+      const currentItem = playlistManager.getCurrentItem() || selectPlaylistItemForContinuous(0);
+      if (!isContinuousSessionActive(sessionId)) return;
+      if (!currentItem) {
+        stopContinuousPlayback();
+        return;
+      }
 
-    const ready = await waitForPreparedOrSkip(currentItem);
-    if (!ready) {
-      await playNextContinuousItem();
-      return;
-    }
+      const ready = await waitForPreparedOrSkip(currentItem, sessionId);
+      if (!isContinuousSessionActive(sessionId)) return;
+      if (!ready) {
+        await playNextContinuousItem(sessionId);
+        return;
+      }
 
-    const alreadyLoaded = state.currentFile === currentItem.videoPath;
-    if (!alreadyLoaded) {
-      await loadVideoFromPlaylist(currentItem);
-      videoPlayer.seekToFrame(0);
+      const alreadyLoaded = state.currentFile === currentItem.videoPath;
+      if (!alreadyLoaded) {
+        const loaded = await loadContinuousPlaylistItem(currentItem, sessionId);
+        if (!isContinuousSessionActive(sessionId)) return;
+        if (!loaded) {
+          await playNextContinuousItem(sessionId);
+          return;
+        }
+        videoPlayer.seekToFrame(0);
+      }
+      if (!isContinuousSessionActive(sessionId)) return;
+      videoPlayer.play();
+      prepareNextPlaylistItem(sessionId);
+    } catch (error) {
+      if (!isContinuousSessionActive(sessionId)) return;
+      log.warn('이어보기 시작 실패', { error: error.message });
+      stopContinuousPlayback();
+      showToast('이어보기를 시작할 수 없습니다.', 'error');
     }
-    videoPlayer.play();
-    prepareNextPlaylistItem();
   }
 
-  async function playNextContinuousItem() {
+  async function playNextContinuousItem(sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return;
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
     const settings = playlistManager.getContinuousSettings();
     const nextIndex = findNextPlayableIndex(items, playlistManager.currentIndex, { loop: settings.loop });
 
     if (nextIndex < 0) {
+      if (!isContinuousSessionActive(sessionId)) return;
       flushSkippedToastBatch();
       stopContinuousPlayback();
       showToast('재생목록 재생 완료', 'success');
@@ -10260,16 +10336,23 @@ async function initApp() {
     }
 
     const nextItem = selectPlaylistItemForContinuous(nextIndex);
-    const ready = await waitForPreparedOrSkip(nextItem);
+    if (!isContinuousSessionActive(sessionId)) return;
+    const ready = await waitForPreparedOrSkip(nextItem, sessionId);
+    if (!isContinuousSessionActive(sessionId)) return;
     if (!ready) {
-      await playNextContinuousItem();
+      await playNextContinuousItem(sessionId);
       return;
     }
 
     flushSkippedToastBatch();
-    await loadVideoFromPlaylist(nextItem);
+    const loaded = await loadContinuousPlaylistItem(nextItem, sessionId);
+    if (!isContinuousSessionActive(sessionId)) return;
+    if (!loaded) {
+      await playNextContinuousItem(sessionId);
+      return;
+    }
     videoPlayer.play();
-    prepareNextPlaylistItem();
+    prepareNextPlaylistItem(sessionId);
   }
 
   function setPlaylistMode(mode) {

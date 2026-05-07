@@ -72,8 +72,8 @@ export function findNextPlayableIndex(items, currentIndex, options = {}) {
     if (index < list.length && isPlayable(list[index])) return index;
     if (index >= list.length && options.loop === true) {
       const wrappedIndex = index % list.length;
-      if (wrappedIndex === currentIndex) return -1;
       if (isPlayable(list[wrappedIndex])) return wrappedIndex;
+      if (wrappedIndex === currentIndex) return -1;
     }
   }
 
