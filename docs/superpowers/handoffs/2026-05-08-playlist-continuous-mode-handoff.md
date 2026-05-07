@@ -1,132 +1,166 @@
-# Playlist Continuous Mode Handoff
+# 재생목록 이어보기 기능 인수인계 문서
 
-Date: 2026-05-08
-Branch: `codex/playlist-continuous-mode-design`
-Latest implementation commit: `66e8af9`
+작성일: 2026-05-08
 
-## User Goal
+브랜치: `codex/playlist-continuous-mode-design`
 
-Upgrade BAEFRAME playlist UX:
+최신 구현 커밋: `53d9561`
 
-- keep playlist ordering stable
-- add `이어보기` mode so playlist videos can play as one continuous flow
-- skip missing/unplayable items with toast notifications
-- prepare videos needing conversion in the background
-- show unified playlist timeline/comment context in `이어보기`
-- fix stacked toast behavior
-- keep the existing visual tone
+## 사용자가 원한 목표
 
-## Implemented
+BAEFRAME의 재생목록 사용 경험을 안정적으로 업그레이드한다.
 
-- Playlist ordering helpers and persisted continuous settings:
-  - natural filename sorting (`shot1`, `shot2`, `shot10`)
-  - added-date and modified-date sorting
-  - manual drag order wins, with new items appended behind manual order
-  - current selected item is preserved after sort/add/reorder
+- 재생목록 영상 순서가 뒤섞이지 않게 유지한다.
+- `이어보기` 모드를 추가해 여러 영상을 하나의 긴 영상처럼 끊김 없이 볼 수 있게 한다.
+- 없는 파일이나 재생할 수 없는 영상은 토스트로 알려주고 자동으로 건너뛴다.
+- 변환이 필요한 영상은 사용자가 기다리지 않도록 백그라운드에서 미리 준비한다.
+- `이어보기` 모드에서는 전체 재생목록 기준의 타임라인과 댓글 흐름을 보여준다.
+- 여러 토스트가 쌓였다가 사라질 때 앞으로 튀거나 창 밖으로 넘치는 문제를 고친다.
+- UI는 기존 BAEFRAME의 톤을 최대한 유지한다.
 
-- Playlist UI:
-  - `리뷰` / `이어보기` tabs
-  - sort selector
-  - loop toggle
-  - preparation summary and item status text
+## 이번에 구현된 내용
 
-- Continuous playback runtime:
-  - starts from selected item, or first item if none is selected
-  - quick file existence preflight
-  - background preparation/transcode via existing FFmpeg APIs
-  - waits up to 5 seconds when the next item is not ready
-  - skips missing/error/unready videos
-  - grouped skipped-video toast
-  - completion toast
-  - loop mode, including one-playable-item replay
-  - async session guards so old waits/prep cannot resume after stop/restart
-  - load failure is treated as skip instead of replaying the previous video
+### 재생목록 순서와 설정
 
-- Unified continuous timeline:
-  - segment boundaries for playlist videos
-  - unloaded video duration/fps collection through `ffmpegProbeCodec`
-  - aggregate read-only comment bars from all playlist videos
-  - author and resolved/unresolved filters update aggregate bars
-  - aggregate comment click loads source video, seeks, pauses, and highlights the existing comment
-  - stale async timeline render guard
+- 파일명 자연 정렬을 추가했다.
+  - 예: `shot1`, `shot2`, `shot10` 순서로 정렬된다.
+- 추가한 날짜순, 수정한 날짜순 정렬을 추가했다.
+- 사용자가 드래그로 순서를 직접 바꾼 경우, 그 수동 순서를 우선한다.
+- 수동 순서가 있는 상태에서 새 영상을 추가하면, 기존 수동 순서 뒤에 새 영상만 파일명순으로 붙는다.
+- 정렬, 추가, 드래그 후에도 현재 선택된 영상이 유지된다.
+- 수정한 날짜순 재생목록을 다시 열 때 실제 파일의 최신 수정 시간을 다시 읽도록 보강했다.
 
-- Toast stack:
-  - newest toast remains on top
-  - dismissed toasts do not jump forward while disappearing
-  - hover pauses auto-dismiss timers
-  - hover expansion is scroll-contained
-  - loading-toast updates respect hover pause
+### 재생목록 UI
 
-## Verification Completed
+- 재생목록 안에 `리뷰` / `이어보기` 탭을 추가했다.
+- 정렬 기준 선택 UI를 추가했다.
+- 반복 재생 토글을 추가했다.
+- 이어보기 준비 상태 요약을 추가했다.
+- 각 영상에 `확인 중`, `준비 중`, `준비 완료`, `건너뜀`, `문제 있음` 같은 상태 문구가 표시된다.
+
+### 이어보기 재생 흐름
+
+- 선택된 영상부터 이어보기를 시작한다.
+- 선택된 영상이 없으면 첫 번째 영상부터 시작한다.
+- 재생 전에 파일이 실제로 존재하는지 빠르게 확인한다.
+- 변환이 필요한 영상은 기존 FFmpeg 기능을 사용해 백그라운드에서 준비한다.
+- 다음 영상 차례가 왔는데 아직 준비 중이면 최대 5초까지 기다린다.
+- 5초 안에 준비되지 않거나 문제가 있으면 해당 영상을 건너뛴다.
+- 여러 영상을 연속으로 건너뛰면 토스트를 하나로 묶어서 보여준다.
+- 마지막 영상까지 끝나면 `재생목록 재생 완료` 토스트를 보여준다.
+- 반복 재생이 켜져 있으면 마지막 재생 가능 영상 뒤에 첫 재생 가능 영상으로 돌아간다.
+- 재생 가능한 영상이 하나뿐이고 반복 재생이 켜져 있으면 그 영상을 다시 재생한다.
+- 사용자가 이어보기 중에 다른 영상을 직접 열면 기존 이어보기 세션을 안전하게 중단한다.
+- 오래된 비동기 작업이 나중에 돌아와서 사용자가 연 영상을 덮어쓰지 못하도록 세션 보호 로직을 추가했다.
+- 영상 로드 실패는 이전 영상을 다시 재생하는 대신 해당 항목을 건너뛰는 흐름으로 처리한다.
+
+### 백그라운드 변환 안정화
+
+- 이미 변환 중인 영상을 다시 준비하려고 할 때 실패로 처리하지 않고, 진행 중인 변환이 끝나기를 기다리도록 했다.
+- 일반 영상 로드가 백그라운드 변환에 합류하는 경우에도 변환 진행률 오버레이가 멈춰 보이지 않도록 진행률 이벤트를 함께 듣게 했다.
+
+### 이어보기 통합 타임라인
+
+- 재생목록의 각 영상 구간을 전체 타임라인 위에 경계선으로 표시한다.
+- 아직 로드하지 않은 영상도 `ffmpegProbeCodec`으로 길이와 FPS 정보를 수집해 전체 타임라인을 구성한다.
+- 여러 `.bframe` 파일에 있는 댓글 범위를 전체 재생목록 기준 타임라인에 읽기 전용으로 표시한다.
+- 작성자 필터와 해결/미해결 필터가 통합 댓글 바에도 반영된다.
+- 통합 댓글을 클릭하면 원래 영상으로 이동하고, 해당 시간으로 이동한 뒤 일시정지하고, 기존 댓글을 강조 표시한다.
+- 세그먼트 경계선을 클릭하면 해당 영상 시작 지점으로 이동한다.
+- 이어보기 모드의 재생 헤드, 룰러, seek 동작을 현재 영상 시간이 아니라 전체 재생목록 시간 기준으로 맞췄다.
+- 재생목록 삭제, 드래그 순서 변경, 설정 변경 후에도 통합 타임라인이 오래된 상태로 남지 않도록 갱신한다.
+- 오래된 비동기 타임라인 렌더링 결과가 나중에 덮어쓰지 못하도록 토큰 보호를 추가했다.
+
+### 리뷰 모드 보존
+
+- `리뷰` 모드는 기존처럼 현재 영상 기준 댓글과 드로잉을 유지한다.
+- 이번 버전에서는 통합 타임라인에서 댓글을 직접 편집하지 않는다.
+- 댓글과 드로잉 데이터는 기존처럼 영상별 `.bframe`에 남는다.
+
+### 토스트 스택
+
+- 최신 토스트가 항상 위에 보인다.
+- 사라지는 중인 토스트가 앞으로 튀어 올라오지 않는다.
+- 토스트 영역에 마우스를 올리면 자동 닫힘 타이머가 멈춘다.
+- 마우스를 올려 토스트 목록이 펼쳐져도 창 밖으로 넘치지 않고 내부 스크롤로 처리된다.
+- 로딩 토스트가 일반 토스트로 바뀌는 경우에도 hover 중이면 타이머가 바로 시작되지 않는다.
+
+## 완료된 검증
 
 - `npm run test:playlist`
-  - PASS: 47/47
-  - note: Node prints existing `MODULE_TYPELESS_PACKAGE_JSON` warnings for ES module test imports.
+  - 통과: 56/56
+  - 참고: Node가 ES module import 관련 `MODULE_TYPELESS_PACKAGE_JSON` 경고를 출력하지만 테스트 실패는 아니다.
 
 - `npm run test:toast-stack`
-  - PASS: 8/8
+  - 통과: 8/8
 
 - `npm run test:cluster`
-  - PASS: 29/29
+  - 통과: 29/29
+
+- `npm run test:recent`
+  - 통과: 17/17
+
+- `npm run test:frame-grid`
+  - 통과: 12/12
+
+- 변경 파일 ESLint
+  - 명령: `npx eslint --rule "linebreak-style: off" --quiet ...`
+  - 통과: 변경된 JS/test 파일에서 오류 없음
 
 - `git diff --check`
-  - PASS
-
-- Touched-file lint check:
-  - `npx eslint --rule "linebreak-style: off" --quiet ...`
-  - PASS: no errors in touched JS/test files.
-
-- Full `npm run lint`
-  - FAILS because the repo currently has many existing CRLF `linebreak-style` errors.
-  - This is not isolated to the playlist/toast change.
+  - 통과
 
 - `npm run dev` smoke test
-  - Electron app started in development mode.
-  - Logs showed app ready and main window displayed.
-  - No startup crash was observed.
+  - Electron 개발 모드 앱이 시작됨
+  - 로그에서 앱 준비 완료와 메인 윈도우 표시를 확인함
+  - 시작 크래시는 관찰되지 않음
 
-## Manual QA Still Needed
+## 아직 사람이 직접 확인해야 할 것
 
-This workspace did not include a prepared set of local videos and `.bframe` files, so full hands-on media QA still needs to be done.
+이 작업 공간에는 실제 테스트용 영상과 `.bframe` 파일 묶음이 준비되어 있지 않았다. 그래서 실제 미디어를 넣고 손으로 확인하는 QA는 다음 세션에서 진행해야 한다.
 
-Use a small fixture set:
+추천 테스트 파일:
 
 - `shot1.mp4`
 - `shot2.mp4`
 - `shot10.mp4`
-- optional `shot3.mp4`, `shot11.mp4`
-- one intentionally missing playlist item
-- one unsupported-codec file that requires conversion, if available
-- at least two `.bframe` files with comments from different authors and resolved/unresolved states
+- 선택 사항: `shot3.mp4`, `shot11.mp4`
+- 일부러 없는 파일 1개
+- 가능하다면 변환이 필요한 코덱의 영상 1개
+- 서로 다른 작성자의 댓글, 해결/미해결 댓글이 들어 있는 `.bframe` 파일 2개 이상
 
-Checklist:
+직접 확인 체크리스트:
 
-- files appear as `shot1`, `shot2`, `shot10`
-- dragging `shot2` above `shot1` marks manual order
-- after manual order, adding `shot3` and `shot11` appends them as `shot3`, `shot11`
-- filename, added-date, and modified-date sorting only apply when selected
-- sorting during `이어보기` does not reload the current video
-- `이어보기` starts from the selected item
-- already-loaded selected item starts from current player position
-- missing later item is marked and skipped
-- multiple skipped items produce one grouped toast
-- last item stops with `재생목록 재생 완료`
-- loop toggle loops from last playable item to first playable item
-- conversion-needed item shows `준비 중`, waits up to 5 seconds on turn, then plays or skips
-- `이어보기` tab shows segment boundaries
-- segment hover title shows filename/time
-- aggregate comment bars from multiple videos appear
-- comment filters affect aggregate bars
-- clicking an aggregate comment from another video loads it, seeks, pauses, and highlights the comment
-- existing comment drag/resize editing still works in `리뷰` mode
-- 6 rapid toasts stack without jumping or overflowing
-- hovering toast area pauses auto-dismiss
-- expanded toast stack scrolls inside the window
+- 파일명이 `shot1`, `shot2`, `shot10` 순서로 보이는지 확인한다.
+- `shot2`를 `shot1` 위로 드래그하면 수동 순서가 적용되는지 확인한다.
+- 수동 순서 상태에서 `shot3`, `shot11`을 추가하면 뒤쪽에 `shot3`, `shot11` 순서로 붙는지 확인한다.
+- 파일명순, 추가한 날짜순, 수정한 날짜순 정렬이 사용자가 선택했을 때만 적용되는지 확인한다.
+- `이어보기` 중 정렬해도 현재 재생 중인 영상이 갑자기 다시 로드되지 않는지 확인한다.
+- `이어보기`가 선택된 영상부터 시작하는지 확인한다.
+- 이미 로드된 선택 영상에서 이어보기를 시작하면 현재 플레이어 위치에서 시작하는지 확인한다.
+- 뒤쪽에 없는 파일이 있으면 상태가 표시되고 자동으로 건너뛰는지 확인한다.
+- 여러 영상을 건너뛰면 토스트가 하나로 묶여 나오는지 확인한다.
+- 마지막 영상이 끝나면 `재생목록 재생 완료` 토스트가 나오는지 확인한다.
+- 반복 재생을 켜면 마지막 재생 가능 영상 뒤에 첫 재생 가능 영상으로 돌아가는지 확인한다.
+- 변환이 필요한 영상이 `준비 중`으로 표시되고, 차례가 왔을 때 최대 5초 기다린 뒤 재생 또는 건너뛰기를 하는지 확인한다.
+- `이어보기` 탭에서 영상별 세그먼트 경계선이 보이는지 확인한다.
+- 세그먼트 경계선을 클릭하면 해당 영상 시작 지점으로 이동하는지 확인한다.
+- 여러 영상의 댓글 바가 통합 타임라인에 함께 보이는지 확인한다.
+- 댓글 필터가 통합 댓글 바에도 반영되는지 확인한다.
+- 다른 영상의 통합 댓글을 클릭하면 그 영상으로 이동하고, 해당 시간에 멈추며, 댓글이 강조되는지 확인한다.
+- `리뷰` 모드에서 기존 댓글 드래그/리사이즈 편집이 계속 동작하는지 확인한다.
+- 토스트 6개 이상을 빠르게 띄워도 튀거나 창 밖으로 넘어가지 않는지 확인한다.
+- 토스트 영역에 마우스를 올리면 자동 닫힘이 멈추는지 확인한다.
+- 펼쳐진 토스트 목록이 창 안에서 스크롤되는지 확인한다.
 
-## Known Follow-Ups
+## 의도적으로 이번 범위에서 제외한 것
 
-- Clip trimming in continuous mode is intentionally out of scope for this version.
-- Direct editing of aggregate comments on the unified timeline is intentionally out of scope.
-- Temporary include/exclude playlist items is intentionally out of scope.
-- Runtime integration tests are partly structural because the renderer is not currently easy to drive headlessly.
-- The repo-wide CRLF lint issue should be fixed separately from this feature branch.
+- 이어보기 모드에서 영상 클립을 잘라 쓰는 기능
+- 통합 타임라인에서 댓글을 직접 편집하는 기능
+- 재생목록 항목을 임시로 포함/제외하는 기능
+
+## 다음 세션 참고 사항
+
+- 런타임 테스트 일부는 현재 렌더러를 headless로 직접 돌리기 어려워 구조 확인 테스트를 함께 사용했다.
+- 저장소 전체 `npm run lint`는 기존 CRLF `linebreak-style` 오류가 많아 실패한다.
+- 이 CRLF 린트 문제는 이번 재생목록/토스트 기능과 분리해서 별도 브랜치에서 처리하는 것이 좋다.
