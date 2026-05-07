@@ -24,7 +24,8 @@ if %errorlevel% NEQ 0 (
   echo If you do not see the UAC prompt, for example on remote desktop, try Alt+Tab or check the taskbar.
   echo.
 
-  "%PS64%" -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  set "BAEFRAME_ELEVATE_ARGS=%*"
+  "%PS64%" -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $argLine=$env:BAEFRAME_ELEVATE_ARGS; Start-Process -FilePath '%~f0' -ArgumentList $argLine -WorkingDirectory '%~dp0' -Verb RunAs; exit 0"
   if %errorlevel% NEQ 0 (
     echo.
     echo [FAILED] Elevation request failed.
