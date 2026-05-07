@@ -10488,6 +10488,23 @@ async function initApp() {
     }
   }
 
+  async function refreshPlaylistModifiedTimes() {
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems();
+    for (const item of items) {
+      try {
+        const stats = await window.electronAPI.getFileStats(item.videoPath);
+        item.modifiedAtMs = Number(stats?.mtimeMs) || 0;
+      } catch (error) {
+        item.modifiedAtMs = 0;
+        log.warn('재생목록 수정 날짜 조회 실패', {
+          filePath: item.videoPath,
+          error: error?.message || error
+        });
+      }
+    }
+  }
+
   function initPlaylistFeature() {
     const playlistManager = getPlaylistManager();
 
@@ -10685,8 +10702,23 @@ async function initApp() {
       setPlaylistMode('continuous');
     });
 
-    elements.playlistSortMode?.addEventListener('change', (e) => {
-      playlistManager.setSortMode(e.target.value);
+    elements.playlistSortMode?.addEventListener('change', async (e) => {
+      const sortMode = e.target.value;
+      const currentItemId = playlistManager.getCurrentItem()?.id || null;
+      if (sortMode === 'modifiedAt') {
+        await refreshPlaylistModifiedTimes();
+      }
+
+      playlistManager.setSortMode(sortMode);
+      if (currentItemId) {
+        suppressPlaylistSelectionLoad = true;
+        try {
+          playlistManager.selectItemById(currentItemId);
+        } finally {
+          suppressPlaylistSelectionLoad = false;
+        }
+      }
+
       updatePlaylistUI();
       updatePlaylistContinuousTimeline();
     });

@@ -703,7 +703,7 @@ body.app-fullscreen .playlist-resizer {
 
 .playlist-continuous-tools {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   padding: 8px;
   background: var(--bg-primary);
@@ -717,6 +717,7 @@ body.app-fullscreen .playlist-resizer {
   min-width: 0;
   color: var(--text-secondary);
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .playlist-sort-control select {

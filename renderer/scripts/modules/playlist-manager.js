@@ -115,7 +115,8 @@ function createPlaylistItem(videoPath, bframePath = '') {
     fileName: fileName,
     thumbnailPath: '',
     order: 0,
-    addedAt: new Date().toISOString()
+    addedAt: new Date().toISOString(),
+    modifiedAtMs: 0
   };
 }
 
@@ -368,9 +369,9 @@ export class PlaylistManager {
       this.currentPlaylist.items = settings.manualOrder
         ? appendSortedNewItems(this.currentPlaylist.items, createdItems)
         : sortPlaylistItems(
-            [...this.currentPlaylist.items, ...createdItems],
-            settings.sortMode || PLAYLIST_SORT_MODES.FILE_NAME
-          );
+          [...this.currentPlaylist.items, ...createdItems],
+          settings.sortMode || PLAYLIST_SORT_MODES.FILE_NAME
+        );
       this._restoreCurrentIndex(currentItemId);
       addedItems.push(...createdItems);
     }

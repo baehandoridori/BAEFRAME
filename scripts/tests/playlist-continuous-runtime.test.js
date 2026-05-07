@@ -157,6 +157,41 @@ test('playlist rows render and color continuous status text', () => {
   assert.match(playlistCss, /\[data-continuous-status="missing"\]/);
 });
 
+test('modified-date sort refreshes stats and preserves current selection without loading', () => {
+  const refreshMatch = appSource.match(/async function refreshPlaylistModifiedTimes\(\) \{([\s\S]*?)\n  \}\n\n  function initPlaylistFeature/);
+  assert.ok(refreshMatch, 'refreshPlaylistModifiedTimes should exist before playlist feature init');
+
+  const refreshSource = refreshMatch[1];
+  assert.match(refreshSource, /playlistManager\.getItems\(\)/);
+  assert.match(refreshSource, /window\.electronAPI\.getFileStats\(item\.videoPath\)/);
+  assert.match(refreshSource, /item\.modifiedAtMs = Number\(stats\?\.mtimeMs\) \|\| 0;/);
+  assert.match(refreshSource, /catch \(error\) \{/);
+
+  const sortHandlerMatch = appSource.match(/elements\.playlistSortMode\?\.addEventListener\('change', async \(e\) => \{([\s\S]*?)\n    \}\);/);
+  assert.ok(sortHandlerMatch, 'sort change handler should be async');
+
+  const sortHandlerSource = sortHandlerMatch[1];
+  assert.match(sortHandlerSource, /const currentItemId = playlistManager\.getCurrentItem\(\)\?\.id \|\| null;/);
+  assert.ok(
+    sortHandlerSource.indexOf('const currentItemId') < sortHandlerSource.indexOf('playlistManager.setSortMode'),
+    'current item id must be captured before sorting'
+  );
+  assert.match(sortHandlerSource, /const sortMode = e\.target\.value;/);
+  assert.match(sortHandlerSource, /if \(sortMode === 'modifiedAt'\) \{[\s\S]+await refreshPlaylistModifiedTimes\(\);/);
+  assert.match(sortHandlerSource, /suppressPlaylistSelectionLoad = true;[\s\S]+playlistManager\.selectItemById\(currentItemId\);[\s\S]+suppressPlaylistSelectionLoad = false;/);
+});
+
+test('manual playlist reorder updates order without selecting an item directly', () => {
+  const start = appSource.indexOf('function initPlaylistDragReorder()');
+  const end = appSource.indexOf('  // 리사이저', start);
+  assert.notEqual(start, -1, 'drag reorder initializer should exist');
+  assert.notEqual(end, -1, 'drag reorder initializer boundary should exist');
+
+  const reorderSource = appSource.slice(start, end);
+  assert.match(reorderSource, /playlistManager\.reorderItem\(draggedIndex, newIndex\);/);
+  assert.doesNotMatch(reorderSource, /playlistManager\.selectItem\(/);
+});
+
 test('playlist test script includes continuous runtime coverage', () => {
   assert.match(packageJson.scripts['test:playlist'], /playlist-continuous-runtime\.test\.js/);
 });
