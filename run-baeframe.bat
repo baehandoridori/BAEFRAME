@@ -44,15 +44,48 @@ if exist "%LOCAL_DIR%\node_modules" (
     set NEED_INSTALL=1
 )
 
-:: 소스 파일 동기화 (node_modules, logs, .git, settings 제외)
+:: 소스 파일 동기화 (node_modules, logs, .git, settings, ffmpeg 제외)
 echo [baeframe] 소스 동기화 중...
-robocopy "%SOURCE_DIR%" "%LOCAL_DIR%" /MIR /XD node_modules logs .git settings transcoded thumbnails /XF *.log .package-hash baeframe-auth.dat /NFL /NDL /NJH /NJS
+robocopy "%SOURCE_DIR%" "%LOCAL_DIR%" /MIR /XD node_modules logs .git settings transcoded thumbnails ffmpeg /XF *.log .package-hash baeframe-auth.dat /NFL /NDL /NJH /NJS
 
 :: robocopy는 성공해도 errorlevel이 0이 아닐 수 있음 (1-7은 정상)
 if errorlevel 8 (
     echo [오류] 파일 복사 실패
     pause
     exit /b 1
+)
+
+:: FFmpeg 바이너리는 git에서 제외되어 feature worktree에는 없을 수 있음.
+:: 기본 /MIR에서 ffmpeg 폴더를 제외하고, 소스에 실제 exe가 있을 때만 별도 동기화한다.
+set SOURCE_HAS_FFMPEG=0
+if exist "%SOURCE_DIR%\ffmpeg\win32\ffmpeg.exe" (
+    if exist "%SOURCE_DIR%\ffmpeg\win32\ffprobe.exe" (
+        set SOURCE_HAS_FFMPEG=1
+    )
+)
+
+set LOCAL_HAS_FFMPEG=0
+if exist "%LOCAL_DIR%\ffmpeg\win32\ffmpeg.exe" (
+    if exist "%LOCAL_DIR%\ffmpeg\win32\ffprobe.exe" (
+        set LOCAL_HAS_FFMPEG=1
+    )
+)
+
+if "%SOURCE_HAS_FFMPEG%"=="1" (
+    echo [baeframe] FFmpeg 바이너리 동기화 중...
+    robocopy "%SOURCE_DIR%\ffmpeg" "%LOCAL_DIR%\ffmpeg" /MIR /NFL /NDL /NJH /NJS
+    if errorlevel 8 (
+        echo [오류] FFmpeg 복사 실패
+        pause
+        exit /b 1
+    )
+) else (
+    if "%LOCAL_HAS_FFMPEG%"=="1" (
+        echo [baeframe] 기존 FFmpeg 바이너리를 유지합니다.
+    ) else (
+        echo [경고] FFmpeg 바이너리를 찾지 못했습니다. 변환 기능은 사용할 수 없습니다.
+        echo [경고] ffmpeg\win32\ffmpeg.exe 및 ffprobe.exe를 넣어주세요.
+    )
 )
 
 :: 복사 확인
