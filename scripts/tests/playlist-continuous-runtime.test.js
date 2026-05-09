@@ -54,10 +54,18 @@ test('aggregate comment clicks stop when playlist item load fails', () => {
   assert.ok(clickMatch, 'aggregate comment click path should exist');
 
   const clickSource = clickMatch[1];
-  assert.match(clickSource, /const loaded = await loadVideoFromPlaylist\(item\);/);
-  assert.match(clickSource, /if \(!loaded\) return;/);
+  assert.match(clickSource, /await openPlaylistAggregateComment\(playlistCommentItem\.dataset\.aggregateCommentKey\);/);
+
+  const helperStart = appSource.indexOf('async function openPlaylistAggregateComment(key)');
+  const helperEnd = appSource.indexOf('  function renderPlaylistContinuousCommentList', helperStart);
+  assert.notEqual(helperStart, -1, 'aggregate comment open helper should exist');
+  assert.notEqual(helperEnd, -1, 'aggregate comment open helper boundary should exist');
+  const helperSource = appSource.slice(helperStart, helperEnd);
+
+  assert.match(helperSource, /const loaded = await loadVideoFromPlaylist\(item, \{[\s\S]+preserveContinuousSession: continuousPlaybackState\.active[\s\S]+\}\);/);
+  assert.match(helperSource, /if \(!loaded\) return;/);
   assert.ok(
-    clickSource.indexOf('if (!loaded) return;') < clickSource.indexOf('videoPlayer.seekToFrame(localStartFrame);'),
+    helperSource.indexOf('if (!loaded) return;') < helperSource.indexOf('videoPlayer.seekToFrame(range.localStartFrame || 0);'),
     'load failure guard should run before seeking'
   );
 });
@@ -70,6 +78,54 @@ test('aggregate comment range rendering keeps the comment track header in sync',
   assert.match(renderSource, /this\.commentLayerHeader/);
   assert.match(renderSource, /this\.commentLayerHeader\.style\.display = 'none';/);
   assert.match(renderSource, /this\.commentLayerHeader\.style\.display = 'flex';/);
+});
+
+test('timeline wheel zoom anchors to the cursor position', () => {
+  assert.match(timelineSource, /getTimelineFocalContentX[\s\S]+calculateAnchoredScrollLeft[\s\S]+from '\.\/timeline-zoom-core\.js'/);
+
+  const wheelMatch = timelineSource.match(/this\.timelineTracks\?\.addEventListener\('wheel', \(e\) => \{([\s\S]*?)\n    \}, \{ passive: false \}\);/);
+  assert.ok(wheelMatch, 'timeline wheel handler should exist');
+
+  const wheelSource = wheelMatch[1];
+  assert.match(wheelSource, /e\.clientX/);
+  assert.match(wheelSource, /getTimelineFocalContentX\(/);
+  assert.match(wheelSource, /this\.setZoomAtPosition\(newZoom, focalX\);/);
+  assert.doesNotMatch(wheelSource, /newPlayheadX - viewportWidth \/ 2/);
+});
+
+test('continuous aggregate comments update the right comment panel', () => {
+  assert.match(appSource, /let playlistAggregateCommentRanges = \[\];/);
+  assert.match(appSource, /function renderPlaylistContinuousCommentList\(filter = getActiveCommentFilter\(\)\)/);
+  assert.match(appSource, /if \(playlistUIState\.mode === 'continuous'\) \{[\s\S]+renderPlaylistContinuousCommentList\(filter\);[\s\S]+return;/);
+  assert.match(appSource, /playlistAggregateCommentRanges = aggregateRanges;/);
+  assert.match(appSource, /formatPlaylistCommentPanelLine\(range\)/);
+  assert.match(appSource, /data-aggregate-comment-key/);
+  assert.match(appSource, /전체 \$\{highlightCommentSearchMatches\(range\.globalStartTimecode/);
+  assert.match(appSource, /컷 \$\{highlightCommentSearchMatches\(range\.localStartTimecode/);
+});
+
+test('normal file open paths route bplaylist files into playlist open flow', () => {
+  assert.match(appSource, /function isPlaylistFilePath\(filePath\)/);
+  assert.match(appSource, /async function openSelectedPath\(filePath\)/);
+  assert.match(appSource, /if \(isPlaylistFilePath\(filePath\)\) \{[\s\S]+return openPlaylistFile\(filePath\);[\s\S]+\}/);
+  assert.match(appSource, /await openSelectedPath\(result\.filePaths\[0\]\);/);
+  assert.match(appSource, /if \(isPlaylistFilePath\(file\.path \|\| file\.name\)\) \{[\s\S]+await openPlaylistFile\(file\.path\);/);
+  assert.match(appSource, /window\.electronAPI\.onOpenPlaylist\?\.\(async \(path\) => \{[\s\S]+await openPlaylistFile\(path\);/);
+});
+
+test('open dialog exposes saved playlist files', () => {
+  assert.match(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'), /BAEFRAME 재생목록[\s\S]+bplaylist/);
+});
+
+test('continuous playback verifies that native playback actually advances', () => {
+  assert.match(appSource, /function waitForContinuousPlaybackAdvance\(sessionId/);
+  assert.match(appSource, /async function playContinuousItemWithWatchdog\(item, sessionId\)/);
+  assert.match(appSource, /await videoPlayer\.play\(\)/);
+  assert.match(appSource, /waitForContinuousPlaybackAdvance\(sessionId/);
+  assert.match(appSource, /연속 재생이 멈춘 상태라 다시 시도합니다/);
+  assert.match(appSource, /showToast\('영상을 재생할 수 없어 다음 영상으로 넘어갑니다\.', 'warning'\)/);
+  assert.match(appSource, /const started = await playContinuousItemWithWatchdog\(currentItem, sessionId\);[\s\S]+if \(!started\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
+  assert.match(appSource, /const started = await playContinuousItemWithWatchdog\(nextItem, sessionId\);[\s\S]+if \(!started\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
 });
 
 test('continuous video loads preserve aggregate timeline comment ranges', () => {
@@ -305,7 +361,7 @@ test('modified-date sort is refreshed after every playlist add path', () => {
 
 test('opened modified-date playlists refresh filesystem mtimes before first selection', () => {
   assert.match(appSource, /playlistManager\.onPlaylistLoaded = async \(playlist\) => \{[\s\S]+await refreshModifiedSortIfActive\(\);[\s\S]+updatePlaylistUI\(\);/);
-  assert.match(appSource, /await playlistManager\.open\(filePath\);[\s\S]+playlistManager\.selectItem\(0\);/);
+  assert.match(appSource, /async function openPlaylistFile\(filePath\) \{[\s\S]+await playlistManager\.open\(normalizedPath\);[\s\S]+playlistManager\.selectItem\(0\);/);
 });
 
 test('playlist modifications rebuild the continuous aggregate timeline', () => {

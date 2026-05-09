@@ -257,6 +257,8 @@ function setupIpcHandlers() {
       const result = await dialog.showOpenDialog(getMainWindow(), {
         title: '미디어 파일 열기',
         filters: [
+          { name: 'BAEFRAME 파일', extensions: [...MEDIA_FILE_EXTENSIONS, 'bplaylist'] },
+          { name: 'BAEFRAME 재생목록', extensions: ['bplaylist'] },
           { name: '미디어 파일', extensions: MEDIA_FILE_EXTENSIONS },
           { name: '비디오 파일', extensions: VIDEO_FILE_EXTENSIONS },
           { name: '오디오 파일', extensions: AUDIO_FILE_EXTENSIONS },

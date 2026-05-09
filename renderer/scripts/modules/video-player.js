@@ -317,27 +317,31 @@ export class VideoPlayer extends EventTarget {
   /**
    * 재생
    */
-  play() {
+  async play() {
     if (!this.isLoaded) {
       log.warn('비디오가 로드되지 않음');
-      return;
+      return false;
     }
-    // play()는 Promise를 반환하므로 에러 처리 필요
-    const playPromise = this.videoElement.play();
-    if (playPromise !== undefined) {
-      playPromise.catch((error) => {
-        // AbortError: 재생 시작 전 pause() 호출됨 (정상적인 상황)
-        // NotAllowedError: 자동 재생 정책으로 차단됨
-        if (error.name === 'AbortError') {
-          log.debug('재생이 중단됨 (pause 호출)');
-        } else if (error.name === 'NotAllowedError') {
-          log.warn('자동 재생이 차단됨 - 사용자 상호작용 필요');
-        } else {
-          log.error('비디오 재생 실패', { error: error.message, name: error.name });
-        }
-      });
+
+    try {
+      const playPromise = this.videoElement.play();
+      if (playPromise !== undefined) {
+        await playPromise;
+      }
+      log.debug('재생');
+      return true;
+    } catch (error) {
+      // AbortError: 재생 시작 전 pause() 호출됨 (정상적인 상황)
+      // NotAllowedError: 자동 재생 정책으로 차단됨
+      if (error.name === 'AbortError') {
+        log.debug('재생이 중단됨 (pause 호출)');
+      } else if (error.name === 'NotAllowedError') {
+        log.warn('자동 재생이 차단됨 - 사용자 상호작용 필요');
+      } else {
+        log.error('비디오 재생 실패', { error: error.message, name: error.name });
+      }
+      return false;
     }
-    log.debug('재생');
   }
 
   /**

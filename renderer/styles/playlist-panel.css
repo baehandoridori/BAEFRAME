@@ -686,13 +686,16 @@ body.app-fullscreen .playlist-resizer {
 }
 
 .playlist-mode-tab {
-  height: 28px;
+  min-height: 30px;
+  padding: 4px 6px;
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.15;
   cursor: pointer;
+  white-space: normal;
 }
 
 .playlist-mode-tab.active {
@@ -833,12 +836,22 @@ body.app-fullscreen .playlist-resizer {
 .playlist-comment-range {
   position: absolute;
   top: 4px;
-  height: 10px;
+  height: 16px;
+  min-width: 3px;
+  padding: 0 5px;
   border: 0;
   border-radius: 3px;
   background: var(--comment-color, var(--accent-primary));
   opacity: 0.75;
   cursor: pointer;
+  overflow: hidden;
+  color: var(--bg-primary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: left;
+  white-space: nowrap;
 }
 
 .playlist-comment-range:hover {
@@ -848,4 +861,12 @@ body.app-fullscreen .playlist-resizer {
 
 .playlist-comment-range.resolved {
   opacity: 0.35;
+}
+
+.playlist-comment-range-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  text-overflow: ellipsis;
 }

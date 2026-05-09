@@ -4133,6 +4133,38 @@ body.app-fullscreen .video-comment-overlay-controls {
   background: var(--accent-glow);
 }
 
+.playlist-aggregate-comment {
+  padding-top: 12px;
+}
+
+.playlist-comment-time-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.playlist-comment-global-time,
+.playlist-comment-local-time,
+.playlist-comment-source,
+.playlist-comment-reply-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.playlist-comment-source {
+  margin-left: auto;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlist-comment-readonly-actions {
+  gap: 8px;
+}
+
 .comment-item.glow {
   animation: commentGlow 2.5s ease-out;
 }

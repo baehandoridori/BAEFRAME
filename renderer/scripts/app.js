@@ -30,7 +30,11 @@ import {
   mapGlobalTimeToSegment,
   mapLocalTimeToGlobal
 } from './modules/playlist-continuous-core.js';
-import { extractPlaylistCommentRanges } from './modules/playlist-comment-index.js';
+import {
+  extractPlaylistCommentRanges,
+  formatPlaylistCommentPanelLine,
+  formatPlaylistTimecode
+} from './modules/playlist-comment-index.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
 import { getMentionManager } from './modules/mention-manager.js';
@@ -45,6 +49,7 @@ const log = createLogger('App');
 const SUPPORTED_VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
 const SUPPORTED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
 const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];
+const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -254,6 +259,7 @@ async function initApp() {
   let suppressPlaylistSelectionLoad = false;
   let playlistTimelineUpdateToken = 0;
   let playlistSortChangeToken = 0;
+  let playlistAggregateCommentRanges = [];
 
   /**
    * 작성자 필터 적용 헬퍼
@@ -268,6 +274,51 @@ async function initApp() {
       const id = m.authorId || m.author || 'unknown';
       return authorFilter.has(id);
     });
+  }
+
+  function isPlaylistFilePath(filePath) {
+    const normalized = String(filePath || '').split(/[?#]/)[0].toLowerCase();
+    return normalized.endsWith(`.${SUPPORTED_PLAYLIST_EXTENSION}`);
+  }
+
+  function normalizePlaylistOpenPath(path) {
+    let filePath = path || '';
+    if (filePath.startsWith('baeframe://')) {
+      filePath = filePath.replace(/^baeframe:\/\//, '');
+
+      try {
+        filePath = decodeURIComponent(filePath);
+      } catch (error) {
+        log.warn('재생목록 URL 디코딩 실패', { error: error.message });
+      }
+
+      if (/^[A-Za-z]\//.test(filePath)) {
+        filePath = filePath[0] + ':' + filePath.slice(1);
+      }
+
+      filePath = filePath.replace(/\//g, '\\');
+    }
+
+    return filePath;
+  }
+
+  async function openPlaylistFile(filePath) {
+    const normalizedPath = normalizePlaylistOpenPath(filePath);
+    const playlistManager = getPlaylistManager();
+    await playlistManager.open(normalizedPath);
+    showPlaylistSidebar();
+    if (playlistManager.getItemCount() > 0) {
+      playlistManager.selectItem(0);
+    }
+    return true;
+  }
+
+  async function openSelectedPath(filePath) {
+    if (isPlaylistFilePath(filePath)) {
+      return openPlaylistFile(filePath);
+    }
+
+    return loadVideo(filePath);
   }
 
   // ====== 글로벌 Undo/Redo 시스템 ======
@@ -469,7 +520,7 @@ async function initApp() {
       // 드롭다운 닫기
       elements.recentDropdownMenu.classList.remove('open');
       elements.btnRecentFiles?.classList.remove('active');
-      await loadVideo(path);
+      await openSelectedPath(path);
     },
     onPin: async (id) => {
       try {
@@ -495,7 +546,7 @@ async function initApp() {
       try {
         const result = await window.electronAPI.openFileDialog();
         if (!result.canceled && result.filePaths.length > 0) {
-          await loadVideo(result.filePaths[0]);
+          await openSelectedPath(result.filePaths[0]);
         }
       } catch (error) {
         showToast('파일을 열 수 없습니다.', 'error');
@@ -698,7 +749,7 @@ async function initApp() {
 
     const playlistManager = getPlaylistManager();
     if (continuousPlaybackState.active) {
-      log.info('이어보기: 다음 재생 가능 항목으로 이동');
+      log.info('타임라인 이어붙이기: 다음 재생 가능 항목으로 이동');
       void playNextContinuousItem(continuousPlaybackState.sessionId);
       return;
     }
@@ -1149,7 +1200,7 @@ async function initApp() {
     try {
       const result = await window.electronAPI.openFileDialog();
       if (!result.canceled && result.filePaths.length > 0) {
-        await loadVideo(result.filePaths[0]);
+        await openSelectedPath(result.filePaths[0]);
       }
     } catch (error) {
       log.error('파일 열기 실패', error);
@@ -1199,7 +1250,7 @@ async function initApp() {
     try {
       const result = await window.electronAPI.openFileDialog();
       if (!result.canceled && result.filePaths.length > 0) {
-        await loadVideo(result.filePaths[0]);
+        await openSelectedPath(result.filePaths[0]);
       }
     } catch (error) {
       log.error('파일 열기 실패', error);
@@ -1244,7 +1295,9 @@ async function initApp() {
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       const file = files[0];
-      if (isMediaFile(file.name)) {
+      if (isPlaylistFilePath(file.path || file.name)) {
+        await openPlaylistFile(file.path);
+      } else if (isMediaFile(file.name)) {
         await loadVideo(file.path);
       } else {
         showToast('지원하지 않는 파일 형식입니다.', 'error');
@@ -1624,7 +1677,7 @@ async function initApp() {
     try {
       const result = await window.electronAPI.openFileDialog();
       if (!result.canceled && result.filePaths.length > 0) {
-        await loadVideo(result.filePaths[0]);
+        await openSelectedPath(result.filePaths[0]);
       }
     } catch (error) {
       log.error('다른 파일 열기 실패', error);
@@ -3179,24 +3232,7 @@ async function initApp() {
 
       const playlistCommentItem = e.target.closest('.playlist-comment-range');
       if (playlistCommentItem) {
-        const playlistManager = getPlaylistManager();
-        const itemId = playlistCommentItem.dataset.itemId;
-        const localStartFrame = parseInt(playlistCommentItem.dataset.localStartFrame, 10) || 0;
-        suppressPlaylistSelectionLoad = true;
-        let item = null;
-        try {
-          item = playlistManager.selectItemById(itemId);
-        } finally {
-          suppressPlaylistSelectionLoad = false;
-        }
-        if (item) {
-          const loaded = await loadVideoFromPlaylist(item);
-          if (!loaded) return;
-          videoPlayer.seekToFrame(localStartFrame);
-          videoPlayer.pause();
-          scrollToCommentWithGlow(playlistCommentItem.dataset.markerId);
-          updatePlaylistContinuousTimeline();
-        }
+        await openPlaylistAggregateComment(playlistCommentItem.dataset.aggregateCommentKey);
         return;
       }
 
@@ -4547,8 +4583,13 @@ async function initApp() {
    */
   function updateTimecodeDisplay() {
     if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
-      elements.timecodeCurrent.textContent = videoPlayer.timeToTimecode(getContinuousTimelinePlaybackTime());
-      elements.timecodeTotal.textContent = videoPlayer.timeToTimecode(timeline.playlistDuration);
+      const segment = getCurrentContinuousSegment();
+      const globalTime = getContinuousTimelinePlaybackTime();
+      const globalFps = segment?.fps || videoPlayer.fps || 24;
+      const localDuration = segment?.duration || videoPlayer.duration || 0;
+      elements.timecodeCurrent.textContent = `전체 ${formatPlaylistTimecode(globalTime, globalFps)}`;
+      elements.timecodeTotal.textContent =
+        `${formatPlaylistTimecode(timeline.playlistDuration, globalFps)} · 컷 ${formatPlaylistTimecode(videoPlayer.currentTime, videoPlayer.fps)} / ${formatPlaylistTimecode(localDuration, videoPlayer.fps)}`;
     } else {
       elements.timecodeCurrent.textContent = videoPlayer.getCurrentTimecode();
       elements.timecodeTotal.textContent = videoPlayer.getDurationTimecode();
@@ -5470,9 +5511,190 @@ async function initApp() {
     });
   }
 
+  function getPlaylistAggregateCommentKey(range) {
+    return `${range.itemId || ''}:${range.layerId || ''}:${range.markerId || ''}`;
+  }
+
+  function playlistRangeMatchesCommentSearch(range, normalizedQuery) {
+    if (!normalizedQuery) return true;
+    if (markerMatchesCommentSearch(range, normalizedQuery)) return true;
+
+    const haystack = [
+      range.fileName,
+      range.cutLabel,
+      range.localStartTimecode,
+      range.globalStartTimecode,
+      formatPlaylistCommentPanelLine(range)
+    ]
+      .filter(value => value !== undefined && value !== null)
+      .map(value => String(value).toLowerCase())
+      .join(' ');
+
+    return haystack.includes(normalizedQuery);
+  }
+
+  function filterPlaylistAggregateCommentRanges(
+    ranges,
+    filter = getActiveCommentFilter(),
+    normalizedSearch = ''
+  ) {
+    let filtered = Array.isArray(ranges) ? [...ranges] : [];
+
+    if (filter === 'unresolved') {
+      filtered = filtered.filter(range => !range.resolved);
+    } else if (filter === 'resolved') {
+      filtered = filtered.filter(range => range.resolved);
+    }
+
+    filtered = filterByAuthors(filtered);
+
+    if (normalizedSearch) {
+      filtered = filtered.filter(range => playlistRangeMatchesCommentSearch(range, normalizedSearch));
+    }
+
+    return filtered.sort((a, b) => a.globalStartTime - b.globalStartTime);
+  }
+
+  function highlightPlaylistAggregateComment(key) {
+    const container = elements.commentsList;
+    if (!container) return;
+    const target = [...container.querySelectorAll('.playlist-aggregate-comment')]
+      .find(item => item.dataset.aggregateCommentKey === key);
+    if (!target) return;
+
+    container.querySelectorAll('.playlist-aggregate-comment').forEach(item => {
+      item.classList.remove('selected', 'glow');
+    });
+    target.classList.add('selected', 'glow');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => target.classList.remove('glow'), 2600);
+  }
+
+  async function openPlaylistAggregateComment(key) {
+    const range = playlistAggregateCommentRanges.find(item => getPlaylistAggregateCommentKey(item) === key);
+    if (!range) return;
+
+    const playlistManager = getPlaylistManager();
+    const item = playlistManager.getItems().find(candidate => candidate.id === range.itemId);
+    if (!item) return;
+
+    suppressPlaylistSelectionLoad = true;
+    try {
+      playlistManager.selectItemById(item.id);
+    } finally {
+      suppressPlaylistSelectionLoad = false;
+    }
+
+    const isAlreadyLoaded = state.currentFile === item.videoPath;
+    if (!isAlreadyLoaded) {
+      const loaded = await loadVideoFromPlaylist(item, {
+        preserveContinuousSession: continuousPlaybackState.active
+      });
+      if (!loaded) return;
+    }
+
+    videoPlayer.seekToFrame(range.localStartFrame || 0);
+    videoPlayer.pause();
+    timeline.setCurrentTime(range.globalStartTime || 0);
+    updatePlaylistCurrentItem();
+    updatePlaylistPosition();
+    updateTimecodeDisplay();
+    highlightPlaylistAggregateComment(key);
+  }
+
+  function renderPlaylistContinuousCommentList(filter = getActiveCommentFilter()) {
+    const container = elements.commentsList;
+    if (!container) return;
+
+    const savedScrollTop = container.scrollTop;
+    const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
+    const authorFilteredRanges = filterByAuthors(playlistAggregateCommentRanges);
+    const resolvedCount = authorFilteredRanges.filter(range => range.resolved).length;
+    const ranges = filterPlaylistAggregateCommentRanges(
+      playlistAggregateCommentRanges,
+      filter,
+      normalizedSearch
+    );
+
+    if (elements.commentCount) {
+      if (normalizedSearch) {
+        elements.commentCount.textContent = `검색 ${ranges.length} / 전체 ${authorFilteredRanges.length}`;
+      } else {
+        const unresolvedCount = authorFilteredRanges.length - resolvedCount;
+        elements.commentCount.textContent = authorFilteredRanges.length > 0
+          ? `${unresolvedCount > 0 ? `${unresolvedCount} 미해결 / ` : ''}${authorFilteredRanges.length}개`
+          : '0';
+      }
+    }
+
+    updateFeedbackProgress(authorFilteredRanges.length, resolvedCount);
+
+    if (ranges.length === 0) {
+      const emptyTitle = normalizedSearch ? '검색 결과가 없습니다' : '재생목록 댓글이 없습니다';
+      const emptyHint = normalizedSearch
+        ? `"${escapeHtml(commentSearchKeyword)}"와 일치하는 재생목록 댓글이 없습니다.`
+        : '타임라인 이어붙이기에서는 재생목록 전체 댓글이 이곳에 표시됩니다.';
+
+      container.innerHTML = `
+        <div class="comment-empty">
+          <span style="font-size: 32px; margin-bottom: 8px;">#</span>
+          <p>${emptyTitle}</p>
+          <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = ranges.map(range => {
+      const key = getPlaylistAggregateCommentKey(range);
+      const title = escapeHtml(formatPlaylistCommentPanelLine(range));
+      const author = range.author || '알 수 없음';
+      const authorColor = getAuthorColor(range.authorId || author || 'unknown');
+      const replyCount = range.replies?.length || 0;
+
+      return `
+      <div class="comment-item playlist-aggregate-comment ${range.resolved ? 'resolved' : ''}"
+        data-aggregate-comment-key="${escapeHtml(key)}"
+        data-marker-id="${escapeHtml(range.markerId)}"
+        data-item-id="${escapeHtml(range.itemId)}"
+        title="${title}">
+        <div class="playlist-comment-time-row">
+          <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+          <span class="playlist-comment-global-time">전체 ${highlightCommentSearchMatches(range.globalStartTimecode, normalizedSearch)}</span>
+          <span class="playlist-comment-local-time">컷 ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+        </div>
+        <div class="comment-content">
+          <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(range.text || '댓글', normalizedSearch)))}</p>
+          ${range.image ? `<div class="comment-attached-image"><img src="${range.image}" alt="첨부 이미지" data-full-image="${range.image}"></div>` : ''}
+        </div>
+        <div class="comment-actions playlist-comment-readonly-actions">
+          <span class="comment-author-inline ${getAuthorColorClass(author)}" style="color: ${authorColor.color}; font-weight: bold;">${highlightCommentSearchMatches(author, normalizedSearch)}</span>
+          ${range.createdAt ? `<span class="comment-time-inline">${formatRelativeTime(range.createdAt)}</span>` : ''}
+          ${replyCount > 0 ? `<span class="playlist-comment-reply-count">답글 ${replyCount}개</span>` : ''}
+          <span class="playlist-comment-source">${highlightCommentSearchMatches(range.fileName, normalizedSearch)}</span>
+        </div>
+      </div>
+    `;
+    }).join('');
+
+    container.querySelectorAll('.playlist-aggregate-comment').forEach(item => {
+      item.addEventListener('click', async (e) => {
+        if (e.target.closest('.gdrive-link-btn')) return;
+        await openPlaylistAggregateComment(item.dataset.aggregateCommentKey);
+      });
+    });
+
+    container.scrollTop = savedScrollTop;
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
+
+    if (playlistUIState.mode === 'continuous') {
+      renderPlaylistContinuousCommentList(filter);
+      return;
+    }
 
     // 확장 상태 및 스크롤 위치 보존
     const expandedIds = new Set(
@@ -10207,7 +10429,7 @@ async function initApp() {
     continuousPlaybackState.skippedBatch = [];
     continuousPlaybackState.preparePromises.clear();
     if (elements.btnPlaylistContinuousPlay) {
-      elements.btnPlaylistContinuousPlay.textContent = '이어보기';
+      elements.btnPlaylistContinuousPlay.textContent = '타임라인 이어붙이기';
     }
   }
 
@@ -10271,10 +10493,10 @@ async function initApp() {
               item.fps = fps;
             }
           } else {
-            log.warn('이어보기 영상 메타데이터 수집 실패', { fileName: item.fileName, error: probe?.error || 'probe failed' });
+            log.warn('타임라인 이어붙이기 영상 메타데이터 수집 실패', { fileName: item.fileName, error: probe?.error || 'probe failed' });
           }
         } catch (error) {
-          log.warn('이어보기 영상 메타데이터 수집 실패', { fileName: item.fileName, error: error.message });
+          log.warn('타임라인 이어붙이기 영상 메타데이터 수집 실패', { fileName: item.fileName, error: error.message });
         }
       }
 
@@ -10299,7 +10521,6 @@ async function initApp() {
     timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
 
     const aggregateRanges = [];
-    const allowedAuthorIds = commentFilterState.authors === null ? null : new Set(commentFilterState.authors);
 
     for (const segment of segments) {
       const item = items[segment.index];
@@ -10312,20 +10533,21 @@ async function initApp() {
           bframeData,
           segment,
           visibleLayerIds: null,
-          allowedAuthorIds
+          allowedAuthorIds: null
         }));
       } catch (error) {
-        log.warn('이어보기 댓글 로드 실패', { fileName: item.fileName, error: error.message });
+        log.warn('타임라인 이어붙이기 댓글 로드 실패', { fileName: item.fileName, error: error.message });
       }
     }
 
     if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
-    const filteredRanges = aggregateRanges.filter(range => {
-      if (commentFilterState.status === 'resolved') return range.resolved;
-      if (commentFilterState.status === 'unresolved') return !range.resolved;
-      return true;
-    });
+    playlistAggregateCommentRanges = aggregateRanges;
+    const filteredRanges = filterPlaylistAggregateCommentRanges(
+      aggregateRanges,
+      commentFilterState.status
+    );
     timeline.renderPlaylistCommentRanges(filteredRanges, totalDuration);
+    renderPlaylistContinuousCommentList(commentFilterState.status);
   }
 
   async function quickCheckPlaylistForContinuous(sessionId) {
@@ -10345,7 +10567,7 @@ async function initApp() {
         markPlaylistItemStatus(item, CONTINUOUS_STATUS.IDLE, '');
       } catch (error) {
         if (!isContinuousSessionActive(sessionId)) return false;
-        log.warn('이어보기 파일 확인 실패', { fileName: item.fileName, error: error.message });
+        log.warn('타임라인 이어붙이기 파일 확인 실패', { fileName: item.fileName, error: error.message });
         markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
         continue;
       }
@@ -10486,6 +10708,132 @@ async function initApp() {
     return true;
   }
 
+  function waitForContinuousDelay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function waitForContinuousMediaReady(timeoutMs = 1200) {
+    const media = videoPlayer.videoElement;
+    if (!media) return Promise.resolve(false);
+    if (media.readyState >= 2) return Promise.resolve(true);
+
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        media.removeEventListener('canplay', onReady);
+        media.removeEventListener('loadeddata', onReady);
+        media.removeEventListener('error', onError);
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const onReady = () => finish(true);
+      const onError = () => finish(false);
+      const timer = setTimeout(() => finish(media.readyState >= 2), timeoutMs);
+
+      media.addEventListener('canplay', onReady, { once: true });
+      media.addEventListener('loadeddata', onReady, { once: true });
+      media.addEventListener('error', onError, { once: true });
+    });
+  }
+
+  function waitForContinuousPlaybackAdvance(sessionId, options = {}) {
+    const timeoutMs = options.timeoutMs || 1100;
+    const minDelta = options.minDelta || 0.03;
+    const media = videoPlayer.videoElement;
+    if (!media) return Promise.resolve(false);
+
+    const startTime = Number(media.currentTime || videoPlayer.currentTime) || 0;
+    const duration = Number(media.duration || videoPlayer.duration) || 0;
+    if (duration > 0 && duration - startTime <= 0.25) return Promise.resolve(true);
+
+    return new Promise(resolve => {
+      let settled = false;
+      const startedAt = performance.now();
+
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        media.removeEventListener('timeupdate', onProgress);
+        media.removeEventListener('ended', onEnded);
+        clearInterval(interval);
+        resolve(value);
+      };
+
+      const hasAdvanced = () => {
+        const currentTime = Number(media.currentTime || videoPlayer.currentTime) || 0;
+        return currentTime - startTime >= minDelta;
+      };
+
+      const onProgress = () => {
+        if (hasAdvanced()) finish(true);
+      };
+      const onEnded = () => finish(true);
+      const interval = setInterval(() => {
+        if (!isContinuousSessionActive(sessionId)) {
+          finish(false);
+          return;
+        }
+        if (hasAdvanced() || media.ended) {
+          finish(true);
+          return;
+        }
+        if (media.paused && !videoPlayer.isPlaying) {
+          finish(true);
+          return;
+        }
+        if (performance.now() - startedAt >= timeoutMs) {
+          finish(false);
+        }
+      }, 120);
+
+      media.addEventListener('timeupdate', onProgress);
+      media.addEventListener('ended', onEnded, { once: true });
+    });
+  }
+
+  async function playContinuousItemWithWatchdog(item, sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return false;
+
+    await waitForContinuousMediaReady();
+    if (!isContinuousSessionActive(sessionId)) return false;
+    const started = await videoPlayer.play();
+    if (!isContinuousSessionActive(sessionId)) return false;
+    if (!started && !videoPlayer.isPlaying) {
+      markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+      continuousPlaybackState.skippedBatch.push(item);
+      showToast('영상을 재생할 수 없어 다음 영상으로 넘어갑니다.', 'warning');
+      return false;
+    }
+
+    const advanced = await waitForContinuousPlaybackAdvance(sessionId);
+    if (!isContinuousSessionActive(sessionId)) return false;
+    if (advanced) return true;
+
+    log.warn('연속 재생이 멈춘 상태라 다시 시도합니다', { fileName: item?.fileName });
+    videoPlayer.pause();
+    await waitForContinuousDelay(80);
+    await waitForContinuousMediaReady();
+    if (!isContinuousSessionActive(sessionId)) return false;
+    const retryStarted = await videoPlayer.play();
+    if (!isContinuousSessionActive(sessionId)) return false;
+    if (!retryStarted && !videoPlayer.isPlaying) {
+      markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+      continuousPlaybackState.skippedBatch.push(item);
+      showToast('영상을 재생할 수 없어 다음 영상으로 넘어갑니다.', 'warning');
+      return false;
+    }
+
+    const retryAdvanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 1400 });
+    if (retryAdvanced) return true;
+
+    markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+    continuousPlaybackState.skippedBatch.push(item);
+    showToast('영상을 재생할 수 없어 다음 영상으로 넘어갑니다.', 'warning');
+    return false;
+  }
+
   async function startContinuousPlayback() {
     const playlistManager = getPlaylistManager();
     if (!playlistManager.isActive() || playlistManager.isEmpty()) {
@@ -10500,7 +10848,7 @@ async function initApp() {
     continuousPlaybackState.skippedBatch = [];
     continuousPlaybackState.preparePromises.clear();
     if (elements.btnPlaylistContinuousPlay) {
-      elements.btnPlaylistContinuousPlay.textContent = '이어보기 중';
+      elements.btnPlaylistContinuousPlay.textContent = '이어붙이는 중';
     }
 
     try {
@@ -10531,13 +10879,18 @@ async function initApp() {
         videoPlayer.seekToFrame(0);
       }
       if (!isContinuousSessionActive(sessionId)) return;
-      videoPlayer.play();
+      const started = await playContinuousItemWithWatchdog(currentItem, sessionId);
+      if (!isContinuousSessionActive(sessionId)) return;
+      if (!started) {
+        await playNextContinuousItem(sessionId);
+        return;
+      }
       prepareNextPlaylistItem(sessionId);
     } catch (error) {
       if (!isContinuousSessionActive(sessionId)) return;
-      log.warn('이어보기 시작 실패', { error: error.message });
+      log.warn('타임라인 이어붙이기 시작 실패', { error: error.message });
       stopContinuousPlayback();
-      showToast('이어보기를 시작할 수 없습니다.', 'error');
+      showToast('타임라인 이어붙이기를 시작할 수 없습니다.', 'error');
     }
   }
 
@@ -10572,7 +10925,12 @@ async function initApp() {
       await playNextContinuousItem(sessionId);
       return;
     }
-    videoPlayer.play();
+    const started = await playContinuousItemWithWatchdog(nextItem, sessionId);
+    if (!isContinuousSessionActive(sessionId)) return;
+    if (!started) {
+      await playNextContinuousItem(sessionId);
+      return;
+    }
     prepareNextPlaylistItem(sessionId);
   }
 
@@ -10594,8 +10952,10 @@ async function initApp() {
 
     if (nextMode === 'review') {
       stopContinuousPlayback({ keepCurrentVideo: true });
+      playlistAggregateCommentRanges = [];
       timeline.setPlaylistTimeline([], 0);
       renderCommentRanges();
+      updateCommentList();
     } else {
       updatePlaylistContinuousTimeline();
     }
@@ -10927,37 +11287,8 @@ async function initApp() {
     window.electronAPI.onOpenPlaylist?.(async (path) => {
       log.info('재생목록 링크로 열기', { path });
 
-      // baeframe:// URL이면 파일 경로로 변환
-      let filePath = path;
-      if (path && path.startsWith('baeframe://')) {
-        // baeframe:// 제거
-        filePath = path.replace(/^baeframe:\/\//, '');
-
-        // URL 디코딩 (한글 등)
-        try {
-          filePath = decodeURIComponent(filePath);
-        } catch (e) {
-          log.warn('URL 디코딩 실패', e);
-        }
-
-        // G/ → G:/ 변환 (AHK가 Slack file:/// 방지를 위해 콜론 제거)
-        if (/^[A-Za-z]\//.test(filePath)) {
-          filePath = filePath[0] + ':' + filePath.slice(1);
-        }
-
-        // 슬래시 → 백슬래시 (Windows)
-        filePath = filePath.replace(/\//g, '\\');
-
-        log.info('URL 변환 완료', { original: path, converted: filePath });
-      }
-
       try {
-        await playlistManager.open(filePath);
-        showPlaylistSidebar();
-        // 첫 번째 아이템 자동 로드
-        if (playlistManager.getItemCount() > 0) {
-          playlistManager.selectItem(0);
-        }
+        await openPlaylistFile(path);
       } catch (error) {
         showToast(`재생목록을 열 수 없습니다: ${error.message}`, 'error');
       }

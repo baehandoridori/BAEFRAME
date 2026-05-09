@@ -7,6 +7,8 @@ import { createLogger } from '../logger.js';
 import { MARKER_COLORS } from './comment-manager.js';
 import { resolveFrameGridTier } from './frame-grid-tiers.js';
 import { findRangeClusters, assignLanes, clusterKey, splitClustersByPixelGap } from './comment-cluster.js';
+import { getTimelineFocalContentX, calculateAnchoredScrollLeft } from './timeline-zoom-core.js';
+import { formatPlaylistCommentLabel, formatPlaylistCommentTitle } from './playlist-comment-index.js';
 
 const log = createLogger('Timeline');
 
@@ -169,7 +171,7 @@ export class Timeline extends EventTarget {
         const scrollAmount = e.deltaY * 3;
         this.timelineTracks.scrollLeft += scrollAmount;
       } else {
-        // 기본 휠: 플레이헤드(재생바) 위치 기준 확대/축소
+        // 기본 휠: 커서 위치 기준 확대/축소
         // 비율 기반 줌: 현재 줌 레벨의 5%씩 변화 (고배율일수록 변화량 증가)
         const zoomStep = Math.max(15, this.zoom * 0.05);
         const delta = e.deltaY > 0 ? -zoomStep : zoomStep;
@@ -177,20 +179,13 @@ export class Timeline extends EventTarget {
 
         if (Math.abs(newZoom - this.zoom) < 0.1) return;
 
-        // 현재 시간의 비율 (0~1) - 줌과 무관하게 항상 동일
-        const timeRatio = this.duration > 0 ? this.currentTime / this.duration : 0;
-
-        // 줌 적용
-        this.zoom = newZoom;
-        this._applyZoom();
-        this._updateZoomDisplay();
-        this._showZoomIndicator();
-
-        // 새 줌에서 플레이헤드가 뷰포트 중앙에 오도록 스크롤
-        const newContainerWidth = this.tracksContainer?.offsetWidth || 1000;
-        const newPlayheadX = timeRatio * newContainerWidth;
-        const viewportWidth = this.timelineTracks.clientWidth;
-        this.timelineTracks.scrollLeft = Math.max(0, newPlayheadX - viewportWidth / 2);
+        const rect = this.timelineTracks.getBoundingClientRect();
+        const focalX = getTimelineFocalContentX({
+          clientX: e.clientX,
+          viewportLeft: rect.left,
+          scrollLeft: this.timelineTracks.scrollLeft
+        });
+        this.setZoomAtPosition(newZoom, focalX);
       }
     }, { passive: false });
 
@@ -668,10 +663,6 @@ export class Timeline extends EventTarget {
 
     if (oldZoom === newZoom) return;
 
-    // 현재 기준점의 상대적 위치 (0~1)
-    const oldScale = oldZoom / 100;
-    const newScale = newZoom / 100;
-
     // 현재 뷰포트에서의 마우스 위치
     const viewportX = focalX - this.timelineTracks.scrollLeft;
 
@@ -682,8 +673,15 @@ export class Timeline extends EventTarget {
     this._showZoomIndicator();
 
     // 새 줌에서 같은 콘텐츠 위치가 마우스 아래에 오도록 스크롤 조정
-    const newFocalX = (focalX / oldScale) * newScale;
-    this.timelineTracks.scrollLeft = newFocalX - viewportX;
+    const maxScrollLeft = Math.max(0, this.timelineTracks.scrollWidth - this.timelineTracks.clientWidth);
+    this.timelineTracks.scrollLeft = calculateAnchoredScrollLeft({
+      focalContentX: focalX,
+      viewportX,
+      oldZoom,
+      newZoom,
+      minScrollLeft: 0,
+      maxScrollLeft
+    });
   }
 
   /**
@@ -1977,8 +1975,13 @@ export class Timeline extends EventTarget {
       el.style.setProperty('--comment-color', range.color);
       el.dataset.itemId = range.itemId;
       el.dataset.markerId = range.markerId;
+      el.dataset.aggregateCommentKey = `${range.itemId || ''}:${range.layerId || ''}:${range.markerId || ''}`;
       el.dataset.localStartFrame = String(range.localStartFrame);
-      el.title = `${range.fileName}: ${range.text || '댓글'}`;
+      el.title = formatPlaylistCommentTitle(range);
+      const label = document.createElement('span');
+      label.className = 'playlist-comment-range-label';
+      label.textContent = formatPlaylistCommentLabel(range);
+      el.appendChild(label);
       this.commentTrack.appendChild(el);
     }
 
