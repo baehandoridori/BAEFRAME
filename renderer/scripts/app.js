@@ -154,6 +154,7 @@ async function initApp() {
     btnVideoZoomIn: document.getElementById('btnVideoZoomIn'),
     btnVideoZoomOut: document.getElementById('btnVideoZoomOut'),
     btnVideoZoomReset: document.getElementById('btnVideoZoomReset'),
+    btnVideoCenterLock: document.getElementById('btnVideoCenterLock'),
     videoZoomDisplay: document.getElementById('videoZoomDisplay'),
     zoomIndicatorOverlay: document.getElementById('zoomIndicatorOverlay'),
 
@@ -213,6 +214,9 @@ async function initApp() {
     recentFilesSection: document.getElementById('recentFilesSection')
   };
 
+  // 사용자 설정
+  const userSettings = getUserSettings();
+
   // 상태
   const state = {
     isDrawMode: false,
@@ -228,6 +232,7 @@ async function initApp() {
     // 비디오 패닝 상태
     videoPanX: 0,
     videoPanY: 0,
+    videoCenterLocked: userSettings.getVideoCenterLocked(),
     isPanningVideo: false,
     panStartX: 0,
     panStartY: 0,
@@ -491,9 +496,6 @@ async function initApp() {
     window.electronAPI.watchFileStopAll();
   });
 
-  // 사용자 설정
-  const userSettings = getUserSettings();
-
   // ====== 최근 파일 매니저 초기화 ======
   const recentFilesManager = getRecentFilesManager();
 
@@ -635,6 +637,9 @@ async function initApp() {
   userSettings.addEventListener('ready', () => {
     log.info('설정 파일 로드 완료, UI 업데이트');
     updateShortcutHints();
+    state.videoCenterLocked = userSettings.getVideoCenterLocked();
+    updateVideoCenterLockButton();
+    applyVideoZoom();
   });
 
   // ====== 모듈 이벤트 연결 ======
@@ -3599,11 +3604,24 @@ async function initApp() {
     }
   }
 
+  function shouldCenterVideo() {
+    return state.videoCenterLocked && state.videoZoom <= 100;
+  }
+
+  function canPanVideo() {
+    return !state.isDrawMode && (state.videoZoom > 100 || !state.videoCenterLocked);
+  }
+
   /**
    * 비디오 줌 적용
    */
   function applyVideoZoom() {
     const video = elements.videoPlayer;
+    if (shouldCenterVideo()) {
+      state.videoPanX = 0;
+      state.videoPanY = 0;
+    }
+
     const scale = state.videoZoom / 100;
 
     video.style.transform = `scale(${scale}) translate(${state.videoPanX}px, ${state.videoPanY}px)`;
@@ -3614,15 +3632,8 @@ async function initApp() {
       elements.videoZoomDisplay.textContent = `${Math.round(state.videoZoom)}%`;
     }
 
-    // 줌이 100%가 아니면 줌 상태 표시
-    if (state.videoZoom !== 100) {
-      elements.videoWrapper?.classList.add('zoomed');
-    } else {
-      elements.videoWrapper?.classList.remove('zoomed');
-      // 100%로 돌아오면 패닝도 리셋
-      state.videoPanX = 0;
-      state.videoPanY = 0;
-    }
+    elements.videoWrapper?.classList.toggle('zoomed', canPanVideo());
+    elements.videoWrapper?.classList.toggle('center-locked', shouldCenterVideo());
 
     // 캔버스도 동일하게 적용
     syncCanvasZoom();
@@ -3689,6 +3700,30 @@ async function initApp() {
     resetVideoZoom();
   });
 
+  function updateVideoCenterLockButton() {
+    const button = elements.btnVideoCenterLock;
+    if (!button) return;
+
+    button.classList.toggle('active', state.videoCenterLocked);
+    button.setAttribute('aria-pressed', String(state.videoCenterLocked));
+    button.title = state.videoCenterLocked
+      ? '화면 중앙 고정 켜짐'
+      : '화면 중앙 고정 꺼짐 - 축소 상태에서도 드래그 가능';
+  }
+
+  function setVideoCenterLocked(locked) {
+    state.videoCenterLocked = !!locked;
+    userSettings.setVideoCenterLocked(state.videoCenterLocked);
+    updateVideoCenterLockButton();
+    applyVideoZoom();
+  }
+
+  updateVideoCenterLockButton();
+
+  elements.btnVideoCenterLock?.addEventListener('click', () => {
+    setVideoCenterLocked(!state.videoCenterLocked);
+  });
+
   // 비디오 영역 휠 줌
   elements.viewerContainer?.addEventListener('wheel', (e) => {
     // 그리기 모드가 아닐 때만 줌 적용
@@ -3699,9 +3734,9 @@ async function initApp() {
     }
   }, { passive: false });
 
-  // 비디오 패닝 (줌이 100% 이상일 때)
+  // 비디오 패닝
   elements.videoWrapper?.addEventListener('mousedown', (e) => {
-    if (state.videoZoom > 100 && !state.isDrawMode && e.button === 0) {
+    if (canPanVideo() && e.button === 0) {
       state.isPanningVideo = true;
       state.panStartX = e.clientX;
       state.panStartY = e.clientY;
