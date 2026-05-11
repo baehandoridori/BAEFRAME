@@ -160,6 +160,7 @@ test('continuous mode labels distinguish mode tabs from full autoplay', () => {
   assert.match(indexSource, /id="playlistTabReview"[\s\S]*?>개별영상 모드<\/button>/);
   assert.match(indexSource, /id="playlistTabContinuous"[\s\S]*?>타임라인 이어붙이기 모드<\/button>/);
   assert.match(indexSource, /id="btnPlaylistContinuousPlay"[\s\S]*?>전체 자동재생<\/button>/);
+  assert.match(indexSource, /id="playlistAutoPlay"[\s\S]*?<span class="toggle-label">자동 넘어가기<\/span>/);
   assert.match(appSource, /elements\.btnPlaylistContinuousPlay\.textContent = '전체 자동재생';/);
   assert.match(appSource, /elements\.btnPlaylistContinuousPlay\.textContent = '전체 자동재생 중';/);
 });
