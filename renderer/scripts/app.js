@@ -22,6 +22,19 @@ import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
+import {
+  buildPlaylistSegments,
+  CONTINUOUS_STATUS,
+  findNextPlayableIndex,
+  createSkippedToastMessage,
+  mapGlobalTimeToSegment,
+  mapLocalTimeToGlobal
+} from './modules/playlist-continuous-core.js';
+import {
+  extractPlaylistCommentRanges,
+  formatPlaylistCommentPanelLine,
+  formatPlaylistTimecode
+} from './modules/playlist-comment-index.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
 import { getMentionManager } from './modules/mention-manager.js';
@@ -29,12 +42,14 @@ import { TEAM_MEMBERS } from './modules/team-members.js';
 import { getSlackNotifier } from './modules/slack-notifier.js';
 import { getRecentFilesManager } from './modules/recent-files-manager.js';
 import * as recentFilesView from './modules/recent-files-view.js';
+import { computeToastStackLayout, computeToastTimerPlan } from './modules/toast-stack-core.js';
 
 const log = createLogger('App');
 
 const SUPPORTED_VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
 const SUPPORTED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
 const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];
+const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -172,6 +187,14 @@ async function initApp() {
     btnPlaylistNext: document.getElementById('btnPlaylistNext'),
     playlistPosition: document.getElementById('playlistPosition'),
     playlistAutoPlay: document.getElementById('playlistAutoPlay'),
+    playlistTabReview: document.getElementById('playlistTabReview'),
+    playlistTabContinuous: document.getElementById('playlistTabContinuous'),
+    playlistContinuousTools: document.getElementById('playlistContinuousTools'),
+    playlistSortMode: document.getElementById('playlistSortMode'),
+    playlistContinuousLoop: document.getElementById('playlistContinuousLoop'),
+    btnPlaylistContinuousPlay: document.getElementById('btnPlaylistContinuousPlay'),
+    playlistPrepareSummary: document.getElementById('playlistPrepareSummary'),
+    playlistPrepareSummaryText: document.getElementById('playlistPrepareSummaryText'),
     playlistItems: document.getElementById('playlistItems'),
     playlistDropzone: document.getElementById('playlistDropzone'),
     playlistEmpty: document.getElementById('playlistEmpty'),
@@ -221,6 +244,23 @@ async function initApp() {
     showMarkers: true    // 뷰포트 마커 표시 여부
   };
 
+  const playlistUIState = {
+    mode: 'review'
+  };
+
+  const continuousPlaybackState = {
+    active: false,
+    waiting: false,
+    skippedBatch: [],
+    preparePromises: new Map(),
+    sessionId: 0
+  };
+
+  let suppressPlaylistSelectionLoad = false;
+  let playlistTimelineUpdateToken = 0;
+  let playlistSortChangeToken = 0;
+  let playlistAggregateCommentRanges = [];
+
   /**
    * 작성자 필터 적용 헬퍼
    * @param {Array} items - authorId/author 필드를 가진 객체 배열
@@ -234,6 +274,51 @@ async function initApp() {
       const id = m.authorId || m.author || 'unknown';
       return authorFilter.has(id);
     });
+  }
+
+  function isPlaylistFilePath(filePath) {
+    const normalized = String(filePath || '').split(/[?#]/)[0].toLowerCase();
+    return normalized.endsWith(`.${SUPPORTED_PLAYLIST_EXTENSION}`);
+  }
+
+  function normalizePlaylistOpenPath(path) {
+    let filePath = path || '';
+    if (filePath.startsWith('baeframe://')) {
+      filePath = filePath.replace(/^baeframe:\/\//, '');
+
+      try {
+        filePath = decodeURIComponent(filePath);
+      } catch (error) {
+        log.warn('재생목록 URL 디코딩 실패', { error: error.message });
+      }
+
+      if (/^[A-Za-z]\//.test(filePath)) {
+        filePath = filePath[0] + ':' + filePath.slice(1);
+      }
+
+      filePath = filePath.replace(/\//g, '\\');
+    }
+
+    return filePath;
+  }
+
+  async function openPlaylistFile(filePath) {
+    const normalizedPath = normalizePlaylistOpenPath(filePath);
+    const playlistManager = getPlaylistManager();
+    await playlistManager.open(normalizedPath);
+    showPlaylistSidebar();
+    if (playlistManager.getItemCount() > 0) {
+      playlistManager.selectItem(0);
+    }
+    return true;
+  }
+
+  async function openSelectedPath(filePath) {
+    if (isPlaylistFilePath(filePath)) {
+      return openPlaylistFile(filePath);
+    }
+
+    return loadVideo(filePath);
   }
 
   // ====== 글로벌 Undo/Redo 시스템 ======
@@ -435,7 +520,7 @@ async function initApp() {
       // 드롭다운 닫기
       elements.recentDropdownMenu.classList.remove('open');
       elements.btnRecentFiles?.classList.remove('active');
-      await loadVideo(path);
+      await openSelectedPath(path);
     },
     onPin: async (id) => {
       try {
@@ -461,7 +546,7 @@ async function initApp() {
       try {
         const result = await window.electronAPI.openFileDialog();
         if (!result.canceled && result.filePaths.length > 0) {
-          await loadVideo(result.filePaths[0]);
+          await openSelectedPath(result.filePaths[0]);
         }
       } catch (error) {
         showToast('파일을 열 수 없습니다.', 'error');
@@ -585,7 +670,7 @@ async function initApp() {
   // 비디오 시간 업데이트 (일반 timeupdate - 타임라인 및 표시용)
   videoPlayer.addEventListener('timeupdate', (e) => {
     const { currentTime, currentFrame } = e.detail;
-    timeline.setCurrentTime(currentTime);
+    timeline.setCurrentTime(getContinuousTimelinePlaybackTime(currentTime));
     updateTimecodeDisplay();
     updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
     updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
@@ -622,7 +707,7 @@ async function initApp() {
     const { frame, time } = e.detail;
 
     // 타임라인 플레이헤드 실시간 업데이트 (재생 중)
-    timeline.setCurrentTime(time);
+    timeline.setCurrentTime(getContinuousTimelinePlaybackTime(time));
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
@@ -662,8 +747,13 @@ async function initApp() {
     timeline.setPlayingState(false);
     getAudioWaveform()?.setPlaying(false);
 
-    // 재생목록 자동 재생
     const playlistManager = getPlaylistManager();
+    if (continuousPlaybackState.active) {
+      log.info('타임라인 이어붙이기: 다음 재생 가능 항목으로 이동');
+      void playNextContinuousItem(continuousPlaybackState.sessionId);
+      return;
+    }
+
     if (playlistManager.isActive() && playlistManager.getAutoPlay() && playlistManager.hasNext()) {
       log.info('자동 재생: 다음 아이템으로 이동');
       playlistManager.next();
@@ -705,7 +795,13 @@ async function initApp() {
   });
 
   // 타임라인에서 시간 이동 요청
-  timeline.addEventListener('seek', (e) => {
+  timeline.addEventListener('seek', async (e) => {
+    if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+      await seekContinuousTimeline(e.detail.time);
+      hideScrubPreview();
+      return;
+    }
+
     videoPlayer.seek(e.detail.time);
     playbackSync.broadcastSeek(e.detail.time);
     hideScrubPreview();
@@ -1104,7 +1200,7 @@ async function initApp() {
     try {
       const result = await window.electronAPI.openFileDialog();
       if (!result.canceled && result.filePaths.length > 0) {
-        await loadVideo(result.filePaths[0]);
+        await openSelectedPath(result.filePaths[0]);
       }
     } catch (error) {
       log.error('파일 열기 실패', error);
@@ -1154,7 +1250,7 @@ async function initApp() {
     try {
       const result = await window.electronAPI.openFileDialog();
       if (!result.canceled && result.filePaths.length > 0) {
-        await loadVideo(result.filePaths[0]);
+        await openSelectedPath(result.filePaths[0]);
       }
     } catch (error) {
       log.error('파일 열기 실패', error);
@@ -1199,7 +1295,9 @@ async function initApp() {
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       const file = files[0];
-      if (isMediaFile(file.name)) {
+      if (isPlaylistFilePath(file.path || file.name)) {
+        await openPlaylistFile(file.path);
+      } else if (isMediaFile(file.name)) {
         await loadVideo(file.path);
       } else {
         showToast('지원하지 않는 파일 형식입니다.', 'error');
@@ -1579,7 +1677,7 @@ async function initApp() {
     try {
       const result = await window.electronAPI.openFileDialog();
       if (!result.canceled && result.filePaths.length > 0) {
-        await loadVideo(result.filePaths[0]);
+        await openSelectedPath(result.filePaths[0]);
       }
     } catch (error) {
       log.error('다른 파일 열기 실패', error);
@@ -1616,7 +1714,7 @@ async function initApp() {
       this.classList.add('active');
       const filter = this.dataset.filter;
       commentFilterState.status = filter;
-      updateCommentList(filter);
+      applyCommentFilters();
       log.debug('필터 변경', { filter });
     });
   });
@@ -1686,7 +1784,7 @@ async function initApp() {
 
   function applyCommentFilters() {
     updateCommentList(commentFilterState.status);
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
     renderVideoMarkers();
     updateTimelineMarkers();
   }
@@ -3103,6 +3201,17 @@ async function initApp() {
     renderVideoCommentRanges();
   }
 
+  async function refreshCommentRangesForCurrentMode() {
+    if (playlistUIState.mode === 'continuous') {
+      setupCommentRangeInteractions();
+      renderVideoCommentRanges();
+      await updatePlaylistContinuousTimeline();
+      return;
+    }
+
+    renderCommentRanges();
+  }
+
   // 댓글 범위 상호작용 설정 — commentTrack 1곳에 이벤트 위임 (1회만 바인딩)
   // 위임으로 전환한 이유: PR #112 이후 클러스터 펼침 시 .comment-range-item이 재생성되는데
   // 요소별 바인딩 방식은 재렌더 후 이벤트가 비어 편집 regression이 발생했다.
@@ -3113,13 +3222,19 @@ async function initApp() {
 
     // 클릭 — 해당 댓글 선택 + 프레임 이동 + 댓글 하이라이트
     // 트랙 배경 클릭은 펼친 클러스터 접기
-    commentTrack.addEventListener('click', (e) => {
+    commentTrack.addEventListener('click', async (e) => {
       if (commentDragState || commentJustDragged) return;
 
       // 핸들/배지/접기 배지 클릭은 mousedown에서 처리하므로 무시
       if (e.target.closest('.comment-handle')) return;
       if (e.target.closest('.comment-cluster-badge')) return;
       if (e.target.closest('.comment-cluster-close-badge')) return;
+
+      const playlistCommentItem = e.target.closest('.playlist-comment-range');
+      if (playlistCommentItem) {
+        await openPlaylistAggregateComment(playlistCommentItem.dataset.aggregateCommentKey);
+        return;
+      }
 
       const item = e.target.closest('.comment-range-item');
       if (item) {
@@ -3455,19 +3570,19 @@ async function initApp() {
 
   // 댓글 매니저 이벤트 수신 - 마커 변경 시 렌더링
   commentManager.addEventListener('markerAdded', () => {
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
   });
 
   commentManager.addEventListener('markerUpdated', () => {
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
   });
 
   commentManager.addEventListener('markerDeleted', () => {
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
   });
 
   commentManager.addEventListener('loaded', () => {
-    renderCommentRanges();
+    void refreshCommentRangesForCurrentMode();
   });
 
   // ====== 비디오 줌/패닝 ======
@@ -3776,6 +3891,7 @@ async function initApp() {
   // ====== 트랜스코딩 상태 관리 ======
   let isTranscoding = false;
   let transcodeResolve = null;
+  let latestVideoLoadToken = 0;
 
   /**
    * 트랜스코딩 오버레이 표시 및 진행
@@ -3808,6 +3924,12 @@ async function initApp() {
       }
     };
     window.electronAPI.onTranscodeProgress(progressHandler);
+    window.electronAPI.onPreTranscodeProgress(progressHandler);
+
+    const cleanupTranscodeProgressListeners = () => {
+      window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+      window.electronAPI.removeAllListeners('ffmpeg:pre-transcode-progress');
+    };
 
     // 취소 버튼 핸들러
     const handleCancel = async () => {
@@ -3815,7 +3937,7 @@ async function initApp() {
       await window.electronAPI.ffmpegCancel();
       isTranscoding = false;
       overlay.classList.remove('active');
-      window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+      cleanupTranscodeProgressListeners();
       if (transcodeResolve) {
         transcodeResolve({ success: false, error: '사용자 취소' });
         transcodeResolve = null;
@@ -3831,7 +3953,7 @@ async function initApp() {
 
         isTranscoding = false;
         overlay.classList.remove('active');
-        window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+        cleanupTranscodeProgressListeners();
         cancelBtn.removeEventListener('click', handleCancel);
 
         if (result.success) {
@@ -3844,7 +3966,7 @@ async function initApp() {
       } catch (error) {
         isTranscoding = false;
         overlay.classList.remove('active');
-        window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
+        cleanupTranscodeProgressListeners();
         cancelBtn.removeEventListener('click', handleCancel);
 
         log.error('트랜스코딩 예외', { error: error.message });
@@ -3861,13 +3983,25 @@ async function initApp() {
    * @param {Object} options - 옵션
    * @param {boolean} options.keepVersionContext - 버전 컨텍스트 유지 (수동 버전 전환 시 사용)
    * @param {number} options.targetVersion - 전환할 버전 번호 (수동 버전 선택 시)
+   * @param {boolean} options.preserveContinuousSession - 이어보기 내부 로드는 현재 세션 유지
    */
   async function loadVideo(filePath, options = {}) {
-    const { keepVersionContext = false, targetVersion = null } = options;
+    const {
+      keepVersionContext = false,
+      targetVersion = null,
+      preserveContinuousSession = false
+    } = options;
+    const loadToken = ++latestVideoLoadToken;
+    const isStaleVideoLoad = () => loadToken !== latestVideoLoadToken;
+    if (!preserveContinuousSession && continuousPlaybackState.active) {
+      stopContinuousPlayback();
+    }
+
     const trace = log.trace('loadVideo');
     try {
       // 파일 정보 가져오기
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
+      if (isStaleVideoLoad()) return false;
 
       // ====== 오디오 파일 감지 ======
       const fileIsAudio = isAudioFile(fileInfo.name);
@@ -3878,25 +4012,28 @@ async function initApp() {
 
       if (ffmpegAvailable) {
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
+        if (isStaleVideoLoad()) return false;
 
         if (codecInfo.success && !codecInfo.isSupported) {
           log.info('미지원 코덱 감지, 트랜스코딩 필요', { codec: codecInfo.codecName });
 
           // 캐시 확인
           const cacheResult = await window.electronAPI.ffmpegCheckCache(filePath);
+          if (isStaleVideoLoad()) return false;
           if (cacheResult.valid) {
             log.info('캐시된 변환 파일 사용', { path: cacheResult.convertedPath });
             actualVideoPath = cacheResult.convertedPath;
           } else {
             // 트랜스코딩 필요 - UI 표시
             const transcoded = await showTranscodeOverlay(filePath, codecInfo.codecName);
+            if (isStaleVideoLoad()) return false;
             if (transcoded.success) {
               actualVideoPath = transcoded.outputPath;
             } else {
               // 트랜스코딩 실패 또는 취소
               log.warn('트랜스코딩 실패 또는 취소', { error: transcoded.error });
               showToast(`코덱 변환 실패: ${transcoded.error || '취소됨'}`, 'error');
-              return;
+              return false;
             }
           }
         }
@@ -3909,12 +4046,13 @@ async function initApp() {
       if (reviewDataManager.hasUnsavedChanges()) {
         log.info('파일 전환 전 변경사항 저장 시도');
         const saved = await reviewDataManager.save();
+        if (isStaleVideoLoad()) return false;
         if (!saved) {
           // 저장 실패 시 사용자에게 확인
           const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
           if (!proceed) {
             log.info('사용자가 파일 전환 취소');
-            return;
+            return false;
           }
           log.warn('저장 실패했지만 사용자가 전환 진행 선택');
         }
@@ -3923,6 +4061,7 @@ async function initApp() {
       // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
       if (reviewDataManager.currentBframePath) {
         await window.electronAPI.watchFileStop(reviewDataManager.currentBframePath);
+        if (isStaleVideoLoad()) return false;
         log.info('이전 파일 감시 중지', { path: reviewDataManager.currentBframePath });
         try {
           await liveblocksManager.stop();
@@ -3982,6 +4121,7 @@ async function initApp() {
         // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
         try {
           await videoPlayer.load(actualVideoPath);
+          if (isStaleVideoLoad()) return false;
         } catch (loadErr) {
           log.warn('videoPlayer.load 실패, 직접 src 설정으로 폴백', { error: loadErr.message });
           // 폴백: 직접 src 설정 (loadedmetadata 이벤트 없이)
@@ -4016,6 +4156,7 @@ async function initApp() {
               reject(new Error('미디어 로드 타임아웃 (3초)'));
             }, 3000);
           });
+          if (isStaleVideoLoad()) return false;
         }
 
         // videoPlayer.load()가 display:block을 강제할 수 있으므로 다시 숨김
@@ -4033,6 +4174,7 @@ async function initApp() {
 
         try {
           await audioWaveform.loadAudio(filePath);
+          if (isStaleVideoLoad()) return false;
         } catch (err) {
           log.error('웨이브폼 로드 실패', { error: err.message, stack: err.stack });
           showToast(`웨이브폼 로드 실패: ${err.message}`, 'error');
@@ -4085,6 +4227,7 @@ async function initApp() {
 
         // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
         await videoPlayer.load(actualVideoPath);
+        if (isStaleVideoLoad()) return false;
       }
 
       // 원본 파일 경로 저장 (UI/메타데이터용)
@@ -4107,6 +4250,7 @@ async function initApp() {
       if (!keepVersionContext) {
         // VersionManager에 현재 파일 설정 (폴더 스캔 포함)
         await versionManager.setCurrentFile(filePath);
+        if (isStaleVideoLoad()) return false;
       } else {
         log.info('버전 컨텍스트 유지 모드 - 폴더 스캔 건너뜀');
       }
@@ -4137,6 +4281,7 @@ async function initApp() {
       // 썸네일 생성 시작 (비디오만, 트랜스코딩된 경우 변환된 파일 사용)
       if (!fileIsAudio) {
         await generateThumbnails(actualVideoPath);
+        if (isStaleVideoLoad()) return false;
       } else {
         // 오디오 파일 로드 시 이전 비디오의 썸네일 상태 정리
         getThumbnailGenerator().clear();
@@ -4144,6 +4289,7 @@ async function initApp() {
 
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
+      if (isStaleVideoLoad()) return false;
 
       // keepVersionContext가 false일 때만 manualVersions 복원
       // (true면 기존 버전 목록 유지)
@@ -4170,6 +4316,7 @@ async function initApp() {
       try {
         // .bframe에서 기존 Room ID 확인
         const bframeData = await window.electronAPI.loadReview(reviewDataManager.currentBframePath);
+        if (isStaleVideoLoad()) return false;
         const existingRoomId = bframeData?.liveblocksRoomId || null;
 
         const { roomId, isNewRoom } = await liveblocksManager.start(
@@ -4178,15 +4325,18 @@ async function initApp() {
           userColor,
           existingRoomId
         );
+        if (isStaleVideoLoad()) return false;
 
         // 새 Room이면 Room ID를 .bframe에 저장
         if (isNewRoom && reviewDataManager.currentBframePath) {
           reviewDataManager.setLiveblocksRoomId(roomId);
           await reviewDataManager.save({ skipMerge: true });
+          if (isStaleVideoLoad()) return false;
         }
 
         // 댓글/그리기/재생 동기화 시작 (Broadcast 기반)
         await commentSync.start();
+        if (isStaleVideoLoad()) return false;
         drawingSync.start();
         playbackSync.start();
         log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
@@ -4197,6 +4347,7 @@ async function initApp() {
       // ====== 파일 감시 시작 (실시간 동기화) ======
       if (reviewDataManager.currentBframePath) {
         await window.electronAPI.watchFileStart(reviewDataManager.currentBframePath);
+        if (isStaleVideoLoad()) return false;
         log.info('파일 감시 시작됨', { path: reviewDataManager.currentBframePath });
       }
 
@@ -4213,7 +4364,8 @@ async function initApp() {
       renderHighlights();
 
       // 댓글 범위 렌더링
-      renderCommentRanges();
+      await refreshCommentRangesForCurrentMode();
+      if (isStaleVideoLoad()) return false;
 
       // ====== 최근 파일 목록에 추가 ======
       // fire-and-forget: manager 내부에서 자체 에러 처리함
@@ -4227,12 +4379,14 @@ async function initApp() {
       });
 
       trace.end({ filePath, hasExistingData });
+      return true;
 
     } catch (error) {
       trace.error(error);
       // 에러 발생 시에도 자동 저장 재개
       reviewDataManager.resumeAutoSave();
       showToast('파일을 로드할 수 없습니다.', 'error');
+      return false;
     }
   }
 
@@ -4428,8 +4582,18 @@ async function initApp() {
    * 타임코드 디스플레이 업데이트
    */
   function updateTimecodeDisplay() {
-    elements.timecodeCurrent.textContent = videoPlayer.getCurrentTimecode();
-    elements.timecodeTotal.textContent = videoPlayer.getDurationTimecode();
+    if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+      const segment = getCurrentContinuousSegment();
+      const globalTime = getContinuousTimelinePlaybackTime();
+      const globalFps = segment?.fps || videoPlayer.fps || 24;
+      const localDuration = segment?.duration || videoPlayer.duration || 0;
+      elements.timecodeCurrent.textContent = `전체 ${formatPlaylistTimecode(globalTime, globalFps)}`;
+      elements.timecodeTotal.textContent =
+        `${formatPlaylistTimecode(timeline.playlistDuration, globalFps)} · 컷 ${formatPlaylistTimecode(videoPlayer.currentTime, videoPlayer.fps)} / ${formatPlaylistTimecode(localDuration, videoPlayer.fps)}`;
+    } else {
+      elements.timecodeCurrent.textContent = videoPlayer.getCurrentTimecode();
+      elements.timecodeTotal.textContent = videoPlayer.getDurationTimecode();
+    }
     elements.frameIndicator.textContent =
       `${videoPlayer.fps}fps · Frame ${videoPlayer.currentFrame} / ${videoPlayer.totalFrames}`;
   }
@@ -5059,6 +5223,11 @@ async function initApp() {
    * 클러스터링 기반 렌더링 - 줌 레벨에 따라 가까운 마커 그룹화
    */
   function updateTimelineMarkers() {
+    if (playlistUIState.mode === 'continuous') {
+      timeline.clearCommentMarkers();
+      return;
+    }
+
     const ranges = commentManager.getMarkerRanges();
     const fps = videoPlayer.fps || 24;
 
@@ -5347,9 +5516,190 @@ async function initApp() {
     });
   }
 
+  function getPlaylistAggregateCommentKey(range) {
+    return `${range.itemId || ''}:${range.layerId || ''}:${range.markerId || ''}`;
+  }
+
+  function playlistRangeMatchesCommentSearch(range, normalizedQuery) {
+    if (!normalizedQuery) return true;
+    if (markerMatchesCommentSearch(range, normalizedQuery)) return true;
+
+    const haystack = [
+      range.fileName,
+      range.cutLabel,
+      range.localStartTimecode,
+      range.globalStartTimecode,
+      formatPlaylistCommentPanelLine(range)
+    ]
+      .filter(value => value !== undefined && value !== null)
+      .map(value => String(value).toLowerCase())
+      .join(' ');
+
+    return haystack.includes(normalizedQuery);
+  }
+
+  function filterPlaylistAggregateCommentRanges(
+    ranges,
+    filter = getActiveCommentFilter(),
+    normalizedSearch = ''
+  ) {
+    let filtered = Array.isArray(ranges) ? [...ranges] : [];
+
+    if (filter === 'unresolved') {
+      filtered = filtered.filter(range => !range.resolved);
+    } else if (filter === 'resolved') {
+      filtered = filtered.filter(range => range.resolved);
+    }
+
+    filtered = filterByAuthors(filtered);
+
+    if (normalizedSearch) {
+      filtered = filtered.filter(range => playlistRangeMatchesCommentSearch(range, normalizedSearch));
+    }
+
+    return filtered.sort((a, b) => a.globalStartTime - b.globalStartTime);
+  }
+
+  function highlightPlaylistAggregateComment(key) {
+    const container = elements.commentsList;
+    if (!container) return;
+    const target = [...container.querySelectorAll('.playlist-aggregate-comment')]
+      .find(item => item.dataset.aggregateCommentKey === key);
+    if (!target) return;
+
+    container.querySelectorAll('.playlist-aggregate-comment').forEach(item => {
+      item.classList.remove('selected', 'glow');
+    });
+    target.classList.add('selected', 'glow');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => target.classList.remove('glow'), 2600);
+  }
+
+  async function openPlaylistAggregateComment(key) {
+    const range = playlistAggregateCommentRanges.find(item => getPlaylistAggregateCommentKey(item) === key);
+    if (!range) return;
+
+    const playlistManager = getPlaylistManager();
+    const item = playlistManager.getItems().find(candidate => candidate.id === range.itemId);
+    if (!item) return;
+
+    suppressPlaylistSelectionLoad = true;
+    try {
+      playlistManager.selectItemById(item.id);
+    } finally {
+      suppressPlaylistSelectionLoad = false;
+    }
+
+    const isAlreadyLoaded = state.currentFile === item.videoPath;
+    if (!isAlreadyLoaded) {
+      const loaded = await loadVideoFromPlaylist(item, {
+        preserveContinuousSession: continuousPlaybackState.active
+      });
+      if (!loaded) return;
+    }
+
+    videoPlayer.seekToFrame(range.localStartFrame || 0);
+    videoPlayer.pause();
+    timeline.setCurrentTime(range.globalStartTime || 0);
+    updatePlaylistCurrentItem();
+    updatePlaylistPosition();
+    updateTimecodeDisplay();
+    highlightPlaylistAggregateComment(key);
+  }
+
+  function renderPlaylistContinuousCommentList(filter = getActiveCommentFilter()) {
+    const container = elements.commentsList;
+    if (!container) return;
+
+    const savedScrollTop = container.scrollTop;
+    const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
+    const authorFilteredRanges = filterByAuthors(playlistAggregateCommentRanges);
+    const resolvedCount = authorFilteredRanges.filter(range => range.resolved).length;
+    const ranges = filterPlaylistAggregateCommentRanges(
+      playlistAggregateCommentRanges,
+      filter,
+      normalizedSearch
+    );
+
+    if (elements.commentCount) {
+      if (normalizedSearch) {
+        elements.commentCount.textContent = `검색 ${ranges.length} / 전체 ${authorFilteredRanges.length}`;
+      } else {
+        const unresolvedCount = authorFilteredRanges.length - resolvedCount;
+        elements.commentCount.textContent = authorFilteredRanges.length > 0
+          ? `${unresolvedCount > 0 ? `${unresolvedCount} 미해결 / ` : ''}${authorFilteredRanges.length}개`
+          : '0';
+      }
+    }
+
+    updateFeedbackProgress(authorFilteredRanges.length, resolvedCount);
+
+    if (ranges.length === 0) {
+      const emptyTitle = normalizedSearch ? '검색 결과가 없습니다' : '재생목록 댓글이 없습니다';
+      const emptyHint = normalizedSearch
+        ? `"${escapeHtml(commentSearchKeyword)}"와 일치하는 재생목록 댓글이 없습니다.`
+        : '타임라인 이어붙이기에서는 재생목록 전체 댓글이 이곳에 표시됩니다.';
+
+      container.innerHTML = `
+        <div class="comment-empty">
+          <span style="font-size: 32px; margin-bottom: 8px;">#</span>
+          <p>${emptyTitle}</p>
+          <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = ranges.map(range => {
+      const key = getPlaylistAggregateCommentKey(range);
+      const title = escapeHtml(formatPlaylistCommentPanelLine(range));
+      const author = range.author || '알 수 없음';
+      const authorColor = getAuthorColor(range.authorId || author || 'unknown');
+      const replyCount = range.replies?.length || 0;
+
+      return `
+      <div class="comment-item playlist-aggregate-comment ${range.resolved ? 'resolved' : ''}"
+        data-aggregate-comment-key="${escapeHtml(key)}"
+        data-marker-id="${escapeHtml(range.markerId)}"
+        data-item-id="${escapeHtml(range.itemId)}"
+        title="${title}">
+        <div class="playlist-comment-time-row">
+          <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+          <span class="playlist-comment-global-time">전체 ${highlightCommentSearchMatches(range.globalStartTimecode, normalizedSearch)}</span>
+          <span class="playlist-comment-local-time">컷 ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+        </div>
+        <div class="comment-content">
+          <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(range.text || '댓글', normalizedSearch)))}</p>
+          ${range.image ? `<div class="comment-attached-image"><img src="${range.image}" alt="첨부 이미지" data-full-image="${range.image}"></div>` : ''}
+        </div>
+        <div class="comment-actions playlist-comment-readonly-actions">
+          <span class="comment-author-inline ${getAuthorColorClass(author)}" style="color: ${authorColor.color}; font-weight: bold;">${highlightCommentSearchMatches(author, normalizedSearch)}</span>
+          ${range.createdAt ? `<span class="comment-time-inline">${formatRelativeTime(range.createdAt)}</span>` : ''}
+          ${replyCount > 0 ? `<span class="playlist-comment-reply-count">답글 ${replyCount}개</span>` : ''}
+          <span class="playlist-comment-source">${highlightCommentSearchMatches(range.fileName, normalizedSearch)}</span>
+        </div>
+      </div>
+    `;
+    }).join('');
+
+    container.querySelectorAll('.playlist-aggregate-comment').forEach(item => {
+      item.addEventListener('click', async (e) => {
+        if (e.target.closest('.gdrive-link-btn')) return;
+        await openPlaylistAggregateComment(item.dataset.aggregateCommentKey);
+      });
+    });
+
+    container.scrollTop = savedScrollTop;
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
+
+    if (playlistUIState.mode === 'continuous') {
+      renderPlaylistContinuousCommentList(filter);
+      return;
+    }
 
     // 확장 상태 및 스크롤 위치 보존
     const expandedIds = new Set(
@@ -6145,7 +6495,8 @@ async function initApp() {
    */
   const _toastState = {
     toasts: [],     // 현재 활성 토스트 요소 배열
-    maxVisible: 3  // 최대 표시 개수
+    maxVisible: 3,  // 최대 표시 개수
+    isHovered: false
   };
 
   const _toastIcons = {
@@ -6158,40 +6509,27 @@ async function initApp() {
   };
 
   function _updateToastStack() {
-    const toasts = _toastState.toasts;
-    for (let i = 0; i < toasts.length; i++) {
-      const t = toasts[i];
-      const fromTop = toasts.length - 1 - i; // 0 = 최신 (맨 앞)
-      // 최신 토스트가 항상 위에 표시되도록 z-index 설정
-      t.style.zIndex = toasts.length - fromTop;
-      if (fromTop >= _toastState.maxVisible) {
-        // 숨기지만 호버 시 보이도록 CSS 클래스 사용
-        t.classList.add('toast-stacked', 'toast-hidden');
-        const s = 1 - Math.min(fromTop, 3) * 0.05;
-        t.style.setProperty('--stack-scale', s);
-        t.style.setProperty('--stack-opacity', '0');
-        t.style.setProperty('--stack-brightness', '0.7');
-      } else if (fromTop > 0) {
-        t.classList.add('toast-stacked');
-        t.classList.remove('toast-hidden');
-        const s = 1 - fromTop * 0.05;
-        const o = 1 - fromTop * 0.2;
-        const b = 1 - fromTop * 0.08;
-        t.style.setProperty('--stack-scale', s);
-        t.style.setProperty('--stack-opacity', Math.max(o, 0.3));
-        t.style.setProperty('--stack-brightness', b);
-      } else {
-        t.classList.remove('toast-stacked', 'toast-hidden');
-        t.style.removeProperty('--stack-scale');
-        t.style.removeProperty('--stack-opacity');
-        t.style.removeProperty('--stack-brightness');
-      }
-    }
+    const layout = computeToastStackLayout(_toastState.toasts, {
+      maxVisible: _toastState.maxVisible
+    });
+
+    layout.forEach((entry) => {
+      const toast = _toastState.toasts[entry.index];
+      if (!toast) return;
+
+      toast.style.zIndex = String(entry.zIndex);
+      toast.classList.toggle('toast-stacked', entry.stacked);
+      toast.classList.toggle('toast-hidden', entry.hidden);
+      toast.style.setProperty('--stack-scale', entry.scale);
+      toast.style.setProperty('--stack-opacity', entry.opacity);
+      toast.style.setProperty('--stack-brightness', entry.brightness);
+    });
   }
 
   function _dismissToast(toast, swipeDir) {
     if (toast._dismissed) return;
     toast._dismissed = true;
+    toast.style.zIndex = '0';
     clearTimeout(toast._autoTimer);
     cancelAnimationFrame(toast._progressRaf);
 
@@ -6236,6 +6574,58 @@ async function initApp() {
     }, fadeTime);
   }
 
+  function _isToastContainerHovered() {
+    if (!elements.toastContainer) return false;
+    try {
+      return _toastState.isHovered || elements.toastContainer.matches(':hover');
+    } catch {
+      return _toastState.isHovered;
+    }
+  }
+
+  function _startToastProgress(toast) {
+    if (!toast || !toast._progress || toast._isLoading || toast._paused || toast._dismissed) return;
+    cancelAnimationFrame(toast._progressRaf);
+    toast._progressRaf = requestAnimationFrame(function tick() {
+      if (toast._isLoading || toast._dismissed) return;
+      if (toast._paused) return;
+      const elapsed = performance.now() - toast._startedAt;
+      const pct = Math.max(0, 1 - elapsed / toast._duration);
+      toast._progress.style.width = `${pct * 100}%`;
+      if (pct > 0) toast._progressRaf = requestAnimationFrame(tick);
+    });
+  }
+
+  function _pauseToastTimer(toast) {
+    if (!toast || toast._isLoading || toast._paused || toast._dismissed) return;
+    toast._paused = true;
+    toast._remaining = Math.max(0, toast._duration - (performance.now() - toast._startedAt));
+    clearTimeout(toast._autoTimer);
+    cancelAnimationFrame(toast._progressRaf);
+  }
+
+  function _resumeToastTimer(toast) {
+    if (!toast || toast._isLoading || !toast._paused || toast._dismissed) return;
+    toast._paused = false;
+    toast._duration = toast._remaining;
+    toast._startedAt = performance.now();
+    toast._autoTimer = setTimeout(() => _dismissToast(toast), toast._remaining);
+    _startToastProgress(toast);
+  }
+
+  function _bindToastContainerPause() {
+    if (!elements.toastContainer || elements.toastContainer._pauseBound) return;
+    elements.toastContainer._pauseBound = true;
+    elements.toastContainer.addEventListener('mouseenter', () => {
+      _toastState.isHovered = true;
+      _toastState.toasts.forEach(_pauseToastTimer);
+    });
+    elements.toastContainer.addEventListener('mouseleave', () => {
+      _toastState.isHovered = false;
+      _toastState.toasts.forEach(_resumeToastTimer);
+    });
+  }
+
   /**
    * 토스트 메시지 표시
    * @param {string} message - 표시할 메시지
@@ -6253,6 +6643,8 @@ async function initApp() {
 
     // warn/warning 통일
     const normalType = type === 'warning' ? 'warn' : type;
+
+    _bindToastContainerPause();
 
     const toast = document.createElement('div');
     toast.className = `toast ${normalType} toast-enter`;
@@ -6281,47 +6673,19 @@ async function initApp() {
 
     // loading 타입: 진행률 바 없이 스피너만 표시
     const isLoading = normalType === 'loading';
+    toast._duration = duration;
+    toast._remaining = duration;
+    toast._startedAt = performance.now();
+    toast._isLoading = isLoading;
+    toast._paused = false;
 
     // 진행률 바
     const progress = document.createElement('div');
     progress.className = 'toast-progress';
+    progress.style.width = '100%';
     if (isLoading) progress.style.display = 'none';
     toast.appendChild(progress);
-
-    // 호버 일시정지
-    let paused = false;
-    let remaining = duration;
-    let startTime = performance.now();
-
-    function animateProgress() {
-      if (isLoading) return;
-      if (paused) {
-        toast._progressRaf = requestAnimationFrame(animateProgress);
-        return;
-      }
-      const elapsed = performance.now() - startTime;
-      const pct = Math.max(0, 1 - elapsed / duration);
-      progress.style.width = `${pct * 100}%`;
-      if (pct > 0) {
-        toast._progressRaf = requestAnimationFrame(animateProgress);
-      }
-    }
-    toast._progressRaf = requestAnimationFrame(animateProgress);
-
-    if (!isLoading) {
-      toast.addEventListener('mouseenter', () => {
-        paused = true;
-        remaining = Math.max(0, duration - (performance.now() - startTime));
-        clearTimeout(toast._autoTimer);
-      });
-
-      toast.addEventListener('mouseleave', () => {
-        paused = false;
-        duration = remaining;
-        startTime = performance.now();
-        toast._autoTimer = setTimeout(() => _dismissToast(toast), remaining);
-      });
-    }
+    toast._progress = progress;
 
     // 스와이프 제스처
     let swipeStartX = 0;
@@ -6372,11 +6736,20 @@ async function initApp() {
 
     // 컨테이너에 추가 (최신이 맨 위)
     elements.toastContainer.prepend(toast);
-    _toastState.toasts.push(toast);
+    _toastState.toasts.unshift(toast);
     _updateToastStack();
 
+    const timerPlan = computeToastTimerPlan({
+      isHovered: _isToastContainerHovered(),
+      isLoading
+    });
+    toast._paused = timerPlan.paused;
+
     // 자동 닫기 (loading 타입은 수동 dismiss)
-    if (!isLoading) {
+    if (timerPlan.shouldStartProgress) {
+      _startToastProgress(toast);
+    }
+    if (timerPlan.shouldScheduleAutoDismiss) {
       toast._autoTimer = setTimeout(() => _dismissToast(toast), duration);
     }
 
@@ -6390,17 +6763,24 @@ async function initApp() {
           icon.innerHTML = _toastIcons[newNormalType] || _toastIcons.info;
           msg.textContent = newMessage;
           progress.style.display = '';
+          clearTimeout(toast._autoTimer);
+          cancelAnimationFrame(toast._progressRaf);
           // 자동 닫기 재설정
-          duration = newDuration;
-          remaining = newDuration;
-          startTime = performance.now();
-          toast._progressRaf = requestAnimationFrame(function tick() {
-            const elapsed = performance.now() - startTime;
-            const pct = Math.max(0, 1 - elapsed / newDuration);
-            progress.style.width = `${pct * 100}%`;
-            if (pct > 0) toast._progressRaf = requestAnimationFrame(tick);
+          toast._duration = newDuration;
+          toast._remaining = newDuration;
+          toast._startedAt = performance.now();
+          toast._isLoading = false;
+          const updateTimerPlan = computeToastTimerPlan({
+            isHovered: _isToastContainerHovered(),
+            isLoading: false
           });
-          toast._autoTimer = setTimeout(() => _dismissToast(toast), newDuration);
+          toast._paused = updateTimerPlan.paused;
+          if (updateTimerPlan.shouldStartProgress) {
+            _startToastProgress(toast);
+          }
+          if (updateTimerPlan.shouldScheduleAutoDismiss) {
+            toast._autoTimer = setTimeout(() => _dismissToast(toast), newDuration);
+          }
         }
       };
     }
@@ -9996,12 +10376,669 @@ async function initApp() {
   // 재생목록 기능
   // ============================================================================
 
+  function getCurrentContinuousSegment() {
+    if (playlistUIState.mode !== 'continuous' || !timeline.playlistDuration) return null;
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems?.() || [];
+    const currentItem = playlistManager.getCurrentItem?.();
+    const itemId = currentItem?.videoPath === state.currentFile
+      ? currentItem.id
+      : items.find(item => item.videoPath === state.currentFile)?.id;
+    if (!itemId) return null;
+    return timeline.playlistSegments?.find(segment => segment.itemId === itemId) || null;
+  }
+
+  function getContinuousTimelinePlaybackTime(localTime = videoPlayer.currentTime) {
+    const segment = getCurrentContinuousSegment();
+    if (!segment) return localTime;
+    return mapLocalTimeToGlobal(segment, localTime);
+  }
+
+  async function seekContinuousTimeline(globalTime) {
+    const playlistManager = getPlaylistManager();
+    const mapped = mapGlobalTimeToSegment(timeline.playlistSegments, globalTime);
+    if (!mapped) return false;
+
+    const item = playlistManager.getItems()[mapped.segment.index];
+    if (!item) return false;
+
+    if (playlistManager.getCurrentItem?.()?.id !== item.id) {
+      suppressPlaylistSelectionLoad = true;
+      try {
+        playlistManager.selectItemById(item.id);
+      } finally {
+        suppressPlaylistSelectionLoad = false;
+      }
+    }
+
+    const isAlreadyLoaded = state.currentFile === item.videoPath;
+    if (!isAlreadyLoaded) {
+      const loaded = await loadVideoFromPlaylist(item, {
+        preserveContinuousSession: continuousPlaybackState.active
+      });
+      if (!loaded) return false;
+    }
+
+    videoPlayer.seek(mapped.localTime);
+    playbackSync.broadcastSeek(mapped.localTime);
+    timeline.setCurrentTime(mapLocalTimeToGlobal(mapped.segment, mapped.localTime));
+    updatePlaylistCurrentItem();
+    updatePlaylistPosition();
+    return true;
+  }
+
+  function stopContinuousPlayback() {
+    continuousPlaybackState.sessionId += 1;
+    continuousPlaybackState.active = false;
+    continuousPlaybackState.waiting = false;
+    continuousPlaybackState.skippedBatch = [];
+    continuousPlaybackState.preparePromises.clear();
+    if (elements.btnPlaylistContinuousPlay) {
+      elements.btnPlaylistContinuousPlay.textContent = '전체 자동재생';
+    }
+  }
+
+  function isContinuousSessionActive(sessionId) {
+    return continuousPlaybackState.active && continuousPlaybackState.sessionId === sessionId;
+  }
+
+  function updatePlaylistPrepareSummary() {
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems?.() || [];
+    const readyCount = items.filter(item => item.continuousStatus === CONTINUOUS_STATUS.READY).length;
+    if (elements.playlistPrepareSummaryText) {
+      elements.playlistPrepareSummaryText.textContent = `${readyCount}/${items.length}개 준비됨`;
+    }
+  }
+
+  function markPlaylistItemStatus(item, status, message = '') {
+    if (!item) return;
+    item.continuousStatus = status;
+    item.continuousMessage = message;
+    updatePlaylistPrepareSummary();
+    const el = document.querySelector(`.playlist-item[data-id="${item.id}"]`);
+    if (el) {
+      el.dataset.continuousStatus = status;
+      el.classList.toggle('missing', status === CONTINUOUS_STATUS.MISSING);
+      const statusEl = el.querySelector('.playlist-item-continuous-status');
+      if (statusEl) statusEl.textContent = message || status;
+    }
+  }
+
+  function flushSkippedToastBatch() {
+    if (continuousPlaybackState.skippedBatch.length === 0) return;
+    showToast(createSkippedToastMessage(continuousPlaybackState.skippedBatch), 'warning');
+    continuousPlaybackState.skippedBatch = [];
+  }
+
+  async function collectPlaylistMetadata(items) {
+    const metadata = new Map();
+    for (const item of items) {
+      if (state.currentFile === item.videoPath && videoPlayer.duration) {
+        metadata.set(item.id, { duration: videoPlayer.duration, fps: videoPlayer.fps || 24 });
+        continue;
+      }
+
+      let duration = Number(item.duration);
+      let fps = Number(item.fps);
+      const hasDuration = Number.isFinite(duration) && duration > 0;
+
+      if (!hasDuration && item.videoPath) {
+        try {
+          const probe = await window.electronAPI.ffmpegProbeCodec(item.videoPath);
+          if (probe?.success) {
+            const probeDuration = Number(probe.duration);
+            const probeFps = Number(probe.frameRate);
+            if (Number.isFinite(probeDuration) && probeDuration > 0) {
+              duration = probeDuration;
+              fps = Number.isFinite(probeFps) && probeFps > 0
+                ? probeFps
+                : (Number.isFinite(fps) && fps > 0 ? fps : 24);
+              item.duration = duration;
+              item.fps = fps;
+            }
+          } else {
+            log.warn('타임라인 이어붙이기 영상 메타데이터 수집 실패', { fileName: item.fileName, error: probe?.error || 'probe failed' });
+          }
+        } catch (error) {
+          log.warn('타임라인 이어붙이기 영상 메타데이터 수집 실패', { fileName: item.fileName, error: error.message });
+        }
+      }
+
+      metadata.set(item.id, {
+        duration: Number.isFinite(duration) && duration > 0 ? duration : 0,
+        fps: Number.isFinite(fps) && fps > 0 ? fps : 24
+      });
+    }
+    return metadata;
+  }
+
+  async function updatePlaylistContinuousTimeline() {
+    if (playlistUIState.mode !== 'continuous') return;
+    timeline.clearCommentMarkers();
+    const updateToken = ++playlistTimelineUpdateToken;
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems();
+    const metadata = await collectPlaylistMetadata(items);
+    if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
+
+    const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
+    timeline.setPlaylistTimeline(segments, totalDuration);
+    timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
+
+    const aggregateRanges = [];
+
+    for (const segment of segments) {
+      const item = items[segment.index];
+      if (!item?.bframePath) continue;
+      try {
+        const bframeData = await window.electronAPI.loadReview(item.bframePath);
+        if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
+        if (!bframeData) continue;
+        aggregateRanges.push(...extractPlaylistCommentRanges({
+          bframeData,
+          segment,
+          visibleLayerIds: null,
+          allowedAuthorIds: null
+        }));
+      } catch (error) {
+        log.warn('타임라인 이어붙이기 댓글 로드 실패', { fileName: item.fileName, error: error.message });
+      }
+    }
+
+    if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
+    playlistAggregateCommentRanges = aggregateRanges;
+    const filteredRanges = filterPlaylistAggregateCommentRanges(
+      aggregateRanges,
+      commentFilterState.status
+    );
+    timeline.renderPlaylistCommentRanges(filteredRanges, totalDuration);
+    renderPlaylistContinuousCommentList(commentFilterState.status);
+  }
+
+  async function quickCheckPlaylistForContinuous(sessionId) {
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems();
+
+    for (const item of items) {
+      if (!isContinuousSessionActive(sessionId)) return false;
+      markPlaylistItemStatus(item, CONTINUOUS_STATUS.CHECKING, '확인 중');
+      try {
+        const exists = await window.electronAPI.fileExists(item.videoPath);
+        if (!isContinuousSessionActive(sessionId)) return false;
+        if (!exists) {
+          markPlaylistItemStatus(item, CONTINUOUS_STATUS.MISSING, '문제 있음');
+          continue;
+        }
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.IDLE, '');
+      } catch (error) {
+        if (!isContinuousSessionActive(sessionId)) return false;
+        log.warn('타임라인 이어붙이기 파일 확인 실패', { fileName: item.fileName, error: error.message });
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+        continue;
+      }
+    }
+
+    if (!isContinuousSessionActive(sessionId)) return false;
+    await updatePlaylistUI();
+    return isContinuousSessionActive(sessionId);
+  }
+
+  async function preparePlaylistItemInBackground(item, sessionId = continuousPlaybackState.sessionId) {
+    if (!item) return undefined;
+
+    const existingPrepare = continuousPlaybackState.preparePromises.get(item.id);
+    if (existingPrepare?.sessionId === sessionId) {
+      return existingPrepare.promise;
+    }
+
+    if (item.continuousStatus === CONTINUOUS_STATUS.READY) {
+      return { ready: true, cached: true };
+    }
+
+    if ([
+      CONTINUOUS_STATUS.MISSING,
+      CONTINUOUS_STATUS.SKIPPED,
+      CONTINUOUS_STATUS.ERROR
+    ].includes(item.continuousStatus)) {
+      return { ready: false, error: item.continuousMessage || item.continuousStatus };
+    }
+
+    const promise = (async () => {
+      const shouldContinuePreparing = () => (
+        isContinuousSessionActive(sessionId) &&
+        item.continuousStatus !== CONTINUOUS_STATUS.SKIPPED
+      );
+
+      try {
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.PREPARING, '준비 중');
+        const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
+        if (!ffmpegAvailable) {
+          markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
+          return { ready: true };
+        }
+
+        const codecInfo = await window.electronAPI.ffmpegProbeCodec(item.videoPath);
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
+        if (!codecInfo.success || codecInfo.isSupported) {
+          markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
+          return { ready: true };
+        }
+
+        const cacheResult = await window.electronAPI.ffmpegCheckCache(item.videoPath);
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
+        if (cacheResult.valid) {
+          markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
+          return { ready: true, cached: true };
+        }
+
+        const result = await window.electronAPI.ffmpegPreTranscode(item.videoPath);
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
+        if (result.success) {
+          markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
+          return { ready: true };
+        }
+
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+        return { ready: false, error: result.error || '변환 실패' };
+      } catch (error) {
+        if (!shouldContinuePreparing()) return { ready: false, stale: true };
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+        return { ready: false, error: error.message };
+      } finally {
+        const currentPrepare = continuousPlaybackState.preparePromises.get(item.id);
+        if (currentPrepare?.promise === promise) {
+          continuousPlaybackState.preparePromises.delete(item.id);
+        }
+      }
+    })();
+
+    continuousPlaybackState.preparePromises.set(item.id, { sessionId, promise });
+    return promise;
+  }
+
+  function prepareNextPlaylistItem(sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return;
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems();
+    const settings = playlistManager.getContinuousSettings();
+    const nextIndex = findNextPlayableIndex(items, playlistManager.currentIndex, { loop: settings.loop });
+    if (nextIndex >= 0) {
+      preparePlaylistItemInBackground(items[nextIndex], sessionId);
+    }
+  }
+
+  async function waitForPreparedOrSkip(item, sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return false;
+    if (item?.continuousStatus === CONTINUOUS_STATUS.READY) {
+      return true;
+    }
+    if ([
+      CONTINUOUS_STATUS.MISSING,
+      CONTINUOUS_STATUS.SKIPPED,
+      CONTINUOUS_STATUS.ERROR
+    ].includes(item?.continuousStatus)) {
+      if (!isContinuousSessionActive(sessionId)) return false;
+      continuousPlaybackState.skippedBatch.push(item);
+      return false;
+    }
+
+    continuousPlaybackState.waiting = true;
+    const preparePromise = preparePlaylistItemInBackground(item, sessionId);
+    const timeoutPromise = new Promise(resolve => {
+      setTimeout(() => resolve({ ready: false, timedOut: true }), 5000);
+    });
+    const result = await Promise.race([preparePromise, timeoutPromise]);
+    if (!isContinuousSessionActive(sessionId)) return false;
+    continuousPlaybackState.waiting = false;
+    if (result.ready) return true;
+
+    markPlaylistItemStatus(item, CONTINUOUS_STATUS.SKIPPED, '건너뜀');
+    continuousPlaybackState.skippedBatch.push(item);
+    return false;
+  }
+
+  function selectPlaylistItemForContinuous(index) {
+    suppressPlaylistSelectionLoad = true;
+    try {
+      return getPlaylistManager().selectItem(index);
+    } finally {
+      suppressPlaylistSelectionLoad = false;
+    }
+  }
+
+  async function loadContinuousPlaylistItem(item, sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return false;
+    const loaded = await loadVideoFromPlaylist(item, { preserveContinuousSession: true });
+    if (!isContinuousSessionActive(sessionId)) return false;
+    if (loaded === false) {
+      markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+      continuousPlaybackState.skippedBatch.push(item);
+      return false;
+    }
+    return true;
+  }
+
+  function waitForContinuousDelay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function waitForContinuousMediaReady(timeoutMs = 1200) {
+    const media = videoPlayer.videoElement;
+    if (!media) return Promise.resolve(false);
+    if (media.readyState >= 2) return Promise.resolve(true);
+
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        media.removeEventListener('canplay', onReady);
+        media.removeEventListener('loadeddata', onReady);
+        media.removeEventListener('error', onError);
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const onReady = () => finish(true);
+      const onError = () => finish(false);
+      const timer = setTimeout(() => finish(media.readyState >= 2), timeoutMs);
+
+      media.addEventListener('canplay', onReady, { once: true });
+      media.addEventListener('loadeddata', onReady, { once: true });
+      media.addEventListener('error', onError, { once: true });
+    });
+  }
+
+  function waitForContinuousPlaybackAdvance(sessionId, options = {}) {
+    const timeoutMs = options.timeoutMs || 1100;
+    const minDelta = options.minDelta || 0.03;
+    const media = videoPlayer.videoElement;
+    if (!media) return Promise.resolve(false);
+
+    const startTime = Number(media.currentTime || videoPlayer.currentTime) || 0;
+    const duration = Number(media.duration || videoPlayer.duration) || 0;
+    if (duration > 0 && duration - startTime <= 0.25) return Promise.resolve(true);
+
+    return new Promise(resolve => {
+      let settled = false;
+      const startedAt = performance.now();
+
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        media.removeEventListener('timeupdate', onProgress);
+        media.removeEventListener('ended', onEnded);
+        clearInterval(interval);
+        resolve(value);
+      };
+
+      const hasAdvanced = () => {
+        const currentTime = Number(media.currentTime || videoPlayer.currentTime) || 0;
+        return currentTime - startTime >= minDelta;
+      };
+
+      const onProgress = () => {
+        if (hasAdvanced()) finish(true);
+      };
+      const onEnded = () => finish(true);
+      const interval = setInterval(() => {
+        if (!isContinuousSessionActive(sessionId)) {
+          finish(false);
+          return;
+        }
+        if (hasAdvanced() || media.ended) {
+          finish(true);
+          return;
+        }
+        if (media.paused && !videoPlayer.isPlaying) {
+          finish(true);
+          return;
+        }
+        if (performance.now() - startedAt >= timeoutMs) {
+          finish(false);
+        }
+      }, 120);
+
+      media.addEventListener('timeupdate', onProgress);
+      media.addEventListener('ended', onEnded, { once: true });
+    });
+  }
+
+  async function playContinuousItemWithWatchdog(item, sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return false;
+
+    await waitForContinuousMediaReady();
+    if (!isContinuousSessionActive(sessionId)) return false;
+    const started = await videoPlayer.play();
+    if (!isContinuousSessionActive(sessionId)) return false;
+    if (!started && !videoPlayer.isPlaying) {
+      markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+      continuousPlaybackState.skippedBatch.push(item);
+      showToast('영상을 재생할 수 없어 다음 영상으로 넘어갑니다.', 'warning');
+      return false;
+    }
+
+    const advanced = await waitForContinuousPlaybackAdvance(sessionId);
+    if (!isContinuousSessionActive(sessionId)) return false;
+    if (advanced) return true;
+
+    log.warn('연속 재생이 멈춘 상태라 다시 시도합니다', { fileName: item?.fileName });
+    videoPlayer.pause();
+    await waitForContinuousDelay(80);
+    await waitForContinuousMediaReady();
+    if (!isContinuousSessionActive(sessionId)) return false;
+    const retryStarted = await videoPlayer.play();
+    if (!isContinuousSessionActive(sessionId)) return false;
+    if (!retryStarted && !videoPlayer.isPlaying) {
+      markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+      continuousPlaybackState.skippedBatch.push(item);
+      showToast('영상을 재생할 수 없어 다음 영상으로 넘어갑니다.', 'warning');
+      return false;
+    }
+
+    const retryAdvanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 1400 });
+    if (retryAdvanced) return true;
+
+    markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+    continuousPlaybackState.skippedBatch.push(item);
+    showToast('영상을 재생할 수 없어 다음 영상으로 넘어갑니다.', 'warning');
+    return false;
+  }
+
+  async function startContinuousPlayback() {
+    const playlistManager = getPlaylistManager();
+    if (!playlistManager.isActive() || playlistManager.isEmpty()) {
+      showToast('재생목록에 영상을 먼저 추가해주세요.', 'warning');
+      return;
+    }
+
+    continuousPlaybackState.sessionId += 1;
+    const sessionId = continuousPlaybackState.sessionId;
+    continuousPlaybackState.active = true;
+    continuousPlaybackState.waiting = false;
+    continuousPlaybackState.skippedBatch = [];
+    continuousPlaybackState.preparePromises.clear();
+    if (elements.btnPlaylistContinuousPlay) {
+      elements.btnPlaylistContinuousPlay.textContent = '전체 자동재생 중';
+    }
+
+    try {
+      const checked = await quickCheckPlaylistForContinuous(sessionId);
+      if (!isContinuousSessionActive(sessionId) || !checked) return;
+      const currentItem = playlistManager.getCurrentItem() || selectPlaylistItemForContinuous(0);
+      if (!isContinuousSessionActive(sessionId)) return;
+      if (!currentItem) {
+        stopContinuousPlayback();
+        return;
+      }
+
+      const ready = await waitForPreparedOrSkip(currentItem, sessionId);
+      if (!isContinuousSessionActive(sessionId)) return;
+      if (!ready) {
+        await playNextContinuousItem(sessionId);
+        return;
+      }
+
+      const alreadyLoaded = state.currentFile === currentItem.videoPath;
+      if (!alreadyLoaded) {
+        const loaded = await loadContinuousPlaylistItem(currentItem, sessionId);
+        if (!isContinuousSessionActive(sessionId)) return;
+        if (!loaded) {
+          await playNextContinuousItem(sessionId);
+          return;
+        }
+        videoPlayer.seekToFrame(0);
+      }
+      if (!isContinuousSessionActive(sessionId)) return;
+      prepareNextPlaylistItem(sessionId);
+      const started = await playContinuousItemWithWatchdog(currentItem, sessionId);
+      if (!isContinuousSessionActive(sessionId)) return;
+      if (!started) {
+        await playNextContinuousItem(sessionId);
+        return;
+      }
+    } catch (error) {
+      if (!isContinuousSessionActive(sessionId)) return;
+      log.warn('타임라인 이어붙이기 시작 실패', { error: error.message });
+      stopContinuousPlayback();
+      showToast('타임라인 이어붙이기를 시작할 수 없습니다.', 'error');
+    }
+  }
+
+  async function playNextContinuousItem(sessionId) {
+    if (!isContinuousSessionActive(sessionId)) return;
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems();
+    const settings = playlistManager.getContinuousSettings();
+    const nextIndex = findNextPlayableIndex(items, playlistManager.currentIndex, { loop: settings.loop });
+
+    if (nextIndex < 0) {
+      if (!isContinuousSessionActive(sessionId)) return;
+      flushSkippedToastBatch();
+      stopContinuousPlayback();
+      showToast('재생목록 재생 완료', 'success');
+      return;
+    }
+
+    const nextItem = selectPlaylistItemForContinuous(nextIndex);
+    if (!isContinuousSessionActive(sessionId)) return;
+    const ready = await waitForPreparedOrSkip(nextItem, sessionId);
+    if (!isContinuousSessionActive(sessionId)) return;
+    if (!ready) {
+      await playNextContinuousItem(sessionId);
+      return;
+    }
+
+    flushSkippedToastBatch();
+    const loaded = await loadContinuousPlaylistItem(nextItem, sessionId);
+    if (!isContinuousSessionActive(sessionId)) return;
+    if (!loaded) {
+      await playNextContinuousItem(sessionId);
+      return;
+    }
+    prepareNextPlaylistItem(sessionId);
+    const started = await playContinuousItemWithWatchdog(nextItem, sessionId);
+    if (!isContinuousSessionActive(sessionId)) return;
+    if (!started) {
+      await playNextContinuousItem(sessionId);
+      return;
+    }
+  }
+
+  function setPlaylistMode(mode) {
+    const nextMode = mode === 'continuous' ? 'continuous' : 'review';
+    playlistUIState.mode = nextMode;
+
+    elements.playlistTabReview?.classList.toggle('active', nextMode === 'review');
+    elements.playlistTabContinuous?.classList.toggle('active', nextMode === 'continuous');
+    elements.playlistTabReview?.setAttribute('aria-selected', String(nextMode === 'review'));
+    elements.playlistTabContinuous?.setAttribute('aria-selected', String(nextMode === 'continuous'));
+
+    if (elements.playlistContinuousTools) {
+      elements.playlistContinuousTools.hidden = nextMode !== 'continuous';
+    }
+    if (elements.playlistPrepareSummary) {
+      elements.playlistPrepareSummary.hidden = nextMode !== 'continuous';
+    }
+
+    if (nextMode === 'review') {
+      stopContinuousPlayback({ keepCurrentVideo: true });
+      playlistAggregateCommentRanges = [];
+      timeline.setPlaylistTimeline([], 0);
+      renderCommentRanges();
+      updateTimelineMarkers();
+      updateCommentList();
+    } else {
+      timeline.clearCommentMarkers();
+      updatePlaylistContinuousTimeline();
+    }
+  }
+
+  async function refreshPlaylistModifiedTimes() {
+    const playlistManager = getPlaylistManager();
+    const items = playlistManager.getItems();
+    for (const item of items) {
+      try {
+        const stats = await window.electronAPI.getFileStats(item.videoPath);
+        item.modifiedAtMs = Number(stats?.mtimeMs) || 0;
+      } catch (error) {
+        item.modifiedAtMs = 0;
+        log.warn('재생목록 수정 날짜 조회 실패', {
+          filePath: item.videoPath,
+          error: error?.message || error
+        });
+      }
+    }
+  }
+
+  function applyPlaylistSortPreservingSelection(sortMode) {
+    const playlistManager = getPlaylistManager();
+    const currentItemId = playlistManager.getCurrentItem()?.id || null;
+
+    playlistManager.setSortMode(sortMode);
+    if (currentItemId) {
+      suppressPlaylistSelectionLoad = true;
+      try {
+        playlistManager.selectItemById(currentItemId);
+      } finally {
+        suppressPlaylistSelectionLoad = false;
+      }
+    }
+  }
+
+  async function refreshModifiedSortIfActive() {
+    const playlistManager = getPlaylistManager();
+    const continuousSettings = playlistManager.getContinuousSettings();
+    if (
+      continuousSettings?.sortMode !== 'modifiedAt' ||
+      continuousSettings?.manualOrder === true
+    ) {
+      return;
+    }
+
+    await refreshPlaylistModifiedTimes();
+    const nextContinuousSettings = playlistManager.getContinuousSettings();
+    if (
+      nextContinuousSettings?.sortMode !== 'modifiedAt' ||
+      nextContinuousSettings?.manualOrder === true
+    ) {
+      return;
+    }
+
+    applyPlaylistSortPreservingSelection('modifiedAt');
+    updatePlaylistUI();
+    updatePlaylistContinuousTimeline();
+  }
+
   function initPlaylistFeature() {
     const playlistManager = getPlaylistManager();
 
     // 콜백 설정
     playlistManager.onPlaylistLoaded = async (playlist) => {
       log.info('재생목록 로드됨', { name: playlist.name });
+      await refreshModifiedSortIfActive();
       updatePlaylistUI();
 
       // 모든 아이템의 코덱을 확인하고 필요한 것들을 사전 변환
@@ -10010,6 +11047,7 @@ async function initApp() {
 
     playlistManager.onPlaylistModified = () => {
       updatePlaylistUI();
+      updatePlaylistContinuousTimeline();
       // 자동 저장 (딜레이)
       clearTimeout(playlistManager._autoSaveTimeout);
       playlistManager._autoSaveTimeout = setTimeout(async () => {
@@ -10037,9 +11075,16 @@ async function initApp() {
 
     playlistManager.onItemSelected = async (item, index) => {
       log.info('재생목록 아이템 선택', { index, fileName: item.fileName });
+      if (suppressPlaylistSelectionLoad) {
+        updatePlaylistCurrentItem();
+        updatePlaylistPosition();
+        return;
+      }
+
       await loadVideoFromPlaylist(item);
       updatePlaylistCurrentItem();
       updatePlaylistPosition();
+      updatePlaylistContinuousTimeline();
 
       // 다음 아이템 사전 변환 트리거
       preTranscodePlaylistItems();
@@ -10066,11 +11111,12 @@ async function initApp() {
         // 현재 아이템의 진행률 업데이트
         await updatePlaylistItemProgress(e.detail.path);
         await updatePlaylistProgress();
+        updatePlaylistContinuousTimeline();
       }
     });
 
     // 헤더 재생목록 버튼
-    elements.btnPlaylist?.addEventListener('click', () => {
+    elements.btnPlaylist?.addEventListener('click', async () => {
       if (elements.playlistSidebar.classList.contains('hidden')) {
         showPlaylistSidebar();
         if (!playlistManager.isActive()) {
@@ -10087,7 +11133,13 @@ async function initApp() {
             playlistManager.createNew();
             // 현재 영상이 있으면 추가 (state.currentFile은 문자열)
             if (state.currentFile) {
-              playlistManager.addItems([state.currentFile]).then(updatePlaylistUI);
+              try {
+                await playlistManager.addItems([state.currentFile]);
+                await refreshModifiedSortIfActive();
+                updatePlaylistUI();
+              } catch (error) {
+                showToast(error.message, 'error');
+              }
             }
           }
         }
@@ -10125,6 +11177,7 @@ async function initApp() {
       if (!result.canceled && result.filePaths.length > 0) {
         try {
           await playlistManager.addItems(result.filePaths);
+          await refreshModifiedSortIfActive();
           exitPlaylistAddMode();
           updatePlaylistUI();
           showToast(`${result.filePaths.length}개 파일이 추가되었습니다.`, 'success');
@@ -10177,6 +11230,40 @@ async function initApp() {
       playlistManager.setAutoPlay(e.target.checked);
     });
 
+    elements.playlistTabReview?.addEventListener('click', () => {
+      setPlaylistMode('review');
+    });
+
+    elements.playlistTabContinuous?.addEventListener('click', () => {
+      setPlaylistMode('continuous');
+    });
+
+    elements.playlistSortMode?.addEventListener('change', async (e) => {
+      const sortMode = e.target.value;
+      const sortChangeToken = ++playlistSortChangeToken;
+      if (sortMode === 'modifiedAt') {
+        await refreshPlaylistModifiedTimes();
+        if (
+          playlistSortChangeToken !== sortChangeToken ||
+          elements.playlistSortMode?.value !== sortMode
+        ) {
+          return;
+        }
+      }
+
+      applyPlaylistSortPreservingSelection(sortMode);
+      updatePlaylistUI();
+      updatePlaylistContinuousTimeline();
+    });
+
+    elements.playlistContinuousLoop?.addEventListener('change', (e) => {
+      playlistManager.setContinuousLoop(e.target.checked);
+    });
+
+    elements.btnPlaylistContinuousPlay?.addEventListener('click', () => {
+      startContinuousPlayback();
+    });
+
     // 드래그 앤 드롭 - 파일 추가
     initPlaylistDragDrop();
 
@@ -10215,37 +11302,8 @@ async function initApp() {
     window.electronAPI.onOpenPlaylist?.(async (path) => {
       log.info('재생목록 링크로 열기', { path });
 
-      // baeframe:// URL이면 파일 경로로 변환
-      let filePath = path;
-      if (path && path.startsWith('baeframe://')) {
-        // baeframe:// 제거
-        filePath = path.replace(/^baeframe:\/\//, '');
-
-        // URL 디코딩 (한글 등)
-        try {
-          filePath = decodeURIComponent(filePath);
-        } catch (e) {
-          log.warn('URL 디코딩 실패', e);
-        }
-
-        // G/ → G:/ 변환 (AHK가 Slack file:/// 방지를 위해 콜론 제거)
-        if (/^[A-Za-z]\//.test(filePath)) {
-          filePath = filePath[0] + ':' + filePath.slice(1);
-        }
-
-        // 슬래시 → 백슬래시 (Windows)
-        filePath = filePath.replace(/\//g, '\\');
-
-        log.info('URL 변환 완료', { original: path, converted: filePath });
-      }
-
       try {
-        await playlistManager.open(filePath);
-        showPlaylistSidebar();
-        // 첫 번째 아이템 자동 로드
-        if (playlistManager.getItemCount() > 0) {
-          playlistManager.selectItem(0);
-        }
+        await openPlaylistFile(path);
       } catch (error) {
         showToast(`재생목록을 열 수 없습니다: ${error.message}`, 'error');
       }
@@ -10253,7 +11311,7 @@ async function initApp() {
   }
 
   // 재생목록에서 영상 로드
-  async function loadVideoFromPlaylist(item) {
+  async function loadVideoFromPlaylist(item, options = {}) {
     // 파일 존재 확인
     const exists = await window.electronAPI.fileExists(item.videoPath);
     if (!exists) {
@@ -10268,8 +11326,8 @@ async function initApp() {
     }
 
     // 새 영상 로드
-    await loadVideo(item.videoPath);
-    return true;
+    const loaded = await loadVideo(item.videoPath, options);
+    return loaded === true;
   }
 
   // 사이드바 표시
@@ -10333,6 +11391,16 @@ async function initApp() {
         elements.playlistAutoPlay.checked = playlistManager.getAutoPlay();
       }
 
+      const continuousSettings = playlistManager.getContinuousSettings?.();
+      if (continuousSettings) {
+        if (elements.playlistSortMode) {
+          elements.playlistSortMode.value = continuousSettings.sortMode;
+        }
+        if (elements.playlistContinuousLoop) {
+          elements.playlistContinuousLoop.checked = continuousSettings.loop;
+        }
+      }
+
       // 아이템 렌더링
       await renderPlaylistItems();
 
@@ -10341,6 +11409,8 @@ async function initApp() {
 
       // 전체 진행률 업데이트
       await updatePlaylistProgress();
+
+      updatePlaylistPrepareSummary();
     } finally {
       isUpdatingPlaylistUI = false;
     }
@@ -10371,6 +11441,9 @@ async function initApp() {
       el.className = 'playlist-item' + (i === playlistManager.currentIndex ? ' active' : '');
       el.dataset.id = item.id;
       el.dataset.index = i;
+      if (item.continuousStatus) {
+        el.dataset.continuousStatus = item.continuousStatus;
+      }
       el.draggable = true;
 
       // 썸네일: 파일 경로 또는 Data URL 지원
@@ -10411,6 +11484,7 @@ async function initApp() {
               </div>
               ${progress.total > 0 ? `${progress.percent}%` : '-'}
             </span>
+            <span class="playlist-item-continuous-status">${item.continuousMessage || ''}</span>
           </div>
         </div>
         <button class="playlist-item-remove" title="제거">
@@ -10583,6 +11657,7 @@ async function initApp() {
 
         try {
           const added = await playlistManager.addItems(videoPaths);
+          await refreshModifiedSortIfActive();
           if (added.length > 0) {
             showToast(`${added.length}개 파일이 추가되었습니다.`, 'success');
           }
@@ -10638,6 +11713,7 @@ async function initApp() {
 
         try {
           const added = await playlistManager.addItems(videoPaths);
+          await refreshModifiedSortIfActive();
           if (added.length > 0) {
             showToast(`${added.length}개 파일이 추가되었습니다.`, 'success');
           }

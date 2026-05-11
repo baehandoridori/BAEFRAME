@@ -14,6 +14,11 @@
     "test:recent": "node --test scripts/tests/recent-files-store.test.js",
     "test:frame-grid": "node --test scripts/tests/frame-grid-tiers.test.js",
     "test:cluster": "node --test scripts/tests/comment-cluster.test.js",
+    "test:playlist-ordering": "node --test scripts/tests/playlist-ordering.test.js",
+    "test:playlist-continuous": "node --test scripts/tests/playlist-continuous-core.test.js",
+    "test:playlist-comments": "node --test scripts/tests/playlist-comment-index.test.js",
+    "test:playlist": "node --test scripts/tests/playlist-ordering.test.js scripts/tests/playlist-continuous-core.test.js scripts/tests/playlist-continuous-runtime.test.js scripts/tests/playlist-comment-index.test.js",
+    "test:toast-stack": "node --test scripts/tests/toast-stack-core.test.js",
     "bundle:liveblocks": "esbuild ./node_modules/@liveblocks/client/dist/index.js --bundle --format=esm --outfile=renderer/scripts/lib/liveblocks-client.js",
     "postinstall": "npm run bundle:liveblocks"
   },

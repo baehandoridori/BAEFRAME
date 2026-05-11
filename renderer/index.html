@@ -202,6 +202,32 @@
         <span class="playlist-progress-text" id="playlistProgressText">0/0 완료</span>
       </div>
 
+      <div class="playlist-mode-tabs" role="tablist" aria-label="재생목록 모드">
+        <button class="playlist-mode-tab active" id="playlistTabReview" type="button" role="tab" aria-selected="true">개별영상 모드</button>
+        <button class="playlist-mode-tab" id="playlistTabContinuous" type="button" role="tab" aria-selected="false">타임라인 이어붙이기 모드</button>
+      </div>
+
+      <div class="playlist-continuous-tools" id="playlistContinuousTools" hidden>
+        <label class="playlist-sort-control">
+          <span>정렬</span>
+          <select id="playlistSortMode">
+            <option value="fileName">파일명순</option>
+            <option value="addedAt">추가한 순서</option>
+            <option value="modifiedAt">수정한 날짜순</option>
+          </select>
+        </label>
+        <label class="playlist-loop-toggle">
+          <input type="checkbox" id="playlistContinuousLoop">
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">반복</span>
+        </label>
+        <button class="playlist-continuous-play" id="btnPlaylistContinuousPlay" type="button" title="재생목록 전체를 현재 순서대로 자동 재생">전체 자동재생</button>
+      </div>
+
+      <div class="playlist-prepare-summary" id="playlistPrepareSummary" hidden>
+        <span id="playlistPrepareSummaryText">0/0개 준비됨</span>
+      </div>
+
       <div class="playlist-controls">
         <button class="playlist-nav-btn" id="btnPlaylistPrev" title="이전 영상 (Ctrl+←)">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -219,7 +245,7 @@
         <label class="playlist-autoplay-toggle">
           <input type="checkbox" id="playlistAutoPlay">
           <span class="toggle-slider"></span>
-          <span class="toggle-label">자동 재생</span>
+          <span class="toggle-label">자동 넘어가기</span>
         </label>
       </div>
 

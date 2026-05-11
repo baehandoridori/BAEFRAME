@@ -4133,6 +4133,38 @@ body.app-fullscreen .video-comment-overlay-controls {
   background: var(--accent-glow);
 }
 
+.playlist-aggregate-comment {
+  padding-top: 12px;
+}
+
+.playlist-comment-time-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.playlist-comment-global-time,
+.playlist-comment-local-time,
+.playlist-comment-source,
+.playlist-comment-reply-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.playlist-comment-source {
+  margin-left: auto;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlist-comment-readonly-actions {
+  gap: 8px;
+}
+
 .comment-item.glow {
   animation: commentGlow 2.5s ease-out;
 }
@@ -4791,6 +4823,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   width: min(356px, calc(100vw - 32px));
   max-height: calc(100vh - 104px);
   overflow: hidden;
+  overscroll-behavior: contain;
   /* 기본 위치 - JS _applyToastPosition에서 동적 오버라이드 */
   top: 52px;
   left: 0;
@@ -5049,6 +5082,9 @@ body.app-fullscreen .video-comment-overlay-controls {
 /* 호버 시 토스트 펼치기 */
 .toast-container:hover {
   pointer-events: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
 }
 
 .toast-container:hover .toast.toast-stacked {
@@ -5062,6 +5098,8 @@ body.app-fullscreen .video-comment-overlay-controls {
 .toast-container:hover .toast.toast-hidden {
   height: auto;
   padding: 14px 40px 14px 44px;
+  width: 100%;
+  max-width: 100%;
   margin-top: 6px;
   border: 1px solid var(--glass-border-bright);
   overflow: hidden;

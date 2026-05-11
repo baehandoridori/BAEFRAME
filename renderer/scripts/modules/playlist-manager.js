@@ -5,6 +5,13 @@
  */
 
 import { createLogger } from '../logger.js';
+import {
+  PLAYLIST_SORT_MODES,
+  normalizePlaylistSettings,
+  normalizeItemOrders,
+  sortPlaylistItems,
+  appendSortedNewItems
+} from './playlist-ordering.js';
 
 const log = createLogger('PlaylistManager');
 
@@ -57,6 +64,10 @@ function isMediaFile(filePath) {
   return SUPPORTED_MEDIA_EXTENSIONS.includes(ext);
 }
 
+function normalizeMediaPath(filePath) {
+  return String(filePath || '').replace(/\\/g, '/').toLowerCase();
+}
+
 /**
  * 비디오 파일 확인
  */
@@ -82,7 +93,12 @@ function createDefaultPlaylistData(options = {}) {
     items: [],
     settings: {
       autoPlay: false,
-      floatingMode: false
+      floatingMode: false,
+      continuous: {
+        loop: false,
+        sortMode: 'fileName',
+        manualOrder: false
+      }
     }
   };
 }
@@ -99,7 +115,8 @@ function createPlaylistItem(videoPath, bframePath = '') {
     fileName: fileName,
     thumbnailPath: '',
     order: 0,
-    addedAt: new Date().toISOString()
+    addedAt: new Date().toISOString(),
+    modifiedAtMs: 0
   };
 }
 
@@ -157,6 +174,7 @@ export class PlaylistManager {
       userName: window.appState?.userName || '',
       userId: window.appState?.sessionId || ''
     });
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
     this.playlistPath = null;
     this.currentIndex = -1;
     this.isModified = true;
@@ -188,14 +206,16 @@ export class PlaylistManager {
       }
 
       this.currentPlaylist = data;
+      this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+      this.currentPlaylist.items = normalizeItemOrders(this.currentPlaylist.items);
       this.playlistPath = filePath;
-      this.currentIndex = data.items.length > 0 ? 0 : -1;
+      this.currentIndex = this.currentPlaylist.items.length > 0 ? 0 : -1;
       this.isModified = false;
 
       // 썸네일 경로 검증 및 재생성
       await this._validateThumbnails();
 
-      this.onPlaylistLoaded?.(this.currentPlaylist);
+      await this.onPlaylistLoaded?.(this.currentPlaylist);
       log.info('재생목록 로드 완료', {
         name: data.name,
         itemCount: data.items.length
@@ -310,6 +330,10 @@ export class PlaylistManager {
 
     const pathsToAdd = filePaths.slice(0, availableSlots);
     const addedItems = [];
+    const createdItems = [];
+    const knownPaths = new Set(
+      this.currentPlaylist.items.map(item => normalizeMediaPath(item.videoPath))
+    );
 
     log.info('아이템 추가 시작', { count: pathsToAdd.length });
 
@@ -321,7 +345,8 @@ export class PlaylistManager {
       }
 
       // 중복 확인
-      if (this._isDuplicate(filePath)) {
+      const normalizedPath = normalizeMediaPath(filePath);
+      if (knownPaths.has(normalizedPath)) {
         log.warn('중복 파일', { filePath });
         continue;
       }
@@ -333,11 +358,22 @@ export class PlaylistManager {
       const thumbnailPath = await this._tryGenerateThumbnail(filePath);
 
       const item = createPlaylistItem(filePath, bframePath);
-      item.order = this.currentPlaylist.items.length;
       item.thumbnailPath = thumbnailPath;
+      createdItems.push(item);
+      knownPaths.add(normalizedPath);
+    }
 
-      this.currentPlaylist.items.push(item);
-      addedItems.push(item);
+    if (createdItems.length > 0) {
+      const settings = this.getContinuousSettings();
+      const currentItemId = this.getCurrentItem()?.id || null;
+      this.currentPlaylist.items = settings.manualOrder
+        ? appendSortedNewItems(this.currentPlaylist.items, createdItems)
+        : sortPlaylistItems(
+          [...this.currentPlaylist.items, ...createdItems],
+          settings.sortMode || PLAYLIST_SORT_MODES.FILE_NAME
+        );
+      this._restoreCurrentIndex(currentItemId);
+      addedItems.push(...createdItems);
     }
 
     if (addedItems.length > 0) {
@@ -410,6 +446,8 @@ export class PlaylistManager {
     items.forEach((item, i) => {
       item.order = i;
     });
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+    this.currentPlaylist.settings.continuous.manualOrder = true;
 
     // 현재 인덱스 조정
     if (this.currentIndex === fromIndex) {
@@ -577,6 +615,7 @@ export class PlaylistManager {
 
   setAutoPlay(enabled) {
     if (this.currentPlaylist) {
+      this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
       this.currentPlaylist.settings.autoPlay = enabled;
       this.isModified = true;
     }
@@ -588,9 +627,39 @@ export class PlaylistManager {
 
   setFloatingMode(enabled) {
     if (this.currentPlaylist) {
+      this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
       this.currentPlaylist.settings.floatingMode = enabled;
       this.isModified = true;
     }
+  }
+
+  getContinuousSettings() {
+    if (!this.currentPlaylist) {
+      return normalizePlaylistSettings({ settings: {} }).continuous;
+    }
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+    return this.currentPlaylist.settings.continuous;
+  }
+
+  setContinuousLoop(enabled) {
+    if (!this.currentPlaylist) return;
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+    this.currentPlaylist.settings.continuous.loop = enabled === true;
+    this.isModified = true;
+    this.onPlaylistModified?.();
+  }
+
+  setSortMode(sortMode) {
+    if (!this.currentPlaylist) return;
+    if (!Object.values(PLAYLIST_SORT_MODES).includes(sortMode)) return;
+    this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
+    this.currentPlaylist.settings.continuous.sortMode = sortMode;
+    this.currentPlaylist.settings.continuous.manualOrder = false;
+    const currentItemId = this.getCurrentItem()?.id || null;
+    this.currentPlaylist.items = sortPlaylistItems(this.currentPlaylist.items, sortMode);
+    this._restoreCurrentIndex(currentItemId);
+    this.isModified = true;
+    this.onPlaylistModified?.();
   }
 
   setName(name) {
@@ -612,11 +681,30 @@ export class PlaylistManager {
   _isDuplicate(videoPath) {
     if (!this.currentPlaylist) return false;
     // 경로 정규화하여 비교 (대소문자, 슬래시 통일)
-    const normalizedPath = videoPath.replace(/\\/g, '/').toLowerCase();
+    const normalizedPath = normalizeMediaPath(videoPath);
     return this.currentPlaylist.items.some(item => {
-      const itemPath = item.videoPath.replace(/\\/g, '/').toLowerCase();
+      const itemPath = normalizeMediaPath(item.videoPath);
       return itemPath === normalizedPath;
     });
+  }
+
+  _restoreCurrentIndex(currentItemId) {
+    if (!this.currentPlaylist || this.currentPlaylist.items.length === 0) {
+      this.currentIndex = -1;
+      return;
+    }
+
+    if (currentItemId) {
+      const nextIndex = this.currentPlaylist.items.findIndex(item => item.id === currentItemId);
+      if (nextIndex !== -1) {
+        this.currentIndex = nextIndex;
+        return;
+      }
+    }
+
+    if (this.currentIndex >= 0) {
+      this.currentIndex = Math.min(this.currentIndex, this.currentPlaylist.items.length - 1);
+    }
   }
 
   async _findBframePath(videoPath) {
@@ -845,11 +933,11 @@ export class PlaylistManager {
   // ========================================
 
   isActive() {
-    return this.currentPlaylist !== null;
+    return !!this.currentPlaylist;
   }
 
   isEmpty() {
-    return !this.currentPlaylist || this.currentPlaylist.items.length === 0;
+    return this.getItemCount() === 0;
   }
 
   getItemCount() {
