@@ -4,10 +4,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '../..');
-const appSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8');
-const timelineSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/timeline.js'), 'utf8');
-const ffmpegManagerSource = fs.readFileSync(path.join(rootDir, 'main/ffmpeg-manager.js'), 'utf8');
-const playlistCss = fs.readFileSync(path.join(rootDir, 'renderer/styles/playlist-panel.css'), 'utf8');
+const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
+const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8'));
+const timelineSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/timeline.js'), 'utf8'));
+const ffmpegManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ffmpeg-manager.js'), 'utf8'));
+const playlistCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/playlist-panel.css'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
 test('continuous runtime imports the shared helper module', () => {
@@ -156,7 +157,7 @@ test('continuous playback verifies that native playback actually advances', () =
 });
 
 test('continuous mode labels distinguish mode tabs from full autoplay', () => {
-  const indexSource = fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8');
+  const indexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8'));
   assert.match(indexSource, /id="playlistTabReview"[\s\S]*?>개별영상 모드<\/button>/);
   assert.match(indexSource, /id="playlistTabContinuous"[\s\S]*?>타임라인 이어붙이기 모드<\/button>/);
   assert.match(indexSource, /id="btnPlaylistContinuousPlay"[\s\S]*?>전체 자동재생<\/button>/);
