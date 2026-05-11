@@ -184,7 +184,9 @@ export class UserSettings extends EventTarget {
       // 협업 플렉서스 패널 표시 여부
       showPlexusPanel: true,
       // 타임라인 프레임 격자 표시 여부
-      showFrameGrid: true
+      showFrameGrid: true,
+      // 100% 이하 줌에서 영상을 중앙에 고정할지 여부
+      videoCenterLocked: true
     };
 
     this._ready = false;
@@ -560,6 +562,17 @@ export class UserSettings extends EventTarget {
     // 향후 외부에서 설정 변경을 감지해야 할 경우를 위한 hook
     this._emit('showFrameGridChanged', { show: this.settings.showFrameGrid });
     log.info('프레임 격자 설정 변경됨', { show });
+  }
+
+  getVideoCenterLocked() {
+    return this.settings.videoCenterLocked !== false;
+  }
+
+  setVideoCenterLocked(locked) {
+    this.settings.videoCenterLocked = !!locked;
+    this._save();
+    this._emit('videoCenterLockedChanged', { locked: this.settings.videoCenterLocked });
+    log.info('비디오 중앙 고정 설정 변경됨', { locked: this.settings.videoCenterLocked });
   }
 
   getLightMode() {

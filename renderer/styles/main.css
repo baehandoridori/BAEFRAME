@@ -5221,6 +5221,12 @@ body.resizing .comment-panel {
   border-color: var(--border-default);
 }
 
+.video-zoom-btn.active {
+  background: var(--accent-glow);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
 .video-zoom-btn:active {
   transform: scale(0.95);
 }
