@@ -128,6 +128,40 @@ test('continuous playback verifies that native playback actually advances', () =
   assert.match(appSource, /const started = await playContinuousItemWithWatchdog\(nextItem, sessionId\);[\s\S]+if \(!started\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
 });
 
+test('continuous mode labels distinguish mode tabs from full autoplay', () => {
+  const indexSource = fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8');
+  assert.match(indexSource, /id="playlistTabReview"[\s\S]*?>개별영상 모드<\/button>/);
+  assert.match(indexSource, /id="playlistTabContinuous"[\s\S]*?>타임라인 이어붙이기 모드<\/button>/);
+  assert.match(indexSource, /id="btnPlaylistContinuousPlay"[\s\S]*?>전체 자동재생<\/button>/);
+  assert.match(appSource, /elements\.btnPlaylistContinuousPlay\.textContent = '전체 자동재생';/);
+  assert.match(appSource, /elements\.btnPlaylistContinuousPlay\.textContent = '전체 자동재생 중';/);
+});
+
+test('prepared continuous items skip redundant preparation checks at cut boundaries', () => {
+  assert.match(appSource, /if \(item\?\.continuousStatus === CONTINUOUS_STATUS\.READY\) \{[\s\S]+return true;[\s\S]+\}/);
+  assert.match(appSource, /if \(item\.continuousStatus === CONTINUOUS_STATUS\.READY\) \{[\s\S]+return \{ ready: true, cached: true \};[\s\S]+\}/);
+});
+
+test('continuous playback starts next-item preparation before playback watchdog waits', () => {
+  const startMatch = appSource.match(/async function startContinuousPlayback\(\) \{([\s\S]*?)\n  \}\n\n  async function playNextContinuousItem/);
+  assert.ok(startMatch, 'startContinuousPlayback should exist');
+  const startSource = startMatch[1];
+  assert.ok(
+    startSource.indexOf('prepareNextPlaylistItem(sessionId);') <
+      startSource.indexOf('const started = await playContinuousItemWithWatchdog(currentItem, sessionId);'),
+    'next item preparation should begin before playback watchdog waits'
+  );
+
+  const nextMatch = appSource.match(/async function playNextContinuousItem\(sessionId\) \{([\s\S]*?)\n  \}\n\n  function setPlaylistMode/);
+  assert.ok(nextMatch, 'playNextContinuousItem should exist');
+  const nextSource = nextMatch[1];
+  assert.ok(
+    nextSource.indexOf('prepareNextPlaylistItem(sessionId);') <
+      nextSource.indexOf('const started = await playContinuousItemWithWatchdog(nextItem, sessionId);'),
+    'following item preparation should begin before playback watchdog waits'
+  );
+});
+
 test('continuous video loads preserve aggregate timeline comment ranges', () => {
   const helperMatch = appSource.match(/async function refreshCommentRangesForCurrentMode\(\) \{([\s\S]*?)\n  \}/);
   assert.ok(helperMatch, 'current-mode comment range refresher should exist');

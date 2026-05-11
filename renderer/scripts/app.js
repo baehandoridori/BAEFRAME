@@ -10429,7 +10429,7 @@ async function initApp() {
     continuousPlaybackState.skippedBatch = [];
     continuousPlaybackState.preparePromises.clear();
     if (elements.btnPlaylistContinuousPlay) {
-      elements.btnPlaylistContinuousPlay.textContent = '타임라인 이어붙이기';
+      elements.btnPlaylistContinuousPlay.textContent = '전체 자동재생';
     }
   }
 
@@ -10586,6 +10586,10 @@ async function initApp() {
       return existingPrepare.promise;
     }
 
+    if (item.continuousStatus === CONTINUOUS_STATUS.READY) {
+      return { ready: true, cached: true };
+    }
+
     if ([
       CONTINUOUS_STATUS.MISSING,
       CONTINUOUS_STATUS.SKIPPED,
@@ -10662,6 +10666,9 @@ async function initApp() {
 
   async function waitForPreparedOrSkip(item, sessionId) {
     if (!isContinuousSessionActive(sessionId)) return false;
+    if (item?.continuousStatus === CONTINUOUS_STATUS.READY) {
+      return true;
+    }
     if ([
       CONTINUOUS_STATUS.MISSING,
       CONTINUOUS_STATUS.SKIPPED,
@@ -10848,7 +10855,7 @@ async function initApp() {
     continuousPlaybackState.skippedBatch = [];
     continuousPlaybackState.preparePromises.clear();
     if (elements.btnPlaylistContinuousPlay) {
-      elements.btnPlaylistContinuousPlay.textContent = '이어붙이는 중';
+      elements.btnPlaylistContinuousPlay.textContent = '전체 자동재생 중';
     }
 
     try {
@@ -10879,13 +10886,13 @@ async function initApp() {
         videoPlayer.seekToFrame(0);
       }
       if (!isContinuousSessionActive(sessionId)) return;
+      prepareNextPlaylistItem(sessionId);
       const started = await playContinuousItemWithWatchdog(currentItem, sessionId);
       if (!isContinuousSessionActive(sessionId)) return;
       if (!started) {
         await playNextContinuousItem(sessionId);
         return;
       }
-      prepareNextPlaylistItem(sessionId);
     } catch (error) {
       if (!isContinuousSessionActive(sessionId)) return;
       log.warn('타임라인 이어붙이기 시작 실패', { error: error.message });
@@ -10925,13 +10932,13 @@ async function initApp() {
       await playNextContinuousItem(sessionId);
       return;
     }
+    prepareNextPlaylistItem(sessionId);
     const started = await playContinuousItemWithWatchdog(nextItem, sessionId);
     if (!isContinuousSessionActive(sessionId)) return;
     if (!started) {
       await playNextContinuousItem(sessionId);
       return;
     }
-    prepareNextPlaylistItem(sessionId);
   }
 
   function setPlaylistMode(mode) {

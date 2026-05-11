@@ -57,7 +57,9 @@ export function extractPlaylistCommentRanges(options) {
   const allowedAuthorIds = options.allowedAuthorIds;
   if (!segment) return [];
 
-  const fps = Number(bframeData.fps) || Number(segment.fps) || 24;
+  const segmentFps = Number(segment.fps);
+  const bframeFps = Number(bframeData.fps);
+  const fallbackFps = Number.isFinite(bframeFps) && bframeFps > 0 ? bframeFps : 24;
   const layers = Array.isArray(bframeData.comments?.layers) ? bframeData.comments.layers : [];
   const ranges = [];
   const cutLabel = getPlaylistCutLabel(segment);
@@ -73,6 +75,10 @@ export function extractPlaylistCommentRanges(options) {
       const authorId = marker.authorId || marker.author || 'unknown';
       if (allowedAuthorIds && !allowedAuthorIds.has(authorId)) continue;
 
+      const markerFps = Number(marker.fps);
+      const fps = Number.isFinite(segmentFps) && segmentFps > 0
+        ? segmentFps
+        : (Number.isFinite(markerFps) && markerFps > 0 ? markerFps : fallbackFps);
       const startFrame = Number(marker.startFrame) || 0;
       const endFrame = Number(marker.endFrame) || startFrame;
       const startTime = startFrame / fps;
