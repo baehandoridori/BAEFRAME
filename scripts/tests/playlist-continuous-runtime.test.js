@@ -80,6 +80,33 @@ test('aggregate comment range rendering keeps the comment track header in sync',
   assert.match(renderSource, /this\.commentLayerHeader\.style\.display = 'flex';/);
 });
 
+test('continuous mode hides single-video vertical comment markers', () => {
+  const markerStart = appSource.indexOf('function updateTimelineMarkers()');
+  const markerEndMatch = appSource.slice(markerStart).match(/\r?\n  \/\*\*\r?\n   \* 댓글 목록 업데이트/);
+  assert.notEqual(markerStart, -1, 'updateTimelineMarkers should exist');
+  assert.ok(markerEndMatch, 'updateTimelineMarkers boundary should exist');
+  const markerEnd = markerStart + markerEndMatch.index;
+  const markerUpdateSource = appSource.slice(markerStart, markerEnd);
+  assert.match(markerUpdateSource, /playlistUIState\.mode === 'continuous'/);
+  assert.match(markerUpdateSource, /timeline\.clearCommentMarkers\(\);[\s\S]+return;/);
+  assert.ok(
+    markerUpdateSource.indexOf('timeline.clearCommentMarkers();') <
+      markerUpdateSource.indexOf('timeline.renderClusteredCommentMarkers(allMarkerData);'),
+    'continuous guard should run before single-video marker rendering'
+  );
+
+  const modeStart = appSource.indexOf('function setPlaylistMode(mode)');
+  const modeEnd = appSource.indexOf('  async function refreshPlaylistModifiedTimes', modeStart);
+  assert.notEqual(modeStart, -1, 'setPlaylistMode should exist');
+  assert.notEqual(modeEnd, -1, 'setPlaylistMode boundary should exist');
+  const modeSource = appSource.slice(modeStart, modeEnd);
+  const continuousBranchIndex = modeSource.indexOf("nextMode === 'review'");
+  const continuousClearIndex = modeSource.indexOf('timeline.clearCommentMarkers();', continuousBranchIndex);
+  const continuousUpdateIndex = modeSource.indexOf('updatePlaylistContinuousTimeline();', continuousBranchIndex);
+  assert.ok(continuousClearIndex !== -1, 'continuous mode should clear existing single-video markers');
+  assert.ok(continuousClearIndex < continuousUpdateIndex, 'single-video markers should clear before aggregate timeline renders');
+});
+
 test('timeline wheel zoom anchors to the cursor position', () => {
   assert.match(timelineSource, /getTimelineFocalContentX[\s\S]+calculateAnchoredScrollLeft[\s\S]+from '\.\/timeline-zoom-core\.js'/);
 

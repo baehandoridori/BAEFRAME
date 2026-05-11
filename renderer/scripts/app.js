@@ -5223,6 +5223,11 @@ async function initApp() {
    * 클러스터링 기반 렌더링 - 줌 레벨에 따라 가까운 마커 그룹화
    */
   function updateTimelineMarkers() {
+    if (playlistUIState.mode === 'continuous') {
+      timeline.clearCommentMarkers();
+      return;
+    }
+
     const ranges = commentManager.getMarkerRanges();
     const fps = videoPlayer.fps || 24;
 
@@ -10510,6 +10515,7 @@ async function initApp() {
 
   async function updatePlaylistContinuousTimeline() {
     if (playlistUIState.mode !== 'continuous') return;
+    timeline.clearCommentMarkers();
     const updateToken = ++playlistTimelineUpdateToken;
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
@@ -10962,8 +10968,10 @@ async function initApp() {
       playlistAggregateCommentRanges = [];
       timeline.setPlaylistTimeline([], 0);
       renderCommentRanges();
+      updateTimelineMarkers();
       updateCommentList();
     } else {
+      timeline.clearCommentMarkers();
       updatePlaylistContinuousTimeline();
     }
   }
