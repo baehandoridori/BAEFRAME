@@ -26,6 +26,7 @@ export class AudioWaveform extends EventTarget {
     this.ctx = null;
     this.overlayCanvas = null;
     this.overlayCtx = null;
+    this.hitArea = null;
 
     // 오디오 데이터
     this.waveformData = null; // Main Process에서 생성된 웨이브폼 데이터
@@ -88,6 +89,9 @@ export class AudioWaveform extends EventTarget {
     this.overlayCanvas.className = 'audio-waveform-overlay';
     this.overlayCtx = this.overlayCanvas.getContext('2d');
 
+    this.hitArea = document.createElement('div');
+    this.hitArea.className = 'audio-waveform-hit-area';
+
     // 시간 표시 엘리먼트
     this._timeDisplay = document.createElement('div');
     this._timeDisplay.className = 'audio-waveform-time';
@@ -102,15 +106,16 @@ export class AudioWaveform extends EventTarget {
 
     container.appendChild(this.canvas);
     container.appendChild(this.overlayCanvas);
+    container.appendChild(this.hitArea);
     container.appendChild(this._timeDisplay);
     container.appendChild(this._hoverLabel);
     container.appendChild(this._zoomIndicator);
 
     // 이벤트 리스너
-    this.overlayCanvas.addEventListener('mousedown', this._onMouseDown);
-    this.overlayCanvas.addEventListener('mousemove', this._onMouseMove);
-    this.overlayCanvas.addEventListener('mouseleave', this._onMouseLeave);
-    this.overlayCanvas.addEventListener('wheel', this._onWheel, { passive: false });
+    this.hitArea.addEventListener('mousedown', this._onMouseDown);
+    this.hitArea.addEventListener('mousemove', this._onMouseMove);
+    this.hitArea.addEventListener('mouseleave', this._onMouseLeave);
+    this.hitArea.addEventListener('wheel', this._onWheel, { passive: false });
     window.addEventListener('mouseup', this._onMouseUp);
     window.addEventListener('resize', this._onResize);
 
@@ -124,11 +129,11 @@ export class AudioWaveform extends EventTarget {
   unmount() {
     this.stopAnimation();
 
-    if (this.overlayCanvas) {
-      this.overlayCanvas.removeEventListener('mousedown', this._onMouseDown);
-      this.overlayCanvas.removeEventListener('mousemove', this._onMouseMove);
-      this.overlayCanvas.removeEventListener('mouseleave', this._onMouseLeave);
-      this.overlayCanvas.removeEventListener('wheel', this._onWheel);
+    if (this.hitArea) {
+      this.hitArea.removeEventListener('mousedown', this._onMouseDown);
+      this.hitArea.removeEventListener('mousemove', this._onMouseMove);
+      this.hitArea.removeEventListener('mouseleave', this._onMouseLeave);
+      this.hitArea.removeEventListener('wheel', this._onWheel);
     }
     window.removeEventListener('mouseup', this._onMouseUp);
     window.removeEventListener('resize', this._onResize);
@@ -141,6 +146,7 @@ export class AudioWaveform extends EventTarget {
     this.ctx = null;
     this.overlayCanvas = null;
     this.overlayCtx = null;
+    this.hitArea = null;
     this._timeDisplay = null;
     this._hoverLabel = null;
     this.waveformData = null;
@@ -705,13 +711,14 @@ export class AudioWaveform extends EventTarget {
 
     this._isDragging = true;
     this._seekFromEvent(e);
-    this.overlayCanvas.style.cursor = 'grabbing';
+    this.hitArea.style.cursor = 'grabbing';
   }
 
   _onMouseMove(e) {
     if (!this.waveformData || this.duration <= 0) return;
 
-    const rect = this.overlayCanvas.getBoundingClientRect();
+    const rect = this._getInteractionRect();
+    if (!rect || rect.width <= 0) return;
     const x = e.clientX - rect.left;
 
     // 줌/스크롤 반영
@@ -738,8 +745,8 @@ export class AudioWaveform extends EventTarget {
   _onMouseUp() {
     if (this._isDragging) {
       this._isDragging = false;
-      if (this.overlayCanvas) {
-        this.overlayCanvas.style.cursor = '';
+      if (this.hitArea) {
+        this.hitArea.style.cursor = '';
       }
     }
   }
@@ -752,7 +759,8 @@ export class AudioWaveform extends EventTarget {
   }
 
   _seekFromEvent(e) {
-    const rect = this.overlayCanvas.getBoundingClientRect();
+    const rect = this._getInteractionRect();
+    if (!rect || rect.width <= 0) return;
     const x = e.clientX - rect.left;
 
     // 줌/스크롤 반영: 화면 x → 전체 비율
@@ -775,7 +783,8 @@ export class AudioWaveform extends EventTarget {
     if (!this.waveformData || this.duration <= 0) return;
     e.preventDefault();
 
-    const rect = this.overlayCanvas.getBoundingClientRect();
+    const rect = this._getInteractionRect();
+    if (!rect || rect.width <= 0) return;
     const mouseX = e.clientX - rect.left;
     const mouseRatio = mouseX / rect.width; // 마우스가 보이는 영역의 어디인지 (0~1)
 
@@ -838,6 +847,10 @@ export class AudioWaveform extends EventTarget {
     this.canvas.height = rect.height;
     this.overlayCanvas.width = rect.width;
     this.overlayCanvas.height = rect.height;
+  }
+
+  _getInteractionRect() {
+    return (this.hitArea || this.overlayCanvas)?.getBoundingClientRect() || null;
   }
 
   // ====== 유틸리티 ======
@@ -904,9 +917,9 @@ export class AudioWaveform extends EventTarget {
     const hue2rgb = (p, q, t) => {
       if (t < 0) t += 1;
       if (t > 1) t -= 1;
-      if (t < 1/6) return p + (q - p) * 6 * t;
-      if (t < 1/2) return q;
-      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
       return p;
     };
 
@@ -915,9 +928,9 @@ export class AudioWaveform extends EventTarget {
     } else {
       const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
       const p = 2 * l - q;
-      r = hue2rgb(p, q, h + 1/3);
+      r = hue2rgb(p, q, h + 1 / 3);
       g = hue2rgb(p, q, h);
-      b = hue2rgb(p, q, h - 1/3);
+      b = hue2rgb(p, q, h - 1 / 3);
     }
 
     return '#' +
