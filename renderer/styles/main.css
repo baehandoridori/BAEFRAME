@@ -9805,7 +9805,8 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   right: 0;
   bottom: 0;
   z-index: 5;
-  cursor: pointer;
+  cursor: default;
+  pointer-events: none;
 }
 
 .audio-waveform-container.active {
@@ -9848,15 +9849,31 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
 
 .audio-waveform-overlay {
   z-index: 2;
+  pointer-events: none;
+}
+
+.audio-waveform-hit-area {
+  position: absolute;
+  top: 30%;
+  left: 0;
+  width: 100%;
+  height: 52%;
+  z-index: 4;
+  pointer-events: auto;
   cursor: pointer;
 }
 
-.audio-waveform-overlay:hover {
+.audio-waveform-hit-area:hover {
   cursor: grab;
 }
 
-.audio-waveform-overlay:active {
+.audio-waveform-hit-area:active {
   cursor: grabbing;
+}
+
+.video-wrapper.comment-mode .audio-waveform-hit-area {
+  pointer-events: none;
+  cursor: crosshair;
 }
 
 .audio-waveform-time {
