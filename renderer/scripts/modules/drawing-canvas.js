@@ -4,6 +4,7 @@
  */
 
 import { createLogger } from '../logger.js';
+import { ERASER_MODES, normalizeEraserMode } from './drawing-stroke-records.js';
 
 const log = createLogger('DrawingCanvas');
 
@@ -32,6 +33,9 @@ export class DrawingCanvas extends EventTarget {
 
     // 그리기 설정
     this.tool = DrawingTool.PEN;
+    this.activeTool = DrawingTool.PEN;
+    this.eraserMode = ERASER_MODES.PIXEL;
+    this.activeEraserMode = ERASER_MODES.PIXEL;
     this.color = '#ff4757';
     this.lineWidth = 3;
     this.opacity = 1;
@@ -124,7 +128,13 @@ export class DrawingCanvas extends EventTarget {
   _onMouseDown(e) {
     if (!this.canvas.classList.contains('active')) return;
 
+    if (e.ctrlKey) {
+      e.preventDefault?.();
+    }
+
     const coords = this._getCanvasCoords(e);
+    this.activeTool = this._resolveEffectiveTool(e);
+    this.activeEraserMode = this.eraserMode;
     this.isDrawing = true;
     this.lastX = coords.x;
     this.lastY = coords.y;
@@ -135,16 +145,20 @@ export class DrawingCanvas extends EventTarget {
     this.currentStrokePath = [{ x: coords.x, y: coords.y }];
 
     // 도형 도구 또는 외곽선 활성화 시 현재 상태 백업
-    if (this._isShapeTool() || (this.strokeEnabled && this._isFreeDrawTool())) {
+    if (this._isShapeTool(this.activeTool) || (this.strokeEnabled && this._isFreeDrawTool(this.activeTool))) {
       this.backupImageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
     }
 
     // 그리기 시작 이벤트 발생
-    this._emit('drawstart', { x: coords.x, y: coords.y, tool: this.tool });
+    this._emit('drawstart', this._createDrawEventDetail({
+      x: coords.x,
+      y: coords.y,
+      ctrlKey: e.ctrlKey === true
+    }));
 
     // 펜/브러시는 점 찍기
-    if (this._isFreeDrawTool()) {
-      this._drawPoint(coords.x, coords.y);
+    if (this._isFreeDrawTool(this.activeTool) && !this._isStrokeEraserActive()) {
+      this._drawPoint(coords.x, coords.y, this.activeTool);
     }
   }
 
@@ -155,23 +169,32 @@ export class DrawingCanvas extends EventTarget {
     if (!this.isDrawing) return;
 
     const coords = this._getCanvasCoords(e);
+    this.currentStrokePath.push({ x: coords.x, y: coords.y });
 
     // 실시간 스트로크 포인트 이벤트 (협업 스트리밍용)
-    this._emit('drawmove', { x: coords.x, y: coords.y, tool: this.tool });
+    this._emit('drawmove', this._createDrawEventDetail({
+      x: coords.x,
+      y: coords.y,
+      ctrlKey: e.ctrlKey === true
+    }));
 
-    if (this._isShapeTool()) {
+    if (this._isStrokeEraserActive()) {
+      this.lastX = coords.x;
+      this.lastY = coords.y;
+      return;
+    }
+
+    if (this._isShapeTool(this.activeTool)) {
       // 도형 도구: 실시간 미리보기
       this._drawShapePreview(coords.x, coords.y);
-    } else if (this._isFreeDrawTool()) {
+    } else if (this._isFreeDrawTool(this.activeTool)) {
       // 펜/브러시/지우개: 자유 그리기
-      this.currentStrokePath.push({ x: coords.x, y: coords.y });
-
-      if (this.strokeEnabled && this.tool !== DrawingTool.ERASER) {
+      if (this.strokeEnabled && this.activeTool !== DrawingTool.ERASER) {
         // 외곽선 모드: 전체 경로를 다시 그리기
-        this._drawStrokeWithOutline();
+        this._drawStrokeWithOutline(this.activeTool);
       } else {
         // 일반 모드: 세그먼트 그리기
-        this._drawLine(this.lastX, this.lastY, coords.x, coords.y);
+        this._drawLine(this.lastX, this.lastY, coords.x, coords.y, this.activeTool);
       }
 
       this.lastX = coords.x;
@@ -188,7 +211,7 @@ export class DrawingCanvas extends EventTarget {
     this.isDrawing = false;
 
     // 도형 도구일 경우 최종 그리기
-    if (this._isShapeTool() && e.type !== 'mouseleave') {
+    if (this._isShapeTool(this.activeTool) && e.type !== 'mouseleave') {
       const coords = this._getCanvasCoords(e);
       this._drawShapeFinal(coords.x, coords.y);
     }
@@ -197,7 +220,11 @@ export class DrawingCanvas extends EventTarget {
     this.backupImageData = null;
 
     // 그리기 완료 이벤트 발생
-    this._emit('drawend', { tool: this.tool });
+    this._emit('drawend', this._createDrawEventDetail({
+      ctrlKey: e.ctrlKey === true
+    }));
+    this.activeTool = this.tool;
+    this.activeEraserMode = this.eraserMode;
   }
 
   /**
@@ -229,21 +256,53 @@ export class DrawingCanvas extends EventTarget {
   /**
    * 도형 도구인지 확인
    */
-  _isShapeTool() {
-    return [DrawingTool.LINE, DrawingTool.ARROW, DrawingTool.RECT, DrawingTool.CIRCLE].includes(this.tool);
+  _isShapeTool(tool = this._getActiveTool()) {
+    return [DrawingTool.LINE, DrawingTool.ARROW, DrawingTool.RECT, DrawingTool.CIRCLE].includes(tool);
   }
 
   /**
    * 자유 그리기 도구인지 확인
    */
-  _isFreeDrawTool() {
-    return [DrawingTool.PEN, DrawingTool.BRUSH, DrawingTool.ERASER].includes(this.tool);
+  _isFreeDrawTool(tool = this._getActiveTool()) {
+    return [DrawingTool.PEN, DrawingTool.BRUSH, DrawingTool.ERASER].includes(tool);
+  }
+
+  _getActiveTool() {
+    return this.activeTool || this.tool;
+  }
+
+  _resolveEffectiveTool(e) {
+    if ((this.tool === DrawingTool.PEN || this.tool === DrawingTool.BRUSH) && e?.ctrlKey) {
+      return DrawingTool.ERASER;
+    }
+    return this.tool;
+  }
+
+  _isStrokeEraserActive() {
+    return this._getActiveTool() === DrawingTool.ERASER && this.activeEraserMode === ERASER_MODES.STROKE;
+  }
+
+  _createDrawEventDetail(extra = {}) {
+    return {
+      tool: this._getActiveTool(),
+      originalTool: this.tool,
+      effectiveTool: this.activeTool,
+      eraserMode: this.activeEraserMode,
+      points: this.currentStrokePath.map(point => ({ ...point })),
+      color: this.color,
+      lineWidth: this.lineWidth,
+      opacity: this.opacity,
+      strokeEnabled: this.strokeEnabled,
+      strokeWidth: this.strokeWidth,
+      strokeColor: this.strokeColor,
+      ...extra
+    };
   }
 
   /**
    * 외곽선과 함께 전체 스트로크 그리기
    */
-  _drawStrokeWithOutline() {
+  _drawStrokeWithOutline(tool = this._getActiveTool()) {
     if (!this.backupImageData || this.currentStrokePath.length < 1) return;
 
     // 백업에서 복원
@@ -254,8 +313,8 @@ export class DrawingCanvas extends EventTarget {
     this.ctx.save();
 
     // 1. 외곽선 먼저 그리기
-    this.ctx.lineCap = this.tool === DrawingTool.BRUSH ? 'square' : 'round';
-    this.ctx.lineJoin = this.tool === DrawingTool.BRUSH ? 'miter' : 'round';
+    this.ctx.lineCap = tool === DrawingTool.BRUSH ? 'square' : 'round';
+    this.ctx.lineJoin = tool === DrawingTool.BRUSH ? 'miter' : 'round';
     this.ctx.lineWidth = this.lineWidth + (this.strokeWidth * 2);
     this.ctx.globalAlpha = this.opacity;
     this.ctx.strokeStyle = this.strokeColor;
@@ -264,7 +323,7 @@ export class DrawingCanvas extends EventTarget {
       // 점 하나
       this.ctx.fillStyle = this.strokeColor;
       this.ctx.beginPath();
-      if (this.tool === DrawingTool.BRUSH) {
+      if (tool === DrawingTool.BRUSH) {
         const size = (this.lineWidth / 2) + this.strokeWidth;
         this.ctx.rect(path[0].x - size, path[0].y - size, size * 2, size * 2);
       } else {
@@ -282,8 +341,8 @@ export class DrawingCanvas extends EventTarget {
     }
 
     // 2. 메인 색상 그리기
-    this.ctx.lineCap = this.tool === DrawingTool.BRUSH ? 'square' : 'round';
-    this.ctx.lineJoin = this.tool === DrawingTool.BRUSH ? 'miter' : 'round';
+    this.ctx.lineCap = tool === DrawingTool.BRUSH ? 'square' : 'round';
+    this.ctx.lineJoin = tool === DrawingTool.BRUSH ? 'miter' : 'round';
     this.ctx.lineWidth = this.lineWidth;
     this.ctx.strokeStyle = this.color;
     this.ctx.fillStyle = this.color;
@@ -291,7 +350,7 @@ export class DrawingCanvas extends EventTarget {
     if (path.length === 1) {
       // 점 하나
       this.ctx.beginPath();
-      if (this.tool === DrawingTool.BRUSH) {
+      if (tool === DrawingTool.BRUSH) {
         const size = this.lineWidth / 2;
         this.ctx.rect(path[0].x - size, path[0].y - size, size * 2, size * 2);
       } else {
@@ -314,12 +373,12 @@ export class DrawingCanvas extends EventTarget {
   /**
    * 점 그리기
    */
-  _drawPoint(x, y) {
+  _drawPoint(x, y, tool = this._getActiveTool()) {
     this.ctx.save();
-    const isSquare = this.tool === DrawingTool.BRUSH;
+    const isSquare = tool === DrawingTool.BRUSH;
 
     // 외곽선 먼저 그리기 (지우개가 아니고 외곽선이 활성화된 경우)
-    if (this.strokeEnabled && this.tool !== DrawingTool.ERASER) {
+    if (this.strokeEnabled && tool !== DrawingTool.ERASER) {
       this.ctx.globalAlpha = this.opacity;
       this.ctx.fillStyle = this.strokeColor;
       this.ctx.beginPath();
@@ -333,7 +392,7 @@ export class DrawingCanvas extends EventTarget {
     }
 
     // 메인 색상
-    this._setupContext();
+    this._setupContext(tool);
     this.ctx.beginPath();
     if (isSquare) {
       const size = this.lineWidth / 2;
@@ -349,16 +408,16 @@ export class DrawingCanvas extends EventTarget {
   /**
    * 선 그리기
    */
-  _drawLine(x1, y1, x2, y2) {
+  _drawLine(x1, y1, x2, y2, tool = this._getActiveTool()) {
     this.ctx.save();
-    const isSquare = this.tool === DrawingTool.BRUSH;
+    const isSquare = tool === DrawingTool.BRUSH;
 
     // 외곽선 먼저 그리기 (지우개가 아니고 외곽선이 활성화된 경우)
     // 참고: 세그먼트별 외곽선은 끊김 문제가 있어서, 외곽선 모드는 _drawStrokeWithOutline에서 처리
     // 이 코드는 외곽선 비활성화 시에만 사용됨
 
     // 메인 색상
-    this._setupContext();
+    this._setupContext(tool);
     this.ctx.lineCap = isSquare ? 'square' : 'round';
     this.ctx.lineJoin = isSquare ? 'miter' : 'round';
     this.ctx.beginPath();
@@ -372,13 +431,13 @@ export class DrawingCanvas extends EventTarget {
   /**
    * 컨텍스트 설정
    */
-  _setupContext() {
+  _setupContext(tool = this._getActiveTool()) {
     this.ctx.lineCap = 'round';
     this.ctx.lineJoin = 'round';
     this.ctx.lineWidth = this.lineWidth;
     this.ctx.globalAlpha = this.opacity;
 
-    if (this.tool === DrawingTool.ERASER) {
+    if (tool === DrawingTool.ERASER) {
       this.ctx.globalCompositeOperation = 'destination-out';
       this.ctx.strokeStyle = 'rgba(0,0,0,1)';
       this.ctx.fillStyle = 'rgba(0,0,0,1)';
@@ -420,9 +479,9 @@ export class DrawingCanvas extends EventTarget {
    */
   _drawShape(x1, y1, x2, y2, isFinal) {
     this.ctx.save();
-    this._setupContext();
+    this._setupContext(this.activeTool);
 
-    switch (this.tool) {
+    switch (this.activeTool) {
     case DrawingTool.LINE:
       this.ctx.beginPath();
       this.ctx.moveTo(x1, y1);
@@ -528,6 +587,84 @@ export class DrawingCanvas extends EventTarget {
   }
 
   /**
+   * base64 이미지 데이터를 현재 캔버스에 그리기
+   */
+  drawImageDataUrl(imageData) {
+    return new Promise((resolve) => {
+      if (!imageData || typeof imageData !== 'string') {
+        resolve(false);
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        this.ctx.drawImage(img, 0, 0);
+        resolve(true);
+      };
+      img.onerror = () => {
+        log.warn('이미지 데이터 그리기 실패');
+        resolve(false);
+      };
+      img.src = imageData;
+    });
+  }
+
+  /**
+   * 저장된 펜/브러시 획을 다시 그리기
+   */
+  drawStrokeRecord(record) {
+    const points = Array.isArray(record?.points) ? record.points : [];
+    if (points.length === 0) return;
+
+    const tool = record.tool || DrawingTool.PEN;
+    const lineWidth = Math.max(1, Number(record.lineWidth) || this.lineWidth);
+    const opacity = Number.isFinite(Number(record.opacity)) ? Number(record.opacity) : 1;
+    const color = record.color || this.color;
+    const strokeEnabled = record.strokeEnabled === true;
+    const strokeWidth = Math.max(0, Number(record.strokeWidth) || 0);
+    const strokeColor = record.strokeColor || this.strokeColor;
+    const isSquare = tool === DrawingTool.BRUSH;
+
+    const drawPath = (style, width) => {
+      this.ctx.lineCap = isSquare ? 'square' : 'round';
+      this.ctx.lineJoin = isSquare ? 'miter' : 'round';
+      this.ctx.lineWidth = width;
+      this.ctx.strokeStyle = style;
+      this.ctx.fillStyle = style;
+
+      if (points.length === 1) {
+        const size = width / 2;
+        this.ctx.beginPath();
+        if (isSquare) {
+          this.ctx.rect(points[0].x - size, points[0].y - size, size * 2, size * 2);
+        } else {
+          this.ctx.arc(points[0].x, points[0].y, size, 0, Math.PI * 2);
+        }
+        this.ctx.fill();
+        return;
+      }
+
+      this.ctx.beginPath();
+      this.ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        this.ctx.lineTo(points[i].x, points[i].y);
+      }
+      this.ctx.stroke();
+    };
+
+    this.ctx.save();
+    this.ctx.globalCompositeOperation = 'source-over';
+    this.ctx.globalAlpha = opacity;
+
+    if (strokeEnabled && strokeWidth > 0) {
+      drawPath(strokeColor, lineWidth + (strokeWidth * 2));
+    }
+    drawPath(color, lineWidth);
+
+    this.ctx.restore();
+  }
+
+  /**
    * 캔버스가 비어있는지 확인
    */
   isEmpty() {
@@ -546,7 +683,21 @@ export class DrawingCanvas extends EventTarget {
    */
   setTool(tool) {
     this.tool = tool;
+    if (!this.isDrawing) {
+      this.activeTool = tool;
+    }
     log.debug('도구 변경', { tool });
+  }
+
+  /**
+   * 지우개 방식 설정
+   */
+  setEraserMode(mode) {
+    this.eraserMode = normalizeEraserMode(mode);
+    if (!this.isDrawing) {
+      this.activeEraserMode = this.eraserMode;
+    }
+    log.debug('지우개 방식 변경', { eraserMode: this.eraserMode });
   }
 
   /**

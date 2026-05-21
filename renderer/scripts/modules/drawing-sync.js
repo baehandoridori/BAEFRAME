@@ -106,9 +106,13 @@ export class DrawingSync {
     if (this._isRemoteUpdate) return;
     if (!this._lm.hasOtherCollaborators()) return;
 
-    const { x, y, tool } = e.detail || {};
+    const { x, y, tool, eraserMode } = e.detail || {};
     const layer = this._dm.getActiveLayer?.() || this._dm.activeLayer;
     if (!layer) return;
+    if (tool === 'eraser' && eraserMode === 'stroke') {
+      this._isStroking = false;
+      return;
+    }
 
     const canvas = this._dm.drawingCanvas;
     this._isStroking = true;
@@ -198,7 +202,9 @@ export class DrawingSync {
       type: 'DRAWING_KEYFRAME_UPDATE',
       layerId: layer.id,
       frame: keyframe.frame,
-      canvasData: sendData
+      canvasData: sendData,
+      baseCanvasData: keyframe.baseCanvasData,
+      strokeRecords: keyframe.strokeRecords
     });
 
     log.debug('그리기 브로드캐스트 전송', {
@@ -287,7 +293,7 @@ export class DrawingSync {
   }
 
   async _applyRemoteKeyframe(event) {
-    const { layerId, frame, canvasData } = event;
+    const { layerId, frame, canvasData, baseCanvasData, strokeRecords } = event;
     if (!layerId || frame === undefined || !canvasData) return;
 
     this._isRemoteUpdate = true;
@@ -313,6 +319,8 @@ export class DrawingSync {
 
       if (keyframe) {
         keyframe.setCanvasData?.(canvasData) || (keyframe.canvasData = canvasData);
+        keyframe.baseCanvasData = baseCanvasData || null;
+        keyframe.strokeRecords = Array.isArray(strokeRecords) ? strokeRecords : [];
         keyframe._cachedImage = null;
         keyframe._cachedSrc = null;
         keyframe.isEmpty = false;

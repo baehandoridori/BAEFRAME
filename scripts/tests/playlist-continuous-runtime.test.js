@@ -156,14 +156,14 @@ test('continuous playback verifies that native playback actually advances', () =
   assert.match(appSource, /const started = await playContinuousItemWithWatchdog\(nextItem, sessionId\);[\s\S]+if \(!started\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
 });
 
-test('continuous mode labels distinguish mode tabs from full autoplay', () => {
+test('continuous mode keeps timeline tools separate from autoplay control', () => {
   const indexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8'));
   assert.match(indexSource, /id="playlistTabReview"[\s\S]*?>개별영상 모드<\/button>/);
   assert.match(indexSource, /id="playlistTabContinuous"[\s\S]*?>타임라인 이어붙이기 모드<\/button>/);
-  assert.match(indexSource, /id="btnPlaylistContinuousPlay"[\s\S]*?>전체 자동재생<\/button>/);
-  assert.match(indexSource, /id="playlistAutoPlay"[\s\S]*?<span class="toggle-label">자동 넘어가기<\/span>/);
-  assert.match(appSource, /elements\.btnPlaylistContinuousPlay\.textContent = '전체 자동재생';/);
-  assert.match(appSource, /elements\.btnPlaylistContinuousPlay\.textContent = '전체 자동재생 중';/);
+  assert.doesNotMatch(indexSource, /id="btnPlaylistContinuousPlay"/);
+  assert.doesNotMatch(indexSource, /전체 자동재생/);
+  assert.match(indexSource, /id="playlistAutoPlay"[\s\S]*?<span class="toggle-label">자동 재생<\/span>/);
+  assert.doesNotMatch(appSource, /btnPlaylistContinuousPlay/);
 });
 
 test('prepared continuous items skip redundant preparation checks at cut boundaries', () => {
@@ -229,7 +229,7 @@ test('continuous selection does not auto-load before preparation finishes', () =
 });
 
 test('ended event routes active continuous playback before normal autoplay', () => {
-  assert.match(appSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+playNextContinuousItem\(continuousPlaybackState\.sessionId\);[\s\S]+return;[\s\S]+if \(playlistManager\.isActive\(\) && playlistManager\.getAutoPlay\(\)/);
+  assert.match(appSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+playNextContinuousItem\(continuousPlaybackState\.sessionId\);[\s\S]+return;[\s\S]+if \(playlistManager\.isActive\(\) && userSettings\.getPlaylistAutoPlay\(\)/);
 });
 
 test('manual video loads cancel active continuous playback and stale loads', () => {
@@ -264,7 +264,7 @@ test('continuous async flows are guarded by a session id', () => {
   assert.match(appSource, /sessionId:\s*0/);
   assert.match(appSource, /continuousPlaybackState\.sessionId \+= 1;/);
   assert.match(appSource, /function isContinuousSessionActive\(sessionId\)/);
-  assert.match(appSource, /async function quickCheckPlaylistForContinuous\(sessionId\)/);
+  assert.match(appSource, /async function quickCheckPlaylistForContinuous\(sessionId, itemsToCheck = null\)/);
   assert.match(appSource, /async function waitForPreparedOrSkip\(item, sessionId\)/);
   assert.match(appSource, /async function startContinuousPlayback\(\)[\s\S]+const sessionId = continuousPlaybackState\.sessionId;/);
   assert.match(appSource, /async function playNextContinuousItem\(sessionId\)/);
@@ -279,7 +279,7 @@ test('continuous preparation promises are scoped to the active session', () => {
 });
 
 test('continuous preflight handles per-item fileExists failures', () => {
-  const preflightMatch = appSource.match(/async function quickCheckPlaylistForContinuous\(sessionId\) \{([\s\S]*?)\n  \}/);
+  const preflightMatch = appSource.match(/async function quickCheckPlaylistForContinuous\(sessionId, itemsToCheck = null\) \{([\s\S]*?)\n  \}/);
   assert.ok(preflightMatch, 'quick preflight function should exist');
 
   const preflightSource = preflightMatch[1];
@@ -287,6 +287,24 @@ test('continuous preflight handles per-item fileExists failures', () => {
   assert.match(preflightSource, /catch \(error\) \{/);
   assert.match(preflightSource, /CONTINUOUS_STATUS\.ERROR/);
   assert.match(preflightSource, /continue;/);
+});
+
+test('continuous playback only checks the current item before first play', () => {
+  const startMatch = appSource.match(/async function startContinuousPlayback\(\) \{([\s\S]*?)\n  \}\n\n  async function playNextContinuousItem/);
+  assert.ok(startMatch, 'startContinuousPlayback should exist');
+  const startSource = startMatch[1];
+
+  assert.doesNotMatch(startSource, /const checked = await quickCheckPlaylistForContinuous\(sessionId\);/);
+  assert.ok(
+    startSource.indexOf('const currentItem = playlistManager.getCurrentItem() || selectPlaylistItemForContinuous(0);') <
+      startSource.indexOf('const checked = await quickCheckPlaylistForContinuous(sessionId, [currentItem]);'),
+    'current item should be selected before the preflight check'
+  );
+  assert.ok(
+    startSource.indexOf('void quickCheckPlaylistForContinuous(') >
+      startSource.indexOf('const checked = await quickCheckPlaylistForContinuous(sessionId, [currentItem]);'),
+    'remaining playlist file checks should be moved to the background'
+  );
 });
 
 test('continuous playback skips item when playlist load fails', () => {
@@ -447,6 +465,15 @@ test('pre-transcode joins an existing pending transcode instead of marking it fa
   const preTranscodeSource = preTranscodeMatch[1];
   assert.match(preTranscodeSource, /if \(this\.pendingTranscodes\.has\(filePath\)\) \{[\s\S]+return this\.pendingTranscodes\.get\(filePath\);[\s\S]+\}/);
   assert.doesNotMatch(preTranscodeSource, /already-in-progress/);
+});
+
+test('ffmpeg detection checks the main checkout when running from a git worktree', () => {
+  assert.match(ffmpegManagerSource, /const appRoot = path\.join\(__dirname, '\.\.'\);/);
+  assert.match(ffmpegManagerSource, /_getGitCommonWorktreeRoot\(appRoot\)/);
+  assert.match(ffmpegManagerSource, /path\.join\(gitCommonRoot, 'ffmpeg', 'win32'\)/);
+  assert.match(ffmpegManagerSource, /path\.join\(gitCommonRoot, 'ffmpeg'\)/);
+  assert.match(ffmpegManagerSource, /readFileSync\(gitPath, 'utf8'\)/);
+  assert.match(ffmpegManagerSource, /gitdir:/);
 });
 
 test('playlist test script includes continuous runtime coverage', () => {

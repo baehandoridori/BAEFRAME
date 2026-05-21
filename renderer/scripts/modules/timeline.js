@@ -229,23 +229,21 @@ export class Timeline extends EventTarget {
         return;
       }
 
-      // 빈 영역 또는 비디오 트랙에서 마우스 다운 시 패닝 모드 (기본 동작)
-      if (e.target === this.tracksContainer ||
-          e.target.classList.contains('track-row') ||
-          e.target.classList.contains('frame-grid-container') ||
-          e.target.classList.contains('track-clip')) {
+      if (this._shouldStartTimelineLasso(e)) {
+        e.preventDefault();
+        this._startSelection(e);
+        return;
+      }
+
+      // 비디오 트랙에서만 홀드 드래그 패닝
+      if (this._shouldStartTimelinePan(e)) {
         this.isPanning = true;
         this.panStartX = e.clientX;
-        this.panScrollLeft = this.timelineTracks.scrollLeft;
+        this.panScrollLeft = this.timelineTracks?.scrollLeft || 0;
         this.tracksContainer.classList.add('panning');
         e.preventDefault();
       }
     });
-
-    // 트랙 영역 기본 커서를 grab으로 설정
-    if (this.tracksContainer) {
-      this.tracksContainer.style.cursor = 'grab';
-    }
 
     // 전역 마우스 이벤트 (드래그용)
     document.addEventListener('mousemove', (e) => {
@@ -1199,8 +1197,8 @@ export class Timeline extends EventTarget {
     const isSelected = this.selectedKeyframes.some(
       kf => kf.layerId === layerId && kf.frame === frame
     );
-    if (!isSelected) {
-      this.selectedKeyframes = [{ layerId, frame }];
+    if (!isSelected && !e.ctrlKey && !e.metaKey) {
+      this._selectKeyframe(layerId, frame, false);
     }
 
     // 고스트 요소 생성
@@ -1334,16 +1332,15 @@ export class Timeline extends EventTarget {
       }
     } else {
       // 일반 클릭: 단독 선택
-      if (index !== -1 && this.selectedKeyframes.length === 1) {
-        // 이미 단독 선택된 상태면 선택 해제
-        this.selectedKeyframes = [];
-      } else {
-        this.selectedKeyframes = [{ layerId, frame }];
-      }
+      this.selectedKeyframes = [{ layerId, frame }];
     }
 
     this._emit('keyframeSelectionChanged', { selected: this.selectedKeyframes });
     this._updateKeyframeSelectionUI();
+  }
+
+  _selectKeyframe(layerId, frame, addToSelection) {
+    this._toggleKeyframeSelection(layerId, frame, addToSelection);
   }
 
   /**
@@ -1354,6 +1351,9 @@ export class Timeline extends EventTarget {
     this.tracksContainer?.querySelectorAll('.drawing-clip').forEach(clip => {
       clip.classList.remove('selected');
     });
+    this.tracksContainer?.querySelectorAll('.keyframe-marker-dot, .keyframe-marker').forEach(marker => {
+      marker.classList.remove('selected');
+    });
 
     // 선택된 키프레임에 selected 클래스 추가
     this.selectedKeyframes.forEach(kf => {
@@ -1363,7 +1363,54 @@ export class Timeline extends EventTarget {
       if (clip) {
         clip.classList.add('selected');
       }
+      const marker = this.tracksContainer?.querySelector(
+        `.keyframe-marker-dot[data-layer-id="${kf.layerId}"][data-frame="${kf.frame}"], .keyframe-marker[data-layer-id="${kf.layerId}"][data-frame="${kf.frame}"]`
+      );
+      if (marker) {
+        marker.classList.add('selected');
+      }
     });
+  }
+
+  _shouldStartTimelinePan(e) {
+    if (e.button !== 0) return false;
+    return Boolean(e.target?.closest?.('.video-track-row, .track-clip.video'));
+  }
+
+  _shouldStartTimelineLasso(e) {
+    if (e.button !== 0 || !this.tracksContainer) return false;
+    if (this._shouldStartTimelinePan(e)) return false;
+
+    const target = e.target;
+    if (!target?.closest || !this.tracksContainer.contains(target)) return false;
+
+    const blockedTarget = target.closest([
+      '.keyframe-marker',
+      '.keyframe-marker-dot',
+      '.playlist-segment-boundary',
+      '.playlist-segment-block',
+      '.playlist-comment-range',
+      '.comment-range-item',
+      '.comment-cluster-badge',
+      '.comment-cluster-close-badge',
+      '.highlight-range',
+      '.highlight-handle',
+      'button',
+      'input',
+      'select',
+      'textarea',
+      '[data-action]'
+    ].join(', '));
+    if (blockedTarget) return false;
+
+    return target === this.tracksContainer || Boolean(target.closest([
+      '.track-row',
+      '.drawing-track-row',
+      '.frame-grid-container',
+      '.keyframe-container',
+      '.keyframe-range-bar',
+      '.drawing-clip'
+    ].join(', ')));
   }
 
   /**
@@ -1374,7 +1421,7 @@ export class Timeline extends EventTarget {
 
     this.isSelecting = true;
     const containerRect = this.tracksContainer.getBoundingClientRect();
-    this.selectionStartX = e.clientX - containerRect.left + this.timelineTracks.scrollLeft;
+    this.selectionStartX = e.clientX - containerRect.left;
     this.selectionStartY = e.clientY - containerRect.top;
 
     // 선택 박스 생성
@@ -1397,7 +1444,7 @@ export class Timeline extends EventTarget {
     if (!this.selectionBox || !this.tracksContainer) return;
 
     const containerRect = this.tracksContainer.getBoundingClientRect();
-    const currentX = e.clientX - containerRect.left + this.timelineTracks.scrollLeft;
+    const currentX = e.clientX - containerRect.left;
     const currentY = e.clientY - containerRect.top;
 
     const left = Math.min(this.selectionStartX, currentX);
@@ -1420,7 +1467,7 @@ export class Timeline extends EventTarget {
     const boxRect = this.selectionBox.getBoundingClientRect();
 
     // 선택 박스 내의 키프레임 마커 찾기
-    this.tracksContainer?.querySelectorAll('.keyframe-marker').forEach(marker => {
+    this.tracksContainer?.querySelectorAll('.keyframe-marker, .keyframe-marker-dot').forEach(marker => {
       const markerRect = marker.getBoundingClientRect();
 
       // 마커가 선택 박스 안에 있는지 확인
@@ -1452,6 +1499,7 @@ export class Timeline extends EventTarget {
    */
   clearSelection() {
     this.selectedKeyframes = [];
+    this._emit('keyframeSelectionChanged', { selected: this.selectedKeyframes });
     this._updateKeyframeSelectionUI();
   }
 
@@ -1926,12 +1974,50 @@ export class Timeline extends EventTarget {
 
   _renderPlaylistSegments() {
     if (!this.tracksContainer) return;
-    this.tracksContainer.querySelectorAll('.playlist-segment-boundary').forEach(el => el.remove());
+    this.tracksContainer.querySelectorAll('.playlist-segment-boundary, .playlist-segment-block').forEach(el => el.remove());
+    const videoTrackRow = this.tracksContainer.querySelector('.video-track-row');
     const duration = this.playlistDuration || this.duration;
-    if (!duration) return;
+    const hasSegments = Boolean(duration && this.playlistSegments?.length);
+    if (videoTrackRow) {
+      videoTrackRow.classList.toggle('has-playlist-segments', hasSegments);
+    }
+    if (!hasSegments) return;
 
     for (const segment of this.playlistSegments || []) {
       const left = (segment.startTime / duration) * 100;
+      const width = Math.max(0.25, ((segment.endTime - segment.startTime) / duration) * 100);
+      if (videoTrackRow) {
+        const block = document.createElement('button');
+        block.type = 'button';
+        block.className = 'playlist-segment-block';
+        block.style.left = `${left}%`;
+        block.style.width = `${width}%`;
+        block.title = `${segment.fileName} ${this._formatTime(segment.startTime)} - ${this._formatTime(segment.endTime)}`;
+        block.dataset.itemId = segment.itemId;
+        block.dataset.startTime = String(segment.startTime);
+
+        const label = document.createElement('span');
+        label.className = 'playlist-segment-block-label';
+        label.textContent = segment.fileName || `컷 ${segment.index + 1}`;
+        block.appendChild(label);
+
+        let pointerDown = null;
+        block.addEventListener('mousedown', (e) => {
+          pointerDown = { x: e.clientX, y: e.clientY };
+        });
+        block.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const moved = pointerDown
+            ? Math.abs(e.clientX - pointerDown.x) + Math.abs(e.clientY - pointerDown.y) > 4
+            : false;
+          pointerDown = null;
+          if (moved) return;
+          const time = Number(block.dataset.startTime) || 0;
+          this._emit('seek', { time, itemId: segment.itemId });
+        });
+        videoTrackRow.appendChild(block);
+      }
+
       const boundary = document.createElement('button');
       boundary.type = 'button';
       boundary.className = 'playlist-segment-boundary';

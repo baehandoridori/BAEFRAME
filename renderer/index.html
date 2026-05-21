@@ -188,7 +188,7 @@
               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
             </svg>
           </button>
-          <button class="playlist-btn" id="btnPlaylistClose" title="닫기">
+          <button class="playlist-btn" id="btnPlaylistClose" title="패널 숨기기">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"/>
               <line x1="6" y1="6" x2="18" y2="18"/>
@@ -221,7 +221,6 @@
           <span class="toggle-slider"></span>
           <span class="toggle-label">반복</span>
         </label>
-        <button class="playlist-continuous-play" id="btnPlaylistContinuousPlay" type="button" title="재생목록 전체를 현재 순서대로 자동 재생">전체 자동재생</button>
       </div>
 
       <div class="playlist-prepare-summary" id="playlistPrepareSummary" hidden>
@@ -245,7 +244,7 @@
         <label class="playlist-autoplay-toggle">
           <input type="checkbox" id="playlistAutoPlay">
           <span class="toggle-slider"></span>
-          <span class="toggle-label">자동 넘어가기</span>
+          <span class="toggle-label">자동 재생</span>
         </label>
       </div>
 
@@ -504,6 +503,15 @@
                 <div class="section-label">불투명도 <span id="brushOpacityValue">100%</span></div>
                 <div class="size-slider-wrapper">
                   <input type="range" class="size-slider" id="brushOpacitySlider" min="10" max="100" value="100">
+                </div>
+              </div>
+
+              <!-- 지우개 방식 -->
+              <div class="tools-section" id="eraserModeSection" hidden>
+                <div class="section-label">지우개 방식</div>
+                <div class="eraser-mode-toggle" role="group" aria-label="지우개 방식">
+                  <button type="button" class="eraser-mode-btn active" data-eraser-mode="pixel" id="eraserModePixel">픽셀</button>
+                  <button type="button" class="eraser-mode-btn" data-eraser-mode="stroke" id="eraserModeStroke">획</button>
                 </div>
               </div>
 
@@ -826,7 +834,7 @@
               <div class="comment-track" id="commentTrack" style="display: none;">
                 <!-- 댓글 범위 요소들이 여기에 동적으로 추가됨 -->
               </div>
-              <div class="track-row">
+              <div class="track-row video-track-row">
                 <div class="track-clip video" id="videoTrackClip">영상을 로드하세요</div>
               </div>
             </div>

@@ -83,6 +83,7 @@ class FFmpegManager {
   async _detectFFmpeg() {
     const exeName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
     const probeName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+    const appRoot = path.join(__dirname, '..');
 
     // 1. 번들된 바이너리 확인 (extraResources)
     // 여러 가지 경로를 시도하여 다양한 실행 환경에서 작동하도록 함
@@ -113,16 +114,26 @@ class FFmpegManager {
 
     // 개발 환경 fallback
     bundledPaths.push(
-      path.join(__dirname, '..', 'ffmpeg', 'win32'),
-      path.join(__dirname, '..', 'ffmpeg')
+      path.join(appRoot, 'ffmpeg', 'win32'),
+      path.join(appRoot, 'ffmpeg')
     );
+
+    const gitCommonRoot = this._getGitCommonWorktreeRoot(appRoot);
+    if (gitCommonRoot && path.resolve(gitCommonRoot) !== path.resolve(appRoot)) {
+      bundledPaths.push(
+        path.join(gitCommonRoot, 'ffmpeg', 'win32'),
+        path.join(gitCommonRoot, 'ffmpeg')
+      );
+    }
+
+    const uniqueBundledPaths = [...new Set(bundledPaths)];
 
     log.info('FFmpeg 경로 탐색 시작', {
       resourcesPath: process.resourcesPath,
-      searchPaths: bundledPaths
+      searchPaths: uniqueBundledPaths
     });
 
-    for (const dir of bundledPaths) {
+    for (const dir of uniqueBundledPaths) {
       const ffmpegExe = path.join(dir, exeName);
       const ffprobeExe = path.join(dir, probeName);
 
@@ -186,10 +197,32 @@ class FFmpegManager {
 
     log.error('FFmpeg를 찾을 수 없습니다', {
       hint: 'ffmpeg/win32/ 폴더에 ffmpeg.exe와 ffprobe.exe를 넣거나, 시스템 PATH에 FFmpeg를 설치하세요.',
-      searchedPaths: bundledPaths
+      searchedPaths: uniqueBundledPaths
     });
 
     return null;
+  }
+
+  _getGitCommonWorktreeRoot(appRoot) {
+    const gitPath = path.join(appRoot, '.git');
+    try {
+      if (!fs.existsSync(gitPath) || fs.statSync(gitPath).isDirectory()) return null;
+
+      const gitFile = fs.readFileSync(gitPath, 'utf8');
+      const match = gitFile.match(/^gitdir:\s*(.+)$/m);
+      if (!match) return null;
+
+      const gitDir = path.resolve(appRoot, match[1].trim());
+      const normalizedGitDir = path.normalize(gitDir);
+      const marker = `${path.sep}.git${path.sep}`;
+      const markerIndex = normalizedGitDir.toLowerCase().indexOf(marker.toLowerCase());
+      if (markerIndex < 0) return null;
+
+      return normalizedGitDir.slice(0, markerIndex);
+    } catch (e) {
+      log.debug('git worktree 루트 확인 실패', { error: e.message });
+      return null;
+    }
   }
 
   /**
