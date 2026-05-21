@@ -75,6 +75,8 @@
   --header-height: 52px;
   --controls-height: 56px;
   --timeline-height: 220px;
+  --timeline-video-track-height: 48px;
+  --timeline-drawing-track-height: 44px;
   --panel-width: 340px;
   --layer-header-width: 160px;
 
@@ -1402,6 +1404,40 @@ body.app-fullscreen .video-comment-overlay-controls {
   border-radius: 50%;
 }
 
+.eraser-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 3px;
+}
+
+.eraser-mode-btn {
+  min-width: 0;
+  height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.eraser-mode-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.eraser-mode-btn.active {
+  color: var(--accent-primary);
+  background: var(--accent-glow-strong);
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
 /* 색상 버튼 행 */
 .colors-row {
   display: flex;
@@ -2172,6 +2208,7 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .layer-header {
   height: 36px;
+  min-height: 36px;
   display: flex;
   align-items: center;
   padding: 0 8px;
@@ -2184,6 +2221,16 @@ body.app-fullscreen .video-comment-overlay-controls {
   font-size: 13px;
   cursor: pointer;
   transition: background-color var(--transition-fast);
+}
+
+.layer-header[data-layer="video"] {
+  height: var(--timeline-video-track-height);
+  min-height: var(--timeline-video-track-height);
+}
+
+.layer-header.drawing-layer-header {
+  height: var(--timeline-drawing-track-height);
+  min-height: var(--timeline-drawing-track-height);
 }
 
 .layer-header:hover {
@@ -2396,12 +2443,13 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .tracks-container {
   position: relative;
-  cursor: grab;
+  min-height: calc(100% - 32px);
+  cursor: crosshair;
   --marker-top-offset: 0px;
 }
 
 .tracks-container:active {
-  cursor: grabbing;
+  cursor: crosshair;
 }
 
 .tracks-container.panning {
@@ -2417,6 +2465,16 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .track-row:nth-child(odd) {
   background: rgba(26, 26, 26, 0.5);
+}
+
+.video-track-row {
+  height: var(--timeline-video-track-height);
+  min-height: var(--timeline-video-track-height);
+  cursor: grab;
+}
+
+.video-track-row:active {
+  cursor: grabbing;
 }
 
 .track-clip {
@@ -2445,6 +2503,8 @@ body.app-fullscreen .video-comment-overlay-controls {
   background: linear-gradient(90deg, #2a2a2a, #3a3a3a);
   left: 0;
   right: 0;
+  top: 6px;
+  height: calc(var(--timeline-video-track-height) - 12px);
   border: 1px solid var(--border-default);
   cursor: grab;
 }
@@ -3125,7 +3185,9 @@ body.app-fullscreen .video-comment-overlay-controls {
 .drawing-track-row {
   position: relative;
   background: var(--bg-tertiary);
-  min-height: 36px;
+  height: var(--timeline-drawing-track-height);
+  min-height: var(--timeline-drawing-track-height);
+  cursor: crosshair;
   /* 격자 패턴은 JS에서 동적으로 설정 (줌에 따라 변경) */
 }
 
@@ -3240,8 +3302,8 @@ body.app-fullscreen .video-comment-overlay-controls {
 /* 키프레임 클립 */
 .drawing-clip {
   position: absolute;
-  top: 4px;
-  height: 28px;
+  top: 6px;
+  height: calc(var(--timeline-drawing-track-height) - 12px);
   border-radius: 4px;
   display: flex;
   align-items: center;

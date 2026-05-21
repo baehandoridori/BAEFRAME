@@ -778,17 +778,6 @@ body.app-fullscreen .playlist-resizer {
   background: var(--bg-primary);
 }
 
-.playlist-continuous-play {
-  grid-column: 1 / -1;
-  height: 30px;
-  border: 1px solid var(--accent-primary);
-  border-radius: 6px;
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  font-size: 12px;
-  cursor: pointer;
-}
-
 .playlist-prepare-summary {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border-subtle);
@@ -831,6 +820,45 @@ body.app-fullscreen .playlist-resizer {
 .playlist-segment-boundary:hover {
   width: 2px;
   background: var(--accent-primary);
+}
+
+.video-track-row.has-playlist-segments .track-clip.video {
+  opacity: 0.18;
+}
+
+.playlist-segment-block {
+  position: absolute;
+  top: 6px;
+  height: calc(var(--timeline-video-track-height) - 12px);
+  min-width: 4px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(74, 158, 255, 0.38), rgba(90, 90, 90, 0.55));
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  cursor: grab;
+  z-index: 7;
+  text-align: left;
+}
+
+.playlist-segment-block:hover {
+  filter: brightness(1.15);
+}
+
+.playlist-segment-block:active {
+  cursor: grabbing;
+}
+
+.playlist-segment-block-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .playlist-comment-range {

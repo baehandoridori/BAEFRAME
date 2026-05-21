@@ -92,7 +92,6 @@ function createDefaultPlaylistData(options = {}) {
     createdById: options.userId || '',
     items: [],
     settings: {
-      autoPlay: false,
       floatingMode: false,
       continuous: {
         loop: false,
@@ -612,18 +611,6 @@ export class PlaylistManager {
   // ========================================
   // 설정
   // ========================================
-
-  setAutoPlay(enabled) {
-    if (this.currentPlaylist) {
-      this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
-      this.currentPlaylist.settings.autoPlay = enabled;
-      this.isModified = true;
-    }
-  }
-
-  getAutoPlay() {
-    return this.currentPlaylist?.settings?.autoPlay || false;
-  }
 
   setFloatingMode(enabled) {
     if (this.currentPlaylist) {

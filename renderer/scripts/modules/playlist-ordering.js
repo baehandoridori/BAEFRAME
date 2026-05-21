@@ -28,7 +28,6 @@ export function normalizePlaylistSettings(playlist) {
     : {};
 
   return {
-    autoPlay: current.autoPlay === true,
     floatingMode: current.floatingMode === true,
     continuous: {
       loop: currentContinuous.loop === true,

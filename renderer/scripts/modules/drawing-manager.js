@@ -6,6 +6,13 @@
 import { createLogger } from '../logger.js';
 import { DrawingLayer, Keyframe } from './drawing-layer.js';
 import { DrawingCanvas, DrawingTool } from './drawing-canvas.js';
+import {
+  ERASER_MODES,
+  createStrokeRecord,
+  isRecordableStrokeTool,
+  normalizeEraserMode,
+  removeIntersectingStrokes
+} from './drawing-stroke-records.js';
 
 const log = createLogger('DrawingManager');
 
@@ -53,6 +60,9 @@ export class DrawingManager extends EventTarget {
 
     // 렌더링 상태 관리
     this._renderingId = 0;  // 렌더링 취소용 ID
+    this.eraserMode = ERASER_MODES.PIXEL;
+    this._activeStrokeBaseData = null;
+    this._strokeEraseQueue = Promise.resolve();
 
     // Undo/Redo — 외부 통합 스택과 연동
     this._onUndoPush = null; // 외부에서 설정하는 콜백: (action) => void
@@ -73,9 +83,14 @@ export class DrawingManager extends EventTarget {
       this._onDrawStart(e.detail);
     });
 
+    // 그리기 진행 시
+    this.drawingCanvas.addEventListener('drawmove', (e) => {
+      this._onDrawMove(e.detail);
+    });
+
     // 그리기 완료 시
     this.drawingCanvas.addEventListener('drawend', (e) => {
-      this._onDrawEnd(e.detail);
+      void this._onDrawEnd(e.detail);
     });
   }
 
@@ -96,53 +111,98 @@ export class DrawingManager extends EventTarget {
       this._saveToHistory();
     }
 
-    // 현재 프레임에 키프레임이 없으면 생성
-    // (기존 키프레임 범위 내에서 그리는 경우는 덧그리기)
-    const existingKf = layer.getKeyframeAtFrame(this.currentFrame);
+    this._activeStrokeBaseData = this.drawingCanvas.toDataURL();
 
-    if (!existingKf) {
-      // 첫 키프레임 생성
-      layer.getOrCreateKeyframe(this.currentFrame, true);
-    } else if (existingKf.frame !== this.currentFrame) {
-      // 기존 키프레임의 범위 내에서 그리기 → 덧그리기 (키프레임 생성 안 함)
-      // 기존 키프레임의 내용이 이미 캔버스에 표시되어 있음
+    if (this._isStrokeEraseDetail(detail)) {
+      this._getEditableKeyframeForCurrentFrame({
+        editHeldSourceKeyframe: true,
+        preserveSourceRecords: true,
+        fallbackBaseData: this._activeStrokeBaseData
+      });
+    } else {
+      // 현재 프레임에 키프레임이 없으면 생성
+      // (기존 키프레임 범위 내에서 그리는 경우는 덧그리기)
+      const existingKf = layer.getKeyframeAtFrame(this.currentFrame);
+
+      if (!existingKf) {
+        // 첫 키프레임 생성
+        layer.getOrCreateKeyframe(this.currentFrame, true);
+      } else if (existingKf.frame !== this.currentFrame) {
+        // 기존 키프레임의 범위 내에서 그리기 → 덧그리기 (키프레임 생성 안 함)
+        // 기존 키프레임의 내용이 이미 캔버스에 표시되어 있음
+      }
     }
 
     this._emit('drawstart', { layer, frame: this.currentFrame });
   }
 
   /**
+   * 그리기 진행 처리
+   */
+  _onDrawMove(detail) {
+    if (!this._isStrokeEraseDetail(detail)) return;
+
+    this._strokeEraseQueue = this._strokeEraseQueue
+      .then(() => this._eraseStrokeRecords(detail))
+      .catch(error => {
+        log.warn('획 지우기 처리 실패', { error: error?.message || String(error) });
+      });
+  }
+
+  /**
    * 그리기 완료 처리
    */
-  _onDrawEnd(detail) {
+  async _onDrawEnd(detail) {
+    if (this._isStrokeEraseDetail(detail)) {
+      this._strokeEraseQueue = this._strokeEraseQueue
+        .then(() => this._eraseStrokeRecords(detail))
+        .catch(error => {
+          log.warn('획 지우기 마무리 실패', { error: error?.message || String(error) });
+        });
+      await this._strokeEraseQueue;
+
+      this._emit('drawend', { frame: this.currentFrame });
+      this._emit('layersChanged');
+      this._activeStrokeBaseData = null;
+      return;
+    }
+
     // 현재 키프레임에 캔버스 데이터 저장
-    this._saveCurrentFrameData();
+    const keyframe = this._saveCurrentFrameData({
+      editHeldSourceKeyframe: (detail?.effectiveTool || detail?.tool) === DrawingTool.ERASER,
+      preserveStrokeRecords: isRecordableStrokeTool(detail?.effectiveTool)
+    });
+
+    if (isRecordableStrokeTool(detail?.effectiveTool)) {
+      this._saveRecordableStroke(detail);
+    } else {
+      this._freezeStrokeRecords(keyframe);
+    }
 
     this._emit('drawend', { frame: this.currentFrame });
     this._emit('layersChanged');
+    this._activeStrokeBaseData = null;
   }
 
   /**
    * 현재 프레임의 캔버스 데이터 저장
    */
-  _saveCurrentFrameData() {
+  _saveCurrentFrameData(options = {}) {
     const layer = this.getActiveLayer();
     if (!layer) {
       log.warn('저장 실패: 활성 레이어 없음');
-      return;
+      return null;
     }
 
-    // 현재 프레임에 해당하는 키프레임 찾기
-    let keyframe = layer.getKeyframeAtFrame(this.currentFrame);
-
-    // 키프레임이 없거나 정확히 현재 프레임이 아닌 경우
-    // → 현재 프레임에 새 키프레임 생성 (덧그린 내용을 새 키프레임으로)
-    if (!keyframe || keyframe.frame !== this.currentFrame) {
-      keyframe = layer.getOrCreateKeyframe(this.currentFrame, true);
-    }
+    const keyframe = this._getEditableKeyframeForCurrentFrame({
+      editHeldSourceKeyframe: options.editHeldSourceKeyframe === true,
+      preserveSourceRecords: options.preserveStrokeRecords === true,
+      fallbackBaseData: this._activeStrokeBaseData
+    });
+    if (!keyframe) return null;
 
     // 캔버스 데이터 저장
-    const imageData = this.drawingCanvas.toDataURL();
+    const imageData = this.drawingCanvas.isEmpty() ? null : this.drawingCanvas.toDataURL();
     keyframe.setCanvasData(imageData);
 
     // 캐시 무효화 (새 데이터이므로)
@@ -155,6 +215,137 @@ export class DrawingManager extends EventTarget {
       dataLength: imageData?.length || 0,
       keyframesCount: layer.keyframes.length
     });
+
+    return keyframe;
+  }
+
+  _isStrokeEraseDetail(detail) {
+    const effectiveTool = detail?.effectiveTool || detail?.tool;
+    return effectiveTool === DrawingTool.ERASER && detail?.eraserMode === ERASER_MODES.STROKE;
+  }
+
+  _cloneStrokeRecords(records = []) {
+    return records.map(record => ({
+      ...record,
+      points: Array.isArray(record.points)
+        ? record.points.map(point => ({ ...point }))
+        : []
+    }));
+  }
+
+  _getEditableKeyframeForCurrentFrame(options = {}) {
+    const layer = this.getActiveLayer();
+    if (!layer) return null;
+
+    const exactKeyframe = layer.keyframes.find(kf => kf.frame === this.currentFrame);
+    if (exactKeyframe) return exactKeyframe;
+
+    const sourceKeyframe = layer.getKeyframeAtFrame(this.currentFrame);
+    if (sourceKeyframe && options.editHeldSourceKeyframe === true) {
+      if (!sourceKeyframe.baseCanvasData && Array.isArray(sourceKeyframe.strokeRecords) && sourceKeyframe.strokeRecords.length > 0) {
+        sourceKeyframe.baseCanvasData = sourceKeyframe.canvasData || options.fallbackBaseData || null;
+      }
+      return sourceKeyframe;
+    }
+
+    if (sourceKeyframe && sourceKeyframe.frame !== this.currentFrame) {
+      const preserveSourceRecords = options.preserveSourceRecords === true;
+      const sourceRecords = preserveSourceRecords
+        ? this._cloneStrokeRecords(sourceKeyframe.strokeRecords || [])
+        : [];
+      const baseCanvasData = preserveSourceRecords
+        ? (sourceKeyframe.baseCanvasData || (sourceRecords.length === 0 ? sourceKeyframe.canvasData : null))
+        : (options.fallbackBaseData || null);
+
+      const keyframe = new Keyframe(this.currentFrame, sourceKeyframe.canvasData, {
+        baseCanvasData,
+        strokeRecords: sourceRecords
+      });
+      keyframe.isEmpty = sourceKeyframe.isEmpty;
+      layer.keyframes.push(keyframe);
+      layer._sortKeyframes();
+      return keyframe;
+    }
+
+    const keyframe = layer.getOrCreateKeyframe(this.currentFrame, true);
+    if (keyframe && options.fallbackBaseData && !keyframe.baseCanvasData && keyframe.strokeRecords.length === 0) {
+      keyframe.baseCanvasData = options.fallbackBaseData;
+    }
+    return keyframe;
+  }
+
+  _saveRecordableStroke(detail) {
+    const layer = this.getActiveLayer();
+    const keyframe = layer?.keyframes.find(kf => kf.frame === this.currentFrame);
+    if (!keyframe || !isRecordableStrokeTool(detail?.effectiveTool)) return;
+    const points = Array.isArray(detail.points) ? detail.points : [];
+    if (points.length === 0) return;
+
+    if (!keyframe.baseCanvasData && (!keyframe.strokeRecords || keyframe.strokeRecords.length === 0)) {
+      keyframe.baseCanvasData = this._activeStrokeBaseData || null;
+    }
+
+    keyframe.strokeRecords = this._cloneStrokeRecords(keyframe.strokeRecords || []);
+    keyframe.strokeRecords.push(createStrokeRecord({
+      tool: detail.effectiveTool,
+      points,
+      color: detail.color,
+      lineWidth: detail.lineWidth,
+      opacity: detail.opacity,
+      strokeEnabled: detail.strokeEnabled,
+      strokeWidth: detail.strokeWidth,
+      strokeColor: detail.strokeColor
+    }));
+  }
+
+  _freezeStrokeRecords(keyframe) {
+    if (!keyframe || !Array.isArray(keyframe.strokeRecords) || keyframe.strokeRecords.length === 0) return;
+
+    keyframe.baseCanvasData = keyframe.canvasData || null;
+    keyframe.strokeRecords = [];
+    keyframe._cachedImage = null;
+    keyframe._cachedSrc = null;
+  }
+
+  async _eraseStrokeRecords(detail) {
+    const layer = this.getActiveLayer();
+    if (!layer || layer.locked) return false;
+
+    const keyframe = this._getEditableKeyframeForCurrentFrame({
+      editHeldSourceKeyframe: true,
+      preserveSourceRecords: true,
+      fallbackBaseData: this._activeStrokeBaseData
+    });
+    if (!keyframe?.strokeRecords?.length) return false;
+
+    const result = removeIntersectingStrokes(
+      keyframe.strokeRecords,
+      detail?.points || [],
+      detail?.lineWidth || this.drawingCanvas.lineWidth
+    );
+    if (result.removed.length === 0) return false;
+
+    keyframe.strokeRecords = result.remaining;
+    await this._redrawKeyframeFromRecords(keyframe);
+    return true;
+  }
+
+  async _redrawKeyframeFromRecords(keyframe) {
+    if (!keyframe) return;
+
+    this.drawingCanvas.clear();
+    if (keyframe.baseCanvasData) {
+      await this.drawingCanvas.drawImageDataUrl(keyframe.baseCanvasData);
+    }
+
+    for (const record of keyframe.strokeRecords || []) {
+      this.drawingCanvas.drawStrokeRecord(record);
+    }
+
+    const imageData = this.drawingCanvas.isEmpty() ? null : this.drawingCanvas.toDataURL();
+    keyframe.setCanvasData(imageData);
+    keyframe._cachedImage = null;
+    keyframe._cachedSrc = null;
   }
 
   /**
@@ -379,13 +570,8 @@ export class DrawingManager extends EventTarget {
    */
   removeKeyframe() {
     const layer = this.getActiveLayer();
-    if (!layer || layer.locked) return;
-
-    // 첫 번째 키프레임은 삭제 불가
-    if (layer.keyframes.length <= 1 && layer.isKeyframe(this.currentFrame)) {
-      log.warn('마지막 키프레임은 삭제할 수 없습니다.');
-      return;
-    }
+    if (!layer || layer.locked) return false;
+    if (!layer.isKeyframe(this.currentFrame)) return false;
 
     // Undo를 위해 현재 상태 저장
     this._saveToHistory();
@@ -395,6 +581,57 @@ export class DrawingManager extends EventTarget {
 
     this._emit('keyframeRemoved', { layer, frame: this.currentFrame });
     this._emit('layersChanged');
+    return true;
+  }
+
+  /**
+   * 선택된 여러 키프레임 삭제
+   * @param {Array<{layerId: string, frame: number}>} selectedKeyframes
+   * @returns {number} 삭제된 키프레임 수
+   */
+  removeKeyframes(selectedKeyframes = []) {
+    if (!Array.isArray(selectedKeyframes) || selectedKeyframes.length === 0) return 0;
+
+    const uniqueTargets = [];
+    for (const target of selectedKeyframes) {
+      if (!target?.layerId || !Number.isFinite(Number(target.frame))) continue;
+      const frame = Number(target.frame);
+      if (!uniqueTargets.some(item => item.layerId === target.layerId && item.frame === frame)) {
+        uniqueTargets.push({ layerId: target.layerId, frame });
+      }
+    }
+    if (uniqueTargets.length === 0) return 0;
+
+    this._saveToHistory();
+
+    let removedCount = 0;
+    const targetsByLayer = new Map();
+    uniqueTargets.forEach(target => {
+      if (!targetsByLayer.has(target.layerId)) {
+        targetsByLayer.set(target.layerId, []);
+      }
+      targetsByLayer.get(target.layerId).push(target.frame);
+    });
+
+    for (const [layerId, frames] of targetsByLayer) {
+      const layer = this.layers.find(l => l.id === layerId);
+      if (!layer || layer.locked) continue;
+
+      const sortedFrames = [...frames].sort((a, b) => b - a);
+      for (const frame of sortedFrames) {
+        if (layer.removeKeyframe(frame)) {
+          removedCount += 1;
+          this._emit('keyframeRemoved', { layer, frame });
+        }
+      }
+    }
+
+    if (removedCount > 0) {
+      this.renderFrame(this.currentFrame);
+      this._emit('layersChanged');
+    }
+
+    return removedCount;
   }
 
   /**
@@ -780,6 +1017,14 @@ export class DrawingManager extends EventTarget {
    */
   setTool(tool) {
     this.drawingCanvas.setTool(tool);
+  }
+
+  /**
+   * 지우개 방식 설정
+   */
+  setEraserMode(mode) {
+    this.eraserMode = normalizeEraserMode(mode);
+    this.drawingCanvas.setEraserMode(this.eraserMode);
   }
 
   /**

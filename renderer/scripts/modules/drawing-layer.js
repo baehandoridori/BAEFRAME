@@ -4,6 +4,7 @@
  */
 
 import { createLogger } from '../logger.js';
+import { normalizeStrokeRecords } from './drawing-stroke-records.js';
 
 const log = createLogger('DrawingLayer');
 
@@ -12,10 +13,12 @@ const log = createLogger('DrawingLayer');
  * Adobe Animate의 키프레임과 유사
  */
 export class Keyframe {
-  constructor(frame, canvasData = null) {
+  constructor(frame, canvasData = null, options = {}) {
     this.frame = frame;           // 시작 프레임 번호
     this.canvasData = canvasData; // ImageData 또는 base64 문자열
     this.isEmpty = !canvasData;   // 빈 키프레임 여부
+    this.baseCanvasData = options.baseCanvasData || null;
+    this.strokeRecords = normalizeStrokeRecords(options.strokeRecords);
   }
 
   /**
@@ -30,7 +33,13 @@ export class Keyframe {
    * 키프레임 복제
    */
   clone() {
-    return new Keyframe(this.frame, this.canvasData);
+    return new Keyframe(this.frame, this.canvasData, {
+      baseCanvasData: this.baseCanvasData,
+      strokeRecords: this.strokeRecords.map(record => ({
+        ...record,
+        points: record.points.map(point => ({ ...point }))
+      }))
+    });
   }
 
   /**
@@ -40,7 +49,9 @@ export class Keyframe {
     return {
       frame: this.frame,
       canvasData: this.canvasData,
-      isEmpty: this.isEmpty
+      isEmpty: this.isEmpty,
+      baseCanvasData: this.baseCanvasData,
+      strokeRecords: this.strokeRecords
     };
   }
 
@@ -48,7 +59,10 @@ export class Keyframe {
    * JSON에서 복원
    */
   static fromJSON(json) {
-    const kf = new Keyframe(json.frame, json.canvasData);
+    const kf = new Keyframe(json.frame, json.canvasData, {
+      baseCanvasData: json.baseCanvasData,
+      strokeRecords: json.strokeRecords
+    });
     kf.isEmpty = json.isEmpty;
     return kf;
   }
@@ -218,7 +232,10 @@ export class DrawingLayer {
     this.removeKeyframe(frame);
 
     const canvasData = sourceKf ? sourceKf.canvasData : null;
-    const keyframe = new Keyframe(frame, canvasData);
+    const keyframe = new Keyframe(frame, canvasData, {
+      baseCanvasData: sourceKf?.baseCanvasData || null,
+      strokeRecords: sourceKf?.strokeRecords || []
+    });
     this.keyframes.push(keyframe);
     this._sortKeyframes();
 

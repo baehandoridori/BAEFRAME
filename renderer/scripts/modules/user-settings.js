@@ -5,6 +5,7 @@
 
 import { createLogger } from '../logger.js';
 import { getAuthManager } from './auth-manager.js';
+import { normalizeEraserMode } from './drawing-stroke-records.js';
 
 const log = createLogger('UserSettings');
 
@@ -174,6 +175,8 @@ export class UserSettings extends EventTarget {
       lightMode: false,
       // 로컬 테마 (인증 시스템과 별도, 개인 로컬 설정)
       localTheme: 'default',
+      // 재생목록 자동 재생 (재생목록 파일과 별도인 개인 로컬 설정)
+      playlistAutoPlay: false,
       // 최초 이름 설정 여부 (모달 한 번만 표시)
       hasSetNameOnce: false,
       // 사용자 정의 단축키 (기본값 위에 덮어씀)
@@ -186,7 +189,9 @@ export class UserSettings extends EventTarget {
       // 타임라인 프레임 격자 표시 여부
       showFrameGrid: true,
       // 100% 이하 줌에서 영상을 중앙에 고정할지 여부
-      videoCenterLocked: true
+      videoCenterLocked: true,
+      // 이 PC에서 마지막으로 사용한 지우개 방식
+      eraserMode: 'pixel'
     };
 
     this._ready = false;
@@ -575,6 +580,17 @@ export class UserSettings extends EventTarget {
     log.info('비디오 중앙 고정 설정 변경됨', { locked: this.settings.videoCenterLocked });
   }
 
+  getEraserMode() {
+    return normalizeEraserMode(this.settings.eraserMode);
+  }
+
+  setEraserMode(mode) {
+    this.settings.eraserMode = normalizeEraserMode(mode);
+    this._save();
+    this._emit('eraserModeChanged', { mode: this.settings.eraserMode });
+    log.info('지우개 방식 설정 변경됨', { mode: this.settings.eraserMode });
+  }
+
   getLightMode() {
     return this.settings.lightMode === true;
   }
@@ -592,6 +608,17 @@ export class UserSettings extends EventTarget {
   setLocalTheme(theme) {
     this.settings.localTheme = theme;
     this._save();
+  }
+
+  getPlaylistAutoPlay() {
+    return this.settings.playlistAutoPlay === true;
+  }
+
+  setPlaylistAutoPlay(enabled) {
+    this.settings.playlistAutoPlay = enabled === true;
+    this._save();
+    this._emit('playlistAutoPlayChanged', { enabled: this.settings.playlistAutoPlay });
+    log.info('재생목록 자동 재생 설정 변경됨', { enabled: this.settings.playlistAutoPlay });
   }
 
   /**
