@@ -108,6 +108,11 @@ export function validateCutlistData(data) {
     if (!source.id) errors.push(`sources[${index}]: id 필드가 없습니다.`);
     if (!source.videoPath) errors.push(`sources[${index}]: videoPath 필드가 없습니다.`);
     if (!source.infoPath) errors.push(`sources[${index}]: infoPath 필드가 없습니다.`);
+    if (!hasOwnField(source, 'infoText') || typeof source.infoText !== 'string') errors.push(`sources[${index}]: infoText 필드가 유효하지 않습니다.`);
+    if (!source.fileName || typeof source.fileName !== 'string') errors.push(`sources[${index}]: fileName 필드가 유효하지 않습니다.`);
+    if (!Number.isFinite(Number(source.fps)) || Number(source.fps) <= 0) errors.push(`sources[${index}]: fps가 유효하지 않습니다.`);
+    if (typeof source.missing !== 'boolean') errors.push(`sources[${index}]: missing 필드는 boolean이어야 합니다.`);
+    if (!source.addedAt || typeof source.addedAt !== 'string') errors.push(`sources[${index}]: addedAt 필드가 유효하지 않습니다.`);
   });
 
   (data.cuts || []).forEach((cut, index) => {
@@ -123,7 +128,7 @@ export function validateCutlistData(data) {
     if (Number(cut.mohoEndFrame) < Number(cut.mohoStartFrame)) errors.push(`cuts[${index}]: mohoEndFrame은 mohoStartFrame보다 작을 수 없습니다.`);
     if (!Number.isFinite(Number(cut.fps)) || Number(cut.fps) <= 0) errors.push(`cuts[${index}]: fps가 유효하지 않습니다.`);
     if (!Number.isFinite(Number(cut.order))) errors.push(`cuts[${index}]: order가 유효하지 않습니다.`);
-    if (hasOwnField(cut, 'ignored') && typeof cut.ignored !== 'boolean') errors.push(`cuts[${index}]: ignored 필드는 boolean이어야 합니다.`);
+    if (!hasOwnField(cut, 'ignored') || typeof cut.ignored !== 'boolean') errors.push(`cuts[${index}]: ignored 필드는 boolean이어야 합니다.`);
   });
 
   return { valid: errors.length === 0, errors };

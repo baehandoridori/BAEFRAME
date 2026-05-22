@@ -69,6 +69,47 @@ test('rejects invalid cut ranges and missing paths', () => {
   assert.match(result.errors.join('\n'), /endFrame/);
 });
 
+test('validates required source metadata fields', () => {
+  const data = createDefaultCutlistData({ name: 'bad source fields' });
+  data.sources.push({
+    id: 'source_1',
+    videoPath: 'G:/shot/a001.mp4',
+    infoPath: 'G:/shot/a001_info.txt',
+    fileName: '',
+    fps: 0,
+    missing: 'false',
+    addedAt: ''
+  });
+
+  const result = validateCutlistData(data);
+  const errors = result.errors.join('\n');
+
+  assert.equal(result.valid, false);
+  assert.match(errors, /infoText/);
+  assert.match(errors, /fileName/);
+  assert.match(errors, /fps/);
+  assert.match(errors, /missing/);
+  assert.match(errors, /addedAt/);
+});
+
+test('allows explicitly empty source info text', () => {
+  const data = createDefaultCutlistData({ name: 'empty info text' });
+  data.sources.push(createCutlistSource({
+    id: 'source_1',
+    videoPath: 'G:/shot/a001.mp4',
+    infoPath: 'G:/shot/a001_info.txt',
+    infoText: '',
+    fileName: 'a001.mp4',
+    fps: 24,
+    missing: false,
+    addedAt: '2026-05-23T00:00:00.000Z'
+  }));
+
+  const result = validateCutlistData(data);
+
+  assert.equal(result.valid, true);
+});
+
 test('validates required top-level cutlist metadata fields', () => {
   const data = createDefaultCutlistData({ name: 'bad metadata' });
   data.createdAt = '';
@@ -128,6 +169,18 @@ test('validates required cut timing and flag fields', () => {
     order: 1,
     ignored: false
   });
+  data.cuts.push({
+    id: 'cut_missing_ignored',
+    sourceId: 'source_1',
+    sceneNumber: 3,
+    label: 'a003',
+    startFrame: 30,
+    endFrame: 40,
+    mohoStartFrame: 31,
+    mohoEndFrame: 41,
+    fps: 24,
+    order: 2
+  });
 
   const result = validateCutlistData(data);
   const errors = result.errors.join('\n');
@@ -138,6 +191,27 @@ test('validates required cut timing and flag fields', () => {
   assert.match(errors, /fps/);
   assert.match(errors, /order/);
   assert.match(errors, /ignored/);
+});
+
+test('requires cut ignored flag to exist as a boolean', () => {
+  const data = createDefaultCutlistData({ name: 'missing ignored flag' });
+  data.cuts.push({
+    id: 'cut_missing_ignored',
+    sourceId: 'source_1',
+    sceneNumber: 3,
+    label: 'a003',
+    startFrame: 30,
+    endFrame: 40,
+    mohoStartFrame: 31,
+    mohoEndFrame: 41,
+    fps: 24,
+    order: 2
+  });
+
+  const result = validateCutlistData(data);
+
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join('\n'), /ignored/);
 });
 
 test('detects cutlist paths and suggests names', () => {
