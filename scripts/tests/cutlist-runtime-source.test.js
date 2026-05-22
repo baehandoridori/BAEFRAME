@@ -133,6 +133,27 @@ test('cutlist sidebar transitions refresh comment labels and ranges', () => {
   assert.match(hideBody, /cutlistUIState\.active = false;[\s\S]+updateCommentList\(getActiveCommentFilter\(\)\)/);
 });
 
+test('showing cutlist sidebar re-syncs current cut from playback frame', () => {
+  const showBody = extractBalancedBlock(appSource, 'function showCutlistSidebar');
+
+  const activeIndex = showBody.indexOf('cutlistUIState.active = true;');
+  const refreshIndex = showBody.indexOf('refreshCurrentCutFromPlayback(videoPlayer.currentFrame)');
+  const displayIndex = showBody.indexOf('updateCurrentCutDisplay(currentCut)');
+
+  assert.notEqual(refreshIndex, -1, 'cutlist sidebar should recompute the selected cut from playback');
+  assert.ok(activeIndex < refreshIndex, 'cutlist mode must be active before recomputing from playback');
+  assert.ok(refreshIndex < displayIndex, 'overlay should use the recomputed current cut');
+  assert.doesNotMatch(showBody, /getCutById\(getCutlistManager\(\)\.currentCutId\)/);
+});
+
+test('comment target readiness realigns stale same-file cut selection', () => {
+  const functionBody = extractBalancedBlock(appSource, 'async function ensureCutlistCommentTargetReady');
+
+  assert.doesNotMatch(functionBody, /if \(isSameFilePath\(state\.currentFile,\s*source\.videoPath\)\) return true;/);
+  assert.match(functionBody, /isFrameInsideCut\(cut,\s*videoPlayer\.currentFrame\)/);
+  assert.match(functionBody, /await seekPlaybackToCutStart\(cut\)/);
+});
+
 test('cutlist route URLs preserve or recover Windows drive paths', () => {
   assert.deepEqual(
     launchRouting.resolveRoutedFileUrl('baeframe://cutlist/G:/dir/file.bcutlist', 'cutlist'),

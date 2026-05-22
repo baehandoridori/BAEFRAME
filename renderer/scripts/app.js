@@ -11531,7 +11531,7 @@ async function initApp() {
     elements.btnCutlist?.classList.add('active');
     updateCutlistUI();
     updateCutlistTimeline();
-    const currentCut = getCutlistManager().getCutById(getCutlistManager().currentCutId);
+    const currentCut = refreshCurrentCutFromPlayback(videoPlayer.currentFrame);
     updateCurrentCutDisplay(currentCut);
     void refreshCommentRangesForCurrentMode();
     updateCommentList(getActiveCommentFilter());
@@ -11687,6 +11687,29 @@ async function initApp() {
     timeline.setCurrentCutId(cut?.id || null);
   }
 
+  function isFrameInsideCut(cut, frame) {
+    const currentFrame = Number(frame);
+    const startFrame = Number(cut?.startFrame);
+    const endFrame = Number(cut?.endFrame);
+    return Number.isFinite(currentFrame) &&
+      Number.isFinite(startFrame) &&
+      Number.isFinite(endFrame) &&
+      currentFrame >= startFrame &&
+      currentFrame <= endFrame;
+  }
+
+  async function seekPlaybackToCutStart(cut) {
+    setCutlistCurrentCut(cut);
+    const frame = Math.max(0, Number(cut.startFrame) || 0);
+    const fps = videoPlayer.fps || cut.fps || 24;
+    videoPlayer.seekToFrame(frame);
+    playbackSync.broadcastSeek(frame / fps);
+    timeline.setCurrentTime(frame / fps);
+    refreshCurrentCutFromPlayback(frame);
+    await refreshCommentRangesForCurrentMode();
+    updateCommentList(getActiveCommentFilter());
+  }
+
   function refreshCurrentCutFromPlayback(frame = videoPlayer.currentFrame) {
     if (!cutlistUIState.active) return null;
     const cutlistManager = getCutlistManager();
@@ -11737,13 +11760,7 @@ async function initApp() {
       if (!loaded) return false;
     }
 
-    const frame = Math.max(0, Number(cut.startFrame) || 0);
-    videoPlayer.seekToFrame(frame);
-    playbackSync.broadcastSeek(frame / (videoPlayer.fps || cut.fps || 24));
-    timeline.setCurrentTime(frame / (videoPlayer.fps || cut.fps || 24));
-    refreshCurrentCutFromPlayback(frame);
-    await refreshCommentRangesForCurrentMode();
-    updateCommentList(getActiveCommentFilter());
+    await seekPlaybackToCutStart(cut);
     return true;
   }
 
@@ -11806,19 +11823,20 @@ async function initApp() {
     const source = await resolveCutlistSourceForPlayback(cut);
     if (!source?.videoPath) return false;
 
-    if (isSameFilePath(state.currentFile, source.videoPath)) return true;
+    if (isSameFilePath(state.currentFile, source.videoPath)) {
+      if (isFrameInsideCut(cut, videoPlayer.currentFrame)) {
+        refreshCurrentCutFromPlayback(videoPlayer.currentFrame);
+        return true;
+      }
+
+      await seekPlaybackToCutStart(cut);
+      return true;
+    }
 
     const loaded = await loadVideo(source.videoPath);
     if (!loaded) return false;
 
-    setCutlistCurrentCut(cut);
-    const frame = Math.max(0, Number(cut.startFrame) || 0);
-    videoPlayer.seekToFrame(frame);
-    playbackSync.broadcastSeek(frame / (videoPlayer.fps || cut.fps || 24));
-    timeline.setCurrentTime(frame / (videoPlayer.fps || cut.fps || 24));
-    refreshCurrentCutFromPlayback(frame);
-    await refreshCommentRangesForCurrentMode();
-    updateCommentList(getActiveCommentFilter());
+    await seekPlaybackToCutStart(cut);
     return true;
   }
 
