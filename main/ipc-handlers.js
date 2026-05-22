@@ -18,7 +18,7 @@ const log = createLogger('IPC');
 /**
  * 허용된 파일 확장자 목록
  */
-const ALLOWED_EXTENSIONS = ['.bframe', '.json', '.bak', '.bplaylist'];
+const ALLOWED_EXTENSIONS = ['.bframe', '.json', '.bak', '.bplaylist', '.bcutlist'];
 const VIDEO_FILE_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
 const AUDIO_FILE_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
 const MEDIA_FILE_EXTENSIONS = [...VIDEO_FILE_EXTENSIONS, ...AUDIO_FILE_EXTENSIONS];
@@ -257,7 +257,8 @@ function setupIpcHandlers() {
       const result = await dialog.showOpenDialog(getMainWindow(), {
         title: '미디어 파일 열기',
         filters: [
-          { name: 'BAEFRAME 파일', extensions: [...MEDIA_FILE_EXTENSIONS, 'bplaylist'] },
+          { name: 'BAEFRAME 파일', extensions: [...MEDIA_FILE_EXTENSIONS, 'bplaylist', 'bcutlist'] },
+          { name: 'BAEFRAME 컷 묶음', extensions: ['bcutlist'] },
           { name: 'BAEFRAME 재생목록', extensions: ['bplaylist'] },
           { name: '미디어 파일', extensions: MEDIA_FILE_EXTENSIONS },
           { name: '비디오 파일', extensions: VIDEO_FILE_EXTENSIONS },
@@ -1606,6 +1607,7 @@ function setupIpcHandlers() {
 
   // 재생목록 관련 핸들러 등록
   setupPlaylistHandlers();
+  setupCutlistHandlers();
 
   log.info('IPC 핸들러 등록 완료');
 }
@@ -2340,6 +2342,77 @@ function setupPlaylistHandlers() {
     } catch (err) {
       return null;
     }
+  });
+}
+
+// ============================================================================
+// 컷 묶음 관련 IPC 핸들러
+// ============================================================================
+
+function setupCutlistHandlers() {
+  ipcMain.handle('cutlist:read', async (event, filePath) => {
+    const trace = log.trace('cutlist:read');
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      const data = JSON.parse(content);
+      trace.end({ filePath });
+      return data;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        trace.end({ filePath, exists: false });
+        return null;
+      }
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('cutlist:write', async (event, filePath, data) => {
+    const trace = log.trace('cutlist:write');
+    try {
+      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+      trace.end({ filePath });
+      return { success: true };
+    } catch (error) {
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('cutlist:delete', async (event, filePath) => {
+    const trace = log.trace('cutlist:delete');
+    try {
+      await fs.promises.unlink(filePath);
+      trace.end({ filePath });
+      return { success: true };
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        trace.end({ filePath, exists: false });
+        return { success: true };
+      }
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('cutlist:read-info-text', async (event, filePath) => {
+    const trace = log.trace('cutlist:read-info-text');
+    try {
+      if (path.extname(filePath).toLowerCase() !== '.txt') {
+        throw new Error('컷 묶음 정보 파일은 .txt만 읽을 수 있습니다.');
+      }
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      trace.end({ filePath });
+      return content;
+    } catch (error) {
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('cutlist:generate-link', async (event, cutlistPath) => {
+    const encodedPath = encodeURIComponent(cutlistPath);
+    return `baeframe://cutlist?file=${encodedPath}`;
   });
 }
 

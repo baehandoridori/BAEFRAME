@@ -159,6 +159,36 @@ function isSupportedVideoPath(filePath) {
   return SUPPORTED_VIDEO_EXTENSIONS.some((ext) => hasExtension(filePath, ext));
 }
 
+function normalizeLaunchPath(filePath, replaceSlashes = true) {
+  let normalized = filePath;
+  if (replaceSlashes && process.platform === 'win32') {
+    normalized = normalized.replace(/\//g, '\\');
+  }
+  if (/^[A-Za-z][\/\\]/.test(normalized)) {
+    normalized = normalized[0] + ':' + normalized.slice(1);
+  }
+  return normalized;
+}
+
+function parseRoutedFileUrl(arg, routeName) {
+  const routePattern = new RegExp(`^baeframe://${routeName}[\\/\\?%]`, 'i');
+  if (!routePattern.test(arg)) {
+    return '';
+  }
+
+  let routedPath = '';
+  const slashMatch = arg.match(new RegExp(`^baeframe://${routeName}/(.+)`, 'i'));
+  const queryMatch = arg.match(new RegExp(`${routeName}/?(?:\\?|%3F)file=(.+)`, 'i'));
+
+  if (slashMatch) {
+    routedPath = decodeURIComponent(slashMatch[1]);
+  } else if (queryMatch) {
+    routedPath = decodeURIComponent(queryMatch[1]);
+  }
+
+  return routedPath ? normalizeLaunchPath(routedPath) : '';
+}
+
 function isLaunchArgument(arg) {
   if (typeof arg !== 'string' || arg.length === 0) {
     return false;
@@ -167,6 +197,7 @@ function isLaunchArgument(arg) {
   return arg.startsWith('baeframe://') ||
     hasExtension(arg, '.bframe') ||
     hasExtension(arg, '.bplaylist') ||
+    hasExtension(arg, '.bcutlist') ||
     isSupportedVideoPath(arg);
 }
 // ============================================
@@ -244,32 +275,23 @@ if (!gotTheLock) {
       let arg = commandLine.find(isLaunchArgument);
 
       if (arg) {
+        // 컷 묶음 URL인지 확인
+        // 형식1: baeframe://cutlist/G:/경로/파일.bcutlist (Slack 호환)
+        // 형식2: baeframe://cutlist?file=경로 (레거시)
+        const cutlistPath = parseRoutedFileUrl(arg, 'cutlist');
+        if (cutlistPath) {
+          log.info('컷 묶음 URL 처리됨', { cutlistPath });
+          mainWindow.webContents.send('open-cutlist', cutlistPath);
+          return;
+        }
+
         // 재생목록 URL인지 확인
         // 형식1: baeframe://playlist/G:/경로/파일.bplaylist (Slack 호환)
         // 형식2: baeframe://playlist?file=경로 (레거시)
         if (arg.match(/^baeframe:\/\/playlist[\/\?%]/i)) {
-          let playlistPath = '';
-
-          // 형식1: playlist/ 뒤에 경로가 오는 형식
-          const slashMatch = arg.match(/^baeframe:\/\/playlist\/(.+)/i);
-          // 형식2: playlist?file= 또는 playlist/?file= 형식 (레거시)
-          const queryMatch = arg.match(/playlist\/?(?:\?|%3F)file=(.+)/i);
-
-          if (slashMatch) {
-            playlistPath = decodeURIComponent(slashMatch[1]);
-          } else if (queryMatch) {
-            playlistPath = decodeURIComponent(queryMatch[1]);
-          }
+          const playlistPath = parseRoutedFileUrl(arg, 'playlist');
 
           if (playlistPath) {
-            // Windows 경로 처리
-            if (process.platform === 'win32') {
-              playlistPath = playlistPath.replace(/\//g, '\\');
-            }
-            // Slack이 "G:/" → "G/" 로 변환하는 문제 수정
-            if (/^[A-Za-z][\/\\]/.test(playlistPath)) {
-              playlistPath = playlistPath[0] + ':' + playlistPath.slice(1);
-            }
             log.info('재생목록 URL 처리됨', { playlistPath });
             mainWindow.webContents.send('open-playlist', playlistPath);
             return;
@@ -290,7 +312,9 @@ if (!gotTheLock) {
               resolved = resolved[0] + ':' + resolved.slice(1);
             }
             log.info('Slack 딥링크 처리됨', { filePath: resolved, commentId });
-            if (hasExtension(resolved, '.bplaylist')) {
+            if (hasExtension(resolved, '.bcutlist')) {
+              mainWindow.webContents.send('open-cutlist', resolved);
+            } else if (hasExtension(resolved, '.bplaylist')) {
               mainWindow.webContents.send('open-playlist', resolved);
             } else {
               mainWindow.webContents.send('open-from-protocol', resolved, commentId || null);
@@ -305,8 +329,10 @@ if (!gotTheLock) {
           log.info('프로토콜 URL 처리됨', { filePath: arg, commentId: parseBaeframeUrl._lastCommentId });
         }
 
-        // .bplaylist 파일이면 재생목록으로 열기
-        if (hasExtension(arg, '.bplaylist')) {
+        // .bcutlist/.bplaylist 파일이면 전용 경로로 열기
+        if (hasExtension(arg, '.bcutlist')) {
+          mainWindow.webContents.send('open-cutlist', arg);
+        } else if (hasExtension(arg, '.bplaylist')) {
           mainWindow.webContents.send('open-playlist', arg);
         } else {
           mainWindow.webContents.send('open-from-protocol', arg, parseBaeframeUrl._lastCommentId || null);
@@ -327,11 +353,18 @@ if (!gotTheLock) {
     log.info('fileArg 결과', { fileArg: fileArg || '(없음)' });
 
     // 파일 인자가 있으면 로딩 창 먼저 표시
-    // (재생목록 URL/파일은 제외 - 별도 처리)
+    // (재생목록/컷 묶음 URL/파일은 제외 - 별도 처리)
     let isPlaylistArg = false;
+    let isCutlistArg = false;
     if (fileArg) {
-      // 재생목록 URL인지 확인 (playlist/ 또는 playlist?file= 형식)
-      if (fileArg.match(/^baeframe:\/\/playlist[\/\?%]/i)) {
+      // 컷 묶음 URL인지 확인 (cutlist/ 또는 cutlist?file= 형식)
+      if (fileArg.match(/^baeframe:\/\/cutlist[\/\?%]/i)) {
+        isCutlistArg = true;
+        log.info('컷 묶음 URL로 시작됨', { fileArg });
+      } else if (hasExtension(fileArg, '.bcutlist')) {
+        isCutlistArg = true;
+        log.info('컷 묶음 파일로 시작됨', { fileArg });
+      } else if (fileArg.match(/^baeframe:\/\/playlist[\/\?%]/i)) {
         isPlaylistArg = true;
         log.info('재생목록 URL로 시작됨', { fileArg });
       } else if (hasExtension(fileArg, '.bplaylist')) {
@@ -347,15 +380,21 @@ if (!gotTheLock) {
             fileArg = fileArg[0] + ':' + fileArg.slice(1);
           }
           parseBaeframeUrl._lastCommentId = commentMatch ? decodeURIComponent(commentMatch[1]) : null;
-          if (hasExtension(fileArg, '.bplaylist')) {
+          if (hasExtension(fileArg, '.bcutlist')) {
+            isCutlistArg = true;
+          } else if (hasExtension(fileArg, '.bplaylist')) {
             isPlaylistArg = true;
           }
           log.info('Slack 딥링크로 시작됨', { fileArg, commentId: parseBaeframeUrl._lastCommentId });
         }
       } else if (fileArg.startsWith('baeframe://')) {
-        // baeframe://G:/path/file.bplaylist 형식 체크 (레거시)
+        // baeframe://G:/path/file.bplaylist 또는 .bcutlist 형식 체크 (레거시)
         const parsedPath = parseBaeframeUrl(fileArg);
-        if (hasExtension(parsedPath, '.bplaylist')) {
+        if (hasExtension(parsedPath, '.bcutlist')) {
+          isCutlistArg = true;
+          fileArg = parsedPath;
+          log.info('컷 묶음 경로 URL로 시작됨', { fileArg });
+        } else if (hasExtension(parsedPath, '.bplaylist')) {
           isPlaylistArg = true;
           fileArg = parsedPath;
           log.info('재생목록 경로 URL로 시작됨', { fileArg });
@@ -368,8 +407,8 @@ if (!gotTheLock) {
         log.info('시작 인자로 파일 전달됨', { fileArg });
       }
 
-      // 재생목록이 아닌 경우만 로딩 창 표시
-      if (!isPlaylistArg) {
+      // 재생목록/컷 묶음이 아닌 경우만 로딩 창 표시
+      if (!isPlaylistArg && !isCutlistArg) {
         createLoadingWindow({
           filePath: fileArg,
           launchContext: 'deeplink'
@@ -380,12 +419,12 @@ if (!gotTheLock) {
 
     // IPC 핸들러 설정
     debugLog('IPC 핸들러 설정 중...');
-    if (!fileArg || isPlaylistArg) {
+    if (!fileArg || isPlaylistArg || isCutlistArg) {
       createLoadingWindow({
         filePath: '',
         launchContext: fileArg ? 'deeplink' : 'app'
       });
-      debugLog('로딩 창 표시됨 (일반/재생목록 시작)');
+      debugLog('로딩 창 표시됨 (일반/재생목록/컷 묶음 시작)');
     }
 
     setupIpcHandlers();
@@ -414,7 +453,11 @@ if (!gotTheLock) {
       const { ipcMain } = require('electron');
       ipcMain.once('renderer-ready', () => {
         log.info('renderer 준비 완료, 파일 전송', { fileArg });
-        if (isPlaylistArg) {
+        if (isCutlistArg) {
+          const cutlistPath = parseRoutedFileUrl(fileArg, 'cutlist') || fileArg;
+          log.info('컷 묶음 열기 이벤트 전송', { cutlistPath });
+          mainWindow.webContents.send('open-cutlist', cutlistPath);
+        } else if (isPlaylistArg) {
           // 재생목록 URL 또는 파일
           let playlistPath = fileArg;
 
