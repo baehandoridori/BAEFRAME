@@ -1,0 +1,91 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  parseMohoSceneInfo,
+  mergeDuplicateSceneCuts,
+  buildCutsFromMohoSceneInfo
+} from '../../renderer/scripts/modules/moho-scene-info-parser.js';
+
+const SAMPLE = `SW Timeline Scene Info
+======================
+Marker Level: Document
+Project Path: G:\\shot\\a019, a023, a028_re6.moho
+FPS: 24.0
+Document Range: 1 - 204
+Scene Count: 5
+
+01. sc019
+    Range: 1 - 11
+    Frames: 11f
+    Length: 00분 00초 11프레임 (00:00:11)
+
+02. 실제 사운드 시작지점
+    Range: 12 - 41
+    Frames: 30f
+
+03. sc023
+    Range: 42 - 92
+    Frames: 51f
+
+04. a028
+    Range: 93 - 204
+    Frames: 112f
+
+05. a028
+    Range: 205 - 205
+    Frames: 1f
+`;
+
+test('parses fps, project path, and scene blocks', () => {
+  const parsed = parseMohoSceneInfo(SAMPLE);
+
+  assert.equal(parsed.fps, 24);
+  assert.equal(parsed.projectPath, 'G:\\shot\\a019, a023, a028_re6.moho');
+  assert.equal(parsed.entries.length, 5);
+  assert.equal(parsed.entries[2].label, 'sc023');
+  assert.equal(parsed.entries[2].mohoStartFrame, 42);
+  assert.equal(parsed.entries[2].mohoEndFrame, 92);
+});
+
+test('builds scene cuts from numeric labels and applies minus-one frame offset', () => {
+  const result = buildCutsFromMohoSceneInfo(SAMPLE, { sourceId: 'source_1' });
+
+  assert.deepEqual(result.cuts.map(c => c.label), ['sc019', 'sc023', 'a028']);
+  assert.deepEqual(result.cuts.map(c => c.sceneNumber), [19, 23, 28]);
+  assert.deepEqual(result.cuts.find(c => c.label === 'sc023'), {
+    id: 'source_1_23_41_91',
+    sourceId: 'source_1',
+    sceneNumber: 23,
+    label: 'sc023',
+    startFrame: 41,
+    endFrame: 91,
+    mohoStartFrame: 42,
+    mohoEndFrame: 92,
+    frameCount: 51,
+    fps: 24,
+    order: 1
+  });
+});
+
+test('reports ignored memo labels and short duplicate scenes', () => {
+  const result = buildCutsFromMohoSceneInfo(SAMPLE, { sourceId: 'source_1' });
+
+  assert.equal(result.ignored.length, 2);
+  assert.equal(result.ignored[0].label, '실제 사운드 시작지점');
+  assert.equal(result.ignored[0].reason, 'scene-label-not-numbered');
+  assert.equal(result.ignored[1].label, 'a028');
+  assert.equal(result.ignored[1].reason, 'duplicate-shorter-scene');
+});
+
+test('keeps the longest duplicate scene per scene number', () => {
+  const cuts = [
+    { sceneNumber: 28, label: 'a028', frameCount: 112, startFrame: 92, endFrame: 203 },
+    { sceneNumber: 28, label: 'a028', frameCount: 1, startFrame: 204, endFrame: 204 }
+  ];
+
+  const result = mergeDuplicateSceneCuts(cuts);
+
+  assert.equal(result.cuts.length, 1);
+  assert.equal(result.cuts[0].frameCount, 112);
+  assert.equal(result.ignored[0].reason, 'duplicate-shorter-scene');
+});
