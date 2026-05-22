@@ -1,0 +1,345 @@
+/**
+ * BAEFRAME 컷 묶음 패널 스타일
+ */
+
+:root {
+  --cutlist-width: 300px;
+  --cutlist-width-min: 260px;
+  --cutlist-width-max: 420px;
+}
+
+.cutlist-sidebar {
+  width: var(--cutlist-width);
+  min-width: var(--cutlist-width-min);
+  max-width: var(--cutlist-width-max);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.2s ease, min-width 0.2s ease;
+}
+
+.cutlist-sidebar.hidden {
+  width: 0;
+  min-width: 0;
+  border-right: none;
+  padding: 0;
+}
+
+.cutlist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-tertiary);
+  flex-shrink: 0;
+}
+
+.cutlist-title-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.cutlist-icon {
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.cutlist-name-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 4px 8px;
+  transition: all 0.15s ease;
+}
+
+.cutlist-name-input:hover {
+  background: var(--bg-hover);
+}
+
+.cutlist-name-input:focus {
+  outline: none;
+  background: var(--bg-primary);
+  box-shadow: 0 0 0 2px var(--accent-primary);
+}
+
+.cutlist-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cutlist-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cutlist-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.cutlist-btn:active {
+  transform: scale(0.95);
+}
+
+.cutlist-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.cutlist-meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cutlist-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.cutlist-toggle input {
+  display: none;
+}
+
+.cutlist-toggle .toggle-slider {
+  width: 32px;
+  height: 18px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.cutlist-toggle .toggle-slider::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  top: 1px;
+  left: 1px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+
+.cutlist-toggle input:checked + .toggle-slider {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.cutlist-toggle input:checked + .toggle-slider::after {
+  left: 15px;
+  background: var(--bg-primary);
+}
+
+.cutlist-toggle .toggle-label {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.cutlist-ignored-summary {
+  padding: 7px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--warning, #ffd000);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.cutlist-items {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px;
+}
+
+.cutlist-item {
+  width: 100%;
+  min-height: 70px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.cutlist-item:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.cutlist-item.active {
+  background: var(--bg-elevated);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
+}
+
+.cutlist-item.missing {
+  opacity: 0.55;
+}
+
+.cutlist-item:disabled {
+  cursor: default;
+}
+
+.cutlist-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cutlist-item-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cutlist-item-frames {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.cutlist-item-source {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cutlist-item-ranges {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.cutlist-item-ranges span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cutlist-missing-row {
+  min-height: 42px;
+  border-style: dashed;
+}
+
+.cutlist-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+  flex: 1;
+}
+
+.cutlist-empty svg {
+  opacity: 0.5;
+}
+
+.cutlist-empty span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cutlist-sidebar:not(.empty) .cutlist-empty {
+  display: none;
+}
+
+.cutlist-sidebar.empty .cutlist-items {
+  display: none;
+}
+
+.cutlist-items::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cutlist-items::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cutlist-items::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+
+.cutlist-items::-webkit-scrollbar-thumb:hover {
+  background: var(--border-default);
+}
+
+body.app-fullscreen .cutlist-sidebar {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .cutlist-sidebar:not(.hidden) {
+    position: absolute;
+    left: 0;
+    top: var(--header-height, 52px);
+    height: calc(100vh - var(--header-height, 52px));
+    z-index: 100;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
+  }
+}

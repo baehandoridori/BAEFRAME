@@ -23,6 +23,7 @@ import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
+import { getCutlistManager } from './modules/cutlist-manager.js';
 import {
   buildPlaylistSegments,
   CONTINUOUS_STATUS,
@@ -51,6 +52,7 @@ const SUPPORTED_VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
 const SUPPORTED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
 const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];
 const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
+const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -202,6 +204,20 @@ async function initApp() {
     playlistAddArea: document.getElementById('playlistAddArea'),
     playlistAddZone: document.getElementById('playlistAddZone'),
 
+    // 컷 묶음 관련
+    btnCutlist: document.getElementById('btnCutlist'),
+    cutlistSidebar: document.getElementById('cutlistSidebar'),
+    cutlistNameInput: document.getElementById('cutlistNameInput'),
+    btnCutlistAdd: document.getElementById('btnCutlistAdd'),
+    btnCutlistSave: document.getElementById('btnCutlistSave'),
+    btnCutlistClose: document.getElementById('btnCutlistClose'),
+    cutlistSummary: document.getElementById('cutlistSummary'),
+    cutlistItems: document.getElementById('cutlistItems'),
+    cutlistEmpty: document.getElementById('cutlistEmpty'),
+    cutlistIgnoredSummary: document.getElementById('cutlistIgnoredSummary'),
+    cutlistShowMissing: document.getElementById('cutlistShowMissing'),
+    currentCutOverlay: document.getElementById('currentCutOverlay'),
+
     // 오디오 웨이브폼
     audioWaveformContainer: document.getElementById('audioWaveformContainer'),
 
@@ -253,6 +269,11 @@ async function initApp() {
     mode: 'review'
   };
 
+  const cutlistUIState = {
+    active: false,
+    lastIgnored: []
+  };
+
   const continuousPlaybackState = {
     active: false,
     waiting: false,
@@ -294,6 +315,11 @@ async function initApp() {
     return normalized.endsWith(`.${SUPPORTED_PLAYLIST_EXTENSION}`);
   }
 
+  function isCutlistFilePath(filePath) {
+    const normalized = String(filePath || '').split(/[?#]/)[0].toLowerCase();
+    return normalized.endsWith(`.${SUPPORTED_CUTLIST_EXTENSION}`);
+  }
+
   function normalizePlaylistOpenPath(path) {
     let filePath = path || '';
     if (filePath.startsWith('baeframe://')) {
@@ -326,9 +352,70 @@ async function initApp() {
     return true;
   }
 
+  function normalizeCutlistOpenPath(path) {
+    let filePath = path || '';
+    if (filePath.startsWith('baeframe://cutlist')) {
+      try {
+        const url = new URL(filePath);
+        filePath = url.searchParams.get('file') || filePath.replace(/^baeframe:\/\/cutlist\/?/, '');
+      } catch (error) {
+        log.warn('컷 묶음 URL 디코딩 실패', { error: error.message });
+      }
+    } else if (filePath.startsWith('baeframe://')) {
+      filePath = filePath.replace(/^baeframe:\/\//, '');
+    }
+
+    try {
+      filePath = decodeURIComponent(filePath);
+    } catch (error) {
+      log.warn('컷 묶음 경로 디코딩 실패', { error: error.message });
+    }
+
+    if (/^[A-Za-z]\//.test(filePath)) {
+      filePath = filePath[0] + ':' + filePath.slice(1);
+    }
+
+    return filePath.replace(/\//g, '\\');
+  }
+
+  async function openCutlistFile(filePath) {
+    const normalizedPath = normalizeCutlistOpenPath(filePath);
+    const cutlistManager = getCutlistManager();
+    await cutlistManager.open(normalizedPath);
+    showCutlistSidebar();
+    updateCutlistUI();
+    updateCutlistTimeline();
+    const firstCut = cutlistManager.getOrderedCuts()[0];
+    if (firstCut) {
+      cutlistManager.selectCut(firstCut.id);
+    }
+    return true;
+  }
+
+  async function saveCurrentCutlist() {
+    const cutlistManager = getCutlistManager();
+    if (!cutlistManager.currentCutlist) {
+      showToast('저장할 컷 묶음이 없습니다.', 'warning');
+      return false;
+    }
+
+    try {
+      const path = await cutlistManager.save();
+      showToast('컷 묶음을 저장했습니다.', 'success');
+      return path;
+    } catch (error) {
+      showToast(`컷 묶음을 저장할 수 없습니다: ${error.message}`, 'error');
+      return false;
+    }
+  }
+
   async function openSelectedPath(filePath) {
     if (isPlaylistFilePath(filePath)) {
       return openPlaylistFile(filePath);
+    }
+
+    if (isCutlistFilePath(filePath)) {
+      return openCutlistFile(filePath);
     }
 
     return loadVideo(filePath);
@@ -1350,6 +1437,8 @@ async function initApp() {
       const file = files[0];
       if (isPlaylistFilePath(file.path || file.name)) {
         await openPlaylistFile(file.path);
+      } else if (isCutlistFilePath(file.path || file.name)) {
+        await openCutlistFile(file.path);
       } else if (isMediaFile(file.name)) {
         await loadVideo(file.path);
       } else {
@@ -10415,6 +10504,7 @@ async function initApp() {
 
   // ====== 재생목록 초기화 ======
   initPlaylistFeature();
+  initCutlistFeature();
 
   log.info('앱 초기화 완료');
 
@@ -11257,6 +11347,263 @@ async function initApp() {
     updatePlaylistContinuousTimeline();
   }
 
+  function initCutlistFeature() {
+    const cutlistManager = getCutlistManager();
+
+    cutlistManager.onCutlistLoaded = () => {
+      updateCutlistUI();
+      updateCutlistTimeline();
+    };
+
+    cutlistManager.onCutlistModified = () => {
+      updateCutlistUI();
+      updateCutlistTimeline();
+    };
+
+    cutlistManager.onCutSelected = (cut) => {
+      updateCurrentCutDisplay(cut);
+      updateCutlistCurrentItem();
+      void seekToCut(cut);
+    };
+
+    cutlistManager.onError = (error) => {
+      showToast(error.message, 'error');
+    };
+
+    elements.btnCutlist?.addEventListener('click', () => {
+      if (elements.cutlistSidebar?.classList.contains('hidden')) {
+        showCutlistSidebar();
+        if (!cutlistManager.isActive()) {
+          cutlistManager.createNew();
+        }
+      } else {
+        hideCutlistSidebar();
+      }
+    });
+
+    elements.btnCutlistClose?.addEventListener('click', () => {
+      hideCutlistSidebar();
+    });
+
+    elements.btnCutlistAdd?.addEventListener('click', async () => {
+      try {
+        await addCutlistSourcePair();
+      } catch (error) {
+        showToast(`컷 묶음 소스를 추가할 수 없습니다: ${error.message}`, 'error');
+      }
+    });
+
+    elements.btnCutlistSave?.addEventListener('click', () => {
+      void saveCurrentCutlist();
+    });
+
+    elements.cutlistNameInput?.addEventListener('change', (event) => {
+      cutlistManager.setName(event.target.value);
+    });
+
+    elements.cutlistShowMissing?.addEventListener('change', (event) => {
+      cutlistManager.setShowMissingScenes(event.target.checked);
+    });
+
+    window.electronAPI.onOpenCutlist?.(async (path) => {
+      log.info('컷 묶음 링크로 열기', { path });
+
+      try {
+        await openCutlistFile(path);
+      } catch (error) {
+        showToast(`컷 묶음을 열 수 없습니다: ${error.message}`, 'error');
+      }
+    });
+  }
+
+  async function addCutlistSourcePair() {
+    const txtResult = await window.electronAPI.openFileDialog({
+      title: 'Moho info txt 선택',
+      filters: [{ name: 'Moho info txt', extensions: ['txt'] }],
+      properties: ['openFile']
+    });
+    if (txtResult.canceled || txtResult.filePaths.length === 0) return false;
+
+    const videoResult = await window.electronAPI.openFileDialog({
+      title: '연결할 출력 영상 선택',
+      filters: [{ name: '미디어 파일', extensions: SUPPORTED_MEDIA_EXTENSIONS }],
+      properties: ['openFile']
+    });
+    if (videoResult.canceled || videoResult.filePaths.length === 0) return false;
+
+    const cutlistManager = getCutlistManager();
+    if (!cutlistManager.isActive()) {
+      cutlistManager.createNew();
+    }
+
+    const result = await cutlistManager.addSourcePair(txtResult.filePaths[0], videoResult.filePaths[0]);
+    cutlistUIState.lastIgnored = result.ignored || [];
+    updateCutlistUI();
+    updateCutlistTimeline();
+
+    if (!cutlistManager.currentCutId && result.cuts.length > 0) {
+      cutlistManager.selectCut(result.cuts[0].id);
+    }
+
+    showToast(`${result.cuts.length}개 컷을 추가했습니다.`, 'success');
+    return result;
+  }
+
+  function showCutlistSidebar() {
+    hidePlaylistSidebar();
+    cutlistUIState.active = true;
+    elements.cutlistSidebar?.classList.remove('hidden');
+    elements.btnCutlist?.classList.add('active');
+    updateCutlistUI();
+    const currentCut = getCutlistManager().getCutById(getCutlistManager().currentCutId);
+    updateCurrentCutDisplay(currentCut);
+  }
+
+  function hideCutlistSidebar() {
+    cutlistUIState.active = false;
+    elements.cutlistSidebar?.classList.add('hidden');
+    elements.btnCutlist?.classList.remove('active');
+    updateCurrentCutDisplay(null);
+  }
+
+  function updateCutlistUI() {
+    const cutlistManager = getCutlistManager();
+    const cutlist = cutlistManager.currentCutlist;
+    const hasCutlist = !!cutlist;
+    const cutCount = cutlist?.cuts?.length || 0;
+    const sourceCount = cutlist?.sources?.length || 0;
+
+    elements.cutlistSidebar?.classList.toggle('empty', !hasCutlist || cutCount === 0);
+
+    if (elements.cutlistNameInput && document.activeElement !== elements.cutlistNameInput) {
+      elements.cutlistNameInput.value = cutlist?.name || '새 컷 묶음';
+    }
+
+    if (elements.cutlistShowMissing) {
+      elements.cutlistShowMissing.checked = cutlist?.settings?.showMissingScenes === true;
+    }
+
+    if (elements.cutlistSummary) {
+      elements.cutlistSummary.textContent = hasCutlist
+        ? `${sourceCount}개 소스 · ${cutCount}개 컷`
+        : '0개 소스 · 0개 컷';
+    }
+
+    if (elements.cutlistEmpty) {
+      elements.cutlistEmpty.hidden = hasCutlist && cutCount > 0;
+    }
+
+    renderCutlistItems();
+    renderCutlistIgnoredSummary();
+  }
+
+  function renderCutlistItems() {
+    const cutlistManager = getCutlistManager();
+    if (!elements.cutlistItems) return;
+
+    elements.cutlistItems.innerHTML = '';
+
+    if (!cutlistManager.currentCutlist) return;
+
+    for (const row of cutlistManager.getRows()) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'cutlist-item';
+      item.dataset.cutId = row.id;
+
+      if (row.missing) {
+        item.classList.add('missing', 'cutlist-missing-row');
+        item.disabled = true;
+        item.innerHTML = `
+          <div class="cutlist-item-main">
+            <span class="cutlist-item-label">${escapeHtml(row.label)}</span>
+            <span class="cutlist-item-frames">누락</span>
+          </div>
+        `;
+        elements.cutlistItems.appendChild(item);
+        continue;
+      }
+
+      const source = cutlistManager.getSourceById(row.sourceId);
+      const sourceMissing = source?.missing === true;
+      const frameCount = Math.max(0, Number(row.endFrame) - Number(row.startFrame) + 1);
+
+      item.classList.toggle('active', row.id === cutlistManager.currentCutId);
+      item.classList.toggle('missing', sourceMissing);
+      item.title = sourceMissing
+        ? `${source?.fileName || '출력 영상'} 파일을 찾을 수 없습니다.`
+        : `${row.label} - ${source?.fileName || ''}`;
+      item.innerHTML = `
+        <div class="cutlist-item-main">
+          <span class="cutlist-item-label">${escapeHtml(row.label)}</span>
+          <span class="cutlist-item-frames">${frameCount}f</span>
+        </div>
+        <div class="cutlist-item-source">${escapeHtml(source?.fileName || '출력 영상')}</div>
+        <div class="cutlist-item-ranges">
+          <span>BAEFRAME ${formatCutlistFrameRange(row.startFrame, row.endFrame)}</span>
+          <span>Moho ${formatCutlistFrameRange(row.mohoStartFrame, row.mohoEndFrame)}</span>
+        </div>
+      `;
+
+      item.addEventListener('click', () => {
+        cutlistManager.selectCut(row.id);
+      });
+
+      elements.cutlistItems.appendChild(item);
+    }
+  }
+
+  function renderCutlistIgnoredSummary() {
+    if (!elements.cutlistIgnoredSummary) return;
+
+    const cutlistManager = getCutlistManager();
+    const ignoredCount = cutlistUIState.lastIgnored.length ||
+      (cutlistManager.currentCutlist?.sources || []).reduce((sum, source) => (
+        sum + (Array.isArray(source.ignoredLabels) ? source.ignoredLabels.length : 0)
+      ), 0);
+
+    elements.cutlistIgnoredSummary.hidden = ignoredCount === 0;
+    elements.cutlistIgnoredSummary.textContent = ignoredCount > 0
+      ? `무시된 라벨 ${ignoredCount}개`
+      : '';
+  }
+
+  function updateCutlistCurrentItem() {
+    const currentCutId = getCutlistManager().currentCutId;
+    elements.cutlistItems?.querySelectorAll('.cutlist-item').forEach((item) => {
+      item.classList.toggle('active', item.dataset.cutId === currentCutId);
+    });
+  }
+
+  function updateCurrentCutDisplay(cut) {
+    if (!elements.currentCutOverlay) return;
+
+    if (!cut || !cutlistUIState.active) {
+      elements.currentCutOverlay.hidden = true;
+      elements.currentCutOverlay.textContent = '';
+      return;
+    }
+
+    elements.currentCutOverlay.hidden = false;
+    elements.currentCutOverlay.textContent = `${cut.label} · BAEFRAME ${formatCutlistFrameRange(cut.startFrame, cut.endFrame)}`;
+  }
+
+  function updateCutlistTimeline() {
+    getCutlistManager().getTimeline();
+  }
+
+  async function seekToCut(cut) {
+    if (!cut) return false;
+    updateCurrentCutDisplay(cut);
+    return true;
+  }
+
+  function formatCutlistFrameRange(startFrame, endFrame) {
+    const start = Number.isFinite(Number(startFrame)) ? Number(startFrame) : 0;
+    const end = Number.isFinite(Number(endFrame)) ? Number(endFrame) : start;
+    return `${start} - ${end}f`;
+  }
+
   function initPlaylistFeature() {
     const playlistManager = getPlaylistManager();
 
@@ -11415,6 +11762,14 @@ async function initApp() {
             await openPlaylistFile(playlistPath);
             exitPlaylistAddMode();
             showToast('재생목록을 열었습니다.', 'success');
+            return;
+          }
+
+          const cutlistPath = result.filePaths.find(isCutlistFilePath);
+          if (cutlistPath) {
+            await openCutlistFile(cutlistPath);
+            exitPlaylistAddMode();
+            showToast('컷 묶음을 열었습니다.', 'success');
             return;
           }
 
@@ -11608,6 +11963,7 @@ async function initApp() {
 
   // 사이드바 표시
   function showPlaylistSidebar() {
+    hideCutlistSidebar();
     elements.playlistSidebar?.classList.remove('hidden');
     updatePlaylistUI();
   }
@@ -11935,6 +12291,17 @@ async function initApp() {
         return;
       }
 
+      const cutlistPath = files.find(f => isCutlistFilePath(f.path || f.name))?.path;
+      if (cutlistPath) {
+        try {
+          await openCutlistFile(cutlistPath);
+          showToast('컷 묶음을 열었습니다.', 'success');
+        } catch (error) {
+          showToast(`컷 묶음을 열 수 없습니다: ${error.message}`, 'error');
+        }
+        return;
+      }
+
       const videoPaths = files
         .filter(f => isMediaFile(f.path))
         .map(f => f.path);
@@ -11999,6 +12366,18 @@ async function initApp() {
           showToast('재생목록을 열었습니다.', 'success');
         } catch (error) {
           showToast(`재생목록을 열 수 없습니다: ${error.message}`, 'error');
+        }
+        return;
+      }
+
+      const cutlistPath = files.find(f => isCutlistFilePath(f.path || f.name))?.path;
+      if (cutlistPath) {
+        try {
+          await openCutlistFile(cutlistPath);
+          exitPlaylistAddMode();
+          showToast('컷 묶음을 열었습니다.', 'success');
+        } catch (error) {
+          showToast(`컷 묶음을 열 수 없습니다: ${error.message}`, 'error');
         }
         return;
       }
