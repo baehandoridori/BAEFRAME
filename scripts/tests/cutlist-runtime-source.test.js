@@ -74,6 +74,20 @@ test('cutlist query route decodes only the file value', () => {
   );
 });
 
+test('cutlist route with slash before query decodes the file value', () => {
+  assert.deepEqual(
+    launchRouting.resolveRoutedFileUrl('baeframe://cutlist/?file=G%3A%5Cdir%5Cfile.bcutlist', 'cutlist'),
+    { route: 'cutlist', filePath: 'G:\\dir\\file.bcutlist' }
+  );
+});
+
+test('playlist route with slash before query decodes the file value', () => {
+  assert.deepEqual(
+    launchRouting.resolveRoutedFileUrl('baeframe://playlist/?file=G%3A%5Cdir%5Cfile.bplaylist', 'playlist'),
+    { route: 'playlist', filePath: 'G:\\dir\\file.bplaylist' }
+  );
+});
+
 test('malformed cutlist route URL does not throw or resolve', () => {
   assert.doesNotThrow(() => {
     assert.deepEqual(

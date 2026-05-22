@@ -50,7 +50,13 @@ function resolveRoutedFileUrl(arg, routeName) {
   const rest = arg.slice(routePrefix.length);
   let rawPath = '';
 
-  if (rest.startsWith('/')) {
+  if (rest.startsWith('/?')) {
+    const params = new URLSearchParams(rest.slice(2));
+    rawPath = params.get('file') || '';
+  } else if (rest.toLowerCase().startsWith('/%3f')) {
+    const params = new URLSearchParams(rest.slice(4));
+    rawPath = params.get('file') || '';
+  } else if (rest.startsWith('/')) {
     rawPath = rest.slice(1);
   } else if (rest.startsWith('?')) {
     const params = new URLSearchParams(rest.slice(1));
