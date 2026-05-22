@@ -123,6 +123,16 @@ test('opening cutlist mode exits playlist continuous state before cutlist timeli
   assert.ok(exitIndex < updateIndex, 'playlist continuous state should clear before cutlist timeline renders');
 });
 
+test('cutlist sidebar transitions refresh comment labels and ranges', () => {
+  const showBody = extractBalancedBlock(appSource, 'function showCutlistSidebar');
+  const hideBody = extractBalancedBlock(appSource, 'function hideCutlistSidebar');
+
+  assert.match(showBody, /cutlistUIState\.active = true;[\s\S]+refreshCommentRangesForCurrentMode\(\)/);
+  assert.match(showBody, /cutlistUIState\.active = true;[\s\S]+updateCommentList\(getActiveCommentFilter\(\)\)/);
+  assert.match(hideBody, /cutlistUIState\.active = false;[\s\S]+refreshCommentRangesForCurrentMode\(\)/);
+  assert.match(hideBody, /cutlistUIState\.active = false;[\s\S]+updateCommentList\(getActiveCommentFilter\(\)\)/);
+});
+
 test('cutlist route URLs preserve or recover Windows drive paths', () => {
   assert.deepEqual(
     launchRouting.resolveRoutedFileUrl('baeframe://cutlist/G:/dir/file.bcutlist', 'cutlist'),

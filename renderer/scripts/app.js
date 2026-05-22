@@ -11533,6 +11533,8 @@ async function initApp() {
     updateCutlistTimeline();
     const currentCut = getCutlistManager().getCutById(getCutlistManager().currentCutId);
     updateCurrentCutDisplay(currentCut);
+    void refreshCommentRangesForCurrentMode();
+    updateCommentList(getActiveCommentFilter());
   }
 
   function hideCutlistSidebar() {
@@ -11542,6 +11544,8 @@ async function initApp() {
     updateCurrentCutDisplay(null);
     timeline.setCurrentCutId(null);
     timeline.setCutlistTimeline([], 0);
+    void refreshCommentRangesForCurrentMode();
+    updateCommentList(getActiveCommentFilter());
   }
 
   function updateCutlistUI() {
