@@ -11,6 +11,7 @@ const { createLogger } = require('./logger');
 const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized, toggleFullscreen, isFullscreen } = require('./window');
 const { RecentFilesStore } = require('./recent-files-store');
 const recentThumbCapture = require('./recent-thumb-capture');
+const { validateCutlistFilePath } = require('./cutlist-paths');
 const Store = require('electron-store');
 
 const log = createLogger('IPC');
@@ -2352,14 +2353,15 @@ function setupPlaylistHandlers() {
 function setupCutlistHandlers() {
   ipcMain.handle('cutlist:read', async (event, filePath) => {
     const trace = log.trace('cutlist:read');
+    const cutlistPath = validateCutlistFilePath(filePath);
     try {
-      const content = await fs.promises.readFile(filePath, 'utf-8');
+      const content = await fs.promises.readFile(cutlistPath, 'utf-8');
       const data = JSON.parse(content);
-      trace.end({ filePath });
+      trace.end({ filePath: cutlistPath });
       return data;
     } catch (error) {
       if (error.code === 'ENOENT') {
-        trace.end({ filePath, exists: false });
+        trace.end({ filePath: cutlistPath, exists: false });
         return null;
       }
       trace.error(error);
@@ -2369,9 +2371,10 @@ function setupCutlistHandlers() {
 
   ipcMain.handle('cutlist:write', async (event, filePath, data) => {
     const trace = log.trace('cutlist:write');
+    const cutlistPath = validateCutlistFilePath(filePath);
     try {
-      await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-      trace.end({ filePath });
+      await fs.promises.writeFile(cutlistPath, JSON.stringify(data, null, 2), 'utf-8');
+      trace.end({ filePath: cutlistPath });
       return { success: true };
     } catch (error) {
       trace.error(error);
@@ -2381,13 +2384,14 @@ function setupCutlistHandlers() {
 
   ipcMain.handle('cutlist:delete', async (event, filePath) => {
     const trace = log.trace('cutlist:delete');
+    const cutlistPath = validateCutlistFilePath(filePath);
     try {
-      await fs.promises.unlink(filePath);
-      trace.end({ filePath });
+      await fs.promises.unlink(cutlistPath);
+      trace.end({ filePath: cutlistPath });
       return { success: true };
     } catch (error) {
       if (error.code === 'ENOENT') {
-        trace.end({ filePath, exists: false });
+        trace.end({ filePath: cutlistPath, exists: false });
         return { success: true };
       }
       trace.error(error);
