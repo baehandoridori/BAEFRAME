@@ -18,6 +18,35 @@ function safeDecodeURIComponent(value) {
   }
 }
 
+function safeDecodeQueryComponent(value) {
+  try {
+    return decodeURIComponent(value.replace(/\+/g, '%20'));
+  } catch {
+    return null;
+  }
+}
+
+function getQueryFilePath(query) {
+  const pairs = query.split('&');
+  for (const pair of pairs) {
+    const separatorIndex = pair.indexOf('=');
+    const rawKey = separatorIndex === -1 ? pair : pair.slice(0, separatorIndex);
+    const decodedKey = safeDecodeQueryComponent(rawKey);
+    if (decodedKey !== 'file') {
+      continue;
+    }
+
+    const rawValue = separatorIndex === -1 ? '' : pair.slice(separatorIndex + 1);
+    if (safeDecodeQueryComponent(rawValue) === null) {
+      return '';
+    }
+
+    return new URLSearchParams(query).get('file') || '';
+  }
+
+  return '';
+}
+
 function normalizeLaunchPath(filePath, replaceSlashes = true) {
   if (typeof filePath !== 'string' || filePath.length === 0) {
     return '';
@@ -49,26 +78,27 @@ function resolveRoutedFileUrl(arg, routeName) {
 
   const rest = arg.slice(routePrefix.length);
   let rawPath = '';
+  let shouldDecodePath = true;
 
   if (rest.startsWith('/?')) {
-    const params = new URLSearchParams(rest.slice(2));
-    rawPath = params.get('file') || '';
+    rawPath = getQueryFilePath(rest.slice(2));
+    shouldDecodePath = false;
   } else if (rest.toLowerCase().startsWith('/%3f')) {
-    const params = new URLSearchParams(rest.slice(4));
-    rawPath = params.get('file') || '';
+    rawPath = getQueryFilePath(rest.slice(4));
+    shouldDecodePath = false;
   } else if (rest.startsWith('/')) {
     rawPath = rest.slice(1);
   } else if (rest.startsWith('?')) {
-    const params = new URLSearchParams(rest.slice(1));
-    rawPath = params.get('file') || '';
+    rawPath = getQueryFilePath(rest.slice(1));
+    shouldDecodePath = false;
   } else if (rest.toLowerCase().startsWith('%3f')) {
-    const params = new URLSearchParams(rest.slice(3));
-    rawPath = params.get('file') || '';
+    rawPath = getQueryFilePath(rest.slice(3));
+    shouldDecodePath = false;
   } else {
     return { route: '', filePath: '' };
   }
 
-  const decodedPath = safeDecodeURIComponent(rawPath);
+  const decodedPath = shouldDecodePath ? safeDecodeURIComponent(rawPath) : rawPath;
   if (!decodedPath) {
     return { route: '', filePath: '' };
   }

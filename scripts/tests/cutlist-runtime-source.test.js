@@ -74,10 +74,38 @@ test('cutlist query route decodes only the file value', () => {
   );
 });
 
+test('cutlist query route preserves literal percent characters in the file path', () => {
+  const encodedPath = encodeURIComponent('G:\\dir\\100% done\\file.bcutlist');
+
+  assert.deepEqual(
+    launchRouting.resolveRoutedFileUrl(`baeframe://cutlist?file=${encodedPath}`, 'cutlist'),
+    { route: 'cutlist', filePath: 'G:\\dir\\100% done\\file.bcutlist' }
+  );
+
+  assert.deepEqual(
+    launchRouting.resolveRoutedFileUrl(`baeframe://cutlist/?file=${encodedPath}`, 'cutlist'),
+    { route: 'cutlist', filePath: 'G:\\dir\\100% done\\file.bcutlist' }
+  );
+});
+
 test('cutlist route with slash before query decodes the file value', () => {
   assert.deepEqual(
     launchRouting.resolveRoutedFileUrl('baeframe://cutlist/?file=G%3A%5Cdir%5Cfile.bcutlist', 'cutlist'),
     { route: 'cutlist', filePath: 'G:\\dir\\file.bcutlist' }
+  );
+});
+
+test('playlist query route preserves literal percent characters in the file path', () => {
+  const encodedPath = encodeURIComponent('G:\\dir\\100% done\\file.bplaylist');
+
+  assert.deepEqual(
+    launchRouting.resolveRoutedFileUrl(`baeframe://playlist?file=${encodedPath}`, 'playlist'),
+    { route: 'playlist', filePath: 'G:\\dir\\100% done\\file.bplaylist' }
+  );
+
+  assert.deepEqual(
+    launchRouting.resolveRoutedFileUrl(`baeframe://playlist/?file=${encodedPath}`, 'playlist'),
+    { route: 'playlist', filePath: 'G:\\dir\\100% done\\file.bplaylist' }
   );
 });
 
