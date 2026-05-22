@@ -108,10 +108,16 @@
           <canvas class="collab-plexus-canvas" id="collabPlexusCanvas"></canvas>
           <div class="collab-plexus-footer">
             <span class="collab-plexus-label">실시간 협업 중</span>
-            <button class="collab-plexus-sync-btn" id="btnOpenSyncFromPlexus" title="동기화 작업 패널 열기">
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
-              <span>동기화 작업</span>
-            </button>
+            <div class="collab-plexus-actions">
+              <button class="collab-plexus-action-btn collab-remote-cursor-btn" id="btnToggleRemoteCursors" title="다른 사람 커서 숨기기">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20C7 20 2.73 16.89 1 12a18.45 18.45 0 0 1 5.06-6.94"/><path d="M10.58 10.58A2 2 0 0 0 12 14a2 2 0 0 0 1.42-.58"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c5 0 9.27 3.11 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                <span id="remoteCursorsToggleLabel">커서 숨기기</span>
+              </button>
+              <button class="collab-plexus-sync-btn" id="btnOpenSyncFromPlexus" title="동기화 작업 패널 열기">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                <span>동기화 작업</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -540,7 +546,7 @@
               </div>
 
               <!-- 색상 선택 -->
-              <div class="tools-section">
+              <div class="tools-section" id="colorSection">
                 <div class="section-label">색상</div>
                 <div class="colors-row">
                   <button class="color-btn active" data-color="red" style="background: #ff4757" title="빨강"></button>

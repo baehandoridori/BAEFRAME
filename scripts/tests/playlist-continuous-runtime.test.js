@@ -192,7 +192,7 @@ test('continuous playback starts next-item preparation before playback watchdog 
 });
 
 test('continuous video loads preserve aggregate timeline comment ranges', () => {
-  const helperMatch = appSource.match(/async function refreshCommentRangesForCurrentMode\(\) \{([\s\S]*?)\n  \}/);
+  const helperMatch = appSource.match(/async function refreshCommentRangesForCurrentMode\([^)]*\) \{([\s\S]*?)\n  \}/);
   assert.ok(helperMatch, 'current-mode comment range refresher should exist');
 
   const helperSource = helperMatch[1];
@@ -203,13 +203,27 @@ test('continuous video loads preserve aggregate timeline comment ranges', () => 
 
   const loadVideoCommentRefreshMatch = appSource.match(/renderHighlights\(\);\s*\n\s*\/\/ 댓글 범위 렌더링([\s\S]*?)\/\/ ====== 최근 파일 목록에 추가/);
   assert.ok(loadVideoCommentRefreshMatch, 'loadVideo should refresh comment ranges before recent files');
-  assert.match(loadVideoCommentRefreshMatch[1], /await refreshCommentRangesForCurrentMode\(\);/);
+  assert.match(loadVideoCommentRefreshMatch[1], /await refreshCommentRangesForCurrentMode\(/);
   assert.doesNotMatch(loadVideoCommentRefreshMatch[1], /\n\s*renderCommentRanges\(\);/);
+});
+
+test('continuous cut loads reuse the existing aggregate timeline instead of rebuilding it', () => {
+  const helperMatch = appSource.match(/async function refreshCommentRangesForCurrentMode\(options = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(helperMatch, 'current-mode comment range refresher should accept options');
+
+  const helperSource = helperMatch[1];
+  assert.match(helperSource, /skipContinuousTimelineRefresh = false/);
+  assert.match(helperSource, /if \(skipContinuousTimelineRefresh && timeline\.playlistDuration > 0\) \{[\s\S]+renderPlaylistContinuousCommentList\(commentFilterState\.status\);[\s\S]+return;/);
+  assert.match(helperSource, /await updatePlaylistContinuousTimeline\(\);/);
+
+  const loadVideoCommentRefreshMatch = appSource.match(/renderHighlights\(\);\s*\n\s*\/\/ 댓글 범위 렌더링([\s\S]*?)\/\/ ====== 최근 파일 목록에 추가/);
+  assert.ok(loadVideoCommentRefreshMatch, 'loadVideo should refresh comment ranges before recent files');
+  assert.match(loadVideoCommentRefreshMatch[1], /await refreshCommentRangesForCurrentMode\(\{\s*skipContinuousTimelineRefresh: preserveContinuousSession\s*\}\);/);
 });
 
 test('continuous state is initialized before startup file-open comment refresh paths', () => {
   const stateIndex = appSource.indexOf('const playlistUIState = {');
-  const helperIndex = appSource.indexOf('async function refreshCommentRangesForCurrentMode()');
+  const helperIndex = appSource.indexOf('async function refreshCommentRangesForCurrentMode');
   const loadVideoIndex = appSource.indexOf('async function loadVideo(filePath, options = {})');
   const rendererReadyIndex = appSource.indexOf('window.electronAPI.notifyRendererReady?.();');
 
@@ -309,11 +323,33 @@ test('continuous playback only checks the current item before first play', () =>
 
 test('continuous playback skips item when playlist load fails', () => {
   assert.match(appSource, /async function loadContinuousPlaylistItem\(item, sessionId\)/);
-  assert.match(appSource, /const loaded = await loadVideoFromPlaylist\(item, \{ preserveContinuousSession: true \}\);/);
+  assert.match(appSource, /const loaded = await loadVideoFromPlaylist\(item, \{[\s\S]+preserveContinuousSession: true,[\s\S]+preparedVideoPath[\s\S]+\}\);/);
   assert.match(appSource, /markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.ERROR, '건너뜀'\);/);
   assert.match(appSource, /continuousPlaybackState\.skippedBatch\.push\(item\);/);
   assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(currentItem, sessionId\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
   assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(nextItem, sessionId\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
+});
+
+test('continuous playback reuses prepared media paths at cut boundaries', () => {
+  assert.match(appSource, /preparedMediaPaths:\s*new Map\(\)/);
+  assert.match(appSource, /continuousPlaybackState\.preparedMediaPaths\.clear\(\);/);
+  assert.match(appSource, /continuousPlaybackState\.preparedMediaPaths\.set\(item\.id, item\.videoPath\);/);
+  assert.match(appSource, /continuousPlaybackState\.preparedMediaPaths\.set\(item\.id, cacheResult\.convertedPath\);/);
+  assert.match(appSource, /continuousPlaybackState\.preparedMediaPaths\.set\(item\.id, result\.outputPath\);/);
+
+  const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(loadVideoMatch, 'loadVideo should exist');
+  const loadVideoSource = loadVideoMatch[1];
+  assert.match(loadVideoSource, /preparedVideoPath = null/);
+  assert.match(loadVideoSource, /const hasPreparedVideoPath = typeof preparedVideoPath === 'string' && preparedVideoPath\.length > 0;/);
+  assert.match(loadVideoSource, /let actualVideoPath = hasPreparedVideoPath \? preparedVideoPath : filePath;/);
+  assert.match(loadVideoSource, /!hasPreparedVideoPath && !fileIsAudio && await window\.electronAPI\.ffmpegIsAvailable\(\)/);
+
+  const continuousLoaderMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}/);
+  assert.ok(continuousLoaderMatch, 'continuous playlist loader should exist');
+  const continuousLoaderSource = continuousLoaderMatch[1];
+  assert.match(continuousLoaderSource, /const preparedVideoPath = continuousPlaybackState\.preparedMediaPaths\.get\(item\.id\);/);
+  assert.match(continuousLoaderSource, /preparedVideoPath/);
 });
 
 test('playlist loading returns the real loadVideo result', () => {

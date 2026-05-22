@@ -8,7 +8,7 @@
 
 *프레임 단위로 정확하게. 그림으로 직관적으로. 링크 하나로 간편하게.*
 
-[![Version](https://img.shields.io/badge/version-1.3.0--beta-0366d6?style=for-the-badge)](https://github.com/baehandoridori/BAEFRAME)
+[![Version](https://img.shields.io/badge/version-1.3.1--beta-0366d6?style=for-the-badge)](https://github.com/baehandoridori/BAEFRAME)
 [![Electron](https://img.shields.io/badge/Electron-28-47848F?style=for-the-badge&logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/baehandoridori/BAEFRAME)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge)](LICENSE)

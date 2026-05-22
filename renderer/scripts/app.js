@@ -217,6 +217,41 @@ async function initApp() {
   // 사용자 설정
   const userSettings = getUserSettings();
 
+  function getCommentEditableTarget(target) {
+    if (!(target instanceof Element)) return null;
+    return target.closest('.comment-input, .comment-marker-input, .comment-reply-input, .comment-edit-textarea, .comment-reply-edit-textarea, .thread-editor[contenteditable="true"]');
+  }
+
+  function installCommentEditableFocusRecovery() {
+    let pendingEditable = null;
+
+    document.addEventListener('pointerdown', handleEditablePointerDown, true);
+    document.addEventListener('mousedown', handleEditablePointerDown, true);
+
+    function handleEditablePointerDown(e) {
+      const editable = getCommentEditableTarget(e.target);
+      if (!editable || editable.disabled || editable.readOnly) return;
+
+      pendingEditable = editable;
+      window.setTimeout(() => {
+        if (pendingEditable !== editable) return;
+        pendingEditable = null;
+        if (!document.contains(editable) || document.activeElement === editable) return;
+
+        editable.focus({ preventScroll: true });
+        if (
+          (editable instanceof HTMLTextAreaElement || editable instanceof HTMLInputElement) &&
+          typeof editable.selectionStart === 'number'
+        ) {
+          const end = editable.value.length;
+          editable.setSelectionRange(end, end);
+        }
+      }, 0);
+    }
+  }
+
+  installCommentEditableFocusRecovery();
+
   // 상태
   const state = {
     isDrawMode: false,
@@ -258,6 +293,7 @@ async function initApp() {
     waiting: false,
     skippedBatch: [],
     preparePromises: new Map(),
+    preparedMediaPaths: new Map(),
     sessionId: 0
   };
 
@@ -2164,6 +2200,25 @@ async function initApp() {
     }
   });
 
+  // 다른 사람 협업 커서 표시 토글
+  const btnToggleRemoteCursors = document.getElementById('btnToggleRemoteCursors');
+  const remoteCursorsToggleLabel = document.getElementById('remoteCursorsToggleLabel');
+  function updateRemoteCursorToggleButton() {
+    const showRemoteCursors = userSettings.getShowRemoteCursors();
+    if (remoteCursorsToggleLabel) {
+      remoteCursorsToggleLabel.textContent = showRemoteCursors ? '커서 숨기기' : '커서 보이기';
+    }
+    if (btnToggleRemoteCursors) {
+      btnToggleRemoteCursors.classList.toggle('is-muted', !showRemoteCursors);
+      btnToggleRemoteCursors.setAttribute('title', showRemoteCursors ? '다른 사람 커서 숨기기' : '다른 사람 커서 보이기');
+      btnToggleRemoteCursors.setAttribute('aria-pressed', String(!showRemoteCursors));
+    }
+  }
+  updateRemoteCursorToggleButton();
+  btnToggleRemoteCursors?.addEventListener('click', () => {
+    userSettings.setShowRemoteCursors(!userSettings.getShowRemoteCursors());
+  });
+
   // 도구별 설정 저장 (크기, 불투명도)
   const toolSettings = {
     eraser: { size: 20 },      // 지우개는 기본 크기 더 크게
@@ -2179,6 +2234,8 @@ async function initApp() {
   const brushOpacitySlider = document.getElementById('brushOpacitySlider');
   const brushOpacityValue = document.getElementById('brushOpacityValue');
   const eraserModeSection = document.getElementById('eraserModeSection');
+  const colorSection = document.getElementById('colorSection');
+  const strokeSection = document.getElementById('strokeSection');
   const eraserModeButtons = document.querySelectorAll('.eraser-mode-btn[data-eraser-mode]');
 
   function applyEraserMode(mode, persist = false) {
@@ -2238,11 +2295,15 @@ async function initApp() {
       // 지우개일 때 불투명도 섹션 숨기기, 아니면 보이기
       if (newToolType === 'eraser') {
         opacitySection.style.display = 'none';
+        if (colorSection) colorSection.style.display = 'none';
+        if (strokeSection) strokeSection.style.display = 'none';
         if (eraserModeSection) eraserModeSection.hidden = false;
         applyEraserMode(currentEraserMode);
         drawingManager.setOpacity(1);  // 지우개는 항상 100%
       } else {
         opacitySection.style.display = 'block';
+        if (colorSection) colorSection.style.display = 'block';
+        if (strokeSection) strokeSection.style.display = 'block';
         if (eraserModeSection) eraserModeSection.hidden = true;
         brushOpacitySlider.value = toolSettings.brush.opacity;
         brushOpacityValue.textContent = `${toolSettings.brush.opacity}%`;
@@ -2284,6 +2345,7 @@ async function initApp() {
   function updateSizePreview() {
     const size = brushSizeSlider.value;
     brushSizeValue.textContent = `${size}px`;
+    sizePreview.classList.toggle('eraser-preview', currentToolType === 'eraser');
     sizePreview.style.setProperty('--preview-size', `${Math.min(size, 20)}px`);
     sizePreview.style.setProperty('--preview-color', currentColor);
   }
@@ -3276,10 +3338,15 @@ async function initApp() {
     renderVideoCommentRanges();
   }
 
-  async function refreshCommentRangesForCurrentMode() {
+  async function refreshCommentRangesForCurrentMode(options = {}) {
+    const { skipContinuousTimelineRefresh = false } = options;
     if (playlistUIState.mode === 'continuous') {
       setupCommentRangeInteractions();
       renderVideoCommentRanges();
+      if (skipContinuousTimelineRefresh && timeline.playlistDuration > 0) {
+        renderPlaylistContinuousCommentList(commentFilterState.status);
+        return;
+      }
       await updatePlaylistContinuousTimeline();
       return;
     }
@@ -3806,6 +3873,7 @@ async function initApp() {
 
   // 비디오 패닝
   elements.videoWrapper?.addEventListener('mousedown', (e) => {
+    if (getCommentEditableTarget(e.target)) return;
     if (canPanVideo() && e.button === 0) {
       state.isPanningVideo = true;
       state.panStartX = e.clientX;
@@ -4095,7 +4163,8 @@ async function initApp() {
       keepVersionContext = false,
       targetVersion = null,
       preserveContinuousSession = false,
-      playWhenMediaReady = false
+      playWhenMediaReady = false,
+      preparedVideoPath = null
     } = options;
     const loadToken = ++latestVideoLoadToken;
     const isStaleVideoLoad = () => loadToken !== latestVideoLoadToken;
@@ -4113,8 +4182,12 @@ async function initApp() {
       const fileIsAudio = isAudioFile(fileInfo.name);
 
       // ====== 코덱 확인 및 트랜스코딩 (비디오만) ======
-      let actualVideoPath = filePath;
-      const ffmpegAvailable = !fileIsAudio && await window.electronAPI.ffmpegIsAvailable();
+      const hasPreparedVideoPath = typeof preparedVideoPath === 'string' && preparedVideoPath.length > 0;
+      let actualVideoPath = hasPreparedVideoPath ? preparedVideoPath : filePath;
+      if (hasPreparedVideoPath) {
+        log.debug('준비된 연속 재생 미디어 경로 사용', { filePath, preparedVideoPath });
+      }
+      const ffmpegAvailable = !hasPreparedVideoPath && !fileIsAudio && await window.electronAPI.ffmpegIsAvailable();
 
       if (ffmpegAvailable) {
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
@@ -4474,7 +4547,9 @@ async function initApp() {
       renderHighlights();
 
       // 댓글 범위 렌더링
-      await refreshCommentRangesForCurrentMode();
+      await refreshCommentRangesForCurrentMode({
+        skipContinuousTimelineRefresh: preserveContinuousSession
+      });
       if (isStaleVideoLoad()) return false;
 
       // ====== 최근 파일 목록에 추가 ======
@@ -4898,6 +4973,8 @@ async function initApp() {
       <textarea class="comment-marker-input" placeholder="댓글 입력..." rows="1"></textarea>
       <div class="comment-marker-input-hint">Enter 확인 · Shift+Enter 줄바꿈 · Esc 취소</div>
     `;
+    inputWrapper.addEventListener('pointerdown', (e) => e.stopPropagation());
+    inputWrapper.addEventListener('mousedown', (e) => e.stopPropagation());
 
     markerEl.appendChild(inputWrapper);
     markerContainer.appendChild(markerEl);
@@ -10075,17 +10152,31 @@ async function initApp() {
     }
     return container;
   })();
+  let lastRemoteCursorCollaborators = [];
 
-  function renderRemoteCursors(collaborators) {
+  function clearRemoteCursors() {
+    if (!remoteCursorsContainer) return;
+    remoteCursorsContainer.querySelectorAll('.remote-cursor').forEach(el => el.remove());
+  }
+
+  function renderRemoteCursors(collaborators = []) {
     if (!remoteCursorsContainer) return;
 
+    const safeCollaborators = Array.isArray(collaborators) ? collaborators : [];
+    lastRemoteCursorCollaborators = safeCollaborators;
+
+    if (!userSettings.getShowRemoteCursors()) {
+      clearRemoteCursors();
+      return;
+    }
+
     // 기존 커서 중 더 이상 없는 것 제거
-    const activeIds = new Set(collaborators.map(c => `cursor-${c.connectionId}`));
+    const activeIds = new Set(safeCollaborators.filter(c => c.cursor).map(c => `cursor-${c.connectionId}`));
     remoteCursorsContainer.querySelectorAll('.remote-cursor').forEach(el => {
       if (!activeIds.has(el.id)) el.remove();
     });
 
-    for (const collab of collaborators) {
+    for (const collab of safeCollaborators) {
       if (!collab.cursor) continue;
 
       const cursorId = `cursor-${collab.connectionId}`;
@@ -10114,6 +10205,15 @@ async function initApp() {
       }
     }
   }
+
+  userSettings.addEventListener('showRemoteCursorsChanged', (event) => {
+    updateRemoteCursorToggleButton();
+    if (event.detail?.show) {
+      renderRemoteCursors(lastRemoteCursorCollaborators);
+    } else {
+      clearRemoteCursors();
+    }
+  });
 
   // 로컬 커서 → Presence 전송 (videoWrapper 위에서만)
   elements.videoWrapper?.addEventListener('mousemove', (e) => {
@@ -10651,6 +10751,7 @@ async function initApp() {
     continuousPlaybackState.waiting = false;
     continuousPlaybackState.skippedBatch = [];
     continuousPlaybackState.preparePromises.clear();
+    continuousPlaybackState.preparedMediaPaths.clear();
   }
 
   function isContinuousSessionActive(sessionId) {
@@ -10831,10 +10932,12 @@ async function initApp() {
 
       try {
         if (!shouldContinuePreparing()) return { ready: false, stale: true };
+        continuousPlaybackState.preparedMediaPaths.delete(item.id);
         markPlaylistItemStatus(item, CONTINUOUS_STATUS.PREPARING, '준비 중');
         const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
         if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (!ffmpegAvailable) {
+          continuousPlaybackState.preparedMediaPaths.set(item.id, item.videoPath);
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
           return { ready: true };
         }
@@ -10842,6 +10945,7 @@ async function initApp() {
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(item.videoPath);
         if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (!codecInfo.success || codecInfo.isSupported) {
+          continuousPlaybackState.preparedMediaPaths.set(item.id, item.videoPath);
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
           return { ready: true };
         }
@@ -10849,6 +10953,7 @@ async function initApp() {
         const cacheResult = await window.electronAPI.ffmpegCheckCache(item.videoPath);
         if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (cacheResult.valid) {
+          continuousPlaybackState.preparedMediaPaths.set(item.id, cacheResult.convertedPath);
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
           return { ready: true, cached: true };
         }
@@ -10856,6 +10961,7 @@ async function initApp() {
         const result = await window.electronAPI.ffmpegPreTranscode(item.videoPath);
         if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (result.success) {
+          continuousPlaybackState.preparedMediaPaths.set(item.id, result.outputPath);
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, '준비 완료');
           return { ready: true };
         }
@@ -10930,7 +11036,11 @@ async function initApp() {
 
   async function loadContinuousPlaylistItem(item, sessionId) {
     if (!isContinuousSessionActive(sessionId)) return false;
-    const loaded = await loadVideoFromPlaylist(item, { preserveContinuousSession: true });
+    const preparedVideoPath = continuousPlaybackState.preparedMediaPaths.get(item.id);
+    const loaded = await loadVideoFromPlaylist(item, {
+      preserveContinuousSession: true,
+      preparedVideoPath
+    });
     if (!isContinuousSessionActive(sessionId)) return false;
     if (loaded === false) {
       markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
