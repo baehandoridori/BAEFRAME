@@ -123,6 +123,31 @@ test('cutlist playback uses global cutlist timeline time for playhead', () => {
   assert.doesNotMatch(seekStartBody, /timeline\.setCurrentTime\(frame \/ fps\)/);
 });
 
+test('cutlist timeline comment markers use global display time but keep source click frame', () => {
+  const updateMarkersBody = extractBalancedBlock(appSource, 'function updateTimelineMarkers');
+  const mapRangesBody = extractBalancedBlock(appSource, 'function mapCutlistCommentRangesToTimeline');
+
+  assert.match(updateMarkersBody, /mapCutlistCommentRangesToTimeline\(filteredRanges\)/);
+  assert.match(updateMarkersBody, /const markerFrame = Number\(range\.startFrame\)/);
+  assert.doesNotMatch(updateMarkersBody, /range\.globalStartFrame/);
+  assert.match(mapRangesBody, /sourceStartFrame:\s*range\.startFrame/);
+  assert.match(updateMarkersBody, /markersAtFrame\[0\]\?\.sourceStartFrame/);
+  assert.match(updateMarkersBody, /const time = cutlistUIState\.active/);
+  assert.match(updateMarkersBody, /markersAtFrame\[0\]\?\.globalStartTime/);
+});
+
+test('clustered comment markers use active timeline duration', () => {
+  const renderMarkersBody = extractBalancedBlock(timelineSource, 'renderClusteredCommentMarkers(allMarkerData)');
+  const addMarkerBody = extractBalancedBlock(timelineSource, '_addClusteredMarker(time, resolved, frame, markerInfos, clusterCount, colorKey = ');
+
+  assert.match(renderMarkersBody, /const duration = this\._getTimelineDuration\(\)/);
+  assert.match(renderMarkersBody, /markerData\.time \/ duration/);
+  assert.doesNotMatch(renderMarkersBody, /this\.duration === 0/);
+  assert.match(addMarkerBody, /const duration = this\._getTimelineDuration\(\)/);
+  assert.match(addMarkerBody, /time \/ duration/);
+  assert.doesNotMatch(addMarkerBody, /time \/ this\.duration/);
+});
+
 test('timeline cutlist segment clicks route through cutlist manager selection', () => {
   const listenerBody = extractBalancedBlock(appSource, "timeline.addEventListener('cutlist-seek'");
 

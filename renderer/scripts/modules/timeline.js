@@ -1616,7 +1616,8 @@ export class Timeline extends EventTarget {
     this.clearCommentMarkers();
 
     if (!allMarkerData || allMarkerData.length === 0) return;
-    if (!this.tracksContainer || this.duration === 0) return;
+    const duration = this._getTimelineDuration();
+    if (!this.tracksContainer || duration === 0) return;
 
     // 픽셀 거리 계산을 위한 컨테이너 너비
     const containerWidth = this.tracksContainer.offsetWidth || 1000;
@@ -1630,7 +1631,7 @@ export class Timeline extends EventTarget {
     let currentCluster = null;
 
     sortedMarkers.forEach(markerData => {
-      const pixelX = (markerData.time / this.duration) * containerWidth;
+      const pixelX = (markerData.time / duration) * containerWidth;
 
       if (!currentCluster) {
         // 첫 클러스터 시작
@@ -1686,7 +1687,8 @@ export class Timeline extends EventTarget {
    * 클러스터된 마커 추가 (내부용)
    */
   _addClusteredMarker(time, resolved, frame, markerInfos, clusterCount, colorKey = 'default') {
-    const percent = (time / this.duration) * 100;
+    const duration = this._getTimelineDuration();
+    const percent = duration > 0 ? (time / duration) * 100 : 0;
     const marker = document.createElement('div');
     marker.className = `comment-marker-track${resolved ? ' resolved' : ''}`;
     marker.style.left = `${percent}%`;

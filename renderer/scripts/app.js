@@ -5472,23 +5472,34 @@ async function initApp() {
       filteredRanges = ranges.filter(r => allowedIds.has(r.markerId));
     }
 
+    if (cutlistUIState.active) {
+      filteredRanges = mapCutlistCommentRangesToTimeline(filteredRanges);
+    }
+
     // 프레임별로 마커 그룹화
     const frameMap = new Map();
     filteredRanges.forEach(range => {
-      if (!frameMap.has(range.startFrame)) {
-        frameMap.set(range.startFrame, []);
+      const markerFrame = Number(range.startFrame);
+      if (!Number.isFinite(markerFrame)) return;
+      if (!frameMap.has(markerFrame)) {
+        frameMap.set(markerFrame, []);
       }
-      frameMap.get(range.startFrame).push(range);
+      frameMap.get(markerFrame).push(range);
     });
 
     // 클러스터링용 마커 데이터 배열 생성
     const allMarkerData = [];
     frameMap.forEach((markersAtFrame, frame) => {
-      const time = frame / fps;
+      const time = cutlistUIState.active
+        ? Number(markersAtFrame[0]?.globalStartTime)
+        : frame / fps;
+      const sourceFrame = cutlistUIState.active
+        ? Number(markersAtFrame[0]?.sourceStartFrame ?? markersAtFrame[0]?.startFrame ?? frame)
+        : frame;
       const allResolved = markersAtFrame.every(m => m.resolved);
       allMarkerData.push({
-        time,
-        frame,
+        time: Number.isFinite(time) ? time : frame / fps,
+        frame: Number.isFinite(sourceFrame) ? sourceFrame : frame,
         resolved: allResolved,
         infos: markersAtFrame
       });
@@ -5600,6 +5611,8 @@ async function initApp() {
       return {
         ...range,
         cutId: context.cutId,
+        sourceStartFrame: range.startFrame,
+        sourceEndFrame: range.endFrame,
         startFrame: context.globalStartFrame,
         endFrame: context.globalStartFrame + frameCount,
         globalStartTime: context.globalStartTime,
