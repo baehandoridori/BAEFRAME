@@ -104,6 +104,51 @@ test('reports ignored memo labels and short duplicate scenes', () => {
   assert.equal(result.ignored[1].reason, 'duplicate-shorter-scene');
 });
 
+test('ignores scene labels with reversed ranges', () => {
+  const reversedRange = `SW Timeline Scene Info
+======================
+FPS: 24.0
+
+01. sc020
+    Range: 20 - 10
+    Frames: 11f
+`;
+
+  const result = buildCutsFromMohoSceneInfo(reversedRange, { sourceId: 'source_1' });
+
+  assert.deepEqual(result.cuts, []);
+  assert.equal(result.ignored.length, 1);
+  assert.equal(result.ignored[0].label, 'sc020');
+  assert.equal(result.ignored[0].reason, 'scene-range-invalid');
+});
+
+test('accepts flexible numeric scene labels while preserving display labels', () => {
+  const flexibleLabels = `SW Timeline Scene Info
+======================
+FPS: 24.0
+
+01. a20
+    Range: 1 - 10
+
+02. a020
+    Range: 11 - 30
+
+03. a0020
+    Range: 31 - 35
+
+04. SC 023
+    Range: 36 - 40
+`;
+
+  const result = buildCutsFromMohoSceneInfo(flexibleLabels, { sourceId: 'source_1' });
+
+  assert.deepEqual(result.cuts.map(cut => cut.label), ['a020', 'SC 023']);
+  assert.deepEqual(result.cuts.map(cut => cut.sceneNumber), [20, 23]);
+  assert.equal(result.ignored.length, 2);
+  assert.deepEqual(result.ignored.map(entry => entry.label), ['a20', 'a0020']);
+  assert.deepEqual(result.ignored.map(entry => entry.reason), ['duplicate-shorter-scene', 'duplicate-shorter-scene']);
+});
+
 test('keeps the longest duplicate scene per scene number', () => {
   const cuts = [
     { sceneNumber: 28, label: 'a028', frameCount: 112, startFrame: 92, endFrame: 203 },

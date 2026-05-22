@@ -104,7 +104,10 @@ export function validateCutlistData(data) {
   }
   if (!isPlainObject(data.future)) errors.push('future 필드가 객체가 아닙니다.');
 
-  (data.sources || []).forEach((source, index) => {
+  const sources = Array.isArray(data.sources) ? data.sources : [];
+  const cuts = Array.isArray(data.cuts) ? data.cuts : [];
+
+  sources.forEach((source, index) => {
     if (!source.id) errors.push(`sources[${index}]: id 필드가 없습니다.`);
     if (!source.videoPath) errors.push(`sources[${index}]: videoPath 필드가 없습니다.`);
     if (!source.infoPath) errors.push(`sources[${index}]: infoPath 필드가 없습니다.`);
@@ -115,7 +118,7 @@ export function validateCutlistData(data) {
     if (!source.addedAt || typeof source.addedAt !== 'string') errors.push(`sources[${index}]: addedAt 필드가 유효하지 않습니다.`);
   });
 
-  (data.cuts || []).forEach((cut, index) => {
+  cuts.forEach((cut, index) => {
     if (!cut.id) errors.push(`cuts[${index}]: id 필드가 없습니다.`);
     if (!cut.sourceId) errors.push(`cuts[${index}]: sourceId 필드가 없습니다.`);
     if (!Number.isFinite(Number(cut.sceneNumber))) errors.push(`cuts[${index}]: sceneNumber가 유효하지 않습니다.`);

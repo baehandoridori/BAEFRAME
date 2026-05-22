@@ -1,4 +1,4 @@
-const SCENE_LABEL_PATTERN = /^(?:a|sc)(\d{3})$/i;
+const SCENE_LABEL_PATTERN = /^(?:a|sc)\s*0*(\d+)$/i;
 
 function parseNumber(value, fallback = 0) {
   const number = Number(value);
@@ -126,6 +126,10 @@ export function buildCutsFromMohoSceneInfo(infoText = '', options = {}) {
     const mohoEndFrame = Number(entry.mohoEndFrame);
     if (!Number.isFinite(mohoStartFrame) || !Number.isFinite(mohoEndFrame)) {
       ignored.push({ ...entry, reason: 'scene-range-missing' });
+      return;
+    }
+    if (mohoEndFrame < mohoStartFrame) {
+      ignored.push({ ...entry, reason: 'scene-range-invalid' });
       return;
     }
 

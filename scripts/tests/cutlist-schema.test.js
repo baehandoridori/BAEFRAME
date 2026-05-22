@@ -92,6 +92,22 @@ test('validates required source metadata fields', () => {
   assert.match(errors, /addedAt/);
 });
 
+test('does not throw when sources or cuts are not arrays', () => {
+  const badSources = createDefaultCutlistData({ name: 'bad sources' });
+  badSources.sources = {};
+  assert.doesNotThrow(() => validateCutlistData(badSources));
+  const badSourcesResult = validateCutlistData(badSources);
+  assert.equal(badSourcesResult.valid, false);
+  assert.match(badSourcesResult.errors.join('\n'), /sources/);
+
+  const badCuts = createDefaultCutlistData({ name: 'bad cuts' });
+  badCuts.cuts = {};
+  assert.doesNotThrow(() => validateCutlistData(badCuts));
+  const badCutsResult = validateCutlistData(badCuts);
+  assert.equal(badCutsResult.valid, false);
+  assert.match(badCutsResult.errors.join('\n'), /cuts/);
+});
+
 test('allows explicitly empty source info text', () => {
   const data = createDefaultCutlistData({ name: 'empty info text' });
   data.sources.push(createCutlistSource({
