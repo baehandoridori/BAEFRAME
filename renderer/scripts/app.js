@@ -939,10 +939,8 @@ async function initApp() {
     hideScrubPreview();
   });
 
-  timeline.addEventListener('cutlist-seek', async (e) => {
-    const cut = getCutlistManager().getCutById(e.detail.cutId);
-    if (!cut) return;
-    await seekToCut(cut);
+  timeline.addEventListener('cutlist-seek', (e) => {
+    getCutlistManager().selectCut(e.detail.cutId);
   });
 
   // 스크러빙 중 (드래그 중 프리뷰)
@@ -11779,17 +11777,30 @@ async function initApp() {
     if (!cutlistUIState.active) return true;
     const cutlistManager = getCutlistManager();
     if (!cutlistManager.isActive()) return true;
-    if (getCurrentCutlistSourceForFile(state.currentFile)) return true;
 
-    const cut = cutlistManager.getCutById(cutlistManager.currentCutId) ||
-      cutlistManager.getOrderedCuts()[0] ||
-      null;
+    const cut = cutlistManager.getCutById(cutlistManager.currentCutId);
     if (!cut) {
       showToast('댓글을 달 컷을 먼저 선택하세요.', 'warning');
       return false;
     }
 
-    return seekToCut(cut);
+    const source = await resolveCutlistSourceForPlayback(cut);
+    if (!source?.videoPath) return false;
+
+    if (isSameFilePath(state.currentFile, source.videoPath)) return true;
+
+    const loaded = await loadVideo(source.videoPath);
+    if (!loaded) return false;
+
+    setCutlistCurrentCut(cut);
+    const frame = Math.max(0, Number(cut.startFrame) || 0);
+    videoPlayer.seekToFrame(frame);
+    playbackSync.broadcastSeek(frame / (videoPlayer.fps || cut.fps || 24));
+    timeline.setCurrentTime(frame / (videoPlayer.fps || cut.fps || 24));
+    refreshCurrentCutFromPlayback(frame);
+    await refreshCommentRangesForCurrentMode();
+    updateCommentList(getActiveCommentFilter());
+    return true;
   }
 
   function formatCutlistFrameRange(startFrame, endFrame) {

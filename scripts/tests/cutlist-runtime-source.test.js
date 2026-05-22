@@ -13,6 +13,29 @@ const timelineSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/modu
 const launchRouting = require(path.join(rootDir, 'main/launch-routing'));
 const cutlistPaths = require(path.join(rootDir, 'main/cutlist-paths'));
 
+function extractBalancedBlock(source, startNeedle) {
+  const startIndex = source.indexOf(startNeedle);
+  assert.notEqual(startIndex, -1, `Missing source section: ${startNeedle}`);
+
+  const blockStart = source.indexOf('{', startIndex);
+  assert.notEqual(blockStart, -1, `Missing block start for: ${startNeedle}`);
+
+  let depth = 0;
+  for (let index = blockStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(blockStart + 1, index);
+      }
+    }
+  }
+
+  assert.fail(`Missing block end for: ${startNeedle}`);
+}
+
 test('main process exposes cutlist file handlers', () => {
   assert.match(mainIpc, /cutlist:read/);
   assert.match(mainIpc, /cutlist:write/);
@@ -60,11 +83,30 @@ test('timeline can render cutlist segments', () => {
 test('renderer wires cutlist playback and comment integration', () => {
   assert.match(appSource, /cutlist-comment-index\.js/);
   assert.match(appSource, /findCurrentCut/);
-  assert.match(appSource, /timeline\.addEventListener\('cutlist-seek'[\s\S]*seekToCut/);
+  assert.match(appSource, /timeline\.addEventListener\('cutlist-seek'/);
   assert.match(appSource, /function updateCutlistTimeline\(\)[\s\S]*timeline\.setCutlistTimeline/);
   assert.match(appSource, /async function seekToCut\(cut\)[\s\S]*loadVideo/);
   assert.match(appSource, /function refreshCurrentCutFromPlayback/);
   assert.match(appSource, /function ensureCutlistCommentTargetReady/);
+});
+
+test('timeline cutlist segment clicks route through cutlist manager selection', () => {
+  const listenerBody = extractBalancedBlock(appSource, "timeline.addEventListener('cutlist-seek'");
+
+  assert.match(listenerBody, /getCutlistManager\(\)\.selectCut\(e\.detail\.cutId\)/);
+  assert.doesNotMatch(listenerBody, /seekToCut\(/);
+  assert.doesNotMatch(listenerBody, /getCutById\(e\.detail\.cutId\)/);
+});
+
+test('comment target readiness loads the selected cut source, not any loaded cutlist source', () => {
+  const functionBody = extractBalancedBlock(appSource, 'async function ensureCutlistCommentTargetReady');
+
+  assert.match(functionBody, /cutlistManager\.getCutById\(cutlistManager\.currentCutId\)/);
+  assert.match(functionBody, /resolveCutlistSourceForPlayback\(cut\)/);
+  assert.match(functionBody, /isSameFilePath\(state\.currentFile,\s*source\.videoPath\)/);
+  assert.match(functionBody, /loadVideo\(source\.videoPath\)/);
+  assert.doesNotMatch(functionBody, /getCurrentCutlistSourceForFile\(state\.currentFile\)\)\s*return true/);
+  assert.doesNotMatch(functionBody, /getOrderedCuts\(\)\[0\]/);
 });
 
 test('cutlist route URLs preserve or recover Windows drive paths', () => {
