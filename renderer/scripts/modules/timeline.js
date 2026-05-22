@@ -52,6 +52,7 @@ export class Timeline extends EventTarget {
     this.playlistDuration = 0;
     this.cutlistSegments = [];
     this.cutlistDuration = 0;
+    this.cutlistTotalFrames = 0;
     this.currentCutId = null;
 
     // 플레이헤드 드래그 상태
@@ -302,7 +303,11 @@ export class Timeline extends EventTarget {
    * 시간을 프레임 단위로 스냅
    */
   _getTimelineDuration() {
-    return this.playlistDuration || this.duration;
+    return this.playlistDuration || this.cutlistDuration || this.duration;
+  }
+
+  _getTimelineTotalFrames() {
+    return this.cutlistDuration ? (this.cutlistTotalFrames || this.totalFrames) : this.totalFrames;
   }
 
   _snapTimeToFrame(time) {
@@ -1980,6 +1985,9 @@ export class Timeline extends EventTarget {
   setCutlistTimeline(segments, totalDuration) {
     this.cutlistSegments = segments || [];
     this.cutlistDuration = totalDuration || 0;
+    this.cutlistTotalFrames = this.cutlistSegments.reduce((maxFrame, segment) => (
+      Math.max(maxFrame, Number(segment?.globalEndFrame) + 1 || 0)
+    ), 0);
     this._updateRuler();
     this._updatePlayheadPosition();
     this._renderCutlistSegments();
@@ -2192,8 +2200,9 @@ export class Timeline extends EventTarget {
 
     // 1b) 픽셀 기반 split — 줌 반응형. 포인트 마커 클러스터링과 동일한 20px 기준.
     const trackRect = this.commentTrack.getBoundingClientRect();
-    const pxPerFrame = this.totalFrames > 0 && trackRect.width > 0
-      ? trackRect.width / this.totalFrames
+    const totalFrames = this._getTimelineTotalFrames();
+    const pxPerFrame = totalFrames > 0 && trackRect.width > 0
+      ? trackRect.width / totalFrames
       : 0;
     const clusters = splitClustersByPixelGap(rawClusters, { pxPerFrame, minSpacingPx: 20 });
 
@@ -2269,7 +2278,7 @@ export class Timeline extends EventTarget {
     }
 
     // 위치 및 크기 계산 (프레임 기반)
-    const totalFrames = this.totalFrames || 1;
+    const totalFrames = this._getTimelineTotalFrames() || 1;
     const leftPercent = (comment.startFrame / totalFrames) * 100;
     const widthPercent = ((comment.endFrame - comment.startFrame) / totalFrames) * 100;
 
@@ -2315,7 +2324,7 @@ export class Timeline extends EventTarget {
    * 접힌 클러스터의 배지 바 DOM 생성 (이벤트는 위임 핸들러가 처리)
    */
   _createClusterBadgeElement(cluster) {
-    const totalFrames = this.totalFrames || 1;
+    const totalFrames = this._getTimelineTotalFrames() || 1;
     const minStart = Math.min(...cluster.map(c => c.startFrame));
     const maxEnd = Math.max(...cluster.map(c => c.endFrame));
     const leftPercent = (minStart / totalFrames) * 100;
@@ -2341,7 +2350,7 @@ export class Timeline extends EventTarget {
    * 펼친 클러스터의 접기 배지 DOM (오른쪽 상단 고정, 이벤트는 위임)
    */
   _createClusterCloseBadge(cluster) {
-    const totalFrames = this.totalFrames || 1;
+    const totalFrames = this._getTimelineTotalFrames() || 1;
     const minStart = Math.min(...cluster.map(c => c.startFrame));
     const maxEnd = Math.max(...cluster.map(c => c.endFrame));
     const leftPercent = (minStart / totalFrames) * 100;
@@ -2379,7 +2388,7 @@ export class Timeline extends EventTarget {
     element.classList.toggle('resolved', comment.resolved);
 
     // 위치 및 크기 업데이트
-    const totalFrames = this.totalFrames || 1;
+    const totalFrames = this._getTimelineTotalFrames() || 1;
     const leftPercent = (comment.startFrame / totalFrames) * 100;
     const widthPercent = ((comment.endFrame - comment.startFrame) / totalFrames) * 100;
     const minWidthPercent = Math.max(widthPercent, 0.5);

@@ -24,7 +24,7 @@ import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
 import { getCutlistManager } from './modules/cutlist-manager.js';
-import { findCurrentCut } from './modules/cutlist-core.js';
+import { findCurrentCut, mapGlobalTimeToCut } from './modules/cutlist-core.js';
 import {
   buildPlaylistSegments,
   CONTINUOUS_STATUS,
@@ -796,7 +796,7 @@ async function initApp() {
   // 비디오 시간 업데이트 (일반 timeupdate - 타임라인 및 표시용)
   videoPlayer.addEventListener('timeupdate', (e) => {
     const { currentTime, currentFrame } = e.detail;
-    timeline.setCurrentTime(getContinuousTimelinePlaybackTime(currentTime));
+    timeline.setCurrentTime(getActiveTimelinePlaybackTime(currentTime, currentFrame));
     updateTimecodeDisplay();
     updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
     updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
@@ -834,7 +834,7 @@ async function initApp() {
     const { frame, time } = e.detail;
 
     // 타임라인 플레이헤드 실시간 업데이트 (재생 중)
-    timeline.setCurrentTime(getContinuousTimelinePlaybackTime(time));
+    timeline.setCurrentTime(getActiveTimelinePlaybackTime(time, frame));
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
@@ -930,6 +930,12 @@ async function initApp() {
   timeline.addEventListener('seek', async (e) => {
     if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
       await seekContinuousTimeline(e.detail.time);
+      hideScrubPreview();
+      return;
+    }
+
+    if (cutlistUIState.active && getCutlistManager().isActive() && timeline.cutlistDuration > 0) {
+      await seekCutlistTimeline(e.detail.time);
       hideScrubPreview();
       return;
     }
@@ -3384,6 +3390,10 @@ async function initApp() {
       ranges = ranges.filter(r => allowedIds.has(r.markerId));
     }
 
+    if (cutlistUIState.active) {
+      ranges = mapCutlistCommentRangesToTimeline(ranges);
+    }
+
     timeline.renderCommentRanges(ranges);
     setupCommentRangeInteractions();
     renderVideoCommentRanges();
@@ -5574,6 +5584,28 @@ async function initApp() {
       getCutlistManager().getTimeline().segments,
       source.id
     );
+  }
+
+  function mapCutlistCommentRangesToTimeline(ranges = []) {
+    if (!cutlistUIState.active) return ranges || [];
+    const source = getCurrentCutlistSourceForFile(state.currentFile);
+    if (!source) return [];
+    const segments = getCutlistManager().getTimeline().segments;
+
+    return (ranges || []).map((range) => {
+      const context = buildCutlistCommentContext(range, segments, source.id);
+      if (!context) return null;
+      const fps = context.fps || videoPlayer.fps || 24;
+      const frameCount = Math.max(1, Number(range.endFrame) - Number(range.startFrame));
+      return {
+        ...range,
+        cutId: context.cutId,
+        startFrame: context.globalStartFrame,
+        endFrame: context.globalStartFrame + frameCount,
+        globalStartTime: context.globalStartTime,
+        globalEndTime: context.globalStartTime + (frameCount / fps)
+      };
+    }).filter(Boolean);
   }
 
   function getCutlistCommentLabelForMarker(marker) {
@@ -11688,6 +11720,43 @@ async function initApp() {
     )) || null;
   }
 
+  function getCutlistSegmentForCut(cut) {
+    if (!cut?.id) return null;
+    return getCutlistManager().getTimeline().segments.find(segment => segment.cutId === cut.id) || null;
+  }
+
+  function getCutlistGlobalTimeForCutFrame(cut, frame) {
+    const segment = getCutlistSegmentForCut(cut);
+    if (!segment) return null;
+    const fps = segment.fps || cut.fps || videoPlayer.fps || 24;
+    const sourceStartFrame = Number(segment.sourceStartFrame ?? cut.startFrame) || 0;
+    const frameCount = Math.max(1, Number(segment.frameCount) || 1);
+    const localFrame = Math.max(0, Math.min(Number(frame) - sourceStartFrame, frameCount - 1));
+    return (Number(segment.globalStartTime) || 0) + (localFrame / fps);
+  }
+
+  function getCutlistTimelinePlaybackTime(frame = videoPlayer.currentFrame, fallbackTime = videoPlayer.currentTime) {
+    if (!cutlistUIState.active || !getCutlistManager().isActive()) return fallbackTime;
+    const source = getCurrentCutlistSourceForFile(state.currentFile);
+    if (!source) return fallbackTime;
+    const cut = findCurrentCut(getCutlistManager().getOrderedCuts(), {
+      sourceId: source.id,
+      frame
+    });
+    const globalTime = getCutlistGlobalTimeForCutFrame(cut, frame);
+    return Number.isFinite(globalTime) ? globalTime : fallbackTime;
+  }
+
+  function getActiveTimelinePlaybackTime(currentTime = videoPlayer.currentTime, currentFrame = videoPlayer.currentFrame) {
+    if (playlistUIState.mode === 'continuous') {
+      return getContinuousTimelinePlaybackTime(currentTime);
+    }
+    if (cutlistUIState.active) {
+      return getCutlistTimelinePlaybackTime(currentFrame, currentTime);
+    }
+    return currentTime;
+  }
+
   function setCutlistCurrentCut(cut) {
     const cutlistManager = getCutlistManager();
     cutlistManager.currentCutId = cut?.id || null;
@@ -11708,15 +11777,42 @@ async function initApp() {
   }
 
   async function seekPlaybackToCutStart(cut) {
+    const segment = getCutlistSegmentForCut(cut);
+    if (!segment) return false;
+    return await seekCutlistTimeline(segment.globalStartTime);
+  }
+
+  async function seekCutlistMappedPosition(mapped) {
+    if (!mapped?.segment) return false;
+    const cutlistManager = getCutlistManager();
+    const cut = cutlistManager.getCutById(mapped.segment.cutId) || mapped.segment.cut;
+    if (!cut) return false;
+
+    const source = await resolveCutlistSourceForPlayback(cut);
+    if (!source?.videoPath) return false;
+
     setCutlistCurrentCut(cut);
-    const frame = Math.max(0, Number(cut.startFrame) || 0);
-    const fps = videoPlayer.fps || cut.fps || 24;
+
+    if (!isSameFilePath(state.currentFile, source.videoPath)) {
+      const loaded = await loadVideo(source.videoPath);
+      if (!loaded) return false;
+    }
+
+    const frame = Math.max(0, Number(mapped.sourceFrame) || Number(cut.startFrame) || 0);
+    const fps = videoPlayer.fps || mapped.segment.fps || cut.fps || 24;
+    const globalTime = (Number(mapped.segment.globalStartTime) || 0) + (Number(mapped.localTime) || 0);
     videoPlayer.seekToFrame(frame);
     playbackSync.broadcastSeek(frame / fps);
-    timeline.setCurrentTime(frame / fps);
+    timeline.setCurrentTime(globalTime);
     refreshCurrentCutFromPlayback(frame);
     await refreshCommentRangesForCurrentMode();
     updateCommentList(getActiveCommentFilter());
+    return true;
+  }
+
+  async function seekCutlistTimeline(globalTime) {
+    const mapped = mapGlobalTimeToCut(getCutlistManager().getTimeline().segments, globalTime);
+    return seekCutlistMappedPosition(mapped);
   }
 
   function refreshCurrentCutFromPlayback(frame = videoPlayer.currentFrame) {
@@ -11835,6 +11931,10 @@ async function initApp() {
     if (isSameFilePath(state.currentFile, source.videoPath)) {
       if (isFrameInsideCut(cut, videoPlayer.currentFrame)) {
         refreshCurrentCutFromPlayback(videoPlayer.currentFrame);
+        const globalTime = getCutlistGlobalTimeForCutFrame(cut, videoPlayer.currentFrame);
+        if (Number.isFinite(globalTime)) {
+          timeline.setCurrentTime(globalTime);
+        }
         return true;
       }
 

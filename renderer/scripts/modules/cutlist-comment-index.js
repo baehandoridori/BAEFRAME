@@ -55,7 +55,7 @@ export function buildCutlistCommentContext(marker, segments = [], sourceId = '')
   const localFrame = Math.max(0, frame - sourceStartFrame);
   const globalFrame = globalStartFrame + localFrame;
   const localStartTime = localFrame / fps;
-  const globalStartTime = globalFrame / fps;
+  const globalStartTime = (Number(segment.globalStartTime) || 0) + localStartTime;
 
   return {
     cutId: segment.cutId,

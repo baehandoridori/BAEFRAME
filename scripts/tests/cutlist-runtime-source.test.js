@@ -80,14 +80,47 @@ test('timeline can render cutlist segments', () => {
   assert.match(timelineSource, /this\._emit\('cutlist-seek', \{\s*cutId/);
 });
 
+test('timeline uses cutlist duration for shared timeline math', () => {
+  const durationBody = extractBalancedBlock(timelineSource, '_getTimelineDuration()');
+
+  assert.match(durationBody, /this\.playlistDuration \|\| this\.cutlistDuration \|\| this\.duration/);
+  assert.match(timelineSource, /this\.cutlistTotalFrames = 0/);
+  assert.match(timelineSource, /_getTimelineTotalFrames\(\)/);
+  assert.match(timelineSource, /this\.cutlistDuration \? \(this\.cutlistTotalFrames \|\| this\.totalFrames\) : this\.totalFrames/);
+});
+
 test('renderer wires cutlist playback and comment integration', () => {
   assert.match(appSource, /cutlist-comment-index\.js/);
   assert.match(appSource, /findCurrentCut/);
+  assert.match(appSource, /mapGlobalTimeToCut/);
   assert.match(appSource, /timeline\.addEventListener\('cutlist-seek'/);
   assert.match(appSource, /function updateCutlistTimeline\(\)[\s\S]*timeline\.setCutlistTimeline/);
   assert.match(appSource, /async function seekToCut\(cut\)[\s\S]*loadVideo/);
   assert.match(appSource, /function refreshCurrentCutFromPlayback/);
   assert.match(appSource, /function ensureCutlistCommentTargetReady/);
+});
+
+test('generic timeline seeking routes through cutlist global time when cutlist is active', () => {
+  const listenerBody = extractBalancedBlock(appSource, "timeline.addEventListener('seek'");
+
+  assert.match(listenerBody, /timeline\.cutlistDuration > 0/);
+  assert.match(listenerBody, /await seekCutlistTimeline\(e\.detail\.time\)/);
+  assert.ok(
+    listenerBody.indexOf('await seekCutlistTimeline(e.detail.time)') <
+      listenerBody.indexOf('videoPlayer.seek(e.detail.time)'),
+    'cutlist seek branch should run before raw media seek'
+  );
+});
+
+test('cutlist playback uses global cutlist timeline time for playhead', () => {
+  assert.match(appSource, /function getCutlistTimelinePlaybackTime/);
+  assert.match(appSource, /function getActiveTimelinePlaybackTime/);
+  assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(currentTime,\s*currentFrame\)\)/);
+  assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(time,\s*frame\)\)/);
+
+  const seekStartBody = extractBalancedBlock(appSource, 'async function seekPlaybackToCutStart');
+  assert.match(seekStartBody, /await seekCutlistTimeline\(segment\.globalStartTime\)/);
+  assert.doesNotMatch(seekStartBody, /timeline\.setCurrentTime\(frame \/ fps\)/);
 });
 
 test('timeline cutlist segment clicks route through cutlist manager selection', () => {
