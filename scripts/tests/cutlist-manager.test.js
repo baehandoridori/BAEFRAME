@@ -187,6 +187,50 @@ test('save uses sanitized custom name when cutlist name was changed', async () =
   assert.deepEqual(writtenPaths, ['G:\\shot\\성철 컷 묶음__.bcutlist']);
 });
 
+test('open selects the first ordered cut from loaded data', async () => {
+  const data = createDefaultCutlistData({ name: 'opened selected cutlist' });
+  data.sources.push(createCutlistSource({
+    id: 'source_opened',
+    videoPath: 'G:\\shot\\opened.mp4',
+    infoPath: 'G:\\shot\\opened_info.txt',
+    infoText: SAMPLE_INFO_TEXT,
+    fileName: 'opened.mp4'
+  }));
+  data.cuts.push(
+    createCutlistCut({
+      id: 'cut_23',
+      sourceId: 'source_opened',
+      sceneNumber: 23,
+      label: 'sc023',
+      startFrame: 11,
+      endFrame: 40,
+      mohoStartFrame: 12,
+      mohoEndFrame: 41,
+      fps: 24
+    }),
+    createCutlistCut({
+      id: 'cut_19',
+      sourceId: 'source_opened',
+      sceneNumber: 19,
+      label: 'sc019',
+      startFrame: 0,
+      endFrame: 10,
+      mohoStartFrame: 1,
+      mohoEndFrame: 11,
+      fps: 24
+    })
+  );
+
+  installWindow({ readCutlist: async () => data });
+  const manager = new CutlistManager();
+
+  await manager.open('G:\\shot\\opened-selected.bcutlist');
+
+  assert.equal(manager.getOrderedCuts()[0].id, 'cut_19');
+  assert.equal(manager.currentCutId, 'cut_19');
+  assert.equal(manager.getCutById(manager.currentCutId).id, 'cut_19');
+});
+
 test('open validates data and refreshes missing sources', async () => {
   const data = createDefaultCutlistData({ name: 'opened cutlist' });
   data.sources.push(createCutlistSource({

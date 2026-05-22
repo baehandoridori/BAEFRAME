@@ -147,6 +147,7 @@ export class CutlistManager {
       this.lastIgnored = [];
 
       await this.refreshMissingSources({ emit: false });
+      this._reconcileCurrentCutSelection();
       this.isModified = false;
 
       this.onCutlistLoaded?.(this.currentCutlist);
