@@ -11343,6 +11343,20 @@ async function initApp() {
     }
   }
 
+  function exitPlaylistContinuousModeForCutlist() {
+    if (
+      playlistUIState.mode !== 'continuous' &&
+      !continuousPlaybackState.active &&
+      !timeline.playlistDuration
+    ) {
+      return;
+    }
+
+    setPlaylistMode('review');
+    playlistAggregateCommentRanges = [];
+    timeline.setPlaylistTimeline([], 0);
+  }
+
   async function refreshPlaylistModifiedTimes() {
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
@@ -11510,6 +11524,7 @@ async function initApp() {
   }
 
   function showCutlistSidebar() {
+    exitPlaylistContinuousModeForCutlist();
     hidePlaylistSidebar();
     cutlistUIState.active = true;
     elements.cutlistSidebar?.classList.remove('hidden');

@@ -109,6 +109,20 @@ test('comment target readiness loads the selected cut source, not any loaded cut
   assert.doesNotMatch(functionBody, /getOrderedCuts\(\)\[0\]/);
 });
 
+test('opening cutlist mode exits playlist continuous state before cutlist timeline renders', () => {
+  const helperBody = extractBalancedBlock(appSource, 'function exitPlaylistContinuousModeForCutlist');
+  const showBody = extractBalancedBlock(appSource, 'function showCutlistSidebar');
+
+  assert.match(helperBody, /setPlaylistMode\('review'\)/);
+  assert.match(helperBody, /playlistAggregateCommentRanges = \[\]/);
+  assert.match(helperBody, /timeline\.setPlaylistTimeline\(\[\], 0\)/);
+
+  const exitIndex = showBody.indexOf('exitPlaylistContinuousModeForCutlist()');
+  const updateIndex = showBody.indexOf('updateCutlistTimeline()');
+  assert.notEqual(exitIndex, -1, 'cutlist mode should leave continuous playlist mode');
+  assert.ok(exitIndex < updateIndex, 'playlist continuous state should clear before cutlist timeline renders');
+});
+
 test('cutlist route URLs preserve or recover Windows drive paths', () => {
   assert.deepEqual(
     launchRouting.resolveRoutedFileUrl('baeframe://cutlist/G:/dir/file.bcutlist', 'cutlist'),
