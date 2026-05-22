@@ -8,6 +8,14 @@ function getFrameNumber(value, fallback = 0) {
   return Number.isFinite(frame) ? frame : fallback;
 }
 
+function getFiniteFrameBound(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+
+  const frame = Number(value);
+  return Number.isFinite(frame) ? frame : null;
+}
+
 function getSceneNumber(value) {
   const sceneNumber = Number(value);
   return Number.isFinite(sceneNumber) ? sceneNumber : Number.POSITIVE_INFINITY;
@@ -138,8 +146,13 @@ export function mapGlobalTimeToCut(segments = [], globalTime = 0) {
   if (!segments || segments.length === 0) return null;
 
   const time = Math.max(0, Number(globalTime) || 0);
-  const segment = segments.find(item => time >= item.globalStartTime && time < item.globalEndTime)
-    || segments[segments.length - 1];
+  const segment = segments.find(item => (
+    Number(item.frameCount) > 0
+    && time >= item.globalStartTime
+    && time < item.globalEndTime
+  )) || [...segments].reverse().find(item => Number(item.frameCount) > 0);
+  if (!segment) return null;
+
   const frameCount = Math.max(0, Number(segment.frameCount) || 0);
   const fps = getValidFps(segment.fps);
   const rawLocalFrame = Math.floor(Math.max(0, time - segment.globalStartTime) * fps);
@@ -169,9 +182,15 @@ export function findCurrentCut(cuts = [], position = {}) {
   const frame = Number(position.frame);
   if (!sourceId || !Number.isFinite(frame)) return null;
 
-  return (cuts || []).find(cut => (
-    cut.sourceId === sourceId
-    && frame >= Number(cut.startFrame)
-    && frame <= Number(cut.endFrame)
-  )) || null;
+  return (cuts || []).find(cut => {
+    const startFrame = getFiniteFrameBound(cut.startFrame);
+    const endFrame = getFiniteFrameBound(cut.endFrame);
+
+    return cut.sourceId === sourceId
+      && startFrame !== null
+      && endFrame !== null
+      && endFrame >= startFrame
+      && frame >= startFrame
+      && frame <= endFrame;
+  }) || null;
 }
