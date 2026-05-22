@@ -24,6 +24,7 @@ import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
 import { getCutlistManager } from './modules/cutlist-manager.js';
+import { findCurrentCut } from './modules/cutlist-core.js';
 import {
   buildPlaylistSegments,
   CONTINUOUS_STATUS,
@@ -37,6 +38,11 @@ import {
   formatPlaylistCommentPanelLine,
   formatPlaylistTimecode
 } from './modules/playlist-comment-index.js';
+import {
+  buildCutlistCommentContext,
+  formatCutlistCommentLabel,
+  formatCutlistCommentPanelLine
+} from './modules/cutlist-comment-index.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
 import { getMentionManager } from './modules/mention-manager.js';
@@ -319,6 +325,17 @@ async function initApp() {
   function isCutlistFilePath(filePath) {
     const normalized = String(filePath || '').split(/[?#]/)[0].toLowerCase();
     return normalized.endsWith(`.${SUPPORTED_CUTLIST_EXTENSION}`);
+  }
+
+  function normalizeComparableFilePath(filePath) {
+    return String(filePath || '')
+      .replace(/^file:\/\//i, '')
+      .replace(/\//g, '\\')
+      .toLowerCase();
+  }
+
+  function isSameFilePath(a, b) {
+    return normalizeComparableFilePath(a) === normalizeComparableFilePath(b);
   }
 
   function normalizePlaylistOpenPath(path) {
@@ -793,6 +810,7 @@ async function initApp() {
 
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
+    refreshCurrentCutFromPlayback(currentFrame);
 
     // Liveblocks Presence에 현재 프레임 전달 (원격 타임라인 표시용)
     if (liveblocksManager.isConnected) {
@@ -820,6 +838,7 @@ async function initApp() {
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
+    refreshCurrentCutFromPlayback(frame);
 
     // 타임코드/프레임레이트 실시간 업데이트 (스플릿 뷰와 동일하게)
     updateTimecodeDisplay();
@@ -918,6 +937,12 @@ async function initApp() {
     videoPlayer.seek(e.detail.time);
     playbackSync.broadcastSeek(e.detail.time);
     hideScrubPreview();
+  });
+
+  timeline.addEventListener('cutlist-seek', async (e) => {
+    const cut = getCutlistManager().getCutById(e.detail.cutId);
+    if (!cut) return;
+    await seekToCut(cut);
   });
 
   // 스크러빙 중 (드래그 중 프리뷰)
@@ -1502,7 +1527,10 @@ async function initApp() {
 
   // 댓글 추가 버튼 (댓글 모드 토글)
   elements.btnAddComment.addEventListener('click', () => {
-    toggleCommentMode();
+    void (async () => {
+      if (!state.isCommentMode && !(await ensureCutlistCommentTargetReady())) return;
+      toggleCommentMode();
+    })();
   });
 
   // 이전 댓글로 이동
@@ -1550,40 +1578,35 @@ async function initApp() {
   slackNotifier.setToastFunction(showToast);
 
   // 사이드바 댓글 입력 Enter 처리 (역순 플로우: 텍스트 입력 → 마커 찍기)
+  async function submitSidebarCommentDraft() {
+    const text = elements.commentInput.value.trim();
+    if (!text && !state.pendingCommentImage) return false;
+    if (!(await ensureCutlistCommentTargetReady())) return false;
+
+    // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
+    commentManager.setPendingText(text || '(이미지)');
+    // 이미지가 있으면 commentManager에 임시 저장
+    if (state.pendingCommentImage) {
+      commentManager._pendingImage = state.pendingCommentImage;
+    }
+    elements.commentInput.value = '';
+    clearCommentImage();
+    showToast('영상에서 마커를 찍어주세요', 'info');
+    return true;
+  }
+
   elements.commentInput.addEventListener('keydown', (e) => {
     // 멘션 드롭다운 열려있으면 Enter를 멘션 선택으로 처리 (댓글 제출 방지)
     if (mentionManager.isVisible) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      const text = elements.commentInput.value.trim();
-      if (text || state.pendingCommentImage) {
-        // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
-        commentManager.setPendingText(text || '(이미지)');
-        // 이미지가 있으면 commentManager에 임시 저장
-        if (state.pendingCommentImage) {
-          commentManager._pendingImage = state.pendingCommentImage;
-        }
-        elements.commentInput.value = '';
-        clearCommentImage();
-        showToast('영상에서 마커를 찍어주세요', 'info');
-      }
+      void submitSidebarCommentDraft();
     }
   });
 
   // 전송 버튼 클릭 처리 (Enter와 동일한 동작)
   elements.btnSubmitComment?.addEventListener('click', () => {
-    const text = elements.commentInput.value.trim();
-    if (text || state.pendingCommentImage) {
-      // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
-      commentManager.setPendingText(text || '(이미지)');
-      // 이미지가 있으면 commentManager에 임시 저장
-      if (state.pendingCommentImage) {
-        commentManager._pendingImage = state.pendingCommentImage;
-      }
-      elements.commentInput.value = '';
-      clearCommentImage();
-      showToast('영상에서 마커를 찍어주세요', 'info');
-    }
+    void submitSidebarCommentDraft();
   });
 
   // ====== 댓글 이미지 기능 ======
@@ -1653,7 +1676,7 @@ async function initApp() {
   });
 
   // 마커 컨테이너 클릭 (영상 위 클릭으로 마커 생성)
-  markerContainer.addEventListener('click', (e) => {
+  markerContainer.addEventListener('click', async (e) => {
     if (!state.isCommentMode) return;
 
     // 마커 요소 클릭은 무시 (마커 자체의 이벤트 처리)
@@ -1663,6 +1686,8 @@ async function initApp() {
     const rect = markerContainer.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
+
+    if (!(await ensureCutlistCommentTargetReady())) return;
 
     // 마커 생성 시작
     commentManager.startMarkerCreation(x, y);
@@ -5518,12 +5543,14 @@ async function initApp() {
   function markerMatchesCommentSearch(marker, normalizedQuery) {
     if (!normalizedQuery) return true;
 
+    const cutlistLabel = getCutlistCommentLabelForMarker(marker);
     const searchTargets = [
       marker?.text,
       marker?.author,
       marker?.frame,
       marker?.startFrame,
-      marker?.endFrame
+      marker?.endFrame,
+      cutlistLabel
     ];
 
     if (Array.isArray(marker?.replies)) {
@@ -5538,6 +5565,29 @@ async function initApp() {
       .join(' ');
 
     return haystack.includes(normalizedQuery);
+  }
+
+  function getCutlistCommentContextForMarker(marker) {
+    if (!cutlistUIState.active || !marker) return null;
+    const source = getCurrentCutlistSourceForFile(state.currentFile);
+    if (!source) return null;
+    return buildCutlistCommentContext(
+      marker,
+      getCutlistManager().getTimeline().segments,
+      source.id
+    );
+  }
+
+  function getCutlistCommentLabelForMarker(marker) {
+    const context = getCutlistCommentContextForMarker(marker);
+    return context ? formatCutlistCommentLabel(context) : '';
+  }
+
+  function getCutlistCommentPanelLineForMarker(marker) {
+    const context = getCutlistCommentContextForMarker(marker);
+    return context
+      ? formatCutlistCommentPanelLine({ ...context, text: marker?.text || '' })
+      : '';
   }
 
   function highlightCommentSearchMatches(value, normalizedQuery) {
@@ -5987,6 +6037,9 @@ async function initApp() {
       const markerAuthorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
+      const cutlistCommentLabel = getCutlistCommentLabelForMarker(marker);
+      const commentTimeLabel = cutlistCommentLabel || marker.startTimecode;
+      const commentPanelLine = getCutlistCommentPanelLineForMarker(marker);
       const repliesHtml = (marker.replies || []).map(reply => {
         const canEditReply = commentManager.canEdit(reply);
         return `
@@ -6031,7 +6084,7 @@ async function initApp() {
       ` : '';
 
       return `
-      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}"${commentPanelLine ? ` title="${escapeHtml(commentPanelLine)}"` : ''}>
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
         <button class="comment-resolve-toggle resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
           ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
@@ -6039,7 +6092,7 @@ async function initApp() {
         </button>
         ${thumbnailHtml}
         <div class="comment-header">
-          <span class="comment-timecode">${highlightCommentSearchMatches(marker.startTimecode, normalizedSearch)}</span>
+          <span class="comment-timecode">${highlightCommentSearchMatches(commentTimeLabel, normalizedSearch)}</span>
         </div>
         <div class="comment-content">
           <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(marker.text, normalizedSearch)))}</p>
@@ -11464,6 +11517,7 @@ async function initApp() {
     elements.cutlistSidebar?.classList.remove('hidden');
     elements.btnCutlist?.classList.add('active');
     updateCutlistUI();
+    updateCutlistTimeline();
     const currentCut = getCutlistManager().getCutById(getCutlistManager().currentCutId);
     updateCurrentCutDisplay(currentCut);
   }
@@ -11473,6 +11527,8 @@ async function initApp() {
     elements.cutlistSidebar?.classList.add('hidden');
     elements.btnCutlist?.classList.remove('active');
     updateCurrentCutDisplay(null);
+    timeline.setCurrentCutId(null);
+    timeline.setCutlistTimeline([], 0);
   }
 
   function updateCutlistUI() {
@@ -11597,14 +11653,143 @@ async function initApp() {
     elements.currentCutOverlay.textContent = `${cut.label} · BAEFRAME ${formatCutlistFrameRange(cut.startFrame, cut.endFrame)}`;
   }
 
+  function getCurrentCutlistSourceForFile(filePath) {
+    const normalizedPath = normalizeComparableFilePath(filePath);
+    if (!normalizedPath) return null;
+    const sources = getCutlistManager().currentCutlist?.sources || [];
+    return sources.find(source => (
+      normalizeComparableFilePath(source.videoPath) === normalizedPath
+    )) || null;
+  }
+
+  function setCutlistCurrentCut(cut) {
+    const cutlistManager = getCutlistManager();
+    cutlistManager.currentCutId = cut?.id || null;
+    updateCurrentCutDisplay(cut || null);
+    updateCutlistCurrentItem();
+    timeline.setCurrentCutId(cut?.id || null);
+  }
+
+  function refreshCurrentCutFromPlayback(frame = videoPlayer.currentFrame) {
+    if (!cutlistUIState.active) return null;
+    const cutlistManager = getCutlistManager();
+    if (!cutlistManager.isActive()) {
+      setCutlistCurrentCut(null);
+      return null;
+    }
+
+    const source = getCurrentCutlistSourceForFile(state.currentFile);
+    if (!source) {
+      setCutlistCurrentCut(null);
+      return null;
+    }
+
+    const currentCut = findCurrentCut(cutlistManager.getOrderedCuts(), {
+      sourceId: source.id,
+      frame
+    });
+    const nextCutId = currentCut?.id || null;
+    if ((cutlistManager.currentCutId || null) !== nextCutId) {
+      setCutlistCurrentCut(currentCut);
+    }
+    return currentCut;
+  }
+
   function updateCutlistTimeline() {
-    getCutlistManager().getTimeline();
+    const cutlistManager = getCutlistManager();
+    if (!cutlistUIState.active || !cutlistManager.isActive()) {
+      timeline.setCurrentCutId(null);
+      timeline.setCutlistTimeline([], 0);
+      return;
+    }
+
+    const cutlistTimeline = cutlistManager.getTimeline();
+    timeline.setCutlistTimeline(cutlistTimeline.segments, cutlistTimeline.totalDuration);
+    timeline.setCurrentCutId(cutlistManager.currentCutId);
   }
 
   async function seekToCut(cut) {
     if (!cut) return false;
-    updateCurrentCutDisplay(cut);
+    const source = await resolveCutlistSourceForPlayback(cut);
+    if (!source?.videoPath) return false;
+
+    setCutlistCurrentCut(cut);
+
+    if (!isSameFilePath(state.currentFile, source.videoPath)) {
+      const loaded = await loadVideo(source.videoPath);
+      if (!loaded) return false;
+    }
+
+    const frame = Math.max(0, Number(cut.startFrame) || 0);
+    videoPlayer.seekToFrame(frame);
+    playbackSync.broadcastSeek(frame / (videoPlayer.fps || cut.fps || 24));
+    timeline.setCurrentTime(frame / (videoPlayer.fps || cut.fps || 24));
+    refreshCurrentCutFromPlayback(frame);
+    await refreshCommentRangesForCurrentMode();
+    updateCommentList(getActiveCommentFilter());
     return true;
+  }
+
+  async function resolveCutlistSourceForPlayback(cut) {
+    const cutlistManager = getCutlistManager();
+    let source = cutlistManager.getSourceById(cut?.sourceId);
+    if (!source) {
+      showToast('컷의 원본 영상을 찾을 수 없습니다.', 'error');
+      return null;
+    }
+
+    let exists = source.missing !== true && !!source.videoPath;
+    if (exists && window.electronAPI.fileExists) {
+      try {
+        exists = await window.electronAPI.fileExists(source.videoPath);
+      } catch (error) {
+        log.warn('컷 묶음 소스 파일 확인 실패', { fileName: source.fileName, error: error.message });
+      }
+    }
+
+    if (exists) return source;
+
+    const result = await window.electronAPI.openFileDialog({
+      title: `${source.fileName || '출력 영상'} 다시 연결`,
+      filters: [{ name: '미디어 파일', extensions: SUPPORTED_MEDIA_EXTENSIONS }],
+      properties: ['openFile']
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    const reconnected = await cutlistManager.reconnectSource(source.id, result.filePaths[0]);
+    if (!reconnected) return null;
+    source = cutlistManager.getSourceById(source.id);
+
+    if (window.electronAPI.fileExists) {
+      const reconnectedExists = await window.electronAPI.fileExists(source.videoPath);
+      if (!reconnectedExists) {
+        showToast('다시 연결한 파일을 찾을 수 없습니다.', 'error');
+        return null;
+      }
+    }
+
+    updateCutlistUI();
+    updateCutlistTimeline();
+    return source;
+  }
+
+  async function ensureCutlistCommentTargetReady() {
+    if (!cutlistUIState.active) return true;
+    const cutlistManager = getCutlistManager();
+    if (!cutlistManager.isActive()) return true;
+    if (getCurrentCutlistSourceForFile(state.currentFile)) return true;
+
+    const cut = cutlistManager.getCutById(cutlistManager.currentCutId) ||
+      cutlistManager.getOrderedCuts()[0] ||
+      null;
+    if (!cut) {
+      showToast('댓글을 달 컷을 먼저 선택하세요.', 'warning');
+      return false;
+    }
+
+    return seekToCut(cut);
   }
 
   function formatCutlistFrameRange(startFrame, endFrame) {

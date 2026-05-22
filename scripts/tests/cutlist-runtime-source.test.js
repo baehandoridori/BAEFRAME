@@ -50,8 +50,21 @@ test('renderer initializes cutlist feature', () => {
 });
 
 test('timeline can render cutlist segments', () => {
-  assert.match(timelineSource, /setCutlistTimeline/);
-  assert.match(timelineSource, /setCurrentCutId/);
+  assert.match(timelineSource, /setCutlistTimeline\(segments, totalDuration\)/);
+  assert.match(timelineSource, /setCurrentCutId\(cutId\)/);
+  assert.match(timelineSource, /cutlist-segment-block/);
+  assert.match(timelineSource, /has-cutlist-segments/);
+  assert.match(timelineSource, /this\._emit\('cutlist-seek', \{\s*cutId/);
+});
+
+test('renderer wires cutlist playback and comment integration', () => {
+  assert.match(appSource, /cutlist-comment-index\.js/);
+  assert.match(appSource, /findCurrentCut/);
+  assert.match(appSource, /timeline\.addEventListener\('cutlist-seek'[\s\S]*seekToCut/);
+  assert.match(appSource, /function updateCutlistTimeline\(\)[\s\S]*timeline\.setCutlistTimeline/);
+  assert.match(appSource, /async function seekToCut\(cut\)[\s\S]*loadVideo/);
+  assert.match(appSource, /function refreshCurrentCutFromPlayback/);
+  assert.match(appSource, /function ensureCutlistCommentTargetReady/);
 });
 
 test('cutlist route URLs preserve or recover Windows drive paths', () => {

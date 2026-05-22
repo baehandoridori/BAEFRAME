@@ -50,6 +50,9 @@ export class Timeline extends EventTarget {
     this._lastComments = null;      // 펼치기/접기 재렌더용 캐시
     this.playlistSegments = [];
     this.playlistDuration = 0;
+    this.cutlistSegments = [];
+    this.cutlistDuration = 0;
+    this.currentCutId = null;
 
     // 플레이헤드 드래그 상태
     this.isDraggingPlayhead = false;
@@ -1374,6 +1377,7 @@ export class Timeline extends EventTarget {
 
   _shouldStartTimelinePan(e) {
     if (e.button !== 0) return false;
+    if (e.target?.closest?.('.cutlist-segment-block')) return false;
     return Boolean(e.target?.closest?.('.video-track-row, .track-clip.video'));
   }
 
@@ -1389,6 +1393,7 @@ export class Timeline extends EventTarget {
       '.keyframe-marker-dot',
       '.playlist-segment-boundary',
       '.playlist-segment-block',
+      '.cutlist-segment-block',
       '.playlist-comment-range',
       '.comment-range-item',
       '.comment-cluster-badge',
@@ -1972,6 +1977,21 @@ export class Timeline extends EventTarget {
     this._renderPlaylistSegments();
   }
 
+  setCutlistTimeline(segments, totalDuration) {
+    this.cutlistSegments = segments || [];
+    this.cutlistDuration = totalDuration || 0;
+    this._updateRuler();
+    this._updatePlayheadPosition();
+    this._renderCutlistSegments();
+  }
+
+  setCurrentCutId(cutId) {
+    this.currentCutId = cutId || null;
+    this.tracksContainer?.querySelectorAll('.cutlist-segment-block').forEach(block => {
+      block.classList.toggle('current', block.dataset.cutId === this.currentCutId);
+    });
+  }
+
   _renderPlaylistSegments() {
     if (!this.tracksContainer) return;
     this.tracksContainer.querySelectorAll('.playlist-segment-boundary, .playlist-segment-block').forEach(el => el.remove());
@@ -2031,6 +2051,58 @@ export class Timeline extends EventTarget {
         this._emit('seek', { time, itemId: segment.itemId });
       });
       this.tracksContainer.appendChild(boundary);
+    }
+  }
+
+  _renderCutlistSegments() {
+    if (!this.tracksContainer) return;
+    this.tracksContainer.querySelectorAll('.cutlist-segment-block').forEach(el => el.remove());
+    const videoTrackRow = this.tracksContainer.querySelector('.video-track-row');
+    const duration = this.cutlistDuration || 0;
+    const hasSegments = Boolean(duration && this.cutlistSegments?.length);
+    if (videoTrackRow) {
+      videoTrackRow.classList.toggle('has-cutlist-segments', hasSegments);
+    }
+    if (!hasSegments || !videoTrackRow) return;
+
+    for (const segment of this.cutlistSegments || []) {
+      const startTime = Number(segment.globalStartTime) || 0;
+      const endTime = Number(segment.globalEndTime) || startTime;
+      const left = (startTime / duration) * 100;
+      const width = Math.max(0.25, ((endTime - startTime) / duration) * 100);
+      const cutId = segment.cutId || segment.cut?.id || '';
+      const labelText = segment.label || segment.cut?.label || `컷 ${segment.index + 1}`;
+
+      const block = document.createElement('button');
+      block.type = 'button';
+      block.className = `cutlist-segment-block${cutId === this.currentCutId ? ' current' : ''}`;
+      block.style.left = `${left}%`;
+      block.style.width = `${width}%`;
+      block.title = `${labelText} ${this._formatTime(startTime)} - ${this._formatTime(endTime)}`;
+      block.dataset.cutId = cutId;
+
+      const label = document.createElement('span');
+      label.className = 'cutlist-segment-label';
+      label.textContent = labelText;
+      block.appendChild(label);
+
+      let pointerDown = null;
+      block.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        pointerDown = { x: e.clientX, y: e.clientY };
+      });
+      block.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const moved = pointerDown
+          ? Math.abs(e.clientX - pointerDown.x) + Math.abs(e.clientY - pointerDown.y) > 4
+          : false;
+        pointerDown = null;
+        if (moved || !cutId) return;
+        this._emit('cutlist-seek', { cutId });
+      });
+
+      videoTrackRow.appendChild(block);
     }
   }
 
