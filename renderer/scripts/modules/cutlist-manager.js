@@ -23,6 +23,7 @@ import {
 } from './cutlist-core.js';
 
 const log = createLogger('CutlistManager');
+const DEFAULT_CUTLIST_NAME = '새 컷 묶음';
 
 function getElectronAPI() {
   return globalThis.window?.electronAPI || null;
@@ -42,6 +43,14 @@ function normalizePath(filePath) {
 
 function cloneCutlistData(data) {
   return JSON.parse(JSON.stringify(data));
+}
+
+function getSaveBaseName(cutlist) {
+  const suggestedName = suggestCutlistFileName(cutlist?.cuts || []).replace(/\.bcutlist$/i, '');
+  const cutlistName = String(cutlist?.name || '').trim();
+  return cutlistName && cutlistName !== DEFAULT_CUTLIST_NAME
+    ? cutlistName
+    : suggestedName;
 }
 
 function normalizeCut(cut, order) {
@@ -91,7 +100,7 @@ export class CutlistManager {
     log.info('CutlistManager 초기화');
   }
 
-  createNew(name = '새 컷 묶음') {
+  createNew(name = DEFAULT_CUTLIST_NAME) {
     const user = getAppUser();
     this.currentCutlist = createDefaultCutlistData({
       name,
@@ -164,8 +173,7 @@ export class CutlistManager {
 
       const firstSource = this.currentCutlist.sources[0];
       const folderPath = await api.pathDirname(firstSource.infoPath || firstSource.videoPath);
-      const fallbackName = suggestCutlistFileName(this.currentCutlist.cuts);
-      const safeName = sanitizeFileName(this.currentCutlist.name || fallbackName.replace(/\.bcutlist$/i, ''));
+      const safeName = sanitizeFileName(getSaveBaseName(this.currentCutlist));
       targetPath = await api.pathJoin(folderPath, `${safeName}.bcutlist`);
     }
 
@@ -236,7 +244,7 @@ export class CutlistManager {
 
   setName(name) {
     if (!this.currentCutlist) return;
-    const nextName = String(name || '').trim() || '새 컷 묶음';
+    const nextName = String(name || '').trim() || DEFAULT_CUTLIST_NAME;
     if (this.currentCutlist.name === nextName) return;
     this.currentCutlist.name = nextName;
     this.currentCutlist.modifiedAt = new Date().toISOString();

@@ -120,6 +120,43 @@ test('addSourcePair parses cuts, records ignored labels, orders cuts, and emits 
   assert.equal(changedCount, 2);
 });
 
+test('save uses cut range filename when cutlist still has the default name', async () => {
+  const writtenPaths = [];
+  installWindow({
+    writeCutlist: async (filePath) => {
+      writtenPaths.push(filePath);
+      return true;
+    }
+  });
+  const manager = new CutlistManager();
+  manager.createNew();
+
+  await manager.addSourcePair('G:\\shot\\a019_info.txt', 'G:\\shot\\a019.mp4');
+  const savedPath = await manager.save();
+
+  assert.equal(savedPath, 'G:\\shot\\a019-a028.bcutlist');
+  assert.deepEqual(writtenPaths, ['G:\\shot\\a019-a028.bcutlist']);
+});
+
+test('save uses sanitized custom name when cutlist name was changed', async () => {
+  const writtenPaths = [];
+  installWindow({
+    writeCutlist: async (filePath) => {
+      writtenPaths.push(filePath);
+      return true;
+    }
+  });
+  const manager = new CutlistManager();
+  manager.createNew();
+
+  await manager.addSourcePair('G:\\shot\\a019_info.txt', 'G:\\shot\\a019.mp4');
+  manager.setName('성철 컷 묶음:/');
+  const savedPath = await manager.save();
+
+  assert.equal(savedPath, 'G:\\shot\\성철 컷 묶음__.bcutlist');
+  assert.deepEqual(writtenPaths, ['G:\\shot\\성철 컷 묶음__.bcutlist']);
+});
+
 test('open validates data and refreshes missing sources', async () => {
   const data = createDefaultCutlistData({ name: 'opened cutlist' });
   data.sources.push(createCutlistSource({

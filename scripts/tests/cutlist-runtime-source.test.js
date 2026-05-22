@@ -35,6 +35,8 @@ test('main process recognizes bcutlist launch inputs', () => {
 
 test('renderer has cutlist DOM hooks', () => {
   assert.match(rendererIndex, /btnCutlist/);
+  assert.match(rendererIndex, /btnCutlistPrimaryAdd/);
+  assert.match(rendererIndex, /영상 \+ info txt 쌍 추가/);
   assert.match(rendererIndex, /cutlistSidebar/);
   assert.match(rendererIndex, /currentCutOverlay/);
 });
@@ -42,6 +44,8 @@ test('renderer has cutlist DOM hooks', () => {
 test('renderer initializes cutlist feature', () => {
   assert.match(appSource, /initCutlistFeature/);
   assert.match(appSource, /openCutlistFile/);
+  assert.match(appSource, /btnCutlistPrimaryAdd/);
+  assert.match(appSource, /btnCutlistPrimaryAdd\?\.addEventListener\('click'[\s\S]*handleCutlistAddClick\(\)/);
   assert.match(appSource, /addCutlistSourcePair/);
 });
 

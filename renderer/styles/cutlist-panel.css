@@ -299,9 +299,48 @@
   opacity: 0.5;
 }
 
-.cutlist-empty span {
+.cutlist-empty > span {
   font-size: 12px;
   line-height: 1.5;
+}
+
+.cutlist-empty-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  max-width: 100%;
+  padding: 0 12px;
+  background: var(--accent-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 4px;
+  color: var(--bg-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.cutlist-empty-primary:hover {
+  filter: brightness(1.08);
+}
+
+.cutlist-empty-primary:active {
+  transform: scale(0.98);
+}
+
+.cutlist-empty-primary svg {
+  flex-shrink: 0;
+  opacity: 1;
+}
+
+.cutlist-empty-primary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cutlist-sidebar:not(.empty) .cutlist-empty {

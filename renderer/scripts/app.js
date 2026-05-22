@@ -209,6 +209,7 @@ async function initApp() {
     cutlistSidebar: document.getElementById('cutlistSidebar'),
     cutlistNameInput: document.getElementById('cutlistNameInput'),
     btnCutlistAdd: document.getElementById('btnCutlistAdd'),
+    btnCutlistPrimaryAdd: document.getElementById('btnCutlistPrimaryAdd'),
     btnCutlistSave: document.getElementById('btnCutlistSave'),
     btnCutlistClose: document.getElementById('btnCutlistClose'),
     cutlistSummary: document.getElementById('cutlistSummary'),
@@ -11385,12 +11386,20 @@ async function initApp() {
       hideCutlistSidebar();
     });
 
-    elements.btnCutlistAdd?.addEventListener('click', async () => {
+    async function handleCutlistAddClick() {
       try {
         await addCutlistSourcePair();
       } catch (error) {
         showToast(`컷 묶음 소스를 추가할 수 없습니다: ${error.message}`, 'error');
       }
+    }
+
+    elements.btnCutlistAdd?.addEventListener('click', () => {
+      void handleCutlistAddClick();
+    });
+
+    elements.btnCutlistPrimaryAdd?.addEventListener('click', () => {
+      void handleCutlistAddClick();
     });
 
     elements.btnCutlistSave?.addEventListener('click', () => {
