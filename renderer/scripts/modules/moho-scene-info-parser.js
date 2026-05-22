@@ -145,7 +145,8 @@ export function buildCutsFromMohoSceneInfo(infoText = '', options = {}) {
         ? Number(entry.frameCount)
         : getRangeFrameCount(mohoStartFrame, mohoEndFrame),
       fps: parsed.fps,
-      order: 0
+      order: 0,
+      ignored: false
     });
   });
 

@@ -5,6 +5,11 @@ import {
   mergeDuplicateSceneCuts,
   buildCutsFromMohoSceneInfo
 } from '../../renderer/scripts/modules/moho-scene-info-parser.js';
+import {
+  createCutlistSource,
+  createDefaultCutlistData,
+  validateCutlistData
+} from '../../shared/cutlist-schema.js';
 
 const SAMPLE = `SW Timeline Scene Info
 ======================
@@ -63,8 +68,30 @@ test('builds scene cuts from numeric labels and applies minus-one frame offset',
     mohoEndFrame: 92,
     frameCount: 51,
     fps: 24,
-    order: 1
+    order: 1,
+    ignored: false
   });
+});
+
+test('builds schema-valid cuts for default cutlist data', () => {
+  const result = buildCutsFromMohoSceneInfo(SAMPLE, { sourceId: 'source_1' });
+  const data = createDefaultCutlistData({ name: 'parser output' });
+  data.sources.push(createCutlistSource({
+    id: 'source_1',
+    videoPath: 'G:/shot/a019.mp4',
+    infoPath: 'G:/shot/a019_info.txt',
+    infoText: SAMPLE,
+    fileName: 'a019.mp4',
+    fps: result.fps,
+    missing: false,
+    addedAt: '2026-05-23T00:00:00.000Z'
+  }));
+  data.cuts.push(...result.cuts);
+
+  const validation = validateCutlistData(data);
+
+  assert.equal(validation.valid, true);
+  assert.deepEqual(validation.errors, []);
 });
 
 test('reports ignored memo labels and short duplicate scenes', () => {
