@@ -9,6 +9,22 @@ function getRangeFrameCount(startFrame, endFrame) {
   return Math.max(0, endFrame - startFrame + 1);
 }
 
+function getCutRangeFrameCount(cut) {
+  const startFrame = Number(cut.startFrame);
+  const endFrame = Number(cut.endFrame);
+  if (Number.isFinite(startFrame) && Number.isFinite(endFrame)) {
+    return getRangeFrameCount(startFrame, endFrame);
+  }
+
+  const mohoStartFrame = Number(cut.mohoStartFrame);
+  const mohoEndFrame = Number(cut.mohoEndFrame);
+  if (Number.isFinite(mohoStartFrame) && Number.isFinite(mohoEndFrame)) {
+    return getRangeFrameCount(mohoStartFrame, mohoEndFrame);
+  }
+
+  return 0;
+}
+
 function compareCutsBySceneNumber(a, b) {
   const sceneDiff = Number(a.sceneNumber) - Number(b.sceneNumber);
   if (sceneDiff !== 0) return sceneDiff;
@@ -77,8 +93,8 @@ export function mergeDuplicateSceneCuts(cuts = []) {
       continue;
     }
 
-    const currentFrameCount = Number(current.frameCount);
-    const nextFrameCount = Number(cut.frameCount);
+    const currentFrameCount = getCutRangeFrameCount(current);
+    const nextFrameCount = getCutRangeFrameCount(cut);
     if (nextFrameCount > currentFrameCount) {
       ignored.push({ ...current, reason: 'duplicate-shorter-scene' });
       bestCutsByScene.set(sceneNumber, cut);

@@ -72,6 +72,14 @@ export function createCutlistCut(input = {}) {
   };
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasOwnField(value, fieldName) {
+  return Object.prototype.hasOwnProperty.call(value, fieldName);
+}
+
 export function validateCutlistData(data) {
   const errors = [];
   if (!data || typeof data !== 'object') {
@@ -82,8 +90,19 @@ export function validateCutlistData(data) {
   }
   if (!data.id) errors.push('id 필드가 없습니다.');
   if (!data.name || typeof data.name !== 'string') errors.push('name 필드가 유효하지 않습니다.');
+  if (!data.createdAt || typeof data.createdAt !== 'string') errors.push('createdAt 필드가 유효하지 않습니다.');
+  if (!data.modifiedAt || typeof data.modifiedAt !== 'string') errors.push('modifiedAt 필드가 유효하지 않습니다.');
+  if (!hasOwnField(data, 'createdBy') || typeof data.createdBy !== 'string') errors.push('createdBy 필드가 유효하지 않습니다.');
+  if (!hasOwnField(data, 'createdById') || typeof data.createdById !== 'string') errors.push('createdById 필드가 유효하지 않습니다.');
   if (!Array.isArray(data.sources)) errors.push('sources 필드가 배열이 아닙니다.');
   if (!Array.isArray(data.cuts)) errors.push('cuts 필드가 배열이 아닙니다.');
+  if (!isPlainObject(data.settings)) {
+    errors.push('settings 필드가 객체가 아닙니다.');
+  } else {
+    if (typeof data.settings.showMissingScenes !== 'boolean') errors.push('settings.showMissingScenes 필드가 boolean이 아닙니다.');
+    if (typeof data.settings.manualOrder !== 'boolean') errors.push('settings.manualOrder 필드가 boolean이 아닙니다.');
+  }
+  if (!isPlainObject(data.future)) errors.push('future 필드가 객체가 아닙니다.');
 
   (data.sources || []).forEach((source, index) => {
     if (!source.id) errors.push(`sources[${index}]: id 필드가 없습니다.`);
@@ -99,6 +118,12 @@ export function validateCutlistData(data) {
     if (!Number.isFinite(Number(cut.startFrame))) errors.push(`cuts[${index}]: startFrame이 유효하지 않습니다.`);
     if (!Number.isFinite(Number(cut.endFrame))) errors.push(`cuts[${index}]: endFrame이 유효하지 않습니다.`);
     if (Number(cut.endFrame) < Number(cut.startFrame)) errors.push(`cuts[${index}]: endFrame은 startFrame보다 작을 수 없습니다.`);
+    if (!Number.isFinite(Number(cut.mohoStartFrame))) errors.push(`cuts[${index}]: mohoStartFrame이 유효하지 않습니다.`);
+    if (!Number.isFinite(Number(cut.mohoEndFrame))) errors.push(`cuts[${index}]: mohoEndFrame이 유효하지 않습니다.`);
+    if (Number(cut.mohoEndFrame) < Number(cut.mohoStartFrame)) errors.push(`cuts[${index}]: mohoEndFrame은 mohoStartFrame보다 작을 수 없습니다.`);
+    if (!Number.isFinite(Number(cut.fps)) || Number(cut.fps) <= 0) errors.push(`cuts[${index}]: fps가 유효하지 않습니다.`);
+    if (!Number.isFinite(Number(cut.order))) errors.push(`cuts[${index}]: order가 유효하지 않습니다.`);
+    if (hasOwnField(cut, 'ignored') && typeof cut.ignored !== 'boolean') errors.push(`cuts[${index}]: ignored 필드는 boolean이어야 합니다.`);
   });
 
   return { valid: errors.length === 0, errors };

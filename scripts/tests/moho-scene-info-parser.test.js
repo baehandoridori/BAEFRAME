@@ -89,3 +89,28 @@ test('keeps the longest duplicate scene per scene number', () => {
   assert.equal(result.cuts[0].frameCount, 112);
   assert.equal(result.ignored[0].reason, 'duplicate-shorter-scene');
 });
+
+test('keeps the duplicate scene with the longest range even when Frames is misleading', () => {
+  const misleadingFrames = `SW Timeline Scene Info
+======================
+FPS: 24.0
+
+01. sc019
+    Range: 1 - 10
+    Frames: 999f
+
+02. sc019
+    Range: 11 - 60
+    Frames: 1f
+`;
+
+  const result = buildCutsFromMohoSceneInfo(misleadingFrames, { sourceId: 'source_1' });
+
+  assert.equal(result.cuts.length, 1);
+  assert.equal(result.cuts[0].startFrame, 10);
+  assert.equal(result.cuts[0].endFrame, 59);
+  assert.equal(result.ignored.length, 1);
+  assert.equal(result.ignored[0].startFrame, 0);
+  assert.equal(result.ignored[0].endFrame, 9);
+  assert.equal(result.ignored[0].reason, 'duplicate-shorter-scene');
+});
