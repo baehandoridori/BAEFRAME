@@ -234,10 +234,14 @@ export class CutlistManager {
 
     this.currentCutlist.cuts.push(...cuts);
     this.currentCutlist.cuts = sortAndReindexCuts(this.currentCutlist.cuts);
+    const selection = this._reconcileCurrentCutSelection(cuts[0]?.id || null);
     this.lastIgnored = ignoredLabels;
     this.currentCutlist.modifiedAt = new Date().toISOString();
     this.isModified = true;
     this._emitChanged('addSourcePair');
+    if (selection.changed) {
+      this._emitSelectionChanged(selection.cut);
+    }
 
     return { source, cuts, ignored: ignoredLabels };
   }
@@ -268,8 +272,7 @@ export class CutlistManager {
     if (!cut) return null;
 
     this.currentCutId = cut.id;
-    this.onCutSelected?.(cut, this.getOrderedCuts().findIndex(item => item.id === cut.id));
-    this._dispatch('cutlist:selection-changed', { cut });
+    this._emitSelectionChanged(cut);
     return cut;
   }
 
@@ -360,6 +363,30 @@ export class CutlistManager {
       cutlist: this.currentCutlist,
       reason
     });
+  }
+
+  _reconcileCurrentCutSelection(preferredCutId = null) {
+    const previousCutId = this.currentCutId;
+    const orderedCuts = this.getOrderedCuts();
+    const preferredCut = preferredCutId
+      ? orderedCuts.find(cut => cut.id === preferredCutId) || null
+      : null;
+    const currentCut = this.getCutById(this.currentCutId);
+    const nextCut = preferredCut || currentCut || orderedCuts[0] || null;
+
+    this.currentCutId = nextCut?.id || null;
+    return {
+      cut: nextCut,
+      changed: previousCutId !== this.currentCutId
+    };
+  }
+
+  _emitSelectionChanged(cut) {
+    const index = cut
+      ? this.getOrderedCuts().findIndex(item => item.id === cut.id)
+      : -1;
+    this.onCutSelected?.(cut, index);
+    this._dispatch('cutlist:selection-changed', { cut });
   }
 
   _dispatch(type, detail) {

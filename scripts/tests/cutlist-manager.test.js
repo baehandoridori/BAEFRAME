@@ -120,6 +120,36 @@ test('addSourcePair parses cuts, records ignored labels, orders cuts, and emits 
   assert.equal(changedCount, 2);
 });
 
+test('re-adding the same source pair selects an existing replacement cut', async () => {
+  const dispatched = installWindow();
+  const manager = new CutlistManager();
+  manager.createNew('replace source pair');
+
+  const original = await manager.addSourcePair('G:\\shot\\a019_info.txt', 'G:\\shot\\a019.mp4');
+  const originallySelected = manager.selectCut(original.cuts[1].id);
+  assert.ok(originallySelected);
+
+  const originalCutIds = new Set(original.cuts.map(cut => cut.id));
+  const selectionEventCount = dispatched.filter(event => event.type === 'cutlist:selection-changed').length;
+  const selectedCuts = [];
+  manager.onCutSelected = (cut) => {
+    selectedCuts.push(cut);
+  };
+
+  const replacement = await manager.addSourcePair('G:\\shot\\a019_info.txt', 'G:\\shot\\a019.mp4');
+  const activeCut = manager.getCutById(manager.currentCutId);
+
+  assert.ok(activeCut);
+  assert.equal(originalCutIds.has(manager.currentCutId), false);
+  assert.ok(replacement.cuts.some(cut => cut.id === manager.currentCutId));
+  assert.ok(manager.currentCutlist.cuts.some(cut => cut.id === manager.currentCutId));
+  assert.equal(selectedCuts.at(-1)?.id, manager.currentCutId);
+
+  const selectionEvents = dispatched.filter(event => event.type === 'cutlist:selection-changed');
+  assert.equal(selectionEvents.length, selectionEventCount + 1);
+  assert.equal(selectionEvents.at(-1).detail.cut.id, manager.currentCutId);
+});
+
 test('save uses cut range filename when cutlist still has the default name', async () => {
   const writtenPaths = [];
   installWindow({
