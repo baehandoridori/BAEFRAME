@@ -334,8 +334,10 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(appSource, /mapGlobalTimeToSegment[\s\S]+mapLocalTimeToGlobal[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
   assert.match(appSource, /function getContinuousTimelinePlaybackTime\(localTime = videoPlayer\.currentTime\)/);
   assert.match(appSource, /mapLocalTimeToGlobal\(segment, localTime\)/);
-  assert.match(appSource, /timeline\.setCurrentTime\(getContinuousTimelinePlaybackTime\(currentTime\)\);/);
-  assert.match(appSource, /timeline\.setCurrentTime\(getContinuousTimelinePlaybackTime\(time\)\);/);
+  assert.match(appSource, /function getActiveTimelinePlaybackTime\(currentTime = videoPlayer\.currentTime,\s*currentFrame = videoPlayer\.currentFrame\)/);
+  assert.match(appSource, /playlistUIState\.mode === 'continuous'[\s\S]+return getContinuousTimelinePlaybackTime\(currentTime\);/);
+  assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(currentTime,\s*currentFrame\)\);/);
+  assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(time,\s*frame\)\);/);
   assert.match(appSource, /async function seekContinuousTimeline\(globalTime\)/);
   assert.match(appSource, /mapGlobalTimeToSegment\(timeline\.playlistSegments, globalTime\)/);
   assert.match(appSource, /videoPlayer\.seek\(mapped\.localTime\);/);

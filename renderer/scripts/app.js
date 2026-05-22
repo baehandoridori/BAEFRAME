@@ -217,6 +217,7 @@ async function initApp() {
     btnCutlistAdd: document.getElementById('btnCutlistAdd'),
     btnCutlistPrimaryAdd: document.getElementById('btnCutlistPrimaryAdd'),
     btnCutlistSave: document.getElementById('btnCutlistSave'),
+    btnCutlistCopyLink: document.getElementById('btnCutlistCopyLink'),
     btnCutlistClose: document.getElementById('btnCutlistClose'),
     cutlistSummary: document.getElementById('cutlistSummary'),
     cutlistItems: document.getElementById('cutlistItems'),
@@ -11525,6 +11526,27 @@ async function initApp() {
       void saveCurrentCutlist();
     });
 
+    elements.btnCutlistCopyLink?.addEventListener('click', async () => {
+      const cutlist = cutlistManager.currentCutlist;
+      if (!cutlist || !Array.isArray(cutlist.cuts) || cutlist.cuts.length === 0) {
+        showToast('컷 묶음에 컷을 먼저 추가해주세요.', 'warning');
+        return;
+      }
+
+      try {
+        const path = await saveCurrentCutlist();
+        if (!path) return;
+
+        const windowsPath = String(path).replace(/\//g, '\\');
+        const fileName = windowsPath.split('\\').pop() || '컷 묶음.bcutlist';
+        const clipboardContent = `${windowsPath}\n\n${fileName}`;
+        await window.electronAPI.copyToClipboard(clipboardContent);
+        showToast('컷 묶음 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    });
+
     elements.cutlistNameInput?.addEventListener('change', (event) => {
       cutlistManager.setName(event.target.value);
     });
@@ -11663,6 +11685,9 @@ async function initApp() {
       const source = cutlistManager.getSourceById(row.sourceId);
       const sourceMissing = source?.missing === true;
       const frameCount = Math.max(0, Number(row.endFrame) - Number(row.startFrame) + 1);
+      const sourceStatus = sourceMissing
+        ? '<span class="cutlist-item-status">파일 없음</span>'
+        : '';
 
       item.classList.toggle('active', row.id === cutlistManager.currentCutId);
       item.classList.toggle('missing', sourceMissing);
@@ -11674,7 +11699,10 @@ async function initApp() {
           <span class="cutlist-item-label">${escapeHtml(row.label)}</span>
           <span class="cutlist-item-frames">${frameCount}f</span>
         </div>
-        <div class="cutlist-item-source">${escapeHtml(source?.fileName || '출력 영상')}</div>
+        <div class="cutlist-item-source-row">
+          <span class="cutlist-item-source">${escapeHtml(source?.fileName || '출력 영상')}</span>
+          ${sourceStatus}
+        </div>
         <div class="cutlist-item-ranges">
           <span>BAEFRAME ${formatCutlistFrameRange(row.startFrame, row.endFrame)}</span>
           <span>Moho ${formatCutlistFrameRange(row.mohoStartFrame, row.mohoEndFrame)}</span>

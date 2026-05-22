@@ -10,6 +10,7 @@ const mainIndex = fs.readFileSync(path.join(rootDir, 'main/index.js'), 'utf-8');
 const rendererIndex = fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf-8');
 const appSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf-8');
 const timelineSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/timeline.js'), 'utf-8');
+const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
 const launchRouting = require(path.join(rootDir, 'main/launch-routing'));
 const cutlistPaths = require(path.join(rootDir, 'main/cutlist-paths'));
 
@@ -59,6 +60,7 @@ test('main process recognizes bcutlist launch inputs', () => {
 test('renderer has cutlist DOM hooks', () => {
   assert.match(rendererIndex, /btnCutlist/);
   assert.match(rendererIndex, /btnCutlistPrimaryAdd/);
+  assert.match(rendererIndex, /btnCutlistCopyLink/);
   assert.match(rendererIndex, /영상 \+ info txt 쌍 추가/);
   assert.match(rendererIndex, /cutlistSidebar/);
   assert.match(rendererIndex, /currentCutOverlay/);
@@ -67,9 +69,39 @@ test('renderer has cutlist DOM hooks', () => {
 test('renderer initializes cutlist feature', () => {
   assert.match(appSource, /initCutlistFeature/);
   assert.match(appSource, /openCutlistFile/);
+  assert.match(appSource, /btnCutlistCopyLink/);
   assert.match(appSource, /btnCutlistPrimaryAdd/);
   assert.match(appSource, /btnCutlistPrimaryAdd\?\.addEventListener\('click'[\s\S]*handleCutlistAddClick\(\)/);
   assert.match(appSource, /addCutlistSourcePair/);
+});
+
+test('cutlist copy link saves then copies a shareable bcutlist path', () => {
+  const listenerBody = extractBalancedBlock(appSource, "elements.btnCutlistCopyLink?.addEventListener('click'");
+
+  assert.match(listenerBody, /await saveCurrentCutlist\(\)/);
+  assert.ok(listenerBody.includes("replace(/\\//g, '\\\\')"));
+  assert.match(listenerBody, /const clipboardContent = `\$\{windowsPath\}\\n\\n\$\{fileName\}`/);
+  assert.match(listenerBody, /copyToClipboard\(clipboardContent\)/);
+  assert.match(listenerBody, /Slack에서 Ctrl\+Shift\+V/);
+});
+
+test('cutlist source missing rows show a visible file status', () => {
+  const renderBody = extractBalancedBlock(appSource, 'function renderCutlistItems');
+
+  assert.match(renderBody, /sourceMissing/);
+  assert.match(renderBody, /cutlist-item-status/);
+  assert.match(renderBody, /파일 없음/);
+});
+
+test('package exposes a full cutlist test script', () => {
+  const script = packageJson.scripts?.['test:cutlist'] || '';
+
+  assert.match(script, /cutlist-manager\.test\.js/);
+  assert.match(script, /cutlist-schema\.test\.js/);
+  assert.match(script, /moho-scene-info-parser\.test\.js/);
+  assert.match(script, /cutlist-core\.test\.js/);
+  assert.match(script, /cutlist-runtime-source\.test\.js/);
+  assert.match(script, /cutlist-comment-index\.test\.js/);
 });
 
 test('timeline can render cutlist segments', () => {
