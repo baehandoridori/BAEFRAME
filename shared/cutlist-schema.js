@@ -108,6 +108,10 @@ export function validateCutlistData(data) {
   const cuts = Array.isArray(data.cuts) ? data.cuts : [];
 
   sources.forEach((source, index) => {
+    if (!isPlainObject(source)) {
+      errors.push(`sources[${index}]: 항목이 객체가 아닙니다.`);
+      return;
+    }
     if (!source.id) errors.push(`sources[${index}]: id 필드가 없습니다.`);
     if (!source.videoPath) errors.push(`sources[${index}]: videoPath 필드가 없습니다.`);
     if (!source.infoPath) errors.push(`sources[${index}]: infoPath 필드가 없습니다.`);
@@ -119,6 +123,10 @@ export function validateCutlistData(data) {
   });
 
   cuts.forEach((cut, index) => {
+    if (!isPlainObject(cut)) {
+      errors.push(`cuts[${index}]: 항목이 객체가 아닙니다.`);
+      return;
+    }
     if (!cut.id) errors.push(`cuts[${index}]: id 필드가 없습니다.`);
     if (!cut.sourceId) errors.push(`cuts[${index}]: sourceId 필드가 없습니다.`);
     if (!Number.isFinite(Number(cut.sceneNumber))) errors.push(`cuts[${index}]: sceneNumber가 유효하지 않습니다.`);

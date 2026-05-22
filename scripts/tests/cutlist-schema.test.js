@@ -108,6 +108,32 @@ test('does not throw when sources or cuts are not arrays', () => {
   assert.match(badCutsResult.errors.join('\n'), /cuts/);
 });
 
+test('does not throw when sources contain non-object items', () => {
+  for (const source of [null, 'bad']) {
+    const data = createDefaultCutlistData({ name: 'bad source item' });
+    data.sources = [source];
+
+    assert.doesNotThrow(() => validateCutlistData(data));
+    const result = validateCutlistData(data);
+
+    assert.equal(result.valid, false);
+    assert.match(result.errors.join('\n'), /sources\[0\].*객체/);
+  }
+});
+
+test('does not throw when cuts contain non-object items', () => {
+  for (const cut of [null, 'bad']) {
+    const data = createDefaultCutlistData({ name: 'bad cut item' });
+    data.cuts = [cut];
+
+    assert.doesNotThrow(() => validateCutlistData(data));
+    const result = validateCutlistData(data);
+
+    assert.equal(result.valid, false);
+    assert.match(result.errors.join('\n'), /cuts\[0\].*객체/);
+  }
+});
+
 test('allows explicitly empty source info text', () => {
   const data = createDefaultCutlistData({ name: 'empty info text' });
   data.sources.push(createCutlistSource({
