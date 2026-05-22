@@ -5900,7 +5900,7 @@ async function initApp() {
 
     container.innerHTML = ranges.map(range => {
       const key = getPlaylistAggregateCommentKey(range);
-      const title = escapeHtml(formatPlaylistCommentPanelLine(range));
+      const title = escapeHtmlAttribute(formatPlaylistCommentPanelLine(range));
       const author = range.author || '알 수 없음';
       const authorColor = getAuthorColor(range.authorId || author || 'unknown');
       const replyCount = range.replies?.length || 0;
@@ -6082,7 +6082,7 @@ async function initApp() {
       ` : '';
 
       return `
-      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}"${commentPanelLine ? ` title="${escapeHtml(commentPanelLine)}"` : ''}>
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}"${commentPanelLine ? ` title="${escapeHtmlAttribute(commentPanelLine)}"` : ''}>
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
         <button class="comment-resolve-toggle resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
           ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
@@ -6716,6 +6716,15 @@ async function initApp() {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  function escapeHtmlAttribute(text) {
+    return String(text ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
   /**

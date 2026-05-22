@@ -154,6 +154,15 @@ test('comment target readiness realigns stale same-file cut selection', () => {
   assert.match(functionBody, /await seekPlaybackToCutStart\(cut\)/);
 });
 
+test('cutlist comment tooltip uses attribute-safe escaping', () => {
+  assert.match(appSource, /function escapeHtmlAttribute\(text\)/);
+  assert.match(appSource, /replace\(/);
+  assert.match(appSource, /&quot;/);
+  assert.match(appSource, /&#39;/);
+  assert.match(appSource, /commentPanelLine \? ` title="\$\{escapeHtmlAttribute\(commentPanelLine\)\}"` : ''/);
+  assert.doesNotMatch(appSource, /commentPanelLine \? ` title="\$\{escapeHtml\(commentPanelLine\)\}"` : ''/);
+});
+
 test('cutlist route URLs preserve or recover Windows drive paths', () => {
   assert.deepEqual(
     launchRouting.resolveRoutedFileUrl('baeframe://cutlist/G:/dir/file.bcutlist', 'cutlist'),
