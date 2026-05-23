@@ -8,7 +8,7 @@ import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { ERASER_MODES, normalizeEraserMode } from './modules/drawing-stroke-records.js';
 import { CommentManager, MARKER_COLORS, getAuthorColor } from './modules/comment-manager.js';
-import { ReviewDataManager } from './modules/review-data-manager.js';
+import { ReviewDataManager, getBframePath } from './modules/review-data-manager.js';
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
 import { DrawingSync } from './modules/drawing-sync.js';
@@ -40,6 +40,7 @@ import {
 } from './modules/playlist-comment-index.js';
 import {
   buildCutlistCommentContext,
+  extractCutlistCommentRanges,
   formatCutlistCommentLabel,
   formatCutlistCommentPanelLine
 } from './modules/cutlist-comment-index.js';
@@ -302,6 +303,9 @@ async function initApp() {
   let playlistTimelineUpdateToken = 0;
   let playlistSortChangeToken = 0;
   let playlistAggregateCommentRanges = [];
+  let cutlistAggregateCommentRanges = [];
+  let cutlistCommentTimelineUpdateToken = 0;
+  let cutlistPlaybackTransitioning = false;
 
   /**
    * 작성자 필터 적용 헬퍼
@@ -811,6 +815,7 @@ async function initApp() {
 
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
+    void handleCutlistPlaybackFrame(currentFrame);
     refreshCurrentCutFromPlayback(currentFrame);
 
     // Liveblocks Presence에 현재 프레임 전달 (원격 타임라인 표시용)
@@ -839,6 +844,7 @@ async function initApp() {
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
+    void handleCutlistPlaybackFrame(frame);
     refreshCurrentCutFromPlayback(frame);
 
     // 타임코드/프레임레이트 실시간 업데이트 (스플릿 뷰와 동일하게)
@@ -875,6 +881,15 @@ async function initApp() {
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     getAudioWaveform()?.setPlaying(false);
+
+    if (cutlistUIState.active && getCutlistManager().isActive()) {
+      const currentCut = getCutlistManager().getCutById(getCutlistManager().currentCutId);
+      if (currentCut && getNextCutlistCut(currentCut)) {
+        log.info('컷 묶음 재생: 다음 컷으로 이동');
+        void advanceCutlistPlaybackFromCut(currentCut);
+        return;
+      }
+    }
 
     const playlistManager = getPlaylistManager();
     if (continuousPlaybackState.active) {
@@ -3381,10 +3396,12 @@ async function initApp() {
 
   // 댓글 범위 렌더링 함수 (타임라인 + 비디오 오버레이)
   function renderCommentRanges() {
-    let ranges = commentManager.getMarkerRanges();
+    let ranges = cutlistUIState.active
+      ? cutlistAggregateCommentRanges
+      : commentManager.getMarkerRanges();
 
     // 작성자 필터 적용
-    if (commentFilterState.authors !== null) {
+    if (!cutlistUIState.active && commentFilterState.authors !== null) {
       const allowedIds = new Set(
         filterByAuthors(commentManager.getAllMarkers()).map(m => m.id)
       );
@@ -3392,7 +3409,7 @@ async function initApp() {
     }
 
     if (cutlistUIState.active) {
-      ranges = mapCutlistCommentRangesToTimeline(ranges);
+      ranges = filterCutlistAggregateCommentRanges(ranges, commentFilterState.status);
     }
 
     timeline.renderCommentRanges(ranges);
@@ -3405,6 +3422,13 @@ async function initApp() {
       setupCommentRangeInteractions();
       renderVideoCommentRanges();
       await updatePlaylistContinuousTimeline();
+      return;
+    }
+
+    if (cutlistUIState.active) {
+      setupCommentRangeInteractions();
+      renderVideoCommentRanges();
+      await updateCutlistAggregateComments();
       return;
     }
 
@@ -3437,6 +3461,11 @@ async function initApp() {
 
       const item = e.target.closest('.comment-range-item');
       if (item) {
+        if (item.dataset.cutlistAggregateCommentKey) {
+          await openCutlistAggregateComment(item.dataset.cutlistAggregateCommentKey);
+          return;
+        }
+
         const layerId = item.dataset.layerId;
         const markerId = item.dataset.markerId;
         const marker = commentManager.getMarker(markerId);
@@ -5462,19 +5491,26 @@ async function initApp() {
       return;
     }
 
-    const ranges = commentManager.getMarkerRanges();
+    const ranges = cutlistUIState.active
+      ? cutlistAggregateCommentRanges
+      : commentManager.getMarkerRanges();
     const fps = videoPlayer.fps || 24;
 
     // 작성자 필터 적용
     let filteredRanges = ranges;
-    if (commentFilterState.authors !== null) {
+    if (cutlistUIState.active) {
+      filteredRanges = filterCutlistAggregateCommentRanges(filteredRanges, commentFilterState.status);
+    } else if (commentFilterState.authors !== null) {
       const filteredMarkers = filterByAuthors(commentManager.getAllMarkers());
       const allowedIds = new Set(filteredMarkers.map(m => m.id));
       filteredRanges = ranges.filter(r => allowedIds.has(r.markerId));
     }
 
     if (cutlistUIState.active) {
-      filteredRanges = mapCutlistCommentRangesToTimeline(filteredRanges);
+      filteredRanges = filteredRanges.map(range => ({
+        ...range,
+        aggregateCommentKey: range.aggregateCommentKey || getCutlistAggregateCommentKey(range)
+      }));
     }
 
     // 프레임별로 마커 그룹화
@@ -5986,12 +6022,204 @@ async function initApp() {
     container.scrollTop = savedScrollTop;
   }
 
+  function getCutlistAggregateCommentKey(range) {
+    return range.aggregateCommentKey ||
+      `${range.cutId || ''}:${range.sourceId || ''}:${range.layerId || ''}:${range.markerId || ''}`;
+  }
+
+  function cutlistRangeMatchesCommentSearch(range, normalizedQuery) {
+    if (!normalizedQuery) return true;
+
+    const haystack = [
+      range.text,
+      range.author,
+      range.cutLabel,
+      range.fileName,
+      range.sourceStartFrame,
+      range.sourceEndFrame,
+      range.localStartTimecode,
+      range.globalStartTimecode,
+      formatCutlistCommentPanelLine(range)
+    ];
+
+    if (Array.isArray(range.replies)) {
+      for (const reply of range.replies) {
+        haystack.push(reply?.text, reply?.author);
+      }
+    }
+
+    return haystack
+      .filter(value => value !== undefined && value !== null)
+      .map(value => String(value).toLowerCase())
+      .join(' ')
+      .includes(normalizedQuery);
+  }
+
+  function filterCutlistAggregateCommentRanges(
+    ranges,
+    filter = getActiveCommentFilter(),
+    normalizedSearch = ''
+  ) {
+    let filtered = Array.isArray(ranges) ? [...ranges] : [];
+
+    if (filter === 'unresolved') {
+      filtered = filtered.filter(range => !range.resolved);
+    } else if (filter === 'resolved') {
+      filtered = filtered.filter(range => range.resolved);
+    }
+
+    filtered = filterByAuthors(filtered);
+
+    if (normalizedSearch) {
+      filtered = filtered.filter(range => cutlistRangeMatchesCommentSearch(range, normalizedSearch));
+    }
+
+    return filtered.sort((a, b) => a.globalStartTime - b.globalStartTime);
+  }
+
+  function highlightCutlistAggregateComment(key) {
+    const container = elements.commentsList;
+    if (!container) return;
+    const target = [...container.querySelectorAll('.cutlist-aggregate-comment')]
+      .find(item => item.dataset.cutlistAggregateCommentKey === key);
+    if (!target) return;
+
+    container.querySelectorAll('.cutlist-aggregate-comment').forEach(item => {
+      item.classList.remove('selected', 'glow');
+    });
+    target.classList.add('selected', 'glow');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => target.classList.remove('glow'), 2600);
+  }
+
+  async function openCutlistAggregateComment(key) {
+    const range = cutlistAggregateCommentRanges.find(item => getCutlistAggregateCommentKey(item) === key);
+    if (!range) return;
+
+    const cutlistManager = getCutlistManager();
+    const cut = cutlistManager.getCutById(range.cutId);
+    if (!cut) return;
+
+    const segment = getCutlistSegmentForCut(cut);
+    if (!segment) return;
+
+    const fps = Math.max(1, Number(range.fps || segment.fps || cut.fps) || 24);
+    const sourceStartFrame = Number(segment.sourceStartFrame ?? cut.startFrame) || 0;
+    const sourceFrame = Math.max(
+      0,
+      Number(range.sourceStartFrame ?? (sourceStartFrame + Number(range.localStartFrame || 0))) || 0
+    );
+    const localTime = Math.max(0, sourceFrame - sourceStartFrame) / fps;
+    const moved = await seekCutlistMappedPosition({
+      segment,
+      sourceFrame,
+      localTime
+    });
+    if (!moved) return;
+
+    videoPlayer.pause();
+    timeline.setCurrentTime(Number(range.globalStartTime) || segment.globalStartTime || 0);
+    updateTimecodeDisplay();
+    highlightCutlistAggregateComment(key);
+  }
+
+  function renderCutlistAggregateCommentList(filter = getActiveCommentFilter()) {
+    const container = elements.commentsList;
+    if (!container) return;
+
+    const savedScrollTop = container.scrollTop;
+    const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
+    const authorFilteredRanges = filterByAuthors(cutlistAggregateCommentRanges);
+    const resolvedCount = authorFilteredRanges.filter(range => range.resolved).length;
+    const ranges = filterCutlistAggregateCommentRanges(
+      cutlistAggregateCommentRanges,
+      filter,
+      normalizedSearch
+    );
+
+    if (elements.commentCount) {
+      if (normalizedSearch) {
+        elements.commentCount.textContent = `검색 ${ranges.length} / 전체 ${authorFilteredRanges.length}`;
+      } else {
+        const unresolvedCount = authorFilteredRanges.length - resolvedCount;
+        elements.commentCount.textContent = authorFilteredRanges.length > 0
+          ? `${unresolvedCount > 0 ? `${unresolvedCount} 미해결 / ` : ''}${authorFilteredRanges.length}개`
+          : '0';
+      }
+    }
+
+    updateFeedbackProgress(authorFilteredRanges.length, resolvedCount);
+
+    if (ranges.length === 0) {
+      const emptyTitle = normalizedSearch ? '검색 결과가 없습니다' : '컷 묶음 댓글이 없습니다';
+      const emptyHint = normalizedSearch
+        ? `"${escapeHtml(commentSearchKeyword)}"와 일치하는 컷 묶음 댓글이 없습니다.`
+        : '컷 묶음 모드에서는 연결된 모든 원본의 댓글이 이곳에 표시됩니다.';
+
+      container.innerHTML = `
+        <div class="comment-empty">
+          <span style="font-size: 32px; margin-bottom: 8px;">#</span>
+          <p>${emptyTitle}</p>
+          <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = ranges.map(range => {
+      const key = getCutlistAggregateCommentKey(range);
+      const title = escapeHtmlAttribute(formatCutlistCommentPanelLine(range));
+      const author = range.author || '알 수 없음';
+      const authorColor = getAuthorColor(range.authorId || author || 'unknown');
+      const replyCount = range.replies?.length || 0;
+
+      return `
+      <div class="comment-item cutlist-aggregate-comment playlist-aggregate-comment ${range.resolved ? 'resolved' : ''}"
+        data-cutlist-aggregate-comment-key="${escapeHtml(key)}"
+        data-marker-id="${escapeHtml(range.markerId)}"
+        data-cut-id="${escapeHtml(range.cutId)}"
+        data-source-id="${escapeHtml(range.sourceId)}"
+        title="${title}">
+        <div class="playlist-comment-time-row">
+          <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+          <span class="playlist-comment-global-time">전체 ${highlightCommentSearchMatches(range.globalStartTimecode, normalizedSearch)}</span>
+          <span class="playlist-comment-local-time">컷 ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+        </div>
+        <div class="comment-content">
+          <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(range.text || '댓글', normalizedSearch)))}</p>
+          ${range.image ? `<div class="comment-attached-image"><img src="${range.image}" alt="첨부 이미지" data-full-image="${range.image}"></div>` : ''}
+        </div>
+        <div class="comment-actions playlist-comment-readonly-actions">
+          <span class="comment-author-inline ${getAuthorColorClass(author)}" style="color: ${authorColor.color}; font-weight: bold;">${highlightCommentSearchMatches(author, normalizedSearch)}</span>
+          ${range.createdAt ? `<span class="comment-time-inline">${formatRelativeTime(range.createdAt)}</span>` : ''}
+          ${replyCount > 0 ? `<span class="playlist-comment-reply-count">답글 ${replyCount}개</span>` : ''}
+          <span class="playlist-comment-source">${highlightCommentSearchMatches(range.fileName, normalizedSearch)}</span>
+        </div>
+      </div>
+    `;
+    }).join('');
+
+    container.querySelectorAll('.cutlist-aggregate-comment').forEach(item => {
+      item.addEventListener('click', async (e) => {
+        if (e.target.closest('.gdrive-link-btn')) return;
+        await openCutlistAggregateComment(item.dataset.cutlistAggregateCommentKey);
+      });
+    });
+
+    container.scrollTop = savedScrollTop;
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
 
     if (playlistUIState.mode === 'continuous') {
       renderPlaylistContinuousCommentList(filter);
+      return;
+    }
+
+    if (cutlistUIState.active) {
+      renderCutlistAggregateCommentList(filter);
       return;
     }
 
@@ -11474,11 +11702,13 @@ async function initApp() {
     cutlistManager.onCutlistLoaded = () => {
       updateCutlistUI();
       updateCutlistTimeline();
+      void updateCutlistAggregateComments();
     };
 
     cutlistManager.onCutlistModified = () => {
       updateCutlistUI();
       updateCutlistTimeline();
+      void updateCutlistAggregateComments();
     };
 
     cutlistManager.onCutSelected = (cut) => {
@@ -11590,6 +11820,7 @@ async function initApp() {
     cutlistUIState.lastIgnored = result.ignored || [];
     updateCutlistUI();
     updateCutlistTimeline();
+    void updateCutlistAggregateComments();
 
     if (!cutlistManager.currentCutId && result.cuts.length > 0) {
       cutlistManager.selectCut(result.cuts[0].id);
@@ -11615,6 +11846,8 @@ async function initApp() {
 
   function hideCutlistSidebar() {
     cutlistUIState.active = false;
+    cutlistCommentTimelineUpdateToken += 1;
+    cutlistAggregateCommentRanges = [];
     elements.cutlistSidebar?.classList.add('hidden');
     elements.btnCutlist?.classList.remove('active');
     updateCurrentCutDisplay(null);
@@ -11780,7 +12013,11 @@ async function initApp() {
     if (!cutlistUIState.active || !getCutlistManager().isActive()) return fallbackTime;
     const source = getCurrentCutlistSourceForFile(state.currentFile);
     if (!source) return fallbackTime;
-    const cut = findCurrentCut(getCutlistManager().getOrderedCuts(), {
+    const cutlistManager = getCutlistManager();
+    const selectedCut = cutlistManager.getCutById(cutlistManager.currentCutId);
+    const cut = (isCutlistPlaybackLockedToSelectedCut() || cutlistPlaybackTransitioning) && selectedCut
+      ? selectedCut
+      : findCurrentCut(cutlistManager.getOrderedCuts(), {
       sourceId: source.id,
       frame
     });
@@ -11815,6 +12052,79 @@ async function initApp() {
       Number.isFinite(endFrame) &&
       currentFrame >= startFrame &&
       currentFrame <= endFrame;
+  }
+
+  function isCutlistPlaybackLockedToSelectedCut() {
+    return cutlistUIState.active &&
+      videoPlayer.isPlaying &&
+      !cutlistPlaybackTransitioning &&
+      !!getCutlistManager().currentCutId;
+  }
+
+  function getNextCutlistCut(cut) {
+    if (!cut?.id) return null;
+    const cuts = getCutlistManager().getOrderedCuts();
+    const index = cuts.findIndex(item => item.id === cut.id);
+    if (index < 0) return null;
+    return cuts[index + 1] || null;
+  }
+
+  async function advanceCutlistPlaybackFromCut(cut, options) {
+    const nextCut = getNextCutlistCut(cut);
+    if (!nextCut) {
+      videoPlayer.pause();
+      timeline.setPlayingState(false);
+      getAudioWaveform()?.setPlaying(false);
+      return false;
+    }
+
+    const playbackOptions = options || {};
+    const shouldResume = playbackOptions.resume !== false;
+    const moved = await seekPlaybackToCutStart(nextCut);
+    if (!moved) {
+      videoPlayer.pause();
+      timeline.setPlayingState(false);
+      getAudioWaveform()?.setPlaying(false);
+      return false;
+    }
+
+    if (shouldResume) {
+      await videoPlayer.play();
+    }
+    return true;
+  }
+
+  async function handleCutlistPlaybackFrame(frame) {
+    if (
+      !cutlistUIState.active ||
+      !getCutlistManager().isActive() ||
+      !videoPlayer.isPlaying ||
+      cutlistPlaybackTransitioning
+    ) {
+      return false;
+    }
+
+    const cutlistManager = getCutlistManager();
+    const currentCut = cutlistManager.getCutById(cutlistManager.currentCutId);
+    if (!currentCut) {
+      refreshCurrentCutFromPlayback(frame);
+      return false;
+    }
+
+    if (isFrameInsideCut(currentCut, frame)) return false;
+
+    const currentFrame = Number(frame);
+    const endFrame = Number(currentCut.endFrame);
+    if (!Number.isFinite(currentFrame) || !Number.isFinite(endFrame) || currentFrame <= endFrame) {
+      return false;
+    }
+
+    cutlistPlaybackTransitioning = true;
+    try {
+      return await advanceCutlistPlaybackFromCut(currentCut);
+    } finally {
+      cutlistPlaybackTransitioning = false;
+    }
   }
 
   async function seekPlaybackToCutStart(cut) {
@@ -11864,6 +12174,11 @@ async function initApp() {
       return null;
     }
 
+    const lockedCut = cutlistManager.getCutById(cutlistManager.currentCutId);
+    if ((isCutlistPlaybackLockedToSelectedCut() || cutlistPlaybackTransitioning) && lockedCut) {
+      return lockedCut;
+    }
+
     const source = getCurrentCutlistSourceForFile(state.currentFile);
     if (!source) {
       setCutlistCurrentCut(null);
@@ -11886,12 +12201,81 @@ async function initApp() {
     if (!cutlistUIState.active || !cutlistManager.isActive()) {
       timeline.setCurrentCutId(null);
       timeline.setCutlistTimeline([], 0);
+      cutlistAggregateCommentRanges = [];
       return;
     }
 
     const cutlistTimeline = cutlistManager.getTimeline();
     timeline.setCutlistTimeline(cutlistTimeline.segments, cutlistTimeline.totalDuration);
     timeline.setCurrentCutId(cutlistManager.currentCutId);
+  }
+
+  async function updateCutlistAggregateComments() {
+    const cutlistManager = getCutlistManager();
+    const updateToken = ++cutlistCommentTimelineUpdateToken;
+    if (!cutlistUIState.active || !cutlistManager.isActive()) {
+      cutlistAggregateCommentRanges = [];
+      if (cutlistUIState.active) {
+        renderCommentRanges();
+        updateTimelineMarkers();
+        renderCutlistAggregateCommentList(commentFilterState.status);
+      }
+      return;
+    }
+
+    const cutlistTimeline = cutlistManager.getTimeline();
+    const sourcesById = new Map(
+      (cutlistManager.currentCutlist?.sources || []).map(source => [source.id, source])
+    );
+    const bframeCache = new Map();
+    const aggregateRanges = [];
+
+    for (const segment of cutlistTimeline.segments) {
+      if (cutlistCommentTimelineUpdateToken !== updateToken || !cutlistUIState.active) return;
+
+      const source = sourcesById.get(segment.sourceId);
+      if (!source?.videoPath) continue;
+
+      const bframePath = getBframePath(source.videoPath);
+      let bframeData = bframeCache.get(bframePath);
+      if (!bframeCache.has(bframePath)) {
+        try {
+          bframeData = await window.electronAPI.loadReview(bframePath);
+        } catch (error) {
+          log.warn('컷 묶음 댓글 로드 실패', {
+            fileName: source.fileName || segment.label,
+            error: error.message
+          });
+          bframeData = null;
+        }
+        bframeCache.set(bframePath, bframeData);
+      }
+
+      if (cutlistCommentTimelineUpdateToken !== updateToken || !cutlistUIState.active) return;
+      if (!bframeData) continue;
+
+      const ranges = extractCutlistCommentRanges({
+        bframeData,
+        segment: {
+          ...segment,
+          fileName: source.fileName || segment.label || '',
+          sourceVideoPath: source.videoPath
+        },
+        visibleLayerIds: null,
+        allowedAuthorIds: null
+      }).map(range => ({
+        ...range,
+        aggregateCommentKey: getCutlistAggregateCommentKey(range)
+      }));
+      aggregateRanges.push(...ranges);
+    }
+
+    if (cutlistCommentTimelineUpdateToken !== updateToken || !cutlistUIState.active) return;
+
+    cutlistAggregateCommentRanges = aggregateRanges;
+    renderCommentRanges();
+    updateTimelineMarkers();
+    renderCutlistAggregateCommentList(commentFilterState.status);
   }
 
   async function seekToCut(cut) {

@@ -2271,6 +2271,10 @@ export class Timeline extends EventTarget {
   _createCommentRangeElement(comment) {
     const element = document.createElement('div');
     element.className = 'comment-range-item';
+    if (comment.aggregateCommentKey) {
+      element.classList.add('cutlist-comment-range');
+      element.dataset.cutlistAggregateCommentKey = comment.aggregateCommentKey;
+    }
     element.dataset.layerId = comment.layerId;
     element.dataset.markerId = comment.markerId;
 

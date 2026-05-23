@@ -155,17 +155,57 @@ test('cutlist playback uses global cutlist timeline time for playhead', () => {
   assert.doesNotMatch(seekStartBody, /timeline\.setCurrentTime\(frame \/ fps\)/);
 });
 
+test('cutlist playback advances to the next ordered cut instead of the next cut in the same source', () => {
+  const timeUpdateBody = extractBalancedBlock(appSource, "videoPlayer.addEventListener('timeupdate'");
+  const frameUpdateBody = extractBalancedBlock(appSource, "videoPlayer.addEventListener('frameUpdate'");
+  const endedBody = extractBalancedBlock(appSource, "videoPlayer.addEventListener('ended'");
+  const refreshBody = extractBalancedBlock(appSource, 'function refreshCurrentCutFromPlayback');
+  const advanceBody = extractBalancedBlock(appSource, 'async function advanceCutlistPlaybackFromCut');
+
+  assert.match(appSource, /function getNextCutlistCut\(cut\)/);
+  assert.match(appSource, /async function handleCutlistPlaybackFrame\(frame/);
+  assert.match(timeUpdateBody, /handleCutlistPlaybackFrame\(currentFrame\)/);
+  assert.match(frameUpdateBody, /handleCutlistPlaybackFrame\(frame\)/);
+  assert.match(endedBody, /advanceCutlistPlaybackFromCut\(currentCut\)/);
+  assert.match(advanceBody, /getNextCutlistCut\(cut\)/);
+  assert.match(advanceBody, /await seekPlaybackToCutStart\(nextCut\)/);
+  assert.match(advanceBody, /await videoPlayer\.play\(\)/);
+  assert.match(refreshBody, /isCutlistPlaybackLockedToSelectedCut\(\)/);
+  assert.match(refreshBody, /currentCut/);
+});
+
 test('cutlist timeline comment markers use global display time but keep source click frame', () => {
   const updateMarkersBody = extractBalancedBlock(appSource, 'function updateTimelineMarkers');
   const mapRangesBody = extractBalancedBlock(appSource, 'function mapCutlistCommentRangesToTimeline');
 
-  assert.match(updateMarkersBody, /mapCutlistCommentRangesToTimeline\(filteredRanges\)/);
+  assert.match(updateMarkersBody, /cutlistAggregateCommentRanges/);
   assert.match(updateMarkersBody, /const markerFrame = Number\(range\.startFrame\)/);
   assert.doesNotMatch(updateMarkersBody, /range\.globalStartFrame/);
   assert.match(mapRangesBody, /sourceStartFrame:\s*range\.startFrame/);
   assert.match(updateMarkersBody, /markersAtFrame\[0\]\?\.sourceStartFrame/);
   assert.match(updateMarkersBody, /const time = cutlistUIState\.active/);
   assert.match(updateMarkersBody, /markersAtFrame\[0\]\?\.globalStartTime/);
+});
+
+test('cutlist mode aggregates comments from every source bframe for the joined timeline', () => {
+  const refreshBody = extractBalancedBlock(appSource, 'async function refreshCommentRangesForCurrentMode');
+  const updateListBody = extractBalancedBlock(appSource, 'function updateCommentListImmediate');
+  const renderRangesBody = extractBalancedBlock(appSource, 'function renderCommentRanges');
+  const updateMarkersBody = extractBalancedBlock(appSource, 'function updateTimelineMarkers');
+  const interactionBody = extractBalancedBlock(appSource, 'function setupCommentRangeInteractions');
+
+  assert.match(appSource, /getBframePath/);
+  assert.match(appSource, /extractCutlistCommentRanges/);
+  assert.match(appSource, /let cutlistAggregateCommentRanges = \[\]/);
+  assert.match(appSource, /async function updateCutlistAggregateComments\(\)/);
+  assert.match(appSource, /function renderCutlistAggregateCommentList/);
+  assert.match(appSource, /async function openCutlistAggregateComment/);
+  assert.match(refreshBody, /await updateCutlistAggregateComments\(\)/);
+  assert.match(updateListBody, /renderCutlistAggregateCommentList\(filter\)/);
+  assert.match(renderRangesBody, /cutlistAggregateCommentRanges/);
+  assert.match(updateMarkersBody, /cutlistAggregateCommentRanges/);
+  assert.match(interactionBody, /item\.dataset\.cutlistAggregateCommentKey/);
+  assert.match(timelineSource, /dataset\.cutlistAggregateCommentKey/);
 });
 
 test('clustered comment markers use active timeline duration', () => {
