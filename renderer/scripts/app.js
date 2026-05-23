@@ -300,12 +300,22 @@ async function initApp() {
     ready: false,
     token: 0
   };
+  const cutlistMediaPreload = {
+    element: null,
+    cutId: null,
+    sourceId: null,
+    path: null,
+    frame: null,
+    ready: false,
+    token: 0
+  };
   let playlistTimelineUpdateToken = 0;
   let playlistSortChangeToken = 0;
   let playlistAggregateCommentRanges = [];
   let cutlistAggregateCommentRanges = [];
   let cutlistCommentTimelineUpdateToken = 0;
   let cutlistPlaybackTransitioning = false;
+  let videoTransitionFreezeCanvas = null;
 
   /**
    * 작성자 필터 적용 헬퍼
@@ -3882,6 +3892,10 @@ async function initApp() {
       markerContainer.style.transform = transform;
       markerContainer.style.transformOrigin = 'center center';
     }
+    if (videoTransitionFreezeCanvas) {
+      videoTransitionFreezeCanvas.style.transform = transform;
+      videoTransitionFreezeCanvas.style.transformOrigin = 'center center';
+    }
   }
 
   /**
@@ -4268,6 +4282,67 @@ async function initApp() {
     });
   }
 
+  function ensureVideoTransitionFreezeCanvas() {
+    if (videoTransitionFreezeCanvas) return videoTransitionFreezeCanvas;
+
+    const canvas = document.createElement('canvas');
+    canvas.className = 'video-transition-freeze-canvas';
+    canvas.hidden = true;
+    elements.videoWrapper?.appendChild(canvas);
+    videoTransitionFreezeCanvas = canvas;
+    return canvas;
+  }
+
+  function syncVideoTransitionFreezeCanvas(renderArea) {
+    const canvas = videoTransitionFreezeCanvas;
+    if (!canvas || !renderArea) return;
+
+    canvas.style.left = `${renderArea.left}px`;
+    canvas.style.top = `${renderArea.top}px`;
+    canvas.style.width = `${renderArea.width}px`;
+    canvas.style.height = `${renderArea.height}px`;
+    canvas.style.transform = elements.videoPlayer.style.transform || '';
+    canvas.style.transformOrigin = elements.videoPlayer.style.transformOrigin || 'center center';
+  }
+
+  function captureVideoTransitionFreezeFrame() {
+    const video = elements.videoPlayer;
+    if (
+      state.isAudioMode ||
+      !video ||
+      video.readyState < 2 ||
+      !video.videoWidth ||
+      !video.videoHeight
+    ) {
+      return false;
+    }
+
+    const renderArea = getVideoRenderArea();
+    if (!renderArea) return false;
+
+    const canvas = ensureVideoTransitionFreezeCanvas();
+    const context = canvas.getContext('2d');
+    if (!context) return false;
+
+    canvas.width = renderArea.videoWidth;
+    canvas.height = renderArea.videoHeight;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    syncVideoTransitionFreezeCanvas(renderArea);
+    canvas.hidden = false;
+    return true;
+  }
+
+  function releaseVideoTransitionFreezeFrame(wasCaptured) {
+    if (!wasCaptured || !videoTransitionFreezeCanvas) return;
+
+    requestAnimationFrame(() => {
+      if (videoTransitionFreezeCanvas) {
+        videoTransitionFreezeCanvas.hidden = true;
+      }
+    });
+  }
+
   async function seekInitialVideoFrameBeforeReveal(initialFrame) {
     const frame = Number(initialFrame);
     if (!Number.isFinite(frame) || frame <= 0 || !videoPlayer.isLoaded) return;
@@ -4570,6 +4645,7 @@ async function initApp() {
           Number.isFinite(Number(initialFrame)) &&
           Number(initialFrame) > 0;
         const previousVideoVisibility = elements.videoPlayer.style.visibility;
+        const transitionFreezeCaptured = shouldDelayVideoReveal && captureVideoTransitionFreezeFrame();
         if (shouldDelayVideoReveal) {
           elements.videoPlayer.style.visibility = 'hidden';
         }
@@ -4585,6 +4661,7 @@ async function initApp() {
         } finally {
           if (shouldDelayVideoReveal) {
             elements.videoPlayer.style.visibility = previousVideoVisibility;
+            releaseVideoTransitionFreezeFrame(transitionFreezeCaptured);
           }
         }
       }
@@ -11028,6 +11105,122 @@ async function initApp() {
     }
   }
 
+  function ensureCutlistPreloadElement() {
+    if (cutlistMediaPreload.element) return cutlistMediaPreload.element;
+
+    const media = document.createElement('video');
+    media.preload = 'auto';
+    media.muted = true;
+    media.playsInline = true;
+    media.style.display = 'none';
+    media.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(media);
+    cutlistMediaPreload.element = media;
+    return media;
+  }
+
+  function clearCutlistMediaPreload() {
+    cutlistMediaPreload.token += 1;
+    cutlistMediaPreload.cutId = null;
+    cutlistMediaPreload.sourceId = null;
+    cutlistMediaPreload.path = null;
+    cutlistMediaPreload.frame = null;
+    cutlistMediaPreload.ready = false;
+
+    const media = cutlistMediaPreload.element;
+    if (media) {
+      media.onloadedmetadata = null;
+      media.onloadeddata = null;
+      media.oncanplay = null;
+      media.onseeked = null;
+      media.onerror = null;
+      media.removeAttribute('src');
+      media.load?.();
+    }
+  }
+
+  function preloadNextCutlistMedia(cut) {
+    const cutlistManager = getCutlistManager();
+    if (!cutlistUIState.active || !cutlistManager.isActive() || !cut?.id) {
+      clearCutlistMediaPreload();
+      return;
+    }
+
+    const nextCut = getNextCutlistCut(cut);
+    if (!nextCut) {
+      clearCutlistMediaPreload();
+      return;
+    }
+
+    const source = cutlistManager.getSourceById(nextCut.sourceId);
+    if (!source?.videoPath || source.missing === true || isSameFilePath(state.currentFile, source.videoPath)) {
+      clearCutlistMediaPreload();
+      return;
+    }
+
+    const frame = Math.max(0, Number(nextCut.startFrame) || 0);
+    if (
+      cutlistMediaPreload.cutId === nextCut.id &&
+      cutlistMediaPreload.path === source.videoPath &&
+      cutlistMediaPreload.frame === frame
+    ) {
+      return;
+    }
+
+    const token = ++cutlistMediaPreload.token;
+    cutlistMediaPreload.cutId = nextCut.id;
+    cutlistMediaPreload.sourceId = source.id;
+    cutlistMediaPreload.path = source.videoPath;
+    cutlistMediaPreload.frame = frame;
+    cutlistMediaPreload.ready = false;
+
+    const media = ensureCutlistPreloadElement();
+    const fps = Number(nextCut.fps) > 0 ? Number(nextCut.fps) : 24;
+    const targetTime = Math.max(0, (frame / fps) + 0.001);
+
+    const markReady = () => {
+      if (token !== cutlistMediaPreload.token) return;
+      cutlistMediaPreload.ready = media.readyState >= 2;
+      log.debug('컷 묶음 다음 소스 사전 로드됨', {
+        label: nextCut.label,
+        fileName: source.fileName,
+        frame,
+        readyState: media.readyState
+      });
+    };
+
+    const markFailed = () => {
+      if (token !== cutlistMediaPreload.token) return;
+      cutlistMediaPreload.ready = false;
+      log.warn('컷 묶음 다음 소스 사전 로드 실패', {
+        label: nextCut.label,
+        fileName: source.fileName
+      });
+    };
+
+    const seekToTarget = () => {
+      if (token !== cutlistMediaPreload.token) return;
+      try {
+        media.currentTime = targetTime;
+      } catch (error) {
+        log.debug('컷 묶음 사전 로드 프레임 이동 실패', {
+          label: nextCut.label,
+          frame,
+          error: error.message
+        });
+        markReady();
+      }
+    };
+
+    media.onloadedmetadata = seekToTarget;
+    media.onloadeddata = markReady;
+    media.oncanplay = markReady;
+    media.onseeked = markReady;
+    media.onerror = markFailed;
+    media.src = toLocalMediaUrl(source.videoPath);
+    media.load();
+  }
+
   function preloadNextPlaylistMedia() {
     const playlistManager = getPlaylistManager();
     if (!playlistManager.isActive() || !userSettings.getPlaylistAutoPlay() || continuousPlaybackState.active) {
@@ -11802,12 +11995,14 @@ async function initApp() {
     cutlistManager.onCutlistLoaded = () => {
       updateCutlistUI();
       updateCutlistTimeline();
+      preloadNextCutlistMedia(cutlistManager.getCutById(cutlistManager.currentCutId));
       void updateCutlistAggregateComments();
     };
 
     cutlistManager.onCutlistModified = () => {
       updateCutlistUI();
       updateCutlistTimeline();
+      preloadNextCutlistMedia(cutlistManager.getCutById(cutlistManager.currentCutId));
       void updateCutlistAggregateComments();
     };
 
@@ -11948,6 +12143,7 @@ async function initApp() {
     cutlistUIState.active = false;
     cutlistCommentTimelineUpdateToken += 1;
     cutlistAggregateCommentRanges = [];
+    clearCutlistMediaPreload();
     elements.cutlistSidebar?.classList.add('hidden');
     elements.btnCutlist?.classList.remove('active');
     updateCurrentCutDisplay(null);
@@ -12141,6 +12337,7 @@ async function initApp() {
     updateCurrentCutDisplay(cut || null);
     updateCutlistCurrentItem();
     timeline.setCurrentCutId(cut?.id || null);
+    preloadNextCutlistMedia(cut);
   }
 
   function isFrameInsideCut(cut, frame) {

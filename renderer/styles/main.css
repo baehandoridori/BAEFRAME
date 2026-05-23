@@ -954,6 +954,17 @@ body {
   object-fit: contain;
 }
 
+.video-transition-freeze-canvas {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  background: #000;
+}
+
+.video-transition-freeze-canvas[hidden] {
+  display: none;
+}
+
 /* 비디오 실제 영역 위에 정확히 맞는 오버레이 컨테이너 */
 .video-overlay-container {
   position: absolute;

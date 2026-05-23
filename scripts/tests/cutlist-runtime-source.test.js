@@ -10,6 +10,7 @@ const mainIndex = fs.readFileSync(path.join(rootDir, 'main/index.js'), 'utf-8');
 const rendererIndex = fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf-8');
 const appSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf-8');
 const timelineSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/timeline.js'), 'utf-8');
+const mainStyles = fs.readFileSync(path.join(rootDir, 'renderer/styles/main.css'), 'utf-8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
 const launchRouting = require(path.join(rootDir, 'main/launch-routing'));
 const cutlistPaths = require(path.join(rootDir, 'main/cutlist-paths'));
@@ -193,6 +194,32 @@ test('cutlist source switches reveal new video only after the target cut frame i
   assert.match(mappedSeekBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*frame[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*\}\)/);
   assert.match(seekToCutBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*Number\(cut\.startFrame\)[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*\}\)/);
   assert.match(commentReadyBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*Number\(cut\.startFrame\)[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*\}\)/);
+});
+
+test('cutlist hidden source switches hold the previous frame instead of flashing black', () => {
+  assert.match(appSource, /let videoTransitionFreezeCanvas = null/);
+  assert.match(appSource, /function captureVideoTransitionFreezeFrame\(\)/);
+  assert.match(appSource, /function releaseVideoTransitionFreezeFrame\(wasCaptured\)/);
+  assert.match(appSource, /drawImage\(video,\s*0,\s*0,\s*canvas\.width,\s*canvas\.height\)/);
+  assert.match(appSource, /const transitionFreezeCaptured = shouldDelayVideoReveal && captureVideoTransitionFreezeFrame\(\)/);
+  assert.match(appSource, /releaseVideoTransitionFreezeFrame\(transitionFreezeCaptured\)/);
+  assert.match(mainStyles, /\.video-transition-freeze-canvas/);
+  assert.match(mainStyles, /z-index:\s*1/);
+  assert.match(mainStyles, /pointer-events:\s*none/);
+});
+
+test('cutlist playback preloads the next source cut to reduce visible transition delay', () => {
+  const setCurrentBody = extractBalancedBlock(appSource, 'function setCutlistCurrentCut');
+  const hideBody = extractBalancedBlock(appSource, 'function hideCutlistSidebar');
+
+  assert.match(appSource, /const cutlistMediaPreload = \{/);
+  assert.match(appSource, /function ensureCutlistPreloadElement\(\)/);
+  assert.match(appSource, /function clearCutlistMediaPreload\(\)/);
+  assert.match(appSource, /function preloadNextCutlistMedia\(cut\)/);
+  assert.match(appSource, /media\.preload = 'auto'/);
+  assert.match(appSource, /media\.currentTime = targetTime/);
+  assert.match(setCurrentBody, /preloadNextCutlistMedia\(cut\)/);
+  assert.match(hideBody, /clearCutlistMediaPreload\(\)/);
 });
 
 test('cutlist timeline comment markers use global display time but keep source click frame', () => {
