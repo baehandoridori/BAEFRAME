@@ -174,6 +174,27 @@ test('cutlist playback advances to the next ordered cut instead of the next cut 
   assert.match(refreshBody, /currentCut/);
 });
 
+test('cutlist source switches reveal new video only after the target cut frame is ready', () => {
+  const mappedSeekBody = extractBalancedBlock(appSource, 'async function seekCutlistMappedPosition');
+  const seekToCutBody = extractBalancedBlock(appSource, 'async function seekToCut');
+  const commentReadyBody = extractBalancedBlock(appSource, 'async function ensureCutlistCommentTargetReady');
+
+  assert.match(appSource, /initialFrame = null/);
+  assert.match(appSource, /revealAfterInitialSeek = false/);
+  assert.match(appSource, /async function seekInitialVideoFrameBeforeReveal\(initialFrame\)/);
+  assert.match(appSource, /elements\.videoPlayer\.style\.visibility = 'hidden'/);
+  assert.match(appSource, /await seekInitialVideoFrameBeforeReveal\(initialFrame\)/);
+
+  const frameIndex = mappedSeekBody.indexOf('const frame = Math.max');
+  const loadIndex = mappedSeekBody.indexOf('await loadVideo(source.videoPath, {');
+  assert.notEqual(frameIndex, -1, 'cutlist seek should resolve the target source frame');
+  assert.notEqual(loadIndex, -1, 'cutlist seek should pass initial frame options into loadVideo');
+  assert.ok(frameIndex < loadIndex, 'target frame should be known before a new source video is revealed');
+  assert.match(mappedSeekBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*frame[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*\}\)/);
+  assert.match(seekToCutBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*Number\(cut\.startFrame\)[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*\}\)/);
+  assert.match(commentReadyBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*Number\(cut\.startFrame\)[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*\}\)/);
+});
+
 test('cutlist timeline comment markers use global display time but keep source click frame', () => {
   const updateMarkersBody = extractBalancedBlock(appSource, 'function updateTimelineMarkers');
   const mapRangesBody = extractBalancedBlock(appSource, 'function mapCutlistCommentRangesToTimeline');
@@ -234,7 +255,7 @@ test('comment target readiness loads the selected cut source, not any loaded cut
   assert.match(functionBody, /cutlistManager\.getCutById\(cutlistManager\.currentCutId\)/);
   assert.match(functionBody, /resolveCutlistSourceForPlayback\(cut\)/);
   assert.match(functionBody, /isSameFilePath\(state\.currentFile,\s*source\.videoPath\)/);
-  assert.match(functionBody, /loadVideo\(source\.videoPath\)/);
+  assert.match(functionBody, /loadVideo\(source\.videoPath,\s*\{/);
   assert.doesNotMatch(functionBody, /getCurrentCutlistSourceForFile\(state\.currentFile\)\)\s*return true/);
   assert.doesNotMatch(functionBody, /getOrderedCuts\(\)\[0\]/);
 });

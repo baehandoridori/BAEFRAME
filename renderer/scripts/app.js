@@ -4242,13 +4242,94 @@ async function initApp() {
    * @param {boolean} options.keepVersionContext - 버전 컨텍스트 유지 (수동 버전 전환 시 사용)
    * @param {number} options.targetVersion - 전환할 버전 번호 (수동 버전 선택 시)
    * @param {boolean} options.preserveContinuousSession - 이어보기 내부 로드는 현재 세션 유지
+   * @param {number|null} options.initialFrame - 로드 직후 먼저 맞출 프레임
+   * @param {boolean} options.revealAfterInitialSeek - 첫 프레임 노출 없이 initialFrame 준비 후 표시
    */
+  function waitForNextVideoPaint(video) {
+    return new Promise(resolve => {
+      if (typeof video?.requestVideoFrameCallback === 'function') {
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        }, 120);
+
+        video.requestVideoFrameCallback(() => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve();
+        });
+        return;
+      }
+
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+  }
+
+  async function seekInitialVideoFrameBeforeReveal(initialFrame) {
+    const frame = Number(initialFrame);
+    if (!Number.isFinite(frame) || frame <= 0 || !videoPlayer.isLoaded) return;
+
+    const video = elements.videoPlayer;
+    const fps = Number(videoPlayer.fps) > 0 ? Number(videoPlayer.fps) : 24;
+    const totalFrames = Number(videoPlayer.totalFrames);
+    const maxFrame = Number.isFinite(totalFrames) && totalFrames > 0
+      ? totalFrames - 1
+      : frame;
+    const targetFrame = Math.max(0, Math.min(Math.floor(frame), maxFrame));
+    const duration = Number(videoPlayer.duration) || Number(video.duration);
+    const targetTime = (targetFrame / fps) + 0.001;
+    const boundedTime = Number.isFinite(duration) && duration > 0
+      ? Math.max(0, Math.min(targetTime, duration))
+      : Math.max(0, targetTime);
+
+    await new Promise(resolve => {
+      let settled = false;
+      let timeoutId = null;
+
+      const cleanup = () => {
+        video.removeEventListener('seeked', onReady);
+        video.removeEventListener('error', onReady);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      };
+
+      const onReady = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      video.addEventListener('seeked', onReady, { once: true });
+      video.addEventListener('error', onReady, { once: true });
+      timeoutId = setTimeout(onReady, 700);
+
+      try {
+        video.currentTime = boundedTime;
+      } catch (error) {
+        log.warn('초기 프레임 이동 실패', { frame: targetFrame, error: error.message });
+        onReady();
+      }
+    });
+
+    videoPlayer.currentFrame = targetFrame;
+    videoPlayer.currentTime = targetFrame / fps;
+    await waitForNextVideoPaint(video);
+  }
+
   async function loadVideo(filePath, options = {}) {
     const {
       keepVersionContext = false,
       targetVersion = null,
       preserveContinuousSession = false,
-      playWhenMediaReady = false
+      playWhenMediaReady = false,
+      initialFrame = null,
+      revealAfterInitialSeek = false
     } = options;
     const loadToken = ++latestVideoLoadToken;
     const isStaleVideoLoad = () => loadToken !== latestVideoLoadToken;
@@ -4485,8 +4566,27 @@ async function initApp() {
         document.getElementById('frameIndicator')?.classList.remove('audio-hidden');
 
         // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
-        await videoPlayer.load(actualVideoPath);
-        if (isStaleVideoLoad()) return false;
+        const shouldDelayVideoReveal = revealAfterInitialSeek &&
+          Number.isFinite(Number(initialFrame)) &&
+          Number(initialFrame) > 0;
+        const previousVideoVisibility = elements.videoPlayer.style.visibility;
+        if (shouldDelayVideoReveal) {
+          elements.videoPlayer.style.visibility = 'hidden';
+        }
+
+        try {
+          await videoPlayer.load(actualVideoPath);
+          if (isStaleVideoLoad()) return false;
+
+          if (shouldDelayVideoReveal) {
+            await seekInitialVideoFrameBeforeReveal(initialFrame);
+            if (isStaleVideoLoad()) return false;
+          }
+        } finally {
+          if (shouldDelayVideoReveal) {
+            elements.videoPlayer.style.visibility = previousVideoVisibility;
+          }
+        }
       }
 
       // 원본 파일 경로 저장 (UI/메타데이터용)
@@ -12144,14 +12244,18 @@ async function initApp() {
 
     setCutlistCurrentCut(cut);
 
-    if (!isSameFilePath(state.currentFile, source.videoPath)) {
-      const loaded = await loadVideo(source.videoPath);
-      if (!loaded) return false;
-    }
-
     const frame = Math.max(0, Number(mapped.sourceFrame) || Number(cut.startFrame) || 0);
     const fps = videoPlayer.fps || mapped.segment.fps || cut.fps || 24;
     const globalTime = (Number(mapped.segment.globalStartTime) || 0) + (Number(mapped.localTime) || 0);
+
+    if (!isSameFilePath(state.currentFile, source.videoPath)) {
+      const loaded = await loadVideo(source.videoPath, {
+        initialFrame: frame,
+        revealAfterInitialSeek: true
+      });
+      if (!loaded) return false;
+    }
+
     videoPlayer.seekToFrame(frame);
     playbackSync.broadcastSeek(frame / fps);
     timeline.setCurrentTime(globalTime);
@@ -12286,7 +12390,10 @@ async function initApp() {
     setCutlistCurrentCut(cut);
 
     if (!isSameFilePath(state.currentFile, source.videoPath)) {
-      const loaded = await loadVideo(source.videoPath);
+      const loaded = await loadVideo(source.videoPath, {
+        initialFrame: Number(cut.startFrame),
+        revealAfterInitialSeek: true
+      });
       if (!loaded) return false;
     }
 
@@ -12367,7 +12474,10 @@ async function initApp() {
       return true;
     }
 
-    const loaded = await loadVideo(source.videoPath);
+    const loaded = await loadVideo(source.videoPath, {
+      initialFrame: Number(cut.startFrame),
+      revealAfterInitialSeek: true
+    });
     if (!loaded) return false;
 
     await seekPlaybackToCutStart(cut);
