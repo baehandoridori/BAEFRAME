@@ -4258,6 +4258,7 @@ async function initApp() {
    * @param {boolean} options.preserveContinuousSession - 이어보기 내부 로드는 현재 세션 유지
    * @param {number|null} options.initialFrame - 로드 직후 먼저 맞출 프레임
    * @param {boolean} options.revealAfterInitialSeek - 첫 프레임 노출 없이 initialFrame 준비 후 표시
+   * @param {boolean} options.holdPreviousFrameUntilReady - 다음 영상 첫 화면 준비 전까지 이전 화면 유지
    */
   function waitForNextVideoPaint(video) {
     return new Promise(resolve => {
@@ -4279,6 +4280,33 @@ async function initApp() {
       }
 
       requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+  }
+
+  function waitForVideoRenderable(video, timeoutMs = 400) {
+    if (!video) return Promise.resolve(false);
+    if (video.readyState >= 2) return Promise.resolve(true);
+
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        video.removeEventListener('loadeddata', onReady);
+        video.removeEventListener('canplay', onReady);
+        video.removeEventListener('seeked', onReady);
+        video.removeEventListener('error', onError);
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const onReady = () => finish(video.readyState >= 2);
+      const onError = () => finish(false);
+      const timer = setTimeout(() => finish(video.readyState >= 2), timeoutMs);
+
+      video.addEventListener('loadeddata', onReady, { once: true });
+      video.addEventListener('canplay', onReady, { once: true });
+      video.addEventListener('seeked', onReady, { once: true });
+      video.addEventListener('error', onError, { once: true });
     });
   }
 
@@ -4404,7 +4432,8 @@ async function initApp() {
       preserveContinuousSession = false,
       playWhenMediaReady = false,
       initialFrame = null,
-      revealAfterInitialSeek = false
+      revealAfterInitialSeek = false,
+      holdPreviousFrameUntilReady = false
     } = options;
     const loadToken = ++latestVideoLoadToken;
     const isStaleVideoLoad = () => loadToken !== latestVideoLoadToken;
@@ -4644,9 +4673,11 @@ async function initApp() {
         const shouldDelayVideoReveal = revealAfterInitialSeek &&
           Number.isFinite(Number(initialFrame)) &&
           Number(initialFrame) > 0;
+        const shouldHoldVideoReveal = holdPreviousFrameUntilReady || shouldDelayVideoReveal;
         const previousVideoVisibility = elements.videoPlayer.style.visibility;
-        const transitionFreezeCaptured = shouldDelayVideoReveal && captureVideoTransitionFreezeFrame();
-        if (shouldDelayVideoReveal) {
+        const transitionFreezeCaptured = shouldHoldVideoReveal && captureVideoTransitionFreezeFrame();
+        const shouldHideVideoDuringLoad = shouldDelayVideoReveal || transitionFreezeCaptured;
+        if (shouldHideVideoDuringLoad) {
           elements.videoPlayer.style.visibility = 'hidden';
         }
 
@@ -4657,9 +4688,14 @@ async function initApp() {
           if (shouldDelayVideoReveal) {
             await seekInitialVideoFrameBeforeReveal(initialFrame);
             if (isStaleVideoLoad()) return false;
+          } else if (shouldHoldVideoReveal) {
+            await waitForVideoRenderable(elements.videoPlayer);
+            if (isStaleVideoLoad()) return false;
+            await waitForNextVideoPaint(elements.videoPlayer);
+            if (isStaleVideoLoad()) return false;
           }
         } finally {
-          if (shouldDelayVideoReveal) {
+          if (shouldHideVideoDuringLoad) {
             elements.videoPlayer.style.visibility = previousVideoVisibility;
             releaseVideoTransitionFreezeFrame(transitionFreezeCaptured);
           }
@@ -11099,9 +11135,16 @@ async function initApp() {
     playlistMediaPreload.itemId = null;
     playlistMediaPreload.path = null;
     playlistMediaPreload.ready = false;
-    if (playlistMediaPreload.element) {
-      playlistMediaPreload.element.removeAttribute('src');
-      playlistMediaPreload.element.load?.();
+
+    const media = playlistMediaPreload.element;
+    if (media) {
+      media.onloadedmetadata = null;
+      media.onloadeddata = null;
+      media.oncanplay = null;
+      media.onseeked = null;
+      media.onerror = null;
+      media.removeAttribute('src');
+      media.load?.();
     }
   }
 
@@ -11221,6 +11264,52 @@ async function initApp() {
     media.load();
   }
 
+  function preloadPlaylistMediaForItem(item, options = {}) {
+    const { continuous = false, sessionId = null } = options;
+    if (!item?.videoPath) return;
+    if (continuous && !isContinuousSessionActive(sessionId)) return;
+    if (isSameFilePath(state.currentFile, item.videoPath)) return;
+    if (
+      playlistMediaPreload.itemId === item.id &&
+      playlistMediaPreload.path === item.videoPath
+    ) {
+      return;
+    }
+
+    const token = ++playlistMediaPreload.token;
+    playlistMediaPreload.itemId = item.id;
+    playlistMediaPreload.path = item.videoPath;
+    playlistMediaPreload.ready = false;
+
+    const media = ensurePlaylistPreloadElement();
+    const isCurrentPreload = () => (
+      token === playlistMediaPreload.token &&
+      (!continuous || isContinuousSessionActive(sessionId))
+    );
+    const markReady = () => {
+      if (!isCurrentPreload()) return;
+      playlistMediaPreload.ready = media.readyState >= 2;
+      log.debug('재생목록 다음 미디어 사전 로드됨', {
+        fileName: item.fileName,
+        continuous,
+        readyState: media.readyState
+      });
+    };
+    const markFailed = () => {
+      if (!isCurrentPreload()) return;
+      playlistMediaPreload.ready = false;
+      log.warn('재생목록 다음 미디어 사전 로드 실패', { fileName: item.fileName, continuous });
+    };
+
+    media.onloadedmetadata = markReady;
+    media.onloadeddata = markReady;
+    media.oncanplay = markReady;
+    media.onseeked = markReady;
+    media.onerror = markFailed;
+    media.src = toLocalMediaUrl(item.videoPath);
+    media.load();
+  }
+
   function preloadNextPlaylistMedia() {
     const playlistManager = getPlaylistManager();
     if (!playlistManager.isActive() || !userSettings.getPlaylistAutoPlay() || continuousPlaybackState.active) {
@@ -11236,38 +11325,7 @@ async function initApp() {
       return;
     }
 
-    if (
-      playlistMediaPreload.itemId === nextItem.id &&
-      playlistMediaPreload.path === nextItem.videoPath
-    ) {
-      return;
-    }
-
-    const token = ++playlistMediaPreload.token;
-    playlistMediaPreload.itemId = nextItem.id;
-    playlistMediaPreload.path = nextItem.videoPath;
-    playlistMediaPreload.ready = false;
-
-    const media = ensurePlaylistPreloadElement();
-    const markReady = () => {
-      if (token !== playlistMediaPreload.token) return;
-      playlistMediaPreload.ready = media.readyState >= 2;
-      log.debug('재생목록 다음 미디어 사전 로드됨', {
-        fileName: nextItem.fileName,
-        readyState: media.readyState
-      });
-    };
-    const markFailed = () => {
-      if (token !== playlistMediaPreload.token) return;
-      playlistMediaPreload.ready = false;
-      log.warn('재생목록 다음 미디어 사전 로드 실패', { fileName: nextItem.fileName });
-    };
-
-    media.onloadeddata = markReady;
-    media.oncanplay = markReady;
-    media.onerror = markFailed;
-    media.src = toLocalMediaUrl(nextItem.videoPath);
-    media.load();
+    preloadPlaylistMediaForItem(nextItem);
   }
 
   function warmPlaylistAutoPlayQueue() {
@@ -11603,6 +11661,7 @@ async function initApp() {
     const settings = playlistManager.getContinuousSettings();
     const nextIndex = findNextPlayableIndex(items, playlistManager.currentIndex, { loop: settings.loop });
     if (nextIndex >= 0) {
+      preloadPlaylistMediaForItem(items[nextIndex], { continuous: true, sessionId });
       preparePlaylistItemInBackground(items[nextIndex], sessionId);
     }
   }
@@ -11648,7 +11707,10 @@ async function initApp() {
 
   async function loadContinuousPlaylistItem(item, sessionId) {
     if (!isContinuousSessionActive(sessionId)) return false;
-    const loaded = await loadVideoFromPlaylist(item, { preserveContinuousSession: true });
+    const loaded = await loadVideoFromPlaylist(item, {
+      preserveContinuousSession: true,
+      holdPreviousFrameUntilReady: true
+    });
     if (!isContinuousSessionActive(sessionId)) return false;
     if (loaded === false) {
       markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');

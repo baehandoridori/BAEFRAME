@@ -309,11 +309,45 @@ test('continuous playback only checks the current item before first play', () =>
 
 test('continuous playback skips item when playlist load fails', () => {
   assert.match(appSource, /async function loadContinuousPlaylistItem\(item, sessionId\)/);
-  assert.match(appSource, /const loaded = await loadVideoFromPlaylist\(item, \{ preserveContinuousSession: true \}\);/);
+  assert.match(appSource, /const loaded = await loadVideoFromPlaylist\(item, \{[\s\S]*preserveContinuousSession: true[\s\S]*\}\);/);
   assert.match(appSource, /markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.ERROR, '건너뜀'\);/);
   assert.match(appSource, /continuousPlaybackState\.skippedBatch\.push\(item\);/);
   assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(currentItem, sessionId\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
   assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(nextItem, sessionId\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
+});
+
+test('continuous playlist loads hold the previous frame during source switches', () => {
+  const loadVideoStart = appSource.indexOf('async function loadVideo(filePath, options = {})');
+  const loadVideoEnd = appSource.indexOf('  async function generateThumbnails', loadVideoStart);
+  assert.notEqual(loadVideoStart, -1, 'loadVideo should exist');
+  assert.notEqual(loadVideoEnd, -1, 'loadVideo boundary should exist');
+  const loadVideoSource = appSource.slice(loadVideoStart, loadVideoEnd);
+
+  assert.match(loadVideoSource, /holdPreviousFrameUntilReady = false/);
+  assert.match(loadVideoSource, /const shouldHoldVideoReveal = holdPreviousFrameUntilReady \|\| shouldDelayVideoReveal;/);
+  assert.match(loadVideoSource, /captureVideoTransitionFreezeFrame\(\)/);
+  assert.match(loadVideoSource, /await waitForVideoRenderable\(elements\.videoPlayer\)/);
+
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
+  const continuousLoadSource = continuousLoadMatch[1];
+
+  assert.match(continuousLoadSource, /loadVideoFromPlaylist\(item, \{[\s\S]*preserveContinuousSession: true,[\s\S]*holdPreviousFrameUntilReady: true[\s\S]*\}\)/);
+});
+
+test('continuous playback warms the next source with the hidden playlist preload video', () => {
+  assert.match(appSource, /function preloadPlaylistMediaForItem\(item, options = \{\}\)/);
+
+  const prepareNextMatch = appSource.match(/function prepareNextPlaylistItem\(sessionId\) \{([\s\S]*?)\n  \}\n\n  async function waitForPreparedOrSkip/);
+  assert.ok(prepareNextMatch, 'prepareNextPlaylistItem should exist');
+  const prepareNextSource = prepareNextMatch[1];
+
+  assert.match(prepareNextSource, /preloadPlaylistMediaForItem\(items\[nextIndex\], \{[\s\S]*continuous: true,[\s\S]*sessionId[\s\S]*\}\);/);
+  assert.ok(
+    prepareNextSource.indexOf('preloadPlaylistMediaForItem(items[nextIndex]') <
+      prepareNextSource.indexOf('preparePlaylistItemInBackground(items[nextIndex], sessionId);'),
+    'hidden media preload should start before background preparation'
+  );
 });
 
 test('playlist loading returns the real loadVideo result', () => {
