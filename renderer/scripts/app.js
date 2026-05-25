@@ -288,6 +288,7 @@ async function initApp() {
     waiting: false,
     skippedBatch: [],
     preparePromises: new Map(),
+    loadingItemId: null,
     sessionId: 0
   };
 
@@ -784,7 +785,9 @@ async function initApp() {
   videoPlayer.addEventListener('loadedmetadata', (e) => {
     const { duration, totalFrames, fps } = e.detail;
     timeline.setVideoInfo(duration, fps);
-    updateTimecodeDisplay();
+    if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
+      updateTimecodeDisplay();
+    }
 
     // 비디오 크기 정보가 준비되면 캔버스 오버레이 동기화
     syncCanvasOverlay();
@@ -811,10 +814,12 @@ async function initApp() {
   // 비디오 시간 업데이트 (일반 timeupdate - 타임라인 및 표시용)
   videoPlayer.addEventListener('timeupdate', (e) => {
     const { currentTime, currentFrame } = e.detail;
-    timeline.setCurrentTime(getActiveTimelinePlaybackTime(currentTime, currentFrame));
-    updateTimecodeDisplay();
-    updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
-    updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
+    if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
+      timeline.setCurrentTime(getActiveTimelinePlaybackTime(currentTime, currentFrame));
+      updateTimecodeDisplay();
+      updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
+      updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
+    }
 
     // 오디오 웨이브폼 동기화
     if (state.isAudioMode) {
@@ -850,7 +855,9 @@ async function initApp() {
     const { frame, time } = e.detail;
 
     // 타임라인 플레이헤드 실시간 업데이트 (재생 중)
-    timeline.setCurrentTime(getActiveTimelinePlaybackTime(time, frame));
+    if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
+      timeline.setCurrentTime(getActiveTimelinePlaybackTime(time, frame));
+    }
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
@@ -11382,6 +11389,17 @@ async function initApp() {
     return timeline.playlistSegments?.find(segment => segment.itemId === itemId) || null;
   }
 
+  function shouldIgnoreContinuousTimelineUpdateDuringSourceLoad() {
+    if (playlistUIState.mode !== 'continuous' || !continuousPlaybackState.loadingItemId) return false;
+
+    const playlistManager = getPlaylistManager();
+    const loadingItem = playlistManager.getItems?.()
+      ?.find(item => item.id === continuousPlaybackState.loadingItemId);
+    if (!loadingItem?.videoPath) return false;
+
+    return !isSameFilePath(state.currentFile, loadingItem.videoPath);
+  }
+
   function getContinuousTimelinePlaybackTime(localTime = videoPlayer.currentTime) {
     const segment = getCurrentContinuousSegment();
     if (!segment) return localTime;
@@ -11707,17 +11725,25 @@ async function initApp() {
 
   async function loadContinuousPlaylistItem(item, sessionId) {
     if (!isContinuousSessionActive(sessionId)) return false;
-    const loaded = await loadVideoFromPlaylist(item, {
-      preserveContinuousSession: true,
-      holdPreviousFrameUntilReady: true
-    });
-    if (!isContinuousSessionActive(sessionId)) return false;
-    if (loaded === false) {
-      markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
-      continuousPlaybackState.skippedBatch.push(item);
-      return false;
+
+    continuousPlaybackState.loadingItemId = item.id;
+    try {
+      prepareNextPlaylistItem(sessionId);
+      const loaded = await loadVideoFromPlaylist(item, {
+        preserveContinuousSession: true,
+        holdPreviousFrameUntilReady: true,
+        playWhenMediaReady: true
+      });
+      if (!isContinuousSessionActive(sessionId)) return false;
+      if (loaded === false) {
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+        continuousPlaybackState.skippedBatch.push(item);
+        return false;
+      }
+      return true;
+    } finally {
+      continuousPlaybackState.loadingItemId = null;
     }
-    return true;
   }
 
   function waitForContinuousDelay(ms) {

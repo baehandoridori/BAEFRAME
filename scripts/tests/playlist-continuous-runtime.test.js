@@ -335,6 +335,38 @@ test('continuous playlist loads hold the previous frame during source switches',
   assert.match(continuousLoadSource, /loadVideoFromPlaylist\(item, \{[\s\S]*preserveContinuousSession: true,[\s\S]*holdPreviousFrameUntilReady: true[\s\S]*\}\)/);
 });
 
+test('continuous playlist starts playback as soon as the next media is renderable', () => {
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
+  const continuousLoadSource = continuousLoadMatch[1];
+
+  assert.match(continuousLoadSource, /prepareNextPlaylistItem\(sessionId\);/);
+  assert.match(continuousLoadSource, /loadVideoFromPlaylist\(item, \{[\s\S]*playWhenMediaReady: true[\s\S]*\}\)/);
+  assert.ok(
+    continuousLoadSource.indexOf('prepareNextPlaylistItem(sessionId);') <
+      continuousLoadSource.indexOf('const loaded = await loadVideoFromPlaylist(item, {'),
+    'following item preparation should start before the current source load waits on post-load work'
+  );
+});
+
+test('continuous source switches suppress stale zero-time timeline updates', () => {
+  assert.match(appSource, /loadingItemId:\s*null/);
+  assert.match(appSource, /function shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)/);
+
+  const timeupdateMatch = appSource.match(/videoPlayer\.addEventListener\('timeupdate', \(e\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(timeupdateMatch, 'timeupdate handler should exist');
+  assert.match(timeupdateMatch[1], /if \(!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)\) \{[\s\S]*timeline\.setCurrentTime/);
+
+  const frameUpdateMatch = appSource.match(/videoPlayer\.addEventListener\('frameUpdate', \(e\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(frameUpdateMatch, 'frameUpdate handler should exist');
+  assert.match(frameUpdateMatch[1], /if \(!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)\) \{[\s\S]*timeline\.setCurrentTime/);
+
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
+  assert.match(continuousLoadMatch[1], /continuousPlaybackState\.loadingItemId = item\.id/);
+  assert.match(continuousLoadMatch[1], /finally \{[\s\S]*continuousPlaybackState\.loadingItemId = null/);
+});
+
 test('continuous playback warms the next source with the hidden playlist preload video', () => {
   assert.match(appSource, /function preloadPlaylistMediaForItem\(item, options = \{\}\)/);
 
