@@ -263,7 +263,9 @@ test('cutlist timeline comment markers use global display time but keep source c
 });
 
 test('cutlist mode aggregates comments from every source bframe for the joined timeline', () => {
-  const refreshBody = extractBalancedBlock(appSource, 'async function refreshCommentRangesForCurrentMode');
+  const refreshMatch = appSource.match(/async function refreshCommentRangesForCurrentMode\(options = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(refreshMatch, 'refreshCommentRangesForCurrentMode should exist');
+  const refreshBody = refreshMatch[1];
   const updateListBody = extractBalancedBlock(appSource, 'function updateCommentListImmediate');
   const renderRangesBody = extractBalancedBlock(appSource, 'function renderCommentRanges');
   const updateMarkersBody = extractBalancedBlock(appSource, 'function updateTimelineMarkers');

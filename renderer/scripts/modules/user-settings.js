@@ -186,6 +186,8 @@ export class UserSettings extends EventTarget {
       secondSkipAmount: 1,  // Ctrl+화살표로 이동할 초 수
       // 협업 플렉서스 패널 표시 여부
       showPlexusPanel: true,
+      // 다른 사람 협업 커서 표시 여부
+      showRemoteCursors: true,
       // 타임라인 프레임 격자 표시 여부
       showFrameGrid: true,
       // 100% 이하 줌에서 영상을 중앙에 고정할지 여부
@@ -567,6 +569,17 @@ export class UserSettings extends EventTarget {
     // 향후 외부에서 설정 변경을 감지해야 할 경우를 위한 hook
     this._emit('showFrameGridChanged', { show: this.settings.showFrameGrid });
     log.info('프레임 격자 설정 변경됨', { show });
+  }
+
+  getShowRemoteCursors() {
+    return this.settings.showRemoteCursors !== false;
+  }
+
+  setShowRemoteCursors(show) {
+    this.settings.showRemoteCursors = !!show;
+    this._save();
+    this._emit('showRemoteCursorsChanged', { show: this.settings.showRemoteCursors });
+    log.info('협업 커서 표시 설정 변경됨', { show: this.settings.showRemoteCursors });
   }
 
   getVideoCenterLocked() {

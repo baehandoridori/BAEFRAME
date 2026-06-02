@@ -1,6 +1,6 @@
 {
   "name": "baeframe",
-  "version": "1.3.0-beta",
+  "version": "1.3.1-beta",
   "description": "애니메이션 스튜디오를 위한 비디오 리뷰/피드백 도구",
   "main": "main/index.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "test:recent": "node --test scripts/tests/recent-files-store.test.js",
+    "test:recent": "node --test scripts/tests/recent-files-store.test.js scripts/tests/recent-files-source.test.js",
     "test:frame-grid": "node --test scripts/tests/frame-grid-tiers.test.js",
     "test:cluster": "node --test scripts/tests/comment-cluster.test.js",
     "test:playlist-ordering": "node --test scripts/tests/playlist-ordering.test.js",
@@ -22,6 +22,8 @@
     "test:drawing": "node --test scripts/tests/drawing-stroke-records.test.js scripts/tests/drawing-runtime-source.test.js scripts/tests/keyframe-multi-select-source.test.js",
     "test:video-pan": "node --test scripts/tests/video-pan-controls.test.js",
     "test:audio-waveform": "node --test scripts/tests/audio-waveform-hit-area.test.js",
+    "test:collaboration": "node --test scripts/tests/collaboration-cursors-source.test.js",
+    "test:comment-input": "node --test scripts/tests/comment-input-focus-source.test.js",
     "test:toast-stack": "node --test scripts/tests/toast-stack-core.test.js",
     "bundle:liveblocks": "esbuild ./node_modules/@liveblocks/client/dist/index.js --bundle --format=esm --outfile=renderer/scripts/lib/liveblocks-client.js",
     "postinstall": "npm run bundle:liveblocks"

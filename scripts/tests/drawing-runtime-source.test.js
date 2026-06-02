@@ -25,6 +25,18 @@ test('drawing tools expose a persisted eraser mode segmented control', () => {
   assert.match(appSource, /drawingManager\.setEraserMode\(mode\)/);
 });
 
+test('eraser tool hides color-only controls and uses a neutral size preview', () => {
+  assert.match(indexSource, /id="colorSection"/);
+  assert.match(appSource, /const colorSection = document\.getElementById\('colorSection'\);/);
+  assert.match(appSource, /const strokeSection = document\.getElementById\('strokeSection'\);/);
+  assert.match(appSource, /colorSection\.style\.display = 'none';/);
+  assert.match(appSource, /colorSection\.style\.display = 'block';/);
+  assert.match(appSource, /strokeSection\.style\.display = 'none';/);
+  assert.match(appSource, /strokeSection\.style\.display = 'block';/);
+  assert.match(appSource, /sizePreview\.classList\.toggle\('eraser-preview', currentToolType === 'eraser'\);/);
+  assert.match(mainCss, /\.size-preview\.eraser-preview::after/);
+});
+
 test('drawing canvas resolves Ctrl pen and brush strokes as eraser at stroke start', () => {
   assert.match(drawingCanvasSource, /setEraserMode\(mode\)/);
   assert.match(drawingCanvasSource, /_resolveEffectiveTool\(e\)/);

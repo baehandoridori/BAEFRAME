@@ -1475,6 +1475,11 @@ body.app-fullscreen .video-comment-overlay-controls {
   border-radius: 50%;
 }
 
+.size-preview.eraser-preview::after {
+  background: transparent;
+  border: 2px solid var(--text-muted);
+}
+
 .eraser-mode-toggle {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -10177,6 +10182,13 @@ body.audio-mode .frame-indicator {
   letter-spacing: 0.5px;
 }
 
+.collab-plexus-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.collab-plexus-action-btn,
 .collab-plexus-sync-btn {
   display: flex;
   align-items: center;
@@ -10192,12 +10204,25 @@ body.audio-mode .frame-indicator {
   transition: all 0.15s;
 }
 
+.collab-plexus-action-btn:hover,
 .collab-plexus-sync-btn:hover {
   background: var(--accent-primary);
   color: var(--bg-primary);
   border-color: var(--accent-primary);
 }
 
+.collab-remote-cursor-btn.is-muted {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-tertiary);
+}
+
+.collab-remote-cursor-btn.is-muted:hover {
+  background: var(--accent-primary);
+  color: var(--bg-primary);
+  border-color: var(--accent-primary);
+}
+
+.collab-plexus-action-btn svg,
 .collab-plexus-sync-btn svg {
   flex-shrink: 0;
 }
