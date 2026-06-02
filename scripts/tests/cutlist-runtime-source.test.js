@@ -76,6 +76,19 @@ test('renderer initializes cutlist feature', () => {
   assert.match(appSource, /addCutlistSourcePair/);
 });
 
+test('cutlist video picker asks for the video matching the selected info file', () => {
+  const sourcePairBody = extractBalancedBlock(appSource, 'async function addCutlistSourcePair');
+
+  assert.match(appSource, /function getDialogFileName\(filePath\)/);
+  assert.match(sourcePairBody, /const infoFileNameForDialog = getDialogFileName\(txtResult\.filePaths\[0\]\);/);
+  assert.match(sourcePairBody, /title:\s*`\$\{infoFileNameForDialog\} 이름의 영상을 찾아주세요`/);
+  assert.ok(
+    sourcePairBody.indexOf('const infoFileNameForDialog') <
+      sourcePairBody.indexOf('const videoResult'),
+    'video picker title should be derived after the info file is selected'
+  );
+});
+
 test('cutlist copy link saves then copies a shareable bcutlist path', () => {
   const listenerBody = extractBalancedBlock(appSource, "elements.btnCutlistCopyLink?.addEventListener('click'");
 
@@ -191,9 +204,21 @@ test('cutlist source switches reveal new video only after the target cut frame i
   assert.notEqual(frameIndex, -1, 'cutlist seek should resolve the target source frame');
   assert.notEqual(loadIndex, -1, 'cutlist seek should pass initial frame options into loadVideo');
   assert.ok(frameIndex < loadIndex, 'target frame should be known before a new source video is revealed');
-  assert.match(mappedSeekBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*frame[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*\}\)/);
-  assert.match(seekToCutBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*Number\(cut\.startFrame\)[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*\}\)/);
-  assert.match(commentReadyBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*Number\(cut\.startFrame\)[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*\}\)/);
+  assert.match(mappedSeekBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*frame[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*holdPreviousFrameUntilReady:\s*true[\s\S]*\}\)/);
+  assert.match(seekToCutBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*Number\(cut\.startFrame\)[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*holdPreviousFrameUntilReady:\s*true[\s\S]*\}\)/);
+  assert.match(commentReadyBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*initialFrame:\s*Number\(cut\.startFrame\)[\s\S]*revealAfterInitialSeek:\s*true[\s\S]*holdPreviousFrameUntilReady:\s*true[\s\S]*\}\)/);
+});
+
+test('cutlist source switches defer collaboration startup until after the target cut is shown', () => {
+  const mappedSeekBody = extractBalancedBlock(appSource, 'async function seekCutlistMappedPosition');
+  const seekToCutBody = extractBalancedBlock(appSource, 'async function seekToCut');
+  const commentReadyBody = extractBalancedBlock(appSource, 'async function ensureCutlistCommentTargetReady');
+
+  assert.match(appSource, /async function startCollaborationForVideoLoad\(loadToken, bframePath\)/);
+  assert.match(appSource, /function scheduleDeferredCollaborationStart\(loadToken, bframePath\)/);
+  assert.match(mappedSeekBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*deferCollaborationStart:\s*true[\s\S]*\}\)/);
+  assert.match(seekToCutBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*deferCollaborationStart:\s*true[\s\S]*\}\)/);
+  assert.match(commentReadyBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*deferCollaborationStart:\s*true[\s\S]*\}\)/);
 });
 
 test('cutlist hidden source switches hold the previous frame instead of flashing black', () => {

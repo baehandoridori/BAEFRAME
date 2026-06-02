@@ -354,6 +354,11 @@ async function initApp() {
     return normalizeComparableFilePath(a) === normalizeComparableFilePath(b);
   }
 
+  function getDialogFileName(filePath) {
+    const normalized = String(filePath || '').replace(/\\/g, '/');
+    return normalized.split('/').filter(Boolean).pop() || '선택한 info 파일';
+  }
+
   function normalizePlaylistOpenPath(path) {
     let filePath = path || '';
     if (filePath.startsWith('baeframe://')) {
@@ -4172,6 +4177,99 @@ async function initApp() {
   let transcodeResolve = null;
   let latestVideoLoadToken = 0;
 
+  function isStaleVideoLoadToken(loadToken) {
+    return loadToken !== latestVideoLoadToken;
+  }
+
+  function isCurrentReviewPath(bframePath) {
+    return !!bframePath && reviewDataManager.currentBframePath === bframePath;
+  }
+
+  async function stopStaleCollaborationRoom(roomId) {
+    if (!roomId || liveblocksManager.roomId !== roomId) return;
+    try {
+      playbackSync.stop();
+      drawingSync.stop();
+      commentSync.stop();
+      await liveblocksManager.stop();
+    } catch (error) {
+      log.warn('이전 협업 세션 정리 실패', { error: error.message });
+    }
+  }
+
+  async function startCollaborationForVideoLoad(loadToken, bframePath) {
+    if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
+
+    const userName = userSettings.getUserName();
+    const userColor = userSettings.getColorForName(userName) || '#4a9eff';
+    let startedRoomId = null;
+
+    try {
+      const bframeData = await window.electronAPI.loadReview(bframePath);
+      if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
+      const existingRoomId = bframeData?.liveblocksRoomId || null;
+
+      const { roomId, isNewRoom } = await liveblocksManager.start(
+        bframePath,
+        userName,
+        userColor,
+        existingRoomId
+      );
+      startedRoomId = roomId;
+      if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) {
+        await stopStaleCollaborationRoom(roomId);
+        return false;
+      }
+
+      if (isNewRoom && isCurrentReviewPath(bframePath)) {
+        reviewDataManager.setLiveblocksRoomId(roomId);
+        await reviewDataManager.save({ skipMerge: true });
+        if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) {
+          await stopStaleCollaborationRoom(roomId);
+          return false;
+        }
+      }
+
+      await commentSync.start();
+      if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) {
+        await stopStaleCollaborationRoom(roomId);
+        return false;
+      }
+      drawingSync.start();
+      playbackSync.start();
+      log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
+    } catch (error) {
+      log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
+    }
+
+    if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) {
+      await stopStaleCollaborationRoom(startedRoomId);
+      return false;
+    }
+
+    try {
+      await window.electronAPI.watchFileStart(bframePath);
+      if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
+      log.info('파일 감시 시작됨', { path: bframePath });
+    } catch (error) {
+      log.warn('파일 감시 시작 실패', { path: bframePath, error: error.message });
+    }
+
+    return true;
+  }
+
+  function scheduleDeferredCollaborationStart(loadToken, bframePath) {
+    const start = () => {
+      void startCollaborationForVideoLoad(loadToken, bframePath);
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(start, { timeout: 500 });
+    } else {
+      setTimeout(start, 0);
+    }
+  }
+
   /**
    * 트랜스코딩 오버레이 표시 및 진행
    * @param {string} filePath - 원본 파일 경로
@@ -4266,6 +4364,7 @@ async function initApp() {
    * @param {number|null} options.initialFrame - 로드 직후 먼저 맞출 프레임
    * @param {boolean} options.revealAfterInitialSeek - 첫 프레임 노출 없이 initialFrame 준비 후 표시
    * @param {boolean} options.holdPreviousFrameUntilReady - 다음 영상 첫 화면 준비 전까지 이전 화면 유지
+   * @param {boolean} options.deferCollaborationStart - 협업 접속/파일 감시를 화면 전환 뒤로 미룸
    */
   function waitForNextVideoPaint(video) {
     return new Promise(resolve => {
@@ -4440,7 +4539,8 @@ async function initApp() {
       playWhenMediaReady = false,
       initialFrame = null,
       revealAfterInitialSeek = false,
-      holdPreviousFrameUntilReady = false
+      holdPreviousFrameUntilReady = false,
+      deferCollaborationStart = false
     } = options;
     const loadToken = ++latestVideoLoadToken;
     const isStaleVideoLoad = () => loadToken !== latestVideoLoadToken;
@@ -4773,6 +4873,7 @@ async function initApp() {
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
       if (isStaleVideoLoad()) return false;
+      const currentBframePath = reviewDataManager.currentBframePath;
 
       // keepVersionContext가 false일 때만 manualVersions 복원
       // (true면 기존 버전 목록 유지)
@@ -4793,45 +4894,11 @@ async function initApp() {
         showToast(`"${fileInfo.name}" 로드됨`, 'success');
       }
 
-      // ====== Liveblocks 실시간 협업 세션 시작 ======
-      const userName = userSettings.getUserName();
-      const userColor = userSettings.getColorForName(userName) || '#4a9eff';
-      try {
-        // .bframe에서 기존 Room ID 확인
-        const bframeData = await window.electronAPI.loadReview(reviewDataManager.currentBframePath);
+      if (deferCollaborationStart) {
+        scheduleDeferredCollaborationStart(loadToken, currentBframePath);
+      } else {
+        await startCollaborationForVideoLoad(loadToken, currentBframePath);
         if (isStaleVideoLoad()) return false;
-        const existingRoomId = bframeData?.liveblocksRoomId || null;
-
-        const { roomId, isNewRoom } = await liveblocksManager.start(
-          reviewDataManager.currentBframePath,
-          userName,
-          userColor,
-          existingRoomId
-        );
-        if (isStaleVideoLoad()) return false;
-
-        // 새 Room이면 Room ID를 .bframe에 저장
-        if (isNewRoom && reviewDataManager.currentBframePath) {
-          reviewDataManager.setLiveblocksRoomId(roomId);
-          await reviewDataManager.save({ skipMerge: true });
-          if (isStaleVideoLoad()) return false;
-        }
-
-        // 댓글/그리기/재생 동기화 시작 (Broadcast 기반)
-        await commentSync.start();
-        if (isStaleVideoLoad()) return false;
-        drawingSync.start();
-        playbackSync.start();
-        log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
-      } catch (error) {
-        log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
-      }
-
-      // ====== 파일 감시 시작 (실시간 동기화) ======
-      if (reviewDataManager.currentBframePath) {
-        await window.electronAPI.watchFileStart(reviewDataManager.currentBframePath);
-        if (isStaleVideoLoad()) return false;
-        log.info('파일 감시 시작됨', { path: reviewDataManager.currentBframePath });
       }
 
       // 마커 및 그리기 렌더링 업데이트 (항상 실행)
@@ -11732,7 +11799,8 @@ async function initApp() {
       const loaded = await loadVideoFromPlaylist(item, {
         preserveContinuousSession: true,
         holdPreviousFrameUntilReady: true,
-        playWhenMediaReady: true
+        playWhenMediaReady: true,
+        deferCollaborationStart: true
       });
       if (!isContinuousSessionActive(sessionId)) return false;
       if (loaded === false) {
@@ -12187,8 +12255,9 @@ async function initApp() {
     });
     if (txtResult.canceled || txtResult.filePaths.length === 0) return false;
 
+    const infoFileNameForDialog = getDialogFileName(txtResult.filePaths[0]);
     const videoResult = await window.electronAPI.openFileDialog({
-      title: '연결할 출력 영상 선택',
+      title: `${infoFileNameForDialog} 이름의 영상을 찾아주세요`,
       filters: [{ name: '미디어 파일', extensions: SUPPORTED_MEDIA_EXTENSIONS }],
       properties: ['openFile']
     });
@@ -12536,7 +12605,9 @@ async function initApp() {
     if (!isSameFilePath(state.currentFile, source.videoPath)) {
       const loaded = await loadVideo(source.videoPath, {
         initialFrame: frame,
-        revealAfterInitialSeek: true
+        revealAfterInitialSeek: true,
+        holdPreviousFrameUntilReady: true,
+        deferCollaborationStart: true
       });
       if (!loaded) return false;
     }
@@ -12677,7 +12748,9 @@ async function initApp() {
     if (!isSameFilePath(state.currentFile, source.videoPath)) {
       const loaded = await loadVideo(source.videoPath, {
         initialFrame: Number(cut.startFrame),
-        revealAfterInitialSeek: true
+        revealAfterInitialSeek: true,
+        holdPreviousFrameUntilReady: true,
+        deferCollaborationStart: true
       });
       if (!loaded) return false;
     }
@@ -12761,7 +12834,9 @@ async function initApp() {
 
     const loaded = await loadVideo(source.videoPath, {
       initialFrame: Number(cut.startFrame),
-      revealAfterInitialSeek: true
+      revealAfterInitialSeek: true,
+      holdPreviousFrameUntilReady: true,
+      deferCollaborationStart: true
     });
     if (!loaded) return false;
 

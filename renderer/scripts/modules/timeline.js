@@ -504,6 +504,9 @@ export class Timeline extends EventTarget {
    */
   setCurrentTime(time) {
     this.currentTime = time;
+    if (this.isDraggingPlayhead && this.scrubTime !== undefined) {
+      return;
+    }
     this._updatePlayheadPosition();
 
     // 재생 중일 때 플레이헤드가 화면 밖으로 나가면 자동 스크롤
