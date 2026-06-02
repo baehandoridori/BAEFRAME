@@ -8,7 +8,7 @@ import { Timeline } from './modules/timeline.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { ERASER_MODES, normalizeEraserMode } from './modules/drawing-stroke-records.js';
 import { CommentManager, MARKER_COLORS, getAuthorColor } from './modules/comment-manager.js';
-import { ReviewDataManager } from './modules/review-data-manager.js';
+import { ReviewDataManager, getBframePath } from './modules/review-data-manager.js';
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
 import { DrawingSync } from './modules/drawing-sync.js';
@@ -23,6 +23,8 @@ import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
+import { getCutlistManager } from './modules/cutlist-manager.js';
+import { findCurrentCut, mapGlobalTimeToCut } from './modules/cutlist-core.js';
 import {
   buildPlaylistSegments,
   CONTINUOUS_STATUS,
@@ -36,6 +38,12 @@ import {
   formatPlaylistCommentPanelLine,
   formatPlaylistTimecode
 } from './modules/playlist-comment-index.js';
+import {
+  buildCutlistCommentContext,
+  extractCutlistCommentRanges,
+  formatCutlistCommentLabel,
+  formatCutlistCommentPanelLine
+} from './modules/cutlist-comment-index.js';
 import { getAudioWaveform } from './modules/audio-waveform.js';
 import { getPlaybackSync } from './modules/playback-sync.js';
 import { getMentionManager } from './modules/mention-manager.js';
@@ -51,6 +59,7 @@ const SUPPORTED_VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
 const SUPPORTED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
 const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];
 const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
+const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -202,6 +211,22 @@ async function initApp() {
     playlistAddArea: document.getElementById('playlistAddArea'),
     playlistAddZone: document.getElementById('playlistAddZone'),
 
+    // 컷 묶음 관련
+    btnCutlist: document.getElementById('btnCutlist'),
+    cutlistSidebar: document.getElementById('cutlistSidebar'),
+    cutlistNameInput: document.getElementById('cutlistNameInput'),
+    btnCutlistAdd: document.getElementById('btnCutlistAdd'),
+    btnCutlistPrimaryAdd: document.getElementById('btnCutlistPrimaryAdd'),
+    btnCutlistSave: document.getElementById('btnCutlistSave'),
+    btnCutlistCopyLink: document.getElementById('btnCutlistCopyLink'),
+    btnCutlistClose: document.getElementById('btnCutlistClose'),
+    cutlistSummary: document.getElementById('cutlistSummary'),
+    cutlistItems: document.getElementById('cutlistItems'),
+    cutlistEmpty: document.getElementById('cutlistEmpty'),
+    cutlistIgnoredSummary: document.getElementById('cutlistIgnoredSummary'),
+    cutlistShowMissing: document.getElementById('cutlistShowMissing'),
+    currentCutOverlay: document.getElementById('currentCutOverlay'),
+
     // 오디오 웨이브폼
     audioWaveformContainer: document.getElementById('audioWaveformContainer'),
 
@@ -288,11 +313,17 @@ async function initApp() {
     mode: 'review'
   };
 
+  const cutlistUIState = {
+    active: false,
+    lastIgnored: []
+  };
+
   const continuousPlaybackState = {
     active: false,
     waiting: false,
     skippedBatch: [],
     preparePromises: new Map(),
+    loadingItemId: null,
     preparedMediaPaths: new Map(),
     sessionId: 0
   };
@@ -306,9 +337,22 @@ async function initApp() {
     ready: false,
     token: 0
   };
+  const cutlistMediaPreload = {
+    element: null,
+    cutId: null,
+    sourceId: null,
+    path: null,
+    frame: null,
+    ready: false,
+    token: 0
+  };
   let playlistTimelineUpdateToken = 0;
   let playlistSortChangeToken = 0;
   let playlistAggregateCommentRanges = [];
+  let cutlistAggregateCommentRanges = [];
+  let cutlistCommentTimelineUpdateToken = 0;
+  let cutlistPlaybackTransitioning = false;
+  let videoTransitionFreezeCanvas = null;
 
   /**
    * 작성자 필터 적용 헬퍼
@@ -328,6 +372,27 @@ async function initApp() {
   function isPlaylistFilePath(filePath) {
     const normalized = String(filePath || '').split(/[?#]/)[0].toLowerCase();
     return normalized.endsWith(`.${SUPPORTED_PLAYLIST_EXTENSION}`);
+  }
+
+  function isCutlistFilePath(filePath) {
+    const normalized = String(filePath || '').split(/[?#]/)[0].toLowerCase();
+    return normalized.endsWith(`.${SUPPORTED_CUTLIST_EXTENSION}`);
+  }
+
+  function normalizeComparableFilePath(filePath) {
+    return String(filePath || '')
+      .replace(/^file:\/\//i, '')
+      .replace(/\//g, '\\')
+      .toLowerCase();
+  }
+
+  function isSameFilePath(a, b) {
+    return normalizeComparableFilePath(a) === normalizeComparableFilePath(b);
+  }
+
+  function getDialogFileName(filePath) {
+    const normalized = String(filePath || '').replace(/\\/g, '/');
+    return normalized.split('/').filter(Boolean).pop() || '선택한 info 파일';
   }
 
   function normalizePlaylistOpenPath(path) {
@@ -362,9 +427,70 @@ async function initApp() {
     return true;
   }
 
+  function normalizeCutlistOpenPath(path) {
+    let filePath = path || '';
+    if (filePath.startsWith('baeframe://cutlist')) {
+      try {
+        const url = new URL(filePath);
+        filePath = url.searchParams.get('file') || filePath.replace(/^baeframe:\/\/cutlist\/?/, '');
+      } catch (error) {
+        log.warn('컷 묶음 URL 디코딩 실패', { error: error.message });
+      }
+    } else if (filePath.startsWith('baeframe://')) {
+      filePath = filePath.replace(/^baeframe:\/\//, '');
+    }
+
+    try {
+      filePath = decodeURIComponent(filePath);
+    } catch (error) {
+      log.warn('컷 묶음 경로 디코딩 실패', { error: error.message });
+    }
+
+    if (/^[A-Za-z]\//.test(filePath)) {
+      filePath = filePath[0] + ':' + filePath.slice(1);
+    }
+
+    return filePath.replace(/\//g, '\\');
+  }
+
+  async function openCutlistFile(filePath) {
+    const normalizedPath = normalizeCutlistOpenPath(filePath);
+    const cutlistManager = getCutlistManager();
+    await cutlistManager.open(normalizedPath);
+    showCutlistSidebar();
+    updateCutlistUI();
+    updateCutlistTimeline();
+    const firstCut = cutlistManager.getOrderedCuts()[0];
+    if (firstCut) {
+      cutlistManager.selectCut(firstCut.id);
+    }
+    return true;
+  }
+
+  async function saveCurrentCutlist() {
+    const cutlistManager = getCutlistManager();
+    if (!cutlistManager.currentCutlist) {
+      showToast('저장할 컷 묶음이 없습니다.', 'warning');
+      return false;
+    }
+
+    try {
+      const path = await cutlistManager.save();
+      showToast('컷 묶음을 저장했습니다.', 'success');
+      return path;
+    } catch (error) {
+      showToast(`컷 묶음을 저장할 수 없습니다: ${error.message}`, 'error');
+      return false;
+    }
+  }
+
   async function openSelectedPath(filePath) {
     if (isPlaylistFilePath(filePath)) {
       return openPlaylistFile(filePath);
+    }
+
+    if (isCutlistFilePath(filePath)) {
+      return openCutlistFile(filePath);
     }
 
     return loadVideo(filePath);
@@ -700,7 +826,9 @@ async function initApp() {
   videoPlayer.addEventListener('loadedmetadata', (e) => {
     const { duration, totalFrames, fps } = e.detail;
     timeline.setVideoInfo(duration, fps);
-    updateTimecodeDisplay();
+    if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
+      updateTimecodeDisplay();
+    }
 
     // 비디오 크기 정보가 준비되면 캔버스 오버레이 동기화
     syncCanvasOverlay();
@@ -727,10 +855,12 @@ async function initApp() {
   // 비디오 시간 업데이트 (일반 timeupdate - 타임라인 및 표시용)
   videoPlayer.addEventListener('timeupdate', (e) => {
     const { currentTime, currentFrame } = e.detail;
-    timeline.setCurrentTime(getContinuousTimelinePlaybackTime(currentTime));
-    updateTimecodeDisplay();
-    updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
-    updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
+    if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
+      timeline.setCurrentTime(getActiveTimelinePlaybackTime(currentTime, currentFrame));
+      updateTimecodeDisplay();
+      updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
+      updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
+    }
 
     // 오디오 웨이브폼 동기화
     if (state.isAudioMode) {
@@ -741,6 +871,8 @@ async function initApp() {
 
     // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
     commentManager.setCurrentFrame(currentFrame);
+    void handleCutlistPlaybackFrame(currentFrame);
+    refreshCurrentCutFromPlayback(currentFrame);
 
     // Liveblocks Presence에 현재 프레임 전달 (원격 타임라인 표시용)
     if (liveblocksManager.isConnected) {
@@ -764,10 +896,14 @@ async function initApp() {
     const { frame, time } = e.detail;
 
     // 타임라인 플레이헤드 실시간 업데이트 (재생 중)
-    timeline.setCurrentTime(getContinuousTimelinePlaybackTime(time));
+    if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
+      timeline.setCurrentTime(getActiveTimelinePlaybackTime(time, frame));
+    }
 
     // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
     drawingManager.setCurrentFrame(frame);
+    void handleCutlistPlaybackFrame(frame);
+    refreshCurrentCutFromPlayback(frame);
 
     // 타임코드/프레임레이트 실시간 업데이트 (스플릿 뷰와 동일하게)
     updateTimecodeDisplay();
@@ -803,6 +939,15 @@ async function initApp() {
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     getAudioWaveform()?.setPlaying(false);
+
+    if (cutlistUIState.active && getCutlistManager().isActive()) {
+      const currentCut = getCutlistManager().getCutById(getCutlistManager().currentCutId);
+      if (currentCut && getNextCutlistCut(currentCut)) {
+        log.info('컷 묶음 재생: 다음 컷으로 이동');
+        void advanceCutlistPlaybackFromCut(currentCut);
+        return;
+      }
+    }
 
     const playlistManager = getPlaylistManager();
     if (continuousPlaybackState.active) {
@@ -863,9 +1008,19 @@ async function initApp() {
       return;
     }
 
+    if (cutlistUIState.active && getCutlistManager().isActive() && timeline.cutlistDuration > 0) {
+      await seekCutlistTimeline(e.detail.time);
+      hideScrubPreview();
+      return;
+    }
+
     videoPlayer.seek(e.detail.time);
     playbackSync.broadcastSeek(e.detail.time);
     hideScrubPreview();
+  });
+
+  timeline.addEventListener('cutlist-seek', (e) => {
+    getCutlistManager().selectCut(e.detail.cutId);
   });
 
   // 스크러빙 중 (드래그 중 프리뷰)
@@ -1386,6 +1541,8 @@ async function initApp() {
       const file = files[0];
       if (isPlaylistFilePath(file.path || file.name)) {
         await openPlaylistFile(file.path);
+      } else if (isCutlistFilePath(file.path || file.name)) {
+        await openCutlistFile(file.path);
       } else if (isMediaFile(file.name)) {
         await loadVideo(file.path);
       } else {
@@ -1448,7 +1605,10 @@ async function initApp() {
 
   // 댓글 추가 버튼 (댓글 모드 토글)
   elements.btnAddComment.addEventListener('click', () => {
-    toggleCommentMode();
+    void (async () => {
+      if (!state.isCommentMode && !(await ensureCutlistCommentTargetReady())) return;
+      toggleCommentMode();
+    })();
   });
 
   // 이전 댓글로 이동
@@ -1496,40 +1656,35 @@ async function initApp() {
   slackNotifier.setToastFunction(showToast);
 
   // 사이드바 댓글 입력 Enter 처리 (역순 플로우: 텍스트 입력 → 마커 찍기)
+  async function submitSidebarCommentDraft() {
+    const text = elements.commentInput.value.trim();
+    if (!text && !state.pendingCommentImage) return false;
+    if (!(await ensureCutlistCommentTargetReady())) return false;
+
+    // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
+    commentManager.setPendingText(text || '(이미지)');
+    // 이미지가 있으면 commentManager에 임시 저장
+    if (state.pendingCommentImage) {
+      commentManager._pendingImage = state.pendingCommentImage;
+    }
+    elements.commentInput.value = '';
+    clearCommentImage();
+    showToast('영상에서 마커를 찍어주세요', 'info');
+    return true;
+  }
+
   elements.commentInput.addEventListener('keydown', (e) => {
     // 멘션 드롭다운 열려있으면 Enter를 멘션 선택으로 처리 (댓글 제출 방지)
     if (mentionManager.isVisible) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      const text = elements.commentInput.value.trim();
-      if (text || state.pendingCommentImage) {
-        // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
-        commentManager.setPendingText(text || '(이미지)');
-        // 이미지가 있으면 commentManager에 임시 저장
-        if (state.pendingCommentImage) {
-          commentManager._pendingImage = state.pendingCommentImage;
-        }
-        elements.commentInput.value = '';
-        clearCommentImage();
-        showToast('영상에서 마커를 찍어주세요', 'info');
-      }
+      void submitSidebarCommentDraft();
     }
   });
 
   // 전송 버튼 클릭 처리 (Enter와 동일한 동작)
   elements.btnSubmitComment?.addEventListener('click', () => {
-    const text = elements.commentInput.value.trim();
-    if (text || state.pendingCommentImage) {
-      // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
-      commentManager.setPendingText(text || '(이미지)');
-      // 이미지가 있으면 commentManager에 임시 저장
-      if (state.pendingCommentImage) {
-        commentManager._pendingImage = state.pendingCommentImage;
-      }
-      elements.commentInput.value = '';
-      clearCommentImage();
-      showToast('영상에서 마커를 찍어주세요', 'info');
-    }
+    void submitSidebarCommentDraft();
   });
 
   // ====== 댓글 이미지 기능 ======
@@ -1599,7 +1754,7 @@ async function initApp() {
   });
 
   // 마커 컨테이너 클릭 (영상 위 클릭으로 마커 생성)
-  markerContainer.addEventListener('click', (e) => {
+  markerContainer.addEventListener('click', async (e) => {
     if (!state.isCommentMode) return;
 
     // 마커 요소 클릭은 무시 (마커 자체의 이벤트 처리)
@@ -1609,6 +1764,8 @@ async function initApp() {
     const rect = markerContainer.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
+
+    if (!(await ensureCutlistCommentTargetReady())) return;
 
     // 마커 생성 시작
     commentManager.startMarkerCreation(x, y);
@@ -3323,14 +3480,20 @@ async function initApp() {
 
   // 댓글 범위 렌더링 함수 (타임라인 + 비디오 오버레이)
   function renderCommentRanges() {
-    let ranges = commentManager.getMarkerRanges();
+    let ranges = cutlistUIState.active
+      ? cutlistAggregateCommentRanges
+      : commentManager.getMarkerRanges();
 
     // 작성자 필터 적용
-    if (commentFilterState.authors !== null) {
+    if (!cutlistUIState.active && commentFilterState.authors !== null) {
       const allowedIds = new Set(
         filterByAuthors(commentManager.getAllMarkers()).map(m => m.id)
       );
       ranges = ranges.filter(r => allowedIds.has(r.markerId));
+    }
+
+    if (cutlistUIState.active) {
+      ranges = filterCutlistAggregateCommentRanges(ranges, commentFilterState.status);
     }
 
     timeline.renderCommentRanges(ranges);
@@ -3348,6 +3511,13 @@ async function initApp() {
         return;
       }
       await updatePlaylistContinuousTimeline();
+      return;
+    }
+
+    if (cutlistUIState.active) {
+      setupCommentRangeInteractions();
+      renderVideoCommentRanges();
+      await updateCutlistAggregateComments();
       return;
     }
 
@@ -3380,6 +3550,11 @@ async function initApp() {
 
       const item = e.target.closest('.comment-range-item');
       if (item) {
+        if (item.dataset.cutlistAggregateCommentKey) {
+          await openCutlistAggregateComment(item.dataset.cutlistAggregateCommentKey);
+          return;
+        }
+
         const layerId = item.dataset.layerId;
         const markerId = item.dataset.markerId;
         const marker = commentManager.getMarker(markerId);
@@ -3796,6 +3971,10 @@ async function initApp() {
       markerContainer.style.transform = transform;
       markerContainer.style.transformOrigin = 'center center';
     }
+    if (videoTransitionFreezeCanvas) {
+      videoTransitionFreezeCanvas.style.transform = transform;
+      videoTransitionFreezeCanvas.style.transformOrigin = 'center center';
+    }
   }
 
   /**
@@ -4066,6 +4245,99 @@ async function initApp() {
   let transcodeResolve = null;
   let latestVideoLoadToken = 0;
 
+  function isStaleVideoLoadToken(loadToken) {
+    return loadToken !== latestVideoLoadToken;
+  }
+
+  function isCurrentReviewPath(bframePath) {
+    return !!bframePath && reviewDataManager.currentBframePath === bframePath;
+  }
+
+  async function stopStaleCollaborationRoom(roomId) {
+    if (!roomId || liveblocksManager.roomId !== roomId) return;
+    try {
+      playbackSync.stop();
+      drawingSync.stop();
+      commentSync.stop();
+      await liveblocksManager.stop();
+    } catch (error) {
+      log.warn('이전 협업 세션 정리 실패', { error: error.message });
+    }
+  }
+
+  async function startCollaborationForVideoLoad(loadToken, bframePath) {
+    if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
+
+    const userName = userSettings.getUserName();
+    const userColor = userSettings.getColorForName(userName) || '#4a9eff';
+    let startedRoomId = null;
+
+    try {
+      const bframeData = await window.electronAPI.loadReview(bframePath);
+      if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
+      const existingRoomId = bframeData?.liveblocksRoomId || null;
+
+      const { roomId, isNewRoom } = await liveblocksManager.start(
+        bframePath,
+        userName,
+        userColor,
+        existingRoomId
+      );
+      startedRoomId = roomId;
+      if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) {
+        await stopStaleCollaborationRoom(roomId);
+        return false;
+      }
+
+      if (isNewRoom && isCurrentReviewPath(bframePath)) {
+        reviewDataManager.setLiveblocksRoomId(roomId);
+        await reviewDataManager.save({ skipMerge: true });
+        if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) {
+          await stopStaleCollaborationRoom(roomId);
+          return false;
+        }
+      }
+
+      await commentSync.start();
+      if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) {
+        await stopStaleCollaborationRoom(roomId);
+        return false;
+      }
+      drawingSync.start();
+      playbackSync.start();
+      log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
+    } catch (error) {
+      log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
+    }
+
+    if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) {
+      await stopStaleCollaborationRoom(startedRoomId);
+      return false;
+    }
+
+    try {
+      await window.electronAPI.watchFileStart(bframePath);
+      if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
+      log.info('파일 감시 시작됨', { path: bframePath });
+    } catch (error) {
+      log.warn('파일 감시 시작 실패', { path: bframePath, error: error.message });
+    }
+
+    return true;
+  }
+
+  function scheduleDeferredCollaborationStart(loadToken, bframePath) {
+    const start = () => {
+      void startCollaborationForVideoLoad(loadToken, bframePath);
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(start, { timeout: 500 });
+    } else {
+      setTimeout(start, 0);
+    }
+  }
+
   /**
    * 트랜스코딩 오버레이 표시 및 진행
    * @param {string} filePath - 원본 파일 경로
@@ -4157,13 +4429,186 @@ async function initApp() {
    * @param {boolean} options.keepVersionContext - 버전 컨텍스트 유지 (수동 버전 전환 시 사용)
    * @param {number} options.targetVersion - 전환할 버전 번호 (수동 버전 선택 시)
    * @param {boolean} options.preserveContinuousSession - 이어보기 내부 로드는 현재 세션 유지
+   * @param {number|null} options.initialFrame - 로드 직후 먼저 맞출 프레임
+   * @param {boolean} options.revealAfterInitialSeek - 첫 프레임 노출 없이 initialFrame 준비 후 표시
+   * @param {boolean} options.holdPreviousFrameUntilReady - 다음 영상 첫 화면 준비 전까지 이전 화면 유지
+   * @param {boolean} options.deferCollaborationStart - 협업 접속/파일 감시를 화면 전환 뒤로 미룸
    */
+  function waitForNextVideoPaint(video) {
+    return new Promise(resolve => {
+      if (typeof video?.requestVideoFrameCallback === 'function') {
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        }, 120);
+
+        video.requestVideoFrameCallback(() => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve();
+        });
+        return;
+      }
+
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+  }
+
+  function waitForVideoRenderable(video, timeoutMs = 400) {
+    if (!video) return Promise.resolve(false);
+    if (video.readyState >= 2) return Promise.resolve(true);
+
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        video.removeEventListener('loadeddata', onReady);
+        video.removeEventListener('canplay', onReady);
+        video.removeEventListener('seeked', onReady);
+        video.removeEventListener('error', onError);
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const onReady = () => finish(video.readyState >= 2);
+      const onError = () => finish(false);
+      const timer = setTimeout(() => finish(video.readyState >= 2), timeoutMs);
+
+      video.addEventListener('loadeddata', onReady, { once: true });
+      video.addEventListener('canplay', onReady, { once: true });
+      video.addEventListener('seeked', onReady, { once: true });
+      video.addEventListener('error', onError, { once: true });
+    });
+  }
+
+  function ensureVideoTransitionFreezeCanvas() {
+    if (videoTransitionFreezeCanvas) return videoTransitionFreezeCanvas;
+
+    const canvas = document.createElement('canvas');
+    canvas.className = 'video-transition-freeze-canvas';
+    canvas.hidden = true;
+    elements.videoWrapper?.appendChild(canvas);
+    videoTransitionFreezeCanvas = canvas;
+    return canvas;
+  }
+
+  function syncVideoTransitionFreezeCanvas(renderArea) {
+    const canvas = videoTransitionFreezeCanvas;
+    if (!canvas || !renderArea) return;
+
+    canvas.style.left = `${renderArea.left}px`;
+    canvas.style.top = `${renderArea.top}px`;
+    canvas.style.width = `${renderArea.width}px`;
+    canvas.style.height = `${renderArea.height}px`;
+    canvas.style.transform = elements.videoPlayer.style.transform || '';
+    canvas.style.transformOrigin = elements.videoPlayer.style.transformOrigin || 'center center';
+  }
+
+  function captureVideoTransitionFreezeFrame() {
+    const video = elements.videoPlayer;
+    if (
+      state.isAudioMode ||
+      !video ||
+      video.readyState < 2 ||
+      !video.videoWidth ||
+      !video.videoHeight
+    ) {
+      return false;
+    }
+
+    const renderArea = getVideoRenderArea();
+    if (!renderArea) return false;
+
+    const canvas = ensureVideoTransitionFreezeCanvas();
+    const context = canvas.getContext('2d');
+    if (!context) return false;
+
+    canvas.width = renderArea.videoWidth;
+    canvas.height = renderArea.videoHeight;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    syncVideoTransitionFreezeCanvas(renderArea);
+    canvas.hidden = false;
+    return true;
+  }
+
+  function releaseVideoTransitionFreezeFrame(wasCaptured) {
+    if (!wasCaptured || !videoTransitionFreezeCanvas) return;
+
+    requestAnimationFrame(() => {
+      if (videoTransitionFreezeCanvas) {
+        videoTransitionFreezeCanvas.hidden = true;
+      }
+    });
+  }
+
+  async function seekInitialVideoFrameBeforeReveal(initialFrame) {
+    const frame = Number(initialFrame);
+    if (!Number.isFinite(frame) || frame <= 0 || !videoPlayer.isLoaded) return;
+
+    const video = elements.videoPlayer;
+    const fps = Number(videoPlayer.fps) > 0 ? Number(videoPlayer.fps) : 24;
+    const totalFrames = Number(videoPlayer.totalFrames);
+    const maxFrame = Number.isFinite(totalFrames) && totalFrames > 0
+      ? totalFrames - 1
+      : frame;
+    const targetFrame = Math.max(0, Math.min(Math.floor(frame), maxFrame));
+    const duration = Number(videoPlayer.duration) || Number(video.duration);
+    const targetTime = (targetFrame / fps) + 0.001;
+    const boundedTime = Number.isFinite(duration) && duration > 0
+      ? Math.max(0, Math.min(targetTime, duration))
+      : Math.max(0, targetTime);
+
+    await new Promise(resolve => {
+      let settled = false;
+      let timeoutId = null;
+
+      const cleanup = () => {
+        video.removeEventListener('seeked', onReady);
+        video.removeEventListener('error', onReady);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      };
+
+      const onReady = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      video.addEventListener('seeked', onReady, { once: true });
+      video.addEventListener('error', onReady, { once: true });
+      timeoutId = setTimeout(onReady, 700);
+
+      try {
+        video.currentTime = boundedTime;
+      } catch (error) {
+        log.warn('초기 프레임 이동 실패', { frame: targetFrame, error: error.message });
+        onReady();
+      }
+    });
+
+    videoPlayer.currentFrame = targetFrame;
+    videoPlayer.currentTime = targetFrame / fps;
+    await waitForNextVideoPaint(video);
+  }
+
   async function loadVideo(filePath, options = {}) {
     const {
       keepVersionContext = false,
       targetVersion = null,
       preserveContinuousSession = false,
       playWhenMediaReady = false,
+      initialFrame = null,
+      revealAfterInitialSeek = false,
+      holdPreviousFrameUntilReady = false,
+      deferCollaborationStart = false,
       preparedVideoPath = null
     } = options;
     const loadToken = ++latestVideoLoadToken;
@@ -4405,8 +4850,36 @@ async function initApp() {
         document.getElementById('frameIndicator')?.classList.remove('audio-hidden');
 
         // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
-        await videoPlayer.load(actualVideoPath);
-        if (isStaleVideoLoad()) return false;
+        const shouldDelayVideoReveal = revealAfterInitialSeek &&
+          Number.isFinite(Number(initialFrame)) &&
+          Number(initialFrame) > 0;
+        const shouldHoldVideoReveal = holdPreviousFrameUntilReady || shouldDelayVideoReveal;
+        const previousVideoVisibility = elements.videoPlayer.style.visibility;
+        const transitionFreezeCaptured = shouldHoldVideoReveal && captureVideoTransitionFreezeFrame();
+        const shouldHideVideoDuringLoad = shouldDelayVideoReveal || transitionFreezeCaptured;
+        if (shouldHideVideoDuringLoad) {
+          elements.videoPlayer.style.visibility = 'hidden';
+        }
+
+        try {
+          await videoPlayer.load(actualVideoPath);
+          if (isStaleVideoLoad()) return false;
+
+          if (shouldDelayVideoReveal) {
+            await seekInitialVideoFrameBeforeReveal(initialFrame);
+            if (isStaleVideoLoad()) return false;
+          } else if (shouldHoldVideoReveal) {
+            await waitForVideoRenderable(elements.videoPlayer);
+            if (isStaleVideoLoad()) return false;
+            await waitForNextVideoPaint(elements.videoPlayer);
+            if (isStaleVideoLoad()) return false;
+          }
+        } finally {
+          if (shouldHideVideoDuringLoad) {
+            elements.videoPlayer.style.visibility = previousVideoVisibility;
+            releaseVideoTransitionFreezeFrame(transitionFreezeCaptured);
+          }
+        }
       }
 
       // 원본 파일 경로 저장 (UI/메타데이터용)
@@ -4473,6 +4946,7 @@ async function initApp() {
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
       if (isStaleVideoLoad()) return false;
+      const currentBframePath = reviewDataManager.currentBframePath;
 
       // keepVersionContext가 false일 때만 manualVersions 복원
       // (true면 기존 버전 목록 유지)
@@ -4493,45 +4967,11 @@ async function initApp() {
         showToast(`"${fileInfo.name}" 로드됨`, 'success');
       }
 
-      // ====== Liveblocks 실시간 협업 세션 시작 ======
-      const userName = userSettings.getUserName();
-      const userColor = userSettings.getColorForName(userName) || '#4a9eff';
-      try {
-        // .bframe에서 기존 Room ID 확인
-        const bframeData = await window.electronAPI.loadReview(reviewDataManager.currentBframePath);
+      if (deferCollaborationStart) {
+        scheduleDeferredCollaborationStart(loadToken, currentBframePath);
+      } else {
+        await startCollaborationForVideoLoad(loadToken, currentBframePath);
         if (isStaleVideoLoad()) return false;
-        const existingRoomId = bframeData?.liveblocksRoomId || null;
-
-        const { roomId, isNewRoom } = await liveblocksManager.start(
-          reviewDataManager.currentBframePath,
-          userName,
-          userColor,
-          existingRoomId
-        );
-        if (isStaleVideoLoad()) return false;
-
-        // 새 Room이면 Room ID를 .bframe에 저장
-        if (isNewRoom && reviewDataManager.currentBframePath) {
-          reviewDataManager.setLiveblocksRoomId(roomId);
-          await reviewDataManager.save({ skipMerge: true });
-          if (isStaleVideoLoad()) return false;
-        }
-
-        // 댓글/그리기/재생 동기화 시작 (Broadcast 기반)
-        await commentSync.start();
-        if (isStaleVideoLoad()) return false;
-        drawingSync.start();
-        playbackSync.start();
-        log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
-      } catch (error) {
-        log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
-      }
-
-      // ====== 파일 감시 시작 (실시간 동기화) ======
-      if (reviewDataManager.currentBframePath) {
-        await window.electronAPI.watchFileStart(reviewDataManager.currentBframePath);
-        if (isStaleVideoLoad()) return false;
-        log.info('파일 감시 시작됨', { path: reviewDataManager.currentBframePath });
       }
 
       // 마커 및 그리기 렌더링 업데이트 (항상 실행)
@@ -5415,34 +5855,52 @@ async function initApp() {
       return;
     }
 
-    const ranges = commentManager.getMarkerRanges();
+    const ranges = cutlistUIState.active
+      ? cutlistAggregateCommentRanges
+      : commentManager.getMarkerRanges();
     const fps = videoPlayer.fps || 24;
 
     // 작성자 필터 적용
     let filteredRanges = ranges;
-    if (commentFilterState.authors !== null) {
+    if (cutlistUIState.active) {
+      filteredRanges = filterCutlistAggregateCommentRanges(filteredRanges, commentFilterState.status);
+    } else if (commentFilterState.authors !== null) {
       const filteredMarkers = filterByAuthors(commentManager.getAllMarkers());
       const allowedIds = new Set(filteredMarkers.map(m => m.id));
       filteredRanges = ranges.filter(r => allowedIds.has(r.markerId));
     }
 
+    if (cutlistUIState.active) {
+      filteredRanges = filteredRanges.map(range => ({
+        ...range,
+        aggregateCommentKey: range.aggregateCommentKey || getCutlistAggregateCommentKey(range)
+      }));
+    }
+
     // 프레임별로 마커 그룹화
     const frameMap = new Map();
     filteredRanges.forEach(range => {
-      if (!frameMap.has(range.startFrame)) {
-        frameMap.set(range.startFrame, []);
+      const markerFrame = Number(range.startFrame);
+      if (!Number.isFinite(markerFrame)) return;
+      if (!frameMap.has(markerFrame)) {
+        frameMap.set(markerFrame, []);
       }
-      frameMap.get(range.startFrame).push(range);
+      frameMap.get(markerFrame).push(range);
     });
 
     // 클러스터링용 마커 데이터 배열 생성
     const allMarkerData = [];
     frameMap.forEach((markersAtFrame, frame) => {
-      const time = frame / fps;
+      const time = cutlistUIState.active
+        ? Number(markersAtFrame[0]?.globalStartTime)
+        : frame / fps;
+      const sourceFrame = cutlistUIState.active
+        ? Number(markersAtFrame[0]?.sourceStartFrame ?? markersAtFrame[0]?.startFrame ?? frame)
+        : frame;
       const allResolved = markersAtFrame.every(m => m.resolved);
       allMarkerData.push({
-        time,
-        frame,
+        time: Number.isFinite(time) ? time : frame / fps,
+        frame: Number.isFinite(sourceFrame) ? sourceFrame : frame,
         resolved: allResolved,
         infos: markersAtFrame
       });
@@ -5505,12 +5963,14 @@ async function initApp() {
   function markerMatchesCommentSearch(marker, normalizedQuery) {
     if (!normalizedQuery) return true;
 
+    const cutlistLabel = getCutlistCommentLabelForMarker(marker);
     const searchTargets = [
       marker?.text,
       marker?.author,
       marker?.frame,
       marker?.startFrame,
-      marker?.endFrame
+      marker?.endFrame,
+      cutlistLabel
     ];
 
     if (Array.isArray(marker?.replies)) {
@@ -5525,6 +5985,53 @@ async function initApp() {
       .join(' ');
 
     return haystack.includes(normalizedQuery);
+  }
+
+  function getCutlistCommentContextForMarker(marker) {
+    if (!cutlistUIState.active || !marker) return null;
+    const source = getCurrentCutlistSourceForFile(state.currentFile);
+    if (!source) return null;
+    return buildCutlistCommentContext(
+      marker,
+      getCutlistManager().getTimeline().segments,
+      source.id
+    );
+  }
+
+  function mapCutlistCommentRangesToTimeline(ranges = []) {
+    if (!cutlistUIState.active) return ranges || [];
+    const source = getCurrentCutlistSourceForFile(state.currentFile);
+    if (!source) return [];
+    const segments = getCutlistManager().getTimeline().segments;
+
+    return (ranges || []).map((range) => {
+      const context = buildCutlistCommentContext(range, segments, source.id);
+      if (!context) return null;
+      const fps = context.fps || videoPlayer.fps || 24;
+      const frameCount = Math.max(1, Number(range.endFrame) - Number(range.startFrame));
+      return {
+        ...range,
+        cutId: context.cutId,
+        sourceStartFrame: range.startFrame,
+        sourceEndFrame: range.endFrame,
+        startFrame: context.globalStartFrame,
+        endFrame: context.globalStartFrame + frameCount,
+        globalStartTime: context.globalStartTime,
+        globalEndTime: context.globalStartTime + (frameCount / fps)
+      };
+    }).filter(Boolean);
+  }
+
+  function getCutlistCommentLabelForMarker(marker) {
+    const context = getCutlistCommentContextForMarker(marker);
+    return context ? formatCutlistCommentLabel(context) : '';
+  }
+
+  function getCutlistCommentPanelLineForMarker(marker) {
+    const context = getCutlistCommentContextForMarker(marker);
+    return context
+      ? formatCutlistCommentPanelLine({ ...context, text: marker?.text || '' })
+      : '';
   }
 
   function highlightCommentSearchMatches(value, normalizedQuery) {
@@ -5839,7 +6346,7 @@ async function initApp() {
 
     container.innerHTML = ranges.map(range => {
       const key = getPlaylistAggregateCommentKey(range);
-      const title = escapeHtml(formatPlaylistCommentPanelLine(range));
+      const title = escapeHtmlAttribute(formatPlaylistCommentPanelLine(range));
       const author = range.author || '알 수 없음';
       const authorColor = getAuthorColor(range.authorId || author || 'unknown');
       const replyCount = range.replies?.length || 0;
@@ -5879,12 +6386,204 @@ async function initApp() {
     container.scrollTop = savedScrollTop;
   }
 
+  function getCutlistAggregateCommentKey(range) {
+    return range.aggregateCommentKey ||
+      `${range.cutId || ''}:${range.sourceId || ''}:${range.layerId || ''}:${range.markerId || ''}`;
+  }
+
+  function cutlistRangeMatchesCommentSearch(range, normalizedQuery) {
+    if (!normalizedQuery) return true;
+
+    const haystack = [
+      range.text,
+      range.author,
+      range.cutLabel,
+      range.fileName,
+      range.sourceStartFrame,
+      range.sourceEndFrame,
+      range.localStartTimecode,
+      range.globalStartTimecode,
+      formatCutlistCommentPanelLine(range)
+    ];
+
+    if (Array.isArray(range.replies)) {
+      for (const reply of range.replies) {
+        haystack.push(reply?.text, reply?.author);
+      }
+    }
+
+    return haystack
+      .filter(value => value !== undefined && value !== null)
+      .map(value => String(value).toLowerCase())
+      .join(' ')
+      .includes(normalizedQuery);
+  }
+
+  function filterCutlistAggregateCommentRanges(
+    ranges,
+    filter = getActiveCommentFilter(),
+    normalizedSearch = ''
+  ) {
+    let filtered = Array.isArray(ranges) ? [...ranges] : [];
+
+    if (filter === 'unresolved') {
+      filtered = filtered.filter(range => !range.resolved);
+    } else if (filter === 'resolved') {
+      filtered = filtered.filter(range => range.resolved);
+    }
+
+    filtered = filterByAuthors(filtered);
+
+    if (normalizedSearch) {
+      filtered = filtered.filter(range => cutlistRangeMatchesCommentSearch(range, normalizedSearch));
+    }
+
+    return filtered.sort((a, b) => a.globalStartTime - b.globalStartTime);
+  }
+
+  function highlightCutlistAggregateComment(key) {
+    const container = elements.commentsList;
+    if (!container) return;
+    const target = [...container.querySelectorAll('.cutlist-aggregate-comment')]
+      .find(item => item.dataset.cutlistAggregateCommentKey === key);
+    if (!target) return;
+
+    container.querySelectorAll('.cutlist-aggregate-comment').forEach(item => {
+      item.classList.remove('selected', 'glow');
+    });
+    target.classList.add('selected', 'glow');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => target.classList.remove('glow'), 2600);
+  }
+
+  async function openCutlistAggregateComment(key) {
+    const range = cutlistAggregateCommentRanges.find(item => getCutlistAggregateCommentKey(item) === key);
+    if (!range) return;
+
+    const cutlistManager = getCutlistManager();
+    const cut = cutlistManager.getCutById(range.cutId);
+    if (!cut) return;
+
+    const segment = getCutlistSegmentForCut(cut);
+    if (!segment) return;
+
+    const fps = Math.max(1, Number(range.fps || segment.fps || cut.fps) || 24);
+    const sourceStartFrame = Number(segment.sourceStartFrame ?? cut.startFrame) || 0;
+    const sourceFrame = Math.max(
+      0,
+      Number(range.sourceStartFrame ?? (sourceStartFrame + Number(range.localStartFrame || 0))) || 0
+    );
+    const localTime = Math.max(0, sourceFrame - sourceStartFrame) / fps;
+    const moved = await seekCutlistMappedPosition({
+      segment,
+      sourceFrame,
+      localTime
+    });
+    if (!moved) return;
+
+    videoPlayer.pause();
+    timeline.setCurrentTime(Number(range.globalStartTime) || segment.globalStartTime || 0);
+    updateTimecodeDisplay();
+    highlightCutlistAggregateComment(key);
+  }
+
+  function renderCutlistAggregateCommentList(filter = getActiveCommentFilter()) {
+    const container = elements.commentsList;
+    if (!container) return;
+
+    const savedScrollTop = container.scrollTop;
+    const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
+    const authorFilteredRanges = filterByAuthors(cutlistAggregateCommentRanges);
+    const resolvedCount = authorFilteredRanges.filter(range => range.resolved).length;
+    const ranges = filterCutlistAggregateCommentRanges(
+      cutlistAggregateCommentRanges,
+      filter,
+      normalizedSearch
+    );
+
+    if (elements.commentCount) {
+      if (normalizedSearch) {
+        elements.commentCount.textContent = `검색 ${ranges.length} / 전체 ${authorFilteredRanges.length}`;
+      } else {
+        const unresolvedCount = authorFilteredRanges.length - resolvedCount;
+        elements.commentCount.textContent = authorFilteredRanges.length > 0
+          ? `${unresolvedCount > 0 ? `${unresolvedCount} 미해결 / ` : ''}${authorFilteredRanges.length}개`
+          : '0';
+      }
+    }
+
+    updateFeedbackProgress(authorFilteredRanges.length, resolvedCount);
+
+    if (ranges.length === 0) {
+      const emptyTitle = normalizedSearch ? '검색 결과가 없습니다' : '컷 묶음 댓글이 없습니다';
+      const emptyHint = normalizedSearch
+        ? `"${escapeHtml(commentSearchKeyword)}"와 일치하는 컷 묶음 댓글이 없습니다.`
+        : '컷 묶음 모드에서는 연결된 모든 원본의 댓글이 이곳에 표시됩니다.';
+
+      container.innerHTML = `
+        <div class="comment-empty">
+          <span style="font-size: 32px; margin-bottom: 8px;">#</span>
+          <p>${emptyTitle}</p>
+          <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = ranges.map(range => {
+      const key = getCutlistAggregateCommentKey(range);
+      const title = escapeHtmlAttribute(formatCutlistCommentPanelLine(range));
+      const author = range.author || '알 수 없음';
+      const authorColor = getAuthorColor(range.authorId || author || 'unknown');
+      const replyCount = range.replies?.length || 0;
+
+      return `
+      <div class="comment-item cutlist-aggregate-comment playlist-aggregate-comment ${range.resolved ? 'resolved' : ''}"
+        data-cutlist-aggregate-comment-key="${escapeHtml(key)}"
+        data-marker-id="${escapeHtml(range.markerId)}"
+        data-cut-id="${escapeHtml(range.cutId)}"
+        data-source-id="${escapeHtml(range.sourceId)}"
+        title="${title}">
+        <div class="playlist-comment-time-row">
+          <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+          <span class="playlist-comment-global-time">전체 ${highlightCommentSearchMatches(range.globalStartTimecode, normalizedSearch)}</span>
+          <span class="playlist-comment-local-time">컷 ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+        </div>
+        <div class="comment-content">
+          <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(range.text || '댓글', normalizedSearch)))}</p>
+          ${range.image ? `<div class="comment-attached-image"><img src="${range.image}" alt="첨부 이미지" data-full-image="${range.image}"></div>` : ''}
+        </div>
+        <div class="comment-actions playlist-comment-readonly-actions">
+          <span class="comment-author-inline ${getAuthorColorClass(author)}" style="color: ${authorColor.color}; font-weight: bold;">${highlightCommentSearchMatches(author, normalizedSearch)}</span>
+          ${range.createdAt ? `<span class="comment-time-inline">${formatRelativeTime(range.createdAt)}</span>` : ''}
+          ${replyCount > 0 ? `<span class="playlist-comment-reply-count">답글 ${replyCount}개</span>` : ''}
+          <span class="playlist-comment-source">${highlightCommentSearchMatches(range.fileName, normalizedSearch)}</span>
+        </div>
+      </div>
+    `;
+    }).join('');
+
+    container.querySelectorAll('.cutlist-aggregate-comment').forEach(item => {
+      item.addEventListener('click', async (e) => {
+        if (e.target.closest('.gdrive-link-btn')) return;
+        await openCutlistAggregateComment(item.dataset.cutlistAggregateCommentKey);
+      });
+    });
+
+    container.scrollTop = savedScrollTop;
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
 
     if (playlistUIState.mode === 'continuous') {
       renderPlaylistContinuousCommentList(filter);
+      return;
+    }
+
+    if (cutlistUIState.active) {
+      renderCutlistAggregateCommentList(filter);
       return;
     }
 
@@ -5974,6 +6673,9 @@ async function initApp() {
       const markerAuthorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
+      const cutlistCommentLabel = getCutlistCommentLabelForMarker(marker);
+      const commentTimeLabel = cutlistCommentLabel || marker.startTimecode;
+      const commentPanelLine = getCutlistCommentPanelLineForMarker(marker);
       const repliesHtml = (marker.replies || []).map(reply => {
         const canEditReply = commentManager.canEdit(reply);
         return `
@@ -6018,7 +6720,7 @@ async function initApp() {
       ` : '';
 
       return `
-      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}">
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}"${commentPanelLine ? ` title="${escapeHtmlAttribute(commentPanelLine)}"` : ''}>
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
         <button class="comment-resolve-toggle resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
           ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
@@ -6026,7 +6728,7 @@ async function initApp() {
         </button>
         ${thumbnailHtml}
         <div class="comment-header">
-          <span class="comment-timecode">${highlightCommentSearchMatches(marker.startTimecode, normalizedSearch)}</span>
+          <span class="comment-timecode">${highlightCommentSearchMatches(commentTimeLabel, normalizedSearch)}</span>
         </div>
         <div class="comment-content">
           <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(marker.text, normalizedSearch)))}</p>
@@ -6652,6 +7354,15 @@ async function initApp() {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  function escapeHtmlAttribute(text) {
+    return String(text ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
   /**
@@ -10515,6 +11226,7 @@ async function initApp() {
 
   // ====== 재생목록 초기화 ======
   initPlaylistFeature();
+  initCutlistFeature();
 
   log.info('앱 초기화 완료');
 
@@ -10597,10 +11309,179 @@ async function initApp() {
     playlistMediaPreload.itemId = null;
     playlistMediaPreload.path = null;
     playlistMediaPreload.ready = false;
-    if (playlistMediaPreload.element) {
-      playlistMediaPreload.element.removeAttribute('src');
-      playlistMediaPreload.element.load?.();
+
+    const media = playlistMediaPreload.element;
+    if (media) {
+      media.onloadedmetadata = null;
+      media.onloadeddata = null;
+      media.oncanplay = null;
+      media.onseeked = null;
+      media.onerror = null;
+      media.removeAttribute('src');
+      media.load?.();
     }
+  }
+
+  function ensureCutlistPreloadElement() {
+    if (cutlistMediaPreload.element) return cutlistMediaPreload.element;
+
+    const media = document.createElement('video');
+    media.preload = 'auto';
+    media.muted = true;
+    media.playsInline = true;
+    media.style.display = 'none';
+    media.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(media);
+    cutlistMediaPreload.element = media;
+    return media;
+  }
+
+  function clearCutlistMediaPreload() {
+    cutlistMediaPreload.token += 1;
+    cutlistMediaPreload.cutId = null;
+    cutlistMediaPreload.sourceId = null;
+    cutlistMediaPreload.path = null;
+    cutlistMediaPreload.frame = null;
+    cutlistMediaPreload.ready = false;
+
+    const media = cutlistMediaPreload.element;
+    if (media) {
+      media.onloadedmetadata = null;
+      media.onloadeddata = null;
+      media.oncanplay = null;
+      media.onseeked = null;
+      media.onerror = null;
+      media.removeAttribute('src');
+      media.load?.();
+    }
+  }
+
+  function preloadNextCutlistMedia(cut) {
+    const cutlistManager = getCutlistManager();
+    if (!cutlistUIState.active || !cutlistManager.isActive() || !cut?.id) {
+      clearCutlistMediaPreload();
+      return;
+    }
+
+    const nextCut = getNextCutlistCut(cut);
+    if (!nextCut) {
+      clearCutlistMediaPreload();
+      return;
+    }
+
+    const source = cutlistManager.getSourceById(nextCut.sourceId);
+    if (!source?.videoPath || source.missing === true || isSameFilePath(state.currentFile, source.videoPath)) {
+      clearCutlistMediaPreload();
+      return;
+    }
+
+    const frame = Math.max(0, Number(nextCut.startFrame) || 0);
+    if (
+      cutlistMediaPreload.cutId === nextCut.id &&
+      cutlistMediaPreload.path === source.videoPath &&
+      cutlistMediaPreload.frame === frame
+    ) {
+      return;
+    }
+
+    const token = ++cutlistMediaPreload.token;
+    cutlistMediaPreload.cutId = nextCut.id;
+    cutlistMediaPreload.sourceId = source.id;
+    cutlistMediaPreload.path = source.videoPath;
+    cutlistMediaPreload.frame = frame;
+    cutlistMediaPreload.ready = false;
+
+    const media = ensureCutlistPreloadElement();
+    const fps = Number(nextCut.fps) > 0 ? Number(nextCut.fps) : 24;
+    const targetTime = Math.max(0, (frame / fps) + 0.001);
+
+    const markReady = () => {
+      if (token !== cutlistMediaPreload.token) return;
+      cutlistMediaPreload.ready = media.readyState >= 2;
+      log.debug('컷 묶음 다음 소스 사전 로드됨', {
+        label: nextCut.label,
+        fileName: source.fileName,
+        frame,
+        readyState: media.readyState
+      });
+    };
+
+    const markFailed = () => {
+      if (token !== cutlistMediaPreload.token) return;
+      cutlistMediaPreload.ready = false;
+      log.warn('컷 묶음 다음 소스 사전 로드 실패', {
+        label: nextCut.label,
+        fileName: source.fileName
+      });
+    };
+
+    const seekToTarget = () => {
+      if (token !== cutlistMediaPreload.token) return;
+      try {
+        media.currentTime = targetTime;
+      } catch (error) {
+        log.debug('컷 묶음 사전 로드 프레임 이동 실패', {
+          label: nextCut.label,
+          frame,
+          error: error.message
+        });
+        markReady();
+      }
+    };
+
+    media.onloadedmetadata = seekToTarget;
+    media.onloadeddata = markReady;
+    media.oncanplay = markReady;
+    media.onseeked = markReady;
+    media.onerror = markFailed;
+    media.src = toLocalMediaUrl(source.videoPath);
+    media.load();
+  }
+
+  function preloadPlaylistMediaForItem(item, options = {}) {
+    const { continuous = false, sessionId = null } = options;
+    if (!item?.videoPath) return;
+    if (continuous && !isContinuousSessionActive(sessionId)) return;
+    if (isSameFilePath(state.currentFile, item.videoPath)) return;
+    if (
+      playlistMediaPreload.itemId === item.id &&
+      playlistMediaPreload.path === item.videoPath
+    ) {
+      return;
+    }
+
+    const token = ++playlistMediaPreload.token;
+    playlistMediaPreload.itemId = item.id;
+    playlistMediaPreload.path = item.videoPath;
+    playlistMediaPreload.ready = false;
+
+    const media = ensurePlaylistPreloadElement();
+    const isCurrentPreload = () => (
+      token === playlistMediaPreload.token &&
+      (!continuous || isContinuousSessionActive(sessionId))
+    );
+    const markReady = () => {
+      if (!isCurrentPreload()) return;
+      playlistMediaPreload.ready = media.readyState >= 2;
+      log.debug('재생목록 다음 미디어 사전 로드됨', {
+        fileName: item.fileName,
+        continuous,
+        readyState: media.readyState
+      });
+    };
+    const markFailed = () => {
+      if (!isCurrentPreload()) return;
+      playlistMediaPreload.ready = false;
+      log.warn('재생목록 다음 미디어 사전 로드 실패', { fileName: item.fileName, continuous });
+    };
+
+    media.onloadedmetadata = markReady;
+    media.onloadeddata = markReady;
+    media.oncanplay = markReady;
+    media.onseeked = markReady;
+    media.onerror = markFailed;
+    media.src = toLocalMediaUrl(item.videoPath);
+    media.load();
   }
 
   function preloadNextPlaylistMedia() {
@@ -10618,38 +11499,7 @@ async function initApp() {
       return;
     }
 
-    if (
-      playlistMediaPreload.itemId === nextItem.id &&
-      playlistMediaPreload.path === nextItem.videoPath
-    ) {
-      return;
-    }
-
-    const token = ++playlistMediaPreload.token;
-    playlistMediaPreload.itemId = nextItem.id;
-    playlistMediaPreload.path = nextItem.videoPath;
-    playlistMediaPreload.ready = false;
-
-    const media = ensurePlaylistPreloadElement();
-    const markReady = () => {
-      if (token !== playlistMediaPreload.token) return;
-      playlistMediaPreload.ready = media.readyState >= 2;
-      log.debug('재생목록 다음 미디어 사전 로드됨', {
-        fileName: nextItem.fileName,
-        readyState: media.readyState
-      });
-    };
-    const markFailed = () => {
-      if (token !== playlistMediaPreload.token) return;
-      playlistMediaPreload.ready = false;
-      log.warn('재생목록 다음 미디어 사전 로드 실패', { fileName: nextItem.fileName });
-    };
-
-    media.onloadeddata = markReady;
-    media.oncanplay = markReady;
-    media.onerror = markFailed;
-    media.src = toLocalMediaUrl(nextItem.videoPath);
-    media.load();
+    preloadPlaylistMediaForItem(nextItem);
   }
 
   function warmPlaylistAutoPlayQueue() {
@@ -10704,6 +11554,17 @@ async function initApp() {
       : items.find(item => item.videoPath === state.currentFile)?.id;
     if (!itemId) return null;
     return timeline.playlistSegments?.find(segment => segment.itemId === itemId) || null;
+  }
+
+  function shouldIgnoreContinuousTimelineUpdateDuringSourceLoad() {
+    if (playlistUIState.mode !== 'continuous' || !continuousPlaybackState.loadingItemId) return false;
+
+    const playlistManager = getPlaylistManager();
+    const loadingItem = playlistManager.getItems?.()
+      ?.find(item => item.id === continuousPlaybackState.loadingItemId);
+    if (!loadingItem?.videoPath) return false;
+
+    return !isSameFilePath(state.currentFile, loadingItem.videoPath);
   }
 
   function getContinuousTimelinePlaybackTime(localTime = videoPlayer.currentTime) {
@@ -10991,6 +11852,7 @@ async function initApp() {
     const settings = playlistManager.getContinuousSettings();
     const nextIndex = findNextPlayableIndex(items, playlistManager.currentIndex, { loop: settings.loop });
     if (nextIndex >= 0) {
+      preloadPlaylistMediaForItem(items[nextIndex], { continuous: true, sessionId });
       preparePlaylistItemInBackground(items[nextIndex], sessionId);
     }
   }
@@ -11036,18 +11898,28 @@ async function initApp() {
 
   async function loadContinuousPlaylistItem(item, sessionId) {
     if (!isContinuousSessionActive(sessionId)) return false;
-    const preparedVideoPath = continuousPlaybackState.preparedMediaPaths.get(item.id);
-    const loaded = await loadVideoFromPlaylist(item, {
-      preserveContinuousSession: true,
-      preparedVideoPath
-    });
-    if (!isContinuousSessionActive(sessionId)) return false;
-    if (loaded === false) {
-      markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
-      continuousPlaybackState.skippedBatch.push(item);
-      return false;
+
+    continuousPlaybackState.loadingItemId = item.id;
+    try {
+      prepareNextPlaylistItem(sessionId);
+      const preparedVideoPath = continuousPlaybackState.preparedMediaPaths.get(item.id);
+      const loaded = await loadVideoFromPlaylist(item, {
+        preserveContinuousSession: true,
+        holdPreviousFrameUntilReady: true,
+        playWhenMediaReady: true,
+        deferCollaborationStart: true,
+        preparedVideoPath
+      });
+      if (!isContinuousSessionActive(sessionId)) return false;
+      if (loaded === false) {
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
+        continuousPlaybackState.skippedBatch.push(item);
+        return false;
+      }
+      return true;
+    } finally {
+      continuousPlaybackState.loadingItemId = null;
     }
-    return true;
   }
 
   function waitForContinuousDelay(ms) {
@@ -11311,6 +12183,20 @@ async function initApp() {
     }
   }
 
+  function exitPlaylistContinuousModeForCutlist() {
+    if (
+      playlistUIState.mode !== 'continuous' &&
+      !continuousPlaybackState.active &&
+      !timeline.playlistDuration
+    ) {
+      return;
+    }
+
+    setPlaylistMode('review');
+    playlistAggregateCommentRanges = [];
+    timeline.setPlaylistTimeline([], 0);
+  }
+
   async function refreshPlaylistModifiedTimes() {
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
@@ -11365,6 +12251,711 @@ async function initApp() {
     applyPlaylistSortPreservingSelection('modifiedAt');
     updatePlaylistUI();
     updatePlaylistContinuousTimeline();
+  }
+
+  function initCutlistFeature() {
+    const cutlistManager = getCutlistManager();
+
+    cutlistManager.onCutlistLoaded = () => {
+      updateCutlistUI();
+      updateCutlistTimeline();
+      preloadNextCutlistMedia(cutlistManager.getCutById(cutlistManager.currentCutId));
+      void updateCutlistAggregateComments();
+    };
+
+    cutlistManager.onCutlistModified = () => {
+      updateCutlistUI();
+      updateCutlistTimeline();
+      preloadNextCutlistMedia(cutlistManager.getCutById(cutlistManager.currentCutId));
+      void updateCutlistAggregateComments();
+    };
+
+    cutlistManager.onCutSelected = (cut) => {
+      updateCurrentCutDisplay(cut);
+      updateCutlistCurrentItem();
+      void seekToCut(cut);
+    };
+
+    cutlistManager.onError = (error) => {
+      showToast(error.message, 'error');
+    };
+
+    elements.btnCutlist?.addEventListener('click', () => {
+      if (elements.cutlistSidebar?.classList.contains('hidden')) {
+        showCutlistSidebar();
+        if (!cutlistManager.isActive()) {
+          cutlistManager.createNew();
+        }
+      } else {
+        hideCutlistSidebar();
+      }
+    });
+
+    elements.btnCutlistClose?.addEventListener('click', () => {
+      hideCutlistSidebar();
+    });
+
+    async function handleCutlistAddClick() {
+      try {
+        await addCutlistSourcePair();
+      } catch (error) {
+        showToast(`컷 묶음 소스를 추가할 수 없습니다: ${error.message}`, 'error');
+      }
+    }
+
+    elements.btnCutlistAdd?.addEventListener('click', () => {
+      void handleCutlistAddClick();
+    });
+
+    elements.btnCutlistPrimaryAdd?.addEventListener('click', () => {
+      void handleCutlistAddClick();
+    });
+
+    elements.btnCutlistSave?.addEventListener('click', () => {
+      void saveCurrentCutlist();
+    });
+
+    elements.btnCutlistCopyLink?.addEventListener('click', async () => {
+      const cutlist = cutlistManager.currentCutlist;
+      if (!cutlist || !Array.isArray(cutlist.cuts) || cutlist.cuts.length === 0) {
+        showToast('컷 묶음에 컷을 먼저 추가해주세요.', 'warning');
+        return;
+      }
+
+      try {
+        const path = await saveCurrentCutlist();
+        if (!path) return;
+
+        const windowsPath = String(path).replace(/\//g, '\\');
+        const fileName = windowsPath.split('\\').pop() || '컷 묶음.bcutlist';
+        const clipboardContent = `${windowsPath}\n\n${fileName}`;
+        await window.electronAPI.copyToClipboard(clipboardContent);
+        showToast('컷 묶음 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기', 'success');
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    });
+
+    elements.cutlistNameInput?.addEventListener('change', (event) => {
+      cutlistManager.setName(event.target.value);
+    });
+
+    elements.cutlistShowMissing?.addEventListener('change', (event) => {
+      cutlistManager.setShowMissingScenes(event.target.checked);
+    });
+
+    window.electronAPI.onOpenCutlist?.(async (path) => {
+      log.info('컷 묶음 링크로 열기', { path });
+
+      try {
+        await openCutlistFile(path);
+      } catch (error) {
+        showToast(`컷 묶음을 열 수 없습니다: ${error.message}`, 'error');
+      }
+    });
+  }
+
+  async function addCutlistSourcePair() {
+    const txtResult = await window.electronAPI.openFileDialog({
+      title: 'Moho info txt 선택',
+      filters: [{ name: 'Moho info txt', extensions: ['txt'] }],
+      properties: ['openFile']
+    });
+    if (txtResult.canceled || txtResult.filePaths.length === 0) return false;
+
+    const infoFileNameForDialog = getDialogFileName(txtResult.filePaths[0]);
+    const videoResult = await window.electronAPI.openFileDialog({
+      title: `${infoFileNameForDialog} 이름의 영상을 찾아주세요`,
+      filters: [{ name: '미디어 파일', extensions: SUPPORTED_MEDIA_EXTENSIONS }],
+      properties: ['openFile']
+    });
+    if (videoResult.canceled || videoResult.filePaths.length === 0) return false;
+
+    const cutlistManager = getCutlistManager();
+    if (!cutlistManager.isActive()) {
+      cutlistManager.createNew();
+    }
+
+    const result = await cutlistManager.addSourcePair(txtResult.filePaths[0], videoResult.filePaths[0]);
+    cutlistUIState.lastIgnored = result.ignored || [];
+    updateCutlistUI();
+    updateCutlistTimeline();
+    void updateCutlistAggregateComments();
+
+    if (!cutlistManager.currentCutId && result.cuts.length > 0) {
+      cutlistManager.selectCut(result.cuts[0].id);
+    }
+
+    showToast(`${result.cuts.length}개 컷을 추가했습니다.`, 'success');
+    return result;
+  }
+
+  function showCutlistSidebar() {
+    exitPlaylistContinuousModeForCutlist();
+    hidePlaylistSidebar();
+    cutlistUIState.active = true;
+    elements.cutlistSidebar?.classList.remove('hidden');
+    elements.btnCutlist?.classList.add('active');
+    updateCutlistUI();
+    updateCutlistTimeline();
+    const currentCut = refreshCurrentCutFromPlayback(videoPlayer.currentFrame);
+    updateCurrentCutDisplay(currentCut);
+    void refreshCommentRangesForCurrentMode();
+    updateCommentList(getActiveCommentFilter());
+  }
+
+  function hideCutlistSidebar() {
+    cutlistUIState.active = false;
+    cutlistCommentTimelineUpdateToken += 1;
+    cutlistAggregateCommentRanges = [];
+    clearCutlistMediaPreload();
+    elements.cutlistSidebar?.classList.add('hidden');
+    elements.btnCutlist?.classList.remove('active');
+    updateCurrentCutDisplay(null);
+    timeline.setCurrentCutId(null);
+    timeline.setCutlistTimeline([], 0);
+    void refreshCommentRangesForCurrentMode();
+    updateCommentList(getActiveCommentFilter());
+  }
+
+  function updateCutlistUI() {
+    const cutlistManager = getCutlistManager();
+    const cutlist = cutlistManager.currentCutlist;
+    const hasCutlist = !!cutlist;
+    const cutCount = cutlist?.cuts?.length || 0;
+    const sourceCount = cutlist?.sources?.length || 0;
+
+    elements.cutlistSidebar?.classList.toggle('empty', !hasCutlist || cutCount === 0);
+
+    if (elements.cutlistNameInput && document.activeElement !== elements.cutlistNameInput) {
+      elements.cutlistNameInput.value = cutlist?.name || '새 컷 묶음';
+    }
+
+    if (elements.cutlistShowMissing) {
+      elements.cutlistShowMissing.checked = cutlist?.settings?.showMissingScenes === true;
+    }
+
+    if (elements.cutlistSummary) {
+      elements.cutlistSummary.textContent = hasCutlist
+        ? `${sourceCount}개 소스 · ${cutCount}개 컷`
+        : '0개 소스 · 0개 컷';
+    }
+
+    if (elements.cutlistEmpty) {
+      elements.cutlistEmpty.hidden = hasCutlist && cutCount > 0;
+    }
+
+    renderCutlistItems();
+    renderCutlistIgnoredSummary();
+  }
+
+  function renderCutlistItems() {
+    const cutlistManager = getCutlistManager();
+    if (!elements.cutlistItems) return;
+
+    elements.cutlistItems.innerHTML = '';
+
+    if (!cutlistManager.currentCutlist) return;
+
+    for (const row of cutlistManager.getRows()) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'cutlist-item';
+      item.dataset.cutId = row.id;
+
+      if (row.missing) {
+        item.classList.add('missing', 'cutlist-missing-row');
+        item.disabled = true;
+        item.innerHTML = `
+          <div class="cutlist-item-main">
+            <span class="cutlist-item-label">${escapeHtml(row.label)}</span>
+            <span class="cutlist-item-frames">누락</span>
+          </div>
+        `;
+        elements.cutlistItems.appendChild(item);
+        continue;
+      }
+
+      const source = cutlistManager.getSourceById(row.sourceId);
+      const sourceMissing = source?.missing === true;
+      const frameCount = Math.max(0, Number(row.endFrame) - Number(row.startFrame) + 1);
+      const sourceStatus = sourceMissing
+        ? '<span class="cutlist-item-status">파일 없음</span>'
+        : '';
+
+      item.classList.toggle('active', row.id === cutlistManager.currentCutId);
+      item.classList.toggle('missing', sourceMissing);
+      item.title = sourceMissing
+        ? `${source?.fileName || '출력 영상'} 파일을 찾을 수 없습니다.`
+        : `${row.label} - ${source?.fileName || ''}`;
+      item.innerHTML = `
+        <div class="cutlist-item-main">
+          <span class="cutlist-item-label">${escapeHtml(row.label)}</span>
+          <span class="cutlist-item-frames">${frameCount}f</span>
+        </div>
+        <div class="cutlist-item-source-row">
+          <span class="cutlist-item-source">${escapeHtml(source?.fileName || '출력 영상')}</span>
+          ${sourceStatus}
+        </div>
+        <div class="cutlist-item-ranges">
+          <span>BAEFRAME ${formatCutlistFrameRange(row.startFrame, row.endFrame)}</span>
+          <span>Moho ${formatCutlistFrameRange(row.mohoStartFrame, row.mohoEndFrame)}</span>
+        </div>
+      `;
+
+      item.addEventListener('click', () => {
+        cutlistManager.selectCut(row.id);
+      });
+
+      elements.cutlistItems.appendChild(item);
+    }
+  }
+
+  function renderCutlistIgnoredSummary() {
+    if (!elements.cutlistIgnoredSummary) return;
+
+    const cutlistManager = getCutlistManager();
+    const ignoredCount = cutlistUIState.lastIgnored.length ||
+      (cutlistManager.currentCutlist?.sources || []).reduce((sum, source) => (
+        sum + (Array.isArray(source.ignoredLabels) ? source.ignoredLabels.length : 0)
+      ), 0);
+
+    elements.cutlistIgnoredSummary.hidden = ignoredCount === 0;
+    elements.cutlistIgnoredSummary.textContent = ignoredCount > 0
+      ? `무시된 라벨 ${ignoredCount}개`
+      : '';
+  }
+
+  function updateCutlistCurrentItem() {
+    const currentCutId = getCutlistManager().currentCutId;
+    elements.cutlistItems?.querySelectorAll('.cutlist-item').forEach((item) => {
+      item.classList.toggle('active', item.dataset.cutId === currentCutId);
+    });
+  }
+
+  function updateCurrentCutDisplay(cut) {
+    if (!elements.currentCutOverlay) return;
+
+    if (!cut || !cutlistUIState.active) {
+      elements.currentCutOverlay.hidden = true;
+      elements.currentCutOverlay.textContent = '';
+      return;
+    }
+
+    elements.currentCutOverlay.hidden = false;
+    elements.currentCutOverlay.textContent = `${cut.label} · BAEFRAME ${formatCutlistFrameRange(cut.startFrame, cut.endFrame)}`;
+  }
+
+  function getCurrentCutlistSourceForFile(filePath) {
+    const normalizedPath = normalizeComparableFilePath(filePath);
+    if (!normalizedPath) return null;
+    const sources = getCutlistManager().currentCutlist?.sources || [];
+    return sources.find(source => (
+      normalizeComparableFilePath(source.videoPath) === normalizedPath
+    )) || null;
+  }
+
+  function getCutlistSegmentForCut(cut) {
+    if (!cut?.id) return null;
+    return getCutlistManager().getTimeline().segments.find(segment => segment.cutId === cut.id) || null;
+  }
+
+  function getCutlistGlobalTimeForCutFrame(cut, frame) {
+    const segment = getCutlistSegmentForCut(cut);
+    if (!segment) return null;
+    const fps = segment.fps || cut.fps || videoPlayer.fps || 24;
+    const sourceStartFrame = Number(segment.sourceStartFrame ?? cut.startFrame) || 0;
+    const frameCount = Math.max(1, Number(segment.frameCount) || 1);
+    const localFrame = Math.max(0, Math.min(Number(frame) - sourceStartFrame, frameCount - 1));
+    return (Number(segment.globalStartTime) || 0) + (localFrame / fps);
+  }
+
+  function getCutlistTimelinePlaybackTime(frame = videoPlayer.currentFrame, fallbackTime = videoPlayer.currentTime) {
+    if (!cutlistUIState.active || !getCutlistManager().isActive()) return fallbackTime;
+    const source = getCurrentCutlistSourceForFile(state.currentFile);
+    if (!source) return fallbackTime;
+    const cutlistManager = getCutlistManager();
+    const selectedCut = cutlistManager.getCutById(cutlistManager.currentCutId);
+    const cut = (isCutlistPlaybackLockedToSelectedCut() || cutlistPlaybackTransitioning) && selectedCut
+      ? selectedCut
+      : findCurrentCut(cutlistManager.getOrderedCuts(), {
+      sourceId: source.id,
+      frame
+    });
+    const globalTime = getCutlistGlobalTimeForCutFrame(cut, frame);
+    return Number.isFinite(globalTime) ? globalTime : fallbackTime;
+  }
+
+  function getActiveTimelinePlaybackTime(currentTime = videoPlayer.currentTime, currentFrame = videoPlayer.currentFrame) {
+    if (playlistUIState.mode === 'continuous') {
+      return getContinuousTimelinePlaybackTime(currentTime);
+    }
+    if (cutlistUIState.active) {
+      return getCutlistTimelinePlaybackTime(currentFrame, currentTime);
+    }
+    return currentTime;
+  }
+
+  function setCutlistCurrentCut(cut) {
+    const cutlistManager = getCutlistManager();
+    cutlistManager.currentCutId = cut?.id || null;
+    updateCurrentCutDisplay(cut || null);
+    updateCutlistCurrentItem();
+    timeline.setCurrentCutId(cut?.id || null);
+    preloadNextCutlistMedia(cut);
+  }
+
+  function isFrameInsideCut(cut, frame) {
+    const currentFrame = Number(frame);
+    const startFrame = Number(cut?.startFrame);
+    const endFrame = Number(cut?.endFrame);
+    return Number.isFinite(currentFrame) &&
+      Number.isFinite(startFrame) &&
+      Number.isFinite(endFrame) &&
+      currentFrame >= startFrame &&
+      currentFrame <= endFrame;
+  }
+
+  function isCutlistPlaybackLockedToSelectedCut() {
+    return cutlistUIState.active &&
+      videoPlayer.isPlaying &&
+      !cutlistPlaybackTransitioning &&
+      !!getCutlistManager().currentCutId;
+  }
+
+  function getNextCutlistCut(cut) {
+    if (!cut?.id) return null;
+    const cuts = getCutlistManager().getOrderedCuts();
+    const index = cuts.findIndex(item => item.id === cut.id);
+    if (index < 0) return null;
+    return cuts[index + 1] || null;
+  }
+
+  async function advanceCutlistPlaybackFromCut(cut, options) {
+    const nextCut = getNextCutlistCut(cut);
+    if (!nextCut) {
+      videoPlayer.pause();
+      timeline.setPlayingState(false);
+      getAudioWaveform()?.setPlaying(false);
+      return false;
+    }
+
+    const playbackOptions = options || {};
+    const shouldResume = playbackOptions.resume !== false;
+    const moved = await seekPlaybackToCutStart(nextCut);
+    if (!moved) {
+      videoPlayer.pause();
+      timeline.setPlayingState(false);
+      getAudioWaveform()?.setPlaying(false);
+      return false;
+    }
+
+    if (shouldResume) {
+      await videoPlayer.play();
+    }
+    return true;
+  }
+
+  async function handleCutlistPlaybackFrame(frame) {
+    if (
+      !cutlistUIState.active ||
+      !getCutlistManager().isActive() ||
+      !videoPlayer.isPlaying ||
+      cutlistPlaybackTransitioning
+    ) {
+      return false;
+    }
+
+    const cutlistManager = getCutlistManager();
+    const currentCut = cutlistManager.getCutById(cutlistManager.currentCutId);
+    if (!currentCut) {
+      refreshCurrentCutFromPlayback(frame);
+      return false;
+    }
+
+    if (isFrameInsideCut(currentCut, frame)) return false;
+
+    const currentFrame = Number(frame);
+    const endFrame = Number(currentCut.endFrame);
+    if (!Number.isFinite(currentFrame) || !Number.isFinite(endFrame) || currentFrame <= endFrame) {
+      return false;
+    }
+
+    cutlistPlaybackTransitioning = true;
+    try {
+      return await advanceCutlistPlaybackFromCut(currentCut);
+    } finally {
+      cutlistPlaybackTransitioning = false;
+    }
+  }
+
+  async function seekPlaybackToCutStart(cut) {
+    const segment = getCutlistSegmentForCut(cut);
+    if (!segment) return false;
+    return await seekCutlistTimeline(segment.globalStartTime);
+  }
+
+  async function seekCutlistMappedPosition(mapped) {
+    if (!mapped?.segment) return false;
+    const cutlistManager = getCutlistManager();
+    const cut = cutlistManager.getCutById(mapped.segment.cutId) || mapped.segment.cut;
+    if (!cut) return false;
+
+    const source = await resolveCutlistSourceForPlayback(cut);
+    if (!source?.videoPath) return false;
+
+    setCutlistCurrentCut(cut);
+
+    const frame = Math.max(0, Number(mapped.sourceFrame) || Number(cut.startFrame) || 0);
+    const fps = videoPlayer.fps || mapped.segment.fps || cut.fps || 24;
+    const globalTime = (Number(mapped.segment.globalStartTime) || 0) + (Number(mapped.localTime) || 0);
+
+    if (!isSameFilePath(state.currentFile, source.videoPath)) {
+      const loaded = await loadVideo(source.videoPath, {
+        initialFrame: frame,
+        revealAfterInitialSeek: true,
+        holdPreviousFrameUntilReady: true,
+        deferCollaborationStart: true
+      });
+      if (!loaded) return false;
+    }
+
+    videoPlayer.seekToFrame(frame);
+    playbackSync.broadcastSeek(frame / fps);
+    timeline.setCurrentTime(globalTime);
+    refreshCurrentCutFromPlayback(frame);
+    await refreshCommentRangesForCurrentMode();
+    updateCommentList(getActiveCommentFilter());
+    return true;
+  }
+
+  async function seekCutlistTimeline(globalTime) {
+    const mapped = mapGlobalTimeToCut(getCutlistManager().getTimeline().segments, globalTime);
+    return seekCutlistMappedPosition(mapped);
+  }
+
+  function refreshCurrentCutFromPlayback(frame = videoPlayer.currentFrame) {
+    if (!cutlistUIState.active) return null;
+    const cutlistManager = getCutlistManager();
+    if (!cutlistManager.isActive()) {
+      setCutlistCurrentCut(null);
+      return null;
+    }
+
+    const lockedCut = cutlistManager.getCutById(cutlistManager.currentCutId);
+    if ((isCutlistPlaybackLockedToSelectedCut() || cutlistPlaybackTransitioning) && lockedCut) {
+      return lockedCut;
+    }
+
+    const source = getCurrentCutlistSourceForFile(state.currentFile);
+    if (!source) {
+      setCutlistCurrentCut(null);
+      return null;
+    }
+
+    const currentCut = findCurrentCut(cutlistManager.getOrderedCuts(), {
+      sourceId: source.id,
+      frame
+    });
+    const nextCutId = currentCut?.id || null;
+    if ((cutlistManager.currentCutId || null) !== nextCutId) {
+      setCutlistCurrentCut(currentCut);
+    }
+    return currentCut;
+  }
+
+  function updateCutlistTimeline() {
+    const cutlistManager = getCutlistManager();
+    if (!cutlistUIState.active || !cutlistManager.isActive()) {
+      timeline.setCurrentCutId(null);
+      timeline.setCutlistTimeline([], 0);
+      cutlistAggregateCommentRanges = [];
+      return;
+    }
+
+    const cutlistTimeline = cutlistManager.getTimeline();
+    timeline.setCutlistTimeline(cutlistTimeline.segments, cutlistTimeline.totalDuration);
+    timeline.setCurrentCutId(cutlistManager.currentCutId);
+  }
+
+  async function updateCutlistAggregateComments() {
+    const cutlistManager = getCutlistManager();
+    const updateToken = ++cutlistCommentTimelineUpdateToken;
+    if (!cutlistUIState.active || !cutlistManager.isActive()) {
+      cutlistAggregateCommentRanges = [];
+      if (cutlistUIState.active) {
+        renderCommentRanges();
+        updateTimelineMarkers();
+        renderCutlistAggregateCommentList(commentFilterState.status);
+      }
+      return;
+    }
+
+    const cutlistTimeline = cutlistManager.getTimeline();
+    const sourcesById = new Map(
+      (cutlistManager.currentCutlist?.sources || []).map(source => [source.id, source])
+    );
+    const bframeCache = new Map();
+    const aggregateRanges = [];
+
+    for (const segment of cutlistTimeline.segments) {
+      if (cutlistCommentTimelineUpdateToken !== updateToken || !cutlistUIState.active) return;
+
+      const source = sourcesById.get(segment.sourceId);
+      if (!source?.videoPath) continue;
+
+      const bframePath = getBframePath(source.videoPath);
+      let bframeData = bframeCache.get(bframePath);
+      if (!bframeCache.has(bframePath)) {
+        try {
+          bframeData = await window.electronAPI.loadReview(bframePath);
+        } catch (error) {
+          log.warn('컷 묶음 댓글 로드 실패', {
+            fileName: source.fileName || segment.label,
+            error: error.message
+          });
+          bframeData = null;
+        }
+        bframeCache.set(bframePath, bframeData);
+      }
+
+      if (cutlistCommentTimelineUpdateToken !== updateToken || !cutlistUIState.active) return;
+      if (!bframeData) continue;
+
+      const ranges = extractCutlistCommentRanges({
+        bframeData,
+        segment: {
+          ...segment,
+          fileName: source.fileName || segment.label || '',
+          sourceVideoPath: source.videoPath
+        },
+        visibleLayerIds: null,
+        allowedAuthorIds: null
+      }).map(range => ({
+        ...range,
+        aggregateCommentKey: getCutlistAggregateCommentKey(range)
+      }));
+      aggregateRanges.push(...ranges);
+    }
+
+    if (cutlistCommentTimelineUpdateToken !== updateToken || !cutlistUIState.active) return;
+
+    cutlistAggregateCommentRanges = aggregateRanges;
+    renderCommentRanges();
+    updateTimelineMarkers();
+    renderCutlistAggregateCommentList(commentFilterState.status);
+  }
+
+  async function seekToCut(cut) {
+    if (!cut) return false;
+    const source = await resolveCutlistSourceForPlayback(cut);
+    if (!source?.videoPath) return false;
+
+    setCutlistCurrentCut(cut);
+
+    if (!isSameFilePath(state.currentFile, source.videoPath)) {
+      const loaded = await loadVideo(source.videoPath, {
+        initialFrame: Number(cut.startFrame),
+        revealAfterInitialSeek: true,
+        holdPreviousFrameUntilReady: true,
+        deferCollaborationStart: true
+      });
+      if (!loaded) return false;
+    }
+
+    await seekPlaybackToCutStart(cut);
+    return true;
+  }
+
+  async function resolveCutlistSourceForPlayback(cut) {
+    const cutlistManager = getCutlistManager();
+    let source = cutlistManager.getSourceById(cut?.sourceId);
+    if (!source) {
+      showToast('컷의 원본 영상을 찾을 수 없습니다.', 'error');
+      return null;
+    }
+
+    let exists = source.missing !== true && !!source.videoPath;
+    if (exists && window.electronAPI.fileExists) {
+      try {
+        exists = await window.electronAPI.fileExists(source.videoPath);
+      } catch (error) {
+        log.warn('컷 묶음 소스 파일 확인 실패', { fileName: source.fileName, error: error.message });
+      }
+    }
+
+    if (exists) return source;
+
+    const result = await window.electronAPI.openFileDialog({
+      title: `${source.fileName || '출력 영상'} 다시 연결`,
+      filters: [{ name: '미디어 파일', extensions: SUPPORTED_MEDIA_EXTENSIONS }],
+      properties: ['openFile']
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    const reconnected = await cutlistManager.reconnectSource(source.id, result.filePaths[0]);
+    if (!reconnected) return null;
+    source = cutlistManager.getSourceById(source.id);
+
+    if (window.electronAPI.fileExists) {
+      const reconnectedExists = await window.electronAPI.fileExists(source.videoPath);
+      if (!reconnectedExists) {
+        showToast('다시 연결한 파일을 찾을 수 없습니다.', 'error');
+        return null;
+      }
+    }
+
+    updateCutlistUI();
+    updateCutlistTimeline();
+    return source;
+  }
+
+  async function ensureCutlistCommentTargetReady() {
+    if (!cutlistUIState.active) return true;
+    const cutlistManager = getCutlistManager();
+    if (!cutlistManager.isActive()) return true;
+
+    const cut = cutlistManager.getCutById(cutlistManager.currentCutId);
+    if (!cut) {
+      showToast('댓글을 달 컷을 먼저 선택하세요.', 'warning');
+      return false;
+    }
+
+    const source = await resolveCutlistSourceForPlayback(cut);
+    if (!source?.videoPath) return false;
+
+    if (isSameFilePath(state.currentFile, source.videoPath)) {
+      if (isFrameInsideCut(cut, videoPlayer.currentFrame)) {
+        refreshCurrentCutFromPlayback(videoPlayer.currentFrame);
+        const globalTime = getCutlistGlobalTimeForCutFrame(cut, videoPlayer.currentFrame);
+        if (Number.isFinite(globalTime)) {
+          timeline.setCurrentTime(globalTime);
+        }
+        return true;
+      }
+
+      await seekPlaybackToCutStart(cut);
+      return true;
+    }
+
+    const loaded = await loadVideo(source.videoPath, {
+      initialFrame: Number(cut.startFrame),
+      revealAfterInitialSeek: true,
+      holdPreviousFrameUntilReady: true,
+      deferCollaborationStart: true
+    });
+    if (!loaded) return false;
+
+    await seekPlaybackToCutStart(cut);
+    return true;
+  }
+
+  function formatCutlistFrameRange(startFrame, endFrame) {
+    const start = Number.isFinite(Number(startFrame)) ? Number(startFrame) : 0;
+    const end = Number.isFinite(Number(endFrame)) ? Number(endFrame) : start;
+    return `${start} - ${end}f`;
   }
 
   function initPlaylistFeature() {
@@ -11525,6 +13116,14 @@ async function initApp() {
             await openPlaylistFile(playlistPath);
             exitPlaylistAddMode();
             showToast('재생목록을 열었습니다.', 'success');
+            return;
+          }
+
+          const cutlistPath = result.filePaths.find(isCutlistFilePath);
+          if (cutlistPath) {
+            await openCutlistFile(cutlistPath);
+            exitPlaylistAddMode();
+            showToast('컷 묶음을 열었습니다.', 'success');
             return;
           }
 
@@ -11718,6 +13317,7 @@ async function initApp() {
 
   // 사이드바 표시
   function showPlaylistSidebar() {
+    hideCutlistSidebar();
     elements.playlistSidebar?.classList.remove('hidden');
     updatePlaylistUI();
   }
@@ -12045,6 +13645,17 @@ async function initApp() {
         return;
       }
 
+      const cutlistPath = files.find(f => isCutlistFilePath(f.path || f.name))?.path;
+      if (cutlistPath) {
+        try {
+          await openCutlistFile(cutlistPath);
+          showToast('컷 묶음을 열었습니다.', 'success');
+        } catch (error) {
+          showToast(`컷 묶음을 열 수 없습니다: ${error.message}`, 'error');
+        }
+        return;
+      }
+
       const videoPaths = files
         .filter(f => isMediaFile(f.path))
         .map(f => f.path);
@@ -12109,6 +13720,18 @@ async function initApp() {
           showToast('재생목록을 열었습니다.', 'success');
         } catch (error) {
           showToast(`재생목록을 열 수 없습니다: ${error.message}`, 'error');
+        }
+        return;
+      }
+
+      const cutlistPath = files.find(f => isCutlistFilePath(f.path || f.name))?.path;
+      if (cutlistPath) {
+        try {
+          await openCutlistFile(cutlistPath);
+          exitPlaylistAddMode();
+          showToast('컷 묶음을 열었습니다.', 'success');
+        } catch (error) {
+          showToast(`컷 묶음을 열 수 없습니다: ${error.message}`, 'error');
         }
         return;
       }

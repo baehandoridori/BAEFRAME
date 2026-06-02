@@ -121,6 +121,19 @@ test('timeline wheel zoom anchors to the cursor position', () => {
   assert.doesNotMatch(wheelSource, /newPlayheadX - viewportWidth \/ 2/);
 });
 
+test('timeline scrubbing keeps the dragged playhead from being overwritten by playback ticks', () => {
+  const setCurrentTimeMatch = timelineSource.match(/setCurrentTime\(time\) \{([\s\S]*?)\n  \}/);
+  assert.ok(setCurrentTimeMatch, 'setCurrentTime should exist');
+  const setCurrentTimeSource = setCurrentTimeMatch[1];
+
+  assert.match(setCurrentTimeSource, /this\.isDraggingPlayhead && this\.scrubTime !== undefined/);
+  assert.ok(
+    setCurrentTimeSource.indexOf('this.isDraggingPlayhead && this.scrubTime !== undefined') <
+      setCurrentTimeSource.indexOf('this._updatePlayheadPosition();'),
+    'playback-driven playhead updates should be skipped while the user is scrubbing'
+  );
+});
+
 test('continuous aggregate comments update the right comment panel', () => {
   assert.match(appSource, /let playlistAggregateCommentRanges = \[\];/);
   assert.match(appSource, /function renderPlaylistContinuousCommentList\(filter = getActiveCommentFilter\(\)\)/);
@@ -330,6 +343,89 @@ test('continuous playback skips item when playlist load fails', () => {
   assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(nextItem, sessionId\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
 });
 
+test('continuous playlist loads hold the previous frame during source switches', () => {
+  const loadVideoStart = appSource.indexOf('async function loadVideo(filePath, options = {})');
+  const loadVideoEnd = appSource.indexOf('  async function generateThumbnails', loadVideoStart);
+  assert.notEqual(loadVideoStart, -1, 'loadVideo should exist');
+  assert.notEqual(loadVideoEnd, -1, 'loadVideo boundary should exist');
+  const loadVideoSource = appSource.slice(loadVideoStart, loadVideoEnd);
+
+  assert.match(loadVideoSource, /holdPreviousFrameUntilReady = false/);
+  assert.match(loadVideoSource, /const shouldHoldVideoReveal = holdPreviousFrameUntilReady \|\| shouldDelayVideoReveal;/);
+  assert.match(loadVideoSource, /captureVideoTransitionFreezeFrame\(\)/);
+  assert.match(loadVideoSource, /await waitForVideoRenderable\(elements\.videoPlayer\)/);
+
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
+  const continuousLoadSource = continuousLoadMatch[1];
+
+  assert.match(continuousLoadSource, /loadVideoFromPlaylist\(item, \{[\s\S]*preserveContinuousSession: true,[\s\S]*holdPreviousFrameUntilReady: true[\s\S]*\}\)/);
+});
+
+test('continuous playlist source switches defer collaboration startup off the transition path', () => {
+  const loadVideoStart = appSource.indexOf('async function loadVideo(filePath, options = {})');
+  const loadVideoEnd = appSource.indexOf('  async function generateThumbnails', loadVideoStart);
+  assert.notEqual(loadVideoStart, -1, 'loadVideo should exist');
+  assert.notEqual(loadVideoEnd, -1, 'loadVideo boundary should exist');
+  const loadVideoSource = appSource.slice(loadVideoStart, loadVideoEnd);
+
+  assert.match(appSource, /async function startCollaborationForVideoLoad\(loadToken, bframePath\)/);
+  assert.match(appSource, /function scheduleDeferredCollaborationStart\(loadToken, bframePath\)/);
+  assert.match(loadVideoSource, /deferCollaborationStart = false/);
+  assert.match(loadVideoSource, /if \(deferCollaborationStart\) \{[\s\S]*scheduleDeferredCollaborationStart\(loadToken, currentBframePath\);[\s\S]*\} else \{[\s\S]*await startCollaborationForVideoLoad\(loadToken, currentBframePath\);/);
+
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
+  assert.match(continuousLoadMatch[1], /deferCollaborationStart: true/);
+});
+
+test('continuous playlist starts playback as soon as the next media is renderable', () => {
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
+  const continuousLoadSource = continuousLoadMatch[1];
+
+  assert.match(continuousLoadSource, /prepareNextPlaylistItem\(sessionId\);/);
+  assert.match(continuousLoadSource, /loadVideoFromPlaylist\(item, \{[\s\S]*playWhenMediaReady: true[\s\S]*\}\)/);
+  assert.ok(
+    continuousLoadSource.indexOf('prepareNextPlaylistItem(sessionId);') <
+      continuousLoadSource.indexOf('const loaded = await loadVideoFromPlaylist(item, {'),
+    'following item preparation should start before the current source load waits on post-load work'
+  );
+});
+
+test('continuous source switches suppress stale zero-time timeline updates', () => {
+  assert.match(appSource, /loadingItemId:\s*null/);
+  assert.match(appSource, /function shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)/);
+
+  const timeupdateMatch = appSource.match(/videoPlayer\.addEventListener\('timeupdate', \(e\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(timeupdateMatch, 'timeupdate handler should exist');
+  assert.match(timeupdateMatch[1], /if \(!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)\) \{[\s\S]*timeline\.setCurrentTime/);
+
+  const frameUpdateMatch = appSource.match(/videoPlayer\.addEventListener\('frameUpdate', \(e\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(frameUpdateMatch, 'frameUpdate handler should exist');
+  assert.match(frameUpdateMatch[1], /if \(!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)\) \{[\s\S]*timeline\.setCurrentTime/);
+
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
+  assert.match(continuousLoadMatch[1], /continuousPlaybackState\.loadingItemId = item\.id/);
+  assert.match(continuousLoadMatch[1], /finally \{[\s\S]*continuousPlaybackState\.loadingItemId = null/);
+});
+
+test('continuous playback warms the next source with the hidden playlist preload video', () => {
+  assert.match(appSource, /function preloadPlaylistMediaForItem\(item, options = \{\}\)/);
+
+  const prepareNextMatch = appSource.match(/function prepareNextPlaylistItem\(sessionId\) \{([\s\S]*?)\n  \}\n\n  async function waitForPreparedOrSkip/);
+  assert.ok(prepareNextMatch, 'prepareNextPlaylistItem should exist');
+  const prepareNextSource = prepareNextMatch[1];
+
+  assert.match(prepareNextSource, /preloadPlaylistMediaForItem\(items\[nextIndex\], \{[\s\S]*continuous: true,[\s\S]*sessionId[\s\S]*\}\);/);
+  assert.ok(
+    prepareNextSource.indexOf('preloadPlaylistMediaForItem(items[nextIndex]') <
+      prepareNextSource.indexOf('preparePlaylistItemInBackground(items[nextIndex], sessionId);'),
+    'hidden media preload should start before background preparation'
+  );
+});
+
 test('continuous playback reuses prepared media paths at cut boundaries', () => {
   assert.match(appSource, /preparedMediaPaths:\s*new Map\(\)/);
   assert.match(appSource, /continuousPlaybackState\.preparedMediaPaths\.clear\(\);/);
@@ -370,8 +466,10 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(appSource, /mapGlobalTimeToSegment[\s\S]+mapLocalTimeToGlobal[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
   assert.match(appSource, /function getContinuousTimelinePlaybackTime\(localTime = videoPlayer\.currentTime\)/);
   assert.match(appSource, /mapLocalTimeToGlobal\(segment, localTime\)/);
-  assert.match(appSource, /timeline\.setCurrentTime\(getContinuousTimelinePlaybackTime\(currentTime\)\);/);
-  assert.match(appSource, /timeline\.setCurrentTime\(getContinuousTimelinePlaybackTime\(time\)\);/);
+  assert.match(appSource, /function getActiveTimelinePlaybackTime\(currentTime = videoPlayer\.currentTime,\s*currentFrame = videoPlayer\.currentFrame\)/);
+  assert.match(appSource, /playlistUIState\.mode === 'continuous'[\s\S]+return getContinuousTimelinePlaybackTime\(currentTime\);/);
+  assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(currentTime,\s*currentFrame\)\);/);
+  assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(time,\s*frame\)\);/);
   assert.match(appSource, /async function seekContinuousTimeline\(globalTime\)/);
   assert.match(appSource, /mapGlobalTimeToSegment\(timeline\.playlistSegments, globalTime\)/);
   assert.match(appSource, /videoPlayer\.seek\(mapped\.localTime\);/);

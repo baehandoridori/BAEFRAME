@@ -57,6 +57,9 @@ export class DrawingManager extends EventTarget {
     this.isPlaying = false;
     this.preloadRange = 10;  // 앞뒤로 프리로드할 프레임 수
     this.maxCacheSize = 100;  // 최대 캐시 프레임 수 (LRU 방식)
+    this._preloadInFlight = false;
+    this._lastPlaybackPreloadCenterFrame = null;
+    this._playbackCanvasCleared = false;
 
     // 렌더링 상태 관리
     this._renderingId = 0;  // 렌더링 취소용 ID
@@ -807,11 +810,12 @@ export class DrawingManager extends EventTarget {
     // 재생 중이면 빠른 동기 렌더링 (clear 없이 먼저 그린 뒤 교체)
     if (this.isPlaying) {
       this._renderFrameSync(frame);
-      this._preloadFrames(frame);
+      this._schedulePlaybackPreload(frame);
       return;
     }
 
     // 일시정지 상태에서만 캔버스 초기화
+    this._playbackCanvasCleared = false;
     this.drawingCanvas.clear();
     this._clearOnionSkinCanvas();
 
@@ -896,8 +900,17 @@ export class DrawingManager extends EventTarget {
       }
     }
 
+    if (images.length === 0 && !hasCacheMiss) {
+      if (!this._playbackCanvasCleared) {
+        this.drawingCanvas.clear({ silent: true });
+        this._playbackCanvasCleared = true;
+      }
+      return;
+    }
+
     // clear + draw를 원자적으로 수행 (깜빡임 방지)
-    this.drawingCanvas.clear();
+    this.drawingCanvas.clear({ silent: true });
+    this._playbackCanvasCleared = images.length === 0 && !hasCacheMiss;
     for (const { img, opacity } of images) {
       this.drawingCanvas.ctx.globalAlpha = opacity;
       this.drawingCanvas.ctx.drawImage(img, 0, 0);
@@ -1236,10 +1249,46 @@ export class DrawingManager extends EventTarget {
    */
   setPlaying(isPlaying) {
     this.isPlaying = isPlaying;
+    this._playbackCanvasCleared = false;
     if (isPlaying) {
       // 재생 시작 시 주변 프레임 프리로드
-      this._preloadFrames(this.currentFrame);
+      this._schedulePlaybackPreload(this.currentFrame, { force: true });
     }
+  }
+
+  _hasVisibleDrawableContent() {
+    return this.layers.some(layer => (
+      layer?.visible &&
+      Array.isArray(layer.keyframes) &&
+      layer.keyframes.some(keyframe => keyframe && !keyframe.isEmpty && keyframe.canvasData)
+    ));
+  }
+
+  _schedulePlaybackPreload(centerFrame, options = {}) {
+    if (!this._hasVisibleDrawableContent()) return;
+    if (this._preloadInFlight) return;
+
+    const frame = Number(centerFrame);
+    if (!Number.isFinite(frame)) return;
+
+    const minDistance = Math.max(1, Math.floor(this.preloadRange / 2));
+    if (
+      options.force !== true &&
+      Number.isFinite(this._lastPlaybackPreloadCenterFrame) &&
+      Math.abs(frame - this._lastPlaybackPreloadCenterFrame) < minDistance
+    ) {
+      return;
+    }
+
+    this._preloadInFlight = true;
+    this._lastPlaybackPreloadCenterFrame = frame;
+    this._preloadFrames(frame)
+      .catch(error => {
+        log.warn('재생 중 드로잉 프리로드 실패', { frame, error: error.message });
+      })
+      .finally(() => {
+        this._preloadInFlight = false;
+      });
   }
 
   /**

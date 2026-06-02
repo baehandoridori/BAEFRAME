@@ -70,3 +70,18 @@ test('stroke eraser gestures do not stream as live pixel eraser strokes to colla
   assert.match(drawingSyncSource, /strokeRecords: keyframe\.strokeRecords/);
   assert.match(drawingSyncSource, /baseCanvasData: keyframe\.baseCanvasData/);
 });
+
+test('drawing playback avoids noisy per-frame canvas clears and preload churn', () => {
+  const renderFrameBody = drawingManagerSource.match(/async renderFrame\(frame\) \{[\s\S]*?\n  \}/)?.[0] || '';
+  const syncRenderBody = drawingManagerSource.match(/_renderFrameSync\(frame\) \{[\s\S]*?\n  \}/)?.[0] || '';
+
+  assert.match(drawingCanvasSource, /clear\(options = \{\}\)/);
+  assert.match(drawingCanvasSource, /options\.silent/);
+  assert.match(renderFrameBody, /this\._schedulePlaybackPreload\(frame\)/);
+  assert.doesNotMatch(renderFrameBody, /this\._preloadFrames\(frame\);/);
+  assert.match(syncRenderBody, /this\._playbackCanvasCleared/);
+  assert.match(syncRenderBody, /this\.drawingCanvas\.clear\(\{ silent: true \}\)/);
+  assert.match(drawingManagerSource, /_schedulePlaybackPreload\(centerFrame, options = \{\}\)/);
+  assert.match(drawingManagerSource, /this\._preloadInFlight/);
+  assert.match(drawingManagerSource, /this\._lastPlaybackPreloadCenterFrame/);
+});

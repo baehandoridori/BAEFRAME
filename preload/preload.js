@@ -123,6 +123,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   generatePlaylistLink: (playlistPath) => ipcRenderer.invoke('playlist:generate-link', playlistPath),
   scanPlaylistsInFolder: (folderPath) => ipcRenderer.invoke('playlist:scan-folder', folderPath),
 
+  // ====== 컷 묶음 관련 ======
+  readCutlist: (filePath) => ipcRenderer.invoke('cutlist:read', filePath),
+  writeCutlist: (filePath, data) => ipcRenderer.invoke('cutlist:write', filePath, data),
+  deleteCutlist: (filePath) => ipcRenderer.invoke('cutlist:delete', filePath),
+  readCutlistInfoText: (filePath) => ipcRenderer.invoke('cutlist:read-info-text', filePath),
+  generateCutlistLink: (cutlistPath) => ipcRenderer.invoke('cutlist:generate-link', cutlistPath),
+
   // ====== 영상 썸네일 관련 (재생목록용) ======
   generateVideoThumbnail: (videoPath) => ipcRenderer.invoke('thumbnail:generate-video', videoPath),
   checkVideoThumbnail: (videoPath) => ipcRenderer.invoke('thumbnail:check-video-thumb', videoPath),
@@ -159,6 +166,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onOpenPlaylist: (callback) => {
     ipcRenderer.on('open-playlist', (event, path) => callback(path));
+  },
+  onOpenCutlist: (callback) => {
+    ipcRenderer.on('open-cutlist', (event, path) => callback(path));
   },
 
   // 이벤트 리스너 제거

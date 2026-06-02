@@ -543,9 +543,11 @@ export class DrawingCanvas extends EventTarget {
   /**
    * 캔버스 초기화
    */
-  clear() {
+  clear(options = {}) {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    log.debug('캔버스 초기화됨');
+    if (!options.silent) {
+      log.debug('캔버스 초기화됨');
+    }
   }
 
   /**

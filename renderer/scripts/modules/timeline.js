@@ -50,6 +50,10 @@ export class Timeline extends EventTarget {
     this._lastComments = null;      // 펼치기/접기 재렌더용 캐시
     this.playlistSegments = [];
     this.playlistDuration = 0;
+    this.cutlistSegments = [];
+    this.cutlistDuration = 0;
+    this.cutlistTotalFrames = 0;
+    this.currentCutId = null;
 
     // 플레이헤드 드래그 상태
     this.isDraggingPlayhead = false;
@@ -299,7 +303,11 @@ export class Timeline extends EventTarget {
    * 시간을 프레임 단위로 스냅
    */
   _getTimelineDuration() {
-    return this.playlistDuration || this.duration;
+    return this.playlistDuration || this.cutlistDuration || this.duration;
+  }
+
+  _getTimelineTotalFrames() {
+    return this.cutlistDuration ? (this.cutlistTotalFrames || this.totalFrames) : this.totalFrames;
   }
 
   _snapTimeToFrame(time) {
@@ -496,6 +504,9 @@ export class Timeline extends EventTarget {
    */
   setCurrentTime(time) {
     this.currentTime = time;
+    if (this.isDraggingPlayhead && this.scrubTime !== undefined) {
+      return;
+    }
     this._updatePlayheadPosition();
 
     // 재생 중일 때 플레이헤드가 화면 밖으로 나가면 자동 스크롤
@@ -1374,6 +1385,7 @@ export class Timeline extends EventTarget {
 
   _shouldStartTimelinePan(e) {
     if (e.button !== 0) return false;
+    if (e.target?.closest?.('.cutlist-segment-block')) return false;
     return Boolean(e.target?.closest?.('.video-track-row, .track-clip.video'));
   }
 
@@ -1389,6 +1401,7 @@ export class Timeline extends EventTarget {
       '.keyframe-marker-dot',
       '.playlist-segment-boundary',
       '.playlist-segment-block',
+      '.cutlist-segment-block',
       '.playlist-comment-range',
       '.comment-range-item',
       '.comment-cluster-badge',
@@ -1606,7 +1619,8 @@ export class Timeline extends EventTarget {
     this.clearCommentMarkers();
 
     if (!allMarkerData || allMarkerData.length === 0) return;
-    if (!this.tracksContainer || this.duration === 0) return;
+    const duration = this._getTimelineDuration();
+    if (!this.tracksContainer || duration === 0) return;
 
     // 픽셀 거리 계산을 위한 컨테이너 너비
     const containerWidth = this.tracksContainer.offsetWidth || 1000;
@@ -1620,7 +1634,7 @@ export class Timeline extends EventTarget {
     let currentCluster = null;
 
     sortedMarkers.forEach(markerData => {
-      const pixelX = (markerData.time / this.duration) * containerWidth;
+      const pixelX = (markerData.time / duration) * containerWidth;
 
       if (!currentCluster) {
         // 첫 클러스터 시작
@@ -1676,7 +1690,8 @@ export class Timeline extends EventTarget {
    * 클러스터된 마커 추가 (내부용)
    */
   _addClusteredMarker(time, resolved, frame, markerInfos, clusterCount, colorKey = 'default') {
-    const percent = (time / this.duration) * 100;
+    const duration = this._getTimelineDuration();
+    const percent = duration > 0 ? (time / duration) * 100 : 0;
     const marker = document.createElement('div');
     marker.className = `comment-marker-track${resolved ? ' resolved' : ''}`;
     marker.style.left = `${percent}%`;
@@ -1972,6 +1987,24 @@ export class Timeline extends EventTarget {
     this._renderPlaylistSegments();
   }
 
+  setCutlistTimeline(segments, totalDuration) {
+    this.cutlistSegments = segments || [];
+    this.cutlistDuration = totalDuration || 0;
+    this.cutlistTotalFrames = this.cutlistSegments.reduce((maxFrame, segment) => (
+      Math.max(maxFrame, Number(segment?.globalEndFrame) + 1 || 0)
+    ), 0);
+    this._updateRuler();
+    this._updatePlayheadPosition();
+    this._renderCutlistSegments();
+  }
+
+  setCurrentCutId(cutId) {
+    this.currentCutId = cutId || null;
+    this.tracksContainer?.querySelectorAll('.cutlist-segment-block').forEach(block => {
+      block.classList.toggle('current', block.dataset.cutId === this.currentCutId);
+    });
+  }
+
   _renderPlaylistSegments() {
     if (!this.tracksContainer) return;
     this.tracksContainer.querySelectorAll('.playlist-segment-boundary, .playlist-segment-block').forEach(el => el.remove());
@@ -2031,6 +2064,58 @@ export class Timeline extends EventTarget {
         this._emit('seek', { time, itemId: segment.itemId });
       });
       this.tracksContainer.appendChild(boundary);
+    }
+  }
+
+  _renderCutlistSegments() {
+    if (!this.tracksContainer) return;
+    this.tracksContainer.querySelectorAll('.cutlist-segment-block').forEach(el => el.remove());
+    const videoTrackRow = this.tracksContainer.querySelector('.video-track-row');
+    const duration = this.cutlistDuration || 0;
+    const hasSegments = Boolean(duration && this.cutlistSegments?.length);
+    if (videoTrackRow) {
+      videoTrackRow.classList.toggle('has-cutlist-segments', hasSegments);
+    }
+    if (!hasSegments || !videoTrackRow) return;
+
+    for (const segment of this.cutlistSegments || []) {
+      const startTime = Number(segment.globalStartTime) || 0;
+      const endTime = Number(segment.globalEndTime) || startTime;
+      const left = (startTime / duration) * 100;
+      const width = Math.max(0.25, ((endTime - startTime) / duration) * 100);
+      const cutId = segment.cutId || segment.cut?.id || '';
+      const labelText = segment.label || segment.cut?.label || `컷 ${segment.index + 1}`;
+
+      const block = document.createElement('button');
+      block.type = 'button';
+      block.className = `cutlist-segment-block${cutId === this.currentCutId ? ' current' : ''}`;
+      block.style.left = `${left}%`;
+      block.style.width = `${width}%`;
+      block.title = `${labelText} ${this._formatTime(startTime)} - ${this._formatTime(endTime)}`;
+      block.dataset.cutId = cutId;
+
+      const label = document.createElement('span');
+      label.className = 'cutlist-segment-label';
+      label.textContent = labelText;
+      block.appendChild(label);
+
+      let pointerDown = null;
+      block.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        pointerDown = { x: e.clientX, y: e.clientY };
+      });
+      block.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const moved = pointerDown
+          ? Math.abs(e.clientX - pointerDown.x) + Math.abs(e.clientY - pointerDown.y) > 4
+          : false;
+        pointerDown = null;
+        if (moved || !cutId) return;
+        this._emit('cutlist-seek', { cutId });
+      });
+
+      videoTrackRow.appendChild(block);
     }
   }
 
@@ -2120,8 +2205,9 @@ export class Timeline extends EventTarget {
 
     // 1b) 픽셀 기반 split — 줌 반응형. 포인트 마커 클러스터링과 동일한 20px 기준.
     const trackRect = this.commentTrack.getBoundingClientRect();
-    const pxPerFrame = this.totalFrames > 0 && trackRect.width > 0
-      ? trackRect.width / this.totalFrames
+    const totalFrames = this._getTimelineTotalFrames();
+    const pxPerFrame = totalFrames > 0 && trackRect.width > 0
+      ? trackRect.width / totalFrames
       : 0;
     const clusters = splitClustersByPixelGap(rawClusters, { pxPerFrame, minSpacingPx: 20 });
 
@@ -2188,6 +2274,10 @@ export class Timeline extends EventTarget {
   _createCommentRangeElement(comment) {
     const element = document.createElement('div');
     element.className = 'comment-range-item';
+    if (comment.aggregateCommentKey) {
+      element.classList.add('cutlist-comment-range');
+      element.dataset.cutlistAggregateCommentKey = comment.aggregateCommentKey;
+    }
     element.dataset.layerId = comment.layerId;
     element.dataset.markerId = comment.markerId;
 
@@ -2197,7 +2287,7 @@ export class Timeline extends EventTarget {
     }
 
     // 위치 및 크기 계산 (프레임 기반)
-    const totalFrames = this.totalFrames || 1;
+    const totalFrames = this._getTimelineTotalFrames() || 1;
     const leftPercent = (comment.startFrame / totalFrames) * 100;
     const widthPercent = ((comment.endFrame - comment.startFrame) / totalFrames) * 100;
 
@@ -2243,7 +2333,7 @@ export class Timeline extends EventTarget {
    * 접힌 클러스터의 배지 바 DOM 생성 (이벤트는 위임 핸들러가 처리)
    */
   _createClusterBadgeElement(cluster) {
-    const totalFrames = this.totalFrames || 1;
+    const totalFrames = this._getTimelineTotalFrames() || 1;
     const minStart = Math.min(...cluster.map(c => c.startFrame));
     const maxEnd = Math.max(...cluster.map(c => c.endFrame));
     const leftPercent = (minStart / totalFrames) * 100;
@@ -2269,7 +2359,7 @@ export class Timeline extends EventTarget {
    * 펼친 클러스터의 접기 배지 DOM (오른쪽 상단 고정, 이벤트는 위임)
    */
   _createClusterCloseBadge(cluster) {
-    const totalFrames = this.totalFrames || 1;
+    const totalFrames = this._getTimelineTotalFrames() || 1;
     const minStart = Math.min(...cluster.map(c => c.startFrame));
     const maxEnd = Math.max(...cluster.map(c => c.endFrame));
     const leftPercent = (minStart / totalFrames) * 100;
@@ -2307,7 +2397,7 @@ export class Timeline extends EventTarget {
     element.classList.toggle('resolved', comment.resolved);
 
     // 위치 및 크기 업데이트
-    const totalFrames = this.totalFrames || 1;
+    const totalFrames = this._getTimelineTotalFrames() || 1;
     const leftPercent = (comment.startFrame / totalFrames) * 100;
     const widthPercent = ((comment.endFrame - comment.startFrame) / totalFrames) * 100;
     const minWidthPercent = Math.max(widthPercent, 0.5);
