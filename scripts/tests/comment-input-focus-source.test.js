@@ -42,3 +42,12 @@ test('pending marker input stops pointer events from bubbling into video panning
   assert.match(pendingMarkerSource, /inputWrapper\.addEventListener\('pointerdown', \(e\) => e\.stopPropagation\(\)\);/);
   assert.match(pendingMarkerSource, /inputWrapper\.addEventListener\('mousedown', \(e\) => e\.stopPropagation\(\)\);/);
 });
+
+test('loading review comments refreshes the right sidebar comment list', () => {
+  const loadedHandlerMatch = appSource.match(/commentManager\.addEventListener\('loaded', \(\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(loadedHandlerMatch, 'commentManager loaded handler should exist');
+  const loadedHandlerSource = loadedHandlerMatch[1];
+
+  assert.match(loadedHandlerSource, /void refreshCommentRangesForCurrentMode\(\);/);
+  assert.match(loadedHandlerSource, /updateCommentList\(\);/);
+});

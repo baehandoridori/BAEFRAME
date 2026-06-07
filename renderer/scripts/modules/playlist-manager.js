@@ -211,13 +211,20 @@ export class PlaylistManager {
       this.currentIndex = this.currentPlaylist.items.length > 0 ? 0 : -1;
       this.isModified = false;
 
+      const repairedBframeCount = await this._repairMissingBframePaths();
+
       // 썸네일 경로 검증 및 재생성
       await this._validateThumbnails();
+
+      if (repairedBframeCount > 0) {
+        await this.save(filePath);
+      }
 
       await this.onPlaylistLoaded?.(this.currentPlaylist);
       log.info('재생목록 로드 완료', {
         name: data.name,
-        itemCount: data.items.length
+        itemCount: data.items.length,
+        repairedBframeCount
       });
 
       return this.currentPlaylist;
@@ -551,7 +558,11 @@ export class PlaylistManager {
   /**
    * 개별 아이템의 피드백 완료율 계산
    */
-  async getItemProgress(bframePath) {
+  async getItemProgress(itemOrBframePath) {
+    const bframePath = typeof itemOrBframePath === 'object' && itemOrBframePath !== null
+      ? await this.ensureItemBframePath(itemOrBframePath)
+      : itemOrBframePath;
+
     if (!bframePath) {
       return { total: 0, resolved: 0, percent: 0, hasData: false };
     }
@@ -599,7 +610,7 @@ export class PlaylistManager {
     let resolvedMarkers = 0;
 
     for (const item of this.currentPlaylist.items) {
-      const progress = await this.getItemProgress(item.bframePath);
+      const progress = await this.getItemProgress(item);
       totalMarkers += progress.total;
       resolvedMarkers += progress.resolved;
     }
@@ -704,6 +715,59 @@ export class PlaylistManager {
     } catch {
       return '';
     }
+  }
+
+  async ensureItemBframePath(item, options = {}) {
+    if (!item?.videoPath) return '';
+
+    const savedPath = String(item.bframePath || '').trim();
+    if (savedPath) {
+      try {
+        if (await window.electronAPI.fileExists(savedPath)) {
+          return savedPath;
+        }
+      } catch {
+        return savedPath;
+      }
+    }
+
+    const inferredPath = await this._findBframePath(item.videoPath);
+    if (!inferredPath) {
+      return savedPath;
+    }
+
+    if (item.bframePath !== inferredPath) {
+      item.bframePath = inferredPath;
+      if (options.markModified !== false) {
+        this.isModified = true;
+      }
+      if (options.notify === true) {
+        this.onPlaylistModified?.();
+      }
+    }
+
+    return item.bframePath || '';
+  }
+
+  async _repairMissingBframePaths() {
+    if (!this.currentPlaylist?.items) return 0;
+
+    let repairedCount = 0;
+    for (const item of this.currentPlaylist.items) {
+      const previousPath = item.bframePath || '';
+      const nextPath = await this.ensureItemBframePath(item, {
+        markModified: false,
+        notify: false
+      });
+      if (nextPath && nextPath !== previousPath) {
+        repairedCount++;
+      }
+    }
+
+    if (repairedCount > 0) {
+      this.isModified = true;
+    }
+    return repairedCount;
   }
 
   /**

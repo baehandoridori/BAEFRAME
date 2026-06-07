@@ -23,6 +23,7 @@ import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
+import { resizeClusterMembersByEdge } from './modules/comment-cluster.js';
 import { getCutlistManager } from './modules/cutlist-manager.js';
 import { findCurrentCut, mapGlobalTimeToCut } from './modules/cutlist-core.js';
 import {
@@ -112,6 +113,7 @@ async function initApp() {
     timelineSection: document.getElementById('timelineSection'),
     zoomSlider: document.getElementById('zoomSlider'),
     zoomDisplay: document.getElementById('zoomDisplay'),
+    toggleCommentTimelineRanges: document.getElementById('toggleCommentTimelineRanges'),
     playheadLine: document.getElementById('playheadLine'),
     playheadHandle: document.getElementById('playheadHandle'),
     videoTrackClip: document.getElementById('videoTrackClip'),
@@ -3330,6 +3332,10 @@ async function initApp() {
   let commentDragState = null;
   let commentJustDragged = false; // 드래그 직후 click 차단용 1-tick 플래그
   let commentInteractionsBound = false; // 위임 리스너 1회 바인딩 가드
+  let ctrlCommentResizeKeyDown = false;
+  let ctrlCommentResizeCandidate = null;
+  const CTRL_COMMENT_RESIZE_MIN_HIT_WIDTH = 72;
+  const CTRL_COMMENT_RESIZE_VERTICAL_PAD = 10;
 
   // 클러스터 호버 툴팁 상태
   let clusterTooltipEl = null;
@@ -3524,6 +3530,258 @@ async function initApp() {
     renderCommentRanges();
   }
 
+  function getEditableClusterMembers(clusterBadge) {
+    const key = clusterBadge?.dataset.clusterKey;
+    if (!key) return [];
+    return key.split('|')
+      .map(markerId => commentManager.getMarker(markerId))
+      .filter(Boolean);
+  }
+
+  function getResizeEdgeFromRectHalf(rect, clientX) {
+    return clientX <= rect.left + rect.width / 2 ? 'left' : 'right';
+  }
+
+  function getResizeEdgeFromElementHalf(element, e) {
+    return getResizeEdgeFromRectHalf(element.getBoundingClientRect(), e.clientX);
+  }
+
+  function getCtrlCommentResizeHitRect(rect) {
+    const extraX = Math.max(0, (CTRL_COMMENT_RESIZE_MIN_HIT_WIDTH - rect.width) / 2);
+    return {
+      left: rect.left - extraX,
+      right: rect.right + extraX,
+      top: rect.top - CTRL_COMMENT_RESIZE_VERTICAL_PAD,
+      bottom: rect.bottom + CTRL_COMMENT_RESIZE_VERTICAL_PAD
+    };
+  }
+
+  function isPointInClientRect(rect, clientX, clientY) {
+    return clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom;
+  }
+
+  function findCtrlCommentResizeTarget(e) {
+    if (!commentTrack) return null;
+    const candidates = Array.from(
+      commentTrack.querySelectorAll('.comment-range-item, .comment-cluster-badge')
+    );
+    let best = null;
+
+    for (const element of candidates) {
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+
+      const hitRect = getCtrlCommentResizeHitRect(rect);
+      if (!isPointInClientRect(hitRect, e.clientX, e.clientY)) continue;
+
+      const centerY = rect.top + rect.height / 2;
+      const overflowX = Math.max(rect.left - e.clientX, e.clientX - rect.right, 0);
+      const score = Math.abs(e.clientY - centerY) * 2 + overflowX;
+      if (!best || score < best.score) {
+        best = {
+          element,
+          edge: getResizeEdgeFromRectHalf(rect, e.clientX),
+          score
+        };
+      }
+    }
+
+    return best;
+  }
+
+  function clearCtrlCommentResizeCandidate() {
+    if (ctrlCommentResizeCandidate?.element) {
+      ctrlCommentResizeCandidate.element.classList.remove(
+        'ctrl-resize-candidate',
+        'ctrl-resize-left',
+        'ctrl-resize-right'
+      );
+    }
+    ctrlCommentResizeCandidate = null;
+    commentTrack?.classList.remove('ctrl-resize-active');
+  }
+
+  function setCtrlCommentResizeCandidate(target) {
+    if (
+      ctrlCommentResizeCandidate?.element === target?.element &&
+      ctrlCommentResizeCandidate?.edge === target?.edge
+    ) {
+      return;
+    }
+
+    clearCtrlCommentResizeCandidate();
+    if (!target?.element) return;
+
+    target.element.classList.add('ctrl-resize-candidate', `ctrl-resize-${target.edge}`);
+    ctrlCommentResizeCandidate = target;
+    commentTrack?.classList.add('ctrl-resize-active');
+  }
+
+  function updateCtrlCommentResizeCandidate(e) {
+    if (commentDragState || (!e.ctrlKey && !ctrlCommentResizeKeyDown)) {
+      clearCtrlCommentResizeCandidate();
+      return;
+    }
+
+    const target = findCtrlCommentResizeTarget(e);
+    setCtrlCommentResizeCandidate(target);
+  }
+
+  function getClusterResizeEdgeFromEvent(clusterBadge, e) {
+    const clusterHandle = e.target.closest('.comment-cluster-handle');
+    if (clusterHandle?.dataset.handle) {
+      return clusterHandle.dataset.handle;
+    }
+
+    return getResizeEdgeFromElementHalf(clusterBadge, e);
+  }
+
+  function beginCommentRangeResize(item, marker, handle, e) {
+    const markerId = item.dataset.markerId;
+    const layerId = item.dataset.layerId;
+    e.preventDefault();
+    e.stopPropagation();
+    clearCtrlCommentResizeCandidate();
+    commentDragState = {
+      layerId,
+      markerId,
+      handle,
+      startX: e.clientX,
+      startFrame: marker.startFrame,
+      endFrame: marker.endFrame,
+      duration: marker.endFrame - marker.startFrame,
+      originalStartFrame: marker.startFrame,
+      originalEndFrame: marker.endFrame
+    };
+    item.classList.add('dragging');
+    document.body.style.cursor = 'ew-resize';
+  }
+
+  function beginCommentRangeMove(item, marker, e) {
+    const markerId = item.dataset.markerId;
+    const layerId = item.dataset.layerId;
+    e.preventDefault();
+    commentDragState = {
+      layerId,
+      markerId,
+      handle: 'move',
+      startX: e.clientX,
+      startFrame: marker.startFrame,
+      endFrame: marker.endFrame,
+      duration: marker.endFrame - marker.startFrame,
+      originalStartFrame: marker.startFrame,
+      originalEndFrame: marker.endFrame
+    };
+    item.classList.add('dragging');
+    document.body.style.cursor = 'grabbing';
+  }
+
+  function beginCommentClusterResize(clusterBadge, edge, e) {
+    const members = getEditableClusterMembers(clusterBadge);
+    if (members.length === 0) return false;
+
+    if (!members.every(marker => commentManager.canEdit(marker))) {
+      showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
+      return false;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    hideClusterTooltip();
+    cancelClusterTooltip();
+    clearCtrlCommentResizeCandidate();
+
+    commentDragState = {
+      type: 'cluster',
+      clusterKey: clusterBadge.dataset.clusterKey,
+      handle: edge,
+      startX: e.clientX,
+      members: members.map(marker => ({
+        layerId: marker.layerId,
+        markerId: marker.id,
+        startFrame: marker.startFrame,
+        endFrame: marker.endFrame
+      })),
+      originalMembers: members.map(marker => ({
+        layerId: marker.layerId,
+        markerId: marker.id,
+        startFrame: marker.startFrame,
+        endFrame: marker.endFrame
+      }))
+    };
+
+    clusterBadge.classList.add('dragging');
+    document.body.style.cursor = 'ew-resize';
+    return true;
+  }
+
+  function applyCommentClusterResize(e) {
+    const { handle, startX, members } = commentDragState;
+    const trackRect = commentTrack.getBoundingClientRect();
+    const totalFrames = timeline.totalFrames || 1;
+    const deltaX = e.clientX - startX;
+    const deltaFrames = Math.round((deltaX / trackRect.width) * totalFrames);
+    const { updates } = resizeClusterMembersByEdge(members, {
+      edge: handle,
+      deltaFrames,
+      totalFrames
+    });
+
+    for (const update of updates) {
+      commentManager.updateMarker(update.markerId, {
+        startFrame: update.startFrame,
+        endFrame: update.endFrame
+      });
+    }
+    renderCommentRanges();
+  }
+
+  function finishCommentClusterResize(dragState) {
+    const nextMembers = dragState.originalMembers.map(original => {
+      const marker = commentManager.getMarker(original.markerId);
+      return {
+        ...original,
+        startFrame: marker?.startFrame ?? original.startFrame,
+        endFrame: marker?.endFrame ?? original.endFrame
+      };
+    });
+
+    const changed = nextMembers.some((next, index) =>
+      next.startFrame !== dragState.originalMembers[index].startFrame ||
+      next.endFrame !== dragState.originalMembers[index].endFrame
+    );
+
+    if (!changed) return;
+
+    pushUndo({
+      type: 'comment-cluster-range',
+      data: { clusterKey: dragState.clusterKey },
+      undo: () => {
+        for (const original of dragState.originalMembers) {
+          commentManager.updateMarker(original.markerId, {
+            startFrame: original.startFrame,
+            endFrame: original.endFrame
+          });
+        }
+        renderCommentRanges();
+        reviewDataManager.save();
+      },
+      redo: () => {
+        for (const next of nextMembers) {
+          commentManager.updateMarker(next.markerId, {
+            startFrame: next.startFrame,
+            endFrame: next.endFrame
+          });
+        }
+        renderCommentRanges();
+        reviewDataManager.save();
+      }
+    });
+  }
+
   // 댓글 범위 상호작용 설정 — commentTrack 1곳에 이벤트 위임 (1회만 바인딩)
   // 위임으로 전환한 이유: PR #112 이후 클러스터 펼침 시 .comment-range-item이 재생성되는데
   // 요소별 바인딩 방식은 재렌더 후 이벤트가 비어 편집 regression이 발생했다.
@@ -3591,15 +3849,40 @@ async function initApp() {
         return;
       }
 
-      // 2) 클러스터 배지 → 펼치기 토글
+      // 2) 클러스터 배지 → Ctrl/핸들은 그룹 리사이즈, 일반 클릭은 펼치기 토글
+      const clusterHandle = e.target.closest('.comment-cluster-handle');
       const clusterBadge = e.target.closest('.comment-cluster-badge');
       if (clusterBadge) {
         e.preventDefault();
         e.stopPropagation();
+        if (e.ctrlKey || clusterHandle) {
+          const edge = getClusterResizeEdgeFromEvent(clusterBadge, e);
+          beginCommentClusterResize(clusterBadge, edge, e);
+          return;
+        }
         const key = clusterBadge.dataset.clusterKey;
         timeline.expandedClusterId = (timeline.expandedClusterId === key) ? null : key;
         timeline.renderCommentRanges(timeline._lastComments || []);
         return;
+      }
+
+      if (e.ctrlKey) {
+        const ctrlTarget = findCtrlCommentResizeTarget(e);
+        if (ctrlTarget) {
+          if (ctrlTarget.element.classList.contains('comment-cluster-badge')) {
+            beginCommentClusterResize(ctrlTarget.element, ctrlTarget.edge, e);
+            return;
+          }
+
+          const marker = commentManager.getMarker(ctrlTarget.element.dataset.markerId);
+          if (!marker) return;
+          if (!commentManager.canEdit(marker)) {
+            showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
+            return;
+          }
+          beginCommentRangeResize(ctrlTarget.element, marker, ctrlTarget.edge, e);
+          return;
+        }
       }
 
       // 3) 핸들 mousedown → 리사이즈 시작
@@ -3608,28 +3891,13 @@ async function initApp() {
         const item = handle.closest('.comment-range-item');
         if (!item) return;
         const markerId = item.dataset.markerId;
-        const layerId = item.dataset.layerId;
         const marker = commentManager.getMarker(markerId);
         if (!marker) return;
         if (!commentManager.canEdit(marker)) {
           showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
           return;
         }
-        e.preventDefault();
-        e.stopPropagation();
-        commentDragState = {
-          layerId,
-          markerId,
-          handle: handle.dataset.handle, // 'left' or 'right'
-          startX: e.clientX,
-          startFrame: marker.startFrame,
-          endFrame: marker.endFrame,
-          duration: marker.endFrame - marker.startFrame,
-          originalStartFrame: marker.startFrame,
-          originalEndFrame: marker.endFrame
-        };
-        item.classList.add('dragging');
-        document.body.style.cursor = 'ew-resize';
+        beginCommentRangeResize(item, marker, handle.dataset.handle, e);
         return;
       }
 
@@ -3637,7 +3905,6 @@ async function initApp() {
       const item = e.target.closest('.comment-range-item');
       if (item) {
         const markerId = item.dataset.markerId;
-        const layerId = item.dataset.layerId;
         const marker = commentManager.getMarker(markerId);
         if (!marker) return;
         if (!commentManager.canEdit(marker)) {
@@ -3645,19 +3912,13 @@ async function initApp() {
           return;
         }
         e.preventDefault();
-        commentDragState = {
-          layerId,
-          markerId,
-          handle: 'move',
-          startX: e.clientX,
-          startFrame: marker.startFrame,
-          endFrame: marker.endFrame,
-          duration: marker.endFrame - marker.startFrame,
-          originalStartFrame: marker.startFrame,
-          originalEndFrame: marker.endFrame
-        };
-        item.classList.add('dragging');
-        document.body.style.cursor = 'grabbing';
+
+        if (e.ctrlKey) {
+          beginCommentRangeResize(item, marker, getResizeEdgeFromElementHalf(item, e), e);
+          return;
+        }
+
+        beginCommentRangeMove(item, marker, e);
       }
     });
 
@@ -3680,6 +3941,9 @@ async function initApp() {
       cancelClusterTooltip();
       hideClusterTooltip();
     });
+
+    commentTrack.addEventListener('mousemove', updateCtrlCommentResizeCandidate);
+    commentTrack.addEventListener('mouseleave', clearCtrlCommentResizeCandidate);
   }
 
   function cancelClusterTooltip() {
@@ -3761,9 +4025,30 @@ async function initApp() {
     tooltip.style.left = `${left}px`;
   }
 
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Control') return;
+    ctrlCommentResizeKeyDown = true;
+  });
+
+  document.addEventListener('keyup', (e) => {
+    if (e.key !== 'Control') return;
+    ctrlCommentResizeKeyDown = false;
+    clearCtrlCommentResizeCandidate();
+  });
+
+  window.addEventListener('blur', () => {
+    ctrlCommentResizeKeyDown = false;
+    clearCtrlCommentResizeCandidate();
+  });
+
   // 댓글 드래그 처리 (mousemove)
   document.addEventListener('mousemove', (e) => {
     if (!commentDragState) return;
+
+    if (commentDragState.type === 'cluster') {
+      applyCommentClusterResize(e);
+      return;
+    }
 
     const { layerId, markerId, handle, startX, startFrame, endFrame, duration } = commentDragState;
     const trackRect = commentTrack.getBoundingClientRect();
@@ -3833,6 +4118,21 @@ async function initApp() {
   // 댓글 드래그 종료
   document.addEventListener('mouseup', () => {
     if (commentDragState) {
+      if (commentDragState.type === 'cluster') {
+        const draggingCluster = commentTrack.querySelector(
+          `.comment-cluster-badge[data-cluster-key="${commentDragState.clusterKey}"]`
+        );
+        draggingCluster?.classList.remove('dragging');
+        finishCommentClusterResize(commentDragState);
+        commentDragState = null;
+        document.body.style.cursor = '';
+        clearCtrlCommentResizeCandidate();
+        commentJustDragged = true;
+        setTimeout(() => { commentJustDragged = false; }, 50);
+        reviewDataManager.save();
+        return;
+      }
+
       const { layerId, markerId, originalStartFrame, originalEndFrame } = commentDragState;
 
       const item = commentTrack.querySelector(
@@ -3875,6 +4175,7 @@ async function initApp() {
 
       commentDragState = null;
       document.body.style.cursor = '';
+      clearCtrlCommentResizeCandidate();
 
       // 드래그 직후 click 이벤트 차단 (클릭으로 오인한 접힘/선택 방지)
       commentJustDragged = true;
@@ -3900,6 +4201,7 @@ async function initApp() {
 
   commentManager.addEventListener('loaded', () => {
     void refreshCommentRangesForCurrentMode();
+    updateCommentList();
   });
 
   // ====== 비디오 줌/패닝 ======
@@ -8361,6 +8663,22 @@ async function initApp() {
     });
   }
 
+  function _syncCommentTimelineRangesToggleUI(show) {
+    if (elements.toggleCommentTimelineRanges) {
+      elements.toggleCommentTimelineRanges.checked = show;
+    }
+  }
+
+  const initCommentTimelineRangesVisible = userSettings.getShowCommentTimelineRanges();
+  timeline.setCommentRangesVisible(initCommentTimelineRangesVisible);
+  _syncCommentTimelineRangesToggleUI(initCommentTimelineRangesVisible);
+
+  elements.toggleCommentTimelineRanges?.addEventListener('change', (e) => {
+    const show = e.target.checked;
+    userSettings.setShowCommentTimelineRanges(show);
+    timeline.setCommentRangesVisible(show);
+  });
+
   // ====== 사용자 설정 모달 ======
   const userSettingsModal = document.getElementById('userSettingsModal');
   const userNameInput = document.getElementById('userNameInput');
@@ -11707,9 +12025,10 @@ async function initApp() {
 
     for (const segment of segments) {
       const item = items[segment.index];
-      if (!item?.bframePath) continue;
+      const bframePath = await playlistManager.ensureItemBframePath(item);
+      if (!bframePath) continue;
       try {
-        const bframeData = await window.electronAPI.loadReview(item.bframePath);
+        const bframeData = await window.electronAPI.loadReview(bframePath);
         if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
         if (!bframeData) continue;
         aggregateRanges.push(...extractPlaylistCommentRanges({
@@ -13420,7 +13739,7 @@ async function initApp() {
     const items = playlistManager.getItems();
     const progressById = new Map(await Promise.all(items.map(async item => [
       item.id,
-      await playlistManager.getItemProgress(item.bframePath)
+      await playlistManager.getItemProgress(item)
     ])));
 
     for (let i = 0; i < items.length; i++) {
@@ -13520,8 +13839,8 @@ async function initApp() {
     if (currentIndex < 0 || currentIndex >= items.length) return;
 
     const item = items[currentIndex];
-    // bframePath가 전달되면 사용, 아니면 아이템의 bframePath 사용
-    const pathToUse = bframePath || item.bframePath;
+    // bframePath가 전달되면 사용, 아니면 아이템에서 영상 옆 .bframe까지 복구
+    const pathToUse = bframePath || item;
     const progress = await playlistManager.getItemProgress(pathToUse);
 
     // 현재 아이템의 DOM 요소 찾기
