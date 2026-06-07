@@ -190,6 +190,8 @@ export class UserSettings extends EventTarget {
       showRemoteCursors: true,
       // 타임라인 프레임 격자 표시 여부
       showFrameGrid: true,
+      // 타임라인 댓글 지속시간 구간 표시 여부
+      showCommentTimelineRanges: true,
       // 100% 이하 줌에서 영상을 중앙에 고정할지 여부
       videoCenterLocked: true,
       // 이 PC에서 마지막으로 사용한 지우개 방식
@@ -569,6 +571,21 @@ export class UserSettings extends EventTarget {
     // 향후 외부에서 설정 변경을 감지해야 할 경우를 위한 hook
     this._emit('showFrameGridChanged', { show: this.settings.showFrameGrid });
     log.info('프레임 격자 설정 변경됨', { show });
+  }
+
+  getShowCommentTimelineRanges() {
+    return this.settings.showCommentTimelineRanges !== false;
+  }
+
+  setShowCommentTimelineRanges(show) {
+    this.settings.showCommentTimelineRanges = !!show;
+    this._save();
+    this._emit('showCommentTimelineRangesChanged', {
+      show: this.settings.showCommentTimelineRanges
+    });
+    log.info('댓글 구간 타임라인 표시 설정 변경됨', {
+      show: this.settings.showCommentTimelineRanges
+    });
   }
 
   getShowRemoteCursors() {

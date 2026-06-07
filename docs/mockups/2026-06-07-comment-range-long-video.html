@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BAEFRAME 긴 영상 댓글 구간 목업</title>
+  <style>
+    :root {
+      --bg: #101214;
+      --panel: #181b1f;
+      --panel-2: #20242a;
+      --line: #333942;
+      --text: #edf1f5;
+      --muted: #9ba5b1;
+      --accent: #ffd000;
+      --blue: #4a9eff;
+      --green: #4ade80;
+      --orange: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Pretendard Variable", "Segoe UI", sans-serif;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: #15181c;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button,
+    label.toggle {
+      height: 30px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    button.active,
+    label.toggle.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(255, 208, 0, 0.11);
+    }
+
+    label.toggle input {
+      accent-color: var(--accent);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      min-height: 0;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-rows: 1fr 184px;
+      min-width: 0;
+    }
+
+    .viewer {
+      display: grid;
+      place-items: center;
+      min-height: 260px;
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        #0d0f12;
+      background-size: 48px 48px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .viewer-frame {
+      width: min(760px, 82%);
+      aspect-ratio: 16 / 9;
+      border: 1px solid #39414c;
+      background: linear-gradient(135deg, #161b22, #2a313a);
+      display: grid;
+      place-items: center;
+      color: #cfd6df;
+      font-size: 13px;
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr);
+      grid-template-rows: 36px 36px 44px 44px;
+      background: var(--panel);
+      border-top: 1px solid #242a31;
+    }
+
+    .timeline-title,
+    .track-label {
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .ruler,
+    .track {
+      position: relative;
+      border-bottom: 1px solid var(--line);
+      overflow: visible;
+    }
+
+    .ruler {
+      background: #15181c;
+    }
+
+    .tick {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .tick span {
+      position: absolute;
+      top: 10px;
+      left: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .video-strip {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 8px;
+      height: 20px;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #29313b, #364150);
+      border: 1px solid #465160;
+    }
+
+    .comment-track {
+      height: 44px;
+      cursor: default;
+    }
+
+    .comment-range-item,
+    .comment-cluster-badge {
+      position: absolute;
+      top: 12px;
+      height: 20px;
+      border-radius: 4px;
+      border-left: 3px solid var(--blue);
+      border-right: 3px solid var(--blue);
+      background: rgba(74, 158, 255, 0.28);
+      overflow: hidden;
+      min-width: 2px;
+    }
+
+    .comment-range-item.resolved {
+      border-color: var(--green);
+      background: rgba(74, 222, 128, 0.23);
+    }
+
+    .comment-cluster-badge {
+      display: grid;
+      place-items: center;
+      min-width: 24px;
+      border: 0;
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: white;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .comment-range-item.ctrl-resize-candidate,
+    .comment-cluster-badge.ctrl-resize-candidate {
+      overflow: visible;
+      z-index: 20;
+      cursor: ew-resize;
+    }
+
+    .comment-range-item.ctrl-resize-candidate::before,
+    .comment-cluster-badge.ctrl-resize-candidate::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: max(72px, calc(100% + 16px));
+      height: calc(100% + 14px);
+      transform: translate(-50%, -50%);
+      border: 1px solid rgba(255, 208, 0, 0.82);
+      border-radius: 8px;
+      background: rgba(255, 208, 0, 0.16);
+      box-shadow: 0 0 18px rgba(255, 208, 0, 0.34);
+      z-index: -1;
+    }
+
+    .comment-range-item.ctrl-resize-candidate::after,
+    .comment-cluster-badge.ctrl-resize-candidate::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      width: 8px;
+      height: calc(100% + 12px);
+      transform: translateY(-50%);
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 10px rgba(255, 208, 0, 0.72);
+    }
+
+    .comment-range-item.ctrl-resize-left::after,
+    .comment-cluster-badge.ctrl-resize-left::after {
+      left: -8px;
+    }
+
+    .comment-range-item.ctrl-resize-right::after,
+    .comment-cluster-badge.ctrl-resize-right::after {
+      right: -8px;
+    }
+
+    aside {
+      border-left: 1px solid var(--line);
+      background: #15181c;
+      min-width: 0;
+      display: grid;
+      grid-template-rows: 42px 1fr;
+    }
+
+    .side-title {
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .comment-list {
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .comment-row {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      background: var(--panel);
+    }
+
+    .comment-row strong {
+      display: block;
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .comment-row span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .readout {
+      color: var(--accent);
+      min-width: 190px;
+      font-size: 12px;
+      text-align: right;
+    }
+
+    @media (max-width: 900px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>BAEFRAME 긴 영상 댓글 구간 목업</h1>
+      <div class="controls">
+        <button class="duration-btn active" data-duration="300">5분 영상</button>
+        <button class="duration-btn" data-duration="600">10분 영상</button>
+        <label class="toggle" id="ctrlToggleLabel">
+          <input id="ctrlToggle" type="checkbox">
+          Ctrl 리사이즈 모드
+        </label>
+        <div class="readout" id="readout">긴 영상 댓글 구간</div>
+      </div>
+    </header>
+    <main>
+      <section class="workspace">
+        <div class="viewer">
+          <div class="viewer-frame">더미 영상 프레임</div>
+        </div>
+        <div class="timeline">
+          <div class="timeline-title">타임라인</div>
+          <div class="ruler" id="ruler"></div>
+          <div class="track-label">영상</div>
+          <div class="track"><div class="video-strip"></div></div>
+          <div class="track-label">댓글</div>
+          <div class="track comment-track" id="commentTrack"></div>
+          <div class="track-label">선택</div>
+          <div class="track" id="selectionTrack"></div>
+        </div>
+      </section>
+      <aside>
+        <div class="side-title">댓글 탭</div>
+        <div class="comment-list" id="commentList"></div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const data = {
+      300: [
+        { start: 12, end: 18, text: '초반 컷 타이밍 확인' },
+        { start: 83, end: 86, text: '3초짜리 짧은 댓글' },
+        { start: 142, end: 145, text: '배경 깜빡임' },
+        { start: 205, end: 216, text: '길게 잡힌 연출 코멘트' },
+        { start: 251, end: 253, text: '2초 댓글', resolved: true }
+      ],
+      600: [
+        { start: 24, end: 30, text: '10분 영상 초반 수정' },
+        { start: 188, end: 191, text: '작은 바 테스트' },
+        { start: 304, end: 307, text: '겹침 A' },
+        { start: 305, end: 310, text: '겹침 B', cluster: true },
+        { start: 486, end: 492, text: '후반부 짧은 댓글' },
+        { start: 574, end: 576, text: '마지막 2초', resolved: true }
+      ]
+    };
+
+    let duration = 300;
+    const track = document.getElementById('commentTrack');
+    const ruler = document.getElementById('ruler');
+    const list = document.getElementById('commentList');
+    const readout = document.getElementById('readout');
+    const ctrlToggle = document.getElementById('ctrlToggle');
+    const ctrlToggleLabel = document.getElementById('ctrlToggleLabel');
+
+    function formatTime(value) {
+      const m = Math.floor(value / 60);
+      const s = String(Math.floor(value % 60)).padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    function renderRuler() {
+      ruler.innerHTML = '';
+      const step = duration === 600 ? 120 : 60;
+      for (let t = 0; t <= duration; t += step) {
+        const tick = document.createElement('div');
+        tick.className = 'tick';
+        tick.style.left = `${(t / duration) * 100}%`;
+        const label = document.createElement('span');
+        label.textContent = formatTime(t);
+        tick.appendChild(label);
+        ruler.appendChild(tick);
+      }
+    }
+
+    function renderComments() {
+      track.innerHTML = '';
+      list.innerHTML = '';
+      data[duration].forEach((item, index) => {
+        const el = document.createElement('div');
+        el.className = item.cluster ? 'comment-cluster-badge' : 'comment-range-item';
+        if (item.resolved) el.classList.add('resolved');
+        el.dataset.index = String(index);
+        el.style.left = `${(item.start / duration) * 100}%`;
+        el.style.width = `${Math.max(((item.end - item.start) / duration) * 100, 0.24)}%`;
+        el.textContent = item.cluster ? '+2' : '';
+        track.appendChild(el);
+
+        const row = document.createElement('div');
+        row.className = 'comment-row';
+        row.innerHTML = `<strong>${item.text}</strong><span>${formatTime(item.start)} - ${formatTime(item.end)}</span>`;
+        list.appendChild(row);
+      });
+    }
+
+    function clearCandidate() {
+      document.querySelectorAll('.ctrl-resize-candidate').forEach(el => {
+        el.classList.remove('ctrl-resize-candidate', 'ctrl-resize-left', 'ctrl-resize-right');
+      });
+    }
+
+    function findCandidate(event) {
+      const items = [...track.querySelectorAll('.comment-range-item, .comment-cluster-badge')];
+      let best = null;
+      for (const el of items) {
+        const rect = el.getBoundingClientRect();
+        const extra = Math.max(0, (44 - rect.width) / 2);
+        const hit = {
+          left: rect.left - extra,
+          right: rect.right + extra,
+          top: rect.top - 10,
+          bottom: rect.bottom + 10
+        };
+        const inside = event.clientX >= hit.left && event.clientX <= hit.right &&
+          event.clientY >= hit.top && event.clientY <= hit.bottom;
+        if (!inside) continue;
+        const score = Math.abs(event.clientY - (rect.top + rect.height / 2)) +
+          Math.max(rect.left - event.clientX, event.clientX - rect.right, 0);
+        if (!best || score < best.score) {
+          best = {
+            el,
+            edge: event.clientX <= rect.left + rect.width / 2 ? 'left' : 'right',
+            score
+          };
+        }
+      }
+      return best;
+    }
+
+    function updateCandidate(event) {
+      if (!ctrlToggle.checked && !event.ctrlKey) {
+        clearCandidate();
+        readout.textContent = '긴 영상 댓글 구간';
+        return;
+      }
+      clearCandidate();
+      const target = findCandidate(event);
+      if (!target) {
+        readout.textContent = '후보 없음';
+        return;
+      }
+      target.el.classList.add('ctrl-resize-candidate', `ctrl-resize-${target.edge}`);
+      const item = data[duration][Number(target.el.dataset.index)];
+      readout.textContent = `${target.edge === 'left' ? '시작점' : '끝점'} 조절: ${formatTime(item.start)} - ${formatTime(item.end)}`;
+    }
+
+    document.querySelectorAll('.duration-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        duration = Number(btn.dataset.duration);
+        document.querySelectorAll('.duration-btn').forEach(b => b.classList.toggle('active', b === btn));
+        renderRuler();
+        renderComments();
+        readout.textContent = duration === 600 ? '10분 긴 영상' : '5분 긴 영상';
+      });
+    });
+
+    ctrlToggle.addEventListener('change', () => {
+      ctrlToggleLabel.classList.toggle('active', ctrlToggle.checked);
+      if (!ctrlToggle.checked) clearCandidate();
+    });
+
+    track.addEventListener('mousemove', updateCandidate);
+    track.addEventListener('mouseleave', () => {
+      clearCandidate();
+      readout.textContent = '긴 영상 댓글 구간';
+    });
+
+    renderRuler();
+    renderComments();
+  </script>
+</body>
+</html>

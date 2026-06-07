@@ -6,7 +6,7 @@
 import { createLogger } from '../logger.js';
 import { MARKER_COLORS } from './comment-manager.js';
 import { resolveFrameGridTier } from './frame-grid-tiers.js';
-import { findRangeClusters, assignLanes, clusterKey, splitClustersByPixelGap } from './comment-cluster.js';
+import { findRangeClusters, assignLanes, assignRenderLanes, clusterKey, splitClustersByPixelGap } from './comment-cluster.js';
 import { getTimelineFocalContentX, calculateAnchoredScrollLeft } from './timeline-zoom-core.js';
 import { formatPlaylistCommentLabel, formatPlaylistCommentTitle } from './playlist-comment-index.js';
 
@@ -48,6 +48,9 @@ export class Timeline extends EventTarget {
     // 클러스터 펼침/접힘 상태
     this.expandedClusterId = null;  // 현재 펼친 클러스터의 키 (markerId)
     this._lastComments = null;      // 펼치기/접기 재렌더용 캐시
+    this.commentRangesVisible = true;
+    this._lastPlaylistCommentRanges = null;
+    this._lastPlaylistCommentDuration = 0;
     this.playlistSegments = [];
     this.playlistDuration = 0;
     this.cutlistSegments = [];
@@ -1979,6 +1982,31 @@ export class Timeline extends EventTarget {
     // setupCommentRangeInteractions()에서 드래그 가드와 함께 위임 처리한다.
   }
 
+  setCommentRangesVisible(visible) {
+    this.commentRangesVisible = visible !== false;
+    if (!this.commentTrack) return;
+
+    if (!this.commentRangesVisible) {
+      this.commentTrack.style.display = 'none';
+      if (this.commentLayerHeader) {
+        this.commentLayerHeader.style.display = 'none';
+      }
+      return;
+    }
+
+    if (Array.isArray(this._lastPlaylistCommentRanges)) {
+      this.renderPlaylistCommentRanges(
+        this._lastPlaylistCommentRanges,
+        this._lastPlaylistCommentDuration
+      );
+      return;
+    }
+
+    if (Array.isArray(this._lastComments)) {
+      this.renderCommentRanges(this._lastComments);
+    }
+  }
+
   setPlaylistTimeline(segments, totalDuration) {
     this.playlistSegments = segments || [];
     this.playlistDuration = totalDuration || 0;
@@ -2121,12 +2149,22 @@ export class Timeline extends EventTarget {
 
   renderPlaylistCommentRanges(ranges, totalDuration) {
     if (!this.commentTrack) return;
+    this._lastPlaylistCommentRanges = ranges || [];
+    this._lastPlaylistCommentDuration = totalDuration || this.playlistDuration || this.duration || 0;
     this.commentTrack.querySelectorAll(
       '.playlist-comment-range, .comment-range-item, .comment-cluster-badge, .comment-cluster-close-badge'
     ).forEach(el => el.remove());
     this._lastComments = null;
     this.expandedClusterId = null;
-    const duration = totalDuration || this.playlistDuration || this.duration;
+    if (!this.commentRangesVisible) {
+      this.commentTrack.style.display = 'none';
+      if (this.commentLayerHeader) {
+        this.commentLayerHeader.style.display = 'none';
+      }
+      return;
+    }
+
+    const duration = this._lastPlaylistCommentDuration;
     if (!duration) {
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
@@ -2179,9 +2217,19 @@ export class Timeline extends EventTarget {
 
     // 데이터 캐시 (펼침/접힘 재렌더용)
     this._lastComments = comments;
+    this._lastPlaylistCommentRanges = null;
+    this._lastPlaylistCommentDuration = 0;
 
     // 기존 댓글 제거
     this.commentTrack.innerHTML = '';
+
+    if (!this.commentRangesVisible) {
+      this.commentTrack.style.display = 'none';
+      if (this.commentLayerHeader) {
+        this.commentLayerHeader.style.display = 'none';
+      }
+      return;
+    }
 
     // 댓글이 없으면 트랙 및 레이어 헤더 숨김 (기존 로직 유지)
     if (!comments || comments.length === 0) {
@@ -2221,17 +2269,28 @@ export class Timeline extends EventTarget {
       }
     }
 
-    // 3) 최대 레인 수 계산 — 펼친 클러스터가 있으면 그 클러스터의 레인 수
-    //    assignLanes 호출 결과(_lane)를 여기서 메모이제이션하여 step 5에서 재호출하지 않음
-    let maxLanes = 1;
+    // 3) 렌더 단위 레인 계산 — 접힌 클러스터 배지와 단일 댓글이 서로 덮이지 않게 배치
     const expandedClusters = new Set();
-    clusters.forEach(cluster => {
+    const renderItems = clusters.map(cluster => {
+      const startFrame = Math.min(...cluster.map(c => c.startFrame));
+      const endFrame = Math.max(...cluster.map(c => c.endFrame));
+      const item = {
+        cluster,
+        startFrame,
+        endFrame,
+        laneSpan: 1
+      };
+
       if (clusterKey(cluster) === this.expandedClusterId && cluster.length > 1) {
         const { maxLane } = assignLanes(cluster); // _lane이 여기서 1회 설정됨
-        maxLanes = Math.max(maxLanes, maxLane);
+        item.laneSpan = maxLane;
         expandedClusters.add(cluster);
       }
+
+      return item;
     });
+    const { maxLane: maxRenderLane } = assignRenderLanes(renderItems);
+    const maxLanes = Math.max(1, maxRenderLane);
 
     // 4) 트랙 높이 동적 설정 (애니메이션)
     const baseHeight = 24;
@@ -2243,24 +2302,28 @@ export class Timeline extends EventTarget {
     this.commentTrack.style.height = `${targetHeight}px`;
 
     // 5) 각 클러스터 렌더
-    clusters.forEach(cluster => {
+    renderItems.forEach(item => {
+      const { cluster } = item;
+      const laneTop = 2 + item._lane * laneHeight;
       if (cluster.length === 1) {
         // 단일 댓글 (또는 split 후 단일 멤버로 쪼개진 조각)
         const el = this._createCommentRangeElement(cluster[0]);
-        el.style.top = '2px';
+        el.style.top = `${laneTop}px`;
         this.commentTrack.appendChild(el);
       } else if (expandedClusters.has(cluster)) {
         // 펼친 클러스터 — step 3에서 assignLanes가 이미 실행되어 _lane이 설정된 상태
         cluster.forEach(c => {
           const el = this._createCommentRangeElement(c);
-          el.style.top = `${2 + c._lane * laneHeight}px`;
+          el.style.top = `${laneTop + c._lane * laneHeight}px`;
           this.commentTrack.appendChild(el);
         });
         const closeBadge = this._createClusterCloseBadge(cluster);
+        closeBadge.style.top = `${laneTop - 22}px`;
         this.commentTrack.appendChild(closeBadge);
       } else {
         // 접힌 클러스터 — 배지
         const badge = this._createClusterBadgeElement(cluster);
+        badge.style.top = `${laneTop}px`;
         this.commentTrack.appendChild(badge);
       }
     });
@@ -2346,11 +2409,21 @@ export class Timeline extends EventTarget {
     el.style.width = `${Math.max(widthPercent, 3)}%`;
     el.style.top = '2px';
 
+    const leftHandle = document.createElement('span');
+    leftHandle.className = 'comment-cluster-handle comment-cluster-handle-left';
+    leftHandle.dataset.handle = 'left';
+    el.appendChild(leftHandle);
+
     // "+N" 숫자 강조 레이블만 표시 (세로 스트라이프/라벨 제거)
     const label = document.createElement('span');
     label.className = 'comment-cluster-badge-label';
     label.textContent = `+${cluster.length}`;
     el.appendChild(label);
+
+    const rightHandle = document.createElement('span');
+    rightHandle.className = 'comment-cluster-handle comment-cluster-handle-right';
+    rightHandle.dataset.handle = 'right';
+    el.appendChild(rightHandle);
 
     return el;
   }

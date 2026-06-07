@@ -198,3 +198,51 @@ test('PlaylistManager.addItems는 같은 호출 안의 중복 경로를 제외�
   assert.equal(addedItems.length, 1);
   assert.deepEqual(manager.getItems().map(item => item.fileName), ['shot1.mp4']);
 });
+
+test('PlaylistManager.open은 비어 있는 bframePath를 영상 옆 .bframe으로 복구해 저장한다', async () => {
+  const savedPlaylists = [];
+  global.window = {
+    appState: { userName: 'tester', sessionId: 'session-1' },
+    electronAPI: {
+      readPlaylist: async () => ({
+        playlistVersion: '1.0',
+        id: 'playlist-old',
+        name: '오래된 재생목록',
+        items: [
+          {
+            id: 'item-1',
+            videoPath: 'C:\\video\\shot1.mp4',
+            bframePath: '',
+            fileName: 'shot1.mp4',
+            thumbnailPath: 'data:image/png;base64,stub',
+            order: 0,
+            addedAt: '2026-06-06T00:00:00.000Z'
+          }
+        ],
+        settings: {
+          floatingMode: false,
+          continuous: {
+            loop: false,
+            sortMode: 'fileName',
+            manualOrder: false
+          }
+        }
+      }),
+      fileExists: async filePath => filePath === 'C:\\video\\shot1.bframe',
+      writePlaylist: async (targetPath, playlist) => {
+        savedPlaylists.push({ targetPath, playlist: JSON.parse(JSON.stringify(playlist)) });
+      }
+    }
+  };
+
+  const { PlaylistManager } = await import('../../renderer/scripts/modules/playlist-manager.js');
+  const manager = new PlaylistManager();
+
+  await manager.open('C:\\video\\old.bplaylist');
+
+  assert.equal(manager.getItems()[0].bframePath, 'C:\\video\\shot1.bframe');
+  assert.equal(savedPlaylists.length, 1);
+  assert.equal(savedPlaylists[0].targetPath, 'C:\\video\\old.bplaylist');
+  assert.equal(savedPlaylists[0].playlist.items[0].bframePath, 'C:\\video\\shot1.bframe');
+  assert.equal(manager.isModified, false);
+});

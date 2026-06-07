@@ -64,6 +64,55 @@ export function assignLanes(cluster) {
 }
 
 /**
+ * 렌더 단위 레인 할당 — 접힌 클러스터 배지와 단일 댓글이 서로 덮이지 않도록 배치.
+ *
+ * laneSpan은 펼친 클러스터처럼 세로로 여러 줄을 차지하는 렌더 단위가 예약할 줄 수다.
+ * @param {Array<{startFrame: number, endFrame: number, laneSpan?: number}>} items
+ * @returns {{lanes: Array<number>, maxLane: number}}
+ */
+export function assignRenderLanes(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return { lanes: [], maxLane: 0 };
+  }
+
+  const sorted = [...items].sort((a, b) =>
+    a.startFrame - b.startFrame || a.endFrame - b.endFrame
+  );
+  const laneEnds = [];
+
+  for (const item of sorted) {
+    const startFrame = Number.isFinite(item.startFrame) ? item.startFrame : 0;
+    const endFrame = Number.isFinite(item.endFrame)
+      ? Math.max(startFrame, item.endFrame)
+      : startFrame;
+    const laneSpan = Math.max(
+      1,
+      Math.floor(Number.isFinite(item.laneSpan) ? item.laneSpan : 1)
+    );
+
+    let assigned = 0;
+    while (true) {
+      let fits = true;
+      for (let i = 0; i < laneSpan; i++) {
+        if ((laneEnds[assigned + i] ?? -Infinity) > startFrame) {
+          fits = false;
+          break;
+        }
+      }
+      if (fits) break;
+      assigned++;
+    }
+
+    for (let i = 0; i < laneSpan; i++) {
+      laneEnds[assigned + i] = endFrame;
+    }
+    item._lane = assigned;
+  }
+
+  return { lanes: laneEnds, maxLane: laneEnds.length };
+}
+
+/**
  * 클러스터 고유 식별자 — 클러스터 내 모든 markerId를 정렬해 조합.
  * 정렬 순서가 바뀌거나 단일 댓글 위치가 이동해도 클러스터 구성원이 같은 한 안정된 키 반환.
  * @param {Array} cluster
@@ -72,6 +121,68 @@ export function assignLanes(cluster) {
 export function clusterKey(cluster) {
   if (!cluster || cluster.length === 0) return null;
   return cluster.map(c => c.markerId).sort().join('|');
+}
+
+function getFiniteFrame(value, fallback = 0) {
+  const frame = Number(value);
+  return Number.isFinite(frame) ? frame : fallback;
+}
+
+function clampDelta(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * 접힌 댓글 클러스터의 한쪽 끝을 조절할 때 모든 멤버에 적용할 frame 업데이트 계산.
+ *
+ * 각 댓글의 길이는 최소 1프레임을 유지하며, 가능한 범위 안에서 모든 댓글에 같은 delta를 적용한다.
+ *
+ * @param {Array<{markerId: string, startFrame: number, endFrame: number}>} cluster
+ * @param {{edge: 'left'|'right', deltaFrames: number, totalFrames?: number}} opts
+ * @returns {{appliedDeltaFrames: number, updates: Array}}
+ */
+export function resizeClusterMembersByEdge(cluster, opts = {}) {
+  if (!Array.isArray(cluster) || cluster.length === 0) {
+    return { appliedDeltaFrames: 0, updates: [] };
+  }
+
+  const edge = opts.edge === 'right' ? 'right' : 'left';
+  const deltaFrames = Math.round(getFiniteFrame(opts.deltaFrames, 0));
+  const totalFrames = getFiniteFrame(opts.totalFrames, 0);
+  const normalized = cluster.map(item => {
+    const startFrame = getFiniteFrame(item.startFrame, 0);
+    const endFrame = Math.max(startFrame + 1, getFiniteFrame(item.endFrame, startFrame + 1));
+    return { ...item, startFrame, endFrame };
+  });
+
+  let appliedDeltaFrames;
+  if (edge === 'left') {
+    const minStart = Math.min(...normalized.map(item => item.startFrame));
+    const maxShrink = Math.min(...normalized.map(item => item.endFrame - item.startFrame - 1));
+    appliedDeltaFrames = clampDelta(deltaFrames, -minStart, maxShrink);
+  } else {
+    const maxEnd = Math.max(...normalized.map(item => item.endFrame));
+    const maxShrink = Math.min(...normalized.map(item => item.endFrame - item.startFrame - 1));
+    const maxGrow = totalFrames > 0 ? Math.max(0, totalFrames - maxEnd) : Number.POSITIVE_INFINITY;
+    appliedDeltaFrames = clampDelta(deltaFrames, -maxShrink, maxGrow);
+  }
+
+  const updates = normalized.map(item => {
+    if (edge === 'left') {
+      return {
+        ...item,
+        startFrame: item.startFrame + appliedDeltaFrames,
+        endFrame: item.endFrame
+      };
+    }
+    return {
+      ...item,
+      startFrame: item.startFrame,
+      endFrame: item.endFrame + appliedDeltaFrames
+    };
+  });
+
+  return { appliedDeltaFrames, updates };
 }
 
 /**

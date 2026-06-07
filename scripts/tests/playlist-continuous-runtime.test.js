@@ -47,7 +47,18 @@ test('continuous timeline updates ignore stale async completions', () => {
   assert.match(timelineUpdateSource, /const updateToken = \+\+playlistTimelineUpdateToken;/);
   assert.match(timelineUpdateSource, /playlistTimelineUpdateToken !== updateToken/);
   assert.match(timelineUpdateSource, /const metadata = await collectPlaylistMetadata\(items\);[\s\S]+playlistTimelineUpdateToken !== updateToken/);
-  assert.match(timelineUpdateSource, /const bframeData = await window\.electronAPI\.loadReview\(item\.bframePath\);[\s\S]+playlistTimelineUpdateToken !== updateToken/);
+  assert.match(timelineUpdateSource, /const bframePath = await playlistManager\.ensureItemBframePath\(item\);[\s\S]+const bframeData = await window\.electronAPI\.loadReview\(bframePath\);[\s\S]+playlistTimelineUpdateToken !== updateToken/);
+});
+
+test('continuous aggregate comments recover missing bframePath from the media path', () => {
+  const timelineUpdateMatch = appSource.match(/async function updatePlaylistContinuousTimeline\(\) \{([\s\S]*?)\n  \}\n\n  async function quickCheckPlaylistForContinuous/);
+  assert.ok(timelineUpdateMatch, 'updatePlaylistContinuousTimeline should exist');
+
+  const timelineUpdateSource = timelineUpdateMatch[1];
+  assert.match(timelineUpdateSource, /const bframePath = await playlistManager\.ensureItemBframePath\(item\);/);
+  assert.match(timelineUpdateSource, /if \(!bframePath\) continue;/);
+  assert.match(timelineUpdateSource, /window\.electronAPI\.loadReview\(bframePath\)/);
+  assert.doesNotMatch(timelineUpdateSource, /if \(!item\?\.bframePath\) continue;/);
 });
 
 test('aggregate comment clicks stop when playlist item load fails', () => {

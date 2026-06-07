@@ -2098,6 +2098,66 @@ body.app-fullscreen .video-comment-overlay-controls {
   gap: 16px;
 }
 
+.comment-timeline-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-default, #333);
+  border-radius: 4px;
+  color: var(--text-secondary, #aaa);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.comment-timeline-toggle:hover {
+  background: var(--bg-elevated, #222);
+  border-color: var(--accent-primary, #ffd000);
+  color: var(--text-primary, #fff);
+}
+
+.comment-timeline-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.comment-timeline-toggle-box {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: var(--bg-primary);
+  flex: 0 0 auto;
+}
+
+.comment-timeline-toggle input:checked + .comment-timeline-toggle-box {
+  background: var(--accent-primary, #ffd000);
+  border-color: var(--accent-primary, #ffd000);
+}
+
+.comment-timeline-toggle input:checked + .comment-timeline-toggle-box::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--bg-primary, #111);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.comment-timeline-toggle-label {
+  white-space: nowrap;
+}
+
 .zoom-control {
   display: flex;
   align-items: center;
@@ -3091,6 +3151,67 @@ body.app-fullscreen .video-comment-overlay-controls {
   opacity: 0.7;
 }
 
+.comment-range-item.ctrl-resize-candidate,
+.comment-cluster-badge.ctrl-resize-candidate {
+  overflow: visible;
+  z-index: 60;
+  cursor: ew-resize;
+  isolation: isolate;
+}
+
+.comment-range-item.ctrl-resize-candidate::before,
+.comment-cluster-badge.ctrl-resize-candidate::before {
+  --ctrl-resize-hit-width: 72px;
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(var(--ctrl-resize-hit-width), calc(100% + 16px));
+  height: calc(100% + 14px);
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 208, 0, 0.8);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(255, 208, 0, 0.22), rgba(255, 208, 0, 0.08));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 18px rgba(255, 208, 0, 0.35);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.comment-range-item.ctrl-resize-candidate::after,
+.comment-cluster-badge.ctrl-resize-candidate::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: calc(100% + 12px);
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: #ffd000;
+  box-shadow: 0 0 10px rgba(255, 208, 0, 0.75);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.comment-range-item.ctrl-resize-candidate .comment-handle,
+.comment-range-item.ctrl-resize-candidate .comment-range-text,
+.comment-cluster-badge.ctrl-resize-candidate .comment-cluster-badge-label {
+  position: relative;
+  z-index: 2;
+}
+
+.comment-range-item.ctrl-resize-left::after,
+.comment-cluster-badge.ctrl-resize-left::after {
+  left: -8px;
+}
+
+.comment-range-item.ctrl-resize-right::after,
+.comment-cluster-badge.ctrl-resize-right::after {
+  right: -8px;
+}
+
 /* 댓글 핸들 (드래그용) */
 .comment-handle {
   position: absolute;
@@ -3160,7 +3281,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 8px;
+  padding: 0 10px;
   color: #fff;
   overflow: hidden;
   white-space: nowrap;
@@ -3185,6 +3306,38 @@ body.app-fullscreen .video-comment-overlay-controls {
   font-variant-numeric: tabular-nums;
   user-select: none;
   pointer-events: none;
+  min-width: 22px;
+  text-align: center;
+}
+
+.comment-cluster-handle {
+  position: absolute;
+  top: 0;
+  width: 14px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+.comment-cluster-handle-left {
+  left: 0;
+}
+
+.comment-cluster-handle-right {
+  right: 0;
+}
+
+.comment-cluster-handle:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.comment-cluster-badge.dragging {
+  cursor: ew-resize;
+  filter: brightness(1.18);
+  box-shadow:
+    0 0 0 2px rgba(255, 207, 112, 0.5),
+    0 4px 12px rgba(245, 158, 11, 0.6),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
 
 /* 접기 배지 (펼친 상태) — position은 JS에서 left만 설정, right/width는 content-driven */
