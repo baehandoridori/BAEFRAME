@@ -8063,7 +8063,7 @@ async function initApp() {
    */
   async function handleKeydown(e) {
     const isPlayPauseShortcut = userSettings.matchShortcut('playPause', e);
-    if (isPlayPauseShortcut && !shouldHandlePlayPauseShortcutFromTarget(e.target)) return;
+    if (isPlayPauseShortcut && !shouldHandlePlayPauseShortcutFromTarget(e.target, e)) return;
 
     // pending 마커 입력 중이면 단축키 무시 (textarea 포커스 전에도 적용)
     if (commentManager.pendingMarker) return;
