@@ -53,6 +53,10 @@ import { getSlackNotifier } from './modules/slack-notifier.js';
 import { getRecentFilesManager } from './modules/recent-files-manager.js';
 import * as recentFilesView from './modules/recent-files-view.js';
 import { computeToastStackLayout, computeToastTimerPlan } from './modules/toast-stack-core.js';
+import {
+  shouldHandlePlayPauseShortcutFromTarget,
+  shouldIgnoreGlobalShortcutTarget
+} from './modules/keyboard-shortcut-targets.js';
 
 const log = createLogger('App');
 
@@ -8058,11 +8062,8 @@ async function initApp() {
    * 키보드 단축키 처리
    */
   async function handleKeydown(e) {
-    // 입력 필드에서는 단축키 무시
-    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-
-    // contenteditable 요소에서는 단축키 무시 (스레드 에디터 등)
-    if (e.target.isContentEditable) return;
+    const isPlayPauseShortcut = userSettings.matchShortcut('playPause', e);
+    if (isPlayPauseShortcut && !shouldHandlePlayPauseShortcutFromTarget(e.target)) return;
 
     // pending 마커 입력 중이면 단축키 무시 (textarea 포커스 전에도 적용)
     if (commentManager.pendingMarker) return;
@@ -8078,11 +8079,14 @@ async function initApp() {
     // ====== 공통 단축키 (사용자 설정 기반) ======
 
     // 재생/일시정지
-    if (userSettings.matchShortcut('playPause', e)) {
+    if (isPlayPauseShortcut) {
       e.preventDefault();
       handleUserPlayPauseToggle();
       return;
     }
+
+    // 폼 컨트롤에서는 Space 재생을 제외한 전역 단축키를 무시한다.
+    if (shouldIgnoreGlobalShortcutTarget(e.target)) return;
 
     // 댓글 모드
     if (userSettings.matchShortcut('commentMode', e)) {
