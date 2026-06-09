@@ -53,7 +53,8 @@ test('starting playback warms the next autoplay item for button and spacebar pla
 
   assert.match(appSource, /elements\.btnPlay\.addEventListener\('click', handleUserPlayPauseToggle\);/);
 
-  const shortcutHandler = appSource.match(/if \(userSettings\.matchShortcut\('playPause', e\)\) \{([\s\S]*?)\n      return;/);
+  assert.match(appSource, /const isPlayPauseShortcut = userSettings\.matchShortcut\('playPause', e\);/);
+  const shortcutHandler = appSource.match(/if \(isPlayPauseShortcut\) \{([\s\S]*?)\n      return;/);
   assert.ok(shortcutHandler, 'play/pause shortcut handler should exist');
   assert.match(shortcutHandler[1], /handleUserPlayPauseToggle\(\);/);
 });
