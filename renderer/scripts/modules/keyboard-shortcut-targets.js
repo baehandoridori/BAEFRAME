@@ -53,8 +53,15 @@ export function isTextEntryShortcutTarget(target) {
   return TEXT_ENTRY_INPUT_TYPES.has(getInputType(target));
 }
 
-export function shouldHandlePlayPauseShortcutFromTarget(target) {
-  return !isTextEntryShortcutTarget(target);
+export function shouldHandlePlayPauseShortcutFromTarget(target, event = null) {
+  if (isTextEntryShortcutTarget(target)) return false;
+
+  const tagName = getTagName(target);
+  if (tagName === 'INPUT' && event?.code && event.code !== 'Space') {
+    return false;
+  }
+
+  return true;
 }
 
 export function shouldIgnoreGlobalShortcutTarget(target) {
