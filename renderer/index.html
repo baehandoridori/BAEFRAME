@@ -713,18 +713,16 @@
         </div>
       </div>
 
-      <!-- Resizer (Horizontal) -->
-      <div class="resizer resizer-h" id="viewerResizer"></div>
-
       <!-- Playback Controls -->
       <div class="controls-bar">
         <!-- 전체화면 시크바 -->
         <div class="fullscreen-seekbar" id="fullscreenSeekbar">
           <div class="seekbar-track">
             <div class="seekbar-progress" id="seekbarProgress"></div>
-            <div class="seekbar-handle" id="seekbarHandle"></div>
           </div>
+          <div class="seekbar-handle" id="seekbarHandle"></div>
         </div>
+        <div class="playback-controls-scroll">
         <div class="playback-controls">
           <button class="control-btn" id="btnFirst" title="처음으로 (Home)">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
@@ -836,7 +834,11 @@
           </button>
           <input type="range" class="main-volume-slider" id="mainVolumeSlider" min="0" max="100" value="100" title="볼륨">
         </div>
+        </div>
       </div>
+
+      <!-- Timeline Height Resizer -->
+      <div class="resizer resizer-h" id="viewerResizer" title="타임라인 높이 조절"></div>
 
       <!-- Timeline -->
       <div class="timeline-section" id="timelineSection">

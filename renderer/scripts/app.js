@@ -304,6 +304,10 @@ async function initApp() {
     panStartY: 0,
     panInitialX: 0,
     panInitialY: 0,
+    isFullscreenScrubbing: false,
+    fullscreenScrubStartX: 0,
+    fullscreenScrubStartTime: 0,
+    fullscreenScrubDuration: 0,
     // 오디오 모드
     isAudioMode: false
   };
@@ -4359,6 +4363,12 @@ async function initApp() {
   // 비디오 패닝
   elements.videoWrapper?.addEventListener('mousedown', (e) => {
     if (getCommentEditableTarget(e.target)) return;
+
+    if (canStartFullscreenMiddleScrub(e)) {
+      startFullscreenMiddleScrub(e);
+      return;
+    }
+
     if (canPanVideo() && e.button === 0) {
       state.isPanningVideo = true;
       state.panStartX = e.clientX;
@@ -4370,7 +4380,18 @@ async function initApp() {
     }
   });
 
+  elements.videoWrapper?.addEventListener('auxclick', (e) => {
+    if (e.button === 1) {
+      e.preventDefault();
+    }
+  });
+
   document.addEventListener('mousemove', (e) => {
+    if (state.isFullscreenScrubbing) {
+      updateFullscreenMiddleScrub(e);
+      return;
+    }
+
     if (state.isPanningVideo) {
       const scale = state.videoZoom / 100;
       const dx = (e.clientX - state.panStartX) / scale;
@@ -4382,6 +4403,10 @@ async function initApp() {
   });
 
   document.addEventListener('mouseup', () => {
+    if (state.isFullscreenScrubbing) {
+      finishFullscreenMiddleScrub();
+    }
+
     if (state.isPanningVideo) {
       state.isPanningVideo = false;
       elements.videoWrapper?.classList.remove('panning');
@@ -5560,6 +5585,7 @@ async function initApp() {
    */
   let fullscreenMouseHandler = null;
   let fullscreenTimecodeOverlay = null;
+  let fullscreenScrubOverlay = null;
 
   async function toggleFullscreen() {
     // Electron 시스템 전체화면 API 호출
@@ -5605,6 +5631,8 @@ async function initApp() {
       };
       document.addEventListener('mousemove', fullscreenMouseHandler);
     } else {
+      finishFullscreenMiddleScrub();
+
       // 전체화면 해제 시 이벤트 리스너 제거
       if (fullscreenMouseHandler) {
         document.removeEventListener('mousemove', fullscreenMouseHandler);
@@ -5662,8 +5690,95 @@ async function initApp() {
     seekbarHandle.style.left = `${percent}%`;
   }
 
-  // 전체화면 시크바 이벤트 설정
   const fullscreenSeekbar = document.getElementById('fullscreenSeekbar');
+
+  function setFullscreenSeekbarScrubbing(scrubbing) {
+    fullscreenSeekbar?.classList.toggle('is-scrubbing', scrubbing);
+  }
+
+  function canStartFullscreenMiddleScrub(e) {
+    return e.button === 1 &&
+      !state.isDrawMode &&
+      videoPlayer.isLoaded &&
+      videoPlayer.duration > 0;
+  }
+
+  function startFullscreenMiddleScrub(e) {
+    state.isFullscreenScrubbing = true;
+    state.fullscreenScrubStartX = e.clientX;
+    state.fullscreenScrubStartTime = videoPlayer.currentTime || 0;
+    state.fullscreenScrubDuration = videoPlayer.duration || 0;
+    elements.videoWrapper?.classList.add('fullscreen-scrubbing');
+    setFullscreenSeekbarScrubbing(true);
+    showFullscreenScrubOverlay(state.fullscreenScrubStartTime);
+    e.preventDefault();
+  }
+
+  function updateFullscreenMiddleScrub(e) {
+    if (!state.isFullscreenScrubbing) return;
+
+    if (e.buttons === 0 || (e.buttons & 4) === 0) {
+      finishFullscreenMiddleScrub();
+      return;
+    }
+
+    const dx = e.clientX - state.fullscreenScrubStartX;
+    const timeDelta = (dx / Math.max(1, window.innerWidth)) * state.fullscreenScrubDuration;
+    const targetTime = Math.max(
+      0,
+      Math.min(state.fullscreenScrubDuration, state.fullscreenScrubStartTime + timeDelta)
+    );
+
+    videoPlayer.seek(targetTime);
+    updateFullscreenTimecode();
+    updateFullscreenSeekbar();
+    showFullscreenScrubOverlay(targetTime);
+    e.preventDefault();
+  }
+
+  function finishFullscreenMiddleScrub() {
+    if (!state.isFullscreenScrubbing) return;
+
+    state.isFullscreenScrubbing = false;
+    elements.videoWrapper?.classList.remove('fullscreen-scrubbing');
+    setFullscreenSeekbarScrubbing(false);
+    hideFullscreenScrubOverlay();
+  }
+
+  function ensureFullscreenScrubOverlay() {
+    if (fullscreenScrubOverlay) return fullscreenScrubOverlay;
+
+    fullscreenScrubOverlay = document.createElement('div');
+    fullscreenScrubOverlay.className = 'fullscreen-scrub-overlay';
+    fullscreenScrubOverlay.innerHTML = `
+      <div class="fullscreen-scrub-track">
+        <div class="fullscreen-scrub-progress"></div>
+      </div>
+      <div class="fullscreen-scrub-time">00:00:00:00 / 00:00:00:00</div>
+    `;
+    document.body.appendChild(fullscreenScrubOverlay);
+    return fullscreenScrubOverlay;
+  }
+
+  function showFullscreenScrubOverlay(time) {
+    if (!state.isFullscreen) return;
+
+    const overlay = ensureFullscreenScrubOverlay();
+    const duration = state.fullscreenScrubDuration || videoPlayer.duration || 0;
+    const fps = videoPlayer.fps || 24;
+    const percent = duration > 0 ? Math.max(0, Math.min(100, (time / duration) * 100)) : 0;
+
+    overlay.querySelector('.fullscreen-scrub-progress').style.width = `${percent}%`;
+    overlay.querySelector('.fullscreen-scrub-time').textContent =
+      `${formatTimecode(time, fps)} / ${formatTimecode(duration, fps)}`;
+    overlay.classList.add('visible');
+  }
+
+  function hideFullscreenScrubOverlay() {
+    fullscreenScrubOverlay?.classList.remove('visible');
+  }
+
+  // 전체화면 시크바 이벤트 설정
   if (fullscreenSeekbar) {
     let isSeeking = false;
 
@@ -5677,8 +5792,12 @@ async function initApp() {
     };
 
     fullscreenSeekbar.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+
       isSeeking = true;
+      setFullscreenSeekbarScrubbing(true);
       seekToPosition(e);
+      e.preventDefault();
     });
 
     document.addEventListener('mousemove', (e) => {
@@ -5689,9 +5808,14 @@ async function initApp() {
 
     document.addEventListener('mouseup', () => {
       isSeeking = false;
+      setFullscreenSeekbarScrubbing(false);
     });
 
-    fullscreenSeekbar.addEventListener('click', seekToPosition);
+    fullscreenSeekbar.addEventListener('click', (e) => {
+      if (e.button === 0) {
+        seekToPosition(e);
+      }
+    });
   }
 
   /**
