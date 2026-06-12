@@ -98,6 +98,7 @@ test('middle-button drag scrubs video in normal and fullscreen modes', () => {
   assert.doesNotMatch(canStartMiddleScrub, /state\.isFullscreen/);
   assert.match(appSource, /function startFullscreenMiddleScrub\(e\) \{[\s\S]*state\.fullscreenScrubStartX = e\.clientX;[\s\S]*state\.fullscreenScrubStartTime = videoPlayer\.currentTime \|\| 0;[\s\S]*showFullscreenScrubOverlay/);
   assert.match(appSource, /function updateFullscreenMiddleScrub\(e\) \{[\s\S]*const timeDelta = \(dx \/ Math\.max\(1, window\.innerWidth\)\) \* state\.fullscreenScrubDuration;[\s\S]*videoPlayer\.seek\(targetTime\);[\s\S]*\}/);
+  assert.match(appSource, /if \(e\.buttons === 0 \|\| \(e\.buttons & 4\) === 0\) \{[\s\S]*finishFullscreenMiddleScrub\(\);[\s\S]*return;/);
   assert.match(appSource, /elements\.videoWrapper\?\.addEventListener\('auxclick', \(e\) => \{[\s\S]*if \(e\.button === 1\) \{[\s\S]*e\.preventDefault\(\);/);
   assert.match(mainCss, /\.fullscreen-scrub-overlay\s*\{/);
   assert.match(mainCss, /\.fullscreen-scrub-overlay\.visible\s*\{/);

@@ -5717,7 +5717,7 @@ async function initApp() {
   function updateFullscreenMiddleScrub(e) {
     if (!state.isFullscreenScrubbing) return;
 
-    if (e.buttons !== 0 && (e.buttons & 4) === 0) {
+    if (e.buttons === 0 || (e.buttons & 4) === 0) {
       finishFullscreenMiddleScrub();
       return;
     }
