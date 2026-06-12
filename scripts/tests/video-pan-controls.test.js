@@ -76,10 +76,15 @@ test('video bottom seekbar handle is layered above the track so the circle rises
 test('playback controls allow the enlarged seekbar handle above the bar in normal and fullscreen modes', () => {
   const normalControls = cssBlock('.controls-bar');
   const fullscreenControls = cssBlock('body.app-fullscreen .controls-bar');
+  const scrollControls = cssBlock('.playback-controls-scroll');
 
   assert.match(normalControls, /overflow:\s*visible;/);
   assert.doesNotMatch(normalControls, /overflow-x:\s*auto;/);
   assert.match(fullscreenControls, /overflow:\s*visible;/);
+  assert.match(indexSource, /<div class="fullscreen-seekbar" id="fullscreenSeekbar">[\s\S]*?<\/div>\s*<div class="playback-controls-scroll">[\s\S]*?<div class="playback-controls">/);
+  assert.match(scrollControls, /overflow-x:\s*auto;/);
+  assert.match(scrollControls, /overflow-y:\s*hidden;/);
+  assert.match(scrollControls, /min-width:\s*0;/);
 });
 
 test('middle-button drag scrubs video in normal and fullscreen modes', () => {

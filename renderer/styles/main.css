@@ -1710,10 +1710,38 @@ body.app-fullscreen .video-comment-overlay-controls {
   position: relative;
 }
 
+.playback-controls-scroll {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.playback-controls-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.playback-controls-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.playback-controls-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+
 .playback-controls {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .control-btn {
