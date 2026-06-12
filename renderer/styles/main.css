@@ -1705,7 +1705,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   align-items: center;
   padding: 0 16px;
   gap: 16px;
-  overflow-x: auto;
+  overflow: visible;
   flex-shrink: 0;
   position: relative;
 }
@@ -8050,6 +8050,7 @@ body.app-fullscreen .controls-bar {
   z-index: 1000;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.9)) !important;
   opacity: 0;
+  overflow: visible;
   transform: translateY(100%);
   transition: all 0.3s ease;
 }
@@ -8064,30 +8065,38 @@ body.app-fullscreen.show-controls .controls-bar {
 .fullscreen-seekbar {
   display: block;
   position: absolute;
-  top: -8px;
+  top: -28px;
   left: 0;
   right: 0;
-  height: 16px;
-  padding: 6px 0;
+  height: 44px;
+  padding: 0;
   cursor: pointer;
   z-index: 5;
 }
 
 body.app-fullscreen .fullscreen-seekbar {
-  top: -8px;
+  top: -28px;
 }
 
 .seekbar-track {
-  position: relative;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 28px;
+  transform: translateY(-50%);
   width: 100%;
   height: 4px;
   background: rgba(255, 255, 255, 0.2);
   border-radius: 2px;
-  transition: height 0.1s ease;
+  transition: height 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+  z-index: 1;
 }
 
-.fullscreen-seekbar:hover .seekbar-track {
-  height: 6px;
+.fullscreen-seekbar:hover .seekbar-track,
+.fullscreen-seekbar.is-scrubbing .seekbar-track {
+  height: 12px;
+  background: rgba(255, 255, 255, 0.26);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
 .seekbar-progress {
@@ -8096,24 +8105,32 @@ body.app-fullscreen .fullscreen-seekbar {
   top: 0;
   height: 100%;
   background: var(--accent-primary);
-  border-radius: 2px;
+  border-radius: inherit;
   width: 0%;
 }
 
 .seekbar-handle {
   position: absolute;
-  top: 50%;
+  top: 28px;
   transform: translate(-50%, -50%);
   width: 12px;
   height: 12px;
+  box-sizing: border-box;
   background: var(--accent-primary);
+  border: 2px solid rgba(0, 0, 0, 0.45);
   border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(255, 208, 0, 0);
   opacity: 0;
-  transition: opacity 0.1s ease;
+  transition: opacity 0.12s ease, width 0.14s ease, height 0.14s ease, box-shadow 0.14s ease;
   left: 0%;
+  z-index: 2;
 }
 
-.fullscreen-seekbar:hover .seekbar-handle {
+.fullscreen-seekbar:hover .seekbar-handle,
+.fullscreen-seekbar.is-scrubbing .seekbar-handle {
+  width: 22px;
+  height: 22px;
+  box-shadow: 0 0 0 4px rgba(255, 208, 0, 0.16), 0 4px 14px rgba(0, 0, 0, 0.5);
   opacity: 1;
 }
 
@@ -8190,6 +8207,58 @@ body.app-fullscreen .fullscreen-timecode-overlay {
 
 .fullscreen-timecode-overlay .total-time {
   color: var(--text-secondary);
+}
+
+.fullscreen-scrub-overlay {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  width: min(520px, calc(100vw - 48px));
+  padding: 12px 14px;
+  transform: translate(-50%, 8px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1100;
+  background: rgba(8, 8, 8, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.fullscreen-scrub-overlay.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.fullscreen-scrub-track {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+
+.fullscreen-scrub-progress {
+  width: 0%;
+  height: 100%;
+  background: var(--accent-primary);
+  border-radius: inherit;
+}
+
+.fullscreen-scrub-time {
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.88);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+body:not(.app-fullscreen) .fullscreen-scrub-overlay {
+  display: none;
 }
 
 /* 전체화면에서 댓글 모드 표시 */
