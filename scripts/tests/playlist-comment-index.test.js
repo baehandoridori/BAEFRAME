@@ -209,3 +209,49 @@ test('통합 댓글 위치는 저장된 리뷰 fps보다 현재 세그먼트 fps
   assert.equal(range.globalStartTime, 12);
   assert.equal(range.localStartTimecode, '00:00:02:00');
 });
+
+test('통합 댓글 구간은 세그먼트 길이를 넘지 않게 자른다', () => {
+  const bframeData = {
+    fps: 10,
+    comments: {
+      layers: [
+        {
+          id: 'layer-a',
+          visible: true,
+          markers: [
+            { id: 'm1', startFrame: 40, endFrame: 80, text: '끝 구간 확인' }
+          ]
+        }
+      ]
+    }
+  };
+  const segment = {
+    itemId: 'item-1',
+    index: 0,
+    fileName: 'short.mov',
+    startTime: 100,
+    duration: 5,
+    fps: 10
+  };
+
+  const [range] = mod.extractPlaylistCommentRanges({
+    bframeData,
+    segment,
+    visibleLayerIds: null,
+    allowedAuthorIds: null
+  });
+
+  assert.equal(range.localStartTime, 4);
+  assert.equal(range.localEndTime, 5);
+  assert.equal(range.globalStartTime, 104);
+  assert.equal(range.globalEndTime, 105);
+  assert.equal(range.endFrame, 50);
+});
+
+test('통합 댓글 키는 한 헬퍼에서 만든다', () => {
+  assert.equal(typeof mod.getPlaylistAggregateCommentKey, 'function');
+  assert.equal(
+    mod.getPlaylistAggregateCommentKey({ itemId: 'item-1', layerId: 'layer-a', markerId: 'm1' }),
+    'item-1:layer-a:m1'
+  );
+});
