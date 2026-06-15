@@ -264,7 +264,7 @@ if ($comInprocExists) {
 
 $registryInstalled = ($missingRegistry.Count -eq 0) -and $comInprocExists
 $projectFileInstalled = ($missingProjectFiles.Count -eq 0)
-$installed = $sparseInstalled -or $registryInstalled -or $legacyInstalled -or $projectFileInstalled
+$installed = $sparseInstalled -or $registryInstalled -or $legacyInstalled
 
 $mode = 'none'
 if ($configMode) {
@@ -275,8 +275,6 @@ if ($configMode) {
   $mode = 'registry-shell'
 } elseif ($legacyInstalled) {
   $mode = 'legacy-shell'
-} elseif ($projectFileInstalled) {
-  $mode = 'project-files'
 }
 
 $result = [ordered]@{

@@ -34,6 +34,9 @@ test('integration diagnostics report bplaylist project file association status',
   assert.match(detectScript, /projectFiles = \[ordered\]@{/);
   assert.match(detectScript, /missingProjectFiles = \$missingProjectFiles/);
   assert.match(detectScript, /installed = \$projectFileInstalled/);
+  assert.match(detectScript, /\$installed = \$sparseInstalled -or \$registryInstalled -or \$legacyInstalled/);
+  assert.doesNotMatch(detectScript, /\$installed = [^\n]*\$projectFileInstalled/);
+  assert.doesNotMatch(detectScript, /mode = 'project-files'/);
 });
 
 test('integration uninstaller removes bplaylist project file association', () => {
