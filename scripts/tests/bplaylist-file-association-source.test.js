@@ -46,6 +46,9 @@ test('integration uninstaller removes bplaylist project file association', () =>
   assert.match(uninstallScript, /Remove-ProjectFileAssociations/);
   assert.match(uninstallScript, /Registry::HKEY_CURRENT_USER\\Software\\Classes\\\$extension/);
   assert.match(uninstallScript, /Registry::HKEY_CURRENT_USER\\Software\\Classes\\\$progId/);
+  assert.match(uninstallScript, /\[Microsoft\.Win32\.Registry\]::CurrentUser\.OpenSubKey\(\$extensionSubKey, \$true\)/);
+  assert.match(uninstallScript, /DeleteValue\('', \$false\)/);
+  assert.doesNotMatch(uninstallScript, /Remove-Item -Path \$extensionKey -Recurse -Force/);
 });
 
 test('startup playlist listener is registered before renderer-ready opens launch files', () => {

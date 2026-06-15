@@ -88,21 +88,33 @@ function Remove-ProjectFileAssociations {
   foreach ($association in $ProjectFileAssociations) {
     $extension = [string]$association.extension
     $progId = [string]$association.progId
+    $extensionSubKey = "Software\Classes\$extension"
     $extensionKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$extension"
     $progIdKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$progId"
 
     if (Test-Path $extensionKey) {
-      $shouldRemoveExtensionKey = $false
+      $shouldClearExtensionDefault = $false
       try {
         $extensionItem = Get-Item -Path $extensionKey
-        $shouldRemoveExtensionKey = ($extensionItem.GetValue('') -eq $progId)
+        $shouldClearExtensionDefault = ($extensionItem.GetValue('') -eq $progId)
       } catch {
-        $shouldRemoveExtensionKey = $false
+        $shouldClearExtensionDefault = $false
       }
 
-      if ($shouldRemoveExtensionKey -and $PSCmdlet.ShouldProcess($extensionKey, 'Remove project file extension association')) {
-        Remove-Item -Path $extensionKey -Recurse -Force
-        Write-SetupLog -Level 'INFO' -Message 'Removed project file extension association' -Data @{
+      if ($shouldClearExtensionDefault -and $PSCmdlet.ShouldProcess($extensionKey, 'Clear project file extension default association')) {
+        $writableExtensionKey = $null
+        try {
+          $writableExtensionKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($extensionSubKey, $true)
+          if ($writableExtensionKey) {
+            $writableExtensionKey.DeleteValue('', $false)
+          }
+        } finally {
+          if ($writableExtensionKey) {
+            $writableExtensionKey.Close()
+          }
+        }
+
+        Write-SetupLog -Level 'INFO' -Message 'Cleared project file extension default association' -Data @{
           extension = $extension
           progId = $progId
         }
