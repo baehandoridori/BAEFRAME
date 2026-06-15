@@ -8,7 +8,11 @@ import { MARKER_COLORS } from './comment-manager.js';
 import { resolveFrameGridTier } from './frame-grid-tiers.js';
 import { findRangeClusters, assignLanes, assignRenderLanes, clusterKey, splitClustersByPixelGap } from './comment-cluster.js';
 import { getTimelineFocalContentX, calculateAnchoredScrollLeft } from './timeline-zoom-core.js';
-import { formatPlaylistCommentLabel, formatPlaylistCommentTitle } from './playlist-comment-index.js';
+import {
+  formatPlaylistCommentLabel,
+  formatPlaylistCommentTitle,
+  getPlaylistAggregateCommentKey
+} from './playlist-comment-index.js';
 
 const log = createLogger('Timeline');
 
@@ -2008,11 +2012,42 @@ export class Timeline extends EventTarget {
   }
 
   setPlaylistTimeline(segments, totalDuration) {
-    this.playlistSegments = segments || [];
+    this.playlistSegments = Array.isArray(segments) ? segments : [];
     this.playlistDuration = totalDuration || 0;
     this._updateRuler();
     this._updatePlayheadPosition();
+    if (!this.playlistSegments.length || !this.playlistDuration) {
+      this.clearPlaylistCommentRanges();
+    }
     this._renderPlaylistSegments();
+  }
+
+  clearPlaylistCommentRanges() {
+    this._lastPlaylistCommentRanges = null;
+    this._lastPlaylistCommentDuration = 0;
+    this.expandedClusterId = null;
+
+    if (!this.commentTrack) return;
+    this.commentTrack.querySelectorAll('.playlist-comment-range').forEach(el => el.remove());
+
+    const hasCommentContent = this.commentTrack.querySelector(
+      '.comment-range-item, .comment-cluster-badge, .comment-cluster-close-badge'
+    );
+    if (!hasCommentContent) {
+      this.commentTrack.style.display = 'none';
+      if (this.commentLayerHeader) {
+        this.commentLayerHeader.style.display = 'none';
+      }
+    }
+  }
+
+  clearPlaylistTimeline() {
+    this.playlistSegments = [];
+    this.playlistDuration = 0;
+    this._updateRuler();
+    this._updatePlayheadPosition();
+    this._clearPlaylistSegmentElements();
+    this.clearPlaylistCommentRanges();
   }
 
   setCutlistTimeline(segments, totalDuration) {
@@ -2035,7 +2070,7 @@ export class Timeline extends EventTarget {
 
   _renderPlaylistSegments() {
     if (!this.tracksContainer) return;
-    this.tracksContainer.querySelectorAll('.playlist-segment-boundary, .playlist-segment-block').forEach(el => el.remove());
+    this._clearPlaylistSegmentElements();
     const videoTrackRow = this.tracksContainer.querySelector('.video-track-row');
     const duration = this.playlistDuration || this.duration;
     const hasSegments = Boolean(duration && this.playlistSegments?.length);
@@ -2092,6 +2127,15 @@ export class Timeline extends EventTarget {
         this._emit('seek', { time, itemId: segment.itemId });
       });
       this.tracksContainer.appendChild(boundary);
+    }
+  }
+
+  _clearPlaylistSegmentElements() {
+    if (!this.tracksContainer) return;
+    this.tracksContainer.querySelectorAll('.playlist-segment-boundary, .playlist-segment-block').forEach(el => el.remove());
+    const videoTrackRow = this.tracksContainer.querySelector('.video-track-row');
+    if (videoTrackRow) {
+      videoTrackRow.classList.remove('has-playlist-segments');
     }
   }
 
@@ -2184,7 +2228,7 @@ export class Timeline extends EventTarget {
       el.style.setProperty('--comment-color', range.color);
       el.dataset.itemId = range.itemId;
       el.dataset.markerId = range.markerId;
-      el.dataset.aggregateCommentKey = `${range.itemId || ''}:${range.layerId || ''}:${range.markerId || ''}`;
+      el.dataset.aggregateCommentKey = getPlaylistAggregateCommentKey(range);
       el.dataset.localStartFrame = String(range.localStartFrame);
       el.title = formatPlaylistCommentTitle(range);
       const label = document.createElement('span');

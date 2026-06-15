@@ -8,6 +8,8 @@ const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
 const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8'));
 const timelineSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/timeline.js'), 'utf8'));
 const ffmpegManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ffmpeg-manager.js'), 'utf8'));
+const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
+const splitViewSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/split-view-manager.js'), 'utf8'));
 const playlistCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/playlist-panel.css'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
@@ -50,6 +52,47 @@ test('continuous timeline updates ignore stale async completions', () => {
   assert.match(timelineUpdateSource, /const bframePath = await playlistManager\.ensureItemBframePath\(item\);[\s\S]+const bframeData = await window\.electronAPI\.loadReview\(bframePath\);[\s\S]+playlistTimelineUpdateToken !== updateToken/);
 });
 
+test('opening or replacing playlists clears stale continuous timeline state', () => {
+  assert.match(appSource, /function resetPlaylistContinuousTimelineState\(\) \{/);
+
+  const resetMatch = appSource.match(/function resetPlaylistContinuousTimelineState\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(resetMatch, 'continuous timeline reset helper should exist');
+  const resetSource = resetMatch[1];
+  assert.match(resetSource, /playlistTimelineUpdateToken \+= 1;/);
+  assert.match(resetSource, /playlistAggregateCommentRanges = \[\];/);
+  assert.match(resetSource, /timeline\.clearPlaylistTimeline\(\);/);
+  assert.doesNotMatch(
+    resetSource,
+    /timeline\.clearCommentMarkers\(\);/,
+    'continuous reset must not erase normal review markers when opening an empty playlist'
+  );
+
+  const openMatch = appSource.match(/async function openPlaylistFile\(filePath\) \{([\s\S]*?)\n  \}/);
+  assert.ok(openMatch, 'openPlaylistFile should exist');
+  const openSource = openMatch[1];
+  assert.match(openSource, /playlistSelectionLoadToken \+= 1;[\s\S]+await playlistManager\.open\(normalizedPath\);/);
+  assert.ok(
+    openSource.indexOf('await playlistManager.open(normalizedPath);') <
+      openSource.indexOf('resetPlaylistContinuousTimelineState();'),
+    'existing continuous timeline should clear only after the replacement playlist opens successfully'
+  );
+  assert.match(openSource, /if \(playlistUIState\.mode === 'continuous'\) \{[\s\S]+updatePlaylistContinuousTimeline\(\);[\s\S]+\}/);
+});
+
+test('review mode exits through the shared continuous timeline reset helper', () => {
+  const modeStart = appSource.indexOf('function setPlaylistMode(mode)');
+  const modeEnd = appSource.indexOf('  async function refreshPlaylistModifiedTimes', modeStart);
+  assert.notEqual(modeStart, -1, 'setPlaylistMode should exist');
+  assert.notEqual(modeEnd, -1, 'setPlaylistMode boundary should exist');
+  const modeSource = appSource.slice(modeStart, modeEnd);
+  const reviewBranchIndex = modeSource.indexOf("nextMode === 'review'");
+  const resetIndex = modeSource.indexOf('resetPlaylistContinuousTimelineState();', reviewBranchIndex);
+  const renderIndex = modeSource.indexOf('renderCommentRanges();', reviewBranchIndex);
+
+  assert.notEqual(resetIndex, -1, 'review mode should clear continuous state through the shared helper');
+  assert.ok(resetIndex < renderIndex, 'continuous state should clear before normal comments render');
+});
+
 test('continuous aggregate comments recover missing bframePath from the media path', () => {
   const timelineUpdateMatch = appSource.match(/async function updatePlaylistContinuousTimeline\(\) \{([\s\S]*?)\n  \}\n\n  async function quickCheckPlaylistForContinuous/);
   assert.ok(timelineUpdateMatch, 'updatePlaylistContinuousTimeline should exist');
@@ -90,6 +133,65 @@ test('aggregate comment range rendering keeps the comment track header in sync',
   assert.match(renderSource, /this\.commentLayerHeader/);
   assert.match(renderSource, /this\.commentLayerHeader\.style\.display = 'none';/);
   assert.match(renderSource, /this\.commentLayerHeader\.style\.display = 'flex';/);
+});
+
+test('continuous timeline refresh clears stale comment bars before async metadata loads', () => {
+  const timelineUpdateMatch = appSource.match(/async function updatePlaylistContinuousTimeline\(\) \{([\s\S]*?)\n  \}\n\n  async function quickCheckPlaylistForContinuous/);
+  assert.ok(timelineUpdateMatch, 'updatePlaylistContinuousTimeline should exist');
+
+  const timelineUpdateSource = timelineUpdateMatch[1];
+  assert.match(timelineUpdateSource, /timeline\.clearCommentMarkers\(\);\s*\n\s*timeline\.renderPlaylistCommentRanges\(\[\], 0\);/);
+  assert.ok(
+    timelineUpdateSource.indexOf('timeline.renderPlaylistCommentRanges([], 0);') <
+      timelineUpdateSource.indexOf('const metadata = await collectPlaylistMetadata(items);'),
+    'stale single-video or previous playlist comment bars should clear before async metadata work'
+  );
+});
+
+test('playlist timeline clear removes joined comments and cached aggregate ranges', () => {
+  assert.match(timelineSource, /clearPlaylistCommentRanges\(\) \{/);
+  assert.match(timelineSource, /clearPlaylistTimeline\(\) \{/);
+
+  const clearCommentMatch = timelineSource.match(/clearPlaylistCommentRanges\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(clearCommentMatch, 'clearPlaylistCommentRanges should exist');
+  const clearCommentSource = clearCommentMatch[1];
+  assert.match(clearCommentSource, /this\._lastPlaylistCommentRanges = null;/);
+  assert.match(clearCommentSource, /this\._lastPlaylistCommentDuration = 0;/);
+  assert.match(clearCommentSource, /querySelectorAll\('\.playlist-comment-range'\)/);
+
+  const setTimelineMatch = timelineSource.match(/setPlaylistTimeline\(segments, totalDuration\) \{([\s\S]*?)\n  \}/);
+  assert.ok(setTimelineMatch, 'setPlaylistTimeline should exist');
+  assert.match(setTimelineMatch[1], /if \(!this\.playlistSegments\.length \|\| !this\.playlistDuration\) \{[\s\S]+this\.clearPlaylistCommentRanges\(\);/);
+});
+
+test('continuous author filter menu uses aggregate playlist comments', () => {
+  assert.match(appSource, /function getAuthorFilterSourceItems\(\) \{/);
+  assert.match(appSource, /function getAuthorFilterAuthorIds\(\) \{/);
+
+  const sourceMatch = appSource.match(/function getAuthorFilterSourceItems\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(sourceMatch, 'author filter source helper should exist');
+  assert.match(sourceMatch[1], /if \(playlistUIState\.mode === 'continuous'\) \{[\s\S]+return playlistAggregateCommentRanges;/);
+
+  const idsMatch = appSource.match(/function getAuthorFilterAuthorIds\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(idsMatch, 'author filter author id helper should exist');
+  assert.match(idsMatch[1], /getAuthorFilterSourceItems\(\)/);
+
+  const menuMatch = appSource.match(/function updateAuthorFilterMenu\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(menuMatch, 'updateAuthorFilterMenu should exist');
+  assert.match(menuMatch[1], /const allMarkers = getAuthorFilterSourceItems\(\);/);
+
+  const clickMatch = appSource.match(/document\.getElementById\('authorFilterMenu'\)\?\.addEventListener\('click', \(e\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(clickMatch, 'author filter click handler should exist');
+  const clickSource = clickMatch[1];
+  assert.match(clickSource, /const uniqueAuthors = getAuthorFilterAuthorIds\(\);/);
+  assert.doesNotMatch(clickSource, /commentManager\.getAllMarkers\(\)/);
+});
+
+test('playlist aggregate comment keys are generated by the shared helper', () => {
+  assert.match(appSource, /getPlaylistAggregateCommentKey[\s\S]+from '\.\/modules\/playlist-comment-index\.js'/);
+  assert.match(timelineSource, /getPlaylistAggregateCommentKey[\s\S]+from '\.\/playlist-comment-index\.js'/);
+  assert.match(timelineSource, /el\.dataset\.aggregateCommentKey = getPlaylistAggregateCommentKey\(range\);/);
+  assert.doesNotMatch(appSource, /function getPlaylistAggregateCommentKey\(range\) \{[\s\S]*return `\$\{range\.itemId/);
 });
 
 test('continuous mode hides single-video vertical comment markers', () => {
@@ -283,6 +385,30 @@ test('manual video loads cancel active continuous playback and stale loads', () 
   assert.match(loadVideoSource, /if \(isStaleVideoLoad\(\)\) return false;/);
 });
 
+test('rapid playlist item selections cannot let older pre-load checks win', () => {
+  assert.match(appSource, /let playlistSelectionLoadToken = 0;/);
+
+  const selectedMatch = appSource.match(/playlistManager\.onItemSelected = async \(item, index\) => \{([\s\S]*?)\n    \};/);
+  assert.ok(selectedMatch, 'playlist item selected callback should exist');
+  const selectedSource = selectedMatch[1];
+  assert.match(selectedSource, /const selectionLoadToken = \+\+playlistSelectionLoadToken;/);
+  assert.match(selectedSource, /const shouldContinuePlaylistSelectionLoad = \(\) => \([\s\S]+selectionLoadToken === playlistSelectionLoadToken[\s\S]+playlistManager\.getCurrentItem\(\)\?\.id === item\.id[\s\S]+\);/);
+  assert.match(selectedSource, /loadVideoFromPlaylist\(item, \{[\s\S]+shouldContinue: shouldContinuePlaylistSelectionLoad[\s\S]+\}\);/);
+  assert.match(selectedSource, /if \(!shouldContinuePlaylistSelectionLoad\(\)\) return;/);
+
+  const playlistLoaderMatch = appSource.match(/async function loadVideoFromPlaylist\(item, options = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(playlistLoaderMatch, 'playlist loader should exist');
+  const playlistLoaderSource = playlistLoaderMatch[1];
+  assert.match(playlistLoaderSource, /shouldContinue = null/);
+  assert.match(playlistLoaderSource, /const canContinuePlaylistLoad = \(\) => typeof shouldContinue !== 'function' \|\| shouldContinue\(\);/);
+  assert.match(playlistLoaderSource, /if \(!canContinuePlaylistLoad\(\)\) return false;/);
+  assert.ok(
+    playlistLoaderSource.indexOf('if (!canContinuePlaylistLoad()) return false;') <
+      playlistLoaderSource.indexOf('const loaded = await loadVideo(item.videoPath, loadOptions);'),
+    'stale playlist selections must stop before loadVideo can claim the latest load token'
+  );
+});
+
 test('continuous completion flushes skipped batch before stopping playback', () => {
   const completionBranchMatch = appSource.match(/if \(nextIndex < 0\) \{([\s\S]*?)\n    \}/);
   assert.ok(completionBranchMatch, 'completion branch should exist');
@@ -464,7 +590,8 @@ test('playlist loading returns the real loadVideo result', () => {
   assert.ok(loadVideoFromPlaylistMatch, 'playlist loader should exist');
 
   const playlistLoaderSource = loadVideoFromPlaylistMatch[1];
-  assert.match(playlistLoaderSource, /const loaded = await loadVideo\(item\.videoPath, options\);/);
+  assert.match(playlistLoaderSource, /const \{ shouldContinue = null, \.\.\.loadOptions \} = options;/);
+  assert.match(playlistLoaderSource, /const loaded = await loadVideo\(item\.videoPath, loadOptions\);/);
   assert.match(playlistLoaderSource, /return loaded === true;/);
   assert.doesNotMatch(playlistLoaderSource, /await loadVideo\(item\.videoPath\);\s*return true;/);
 
@@ -500,9 +627,39 @@ test('normal transcode overlay follows joined pre-transcode progress', () => {
   assert.ok(overlayMatch, 'showTranscodeOverlay should exist');
 
   const overlaySource = overlayMatch[1];
-  assert.match(overlaySource, /window\.electronAPI\.onTranscodeProgress\(progressHandler\);/);
-  assert.match(overlaySource, /window\.electronAPI\.onPreTranscodeProgress\(progressHandler\);/);
-  assert.match(overlaySource, /removeAllListeners\('ffmpeg:transcode-progress'\);[\s\S]+removeAllListeners\('ffmpeg:pre-transcode-progress'\);/);
+  assert.match(overlaySource, /const unsubscribeTranscodeProgress = window\.electronAPI\.onTranscodeProgress\(progressHandler\);/);
+  assert.match(overlaySource, /const unsubscribePreTranscodeProgress = window\.electronAPI\.onPreTranscodeProgress\(progressHandler\);/);
+  assert.match(overlaySource, /unsubscribeTranscodeProgress\?\.\(\);[\s\S]+unsubscribePreTranscodeProgress\?\.\(\);/);
+  assert.doesNotMatch(overlaySource, /removeAllListeners\('ffmpeg:transcode-progress'\)/);
+});
+
+test('transcode progress listeners unsubscribe individually instead of clearing shared channels', () => {
+  assert.match(preloadSource, /onTranscodeProgress: \(callback\) => \{[\s\S]+const listener = \(event, data\) => callback\(data\);[\s\S]+ipcRenderer\.on\('ffmpeg:transcode-progress', listener\);[\s\S]+return \(\) => ipcRenderer\.removeListener\('ffmpeg:transcode-progress', listener\);/);
+  assert.match(preloadSource, /onPreTranscodeProgress: \(callback\) => \{[\s\S]+const listener = \(event, data\) => callback\(data\);[\s\S]+ipcRenderer\.on\('ffmpeg:pre-transcode-progress', listener\);[\s\S]+return \(\) => ipcRenderer\.removeListener\('ffmpeg:pre-transcode-progress', listener\);/);
+
+  const splitMatch = splitViewSource.match(/const progressHandler = \(data\) => \{[\s\S]*?try \{[\s\S]*?\} finally \{([\s\S]*?)\n\s*\}/);
+  assert.ok(splitMatch, 'split view transcode progress cleanup should exist');
+  assert.match(splitViewSource, /const unsubscribeTranscodeProgress = window\.electronAPI\.onTranscodeProgress\(progressHandler\);/);
+  assert.match(splitMatch[1], /unsubscribeTranscodeProgress\?\.\(\);/);
+  assert.doesNotMatch(splitMatch[1], /removeAllListeners/);
+});
+
+test('normal transcode overlay is superseded when users switch videos quickly', () => {
+  assert.match(appSource, /let activeTranscodeOverlayToken = 0;/);
+  assert.match(appSource, /function supersedeActiveTranscodeOverlay\(/);
+
+  const overlayMatch = appSource.match(/async function showTranscodeOverlay\(filePath, codecName\) \{([\s\S]*?)\n  \}/);
+  assert.ok(overlayMatch, 'showTranscodeOverlay should exist');
+  const overlaySource = overlayMatch[1];
+  assert.match(overlaySource, /const overlayToken = \+\+activeTranscodeOverlayToken;/);
+  assert.match(overlaySource, /const isActiveTranscodeOverlay = \(\) => overlayToken === activeTranscodeOverlayToken;/);
+  assert.match(overlaySource, /const progressHandler = \(data\) => \{[\s\S]+if \(!isActiveTranscodeOverlay\(\)\) return;/);
+  assert.match(overlaySource, /if \(!isActiveTranscodeOverlay\(\)\) \{[\s\S]+return;[\s\S]+\}/);
+
+  const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(loadVideoMatch, 'loadVideo should exist');
+  assert.match(loadVideoMatch[1], /supersedeActiveTranscodeOverlay\('새 영상 선택'\);/);
+  assert.match(loadVideoMatch[1], /if \(transcoded\.stale\) return false;/);
 });
 
 test('playlist rows render and color continuous status text', () => {

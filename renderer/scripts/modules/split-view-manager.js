@@ -1190,7 +1190,7 @@ export class SplitViewManager {
                 if (progressFill) progressFill.style.width = `${data.progress}%`;
               }
             };
-            window.electronAPI.onTranscodeProgress(progressHandler);
+            const unsubscribeTranscodeProgress = window.electronAPI.onTranscodeProgress(progressHandler);
 
             try {
               const transcodeResult = await window.electronAPI.ffmpegTranscode(versionInfo.path);
@@ -1203,7 +1203,7 @@ export class SplitViewManager {
               }
             } finally {
               // 리스너 정리
-              window.electronAPI.removeAllListeners?.('ffmpeg:transcode-progress');
+              unsubscribeTranscodeProgress?.();
             }
           }
         }

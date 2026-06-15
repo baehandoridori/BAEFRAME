@@ -106,7 +106,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ffmpegGetSupportedCodecs: () => ipcRenderer.invoke('ffmpeg:get-supported-codecs'),
   ffmpegPreTranscode: (filePath) => ipcRenderer.invoke('ffmpeg:pre-transcode', filePath),
   onPreTranscodeProgress: (callback) => {
-    ipcRenderer.on('ffmpeg:pre-transcode-progress', (event, data) => callback(data));
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('ffmpeg:pre-transcode-progress', listener);
+    return () => ipcRenderer.removeListener('ffmpeg:pre-transcode-progress', listener);
   },
 
   // ====== 파일 관련 (유틸리티) ======
@@ -159,7 +161,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app:request-save-before-quit', () => callback());
   },
   onTranscodeProgress: (callback) => {
-    ipcRenderer.on('ffmpeg:transcode-progress', (event, data) => callback(data));
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('ffmpeg:transcode-progress', listener);
+    return () => ipcRenderer.removeListener('ffmpeg:transcode-progress', listener);
   },
   onFileChanged: (callback) => {
     ipcRenderer.on('file:changed', (event, data) => callback(data));

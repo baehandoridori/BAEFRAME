@@ -37,7 +37,8 @@ import {
 import {
   extractPlaylistCommentRanges,
   formatPlaylistCommentPanelLine,
-  formatPlaylistTimecode
+  formatPlaylistTimecode,
+  getPlaylistAggregateCommentKey
 } from './modules/playlist-comment-index.js';
 import {
   buildCutlistCommentContext,
@@ -340,6 +341,7 @@ async function initApp() {
 
   let suppressPlaylistSelectionLoad = false;
   let playlistAutoPlayAfterSelection = false;
+  let playlistSelectionLoadToken = 0;
   const playlistMediaPreload = {
     element: null,
     itemId: null,
@@ -400,6 +402,12 @@ async function initApp() {
     return normalizeComparableFilePath(a) === normalizeComparableFilePath(b);
   }
 
+  function resetPlaylistContinuousTimelineState() {
+    playlistTimelineUpdateToken += 1;
+    playlistAggregateCommentRanges = [];
+    timeline.clearPlaylistTimeline();
+  }
+
   function getDialogFileName(filePath) {
     const normalized = String(filePath || '').replace(/\\/g, '/');
     return normalized.split('/').filter(Boolean).pop() || '선택한 info 파일';
@@ -429,10 +437,15 @@ async function initApp() {
   async function openPlaylistFile(filePath) {
     const normalizedPath = normalizePlaylistOpenPath(filePath);
     const playlistManager = getPlaylistManager();
+    playlistSelectionLoadToken += 1;
     await playlistManager.open(normalizedPath);
+    resetPlaylistContinuousTimelineState();
     showPlaylistSidebar();
     if (playlistManager.getItemCount() > 0) {
       playlistManager.selectItem(0);
+    }
+    if (playlistUIState.mode === 'continuous') {
+      updatePlaylistContinuousTimeline();
     }
     return true;
   }
@@ -1968,11 +1981,30 @@ async function initApp() {
   });
 
   // ====== 작성자 필터 드롭다운 ======
+  function getAuthorFilterSourceItems() {
+    if (playlistUIState.mode === 'continuous') {
+      return playlistAggregateCommentRanges;
+    }
+    if (cutlistUIState.active) {
+      return cutlistAggregateCommentRanges;
+    }
+    return commentManager.getAllMarkers();
+  }
+
+  function getAuthorFilterAuthorIds() {
+    const uniqueAuthors = new Set();
+    getAuthorFilterSourceItems().forEach(m => {
+      if (m.deleted) return;
+      uniqueAuthors.add(m.authorId || m.author || 'unknown');
+    });
+    return uniqueAuthors;
+  }
+
   function updateAuthorFilterMenu() {
     const menu = document.getElementById('authorFilterMenu');
     if (!menu) return;
 
-    const allMarkers = commentManager.getAllMarkers();
+    const allMarkers = getAuthorFilterSourceItems();
     const authors = new Map();
 
     allMarkers.forEach(m => {
@@ -2127,10 +2159,7 @@ async function initApp() {
     else {
       if (commentFilterState.authors === null) {
         // 전체 선택 → 이 작성자만 해제
-        const allMarkers = commentManager.getAllMarkers();
-        const uniqueAuthors = new Set(
-          allMarkers.filter(m => !m.deleted).map(m => m.authorId || m.author || 'unknown')
-        );
+        const uniqueAuthors = getAuthorFilterAuthorIds();
         commentFilterState.authors = [...uniqueAuthors].filter(id => id !== authorId);
       } else {
         const idx = commentFilterState.authors.indexOf(authorId);
@@ -2140,10 +2169,7 @@ async function initApp() {
           commentFilterState.authors.push(authorId);
         }
         // 모든 작성자가 선택되면 null(전체)로 리셋
-        const allMarkers = commentManager.getAllMarkers();
-        const uniqueAuthors = new Set(
-          allMarkers.filter(m => !m.deleted).map(m => m.authorId || m.author || 'unknown')
-        );
+        const uniqueAuthors = getAuthorFilterAuthorIds();
         if (commentFilterState.authors.length >= uniqueAuthors.size) {
           commentFilterState.authors = null;
         }
@@ -4574,10 +4600,31 @@ async function initApp() {
   // ====== 트랜스코딩 상태 관리 ======
   let isTranscoding = false;
   let transcodeResolve = null;
+  let activeTranscodeOverlayToken = 0;
+  let activeTranscodeOverlayCleanup = null;
   let latestVideoLoadToken = 0;
 
   function isStaleVideoLoadToken(loadToken) {
     return loadToken !== latestVideoLoadToken;
+  }
+
+  function supersedeActiveTranscodeOverlay(reason = 'stale') {
+    activeTranscodeOverlayToken += 1;
+
+    if (typeof activeTranscodeOverlayCleanup === 'function') {
+      activeTranscodeOverlayCleanup(true);
+      activeTranscodeOverlayCleanup = null;
+    }
+
+    const overlay = document.getElementById('transcodeOverlay');
+    overlay?.classList.remove('active');
+    isTranscoding = false;
+
+    if (transcodeResolve) {
+      const resolve = transcodeResolve;
+      transcodeResolve = null;
+      resolve({ success: false, stale: true, error: reason });
+    }
   }
 
   function isCurrentReviewPath(bframePath) {
@@ -4676,6 +4723,10 @@ async function initApp() {
    * @returns {Promise<{success: boolean, outputPath?: string, error?: string}>}
    */
   async function showTranscodeOverlay(filePath, codecName) {
+    supersedeActiveTranscodeOverlay('새 변환 시작');
+    const overlayToken = ++activeTranscodeOverlayToken;
+    const isActiveTranscodeOverlay = () => overlayToken === activeTranscodeOverlayToken;
+
     const overlay = document.getElementById('transcodeOverlay');
     const subtitle = document.getElementById('transcodeSubtitle');
     const progressFill = document.getElementById('transcodeProgressFill');
@@ -4693,63 +4744,84 @@ async function initApp() {
 
     // 진행률 이벤트 리스너
     const progressHandler = (data) => {
+      if (!isActiveTranscodeOverlay()) return;
       if (data.filePath === filePath) {
         progressFill.style.width = `${data.progress}%`;
         percentText.textContent = `${data.progress}%`;
         statusText.textContent = data.progress < 100 ? '변환 중...' : '완료 처리 중...';
       }
     };
-    window.electronAPI.onTranscodeProgress(progressHandler);
-    window.electronAPI.onPreTranscodeProgress(progressHandler);
+    const unsubscribeTranscodeProgress = window.electronAPI.onTranscodeProgress(progressHandler);
+    const unsubscribePreTranscodeProgress = window.electronAPI.onPreTranscodeProgress(progressHandler);
 
-    const cleanupTranscodeProgressListeners = () => {
-      window.electronAPI.removeAllListeners('ffmpeg:transcode-progress');
-      window.electronAPI.removeAllListeners('ffmpeg:pre-transcode-progress');
-    };
-
-    // 취소 버튼 핸들러
-    const handleCancel = async () => {
-      log.info('사용자가 트랜스코딩 취소 요청');
-      await window.electronAPI.ffmpegCancel();
-      isTranscoding = false;
-      overlay.classList.remove('active');
-      cleanupTranscodeProgressListeners();
-      if (transcodeResolve) {
-        transcodeResolve({ success: false, error: '사용자 취소' });
-        transcodeResolve = null;
+    const cleanupTranscodeProgressListeners = (force = false) => {
+      if (!force && !isActiveTranscodeOverlay()) return;
+      unsubscribeTranscodeProgress?.();
+      unsubscribePreTranscodeProgress?.();
+      if (activeTranscodeOverlayCleanup === cleanupTranscodeProgressListeners) {
+        activeTranscodeOverlayCleanup = null;
       }
     };
-    cancelBtn.addEventListener('click', handleCancel, { once: true });
 
     return new Promise(async (resolve) => {
       transcodeResolve = resolve;
 
+      const finish = (result) => {
+        if (transcodeResolve === resolve) {
+          transcodeResolve = null;
+        }
+        resolve(result);
+      };
+
+      const cleanupOverlay = (force = false) => {
+        if (!force && !isActiveTranscodeOverlay()) return;
+        isTranscoding = false;
+        overlay.classList.remove('active');
+        cleanupTranscodeProgressListeners(force);
+        cancelBtn.removeEventListener('click', handleCancel);
+        if (activeTranscodeOverlayCleanup === cleanupOverlay) {
+          activeTranscodeOverlayCleanup = null;
+        }
+      };
+
+      const handleCancel = async () => {
+        if (!isActiveTranscodeOverlay()) return;
+        activeTranscodeOverlayToken += 1;
+        log.info('사용자가 트랜스코딩 취소 요청');
+        await window.electronAPI.ffmpegCancel();
+        cleanupOverlay(true);
+        finish({ success: false, error: '사용자 취소' });
+      };
+
+      activeTranscodeOverlayCleanup = cleanupOverlay;
+      cancelBtn.addEventListener('click', handleCancel, { once: true });
+
       try {
         const result = await window.electronAPI.ffmpegTranscode(filePath);
 
-        isTranscoding = false;
-        overlay.classList.remove('active');
-        cleanupTranscodeProgressListeners();
-        cancelBtn.removeEventListener('click', handleCancel);
+        if (!isActiveTranscodeOverlay()) {
+          return;
+        }
+
+        cleanupOverlay();
 
         if (result.success) {
           log.info('트랜스코딩 완료', { outputPath: result.outputPath, fromCache: result.fromCache });
-          resolve({ success: true, outputPath: result.outputPath });
+          finish({ success: true, outputPath: result.outputPath });
         } else {
           log.error('트랜스코딩 실패', { error: result.error });
-          resolve({ success: false, error: result.error });
+          finish({ success: false, error: result.error });
         }
       } catch (error) {
-        isTranscoding = false;
-        overlay.classList.remove('active');
-        cleanupTranscodeProgressListeners();
-        cancelBtn.removeEventListener('click', handleCancel);
+        if (!isActiveTranscodeOverlay()) {
+          return;
+        }
+
+        cleanupOverlay();
 
         log.error('트랜스코딩 예외', { error: error.message });
-        resolve({ success: false, error: error.message });
+        finish({ success: false, error: error.message });
       }
-
-      transcodeResolve = null;
     });
   }
 
@@ -4944,6 +5016,7 @@ async function initApp() {
     } = options;
     const loadToken = ++latestVideoLoadToken;
     const isStaleVideoLoad = () => loadToken !== latestVideoLoadToken;
+    supersedeActiveTranscodeOverlay('새 영상 선택');
     if (!preserveContinuousSession && continuousPlaybackState.active) {
       stopContinuousPlayback();
     }
@@ -4982,6 +5055,7 @@ async function initApp() {
             // 트랜스코딩 필요 - UI 표시
             const transcoded = await showTranscodeOverlay(filePath, codecInfo.codecName);
             if (isStaleVideoLoad()) return false;
+            if (transcoded.stale) return false;
             if (transcoded.success) {
               actualVideoPath = transcoded.outputPath;
             } else {
@@ -6640,10 +6714,6 @@ async function initApp() {
     });
   }
 
-  function getPlaylistAggregateCommentKey(range) {
-    return `${range.itemId || ''}:${range.layerId || ''}:${range.markerId || ''}`;
-  }
-
   function playlistRangeMatchesCommentSearch(range, normalizedQuery) {
     if (!normalizedQuery) return true;
     if (markerMatchesCommentSearch(range, normalizedQuery)) return true;
@@ -6717,7 +6787,8 @@ async function initApp() {
     const isAlreadyLoaded = state.currentFile === item.videoPath;
     if (!isAlreadyLoaded) {
       const loaded = await loadVideoFromPlaylist(item, {
-        preserveContinuousSession: continuousPlaybackState.active
+        preserveContinuousSession: continuousPlaybackState.active,
+        shouldContinue: () => playlistUIState.mode === 'continuous'
       });
       if (!loaded) return;
     }
@@ -12039,7 +12110,8 @@ async function initApp() {
     const isAlreadyLoaded = state.currentFile === item.videoPath;
     if (!isAlreadyLoaded) {
       const loaded = await loadVideoFromPlaylist(item, {
-        preserveContinuousSession: continuousPlaybackState.active
+        preserveContinuousSession: continuousPlaybackState.active,
+        shouldContinue: () => playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0
       });
       if (!loaded) return false;
     }
@@ -12057,8 +12129,10 @@ async function initApp() {
     continuousPlaybackState.active = false;
     continuousPlaybackState.waiting = false;
     continuousPlaybackState.skippedBatch = [];
+    continuousPlaybackState.loadingItemId = null;
     continuousPlaybackState.preparePromises.clear();
     continuousPlaybackState.preparedMediaPaths.clear();
+    clearPlaylistMediaPreload();
   }
 
   function isContinuousSessionActive(sessionId) {
@@ -12139,6 +12213,7 @@ async function initApp() {
   async function updatePlaylistContinuousTimeline() {
     if (playlistUIState.mode !== 'continuous') return;
     timeline.clearCommentMarkers();
+    timeline.renderPlaylistCommentRanges([], 0);
     const updateToken = ++playlistTimelineUpdateToken;
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
@@ -12355,7 +12430,8 @@ async function initApp() {
         holdPreviousFrameUntilReady: true,
         playWhenMediaReady: true,
         deferCollaborationStart: true,
-        preparedVideoPath
+        preparedVideoPath,
+        shouldContinue: () => isContinuousSessionActive(sessionId)
       });
       if (!isContinuousSessionActive(sessionId)) return false;
       if (loaded === false) {
@@ -12619,8 +12695,7 @@ async function initApp() {
 
     if (nextMode === 'review') {
       stopContinuousPlayback({ keepCurrentVideo: true });
-      playlistAggregateCommentRanges = [];
-      timeline.setPlaylistTimeline([], 0);
+      resetPlaylistContinuousTimelineState();
       renderCommentRanges();
       updateTimelineMarkers();
       updateCommentList();
@@ -12640,8 +12715,6 @@ async function initApp() {
     }
 
     setPlaylistMode('review');
-    playlistAggregateCommentRanges = [];
-    timeline.setPlaylistTimeline([], 0);
   }
 
   async function refreshPlaylistModifiedTimes() {
@@ -13450,6 +13523,11 @@ async function initApp() {
 
     playlistManager.onItemSelected = async (item, index) => {
       log.info('재생목록 아이템 선택', { index, fileName: item.fileName });
+      const selectionLoadToken = ++playlistSelectionLoadToken;
+      const shouldContinuePlaylistSelectionLoad = () => (
+        selectionLoadToken === playlistSelectionLoadToken &&
+        playlistManager.getCurrentItem()?.id === item.id
+      );
       const shouldAutoPlaySelectedItem = playlistAutoPlayAfterSelection && userSettings.getPlaylistAutoPlay();
       playlistAutoPlayAfterSelection = false;
       if (suppressPlaylistSelectionLoad) {
@@ -13459,8 +13537,10 @@ async function initApp() {
       }
 
       const loaded = await loadVideoFromPlaylist(item, {
-        playWhenMediaReady: shouldAutoPlaySelectedItem
+        playWhenMediaReady: shouldAutoPlaySelectedItem,
+        shouldContinue: shouldContinuePlaylistSelectionLoad
       });
+      if (!shouldContinuePlaylistSelectionLoad()) return;
       updatePlaylistCurrentItem();
       updatePlaylistPosition();
       updatePlaylistContinuousTimeline();
@@ -13475,7 +13555,9 @@ async function initApp() {
     };
 
     playlistManager.onPlaylistClosed = () => {
+      playlistSelectionLoadToken += 1;
       clearPlaylistMediaPreload();
+      resetPlaylistContinuousTimelineState();
       hidePlaylistSidebar();
     };
 
@@ -13707,8 +13789,13 @@ async function initApp() {
 
   // 재생목록에서 영상 로드
   async function loadVideoFromPlaylist(item, options = {}) {
+    const { shouldContinue = null, ...loadOptions } = options;
+    const canContinuePlaylistLoad = () => typeof shouldContinue !== 'function' || shouldContinue();
+    if (!canContinuePlaylistLoad()) return false;
+
     // 파일 존재 확인
     const exists = await window.electronAPI.fileExists(item.videoPath);
+    if (!canContinuePlaylistLoad()) return false;
     if (!exists) {
       showToast(`파일을 찾을 수 없습니다: ${item.fileName}`, 'error');
       markPlaylistItemAsMissing(item.id);
@@ -13718,10 +13805,13 @@ async function initApp() {
     // 현재 영상 저장
     if (reviewDataManager.isModified) {
       await reviewDataManager.save();
+      if (!canContinuePlaylistLoad()) return false;
     }
 
     // 새 영상 로드
-    const loaded = await loadVideo(item.videoPath, options);
+    if (!canContinuePlaylistLoad()) return false;
+    const loaded = await loadVideo(item.videoPath, loadOptions);
+    if (!canContinuePlaylistLoad()) return false;
     return loaded === true;
   }
 

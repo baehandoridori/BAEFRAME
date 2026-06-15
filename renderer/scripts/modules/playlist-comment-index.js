@@ -50,6 +50,10 @@ export function formatPlaylistCommentTitle(range = {}) {
   return `${getPlaylistCutLabel(range)} 컷 ${localTimecode} / 전체 ${globalTimecode} - ${range.text || '댓글'}`;
 }
 
+export function getPlaylistAggregateCommentKey(range = {}) {
+  return `${range.itemId || ''}:${range.layerId || ''}:${range.markerId || ''}`;
+}
+
 export function extractPlaylistCommentRanges(options) {
   const bframeData = options.bframeData || {};
   const segment = options.segment;
@@ -81,10 +85,19 @@ export function extractPlaylistCommentRanges(options) {
         : (Number.isFinite(markerFps) && markerFps > 0 ? markerFps : fallbackFps);
       const startFrame = Number(marker.startFrame) || 0;
       const endFrame = Number(marker.endFrame) || startFrame;
-      const startTime = startFrame / fps;
-      const endTime = Math.max(startTime, endFrame / fps);
+      const rawStartTime = startFrame / fps;
+      const rawEndTime = Math.max(rawStartTime, endFrame / fps);
+      const segmentDuration = Number(segment.duration);
+      const maxLocalTime = Number.isFinite(segmentDuration) && segmentDuration > 0
+        ? segmentDuration
+        : Infinity;
+      if (rawStartTime > maxLocalTime) continue;
+      const startTime = Math.max(0, Math.min(rawStartTime, maxLocalTime));
+      const endTime = Math.max(startTime, Math.min(rawEndTime, maxLocalTime));
       const globalStartTime = segment.startTime + startTime;
       const globalEndTime = segment.startTime + endTime;
+      const localStartFrame = Math.round(startTime * fps);
+      const localEndFrame = Math.round(endTime * fps);
       ranges.push({
         itemId: segment.itemId,
         itemIndex: segment.index,
@@ -108,10 +121,10 @@ export function extractPlaylistCommentRanges(options) {
         localEndTime: endTime,
         globalStartTime,
         globalEndTime,
-        localStartFrame: startFrame,
-        localEndFrame: endFrame,
-        startFrame,
-        endFrame,
+        localStartFrame,
+        localEndFrame,
+        startFrame: localStartFrame,
+        endFrame: localEndFrame,
         startTimecode: formatPlaylistTimecode(startTime, fps),
         localStartTimecode: formatPlaylistTimecode(startTime, fps),
         globalStartTimecode: formatPlaylistTimecode(globalStartTime, fps)
