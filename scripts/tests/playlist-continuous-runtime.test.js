@@ -61,6 +61,11 @@ test('opening or replacing playlists clears stale continuous timeline state', ()
   assert.match(resetSource, /playlistTimelineUpdateToken \+= 1;/);
   assert.match(resetSource, /playlistAggregateCommentRanges = \[\];/);
   assert.match(resetSource, /timeline\.clearPlaylistTimeline\(\);/);
+  assert.doesNotMatch(
+    resetSource,
+    /timeline\.clearCommentMarkers\(\);/,
+    'continuous reset must not erase normal review markers when opening an empty playlist'
+  );
 
   const openMatch = appSource.match(/async function openPlaylistFile\(filePath\) \{([\s\S]*?)\n  \}/);
   assert.ok(openMatch, 'openPlaylistFile should exist');

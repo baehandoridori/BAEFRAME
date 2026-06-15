@@ -406,7 +406,6 @@ async function initApp() {
     playlistTimelineUpdateToken += 1;
     playlistAggregateCommentRanges = [];
     timeline.clearPlaylistTimeline();
-    timeline.clearCommentMarkers();
   }
 
   function getDialogFileName(filePath) {
