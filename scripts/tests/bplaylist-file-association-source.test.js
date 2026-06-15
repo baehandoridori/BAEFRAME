@@ -10,6 +10,7 @@ const builderConfig = read('electron-builder.yml');
 const installScript = read('integration/installer/install-integration.ps1');
 const detectScript = read('integration/installer/detect-integration.ps1');
 const uninstallScript = read('integration/installer/uninstall-integration.ps1');
+const appSource = read('renderer/scripts/app.js');
 
 test('electron builder registers saved playlist files as BAEFRAME project files', () => {
   assert.match(builderConfig, /fileAssociations:[\s\S]+ext: bframe/);
@@ -45,4 +46,15 @@ test('integration uninstaller removes bplaylist project file association', () =>
   assert.match(uninstallScript, /Remove-ProjectFileAssociations/);
   assert.match(uninstallScript, /Registry::HKEY_CURRENT_USER\\Software\\Classes\\\$extension/);
   assert.match(uninstallScript, /Registry::HKEY_CURRENT_USER\\Software\\Classes\\\$progId/);
+});
+
+test('startup playlist listener is registered before renderer-ready opens launch files', () => {
+  const readyIndex = appSource.indexOf('window.electronAPI.notifyRendererReady?.()');
+  const playlistInitIndex = appSource.indexOf('initPlaylistFeature();');
+  const playlistListenerIndex = appSource.indexOf('window.electronAPI.onOpenPlaylist?.');
+
+  assert.notEqual(readyIndex, -1, 'renderer-ready notification should exist');
+  assert.notEqual(playlistInitIndex, -1, 'playlist feature init should run during startup');
+  assert.notEqual(playlistListenerIndex, -1, 'open-playlist listener should exist');
+  assert.ok(playlistInitIndex < readyIndex, 'playlist startup listeners must register before renderer-ready');
 });
