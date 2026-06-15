@@ -44,6 +44,7 @@ let forceQuit = false;
 const { createLogger } = require('./logger');
 const { createMainWindow, getMainWindow, createLoadingWindow, closeLoadingWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
+const { registerProjectFileAssociations } = require('./project-file-associations');
 const {
   hasExtension,
   isLaunchArgument,
@@ -308,6 +309,13 @@ if (!gotTheLock) {
   app.whenReady().then(() => {
     debugLog(`앱 준비 완료: ${Date.now() - appStartTime}ms`);
     log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
+
+    registerProjectFileAssociations({
+      appPath: process.execPath,
+      logger: log
+    }).catch((error) => {
+      log.warn('프로젝트 파일 연결 자동 등록 예외', { error: error.message });
+    });
 
     // 시작 시 전달된 파일/프로토콜 인자 확인
     log.info('process.argv 전체', { argv: process.argv });

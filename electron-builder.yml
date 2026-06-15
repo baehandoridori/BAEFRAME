@@ -29,6 +29,10 @@ fileAssociations:
     name: BAEFRAME Review
     description: BAEFRAME Review File
     role: Editor
+  - ext: bplaylist
+    name: BAEFRAME Playlist
+    description: BAEFRAME Playlist File
+    role: Editor
 
 protocols:
   - name: BFRAME Protocol

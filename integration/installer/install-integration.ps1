@@ -18,6 +18,18 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $SupportedExtensions = @('.mp4', '.mov', '.avi', '.mkv', '.webm')
+$ProjectFileAssociations = @(
+  @{
+    extension = '.bframe'
+    progId = 'BAEFRAME.Review'
+    label = 'BAEFRAME Review File'
+  },
+  @{
+    extension = '.bplaylist'
+    progId = 'BAEFRAME.Playlist'
+    label = 'BAEFRAME Playlist File'
+  }
+)
 $VerbKeyName = 'BAEFRAME.Open'
 $VerbLabel = ('BAEFRAME' + [string][char]0xB85C + ' ' + [string][char]0xC5F4 + [string][char]0xAE30)
 $ShellExtensionClsid = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
@@ -300,6 +312,46 @@ function Register-RegistryComServer {
   }
 }
 
+function Register-ProjectFileAssociations {
+  param([string]$ResolvedAppPath)
+
+  $escapedCommand = "`"$ResolvedAppPath`" `"%1`""
+
+  foreach ($association in $ProjectFileAssociations) {
+    $extension = [string]$association.extension
+    $progId = [string]$association.progId
+    $label = [string]$association.label
+    $extensionKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$extension"
+    $progIdKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$progId"
+    $defaultIconKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$progId\DefaultIcon"
+    $openKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$progId\shell\open"
+    $commandKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$progId\shell\open\command"
+
+    if ($PSCmdlet.ShouldProcess($extensionKey, "Register project file association for $extension")) {
+      New-Item -Path $extensionKey -Force | Out-Null
+      Set-ItemProperty -Path $extensionKey -Name '(default)' -Value $progId -Force
+
+      New-Item -Path $progIdKey -Force | Out-Null
+      Set-ItemProperty -Path $progIdKey -Name '(default)' -Value $label -Force
+
+      New-Item -Path $defaultIconKey -Force | Out-Null
+      Set-ItemProperty -Path $defaultIconKey -Name '(default)' -Value ("$ResolvedAppPath,0") -Force
+
+      New-Item -Path $openKey -Force | Out-Null
+      New-ItemProperty -Path $openKey -Name 'MUIVerb' -PropertyType String -Value 'Open with BAEFRAME' -Force | Out-Null
+
+      New-Item -Path $commandKey -Force | Out-Null
+      Set-ItemProperty -Path $commandKey -Name '(default)' -Value $escapedCommand -Force
+
+      Write-SetupLog -Level 'INFO' -Message 'Registered BAEFRAME project file association' -Data @{
+        extension = $extension
+        progId = $progId
+        command = $escapedCommand
+      }
+    }
+  }
+}
+
 function Register-RegistryShellVerbs {
   param([string]$ResolvedAppPath)
 
@@ -484,6 +536,7 @@ try {
   }
 
   $resolvedAppPath = Resolve-BaeframePath -Candidate $AppPath
+  Register-ProjectFileAssociations -ResolvedAppPath $resolvedAppPath
 
   $resolvedMode = 'none'
 
@@ -703,6 +756,7 @@ try {
       windowsBuild = [int][Environment]::OSVersion.Version.Build
       appPath = $resolvedAppPath
       extensions = $SupportedExtensions
+      projectFileAssociations = $ProjectFileAssociations
       shellClsid = $ShellExtensionClsid
       packageName = $PackageName
       sparseInstall = $sparseInstall
@@ -733,6 +787,7 @@ try {
     sparseInstall = $sparseInstall
     registryShell = $registryShell
     extensions = $SupportedExtensions
+    projectFileAssociations = $ProjectFileAssociations
     configKey = $IntegrationConfigKey
     logPath = $LogPath
     statePath = $StatePath
