@@ -321,8 +321,13 @@ test('opening cutlist mode exits playlist continuous state before cutlist timeli
   const showBody = extractBalancedBlock(appSource, 'function showCutlistSidebar');
 
   assert.match(helperBody, /setPlaylistMode\('review'\)/);
-  assert.match(helperBody, /playlistAggregateCommentRanges = \[\]/);
-  assert.match(helperBody, /timeline\.setPlaylistTimeline\(\[\], 0\)/);
+
+  const modeBody = extractBalancedBlock(appSource, 'function setPlaylistMode');
+  const reviewBranchIndex = modeBody.indexOf("nextMode === 'review'");
+  const resetIndex = modeBody.indexOf('resetPlaylistContinuousTimelineState();', reviewBranchIndex);
+  const renderIndex = modeBody.indexOf('renderCommentRanges();', reviewBranchIndex);
+  assert.notEqual(resetIndex, -1, 'review mode should reset playlist continuous timeline state');
+  assert.ok(resetIndex < renderIndex, 'playlist continuous state should clear before review markers render');
 
   const exitIndex = showBody.indexOf('exitPlaylistContinuousModeForCutlist()');
   const updateIndex = showBody.indexOf('updateCutlistTimeline()');

@@ -5,6 +5,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $SupportedExtensions = @('.mp4', '.mov', '.avi', '.mkv', '.webm')
+$ProjectFileAssociations = @(
+  @{
+    extension = '.bframe'
+    progId = 'BAEFRAME.Review'
+  },
+  @{
+    extension = '.bplaylist'
+    progId = 'BAEFRAME.Playlist'
+  }
+)
 $VerbKeyName = 'BAEFRAME.Open'
 $IntegrationConfigKey = 'Registry::HKEY_CURRENT_USER\Software\BAEFRAME\Integration'
 $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
@@ -79,6 +89,8 @@ $shellClsid = $null
 $missing = @()
 $missingLegacy = @()
 $missingRegistry = @()
+$projectFiles = [ordered]@{}
+$missingProjectFiles = @()
 
 if (Test-Path $IntegrationConfigKey) {
   try {
@@ -151,6 +163,63 @@ foreach ($ext in $SupportedExtensions) {
   }
 }
 
+foreach ($association in $ProjectFileAssociations) {
+  $extension = [string]$association.extension
+  $progId = [string]$association.progId
+  $extensionKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$extension"
+  $progIdKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$progId"
+  $commandKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$progId\shell\open\command"
+
+  $extensionProgId = $null
+  $label = $null
+  $command = $null
+  $present = $false
+
+  if (Test-Path $extensionKey) {
+    try {
+      $extensionItem = Get-Item -Path $extensionKey
+      $extensionProgId = $extensionItem.GetValue('')
+    } catch {
+      $extensionProgId = $null
+    }
+  }
+
+  if (Test-Path $progIdKey) {
+    try {
+      $progIdItem = Get-Item -Path $progIdKey
+      $label = $progIdItem.GetValue('')
+    } catch {
+      $label = $null
+    }
+  }
+
+  if (Test-Path $commandKey) {
+    try {
+      $commandItem = Get-Item -Path $commandKey
+      $command = $commandItem.GetValue('')
+
+      if (-not $appPath) {
+        $appPath = Get-AppPathFromCommand -CommandText $command
+      }
+    } catch {
+      $command = $null
+    }
+  }
+
+  $present = ($extensionProgId -eq $progId) -and (-not [string]::IsNullOrWhiteSpace([string]$command))
+  if (-not $present) {
+    $missingProjectFiles += $extension
+  }
+
+  $projectFiles[$extension] = [ordered]@{
+    present = $present
+    progId = $progId
+    extensionProgId = $extensionProgId
+    label = $label
+    command = $command
+  }
+}
+
 if ((-not $appPath) -and (Test-Path $StatePath)) {
   try {
     $state = Get-Content -Raw $StatePath | ConvertFrom-Json
@@ -194,6 +263,7 @@ if ($comInprocExists) {
 }
 
 $registryInstalled = ($missingRegistry.Count -eq 0) -and $comInprocExists
+$projectFileInstalled = ($missingProjectFiles.Count -eq 0)
 $installed = $sparseInstalled -or $registryInstalled -or $legacyInstalled
 
 $mode = 'none'
@@ -234,6 +304,11 @@ $result = [ordered]@{
     installed = $legacyInstalled
     missingExtensions = $missingLegacy
     extensions = $extensions
+  }
+  projectFiles = [ordered]@{
+    installed = $projectFileInstalled
+    missingProjectFiles = $missingProjectFiles
+    associations = $projectFiles
   }
   configKey = $IntegrationConfigKey
   statePath = $StatePath

@@ -5,6 +5,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $SupportedExtensions = @('.mp4', '.mov', '.avi', '.mkv', '.webm')
+$ProjectFileAssociations = @(
+  @{
+    extension = '.bframe'
+    progId = 'BAEFRAME.Review'
+  },
+  @{
+    extension = '.bplaylist'
+    progId = 'BAEFRAME.Playlist'
+  }
+)
 $VerbKeyName = 'BAEFRAME.Open'
 $PackageName = 'StudioJBBJ.BAEFRAME.Integration'
 $ShellExtensionClsid = '{E9C6CF8B-0E51-4C3C-83B6-42FEE932E7F4}'
@@ -74,6 +84,53 @@ function Invoke-PowerShellFile {
   }
 }
 
+function Remove-ProjectFileAssociations {
+  foreach ($association in $ProjectFileAssociations) {
+    $extension = [string]$association.extension
+    $progId = [string]$association.progId
+    $extensionSubKey = "Software\Classes\$extension"
+    $extensionKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$extension"
+    $progIdKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$progId"
+
+    if (Test-Path $extensionKey) {
+      $shouldClearExtensionDefault = $false
+      try {
+        $extensionItem = Get-Item -Path $extensionKey
+        $shouldClearExtensionDefault = ($extensionItem.GetValue('') -eq $progId)
+      } catch {
+        $shouldClearExtensionDefault = $false
+      }
+
+      if ($shouldClearExtensionDefault -and $PSCmdlet.ShouldProcess($extensionKey, 'Clear project file extension default association')) {
+        $writableExtensionKey = $null
+        try {
+          $writableExtensionKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($extensionSubKey, $true)
+          if ($writableExtensionKey) {
+            $writableExtensionKey.DeleteValue('', $false)
+          }
+        } finally {
+          if ($writableExtensionKey) {
+            $writableExtensionKey.Close()
+          }
+        }
+
+        Write-SetupLog -Level 'INFO' -Message 'Cleared project file extension default association' -Data @{
+          extension = $extension
+          progId = $progId
+        }
+      }
+    }
+
+    if ((Test-Path $progIdKey) -and $PSCmdlet.ShouldProcess($progIdKey, 'Remove project file ProgID association')) {
+      Remove-Item -Path $progIdKey -Recurse -Force
+      Write-SetupLog -Level 'INFO' -Message 'Removed project file ProgID association' -Data @{
+        extension = $extension
+        progId = $progId
+      }
+    }
+  }
+}
+
 try {
   Write-SetupLog -Level 'INFO' -Message 'Integration uninstall started'
 
@@ -112,6 +169,8 @@ try {
     Write-SetupLog -Level 'INFO' -Message 'Removed MSIX stage files' -Data @{ stageRoot = $FullStageRoot }
   }
 
+  Remove-ProjectFileAssociations
+
   foreach ($ext in $SupportedExtensions) {
     $verbKey = "Registry::HKEY_CURRENT_USER\Software\Classes\SystemFileAssociations\$ext\shell\$VerbKeyName"
 
@@ -145,6 +204,7 @@ try {
   [ordered]@{
     success = $true
     removedExtensions = $SupportedExtensions
+    removedProjectFileAssociations = $ProjectFileAssociations
     removedComClsid = $ShellExtensionClsid
     removedArtifactsDir = $RegistryShellInstallDir
     removedConfigKey = $IntegrationConfigKey

@@ -21,6 +21,9 @@ BAEFRAME Windows 통합(이슈 #88)은 영상 파일을 우클릭했을 때 "BAE
 
 - `.mp4`, `.mov` 등 영상 파일 우클릭 → "BAEFRAME로 열기"
 - 선택한 파일이 BAEFRAME에 자동으로 전달됨
+- `.bframe`, `.bplaylist` 프로젝트 파일 더블클릭 → BAEFRAME에서 바로 열기
+- 팀원이 공유한 `.bplaylist` 파일을 더블클릭하면 저장된 재생목록이 BAEFRAME에서 열림
+- 빌드된 BAEFRAME을 한 번 실행하면 `.bframe`, `.bplaylist` 연결이 현재 실행 파일로 자동 보정됨
 
 ### 필수 런타임
 
@@ -43,8 +46,11 @@ integration/installer/BAEFRAME-Integration-Setup.cmd
 1. `BAEFRAME-Integration-Setup.cmd` 더블클릭
 2. 설치 완료 후 Explorer 재시작 여부(Y/N) 선택
 3. `.mp4` 파일 우클릭 → "BAEFRAME로 열기" 항목 확인
+4. `.bplaylist` 파일 더블클릭 → BAEFRAME에서 재생목록 열림 확인
 
 설치기는 내부적으로 64비트 PowerShell을 우선 사용하고, MSIX 설치 직후 COM 활성화가 지연될 때를 대비해 자동 재시도(1회)를 수행합니다.
+
+프로젝트 파일 연결만 필요한 경우에는 빌드된 `BFRAME_alpha_v2.exe`를 한 번 실행해도 됩니다. 앱 시작 시 `.bframe`, `.bplaylist` 연결을 현재 실행 파일로 자동 등록하므로 이후부터는 해당 파일을 더블클릭해 열 수 있습니다.
 
 > **주의:** `installer` 폴더만 따로 압축해서 전달하면 설치가 실패합니다. 설치 스크립트가 상위의 `package/` 폴더를 참조하기 때문입니다. 최소한 `integration/` 폴더 전체 또는 `installer/` + `package/` 폴더를 **동일한 구조**로 함께 전달해야 합니다.
 

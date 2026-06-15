@@ -8690,10 +8690,6 @@ async function initApp() {
     handleExternalFile(arg);
   });
 
-  // renderer 초기화 완료 → main process에 알림 (파일 인자 전송 트리거)
-  window.electronAPI.notifyRendererReady?.();
-  log.info('renderer 초기화 완료, renderer-ready 전송');
-
   // ====== 앱 종료 전 저장 처리 ======
   window.electronAPI.onRequestSaveBeforeQuit(async () => {
     log.info('앱 종료 전 저장 요청 수신');
@@ -11744,6 +11740,11 @@ async function initApp() {
   // ====== 재생목록 초기화 ======
   initPlaylistFeature();
   initCutlistFeature();
+
+  // renderer 초기화 완료 → main process에 알림 (파일 인자 전송 트리거)
+  // 시작 파일이 .bplaylist/.bcutlist일 수 있으므로 전용 리스너 등록 후 알린다.
+  window.electronAPI.notifyRendererReady?.();
+  log.info('renderer 초기화 완료, renderer-ready 전송');
 
   log.info('앱 초기화 완료');
 
