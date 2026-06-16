@@ -1,4 +1,6 @@
 const { execFile } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
 const PROJECT_FILE_ASSOCIATIONS = [
   {
@@ -13,14 +15,27 @@ const PROJECT_FILE_ASSOCIATIONS = [
   }
 ];
 
-function buildProjectFileAssociationOperations(appPath) {
+function resolveProjectFileIconPath({
+  resourcesPath = process.resourcesPath,
+  existsSync = fs.existsSync
+} = {}) {
+  if (!resourcesPath) {
+    return null;
+  }
+
+  const iconPath = path.join(resourcesPath, 'project-file.ico');
+  return existsSync(iconPath) ? iconPath : null;
+}
+
+function buildProjectFileAssociationOperations(appPath, projectFileIconPath = null) {
   if (!appPath) {
     throw new Error('appPath is required');
   }
 
   return PROJECT_FILE_ASSOCIATIONS.flatMap(({ extension, progId, label }) => {
     const commandValue = `"${appPath}" "%1"`;
-    const iconValue = `"${appPath}",0`;
+    const iconSourcePath = projectFileIconPath || appPath;
+    const iconValue = `"${iconSourcePath}",0`;
 
     return [
       {
@@ -72,6 +87,7 @@ function logResult(logger, level, message, meta) {
 
 async function registerProjectFileAssociations({
   appPath = process.execPath,
+  projectFileIconPath = resolveProjectFileIconPath(),
   platform = process.platform,
   isDefaultApp = process.defaultApp,
   runner = runRegistryCommand,
@@ -87,7 +103,7 @@ async function registerProjectFileAssociations({
 
   let operations;
   try {
-    operations = buildProjectFileAssociationOperations(appPath);
+    operations = buildProjectFileAssociationOperations(appPath, projectFileIconPath);
   } catch (error) {
     logResult(logger, 'warn', '프로젝트 파일 연결 준비 실패', { error: error.message });
     return { ok: false, skipped: false, error };
@@ -100,6 +116,7 @@ async function registerProjectFileAssociations({
 
     logResult(logger, 'info', '프로젝트 파일 연결 자동 등록 완료', {
       appPath,
+      projectFileIconPath: projectFileIconPath || appPath,
       extensions: PROJECT_FILE_ASSOCIATIONS.map(spec => spec.extension)
     });
     return { ok: true, skipped: false, operations: operations.length };
@@ -115,6 +132,7 @@ async function registerProjectFileAssociations({
 
 module.exports = {
   PROJECT_FILE_ASSOCIATIONS,
+  resolveProjectFileIconPath,
   buildProjectFileAssociationOperations,
   registerProjectFileAssociations
 };
