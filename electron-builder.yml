@@ -14,6 +14,8 @@ files:
   - package.json
 
 extraResources:
+  - from: BFRAME_ico.ico
+    to: project-file.ico
   - from: mpv/
     to: mpv/
     filter:
@@ -40,6 +42,7 @@ protocols:
       - baeframe
 
 win:
+  icon: BFRAME_ico.ico
   target:
     - target: dir
       arch: x64

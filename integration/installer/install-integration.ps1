@@ -116,6 +116,27 @@ function Resolve-BaeframePath {
   throw 'Unable to locate app executable. Re-run with -AppPath "C:\path\to\BFRAME_alpha_v2.exe".'
 }
 
+function Resolve-ProjectFileIconValue {
+  param([string]$ResolvedAppPath)
+
+  $appDir = Split-Path -Parent $ResolvedAppPath
+  $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+  $candidates = @(
+    (Join-Path $appDir 'resources\project-file.ico'),
+    (Join-Path $appDir 'project-file.ico'),
+    (Join-Path $repoRoot 'BFRAME_ico.ico')
+  )
+
+  foreach ($pathCandidate in $candidates) {
+    if ($pathCandidate -and (Test-Path $pathCandidate)) {
+      $resolvedIconPath = (Resolve-Path $pathCandidate).Path
+      return "$resolvedIconPath,0"
+    }
+  }
+
+  return "$ResolvedAppPath,0"
+}
+
 function Test-Windows11 {
   $build = [int][Environment]::OSVersion.Version.Build
   return $build -ge 22000
@@ -316,6 +337,7 @@ function Register-ProjectFileAssociations {
   param([string]$ResolvedAppPath)
 
   $escapedCommand = "`"$ResolvedAppPath`" `"%1`""
+  $projectFileIconValue = Resolve-ProjectFileIconValue -ResolvedAppPath $ResolvedAppPath
 
   foreach ($association in $ProjectFileAssociations) {
     $extension = [string]$association.extension
@@ -335,7 +357,7 @@ function Register-ProjectFileAssociations {
       Set-ItemProperty -Path $progIdKey -Name '(default)' -Value $label -Force
 
       New-Item -Path $defaultIconKey -Force | Out-Null
-      Set-ItemProperty -Path $defaultIconKey -Name '(default)' -Value ("$ResolvedAppPath,0") -Force
+      Set-ItemProperty -Path $defaultIconKey -Name '(default)' -Value $projectFileIconValue -Force
 
       New-Item -Path $openKey -Force | Out-Null
       New-ItemProperty -Path $openKey -Name 'MUIVerb' -PropertyType String -Value 'Open with BAEFRAME' -Force | Out-Null
@@ -347,6 +369,7 @@ function Register-ProjectFileAssociations {
         extension = $extension
         progId = $progId
         command = $escapedCommand
+        icon = $projectFileIconValue
       }
     }
   }

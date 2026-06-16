@@ -17,6 +17,8 @@ test('electron builder registers saved playlist files as BAEFRAME project files'
   assert.match(builderConfig, /fileAssociations:[\s\S]+ext: bplaylist/);
   assert.match(builderConfig, /ext: bplaylist[\s\S]+name: BAEFRAME Playlist/);
   assert.match(builderConfig, /ext: bplaylist[\s\S]+description: BAEFRAME Playlist File/);
+  assert.match(builderConfig, /extraResources:[\s\S]+from: BFRAME_ico\.ico[\s\S]+to: project-file\.ico/);
+  assert.match(builderConfig, /win:[\s\S]+icon: BFRAME_ico\.ico/);
 });
 
 test('team integration installer registers bplaylist double-click file association', () => {

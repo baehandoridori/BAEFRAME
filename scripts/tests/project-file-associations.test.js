@@ -34,6 +34,22 @@ test('registry operations force bplaylist and bframe to open with the current ex
   assert.ok(operations.every(operation => operation.args.includes('/f')));
 });
 
+test('registry operations use packaged project file icon when available', () => {
+  const operations = projectFileAssociations.buildProjectFileAssociationOperations(
+    'C:\\BAEFRAME\\BFRAME_alpha_v2.exe',
+    'C:\\BAEFRAME\\resources\\project-file.ico'
+  );
+  const iconValues = operations
+    .filter(operation => operation.args.some(arg => arg.includes('DefaultIcon')))
+    .map(operation => operation.args.join(' '));
+
+  assert.equal(iconValues.length, 2);
+  assert.match(iconValues[0], /BAEFRAME\.Review\\DefaultIcon/);
+  assert.match(iconValues[0], /"C:\\BAEFRAME\\resources\\project-file\.ico",0/);
+  assert.match(iconValues[1], /BAEFRAME\.Playlist\\DefaultIcon/);
+  assert.match(iconValues[1], /"C:\\BAEFRAME\\resources\\project-file\.ico",0/);
+});
+
 test('auto registration runs only for packaged Windows apps and does not block startup on failure', async () => {
   const calls = [];
   const success = await projectFileAssociations.registerProjectFileAssociations({
