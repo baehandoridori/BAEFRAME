@@ -72,10 +72,14 @@ test('opening or replacing playlists invalidates active continuous work before f
   const openMatch = appSource.match(/async function openPlaylistFile\(filePath\) \{([\s\S]*?)\n  \}/);
   assert.ok(openMatch, 'openPlaylistFile should exist');
   const openSource = openMatch[1];
-  assert.match(openSource, /const previousReplacementToken = playlistReplacementToken;/);
+  assert.match(appSource, /function restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousState\) \{/);
+  assert.match(appSource, /playlistReplacementToken = previousState\.replacementToken;/);
+  assert.match(appSource, /playlistTimelineUpdateToken = previousState\.timelineUpdateToken;/);
+  assert.match(appSource, /setPlaylistContinuousTimelineBusy\(false\);/);
+  assert.match(openSource, /const previousReplacementState = \{[\s\S]+replacementToken: playlistReplacementToken,[\s\S]+timelineUpdateToken: playlistTimelineUpdateToken[\s\S]+\};/);
   assert.match(openSource, /const replacementToken = beginPlaylistReplacement\(\);[\s\S]+openedPlaylist = await playlistManager\.open\(normalizedPath\);/);
-  assert.match(openSource, /catch \(error\) \{[\s\S]+playlistReplacementToken = previousReplacementToken;[\s\S]+throw error;/);
-  assert.match(openSource, /if \(!openedPlaylist\) \{[\s\S]+playlistReplacementToken = previousReplacementToken;[\s\S]+return;/);
+  assert.match(openSource, /catch \(error\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+throw error;/);
+  assert.match(openSource, /if \(!openedPlaylist\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+return;/);
   assert.match(openSource, /if \(replacementToken !== playlistReplacementToken\) return;/);
   assert.ok(
     openSource.indexOf('const replacementToken = beginPlaylistReplacement();') <
@@ -843,6 +847,7 @@ test('stale playlist opens cannot publish older file state', () => {
   const openSource = openMatch[1];
 
   assert.match(openSource, /const previousOpenOperationToken = this\.openOperationToken;/);
+  assert.match(openSource, /const previousThumbnailValidationToken = this\.thumbnailValidationToken;/);
   assert.match(openSource, /const previousPlaylist = this\.currentPlaylist;/);
   assert.match(openSource, /const previousPlaylistPath = this\.playlistPath;/);
   assert.match(openSource, /const openOperationToken = \+\+this\.openOperationToken;/);
@@ -853,7 +858,7 @@ test('stale playlist opens cannot publish older file state', () => {
     'new opens should cancel stale background thumbnail validation before slow file reads'
   );
   assert.match(openSource, /const shouldContinueOpen = \(\) => openOperationToken === this\.openOperationToken;/);
-  assert.match(openSource, /catch \(error\) \{[\s\S]+this\.currentPlaylist === previousPlaylist[\s\S]+this\.playlistPath === previousPlaylistPath[\s\S]+this\.openOperationToken = previousOpenOperationToken;/);
+  assert.match(openSource, /catch \(error\) \{[\s\S]+this\.currentPlaylist === previousPlaylist[\s\S]+this\.playlistPath === previousPlaylistPath[\s\S]+this\.openOperationToken = previousOpenOperationToken;[\s\S]+this\.thumbnailValidationToken = previousThumbnailValidationToken;/);
   assert.doesNotMatch(openSource, /await this\.save\(/);
   assert.ok(
     openSource.indexOf('if (!shouldContinueOpen()) return null;') <

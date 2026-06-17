@@ -192,6 +192,7 @@ export class PlaylistManager {
   async open(filePath) {
     log.info('재생목록 열기', { filePath });
     const previousOpenOperationToken = this.openOperationToken;
+    const previousThumbnailValidationToken = this.thumbnailValidationToken;
     const previousPlaylist = this.currentPlaylist;
     const previousPlaylistPath = this.playlistPath;
     const openOperationToken = ++this.openOperationToken;
@@ -272,6 +273,7 @@ export class PlaylistManager {
         this.playlistPath === previousPlaylistPath
       ) {
         this.openOperationToken = previousOpenOperationToken;
+        this.thumbnailValidationToken = previousThumbnailValidationToken;
       }
       log.error('재생목록 열기 실패', { filePath, error: error.message });
       this.onError?.(error);

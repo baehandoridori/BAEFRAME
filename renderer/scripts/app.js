@@ -423,6 +423,15 @@ async function initApp() {
     return playlistReplacementToken;
   }
 
+  function restorePlaylistReplacementAfterFailedOpen(replacementToken, previousState) {
+    if (replacementToken !== playlistReplacementToken) return;
+    playlistReplacementToken = previousState.replacementToken;
+    playlistTimelineUpdateToken = previousState.timelineUpdateToken;
+    if (playlistUIState.mode === 'continuous') {
+      setPlaylistContinuousTimelineBusy(false);
+    }
+  }
+
   function getDialogFileName(filePath) {
     const normalized = String(filePath || '').replace(/\\/g, '/');
     return normalized.split('/').filter(Boolean).pop() || '선택한 info 파일';
@@ -452,21 +461,20 @@ async function initApp() {
   async function openPlaylistFile(filePath) {
     const normalizedPath = normalizePlaylistOpenPath(filePath);
     const playlistManager = getPlaylistManager();
-    const previousReplacementToken = playlistReplacementToken;
+    const previousReplacementState = {
+      replacementToken: playlistReplacementToken,
+      timelineUpdateToken: playlistTimelineUpdateToken
+    };
     const replacementToken = beginPlaylistReplacement();
     let openedPlaylist;
     try {
       openedPlaylist = await playlistManager.open(normalizedPath);
     } catch (error) {
-      if (replacementToken === playlistReplacementToken) {
-        playlistReplacementToken = previousReplacementToken;
-      }
+      restorePlaylistReplacementAfterFailedOpen(replacementToken, previousReplacementState);
       throw error;
     }
     if (!openedPlaylist) {
-      if (replacementToken === playlistReplacementToken) {
-        playlistReplacementToken = previousReplacementToken;
-      }
+      restorePlaylistReplacementAfterFailedOpen(replacementToken, previousReplacementState);
       return;
     }
     if (replacementToken !== playlistReplacementToken) return;
