@@ -85,6 +85,7 @@ test('opening or replacing playlists commits visible continuous work only after 
   assert.match(openSource, /if \(!openedPlaylist\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+return;/);
   assert.match(openSource, /if \(playlistReplacementCommitToken > replacementToken\) return false;/);
   assert.match(openSource, /playlistReplacementCommitToken = replacementToken;/);
+  assert.match(openSource, /playlistReplacementCommitToken !== replacementToken[\s\S]+playlistManager\.currentPlaylist !== openedPlaylist[\s\S]+return;/);
   assert.ok(
     openSource.indexOf('const replacementToken = beginPlaylistReplacement();') <
       openSource.indexOf('openedPlaylist = await playlistManager.open(normalizedPath, {'),
@@ -94,6 +95,13 @@ test('opening or replacing playlists commits visible continuous work only after 
     openSource.indexOf('onCommitted: () => {') <
       openSource.indexOf('commitPlaylistReplacement();'),
     'visible playback, timeline, and background work should change from the successful commit callback'
+  );
+  assert.ok(
+    openSource.indexOf('playlistReplacementCommitToken !== replacementToken') <
+      openSource.indexOf('showPlaylistSidebar();') &&
+      openSource.indexOf('playlistManager.currentPlaylist !== openedPlaylist') <
+        openSource.indexOf('playlistManager.selectItem(0);'),
+    'post-open UI side effects should re-check that this open is still the committed playlist'
   );
 
   const replacementMatch = appSource.match(/function beginPlaylistReplacement\(\) \{([\s\S]*?)\n  \}/);

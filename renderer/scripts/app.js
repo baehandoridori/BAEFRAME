@@ -484,6 +484,12 @@ async function initApp() {
       restorePlaylistReplacementAfterFailedOpen(replacementToken, previousReplacementState);
       return;
     }
+    if (
+      playlistReplacementCommitToken !== replacementToken ||
+      playlistManager.currentPlaylist !== openedPlaylist
+    ) {
+      return;
+    }
     showPlaylistSidebar();
     if (playlistManager.getItemCount() > 0) {
       playlistManager.selectItem(0);
