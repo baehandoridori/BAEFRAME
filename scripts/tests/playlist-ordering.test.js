@@ -246,3 +246,306 @@ test('PlaylistManager.open은 비어 있는 bframePath를 영상 옆 .bframe으�
   assert.equal(savedPlaylists[0].playlist.items[0].bframePath, 'C:\\video\\shot1.bframe');
   assert.equal(manager.isModified, false);
 });
+
+test('PlaylistManager.open은 로드 콜백에 오래된 열기 작업을 구분하는 context를 넘긴다', async () => {
+  const makePlaylist = (name, videoPath) => ({
+    playlistVersion: '1.0',
+    id: `playlist-${name}`,
+    name,
+    createdAt: '2026-06-17T00:00:00.000Z',
+    modifiedAt: '2026-06-17T00:00:00.000Z',
+    createdBy: 'tester',
+    createdById: 'session-1',
+    items: [
+      {
+        id: `item-${name}`,
+        videoPath,
+        bframePath: '',
+        fileName: `${name}.mp4`,
+        thumbnailPath: 'data:image/png;base64,stub',
+        order: 0,
+        addedAt: '2026-06-17T00:00:00.000Z',
+        modifiedAtMs: 0
+      }
+    ],
+    settings: {
+      floatingMode: false,
+      continuous: {
+        loop: false,
+        sortMode: 'fileName',
+        manualOrder: false
+      }
+    }
+  });
+
+  global.window = {
+    appState: { userName: 'tester', sessionId: 'session-1' },
+    electronAPI: {
+      readPlaylist: async filePath => (
+        filePath.endsWith('B.bplaylist')
+          ? makePlaylist('B', 'C:\\video\\B.mp4')
+          : makePlaylist('A', 'C:\\video\\A.mp4')
+      ),
+      fileExists: async () => false,
+      writePlaylist: async () => {}
+    }
+  };
+
+  const { PlaylistManager } = await import('../../renderer/scripts/modules/playlist-manager.js');
+  const manager = new PlaylistManager();
+  const callbackChecks = [];
+
+  manager.onPlaylistLoaded = async (playlist, loadContext) => {
+    const check = {
+      name: playlist.name,
+      initiallyCurrent: loadContext.shouldContinue()
+    };
+    callbackChecks.push(check);
+    if (playlist.name === 'A') {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      check.afterSuperseded = loadContext.shouldContinue();
+    }
+  };
+
+  const openA = manager.open('C:\\video\\A.bplaylist');
+  setTimeout(() => {
+    void manager.open('C:\\video\\B.bplaylist');
+  }, 0);
+
+  const aResult = await openA;
+  await new Promise(resolve => setTimeout(resolve, 80));
+
+  assert.equal(aResult, null);
+  assert.deepEqual(callbackChecks, [
+    { name: 'A', initiallyCurrent: true, afterSuperseded: false },
+    { name: 'B', initiallyCurrent: true }
+  ]);
+  assert.equal(manager.currentPlaylist.name, 'B');
+});
+
+test('PlaylistManager.open은 뒤따른 열기 실패가 진행 중인 이전 열기를 막지 않게 복구한다', async () => {
+  const makePlaylist = (name, videoPath) => ({
+    playlistVersion: '1.0',
+    id: `playlist-${name}`,
+    name,
+    createdAt: '2026-06-17T00:00:00.000Z',
+    modifiedAt: '2026-06-17T00:00:00.000Z',
+    createdBy: 'tester',
+    createdById: 'session-1',
+    items: [
+      {
+        id: `item-${name}`,
+        videoPath,
+        bframePath: '',
+        fileName: `${name}.mp4`,
+        thumbnailPath: '',
+        order: 0,
+        addedAt: '2026-06-17T00:00:00.000Z',
+        modifiedAtMs: 0
+      }
+    ],
+    settings: {
+      floatingMode: false,
+      continuous: {
+        loop: false,
+        sortMode: 'fileName',
+        manualOrder: false
+      }
+    }
+  });
+
+  global.window = {
+    appState: { userName: 'tester', sessionId: 'session-1' },
+    electronAPI: {
+      readPlaylist: async filePath => {
+        if (filePath.endsWith('B.bplaylist')) {
+          await new Promise(resolve => setTimeout(resolve, 30));
+          throw new Error('B open failed');
+        }
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return makePlaylist('A', 'C:\\video\\A.mp4');
+      },
+      fileExists: async () => false,
+      writePlaylist: async () => {}
+    }
+  };
+
+  const { PlaylistManager } = await import('../../renderer/scripts/modules/playlist-manager.js');
+  const manager = new PlaylistManager();
+  const errors = [];
+  const callbackChecks = [];
+  let modifiedCount = 0;
+  manager.onError = error => errors.push(error.message);
+  manager.onPlaylistModified = () => {
+    modifiedCount += 1;
+  };
+  manager._tryGenerateThumbnail = async () => 'C:\\thumbs\\A.jpg';
+
+  manager.onPlaylistLoaded = async (playlist, loadContext) => {
+    const check = {
+      name: playlist.name,
+      initiallyCurrent: loadContext.shouldContinue()
+    };
+    callbackChecks.push(check);
+    await Promise.resolve();
+    check.whileReplacementPending = loadContext.shouldContinue();
+  };
+
+  const openA = manager.open('C:\\video\\A.bplaylist');
+  const openB = new Promise(resolve => {
+    setTimeout(() => {
+      resolve(manager.open('C:\\video\\B.bplaylist').catch(error => null));
+    }, 0);
+  });
+
+  const [aResult, bResult] = await Promise.all([openA, openB]);
+
+  assert.equal(bResult, null);
+  assert.equal(aResult.name, 'A');
+  assert.deepEqual(callbackChecks, [
+    { name: 'A', initiallyCurrent: true, whileReplacementPending: true }
+  ]);
+  assert.deepEqual(errors, ['B open failed']);
+  assert.equal(manager.currentPlaylist.name, 'A');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(manager.currentPlaylist.items[0].thumbnailPath, 'C:\\thumbs\\A.jpg');
+  assert.equal(modifiedCount, 1);
+});
+
+test('PlaylistManager.open은 실패한 새 열기가 현재 썸네일 검증을 끊지 않게 한다', async () => {
+  const makePlaylist = (name, videoPath) => ({
+    playlistVersion: '1.0',
+    id: `playlist-${name}`,
+    name,
+    createdAt: '2026-06-17T00:00:00.000Z',
+    modifiedAt: '2026-06-17T00:00:00.000Z',
+    createdBy: 'tester',
+    createdById: 'session-1',
+    items: [
+      {
+        id: `item-${name}`,
+        videoPath,
+        bframePath: '',
+        fileName: `${name}.mp4`,
+        thumbnailPath: '',
+        order: 0,
+        addedAt: '2026-06-17T00:00:00.000Z',
+        modifiedAtMs: 0
+      }
+    ],
+    settings: {
+      floatingMode: false,
+      continuous: {
+        loop: false,
+        sortMode: 'fileName',
+        manualOrder: false
+      }
+    }
+  });
+
+  global.window = {
+    appState: { userName: 'tester', sessionId: 'session-1' },
+    electronAPI: {
+      readPlaylist: async filePath => {
+        if (filePath.endsWith('B.bplaylist')) {
+          await new Promise(resolve => setTimeout(resolve, 30));
+          throw new Error('B open failed');
+        }
+        return makePlaylist('A', 'C:\\video\\A.mp4');
+      },
+      fileExists: async () => false,
+      writePlaylist: async () => {}
+    }
+  };
+
+  const { PlaylistManager } = await import('../../renderer/scripts/modules/playlist-manager.js');
+  const manager = new PlaylistManager();
+  let modifiedCount = 0;
+  let releaseThumbnail;
+  const thumbnailStarted = new Promise(resolve => {
+    manager._tryGenerateThumbnail = async () => {
+      resolve();
+      await new Promise(release => {
+        releaseThumbnail = release;
+      });
+      return 'C:\\thumbs\\A.jpg';
+    };
+  });
+  manager.onPlaylistModified = () => {
+    modifiedCount += 1;
+  };
+
+  await manager.open('C:\\video\\A.bplaylist');
+  await thumbnailStarted;
+
+  const failedOpen = manager.open('C:\\video\\B.bplaylist').catch(error => null);
+  releaseThumbnail();
+  await failedOpen;
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  assert.equal(manager.currentPlaylist.name, 'A');
+  assert.equal(manager.currentPlaylist.items[0].thumbnailPath, 'C:\\thumbs\\A.jpg');
+  assert.equal(modifiedCount, 1);
+});
+
+test('PlaylistManager.open은 커밋 훅이 거절한 열기를 내부 상태에 남기지 않는다', async () => {
+  const makePlaylist = (name, videoPath) => ({
+    playlistVersion: '1.0',
+    id: `playlist-${name}`,
+    name,
+    createdAt: '2026-06-17T00:00:00.000Z',
+    modifiedAt: '2026-06-17T00:00:00.000Z',
+    createdBy: 'tester',
+    createdById: 'session-1',
+    items: [
+      {
+        id: `item-${name}`,
+        videoPath,
+        bframePath: '',
+        fileName: `${name}.mp4`,
+        thumbnailPath: 'data:image/png;base64,AAAA',
+        order: 0,
+        addedAt: '2026-06-17T00:00:00.000Z',
+        modifiedAtMs: 0
+      }
+    ],
+    settings: {
+      floatingMode: false,
+      continuous: {
+        loop: false,
+        sortMode: 'fileName',
+        manualOrder: false
+      }
+    }
+  });
+
+  global.window = {
+    appState: { userName: 'tester', sessionId: 'session-1' },
+    electronAPI: {
+      readPlaylist: async filePath => (
+        filePath.endsWith('new.bplaylist')
+          ? makePlaylist('new', 'C:\\video\\new.mp4')
+          : makePlaylist('old', 'C:\\video\\old.mp4')
+      ),
+      fileExists: async () => true,
+      writePlaylist: async () => {}
+    }
+  };
+
+  const { PlaylistManager } = await import('../../renderer/scripts/modules/playlist-manager.js');
+  const manager = new PlaylistManager();
+  const loadedNames = [];
+  manager.onPlaylistLoaded = playlist => {
+    loadedNames.push(playlist.name);
+  };
+
+  await manager.open('C:\\video\\old.bplaylist');
+  const rejectedResult = await manager.open('C:\\video\\new.bplaylist', {
+    onCommitted: () => false
+  });
+
+  assert.equal(rejectedResult, null);
+  assert.equal(manager.currentPlaylist.name, 'old');
+  assert.equal(manager.playlistPath, 'C:\\video\\old.bplaylist');
+  assert.deepEqual(loadedNames, ['old']);
+});

@@ -7,6 +7,7 @@ const rootDir = path.resolve(__dirname, '../..');
 const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
 const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8'));
 const timelineSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/timeline.js'), 'utf8'));
+const playlistManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/playlist-manager.js'), 'utf8'));
 const ffmpegManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ffmpeg-manager.js'), 'utf8'));
 const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
 const splitViewSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/split-view-manager.js'), 'utf8'));
@@ -52,8 +53,10 @@ test('continuous timeline updates ignore stale async completions', () => {
   assert.match(timelineUpdateSource, /const bframePath = await playlistManager\.ensureItemBframePath\(item\);[\s\S]+const bframeData = await window\.electronAPI\.loadReview\(bframePath\);[\s\S]+playlistTimelineUpdateToken !== updateToken/);
 });
 
-test('opening or replacing playlists clears stale continuous timeline state', () => {
+test('opening or replacing playlists commits visible continuous work only after a file opens', () => {
   assert.match(appSource, /function resetPlaylistContinuousTimelineState\(\) \{/);
+  assert.match(appSource, /function beginPlaylistReplacement\(\) \{/);
+  assert.match(appSource, /function commitPlaylistReplacement\(\) \{/);
 
   const resetMatch = appSource.match(/function resetPlaylistContinuousTimelineState\(\) \{([\s\S]*?)\n  \}/);
   assert.ok(resetMatch, 'continuous timeline reset helper should exist');
@@ -70,13 +73,102 @@ test('opening or replacing playlists clears stale continuous timeline state', ()
   const openMatch = appSource.match(/async function openPlaylistFile\(filePath\) \{([\s\S]*?)\n  \}/);
   assert.ok(openMatch, 'openPlaylistFile should exist');
   const openSource = openMatch[1];
-  assert.match(openSource, /playlistSelectionLoadToken \+= 1;[\s\S]+await playlistManager\.open\(normalizedPath\);/);
+
+  const restoreMatch = appSource.match(/function restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousState\) \{([\s\S]*?)\n  \}/);
+  assert.ok(restoreMatch, 'playlist replacement restore helper should exist');
+  const restoreSource = restoreMatch[1];
+  assert.match(restoreSource, /playlistReplacementToken = previousState\.replacementToken;/);
+  assert.doesNotMatch(restoreSource, /playlistTimelineUpdateToken|stopContinuousPlayback|setPlaylistContinuousTimelineBusy/);
+  assert.match(openSource, /const previousReplacementState = \{[\s\S]+replacementToken: playlistReplacementToken[\s\S]+\};/);
+  assert.match(openSource, /const replacementToken = beginPlaylistReplacement\(\);[\s\S]+openedPlaylist = await playlistManager\.open\(normalizedPath, \{[\s\S]+onCommitted: \(\) => \{[\s\S]+commitPlaylistReplacement\(\);[\s\S]+return true;[\s\S]+\}[\s\S]+\}\);/);
+  assert.match(openSource, /catch \(error\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+throw error;/);
+  assert.match(openSource, /if \(!openedPlaylist\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+return;/);
+  assert.match(openSource, /replacementToken !== playlistReplacementToken[\s\S]+playlistReplacementCommitToken > replacementToken[\s\S]+return false;/);
+  assert.match(openSource, /playlistReplacementCommitToken = replacementToken;/);
+  assert.match(openSource, /playlistReplacementCommitToken !== replacementToken[\s\S]+playlistManager\.currentPlaylist !== openedPlaylist[\s\S]+return;/);
   assert.ok(
-    openSource.indexOf('await playlistManager.open(normalizedPath);') <
-      openSource.indexOf('resetPlaylistContinuousTimelineState();'),
-    'existing continuous timeline should clear only after the replacement playlist opens successfully'
+    openSource.indexOf('const replacementToken = beginPlaylistReplacement();') <
+      openSource.indexOf('openedPlaylist = await playlistManager.open(normalizedPath, {'),
+    'replacement attempts should be marked before opening the replacement file'
   );
+  assert.ok(
+    openSource.indexOf('onCommitted: () => {') <
+      openSource.indexOf('commitPlaylistReplacement();'),
+    'visible playback, timeline, and background work should change from the successful commit callback'
+  );
+  assert.ok(
+    openSource.indexOf('playlistReplacementCommitToken !== replacementToken') <
+      openSource.indexOf('showPlaylistSidebar();') &&
+      openSource.indexOf('playlistManager.currentPlaylist !== openedPlaylist') <
+        openSource.indexOf('playlistManager.selectItem(0);'),
+    'post-open UI side effects should re-check that this open is still the committed playlist'
+  );
+
+  const replacementMatch = appSource.match(/function beginPlaylistReplacement\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(replacementMatch, 'beginPlaylistReplacement should exist');
+  const replacementSource = replacementMatch[1];
+  const commitMatch = appSource.match(/function commitPlaylistReplacement\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(commitMatch, 'commitPlaylistReplacement should exist');
+  const commitSource = commitMatch[1];
+  assert.match(appSource, /let playlistReplacementToken = 0;/);
+  assert.match(appSource, /let playlistReplacementCommitToken = 0;/);
+  assert.match(replacementSource, /playlistReplacementToken \+= 1;/);
+  assert.doesNotMatch(replacementSource, /playlistSelectionLoadToken|playlistTimelineUpdateToken|stopContinuousPlayback|invalidatePlaylistBackgroundWork/);
+  assert.match(commitSource, /playlistSelectionLoadToken \+= 1;/);
+  assert.match(commitSource, /invalidateActiveVideoLoad\(\);/);
+  assert.match(commitSource, /stopContinuousPlayback\(\);/);
+  assert.match(commitSource, /invalidatePlaylistBackgroundWork\(\);/);
+  assert.match(commitSource, /resetPlaylistContinuousTimelineState\(\);/);
+  assert.match(replacementSource, /return playlistReplacementToken;/);
   assert.match(openSource, /if \(playlistUIState\.mode === 'continuous'\) \{[\s\S]+updatePlaylistContinuousTimeline\(\);[\s\S]+\}/);
+});
+
+test('playlist replacement invalidates background work without globally cancelling ffmpeg', () => {
+  const commitMatch = appSource.match(/function commitPlaylistReplacement\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(commitMatch, 'commitPlaylistReplacement should exist');
+  const commitSource = commitMatch[1];
+
+  const invalidateMatch = appSource.match(/function invalidatePlaylistBackgroundWork\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(invalidateMatch, 'background invalidation helper should exist');
+  const invalidateSource = invalidateMatch[1];
+
+  const stopMatch = appSource.match(/function stopContinuousPlayback\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(stopMatch, 'stopContinuousPlayback should exist');
+  const stopSource = stopMatch[1];
+
+  assert.doesNotMatch(commitSource, /ffmpegCancel|cancelBackgroundTranscodes|cancelPlaylistBackgroundTranscodes/);
+  assert.doesNotMatch(invalidateSource, /ffmpegCancel|cancelBackgroundTranscodes|cancelPlaylistBackgroundTranscodes/);
+  assert.doesNotMatch(stopSource, /ffmpegCancel|cancelBackgroundTranscodes|cancelPlaylistBackgroundTranscodes/);
+  assert.match(appSource, /window\.electronAPI\.ffmpegCancel\(\)/);
+});
+
+test('playlist replacement guard is independent from suppressed selection refreshes', () => {
+  const openMatch = appSource.match(/async function openPlaylistFile\(filePath\) \{([\s\S]*?)\n  \}/);
+  assert.ok(openMatch, 'openPlaylistFile should exist');
+  const openSource = openMatch[1];
+
+  assert.match(openSource, /const replacementToken = beginPlaylistReplacement\(\);/);
+  assert.match(openSource, /replacementToken !== playlistReplacementToken/);
+  assert.match(openSource, /playlistReplacementCommitToken > replacementToken/);
+  assert.doesNotMatch(openSource, /replacementToken !== playlistSelectionLoadToken/);
+
+  const applySortMatch = appSource.match(/function applyPlaylistSortPreservingSelection\(sortMode\) \{([\s\S]*?)\n  \}\n\n  async function refreshModifiedSortIfActive/);
+  assert.ok(applySortMatch, 'selection-preserving sort helper should exist');
+  assert.match(applySortMatch[1], /suppressPlaylistSelectionLoad = true;[\s\S]+playlistManager\.selectItemById\(currentItemId\);/);
+});
+
+test('continuous mode shows immediate timeline preparation feedback while metadata loads', () => {
+  const timelineUpdateMatch = appSource.match(/async function updatePlaylistContinuousTimeline\(\) \{([\s\S]*?)\n  \}\n\n  async function quickCheckPlaylistForContinuous/);
+  assert.ok(timelineUpdateMatch, 'updatePlaylistContinuousTimeline should exist');
+
+  const timelineUpdateSource = timelineUpdateMatch[1];
+  assert.match(appSource, /function setPlaylistContinuousTimelineBusy\(busy\) \{/);
+  assert.ok(
+    timelineUpdateSource.indexOf('setPlaylistContinuousTimelineBusy(true);') <
+      timelineUpdateSource.indexOf('const metadata = await collectPlaylistMetadata(items);'),
+    'busy feedback should be visible before slow metadata probing starts'
+  );
+  assert.match(timelineUpdateSource, /finally \{[\s\S]+setPlaylistContinuousTimelineBusy\(false\);/);
 });
 
 test('review mode exits through the shared continuous timeline reset helper', () => {
@@ -378,6 +470,8 @@ test('manual video loads cancel active continuous playback and stale loads', () 
 
   const loadVideoSource = loadVideoMatch[1];
   assert.match(appSource, /let latestVideoLoadToken = 0;/);
+  assert.match(appSource, /function invalidateActiveVideoLoad\(\) \{[\s\S]+latestVideoLoadToken \+= 1;[\s\S]+\}/);
+  assert.match(appSource, /function invalidateActiveVideoLoad\(\) \{[\s\S]+supersedeActiveTranscodeOverlay\('재생목록 교체'\);[\s\S]+\}/);
   assert.match(loadVideoSource, /preserveContinuousSession = false/);
   assert.match(loadVideoSource, /const loadToken = \+\+latestVideoLoadToken;/);
   assert.match(loadVideoSource, /if \(!preserveContinuousSession && continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
@@ -658,6 +752,7 @@ test('normal transcode overlay is superseded when users switch videos quickly', 
 
   const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}/);
   assert.ok(loadVideoMatch, 'loadVideo should exist');
+  assert.match(appSource, /function invalidateActiveVideoLoad\(\) \{[\s\S]+supersedeActiveTranscodeOverlay\('재생목록 교체'\);[\s\S]+\}/);
   assert.match(loadVideoMatch[1], /supersedeActiveTranscodeOverlay\('새 영상 선택'\);/);
   assert.match(loadVideoMatch[1], /if \(transcoded\.stale\) return false;/);
 });
@@ -713,7 +808,7 @@ test('modified-date sort is refreshed after every playlist add path', () => {
   assert.match(applySortSource, /playlistManager\.setSortMode\(sortMode\);/);
   assert.match(applySortSource, /suppressPlaylistSelectionLoad = true;[\s\S]+playlistManager\.selectItemById\(currentItemId\);[\s\S]+suppressPlaylistSelectionLoad = false;/);
 
-  const refreshActiveMatch = appSource.match(/async function refreshModifiedSortIfActive\(\) \{([\s\S]*?)\n  \}\n\n  function initPlaylistFeature/);
+  const refreshActiveMatch = appSource.match(/async function refreshModifiedSortIfActive\(options = \{\}\) \{([\s\S]*?)\n  \}\n\n  function initCutlistFeature/);
   assert.ok(refreshActiveMatch, 'active modified-date sort refresh helper should exist');
   const refreshActiveSource = refreshActiveMatch[1];
   assert.match(refreshActiveSource, /const continuousSettings = playlistManager\.getContinuousSettings\(\);/);
@@ -743,8 +838,93 @@ test('modified-date sort is refreshed after every playlist add path', () => {
 });
 
 test('opened modified-date playlists refresh filesystem mtimes before first selection', () => {
-  assert.match(appSource, /playlistManager\.onPlaylistLoaded = async \(playlist\) => \{[\s\S]+await refreshModifiedSortIfActive\(\);[\s\S]+updatePlaylistUI\(\);/);
-  assert.match(appSource, /async function openPlaylistFile\(filePath\) \{[\s\S]+await playlistManager\.open\(normalizedPath\);[\s\S]+playlistManager\.selectItem\(0\);/);
+  assert.match(appSource, /playlistManager\.onPlaylistLoaded = async \(playlist, loadContext = \{\}\) => \{[\s\S]+await refreshModifiedSortIfActive\(\{ shouldContinue: loadContext\.shouldContinue \}\);[\s\S]+updatePlaylistUI\(\);/);
+  assert.match(appSource, /async function openPlaylistFile\(filePath\) \{[\s\S]+await playlistManager\.open\(normalizedPath, \{[\s\S]+onCommitted:[\s\S]+\}\);[\s\S]+playlistManager\.selectItem\(0\);/);
+});
+
+test('opening playlists defers thumbnail validation until after the playlist is visible', () => {
+  const openMatch = playlistManagerSource.match(/async open\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(openMatch, 'PlaylistManager.open should exist');
+
+  const openSource = openMatch[1];
+  assert.doesNotMatch(openSource, /await this\._validateThumbnails\(\);/);
+  assert.match(openSource, /await this\.onPlaylistLoaded\?\.\(this\.currentPlaylist, loadContext\);/);
+  assert.match(openSource, /this\._validateThumbnailsInBackground\(/);
+  assert.ok(
+    openSource.indexOf('await this.onPlaylistLoaded?.(this.currentPlaylist, loadContext);') <
+      openSource.indexOf('this._validateThumbnailsInBackground('),
+    'thumbnail repair should start only after the playlist load callback can render the list'
+  );
+
+  assert.match(playlistManagerSource, /async _validateThumbnails\(options = \{\}\) \{/);
+  assert.match(playlistManagerSource, /async _validateThumbnailsInBackground\(playlist, playlistPath, token\) \{/);
+});
+
+test('stale playlist opens cannot publish older file state', () => {
+  assert.match(playlistManagerSource, /this\.openOperationToken = 0;/);
+  assert.match(playlistManagerSource, /this\.lastCommittedOpenToken = 0;/);
+  assert.match(playlistManagerSource, /this\.thumbnailValidationToken = 0;/);
+
+  const openMatch = playlistManagerSource.match(/async open\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(openMatch, 'PlaylistManager.open should exist');
+  const openSource = openMatch[1];
+
+  assert.doesNotMatch(openSource, /const previousOpenOperationToken = this\.openOperationToken;/);
+  assert.doesNotMatch(openSource, /const previousThumbnailValidationToken = this\.thumbnailValidationToken;/);
+  assert.doesNotMatch(openSource, /const previousPlaylist = this\.currentPlaylist;/);
+  assert.doesNotMatch(openSource, /const previousPlaylistPath = this\.playlistPath;/);
+  assert.match(openSource, /const openOperationToken = \+\+this\.openOperationToken;/);
+  assert.match(openSource, /const thumbnailValidationToken = openOperationToken;/);
+  assert.ok(
+    openSource.indexOf('this.thumbnailValidationToken = thumbnailValidationToken;') >
+      openSource.indexOf('this.lastCommittedOpenToken = openOperationToken;'),
+    'new opens should activate thumbnail validation only after the replacement commits'
+  );
+  assert.match(openSource, /const shouldContinueOpen = \(\) => this\.lastCommittedOpenToken <= openOperationToken;/);
+  assert.match(openSource, /this\.lastCommittedOpenToken = openOperationToken;/);
+  assert.match(openSource, /this\.thumbnailValidationToken = thumbnailValidationToken;/);
+  assert.doesNotMatch(openSource, /catch \(error\) \{[\s\S]+this\.thumbnailValidationToken = /);
+  assert.doesNotMatch(openSource, /await this\.save\(/);
+  assert.ok(
+    openSource.indexOf('if (!shouldContinueOpen()) return null;') <
+      openSource.indexOf('this.currentPlaylist = data;'),
+    'stale file reads should be discarded before replacing the active playlist'
+  );
+  assert.match(openSource, /const repairedBframeCount = await this\._repairMissingBframePaths\(\{[\s\S]+playlist: data,[\s\S]+shouldContinue: shouldContinueOpen[\s\S]+\}\);/);
+  assert.match(openSource, /await window\.electronAPI\.writePlaylist\(filePath, data\);/);
+  assert.match(openSource, /const restorePreviousCommittedState = \(\) => \{[\s\S]+this\.currentPlaylist = previousCommittedState\.playlist;[\s\S]+this\.thumbnailValidationToken = previousCommittedState\.thumbnailValidationToken;/);
+  assert.match(openSource, /const committed = await options\.onCommitted\?\.\(openedPlaylist, loadContext\);[\s\S]+if \(committed === false\) \{[\s\S]+restorePreviousCommittedState\(\);[\s\S]+return null;[\s\S]+\}/);
+  assert.match(openSource, /if \(!shouldContinueOpen\(\) \|\| this\.currentPlaylist !== openedPlaylist\) return null;[\s\S]+const committed = await options\.onCommitted\?\.\(openedPlaylist, loadContext\);[\s\S]+await this\.onPlaylistLoaded\?\.\(this\.currentPlaylist, loadContext\);/);
+  assert.match(playlistManagerSource, /async _repairMissingBframePaths\(options = \{\}\) \{/);
+});
+
+test('stale playlist load callbacks stop before app side effects', () => {
+  const callbackMatch = appSource.match(/playlistManager\.onPlaylistLoaded = async \(playlist, loadContext = \{\}\) => \{([\s\S]*?)\n    \};/);
+  assert.ok(callbackMatch, 'playlist load callback should accept a stale-load context');
+
+  const callbackSource = callbackMatch[1];
+  assert.match(callbackSource, /await refreshModifiedSortIfActive\(\{ shouldContinue: loadContext\.shouldContinue \}\);/);
+  assert.ok(
+    callbackSource.indexOf('await refreshModifiedSortIfActive({ shouldContinue: loadContext.shouldContinue });') <
+      callbackSource.indexOf('if (loadContext.shouldContinue?.() === false) return;'),
+    'callback should re-check stale status after modified-date refresh awaits'
+  );
+  assert.ok(
+    callbackSource.indexOf('if (loadContext.shouldContinue?.() === false) return;') <
+      callbackSource.indexOf('updatePlaylistUI();'),
+    'stale playlist load callbacks must not update the visible playlist UI'
+  );
+  assert.ok(
+    callbackSource.indexOf('if (loadContext.shouldContinue?.() === false) return;', callbackSource.indexOf('updatePlaylistUI();')) <
+      callbackSource.indexOf('preTranscodePlaylistItems();'),
+    'stale playlist load callbacks must not start background pre-transcode work'
+  );
+
+  const refreshMatch = appSource.match(/async function refreshModifiedSortIfActive\(options = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(refreshMatch, 'refreshModifiedSortIfActive should accept stale-load options');
+  const refreshSource = refreshMatch[1];
+  assert.match(refreshSource, /const shouldContinue = typeof options\.shouldContinue === 'function'[\s\S]+: \(\) => true;/);
+  assert.match(refreshSource, /await refreshPlaylistModifiedTimes\(\);[\s\S]+if \(!shouldContinue\(\)\) return false;/);
 });
 
 test('playlist modifications rebuild the continuous aggregate timeline', () => {
@@ -767,6 +947,20 @@ test('pre-transcode joins an existing pending transcode instead of marking it fa
   const preTranscodeSource = preTranscodeMatch[1];
   assert.match(preTranscodeSource, /if \(this\.pendingTranscodes\.has\(filePath\)\) \{[\s\S]+return this\.pendingTranscodes\.get\(filePath\);[\s\S]+\}/);
   assert.doesNotMatch(preTranscodeSource, /already-in-progress/);
+});
+
+test('playlist background pre-transcode ignores stale playlist generations', () => {
+  assert.match(appSource, /let playlistBackgroundWorkToken = 0;/);
+  assert.match(appSource, /function invalidatePlaylistBackgroundWork\(\) \{/);
+
+  const preTranscodeMatch = appSource.match(/async function preTranscodePlaylistItems\(\) \{([\s\S]*?)\n  \}\n\n  function toLocalMediaUrl/);
+  assert.ok(preTranscodeMatch, 'preTranscodePlaylistItems should exist');
+
+  const preTranscodeSource = preTranscodeMatch[1];
+  assert.match(preTranscodeSource, /const backgroundToken = playlistBackgroundWorkToken;/);
+  assert.match(preTranscodeSource, /const isCurrentBackgroundWork = \(\) => \(/);
+  assert.match(preTranscodeSource, /if \(!isCurrentBackgroundWork\(\)\) return;/);
+  assert.match(preTranscodeSource, /ffmpegPreTranscode\(item\.videoPath\)[\s\S]+if \(!isCurrentBackgroundWork\(\)\) return;/);
 });
 
 test('ffmpeg detection checks the main checkout when running from a git worktree', () => {
