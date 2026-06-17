@@ -427,9 +427,11 @@ async function initApp() {
   function restorePlaylistReplacementAfterFailedOpen(replacementToken, previousState) {
     if (replacementToken !== playlistReplacementToken) return;
     playlistReplacementToken = previousState.replacementToken;
-    playlistTimelineUpdateToken = previousState.timelineUpdateToken;
-    if (playlistUIState.mode === 'continuous') {
-      setPlaylistContinuousTimelineBusy(false);
+    if (playlistReplacementCommitToken === previousState.commitToken) {
+      playlistTimelineUpdateToken = previousState.timelineUpdateToken;
+      if (playlistUIState.mode === 'continuous') {
+        setPlaylistContinuousTimelineBusy(false);
+      }
     }
   }
 
@@ -464,7 +466,8 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
     const previousReplacementState = {
       replacementToken: playlistReplacementToken,
-      timelineUpdateToken: playlistTimelineUpdateToken
+      timelineUpdateToken: playlistTimelineUpdateToken,
+      commitToken: playlistReplacementCommitToken
     };
     const replacementToken = beginPlaylistReplacement();
     let openedPlaylist;

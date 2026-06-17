@@ -72,11 +72,13 @@ test('opening or replacing playlists invalidates active continuous work before f
   const openMatch = appSource.match(/async function openPlaylistFile\(filePath\) \{([\s\S]*?)\n  \}/);
   assert.ok(openMatch, 'openPlaylistFile should exist');
   const openSource = openMatch[1];
-  assert.match(appSource, /function restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousState\) \{/);
-  assert.match(appSource, /playlistReplacementToken = previousState\.replacementToken;/);
-  assert.match(appSource, /playlistTimelineUpdateToken = previousState\.timelineUpdateToken;/);
-  assert.match(appSource, /setPlaylistContinuousTimelineBusy\(false\);/);
-  assert.match(openSource, /const previousReplacementState = \{[\s\S]+replacementToken: playlistReplacementToken,[\s\S]+timelineUpdateToken: playlistTimelineUpdateToken[\s\S]+\};/);
+
+  const restoreMatch = appSource.match(/function restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousState\) \{([\s\S]*?)\n  \}/);
+  assert.ok(restoreMatch, 'playlist replacement restore helper should exist');
+  const restoreSource = restoreMatch[1];
+  assert.match(restoreSource, /playlistReplacementToken = previousState\.replacementToken;/);
+  assert.match(restoreSource, /if \(playlistReplacementCommitToken === previousState\.commitToken\) \{[\s\S]+playlistTimelineUpdateToken = previousState\.timelineUpdateToken;[\s\S]+setPlaylistContinuousTimelineBusy\(false\);/);
+  assert.match(openSource, /const previousReplacementState = \{[\s\S]+replacementToken: playlistReplacementToken,[\s\S]+timelineUpdateToken: playlistTimelineUpdateToken,[\s\S]+commitToken: playlistReplacementCommitToken[\s\S]+\};/);
   assert.match(openSource, /const replacementToken = beginPlaylistReplacement\(\);[\s\S]+openedPlaylist = await playlistManager\.open\(normalizedPath\);/);
   assert.match(openSource, /catch \(error\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+throw error;/);
   assert.match(openSource, /if \(!openedPlaylist\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+return;/);
