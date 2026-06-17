@@ -417,22 +417,19 @@ async function initApp() {
 
   function beginPlaylistReplacement() {
     playlistReplacementToken += 1;
+    return playlistReplacementToken;
+  }
+
+  function commitPlaylistReplacement() {
     playlistSelectionLoadToken += 1;
-    playlistTimelineUpdateToken += 1;
     stopContinuousPlayback();
     invalidatePlaylistBackgroundWork();
-    return playlistReplacementToken;
+    resetPlaylistContinuousTimelineState();
   }
 
   function restorePlaylistReplacementAfterFailedOpen(replacementToken, previousState) {
     if (replacementToken !== playlistReplacementToken) return;
     playlistReplacementToken = previousState.replacementToken;
-    if (playlistReplacementCommitToken === previousState.commitToken) {
-      playlistTimelineUpdateToken = previousState.timelineUpdateToken;
-      if (playlistUIState.mode === 'continuous') {
-        setPlaylistContinuousTimelineBusy(false);
-      }
-    }
   }
 
   function getDialogFileName(filePath) {
@@ -465,14 +462,19 @@ async function initApp() {
     const normalizedPath = normalizePlaylistOpenPath(filePath);
     const playlistManager = getPlaylistManager();
     const previousReplacementState = {
-      replacementToken: playlistReplacementToken,
-      timelineUpdateToken: playlistTimelineUpdateToken,
-      commitToken: playlistReplacementCommitToken
+      replacementToken: playlistReplacementToken
     };
     const replacementToken = beginPlaylistReplacement();
     let openedPlaylist;
     try {
-      openedPlaylist = await playlistManager.open(normalizedPath);
+      openedPlaylist = await playlistManager.open(normalizedPath, {
+        onCommitted: () => {
+          if (playlistReplacementCommitToken > replacementToken) return false;
+          playlistReplacementCommitToken = replacementToken;
+          commitPlaylistReplacement();
+          return true;
+        }
+      });
     } catch (error) {
       restorePlaylistReplacementAfterFailedOpen(replacementToken, previousReplacementState);
       throw error;
@@ -481,9 +483,6 @@ async function initApp() {
       restorePlaylistReplacementAfterFailedOpen(replacementToken, previousReplacementState);
       return;
     }
-    if (playlistReplacementCommitToken > replacementToken) return;
-    playlistReplacementCommitToken = replacementToken;
-    resetPlaylistContinuousTimelineState();
     showPlaylistSidebar();
     if (playlistManager.getItemCount() > 0) {
       playlistManager.selectItem(0);

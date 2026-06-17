@@ -191,11 +191,10 @@ export class PlaylistManager {
   /**
    * 기존 재생목록 파일 열기
    */
-  async open(filePath) {
+  async open(filePath, options = {}) {
     log.info('재생목록 열기', { filePath });
-    const previousThumbnailValidationToken = this.thumbnailValidationToken;
     const openOperationToken = ++this.openOperationToken;
-    const thumbnailValidationToken = ++this.thumbnailValidationToken;
+    const thumbnailValidationToken = openOperationToken;
     const shouldContinueOpen = () => this.lastCommittedOpenToken <= openOperationToken;
 
     try {
@@ -255,6 +254,9 @@ export class PlaylistManager {
       };
 
       if (!shouldContinueOpen() || this.currentPlaylist !== openedPlaylist) return null;
+      const committed = await options.onCommitted?.(openedPlaylist, loadContext);
+      if (committed === false) return null;
+      if (!shouldContinueOpen() || this.currentPlaylist !== openedPlaylist) return null;
       await this.onPlaylistLoaded?.(this.currentPlaylist, loadContext);
       if (!shouldContinueOpen() || this.currentPlaylist !== openedPlaylist) return null;
       void this._validateThumbnailsInBackground(openedPlaylist, filePath, thumbnailValidationToken);
@@ -268,12 +270,6 @@ export class PlaylistManager {
       return this.currentPlaylist;
 
     } catch (error) {
-      if (
-        openOperationToken === this.openOperationToken &&
-        this.lastCommittedOpenToken < openOperationToken
-      ) {
-        this.thumbnailValidationToken = previousThumbnailValidationToken;
-      }
       log.error('재생목록 열기 실패', { filePath, error: error.message });
       this.onError?.(error);
       throw error;
