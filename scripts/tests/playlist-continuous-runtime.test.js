@@ -83,7 +83,7 @@ test('opening or replacing playlists commits visible continuous work only after 
   assert.match(openSource, /const replacementToken = beginPlaylistReplacement\(\);[\s\S]+openedPlaylist = await playlistManager\.open\(normalizedPath, \{[\s\S]+onCommitted: \(\) => \{[\s\S]+commitPlaylistReplacement\(\);[\s\S]+return true;[\s\S]+\}[\s\S]+\}\);/);
   assert.match(openSource, /catch \(error\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+throw error;/);
   assert.match(openSource, /if \(!openedPlaylist\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+return;/);
-  assert.match(openSource, /if \(playlistReplacementCommitToken > replacementToken\) return false;/);
+  assert.match(openSource, /replacementToken !== playlistReplacementToken[\s\S]+playlistReplacementCommitToken > replacementToken[\s\S]+return false;/);
   assert.match(openSource, /playlistReplacementCommitToken = replacementToken;/);
   assert.match(openSource, /playlistReplacementCommitToken !== replacementToken[\s\S]+playlistManager\.currentPlaylist !== openedPlaylist[\s\S]+return;/);
   assert.ok(
@@ -148,6 +148,7 @@ test('playlist replacement guard is independent from suppressed selection refres
   const openSource = openMatch[1];
 
   assert.match(openSource, /const replacementToken = beginPlaylistReplacement\(\);/);
+  assert.match(openSource, /replacementToken !== playlistReplacementToken/);
   assert.match(openSource, /playlistReplacementCommitToken > replacementToken/);
   assert.doesNotMatch(openSource, /replacementToken !== playlistSelectionLoadToken/);
 

@@ -470,7 +470,12 @@ async function initApp() {
     try {
       openedPlaylist = await playlistManager.open(normalizedPath, {
         onCommitted: () => {
-          if (playlistReplacementCommitToken > replacementToken) return false;
+          if (
+            replacementToken !== playlistReplacementToken ||
+            playlistReplacementCommitToken > replacementToken
+          ) {
+            return false;
+          }
           playlistReplacementCommitToken = replacementToken;
           commitPlaylistReplacement();
           return true;
