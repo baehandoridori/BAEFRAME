@@ -107,6 +107,7 @@ test('opening or replacing playlists commits visible continuous work only after 
   assert.match(replacementSource, /playlistReplacementToken \+= 1;/);
   assert.doesNotMatch(replacementSource, /playlistSelectionLoadToken|playlistTimelineUpdateToken|stopContinuousPlayback|invalidatePlaylistBackgroundWork/);
   assert.match(commitSource, /playlistSelectionLoadToken \+= 1;/);
+  assert.match(commitSource, /invalidateActiveVideoLoad\(\);/);
   assert.match(commitSource, /stopContinuousPlayback\(\);/);
   assert.match(commitSource, /invalidatePlaylistBackgroundWork\(\);/);
   assert.match(commitSource, /resetPlaylistContinuousTimelineState\(\);/);
@@ -460,6 +461,7 @@ test('manual video loads cancel active continuous playback and stale loads', () 
 
   const loadVideoSource = loadVideoMatch[1];
   assert.match(appSource, /let latestVideoLoadToken = 0;/);
+  assert.match(appSource, /function invalidateActiveVideoLoad\(\) \{[\s\S]+latestVideoLoadToken \+= 1;[\s\S]+\}/);
   assert.match(loadVideoSource, /preserveContinuousSession = false/);
   assert.match(loadVideoSource, /const loadToken = \+\+latestVideoLoadToken;/);
   assert.match(loadVideoSource, /if \(!preserveContinuousSession && continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);

@@ -422,6 +422,7 @@ async function initApp() {
 
   function commitPlaylistReplacement() {
     playlistSelectionLoadToken += 1;
+    invalidateActiveVideoLoad();
     stopContinuousPlayback();
     invalidatePlaylistBackgroundWork();
     resetPlaylistContinuousTimelineState();
@@ -4646,6 +4647,10 @@ async function initApp() {
   let activeTranscodeOverlayToken = 0;
   let activeTranscodeOverlayCleanup = null;
   let latestVideoLoadToken = 0;
+
+  function invalidateActiveVideoLoad() {
+    latestVideoLoadToken += 1;
+  }
 
   function isStaleVideoLoadToken(loadToken) {
     return loadToken !== latestVideoLoadToken;
