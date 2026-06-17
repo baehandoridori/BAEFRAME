@@ -879,7 +879,8 @@ test('stale playlist opens cannot publish older file state', () => {
   );
   assert.match(openSource, /const repairedBframeCount = await this\._repairMissingBframePaths\(\{[\s\S]+playlist: data,[\s\S]+shouldContinue: shouldContinueOpen[\s\S]+\}\);/);
   assert.match(openSource, /await window\.electronAPI\.writePlaylist\(filePath, data\);/);
-  assert.match(openSource, /const committed = await options\.onCommitted\?\.\(openedPlaylist, loadContext\);[\s\S]+if \(committed === false\) return null;/);
+  assert.match(openSource, /const restorePreviousCommittedState = \(\) => \{[\s\S]+this\.currentPlaylist = previousCommittedState\.playlist;[\s\S]+this\.thumbnailValidationToken = previousCommittedState\.thumbnailValidationToken;/);
+  assert.match(openSource, /const committed = await options\.onCommitted\?\.\(openedPlaylist, loadContext\);[\s\S]+if \(committed === false\) \{[\s\S]+restorePreviousCommittedState\(\);[\s\S]+return null;[\s\S]+\}/);
   assert.match(openSource, /if \(!shouldContinueOpen\(\) \|\| this\.currentPlaylist !== openedPlaylist\) return null;[\s\S]+const committed = await options\.onCommitted\?\.\(openedPlaylist, loadContext\);[\s\S]+await this\.onPlaylistLoaded\?\.\(this\.currentPlaylist, loadContext\);/);
   assert.match(playlistManagerSource, /async _repairMissingBframePaths\(options = \{\}\) \{/);
 });

@@ -236,6 +236,24 @@ export class PlaylistManager {
         if (!shouldContinueOpen()) return null;
       }
 
+      const previousCommittedState = {
+        playlist: this.currentPlaylist,
+        playlistPath: this.playlistPath,
+        currentIndex: this.currentIndex,
+        isModified: this.isModified,
+        lastCommittedOpenToken: this.lastCommittedOpenToken,
+        thumbnailValidationToken: this.thumbnailValidationToken
+      };
+      const restorePreviousCommittedState = () => {
+        if (this.currentPlaylist !== openedPlaylist || this.playlistPath !== filePath) return;
+        this.currentPlaylist = previousCommittedState.playlist;
+        this.playlistPath = previousCommittedState.playlistPath;
+        this.currentIndex = previousCommittedState.currentIndex;
+        this.isModified = previousCommittedState.isModified;
+        this.lastCommittedOpenToken = previousCommittedState.lastCommittedOpenToken;
+        this.thumbnailValidationToken = previousCommittedState.thumbnailValidationToken;
+      };
+
       this.currentPlaylist = data;
       this.playlistPath = filePath;
       this.currentIndex = data.items.length > 0 ? 0 : -1;
@@ -255,7 +273,10 @@ export class PlaylistManager {
 
       if (!shouldContinueOpen() || this.currentPlaylist !== openedPlaylist) return null;
       const committed = await options.onCommitted?.(openedPlaylist, loadContext);
-      if (committed === false) return null;
+      if (committed === false) {
+        restorePreviousCommittedState();
+        return null;
+      }
       if (!shouldContinueOpen() || this.currentPlaylist !== openedPlaylist) return null;
       await this.onPlaylistLoaded?.(this.currentPlaylist, loadContext);
       if (!shouldContinueOpen() || this.currentPlaylist !== openedPlaylist) return null;
