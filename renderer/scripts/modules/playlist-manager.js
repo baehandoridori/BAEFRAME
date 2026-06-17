@@ -143,6 +143,7 @@ export class PlaylistManager {
     this.isModified = false;          // 변경 여부
     this.autoSaveTimer = null;
     this.openOperationToken = 0;
+    this.lastCommittedOpenToken = 0;
     this.thumbnailValidationToken = 0;
 
     // 이벤트 콜백
@@ -165,6 +166,7 @@ export class PlaylistManager {
   createNew(name = '새 재생목록') {
     log.info('새 재생목록 생성', { name });
     this.openOperationToken += 1;
+    this.lastCommittedOpenToken = this.openOperationToken;
     this.thumbnailValidationToken += 1;
 
     // 기존 재생목록이 수정되었으면 저장
@@ -191,13 +193,10 @@ export class PlaylistManager {
    */
   async open(filePath) {
     log.info('재생목록 열기', { filePath });
-    const previousOpenOperationToken = this.openOperationToken;
     const previousThumbnailValidationToken = this.thumbnailValidationToken;
-    const previousPlaylist = this.currentPlaylist;
-    const previousPlaylistPath = this.playlistPath;
     const openOperationToken = ++this.openOperationToken;
     const thumbnailValidationToken = ++this.thumbnailValidationToken;
-    const shouldContinueOpen = () => openOperationToken === this.openOperationToken;
+    const shouldContinueOpen = () => this.lastCommittedOpenToken <= openOperationToken;
 
     try {
       // 기존 재생목록이 수정되었으면 저장
@@ -242,6 +241,8 @@ export class PlaylistManager {
       this.playlistPath = filePath;
       this.currentIndex = data.items.length > 0 ? 0 : -1;
       this.isModified = false;
+      this.lastCommittedOpenToken = openOperationToken;
+      this.thumbnailValidationToken = thumbnailValidationToken;
       const openedPlaylist = this.currentPlaylist;
       const loadContext = {
         playlist: openedPlaylist,
@@ -269,10 +270,8 @@ export class PlaylistManager {
     } catch (error) {
       if (
         openOperationToken === this.openOperationToken &&
-        this.currentPlaylist === previousPlaylist &&
-        this.playlistPath === previousPlaylistPath
+        this.lastCommittedOpenToken < openOperationToken
       ) {
-        this.openOperationToken = previousOpenOperationToken;
         this.thumbnailValidationToken = previousThumbnailValidationToken;
       }
       log.error('재생목록 열기 실패', { filePath, error: error.message });
@@ -321,6 +320,7 @@ export class PlaylistManager {
    */
   async close() {
     this.openOperationToken += 1;
+    this.lastCommittedOpenToken = this.openOperationToken;
     this.thumbnailValidationToken += 1;
 
     // 수정되었고 저장 경로가 있으면 파일로 저장
@@ -347,6 +347,7 @@ export class PlaylistManager {
    */
   async delete() {
     this.openOperationToken += 1;
+    this.lastCommittedOpenToken = this.openOperationToken;
     this.thumbnailValidationToken += 1;
 
     if (!this.playlistPath) {

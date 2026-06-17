@@ -80,7 +80,8 @@ test('opening or replacing playlists invalidates active continuous work before f
   assert.match(openSource, /const replacementToken = beginPlaylistReplacement\(\);[\s\S]+openedPlaylist = await playlistManager\.open\(normalizedPath\);/);
   assert.match(openSource, /catch \(error\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+throw error;/);
   assert.match(openSource, /if \(!openedPlaylist\) \{[\s\S]+restorePlaylistReplacementAfterFailedOpen\(replacementToken, previousReplacementState\);[\s\S]+return;/);
-  assert.match(openSource, /if \(replacementToken !== playlistReplacementToken\) return;/);
+  assert.match(openSource, /if \(playlistReplacementCommitToken > replacementToken\) return;/);
+  assert.match(openSource, /playlistReplacementCommitToken = replacementToken;/);
   assert.ok(
     openSource.indexOf('const replacementToken = beginPlaylistReplacement();') <
       openSource.indexOf('openedPlaylist = await playlistManager.open(normalizedPath);'),
@@ -96,6 +97,7 @@ test('opening or replacing playlists invalidates active continuous work before f
   assert.ok(replacementMatch, 'beginPlaylistReplacement should exist');
   const replacementSource = replacementMatch[1];
   assert.match(appSource, /let playlistReplacementToken = 0;/);
+  assert.match(appSource, /let playlistReplacementCommitToken = 0;/);
   assert.match(replacementSource, /playlistReplacementToken \+= 1;/);
   assert.match(replacementSource, /playlistSelectionLoadToken \+= 1;/);
   assert.match(replacementSource, /playlistTimelineUpdateToken \+= 1;/);
@@ -130,7 +132,7 @@ test('playlist replacement guard is independent from suppressed selection refres
   const openSource = openMatch[1];
 
   assert.match(openSource, /const replacementToken = beginPlaylistReplacement\(\);/);
-  assert.match(openSource, /replacementToken !== playlistReplacementToken/);
+  assert.match(openSource, /playlistReplacementCommitToken > replacementToken/);
   assert.doesNotMatch(openSource, /replacementToken !== playlistSelectionLoadToken/);
 
   const applySortMatch = appSource.match(/function applyPlaylistSortPreservingSelection\(sortMode\) \{([\s\S]*?)\n  \}\n\n  async function refreshModifiedSortIfActive/);
@@ -840,16 +842,17 @@ test('opening playlists defers thumbnail validation until after the playlist is 
 
 test('stale playlist opens cannot publish older file state', () => {
   assert.match(playlistManagerSource, /this\.openOperationToken = 0;/);
+  assert.match(playlistManagerSource, /this\.lastCommittedOpenToken = 0;/);
   assert.match(playlistManagerSource, /this\.thumbnailValidationToken = 0;/);
 
   const openMatch = playlistManagerSource.match(/async open\(filePath\) \{([\s\S]*?)\n  \}/);
   assert.ok(openMatch, 'PlaylistManager.open should exist');
   const openSource = openMatch[1];
 
-  assert.match(openSource, /const previousOpenOperationToken = this\.openOperationToken;/);
+  assert.doesNotMatch(openSource, /const previousOpenOperationToken = this\.openOperationToken;/);
   assert.match(openSource, /const previousThumbnailValidationToken = this\.thumbnailValidationToken;/);
-  assert.match(openSource, /const previousPlaylist = this\.currentPlaylist;/);
-  assert.match(openSource, /const previousPlaylistPath = this\.playlistPath;/);
+  assert.doesNotMatch(openSource, /const previousPlaylist = this\.currentPlaylist;/);
+  assert.doesNotMatch(openSource, /const previousPlaylistPath = this\.playlistPath;/);
   assert.match(openSource, /const openOperationToken = \+\+this\.openOperationToken;/);
   assert.match(openSource, /const thumbnailValidationToken = \+\+this\.thumbnailValidationToken;/);
   assert.ok(
@@ -857,8 +860,10 @@ test('stale playlist opens cannot publish older file state', () => {
       openSource.indexOf('await window.electronAPI.readPlaylist(filePath);'),
     'new opens should cancel stale background thumbnail validation before slow file reads'
   );
-  assert.match(openSource, /const shouldContinueOpen = \(\) => openOperationToken === this\.openOperationToken;/);
-  assert.match(openSource, /catch \(error\) \{[\s\S]+this\.currentPlaylist === previousPlaylist[\s\S]+this\.playlistPath === previousPlaylistPath[\s\S]+this\.openOperationToken = previousOpenOperationToken;[\s\S]+this\.thumbnailValidationToken = previousThumbnailValidationToken;/);
+  assert.match(openSource, /const shouldContinueOpen = \(\) => this\.lastCommittedOpenToken <= openOperationToken;/);
+  assert.match(openSource, /this\.lastCommittedOpenToken = openOperationToken;/);
+  assert.match(openSource, /this\.thumbnailValidationToken = thumbnailValidationToken;/);
+  assert.match(openSource, /catch \(error\) \{[\s\S]+this\.lastCommittedOpenToken < openOperationToken[\s\S]+this\.thumbnailValidationToken = previousThumbnailValidationToken;/);
   assert.doesNotMatch(openSource, /await this\.save\(/);
   assert.ok(
     openSource.indexOf('if (!shouldContinueOpen()) return null;') <

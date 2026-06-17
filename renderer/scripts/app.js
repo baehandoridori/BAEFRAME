@@ -343,6 +343,7 @@ async function initApp() {
   let playlistAutoPlayAfterSelection = false;
   let playlistSelectionLoadToken = 0;
   let playlistReplacementToken = 0;
+  let playlistReplacementCommitToken = 0;
   const playlistMediaPreload = {
     element: null,
     itemId: null,
@@ -477,7 +478,8 @@ async function initApp() {
       restorePlaylistReplacementAfterFailedOpen(replacementToken, previousReplacementState);
       return;
     }
-    if (replacementToken !== playlistReplacementToken) return;
+    if (playlistReplacementCommitToken > replacementToken) return;
+    playlistReplacementCommitToken = replacementToken;
     resetPlaylistContinuousTimelineState();
     showPlaylistSidebar();
     if (playlistManager.getItemCount() > 0) {
