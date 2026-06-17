@@ -452,9 +452,24 @@ async function initApp() {
   async function openPlaylistFile(filePath) {
     const normalizedPath = normalizePlaylistOpenPath(filePath);
     const playlistManager = getPlaylistManager();
+    const previousReplacementToken = playlistReplacementToken;
     const replacementToken = beginPlaylistReplacement();
-    const openedPlaylist = await playlistManager.open(normalizedPath);
-    if (!openedPlaylist || replacementToken !== playlistReplacementToken) return;
+    let openedPlaylist;
+    try {
+      openedPlaylist = await playlistManager.open(normalizedPath);
+    } catch (error) {
+      if (replacementToken === playlistReplacementToken) {
+        playlistReplacementToken = previousReplacementToken;
+      }
+      throw error;
+    }
+    if (!openedPlaylist) {
+      if (replacementToken === playlistReplacementToken) {
+        playlistReplacementToken = previousReplacementToken;
+      }
+      return;
+    }
+    if (replacementToken !== playlistReplacementToken) return;
     resetPlaylistContinuousTimelineState();
     showPlaylistSidebar();
     if (playlistManager.getItemCount() > 0) {

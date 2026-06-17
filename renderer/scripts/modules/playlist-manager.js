@@ -191,6 +191,9 @@ export class PlaylistManager {
    */
   async open(filePath) {
     log.info('재생목록 열기', { filePath });
+    const previousOpenOperationToken = this.openOperationToken;
+    const previousPlaylist = this.currentPlaylist;
+    const previousPlaylistPath = this.playlistPath;
     const openOperationToken = ++this.openOperationToken;
     const thumbnailValidationToken = ++this.thumbnailValidationToken;
     const shouldContinueOpen = () => openOperationToken === this.openOperationToken;
@@ -263,6 +266,13 @@ export class PlaylistManager {
       return this.currentPlaylist;
 
     } catch (error) {
+      if (
+        openOperationToken === this.openOperationToken &&
+        this.currentPlaylist === previousPlaylist &&
+        this.playlistPath === previousPlaylistPath
+      ) {
+        this.openOperationToken = previousOpenOperationToken;
+      }
       log.error('재생목록 열기 실패', { filePath, error: error.message });
       this.onError?.(error);
       throw error;
