@@ -359,6 +359,7 @@ async function initApp() {
     token: 0
   };
   let playlistTimelineUpdateToken = 0;
+  let playlistBackgroundWorkToken = 0;
   let playlistSortChangeToken = 0;
   let playlistAggregateCommentRanges = [];
   let cutlistAggregateCommentRanges = [];
@@ -402,10 +403,33 @@ async function initApp() {
     return normalizeComparableFilePath(a) === normalizeComparableFilePath(b);
   }
 
+  function cancelPlaylistBackgroundTranscodes(reason = 'playlist background work invalidated') {
+    if (typeof window.electronAPI?.ffmpegCancel !== 'function') return;
+    void window.electronAPI.ffmpegCancel().catch(error => {
+      log.warn('재생목록 백그라운드 변환 취소 실패', { reason, error: error.message });
+    });
+  }
+
+  function invalidatePlaylistBackgroundWork(options = {}) {
+    const { cancelTranscodes = false } = options;
+    playlistBackgroundWorkToken += 1;
+    if (cancelTranscodes) {
+      cancelPlaylistBackgroundTranscodes('playlist background work invalidated');
+    }
+  }
+
   function resetPlaylistContinuousTimelineState() {
     playlistTimelineUpdateToken += 1;
     playlistAggregateCommentRanges = [];
     timeline.clearPlaylistTimeline();
+  }
+
+  function beginPlaylistReplacement() {
+    playlistSelectionLoadToken += 1;
+    playlistTimelineUpdateToken += 1;
+    stopContinuousPlayback({ cancelBackgroundTranscodes: true });
+    invalidatePlaylistBackgroundWork();
+    return playlistSelectionLoadToken;
   }
 
   function getDialogFileName(filePath) {
@@ -437,8 +461,9 @@ async function initApp() {
   async function openPlaylistFile(filePath) {
     const normalizedPath = normalizePlaylistOpenPath(filePath);
     const playlistManager = getPlaylistManager();
-    playlistSelectionLoadToken += 1;
-    await playlistManager.open(normalizedPath);
+    const replacementToken = beginPlaylistReplacement();
+    const openedPlaylist = await playlistManager.open(normalizedPath);
+    if (!openedPlaylist || replacementToken !== playlistSelectionLoadToken) return;
     resetPlaylistContinuousTimelineState();
     showPlaylistSidebar();
     if (playlistManager.getItemCount() > 0) {
@@ -11764,7 +11789,14 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
     if (!playlistManager.isActive()) return;
 
+    const backgroundToken = playlistBackgroundWorkToken;
+    const isCurrentBackgroundWork = () => (
+      backgroundToken === playlistBackgroundWorkToken &&
+      playlistManager.isActive()
+    );
+
     const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
+    if (!isCurrentBackgroundWork()) return;
     if (!ffmpegAvailable) return;
 
     const items = playlistManager.getItems();
@@ -11778,16 +11810,19 @@ async function initApp() {
       try {
         // 코덱 확인
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(item.videoPath);
+        if (!isCurrentBackgroundWork()) return;
         if (!codecInfo.success || codecInfo.isSupported) continue;
 
         // 캐시 확인
         const cacheResult = await window.electronAPI.ffmpegCheckCache(item.videoPath);
+        if (!isCurrentBackgroundWork()) return;
         if (cacheResult.valid) continue;
 
         // 변환 필요 - 백그라운드 시작
         log.info('사전 변환 시작', { fileName: item.fileName, index: targetIndex });
         window.electronAPI.ffmpegPreTranscode(item.videoPath)
           .then(result => {
+            if (!isCurrentBackgroundWork()) return;
             if (result.success) {
               log.info('사전 변환 완료', { fileName: item.fileName });
             }
@@ -12125,7 +12160,8 @@ async function initApp() {
     return true;
   }
 
-  function stopContinuousPlayback() {
+  function stopContinuousPlayback(options = {}) {
+    const { cancelBackgroundTranscodes = false } = options;
     continuousPlaybackState.sessionId += 1;
     continuousPlaybackState.active = false;
     continuousPlaybackState.waiting = false;
@@ -12134,6 +12170,9 @@ async function initApp() {
     continuousPlaybackState.preparePromises.clear();
     continuousPlaybackState.preparedMediaPaths.clear();
     clearPlaylistMediaPreload();
+    if (cancelBackgroundTranscodes) {
+      cancelPlaylistBackgroundTranscodes('continuous playback stopped');
+    }
   }
 
   function isContinuousSessionActive(sessionId) {
@@ -12147,6 +12186,18 @@ async function initApp() {
     if (elements.playlistPrepareSummaryText) {
       elements.playlistPrepareSummaryText.textContent = `${readyCount}/${items.length}개 준비됨`;
     }
+  }
+
+  function setPlaylistContinuousTimelineBusy(busy) {
+    if (!elements.playlistPrepareSummaryText) return;
+    if (busy) {
+      elements.playlistPrepareSummaryText.textContent = '타임라인 준비 중...';
+      elements.playlistPrepareSummary?.classList.add('is-preparing');
+      return;
+    }
+
+    elements.playlistPrepareSummary?.classList.remove('is-preparing');
+    updatePlaylistPrepareSummary();
   }
 
   function markPlaylistItemStatus(item, status, message = '') {
@@ -12218,42 +12269,50 @@ async function initApp() {
     const updateToken = ++playlistTimelineUpdateToken;
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
-    const metadata = await collectPlaylistMetadata(items);
-    if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
 
-    const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
-    timeline.setPlaylistTimeline(segments, totalDuration);
-    timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
+    setPlaylistContinuousTimelineBusy(true);
+    try {
+      const metadata = await collectPlaylistMetadata(items);
+      if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
 
-    const aggregateRanges = [];
+      const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
+      timeline.setPlaylistTimeline(segments, totalDuration);
+      timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
 
-    for (const segment of segments) {
-      const item = items[segment.index];
-      const bframePath = await playlistManager.ensureItemBframePath(item);
-      if (!bframePath) continue;
-      try {
-        const bframeData = await window.electronAPI.loadReview(bframePath);
-        if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
-        if (!bframeData) continue;
-        aggregateRanges.push(...extractPlaylistCommentRanges({
-          bframeData,
-          segment,
-          visibleLayerIds: null,
-          allowedAuthorIds: null
-        }));
-      } catch (error) {
-        log.warn('타임라인 이어붙이기 댓글 로드 실패', { fileName: item.fileName, error: error.message });
+      const aggregateRanges = [];
+
+      for (const segment of segments) {
+        const item = items[segment.index];
+        const bframePath = await playlistManager.ensureItemBframePath(item);
+        if (!bframePath) continue;
+        try {
+          const bframeData = await window.electronAPI.loadReview(bframePath);
+          if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
+          if (!bframeData) continue;
+          aggregateRanges.push(...extractPlaylistCommentRanges({
+            bframeData,
+            segment,
+            visibleLayerIds: null,
+            allowedAuthorIds: null
+          }));
+        } catch (error) {
+          log.warn('타임라인 이어붙이기 댓글 로드 실패', { fileName: item.fileName, error: error.message });
+        }
+      }
+
+      if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
+      playlistAggregateCommentRanges = aggregateRanges;
+      const filteredRanges = filterPlaylistAggregateCommentRanges(
+        aggregateRanges,
+        commentFilterState.status
+      );
+      timeline.renderPlaylistCommentRanges(filteredRanges, totalDuration);
+      renderPlaylistContinuousCommentList(commentFilterState.status);
+    } finally {
+      if (playlistUIState.mode === 'continuous' && playlistTimelineUpdateToken === updateToken) {
+        setPlaylistContinuousTimelineBusy(false);
       }
     }
-
-    if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
-    playlistAggregateCommentRanges = aggregateRanges;
-    const filteredRanges = filterPlaylistAggregateCommentRanges(
-      aggregateRanges,
-      commentFilterState.status
-    );
-    timeline.renderPlaylistCommentRanges(filteredRanges, totalDuration);
-    renderPlaylistContinuousCommentList(commentFilterState.status);
   }
 
   async function quickCheckPlaylistForContinuous(sessionId, itemsToCheck = null) {
@@ -12750,7 +12809,10 @@ async function initApp() {
     }
   }
 
-  async function refreshModifiedSortIfActive() {
+  async function refreshModifiedSortIfActive(options = {}) {
+    const shouldContinue = typeof options.shouldContinue === 'function'
+      ? options.shouldContinue
+      : () => true;
     const playlistManager = getPlaylistManager();
     const continuousSettings = playlistManager.getContinuousSettings();
     if (
@@ -12761,6 +12823,7 @@ async function initApp() {
     }
 
     await refreshPlaylistModifiedTimes();
+    if (!shouldContinue()) return false;
     const nextContinuousSettings = playlistManager.getContinuousSettings();
     if (
       nextContinuousSettings?.sortMode !== 'modifiedAt' ||
@@ -12769,9 +12832,11 @@ async function initApp() {
       return;
     }
 
+    if (!shouldContinue()) return false;
     applyPlaylistSortPreservingSelection('modifiedAt');
     updatePlaylistUI();
     updatePlaylistContinuousTimeline();
+    return true;
   }
 
   function initCutlistFeature() {
@@ -13483,10 +13548,12 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
 
     // 콜백 설정
-    playlistManager.onPlaylistLoaded = async (playlist) => {
+    playlistManager.onPlaylistLoaded = async (playlist, loadContext = {}) => {
       log.info('재생목록 로드됨', { name: playlist.name });
-      await refreshModifiedSortIfActive();
+      await refreshModifiedSortIfActive({ shouldContinue: loadContext.shouldContinue });
+      if (loadContext.shouldContinue?.() === false) return;
       updatePlaylistUI();
+      if (loadContext.shouldContinue?.() === false) return;
 
       // 모든 아이템의 코덱을 확인하고 필요한 것들을 사전 변환
       preTranscodePlaylistItems();

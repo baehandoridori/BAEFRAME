@@ -246,3 +246,79 @@ test('PlaylistManager.open은 비어 있는 bframePath를 영상 옆 .bframe으�
   assert.equal(savedPlaylists[0].playlist.items[0].bframePath, 'C:\\video\\shot1.bframe');
   assert.equal(manager.isModified, false);
 });
+
+test('PlaylistManager.open은 로드 콜백에 오래된 열기 작업을 구분하는 context를 넘긴다', async () => {
+  const makePlaylist = (name, videoPath) => ({
+    playlistVersion: '1.0',
+    id: `playlist-${name}`,
+    name,
+    createdAt: '2026-06-17T00:00:00.000Z',
+    modifiedAt: '2026-06-17T00:00:00.000Z',
+    createdBy: 'tester',
+    createdById: 'session-1',
+    items: [
+      {
+        id: `item-${name}`,
+        videoPath,
+        bframePath: '',
+        fileName: `${name}.mp4`,
+        thumbnailPath: 'data:image/png;base64,stub',
+        order: 0,
+        addedAt: '2026-06-17T00:00:00.000Z',
+        modifiedAtMs: 0
+      }
+    ],
+    settings: {
+      floatingMode: false,
+      continuous: {
+        loop: false,
+        sortMode: 'fileName',
+        manualOrder: false
+      }
+    }
+  });
+
+  global.window = {
+    appState: { userName: 'tester', sessionId: 'session-1' },
+    electronAPI: {
+      readPlaylist: async filePath => (
+        filePath.endsWith('B.bplaylist')
+          ? makePlaylist('B', 'C:\\video\\B.mp4')
+          : makePlaylist('A', 'C:\\video\\A.mp4')
+      ),
+      fileExists: async () => false,
+      writePlaylist: async () => {}
+    }
+  };
+
+  const { PlaylistManager } = await import('../../renderer/scripts/modules/playlist-manager.js');
+  const manager = new PlaylistManager();
+  const callbackChecks = [];
+
+  manager.onPlaylistLoaded = async (playlist, loadContext) => {
+    const check = {
+      name: playlist.name,
+      initiallyCurrent: loadContext.shouldContinue()
+    };
+    callbackChecks.push(check);
+    if (playlist.name === 'A') {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      check.afterSuperseded = loadContext.shouldContinue();
+    }
+  };
+
+  const openA = manager.open('C:\\video\\A.bplaylist');
+  setTimeout(() => {
+    void manager.open('C:\\video\\B.bplaylist');
+  }, 0);
+
+  const aResult = await openA;
+  await new Promise(resolve => setTimeout(resolve, 80));
+
+  assert.equal(aResult, null);
+  assert.deepEqual(callbackChecks, [
+    { name: 'A', initiallyCurrent: true, afterSuperseded: false },
+    { name: 'B', initiallyCurrent: true }
+  ]);
+  assert.equal(manager.currentPlaylist.name, 'B');
+});

@@ -142,6 +142,8 @@ export class PlaylistManager {
     this.currentIndex = -1;           // 현재 재생 중인 아이템 인덱스
     this.isModified = false;          // 변경 여부
     this.autoSaveTimer = null;
+    this.openOperationToken = 0;
+    this.thumbnailValidationToken = 0;
 
     // 이벤트 콜백
     this.onPlaylistLoaded = null;     // (playlist) => {}
@@ -162,6 +164,8 @@ export class PlaylistManager {
    */
   createNew(name = '새 재생목록') {
     log.info('새 재생목록 생성', { name });
+    this.openOperationToken += 1;
+    this.thumbnailValidationToken += 1;
 
     // 기존 재생목록이 수정되었으면 저장
     if (this.isModified && this.currentPlaylist) {
@@ -187,14 +191,24 @@ export class PlaylistManager {
    */
   async open(filePath) {
     log.info('재생목록 열기', { filePath });
+    const openOperationToken = ++this.openOperationToken;
+    const shouldContinueOpen = () => openOperationToken === this.openOperationToken;
 
     try {
       // 기존 재생목록이 수정되었으면 저장
-      if (this.isModified && this.playlistPath) {
-        await this.save();
+      if (this.isModified && this.playlistPath && this.currentPlaylist) {
+        const playlistToSave = this.currentPlaylist;
+        const pathToSave = this.playlistPath;
+        playlistToSave.modifiedAt = new Date().toISOString();
+        await window.electronAPI.writePlaylist(pathToSave, playlistToSave);
+        if (!shouldContinueOpen()) return null;
+        if (this.currentPlaylist === playlistToSave && this.playlistPath === pathToSave) {
+          this.isModified = false;
+        }
       }
 
       const data = await window.electronAPI.readPlaylist(filePath);
+      if (!shouldContinueOpen()) return null;
 
       if (!data) {
         throw new Error('재생목록 파일을 찾을 수 없습니다.');
@@ -204,27 +218,46 @@ export class PlaylistManager {
         throw new Error('유효하지 않은 재생목록 파일입니다.');
       }
 
-      this.currentPlaylist = data;
-      this.currentPlaylist.settings = normalizePlaylistSettings(this.currentPlaylist);
-      this.currentPlaylist.items = normalizeItemOrders(this.currentPlaylist.items);
-      this.playlistPath = filePath;
-      this.currentIndex = this.currentPlaylist.items.length > 0 ? 0 : -1;
-      this.isModified = false;
+      data.settings = normalizePlaylistSettings(data);
+      data.items = normalizeItemOrders(data.items);
 
-      const repairedBframeCount = await this._repairMissingBframePaths();
-
-      // 썸네일 경로 검증 및 재생성
-      await this._validateThumbnails();
+      const repairedBframeCount = await this._repairMissingBframePaths({
+        playlist: data,
+        shouldContinue: shouldContinueOpen
+      });
+      if (!shouldContinueOpen()) return null;
 
       if (repairedBframeCount > 0) {
-        await this.save(filePath);
+        data.modifiedAt = new Date().toISOString();
+        await window.electronAPI.writePlaylist(filePath, data);
+        if (!shouldContinueOpen()) return null;
       }
 
-      await this.onPlaylistLoaded?.(this.currentPlaylist);
+      this.currentPlaylist = data;
+      this.playlistPath = filePath;
+      this.currentIndex = data.items.length > 0 ? 0 : -1;
+      this.isModified = false;
+      const openedPlaylist = this.currentPlaylist;
+      const thumbnailValidationToken = ++this.thumbnailValidationToken;
+      const loadContext = {
+        playlist: openedPlaylist,
+        playlistPath: filePath,
+        shouldContinue: () => (
+          shouldContinueOpen() &&
+          this.currentPlaylist === openedPlaylist &&
+          this.playlistPath === filePath
+        )
+      };
+
+      if (!shouldContinueOpen() || this.currentPlaylist !== openedPlaylist) return null;
+      await this.onPlaylistLoaded?.(this.currentPlaylist, loadContext);
+      if (!shouldContinueOpen() || this.currentPlaylist !== openedPlaylist) return null;
+      void this._validateThumbnailsInBackground(openedPlaylist, filePath, thumbnailValidationToken);
       log.info('재생목록 로드 완료', {
         name: data.name,
         itemCount: data.items.length,
-        repairedBframeCount
+        repairedBframeCount,
+        thumbnailsDeferred: true
       });
 
       return this.currentPlaylist;
@@ -275,6 +308,9 @@ export class PlaylistManager {
    * 재생목록 닫기
    */
   async close() {
+    this.openOperationToken += 1;
+    this.thumbnailValidationToken += 1;
+
     // 수정되었고 저장 경로가 있으면 파일로 저장
     if (this.isModified && this.playlistPath) {
       await this.save();
@@ -298,6 +334,9 @@ export class PlaylistManager {
    * 재생목록 삭제
    */
   async delete() {
+    this.openOperationToken += 1;
+    this.thumbnailValidationToken += 1;
+
     if (!this.playlistPath) {
       this.close();
       return;
@@ -749,22 +788,31 @@ export class PlaylistManager {
     return item.bframePath || '';
   }
 
-  async _repairMissingBframePaths() {
-    if (!this.currentPlaylist?.items) return 0;
+  async _repairMissingBframePaths(options = {}) {
+    const playlist = options.playlist || this.currentPlaylist;
+    const shouldContinue = typeof options.shouldContinue === 'function'
+      ? options.shouldContinue
+      : () => true;
+
+    if (!playlist?.items) return 0;
 
     let repairedCount = 0;
-    for (const item of this.currentPlaylist.items) {
+    for (const item of playlist.items) {
+      if (!shouldContinue()) return 0;
+
       const previousPath = item.bframePath || '';
       const nextPath = await this.ensureItemBframePath(item, {
         markModified: false,
         notify: false
       });
+      if (!shouldContinue()) return 0;
+
       if (nextPath && nextPath !== previousPath) {
         repairedCount++;
       }
     }
 
-    if (repairedCount > 0) {
+    if (repairedCount > 0 && playlist === this.currentPlaylist) {
       this.isModified = true;
     }
     return repairedCount;
@@ -863,12 +911,19 @@ export class PlaylistManager {
     });
   }
 
-  async _validateThumbnails() {
-    if (!this.currentPlaylist) return;
+  async _validateThumbnails(options = {}) {
+    const playlist = options.playlist || this.currentPlaylist;
+    const shouldContinue = typeof options.shouldContinue === 'function'
+      ? options.shouldContinue
+      : () => true;
+
+    if (!playlist) return false;
 
     let thumbnailsUpdated = false;
 
-    for (const item of this.currentPlaylist.items) {
+    for (const item of playlist.items) {
+      if (!shouldContinue()) return false;
+
       // Data URL은 항상 유효
       if (item.thumbnailPath && item.thumbnailPath.startsWith('data:')) {
         continue;
@@ -877,16 +932,21 @@ export class PlaylistManager {
       if (item.thumbnailPath) {
         try {
           const exists = await window.electronAPI.fileExists(item.thumbnailPath);
+          if (!shouldContinue()) return false;
+
           if (!exists) {
             // 썸네일 재생성
             log.info('썸네일 재생성 시도', { fileName: item.fileName });
             const newPath = await this._tryGenerateThumbnail(item.videoPath);
+            if (!shouldContinue()) return false;
+
             if (newPath !== item.thumbnailPath) {
               item.thumbnailPath = newPath;
               thumbnailsUpdated = true;
             }
           }
         } catch (err) {
+          if (!shouldContinue()) return false;
           log.warn('썸네일 검증 실패', { fileName: item.fileName, error: err.message });
           item.thumbnailPath = '';
           thumbnailsUpdated = true;
@@ -895,6 +955,8 @@ export class PlaylistManager {
         // 썸네일이 없으면 생성
         log.info('새 썸네일 생성 시도', { fileName: item.fileName });
         const newPath = await this._tryGenerateThumbnail(item.videoPath);
+        if (!shouldContinue()) return false;
+
         if (newPath) {
           item.thumbnailPath = newPath;
           thumbnailsUpdated = true;
@@ -904,8 +966,34 @@ export class PlaylistManager {
     }
 
     // 썸네일이 업데이트되었으면 저장 필요 표시
-    if (thumbnailsUpdated) {
+    if (thumbnailsUpdated && playlist === this.currentPlaylist) {
       this.isModified = true;
+    }
+
+    return thumbnailsUpdated;
+  }
+
+  async _validateThumbnailsInBackground(playlist, playlistPath, token) {
+    const shouldContinue = () => (
+      token === this.thumbnailValidationToken &&
+      this.currentPlaylist === playlist &&
+      this.playlistPath === playlistPath
+    );
+
+    try {
+      const thumbnailsUpdated = await this._validateThumbnails({ playlist, shouldContinue });
+      if (!thumbnailsUpdated || !shouldContinue()) return;
+
+      this.isModified = true;
+      this.onPlaylistModified?.();
+      log.info('재생목록 썸네일 백그라운드 검증 완료', { path: playlistPath });
+    } catch (error) {
+      if (shouldContinue()) {
+        log.warn('재생목록 썸네일 백그라운드 검증 실패', {
+          path: playlistPath,
+          error: error.message
+        });
+      }
     }
   }
 
