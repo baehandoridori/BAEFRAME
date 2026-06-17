@@ -4661,6 +4661,7 @@ async function initApp() {
 
   function invalidateActiveVideoLoad() {
     latestVideoLoadToken += 1;
+    supersedeActiveTranscodeOverlay('재생목록 교체');
   }
 
   function isStaleVideoLoadToken(loadToken) {

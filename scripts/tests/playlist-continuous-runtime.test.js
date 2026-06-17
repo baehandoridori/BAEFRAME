@@ -471,6 +471,7 @@ test('manual video loads cancel active continuous playback and stale loads', () 
   const loadVideoSource = loadVideoMatch[1];
   assert.match(appSource, /let latestVideoLoadToken = 0;/);
   assert.match(appSource, /function invalidateActiveVideoLoad\(\) \{[\s\S]+latestVideoLoadToken \+= 1;[\s\S]+\}/);
+  assert.match(appSource, /function invalidateActiveVideoLoad\(\) \{[\s\S]+supersedeActiveTranscodeOverlay\('재생목록 교체'\);[\s\S]+\}/);
   assert.match(loadVideoSource, /preserveContinuousSession = false/);
   assert.match(loadVideoSource, /const loadToken = \+\+latestVideoLoadToken;/);
   assert.match(loadVideoSource, /if \(!preserveContinuousSession && continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
@@ -751,6 +752,7 @@ test('normal transcode overlay is superseded when users switch videos quickly', 
 
   const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}/);
   assert.ok(loadVideoMatch, 'loadVideo should exist');
+  assert.match(appSource, /function invalidateActiveVideoLoad\(\) \{[\s\S]+supersedeActiveTranscodeOverlay\('재생목록 교체'\);[\s\S]+\}/);
   assert.match(loadVideoMatch[1], /supersedeActiveTranscodeOverlay\('새 영상 선택'\);/);
   assert.match(loadVideoMatch[1], /if \(transcoded\.stale\) return false;/);
 });
