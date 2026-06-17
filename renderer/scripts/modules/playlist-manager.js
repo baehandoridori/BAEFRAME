@@ -192,6 +192,7 @@ export class PlaylistManager {
   async open(filePath) {
     log.info('재생목록 열기', { filePath });
     const openOperationToken = ++this.openOperationToken;
+    const thumbnailValidationToken = ++this.thumbnailValidationToken;
     const shouldContinueOpen = () => openOperationToken === this.openOperationToken;
 
     try {
@@ -238,7 +239,6 @@ export class PlaylistManager {
       this.currentIndex = data.items.length > 0 ? 0 : -1;
       this.isModified = false;
       const openedPlaylist = this.currentPlaylist;
-      const thumbnailValidationToken = ++this.thumbnailValidationToken;
       const loadContext = {
         playlist: openedPlaylist,
         playlistPath: filePath,

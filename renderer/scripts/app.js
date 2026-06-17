@@ -342,6 +342,7 @@ async function initApp() {
   let suppressPlaylistSelectionLoad = false;
   let playlistAutoPlayAfterSelection = false;
   let playlistSelectionLoadToken = 0;
+  let playlistReplacementToken = 0;
   const playlistMediaPreload = {
     element: null,
     itemId: null,
@@ -425,11 +426,12 @@ async function initApp() {
   }
 
   function beginPlaylistReplacement() {
+    playlistReplacementToken += 1;
     playlistSelectionLoadToken += 1;
     playlistTimelineUpdateToken += 1;
     stopContinuousPlayback({ cancelBackgroundTranscodes: true });
     invalidatePlaylistBackgroundWork();
-    return playlistSelectionLoadToken;
+    return playlistReplacementToken;
   }
 
   function getDialogFileName(filePath) {
@@ -463,7 +465,7 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
     const replacementToken = beginPlaylistReplacement();
     const openedPlaylist = await playlistManager.open(normalizedPath);
-    if (!openedPlaylist || replacementToken !== playlistSelectionLoadToken) return;
+    if (!openedPlaylist || replacementToken !== playlistReplacementToken) return;
     resetPlaylistContinuousTimelineState();
     showPlaylistSidebar();
     if (playlistManager.getItemCount() > 0) {
