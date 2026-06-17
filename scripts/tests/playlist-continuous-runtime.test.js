@@ -92,10 +92,29 @@ test('opening or replacing playlists invalidates active continuous work before f
   assert.match(replacementSource, /playlistReplacementToken \+= 1;/);
   assert.match(replacementSource, /playlistSelectionLoadToken \+= 1;/);
   assert.match(replacementSource, /playlistTimelineUpdateToken \+= 1;/);
-  assert.match(replacementSource, /stopContinuousPlayback\(\{ cancelBackgroundTranscodes: true \}\);/);
+  assert.match(replacementSource, /stopContinuousPlayback\(\);/);
   assert.match(replacementSource, /invalidatePlaylistBackgroundWork\(\);/);
   assert.match(replacementSource, /return playlistReplacementToken;/);
   assert.match(openSource, /if \(playlistUIState\.mode === 'continuous'\) \{[\s\S]+updatePlaylistContinuousTimeline\(\);[\s\S]+\}/);
+});
+
+test('playlist replacement invalidates background work without globally cancelling ffmpeg', () => {
+  const replacementMatch = appSource.match(/function beginPlaylistReplacement\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(replacementMatch, 'beginPlaylistReplacement should exist');
+  const replacementSource = replacementMatch[1];
+
+  const invalidateMatch = appSource.match(/function invalidatePlaylistBackgroundWork\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(invalidateMatch, 'background invalidation helper should exist');
+  const invalidateSource = invalidateMatch[1];
+
+  const stopMatch = appSource.match(/function stopContinuousPlayback\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(stopMatch, 'stopContinuousPlayback should exist');
+  const stopSource = stopMatch[1];
+
+  assert.doesNotMatch(replacementSource, /ffmpegCancel|cancelBackgroundTranscodes|cancelPlaylistBackgroundTranscodes/);
+  assert.doesNotMatch(invalidateSource, /ffmpegCancel|cancelBackgroundTranscodes|cancelPlaylistBackgroundTranscodes/);
+  assert.doesNotMatch(stopSource, /ffmpegCancel|cancelBackgroundTranscodes|cancelPlaylistBackgroundTranscodes/);
+  assert.match(appSource, /window\.electronAPI\.ffmpegCancel\(\)/);
 });
 
 test('playlist replacement guard is independent from suppressed selection refreshes', () => {
@@ -893,7 +912,7 @@ test('pre-transcode joins an existing pending transcode instead of marking it fa
 
 test('playlist background pre-transcode ignores stale playlist generations', () => {
   assert.match(appSource, /let playlistBackgroundWorkToken = 0;/);
-  assert.match(appSource, /function invalidatePlaylistBackgroundWork\(options = \{\}\) \{/);
+  assert.match(appSource, /function invalidatePlaylistBackgroundWork\(\) \{/);
 
   const preTranscodeMatch = appSource.match(/async function preTranscodePlaylistItems\(\) \{([\s\S]*?)\n  \}\n\n  function toLocalMediaUrl/);
   assert.ok(preTranscodeMatch, 'preTranscodePlaylistItems should exist');

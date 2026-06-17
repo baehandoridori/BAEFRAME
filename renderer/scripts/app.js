@@ -404,19 +404,8 @@ async function initApp() {
     return normalizeComparableFilePath(a) === normalizeComparableFilePath(b);
   }
 
-  function cancelPlaylistBackgroundTranscodes(reason = 'playlist background work invalidated') {
-    if (typeof window.electronAPI?.ffmpegCancel !== 'function') return;
-    void window.electronAPI.ffmpegCancel().catch(error => {
-      log.warn('재생목록 백그라운드 변환 취소 실패', { reason, error: error.message });
-    });
-  }
-
-  function invalidatePlaylistBackgroundWork(options = {}) {
-    const { cancelTranscodes = false } = options;
+  function invalidatePlaylistBackgroundWork() {
     playlistBackgroundWorkToken += 1;
-    if (cancelTranscodes) {
-      cancelPlaylistBackgroundTranscodes('playlist background work invalidated');
-    }
   }
 
   function resetPlaylistContinuousTimelineState() {
@@ -429,7 +418,7 @@ async function initApp() {
     playlistReplacementToken += 1;
     playlistSelectionLoadToken += 1;
     playlistTimelineUpdateToken += 1;
-    stopContinuousPlayback({ cancelBackgroundTranscodes: true });
+    stopContinuousPlayback();
     invalidatePlaylistBackgroundWork();
     return playlistReplacementToken;
   }
@@ -12162,8 +12151,7 @@ async function initApp() {
     return true;
   }
 
-  function stopContinuousPlayback(options = {}) {
-    const { cancelBackgroundTranscodes = false } = options;
+  function stopContinuousPlayback() {
     continuousPlaybackState.sessionId += 1;
     continuousPlaybackState.active = false;
     continuousPlaybackState.waiting = false;
@@ -12172,9 +12160,6 @@ async function initApp() {
     continuousPlaybackState.preparePromises.clear();
     continuousPlaybackState.preparedMediaPaths.clear();
     clearPlaylistMediaPreload();
-    if (cancelBackgroundTranscodes) {
-      cancelPlaylistBackgroundTranscodes('continuous playback stopped');
-    }
   }
 
   function isContinuousSessionActive(sessionId) {
