@@ -327,9 +327,42 @@ test('status uses fallbacks when optional mpv properties are unavailable', async
   assert.equal(status.time, 0.25);
   assert.equal(status.duration, 1);
   assert.equal(status.paused, true);
+  assert.equal(status.eofReached, false);
   assert.equal(status.width, 0);
   assert.equal(status.height, 0);
   assert.equal(status.fps, 24);
+});
+
+test('status reports eof-reached for keep-open mpv playback', async () => {
+  const manager = createManager({
+    env: { BAEFRAME_MPV_PILOT: '1' },
+    existing: [path.normalize('C:\\repo\\mpv\\win32\\mpv.exe')]
+  });
+
+  manager.initialized = true;
+  manager.mpvPath = 'C:\\repo\\mpv\\win32\\mpv.exe';
+  manager.process = { killed: false };
+  manager.start = async () => {
+    throw new Error('status polling should not start mpv');
+  };
+  manager.getProperty = async (name) => {
+    const values = {
+      'time-pos': 1,
+      duration: 1,
+      pause: true,
+      path: 'C:\\video\\sample.mp4',
+      'eof-reached': true
+    };
+    if (Object.prototype.hasOwnProperty.call(values, name)) {
+      return values[name];
+    }
+    throw new Error('mpv command failed: property unavailable');
+  };
+
+  const status = await manager.getStatus();
+
+  assert.equal(status.success, true);
+  assert.equal(status.eofReached, true);
 });
 
 test('status polling reports stopped instead of restarting mpv after exit', async () => {

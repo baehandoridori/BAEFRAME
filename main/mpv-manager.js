@@ -219,18 +219,20 @@ class MPVManager {
         path: '',
         width: 0,
         height: 0,
-        fps: 24
+        fps: 24,
+        eofReached: false
       };
     }
 
-    const [timePos, duration, paused, pathValue, width, height, fps] = await Promise.all([
+    const [timePos, duration, paused, pathValue, width, height, fps, eofReached] = await Promise.all([
       this.getOptionalProperty('time-pos', 0),
       this.getOptionalProperty('duration', 0),
       this.getOptionalProperty('pause', true),
       this.getOptionalProperty('path', ''),
       this.getOptionalProperty('width', 0),
       this.getOptionalProperty('height', 0),
-      this.getOptionalProperty('container-fps', 24)
+      this.getOptionalProperty('container-fps', 24),
+      this.getOptionalProperty('eof-reached', false)
     ]);
 
     return {
@@ -241,7 +243,8 @@ class MPVManager {
       path: pathValue || '',
       width: this._toNumber(width, 0),
       height: this._toNumber(height, 0),
-      fps: this._toNumber(fps, 24)
+      fps: this._toNumber(fps, 24),
+      eofReached: Boolean(eofReached)
     };
   }
 

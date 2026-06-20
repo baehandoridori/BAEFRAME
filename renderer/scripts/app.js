@@ -5444,6 +5444,8 @@ async function initApp() {
         stop: () => stopMpvPilotEngine()
       }
     });
+    videoPlayer.setVolume(videoPlayer.videoElement.volume);
+    videoPlayer.setMuted(videoPlayer.videoElement.muted);
 
     elements.videoWrapper?.classList.add('mpv-pilot-mode');
     document.body.classList.add('mpv-pilot-mode');

@@ -22,6 +22,7 @@ export class VideoPlayer extends EventTarget {
     this.externalControls = null;
     this._externalStatusTimer = null;
     this._externalStatusPending = false;
+    this._externalEndedEmitted = false;
 
     // 상태
     this.isLoaded = false;
@@ -216,6 +217,7 @@ export class VideoPlayer extends EventTarget {
     this._stopExternalStatusPolling();
     this.engine = 'html5';
     this.externalControls = null;
+    this._externalEndedEmitted = false;
 
     if (wasExternalPlaying) {
       this.isPlaying = false;
@@ -229,6 +231,7 @@ export class VideoPlayer extends EventTarget {
 
     this.engine = config.engineName || 'external';
     this.externalControls = config.controls || null;
+    this._externalEndedEmitted = false;
     this.filePath = config.filePath || null;
     this.duration = Math.max(0, Number(config.duration) || 0);
     this.fps = Math.max(1, Number(config.fps) || this.fps || 24);
@@ -413,6 +416,7 @@ export class VideoPlayer extends EventTarget {
 
     try {
       if (this.engine !== 'html5') {
+        this._externalEndedEmitted = false;
         const result = await this.externalControls?.play?.();
         if (result?.success === false) {
           throw new Error(result.error || '외부 플레이어 재생 실패');
@@ -479,6 +483,7 @@ export class VideoPlayer extends EventTarget {
     if (!this.isLoaded) return;
 
     time = Math.max(0, Math.min(time, this.duration));
+    this._externalEndedEmitted = false;
 
     // 내부 상태 즉시 업데이트 (timeupdate 이벤트 전에)
     this.currentTime = time;
@@ -846,6 +851,7 @@ export class VideoPlayer extends EventTarget {
       const nextTime = Number(status.time);
       const nextDuration = Number(status.duration);
       const nextFps = Number(status.fps);
+      const eofReached = status.eofReached === true;
       if (Number.isFinite(nextDuration) && nextDuration > 0) {
         this.duration = nextDuration;
       }
@@ -858,8 +864,11 @@ export class VideoPlayer extends EventTarget {
       this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
       const nextFrame = Math.floor(this.currentTime * this.fps);
       const wasPlaying = this.isPlaying;
-      this.isPlaying = status.paused === false;
+      this.isPlaying = !eofReached && status.paused === false;
       this.currentFrame = Math.max(0, Math.min(nextFrame, Math.max(0, this.totalFrames - 1)));
+      if (!eofReached) {
+        this._externalEndedEmitted = false;
+      }
 
       if (this._handleLoopRestartIfNeeded()) {
         if (wasPlaying !== this.isPlaying) {
@@ -883,6 +892,11 @@ export class VideoPlayer extends EventTarget {
 
       if (wasPlaying !== this.isPlaying) {
         this._emit(this.isPlaying ? 'play' : 'pause');
+      }
+
+      if (eofReached && !this._externalEndedEmitted) {
+        this._externalEndedEmitted = true;
+        this._emit('ended');
       }
     } catch (error) {
       log.debug('외부 플레이어 상태 동기화 실패', { error: error.message });

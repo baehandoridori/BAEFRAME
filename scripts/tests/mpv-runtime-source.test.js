@@ -170,6 +170,7 @@ test('mpv pilot routes audio and viewport controls through mpv IPC', () => {
   assert.match(videoPlayerSource, /setMuted\(muted\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+this\.externalControls\?\.setMuted\?\.\(nextMuted\)/);
   assert.match(appSource, /setVolume: \(volume\) => window\.electronAPI\.mpvSetVolume\(volume\)/);
   assert.match(appSource, /setMuted: \(muted\) => window\.electronAPI\.mpvSetMuted\(muted\)/);
+  assert.match(appSource, /videoPlayer\.useExternalEngine\(\{[\s\S]+setMuted: \(muted\) => window\.electronAPI\.mpvSetMuted\(muted\)[\s\S]+\}\s+\}\);[\s\S]+videoPlayer\.setVolume\(videoPlayer\.videoElement\.volume\);[\s\S]+videoPlayer\.setMuted\(videoPlayer\.videoElement\.muted\);/);
 });
 
 test('mpv pilot applies the same zoom and pan to the mpv image', () => {
@@ -231,6 +232,16 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}/);
   assert.ok(seekToFrameMatch, 'seekToFrame should exist');
   assert.match(seekToFrameMatch[1], /if \(this\.engine !== 'html5'\) \{[\s\S]+this\.seek\(time\);[\s\S]+return;/);
+});
+
+test('mpv external playback emits ended when keep-open reaches EOF', () => {
+  assert.match(mpvManagerSource, /this\.getOptionalProperty\('eof-reached', false\)/);
+  assert.match(videoPlayerSource, /this\._externalEndedEmitted = false;/);
+  assert.match(videoPlayerSource, /const eofReached = status\.eofReached === true;/);
+  assert.match(videoPlayerSource, /this\.isPlaying = !eofReached && status\.paused === false;/);
+  assert.match(videoPlayerSource, /if \(eofReached && !this\._externalEndedEmitted\) \{[\s\S]+this\._externalEndedEmitted = true;[\s\S]+this\._emit\('ended'\);[\s\S]+\}/);
+  assert.match(videoPlayerSource, /if \(!eofReached\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+\}/);
+  assert.match(videoPlayerSource, /seek\(time\) \{[\s\S]+this\._externalEndedEmitted = false;/);
 });
 
 test('mpv engine replacement resets playing state before html5 loads', () => {
