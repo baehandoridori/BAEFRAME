@@ -328,3 +328,33 @@ test('waits for playback properties before treating mpv load as ready', async ()
   assert.equal(status.time, 0);
   assert.equal(timeChecks, 3);
 });
+
+test('waits for the requested file path before treating mpv load as ready', async () => {
+  const manager = createManager({
+    env: { BAEFRAME_MPV_PILOT: '1' },
+    existing: [path.normalize('C:\\repo\\mpv\\win32\\mpv.exe')]
+  });
+  let pathChecks = 0;
+
+  manager.getOptionalProperty = async (name, fallback) => {
+    if (name === 'duration') return 1;
+    if (name === 'pause') return true;
+    if (name === 'time-pos') return 0;
+    if (name === 'path') {
+      pathChecks += 1;
+      return pathChecks < 3
+        ? 'C:\\video\\previous.mov'
+        : 'C:\\video\\requested.mov';
+    }
+    return fallback;
+  };
+
+  const status = await manager.waitForPlaybackReady('C:\\video\\requested.mov', {
+    timeoutMs: 1000,
+    intervalMs: 1
+  });
+
+  assert.equal(status.success, true);
+  assert.equal(status.path, 'C:\\video\\requested.mov');
+  assert.equal(pathChecks, 3);
+});

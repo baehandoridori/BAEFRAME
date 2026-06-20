@@ -41,6 +41,12 @@ function normalizeMpvWid(wid) {
   return /^\d+$/.test(value) ? value : null;
 }
 
+function normalizePlaybackPathForCompare(value) {
+  if (!value) return '';
+  const normalized = path.normalize(String(value)).replace(/[\\/]+$/, '');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
 function createMpvLaunchArgs({ ipcPath, forceWindow = true, wid = null } = {}) {
   if (!ipcPath) {
     throw new Error('mpv IPC path is required');
@@ -206,12 +212,13 @@ class MPVManager {
     }
   }
 
-  async waitForPlaybackReady(_expectedPath, {
+  async waitForPlaybackReady(expectedPath, {
     timeoutMs = 3000,
     intervalMs = 50
   } = {}) {
     const deadline = Date.now() + timeoutMs;
     let lastStatus = null;
+    const requestedPath = normalizePlaybackPathForCompare(expectedPath);
 
     while (Date.now() < deadline) {
       const [timePos, duration, paused, pathValue, width, height, fps] = await Promise.all([
@@ -235,7 +242,9 @@ class MPVManager {
         fps: this._toNumber(fps, 24)
       };
 
-      if (timePos !== null && pathValue) {
+      const loadedPath = normalizePlaybackPathForCompare(pathValue);
+      const isRequestedPathLoaded = !requestedPath || loadedPath === requestedPath;
+      if (timePos !== null && pathValue && isRequestedPathLoaded) {
         return lastStatus;
       }
 

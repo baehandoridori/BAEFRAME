@@ -70,6 +70,21 @@ export class VideoPlayer extends EventTarget {
     log.info('VideoPlayer 초기화됨', { fps: this.fps });
   }
 
+  _handleLoopRestartIfNeeded() {
+    if (!this.loop.enabled || !this.isPlaying ||
+        this.loop.inPoint === null || this.loop.outPoint === null) {
+      return false;
+    }
+
+    if (this.currentTime < this.loop.outPoint) {
+      return false;
+    }
+
+    this.seek(this.loop.inPoint);
+    this._emit('loopRestart');
+    return true;
+  }
+
   /**
    * 이벤트 리스너 설정
    */
@@ -139,14 +154,8 @@ export class VideoPlayer extends EventTarget {
       this.currentFrame = Math.floor(this.currentTime * this.fps);
       this.currentFrame = Math.max(0, Math.min(this.currentFrame, this.totalFrames - 1));
 
-      // 구간 반복 처리
-      if (this.loop.enabled && this.isPlaying &&
-          this.loop.inPoint !== null && this.loop.outPoint !== null) {
-        if (this.currentTime >= this.loop.outPoint) {
-          this.seek(this.loop.inPoint);
-          this._emit('loopRestart');
-          return;
-        }
+      if (this._handleLoopRestartIfNeeded()) {
+        return;
       }
 
       this._emit('timeupdate', {
@@ -518,6 +527,13 @@ export class VideoPlayer extends EventTarget {
       currentFrame: this.currentFrame
     });
 
+    if (this.engine !== 'html5') {
+      this.seek(time);
+      this._isSeeking = false;
+      log.debug('프레임 이동', { frame, time });
+      return;
+    }
+
     // 실제 video seek는 rAF로 배치 (빠른 연속 입력 시 마지막 프레임만 seek)
     this._seekDebounceId = requestAnimationFrame(() => {
       this._seekDebounceId = null;
@@ -820,6 +836,13 @@ export class VideoPlayer extends EventTarget {
       const wasPlaying = this.isPlaying;
       this.isPlaying = status.paused === false;
       this.currentFrame = Math.max(0, Math.min(nextFrame, Math.max(0, this.totalFrames - 1)));
+
+      if (this._handleLoopRestartIfNeeded()) {
+        if (wasPlaying !== this.isPlaying) {
+          this._emit(this.isPlaying ? 'play' : 'pause');
+        }
+        return;
+      }
 
       this._emit('timeupdate', {
         currentTime: this.currentTime,
