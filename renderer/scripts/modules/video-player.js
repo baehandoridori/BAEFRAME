@@ -363,9 +363,11 @@ export class VideoPlayer extends EventTarget {
 
     try {
       if (this.engine !== 'html5') {
-        this.externalControls?.stop?.().catch?.((error) => {
+        try {
+          await this.externalControls?.stop?.();
+        } catch (error) {
           log.warn('외부 플레이어 종료 실패', { error: error.message });
-        });
+        }
       }
       this.useHtml5Engine();
       this.filePath = filePath;

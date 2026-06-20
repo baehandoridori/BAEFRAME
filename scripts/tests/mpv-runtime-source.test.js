@@ -268,7 +268,7 @@ test('mpv external playback emits ended when keep-open reaches EOF', () => {
 
 test('mpv engine replacement resets playing state before html5 loads', () => {
   assert.match(videoPlayerSource, /useHtml5Engine\(\) \{[\s\S]+const wasExternalPlaying = this\.engine !== 'html5' && this\.isPlaying;[\s\S]+if \(wasExternalPlaying\) \{[\s\S]+this\.isPlaying = false;[\s\S]+this\._emit\('pause'\);[\s\S]+\}/);
-  assert.match(videoPlayerSource, /async load\(filePath\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+this\.externalControls\?\.stop\?\.\(\)[\s\S]+this\.useHtml5Engine\(\);/);
+  assert.match(videoPlayerSource, /async load\(filePath\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+await this\.externalControls\?\.stop\?\.\(\);[\s\S]+\}[\s\S]+this\.useHtml5Engine\(\);/);
 });
 
 test('main process owns mpv shutdown cleanup before forced app quit', () => {
