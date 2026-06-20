@@ -353,6 +353,30 @@ test('status polling reports stopped instead of restarting mpv after exit', asyn
   assert.equal(status.path, '');
 });
 
+test('mpv audio and viewport controls send bounded properties', async () => {
+  const manager = createManager({
+    env: { BAEFRAME_MPV_PILOT: '1' },
+    existing: [path.normalize('C:\\repo\\mpv\\win32\\mpv.exe')]
+  });
+  const commands = [];
+  manager.sendCommand = async (command) => {
+    commands.push(command);
+    return { success: true };
+  };
+
+  await manager.setVolume(0.42);
+  await manager.setMuted(true);
+  await manager.setVideoTransform({ zoom: 1.25, panX: 0.2, panY: -0.3 });
+
+  assert.deepEqual(commands, [
+    ['set_property', 'volume', 42],
+    ['set_property', 'mute', true],
+    ['set_property', 'video-zoom', 1.25],
+    ['set_property', 'video-pan-x', 0.2],
+    ['set_property', 'video-pan-y', -0.3]
+  ]);
+});
+
 test('waits for playback properties before treating mpv load as ready', async () => {
   const manager = createManager({
     env: { BAEFRAME_MPV_PILOT: '1' },

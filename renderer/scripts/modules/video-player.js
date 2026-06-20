@@ -605,17 +605,35 @@ export class VideoPlayer extends EventTarget {
    * @param {number} volume - 0~1
    */
   setVolume(volume) {
-    if (this.engine !== 'html5') return;
-    this.videoElement.volume = Math.max(0, Math.min(1, volume));
+    const normalizedVolume = Math.max(0, Math.min(1, Number(volume) || 0));
+    this.videoElement.volume = normalizedVolume;
+
+    if (this.engine !== 'html5') {
+      this.externalControls?.setVolume?.(normalizedVolume).catch?.((error) => {
+        log.warn('외부 플레이어 볼륨 설정 실패', { error: error.message });
+      });
+      return;
+    }
   }
 
   /**
    * 음소거 토글
    */
+  setMuted(muted) {
+    const nextMuted = muted === true;
+    this.videoElement.muted = nextMuted;
+
+    if (this.engine !== 'html5') {
+      this.externalControls?.setMuted?.(nextMuted).catch?.((error) => {
+        log.warn('외부 플레이어 음소거 설정 실패', { error: error.message });
+      });
+    }
+
+    return nextMuted;
+  }
+
   toggleMute() {
-    if (this.engine !== 'html5') return false;
-    this.videoElement.muted = !this.videoElement.muted;
-    return this.videoElement.muted;
+    return this.setMuted(!this.videoElement.muted);
   }
 
   /**

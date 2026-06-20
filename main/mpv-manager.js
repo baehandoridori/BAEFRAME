@@ -51,6 +51,12 @@ function normalizePlaybackPathForCompare(value, platform = process.platform) {
   return platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
 function createMpvLaunchArgs({ ipcPath, forceWindow = true, wid = null } = {}) {
   if (!ipcPath) {
     throw new Error('mpv IPC path is required');
@@ -146,6 +152,9 @@ class MPVManager {
     await this.start({ wid: options.wid });
     await this.sendCommand(['loadfile', filePath, 'replace']);
     await this.waitForPlaybackReady(filePath);
+    if (options.videoTransform) {
+      await this.setVideoTransform(options.videoTransform);
+    }
 
     if (options.pause === false || options.play === true) {
       await this.play();
@@ -173,6 +182,29 @@ class MPVManager {
     }
     await this.sendCommand(['set_property', 'time-pos', Math.max(0, numericTime)]);
     return { success: true };
+  }
+
+  async setVolume(volume) {
+    const normalizedVolume = clampNumber(volume, 0, 1, 1);
+    await this.sendCommand(['set_property', 'volume', normalizedVolume * 100]);
+    return { success: true, volume: normalizedVolume };
+  }
+
+  async setMuted(muted) {
+    const nextMuted = muted === true;
+    await this.sendCommand(['set_property', 'mute', nextMuted]);
+    return { success: true, muted: nextMuted };
+  }
+
+  async setVideoTransform(transform = {}) {
+    const zoom = clampNumber(transform.zoom, -8, 8, 0);
+    const panX = clampNumber(transform.panX, -3, 3, 0);
+    const panY = clampNumber(transform.panY, -3, 3, 0);
+
+    await this.sendCommand(['set_property', 'video-zoom', zoom]);
+    await this.sendCommand(['set_property', 'video-pan-x', panX]);
+    await this.sendCommand(['set_property', 'video-pan-y', panY]);
+    return { success: true, zoom, panX, panY };
   }
 
   async getStatus() {

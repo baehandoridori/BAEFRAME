@@ -29,6 +29,9 @@ test('preload exposes a narrow mpv API surface', () => {
   assert.match(preloadSource, /mpvPlay: \(\) => ipcRenderer\.invoke\('mpv:play'\)/);
   assert.match(preloadSource, /mpvPause: \(\) => ipcRenderer\.invoke\('mpv:pause'\)/);
   assert.match(preloadSource, /mpvSeek: \(time\) => ipcRenderer\.invoke\('mpv:seek', time\)/);
+  assert.match(preloadSource, /mpvSetVolume: \(volume\) => ipcRenderer\.invoke\('mpv:set-volume', volume\)/);
+  assert.match(preloadSource, /mpvSetMuted: \(muted\) => ipcRenderer\.invoke\('mpv:set-muted', muted\)/);
+  assert.match(preloadSource, /mpvSetVideoTransform: \(transform\) => ipcRenderer\.invoke\('mpv:set-video-transform', transform\)/);
   assert.match(preloadSource, /mpvGetStatus: \(\) => ipcRenderer\.invoke\('mpv:get-status'\)/);
   assert.match(preloadSource, /mpvStop: \(\) => ipcRenderer\.invoke\('mpv:stop'\)/);
   assert.match(preloadSource, /mpvPrepareEmbed: \(bounds\) => ipcRenderer\.invoke\('mpv:prepare-embed', bounds\)/);
@@ -51,6 +54,9 @@ test('main process registers mpv IPC handlers through the manager and embed host
     'mpv:play',
     'mpv:pause',
     'mpv:seek',
+    'mpv:set-volume',
+    'mpv:set-muted',
+    'mpv:set-video-transform',
     'mpv:get-status',
     'mpv:stop',
     'mpv:prepare-embed',
@@ -94,6 +100,17 @@ test('loadVideo checks mpv pilot before FFmpeg transcode and falls back by defau
   assert.match(loadVideoSource, /await videoPlayer\.load\(actualVideoPath\);/);
 });
 
+test('mpv pilot keeps a Chromium-decodable path for thumbnails', () => {
+  const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\//);
+  assert.ok(loadVideoMatch, 'loadVideo should exist');
+  const loadVideoSource = loadVideoMatch[1];
+
+  assert.match(appSource, /async function resolveMpvThumbnailVideoPath\(filePath, \{[\s\S]+ffmpegProbeCodec\(filePath\)[\s\S]+ffmpegCheckCache\(filePath\)[\s\S]+showTranscodeOverlay\(filePath/);
+  assert.match(loadVideoSource, /let thumbnailVideoPath = actualVideoPath;/);
+  assert.match(loadVideoSource, /if \(useMpvPilot\) \{[\s\S]+thumbnailVideoPath = await resolveMpvThumbnailVideoPath\(filePath, \{[\s\S]+isStaleVideoLoad[\s\S]+\}\);[\s\S]+\}/);
+  assert.match(loadVideoSource, /await generateThumbnails\(thumbnailVideoPath\);/);
+});
+
 test('mpv pilot can be enabled from app playback settings without an env var', () => {
   assert.match(userSettingsSource, /mpvPilotEnabled:\s*false/);
   assert.match(userSettingsSource, /getMpvPilotEnabled\(\) \{[\s\S]+return this\.settings\.mpvPilotEnabled === true;/);
@@ -122,7 +139,7 @@ test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(appSource, /async function syncMpvOverlayState\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateOverlayState\(state\)/);
   assert.match(appSource, /const embedHost = await prepareMpvEmbedHost\(\);/);
   assert.match(appSource, /await prepareMpvOverlayHost\(\);/);
-  assert.match(appSource, /loadResult = await window\.electronAPI\.mpvLoad\(filePath, \{ pause: true, wid: embedHost\?\.wid \}\);/);
+  assert.match(appSource, /loadResult = await window\.electronAPI\.mpvLoad\(filePath, \{[\s\S]+pause: true,[\s\S]+wid: embedHost\?\.wid,[\s\S]+videoTransform: getMpvVideoTransform\(\)[\s\S]+\}\);/);
   assert.match(appSource, /stop: \(\) => stopMpvPilotEngine\(\)/);
   assert.match(appSource, /resizeObserver\.observe\(elements\.videoWrapper\);[\s\S]+syncMpvEmbedBounds\(\);/);
 
@@ -130,6 +147,26 @@ test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(videoPlayerSource, /this\.videoHeight = 0;/);
   assert.match(videoPlayerSource, /this\.videoWidth = Math\.max\(0, Number\(config\.width\) \|\| 0\);/);
   assert.match(videoPlayerSource, /this\.videoHeight = Math\.max\(0, Number\(config\.height\) \|\| 0\);/);
+});
+
+test('mpv pilot routes audio and viewport controls through mpv IPC', () => {
+  assert.match(mpvManagerSource, /async setVolume\(volume\) \{[\s\S]+this\.sendCommand\(\['set_property', 'volume', normalizedVolume \* 100\]\)/);
+  assert.match(mpvManagerSource, /async setMuted\(muted\) \{[\s\S]+this\.sendCommand\(\['set_property', 'mute', nextMuted\]\)/);
+  assert.match(mpvManagerSource, /async setVideoTransform\(transform = \{\}\) \{[\s\S]+this\.sendCommand\(\['set_property', 'video-zoom', zoom\]\)[\s\S]+this\.sendCommand\(\['set_property', 'video-pan-x', panX\]\)[\s\S]+this\.sendCommand\(\['set_property', 'video-pan-y', panY\]\)/);
+  assert.match(ipcSource, /ipcMain\.handle\('mpv:set-volume'[\s\S]+mpvManager\.setVolume\(volume\)/);
+  assert.match(ipcSource, /ipcMain\.handle\('mpv:set-muted'[\s\S]+mpvManager\.setMuted\(muted\)/);
+  assert.match(ipcSource, /ipcMain\.handle\('mpv:set-video-transform'[\s\S]+mpvManager\.setVideoTransform\(transform\)/);
+  assert.match(videoPlayerSource, /setVolume\(volume\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+this\.externalControls\?\.setVolume\?\.\(normalizedVolume\)/);
+  assert.match(videoPlayerSource, /setMuted\(muted\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+this\.externalControls\?\.setMuted\?\.\(nextMuted\)/);
+  assert.match(appSource, /setVolume: \(volume\) => window\.electronAPI\.mpvSetVolume\(volume\)/);
+  assert.match(appSource, /setMuted: \(muted\) => window\.electronAPI\.mpvSetMuted\(muted\)/);
+});
+
+test('mpv pilot applies the same zoom and pan to the mpv image', () => {
+  assert.match(appSource, /function getMpvVideoTransform\(\) \{[\s\S]+const zoom = Math\.log2\(scale\);[\s\S]+panX: state\.videoPanX \/ rect\.width,[\s\S]+panY: state\.videoPanY \/ rect\.height/);
+  assert.match(appSource, /function syncMpvVideoTransform\(\) \{[\s\S]+window\.electronAPI\.mpvSetVideoTransform\(transform\)/);
+  assert.match(appSource, /function applyVideoZoom\(\) \{[\s\S]+syncMpvEmbedBounds\(\);[\s\S]+syncMpvVideoTransform\(\);/);
+  assert.match(appSource, /videoTransform: getMpvVideoTransform\(\)/);
 });
 
 test('mpv pilot resyncs embed bounds after fullscreen layout transitions', () => {

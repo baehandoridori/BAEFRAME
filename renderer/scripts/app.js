@@ -1685,10 +1685,10 @@ async function initApp() {
     const volume = e.target.value / 100;
     videoPlayer.setVolume(volume);
     if (volume === 0) {
-      videoPlayer.videoElement.muted = true;
+      videoPlayer.setMuted(true);
       updateMainVolumeIcon(true);
     } else if (videoPlayer.videoElement.muted) {
-      videoPlayer.videoElement.muted = false;
+      videoPlayer.setMuted(false);
       updateMainVolumeIcon(false);
     }
   });
@@ -4356,6 +4356,7 @@ async function initApp() {
     // 캔버스도 동일하게 적용
     syncCanvasZoom();
     syncMpvEmbedBounds();
+    syncMpvVideoTransform();
   }
 
   /**
@@ -5087,6 +5088,7 @@ async function initApp() {
   }
 
   let mpvEmbedBoundsSyncPending = false;
+  let mpvVideoTransformSyncPending = false;
   let mpvOverlayStateSyncPending = false;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
@@ -5101,6 +5103,21 @@ async function initApp() {
       width: rect.width,
       height: rect.height,
       devicePixelRatio: window.devicePixelRatio || 1
+    };
+  }
+
+  function getMpvVideoTransform() {
+    const rect = elements.videoWrapper?.getBoundingClientRect();
+    if (!rect || rect.width <= 1 || rect.height <= 1) {
+      return { zoom: 0, panX: 0, panY: 0 };
+    }
+
+    const scale = Math.max(0.01, state.videoZoom / 100);
+    const zoom = Math.log2(scale);
+    return {
+      zoom,
+      panX: state.videoPanX / rect.width,
+      panY: state.videoPanY / rect.height
     };
   }
 
@@ -5188,6 +5205,7 @@ async function initApp() {
       markerHtml: serializeMpvOverlayMarkerHtml(),
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
+      videoTransform: getMpvVideoTransform(),
       canvas: {
         left: canvasRect.left - wrapperRect.left,
         top: canvasRect.top - wrapperRect.top,
@@ -5245,6 +5263,24 @@ async function initApp() {
     }
 
     syncMpvOverlayState();
+  }
+
+  function syncMpvVideoTransform() {
+    if (!document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!window.electronAPI?.mpvSetVideoTransform) return;
+    if (mpvVideoTransformSyncPending) return;
+
+    mpvVideoTransformSyncPending = true;
+    requestAnimationFrame(async () => {
+      mpvVideoTransformSyncPending = false;
+      const transform = getMpvVideoTransform();
+
+      try {
+        await window.electronAPI.mpvSetVideoTransform(transform);
+      } catch (error) {
+        log.debug('mpv 화면 변환 동기화 실패', { error: error.message });
+      }
+    });
   }
 
   async function syncMpvEmbedBounds() {
@@ -5343,7 +5379,11 @@ async function initApp() {
     let loadResult = null;
     try {
       mpvLoadStarted = true;
-      loadResult = await window.electronAPI.mpvLoad(filePath, { pause: true, wid: embedHost?.wid });
+      loadResult = await window.electronAPI.mpvLoad(filePath, {
+        pause: true,
+        wid: embedHost?.wid,
+        videoTransform: getMpvVideoTransform()
+      });
     } catch (error) {
       await cleanupPendingMpvPilot();
       throw error;
@@ -5398,6 +5438,8 @@ async function initApp() {
         play: () => window.electronAPI.mpvPlay(),
         pause: () => window.electronAPI.mpvPause(),
         seek: (time) => window.electronAPI.mpvSeek(time),
+        setVolume: (volume) => window.electronAPI.mpvSetVolume(volume),
+        setMuted: (muted) => window.electronAPI.mpvSetMuted(muted),
         getStatus: () => window.electronAPI.mpvGetStatus(),
         stop: () => stopMpvPilotEngine()
       }
@@ -5407,6 +5449,7 @@ async function initApp() {
     document.body.classList.add('mpv-pilot-mode');
     syncCanvasOverlay();
     syncMpvEmbedBounds();
+    syncMpvVideoTransform();
     scheduleMpvOverlayStateSync();
 
     if (Number.isFinite(Number(initialFrame)) && Number(initialFrame) > 0) {
@@ -5420,6 +5463,43 @@ async function initApp() {
       'info'
     );
     return true;
+  }
+
+  async function resolveMpvThumbnailVideoPath(filePath, {
+    isStaleVideoLoad = () => false
+  } = {}) {
+    if (!window.electronAPI?.ffmpegIsAvailable) return filePath;
+
+    try {
+      const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();
+      if (isStaleVideoLoad()) return filePath;
+      if (!ffmpegAvailable) return filePath;
+
+      const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
+      if (isStaleVideoLoad()) return filePath;
+      if (!codecInfo?.success || codecInfo.isSupported) return filePath;
+
+      const cacheResult = await window.electronAPI.ffmpegCheckCache(filePath);
+      if (isStaleVideoLoad()) return filePath;
+      if (cacheResult?.valid && cacheResult.convertedPath) {
+        log.info('mpv 파일럿 썸네일용 캐시 파일 사용', { path: cacheResult.convertedPath });
+        return cacheResult.convertedPath;
+      }
+
+      const transcoded = await showTranscodeOverlay(filePath, codecInfo.codecName || '미지원 코덱');
+      if (isStaleVideoLoad()) return filePath;
+      if (transcoded?.success && transcoded.outputPath) {
+        log.info('mpv 파일럿 썸네일용 변환 파일 사용', { path: transcoded.outputPath });
+        return transcoded.outputPath;
+      }
+
+      log.warn('mpv 파일럿 썸네일용 변환 실패', { error: transcoded?.error || 'unknown' });
+      showToast('원본 재생은 mpv로 유지하지만 썸네일은 비어 있을 수 있습니다.', 'warning');
+    } catch (error) {
+      log.debug('mpv 파일럿 썸네일 경로 준비 실패', { error: error.message });
+    }
+
+    return filePath;
   }
 
   async function loadVideo(filePath, options = {}) {
@@ -5453,6 +5533,7 @@ async function initApp() {
       // ====== 코덱 확인 및 트랜스코딩 (비디오만) ======
       const hasPreparedVideoPath = typeof preparedVideoPath === 'string' && preparedVideoPath.length > 0;
       let actualVideoPath = hasPreparedVideoPath ? preparedVideoPath : filePath;
+      let thumbnailVideoPath = actualVideoPath;
       const useMpvPilot = await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath });
       if (isStaleVideoLoad()) return false;
       if (hasPreparedVideoPath) {
@@ -5777,7 +5858,13 @@ async function initApp() {
 
       // 썸네일 생성 시작 (비디오만, 트랜스코딩된 경우 변환된 파일 사용)
       if (!fileIsAudio) {
-        await generateThumbnails(actualVideoPath);
+        if (useMpvPilot) {
+          thumbnailVideoPath = await resolveMpvThumbnailVideoPath(filePath, {
+            isStaleVideoLoad
+          });
+          if (isStaleVideoLoad()) return false;
+        }
+        await generateThumbnails(thumbnailVideoPath);
         if (isStaleVideoLoad()) return false;
       } else {
         // 오디오 파일 로드 시 이전 비디오의 썸네일 상태 정리

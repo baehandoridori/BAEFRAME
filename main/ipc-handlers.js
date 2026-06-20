@@ -1711,6 +1711,30 @@ function setupIpcHandlers() {
     }
   });
 
+  ipcMain.handle('mpv:set-volume', async (event, volume) => {
+    try {
+      return await mpvManager.setVolume(volume);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:set-muted', async (event, muted) => {
+    try {
+      return await mpvManager.setMuted(muted);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:set-video-transform', async (event, transform) => {
+    try {
+      return await mpvManager.setVideoTransform(transform);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('mpv:get-status', async () => {
     try {
       return await mpvManager.getStatus();
