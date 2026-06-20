@@ -309,6 +309,79 @@ test('loading a new file into the same embedded window replaces media without re
   );
 });
 
+test('serializes overlapping loadfile requests so stale loads cannot replace newer media late', async () => {
+  const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
+  const firstVideo = path.normalize('C:\\video\\first.mov');
+  const secondVideo = path.normalize('C:\\video\\second.mp4');
+  const commands = [];
+  let releaseFirstReady = null;
+  const manager = createManager({
+    env: { BAEFRAME_MPV_PILOT: '1' },
+    existing: [bundledPath, firstVideo, secondVideo]
+  });
+
+  manager.spawn = () => ({
+    killed: false,
+    on() {},
+    kill() {
+      this.killed = true;
+    }
+  });
+  manager._waitForIpcReady = async () => true;
+  manager.sendCommand = async (command) => {
+    commands.push(command);
+    return { error: 'success' };
+  };
+  manager.waitForPlaybackReady = async (expectedPath) => {
+    if (expectedPath === firstVideo) {
+      await new Promise((resolve) => {
+        releaseFirstReady = resolve;
+      });
+    }
+    return {
+      success: true,
+      time: 0,
+      duration: 1,
+      paused: true,
+      path: expectedPath,
+      width: 1920,
+      height: 1080,
+      fps: 24
+    };
+  };
+  manager.getStatus = async () => ({
+    success: true,
+    time: 0,
+    duration: 1,
+    paused: true,
+    path: secondVideo,
+    width: 1920,
+    height: 1080,
+    fps: 24
+  });
+
+  const firstLoad = manager.load(firstVideo, { pause: true, wid: '100' });
+  await new Promise((resolve) => setImmediate(resolve));
+  const secondLoad = manager.load(secondVideo, { pause: true, wid: '100' });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    commands.filter((command) => command[0] === 'loadfile'),
+    [['loadfile', firstVideo, 'replace']]
+  );
+
+  releaseFirstReady();
+  await Promise.all([firstLoad, secondLoad]);
+
+  assert.deepEqual(
+    commands.filter((command) => command[0] === 'loadfile'),
+    [
+      ['loadfile', firstVideo, 'replace'],
+      ['loadfile', secondVideo, 'replace']
+    ]
+  );
+});
+
 test('start hides the mpv console window while keeping IPC detached from stdio', async () => {
   const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
   let spawnOptions = null;

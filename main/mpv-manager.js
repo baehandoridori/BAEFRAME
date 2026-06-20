@@ -110,6 +110,7 @@ class MPVManager {
     this.process = null;
     this.requestId = 0;
     this.embeddedWid = null;
+    this.loadQueue = Promise.resolve();
   }
 
   isEnabled() {
@@ -142,6 +143,13 @@ class MPVManager {
   }
 
   async load(filePath, options = {}) {
+    const runLoad = () => this._load(filePath, options);
+    const queuedLoad = this.loadQueue.then(runLoad, runLoad);
+    this.loadQueue = queuedLoad.catch(() => {});
+    return queuedLoad;
+  }
+
+  async _load(filePath, options = {}) {
     if (!filePath || typeof filePath !== 'string') {
       throw new Error('mpv load requires a file path');
     }

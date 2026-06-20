@@ -146,7 +146,9 @@ test('mpv pilot can be enabled from app playback settings without an env var', (
 });
 
 test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
-  assert.match(mpvManagerSource, /async load\(filePath, options = \{\}\) \{[\s\S]+await this\.start\(\{ wid: options\.wid \}\);/);
+  assert.match(mpvManagerSource, /this\.loadQueue = Promise\.resolve\(\);/);
+  assert.match(mpvManagerSource, /async load\(filePath, options = \{\}\) \{[\s\S]+const queuedLoad = this\.loadQueue\.then\(runLoad, runLoad\);[\s\S]+this\.loadQueue = queuedLoad\.catch\(\(\) => \{\}\);[\s\S]+return queuedLoad;/);
+  assert.match(mpvManagerSource, /async _load\(filePath, options = \{\}\) \{[\s\S]+await this\.start\(\{ wid: options\.wid \}\);/);
   assert.match(mpvManagerSource, /`--wid=\$\{normalizedWid\}`/);
 
   assert.match(appSource, /function getMpvEmbedBounds\(\) \{[\s\S]+elements\.videoWrapper\.getBoundingClientRect\(\)/);
