@@ -151,7 +151,8 @@ test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(mpvManagerSource, /async _load\(filePath, options = \{\}\) \{[\s\S]+await this\.start\(\{ wid: options\.wid \}\);/);
   assert.match(mpvManagerSource, /`--wid=\$\{normalizedWid\}`/);
 
-  assert.match(appSource, /function getMpvEmbedBounds\(\) \{[\s\S]+elements\.videoWrapper\.getBoundingClientRect\(\)/);
+  assert.match(appSource, /function getMpvEmbedBounds\(\) \{[\s\S]+elements\.videoWrapper\?\.getBoundingClientRect\(\)[\s\S]+const controlsInset = getMpvFullscreenControlsInset\(rect\);[\s\S]+height: Math\.max\(1, rect\.height - controlsInset\)/);
+  assert.match(appSource, /function getMpvFullscreenControlsInset\(wrapperRect\) \{[\s\S]+document\.body\.classList\.contains\('app-fullscreen'\)[\s\S]+document\.body\.classList\.contains\('show-controls'\)[\s\S]+elements\.controlsBar\?\.getBoundingClientRect\(\)[\s\S]+elements\.fullscreenSeekbar\?\.getBoundingClientRect\(\)/);
   assert.match(appSource, /async function prepareMpvEmbedHost\(\) \{[\s\S]+window\.electronAPI\.mpvPrepareEmbed\(bounds\)/);
   assert.match(appSource, /async function syncMpvEmbedBounds\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateEmbedBounds\(bounds\)/);
   assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+window\.electronAPI\.mpvPrepareOverlay\(bounds\)/);
@@ -195,7 +196,9 @@ test('mpv pilot resyncs embed bounds after fullscreen layout transitions', () =>
   const fullscreenSource = fullscreenMatch[1];
 
   assert.match(appSource, /function scheduleMpvEmbedBoundsSyncAfterLayout\(\) \{[\s\S]+syncMpvEmbedBounds\(\);[\s\S]+requestAnimationFrame\(\(\) => \{[\s\S]+syncMpvEmbedBounds\(\);[\s\S]+requestAnimationFrame\(\(\) => \{[\s\S]+syncMpvEmbedBounds\(\);[\s\S]+setTimeout\(\(\) => \{[\s\S]+syncMpvEmbedBounds\(\);[\s\S]+250/);
+  assert.match(appSource, /function setFullscreenControlsVisible\(visible\) \{[\s\S]+document\.body\.classList\.toggle\('show-controls', visible\);[\s\S]+scheduleMpvEmbedBoundsSyncAfterLayout\(\);/);
   assert.match(fullscreenSource, /document\.body\.classList\.toggle\('app-fullscreen', isFullscreen\);[\s\S]+scheduleMpvEmbedBoundsSyncAfterLayout\(\);/);
+  assert.match(fullscreenSource, /if \(isNearBottom\) \{[\s\S]+setFullscreenControlsVisible\(true\);[\s\S]+\} else \{[\s\S]+setFullscreenControlsVisible\(false\);/);
 });
 
 test('mpv pilot cleans up pending embed host when load is stale or fails before adoption', () => {
@@ -222,8 +225,8 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
 
 test('mpv pilot mirrors DOM overlays into a click-through native overlay window', () => {
   assert.match(appSource, /function serializeMpvOverlayMarkerHtml\(\) \{[\s\S]+cloneNode\(true\)[\s\S]+textarea\.textContent = sourceTextarea\.value/);
-  assert.match(appSource, /const wrapperRect = elements\.videoWrapper\?\.getBoundingClientRect\(\);[\s\S]+document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(\(tooltip\) => \{[\s\S]+tooltipClone\.style\.position = 'absolute';[\s\S]+tooltipClone\.style\.transform = 'none';[\s\S]+clone\.appendChild\(tooltipClone\);[\s\S]+\}\);/);
-  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: serializeMpvOverlayMarkerHtml\(\)/);
+  assert.match(appSource, /function serializeMpvOverlayTooltipHtml\(\) \{[\s\S]+const tooltipLayer = document\.createElement\('div'\);[\s\S]+document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(\(tooltip\) => \{[\s\S]+tooltipClone\.style\.position = 'absolute';[\s\S]+tooltipClone\.style\.transform = 'none';[\s\S]+tooltipLayer\.appendChild\(tooltipClone\);[\s\S]+\}\);/);
+  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: serializeMpvOverlayMarkerHtml\(\)[\s\S]+tooltipHtml: serializeMpvOverlayTooltipHtml\(\)/);
   assert.match(appSource, /function scheduleMpvOverlayStateSync\(options = \{\}\) \{[\s\S]+syncMpvOverlayState\(\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('drawmove', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('frameRendered', \(e\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);

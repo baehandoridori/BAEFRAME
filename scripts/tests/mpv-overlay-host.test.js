@@ -15,6 +15,7 @@ test('normalizes overlay state to bounded serializable fields', () => {
     drawingDataUrl: 'data:image/png;base64,abc',
     onionDataUrl: 'file://not-allowed',
     markerHtml: '<div class="comment-marker"></div>',
+    tooltipHtml: '<div class="comment-marker-tooltip visible"></div>',
     canvas: { left: 10.4, top: 20.6, width: 640.2, height: 360.7 },
     markerTransform: 'scale(2) translate(1px, 2px)',
     markerTransformOrigin: 'center center'
@@ -24,6 +25,7 @@ test('normalizes overlay state to bounded serializable fields', () => {
   assert.equal(state.drawingDataUrl, 'data:image/png;base64,abc');
   assert.equal(state.onionDataUrl, '');
   assert.equal(state.markerHtml, '<div class="comment-marker"></div>');
+  assert.equal(state.tooltipHtml, '<div class="comment-marker-tooltip visible"></div>');
   assert.equal(state.markerTransform, 'scale(2) translate(1px, 2px)');
   assert.equal(state.markerTransformOrigin, 'center center');
 });
@@ -106,12 +108,15 @@ test('creates a click-through overlay window above the viewer area', async () =>
   const overlayHtml = decodeURIComponent(events.find(([name]) => name === 'loadURL')?.[1] || '');
   assert.equal(overlayHtml.includes('__applyMpvOverlayState'), true);
   assert.equal(overlayHtml.includes('applyOverlayTransform'), true);
+  assert.equal(overlayHtml.includes('tooltipMirror'), true);
   assert.equal(overlayHtml.includes("applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas)"), true);
   assert.doesNotMatch(
     overlayHtml,
     /function applyImage\([\s\S]*?applyOverlayTransform\(element, state\)[\s\S]*?\n    \}/
   );
   assert.equal(overlayHtml.includes("element.style.transform = 'none';"), true);
+  assert.equal(overlayHtml.includes('tooltipMirror.innerHTML = nextState.tooltipHtml'), true);
+  assert.equal(overlayHtml.includes("tooltipMirror.style.transform = 'none';"), true);
   assert.ok(events.some(([name]) => name === 'showInactive'));
   assert.ok(events.some(([name]) => name === 'moveTop'));
 });

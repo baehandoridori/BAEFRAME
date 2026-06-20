@@ -104,6 +104,8 @@ async function initApp() {
     btnPlay: document.getElementById('btnPlay'),
     btnNextFrame: document.getElementById('btnNextFrame'),
     btnLast: document.getElementById('btnLast'),
+    controlsBar: document.querySelector('.controls-bar'),
+    fullscreenSeekbar: document.getElementById('fullscreenSeekbar'),
     timecodeCurrent: document.getElementById('timecodeCurrent'),
     timecodeTotal: document.getElementById('timecodeTotal'),
     frameIndicator: document.getElementById('frameIndicator'),
@@ -5103,13 +5105,29 @@ async function initApp() {
     const rect = elements.videoWrapper?.getBoundingClientRect();
     if (!rect || rect.width <= 1 || rect.height <= 1) return null;
 
+    const controlsInset = getMpvFullscreenControlsInset(rect);
     return {
       x: rect.left,
       y: rect.top,
       width: rect.width,
-      height: rect.height,
+      height: Math.max(1, rect.height - controlsInset),
       devicePixelRatio: window.devicePixelRatio || 1
     };
+  }
+
+  function getMpvFullscreenControlsInset(wrapperRect) {
+    if (!document.body.classList.contains('app-fullscreen')) return 0;
+    if (!document.body.classList.contains('show-controls')) return 0;
+
+    const controlsRect = elements.controlsBar?.getBoundingClientRect();
+    if (!controlsRect || controlsRect.height <= 0) return 0;
+
+    const seekbarRect = elements.fullscreenSeekbar?.getBoundingClientRect();
+    const cutoutTop = seekbarRect && seekbarRect.height > 0
+      ? Math.min(controlsRect.top, seekbarRect.top)
+      : controlsRect.top;
+    const visibleTop = Math.max(wrapperRect.top, Math.min(wrapperRect.bottom, cutoutTop));
+    return Math.max(0, Math.min(wrapperRect.height - 1, wrapperRect.bottom - visibleTop));
   }
 
   function getMpvVideoTransform() {
@@ -5196,24 +5214,33 @@ async function initApp() {
       textarea.textContent = sourceTextarea.value;
       textarea.setAttribute('value', sourceTextarea.value);
     });
-    const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
-    if (wrapperRect) {
-      document.querySelectorAll('.comment-marker-tooltip').forEach((tooltip) => {
-        const tooltipRect = tooltip.getBoundingClientRect();
-        const tooltipClone = tooltip.cloneNode(true);
-        tooltipClone.style.position = 'absolute';
-        tooltipClone.style.left = `${tooltipRect.left - wrapperRect.left}px`;
-        tooltipClone.style.top = `${tooltipRect.top - wrapperRect.top}px`;
-        tooltipClone.style.transform = 'none';
-        tooltipClone.style.pointerEvents = 'none';
-        clone.appendChild(tooltipClone);
-      });
-    }
     clone.querySelectorAll('[id]').forEach((el) => {
       el.removeAttribute('id');
     });
 
     return clone.innerHTML;
+  }
+
+  function serializeMpvOverlayTooltipHtml() {
+    const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
+    if (!wrapperRect) return '';
+
+    const tooltipLayer = document.createElement('div');
+    document.querySelectorAll('.comment-marker-tooltip').forEach((tooltip) => {
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const tooltipClone = tooltip.cloneNode(true);
+      tooltipClone.style.position = 'absolute';
+      tooltipClone.style.left = `${tooltipRect.left - wrapperRect.left}px`;
+      tooltipClone.style.top = `${tooltipRect.top - wrapperRect.top}px`;
+      tooltipClone.style.transform = 'none';
+      tooltipClone.style.pointerEvents = 'none';
+      tooltipLayer.appendChild(tooltipClone);
+    });
+    tooltipLayer.querySelectorAll('[id]').forEach((el) => {
+      el.removeAttribute('id');
+    });
+
+    return tooltipLayer.innerHTML;
   }
 
   function getMpvOverlayState() {
@@ -5225,6 +5252,7 @@ async function initApp() {
       drawingDataUrl: getCanvasOverlayDataUrl(elements.drawingCanvas),
       onionDataUrl: getCanvasOverlayDataUrl(elements.onionSkinCanvas),
       markerHtml: serializeMpvOverlayMarkerHtml(),
+      tooltipHtml: serializeMpvOverlayTooltipHtml(),
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
@@ -6246,6 +6274,14 @@ async function initApp() {
   let fullscreenTimecodeOverlay = null;
   let fullscreenScrubOverlay = null;
 
+  function setFullscreenControlsVisible(visible) {
+    const wasVisible = document.body.classList.contains('show-controls');
+    document.body.classList.toggle('show-controls', visible);
+    if (wasVisible !== visible) {
+      scheduleMpvEmbedBoundsSyncAfterLayout();
+    }
+  }
+
   async function toggleFullscreen() {
     // Electron 시스템 전체화면 API 호출
     await window.electronAPI.toggleFullscreen();
@@ -6284,9 +6320,9 @@ async function initApp() {
         const isNearBottom = window.innerHeight - e.clientY < bottomThreshold;
 
         if (isNearBottom) {
-          document.body.classList.add('show-controls');
+          setFullscreenControlsVisible(true);
         } else {
-          document.body.classList.remove('show-controls');
+          setFullscreenControlsVisible(false);
         }
       };
       document.addEventListener('mousemove', fullscreenMouseHandler);
@@ -6303,7 +6339,7 @@ async function initApp() {
         fullscreenTimecodeOverlay.remove();
         fullscreenTimecodeOverlay = null;
       }
-      document.body.classList.remove('show-controls');
+      setFullscreenControlsVisible(false);
     }
 
     log.debug('전체화면 모드 변경', { isFullscreen });

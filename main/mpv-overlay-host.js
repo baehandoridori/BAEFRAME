@@ -74,13 +74,18 @@ const OVERLAY_HTML = `
     #drawingCanvasMirror {
       z-index: 3;
     }
-    #markerMirror {
+    #markerMirror,
+    #tooltipMirror {
       position: absolute;
       inset: 0;
       z-index: 15;
       pointer-events: none;
     }
-    #markerMirror * {
+    #tooltipMirror {
+      z-index: 16;
+    }
+    #markerMirror *,
+    #tooltipMirror * {
       pointer-events: none !important;
     }
     .comment-marker {
@@ -239,6 +244,7 @@ const OVERLAY_HTML = `
     <img id="onionCanvasMirror" class="mirror-canvas" alt="">
     <img id="drawingCanvasMirror" class="mirror-canvas" alt="">
     <div id="markerMirror"></div>
+    <div id="tooltipMirror"></div>
   </div>
   <script>
     function applyOverlayTransform(element, state) {
@@ -267,10 +273,14 @@ const OVERLAY_HTML = `
     window.__applyMpvOverlayState = function applyMpvOverlayState(state) {
       const nextState = state || {};
       const markerMirror = document.getElementById('markerMirror');
+      const tooltipMirror = document.getElementById('tooltipMirror');
       applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
       applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
       markerMirror.innerHTML = nextState.markerHtml || '';
+      tooltipMirror.innerHTML = nextState.tooltipHtml || '';
       applyOverlayTransform(markerMirror, nextState);
+      tooltipMirror.style.transform = 'none';
+      tooltipMirror.style.transformOrigin = 'center center';
     };
   </script>
 </body>
@@ -302,6 +312,7 @@ function normalizeOverlayState(state = {}) {
     drawingDataUrl: normalizeImageDataUrl(state.drawingDataUrl),
     onionDataUrl: normalizeImageDataUrl(state.onionDataUrl),
     markerHtml: typeof state.markerHtml === 'string' ? state.markerHtml : '',
+    tooltipHtml: typeof state.tooltipHtml === 'string' ? state.tooltipHtml : '',
     markerTransform: typeof state.markerTransform === 'string' ? state.markerTransform : '',
     markerTransformOrigin: typeof state.markerTransformOrigin === 'string'
       ? state.markerTransformOrigin
