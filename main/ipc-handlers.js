@@ -12,6 +12,9 @@ const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized,
 const { RecentFilesStore } = require('./recent-files-store');
 const recentThumbCapture = require('./recent-thumb-capture');
 const { validateCutlistFilePath } = require('./cutlist-paths');
+const { mpvManager } = require('./mpv-manager');
+const { mpvEmbedHost } = require('./mpv-embed-host');
+const { mpvOverlayHost } = require('./mpv-overlay-host');
 const Store = require('electron-store');
 
 const log = createLogger('IPC');
@@ -1593,6 +1596,162 @@ function setupIpcHandlers() {
   // 지원 코덱 목록 반환
   ipcMain.handle('ffmpeg:get-supported-codecs', () => {
     return { success: true, codecs: SUPPORTED_CODECS };
+  });
+
+  // ====== MPV 파일럿 관련 ======
+
+  ipcMain.handle('mpv:is-enabled', () => {
+    return mpvManager.isEnabled();
+  });
+
+  ipcMain.handle('mpv:is-available', async () => {
+    try {
+      await mpvManager.initialize();
+      return mpvManager.isAvailable();
+    } catch (error) {
+      log.warn('mpv 사용 가능 여부 확인 실패', { error: error.message });
+      return false;
+    }
+  });
+
+  ipcMain.handle('mpv:load', async (event, filePath, options = {}) => {
+    const trace = log.trace('mpv:load');
+    try {
+      const result = await mpvManager.load(filePath, options);
+      trace.end({ success: result.success, filePath });
+      return result;
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:prepare-embed', async (event, bounds) => {
+    try {
+      return await mpvEmbedHost.ensure(bounds);
+    } catch (error) {
+      log.warn('mpv 임베드 호스트 준비 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:update-embed-bounds', async (event, bounds) => {
+    try {
+      return mpvEmbedHost.updateBounds(bounds);
+    } catch (error) {
+      log.debug('mpv 임베드 호스트 위치 갱신 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:destroy-embed', async () => {
+    try {
+      return mpvEmbedHost.destroy();
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:prepare-overlay', async (event, bounds) => {
+    try {
+      return await mpvOverlayHost.ensure(bounds);
+    } catch (error) {
+      log.warn('mpv 오버레이 호스트 준비 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:update-overlay-bounds', async (event, bounds) => {
+    try {
+      return mpvOverlayHost.updateBounds(bounds);
+    } catch (error) {
+      log.debug('mpv 오버레이 호스트 위치 갱신 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:update-overlay-state', async (event, state) => {
+    try {
+      return await mpvOverlayHost.updateState(state);
+    } catch (error) {
+      log.debug('mpv 오버레이 상태 갱신 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:destroy-overlay', async () => {
+    try {
+      return mpvOverlayHost.destroy();
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:play', async () => {
+    try {
+      return await mpvManager.play();
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:pause', async () => {
+    try {
+      return await mpvManager.pause();
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:seek', async (event, time) => {
+    try {
+      return await mpvManager.seek(time);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:set-volume', async (event, volume) => {
+    try {
+      return await mpvManager.setVolume(volume);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:set-muted', async (event, muted) => {
+    try {
+      return await mpvManager.setMuted(muted);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:set-video-transform', async (event, transform) => {
+    try {
+      return await mpvManager.setVideoTransform(transform);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:get-status', async () => {
+    try {
+      return await mpvManager.getStatus();
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:stop', async () => {
+    try {
+      const result = await mpvManager.stop();
+      mpvOverlayHost.destroy();
+      mpvEmbedHost.destroy();
+      return result;
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   });
 
   // ====== 로그 관련 ======

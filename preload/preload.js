@@ -111,6 +111,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('ffmpeg:pre-transcode-progress', listener);
   },
 
+  // ====== MPV 파일럿 관련 ======
+  mpvIsEnabled: () => ipcRenderer.invoke('mpv:is-enabled'),
+  mpvIsAvailable: () => ipcRenderer.invoke('mpv:is-available'),
+  mpvLoad: (filePath, options) => ipcRenderer.invoke('mpv:load', filePath, options),
+  mpvPlay: () => ipcRenderer.invoke('mpv:play'),
+  mpvPause: () => ipcRenderer.invoke('mpv:pause'),
+  mpvSeek: (time) => ipcRenderer.invoke('mpv:seek', time),
+  mpvSetVolume: (volume) => ipcRenderer.invoke('mpv:set-volume', volume),
+  mpvSetMuted: (muted) => ipcRenderer.invoke('mpv:set-muted', muted),
+  mpvSetVideoTransform: (transform) => ipcRenderer.invoke('mpv:set-video-transform', transform),
+  mpvGetStatus: () => ipcRenderer.invoke('mpv:get-status'),
+  mpvStop: () => ipcRenderer.invoke('mpv:stop'),
+  mpvPrepareEmbed: (bounds) => ipcRenderer.invoke('mpv:prepare-embed', bounds),
+  mpvUpdateEmbedBounds: (bounds) => ipcRenderer.invoke('mpv:update-embed-bounds', bounds),
+  mpvDestroyEmbed: () => ipcRenderer.invoke('mpv:destroy-embed'),
+  mpvPrepareOverlay: (bounds) => ipcRenderer.invoke('mpv:prepare-overlay', bounds),
+  mpvUpdateOverlayBounds: (bounds) => ipcRenderer.invoke('mpv:update-overlay-bounds', bounds),
+  mpvUpdateOverlayState: (state) => ipcRenderer.invoke('mpv:update-overlay-state', state),
+  mpvDestroyOverlay: () => ipcRenderer.invoke('mpv:destroy-overlay'),
+
   // ====== 파일 관련 (유틸리티) ======
   readBinaryFile: (filePath) => ipcRenderer.invoke('file:read-binary', filePath),
   getFileStats: (filePath) => ipcRenderer.invoke('file:get-stats', filePath),

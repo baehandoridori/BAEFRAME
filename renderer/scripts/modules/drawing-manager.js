@@ -143,6 +143,8 @@ export class DrawingManager extends EventTarget {
    * 그리기 진행 처리
    */
   _onDrawMove(detail) {
+    this._emit('drawmove', { frame: this.currentFrame, detail });
+
     if (!this._isStrokeEraseDetail(detail)) return;
 
     this._strokeEraseQueue = this._strokeEraseQueue
