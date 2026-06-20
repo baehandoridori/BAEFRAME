@@ -5375,6 +5375,11 @@ async function initApp() {
     await prepareMpvOverlayHost();
     let mpvLoadStarted = false;
     const cleanupPendingMpvPilot = async () => {
+      if (isStaleVideoLoad()) {
+        log.debug('mpv 파일럿 준비 정리 건너뜀: 더 최신 영상 로드가 활성화됨', { filePath });
+        return;
+      }
+
       try {
         if (mpvLoadStarted) {
           await stopMpvPilotEngine();
