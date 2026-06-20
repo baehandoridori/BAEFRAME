@@ -493,9 +493,15 @@ if (!gotTheLock) {
   // 모든 창이 닫히면 앱 종료 (macOS 제외)
   app.on('window-all-closed', () => {
     log.info('모든 창 닫힘');
-    if (process.platform !== 'darwin') {
-      app.quit();
+    if (process.platform === 'darwin') {
+      if (!isQuitting && !forceQuit) {
+        cleanupMpvPilotBeforeQuit().catch((error) => {
+          log.warn('macOS 창 닫힘 후 mpv 정리 예외', { error: error.message });
+        });
+      }
+      return;
     }
+    app.quit();
   });
 
   // 앱 종료 전 - 저장 확인
