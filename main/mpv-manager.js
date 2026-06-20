@@ -176,7 +176,20 @@ class MPVManager {
   }
 
   async getStatus() {
-    await this.start();
+    if (!this.process || this.process.killed) {
+      this.process = null;
+      return {
+        success: true,
+        stopped: true,
+        time: 0,
+        duration: 0,
+        paused: true,
+        path: '',
+        width: 0,
+        height: 0,
+        fps: 24
+      };
+    }
 
     const [timePos, duration, paused, pathValue, width, height, fps] = await Promise.all([
       this.getOptionalProperty('time-pos', 0),

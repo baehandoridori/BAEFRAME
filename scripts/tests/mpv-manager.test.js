@@ -304,7 +304,10 @@ test('status uses fallbacks when optional mpv properties are unavailable', async
 
   manager.initialized = true;
   manager.mpvPath = 'C:\\repo\\mpv\\win32\\mpv.exe';
-  manager.start = async () => true;
+  manager.process = { killed: false };
+  manager.start = async () => {
+    throw new Error('status polling should not start mpv');
+  };
   manager.getProperty = async (name) => {
     const values = {
       'time-pos': 0.25,
@@ -327,6 +330,27 @@ test('status uses fallbacks when optional mpv properties are unavailable', async
   assert.equal(status.width, 0);
   assert.equal(status.height, 0);
   assert.equal(status.fps, 24);
+});
+
+test('status polling reports stopped instead of restarting mpv after exit', async () => {
+  const manager = createManager({
+    env: { BAEFRAME_MPV_PILOT: '1' },
+    existing: [path.normalize('C:\\repo\\mpv\\win32\\mpv.exe')]
+  });
+
+  manager.initialized = true;
+  manager.mpvPath = 'C:\\repo\\mpv\\win32\\mpv.exe';
+  manager.process = null;
+  manager.start = async () => {
+    throw new Error('status polling should not start mpv');
+  };
+
+  const status = await manager.getStatus();
+
+  assert.equal(status.success, true);
+  assert.equal(status.stopped, true);
+  assert.equal(status.paused, true);
+  assert.equal(status.path, '');
 });
 
 test('waits for playback properties before treating mpv load as ready', async () => {
