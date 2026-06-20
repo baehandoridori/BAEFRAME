@@ -212,9 +212,15 @@ export class VideoPlayer extends EventTarget {
   }
 
   useHtml5Engine() {
+    const wasExternalPlaying = this.engine !== 'html5' && this.isPlaying;
     this._stopExternalStatusPolling();
     this.engine = 'html5';
     this.externalControls = null;
+
+    if (wasExternalPlaying) {
+      this.isPlaying = false;
+      this._emit('pause');
+    }
   }
 
   useExternalEngine(config = {}) {

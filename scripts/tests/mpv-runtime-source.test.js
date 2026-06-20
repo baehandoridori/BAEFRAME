@@ -184,3 +184,8 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
   assert.ok(seekToFrameMatch, 'seekToFrame should exist');
   assert.match(seekToFrameMatch[1], /if \(this\.engine !== 'html5'\) \{[\s\S]+this\.seek\(time\);[\s\S]+return;/);
 });
+
+test('mpv engine replacement resets playing state before html5 loads', () => {
+  assert.match(videoPlayerSource, /useHtml5Engine\(\) \{[\s\S]+const wasExternalPlaying = this\.engine !== 'html5' && this\.isPlaying;[\s\S]+if \(wasExternalPlaying\) \{[\s\S]+this\.isPlaying = false;[\s\S]+this\._emit\('pause'\);[\s\S]+\}/);
+  assert.match(videoPlayerSource, /async load\(filePath\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+this\.externalControls\?\.stop\?\.\(\)[\s\S]+this\.useHtml5Engine\(\);/);
+});

@@ -251,11 +251,11 @@ class MPVManager {
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
 
-    if (lastStatus) {
+    if (lastStatus && !requestedPath) {
       return lastStatus;
     }
 
-    throw new Error('mpv playback did not become ready');
+    throw new Error('mpv playback did not become ready for requested file');
   }
 
   async start(options = {}) {
