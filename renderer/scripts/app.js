@@ -5512,7 +5512,8 @@ async function initApp() {
       revealAfterInitialSeek = false,
       holdPreviousFrameUntilReady = false,
       deferCollaborationStart = false,
-      preparedVideoPath = null
+      preparedVideoPath = null,
+      allowMpvPilot = true
     } = options;
     const loadToken = ++latestVideoLoadToken;
     const isStaleVideoLoad = () => loadToken !== latestVideoLoadToken;
@@ -5534,7 +5535,7 @@ async function initApp() {
       const hasPreparedVideoPath = typeof preparedVideoPath === 'string' && preparedVideoPath.length > 0;
       let actualVideoPath = hasPreparedVideoPath ? preparedVideoPath : filePath;
       let thumbnailVideoPath = actualVideoPath;
-      const useMpvPilot = await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath });
+      const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath });
       if (isStaleVideoLoad()) return false;
       if (hasPreparedVideoPath) {
         log.debug('준비된 연속 재생 미디어 경로 사용', { filePath, preparedVideoPath });
@@ -5761,11 +5762,23 @@ async function initApp() {
         document.getElementById('frameIndicator')?.classList.remove('audio-hidden');
 
         if (useMpvPilot) {
-          await loadVideoWithMpvPilot(filePath, {
-            initialFrame,
-            isStaleVideoLoad
-          });
-          if (isStaleVideoLoad()) return false;
+          try {
+            const mpvLoaded = await loadVideoWithMpvPilot(filePath, {
+              initialFrame,
+              isStaleVideoLoad
+            });
+            if (isStaleVideoLoad()) return false;
+            if (!mpvLoaded) return false;
+          } catch (mpvError) {
+            if (isStaleVideoLoad()) return false;
+            log.warn('mpv 파일럿 로드 실패, 기존 재생 방식으로 재시도', { error: mpvError.message });
+            showToast('mpv 재생에 실패해 기존 방식으로 다시 시도합니다.', 'warning');
+            const fallbackOptions = {
+              ...options,
+              allowMpvPilot: false
+            };
+            return loadVideo(filePath, fallbackOptions);
+          }
         } else {
           elements.videoWrapper?.classList.remove('mpv-pilot-mode');
           document.body.classList.remove('mpv-pilot-mode');

@@ -94,7 +94,7 @@ test('loadVideo checks mpv pilot before FFmpeg transcode and falls back by defau
   const loadVideoSource = loadVideoMatch[1];
 
   assert.match(appSource, /async function shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath \} = \{\}\) \{/);
-  assert.match(loadVideoSource, /const useMpvPilot = await shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath \}\);/);
+  assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath \}\);/);
   assert.match(loadVideoSource, /!useMpvPilot && !hasPreparedVideoPath && !fileIsAudio && await window\.electronAPI\.ffmpegIsAvailable\(\)/);
   assert.match(loadVideoSource, /await loadVideoWithMpvPilot\(filePath, \{[\s\S]+initialFrame[\s\S]+\}\);/);
   assert.match(loadVideoSource, /await videoPlayer\.load\(actualVideoPath\);/);
@@ -109,6 +109,16 @@ test('mpv pilot keeps a Chromium-decodable path for thumbnails', () => {
   assert.match(loadVideoSource, /let thumbnailVideoPath = actualVideoPath;/);
   assert.match(loadVideoSource, /if \(useMpvPilot\) \{[\s\S]+thumbnailVideoPath = await resolveMpvThumbnailVideoPath\(filePath, \{[\s\S]+isStaleVideoLoad[\s\S]+\}\);[\s\S]+\}/);
   assert.match(loadVideoSource, /await generateThumbnails\(thumbnailVideoPath\);/);
+});
+
+test('mpv pilot falls back to the normal playback path when mpv load fails', () => {
+  const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\//);
+  assert.ok(loadVideoMatch, 'loadVideo should exist');
+  const loadVideoSource = loadVideoMatch[1];
+
+  assert.match(loadVideoSource, /allowMpvPilot = true/);
+  assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath \}\);/);
+  assert.match(loadVideoSource, /catch \(mpvError\) \{[\s\S]+mpv 파일럿 로드 실패, 기존 재생 방식으로 재시도[\s\S]+allowMpvPilot: false[\s\S]+return loadVideo\(filePath, fallbackOptions\);[\s\S]+\}/);
 });
 
 test('mpv pilot can be enabled from app playback settings without an env var', () => {
