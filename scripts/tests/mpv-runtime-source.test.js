@@ -228,8 +228,11 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
 });
 
 test('mpv pilot mirrors DOM overlays into a click-through native overlay window', () => {
+  assert.match(appSource, /function isMpvMarkerOverlayVisible\(\) \{[\s\S]+window\.getComputedStyle\(markerContainer\)[\s\S]+style\.display !== 'none'[\s\S]+style\.visibility !== 'hidden'/);
   assert.match(appSource, /function serializeMpvOverlayMarkerHtml\(\) \{[\s\S]+cloneNode\(true\)[\s\S]+textarea\.textContent = sourceTextarea\.value/);
+  assert.match(appSource, /function serializeMpvOverlayMarkerHtml\(\) \{[\s\S]+if \(!isMpvMarkerOverlayVisible\(\)\) return '';/);
   assert.match(appSource, /function serializeMpvOverlayTooltipHtml\(\) \{[\s\S]+const tooltipLayer = document\.createElement\('div'\);[\s\S]+document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(\(tooltip\) => \{[\s\S]+tooltipClone\.style\.position = 'absolute';[\s\S]+tooltipClone\.style\.transform = 'none';[\s\S]+tooltipLayer\.appendChild\(tooltipClone\);[\s\S]+\}\);/);
+  assert.match(appSource, /function serializeMpvOverlayTooltipHtml\(\) \{[\s\S]+if \(!isMpvMarkerOverlayVisible\(\)\) return '';/);
   assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: serializeMpvOverlayMarkerHtml\(\)[\s\S]+tooltipHtml: serializeMpvOverlayTooltipHtml\(\)/);
   assert.match(appSource, /function scheduleMpvOverlayStateSync\(options = \{\}\) \{[\s\S]+syncMpvOverlayState\(\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('drawmove', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);

@@ -5212,8 +5212,17 @@ async function initApp() {
     }
   }
 
+  function isMpvMarkerOverlayVisible() {
+    if (!markerContainer) return false;
+    const style = window.getComputedStyle(markerContainer);
+    return style.display !== 'none'
+      && style.visibility !== 'hidden'
+      && Number(style.opacity || 1) !== 0;
+  }
+
   function serializeMpvOverlayMarkerHtml() {
     if (!markerContainer) return '';
+    if (!isMpvMarkerOverlayVisible()) return '';
 
     const clone = markerContainer.cloneNode(true);
     const sourceTextareas = markerContainer.querySelectorAll('textarea');
@@ -5230,6 +5239,8 @@ async function initApp() {
   }
 
   function serializeMpvOverlayTooltipHtml() {
+    if (!isMpvMarkerOverlayVisible()) return '';
+
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     if (!wrapperRect) return '';
 
