@@ -849,6 +849,18 @@ export class VideoPlayer extends EventTarget {
     try {
       const status = await this.externalControls.getStatus();
       if (!status?.success) return;
+      if (status.stopped === true) {
+        const stoppedEngine = this.engine;
+        try {
+          await this.externalControls?.stop?.();
+        } catch (error) {
+          log.warn('중지된 외부 플레이어 정리 실패', { error: error.message });
+        }
+        this.useHtml5Engine();
+        this.isLoaded = false;
+        this._emit('externalstopped', { engine: stoppedEngine });
+        return;
+      }
 
       const nextTime = Number(status.time);
       const nextDuration = Number(status.duration);
@@ -856,22 +868,37 @@ export class VideoPlayer extends EventTarget {
       const nextWidth = Number(status.width);
       const nextHeight = Number(status.height);
       const eofReached = status.eofReached === true;
-      if (Number.isFinite(nextDuration) && nextDuration > 0) {
+      let metadataChanged = false;
+      if (Number.isFinite(nextDuration) && nextDuration > 0 && this.duration !== nextDuration) {
         this.duration = nextDuration;
+        metadataChanged = true;
       }
-      if (Number.isFinite(nextFps) && nextFps > 0) {
+      if (Number.isFinite(nextFps) && nextFps > 0 && this.fps !== nextFps) {
         this.fps = nextFps;
+        metadataChanged = true;
       }
-      if (Number.isFinite(nextWidth) && nextWidth > 0) {
+      if (Number.isFinite(nextWidth) && nextWidth > 0 && this.videoWidth !== nextWidth) {
         this.videoWidth = nextWidth;
+        metadataChanged = true;
       }
-      if (Number.isFinite(nextHeight) && nextHeight > 0) {
+      if (Number.isFinite(nextHeight) && nextHeight > 0 && this.videoHeight !== nextHeight) {
         this.videoHeight = nextHeight;
+        metadataChanged = true;
       }
       if (Number.isFinite(nextTime)) {
         this.currentTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
       }
       this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
+      if (metadataChanged) {
+        this._emit('loadedmetadata', {
+          duration: this.duration,
+          totalFrames: this.totalFrames,
+          fps: this.fps,
+          width: this.videoWidth,
+          height: this.videoHeight,
+          engine: this.engine
+        });
+      }
       const nextFrame = Math.floor(this.currentTime * this.fps);
       const wasPlaying = this.isPlaying;
       const externalIsPlaying = status.paused === false;

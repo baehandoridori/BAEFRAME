@@ -1061,6 +1061,11 @@ async function initApp() {
     showToast('비디오 재생 오류가 발생했습니다.', 'error');
   });
 
+  videoPlayer.addEventListener('externalstopped', () => {
+    elements.videoWrapper?.classList.remove('mpv-pilot-mode');
+    document.body.classList.remove('mpv-pilot-mode');
+  });
+
   // 코덱 미지원
   const codecErrorOverlay = document.getElementById('codecErrorOverlay');
   const btnCodecErrorClose = document.getElementById('btnCodecErrorClose');
