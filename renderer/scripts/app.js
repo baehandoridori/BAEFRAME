@@ -4683,6 +4683,7 @@ async function initApp() {
   let activeTranscodeOverlayToken = 0;
   let activeTranscodeOverlayCleanup = null;
   let latestVideoLoadToken = 0;
+  let activeMpvPilotLoadToken = null;
 
   function invalidateActiveVideoLoad() {
     latestVideoLoadToken += 1;
@@ -5369,14 +5370,22 @@ async function initApp() {
 
   async function loadVideoWithMpvPilot(filePath, {
     initialFrame = null,
+    loadToken = null,
     isStaleVideoLoad = () => false
   } = {}) {
+    activeMpvPilotLoadToken = loadToken;
     const embedHost = await prepareMpvEmbedHost();
     await prepareMpvOverlayHost();
     let mpvLoadStarted = false;
+    const ownsMpvPilotLoad = () => activeMpvPilotLoadToken === loadToken;
+    const clearMpvPilotLoadOwner = () => {
+      if (ownsMpvPilotLoad()) {
+        activeMpvPilotLoadToken = null;
+      }
+    };
     const cleanupPendingMpvPilot = async () => {
-      if (isStaleVideoLoad()) {
-        log.debug('mpv 파일럿 준비 정리 건너뜀: 더 최신 영상 로드가 활성화됨', { filePath });
+      if (isStaleVideoLoad() && !ownsMpvPilotLoad()) {
+        log.debug('mpv 파일럿 준비 정리 건너뜀: 더 최신 mpv 영상 로드가 활성화됨', { filePath });
         return;
       }
 
@@ -5389,6 +5398,15 @@ async function initApp() {
         }
       } catch (error) {
         log.debug('mpv 파일럿 준비 정리 실패', { error: error.message });
+      } finally {
+        clearMpvPilotLoadOwner();
+      }
+    };
+    const stopCurrentMpvPilotEngine = async () => {
+      try {
+        return await stopMpvPilotEngine();
+      } finally {
+        clearMpvPilotLoadOwner();
       }
     };
 
@@ -5462,7 +5480,7 @@ async function initApp() {
         setVolume: (volume) => window.electronAPI.mpvSetVolume(volume),
         setMuted: (muted) => window.electronAPI.mpvSetMuted(muted),
         getStatus: () => window.electronAPI.mpvGetStatus(),
-        stop: () => stopMpvPilotEngine()
+        stop: () => stopCurrentMpvPilotEngine()
       }
     });
     videoPlayer.setVolume(videoPlayer.videoElement.volume);
@@ -5788,6 +5806,7 @@ async function initApp() {
           try {
             const mpvLoaded = await loadVideoWithMpvPilot(filePath, {
               initialFrame,
+              loadToken,
               isStaleVideoLoad
             });
             if (isStaleVideoLoad()) return false;
