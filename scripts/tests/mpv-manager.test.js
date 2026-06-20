@@ -168,6 +168,44 @@ test('start restarts mpv when the embedded window id changes', async () => {
   assert.equal(spawned[0].processRef.killed, true);
 });
 
+test('stale mpv exit handlers do not clear a replacement process', async () => {
+  const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
+  const spawned = [];
+  const manager = createManager({
+    env: { BAEFRAME_MPV_PILOT: '1' },
+    existing: [bundledPath]
+  });
+  manager.spawn = (_cmd, args) => {
+    const listeners = new Map();
+    const processRef = {
+      killed: false,
+      on(eventName, handler) {
+        listeners.set(eventName, handler);
+      },
+      emit(eventName, ...args) {
+        listeners.get(eventName)?.(...args);
+      },
+      kill() {
+        this.killed = true;
+      }
+    };
+    spawned.push({ args, processRef });
+    return processRef;
+  };
+  manager._waitForIpcReady = async () => true;
+  manager.sendCommand = async () => ({ error: 'success' });
+
+  await manager.start({ wid: '100' });
+  const firstProcess = manager.process;
+  await manager.start({ wid: '200' });
+  const secondProcess = manager.process;
+
+  firstProcess.emit('exit', 0, null);
+
+  assert.equal(spawned.length, 2);
+  assert.equal(manager.process, secondProcess);
+});
+
 test('status polling keeps the active embedded window id', async () => {
   const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
   const spawned = [];

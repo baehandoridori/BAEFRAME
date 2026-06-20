@@ -340,17 +340,20 @@ class MPVManager {
     this.logger.info('starting mpv pilot process', { mpvPath: this.mpvPath, args });
     this.embeddedWid = requestedWid;
 
-    this.process = this.spawn(this.mpvPath, args, {
+    const processRef = this.spawn(this.mpvPath, args, {
       stdio: 'ignore',
       windowsHide: true
     });
+    this.process = processRef;
 
-    this.process.on?.('exit', (code, signal) => {
+    processRef.on?.('exit', (code, signal) => {
       this.logger.info('mpv process exited', { code, signal });
-      this.process = null;
+      if (this.process === processRef) {
+        this.process = null;
+      }
     });
 
-    this.process.on?.('error', (error) => {
+    processRef.on?.('error', (error) => {
       this.logger.error('mpv process error', { error: error.message });
     });
 
