@@ -115,7 +115,7 @@ test('mpv pilot keeps a Chromium-decodable path for thumbnails', () => {
   assert.match(loadVideoSource, /let thumbnailVideoPath = actualVideoPath;/);
   assert.match(loadVideoSource, /let shouldGenerateThumbnails = true;/);
   assert.match(loadVideoSource, /if \(useMpvPilot\) \{[\s\S]+thumbnailVideoPath = await resolveMpvThumbnailVideoPath\(filePath, \{[\s\S]+isStaleVideoLoad[\s\S]+\}\);[\s\S]+shouldGenerateThumbnails = Boolean\(thumbnailVideoPath\);[\s\S]+\}/);
-  assert.match(loadVideoSource, /if \(shouldGenerateThumbnails\) \{[\s\S]+await generateThumbnails\(thumbnailVideoPath\);[\s\S]+\} else \{[\s\S]+getThumbnailGenerator\(\)\.clear\(\);[\s\S]+\}/);
+  assert.match(loadVideoSource, /if \(shouldGenerateThumbnails\) \{[\s\S]+await generateThumbnails\(thumbnailVideoPath\);[\s\S]+\} else \{[\s\S]+getThumbnailGenerator\(\)\.clear\(\);[\s\S]+document\.getElementById\('videoLoadingOverlay'\)\?\.classList\.remove\('active'\);[\s\S]+\}/);
 });
 
 test('mpv pilot falls back to the normal playback path when mpv load fails', () => {
@@ -249,6 +249,7 @@ test('mpv overlay throttles live drawing snapshots but forces final drawing sync
 test('mpv external playback preserves frame seek and loop behavior', () => {
   assert.match(videoPlayerSource, /_handleLoopRestartIfNeeded\(\) \{[\s\S]+this\.seek\(this\.loop\.inPoint\);[\s\S]+this\._emit\('loopRestart'\);[\s\S]+return true;/);
   assert.match(videoPlayerSource, /video\.addEventListener\('timeupdate', \(\) => \{[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}/);
+  assert.match(videoPlayerSource, /const nextWidth = Number\(status\.width\);[\s\S]+const nextHeight = Number\(status\.height\);[\s\S]+if \(Number\.isFinite\(nextWidth\) && nextWidth > 0\) \{[\s\S]+this\.videoWidth = nextWidth;[\s\S]+\}[\s\S]+if \(Number\.isFinite\(nextHeight\) && nextHeight > 0\) \{[\s\S]+this\.videoHeight = nextHeight;/);
   assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
 
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}/);

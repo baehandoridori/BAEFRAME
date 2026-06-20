@@ -853,12 +853,20 @@ export class VideoPlayer extends EventTarget {
       const nextTime = Number(status.time);
       const nextDuration = Number(status.duration);
       const nextFps = Number(status.fps);
+      const nextWidth = Number(status.width);
+      const nextHeight = Number(status.height);
       const eofReached = status.eofReached === true;
       if (Number.isFinite(nextDuration) && nextDuration > 0) {
         this.duration = nextDuration;
       }
       if (Number.isFinite(nextFps) && nextFps > 0) {
         this.fps = nextFps;
+      }
+      if (Number.isFinite(nextWidth) && nextWidth > 0) {
+        this.videoWidth = nextWidth;
+      }
+      if (Number.isFinite(nextHeight) && nextHeight > 0) {
+        this.videoHeight = nextHeight;
       }
       if (Number.isFinite(nextTime)) {
         this.currentTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));

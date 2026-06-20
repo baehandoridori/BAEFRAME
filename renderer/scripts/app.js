@@ -5920,6 +5920,7 @@ async function initApp() {
           await generateThumbnails(thumbnailVideoPath);
         } else {
           getThumbnailGenerator().clear();
+          document.getElementById('videoLoadingOverlay')?.classList.remove('active');
         }
         if (isStaleVideoLoad()) return false;
       } else {
