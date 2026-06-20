@@ -11,6 +11,7 @@ const videoPlayerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, '
 const userSettingsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/user-settings.js'), 'utf8'));
 const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
 const ipcSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
+const mainIndexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/index.js'), 'utf8'));
 const mpvManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/mpv-manager.js'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
@@ -188,4 +189,12 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
 test('mpv engine replacement resets playing state before html5 loads', () => {
   assert.match(videoPlayerSource, /useHtml5Engine\(\) \{[\s\S]+const wasExternalPlaying = this\.engine !== 'html5' && this\.isPlaying;[\s\S]+if \(wasExternalPlaying\) \{[\s\S]+this\.isPlaying = false;[\s\S]+this\._emit\('pause'\);[\s\S]+\}/);
   assert.match(videoPlayerSource, /async load\(filePath\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+this\.externalControls\?\.stop\?\.\(\)[\s\S]+this\.useHtml5Engine\(\);/);
+});
+
+test('main process owns mpv shutdown cleanup before forced app quit', () => {
+  assert.match(mainIndexSource, /const \{ mpvManager \} = require\('\.\/mpv-manager'\);/);
+  assert.match(mainIndexSource, /const \{ mpvEmbedHost \} = require\('\.\/mpv-embed-host'\);/);
+  assert.match(mainIndexSource, /const \{ mpvOverlayHost \} = require\('\.\/mpv-overlay-host'\);/);
+  assert.match(mainIndexSource, /async function cleanupMpvPilotBeforeQuit\(\) \{[\s\S]+mpvManager\.stop\(\{ commandTimeoutMs: 500 \}\)[\s\S]+mpvOverlayHost\.destroy\(\);[\s\S]+mpvEmbedHost\.destroy\(\);[\s\S]+\}/);
+  assert.match(mainIndexSource, /if \(forceQuit && !shutdownCleanupStarted\) \{[\s\S]+event\.preventDefault\(\);[\s\S]+cleanupMpvPilotBeforeQuit\(\)[\s\S]+app\.quit\(\);/);
 });

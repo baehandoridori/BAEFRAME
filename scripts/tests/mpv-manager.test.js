@@ -9,10 +9,18 @@ const {
   isMpvPilotEnabled
 } = require('../../main/mpv-manager');
 
+function normalizeCandidateForTest(candidate, platform) {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  return pathApi.normalize(candidate);
+}
+
 function createManager(options = {}) {
-  const existing = new Set(options.existing || []);
+  const platform = options.platform || 'win32';
+  const existing = new Set((options.existing || []).map((candidate) => (
+    normalizeCandidateForTest(candidate, platform)
+  )));
   return new MPVManager({
-    platform: options.platform || 'win32',
+    platform,
     processPid: 4242,
     env: options.env || {},
     appRoot: options.appRoot || 'C:\\repo',
@@ -20,9 +28,9 @@ function createManager(options = {}) {
     executableDir: options.executableDir || 'C:\\Program Files\\BAEFRAME',
     tempDir: options.tempDir || 'C:\\Temp',
     fs: {
-      existsSync: (candidate) => existing.has(path.normalize(candidate)),
+      existsSync: (candidate) => existing.has(normalizeCandidateForTest(candidate, platform)),
       accessSync: (candidate) => {
-        if (!existing.has(path.normalize(candidate))) {
+        if (!existing.has(normalizeCandidateForTest(candidate, platform))) {
           const error = new Error('missing');
           error.code = 'ENOENT';
           throw error;
@@ -61,6 +69,27 @@ test('detects bundled Windows mpv before system PATH', async () => {
   assert.equal(detected, true);
   assert.equal(manager.isAvailable(), true);
   assert.equal(path.normalize(manager.mpvPath), bundledPath);
+});
+
+test('uses injected platform path rules for bundled mpv lookup', async () => {
+  const bundledPath = '/opt/BAEFRAME/mpv/mpv';
+  const manager = createManager({
+    platform: 'linux',
+    env: { BAEFRAME_MPV_PILOT: '1' },
+    appRoot: '/opt/BAEFRAME',
+    resourcesPath: '/opt/BAEFRAME/resources',
+    executableDir: '/opt/BAEFRAME',
+    existing: [bundledPath]
+  });
+
+  const searchDirs = manager._getBundledSearchDirs();
+  assert.ok(searchDirs.every((dir) => dir.startsWith('/opt/BAEFRAME')));
+  assert.ok(searchDirs.every((dir) => !dir.includes('\\')));
+
+  const detected = await manager.initialize();
+
+  assert.equal(detected, true);
+  assert.equal(manager.mpvPath, bundledPath);
 });
 
 test('detects mpv availability even when pilot env is not enabled', async () => {

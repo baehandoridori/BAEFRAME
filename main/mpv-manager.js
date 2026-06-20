@@ -41,10 +41,14 @@ function normalizeMpvWid(wid) {
   return /^\d+$/.test(value) ? value : null;
 }
 
-function normalizePlaybackPathForCompare(value) {
+function getPathApiForPlatform(platform = process.platform) {
+  return platform === 'win32' ? path.win32 : path.posix;
+}
+
+function normalizePlaybackPathForCompare(value, platform = process.platform) {
   if (!value) return '';
-  const normalized = path.normalize(String(value)).replace(/[\\/]+$/, '');
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  const normalized = getPathApiForPlatform(platform).normalize(String(value)).replace(/[\\/]+$/, '');
+  return platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 function createMpvLaunchArgs({ ipcPath, forceWindow = true, wid = null } = {}) {
@@ -218,7 +222,7 @@ class MPVManager {
   } = {}) {
     const deadline = Date.now() + timeoutMs;
     let lastStatus = null;
-    const requestedPath = normalizePlaybackPathForCompare(expectedPath);
+    const requestedPath = normalizePlaybackPathForCompare(expectedPath, this.platform);
 
     while (Date.now() < deadline) {
       const [timePos, duration, paused, pathValue, width, height, fps] = await Promise.all([
@@ -242,7 +246,7 @@ class MPVManager {
         fps: this._toNumber(fps, 24)
       };
 
-      const loadedPath = normalizePlaybackPathForCompare(pathValue);
+      const loadedPath = normalizePlaybackPathForCompare(pathValue, this.platform);
       const isRequestedPathLoaded = !requestedPath || loadedPath === requestedPath;
       if (timePos !== null && pathValue && isRequestedPathLoaded) {
         return lastStatus;
@@ -306,14 +310,18 @@ class MPVManager {
     return true;
   }
 
-  async stop() {
+  async stop(options = {}) {
     const processRef = this.process;
     if (!processRef) {
       return { success: true, stopped: false };
     }
 
+    const commandTimeoutMs = Number.isFinite(Number(options.commandTimeoutMs)) && Number(options.commandTimeoutMs) > 0
+      ? Number(options.commandTimeoutMs)
+      : COMMAND_TIMEOUT_MS;
+
     try {
-      await this.sendCommand(['quit']);
+      await this.sendCommand(['quit'], commandTimeoutMs);
     } catch (error) {
       this.logger.debug('mpv quit command failed, killing process', { error: error.message });
     }
@@ -441,10 +449,11 @@ class MPVManager {
 
   async _detectMpv() {
     const executableName = this.platform === 'win32' ? 'mpv.exe' : 'mpv';
+    const pathApi = getPathApiForPlatform(this.platform);
     const searchDirs = this._getBundledSearchDirs();
 
     for (const dir of searchDirs) {
-      const candidate = path.join(dir, executableName);
+      const candidate = pathApi.join(dir, executableName);
       if (this._pathExists(candidate)) {
         return candidate;
       }
@@ -454,18 +463,19 @@ class MPVManager {
   }
 
   _getBundledSearchDirs() {
+    const pathApi = getPathApiForPlatform(this.platform);
     const dirs = [
-      path.join(this.resourcesPath, 'mpv', 'win32'),
-      path.join(this.resourcesPath, 'mpv'),
-      path.join(this.executableDir, 'resources', 'mpv', 'win32'),
-      path.join(this.executableDir, 'resources', 'mpv'),
-      path.join(this.executableDir, 'mpv', 'win32'),
-      path.join(this.executableDir, 'mpv'),
-      path.join(this.appRoot, 'mpv', 'win32'),
-      path.join(this.appRoot, 'mpv')
+      pathApi.join(this.resourcesPath, 'mpv', 'win32'),
+      pathApi.join(this.resourcesPath, 'mpv'),
+      pathApi.join(this.executableDir, 'resources', 'mpv', 'win32'),
+      pathApi.join(this.executableDir, 'resources', 'mpv'),
+      pathApi.join(this.executableDir, 'mpv', 'win32'),
+      pathApi.join(this.executableDir, 'mpv'),
+      pathApi.join(this.appRoot, 'mpv', 'win32'),
+      pathApi.join(this.appRoot, 'mpv')
     ];
 
-    return [...new Set(dirs.filter(Boolean).map((dir) => path.normalize(dir)))];
+    return [...new Set(dirs.filter(Boolean).map((dir) => pathApi.normalize(dir)))];
   }
 
   _findInPath(executableName) {

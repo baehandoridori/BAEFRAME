@@ -40,11 +40,15 @@ debugLog('electron 모듈 로드 완료');
 // ============================================
 let isQuitting = false;
 let forceQuit = false;
+let shutdownCleanupStarted = false;
 
 const { createLogger } = require('./logger');
 const { createMainWindow, getMainWindow, createLoadingWindow, closeLoadingWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
 const { registerProjectFileAssociations } = require('./project-file-associations');
+const { mpvManager } = require('./mpv-manager');
+const { mpvEmbedHost } = require('./mpv-embed-host');
+const { mpvOverlayHost } = require('./mpv-overlay-host');
 const {
   hasExtension,
   isLaunchArgument,
@@ -56,6 +60,26 @@ debugLog('내부 모듈 로드 완료');
 const log = createLogger('Main');
 log.info(`앱 모듈 로딩 완료: ${Date.now() - appStartTime}ms`);
 debugLog(`로거 초기화 완료: ${Date.now() - appStartTime}ms`);
+
+async function cleanupMpvPilotBeforeQuit() {
+  try {
+    await mpvManager.stop({ commandTimeoutMs: 500 });
+  } catch (error) {
+    log.warn('앱 종료 중 mpv 종료 실패', { error: error.message });
+  }
+
+  try {
+    mpvOverlayHost.destroy();
+  } catch (error) {
+    log.debug('앱 종료 중 mpv 오버레이 정리 실패', { error: error.message });
+  }
+
+  try {
+    mpvEmbedHost.destroy();
+  } catch (error) {
+    log.debug('앱 종료 중 mpv 임베드 정리 실패', { error: error.message });
+  }
+}
 
 // ============================================
 // baeframe:// 프로토콜 URL 파싱 헬퍼
@@ -479,6 +503,24 @@ if (!gotTheLock) {
 
   app.on('before-quit', (event) => {
     log.info('앱 종료 요청', { isQuitting, forceQuit });
+
+    if (forceQuit && !shutdownCleanupStarted) {
+      event.preventDefault();
+      shutdownCleanupStarted = true;
+      log.info('강제 종료 전 mpv 재생 엔진 정리');
+      if (quitTimeout) {
+        clearTimeout(quitTimeout);
+        quitTimeout = null;
+      }
+      cleanupMpvPilotBeforeQuit()
+        .catch((error) => {
+          log.warn('강제 종료 전 mpv 정리 예외', { error: error.message });
+        })
+        .finally(() => {
+          app.quit();
+        });
+      return;
+    }
 
     // 이미 종료 처리 중이거나 강제 종료인 경우 진행
     if (forceQuit) {
