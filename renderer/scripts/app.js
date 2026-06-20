@@ -5102,20 +5102,22 @@ async function initApp() {
   let mpvOverlayLastLiveDrawSyncAt = 0;
 
   function getMpvEmbedBounds() {
+    syncMpvFullscreenViewportInset();
+
     const rect = elements.videoWrapper?.getBoundingClientRect();
     if (!rect || rect.width <= 1 || rect.height <= 1) return null;
 
-    const controlsInset = getMpvFullscreenControlsInset(rect);
     return {
       x: rect.left,
       y: rect.top,
       width: rect.width,
-      height: Math.max(1, rect.height - controlsInset),
+      height: rect.height,
       devicePixelRatio: window.devicePixelRatio || 1
     };
   }
 
-  function getMpvFullscreenControlsInset(wrapperRect) {
+  function getMpvFullscreenControlsInset() {
+    if (!document.body.classList.contains('mpv-pilot-mode')) return 0;
     if (!document.body.classList.contains('app-fullscreen')) return 0;
     if (!document.body.classList.contains('show-controls')) return 0;
 
@@ -5126,8 +5128,14 @@ async function initApp() {
     const cutoutTop = seekbarRect && seekbarRect.height > 0
       ? Math.min(controlsRect.top, seekbarRect.top)
       : controlsRect.top;
-    const visibleTop = Math.max(wrapperRect.top, Math.min(wrapperRect.bottom, cutoutTop));
-    return Math.max(0, Math.min(wrapperRect.height - 1, wrapperRect.bottom - visibleTop));
+    const viewportBottom = Math.max(1, window.innerHeight || controlsRect.bottom);
+    const visibleTop = Math.max(0, Math.min(viewportBottom, cutoutTop));
+    return Math.max(0, Math.min(viewportBottom - 1, viewportBottom - visibleTop));
+  }
+
+  function syncMpvFullscreenViewportInset() {
+    const inset = getMpvFullscreenControlsInset();
+    elements.videoWrapper?.style.setProperty('--mpv-fullscreen-controls-inset', `${inset}px`);
   }
 
   function getMpvVideoTransform() {

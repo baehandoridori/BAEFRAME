@@ -8181,6 +8181,10 @@ body.app-fullscreen .video-wrapper {
   height: 100vh;
 }
 
+body.app-fullscreen.mpv-pilot-mode.show-controls .video-wrapper {
+  height: calc(100vh - var(--mpv-fullscreen-controls-inset, 0px));
+}
+
 /* 전체화면에서 댓글 마커 숨기기 (댓글 모드에서는 표시) */
 body.app-fullscreen .comment-markers-container {
   display: none !important;
@@ -8201,6 +8205,11 @@ body.app-fullscreen #mpvContainer {
   width: 100vw !important;
   height: 100vh !important;
   object-fit: contain;
+}
+
+body.app-fullscreen.mpv-pilot-mode.show-controls video,
+body.app-fullscreen.mpv-pilot-mode.show-controls #mpvContainer {
+  height: calc(100vh - var(--mpv-fullscreen-controls-inset, 0px)) !important;
 }
 
 /* 전체화면 타임코드 오버레이 */

@@ -7,6 +7,7 @@ const rootDir = path.resolve(__dirname, '../..');
 const normalizeNewlines = (value) => value.replace(/\r\n/g, '\n');
 const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8'));
 const indexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8'));
+const mainStyles = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/main.css'), 'utf8'));
 const videoPlayerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/video-player.js'), 'utf8'));
 const userSettingsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/user-settings.js'), 'utf8'));
 const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
@@ -151,8 +152,10 @@ test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(mpvManagerSource, /async _load\(filePath, options = \{\}\) \{[\s\S]+await this\.start\(\{ wid: options\.wid \}\);/);
   assert.match(mpvManagerSource, /`--wid=\$\{normalizedWid\}`/);
 
-  assert.match(appSource, /function getMpvEmbedBounds\(\) \{[\s\S]+elements\.videoWrapper\?\.getBoundingClientRect\(\)[\s\S]+const controlsInset = getMpvFullscreenControlsInset\(rect\);[\s\S]+height: Math\.max\(1, rect\.height - controlsInset\)/);
-  assert.match(appSource, /function getMpvFullscreenControlsInset\(wrapperRect\) \{[\s\S]+document\.body\.classList\.contains\('app-fullscreen'\)[\s\S]+document\.body\.classList\.contains\('show-controls'\)[\s\S]+elements\.controlsBar\?\.getBoundingClientRect\(\)[\s\S]+elements\.fullscreenSeekbar\?\.getBoundingClientRect\(\)/);
+  assert.match(appSource, /function getMpvEmbedBounds\(\) \{[\s\S]+syncMpvFullscreenViewportInset\(\);[\s\S]+elements\.videoWrapper\?\.getBoundingClientRect\(\)[\s\S]+height: rect\.height/);
+  assert.match(appSource, /function getMpvFullscreenControlsInset\(\) \{[\s\S]+document\.body\.classList\.contains\('mpv-pilot-mode'\)[\s\S]+document\.body\.classList\.contains\('app-fullscreen'\)[\s\S]+document\.body\.classList\.contains\('show-controls'\)[\s\S]+elements\.controlsBar\?\.getBoundingClientRect\(\)[\s\S]+elements\.fullscreenSeekbar\?\.getBoundingClientRect\(\)/);
+  assert.match(appSource, /function syncMpvFullscreenViewportInset\(\) \{[\s\S]+elements\.videoWrapper\?\.style\.setProperty\('--mpv-fullscreen-controls-inset', `\$\{inset\}px`\);/);
+  assert.match(mainStyles, /body\.app-fullscreen\.mpv-pilot-mode\.show-controls \.video-wrapper \{[\s\S]+height: calc\(100vh - var\(--mpv-fullscreen-controls-inset, 0px\)\);/);
   assert.match(appSource, /async function prepareMpvEmbedHost\(\) \{[\s\S]+window\.electronAPI\.mpvPrepareEmbed\(bounds\)/);
   assert.match(appSource, /async function syncMpvEmbedBounds\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateEmbedBounds\(bounds\)/);
   assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+window\.electronAPI\.mpvPrepareOverlay\(bounds\)/);
