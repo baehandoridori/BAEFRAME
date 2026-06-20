@@ -845,14 +845,17 @@ export class VideoPlayer extends EventTarget {
   async _syncExternalStatus() {
     if (this.engine === 'html5' || !this.externalControls?.getStatus || this._externalStatusPending) return;
 
+    const pollingControls = this.externalControls;
+    const pollingEngine = this.engine;
     this._externalStatusPending = true;
     try {
-      const status = await this.externalControls.getStatus();
+      const status = await pollingControls.getStatus();
+      if (this.engine !== pollingEngine || this.externalControls !== pollingControls) return;
       if (!status?.success) return;
       if (status.stopped === true) {
         const stoppedEngine = this.engine;
         try {
-          await this.externalControls?.stop?.();
+          await pollingControls?.stop?.();
         } catch (error) {
           log.warn('중지된 외부 플레이어 정리 실패', { error: error.message });
         }

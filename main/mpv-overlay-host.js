@@ -241,7 +241,12 @@ const OVERLAY_HTML = `
     <div id="markerMirror"></div>
   </div>
   <script>
-    function applyImage(id, dataUrl, canvas) {
+    function applyOverlayTransform(element, state) {
+      element.style.transform = state.markerTransform || '';
+      element.style.transformOrigin = state.markerTransformOrigin || 'center center';
+    }
+
+    function applyImage(id, dataUrl, canvas, state) {
       const element = document.getElementById(id);
       if (!element) return;
       if (!dataUrl || !canvas || canvas.width <= 0 || canvas.height <= 0) {
@@ -255,16 +260,16 @@ const OVERLAY_HTML = `
       element.style.top = canvas.top + 'px';
       element.style.width = canvas.width + 'px';
       element.style.height = canvas.height + 'px';
+      applyOverlayTransform(element, state);
     }
 
     window.__applyMpvOverlayState = function applyMpvOverlayState(state) {
       const nextState = state || {};
       const markerMirror = document.getElementById('markerMirror');
-      applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
-      applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
+      applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas, nextState);
+      applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas, nextState);
       markerMirror.innerHTML = nextState.markerHtml || '';
-      markerMirror.style.transform = nextState.markerTransform || '';
-      markerMirror.style.transformOrigin = nextState.markerTransformOrigin || 'center center';
+      applyOverlayTransform(markerMirror, nextState);
     };
   </script>
 </body>

@@ -103,7 +103,10 @@ test('creates a click-through overlay window above the viewer area', async () =>
     events.find(([name]) => name === 'setIgnoreMouseEvents'),
     ['setIgnoreMouseEvents', true, { forward: true }]
   );
-  assert.equal(events.find(([name]) => name === 'loadURL')?.[1].includes('__applyMpvOverlayState'), true);
+  const overlayHtml = decodeURIComponent(events.find(([name]) => name === 'loadURL')?.[1] || '');
+  assert.equal(overlayHtml.includes('__applyMpvOverlayState'), true);
+  assert.equal(overlayHtml.includes('applyOverlayTransform'), true);
+  assert.equal(overlayHtml.includes("applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas, nextState)"), true);
   assert.ok(events.some(([name]) => name === 'showInactive'));
   assert.ok(events.some(([name]) => name === 'moveTop'));
 });
