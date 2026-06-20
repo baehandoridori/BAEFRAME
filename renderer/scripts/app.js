@@ -5112,12 +5112,15 @@ async function initApp() {
       return { zoom: 0, panX: 0, panY: 0 };
     }
 
+    const renderArea = getVideoRenderArea();
+    const panWidth = Math.max(1, Number(renderArea?.width) || rect.width);
+    const panHeight = Math.max(1, Number(renderArea?.height) || rect.height);
     const scale = Math.max(0.01, state.videoZoom / 100);
     const zoom = Math.log2(scale);
     return {
       zoom,
-      panX: state.videoPanX / rect.width,
-      panY: state.videoPanY / rect.height
+      panX: state.videoPanX / panWidth,
+      panY: state.videoPanY / panHeight
     };
   }
 

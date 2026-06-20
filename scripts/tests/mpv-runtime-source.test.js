@@ -174,7 +174,7 @@ test('mpv pilot routes audio and viewport controls through mpv IPC', () => {
 });
 
 test('mpv pilot applies the same zoom and pan to the mpv image', () => {
-  assert.match(appSource, /function getMpvVideoTransform\(\) \{[\s\S]+const zoom = Math\.log2\(scale\);[\s\S]+panX: state\.videoPanX \/ rect\.width,[\s\S]+panY: state\.videoPanY \/ rect\.height/);
+  assert.match(appSource, /function getMpvVideoTransform\(\) \{[\s\S]+const renderArea = getVideoRenderArea\(\);[\s\S]+const panWidth = Math\.max\(1, Number\(renderArea\?\.width\) \|\| rect\.width\);[\s\S]+const panHeight = Math\.max\(1, Number\(renderArea\?\.height\) \|\| rect\.height\);[\s\S]+const zoom = Math\.log2\(scale\);[\s\S]+panX: state\.videoPanX \/ panWidth,[\s\S]+panY: state\.videoPanY \/ panHeight/);
   assert.match(appSource, /function syncMpvVideoTransform\(\) \{[\s\S]+window\.electronAPI\.mpvSetVideoTransform\(transform\)/);
   assert.match(appSource, /function applyVideoZoom\(\) \{[\s\S]+syncMpvEmbedBounds\(\);[\s\S]+syncMpvVideoTransform\(\);/);
   assert.match(appSource, /videoTransform: getMpvVideoTransform\(\)/);
