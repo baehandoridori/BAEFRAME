@@ -28,6 +28,18 @@ test('normalizes overlay state to bounded serializable fields', () => {
   assert.equal(state.markerTransformOrigin, 'center center');
 });
 
+test('preserves negative overlay canvas offsets from zoomed and panned video', () => {
+  const state = normalizeOverlayState({
+    drawingDataUrl: 'data:image/png;base64,abc',
+    canvas: { left: -42.4, top: -18.6, width: 640, height: 360 }
+  });
+
+  assert.equal(state.canvas.left, -42);
+  assert.equal(state.canvas.top, -19);
+  assert.equal(state.canvas.width, 640);
+  assert.equal(state.canvas.height, 360);
+});
+
 test('creates a click-through overlay window above the viewer area', async () => {
   const events = [];
   const fakeMainWindow = {

@@ -239,8 +239,8 @@ function normalizeOverlayState(state = {}) {
       ? state.markerTransformOrigin
       : 'center center',
     canvas: {
-      left: Math.max(0, normalizeNumber(canvas.left, 0)),
-      top: Math.max(0, normalizeNumber(canvas.top, 0)),
+      left: normalizeNumber(canvas.left, 0),
+      top: normalizeNumber(canvas.top, 0),
       width: Math.max(0, normalizeNumber(canvas.width, 0)),
       height: Math.max(0, normalizeNumber(canvas.height, 0))
     }
