@@ -170,6 +170,68 @@ const OVERLAY_HTML = `
       z-index: 10;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
+    .comment-marker-tooltip {
+      position: absolute;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 10px 12px;
+      min-width: 180px;
+      max-width: 280px;
+      box-shadow: var(--shadow-lg);
+      opacity: 0;
+      visibility: hidden;
+      z-index: 10000;
+      box-sizing: border-box;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .comment-marker-tooltip.visible {
+      opacity: 1;
+      visibility: visible;
+    }
+    .comment-marker-tooltip.pinned {
+      border-color: var(--accent-primary);
+    }
+    .tooltip-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .tooltip-timecode {
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent-primary);
+      background: var(--accent-glow);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .tooltip-author {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .tooltip-text {
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--text-primary);
+      word-break: break-word;
+      margin-bottom: 8px;
+    }
+    .tooltip-actions {
+      display: flex;
+      gap: 6px;
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 8px;
+    }
+    .tooltip-btn {
+      padding: 4px 8px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      color: var(--text-primary);
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>

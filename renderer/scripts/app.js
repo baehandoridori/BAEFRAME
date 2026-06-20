@@ -5190,6 +5190,19 @@ async function initApp() {
       textarea.textContent = sourceTextarea.value;
       textarea.setAttribute('value', sourceTextarea.value);
     });
+    const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
+    if (wrapperRect) {
+      document.querySelectorAll('.comment-marker-tooltip').forEach((tooltip) => {
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const tooltipClone = tooltip.cloneNode(true);
+        tooltipClone.style.position = 'absolute';
+        tooltipClone.style.left = `${tooltipRect.left - wrapperRect.left}px`;
+        tooltipClone.style.top = `${tooltipRect.top - wrapperRect.top}px`;
+        tooltipClone.style.transform = 'none';
+        tooltipClone.style.pointerEvents = 'none';
+        clone.appendChild(tooltipClone);
+      });
+    }
     clone.querySelectorAll('[id]').forEach((el) => {
       el.removeAttribute('id');
     });
@@ -6652,6 +6665,7 @@ async function initApp() {
       // 마커 요소 위치 업데이트
       markerEl.style.left = `${newX * 100}%`;
       markerEl.style.top = `${newY * 100}%`;
+      scheduleMpvOverlayStateSync();
     };
 
     // 드래그 종료 (마우스 업)
@@ -6681,6 +6695,7 @@ async function initApp() {
         reviewDataManager.save();
         log.info('마커 위치 변경 및 저장', { markerId: marker.id, x: newX, y: newY });
       }
+      scheduleMpvOverlayStateSync({ force: true });
 
       // 이벤트 리스너 제거
       document.removeEventListener('mousemove', onMouseMove);
@@ -6752,6 +6767,7 @@ async function initApp() {
       if (!marker.pinned && !isDragging) {
         positionTooltip();
         tooltip.classList.add('visible');
+        scheduleMpvOverlayStateSync();
       }
     };
 
@@ -6759,6 +6775,7 @@ async function initApp() {
       if (!marker.pinned && !isDragging) {
         hideTimeout = setTimeout(() => {
           tooltip.classList.remove('visible');
+          scheduleMpvOverlayStateSync();
         }, 100); // 100ms 딜레이로 툴팁으로 이동할 시간 확보
       }
     };
@@ -6896,6 +6913,7 @@ async function initApp() {
           marker.tooltipElement.classList.remove('visible');
         }
       }
+      scheduleMpvOverlayStateSync();
     }
   }
 

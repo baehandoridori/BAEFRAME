@@ -204,12 +204,18 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
 
 test('mpv pilot mirrors DOM overlays into a click-through native overlay window', () => {
   assert.match(appSource, /function serializeMpvOverlayMarkerHtml\(\) \{[\s\S]+cloneNode\(true\)[\s\S]+textarea\.textContent = sourceTextarea\.value/);
+  assert.match(appSource, /const wrapperRect = elements\.videoWrapper\?\.getBoundingClientRect\(\);[\s\S]+document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(\(tooltip\) => \{[\s\S]+tooltipClone\.style\.position = 'absolute';[\s\S]+tooltipClone\.style\.transform = 'none';[\s\S]+clone\.appendChild\(tooltipClone\);[\s\S]+\}\);/);
   assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: serializeMpvOverlayMarkerHtml\(\)/);
   assert.match(appSource, /function scheduleMpvOverlayStateSync\(options = \{\}\) \{[\s\S]+syncMpvOverlayState\(\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('drawmove', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('frameRendered', \(e\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);
   assert.match(appSource, /function renderVideoMarkers\(\) \{[\s\S]+scheduleMpvOverlayStateSync\(\);/);
   assert.match(appSource, /function updateVideoMarkersVisibility\(\) \{[\s\S]+scheduleMpvOverlayStateSync\(\);/);
+  assert.match(appSource, /const onMouseMove = \(e\) => \{[\s\S]+markerEl\.style\.left = `\$\{newX \* 100\}%`;[\s\S]+markerEl\.style\.top = `\$\{newY \* 100\}%`;[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\};/);
+  assert.match(appSource, /const onMouseUp = \(e\) => \{[\s\S]+reviewDataManager\.save\(\);[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+document\.removeEventListener\('mousemove', onMouseMove\);/);
+  assert.match(appSource, /const showTooltipHover = \(\) => \{[\s\S]+tooltip\.classList\.add\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\};/);
+  assert.match(appSource, /const hideTooltipHover = \(\) => \{[\s\S]+tooltip\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}, 100\);/);
+  assert.match(appSource, /function updateMarkerTooltipState\(marker\) \{[\s\S]+marker\.tooltipElement\.classList\.add\('visible', 'pinned'\);[\s\S]+scheduleMpvOverlayStateSync\(\);/);
   assert.match(appSource, /async function stopMpvPilotEngine\(\) \{[\s\S]+await window\.electronAPI\?\.mpvDestroyOverlay\?\.\(\);/);
 });
 
