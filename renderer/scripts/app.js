@@ -5650,6 +5650,7 @@ async function initApp() {
       } else {
         log.debug('FFmpeg 사용 불가, 코덱 변환 건너뜀');
       }
+      thumbnailVideoPath = actualVideoPath;
 
       // ====== 이전 데이터 저장 (clear 전에 수행!) ======
       // 저장되지 않은 변경사항이 있으면 먼저 저장

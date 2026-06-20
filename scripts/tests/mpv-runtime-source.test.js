@@ -114,6 +114,7 @@ test('mpv pilot keeps a Chromium-decodable path for thumbnails', () => {
   assert.match(resolveMpvThumbnailSource, /return null;/);
   assert.doesNotMatch(resolveMpvThumbnailSource, /showTranscodeOverlay\(filePath/);
   assert.match(loadVideoSource, /let thumbnailVideoPath = actualVideoPath;/);
+  assert.match(loadVideoSource, /if \(ffmpegAvailable\) \{[\s\S]+actualVideoPath = transcoded\.outputPath;[\s\S]+\} else \{[\s\S]+log\.debug\('FFmpeg 사용 불가, 코덱 변환 건너뜀'\);[\s\S]+\}\s+thumbnailVideoPath = actualVideoPath;/);
   assert.match(loadVideoSource, /let shouldGenerateThumbnails = true;/);
   assert.match(loadVideoSource, /if \(useMpvPilot\) \{[\s\S]+thumbnailVideoPath = await resolveMpvThumbnailVideoPath\(filePath, \{[\s\S]+isStaleVideoLoad[\s\S]+\}\);[\s\S]+shouldGenerateThumbnails = Boolean\(thumbnailVideoPath\);[\s\S]+\}/);
   assert.match(loadVideoSource, /if \(shouldGenerateThumbnails\) \{[\s\S]+await generateThumbnails\(thumbnailVideoPath\);[\s\S]+\} else \{[\s\S]+getThumbnailGenerator\(\)\.clear\(\);[\s\S]+document\.getElementById\('videoLoadingOverlay'\)\?\.classList\.remove\('active'\);[\s\S]+\}/);
