@@ -105,10 +105,17 @@ test('mpv pilot keeps a Chromium-decodable path for thumbnails', () => {
   assert.ok(loadVideoMatch, 'loadVideo should exist');
   const loadVideoSource = loadVideoMatch[1];
 
-  assert.match(appSource, /async function resolveMpvThumbnailVideoPath\(filePath, \{[\s\S]+ffmpegProbeCodec\(filePath\)[\s\S]+ffmpegCheckCache\(filePath\)[\s\S]+showTranscodeOverlay\(filePath/);
+  const resolveMpvThumbnailMatch = appSource.match(/async function resolveMpvThumbnailVideoPath\(filePath, \{[\s\S]*?\n  \}\n\n  async function loadVideo/);
+  assert.ok(resolveMpvThumbnailMatch, 'resolveMpvThumbnailVideoPath should exist');
+  const resolveMpvThumbnailSource = resolveMpvThumbnailMatch[0];
+
+  assert.match(resolveMpvThumbnailSource, /ffmpegProbeCodec\(filePath\)[\s\S]+ffmpegCheckCache\(filePath\)/);
+  assert.match(resolveMpvThumbnailSource, /return null;/);
+  assert.doesNotMatch(resolveMpvThumbnailSource, /showTranscodeOverlay\(filePath/);
   assert.match(loadVideoSource, /let thumbnailVideoPath = actualVideoPath;/);
-  assert.match(loadVideoSource, /if \(useMpvPilot\) \{[\s\S]+thumbnailVideoPath = await resolveMpvThumbnailVideoPath\(filePath, \{[\s\S]+isStaleVideoLoad[\s\S]+\}\);[\s\S]+\}/);
-  assert.match(loadVideoSource, /await generateThumbnails\(thumbnailVideoPath\);/);
+  assert.match(loadVideoSource, /let shouldGenerateThumbnails = true;/);
+  assert.match(loadVideoSource, /if \(useMpvPilot\) \{[\s\S]+thumbnailVideoPath = await resolveMpvThumbnailVideoPath\(filePath, \{[\s\S]+isStaleVideoLoad[\s\S]+\}\);[\s\S]+shouldGenerateThumbnails = Boolean\(thumbnailVideoPath\);[\s\S]+\}/);
+  assert.match(loadVideoSource, /if \(shouldGenerateThumbnails\) \{[\s\S]+await generateThumbnails\(thumbnailVideoPath\);[\s\S]+\} else \{[\s\S]+getThumbnailGenerator\(\)\.clear\(\);[\s\S]+\}/);
 });
 
 test('mpv pilot falls back to the normal playback path when mpv load fails', () => {
@@ -242,7 +249,7 @@ test('mpv overlay throttles live drawing snapshots but forces final drawing sync
 test('mpv external playback preserves frame seek and loop behavior', () => {
   assert.match(videoPlayerSource, /_handleLoopRestartIfNeeded\(\) \{[\s\S]+this\.seek\(this\.loop\.inPoint\);[\s\S]+this\._emit\('loopRestart'\);[\s\S]+return true;/);
   assert.match(videoPlayerSource, /video\.addEventListener\('timeupdate', \(\) => \{[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}/);
-  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}/);
+  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
 
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}/);
   assert.ok(seekToFrameMatch, 'seekToFrame should exist');
@@ -253,7 +260,7 @@ test('mpv external playback emits ended when keep-open reaches EOF', () => {
   assert.match(mpvManagerSource, /this\.getOptionalProperty\('eof-reached', false\)/);
   assert.match(videoPlayerSource, /this\._externalEndedEmitted = false;/);
   assert.match(videoPlayerSource, /const eofReached = status\.eofReached === true;/);
-  assert.match(videoPlayerSource, /this\.isPlaying = !eofReached && status\.paused === false;/);
+  assert.match(videoPlayerSource, /const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+this\.isPlaying = nextIsPlaying;/);
   assert.match(videoPlayerSource, /if \(eofReached && !this\._externalEndedEmitted\) \{[\s\S]+this\._externalEndedEmitted = true;[\s\S]+this\._emit\('ended'\);[\s\S]+\}/);
   assert.match(videoPlayerSource, /if \(!eofReached\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+\}/);
   assert.match(videoPlayerSource, /seek\(time\) \{[\s\S]+this\._externalEndedEmitted = false;/);

@@ -864,7 +864,9 @@ export class VideoPlayer extends EventTarget {
       this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
       const nextFrame = Math.floor(this.currentTime * this.fps);
       const wasPlaying = this.isPlaying;
-      this.isPlaying = !eofReached && status.paused === false;
+      const externalIsPlaying = status.paused === false;
+      const nextIsPlaying = !eofReached && externalIsPlaying;
+      this.isPlaying = externalIsPlaying;
       this.currentFrame = Math.max(0, Math.min(nextFrame, Math.max(0, this.totalFrames - 1)));
       if (!eofReached) {
         this._externalEndedEmitted = false;
@@ -876,6 +878,8 @@ export class VideoPlayer extends EventTarget {
         }
         return;
       }
+
+      this.isPlaying = nextIsPlaying;
 
       this._emit('timeupdate', {
         currentTime: this.currentTime,

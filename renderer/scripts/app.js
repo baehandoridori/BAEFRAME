@@ -5527,15 +5527,10 @@ async function initApp() {
         return cacheResult.convertedPath;
       }
 
-      const transcoded = await showTranscodeOverlay(filePath, codecInfo.codecName || '미지원 코덱');
-      if (isStaleVideoLoad()) return filePath;
-      if (transcoded?.success && transcoded.outputPath) {
-        log.info('mpv 파일럿 썸네일용 변환 파일 사용', { path: transcoded.outputPath });
-        return transcoded.outputPath;
-      }
-
-      log.warn('mpv 파일럿 썸네일용 변환 실패', { error: transcoded?.error || 'unknown' });
-      showToast('원본 재생은 mpv로 유지하지만 썸네일은 비어 있을 수 있습니다.', 'warning');
+      log.info('mpv 파일럿 썸네일 생성 건너뜀: 원본 직접 재생을 위해 변환을 기다리지 않음', {
+        codec: codecInfo.codecName || 'unknown'
+      });
+      return null;
     } catch (error) {
       log.debug('mpv 파일럿 썸네일 경로 준비 실패', { error: error.message });
     }
@@ -5913,13 +5908,19 @@ async function initApp() {
 
       // 썸네일 생성 시작 (비디오만, 트랜스코딩된 경우 변환된 파일 사용)
       if (!fileIsAudio) {
+        let shouldGenerateThumbnails = true;
         if (useMpvPilot) {
           thumbnailVideoPath = await resolveMpvThumbnailVideoPath(filePath, {
             isStaleVideoLoad
           });
           if (isStaleVideoLoad()) return false;
+          shouldGenerateThumbnails = Boolean(thumbnailVideoPath);
         }
-        await generateThumbnails(thumbnailVideoPath);
+        if (shouldGenerateThumbnails) {
+          await generateThumbnails(thumbnailVideoPath);
+        } else {
+          getThumbnailGenerator().clear();
+        }
         if (isStaleVideoLoad()) return false;
       } else {
         // 오디오 파일 로드 시 이전 비디오의 썸네일 상태 정리
