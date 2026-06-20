@@ -177,6 +177,8 @@ export class UserSettings extends EventTarget {
       localTheme: 'default',
       // 재생목록 자동 재생 (재생목록 파일과 별도인 개인 로컬 설정)
       playlistAutoPlay: false,
+      // mpv 직접 재생 파일럿 (이 PC에서만 켜는 개인 로컬 설정)
+      mpvPilotEnabled: false,
       // 최초 이름 설정 여부 (모달 한 번만 표시)
       hasSetNameOnce: false,
       // 사용자 정의 단축키 (기본값 위에 덮어씀)
@@ -649,6 +651,17 @@ export class UserSettings extends EventTarget {
     this._save();
     this._emit('playlistAutoPlayChanged', { enabled: this.settings.playlistAutoPlay });
     log.info('재생목록 자동 재생 설정 변경됨', { enabled: this.settings.playlistAutoPlay });
+  }
+
+  getMpvPilotEnabled() {
+    return this.settings.mpvPilotEnabled === true;
+  }
+
+  setMpvPilotEnabled(enabled) {
+    this.settings.mpvPilotEnabled = enabled === true;
+    this._save();
+    this._emit('mpvPilotEnabledChanged', { enabled: this.settings.mpvPilotEnabled });
+    log.info('mpv 직접 재생 파일럿 설정 변경됨', { enabled: this.settings.mpvPilotEnabled });
   }
 
   /**

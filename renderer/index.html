@@ -1372,6 +1372,7 @@
           <button class="app-settings-tab active" data-tab="profile">개인정보</button>
           <button class="app-settings-tab" data-tab="notification">알람</button>
           <button class="app-settings-tab" data-tab="theme">테마</button>
+          <button class="app-settings-tab" data-tab="playback">재생</button>
           <button class="app-settings-tab" data-tab="shortcuts">단축키</button>
         </nav>
         <div class="app-settings-divider"></div>
@@ -1489,6 +1490,21 @@
                 <span class="theme-color-label">초록</span>
               </button>
             </div>
+          </div>
+          <!-- 재생 탭 -->
+          <div class="app-settings-panel" data-panel="playback">
+            <h4 class="app-settings-section-title">재생</h4>
+            <div class="app-settings-row">
+              <div class="app-settings-row-main">
+                <label for="appSettingsMpvPilotEnabled">mpv 직접 재생 파일럿</label>
+                <p class="app-settings-hint">원본 영상을 별도 mpv 창으로 열어 코덱 변환을 건너뜁니다.</p>
+              </div>
+              <label class="settings-toggle" title="mpv 직접 재생 파일럿">
+                <input type="checkbox" id="appSettingsMpvPilotEnabled">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <p class="app-settings-hint" id="appSettingsMpvPilotStatus">mpv.exe가 없으면 기존 변환 방식으로 재생됩니다.</p>
           </div>
           <!-- 단축키 탭 -->
           <div class="app-settings-panel" data-panel="shortcuts">

@@ -10625,6 +10625,19 @@ body.audio-mode .frame-indicator {
   font-weight: 450;
 }
 
+.app-settings-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-settings-row-main .app-settings-hint {
+  margin: 0;
+  max-width: 320px;
+  line-height: 1.45;
+}
+
 .app-settings-input {
   background: var(--bg-primary);
   border: 1px solid var(--border-subtle);

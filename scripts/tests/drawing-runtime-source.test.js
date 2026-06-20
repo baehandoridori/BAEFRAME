@@ -10,8 +10,10 @@ const indexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'render
 const mainCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/main.css'), 'utf8'));
 const drawingCanvasSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-canvas.js'), 'utf8'));
 const drawingManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-manager.js'), 'utf8'));
+const drawingStrokeRecordsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-stroke-records.js'), 'utf8'));
 const drawingSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-sync.js'), 'utf8'));
 const userSettingsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/user-settings.js'), 'utf8'));
+const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
 test('drawing tools expose a persisted eraser mode segmented control', () => {
   assert.match(indexSource, /id="eraserModeSection"/);
@@ -84,4 +86,19 @@ test('drawing playback avoids noisy per-frame canvas clears and preload churn', 
   assert.match(drawingManagerSource, /_schedulePlaybackPreload\(centerFrame, options = \{\}\)/);
   assert.match(drawingManagerSource, /this\._preloadInFlight/);
   assert.match(drawingManagerSource, /this\._lastPlaybackPreloadCenterFrame/);
+});
+
+test('pen and brush strokes use bundled perfect-freehand smoothing without changing record storage', () => {
+  assert.equal(packageJson.dependencies['perfect-freehand'], '^1.2.3');
+  assert.match(packageJson.scripts['bundle:perfect-freehand'], /perfect-freehand[\s\S]+renderer\/scripts\/lib\/perfect-freehand\.js/);
+  assert.match(packageJson.scripts.postinstall, /bundle:perfect-freehand/);
+
+  assert.match(drawingCanvasSource, /import \{ drawFreehandStroke \} from '\.\/freehand-stroke-renderer\.js';/);
+  assert.match(drawingCanvasSource, /_drawSmoothedFreehandStroke\(points, options = \{\}\)/);
+  assert.match(drawingCanvasSource, /this\._drawSmoothedFreehandStroke\(this\.currentStrokePath, \{[\s\S]*?tool[\s\S]*?\}\);/);
+  assert.match(drawingCanvasSource, /this\._drawSmoothedFreehandStroke\(points, \{[\s\S]*?strokeEnabled[\s\S]*?\}\);/);
+  assert.match(drawingCanvasSource, /drawFreehandStroke\(this\.ctx, points, \{/);
+
+  assert.match(drawingStrokeRecordsSource, /points: record\.points\.map\(point => \(\{/);
+  assert.doesNotMatch(drawingStrokeRecordsSource, /smoothVersion|freehandVersion|renderMode/);
 });

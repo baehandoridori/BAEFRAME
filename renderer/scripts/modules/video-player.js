@@ -18,6 +18,10 @@ export class VideoPlayer extends EventTarget {
     this.videoElement = options.videoElement || document.getElementById('videoPlayer');
     this.container = options.container || document.getElementById('videoWrapper');
     this.fps = options.fps || 24;
+    this.engine = 'html5';
+    this.externalControls = null;
+    this._externalStatusTimer = null;
+    this._externalStatusPending = false;
 
     // 상태
     this.isLoaded = false;
@@ -26,6 +30,8 @@ export class VideoPlayer extends EventTarget {
     this.duration = 0;
     this.currentFrame = 0;
     this.totalFrames = 0;
+    this.videoWidth = 0;
+    this.videoHeight = 0;
     this.filePath = null;
 
     // 오디오 모드 플래그 (오디오 파일 재생 시 videoWidth 체크 건너뜀)
@@ -76,6 +82,8 @@ export class VideoPlayer extends EventTarget {
     // 메타데이터 로드됨
     video.addEventListener('loadedmetadata', () => {
       this.duration = video.duration;
+      this.videoWidth = video.videoWidth || 0;
+      this.videoHeight = video.videoHeight || 0;
       this.totalFrames = Math.floor(this.duration * this.fps);
       this.isLoaded = true;
 
@@ -194,11 +202,63 @@ export class VideoPlayer extends EventTarget {
     this.dispatchEvent(new CustomEvent(eventName, { detail }));
   }
 
+  useHtml5Engine() {
+    this._stopExternalStatusPolling();
+    this.engine = 'html5';
+    this.externalControls = null;
+  }
+
+  useExternalEngine(config = {}) {
+    this._stopFrameCallback();
+    this._stopExternalStatusPolling();
+
+    this.engine = config.engineName || 'external';
+    this.externalControls = config.controls || null;
+    this.filePath = config.filePath || null;
+    this.duration = Math.max(0, Number(config.duration) || 0);
+    this.fps = Math.max(1, Number(config.fps) || this.fps || 24);
+    this.totalFrames = Math.max(0, Math.floor(this.duration * this.fps));
+    this.videoWidth = Math.max(0, Number(config.width) || 0);
+    this.videoHeight = Math.max(0, Number(config.height) || 0);
+    this.currentTime = Math.max(0, Number(config.currentTime) || 0);
+    this.currentFrame = Math.floor(this.currentTime * this.fps);
+    this.isLoaded = true;
+    this.isPlaying = config.paused === false;
+
+    if (this.videoElement) {
+      this.videoElement.removeAttribute('src');
+      this.videoElement.style.display = 'none';
+    }
+
+    this._emit('loadedmetadata', {
+      duration: this.duration,
+      totalFrames: this.totalFrames,
+      fps: this.fps,
+      engine: this.engine
+    });
+    this._emit('loaded', {
+      filePath: this.filePath,
+      duration: this.duration,
+      engine: this.engine
+    });
+    this._emit('timeupdate', {
+      currentTime: this.currentTime,
+      currentFrame: this.currentFrame
+    });
+
+    this._startExternalStatusPolling();
+  }
+
   /**
    * 프레임 콜백 시작 (requestVideoFrameCallback 또는 requestAnimationFrame 폴백)
    */
   _startFrameCallback() {
     if (this._frameCallbackId) return;
+
+    if (this.engine !== 'html5') {
+      this._startExternalStatusPolling();
+      return;
+    }
 
     const video = this.videoElement;
 
@@ -259,6 +319,11 @@ export class VideoPlayer extends EventTarget {
   _stopFrameCallback() {
     if (!this._frameCallbackId) return;
 
+    if (this.engine !== 'html5') {
+      this._stopExternalStatusPolling();
+      return;
+    }
+
     const video = this.videoElement;
 
     if ('requestVideoFrameCallback' in video && video.cancelVideoFrameCallback) {
@@ -279,8 +344,16 @@ export class VideoPlayer extends EventTarget {
     const trace = log.trace('load');
 
     try {
+      if (this.engine !== 'html5') {
+        this.externalControls?.stop?.().catch?.((error) => {
+          log.warn('외부 플레이어 종료 실패', { error: error.message });
+        });
+      }
+      this.useHtml5Engine();
       this.filePath = filePath;
       this.isLoaded = false;
+      this.videoWidth = 0;
+      this.videoHeight = 0;
 
       // file:// 프로토콜로 로컬 파일 로드
       const videoUrl = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
@@ -324,6 +397,17 @@ export class VideoPlayer extends EventTarget {
     }
 
     try {
+      if (this.engine !== 'html5') {
+        const result = await this.externalControls?.play?.();
+        if (result?.success === false) {
+          throw new Error(result.error || '외부 플레이어 재생 실패');
+        }
+        this.isPlaying = true;
+        this._emit('play');
+        this._startExternalStatusPolling();
+        return true;
+      }
+
       const playPromise = this.videoElement.play();
       if (playPromise !== undefined) {
         await playPromise;
@@ -348,6 +432,15 @@ export class VideoPlayer extends EventTarget {
    * 일시정지
    */
   pause() {
+    if (this.engine !== 'html5') {
+      this.externalControls?.pause?.().catch?.((error) => {
+        log.warn('외부 플레이어 일시정지 실패', { error: error.message });
+      });
+      this.isPlaying = false;
+      this._emit('pause');
+      return;
+    }
+
     this.videoElement.pause();
     log.debug('일시정지');
   }
@@ -375,6 +468,17 @@ export class VideoPlayer extends EventTarget {
     // 내부 상태 즉시 업데이트 (timeupdate 이벤트 전에)
     this.currentTime = time;
     this.currentFrame = Math.floor(time * this.fps);
+
+    if (this.engine !== 'html5') {
+      this.externalControls.seek(time).catch?.((error) => {
+        log.warn('외부 플레이어 시간 이동 실패', { error: error.message });
+      });
+      this._emit('timeupdate', {
+        currentTime: this.currentTime,
+        currentFrame: this.currentFrame
+      });
+      return;
+    }
 
     this.videoElement.currentTime = time;
     log.debug('시간 이동', { time, frame: this.currentFrame });
@@ -479,6 +583,7 @@ export class VideoPlayer extends EventTarget {
    * @param {number} volume - 0~1
    */
   setVolume(volume) {
+    if (this.engine !== 'html5') return;
     this.videoElement.volume = Math.max(0, Math.min(1, volume));
   }
 
@@ -486,6 +591,7 @@ export class VideoPlayer extends EventTarget {
    * 음소거 토글
    */
   toggleMute() {
+    if (this.engine !== 'html5') return false;
     this.videoElement.muted = !this.videoElement.muted;
     return this.videoElement.muted;
   }
@@ -647,6 +753,12 @@ export class VideoPlayer extends EventTarget {
    * 비디오 언로드
    */
   unload() {
+    if (this.engine !== 'html5') {
+      this.externalControls?.stop?.().catch?.((error) => {
+        log.warn('외부 플레이어 종료 실패', { error: error.message });
+      });
+    }
+    this.useHtml5Engine();
     this.videoElement.src = '';
     this.videoElement.style.display = 'none';
     this.isLoaded = false;
@@ -665,6 +777,71 @@ export class VideoPlayer extends EventTarget {
 
     log.info('비디오 언로드됨');
     this._emit('unloaded');
+  }
+
+  _startExternalStatusPolling() {
+    if (this.engine === 'html5' || this._externalStatusTimer || !this.externalControls?.getStatus) return;
+
+    this._externalStatusTimer = setInterval(() => {
+      this._syncExternalStatus();
+    }, 120);
+  }
+
+  _stopExternalStatusPolling() {
+    if (this._externalStatusTimer) {
+      clearInterval(this._externalStatusTimer);
+      this._externalStatusTimer = null;
+    }
+    this._externalStatusPending = false;
+  }
+
+  async _syncExternalStatus() {
+    if (this.engine === 'html5' || !this.externalControls?.getStatus || this._externalStatusPending) return;
+
+    this._externalStatusPending = true;
+    try {
+      const status = await this.externalControls.getStatus();
+      if (!status?.success) return;
+
+      const nextTime = Number(status.time);
+      const nextDuration = Number(status.duration);
+      const nextFps = Number(status.fps);
+      if (Number.isFinite(nextDuration) && nextDuration > 0) {
+        this.duration = nextDuration;
+      }
+      if (Number.isFinite(nextFps) && nextFps > 0) {
+        this.fps = nextFps;
+      }
+      if (Number.isFinite(nextTime)) {
+        this.currentTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
+      }
+      this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
+      const nextFrame = Math.floor(this.currentTime * this.fps);
+      const wasPlaying = this.isPlaying;
+      this.isPlaying = status.paused === false;
+      this.currentFrame = Math.max(0, Math.min(nextFrame, Math.max(0, this.totalFrames - 1)));
+
+      this._emit('timeupdate', {
+        currentTime: this.currentTime,
+        currentFrame: this.currentFrame
+      });
+
+      if (this.currentFrame !== this._lastEmittedFrame) {
+        this._lastEmittedFrame = this.currentFrame;
+        this._emit('frameUpdate', {
+          frame: this.currentFrame,
+          time: this.currentTime
+        });
+      }
+
+      if (wasPlaying !== this.isPlaying) {
+        this._emit(this.isPlaying ? 'play' : 'pause');
+      }
+    } catch (error) {
+      log.debug('외부 플레이어 상태 동기화 실패', { error: error.message });
+    } finally {
+      this._externalStatusPending = false;
+    }
   }
 
   // ====== 영상 어니언 스킨 ======
