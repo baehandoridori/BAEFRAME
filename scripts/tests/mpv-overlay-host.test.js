@@ -106,7 +106,12 @@ test('creates a click-through overlay window above the viewer area', async () =>
   const overlayHtml = decodeURIComponent(events.find(([name]) => name === 'loadURL')?.[1] || '');
   assert.equal(overlayHtml.includes('__applyMpvOverlayState'), true);
   assert.equal(overlayHtml.includes('applyOverlayTransform'), true);
-  assert.equal(overlayHtml.includes("applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas, nextState)"), true);
+  assert.equal(overlayHtml.includes("applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas)"), true);
+  assert.doesNotMatch(
+    overlayHtml,
+    /function applyImage\([\s\S]*?applyOverlayTransform\(element, state\)[\s\S]*?\n    \}/
+  );
+  assert.equal(overlayHtml.includes("element.style.transform = 'none';"), true);
   assert.ok(events.some(([name]) => name === 'showInactive'));
   assert.ok(events.some(([name]) => name === 'moveTop'));
 });

@@ -246,7 +246,7 @@ const OVERLAY_HTML = `
       element.style.transformOrigin = state.markerTransformOrigin || 'center center';
     }
 
-    function applyImage(id, dataUrl, canvas, state) {
+    function applyImage(id, dataUrl, canvas) {
       const element = document.getElementById(id);
       if (!element) return;
       if (!dataUrl || !canvas || canvas.width <= 0 || canvas.height <= 0) {
@@ -260,14 +260,15 @@ const OVERLAY_HTML = `
       element.style.top = canvas.top + 'px';
       element.style.width = canvas.width + 'px';
       element.style.height = canvas.height + 'px';
-      applyOverlayTransform(element, state);
+      element.style.transform = 'none';
+      element.style.transformOrigin = 'center center';
     }
 
     window.__applyMpvOverlayState = function applyMpvOverlayState(state) {
       const nextState = state || {};
       const markerMirror = document.getElementById('markerMirror');
-      applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas, nextState);
-      applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas, nextState);
+      applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
+      applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
       markerMirror.innerHTML = nextState.markerHtml || '';
       applyOverlayTransform(markerMirror, nextState);
     };
