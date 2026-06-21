@@ -6,6 +6,7 @@ const {
   MPVManager,
   createMpvLaunchArgs,
   createMpvIpcPath,
+  createMpvIpcUniqueId,
   isMpvPilotEnabled
 } = require('../../main/mpv-manager');
 
@@ -111,6 +112,15 @@ test('creates stable platform-specific IPC paths', () => {
   assert.match(createMpvIpcPath({ platform: 'linux', pid: 77, unique: 'abc', tempDir: '/tmp' }), /^\/tmp\/baeframe-mpv-77-abc\.sock$/);
 });
 
+test('creates unique IPC suffixes for same-millisecond mpv starts', () => {
+  const first = createMpvIpcUniqueId({ now: () => 12345, random: () => 0.1 });
+  const second = createMpvIpcUniqueId({ now: () => 12345, random: () => 0.2 });
+
+  assert.notEqual(first, second);
+  assert.match(first, /^9ix-[a-z0-9]+$/);
+  assert.match(second, /^9ix-[a-z0-9]+$/);
+});
+
 test('launch args enable JSON IPC without user config', () => {
   const args = createMpvLaunchArgs({
     ipcPath: '\\\\.\\pipe\\baeframe-mpv-1-test',
@@ -135,6 +145,68 @@ test('launch args can attach mpv to an embedded window id', () => {
   assert.ok(args.includes('--border=no'));
   assert.ok(args.includes('--keepaspect-window=no'));
   assert.ok(args.includes('--cursor-autohide=always'));
+});
+
+test('launch args can use null audio and video outputs for headless metadata probes', () => {
+  const args = createMpvLaunchArgs({
+    ipcPath: '\\\\.\\pipe\\baeframe-mpv-headless',
+    forceWindow: false,
+    headless: true
+  });
+
+  assert.ok(args.includes('--force-window=no'));
+  assert.ok(args.includes('--vo=null'));
+  assert.ok(args.includes('--ao=null'));
+});
+
+test('load can start hidden no-window mpv for metadata probes', async () => {
+  const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
+  const videoPath = path.normalize('C:\\video\\shot.mov');
+  const spawned = [];
+  const commands = [];
+  const manager = createManager({
+    existing: [bundledPath, videoPath]
+  });
+  manager.spawn = (_cmd, args) => {
+    const processRef = {
+      killed: false,
+      on() {},
+      kill() {
+        this.killed = true;
+      }
+    };
+    spawned.push({ args, processRef });
+    return processRef;
+  };
+  manager._waitForIpcReady = async () => true;
+  manager.sendCommand = async (command) => {
+    commands.push(command);
+    return { error: 'success' };
+  };
+  manager.waitForPlaybackReady = async () => ({
+    success: true,
+    duration: 12.5,
+    fps: 24,
+    width: 1920,
+    height: 1080
+  });
+  manager.getStatus = async () => ({
+    success: true,
+    duration: 12.5,
+    fps: 24,
+    width: 1920,
+    height: 1080
+  });
+
+  const result = await manager.load(videoPath, { pause: true, forceWindow: false, headless: true });
+
+  assert.equal(result.duration, 12.5);
+  assert.ok(spawned[0].args.includes('--force-window=no'));
+  assert.ok(spawned[0].args.includes('--vo=null'));
+  assert.ok(spawned[0].args.includes('--ao=null'));
+  assert.ok(commands.some(command => command[0] === 'loadfile' && command[1] === videoPath));
+  assert.equal(manager.forceWindow, false);
+  assert.equal(manager.headless, true);
 });
 
 test('start restarts mpv when the embedded window id changes', async () => {

@@ -27,6 +27,7 @@ test('preload exposes a narrow mpv API surface', () => {
   assert.match(preloadSource, /mpvIsEnabled: \(\) => ipcRenderer\.invoke\('mpv:is-enabled'\)/);
   assert.match(preloadSource, /mpvIsAvailable: \(\) => ipcRenderer\.invoke\('mpv:is-available'\)/);
   assert.match(preloadSource, /mpvLoad: \(filePath, options\) => ipcRenderer\.invoke\('mpv:load', filePath, options\)/);
+  assert.match(preloadSource, /mpvProbeMetadata: \(filePath\) => ipcRenderer\.invoke\('mpv:probe-metadata', filePath\)/);
   assert.match(preloadSource, /mpvPlay: \(\) => ipcRenderer\.invoke\('mpv:play'\)/);
   assert.match(preloadSource, /mpvPause: \(\) => ipcRenderer\.invoke\('mpv:pause'\)/);
   assert.match(preloadSource, /mpvSeek: \(time\) => ipcRenderer\.invoke\('mpv:seek', time\)/);
@@ -46,13 +47,14 @@ test('preload exposes a narrow mpv API surface', () => {
 });
 
 test('main process registers mpv IPC handlers through the manager and embed host', () => {
-  assert.match(ipcSource, /const \{ mpvManager \} = require\('\.\/mpv-manager'\);/);
+  assert.match(ipcSource, /const \{ MPVManager, mpvManager \} = require\('\.\/mpv-manager'\);/);
   assert.match(ipcSource, /const \{ mpvEmbedHost \} = require\('\.\/mpv-embed-host'\);/);
   assert.match(ipcSource, /const \{ mpvOverlayHost \} = require\('\.\/mpv-overlay-host'\);/);
   for (const channel of [
     'mpv:is-enabled',
     'mpv:is-available',
     'mpv:load',
+    'mpv:probe-metadata',
     'mpv:play',
     'mpv:pause',
     'mpv:seek',
@@ -72,6 +74,8 @@ test('main process registers mpv IPC handlers through the manager and embed host
   ]) {
     assert.match(ipcSource, new RegExp(`ipcMain\\.handle\\('${channel}'`));
   }
+  assert.match(ipcSource, /ipcMain\.handle\('mpv:probe-metadata'[\s\S]+const metadataMpv = new MPVManager\(\);/);
+  assert.match(ipcSource, /metadataMpv\.load\(filePath, \{[\s\S]+forceWindow: false,[\s\S]+headless: true[\s\S]+\}\)/);
   assert.match(ipcSource, /mpvEmbedHost\.ensure\(bounds\)/);
   assert.match(ipcSource, /mpvEmbedHost\.updateBounds\(bounds\)/);
   assert.match(ipcSource, /mpvEmbedHost\.setVisible\(nextVisible\)/);
@@ -107,7 +111,7 @@ test('loadVideo checks mpv pilot before FFmpeg transcode and falls back by defau
   assert.match(loadVideoSource, /await videoPlayer\.load\(actualVideoPath\);/);
 });
 
-test('mpv pilot keeps a Chromium-decodable path for thumbnails', () => {
+test('mpv pilot skips thumbnail generation without FFmpeg probing', () => {
   const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\//);
   assert.ok(loadVideoMatch, 'loadVideo should exist');
   const loadVideoSource = loadVideoMatch[1];
@@ -116,7 +120,7 @@ test('mpv pilot keeps a Chromium-decodable path for thumbnails', () => {
   assert.ok(resolveMpvThumbnailMatch, 'resolveMpvThumbnailVideoPath should exist');
   const resolveMpvThumbnailSource = resolveMpvThumbnailMatch[0];
 
-  assert.match(resolveMpvThumbnailSource, /ffmpegProbeCodec\(filePath\)[\s\S]+ffmpegCheckCache\(filePath\)/);
+  assert.doesNotMatch(resolveMpvThumbnailSource, /window\.electronAPI\.ffmpeg/);
   assert.match(resolveMpvThumbnailSource, /return null;/);
   assert.doesNotMatch(resolveMpvThumbnailSource, /showTranscodeOverlay\(filePath/);
   assert.match(loadVideoSource, /let thumbnailVideoPath = actualVideoPath;/);
@@ -133,7 +137,7 @@ test('mpv pilot falls back to the normal playback path when mpv load fails', () 
 
   assert.match(loadVideoSource, /allowMpvPilot = true/);
   assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath: hasConvertedPreparedVideoPath \}\);/);
-  assert.match(loadVideoSource, /catch \(mpvError\) \{[\s\S]+mpv 파일럿 로드 실패, 기존 재생 방식으로 재시도[\s\S]+allowMpvPilot: false[\s\S]+return loadVideo\(filePath, fallbackOptions\);[\s\S]+\}/);
+  assert.match(loadVideoSource, /catch \(mpvError\) \{[\s\S]+mpv 파일럿 로드 실패, 기존 재생 방식으로 재시도[\s\S]+allowMpvPilot: false,[\s\S]+preparedVideoPath: preparedVideoPathIsOriginal \? null : preparedVideoPath[\s\S]+return loadVideo\(filePath, fallbackOptions\);[\s\S]+\}/);
 });
 
 test('mpv pilot can be enabled from app playback settings without an env var', () => {
@@ -156,7 +160,7 @@ test('mpv pilot can be enabled from app playback settings without an env var', (
 test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(mpvManagerSource, /this\.loadQueue = Promise\.resolve\(\);/);
   assert.match(mpvManagerSource, /async load\(filePath, options = \{\}\) \{[\s\S]+const queuedLoad = this\.loadQueue\.then\(runLoad, runLoad\);[\s\S]+this\.loadQueue = queuedLoad\.catch\(\(\) => \{\}\);[\s\S]+return queuedLoad;/);
-  assert.match(mpvManagerSource, /async _load\(filePath, options = \{\}\) \{[\s\S]+await this\.start\(\{ wid: options\.wid \}\);/);
+  assert.match(mpvManagerSource, /async _load\(filePath, options = \{\}\) \{[\s\S]+await this\.start\(\{ wid: options\.wid, forceWindow: options\.forceWindow, headless: options\.headless \}\);/);
   assert.match(mpvManagerSource, /`--wid=\$\{normalizedWid\}`/);
 
   assert.match(appSource, /function getMpvEmbedBounds\(\) \{[\s\S]+syncMpvFullscreenViewportInset\(\);[\s\S]+elements\.videoWrapper\?\.getBoundingClientRect\(\)[\s\S]+height: rect\.height/);
@@ -259,6 +263,8 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
   assert.match(loadMpvSource, /if \(isStaleVideoLoad\(\)\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+return false;[\s\S]+\}/);
   assert.match(loadMpvSource, /catch \(error\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw error;[\s\S]+\}/);
   assert.match(loadMpvSource, /if \(!loadResult\?\.success\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw new Error/);
+  assert.doesNotMatch(loadMpvSource, /ffmpegIsAvailable|ffmpegProbeCodec/);
+  assert.match(loadMpvSource, /duration: Number\(loadResult\.duration\) \|\| 0/);
   assert.match(loadMpvSource, /document\.body\.classList\.add\('mpv-pilot-mode'\);[\s\S]+mpvPilotHostPreparing = false;[\s\S]+syncMpvHostVisibilityWithDom\(\);/);
 });
 

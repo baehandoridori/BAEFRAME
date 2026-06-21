@@ -35,6 +35,15 @@ function createMpvIpcPath({
   return path.posix.join(String(tempDir).replace(/\\/g, '/'), `baeframe-mpv-${pid}-${safeUnique}.sock`);
 }
 
+function createMpvIpcUniqueId({
+  now = Date.now,
+  random = Math.random
+} = {}) {
+  const timePart = Number(now()).toString(36);
+  const randomPart = Math.floor(Number(random()) * Number.MAX_SAFE_INTEGER).toString(36);
+  return `${timePart}-${randomPart}`;
+}
+
 function normalizeMpvWid(wid) {
   if (wid === undefined || wid === null || wid === '') return null;
   const value = String(wid).trim();
@@ -57,7 +66,7 @@ function clampNumber(value, min, max, fallback) {
   return Math.max(min, Math.min(max, number));
 }
 
-function createMpvLaunchArgs({ ipcPath, forceWindow = true, wid = null } = {}) {
+function createMpvLaunchArgs({ ipcPath, forceWindow = true, wid = null, headless = false } = {}) {
   if (!ipcPath) {
     throw new Error('mpv IPC path is required');
   }
@@ -74,6 +83,10 @@ function createMpvLaunchArgs({ ipcPath, forceWindow = true, wid = null } = {}) {
     '--hwdec=auto',
     `--input-ipc-server=${ipcPath}`
   ];
+
+  if (headless) {
+    args.push('--vo=null', '--ao=null');
+  }
 
   if (normalizedWid) {
     args.push(
@@ -98,6 +111,7 @@ class MPVManager {
     this.execFile = options.execFile || execFile;
     this.logger = options.logger || log;
     this.now = options.now || (() => Date.now());
+    this.random = options.random || Math.random;
     this.tempDir = options.tempDir || os.tmpdir();
 
     this.appRoot = options.appRoot || path.join(__dirname, '..');
@@ -110,6 +124,8 @@ class MPVManager {
     this.process = null;
     this.requestId = 0;
     this.embeddedWid = null;
+    this.forceWindow = true;
+    this.headless = false;
     this.loadQueue = Promise.resolve();
   }
 
@@ -157,7 +173,7 @@ class MPVManager {
       throw new Error(`mpv load file not found: ${filePath}`);
     }
 
-    await this.start({ wid: options.wid });
+    await this.start({ wid: options.wid, forceWindow: options.forceWindow, headless: options.headless });
     await this.sendCommand(['loadfile', filePath, 'replace']);
     await this.waitForPlaybackReady(filePath);
     if (options.videoTransform) {
@@ -329,7 +345,17 @@ class MPVManager {
 
     const hasWidOption = Object.prototype.hasOwnProperty.call(options, 'wid');
     const requestedWid = hasWidOption ? normalizeMpvWid(options.wid) : this.embeddedWid;
-    if (this.process && !this.process.killed && this.embeddedWid !== requestedWid) {
+    const requestedForceWindow = options.forceWindow !== false;
+    const requestedHeadless = options.headless === true;
+    if (
+      this.process &&
+      !this.process.killed &&
+      (
+        this.embeddedWid !== requestedWid ||
+        this.forceWindow !== requestedForceWindow ||
+        this.headless !== requestedHeadless
+      )
+    ) {
       await this.stop();
     }
 
@@ -340,13 +366,20 @@ class MPVManager {
     this.ipcPath = createMpvIpcPath({
       platform: this.platform,
       pid: this.processPid,
-      unique: this.now().toString(36),
+      unique: createMpvIpcUniqueId({ now: this.now, random: this.random }),
       tempDir: this.tempDir
     });
 
-    const args = createMpvLaunchArgs({ ipcPath: this.ipcPath, forceWindow: true, wid: requestedWid });
+    const args = createMpvLaunchArgs({
+      ipcPath: this.ipcPath,
+      forceWindow: requestedForceWindow,
+      wid: requestedWid,
+      headless: requestedHeadless
+    });
     this.logger.info('starting mpv pilot process', { mpvPath: this.mpvPath, args });
     this.embeddedWid = requestedWid;
+    this.forceWindow = requestedForceWindow;
+    this.headless = requestedHeadless;
 
     const processRef = this.spawn(this.mpvPath, args, {
       stdio: 'ignore',
@@ -391,6 +424,8 @@ class MPVManager {
 
     this.process = null;
     this.embeddedWid = null;
+    this.forceWindow = true;
+    this.headless = false;
     return { success: true, stopped: true };
   }
 
@@ -575,6 +610,7 @@ const mpvManager = new MPVManager();
 module.exports = {
   MPVManager,
   createMpvIpcPath,
+  createMpvIpcUniqueId,
   createMpvLaunchArgs,
   isMpvPilotEnabled,
   mpvManager

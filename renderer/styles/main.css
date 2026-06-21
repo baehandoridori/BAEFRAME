@@ -4484,6 +4484,69 @@ body.app-fullscreen .video-comment-overlay-controls {
   gap: 8px;
 }
 
+.playlist-comment-reply-toggle {
+  padding: 2px 6px;
+  min-height: 22px;
+  font-size: 11px;
+}
+
+.playlist-comment-reply-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.playlist-comment-reply-form[hidden] {
+  display: none;
+}
+
+.playlist-comment-reply-input {
+  flex: 1;
+  min-height: 34px;
+  max-height: 140px;
+  padding: 8px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  outline: none;
+  resize: none;
+  overflow-y: hidden;
+}
+
+.playlist-comment-reply-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.playlist-comment-reply-submit {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  background: var(--accent-primary);
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.playlist-comment-reply-submit:hover {
+  background: var(--accent-secondary);
+}
+
+.playlist-comment-reply-submit:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .comment-item.glow {
   animation: commentGlow 2.5s ease-out;
 }
@@ -6805,6 +6868,9 @@ body.resizing .comment-panel {
   font-size: 12px;
   outline: none;
   resize: none;
+  min-height: 34px;
+  max-height: 150px;
+  overflow-y: hidden;
 }
 
 .comment-reply-input:focus {
