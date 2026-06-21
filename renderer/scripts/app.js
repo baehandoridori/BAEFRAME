@@ -5195,6 +5195,17 @@ async function initApp() {
       .some(isElementVisiblyBlockingMpv);
   }
 
+  function didMpvHostVisibilityApply(result, shouldShowMpvHost) {
+    if (!result?.success) return false;
+    if (shouldShowMpvHost) return true;
+    return result.embed?.ready === true && result.overlay?.ready === true;
+  }
+
+  function forceMpvHostVisibilitySync() {
+    mpvHostLastRequestedVisible = null;
+    syncMpvHostVisibilityWithDom();
+  }
+
   function syncMpvHostVisibilityWithDom() {
     if (!mpvPilotHostPreparing && !document.body.classList.contains('mpv-pilot-mode')) return;
     if (!window.electronAPI?.mpvSetHostVisible) return;
@@ -5208,7 +5219,7 @@ async function initApp() {
 
       try {
         const result = await window.electronAPI.mpvSetHostVisible(shouldShowMpvHost);
-        if (result?.success && (result.embed?.ready || result.overlay?.ready || shouldShowMpvHost)) {
+        if (didMpvHostVisibilityApply(result, shouldShowMpvHost)) {
           mpvHostLastRequestedVisible = shouldShowMpvHost;
         }
       } catch (error) {
@@ -5297,7 +5308,7 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareEmbed(bounds);
     if (result?.success && result.wid) {
-      syncMpvHostVisibilityWithDom();
+      forceMpvHostVisibilitySync();
       return result;
     }
 
@@ -5315,7 +5326,7 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareOverlay(bounds);
     if (result?.success) {
-      syncMpvHostVisibilityWithDom();
+      forceMpvHostVisibilitySync();
       return result;
     }
 
