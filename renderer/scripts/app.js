@@ -13428,8 +13428,9 @@ async function initApp() {
   }
 
   function hasContinuousPlaybackReachedMediaEnd(snapshot = getContinuousPlaybackSnapshot()) {
-    if (snapshot.externalEofReached === true) return true;
-    return snapshot.duration > 0 && snapshot.duration - snapshot.currentTime <= 0.25 && snapshot.ended === true;
+    const nearMediaEnd = snapshot.duration > 0 && snapshot.duration - snapshot.currentTime <= 0.25;
+    if (snapshot.externalEofReached === true) return nearMediaEnd;
+    return nearMediaEnd && snapshot.ended === true;
   }
 
   function waitForContinuousMediaReady(timeoutMs = 1200) {

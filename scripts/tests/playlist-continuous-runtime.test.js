@@ -398,8 +398,10 @@ test('continuous playback only advances on confirmed media end', () => {
   assert.match(appSource, /const externalEofReached = videoPlayer\.externalEofReached === true;/);
   assert.match(appSource, /ended: externalEofReached \|\| \(duration > 0 && duration - currentTime <= 0\.25 && !videoPlayer\.isPlaying\),/);
   assert.match(appSource, /externalEofReached,/);
-  assert.match(appSource, /if \(snapshot\.externalEofReached === true\) return true;/);
-  assert.match(appSource, /return snapshot\.duration > 0 && snapshot\.duration - snapshot\.currentTime <= 0\.25 && snapshot\.ended === true;/);
+  assert.match(appSource, /const nearMediaEnd = snapshot\.duration > 0 && snapshot\.duration - snapshot\.currentTime <= 0\.25;/);
+  assert.match(appSource, /if \(snapshot\.externalEofReached === true\) return nearMediaEnd;/);
+  assert.match(appSource, /return nearMediaEnd && snapshot\.ended === true;/);
+  assert.doesNotMatch(appSource, /if \(snapshot\.externalEofReached === true\) return true;/);
 
   const endedListenerMatch = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);
   assert.ok(endedListenerMatch, 'videoPlayer ended listener should exist');
