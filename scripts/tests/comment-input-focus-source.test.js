@@ -68,3 +68,17 @@ test('playlist aggregate comments can submit inline replies from the sidebar lis
   assert.match(appSource, /commentManager\.addReplyToMarker\(activeRange\.markerId, text, commentManager\.getAuthor\(\)\)/);
   assert.match(appSource, /activeRange\.replies = \[\.\.\.\(activeRange\.replies \|\| \[\]\), reply\];/);
 });
+
+test('playlist aggregate comment rerenders detach reply editors before empty state', () => {
+  const renderStart = appSource.indexOf('  function renderPlaylistContinuousCommentList');
+  assert.ok(renderStart >= 0, 'playlist aggregate comment renderer should exist');
+  const renderEnd = appSource.indexOf('  function getCutlistAggregateCommentKey', renderStart);
+  assert.ok(renderEnd > renderStart, 'playlist aggregate comment renderer should have a bounded body');
+  const renderSource = appSource.slice(renderStart, renderEnd);
+
+  const detachIndex = renderSource.indexOf("container.querySelectorAll('.playlist-comment-reply-input').forEach");
+  const emptyIndex = renderSource.indexOf('if (ranges.length === 0)');
+  assert.ok(detachIndex >= 0, 'reply editors should be detached during playlist comment rerender');
+  assert.ok(emptyIndex >= 0, 'playlist comment renderer should handle empty results');
+  assert.ok(detachIndex < emptyIndex, 'reply editors should be detached before empty-state innerHTML replacement');
+});

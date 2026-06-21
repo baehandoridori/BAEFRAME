@@ -7728,6 +7728,10 @@ async function initApp() {
 
     updateFeedbackProgress(authorFilteredRanges.length, resolvedCount);
 
+    container.querySelectorAll('.playlist-comment-reply-input').forEach(el => {
+      mentionManager.detach(el);
+    });
+
     if (ranges.length === 0) {
       const emptyTitle = normalizedSearch ? '검색 결과가 없습니다' : '재생목록 댓글이 없습니다';
       const emptyHint = normalizedSearch
@@ -7743,10 +7747,6 @@ async function initApp() {
       `;
       return;
     }
-
-    container.querySelectorAll('.playlist-comment-reply-input').forEach(el => {
-      mentionManager.detach(el);
-    });
 
     container.innerHTML = ranges.map(range => {
       const key = getPlaylistAggregateCommentKey(range);
