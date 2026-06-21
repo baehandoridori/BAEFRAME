@@ -875,8 +875,7 @@ export class VideoPlayer extends EventTarget {
       const nextFps = Number(status.fps);
       const nextWidth = Number(status.width);
       const nextHeight = Number(status.height);
-      const eofReached = status.eofReached === true;
-      this.externalEofReached = eofReached;
+      const rawEofReached = status.eofReached === true;
       let metadataChanged = false;
       if (Number.isFinite(nextDuration) && nextDuration > 0 && this.duration !== nextDuration) {
         this.duration = nextDuration;
@@ -898,6 +897,8 @@ export class VideoPlayer extends EventTarget {
         this.currentTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
       }
       this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
+      const eofReached = rawEofReached && this.duration > 0 && this.duration - this.currentTime <= 0.25;
+      this.externalEofReached = eofReached;
       if (metadataChanged) {
         this._emit('loadedmetadata', {
           duration: this.duration,
