@@ -272,8 +272,9 @@ async function initApp() {
     }
 
     if (editor.isContentEditable) {
-      const maxHeight = Number(editor.dataset.maxAutoHeight) || 220;
-      editor.style.overflowY = editor.scrollHeight > maxHeight ? 'auto' : 'hidden';
+      const computedMaxHeight = Number.parseFloat(getComputedStyle(editor).maxHeight);
+      const maxHeight = Number(editor.dataset.maxAutoHeight) || (Number.isFinite(computedMaxHeight) ? computedMaxHeight : 220);
+      editor.style.overflowY = editor.scrollHeight > maxHeight ? 'auto' : '';
     }
   }
 
