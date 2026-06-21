@@ -13470,8 +13470,7 @@ async function initApp() {
 
     const snapshot = getContinuousPlaybackSnapshot();
     const startTime = snapshot.currentTime;
-    const duration = snapshot.duration;
-    if (duration > 0 && duration - startTime <= 0.25) return Promise.resolve(true);
+    if (hasContinuousPlaybackReachedMediaEnd(snapshot)) return Promise.resolve(true);
 
     return new Promise(resolve => {
       let settled = false;
@@ -13505,11 +13504,7 @@ async function initApp() {
           return;
         }
         const currentSnapshot = getContinuousPlaybackSnapshot();
-        if (hasAdvanced() || currentSnapshot.ended) {
-          finish(true);
-          return;
-        }
-        if (currentSnapshot.paused && !videoPlayer.isPlaying) {
+        if (hasAdvanced() || hasContinuousPlaybackReachedMediaEnd(currentSnapshot)) {
           finish(true);
           return;
         }
