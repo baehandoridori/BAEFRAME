@@ -348,6 +348,7 @@ class MPVOverlayHost {
     this.parentShowHandler = null;
     this.parentClosedHandler = null;
     this.repositionPending = false;
+    this.requestedVisible = true;
   }
 
   async ensure(bounds) {
@@ -371,7 +372,11 @@ class MPVOverlayHost {
       }
     }
 
-    this._showOverlayWindow(mainWindow);
+    if (this.requestedVisible === false) {
+      this._hideOverlayWindow();
+    } else {
+      this._showOverlayWindow(mainWindow);
+    }
     return { success: true, bounds: screenBounds };
   }
 
@@ -411,11 +416,13 @@ class MPVOverlayHost {
   }
 
   setVisible(visible) {
+    const nextVisible = visible !== false;
+    this.requestedVisible = nextVisible;
+
     if (!this.window || this.window.isDestroyed?.()) {
-      return { success: true, visible: false, ready: false };
+      return { success: true, visible: nextVisible, ready: false };
     }
 
-    const nextVisible = visible !== false;
     if (nextVisible) {
       this._repositionToParent();
       this._showOverlayWindow(this.parentWindow || this.getMainWindow());
@@ -431,6 +438,7 @@ class MPVOverlayHost {
     this.window = null;
     this.contentLoaded = false;
     this.lastBounds = null;
+    this.requestedVisible = true;
     this._unbindParentWindow();
 
     if (!hostWindow || hostWindow.isDestroyed?.()) {
@@ -491,7 +499,11 @@ class MPVOverlayHost {
     };
     this.parentShowHandler = () => {
       this._repositionToParent();
-      this._showOverlayWindow(parent);
+      if (this.requestedVisible === false) {
+        this._hideOverlayWindow();
+      } else {
+        this._showOverlayWindow(parent);
+      }
     };
     this.parentClosedHandler = () => {
       this.destroy();

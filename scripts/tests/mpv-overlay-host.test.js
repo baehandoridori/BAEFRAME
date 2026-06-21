@@ -255,6 +255,7 @@ test('repositions and hides overlay with the parent window', async () => {
       this.bounds = null;
       this.visible = false;
       this.destroyed = false;
+      this.showCount = 0;
     }
     loadURL() {
       return Promise.resolve();
@@ -265,6 +266,7 @@ test('repositions and hides overlay with the parent window', async () => {
     setIgnoreMouseEvents() {}
     showInactive() {
       this.visible = true;
+      this.showCount += 1;
     }
     moveTop() {}
     hide() {
@@ -300,4 +302,14 @@ test('repositions and hides overlay with the parent window', async () => {
 
   assert.equal(host.window.visible, true);
   assert.deepEqual(host.window.bounds, { x: 150, y: 180, width: 640, height: 360 });
+
+  const showCountBeforeHiddenRestore = host.window.showCount;
+  host.setVisible(false);
+  for (const handler of listeners.get('restore') || []) {
+    handler();
+  }
+  await waitForAsyncReposition();
+
+  assert.equal(host.window.visible, false);
+  assert.equal(host.window.showCount, showCountBeforeHiddenRestore);
 });

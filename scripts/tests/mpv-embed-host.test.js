@@ -336,6 +336,16 @@ test('hides the host while the parent is minimized and restores it with fresh bo
   assert.equal(host.window.visible, true);
   assert.deepEqual(host.window.bounds, { x: 150, y: 180, width: 640, height: 360 });
   assert.ok(host.window.events.some(([name]) => name === 'showInactive'));
+
+  const showCountBeforeHiddenRestore = host.window.events.filter(([name]) => name === 'showInactive').length;
+  host.setVisible(false);
+  for (const handler of listeners.get('restore') || []) {
+    handler();
+  }
+  await waitForAsyncReposition();
+
+  assert.equal(host.window.visible, false);
+  assert.equal(host.window.events.filter(([name]) => name === 'showInactive').length, showCountBeforeHiddenRestore);
 });
 
 test('destroys the host and unbinds parent listeners when the parent closes', async () => {
