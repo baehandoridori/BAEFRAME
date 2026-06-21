@@ -145,6 +145,58 @@ test('updates and destroys an existing host window', async () => {
   assert.equal(host.window, null);
 });
 
+test('hides and restores an embedded host without destroying playback', async () => {
+  const events = [];
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    isMinimized: () => false,
+    getContentBounds: () => ({ x: 20, y: 30, width: 800, height: 600 })
+  };
+  class FakeBrowserWindow {
+    constructor() {
+      this.destroyed = false;
+    }
+    loadURL() {
+      return Promise.resolve();
+    }
+    setBounds(bounds) {
+      events.push(['setBounds', bounds]);
+    }
+    showInactive() {
+      events.push(['showInactive']);
+    }
+    hide() {
+      events.push(['hide']);
+    }
+    isDestroyed() {
+      return this.destroyed;
+    }
+    getNativeWindowHandle() {
+      return createHandleBuffer(99);
+    }
+    on() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVEmbedHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow,
+    platform: 'win32'
+  });
+
+  await host.ensure({ x: 1, y: 2, width: 300, height: 200 });
+  const hideResult = host.setVisible(false);
+  const showResult = host.setVisible(true);
+
+  assert.deepEqual(hideResult, { success: true, visible: false, ready: true });
+  assert.deepEqual(showResult, { success: true, visible: true, ready: true });
+  assert.ok(events.some(([name]) => name === 'hide'));
+  assert.ok(events.filter(([name]) => name === 'showInactive').length >= 2);
+  assert.equal(host.window.isDestroyed(), false);
+});
+
 test('repositions the host window when the parent window moves', async () => {
   const listeners = new Map();
   let contentBounds = { x: 100, y: 80, width: 1200, height: 800 };
@@ -284,6 +336,16 @@ test('hides the host while the parent is minimized and restores it with fresh bo
   assert.equal(host.window.visible, true);
   assert.deepEqual(host.window.bounds, { x: 150, y: 180, width: 640, height: 360 });
   assert.ok(host.window.events.some(([name]) => name === 'showInactive'));
+
+  const showCountBeforeHiddenRestore = host.window.events.filter(([name]) => name === 'showInactive').length;
+  host.setVisible(false);
+  for (const handler of listeners.get('restore') || []) {
+    handler();
+  }
+  await waitForAsyncReposition();
+
+  assert.equal(host.window.visible, false);
+  assert.equal(host.window.events.filter(([name]) => name === 'showInactive').length, showCountBeforeHiddenRestore);
 });
 
 test('destroys the host and unbinds parent listeners when the parent closes', async () => {

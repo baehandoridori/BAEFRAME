@@ -16,6 +16,7 @@ test('normalizes overlay state to bounded serializable fields', () => {
     onionDataUrl: 'file://not-allowed',
     markerHtml: '<div class="comment-marker"></div>',
     tooltipHtml: '<div class="comment-marker-tooltip visible"></div>',
+    htmlOverlayHtml: '<div class="current-cut-overlay">Cut 01</div>',
     canvas: { left: 10.4, top: 20.6, width: 640.2, height: 360.7 },
     markerTransform: 'scale(2) translate(1px, 2px)',
     markerTransformOrigin: 'center center'
@@ -26,6 +27,7 @@ test('normalizes overlay state to bounded serializable fields', () => {
   assert.equal(state.onionDataUrl, '');
   assert.equal(state.markerHtml, '<div class="comment-marker"></div>');
   assert.equal(state.tooltipHtml, '<div class="comment-marker-tooltip visible"></div>');
+  assert.equal(state.htmlOverlayHtml, '<div class="current-cut-overlay">Cut 01</div>');
   assert.equal(state.markerTransform, 'scale(2) translate(1px, 2px)');
   assert.equal(state.markerTransformOrigin, 'center center');
 });
@@ -108,6 +110,7 @@ test('creates a click-through overlay window above the viewer area', async () =>
   const overlayHtml = decodeURIComponent(events.find(([name]) => name === 'loadURL')?.[1] || '');
   assert.equal(overlayHtml.includes('__applyMpvOverlayState'), true);
   assert.equal(overlayHtml.includes('applyOverlayTransform'), true);
+  assert.equal(overlayHtml.includes('htmlOverlay'), true);
   assert.equal(overlayHtml.includes('tooltipMirror'), true);
   assert.equal(overlayHtml.includes("applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas)"), true);
   assert.doesNotMatch(
@@ -116,6 +119,7 @@ test('creates a click-through overlay window above the viewer area', async () =>
   );
   assert.equal(overlayHtml.includes("element.style.transform = 'none';"), true);
   assert.equal(overlayHtml.includes('tooltipMirror.innerHTML = nextState.tooltipHtml'), true);
+  assert.equal(overlayHtml.includes('htmlOverlay.innerHTML = nextState.htmlOverlayHtml'), true);
   assert.equal(overlayHtml.includes("tooltipMirror.style.transform = 'none';"), true);
   assert.ok(events.some(([name]) => name === 'showInactive'));
   assert.ok(events.some(([name]) => name === 'moveTop'));
@@ -160,6 +164,7 @@ test('updates overlay state through the isolated overlay document', async () => 
   await host.ensure({ x: 0, y: 0, width: 300, height: 200 });
   const result = await host.updateState({
     markerHtml: '<div class="comment-marker pending"></div>',
+    htmlOverlayHtml: '<div class="current-cut-overlay">Cut 01</div>',
     drawingDataUrl: 'data:image/png;base64,draw',
     canvas: { left: 1, top: 2, width: 3, height: 4 }
   });
@@ -168,7 +173,63 @@ test('updates overlay state through the isolated overlay document', async () => 
   assert.equal(scripts.length, 1);
   assert.match(scripts[0], /window\.__applyMpvOverlayState/);
   assert.match(scripts[0], /comment-marker pending/);
+  assert.match(scripts[0], /current-cut-overlay/);
   assert.match(scripts[0], /data:image\/png;base64,draw/);
+});
+
+test('hides and restores the native overlay host with the mpv embed host', async () => {
+  const events = [];
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    isMinimized: () => false,
+    getContentBounds: () => ({ x: 20, y: 30, width: 1200, height: 800 })
+  };
+  class FakeBrowserWindow {
+    constructor() {
+      this.destroyed = false;
+      this.webContents = {
+        executeJavaScript: async () => {}
+      };
+    }
+    loadURL() {
+      return Promise.resolve();
+    }
+    setBounds(bounds) {
+      events.push(['setBounds', bounds]);
+    }
+    showInactive() {
+      events.push(['showInactive']);
+    }
+    hide() {
+      events.push(['hide']);
+    }
+    moveTop() {
+      events.push(['moveTop']);
+    }
+    setIgnoreMouseEvents() {}
+    isDestroyed() {
+      return this.destroyed;
+    }
+    on() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow
+  });
+
+  await host.ensure({ x: 1, y: 2, width: 300, height: 200 });
+  const hideResult = host.setVisible(false);
+  const showResult = host.setVisible(true);
+
+  assert.deepEqual(hideResult, { success: true, visible: false, ready: true });
+  assert.deepEqual(showResult, { success: true, visible: true, ready: true });
+  assert.ok(events.some(([name]) => name === 'hide'));
+  assert.ok(events.filter(([name]) => name === 'showInactive').length >= 2);
+  assert.equal(host.window.isDestroyed(), false);
 });
 
 test('repositions and hides overlay with the parent window', async () => {
@@ -194,6 +255,7 @@ test('repositions and hides overlay with the parent window', async () => {
       this.bounds = null;
       this.visible = false;
       this.destroyed = false;
+      this.showCount = 0;
     }
     loadURL() {
       return Promise.resolve();
@@ -204,6 +266,7 @@ test('repositions and hides overlay with the parent window', async () => {
     setIgnoreMouseEvents() {}
     showInactive() {
       this.visible = true;
+      this.showCount += 1;
     }
     moveTop() {}
     hide() {
@@ -239,4 +302,14 @@ test('repositions and hides overlay with the parent window', async () => {
 
   assert.equal(host.window.visible, true);
   assert.deepEqual(host.window.bounds, { x: 150, y: 180, width: 640, height: 360 });
+
+  const showCountBeforeHiddenRestore = host.window.showCount;
+  host.setVisible(false);
+  for (const handler of listeners.get('restore') || []) {
+    handler();
+  }
+  await waitForAsyncReposition();
+
+  assert.equal(host.window.visible, false);
+  assert.equal(host.window.showCount, showCountBeforeHiddenRestore);
 });

@@ -23,6 +23,7 @@ export class VideoPlayer extends EventTarget {
     this._externalStatusTimer = null;
     this._externalStatusPending = false;
     this._externalEndedEmitted = false;
+    this.externalEofReached = false;
 
     // 상태
     this.isLoaded = false;
@@ -218,6 +219,7 @@ export class VideoPlayer extends EventTarget {
     this.engine = 'html5';
     this.externalControls = null;
     this._externalEndedEmitted = false;
+    this.externalEofReached = false;
 
     if (wasExternalPlaying) {
       this.isPlaying = false;
@@ -232,6 +234,7 @@ export class VideoPlayer extends EventTarget {
     this.engine = config.engineName || 'external';
     this.externalControls = config.controls || null;
     this._externalEndedEmitted = false;
+    this.externalEofReached = false;
     this.filePath = config.filePath || null;
     this.duration = Math.max(0, Number(config.duration) || 0);
     this.fps = Math.max(1, Number(config.fps) || this.fps || 24);
@@ -419,6 +422,7 @@ export class VideoPlayer extends EventTarget {
     try {
       if (this.engine !== 'html5') {
         this._externalEndedEmitted = false;
+        this.externalEofReached = false;
         const result = await this.externalControls?.play?.();
         if (result?.success === false) {
           throw new Error(result.error || '외부 플레이어 재생 실패');
@@ -486,6 +490,7 @@ export class VideoPlayer extends EventTarget {
 
     time = Math.max(0, Math.min(time, this.duration));
     this._externalEndedEmitted = false;
+    this.externalEofReached = false;
 
     // 내부 상태 즉시 업데이트 (timeupdate 이벤트 전에)
     this.currentTime = time;
@@ -870,7 +875,7 @@ export class VideoPlayer extends EventTarget {
       const nextFps = Number(status.fps);
       const nextWidth = Number(status.width);
       const nextHeight = Number(status.height);
-      const eofReached = status.eofReached === true;
+      const rawEofReached = status.eofReached === true;
       let metadataChanged = false;
       if (Number.isFinite(nextDuration) && nextDuration > 0 && this.duration !== nextDuration) {
         this.duration = nextDuration;
@@ -892,6 +897,9 @@ export class VideoPlayer extends EventTarget {
         this.currentTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
       }
       this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
+      const hasKnownDuration = this.duration > 0;
+      const eofReached = rawEofReached && (!hasKnownDuration || this.duration - this.currentTime <= 0.25);
+      this.externalEofReached = eofReached;
       if (metadataChanged) {
         this._emit('loadedmetadata', {
           duration: this.duration,

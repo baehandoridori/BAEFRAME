@@ -374,6 +374,48 @@ test('continuous playback verifies that native playback actually advances', () =
   assert.match(appSource, /const started = await playContinuousItemWithWatchdog\(nextItem, sessionId\);[\s\S]+if \(!started\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
 });
 
+test('continuous playback watchdog uses VideoPlayer state for external engines', () => {
+  const readyMatch = appSource.match(/function waitForContinuousMediaReady\(timeoutMs = 1200\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousPlaybackAdvance/);
+  assert.ok(readyMatch, 'waitForContinuousMediaReady should exist');
+  assert.match(readyMatch[1], /if \(videoPlayer\.engine !== 'html5'\) \{[\s\S]+return Promise\.resolve\(videoPlayer\.isLoaded === true\);/);
+
+  const advanceMatch = appSource.match(/function waitForContinuousPlaybackAdvance\(sessionId, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  async function playContinuousItemWithWatchdog/);
+  assert.ok(advanceMatch, 'waitForContinuousPlaybackAdvance should exist');
+  const advanceSource = advanceMatch[1];
+  assert.match(advanceSource, /const snapshot = getContinuousPlaybackSnapshot\(\);/);
+  assert.match(advanceSource, /const startTime = snapshot\.currentTime;/);
+  assert.match(advanceSource, /if \(hasContinuousPlaybackReachedMediaEnd\(snapshot\)\) return Promise\.resolve\(true\);/);
+  assert.match(advanceSource, /const currentSnapshot = getContinuousPlaybackSnapshot\(\);/);
+  assert.match(advanceSource, /return currentSnapshot\.currentTime - startTime >= minDelta;/);
+  assert.match(advanceSource, /hasAdvanced\(\) \|\| hasContinuousPlaybackReachedMediaEnd\(currentSnapshot\)/);
+  assert.doesNotMatch(advanceSource, /currentSnapshot\.paused && !videoPlayer\.isPlaying[\s\S]+finish\(true\)/);
+  assert.doesNotMatch(advanceSource, /media\.currentTime \|\| videoPlayer\.currentTime/);
+  assert.doesNotMatch(advanceSource, /media\.duration \|\| videoPlayer\.duration/);
+});
+
+test('continuous playback only advances on confirmed media end', () => {
+  assert.match(appSource, /function hasContinuousPlaybackReachedMediaEnd\(snapshot = getContinuousPlaybackSnapshot\(\)\) \{/);
+  assert.match(appSource, /const externalEofReached = videoPlayer\.externalEofReached === true;/);
+  assert.match(appSource, /ended: externalEofReached \|\| \(duration > 0 && duration - currentTime <= 0\.25 && !videoPlayer\.isPlaying\),/);
+  assert.match(appSource, /externalEofReached,/);
+  assert.match(appSource, /const hasKnownDuration = snapshot\.duration > 0;/);
+  assert.match(appSource, /const nearMediaEnd = hasKnownDuration && snapshot\.duration - snapshot\.currentTime <= 0\.25;/);
+  assert.match(appSource, /if \(snapshot\.externalEofReached === true\) return !hasKnownDuration \|\| nearMediaEnd;/);
+  assert.match(appSource, /return nearMediaEnd && snapshot\.ended === true;/);
+  assert.doesNotMatch(appSource, /if \(snapshot\.externalEofReached === true\) return true;/);
+
+  const endedListenerMatch = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(endedListenerMatch, 'videoPlayer ended listener should exist');
+  const endedListenerSource = endedListenerMatch[1];
+  assert.match(endedListenerSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+if \(!hasContinuousPlaybackReachedMediaEnd\(\)\) \{[\s\S]+return;[\s\S]+playNextContinuousItem\(continuousPlaybackState\.sessionId\);/);
+
+  const advanceMatch = appSource.match(/function waitForContinuousPlaybackAdvance\(sessionId, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  async function playContinuousItemWithWatchdog/);
+  assert.ok(advanceMatch, 'waitForContinuousPlaybackAdvance should exist');
+  const advanceSource = advanceMatch[1];
+  assert.match(advanceSource, /const onEnded = \(\) => \{[\s\S]+if \(hasContinuousPlaybackReachedMediaEnd\(\)\) finish\(true\);[\s\S]+\};/);
+  assert.doesNotMatch(advanceSource, /const onEnded = \(\) => finish\(true\);/);
+});
+
 test('continuous mode keeps timeline tools separate from autoplay control', () => {
   const indexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8'));
   assert.match(indexSource, /id="playlistTabReview"[\s\S]*?>개별영상 모드<\/button>/);
@@ -461,7 +503,7 @@ test('continuous selection does not auto-load before preparation finishes', () =
 });
 
 test('ended event routes active continuous playback before normal autoplay', () => {
-  assert.match(appSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+playNextContinuousItem\(continuousPlaybackState\.sessionId\);[\s\S]+return;[\s\S]+if \(playlistManager\.isActive\(\) && userSettings\.getPlaylistAutoPlay\(\)/);
+  assert.match(appSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+hasContinuousPlaybackReachedMediaEnd\(\)[\s\S]+playNextContinuousItem\(continuousPlaybackState\.sessionId\);[\s\S]+return;[\s\S]+if \(playlistManager\.isActive\(\) && userSettings\.getPlaylistAutoPlay\(\)/);
 });
 
 test('manual video loads cancel active continuous playback and stale loads', () => {

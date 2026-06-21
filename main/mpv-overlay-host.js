@@ -75,11 +75,15 @@ const OVERLAY_HTML = `
       z-index: 3;
     }
     #markerMirror,
-    #tooltipMirror {
+    #tooltipMirror,
+    #htmlOverlay {
       position: absolute;
       inset: 0;
       z-index: 15;
       pointer-events: none;
+    }
+    #htmlOverlay {
+      z-index: 14;
     }
     #tooltipMirror {
       z-index: 16;
@@ -243,6 +247,7 @@ const OVERLAY_HTML = `
   <div id="overlayRoot">
     <img id="onionCanvasMirror" class="mirror-canvas" alt="">
     <img id="drawingCanvasMirror" class="mirror-canvas" alt="">
+    <div id="htmlOverlay"></div>
     <div id="markerMirror"></div>
     <div id="tooltipMirror"></div>
   </div>
@@ -272,10 +277,12 @@ const OVERLAY_HTML = `
 
     window.__applyMpvOverlayState = function applyMpvOverlayState(state) {
       const nextState = state || {};
+      const htmlOverlay = document.getElementById('htmlOverlay');
       const markerMirror = document.getElementById('markerMirror');
       const tooltipMirror = document.getElementById('tooltipMirror');
       applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
       applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
+      htmlOverlay.innerHTML = nextState.htmlOverlayHtml || '';
       markerMirror.innerHTML = nextState.markerHtml || '';
       tooltipMirror.innerHTML = nextState.tooltipHtml || '';
       applyOverlayTransform(markerMirror, nextState);
@@ -313,6 +320,7 @@ function normalizeOverlayState(state = {}) {
     onionDataUrl: normalizeImageDataUrl(state.onionDataUrl),
     markerHtml: typeof state.markerHtml === 'string' ? state.markerHtml : '',
     tooltipHtml: typeof state.tooltipHtml === 'string' ? state.tooltipHtml : '',
+    htmlOverlayHtml: typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : '',
     markerTransform: typeof state.markerTransform === 'string' ? state.markerTransform : '',
     markerTransformOrigin: typeof state.markerTransformOrigin === 'string'
       ? state.markerTransformOrigin
@@ -340,6 +348,7 @@ class MPVOverlayHost {
     this.parentShowHandler = null;
     this.parentClosedHandler = null;
     this.repositionPending = false;
+    this.requestedVisible = true;
   }
 
   async ensure(bounds) {
@@ -363,7 +372,11 @@ class MPVOverlayHost {
       }
     }
 
-    this._showOverlayWindow(mainWindow);
+    if (this.requestedVisible === false) {
+      this._hideOverlayWindow();
+    } else {
+      this._showOverlayWindow(mainWindow);
+    }
     return { success: true, bounds: screenBounds };
   }
 
@@ -402,11 +415,30 @@ class MPVOverlayHost {
     }
   }
 
+  setVisible(visible) {
+    const nextVisible = visible !== false;
+    this.requestedVisible = nextVisible;
+
+    if (!this.window || this.window.isDestroyed?.()) {
+      return { success: true, visible: nextVisible, ready: false };
+    }
+
+    if (nextVisible) {
+      this._repositionToParent();
+      this._showOverlayWindow(this.parentWindow || this.getMainWindow());
+    } else {
+      this._hideOverlayWindow();
+    }
+
+    return { success: true, visible: nextVisible, ready: true };
+  }
+
   destroy() {
     const hostWindow = this.window;
     this.window = null;
     this.contentLoaded = false;
     this.lastBounds = null;
+    this.requestedVisible = true;
     this._unbindParentWindow();
 
     if (!hostWindow || hostWindow.isDestroyed?.()) {
@@ -467,7 +499,11 @@ class MPVOverlayHost {
     };
     this.parentShowHandler = () => {
       this._repositionToParent();
-      this._showOverlayWindow(parent);
+      if (this.requestedVisible === false) {
+        this._hideOverlayWindow();
+      } else {
+        this._showOverlayWindow(parent);
+      }
     };
     this.parentClosedHandler = () => {
       this.destroy();

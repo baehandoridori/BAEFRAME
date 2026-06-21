@@ -67,6 +67,7 @@ const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_
 const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
+const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -1032,6 +1033,10 @@ async function initApp() {
 
     const playlistManager = getPlaylistManager();
     if (continuousPlaybackState.active) {
+      if (!hasContinuousPlaybackReachedMediaEnd()) {
+        log.warn('타임라인 이어붙이기: 영상 끝이 아닌 종료 신호를 무시합니다', getContinuousPlaybackSnapshot());
+        return;
+      }
       log.info('타임라인 이어붙이기: 다음 재생 가능 항목으로 이동');
       void playNextContinuousItem(continuousPlaybackState.sessionId);
       return;
@@ -1066,6 +1071,7 @@ async function initApp() {
   videoPlayer.addEventListener('externalstopped', () => {
     elements.videoWrapper?.classList.remove('mpv-pilot-mode');
     document.body.classList.remove('mpv-pilot-mode');
+    mpvHostLastRequestedVisible = null;
   });
 
   // 코덱 미지원
@@ -3471,6 +3477,7 @@ async function initApp() {
 
       if (videoCommentRangeOverlay) {
         videoCommentRangeOverlay.classList.toggle('hidden', !overlayEnabled);
+        scheduleMpvOverlayStateSync();
       }
     });
   }
@@ -3483,6 +3490,7 @@ async function initApp() {
 
       if (videoCommentRangeOverlay) {
         videoCommentRangeOverlay.classList.toggle('position-top', overlayPositionTop);
+        scheduleMpvOverlayStateSync();
       }
     });
   }
@@ -3507,6 +3515,7 @@ async function initApp() {
     // 댓글이 없으면 숨김
     if (!ranges || ranges.length === 0) {
       videoCommentRangeOverlay.classList.remove('visible');
+      scheduleMpvOverlayStateSync();
       return;
     }
 
@@ -3564,6 +3573,7 @@ async function initApp() {
 
     // 초기 플레이헤드 위치 업데이트
     updateVideoCommentPlayhead();
+    scheduleMpvOverlayStateSync();
   }
 
   // 플레이헤드 위치 업데이트
@@ -3585,6 +3595,7 @@ async function initApp() {
         bar.classList.toggle('active', isActive);
       }
     });
+    scheduleMpvOverlayStateSync();
   }
 
   // HEX to RGBA 변환 헬퍼
@@ -4401,10 +4412,17 @@ async function initApp() {
 
     elements.zoomIndicatorOverlay.textContent = `${Math.round(zoom)}%`;
     elements.zoomIndicatorOverlay.classList.add('visible');
+    scheduleMpvOverlayStateSync();
 
     clearTimeout(window._zoomIndicatorTimeout);
     window._zoomIndicatorTimeout = setTimeout(() => {
       elements.zoomIndicatorOverlay.classList.remove('visible');
+      scheduleMpvOverlayStateSync();
+      setTimeout(() => {
+        if (!elements.zoomIndicatorOverlay?.classList.contains('visible')) {
+          scheduleMpvOverlayStateSync({ force: true });
+        }
+      }, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS);
     }, 800);
   }
 
@@ -5100,6 +5118,138 @@ async function initApp() {
   let mpvOverlayStateSyncPending = false;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
+  let mpvHostVisibilitySyncPending = false;
+  let mpvHostLastRequestedVisible = null;
+  let mpvPilotHostPreparing = false;
+  let fullscreenTimecodeOverlay = null;
+  let fullscreenScrubOverlay = null;
+
+  const MPV_BLOCKING_OVERLAY_SELECTOR = [
+    '.modal-overlay.active',
+    '.thread-overlay.open',
+    '.image-viewer-overlay.open',
+    '.split-view-overlay.open',
+    '.prompt-modal-overlay.open',
+    '.credits-overlay.active',
+    '.codec-error-overlay.active',
+    '.app-saving-overlay.active',
+    '#videoLoadingOverlay.active',
+    '.transcode-overlay.active'
+  ].join(',');
+
+  const MPV_HTML_OVERLAY_STYLE_PROPERTIES = [
+    'align-items',
+    'backdrop-filter',
+    'background',
+    'background-color',
+    'border',
+    'border-color',
+    'border-radius',
+    'border-style',
+    'border-width',
+    'bottom',
+    'box-shadow',
+    'box-sizing',
+    'color',
+    'display',
+    'flex-direction',
+    'font',
+    'font-family',
+    'font-size',
+    'font-weight',
+    'gap',
+    'height',
+    'justify-content',
+    'left',
+    'letter-spacing',
+    'line-height',
+    'margin',
+    'max-height',
+    'max-width',
+    'min-height',
+    'min-width',
+    'opacity',
+    'overflow',
+    'padding',
+    'pointer-events',
+    'position',
+    'right',
+    'text-align',
+    'text-overflow',
+    'top',
+    'transform',
+    'transform-origin',
+    'visibility',
+    'white-space',
+    'width',
+    'z-index',
+    '-webkit-backdrop-filter'
+  ];
+
+  function isElementVisiblyBlockingMpv(element) {
+    if (!element) return false;
+    const style = window.getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function hasBlockingOverlayForMpv() {
+    return Array.from(document.querySelectorAll(MPV_BLOCKING_OVERLAY_SELECTOR))
+      .some(isElementVisiblyBlockingMpv);
+  }
+
+  function didMpvHostVisibilityApply(result, shouldShowMpvHost) {
+    if (!result?.success) return false;
+    if (shouldShowMpvHost) return true;
+    return result.embed?.ready === true && result.overlay?.ready === true;
+  }
+
+  function forceMpvHostVisibilitySync() {
+    mpvHostLastRequestedVisible = null;
+    syncMpvHostVisibilityWithDom();
+  }
+
+  function syncMpvHostVisibilityWithDom() {
+    if (!mpvPilotHostPreparing && !document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!window.electronAPI?.mpvSetHostVisible) return;
+    if (mpvHostVisibilitySyncPending) return;
+
+    mpvHostVisibilitySyncPending = true;
+    requestAnimationFrame(async () => {
+      mpvHostVisibilitySyncPending = false;
+      const shouldShowMpvHost = !hasBlockingOverlayForMpv();
+      if (mpvHostLastRequestedVisible === shouldShowMpvHost) return;
+
+      try {
+        const result = await window.electronAPI.mpvSetHostVisible(shouldShowMpvHost);
+        if (didMpvHostVisibilityApply(result, shouldShowMpvHost)) {
+          mpvHostLastRequestedVisible = shouldShowMpvHost;
+        }
+      } catch (error) {
+        log.debug('mpv 호스트 표시 상태 동기화 실패', { error: error.message });
+      }
+    });
+  }
+
+  function installMpvBlockingOverlayObserver() {
+    const observer = new MutationObserver((mutations) => {
+      if (!mpvPilotHostPreparing && !document.body.classList.contains('mpv-pilot-mode')) return;
+      if (!mutations.some((mutation) => mutation.type === 'attributes' || mutation.type === 'childList')) return;
+      syncMpvHostVisibilityWithDom();
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden']
+    });
+    syncMpvHostVisibilityWithDom();
+  }
+
+  installMpvBlockingOverlayObserver();
 
   function getMpvEmbedBounds() {
     syncMpvFullscreenViewportInset();
@@ -5164,6 +5314,7 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareEmbed(bounds);
     if (result?.success && result.wid) {
+      forceMpvHostVisibilitySync();
       return result;
     }
 
@@ -5181,6 +5332,7 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareOverlay(bounds);
     if (result?.success) {
+      forceMpvHostVisibilitySync();
       return result;
     }
 
@@ -5262,6 +5414,62 @@ async function initApp() {
     return tooltipLayer.innerHTML;
   }
 
+  function copyComputedMpvOverlayStyles(source, target) {
+    const computedStyle = window.getComputedStyle(source);
+    MPV_HTML_OVERLAY_STYLE_PROPERTIES.forEach((property) => {
+      const value = computedStyle.getPropertyValue(property);
+      if (value) target.style.setProperty(property, value);
+    });
+  }
+
+  function cloneMpvHtmlOverlayElement(element, wrapperRect) {
+    if (!element || !isElementVisiblyBlockingMpv(element)) return null;
+
+    const rect = element.getBoundingClientRect();
+    const clone = element.cloneNode(true);
+    const sourceElements = [element, ...element.querySelectorAll('*')];
+    const targetElements = [clone, ...clone.querySelectorAll('*')];
+
+    sourceElements.forEach((sourceElement, index) => {
+      const targetElement = targetElements[index];
+      if (targetElement) copyComputedMpvOverlayStyles(sourceElement, targetElement);
+    });
+
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach((child) => child.removeAttribute('id'));
+    clone.style.position = 'absolute';
+    clone.style.left = `${rect.left - wrapperRect.left}px`;
+    clone.style.top = `${rect.top - wrapperRect.top}px`;
+    clone.style.right = 'auto';
+    clone.style.bottom = 'auto';
+    clone.style.width = `${rect.width}px`;
+    clone.style.height = `${rect.height}px`;
+    clone.style.margin = '0';
+    clone.style.pointerEvents = 'none';
+    clone.style.transform = 'none';
+
+    return clone;
+  }
+
+  function serializeMpvOverlayHtml() {
+    const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
+    if (!wrapperRect) return '';
+
+    const htmlOverlay = document.createElement('div');
+    [
+      elements.currentCutOverlay,
+      elements.zoomIndicatorOverlay,
+      videoCommentRangeOverlay,
+      fullscreenTimecodeOverlay,
+      fullscreenScrubOverlay
+    ].forEach((element) => {
+      const clone = cloneMpvHtmlOverlayElement(element, wrapperRect);
+      if (clone) htmlOverlay.appendChild(clone);
+    });
+
+    return htmlOverlay.innerHTML;
+  }
+
   function getMpvOverlayState() {
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
@@ -5272,6 +5480,7 @@ async function initApp() {
       onionDataUrl: getCanvasOverlayDataUrl(elements.onionSkinCanvas),
       markerHtml: serializeMpvOverlayMarkerHtml(),
       tooltipHtml: serializeMpvOverlayTooltipHtml(),
+      htmlOverlayHtml: serializeMpvOverlayHtml(),
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
@@ -5393,6 +5602,7 @@ async function initApp() {
     try {
       return await window.electronAPI.mpvStop();
     } finally {
+      mpvHostLastRequestedVisible = null;
       await window.electronAPI?.mpvDestroyOverlay?.();
       await window.electronAPI?.mpvDestroyEmbed?.();
     }
@@ -5426,8 +5636,7 @@ async function initApp() {
     isStaleVideoLoad = () => false
   } = {}) {
     activeMpvPilotLoadToken = loadToken;
-    const embedHost = await prepareMpvEmbedHost();
-    await prepareMpvOverlayHost();
+    let embedHost = null;
     let mpvLoadStarted = false;
     const ownsMpvPilotLoad = () => activeMpvPilotLoadToken === loadToken;
     const clearMpvPilotLoadOwner = () => {
@@ -5451,9 +5660,20 @@ async function initApp() {
       } catch (error) {
         log.debug('mpv 파일럿 준비 정리 실패', { error: error.message });
       } finally {
+        mpvPilotHostPreparing = false;
         clearMpvPilotLoadOwner();
       }
     };
+
+    try {
+      mpvPilotHostPreparing = true;
+      embedHost = await prepareMpvEmbedHost();
+      await prepareMpvOverlayHost();
+    } catch (error) {
+      await cleanupPendingMpvPilot();
+      throw error;
+    }
+
     const stopCurrentMpvPilotEngine = async () => {
       try {
         return await stopMpvPilotEngine();
@@ -5540,6 +5760,8 @@ async function initApp() {
 
     elements.videoWrapper?.classList.add('mpv-pilot-mode');
     document.body.classList.add('mpv-pilot-mode');
+    mpvPilotHostPreparing = false;
+    syncMpvHostVisibilityWithDom();
     syncCanvasOverlay();
     syncMpvEmbedBounds();
     syncMpvVideoTransform();
@@ -5621,9 +5843,11 @@ async function initApp() {
 
       // ====== 코덱 확인 및 트랜스코딩 (비디오만) ======
       const hasPreparedVideoPath = typeof preparedVideoPath === 'string' && preparedVideoPath.length > 0;
+      const preparedVideoPathIsOriginal = hasPreparedVideoPath && isSameFilePath(preparedVideoPath, filePath);
+      const hasConvertedPreparedVideoPath = hasPreparedVideoPath && !preparedVideoPathIsOriginal;
       let actualVideoPath = hasPreparedVideoPath ? preparedVideoPath : filePath;
       let thumbnailVideoPath = actualVideoPath;
-      const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath });
+      const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath: hasConvertedPreparedVideoPath });
       if (isStaleVideoLoad()) return false;
       if (hasPreparedVideoPath) {
         log.debug('준비된 연속 재생 미디어 경로 사용', { filePath, preparedVideoPath });
@@ -6291,8 +6515,6 @@ async function initApp() {
    * 전체화면 모드 토글 (시스템 전체화면)
    */
   let fullscreenMouseHandler = null;
-  let fullscreenTimecodeOverlay = null;
-  let fullscreenScrubOverlay = null;
 
   function setFullscreenControlsVisible(visible) {
     const wasVisible = document.body.classList.contains('show-controls');
@@ -6358,6 +6580,7 @@ async function initApp() {
       if (fullscreenTimecodeOverlay) {
         fullscreenTimecodeOverlay.remove();
         fullscreenTimecodeOverlay = null;
+        scheduleMpvOverlayStateSync();
       }
       setFullscreenControlsVisible(false);
     }
@@ -6387,6 +6610,7 @@ async function initApp() {
 
     fullscreenTimecodeOverlay.querySelector('.current-time').textContent = formatTimecode(currentTime);
     fullscreenTimecodeOverlay.querySelector('.total-time').textContent = formatTimecode(duration);
+    scheduleMpvOverlayStateSync();
   }
 
   /**
@@ -6488,10 +6712,17 @@ async function initApp() {
     overlay.querySelector('.fullscreen-scrub-time').textContent =
       `${formatTimecode(time, fps)} / ${formatTimecode(duration, fps)}`;
     overlay.classList.add('visible');
+    scheduleMpvOverlayStateSync();
   }
 
   function hideFullscreenScrubOverlay() {
     fullscreenScrubOverlay?.classList.remove('visible');
+    scheduleMpvOverlayStateSync();
+    setTimeout(() => {
+      if (!fullscreenScrubOverlay?.classList.contains('visible')) {
+        scheduleMpvOverlayStateSync({ force: true });
+      }
+    }, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS);
   }
 
   // 전체화면 시크바 이벤트 설정
@@ -13177,7 +13408,43 @@ async function initApp() {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  function getContinuousPlaybackSnapshot() {
+    const media = videoPlayer.videoElement;
+    if (videoPlayer.engine !== 'html5') {
+      const currentTime = Math.max(0, Number(videoPlayer.currentTime) || 0);
+      const duration = Math.max(0, Number(videoPlayer.duration) || 0);
+      const externalEofReached = videoPlayer.externalEofReached === true;
+      return {
+        currentTime,
+        duration,
+        ended: externalEofReached || (duration > 0 && duration - currentTime <= 0.25 && !videoPlayer.isPlaying),
+        externalEofReached,
+        paused: !videoPlayer.isPlaying,
+        ready: videoPlayer.isLoaded === true
+      };
+    }
+
+    return {
+      currentTime: Math.max(0, Number(media?.currentTime ?? videoPlayer.currentTime) || 0),
+      duration: Math.max(0, Number(media?.duration ?? videoPlayer.duration) || 0),
+      ended: media?.ended === true,
+      paused: media?.paused === true,
+      ready: Number(media?.readyState || 0) >= 2
+    };
+  }
+
+  function hasContinuousPlaybackReachedMediaEnd(snapshot = getContinuousPlaybackSnapshot()) {
+    const hasKnownDuration = snapshot.duration > 0;
+    const nearMediaEnd = hasKnownDuration && snapshot.duration - snapshot.currentTime <= 0.25;
+    if (snapshot.externalEofReached === true) return !hasKnownDuration || nearMediaEnd;
+    return nearMediaEnd && snapshot.ended === true;
+  }
+
   function waitForContinuousMediaReady(timeoutMs = 1200) {
+    if (videoPlayer.engine !== 'html5') {
+      return Promise.resolve(videoPlayer.isLoaded === true);
+    }
+
     const media = videoPlayer.videoElement;
     if (!media) return Promise.resolve(false);
     if (media.readyState >= 2) return Promise.resolve(true);
@@ -13207,11 +13474,11 @@ async function initApp() {
     const timeoutMs = options.timeoutMs || 1100;
     const minDelta = options.minDelta || 0.03;
     const media = videoPlayer.videoElement;
-    if (!media) return Promise.resolve(false);
+    if (videoPlayer.engine === 'html5' && !media) return Promise.resolve(false);
 
-    const startTime = Number(media.currentTime || videoPlayer.currentTime) || 0;
-    const duration = Number(media.duration || videoPlayer.duration) || 0;
-    if (duration > 0 && duration - startTime <= 0.25) return Promise.resolve(true);
+    const snapshot = getContinuousPlaybackSnapshot();
+    const startTime = snapshot.currentTime;
+    if (hasContinuousPlaybackReachedMediaEnd(snapshot)) return Promise.resolve(true);
 
     return new Promise(resolve => {
       let settled = false;
@@ -13220,31 +13487,32 @@ async function initApp() {
       const finish = (value) => {
         if (settled) return;
         settled = true;
-        media.removeEventListener('timeupdate', onProgress);
-        media.removeEventListener('ended', onEnded);
+        media?.removeEventListener('timeupdate', onProgress);
+        media?.removeEventListener('ended', onEnded);
+        videoPlayer.removeEventListener('timeupdate', onProgress);
+        videoPlayer.removeEventListener('ended', onEnded);
         clearInterval(interval);
         resolve(value);
       };
 
       const hasAdvanced = () => {
-        const currentTime = Number(media.currentTime || videoPlayer.currentTime) || 0;
-        return currentTime - startTime >= minDelta;
+        const currentSnapshot = getContinuousPlaybackSnapshot();
+        return currentSnapshot.currentTime - startTime >= minDelta;
       };
 
       const onProgress = () => {
         if (hasAdvanced()) finish(true);
       };
-      const onEnded = () => finish(true);
+      const onEnded = () => {
+        if (hasContinuousPlaybackReachedMediaEnd()) finish(true);
+      };
       const interval = setInterval(() => {
         if (!isContinuousSessionActive(sessionId)) {
           finish(false);
           return;
         }
-        if (hasAdvanced() || media.ended) {
-          finish(true);
-          return;
-        }
-        if (media.paused && !videoPlayer.isPlaying) {
+        const currentSnapshot = getContinuousPlaybackSnapshot();
+        if (hasAdvanced() || hasContinuousPlaybackReachedMediaEnd(currentSnapshot)) {
           finish(true);
           return;
         }
@@ -13253,8 +13521,10 @@ async function initApp() {
         }
       }, 120);
 
-      media.addEventListener('timeupdate', onProgress);
-      media.addEventListener('ended', onEnded, { once: true });
+      media?.addEventListener('timeupdate', onProgress);
+      media?.addEventListener('ended', onEnded, { once: true });
+      videoPlayer.addEventListener('timeupdate', onProgress);
+      videoPlayer.addEventListener('ended', onEnded, { once: true });
     });
   }
 
@@ -13793,11 +14063,13 @@ async function initApp() {
     if (!cut || !cutlistUIState.active) {
       elements.currentCutOverlay.hidden = true;
       elements.currentCutOverlay.textContent = '';
+      scheduleMpvOverlayStateSync();
       return;
     }
 
     elements.currentCutOverlay.hidden = false;
     elements.currentCutOverlay.textContent = `${cut.label} · BAEFRAME ${formatCutlistFrameRange(cut.startFrame, cut.endFrame)}`;
+    scheduleMpvOverlayStateSync();
   }
 
   function getCurrentCutlistSourceForFile(filePath) {

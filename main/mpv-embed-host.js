@@ -80,6 +80,7 @@ class MPVEmbedHost {
     this.parentShowHandler = null;
     this.parentClosedHandler = null;
     this.repositionPending = false;
+    this.requestedVisible = true;
   }
 
   async ensure(bounds) {
@@ -103,7 +104,11 @@ class MPVEmbedHost {
       }
     }
 
-    this._showHostWindow(mainWindow);
+    if (this.requestedVisible === false) {
+      this._hideHostWindow();
+    } else {
+      this._showHostWindow(mainWindow);
+    }
 
     const wid = nativeWindowHandleToMpvWid(hostWindow.getNativeWindowHandle(), this.platform);
     return { success: true, wid, bounds: screenBounds };
@@ -125,11 +130,30 @@ class MPVEmbedHost {
     return { success: true, bounds: screenBounds };
   }
 
+  setVisible(visible) {
+    const nextVisible = visible !== false;
+    this.requestedVisible = nextVisible;
+
+    if (!this.window || this.window.isDestroyed?.()) {
+      return { success: true, visible: nextVisible, ready: false };
+    }
+
+    if (nextVisible) {
+      this._repositionToParent();
+      this._showHostWindow(this.parentWindow || this.getMainWindow());
+    } else {
+      this._hideHostWindow();
+    }
+
+    return { success: true, visible: nextVisible, ready: true };
+  }
+
   destroy() {
     const hostWindow = this.window;
     this.window = null;
     this.contentLoaded = false;
     this.lastBounds = null;
+    this.requestedVisible = true;
     this._unbindParentWindow();
 
     if (!hostWindow || hostWindow.isDestroyed?.()) {
@@ -190,7 +214,11 @@ class MPVEmbedHost {
     };
     this.parentShowHandler = () => {
       this._repositionToParent();
-      this._showHostWindow(parent);
+      if (this.requestedVisible === false) {
+        this._hideHostWindow();
+      } else {
+        this._showHostWindow(parent);
+      }
     };
     this.parentClosedHandler = () => {
       this.destroy();

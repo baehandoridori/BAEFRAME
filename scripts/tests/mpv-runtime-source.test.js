@@ -37,6 +37,7 @@ test('preload exposes a narrow mpv API surface', () => {
   assert.match(preloadSource, /mpvStop: \(\) => ipcRenderer\.invoke\('mpv:stop'\)/);
   assert.match(preloadSource, /mpvPrepareEmbed: \(bounds\) => ipcRenderer\.invoke\('mpv:prepare-embed', bounds\)/);
   assert.match(preloadSource, /mpvUpdateEmbedBounds: \(bounds\) => ipcRenderer\.invoke\('mpv:update-embed-bounds', bounds\)/);
+  assert.match(preloadSource, /mpvSetHostVisible: \(visible\) => ipcRenderer\.invoke\('mpv:set-host-visible', visible\)/);
   assert.match(preloadSource, /mpvDestroyEmbed: \(\) => ipcRenderer\.invoke\('mpv:destroy-embed'\)/);
   assert.match(preloadSource, /mpvPrepareOverlay: \(bounds\) => ipcRenderer\.invoke\('mpv:prepare-overlay', bounds\)/);
   assert.match(preloadSource, /mpvUpdateOverlayBounds: \(bounds\) => ipcRenderer\.invoke\('mpv:update-overlay-bounds', bounds\)/);
@@ -62,6 +63,7 @@ test('main process registers mpv IPC handlers through the manager and embed host
     'mpv:stop',
     'mpv:prepare-embed',
     'mpv:update-embed-bounds',
+    'mpv:set-host-visible',
     'mpv:destroy-embed',
     'mpv:prepare-overlay',
     'mpv:update-overlay-bounds',
@@ -72,8 +74,10 @@ test('main process registers mpv IPC handlers through the manager and embed host
   }
   assert.match(ipcSource, /mpvEmbedHost\.ensure\(bounds\)/);
   assert.match(ipcSource, /mpvEmbedHost\.updateBounds\(bounds\)/);
+  assert.match(ipcSource, /mpvEmbedHost\.setVisible\(nextVisible\)/);
   assert.match(ipcSource, /mpvEmbedHost\.destroy\(\)/);
   assert.match(ipcSource, /mpvOverlayHost\.ensure\(bounds\)/);
+  assert.match(ipcSource, /mpvOverlayHost\.setVisible\(nextVisible\)/);
   assert.match(ipcSource, /mpvOverlayHost\.updateBounds\(bounds\)/);
   assert.match(ipcSource, /mpvOverlayHost\.updateState\(state\)/);
   assert.match(ipcSource, /mpvOverlayHost\.destroy\(\)/);
@@ -95,7 +99,9 @@ test('loadVideo checks mpv pilot before FFmpeg transcode and falls back by defau
   const loadVideoSource = loadVideoMatch[1];
 
   assert.match(appSource, /async function shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath \} = \{\}\) \{/);
-  assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath \}\);/);
+  assert.match(loadVideoSource, /const preparedVideoPathIsOriginal = hasPreparedVideoPath && isSameFilePath\(preparedVideoPath, filePath\);/);
+  assert.match(loadVideoSource, /const hasConvertedPreparedVideoPath = hasPreparedVideoPath && !preparedVideoPathIsOriginal;/);
+  assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath: hasConvertedPreparedVideoPath \}\);/);
   assert.match(loadVideoSource, /!useMpvPilot && !hasPreparedVideoPath && !fileIsAudio && await window\.electronAPI\.ffmpegIsAvailable\(\)/);
   assert.match(loadVideoSource, /await loadVideoWithMpvPilot\(filePath, \{[\s\S]+initialFrame,[\s\S]+loadToken,[\s\S]+isStaleVideoLoad[\s\S]+\}\);/);
   assert.match(loadVideoSource, /await videoPlayer\.load\(actualVideoPath\);/);
@@ -126,7 +132,7 @@ test('mpv pilot falls back to the normal playback path when mpv load fails', () 
   const loadVideoSource = loadVideoMatch[1];
 
   assert.match(loadVideoSource, /allowMpvPilot = true/);
-  assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath \}\);/);
+  assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath: hasConvertedPreparedVideoPath \}\);/);
   assert.match(loadVideoSource, /catch \(mpvError\) \{[\s\S]+mpv 파일럿 로드 실패, 기존 재생 방식으로 재시도[\s\S]+allowMpvPilot: false[\s\S]+return loadVideo\(filePath, fallbackOptions\);[\s\S]+\}/);
 });
 
@@ -161,7 +167,7 @@ test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(appSource, /async function syncMpvEmbedBounds\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateEmbedBounds\(bounds\)/);
   assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+window\.electronAPI\.mpvPrepareOverlay\(bounds\)/);
   assert.match(appSource, /async function syncMpvOverlayState\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateOverlayState\(state\)/);
-  assert.match(appSource, /const embedHost = await prepareMpvEmbedHost\(\);/);
+  assert.match(appSource, /let embedHost = null;[\s\S]+embedHost = await prepareMpvEmbedHost\(\);/);
   assert.match(appSource, /await prepareMpvOverlayHost\(\);/);
   assert.match(appSource, /loadResult = await window\.electronAPI\.mpvLoad\(filePath, \{[\s\S]+pause: true,[\s\S]+wid: embedHost\?\.wid,[\s\S]+videoTransform: getMpvVideoTransform\(\)[\s\S]+\}\);/);
   assert.match(appSource, /stop: \(\) => stopCurrentMpvPilotEngine\(\)/);
@@ -171,6 +177,32 @@ test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(videoPlayerSource, /this\.videoHeight = 0;/);
   assert.match(videoPlayerSource, /this\.videoWidth = Math\.max\(0, Number\(config\.width\) \|\| 0\);/);
   assert.match(videoPlayerSource, /this\.videoHeight = Math\.max\(0, Number\(config\.height\) \|\| 0\);/);
+});
+
+test('mpv pilot hides native host while DOM blocking overlays are open', () => {
+  assert.match(appSource, /const MPV_BLOCKING_OVERLAY_SELECTOR = \[[\s\S]+'.modal-overlay.active'[\s\S]+'.thread-overlay.open'[\s\S]+'.image-viewer-overlay.open'[\s\S]+\]\.join\(','\);/);
+  [
+    '.credits-overlay.active',
+    '.codec-error-overlay.active',
+    '.app-saving-overlay.active',
+    '#videoLoadingOverlay.active',
+    '.transcode-overlay.active'
+  ].forEach((selector) => {
+    assert.match(appSource, new RegExp(`'${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`));
+  });
+  assert.doesNotMatch(appSource, /'\.credits-overlay\.open'/);
+  assert.doesNotMatch(appSource, /'\.video-loading-overlay\.active'/);
+  assert.match(appSource, /function hasBlockingOverlayForMpv\(\) \{[\s\S]+document\.querySelectorAll\(MPV_BLOCKING_OVERLAY_SELECTOR\)[\s\S]+some\(isElementVisiblyBlockingMpv\);/);
+  assert.match(appSource, /let mpvPilotHostPreparing = false;/);
+  assert.match(appSource, /function didMpvHostVisibilityApply\(result, shouldShowMpvHost\) \{[\s\S]+if \(!result\?\.success\) return false;[\s\S]+if \(shouldShowMpvHost\) return true;[\s\S]+return result\.embed\?\.ready === true && result\.overlay\?\.ready === true;/);
+  assert.match(appSource, /function forceMpvHostVisibilitySync\(\) \{[\s\S]+mpvHostLastRequestedVisible = null;[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+\}/);
+  assert.match(appSource, /function syncMpvHostVisibilityWithDom\(\) \{[\s\S]+if \(!mpvPilotHostPreparing && !document\.body\.classList\.contains\('mpv-pilot-mode'\)\) return;[\s\S]+const shouldShowMpvHost = !hasBlockingOverlayForMpv\(\);[\s\S]+window\.electronAPI\.mpvSetHostVisible\(shouldShowMpvHost\);[\s\S]+didMpvHostVisibilityApply\(result, shouldShowMpvHost\)/);
+  assert.match(appSource, /function installMpvBlockingOverlayObserver\(\) \{[\s\S]+new MutationObserver\(\(mutations\) => \{[\s\S]+if \(!mpvPilotHostPreparing && !document\.body\.classList\.contains\('mpv-pilot-mode'\)\) return;[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+\}\);[\s\S]+attributeFilter: \['class', 'style', 'hidden'\]/);
+  assert.match(appSource, /installMpvBlockingOverlayObserver\(\);/);
+  assert.match(appSource, /async function prepareMpvEmbedHost\(\) \{[\s\S]+if \(result\?\.success && result\.wid\) \{[\s\S]+forceMpvHostVisibilitySync\(\);[\s\S]+return result;/);
+  assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+if \(result\?\.success\) \{[\s\S]+forceMpvHostVisibilitySync\(\);[\s\S]+return result;/);
+  assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(\) => \{[\s\S]+mpvHostLastRequestedVisible = null;/);
+  assert.match(appSource, /async function stopMpvPilotEngine\(\) \{[\s\S]+finally \{[\s\S]+mpvHostLastRequestedVisible = null;/);
 });
 
 test('mpv pilot routes audio and viewport controls through mpv IPC', () => {
@@ -213,18 +245,21 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
   assert.match(appSource, /let activeMpvPilotLoadToken = null;/);
   assert.match(loadMpvSource, /loadToken = null,[\s\S]+isStaleVideoLoad = \(\) => false/);
   assert.match(loadMpvSource, /activeMpvPilotLoadToken = loadToken;/);
+  assert.match(loadMpvSource, /let embedHost = null;/);
   assert.match(loadMpvSource, /const ownsMpvPilotLoad = \(\) => activeMpvPilotLoadToken === loadToken;/);
   assert.match(loadMpvSource, /const clearMpvPilotLoadOwner = \(\) => \{[\s\S]+if \(ownsMpvPilotLoad\(\)\) \{[\s\S]+activeMpvPilotLoadToken = null;[\s\S]+\}/);
   assert.match(loadMpvSource, /const cleanupPendingMpvPilot = async \(\) => \{/);
   assert.match(loadMpvSource, /const cleanupPendingMpvPilot = async \(\) => \{[\s\S]+if \(isStaleVideoLoad\(\) && !ownsMpvPilotLoad\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+if \(mpvLoadStarted\)/);
   assert.match(loadMpvSource, /if \(mpvLoadStarted\) \{[\s\S]+await stopMpvPilotEngine\(\);[\s\S]+\}/);
   assert.match(loadMpvSource, /await window\.electronAPI\?\.mpvDestroyEmbed\?\.\(\);/);
-  assert.match(loadMpvSource, /finally \{[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\}/);
+  assert.match(loadMpvSource, /finally \{[\s\S]+mpvPilotHostPreparing = false;[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\}/);
+  assert.match(loadMpvSource, /try \{[\s\S]+mpvPilotHostPreparing = true;[\s\S]+embedHost = await prepareMpvEmbedHost\(\);[\s\S]+await prepareMpvOverlayHost\(\);[\s\S]+\} catch \(error\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw error;[\s\S]+\}/);
   assert.match(loadMpvSource, /const stopCurrentMpvPilotEngine = async \(\) => \{[\s\S]+await stopMpvPilotEngine\(\);[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\};/);
   assert.match(loadMpvSource, /stop: \(\) => stopCurrentMpvPilotEngine\(\)/);
   assert.match(loadMpvSource, /if \(isStaleVideoLoad\(\)\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+return false;[\s\S]+\}/);
   assert.match(loadMpvSource, /catch \(error\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw error;[\s\S]+\}/);
   assert.match(loadMpvSource, /if \(!loadResult\?\.success\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw new Error/);
+  assert.match(loadMpvSource, /document\.body\.classList\.add\('mpv-pilot-mode'\);[\s\S]+mpvPilotHostPreparing = false;[\s\S]+syncMpvHostVisibilityWithDom\(\);/);
 });
 
 test('mpv pilot mirrors DOM overlays into a click-through native overlay window', () => {
@@ -233,8 +268,24 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /function serializeMpvOverlayMarkerHtml\(\) \{[\s\S]+if \(!isMpvMarkerOverlayVisible\(\)\) return '';/);
   assert.match(appSource, /function serializeMpvOverlayTooltipHtml\(\) \{[\s\S]+const tooltipLayer = document\.createElement\('div'\);[\s\S]+document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(\(tooltip\) => \{[\s\S]+tooltipClone\.style\.position = 'absolute';[\s\S]+tooltipClone\.style\.transform = 'none';[\s\S]+tooltipLayer\.appendChild\(tooltipClone\);[\s\S]+\}\);/);
   assert.match(appSource, /function serializeMpvOverlayTooltipHtml\(\) \{[\s\S]+if \(!isMpvMarkerOverlayVisible\(\)\) return '';/);
-  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: serializeMpvOverlayMarkerHtml\(\)[\s\S]+tooltipHtml: serializeMpvOverlayTooltipHtml\(\)/);
+  assert.match(appSource, /function copyComputedMpvOverlayStyles\(source, target\) \{/);
+  const htmlOverlayMatch = appSource.match(/function serializeMpvOverlayHtml\(\) \{([\s\S]*?)\n  \}\n\n  function getMpvOverlayState/);
+  assert.ok(htmlOverlayMatch, 'serializeMpvOverlayHtml should exist');
+  const htmlOverlaySource = htmlOverlayMatch[1];
+  [
+    'elements.currentCutOverlay',
+    'elements.zoomIndicatorOverlay',
+    'videoCommentRangeOverlay',
+    'fullscreenTimecodeOverlay',
+    'fullscreenScrubOverlay'
+  ].forEach((source) => {
+    assert.match(htmlOverlaySource, new RegExp(source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: serializeMpvOverlayMarkerHtml\(\)[\s\S]+tooltipHtml: serializeMpvOverlayTooltipHtml\(\)[\s\S]+htmlOverlayHtml: serializeMpvOverlayHtml\(\)/);
   assert.match(appSource, /function scheduleMpvOverlayStateSync\(options = \{\}\) \{[\s\S]+syncMpvOverlayState\(\);/);
+  assert.match(appSource, /const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;/);
+  assert.match(appSource, /function showZoomIndicator\(zoom\) \{[\s\S]+elements\.zoomIndicatorOverlay\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+setTimeout\(\(\) => \{[\s\S]+if \(!elements\.zoomIndicatorOverlay\?\.classList\.contains\('visible'\)\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+\}[\s\S]+\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
+  assert.match(appSource, /function hideFullscreenScrubOverlay\(\) \{[\s\S]+fullscreenScrubOverlay\?\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+setTimeout\(\(\) => \{[\s\S]+if \(!fullscreenScrubOverlay\?\.classList\.contains\('visible'\)\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+\}[\s\S]+\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('drawmove', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('frameRendered', \(e\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);
   assert.match(appSource, /function renderVideoMarkers\(\) \{[\s\S]+scheduleMpvOverlayStateSync\(\);/);
@@ -266,7 +317,7 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
   assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(\) => \{[\s\S]+elements\.videoWrapper\?\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+document\.body\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+\}\);/);
   assert.match(videoPlayerSource, /const nextWidth = Number\(status\.width\);[\s\S]+const nextHeight = Number\(status\.height\);[\s\S]+if \(Number\.isFinite\(nextWidth\) && nextWidth > 0 && this\.videoWidth !== nextWidth\) \{[\s\S]+this\.videoWidth = nextWidth;[\s\S]+\}[\s\S]+if \(Number\.isFinite\(nextHeight\) && nextHeight > 0 && this\.videoHeight !== nextHeight\) \{[\s\S]+this\.videoHeight = nextHeight;/);
   assert.match(videoPlayerSource, /let metadataChanged = false;[\s\S]+metadataChanged = true;[\s\S]+if \(metadataChanged\) \{[\s\S]+this\._emit\('loadedmetadata', \{[\s\S]+duration: this\.duration,[\s\S]+totalFrames: this\.totalFrames,[\s\S]+fps: this\.fps,[\s\S]+width: this\.videoWidth,[\s\S]+height: this\.videoHeight,[\s\S]+engine: this\.engine/);
-  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
+  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const rawEofReached = status\.eofReached === true;[\s\S]+const hasKnownDuration = this\.duration > 0;[\s\S]+const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - this\.currentTime <= 0\.25\);[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
 
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}/);
   assert.ok(seekToFrameMatch, 'seekToFrame should exist');
@@ -276,11 +327,19 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
 test('mpv external playback emits ended when keep-open reaches EOF', () => {
   assert.match(mpvManagerSource, /this\.getOptionalProperty\('eof-reached', false\)/);
   assert.match(videoPlayerSource, /this\._externalEndedEmitted = false;/);
-  assert.match(videoPlayerSource, /const eofReached = status\.eofReached === true;/);
+  assert.match(videoPlayerSource, /this\.externalEofReached = false;/);
+  assert.match(videoPlayerSource, /const rawEofReached = status\.eofReached === true;/);
+  assert.match(videoPlayerSource, /const hasKnownDuration = this\.duration > 0;/);
+  assert.match(videoPlayerSource, /const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - this\.currentTime <= 0\.25\);/);
+  assert.match(videoPlayerSource, /this\.externalEofReached = eofReached;/);
+  assert.doesNotMatch(videoPlayerSource, /this\.externalEofReached = rawEofReached;/);
   assert.match(videoPlayerSource, /const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+this\.isPlaying = nextIsPlaying;/);
   assert.match(videoPlayerSource, /if \(eofReached && !this\._externalEndedEmitted\) \{[\s\S]+this\._externalEndedEmitted = true;[\s\S]+this\._emit\('ended'\);[\s\S]+\}/);
   assert.match(videoPlayerSource, /if \(!eofReached\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+\}/);
-  assert.match(videoPlayerSource, /seek\(time\) \{[\s\S]+this\._externalEndedEmitted = false;/);
+  assert.match(videoPlayerSource, /seek\(time\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+this\.externalEofReached = false;/);
+  assert.match(videoPlayerSource, /async play\(\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+this\.externalEofReached = false;/);
+  assert.match(videoPlayerSource, /useExternalEngine\(config = \{\}\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+this\.externalEofReached = false;/);
+  assert.match(videoPlayerSource, /useHtml5Engine\(\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+this\.externalEofReached = false;/);
 });
 
 test('mpv engine replacement resets playing state before html5 loads', () => {
