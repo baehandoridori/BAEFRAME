@@ -282,6 +282,8 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   });
   assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: serializeMpvOverlayMarkerHtml\(\)[\s\S]+tooltipHtml: serializeMpvOverlayTooltipHtml\(\)[\s\S]+htmlOverlayHtml: serializeMpvOverlayHtml\(\)/);
   assert.match(appSource, /function scheduleMpvOverlayStateSync\(options = \{\}\) \{[\s\S]+syncMpvOverlayState\(\);/);
+  assert.match(appSource, /const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;/);
+  assert.match(appSource, /function showZoomIndicator\(zoom\) \{[\s\S]+elements\.zoomIndicatorOverlay\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+setTimeout\(\(\) => \{[\s\S]+if \(!elements\.zoomIndicatorOverlay\?\.classList\.contains\('visible'\)\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+\}[\s\S]+\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('drawmove', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('frameRendered', \(e\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);
   assert.match(appSource, /function renderVideoMarkers\(\) \{[\s\S]+scheduleMpvOverlayStateSync\(\);/);

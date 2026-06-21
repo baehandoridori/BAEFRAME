@@ -67,6 +67,7 @@ const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_
 const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
+const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -4417,6 +4418,11 @@ async function initApp() {
     window._zoomIndicatorTimeout = setTimeout(() => {
       elements.zoomIndicatorOverlay.classList.remove('visible');
       scheduleMpvOverlayStateSync();
+      setTimeout(() => {
+        if (!elements.zoomIndicatorOverlay?.classList.contains('visible')) {
+          scheduleMpvOverlayStateSync({ force: true });
+        }
+      }, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS);
     }, 800);
   }
 
