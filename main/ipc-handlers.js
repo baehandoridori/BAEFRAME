@@ -1632,7 +1632,8 @@ function setupIpcHandlers() {
     try {
       const result = await metadataMpv.load(filePath, {
         pause: true,
-        forceWindow: false
+        forceWindow: false,
+        headless: true
       });
       const metadata = {
         success: true,

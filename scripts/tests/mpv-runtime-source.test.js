@@ -75,7 +75,7 @@ test('main process registers mpv IPC handlers through the manager and embed host
     assert.match(ipcSource, new RegExp(`ipcMain\\.handle\\('${channel}'`));
   }
   assert.match(ipcSource, /ipcMain\.handle\('mpv:probe-metadata'[\s\S]+const metadataMpv = new MPVManager\(\);/);
-  assert.match(ipcSource, /metadataMpv\.load\(filePath, \{[\s\S]+forceWindow: false[\s\S]+\}\)/);
+  assert.match(ipcSource, /metadataMpv\.load\(filePath, \{[\s\S]+forceWindow: false,[\s\S]+headless: true[\s\S]+\}\)/);
   assert.match(ipcSource, /mpvEmbedHost\.ensure\(bounds\)/);
   assert.match(ipcSource, /mpvEmbedHost\.updateBounds\(bounds\)/);
   assert.match(ipcSource, /mpvEmbedHost\.setVisible\(nextVisible\)/);
@@ -160,7 +160,7 @@ test('mpv pilot can be enabled from app playback settings without an env var', (
 test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(mpvManagerSource, /this\.loadQueue = Promise\.resolve\(\);/);
   assert.match(mpvManagerSource, /async load\(filePath, options = \{\}\) \{[\s\S]+const queuedLoad = this\.loadQueue\.then\(runLoad, runLoad\);[\s\S]+this\.loadQueue = queuedLoad\.catch\(\(\) => \{\}\);[\s\S]+return queuedLoad;/);
-  assert.match(mpvManagerSource, /async _load\(filePath, options = \{\}\) \{[\s\S]+await this\.start\(\{ wid: options\.wid, forceWindow: options\.forceWindow \}\);/);
+  assert.match(mpvManagerSource, /async _load\(filePath, options = \{\}\) \{[\s\S]+await this\.start\(\{ wid: options\.wid, forceWindow: options\.forceWindow, headless: options\.headless \}\);/);
   assert.match(mpvManagerSource, /`--wid=\$\{normalizedWid\}`/);
 
   assert.match(appSource, /function getMpvEmbedBounds\(\) \{[\s\S]+syncMpvFullscreenViewportInset\(\);[\s\S]+elements\.videoWrapper\?\.getBoundingClientRect\(\)[\s\S]+height: rect\.height/);

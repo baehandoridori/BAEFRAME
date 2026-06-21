@@ -137,6 +137,18 @@ test('launch args can attach mpv to an embedded window id', () => {
   assert.ok(args.includes('--cursor-autohide=always'));
 });
 
+test('launch args can use null audio and video outputs for headless metadata probes', () => {
+  const args = createMpvLaunchArgs({
+    ipcPath: '\\\\.\\pipe\\baeframe-mpv-headless',
+    forceWindow: false,
+    headless: true
+  });
+
+  assert.ok(args.includes('--force-window=no'));
+  assert.ok(args.includes('--vo=null'));
+  assert.ok(args.includes('--ao=null'));
+});
+
 test('load can start hidden no-window mpv for metadata probes', async () => {
   const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
   const videoPath = path.normalize('C:\\video\\shot.mov');
@@ -176,12 +188,15 @@ test('load can start hidden no-window mpv for metadata probes', async () => {
     height: 1080
   });
 
-  const result = await manager.load(videoPath, { pause: true, forceWindow: false });
+  const result = await manager.load(videoPath, { pause: true, forceWindow: false, headless: true });
 
   assert.equal(result.duration, 12.5);
   assert.ok(spawned[0].args.includes('--force-window=no'));
+  assert.ok(spawned[0].args.includes('--vo=null'));
+  assert.ok(spawned[0].args.includes('--ao=null'));
   assert.ok(commands.some(command => command[0] === 'loadfile' && command[1] === videoPath));
   assert.equal(manager.forceWindow, false);
+  assert.equal(manager.headless, true);
 });
 
 test('start restarts mpv when the embedded window id changes', async () => {

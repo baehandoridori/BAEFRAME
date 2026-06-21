@@ -13224,6 +13224,7 @@ async function initApp() {
           hasPreparedVideoPath: false
         })
         : false;
+      let metadataResolvedByMpv = false;
 
       if (!hasDuration && item.videoPath && useMpvPilotForMetadata) {
         try {
@@ -13238,6 +13239,7 @@ async function initApp() {
                 : (Number.isFinite(fps) && fps > 0 ? fps : 24);
               item.duration = duration;
               item.fps = fps;
+              metadataResolvedByMpv = true;
             }
           } else {
             log.warn('mpv 타임라인 메타데이터 수집 실패', { fileName: item.fileName, error: mpvProbe?.error || 'probe failed' });
@@ -13247,7 +13249,7 @@ async function initApp() {
         }
       }
 
-      if (!hasDuration && item.videoPath && !useMpvPilotForMetadata) {
+      if (!hasDuration && item.videoPath && (!useMpvPilotForMetadata || !metadataResolvedByMpv)) {
         try {
           const probe = await window.electronAPI.ffmpegProbeCodec(item.videoPath);
           if (probe?.success) {

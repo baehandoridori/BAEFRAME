@@ -18,15 +18,17 @@ test('continuous runtime imports the shared helper module', () => {
   assert.match(appSource, /CONTINUOUS_STATUS[\s\S]+findNextPlayableIndex[\s\S]+createSkippedToastMessage[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
 });
 
-test('continuous metadata skips FFmpeg probes for mpv pilot originals', () => {
+test('continuous metadata uses mpv before FFmpeg fallback for mpv pilot originals', () => {
   const metadataMatch = appSource.match(/async function collectPlaylistMetadata\(items\) \{([\s\S]*?)\n  \}\n\n  async function updatePlaylistContinuousTimeline/);
   assert.ok(metadataMatch, 'collectPlaylistMetadata should exist');
 
   const metadataSource = metadataMatch[1];
   assert.match(metadataSource, /state\.currentFile === item\.videoPath && videoPlayer\.duration/);
   assert.match(metadataSource, /const useMpvPilotForMetadata = !hasDuration && item\.videoPath[\s\S]+await shouldUseMpvPilot\(item\.videoPath/);
+  assert.match(metadataSource, /let metadataResolvedByMpv = false;/);
   assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && useMpvPilotForMetadata\) \{[\s\S]+const mpvProbe = await window\.electronAPI\.mpvProbeMetadata\(item\.videoPath\);/);
-  assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && !useMpvPilotForMetadata\) \{/);
+  assert.match(metadataSource, /metadataResolvedByMpv = true;/);
+  assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && \(!useMpvPilotForMetadata \|\| !metadataResolvedByMpv\)\) \{/);
   assert.ok(
     metadataSource.indexOf('const useMpvPilotForMetadata') <
       metadataSource.indexOf('window.electronAPI.mpvProbeMetadata(item.videoPath)') &&
