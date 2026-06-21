@@ -316,7 +316,7 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
   assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(\) => \{[\s\S]+elements\.videoWrapper\?\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+document\.body\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+\}\);/);
   assert.match(videoPlayerSource, /const nextWidth = Number\(status\.width\);[\s\S]+const nextHeight = Number\(status\.height\);[\s\S]+if \(Number\.isFinite\(nextWidth\) && nextWidth > 0 && this\.videoWidth !== nextWidth\) \{[\s\S]+this\.videoWidth = nextWidth;[\s\S]+\}[\s\S]+if \(Number\.isFinite\(nextHeight\) && nextHeight > 0 && this\.videoHeight !== nextHeight\) \{[\s\S]+this\.videoHeight = nextHeight;/);
   assert.match(videoPlayerSource, /let metadataChanged = false;[\s\S]+metadataChanged = true;[\s\S]+if \(metadataChanged\) \{[\s\S]+this\._emit\('loadedmetadata', \{[\s\S]+duration: this\.duration,[\s\S]+totalFrames: this\.totalFrames,[\s\S]+fps: this\.fps,[\s\S]+width: this\.videoWidth,[\s\S]+height: this\.videoHeight,[\s\S]+engine: this\.engine/);
-  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const rawEofReached = status\.eofReached === true;[\s\S]+const eofReached = rawEofReached && this\.duration > 0 && this\.duration - this\.currentTime <= 0\.25;[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
+  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const rawEofReached = status\.eofReached === true;[\s\S]+const hasKnownDuration = this\.duration > 0;[\s\S]+const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - this\.currentTime <= 0\.25\);[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
 
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}/);
   assert.ok(seekToFrameMatch, 'seekToFrame should exist');
@@ -328,7 +328,8 @@ test('mpv external playback emits ended when keep-open reaches EOF', () => {
   assert.match(videoPlayerSource, /this\._externalEndedEmitted = false;/);
   assert.match(videoPlayerSource, /this\.externalEofReached = false;/);
   assert.match(videoPlayerSource, /const rawEofReached = status\.eofReached === true;/);
-  assert.match(videoPlayerSource, /const eofReached = rawEofReached && this\.duration > 0 && this\.duration - this\.currentTime <= 0\.25;/);
+  assert.match(videoPlayerSource, /const hasKnownDuration = this\.duration > 0;/);
+  assert.match(videoPlayerSource, /const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - this\.currentTime <= 0\.25\);/);
   assert.match(videoPlayerSource, /this\.externalEofReached = eofReached;/);
   assert.doesNotMatch(videoPlayerSource, /this\.externalEofReached = rawEofReached;/);
   assert.match(videoPlayerSource, /const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+this\.isPlaying = nextIsPlaying;/);

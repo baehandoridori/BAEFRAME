@@ -897,7 +897,8 @@ export class VideoPlayer extends EventTarget {
         this.currentTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
       }
       this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
-      const eofReached = rawEofReached && this.duration > 0 && this.duration - this.currentTime <= 0.25;
+      const hasKnownDuration = this.duration > 0;
+      const eofReached = rawEofReached && (!hasKnownDuration || this.duration - this.currentTime <= 0.25);
       this.externalEofReached = eofReached;
       if (metadataChanged) {
         this._emit('loadedmetadata', {

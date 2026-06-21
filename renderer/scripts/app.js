@@ -13429,8 +13429,9 @@ async function initApp() {
   }
 
   function hasContinuousPlaybackReachedMediaEnd(snapshot = getContinuousPlaybackSnapshot()) {
-    const nearMediaEnd = snapshot.duration > 0 && snapshot.duration - snapshot.currentTime <= 0.25;
-    if (snapshot.externalEofReached === true) return nearMediaEnd;
+    const hasKnownDuration = snapshot.duration > 0;
+    const nearMediaEnd = hasKnownDuration && snapshot.duration - snapshot.currentTime <= 0.25;
+    if (snapshot.externalEofReached === true) return !hasKnownDuration || nearMediaEnd;
     return nearMediaEnd && snapshot.ended === true;
   }
 
