@@ -6718,6 +6718,11 @@ async function initApp() {
   function hideFullscreenScrubOverlay() {
     fullscreenScrubOverlay?.classList.remove('visible');
     scheduleMpvOverlayStateSync();
+    setTimeout(() => {
+      if (!fullscreenScrubOverlay?.classList.contains('visible')) {
+        scheduleMpvOverlayStateSync({ force: true });
+      }
+    }, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS);
   }
 
   // 전체화면 시크바 이벤트 설정
