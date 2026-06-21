@@ -5114,6 +5114,7 @@ async function initApp() {
   let mpvOverlayLastLiveDrawSyncAt = 0;
   let mpvHostVisibilitySyncPending = false;
   let mpvHostLastRequestedVisible = null;
+  let mpvPilotHostPreparing = false;
   let fullscreenTimecodeOverlay = null;
   let fullscreenScrubOverlay = null;
 
@@ -5195,7 +5196,7 @@ async function initApp() {
   }
 
   function syncMpvHostVisibilityWithDom() {
-    if (!document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!mpvPilotHostPreparing && !document.body.classList.contains('mpv-pilot-mode')) return;
     if (!window.electronAPI?.mpvSetHostVisible) return;
     if (mpvHostVisibilitySyncPending) return;
 
@@ -5218,7 +5219,7 @@ async function initApp() {
 
   function installMpvBlockingOverlayObserver() {
     const observer = new MutationObserver((mutations) => {
-      if (!document.body.classList.contains('mpv-pilot-mode')) return;
+      if (!mpvPilotHostPreparing && !document.body.classList.contains('mpv-pilot-mode')) return;
       if (!mutations.some((mutation) => mutation.type === 'attributes' || mutation.type === 'childList')) return;
       syncMpvHostVisibilityWithDom();
     });
@@ -5618,8 +5619,7 @@ async function initApp() {
     isStaleVideoLoad = () => false
   } = {}) {
     activeMpvPilotLoadToken = loadToken;
-    const embedHost = await prepareMpvEmbedHost();
-    await prepareMpvOverlayHost();
+    let embedHost = null;
     let mpvLoadStarted = false;
     const ownsMpvPilotLoad = () => activeMpvPilotLoadToken === loadToken;
     const clearMpvPilotLoadOwner = () => {
@@ -5643,9 +5643,20 @@ async function initApp() {
       } catch (error) {
         log.debug('mpv 파일럿 준비 정리 실패', { error: error.message });
       } finally {
+        mpvPilotHostPreparing = false;
         clearMpvPilotLoadOwner();
       }
     };
+
+    try {
+      mpvPilotHostPreparing = true;
+      embedHost = await prepareMpvEmbedHost();
+      await prepareMpvOverlayHost();
+    } catch (error) {
+      await cleanupPendingMpvPilot();
+      throw error;
+    }
+
     const stopCurrentMpvPilotEngine = async () => {
       try {
         return await stopMpvPilotEngine();
@@ -5732,6 +5743,8 @@ async function initApp() {
 
     elements.videoWrapper?.classList.add('mpv-pilot-mode');
     document.body.classList.add('mpv-pilot-mode');
+    mpvPilotHostPreparing = false;
+    syncMpvHostVisibilityWithDom();
     syncCanvasOverlay();
     syncMpvEmbedBounds();
     syncMpvVideoTransform();
