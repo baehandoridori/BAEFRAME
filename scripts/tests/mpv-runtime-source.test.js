@@ -137,7 +137,7 @@ test('mpv pilot falls back to the normal playback path when mpv load fails', () 
 
   assert.match(loadVideoSource, /allowMpvPilot = true/);
   assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot\(filePath, \{ fileIsAudio, hasPreparedVideoPath: hasConvertedPreparedVideoPath \}\);/);
-  assert.match(loadVideoSource, /catch \(mpvError\) \{[\s\S]+mpv 파일럿 로드 실패, 기존 재생 방식으로 재시도[\s\S]+allowMpvPilot: false[\s\S]+return loadVideo\(filePath, fallbackOptions\);[\s\S]+\}/);
+  assert.match(loadVideoSource, /catch \(mpvError\) \{[\s\S]+mpv 파일럿 로드 실패, 기존 재생 방식으로 재시도[\s\S]+allowMpvPilot: false,[\s\S]+preparedVideoPath: preparedVideoPathIsOriginal \? null : preparedVideoPath[\s\S]+return loadVideo\(filePath, fallbackOptions\);[\s\S]+\}/);
 });
 
 test('mpv pilot can be enabled from app playback settings without an env var', () => {

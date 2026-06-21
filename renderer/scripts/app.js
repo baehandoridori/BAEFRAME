@@ -6068,7 +6068,8 @@ async function initApp() {
             showToast('mpv 재생에 실패해 기존 방식으로 다시 시도합니다.', 'warning');
             const fallbackOptions = {
               ...options,
-              allowMpvPilot: false
+              allowMpvPilot: false,
+              preparedVideoPath: preparedVideoPathIsOriginal ? null : preparedVideoPath
             };
             return loadVideo(filePath, fallbackOptions);
           }
@@ -13397,7 +13398,7 @@ async function initApp() {
         });
         if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (useMpvPilot) {
-          continuousPlaybackState.preparedMediaPaths.set(item.id, item.videoPath);
+          continuousPlaybackState.preparedMediaPaths.delete(item.id);
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, 'mpv 원본 준비');
           return { ready: true, mpv: true };
         }

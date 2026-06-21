@@ -1026,7 +1026,10 @@ test('mpv pilot playlist preparation skips background transcode work', () => {
       prepareSource.indexOf('const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();'),
     'mpv pilot eligibility should be checked before FFmpeg probing'
   );
-  assert.match(prepareSource, /if \(useMpvPilot\) \{[\s\S]+continuousPlaybackState\.preparedMediaPaths\.set\(item\.id, item\.videoPath\);[\s\S]+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.READY, 'mpv 원본 준비'\);[\s\S]+return \{ ready: true, mpv: true \};[\s\S]+\}/);
+  assert.match(prepareSource, /if \(useMpvPilot\) \{[\s\S]+continuousPlaybackState\.preparedMediaPaths\.delete\(item\.id\);[\s\S]+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.READY, 'mpv 원본 준비'\);[\s\S]+return \{ ready: true, mpv: true \};[\s\S]+\}/);
+  const mpvReadyBlock = prepareSource.match(/if \(useMpvPilot\) \{([\s\S]*?)\n        \}/);
+  assert.ok(mpvReadyBlock, 'mpv ready block should exist');
+  assert.doesNotMatch(mpvReadyBlock[1], /preparedMediaPaths\.set/);
   assert.ok(
     prepareSource.indexOf('if (useMpvPilot)') <
       prepareSource.indexOf('window.electronAPI.ffmpegPreTranscode(item.videoPath)'),
