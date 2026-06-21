@@ -35,6 +35,15 @@ function createMpvIpcPath({
   return path.posix.join(String(tempDir).replace(/\\/g, '/'), `baeframe-mpv-${pid}-${safeUnique}.sock`);
 }
 
+function createMpvIpcUniqueId({
+  now = Date.now,
+  random = Math.random
+} = {}) {
+  const timePart = Number(now()).toString(36);
+  const randomPart = Math.floor(Number(random()) * Number.MAX_SAFE_INTEGER).toString(36);
+  return `${timePart}-${randomPart}`;
+}
+
 function normalizeMpvWid(wid) {
   if (wid === undefined || wid === null || wid === '') return null;
   const value = String(wid).trim();
@@ -102,6 +111,7 @@ class MPVManager {
     this.execFile = options.execFile || execFile;
     this.logger = options.logger || log;
     this.now = options.now || (() => Date.now());
+    this.random = options.random || Math.random;
     this.tempDir = options.tempDir || os.tmpdir();
 
     this.appRoot = options.appRoot || path.join(__dirname, '..');
@@ -356,7 +366,7 @@ class MPVManager {
     this.ipcPath = createMpvIpcPath({
       platform: this.platform,
       pid: this.processPid,
-      unique: this.now().toString(36),
+      unique: createMpvIpcUniqueId({ now: this.now, random: this.random }),
       tempDir: this.tempDir
     });
 
@@ -600,6 +610,7 @@ const mpvManager = new MPVManager();
 module.exports = {
   MPVManager,
   createMpvIpcPath,
+  createMpvIpcUniqueId,
   createMpvLaunchArgs,
   isMpvPilotEnabled,
   mpvManager

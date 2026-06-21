@@ -6,6 +6,7 @@ const {
   MPVManager,
   createMpvLaunchArgs,
   createMpvIpcPath,
+  createMpvIpcUniqueId,
   isMpvPilotEnabled
 } = require('../../main/mpv-manager');
 
@@ -109,6 +110,15 @@ test('detects mpv availability even when pilot env is not enabled', async () => 
 test('creates stable platform-specific IPC paths', () => {
   assert.match(createMpvIpcPath({ platform: 'win32', pid: 77, unique: 'abc' }), /^\\\\\.\\pipe\\baeframe-mpv-77-abc$/);
   assert.match(createMpvIpcPath({ platform: 'linux', pid: 77, unique: 'abc', tempDir: '/tmp' }), /^\/tmp\/baeframe-mpv-77-abc\.sock$/);
+});
+
+test('creates unique IPC suffixes for same-millisecond mpv starts', () => {
+  const first = createMpvIpcUniqueId({ now: () => 12345, random: () => 0.1 });
+  const second = createMpvIpcUniqueId({ now: () => 12345, random: () => 0.2 });
+
+  assert.notEqual(first, second);
+  assert.match(first, /^9ix-[a-z0-9]+$/);
+  assert.match(second, /^9ix-[a-z0-9]+$/);
 });
 
 test('launch args enable JSON IPC without user config', () => {
