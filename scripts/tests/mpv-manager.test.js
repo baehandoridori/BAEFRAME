@@ -137,6 +137,53 @@ test('launch args can attach mpv to an embedded window id', () => {
   assert.ok(args.includes('--cursor-autohide=always'));
 });
 
+test('load can start hidden no-window mpv for metadata probes', async () => {
+  const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
+  const videoPath = path.normalize('C:\\video\\shot.mov');
+  const spawned = [];
+  const commands = [];
+  const manager = createManager({
+    existing: [bundledPath, videoPath]
+  });
+  manager.spawn = (_cmd, args) => {
+    const processRef = {
+      killed: false,
+      on() {},
+      kill() {
+        this.killed = true;
+      }
+    };
+    spawned.push({ args, processRef });
+    return processRef;
+  };
+  manager._waitForIpcReady = async () => true;
+  manager.sendCommand = async (command) => {
+    commands.push(command);
+    return { error: 'success' };
+  };
+  manager.waitForPlaybackReady = async () => ({
+    success: true,
+    duration: 12.5,
+    fps: 24,
+    width: 1920,
+    height: 1080
+  });
+  manager.getStatus = async () => ({
+    success: true,
+    duration: 12.5,
+    fps: 24,
+    width: 1920,
+    height: 1080
+  });
+
+  const result = await manager.load(videoPath, { pause: true, forceWindow: false });
+
+  assert.equal(result.duration, 12.5);
+  assert.ok(spawned[0].args.includes('--force-window=no'));
+  assert.ok(commands.some(command => command[0] === 'loadfile' && command[1] === videoPath));
+  assert.equal(manager.forceWindow, false);
+});
+
 test('start restarts mpv when the embedded window id changes', async () => {
   const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
   const spawned = [];

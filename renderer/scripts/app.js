@@ -7683,13 +7683,14 @@ async function initApp() {
     const opened = await openPlaylistAggregateComment(key);
     if (!opened) return false;
 
-    const reply = commentManager.addReplyToMarker(range.markerId, text, commentManager.getAuthor());
+    const activeRange = playlistAggregateCommentRanges.find(item => getPlaylistAggregateCommentKey(item) === key) || range;
+    const reply = commentManager.addReplyToMarker(activeRange.markerId, text, commentManager.getAuthor());
     if (!reply) {
       showToast('원본 댓글을 찾을 수 없습니다.', 'warning');
       return false;
     }
 
-    range.replies = [...(range.replies || []), reply];
+    activeRange.replies = [...(activeRange.replies || []), reply];
     textarea.value = '';
     resizeReplyEditorToContent(textarea);
     renderPlaylistContinuousCommentList(commentFilterState.status);
@@ -13222,6 +13223,28 @@ async function initApp() {
           hasPreparedVideoPath: false
         })
         : false;
+
+      if (!hasDuration && item.videoPath && useMpvPilotForMetadata) {
+        try {
+          const mpvProbe = await window.electronAPI.mpvProbeMetadata(item.videoPath);
+          if (mpvProbe?.success) {
+            const probeDuration = Number(mpvProbe.duration);
+            const probeFps = Number(mpvProbe.fps);
+            if (Number.isFinite(probeDuration) && probeDuration > 0) {
+              duration = probeDuration;
+              fps = Number.isFinite(probeFps) && probeFps > 0
+                ? probeFps
+                : (Number.isFinite(fps) && fps > 0 ? fps : 24);
+              item.duration = duration;
+              item.fps = fps;
+            }
+          } else {
+            log.warn('mpv 타임라인 메타데이터 수집 실패', { fileName: item.fileName, error: mpvProbe?.error || 'probe failed' });
+          }
+        } catch (error) {
+          log.warn('mpv 타임라인 메타데이터 수집 실패', { fileName: item.fileName, error: error.message });
+        }
+      }
 
       if (!hasDuration && item.videoPath && !useMpvPilotForMetadata) {
         try {

@@ -25,11 +25,14 @@ test('continuous metadata skips FFmpeg probes for mpv pilot originals', () => {
   const metadataSource = metadataMatch[1];
   assert.match(metadataSource, /state\.currentFile === item\.videoPath && videoPlayer\.duration/);
   assert.match(metadataSource, /const useMpvPilotForMetadata = !hasDuration && item\.videoPath[\s\S]+await shouldUseMpvPilot\(item\.videoPath/);
+  assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && useMpvPilotForMetadata\) \{[\s\S]+const mpvProbe = await window\.electronAPI\.mpvProbeMetadata\(item\.videoPath\);/);
   assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && !useMpvPilotForMetadata\) \{/);
   assert.ok(
     metadataSource.indexOf('const useMpvPilotForMetadata') <
+      metadataSource.indexOf('window.electronAPI.mpvProbeMetadata(item.videoPath)') &&
+      metadataSource.indexOf('window.electronAPI.mpvProbeMetadata(item.videoPath)') <
       metadataSource.indexOf('ffmpegProbeCodec(item.videoPath)'),
-    'mpv eligibility should be checked before playlist metadata probing'
+    'mpv eligibility and mpv metadata probing should run before FFmpeg probing'
   );
   assert.match(metadataSource, /ffmpegProbeCodec\(item\.videoPath\)/);
   assert.match(metadataSource, /probe\.duration/);

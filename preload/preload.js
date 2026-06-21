@@ -115,6 +115,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvIsEnabled: () => ipcRenderer.invoke('mpv:is-enabled'),
   mpvIsAvailable: () => ipcRenderer.invoke('mpv:is-available'),
   mpvLoad: (filePath, options) => ipcRenderer.invoke('mpv:load', filePath, options),
+  mpvProbeMetadata: (filePath) => ipcRenderer.invoke('mpv:probe-metadata', filePath),
   mpvPlay: () => ipcRenderer.invoke('mpv:play'),
   mpvPause: () => ipcRenderer.invoke('mpv:pause'),
   mpvSeek: (time) => ipcRenderer.invoke('mpv:seek', time),

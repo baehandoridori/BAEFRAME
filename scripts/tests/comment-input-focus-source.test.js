@@ -62,4 +62,7 @@ test('playlist aggregate comments can submit inline replies from the sidebar lis
   assert.match(appSource, /async function submitPlaylistAggregateReply\(key, textarea\) \{/);
   assert.match(appSource, /<textarea class="playlist-comment-reply-input"[\s\S]+placeholder="답글 입력\.\.\."/);
   assert.match(appSource, /item\.querySelector\('\.playlist-comment-reply-submit'\)\?\.addEventListener\('click'/);
+  assert.match(appSource, /const activeRange = playlistAggregateCommentRanges\.find\(item => getPlaylistAggregateCommentKey\(item\) === key\) \|\| range;/);
+  assert.match(appSource, /commentManager\.addReplyToMarker\(activeRange\.markerId, text, commentManager\.getAuthor\(\)\)/);
+  assert.match(appSource, /activeRange\.replies = \[\.\.\.\(activeRange\.replies \|\| \[\]\), reply\];/);
 });

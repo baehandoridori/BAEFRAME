@@ -12,7 +12,7 @@ const { getMainWindow, minimizeWindow, toggleMaximize, closeWindow, isMaximized,
 const { RecentFilesStore } = require('./recent-files-store');
 const recentThumbCapture = require('./recent-thumb-capture');
 const { validateCutlistFilePath } = require('./cutlist-paths');
-const { mpvManager } = require('./mpv-manager');
+const { MPVManager, mpvManager } = require('./mpv-manager');
 const { mpvEmbedHost } = require('./mpv-embed-host');
 const { mpvOverlayHost } = require('./mpv-overlay-host');
 const Store = require('electron-store');
@@ -1623,6 +1623,35 @@ function setupIpcHandlers() {
     } catch (error) {
       trace.error(error);
       return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:probe-metadata', async (event, filePath) => {
+    const trace = log.trace('mpv:probe-metadata');
+    const metadataMpv = new MPVManager();
+    try {
+      const result = await metadataMpv.load(filePath, {
+        pause: true,
+        forceWindow: false
+      });
+      const metadata = {
+        success: true,
+        duration: Number(result.duration) || 0,
+        fps: Number(result.fps) || 24,
+        width: Number(result.width) || 0,
+        height: Number(result.height) || 0
+      };
+      trace.end({ success: true, filePath, duration: metadata.duration, fps: metadata.fps });
+      return metadata;
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    } finally {
+      try {
+        await metadataMpv.stop({ commandTimeoutMs: 1000 });
+      } catch (stopError) {
+        log.debug('mpv 메타데이터 조회용 프로세스 정리 실패', { error: stopError.message });
+      }
     }
   });
 

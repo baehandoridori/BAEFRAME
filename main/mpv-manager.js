@@ -110,6 +110,7 @@ class MPVManager {
     this.process = null;
     this.requestId = 0;
     this.embeddedWid = null;
+    this.forceWindow = true;
     this.loadQueue = Promise.resolve();
   }
 
@@ -157,7 +158,7 @@ class MPVManager {
       throw new Error(`mpv load file not found: ${filePath}`);
     }
 
-    await this.start({ wid: options.wid });
+    await this.start({ wid: options.wid, forceWindow: options.forceWindow });
     await this.sendCommand(['loadfile', filePath, 'replace']);
     await this.waitForPlaybackReady(filePath);
     if (options.videoTransform) {
@@ -329,7 +330,12 @@ class MPVManager {
 
     const hasWidOption = Object.prototype.hasOwnProperty.call(options, 'wid');
     const requestedWid = hasWidOption ? normalizeMpvWid(options.wid) : this.embeddedWid;
-    if (this.process && !this.process.killed && this.embeddedWid !== requestedWid) {
+    const requestedForceWindow = options.forceWindow !== false;
+    if (
+      this.process &&
+      !this.process.killed &&
+      (this.embeddedWid !== requestedWid || this.forceWindow !== requestedForceWindow)
+    ) {
       await this.stop();
     }
 
@@ -344,9 +350,10 @@ class MPVManager {
       tempDir: this.tempDir
     });
 
-    const args = createMpvLaunchArgs({ ipcPath: this.ipcPath, forceWindow: true, wid: requestedWid });
+    const args = createMpvLaunchArgs({ ipcPath: this.ipcPath, forceWindow: requestedForceWindow, wid: requestedWid });
     this.logger.info('starting mpv pilot process', { mpvPath: this.mpvPath, args });
     this.embeddedWid = requestedWid;
+    this.forceWindow = requestedForceWindow;
 
     const processRef = this.spawn(this.mpvPath, args, {
       stdio: 'ignore',
@@ -391,6 +398,7 @@ class MPVManager {
 
     this.process = null;
     this.embeddedWid = null;
+    this.forceWindow = true;
     return { success: true, stopped: true };
   }
 
