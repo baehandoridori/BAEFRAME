@@ -5809,9 +5809,11 @@ async function initApp() {
 
       // ====== 코덱 확인 및 트랜스코딩 (비디오만) ======
       const hasPreparedVideoPath = typeof preparedVideoPath === 'string' && preparedVideoPath.length > 0;
+      const preparedVideoPathIsOriginal = hasPreparedVideoPath && isSameFilePath(preparedVideoPath, filePath);
+      const hasConvertedPreparedVideoPath = hasPreparedVideoPath && !preparedVideoPathIsOriginal;
       let actualVideoPath = hasPreparedVideoPath ? preparedVideoPath : filePath;
       let thumbnailVideoPath = actualVideoPath;
-      const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath });
+      const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath: hasConvertedPreparedVideoPath });
       if (isStaleVideoLoad()) return false;
       if (hasPreparedVideoPath) {
         log.debug('준비된 연속 재생 미디어 경로 사용', { filePath, preparedVideoPath });
@@ -13367,7 +13369,34 @@ async function initApp() {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  function getContinuousPlaybackSnapshot() {
+    const media = videoPlayer.videoElement;
+    if (videoPlayer.engine !== 'html5') {
+      const currentTime = Math.max(0, Number(videoPlayer.currentTime) || 0);
+      const duration = Math.max(0, Number(videoPlayer.duration) || 0);
+      return {
+        currentTime,
+        duration,
+        ended: duration > 0 && duration - currentTime <= 0.25 && !videoPlayer.isPlaying,
+        paused: !videoPlayer.isPlaying,
+        ready: videoPlayer.isLoaded === true
+      };
+    }
+
+    return {
+      currentTime: Math.max(0, Number(media?.currentTime ?? videoPlayer.currentTime) || 0),
+      duration: Math.max(0, Number(media?.duration ?? videoPlayer.duration) || 0),
+      ended: media?.ended === true,
+      paused: media?.paused === true,
+      ready: Number(media?.readyState || 0) >= 2
+    };
+  }
+
   function waitForContinuousMediaReady(timeoutMs = 1200) {
+    if (videoPlayer.engine !== 'html5') {
+      return Promise.resolve(videoPlayer.isLoaded === true);
+    }
+
     const media = videoPlayer.videoElement;
     if (!media) return Promise.resolve(false);
     if (media.readyState >= 2) return Promise.resolve(true);
@@ -13397,10 +13426,11 @@ async function initApp() {
     const timeoutMs = options.timeoutMs || 1100;
     const minDelta = options.minDelta || 0.03;
     const media = videoPlayer.videoElement;
-    if (!media) return Promise.resolve(false);
+    if (videoPlayer.engine === 'html5' && !media) return Promise.resolve(false);
 
-    const startTime = Number(media.currentTime || videoPlayer.currentTime) || 0;
-    const duration = Number(media.duration || videoPlayer.duration) || 0;
+    const snapshot = getContinuousPlaybackSnapshot();
+    const startTime = snapshot.currentTime;
+    const duration = snapshot.duration;
     if (duration > 0 && duration - startTime <= 0.25) return Promise.resolve(true);
 
     return new Promise(resolve => {
@@ -13410,15 +13440,17 @@ async function initApp() {
       const finish = (value) => {
         if (settled) return;
         settled = true;
-        media.removeEventListener('timeupdate', onProgress);
-        media.removeEventListener('ended', onEnded);
+        media?.removeEventListener('timeupdate', onProgress);
+        media?.removeEventListener('ended', onEnded);
+        videoPlayer.removeEventListener('timeupdate', onProgress);
+        videoPlayer.removeEventListener('ended', onEnded);
         clearInterval(interval);
         resolve(value);
       };
 
       const hasAdvanced = () => {
-        const currentTime = Number(media.currentTime || videoPlayer.currentTime) || 0;
-        return currentTime - startTime >= minDelta;
+        const currentSnapshot = getContinuousPlaybackSnapshot();
+        return currentSnapshot.currentTime - startTime >= minDelta;
       };
 
       const onProgress = () => {
@@ -13430,11 +13462,12 @@ async function initApp() {
           finish(false);
           return;
         }
-        if (hasAdvanced() || media.ended) {
+        const currentSnapshot = getContinuousPlaybackSnapshot();
+        if (hasAdvanced() || currentSnapshot.ended) {
           finish(true);
           return;
         }
-        if (media.paused && !videoPlayer.isPlaying) {
+        if (currentSnapshot.paused && !videoPlayer.isPlaying) {
           finish(true);
           return;
         }
@@ -13443,8 +13476,10 @@ async function initApp() {
         }
       }, 120);
 
-      media.addEventListener('timeupdate', onProgress);
-      media.addEventListener('ended', onEnded, { once: true });
+      media?.addEventListener('timeupdate', onProgress);
+      media?.addEventListener('ended', onEnded, { once: true });
+      videoPlayer.addEventListener('timeupdate', onProgress);
+      videoPlayer.addEventListener('ended', onEnded, { once: true });
     });
   }
 
