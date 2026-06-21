@@ -325,11 +325,16 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
 test('mpv external playback emits ended when keep-open reaches EOF', () => {
   assert.match(mpvManagerSource, /this\.getOptionalProperty\('eof-reached', false\)/);
   assert.match(videoPlayerSource, /this\._externalEndedEmitted = false;/);
+  assert.match(videoPlayerSource, /this\.externalEofReached = false;/);
   assert.match(videoPlayerSource, /const eofReached = status\.eofReached === true;/);
+  assert.match(videoPlayerSource, /this\.externalEofReached = eofReached;/);
   assert.match(videoPlayerSource, /const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+this\.isPlaying = nextIsPlaying;/);
   assert.match(videoPlayerSource, /if \(eofReached && !this\._externalEndedEmitted\) \{[\s\S]+this\._externalEndedEmitted = true;[\s\S]+this\._emit\('ended'\);[\s\S]+\}/);
   assert.match(videoPlayerSource, /if \(!eofReached\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+\}/);
-  assert.match(videoPlayerSource, /seek\(time\) \{[\s\S]+this\._externalEndedEmitted = false;/);
+  assert.match(videoPlayerSource, /seek\(time\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+this\.externalEofReached = false;/);
+  assert.match(videoPlayerSource, /async play\(\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+this\.externalEofReached = false;/);
+  assert.match(videoPlayerSource, /useExternalEngine\(config = \{\}\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+this\.externalEofReached = false;/);
+  assert.match(videoPlayerSource, /useHtml5Engine\(\) \{[\s\S]+this\._externalEndedEmitted = false;[\s\S]+this\.externalEofReached = false;/);
 });
 
 test('mpv engine replacement resets playing state before html5 loads', () => {

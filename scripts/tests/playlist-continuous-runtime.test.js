@@ -393,6 +393,10 @@ test('continuous playback watchdog uses VideoPlayer state for external engines',
 
 test('continuous playback only advances on confirmed media end', () => {
   assert.match(appSource, /function hasContinuousPlaybackReachedMediaEnd\(snapshot = getContinuousPlaybackSnapshot\(\)\) \{/);
+  assert.match(appSource, /const externalEofReached = videoPlayer\.externalEofReached === true;/);
+  assert.match(appSource, /ended: externalEofReached \|\| \(duration > 0 && duration - currentTime <= 0\.25 && !videoPlayer\.isPlaying\),/);
+  assert.match(appSource, /externalEofReached,/);
+  assert.match(appSource, /if \(snapshot\.externalEofReached === true\) return true;/);
   assert.match(appSource, /return snapshot\.duration > 0 && snapshot\.duration - snapshot\.currentTime <= 0\.25 && snapshot\.ended === true;/);
 
   const endedListenerMatch = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);

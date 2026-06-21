@@ -13407,10 +13407,12 @@ async function initApp() {
     if (videoPlayer.engine !== 'html5') {
       const currentTime = Math.max(0, Number(videoPlayer.currentTime) || 0);
       const duration = Math.max(0, Number(videoPlayer.duration) || 0);
+      const externalEofReached = videoPlayer.externalEofReached === true;
       return {
         currentTime,
         duration,
-        ended: duration > 0 && duration - currentTime <= 0.25 && !videoPlayer.isPlaying,
+        ended: externalEofReached || (duration > 0 && duration - currentTime <= 0.25 && !videoPlayer.isPlaying),
+        externalEofReached,
         paused: !videoPlayer.isPlaying,
         ready: videoPlayer.isLoaded === true
       };
@@ -13426,6 +13428,7 @@ async function initApp() {
   }
 
   function hasContinuousPlaybackReachedMediaEnd(snapshot = getContinuousPlaybackSnapshot()) {
+    if (snapshot.externalEofReached === true) return true;
     return snapshot.duration > 0 && snapshot.duration - snapshot.currentTime <= 0.25 && snapshot.ended === true;
   }
 
