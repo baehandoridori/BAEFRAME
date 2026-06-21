@@ -185,6 +185,7 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
     '.credits-overlay.active',
     '.codec-error-overlay.active',
     '.app-saving-overlay.active',
+    '#videoLoadingOverlay.active',
     '.transcode-overlay.active'
   ].forEach((selector) => {
     assert.match(appSource, new RegExp(`'${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`));

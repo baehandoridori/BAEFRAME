@@ -5133,6 +5133,7 @@ async function initApp() {
     '.credits-overlay.active',
     '.codec-error-overlay.active',
     '.app-saving-overlay.active',
+    '#videoLoadingOverlay.active',
     '.transcode-overlay.active'
   ].join(',');
 
