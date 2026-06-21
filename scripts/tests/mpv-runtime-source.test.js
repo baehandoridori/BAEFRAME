@@ -107,7 +107,7 @@ test('loadVideo checks mpv pilot before FFmpeg transcode and falls back by defau
   assert.match(loadVideoSource, /await videoPlayer\.load\(actualVideoPath\);/);
 });
 
-test('mpv pilot keeps a Chromium-decodable path for thumbnails', () => {
+test('mpv pilot skips thumbnail generation without FFmpeg probing', () => {
   const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\//);
   assert.ok(loadVideoMatch, 'loadVideo should exist');
   const loadVideoSource = loadVideoMatch[1];
@@ -116,7 +116,7 @@ test('mpv pilot keeps a Chromium-decodable path for thumbnails', () => {
   assert.ok(resolveMpvThumbnailMatch, 'resolveMpvThumbnailVideoPath should exist');
   const resolveMpvThumbnailSource = resolveMpvThumbnailMatch[0];
 
-  assert.match(resolveMpvThumbnailSource, /ffmpegProbeCodec\(filePath\)[\s\S]+ffmpegCheckCache\(filePath\)/);
+  assert.doesNotMatch(resolveMpvThumbnailSource, /window\.electronAPI\.ffmpeg/);
   assert.match(resolveMpvThumbnailSource, /return null;/);
   assert.doesNotMatch(resolveMpvThumbnailSource, /showTranscodeOverlay\(filePath/);
   assert.match(loadVideoSource, /let thumbnailVideoPath = actualVideoPath;/);
@@ -259,6 +259,8 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
   assert.match(loadMpvSource, /if \(isStaleVideoLoad\(\)\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+return false;[\s\S]+\}/);
   assert.match(loadMpvSource, /catch \(error\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw error;[\s\S]+\}/);
   assert.match(loadMpvSource, /if \(!loadResult\?\.success\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw new Error/);
+  assert.doesNotMatch(loadMpvSource, /ffmpegIsAvailable|ffmpegProbeCodec/);
+  assert.match(loadMpvSource, /duration: Number\(loadResult\.duration\) \|\| 0/);
   assert.match(loadMpvSource, /document\.body\.classList\.add\('mpv-pilot-mode'\);[\s\S]+mpvPilotHostPreparing = false;[\s\S]+syncMpvHostVisibilityWithDom\(\);/);
 });
 

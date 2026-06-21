@@ -51,3 +51,15 @@ test('loading review comments refreshes the right sidebar comment list', () => {
   assert.match(loadedHandlerSource, /void refreshCommentRangesForCurrentMode\(\);/);
   assert.match(loadedHandlerSource, /updateCommentList\(\);/);
 });
+
+test('right sidebar reply editors grow with long replies', () => {
+  assert.match(appSource, /function resizeReplyEditorToContent\(editor\) \{/);
+  assert.match(appSource, /replyInput\?\.addEventListener\('input', \(\) => resizeReplyEditorToContent\(replyInput\)\);/);
+  assert.match(appSource, /threadEditor\?\.addEventListener\('input', \(\) => \{[\s\S]+resizeReplyEditorToContent\(threadEditor\);/);
+});
+
+test('playlist aggregate comments can submit inline replies from the sidebar list', () => {
+  assert.match(appSource, /async function submitPlaylistAggregateReply\(key, textarea\) \{/);
+  assert.match(appSource, /<textarea class="playlist-comment-reply-input"[\s\S]+placeholder="답글 입력\.\.\."/);
+  assert.match(appSource, /item\.querySelector\('\.playlist-comment-reply-submit'\)\?\.addEventListener\('click'/);
+});

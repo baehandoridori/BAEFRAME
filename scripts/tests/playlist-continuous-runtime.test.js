@@ -18,12 +18,19 @@ test('continuous runtime imports the shared helper module', () => {
   assert.match(appSource, /CONTINUOUS_STATUS[\s\S]+findNextPlayableIndex[\s\S]+createSkippedToastMessage[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
 });
 
-test('continuous metadata probes unloaded playlist items without saved duration', () => {
+test('continuous metadata skips FFmpeg probes for mpv pilot originals', () => {
   const metadataMatch = appSource.match(/async function collectPlaylistMetadata\(items\) \{([\s\S]*?)\n  \}\n\n  async function updatePlaylistContinuousTimeline/);
   assert.ok(metadataMatch, 'collectPlaylistMetadata should exist');
 
   const metadataSource = metadataMatch[1];
   assert.match(metadataSource, /state\.currentFile === item\.videoPath && videoPlayer\.duration/);
+  assert.match(metadataSource, /const useMpvPilotForMetadata = !hasDuration && item\.videoPath[\s\S]+await shouldUseMpvPilot\(item\.videoPath/);
+  assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && !useMpvPilotForMetadata\) \{/);
+  assert.ok(
+    metadataSource.indexOf('const useMpvPilotForMetadata') <
+      metadataSource.indexOf('ffmpegProbeCodec(item.videoPath)'),
+    'mpv eligibility should be checked before playlist metadata probing'
+  );
   assert.match(metadataSource, /ffmpegProbeCodec\(item\.videoPath\)/);
   assert.match(metadataSource, /probe\.duration/);
   assert.match(metadataSource, /probe\.frameRate/);
@@ -1003,6 +1010,45 @@ test('playlist background pre-transcode ignores stale playlist generations', () 
   assert.match(preTranscodeSource, /const isCurrentBackgroundWork = \(\) => \(/);
   assert.match(preTranscodeSource, /if \(!isCurrentBackgroundWork\(\)\) return;/);
   assert.match(preTranscodeSource, /ffmpegPreTranscode\(item\.videoPath\)[\s\S]+if \(!isCurrentBackgroundWork\(\)\) return;/);
+});
+
+test('mpv pilot playlist preparation skips background transcode work', () => {
+  const prepareMatch = appSource.match(/async function preparePlaylistItemInBackground\(item, sessionId = continuousPlaybackState\.sessionId\) \{([\s\S]*?)\n  \}\n\n  function prepareNextPlaylistItem/);
+  assert.ok(prepareMatch, 'preparePlaylistItemInBackground should exist');
+
+  const prepareSource = prepareMatch[1];
+  assert.match(prepareSource, /const useMpvPilot = await shouldUseMpvPilot\(item\.videoPath, \{[\s\S]+fileIsAudio: isAudioFile\(item\.fileName \|\| item\.videoPath\),[\s\S]+hasPreparedVideoPath: false[\s\S]+\}\);/);
+  assert.ok(
+    prepareSource.indexOf('const useMpvPilot = await shouldUseMpvPilot') <
+      prepareSource.indexOf('const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();'),
+    'mpv pilot eligibility should be checked before FFmpeg probing'
+  );
+  assert.match(prepareSource, /if \(useMpvPilot\) \{[\s\S]+continuousPlaybackState\.preparedMediaPaths\.set\(item\.id, item\.videoPath\);[\s\S]+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.READY, 'mpv 원본 준비'\);[\s\S]+return \{ ready: true, mpv: true \};[\s\S]+\}/);
+  assert.ok(
+    prepareSource.indexOf('if (useMpvPilot)') <
+      prepareSource.indexOf('window.electronAPI.ffmpegPreTranscode(item.videoPath)'),
+    'mpv-ready playlist items must return before background transcode starts'
+  );
+});
+
+test('mpv pilot playlist pre-transcode scan skips ffmpeg background conversion', () => {
+  const preTranscodeMatch = appSource.match(/async function preTranscodePlaylistItems\(\) \{([\s\S]*?)\n  \}\n\n  function toLocalMediaUrl/);
+  assert.ok(preTranscodeMatch, 'preTranscodePlaylistItems should exist');
+
+  const preTranscodeSource = preTranscodeMatch[1];
+  assert.match(preTranscodeSource, /let ffmpegAvailable = null;/);
+  assert.match(preTranscodeSource, /const useMpvPilot = await shouldUseMpvPilot\(item\.videoPath, \{[\s\S]+fileIsAudio: isAudioFile\(item\.fileName \|\| item\.videoPath\),[\s\S]+hasPreparedVideoPath: false[\s\S]+\}\);/);
+  assert.ok(
+    preTranscodeSource.indexOf('const useMpvPilot = await shouldUseMpvPilot') <
+      preTranscodeSource.indexOf('ffmpegProbeCodec(item.videoPath)'),
+    'mpv eligibility should be checked before codec probing in the pre-transcode scan'
+  );
+  assert.match(preTranscodeSource, /if \(useMpvPilot\) \{[\s\S]+log\.debug\('mpv 파일럿 사전 변환 건너뜀'[\s\S]+continue;[\s\S]+\}/);
+  assert.ok(
+    preTranscodeSource.indexOf('if (useMpvPilot)') <
+      preTranscodeSource.indexOf('window.electronAPI.ffmpegPreTranscode(item.videoPath)'),
+    'mpv-ready items must skip ffmpegPreTranscode'
+  );
 });
 
 test('ffmpeg detection checks the main checkout when running from a git worktree', () => {
