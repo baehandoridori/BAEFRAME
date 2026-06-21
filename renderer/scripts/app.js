@@ -3472,6 +3472,7 @@ async function initApp() {
 
       if (videoCommentRangeOverlay) {
         videoCommentRangeOverlay.classList.toggle('hidden', !overlayEnabled);
+        scheduleMpvOverlayStateSync();
       }
     });
   }
@@ -3484,6 +3485,7 @@ async function initApp() {
 
       if (videoCommentRangeOverlay) {
         videoCommentRangeOverlay.classList.toggle('position-top', overlayPositionTop);
+        scheduleMpvOverlayStateSync();
       }
     });
   }
@@ -3508,6 +3510,7 @@ async function initApp() {
     // 댓글이 없으면 숨김
     if (!ranges || ranges.length === 0) {
       videoCommentRangeOverlay.classList.remove('visible');
+      scheduleMpvOverlayStateSync();
       return;
     }
 
@@ -3565,6 +3568,7 @@ async function initApp() {
 
     // 초기 플레이헤드 위치 업데이트
     updateVideoCommentPlayhead();
+    scheduleMpvOverlayStateSync();
   }
 
   // 플레이헤드 위치 업데이트
@@ -3586,6 +3590,7 @@ async function initApp() {
         bar.classList.toggle('active', isActive);
       }
     });
+    scheduleMpvOverlayStateSync();
   }
 
   // HEX to RGBA 변환 헬퍼
@@ -4402,10 +4407,12 @@ async function initApp() {
 
     elements.zoomIndicatorOverlay.textContent = `${Math.round(zoom)}%`;
     elements.zoomIndicatorOverlay.classList.add('visible');
+    scheduleMpvOverlayStateSync();
 
     clearTimeout(window._zoomIndicatorTimeout);
     window._zoomIndicatorTimeout = setTimeout(() => {
       elements.zoomIndicatorOverlay.classList.remove('visible');
+      scheduleMpvOverlayStateSync();
     }, 800);
   }
 
@@ -5103,6 +5110,8 @@ async function initApp() {
   let mpvOverlayLastLiveDrawSyncAt = 0;
   let mpvHostVisibilitySyncPending = false;
   let mpvHostLastRequestedVisible = null;
+  let fullscreenTimecodeOverlay = null;
+  let fullscreenScrubOverlay = null;
 
   const MPV_BLOCKING_OVERLAY_SELECTOR = [
     '.modal-overlay.active',
@@ -5110,8 +5119,61 @@ async function initApp() {
     '.image-viewer-overlay.open',
     '.split-view-overlay.open',
     '.prompt-modal-overlay.open',
-    '.credits-overlay.open'
+    '.credits-overlay.active',
+    '.video-loading-overlay.active',
+    '.codec-error-overlay.active',
+    '.app-saving-overlay.active',
+    '.transcode-overlay.active'
   ].join(',');
+
+  const MPV_HTML_OVERLAY_STYLE_PROPERTIES = [
+    'align-items',
+    'backdrop-filter',
+    'background',
+    'background-color',
+    'border',
+    'border-color',
+    'border-radius',
+    'border-style',
+    'border-width',
+    'bottom',
+    'box-shadow',
+    'box-sizing',
+    'color',
+    'display',
+    'flex-direction',
+    'font',
+    'font-family',
+    'font-size',
+    'font-weight',
+    'gap',
+    'height',
+    'justify-content',
+    'left',
+    'letter-spacing',
+    'line-height',
+    'margin',
+    'max-height',
+    'max-width',
+    'min-height',
+    'min-width',
+    'opacity',
+    'overflow',
+    'padding',
+    'pointer-events',
+    'position',
+    'right',
+    'text-align',
+    'text-overflow',
+    'top',
+    'transform',
+    'transform-origin',
+    'visibility',
+    'white-space',
+    'width',
+    'z-index',
+    '-webkit-backdrop-filter'
+  ];
 
   function isElementVisiblyBlockingMpv(element) {
     if (!element) return false;
@@ -5330,6 +5392,62 @@ async function initApp() {
     return tooltipLayer.innerHTML;
   }
 
+  function copyComputedMpvOverlayStyles(source, target) {
+    const computedStyle = window.getComputedStyle(source);
+    MPV_HTML_OVERLAY_STYLE_PROPERTIES.forEach((property) => {
+      const value = computedStyle.getPropertyValue(property);
+      if (value) target.style.setProperty(property, value);
+    });
+  }
+
+  function cloneMpvHtmlOverlayElement(element, wrapperRect) {
+    if (!element || !isElementVisiblyBlockingMpv(element)) return null;
+
+    const rect = element.getBoundingClientRect();
+    const clone = element.cloneNode(true);
+    const sourceElements = [element, ...element.querySelectorAll('*')];
+    const targetElements = [clone, ...clone.querySelectorAll('*')];
+
+    sourceElements.forEach((sourceElement, index) => {
+      const targetElement = targetElements[index];
+      if (targetElement) copyComputedMpvOverlayStyles(sourceElement, targetElement);
+    });
+
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach((child) => child.removeAttribute('id'));
+    clone.style.position = 'absolute';
+    clone.style.left = `${rect.left - wrapperRect.left}px`;
+    clone.style.top = `${rect.top - wrapperRect.top}px`;
+    clone.style.right = 'auto';
+    clone.style.bottom = 'auto';
+    clone.style.width = `${rect.width}px`;
+    clone.style.height = `${rect.height}px`;
+    clone.style.margin = '0';
+    clone.style.pointerEvents = 'none';
+    clone.style.transform = 'none';
+
+    return clone;
+  }
+
+  function serializeMpvOverlayHtml() {
+    const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
+    if (!wrapperRect) return '';
+
+    const htmlOverlay = document.createElement('div');
+    [
+      elements.currentCutOverlay,
+      elements.zoomIndicatorOverlay,
+      videoCommentRangeOverlay,
+      fullscreenTimecodeOverlay,
+      fullscreenScrubOverlay
+    ].forEach((element) => {
+      const clone = cloneMpvHtmlOverlayElement(element, wrapperRect);
+      if (clone) htmlOverlay.appendChild(clone);
+    });
+
+    return htmlOverlay.innerHTML;
+  }
+
   function getMpvOverlayState() {
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
@@ -5340,6 +5458,7 @@ async function initApp() {
       onionDataUrl: getCanvasOverlayDataUrl(elements.onionSkinCanvas),
       markerHtml: serializeMpvOverlayMarkerHtml(),
       tooltipHtml: serializeMpvOverlayTooltipHtml(),
+      htmlOverlayHtml: serializeMpvOverlayHtml(),
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
@@ -6360,8 +6479,6 @@ async function initApp() {
    * 전체화면 모드 토글 (시스템 전체화면)
    */
   let fullscreenMouseHandler = null;
-  let fullscreenTimecodeOverlay = null;
-  let fullscreenScrubOverlay = null;
 
   function setFullscreenControlsVisible(visible) {
     const wasVisible = document.body.classList.contains('show-controls');
@@ -6427,6 +6544,7 @@ async function initApp() {
       if (fullscreenTimecodeOverlay) {
         fullscreenTimecodeOverlay.remove();
         fullscreenTimecodeOverlay = null;
+        scheduleMpvOverlayStateSync();
       }
       setFullscreenControlsVisible(false);
     }
@@ -6456,6 +6574,7 @@ async function initApp() {
 
     fullscreenTimecodeOverlay.querySelector('.current-time').textContent = formatTimecode(currentTime);
     fullscreenTimecodeOverlay.querySelector('.total-time').textContent = formatTimecode(duration);
+    scheduleMpvOverlayStateSync();
   }
 
   /**
@@ -6557,10 +6676,12 @@ async function initApp() {
     overlay.querySelector('.fullscreen-scrub-time').textContent =
       `${formatTimecode(time, fps)} / ${formatTimecode(duration, fps)}`;
     overlay.classList.add('visible');
+    scheduleMpvOverlayStateSync();
   }
 
   function hideFullscreenScrubOverlay() {
     fullscreenScrubOverlay?.classList.remove('visible');
+    scheduleMpvOverlayStateSync();
   }
 
   // 전체화면 시크바 이벤트 설정
@@ -13862,11 +13983,13 @@ async function initApp() {
     if (!cut || !cutlistUIState.active) {
       elements.currentCutOverlay.hidden = true;
       elements.currentCutOverlay.textContent = '';
+      scheduleMpvOverlayStateSync();
       return;
     }
 
     elements.currentCutOverlay.hidden = false;
     elements.currentCutOverlay.textContent = `${cut.label} · BAEFRAME ${formatCutlistFrameRange(cut.startFrame, cut.endFrame)}`;
+    scheduleMpvOverlayStateSync();
   }
 
   function getCurrentCutlistSourceForFile(filePath) {
