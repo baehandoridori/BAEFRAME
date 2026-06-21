@@ -39,7 +39,9 @@ function shouldAllowMultipleInstances({ isDev = false, argv = process.argv, env 
     hasSwitch(argv, '--multi-instance-profile') ||
     hasSwitch(argv, '--multi-instance-user-data') ||
     isTruthy(env.BAEFRAME_MULTI_INSTANCE) ||
-    Boolean(env.BAEFRAME_MULTI_INSTANCE_USER_DATA)
+    Boolean(env.BAEFRAME_MULTI_INSTANCE_USER_DATA) ||
+    Boolean(env.BAEFRAME_MULTI_INSTANCE_PROFILE) ||
+    isTruthy(env.BAEFRAME_MULTI_INSTANCE_ISOLATED)
   );
 }
 

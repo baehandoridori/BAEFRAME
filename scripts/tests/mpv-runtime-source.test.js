@@ -183,7 +183,6 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
   assert.match(appSource, /const MPV_BLOCKING_OVERLAY_SELECTOR = \[[\s\S]+'.modal-overlay.active'[\s\S]+'.thread-overlay.open'[\s\S]+'.image-viewer-overlay.open'[\s\S]+\]\.join\(','\);/);
   [
     '.credits-overlay.active',
-    '.video-loading-overlay.active',
     '.codec-error-overlay.active',
     '.app-saving-overlay.active',
     '.transcode-overlay.active'
@@ -191,6 +190,7 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
     assert.match(appSource, new RegExp(`'${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`));
   });
   assert.doesNotMatch(appSource, /'\.credits-overlay\.open'/);
+  assert.doesNotMatch(appSource, /'\.video-loading-overlay\.active'/);
   assert.match(appSource, /function hasBlockingOverlayForMpv\(\) \{[\s\S]+document\.querySelectorAll\(MPV_BLOCKING_OVERLAY_SELECTOR\)[\s\S]+some\(isElementVisiblyBlockingMpv\);/);
   assert.match(appSource, /let mpvPilotHostPreparing = false;/);
   assert.match(appSource, /function didMpvHostVisibilityApply\(result, shouldShowMpvHost\) \{[\s\S]+if \(!result\?\.success\) return false;[\s\S]+if \(shouldShowMpvHost\) return true;[\s\S]+return result\.embed\?\.ready === true && result\.overlay\?\.ready === true;/);

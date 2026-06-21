@@ -5125,7 +5125,6 @@ async function initApp() {
     '.split-view-overlay.open',
     '.prompt-modal-overlay.open',
     '.credits-overlay.active',
-    '.video-loading-overlay.active',
     '.codec-error-overlay.active',
     '.app-saving-overlay.active',
     '.transcode-overlay.active'

@@ -23,6 +23,8 @@ test('explicit multi-instance switches allow packaged comparison runs', () => {
   assert.equal(shouldAllowMultipleInstances({ argv: ['BFRAME_alpha_v2.exe', '--multi-instance-user-data=C:\\temp\\A'], env: {} }), true);
   assert.equal(shouldAllowMultipleInstances({ argv: ['BFRAME_alpha_v2.exe'], env: { BAEFRAME_MULTI_INSTANCE: '1' } }), true);
   assert.equal(shouldAllowMultipleInstances({ argv: ['BFRAME_alpha_v2.exe'], env: { BAEFRAME_MULTI_INSTANCE_USER_DATA: 'C:\\temp\\A' } }), true);
+  assert.equal(shouldAllowMultipleInstances({ argv: ['BFRAME_alpha_v2.exe'], env: { BAEFRAME_MULTI_INSTANCE_PROFILE: 'A' } }), true);
+  assert.equal(shouldAllowMultipleInstances({ argv: ['BFRAME_alpha_v2.exe'], env: { BAEFRAME_MULTI_INSTANCE_ISOLATED: '1' } }), true);
 });
 
 test('multi-instance profile uses an isolated user data folder only when requested', () => {
