@@ -96,3 +96,13 @@ test('main process starts project file association repair during app startup', (
   assert.match(mainIndex, /app\.whenReady\(\)\.then/);
   assert.match(mainIndex, /appPath: process\.execPath/);
 });
+
+test('main process keeps single-instance default but allows explicit comparison instances', () => {
+  const mainIndex = read('main/index.js');
+
+  assert.match(mainIndex, /shouldAllowMultipleInstances/);
+  assert.match(mainIndex, /resolveMultiInstanceUserDataPath/);
+  assert.match(mainIndex, /const allowMultipleInstances = shouldAllowMultipleInstances\(/);
+  assert.match(mainIndex, /const gotTheLock = allowMultipleInstances \? true : app\.requestSingleInstanceLock\(\);/);
+  assert.match(mainIndex, /app\.setPath\('userData', multiInstanceUserDataPath\);/);
+});

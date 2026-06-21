@@ -55,6 +55,10 @@ const {
   parseRoutedFileUrl,
   safeDecodeURIComponent
 } = require('./launch-routing');
+const {
+  resolveMultiInstanceUserDataPath,
+  shouldAllowMultipleInstances
+} = require('./instance-policy');
 debugLog('내부 모듈 로드 완료');
 
 const log = createLogger('Main');
@@ -228,11 +232,36 @@ if (process.defaultApp) {
 
 // 단일 인스턴스 잠금 (개발 모드에서는 다중 인스턴스 허용)
 const isDev = process.env.NODE_ENV === 'development';
+const allowMultipleInstances = shouldAllowMultipleInstances({
+  isDev,
+  argv: process.argv,
+  env: process.env
+});
+const multiInstanceUserDataPath = resolveMultiInstanceUserDataPath({
+  allowMultipleInstances,
+  isDev,
+  argv: process.argv,
+  env: process.env,
+  appDataDir: process.env.APPDATA,
+  pid: process.pid
+});
+if (multiInstanceUserDataPath) {
+  try {
+    fs.mkdirSync(multiInstanceUserDataPath, { recursive: true });
+    app.setPath('userData', multiInstanceUserDataPath);
+    log.info('다중 인스턴스 전용 사용자 데이터 폴더 사용', { userData: multiInstanceUserDataPath });
+    debugLog(`다중 인스턴스 전용 userData: ${multiInstanceUserDataPath}`);
+  } catch (error) {
+    log.warn('다중 인스턴스 사용자 데이터 폴더 설정 실패', { error: error.message, userData: multiInstanceUserDataPath });
+    debugLog(`다중 인스턴스 userData 설정 실패: ${error.message}`);
+  }
+}
 debugLog(`개발 모드: ${isDev}`);
+debugLog(`다중 인스턴스 허용: ${allowMultipleInstances}`);
 debugLog('단일 인스턴스 잠금 요청 중...');
 
-// 개발 모드에서는 잠금 건너뜀 (협업 테스트용)
-const gotTheLock = isDev ? true : app.requestSingleInstanceLock();
+// 개발/명시적 비교 모드에서는 잠금 건너뜀 (협업/재생 비교 테스트용)
+const gotTheLock = allowMultipleInstances ? true : app.requestSingleInstanceLock();
 debugLog(`잠금 결과: ${gotTheLock}`);
 
 if (!gotTheLock) {

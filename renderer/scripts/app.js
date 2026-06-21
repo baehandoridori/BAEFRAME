@@ -1032,6 +1032,10 @@ async function initApp() {
 
     const playlistManager = getPlaylistManager();
     if (continuousPlaybackState.active) {
+      if (!hasContinuousPlaybackReachedMediaEnd()) {
+        log.warn('타임라인 이어붙이기: 영상 끝이 아닌 종료 신호를 무시합니다', getContinuousPlaybackSnapshot());
+        return;
+      }
       log.info('타임라인 이어붙이기: 다음 재생 가능 항목으로 이동');
       void playNextContinuousItem(continuousPlaybackState.sessionId);
       return;
@@ -13392,6 +13396,10 @@ async function initApp() {
     };
   }
 
+  function hasContinuousPlaybackReachedMediaEnd(snapshot = getContinuousPlaybackSnapshot()) {
+    return snapshot.duration > 0 && snapshot.duration - snapshot.currentTime <= 0.25 && snapshot.ended === true;
+  }
+
   function waitForContinuousMediaReady(timeoutMs = 1200) {
     if (videoPlayer.engine !== 'html5') {
       return Promise.resolve(videoPlayer.isLoaded === true);
@@ -13456,7 +13464,9 @@ async function initApp() {
       const onProgress = () => {
         if (hasAdvanced()) finish(true);
       };
-      const onEnded = () => finish(true);
+      const onEnded = () => {
+        if (hasContinuousPlaybackReachedMediaEnd()) finish(true);
+      };
       const interval = setInterval(() => {
         if (!isContinuousSessionActive(sessionId)) {
           finish(false);
