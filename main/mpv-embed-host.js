@@ -125,6 +125,22 @@ class MPVEmbedHost {
     return { success: true, bounds: screenBounds };
   }
 
+  setVisible(visible) {
+    if (!this.window || this.window.isDestroyed?.()) {
+      return { success: true, visible: false, ready: false };
+    }
+
+    const nextVisible = visible !== false;
+    if (nextVisible) {
+      this._repositionToParent();
+      this._showHostWindow(this.parentWindow || this.getMainWindow());
+    } else {
+      this._hideHostWindow();
+    }
+
+    return { success: true, visible: nextVisible, ready: true };
+  }
+
   destroy() {
     const hostWindow = this.window;
     this.window = null;

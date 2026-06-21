@@ -1644,6 +1644,18 @@ function setupIpcHandlers() {
     }
   });
 
+  ipcMain.handle('mpv:set-host-visible', async (event, visible) => {
+    try {
+      const nextVisible = visible !== false;
+      const embed = mpvEmbedHost.setVisible(nextVisible);
+      const overlay = mpvOverlayHost.setVisible(nextVisible);
+      return { success: embed.success !== false && overlay.success !== false, visible: nextVisible, embed, overlay };
+    } catch (error) {
+      log.debug('mpv 호스트 표시 상태 변경 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('mpv:destroy-embed', async () => {
     try {
       return mpvEmbedHost.destroy();

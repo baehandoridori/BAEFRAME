@@ -1066,6 +1066,7 @@ async function initApp() {
   videoPlayer.addEventListener('externalstopped', () => {
     elements.videoWrapper?.classList.remove('mpv-pilot-mode');
     document.body.classList.remove('mpv-pilot-mode');
+    mpvHostLastRequestedVisible = null;
   });
 
   // 코덱 미지원
@@ -5100,6 +5101,71 @@ async function initApp() {
   let mpvOverlayStateSyncPending = false;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
+  let mpvHostVisibilitySyncPending = false;
+  let mpvHostLastRequestedVisible = null;
+
+  const MPV_BLOCKING_OVERLAY_SELECTOR = [
+    '.modal-overlay.active',
+    '.thread-overlay.open',
+    '.image-viewer-overlay.open',
+    '.split-view-overlay.open',
+    '.prompt-modal-overlay.open',
+    '.credits-overlay.open'
+  ].join(',');
+
+  function isElementVisiblyBlockingMpv(element) {
+    if (!element) return false;
+    const style = window.getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function hasBlockingOverlayForMpv() {
+    return Array.from(document.querySelectorAll(MPV_BLOCKING_OVERLAY_SELECTOR))
+      .some(isElementVisiblyBlockingMpv);
+  }
+
+  function syncMpvHostVisibilityWithDom() {
+    if (!document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!window.electronAPI?.mpvSetHostVisible) return;
+    if (mpvHostVisibilitySyncPending) return;
+
+    mpvHostVisibilitySyncPending = true;
+    requestAnimationFrame(async () => {
+      mpvHostVisibilitySyncPending = false;
+      const shouldShowMpvHost = !hasBlockingOverlayForMpv();
+      if (mpvHostLastRequestedVisible === shouldShowMpvHost) return;
+
+      try {
+        const result = await window.electronAPI.mpvSetHostVisible(shouldShowMpvHost);
+        if (result?.success && (result.embed?.ready || result.overlay?.ready || shouldShowMpvHost)) {
+          mpvHostLastRequestedVisible = shouldShowMpvHost;
+        }
+      } catch (error) {
+        log.debug('mpv 호스트 표시 상태 동기화 실패', { error: error.message });
+      }
+    });
+  }
+
+  function installMpvBlockingOverlayObserver() {
+    const observer = new MutationObserver((mutations) => {
+      if (!document.body.classList.contains('mpv-pilot-mode')) return;
+      if (!mutations.some((mutation) => mutation.type === 'attributes' || mutation.type === 'childList')) return;
+      syncMpvHostVisibilityWithDom();
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden']
+    });
+    syncMpvHostVisibilityWithDom();
+  }
+
+  installMpvBlockingOverlayObserver();
 
   function getMpvEmbedBounds() {
     syncMpvFullscreenViewportInset();
@@ -5164,6 +5230,7 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareEmbed(bounds);
     if (result?.success && result.wid) {
+      syncMpvHostVisibilityWithDom();
       return result;
     }
 
@@ -5181,6 +5248,7 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareOverlay(bounds);
     if (result?.success) {
+      syncMpvHostVisibilityWithDom();
       return result;
     }
 
@@ -5393,6 +5461,7 @@ async function initApp() {
     try {
       return await window.electronAPI.mpvStop();
     } finally {
+      mpvHostLastRequestedVisible = null;
       await window.electronAPI?.mpvDestroyOverlay?.();
       await window.electronAPI?.mpvDestroyEmbed?.();
     }

@@ -37,6 +37,7 @@ test('preload exposes a narrow mpv API surface', () => {
   assert.match(preloadSource, /mpvStop: \(\) => ipcRenderer\.invoke\('mpv:stop'\)/);
   assert.match(preloadSource, /mpvPrepareEmbed: \(bounds\) => ipcRenderer\.invoke\('mpv:prepare-embed', bounds\)/);
   assert.match(preloadSource, /mpvUpdateEmbedBounds: \(bounds\) => ipcRenderer\.invoke\('mpv:update-embed-bounds', bounds\)/);
+  assert.match(preloadSource, /mpvSetHostVisible: \(visible\) => ipcRenderer\.invoke\('mpv:set-host-visible', visible\)/);
   assert.match(preloadSource, /mpvDestroyEmbed: \(\) => ipcRenderer\.invoke\('mpv:destroy-embed'\)/);
   assert.match(preloadSource, /mpvPrepareOverlay: \(bounds\) => ipcRenderer\.invoke\('mpv:prepare-overlay', bounds\)/);
   assert.match(preloadSource, /mpvUpdateOverlayBounds: \(bounds\) => ipcRenderer\.invoke\('mpv:update-overlay-bounds', bounds\)/);
@@ -62,6 +63,7 @@ test('main process registers mpv IPC handlers through the manager and embed host
     'mpv:stop',
     'mpv:prepare-embed',
     'mpv:update-embed-bounds',
+    'mpv:set-host-visible',
     'mpv:destroy-embed',
     'mpv:prepare-overlay',
     'mpv:update-overlay-bounds',
@@ -72,8 +74,10 @@ test('main process registers mpv IPC handlers through the manager and embed host
   }
   assert.match(ipcSource, /mpvEmbedHost\.ensure\(bounds\)/);
   assert.match(ipcSource, /mpvEmbedHost\.updateBounds\(bounds\)/);
+  assert.match(ipcSource, /mpvEmbedHost\.setVisible\(nextVisible\)/);
   assert.match(ipcSource, /mpvEmbedHost\.destroy\(\)/);
   assert.match(ipcSource, /mpvOverlayHost\.ensure\(bounds\)/);
+  assert.match(ipcSource, /mpvOverlayHost\.setVisible\(nextVisible\)/);
   assert.match(ipcSource, /mpvOverlayHost\.updateBounds\(bounds\)/);
   assert.match(ipcSource, /mpvOverlayHost\.updateState\(state\)/);
   assert.match(ipcSource, /mpvOverlayHost\.destroy\(\)/);
@@ -171,6 +175,18 @@ test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(videoPlayerSource, /this\.videoHeight = 0;/);
   assert.match(videoPlayerSource, /this\.videoWidth = Math\.max\(0, Number\(config\.width\) \|\| 0\);/);
   assert.match(videoPlayerSource, /this\.videoHeight = Math\.max\(0, Number\(config\.height\) \|\| 0\);/);
+});
+
+test('mpv pilot hides native host while DOM blocking overlays are open', () => {
+  assert.match(appSource, /const MPV_BLOCKING_OVERLAY_SELECTOR = \[[\s\S]+'.modal-overlay.active'[\s\S]+'.thread-overlay.open'[\s\S]+'.image-viewer-overlay.open'[\s\S]+\]\.join\(','\);/);
+  assert.match(appSource, /function hasBlockingOverlayForMpv\(\) \{[\s\S]+document\.querySelectorAll\(MPV_BLOCKING_OVERLAY_SELECTOR\)[\s\S]+some\(isElementVisiblyBlockingMpv\);/);
+  assert.match(appSource, /function syncMpvHostVisibilityWithDom\(\) \{[\s\S]+document\.body\.classList\.contains\('mpv-pilot-mode'\)[\s\S]+const shouldShowMpvHost = !hasBlockingOverlayForMpv\(\);[\s\S]+window\.electronAPI\.mpvSetHostVisible\(shouldShowMpvHost\);/);
+  assert.match(appSource, /function installMpvBlockingOverlayObserver\(\) \{[\s\S]+new MutationObserver\(\(mutations\) => \{[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+\}\);[\s\S]+attributeFilter: \['class', 'style', 'hidden'\]/);
+  assert.match(appSource, /installMpvBlockingOverlayObserver\(\);/);
+  assert.match(appSource, /async function prepareMpvEmbedHost\(\) \{[\s\S]+if \(result\?\.success && result\.wid\) \{[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+return result;/);
+  assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+if \(result\?\.success\) \{[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+return result;/);
+  assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(\) => \{[\s\S]+mpvHostLastRequestedVisible = null;/);
+  assert.match(appSource, /async function stopMpvPilotEngine\(\) \{[\s\S]+finally \{[\s\S]+mpvHostLastRequestedVisible = null;/);
 });
 
 test('mpv pilot routes audio and viewport controls through mpv IPC', () => {

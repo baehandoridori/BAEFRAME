@@ -171,6 +171,61 @@ test('updates overlay state through the isolated overlay document', async () => 
   assert.match(scripts[0], /data:image\/png;base64,draw/);
 });
 
+test('hides and restores the native overlay host with the mpv embed host', async () => {
+  const events = [];
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    isMinimized: () => false,
+    getContentBounds: () => ({ x: 20, y: 30, width: 1200, height: 800 })
+  };
+  class FakeBrowserWindow {
+    constructor() {
+      this.destroyed = false;
+      this.webContents = {
+        executeJavaScript: async () => {}
+      };
+    }
+    loadURL() {
+      return Promise.resolve();
+    }
+    setBounds(bounds) {
+      events.push(['setBounds', bounds]);
+    }
+    showInactive() {
+      events.push(['showInactive']);
+    }
+    hide() {
+      events.push(['hide']);
+    }
+    moveTop() {
+      events.push(['moveTop']);
+    }
+    setIgnoreMouseEvents() {}
+    isDestroyed() {
+      return this.destroyed;
+    }
+    on() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow
+  });
+
+  await host.ensure({ x: 1, y: 2, width: 300, height: 200 });
+  const hideResult = host.setVisible(false);
+  const showResult = host.setVisible(true);
+
+  assert.deepEqual(hideResult, { success: true, visible: false, ready: true });
+  assert.deepEqual(showResult, { success: true, visible: true, ready: true });
+  assert.ok(events.some(([name]) => name === 'hide'));
+  assert.ok(events.filter(([name]) => name === 'showInactive').length >= 2);
+  assert.equal(host.window.isDestroyed(), false);
+});
+
 test('repositions and hides overlay with the parent window', async () => {
   const listeners = new Map();
   let contentBounds = { x: 100, y: 80, width: 1200, height: 800 };

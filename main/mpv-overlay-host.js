@@ -402,6 +402,22 @@ class MPVOverlayHost {
     }
   }
 
+  setVisible(visible) {
+    if (!this.window || this.window.isDestroyed?.()) {
+      return { success: true, visible: false, ready: false };
+    }
+
+    const nextVisible = visible !== false;
+    if (nextVisible) {
+      this._repositionToParent();
+      this._showOverlayWindow(this.parentWindow || this.getMainWindow());
+    } else {
+      this._hideOverlayWindow();
+    }
+
+    return { success: true, visible: nextVisible, ready: true };
+  }
+
   destroy() {
     const hostWindow = this.window;
     this.window = null;
