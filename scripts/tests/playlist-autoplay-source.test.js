@@ -49,7 +49,8 @@ test('playlist panel close hides the panel without clearing the active playlist'
 test('starting playback warms the next autoplay item for button and spacebar playback', () => {
   assert.match(appSource, /function warmPlaylistAutoPlayQueue\(\) \{[\s\S]*?playlistManager\.isActive\(\)[\s\S]*?userSettings\.getPlaylistAutoPlay\(\)[\s\S]*?preloadNextPlaylistMedia\(\);[\s\S]*?\}/);
   assert.match(appSource, /function shouldStartPlaylistContinuousAutoPlayback\(\) \{[\s\S]*?playlistUIState\.mode === 'continuous'[\s\S]*?userSettings\.getPlaylistAutoPlay\(\)[\s\S]*?\}/);
-  assert.match(appSource, /function handleUserPlayPauseToggle\(\) \{[\s\S]*?void startContinuousPlayback\(\);[\s\S]*?warmPlaylistAutoPlayQueue\(\);[\s\S]*?\}/);
+  assert.match(appSource, /async function handleUserPlayPauseToggle\(\) \{[\s\S]*?const startedItem = await startContinuousPlayback\(\);[\s\S]*?broadcastPlaylistContinuousPlaybackPlay\(startedItem, videoPlayer\.currentTime\);[\s\S]*?warmPlaylistAutoPlayQueue\(\);[\s\S]*?\}/);
+  assert.doesNotMatch(appSource, /void startContinuousPlayback\(\);[\s\S]*?broadcastCurrentPlaybackPlay\(\);/);
 
   assert.match(appSource, /elements\.btnPlay\.addEventListener\('click', handleUserPlayPauseToggle\);/);
 
@@ -63,8 +64,10 @@ test('continuous playlist playback starts immediately before falling back to rea
   const watchdogMatch = appSource.match(/async function playContinuousItemWithWatchdog\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  async function startContinuousPlayback/);
   assert.ok(watchdogMatch, 'continuous playback watchdog should exist');
   const watchdogSource = watchdogMatch[1];
+  assert.match(watchdogSource, /let started = videoPlayer\.isPlaying === true;/);
+  assert.match(watchdogSource, /if \(!started\) \{[\s\S]+started = await videoPlayer\.play\(\);[\s\S]+\}/);
   assert.ok(
-    watchdogSource.indexOf('const started = await videoPlayer.play();') <
+    watchdogSource.indexOf('started = await videoPlayer.play();') <
       watchdogSource.indexOf('await waitForContinuousMediaReady(250);'),
     'play should be attempted before waiting for canplay/loadeddata'
   );

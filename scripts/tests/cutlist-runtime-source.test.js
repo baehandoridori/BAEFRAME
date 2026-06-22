@@ -228,7 +228,7 @@ test('cutlist hidden source switches hold the previous frame instead of flashing
   assert.match(appSource, /drawImage\(video,\s*0,\s*0,\s*canvas\.width,\s*canvas\.height\)/);
   assert.match(appSource, /const shouldHoldVideoReveal = holdPreviousFrameUntilReady \|\| shouldDelayVideoReveal/);
   assert.match(appSource, /const transitionFreezeCaptured = shouldHoldVideoReveal && captureVideoTransitionFreezeFrame\(\)/);
-  assert.match(appSource, /const shouldHideVideoDuringLoad = shouldDelayVideoReveal \|\| transitionFreezeCaptured/);
+  assert.match(appSource, /const shouldHideVideoDuringLoad = shouldHoldVideoReveal/);
   assert.match(appSource, /releaseVideoTransitionFreezeFrame\(transitionFreezeCaptured\)/);
   assert.match(mainStyles, /\.video-transition-freeze-canvas/);
   assert.match(mainStyles, /z-index:\s*1/);

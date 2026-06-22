@@ -40,7 +40,7 @@ export class PlaybackSync extends EventTarget {
 
     // 탐색 쓰로틀
     this._seekThrottleTimer = null;
-    this._pendingSeekTime = null;
+    this._pendingSeekEvent = null;
     this._seekThrottleMs = 100;
 
     // 이벤트 핸들러 바인딩
@@ -68,6 +68,7 @@ export class PlaybackSync extends EventTarget {
       clearTimeout(this._seekThrottleTimer);
       this._seekThrottleTimer = null;
     }
+    this._pendingSeekEvent = null;
     if (this._remoteUpdateTimer) {
       clearTimeout(this._remoteUpdateTimer);
       this._remoteUpdateTimer = null;
@@ -111,26 +112,26 @@ export class PlaybackSync extends EventTarget {
   // 로컬 → 리모트 (브로드캐스트 송신)
   // ============================================================================
 
-  broadcastPlay(time) {
+  broadcastPlay(time, options = {}) {
     if (!this._canSend()) return;
-    this._lm.broadcastEvent({ type: `${PREFIX}PLAY`, time });
+    this._lm.broadcastEvent({ type: `${PREFIX}PLAY`, time, ...options });
     log.info('재생 브로드캐스트', { time });
   }
 
-  broadcastPause(time) {
+  broadcastPause(time, options = {}) {
     if (!this._canSend()) return;
-    this._lm.broadcastEvent({ type: `${PREFIX}PAUSE`, time });
+    this._lm.broadcastEvent({ type: `${PREFIX}PAUSE`, time, ...options });
     log.info('일시정지 브로드캐스트', { time });
   }
 
-  broadcastSeek(time) {
+  broadcastSeek(time, options = {}) {
     if (!this._canSend()) return;
-    this._pendingSeekTime = time;
+    this._pendingSeekEvent = { time, ...options };
     if (!this._seekThrottleTimer) {
       this._flushSeek();
       this._seekThrottleTimer = setTimeout(() => {
         this._seekThrottleTimer = null;
-        if (this._pendingSeekTime !== null) {
+        if (this._pendingSeekEvent !== null) {
           this._flushSeek();
         }
       }, this._seekThrottleMs);
@@ -138,15 +139,15 @@ export class PlaybackSync extends EventTarget {
   }
 
   _flushSeek() {
-    if (this._pendingSeekTime === null) return;
+    if (this._pendingSeekEvent === null) return;
     // 쓰로틀 대기 중 동기화 해제/follow 전환 등 대비 재검증
     if (!this._canSend()) {
-      this._pendingSeekTime = null;
+      this._pendingSeekEvent = null;
       return;
     }
-    const time = this._pendingSeekTime;
-    this._pendingSeekTime = null;
-    this._lm.broadcastEvent({ type: `${PREFIX}SEEK`, time });
+    const event = this._pendingSeekEvent;
+    this._pendingSeekEvent = null;
+    this._lm.broadcastEvent({ type: `${PREFIX}SEEK`, ...event });
   }
 
   // ============================================================================
@@ -168,7 +169,7 @@ export class PlaybackSync extends EventTarget {
         log.info('리모트 재생 수신', { time: event.time });
         this._setRemoteGuard();
         this.dispatchEvent(new CustomEvent('remotePlay', {
-          detail: { time: event.time }
+          detail: { time: event.time, playlistContinuous: event.playlistContinuous === true }
         }));
         break;
 
@@ -176,7 +177,7 @@ export class PlaybackSync extends EventTarget {
         log.info('리모트 일시정지 수신', { time: event.time });
         this._setRemoteGuard();
         this.dispatchEvent(new CustomEvent('remotePause', {
-          detail: { time: event.time }
+          detail: { time: event.time, playlistContinuous: event.playlistContinuous === true }
         }));
         break;
 
@@ -184,7 +185,7 @@ export class PlaybackSync extends EventTarget {
         log.info('리모트 탐색 수신', { time: event.time });
         this._setRemoteGuard();
         this.dispatchEvent(new CustomEvent('remoteSeek', {
-          detail: { time: event.time }
+          detail: { time: event.time, playlistContinuous: event.playlistContinuous === true }
         }));
         break;
     }
