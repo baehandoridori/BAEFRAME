@@ -5320,7 +5320,7 @@ async function initApp() {
     const targetTime = frame / fps;
     videoPlayer.seekToFrame(frame);
     return waitForMpvPlaybackTime(targetTime, {
-      tolerance: Math.max(0.08, (1 / fps) * 2)
+      tolerance: Math.max(0.004, (1 / fps) * 0.45)
     });
   }
 
@@ -13341,10 +13341,11 @@ async function initApp() {
     }
 
     if (continuousPlaybackState.active) {
+      const continuousPausePosition = getPlaybackSyncPosition(videoPlayer.currentTime, { forceContinuous: true });
       stopContinuousPlayback();
       invalidateActiveVideoLoad();
       videoPlayer.pause();
-      broadcastCurrentPlaybackPause();
+      playbackSync.broadcastPause(continuousPausePosition.time, continuousPausePosition.options);
       return;
     }
 

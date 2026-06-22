@@ -556,7 +556,7 @@ test('spacebar pauses an active continuous handoff instead of starting a duplica
   const handleSource = handleMatch[1];
   assert.match(handleSource, /const continuousPausePosition = continuousPlaybackState\.active[\s\S]+getPlaybackSyncPosition\(videoPlayer\.currentTime, \{ forceContinuous: true \}\)/);
   assert.match(handleSource, /playbackSync\.broadcastPause\(continuousPausePosition\.time, continuousPausePosition\.options\);/);
-  assert.match(handleSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+invalidateActiveVideoLoad\(\);[\s\S]+videoPlayer\.pause\(\);[\s\S]+broadcastCurrentPlaybackPause\(\);[\s\S]+return;/);
+  assert.match(handleSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+const continuousPausePosition = getPlaybackSyncPosition\(videoPlayer\.currentTime, \{ forceContinuous: true \}\);[\s\S]+stopContinuousPlayback\(\);[\s\S]+invalidateActiveVideoLoad\(\);[\s\S]+videoPlayer\.pause\(\);[\s\S]+playbackSync\.broadcastPause\(continuousPausePosition\.time, continuousPausePosition\.options\);[\s\S]+return;/);
   assert.match(handleSource, /const startedItem = await startContinuousPlayback\(\);[\s\S]+broadcastPlaylistContinuousPlaybackPlay\(startedItem, videoPlayer\.currentTime\);/);
   assert.doesNotMatch(handleSource, /void startContinuousPlayback\(\);[\s\S]+broadcastCurrentPlaybackPlay\(\);/);
   assert.ok(

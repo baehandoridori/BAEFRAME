@@ -216,6 +216,7 @@ test('mpv pilot waits for the requested initial frame before revealing the nativ
 
   assert.match(appSource, /async function waitForMpvPlaybackTime\(targetTime, \{ timeoutMs = 700, tolerance = 0\.12 \} = \{\}\)/);
   assert.match(appSource, /async function seekMpvInitialFrameBeforeReveal\(initialFrame\)/);
+  assert.match(appSource, /tolerance: Math\.max\(0\.004, \(1 \/ fps\) \* 0\.45\)/);
   assert.match(loadMpvSource, /const initialSeekReady = await seekMpvInitialFrameBeforeReveal\(initialFrame\);/);
   assert.match(loadMpvSource, /if \(!initialSeekReady\) \{[\s\S]+requestAnimationFrame\(resolve\)/);
   const initialSeekIndex = loadMpvSource.indexOf('const initialSeekReady = await seekMpvInitialFrameBeforeReveal(initialFrame);');
