@@ -12806,10 +12806,28 @@ async function initApp() {
     });
   }
 
+  function canHandleRemoteContinuousSync() {
+    return playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0;
+  }
+
+  function warnRemoteContinuousSyncUnavailable(action, time) {
+    log.warn('리모트 연속 재생 동기화를 처리할 수 없습니다', {
+      action,
+      time,
+      mode: playlistUIState.mode,
+      playlistDuration: timeline.playlistDuration
+    });
+    showToast('상대방의 재생목록 위치를 따라갈 수 없습니다.', 'warning');
+  }
+
   // 리모트 이벤트 수신 → 로컬 재생 제어
   playbackSync.addEventListener('remotePlay', (e) => {
     const { time, playlistContinuous } = e.detail;
-    if (playlistContinuous && playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+    if (playlistContinuous) {
+      if (!canHandleRemoteContinuousSync()) {
+        warnRemoteContinuousSyncUnavailable('play', time);
+        return;
+      }
       void (async () => {
         const followed = await seekContinuousTimeline(time);
         if (!followed) {
@@ -12832,7 +12850,11 @@ async function initApp() {
   playbackSync.addEventListener('remotePause', (e) => {
     const { time, playlistContinuous } = e.detail;
     videoPlayer.pause();
-    if (playlistContinuous && playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+    if (playlistContinuous) {
+      if (!canHandleRemoteContinuousSync()) {
+        warnRemoteContinuousSyncUnavailable('pause', time);
+        return;
+      }
       if (continuousPlaybackState.active) {
         stopContinuousPlayback();
       }
@@ -12844,7 +12866,11 @@ async function initApp() {
 
   playbackSync.addEventListener('remoteSeek', (e) => {
     const { time, playlistContinuous } = e.detail;
-    if (playlistContinuous && playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+    if (playlistContinuous) {
+      if (!canHandleRemoteContinuousSync()) {
+        warnRemoteContinuousSyncUnavailable('seek', time);
+        return;
+      }
       void seekContinuousTimeline(time);
       return;
     }

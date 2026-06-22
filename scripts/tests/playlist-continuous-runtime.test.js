@@ -915,9 +915,14 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(playbackSyncSource, /this\._pendingSeekEvent = \{ time, \.\.\.options \};/);
   assert.match(playbackSyncSource, /this\._lm\.broadcastEvent\(\{ type: `\$\{PREFIX\}SEEK`, \.\.\.event \}\);/);
   assert.match(playbackSyncSource, /detail: \{ time: event\.time, playlistContinuous: event\.playlistContinuous === true \}/);
+  assert.match(appSource, /function canHandleRemoteContinuousSync\(\) \{[\s\S]+playlistUIState\.mode === 'continuous' && timeline\.playlistDuration > 0;[\s\S]+\}/);
+  assert.match(appSource, /function warnRemoteContinuousSyncUnavailable\(action, time\) \{[\s\S]+상대방의 재생목록 위치를 따라갈 수 없습니다\./);
   assert.match(appSource, /playbackSync\.addEventListener\('remotePlay', \(e\) => \{[\s\S]+const followed = await seekContinuousTimeline\(time\);[\s\S]+if \(!followed\) \{[\s\S]+상대방의 재생목록 위치를 따라갈 수 없습니다\.[\s\S]+return;[\s\S]+\}[\s\S]+if \(!continuousPlaybackState\.active\) \{[\s\S]+await startContinuousPlayback\(\);/);
+  assert.match(appSource, /playbackSync\.addEventListener\('remotePlay', \(e\) => \{[\s\S]+if \(playlistContinuous\) \{[\s\S]+if \(!canHandleRemoteContinuousSync\(\)\) \{[\s\S]+warnRemoteContinuousSyncUnavailable\('play', time\);[\s\S]+return;[\s\S]+\}/);
   assert.match(appSource, /playbackSync\.addEventListener\('remotePause', \(e\) => \{[\s\S]+seekContinuousTimeline\(time, \{ resumePlayback: false \}\);/);
+  assert.match(appSource, /playbackSync\.addEventListener\('remotePause', \(e\) => \{[\s\S]+if \(playlistContinuous\) \{[\s\S]+if \(!canHandleRemoteContinuousSync\(\)\) \{[\s\S]+warnRemoteContinuousSyncUnavailable\('pause', time\);[\s\S]+return;[\s\S]+\}/);
   assert.match(appSource, /playbackSync\.addEventListener\('remoteSeek', \(e\) => \{[\s\S]+const \{ time, playlistContinuous \} = e\.detail;[\s\S]+seekContinuousTimeline\(time\);/);
+  assert.match(appSource, /playbackSync\.addEventListener\('remoteSeek', \(e\) => \{[\s\S]+if \(playlistContinuous\) \{[\s\S]+if \(!canHandleRemoteContinuousSync\(\)\) \{[\s\S]+warnRemoteContinuousSyncUnavailable\('seek', time\);[\s\S]+return;[\s\S]+\}/);
 });
 
 test('playlist segment boundaries navigate through timeline seek', () => {
