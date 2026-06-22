@@ -13243,8 +13243,10 @@ async function initApp() {
 
   function getPlaybackSyncPosition(localTime = videoPlayer.currentTime) {
     if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+      const segment = getCurrentContinuousSegment();
+      if (!segment) return { time: localTime, options: {} };
       return {
-        time: getContinuousTimelinePlaybackTime(localTime),
+        time: mapLocalTimeToGlobal(segment, localTime),
         options: { playlistContinuous: true }
       };
     }
