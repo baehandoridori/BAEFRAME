@@ -1542,7 +1542,7 @@ async function initApp() {
     updateTimelineMarkers();
     updateCommentList();
     if (getPlaylistManager().isActive?.()) {
-      void updatePlaylistUI();
+      void refreshVisiblePlaylistProgress();
     }
   });
 
@@ -13922,7 +13922,7 @@ async function initApp() {
     }
 
     if (!isContinuousSessionActive(sessionId)) return false;
-    await updatePlaylistUI();
+    updatePlaylistPrepareSummary();
     return isContinuousSessionActive(sessionId);
   }
 
@@ -15293,8 +15293,7 @@ async function initApp() {
         }
 
         // 현재 아이템의 진행률 업데이트
-        await updatePlaylistItemProgress(e.detail.path);
-        await updatePlaylistProgress();
+        await refreshVisiblePlaylistProgress(e.detail.path);
         updatePlaylistContinuousTimeline();
       }
     });
@@ -15874,6 +15873,14 @@ async function initApp() {
         elements.playlistProgressText.textContent = '피드백 없음';
       }
     }
+  }
+
+  async function refreshVisiblePlaylistProgress(bframePath = null) {
+    const playlistManager = getPlaylistManager();
+    if (!playlistManager.isActive?.()) return;
+
+    await updatePlaylistItemProgress(bframePath);
+    await updatePlaylistProgress();
   }
 
   // 파일 누락 표시
