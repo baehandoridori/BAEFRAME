@@ -17,7 +17,7 @@ const log = createLogger('PlaylistManager');
 
 // 스키마 함수들을 동적으로 가져올 수 없으므로 여기서 필요한 것들을 재정의
 const PLAYLIST_VERSION = '1.0';
-const MAX_PLAYLIST_ITEMS = 50;
+const MAX_PLAYLIST_ITEMS = 100;
 const SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
 const SUPPORTED_AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'];
 const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];

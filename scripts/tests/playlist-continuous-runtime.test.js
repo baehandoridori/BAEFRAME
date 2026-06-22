@@ -767,6 +767,19 @@ test('continuous preflight handles per-item fileExists failures', () => {
   assert.match(preflightSource, /continue;/);
 });
 
+test('continuous preflight updates item status without rebuilding the playlist list', () => {
+  const preflightMatch = appSource.match(/async function quickCheckPlaylistForContinuous\(sessionId, itemsToCheck = null\) \{([\s\S]*?)\n  \}/);
+  assert.ok(preflightMatch, 'quick preflight function should exist');
+
+  const preflightSource = preflightMatch[1];
+  assert.match(preflightSource, /markPlaylistItemStatus\(item,/);
+  assert.doesNotMatch(
+    preflightSource,
+    /updatePlaylistUI\(\)/,
+    'preflight status checks should not rebuild the playlist DOM and reset scroll'
+  );
+});
+
 test('continuous playback only checks the current item before first play', () => {
   const startMatch = appSource.match(/async function startContinuousPlayback\(\) \{([\s\S]*?)\n  \}\n\n  async function playNextContinuousItem/);
   assert.ok(startMatch, 'startContinuousPlayback should exist');
@@ -828,6 +841,19 @@ test('continuous playlist source switches defer collaboration startup off the tr
   const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
   assert.match(continuousLoadMatch[1], /deferCollaborationStart: true/);
+});
+
+test('playlist marker refreshes update visible progress without rebuilding scrolled playlist rows', () => {
+  const markerRefreshMatch = appSource.match(/commentManager\.addEventListener\('markersChanged', \(\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(markerRefreshMatch, 'markersChanged listener should exist');
+
+  const markerRefreshSource = markerRefreshMatch[1];
+  assert.match(markerRefreshSource, /void refreshVisiblePlaylistProgress\(\);/);
+  assert.doesNotMatch(
+    markerRefreshSource,
+    /updatePlaylistUI\(\)/,
+    'marker refreshes should not rebuild playlist rows during item navigation'
+  );
 });
 
 test('continuous playlist starts playback as soon as the next media is renderable', () => {
