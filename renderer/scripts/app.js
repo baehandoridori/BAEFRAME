@@ -12849,7 +12849,6 @@ async function initApp() {
 
   playbackSync.addEventListener('remotePause', (e) => {
     const { time, playlistContinuous } = e.detail;
-    videoPlayer.pause();
     if (playlistContinuous) {
       if (!canHandleRemoteContinuousSync()) {
         warnRemoteContinuousSyncUnavailable('pause', time);
@@ -12858,9 +12857,11 @@ async function initApp() {
       if (continuousPlaybackState.active) {
         stopContinuousPlayback();
       }
+      videoPlayer.pause();
       void seekContinuousTimeline(time, { resumePlayback: false });
       return;
     }
+    videoPlayer.pause();
     videoPlayer.seek(time);
   });
 
@@ -13279,6 +13280,16 @@ async function initApp() {
     return { time: localTime, options: {} };
   }
 
+  function getPlaylistContinuousSyncPositionForItem(item, localTime = videoPlayer.currentTime) {
+    if (playlistUIState.mode !== 'continuous' || !timeline.playlistDuration || !item?.id) return null;
+    const segment = timeline.playlistSegments?.find(candidate => candidate.itemId === item.id);
+    if (!segment) return null;
+    return {
+      time: mapLocalTimeToGlobal(segment, localTime),
+      options: { playlistContinuous: true }
+    };
+  }
+
   function broadcastCurrentPlaybackPause() {
     const position = getPlaybackSyncPosition(videoPlayer.currentTime);
     playbackSync.broadcastPause(position.time, position.options);
@@ -13289,7 +13300,21 @@ async function initApp() {
     playbackSync.broadcastPlay(position.time, position.options);
   }
 
-  function handleUserPlayPauseToggle() {
+  function broadcastPlaylistContinuousPlaybackPlay(item, localTime = videoPlayer.currentTime) {
+    const position = getPlaylistContinuousSyncPositionForItem(item, localTime);
+    if (!position) {
+      log.warn('타임라인 이어붙이기 재생 위치를 공유할 수 없습니다', {
+        itemId: item?.id || null,
+        filePath: item?.videoPath || null,
+        playlistDuration: timeline.playlistDuration,
+        localTime
+      });
+      return;
+    }
+    playbackSync.broadcastPlay(position.time, position.options);
+  }
+
+  async function handleUserPlayPauseToggle() {
     const wasPlaying = videoPlayer.isPlaying;
     if (wasPlaying) {
       if (continuousPlaybackState.active) {
@@ -13310,8 +13335,10 @@ async function initApp() {
     }
 
     if (shouldStartPlaylistContinuousAutoPlayback()) {
-      void startContinuousPlayback();
-      broadcastCurrentPlaybackPlay();
+      const startedItem = await startContinuousPlayback();
+      if (startedItem) {
+        broadcastPlaylistContinuousPlaybackPlay(startedItem, videoPlayer.currentTime);
+      }
       return;
     }
 
@@ -14015,7 +14042,7 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
     if (!playlistManager.isActive() || playlistManager.isEmpty()) {
       showToast('재생목록에 영상을 먼저 추가해주세요.', 'warning');
-      return;
+      return null;
     }
 
     continuousPlaybackState.sessionId += 1;
@@ -14027,90 +14054,87 @@ async function initApp() {
 
     try {
       const currentItem = playlistManager.getCurrentItem() || selectPlaylistItemForContinuous(0);
-      if (!isContinuousSessionActive(sessionId)) return;
+      if (!isContinuousSessionActive(sessionId)) return null;
       if (!currentItem) {
         stopContinuousPlayback();
-        return;
+        return null;
       }
 
       const checked = await quickCheckPlaylistForContinuous(sessionId, [currentItem]);
-      if (!isContinuousSessionActive(sessionId) || !checked) return;
+      if (!isContinuousSessionActive(sessionId) || !checked) return null;
       const remainingItems = playlistManager.getItems().filter(item => item.id !== currentItem.id);
       if (remainingItems.length > 0) {
         void quickCheckPlaylistForContinuous(sessionId, remainingItems);
       }
 
       const ready = await waitForPreparedOrSkip(currentItem, sessionId);
-      if (!isContinuousSessionActive(sessionId)) return;
+      if (!isContinuousSessionActive(sessionId)) return null;
       if (!ready) {
-        await playNextContinuousItem(sessionId);
-        return;
+        return await playNextContinuousItem(sessionId);
       }
 
       const alreadyLoaded = isSameFilePath(state.currentFile, currentItem.videoPath);
       if (!alreadyLoaded) {
         const loaded = await loadContinuousPlaylistItem(currentItem, sessionId);
-        if (!isContinuousSessionActive(sessionId)) return;
+        if (!isContinuousSessionActive(sessionId)) return null;
         if (!loaded) {
-          await playNextContinuousItem(sessionId);
-          return;
+          return await playNextContinuousItem(sessionId);
         }
         videoPlayer.seekToFrame(0);
       }
-      if (!isContinuousSessionActive(sessionId)) return;
+      if (!isContinuousSessionActive(sessionId)) return null;
       prepareNextPlaylistItem(sessionId);
       const started = await playContinuousItemWithWatchdog(currentItem, sessionId);
-      if (!isContinuousSessionActive(sessionId)) return;
+      if (!isContinuousSessionActive(sessionId)) return null;
       if (!started) {
-        await playNextContinuousItem(sessionId);
-        return;
+        return await playNextContinuousItem(sessionId);
       }
+      return currentItem;
     } catch (error) {
-      if (!isContinuousSessionActive(sessionId)) return;
+      if (!isContinuousSessionActive(sessionId)) return null;
       log.warn('타임라인 이어붙이기 시작 실패', { error: error.message });
       stopContinuousPlayback();
       showToast('타임라인 이어붙이기를 시작할 수 없습니다.', 'error');
+      return null;
     }
   }
 
   async function playNextContinuousItem(sessionId) {
-    if (!isContinuousSessionActive(sessionId)) return;
+    if (!isContinuousSessionActive(sessionId)) return null;
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
     const settings = playlistManager.getContinuousSettings();
     const nextIndex = findNextPlayableIndex(items, playlistManager.currentIndex, { loop: settings.loop });
 
     if (nextIndex < 0) {
-      if (!isContinuousSessionActive(sessionId)) return;
+      if (!isContinuousSessionActive(sessionId)) return null;
       flushSkippedToastBatch();
       stopContinuousPlayback();
       showToast('재생목록 재생 완료', 'success');
-      return;
+      return null;
     }
 
     const nextItem = selectPlaylistItemForContinuous(nextIndex);
-    if (!isContinuousSessionActive(sessionId)) return;
+    if (!isContinuousSessionActive(sessionId)) return null;
     const ready = await waitForPreparedOrSkip(nextItem, sessionId);
-    if (!isContinuousSessionActive(sessionId)) return;
+    if (!isContinuousSessionActive(sessionId)) return null;
     if (!ready) {
-      await playNextContinuousItem(sessionId);
-      return;
+      return await playNextContinuousItem(sessionId);
     }
 
     flushSkippedToastBatch();
     const loaded = await loadContinuousPlaylistItem(nextItem, sessionId);
-    if (!isContinuousSessionActive(sessionId)) return;
+    if (!isContinuousSessionActive(sessionId)) return null;
     if (!loaded) {
-      await playNextContinuousItem(sessionId);
-      return;
+      return await playNextContinuousItem(sessionId);
     }
     prepareNextPlaylistItem(sessionId);
     const started = await playContinuousItemWithWatchdog(nextItem, sessionId);
-    if (!isContinuousSessionActive(sessionId)) return;
+    if (!isContinuousSessionActive(sessionId)) return null;
     if (!started) {
-      await playNextContinuousItem(sessionId);
-      return;
+      return await playNextContinuousItem(sessionId);
     }
+    return nextItem;
   }
 
   function setPlaylistMode(mode) {

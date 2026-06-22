@@ -547,10 +547,12 @@ test('spacebar pauses an active continuous handoff instead of starting a duplica
   assert.ok(shouldStartMatch, 'continuous autoplay start predicate should exist');
   assert.match(shouldStartMatch[1], /!continuousPlaybackState\.active/);
 
-  const handleMatch = appSource.match(/function handleUserPlayPauseToggle\(\) \{([\s\S]*?)\n  \}/);
+  const handleMatch = appSource.match(/async function handleUserPlayPauseToggle\(\) \{([\s\S]*?)\n  \}/);
   assert.ok(handleMatch, 'play/pause toggle handler should exist');
   const handleSource = handleMatch[1];
   assert.match(handleSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+invalidateActiveVideoLoad\(\);[\s\S]+videoPlayer\.pause\(\);[\s\S]+broadcastCurrentPlaybackPause\(\);[\s\S]+return;/);
+  assert.match(handleSource, /const startedItem = await startContinuousPlayback\(\);[\s\S]+broadcastPlaylistContinuousPlaybackPlay\(startedItem, videoPlayer\.currentTime\);/);
+  assert.doesNotMatch(handleSource, /void startContinuousPlayback\(\);[\s\S]+broadcastCurrentPlaybackPlay\(\);/);
   assert.ok(
     handleSource.indexOf('if (continuousPlaybackState.active)') <
       handleSource.indexOf('if (shouldStartPlaylistContinuousAutoPlayback())'),
@@ -578,6 +580,8 @@ test('continuous playback starts next-item preparation before playback watchdog 
       startSource.indexOf('const started = await playContinuousItemWithWatchdog(currentItem, sessionId);'),
     'next item preparation should begin before playback watchdog waits'
   );
+  assert.match(startSource, /return await playNextContinuousItem\(sessionId\);/);
+  assert.match(startSource, /return currentItem;/);
 
   const nextMatch = appSource.match(/async function playNextContinuousItem\(sessionId\) \{([\s\S]*?)\n  \}\n\n  function setPlaylistMode/);
   assert.ok(nextMatch, 'playNextContinuousItem should exist');
@@ -587,6 +591,8 @@ test('continuous playback starts next-item preparation before playback watchdog 
       nextSource.indexOf('const started = await playContinuousItemWithWatchdog(nextItem, sessionId);'),
     'following item preparation should begin before playback watchdog waits'
   );
+  assert.match(nextSource, /return await playNextContinuousItem\(sessionId\);/);
+  assert.match(nextSource, /return nextItem;/);
 });
 
 test('continuous video loads preserve aggregate timeline comment ranges', () => {
@@ -902,6 +908,10 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(appSource, /const segment = getCurrentContinuousSegment\(\);[\s\S]+if \(!segment\) return \{ time: localTime, options: \{\} \};/);
   assert.match(appSource, /time: mapLocalTimeToGlobal\(segment, localTime\)/);
   assert.match(appSource, /options: \{ playlistContinuous: true \}/);
+  assert.match(appSource, /function getPlaylistContinuousSyncPositionForItem\(item, localTime = videoPlayer\.currentTime\)/);
+  assert.match(appSource, /timeline\.playlistSegments\?\.find\(candidate => candidate\.itemId === item\.id\)/);
+  assert.match(appSource, /function broadcastPlaylistContinuousPlaybackPlay\(item, localTime = videoPlayer\.currentTime\)/);
+  assert.match(appSource, /playbackSync\.broadcastPlay\(position\.time, position\.options\);/);
   assert.match(appSource, /function getActiveTimelinePlaybackTime\(currentTime = videoPlayer\.currentTime,\s*currentFrame = videoPlayer\.currentFrame\)/);
   assert.match(appSource, /playlistUIState\.mode === 'continuous'[\s\S]+return getContinuousTimelinePlaybackTime\(currentTime\);/);
   assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(currentTime,\s*currentFrame\)\);/);
@@ -921,6 +931,13 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(appSource, /playbackSync\.addEventListener\('remotePlay', \(e\) => \{[\s\S]+if \(playlistContinuous\) \{[\s\S]+if \(!canHandleRemoteContinuousSync\(\)\) \{[\s\S]+warnRemoteContinuousSyncUnavailable\('play', time\);[\s\S]+return;[\s\S]+\}/);
   assert.match(appSource, /playbackSync\.addEventListener\('remotePause', \(e\) => \{[\s\S]+seekContinuousTimeline\(time, \{ resumePlayback: false \}\);/);
   assert.match(appSource, /playbackSync\.addEventListener\('remotePause', \(e\) => \{[\s\S]+if \(playlistContinuous\) \{[\s\S]+if \(!canHandleRemoteContinuousSync\(\)\) \{[\s\S]+warnRemoteContinuousSyncUnavailable\('pause', time\);[\s\S]+return;[\s\S]+\}/);
+  const remotePauseMatch = appSource.match(/playbackSync\.addEventListener\('remotePause', \(e\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(remotePauseMatch, 'remotePause handler should exist');
+  assert.ok(
+    remotePauseMatch[1].indexOf('if (!canHandleRemoteContinuousSync())') <
+      remotePauseMatch[1].indexOf('videoPlayer.pause();'),
+    'unhandled continuous pause should return before touching local playback'
+  );
   assert.match(appSource, /playbackSync\.addEventListener\('remoteSeek', \(e\) => \{[\s\S]+const \{ time, playlistContinuous \} = e\.detail;[\s\S]+seekContinuousTimeline\(time\);/);
   assert.match(appSource, /playbackSync\.addEventListener\('remoteSeek', \(e\) => \{[\s\S]+if \(playlistContinuous\) \{[\s\S]+if \(!canHandleRemoteContinuousSync\(\)\) \{[\s\S]+warnRemoteContinuousSyncUnavailable\('seek', time\);[\s\S]+return;[\s\S]+\}/);
 });

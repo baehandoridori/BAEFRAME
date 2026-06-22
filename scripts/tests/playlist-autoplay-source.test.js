@@ -49,7 +49,8 @@ test('playlist panel close hides the panel without clearing the active playlist'
 test('starting playback warms the next autoplay item for button and spacebar playback', () => {
   assert.match(appSource, /function warmPlaylistAutoPlayQueue\(\) \{[\s\S]*?playlistManager\.isActive\(\)[\s\S]*?userSettings\.getPlaylistAutoPlay\(\)[\s\S]*?preloadNextPlaylistMedia\(\);[\s\S]*?\}/);
   assert.match(appSource, /function shouldStartPlaylistContinuousAutoPlayback\(\) \{[\s\S]*?playlistUIState\.mode === 'continuous'[\s\S]*?userSettings\.getPlaylistAutoPlay\(\)[\s\S]*?\}/);
-  assert.match(appSource, /function handleUserPlayPauseToggle\(\) \{[\s\S]*?void startContinuousPlayback\(\);[\s\S]*?warmPlaylistAutoPlayQueue\(\);[\s\S]*?\}/);
+  assert.match(appSource, /async function handleUserPlayPauseToggle\(\) \{[\s\S]*?const startedItem = await startContinuousPlayback\(\);[\s\S]*?broadcastPlaylistContinuousPlaybackPlay\(startedItem, videoPlayer\.currentTime\);[\s\S]*?warmPlaylistAutoPlayQueue\(\);[\s\S]*?\}/);
+  assert.doesNotMatch(appSource, /void startContinuousPlayback\(\);[\s\S]*?broadcastCurrentPlaybackPlay\(\);/);
 
   assert.match(appSource, /elements\.btnPlay\.addEventListener\('click', handleUserPlayPauseToggle\);/);
 
