@@ -49,14 +49,23 @@ export class VideoPlayer extends EventTarget {
     // 수동 seek 중 플래그 (timeupdate가 프레임을 덮어쓰지 않도록)
     this._isSeeking = false;
     this._seekTimeout = null;
+    this._seekTargetFrame = null;
+    this._seekTargetTime = null;
+    this._seekToken = 0;
 
     // seeked 이벤트 핸들러 (seek 완료 시 플래그 해제)
     this._onSeeked = () => {
+      if (this._seekTargetFrame !== null) {
+        const actualFrame = this._timeToFrame(this.videoElement?.currentTime || 0);
+        if (Math.abs(actualFrame - this._seekTargetFrame) > 0) {
+          return;
+        }
+      }
       if (this._seekTimeout) {
         clearTimeout(this._seekTimeout);
         this._seekTimeout = null;
       }
-      this._isSeeking = false;
+      this._finishManualSeek();
     };
 
     // 프레임 콜백 상태
@@ -70,6 +79,24 @@ export class VideoPlayer extends EventTarget {
     this._setupEventListeners();
 
     log.info('VideoPlayer 초기화됨', { fps: this.fps });
+  }
+
+  _clampFrame(frame) {
+    const maxFrame = Math.max(0, (this.totalFrames || 1) - 1);
+    const normalized = Math.round(Number(frame) || 0);
+    return Math.max(0, Math.min(normalized, maxFrame));
+  }
+
+  _timeToFrame(time) {
+    const fps = Math.max(1, Number(this.fps) || 24);
+    const frame = Math.floor((Number(time) || 0) * fps + 1e-4);
+    return this._clampFrame(frame);
+  }
+
+  _finishManualSeek() {
+    this._isSeeking = false;
+    this._seekTargetFrame = null;
+    this._seekTargetTime = null;
   }
 
   _handleLoopRestartIfNeeded() {
@@ -153,8 +180,7 @@ export class VideoPlayer extends EventTarget {
 
       this.currentTime = video.currentTime;
       // 프레임 계산: floor 사용 (프레임은 0-indexed, 시간 t는 frame floor(t*fps)에 속함)
-      this.currentFrame = Math.floor(this.currentTime * this.fps);
-      this.currentFrame = Math.max(0, Math.min(this.currentFrame, this.totalFrames - 1));
+      this.currentFrame = this._timeToFrame(this.currentTime);
 
       if (this._handleLoopRestartIfNeeded()) {
         return;
@@ -289,7 +315,7 @@ export class VideoPlayer extends EventTarget {
         if (!this.isPlaying) return;
 
         // 정확한 프레임 번호 계산 (floor 사용)
-        const frame = Math.floor(metadata.mediaTime * this.fps);
+        const frame = this._timeToFrame(metadata.mediaTime);
 
         if (frame !== this._lastEmittedFrame) {
           this._lastEmittedFrame = frame;
@@ -313,7 +339,7 @@ export class VideoPlayer extends EventTarget {
       const onFrame = () => {
         if (!this.isPlaying) return;
 
-        const frame = Math.floor(video.currentTime * this.fps);
+        const frame = this._timeToFrame(video.currentTime);
 
         if (frame !== this._lastEmittedFrame) {
           this._lastEmittedFrame = frame;
@@ -491,10 +517,20 @@ export class VideoPlayer extends EventTarget {
     time = Math.max(0, Math.min(time, this.duration));
     this._externalEndedEmitted = false;
     this.externalEofReached = false;
+    this._seekToken += 1;
+    if (this._seekDebounceId) {
+      cancelAnimationFrame(this._seekDebounceId);
+      this._seekDebounceId = null;
+    }
+    if (this._seekTimeout) {
+      clearTimeout(this._seekTimeout);
+      this._seekTimeout = null;
+    }
+    this._finishManualSeek();
 
     // 내부 상태 즉시 업데이트 (timeupdate 이벤트 전에)
     this.currentTime = time;
-    this.currentFrame = Math.floor(time * this.fps);
+    this.currentFrame = this._timeToFrame(time);
 
     if (this.engine !== 'html5') {
       this.externalControls.seek(time).catch?.((error) => {
@@ -518,11 +554,12 @@ export class VideoPlayer extends EventTarget {
   seekToFrame(frame) {
     if (!this.isLoaded) return;
 
-    frame = Math.max(0, Math.min(frame, this.totalFrames - 1));
+    frame = this._clampFrame(frame);
 
     // 프레임의 시작 시간 + 작은 오프셋 (프레임 경계 부동소수점 오차 방지)
     const frameDuration = 1 / this.fps;
     const time = (frame * frameDuration) + 0.001;
+    const seekToken = ++this._seekToken;
 
     // 이전 rAF seek 취소 (빠른 연속 입력 시 마지막 프레임만 실제 seek)
     if (this._seekDebounceId) {
@@ -531,6 +568,8 @@ export class VideoPlayer extends EventTarget {
 
     // seeking 플래그 설정 (timeupdate가 프레임을 덮어쓰지 않도록)
     this._isSeeking = true;
+    this._seekTargetFrame = frame;
+    this._seekTargetTime = time;
     if (this._seekTimeout) {
       clearTimeout(this._seekTimeout);
     }
@@ -546,8 +585,15 @@ export class VideoPlayer extends EventTarget {
     });
 
     if (this.engine !== 'html5') {
-      this.seek(time);
-      this._isSeeking = false;
+      this._externalEndedEmitted = false;
+      this.externalEofReached = false;
+      this.externalControls.seek(time).catch?.((error) => {
+        log.warn('외부 플레이어 프레임 이동 실패', { error: error.message });
+      });
+      this._seekTimeout = setTimeout(() => {
+        if (seekToken !== this._seekToken) return;
+        this._finishManualSeek();
+      }, 300);
       log.debug('프레임 이동', { frame, time });
       return;
     }
@@ -560,24 +606,33 @@ export class VideoPlayer extends EventTarget {
 
     // seeked 이벤트 또는 타임아웃으로 플래그 해제
     this._seekTimeout = setTimeout(() => {
-      this._isSeeking = false;
+      if (seekToken !== this._seekToken) return;
+      this._finishManualSeek();
     }, 200);
 
     log.debug('프레임 이동', { frame, time });
+  }
+
+  stepFrames(delta) {
+    if (!this.isLoaded) return;
+    const baseFrame = this._seekTargetFrame !== null
+      ? this._seekTargetFrame
+      : this.currentFrame;
+    this.seekToFrame(baseFrame + delta);
   }
 
   /**
    * 이전 프레임으로 이동
    */
   prevFrame() {
-    this.seekToFrame(this.currentFrame - 1);
+    this.stepFrames(-1);
   }
 
   /**
    * 다음 프레임으로 이동
    */
   nextFrame() {
-    this.seekToFrame(this.currentFrame + 1);
+    this.stepFrames(1);
   }
 
   /**
@@ -665,7 +720,7 @@ export class VideoPlayer extends EventTarget {
    * @returns {number}
    */
   getCurrentFrame() {
-    return Math.floor(this.currentTime * this.fps);
+    return this._timeToFrame(this.currentTime);
   }
 
   /**
@@ -894,7 +949,16 @@ export class VideoPlayer extends EventTarget {
         metadataChanged = true;
       }
       if (Number.isFinite(nextTime)) {
-        this.currentTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
+        const candidateTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
+        if (this._isSeeking && this._seekTargetFrame !== null) {
+          const candidateFrame = this._timeToFrame(candidateTime);
+          if (candidateFrame === this._seekTargetFrame) {
+            this.currentTime = candidateTime;
+            this._finishManualSeek();
+          }
+        } else {
+          this.currentTime = candidateTime;
+        }
       }
       this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
       const hasKnownDuration = this.duration > 0;
@@ -910,7 +974,7 @@ export class VideoPlayer extends EventTarget {
           engine: this.engine
         });
       }
-      const nextFrame = Math.floor(this.currentTime * this.fps);
+      const nextFrame = this._timeToFrame(this.currentTime);
       const wasPlaying = this.isPlaying;
       const externalIsPlaying = status.paused === false;
       const nextIsPlaying = !eofReached && externalIsPlaying;

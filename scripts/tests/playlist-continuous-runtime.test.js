@@ -19,17 +19,16 @@ test('continuous runtime imports the shared helper module', () => {
   assert.match(appSource, /CONTINUOUS_STATUS[\s\S]+findNextPlayableIndex[\s\S]+createSkippedToastMessage[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
 });
 
-test('continuous metadata uses mpv before FFmpeg fallback for mpv pilot originals', () => {
+test('continuous metadata keeps mpv pilot originals off FFmpeg probing', () => {
   const metadataMatch = appSource.match(/async function collectPlaylistMetadata\(items\) \{([\s\S]*?)\n  \}\n\n  async function updatePlaylistContinuousTimeline/);
   assert.ok(metadataMatch, 'collectPlaylistMetadata should exist');
 
   const metadataSource = metadataMatch[1];
   assert.match(metadataSource, /isSameFilePath\(state\.currentFile, item\.videoPath\) && videoPlayer\.duration/);
   assert.match(metadataSource, /const useMpvPilotForMetadata = !hasDuration && item\.videoPath[\s\S]+await shouldUseMpvPilot\(item\.videoPath/);
-  assert.match(metadataSource, /let metadataResolvedByMpv = false;/);
   assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && useMpvPilotForMetadata\) \{[\s\S]+const mpvProbe = await window\.electronAPI\.mpvProbeMetadata\(item\.videoPath\);/);
-  assert.match(metadataSource, /metadataResolvedByMpv = true;/);
-  assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && \(!useMpvPilotForMetadata \|\| !metadataResolvedByMpv\)\) \{/);
+  assert.match(metadataSource, /mpv 타임라인 메타데이터 수집 실패: FFmpeg 없이 건너뜀/);
+  assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && !useMpvPilotForMetadata\) \{/);
   assert.ok(
     metadataSource.indexOf('const useMpvPilotForMetadata') <
       metadataSource.indexOf('window.electronAPI.mpvProbeMetadata(item.videoPath)') &&
@@ -37,6 +36,7 @@ test('continuous metadata uses mpv before FFmpeg fallback for mpv pilot original
       metadataSource.indexOf('ffmpegProbeCodec(item.videoPath)'),
     'mpv eligibility and mpv metadata probing should run before FFmpeg probing'
   );
+  assert.doesNotMatch(metadataSource, /!metadataResolvedByMpv/);
   assert.match(metadataSource, /ffmpegProbeCodec\(item\.videoPath\)/);
   assert.match(metadataSource, /probe\.duration/);
   assert.match(metadataSource, /probe\.frameRate/);
@@ -462,6 +462,19 @@ test('continuous aggregate comments update the right comment panel', () => {
   assert.match(appSource, /data-aggregate-comment-key/);
   assert.match(appSource, /전체 \$\{highlightCommentSearchMatches\(range\.globalStartTimecode/);
   assert.match(appSource, /컷 \$\{highlightCommentSearchMatches\(range\.localStartTimecode/);
+  assert.match(appSource, /playlist-comment-resolve-toggle/);
+  assert.match(appSource, /playlist-comment-replies/);
+});
+
+test('continuous preparation summary distinguishes mpv-ready originals', () => {
+  const summaryMatch = appSource.match(/function updatePlaylistPrepareSummary\(\) \{([\s\S]*?)\n  \}\n\n  function setPlaylistContinuousTimelineBusy/);
+  assert.ok(summaryMatch, 'updatePlaylistPrepareSummary should exist');
+
+  const summarySource = summaryMatch[1];
+  assert.match(summarySource, /const mpvReadyCount = items\.filter/);
+  assert.match(summarySource, /개 바로 재생 가능/);
+  assert.match(summarySource, /mpv 원본 \$\{mpvReadyCount\}개/);
+  assert.doesNotMatch(summarySource, /개 준비됨/);
 });
 
 test('normal file open paths route bplaylist files into playlist open flow', () => {
@@ -835,14 +848,17 @@ test('continuous source switches suppress stale zero-time timeline updates', () 
   assert.match(appSource, /loadingItemId:\s*null/);
   assert.match(appSource, /loadingSessionId:\s*null/);
   assert.match(appSource, /function shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)/);
+  const playbackSyncMatch = appSource.match(/function syncPlaybackPositionUI\(currentTime, currentFrame, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 비디오 시간 업데이트/);
+  assert.ok(playbackSyncMatch, 'shared playback UI sync helper should exist');
+  assert.match(playbackSyncMatch[1], /if \(!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)\) \{[\s\S]*timeline\.setCurrentTime/);
 
   const timeupdateMatch = appSource.match(/videoPlayer\.addEventListener\('timeupdate', \(e\) => \{([\s\S]*?)\n  \}\);/);
   assert.ok(timeupdateMatch, 'timeupdate handler should exist');
-  assert.match(timeupdateMatch[1], /if \(!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)\) \{[\s\S]*timeline\.setCurrentTime/);
+  assert.match(timeupdateMatch[1], /syncPlaybackPositionUI\(currentTime, currentFrame/);
 
   const frameUpdateMatch = appSource.match(/videoPlayer\.addEventListener\('frameUpdate', \(e\) => \{([\s\S]*?)\n  \}\);/);
   assert.ok(frameUpdateMatch, 'frameUpdate handler should exist');
-  assert.match(frameUpdateMatch[1], /if \(!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)\) \{[\s\S]*timeline\.setCurrentTime/);
+  assert.match(frameUpdateMatch[1], /syncPlaybackPositionUI\(time, frame/);
 
   const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
@@ -931,7 +947,7 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(appSource, /function getActiveTimelinePlaybackTime\(currentTime = videoPlayer\.currentTime,\s*currentFrame = videoPlayer\.currentFrame\)/);
   assert.match(appSource, /playlistUIState\.mode === 'continuous'[\s\S]+return getContinuousTimelinePlaybackTime\(currentTime\);/);
   assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(currentTime,\s*currentFrame\)\);/);
-  assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(time,\s*frame\)\);/);
+  assert.match(appSource, /syncPlaybackPositionUI\(time, frame, \{/);
   assert.match(appSource, /async function seekContinuousTimeline\(globalTime, options = \{\}\)/);
   assert.match(appSource, /const \{ resumePlayback = true \} = options;/);
   assert.match(appSource, /mapGlobalTimeToSegment\(timeline\.playlistSegments, globalTime\)/);
@@ -1016,6 +1032,19 @@ test('playlist rows render and color continuous status text', () => {
   assert.match(playlistCss, /\[data-continuous-status="preparing"\]/);
   assert.match(playlistCss, /\[data-continuous-status="ready"\]/);
   assert.match(playlistCss, /\[data-continuous-status="missing"\]/);
+});
+
+test('playlist rows highlight videos with comments by resolved state', () => {
+  assert.match(appSource, /function applyPlaylistItemCommentState\(el, progress\) \{/);
+  assert.match(appSource, /el\.classList\.toggle\('has-comments', hasComments\);/);
+  assert.match(appSource, /el\.classList\.toggle\('has-unresolved-comments', unresolved > 0\);/);
+  assert.match(appSource, /el\.classList\.toggle\('comments-resolved', allResolved\);/);
+  assert.match(playlistManagerSource, /if \(!marker \|\| marker\.deleted\) continue;[\s\S]+total\+\+;/);
+  assert.match(appSource, /<span class="playlist-item-comment-state" hidden><\/span>/);
+  assert.match(appSource, /applyPlaylistItemCommentState\(el, progress\);/);
+  assert.match(playlistCss, /\.playlist-item\.has-unresolved-comments/);
+  assert.match(playlistCss, /\.playlist-item\.comments-resolved/);
+  assert.match(playlistCss, /\.playlist-item-comment-state/);
 });
 
 test('modified-date sort refreshes stats and preserves current selection without loading', () => {
@@ -1220,13 +1249,14 @@ test('mpv pilot playlist preparation skips background transcode work', () => {
   assert.ok(prepareMatch, 'preparePlaylistItemInBackground should exist');
 
   const prepareSource = prepareMatch[1];
+  assert.match(appSource, /async function cancelPlaylistBackgroundTranscodesForMpvPilot\(reason = 'mpv 파일럿 사용'\) \{[\s\S]+invalidatePlaylistBackgroundWork\(\);[\s\S]+await window\.electronAPI\.ffmpegCancel\(\);/);
   assert.match(prepareSource, /const useMpvPilot = await shouldUseMpvPilot\(item\.videoPath, \{[\s\S]+fileIsAudio: isAudioFile\(item\.fileName \|\| item\.videoPath\),[\s\S]+hasPreparedVideoPath: false[\s\S]+\}\);/);
   assert.ok(
     prepareSource.indexOf('const useMpvPilot = await shouldUseMpvPilot') <
       prepareSource.indexOf('const ffmpegAvailable = await window.electronAPI.ffmpegIsAvailable();'),
     'mpv pilot eligibility should be checked before FFmpeg probing'
   );
-  assert.match(prepareSource, /if \(useMpvPilot\) \{[\s\S]+continuousPlaybackState\.preparedMediaPaths\.delete\(item\.id\);[\s\S]+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.READY, 'mpv 원본 준비'\);[\s\S]+return \{ ready: true, mpv: true \};[\s\S]+\}/);
+  assert.match(prepareSource, /if \(useMpvPilot\) \{[\s\S]+await cancelPlaylistBackgroundTranscodesForMpvPilot\('mpv 재생목록 원본 준비'\);[\s\S]+continuousPlaybackState\.preparedMediaPaths\.delete\(item\.id\);[\s\S]+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.READY, 'mpv 원본 준비'\);[\s\S]+return \{ ready: true, mpv: true \};[\s\S]+\}/);
   const mpvReadyBlock = prepareSource.match(/if \(useMpvPilot\) \{([\s\S]*?)\n        \}/);
   assert.ok(mpvReadyBlock, 'mpv ready block should exist');
   assert.doesNotMatch(mpvReadyBlock[1], /preparedMediaPaths\.set/);
@@ -1234,6 +1264,20 @@ test('mpv pilot playlist preparation skips background transcode work', () => {
     prepareSource.indexOf('if (useMpvPilot)') <
       prepareSource.indexOf('window.electronAPI.ffmpegPreTranscode(item.videoPath)'),
     'mpv-ready playlist items must return before background transcode starts'
+  );
+});
+
+test('mpv pilot video loads cancel already-running FFmpeg background work before playback', () => {
+  const loadVideoStart = appSource.indexOf('  async function loadVideo(filePath, options = {}) {');
+  assert.notEqual(loadVideoStart, -1, 'loadVideo should exist');
+
+  const loadVideoSource = appSource.slice(loadVideoStart, loadVideoStart + 3600);
+  assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot/);
+  assert.match(loadVideoSource, /if \(useMpvPilot\) \{[\s\S]+await cancelPlaylistBackgroundTranscodesForMpvPilot\('mpv 직접 재생 시작'\);[\s\S]+if \(!canContinueVideoLoad\(\)\) return false;[\s\S]+\}/);
+  assert.ok(
+    loadVideoSource.indexOf("await cancelPlaylistBackgroundTranscodesForMpvPilot('mpv 직접 재생 시작')") <
+      loadVideoSource.indexOf('const ffmpegAvailable = !useMpvPilot'),
+    'mpv direct playback should cancel stale FFmpeg background work before any FFmpeg branch'
   );
 });
 

@@ -8,6 +8,7 @@ const {
   sanitizeProfileName,
   shouldAllowMultipleInstances
 } = require('../../main/instance-policy');
+const { classifyLaunchArgument } = require('../../main/launch-routing');
 
 test('development mode allows multiple instances without a switch', () => {
   assert.equal(shouldAllowMultipleInstances({ isDev: true, argv: [], env: {} }), true);
@@ -33,6 +34,16 @@ test('packaged file launches open in a new instance by default', () => {
     argv: ['BFRAME_alpha_v2.exe', 'baeframe://playlist/G:/project/playlist.bplaylist'],
     env: {}
   }), true);
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe', 'baeframe://open?file=G%3A%5Cproject%5Creview.bframe&comment=marker-1'],
+    env: {}
+  }), true);
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe', 'baeframe://open?file=G%3A%5Cproject%5Cplaylist.bplaylist&comment=marker-1'],
+    env: {}
+  }), true);
 });
 
 test('packaged non-project launches keep the existing single-instance router', () => {
@@ -51,6 +62,13 @@ test('packaged non-project launches keep the existing single-instance router', (
     argv: ['BFRAME_alpha_v2.exe', 'baeframe://open?file=G%3A%5Cproject%5Creview.mov&comment=marker-1'],
     env: {}
   }), false);
+});
+
+test('open deeplinks classify project files before the single-instance router', () => {
+  assert.equal(classifyLaunchArgument('baeframe://open?file=G%3A%5Cproject%5Creview.bframe&comment=marker-1'), 'project');
+  assert.equal(classifyLaunchArgument('baeframe://open?file=G%3A%5Cproject%5Cplaylist.bplaylist&comment=marker-1'), 'playlist');
+  assert.equal(classifyLaunchArgument('baeframe://open?file=G%3A%5Cproject%5Ccuts.bcutlist&comment=marker-1'), 'cutlist');
+  assert.equal(classifyLaunchArgument('baeframe://open?file=G%3A%5Cproject%5Creview.mov&comment=marker-1'), 'video');
 });
 
 test('explicit multi-instance switches allow packaged comparison runs', () => {

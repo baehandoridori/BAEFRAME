@@ -367,7 +367,10 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
 
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}/);
   assert.ok(seekToFrameMatch, 'seekToFrame should exist');
-  assert.match(seekToFrameMatch[1], /if \(this\.engine !== 'html5'\) \{[\s\S]+this\.seek\(time\);[\s\S]+return;/);
+  assert.match(seekToFrameMatch[1], /this\._seekTargetFrame = frame;/);
+  assert.match(seekToFrameMatch[1], /if \(this\.engine !== 'html5'\) \{[\s\S]+this\.externalControls\.seek\(time\)[\s\S]+this\._finishManualSeek\(\);[\s\S]+return;/);
+  assert.doesNotMatch(seekToFrameMatch[1], /if \(this\.engine !== 'html5'\) \{[\s\S]+this\.seek\(time\);[\s\S]+return;/);
+  assert.match(videoPlayerSource, /if \(this\._isSeeking && this\._seekTargetFrame !== null\) \{[\s\S]+const candidateFrame = this\._timeToFrame\(candidateTime\);[\s\S]+if \(candidateFrame === this\._seekTargetFrame\) \{[\s\S]+this\._finishManualSeek\(\);[\s\S]+return;[\s\S]+\}/);
 });
 
 test('mpv external playback emits ended when keep-open reaches EOF', () => {

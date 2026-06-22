@@ -291,6 +291,34 @@
   box-shadow: 0 0 0 1px var(--accent-primary);
 }
 
+.playlist-item.has-comments {
+  border-left-width: 3px;
+}
+
+.playlist-item.has-unresolved-comments {
+  border-left-color: var(--warning, #f59e0b);
+  background:
+    linear-gradient(90deg, rgba(245, 158, 11, 0.12), transparent 46%),
+    var(--bg-tertiary);
+}
+
+.playlist-item.has-unresolved-comments:hover,
+.playlist-item.has-unresolved-comments.active {
+  background:
+    linear-gradient(90deg, rgba(245, 158, 11, 0.16), transparent 48%),
+    var(--bg-elevated);
+}
+
+.playlist-item.comments-resolved {
+  border-left-color: var(--success, #22c55e);
+}
+
+.playlist-item.comments-resolved:not(.active) {
+  background:
+    linear-gradient(90deg, rgba(34, 197, 94, 0.08), transparent 44%),
+    var(--bg-tertiary);
+}
+
 .playlist-item.dragging {
   opacity: 0.5;
 }
@@ -396,6 +424,7 @@
 .playlist-item-stats {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   font-size: 11px;
   color: var(--text-secondary);
@@ -414,6 +443,27 @@
 }
 
 .playlist-item-progress.completed {
+  color: var(--success, #22c55e);
+}
+
+.playlist-item-comment-state {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.playlist-item.has-unresolved-comments .playlist-item-comment-state {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+
+.playlist-item.comments-resolved .playlist-item-comment-state {
+  background: rgba(34, 197, 94, 0.14);
   color: var(--success, #22c55e);
 }
 

@@ -348,6 +348,8 @@ async function initApp() {
     mode: 'review'
   };
 
+  let suppressCommentRangeRefreshOnce = false;
+
   const cutlistUIState = {
     active: false,
     lastIgnored: []
@@ -370,6 +372,7 @@ async function initApp() {
   let playlistReplacementToken = 0;
   let playlistReplacementCommitToken = 0;
   let playlistContinuousNavigationToken = 0;
+  const playlistExpandedReplyKeys = new Set();
   const playlistMediaPreload = {
     element: null,
     itemId: null,
@@ -433,6 +436,16 @@ async function initApp() {
 
   function invalidatePlaylistBackgroundWork() {
     playlistBackgroundWorkToken += 1;
+  }
+
+  async function cancelPlaylistBackgroundTranscodesForMpvPilot(reason = 'mpv 파일럿 사용') {
+    invalidatePlaylistBackgroundWork();
+    try {
+      await window.electronAPI.ffmpegCancel();
+      log.info('mpv 파일럿 사용으로 FFmpeg 백그라운드 준비 취소', { reason });
+    } catch (error) {
+      log.warn('mpv 파일럿 FFmpeg 백그라운드 준비 취소 실패', { reason, error: error.message });
+    }
   }
 
   function resetPlaylistContinuousTimelineState() {
@@ -925,10 +938,12 @@ async function initApp() {
   });
 
   // ====== 모듈 이벤트 연결 ======
+  let lastFrameConsumerSyncFrame = null;
 
   // 비디오 메타데이터 로드됨
   videoPlayer.addEventListener('loadedmetadata', (e) => {
     const { duration, totalFrames, fps } = e.detail;
+    lastFrameConsumerSyncFrame = null;
     timeline.setVideoInfo(duration, fps);
     if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
       updateTimecodeDisplay();
@@ -956,61 +971,63 @@ async function initApp() {
     log.info('비디오 정보', { duration, totalFrames, fps });
   });
 
-  // 비디오 시간 업데이트 (일반 timeupdate - 타임라인 및 표시용)
-  videoPlayer.addEventListener('timeupdate', (e) => {
-    const { currentTime, currentFrame } = e.detail;
+  function syncPlaybackPositionUI(currentTime, currentFrame, options = {}) {
+    const {
+      updatePresence = false,
+      updateDrawing = false
+    } = options;
+
     if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
       timeline.setCurrentTime(getActiveTimelinePlaybackTime(currentTime, currentFrame));
       updateTimecodeDisplay();
-      updateFullscreenTimecode(); // 전체화면 타임코드 업데이트
-      updateFullscreenSeekbar(); // 전체화면 시크바 업데이트
+      updateFullscreenTimecode();
+      updateFullscreenSeekbar();
     }
 
-    // 오디오 웨이브폼 동기화
     if (state.isAudioMode) {
       const audioWaveform = getAudioWaveform();
       audioWaveform.updateTime(currentTime);
       audioWaveform.setPlaying(videoPlayer.isPlaying);
     }
 
-    // 댓글 매니저에 현재 프레임 전달 (마커 가시성 업데이트)
-    commentManager.setCurrentFrame(currentFrame);
-    void handleCutlistPlaybackFrame(currentFrame);
-    refreshCurrentCutFromPlayback(currentFrame);
+    const shouldSyncFrameConsumers = !videoPlayer.isPlaying || currentFrame !== lastFrameConsumerSyncFrame;
+    if (shouldSyncFrameConsumers) {
+      lastFrameConsumerSyncFrame = currentFrame;
+      commentManager.setCurrentFrame(currentFrame);
+      void handleCutlistPlaybackFrame(currentFrame);
+      refreshCurrentCutFromPlayback(currentFrame);
+    }
 
-    // Liveblocks Presence에 현재 프레임 전달 (원격 타임라인 표시용)
-    if (liveblocksManager.isConnected) {
+    if (updatePresence && liveblocksManager.isConnected) {
       liveblocksManager.updatePresence({ currentFrame });
     }
 
-    // 비디오 댓글 범위 오버레이 플레이헤드 업데이트
     if (typeof updateVideoCommentPlayhead === 'function') {
       updateVideoCommentPlayhead();
     }
 
-    // 재생 중이 아닐 때 (seeking)만 그리기 업데이트
-    // 재생 중에는 frameUpdate 이벤트에서 처리
-    if (!videoPlayer.isPlaying) {
+    if (updateDrawing) {
       drawingManager.setCurrentFrame(currentFrame);
     }
+  }
+
+  // 비디오 시간 업데이트 (일반 timeupdate - 타임라인 및 표시용)
+  videoPlayer.addEventListener('timeupdate', (e) => {
+    const { currentTime, currentFrame } = e.detail;
+    syncPlaybackPositionUI(currentTime, currentFrame, {
+      updatePresence: true,
+      updateDrawing: !videoPlayer.isPlaying
+    });
   });
 
-  // 프레임 정확한 업데이트 (requestVideoFrameCallback 기반 - 그리기 동기화용)
+  // 프레임 정확한 업데이트 (requestVideoFrameCallback 기반 - 재생 중 표시/그리기 동기화용)
   videoPlayer.addEventListener('frameUpdate', (e) => {
     const { frame, time } = e.detail;
 
-    // 타임라인 플레이헤드 실시간 업데이트 (재생 중)
-    if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
-      timeline.setCurrentTime(getActiveTimelinePlaybackTime(time, frame));
-    }
-
-    // 그리기 레이어를 프레임 정확하게 동기화 (재생 중)
-    drawingManager.setCurrentFrame(frame);
-    void handleCutlistPlaybackFrame(frame);
-    refreshCurrentCutFromPlayback(frame);
-
-    // 타임코드/프레임레이트 실시간 업데이트 (스플릿 뷰와 동일하게)
-    updateTimecodeDisplay();
+    syncPlaybackPositionUI(time, frame, {
+      updatePresence: false,
+      updateDrawing: true
+    });
   });
 
   // 재생 아이콘 SVG
@@ -1406,8 +1423,11 @@ async function initApp() {
     } else {
       elements.videoWrapper.classList.remove('comment-mode');
       markerContainer.style.pointerEvents = 'none';
+      markerContainer.style.zIndex = '15';
       removePendingMarkerUI();
     }
+
+    markerContainer.style.zIndex = isCommentMode ? '30' : '15';
 
     // 버튼 상태 업데이트
     elements.btnAddComment?.classList.toggle('active', isCommentMode);
@@ -1521,6 +1541,9 @@ async function initApp() {
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
+    if (getPlaylistManager().isActive?.()) {
+      void updatePlaylistUI();
+    }
   });
 
   // 프레임 변경 시 마커 가시성 업데이트
@@ -4336,6 +4359,10 @@ async function initApp() {
   });
 
   commentManager.addEventListener('markerUpdated', () => {
+    if (suppressCommentRangeRefreshOnce) {
+      suppressCommentRangeRefreshOnce = false;
+      return;
+    }
     void refreshCommentRangesForCurrentMode();
   });
 
@@ -5925,6 +5952,10 @@ async function initApp() {
       let thumbnailVideoPath = actualVideoPath;
       const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath: hasConvertedPreparedVideoPath });
       if (!canContinueVideoLoad()) return false;
+      if (useMpvPilot) {
+        await cancelPlaylistBackgroundTranscodesForMpvPilot('mpv 직접 재생 시작');
+        if (!canContinueVideoLoad()) return false;
+      }
       if (hasPreparedVideoPath) {
         log.debug('준비된 연속 재생 미디어 경로 사용', { filePath, preparedVideoPath });
       }
@@ -6853,6 +6884,7 @@ async function initApp() {
    */
   function renderPendingMarker(marker) {
     removePendingMarkerUI();
+    elements.videoWrapper?.classList.add('comment-pending');
 
     // 마커 동그라미 생성
     const markerEl = document.createElement('div');
@@ -6869,6 +6901,9 @@ async function initApp() {
     // 인라인 입력창 생성 (textarea로 변경 - 여러 줄 지원)
     const inputWrapper = document.createElement('div');
     inputWrapper.className = 'comment-marker-input-wrapper';
+    inputWrapper.classList.toggle('align-left', marker.x > 0.68);
+    inputWrapper.classList.toggle('align-above', marker.y > 0.72);
+    inputWrapper.classList.toggle('align-below', marker.y < 0.22);
     inputWrapper.innerHTML = `
       <textarea class="comment-marker-input" placeholder="댓글 입력..." rows="1"></textarea>
       <div class="comment-marker-input-hint">Enter 확인 · Shift+Enter 줄바꿈 · Esc 취소</div>
@@ -6960,6 +6995,7 @@ async function initApp() {
     if (pending) {
       pending.remove();
     }
+    elements.videoWrapper?.classList.remove('comment-pending');
     scheduleMpvOverlayStateSync();
   }
 
@@ -7790,6 +7826,144 @@ async function initApp() {
     return true;
   }
 
+  function findMarkerRecordInBframeData(bframeData, markerId, layerId = null) {
+    const layers = Array.isArray(bframeData?.comments?.layers) ? bframeData.comments.layers : [];
+    for (const layer of layers) {
+      if (layerId && layer?.id !== layerId) continue;
+      const markers = Array.isArray(layer?.markers) ? layer.markers : [];
+      const marker = markers.find(candidate => candidate?.id === markerId && !candidate.deleted);
+      if (marker) return marker;
+    }
+    return null;
+  }
+
+  function snapshotMarkerResolution(marker) {
+    return {
+      resolved: marker?.resolved === true,
+      resolvedBy: marker?.resolvedBy || null,
+      resolvedAt: marker?.resolvedAt || null,
+      updatedAt: marker?.updatedAt || null
+    };
+  }
+
+  function applyMarkerResolutionToggle(marker) {
+    if (!marker) return null;
+    const previous = snapshotMarkerResolution(marker);
+    marker.resolved = !previous.resolved;
+    marker.resolvedAt = marker.resolved ? new Date() : null;
+    marker.resolvedBy = marker.resolved ? userName : null;
+    marker.updatedAt = new Date();
+    return previous;
+  }
+
+  function restoreMarkerResolution(marker, previous) {
+    if (!marker || !previous) return;
+    marker.resolved = previous.resolved;
+    marker.resolvedBy = previous.resolvedBy;
+    marker.resolvedAt = previous.resolvedAt;
+    marker.updatedAt = previous.updatedAt;
+  }
+
+  async function togglePlaylistAggregateResolvedWithoutNavigation(range) {
+    const playlistManager = getPlaylistManager();
+    const item = playlistManager.getItems().find(candidate => candidate.id === range.itemId);
+    if (!item) {
+      throw new Error('재생목록 항목을 찾을 수 없습니다.');
+    }
+
+    const bframePath = await playlistManager.ensureItemBframePath(item);
+    if (!bframePath) {
+      throw new Error('댓글 파일을 찾을 수 없습니다.');
+    }
+
+    const currentBframePath = reviewDataManager.getBframePath();
+    if (currentBframePath && isSameFilePath(currentBframePath, bframePath)) {
+      const marker = commentManager.getMarker(range.markerId);
+      if (!marker || marker.deleted) {
+        throw new Error('원본 댓글을 찾을 수 없습니다.');
+      }
+      const previous = applyMarkerResolutionToggle(marker);
+      suppressCommentRangeRefreshOnce = true;
+      commentManager._emit('markerUpdated', { marker });
+      commentManager._emit('markersChanged');
+      const saved = await reviewDataManager.save();
+      if (!saved) {
+        restoreMarkerResolution(marker, previous);
+        suppressCommentRangeRefreshOnce = true;
+        commentManager._emit('markerUpdated', { marker });
+        commentManager._emit('markersChanged');
+        throw new Error('해결 상태 저장에 실패했습니다.');
+      }
+      return marker;
+    }
+
+    const bframeData = await window.electronAPI.loadReview(bframePath);
+    const marker = findMarkerRecordInBframeData(bframeData, range.markerId, range.layerId);
+    if (!marker) {
+      throw new Error('원본 댓글을 찾을 수 없습니다.');
+    }
+
+    const previous = applyMarkerResolutionToggle(marker);
+    try {
+      const saved = await window.electronAPI.saveReview(bframePath, bframeData);
+      if (saved === false) {
+        restoreMarkerResolution(marker, previous);
+        throw new Error('해결 상태 저장에 실패했습니다.');
+      }
+    } catch (error) {
+      restoreMarkerResolution(marker, previous);
+      throw error;
+    }
+    return marker;
+  }
+
+  function renderPlaylistAggregateReplies(range, normalizedSearch) {
+    const replies = range.replies || [];
+    if (replies.length === 0) return '';
+
+    return replies.map(reply => {
+      const author = reply.author || '익명';
+      const imageUrl = reply.image ? escapeHtmlAttribute(reply.image) : '';
+      return `
+        <div class="playlist-comment-reply" data-reply-id="${escapeHtmlAttribute(reply.id || '')}">
+          <div class="playlist-comment-reply-header">
+            <span class="comment-reply-author ${getAuthorColorClass(author)}" ${getAuthorColorStyle(author)}>${highlightCommentSearchMatches(author, normalizedSearch)}</span>
+            ${reply.createdAt ? `<span class="comment-reply-time">${formatRelativeTime(reply.createdAt)}</span>` : ''}
+          </div>
+          <p class="comment-reply-text">${reply.text ? highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(reply.text, normalizedSearch))) : ''}</p>
+          ${imageUrl ? `<div class="comment-attached-image"><img src="${imageUrl}" alt="첨부 이미지" data-full-image="${imageUrl}"></div>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function togglePlaylistAggregateResolved(key) {
+    const range = playlistAggregateCommentRanges.find(item => getPlaylistAggregateCommentKey(item) === key);
+    if (!range) {
+      showToast('해결 상태를 바꿀 댓글을 찾을 수 없습니다.', 'warning');
+      return false;
+    }
+
+    let marker;
+    try {
+      marker = await togglePlaylistAggregateResolvedWithoutNavigation(range);
+    } catch (error) {
+      showToast(error.message || '해결 상태 저장에 실패했습니다.', 'warning');
+      return false;
+    }
+
+    range.resolved = marker.resolved === true;
+    range.resolvedBy = marker.resolvedBy || '';
+    range.resolvedAt = marker.resolvedAt || null;
+
+    await refreshCommentRangesForCurrentMode();
+    void updatePlaylistUI();
+    renderPlaylistContinuousCommentList(commentFilterState.status);
+    highlightPlaylistAggregateComment(key);
+    showToast(marker.resolved ? '해결됨으로 표시했습니다.' : '미해결로 다시 표시했습니다.', 'success');
+    return true;
+  }
+
   async function submitPlaylistAggregateReply(key, textarea) {
     const text = textarea?.value?.trim() || '';
     if (!text) return false;
@@ -7811,6 +7985,7 @@ async function initApp() {
     }
 
     activeRange.replies = [...(activeRange.replies || []), reply];
+    playlistExpandedReplyKeys.add(key);
     textarea.value = '';
     resizeReplyEditorToContent(textarea);
     renderPlaylistContinuousCommentList(commentFilterState.status);
@@ -7872,13 +8047,21 @@ async function initApp() {
       const author = range.author || '알 수 없음';
       const authorColor = getAuthorColor(range.authorId || author || 'unknown');
       const replyCount = range.replies?.length || 0;
+      const repliesExpanded = playlistExpandedReplyKeys.has(key);
+      const repliesHtml = renderPlaylistAggregateReplies(range, normalizedSearch);
+      const resolveTitle = range.resolved ? '미해결로 변경' : '해결됨으로 변경';
+      const imageUrl = range.image ? escapeHtmlAttribute(range.image) : '';
 
       return `
-      <div class="comment-item playlist-aggregate-comment ${range.resolved ? 'resolved' : ''}"
-        data-aggregate-comment-key="${escapeHtml(key)}"
-        data-marker-id="${escapeHtml(range.markerId)}"
-        data-item-id="${escapeHtml(range.itemId)}"
+      <div class="comment-item playlist-aggregate-comment ${range.resolved ? 'resolved' : ''} ${replyCount > 0 ? 'has-replies' : ''}"
+        data-aggregate-comment-key="${escapeHtmlAttribute(key)}"
+        data-marker-id="${escapeHtmlAttribute(range.markerId)}"
+        data-item-id="${escapeHtmlAttribute(range.itemId)}"
         title="${title}">
+        <button type="button" class="comment-resolve-toggle playlist-comment-resolve-toggle" title="${resolveTitle}" aria-label="${resolveTitle}">
+          ${range.resolved ? '✓ 해결됨' : '○ 미해결'}
+          ${range.resolved && range.resolvedBy ? `<span class="resolve-tooltip"><span class="resolve-tooltip-who">해결됨 by ${escapeHtml(range.resolvedBy)}</span><span class="resolve-tooltip-date">${formatResolvedDate(range.resolvedAt)}</span></span>` : ''}
+        </button>
         <div class="playlist-comment-time-row">
           <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
           <span class="playlist-comment-global-time">전체 ${highlightCommentSearchMatches(range.globalStartTimecode, normalizedSearch)}</span>
@@ -7886,16 +8069,18 @@ async function initApp() {
         </div>
         <div class="comment-content">
           <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(range.text || '댓글', normalizedSearch)))}</p>
-          ${range.image ? `<div class="comment-attached-image"><img src="${range.image}" alt="첨부 이미지" data-full-image="${range.image}"></div>` : ''}
+          ${imageUrl ? `<div class="comment-attached-image"><img src="${imageUrl}" alt="첨부 이미지" data-full-image="${imageUrl}"></div>` : ''}
         </div>
         <div class="comment-actions playlist-comment-readonly-actions">
           <span class="comment-author-inline ${getAuthorColorClass(author)}" style="color: ${authorColor.color}; font-weight: bold;">${highlightCommentSearchMatches(author, normalizedSearch)}</span>
           ${range.createdAt ? `<span class="comment-time-inline">${formatRelativeTime(range.createdAt)}</span>` : ''}
-          <button type="button" class="comment-action-btn playlist-comment-reply-toggle" title="답글">답글</button>
-          ${replyCount > 0 ? `<span class="playlist-comment-reply-count">답글 ${replyCount}개</span>` : ''}
+          <button type="button" class="comment-action-btn playlist-comment-reply-toggle${repliesExpanded ? ' expanded' : ''}" title="${replyCount > 0 ? '답글 보기/작성' : '답글 작성'}" aria-expanded="${repliesExpanded ? 'true' : 'false'}" data-reply-count="${replyCount}">
+            ${replyCount > 0 ? (repliesExpanded ? '답글 접기' : `답글 ${replyCount}개`) : '답글'}
+          </button>
           <span class="playlist-comment-source">${highlightCommentSearchMatches(range.fileName, normalizedSearch)}</span>
         </div>
-        <div class="playlist-comment-reply-form" hidden>
+        ${replyCount > 0 ? `<div class="playlist-comment-replies${repliesExpanded ? ' expanded' : ''}" ${repliesExpanded ? '' : 'hidden'}>${repliesHtml}</div>` : ''}
+        <div class="playlist-comment-reply-form" ${repliesExpanded ? '' : 'hidden'}>
           <textarea class="playlist-comment-reply-input" placeholder="답글 입력..." rows="1" data-max-auto-height="140"></textarea>
           <button type="button" class="playlist-comment-reply-submit">전송</button>
         </div>
@@ -7907,10 +8092,11 @@ async function initApp() {
       const replyToggle = item.querySelector('.playlist-comment-reply-toggle');
       const replyForm = item.querySelector('.playlist-comment-reply-form');
       const replyInput = item.querySelector('.playlist-comment-reply-input');
+      const replies = item.querySelector('.playlist-comment-replies');
 
       item.addEventListener('click', async (e) => {
         if (e.target.closest('.gdrive-link-btn')) return;
-        if (e.target.closest('.playlist-comment-reply-form, .playlist-comment-reply-toggle')) return;
+        if (e.target.closest('.playlist-comment-reply-form, .playlist-comment-reply-toggle, .playlist-comment-replies, .playlist-comment-resolve-toggle')) return;
         await openPlaylistAggregateComment(item.dataset.aggregateCommentKey);
       });
 
@@ -7922,10 +8108,35 @@ async function initApp() {
       replyToggle?.addEventListener('click', (e) => {
         e.stopPropagation();
         if (!replyForm || !replyInput) return;
-        replyForm.hidden = !replyForm.hidden;
-        if (!replyForm.hidden) {
+        const key = item.dataset.aggregateCommentKey;
+        const nextExpanded = !playlistExpandedReplyKeys.has(key);
+        if (nextExpanded) {
+          playlistExpandedReplyKeys.add(key);
+        } else {
+          playlistExpandedReplyKeys.delete(key);
+        }
+        replyForm.hidden = !nextExpanded;
+        if (replies) replies.hidden = !nextExpanded;
+        replyToggle.classList.toggle('expanded', nextExpanded);
+        replyToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+        const replyCount = Number(replyToggle.dataset.replyCount) || 0;
+        replyToggle.textContent = replyCount > 0
+          ? (nextExpanded ? '답글 접기' : `답글 ${replyCount}개`)
+          : '답글';
+        if (nextExpanded) {
           replyInput.focus();
           resizeReplyEditorToContent(replyInput);
+        }
+      });
+
+      item.querySelector('.playlist-comment-resolve-toggle')?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const resolveBtn = e.currentTarget;
+        resolveBtn.disabled = true;
+        try {
+          await togglePlaylistAggregateResolved(item.dataset.aggregateCommentKey);
+        } finally {
+          if (document.contains(resolveBtn)) resolveBtn.disabled = false;
         }
       });
 
@@ -9374,6 +9585,7 @@ async function initApp() {
     // 댓글 모드
     if (userSettings.matchShortcut('commentMode', e)) {
       e.preventDefault();
+      if (!state.isCommentMode && !(await ensureCutlistCommentTargetReady())) return;
       toggleCommentMode();
       return;
     }
@@ -9556,19 +9768,14 @@ async function initApp() {
     if (userSettings.matchShortcut('prevFrameFast', e)) {
       e.preventDefault();
       const frameAmount = userSettings.getFrameSkipAmount();
-      const currentFrame = videoPlayer.currentFrame || 0;
-      const newFrame = Math.max(0, currentFrame - frameAmount);
-      videoPlayer.seekToFrame(newFrame);
+      videoPlayer.stepFrames(-frameAmount);
       timeline.scrollToPlayhead();
       return;
     }
     if (userSettings.matchShortcut('nextFrameFast', e)) {
       e.preventDefault();
       const frameAmount = userSettings.getFrameSkipAmount();
-      const currentFrame = videoPlayer.currentFrame || 0;
-      const totalFrames = videoPlayer.totalFrames || 0;
-      const newFrame = Math.min(totalFrames - 1, currentFrame + frameAmount);
-      videoPlayer.seekToFrame(newFrame);
+      videoPlayer.stepFrames(frameAmount);
       timeline.scrollToPlayhead();
       return;
     }
@@ -13508,8 +13715,15 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems?.() || [];
     const readyCount = items.filter(item => item.continuousStatus === CONTINUOUS_STATUS.READY).length;
+    const mpvReadyCount = items.filter(item =>
+      item.continuousStatus === CONTINUOUS_STATUS.READY &&
+      String(item.continuousMessage || '').toLowerCase().includes('mpv')
+    ).length;
     if (elements.playlistPrepareSummaryText) {
-      elements.playlistPrepareSummaryText.textContent = `${readyCount}/${items.length}개 준비됨`;
+      const baseText = `${readyCount}/${items.length}개 바로 재생 가능`;
+      elements.playlistPrepareSummaryText.textContent = mpvReadyCount > 0
+        ? `${baseText} (mpv 원본 ${mpvReadyCount}개)`
+        : baseText;
     }
   }
 
@@ -13574,7 +13788,6 @@ async function initApp() {
           hasPreparedVideoPath: false
         })
         : false;
-      let metadataResolvedByMpv = false;
 
       if (!hasDuration && item.videoPath && useMpvPilotForMetadata) {
         try {
@@ -13586,20 +13799,19 @@ async function initApp() {
               duration = probeDuration;
               fps = Number.isFinite(probeFps) && probeFps > 0
                 ? probeFps
-                : (Number.isFinite(fps) && fps > 0 ? fps : 24);
+              : (Number.isFinite(fps) && fps > 0 ? fps : 24);
               item.duration = duration;
               item.fps = fps;
-              metadataResolvedByMpv = true;
             }
           } else {
-            log.warn('mpv 타임라인 메타데이터 수집 실패', { fileName: item.fileName, error: mpvProbe?.error || 'probe failed' });
+            log.warn('mpv 타임라인 메타데이터 수집 실패: FFmpeg 없이 건너뜀', { fileName: item.fileName, error: mpvProbe?.error || 'probe failed' });
           }
         } catch (error) {
-          log.warn('mpv 타임라인 메타데이터 수집 실패', { fileName: item.fileName, error: error.message });
+          log.warn('mpv 타임라인 메타데이터 수집 실패: FFmpeg 없이 건너뜀', { fileName: item.fileName, error: error.message });
         }
       }
 
-      if (!hasDuration && item.videoPath && (!useMpvPilotForMetadata || !metadataResolvedByMpv)) {
+      if (!hasDuration && item.videoPath && !useMpvPilotForMetadata) {
         try {
           const probe = await window.electronAPI.ffmpegProbeCodec(item.videoPath);
           if (probe?.success) {
@@ -13753,6 +13965,8 @@ async function initApp() {
         });
         if (!shouldContinuePreparing()) return { ready: false, stale: true };
         if (useMpvPilot) {
+          await cancelPlaylistBackgroundTranscodesForMpvPilot('mpv 재생목록 원본 준비');
+          if (!shouldContinuePreparing()) return { ready: false, stale: true };
           continuousPlaybackState.preparedMediaPaths.delete(item.id);
           markPlaylistItemStatus(item, CONTINUOUS_STATUS.READY, 'mpv 원본 준비');
           return { ready: true, mpv: true };
@@ -15445,6 +15659,35 @@ async function initApp() {
     }
   }
 
+  function applyPlaylistItemCommentState(el, progress) {
+    if (!el) return;
+    const total = Math.max(0, Number(progress?.total) || 0);
+    const resolved = Math.max(0, Number(progress?.resolved) || 0);
+    const unresolved = Math.max(0, total - resolved);
+    const hasComments = total > 0;
+    const allResolved = hasComments && unresolved === 0;
+
+    el.classList.toggle('has-comments', hasComments);
+    el.classList.toggle('has-unresolved-comments', unresolved > 0);
+    el.classList.toggle('comments-resolved', allResolved);
+    el.dataset.commentState = !hasComments ? 'none' : (allResolved ? 'resolved' : 'unresolved');
+
+    const statusEl = el.querySelector('.playlist-item-comment-state');
+    if (statusEl) {
+      statusEl.textContent = !hasComments
+        ? ''
+        : (unresolved > 0 ? `미해결 ${unresolved}` : '모두 해결');
+      statusEl.hidden = !hasComments;
+    }
+
+    const commentsEl = el.querySelector('.playlist-item-comments');
+    if (commentsEl) {
+      commentsEl.title = hasComments
+        ? `댓글 ${total}개, 해결 ${resolved}개, 미해결 ${unresolved}개`
+        : '피드백 없음';
+    }
+  }
+
   // 아이템 렌더링
   async function renderPlaylistItems() {
     const playlistManager = getPlaylistManager();
@@ -15517,6 +15760,7 @@ async function initApp() {
               </div>
               ${progress.total > 0 ? `${progress.percent}%` : '-'}
             </span>
+            <span class="playlist-item-comment-state" hidden></span>
             <span class="playlist-item-continuous-status">${item.continuousMessage || ''}</span>
           </div>
         </div>
@@ -15526,6 +15770,7 @@ async function initApp() {
           </svg>
         </button>
       `;
+      applyPlaylistItemCommentState(el, progress);
 
       // 클릭 이벤트
       el.addEventListener('click', (e) => {
@@ -15592,6 +15837,7 @@ async function initApp() {
         textNode.textContent = `\n              ${progress.total > 0 ? `${progress.percent}%` : '-'}`;
       }
     }
+    applyPlaylistItemCommentState(el, progress);
   }
 
   // 위치 표시 업데이트

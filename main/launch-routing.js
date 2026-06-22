@@ -111,6 +111,22 @@ function classifyLaunchArgument(arg) {
     return '';
   }
 
+  const openRoute = resolveRoutedFileUrl(arg, 'open');
+  if (openRoute.filePath) {
+    if (hasExtension(openRoute.filePath, '.bcutlist')) {
+      return 'cutlist';
+    }
+    if (hasExtension(openRoute.filePath, '.bplaylist')) {
+      return 'playlist';
+    }
+    if (hasExtension(openRoute.filePath, '.bframe')) {
+      return 'project';
+    }
+    if (isSupportedVideoPath(openRoute.filePath)) {
+      return 'video';
+    }
+  }
+
   const cutlistRoute = resolveRoutedFileUrl(arg, 'cutlist');
   if (cutlistRoute.filePath) {
     return 'cutlist';

@@ -651,6 +651,7 @@ export class PlaylistManager {
         for (const layer of bframeData.comments.layers) {
           if (layer?.markers && Array.isArray(layer.markers)) {
             for (const marker of layer.markers) {
+              if (!marker || marker.deleted) continue;
               total++;
               if (marker.resolved) resolved++;
             }
