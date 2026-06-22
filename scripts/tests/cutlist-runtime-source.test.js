@@ -38,6 +38,14 @@ function extractBalancedBlock(source, startNeedle) {
   assert.fail(`Missing block end for: ${startNeedle}`);
 }
 
+function extractSyncPlaybackPositionUiBody() {
+  const match = appSource.match(
+    /function syncPlaybackPositionUI\(currentTime, currentFrame, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 비디오 시간 업데이트/
+  );
+  assert.ok(match, 'Missing source section: function syncPlaybackPositionUI');
+  return match[1];
+}
+
 test('main process exposes cutlist file handlers', () => {
   assert.match(mainIpc, /cutlist:read/);
   assert.match(mainIpc, /cutlist:write/);
@@ -161,8 +169,9 @@ test('generic timeline seeking routes through cutlist global time when cutlist i
 test('cutlist playback uses global cutlist timeline time for playhead', () => {
   assert.match(appSource, /function getCutlistTimelinePlaybackTime/);
   assert.match(appSource, /function getActiveTimelinePlaybackTime/);
-  assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(currentTime,\s*currentFrame\)\)/);
-  assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(time,\s*frame\)\)/);
+  const syncBody = extractSyncPlaybackPositionUiBody();
+  assert.match(syncBody, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(currentTime,\s*currentFrame\)\)/);
+  assert.match(appSource, /syncPlaybackPositionUI\(time,\s*frame,\s*\{/);
 
   const seekStartBody = extractBalancedBlock(appSource, 'async function seekPlaybackToCutStart');
   assert.match(seekStartBody, /await seekCutlistTimeline\(segment\.globalStartTime\)/);
@@ -173,13 +182,15 @@ test('cutlist playback advances to the next ordered cut instead of the next cut 
   const timeUpdateBody = extractBalancedBlock(appSource, "videoPlayer.addEventListener('timeupdate'");
   const frameUpdateBody = extractBalancedBlock(appSource, "videoPlayer.addEventListener('frameUpdate'");
   const endedBody = extractBalancedBlock(appSource, "videoPlayer.addEventListener('ended'");
+  const syncBody = extractSyncPlaybackPositionUiBody();
   const refreshBody = extractBalancedBlock(appSource, 'function refreshCurrentCutFromPlayback');
   const advanceBody = extractBalancedBlock(appSource, 'async function advanceCutlistPlaybackFromCut');
 
   assert.match(appSource, /function getNextCutlistCut\(cut\)/);
   assert.match(appSource, /async function handleCutlistPlaybackFrame\(frame/);
-  assert.match(timeUpdateBody, /handleCutlistPlaybackFrame\(currentFrame\)/);
-  assert.match(frameUpdateBody, /handleCutlistPlaybackFrame\(frame\)/);
+  assert.match(timeUpdateBody, /syncPlaybackPositionUI\(currentTime,\s*currentFrame/);
+  assert.match(frameUpdateBody, /syncPlaybackPositionUI\(time,\s*frame/);
+  assert.match(syncBody, /handleCutlistPlaybackFrame\(currentFrame\)/);
   assert.match(endedBody, /advanceCutlistPlaybackFromCut\(currentCut\)/);
   assert.match(advanceBody, /getNextCutlistCut\(cut\)/);
   assert.match(advanceBody, /await seekPlaybackToCutStart\(nextCut\)/);
