@@ -554,6 +554,8 @@ test('spacebar pauses an active continuous handoff instead of starting a duplica
   const handleMatch = appSource.match(/async function handleUserPlayPauseToggle\(\) \{([\s\S]*?)\n  \}/);
   assert.ok(handleMatch, 'play/pause toggle handler should exist');
   const handleSource = handleMatch[1];
+  assert.match(handleSource, /const continuousPausePosition = continuousPlaybackState\.active[\s\S]+getPlaybackSyncPosition\(videoPlayer\.currentTime, \{ forceContinuous: true \}\)/);
+  assert.match(handleSource, /playbackSync\.broadcastPause\(continuousPausePosition\.time, continuousPausePosition\.options\);/);
   assert.match(handleSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+invalidateActiveVideoLoad\(\);[\s\S]+videoPlayer\.pause\(\);[\s\S]+broadcastCurrentPlaybackPause\(\);[\s\S]+return;/);
   assert.match(handleSource, /const startedItem = await startContinuousPlayback\(\);[\s\S]+broadcastPlaylistContinuousPlaybackPlay\(startedItem, videoPlayer\.currentTime\);/);
   assert.doesNotMatch(handleSource, /void startContinuousPlayback\(\);[\s\S]+broadcastCurrentPlaybackPlay\(\);/);
@@ -911,7 +913,9 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(appSource, /mapGlobalTimeToSegment[\s\S]+mapLocalTimeToGlobal[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
   assert.match(appSource, /function getContinuousTimelinePlaybackTime\(localTime = videoPlayer\.currentTime\)/);
   assert.match(appSource, /mapLocalTimeToGlobal\(segment, localTime\)/);
-  assert.match(appSource, /function getPlaybackSyncPosition\(localTime = videoPlayer\.currentTime\)/);
+  assert.match(appSource, /function getPlaybackSyncPosition\(localTime = videoPlayer\.currentTime, options = \{\}\)/);
+  assert.match(appSource, /const \{ forceContinuous = false \} = options;/);
+  assert.match(appSource, /\(forceContinuous \|\| continuousPlaybackState\.active === true\) &&[\s\S]+playlistUIState\.mode === 'continuous'/);
   assert.match(appSource, /const segment = getCurrentContinuousSegment\(\);[\s\S]+if \(!segment\) return \{ time: localTime, options: \{\} \};/);
   assert.match(appSource, /time: mapLocalTimeToGlobal\(segment, localTime\)/);
   assert.match(appSource, /options: \{ playlistContinuous: true \}/);

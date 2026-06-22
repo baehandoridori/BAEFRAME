@@ -13270,8 +13270,13 @@ async function initApp() {
     );
   }
 
-  function getPlaybackSyncPosition(localTime = videoPlayer.currentTime) {
-    if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+  function getPlaybackSyncPosition(localTime = videoPlayer.currentTime, options = {}) {
+    const { forceContinuous = false } = options;
+    if (
+      (forceContinuous || continuousPlaybackState.active === true) &&
+      playlistUIState.mode === 'continuous' &&
+      timeline.playlistDuration > 0
+    ) {
       const segment = getCurrentContinuousSegment();
       if (!segment) return { time: localTime, options: {} };
       return {
@@ -13292,8 +13297,8 @@ async function initApp() {
     };
   }
 
-  function broadcastCurrentPlaybackPause() {
-    const position = getPlaybackSyncPosition(videoPlayer.currentTime);
+  function broadcastCurrentPlaybackPause(options = {}) {
+    const position = getPlaybackSyncPosition(videoPlayer.currentTime, options);
     playbackSync.broadcastPause(position.time, position.options);
   }
 
@@ -13319,12 +13324,19 @@ async function initApp() {
   async function handleUserPlayPauseToggle() {
     const wasPlaying = videoPlayer.isPlaying;
     if (wasPlaying) {
+      const continuousPausePosition = continuousPlaybackState.active
+        ? getPlaybackSyncPosition(videoPlayer.currentTime, { forceContinuous: true })
+        : null;
       if (continuousPlaybackState.active) {
         stopContinuousPlayback();
         invalidateActiveVideoLoad();
       }
       videoPlayer.togglePlay();
-      broadcastCurrentPlaybackPause();
+      if (continuousPausePosition) {
+        playbackSync.broadcastPause(continuousPausePosition.time, continuousPausePosition.options);
+      } else {
+        broadcastCurrentPlaybackPause();
+      }
       return;
     }
 
