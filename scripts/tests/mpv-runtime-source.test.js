@@ -219,8 +219,14 @@ test('mpv pilot waits for the requested initial frame before revealing the nativ
   assert.match(loadMpvSource, /const initialSeekReady = await seekMpvInitialFrameBeforeReveal\(initialFrame\);/);
   assert.match(loadMpvSource, /if \(!initialSeekReady\) \{[\s\S]+requestAnimationFrame\(resolve\)/);
   const initialSeekIndex = loadMpvSource.indexOf('const initialSeekReady = await seekMpvInitialFrameBeforeReveal(initialFrame);');
+  const staleRecheckIndex = loadMpvSource.indexOf('if (isStaleVideoLoad()) {', initialSeekIndex);
   const revealReadyIndex = loadMpvSource.indexOf('mpvPilotHostPreparing = false;', initialSeekIndex);
   const visibilitySyncIndex = loadMpvSource.indexOf('syncMpvHostVisibilityWithDom();', revealReadyIndex);
+  assert.match(loadMpvSource, /if \(isStaleVideoLoad\(\)\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+return false;[\s\S]+\}/);
+  assert.ok(
+    initialSeekIndex < staleRecheckIndex && staleRecheckIndex < revealReadyIndex,
+    'stale mpv loads should be cleaned up after initial-frame waits and before host reveal'
+  );
   assert.ok(
     initialSeekIndex < revealReadyIndex,
     'the mpv host should stay hidden until the initial seek has been requested and observed'

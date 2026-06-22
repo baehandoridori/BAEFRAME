@@ -262,7 +262,7 @@ test('aggregate comment clicks cancel stale continuous navigation and hide first
 test('manual continuous timeline seeks restart active sessions and preserve the target frame', () => {
   assert.match(appSource, /function restartContinuousPlaybackSessionForManualSeek\(\) \{/);
 
-  const seekStart = appSource.indexOf('async function seekContinuousTimeline(globalTime)');
+  const seekStart = appSource.indexOf('async function seekContinuousTimeline(globalTime, options = {})');
   const seekEnd = appSource.indexOf('  function stopContinuousPlayback', seekStart);
   assert.notEqual(seekStart, -1, 'seekContinuousTimeline should exist');
   assert.notEqual(seekEnd, -1, 'seekContinuousTimeline boundary should exist');
@@ -270,7 +270,7 @@ test('manual continuous timeline seeks restart active sessions and preserve the 
 
   assert.match(seekSource, /const navigationToken = \+\+playlistContinuousNavigationToken;/);
   assert.match(seekSource, /const wasContinuousActive = continuousPlaybackState\.active === true;/);
-  assert.match(seekSource, /const shouldResumePlayback = videoPlayer\.isPlaying === true \|\| wasContinuousActive;/);
+  assert.match(seekSource, /const shouldResumePlayback = resumePlayback && \(videoPlayer\.isPlaying === true \|\| wasContinuousActive\);/);
   assert.match(seekSource, /const manualSessionId = wasContinuousActive[\s\S]+restartContinuousPlaybackSessionForManualSeek\(\)/);
   assert.match(seekSource, /const isAlreadyLoaded = isSameFilePath\(state\.currentFile, item\.videoPath\) &&[\s\S]+!hasActiveVideoLoadForDifferentFile\(item\.videoPath\);/);
   assert.match(seekSource, /preserveContinuousSession: true/);
@@ -288,7 +288,7 @@ test('manual continuous timeline seeks restart active sessions and preserve the 
 });
 
 test('manual continuous timeline seeks suppress zero-time updates while cross-file loads settle', () => {
-  const seekStart = appSource.indexOf('async function seekContinuousTimeline(globalTime)');
+  const seekStart = appSource.indexOf('async function seekContinuousTimeline(globalTime, options = {})');
   const seekEnd = appSource.indexOf('  function resetContinuousPlaybackRuntimeState', seekStart);
   assert.notEqual(seekStart, -1, 'seekContinuousTimeline should exist');
   assert.notEqual(seekEnd, -1, 'seekContinuousTimeline boundary should exist');
@@ -904,7 +904,8 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(appSource, /playlistUIState\.mode === 'continuous'[\s\S]+return getContinuousTimelinePlaybackTime\(currentTime\);/);
   assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(currentTime,\s*currentFrame\)\);/);
   assert.match(appSource, /timeline\.setCurrentTime\(getActiveTimelinePlaybackTime\(time,\s*frame\)\);/);
-  assert.match(appSource, /async function seekContinuousTimeline\(globalTime\)/);
+  assert.match(appSource, /async function seekContinuousTimeline\(globalTime, options = \{\}\)/);
+  assert.match(appSource, /const \{ resumePlayback = true \} = options;/);
   assert.match(appSource, /mapGlobalTimeToSegment\(timeline\.playlistSegments, globalTime\)/);
   assert.match(appSource, /videoPlayer\.seek\(mapped\.localTime\);/);
   assert.match(appSource, /playbackSync\.broadcastSeek\(mapLocalTimeToGlobal\(mapped\.segment, mapped\.localTime\), \{[\s\S]+playlistContinuous: true[\s\S]+\}\);/);
@@ -913,6 +914,7 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(playbackSyncSource, /this\._lm\.broadcastEvent\(\{ type: `\$\{PREFIX\}SEEK`, \.\.\.event \}\);/);
   assert.match(playbackSyncSource, /detail: \{ time: event\.time, playlistContinuous: event\.playlistContinuous === true \}/);
   assert.match(appSource, /playbackSync\.addEventListener\('remotePlay', \(e\) => \{[\s\S]+await seekContinuousTimeline\(time\);[\s\S]+if \(!continuousPlaybackState\.active\) \{[\s\S]+await startContinuousPlayback\(\);/);
+  assert.match(appSource, /playbackSync\.addEventListener\('remotePause', \(e\) => \{[\s\S]+seekContinuousTimeline\(time, \{ resumePlayback: false \}\);/);
   assert.match(appSource, /playbackSync\.addEventListener\('remoteSeek', \(e\) => \{[\s\S]+const \{ time, playlistContinuous \} = e\.detail;[\s\S]+seekContinuousTimeline\(time\);/);
 });
 

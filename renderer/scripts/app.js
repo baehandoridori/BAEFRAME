@@ -5851,6 +5851,11 @@ async function initApp() {
       }
     }
 
+    if (isStaleVideoLoad()) {
+      await cleanupPendingMpvPilot();
+      return false;
+    }
+
     mpvPilotHostPreparing = false;
     syncMpvHostVisibilityWithDom();
 
@@ -12826,7 +12831,7 @@ async function initApp() {
       if (continuousPlaybackState.active) {
         stopContinuousPlayback();
       }
-      void seekContinuousTimeline(time);
+      void seekContinuousTimeline(time, { resumePlayback: false });
       return;
     }
     videoPlayer.seek(time);
@@ -13315,7 +13320,8 @@ async function initApp() {
     return mapLocalTimeToGlobal(segment, localTime);
   }
 
-  async function seekContinuousTimeline(globalTime) {
+  async function seekContinuousTimeline(globalTime, options = {}) {
+    const { resumePlayback = true } = options;
     const playlistManager = getPlaylistManager();
     const mapped = mapGlobalTimeToSegment(timeline.playlistSegments, globalTime);
     if (!mapped) return false;
@@ -13323,7 +13329,7 @@ async function initApp() {
     const item = playlistManager.getItems()[mapped.segment.index];
     if (!item) return false;
     const wasContinuousActive = continuousPlaybackState.active === true;
-    const shouldResumePlayback = videoPlayer.isPlaying === true || wasContinuousActive;
+    const shouldResumePlayback = resumePlayback && (videoPlayer.isPlaying === true || wasContinuousActive);
     const manualSessionId = wasContinuousActive
       ? restartContinuousPlaybackSessionForManualSeek()
       : null;
