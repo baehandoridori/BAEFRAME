@@ -913,7 +913,7 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(playbackSyncSource, /this\._pendingSeekEvent = \{ time, \.\.\.options \};/);
   assert.match(playbackSyncSource, /this\._lm\.broadcastEvent\(\{ type: `\$\{PREFIX\}SEEK`, \.\.\.event \}\);/);
   assert.match(playbackSyncSource, /detail: \{ time: event\.time, playlistContinuous: event\.playlistContinuous === true \}/);
-  assert.match(appSource, /playbackSync\.addEventListener\('remotePlay', \(e\) => \{[\s\S]+await seekContinuousTimeline\(time\);[\s\S]+if \(!continuousPlaybackState\.active\) \{[\s\S]+await startContinuousPlayback\(\);/);
+  assert.match(appSource, /playbackSync\.addEventListener\('remotePlay', \(e\) => \{[\s\S]+const followed = await seekContinuousTimeline\(time\);[\s\S]+if \(!followed\) \{[\s\S]+상대방의 재생목록 위치를 따라갈 수 없습니다\.[\s\S]+return;[\s\S]+\}[\s\S]+if \(!continuousPlaybackState\.active\) \{[\s\S]+await startContinuousPlayback\(\);/);
   assert.match(appSource, /playbackSync\.addEventListener\('remotePause', \(e\) => \{[\s\S]+seekContinuousTimeline\(time, \{ resumePlayback: false \}\);/);
   assert.match(appSource, /playbackSync\.addEventListener\('remoteSeek', \(e\) => \{[\s\S]+const \{ time, playlistContinuous \} = e\.detail;[\s\S]+seekContinuousTimeline\(time\);/);
 });

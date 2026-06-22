@@ -12811,7 +12811,12 @@ async function initApp() {
     const { time, playlistContinuous } = e.detail;
     if (playlistContinuous && playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
       void (async () => {
-        await seekContinuousTimeline(time);
+        const followed = await seekContinuousTimeline(time);
+        if (!followed) {
+          log.warn('리모트 연속 재생 위치를 따라갈 수 없습니다', { time });
+          showToast('상대방의 재생목록 위치를 따라갈 수 없습니다.', 'warning');
+          return;
+        }
         if (!continuousPlaybackState.active) {
           await startContinuousPlayback();
           return;
