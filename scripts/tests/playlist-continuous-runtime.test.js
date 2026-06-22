@@ -239,9 +239,12 @@ test('aggregate comment clicks cancel stale continuous navigation and hide first
   const helperSource = appSource.slice(helperStart, helperEnd);
 
   assert.match(appSource, /let playlistContinuousNavigationToken = 0;/);
+  assert.match(appSource, /let activeVideoLoadPath = null;/);
+  assert.match(appSource, /function hasActiveVideoLoadForDifferentFile\(filePath\) \{[\s\S]+!isSameFilePath\(activeVideoLoadPath, filePath\);[\s\S]+\}/);
   assert.match(helperSource, /const navigationToken = \+\+playlistContinuousNavigationToken;/);
   assert.match(helperSource, /const isCurrentNavigation = \(\) =>[\s\S]+navigationToken === playlistContinuousNavigationToken/);
   assert.match(helperSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
+  assert.match(helperSource, /const isAlreadyLoaded = isSameFilePath\(state\.currentFile, item\.videoPath\) &&[\s\S]+!hasActiveVideoLoadForDifferentFile\(item\.videoPath\);/);
   assert.match(helperSource, /initialFrame: range\.localStartFrame \|\| 0/);
   assert.match(helperSource, /revealAfterInitialSeek: true/);
   assert.match(helperSource, /holdPreviousFrameUntilReady: true/);
@@ -268,6 +271,7 @@ test('manual continuous timeline seeks restart active sessions and preserve the 
   assert.match(seekSource, /const wasContinuousActive = continuousPlaybackState\.active === true;/);
   assert.match(seekSource, /const shouldResumePlayback = videoPlayer\.isPlaying === true \|\| wasContinuousActive;/);
   assert.match(seekSource, /const manualSessionId = wasContinuousActive[\s\S]+restartContinuousPlaybackSessionForManualSeek\(\)/);
+  assert.match(seekSource, /const isAlreadyLoaded = isSameFilePath\(state\.currentFile, item\.videoPath\) &&[\s\S]+!hasActiveVideoLoadForDifferentFile\(item\.videoPath\);/);
   assert.match(seekSource, /preserveContinuousSession: true/);
   assert.match(seekSource, /initialFrame: targetFrame/);
   assert.match(seekSource, /revealAfterInitialSeek: true/);
@@ -601,7 +605,11 @@ test('manual video loads cancel active continuous playback and stale loads', () 
   assert.match(loadVideoSource, /const loadToken = \+\+latestVideoLoadToken;/);
   assert.match(loadVideoSource, /shouldContinue = null/);
   assert.match(loadVideoSource, /const shouldContinueVideoLoad = typeof shouldContinue === 'function'[\s\S]+: \(\) => true;/);
-  assert.match(loadVideoSource, /const canContinueVideoLoad = \(\) => !isStaleVideoLoad\(\) && shouldContinueVideoLoad\(\);/);
+  assert.match(loadVideoSource, /let allowNavigationGuardAbort = true;/);
+  assert.match(loadVideoSource, /const canContinueVideoLoad = \(\) => \([\s\S]+!isStaleVideoLoad\(\) &&[\s\S]+\(!allowNavigationGuardAbort \|\| shouldContinueVideoLoad\(\)\)[\s\S]+\);/);
+  assert.match(loadVideoSource, /activeVideoLoadPath = filePath;/);
+  assert.match(loadVideoSource, /allowNavigationGuardAbort = false;[\s\S]+\/\/ ====== 이전 파일 감시 및 협업 세션 정리/);
+  assert.match(loadVideoSource, /finally \{[\s\S]+if \(loadToken === latestVideoLoadToken\) \{[\s\S]+activeVideoLoadPath = null;/);
   assert.match(loadVideoSource, /if \(!preserveContinuousSession && continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
   assert.match(loadVideoSource, /const isStaleVideoLoad = \(\) => loadToken !== latestVideoLoadToken;/);
   assert.match(loadVideoSource, /if \(!canContinueVideoLoad\(\)\) return false;/);

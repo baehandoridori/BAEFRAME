@@ -4730,7 +4730,12 @@ async function initApp() {
   let activeTranscodeOverlayToken = 0;
   let activeTranscodeOverlayCleanup = null;
   let latestVideoLoadToken = 0;
+  let activeVideoLoadPath = null;
   let activeMpvPilotLoadToken = null;
+
+  function hasActiveVideoLoadForDifferentFile(filePath) {
+    return typeof activeVideoLoadPath === 'string' && !isSameFilePath(activeVideoLoadPath, filePath);
+  }
 
   function invalidateActiveVideoLoad() {
     latestVideoLoadToken += 1;
@@ -5844,8 +5849,13 @@ async function initApp() {
       : () => true;
     const loadToken = ++latestVideoLoadToken;
     const isStaleVideoLoad = () => loadToken !== latestVideoLoadToken;
-    const canContinueVideoLoad = () => !isStaleVideoLoad() && shouldContinueVideoLoad();
+    let allowNavigationGuardAbort = true;
+    const canContinueVideoLoad = () => (
+      !isStaleVideoLoad() &&
+      (!allowNavigationGuardAbort || shouldContinueVideoLoad())
+    );
     if (!canContinueVideoLoad()) return false;
+    activeVideoLoadPath = filePath;
     supersedeActiveTranscodeOverlay('새 영상 선택');
     if (!preserveContinuousSession && continuousPlaybackState.active) {
       stopContinuousPlayback();
@@ -5922,6 +5932,8 @@ async function initApp() {
           log.warn('저장 실패했지만 사용자가 전환 진행 선택');
         }
       }
+
+      allowNavigationGuardAbort = false;
 
       // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
       if (reviewDataManager.currentBframePath) {
@@ -6294,6 +6306,10 @@ async function initApp() {
       reviewDataManager.resumeAutoSave();
       showToast('파일을 로드할 수 없습니다.', 'error');
       return false;
+    } finally {
+      if (loadToken === latestVideoLoadToken) {
+        activeVideoLoadPath = null;
+      }
     }
   }
 
@@ -7702,7 +7718,8 @@ async function initApp() {
     }
     if (!isCurrentNavigation()) return false;
 
-    const isAlreadyLoaded = isSameFilePath(state.currentFile, item.videoPath);
+    const isAlreadyLoaded = isSameFilePath(state.currentFile, item.videoPath) &&
+      !hasActiveVideoLoadForDifferentFile(item.videoPath);
     if (!isAlreadyLoaded) {
       const loaded = await loadVideoFromPlaylist(item, {
         preserveContinuousSession: true,
@@ -13222,7 +13239,8 @@ async function initApp() {
       if (!isCurrentNavigation()) return false;
     }
 
-    const isAlreadyLoaded = isSameFilePath(state.currentFile, item.videoPath);
+    const isAlreadyLoaded = isSameFilePath(state.currentFile, item.videoPath) &&
+      !hasActiveVideoLoadForDifferentFile(item.videoPath);
     const targetFrame = Math.max(0, Math.floor(mapped.localTime * (mapped.segment.fps || item.fps || videoPlayer.fps || 24)));
     if (!isAlreadyLoaded) {
       const loaded = await loadVideoFromPlaylist(item, {
