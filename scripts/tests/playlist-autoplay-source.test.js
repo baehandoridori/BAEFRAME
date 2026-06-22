@@ -63,8 +63,10 @@ test('continuous playlist playback starts immediately before falling back to rea
   const watchdogMatch = appSource.match(/async function playContinuousItemWithWatchdog\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  async function startContinuousPlayback/);
   assert.ok(watchdogMatch, 'continuous playback watchdog should exist');
   const watchdogSource = watchdogMatch[1];
+  assert.match(watchdogSource, /let started = videoPlayer\.isPlaying === true;/);
+  assert.match(watchdogSource, /if \(!started\) \{[\s\S]+started = await videoPlayer\.play\(\);[\s\S]+\}/);
   assert.ok(
-    watchdogSource.indexOf('const started = await videoPlayer.play();') <
+    watchdogSource.indexOf('started = await videoPlayer.play();') <
       watchdogSource.indexOf('await waitForContinuousMediaReady(250);'),
     'play should be attempted before waiting for canplay/loadeddata'
   );

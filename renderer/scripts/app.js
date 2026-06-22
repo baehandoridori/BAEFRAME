@@ -5256,7 +5256,7 @@ async function initApp() {
     mpvHostVisibilitySyncPending = true;
     requestAnimationFrame(async () => {
       mpvHostVisibilitySyncPending = false;
-      const shouldShowMpvHost = !hasBlockingOverlayForMpv();
+      const shouldShowMpvHost = !mpvPilotHostPreparing && !hasBlockingOverlayForMpv();
       if (mpvHostLastRequestedVisible === shouldShowMpvHost) return;
 
       try {
@@ -5286,6 +5286,42 @@ async function initApp() {
   }
 
   installMpvBlockingOverlayObserver();
+
+  async function waitForMpvPlaybackTime(targetTime, { timeoutMs = 700, tolerance = 0.12 } = {}) {
+    if (!window.electronAPI?.mpvGetStatus) return false;
+    const target = Number(targetTime);
+    if (!Number.isFinite(target)) return false;
+
+    const startedAt = performance.now();
+    while (performance.now() - startedAt < timeoutMs) {
+      try {
+        const status = await window.electronAPI.mpvGetStatus();
+        const current = Number(status?.time);
+        if (status?.success && Number.isFinite(current) && Math.abs(current - target) <= tolerance) {
+          return true;
+        }
+      } catch (error) {
+        log.debug('mpv 초기 프레임 대기 실패', { error: error.message });
+        return false;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    return false;
+  }
+
+  async function seekMpvInitialFrameBeforeReveal(initialFrame) {
+    const frame = Number(initialFrame);
+    if (!Number.isFinite(frame) || frame <= 0 || !videoPlayer.isLoaded) return false;
+
+    const fps = Math.max(1, Number(videoPlayer.fps) || 24);
+    const targetTime = frame / fps;
+    videoPlayer.seekToFrame(frame);
+    return waitForMpvPlaybackTime(targetTime, {
+      tolerance: Math.max(0.08, (1 / fps) * 2)
+    });
+  }
 
   function getMpvEmbedBounds() {
     syncMpvFullscreenViewportInset();
@@ -5802,16 +5838,21 @@ async function initApp() {
 
     elements.videoWrapper?.classList.add('mpv-pilot-mode');
     document.body.classList.add('mpv-pilot-mode');
-    mpvPilotHostPreparing = false;
-    syncMpvHostVisibilityWithDom();
     syncCanvasOverlay();
     syncMpvEmbedBounds();
     syncMpvVideoTransform();
     scheduleMpvOverlayStateSync();
 
     if (Number.isFinite(Number(initialFrame)) && Number(initialFrame) > 0) {
-      videoPlayer.seekToFrame(Number(initialFrame));
+      const initialSeekReady = await seekMpvInitialFrameBeforeReveal(initialFrame);
+      if (!initialSeekReady) {
+        log.debug('mpv 초기 프레임 확인 시간 초과, 호스트 공개 전 한 프레임 더 대기', { filePath, initialFrame });
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }
     }
+
+    mpvPilotHostPreparing = false;
+    syncMpvHostVisibilityWithDom();
 
     showToast(
       embedHost?.wid
@@ -6136,7 +6177,7 @@ async function initApp() {
           const shouldHoldVideoReveal = holdPreviousFrameUntilReady || shouldDelayVideoReveal;
           const previousVideoVisibility = elements.videoPlayer.style.visibility;
           const transitionFreezeCaptured = shouldHoldVideoReveal && captureVideoTransitionFreezeFrame();
-          const shouldHideVideoDuringLoad = shouldDelayVideoReveal || transitionFreezeCaptured;
+          const shouldHideVideoDuringLoad = shouldHoldVideoReveal;
           if (shouldHideVideoDuringLoad) {
             elements.videoPlayer.style.visibility = 'hidden';
           }
@@ -6170,7 +6211,7 @@ async function initApp() {
       elements.filePath.textContent = fileInfo.dir;
       elements.dropZone.classList.add('hidden');
 
-      if (playWhenMediaReady) {
+      if (playWhenMediaReady && shouldContinueVideoLoad()) {
         await playVideoAfterMediaLoad({ silent: true });
       }
 
@@ -12762,19 +12803,41 @@ async function initApp() {
 
   // 리모트 이벤트 수신 → 로컬 재생 제어
   playbackSync.addEventListener('remotePlay', (e) => {
-    const { time } = e.detail;
+    const { time, playlistContinuous } = e.detail;
+    if (playlistContinuous && playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+      void (async () => {
+        await seekContinuousTimeline(time);
+        if (!continuousPlaybackState.active) {
+          await startContinuousPlayback();
+          return;
+        }
+        await playVideoAfterMediaLoad({ silent: true, logContext: { remoteContinuousPlay: true } });
+      })();
+      return;
+    }
     videoPlayer.seek(time);
     videoPlayer.play();
   });
 
   playbackSync.addEventListener('remotePause', (e) => {
-    const { time } = e.detail;
+    const { time, playlistContinuous } = e.detail;
     videoPlayer.pause();
+    if (playlistContinuous && playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+      if (continuousPlaybackState.active) {
+        stopContinuousPlayback();
+      }
+      void seekContinuousTimeline(time);
+      return;
+    }
     videoPlayer.seek(time);
   });
 
   playbackSync.addEventListener('remoteSeek', (e) => {
-    const { time } = e.detail;
+    const { time, playlistContinuous } = e.detail;
+    if (playlistContinuous && playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+      void seekContinuousTimeline(time);
+      return;
+    }
     videoPlayer.seek(time);
   });
 
@@ -13074,11 +13137,24 @@ async function initApp() {
     media.load();
   }
 
-  function preloadPlaylistMediaForItem(item, options = {}) {
+  async function preloadPlaylistMediaForItem(item, options = {}) {
     const { continuous = false, sessionId = null } = options;
     if (!item?.videoPath) return;
     if (continuous && !isContinuousSessionActive(sessionId)) return;
     if (isSameFilePath(state.currentFile, item.videoPath)) return;
+    const useMpvPilot = await shouldUseMpvPilot(item.videoPath, {
+      fileIsAudio: isAudioFile(item.fileName || item.videoPath),
+      hasPreparedVideoPath: false
+    });
+    if (continuous && !isContinuousSessionActive(sessionId)) return;
+    if (isSameFilePath(state.currentFile, item.videoPath)) return;
+    if (useMpvPilot) {
+      log.debug('mpv 파일럿 재생목록 HTML 사전 로드 건너뜀', {
+        fileName: item.fileName,
+        continuous
+      });
+      return;
+    }
     if (
       playlistMediaPreload.itemId === item.id &&
       playlistMediaPreload.path === item.videoPath
@@ -13135,7 +13211,7 @@ async function initApp() {
       return;
     }
 
-    preloadPlaylistMediaForItem(nextItem);
+    void preloadPlaylistMediaForItem(nextItem);
   }
 
   function warmPlaylistAutoPlayQueue() {
@@ -13148,10 +13224,31 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
     return (
       playlistUIState.mode === 'continuous' &&
+      !continuousPlaybackState.active &&
       playlistManager.isActive() &&
       userSettings.getPlaylistAutoPlay() &&
       !playlistManager.isEmpty()
     );
+  }
+
+  function getPlaybackSyncPosition(localTime = videoPlayer.currentTime) {
+    if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+      return {
+        time: getContinuousTimelinePlaybackTime(localTime),
+        options: { playlistContinuous: true }
+      };
+    }
+    return { time: localTime, options: {} };
+  }
+
+  function broadcastCurrentPlaybackPause() {
+    const position = getPlaybackSyncPosition(videoPlayer.currentTime);
+    playbackSync.broadcastPause(position.time, position.options);
+  }
+
+  function broadcastCurrentPlaybackPlay() {
+    const position = getPlaybackSyncPosition(videoPlayer.currentTime);
+    playbackSync.broadcastPlay(position.time, position.options);
   }
 
   function handleUserPlayPauseToggle() {
@@ -13159,21 +13256,30 @@ async function initApp() {
     if (wasPlaying) {
       if (continuousPlaybackState.active) {
         stopContinuousPlayback();
+        invalidateActiveVideoLoad();
       }
       videoPlayer.togglePlay();
-      playbackSync.broadcastPause(videoPlayer.currentTime);
+      broadcastCurrentPlaybackPause();
+      return;
+    }
+
+    if (continuousPlaybackState.active) {
+      stopContinuousPlayback();
+      invalidateActiveVideoLoad();
+      videoPlayer.pause();
+      broadcastCurrentPlaybackPause();
       return;
     }
 
     if (shouldStartPlaylistContinuousAutoPlayback()) {
       void startContinuousPlayback();
-      playbackSync.broadcastPlay(videoPlayer.currentTime);
+      broadcastCurrentPlaybackPlay();
       return;
     }
 
     warmPlaylistAutoPlayQueue();
     videoPlayer.togglePlay();
-    playbackSync.broadcastPlay(videoPlayer.currentTime);
+    broadcastCurrentPlaybackPlay();
   }
 
   // ============================================================================
@@ -13242,24 +13348,36 @@ async function initApp() {
     const isAlreadyLoaded = isSameFilePath(state.currentFile, item.videoPath) &&
       !hasActiveVideoLoadForDifferentFile(item.videoPath);
     const targetFrame = Math.max(0, Math.floor(mapped.localTime * (mapped.segment.fps || item.fps || videoPlayer.fps || 24)));
-    if (!isAlreadyLoaded) {
-      const loaded = await loadVideoFromPlaylist(item, {
-        preserveContinuousSession: true,
-        initialFrame: targetFrame,
-        revealAfterInitialSeek: true,
-        holdPreviousFrameUntilReady: true,
-        shouldContinue: isCurrentNavigation
-      });
-      if (!loaded) return false;
-      if (!isCurrentNavigation()) return false;
-    }
+    const previousLoadingItemId = continuousPlaybackState.loadingItemId;
+    let setManualLoadingItem = false;
+    try {
+      if (!isAlreadyLoaded) {
+        continuousPlaybackState.loadingItemId = item.id;
+        setManualLoadingItem = true;
+        const loaded = await loadVideoFromPlaylist(item, {
+          preserveContinuousSession: true,
+          initialFrame: targetFrame,
+          revealAfterInitialSeek: true,
+          holdPreviousFrameUntilReady: true,
+          shouldContinue: isCurrentNavigation
+        });
+        if (!loaded) return false;
+        if (!isCurrentNavigation()) return false;
+      }
 
-    if (!isCurrentNavigation()) return false;
-    videoPlayer.seek(mapped.localTime);
-    playbackSync.broadcastSeek(mapped.localTime);
-    timeline.setCurrentTime(mapLocalTimeToGlobal(mapped.segment, mapped.localTime));
-    updatePlaylistCurrentItem();
-    updatePlaylistPosition();
+      if (!isCurrentNavigation()) return false;
+      videoPlayer.seek(mapped.localTime);
+      playbackSync.broadcastSeek(mapLocalTimeToGlobal(mapped.segment, mapped.localTime), {
+        playlistContinuous: true
+      });
+      timeline.setCurrentTime(mapLocalTimeToGlobal(mapped.segment, mapped.localTime));
+      updatePlaylistCurrentItem();
+      updatePlaylistPosition();
+    } finally {
+      if (setManualLoadingItem && continuousPlaybackState.loadingItemId === item.id) {
+        continuousPlaybackState.loadingItemId = previousLoadingItemId;
+      }
+    }
     if (manualSessionId !== null) {
       prepareNextPlaylistItem(manualSessionId);
     }
@@ -13336,6 +13454,17 @@ async function initApp() {
     if (continuousPlaybackState.skippedBatch.length === 0) return;
     showToast(createSkippedToastMessage(continuousPlaybackState.skippedBatch), 'warning');
     continuousPlaybackState.skippedBatch = [];
+  }
+
+  async function canReusePreparedContinuousItem(item) {
+    if (!item || item.continuousStatus !== CONTINUOUS_STATUS.READY) return false;
+    if (continuousPlaybackState.preparedMediaPaths.has(item.id)) return true;
+
+    const useMpvPilot = await shouldUseMpvPilot(item.videoPath, {
+      fileIsAudio: isAudioFile(item.fileName || item.videoPath),
+      hasPreparedVideoPath: false
+    });
+    return useMpvPilot === true;
   }
 
   async function collectPlaylistMetadata(items) {
@@ -13504,8 +13633,11 @@ async function initApp() {
       return existingPrepare.promise;
     }
 
-    if (item.continuousStatus === CONTINUOUS_STATUS.READY) {
+    if (item.continuousStatus === CONTINUOUS_STATUS.READY && await canReusePreparedContinuousItem(item)) {
       return { ready: true, cached: true };
+    }
+    if (item.continuousStatus === CONTINUOUS_STATUS.READY) {
+      markPlaylistItemStatus(item, CONTINUOUS_STATUS.IDLE, '');
     }
 
     if ([
@@ -13594,15 +13726,19 @@ async function initApp() {
     const settings = playlistManager.getContinuousSettings();
     const nextIndex = findNextPlayableIndex(items, playlistManager.currentIndex, { loop: settings.loop });
     if (nextIndex >= 0) {
-      preloadPlaylistMediaForItem(items[nextIndex], { continuous: true, sessionId });
+      void preloadPlaylistMediaForItem(items[nextIndex], { continuous: true, sessionId });
       preparePlaylistItemInBackground(items[nextIndex], sessionId);
     }
   }
 
   async function waitForPreparedOrSkip(item, sessionId) {
     if (!isContinuousSessionActive(sessionId)) return false;
-    if (item?.continuousStatus === CONTINUOUS_STATUS.READY) {
+    if (!item) return false;
+    if (item?.continuousStatus === CONTINUOUS_STATUS.READY && await canReusePreparedContinuousItem(item)) {
       return true;
+    }
+    if (item?.continuousStatus === CONTINUOUS_STATUS.READY) {
+      markPlaylistItemStatus(item, CONTINUOUS_STATUS.IDLE, '');
     }
     if ([
       CONTINUOUS_STATUS.MISSING,
@@ -13792,7 +13928,10 @@ async function initApp() {
   async function playContinuousItemWithWatchdog(item, sessionId) {
     if (!isContinuousSessionActive(sessionId)) return false;
 
-    const started = await videoPlayer.play();
+    let started = videoPlayer.isPlaying === true;
+    if (!started) {
+      started = await videoPlayer.play();
+    }
     if (!isContinuousSessionActive(sessionId)) return false;
     if (!started && !videoPlayer.isPlaying) {
       await waitForContinuousMediaReady(250);
@@ -13812,11 +13951,10 @@ async function initApp() {
     if (advanced) return true;
 
     log.warn('연속 재생이 멈춘 상태라 다시 시도합니다', { fileName: item?.fileName });
-    videoPlayer.pause();
     await waitForContinuousDelay(40);
     await waitForContinuousMediaReady(250);
     if (!isContinuousSessionActive(sessionId)) return false;
-    const retryStarted = await videoPlayer.play();
+    const retryStarted = videoPlayer.isPlaying === true || await videoPlayer.play();
     if (!isContinuousSessionActive(sessionId)) return false;
     if (!retryStarted && !videoPlayer.isPlaying) {
       markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');

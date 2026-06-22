@@ -200,13 +200,35 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
   assert.match(appSource, /let mpvPilotHostPreparing = false;/);
   assert.match(appSource, /function didMpvHostVisibilityApply\(result, shouldShowMpvHost\) \{[\s\S]+if \(!result\?\.success\) return false;[\s\S]+if \(shouldShowMpvHost\) return true;[\s\S]+return result\.embed\?\.ready === true && result\.overlay\?\.ready === true;/);
   assert.match(appSource, /function forceMpvHostVisibilitySync\(\) \{[\s\S]+mpvHostLastRequestedVisible = null;[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+\}/);
-  assert.match(appSource, /function syncMpvHostVisibilityWithDom\(\) \{[\s\S]+if \(!mpvPilotHostPreparing && !document\.body\.classList\.contains\('mpv-pilot-mode'\)\) return;[\s\S]+const shouldShowMpvHost = !hasBlockingOverlayForMpv\(\);[\s\S]+window\.electronAPI\.mpvSetHostVisible\(shouldShowMpvHost\);[\s\S]+didMpvHostVisibilityApply\(result, shouldShowMpvHost\)/);
+  assert.match(appSource, /function syncMpvHostVisibilityWithDom\(\) \{[\s\S]+if \(!mpvPilotHostPreparing && !document\.body\.classList\.contains\('mpv-pilot-mode'\)\) return;[\s\S]+const shouldShowMpvHost = !mpvPilotHostPreparing && !hasBlockingOverlayForMpv\(\);[\s\S]+window\.electronAPI\.mpvSetHostVisible\(shouldShowMpvHost\);[\s\S]+didMpvHostVisibilityApply\(result, shouldShowMpvHost\)/);
   assert.match(appSource, /function installMpvBlockingOverlayObserver\(\) \{[\s\S]+new MutationObserver\(\(mutations\) => \{[\s\S]+if \(!mpvPilotHostPreparing && !document\.body\.classList\.contains\('mpv-pilot-mode'\)\) return;[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+\}\);[\s\S]+attributeFilter: \['class', 'style', 'hidden'\]/);
   assert.match(appSource, /installMpvBlockingOverlayObserver\(\);/);
   assert.match(appSource, /async function prepareMpvEmbedHost\(\) \{[\s\S]+if \(result\?\.success && result\.wid\) \{[\s\S]+forceMpvHostVisibilitySync\(\);[\s\S]+return result;/);
   assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+if \(result\?\.success\) \{[\s\S]+forceMpvHostVisibilitySync\(\);[\s\S]+return result;/);
   assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(\) => \{[\s\S]+mpvHostLastRequestedVisible = null;/);
   assert.match(appSource, /async function stopMpvPilotEngine\(\) \{[\s\S]+finally \{[\s\S]+mpvHostLastRequestedVisible = null;/);
+});
+
+test('mpv pilot waits for the requested initial frame before revealing the native host', () => {
+  const loadMpvMatch = appSource.match(/async function loadVideoWithMpvPilot\(filePath, \{([\s\S]*?)\n  \}\n\n  async function resolveMpvThumbnailVideoPath/);
+  assert.ok(loadMpvMatch, 'loadVideoWithMpvPilot should exist');
+  const loadMpvSource = loadMpvMatch[1];
+
+  assert.match(appSource, /async function waitForMpvPlaybackTime\(targetTime, \{ timeoutMs = 700, tolerance = 0\.12 \} = \{\}\)/);
+  assert.match(appSource, /async function seekMpvInitialFrameBeforeReveal\(initialFrame\)/);
+  assert.match(loadMpvSource, /const initialSeekReady = await seekMpvInitialFrameBeforeReveal\(initialFrame\);/);
+  assert.match(loadMpvSource, /if \(!initialSeekReady\) \{[\s\S]+requestAnimationFrame\(resolve\)/);
+  const initialSeekIndex = loadMpvSource.indexOf('const initialSeekReady = await seekMpvInitialFrameBeforeReveal(initialFrame);');
+  const revealReadyIndex = loadMpvSource.indexOf('mpvPilotHostPreparing = false;', initialSeekIndex);
+  const visibilitySyncIndex = loadMpvSource.indexOf('syncMpvHostVisibilityWithDom();', revealReadyIndex);
+  assert.ok(
+    initialSeekIndex < revealReadyIndex,
+    'the mpv host should stay hidden until the initial seek has been requested and observed'
+  );
+  assert.ok(
+    revealReadyIndex < visibilitySyncIndex,
+    'mpv visibility should be synced only after preparation is marked complete'
+  );
 });
 
 test('mpv pilot routes audio and viewport controls through mpv IPC', () => {
