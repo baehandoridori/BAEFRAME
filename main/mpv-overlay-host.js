@@ -76,6 +76,7 @@ const OVERLAY_HTML = `
     }
     #markerMirror,
     #tooltipMirror,
+    #toastMirror,
     #htmlOverlay {
       position: absolute;
       inset: 0;
@@ -88,8 +89,12 @@ const OVERLAY_HTML = `
     #tooltipMirror {
       z-index: 16;
     }
+    #toastMirror {
+      z-index: 50;
+    }
     #markerMirror *,
-    #tooltipMirror * {
+    #tooltipMirror *,
+    #toastMirror * {
       pointer-events: none !important;
     }
     .comment-marker {
@@ -250,6 +255,7 @@ const OVERLAY_HTML = `
     <div id="htmlOverlay"></div>
     <div id="markerMirror"></div>
     <div id="tooltipMirror"></div>
+    <div id="toastMirror"></div>
   </div>
   <script>
     function applyOverlayTransform(element, state) {
@@ -280,11 +286,13 @@ const OVERLAY_HTML = `
       const htmlOverlay = document.getElementById('htmlOverlay');
       const markerMirror = document.getElementById('markerMirror');
       const tooltipMirror = document.getElementById('tooltipMirror');
+      const toastMirror = document.getElementById('toastMirror');
       applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
       applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
       htmlOverlay.innerHTML = nextState.htmlOverlayHtml || '';
       markerMirror.innerHTML = nextState.markerHtml || '';
       tooltipMirror.innerHTML = nextState.tooltipHtml || '';
+      toastMirror.innerHTML = nextState.toastHtml || '';
       applyOverlayTransform(markerMirror, nextState);
       tooltipMirror.style.transform = 'none';
       tooltipMirror.style.transformOrigin = 'center center';
@@ -321,6 +329,7 @@ function normalizeOverlayState(state = {}) {
     markerHtml: typeof state.markerHtml === 'string' ? state.markerHtml : '',
     tooltipHtml: typeof state.tooltipHtml === 'string' ? state.tooltipHtml : '',
     htmlOverlayHtml: typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : '',
+    toastHtml: typeof state.toastHtml === 'string' ? state.toastHtml : '',
     markerTransform: typeof state.markerTransform === 'string' ? state.markerTransform : '',
     markerTransformOrigin: typeof state.markerTransformOrigin === 'string'
       ? state.markerTransformOrigin

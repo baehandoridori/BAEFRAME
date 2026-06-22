@@ -17,6 +17,7 @@ test('normalizes overlay state to bounded serializable fields', () => {
     markerHtml: '<div class="comment-marker"></div>',
     tooltipHtml: '<div class="comment-marker-tooltip visible"></div>',
     htmlOverlayHtml: '<div class="current-cut-overlay">Cut 01</div>',
+    toastHtml: '<div class="toast-container"><div class="toast success">Saved</div></div>',
     canvas: { left: 10.4, top: 20.6, width: 640.2, height: 360.7 },
     markerTransform: 'scale(2) translate(1px, 2px)',
     markerTransformOrigin: 'center center'
@@ -28,6 +29,7 @@ test('normalizes overlay state to bounded serializable fields', () => {
   assert.equal(state.markerHtml, '<div class="comment-marker"></div>');
   assert.equal(state.tooltipHtml, '<div class="comment-marker-tooltip visible"></div>');
   assert.equal(state.htmlOverlayHtml, '<div class="current-cut-overlay">Cut 01</div>');
+  assert.equal(state.toastHtml, '<div class="toast-container"><div class="toast success">Saved</div></div>');
   assert.equal(state.markerTransform, 'scale(2) translate(1px, 2px)');
   assert.equal(state.markerTransformOrigin, 'center center');
 });
@@ -112,6 +114,7 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.equal(overlayHtml.includes('applyOverlayTransform'), true);
   assert.equal(overlayHtml.includes('htmlOverlay'), true);
   assert.equal(overlayHtml.includes('tooltipMirror'), true);
+  assert.equal(overlayHtml.includes('toastMirror'), true);
   assert.equal(overlayHtml.includes("applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas)"), true);
   assert.doesNotMatch(
     overlayHtml,
@@ -120,6 +123,7 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.equal(overlayHtml.includes("element.style.transform = 'none';"), true);
   assert.equal(overlayHtml.includes('tooltipMirror.innerHTML = nextState.tooltipHtml'), true);
   assert.equal(overlayHtml.includes('htmlOverlay.innerHTML = nextState.htmlOverlayHtml'), true);
+  assert.equal(overlayHtml.includes('toastMirror.innerHTML = nextState.toastHtml'), true);
   assert.equal(overlayHtml.includes("tooltipMirror.style.transform = 'none';"), true);
   assert.ok(events.some(([name]) => name === 'showInactive'));
   assert.ok(events.some(([name]) => name === 'moveTop'));
@@ -165,6 +169,7 @@ test('updates overlay state through the isolated overlay document', async () => 
   const result = await host.updateState({
     markerHtml: '<div class="comment-marker pending"></div>',
     htmlOverlayHtml: '<div class="current-cut-overlay">Cut 01</div>',
+    toastHtml: '<div class="toast-container"><div class="toast info">Ready</div></div>',
     drawingDataUrl: 'data:image/png;base64,draw',
     canvas: { left: 1, top: 2, width: 3, height: 4 }
   });
@@ -174,6 +179,7 @@ test('updates overlay state through the isolated overlay document', async () => 
   assert.match(scripts[0], /window\.__applyMpvOverlayState/);
   assert.match(scripts[0], /comment-marker pending/);
   assert.match(scripts[0], /current-cut-overlay/);
+  assert.match(scripts[0], /toast info/);
   assert.match(scripts[0], /data:image\/png;base64,draw/);
 });
 

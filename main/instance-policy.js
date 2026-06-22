@@ -1,5 +1,6 @@
 const path = require('path');
 const os = require('os');
+const { classifyLaunchArgument } = require('./launch-routing');
 
 function isTruthy(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -22,6 +23,13 @@ function hasSwitch(argv = [], switchName) {
   return argv.some(arg => arg === switchName || String(arg).startsWith(`${switchName}=`));
 }
 
+function hasProjectLaunchArgument(argv = []) {
+  return argv.some((arg) => {
+    const launchType = classifyLaunchArgument(arg);
+    return launchType === 'project' || launchType === 'playlist';
+  });
+}
+
 function sanitizeProfileName(value) {
   return String(value || '')
     .trim()
@@ -34,6 +42,7 @@ function sanitizeProfileName(value) {
 function shouldAllowMultipleInstances({ isDev = false, argv = process.argv, env = process.env } = {}) {
   return Boolean(
     isDev ||
+    hasProjectLaunchArgument(argv) ||
     hasSwitch(argv, '--multi-instance') ||
     hasSwitch(argv, '--multi-instance-isolated') ||
     hasSwitch(argv, '--multi-instance-profile') ||
@@ -74,6 +83,7 @@ function resolveMultiInstanceUserDataPath({
 
 module.exports = {
   getSwitchValue,
+  hasProjectLaunchArgument,
   hasSwitch,
   isTruthy,
   resolveMultiInstanceUserDataPath,
