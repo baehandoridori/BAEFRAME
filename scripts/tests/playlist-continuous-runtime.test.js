@@ -599,9 +599,12 @@ test('manual video loads cancel active continuous playback and stale loads', () 
   assert.match(appSource, /function invalidateActiveVideoLoad\(\) \{[\s\S]+supersedeActiveTranscodeOverlay\('재생목록 교체'\);[\s\S]+\}/);
   assert.match(loadVideoSource, /preserveContinuousSession = false/);
   assert.match(loadVideoSource, /const loadToken = \+\+latestVideoLoadToken;/);
+  assert.match(loadVideoSource, /shouldContinue = null/);
+  assert.match(loadVideoSource, /const shouldContinueVideoLoad = typeof shouldContinue === 'function'[\s\S]+: \(\) => true;/);
+  assert.match(loadVideoSource, /const canContinueVideoLoad = \(\) => !isStaleVideoLoad\(\) && shouldContinueVideoLoad\(\);/);
   assert.match(loadVideoSource, /if \(!preserveContinuousSession && continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
   assert.match(loadVideoSource, /const isStaleVideoLoad = \(\) => loadToken !== latestVideoLoadToken;/);
-  assert.match(loadVideoSource, /if \(isStaleVideoLoad\(\)\) return false;/);
+  assert.match(loadVideoSource, /if \(!canContinueVideoLoad\(\)\) return false;/);
 });
 
 test('rapid playlist item selections cannot let older pre-load checks win', () => {
@@ -623,9 +626,10 @@ test('rapid playlist item selections cannot let older pre-load checks win', () =
   assert.match(playlistLoaderSource, /if \(!canContinuePlaylistLoad\(\)\) return false;/);
   assert.ok(
     playlistLoaderSource.indexOf('if (!canContinuePlaylistLoad()) return false;') <
-      playlistLoaderSource.indexOf('const loaded = await loadVideo(item.videoPath, loadOptions);'),
+      playlistLoaderSource.indexOf('const loaded = await loadVideo(item.videoPath, {'),
     'stale playlist selections must stop before loadVideo can claim the latest load token'
   );
+  assert.match(playlistLoaderSource, /const loaded = await loadVideo\(item\.videoPath, \{[\s\S]+\.\.\.loadOptions,[\s\S]+shouldContinue: canContinuePlaylistLoad[\s\S]+\}\);/);
 });
 
 test('continuous completion flushes skipped batch before stopping playback', () => {
@@ -810,7 +814,7 @@ test('playlist loading returns the real loadVideo result', () => {
 
   const playlistLoaderSource = loadVideoFromPlaylistMatch[1];
   assert.match(playlistLoaderSource, /const \{ shouldContinue = null, \.\.\.loadOptions \} = options;/);
-  assert.match(playlistLoaderSource, /const loaded = await loadVideo\(item\.videoPath, loadOptions\);/);
+  assert.match(playlistLoaderSource, /const loaded = await loadVideo\(item\.videoPath, \{[\s\S]+\.\.\.loadOptions,[\s\S]+shouldContinue: canContinuePlaylistLoad[\s\S]+\}\);/);
   assert.match(playlistLoaderSource, /return loaded === true;/);
   assert.doesNotMatch(playlistLoaderSource, /await loadVideo\(item\.videoPath\);\s*return true;/);
 

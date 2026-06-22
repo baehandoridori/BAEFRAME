@@ -308,6 +308,7 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
 
 test('mpv pilot keeps toast notifications visible above the native video host', () => {
   assert.match(appSource, /function serializeMpvOverlayToastHtml\(\) \{[\s\S]+elements\.toastContainer[\s\S]+cloneMpvHtmlOverlayElement\(elements\.toastContainer, wrapperRect\)[\s\S]+return clone\.outerHTML;/);
+  assert.match(appSource, /clone\.querySelectorAll\('\.toast-enter'\)\.forEach\(\(toast\) => \{[\s\S]+toast\.classList\.remove\('toast-enter'\);[\s\S]+toast\.style\.animation = 'none';[\s\S]+toast\.style\.transform = '';[\s\S]+toast\.style\.opacity = '';[\s\S]+\}\);/);
   assert.match(appSource, /function _updateToastStack\(\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
   assert.match(appSource, /function _dismissToast\(toast, swipeDir\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
   assert.match(appSource, /update: \(newMessage, newType = 'success', newDuration = 3000\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
