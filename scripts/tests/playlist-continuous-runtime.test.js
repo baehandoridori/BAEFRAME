@@ -295,7 +295,9 @@ test('manual continuous timeline seeks suppress zero-time updates while cross-fi
   const seekSource = appSource.slice(seekStart, seekEnd);
 
   assert.match(seekSource, /const previousLoadingItemId = continuousPlaybackState\.loadingItemId;/);
+  assert.match(seekSource, /const previousLoadingSessionId = continuousPlaybackState\.loadingSessionId;/);
   assert.match(seekSource, /continuousPlaybackState\.loadingItemId = item\.id;/);
+  assert.match(seekSource, /continuousPlaybackState\.loadingSessionId = manualSessionId;/);
   assert.match(seekSource, /const loaded = await loadVideoFromPlaylist\(item, \{[\s\S]+holdPreviousFrameUntilReady: true[\s\S]+\}\);/);
   assert.ok(
     seekSource.indexOf('continuousPlaybackState.loadingItemId = item.id;') <
@@ -307,6 +309,8 @@ test('manual continuous timeline seeks suppress zero-time updates while cross-fi
       seekSource.indexOf('continuousPlaybackState.loadingItemId = previousLoadingItemId;'),
     'manual seek should keep zero-time suppression active until the target global playhead is restored'
   );
+  assert.match(seekSource, /continuousPlaybackState\.loadingItemId === item\.id &&[\s\S]+continuousPlaybackState\.loadingSessionId === manualSessionId/);
+  assert.match(seekSource, /continuousPlaybackState\.loadingSessionId = previousLoadingSessionId;/);
 });
 
 test('continuous timeline maps current files with normalized Windows paths', () => {
@@ -822,6 +826,7 @@ test('continuous playlist starts playback as soon as the next media is renderabl
 
 test('continuous source switches suppress stale zero-time timeline updates', () => {
   assert.match(appSource, /loadingItemId:\s*null/);
+  assert.match(appSource, /loadingSessionId:\s*null/);
   assert.match(appSource, /function shouldIgnoreContinuousTimelineUpdateDuringSourceLoad\(\)/);
 
   const timeupdateMatch = appSource.match(/videoPlayer\.addEventListener\('timeupdate', \(e\) => \{([\s\S]*?)\n  \}\);/);
@@ -835,7 +840,9 @@ test('continuous source switches suppress stale zero-time timeline updates', () 
   const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
   assert.match(continuousLoadMatch[1], /continuousPlaybackState\.loadingItemId = item\.id/);
-  assert.match(continuousLoadMatch[1], /finally \{[\s\S]*continuousPlaybackState\.loadingItemId = null/);
+  assert.match(continuousLoadMatch[1], /continuousPlaybackState\.loadingSessionId = sessionId/);
+  assert.match(continuousLoadMatch[1], /finally \{[\s\S]*continuousPlaybackState\.loadingItemId === item\.id &&[\s\S]*continuousPlaybackState\.loadingSessionId === sessionId[\s\S]*continuousPlaybackState\.loadingItemId = null/);
+  assert.match(continuousLoadMatch[1], /continuousPlaybackState\.loadingSessionId = null/);
 });
 
 test('continuous playback skips hidden HTML preload for mpv pilot items', () => {
@@ -933,6 +940,7 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(appSource, /playbackSync\.addEventListener\('remotePause', \(e\) => \{[\s\S]+if \(playlistContinuous\) \{[\s\S]+if \(!canHandleRemoteContinuousSync\(\)\) \{[\s\S]+warnRemoteContinuousSyncUnavailable\('pause', time\);[\s\S]+return;[\s\S]+\}/);
   const remotePauseMatch = appSource.match(/playbackSync\.addEventListener\('remotePause', \(e\) => \{([\s\S]*?)\n  \}\);/);
   assert.ok(remotePauseMatch, 'remotePause handler should exist');
+  assert.match(remotePauseMatch[1], /stopContinuousPlayback\(\);[\s\S]+invalidateActiveVideoLoad\(\);/);
   assert.ok(
     remotePauseMatch[1].indexOf('if (!canHandleRemoteContinuousSync())') <
       remotePauseMatch[1].indexOf('videoPlayer.pause();'),

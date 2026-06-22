@@ -359,6 +359,7 @@ async function initApp() {
     skippedBatch: [],
     preparePromises: new Map(),
     loadingItemId: null,
+    loadingSessionId: null,
     preparedMediaPaths: new Map(),
     sessionId: 0
   };
@@ -12856,6 +12857,7 @@ async function initApp() {
       }
       if (continuousPlaybackState.active) {
         stopContinuousPlayback();
+        invalidateActiveVideoLoad();
       }
       videoPlayer.pause();
       void seekContinuousTimeline(time, { resumePlayback: false });
@@ -13415,10 +13417,12 @@ async function initApp() {
       !hasActiveVideoLoadForDifferentFile(item.videoPath);
     const targetFrame = Math.max(0, Math.floor(mapped.localTime * (mapped.segment.fps || item.fps || videoPlayer.fps || 24)));
     const previousLoadingItemId = continuousPlaybackState.loadingItemId;
+    const previousLoadingSessionId = continuousPlaybackState.loadingSessionId;
     let setManualLoadingItem = false;
     try {
       if (!isAlreadyLoaded) {
         continuousPlaybackState.loadingItemId = item.id;
+        continuousPlaybackState.loadingSessionId = manualSessionId;
         setManualLoadingItem = true;
         const loaded = await loadVideoFromPlaylist(item, {
           preserveContinuousSession: true,
@@ -13440,8 +13444,13 @@ async function initApp() {
       updatePlaylistCurrentItem();
       updatePlaylistPosition();
     } finally {
-      if (setManualLoadingItem && continuousPlaybackState.loadingItemId === item.id) {
+      if (
+        setManualLoadingItem &&
+        continuousPlaybackState.loadingItemId === item.id &&
+        continuousPlaybackState.loadingSessionId === manualSessionId
+      ) {
         continuousPlaybackState.loadingItemId = previousLoadingItemId;
+        continuousPlaybackState.loadingSessionId = previousLoadingSessionId;
       }
     }
     if (manualSessionId !== null) {
@@ -13461,6 +13470,7 @@ async function initApp() {
     continuousPlaybackState.waiting = false;
     continuousPlaybackState.skippedBatch = [];
     continuousPlaybackState.loadingItemId = null;
+    continuousPlaybackState.loadingSessionId = null;
     continuousPlaybackState.preparePromises.clear();
     continuousPlaybackState.preparedMediaPaths.clear();
     clearPlaylistMediaPreload();
@@ -13844,6 +13854,7 @@ async function initApp() {
     if (!isContinuousSessionActive(sessionId)) return false;
 
     continuousPlaybackState.loadingItemId = item.id;
+    continuousPlaybackState.loadingSessionId = sessionId;
     try {
       prepareNextPlaylistItem(sessionId);
       const preparedVideoPath = continuousPlaybackState.preparedMediaPaths.get(item.id);
@@ -13863,7 +13874,13 @@ async function initApp() {
       }
       return true;
     } finally {
-      continuousPlaybackState.loadingItemId = null;
+      if (
+        continuousPlaybackState.loadingItemId === item.id &&
+        continuousPlaybackState.loadingSessionId === sessionId
+      ) {
+        continuousPlaybackState.loadingItemId = null;
+        continuousPlaybackState.loadingSessionId = null;
+      }
     }
   }
 
