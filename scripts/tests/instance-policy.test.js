@@ -35,6 +35,24 @@ test('packaged file launches open in a new instance by default', () => {
   }), true);
 });
 
+test('packaged non-project launches keep the existing single-instance router', () => {
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe', 'G:\\project\\review.mov'],
+    env: {}
+  }), false);
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe', 'G:\\project\\cuts.bcutlist'],
+    env: {}
+  }), false);
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe', 'baeframe://open?file=G%3A%5Cproject%5Creview.mov&comment=marker-1'],
+    env: {}
+  }), false);
+});
+
 test('explicit multi-instance switches allow packaged comparison runs', () => {
   assert.equal(shouldAllowMultipleInstances({ argv: ['BFRAME_alpha_v2.exe', '--multi-instance'], env: {} }), true);
   assert.equal(shouldAllowMultipleInstances({ argv: ['BFRAME_alpha_v2.exe', '--multi-instance-profile=A'], env: {} }), true);
