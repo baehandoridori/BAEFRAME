@@ -17,6 +17,24 @@ test('packaged mode stays single-instance by default', () => {
   assert.equal(shouldAllowMultipleInstances({ isDev: false, argv: [], env: {} }), false);
 });
 
+test('packaged file launches open in a new instance by default', () => {
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe', 'G:\\project\\review.bframe'],
+    env: {}
+  }), true);
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe', 'G:\\project\\playlist.bplaylist'],
+    env: {}
+  }), true);
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe', 'baeframe://playlist/G:/project/playlist.bplaylist'],
+    env: {}
+  }), true);
+});
+
 test('explicit multi-instance switches allow packaged comparison runs', () => {
   assert.equal(shouldAllowMultipleInstances({ argv: ['BFRAME_alpha_v2.exe', '--multi-instance'], env: {} }), true);
   assert.equal(shouldAllowMultipleInstances({ argv: ['BFRAME_alpha_v2.exe', '--multi-instance-profile=A'], env: {} }), true);

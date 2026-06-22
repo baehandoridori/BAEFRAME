@@ -368,6 +368,7 @@ async function initApp() {
   let playlistSelectionLoadToken = 0;
   let playlistReplacementToken = 0;
   let playlistReplacementCommitToken = 0;
+  let playlistContinuousNavigationToken = 0;
   const playlistMediaPreload = {
     element: null,
     itemId: null,
@@ -4598,7 +4599,8 @@ async function initApp() {
   });
 
   // 키보드 단축키
-  document.addEventListener('keydown', handleKeydown);
+  document.addEventListener('keydown', handleKeydown, true);
+  document.addEventListener('keyup', handleKeyup, true);
 
   // ====== 캔버스 오버레이 동기화 ======
 
@@ -5159,6 +5161,15 @@ async function initApp() {
 
   const MPV_HTML_OVERLAY_STYLE_PROPERTIES = [
     'align-items',
+    'animation',
+    'animation-delay',
+    'animation-direction',
+    'animation-duration',
+    'animation-fill-mode',
+    'animation-iteration-count',
+    'animation-name',
+    'animation-play-state',
+    'animation-timing-function',
     'backdrop-filter',
     'background',
     'background-color',
@@ -5490,6 +5501,21 @@ async function initApp() {
     return htmlOverlay.innerHTML;
   }
 
+  function serializeMpvOverlayToastHtml() {
+    const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
+    if (!wrapperRect || !elements.toastContainer) return '';
+
+    const clone = cloneMpvHtmlOverlayElement(elements.toastContainer, wrapperRect);
+    if (!clone) return '';
+
+    clone.querySelectorAll('button').forEach((button) => {
+      button.setAttribute('tabindex', '-1');
+      button.style.pointerEvents = 'none';
+    });
+
+    return clone.outerHTML;
+  }
+
   function getMpvOverlayState() {
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
@@ -5501,6 +5527,7 @@ async function initApp() {
       markerHtml: serializeMpvOverlayMarkerHtml(),
       tooltipHtml: serializeMpvOverlayTooltipHtml(),
       htmlOverlayHtml: serializeMpvOverlayHtml(),
+      toastHtml: serializeMpvOverlayToastHtml(),
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
@@ -7646,22 +7673,37 @@ async function initApp() {
     const item = playlistManager.getItems().find(candidate => candidate.id === range.itemId);
     if (!item) return false;
 
+    const navigationToken = ++playlistContinuousNavigationToken;
+    const isCurrentNavigation = () => (
+      navigationToken === playlistContinuousNavigationToken &&
+      playlistUIState.mode === 'continuous'
+    );
+    if (continuousPlaybackState.active) {
+      stopContinuousPlayback();
+    }
+
     suppressPlaylistSelectionLoad = true;
     try {
       playlistManager.selectItemById(item.id);
     } finally {
       suppressPlaylistSelectionLoad = false;
     }
+    if (!isCurrentNavigation()) return false;
 
-    const isAlreadyLoaded = state.currentFile === item.videoPath;
+    const isAlreadyLoaded = isSameFilePath(state.currentFile, item.videoPath);
     if (!isAlreadyLoaded) {
       const loaded = await loadVideoFromPlaylist(item, {
-        preserveContinuousSession: continuousPlaybackState.active,
-        shouldContinue: () => playlistUIState.mode === 'continuous'
+        preserveContinuousSession: true,
+        initialFrame: range.localStartFrame || 0,
+        revealAfterInitialSeek: true,
+        holdPreviousFrameUntilReady: true,
+        shouldContinue: isCurrentNavigation
       });
       if (!loaded) return;
+      if (!isCurrentNavigation()) return false;
     }
 
+    if (!isCurrentNavigation()) return false;
     videoPlayer.seekToFrame(range.localStartFrame || 0);
     videoPlayer.pause();
     timeline.setCurrentTime(range.globalStartTime || 0);
@@ -8880,6 +8922,8 @@ async function initApp() {
       toast.style.setProperty('--stack-opacity', entry.opacity);
       toast.style.setProperty('--stack-brightness', entry.brightness);
     });
+
+    scheduleMpvOverlayStateSync({ force: true });
   }
 
   function _dismissToast(toast, swipeDir) {
@@ -8900,6 +8944,7 @@ async function initApp() {
       toast.style.transform = 'translateY(-8px) scale(0.96)';
       toast.style.opacity = '0';
     }
+    scheduleMpvOverlayStateSync({ force: true });
 
     // 2단계: 페이드아웃 완료 후 공간 축소 (Sonner 방식)
     const fadeTime = swipeDir ? 250 : 200;
@@ -8926,6 +8971,7 @@ async function initApp() {
       // 공간 축소 완료 후 DOM 제거
       setTimeout(() => {
         toast.remove();
+        scheduleMpvOverlayStateSync({ force: true });
       }, 220);
     }, fadeTime);
   }
@@ -9119,6 +9165,7 @@ async function initApp() {
           icon.innerHTML = _toastIcons[newNormalType] || _toastIcons.info;
           msg.textContent = newMessage;
           progress.style.display = '';
+          scheduleMpvOverlayStateSync({ force: true });
           clearTimeout(toast._autoTimer);
           cancelAnimationFrame(toast._progressRaf);
           // 자동 닫기 재설정
@@ -9213,7 +9260,11 @@ async function initApp() {
   /**
    * 키보드 단축키 처리
    */
+  let suppressPlayPauseShortcutKeyup = false;
+
   async function handleKeydown(e) {
+    if (document.querySelector('.shortcut-key-btn.capturing')) return;
+
     const isPlayPauseShortcut = userSettings.matchShortcut('playPause', e);
     if (isPlayPauseShortcut && !shouldHandlePlayPauseShortcutFromTarget(e.target, e)) return;
 
@@ -9232,7 +9283,11 @@ async function initApp() {
 
     // 재생/일시정지
     if (isPlayPauseShortcut) {
+      if (e.code === 'Space') {
+        suppressPlayPauseShortcutKeyup = true;
+      }
       e.preventDefault();
+      e.stopPropagation();
       handleUserPlayPauseToggle();
       return;
     }
@@ -9563,6 +9618,13 @@ async function initApp() {
       }
       return;
     }
+  }
+
+  function handleKeyup(e) {
+    if (!suppressPlayPauseShortcutKeyup || e.code !== 'Space') return;
+    e.preventDefault();
+    e.stopPropagation();
+    suppressPlayPauseShortcutKeyup = false;
   }
 
   // 초기화 완료
@@ -10343,6 +10405,7 @@ async function initApp() {
       c.style.marginRight = 'auto';
       c.style.alignItems = 'center';
     }
+    scheduleMpvOverlayStateSync({ force: true });
   }
 
   // 초기 토스트 위치 적용
@@ -13093,9 +13156,9 @@ async function initApp() {
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems?.() || [];
     const currentItem = playlistManager.getCurrentItem?.();
-    const itemId = currentItem?.videoPath === state.currentFile
+    const itemId = isSameFilePath(currentItem?.videoPath, state.currentFile)
       ? currentItem.id
-      : items.find(item => item.videoPath === state.currentFile)?.id;
+      : items.find(item => isSameFilePath(item.videoPath, state.currentFile))?.id;
     if (!itemId) return null;
     return timeline.playlistSegments?.find(segment => segment.itemId === itemId) || null;
   }
@@ -13124,6 +13187,18 @@ async function initApp() {
 
     const item = playlistManager.getItems()[mapped.segment.index];
     if (!item) return false;
+    const wasContinuousActive = continuousPlaybackState.active === true;
+    const shouldResumePlayback = videoPlayer.isPlaying === true || wasContinuousActive;
+    const manualSessionId = wasContinuousActive
+      ? restartContinuousPlaybackSessionForManualSeek()
+      : null;
+    const navigationToken = ++playlistContinuousNavigationToken;
+    const isCurrentNavigation = () => (
+      navigationToken === playlistContinuousNavigationToken &&
+      playlistUIState.mode === 'continuous' &&
+      timeline.playlistDuration > 0 &&
+      (manualSessionId === null || isContinuousSessionActive(manualSessionId))
+    );
 
     if (playlistManager.getCurrentItem?.()?.id !== item.id) {
       suppressPlaylistSelectionLoad = true;
@@ -13132,34 +13207,60 @@ async function initApp() {
       } finally {
         suppressPlaylistSelectionLoad = false;
       }
+      if (!isCurrentNavigation()) return false;
     }
 
-    const isAlreadyLoaded = state.currentFile === item.videoPath;
+    const isAlreadyLoaded = isSameFilePath(state.currentFile, item.videoPath);
+    const targetFrame = Math.max(0, Math.floor(mapped.localTime * (mapped.segment.fps || item.fps || videoPlayer.fps || 24)));
     if (!isAlreadyLoaded) {
       const loaded = await loadVideoFromPlaylist(item, {
-        preserveContinuousSession: continuousPlaybackState.active,
-        shouldContinue: () => playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0
+        preserveContinuousSession: true,
+        initialFrame: targetFrame,
+        revealAfterInitialSeek: true,
+        holdPreviousFrameUntilReady: true,
+        shouldContinue: isCurrentNavigation
       });
       if (!loaded) return false;
+      if (!isCurrentNavigation()) return false;
     }
 
+    if (!isCurrentNavigation()) return false;
     videoPlayer.seek(mapped.localTime);
     playbackSync.broadcastSeek(mapped.localTime);
     timeline.setCurrentTime(mapLocalTimeToGlobal(mapped.segment, mapped.localTime));
     updatePlaylistCurrentItem();
     updatePlaylistPosition();
+    if (manualSessionId !== null) {
+      prepareNextPlaylistItem(manualSessionId);
+    }
+    if (shouldResumePlayback) {
+      await playVideoAfterMediaLoad({
+        silent: true,
+        logContext: { fileName: item.fileName, continuousSeek: true }
+      });
+    }
     return true;
   }
 
-  function stopContinuousPlayback() {
-    continuousPlaybackState.sessionId += 1;
-    continuousPlaybackState.active = false;
+  function resetContinuousPlaybackRuntimeState(active) {
+    continuousPlaybackState.active = active;
     continuousPlaybackState.waiting = false;
     continuousPlaybackState.skippedBatch = [];
     continuousPlaybackState.loadingItemId = null;
     continuousPlaybackState.preparePromises.clear();
     continuousPlaybackState.preparedMediaPaths.clear();
     clearPlaylistMediaPreload();
+  }
+
+  function restartContinuousPlaybackSessionForManualSeek() {
+    continuousPlaybackState.sessionId += 1;
+    resetContinuousPlaybackRuntimeState(true);
+    return continuousPlaybackState.sessionId;
+  }
+
+  function stopContinuousPlayback() {
+    continuousPlaybackState.sessionId += 1;
+    resetContinuousPlaybackRuntimeState(false);
   }
 
   function isContinuousSessionActive(sessionId) {
@@ -13210,7 +13311,7 @@ async function initApp() {
   async function collectPlaylistMetadata(items) {
     const metadata = new Map();
     for (const item of items) {
-      if (state.currentFile === item.videoPath && videoPlayer.duration) {
+      if (isSameFilePath(state.currentFile, item.videoPath) && videoPlayer.duration) {
         metadata.set(item.id, { duration: videoPlayer.duration, fps: videoPlayer.fps || 24 });
         continue;
       }
@@ -13739,7 +13840,7 @@ async function initApp() {
         return;
       }
 
-      const alreadyLoaded = state.currentFile === currentItem.videoPath;
+      const alreadyLoaded = isSameFilePath(state.currentFile, currentItem.videoPath);
       if (!alreadyLoaded) {
         const loaded = await loadContinuousPlaylistItem(currentItem, sessionId);
         if (!isContinuousSessionActive(sessionId)) return;

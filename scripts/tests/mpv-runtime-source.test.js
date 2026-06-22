@@ -275,6 +275,8 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /function serializeMpvOverlayTooltipHtml\(\) \{[\s\S]+const tooltipLayer = document\.createElement\('div'\);[\s\S]+document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(\(tooltip\) => \{[\s\S]+tooltipClone\.style\.position = 'absolute';[\s\S]+tooltipClone\.style\.transform = 'none';[\s\S]+tooltipLayer\.appendChild\(tooltipClone\);[\s\S]+\}\);/);
   assert.match(appSource, /function serializeMpvOverlayTooltipHtml\(\) \{[\s\S]+if \(!isMpvMarkerOverlayVisible\(\)\) return '';/);
   assert.match(appSource, /function copyComputedMpvOverlayStyles\(source, target\) \{/);
+  assert.match(appSource, /function serializeMpvOverlayToastHtml\(\) \{/);
+  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+toastHtml: serializeMpvOverlayToastHtml\(\)/);
   const htmlOverlayMatch = appSource.match(/function serializeMpvOverlayHtml\(\) \{([\s\S]*?)\n  \}\n\n  function getMpvOverlayState/);
   assert.ok(htmlOverlayMatch, 'serializeMpvOverlayHtml should exist');
   const htmlOverlaySource = htmlOverlayMatch[1];
@@ -302,6 +304,14 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /const hideTooltipHover = \(\) => \{[\s\S]+tooltip\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}, 100\);/);
   assert.match(appSource, /function updateMarkerTooltipState\(marker\) \{[\s\S]+marker\.tooltipElement\.classList\.add\('visible', 'pinned'\);[\s\S]+scheduleMpvOverlayStateSync\(\);/);
   assert.match(appSource, /async function stopMpvPilotEngine\(\) \{[\s\S]+await window\.electronAPI\?\.mpvDestroyOverlay\?\.\(\);/);
+});
+
+test('mpv pilot keeps toast notifications visible above the native video host', () => {
+  assert.match(appSource, /function serializeMpvOverlayToastHtml\(\) \{[\s\S]+elements\.toastContainer[\s\S]+cloneMpvHtmlOverlayElement\(elements\.toastContainer, wrapperRect\)[\s\S]+return clone\.outerHTML;/);
+  assert.match(appSource, /function _updateToastStack\(\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
+  assert.match(appSource, /function _dismissToast\(toast, swipeDir\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
+  assert.match(appSource, /update: \(newMessage, newType = 'success', newDuration = 3000\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
+  assert.match(appSource, /function _applyToastPosition\(pos\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
 });
 
 test('mpv overlay throttles live drawing snapshots but forces final drawing sync', () => {

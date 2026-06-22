@@ -1,5 +1,6 @@
 const path = require('path');
 const os = require('os');
+const { isLaunchArgument } = require('./launch-routing');
 
 function isTruthy(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -22,6 +23,10 @@ function hasSwitch(argv = [], switchName) {
   return argv.some(arg => arg === switchName || String(arg).startsWith(`${switchName}=`));
 }
 
+function hasFileLaunchArgument(argv = []) {
+  return argv.some(arg => isLaunchArgument(arg));
+}
+
 function sanitizeProfileName(value) {
   return String(value || '')
     .trim()
@@ -34,6 +39,7 @@ function sanitizeProfileName(value) {
 function shouldAllowMultipleInstances({ isDev = false, argv = process.argv, env = process.env } = {}) {
   return Boolean(
     isDev ||
+    hasFileLaunchArgument(argv) ||
     hasSwitch(argv, '--multi-instance') ||
     hasSwitch(argv, '--multi-instance-isolated') ||
     hasSwitch(argv, '--multi-instance-profile') ||
@@ -74,6 +80,7 @@ function resolveMultiInstanceUserDataPath({
 
 module.exports = {
   getSwitchValue,
+  hasFileLaunchArgument,
   hasSwitch,
   isTruthy,
   resolveMultiInstanceUserDataPath,

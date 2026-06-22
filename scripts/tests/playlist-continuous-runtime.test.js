@@ -23,7 +23,7 @@ test('continuous metadata uses mpv before FFmpeg fallback for mpv pilot original
   assert.ok(metadataMatch, 'collectPlaylistMetadata should exist');
 
   const metadataSource = metadataMatch[1];
-  assert.match(metadataSource, /state\.currentFile === item\.videoPath && videoPlayer\.duration/);
+  assert.match(metadataSource, /isSameFilePath\(state\.currentFile, item\.videoPath\) && videoPlayer\.duration/);
   assert.match(metadataSource, /const useMpvPilotForMetadata = !hasDuration && item\.videoPath[\s\S]+await shouldUseMpvPilot\(item\.videoPath/);
   assert.match(metadataSource, /let metadataResolvedByMpv = false;/);
   assert.match(metadataSource, /if \(!hasDuration && item\.videoPath && useMpvPilotForMetadata\) \{[\s\S]+const mpvProbe = await window\.electronAPI\.mpvProbeMetadata\(item\.videoPath\);/);
@@ -221,12 +221,83 @@ test('aggregate comment clicks stop when playlist item load fails', () => {
   assert.notEqual(helperEnd, -1, 'aggregate comment open helper boundary should exist');
   const helperSource = appSource.slice(helperStart, helperEnd);
 
-  assert.match(helperSource, /const loaded = await loadVideoFromPlaylist\(item, \{[\s\S]+preserveContinuousSession: continuousPlaybackState\.active[\s\S]+\}\);/);
+  assert.match(helperSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
+  assert.match(helperSource, /const isCurrentNavigation = \(\) => \([\s\S]+navigationToken === playlistContinuousNavigationToken[\s\S]+\);/);
+  assert.match(helperSource, /const loaded = await loadVideoFromPlaylist\(item, \{[\s\S]+preserveContinuousSession: true[\s\S]+initialFrame: range\.localStartFrame \|\| 0[\s\S]+revealAfterInitialSeek: true[\s\S]+holdPreviousFrameUntilReady: true[\s\S]+shouldContinue: isCurrentNavigation[\s\S]+\}\);/);
   assert.match(helperSource, /if \(!loaded\) return;/);
   assert.ok(
     helperSource.indexOf('if (!loaded) return;') < helperSource.indexOf('videoPlayer.seekToFrame(range.localStartFrame || 0);'),
     'load failure guard should run before seeking'
   );
+});
+
+test('aggregate comment clicks cancel stale continuous navigation and hide first-frame flashes', () => {
+  const helperStart = appSource.indexOf('async function openPlaylistAggregateComment(key)');
+  const helperEnd = appSource.indexOf('  async function submitPlaylistAggregateReply', helperStart);
+  assert.notEqual(helperStart, -1, 'aggregate comment open helper should exist');
+  assert.notEqual(helperEnd, -1, 'aggregate comment open helper boundary should exist');
+  const helperSource = appSource.slice(helperStart, helperEnd);
+
+  assert.match(appSource, /let playlistContinuousNavigationToken = 0;/);
+  assert.match(helperSource, /const navigationToken = \+\+playlistContinuousNavigationToken;/);
+  assert.match(helperSource, /const isCurrentNavigation = \(\) =>[\s\S]+navigationToken === playlistContinuousNavigationToken/);
+  assert.match(helperSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
+  assert.match(helperSource, /initialFrame: range\.localStartFrame \|\| 0/);
+  assert.match(helperSource, /revealAfterInitialSeek: true/);
+  assert.match(helperSource, /holdPreviousFrameUntilReady: true/);
+  assert.match(helperSource, /preserveContinuousSession: true/);
+  assert.match(helperSource, /shouldContinue: isCurrentNavigation/);
+  assert.match(helperSource, /if \(!isCurrentNavigation\(\)\) return false;/);
+  assert.ok(
+    helperSource.indexOf('if (!isCurrentNavigation()) return false;') <
+      helperSource.indexOf('videoPlayer.seekToFrame(range.localStartFrame || 0);'),
+    'stale aggregate comment navigation must stop before the final seek/pause'
+  );
+});
+
+test('manual continuous timeline seeks restart active sessions and preserve the target frame', () => {
+  assert.match(appSource, /function restartContinuousPlaybackSessionForManualSeek\(\) \{/);
+
+  const seekStart = appSource.indexOf('async function seekContinuousTimeline(globalTime)');
+  const seekEnd = appSource.indexOf('  function stopContinuousPlayback', seekStart);
+  assert.notEqual(seekStart, -1, 'seekContinuousTimeline should exist');
+  assert.notEqual(seekEnd, -1, 'seekContinuousTimeline boundary should exist');
+  const seekSource = appSource.slice(seekStart, seekEnd);
+
+  assert.match(seekSource, /const navigationToken = \+\+playlistContinuousNavigationToken;/);
+  assert.match(seekSource, /const wasContinuousActive = continuousPlaybackState\.active === true;/);
+  assert.match(seekSource, /const shouldResumePlayback = videoPlayer\.isPlaying === true \|\| wasContinuousActive;/);
+  assert.match(seekSource, /const manualSessionId = wasContinuousActive[\s\S]+restartContinuousPlaybackSessionForManualSeek\(\)/);
+  assert.match(seekSource, /preserveContinuousSession: true/);
+  assert.match(seekSource, /initialFrame: targetFrame/);
+  assert.match(seekSource, /revealAfterInitialSeek: true/);
+  assert.match(seekSource, /holdPreviousFrameUntilReady: true/);
+  assert.match(seekSource, /shouldContinue: isCurrentNavigation/);
+  assert.match(seekSource, /if \(!isCurrentNavigation\(\)\) return false;/);
+  assert.match(seekSource, /if \(shouldResumePlayback\) \{[\s\S]+await playVideoAfterMediaLoad\(\{[\s\S]+silent: true/);
+  assert.ok(
+    seekSource.indexOf('if (!isCurrentNavigation()) return false;') <
+      seekSource.indexOf('videoPlayer.seek(mapped.localTime);'),
+    'stale manual timeline seeks must not move the player after a newer navigation'
+  );
+});
+
+test('continuous timeline maps current files with normalized Windows paths', () => {
+  const segmentStart = appSource.indexOf('function getCurrentContinuousSegment()');
+  const segmentEnd = appSource.indexOf('  function shouldIgnoreContinuousTimelineUpdateDuringSourceLoad', segmentStart);
+  assert.notEqual(segmentStart, -1, 'getCurrentContinuousSegment should exist');
+  assert.notEqual(segmentEnd, -1, 'getCurrentContinuousSegment boundary should exist');
+  const segmentSource = appSource.slice(segmentStart, segmentEnd);
+
+  assert.match(segmentSource, /isSameFilePath\(currentItem\?\.videoPath, state\.currentFile\)/);
+  assert.match(segmentSource, /items\.find\(item => isSameFilePath\(item\.videoPath, state\.currentFile\)\)/);
+  assert.doesNotMatch(segmentSource, /currentItem\?\.videoPath === state\.currentFile/);
+  assert.doesNotMatch(segmentSource, /item\.videoPath === state\.currentFile/);
+
+  const metadataMatch = appSource.match(/async function collectPlaylistMetadata\(items\) \{([\s\S]*?)\n  \}\n\n  async function updatePlaylistContinuousTimeline/);
+  assert.ok(metadataMatch, 'collectPlaylistMetadata should exist');
+  assert.match(metadataMatch[1], /isSameFilePath\(state\.currentFile, item\.videoPath\) && videoPlayer\.duration/);
+  assert.doesNotMatch(metadataMatch[1], /state\.currentFile === item\.videoPath/);
 });
 
 test('aggregate comment range rendering keeps the comment track header in sync', () => {
