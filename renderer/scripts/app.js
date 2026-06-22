@@ -14047,10 +14047,13 @@ async function initApp() {
     if (advanced) return true;
 
     log.warn('연속 재생이 멈춘 상태라 다시 시도합니다', { fileName: item?.fileName });
-    await waitForContinuousDelay(40);
+    if (videoPlayer.isPlaying === true) {
+      videoPlayer.pause();
+      await waitForContinuousDelay(40);
+    }
     await waitForContinuousMediaReady(250);
     if (!isContinuousSessionActive(sessionId)) return false;
-    const retryStarted = videoPlayer.isPlaying === true || await videoPlayer.play();
+    const retryStarted = await videoPlayer.play();
     if (!isContinuousSessionActive(sessionId)) return false;
     if (!retryStarted && !videoPlayer.isPlaying) {
       markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');

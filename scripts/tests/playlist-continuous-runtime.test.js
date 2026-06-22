@@ -490,8 +490,13 @@ test('continuous playback verifies that native playback actually advances', () =
 
   const watchdogMatch = appSource.match(/async function playContinuousItemWithWatchdog\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  async function startContinuousPlayback/);
   assert.ok(watchdogMatch, 'playContinuousItemWithWatchdog should exist');
-  assert.doesNotMatch(watchdogMatch[1], /videoPlayer\.pause\(\)/);
-  assert.match(watchdogMatch[1], /const retryStarted = videoPlayer\.isPlaying === true \|\| await videoPlayer\.play\(\);/);
+  assert.match(watchdogMatch[1], /if \(videoPlayer\.isPlaying === true\) \{[\s\S]+videoPlayer\.pause\(\);[\s\S]+await waitForContinuousDelay\(40\);[\s\S]+\}/);
+  assert.match(watchdogMatch[1], /const retryStarted = await videoPlayer\.play\(\);/);
+  assert.ok(
+    watchdogMatch[1].indexOf('videoPlayer.pause();') <
+      watchdogMatch[1].indexOf('const retryStarted = await videoPlayer.play();'),
+    'stalled playback should be paused before retrying play'
+  );
 });
 
 test('continuous playback watchdog uses VideoPlayer state for external engines', () => {
