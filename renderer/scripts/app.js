@@ -5200,6 +5200,7 @@ async function initApp() {
   let mpvEmbedBoundsSyncPending = false;
   let mpvVideoTransformSyncPending = false;
   let mpvOverlayStateSyncPending = false;
+  let mpvOverlayRemoteCursorSyncPending = false;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
   let mpvHostVisibilitySyncPending = false;
@@ -5677,6 +5678,28 @@ async function initApp() {
         log.debug('mpv 오버레이 상태 갱신 실패', { error: error.message });
       }
     });
+  }
+
+  function syncMpvOverlayRemoteCursorState() {
+    if (!document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!window.electronAPI?.mpvUpdateOverlayRemoteCursors) return;
+    if (mpvOverlayRemoteCursorSyncPending) return;
+
+    mpvOverlayRemoteCursorSyncPending = true;
+    requestAnimationFrame(async () => {
+      mpvOverlayRemoteCursorSyncPending = false;
+      const remoteCursorHtml = serializeMpvOverlayRemoteCursorHtml();
+
+      try {
+        await window.electronAPI.mpvUpdateOverlayRemoteCursors(remoteCursorHtml);
+      } catch (error) {
+        log.debug('mpv 오버레이 원격 커서 갱신 실패', { error: error.message });
+      }
+    });
+  }
+
+  function scheduleMpvOverlayRemoteCursorStateSync() {
+    syncMpvOverlayRemoteCursorState();
   }
 
   function scheduleMpvOverlayStateSync(options = {}) {
@@ -12777,7 +12800,7 @@ async function initApp() {
   function clearRemoteCursors() {
     if (!remoteCursorsContainer) return;
     remoteCursorsContainer.querySelectorAll('.remote-cursor').forEach(el => el.remove());
-    scheduleMpvOverlayStateSync();
+    scheduleMpvOverlayRemoteCursorStateSync();
   }
 
   function createRemoteCursorElement(collab) {
@@ -12846,7 +12869,7 @@ async function initApp() {
         cursorEl.style.display = 'block';
       }
     }
-    scheduleMpvOverlayStateSync();
+    scheduleMpvOverlayRemoteCursorStateSync();
   }
 
   userSettings.addEventListener('showRemoteCursorsChanged', (event) => {

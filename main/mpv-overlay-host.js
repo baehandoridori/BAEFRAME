@@ -364,19 +364,28 @@ const OVERLAY_HTML = `
       return template.innerHTML;
     }
 
+    function applyRemoteCursorHtml(remoteCursorHtml) {
+      const remoteCursorMirror = document.getElementById('remoteCursorMirror');
+      if (!remoteCursorMirror) return;
+      remoteCursorMirror.innerHTML = sanitizeRemoteCursorHtml(remoteCursorHtml);
+    }
+
+    window.__applyMpvRemoteCursorState = function applyMpvRemoteCursorState(remoteCursorHtml) {
+      applyRemoteCursorHtml(remoteCursorHtml);
+    };
+
     window.__applyMpvOverlayState = function applyMpvOverlayState(state) {
       const nextState = state || {};
       const htmlOverlay = document.getElementById('htmlOverlay');
       const markerMirror = document.getElementById('markerMirror');
       const tooltipMirror = document.getElementById('tooltipMirror');
-      const remoteCursorMirror = document.getElementById('remoteCursorMirror');
       const toastMirror = document.getElementById('toastMirror');
       applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
       applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
       htmlOverlay.innerHTML = nextState.htmlOverlayHtml || '';
       markerMirror.innerHTML = nextState.markerHtml || '';
       tooltipMirror.innerHTML = nextState.tooltipHtml || '';
-      remoteCursorMirror.innerHTML = sanitizeRemoteCursorHtml(nextState.remoteCursorHtml);
+      applyRemoteCursorHtml(nextState.remoteCursorHtml);
       toastMirror.innerHTML = nextState.toastHtml || '';
       applyOverlayTransform(markerMirror, nextState);
       tooltipMirror.style.transform = 'none';
@@ -506,6 +515,24 @@ class MPVOverlayHost {
       return { success: true };
     } catch (error) {
       this.logger.debug('mpv overlay state update failed', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  }
+
+  async updateRemoteCursorState(remoteCursorHtml) {
+    if (!this.window || this.window.isDestroyed?.()) {
+      return { success: false, error: 'mpv overlay host is not ready' };
+    }
+
+    const safeRemoteCursorHtml = typeof remoteCursorHtml === 'string' ? remoteCursorHtml : '';
+    try {
+      await this.window.webContents?.executeJavaScript?.(
+        `window.__applyMpvRemoteCursorState(${JSON.stringify(safeRemoteCursorHtml)});`,
+        true
+      );
+      return { success: true };
+    } catch (error) {
+      this.logger.debug('mpv overlay remote cursor update failed', { error: error.message });
       return { success: false, error: error.message };
     }
   }

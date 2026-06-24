@@ -132,6 +132,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvPrepareOverlay: (bounds) => ipcRenderer.invoke('mpv:prepare-overlay', bounds),
   mpvUpdateOverlayBounds: (bounds) => ipcRenderer.invoke('mpv:update-overlay-bounds', bounds),
   mpvUpdateOverlayState: (state) => ipcRenderer.invoke('mpv:update-overlay-state', state),
+  mpvUpdateOverlayRemoteCursors: (remoteCursorHtml) => ipcRenderer.invoke('mpv:update-overlay-remote-cursors', remoteCursorHtml),
   mpvDestroyOverlay: () => ipcRenderer.invoke('mpv:destroy-overlay'),
 
   // ====== 파일 관련 (유틸리티) ======

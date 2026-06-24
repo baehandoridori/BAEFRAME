@@ -1738,6 +1738,15 @@ function setupIpcHandlers() {
     }
   });
 
+  ipcMain.handle('mpv:update-overlay-remote-cursors', async (event, remoteCursorHtml) => {
+    try {
+      return await mpvOverlayHost.updateRemoteCursorState(remoteCursorHtml);
+    } catch (error) {
+      log.debug('mpv 오버레이 원격 커서 갱신 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('mpv:destroy-overlay', async () => {
     try {
       return mpvOverlayHost.destroy();
