@@ -7049,6 +7049,7 @@ async function initApp() {
     tooltip.className = 'comment-marker-tooltip';
     tooltip.dataset.markerId = marker.id;
     const authorClass = getAuthorColorClass(marker.author);
+    const resolveTitle = getResolveButtonLabel(marker.resolved, marker.resolvedBy);
     tooltip.innerHTML = `
       <div class="tooltip-header">
         <span class="tooltip-timecode">${marker.startTimecode}</span>
@@ -7056,7 +7057,7 @@ async function initApp() {
       </div>
       <div class="tooltip-text">${renderGDriveLinks(escapeHtml(marker.text))}</div>
       <div class="tooltip-actions">
-        <button class="tooltip-btn resolve" title="${marker.resolved ? '미해결로 변경' : '해결'}">
+        <button class="tooltip-btn resolve" title="${escapeHtmlAttribute(resolveTitle)}" aria-label="${escapeHtmlAttribute(resolveTitle)}">
           ${marker.resolved ? '↩️' : '✓'}
         </button>
         <button class="tooltip-btn delete" title="삭제">🗑️</button>
@@ -8049,7 +8050,8 @@ async function initApp() {
       const replyCount = range.replies?.length || 0;
       const repliesExpanded = playlistExpandedReplyKeys.has(key);
       const repliesHtml = renderPlaylistAggregateReplies(range, normalizedSearch);
-      const resolveTitle = range.resolved ? '미해결로 변경' : '해결됨으로 변경';
+      const resolveTitle = getResolveButtonLabel(range.resolved, range.resolvedBy);
+      const resolveTooltipHtml = range.resolved ? getResolveTooltipHtml(range.resolvedBy, range.resolvedAt) : '';
       const imageUrl = range.image ? escapeHtmlAttribute(range.image) : '';
 
       return `
@@ -8058,9 +8060,9 @@ async function initApp() {
         data-marker-id="${escapeHtmlAttribute(range.markerId)}"
         data-item-id="${escapeHtmlAttribute(range.itemId)}"
         title="${title}">
-        <button type="button" class="comment-resolve-toggle playlist-comment-resolve-toggle" title="${resolveTitle}" aria-label="${resolveTitle}">
+        <button type="button" class="comment-resolve-toggle playlist-comment-resolve-toggle" title="${escapeHtmlAttribute(resolveTitle)}" aria-label="${escapeHtmlAttribute(resolveTitle)}">
           ${range.resolved ? '✓ 해결됨' : '○ 미해결'}
-          ${range.resolved && range.resolvedBy ? `<span class="resolve-tooltip"><span class="resolve-tooltip-who">해결됨 by ${escapeHtml(range.resolvedBy)}</span><span class="resolve-tooltip-date">${formatResolvedDate(range.resolvedAt)}</span></span>` : ''}
+          ${resolveTooltipHtml}
         </button>
         <div class="playlist-comment-time-row">
           <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
@@ -8459,6 +8461,8 @@ async function initApp() {
       const cutlistCommentLabel = getCutlistCommentLabelForMarker(marker);
       const commentTimeLabel = cutlistCommentLabel || marker.startTimecode;
       const commentPanelLine = getCutlistCommentPanelLineForMarker(marker);
+      const resolveTitle = getResolveButtonLabel(marker.resolved, marker.resolvedBy);
+      const resolveTooltipHtml = marker.resolved ? getResolveTooltipHtml(marker.resolvedBy, marker.resolvedAt) : '';
       const repliesHtml = (marker.replies || []).map(reply => {
         const canEditReply = commentManager.canEdit(reply);
         return `
@@ -8505,9 +8509,9 @@ async function initApp() {
       return `
       <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}"${commentPanelLine ? ` title="${escapeHtmlAttribute(commentPanelLine)}"` : ''}>
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
-        <button class="comment-resolve-toggle resolve-btn" title="${marker.resolved ? '미해결로 변경' : '해결됨으로 변경'}">
+        <button class="comment-resolve-toggle resolve-btn" title="${escapeHtmlAttribute(resolveTitle)}" aria-label="${escapeHtmlAttribute(resolveTitle)}">
           ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
-          ${marker.resolved && marker.resolvedBy ? `<span class="resolve-tooltip"><span class="resolve-tooltip-who">해결됨 by ${escapeHtml(marker.resolvedBy)}</span><span class="resolve-tooltip-date">${formatResolvedDate(marker.resolvedAt)}</span></span>` : ''}
+          ${resolveTooltipHtml}
         </button>
         ${thumbnailHtml}
         <div class="comment-header">
@@ -9132,6 +9136,28 @@ async function initApp() {
     const ampm = hours >= 12 ? 'PM' : 'AM';
     hours = hours % 12 || 12;
     return `${month}월 ${day}일 ${hours}:${minutes} ${ampm}`;
+  }
+
+  function getResolveButtonLabel(isResolved, resolvedBy) {
+    if (!isResolved) return '해결됨으로 변경';
+
+    const resolver = typeof resolvedBy === 'string' ? resolvedBy.trim() : resolvedBy;
+    return resolver
+      ? `${resolver}님이 해결함 - 미해결로 변경`
+      : '해결한 사람 기록 없음 - 미해결로 변경';
+  }
+
+  function getResolveTooltipHtml(resolvedBy, resolvedAt) {
+    const resolver = typeof resolvedBy === 'string' ? resolvedBy.trim() : resolvedBy;
+    const resolverText = resolver ? `해결됨 by ${escapeHtml(resolver)}` : '해결한 사람 기록 없음';
+    const resolvedDateText = formatResolvedDate(resolvedAt);
+
+    return `
+      <span class="resolve-tooltip">
+        <span class="resolve-tooltip-who">${resolverText}</span>
+        ${resolvedDateText ? `<span class="resolve-tooltip-date">${resolvedDateText}</span>` : ''}
+      </span>
+    `;
   }
 
   /**
