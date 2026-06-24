@@ -171,7 +171,8 @@ test('resolved author metadata is synced and visible for every resolved tooltip'
   const updateBroadcastMatch = commentSyncSource.match(/type: 'COMMENT_MARKER_UPDATED'[\s\S]*?fields: \{([\s\S]*?)\n      \}/);
   assert.ok(updateBroadcastMatch, 'comment marker update broadcast should include a fields payload');
   assert.match(updateBroadcastMatch[1], /resolvedBy:/);
-  assert.match(updateBroadcastMatch[1], /resolvedAt:/);
+  assert.match(updateBroadcastMatch[1], /resolvedAt:\s*marker\.resolved \? this\._toISOString\(marker\.resolvedAt\) : null/);
+  assert.doesNotMatch(updateBroadcastMatch[1], /resolvedAt:\s*marker\.resolved \? \(this\._toISOString\(marker\.resolvedAt\) \|\| new Date\(\)\.toISOString\(\)\) : null/);
 
   const serializedMarkerMatch = commentSyncSource.match(/return \{([\s\S]*?)\n    \};\n  \}\n\n  \/\*\*/);
   assert.ok(serializedMarkerMatch, 'comment marker serialization should exist');

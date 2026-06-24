@@ -117,7 +117,7 @@ export class CommentSync {
         text: marker.text || marker.content || '',
         resolved: marker.resolved || false,
         resolvedBy: marker.resolved ? (marker.resolvedBy || '') : null,
-        resolvedAt: marker.resolved ? (this._toISOString(marker.resolvedAt) || new Date().toISOString()) : null,
+        resolvedAt: marker.resolved ? this._toISOString(marker.resolvedAt) : null,
         x: marker.x,
         y: marker.y,
         startFrame: marker.startFrame ?? marker.frame,
