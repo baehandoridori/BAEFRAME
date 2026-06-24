@@ -30,3 +30,10 @@ test('remote cursor renderer clears cursors when the setting is off', () => {
   assert.match(appSource, /if \(!userSettings\.getShowRemoteCursors\(\)\) \{[\s\S]+clearRemoteCursors\(\);[\s\S]+return;/);
   assert.match(appSource, /userSettings\.addEventListener\('showRemoteCursorsChanged'/);
 });
+
+test('remote cursor labels are built as text before mpv mirroring', () => {
+  assert.match(appSource, /const SVG_NAMESPACE = 'http:\/\/www\.w3\.org\/2000\/svg';/);
+  assert.match(appSource, /const label = document\.createElement\('span'\);[\s\S]+label\.textContent = collab\.userName \|\| '알 수 없음';/);
+  assert.match(appSource, /const svg = document\.createElementNS\(SVG_NAMESPACE, 'svg'\);/);
+  assert.doesNotMatch(appSource, /cursorEl\.innerHTML = `[\s\S]*\$\{collab\.userName\}/);
+});

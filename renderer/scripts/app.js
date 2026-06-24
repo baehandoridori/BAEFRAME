@@ -68,6 +68,7 @@ const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
 const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -12749,6 +12750,35 @@ async function initApp() {
     scheduleMpvOverlayStateSync();
   }
 
+  function createRemoteCursorElement(collab) {
+    const cursorEl = document.createElement('div');
+    cursorEl.id = `cursor-${collab.connectionId}`;
+    cursorEl.className = 'remote-cursor';
+
+    const svg = document.createElementNS(SVG_NAMESPACE, 'svg');
+    svg.classList.add('remote-cursor-icon');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('fill', 'none');
+
+    const path = document.createElementNS(SVG_NAMESPACE, 'path');
+    path.setAttribute('d', 'M1 1L6 14L8 8L14 6L1 1Z');
+    path.setAttribute('fill', collab.userColor || '#ffd000');
+    path.setAttribute('stroke', 'rgba(0,0,0,0.3)');
+    path.setAttribute('stroke-width', '0.5');
+    svg.appendChild(path);
+
+    const label = document.createElement('span');
+    label.className = 'remote-cursor-label';
+    label.style.backgroundColor = collab.userColor || '#ffd000';
+    label.textContent = collab.userName || '알 수 없음';
+
+    cursorEl.appendChild(svg);
+    cursorEl.appendChild(label);
+    return cursorEl;
+  }
+
   function renderRemoteCursors(collaborators = []) {
     if (!remoteCursorsContainer) return;
 
@@ -12773,15 +12803,7 @@ async function initApp() {
       let cursorEl = document.getElementById(cursorId);
 
       if (!cursorEl) {
-        cursorEl = document.createElement('div');
-        cursorEl.id = cursorId;
-        cursorEl.className = 'remote-cursor';
-        cursorEl.innerHTML = `
-          <svg class="remote-cursor-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M1 1L6 14L8 8L14 6L1 1Z" fill="${collab.userColor}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>
-          </svg>
-          <span class="remote-cursor-label" style="background-color: ${collab.userColor}">${collab.userName}</span>
-        `;
+        cursorEl = createRemoteCursorElement(collab);
         remoteCursorsContainer.appendChild(cursorEl);
       }
 

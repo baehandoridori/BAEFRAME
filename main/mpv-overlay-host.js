@@ -327,6 +327,43 @@ const OVERLAY_HTML = `
       element.style.transformOrigin = 'center center';
     }
 
+    function sanitizeRemoteCursorHtml(value) {
+      const allowedTags = new Set(['div', 'span', 'svg', 'path']);
+      const allowedAttrs = new Set([
+        'class',
+        'style',
+        'width',
+        'height',
+        'viewbox',
+        'fill',
+        'stroke',
+        'stroke-width',
+        'd'
+      ]);
+      const template = document.createElement('template');
+      template.innerHTML = typeof value === 'string' ? value : '';
+
+      template.content.querySelectorAll('*').forEach((element) => {
+        if (!allowedTags.has(element.localName)) {
+          element.remove();
+          return;
+        }
+
+        [...element.attributes].forEach((attribute) => {
+          const name = attribute.name.toLowerCase();
+          const attrValue = attribute.value || '';
+          const hasUnsafeValue = /javascript:/i.test(attrValue) ||
+            /expression\s*\(/i.test(attrValue) ||
+            (name === 'style' && /url\s*\(/i.test(attrValue));
+          if (!allowedAttrs.has(name) || name.startsWith('on') || hasUnsafeValue) {
+            element.removeAttribute(attribute.name);
+          }
+        });
+      });
+
+      return template.innerHTML;
+    }
+
     window.__applyMpvOverlayState = function applyMpvOverlayState(state) {
       const nextState = state || {};
       const htmlOverlay = document.getElementById('htmlOverlay');
@@ -339,7 +376,7 @@ const OVERLAY_HTML = `
       htmlOverlay.innerHTML = nextState.htmlOverlayHtml || '';
       markerMirror.innerHTML = nextState.markerHtml || '';
       tooltipMirror.innerHTML = nextState.tooltipHtml || '';
-      remoteCursorMirror.innerHTML = nextState.remoteCursorHtml || '';
+      remoteCursorMirror.innerHTML = sanitizeRemoteCursorHtml(nextState.remoteCursorHtml);
       toastMirror.innerHTML = nextState.toastHtml || '';
       applyOverlayTransform(markerMirror, nextState);
       tooltipMirror.style.transform = 'none';

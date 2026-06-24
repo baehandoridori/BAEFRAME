@@ -128,7 +128,10 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.equal(overlayHtml.includes('tooltipMirror.innerHTML = nextState.tooltipHtml'), true);
   assert.equal(overlayHtml.includes('htmlOverlay.innerHTML = nextState.htmlOverlayHtml'), true);
   assert.equal(overlayHtml.includes('toastMirror.innerHTML = nextState.toastHtml'), true);
-  assert.equal(overlayHtml.includes('remoteCursorMirror.innerHTML = nextState.remoteCursorHtml'), true);
+  assert.equal(overlayHtml.includes('function sanitizeRemoteCursorHtml'), true);
+  assert.equal(overlayHtml.includes("const allowedTags = new Set(['div', 'span', 'svg', 'path'])"), true);
+  assert.equal(overlayHtml.includes("name.startsWith('on')"), true);
+  assert.equal(overlayHtml.includes('remoteCursorMirror.innerHTML = sanitizeRemoteCursorHtml(nextState.remoteCursorHtml)'), true);
   assert.equal(overlayHtml.includes("tooltipMirror.style.transform = 'none';"), true);
   assert.ok(events.some(([name]) => name === 'showInactive'));
   assert.ok(events.some(([name]) => name === 'moveTop'));
