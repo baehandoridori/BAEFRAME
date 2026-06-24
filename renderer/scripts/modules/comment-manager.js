@@ -954,11 +954,11 @@ export class CommentManager extends EventTarget {
 
     const allowedFields = [
       'text', 'startFrame', 'endFrame', 'resolved', 'x', 'y',
-      'colorKey', 'updatedAt', 'image', 'author', 'authorId'
+      'resolvedBy', 'resolvedAt', 'colorKey', 'updatedAt', 'image', 'author', 'authorId'
     ];
     for (const key of allowedFields) {
       if (fields[key] !== undefined) {
-        marker[key] = fields[key];
+        marker[key] = key === 'resolvedAt' && fields[key] ? new Date(fields[key]) : fields[key];
       }
     }
 

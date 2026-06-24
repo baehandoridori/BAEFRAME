@@ -8,6 +8,8 @@ const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
 const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8'));
 const htmlSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8'));
 const cssSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/main.css'), 'utf8'));
+const commentManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/comment-manager.js'), 'utf8'));
+const commentSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/comment-sync.js'), 'utf8'));
 const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
 const ipcHandlersSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
 
@@ -171,4 +173,28 @@ test('playlist aggregate replies can expand and resolved state can be toggled fr
   assert.doesNotMatch(renderSource, /<img src="\$\{range\.image\}"/);
   assert.match(cssSource, /\.playlist-comment-replies/);
   assert.match(cssSource, /\.playlist-comment-reply-toggle\.expanded/);
+});
+
+test('resolved author metadata is synced and visible for every resolved tooltip', () => {
+  const updateBroadcastMatch = commentSyncSource.match(/type: 'COMMENT_MARKER_UPDATED'[\s\S]*?fields: \{([\s\S]*?)\n      \}/);
+  assert.ok(updateBroadcastMatch, 'comment marker update broadcast should include a fields payload');
+  assert.match(updateBroadcastMatch[1], /resolvedBy:/);
+  assert.match(updateBroadcastMatch[1], /resolvedAt:\s*marker\.resolved \? this\._toISOString\(marker\.resolvedAt\) : null/);
+  assert.doesNotMatch(updateBroadcastMatch[1], /resolvedAt:\s*marker\.resolved \? \(this\._toISOString\(marker\.resolvedAt\) \|\| new Date\(\)\.toISOString\(\)\) : null/);
+
+  const serializedMarkerMatch = commentSyncSource.match(/return \{([\s\S]*?)\n    \};\n  \}\n\n  \/\*\*/);
+  assert.ok(serializedMarkerMatch, 'comment marker serialization should exist');
+  assert.match(serializedMarkerMatch[1], /resolvedBy:/);
+  assert.match(serializedMarkerMatch[1], /resolvedAt:/);
+
+  const remoteAllowedFieldsMatch = commentManagerSource.match(/applyRemoteMarkerUpdate\(markerId, fields\) \{[\s\S]*?const allowedFields = \[([\s\S]*?)\];/);
+  assert.ok(remoteAllowedFieldsMatch, 'remote marker update allowed fields should exist');
+  assert.match(remoteAllowedFieldsMatch[1], /'resolvedBy'/);
+  assert.match(remoteAllowedFieldsMatch[1], /'resolvedAt'/);
+
+  assert.match(appSource, /function getResolveButtonLabel\(isResolved, resolvedBy\) \{/);
+  assert.match(appSource, /function getResolveTooltipHtml\(resolvedBy, resolvedAt\) \{/);
+  assert.match(appSource, /해결한 사람 기록 없음/);
+  assert.match(appSource, /marker\.resolved \? getResolveTooltipHtml\(marker\.resolvedBy, marker\.resolvedAt\) : ''/);
+  assert.match(appSource, /range\.resolved \? getResolveTooltipHtml\(range\.resolvedBy, range\.resolvedAt\) : ''/);
 });

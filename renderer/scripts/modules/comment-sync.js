@@ -116,6 +116,8 @@ export class CommentSync {
       fields: {
         text: marker.text || marker.content || '',
         resolved: marker.resolved || false,
+        resolvedBy: marker.resolved ? (marker.resolvedBy || '') : null,
+        resolvedAt: marker.resolved ? this._toISOString(marker.resolvedAt) : null,
         x: marker.x,
         y: marker.y,
         startFrame: marker.startFrame ?? marker.frame,
@@ -371,6 +373,8 @@ export class CommentSync {
       createdAt: this._toISOString(marker.createdAt) || new Date().toISOString(),
       updatedAt: this._toISOString(marker.updatedAt) || new Date().toISOString(),
       resolved: marker.resolved || false,
+      resolvedBy: marker.resolved ? (marker.resolvedBy || '') : null,
+      resolvedAt: marker.resolved ? this._toISOString(marker.resolvedAt) : null,
       colorKey: marker.colorKey || 'default',
       image: marker.image || null,
       replies
