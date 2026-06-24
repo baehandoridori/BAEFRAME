@@ -5178,6 +5178,7 @@ async function initApp() {
   let mpvPilotHostPreparing = false;
   let fullscreenTimecodeOverlay = null;
   let fullscreenScrubOverlay = null;
+  let remoteCursorsContainer = null;
 
   const MPV_BLOCKING_OVERLAY_SELECTOR = [
     '.modal-overlay.active',
@@ -5591,6 +5592,20 @@ async function initApp() {
     return clone.outerHTML;
   }
 
+  function serializeMpvOverlayRemoteCursorHtml() {
+    if (!remoteCursorsContainer || !userSettings.getShowRemoteCursors()) return '';
+
+    const clone = remoteCursorsContainer.cloneNode(true);
+    clone.querySelectorAll('[id]').forEach((el) => {
+      el.removeAttribute('id');
+    });
+    clone.querySelectorAll('.remote-cursor').forEach((cursor) => {
+      cursor.style.pointerEvents = 'none';
+    });
+
+    return clone.innerHTML;
+  }
+
   function getMpvOverlayState() {
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
@@ -5603,6 +5618,7 @@ async function initApp() {
       tooltipHtml: serializeMpvOverlayTooltipHtml(),
       htmlOverlayHtml: serializeMpvOverlayHtml(),
       toastHtml: serializeMpvOverlayToastHtml(),
+      remoteCursorHtml: serializeMpvOverlayRemoteCursorHtml(),
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
@@ -12715,7 +12731,7 @@ async function initApp() {
   /**
    * 원격 커서 렌더링
    */
-  const remoteCursorsContainer = (() => {
+  remoteCursorsContainer = (() => {
     let container = document.getElementById('remoteCursorsContainer');
     if (!container) {
       container = document.createElement('div');
@@ -12730,6 +12746,7 @@ async function initApp() {
   function clearRemoteCursors() {
     if (!remoteCursorsContainer) return;
     remoteCursorsContainer.querySelectorAll('.remote-cursor').forEach(el => el.remove());
+    scheduleMpvOverlayStateSync();
   }
 
   function renderRemoteCursors(collaborators = []) {
@@ -12777,6 +12794,7 @@ async function initApp() {
         cursorEl.style.display = 'block';
       }
     }
+    scheduleMpvOverlayStateSync();
   }
 
   userSettings.addEventListener('showRemoteCursorsChanged', (event) => {

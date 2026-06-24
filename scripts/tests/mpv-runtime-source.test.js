@@ -306,6 +306,11 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /function copyComputedMpvOverlayStyles\(source, target\) \{/);
   assert.match(appSource, /function serializeMpvOverlayToastHtml\(\) \{/);
   assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+toastHtml: serializeMpvOverlayToastHtml\(\)/);
+  assert.match(appSource, /function serializeMpvOverlayRemoteCursorHtml\(\) \{[\s\S]+remoteCursorsContainer\.cloneNode\(true\)[\s\S]+return clone\.innerHTML;/);
+  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+remoteCursorHtml: serializeMpvOverlayRemoteCursorHtml\(\)/);
+  assert.match(appSource, /function renderRemoteCursors\(collaborators = \[\]\) \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}/);
+  assert.match(appSource, /function clearRemoteCursors\(\) \{[\s\S]+remoteCursorsContainer\.querySelectorAll\('\.remote-cursor'\)\.forEach\(el => el\.remove\(\)\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}/);
+  assert.match(mainStyles, /body\.mpv-pilot-mode \.video-wrapper\.mpv-pilot-mode > \.remote-cursors-container \{[\s\S]+visibility: hidden !important;/);
   const htmlOverlayMatch = appSource.match(/function serializeMpvOverlayHtml\(\) \{([\s\S]*?)\n  \}\n\n  function getMpvOverlayState/);
   assert.ok(htmlOverlayMatch, 'serializeMpvOverlayHtml should exist');
   const htmlOverlaySource = htmlOverlayMatch[1];

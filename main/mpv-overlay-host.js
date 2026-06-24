@@ -77,6 +77,7 @@ const OVERLAY_HTML = `
     #markerMirror,
     #tooltipMirror,
     #toastMirror,
+    #remoteCursorMirror,
     #htmlOverlay {
       position: absolute;
       inset: 0;
@@ -92,10 +93,54 @@ const OVERLAY_HTML = `
     #toastMirror {
       z-index: 50;
     }
+    #remoteCursorMirror {
+      z-index: 45;
+    }
     #markerMirror *,
     #tooltipMirror *,
-    #toastMirror * {
+    #toastMirror *,
+    #remoteCursorMirror * {
       pointer-events: none !important;
+    }
+    .remote-cursors-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 50;
+      overflow: hidden;
+    }
+    .remote-cursor {
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: none;
+      transition: transform 120ms ease-out;
+      will-change: transform;
+      filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+    }
+    .remote-cursor-icon {
+      display: block;
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+    .remote-cursor-label {
+      position: absolute;
+      top: 16px;
+      left: 10px;
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      line-height: 1.3;
+      color: #fff;
+      white-space: nowrap;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+      opacity: 0.92;
     }
     .comment-marker {
       width: 24px;
@@ -255,6 +300,7 @@ const OVERLAY_HTML = `
     <div id="htmlOverlay"></div>
     <div id="markerMirror"></div>
     <div id="tooltipMirror"></div>
+    <div id="remoteCursorMirror" class="remote-cursors-container"></div>
     <div id="toastMirror"></div>
   </div>
   <script>
@@ -286,12 +332,14 @@ const OVERLAY_HTML = `
       const htmlOverlay = document.getElementById('htmlOverlay');
       const markerMirror = document.getElementById('markerMirror');
       const tooltipMirror = document.getElementById('tooltipMirror');
+      const remoteCursorMirror = document.getElementById('remoteCursorMirror');
       const toastMirror = document.getElementById('toastMirror');
       applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
       applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
       htmlOverlay.innerHTML = nextState.htmlOverlayHtml || '';
       markerMirror.innerHTML = nextState.markerHtml || '';
       tooltipMirror.innerHTML = nextState.tooltipHtml || '';
+      remoteCursorMirror.innerHTML = nextState.remoteCursorHtml || '';
       toastMirror.innerHTML = nextState.toastHtml || '';
       applyOverlayTransform(markerMirror, nextState);
       tooltipMirror.style.transform = 'none';
@@ -330,6 +378,7 @@ function normalizeOverlayState(state = {}) {
     tooltipHtml: typeof state.tooltipHtml === 'string' ? state.tooltipHtml : '',
     htmlOverlayHtml: typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : '',
     toastHtml: typeof state.toastHtml === 'string' ? state.toastHtml : '',
+    remoteCursorHtml: typeof state.remoteCursorHtml === 'string' ? state.remoteCursorHtml : '',
     markerTransform: typeof state.markerTransform === 'string' ? state.markerTransform : '',
     markerTransformOrigin: typeof state.markerTransformOrigin === 'string'
       ? state.markerTransformOrigin
