@@ -149,11 +149,13 @@ export class CommentSync {
     this._lm.broadcastEvent({
       type: 'COMMENT_REPLY_ADDED',
       markerId,
+      updatedAt: this._toISOString(detail.marker?.updatedAt) || this._toISOString(reply.updatedAt) || new Date().toISOString(),
       reply: {
         id: reply.id,
         text: reply.text || reply.content || '',
         author: reply.author || '',
         createdAt: this._toISOString(reply.createdAt) || new Date().toISOString(),
+        updatedAt: this._toISOString(reply.updatedAt) || this._toISOString(reply.createdAt) || new Date().toISOString(),
         image: reply.image || null,
         imageWidth: reply.imageWidth || null,
         imageHeight: reply.imageHeight || null
@@ -169,11 +171,16 @@ export class CommentSync {
     const updates = detail.updates;
     if (!markerId || !replyId) return;
 
+    const updatedAt = this._toISOString(detail.marker?.updatedAt) || this._toISOString(detail.reply?.updatedAt) || new Date().toISOString();
     this._lm.broadcastEvent({
       type: 'COMMENT_REPLY_UPDATED',
       markerId,
       replyId,
-      updates: { text: updates?.text }
+      updatedAt,
+      updates: {
+        text: updates?.text,
+        updatedAt
+      }
     });
   }
 
@@ -187,7 +194,8 @@ export class CommentSync {
     this._lm.broadcastEvent({
       type: 'COMMENT_REPLY_DELETED',
       markerId,
-      replyId
+      replyId,
+      updatedAt: this._toISOString(detail.marker?.updatedAt) || new Date().toISOString()
     });
   }
 
@@ -292,38 +300,26 @@ export class CommentSync {
   }
 
   _applyRemoteReplyAdd(event) {
-    const { markerId, reply } = event;
+    const { markerId, reply, updatedAt } = event;
     if (!markerId || !reply) return;
 
-    this._cm.applyRemoteReplyAdd(markerId, reply);
+    this._cm.applyRemoteReplyAdd(markerId, reply, updatedAt);
     log.debug('원격 답글 추가 적용', { markerId, replyId: reply.id });
   }
 
   _applyRemoteReplyUpdate(event) {
-    const { markerId, replyId, updates } = event;
+    const { markerId, replyId, updates, updatedAt } = event;
     if (!markerId || !replyId || !updates) return;
 
-    const marker = this._cm.getMarker(markerId);
-    if (!marker) return;
-
-    const reply = marker.replies?.find(r => r.id === replyId);
-    if (!reply) return;
-
-    if (updates.text !== undefined) {
-      reply.text = updates.text;
-    }
-    marker.updatedAt = new Date().toISOString();
-
-    this._cm._emit('markerUpdated', { marker });
-    this._cm._emit('markersChanged');
+    this._cm.applyRemoteReplyUpdate(markerId, replyId, updates, updatedAt);
     log.debug('원격 답글 수정 적용', { markerId, replyId });
   }
 
   _applyRemoteReplyDelete(event) {
-    const { markerId, replyId } = event;
+    const { markerId, replyId, updatedAt } = event;
     if (!markerId || !replyId) return;
 
-    this._cm.applyRemoteReplyDelete(markerId, replyId);
+    this._cm.applyRemoteReplyDelete(markerId, replyId, updatedAt);
     log.debug('원격 답글 삭제 적용', { markerId, replyId });
   }
 
@@ -356,6 +352,7 @@ export class CommentSync {
       text: r.text || r.content || '',
       author: r.author || '',
       createdAt: this._toISOString(r.createdAt) || new Date().toISOString(),
+      updatedAt: this._toISOString(r.updatedAt) || this._toISOString(r.createdAt) || new Date().toISOString(),
       image: r.image || null,
       imageWidth: r.imageWidth || null,
       imageHeight: r.imageHeight || null

@@ -15,6 +15,31 @@ import {
   extractFileNameWithoutExt
 } from '../../../shared/schema.js';
 // 오프라인 머지 유틸리티 (Liveblocks 비활성 시 폴백)
+
+function toTime(value) {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function getCommentRevisionTime(comment) {
+  const ownRevision = Math.max(
+    toTime(comment.updatedAt),
+    toTime(comment.createdAt),
+    toTime(comment.deletedAt)
+  );
+  const replyRevision = (comment.replies || []).reduce((latest, reply) => {
+    return Math.max(
+      latest,
+      toTime(reply.updatedAt),
+      toTime(reply.createdAt),
+      toTime(reply.deletedAt)
+    );
+  }, 0);
+
+  return Math.max(ownRevision, replyRevision);
+}
+
 function mergeComments(localComments, remoteComments) {
   const localMap = new Map(localComments.map(c => [c.id, c]));
   const remoteMap = new Map(remoteComments.map(c => [c.id, c]));
@@ -33,8 +58,8 @@ function mergeComments(localComments, remoteComments) {
     } else if (local && !remote) {
       merged.push(local);
     } else if (local && remote) {
-      const localTime = new Date(local.updatedAt || local.createdAt).getTime();
-      const remoteTime = new Date(remote.updatedAt || remote.createdAt).getTime();
+      const localTime = getCommentRevisionTime(local);
+      const remoteTime = getCommentRevisionTime(remote);
       if (remoteTime > localTime) {
         merged.push(remote);
         updated++;

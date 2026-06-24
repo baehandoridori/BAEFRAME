@@ -127,11 +127,14 @@ export class CommentMarker {
    * 답글 추가
    */
   addReply(reply) {
+    const createdAt = reply.createdAt ? new Date(reply.createdAt) : new Date();
+    const updatedAt = reply.updatedAt ? new Date(reply.updatedAt) : createdAt;
     const newReply = {
       id: generateUUID(),
       text: reply.text,
       author: reply.author || '익명',
-      createdAt: new Date()
+      createdAt,
+      updatedAt
     };
 
     // 이미지 첨부 지원
@@ -142,6 +145,7 @@ export class CommentMarker {
     }
 
     this.replies.push(newReply);
+    this.updatedAt = updatedAt;
     return newReply;
   }
 
@@ -233,7 +237,8 @@ export class CommentMarker {
       colorKey: this.colorKey,
       replies: this.replies.map(r => ({
         ...r,
-        createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt
+        createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+        updatedAt: r.updatedAt instanceof Date ? r.updatedAt.toISOString() : r.updatedAt
       }))
     };
 
@@ -259,7 +264,8 @@ export class CommentMarker {
       deletedAt: json.deletedAt ? new Date(json.deletedAt) : null,
       replies: (json.replies || []).map(r => ({
         ...r,
-        createdAt: new Date(r.createdAt)
+        createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
+        updatedAt: r.updatedAt ? new Date(r.updatedAt) : (r.createdAt ? new Date(r.createdAt) : new Date())
       }))
     });
   }
@@ -717,9 +723,11 @@ export class CommentManager extends EventTarget {
     if (updates.text !== undefined) {
       reply.text = updates.text;
     }
-    marker.updatedAt = new Date();
+    const revision = new Date();
+    reply.updatedAt = revision;
+    marker.updatedAt = revision;
 
-    this._emit('replyUpdated', { markerId, replyId, updates });
+    this._emit('replyUpdated', { marker, markerId, replyId, reply, updates });
     this._emit('markerUpdated', { marker });
     this._emit('markersChanged');
     return true;
@@ -1000,7 +1008,7 @@ export class CommentManager extends EventTarget {
   /**
    * 원격 델타: 답글 추가
    */
-  applyRemoteReplyAdd(markerId, replyData) {
+  applyRemoteReplyAdd(markerId, replyData, markerUpdatedAt = null) {
     const marker = this.getMarker(markerId);
     if (!marker) return false;
 
@@ -1009,18 +1017,57 @@ export class CommentManager extends EventTarget {
 
     const reply = {
       ...replyData,
-      createdAt: replyData.createdAt ? new Date(replyData.createdAt) : new Date()
+      createdAt: replyData.createdAt ? new Date(replyData.createdAt) : new Date(),
+      updatedAt: replyData.updatedAt ? new Date(replyData.updatedAt) : (replyData.createdAt ? new Date(replyData.createdAt) : new Date())
     };
     if (!marker.replies) marker.replies = [];
     marker.replies.push(reply);
+    marker.updatedAt = markerUpdatedAt ? new Date(markerUpdatedAt) : reply.updatedAt;
     this._emit('replyAdded', { marker, reply, remote: true });
+    this._emit('markerUpdated', { marker, remote: true });
+    this._emit('markersChanged');
+    return true;
+  }
+
+  /**
+   * 원격 델타: 답글 수정
+   */
+  applyRemoteReplyUpdate(markerId, replyId, updates = {}, markerUpdatedAt = null) {
+    const marker = this.getMarker(markerId);
+    if (!marker || !marker.replies) return false;
+
+    const reply = marker.replies.find(r => r.id === replyId);
+    if (!reply) return false;
+
+    if (updates.text !== undefined) {
+      reply.text = updates.text;
+    }
+    if (updates.image !== undefined) {
+      reply.image = updates.image;
+    }
+    if (updates.imageWidth !== undefined) {
+      reply.imageWidth = updates.imageWidth;
+    }
+    if (updates.imageHeight !== undefined) {
+      reply.imageHeight = updates.imageHeight;
+    }
+
+    const revision = markerUpdatedAt
+      ? new Date(markerUpdatedAt)
+      : (updates.updatedAt ? new Date(updates.updatedAt) : new Date());
+    reply.updatedAt = updates.updatedAt ? new Date(updates.updatedAt) : revision;
+    marker.updatedAt = revision;
+
+    this._emit('replyUpdated', { marker, markerId, replyId, reply, updates, remote: true });
+    this._emit('markerUpdated', { marker, remote: true });
+    this._emit('markersChanged');
     return true;
   }
 
   /**
    * 원격 델타: 답글 삭제
    */
-  applyRemoteReplyDelete(markerId, replyId) {
+  applyRemoteReplyDelete(markerId, replyId, markerUpdatedAt = null) {
     const marker = this.getMarker(markerId);
     if (!marker || !marker.replies) return false;
 
@@ -1028,7 +1075,10 @@ export class CommentManager extends EventTarget {
     if (idx === -1) return false;
 
     marker.replies.splice(idx, 1);
+    marker.updatedAt = markerUpdatedAt ? new Date(markerUpdatedAt) : new Date();
     this._emit('replyDeleted', { marker, replyId, remote: true });
+    this._emit('markerUpdated', { marker, remote: true });
+    this._emit('markersChanged');
     return true;
   }
 
