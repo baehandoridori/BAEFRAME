@@ -55,6 +55,9 @@ import { getRecentFilesManager } from './modules/recent-files-manager.js';
 import * as recentFilesView from './modules/recent-files-view.js';
 import { computeToastStackLayout, computeToastTimerPlan } from './modules/toast-stack-core.js';
 import {
+  getEffectiveKeyboardShortcutTarget,
+  isTextEntryShortcutTarget,
+  shouldIgnoreComposingKeyboardEvent,
   shouldHandlePlayPauseShortcutFromTarget,
   shouldIgnoreGlobalShortcutTarget
 } from './modules/keyboard-shortcut-targets.js';
@@ -68,6 +71,7 @@ const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
 const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
@@ -259,6 +263,13 @@ async function initApp() {
     return standardEditable || target.closest('.playlist-comment-reply-input');
   }
 
+  function getTextEntryFocusableTarget(target) {
+    if (!(target instanceof Element)) return null;
+    const editable = target.closest('textarea, input, [contenteditable="true"], [contenteditable="plaintext-only"]');
+    if (!editable || editable.disabled || editable.readOnly) return null;
+    return isTextEntryShortcutTarget(editable) ? editable : null;
+  }
+
   function resizeReplyEditorToContent(editor) {
     if (!editor) return;
 
@@ -278,21 +289,39 @@ async function initApp() {
     }
   }
 
-  function installCommentEditableFocusRecovery() {
+  function installTextEntryFocusRecovery() {
     let pendingEditable = null;
 
-    document.addEventListener('pointerdown', handleEditablePointerDown, true);
-    document.addEventListener('mousedown', handleEditablePointerDown, true);
+    document.addEventListener('pointerdown', handleTextEntryPointerDown, true);
+    document.addEventListener('mousedown', handleTextEntryPointerDown, true);
 
-    function handleEditablePointerDown(e) {
-      const editable = getCommentEditableTarget(e.target);
-      if (!editable || editable.disabled || editable.readOnly) return;
+    function requestMainWindowFocusForTextEntry() {
+      try {
+        const focusRequest = window.electronAPI?.focusMainWindow?.();
+        if (focusRequest && typeof focusRequest.catch === 'function') {
+          focusRequest.catch((error) => {
+            log.debug('입력 포커스 회복 중 메인창 포커스 요청 실패', { error: error.message });
+          });
+        }
+        return focusRequest;
+      } catch (error) {
+        log.debug('입력 포커스 회복 중 메인창 포커스 요청 실패', { error: error.message });
+        return null;
+      }
+    }
+
+    function handleTextEntryPointerDown(e) {
+      const editable = getTextEntryFocusableTarget(e.target);
+      if (!editable) return;
 
       pendingEditable = editable;
-      window.setTimeout(() => {
+      void requestMainWindowFocusForTextEntry();
+      window.setTimeout(async () => {
         if (pendingEditable !== editable) return;
         pendingEditable = null;
         if (!document.contains(editable) || document.activeElement === editable) return;
+
+        await requestMainWindowFocusForTextEntry();
 
         editable.focus({ preventScroll: true });
         if (
@@ -306,7 +335,7 @@ async function initApp() {
     }
   }
 
-  installCommentEditableFocusRecovery();
+  installTextEntryFocusRecovery();
 
   // 상태
   const state = {
@@ -5171,6 +5200,7 @@ async function initApp() {
   let mpvEmbedBoundsSyncPending = false;
   let mpvVideoTransformSyncPending = false;
   let mpvOverlayStateSyncPending = false;
+  let mpvOverlayRemoteCursorSyncPending = false;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
   let mpvHostVisibilitySyncPending = false;
@@ -5178,6 +5208,7 @@ async function initApp() {
   let mpvPilotHostPreparing = false;
   let fullscreenTimecodeOverlay = null;
   let fullscreenScrubOverlay = null;
+  let remoteCursorsContainer = null;
 
   const MPV_BLOCKING_OVERLAY_SELECTOR = [
     '.modal-overlay.active',
@@ -5591,6 +5622,20 @@ async function initApp() {
     return clone.outerHTML;
   }
 
+  function serializeMpvOverlayRemoteCursorHtml() {
+    if (!remoteCursorsContainer || !userSettings.getShowRemoteCursors()) return '';
+
+    const clone = remoteCursorsContainer.cloneNode(true);
+    clone.querySelectorAll('[id]').forEach((el) => {
+      el.removeAttribute('id');
+    });
+    clone.querySelectorAll('.remote-cursor').forEach((cursor) => {
+      cursor.style.pointerEvents = 'none';
+    });
+
+    return clone.innerHTML;
+  }
+
   function getMpvOverlayState() {
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
@@ -5603,6 +5648,7 @@ async function initApp() {
       tooltipHtml: serializeMpvOverlayTooltipHtml(),
       htmlOverlayHtml: serializeMpvOverlayHtml(),
       toastHtml: serializeMpvOverlayToastHtml(),
+      remoteCursorHtml: serializeMpvOverlayRemoteCursorHtml(),
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
@@ -5632,6 +5678,28 @@ async function initApp() {
         log.debug('mpv 오버레이 상태 갱신 실패', { error: error.message });
       }
     });
+  }
+
+  function syncMpvOverlayRemoteCursorState() {
+    if (!document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!window.electronAPI?.mpvUpdateOverlayRemoteCursors) return;
+    if (mpvOverlayRemoteCursorSyncPending) return;
+
+    mpvOverlayRemoteCursorSyncPending = true;
+    requestAnimationFrame(async () => {
+      mpvOverlayRemoteCursorSyncPending = false;
+      const remoteCursorHtml = serializeMpvOverlayRemoteCursorHtml();
+
+      try {
+        await window.electronAPI.mpvUpdateOverlayRemoteCursors(remoteCursorHtml);
+      } catch (error) {
+        log.debug('mpv 오버레이 원격 커서 갱신 실패', { error: error.message });
+      }
+    });
+  }
+
+  function scheduleMpvOverlayRemoteCursorStateSync() {
+    syncMpvOverlayRemoteCursorState();
   }
 
   function scheduleMpvOverlayStateSync(options = {}) {
@@ -9551,9 +9619,11 @@ async function initApp() {
 
   async function handleKeydown(e) {
     if (document.querySelector('.shortcut-key-btn.capturing')) return;
+    if (shouldIgnoreComposingKeyboardEvent(e)) return;
 
+    const shortcutTarget = getEffectiveKeyboardShortcutTarget(e, document);
     const isPlayPauseShortcut = userSettings.matchShortcut('playPause', e);
-    if (isPlayPauseShortcut && !shouldHandlePlayPauseShortcutFromTarget(e.target, e)) return;
+    if (isPlayPauseShortcut && !shouldHandlePlayPauseShortcutFromTarget(shortcutTarget, e)) return;
 
     // pending 마커 입력 중이면 단축키 무시 (textarea 포커스 전에도 적용)
     if (commentManager.pendingMarker) return;
@@ -9580,7 +9650,7 @@ async function initApp() {
     }
 
     // 폼 컨트롤에서는 Space 재생을 제외한 전역 단축키를 무시한다.
-    if (shouldIgnoreGlobalShortcutTarget(e.target)) return;
+    if (shouldIgnoreGlobalShortcutTarget(shortcutTarget)) return;
 
     // 댓글 모드
     if (userSettings.matchShortcut('commentMode', e)) {
@@ -12715,7 +12785,7 @@ async function initApp() {
   /**
    * 원격 커서 렌더링
    */
-  const remoteCursorsContainer = (() => {
+  remoteCursorsContainer = (() => {
     let container = document.getElementById('remoteCursorsContainer');
     if (!container) {
       container = document.createElement('div');
@@ -12730,6 +12800,36 @@ async function initApp() {
   function clearRemoteCursors() {
     if (!remoteCursorsContainer) return;
     remoteCursorsContainer.querySelectorAll('.remote-cursor').forEach(el => el.remove());
+    scheduleMpvOverlayRemoteCursorStateSync();
+  }
+
+  function createRemoteCursorElement(collab) {
+    const cursorEl = document.createElement('div');
+    cursorEl.id = `cursor-${collab.connectionId}`;
+    cursorEl.className = 'remote-cursor';
+
+    const svg = document.createElementNS(SVG_NAMESPACE, 'svg');
+    svg.classList.add('remote-cursor-icon');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('fill', 'none');
+
+    const path = document.createElementNS(SVG_NAMESPACE, 'path');
+    path.setAttribute('d', 'M1 1L6 14L8 8L14 6L1 1Z');
+    path.setAttribute('fill', collab.userColor || '#ffd000');
+    path.setAttribute('stroke', 'rgba(0,0,0,0.3)');
+    path.setAttribute('stroke-width', '0.5');
+    svg.appendChild(path);
+
+    const label = document.createElement('span');
+    label.className = 'remote-cursor-label';
+    label.style.backgroundColor = collab.userColor || '#ffd000';
+    label.textContent = collab.userName || '알 수 없음';
+
+    cursorEl.appendChild(svg);
+    cursorEl.appendChild(label);
+    return cursorEl;
   }
 
   function renderRemoteCursors(collaborators = []) {
@@ -12756,15 +12856,7 @@ async function initApp() {
       let cursorEl = document.getElementById(cursorId);
 
       if (!cursorEl) {
-        cursorEl = document.createElement('div');
-        cursorEl.id = cursorId;
-        cursorEl.className = 'remote-cursor';
-        cursorEl.innerHTML = `
-          <svg class="remote-cursor-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M1 1L6 14L8 8L14 6L1 1Z" fill="${collab.userColor}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>
-          </svg>
-          <span class="remote-cursor-label" style="background-color: ${collab.userColor}">${collab.userName}</span>
-        `;
+        cursorEl = createRemoteCursorElement(collab);
         remoteCursorsContainer.appendChild(cursorEl);
       }
 
@@ -12777,6 +12869,7 @@ async function initApp() {
         cursorEl.style.display = 'block';
       }
     }
+    scheduleMpvOverlayRemoteCursorStateSync();
   }
 
   userSettings.addEventListener('showRemoteCursorsChanged', (event) => {

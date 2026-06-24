@@ -53,6 +53,20 @@ export function isTextEntryShortcutTarget(target) {
   return TEXT_ENTRY_INPUT_TYPES.has(getInputType(target));
 }
 
+export function getEffectiveKeyboardShortcutTarget(event, ownerDocument = globalThis.document) {
+  const target = event?.target || null;
+  const tagName = getTagName(target);
+  if (target && tagName !== 'BODY' && tagName !== 'HTML' && tagName !== '') {
+    return target;
+  }
+
+  return ownerDocument?.activeElement || target;
+}
+
+export function shouldIgnoreComposingKeyboardEvent(event) {
+  return event?.isComposing === true || event?.key === 'Process' || event?.code === 'Process';
+}
+
 export function shouldHandlePlayPauseShortcutFromTarget(target, event = null) {
   if (isTextEntryShortcutTarget(target)) return false;
 

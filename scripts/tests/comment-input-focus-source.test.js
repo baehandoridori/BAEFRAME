@@ -8,12 +8,20 @@ const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
 const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8'));
 const htmlSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8'));
 const cssSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/main.css'), 'utf8'));
+const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
+const ipcHandlersSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
 
 test('comment editable fields recover focus when a parent pointer handler blocks default focus', () => {
   assert.match(appSource, /function getCommentEditableTarget\(target\) \{[\s\S]+target\.closest\('\.comment-input, \.comment-marker-input, \.comment-reply-input, \.comment-edit-textarea, \.comment-reply-edit-textarea, \.thread-editor\[contenteditable="true"\]'\)/);
-  assert.match(appSource, /function installCommentEditableFocusRecovery\(\) \{[\s\S]+document\.addEventListener\('pointerdown', handleEditablePointerDown, true\);[\s\S]+editable\.focus\(\{ preventScroll: true \}\);/);
-  assert.match(appSource, /document\.addEventListener\('mousedown', handleEditablePointerDown, true\);/);
-  assert.match(appSource, /installCommentEditableFocusRecovery\(\);/);
+  assert.match(appSource, /function getTextEntryFocusableTarget\(target\) \{[\s\S]+target\.closest\('textarea, input, \[contenteditable="true"\], \[contenteditable="plaintext-only"\]'\)/);
+  assert.match(appSource, /function installTextEntryFocusRecovery\(\) \{[\s\S]+document\.addEventListener\('pointerdown', handleTextEntryPointerDown, true\);[\s\S]+window\.electronAPI\?\.focusMainWindow\?\.\(\);[\s\S]+editable\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(appSource, /document\.addEventListener\('mousedown', handleTextEntryPointerDown, true\);/);
+  assert.match(appSource, /installTextEntryFocusRecovery\(\);/);
+});
+
+test('text entry focus recovery can reactivate the main Electron window', () => {
+  assert.match(preloadSource, /focusMainWindow: \(\) => ipcRenderer\.invoke\('window:focus-main'\)/);
+  assert.match(ipcHandlersSource, /ipcMain\.handle\('window:focus-main', \(\) => \{[\s\S]+mainWindow\.focus\(\);[\s\S]+mainWindow\.webContents\?\.focus\?\.\(\);[\s\S]+success: true/);
 });
 
 test('right sidebar comment input is covered by the same focus recovery path', () => {

@@ -77,6 +77,7 @@ const OVERLAY_HTML = `
     #markerMirror,
     #tooltipMirror,
     #toastMirror,
+    #remoteCursorMirror,
     #htmlOverlay {
       position: absolute;
       inset: 0;
@@ -92,10 +93,54 @@ const OVERLAY_HTML = `
     #toastMirror {
       z-index: 50;
     }
+    #remoteCursorMirror {
+      z-index: 45;
+    }
     #markerMirror *,
     #tooltipMirror *,
-    #toastMirror * {
+    #toastMirror *,
+    #remoteCursorMirror * {
       pointer-events: none !important;
+    }
+    .remote-cursors-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 50;
+      overflow: hidden;
+    }
+    .remote-cursor {
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: none;
+      transition: transform 120ms ease-out;
+      will-change: transform;
+      filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+    }
+    .remote-cursor-icon {
+      display: block;
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+    .remote-cursor-label {
+      position: absolute;
+      top: 16px;
+      left: 10px;
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      line-height: 1.3;
+      color: #fff;
+      white-space: nowrap;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+      opacity: 0.92;
     }
     .comment-marker {
       width: 24px;
@@ -255,6 +300,7 @@ const OVERLAY_HTML = `
     <div id="htmlOverlay"></div>
     <div id="markerMirror"></div>
     <div id="tooltipMirror"></div>
+    <div id="remoteCursorMirror" class="remote-cursors-container"></div>
     <div id="toastMirror"></div>
   </div>
   <script>
@@ -281,6 +327,53 @@ const OVERLAY_HTML = `
       element.style.transformOrigin = 'center center';
     }
 
+    function sanitizeRemoteCursorHtml(value) {
+      const allowedTags = new Set(['div', 'span', 'svg', 'path']);
+      const allowedAttrs = new Set([
+        'class',
+        'style',
+        'width',
+        'height',
+        'viewbox',
+        'fill',
+        'stroke',
+        'stroke-width',
+        'd'
+      ]);
+      const template = document.createElement('template');
+      template.innerHTML = typeof value === 'string' ? value : '';
+
+      template.content.querySelectorAll('*').forEach((element) => {
+        if (!allowedTags.has(element.localName)) {
+          element.remove();
+          return;
+        }
+
+        [...element.attributes].forEach((attribute) => {
+          const name = attribute.name.toLowerCase();
+          const attrValue = attribute.value || '';
+          const hasUnsafeValue = /javascript:/i.test(attrValue) ||
+            /expression\s*\(/i.test(attrValue) ||
+            (name === 'style' && /url\s*\(/i.test(attrValue));
+          if (!allowedAttrs.has(name) || name.startsWith('on') || hasUnsafeValue) {
+            element.removeAttribute(attribute.name);
+          }
+        });
+      });
+
+      return template.innerHTML;
+    }
+
+    function applyRemoteCursorHtml(remoteCursorHtml) {
+      const remoteCursorMirror = document.getElementById('remoteCursorMirror');
+      if (!remoteCursorMirror) return;
+      remoteCursorMirror.innerHTML = sanitizeRemoteCursorHtml(remoteCursorHtml);
+    }
+
+    window.__applyMpvRemoteCursorState = function applyMpvRemoteCursorState(remoteCursorHtml) {
+      applyRemoteCursorHtml(remoteCursorHtml);
+    };
+
     window.__applyMpvOverlayState = function applyMpvOverlayState(state) {
       const nextState = state || {};
       const htmlOverlay = document.getElementById('htmlOverlay');
@@ -292,6 +385,7 @@ const OVERLAY_HTML = `
       htmlOverlay.innerHTML = nextState.htmlOverlayHtml || '';
       markerMirror.innerHTML = nextState.markerHtml || '';
       tooltipMirror.innerHTML = nextState.tooltipHtml || '';
+      applyRemoteCursorHtml(nextState.remoteCursorHtml);
       toastMirror.innerHTML = nextState.toastHtml || '';
       applyOverlayTransform(markerMirror, nextState);
       tooltipMirror.style.transform = 'none';
@@ -330,6 +424,7 @@ function normalizeOverlayState(state = {}) {
     tooltipHtml: typeof state.tooltipHtml === 'string' ? state.tooltipHtml : '',
     htmlOverlayHtml: typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : '',
     toastHtml: typeof state.toastHtml === 'string' ? state.toastHtml : '',
+    remoteCursorHtml: typeof state.remoteCursorHtml === 'string' ? state.remoteCursorHtml : '',
     markerTransform: typeof state.markerTransform === 'string' ? state.markerTransform : '',
     markerTransformOrigin: typeof state.markerTransformOrigin === 'string'
       ? state.markerTransformOrigin
@@ -420,6 +515,24 @@ class MPVOverlayHost {
       return { success: true };
     } catch (error) {
       this.logger.debug('mpv overlay state update failed', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  }
+
+  async updateRemoteCursorState(remoteCursorHtml) {
+    if (!this.window || this.window.isDestroyed?.()) {
+      return { success: false, error: 'mpv overlay host is not ready' };
+    }
+
+    const safeRemoteCursorHtml = typeof remoteCursorHtml === 'string' ? remoteCursorHtml : '';
+    try {
+      await this.window.webContents?.executeJavaScript?.(
+        `window.__applyMpvRemoteCursorState(${JSON.stringify(safeRemoteCursorHtml)});`,
+        true
+      );
+      return { success: true };
+    } catch (error) {
+      this.logger.debug('mpv overlay remote cursor update failed', { error: error.message });
       return { success: false, error: error.message };
     }
   }

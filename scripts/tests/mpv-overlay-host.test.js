@@ -18,6 +18,7 @@ test('normalizes overlay state to bounded serializable fields', () => {
     tooltipHtml: '<div class="comment-marker-tooltip visible"></div>',
     htmlOverlayHtml: '<div class="current-cut-overlay">Cut 01</div>',
     toastHtml: '<div class="toast-container"><div class="toast success">Saved</div></div>',
+    remoteCursorHtml: '<div class="remote-cursor"></div>',
     canvas: { left: 10.4, top: 20.6, width: 640.2, height: 360.7 },
     markerTransform: 'scale(2) translate(1px, 2px)',
     markerTransformOrigin: 'center center'
@@ -30,6 +31,7 @@ test('normalizes overlay state to bounded serializable fields', () => {
   assert.equal(state.tooltipHtml, '<div class="comment-marker-tooltip visible"></div>');
   assert.equal(state.htmlOverlayHtml, '<div class="current-cut-overlay">Cut 01</div>');
   assert.equal(state.toastHtml, '<div class="toast-container"><div class="toast success">Saved</div></div>');
+  assert.equal(state.remoteCursorHtml, '<div class="remote-cursor"></div>');
   assert.equal(state.markerTransform, 'scale(2) translate(1px, 2px)');
   assert.equal(state.markerTransformOrigin, 'center center');
 });
@@ -115,6 +117,9 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.equal(overlayHtml.includes('htmlOverlay'), true);
   assert.equal(overlayHtml.includes('tooltipMirror'), true);
   assert.equal(overlayHtml.includes('toastMirror'), true);
+  assert.equal(overlayHtml.includes('remoteCursorMirror'), true);
+  assert.equal(overlayHtml.includes('__applyMpvRemoteCursorState'), true);
+  assert.equal(overlayHtml.includes('.remote-cursors-container'), true);
   assert.equal(overlayHtml.includes("applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas)"), true);
   assert.doesNotMatch(
     overlayHtml,
@@ -124,6 +129,12 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.equal(overlayHtml.includes('tooltipMirror.innerHTML = nextState.tooltipHtml'), true);
   assert.equal(overlayHtml.includes('htmlOverlay.innerHTML = nextState.htmlOverlayHtml'), true);
   assert.equal(overlayHtml.includes('toastMirror.innerHTML = nextState.toastHtml'), true);
+  assert.equal(overlayHtml.includes('function sanitizeRemoteCursorHtml'), true);
+  assert.equal(overlayHtml.includes('function applyRemoteCursorHtml'), true);
+  assert.equal(overlayHtml.includes("const allowedTags = new Set(['div', 'span', 'svg', 'path'])"), true);
+  assert.equal(overlayHtml.includes("name.startsWith('on')"), true);
+  assert.equal(overlayHtml.includes('remoteCursorMirror.innerHTML = sanitizeRemoteCursorHtml(remoteCursorHtml)'), true);
+  assert.equal(overlayHtml.includes('applyRemoteCursorHtml(nextState.remoteCursorHtml)'), true);
   assert.equal(overlayHtml.includes("tooltipMirror.style.transform = 'none';"), true);
   assert.ok(events.some(([name]) => name === 'showInactive'));
   assert.ok(events.some(([name]) => name === 'moveTop'));
@@ -170,6 +181,7 @@ test('updates overlay state through the isolated overlay document', async () => 
     markerHtml: '<div class="comment-marker pending"></div>',
     htmlOverlayHtml: '<div class="current-cut-overlay">Cut 01</div>',
     toastHtml: '<div class="toast-container"><div class="toast info">Ready</div></div>',
+    remoteCursorHtml: '<div class="remote-cursor" style="display:block"></div>',
     drawingDataUrl: 'data:image/png;base64,draw',
     canvas: { left: 1, top: 2, width: 3, height: 4 }
   });
@@ -180,7 +192,15 @@ test('updates overlay state through the isolated overlay document', async () => 
   assert.match(scripts[0], /comment-marker pending/);
   assert.match(scripts[0], /current-cut-overlay/);
   assert.match(scripts[0], /toast info/);
+  assert.match(scripts[0], /remote-cursor/);
   assert.match(scripts[0], /data:image\/png;base64,draw/);
+
+  const cursorOnlyResult = await host.updateRemoteCursorState('<div class="remote-cursor" style="display:block"></div>');
+  assert.equal(cursorOnlyResult.success, true);
+  assert.equal(scripts.length, 2);
+  assert.match(scripts[1], /window\.__applyMpvRemoteCursorState/);
+  assert.match(scripts[1], /remote-cursor/);
+  assert.doesNotMatch(scripts[1], /drawingDataUrl|markerHtml|toastHtml/);
 });
 
 test('hides and restores the native overlay host with the mpv embed host', async () => {
