@@ -753,6 +753,23 @@ function setupIpcHandlers() {
     return isFullscreen();
   });
 
+  ipcMain.handle('window:focus-main', () => {
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed?.()) {
+      return { success: false, error: 'main window is not available' };
+    }
+
+    if (mainWindow.isMinimized?.()) {
+      mainWindow.restore();
+    }
+    if (mainWindow.isVisible?.() === false) {
+      mainWindow.show();
+    }
+    mainWindow.focus();
+    mainWindow.webContents?.focus?.();
+    return { success: true };
+  });
+
   // ====== 앱 관련 ======
 
   ipcMain.handle('app:get-version', () => {

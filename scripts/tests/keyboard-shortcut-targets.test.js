@@ -39,7 +39,7 @@ test('form controls only allow play/pause override for the Space shortcut', asyn
     shouldHandlePlayPauseShortcutFromTarget({ tagName: 'INPUT', type: 'checkbox' }, { code: 'KeyK' }),
     false
   );
-  assert.match(appSource, /shouldHandlePlayPauseShortcutFromTarget\(e\.target, e\)/);
+  assert.match(appSource, /shouldHandlePlayPauseShortcutFromTarget\(shortcutTarget, e\)/);
 });
 
 test('Space play/pause shortcut suppresses focused control keyup activation', () => {
@@ -69,4 +69,31 @@ test('non-playback shortcuts stay ignored for form controls', async () => {
 
   assert.equal(shouldIgnoreGlobalShortcutTarget({ tagName: 'BUTTON' }), false);
   assert.equal(shouldIgnoreGlobalShortcutTarget({ tagName: 'DIV' }), false);
+});
+
+test('global shortcuts use active text entry when keyboard target is the page shell', async () => {
+  const {
+    getEffectiveKeyboardShortcutTarget,
+    shouldIgnoreComposingKeyboardEvent
+  } = await import('../../renderer/scripts/modules/keyboard-shortcut-targets.js');
+
+  const activeInput = { tagName: 'TEXTAREA' };
+  const bodyTarget = { tagName: 'BODY' };
+  assert.equal(
+    getEffectiveKeyboardShortcutTarget({ target: bodyTarget }, { activeElement: activeInput }),
+    activeInput
+  );
+  assert.equal(
+    getEffectiveKeyboardShortcutTarget({ target: { tagName: 'INPUT', type: 'text' } }, { activeElement: activeInput })?.tagName,
+    'INPUT'
+  );
+  assert.equal(shouldIgnoreComposingKeyboardEvent({ isComposing: true }), true);
+  assert.equal(shouldIgnoreComposingKeyboardEvent({ key: 'Process' }), true);
+  assert.equal(shouldIgnoreComposingKeyboardEvent({ code: 'Process' }), true);
+  assert.equal(shouldIgnoreComposingKeyboardEvent({ key: 'a', code: 'KeyA' }), false);
+
+  assert.match(appSource, /if \(shouldIgnoreComposingKeyboardEvent\(e\)\) return;/);
+  assert.match(appSource, /const shortcutTarget = getEffectiveKeyboardShortcutTarget\(e, document\);/);
+  assert.match(appSource, /shouldHandlePlayPauseShortcutFromTarget\(shortcutTarget, e\)/);
+  assert.match(appSource, /shouldIgnoreGlobalShortcutTarget\(shortcutTarget\)/);
 });

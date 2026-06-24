@@ -55,6 +55,9 @@ import { getRecentFilesManager } from './modules/recent-files-manager.js';
 import * as recentFilesView from './modules/recent-files-view.js';
 import { computeToastStackLayout, computeToastTimerPlan } from './modules/toast-stack-core.js';
 import {
+  getEffectiveKeyboardShortcutTarget,
+  isTextEntryShortcutTarget,
+  shouldIgnoreComposingKeyboardEvent,
   shouldHandlePlayPauseShortcutFromTarget,
   shouldIgnoreGlobalShortcutTarget
 } from './modules/keyboard-shortcut-targets.js';
@@ -260,6 +263,13 @@ async function initApp() {
     return standardEditable || target.closest('.playlist-comment-reply-input');
   }
 
+  function getTextEntryFocusableTarget(target) {
+    if (!(target instanceof Element)) return null;
+    const editable = target.closest('textarea, input, [contenteditable="true"], [contenteditable="plaintext-only"]');
+    if (!editable || editable.disabled || editable.readOnly) return null;
+    return isTextEntryShortcutTarget(editable) ? editable : null;
+  }
+
   function resizeReplyEditorToContent(editor) {
     if (!editor) return;
 
@@ -279,21 +289,39 @@ async function initApp() {
     }
   }
 
-  function installCommentEditableFocusRecovery() {
+  function installTextEntryFocusRecovery() {
     let pendingEditable = null;
 
-    document.addEventListener('pointerdown', handleEditablePointerDown, true);
-    document.addEventListener('mousedown', handleEditablePointerDown, true);
+    document.addEventListener('pointerdown', handleTextEntryPointerDown, true);
+    document.addEventListener('mousedown', handleTextEntryPointerDown, true);
 
-    function handleEditablePointerDown(e) {
-      const editable = getCommentEditableTarget(e.target);
-      if (!editable || editable.disabled || editable.readOnly) return;
+    function requestMainWindowFocusForTextEntry() {
+      try {
+        const focusRequest = window.electronAPI?.focusMainWindow?.();
+        if (focusRequest && typeof focusRequest.catch === 'function') {
+          focusRequest.catch((error) => {
+            log.debug('입력 포커스 회복 중 메인창 포커스 요청 실패', { error: error.message });
+          });
+        }
+        return focusRequest;
+      } catch (error) {
+        log.debug('입력 포커스 회복 중 메인창 포커스 요청 실패', { error: error.message });
+        return null;
+      }
+    }
+
+    function handleTextEntryPointerDown(e) {
+      const editable = getTextEntryFocusableTarget(e.target);
+      if (!editable) return;
 
       pendingEditable = editable;
-      window.setTimeout(() => {
+      void requestMainWindowFocusForTextEntry();
+      window.setTimeout(async () => {
         if (pendingEditable !== editable) return;
         pendingEditable = null;
         if (!document.contains(editable) || document.activeElement === editable) return;
+
+        await requestMainWindowFocusForTextEntry();
 
         editable.focus({ preventScroll: true });
         if (
@@ -307,7 +335,7 @@ async function initApp() {
     }
   }
 
-  installCommentEditableFocusRecovery();
+  installTextEntryFocusRecovery();
 
   // 상태
   const state = {
@@ -9568,9 +9596,11 @@ async function initApp() {
 
   async function handleKeydown(e) {
     if (document.querySelector('.shortcut-key-btn.capturing')) return;
+    if (shouldIgnoreComposingKeyboardEvent(e)) return;
 
+    const shortcutTarget = getEffectiveKeyboardShortcutTarget(e, document);
     const isPlayPauseShortcut = userSettings.matchShortcut('playPause', e);
-    if (isPlayPauseShortcut && !shouldHandlePlayPauseShortcutFromTarget(e.target, e)) return;
+    if (isPlayPauseShortcut && !shouldHandlePlayPauseShortcutFromTarget(shortcutTarget, e)) return;
 
     // pending 마커 입력 중이면 단축키 무시 (textarea 포커스 전에도 적용)
     if (commentManager.pendingMarker) return;
@@ -9597,7 +9627,7 @@ async function initApp() {
     }
 
     // 폼 컨트롤에서는 Space 재생을 제외한 전역 단축키를 무시한다.
-    if (shouldIgnoreGlobalShortcutTarget(e.target)) return;
+    if (shouldIgnoreGlobalShortcutTarget(shortcutTarget)) return;
 
     // 댓글 모드
     if (userSettings.matchShortcut('commentMode', e)) {
