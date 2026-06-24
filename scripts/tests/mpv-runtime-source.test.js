@@ -43,6 +43,7 @@ test('preload exposes a narrow mpv API surface', () => {
   assert.match(preloadSource, /mpvPrepareOverlay: \(bounds\) => ipcRenderer\.invoke\('mpv:prepare-overlay', bounds\)/);
   assert.match(preloadSource, /mpvUpdateOverlayBounds: \(bounds\) => ipcRenderer\.invoke\('mpv:update-overlay-bounds', bounds\)/);
   assert.match(preloadSource, /mpvUpdateOverlayState: \(state\) => ipcRenderer\.invoke\('mpv:update-overlay-state', state\)/);
+  assert.match(preloadSource, /mpvUpdateOverlayRemoteCursors: \(remoteCursorHtml\) => ipcRenderer\.invoke\('mpv:update-overlay-remote-cursors', remoteCursorHtml\)/);
   assert.match(preloadSource, /mpvDestroyOverlay: \(\) => ipcRenderer\.invoke\('mpv:destroy-overlay'\)/);
 });
 
@@ -70,6 +71,7 @@ test('main process registers mpv IPC handlers through the manager and embed host
     'mpv:prepare-overlay',
     'mpv:update-overlay-bounds',
     'mpv:update-overlay-state',
+    'mpv:update-overlay-remote-cursors',
     'mpv:destroy-overlay'
   ]) {
     assert.match(ipcSource, new RegExp(`ipcMain\\.handle\\('${channel}'`));
@@ -84,6 +86,7 @@ test('main process registers mpv IPC handlers through the manager and embed host
   assert.match(ipcSource, /mpvOverlayHost\.setVisible\(nextVisible\)/);
   assert.match(ipcSource, /mpvOverlayHost\.updateBounds\(bounds\)/);
   assert.match(ipcSource, /mpvOverlayHost\.updateState\(state\)/);
+  assert.match(ipcSource, /mpvOverlayHost\.updateRemoteCursorState\(remoteCursorHtml\)/);
   assert.match(ipcSource, /mpvOverlayHost\.destroy\(\)/);
 });
 
@@ -306,6 +309,17 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /function copyComputedMpvOverlayStyles\(source, target\) \{/);
   assert.match(appSource, /function serializeMpvOverlayToastHtml\(\) \{/);
   assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+toastHtml: serializeMpvOverlayToastHtml\(\)/);
+  assert.match(appSource, /function serializeMpvOverlayRemoteCursorHtml\(\) \{[\s\S]+remoteCursorsContainer\.cloneNode\(true\)[\s\S]+return clone\.innerHTML;/);
+  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+remoteCursorHtml: serializeMpvOverlayRemoteCursorHtml\(\)/);
+  assert.match(appSource, /function syncMpvOverlayRemoteCursorState\(\) \{[\s\S]+const remoteCursorHtml = serializeMpvOverlayRemoteCursorHtml\(\);[\s\S]+window\.electronAPI\.mpvUpdateOverlayRemoteCursors\(remoteCursorHtml\)/);
+  assert.match(appSource, /function scheduleMpvOverlayRemoteCursorStateSync\(\) \{[\s\S]+syncMpvOverlayRemoteCursorState\(\);[\s\S]+\}/);
+  const clearRemoteCursorsSource = appSource.match(/function clearRemoteCursors\(\) \{([\s\S]*?)\n  \}/)?.[1] || '';
+  const renderRemoteCursorsSource = appSource.match(/function renderRemoteCursors\(collaborators = \[\]\) \{([\s\S]*?)\n  \}\n\n  userSettings\.addEventListener/)?.[1] || '';
+  assert.match(clearRemoteCursorsSource, /remoteCursorsContainer\.querySelectorAll\('\.remote-cursor'\)\.forEach\(el => el\.remove\(\)\);[\s\S]+scheduleMpvOverlayRemoteCursorStateSync\(\);/);
+  assert.match(renderRemoteCursorsSource, /scheduleMpvOverlayRemoteCursorStateSync\(\);/);
+  assert.doesNotMatch(clearRemoteCursorsSource, /scheduleMpvOverlayStateSync\(/);
+  assert.doesNotMatch(renderRemoteCursorsSource, /scheduleMpvOverlayStateSync\(/);
+  assert.match(mainStyles, /body\.mpv-pilot-mode \.video-wrapper\.mpv-pilot-mode > \.remote-cursors-container \{[\s\S]+visibility: hidden !important;/);
   const htmlOverlayMatch = appSource.match(/function serializeMpvOverlayHtml\(\) \{([\s\S]*?)\n  \}\n\n  function getMpvOverlayState/);
   assert.ok(htmlOverlayMatch, 'serializeMpvOverlayHtml should exist');
   const htmlOverlaySource = htmlOverlayMatch[1];

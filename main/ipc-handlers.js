@@ -753,6 +753,23 @@ function setupIpcHandlers() {
     return isFullscreen();
   });
 
+  ipcMain.handle('window:focus-main', () => {
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed?.()) {
+      return { success: false, error: 'main window is not available' };
+    }
+
+    if (mainWindow.isMinimized?.()) {
+      mainWindow.restore();
+    }
+    if (mainWindow.isVisible?.() === false) {
+      mainWindow.show();
+    }
+    mainWindow.focus();
+    mainWindow.webContents?.focus?.();
+    return { success: true };
+  });
+
   // ====== 앱 관련 ======
 
   ipcMain.handle('app:get-version', () => {
@@ -1717,6 +1734,15 @@ function setupIpcHandlers() {
       return await mpvOverlayHost.updateState(state);
     } catch (error) {
       log.debug('mpv 오버레이 상태 갱신 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:update-overlay-remote-cursors', async (event, remoteCursorHtml) => {
+    try {
+      return await mpvOverlayHost.updateRemoteCursorState(remoteCursorHtml);
+    } catch (error) {
+      log.debug('mpv 오버레이 원격 커서 갱신 실패', { error: error.message });
       return { success: false, error: error.message };
     }
   });
