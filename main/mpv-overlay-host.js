@@ -424,9 +424,32 @@ const OVERLAY_HTML = `
       return wrapper;
     }
 
-    function applyCompositionLayers(layers) {
+    function applyCompositionMirrorFrame(root, canvas) {
+      if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
+        root.style.display = 'none';
+        return false;
+      }
+
+      root.style.display = 'block';
+      root.style.left = canvas.left + 'px';
+      root.style.top = canvas.top + 'px';
+      root.style.width = canvas.width + 'px';
+      root.style.height = canvas.height + 'px';
+      root.style.right = 'auto';
+      root.style.bottom = 'auto';
+      root.style.transform = 'none';
+      root.style.transformOrigin = 'center center';
+      return true;
+    }
+
+    function applyCompositionLayers(layers, canvas) {
       const root = document.getElementById('compositionMirror');
       if (!root) return;
+      if (!applyCompositionMirrorFrame(root, canvas)) {
+        root.innerHTML = '';
+        return;
+      }
+
       const nextLayers = Array.isArray(layers) ? layers : [];
       const nextIds = new Set(nextLayers.map((layer) => layer.id));
 
@@ -474,7 +497,7 @@ const OVERLAY_HTML = `
       const toastMirror = document.getElementById('toastMirror');
       applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
       applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
-      applyCompositionLayers(nextState.compositionLayers);
+      applyCompositionLayers(nextState.compositionLayers, nextState.canvas);
       htmlOverlay.innerHTML = nextState.htmlOverlayHtml || '';
       markerMirror.innerHTML = nextState.markerHtml || '';
       tooltipMirror.innerHTML = nextState.tooltipHtml || '';

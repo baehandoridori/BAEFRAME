@@ -60,6 +60,11 @@ test('review data manager saves and restores compositionLayers', () => {
   assert.match(reviewDataSource, /this\.compositionLayerManager\.fromJSON\(data\.compositionLayers \|\| \[\]\)/);
 });
 
+test('review data manager clears compositionLayers when a review has no bframe data', () => {
+  const noDataLoadBranch = reviewDataSource.match(/if \(!data\) \{[\s\S]*?return false;\s*\}/)?.[0] || '';
+  assert.match(noDataLoadBranch, /this\.compositionLayerManager\?\.fromJSON\?\.\(\[\]\);/);
+});
+
 test('timeline can render and drag composition layer ranges', () => {
   assert.match(timelineSource, /renderCompositionLayers\(layers, options = \{\}\) \{/);
   assert.match(timelineSource, /composition-layer-track-row/);
@@ -75,9 +80,10 @@ test('timeline can render and drag composition layer ranges', () => {
 test('mpv overlay host accepts synchronized composition layer state', () => {
   assert.match(mpvOverlayHostSource, /compositionLayers/);
   assert.match(mpvOverlayHostSource, /function applyCompositionLayers/);
+  assert.match(mpvOverlayHostSource, /function applyCompositionMirrorFrame\(root, canvas\)/);
   assert.match(mpvOverlayHostSource, /composition-layer-mirror/);
   assert.match(mpvOverlayHostSource, /element\.muted = true/);
-  assert.match(mpvOverlayHostSource, /nextState\.compositionLayers/);
+  assert.match(mpvOverlayHostSource, /applyCompositionLayers\(nextState\.compositionLayers, nextState\.canvas\)/);
 });
 
 test('composition overlay keeps media elements stable during playback sync', () => {
@@ -196,6 +202,11 @@ test('composition live edits avoid full panel and timeline churn until commit', 
   assert.match(compositionManagerSource, /this\.updateLayer\(layerId, snapped\.rect, \{\s*recordUndo: false,\s*renderPanel: false,\s*renderTimeline: false,\s*emitChange: false,\s*scheduleOverlaySync: false\s*\}\);/);
   assert.match(compositionManagerSource, /this\._changed\('layerTransformed'/);
   assert.match(compositionManagerSource, /renderPanel: !isLiveInput,\s*emitChange: !isLiveInput,\s*scheduleOverlaySync: !isLiveInput/);
+});
+
+test('draw mode lets the drawing canvas receive events above composition layers', () => {
+  assert.match(appSource, /elements\.videoWrapper\?\.classList\.toggle\('drawing-mode', state\.isDrawMode\);/);
+  assert.match(mainStyles, /\.video-wrapper\.drawing-mode \.composition-layer-preview\s*\{[^}]*pointer-events:\s*none;/s);
 });
 
 test('drawing preload cache cleanup does not spam renderer logs during playback', () => {

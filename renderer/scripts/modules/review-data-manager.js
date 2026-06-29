@@ -419,6 +419,7 @@ export class ReviewDataManager extends EventTarget {
 
       if (!data) {
         log.info('.bframe 파일 없음 (새 리뷰)', { path: this.currentBframePath });
+        this.compositionLayerManager?.fromJSON?.([]);
         this.isLoading = false;
         return false;
       }

@@ -1137,6 +1137,10 @@ body.mpv-pilot-mode .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 22px var(--accent-glow-strong);
 }
 
+.video-wrapper.drawing-mode .composition-layer-preview {
+  pointer-events: none;
+}
+
 .composition-layer-preview-media {
   display: block;
   width: 100%;
