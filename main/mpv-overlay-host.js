@@ -477,7 +477,8 @@ const OVERLAY_HTML = `
           const element = media;
           element.muted = true;
           const localTime = Math.max(0, Number(layer.localTime) || 0);
-          if (Number.isFinite(localTime) && Math.abs((element.currentTime || 0) - localTime) > 0.08) {
+          const seekThreshold = layer.isPlaying ? 0.08 : 0.001;
+          if (Number.isFinite(localTime) && Math.abs((element.currentTime || 0) - localTime) > seekThreshold) {
             try { element.currentTime = localTime; } catch (_) {}
           }
           if (layer.isPlaying) {

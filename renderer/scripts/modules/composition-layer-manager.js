@@ -153,10 +153,25 @@ function filePathToFileUrl(filePath) {
   if (/^file:\/\//i.test(raw)) return raw;
 
   const normalized = raw.replace(/\\/g, '/');
+  if (normalized.startsWith('//')) {
+    const [, , host = '', ...segments] = normalized.split('/');
+    const encodedHost = encodeURIComponent(host);
+    const encodedPath = segments.map(segment => encodeURIComponent(segment)).join('/');
+    return `file://${encodedHost}/${encodedPath}`;
+  }
+
   const prefixed = /^[a-zA-Z]:\//.test(normalized)
     ? `/${normalized}`
-    : normalized;
-  return `file://${encodeURI(prefixed)}`;
+    : normalized.startsWith('/')
+      ? normalized
+      : `/${normalized}`;
+  const encodedPath = prefixed
+    .split('/')
+    .map((segment, index) => (index === 1 && /^[a-zA-Z]:$/.test(segment)
+      ? segment
+      : encodeURIComponent(segment)))
+    .join('/');
+  return `file://${encodedPath}`;
 }
 
 export function getCompositionLayerType(filePath) {
@@ -1053,7 +1068,8 @@ export class CompositionLayerManager extends EventTarget {
       const localTime = Math.max(0, this.currentTime - layer.startTime);
       video.muted = true;
       video.playsInline = true;
-      if (Number.isFinite(localTime) && Math.abs((video.currentTime || 0) - localTime) > 0.08) {
+      const seekThreshold = this.isPlaying ? 0.08 : 0.001;
+      if (Number.isFinite(localTime) && Math.abs((video.currentTime || 0) - localTime) > seekThreshold) {
         try { video.currentTime = localTime; } catch (_) {}
       }
       if (this.isPlaying) {

@@ -1072,13 +1072,30 @@ async function initApp() {
       updateVideoCommentPlayhead();
     }
 
-    compositionLayerManager.setPlaybackState({
-      currentTime,
-      isPlaying: videoPlayer.isPlaying
-    });
+    syncCompositionLayerPlaybackState(currentTime, videoPlayer.isPlaying);
 
     if (updateDrawing) {
       drawingManager.setCurrentFrame(currentFrame);
+    }
+  }
+
+  function syncCompositionLayerPlaybackState(currentTime, isPlaying) {
+    const safeCurrentTime = Number.isFinite(Number(currentTime))
+      ? Number(currentTime)
+      : videoPlayer.currentTime;
+    compositionLayerManager.setPlaybackState({
+      currentTime: safeCurrentTime,
+      isPlaying
+    });
+
+    if (
+      document.body.classList.contains('mpv-pilot-mode') &&
+      compositionLayerManager.getMpvOverlayLayers({
+        currentTime: safeCurrentTime,
+        isPlaying
+      }).length > 0
+    ) {
+      scheduleMpvOverlayStateSync({ force: true });
     }
   }
 
@@ -1110,10 +1127,7 @@ async function initApp() {
     elements.btnPlay.innerHTML = pauseIconSVG;
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
-    compositionLayerManager.setPlaybackState({
-      currentTime: videoPlayer.currentTime,
-      isPlaying: true
-    });
+    syncCompositionLayerPlaybackState(videoPlayer.currentTime, true);
     getAudioWaveform()?.setPlaying(true);
     // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
     timeline.scrollToPlayhead();
@@ -1125,10 +1139,7 @@ async function initApp() {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
-    compositionLayerManager.setPlaybackState({
-      currentTime: videoPlayer.currentTime,
-      isPlaying: false
-    });
+    syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
     getAudioWaveform()?.setPlaying(false);
     // 일시정지 시점에 누적된 온디맨드 정확-프레임 큐를 소진
     getThumbnailGenerator()?._drainExactQueue?.();
@@ -1138,10 +1149,7 @@ async function initApp() {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
-    compositionLayerManager.setPlaybackState({
-      currentTime: videoPlayer.currentTime,
-      isPlaying: false
-    });
+    syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
     getAudioWaveform()?.setPlaying(false);
 
     if (cutlistUIState.active && getCutlistManager().isActive()) {

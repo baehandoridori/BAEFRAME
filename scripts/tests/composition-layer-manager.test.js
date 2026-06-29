@@ -373,3 +373,87 @@ test('manager prepares runtime display media without serializing it', async () =
   assert.equal(saved.displayFilePath, undefined);
   assert.match(mpvLayer.fileUrl, /overlay-converted\.mp4/);
 });
+
+test('manager escapes URL delimiters in runtime file URLs', async () => {
+  const { CompositionLayerManager } = await loadModule();
+  const manager = new CompositionLayerManager();
+  manager.layers = [
+    {
+      id: 'url_layer',
+      name: 'plate',
+      type: 'image',
+      filePath: 'C:/shot/plate#v2?look.png',
+      enabled: true,
+      missing: false,
+      mediaStatus: 'ready',
+      order: 0,
+      startTime: 0,
+      endTime: 2,
+      opacity: 1,
+      x: 0,
+      y: 0,
+      width: 0.5,
+      height: 0.5
+    }
+  ];
+
+  const [layer] = manager.getMpvOverlayLayers({ currentTime: 1 });
+
+  assert.equal(layer.fileUrl, 'file:///C:/shot/plate%23v2%3Flook.png');
+});
+
+test('manager seeks paused video overlays below the playback drift threshold', async () => {
+  const { CompositionLayerManager } = await loadModule();
+  const video = {
+    dataset: { layerId: 'video_layer' },
+    currentTime: 1,
+    muted: false,
+    playsInline: false,
+    pauseCalled: false,
+    playCalled: false,
+    pause() {
+      this.pauseCalled = true;
+    },
+    play() {
+      this.playCalled = true;
+      return Promise.resolve();
+    }
+  };
+  const overlay = {
+    addEventListener() {},
+    querySelectorAll(selector) {
+      assert.equal(selector, '.composition-layer-preview-video');
+      return [video];
+    }
+  };
+  const manager = new CompositionLayerManager({ elements: { overlay } });
+  manager.layers = [
+    {
+      id: 'video_layer',
+      name: 'Overlay',
+      type: 'video',
+      filePath: 'C:/shot/overlay.mov',
+      enabled: true,
+      missing: false,
+      order: 0,
+      startTime: 0,
+      endTime: 3
+    }
+  ];
+
+  manager.currentTime = 1.033;
+  manager.isPlaying = false;
+  manager._syncOverlayVideoPlayback();
+
+  assert.equal(video.currentTime, 1.033);
+  assert.equal(video.pauseCalled, true);
+
+  video.currentTime = 1.05;
+  video.playCalled = false;
+  manager.currentTime = 1.09;
+  manager.isPlaying = true;
+  manager._syncOverlayVideoPlayback();
+
+  assert.equal(video.currentTime, 1.05);
+  assert.equal(video.playCalled, true);
+});

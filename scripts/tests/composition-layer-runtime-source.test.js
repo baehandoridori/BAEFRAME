@@ -95,6 +95,14 @@ test('composition overlay keeps media elements stable during playback sync', () 
   assert.match(compositionManagerSource, /_getOrCreateOverlayLayerElement\(/);
 });
 
+test('composition playback changes force mpv overlay mirror sync', () => {
+  assert.match(appSource, /function syncCompositionLayerPlaybackState\(currentTime, isPlaying\) \{/);
+  assert.match(appSource, /compositionLayerManager\.getMpvOverlayLayers\(\{\s*currentTime: safeCurrentTime,\s*isPlaying\s*\}\)\.length > 0/);
+  assert.match(appSource, /scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
+  assert.match(compositionManagerSource, /const seekThreshold = this\.isPlaying \? 0\.08 : 0\.001;/);
+  assert.match(mpvOverlayHostSource, /const seekThreshold = layer\.isPlaying \? 0\.08 : 0\.001;/);
+});
+
 test('composition panel slider drag is isolated from layer reorder drag', () => {
   assert.doesNotMatch(compositionManagerSource, /<div class="composition-layer-item[^>]*draggable="true"/);
   assert.match(compositionManagerSource, /composition-layer-drag[^>]+draggable="true"/);
