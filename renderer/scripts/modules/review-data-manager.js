@@ -127,6 +127,7 @@ export class ReviewDataManager extends EventTarget {
     this.commentManager = options.commentManager;
     this.drawingManager = options.drawingManager;
     this.highlightManager = options.highlightManager;
+    this.compositionLayerManager = options.compositionLayerManager;
 
     // 현재 상태
     this.currentVideoPath = null;
@@ -193,6 +194,10 @@ export class ReviewDataManager extends EventTarget {
       this.highlightManager.addEventListener('changed', this._onDataChanged);
     }
 
+    if (this.compositionLayerManager) {
+      this.compositionLayerManager.addEventListener('changed', this._onDataChanged);
+    }
+
     log.info('데이터 변경 이벤트 연결됨');
   }
 
@@ -224,6 +229,10 @@ export class ReviewDataManager extends EventTarget {
 
     if (this.highlightManager) {
       this.highlightManager.removeEventListener('changed', this._onDataChanged);
+    }
+
+    if (this.compositionLayerManager) {
+      this.compositionLayerManager.removeEventListener('changed', this._onDataChanged);
     }
 
     this._cancelAutoSave();
@@ -687,7 +696,8 @@ export class ReviewDataManager extends EventTarget {
       // 리뷰 데이터
       comments: this.commentManager?.toJSON() || { layers: [] },
       drawings: this.drawingManager?.exportData() || { layers: [] },
-      highlights: this.highlightManager?.toJSON() || []
+      highlights: this.highlightManager?.toJSON() || [],
+      compositionLayers: this.compositionLayerManager?.toJSON() || []
     };
   }
 
@@ -718,6 +728,10 @@ export class ReviewDataManager extends EventTarget {
 
     if (data.highlights && this.highlightManager) {
       this.highlightManager.fromJSON(data.highlights);
+    }
+
+    if (this.compositionLayerManager) {
+      this.compositionLayerManager.fromJSON(data.compositionLayers || []);
     }
   }
 

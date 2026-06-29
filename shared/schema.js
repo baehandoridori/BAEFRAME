@@ -101,6 +101,27 @@ export const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUP
  */
 
 /**
+ * @typedef {Object} CompositionLayer
+ * @property {string} id - 합성 레이어 ID
+ * @property {string} name - 표시 이름
+ * @property {'image'|'video'} type - 레이어 미디어 타입
+ * @property {string} filePath - 원본 이미지/영상 파일 경로
+ * @property {boolean} enabled - 표시 여부
+ * @property {number} order - 합성 순서
+ * @property {number} startTime - 시작 시간(초)
+ * @property {number} endTime - 종료 시간(초)
+ * @property {number} opacity - 불투명도(0~1)
+ * @property {number} x - 정규화 X 위치
+ * @property {number} y - 정규화 Y 위치
+ * @property {number} width - 정규화 너비
+ * @property {number} height - 정규화 높이
+ * @property {boolean} [aspectLocked] - 프리뷰 리사이즈 비율 잠금 여부
+ * @property {string} [color] - 레이어 기본 표시 색상(HEX)
+ * @property {string} [selectedColor] - 레이어 선택 표시 색상(HEX)
+ * @property {number|null} sourceDuration - 원본 영상 길이(초)
+ */
+
+/**
  * @typedef {Object} BframeData
  * @property {string} bframeVersion - 스키마 버전 (예: "2.0")
  * @property {string} videoFile - 비디오 파일명 (확장자 포함)
@@ -114,6 +135,7 @@ export const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUP
  * @property {Object} comments - 댓글 데이터 { layers: CommentLayer[] }
  * @property {Object} drawings - 그리기 데이터 { layers: DrawingLayer[] }
  * @property {Array<Highlight>} highlights - 하이라이트 목록
+ * @property {Array<CompositionLayer>} [compositionLayers] - 레이어 합성 목록
  */
 
 // ============================================================================
@@ -144,7 +166,8 @@ export function createDefaultBframeData(options = {}) {
     manualVersions: [],
     comments: { layers: [] },
     drawings: { layers: [] },
-    highlights: []
+    highlights: [],
+    compositionLayers: []
   };
 }
 
@@ -261,7 +284,10 @@ export function migrateToV2(data) {
     drawings: migrateDrawings(data.drawings),
 
     // 하이라이트
-    highlights: Array.isArray(data.highlights) ? data.highlights : []
+    highlights: Array.isArray(data.highlights) ? data.highlights : [],
+
+    // 레이어 합성 데이터
+    compositionLayers: Array.isArray(data.compositionLayers) ? data.compositionLayers : []
   };
 
   // versions 필드가 있었다면 manualVersions로 변환 (문서 기반 레거시)

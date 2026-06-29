@@ -124,6 +124,27 @@
       "endFrame": 120,
       "color": "#ffa502"
     }
+  ],
+  "compositionLayers": [
+    {
+      "id": "composition_1709123456789_mno345",
+      "name": "overlay.mov",
+      "type": "video",
+      "filePath": "C:/Projects/overlay.mov",
+      "enabled": true,
+      "order": 0,
+      "startTime": 1.25,
+      "endTime": 6.25,
+      "opacity": 0.75,
+      "x": 0.25,
+      "y": 0.25,
+      "width": 0.5,
+      "height": 0.5,
+      "aspectLocked": true,
+      "color": "#4a9eff",
+      "selectedColor": "#a4d2ff",
+      "sourceDuration": 5
+    }
   ]
 }
 ```
@@ -144,6 +165,7 @@
 | `comments` | object | 필수 | 댓글 데이터 (`{ layers: [] }`) |
 | `drawings` | object | 필수 | 그리기 데이터 (`{ layers: [] }`) |
 | `highlights` | array | 필수 | 하이라이트 구간 목록 |
+| `compositionLayers` | array | 선택 | 레이어 합성 목록 |
 
 ---
 
@@ -301,6 +323,30 @@ drawings
 | `startFrame` | number | 하이라이트 시작 프레임 번호 |
 | `endFrame` | number | 하이라이트 종료 프레임 번호 |
 | `color` | string | 하이라이트 색상 (HEX 형식) |
+
+### 3.6 레이어 합성 (compositionLayers)
+
+레이어 합성은 사용자가 이미지나 영상을 원본 영상 위에 얹어 임시 편집/검토하는 데이터입니다. 이 단계에서는 원본 미디어를 복사하지 않고 `filePath`에 원본 경로만 저장합니다.
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `id` | string | 합성 레이어 고유 ID |
+| `name` | string | 레이어 탭에 표시되는 이름 |
+| `type` | string | `image` 또는 `video` |
+| `filePath` | string | 원본 이미지/영상 파일 경로 |
+| `enabled` | boolean | 표시 여부 |
+| `order` | number | 합성 순서. 값이 클수록 위에 렌더링됩니다. |
+| `startTime` | number | 레이어 시작 시간(초) |
+| `endTime` | number | 레이어 종료 시간(초). 원본 영상 길이를 초과할 수 있습니다. |
+| `opacity` | number | 불투명도. 0~1 범위 |
+| `x` | number | 영상 영역 기준 정규화 X 위치. 화면 밖 배치를 위해 0~1을 벗어날 수 있습니다. |
+| `y` | number | 영상 영역 기준 정규화 Y 위치. 화면 밖 배치를 위해 0~1을 벗어날 수 있습니다. |
+| `width` | number | 영상 영역 기준 정규화 너비 |
+| `height` | number | 영상 영역 기준 정규화 높이 |
+| `aspectLocked` | boolean | 선택. 프리뷰에서 크기 조절 시 원본 비율을 유지할지 여부. 없으면 `true`로 처리 |
+| `color` | string | 선택. 레이어 기본 표시 색상(HEX) |
+| `selectedColor` | string | 선택. 레이어 선택 표시 색상(HEX) |
+| `sourceDuration` | number \| null | 영상 레이어의 원본 길이(초). 이미지 레이어는 `null` 가능 |
 
 ---
 

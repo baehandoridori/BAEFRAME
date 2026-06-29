@@ -1353,9 +1353,7 @@ export class DrawingManager extends EventTarget {
       this.preloadedFrames.delete(frame);
     }
 
-    if (framesToRemove.length > 0) {
-      log.debug('캐시 정리', { removed: framesToRemove.length, remaining: this.preloadedFrames.size });
-    }
+    // 재생 중 자주 호출되는 정상 LRU 정리라 콘솔/로그 패널에는 남기지 않는다.
   }
 
   /**

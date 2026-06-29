@@ -494,6 +494,9 @@
           <!-- Onion Skin Canvas (그리기 캔버스 아래에 표시) -->
           <canvas id="onionSkinCanvas" class="drawing-overlay onion-skin-layer"></canvas>
 
+          <!-- Composition Layer Overlay (이미지/영상 합성 프리뷰) -->
+          <div id="compositionLayerOverlay" class="composition-layer-overlay"></div>
+
           <!-- Drawing Overlay Canvas -->
           <canvas id="drawingCanvas" class="drawing-overlay"></canvas>
 
@@ -539,6 +542,35 @@
 
           <!-- Zoom Indicator Overlay -->
           <div class="zoom-indicator-overlay" id="zoomIndicatorOverlay"></div>
+
+          <!-- Composition Layer Panel -->
+          <aside class="composition-layer-panel" id="compositionLayerPanel" aria-label="레이어 합성">
+            <div class="composition-layer-panel-header" id="compositionLayerPanelHeader">
+              <div class="composition-layer-panel-title">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2 2 7l10 5 10-5-10-5Z"/>
+                  <path d="m2 17 10 5 10-5"/>
+                  <path d="m2 12 10 5 10-5"/>
+                </svg>
+                레이어 합성
+              </div>
+              <div class="composition-layer-panel-actions">
+                <button class="composition-layer-icon-btn" id="btnCompositionLayerPanelCollapse" title="패널 접기/펴기">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <button class="composition-layer-icon-btn" id="btnCompositionLayerUndo" title="합성 레이어 실행 취소">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+                </button>
+                <button class="composition-layer-icon-btn" id="btnCompositionLayerRedo" title="합성 레이어 다시 실행">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+                </button>
+                <button class="composition-layer-icon-btn primary" id="btnCompositionLayerAdd" title="이미지/영상 레이어 추가">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="composition-layer-list" id="compositionLayerList"></div>
+          </aside>
 
           <!-- Drawing Tools Palette (이동/접기 가능) -->
           <div class="drawing-tools" id="drawingTools">
@@ -771,6 +803,14 @@
               <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
           </div>
+          <button class="action-btn" id="btnLayerCompositing" title="레이어 합성">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2 2 7l10 5 10-5-10-5Z"/>
+              <path d="m2 17 10 5 10-5"/>
+              <path d="m2 12 10 5 10-5"/>
+            </svg>
+            레이어 합성
+          </button>
         </div>
 
         <!-- TODO: 영상 어니언 스킨 토글 - 비디오 가림 문제로 임시 비활성화

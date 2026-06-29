@@ -16,6 +16,24 @@ import {
 
 const log = createLogger('Timeline');
 
+function _getCompositionLayerTypeIcon(type) {
+  if (type === 'video') {
+    return `
+      <svg class="composition-layer-media-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="6" width="14" height="12" rx="2"></rect>
+        <path d="M17 10.5l4-2.5v8l-4-2.5z"></path>
+      </svg>
+    `;
+  }
+  return `
+    <svg class="composition-layer-media-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+      <circle cx="8" cy="10" r="1.6"></circle>
+      <path d="M4.5 17l4.2-4.2 3.2 3.2 2.4-2.4 5.2 5.2"></path>
+    </svg>
+  `;
+}
+
 export class Timeline extends EventTarget {
   constructor(options = {}) {
     super();
@@ -91,6 +109,7 @@ export class Timeline extends EventTarget {
     this.thumbnailGenerator = null;
     this.thumbnailTooltip = null;
     this.isThumbnailVisible = false;
+    this.compositionLayerReorderState = null;
 
     // 초기화
     this._setupEventListeners();
@@ -920,6 +939,237 @@ export class Timeline extends EventTarget {
   }
 
   // ====== 그리기 레이어 관련 ======
+
+  /**
+   * 합성 레이어 타임라인 렌더링
+   * @param {Array} layers - CompositionLayer 배열
+   * @param {Object} options
+   * @param {string|null} options.selectedLayerId - 선택된 합성 레이어 ID
+   * @param {number} options.duration - 기준 영상 길이(초)
+   */
+  renderCompositionLayers(layers, options = {}) {
+    if (!this.tracksContainer || !this.layerHeaders) return;
+
+    this.tracksContainer.querySelectorAll('.composition-layer-track-row').forEach(track => track.remove());
+    this.layerHeaders.querySelectorAll('.composition-layer-header').forEach(header => header.remove());
+
+    const sourceLayers = Array.isArray(layers) ? layers : [];
+    const duration = Math.max(
+      0,
+      Number(options.duration) || this.duration || Math.max(0, ...sourceLayers.map(layer => Number(layer.endTime) || 0))
+    );
+    const timelineDuration = duration > 0 ? duration : 1;
+
+    sourceLayers
+      .slice()
+      .sort((a, b) => (Number(b.order) || 0) - (Number(a.order) || 0))
+      .forEach((layer) => {
+        const isSelected = layer.id === options.selectedLayerId;
+        const header = this._createCompositionLayerHeader(layer, isSelected);
+        const track = this._createCompositionLayerTrack(layer, isSelected, timelineDuration, duration);
+        const videoHeader = this.layerHeaders.querySelector('.layer-header[data-layer="video"]');
+        const videoTrack = this.tracksContainer.querySelector('.video-track-row');
+
+        if (videoHeader) {
+          this.layerHeaders.insertBefore(header, videoHeader);
+        } else {
+          this.layerHeaders.appendChild(header);
+        }
+
+        if (videoTrack) {
+          this.tracksContainer.insertBefore(track, videoTrack);
+        } else {
+          this.tracksContainer.appendChild(track);
+        }
+      });
+  }
+
+  _createCompositionLayerHeader(layer, isSelected) {
+    const header = document.createElement('div');
+    header.className = `layer-header composition-layer-header${isSelected ? ' selected' : ''}`;
+    header.dataset.layerId = layer.id;
+    header.draggable = true;
+    const layerColor = layer.color || (layer.type === 'video' ? '#4a9eff' : '#ffd000');
+    const selectedColor = layer.selectedColor || layerColor;
+    const typeLabel = layer.type === 'video' ? '영상' : '이미지';
+    header.style.setProperty('--composition-layer-color', layerColor);
+    header.style.setProperty('--composition-layer-selected-color', selectedColor);
+    header.innerHTML = `
+      <div class="layer-color" style="background: var(--composition-layer-color)"></div>
+      <span class="composition-layer-header-drag" title="순서 변경" aria-hidden="true">⋮⋮</span>
+      <button class="layer-visibility composition-layer-header-visibility" type="button" data-action="composition-visibility" title="${layer.enabled ? '레이어 숨기기' : '레이어 보이기'}" aria-label="${layer.enabled ? '레이어 숨기기' : '레이어 보이기'}">
+        ${this._getCompositionLayerVisibilityIcon(layer.enabled)}
+      </button>
+      <span class="composition-layer-header-type" title="${typeLabel}" aria-label="${typeLabel}">${_getCompositionLayerTypeIcon(layer.type)}</span>
+      <span class="layer-name" title="${this._escapeHtml(layer.name)}">${this._escapeHtml(layer.name)}</span>
+      <span class="layer-opacity-badge">${Math.round((layer.opacity ?? 1) * 100)}%</span>
+    `;
+    header.addEventListener('click', (event) => {
+      const action = event.target.closest?.('[data-action]')?.dataset.action;
+      if (action === 'composition-visibility') {
+        event.preventDefault();
+        event.stopPropagation();
+        this._emit('compositionLayerVisibilityToggle', { layerId: layer.id });
+        return;
+      }
+      this._emit('compositionLayerSelect', { layerId: layer.id });
+    });
+    header.addEventListener('dragstart', (event) => this._handleCompositionLayerHeaderDragStart(event, layer.id, header));
+    header.addEventListener('dragover', (event) => this._handleCompositionLayerHeaderDragOver(event, layer.id, header));
+    header.addEventListener('drop', (event) => this._handleCompositionLayerHeaderDrop(event, layer.id, header));
+    header.addEventListener('dragend', () => this._clearCompositionLayerHeaderDragFeedback());
+    return header;
+  }
+
+  _handleCompositionLayerHeaderDragStart(event, layerId, header) {
+    if (event.target.closest?.('[data-action]')) {
+      event.preventDefault();
+      return;
+    }
+    this.compositionLayerReorderState = { layerId };
+    header.classList.add('is-dragging');
+    this.layerHeaders?.classList.add('composition-layer-reordering');
+    event.dataTransfer?.setData('application/x-baeframe-composition-layer', layerId);
+    event.dataTransfer?.setData('text/plain', layerId);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  }
+
+  _handleCompositionLayerHeaderDragOver(event, targetLayerId, header) {
+    const sourceLayerId = this.compositionLayerReorderState?.layerId ||
+      event.dataTransfer?.getData('application/x-baeframe-composition-layer') ||
+      event.dataTransfer?.getData('text/plain');
+    if (!sourceLayerId || sourceLayerId === targetLayerId) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const placement = this._getCompositionHeaderDropPlacement(event, header);
+    this._setCompositionLayerHeaderDropFeedback(header, placement);
+  }
+
+  _handleCompositionLayerHeaderDrop(event, targetLayerId, header) {
+    const sourceLayerId = this.compositionLayerReorderState?.layerId ||
+      event.dataTransfer?.getData('application/x-baeframe-composition-layer') ||
+      event.dataTransfer?.getData('text/plain');
+    if (!sourceLayerId || sourceLayerId === targetLayerId) return;
+    event.preventDefault();
+    const placement = this._getCompositionHeaderDropPlacement(event, header);
+    this._clearCompositionLayerHeaderDragFeedback();
+    this._emit('compositionLayerReorder', {
+      layerId: sourceLayerId,
+      targetLayerId,
+      placement
+    });
+  }
+
+  _getCompositionHeaderDropPlacement(event, header) {
+    const rect = header?.getBoundingClientRect?.();
+    if (!rect) return 'before';
+    return event.clientY > rect.top + rect.height / 2 ? 'after' : 'before';
+  }
+
+  _setCompositionLayerHeaderDropFeedback(header, placement = 'before') {
+    this._clearCompositionLayerHeaderDropFeedback();
+    header.classList.add(placement === 'after' ? 'is-drop-after' : 'is-drop-before');
+  }
+
+  _clearCompositionLayerHeaderDropFeedback() {
+    this.layerHeaders
+      ?.querySelectorAll?.('.composition-layer-header.is-drop-before, .composition-layer-header.is-drop-after')
+      .forEach(header => header.classList.remove('is-drop-before', 'is-drop-after'));
+  }
+
+  _clearCompositionLayerHeaderDragFeedback() {
+    this._clearCompositionLayerHeaderDropFeedback();
+    this.layerHeaders
+      ?.querySelectorAll?.('.composition-layer-header.is-dragging')
+      .forEach(header => header.classList.remove('is-dragging'));
+    this.layerHeaders?.classList.remove('composition-layer-reordering');
+    this.compositionLayerReorderState = null;
+  }
+
+  _getCompositionLayerVisibilityIcon(enabled) {
+    const slash = enabled
+      ? ''
+      : '<line x1="4" y1="20" x2="20" y2="4"></line>';
+    return `
+      <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"></path>
+        <circle cx="12" cy="12" r="2.4"></circle>
+        ${slash}
+      </svg>
+    `;
+  }
+
+  _createCompositionLayerTrack(layer, isSelected, timelineDuration, baseDuration) {
+    const trackRow = document.createElement('div');
+    trackRow.className = 'track-row composition-layer-track-row';
+    trackRow.dataset.layerId = layer.id;
+    const layerColor = layer.color || (layer.type === 'video' ? '#4a9eff' : '#ffd000');
+    const selectedColor = layer.selectedColor || layerColor;
+    trackRow.style.setProperty('--composition-layer-color', layerColor);
+    trackRow.style.setProperty('--composition-layer-selected-color', selectedColor);
+
+    const startTime = Math.max(0, Number(layer.startTime) || 0);
+    const endTime = Math.max(startTime, Number(layer.endTime) || startTime);
+    const visibleEndTime = baseDuration > 0 ? Math.min(endTime, baseDuration) : endTime;
+    const leftPercent = Math.min(100, Math.max(0, (startTime / timelineDuration) * 100));
+    const rightPercent = Math.min(100, Math.max(leftPercent, (visibleEndTime / timelineDuration) * 100));
+    const widthPercent = Math.max(0.4, rightPercent - leftPercent);
+    const overflows = baseDuration > 0 && endTime > baseDuration;
+
+    const range = document.createElement('div');
+    range.className = `composition-layer-range${isSelected ? ' selected' : ''}${layer.enabled ? '' : ' is-disabled'}`;
+    range.dataset.layerId = layer.id;
+    range.style.left = `${leftPercent}%`;
+    range.style.width = `${widthPercent}%`;
+    range.style.setProperty('--composition-layer-color', layerColor);
+    range.style.setProperty('--composition-layer-selected-color', selectedColor);
+    range.innerHTML = `
+      <span class="composition-layer-range-handle start" data-mode="start"></span>
+      <span class="composition-layer-range-label">${this._escapeHtml(layer.name)}</span>
+      <span class="composition-layer-range-handle end" data-mode="end"></span>
+    `;
+
+    range.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this._emit('compositionLayerSelect', { layerId: layer.id });
+    });
+    range.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const mode = event.target.dataset.mode || 'move';
+      this._emit('compositionLayerRangeChange', {
+        layerId: layer.id,
+        mode,
+        clientX: event.clientX,
+        trackWidth: Math.max(1, trackRow.getBoundingClientRect().width)
+      });
+    });
+
+    trackRow.appendChild(range);
+
+    if (overflows) {
+      const overflow = document.createElement('div');
+      const overflowLeft = rightPercent;
+      const overflowWidth = Math.max(1.5, 100 - overflowLeft);
+      overflow.className = 'composition-layer-overflow';
+      overflow.style.left = `${overflowLeft}%`;
+      overflow.style.width = `${overflowWidth}%`;
+      overflow.innerHTML = '<span class="composition-layer-overflow-badge">초과</span>';
+      trackRow.appendChild(overflow);
+    }
+
+    return trackRow;
+  }
+
+  _escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
   /**
    * 그리기 레이어들 렌더링
