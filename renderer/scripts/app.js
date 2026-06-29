@@ -5491,7 +5491,33 @@ async function initApp() {
     '.app-saving-overlay.active',
     '#videoLoadingOverlay.active',
     '.transcode-overlay.active',
-    '.composition-layer-context-menu'
+    '.composition-layer-context-menu',
+    '.comment-marker-input-wrapper',
+    '.composition-drop-choice-overlay',
+    '.drawing-tools.visible',
+    '.marker-popup',
+    '.layer-settings-popup',
+    '.highlight-popup',
+    '.shortcuts-menu.visible',
+    '.comment-settings-dropdown.open',
+    '.filter-dropdown-menu.open',
+    '.mention-dropdown',
+    '.recent-dropdown-menu.open',
+    '.version-dropdown.open .version-dropdown-menu',
+    '.split-version-selector.open .split-version-menu'
+  ].join(',');
+
+  const MPV_MIRRORED_OVERLAY_SELECTOR = [
+    '.comment-markers-container',
+    '.comment-marker',
+    '.comment-marker-tooltip',
+    '.video-comment-range-overlay',
+    '.current-cut-overlay',
+    '.zoom-indicator-overlay',
+    '.fullscreen-timecode-overlay',
+    '.fullscreen-scrub-overlay',
+    '.toast-container',
+    '#compositionLayerOverlay'
   ].join(',');
 
   const MPV_HTML_OVERLAY_STYLE_PROPERTIES = [
@@ -5552,6 +5578,15 @@ async function initApp() {
     '-webkit-backdrop-filter'
   ];
 
+  function doesRectOverlapMpvHost(rect) {
+    const hostRect = elements.videoWrapper?.getBoundingClientRect();
+    if (!hostRect || hostRect.width <= 0 || hostRect.height <= 0) return false;
+    return rect.right > hostRect.left &&
+      rect.left < hostRect.right &&
+      rect.bottom > hostRect.top &&
+      rect.top < hostRect.bottom;
+  }
+
   function isElementVisiblyBlockingMpv(element) {
     if (!element) return false;
     const style = window.getComputedStyle(element);
@@ -5559,6 +5594,7 @@ async function initApp() {
       return false;
     }
     const rect = element.getBoundingClientRect();
+    if (!doesRectOverlapMpvHost(rect)) return false;
     return rect.width > 0 && rect.height > 0;
   }
 
@@ -5616,6 +5652,45 @@ async function initApp() {
   }
 
   installMpvBlockingOverlayObserver();
+
+  function getMutationElementTarget(target) {
+    if (!target) return null;
+    if (target.nodeType === Node.ELEMENT_NODE) return target;
+    return target.parentElement || null;
+  }
+
+  function isMpvMirroredOverlayMutation(mutation) {
+    const target = getMutationElementTarget(mutation.target);
+    if (target && target.matches?.(MPV_MIRRORED_OVERLAY_SELECTOR)) return true;
+    if (target && target.closest?.(MPV_MIRRORED_OVERLAY_SELECTOR)) return true;
+
+    return Array.from(mutation.addedNodes || []).some((node) => (
+      node.nodeType === Node.ELEMENT_NODE &&
+      (node.matches?.(MPV_MIRRORED_OVERLAY_SELECTOR) ||
+        node.querySelector?.(MPV_MIRRORED_OVERLAY_SELECTOR))
+    )) || Array.from(mutation.removedNodes || []).some((node) => (
+      node.nodeType === Node.ELEMENT_NODE &&
+      (node.matches?.(MPV_MIRRORED_OVERLAY_SELECTOR) ||
+        node.querySelector?.(MPV_MIRRORED_OVERLAY_SELECTOR))
+    ));
+  }
+
+  function installMpvMirroredOverlayObserver() {
+    const observer = new MutationObserver((mutations) => {
+      if (!document.body.classList.contains('mpv-pilot-mode')) return;
+      if (!mutations.some(isMpvMirroredOverlayMutation)) return;
+      scheduleMpvOverlayStateSync({ force: true });
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden']
+    });
+  }
+
+  installMpvMirroredOverlayObserver();
 
   async function waitForMpvPlaybackTime(targetTime, { timeoutMs = 700, tolerance = 0.12 } = {}) {
     if (!window.electronAPI?.mpvGetStatus) return false;

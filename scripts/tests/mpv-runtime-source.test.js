@@ -207,12 +207,27 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
     '.app-saving-overlay.active',
     '#videoLoadingOverlay.active',
     '.transcode-overlay.active',
-    '.composition-layer-context-menu'
+    '.composition-layer-context-menu',
+    '.comment-marker-input-wrapper',
+    '.composition-drop-choice-overlay',
+    '.drawing-tools.visible',
+    '.marker-popup',
+    '.layer-settings-popup',
+    '.highlight-popup',
+    '.shortcuts-menu.visible',
+    '.comment-settings-dropdown.open',
+    '.filter-dropdown-menu.open',
+    '.mention-dropdown',
+    '.recent-dropdown-menu.open',
+    '.version-dropdown.open .version-dropdown-menu',
+    '.split-version-selector.open .split-version-menu'
   ].forEach((selector) => {
     assert.match(appSource, new RegExp(`'${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`));
   });
   assert.doesNotMatch(appSource, /'\.credits-overlay\.open'/);
   assert.doesNotMatch(appSource, /'\.video-loading-overlay\.active'/);
+  assert.match(appSource, /function doesRectOverlapMpvHost\(rect\) \{[\s\S]+elements\.videoWrapper\?\.getBoundingClientRect\(\)[\s\S]+rect\.right > hostRect\.left[\s\S]+rect\.left < hostRect\.right[\s\S]+rect\.bottom > hostRect\.top[\s\S]+rect\.top < hostRect\.bottom/);
+  assert.match(appSource, /function isElementVisiblyBlockingMpv\(element\) \{[\s\S]+const rect = element\.getBoundingClientRect\(\);[\s\S]+if \(!doesRectOverlapMpvHost\(rect\)\) return false;[\s\S]+return rect\.width > 0 && rect\.height > 0;/);
   assert.match(appSource, /function hasBlockingOverlayForMpv\(\) \{[\s\S]+document\.querySelectorAll\(MPV_BLOCKING_OVERLAY_SELECTOR\)[\s\S]+some\(isElementVisiblyBlockingMpv\);/);
   assert.match(appSource, /let mpvPilotHostPreparing = false;/);
   assert.match(appSource, /function didMpvHostVisibilityApply\(result, shouldShowMpvHost\) \{[\s\S]+if \(!result\?\.success\) return false;[\s\S]+if \(shouldShowMpvHost\) return true;[\s\S]+return result\.embed\?\.ready === true && result\.overlay\?\.ready === true;/);
@@ -348,6 +363,10 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   });
   assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: serializeMpvOverlayMarkerHtml\(\)[\s\S]+tooltipHtml: serializeMpvOverlayTooltipHtml\(\)[\s\S]+htmlOverlayHtml: serializeMpvOverlayHtml\(\)/);
   assert.match(appSource, /function scheduleMpvOverlayStateSync\(options = \{\}\) \{[\s\S]+syncMpvOverlayState\(\);/);
+  assert.match(appSource, /const MPV_MIRRORED_OVERLAY_SELECTOR = \[[\s\S]+'.comment-markers-container'[\s\S]+'.comment-marker-tooltip'[\s\S]+'.video-comment-range-overlay'[\s\S]+\]\.join\(','\);/);
+  assert.match(appSource, /function isMpvMirroredOverlayMutation\(mutation\) \{[\s\S]+target\.matches\?\.\(MPV_MIRRORED_OVERLAY_SELECTOR\)[\s\S]+target\.closest\?\.\(MPV_MIRRORED_OVERLAY_SELECTOR\)[\s\S]+node\.querySelector\?\.\(MPV_MIRRORED_OVERLAY_SELECTOR\)/);
+  assert.match(appSource, /function installMpvMirroredOverlayObserver\(\) \{[\s\S]+new MutationObserver\(\(mutations\) => \{[\s\S]+if \(!document\.body\.classList\.contains\('mpv-pilot-mode'\)\) return;[\s\S]+mutations\.some\(isMpvMirroredOverlayMutation\)[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
+  assert.match(appSource, /installMpvMirroredOverlayObserver\(\);/);
   assert.match(appSource, /const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;/);
   assert.match(appSource, /function showZoomIndicator\(zoom\) \{[\s\S]+elements\.zoomIndicatorOverlay\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+setTimeout\(\(\) => \{[\s\S]+if \(!elements\.zoomIndicatorOverlay\?\.classList\.contains\('visible'\)\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+\}[\s\S]+\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
   assert.match(appSource, /function hideFullscreenScrubOverlay\(\) \{[\s\S]+fullscreenScrubOverlay\?\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+setTimeout\(\(\) => \{[\s\S]+if \(!fullscreenScrubOverlay\?\.classList\.contains\('visible'\)\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+\}[\s\S]+\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
