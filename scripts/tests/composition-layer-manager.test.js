@@ -127,12 +127,26 @@ test('normalizes persisted layers while preserving offscreen transforms', async 
   assert.equal(layer.opacity, 1);
   assert.equal(layer.x, -0.2);
   assert.equal(layer.y, 1.4);
-  assert.equal(layer.width, 0.1);
-  assert.equal(layer.height, 0.1);
+  assert.equal(layer.width, 0.05);
+  assert.equal(layer.height, 0.05);
   assert.equal(layer.aspectLocked, false);
   assert.equal(layer.color, '#aabbcc');
   assert.equal(layer.selectedColor, '#123456');
   assert.equal(layer.sourceDuration, 5);
+
+  const smallLayer = normalizeCompositionLayer({
+    id: 'composition_small',
+    name: 'small.png',
+    type: 'image',
+    filePath: 'C:/shot/small.png',
+    startTime: 0,
+    endTime: 2,
+    width: 0.06,
+    height: 0.06
+  });
+
+  assert.equal(smallLayer.width, 0.06);
+  assert.equal(smallLayer.height, 0.06);
 });
 
 test('serializes aspect lock state with true as the default', async () => {

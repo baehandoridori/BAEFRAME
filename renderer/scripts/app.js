@@ -1090,10 +1090,7 @@ async function initApp() {
 
     if (
       document.body.classList.contains('mpv-pilot-mode') &&
-      compositionLayerManager.getMpvOverlayLayers({
-        currentTime: safeCurrentTime,
-        isPlaying
-      }).length > 0
+      compositionLayerManager.toJSON().length > 0
     ) {
       scheduleMpvOverlayStateSync({ force: true });
     }

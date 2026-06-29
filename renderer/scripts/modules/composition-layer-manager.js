@@ -1,6 +1,7 @@
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
 const MIN_LAYER_DURATION = 0.1;
+const MIN_LAYER_DIMENSION = 0.05;
 const DEFAULT_VIDEO_LAYER_DURATION = 5;
 const DEFAULT_LAYER_RECT = Object.freeze({
   x: 0.25,
@@ -252,8 +253,8 @@ export function normalizeCompositionLayer(layer = {}, context = {}) {
     opacity: clamp(toFiniteNumber(layer.opacity, 1), 0, 1),
     x: toFiniteNumber(layer.x, DEFAULT_LAYER_RECT.x),
     y: toFiniteNumber(layer.y, DEFAULT_LAYER_RECT.y),
-    width: Math.max(MIN_LAYER_DURATION, toFiniteNumber(layer.width, DEFAULT_LAYER_RECT.width)),
-    height: Math.max(MIN_LAYER_DURATION, toFiniteNumber(layer.height, DEFAULT_LAYER_RECT.height)),
+    width: Math.max(MIN_LAYER_DIMENSION, toFiniteNumber(layer.width, DEFAULT_LAYER_RECT.width)),
+    height: Math.max(MIN_LAYER_DIMENSION, toFiniteNumber(layer.height, DEFAULT_LAYER_RECT.height)),
     aspectLocked: layer.aspectLocked !== false,
     color,
     selectedColor,
