@@ -143,6 +143,19 @@ test('mpv pilot falls back to the normal playback path when mpv load fails', () 
   assert.match(loadVideoSource, /catch \(mpvError\) \{[\s\S]+mpv 파일럿 로드 실패, 기존 재생 방식으로 재시도[\s\S]+allowMpvPilot: false,[\s\S]+preparedVideoPath: preparedVideoPathIsOriginal \? null : preparedVideoPath[\s\S]+return loadVideo\(filePath, fallbackOptions\);[\s\S]+\}/);
 });
 
+test('loadVideo shows Google Drive loading feedback before media preparation', () => {
+  const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\//);
+  assert.ok(loadVideoMatch, 'loadVideo should exist');
+  const loadVideoSource = loadVideoMatch[1];
+
+  assert.match(appSource, /function showDriveVideoLoadingFeedback\(filePath, options = \{\}\) \{/);
+  assert.match(appSource, /isGoogleDrivePath\(filePath\) \|\| isGoogleDrivePath\(options\.preparedVideoPath\)/);
+  assert.match(appSource, /Google Drive에서 영상 불러오는 중/);
+  assert.match(loadVideoSource, /const driveLoadingFeedbackShown = showDriveVideoLoadingFeedback\(filePath, \{ preparedVideoPath \}\);/);
+  assert.match(loadVideoSource, /if \(driveLoadingFeedbackShown && fileIsAudio\) \{[\s\S]+hideVideoLoadingOverlay\('drive'\);[\s\S]+\}/);
+  assert.match(loadVideoSource, /if \(driveLoadingFeedbackShown\) \{[\s\S]+hideVideoLoadingOverlay\('drive'\);[\s\S]+\}/);
+});
+
 test('mpv pilot can be enabled from app playback settings without an env var', () => {
   assert.match(userSettingsSource, /mpvPilotEnabled:\s*false/);
   assert.match(userSettingsSource, /getMpvPilotEnabled\(\) \{[\s\S]+return this\.settings\.mpvPilotEnabled === true;/);
@@ -193,7 +206,8 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
     '.codec-error-overlay.active',
     '.app-saving-overlay.active',
     '#videoLoadingOverlay.active',
-    '.transcode-overlay.active'
+    '.transcode-overlay.active',
+    '.composition-layer-context-menu'
   ].forEach((selector) => {
     assert.match(appSource, new RegExp(`'${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`));
   });
