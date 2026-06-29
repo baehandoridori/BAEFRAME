@@ -4,7 +4,6 @@
  */
 
 import {
-  BFRAME_VERSION,
   SUPPORTED_VERSIONS,
   isValidVideoFile,
   isValidCoordinate
@@ -12,6 +11,8 @@ import {
 
 // re-export for backward compatibility
 export { isValidVideoFile, isValidCoordinate };
+
+const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 /**
  * 리뷰 데이터 스키마 검증 (v2.0)
@@ -59,6 +60,12 @@ export function validateReviewData(data) {
   // 하이라이트 검증
   if (data.highlights && !Array.isArray(data.highlights)) {
     errors.push('highlights는 배열이어야 합니다.');
+  }
+
+  // 레이어 합성 검증 (선택적)
+  if (data.compositionLayers) {
+    const compositionErrors = validateCompositionLayers(data.compositionLayers);
+    errors.push(...compositionErrors);
   }
 
   // 버전 정보 검증 (선택적)
@@ -283,6 +290,85 @@ export function validateDrawingObject(drawing) {
 }
 
 /**
+ * 레이어 합성 데이터 검증
+ * @param {Array} layers - 검증할 합성 레이어 목록
+ * @returns {string[]} 에러 목록
+ */
+export function validateCompositionLayers(layers) {
+  const errors = [];
+
+  if (!Array.isArray(layers)) {
+    return ['compositionLayers는 배열이어야 합니다.'];
+  }
+
+  layers.forEach((layer, index) => {
+    const layerErrors = validateCompositionLayer(layer, index);
+    errors.push(...layerErrors);
+  });
+
+  return errors;
+}
+
+/**
+ * 합성 레이어 검증
+ * @param {Object} layer - 검증할 합성 레이어
+ * @param {number} index - 레이어 인덱스
+ * @returns {string[]} 에러 목록
+ */
+export function validateCompositionLayer(layer, index) {
+  const errors = [];
+  const prefix = `compositionLayers[${index}]`;
+
+  if (!layer || typeof layer !== 'object') {
+    return [`${prefix}: 객체여야 합니다.`];
+  }
+
+  if (!layer.id) errors.push(`${prefix}: id 필드가 없습니다.`);
+  if (!layer.name) errors.push(`${prefix}: name 필드가 없습니다.`);
+  if (!['image', 'video'].includes(layer.type)) {
+    errors.push(`${prefix}: type은 image 또는 video여야 합니다.`);
+  }
+  if (!layer.filePath) errors.push(`${prefix}: filePath 필드가 없습니다.`);
+  if (typeof layer.enabled !== 'boolean') errors.push(`${prefix}: enabled는 boolean이어야 합니다.`);
+  if (!Number.isFinite(layer.order)) errors.push(`${prefix}: order는 숫자여야 합니다.`);
+  if (!Number.isFinite(layer.startTime) || layer.startTime < 0) {
+    errors.push(`${prefix}: startTime은 0 이상의 숫자여야 합니다.`);
+  }
+  if (!Number.isFinite(layer.endTime) || layer.endTime <= layer.startTime) {
+    errors.push(`${prefix}: endTime은 startTime보다 큰 숫자여야 합니다.`);
+  }
+  if (!Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 1) {
+    errors.push(`${prefix}: opacity는 0~1 범위여야 합니다.`);
+  }
+  if (!Number.isFinite(layer.x)) errors.push(`${prefix}: x는 숫자여야 합니다.`);
+  if (!Number.isFinite(layer.y)) errors.push(`${prefix}: y는 숫자여야 합니다.`);
+  if (!Number.isFinite(layer.width) || layer.width <= 0) {
+    errors.push(`${prefix}: width는 0보다 큰 숫자여야 합니다.`);
+  }
+  if (!Number.isFinite(layer.height) || layer.height <= 0) {
+    errors.push(`${prefix}: height는 0보다 큰 숫자여야 합니다.`);
+  }
+  if (layer.aspectLocked !== undefined && typeof layer.aspectLocked !== 'boolean') {
+    errors.push(`${prefix}: aspectLocked는 boolean이어야 합니다.`);
+  }
+  if (layer.color !== undefined && !HEX_COLOR_PATTERN.test(layer.color)) {
+    errors.push(`${prefix}: color는 HEX 색상이어야 합니다.`);
+  }
+  if (layer.selectedColor !== undefined && !HEX_COLOR_PATTERN.test(layer.selectedColor)) {
+    errors.push(`${prefix}: selectedColor는 HEX 색상이어야 합니다.`);
+  }
+  if (
+    layer.sourceDuration !== null &&
+    layer.sourceDuration !== undefined &&
+    (!Number.isFinite(layer.sourceDuration) || layer.sourceDuration < 0)
+  ) {
+    errors.push(`${prefix}: sourceDuration은 null 또는 0 이상의 숫자여야 합니다.`);
+  }
+
+  return errors;
+}
+
+/**
  * 버전 정보 검증
  * @param {Object} versionInfo - 검증할 버전 정보
  * @returns {string[]} 에러 목록
@@ -349,6 +435,8 @@ export default {
   validateDrawings,
   validateDrawingLayer,
   validateDrawingObject,
+  validateCompositionLayers,
+  validateCompositionLayer,
   validateVersionInfo,
   validateManualVersion,
   isValidVideoFile,

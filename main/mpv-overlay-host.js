@@ -78,6 +78,7 @@ const OVERLAY_HTML = `
     #tooltipMirror,
     #toastMirror,
     #remoteCursorMirror,
+    #compositionMirror,
     #htmlOverlay {
       position: absolute;
       inset: 0;
@@ -86,6 +87,10 @@ const OVERLAY_HTML = `
     }
     #htmlOverlay {
       z-index: 14;
+    }
+    #compositionMirror {
+      z-index: 13;
+      overflow: visible;
     }
     #tooltipMirror {
       z-index: 16;
@@ -141,6 +146,22 @@ const OVERLAY_HTML = `
       white-space: nowrap;
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
       opacity: 0.92;
+    }
+    .composition-layer-mirror {
+      position: absolute;
+      min-width: 1px;
+      min-height: 1px;
+      overflow: visible;
+      pointer-events: none;
+    }
+    .composition-layer-mirror > img,
+    .composition-layer-mirror > video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+      background: transparent;
     }
     .comment-marker {
       width: 24px;
@@ -297,6 +318,7 @@ const OVERLAY_HTML = `
   <div id="overlayRoot">
     <img id="onionCanvasMirror" class="mirror-canvas" alt="">
     <img id="drawingCanvasMirror" class="mirror-canvas" alt="">
+    <div id="compositionMirror"></div>
     <div id="htmlOverlay"></div>
     <div id="markerMirror"></div>
     <div id="tooltipMirror"></div>
@@ -374,6 +396,100 @@ const OVERLAY_HTML = `
       applyRemoteCursorHtml(remoteCursorHtml);
     };
 
+    function getCompositionElement(root, layer) {
+      const children = Array.from(root.children);
+      let wrapper = children.find((child) => child.dataset.layerId === layer.id);
+      const existingMedia = wrapper ? wrapper.querySelector('img, video') : null;
+      const needsRecreate = !wrapper || !existingMedia ||
+        (layer.type === 'video' && existingMedia.tagName !== 'VIDEO') ||
+        (layer.type !== 'video' && existingMedia.tagName !== 'IMG');
+
+      if (!needsRecreate) return wrapper;
+      if (wrapper) wrapper.remove();
+
+      wrapper = document.createElement('div');
+      wrapper.className = 'composition-layer-mirror';
+      wrapper.dataset.layerId = layer.id;
+      const media = document.createElement(layer.type === 'video' ? 'video' : 'img');
+      if (layer.type === 'video') {
+        const element = media;
+        element.muted = true;
+        element.playsInline = true;
+        element.preload = 'metadata';
+      } else {
+        media.alt = '';
+      }
+      wrapper.appendChild(media);
+      root.appendChild(wrapper);
+      return wrapper;
+    }
+
+    function applyCompositionMirrorFrame(root, canvas) {
+      if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
+        root.style.display = 'none';
+        return false;
+      }
+
+      root.style.display = 'block';
+      root.style.left = canvas.left + 'px';
+      root.style.top = canvas.top + 'px';
+      root.style.width = canvas.width + 'px';
+      root.style.height = canvas.height + 'px';
+      root.style.right = 'auto';
+      root.style.bottom = 'auto';
+      root.style.transform = 'none';
+      root.style.transformOrigin = 'center center';
+      return true;
+    }
+
+    function applyCompositionLayers(layers, canvas) {
+      const root = document.getElementById('compositionMirror');
+      if (!root) return;
+      if (!applyCompositionMirrorFrame(root, canvas)) {
+        root.innerHTML = '';
+        return;
+      }
+
+      const nextLayers = Array.isArray(layers) ? layers : [];
+      const nextIds = new Set(nextLayers.map((layer) => layer.id));
+
+      Array.from(root.children).forEach((child) => {
+        if (!nextIds.has(child.dataset.layerId)) child.remove();
+      });
+
+      nextLayers.forEach((layer) => {
+        const wrapper = getCompositionElement(root, layer);
+        const media = wrapper.querySelector('img, video');
+        if (!media) return;
+
+        wrapper.style.left = (layer.x * 100) + '%';
+        wrapper.style.top = (layer.y * 100) + '%';
+        wrapper.style.width = (layer.width * 100) + '%';
+        wrapper.style.height = (layer.height * 100) + '%';
+        wrapper.style.opacity = String(layer.opacity);
+        wrapper.style.zIndex = String(20 + layer.order);
+
+        if (media.getAttribute('src') !== layer.fileUrl) {
+          media.setAttribute('src', layer.fileUrl);
+        }
+
+        if (layer.type === 'video') {
+          const element = media;
+          element.muted = true;
+          const localTime = Math.max(0, Number(layer.localTime) || 0);
+          const seekThreshold = layer.isPlaying ? 0.08 : 0.001;
+          if (Number.isFinite(localTime) && Math.abs((element.currentTime || 0) - localTime) > seekThreshold) {
+            try { element.currentTime = localTime; } catch (_) {}
+          }
+          if (layer.isPlaying) {
+            element.play?.().catch?.(() => {});
+          } else {
+            element.pause?.();
+          }
+        }
+      });
+    }
+
     window.__applyMpvOverlayState = function applyMpvOverlayState(state) {
       const nextState = state || {};
       const htmlOverlay = document.getElementById('htmlOverlay');
@@ -382,6 +498,7 @@ const OVERLAY_HTML = `
       const toastMirror = document.getElementById('toastMirror');
       applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
       applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
+      applyCompositionLayers(nextState.compositionLayers, nextState.canvas);
       htmlOverlay.innerHTML = nextState.htmlOverlayHtml || '';
       markerMirror.innerHTML = nextState.markerHtml || '';
       tooltipMirror.innerHTML = nextState.tooltipHtml || '';
@@ -410,9 +527,48 @@ function normalizeNumber(value, fallback = 0) {
   return Number.isFinite(number) ? Math.round(number) : fallback;
 }
 
+function normalizeFloat(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 function normalizeImageDataUrl(value) {
   const text = typeof value === 'string' ? value : '';
   return text.startsWith('data:image/') ? text : '';
+}
+
+function normalizeCompositionLayer(layer = {}) {
+  const type = layer.type === 'video' ? 'video' : layer.type === 'image' ? 'image' : null;
+  const fileUrl = typeof layer.fileUrl === 'string' && /^file:\/\//i.test(layer.fileUrl)
+    ? layer.fileUrl
+    : '';
+  if (!type || !fileUrl || !layer.id) return null;
+
+  return {
+    id: String(layer.id),
+    name: typeof layer.name === 'string' ? layer.name : '',
+    type,
+    filePath: typeof layer.filePath === 'string' ? layer.filePath : '',
+    fileUrl,
+    order: Math.max(0, normalizeNumber(layer.order, 0)),
+    opacity: Math.max(0, Math.min(1, normalizeFloat(layer.opacity, 1))),
+    x: normalizeFloat(layer.x, 0),
+    y: normalizeFloat(layer.y, 0),
+    width: Math.max(0.001, normalizeFloat(layer.width, 0)),
+    height: Math.max(0.001, normalizeFloat(layer.height, 0)),
+    startTime: Math.max(0, normalizeFloat(layer.startTime, 0)),
+    endTime: Math.max(0, normalizeFloat(layer.endTime, 0)),
+    localTime: Math.max(0, normalizeFloat(layer.localTime, 0)),
+    isPlaying: layer.isPlaying === true
+  };
+}
+
+function normalizeCompositionLayers(layers) {
+  if (!Array.isArray(layers)) return [];
+  return layers
+    .map(normalizeCompositionLayer)
+    .filter(Boolean)
+    .slice(0, 24);
 }
 
 function normalizeOverlayState(state = {}) {
@@ -425,6 +581,7 @@ function normalizeOverlayState(state = {}) {
     htmlOverlayHtml: typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : '',
     toastHtml: typeof state.toastHtml === 'string' ? state.toastHtml : '',
     remoteCursorHtml: typeof state.remoteCursorHtml === 'string' ? state.remoteCursorHtml : '',
+    compositionLayers: normalizeCompositionLayers(state.compositionLayers),
     markerTransform: typeof state.markerTransform === 'string' ? state.markerTransform : '',
     markerTransformOrigin: typeof state.markerTransformOrigin === 'string'
       ? state.markerTransformOrigin
@@ -594,7 +751,8 @@ class MPVOverlayHost {
         backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: true
+        sandbox: true,
+        webSecurity: false
       }
     });
     this.window.setIgnoreMouseEvents?.(true, { forward: true });

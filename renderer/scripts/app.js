@@ -5,6 +5,7 @@
 import { createLogger, setupGlobalErrorHandlers } from './logger.js';
 import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
+import { CompositionLayerManager } from './modules/composition-layer-manager.js';
 import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { ERASER_MODES, normalizeEraserMode } from './modules/drawing-stroke-records.js';
 import { CommentManager, MARKER_COLORS, getAuthorColor } from './modules/comment-manager.js';
@@ -65,8 +66,11 @@ import {
 const log = createLogger('App');
 
 const SUPPORTED_VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+const SUPPORTED_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif'];
 const SUPPORTED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
 const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_AUDIO_EXTENSIONS];
+const SUPPORTED_COMPOSITION_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUPPORTED_IMAGE_EXTENSIONS];
+const ALPHA_PRESERVING_COMPOSITION_EXTENSIONS = ['webm', 'webp'];
 const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
@@ -98,6 +102,15 @@ async function initApp() {
     dropZone: document.getElementById('dropZone'),
     videoWrapper: document.getElementById('videoWrapper'),
     videoPlayer: document.getElementById('videoPlayer'),
+    compositionLayerOverlay: document.getElementById('compositionLayerOverlay'),
+    compositionLayerPanel: document.getElementById('compositionLayerPanel'),
+    compositionLayerPanelHeader: document.getElementById('compositionLayerPanelHeader'),
+    compositionLayerList: document.getElementById('compositionLayerList'),
+    btnLayerCompositing: document.getElementById('btnLayerCompositing'),
+    btnCompositionLayerAdd: document.getElementById('btnCompositionLayerAdd'),
+    btnCompositionLayerUndo: document.getElementById('btnCompositionLayerUndo'),
+    btnCompositionLayerRedo: document.getElementById('btnCompositionLayerRedo'),
+    btnCompositionLayerPanelCollapse: document.getElementById('btnCompositionLayerPanelCollapse'),
     drawingCanvas: document.getElementById('drawingCanvas'),
     onionSkinCanvas: document.getElementById('onionSkinCanvas'),
     drawingTools: document.getElementById('drawingTools'),
@@ -767,6 +780,27 @@ async function initApp() {
     layerHeaders: elements.layerHeaders
   });
 
+  const compositionLayerManager = new CompositionLayerManager({
+    timeline,
+    elements: {
+      overlay: elements.compositionLayerOverlay,
+      panel: elements.compositionLayerPanel,
+      panelHeader: elements.compositionLayerPanelHeader,
+      list: elements.compositionLayerList,
+      addButton: elements.btnCompositionLayerAdd,
+      undoButton: elements.btnCompositionLayerUndo,
+      redoButton: elements.btnCompositionLayerRedo,
+      collapseButton: elements.btnCompositionLayerPanelCollapse
+    },
+    openFileDialog: (options) => window.electronAPI.openFileDialog(options),
+    fileExists: (filePath) => window.electronAPI.fileExists(filePath),
+    showToast,
+    getCurrentTime: () => videoPlayer.currentTime || 0,
+    getBaseDuration: () => videoPlayer.duration || 0,
+    prepareMedia: prepareCompositionLayerMedia,
+    scheduleOverlaySync: scheduleMpvOverlayStateSync
+  });
+
   // 드로잉 매니저
   const drawingManager = new DrawingManager({
     canvas: elements.drawingCanvas,
@@ -796,6 +830,7 @@ async function initApp() {
     commentManager,
     drawingManager,
     highlightManager,
+    compositionLayerManager,
     autoSave: true,
     autoSaveDelay: 500 // 500ms 디바운스
   });
@@ -974,6 +1009,7 @@ async function initApp() {
     const { duration, totalFrames, fps } = e.detail;
     lastFrameConsumerSyncFrame = null;
     timeline.setVideoInfo(duration, fps);
+    compositionLayerManager.setVideoInfo({ duration });
     if (!shouldIgnoreContinuousTimelineUpdateDuringSourceLoad()) {
       updateTimecodeDisplay();
     }
@@ -996,6 +1032,7 @@ async function initApp() {
     // 댓글 마커도 다시 렌더링 (FPS 설정 후)
     renderVideoMarkers();
     updateTimelineMarkers();
+    renderCompositionLayerTimeline();
 
     log.info('비디오 정보', { duration, totalFrames, fps });
   });
@@ -1035,8 +1072,27 @@ async function initApp() {
       updateVideoCommentPlayhead();
     }
 
+    syncCompositionLayerPlaybackState(currentTime, videoPlayer.isPlaying);
+
     if (updateDrawing) {
       drawingManager.setCurrentFrame(currentFrame);
+    }
+  }
+
+  function syncCompositionLayerPlaybackState(currentTime, isPlaying) {
+    const safeCurrentTime = Number.isFinite(Number(currentTime))
+      ? Number(currentTime)
+      : videoPlayer.currentTime;
+    compositionLayerManager.setPlaybackState({
+      currentTime: safeCurrentTime,
+      isPlaying
+    });
+
+    if (
+      document.body.classList.contains('mpv-pilot-mode') &&
+      compositionLayerManager.toJSON().length > 0
+    ) {
+      scheduleMpvOverlayStateSync({ force: true });
     }
   }
 
@@ -1068,6 +1124,7 @@ async function initApp() {
     elements.btnPlay.innerHTML = pauseIconSVG;
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
+    syncCompositionLayerPlaybackState(videoPlayer.currentTime, true);
     getAudioWaveform()?.setPlaying(true);
     // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
     timeline.scrollToPlayhead();
@@ -1079,6 +1136,7 @@ async function initApp() {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
+    syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
     getAudioWaveform()?.setPlaying(false);
     // 일시정지 시점에 누적된 온디맨드 정확-프레임 큐를 소진
     getThumbnailGenerator()?._drainExactQueue?.();
@@ -1088,6 +1146,7 @@ async function initApp() {
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
+    syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
     getAudioWaveform()?.setPlaying(false);
 
     if (cutlistUIState.active && getCutlistManager().isActive()) {
@@ -1614,6 +1673,105 @@ async function initApp() {
   // 타임라인 줌 변경 시 마커 다시 렌더링 (클러스터링 재계산)
   timeline.addEventListener('zoomChanged', () => {
     updateTimelineMarkers();
+    renderCompositionLayerTimeline();
+  });
+
+  function renderCompositionLayerTimeline() {
+    timeline.renderCompositionLayers(compositionLayerManager.toJSON(), {
+      selectedLayerId: compositionLayerManager.selectedLayerId,
+      duration: videoPlayer.duration || timeline.duration || 0
+    });
+  }
+
+  async function addCompositionLayerFromPath(filePath) {
+    if (!videoPlayer.isLoaded) {
+      showToast('먼저 기준 영상을 열어주세요.', 'warning');
+      return null;
+    }
+    const layer = await compositionLayerManager.addLayerFromFile(filePath);
+    if (layer) {
+      compositionLayerManager.togglePanel(true);
+      renderCompositionLayerTimeline();
+      scheduleMpvOverlayStateSync({ force: true });
+      showToast('합성 레이어가 추가되었습니다.', 'success');
+    }
+    return layer;
+  }
+
+  async function chooseDroppedVideoAction(filePath) {
+    const name = String(filePath || '').split(/[\\/]/).filter(Boolean).pop() || '드롭한 영상';
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'composition-drop-choice-overlay';
+      overlay.innerHTML = `
+        <div class="composition-drop-choice-dialog" role="dialog" aria-modal="true" aria-label="드롭한 영상 처리 선택">
+          <div class="composition-drop-choice-title">드롭한 영상 처리</div>
+          <div class="composition-drop-choice-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+          <div class="composition-drop-choice-actions">
+            <button type="button" data-action="open">기준 영상으로 열기</button>
+            <button type="button" class="primary" data-action="overlay">합성 레이어로 얹기</button>
+            <button type="button" data-action="cancel">취소</button>
+          </div>
+        </div>
+      `;
+
+      const cleanup = (action) => {
+        window.removeEventListener('keydown', handleKeyDown);
+        overlay.remove();
+        resolve(action);
+      };
+      const handleKeyDown = (event) => {
+        if (event.key === 'Escape') cleanup('cancel');
+      };
+
+      overlay.addEventListener('click', (event) => {
+        const action = event.target.closest?.('[data-action]')?.dataset.action;
+        if (action) {
+          cleanup(action);
+          return;
+        }
+        if (event.target === overlay) cleanup('cancel');
+      });
+      window.addEventListener('keydown', handleKeyDown);
+      document.body.appendChild(overlay);
+      overlay.querySelector('[data-action="overlay"]')?.focus();
+    });
+  }
+
+  elements.btnLayerCompositing?.addEventListener('click', () => {
+    compositionLayerManager.togglePanel();
+  });
+
+  compositionLayerManager.addEventListener('changed', () => {
+    renderCompositionLayerTimeline();
+    scheduleMpvOverlayStateSync({ force: true });
+  });
+
+  compositionLayerManager.addEventListener('selectionChanged', () => {
+    renderCompositionLayerTimeline();
+    scheduleMpvOverlayStateSync({ force: true });
+  });
+
+  timeline.addEventListener('compositionLayerSelect', (e) => {
+    compositionLayerManager.selectLayer(e.detail.layerId);
+  });
+
+  timeline.addEventListener('compositionLayerVisibilityToggle', (e) => {
+    const layer = compositionLayerManager.getLayer(e.detail.layerId);
+    if (layer) compositionLayerManager.updateLayer(layer.id, { enabled: !layer.enabled });
+  });
+
+  timeline.addEventListener('compositionLayerReorder', (e) => {
+    const { layerId, targetLayerId, placement } = e.detail || {};
+    if (layerId && targetLayerId) {
+      compositionLayerManager.reorderLayerByDisplayTarget(layerId, targetLayerId, placement);
+    }
+  });
+
+  timeline.addEventListener('compositionLayerRangeChange', (e) => {
+    const { layerId, mode, clientX, trackWidth } = e.detail;
+    compositionLayerManager.selectLayer(layerId);
+    compositionLayerManager.startTimelineRangeDrag(layerId, mode, clientX, trackWidth);
   });
 
   // ====== 이벤트 리스너 설정 ======
@@ -1723,6 +1881,15 @@ async function initApp() {
         await openPlaylistFile(file.path);
       } else if (isCutlistFilePath(file.path || file.name)) {
         await openCutlistFile(file.path);
+      } else if (videoPlayer.isLoaded && isVideoFile(file.path || file.name)) {
+        const videoAction = await chooseDroppedVideoAction(file.path);
+        if (videoAction === 'overlay') {
+          await addCompositionLayerFromPath(file.path);
+        } else if (videoAction === 'open') {
+          await loadVideo(file.path);
+        }
+      } else if (videoPlayer.isLoaded && isCompositionLayerFile(file.path || file.name)) {
+        await addCompositionLayerFromPath(file.path);
       } else if (isMediaFile(file.name)) {
         await loadVideo(file.path);
       } else {
@@ -4470,6 +4637,10 @@ async function initApp() {
       elements.onionSkinCanvas.style.transform = transform;
       elements.onionSkinCanvas.style.transformOrigin = 'center center';
     }
+    if (elements.compositionLayerOverlay) {
+      elements.compositionLayerOverlay.style.transform = transform;
+      elements.compositionLayerOverlay.style.transformOrigin = 'center center';
+    }
     // 마커 컨테이너도 동일하게 적용 (영상 확대 시 마커가 따라다님)
     if (markerContainer) {
       markerContainer.style.transform = transform;
@@ -4715,6 +4886,7 @@ async function initApp() {
     const renderArea = getVideoRenderArea();
     const canvas = elements.drawingCanvas;
     const onionCanvas = elements.onionSkinCanvas;
+    const compositionOverlay = elements.compositionLayerOverlay;
 
     if (!renderArea || !canvas) {
       return;
@@ -4740,6 +4912,15 @@ async function initApp() {
       onionCanvas.height = renderArea.videoHeight;
     }
 
+    if (compositionOverlay) {
+      compositionOverlay.style.position = 'absolute';
+      compositionOverlay.style.left = `${renderArea.left}px`;
+      compositionOverlay.style.top = `${renderArea.top}px`;
+      compositionOverlay.style.width = `${renderArea.width}px`;
+      compositionOverlay.style.height = `${renderArea.height}px`;
+      compositionLayerManager.renderOverlay();
+    }
+
     // 영상 어니언 스킨 캔버스도 동일하게 동기화 (TODO: 임시 비활성화)
     /*
     if (videoOnionSkinCanvas) {
@@ -4762,6 +4943,7 @@ async function initApp() {
       left: renderArea.left,
       top: renderArea.top
     });
+    renderCompositionLayerTimeline();
     scheduleMpvOverlayStateSync();
   }
 
@@ -4908,6 +5090,56 @@ async function initApp() {
       window.requestIdleCallback(start, { timeout: 500 });
     } else {
       setTimeout(start, 0);
+    }
+  }
+
+  async function prepareCompositionLayerMedia(filePath) {
+    if (isAlphaPreservingCompositionMedia(filePath)) {
+      return { status: 'ready', filePath, message: '원본 사용' };
+    }
+
+    const api = window.electronAPI;
+    if (!filePath || !api?.ffmpegIsAvailable || !api?.ffmpegProbeCodec || !api?.ffmpegCheckCache || !api?.ffmpegTranscode) {
+      return { status: 'ready', filePath, message: '원본 사용' };
+    }
+
+    try {
+      const ffmpegAvailable = await api.ffmpegIsAvailable();
+      if (!ffmpegAvailable) {
+        return { status: 'ready', filePath, message: 'FFmpeg 없음, 원본 사용' };
+      }
+
+      const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
+      if (!codecInfo?.success || codecInfo.isSupported) {
+        return { status: 'ready', filePath, message: '원본 사용' };
+      }
+
+      const cacheResult = await window.electronAPI.ffmpegCheckCache(filePath);
+      if (cacheResult?.valid && cacheResult.convertedPath) {
+        return { status: 'ready', filePath: cacheResult.convertedPath, message: '캐시 사용' };
+      }
+
+      const transcodeResult = await window.electronAPI.ffmpegTranscode(filePath);
+      if (transcodeResult?.success) {
+        return {
+          status: 'ready',
+          filePath: transcodeResult.outputPath || filePath,
+          message: transcodeResult.fromCache ? '캐시 사용' : '변환 완료'
+        };
+      }
+
+      return {
+        status: 'error',
+        filePath,
+        error: transcodeResult?.error || '변환 실패'
+      };
+    } catch (error) {
+      log.warn('합성 레이어 영상 준비 실패', { filePath, error: error?.message });
+      return {
+        status: 'error',
+        filePath,
+        error: error?.message || '변환 실패'
+      };
     }
   }
 
@@ -5649,6 +5881,10 @@ async function initApp() {
       htmlOverlayHtml: serializeMpvOverlayHtml(),
       toastHtml: serializeMpvOverlayToastHtml(),
       remoteCursorHtml: serializeMpvOverlayRemoteCursorHtml(),
+      compositionLayers: compositionLayerManager.getMpvOverlayLayers({
+        currentTime: videoPlayer.currentTime,
+        isPlaying: videoPlayer.isPlaying
+      }),
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
@@ -6421,6 +6657,13 @@ async function initApp() {
       // 그리기 레이어 UI 및 캔버스 다시 렌더링
       timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
       drawingManager.renderFrame(videoPlayer.currentFrame);
+      compositionLayerManager.setVideoInfo({ duration: videoPlayer.duration });
+      compositionLayerManager.setPlaybackState({
+        currentTime: videoPlayer.currentTime,
+        isPlaying: videoPlayer.isPlaying
+      });
+      compositionLayerManager.render();
+      renderCompositionLayerTimeline();
 
       // 하이라이트 매니저 영상 정보 설정 및 렌더링
       highlightManager.setVideoInfo(videoPlayer.duration, videoPlayer.fps);
@@ -6677,6 +6920,7 @@ async function initApp() {
     elements.btnDrawMode.classList.toggle('active', state.isDrawMode);
     elements.drawingTools.classList.toggle('visible', state.isDrawMode);
     elements.drawingCanvas.classList.toggle('active', state.isDrawMode);
+    elements.videoWrapper?.classList.toggle('drawing-mode', state.isDrawMode);
     // 그리기 모드에서 댓글 마커 클릭 방지
     markerContainer.classList.toggle('drawing-active', state.isDrawMode);
     log.debug('그리기 모드 변경', { isDrawMode: state.isDrawMode });
@@ -9254,6 +9498,11 @@ async function initApp() {
     return SUPPORTED_VIDEO_EXTENSIONS.includes(ext);
   }
 
+  function isAlphaPreservingCompositionMedia(filePath) {
+    const ext = String(filePath || '').toLowerCase().split('.').pop();
+    return ALPHA_PRESERVING_COMPOSITION_EXTENSIONS.includes(ext);
+  }
+
   /**
    * 오디오 파일 확인
    */
@@ -9267,6 +9516,11 @@ async function initApp() {
    */
   function isMediaFile(filename) {
     return isVideoFile(filename) || isAudioFile(filename);
+  }
+
+  function isCompositionLayerFile(filename) {
+    const ext = String(filename || '').toLowerCase().split('.').pop();
+    return SUPPORTED_COMPOSITION_EXTENSIONS.includes(ext);
   }
 
   /**
@@ -13918,7 +14172,7 @@ async function initApp() {
               duration = probeDuration;
               fps = Number.isFinite(probeFps) && probeFps > 0
                 ? probeFps
-              : (Number.isFinite(fps) && fps > 0 ? fps : 24);
+                : (Number.isFinite(fps) && fps > 0 ? fps : 24);
               item.duration = duration;
               item.fps = fps;
             }
@@ -14933,9 +15187,9 @@ async function initApp() {
     const cut = (isCutlistPlaybackLockedToSelectedCut() || cutlistPlaybackTransitioning) && selectedCut
       ? selectedCut
       : findCurrentCut(cutlistManager.getOrderedCuts(), {
-      sourceId: source.id,
-      frame
-    });
+        sourceId: source.id,
+        frame
+      });
     const globalTime = getCutlistGlobalTimeForCutFrame(cut, frame);
     return Number.isFinite(globalTime) ? globalTime : fallbackTime;
   }
