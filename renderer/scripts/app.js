@@ -2225,6 +2225,44 @@ async function initApp() {
            lowerPath.includes('google drive');
   }
 
+  function showVideoLoadingOverlay(message, options = {}) {
+    const loadingOverlay = document.getElementById('videoLoadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+    const loadingProgress = document.getElementById('loadingProgressFill');
+    if (!loadingOverlay) return false;
+
+    loadingOverlay.classList.add('active');
+    if (options.kind) {
+      loadingOverlay.dataset.loadingKind = options.kind;
+    }
+    if (loadingText) {
+      loadingText.textContent = message;
+    }
+    if (loadingProgress && Number.isFinite(Number(options.progress))) {
+      const progress = Math.max(0, Math.min(100, Number(options.progress)));
+      loadingProgress.style.width = `${progress}%`;
+    }
+    return true;
+  }
+
+  function hideVideoLoadingOverlay(kind = '') {
+    const loadingOverlay = document.getElementById('videoLoadingOverlay');
+    if (!loadingOverlay) return;
+    if (kind && loadingOverlay.dataset.loadingKind && loadingOverlay.dataset.loadingKind !== kind) return;
+
+    loadingOverlay.classList.remove('active');
+    delete loadingOverlay.dataset.loadingKind;
+  }
+
+  function showDriveVideoLoadingFeedback(filePath, options = {}) {
+    const isDriveBacked = isGoogleDrivePath(filePath) || isGoogleDrivePath(options.preparedVideoPath);
+    if (!isDriveBacked) return false;
+    return showVideoLoadingOverlay('Google Drive에서 영상 불러오는 중...', {
+      kind: 'drive',
+      progress: 12
+    });
+  }
+
   // 저장된 Google Drive 링크 (파일별)
   const storedDriveLinks = {
     videoUrl: null,
@@ -5452,7 +5490,8 @@ async function initApp() {
     '.codec-error-overlay.active',
     '.app-saving-overlay.active',
     '#videoLoadingOverlay.active',
-    '.transcode-overlay.active'
+    '.transcode-overlay.active',
+    '.composition-layer-context-menu'
   ].join(',');
 
   const MPV_HTML_OVERLAY_STYLE_PROPERTIES = [
@@ -6239,6 +6278,7 @@ async function initApp() {
       stopContinuousPlayback();
     }
 
+    const driveLoadingFeedbackShown = showDriveVideoLoadingFeedback(filePath, { preparedVideoPath });
     const trace = log.trace('loadVideo');
     try {
       // 파일 정보 가져오기
@@ -6469,6 +6509,9 @@ async function initApp() {
 
         elements.videoWrapper?.classList.add('audio-mode');
         document.body.classList.add('audio-mode');
+        if (driveLoadingFeedbackShown && fileIsAudio) {
+          hideVideoLoadingOverlay('drive');
+        }
       } else {
         // 비디오 모드
         state.isAudioMode = false;
@@ -6611,6 +6654,9 @@ async function initApp() {
           await generateThumbnails(thumbnailVideoPath);
         } else {
           getThumbnailGenerator().clear();
+          if (driveLoadingFeedbackShown) {
+            hideVideoLoadingOverlay('drive');
+          }
           document.getElementById('videoLoadingOverlay')?.classList.remove('active');
         }
         if (!canContinueVideoLoad()) return false;
@@ -6693,6 +6739,9 @@ async function initApp() {
       trace.error(error);
       // 에러 발생 시에도 자동 저장 재개
       reviewDataManager.resumeAutoSave();
+      if (driveLoadingFeedbackShown) {
+        hideVideoLoadingOverlay('drive');
+      }
       showToast('파일을 로드할 수 없습니다.', 'error');
       return false;
     } finally {
@@ -6755,6 +6804,7 @@ async function initApp() {
         if (!overlayShown) {
           overlayShown = true;
           loadingOverlay?.classList.add('active');
+          if (loadingOverlay) loadingOverlay.dataset.loadingKind = 'thumbnail';
           loadingProgress.style.width = '0%';
         }
 
@@ -6780,6 +6830,7 @@ async function initApp() {
 
         // 로딩 오버레이 숨김 (외부 파일 열기 등에서 미리 표시된 경우도 포함)
         loadingOverlay?.classList.remove('active');
+        if (loadingOverlay) delete loadingOverlay.dataset.loadingKind;
 
         if (fromCache) {
           log.info('썸네일 캐시에서 로드 완료');
@@ -6830,6 +6881,7 @@ async function initApp() {
       showToast('썸네일 생성에 실패했습니다.', 'warning');
       // 실패 시에도 오버레이 숨김
       loadingOverlay?.classList.remove('active');
+      if (loadingOverlay) delete loadingOverlay.dataset.loadingKind;
     }
   }
 

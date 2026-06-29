@@ -191,6 +191,15 @@ test('composition layer panel uses svg media icons and reliable menu opening', (
   assert.match(mainStyles, /\.composition-layer-opacity input\[type="range"\]/);
 });
 
+test('composition layer context menu is portaled outside the clipped panel', () => {
+  assert.match(compositionManagerSource, /this\.contextMenuPortal = null;/);
+  assert.match(compositionManagerSource, /_renderContextMenuPortal\(\)/);
+  assert.match(compositionManagerSource, /document\.body\.appendChild\(this\.contextMenuPortal\)/);
+  assert.match(compositionManagerSource, /this\.contextMenuPortal\.innerHTML = this\._renderContextMenuHtml\(\);/);
+  assert.match(compositionManagerSource, /list\.innerHTML = itemsHtml;/);
+  assert.doesNotMatch(compositionManagerSource, /list\.innerHTML = `\$\{itemsHtml\}\$\{this\._renderContextMenuHtml\(\)\}`;/);
+});
+
 test('composition file drop asks whether video should open or overlay', () => {
   assert.match(appSource, /async function chooseDroppedVideoAction\(filePath\)/);
   assert.match(appSource, /기준 영상으로 열기/);

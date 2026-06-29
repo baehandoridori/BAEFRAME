@@ -515,6 +515,7 @@ export class CompositionLayerManager extends EventTarget {
     this.panelReorderState = null;
     this.panelResizeState = null;
     this.contextMenuState = null;
+    this.contextMenuPortal = null;
     this.panelContinuousEdit = null;
 
     this._onDocumentPointerMove = this._onDocumentPointerMove.bind(this);
@@ -876,6 +877,7 @@ export class CompositionLayerManager extends EventTarget {
     }
     if (ordered.length === 0) {
       list.innerHTML = '<div class="composition-layer-empty">합성 레이어 없음</div>';
+      this._renderContextMenuPortal();
       return;
     }
 
@@ -926,7 +928,8 @@ export class CompositionLayerManager extends EventTarget {
       `;
     }).join('');
 
-    list.innerHTML = `${itemsHtml}${this._renderContextMenuHtml()}`;
+    list.innerHTML = itemsHtml;
+    this._renderContextMenuPortal();
   }
 
   _getPanelOrderedLayers() {
@@ -966,6 +969,30 @@ export class CompositionLayerManager extends EventTarget {
         </div>
       </div>
     `;
+  }
+
+  _ensureContextMenuPortal() {
+    if (typeof document === 'undefined') return null;
+    if (!this.contextMenuPortal) {
+      this.contextMenuPortal = document.createElement('div');
+      this.contextMenuPortal.className = 'composition-layer-context-menu-portal';
+      this.contextMenuPortal.addEventListener('click', (event) => this._handlePanelClick(event));
+      this.contextMenuPortal.addEventListener('pointerdown', (event) => this._handlePanelPointerDown(event));
+      this.contextMenuPortal.addEventListener('input', (event) => this._handlePanelInput(event));
+      this.contextMenuPortal.addEventListener('change', (event) => this._handlePanelInput(event, { commit: true }));
+      this.contextMenuPortal.addEventListener('wheel', (event) => event.stopPropagation());
+    }
+    if (!this.contextMenuPortal.isConnected) {
+      document.body.appendChild(this.contextMenuPortal);
+    }
+    return this.contextMenuPortal;
+  }
+
+  _renderContextMenuPortal() {
+    const portal = this._ensureContextMenuPortal();
+    if (!portal) return;
+    this.contextMenuPortal.innerHTML = this._renderContextMenuHtml();
+    this.contextMenuPortal.hidden = !this.contextMenuPortal.firstElementChild;
   }
 
   renderOverlay(_options = {}) {
