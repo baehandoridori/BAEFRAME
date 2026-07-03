@@ -74,9 +74,9 @@ test('brush size HUD and bracket shortcuts are wired for drawing mode only', () 
   assert.match(appSource, /sizeadjustend/);
   assert.match(userSettingsSource, /brushSizeDown:\s*\{ key: 'BracketLeft'/);
   assert.match(userSettingsSource, /brushSizeUp:\s*\{ key: 'BracketRight'/);
-  assert.match(appSource, /userSettings\.matchShortcut\('brushSizeDown', e\)/);
-  assert.match(appSource, /userSettings\.matchShortcut\('brushSizeUp', e\)/);
-  assert.match(appSource, /if \(state\.isDrawMode && \(userSettings\.matchShortcut\('brushSizeDown', e\) \|\| userSettings\.matchShortcut\('brushSizeUp', e\)\)\)/);
+  assert.match(appSource, /const matchedBrushSizeAction = userSettings\.findActionByEvent\(e\);/);
+  assert.match(appSource, /matchedBrushSizeAction === 'brushSizeDown'/);
+  assert.match(appSource, /matchedBrushSizeAction === 'brushSizeUp'/);
   assert.match(appSource, /'그리기 보조': \['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp'\]/);
 });
 

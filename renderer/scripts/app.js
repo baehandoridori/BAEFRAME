@@ -10415,9 +10415,10 @@ async function initApp() {
       return;
     }
 
-    if (state.isDrawMode && (userSettings.matchShortcut('brushSizeDown', e) || userSettings.matchShortcut('brushSizeUp', e))) {
+    const matchedBrushSizeAction = userSettings.findActionByEvent(e);
+    if (state.isDrawMode && (matchedBrushSizeAction === 'brushSizeDown' || matchedBrushSizeAction === 'brushSizeUp')) {
       e.preventDefault();
-      const delta = userSettings.matchShortcut('brushSizeDown', e) ? -1 : 1;
+      const delta = matchedBrushSizeAction === 'brushSizeDown' ? -1 : 1;
       adjustBrushSizeBy(delta, { persist: true });
       return;
     }
