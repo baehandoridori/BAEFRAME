@@ -79,6 +79,16 @@ test('clearing the current drawing frame respects locked and hidden layers', () 
   assert.match(appSource, /숨긴 레이어는 지울 수 없습니다/);
 });
 
+test('drawing manager skips stroke record persistence when a save is blocked', () => {
+  const drawEndBody = drawingManagerSource.match(/async _onDrawEnd\(detail\) \{[\s\S]*?\n  \}/)?.[0] || '';
+  assert.match(drawEndBody, /const keyframe = this\._saveCurrentFrameData\(/);
+  assert.match(drawEndBody, /if \(!keyframe\) \{/);
+  assert.ok(
+    drawEndBody.indexOf('if (!keyframe) {') < drawEndBody.indexOf('this._saveRecordableStroke(detail);'),
+    'blocked saves must return before strokeRecords can be appended'
+  );
+});
+
 test('drawing manager records freehand strokes and erases intersecting stroke records', () => {
   assert.match(drawingManagerSource, /createStrokeRecord/);
   assert.match(drawingManagerSource, /removeIntersectingStrokes/);

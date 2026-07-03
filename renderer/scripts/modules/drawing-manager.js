@@ -189,6 +189,12 @@ export class DrawingManager extends EventTarget {
       editHeldSourceKeyframe: (detail?.effectiveTool || detail?.tool) === DrawingTool.ERASER,
       preserveStrokeRecords: isRecordableStrokeTool(detail?.effectiveTool)
     });
+    if (!keyframe) {
+      this._emit('drawend', { frame: this.currentFrame });
+      this._emit('layersChanged');
+      this._activeStrokeBaseData = null;
+      return;
+    }
 
     if (isRecordableStrokeTool(detail?.effectiveTool)) {
       this._saveRecordableStroke(detail);
