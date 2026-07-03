@@ -77,3 +77,14 @@ export function resolveFrameGridTier(pxPerFrame, prevTier) {
     showFrame: tier >= TIER.EVERY_FRAME
   };
 }
+
+export function resolveFrameCellActive(mode, tierResult) {
+  if (mode === 'off') return false;
+  if (mode === 'on') return true;
+  return !!tierResult?.showFrame;
+}
+
+export function computeMinZoomForCellMode(totalFrames, viewportWidth, minFramePx) {
+  if (!totalFrames || !viewportWidth || !minFramePx) return 100;
+  return Math.max(100, Math.ceil((minFramePx * totalFrames * 100) / viewportWidth));
+}

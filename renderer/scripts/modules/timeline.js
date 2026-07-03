@@ -5,7 +5,7 @@
 
 import { createLogger } from '../logger.js';
 import { MARKER_COLORS } from './comment-manager.js';
-import { resolveFrameGridTier } from './frame-grid-tiers.js';
+import { computeMinZoomForCellMode, resolveFrameCellActive, resolveFrameGridTier } from './frame-grid-tiers.js';
 import { findRangeClusters, assignLanes, assignRenderLanes, clusterKey, splitClustersByPixelGap } from './comment-cluster.js';
 import { getTimelineFocalContentX, calculateAnchoredScrollLeft } from './timeline-zoom-core.js';
 import {
@@ -66,6 +66,11 @@ export class Timeline extends EventTarget {
     this.frameGridContainer = null;
     this.gridVisible = true;          // 격자 표시 토글 (기본 ON)
     this._lastFrameGridTier = null;  // 히스테리시스용 직전 단계
+    this.frameCellMode = 'auto';
+    this._frameCellActive = false;
+    this.minFrameCellPx = 8;
+    this._lastDrawingLayers = null;
+    this._lastDrawingActiveLayerId = null;
 
     // 클러스터 펼침/접힘 상태
     this.expandedClusterId = null;  // 현재 펼친 클러스터의 키 (markerId)
@@ -140,6 +145,12 @@ export class Timeline extends EventTarget {
         }
 
         prevContainerWidth = newContainerWidth;
+
+        const prevZoom = this.zoom;
+        this._applyCellModeMinZoom();
+        if (this.zoom !== prevZoom) {
+          this._applyZoom();
+        }
 
         // 플레이헤드 위치 업데이트
         this._updatePlayheadPosition();
@@ -470,9 +481,9 @@ export class Timeline extends EventTarget {
     // 프레임이 4px 이상일 때 개별 프레임 그리드가 표시됨
     // 목표: maxZoom에서 frameWidth >= 5px (여유있게)
     this._calculateDynamicMaxZoom();
+    this._applyCellModeMinZoom();
+    this._applyZoom();
 
-    this._updateRuler();
-    this._updateFrameGrid();
     log.info('비디오 정보 설정', { duration, fps, totalFrames: this.totalFrames, maxZoom: this.maxZoom });
   }
 
@@ -748,7 +759,8 @@ export class Timeline extends EventTarget {
       this.zoomDisplay.textContent = `${Math.round(this.zoom)}%`;
     }
     if (this.zoomSlider) {
-      this.zoomSlider.value = ((this.zoom - this.minZoom) / (this.maxZoom - this.minZoom)) * 100;
+      const zoomRange = Math.max(1, this.maxZoom - this.minZoom);
+      this.zoomSlider.value = ((this.zoom - this.minZoom) / zoomRange) * 100;
     }
   }
 
@@ -802,7 +814,7 @@ export class Timeline extends EventTarget {
 
     // 마크 간격 계산 (화면에 약 6~8개의 마크가 보이도록)
     const scale = this.zoom / 100;
-    const numMarks = Math.ceil(6 * scale);
+    const numMarks = Math.min(Math.ceil(6 * scale), 600);
     const interval = duration / numMarks;
 
     for (let i = 0; i <= numMarks; i++) {
@@ -830,14 +842,21 @@ export class Timeline extends EventTarget {
    * 줌 레벨에 따라 5단 계단식 격자선 표시 (히스테리시스 적용)
    */
   _updateFrameGrid() {
-    if (!this.tracksContainer || this.duration === 0 || this.totalFrames === 0) return;
+    if (!this.tracksContainer || this.duration === 0 || this.totalFrames === 0) {
+      this._updateFrameCellActive(false);
+      return;
+    }
+
+    const frameWidth = this._computePxPerFrame();
+    const tierResult = resolveFrameGridTier(frameWidth, this._lastFrameGridTier ?? null);
+    this._lastFrameGridTier = tierResult.tier;
+    this._updateFrameCellActive(resolveFrameCellActive(this.frameCellMode, tierResult));
 
     // 격자 토글 OFF면 즉시 숨김 후 리턴
     if (!this.gridVisible) {
       if (this.frameGridContainer) {
         this.frameGridContainer.style.display = 'none';
       }
-      this._lastFrameGridTier = null;
       return;
     }
 
@@ -853,13 +872,20 @@ export class Timeline extends EventTarget {
       this.tracksContainer.appendChild(this.frameGridContainer);
     }
 
-    const containerWidth = this.tracksContainer.offsetWidth;
-    const frameWidth = containerWidth / this.totalFrames;
-
-    const tierResult = resolveFrameGridTier(frameWidth, this._lastFrameGridTier ?? null);
-    this._lastFrameGridTier = tierResult.tier;
-
     this._renderFrameGridTiered(frameWidth, tierResult);
+  }
+
+  _computePxPerFrame() {
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    const totalFrames = this._getTimelineTotalFrames() || this.totalFrames || 0;
+    return totalFrames > 0 ? containerWidth / totalFrames : 0;
+  }
+
+  _updateFrameCellActive(active) {
+    const next = active === true;
+    if (this._frameCellActive === next) return;
+    this._frameCellActive = next;
+    this._refreshDrawingLayerRender();
   }
 
   /**
@@ -868,6 +894,22 @@ export class Timeline extends EventTarget {
   setGridVisible(visible) {
     this.gridVisible = !!visible;
     this._updateFrameGrid();
+  }
+
+  setFrameCellMode(mode) {
+    this.frameCellMode = ['on', 'off', 'auto'].includes(mode) ? mode : 'auto';
+    this._applyCellModeMinZoom();
+    this._applyZoom();
+  }
+
+  _applyCellModeMinZoom() {
+    const viewportWidth = this.timelineTracks?.clientWidth || 0;
+    this.minZoom = this.frameCellMode === 'on'
+      ? computeMinZoomForCellMode(this.totalFrames, viewportWidth, this.minFrameCellPx)
+      : 100;
+    this.maxZoom = Math.max(this.maxZoom, this.minZoom);
+    if (this.zoom < this.minZoom) this.zoom = this.minZoom;
+    this._updateZoomDisplay();
   }
 
   /**
@@ -1179,6 +1221,9 @@ export class Timeline extends EventTarget {
   renderDrawingLayers(layers, activeLayerId) {
     if (!this.tracksContainer || !this.layerHeaders) return;
 
+    this._lastDrawingLayers = layers;
+    this._lastDrawingActiveLayerId = activeLayerId;
+
     // 기존 그리기 레이어 트랙 제거
     const existingTracks = this.tracksContainer.querySelectorAll('.drawing-track-row');
     existingTracks.forEach(t => t.remove());
@@ -1191,6 +1236,11 @@ export class Timeline extends EventTarget {
       this._renderLayerHeader(layer, activeLayerId === layer.id);
       this._renderLayerTrack(layer, activeLayerId === layer.id);
     });
+  }
+
+  _refreshDrawingLayerRender() {
+    if (!this._lastDrawingLayers) return;
+    this.renderDrawingLayers(this._lastDrawingLayers, this._lastDrawingActiveLayerId);
   }
 
   /**
@@ -1287,16 +1337,24 @@ export class Timeline extends EventTarget {
         keyframeContainer.appendChild(rangeBar);
       }
 
-      // 키프레임 마커 - 격자 칸 중앙에 배치
+      // 키프레임 마커 - 점 모드 또는 정확한 1프레임 셀 모드로 표시
       const marker = document.createElement('div');
-      marker.className = `keyframe-marker-dot${range.keyframe.isEmpty ? ' empty' : ''}`;
+      const emptyClass = range.keyframe.isEmpty ? ' empty' : '';
+      if (this._frameCellActive && this.totalFrames > 0) {
+        marker.className = `keyframe-cell keyframe-marker-dot${emptyClass}`;
+        marker.style.left = `${(range.start / this.totalFrames) * 100}%`;
+        marker.style.width = `${(1 / this.totalFrames) * 100}%`;
+        marker.style.setProperty('--kf-color', layer.color);
+        marker.innerHTML = '<span class="keyframe-cell-dot" aria-hidden="true"></span>';
+      } else {
+        marker.className = `keyframe-marker-dot${emptyClass}`;
+        // 프레임 중앙에 배치 (프레임 시작 + 0.5프레임)
+        const markerLeft = ((range.start + 0.5) / this.totalFrames) * 100;
+        marker.style.left = `${markerLeft}%`;
+        marker.style.background = range.keyframe.isEmpty ? 'transparent' : layer.color;
+      }
       marker.dataset.frame = range.start;
       marker.dataset.layerId = layer.id;
-
-      // 프레임 중앙에 배치 (프레임 시작 + 0.5프레임)
-      const markerLeft = ((range.start + 0.5) / this.totalFrames) * 100;
-      marker.style.left = `${markerLeft}%`;
-      marker.style.background = range.keyframe.isEmpty ? 'transparent' : layer.color;
       marker.title = `F${range.start}${range.keyframe.isEmpty ? ' (빈 키프레임)' : ''}`;
 
       // 선택 상태
@@ -1489,7 +1547,7 @@ export class Timeline extends EventTarget {
     // getBoundingClientRect()는 이미 스크롤 위치를 반영하므로 scrollLeft 추가 불필요
     const x = e.clientX - containerRect.left;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const newFrame = Math.round(percent * (this.totalFrames - 1));
+    const newFrame = Math.min(this.totalFrames - 1, Math.floor(percent * this.totalFrames));
 
     // 고스트 클립 위치 업데이트
     const ghostPercent = (newFrame / this.totalFrames) * 100;
@@ -1497,7 +1555,8 @@ export class Timeline extends EventTarget {
 
     // 툴팁 위치 및 내용 업데이트
     if (this.dragTooltip) {
-      this.dragTooltip.style.left = `${ghostPercent}%`;
+      const tooltipPercent = ((newFrame + 0.5) / this.totalFrames) * 100;
+      this.dragTooltip.style.left = `${tooltipPercent}%`;
       this.dragTooltip.textContent = `F${newFrame}`;
     }
 
@@ -1552,20 +1611,16 @@ export class Timeline extends EventTarget {
    * 드래그 고스트 생성
    */
   _createDragGhost(e, frame) {
-    const { element: clipElement, layerId } = this.draggedKeyframe;
+    const { element: clipElement } = this.draggedKeyframe;
 
-    // 클립 요소 복제하여 고스트로 사용
-    this.dragGhost = clipElement.cloneNode(true);
-    this.dragGhost.className = 'drawing-clip keyframe-drag-ghost-clip';
-
-    // 원본 클립의 스타일 복사하고 투명도 적용
-    const clipRect = clipElement.getBoundingClientRect();
-    const trackRect = clipElement.parentElement.getBoundingClientRect();
-
-    this.dragGhost.style.cssText = clipElement.style.cssText;
-    this.dragGhost.style.opacity = '0.5';
-    this.dragGhost.style.pointerEvents = 'none';
-    this.dragGhost.style.zIndex = '100';
+    // 정확히 1프레임 칸을 나타내는 고스트를 새로 만든다.
+    this.dragGhost = document.createElement('div');
+    this.dragGhost.className = 'keyframe-drag-ghost-cell';
+    const ghostLeftPercent = (frame / this.totalFrames) * 100;
+    const ghostWidthPercent = (1 / this.totalFrames) * 100;
+    this.dragGhost.style.left = `${ghostLeftPercent}%`;
+    this.dragGhost.style.width = `${ghostWidthPercent}%`;
+    this.dragGhost.dataset.targetFrame = frame;
 
     // 원본 클립을 반투명하게 처리
     clipElement.style.opacity = '0.3';
@@ -1574,7 +1629,7 @@ export class Timeline extends EventTarget {
     this.dragTooltip = document.createElement('div');
     this.dragTooltip.className = 'keyframe-drag-ghost';
     this.dragTooltip.textContent = `F${frame}`;
-    const percent = (frame / this.totalFrames) * 100;
+    const percent = ((frame + 0.5) / this.totalFrames) * 100;
     this.dragTooltip.style.left = `${percent}%`;
 
     clipElement.parentElement.appendChild(this.dragGhost);

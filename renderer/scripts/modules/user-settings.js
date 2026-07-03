@@ -192,6 +192,8 @@ export class UserSettings extends EventTarget {
       showRemoteCursors: true,
       // 타임라인 프레임 격자 표시 여부
       showFrameGrid: true,
+      // 타임라인 프레임 1칸 셀 표시 모드
+      frameCellMode: 'auto',
       // 타임라인 댓글 지속시간 구간 표시 여부
       showCommentTimelineRanges: true,
       // 100% 이하 줌에서 영상을 중앙에 고정할지 여부
@@ -573,6 +575,19 @@ export class UserSettings extends EventTarget {
     // 향후 외부에서 설정 변경을 감지해야 할 경우를 위한 hook
     this._emit('showFrameGridChanged', { show: this.settings.showFrameGrid });
     log.info('프레임 격자 설정 변경됨', { show });
+  }
+
+  getFrameCellMode() {
+    const mode = this.settings.frameCellMode;
+    return ['on', 'off', 'auto'].includes(mode) ? mode : 'auto';
+  }
+
+  setFrameCellMode(mode) {
+    if (!['on', 'off', 'auto'].includes(mode)) return;
+    this.settings.frameCellMode = mode;
+    this._save();
+    this._emit('frameCellModeChanged', { mode });
+    log.info('프레임 셀 모드 변경됨', { mode });
   }
 
   getShowCommentTimelineRanges() {

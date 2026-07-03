@@ -2964,6 +2964,32 @@ body.app-fullscreen .video-comment-overlay-controls {
   color: var(--accent-primary, #ffd000);
 }
 
+.frame-cell-mode-btn {
+  gap: 4px;
+  min-width: 48px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.frame-cell-mode-btn[data-mode="off"] {
+  color: var(--text-tertiary);
+}
+
+.frame-cell-mode-badge {
+  min-width: 16px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  color: currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  line-height: 1;
+}
+
 /* 타임라인 줌 버튼들 */
 .zoom-buttons {
   display: flex;
@@ -4384,6 +4410,52 @@ body.app-fullscreen .video-comment-overlay-controls {
   border: 2px dashed white;
 }
 
+/* 프레임 1칸 키프레임 셀 */
+.keyframe-container .keyframe-cell {
+  top: 0;
+  width: auto;
+  height: 100%;
+  transform: none;
+  border-radius: 0;
+  border: 1px solid var(--kf-color, #4a9eff);
+  background: color-mix(in srgb, var(--kf-color, #4a9eff) 30%, transparent);
+  box-sizing: border-box;
+  min-width: 3px;
+  box-shadow: none;
+}
+
+.keyframe-container .keyframe-cell:hover {
+  transform: none;
+  filter: brightness(1.3);
+}
+
+.keyframe-cell .keyframe-cell-dot {
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  transform: translateX(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #fff;
+  pointer-events: none;
+}
+
+.keyframe-cell.empty {
+  background: transparent;
+  border-style: dashed;
+}
+
+.keyframe-cell.empty .keyframe-cell-dot {
+  background: transparent;
+  border: 1px solid #fff;
+}
+
+.keyframe-container .keyframe-cell.selected {
+  border-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
 /* 선택된 프레임 셀 */
 .frame-cell.selected {
   background: var(--accent-glow-strong);
@@ -4498,6 +4570,19 @@ body.app-fullscreen .video-comment-overlay-controls {
   z-index: 100 !important;
   outline: 2px dashed var(--accent-primary) !important;
   outline-offset: -2px;
+}
+
+.keyframe-drag-ghost-cell {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 2px;
+  box-sizing: border-box;
+  background: rgba(255, 208, 0, 0.3);
+  outline: 2px dashed var(--accent-primary);
+  outline-offset: -2px;
+  pointer-events: none;
+  z-index: 100;
 }
 
 /* 선택 박스 */

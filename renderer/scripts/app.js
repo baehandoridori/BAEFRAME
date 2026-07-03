@@ -131,6 +131,7 @@ async function initApp() {
     frameIndicator: document.getElementById('frameIndicator'),
     btnDrawMode: document.getElementById('btnDrawMode'),
     btnGridToggle: document.getElementById('btnGridToggle'),
+    btnFrameCellMode: document.getElementById('btnFrameCellMode'),
     btnAddComment: document.getElementById('btnAddComment'),
     btnPrevComment: document.getElementById('btnPrevComment'),
     btnNextComment: document.getElementById('btnNextComment'),
@@ -10683,6 +10684,31 @@ async function initApp() {
       _syncGridToggleUI(next);
     });
   }
+
+  const FRAME_CELL_MODE_ORDER = ['auto', 'on', 'off'];
+  const FRAME_CELL_MODE_LABEL = { auto: 'A', on: 'ON', off: 'OFF' };
+
+  function _syncFrameCellModeUI(mode) {
+    if (!elements.btnFrameCellMode) return;
+    elements.btnFrameCellMode.dataset.mode = mode;
+    elements.btnFrameCellMode.classList.toggle('active', mode !== 'off');
+    elements.btnFrameCellMode.title = `프레임 1칸 표시: ${mode.toUpperCase()} (클릭으로 전환)`;
+    const badge = document.getElementById('frameCellModeBadge');
+    if (badge) badge.textContent = FRAME_CELL_MODE_LABEL[mode] || 'A';
+  }
+
+  const initFrameCellMode = userSettings.getFrameCellMode();
+  timeline.setFrameCellMode(initFrameCellMode);
+  _syncFrameCellModeUI(initFrameCellMode);
+
+  elements.btnFrameCellMode?.addEventListener('click', () => {
+    const cur = userSettings.getFrameCellMode();
+    const next = FRAME_CELL_MODE_ORDER[(FRAME_CELL_MODE_ORDER.indexOf(cur) + 1) % 3];
+    userSettings.setFrameCellMode(next);
+    timeline.setFrameCellMode(next);
+    _syncFrameCellModeUI(next);
+    showToast(`프레임 1칸 표시: ${next.toUpperCase()}`, 'info');
+  });
 
   function _syncCommentTimelineRangesToggleUI(show) {
     if (elements.toggleCommentTimelineRanges) {
