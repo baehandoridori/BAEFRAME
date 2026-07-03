@@ -26,6 +26,10 @@ export class DrawingManager extends EventTarget {
     // 캔버스 요소
     this.canvas = options.canvas;
     this.drawingCanvas = new DrawingCanvas(this.canvas);
+    this.drawingCanvas.canDraw = () => {
+      const layer = this.getActiveLayer();
+      return !layer || (layer.locked !== true && layer.visible !== false);
+    };
 
     // 어니언 스킨 전용 캔버스 (별도 레이어)
     this.onionSkinCanvasElement = options.onionSkinCanvas;
@@ -95,6 +99,14 @@ export class DrawingManager extends EventTarget {
     this.drawingCanvas.addEventListener('drawend', (e) => {
       void this._onDrawEnd(e.detail);
     });
+
+    this.drawingCanvas.addEventListener('drawblocked', (e) => {
+      const layer = this.getActiveLayer();
+      this._emit('drawblocked', {
+        ...e.detail,
+        reason: layer?.locked ? 'locked' : 'hidden'
+      });
+    });
   }
 
   /**
@@ -107,7 +119,7 @@ export class DrawingManager extends EventTarget {
     }
 
     const layer = this.getActiveLayer();
-    if (!layer) return;
+    if (!layer || layer.locked || layer.visible === false) return;
 
     // Undo를 위해 현재 상태 저장 (그리기 시작 전)
     if (!this._isUndoingOrRedoing) {
@@ -177,6 +189,12 @@ export class DrawingManager extends EventTarget {
       editHeldSourceKeyframe: (detail?.effectiveTool || detail?.tool) === DrawingTool.ERASER,
       preserveStrokeRecords: isRecordableStrokeTool(detail?.effectiveTool)
     });
+    if (!keyframe) {
+      this._emit('drawend', { frame: this.currentFrame });
+      this._emit('layersChanged');
+      this._activeStrokeBaseData = null;
+      return;
+    }
 
     if (isRecordableStrokeTool(detail?.effectiveTool)) {
       this._saveRecordableStroke(detail);
@@ -194,8 +212,11 @@ export class DrawingManager extends EventTarget {
    */
   _saveCurrentFrameData(options = {}) {
     const layer = this.getActiveLayer();
-    if (!layer) {
-      log.warn('저장 실패: 활성 레이어 없음');
+    if (!layer || layer.locked || layer.visible === false) {
+      log.warn('저장 실패: 활성 레이어 없음 또는 그리기 차단 상태');
+      if (layer?.locked || layer?.visible === false) {
+        this.renderFrame(this.currentFrame);
+      }
       return null;
     }
 
@@ -314,7 +335,7 @@ export class DrawingManager extends EventTarget {
 
   async _eraseStrokeRecords(detail) {
     const layer = this.getActiveLayer();
-    if (!layer || layer.locked) return false;
+    if (!layer || layer.locked || layer.visible === false) return false;
 
     const keyframe = this._getEditableKeyframeForCurrentFrame({
       editHeldSourceKeyframe: true,

@@ -42,10 +42,51 @@ test('eraser tool hides color-only controls and uses a neutral size preview', ()
 test('drawing canvas resolves Ctrl pen and brush strokes as eraser at stroke start', () => {
   assert.match(drawingCanvasSource, /setEraserMode\(mode\)/);
   assert.match(drawingCanvasSource, /_resolveEffectiveTool\(e\)/);
-  assert.match(drawingCanvasSource, /e\.ctrlKey/);
+  assert.match(drawingCanvasSource, /this\._modifierCtrlDown = false;/);
+  assert.match(drawingCanvasSource, /_isCtrlActive\(e\)/);
+  assert.match(drawingCanvasSource, /e\?\.ctrlKey === true \|\| this\._modifierCtrlDown === true/);
   assert.match(drawingCanvasSource, /this\.activeTool = this\._resolveEffectiveTool\(e\);/);
   assert.match(drawingCanvasSource, /effectiveTool: this\.activeTool/);
   assert.match(drawingCanvasSource, /eraserMode: this\.activeEraserMode/);
+});
+
+test('drawing input is blocked before stroke events when the active layer is locked or hidden', () => {
+  const mouseDownBody = drawingCanvasSource.match(/_onMouseDown\(e\) \{[\s\S]*?\n  \}/)?.[0] || '';
+  assert.match(drawingCanvasSource, /this\.canDraw = null;/);
+  assert.match(mouseDownBody, /typeof this\.canDraw === 'function' && !this\.canDraw\(\)/);
+  assert.match(mouseDownBody, /this\._emit\('drawblocked'/);
+  assert.ok(
+    mouseDownBody.indexOf("this._emit('drawblocked'") < mouseDownBody.indexOf('this.isDrawing = true'),
+    'blocked input must return before isDrawing enables drawstart/drawmove/drawend'
+  );
+
+  assert.match(drawingManagerSource, /this\.drawingCanvas\.canDraw = \(\) => \{/);
+  assert.match(drawingManagerSource, /layer\.locked !== true && layer\.visible !== false/);
+  assert.match(drawingManagerSource, /this\.drawingCanvas\.addEventListener\('drawblocked'/);
+  assert.match(drawingManagerSource, /reason: layer\?\.locked \? 'locked' : 'hidden'/);
+  assert.match(drawingManagerSource, /if \(!layer \|\| layer\.locked \|\| layer\.visible === false\) return;/);
+  assert.match(drawingManagerSource, /if \(!layer \|\| layer\.locked \|\| layer\.visible === false\) \{/);
+
+  assert.match(appSource, /drawingManager\.addEventListener\('drawblocked'/);
+  assert.match(appSource, /잠긴 레이어에는 그릴 수 없습니다/);
+  assert.match(appSource, /숨긴 레이어에는 그릴 수 없습니다/);
+});
+
+test('clearing the current drawing frame respects locked and hidden layers', () => {
+  assert.match(appSource, /elements\.btnClearDrawing\?\.addEventListener\('click'/);
+  assert.match(appSource, /if \(layer\.locked \|\| layer\.visible === false\) \{/);
+  assert.match(appSource, /잠긴 레이어는 지울 수 없습니다/);
+  assert.match(appSource, /숨긴 레이어는 지울 수 없습니다/);
+});
+
+test('drawing manager skips stroke record persistence when a save is blocked', () => {
+  const drawEndBody = drawingManagerSource.match(/async _onDrawEnd\(detail\) \{[\s\S]*?\n  \}/)?.[0] || '';
+  assert.match(drawEndBody, /const keyframe = this\._saveCurrentFrameData\(/);
+  assert.match(drawEndBody, /if \(!keyframe\) \{/);
+  assert.ok(
+    drawEndBody.indexOf('if (!keyframe) {') < drawEndBody.indexOf('this._saveRecordableStroke(detail);'),
+    'blocked saves must return before strokeRecords can be appended'
+  );
 });
 
 test('drawing manager records freehand strokes and erases intersecting stroke records', () => {

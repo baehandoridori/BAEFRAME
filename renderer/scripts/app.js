@@ -1277,6 +1277,14 @@ async function initApp() {
     scheduleMpvOverlayStateSync({ force: true });
   });
 
+  drawingManager.addEventListener('drawblocked', (e) => {
+    const reason = e.detail?.reason;
+    const message = reason === 'hidden'
+      ? '숨긴 레이어에는 그릴 수 없습니다. 레이어를 보이게 켠 뒤 다시 시도하세요.'
+      : '잠긴 레이어에는 그릴 수 없습니다. 잠금을 해제한 뒤 다시 시도하세요.';
+    showToast(message, 'warning');
+  });
+
   // 프레임 렌더링 완료 시
   drawingManager.addEventListener('frameRendered', (e) => {
     log.debug('프레임 렌더링 완료', { frame: e.detail.frame });
@@ -2966,6 +2974,14 @@ async function initApp() {
   elements.btnClearDrawing?.addEventListener('click', () => {
     const layer = drawingManager.getActiveLayer();
     if (layer) {
+      if (layer.locked || layer.visible === false) {
+        const message = layer.visible === false
+          ? '숨긴 레이어는 지울 수 없습니다. 레이어를 보이게 켠 뒤 다시 시도하세요.'
+          : '잠긴 레이어는 지울 수 없습니다. 잠금을 해제한 뒤 다시 시도하세요.';
+        showToast(message, 'warning');
+        return;
+      }
+
       // 현재 키프레임의 데이터를 지움
       const keyframe = layer.getKeyframeAtFrame(drawingManager.currentFrame);
       if (keyframe && !keyframe.isEmpty) {
