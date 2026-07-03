@@ -50,6 +50,12 @@ export class DrawingCanvas extends EventTarget {
     this.isDrawing = false;
     this.canDraw = null;
     this._modifierCtrlDown = false;
+    this.isSizeAdjusting = false;
+    this._sizeAdjustStartX = 0;
+    this._sizeAdjustStartY = 0;
+    this._sizeAdjustStartSize = 3;
+    this._sizeAdjustMoveHandler = null;
+    this._sizeAdjustEndHandler = null;
     this.lastX = 0;
     this.lastY = 0;
     this.startX = 0;
@@ -85,6 +91,11 @@ export class DrawingCanvas extends EventTarget {
     this.canvas.addEventListener('mousemove', (e) => this._onMouseMove(e), { signal });
     this.canvas.addEventListener('mouseup', (e) => this._onMouseUp(e), { signal });
     this.canvas.addEventListener('mouseleave', (e) => this._onMouseUp(e), { signal });
+    this.canvas.addEventListener('contextmenu', (e) => {
+      if (e.altKey || this.isSizeAdjusting) {
+        e.preventDefault();
+      }
+    }, { signal });
 
     // 터치 이벤트 (태블릿 지원)
     this.canvas.addEventListener('touchstart', (e) => this._onTouchStart(e), { signal });
@@ -142,6 +153,12 @@ export class DrawingCanvas extends EventTarget {
   _onMouseDown(e) {
     if (!this.canvas.classList.contains('active')) return;
 
+    if (e.altKey && (e.button === 0 || e.button === 2)) {
+      e.preventDefault?.();
+      this._beginSizeAdjust(e);
+      return;
+    }
+
     if (this._isCtrlActive(e)) {
       e.preventDefault?.();
     }
@@ -186,6 +203,63 @@ export class DrawingCanvas extends EventTarget {
       });
     } else if (this._isFreeDrawTool(this.activeTool) && !this._isStrokeEraserActive()) {
       this._drawPoint(coords.x, coords.y, this.activeTool);
+    }
+  }
+
+  _beginSizeAdjust(e) {
+    if (this.isSizeAdjusting) return;
+
+    this.isSizeAdjusting = true;
+    this._sizeAdjustStartX = e.clientX;
+    this._sizeAdjustStartY = e.clientY;
+    this._sizeAdjustStartSize = Math.min(50, Math.max(1, parseInt(this.lineWidth) || 3));
+    this._sizeAdjustMoveHandler = (event) => this._updateSizeAdjust(event);
+    this._sizeAdjustEndHandler = () => this._endSizeAdjust();
+
+    window.addEventListener('mousemove', this._sizeAdjustMoveHandler, { signal: this._abortController.signal });
+    window.addEventListener('mouseup', this._sizeAdjustEndHandler, { signal: this._abortController.signal });
+
+    this._emit('sizeadjuststart', {
+      size: this.lineWidth,
+      clientX: e.clientX,
+      clientY: e.clientY
+    });
+  }
+
+  _updateSizeAdjust(e) {
+    if (!this.isSizeAdjusting) return;
+    e.preventDefault?.();
+
+    const delta = e.clientX - this._sizeAdjustStartX;
+    const nextSize = Math.min(50, Math.max(1, Math.round(this._sizeAdjustStartSize + (delta / 4))));
+    this.setLineWidth(nextSize);
+    this._emit('sizeadjust', {
+      size: nextSize,
+      clientX: this._sizeAdjustStartX,
+      clientY: this._sizeAdjustStartY
+    });
+  }
+
+  _endSizeAdjust() {
+    if (!this.isSizeAdjusting) return;
+    this.isSizeAdjusting = false;
+
+    this._removeSizeAdjustListeners();
+    this._emit('sizeadjustend', {
+      size: this.lineWidth,
+      clientX: this._sizeAdjustStartX,
+      clientY: this._sizeAdjustStartY
+    });
+  }
+
+  _removeSizeAdjustListeners() {
+    if (this._sizeAdjustMoveHandler) {
+      window.removeEventListener('mousemove', this._sizeAdjustMoveHandler);
+      this._sizeAdjustMoveHandler = null;
+    }
+    if (this._sizeAdjustEndHandler) {
+      window.removeEventListener('mouseup', this._sizeAdjustEndHandler);
+      this._sizeAdjustEndHandler = null;
     }
   }
 
@@ -735,8 +809,8 @@ export class DrawingCanvas extends EventTarget {
    * 선 두께 설정
    */
   setLineWidth(width) {
-    this.lineWidth = width;
-    log.debug('선 두께 변경', { width });
+    this.lineWidth = Math.min(50, Math.max(1, parseInt(width) || 3));
+    log.debug('선 두께 변경', { width: this.lineWidth });
   }
 
   /**
@@ -781,11 +855,13 @@ export class DrawingCanvas extends EventTarget {
    * 정리
    */
   destroy() {
+    this._endSizeAdjust();
     // AbortController를 통해 모든 이벤트 리스너 제거
     if (this._abortController) {
       this._abortController.abort();
       this._abortController = null;
     }
+    this._removeSizeAdjustListeners();
 
     // 임시 캔버스 정리
     this.tempCanvas = null;

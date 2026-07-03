@@ -57,7 +57,9 @@ const DEFAULT_SHORTCUTS = {
   // 그리기 보조
   onionSkinToggle: { key: 'Digit1', ctrl: false, shift: false, alt: false, label: '어니언 스킨 토글' },
   prevFrameDraw: { key: 'KeyA', ctrl: false, shift: true, alt: false, label: '1프레임 이전 (Shift+A)' },
-  nextFrameDraw: { key: 'KeyD', ctrl: false, shift: true, alt: false, label: '1프레임 다음 (Shift+D)' }
+  nextFrameDraw: { key: 'KeyD', ctrl: false, shift: true, alt: false, label: '1프레임 다음 (Shift+D)' },
+  brushSizeDown: { key: 'BracketLeft', ctrl: false, shift: false, alt: false, label: '브러시 크기 줄이기' },
+  brushSizeUp: { key: 'BracketRight', ctrl: false, shift: false, alt: false, label: '브러시 크기 키우기' }
 };
 
 // 이름별 테마 매핑
@@ -199,7 +201,18 @@ export class UserSettings extends EventTarget {
       // 100% 이하 줌에서 영상을 중앙에 고정할지 여부
       videoCenterLocked: true,
       // 이 PC에서 마지막으로 사용한 지우개 방식
-      eraserMode: 'pixel'
+      eraserMode: 'pixel',
+      // 이 PC에서 마지막으로 사용한 브러시 설정
+      brushSettings: {
+        tool: 'brush',
+        color: '#ff4757',
+        brushSize: 3,
+        eraserSize: 20,
+        opacity: 100,
+        strokeEnabled: false,
+        strokeWidth: 3,
+        strokeColor: '#ffffff'
+      }
     };
 
     this._ready = false;
@@ -636,6 +649,40 @@ export class UserSettings extends EventTarget {
     this._save();
     this._emit('eraserModeChanged', { mode: this.settings.eraserMode });
     log.info('지우개 방식 설정 변경됨', { mode: this.settings.eraserMode });
+  }
+
+  getBrushSettings() {
+    const defaults = {
+      tool: 'brush',
+      color: '#ff4757',
+      brushSize: 3,
+      eraserSize: 20,
+      opacity: 100,
+      strokeEnabled: false,
+      strokeWidth: 3,
+      strokeColor: '#ffffff'
+    };
+    const merged = { ...defaults, ...(this.settings.brushSettings || {}) };
+    const validTools = ['pen', 'brush', 'eraser', 'line', 'arrow', 'rect', 'circle'];
+
+    merged.tool = validTools.includes(merged.tool) ? merged.tool : defaults.tool;
+    merged.color = typeof merged.color === 'string' ? merged.color : defaults.color;
+    merged.brushSize = Math.min(50, Math.max(1, parseInt(merged.brushSize) || 3));
+    merged.eraserSize = Math.min(50, Math.max(1, parseInt(merged.eraserSize) || 20));
+    merged.opacity = Math.min(100, Math.max(10, parseInt(merged.opacity) || 100));
+    merged.strokeEnabled = merged.strokeEnabled === true;
+    merged.strokeWidth = Math.min(10, Math.max(1, parseInt(merged.strokeWidth) || 3));
+    merged.strokeColor = typeof merged.strokeColor === 'string' ? merged.strokeColor : defaults.strokeColor;
+
+    return merged;
+  }
+
+  setBrushSettings(partial) {
+    this.settings.brushSettings = { ...this.getBrushSettings(), ...partial };
+    this.settings.brushSettings = this.getBrushSettings();
+    this._save();
+    this._emit('brushSettingsChanged', { brushSettings: this.settings.brushSettings });
+    log.info('브러시 설정 변경됨', partial);
   }
 
   getLightMode() {
