@@ -89,6 +89,32 @@ test('drawing manager skips stroke record persistence when a save is blocked', (
   );
 });
 
+test('drawing layer rendering uses static below and above canvases around the active layer', () => {
+  assert.match(indexSource, /id="layersBelowCanvas"/);
+  assert.match(indexSource, /id="layersAboveCanvas"/);
+  assert.match(mainCss, /\.layers-below-layer/);
+  assert.match(mainCss, /\.layers-above-layer/);
+
+  assert.match(appSource, /layersBelowCanvas: document\.getElementById\('layersBelowCanvas'\)/);
+  assert.match(appSource, /layersAboveCanvas: document\.getElementById\('layersAboveCanvas'\)/);
+  assert.match(appSource, /layersBelowCanvas: elements\.layersBelowCanvas/);
+  assert.match(appSource, /layersAboveCanvas: elements\.layersAboveCanvas/);
+  assert.match(appSource, /getCompositedDrawingOverlayDataUrl\(\)/);
+  assert.match(appSource, /drawingDataUrl: getCompositedDrawingOverlayDataUrl\(\)/);
+
+  assert.match(drawingManagerSource, /partitionDrawingLayersForActive\(layers = \[\], activeLayerId\)/);
+  assert.match(drawingManagerSource, /this\.layersBelowCanvas = options\.layersBelowCanvas/);
+  assert.match(drawingManagerSource, /this\.layersAboveCanvas = options\.layersAboveCanvas/);
+  assert.match(drawingManagerSource, /this\.layersBelowCtx = this\.layersBelowCanvas\?\.getContext\('2d'\)/);
+  assert.match(drawingManagerSource, /this\.layersAboveCtx = this\.layersAboveCanvas\?\.getContext\('2d'\)/);
+  assert.match(drawingManagerSource, /_clearStaticLayerCanvases\(\)/);
+  assert.match(drawingManagerSource, /_getLayerRenderBuckets\(\)/);
+  assert.match(drawingManagerSource, /_drawImageToContext\(ctx, img, opacity\)/);
+  assert.match(drawingManagerSource, /this\.renderFrame\(this\.currentFrame\);/);
+
+  assert.match(drawingSyncSource, /createLayer\(\{ \.\.\.layerData, skipActivate: true \}\)/);
+});
+
 test('drawing manager records freehand strokes and erases intersecting stroke records', () => {
   assert.match(drawingManagerSource, /createStrokeRecord/);
   assert.match(drawingManagerSource, /removeIntersectingStrokes/);

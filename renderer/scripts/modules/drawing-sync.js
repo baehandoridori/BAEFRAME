@@ -350,7 +350,7 @@ export class DrawingSync {
 
       // DrawingManager에 레이어 추가
       if (this._dm.createLayer) {
-        this._dm.createLayer(layerData);
+        this._dm.createLayer({ ...layerData, skipActivate: true });
       }
       log.debug('원격 레이어 생성 적용', { id: layerData.id });
     } finally {

@@ -16,6 +16,23 @@ import {
 
 const log = createLogger('DrawingManager');
 
+export function partitionDrawingLayersForActive(layers = [], activeLayerId) {
+  const activeIndex = layers.findIndex(layer => layer.id === activeLayerId);
+  if (activeIndex === -1) {
+    return {
+      below: [...layers],
+      active: null,
+      above: []
+    };
+  }
+
+  return {
+    below: layers.slice(0, activeIndex),
+    active: layers[activeIndex],
+    above: layers.slice(activeIndex + 1)
+  };
+}
+
 /**
  * 드로잉 매니저 클래스
  */
@@ -34,6 +51,10 @@ export class DrawingManager extends EventTarget {
     // 어니언 스킨 전용 캔버스 (별도 레이어)
     this.onionSkinCanvasElement = options.onionSkinCanvas;
     this.onionSkinCtx = this.onionSkinCanvasElement?.getContext('2d');
+    this.layersBelowCanvas = options.layersBelowCanvas;
+    this.layersAboveCanvas = options.layersAboveCanvas;
+    this.layersBelowCtx = this.layersBelowCanvas?.getContext('2d');
+    this.layersAboveCtx = this.layersAboveCanvas?.getContext('2d');
 
     // 레이어 관리
     this.layers = [];
@@ -385,10 +406,13 @@ export class DrawingManager extends EventTarget {
 
     const layer = new DrawingLayer(options);
     this.layers.push(layer);
-    this.activeLayerId = layer.id;
+    if (options.skipActivate !== true) {
+      this.activeLayerId = layer.id;
+    }
 
     this._emit('layerCreated', { layer });
     this._emit('layersChanged');
+    this.renderFrame(this.currentFrame);
 
     log.info('새 레이어 생성됨', { id: layer.id, name: layer.name });
     return layer;
@@ -437,6 +461,7 @@ export class DrawingManager extends EventTarget {
     if (layer) {
       this.activeLayerId = layerId;
       this._emit('activeLayerChanged', { layer });
+      this.renderFrame(this.currentFrame);
       log.debug('활성 레이어 변경', { id: layerId });
     }
   }
@@ -791,6 +816,11 @@ export class DrawingManager extends EventTarget {
     this.canvasWidth = width;
     this.canvasHeight = height;
     this.drawingCanvas.syncSize(width, height);
+    [this.layersBelowCanvas, this.layersAboveCanvas].forEach((canvas) => {
+      if (!canvas) return;
+      canvas.width = width;
+      canvas.height = height;
+    });
 
     // 어니언 스킨 캔버스 크기도 동기화
     if (this.onionSkinCanvasElement) {
@@ -799,6 +829,7 @@ export class DrawingManager extends EventTarget {
     }
 
     log.debug('캔버스 크기 설정됨', { width, height });
+    this.renderFrame(this.currentFrame);
   }
 
   /**
@@ -815,6 +846,32 @@ export class DrawingManager extends EventTarget {
 
     this.currentFrame = frame;
     this.renderFrame(frame);
+  }
+
+  _clearCanvasElement(canvas, ctx) {
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  _clearStaticLayerCanvases() {
+    this._clearCanvasElement(this.layersBelowCanvas, this.layersBelowCtx);
+    this._clearCanvasElement(this.layersAboveCanvas, this.layersAboveCtx);
+  }
+
+  _getLayerRenderBuckets() {
+    const { below, active, above } = partitionDrawingLayersForActive(this.layers, this.activeLayerId);
+    return [
+      { layers: below, ctx: this.layersBelowCtx },
+      { layers: active ? [active] : [], ctx: this.drawingCanvas.ctx },
+      { layers: above, ctx: this.layersAboveCtx }
+    ];
+  }
+
+  _drawImageToContext(ctx, img, opacity) {
+    if (!ctx || !img) return;
+    ctx.globalAlpha = opacity;
+    ctx.drawImage(img, 0, 0);
+    ctx.globalAlpha = 1;
   }
 
   /**
@@ -840,6 +897,7 @@ export class DrawingManager extends EventTarget {
     // 일시정지 상태에서만 캔버스 초기화
     this._playbackCanvasCleared = false;
     this.drawingCanvas.clear();
+    this._clearStaticLayerCanvases();
     this._clearOnionSkinCanvas();
 
     log.debug('renderFrame 시작', {
@@ -863,23 +921,25 @@ export class DrawingManager extends EventTarget {
     // 렌더링할 이미지들을 먼저 모두 로드
     const imagesToRender = [];
 
-    for (const layer of this.layers) {
-      if (!layer.visible) continue;
+    for (const bucket of this._getLayerRenderBuckets()) {
+      for (const layer of bucket.layers) {
+        if (!layer.visible) continue;
 
-      const keyframe = layer.getKeyframeAtFrame(frame);
+        const keyframe = layer.getKeyframeAtFrame(frame);
 
-      if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
+        if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
-      // 이미지 캐시 확인 또는 새로 로드
-      const img = await this._loadImage(keyframe.canvasData, keyframe);
-      if (img) {
-        imagesToRender.push({ img, layer });
-      }
+        // 이미지 캐시 확인 또는 새로 로드
+        const img = await this._loadImage(keyframe.canvasData, keyframe);
+        if (img) {
+          imagesToRender.push({ img, layer, ctx: bucket.ctx });
+        }
 
-      // 렌더링 취소 체크
-      if (this._renderingId !== currentRenderingId) {
-        log.debug('이미지 로드 중 렌더링 취소', { frame, currentRenderingId });
-        return;
+        // 렌더링 취소 체크
+        if (this._renderingId !== currentRenderingId) {
+          log.debug('이미지 로드 중 렌더링 취소', { frame, currentRenderingId });
+          return;
+        }
       }
     }
 
@@ -890,10 +950,8 @@ export class DrawingManager extends EventTarget {
     }
 
     // 모든 이미지를 순서대로 그리기
-    for (const { img, layer } of imagesToRender) {
-      this.drawingCanvas.ctx.globalAlpha = layer.opacity;
-      this.drawingCanvas.ctx.drawImage(img, 0, 0);
-      this.drawingCanvas.ctx.globalAlpha = 1;
+    for (const { img, layer, ctx } of imagesToRender) {
+      this._drawImageToContext(ctx, img, layer.opacity);
     }
 
     log.debug('renderFrame 완료', { frame, renderedCount: imagesToRender.length });
@@ -910,22 +968,25 @@ export class DrawingManager extends EventTarget {
     const images = [];
     let hasCacheMiss = false;
 
-    for (const layer of this.layers) {
-      if (!layer.visible) continue;
+    for (const bucket of this._getLayerRenderBuckets()) {
+      for (const layer of bucket.layers) {
+        if (!layer.visible) continue;
 
-      const keyframe = layer.getKeyframeAtFrame(frame);
-      if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
+        const keyframe = layer.getKeyframeAtFrame(frame);
+        if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
-      if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
-        images.push({ img: keyframe._cachedImage, opacity: layer.opacity });
-      } else {
-        hasCacheMiss = true;
+        if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
+          images.push({ img: keyframe._cachedImage, opacity: layer.opacity, ctx: bucket.ctx });
+        } else {
+          hasCacheMiss = true;
+        }
       }
     }
 
     if (images.length === 0 && !hasCacheMiss) {
       if (!this._playbackCanvasCleared) {
         this.drawingCanvas.clear({ silent: true });
+        this._clearStaticLayerCanvases();
         this._playbackCanvasCleared = true;
       }
       return;
@@ -933,11 +994,10 @@ export class DrawingManager extends EventTarget {
 
     // clear + draw를 원자적으로 수행 (깜빡임 방지)
     this.drawingCanvas.clear({ silent: true });
+    this._clearStaticLayerCanvases();
     this._playbackCanvasCleared = images.length === 0 && !hasCacheMiss;
-    for (const { img, opacity } of images) {
-      this.drawingCanvas.ctx.globalAlpha = opacity;
-      this.drawingCanvas.ctx.drawImage(img, 0, 0);
-      this.drawingCanvas.ctx.globalAlpha = 1;
+    for (const { img, opacity, ctx } of images) {
+      this._drawImageToContext(ctx, img, opacity);
     }
 
     // 캐시 미스가 있으면 백그라운드에서 로드 (다음 프레임에서 사용됨)
@@ -1024,6 +1084,7 @@ export class DrawingManager extends EventTarget {
     this.layers = [];
     this.activeLayerId = null;
     this.drawingCanvas.clear();
+    this._clearStaticLayerCanvases();
 
     this._emit('layersChanged');
     log.info('모든 레이어 초기화됨');
@@ -1036,6 +1097,7 @@ export class DrawingManager extends EventTarget {
     this.layers = [];
     this.activeLayerId = null;
     this.drawingCanvas.clear();
+    this._clearStaticLayerCanvases();
     this.clearHistory();
 
     // ID 충돌 방지: nextId를 1로 리셋
