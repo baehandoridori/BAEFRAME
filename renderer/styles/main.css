@@ -3991,8 +3991,11 @@ body.app-fullscreen .video-comment-overlay-controls {
   align-items: center;
   padding: 0 12px;
   height: 24px;
+  min-height: 24px;
+  margin-bottom: 2px;
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-subtle);
+  transition: height 0.28s ease, min-height 0.28s ease;
 }
 
 .comment-layer-header .comment-label {

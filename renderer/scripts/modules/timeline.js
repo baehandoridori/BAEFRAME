@@ -2232,8 +2232,23 @@ export class Timeline extends EventTarget {
   setCommentTrack(trackElement, layerHeaderElement = null) {
     this.commentTrack = trackElement;
     this.commentLayerHeader = layerHeaderElement;
+    this.clearCommentTrackRowHeight();
     // 트랙 배경 클릭으로 펼친 클러스터 접기 / 배지 펼치기 등은 app.js의
     // setupCommentRangeInteractions()에서 드래그 가드와 함께 위임 처리한다.
+  }
+
+  _setCommentTrackRowHeight(height = 24) {
+    if (this.commentTrack) {
+      this.commentTrack.style.height = `${height}px`;
+    }
+    if (this.commentLayerHeader) {
+      this.commentLayerHeader.style.height = `${height}px`;
+      this.commentLayerHeader.style.minHeight = `${height}px`;
+    }
+  }
+
+  clearCommentTrackRowHeight() {
+    this._setCommentTrackRowHeight();
   }
 
   setCommentRangesVisible(visible) {
@@ -2241,6 +2256,7 @@ export class Timeline extends EventTarget {
     if (!this.commentTrack) return;
 
     if (!this.commentRangesVisible) {
+      this.clearCommentTrackRowHeight();
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
@@ -2284,6 +2300,7 @@ export class Timeline extends EventTarget {
       '.comment-range-item, .comment-cluster-badge, .comment-cluster-close-badge'
     );
     if (!hasCommentContent) {
+      this.clearCommentTrackRowHeight();
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
@@ -2445,12 +2462,14 @@ export class Timeline extends EventTarget {
     if (!this.commentTrack) return;
     this._lastPlaylistCommentRanges = ranges || [];
     this._lastPlaylistCommentDuration = totalDuration || this.playlistDuration || this.duration || 0;
+    this._setCommentTrackRowHeight();
     this.commentTrack.querySelectorAll(
       '.playlist-comment-range, .comment-range-item, .comment-cluster-badge, .comment-cluster-close-badge'
     ).forEach(el => el.remove());
     this._lastComments = null;
     this.expandedClusterId = null;
     if (!this.commentRangesVisible) {
+      this.clearCommentTrackRowHeight();
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
@@ -2460,6 +2479,7 @@ export class Timeline extends EventTarget {
 
     const duration = this._lastPlaylistCommentDuration;
     if (!duration) {
+      this.clearCommentTrackRowHeight();
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
@@ -2495,6 +2515,7 @@ export class Timeline extends EventTarget {
         this.commentLayerHeader.style.display = 'flex';
       }
     } else {
+      this.clearCommentTrackRowHeight();
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
@@ -2518,6 +2539,7 @@ export class Timeline extends EventTarget {
     this.commentTrack.innerHTML = '';
 
     if (!this.commentRangesVisible) {
+      this.clearCommentTrackRowHeight();
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
@@ -2527,6 +2549,7 @@ export class Timeline extends EventTarget {
 
     // 댓글이 없으면 트랙 및 레이어 헤더 숨김 (기존 로직 유지)
     if (!comments || comments.length === 0) {
+      this.clearCommentTrackRowHeight();
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
@@ -2593,7 +2616,7 @@ export class Timeline extends EventTarget {
     const targetHeight = maxLanes > 1
       ? laneHeight * maxLanes + lanePadding
       : baseHeight;
-    this.commentTrack.style.height = `${targetHeight}px`;
+    this._setCommentTrackRowHeight(targetHeight);
 
     // 5) 각 클러스터 렌더
     renderItems.forEach(item => {
