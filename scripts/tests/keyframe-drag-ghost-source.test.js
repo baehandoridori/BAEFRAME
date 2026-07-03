@@ -47,3 +47,10 @@ test('timeline can switch between dot markers and one-frame keyframe cells', () 
   assert.match(mainCss, /\.keyframe-container \.keyframe-cell\s*\{[\s\S]*?width:[\s\S]*?height:\s*100%;/);
   assert.match(mainCss, /\.keyframe-cell \.keyframe-cell-dot/);
 });
+
+test('frame cell ON mode recomputes minimum zoom when the timeline viewport resizes', () => {
+  const resizeObserverMatch = timelineSource.match(/const resizeObserver = new ResizeObserver\(\(entries\) => \{([\s\S]*?)\n    \}\);/);
+  assert.ok(resizeObserverMatch, 'timeline ResizeObserver should exist');
+  assert.match(resizeObserverMatch[1], /this\._applyCellModeMinZoom\(\)/);
+  assert.match(resizeObserverMatch[1], /if \(this\.zoom !== prevZoom\) \{[\s\S]*?this\._applyZoom\(\);/);
+});

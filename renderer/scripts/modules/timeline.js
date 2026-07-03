@@ -146,6 +146,12 @@ export class Timeline extends EventTarget {
 
         prevContainerWidth = newContainerWidth;
 
+        const prevZoom = this.zoom;
+        this._applyCellModeMinZoom();
+        if (this.zoom !== prevZoom) {
+          this._applyZoom();
+        }
+
         // 플레이헤드 위치 업데이트
         this._updatePlayheadPosition();
 
