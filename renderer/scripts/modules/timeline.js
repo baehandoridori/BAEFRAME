@@ -1040,7 +1040,7 @@ export class Timeline extends EventTarget {
       <div class="layer-color" style="background: var(--composition-layer-color)"></div>
       <span class="composition-layer-header-drag" title="순서 변경" aria-hidden="true">⋮⋮</span>
       <button class="layer-visibility composition-layer-header-visibility" type="button" data-action="composition-visibility" title="${layer.enabled ? '레이어 숨기기' : '레이어 보이기'}" aria-label="${layer.enabled ? '레이어 숨기기' : '레이어 보이기'}">
-        ${this._getCompositionLayerVisibilityIcon(layer.enabled)}
+        ${this._getLayerVisibilityIcon(layer.enabled, 16)}
       </button>
       <span class="composition-layer-header-type" title="${typeLabel}" aria-label="${typeLabel}">${_getCompositionLayerTypeIcon(layer.type)}</span>
       <span class="layer-name" title="${this._escapeHtml(layer.name)}">${this._escapeHtml(layer.name)}</span>
@@ -1128,12 +1128,12 @@ export class Timeline extends EventTarget {
     this.compositionLayerReorderState = null;
   }
 
-  _getCompositionLayerVisibilityIcon(enabled) {
+  _getLayerVisibilityIcon(enabled, size = 16) {
     const slash = enabled
       ? ''
       : '<line x1="4" y1="20" x2="20" y2="4"></line>';
     return `
-      <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
         <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"></path>
         <circle cx="12" cy="12" r="2.4"></circle>
         ${slash}
@@ -1250,18 +1250,22 @@ export class Timeline extends EventTarget {
     const header = document.createElement('div');
     header.className = `layer-header drawing-layer-header${isActive ? ' selected' : ''}`;
     header.dataset.layerId = layer.id;
+    header.classList.toggle('layer-hidden', !layer.visible);
 
     const opacityPercent = Math.round((layer.opacity ?? 1) * 100);
+    const safeName = this._escapeHtml(layer.name);
+    const visibilityLabel = layer.visible ? '레이어 숨기기' : '레이어 보이기';
+    const lockLabel = layer.locked ? '잠금 해제' : '레이어 잠금';
     header.innerHTML = `
       <div class="layer-color" style="background: ${layer.color}"></div>
-      <span class="layer-visibility" data-action="visibility">
-        ${layer.visible ? '👁' : '👁‍🗨'}
-      </span>
-      <span class="layer-name" title="${layer.name}">${layer.name}</span>
+      <button class="layer-visibility" type="button" data-action="visibility" title="${visibilityLabel}" aria-label="${visibilityLabel}" aria-pressed="${layer.visible}">
+        ${this._getLayerVisibilityIcon(layer.visible)}
+      </button>
+      <span class="layer-name" title="${safeName}">${safeName}</span>
       <span class="layer-opacity-badge" title="불투명도 ${opacityPercent}%">${opacityPercent}%</span>
-      <span class="layer-lock" data-action="lock">
-        ${layer.locked ? '🔒' : ''}
-      </span>
+      <button class="layer-lock${layer.locked ? ' locked' : ''}" type="button" data-action="lock" title="${lockLabel}" aria-label="${lockLabel}" aria-pressed="${layer.locked}">
+        ${layer.locked ? '🔒' : '🔓'}
+      </button>
     `;
 
     // 레이어 선택 클릭

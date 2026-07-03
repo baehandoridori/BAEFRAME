@@ -3173,22 +3173,56 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .layer-visibility {
-  width: 14px;
-  height: 14px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
   border: 0;
   padding: 0;
+  border-radius: 4px;
   background: transparent;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
   color: var(--text-tertiary);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .layer-visibility:hover {
+  background: var(--bg-hover);
   color: var(--accent-primary);
+}
+
+.layer-visibility:focus-visible {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: -1px;
+}
+
+.layer-header.layer-hidden .layer-visibility {
+  opacity: 0.45;
+}
+
+.layer-header.layer-hidden .layer-name,
+.layer-header.layer-hidden .layer-opacity-badge {
+  opacity: 0.5;
+}
+
+.layer-header[data-layer="video"] .layer-visibility {
+  cursor: default;
+}
+
+.layer-header[data-layer="video"] .layer-visibility:hover {
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.layer-header[data-layer="video"] .layer-lock {
+  cursor: default;
+}
+
+.layer-header[data-layer="video"] .layer-lock:hover {
+  background: transparent;
+  color: var(--text-tertiary);
 }
 
 .layer-name {
@@ -3203,14 +3237,35 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .layer-lock {
-  width: 14px;
-  height: 14px;
-  display: flex;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  padding: 0;
+  border-radius: 4px;
+  background: transparent;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-tertiary);
+  cursor: pointer;
   flex-shrink: 0;
+}
+
+button.layer-lock:not(.locked) {
+  opacity: 0.35;
+}
+
+button.layer-lock:hover,
+button.layer-lock:not(.locked):hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--accent-primary);
+}
+
+.layer-lock:focus-visible {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: -1px;
 }
 
 /* 레이어 불투명도 배지 (헤더 인라인) */
@@ -3478,8 +3533,8 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .composition-layer-header-visibility {
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   border-radius: 4px;
 }
 
@@ -4343,16 +4398,6 @@ body.app-fullscreen .video-comment-overlay-controls {
 .drawing-layer-header.selected {
   background: var(--accent-glow);
   border-left: 3px solid var(--accent-primary);
-}
-
-.drawing-layer-header .layer-visibility {
-  cursor: pointer;
-  opacity: 0.7;
-  transition: opacity var(--transition-fast);
-}
-
-.drawing-layer-header .layer-visibility:hover {
-  opacity: 1;
 }
 
 /* ====== Adobe Animate 스타일 키프레임 격자 ====== */
