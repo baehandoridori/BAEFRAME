@@ -114,6 +114,7 @@ async function initApp() {
     layersBelowCanvas: document.getElementById('layersBelowCanvas'),
     drawingCanvas: document.getElementById('drawingCanvas'),
     layersAboveCanvas: document.getElementById('layersAboveCanvas'),
+    brushSizeHud: document.getElementById('brushSizeHud'),
     onionSkinCanvas: document.getElementById('onionSkinCanvas'),
     drawingTools: document.getElementById('drawingTools'),
     btnOpenFile: document.getElementById('btnOpenFile'),
@@ -2787,12 +2788,7 @@ async function initApp() {
     userSettings.setShowRemoteCursors(!userSettings.getShowRemoteCursors());
   });
 
-  // 도구별 설정 저장 (크기, 불투명도)
-  const toolSettings = {
-    eraser: { size: 20 },      // 지우개는 기본 크기 더 크게
-    brush: { size: 3, opacity: 100 }  // 브러시/펜 등 다른 도구들
-  };
-  let currentToolType = 'brush';  // 'eraser' 또는 'brush'
+  const savedBrush = userSettings.getBrushSettings();
 
   // 그리기 도구 선택
   const opacitySection = document.getElementById('opacitySection');
@@ -2805,6 +2801,148 @@ async function initApp() {
   const colorSection = document.getElementById('colorSection');
   const strokeSection = document.getElementById('strokeSection');
   const eraserModeButtons = document.querySelectorAll('.eraser-mode-btn[data-eraser-mode]');
+  const brushSizeHud = elements.brushSizeHud;
+
+  // 도구 매핑
+  const toolMap = {
+    pen: DrawingTool.PEN,
+    brush: DrawingTool.BRUSH,
+    eraser: DrawingTool.ERASER,
+    line: DrawingTool.LINE,
+    arrow: DrawingTool.ARROW,
+    rect: DrawingTool.RECT,
+    circle: DrawingTool.CIRCLE
+  };
+
+  // 색상 선택 (8색 팔레트)
+  const colorMap = {
+    red: '#ff4757',
+    yellow: '#ffd000',
+    green: '#26de81',
+    blue: '#4a9eff',
+    white: '#ffffff',
+    black: '#000000',
+    mint: '#1abc9c',
+    pink: '#ff6b9d'
+  };
+
+  // 도구별 설정 저장 (크기, 불투명도)
+  const toolSettings = {
+    eraser: { size: savedBrush.eraserSize },
+    brush: { size: savedBrush.brushSize, opacity: savedBrush.opacity }
+  };
+  let currentToolType = savedBrush.tool === 'eraser' ? 'eraser' : 'brush';
+  let currentToolName = toolMap[savedBrush.tool] ? savedBrush.tool : 'brush';
+  let currentColor = savedBrush.color;
+
+  function clampBrushSize(size, fallback = 3) {
+    const parsed = parseInt(size);
+    return Math.min(50, Math.max(1, Number.isFinite(parsed) ? parsed : fallback));
+  }
+
+  function clampBrushOpacity(opacity, fallback = 100) {
+    const parsed = parseInt(opacity);
+    return Math.min(100, Math.max(10, Number.isFinite(parsed) ? parsed : fallback));
+  }
+
+  function clampStrokeWidth(width, fallback = 3) {
+    const parsed = parseInt(width);
+    return Math.min(10, Math.max(1, Number.isFinite(parsed) ? parsed : fallback));
+  }
+
+  function getColorNameByHex(hex) {
+    const normalized = String(hex || '').toLowerCase();
+    return Object.entries(colorMap).find(([, value]) => value.toLowerCase() === normalized)?.[0] || 'red';
+  }
+
+  function getCurrentSizeSettingPatch(size = toolSettings[currentToolType].size) {
+    return currentToolType === 'eraser'
+      ? { eraserSize: size }
+      : { brushSize: size };
+  }
+
+  function updateSizePreview() {
+    const size = brushSizeSlider.value;
+    brushSizeValue.textContent = `${size}px`;
+    sizePreview.classList.toggle('eraser-preview', currentToolType === 'eraser');
+    sizePreview.style.setProperty('--preview-size', `${Math.min(size, 20)}px`);
+    sizePreview.style.setProperty('--preview-color', currentColor);
+  }
+
+  function applyBrushSizeValue(size, options = {}) {
+    const nextSize = clampBrushSize(size, toolSettings[currentToolType].size);
+    toolSettings[currentToolType].size = nextSize;
+    brushSizeSlider.value = String(nextSize);
+    drawingManager.setLineWidth(nextSize);
+    updateSizePreview();
+
+    if (options.persist) {
+      userSettings.setBrushSettings(getCurrentSizeSettingPatch(nextSize));
+    }
+    return nextSize;
+  }
+
+  function applyBrushOpacityValue(opacity, options = {}) {
+    const nextOpacity = clampBrushOpacity(opacity, toolSettings.brush.opacity);
+    toolSettings.brush.opacity = nextOpacity;
+    brushOpacitySlider.value = String(nextOpacity);
+    brushOpacityValue.textContent = `${nextOpacity}%`;
+    if (currentToolType !== 'eraser') {
+      drawingManager.setOpacity(nextOpacity / 100);
+    }
+    if (options.persist) {
+      userSettings.setBrushSettings({ opacity: nextOpacity });
+    }
+    return nextOpacity;
+  }
+
+  function setActiveColorButton(color) {
+    const activeColor = getColorNameByHex(color);
+    document.querySelectorAll('.color-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.color === activeColor);
+    });
+  }
+
+  function setCurrentColor(color, options = {}) {
+    currentColor = color || '#ff4757';
+    setActiveColorButton(currentColor);
+    drawingManager.setColor(currentColor);
+    updateSizePreview();
+    if (options.persist) {
+      userSettings.setBrushSettings({ color: currentColor });
+    }
+  }
+
+  function updateBrushSizeHud(detail = {}) {
+    if (!brushSizeHud) return;
+    const size = clampBrushSize(detail.size, toolSettings[currentToolType].size);
+    const rect = elements.drawingCanvas?.getBoundingClientRect();
+    const scale = rect && elements.drawingCanvas?.width
+      ? rect.width / elements.drawingCanvas.width
+      : 1;
+    const displaySize = Math.min(96, Math.max(28, Math.round(size * scale)));
+    const x = Number.isFinite(detail.clientX) ? detail.clientX : window.innerWidth / 2;
+    const y = Number.isFinite(detail.clientY) ? detail.clientY : window.innerHeight / 2;
+
+    brushSizeHud.style.left = `${x}px`;
+    brushSizeHud.style.top = `${y}px`;
+    brushSizeHud.style.width = `${displaySize}px`;
+    brushSizeHud.style.height = `${displaySize}px`;
+    brushSizeHud.style.background = currentToolType === 'eraser' ? 'transparent' : `${currentColor}80`;
+    brushSizeHud.style.borderColor = currentToolType === 'eraser' ? 'rgba(255, 255, 255, 0.95)' : currentColor;
+    brushSizeHud.textContent = `${size}px`;
+  }
+
+  function showBrushSizeHud(detail = {}) {
+    if (!brushSizeHud) return;
+    brushSizeHud.hidden = false;
+    updateBrushSizeHud(detail);
+  }
+
+  function hideBrushSizeHud() {
+    if (!brushSizeHud) return;
+    brushSizeHud.hidden = true;
+  }
 
   function applyEraserMode(mode, persist = false) {
     mode = normalizeEraserMode(mode);
@@ -2829,144 +2967,178 @@ async function initApp() {
     });
   });
 
+  function selectDrawingTool(toolName, options = {}) {
+    const persist = options.persist !== false;
+    toolName = toolMap[toolName] ? toolName : 'brush';
+    document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tool === toolName);
+    });
+
+    if (persist) {
+      toolSettings[currentToolType].size = clampBrushSize(brushSizeSlider.value, toolSettings[currentToolType].size);
+      if (currentToolType === 'brush') {
+        toolSettings.brush.opacity = clampBrushOpacity(brushOpacitySlider.value, toolSettings.brush.opacity);
+      }
+    }
+
+    currentToolName = toolName;
+    currentToolType = toolName === 'eraser' ? 'eraser' : 'brush';
+    applyBrushSizeValue(toolSettings[currentToolType].size);
+
+    if (currentToolType === 'eraser') {
+      opacitySection.style.display = 'none';
+      if (colorSection) colorSection.style.display = 'none';
+      if (strokeSection) strokeSection.style.display = 'none';
+      if (eraserModeSection) eraserModeSection.hidden = false;
+      applyEraserMode(currentEraserMode);
+      drawingManager.setOpacity(1);
+    } else {
+      opacitySection.style.display = 'block';
+      if (colorSection) colorSection.style.display = 'block';
+      if (strokeSection) strokeSection.style.display = 'block';
+      if (eraserModeSection) eraserModeSection.hidden = true;
+      applyBrushOpacityValue(toolSettings.brush.opacity);
+    }
+
+    drawingManager.setTool(toolMap[toolName]);
+
+    if (persist) {
+      userSettings.setBrushSettings({ tool: toolName, brushSize: toolSettings.brush.size, eraserSize: toolSettings.eraser.size });
+    }
+    log.debug('도구 선택', { tool: toolName, size: toolSettings[currentToolType].size });
+  }
+
   document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
     btn.addEventListener('click', function() {
-      document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
-      this.classList.add('active');
-
-      // 도구 매핑
-      const toolMap = {
-        'pen': DrawingTool.PEN,
-        'brush': DrawingTool.BRUSH,
-        'eraser': DrawingTool.ERASER,
-        'line': DrawingTool.LINE,
-        'arrow': DrawingTool.ARROW,
-        'rect': DrawingTool.RECT,
-        'circle': DrawingTool.CIRCLE
-      };
-      const toolName = this.dataset.tool;
-      const tool = toolMap[toolName] || DrawingTool.PEN;
-      const newToolType = toolName === 'eraser' ? 'eraser' : 'brush';
-
-      // 이전 도구 설정 저장
-      toolSettings[currentToolType].size = parseInt(brushSizeSlider.value);
-      if (currentToolType === 'brush') {
-        toolSettings.brush.opacity = parseInt(brushOpacitySlider.value);
-      }
-
-      // 새 도구 설정 적용
-      currentToolType = newToolType;
-      brushSizeSlider.value = toolSettings[currentToolType].size;
-      drawingManager.setLineWidth(toolSettings[currentToolType].size);
-      updateSizePreview();
-
-      // 지우개일 때 불투명도 섹션 숨기기, 아니면 보이기
-      if (newToolType === 'eraser') {
-        opacitySection.style.display = 'none';
-        if (colorSection) colorSection.style.display = 'none';
-        if (strokeSection) strokeSection.style.display = 'none';
-        if (eraserModeSection) eraserModeSection.hidden = false;
-        applyEraserMode(currentEraserMode);
-        drawingManager.setOpacity(1);  // 지우개는 항상 100%
-      } else {
-        opacitySection.style.display = 'block';
-        if (colorSection) colorSection.style.display = 'block';
-        if (strokeSection) strokeSection.style.display = 'block';
-        if (eraserModeSection) eraserModeSection.hidden = true;
-        brushOpacitySlider.value = toolSettings.brush.opacity;
-        brushOpacityValue.textContent = `${toolSettings.brush.opacity}%`;
-        drawingManager.setOpacity(toolSettings.brush.opacity / 100);
-      }
-
-      drawingManager.setTool(tool);
-      log.debug('도구 선택', { tool: toolName, size: toolSettings[currentToolType].size });
+      selectDrawingTool(this.dataset.tool);
     });
   });
 
-  // 색상 선택 (8색 팔레트)
-  const colorMap = {
-    'red': '#ff4757',
-    'yellow': '#ffd000',
-    'green': '#26de81',
-    'blue': '#4a9eff',
-    'white': '#ffffff',
-    'black': '#000000',
-    'mint': '#1abc9c',
-    'pink': '#ff6b9d'
-  };
-
-  let currentColor = '#ff4757';
-
   document.querySelectorAll('.color-btn').forEach(btn => {
     btn.addEventListener('click', function() {
-      document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
-      this.classList.add('active');
-
-      currentColor = colorMap[this.dataset.color] || '#ff4757';
-      drawingManager.setColor(currentColor);
-      updateSizePreview();
+      setCurrentColor(colorMap[this.dataset.color] || '#ff4757', { persist: true });
       log.debug('색상 선택', { color: this.dataset.color });
     });
   });
 
-  // 브러쉬 사이즈 슬라이더 (변수는 위에서 이미 선언됨)
-  function updateSizePreview() {
-    const size = brushSizeSlider.value;
-    brushSizeValue.textContent = `${size}px`;
-    sizePreview.classList.toggle('eraser-preview', currentToolType === 'eraser');
-    sizePreview.style.setProperty('--preview-size', `${Math.min(size, 20)}px`);
-    sizePreview.style.setProperty('--preview-color', currentColor);
-  }
-
   brushSizeSlider.addEventListener('input', function() {
-    const size = parseInt(this.value);
-    toolSettings[currentToolType].size = size;  // 현재 도구 설정에 저장
-    drawingManager.setLineWidth(size);
-    updateSizePreview();
+    applyBrushSizeValue(this.value);
+  });
+
+  brushSizeSlider.addEventListener('change', function() {
+    applyBrushSizeValue(this.value, { persist: true });
   });
 
   // 불투명도 슬라이더
   brushOpacitySlider.addEventListener('input', function() {
-    const opacity = parseInt(this.value);
-    toolSettings.brush.opacity = opacity;  // 브러시 설정에 저장
-    brushOpacityValue.textContent = `${opacity}%`;
-    drawingManager.setOpacity(opacity / 100);
+    applyBrushOpacityValue(this.value);
   });
 
-  // 초기 사이즈 프리뷰 설정
-  updateSizePreview();
+  brushOpacitySlider.addEventListener('change', function() {
+    applyBrushOpacityValue(this.value, { persist: true });
+  });
+
+  function adjustBrushSizeBy(delta, options = {}) {
+    const nextSize = toolSettings[currentToolType].size + delta;
+    return applyBrushSizeValue(nextSize, options);
+  }
 
   // ====== 브러시 외곽선 ======
   const strokeToggle = document.getElementById('strokeToggle');
   const strokeControls = document.getElementById('strokeControls');
   const strokeWidthSlider = document.getElementById('strokeWidthSlider');
   const strokeWidthValue = document.getElementById('strokeWidthValue');
+  let currentStrokeColor = savedBrush.strokeColor;
+
+  function setActiveStrokeColorButton(color) {
+    document.querySelectorAll('.stroke-color-btn[data-stroke-color]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.strokeColor === color);
+    });
+  }
+
+  function applyStrokeSettings(settings = {}, options = {}) {
+    const strokeEnabled = settings.strokeEnabled === true;
+    const strokeWidth = clampStrokeWidth(settings.strokeWidth, 3);
+    const strokeColor = settings.strokeColor || '#ffffff';
+
+    strokeToggle?.classList.toggle('active', strokeEnabled);
+    if (strokeToggle) strokeToggle.textContent = strokeEnabled ? 'ON' : 'OFF';
+    strokeControls?.classList.toggle('visible', strokeEnabled);
+    if (strokeWidthSlider) strokeWidthSlider.value = String(strokeWidth);
+    if (strokeWidthValue) strokeWidthValue.textContent = `${strokeWidth}px`;
+    currentStrokeColor = strokeColor;
+    setActiveStrokeColorButton(currentStrokeColor);
+
+    drawingManager.setStrokeEnabled(strokeEnabled);
+    drawingManager.setStrokeWidth(strokeWidth);
+    drawingManager.setStrokeColor(currentStrokeColor);
+
+    if (options.persist) {
+      userSettings.setBrushSettings({
+        strokeEnabled,
+        strokeWidth,
+        strokeColor: currentStrokeColor
+      });
+    }
+  }
 
   // 외곽선 토글
   strokeToggle?.addEventListener('click', () => {
     const isActive = !strokeToggle.classList.contains('active');
-    strokeToggle.classList.toggle('active', isActive);
-    strokeToggle.textContent = isActive ? 'ON' : 'OFF';
-    strokeControls?.classList.toggle('visible', isActive);
-    drawingManager.setStrokeEnabled(isActive);
+    applyStrokeSettings({
+      strokeEnabled: isActive,
+      strokeWidth: strokeWidthSlider?.value,
+      strokeColor: currentStrokeColor
+    }, { persist: true });
   });
 
   // 외곽선 두께
   strokeWidthSlider?.addEventListener('input', function() {
-    const width = parseInt(this.value);
+    const width = clampStrokeWidth(this.value);
     strokeWidthValue.textContent = `${width}px`;
     drawingManager.setStrokeWidth(width);
   });
+  strokeWidthSlider?.addEventListener('change', function() {
+    userSettings.setBrushSettings({ strokeWidth: clampStrokeWidth(this.value) });
+  });
 
   // 외곽선 색상
-  document.querySelectorAll('.stroke-color-btn').forEach(btn => {
+  document.querySelectorAll('.stroke-color-btn[data-stroke-color]').forEach(btn => {
     btn.addEventListener('click', function() {
-      document.querySelectorAll('.stroke-color-btn').forEach(b => b.classList.remove('active'));
-      this.classList.add('active');
       const color = this.dataset.strokeColor;
+      currentStrokeColor = color;
+      setActiveStrokeColorButton(color);
       drawingManager.setStrokeColor(color);
+      userSettings.setBrushSettings({ strokeColor: color });
     });
   });
+
+  drawingManager.drawingCanvas?.addEventListener('sizeadjuststart', (event) => {
+    showBrushSizeHud(event.detail);
+  });
+  drawingManager.drawingCanvas?.addEventListener('sizeadjust', (event) => {
+    const size = applyBrushSizeValue(event.detail.size);
+    updateBrushSizeHud({ ...event.detail, size });
+  });
+  drawingManager.drawingCanvas?.addEventListener('sizeadjustend', (event) => {
+    const size = applyBrushSizeValue(event.detail.size, { persist: true });
+    updateBrushSizeHud({ ...event.detail, size });
+    hideBrushSizeHud();
+  });
+
+  function applySavedBrushSettings(settings = userSettings.getBrushSettings()) {
+    toolSettings.eraser.size = clampBrushSize(settings.eraserSize, 20);
+    toolSettings.brush.size = clampBrushSize(settings.brushSize, 3);
+    toolSettings.brush.opacity = clampBrushOpacity(settings.opacity, 100);
+    currentStrokeColor = settings.strokeColor || '#ffffff';
+
+    setCurrentColor(settings.color, { persist: false });
+    applyBrushOpacityValue(toolSettings.brush.opacity);
+    applyStrokeSettings(settings);
+    selectDrawingTool(settings.tool, { persist: false });
+  }
+
+  applySavedBrushSettings(savedBrush);
 
   // Undo 버튼
   elements.btnUndo?.addEventListener('click', async () => {
@@ -10243,6 +10415,14 @@ async function initApp() {
       return;
     }
 
+    const matchedBrushSizeAction = userSettings.findActionByEvent(e);
+    if (state.isDrawMode && (matchedBrushSizeAction === 'brushSizeDown' || matchedBrushSizeAction === 'brushSizeUp')) {
+      e.preventDefault();
+      const delta = matchedBrushSizeAction === 'brushSizeDown' ? -1 : 1;
+      adjustBrushSizeBy(delta, { persist: true });
+      return;
+    }
+
     // 키프레임 삭제 (그리기 모드에서만)
     if (userSettings.matchShortcut('keyframeDelete', e)) {
       if (state.isDrawMode) {
@@ -10345,9 +10525,10 @@ async function initApp() {
       const wasOff = !state.isDrawMode;
       toggleDrawMode();
       if (wasOff) {
-        // 진입 시에만 브러시 자동 선택
-        const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
-        if (brushBtn) brushBtn.click();
+        // 진입 시에는 마지막으로 저장된 도구를 복원
+        const savedTool = userSettings.getBrushSettings().tool || currentToolName || 'brush';
+        const toolBtn = document.querySelector(`.tool-btn[data-tool="${savedTool}"]`) || document.querySelector('.tool-btn[data-tool="brush"]');
+        if (toolBtn) toolBtn.click();
       }
       return;
     }
@@ -10573,6 +10754,7 @@ async function initApp() {
   // ====== 사용자 이름 초기화 ======
   // 설정 파일 로드 완료 대기 (파일에서 hasSetNameOnce 등 로드)
   await userSettings.waitForReady();
+  applySavedBrushSettings(userSettings.getBrushSettings());
 
   // AuthManager 초기화
   const authManager = getAuthManager();
@@ -10983,7 +11165,7 @@ async function initApp() {
     '실행취소': ['undo', 'redo'],
     '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeDelete', 'keyframeDeleteAlt', 'prevKeyframe', 'nextKeyframe'],
     '프레임 편집': ['insertFrame', 'deleteFrame'],
-    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw']
+    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp']
   };
 
   let capturingShortcutAction = null;
