@@ -48,6 +48,8 @@ export class DrawingCanvas extends EventTarget {
 
     // 상태
     this.isDrawing = false;
+    this.canDraw = null;
+    this._modifierCtrlDown = false;
     this.lastX = 0;
     this.lastY = 0;
     this.startX = 0;
@@ -88,6 +90,17 @@ export class DrawingCanvas extends EventTarget {
     this.canvas.addEventListener('touchstart', (e) => this._onTouchStart(e), { signal });
     this.canvas.addEventListener('touchmove', (e) => this._onTouchMove(e), { signal });
     this.canvas.addEventListener('touchend', (e) => this._onTouchEnd(e), { signal });
+
+    // 펜/터치 유래 이벤트는 ctrlKey가 비어 오는 환경이 있어 전역 Ctrl 상태를 함께 본다.
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Control') this._modifierCtrlDown = true;
+    }, { signal });
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'Control') this._modifierCtrlDown = false;
+    }, { signal });
+    window.addEventListener('blur', () => {
+      this._modifierCtrlDown = false;
+    }, { signal });
   }
 
   /**
@@ -129,8 +142,16 @@ export class DrawingCanvas extends EventTarget {
   _onMouseDown(e) {
     if (!this.canvas.classList.contains('active')) return;
 
-    if (e.ctrlKey) {
+    if (this._isCtrlActive(e)) {
       e.preventDefault?.();
+    }
+
+    if (typeof this.canDraw === 'function' && !this.canDraw()) {
+      this._emit('drawblocked', {
+        tool: this._resolveEffectiveTool(e),
+        ctrlKey: this._isCtrlActive(e)
+      });
+      return;
     }
 
     const coords = this._getCanvasCoords(e);
@@ -154,7 +175,7 @@ export class DrawingCanvas extends EventTarget {
     this._emit('drawstart', this._createDrawEventDetail({
       x: coords.x,
       y: coords.y,
-      ctrlKey: e.ctrlKey === true
+      ctrlKey: this._isCtrlActive(e)
     }));
 
     // 펜/브러시는 점 찍기
@@ -181,7 +202,7 @@ export class DrawingCanvas extends EventTarget {
     this._emit('drawmove', this._createDrawEventDetail({
       x: coords.x,
       y: coords.y,
-      ctrlKey: e.ctrlKey === true
+      ctrlKey: this._isCtrlActive(e)
     }));
 
     if (this._isStrokeEraserActive()) {
@@ -239,7 +260,7 @@ export class DrawingCanvas extends EventTarget {
 
     // 그리기 완료 이벤트 발생
     this._emit('drawend', this._createDrawEventDetail({
-      ctrlKey: e.ctrlKey === true
+      ctrlKey: this._isCtrlActive(e)
     }));
     this.activeTool = this.tool;
     this.activeEraserMode = this.eraserMode;
@@ -251,7 +272,7 @@ export class DrawingCanvas extends EventTarget {
   _onTouchStart(e) {
     e.preventDefault();
     const touch = e.touches[0];
-    this._onMouseDown({ clientX: touch.clientX, clientY: touch.clientY });
+    this._onMouseDown({ clientX: touch.clientX, clientY: touch.clientY, ctrlKey: this._isCtrlActive(e) });
   }
 
   /**
@@ -260,7 +281,7 @@ export class DrawingCanvas extends EventTarget {
   _onTouchMove(e) {
     e.preventDefault();
     const touch = e.touches[0];
-    this._onMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
+    this._onMouseMove({ clientX: touch.clientX, clientY: touch.clientY, ctrlKey: this._isCtrlActive(e) });
   }
 
   /**
@@ -268,7 +289,7 @@ export class DrawingCanvas extends EventTarget {
    */
   _onTouchEnd(e) {
     e.preventDefault();
-    this._onMouseUp({ type: 'touchend' });
+    this._onMouseUp({ type: 'touchend', ctrlKey: this._isCtrlActive(e) });
   }
 
   /**
@@ -293,8 +314,12 @@ export class DrawingCanvas extends EventTarget {
     return this.activeTool || this.tool;
   }
 
+  _isCtrlActive(e) {
+    return e?.ctrlKey === true || this._modifierCtrlDown === true;
+  }
+
   _resolveEffectiveTool(e) {
-    if ((this.tool === DrawingTool.PEN || this.tool === DrawingTool.BRUSH) && e?.ctrlKey) {
+    if ((this.tool === DrawingTool.PEN || this.tool === DrawingTool.BRUSH) && this._isCtrlActive(e)) {
       return DrawingTool.ERASER;
     }
     return this.tool;
