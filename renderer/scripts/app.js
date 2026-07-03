@@ -111,7 +111,9 @@ async function initApp() {
     btnCompositionLayerUndo: document.getElementById('btnCompositionLayerUndo'),
     btnCompositionLayerRedo: document.getElementById('btnCompositionLayerRedo'),
     btnCompositionLayerPanelCollapse: document.getElementById('btnCompositionLayerPanelCollapse'),
+    layersBelowCanvas: document.getElementById('layersBelowCanvas'),
     drawingCanvas: document.getElementById('drawingCanvas'),
+    layersAboveCanvas: document.getElementById('layersAboveCanvas'),
     onionSkinCanvas: document.getElementById('onionSkinCanvas'),
     drawingTools: document.getElementById('drawingTools'),
     btnOpenFile: document.getElementById('btnOpenFile'),
@@ -804,6 +806,8 @@ async function initApp() {
   // 드로잉 매니저
   const drawingManager = new DrawingManager({
     canvas: elements.drawingCanvas,
+    layersBelowCanvas: elements.layersBelowCanvas,
+    layersAboveCanvas: elements.layersAboveCanvas,
     onionSkinCanvas: elements.onionSkinCanvas
   });
 
@@ -4683,10 +4687,11 @@ async function initApp() {
     const scale = state.videoZoom / 100;
     const transform = `scale(${scale}) translate(${state.videoPanX}px, ${state.videoPanY}px)`;
 
-    if (elements.drawingCanvas) {
-      elements.drawingCanvas.style.transform = transform;
-      elements.drawingCanvas.style.transformOrigin = 'center center';
-    }
+    [elements.layersBelowCanvas, elements.drawingCanvas, elements.layersAboveCanvas].forEach((canvas) => {
+      if (!canvas) return;
+      canvas.style.transform = transform;
+      canvas.style.transformOrigin = 'center center';
+    });
     if (elements.onionSkinCanvas) {
       elements.onionSkinCanvas.style.transform = transform;
       elements.onionSkinCanvas.style.transformOrigin = 'center center';
@@ -4939,6 +4944,7 @@ async function initApp() {
   function syncCanvasOverlay() {
     const renderArea = getVideoRenderArea();
     const canvas = elements.drawingCanvas;
+    const layerCanvases = [elements.layersBelowCanvas, elements.drawingCanvas, elements.layersAboveCanvas];
     const onionCanvas = elements.onionSkinCanvas;
     const compositionOverlay = elements.compositionLayerOverlay;
 
@@ -4947,13 +4953,16 @@ async function initApp() {
     }
 
     // 그리기 캔버스 위치와 크기를 비디오 실제 렌더 영역에 맞춤
-    canvas.style.position = 'absolute';
-    canvas.style.left = `${renderArea.left}px`;
-    canvas.style.top = `${renderArea.top}px`;
-    canvas.style.width = `${renderArea.width}px`;
-    canvas.style.height = `${renderArea.height}px`;
-    canvas.width = renderArea.videoWidth;
-    canvas.height = renderArea.videoHeight;
+    layerCanvases.forEach((layerCanvas) => {
+      if (!layerCanvas) return;
+      layerCanvas.style.position = 'absolute';
+      layerCanvas.style.left = `${renderArea.left}px`;
+      layerCanvas.style.top = `${renderArea.top}px`;
+      layerCanvas.style.width = `${renderArea.width}px`;
+      layerCanvas.style.height = `${renderArea.height}px`;
+      layerCanvas.width = renderArea.videoWidth;
+      layerCanvas.height = renderArea.videoHeight;
+    });
 
     // 어니언 스킨 캔버스도 동일하게 동기화
     if (onionCanvas) {
@@ -5857,6 +5866,28 @@ async function initApp() {
     }
   }
 
+  function getCompositedDrawingOverlayDataUrl() {
+    const baseCanvas = elements.drawingCanvas;
+    if (!baseCanvas || baseCanvas.width <= 0 || baseCanvas.height <= 0) return '';
+
+    const compositeCanvas = document.createElement('canvas');
+    compositeCanvas.width = baseCanvas.width;
+    compositeCanvas.height = baseCanvas.height;
+    const ctx = compositeCanvas.getContext('2d');
+
+    [elements.layersBelowCanvas, baseCanvas, elements.layersAboveCanvas].forEach((canvas) => {
+      if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
+      ctx.drawImage(canvas, 0, 0);
+    });
+
+    try {
+      return compositeCanvas.toDataURL('image/png');
+    } catch (error) {
+      log.debug('mpv 드로잉 합성 스냅샷 실패', { error: error.message });
+      return '';
+    }
+  }
+
   function isMpvMarkerOverlayVisible() {
     if (!markerContainer) return false;
     const style = window.getComputedStyle(markerContainer);
@@ -6004,7 +6035,7 @@ async function initApp() {
     if (!wrapperRect || !canvasRect) return null;
 
     return {
-      drawingDataUrl: getCanvasOverlayDataUrl(elements.drawingCanvas),
+      drawingDataUrl: getCompositedDrawingOverlayDataUrl(),
       onionDataUrl: getCanvasOverlayDataUrl(elements.onionSkinCanvas),
       markerHtml: serializeMpvOverlayMarkerHtml(),
       tooltipHtml: serializeMpvOverlayTooltipHtml(),

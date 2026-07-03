@@ -1826,8 +1826,16 @@ body.mpv-pilot-mode .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
   z-index: 2;
 }
 
+.layers-below-layer {
+  z-index: 2;
+}
+
 #drawingCanvas {
   z-index: 3;
+}
+
+.layers-above-layer {
+  z-index: 4;
 }
 
 /* ========================================

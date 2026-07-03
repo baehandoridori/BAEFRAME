@@ -497,8 +497,10 @@
           <!-- Composition Layer Overlay (이미지/영상 합성 프리뷰) -->
           <div id="compositionLayerOverlay" class="composition-layer-overlay"></div>
 
-          <!-- Drawing Overlay Canvas -->
+          <!-- Drawing Layer Canvases -->
+          <canvas id="layersBelowCanvas" class="drawing-overlay layers-below-layer"></canvas>
           <canvas id="drawingCanvas" class="drawing-overlay"></canvas>
+          <canvas id="layersAboveCanvas" class="drawing-overlay layers-above-layer"></canvas>
 
           <!-- Comment Range Overlay (비디오 하단 댓글 범위 표시) -->
           <div class="video-comment-range-overlay" id="videoCommentRangeOverlay">
