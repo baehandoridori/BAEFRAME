@@ -3252,12 +3252,12 @@ body.app-fullscreen .video-comment-overlay-controls {
   flex-shrink: 0;
 }
 
-.layer-lock:not(.locked) {
+button.layer-lock:not(.locked) {
   opacity: 0.35;
 }
 
-.layer-lock:hover,
-.layer-lock:not(.locked):hover {
+button.layer-lock:hover,
+button.layer-lock:not(.locked):hover {
   opacity: 1;
   background: var(--bg-hover);
   color: var(--accent-primary);

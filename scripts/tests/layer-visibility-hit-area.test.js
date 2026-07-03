@@ -30,7 +30,8 @@ test('drawing layer visibility and lock controls are real 24px buttons', () => {
   assert.match(lockBlock, /height:\s*24px;/);
   assert.match(lockBlock, /font-size:\s*12px;/);
   assert.match(lockBlock, /cursor:\s*pointer;/);
-  assert.match(mainCss, /\.layer-lock:not\(\.locked\)\s*\{[\s\S]*?opacity:\s*0\.35;/);
+  assert.match(mainCss, /button\.layer-lock:not\(\.locked\)\s*\{[\s\S]*?opacity:\s*0\.35;/);
+  assert.doesNotMatch(mainCss, /(?<!button)\.layer-lock:not\(\.locked\)\s*\{/);
 });
 
 test('drawing layer header renders accessible SVG visibility and visible lock states', () => {
