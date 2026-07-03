@@ -3058,7 +3058,7 @@ async function initApp() {
 
   function applyStrokeSettings(settings = {}, options = {}) {
     const strokeEnabled = settings.strokeEnabled === true;
-    const strokeWidth = clampStrokeWidth(settings.strokeWidth, savedBrush.strokeWidth);
+    const strokeWidth = clampStrokeWidth(settings.strokeWidth, 3);
     const strokeColor = settings.strokeColor || '#ffffff';
 
     strokeToggle?.classList.toggle('active', strokeEnabled);
@@ -3126,10 +3126,19 @@ async function initApp() {
     hideBrushSizeHud();
   });
 
-  setCurrentColor(savedBrush.color, { persist: false });
-  applyBrushOpacityValue(savedBrush.opacity);
-  applyStrokeSettings(savedBrush);
-  selectDrawingTool(savedBrush.tool, { persist: false });
+  function applySavedBrushSettings(settings = userSettings.getBrushSettings()) {
+    toolSettings.eraser.size = clampBrushSize(settings.eraserSize, 20);
+    toolSettings.brush.size = clampBrushSize(settings.brushSize, 3);
+    toolSettings.brush.opacity = clampBrushOpacity(settings.opacity, 100);
+    currentStrokeColor = settings.strokeColor || '#ffffff';
+
+    setCurrentColor(settings.color, { persist: false });
+    applyBrushOpacityValue(toolSettings.brush.opacity);
+    applyStrokeSettings(settings);
+    selectDrawingTool(settings.tool, { persist: false });
+  }
+
+  applySavedBrushSettings(savedBrush);
 
   // Undo 버튼
   elements.btnUndo?.addEventListener('click', async () => {
@@ -10744,6 +10753,7 @@ async function initApp() {
   // ====== 사용자 이름 초기화 ======
   // 설정 파일 로드 완료 대기 (파일에서 hasSetNameOnce 등 로드)
   await userSettings.waitForReady();
+  applySavedBrushSettings(userSettings.getBrushSettings());
 
   // AuthManager 초기화
   const authManager = getAuthManager();

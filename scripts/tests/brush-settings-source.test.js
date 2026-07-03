@@ -32,7 +32,9 @@ test('drawing toolbar restores persisted brush state and saves changes deliberat
   assert.match(appSource, /eraser: \{ size: savedBrush\.eraserSize \}/);
   assert.match(appSource, /brush: \{ size: savedBrush\.brushSize, opacity: savedBrush\.opacity \}/);
   assert.match(appSource, /let currentColor = savedBrush\.color;/);
-  assert.match(appSource, /selectDrawingTool\(savedBrush\.tool, \{ persist: false \}\)/);
+  assert.match(appSource, /function applySavedBrushSettings\(settings = userSettings\.getBrushSettings\(\)\)/);
+  assert.match(appSource, /applySavedBrushSettings\(savedBrush\);/);
+  assert.match(appSource, /await userSettings\.waitForReady\(\);[\s\S]*applySavedBrushSettings\(userSettings\.getBrushSettings\(\)\);/);
   assert.match(appSource, /userSettings\.setBrushSettings\(\{ tool: toolName, brushSize: toolSettings\.brush\.size, eraserSize: toolSettings\.eraser\.size \}\)/);
   assert.match(appSource, /brushSizeSlider\.addEventListener\('change'/);
   assert.match(appSource, /brushOpacitySlider\.addEventListener\('change'/);
