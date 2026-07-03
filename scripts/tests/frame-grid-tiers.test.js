@@ -6,10 +6,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-let resolveFrameGridTier, TIER;
+let resolveFrameGridTier, resolveFrameCellActive, computeMinZoomForCellMode, TIER;
 test('모듈 로드', async () => {
   const mod = await import('../../renderer/scripts/modules/frame-grid-tiers.js');
   resolveFrameGridTier = mod.resolveFrameGridTier;
+  resolveFrameCellActive = mod.resolveFrameCellActive;
+  computeMinZoomForCellMode = mod.computeMinZoomForCellMode;
   TIER = mod.TIER;
 });
 
@@ -87,4 +89,33 @@ test('엣지: 음수/NaN 입력 — 안전한 기본값', () => {
   assert.equal(t1.tier, TIER.FIVE_SEC, '음수는 FIVE_SEC로 수렴');
   const t2 = resolveFrameGridTier(NaN, null);
   assert.equal(t2.tier, TIER.FIVE_SEC, 'NaN도 안전 기본값');
+});
+
+test('프레임 셀 모드: off는 항상 비활성, on은 항상 활성', () => {
+  const hiddenFrameTier = resolveFrameGridTier(0.2, null);
+  assert.equal(resolveFrameCellActive('off', hiddenFrameTier), false);
+  assert.equal(resolveFrameCellActive('on', hiddenFrameTier), true);
+});
+
+test('프레임 셀 모드: auto는 매 프레임 격자 티어를 따른다', () => {
+  assert.equal(resolveFrameCellActive('auto', resolveFrameGridTier(3.9, null)), false);
+  assert.equal(resolveFrameCellActive('auto', resolveFrameGridTier(4.0, null)), true);
+  assert.equal(resolveFrameCellActive('auto', resolveFrameGridTier(4.2, null)), true);
+});
+
+test('프레임 셀 모드: auto는 격자 티어 히스테리시스를 공유한다', () => {
+  const kept = resolveFrameGridTier(3.9, TIER.EVERY_FRAME);
+  const dropped = resolveFrameGridTier(3.87, TIER.EVERY_FRAME);
+
+  assert.equal(kept.tier, TIER.EVERY_FRAME);
+  assert.equal(resolveFrameCellActive('auto', kept), true);
+  assert.notEqual(dropped.tier, TIER.EVERY_FRAME);
+  assert.equal(resolveFrameCellActive('auto', dropped), false);
+});
+
+test('ON 모드 최소 줌은 1프레임 최소 픽셀 폭을 보장한다', () => {
+  assert.equal(computeMinZoomForCellMode(43200, 1200, 8), 28800);
+  assert.equal(computeMinZoomForCellMode(120, 1200, 8), 100);
+  assert.equal(computeMinZoomForCellMode(0, 1200, 8), 100);
+  assert.equal(computeMinZoomForCellMode(120, 0, 8), 100);
 });
