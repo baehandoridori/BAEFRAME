@@ -2453,6 +2453,7 @@ export class Timeline extends EventTarget {
       this.commentLayerHeader.style.height = `${height}px`;
       this.commentLayerHeader.style.minHeight = `${height}px`;
     }
+    this._syncFrameGridContainerMetrics();
   }
 
   clearCommentTrackRowHeight() {
@@ -2469,6 +2470,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2513,6 +2515,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
     }
   }
 
@@ -2682,6 +2685,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2692,6 +2696,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2722,12 +2727,14 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'flex';
       }
+      this._syncFrameGridContainerMetrics();
     } else {
       this.clearCommentTrackRowHeight();
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
     }
   }
 
@@ -2752,6 +2759,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2764,6 +2772,7 @@ export class Timeline extends EventTarget {
       }
       // 펼침 상태는 데이터가 없어진 상황이므로 리셋
       this.expandedClusterId = null;
+      this._syncFrameGridContainerMetrics();
       return;
     }
 

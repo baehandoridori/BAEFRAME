@@ -51,6 +51,9 @@ test('frame grid overlay is pinned to the same pixel width as the tracks', () =>
   assert.match(timelineSource, /if \(child === this\.frameGridContainer\) return;/);
   assert.match(timelineSource, /if \(style\.position === 'absolute' \|\| style\.position === 'fixed'\) return;/);
   assert.doesNotMatch(timelineSource, /this\.tracksContainer\.scrollHeight \|\| this\.tracksContainer\.offsetHeight/);
+  assert.match(timelineSource, /_setCommentTrackRowHeight\(height = 24\) \{[\s\S]*?this\._syncFrameGridContainerMetrics\(\);[\s\S]*?\n  \}/);
+  assert.match(timelineSource, /renderCommentRanges\(comments\) \{[\s\S]*?this\._setCommentTrackRowHeight\(targetHeight\);/);
+  assert.match(timelineSource, /renderPlaylistCommentRanges\(ranges, totalDuration\) \{[\s\S]*?this\.commentTrack\.style\.display = 'block';[\s\S]*?this\._syncFrameGridContainerMetrics\(\);/);
   assert.match(timelineSource, /if \(this\.zoom !== prevZoom\) \{[\s\S]*?this\._applyZoom\(\);[\s\S]*?\}\n\n        this\._syncFrameGridContainerMetrics\(\);/);
   assert.match(timelineSource, /renderCompositionLayers\(layers, options = \{\}\) \{[\s\S]*?sourceLayers[\s\S]*?\.forEach\(\(layer\) => \{[\s\S]*?\}\);\n\n    this\._syncFrameGridContainerMetrics\(\);/);
   assert.match(timelineSource, /layers\.forEach\(\(layer, index\) => \{[\s\S]*?this\._syncFrameGridContainerMetrics\(\);[\s\S]*?\n  \}/);
