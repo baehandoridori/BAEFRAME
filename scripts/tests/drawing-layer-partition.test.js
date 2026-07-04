@@ -1,10 +1,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
+global.window = global.window || {};
+global.window.logPanel = null;
+global.window.electronAPI = null;
+
 let partitionDrawingLayersForActive;
+let DrawingLayer;
+let Keyframe;
 
 test('drawing manager partition helper loads', async () => {
   ({ partitionDrawingLayersForActive } = await import('../../renderer/scripts/modules/drawing-manager.js'));
+  ({ DrawingLayer, Keyframe } = await import('../../renderer/scripts/modules/drawing-layer.js'));
 });
 
 function layer(id) {
@@ -49,4 +56,78 @@ test('partition treats every layer as static when active layer is missing', () =
   assert.deepEqual(ids(result.below), ['layer-1', 'layer-2']);
   assert.equal(result.active, null);
   assert.deepEqual(ids(result.above), []);
+});
+
+test('deleteFrame shortens a tail-held final keyframe by adding a blank boundary', () => {
+  const drawingLayer = new DrawingLayer({ id: 'layer-tail', name: 'Tail' });
+  drawingLayer.keyframes = [new Keyframe(10, 'tail-content')];
+
+  drawingLayer.deleteFrame(10, 15);
+
+  assert.deepEqual(drawingLayer.keyframes.map(kf => [kf.frame, kf.canvasData]), [
+    [10, 'tail-content'],
+    [14, null]
+  ]);
+
+  const ranges = drawingLayer.getKeyframeRanges(15);
+  assert.deepEqual(ranges.map(range => [range.start, range.end, range.keyframe.canvasData]), [
+    [10, 13, 'tail-content'],
+    [14, 14, null]
+  ]);
+});
+
+test('deleteFrame shortens an ordinary frame in the final held range', () => {
+  const drawingLayer = new DrawingLayer({ id: 'layer-tail-held', name: 'Tail Held' });
+  drawingLayer.keyframes = [new Keyframe(10, 'tail-content')];
+
+  drawingLayer.deleteFrame(12, 15);
+
+  assert.deepEqual(drawingLayer.keyframes.map(kf => [kf.frame, kf.canvasData]), [
+    [10, 'tail-content'],
+    [14, null]
+  ]);
+});
+
+test('deleteFrame preserves a blank final boundary after a tail hold was shortened', () => {
+  const drawingLayer = new DrawingLayer({ id: 'layer-tail-boundary', name: 'Tail Boundary' });
+  drawingLayer.keyframes = [
+    new Keyframe(10, 'tail-content'),
+    new Keyframe(14, null)
+  ];
+
+  drawingLayer.deleteFrame(14, 15);
+
+  assert.deepEqual(drawingLayer.keyframes.map(kf => [kf.frame, kf.canvasData]), [
+    [10, 'tail-content'],
+    [14, null]
+  ]);
+});
+
+test('deleteFrame does not duplicate blank tail boundary keyframes', () => {
+  const drawingLayer = new DrawingLayer({ id: 'layer-blank-tail', name: 'Blank Tail' });
+  drawingLayer.keyframes = [
+    new Keyframe(10, 'tail-content'),
+    new Keyframe(13, null)
+  ];
+
+  drawingLayer.deleteFrame(13, 15);
+
+  assert.deepEqual(drawingLayer.keyframes.map(kf => [kf.frame, kf.canvasData]), [
+    [10, 'tail-content'],
+    [13, null]
+  ]);
+});
+
+test('deleteFrame removes a one-frame keyframe when the next keyframe starts immediately', () => {
+  const drawingLayer = new DrawingLayer({ id: 'layer-adjacent', name: 'Adjacent' });
+  drawingLayer.keyframes = [
+    new Keyframe(10, 'one-frame'),
+    new Keyframe(11, 'next-frame')
+  ];
+
+  drawingLayer.deleteFrame(10, 20);
+
+  assert.deepEqual(drawingLayer.keyframes.map(kf => [kf.frame, kf.canvasData]), [
+    [10, 'next-frame']
+  ]);
 });

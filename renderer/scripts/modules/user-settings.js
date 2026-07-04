@@ -46,13 +46,23 @@ const DEFAULT_SHORTCUTS = {
   keyframeAddBlank: { key: 'F7', ctrl: false, shift: false, alt: false, label: '빈 키프레임 추가' },
   keyframeAddBlank2: { key: 'Digit2', ctrl: false, shift: false, alt: false, label: '빈 키프레임 삽입 (2)' },
   keyframeDelete: { key: 'Delete', ctrl: false, shift: false, alt: false, label: '키프레임 삭제' },
-  keyframeDeleteAlt: { key: 'Digit3', ctrl: false, shift: true, alt: false, label: '키프레임 삭제 (Shift+3)' },
+  keyframeConvertToFrame: { key: 'Digit2', ctrl: false, shift: true, alt: false, label: '키프레임을 일반 프레임으로' },
+  keyframeConvertToKeyframe: { key: 'Digit3', ctrl: false, shift: true, alt: false, label: '프레임을 키프레임으로' },
   prevKeyframe: { key: 'KeyA', ctrl: false, shift: false, alt: false, label: '이전 키프레임' },
   nextKeyframe: { key: 'KeyD', ctrl: false, shift: false, alt: false, label: '다음 키프레임' },
 
   // 프레임 편집
   insertFrame: { key: 'Digit3', ctrl: false, shift: false, alt: false, label: '프레임 삽입 (홀드)' },
   deleteFrame: { key: 'Digit4', ctrl: false, shift: false, alt: false, label: '프레임 삭제' },
+
+  // 드로잉 레이어 편집
+  drawingLayerAdd: { key: 'F1', ctrl: false, shift: true, alt: false, label: '드로잉 레이어 추가' },
+  drawingLayerDelete: { key: 'Backquote', ctrl: false, shift: true, alt: false, label: '드로잉 레이어 삭제' },
+  drawingLayerSelectUp: { key: 'KeyX', ctrl: false, shift: true, alt: false, label: '위 레이어 선택' },
+  drawingLayerSelectDown: { key: 'KeyC', ctrl: false, shift: true, alt: false, label: '아래 레이어 선택' },
+  drawingLayerMoveUp: { key: 'KeyX', ctrl: true, shift: true, alt: false, label: '레이어 위로 이동' },
+  drawingLayerMoveDown: { key: 'KeyC', ctrl: true, shift: true, alt: false, label: '레이어 아래로 이동' },
+  timelineCenterOnPlayhead: { key: 'KeyC', ctrl: false, shift: true, alt: true, label: '현재 프레임 중앙 보기' },
 
   // 그리기 보조
   onionSkinToggle: { key: 'Digit1', ctrl: false, shift: false, alt: false, label: '어니언 스킨 토글' },

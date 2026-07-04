@@ -514,6 +514,34 @@ export class DrawingManager extends EventTarget {
     }
   }
 
+  selectActiveLayerByOffset(offset) {
+    const index = this.layers.findIndex(layer => layer.id === this.activeLayerId);
+    if (index === -1) return false;
+
+    const targetIndex = index + offset;
+    if (targetIndex < 0 || targetIndex >= this.layers.length) return false;
+
+    this.setActiveLayer(this.layers[targetIndex].id);
+    return true;
+  }
+
+  moveActiveLayerByOffset(offset) {
+    const index = this.layers.findIndex(layer => layer.id === this.activeLayerId);
+    if (index === -1) return false;
+
+    const targetIndex = index + offset;
+    if (targetIndex < 0 || targetIndex >= this.layers.length) return false;
+
+    this._saveToHistory();
+    const [layer] = this.layers.splice(index, 1);
+    this.layers.splice(targetIndex, 0, layer);
+    this.activeLayerId = layer.id;
+    this._emit('activeLayerChanged', { layer });
+    this._emit('layersChanged');
+    this.renderFrame(this.currentFrame);
+    return true;
+  }
+
   /**
    * 레이어 가시성 토글
    */
@@ -683,6 +711,28 @@ export class DrawingManager extends EventTarget {
     return true;
   }
 
+  convertKeyframeToFrame() {
+    const layer = this.getActiveLayer();
+    if (!layer || layer.locked) return false;
+    if (!layer.isKeyframe(this.currentFrame)) return false;
+
+    this._saveToHistory();
+    layer.removeKeyframe(this.currentFrame);
+    this.renderFrame(this.currentFrame);
+    this._emit('keyframeConvertedToFrame', { layer, frame: this.currentFrame });
+    this._emit('layersChanged');
+    return true;
+  }
+
+  convertFrameToKeyframe() {
+    const layer = this.getActiveLayer();
+    if (!layer || layer.locked) return false;
+
+    this.addKeyframeWithContent();
+    this._emit('keyframeConvertedToKeyframe', { layer, frame: this.currentFrame });
+    return true;
+  }
+
   /**
    * 선택된 여러 키프레임 삭제
    * @param {Array<{layerId: string, frame: number}>} selectedKeyframes
@@ -791,7 +841,7 @@ export class DrawingManager extends EventTarget {
     // Undo를 위해 현재 상태 저장
     this._saveToHistory();
 
-    layer.deleteFrame(this.currentFrame);
+    layer.deleteFrame(this.currentFrame, this.totalFrames);
     this.renderFrame(this.currentFrame);
 
     this._emit('frameDeleted', { layer, frame: this.currentFrame });
