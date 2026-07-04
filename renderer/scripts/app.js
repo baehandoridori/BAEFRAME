@@ -24,7 +24,8 @@ import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
 import {
   countImportableFeedbackMarkers,
-  importFeedbackIntoTargetComments
+  importFeedbackIntoTargetComments,
+  normalizeFeedbackSourceComments
 } from './modules/feedback-import.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
@@ -7080,7 +7081,8 @@ async function initApp() {
       return false;
     }
 
-    const sourceCount = countImportableFeedbackMarkers(sourceData?.comments);
+    const sourceComments = normalizeFeedbackSourceComments(sourceData);
+    const sourceCount = countImportableFeedbackMarkers(sourceComments);
     if (sourceCount <= 0) {
       showToast('선택한 버전에 가져올 피드백이 없습니다.', 'info');
       return false;
@@ -7093,7 +7095,7 @@ async function initApp() {
     const targetLayerId = commentManager.activeLayerId || commentManager.getActiveLayer()?.id || 'comment-layer-1';
     const result = importFeedbackIntoTargetComments(
       commentManager.toJSON(),
-      sourceData?.comments,
+      sourceComments,
       { targetLayerId }
     );
 

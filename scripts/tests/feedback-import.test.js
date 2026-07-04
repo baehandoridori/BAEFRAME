@@ -164,3 +164,56 @@ test('returns zero importable markers for empty or missing comment layers', asyn
     ['target-marker']
   );
 });
+
+test('normalizes legacy source review comments before import', async () => {
+  const {
+    countImportableFeedbackMarkers,
+    importFeedbackIntoTargetComments,
+    normalizeFeedbackSourceComments
+  } = await loadModule();
+  const legacySourceReview = {
+    version: '1.0',
+    videoPath: 'C:/videos/version-1.mp4',
+    comments: [
+      {
+        id: 'legacy-marker',
+        x: 0.25,
+        y: 0.75,
+        startFrame: 10,
+        endFrame: 20,
+        fps: 24,
+        text: 'legacy feedback',
+        author: '예전 리뷰어',
+        image: 'data:image/png;base64,legacy-marker-image',
+        replies: [
+          {
+            id: 'legacy-reply',
+            text: 'legacy reply',
+            author: '답글러',
+            image: 'data:image/png;base64,legacy-reply-image'
+          }
+        ]
+      }
+    ]
+  };
+
+  const sourceComments = normalizeFeedbackSourceComments(legacySourceReview);
+  assert.equal(countImportableFeedbackMarkers(sourceComments), 1);
+
+  const result = importFeedbackIntoTargetComments(
+    createTargetComments(),
+    sourceComments,
+    {
+      createId: createIdFactory(),
+      targetLayerId: 'target-layer'
+    }
+  );
+
+  assert.equal(result.importedCount, 1);
+  assert.deepEqual(
+    result.comments.layers[0].markers.map(marker => marker.text),
+    ['v2 existing feedback', 'legacy feedback']
+  );
+  assert.equal(result.importedMarkers[0].image, 'data:image/png;base64,legacy-marker-image');
+  assert.equal(result.importedMarkers[0].replies[0].image, 'data:image/png;base64,legacy-reply-image');
+});

@@ -24,9 +24,11 @@ test('feedback import is wired to load source bframe, save current bframe, and r
   assert.match(appSource, /async function handleImportFeedbackFromVersion\(versionInfo\) \{/);
   assert.match(appSource, /const sourceBframePath = getBframePath\(versionInfo\.path\);/);
   assert.match(appSource, /sourceData = await window\.electronAPI\.loadReview\(sourceBframePath\);/);
-  assert.match(appSource, /countImportableFeedbackMarkers\(sourceData\?\.comments\)/);
+  assert.match(appSource, /normalizeFeedbackSourceComments\(sourceData\)/);
+  assert.match(appSource, /countImportableFeedbackMarkers\(sourceComments\)/);
   assert.match(appSource, /confirm\(`[\s\S]+피드백[\s\S]+가져올까요\?`\)/);
   assert.match(appSource, /importFeedbackIntoTargetComments\(/);
+  assert.match(appSource, /commentManager\.toJSON\(\),[\s\S]+sourceComments,[\s\S]+\{ targetLayerId \}/);
   assert.match(appSource, /commentManager\.fromJSON\(result\.comments\);/);
   assert.match(appSource, /commentManager\.setActiveLayer\(targetLayerId\);/);
   assert.match(appSource, /const saved = await reviewDataManager\.save\(\);/);

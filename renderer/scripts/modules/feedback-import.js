@@ -6,6 +6,8 @@
  * of scope for this module.
  */
 
+import { migrateToV2 } from '../../../shared/schema.js';
+
 function defaultCreateId(prefix = 'feedback') {
   if (globalThis.crypto?.randomUUID) {
     return `${prefix}-${globalThis.crypto.randomUUID()}`;
@@ -19,7 +21,8 @@ function clonePlainRecord(record) {
 }
 
 function getCommentLayers(comments) {
-  return Array.isArray(comments?.layers) ? comments.layers : [];
+  const normalized = normalizeFeedbackComments(comments);
+  return Array.isArray(normalized?.layers) ? normalized.layers : [];
 }
 
 function getMarkers(layer) {
@@ -41,6 +44,57 @@ function createDefaultTargetLayer(targetLayerId = 'comment-layer-1') {
     locked: false,
     markers: []
   };
+}
+
+function normalizeLegacyCommentArray(comments) {
+  return {
+    layers: [
+      {
+        id: 'layer_default',
+        name: '기본 레이어',
+        visible: true,
+        markers: comments.map(comment => ({
+          ...clonePlainRecord(comment),
+          replies: Array.isArray(comment?.replies) ? comment.replies.map(reply => clonePlainRecord(reply)) : []
+        }))
+      }
+    ]
+  };
+}
+
+function normalizeFeedbackComments(comments) {
+  if (comments && typeof comments === 'object' && Array.isArray(comments.layers)) {
+    return comments;
+  }
+
+  if (Array.isArray(comments)) {
+    return normalizeLegacyCommentArray(comments);
+  }
+
+  return { layers: [] };
+}
+
+/**
+ * Normalize full source review data into importable v2 comment data.
+ *
+ * @param {object|Array|null} sourceData
+ * @returns {object}
+ */
+export function normalizeFeedbackSourceComments(sourceData) {
+  if (!sourceData || typeof sourceData !== 'object') {
+    return { layers: [] };
+  }
+
+  if (Array.isArray(sourceData) || Array.isArray(sourceData.layers)) {
+    return normalizeFeedbackComments(sourceData);
+  }
+
+  try {
+    const migrated = migrateToV2(sourceData);
+    return normalizeFeedbackComments(migrated?.comments);
+  } catch (_error) {
+    return normalizeFeedbackComments(sourceData.comments);
+  }
 }
 
 function normalizeTargetComments(targetComments, targetLayerId) {
