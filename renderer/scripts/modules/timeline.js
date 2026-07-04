@@ -1596,7 +1596,6 @@ export class Timeline extends EventTarget {
     // 고스트 및 툴팁 제거
     this.dragGhostItems.forEach(ghost => ghost.remove());
     this.dragGhostItems = [];
-    this.dragGhostKeyframes = [];
     if (this.dragGhost) {
       this.dragGhost.remove();
       this.dragGhost = null;
@@ -1612,16 +1611,19 @@ export class Timeline extends EventTarget {
     // 이동량이 있으면 이벤트 발생
     if (frameDelta !== 0) {
       // 선택된 모든 키프레임 이동
-      const keyframesToMove = this.selectedKeyframes.map(kf => ({
+      const keyframesToMove = this.dragGhostKeyframes.map(kf => ({
         layerId: kf.layerId,
         fromFrame: kf.frame,
         toFrame: kf.frame + frameDelta
       }));
 
-      this._emit('keyframesMove', { keyframes: keyframesToMove, frameDelta });
-      log.info('키프레임 이동', { keyframes: keyframesToMove, frameDelta });
+      if (keyframesToMove.length > 0) {
+        this._emit('keyframesMove', { keyframes: keyframesToMove, frameDelta });
+        log.info('키프레임 이동', { keyframes: keyframesToMove, frameDelta });
+      }
     }
 
+    this.dragGhostKeyframes = [];
     this.draggedKeyframe = null;
   }
 
@@ -1631,6 +1633,7 @@ export class Timeline extends EventTarget {
   _createDragGhost(e, frame) {
     const { layerId, element: clipElement } = this.draggedKeyframe;
     const ghostKeyframes = this._getDragGhostKeyframes(layerId, frame);
+    if (ghostKeyframes.length === 0) return;
 
     this.dragGhost = document.createElement('div');
     this.dragGhost.className = 'keyframe-drag-ghost-group';
@@ -1691,10 +1694,16 @@ export class Timeline extends EventTarget {
     const isDraggedKeyframeSelected = this.selectedKeyframes.some(
       keyframe => keyframe.layerId === layerId && keyframe.frame === frame
     );
-    if (isDraggedKeyframeSelected && this.selectedKeyframes.length > 0) {
-      return this.selectedKeyframes.map(keyframe => ({ ...keyframe }));
-    }
-    return [{ layerId, frame }];
+    const keyframes = isDraggedKeyframeSelected && this.selectedKeyframes.length > 0
+      ? this.selectedKeyframes.map(keyframe => ({ ...keyframe }))
+      : [{ layerId, frame }];
+    return keyframes.filter(keyframe => this._isKeyframeLayerMovable(keyframe.layerId));
+  }
+
+  _isKeyframeLayerMovable(layerId) {
+    if (!Array.isArray(this._lastDrawingLayers)) return true;
+    const layer = this._lastDrawingLayers.find(item => item.id === layerId);
+    return layer?.locked !== true;
   }
 
   _clampKeyframeDragDelta(frameDelta) {

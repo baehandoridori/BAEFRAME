@@ -38,6 +38,12 @@ test('keyframe drag ghost previews every selected keyframe while dragging', () =
   assert.match(timelineSource, /parseInt\(ghostCell\.dataset\.sourceFrame \|\| '0', 10\) \+ frameDelta/);
   assert.match(timelineSource, /this\.dragSourceElements\.forEach\(element => \{/);
   assert.match(timelineSource, /this\.dragGhostItems\.forEach\(ghost => ghost\.remove\(\)\)/);
+  assert.match(timelineSource, /const keyframesToMove = this\.dragGhostKeyframes\.map\(kf => \(/);
+  assert.ok(
+    timelineSource.indexOf('const keyframesToMove = this.dragGhostKeyframes.map') <
+      timelineSource.indexOf('this.dragGhostKeyframes = [];', timelineSource.indexOf('const keyframesToMove = this.dragGhostKeyframes.map')),
+    'drag ghost keyframes must be cleared after move payload creation'
+  );
 });
 
 test('keyframe drag ghost clamps group delta before preview and move emit', () => {
@@ -49,6 +55,13 @@ test('keyframe drag ghost clamps group delta before preview and move emit', () =
   assert.match(timelineSource, /return Math\.max\(minDelta, Math\.min\(maxDelta, frameDelta\)\);/);
   assert.match(timelineSource, /const targetFrame = this\.dragStartFrame \+ frameDelta;/);
   assert.match(timelineSource, /this\.dragGhost\.dataset\.targetFrame = targetFrame;/);
+});
+
+test('keyframe drag ghost excludes locked layers from preview, clamp, and move emit', () => {
+  assert.match(timelineSource, /_isKeyframeLayerMovable\(layerId\)/);
+  assert.match(timelineSource, /return keyframes\.filter\(keyframe => this\._isKeyframeLayerMovable\(keyframe\.layerId\)\);/);
+  assert.match(timelineSource, /const layer = this\._lastDrawingLayers\.find\(item => item\.id === layerId\);/);
+  assert.match(timelineSource, /return layer\?\.locked !== true;/);
 });
 
 test('frame cell mode is stored and wired through the timeline toolbar', () => {
