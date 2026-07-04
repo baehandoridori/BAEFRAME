@@ -28,7 +28,7 @@ export const AUTHOR_COLORS = [
   { color: '#c084fc', bgColor: 'rgba(192, 132, 252, 0.3)' },  // 보라
   { color: '#f97316', bgColor: 'rgba(249, 115, 22, 0.3)' },   // 주황
   { color: '#38bdf8', bgColor: 'rgba(56, 189, 248, 0.3)' },   // 하늘
-  { color: '#fb7185', bgColor: 'rgba(251, 113, 133, 0.3)' },  // 장미
+  { color: '#fb7185', bgColor: 'rgba(251, 113, 133, 0.3)' }  // 장미
 ];
 
 // authorId → 고정 색상 매핑 (해시 기반)
@@ -607,6 +607,43 @@ export class CommentManager extends EventTarget {
       return marker;
     }
     return null;
+  }
+
+  /**
+   * 가져온 피드백 마커를 현재 댓글 레이어에 추가한다.
+   * markerAdded 이벤트를 내보내 Liveblocks 협업 방송 경로도 동일하게 탄다.
+   */
+  addImportedMarkers(markerDataList, targetLayerId = this.activeLayerId) {
+    if (!Array.isArray(markerDataList) || markerDataList.length === 0) return [];
+
+    const layer = this.layers.find(l => l.id === targetLayerId) || this.getActiveLayer();
+    if (!layer) return [];
+
+    const importedMarkers = [];
+    for (const markerData of markerDataList) {
+      if (!markerData?.id || this.getMarker(markerData.id)) continue;
+
+      const marker = markerData instanceof CommentMarker
+        ? markerData
+        : CommentMarker.fromJSON({
+          ...markerData,
+          layerId: layer.id
+        });
+
+      layer.addMarker(marker);
+      importedMarkers.push(marker);
+      this._emit('markerAdded', { marker, layerId: layer.id, imported: true });
+    }
+
+    if (importedMarkers.length > 0) {
+      this._emit('markersChanged', {
+        imported: true,
+        markers: importedMarkers,
+        layerId: layer.id
+      });
+    }
+
+    return importedMarkers;
   }
 
   /**

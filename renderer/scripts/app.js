@@ -1553,15 +1553,15 @@ async function initApp() {
 
   // 마커 추가됨
   commentManager.addEventListener('markerAdded', async (e) => {
-    const { marker, remote, restored } = e.detail;
+    const { marker, remote, restored, imported } = e.detail;
     removePendingMarkerUI();
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
     log.info('마커 추가됨', { id: marker.id, text: marker.text, remote: !!remote });
 
-    // 원격 변경 또는 Redo 복원은 알림/Undo 스킵
-    if (remote || restored) return;
+    // 원격 변경, Redo 복원, 가져온 피드백은 알림/Undo 스킵
+    if (remote || restored || imported) return;
 
     // Slack 알림: @멘션 대상에게 웹훅 전송 (딥링크 전에 저장하여 최신 상태 보장)
     if (reviewDataManager.getBframePath()) {
@@ -7104,8 +7104,13 @@ async function initApp() {
       return false;
     }
 
-    commentManager.fromJSON(result.comments);
-    commentManager.setActiveLayer(targetLayerId);
+    const importedMarkers = commentManager.addImportedMarkers(result.importedMarkers, targetLayerId);
+    if (importedMarkers.length <= 0) {
+      showToast('가져올 수 있는 피드백이 없습니다.', 'info');
+      return false;
+    }
+
+    commentManager.setActiveLayer(importedMarkers[0].layerId || targetLayerId);
     const saved = await reviewDataManager.save();
 
     updateCommentList();
@@ -7118,7 +7123,7 @@ async function initApp() {
       return false;
     }
 
-    showToast(`피드백 ${result.importedCount}개를 가져왔습니다.`, 'success');
+    showToast(`피드백 ${importedMarkers.length}개를 가져왔습니다.`, 'success');
     return true;
   }
 

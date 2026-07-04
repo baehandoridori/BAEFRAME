@@ -29,9 +29,14 @@ test('feedback import is wired to load source bframe, save current bframe, and r
   assert.match(appSource, /confirm\(`[\s\S]+피드백[\s\S]+가져올까요\?`\)/);
   assert.match(appSource, /importFeedbackIntoTargetComments\(/);
   assert.match(appSource, /commentManager\.toJSON\(\),[\s\S]+sourceComments,[\s\S]+\{ targetLayerId \}/);
-  assert.match(appSource, /commentManager\.fromJSON\(result\.comments\);/);
-  assert.match(appSource, /commentManager\.setActiveLayer\(targetLayerId\);/);
+  assert.match(appSource, /commentManager\.addImportedMarkers\(result\.importedMarkers, targetLayerId\)/);
+  assert.match(appSource, /commentManager\.setActiveLayer\(importedMarkers\[0\]\.layerId \|\| targetLayerId\);/);
   assert.match(appSource, /const saved = await reviewDataManager\.save\(\);/);
   assert.match(appSource, /updateCommentList\(\);[\s\S]+updateTimelineMarkers\(\);[\s\S]+renderVideoMarkers\(\);[\s\S]+refreshCommentRangesForCurrentMode\(\);/);
   assert.match(appSource, /versionDropdown\.onFeedbackImport\(handleImportFeedbackFromVersion\);/);
+});
+
+test('imported feedback skips local Slack and undo side effects while still using markerAdded', () => {
+  assert.match(appSource, /const \{ marker, remote, restored, imported \} = e\.detail;/);
+  assert.match(appSource, /if \(remote \|\| restored \|\| imported\) return;/);
 });

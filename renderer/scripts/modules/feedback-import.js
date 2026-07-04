@@ -149,14 +149,19 @@ export function cloneFeedbackMarkers(sourceComments, options = {}) {
   const targetLayerId = options.targetLayerId || 'comment-layer-1';
 
   return getImportableMarkers(sourceComments).map(sourceMarker => {
+    const now = new Date().toISOString();
     const cloned = {
       ...clonePlainRecord(sourceMarker),
       id: createId('marker'),
       layerId: targetLayerId,
+      createdAt: sourceMarker.createdAt || now,
+      updatedAt: sourceMarker.updatedAt || sourceMarker.createdAt || now,
       replies: Array.isArray(sourceMarker.replies)
         ? sourceMarker.replies.map(reply => ({
           ...clonePlainRecord(reply),
-          id: createId('reply')
+          id: createId('reply'),
+          createdAt: reply.createdAt || now,
+          updatedAt: reply.updatedAt || reply.createdAt || now
         }))
         : []
     };

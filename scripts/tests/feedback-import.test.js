@@ -215,5 +215,8 @@ test('normalizes legacy source review comments before import', async () => {
     ['v2 existing feedback', 'legacy feedback']
   );
   assert.equal(result.importedMarkers[0].image, 'data:image/png;base64,legacy-marker-image');
+  assert.match(result.importedMarkers[0].createdAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(result.importedMarkers[0].updatedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(result.importedMarkers[0].replies[0].image, 'data:image/png;base64,legacy-reply-image');
+  assert.match(result.importedMarkers[0].replies[0].createdAt, /^\d{4}-\d{2}-\d{2}T/);
 });
