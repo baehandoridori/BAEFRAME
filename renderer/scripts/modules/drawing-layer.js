@@ -296,7 +296,10 @@ export class DrawingLayer {
       const tailBoundaryKeyframe = new Keyframe(tailBoundaryFrame, null);
       this.keyframes.push(tailBoundaryKeyframe);
     }
-    if (currentKeyframeIndex !== -1 && !currentHasHold) {
+    const currentKeyframe = currentKeyframeIndex !== -1 ? this.keyframes[currentKeyframeIndex] : null;
+    const preservesTailBlankBoundary = currentKeyframe?.isEmpty && !nextKeyframe && Number.isFinite(totalFrames)
+      && frame === totalFrames - 1 && this.keyframes.some(kf => kf.frame < frame);
+    if (currentKeyframeIndex !== -1 && !currentHasHold && !preservesTailBlankBoundary) {
       this.keyframes.splice(currentKeyframeIndex, 1);
     }
 

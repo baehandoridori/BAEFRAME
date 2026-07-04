@@ -88,6 +88,21 @@ test('deleteFrame shortens an ordinary frame in the final held range', () => {
   ]);
 });
 
+test('deleteFrame preserves a blank final boundary after a tail hold was shortened', () => {
+  const drawingLayer = new DrawingLayer({ id: 'layer-tail-boundary', name: 'Tail Boundary' });
+  drawingLayer.keyframes = [
+    new Keyframe(10, 'tail-content'),
+    new Keyframe(14, null)
+  ];
+
+  drawingLayer.deleteFrame(14, 15);
+
+  assert.deepEqual(drawingLayer.keyframes.map(kf => [kf.frame, kf.canvasData]), [
+    [10, 'tail-content'],
+    [14, null]
+  ]);
+});
+
 test('deleteFrame removes a one-frame keyframe when the next keyframe starts immediately', () => {
   const drawingLayer = new DrawingLayer({ id: 'layer-adjacent', name: 'Adjacent' });
   drawingLayer.keyframes = [

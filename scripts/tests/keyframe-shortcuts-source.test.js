@@ -59,7 +59,8 @@ test('delete frame removes a frame cell without deleting a held keyframe marker'
   assert.match(drawingLayerSource, /const tailBoundaryFrame = frame < totalFrames - 1 \? totalFrames : frame;/);
   assert.match(drawingLayerSource, /const tailBoundaryKeyframe = new Keyframe\(tailBoundaryFrame, null\);/);
   assert.match(drawingLayerSource, /this\.keyframes\.push\(tailBoundaryKeyframe\);/);
-  assert.match(drawingLayerSource, /if \(currentKeyframeIndex !== -1 && !currentHasHold\) \{/);
+  assert.match(drawingLayerSource, /const preservesTailBlankBoundary = currentKeyframe\?\.isEmpty && !nextKeyframe && Number\.isFinite\(totalFrames\)/);
+  assert.match(drawingLayerSource, /if \(currentKeyframeIndex !== -1 && !currentHasHold && !preservesTailBlankBoundary\) \{/);
   assert.doesNotMatch(drawingLayerSource, /현재 프레임에 키프레임이 있으면 먼저 삭제/);
 });
 
