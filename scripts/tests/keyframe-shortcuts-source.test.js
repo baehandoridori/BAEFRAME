@@ -55,7 +55,7 @@ test('delete frame removes a frame cell without deleting a held keyframe marker'
   assert.match(drawingLayerSource, /const hasTimelineTail = Number\.isFinite\(totalFrames\) \? frame < totalFrames - 1 : true;/);
   assert.match(drawingLayerSource, /const currentHasHold = nextKeyframe \? nextKeyframe\.frame > frame \+ 1 : hasTimelineTail;/);
   assert.match(drawingLayerSource, /const heldKeyframe = this\.keyframes/);
-  assert.match(drawingLayerSource, /const deletesTailHeldFrame = heldKeyframe && !nextKeyframe && Number\.isFinite\(totalFrames\)/);
+  assert.match(drawingLayerSource, /const deletesTailHeldFrame = heldKeyframe && !heldKeyframe\.isEmpty && !nextKeyframe && Number\.isFinite\(totalFrames\)/);
   assert.match(drawingLayerSource, /const tailBoundaryFrame = frame < totalFrames - 1 \? totalFrames : frame;/);
   assert.match(drawingLayerSource, /const tailBoundaryKeyframe = new Keyframe\(tailBoundaryFrame, null\);/);
   assert.match(drawingLayerSource, /this\.keyframes\.push\(tailBoundaryKeyframe\);/);

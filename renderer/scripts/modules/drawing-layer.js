@@ -289,7 +289,7 @@ export class DrawingLayer {
       .sort((a, b) => b.frame - a.frame)[0];
     const hasTimelineTail = Number.isFinite(totalFrames) ? frame < totalFrames - 1 : true;
     const currentHasHold = nextKeyframe ? nextKeyframe.frame > frame + 1 : hasTimelineTail;
-    const deletesTailHeldFrame = heldKeyframe && !nextKeyframe && Number.isFinite(totalFrames)
+    const deletesTailHeldFrame = heldKeyframe && !heldKeyframe.isEmpty && !nextKeyframe && Number.isFinite(totalFrames)
       && (heldKeyframe.frame < frame || currentHasHold);
     if (deletesTailHeldFrame) {
       const tailBoundaryFrame = frame < totalFrames - 1 ? totalFrames : frame;
