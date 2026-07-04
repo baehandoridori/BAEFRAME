@@ -351,9 +351,12 @@ export class Timeline extends EventTarget {
   }
 
   _getDisplayTotalFrames() {
+    const timelineFrames = this._getTimelineTotalFrames();
+    if (timelineFrames > 0) return timelineFrames;
+
     const duration = this._getTimelineDuration();
-    const derivedFrames = Math.round(duration * (this.fps || 0));
-    return derivedFrames > 0 ? derivedFrames : this._getTimelineTotalFrames();
+    const derivedFrames = Math.floor(duration * (this.fps || 0));
+    return derivedFrames > 0 ? derivedFrames : 0;
   }
 
   _getPlayheadFrameCenterPx(time = this.currentTime) {
@@ -363,7 +366,9 @@ export class Timeline extends EventTarget {
     if (duration === 0 || totalFrames === 0 || containerWidth === 0) return 0;
 
     const fps = this.fps || (totalFrames / duration);
-    const rawFrame = fps > 0 ? Math.round(time * fps) : Math.round((time / duration) * totalFrames);
+    const rawFrame = fps > 0
+      ? Math.floor((time * fps) + 1e-6)
+      : Math.floor(((time / duration) * totalFrames) + 1e-6);
     const frame = Math.max(0, Math.min(totalFrames - 1, rawFrame));
     return ((frame + 0.5) / totalFrames) * containerWidth;
   }

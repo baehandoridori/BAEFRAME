@@ -11,7 +11,11 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'
 
 test('playhead position is centered within the current frame cell', () => {
   assert.match(timelineSource, /_getDisplayTotalFrames\(\)/);
+  assert.match(timelineSource, /const timelineFrames = this\._getTimelineTotalFrames\(\);/);
+  assert.match(timelineSource, /if \(timelineFrames > 0\) return timelineFrames;/);
+  assert.match(timelineSource, /const derivedFrames = Math\.floor\(duration \* \(this\.fps \|\| 0\)\);/);
   assert.match(timelineSource, /_getPlayheadFrameCenterPx\(time = this\.currentTime\)/);
+  assert.match(timelineSource, /Math\.floor\(\(time \* fps\) \+ 1e-6\)/);
   assert.match(timelineSource, /const frame = Math\.max\(0, Math\.min\(totalFrames - 1, rawFrame\)\);/);
   assert.match(timelineSource, /return \(\(frame \+ 0\.5\) \/ totalFrames\) \* containerWidth;/);
   assert.match(timelineSource, /const positionPx = this\._getPlayheadFrameCenterPx\(time\);/);
