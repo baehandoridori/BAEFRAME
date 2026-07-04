@@ -352,7 +352,122 @@ export class Timeline extends EventTarget {
     return this.cutlistDuration ? (this.cutlistTotalFrames || this.totalFrames) : this.totalFrames;
   }
 
+  _getFrameMappedSegments() {
+    if (this.playlistDuration > 0 && this.playlistSegments?.length) return this.playlistSegments;
+    if (this.cutlistDuration > 0 && this.cutlistSegments?.length) return this.cutlistSegments;
+    return [];
+  }
+
+  _getSegmentFps(segment) {
+    const fps = Number(segment?.fps);
+    if (Number.isFinite(fps) && fps > 0) return fps;
+
+    const fallbackFps = Number(this.fps);
+    return Number.isFinite(fallbackFps) && fallbackFps > 0 ? fallbackFps : 24;
+  }
+
+  _getSegmentStartTime(segment) {
+    const startTime = Number(segment?.globalStartTime ?? segment?.startTime);
+    return Number.isFinite(startTime) ? startTime : 0;
+  }
+
+  _getSegmentEndTime(segment) {
+    const explicitEnd = Number(segment?.globalEndTime ?? segment?.endTime);
+    if (Number.isFinite(explicitEnd)) return explicitEnd;
+    return this._getSegmentStartTime(segment) + this._getSegmentDuration(segment);
+  }
+
+  _getSegmentDuration(segment) {
+    const duration = Number(segment?.duration);
+    if (Number.isFinite(duration) && duration > 0) return duration;
+
+    const startTime = this._getSegmentStartTime(segment);
+    const explicitEnd = Number(segment?.globalEndTime ?? segment?.endTime);
+    if (Number.isFinite(explicitEnd) && explicitEnd > startTime) {
+      return explicitEnd - startTime;
+    }
+
+    const frameCount = Number(segment?.frameCount);
+    const fps = this._getSegmentFps(segment);
+    return Number.isFinite(frameCount) && frameCount > 0 ? frameCount / fps : 0;
+  }
+
+  _getSegmentFrameCount(segment) {
+    const explicitFrameCount = Number(segment?.frameCount);
+    if (Number.isFinite(explicitFrameCount) && explicitFrameCount >= 0) {
+      return Math.floor(explicitFrameCount);
+    }
+
+    const frameCount = Math.floor((this._getSegmentDuration(segment) * this._getSegmentFps(segment)) + 1e-6);
+    return frameCount > 0 ? frameCount : 0;
+  }
+
+  _getTimelineSegmentTotalFrames(segments = this._getFrameMappedSegments()) {
+    return (segments || []).reduce((total, segment) => total + this._getSegmentFrameCount(segment), 0);
+  }
+
+  _getSegmentTimeFromDisplayFrame(frame) {
+    const segments = this._getFrameMappedSegments();
+    if (!segments.length) return null;
+
+    let frameCursor = 0;
+    for (const segment of segments) {
+      const frameCount = this._getSegmentFrameCount(segment);
+      if (frameCount <= 0) continue;
+
+      const segmentEndFrame = frameCursor + frameCount;
+      if (frame < segmentEndFrame) {
+        const localFrame = Math.max(0, Math.min(frameCount - 1, frame - frameCursor));
+        return this._getSegmentStartTime(segment) + (localFrame / this._getSegmentFps(segment));
+      }
+      frameCursor = segmentEndFrame;
+    }
+
+    return null;
+  }
+
+  _getDisplayFrameFromSegmentTime(time) {
+    const segments = this._getFrameMappedSegments();
+    if (!segments.length) return null;
+
+    const targetTime = Math.max(0, Number(time) || 0);
+    let frameCursor = 0;
+    let firstSegmentInfo = null;
+    let lastSegmentInfo = null;
+
+    for (const segment of segments) {
+      const frameCount = this._getSegmentFrameCount(segment);
+      if (frameCount <= 0) continue;
+
+      const fps = this._getSegmentFps(segment);
+      const startTime = this._getSegmentStartTime(segment);
+      const endTime = this._getSegmentEndTime(segment);
+      const segmentInfo = { frameCursor, frameCount, startTime };
+      if (!firstSegmentInfo) firstSegmentInfo = segmentInfo;
+      lastSegmentInfo = segmentInfo;
+
+      if (targetTime >= startTime && targetTime < endTime) {
+        const localFrame = Math.floor(((targetTime - startTime) * fps) + 1e-6);
+        return frameCursor + Math.max(0, Math.min(frameCount - 1, localFrame));
+      }
+
+      frameCursor += frameCount;
+    }
+
+    if (!lastSegmentInfo) return null;
+    if (firstSegmentInfo && targetTime <= firstSegmentInfo.startTime) {
+      return firstSegmentInfo.frameCursor;
+    }
+    const localFrame = targetTime <= lastSegmentInfo.startTime
+      ? 0
+      : lastSegmentInfo.frameCount - 1;
+    return lastSegmentInfo.frameCursor + localFrame;
+  }
+
   _getDisplayTotalFrames() {
+    const segmentFrames = this._getTimelineSegmentTotalFrames();
+    if (segmentFrames > 0) return segmentFrames;
+
     if (this.playlistDuration > 0) {
       const playlistFrames = Math.floor(this.playlistDuration * (this.fps || 0));
       if (playlistFrames > 0) return playlistFrames;
@@ -372,10 +487,10 @@ export class Timeline extends EventTarget {
     const containerWidth = this.tracksContainer?.offsetWidth || 0;
     if (duration === 0 || totalFrames === 0 || containerWidth === 0) return 0;
 
+    const mappedFrame = this._getDisplayFrameFromSegmentTime(time);
     const fps = this.fps || (totalFrames / duration);
-    const useTimelineRatio = this.playlistDuration > 0 || this.cutlistDuration > 0;
-    const rawFrame = useTimelineRatio
-      ? Math.floor(((time / duration) * totalFrames) + 1e-6)
+    const rawFrame = mappedFrame !== null
+      ? mappedFrame
       : (fps > 0
         ? Math.floor((time * fps) + 1e-6)
         : Math.floor(((time / duration) * totalFrames) + 1e-6));
@@ -389,8 +504,11 @@ export class Timeline extends EventTarget {
     if (duration === 0 || totalFrames === 0) return 0;
 
     const frame = Math.max(0, Math.min(totalFrames - 1, Math.floor(percent * totalFrames)));
-    const useTimelineRatio = this.playlistDuration > 0 || this.cutlistDuration > 0;
-    if (useTimelineRatio || !this.fps) {
+    const mappedTime = this._getSegmentTimeFromDisplayFrame(frame);
+    if (mappedTime !== null) {
+      return Math.max(0, Math.min(mappedTime, duration));
+    }
+    if (!this.fps) {
       return (frame / totalFrames) * duration;
     }
     return frame / this.fps;
