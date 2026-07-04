@@ -607,6 +607,20 @@ export class Timeline extends EventTarget {
     }
   }
 
+  centerOnPlayhead() {
+    const duration = this._getTimelineDuration();
+    if (!this.timelineTracks || duration === 0) return;
+
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (containerWidth === 0) return;
+
+    const percent = this.currentTime / duration;
+    const playheadPx = containerWidth * percent;
+    const viewportWidth = this.timelineTracks.clientWidth;
+    const targetScrollLeft = playheadPx - (viewportWidth / 2);
+    this.timelineTracks.scrollLeft = Math.max(0, targetScrollLeft);
+  }
+
   /**
    * 플레이헤드 위치 업데이트
    * 핸들과 라인 모두 동일한 left 값을 사용 (CSS에서 margin-left로 핸들 중앙 정렬)

@@ -3182,15 +3182,17 @@ async function initApp() {
     }
   });
 
-  // 레이어 추가 버튼
-  elements.btnAddLayer?.addEventListener('click', () => {
-    drawingManager.createLayer();
+  function renderDrawingLayerTimeline() {
     timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
-    showToast('새 레이어 추가됨', 'success');
-  });
+  }
 
-  // 레이어 삭제 버튼
-  elements.btnDeleteLayer?.addEventListener('click', () => {
+  function addDrawingLayer() {
+    drawingManager.createLayer();
+    renderDrawingLayerTimeline();
+    showToast('새 레이어 추가됨', 'success');
+  }
+
+  function deleteActiveDrawingLayer() {
     const activeLayerId = drawingManager.activeLayerId;
     if (!activeLayerId) {
       showToast('삭제할 레이어가 없습니다.', 'warn');
@@ -3201,10 +3203,29 @@ async function initApp() {
       return;
     }
     if (drawingManager.deleteLayer(activeLayerId)) {
-      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      renderDrawingLayerTimeline();
       showToast('레이어 삭제됨', 'info');
     }
-  });
+  }
+
+  function selectDrawingLayerByOffset(offset) {
+    if (drawingManager.selectActiveLayerByOffset(offset)) {
+      renderDrawingLayerTimeline();
+    }
+  }
+
+  function moveDrawingLayerByOffset(offset) {
+    if (drawingManager.moveActiveLayerByOffset(offset)) {
+      renderDrawingLayerTimeline();
+      showToast('레이어 순서가 변경되었습니다.', 'info');
+    }
+  }
+
+  // 레이어 추가 버튼
+  elements.btnAddLayer?.addEventListener('click', addDrawingLayer);
+
+  // 레이어 삭제 버튼
+  elements.btnDeleteLayer?.addEventListener('click', deleteActiveDrawingLayer);
 
   // ====== 그리기 도구 메뉴 이동/접기 ======
   const drawingToolsPanel = elements.drawingTools;
@@ -10501,6 +10522,42 @@ async function initApp() {
       return;
     }
 
+    if (userSettings.matchShortcut('drawingLayerAdd', e)) {
+      e.preventDefault();
+      addDrawingLayer();
+      return;
+    }
+    if (userSettings.matchShortcut('drawingLayerDelete', e)) {
+      e.preventDefault();
+      deleteActiveDrawingLayer();
+      return;
+    }
+    if (userSettings.matchShortcut('drawingLayerSelectUp', e)) {
+      e.preventDefault();
+      selectDrawingLayerByOffset(1);
+      return;
+    }
+    if (userSettings.matchShortcut('drawingLayerSelectDown', e)) {
+      e.preventDefault();
+      selectDrawingLayerByOffset(-1);
+      return;
+    }
+    if (userSettings.matchShortcut('drawingLayerMoveUp', e)) {
+      e.preventDefault();
+      moveDrawingLayerByOffset(1);
+      return;
+    }
+    if (userSettings.matchShortcut('drawingLayerMoveDown', e)) {
+      e.preventDefault();
+      moveDrawingLayerByOffset(-1);
+      return;
+    }
+    if (userSettings.matchShortcut('timelineCenterOnPlayhead', e)) {
+      e.preventDefault();
+      timeline.centerOnPlayhead();
+      return;
+    }
+
     const matchedBrushSizeAction = userSettings.findActionByEvent(e);
     if (state.isDrawMode && (matchedBrushSizeAction === 'brushSizeDown' || matchedBrushSizeAction === 'brushSizeUp')) {
       e.preventDefault();
@@ -10653,10 +10710,20 @@ async function initApp() {
       timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
       return;
     }
-    // Shift+3: 현재 키프레임 삭제
-    if (userSettings.matchShortcut('keyframeDeleteAlt', e)) {
+    // Shift+2: 키프레임을 일반 프레임으로 변환
+    if (userSettings.matchShortcut('keyframeConvertToFrame', e)) {
       e.preventDefault();
-      deleteSelectedOrCurrentKeyframes();
+      if (drawingManager.convertKeyframeToFrame()) {
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      }
+      return;
+    }
+    // Shift+3: 현재 프레임을 키프레임으로 변환
+    if (userSettings.matchShortcut('keyframeConvertToKeyframe', e)) {
+      e.preventDefault();
+      if (drawingManager.convertFrameToKeyframe()) {
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      }
       return;
     }
     // 3: 프레임 삽입 (홀드 추가)
@@ -11249,8 +11316,9 @@ async function initApp() {
     '모드': ['commentMode', 'drawMode', 'fullscreen'],
     '구간 반복': ['setInPoint', 'setOutPoint', 'toggleLoop', 'clearLoop', 'addHighlight'],
     '실행취소': ['undo', 'redo'],
-    '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeDelete', 'keyframeDeleteAlt', 'prevKeyframe', 'nextKeyframe'],
+    '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeConvertToFrame', 'keyframeConvertToKeyframe', 'keyframeDelete', 'prevKeyframe', 'nextKeyframe'],
     '프레임 편집': ['insertFrame', 'deleteFrame'],
+    '드로잉 레이어': ['drawingLayerAdd', 'drawingLayerDelete', 'drawingLayerSelectUp', 'drawingLayerSelectDown', 'drawingLayerMoveUp', 'drawingLayerMoveDown', 'timelineCenterOnPlayhead'],
     '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp']
   };
 
@@ -11259,7 +11327,7 @@ async function initApp() {
   function keyCodeToDisplay(code) {
     const map = {
       'Space': 'Space', 'ArrowLeft': '←', 'ArrowRight': '→', 'ArrowUp': '↑', 'ArrowDown': '↓',
-      'Home': 'Home', 'End': 'End', 'Delete': 'Del', 'Backspace': 'Back',
+      'Home': 'Home', 'End': 'End', 'Delete': 'Del', 'Backspace': 'Back', 'Backquote': '`',
       'Enter': 'Enter', 'Tab': 'Tab', 'Escape': 'Esc'
     };
     if (map[code]) return map[code];

@@ -279,11 +279,14 @@ export class DrawingLayer {
   /**
    * 프레임 삭제 - 현재 프레임 이후의 모든 키프레임을 1프레임씩 앞으로 이동
    * @param {number} frame - 삭제할 프레임
+   * @param {number|null} totalFrames - 마지막 키프레임 홀드 판정용 전체 프레임 수
    */
-  deleteFrame(frame) {
-    // 현재 프레임에 키프레임이 있으면 먼저 삭제
+  deleteFrame(frame, totalFrames = null) {
     const currentKeyframeIndex = this.keyframes.findIndex(kf => kf.frame === frame);
-    if (currentKeyframeIndex !== -1) {
+    const nextKeyframe = this.keyframes.find(kf => kf.frame > frame);
+    const hasTimelineTail = Number.isFinite(totalFrames) ? frame < totalFrames - 1 : true;
+    const currentHasHold = nextKeyframe ? nextKeyframe.frame > frame + 1 : hasTimelineTail;
+    if (currentKeyframeIndex !== -1 && !currentHasHold) {
       this.keyframes.splice(currentKeyframeIndex, 1);
     }
 
