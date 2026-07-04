@@ -22,6 +22,10 @@ import { getImageFromClipboard, hasImageInClipboard, selectImageFile, isValidIma
 import { parseVersion, toVersionInfo } from './modules/version-parser.js';
 import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
+import {
+  countImportableFeedbackMarkers,
+  importFeedbackIntoTargetComments
+} from './modules/feedback-import.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
 import { resizeClusterMembersByEdge } from './modules/comment-cluster.js';
@@ -7046,6 +7050,76 @@ async function initApp() {
     }
   }
 
+  async function handleImportFeedbackFromVersion(versionInfo) {
+    if (!state.currentFile) {
+      showToast('먼저 피드백을 받을 버전을 열어주세요.', 'warning');
+      return false;
+    }
+
+    if (!versionInfo?.path) {
+      showToast('피드백을 가져올 버전 파일을 찾을 수 없습니다.', 'warning');
+      return false;
+    }
+
+    if (isSameFilePath(versionInfo.path, state.currentFile)) {
+      showToast('현재 열려 있는 버전에서는 피드백을 가져올 수 없습니다.', 'info');
+      return false;
+    }
+
+    const sourceBframePath = getBframePath(versionInfo.path);
+    let sourceData = null;
+
+    try {
+      sourceData = await window.electronAPI.loadReview(sourceBframePath);
+    } catch (error) {
+      log.warn('피드백 가져오기 소스 로드 실패', {
+        sourceBframePath,
+        error: error.message
+      });
+      showToast('선택한 버전의 피드백 파일을 열 수 없습니다.', 'warning');
+      return false;
+    }
+
+    const sourceCount = countImportableFeedbackMarkers(sourceData?.comments);
+    if (sourceCount <= 0) {
+      showToast('선택한 버전에 가져올 피드백이 없습니다.', 'info');
+      return false;
+    }
+
+    const sourceLabel = versionInfo.displayLabel || (versionInfo.version ? `v${versionInfo.version}` : versionInfo.fileName || '선택한 버전');
+    const confirmed = confirm(`${sourceLabel}에서 피드백 ${sourceCount}개를 현재 버전으로 가져올까요?`);
+    if (!confirmed) return false;
+
+    const targetLayerId = commentManager.activeLayerId || commentManager.getActiveLayer()?.id || 'comment-layer-1';
+    const result = importFeedbackIntoTargetComments(
+      commentManager.toJSON(),
+      sourceData?.comments,
+      { targetLayerId }
+    );
+
+    if (result.importedCount <= 0) {
+      showToast('가져올 수 있는 피드백이 없습니다.', 'info');
+      return false;
+    }
+
+    commentManager.fromJSON(result.comments);
+    commentManager.setActiveLayer(targetLayerId);
+    const saved = await reviewDataManager.save();
+
+    updateCommentList();
+    updateTimelineMarkers();
+    renderVideoMarkers();
+    await refreshCommentRangesForCurrentMode();
+
+    if (!saved) {
+      showToast('피드백은 화면에 추가됐지만 저장에 실패했습니다.', 'error');
+      return false;
+    }
+
+    showToast(`피드백 ${result.importedCount}개를 가져왔습니다.`, 'success');
+    return true;
+  }
+
   // 썸네일 리스너 참조 저장 (파일 전환 시 정리용)
   const thumbnailListeners = {
     progress: null,
@@ -12833,6 +12907,7 @@ async function initApp() {
   const versionDropdown = getVersionDropdown();
   versionDropdown.init();
   versionDropdown.setReviewDataManager(reviewDataManager);
+  versionDropdown.onFeedbackImport(handleImportFeedbackFromVersion);
 
   // 스플릿 뷰 매니저 초기화
   const splitViewManager = getSplitViewManager();

@@ -10165,8 +10165,9 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   margin-left: 4px;
 }
 
-/* Version Item Edit Button */
-.version-item-edit {
+/* Version Item Row Action Buttons */
+.version-item-edit,
+.version-item-import-feedback {
   padding: 4px 6px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
@@ -10179,10 +10180,15 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   justify-content: center;
 }
 
-.version-item-edit:hover {
+.version-item-edit:hover,
+.version-item-import-feedback:hover {
   color: var(--accent-primary);
   background: var(--accent-glow);
   border-color: var(--accent-secondary);
+}
+
+.version-item-import-feedback {
+  color: var(--text-tertiary);
 }
 
 /* Version Item Delete (Manual Only) */

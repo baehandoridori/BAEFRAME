@@ -121,6 +121,7 @@ export class VersionDropdown {
 
     // Callbacks
     this._onVersionSelect = null;
+    this._onFeedbackImport = null;
 
     // VersionManager 참조
     this._versionManager = getVersionManager();
@@ -308,6 +309,14 @@ export class VersionDropdown {
   }
 
   /**
+   * 피드백 가져오기 콜백 설정
+   * @param {Function} callback - (versionInfo) => void
+   */
+  onFeedbackImport(callback) {
+    this._onFeedbackImport = callback;
+  }
+
+  /**
    * 목록 렌더링
    */
   _render() {
@@ -400,6 +409,22 @@ export class VersionDropdown {
     // 버튼 컨테이너
     const btnContainer = document.createElement('div');
     btnContainer.className = 'version-item-actions';
+
+    if (!isCurrent && versionInfo.path) {
+      const importFeedbackBtn = document.createElement('button');
+      importFeedbackBtn.className = 'version-item-import-feedback';
+      importFeedbackBtn.title = '이 버전의 피드백 가져오기';
+      importFeedbackBtn.innerHTML =
+        '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+      importFeedbackBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (this._onFeedbackImport) {
+          this._onFeedbackImport(versionInfo);
+        }
+      });
+      btnContainer.appendChild(importFeedbackBtn);
+    }
 
     // 편집 버튼 (모든 버전)
     const editBtn = document.createElement('button');
