@@ -286,6 +286,10 @@ export class DrawingLayer {
     const nextKeyframe = this.keyframes.find(kf => kf.frame > frame);
     const hasTimelineTail = Number.isFinite(totalFrames) ? frame < totalFrames - 1 : true;
     const currentHasHold = nextKeyframe ? nextKeyframe.frame > frame + 1 : hasTimelineTail;
+    if (currentKeyframeIndex !== -1 && !nextKeyframe && currentHasHold && Number.isFinite(totalFrames)) {
+      const tailBoundaryKeyframe = new Keyframe(totalFrames, null);
+      this.keyframes.push(tailBoundaryKeyframe);
+    }
     if (currentKeyframeIndex !== -1 && !currentHasHold) {
       this.keyframes.splice(currentKeyframeIndex, 1);
     }
