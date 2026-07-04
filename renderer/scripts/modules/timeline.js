@@ -371,7 +371,8 @@ export class Timeline extends EventTarget {
     if (duration === 0 || totalFrames === 0 || containerWidth === 0) return 0;
 
     const fps = this.fps || (totalFrames / duration);
-    const rawFrame = this.playlistDuration > 0
+    const useTimelineRatio = this.playlistDuration > 0 || this.cutlistDuration > 0;
+    const rawFrame = useTimelineRatio
       ? Math.floor(((time / duration) * totalFrames) + 1e-6)
       : (fps > 0
         ? Math.floor((time * fps) + 1e-6)
@@ -1282,6 +1283,8 @@ export class Timeline extends EventTarget {
       this._renderLayerHeader(layer, activeLayerId === layer.id);
       this._renderLayerTrack(layer, activeLayerId === layer.id);
     });
+
+    this._syncFrameGridContainerMetrics();
   }
 
   _refreshDrawingLayerRender() {

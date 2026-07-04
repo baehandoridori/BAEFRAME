@@ -17,7 +17,8 @@ test('playhead position is centered within the current frame cell', () => {
   assert.match(timelineSource, /if \(timelineFrames > 0\) return timelineFrames;/);
   assert.match(timelineSource, /const derivedFrames = Math\.floor\(duration \* \(this\.fps \|\| 0\)\);/);
   assert.match(timelineSource, /_getPlayheadFrameCenterPx\(time = this\.currentTime\)/);
-  assert.match(timelineSource, /const rawFrame = this\.playlistDuration > 0/);
+  assert.match(timelineSource, /const useTimelineRatio = this\.playlistDuration > 0 \|\| this\.cutlistDuration > 0;/);
+  assert.match(timelineSource, /const rawFrame = useTimelineRatio/);
   assert.match(timelineSource, /Math\.floor\(\(time \* fps\) \+ 1e-6\)/);
   assert.match(timelineSource, /const frame = Math\.max\(0, Math\.min\(totalFrames - 1, rawFrame\)\);/);
   assert.match(timelineSource, /return \(\(frame \+ 0\.5\) \/ totalFrames\) \* containerWidth;/);
@@ -37,6 +38,7 @@ test('frame grid overlay is pinned to the same pixel width as the tracks', () =>
   assert.match(timelineSource, /_syncFrameGridContainerMetrics\(\)/);
   assert.match(timelineSource, /const contentWidth = this\.tracksContainer\.offsetWidth \|\| 0;/);
   assert.match(timelineSource, /this\.frameGridContainer\.style\.width = `\$\{contentWidth\}px`;/);
+  assert.match(timelineSource, /layers\.forEach\(\(layer, index\) => \{[\s\S]*?this\._syncFrameGridContainerMetrics\(\);[\s\S]*?\n  \}/);
   assert.match(timelineSource, /_formatGridPx\(value\)/);
   assert.match(timelineSource, /backgroundPosition = '0px 0px';/);
   assert.match(timelineSource, /sizes\.push\(`\$\{this\._formatGridPx\(pxPerFrame\)\} 100%`\);/);
