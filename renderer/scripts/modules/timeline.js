@@ -104,6 +104,7 @@ export class Timeline extends EventTarget {
     this.dragGhost = null;  // 드래그 중 표시할 고스트 요소
     this.dragGhostItems = [];
     this.dragSourceElements = [];
+    this.dragGhostKeyframes = [];
 
     // 다중 선택 상태
     this.selectedKeyframes = [];  // [ { layerId, frame } ]
@@ -1556,23 +1557,24 @@ export class Timeline extends EventTarget {
     const newFrame = Math.min(this.totalFrames - 1, Math.floor(percent * this.totalFrames));
 
     // 고스트 클립 위치 업데이트
-    const frameDelta = newFrame - this.dragStartFrame;
+    const rawFrameDelta = newFrame - this.dragStartFrame;
+    const frameDelta = this._clampKeyframeDragDelta(rawFrameDelta);
+    const targetFrame = this.dragStartFrame + frameDelta;
     this.dragGhostItems.forEach(ghostCell => {
       const sourceFrame = parseInt(ghostCell.dataset.sourceFrame || '0', 10) + frameDelta;
-      const clampedFrame = Math.max(0, Math.min(this.totalFrames - 1, sourceFrame));
-      const ghostPercent = (clampedFrame / this.totalFrames) * 100;
+      const ghostPercent = (sourceFrame / this.totalFrames) * 100;
       ghostCell.style.left = `${ghostPercent}%`;
     });
 
     // 툴팁 위치 및 내용 업데이트
     if (this.dragTooltip) {
-      const tooltipPercent = ((newFrame + 0.5) / this.totalFrames) * 100;
+      const tooltipPercent = ((targetFrame + 0.5) / this.totalFrames) * 100;
       this.dragTooltip.style.left = `${tooltipPercent}%`;
-      this.dragTooltip.textContent = `F${newFrame}`;
+      this.dragTooltip.textContent = `F${targetFrame}`;
     }
 
     // 프레임 이동량 저장
-    this.dragGhost.dataset.targetFrame = newFrame;
+    this.dragGhost.dataset.targetFrame = targetFrame;
     this.dragGhost.dataset.frameDelta = frameDelta;
   }
 
@@ -1594,6 +1596,7 @@ export class Timeline extends EventTarget {
     // 고스트 및 툴팁 제거
     this.dragGhostItems.forEach(ghost => ghost.remove());
     this.dragGhostItems = [];
+    this.dragGhostKeyframes = [];
     if (this.dragGhost) {
       this.dragGhost.remove();
       this.dragGhost = null;
@@ -1635,6 +1638,7 @@ export class Timeline extends EventTarget {
     this.dragGhost.dataset.frameDelta = '0';
     this.dragGhostItems = [];
     this.dragSourceElements = [];
+    this.dragGhostKeyframes = ghostKeyframes.map(keyframe => ({ ...keyframe }));
 
     // 선택된 키프레임 각각에 정확히 1프레임 칸을 나타내는 고스트를 만든다.
     const ghostWidthPercent = (1 / this.totalFrames) * 100;
@@ -1691,6 +1695,19 @@ export class Timeline extends EventTarget {
       return this.selectedKeyframes.map(keyframe => ({ ...keyframe }));
     }
     return [{ layerId, frame }];
+  }
+
+  _clampKeyframeDragDelta(frameDelta) {
+    const sourceFrames = this.dragGhostKeyframes
+      .map(keyframe => Number(keyframe.frame))
+      .filter(Number.isFinite);
+    if (sourceFrames.length === 0 || this.totalFrames <= 0) return frameDelta;
+
+    const minFrame = Math.min(...sourceFrames);
+    const maxFrame = Math.max(...sourceFrames);
+    const minDelta = -minFrame;
+    const maxDelta = (this.totalFrames - 1) - maxFrame;
+    return Math.max(minDelta, Math.min(maxDelta, frameDelta));
   }
 
   // ====== 키프레임 선택 ======
