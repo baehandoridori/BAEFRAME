@@ -66,3 +66,14 @@ test('video layer decorative controls keep matching icon size but do not look cl
   assert.match(mainCss, /\.layer-header\[data-layer="video"\] \.layer-visibility\s*\{[\s\S]*?cursor:\s*default;/);
   assert.match(packageJson.scripts['test:frame-grid'], /layer-visibility-hit-area\.test\.js/);
 });
+
+test('_escapeHtml is defined exactly once and escapes quotes for attribute contexts', () => {
+  // 클래스 내 메서드가 중복 정의되면 나중 정의가 프로토타입을 덮어써
+  // 레이어 이름 title 속성의 따옴표 이스케이프가 무력화된다(속성 주입 방지).
+  const defs = timelineSource.match(/^  _escapeHtml\(/gm) || [];
+  assert.equal(defs.length, 1, '_escapeHtml는 정확히 1회만 정의되어야 함');
+  // 남은 정의는 따옴표까지 이스케이프하는 정규식 버전이어야 함
+  assert.match(timelineSource, /_escapeHtml\(value\)\s*\{[\s\S]*?replace\(\/"\/g, '&quot;'\)[\s\S]*?replace\(\/'\/g, '&#39;'\)/);
+  // DOM(textContent) 기반 버전은 따옴표를 이스케이프하지 못하므로 존재해선 안 됨
+  assert.doesNotMatch(timelineSource, /_escapeHtml\(text\)\s*\{[\s\S]*?div\.textContent/);
+});
