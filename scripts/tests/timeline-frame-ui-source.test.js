@@ -43,6 +43,8 @@ test('frame grid overlay is pinned to the same pixel width as the tracks', () =>
   assert.match(timelineSource, /_syncFrameGridContainerMetrics\(\)/);
   assert.match(timelineSource, /const contentWidth = this\.tracksContainer\.offsetWidth \|\| 0;/);
   assert.match(timelineSource, /this\.frameGridContainer\.style\.width = `\$\{contentWidth\}px`;/);
+  assert.match(timelineSource, /if \(this\.zoom !== prevZoom\) \{[\s\S]*?this\._applyZoom\(\);[\s\S]*?\}\n\n        this\._syncFrameGridContainerMetrics\(\);/);
+  assert.match(timelineSource, /renderCompositionLayers\(layers, options = \{\}\) \{[\s\S]*?sourceLayers[\s\S]*?\.forEach\(\(layer\) => \{[\s\S]*?\}\);\n\n    this\._syncFrameGridContainerMetrics\(\);/);
   assert.match(timelineSource, /layers\.forEach\(\(layer, index\) => \{[\s\S]*?this\._syncFrameGridContainerMetrics\(\);[\s\S]*?\n  \}/);
   assert.match(timelineSource, /_formatGridPx\(value\)/);
   assert.match(timelineSource, /backgroundPosition = '0px 0px';/);

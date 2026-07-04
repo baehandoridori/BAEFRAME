@@ -155,6 +155,8 @@ export class Timeline extends EventTarget {
           this._applyZoom();
         }
 
+        this._syncFrameGridContainerMetrics();
+
         // 플레이헤드 위치 업데이트
         this._updatePlayheadPosition();
 
@@ -1084,6 +1086,8 @@ export class Timeline extends EventTarget {
           this.tracksContainer.appendChild(track);
         }
       });
+
+    this._syncFrameGridContainerMetrics();
   }
 
   _createCompositionLayerHeader(layer, isSelected) {
