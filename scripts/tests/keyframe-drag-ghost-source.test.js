@@ -22,6 +22,21 @@ test('keyframe drag ghost renders as an exact one-frame cell', () => {
   assert.match(mainCss, /\.keyframe-drag-ghost-cell\s*\{[\s\S]*?height:\s*100%;[\s\S]*?outline:\s*2px dashed var\(--accent-primary\);/);
 });
 
+test('keyframe drag ghost previews every selected keyframe while dragging', () => {
+  assert.match(timelineSource, /this\.dragGhostItems = \[\]/);
+  assert.match(timelineSource, /this\.dragSourceElements = \[\]/);
+  assert.match(timelineSource, /_getDragGhostKeyframes\(layerId, frame\)/);
+  assert.match(timelineSource, /const ghostKeyframes = this\._getDragGhostKeyframes\(layerId, frame\);/);
+  assert.match(timelineSource, /ghostKeyframes\.forEach\(keyframe => \{/);
+  assert.match(timelineSource, /ghostCell\.dataset\.sourceFrame = keyframe\.frame;/);
+  assert.match(timelineSource, /this\.dragGhostItems\.push\(ghostCell\)/);
+  assert.match(timelineSource, /const frameDelta = newFrame - this\.dragStartFrame;/);
+  assert.match(timelineSource, /this\.dragGhostItems\.forEach\(ghostCell => \{/);
+  assert.match(timelineSource, /parseInt\(ghostCell\.dataset\.sourceFrame \|\| '0', 10\) \+ frameDelta/);
+  assert.match(timelineSource, /this\.dragSourceElements\.forEach\(element => \{/);
+  assert.match(timelineSource, /this\.dragGhostItems\.forEach\(ghost => ghost\.remove\(\)\)/);
+});
+
 test('frame cell mode is stored and wired through the timeline toolbar', () => {
   assert.match(userSettingsSource, /frameCellMode: 'auto'/);
   assert.match(userSettingsSource, /getFrameCellMode\(\)/);
