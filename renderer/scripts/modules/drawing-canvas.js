@@ -56,6 +56,8 @@ export class DrawingCanvas extends EventTarget {
     this._sizeAdjustStartSize = 3;
     this._sizeAdjustMoveHandler = null;
     this._sizeAdjustEndHandler = null;
+    this._sizeAdjustUsesPointerEvents = false;
+    this._activeSizeAdjustPointerId = null;
     this.lastX = 0;
     this.lastY = 0;
     this.startX = 0;
@@ -87,6 +89,7 @@ export class DrawingCanvas extends EventTarget {
     const signal = this._abortController.signal;
 
     // 마우스 이벤트
+    this.canvas.addEventListener('pointerdown', (e) => this._onPointerDown(e), { signal });
     this.canvas.addEventListener('mousedown', (e) => this._onMouseDown(e), { signal });
     this.canvas.addEventListener('mousemove', (e) => this._onMouseMove(e), { signal });
     this.canvas.addEventListener('mouseup', (e) => this._onMouseUp(e), { signal });
@@ -206,6 +209,14 @@ export class DrawingCanvas extends EventTarget {
     }
   }
 
+  _onPointerDown(e) {
+    if (!this.canvas.classList.contains('active')) return;
+    if (e.pointerType === 'pen' && e.altKey && (e.button === 0 || e.button === 2)) {
+      e.preventDefault?.();
+      this._beginSizeAdjust(e);
+    }
+  }
+
   _beginSizeAdjust(e) {
     if (this.isSizeAdjusting) return;
 
@@ -213,11 +224,29 @@ export class DrawingCanvas extends EventTarget {
     this._sizeAdjustStartX = e.clientX;
     this._sizeAdjustStartY = e.clientY;
     this._sizeAdjustStartSize = Math.min(50, Math.max(1, parseInt(this.lineWidth) || 3));
+    this._sizeAdjustUsesPointerEvents = typeof e.pointerId === 'number';
+    this._activeSizeAdjustPointerId = this._sizeAdjustUsesPointerEvents ? e.pointerId : null;
     this._sizeAdjustMoveHandler = (event) => this._updateSizeAdjust(event);
-    this._sizeAdjustEndHandler = () => this._endSizeAdjust();
+    this._sizeAdjustEndHandler = (event) => {
+      if (
+        this._sizeAdjustUsesPointerEvents &&
+        typeof event?.pointerId === 'number' &&
+        event.pointerId !== this._activeSizeAdjustPointerId
+      ) {
+        return;
+      }
+      this._endSizeAdjust();
+    };
 
-    window.addEventListener('mousemove', this._sizeAdjustMoveHandler, { signal: this._abortController.signal });
-    window.addEventListener('mouseup', this._sizeAdjustEndHandler, { signal: this._abortController.signal });
+    if (this._sizeAdjustUsesPointerEvents) {
+      this.canvas.setPointerCapture?.(e.pointerId);
+      window.addEventListener('pointermove', this._sizeAdjustMoveHandler, { signal: this._abortController.signal });
+      window.addEventListener('pointerup', this._sizeAdjustEndHandler, { signal: this._abortController.signal });
+      window.addEventListener('pointercancel', this._sizeAdjustEndHandler, { signal: this._abortController.signal });
+    } else {
+      window.addEventListener('mousemove', this._sizeAdjustMoveHandler, { signal: this._abortController.signal });
+      window.addEventListener('mouseup', this._sizeAdjustEndHandler, { signal: this._abortController.signal });
+    }
 
     this._emit('sizeadjuststart', {
       size: this.lineWidth,
@@ -228,6 +257,13 @@ export class DrawingCanvas extends EventTarget {
 
   _updateSizeAdjust(e) {
     if (!this.isSizeAdjusting) return;
+    if (
+      this._sizeAdjustUsesPointerEvents &&
+      typeof e.pointerId === 'number' &&
+      e.pointerId !== this._activeSizeAdjustPointerId
+    ) {
+      return;
+    }
     e.preventDefault?.();
 
     const delta = e.clientX - this._sizeAdjustStartX;
@@ -255,12 +291,17 @@ export class DrawingCanvas extends EventTarget {
   _removeSizeAdjustListeners() {
     if (this._sizeAdjustMoveHandler) {
       window.removeEventListener('mousemove', this._sizeAdjustMoveHandler);
+      window.removeEventListener('pointermove', this._sizeAdjustMoveHandler);
       this._sizeAdjustMoveHandler = null;
     }
     if (this._sizeAdjustEndHandler) {
       window.removeEventListener('mouseup', this._sizeAdjustEndHandler);
+      window.removeEventListener('pointerup', this._sizeAdjustEndHandler);
+      window.removeEventListener('pointercancel', this._sizeAdjustEndHandler);
       this._sizeAdjustEndHandler = null;
     }
+    this._sizeAdjustUsesPointerEvents = false;
+    this._activeSizeAdjustPointerId = null;
   }
 
   /**

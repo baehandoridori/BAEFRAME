@@ -1296,6 +1296,10 @@ async function initApp() {
     showToast(message, 'warning');
   });
 
+  drawingManager.addEventListener('strokeeraserunavailable', () => {
+    showToast('픽셀 지우개로 편집된 그림은 획 단위로 지울 수 없습니다. 픽셀 지우개로 지우거나 새로 그린 획을 지워주세요.', 'warning');
+  });
+
   // 프레임 렌더링 완료 시
   drawingManager.addEventListener('frameRendered', (e) => {
     log.debug('프레임 렌더링 완료', { frame: e.detail.frame });
@@ -2925,7 +2929,7 @@ async function initApp() {
     const scale = rect && elements.drawingCanvas?.width
       ? rect.width / elements.drawingCanvas.width
       : 1;
-    const displaySize = Math.min(96, Math.max(28, Math.round(size * scale)));
+    const displaySize = Math.max(2, Math.round(size * scale));
     const x = Number.isFinite(detail.clientX) ? detail.clientX : window.innerWidth / 2;
     const y = Number.isFinite(detail.clientY) ? detail.clientY : window.innerHeight / 2;
 
@@ -2935,7 +2939,8 @@ async function initApp() {
     brushSizeHud.style.height = `${displaySize}px`;
     brushSizeHud.style.background = currentToolType === 'eraser' ? 'transparent' : `${currentColor}80`;
     brushSizeHud.style.borderColor = currentToolType === 'eraser' ? 'rgba(255, 255, 255, 0.95)' : currentColor;
-    brushSizeHud.textContent = `${size}px`;
+    brushSizeHud.dataset.sizeLabel = `${size}px`;
+    brushSizeHud.textContent = '';
   }
 
   function showBrushSizeHud(detail = {}) {
