@@ -67,6 +67,47 @@ test('remote reply add and delete emit the same refresh signals as local changes
   assert.equal(new Date(marker.updatedAt).toISOString(), deleteRevision);
 });
 
+test('imported feedback markers emit markerAdded events for live collaboration broadcast', async () => {
+  const { CommentManager } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const { CommentSync } = await import('../../renderer/scripts/modules/comment-sync.js');
+  const manager = new CommentManager({ author: '테스터' });
+  const broadcasts = [];
+  const liveblocksManager = new EventTarget();
+  liveblocksManager.broadcastEvent = event => broadcasts.push(event);
+
+  const sync = new CommentSync({ liveblocksManager, commentManager: manager });
+  await sync.start();
+
+  const imported = manager.addImportedMarkers([{
+    id: 'imported-marker-1',
+    x: 0.2,
+    y: 0.3,
+    startFrame: 12,
+    endFrame: 48,
+    fps: 24,
+    text: '가져온 피드백',
+    author: '리뷰어',
+    createdAt: '2026-07-04T00:00:00.000Z',
+    updatedAt: '2026-07-04T00:00:00.000Z',
+    replies: [{
+      id: 'imported-reply-1',
+      text: '가져온 답글',
+      author: '답글러',
+      createdAt: '2026-07-04T00:01:00.000Z',
+      updatedAt: '2026-07-04T00:01:00.000Z'
+    }]
+  }], manager.activeLayerId);
+
+  sync.stop();
+
+  assert.equal(imported.length, 1);
+  assert.equal(broadcasts.length, 1);
+  assert.equal(broadcasts[0].type, 'COMMENT_MARKER_ADDED');
+  assert.equal(broadcasts[0].layerId, manager.activeLayerId);
+  assert.equal(broadcasts[0].marker.id, 'imported-marker-1');
+  assert.equal(broadcasts[0].marker.replies[0].id, 'imported-reply-1');
+});
+
 test('file reload merge accepts newer remote replies even when marker updatedAt is unchanged', async () => {
   const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
   const localMarker = {

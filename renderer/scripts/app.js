@@ -22,6 +22,11 @@ import { getImageFromClipboard, hasImageInClipboard, selectImageFile, isValidIma
 import { parseVersion, toVersionInfo } from './modules/version-parser.js';
 import { getVersionManager } from './modules/version-manager.js';
 import { getVersionDropdown } from './modules/version-dropdown.js';
+import {
+  countImportableFeedbackMarkers,
+  importFeedbackIntoTargetComments,
+  normalizeFeedbackSourceComments
+} from './modules/feedback-import.js';
 import { getSplitViewManager } from './modules/split-view-manager.js';
 import { getPlaylistManager } from './modules/playlist-manager.js';
 import { resizeClusterMembersByEdge } from './modules/comment-cluster.js';
@@ -1548,15 +1553,15 @@ async function initApp() {
 
   // 마커 추가됨
   commentManager.addEventListener('markerAdded', async (e) => {
-    const { marker, remote, restored } = e.detail;
+    const { marker, remote, restored, imported } = e.detail;
     removePendingMarkerUI();
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
     log.info('마커 추가됨', { id: marker.id, text: marker.text, remote: !!remote });
 
-    // 원격 변경 또는 Redo 복원은 알림/Undo 스킵
-    if (remote || restored) return;
+    // 원격 변경, Redo 복원, 가져온 피드백은 알림/Undo 스킵
+    if (remote || restored || imported) return;
 
     // Slack 알림: @멘션 대상에게 웹훅 전송 (딥링크 전에 저장하여 최신 상태 보장)
     if (reviewDataManager.getBframePath()) {
@@ -7044,6 +7049,82 @@ async function initApp() {
         activeVideoLoadPath = null;
       }
     }
+  }
+
+  async function handleImportFeedbackFromVersion(versionInfo) {
+    if (!state.currentFile) {
+      showToast('먼저 피드백을 받을 버전을 열어주세요.', 'warning');
+      return false;
+    }
+
+    if (!versionInfo?.path) {
+      showToast('피드백을 가져올 버전 파일을 찾을 수 없습니다.', 'warning');
+      return false;
+    }
+
+    if (isSameFilePath(versionInfo.path, state.currentFile)) {
+      showToast('현재 열려 있는 버전에서는 피드백을 가져올 수 없습니다.', 'info');
+      return false;
+    }
+
+    const sourceBframePath = getBframePath(versionInfo.path);
+    let sourceData = null;
+
+    try {
+      sourceData = await window.electronAPI.loadReview(sourceBframePath);
+    } catch (error) {
+      log.warn('피드백 가져오기 소스 로드 실패', {
+        sourceBframePath,
+        error: error.message
+      });
+      showToast('선택한 버전의 피드백 파일을 열 수 없습니다.', 'warning');
+      return false;
+    }
+
+    const sourceComments = normalizeFeedbackSourceComments(sourceData);
+    const sourceCount = countImportableFeedbackMarkers(sourceComments);
+    if (sourceCount <= 0) {
+      showToast('선택한 버전에 가져올 피드백이 없습니다.', 'info');
+      return false;
+    }
+
+    const sourceLabel = versionInfo.displayLabel || (versionInfo.version ? `v${versionInfo.version}` : versionInfo.fileName || '선택한 버전');
+    const confirmed = confirm(`${sourceLabel}에서 피드백 ${sourceCount}개를 현재 버전으로 가져올까요?`);
+    if (!confirmed) return false;
+
+    const targetLayerId = commentManager.activeLayerId || commentManager.getActiveLayer()?.id || 'comment-layer-1';
+    const result = importFeedbackIntoTargetComments(
+      commentManager.toJSON(),
+      sourceComments,
+      { targetLayerId }
+    );
+
+    if (result.importedCount <= 0) {
+      showToast('가져올 수 있는 피드백이 없습니다.', 'info');
+      return false;
+    }
+
+    const importedMarkers = commentManager.addImportedMarkers(result.importedMarkers, targetLayerId);
+    if (importedMarkers.length <= 0) {
+      showToast('가져올 수 있는 피드백이 없습니다.', 'info');
+      return false;
+    }
+
+    commentManager.setActiveLayer(importedMarkers[0].layerId || targetLayerId);
+    const saved = await reviewDataManager.save();
+
+    updateCommentList();
+    updateTimelineMarkers();
+    renderVideoMarkers();
+    await refreshCommentRangesForCurrentMode();
+
+    if (!saved) {
+      showToast('피드백은 화면에 추가됐지만 저장에 실패했습니다.', 'error');
+      return false;
+    }
+
+    showToast(`피드백 ${importedMarkers.length}개를 가져왔습니다.`, 'success');
+    return true;
   }
 
   // 썸네일 리스너 참조 저장 (파일 전환 시 정리용)
@@ -12833,6 +12914,7 @@ async function initApp() {
   const versionDropdown = getVersionDropdown();
   versionDropdown.init();
   versionDropdown.setReviewDataManager(reviewDataManager);
+  versionDropdown.onFeedbackImport(handleImportFeedbackFromVersion);
 
   // 스플릿 뷰 매니저 초기화
   const splitViewManager = getSplitViewManager();
