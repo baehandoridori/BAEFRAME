@@ -1900,15 +1900,6 @@ export class Timeline extends EventTarget {
   }
 
   /**
-   * HTML 이스케이프
-   */
-  _escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
-  /**
    * 타임코드 포맷 (HH:MM:SS:FF)
    * @param {number} time - 시간 (초)
    * @returns {string} 타임코드 문자열
