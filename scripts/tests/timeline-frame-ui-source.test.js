@@ -32,6 +32,9 @@ test('playhead position is centered within the current frame cell', () => {
   assert.match(timelineSource, /const playheadPx = this\._getPlayheadFrameCenterPx\(\);/);
   assert.match(timelineSource, /const duration = this\._getTimelineDuration\(\);\n    const totalFrames = this\._getDisplayTotalFrames\(\);\n    if \(!this\.tracksContainer \|\| duration === 0 \|\| totalFrames === 0\) \{/);
   assert.match(timelineSource, /_computePxPerFrame\(\) \{\n    const containerWidth = this\.tracksContainer\?\.offsetWidth \|\| 0;\n    const totalFrames = this\._getDisplayTotalFrames\(\);/);
+  assert.match(timelineSource, /setPlaylistTimeline\(segments, totalDuration\) \{[\s\S]*?this\._renderPlaylistSegments\(\);\n    this\._updateFrameGrid\(\);/);
+  assert.match(timelineSource, /clearPlaylistTimeline\(\) \{[\s\S]*?this\.clearPlaylistCommentRanges\(\);\n    this\._updateFrameGrid\(\);/);
+  assert.match(timelineSource, /setCutlistTimeline\(segments, totalDuration\) \{[\s\S]*?this\._renderCutlistSegments\(\);\n    this\._updateFrameGrid\(\);/);
   assert.doesNotMatch(timelineSource, /_computePxPerFrame\(\) \{[\s\S]*?this\._getTimelineTotalFrames\(\) \|\| this\.totalFrames/);
 });
 
@@ -54,6 +57,8 @@ test('frame grid overlay is pinned to the same pixel width as the tracks', () =>
   assert.match(timelineSource, /_setCommentTrackRowHeight\(height = 24\) \{[\s\S]*?this\._syncFrameGridContainerMetrics\(\);[\s\S]*?\n  \}/);
   assert.match(timelineSource, /renderCommentRanges\(comments\) \{[\s\S]*?this\._setCommentTrackRowHeight\(targetHeight\);/);
   assert.match(timelineSource, /renderPlaylistCommentRanges\(ranges, totalDuration\) \{[\s\S]*?this\.commentTrack\.style\.display = 'block';[\s\S]*?this\._syncFrameGridContainerMetrics\(\);/);
+  assert.match(timelineSource, /renderHighlights\(highlights\) \{[\s\S]*?this\.tracksContainer\?\.style\.setProperty\('--marker-top-offset', '0px'\);\n      this\._syncFrameGridContainerMetrics\(\);/);
+  assert.match(timelineSource, /renderHighlights\(highlights\) \{[\s\S]*?highlights\.forEach\(highlight => \{[\s\S]*?\}\);\n\n    this\._syncFrameGridContainerMetrics\(\);/);
   assert.match(timelineSource, /if \(this\.zoom !== prevZoom\) \{[\s\S]*?this\._applyZoom\(\);[\s\S]*?\}\n\n        this\._syncFrameGridContainerMetrics\(\);/);
   assert.match(timelineSource, /renderCompositionLayers\(layers, options = \{\}\) \{[\s\S]*?sourceLayers[\s\S]*?\.forEach\(\(layer\) => \{[\s\S]*?\}\);\n\n    this\._syncFrameGridContainerMetrics\(\);/);
   assert.match(timelineSource, /layers\.forEach\(\(layer, index\) => \{[\s\S]*?this\._syncFrameGridContainerMetrics\(\);[\s\S]*?\n  \}/);

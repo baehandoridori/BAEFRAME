@@ -2318,6 +2318,7 @@ export class Timeline extends EventTarget {
       }
       // 하이라이트 없으면 마커 오프셋 제거
       this.tracksContainer?.style.setProperty('--marker-top-offset', '0px');
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2335,6 +2336,8 @@ export class Timeline extends EventTarget {
       const element = this._createHighlightElement(highlight);
       this.highlightTrack.appendChild(element);
     });
+
+    this._syncFrameGridContainerMetrics();
   }
 
   /**
@@ -2496,6 +2499,7 @@ export class Timeline extends EventTarget {
       this.clearPlaylistCommentRanges();
     }
     this._renderPlaylistSegments();
+    this._updateFrameGrid();
   }
 
   clearPlaylistCommentRanges() {
@@ -2526,6 +2530,7 @@ export class Timeline extends EventTarget {
     this._updatePlayheadPosition();
     this._clearPlaylistSegmentElements();
     this.clearPlaylistCommentRanges();
+    this._updateFrameGrid();
   }
 
   setCutlistTimeline(segments, totalDuration) {
@@ -2537,6 +2542,7 @@ export class Timeline extends EventTarget {
     this._updateRuler();
     this._updatePlayheadPosition();
     this._renderCutlistSegments();
+    this._updateFrameGrid();
   }
 
   setCurrentCutId(cutId) {
