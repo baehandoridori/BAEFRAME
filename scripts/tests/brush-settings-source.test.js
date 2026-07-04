@@ -46,6 +46,8 @@ test('drawing toolbar restores persisted brush state and saves changes deliberat
 test('alt drag adjusts brush size before drawing or ctrl eraser handling', () => {
   const mouseDownBody = drawingCanvasSource.match(/_onMouseDown\(e\) \{[\s\S]*?\n  \}/)?.[0] || '';
   assert.match(drawingCanvasSource, /this\.isSizeAdjusting = false;/);
+  assert.match(drawingCanvasSource, /pointerdown/);
+  assert.match(drawingCanvasSource, /_onPointerDown\(e\)/);
   assert.match(drawingCanvasSource, /_beginSizeAdjust\(e\)/);
   assert.match(drawingCanvasSource, /_updateSizeAdjust\(e\)/);
   assert.match(drawingCanvasSource, /_endSizeAdjust\(\)/);
@@ -64,12 +66,27 @@ test('alt drag adjusts brush size before drawing or ctrl eraser handling', () =>
   assert.match(drawingCanvasSource, /this\.setLineWidth\(nextSize\)/);
 });
 
+test('alt drag size adjustment follows pen pointer events until pointer release', () => {
+  assert.match(drawingCanvasSource, /e\.pointerType === 'pen'/);
+  assert.match(drawingCanvasSource, /e\.altKey && \(e\.button === 0 \|\| e\.button === 2\)/);
+  assert.match(drawingCanvasSource, /this\.canvas\.setPointerCapture\?\.\(e\.pointerId\)/);
+  assert.match(drawingCanvasSource, /window\.addEventListener\('pointermove', this\._sizeAdjustMoveHandler/);
+  assert.match(drawingCanvasSource, /window\.addEventListener\('pointerup', this\._sizeAdjustEndHandler/);
+  assert.match(drawingCanvasSource, /window\.removeEventListener\('pointermove', this\._sizeAdjustMoveHandler\)/);
+  assert.match(drawingCanvasSource, /window\.removeEventListener\('pointerup', this\._sizeAdjustEndHandler\)/);
+});
+
 test('brush size HUD and bracket shortcuts are wired for drawing mode only', () => {
   assert.match(indexSource, /id="brushSizeHud"/);
   assert.match(mainCss, /\.brush-size-hud/);
+  assert.match(mainCss, /\.brush-size-hud::after/);
+  assert.match(mainCss, /content:\s*attr\(data-size-label\)/);
   assert.match(appSource, /brushSizeHud/);
   assert.match(appSource, /showBrushSizeHud/);
   assert.match(appSource, /hideBrushSizeHud/);
+  assert.match(appSource, /brushSizeHud\.dataset\.sizeLabel = `\$\{size\}px`;/);
+  assert.match(appSource, /brushSizeHud\.textContent = '';/);
+  assert.doesNotMatch(appSource, /Math\.min\(96, Math\.max\(28, Math\.round\(size \* scale\)\)\)/);
   assert.match(appSource, /sizeadjuststart/);
   assert.match(appSource, /sizeadjustend/);
   assert.match(userSettingsSource, /brushSizeDown:\s*\{ key: 'BracketLeft'/);

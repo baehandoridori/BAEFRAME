@@ -140,6 +140,26 @@ test('stroke eraser gestures do not stream as live pixel eraser strokes to colla
   assert.match(drawingSyncSource, /baseCanvasData: keyframe\.baseCanvasData/);
 });
 
+test('stroke eraser explains unavailable bitmap-only frames instead of silently doing nothing', () => {
+  assert.match(drawingManagerSource, /_strokeEraseUnavailableNotified = false;/);
+  assert.match(drawingManagerSource, /_notifyStrokeEraseUnavailable\(keyframe\)/);
+  assert.match(drawingManagerSource, /this\._emit\('strokeeraserunavailable'/);
+  assert.match(drawingManagerSource, /reason: 'bitmap-only'/);
+  assert.match(appSource, /drawingManager\.addEventListener\('strokeeraserunavailable'/);
+  assert.match(appSource, /픽셀 지우개로 편집된 그림은 획 단위로 지울 수 없습니다/);
+});
+
+test('stroke eraser redraw loads base image before clearing the visible canvas', () => {
+  const redrawBody = drawingManagerSource.match(/async _redrawKeyframeFromRecords\(keyframe\) \{[\s\S]*?\n  \}/)?.[0] || '';
+  assert.match(drawingManagerSource, /_loadBaseCanvasImage\(keyframe\)/);
+  assert.match(redrawBody, /const baseImage = keyframe\.baseCanvasData[\s\S]+await this\._loadBaseCanvasImage\(keyframe\)/);
+  assert.ok(
+    redrawBody.indexOf('await this._loadBaseCanvasImage(keyframe)') < redrawBody.indexOf('this.drawingCanvas.clear({ silent: true })'),
+    'base image must be decoded before visible canvas clear to avoid flicker'
+  );
+  assert.match(redrawBody, /this\.drawingCanvas\.ctx\.drawImage\(baseImage, 0, 0\);/);
+});
+
 test('drawing playback avoids noisy per-frame canvas clears and preload churn', () => {
   const renderFrameBody = drawingManagerSource.match(/async renderFrame\(frame\) \{[\s\S]*?\n  \}/)?.[0] || '';
   const syncRenderBody = drawingManagerSource.match(/_renderFrameSync\(frame\) \{[\s\S]*?\n  \}/)?.[0] || '';

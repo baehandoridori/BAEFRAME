@@ -91,6 +91,7 @@ export class DrawingManager extends EventTarget {
     this.eraserMode = ERASER_MODES.PIXEL;
     this._activeStrokeBaseData = null;
     this._strokeEraseQueue = Promise.resolve();
+    this._strokeEraseUnavailableNotified = false;
 
     // Undo/Redo — 외부 통합 스택과 연동
     this._onUndoPush = null; // 외부에서 설정하는 콜백: (action) => void
@@ -134,6 +135,8 @@ export class DrawingManager extends EventTarget {
    * 그리기 시작 처리
    */
   _onDrawStart(detail) {
+    this._strokeEraseUnavailableNotified = false;
+
     // 레이어가 없으면 새 레이어 생성
     if (this.layers.length === 0 || !this.activeLayerId) {
       this.createLayer();
@@ -155,6 +158,8 @@ export class DrawingManager extends EventTarget {
         preserveSourceRecords: true,
         fallbackBaseData: this._activeStrokeBaseData
       });
+      const keyframe = layer.getKeyframeAtFrame(this.currentFrame);
+      this._notifyStrokeEraseUnavailable(keyframe);
     } else {
       // 현재 프레임에 키프레임이 없으면 생성
       // (기존 키프레임 범위 내에서 그리는 경우는 덧그리기)
@@ -352,6 +357,8 @@ export class DrawingManager extends EventTarget {
     keyframe.strokeRecords = [];
     keyframe._cachedImage = null;
     keyframe._cachedSrc = null;
+    keyframe._cachedBaseImage = null;
+    keyframe._cachedBaseSrc = null;
   }
 
   async _eraseStrokeRecords(detail) {
@@ -363,7 +370,10 @@ export class DrawingManager extends EventTarget {
       preserveSourceRecords: true,
       fallbackBaseData: this._activeStrokeBaseData
     });
-    if (!keyframe?.strokeRecords?.length) return false;
+    if (!keyframe?.strokeRecords?.length) {
+      this._notifyStrokeEraseUnavailable(keyframe);
+      return false;
+    }
 
     const result = removeIntersectingStrokes(
       keyframe.strokeRecords,
@@ -380,9 +390,13 @@ export class DrawingManager extends EventTarget {
   async _redrawKeyframeFromRecords(keyframe) {
     if (!keyframe) return;
 
-    this.drawingCanvas.clear();
-    if (keyframe.baseCanvasData) {
-      await this.drawingCanvas.drawImageDataUrl(keyframe.baseCanvasData);
+    const baseImage = keyframe.baseCanvasData
+      ? await this._loadBaseCanvasImage(keyframe)
+      : null;
+
+    this.drawingCanvas.clear({ silent: true });
+    if (baseImage) {
+      this.drawingCanvas.ctx.drawImage(baseImage, 0, 0);
     }
 
     for (const record of keyframe.strokeRecords || []) {
@@ -393,6 +407,40 @@ export class DrawingManager extends EventTarget {
     keyframe.setCanvasData(imageData);
     keyframe._cachedImage = null;
     keyframe._cachedSrc = null;
+  }
+
+  _loadBaseCanvasImage(keyframe) {
+    const src = keyframe?.baseCanvasData;
+    if (!src) return Promise.resolve(null);
+    if (keyframe._cachedBaseImage && keyframe._cachedBaseSrc === src) {
+      return Promise.resolve(keyframe._cachedBaseImage);
+    }
+
+    return new Promise(resolve => {
+      const image = new Image();
+      image.onload = () => {
+        keyframe._cachedBaseImage = image;
+        keyframe._cachedBaseSrc = src;
+        resolve(image);
+      };
+      image.onerror = () => {
+        log.warn('획 지우기 기준 이미지 로드 실패');
+        resolve(null);
+      };
+      image.src = src;
+    });
+  }
+
+  _notifyStrokeEraseUnavailable(keyframe) {
+    if (this._strokeEraseUnavailableNotified) return;
+    if (!keyframe || keyframe.strokeRecords?.length > 0) return;
+    if (!keyframe.canvasData && keyframe.isEmpty !== false) return;
+
+    this._strokeEraseUnavailableNotified = true;
+    this._emit('strokeeraserunavailable', {
+      frame: keyframe.frame,
+      reason: 'bitmap-only'
+    });
   }
 
   /**
