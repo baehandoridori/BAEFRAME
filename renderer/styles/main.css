@@ -4654,6 +4654,10 @@ button.layer-lock:not(.locked):hover {
   outline-offset: -2px;
 }
 
+.keyframe-drag-ghost-group {
+  display: none;
+}
+
 .keyframe-drag-ghost-cell {
   position: absolute;
   top: 0;

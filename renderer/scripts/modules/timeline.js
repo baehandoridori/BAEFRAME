@@ -102,6 +102,9 @@ export class Timeline extends EventTarget {
     this.dragStartX = 0;
     this.dragStartFrame = 0;
     this.dragGhost = null;  // 드래그 중 표시할 고스트 요소
+    this.dragGhostItems = [];
+    this.dragSourceElements = [];
+    this.dragGhostKeyframes = [];
 
     // 다중 선택 상태
     this.selectedKeyframes = [];  // [ { layerId, frame } ]
@@ -1554,18 +1557,25 @@ export class Timeline extends EventTarget {
     const newFrame = Math.min(this.totalFrames - 1, Math.floor(percent * this.totalFrames));
 
     // 고스트 클립 위치 업데이트
-    const ghostPercent = (newFrame / this.totalFrames) * 100;
-    this.dragGhost.style.left = `${ghostPercent}%`;
+    const rawFrameDelta = newFrame - this.dragStartFrame;
+    const frameDelta = this._clampKeyframeDragDelta(rawFrameDelta);
+    const targetFrame = this.dragStartFrame + frameDelta;
+    this.dragGhostItems.forEach(ghostCell => {
+      const sourceFrame = parseInt(ghostCell.dataset.sourceFrame || '0', 10) + frameDelta;
+      const ghostPercent = (sourceFrame / this.totalFrames) * 100;
+      ghostCell.style.left = `${ghostPercent}%`;
+    });
 
     // 툴팁 위치 및 내용 업데이트
     if (this.dragTooltip) {
-      const tooltipPercent = ((newFrame + 0.5) / this.totalFrames) * 100;
+      const tooltipPercent = ((targetFrame + 0.5) / this.totalFrames) * 100;
       this.dragTooltip.style.left = `${tooltipPercent}%`;
-      this.dragTooltip.textContent = `F${newFrame}`;
+      this.dragTooltip.textContent = `F${targetFrame}`;
     }
 
     // 프레임 이동량 저장
-    this.dragGhost.dataset.targetFrame = newFrame;
+    this.dragGhost.dataset.targetFrame = targetFrame;
+    this.dragGhost.dataset.frameDelta = frameDelta;
   }
 
   /**
@@ -1577,12 +1587,15 @@ export class Timeline extends EventTarget {
     const targetFrame = parseInt(this.dragGhost?.dataset.targetFrame || this.dragStartFrame);
     const frameDelta = targetFrame - this.dragStartFrame;
 
-    // 원본 클립 투명도 복원
-    if (this.draggedKeyframe.element) {
-      this.draggedKeyframe.element.style.opacity = '';
-    }
+    // 원본 키프레임 투명도 복원
+    this.dragSourceElements.forEach(element => {
+      element.style.opacity = '';
+    });
+    this.dragSourceElements = [];
 
     // 고스트 및 툴팁 제거
+    this.dragGhostItems.forEach(ghost => ghost.remove());
+    this.dragGhostItems = [];
     if (this.dragGhost) {
       this.dragGhost.remove();
       this.dragGhost = null;
@@ -1598,16 +1611,19 @@ export class Timeline extends EventTarget {
     // 이동량이 있으면 이벤트 발생
     if (frameDelta !== 0) {
       // 선택된 모든 키프레임 이동
-      const keyframesToMove = this.selectedKeyframes.map(kf => ({
+      const keyframesToMove = this.dragGhostKeyframes.map(kf => ({
         layerId: kf.layerId,
         fromFrame: kf.frame,
         toFrame: kf.frame + frameDelta
       }));
 
-      this._emit('keyframesMove', { keyframes: keyframesToMove, frameDelta });
-      log.info('키프레임 이동', { keyframes: keyframesToMove, frameDelta });
+      if (keyframesToMove.length > 0) {
+        this._emit('keyframesMove', { keyframes: keyframesToMove, frameDelta });
+        log.info('키프레임 이동', { keyframes: keyframesToMove, frameDelta });
+      }
     }
 
+    this.dragGhostKeyframes = [];
     this.draggedKeyframe = null;
   }
 
@@ -1615,19 +1631,53 @@ export class Timeline extends EventTarget {
    * 드래그 고스트 생성
    */
   _createDragGhost(e, frame) {
-    const { element: clipElement } = this.draggedKeyframe;
+    const { layerId, element: clipElement } = this.draggedKeyframe;
+    const ghostKeyframes = this._getDragGhostKeyframes(layerId, frame);
+    if (ghostKeyframes.length === 0) return;
 
-    // 정확히 1프레임 칸을 나타내는 고스트를 새로 만든다.
     this.dragGhost = document.createElement('div');
-    this.dragGhost.className = 'keyframe-drag-ghost-cell';
-    const ghostLeftPercent = (frame / this.totalFrames) * 100;
-    const ghostWidthPercent = (1 / this.totalFrames) * 100;
-    this.dragGhost.style.left = `${ghostLeftPercent}%`;
-    this.dragGhost.style.width = `${ghostWidthPercent}%`;
+    this.dragGhost.className = 'keyframe-drag-ghost-group';
     this.dragGhost.dataset.targetFrame = frame;
+    this.dragGhost.dataset.frameDelta = '0';
+    this.dragGhostItems = [];
+    this.dragSourceElements = [];
+    this.dragGhostKeyframes = ghostKeyframes.map(keyframe => ({ ...keyframe }));
 
-    // 원본 클립을 반투명하게 처리
-    clipElement.style.opacity = '0.3';
+    // 선택된 키프레임 각각에 정확히 1프레임 칸을 나타내는 고스트를 만든다.
+    const ghostWidthPercent = (1 / this.totalFrames) * 100;
+    ghostKeyframes.forEach(keyframe => {
+      const sourceElement = this.tracksContainer?.querySelector(
+        `[data-layer-id="${keyframe.layerId}"][data-frame="${keyframe.frame}"]`
+      );
+      const ghostHost = sourceElement?.parentElement || clipElement.parentElement;
+      if (!ghostHost) return;
+
+      const ghostCell = document.createElement('div');
+      ghostCell.className = 'keyframe-drag-ghost-cell';
+      ghostCell.dataset.layerId = keyframe.layerId;
+      ghostCell.dataset.sourceFrame = keyframe.frame;
+      ghostCell.style.left = `${(keyframe.frame / this.totalFrames) * 100}%`;
+      ghostCell.style.width = `${ghostWidthPercent}%`;
+
+      ghostHost.appendChild(ghostCell);
+      this.dragGhostItems.push(ghostCell);
+
+      if (sourceElement) {
+        sourceElement.style.opacity = '0.3';
+        this.dragSourceElements.push(sourceElement);
+      }
+    });
+
+    if (this.dragGhostItems.length === 0) {
+      const fallbackGhost = document.createElement('div');
+      fallbackGhost.className = 'keyframe-drag-ghost-cell';
+      fallbackGhost.dataset.layerId = layerId;
+      fallbackGhost.dataset.sourceFrame = frame;
+      fallbackGhost.style.left = `${(frame / this.totalFrames) * 100}%`;
+      fallbackGhost.style.width = `${ghostWidthPercent}%`;
+      clipElement.parentElement?.appendChild(fallbackGhost);
+      this.dragGhostItems.push(fallbackGhost);
+    }
 
     // 프레임 표시 툴팁 추가
     this.dragTooltip = document.createElement('div');
@@ -1638,6 +1688,35 @@ export class Timeline extends EventTarget {
 
     clipElement.parentElement.appendChild(this.dragGhost);
     this.tracksContainer.appendChild(this.dragTooltip);
+  }
+
+  _getDragGhostKeyframes(layerId, frame) {
+    const isDraggedKeyframeSelected = this.selectedKeyframes.some(
+      keyframe => keyframe.layerId === layerId && keyframe.frame === frame
+    );
+    const keyframes = isDraggedKeyframeSelected && this.selectedKeyframes.length > 0
+      ? this.selectedKeyframes.map(keyframe => ({ ...keyframe }))
+      : [{ layerId, frame }];
+    return keyframes.filter(keyframe => this._isKeyframeLayerMovable(keyframe.layerId));
+  }
+
+  _isKeyframeLayerMovable(layerId) {
+    if (!Array.isArray(this._lastDrawingLayers)) return true;
+    const layer = this._lastDrawingLayers.find(item => item.id === layerId);
+    return layer?.locked !== true;
+  }
+
+  _clampKeyframeDragDelta(frameDelta) {
+    const sourceFrames = this.dragGhostKeyframes
+      .map(keyframe => Number(keyframe.frame))
+      .filter(Number.isFinite);
+    if (sourceFrames.length === 0 || this.totalFrames <= 0) return frameDelta;
+
+    const minFrame = Math.min(...sourceFrames);
+    const maxFrame = Math.max(...sourceFrames);
+    const minDelta = -minFrame;
+    const maxDelta = (this.totalFrames - 1) - maxFrame;
+    return Math.max(minDelta, Math.min(maxDelta, frameDelta));
   }
 
   // ====== 키프레임 선택 ======

@@ -811,8 +811,16 @@ export class DrawingManager extends EventTarget {
 
     let moved = false;
 
-    // 충돌 방지를 위해 뒤에서부터 처리 (프레임이 높은 것부터)
-    const sorted = [...keyframesToMove].sort((a, b) => b.fromFrame - a.fromFrame);
+    // 충돌 방지를 위해 이동 방향에 따라 빈칸을 먼저 만든다.
+    const sorted = [...keyframesToMove].sort((a, b) => {
+      const layerCompare = String(a.layerId).localeCompare(String(b.layerId));
+      if (layerCompare !== 0) return layerCompare;
+
+      const frameDelta = (a.toFrame - a.fromFrame) || (b.toFrame - b.fromFrame);
+      if (frameDelta < 0) return a.fromFrame - b.fromFrame;
+      if (frameDelta > 0) return b.fromFrame - a.fromFrame;
+      return 0;
+    });
 
     for (const { layerId, fromFrame, toFrame } of sorted) {
       const layer = this.layers.find(l => l.id === layerId);
