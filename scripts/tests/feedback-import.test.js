@@ -174,13 +174,13 @@ test('normalizes legacy source review comments before import', async () => {
   const legacySourceReview = {
     version: '1.0',
     videoPath: 'C:/videos/version-1.mp4',
+    fps: 60,
     comments: [
       {
         id: 'legacy-marker',
         x: 0.25,
         y: 0.75,
         frame: 240,
-        fps: 24,
         content: 'legacy feedback',
         author: '예전 리뷰어',
         image: 'data:image/png;base64,legacy-marker-image',
@@ -197,6 +197,7 @@ test('normalizes legacy source review comments before import', async () => {
   };
 
   const sourceComments = normalizeFeedbackSourceComments(legacySourceReview);
+  assert.equal(sourceComments.fps, 60);
   assert.equal(countImportableFeedbackMarkers(sourceComments), 1);
 
   const result = importFeedbackIntoTargetComments(
@@ -215,7 +216,8 @@ test('normalizes legacy source review comments before import', async () => {
   );
   assert.equal(result.importedMarkers[0].image, 'data:image/png;base64,legacy-marker-image');
   assert.equal(result.importedMarkers[0].startFrame, 240);
-  assert.equal(result.importedMarkers[0].endFrame, 336);
+  assert.equal(result.importedMarkers[0].endFrame, 480);
+  assert.equal(result.importedMarkers[0].fps, 60);
   assert.equal(result.importedMarkers[0].text, 'legacy feedback');
   assert.match(result.importedMarkers[0].createdAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.match(result.importedMarkers[0].updatedAt, /^\d{4}-\d{2}-\d{2}T/);

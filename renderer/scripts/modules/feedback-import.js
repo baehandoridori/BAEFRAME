@@ -56,8 +56,9 @@ function createDefaultTargetLayer(targetLayerId = 'comment-layer-1') {
   };
 }
 
-function normalizeLegacyCommentArray(comments) {
+function normalizeLegacyCommentArray(comments, fps = null) {
   return {
+    ...(fps ? { fps } : {}),
     layers: [
       {
         id: 'layer_default',
@@ -72,16 +73,16 @@ function normalizeLegacyCommentArray(comments) {
   };
 }
 
-function normalizeFeedbackComments(comments) {
+function normalizeFeedbackComments(comments, fps = null) {
   if (comments && typeof comments === 'object' && Array.isArray(comments.layers)) {
-    return comments;
+    return fps && !comments.fps ? { ...comments, fps } : comments;
   }
 
   if (Array.isArray(comments)) {
-    return normalizeLegacyCommentArray(comments);
+    return normalizeLegacyCommentArray(comments, fps);
   }
 
-  return { layers: [] };
+  return fps ? { fps, layers: [] } : { layers: [] };
 }
 
 /**
@@ -99,11 +100,12 @@ export function normalizeFeedbackSourceComments(sourceData) {
     return normalizeFeedbackComments(sourceData);
   }
 
+  const sourceFps = toPositiveNumber(sourceData.fps);
   try {
     const migrated = migrateToV2(sourceData);
-    return normalizeFeedbackComments(migrated?.comments);
+    return normalizeFeedbackComments(migrated?.comments, toPositiveNumber(migrated?.fps) || sourceFps);
   } catch (_error) {
-    return normalizeFeedbackComments(sourceData.comments);
+    return normalizeFeedbackComments(sourceData.comments, sourceFps);
   }
 }
 
@@ -172,10 +174,11 @@ export function countImportableFeedbackMarkers(sourceComments) {
 export function cloneFeedbackMarkers(sourceComments, options = {}) {
   const createId = options.createId || defaultCreateId;
   const targetLayerId = options.targetLayerId || 'comment-layer-1';
+  const defaultFps = toPositiveNumber(sourceComments?.fps) || options.fps;
 
   return getImportableMarkers(sourceComments).map(sourceMarker => {
     const now = new Date().toISOString();
-    const { fps, startFrame, endFrame } = resolveMarkerFrames(sourceMarker, options.fps);
+    const { fps, startFrame, endFrame } = resolveMarkerFrames(sourceMarker, defaultFps);
     const cloned = {
       ...clonePlainRecord(sourceMarker),
       id: createId('marker'),
