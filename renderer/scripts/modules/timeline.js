@@ -155,6 +155,8 @@ export class Timeline extends EventTarget {
           this._applyZoom();
         }
 
+        this._syncFrameGridContainerMetrics();
+
         // 플레이헤드 위치 업데이트
         this._updatePlayheadPosition();
 
@@ -350,6 +352,168 @@ export class Timeline extends EventTarget {
     return this.cutlistDuration ? (this.cutlistTotalFrames || this.totalFrames) : this.totalFrames;
   }
 
+  _getFrameMappedSegments() {
+    if (this.playlistDuration > 0 && this.playlistSegments?.length) return this.playlistSegments;
+    if (this.cutlistDuration > 0 && this.cutlistSegments?.length) return this.cutlistSegments;
+    return [];
+  }
+
+  _getSegmentFps(segment) {
+    const fps = Number(segment?.fps);
+    if (Number.isFinite(fps) && fps > 0) return fps;
+
+    const fallbackFps = Number(this.fps);
+    return Number.isFinite(fallbackFps) && fallbackFps > 0 ? fallbackFps : 24;
+  }
+
+  _getSegmentStartTime(segment) {
+    const startTime = Number(segment?.globalStartTime ?? segment?.startTime);
+    return Number.isFinite(startTime) ? startTime : 0;
+  }
+
+  _getSegmentEndTime(segment) {
+    const explicitEnd = Number(segment?.globalEndTime ?? segment?.endTime);
+    if (Number.isFinite(explicitEnd)) return explicitEnd;
+    return this._getSegmentStartTime(segment) + this._getSegmentDuration(segment);
+  }
+
+  _getSegmentDuration(segment) {
+    const duration = Number(segment?.duration);
+    if (Number.isFinite(duration) && duration > 0) return duration;
+
+    const startTime = this._getSegmentStartTime(segment);
+    const explicitEnd = Number(segment?.globalEndTime ?? segment?.endTime);
+    if (Number.isFinite(explicitEnd) && explicitEnd > startTime) {
+      return explicitEnd - startTime;
+    }
+
+    const frameCount = Number(segment?.frameCount);
+    const fps = this._getSegmentFps(segment);
+    return Number.isFinite(frameCount) && frameCount > 0 ? frameCount / fps : 0;
+  }
+
+  _getSegmentFrameCount(segment) {
+    const explicitFrameCount = Number(segment?.frameCount);
+    if (Number.isFinite(explicitFrameCount) && explicitFrameCount >= 0) {
+      return Math.floor(explicitFrameCount);
+    }
+
+    const frameCount = Math.floor((this._getSegmentDuration(segment) * this._getSegmentFps(segment)) + 1e-6);
+    return frameCount > 0 ? frameCount : 0;
+  }
+
+  _getTimelineSegmentTotalFrames(segments = this._getFrameMappedSegments()) {
+    return (segments || []).reduce((total, segment) => total + this._getSegmentFrameCount(segment), 0);
+  }
+
+  _getSegmentTimeFromDisplayFrame(frame) {
+    const segments = this._getFrameMappedSegments();
+    if (!segments.length) return null;
+
+    let frameCursor = 0;
+    for (const segment of segments) {
+      const frameCount = this._getSegmentFrameCount(segment);
+      if (frameCount <= 0) continue;
+
+      const segmentEndFrame = frameCursor + frameCount;
+      if (frame < segmentEndFrame) {
+        const localFrame = Math.max(0, Math.min(frameCount - 1, frame - frameCursor));
+        return this._getSegmentStartTime(segment) + (localFrame / this._getSegmentFps(segment));
+      }
+      frameCursor = segmentEndFrame;
+    }
+
+    return null;
+  }
+
+  _getDisplayFrameFromSegmentTime(time) {
+    const segments = this._getFrameMappedSegments();
+    if (!segments.length) return null;
+
+    const targetTime = Math.max(0, Number(time) || 0);
+    let frameCursor = 0;
+    let firstSegmentInfo = null;
+    let lastSegmentInfo = null;
+
+    for (const segment of segments) {
+      const frameCount = this._getSegmentFrameCount(segment);
+      if (frameCount <= 0) continue;
+
+      const fps = this._getSegmentFps(segment);
+      const startTime = this._getSegmentStartTime(segment);
+      const endTime = this._getSegmentEndTime(segment);
+      const segmentInfo = { frameCursor, frameCount, startTime };
+      if (!firstSegmentInfo) firstSegmentInfo = segmentInfo;
+      lastSegmentInfo = segmentInfo;
+
+      if (targetTime >= startTime && targetTime < endTime) {
+        const localFrame = Math.floor(((targetTime - startTime) * fps) + 1e-6);
+        return frameCursor + Math.max(0, Math.min(frameCount - 1, localFrame));
+      }
+
+      frameCursor += frameCount;
+    }
+
+    if (!lastSegmentInfo) return null;
+    if (firstSegmentInfo && targetTime <= firstSegmentInfo.startTime) {
+      return firstSegmentInfo.frameCursor;
+    }
+    const localFrame = targetTime <= lastSegmentInfo.startTime
+      ? 0
+      : lastSegmentInfo.frameCount - 1;
+    return lastSegmentInfo.frameCursor + localFrame;
+  }
+
+  _getDisplayTotalFrames() {
+    const segmentFrames = this._getTimelineSegmentTotalFrames();
+    if (segmentFrames > 0) return segmentFrames;
+
+    if (this.playlistDuration > 0) {
+      const playlistFrames = Math.floor(this.playlistDuration * (this.fps || 0));
+      if (playlistFrames > 0) return playlistFrames;
+    }
+
+    const timelineFrames = this._getTimelineTotalFrames();
+    if (timelineFrames > 0) return timelineFrames;
+
+    const duration = this._getTimelineDuration();
+    const derivedFrames = Math.floor(duration * (this.fps || 0));
+    return derivedFrames > 0 ? derivedFrames : 0;
+  }
+
+  _getPlayheadFrameCenterPx(time = this.currentTime) {
+    const duration = this._getTimelineDuration();
+    const totalFrames = this._getDisplayTotalFrames();
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (duration === 0 || totalFrames === 0 || containerWidth === 0) return 0;
+
+    const mappedFrame = this._getDisplayFrameFromSegmentTime(time);
+    const fps = this.fps || (totalFrames / duration);
+    const rawFrame = mappedFrame !== null
+      ? mappedFrame
+      : (fps > 0
+        ? Math.floor((time * fps) + 1e-6)
+        : Math.floor(((time / duration) * totalFrames) + 1e-6));
+    const frame = Math.max(0, Math.min(totalFrames - 1, rawFrame));
+    return ((frame + 0.5) / totalFrames) * containerWidth;
+  }
+
+  _getTimelineTimeFromCellPercent(percent) {
+    const duration = this._getTimelineDuration();
+    const totalFrames = this._getDisplayTotalFrames();
+    if (duration === 0 || totalFrames === 0) return 0;
+
+    const frame = Math.max(0, Math.min(totalFrames - 1, Math.floor(percent * totalFrames)));
+    const mappedTime = this._getSegmentTimeFromDisplayFrame(frame);
+    if (mappedTime !== null) {
+      return Math.max(0, Math.min(mappedTime, duration));
+    }
+    if (!this.fps) {
+      return (frame / totalFrames) * duration;
+    }
+    return frame / this.fps;
+  }
+
   _snapTimeToFrame(time) {
     const duration = this._getTimelineDuration();
     if (this.fps === 0) return time;
@@ -374,7 +538,7 @@ export class Timeline extends EventTarget {
     // tracksContainer의 실제 너비 (줌이 적용된 상태)
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = this._snapTimeToFrame(percent * duration);
+    const time = this._getTimelineTimeFromCellPercent(percent);
 
     this._emit('seek', { time });
   }
@@ -392,7 +556,7 @@ export class Timeline extends EventTarget {
     const x = e.clientX - rect.left;
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = this._snapTimeToFrame(percent * duration);
+    const time = this._getTimelineTimeFromCellPercent(percent);
 
     // 플레이헤드 위치 업데이트 (시각적으로만)
     this.scrubTime = time;
@@ -452,9 +616,7 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (duration === 0) return;
 
-    const percent = time / duration;
-    const containerWidth = this.tracksContainer?.offsetWidth || 1000;
-    const positionPx = percent * containerWidth;
+    const positionPx = this._getPlayheadFrameCenterPx(time);
 
     if (this.playheadLine) {
       this.playheadLine.style.left = `${positionPx}px`;
@@ -562,11 +724,8 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (!this.timelineTracks || duration === 0) return;
 
-    const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    if (containerWidth === 0) return;
-
-    const percent = this.currentTime / duration;
-    const playheadPx = containerWidth * percent;
+    const playheadPx = this._getPlayheadFrameCenterPx();
+    if (playheadPx === 0) return;
 
     const scrollLeft = this.timelineTracks.scrollLeft;
     const viewportWidth = this.timelineTracks.clientWidth;
@@ -591,11 +750,8 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (!this.timelineTracks || duration === 0) return;
 
-    const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    if (containerWidth === 0) return;
-
-    const percent = this.currentTime / duration;
-    const playheadPx = containerWidth * percent;
+    const playheadPx = this._getPlayheadFrameCenterPx();
+    if (playheadPx === 0) return;
 
     const scrollLeft = this.timelineTracks.scrollLeft;
     const viewportWidth = this.timelineTracks.clientWidth;
@@ -611,11 +767,8 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (!this.timelineTracks || duration === 0) return;
 
-    const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    if (containerWidth === 0) return;
-
-    const percent = this.currentTime / duration;
-    const playheadPx = containerWidth * percent;
+    const playheadPx = this._getPlayheadFrameCenterPx();
+    if (playheadPx === 0) return;
     const viewportWidth = this.timelineTracks.clientWidth;
     const targetScrollLeft = playheadPx - (viewportWidth / 2);
     this.timelineTracks.scrollLeft = Math.max(0, targetScrollLeft);
@@ -629,12 +782,7 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (duration === 0) return;
 
-    // tracksContainer의 실제 너비를 기준으로 픽셀 위치 계산
-    const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    if (containerWidth === 0) return;
-
-    const percent = this.currentTime / duration;
-    const positionPx = containerWidth * percent;
+    const positionPx = this._getPlayheadFrameCenterPx();
 
     // 핸들과 라인 모두 동일한 픽셀 위치 설정
     // CSS에서 핸들은 margin-left: -6px로 중앙 정렬됨
@@ -859,7 +1007,9 @@ export class Timeline extends EventTarget {
    * 줌 레벨에 따라 5단 계단식 격자선 표시 (히스테리시스 적용)
    */
   _updateFrameGrid() {
-    if (!this.tracksContainer || this.duration === 0 || this.totalFrames === 0) {
+    const duration = this._getTimelineDuration();
+    const totalFrames = this._getDisplayTotalFrames();
+    if (!this.tracksContainer || duration === 0 || totalFrames === 0) {
       this._updateFrameCellActive(false);
       return;
     }
@@ -883,8 +1033,9 @@ export class Timeline extends EventTarget {
       this.frameGridContainer.className = 'frame-grid-container';
       this.frameGridContainer.style.cssText = `
         position: absolute; top: 0; left: 0;
-        width: 100%; height: 100%;
+        width: 0; height: 100%;
         pointer-events: none; z-index: 1;
+        contain: layout paint;
       `;
       this.tracksContainer.appendChild(this.frameGridContainer);
     }
@@ -892,9 +1043,36 @@ export class Timeline extends EventTarget {
     this._renderFrameGridTiered(frameWidth, tierResult);
   }
 
+  _syncFrameGridContainerMetrics() {
+    if (!this.frameGridContainer || !this.tracksContainer) return 0;
+    const contentWidth = this.tracksContainer.offsetWidth || 0;
+    this.frameGridContainer.style.width = `${contentWidth}px`;
+    this.frameGridContainer.style.height = `${this._getTrackContentHeight()}px`;
+    return contentWidth;
+  }
+
+  _getTrackContentHeight() {
+    if (!this.tracksContainer) return 0;
+
+    let contentHeight = 0;
+    this.tracksContainer.querySelectorAll(':scope > *').forEach((child) => {
+      if (child === this.frameGridContainer) return;
+      const style = getComputedStyle(child);
+      if (style.position === 'absolute' || style.position === 'fixed') return;
+      contentHeight = Math.max(contentHeight, child.offsetTop + child.offsetHeight);
+    });
+
+    return Math.max(contentHeight, this.tracksContainer.offsetHeight || 0);
+  }
+
+  _formatGridPx(value) {
+    const px = Number.isFinite(value) ? Math.max(1, value) : 1;
+    return `${Number(px.toFixed(4))}px`;
+  }
+
   _computePxPerFrame() {
     const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    const totalFrames = this._getTimelineTotalFrames() || this.totalFrames || 0;
+    const totalFrames = this._getDisplayTotalFrames();
     return totalFrames > 0 ? containerWidth / totalFrames : 0;
   }
 
@@ -941,6 +1119,7 @@ export class Timeline extends EventTarget {
    */
   _renderFrameGridTiered(pxPerFrame, t) {
     this.frameGridContainer.style.display = 'block';
+    this._syncFrameGridContainerMetrics();
 
     const fps = this.fps || 24;
     const secPx = pxPerFrame * fps;
@@ -959,33 +1138,33 @@ export class Timeline extends EventTarget {
       // 5초 간격 2px 폭 강조선
       const fiveSecPx = secPx * 5;
       layers.push(`repeating-linear-gradient(to right, ${colorSec} 0px, ${colorSec} 2px, transparent 2px, transparent ${fiveSecPx}px)`);
-      sizes.push(`${fiveSecPx}px 100%`);
+      sizes.push(`${this._formatGridPx(fiveSecPx)} 100%`);
     }
     if (t.showOneSec) {
       layers.push(`repeating-linear-gradient(to right, ${colorSec} 0px, ${colorSec} 2px, transparent 2px, transparent ${secPx}px)`);
-      sizes.push(`${secPx}px 100%`);
+      sizes.push(`${this._formatGridPx(secPx)} 100%`);
     }
     if (t.showHalf) {
       const halfSecPx = secPx / 2;
       layers.push(`repeating-linear-gradient(to right, ${colorHalf} 0px, ${colorHalf} 1px, transparent 1px, transparent ${halfSecPx}px)`);
-      sizes.push(`${halfSecPx}px 100%`);
+      sizes.push(`${this._formatGridPx(halfSecPx)} 100%`);
     }
     if (t.showQuarter) {
       // ¼초는 fps 인식: round(fps/4) 프레임마다
       const quarterFrames = Math.max(1, Math.round(fps / 4));
       const quarterPx = pxPerFrame * quarterFrames;
       layers.push(`repeating-linear-gradient(to right, ${colorQuarter} 0px, ${colorQuarter} 1px, transparent 1px, transparent ${quarterPx}px)`);
-      sizes.push(`${quarterPx}px 100%`);
+      sizes.push(`${this._formatGridPx(quarterPx)} 100%`);
     }
     if (t.showFrame) {
       layers.push(`repeating-linear-gradient(to right, ${colorFrame} 0px, ${colorFrame} 1px, transparent 1px, transparent ${pxPerFrame}px)`);
-      sizes.push(`${pxPerFrame}px 100%`);
+      sizes.push(`${this._formatGridPx(pxPerFrame)} 100%`);
     }
 
     this.frameGridContainer.style.backgroundImage = layers.join(', ');
     this.frameGridContainer.style.backgroundSize = sizes.join(', ');
     this.frameGridContainer.style.backgroundRepeat = 'repeat-x';
-    this.frameGridContainer.style.backgroundPosition = '0 0';
+    this.frameGridContainer.style.backgroundPosition = '0px 0px';
   }
 
   /**
@@ -1041,6 +1220,8 @@ export class Timeline extends EventTarget {
           this.tracksContainer.appendChild(track);
         }
       });
+
+    this._syncFrameGridContainerMetrics();
   }
 
   _createCompositionLayerHeader(layer, isSelected) {
@@ -1253,6 +1434,8 @@ export class Timeline extends EventTarget {
       this._renderLayerHeader(layer, activeLayerId === layer.id);
       this._renderLayerTrack(layer, activeLayerId === layer.id);
     });
+
+    this._syncFrameGridContainerMetrics();
   }
 
   _refreshDrawingLayerRender() {
@@ -1353,7 +1536,7 @@ export class Timeline extends EventTarget {
 
         rangeBar.style.left = `${startPercent}%`;
         rangeBar.style.width = `${widthPercent}%`;
-        rangeBar.style.background = '#5a5a5a'; // 회색 고정 (#72: 레이어 색상을 회색으로 변경)
+        rangeBar.style.setProperty('--kf-color', layer.color);
 
         keyframeContainer.appendChild(rangeBar);
       }
@@ -2253,6 +2436,7 @@ export class Timeline extends EventTarget {
       }
       // 하이라이트 없으면 마커 오프셋 제거
       this.tracksContainer?.style.setProperty('--marker-top-offset', '0px');
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2270,6 +2454,8 @@ export class Timeline extends EventTarget {
       const element = this._createHighlightElement(highlight);
       this.highlightTrack.appendChild(element);
     });
+
+    this._syncFrameGridContainerMetrics();
   }
 
   /**
@@ -2388,6 +2574,7 @@ export class Timeline extends EventTarget {
       this.commentLayerHeader.style.height = `${height}px`;
       this.commentLayerHeader.style.minHeight = `${height}px`;
     }
+    this._syncFrameGridContainerMetrics();
   }
 
   clearCommentTrackRowHeight() {
@@ -2404,6 +2591,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2429,6 +2617,7 @@ export class Timeline extends EventTarget {
       this.clearPlaylistCommentRanges();
     }
     this._renderPlaylistSegments();
+    this._updateFrameGrid();
   }
 
   clearPlaylistCommentRanges() {
@@ -2448,6 +2637,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
     }
   }
 
@@ -2458,6 +2648,7 @@ export class Timeline extends EventTarget {
     this._updatePlayheadPosition();
     this._clearPlaylistSegmentElements();
     this.clearPlaylistCommentRanges();
+    this._updateFrameGrid();
   }
 
   setCutlistTimeline(segments, totalDuration) {
@@ -2469,6 +2660,7 @@ export class Timeline extends EventTarget {
     this._updateRuler();
     this._updatePlayheadPosition();
     this._renderCutlistSegments();
+    this._updateFrameGrid();
   }
 
   setCurrentCutId(cutId) {
@@ -2617,6 +2809,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2627,6 +2820,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2657,12 +2851,14 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'flex';
       }
+      this._syncFrameGridContainerMetrics();
     } else {
       this.clearCommentTrackRowHeight();
       this.commentTrack.style.display = 'none';
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
     }
   }
 
@@ -2687,6 +2883,7 @@ export class Timeline extends EventTarget {
       if (this.commentLayerHeader) {
         this.commentLayerHeader.style.display = 'none';
       }
+      this._syncFrameGridContainerMetrics();
       return;
     }
 
@@ -2699,6 +2896,7 @@ export class Timeline extends EventTarget {
       }
       // 펼침 상태는 데이터가 없어진 상황이므로 리셋
       this.expandedClusterId = null;
+      this._syncFrameGridContainerMetrics();
       return;
     }
 

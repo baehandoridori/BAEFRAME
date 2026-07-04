@@ -19,7 +19,7 @@ function extractBalancedBlock(source, startNeedle) {
   const startIndex = source.indexOf(startNeedle);
   assert.notEqual(startIndex, -1, `Missing source section: ${startNeedle}`);
 
-  const blockStart = source.indexOf('{', startIndex);
+  const blockStart = source.indexOf('{', startIndex + startNeedle.length);
   assert.notEqual(blockStart, -1, `Missing block start for: ${startNeedle}`);
 
   let depth = 0;
@@ -39,11 +39,7 @@ function extractBalancedBlock(source, startNeedle) {
 }
 
 function extractSyncPlaybackPositionUiBody() {
-  const match = appSource.match(
-    /function syncPlaybackPositionUI\(currentTime, currentFrame, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 비디오 시간 업데이트/
-  );
-  assert.ok(match, 'Missing source section: function syncPlaybackPositionUI');
-  return match[1];
+  return extractBalancedBlock(appSource, 'function syncPlaybackPositionUI(currentTime, currentFrame, options = {})');
 }
 
 test('main process exposes cutlist file handlers', () => {
