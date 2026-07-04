@@ -927,8 +927,22 @@ export class Timeline extends EventTarget {
     if (!this.frameGridContainer || !this.tracksContainer) return 0;
     const contentWidth = this.tracksContainer.offsetWidth || 0;
     this.frameGridContainer.style.width = `${contentWidth}px`;
-    this.frameGridContainer.style.height = `${this.tracksContainer.scrollHeight || this.tracksContainer.offsetHeight}px`;
+    this.frameGridContainer.style.height = `${this._getTrackContentHeight()}px`;
     return contentWidth;
+  }
+
+  _getTrackContentHeight() {
+    if (!this.tracksContainer) return 0;
+
+    let contentHeight = 0;
+    this.tracksContainer.querySelectorAll(':scope > *').forEach((child) => {
+      if (child === this.frameGridContainer) return;
+      const style = getComputedStyle(child);
+      if (style.position === 'absolute' || style.position === 'fixed') return;
+      contentHeight = Math.max(contentHeight, child.offsetTop + child.offsetHeight);
+    });
+
+    return Math.max(contentHeight, this.tracksContainer.offsetHeight || 0);
   }
 
   _formatGridPx(value) {
