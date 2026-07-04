@@ -381,6 +381,19 @@ export class Timeline extends EventTarget {
     return ((frame + 0.5) / totalFrames) * containerWidth;
   }
 
+  _getTimelineTimeFromCellPercent(percent) {
+    const duration = this._getTimelineDuration();
+    const totalFrames = this._getDisplayTotalFrames();
+    if (duration === 0 || totalFrames === 0) return 0;
+
+    const frame = Math.max(0, Math.min(totalFrames - 1, Math.floor(percent * totalFrames)));
+    const useTimelineRatio = this.playlistDuration > 0 || this.cutlistDuration > 0;
+    if (useTimelineRatio || !this.fps) {
+      return (frame / totalFrames) * duration;
+    }
+    return frame / this.fps;
+  }
+
   _snapTimeToFrame(time) {
     const duration = this._getTimelineDuration();
     if (this.fps === 0) return time;
@@ -405,7 +418,7 @@ export class Timeline extends EventTarget {
     // tracksContainer의 실제 너비 (줌이 적용된 상태)
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = this._snapTimeToFrame(percent * duration);
+    const time = this._getTimelineTimeFromCellPercent(percent);
 
     this._emit('seek', { time });
   }
@@ -423,7 +436,7 @@ export class Timeline extends EventTarget {
     const x = e.clientX - rect.left;
     const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
     const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = this._snapTimeToFrame(percent * duration);
+    const time = this._getTimelineTimeFromCellPercent(percent);
 
     // 플레이헤드 위치 업데이트 (시각적으로만)
     this.scrubTime = time;

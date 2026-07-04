@@ -22,6 +22,11 @@ test('playhead position is centered within the current frame cell', () => {
   assert.match(timelineSource, /Math\.floor\(\(time \* fps\) \+ 1e-6\)/);
   assert.match(timelineSource, /const frame = Math\.max\(0, Math\.min\(totalFrames - 1, rawFrame\)\);/);
   assert.match(timelineSource, /return \(\(frame \+ 0\.5\) \/ totalFrames\) \* containerWidth;/);
+  assert.match(timelineSource, /_getTimelineTimeFromCellPercent\(percent\)/);
+  assert.match(timelineSource, /Math\.floor\(percent \* totalFrames\)/);
+  assert.match(timelineSource, /return \(frame \/ totalFrames\) \* duration;/);
+  assert.match(timelineSource, /return frame \/ this\.fps;/);
+  assert.match(timelineSource, /const time = this\._getTimelineTimeFromCellPercent\(percent\);/);
   assert.match(timelineSource, /const positionPx = this\._getPlayheadFrameCenterPx\(time\);/);
   assert.match(timelineSource, /const positionPx = this\._getPlayheadFrameCenterPx\(\);/);
   assert.match(timelineSource, /const playheadPx = this\._getPlayheadFrameCenterPx\(\);/);
