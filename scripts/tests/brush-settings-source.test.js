@@ -72,6 +72,7 @@ test('alt drag size adjustment follows pen pointer events until pointer release'
   assert.match(drawingCanvasSource, /this\.canvas\.setPointerCapture\?\.\(e\.pointerId\)/);
   assert.match(drawingCanvasSource, /window\.addEventListener\('pointermove', this\._sizeAdjustMoveHandler/);
   assert.match(drawingCanvasSource, /window\.addEventListener\('pointerup', this\._sizeAdjustEndHandler/);
+  assert.match(drawingCanvasSource, /event\.pointerId !== this\._activeSizeAdjustPointerId/);
   assert.match(drawingCanvasSource, /window\.removeEventListener\('pointermove', this\._sizeAdjustMoveHandler\)/);
   assert.match(drawingCanvasSource, /window\.removeEventListener\('pointerup', this\._sizeAdjustEndHandler\)/);
 });

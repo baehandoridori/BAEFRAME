@@ -227,7 +227,16 @@ export class DrawingCanvas extends EventTarget {
     this._sizeAdjustUsesPointerEvents = typeof e.pointerId === 'number';
     this._activeSizeAdjustPointerId = this._sizeAdjustUsesPointerEvents ? e.pointerId : null;
     this._sizeAdjustMoveHandler = (event) => this._updateSizeAdjust(event);
-    this._sizeAdjustEndHandler = () => this._endSizeAdjust();
+    this._sizeAdjustEndHandler = (event) => {
+      if (
+        this._sizeAdjustUsesPointerEvents &&
+        typeof event?.pointerId === 'number' &&
+        event.pointerId !== this._activeSizeAdjustPointerId
+      ) {
+        return;
+      }
+      this._endSizeAdjust();
+    };
 
     if (this._sizeAdjustUsesPointerEvents) {
       this.canvas.setPointerCapture?.(e.pointerId);
