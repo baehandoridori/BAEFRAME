@@ -284,10 +284,16 @@ export class DrawingLayer {
   deleteFrame(frame, totalFrames = null) {
     const currentKeyframeIndex = this.keyframes.findIndex(kf => kf.frame === frame);
     const nextKeyframe = this.keyframes.find(kf => kf.frame > frame);
+    const heldKeyframe = this.keyframes
+      .filter(kf => kf.frame <= frame)
+      .sort((a, b) => b.frame - a.frame)[0];
     const hasTimelineTail = Number.isFinite(totalFrames) ? frame < totalFrames - 1 : true;
     const currentHasHold = nextKeyframe ? nextKeyframe.frame > frame + 1 : hasTimelineTail;
-    if (currentKeyframeIndex !== -1 && !nextKeyframe && currentHasHold && Number.isFinite(totalFrames)) {
-      const tailBoundaryKeyframe = new Keyframe(totalFrames, null);
+    const deletesTailHeldFrame = heldKeyframe && !nextKeyframe && Number.isFinite(totalFrames)
+      && (heldKeyframe.frame < frame || currentHasHold);
+    if (deletesTailHeldFrame) {
+      const tailBoundaryFrame = frame < totalFrames - 1 ? totalFrames : frame;
+      const tailBoundaryKeyframe = new Keyframe(tailBoundaryFrame, null);
       this.keyframes.push(tailBoundaryKeyframe);
     }
     if (currentKeyframeIndex !== -1 && !currentHasHold) {
