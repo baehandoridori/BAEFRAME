@@ -181,13 +181,13 @@ test('normalizes legacy source review comments before import', async () => {
         y: 0.75,
         frame: 240,
         fps: 24,
-        text: 'legacy feedback',
+        content: 'legacy feedback',
         author: '예전 리뷰어',
         image: 'data:image/png;base64,legacy-marker-image',
         replies: [
           {
             id: 'legacy-reply',
-            text: 'legacy reply',
+            content: 'legacy reply',
             author: '답글러',
             image: 'data:image/png;base64,legacy-reply-image'
           }
@@ -216,8 +216,10 @@ test('normalizes legacy source review comments before import', async () => {
   assert.equal(result.importedMarkers[0].image, 'data:image/png;base64,legacy-marker-image');
   assert.equal(result.importedMarkers[0].startFrame, 240);
   assert.equal(result.importedMarkers[0].endFrame, 336);
+  assert.equal(result.importedMarkers[0].text, 'legacy feedback');
   assert.match(result.importedMarkers[0].createdAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.match(result.importedMarkers[0].updatedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(result.importedMarkers[0].replies[0].image, 'data:image/png;base64,legacy-reply-image');
+  assert.equal(result.importedMarkers[0].replies[0].text, 'legacy reply');
   assert.match(result.importedMarkers[0].replies[0].createdAt, /^\d{4}-\d{2}-\d{2}T/);
 });

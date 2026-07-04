@@ -183,12 +183,14 @@ export function cloneFeedbackMarkers(sourceComments, options = {}) {
       fps,
       startFrame,
       endFrame,
+      text: sourceMarker.text ?? sourceMarker.content ?? '',
       createdAt: sourceMarker.createdAt || now,
       updatedAt: sourceMarker.updatedAt || sourceMarker.createdAt || now,
       replies: Array.isArray(sourceMarker.replies)
         ? sourceMarker.replies.map(reply => ({
           ...clonePlainRecord(reply),
           id: createId('reply'),
+          text: reply.text ?? reply.content ?? '',
           createdAt: reply.createdAt || now,
           updatedAt: reply.updatedAt || reply.createdAt || now
         }))
