@@ -4443,6 +4443,8 @@ button.layer-lock:not(.locked):hover {
   top: 0;
   height: 100%;
   border-radius: 0;
+  background: color-mix(in srgb, var(--kf-color, #4a9eff) 34%, transparent);
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--kf-color, #4a9eff) 70%, transparent);
   pointer-events: auto;
 }
 

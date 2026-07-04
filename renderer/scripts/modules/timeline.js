@@ -350,6 +350,24 @@ export class Timeline extends EventTarget {
     return this.cutlistDuration ? (this.cutlistTotalFrames || this.totalFrames) : this.totalFrames;
   }
 
+  _getDisplayTotalFrames() {
+    const duration = this._getTimelineDuration();
+    const derivedFrames = Math.round(duration * (this.fps || 0));
+    return derivedFrames > 0 ? derivedFrames : this._getTimelineTotalFrames();
+  }
+
+  _getPlayheadFrameCenterPx(time = this.currentTime) {
+    const duration = this._getTimelineDuration();
+    const totalFrames = this._getDisplayTotalFrames();
+    const containerWidth = this.tracksContainer?.offsetWidth || 0;
+    if (duration === 0 || totalFrames === 0 || containerWidth === 0) return 0;
+
+    const fps = this.fps || (totalFrames / duration);
+    const rawFrame = fps > 0 ? Math.round(time * fps) : Math.round((time / duration) * totalFrames);
+    const frame = Math.max(0, Math.min(totalFrames - 1, rawFrame));
+    return ((frame + 0.5) / totalFrames) * containerWidth;
+  }
+
   _snapTimeToFrame(time) {
     const duration = this._getTimelineDuration();
     if (this.fps === 0) return time;
@@ -452,9 +470,7 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (duration === 0) return;
 
-    const percent = time / duration;
-    const containerWidth = this.tracksContainer?.offsetWidth || 1000;
-    const positionPx = percent * containerWidth;
+    const positionPx = this._getPlayheadFrameCenterPx(time);
 
     if (this.playheadLine) {
       this.playheadLine.style.left = `${positionPx}px`;
@@ -562,11 +578,8 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (!this.timelineTracks || duration === 0) return;
 
-    const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    if (containerWidth === 0) return;
-
-    const percent = this.currentTime / duration;
-    const playheadPx = containerWidth * percent;
+    const playheadPx = this._getPlayheadFrameCenterPx();
+    if (playheadPx === 0) return;
 
     const scrollLeft = this.timelineTracks.scrollLeft;
     const viewportWidth = this.timelineTracks.clientWidth;
@@ -591,11 +604,8 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (!this.timelineTracks || duration === 0) return;
 
-    const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    if (containerWidth === 0) return;
-
-    const percent = this.currentTime / duration;
-    const playheadPx = containerWidth * percent;
+    const playheadPx = this._getPlayheadFrameCenterPx();
+    if (playheadPx === 0) return;
 
     const scrollLeft = this.timelineTracks.scrollLeft;
     const viewportWidth = this.timelineTracks.clientWidth;
@@ -611,11 +621,8 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (!this.timelineTracks || duration === 0) return;
 
-    const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    if (containerWidth === 0) return;
-
-    const percent = this.currentTime / duration;
-    const playheadPx = containerWidth * percent;
+    const playheadPx = this._getPlayheadFrameCenterPx();
+    if (playheadPx === 0) return;
     const viewportWidth = this.timelineTracks.clientWidth;
     const targetScrollLeft = playheadPx - (viewportWidth / 2);
     this.timelineTracks.scrollLeft = Math.max(0, targetScrollLeft);
@@ -629,12 +636,7 @@ export class Timeline extends EventTarget {
     const duration = this._getTimelineDuration();
     if (duration === 0) return;
 
-    // tracksContainer의 실제 너비를 기준으로 픽셀 위치 계산
-    const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    if (containerWidth === 0) return;
-
-    const percent = this.currentTime / duration;
-    const positionPx = containerWidth * percent;
+    const positionPx = this._getPlayheadFrameCenterPx();
 
     // 핸들과 라인 모두 동일한 픽셀 위치 설정
     // CSS에서 핸들은 margin-left: -6px로 중앙 정렬됨
@@ -883,13 +885,27 @@ export class Timeline extends EventTarget {
       this.frameGridContainer.className = 'frame-grid-container';
       this.frameGridContainer.style.cssText = `
         position: absolute; top: 0; left: 0;
-        width: 100%; height: 100%;
+        width: 0; height: 100%;
         pointer-events: none; z-index: 1;
+        contain: layout paint;
       `;
       this.tracksContainer.appendChild(this.frameGridContainer);
     }
 
     this._renderFrameGridTiered(frameWidth, tierResult);
+  }
+
+  _syncFrameGridContainerMetrics() {
+    if (!this.frameGridContainer || !this.tracksContainer) return 0;
+    const contentWidth = this.tracksContainer.offsetWidth || 0;
+    this.frameGridContainer.style.width = `${contentWidth}px`;
+    this.frameGridContainer.style.height = `${this.tracksContainer.scrollHeight || this.tracksContainer.offsetHeight}px`;
+    return contentWidth;
+  }
+
+  _formatGridPx(value) {
+    const px = Number.isFinite(value) ? Math.max(1, value) : 1;
+    return `${Number(px.toFixed(4))}px`;
   }
 
   _computePxPerFrame() {
@@ -941,6 +957,7 @@ export class Timeline extends EventTarget {
    */
   _renderFrameGridTiered(pxPerFrame, t) {
     this.frameGridContainer.style.display = 'block';
+    this._syncFrameGridContainerMetrics();
 
     const fps = this.fps || 24;
     const secPx = pxPerFrame * fps;
@@ -959,33 +976,33 @@ export class Timeline extends EventTarget {
       // 5초 간격 2px 폭 강조선
       const fiveSecPx = secPx * 5;
       layers.push(`repeating-linear-gradient(to right, ${colorSec} 0px, ${colorSec} 2px, transparent 2px, transparent ${fiveSecPx}px)`);
-      sizes.push(`${fiveSecPx}px 100%`);
+      sizes.push(`${this._formatGridPx(fiveSecPx)} 100%`);
     }
     if (t.showOneSec) {
       layers.push(`repeating-linear-gradient(to right, ${colorSec} 0px, ${colorSec} 2px, transparent 2px, transparent ${secPx}px)`);
-      sizes.push(`${secPx}px 100%`);
+      sizes.push(`${this._formatGridPx(secPx)} 100%`);
     }
     if (t.showHalf) {
       const halfSecPx = secPx / 2;
       layers.push(`repeating-linear-gradient(to right, ${colorHalf} 0px, ${colorHalf} 1px, transparent 1px, transparent ${halfSecPx}px)`);
-      sizes.push(`${halfSecPx}px 100%`);
+      sizes.push(`${this._formatGridPx(halfSecPx)} 100%`);
     }
     if (t.showQuarter) {
       // ¼초는 fps 인식: round(fps/4) 프레임마다
       const quarterFrames = Math.max(1, Math.round(fps / 4));
       const quarterPx = pxPerFrame * quarterFrames;
       layers.push(`repeating-linear-gradient(to right, ${colorQuarter} 0px, ${colorQuarter} 1px, transparent 1px, transparent ${quarterPx}px)`);
-      sizes.push(`${quarterPx}px 100%`);
+      sizes.push(`${this._formatGridPx(quarterPx)} 100%`);
     }
     if (t.showFrame) {
       layers.push(`repeating-linear-gradient(to right, ${colorFrame} 0px, ${colorFrame} 1px, transparent 1px, transparent ${pxPerFrame}px)`);
-      sizes.push(`${pxPerFrame}px 100%`);
+      sizes.push(`${this._formatGridPx(pxPerFrame)} 100%`);
     }
 
     this.frameGridContainer.style.backgroundImage = layers.join(', ');
     this.frameGridContainer.style.backgroundSize = sizes.join(', ');
     this.frameGridContainer.style.backgroundRepeat = 'repeat-x';
-    this.frameGridContainer.style.backgroundPosition = '0 0';
+    this.frameGridContainer.style.backgroundPosition = '0px 0px';
   }
 
   /**
@@ -1353,7 +1370,7 @@ export class Timeline extends EventTarget {
 
         rangeBar.style.left = `${startPercent}%`;
         rangeBar.style.width = `${widthPercent}%`;
-        rangeBar.style.background = '#5a5a5a'; // 회색 고정 (#72: 레이어 색상을 회색으로 변경)
+        rangeBar.style.setProperty('--kf-color', layer.color);
 
         keyframeContainer.appendChild(rangeBar);
       }
