@@ -179,8 +179,7 @@ test('normalizes legacy source review comments before import', async () => {
         id: 'legacy-marker',
         x: 0.25,
         y: 0.75,
-        startFrame: 10,
-        endFrame: 20,
+        frame: 240,
         fps: 24,
         text: 'legacy feedback',
         author: '예전 리뷰어',
@@ -215,6 +214,8 @@ test('normalizes legacy source review comments before import', async () => {
     ['v2 existing feedback', 'legacy feedback']
   );
   assert.equal(result.importedMarkers[0].image, 'data:image/png;base64,legacy-marker-image');
+  assert.equal(result.importedMarkers[0].startFrame, 240);
+  assert.equal(result.importedMarkers[0].endFrame, 336);
   assert.match(result.importedMarkers[0].createdAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.match(result.importedMarkers[0].updatedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(result.importedMarkers[0].replies[0].image, 'data:image/png;base64,legacy-reply-image');

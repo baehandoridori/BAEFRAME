@@ -20,6 +20,16 @@ function clonePlainRecord(record) {
   return JSON.parse(JSON.stringify(record));
 }
 
+function toFiniteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function toPositiveNumber(value) {
+  const number = toFiniteNumber(value);
+  return number && number > 0 ? number : null;
+}
+
 function getCommentLayers(comments) {
   const normalized = normalizeFeedbackComments(comments);
   return Array.isArray(normalized?.layers) ? normalized.layers : [];
@@ -125,6 +135,21 @@ function resolveTargetLayer(comments, preferredLayerId) {
   return preferred || comments.layers[0];
 }
 
+function resolveMarkerFrames(sourceMarker, defaultFps = 24) {
+  const fps = toPositiveNumber(sourceMarker.fps) || toPositiveNumber(defaultFps) || 24;
+  const startFrame = toFiniteNumber(sourceMarker.startFrame)
+    ?? toFiniteNumber(sourceMarker.frame)
+    ?? 0;
+  const endFrame = toFiniteNumber(sourceMarker.endFrame)
+    ?? (startFrame + Math.round(fps * 4));
+
+  return {
+    fps,
+    startFrame,
+    endFrame: Math.max(startFrame, endFrame)
+  };
+}
+
 /**
  * Count source comment markers that can be imported.
  *
@@ -150,10 +175,14 @@ export function cloneFeedbackMarkers(sourceComments, options = {}) {
 
   return getImportableMarkers(sourceComments).map(sourceMarker => {
     const now = new Date().toISOString();
+    const { fps, startFrame, endFrame } = resolveMarkerFrames(sourceMarker, options.fps);
     const cloned = {
       ...clonePlainRecord(sourceMarker),
       id: createId('marker'),
       layerId: targetLayerId,
+      fps,
+      startFrame,
+      endFrame,
       createdAt: sourceMarker.createdAt || now,
       updatedAt: sourceMarker.updatedAt || sourceMarker.createdAt || now,
       replies: Array.isArray(sourceMarker.replies)
