@@ -30,6 +30,9 @@ test('playhead position is centered within the current frame cell', () => {
   assert.match(timelineSource, /const positionPx = this\._getPlayheadFrameCenterPx\(time\);/);
   assert.match(timelineSource, /const positionPx = this\._getPlayheadFrameCenterPx\(\);/);
   assert.match(timelineSource, /const playheadPx = this\._getPlayheadFrameCenterPx\(\);/);
+  assert.match(timelineSource, /const duration = this\._getTimelineDuration\(\);\n    const totalFrames = this\._getDisplayTotalFrames\(\);\n    if \(!this\.tracksContainer \|\| duration === 0 \|\| totalFrames === 0\) \{/);
+  assert.match(timelineSource, /_computePxPerFrame\(\) \{\n    const containerWidth = this\.tracksContainer\?\.offsetWidth \|\| 0;\n    const totalFrames = this\._getDisplayTotalFrames\(\);/);
+  assert.doesNotMatch(timelineSource, /_computePxPerFrame\(\) \{[\s\S]*?this\._getTimelineTotalFrames\(\) \|\| this\.totalFrames/);
 });
 
 test('drawing hold ranges are filled with the layer color', () => {

@@ -889,7 +889,9 @@ export class Timeline extends EventTarget {
    * 줌 레벨에 따라 5단 계단식 격자선 표시 (히스테리시스 적용)
    */
   _updateFrameGrid() {
-    if (!this.tracksContainer || this.duration === 0 || this.totalFrames === 0) {
+    const duration = this._getTimelineDuration();
+    const totalFrames = this._getDisplayTotalFrames();
+    if (!this.tracksContainer || duration === 0 || totalFrames === 0) {
       this._updateFrameCellActive(false);
       return;
     }
@@ -952,7 +954,7 @@ export class Timeline extends EventTarget {
 
   _computePxPerFrame() {
     const containerWidth = this.tracksContainer?.offsetWidth || 0;
-    const totalFrames = this._getTimelineTotalFrames() || this.totalFrames || 0;
+    const totalFrames = this._getDisplayTotalFrames();
     return totalFrames > 0 ? containerWidth / totalFrames : 0;
   }
 
