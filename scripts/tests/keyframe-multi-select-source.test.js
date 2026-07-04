@@ -62,6 +62,13 @@ test('selected keyframes can be deleted through the drawing manager', () => {
   assert.match(appSource, /drawingManager\.removeKeyframes\(selectedKeyframes\)/);
 });
 
+test('selected keyframe moves are ordered by drag direction to keep adjacent moves together', () => {
+  assert.match(drawingManagerSource, /const frameDelta = \(a\.toFrame - a\.fromFrame\) \|\| \(b\.toFrame - b\.fromFrame\);/);
+  assert.match(drawingManagerSource, /if \(frameDelta < 0\) return a\.fromFrame - b\.fromFrame;/);
+  assert.match(drawingManagerSource, /if \(frameDelta > 0\) return b\.fromFrame - a\.fromFrame;/);
+  assert.doesNotMatch(drawingManagerSource, /sort\(\(a, b\) => b\.fromFrame - a\.fromFrame\)/);
+});
+
 test('single remaining keyframe can be deleted', () => {
   assert.doesNotMatch(drawingManagerSource, /마지막 키프레임은 삭제할 수 없습니다/);
   assert.doesNotMatch(drawingManagerSource, /layer\.keyframes\.length <= 1/);
