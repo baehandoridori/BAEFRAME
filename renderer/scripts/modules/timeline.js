@@ -351,6 +351,11 @@ export class Timeline extends EventTarget {
   }
 
   _getDisplayTotalFrames() {
+    if (this.playlistDuration > 0) {
+      const playlistFrames = Math.floor(this.playlistDuration * (this.fps || 0));
+      if (playlistFrames > 0) return playlistFrames;
+    }
+
     const timelineFrames = this._getTimelineTotalFrames();
     if (timelineFrames > 0) return timelineFrames;
 
@@ -366,9 +371,11 @@ export class Timeline extends EventTarget {
     if (duration === 0 || totalFrames === 0 || containerWidth === 0) return 0;
 
     const fps = this.fps || (totalFrames / duration);
-    const rawFrame = fps > 0
-      ? Math.floor((time * fps) + 1e-6)
-      : Math.floor(((time / duration) * totalFrames) + 1e-6);
+    const rawFrame = this.playlistDuration > 0
+      ? Math.floor(((time / duration) * totalFrames) + 1e-6)
+      : (fps > 0
+        ? Math.floor((time * fps) + 1e-6)
+        : Math.floor(((time / duration) * totalFrames) + 1e-6));
     const frame = Math.max(0, Math.min(totalFrames - 1, rawFrame));
     return ((frame + 0.5) / totalFrames) * containerWidth;
   }
