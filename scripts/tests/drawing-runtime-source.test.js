@@ -72,6 +72,23 @@ test('drawing input is blocked before stroke events when the active layer is loc
   assert.match(appSource, /숨긴 레이어에는 그릴 수 없습니다/);
 });
 
+test('drawing mode makes video comment overlays click-through for uninterrupted strokes', () => {
+  const singleMarkerMatch = appSource.match(/function renderSingleMarker\(marker\) \{([\s\S]*?)\n  \}\n\n  \/\*\*/);
+  assert.ok(singleMarkerMatch, 'single marker renderer should exist');
+
+  assert.match(appSource, /function setCommentOverlaysDrawingPassthrough\(enabled\) \{/);
+  assert.match(appSource, /markerContainer\.classList\.toggle\('drawing-active', enabled\);/);
+  assert.match(appSource, /document\.body\.classList\.toggle\('drawing-mode-active', enabled\);/);
+  assert.match(appSource, /document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(tooltip => \{/);
+  assert.match(appSource, /tooltip\.classList\.remove\('visible', 'pinned'\);/);
+  assert.match(appSource, /setCommentOverlaysDrawingPassthrough\(state\.isDrawMode\);/);
+
+  assert.doesNotMatch(singleMarkerMatch[1], /pointer-events:\s*auto;/);
+  assert.match(mainCss, /\.comment-marker\s*\{[\s\S]*?pointer-events:\s*auto;/);
+  assert.match(mainCss, /\.comment-markers-container\.drawing-active \.comment-marker\s*\{[\s\S]*?pointer-events:\s*none\s*!important;/);
+  assert.match(mainCss, /body\.drawing-mode-active \.comment-marker-tooltip\.visible\s*\{[\s\S]*?pointer-events:\s*none\s*!important;/);
+});
+
 test('clearing the current drawing frame respects locked and hidden layers', () => {
   assert.match(appSource, /elements\.btnClearDrawing\?\.addEventListener\('click'/);
   assert.match(appSource, /if \(layer\.locked \|\| layer\.visible === false\) \{/);
