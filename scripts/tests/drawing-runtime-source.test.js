@@ -81,12 +81,25 @@ test('drawing mode makes video comment overlays click-through for uninterrupted 
   assert.match(appSource, /document\.body\.classList\.toggle\('drawing-mode-active', enabled\);/);
   assert.match(appSource, /document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(tooltip => \{/);
   assert.match(appSource, /tooltip\.classList\.remove\('visible', 'pinned'\);/);
-  assert.match(appSource, /setCommentOverlaysDrawingPassthrough\(state\.isDrawMode\);/);
+  assert.match(appSource, /function applyDrawModeState\(enabled\) \{/);
+  assert.match(appSource, /setCommentOverlaysDrawingPassthrough\(enabled\);/);
+  assert.match(appSource, /applyDrawModeState\(!state\.isDrawMode\);/);
 
   assert.doesNotMatch(singleMarkerMatch[1], /pointer-events:\s*auto;/);
   assert.match(mainCss, /\.comment-marker\s*\{[\s\S]*?pointer-events:\s*auto;/);
   assert.match(mainCss, /\.comment-markers-container\.drawing-active \.comment-marker\s*\{[\s\S]*?pointer-events:\s*none\s*!important;/);
   assert.match(mainCss, /body\.drawing-mode-active \.comment-marker-tooltip\.visible\s*\{[\s\S]*?pointer-events:\s*none\s*!important;/);
+});
+
+test('non-toggle draw-mode shutdown paths clear drawing overlay state', () => {
+  const audioModeMatch = appSource.match(/\/\/ 그리기 모드 비활성화 \(오디오에서는 의미 없음\)([\s\S]*?)\/\/ 비디오 줌 컨트롤 숨기기/);
+  assert.ok(audioModeMatch, 'audio loading path should explicitly disable drawing mode');
+
+  assert.match(appSource, /function applyDrawModeState\(enabled\) \{/);
+  assert.match(appSource, /setCommentOverlaysDrawingPassthrough\(enabled\);/);
+  assert.match(appSource, /applyDrawModeState\(!state\.isDrawMode\);/);
+  assert.match(audioModeMatch[1], /applyDrawModeState\(false\);/);
+  assert.doesNotMatch(audioModeMatch[1], /state\.isDrawMode = false;/);
 });
 
 test('clearing the current drawing frame respects locked and hidden layers', () => {
