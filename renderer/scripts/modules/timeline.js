@@ -919,9 +919,17 @@ export class Timeline extends EventTarget {
   /**
    * 줌 표시 업데이트
    */
+  _getDisplayZoomPercent(zoom = this.zoom) {
+    const zoomRange = Math.max(1, this.maxZoom - this.minZoom);
+    const numericZoom = Number.isFinite(zoom) ? zoom : this.minZoom;
+    const clamped = Math.max(this.minZoom, Math.min(this.maxZoom, numericZoom));
+    const normalized = 100 + ((clamped - this.minZoom) / zoomRange) * 200;
+    return Math.round(Math.max(100, Math.min(300, normalized)));
+  }
+
   _updateZoomDisplay() {
     if (this.zoomDisplay) {
-      this.zoomDisplay.textContent = `${Math.round(this.zoom)}%`;
+      this.zoomDisplay.textContent = `${this._getDisplayZoomPercent()}%`;
     }
     if (this.zoomSlider) {
       const zoomRange = Math.max(1, this.maxZoom - this.minZoom);
@@ -939,7 +947,7 @@ export class Timeline extends EventTarget {
 
     const indicator = document.createElement('div');
     indicator.className = 'zoom-indicator';
-    indicator.textContent = `${Math.round(this.zoom)}%`;
+    indicator.textContent = `${this._getDisplayZoomPercent()}%`;
     indicator.style.cssText = `
       position: absolute;
       top: 50%;
@@ -1099,8 +1107,9 @@ export class Timeline extends EventTarget {
 
   _applyCellModeMinZoom() {
     const viewportWidth = this.timelineTracks?.clientWidth || 0;
+    const totalFrames = this._getDisplayTotalFrames();
     this.minZoom = this.frameCellMode === 'on'
-      ? computeMinZoomForCellMode(this.totalFrames, viewportWidth, this.minFrameCellPx)
+      ? computeMinZoomForCellMode(totalFrames, viewportWidth, this.minFrameCellPx)
       : 100;
     this.maxZoom = Math.max(this.maxZoom, this.minZoom);
     if (this.zoom < this.minZoom) this.zoom = this.minZoom;

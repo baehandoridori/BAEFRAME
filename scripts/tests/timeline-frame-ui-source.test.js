@@ -77,6 +77,23 @@ test('frame grid overlay is pinned to the same pixel width as the tracks', () =>
   assert.match(timelineSource, /sizes\.push\(`\$\{this\._formatGridPx\(pxPerFrame\)\} 100%`\);/);
 });
 
+test('frame cell minimum zoom uses the same display frame count as the grid', () => {
+  const cellMinZoomMatch = timelineSource.match(/_applyCellModeMinZoom\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(cellMinZoomMatch, 'cell mode minimum zoom method should exist');
+
+  assert.match(cellMinZoomMatch[1], /const totalFrames = this\._getDisplayTotalFrames\(\);/);
+  assert.match(cellMinZoomMatch[1], /computeMinZoomForCellMode\(totalFrames, viewportWidth, this\.minFrameCellPx\)/);
+  assert.doesNotMatch(cellMinZoomMatch[1], /computeMinZoomForCellMode\(this\.totalFrames/);
+});
+
+test('timeline zoom display is normalized to a clean 100 to 300 percent range', () => {
+  assert.match(timelineSource, /_getDisplayZoomPercent\(zoom = this\.zoom\) \{/);
+  assert.match(timelineSource, /const normalized = 100 \+ \(\(clamped - this\.minZoom\) \/ zoomRange\) \* 200;/);
+  assert.match(timelineSource, /Math\.max\(100, Math\.min\(300, normalized\)\)/);
+  assert.match(timelineSource, /this\.zoomDisplay\.textContent = `\$\{this\._getDisplayZoomPercent\(\)\}%`;/);
+  assert.match(timelineSource, /indicator\.textContent = `\$\{this\._getDisplayZoomPercent\(\)\}%`;/);
+});
+
 test('timeline frame UI source coverage runs with frame grid tests', () => {
   assert.match(packageJson.scripts['test:frame-grid'], /timeline-frame-ui-source\.test\.js/);
 });

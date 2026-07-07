@@ -7107,7 +7107,7 @@ body.resizing .comment-panel {
 
 /* 그리기 모드에서 댓글 마커 클릭 방지 */
 .comment-markers-container.drawing-active .comment-marker {
-  pointer-events: none;
+  pointer-events: none !important;
   cursor: crosshair;
 }
 
@@ -7120,6 +7120,7 @@ body.resizing .comment-panel {
   border-radius: 50%;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   cursor: pointer;
+  pointer-events: auto;
   transition: all 0.15s ease;
   z-index: 20;
 }
@@ -7324,6 +7325,10 @@ body.resizing .comment-panel {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
+}
+
+body.drawing-mode-active .comment-marker-tooltip.visible {
+  pointer-events: none !important;
 }
 
 .comment-marker-tooltip.pinned {

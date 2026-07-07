@@ -6820,8 +6820,7 @@ async function initApp() {
 
         // 그리기 모드 비활성화 (오디오에서는 의미 없음)
         if (state.isDrawMode) {
-          state.isDrawMode = false;
-          elements.btnDrawMode?.classList.remove('active');
+          applyDrawModeState(false);
           drawingManager.disable();
         }
         elements.btnDrawMode?.setAttribute('disabled', 'true');
@@ -7367,16 +7366,29 @@ async function initApp() {
   /**
    * 그리기 모드 토글
    */
+  function setCommentOverlaysDrawingPassthrough(enabled) {
+    markerContainer.classList.toggle('drawing-active', enabled);
+    document.body.classList.toggle('drawing-mode-active', enabled);
+    if (!enabled) return;
+
+    document.querySelectorAll('.comment-marker-tooltip').forEach(tooltip => {
+      tooltip.classList.remove('visible', 'pinned');
+    });
+  }
+
+  function applyDrawModeState(enabled) {
+    state.isDrawMode = enabled;
+    elements.btnDrawMode?.classList.toggle('active', enabled);
+    elements.drawingTools?.classList.toggle('visible', enabled);
+    elements.drawingCanvas?.classList.toggle('active', enabled);
+    elements.videoWrapper?.classList.toggle('drawing-mode', enabled);
+    setCommentOverlaysDrawingPassthrough(enabled);
+  }
+
   function toggleDrawMode() {
     // 오디오 모드에서는 그리기 모드 진입 차단
     if (state.isAudioMode) return;
-    state.isDrawMode = !state.isDrawMode;
-    elements.btnDrawMode.classList.toggle('active', state.isDrawMode);
-    elements.drawingTools.classList.toggle('visible', state.isDrawMode);
-    elements.drawingCanvas.classList.toggle('active', state.isDrawMode);
-    elements.videoWrapper?.classList.toggle('drawing-mode', state.isDrawMode);
-    // 그리기 모드에서 댓글 마커 클릭 방지
-    markerContainer.classList.toggle('drawing-active', state.isDrawMode);
+    applyDrawModeState(!state.isDrawMode);
     log.debug('그리기 모드 변경', { isDrawMode: state.isDrawMode });
   }
 
@@ -7806,7 +7818,6 @@ async function initApp() {
       left: ${marker.x * 100}%;
       top: ${marker.y * 100}%;
       transform: translate(-50%, -50%);
-      pointer-events: auto;
       ${!marker.resolved ? `background: ${authorColor.color};` : ''}
     `;
 
@@ -10534,22 +10545,22 @@ async function initApp() {
     }
     if (userSettings.matchShortcut('drawingLayerSelectUp', e)) {
       e.preventDefault();
-      selectDrawingLayerByOffset(1);
+      selectDrawingLayerByOffset(-1);
       return;
     }
     if (userSettings.matchShortcut('drawingLayerSelectDown', e)) {
       e.preventDefault();
-      selectDrawingLayerByOffset(-1);
+      selectDrawingLayerByOffset(1);
       return;
     }
     if (userSettings.matchShortcut('drawingLayerMoveUp', e)) {
       e.preventDefault();
-      moveDrawingLayerByOffset(1);
+      moveDrawingLayerByOffset(-1);
       return;
     }
     if (userSettings.matchShortcut('drawingLayerMoveDown', e)) {
       e.preventDefault();
-      moveDrawingLayerByOffset(-1);
+      moveDrawingLayerByOffset(1);
       return;
     }
     if (userSettings.matchShortcut('timelineCenterOnPlayhead', e)) {

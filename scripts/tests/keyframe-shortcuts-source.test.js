@@ -30,6 +30,13 @@ test('Animate-style drawing layer shortcuts are configured and handled', () => {
   assert.match(appSource, /timeline\.centerOnPlayhead\(\)/);
 });
 
+test('drawing layer up/down shortcuts follow the visible layer list direction', () => {
+  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerSelectUp', e\)[\s\S]{0,140}selectDrawingLayerByOffset\(-1\);/);
+  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerSelectDown', e\)[\s\S]{0,140}selectDrawingLayerByOffset\(1\);/);
+  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveUp', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(-1\);/);
+  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveDown', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(1\);/);
+});
+
 test('DrawingManager supports selecting and moving active layers by offset', () => {
   assert.match(drawingManagerSource, /selectActiveLayerByOffset\(offset\)/);
   assert.match(drawingManagerSource, /moveActiveLayerByOffset\(offset\)/);
