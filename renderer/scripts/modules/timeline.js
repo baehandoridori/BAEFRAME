@@ -1825,9 +1825,15 @@ export class Timeline extends EventTarget {
         fromFrame: kf.frame,
         toFrame: kf.frame + frameDelta
       }));
+      const selectionAnchor = this.draggedKeyframe
+        ? {
+            layerId: this.draggedKeyframe.layerId,
+            frame: this.draggedKeyframe.frame + frameDelta
+          }
+        : null;
 
       if (keyframesToMove.length > 0) {
-        this._emit('keyframesMove', { keyframes: keyframesToMove, frameDelta });
+        this._emit('keyframesMove', { keyframes: keyframesToMove, frameDelta, anchor: selectionAnchor });
         log.info('키프레임 이동', { keyframes: keyframesToMove, frameDelta });
       }
     }

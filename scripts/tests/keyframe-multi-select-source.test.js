@@ -99,8 +99,11 @@ test('selected keyframe moves are ordered by drag direction to keep adjacent mov
 test('moved keyframes refresh selection through the timeline setter', () => {
   assert.match(timelineSource, /setKeyframeSelection\(selection, options = \{\}\) \{/);
   assert.match(timelineSource, /this\._setKeyframeSelection\(selection, options\);/);
+  assert.match(timelineSource, /const selectionAnchor = this\.draggedKeyframe/);
+  assert.match(timelineSource, /this\._emit\('keyframesMove', \{ keyframes: keyframesToMove, frameDelta, anchor: selectionAnchor \}\)/);
+  assert.match(appSource, /const \{ keyframes, frameDelta, anchor \} = e\.detail;/);
   assert.match(appSource, /const movedSelection = keyframes\.map\(kf => \(\{/);
-  assert.match(appSource, /timeline\.setKeyframeSelection\(movedSelection\)/);
+  assert.match(appSource, /timeline\.setKeyframeSelection\(movedSelection, \{ anchor \}\)/);
   assert.doesNotMatch(appSource, /timeline\.selectedKeyframes\s*=\s*keyframes\.map/);
 });
 
