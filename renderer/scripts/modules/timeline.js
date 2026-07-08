@@ -1583,7 +1583,8 @@ export class Timeline extends EventTarget {
       marker.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         e.stopPropagation();
-        this._handleKeyframePointerDown(e, layer.id, range.start);
+        const shouldStartDrag = this._handleKeyframePointerDown(e, layer.id, range.start);
+        if (shouldStartDrag === false) return;
         this._startKeyframeDrag(e, layer.id, range.start, marker);
       });
 
@@ -1700,7 +1701,8 @@ export class Timeline extends EventTarget {
     // 키프레임 마커 드래그 시작
     marker.addEventListener('mousedown', (e) => {
       e.stopPropagation();
-      this._handleKeyframePointerDown(e, layer.id, range.start);
+      const shouldStartDrag = this._handleKeyframePointerDown(e, layer.id, range.start);
+      if (shouldStartDrag === false) return;
       this._startKeyframeDrag(e, layer.id, range.start, clip);
     });
 
@@ -1968,21 +1970,23 @@ export class Timeline extends EventTarget {
   _handleKeyframePointerDown(e, layerId, frame) {
     if (e.shiftKey) {
       this._selectKeyframeRange(layerId, frame, e.ctrlKey || e.metaKey);
-      return;
+      return true;
     }
 
     if (e.ctrlKey || e.metaKey) {
+      const wasSelected = this._isKeyframeSelected(layerId, frame);
       this._toggleKeyframeSelection(layerId, frame, true);
-      return;
+      return !wasSelected;
     }
 
     const isSelected = this._isKeyframeSelected(layerId, frame);
     if (!isSelected || this.selectedKeyframes.length <= 1) {
       this._setKeyframeSelection([{ layerId, frame }], { anchor: { layerId, frame } });
-      return;
+      return true;
     }
 
     this.lastSelectedKeyframe = { layerId, frame };
+    return true;
   }
 
   _selectKeyframeRange(layerId, frame, addToSelection = false) {

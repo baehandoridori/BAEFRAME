@@ -59,16 +59,18 @@ test('shift and ctrl keyframe clicks update selection before any drag ghost is c
   assert.match(timelineSource, /_handleKeyframePointerDown\(e, layerId, frame\)/);
   assert.match(timelineSource, /if \(e\.shiftKey\) \{[\s\S]*?this\._selectKeyframeRange\(layerId, frame, e\.ctrlKey \|\| e\.metaKey\);/);
   assert.match(timelineSource, /this\._toggleKeyframeSelection\(layerId, frame, true\);/);
+  assert.match(timelineSource, /const wasSelected = this\._isKeyframeSelected\(layerId, frame\);[\s\S]*?return !wasSelected;/);
   assert.match(timelineSource, /this\._setKeyframeSelection\(nextSelection, \{ anchor: \{ layerId, frame \} \}\);/);
   assert.match(timelineSource, /nextSelection\.some\(item =>[\s\S]*item\.layerId === this\.lastSelectedKeyframe\?\.layerId/);
 
   const markerMouseDown = timelineSource.match(/marker\.addEventListener\('mousedown', \(e\) => \{([\s\S]*?)\n      \}\);/);
   assert.ok(markerMouseDown, 'rendered keyframe marker mousedown handler should exist');
   assert.ok(
-    markerMouseDown[1].indexOf('this._handleKeyframePointerDown(e, layer.id, range.start);') <
+    markerMouseDown[1].indexOf('const shouldStartDrag = this._handleKeyframePointerDown(e, layer.id, range.start);') <
       markerMouseDown[1].indexOf('this._startKeyframeDrag(e, layer.id, range.start, marker);'),
     'selection must update before drag ghost creation'
   );
+  assert.match(markerMouseDown[1], /if \(shouldStartDrag === false\) return;/);
 });
 
 test('shift range selection is limited to the clicked drawing layer keyframes', () => {
