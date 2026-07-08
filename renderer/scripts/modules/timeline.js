@@ -108,6 +108,7 @@ export class Timeline extends EventTarget {
 
     // 다중 선택 상태
     this.selectedKeyframes = [];  // [ { layerId, frame } ]
+    this.lastSelectedKeyframe = null;
     this.isSelecting = false;  // 드래그 박스 선택 중
     this.selectionBox = null;
     this.selectionStartX = 0;
@@ -1582,13 +1583,14 @@ export class Timeline extends EventTarget {
       marker.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         e.stopPropagation();
+        const shouldStartDrag = this._handleKeyframePointerDown(e, layer.id, range.start);
+        if (shouldStartDrag === false) return;
         this._startKeyframeDrag(e, layer.id, range.start, marker);
       });
 
-      // 클릭으로 선택
+      // 선택은 mousedown에서 먼저 처리한다. 그래야 드래그 고스트가 최신 선택 전체를 반영한다.
       marker.addEventListener('click', (e) => {
         e.stopPropagation();
-        this._toggleKeyframeSelection(layer.id, range.start, e.ctrlKey || e.metaKey);
       });
 
       keyframeContainer.appendChild(marker);
@@ -1699,13 +1701,14 @@ export class Timeline extends EventTarget {
     // 키프레임 마커 드래그 시작
     marker.addEventListener('mousedown', (e) => {
       e.stopPropagation();
+      const shouldStartDrag = this._handleKeyframePointerDown(e, layer.id, range.start);
+      if (shouldStartDrag === false) return;
       this._startKeyframeDrag(e, layer.id, range.start, clip);
     });
 
-    // 키프레임 클릭으로 선택 토글
+    // 선택은 mousedown에서 먼저 처리한다. 그래야 드래그 고스트가 최신 선택 전체를 반영한다.
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
-      this._toggleKeyframeSelection(layer.id, range.start, e.ctrlKey || e.metaKey);
     });
 
     clip.appendChild(marker);
@@ -1822,9 +1825,15 @@ export class Timeline extends EventTarget {
         fromFrame: kf.frame,
         toFrame: kf.frame + frameDelta
       }));
+      const selectionAnchor = this.draggedKeyframe
+        ? {
+            layerId: this.draggedKeyframe.layerId,
+            frame: this.draggedKeyframe.frame + frameDelta
+          }
+        : null;
 
       if (keyframesToMove.length > 0) {
-        this._emit('keyframesMove', { keyframes: keyframesToMove, frameDelta });
+        this._emit('keyframesMove', { keyframes: keyframesToMove, frameDelta, anchor: selectionAnchor });
         log.info('키프레임 이동', { keyframes: keyframesToMove, frameDelta });
       }
     }
@@ -1934,25 +1943,126 @@ export class Timeline extends EventTarget {
     const index = this.selectedKeyframes.findIndex(
       kf => kf.layerId === layerId && kf.frame === frame
     );
+    let nextSelection;
+    let anchor = { layerId, frame };
 
     if (addToSelection) {
       // Ctrl/Cmd + 클릭: 선택에 추가/제거
       if (index !== -1) {
-        this.selectedKeyframes.splice(index, 1);
+        nextSelection = this.selectedKeyframes.filter((_, itemIndex) => itemIndex !== index);
+        anchor = nextSelection.some(item =>
+          item.layerId === this.lastSelectedKeyframe?.layerId &&
+          item.frame === this.lastSelectedKeyframe?.frame
+        ) ? this.lastSelectedKeyframe : null;
       } else {
-        this.selectedKeyframes.push({ layerId, frame });
+        nextSelection = [...this.selectedKeyframes, { layerId, frame }];
       }
     } else {
       // 일반 클릭: 단독 선택
-      this.selectedKeyframes = [{ layerId, frame }];
+      nextSelection = [{ layerId, frame }];
     }
 
-    this._emit('keyframeSelectionChanged', { selected: this.selectedKeyframes });
-    this._updateKeyframeSelectionUI();
+    this._setKeyframeSelection(nextSelection, { anchor });
   }
 
   _selectKeyframe(layerId, frame, addToSelection) {
     this._toggleKeyframeSelection(layerId, frame, addToSelection);
+  }
+
+  setKeyframeSelection(selection, options = {}) {
+    this._setKeyframeSelection(selection, options);
+  }
+
+  _handleKeyframePointerDown(e, layerId, frame) {
+    if (e.shiftKey) {
+      this._selectKeyframeRange(layerId, frame, e.ctrlKey || e.metaKey);
+      return true;
+    }
+
+    if (e.ctrlKey || e.metaKey) {
+      const wasSelected = this._isKeyframeSelected(layerId, frame);
+      this._toggleKeyframeSelection(layerId, frame, true);
+      return !wasSelected;
+    }
+
+    const isSelected = this._isKeyframeSelected(layerId, frame);
+    if (!isSelected || this.selectedKeyframes.length <= 1) {
+      this._setKeyframeSelection([{ layerId, frame }], { anchor: { layerId, frame } });
+      return true;
+    }
+
+    this.lastSelectedKeyframe = { layerId, frame };
+    return true;
+  }
+
+  _selectKeyframeRange(layerId, frame, addToSelection = false) {
+    const anchor = this.lastSelectedKeyframe?.layerId === layerId
+      ? this.lastSelectedKeyframe
+      : { layerId, frame };
+    const frames = this._getLayerKeyframeFrames(layerId);
+    const startFrame = Math.min(anchor.frame, frame);
+    const endFrame = Math.max(anchor.frame, frame);
+    const rangeSelection = frames
+      .filter(frameNumber => frameNumber >= startFrame && frameNumber <= endFrame)
+      .map(frameNumber => ({ layerId, frame: frameNumber }));
+    const nextSelection = addToSelection ? [...this.selectedKeyframes] : [];
+
+    const selectionToAdd = rangeSelection.length > 0
+      ? rangeSelection
+      : [{ layerId, frame }];
+    selectionToAdd.forEach(keyframe => {
+      if (!nextSelection.some(item => item.layerId === keyframe.layerId && item.frame === keyframe.frame)) {
+        nextSelection.push(keyframe);
+      }
+    });
+
+    this._setKeyframeSelection(nextSelection, { anchor: { layerId, frame } });
+  }
+
+  _getLayerKeyframeFrames(layerId) {
+    const layer = Array.isArray(this._lastDrawingLayers)
+      ? this._lastDrawingLayers.find(item => item.id === layerId)
+      : null;
+    return (layer?.keyframes || [])
+      .map(keyframe => Number(keyframe?.frame))
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+  }
+
+  _isKeyframeSelected(layerId, frame) {
+    return this.selectedKeyframes.some(
+      keyframe => keyframe.layerId === layerId && keyframe.frame === frame
+    );
+  }
+
+  _setKeyframeSelection(selection, { anchor = null } = {}) {
+    const seen = new Set();
+    const normalizedSelection = [];
+
+    (selection || []).forEach(keyframe => {
+      if (!keyframe?.layerId || !Number.isFinite(Number(keyframe.frame))) return;
+      const normalized = { layerId: keyframe.layerId, frame: Number(keyframe.frame) };
+      const key = `${normalized.layerId}:${normalized.frame}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      normalizedSelection.push(normalized);
+    });
+
+    this.selectedKeyframes = normalizedSelection;
+
+    if (anchor?.layerId && Number.isFinite(Number(anchor.frame))) {
+      this.lastSelectedKeyframe = { layerId: anchor.layerId, frame: Number(anchor.frame) };
+    } else if (this.selectedKeyframes.length === 0) {
+      this.lastSelectedKeyframe = null;
+    } else if (
+      !this.lastSelectedKeyframe ||
+      !this._isKeyframeSelected(this.lastSelectedKeyframe.layerId, this.lastSelectedKeyframe.frame)
+    ) {
+      this.lastSelectedKeyframe = { ...this.selectedKeyframes[this.selectedKeyframes.length - 1] };
+    }
+
+    this._emit('keyframeSelectionChanged', { selected: this.selectedKeyframes });
+    this._updateKeyframeSelectionUI();
   }
 
   /**
@@ -2047,7 +2157,7 @@ export class Timeline extends EventTarget {
 
     // 기존 선택 초기화 (Ctrl 안 누른 경우)
     if (!e.ctrlKey && !e.metaKey) {
-      this.selectedKeyframes = [];
+      this._setKeyframeSelection([]);
     }
   }
 
@@ -2080,21 +2190,25 @@ export class Timeline extends EventTarget {
 
     const boxRect = this.selectionBox.getBoundingClientRect();
 
-    // 선택 박스 내의 키프레임 마커 찾기
+    const nextSelection = [...this.selectedKeyframes];
+    let lastHit = null;
+
+    // 선택 박스와 겹치는 키프레임 마커 찾기
     this.tracksContainer?.querySelectorAll('.keyframe-marker, .keyframe-marker-dot').forEach(marker => {
       const markerRect = marker.getBoundingClientRect();
 
-      // 마커가 선택 박스 안에 있는지 확인
-      if (markerRect.left >= boxRect.left &&
-          markerRect.right <= boxRect.right &&
-          markerRect.top >= boxRect.top &&
-          markerRect.bottom <= boxRect.bottom) {
+      // 마커가 선택 박스와 조금이라도 겹치는지 확인
+      if (markerRect.right >= boxRect.left &&
+          markerRect.left <= boxRect.right &&
+          markerRect.bottom >= boxRect.top &&
+          markerRect.top <= boxRect.bottom) {
         const layerId = marker.dataset.layerId;
         const frame = parseInt(marker.dataset.frame);
+        lastHit = { layerId, frame };
 
         // 선택에 추가 (중복 방지)
-        if (!this.selectedKeyframes.some(kf => kf.layerId === layerId && kf.frame === frame)) {
-          this.selectedKeyframes.push({ layerId, frame });
+        if (!nextSelection.some(kf => kf.layerId === layerId && kf.frame === frame)) {
+          nextSelection.push({ layerId, frame });
         }
       }
     });
@@ -2104,17 +2218,14 @@ export class Timeline extends EventTarget {
     this.selectionBox = null;
     this.isSelecting = false;
 
-    this._emit('keyframeSelectionChanged', { selected: this.selectedKeyframes });
-    this._updateKeyframeSelectionUI();
+    this._setKeyframeSelection(nextSelection, { anchor: lastHit });
   }
 
   /**
    * 선택 초기화
    */
   clearSelection() {
-    this.selectedKeyframes = [];
-    this._emit('keyframeSelectionChanged', { selected: this.selectedKeyframes });
-    this._updateKeyframeSelectionUI();
+    this._setKeyframeSelection([]);
   }
 
   /**
