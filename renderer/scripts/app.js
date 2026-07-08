@@ -1453,10 +1453,11 @@ async function initApp() {
     const { keyframes, frameDelta } = e.detail;
     if (drawingManager.moveKeyframes(keyframes)) {
       // 이동 성공 시 선택 상태 업데이트
-      timeline.selectedKeyframes = keyframes.map(kf => ({
+      const movedSelection = keyframes.map(kf => ({
         layerId: kf.layerId,
         frame: kf.toFrame
       }));
+      timeline.setKeyframeSelection(movedSelection);
       timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
       showToast(`키프레임 ${frameDelta > 0 ? '+' : ''}${frameDelta} 프레임 이동`, 'info');
     }

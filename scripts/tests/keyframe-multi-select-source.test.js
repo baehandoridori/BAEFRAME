@@ -54,6 +54,31 @@ test('plain keyframe click selects without immediately toggling the only selecte
   assert.doesNotMatch(toggleMatch[1], /이미 단독 선택된 상태면 선택 해제/);
 });
 
+test('shift and ctrl keyframe clicks update selection before any drag ghost is created', () => {
+  assert.match(timelineSource, /this\.lastSelectedKeyframe = null/);
+  assert.match(timelineSource, /_handleKeyframePointerDown\(e, layerId, frame\)/);
+  assert.match(timelineSource, /if \(e\.shiftKey\) \{[\s\S]*?this\._selectKeyframeRange\(layerId, frame, e\.ctrlKey \|\| e\.metaKey\);/);
+  assert.match(timelineSource, /this\._toggleKeyframeSelection\(layerId, frame, true\);/);
+  assert.match(timelineSource, /this\._setKeyframeSelection\(nextSelection, \{ anchor: \{ layerId, frame \} \}\);/);
+  assert.match(timelineSource, /nextSelection\.some\(item =>[\s\S]*item\.layerId === this\.lastSelectedKeyframe\?\.layerId/);
+
+  const markerMouseDown = timelineSource.match(/marker\.addEventListener\('mousedown', \(e\) => \{([\s\S]*?)\n      \}\);/);
+  assert.ok(markerMouseDown, 'rendered keyframe marker mousedown handler should exist');
+  assert.ok(
+    markerMouseDown[1].indexOf('this._handleKeyframePointerDown(e, layer.id, range.start);') <
+      markerMouseDown[1].indexOf('this._startKeyframeDrag(e, layer.id, range.start, marker);'),
+    'selection must update before drag ghost creation'
+  );
+});
+
+test('shift range selection is limited to the clicked drawing layer keyframes', () => {
+  assert.match(timelineSource, /_selectKeyframeRange\(layerId, frame, addToSelection = false\) \{/);
+  assert.match(timelineSource, /const anchor = this\.lastSelectedKeyframe\?\.layerId === layerId/);
+  assert.match(timelineSource, /this\._getLayerKeyframeFrames\(layerId\)/);
+  assert.match(timelineSource, /frameNumber >= startFrame && frameNumber <= endFrame/);
+  assert.match(timelineSource, /this\._setKeyframeSelection\(nextSelection, \{ anchor: \{ layerId, frame \} \}\);/);
+});
+
 test('selected keyframes can be deleted through the drawing manager', () => {
   assert.match(drawingManagerSource, /removeKeyframes\(selectedKeyframes = \[\]\)/);
   assert.match(drawingManagerSource, /this\._emit\('keyframeRemoved'/);
@@ -69,7 +94,38 @@ test('selected keyframe moves are ordered by drag direction to keep adjacent mov
   assert.doesNotMatch(drawingManagerSource, /sort\(\(a, b\) => b\.fromFrame - a\.fromFrame\)/);
 });
 
+test('moved keyframes refresh selection through the timeline setter', () => {
+  assert.match(timelineSource, /setKeyframeSelection\(selection, options = \{\}\) \{/);
+  assert.match(timelineSource, /this\._setKeyframeSelection\(selection, options\);/);
+  assert.match(appSource, /const movedSelection = keyframes\.map\(kf => \(\{/);
+  assert.match(appSource, /timeline\.setKeyframeSelection\(movedSelection\)/);
+  assert.doesNotMatch(appSource, /timeline\.selectedKeyframes\s*=\s*keyframes\.map/);
+});
+
 test('single remaining keyframe can be deleted', () => {
   assert.doesNotMatch(drawingManagerSource, /마지막 키프레임은 삭제할 수 없습니다/);
   assert.doesNotMatch(drawingManagerSource, /layer\.keyframes\.length <= 1/);
+});
+
+test('lasso selection selects keyframes that intersect the drag box', () => {
+  const finishSelectionMatch = timelineSource.match(/_finishSelection\(e\) \{([\s\S]*?)\n  \}/);
+  assert.ok(finishSelectionMatch, 'finish selection method should exist');
+  assert.match(finishSelectionMatch[1], /markerRect\.right >= boxRect\.left/);
+  assert.match(finishSelectionMatch[1], /markerRect\.left <= boxRect\.right/);
+  assert.match(finishSelectionMatch[1], /markerRect\.bottom >= boxRect\.top/);
+  assert.match(finishSelectionMatch[1], /markerRect\.top <= boxRect\.bottom/);
+  assert.doesNotMatch(finishSelectionMatch[1], /markerRect\.left >= boxRect\.left &&[\s\S]*markerRect\.right <= boxRect\.right/);
+});
+
+test('selection state is normalized through the shared setter', () => {
+  const setSelectionMatch = timelineSource.match(/_setKeyframeSelection\(selection, \{ anchor = null \} = \{\}\) \{([\s\S]*?)\n  \}/);
+  assert.ok(setSelectionMatch, 'shared selection setter should exist');
+  assert.match(setSelectionMatch[1], /const normalizedSelection = \[\]/);
+  assert.match(setSelectionMatch[1], /normalizedSelection\.push\(normalized\)/);
+  assert.doesNotMatch(setSelectionMatch[1], /keyframe\.layerId =/);
+  assert.doesNotMatch(setSelectionMatch[1], /keyframe\.frame =/);
+
+  const startSelectionMatch = timelineSource.match(/_startSelection\(e\) \{([\s\S]*?)\n  \}/);
+  assert.ok(startSelectionMatch, 'selection-box start method should exist');
+  assert.match(startSelectionMatch[1], /this\._setKeyframeSelection\(\[\]\)/);
 });
