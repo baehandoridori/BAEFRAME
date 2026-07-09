@@ -37,3 +37,11 @@ test('unexpected mpv stop triggers reload with retry policy', () => {
   assert.match(appSource, /let mpvUnexpectedStopRecovery = \{ filePath: null, attempted: false \};/);
   assert.match(appSource, /isAppShuttingDown = true;/);
 });
+
+test('renderer crash and reload clean up mpv processes and hosts', () => {
+  assert.match(windowSource, /async function cleanupMpvAfterRendererGone\(reason\)/);
+  assert.match(windowSource, /webContents\.on\('render-process-gone'[\s\S]*?cleanupMpvAfterRendererGone/);
+  assert.match(windowSource, /webContents\.on\('did-navigate'[\s\S]*?cleanupMpvAfterRendererGone/);
+  assert.match(windowSource, /rendererCrashRecoveryCount/);
+  assert.match(windowSource, /webContents\.reload\(\)/);
+});
