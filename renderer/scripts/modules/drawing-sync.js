@@ -394,11 +394,17 @@ export class DrawingSync {
           this._dm.renderFrame?.(currentFrame);
         }
 
+        this._notifyRemoteKeyframeApplied(layer, frame, keyframe);
         log.debug('원격 키프레임 적용', { layerId, frame });
       }
     } finally {
       this._isRemoteUpdate = false;
     }
+  }
+
+  _notifyRemoteKeyframeApplied(layer, frame, keyframe) {
+    this._dm._emit?.('keyframeUpdated', { layer, frame, keyframe });
+    this._dm._emit?.('layersChanged');
   }
 
   _applyRemoteLayerCreated(event) {

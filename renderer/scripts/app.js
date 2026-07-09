@@ -3186,6 +3186,7 @@ async function initApp() {
       // 현재 키프레임의 데이터를 지움
       const keyframe = layer.getKeyframeAtFrame(drawingManager.currentFrame);
       if (keyframe && !keyframe.isEmpty) {
+        drawingManager.drawingCanvas?.clearSelection?.();
         drawingManager._saveToHistory();
         keyframe.setCanvasData(null);
         keyframe.baseCanvasData = null;

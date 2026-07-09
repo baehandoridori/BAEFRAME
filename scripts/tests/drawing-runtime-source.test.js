@@ -108,6 +108,7 @@ test('clearing the current drawing frame respects locked and hidden layers', () 
   assert.match(appSource, /if \(layer\.locked \|\| layer\.visible === false\) \{/);
   assert.match(appSource, /잠긴 레이어는 지울 수 없습니다/);
   assert.match(appSource, /숨긴 레이어는 지울 수 없습니다/);
+  assert.match(appSource, /elements\.btnClearDrawing\?\.addEventListener\('click', \(\) => \{[\s\S]*?drawingManager\.drawingCanvas\?\.clearSelection\?\.\(\);[\s\S]*?keyframe\.setCanvasData\(null\);/);
 });
 
 test('drawing manager skips stroke record persistence when a save is blocked', () => {
@@ -277,4 +278,6 @@ test('pasted drawing frames are published to sync and save listeners', () => {
   assert.match(drawingSyncSource, /if \(!keyframe\?\.canvasData && keyframe\?\.isEmpty !== true\) return;/);
   assert.match(drawingSyncSource, /const \{ layerId, frame, canvasData, baseCanvasData, strokeRecords, isEmpty \} = event;/);
   assert.match(drawingSyncSource, /!canvasData && isEmpty !== true/);
+  assert.match(drawingSyncSource, /_notifyRemoteKeyframeApplied\(layer, frame, keyframe\) \{[\s\S]*?this\._dm\._emit\?\.\('keyframeUpdated', \{ layer, frame, keyframe \}\);[\s\S]*?this\._dm\._emit\?\.\('layersChanged'\);[\s\S]*?\}/);
+  assert.match(drawingSyncSource, /_applyRemoteKeyframe\(event\) \{[\s\S]*?this\._notifyRemoteKeyframeApplied\(layer, frame, keyframe\);/);
 });
