@@ -991,6 +991,15 @@ export class DrawingCanvas extends EventTarget {
     return true;
   }
 
+  clearSelection() {
+    this.selection = null;
+    this.floatingImage = null;
+    this.floatingPos = null;
+    this._selectPhase = null;
+    this._selectGrabOffset = null;
+    this._clearSelectionOverlay();
+  }
+
   _clearSelectionOverlay() {
     const ctx = this.selectionCanvas?.getContext('2d');
     if (!ctx) return;
@@ -1123,8 +1132,8 @@ export class DrawingCanvas extends EventTarget {
     this.tempCanvas = null;
     this.tempCtx = null;
     this.backupImageData = null;
+    this.clearSelection();
     this._selectClipboard = null;
-    this.floatingImage = null;
     this.selectionCanvas = null;
 
     log.info('DrawingCanvas 정리됨');

@@ -485,6 +485,8 @@ export class DrawingManager extends EventTarget {
    * 새 레이어 생성
    */
   createLayer(options = {}, saveHistory = true) {
+    this.commitActiveSelection();
+
     // Undo를 위해 현재 상태 저장
     if (saveHistory && this.layers.length > 0) {
       this._saveToHistory();
@@ -513,6 +515,8 @@ export class DrawingManager extends EventTarget {
   deleteLayer(layerId) {
     const index = this.layers.findIndex(l => l.id === layerId);
     if (index === -1) return false;
+
+    this.commitActiveSelection();
 
     // Undo를 위해 현재 상태 저장
     this._saveToHistory();
@@ -548,6 +552,9 @@ export class DrawingManager extends EventTarget {
   setActiveLayer(layerId) {
     const layer = this.layers.find(l => l.id === layerId);
     if (layer) {
+      if (layerId !== this.activeLayerId) {
+        this.commitActiveSelection();
+      }
       this.activeLayerId = layerId;
       this._emit('activeLayerChanged', { layer });
       this.renderFrame(this.currentFrame);
@@ -573,6 +580,7 @@ export class DrawingManager extends EventTarget {
     const targetIndex = index + offset;
     if (targetIndex < 0 || targetIndex >= this.layers.length) return false;
 
+    this.commitActiveSelection();
     this._saveToHistory();
     const [layer] = this.layers.splice(index, 1);
     this.layers.splice(targetIndex, 0, layer);
@@ -664,6 +672,8 @@ export class DrawingManager extends EventTarget {
    */
   _restoreSnapshot(snapshot) {
     if (!snapshot) return;
+
+    this.drawingCanvas.clearSelection?.();
 
     // 레이어 복원
     this.layers = snapshot.layers.map(l => DrawingLayer.fromJSON(l));
@@ -935,6 +945,7 @@ export class DrawingManager extends EventTarget {
     this._saveToHistory();
 
     let pasted = 0;
+    const updatedKeyframes = [];
     for (const item of clip.items) {
       const layer = this.layers.find(l => l.id === item.layerId) || this.getActiveLayer();
       if (!layer || layer.locked) continue;
@@ -948,11 +959,15 @@ export class DrawingManager extends EventTarget {
       keyframe.isEmpty = item.isEmpty;
       layer.keyframes.push(keyframe);
       layer._sortKeyframes();
+      updatedKeyframes.push({ layer, frame, keyframe });
       pasted += 1;
     }
 
     if (pasted > 0) {
       this.renderFrame(this.currentFrame);
+      for (const { layer, frame, keyframe } of updatedKeyframes) {
+        this._emit('keyframeUpdated', { layer, frame, keyframe });
+      }
       this._emit('layersChanged');
       log.info('프레임 붙여넣기됨', { targetFrame, count: pasted });
     }
@@ -1055,7 +1070,7 @@ export class DrawingManager extends EventTarget {
     // 같은 프레임이면 무시 (불필요한 렌더링 방지)
     if (frame === this.currentFrame) return;
     if (this.drawingCanvas.floatingImage || this.drawingCanvas.selection) {
-      this.drawingCanvas.commitSelection();
+      this.commitActiveSelection();
     }
 
     // 이전 프레임에서 그리기 중이었으면 저장
@@ -1098,7 +1113,8 @@ export class DrawingManager extends EventTarget {
    */
   async renderFrame(frame) {
     if (this.drawingCanvas.floatingImage) {
-      this.drawingCanvas.commitSelection();
+      log.debug('플로팅 선택 영역이 있어 렌더링 보류', { frame });
+      return;
     }
 
     // 그리기 중이면 렌더링 스킵 (사용자가 그리는 중에 캔버스 지우기 방지)
@@ -1290,6 +1306,7 @@ export class DrawingManager extends EventTarget {
    * 레이어 데이터 불러오기
    */
   importData(data) {
+    this.drawingCanvas.clearSelection?.();
     this.layers = data.layers.map(l => DrawingLayer.fromJSON(l));
     this.activeLayerId = data.activeLayerId;
     this.totalFrames = data.totalFrames || this.totalFrames;
@@ -1308,6 +1325,7 @@ export class DrawingManager extends EventTarget {
    * 모든 레이어 초기화
    */
   clearAll() {
+    this.drawingCanvas.clearSelection?.();
     this.layers = [];
     this.activeLayerId = null;
     this.drawingCanvas.clear();
@@ -1321,6 +1339,7 @@ export class DrawingManager extends EventTarget {
    * 새 파일 로드 시 초기화 (기본 레이어 생성 포함)
    */
   reset() {
+    this.drawingCanvas.clearSelection?.();
     this.layers = [];
     this.activeLayerId = null;
     this.drawingCanvas.clear();

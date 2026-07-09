@@ -12,6 +12,7 @@ const drawingCanvasSource = normalizeNewlines(fs.readFileSync(path.join(rootDir,
 const drawingManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-manager.js'), 'utf8'));
 const drawingStrokeRecordsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-stroke-records.js'), 'utf8'));
 const drawingSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-sync.js'), 'utf8'));
+const reviewDataManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/review-data-manager.js'), 'utf8'));
 const userSettingsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/user-settings.js'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
@@ -225,6 +226,7 @@ test('drawing select tool supports marquee selection, move, copy and paste', () 
   assert.match(drawingCanvasSource, /SELECT: 'select'/);
   assert.match(drawingCanvasSource, /_onSelectPointerDown\(e\)/);
   assert.match(drawingCanvasSource, /commitSelection\(\)/);
+  assert.match(drawingCanvasSource, /clearSelection\(\)/);
   assert.match(drawingCanvasSource, /copySelection\(\)/);
   assert.match(drawingCanvasSource, /pasteSelection\(\)/);
   assert.match(drawingManagerSource, /commitActiveSelection\(\)/);
@@ -233,4 +235,29 @@ test('drawing select tool supports marquee selection, move, copy and paste', () 
   assert.match(indexSource, /data-tool="select"/);
   assert.match(indexSource, /id="selectionOverlayCanvas"/);
   assert.match(userSettingsSource, /'select', 'pen', 'brush', 'eraser', 'line', 'arrow', 'rect', 'circle'/);
+});
+
+test('floating drawing selections are resolved before context changes, not during render', () => {
+  const renderStart = drawingManagerSource.indexOf('async renderFrame(frame) {');
+  const renderEnd = drawingManagerSource.indexOf('\n  _renderFrameSync', renderStart);
+  const renderFrameBody = drawingManagerSource.slice(renderStart, renderEnd);
+
+  assert.doesNotMatch(renderFrameBody, /commitSelection|commitActiveSelection/);
+  assert.match(drawingManagerSource, /createLayer\(options = \{\}, saveHistory = true\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
+  assert.match(drawingManagerSource, /setActiveLayer\(layerId\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\.activeLayerId = layerId;/);
+  assert.match(drawingManagerSource, /moveActiveLayerByOffset\(offset\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
+  assert.match(drawingManagerSource, /_restoreSnapshot\(snapshot\) \{[\s\S]*?this\.drawingCanvas\.clearSelection\?\.\(\);[\s\S]*?this\.layers = snapshot\.layers/);
+});
+
+test('pasted drawing frames are published to sync and save listeners', () => {
+  assert.match(drawingManagerSource, /const updatedKeyframes = \[\];/);
+  assert.match(drawingManagerSource, /updatedKeyframes\.push\(\{ layer, frame, keyframe \}\);/);
+  assert.match(drawingManagerSource, /this\._emit\('keyframeUpdated', \{ layer, frame, keyframe \}\);/);
+  assert.match(reviewDataManagerSource, /addEventListener\('keyframeUpdated', this\._onDataChanged\)/);
+  assert.match(reviewDataManagerSource, /removeEventListener\('keyframeUpdated', this\._onDataChanged\)/);
+  assert.match(drawingSyncSource, /addEventListener\('keyframeUpdated', this\._onKeyframeUpdated\)/);
+  assert.match(drawingSyncSource, /_onKeyframeUpdated\(e\)/);
+  assert.match(drawingSyncSource, /isEmpty: keyframe\.isEmpty === true/);
+  assert.match(drawingSyncSource, /const \{ layerId, frame, canvasData, baseCanvasData, strokeRecords, isEmpty \} = event;/);
+  assert.match(drawingSyncSource, /!canvasData && isEmpty !== true/);
 });
