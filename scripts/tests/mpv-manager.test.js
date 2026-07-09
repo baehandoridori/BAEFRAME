@@ -674,3 +674,34 @@ test('fails playback readiness when the requested file path never becomes active
     /requested file/
   );
 });
+
+test('screenshot sends screenshot-to-file and verifies the output file', async () => {
+  const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
+  const outputPath = path.normalize('C:\\Temp\\draw-freeze.png');
+  const sent = [];
+  const manager = createManager({
+    env: { BAEFRAME_MPV_PILOT: '1' },
+    existing: [bundledPath, outputPath]
+  });
+  manager.process = { killed: false };
+  manager.ipcPath = '\\\\.\\pipe\\test';
+  manager.sendCommand = async (command) => {
+    sent.push(command);
+    return { error: 'success' };
+  };
+
+  const result = await manager.screenshot(outputPath);
+
+  assert.equal(result.success, true);
+  assert.deepEqual(sent[0], ['screenshot-to-file', outputPath, 'video']);
+});
+
+test('screenshot rejects when mpv is not running', async () => {
+  const manager = createManager({});
+  await assert.rejects(() => manager.screenshot('C:\\Temp\\x.png'), /mpv is not running/);
+});
+
+test('launch args pin png screenshot format', () => {
+  const args = createMpvLaunchArgs({ ipcPath: '\\\\.\\pipe\\x' });
+  assert.ok(args.includes('--screenshot-format=png'));
+});
