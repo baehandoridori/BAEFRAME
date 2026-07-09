@@ -229,6 +229,7 @@ test('drawing select tool supports marquee selection, move, copy and paste', () 
   assert.match(drawingCanvasSource, /pasteSelection\(\)/);
   assert.match(drawingManagerSource, /commitActiveSelection\(\)/);
   assert.match(drawingManagerSource, /selectioncommitted/);
+  assert.match(drawingManagerSource, /exportData\(\) \{[\s\S]*?this\.drawingCanvas\?\.floatingImage[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?layers: this\.layers\.map/);
   assert.match(indexSource, /data-tool="select"/);
   assert.match(indexSource, /id="selectionOverlayCanvas"/);
   assert.match(userSettingsSource, /'select', 'pen', 'brush', 'eraser', 'line', 'arrow', 'rect', 'circle'/);

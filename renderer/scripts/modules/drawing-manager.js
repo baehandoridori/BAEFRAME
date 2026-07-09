@@ -1274,6 +1274,10 @@ export class DrawingManager extends EventTarget {
    * 모든 레이어 데이터 가져오기 (저장용)
    */
   exportData() {
+    if (this.drawingCanvas?.floatingImage) {
+      this.commitActiveSelection();
+    }
+
     return {
       layers: this.layers.map(l => l.toJSON()),
       activeLayerId: this.activeLayerId,
