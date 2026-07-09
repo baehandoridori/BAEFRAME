@@ -3198,6 +3198,7 @@ async function initApp() {
 
   function addDrawingLayer() {
     const activeIndex = drawingManager.layers.findIndex(l => l.id === drawingManager.activeLayerId);
+    // 레이어 패널의 "위 행"은 더 작은 배열 인덱스라 activeIndex 위치에 삽입한다.
     const insertIndex = activeIndex === -1 ? drawingManager.layers.length : activeIndex;
     drawingManager.createLayer({ insertIndex });
     renderDrawingLayerTimeline();
