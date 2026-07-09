@@ -22,6 +22,11 @@ function isMpvPilotEnabled(env = process.env) {
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
+function isMpvPlaybackDisabledByEnv(env = process.env) {
+  const value = String(env.BAEFRAME_DISABLE_MPV || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
 function createMpvIpcPath({
   platform = process.platform,
   pid = process.pid,
@@ -81,6 +86,8 @@ function createMpvLaunchArgs({ ipcPath, forceWindow = true, wid = null, headless
     '--no-terminal',
     '--msg-level=all=warn',
     '--hwdec=auto',
+    '--screenshot-format=png',
+    '--screenshot-png-compression=1',
     `--input-ipc-server=${ipcPath}`
   ];
 
@@ -134,6 +141,7 @@ class MPVManager {
   }
 
   isAvailable() {
+    if (isMpvPlaybackDisabledByEnv(this.env)) return false;
     return Boolean(this.mpvPath);
   }
 
@@ -402,6 +410,23 @@ class MPVManager {
     return true;
   }
 
+  /**
+   * 현재 프레임을 PNG 파일로 캡처한다 ('video' = OSD/자막 제외 원본 프레임).
+   */
+  async screenshot(outputPath) {
+    if (!outputPath || typeof outputPath !== 'string') {
+      throw new Error('mpv screenshot requires an output path');
+    }
+    if (!this.process || this.process.killed) {
+      throw new Error('mpv is not running');
+    }
+    await this.sendCommand(['screenshot-to-file', outputPath, 'video']);
+    if (!this._pathExists(outputPath)) {
+      throw new Error('mpv screenshot file was not created');
+    }
+    return { success: true, path: outputPath };
+  }
+
   async stop(options = {}) {
     const processRef = this.process;
     if (!processRef) {
@@ -613,5 +638,6 @@ module.exports = {
   createMpvIpcUniqueId,
   createMpvLaunchArgs,
   isMpvPilotEnabled,
+  isMpvPlaybackDisabledByEnv,
   mpvManager
 };

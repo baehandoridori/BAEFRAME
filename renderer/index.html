@@ -1569,15 +1569,15 @@
             <h4 class="app-settings-section-title">재생</h4>
             <div class="app-settings-row">
               <div class="app-settings-row-main">
-                <label for="appSettingsMpvPilotEnabled">mpv 직접 재생 파일럿</label>
-                <p class="app-settings-hint">원본 영상을 별도 mpv 창으로 열어 코덱 변환을 건너뜁니다.</p>
+                <label for="appSettingsMpvPilotEnabled">mpv 직접 재생 (기본)</label>
+                <p class="app-settings-hint">원본 영상을 변환 없이 바로 재생합니다. 끄면 기존 변환(FFmpeg) 방식으로 재생합니다.</p>
               </div>
-              <label class="settings-toggle" title="mpv 직접 재생 파일럿">
+              <label class="settings-toggle" title="mpv 직접 재생">
                 <input type="checkbox" id="appSettingsMpvPilotEnabled">
                 <span class="toggle-slider"></span>
               </label>
             </div>
-            <p class="app-settings-hint" id="appSettingsMpvPilotStatus">mpv.exe가 없으면 기존 변환 방식으로 재생됩니다.</p>
+            <p class="app-settings-hint" id="appSettingsMpvPilotStatus">mpv.exe가 없거나 재생에 실패하면 자동으로 기존 변환 방식을 사용합니다.</p>
           </div>
           <!-- 단축키 탭 -->
           <div class="app-settings-panel" data-panel="shortcuts">

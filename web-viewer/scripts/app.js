@@ -1231,8 +1231,8 @@ function getSampleBframeData() {
 
 function handleVideoLoaded() {
   state.duration = elements.videoPlayer.duration;
-  // fps는 comments.fps 또는 최상위 frameRate에서 가져옴
-  state.frameRate = state.bframeData?.comments?.fps || state.bframeData?.frameRate || 24;
+  // fps는 comments.fps 또는 최상위 fps/frameRate에서 가져옴
+  state.frameRate = state.bframeData?.comments?.fps || state.bframeData?.fps || state.bframeData?.frameRate || 24;
 
   // 파일명 표시
   const fileName = state.bframeData?.videoName || state.bframeData?.videoFile || '영상';

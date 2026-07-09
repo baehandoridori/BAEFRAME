@@ -6,6 +6,9 @@ const { BrowserWindow, screen, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { createLogger } = require('./logger');
+const { mpvManager } = require('./mpv-manager');
+const { mpvEmbedHost } = require('./mpv-embed-host');
+const { mpvOverlayHost } = require('./mpv-overlay-host');
 
 const log = createLogger('Window');
 
@@ -20,6 +23,25 @@ function debugLog(msg) {
 
 let mainWindow = null;
 let loadingWindow = null;
+
+async function cleanupMpvAfterRendererGone(reason) {
+  log.warn('렌더러 이탈로 mpv 재생 엔진 정리', { reason });
+  try {
+    await mpvManager.stop({ commandTimeoutMs: 500 });
+  } catch (error) {
+    log.warn('렌더러 이탈 mpv 종료 실패', { error: error.message });
+  }
+  try {
+    mpvOverlayHost.destroy();
+  } catch (error) {
+    log.debug('렌더러 이탈 mpv 오버레이 정리 실패', { error: error.message });
+  }
+  try {
+    mpvEmbedHost.destroy();
+  } catch (error) {
+    log.debug('렌더러 이탈 mpv 임베드 정리 실패', { error: error.message });
+  }
+}
 
 /**
  * 로딩 창 생성
@@ -87,6 +109,7 @@ function closeLoadingWindow() {
  */
 function createMainWindow() {
   const trace = log.trace('createMainWindow');
+  let rendererCrashRecoveryCount = 0;
 
   // 화면 크기 가져오기
   const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
@@ -183,6 +206,19 @@ function createMainWindow() {
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     debugLog(`렌더러 프로세스 종료: ${JSON.stringify(details)}`);
     log.error('렌더러 프로세스 종료', details);
+    void cleanupMpvAfterRendererGone(`render-process-gone:${details?.reason}`);
+
+    const recoverableReasons = ['crashed', 'oom', 'abnormal-exit', 'launch-failed'];
+    if (recoverableReasons.includes(details?.reason) && rendererCrashRecoveryCount < 2) {
+      rendererCrashRecoveryCount += 1;
+      log.warn('렌더러 자동 복구 시도', { attempt: rendererCrashRecoveryCount });
+      mainWindow.webContents.reload();
+    }
+  });
+
+  mainWindow.webContents.on('did-navigate', () => {
+    // 리로드/내비게이션 시 렌더러 상태가 초기화되므로 mpv도 함께 정리
+    void cleanupMpvAfterRendererGone('did-navigate');
   });
 
   mainWindow.webContents.on('unresponsive', () => {

@@ -1043,10 +1043,11 @@ export class ReviewDataManager extends EventTarget {
    * @param {number} fps
    */
   setFps(fps) {
-    if (typeof fps === 'number' && fps > 0) {
-      this._fps = fps;
-      this.isDirty = true;
-    }
+    const nextFps = Number(fps);
+    if (!Number.isFinite(nextFps) || nextFps <= 0) return;
+    if (this._fps === nextFps) return;
+    this._fps = nextFps;
+    this.isDirty = true;
   }
 
   /**

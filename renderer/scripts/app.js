@@ -864,8 +864,13 @@ async function initApp() {
   reviewDataManager.setBeforeSaveHandler(prepareReviewFileBeforeSave);
   reviewDataManager.setInitialSaveConflictHandler(handleInitialReviewFileSaveConflict);
 
+  // mpv 예기치 못한 중단(크래시/행) 복구 상태 - 같은 파일 mpv 재시도는 1회만
+  let mpvUnexpectedStopRecovery = { filePath: null, attempted: false };
+  let isAppShuttingDown = false;
+
   // 앱 종료/새로고침 시 정리
   window.addEventListener('beforeunload', () => {
+    isAppShuttingDown = true;
     void stopDeferredReviewFileDiscovery();
     // Liveblocks Room 퇴장 시 Presence 자동 정리됨
     liveblocksManager.releaseAllEditingLocks();
@@ -1040,6 +1045,7 @@ async function initApp() {
 
     // 댓글 매니저에 FPS 전달
     commentManager.setFPS(fps);
+    reviewDataManager.setFps(fps);
 
     // .bframe에서 로드된 데이터가 있으면 다시 렌더링
     if (drawingManager.layers.length > 0) {
@@ -1131,6 +1137,9 @@ async function initApp() {
       updatePresence: false,
       updateDrawing: true
     });
+    if (state.isDrawMode && isMpvPilotPlaybackActive()) {
+      scheduleMpvDrawFreezeRefresh();
+    }
   });
 
   // 재생 아이콘 SVG
@@ -1213,10 +1222,41 @@ async function initApp() {
     showToast('비디오 재생 오류가 발생했습니다.', 'error');
   });
 
-  videoPlayer.addEventListener('externalstopped', () => {
+  videoPlayer.addEventListener('externalstopped', (e) => {
     elements.videoWrapper?.classList.remove('mpv-pilot-mode');
     document.body.classList.remove('mpv-pilot-mode');
     mpvHostLastRequestedVisible = null;
+
+    // 앱 종료 중 main의 mpv 정리를 크래시로 오인해 재기동하는 레이스 방지
+    if (isAppShuttingDown) return;
+    // mpv 재기동/파일 전환 중 폴링이 감지한 일시적 stopped는 복구 대상이 아님
+    if (mpvPilotHostPreparing) return;
+
+    const detail = e.detail || {};
+    const stoppedFilePath = detail.filePath || state.currentFile;
+    if (hasActiveVideoLoadForDifferentFile(stoppedFilePath)) return;
+    if (!stoppedFilePath || !isSameFilePath(stoppedFilePath, state.currentFile)) return;
+
+    const retryMpv = !mpvUnexpectedStopRecovery.attempted ||
+      !isSameFilePath(mpvUnexpectedStopRecovery.filePath, stoppedFilePath);
+    mpvUnexpectedStopRecovery = { filePath: stoppedFilePath, attempted: true };
+
+    const resumeFrame = Number.isFinite(Number(detail.lastFrame)) ? Number(detail.lastFrame) : null;
+    showToast(
+      retryMpv
+        ? 'mpv 재생이 중단되어 영상을 다시 불러옵니다.'
+        : 'mpv 재생이 반복 중단되어 기존 변환 방식으로 다시 불러옵니다.',
+      'warning',
+      null,
+      true
+    );
+    log.warn('mpv 예기치 못한 중단, 자동 복구', { reason: detail.reason, retryMpv, resumeFrame });
+    void loadVideo(stoppedFilePath, {
+      keepVersionContext: true,
+      allowMpvPilot: retryMpv,
+      initialFrame: resumeFrame,
+      playWhenMediaReady: false
+    });
   });
 
   // 코덱 미지원
@@ -4919,6 +4959,10 @@ async function initApp() {
     syncMpvVideoTransform();
   }
 
+  let mpvDrawFreezeElement = null;
+  let mpvDrawFreezeToken = 0;
+  let mpvDrawFreezeRefreshTimer = null;
+
   /**
    * 캔버스 및 마커 컨테이너 줌 동기화
    */
@@ -4952,6 +4996,10 @@ async function initApp() {
     if (videoTransitionFreezeCanvas) {
       videoTransitionFreezeCanvas.style.transform = transform;
       videoTransitionFreezeCanvas.style.transformOrigin = 'center center';
+    }
+    if (mpvDrawFreezeElement) {
+      mpvDrawFreezeElement.style.transform = transform;
+      mpvDrawFreezeElement.style.transformOrigin = 'center center';
     }
     scheduleMpvOverlayStateSync();
   }
@@ -5187,6 +5235,67 @@ async function initApp() {
     };
   }
 
+  // ====== 그리기 모드 mpv 정지 프레임 ======
+  function isMpvPilotPlaybackActive() {
+    return videoPlayer.engine !== 'html5' && document.body.classList.contains('mpv-pilot-mode');
+  }
+
+  function removeMpvDrawFreezeFrame() {
+    mpvDrawFreezeToken += 1;
+    if (mpvDrawFreezeElement) {
+      mpvDrawFreezeElement.remove();
+      mpvDrawFreezeElement = null;
+    }
+  }
+
+  function scheduleMpvDrawFreezeRefresh() {
+    if (mpvDrawFreezeRefreshTimer) clearTimeout(mpvDrawFreezeRefreshTimer);
+    mpvDrawFreezeRefreshTimer = setTimeout(() => {
+      mpvDrawFreezeRefreshTimer = null;
+      if (!state.isDrawMode || !isMpvPilotPlaybackActive()) return;
+      if (videoPlayer.isSeeking()) {
+        scheduleMpvDrawFreezeRefresh();
+        return;
+      }
+      void showMpvDrawFreezeFrame();
+    }, 160);
+  }
+
+  async function showMpvDrawFreezeFrame() {
+    if (!isMpvPilotPlaybackActive() || !window.electronAPI?.mpvScreenshot) return;
+    const token = ++mpvDrawFreezeToken;
+    try {
+      const result = await window.electronAPI.mpvScreenshot();
+      if (token !== mpvDrawFreezeToken || !state.isDrawMode) return;
+      if (!result?.success || !result.dataUrl) {
+        log.warn('mpv 정지 프레임 캡처 실패', { error: result?.error });
+        return;
+      }
+      if (!mpvDrawFreezeElement) {
+        mpvDrawFreezeElement = document.createElement('img');
+        mpvDrawFreezeElement.className = 'mpv-draw-freeze-frame';
+        mpvDrawFreezeElement.alt = '';
+        const anchor = elements.onionSkinCanvas;
+        if (anchor && anchor.parentElement === elements.videoWrapper) {
+          elements.videoWrapper.insertBefore(mpvDrawFreezeElement, anchor);
+        } else if (elements.videoWrapper) {
+          elements.videoWrapper.insertBefore(mpvDrawFreezeElement, elements.videoWrapper.firstChild);
+        }
+      }
+      const renderArea = getVideoRenderArea();
+      if (renderArea) {
+        mpvDrawFreezeElement.style.left = `${renderArea.left}px`;
+        mpvDrawFreezeElement.style.top = `${renderArea.top}px`;
+        mpvDrawFreezeElement.style.width = `${renderArea.width}px`;
+        mpvDrawFreezeElement.style.height = `${renderArea.height}px`;
+      }
+      mpvDrawFreezeElement.src = result.dataUrl;
+      syncCanvasZoom();
+    } catch (error) {
+      log.warn('mpv 정지 프레임 캡처 예외', { error: error.message });
+    }
+  }
+
   /**
    * 캔버스 오버레이를 비디오 실제 영역에 맞게 동기화
    */
@@ -5232,6 +5341,13 @@ async function initApp() {
       compositionOverlay.style.width = `${renderArea.width}px`;
       compositionOverlay.style.height = `${renderArea.height}px`;
       compositionLayerManager.renderOverlay();
+    }
+
+    if (mpvDrawFreezeElement) {
+      mpvDrawFreezeElement.style.left = `${renderArea.left}px`;
+      mpvDrawFreezeElement.style.top = `${renderArea.top}px`;
+      mpvDrawFreezeElement.style.width = `${renderArea.width}px`;
+      mpvDrawFreezeElement.style.height = `${renderArea.height}px`;
     }
 
     // 영상 어니언 스킨 캔버스도 동일하게 동기화 (TODO: 임시 비활성화)
@@ -6589,7 +6705,7 @@ async function initApp() {
     if (!window.electronAPI?.mpvIsEnabled || !window.electronAPI?.mpvIsAvailable) return false;
 
     try {
-      const locallyEnabled = userSettings.getMpvPilotEnabled();
+      const locallyEnabled = userSettings.getMpvPlaybackEnabled();
       const envEnabled = await window.electronAPI.mpvIsEnabled();
       if (!locallyEnabled && !envEnabled) return false;
 
@@ -6604,6 +6720,38 @@ async function initApp() {
       log.warn('mpv 파일럿 사용 가능 여부 확인 실패', { error: error.message });
       return false;
     }
+  }
+
+  /**
+   * HTML5 <video> 경로용 실제 fps 조회.
+   * 우선순위: ffprobe(frameRate) -> mpv 헤드리스 프로브(container-fps) -> 24.
+   * HTML5 video API는 fps를 제공하지 않으므로 로드 전에 반드시 외부 프로브가 필요하다.
+   */
+  async function resolveHtml5PlaybackFps(filePath) {
+    if (!filePath) return 24;
+    try {
+      if (await window.electronAPI.ffmpegIsAvailable()) {
+        const probe = await window.electronAPI.ffmpegProbeCodec(filePath);
+        const probedFps = Number(probe?.frameRate);
+        if (probe?.success && Number.isFinite(probedFps) && probedFps > 0) {
+          return probedFps;
+        }
+      }
+    } catch (error) {
+      log.warn('ffprobe fps 조회 실패', { error: error.message });
+    }
+    try {
+      if (window.electronAPI?.mpvIsAvailable && await window.electronAPI.mpvIsAvailable()) {
+        const mpvProbe = await window.electronAPI.mpvProbeMetadata(filePath);
+        const mpvFps = Number(mpvProbe?.fps);
+        if (mpvProbe?.success && Number.isFinite(mpvFps) && mpvFps > 0) {
+          return mpvFps;
+        }
+      }
+    } catch (error) {
+      log.warn('mpv 프로브 fps 조회 실패', { error: error.message });
+    }
+    return 24;
   }
 
   async function loadVideoWithMpvPilot(filePath, {
@@ -6740,6 +6888,14 @@ async function initApp() {
 
     mpvPilotHostPreparing = false;
     syncMpvHostVisibilityWithDom();
+    if (state.isDrawMode) {
+      videoPlayer.pause();
+      await showMpvDrawFreezeFrame();
+      if (isStaleVideoLoad()) {
+        await cleanupPendingMpvPilot();
+        return false;
+      }
+    }
 
     showToast(
       embedHost?.wid
@@ -6784,6 +6940,7 @@ async function initApp() {
     );
     if (!canContinueVideoLoad()) return false;
     activeVideoLoadPath = filePath;
+    removeMpvDrawFreezeFrame();
     supersedeActiveTranscodeOverlay('새 영상 선택');
     if (!preserveContinuousSession && continuousPlaybackState.active) {
       stopContinuousPlayback();
@@ -6814,11 +6971,17 @@ async function initApp() {
       if (hasPreparedVideoPath) {
         log.debug('준비된 연속 재생 미디어 경로 사용', { filePath, preparedVideoPath });
       }
+      let html5ProbedFps = null;
       const ffmpegAvailable = !useMpvPilot && !hasPreparedVideoPath && !fileIsAudio && await window.electronAPI.ffmpegIsAvailable();
 
       if (ffmpegAvailable) {
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
         if (!canContinueVideoLoad()) return false;
+
+        const probedFrameRate = Number(codecInfo?.frameRate);
+        if (codecInfo?.success && Number.isFinite(probedFrameRate) && probedFrameRate > 0) {
+          html5ProbedFps = probedFrameRate;
+        }
 
         if (codecInfo.success && !codecInfo.isSupported) {
           log.info('미지원 코덱 감지, 트랜스코딩 필요', { codec: codecInfo.codecName });
@@ -7078,6 +7241,9 @@ async function initApp() {
           }
 
           try {
+            const html5Fps = html5ProbedFps ?? (fileIsAudio ? 24 : await resolveHtml5PlaybackFps(filePath));
+            if (!canContinueVideoLoad()) return false;
+            videoPlayer.setFps(html5Fps);
             await videoPlayer.load(actualVideoPath);
             if (!canContinueVideoLoad()) return false;
 
@@ -7179,6 +7345,7 @@ async function initApp() {
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
       if (!canContinueVideoLoad()) return false;
+      reviewDataManager.setFps(videoPlayer.fps);
       const currentBframePath = reviewDataManager.currentBframePath;
 
       // keepVersionContext가 false일 때만 manualVersions 복원
@@ -7522,15 +7689,22 @@ async function initApp() {
    * 시간을 타임코드로 변환
    */
   function formatTimecode(seconds, fps = 24) {
+    const rate = Math.max(1, Math.round(Number(fps) || 24));
     // Math.round로 부동소수점 오차 방지
-    const totalFrames = Math.round(seconds * fps);
-    const f = totalFrames % fps;
-    const totalSeconds = Math.floor(totalFrames / fps);
+    const totalFrames = Math.round((Number(seconds) || 0) * rate);
+    const f = totalFrames % rate;
+    const totalSeconds = Math.floor(totalFrames / rate);
     const s = totalSeconds % 60;
     const m = Math.floor((totalSeconds % 3600) / 60);
     const h = Math.floor(totalSeconds / 3600);
 
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+  }
+
+  function formatFpsLabel(fps) {
+    const value = Number(fps) || 24;
+    if (Number.isInteger(value)) return String(value);
+    return value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
   }
 
   /**
@@ -7550,7 +7724,7 @@ async function initApp() {
       elements.timecodeTotal.textContent = videoPlayer.getDurationTimecode();
     }
     elements.frameIndicator.textContent =
-      `${videoPlayer.fps}fps · Frame ${videoPlayer.currentFrame} / ${videoPlayer.totalFrames}`;
+      `${formatFpsLabel(videoPlayer.fps)}fps · Frame ${videoPlayer.currentFrame} / ${videoPlayer.totalFrames}`;
   }
 
   /**
@@ -7573,7 +7747,12 @@ async function initApp() {
     elements.drawingCanvas?.classList.toggle('active', enabled);
     elements.videoWrapper?.classList.toggle('drawing-mode', enabled);
     setCommentOverlaysDrawingPassthrough(enabled);
+    if (enabled && isMpvPilotPlaybackActive()) {
+      videoPlayer.pause();
+      void showMpvDrawFreezeFrame();
+    }
     if (!enabled) {
+      removeMpvDrawFreezeFrame();
       drawingManager.commitActiveSelection();
       state.isSpaceHeld = false;
       state.spacePanUsed = false;
@@ -7684,7 +7863,7 @@ async function initApp() {
 
     const currentTime = videoPlayer.currentTime || 0;
     const duration = videoPlayer.duration || 0;
-    const fps = videoPlayer.fps || 24;
+    const fps = Math.max(1, Math.round(Number(videoPlayer.fps) || 24));
 
     const formatTimecode = (seconds) => {
       const totalFrames = Math.round(seconds * fps);
@@ -11493,8 +11672,8 @@ async function initApp() {
     const status = document.getElementById('appSettingsMpvPilotStatus');
     if (!status) return;
 
-    if (!userSettings.getMpvPilotEnabled()) {
-      status.textContent = 'mpv.exe가 없으면 기존 변환 방식으로 재생됩니다.';
+    if (!userSettings.getMpvPlaybackEnabled()) {
+      status.textContent = '꺼져 있습니다. 영상은 기존 변환(FFmpeg) 방식으로 재생됩니다.';
       return;
     }
 
@@ -11548,7 +11727,7 @@ async function initApp() {
 
     // 재생 탭 초기값
     const mpvPilotEnabled = document.getElementById('appSettingsMpvPilotEnabled');
-    if (mpvPilotEnabled) mpvPilotEnabled.checked = userSettings.getMpvPilotEnabled();
+    if (mpvPilotEnabled) mpvPilotEnabled.checked = userSettings.getMpvPlaybackEnabled();
     updateMpvPilotSettingsStatus();
 
     const tGrid = document.getElementById('appThemeColorGrid');
@@ -11821,12 +12000,12 @@ async function initApp() {
   });
 
   document.getElementById('appSettingsMpvPilotEnabled')?.addEventListener('change', (e) => {
-    userSettings.setMpvPilotEnabled(e.target.checked);
+    userSettings.setMpvPlaybackEnabled(e.target.checked);
     updateMpvPilotSettingsStatus();
     showToast(
       e.target.checked
-        ? 'mpv 직접 재생을 켰습니다. 다음 영상부터 원본 재생을 시도합니다.'
-        : 'mpv 직접 재생을 껐습니다.',
+        ? 'mpv 직접 재생을 켰습니다. 다음 영상부터 원본을 바로 재생합니다.'
+        : 'mpv 직접 재생을 껐습니다. 다음 영상부터 기존 변환 방식으로 재생합니다.',
       'info'
     );
   });

@@ -1370,8 +1370,29 @@ export class DrawingManager extends EventTarget {
     this.drawingCanvas.clearSelection?.();
     this.layers = data.layers.map(l => DrawingLayer.fromJSON(l));
     this.activeLayerId = data.activeLayerId;
-    this.totalFrames = data.totalFrames || this.totalFrames;
-    this.fps = data.fps || this.fps;
+    const playbackTotalFrames = Number(this.totalFrames);
+    const savedTotalFrames = Number(data.totalFrames);
+    const hasPlaybackTotalFrames = Number.isFinite(playbackTotalFrames) && playbackTotalFrames > 0;
+    const sourceFps = Number(data.fps) > 0 ? Number(data.fps) : 24;
+    const shouldRemapFps = Number(this.fps) > 0 && sourceFps !== this.fps;
+    const factor = shouldRemapFps ? this.fps / sourceFps : 1;
+    if (!hasPlaybackTotalFrames && Number.isFinite(savedTotalFrames) && savedTotalFrames > 0) {
+      this.totalFrames = shouldRemapFps
+        ? Math.max(0, Math.round(savedTotalFrames * factor))
+        : savedTotalFrames;
+    }
+    if (shouldRemapFps) {
+      this.layers.forEach((layer) => {
+        layer.keyframes.forEach((kf) => {
+          kf.frame = Math.max(0, Math.round(kf.frame * factor));
+        });
+        layer.keyframes.sort((a, b) => a.frame - b.frame);
+        // 축소 재매핑(factor < 1)으로 프레임 번호가 충돌하면 뒤 키프레임 우선
+        layer.keyframes = layer.keyframes.filter((kf, i, arr) =>
+          i === arr.length - 1 || arr[i + 1].frame !== kf.frame
+        );
+      });
+    }
 
     // ID 충돌 방지: 로드된 레이어들의 ID를 기반으로 nextId 업데이트
     DrawingLayer.updateNextIdFromLayers(this.layers);

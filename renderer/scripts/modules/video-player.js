@@ -7,6 +7,12 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('VideoPlayer');
 
+function normalizeFpsValue(value, fallback = null) {
+  const fps = Number(value);
+  if (!Number.isFinite(fps) || fps <= 0) return fallback;
+  return Math.round(fps * 1000) / 1000;
+}
+
 /**
  * 비디오 플레이어 클래스
  * EventTarget을 상속하여 이벤트 기반 통신 지원
@@ -17,11 +23,12 @@ export class VideoPlayer extends EventTarget {
 
     this.videoElement = options.videoElement || document.getElementById('videoPlayer');
     this.container = options.container || document.getElementById('videoWrapper');
-    this.fps = options.fps || 24;
+    this.fps = Math.max(1, normalizeFpsValue(options.fps) ?? 24);
     this.engine = 'html5';
     this.externalControls = null;
     this._externalStatusTimer = null;
     this._externalStatusPending = false;
+    this._externalStatusFailureCount = 0;
     this._externalEndedEmitted = false;
     this.externalEofReached = false;
 
@@ -256,6 +263,7 @@ export class VideoPlayer extends EventTarget {
   useExternalEngine(config = {}) {
     this._stopFrameCallback();
     this._stopExternalStatusPolling();
+    this._externalStatusFailureCount = 0;
 
     this.engine = config.engineName || 'external';
     this.externalControls = config.controls || null;
@@ -263,7 +271,7 @@ export class VideoPlayer extends EventTarget {
     this.externalEofReached = false;
     this.filePath = config.filePath || null;
     this.duration = Math.max(0, Number(config.duration) || 0);
-    this.fps = Math.max(1, Number(config.fps) || this.fps || 24);
+    this.fps = Math.max(1, normalizeFpsValue(config.fps) ?? this.fps ?? 24);
     this.totalFrames = Math.max(0, Math.floor(this.duration * this.fps));
     this.videoWidth = Math.max(0, Number(config.width) || 0);
     this.videoHeight = Math.max(0, Number(config.height) || 0);
@@ -704,15 +712,33 @@ export class VideoPlayer extends EventTarget {
   }
 
   /**
-   * FPS 설정
+   * 수동 시크 진행 여부 (외부에서 시크 완료를 기다릴 때 사용)
+   */
+  isSeeking() {
+    return this._isSeeking === true;
+  }
+
+  /**
+   * FPS 설정 (로드 전 호출이 원칙. 로드 후 호출 시 메타데이터 재전파)
    * @param {number} fps
    */
   setFps(fps) {
-    this.fps = fps;
+    const nextFps = normalizeFpsValue(fps);
+    if (!Number.isFinite(nextFps) || nextFps <= 0) return;
+    if (this.fps === nextFps) return;
+    this.fps = nextFps;
     if (this.isLoaded) {
       this.totalFrames = Math.floor(this.duration * this.fps);
+      this._emit('loadedmetadata', {
+        duration: this.duration,
+        totalFrames: this.totalFrames,
+        fps: this.fps,
+        width: this.videoWidth,
+        height: this.videoHeight,
+        engine: this.engine
+      });
     }
-    log.info('FPS 변경', { fps });
+    log.info('FPS 변경', { fps: this.fps });
   }
 
   /**
@@ -729,11 +755,12 @@ export class VideoPlayer extends EventTarget {
    * @returns {string} HH:MM:SS:FF 형식
    */
   timeToTimecode(time) {
+    const rate = Math.max(1, Math.round(Number(this.fps) || 24));
     // Math.round 사용: 부동소수점 오차로 인한 프레임 계산 오류 방지
     // 예: time=134.666666, fps=24 → 134.666666*24=3231.9999... → floor=3231 (오류), round=3232 (정확)
-    const totalFrames = Math.round(time * this.fps);
-    const frames = totalFrames % this.fps;
-    const totalSeconds = Math.floor(totalFrames / this.fps);
+    const totalFrames = Math.round((Number(time) || 0) * rate);
+    const frames = totalFrames % rate;
+    const totalSeconds = Math.floor(totalFrames / rate);
     const seconds = totalSeconds % 60;
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const hours = Math.floor(totalSeconds / 3600);
@@ -874,6 +901,7 @@ export class VideoPlayer extends EventTarget {
     this.duration = 0;
     this.currentFrame = 0;
     this.totalFrames = 0;
+    this.fps = 24;
     this.filePath = null;
 
     // 구간 반복 초기화
@@ -902,6 +930,29 @@ export class VideoPlayer extends EventTarget {
     this._externalStatusPending = false;
   }
 
+  /**
+   * mpv 행(hang)/IPC 오류 워치독.
+   * 상태 폴링이 연속 3회 실패하면 엔진이 응답 불능이라 보고 복구 이벤트로 승격한다.
+   */
+  async _registerExternalStatusFailure(pollingControls) {
+    this._externalStatusFailureCount += 1;
+    if (this._externalStatusFailureCount < 3) return;
+    this._externalStatusFailureCount = 0;
+    const stoppedEngine = this.engine;
+    const detail = {
+      engine: stoppedEngine,
+      filePath: this.filePath,
+      lastTime: this.currentTime,
+      lastFrame: this.currentFrame,
+      reason: 'unresponsive'
+    };
+    log.warn('외부 플레이어 응답 없음, 엔진 정리', detail);
+    await Promise.resolve(pollingControls?.stop?.()).catch(() => {});
+    this.useHtml5Engine();
+    this.isLoaded = false;
+    this._emit('externalstopped', detail);
+  }
+
   async _syncExternalStatus() {
     if (this.engine === 'html5' || !this.externalControls?.getStatus || this._externalStatusPending) return;
 
@@ -911,9 +962,16 @@ export class VideoPlayer extends EventTarget {
     try {
       const status = await pollingControls.getStatus();
       if (this.engine !== pollingEngine || this.externalControls !== pollingControls) return;
-      if (!status?.success) return;
+      if (!status?.success) {
+        await this._registerExternalStatusFailure(pollingControls);
+        return;
+      }
+      this._externalStatusFailureCount = 0;
       if (status.stopped === true) {
         const stoppedEngine = this.engine;
+        const stoppedFilePath = this.filePath;
+        const stoppedTime = this.currentTime;
+        const stoppedFrame = this.currentFrame;
         try {
           await pollingControls?.stop?.();
         } catch (error) {
@@ -921,13 +979,19 @@ export class VideoPlayer extends EventTarget {
         }
         this.useHtml5Engine();
         this.isLoaded = false;
-        this._emit('externalstopped', { engine: stoppedEngine });
+        this._emit('externalstopped', {
+          engine: stoppedEngine,
+          filePath: stoppedFilePath,
+          lastTime: stoppedTime,
+          lastFrame: stoppedFrame,
+          reason: 'stopped'
+        });
         return;
       }
 
       const nextTime = Number(status.time);
       const nextDuration = Number(status.duration);
-      const nextFps = Number(status.fps);
+      const nextFps = normalizeFpsValue(status.fps);
       const nextWidth = Number(status.width);
       const nextHeight = Number(status.height);
       const rawEofReached = status.eofReached === true;
@@ -1016,6 +1080,9 @@ export class VideoPlayer extends EventTarget {
       }
     } catch (error) {
       log.debug('외부 플레이어 상태 동기화 실패', { error: error.message });
+      if (this.engine === pollingEngine && this.externalControls === pollingControls) {
+        await this._registerExternalStatusFailure(pollingControls);
+      }
     } finally {
       this._externalStatusPending = false;
     }

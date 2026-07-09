@@ -124,6 +124,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvSetMuted: (muted) => ipcRenderer.invoke('mpv:set-muted', muted),
   mpvSetVideoTransform: (transform) => ipcRenderer.invoke('mpv:set-video-transform', transform),
   mpvGetStatus: () => ipcRenderer.invoke('mpv:get-status'),
+  mpvScreenshot: () => ipcRenderer.invoke('mpv:screenshot'),
   mpvStop: () => ipcRenderer.invoke('mpv:stop'),
   mpvPrepareEmbed: (bounds) => ipcRenderer.invoke('mpv:prepare-embed', bounds),
   mpvUpdateEmbedBounds: (bounds) => ipcRenderer.invoke('mpv:update-embed-bounds', bounds),
