@@ -347,6 +347,8 @@ export class ReviewDataManager extends EventTarget {
    */
   async _doSave(_options = {}) {
     try {
+      let savedData = null;
+
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const wasInitialPersist = !this._hasPersistedFile;
 
@@ -385,6 +387,7 @@ export class ReviewDataManager extends EventTarget {
         }
 
         this._hasPersistedFile = true;
+        savedData = data;
         break;
       }
 
@@ -392,8 +395,8 @@ export class ReviewDataManager extends EventTarget {
 
       log.info('.bframe 파일 저장됨', {
         path: this.currentBframePath,
-        commentLayers: data.comments?.layers?.length || 0,
-        drawingLayers: data.drawings?.layers?.length || 0,
+        commentLayers: savedData?.comments?.layers?.length || 0,
+        drawingLayers: savedData?.drawings?.layers?.length || 0,
         liveblocksConnected: !!this._liveblocksManager?.isConnected
       });
 
