@@ -194,8 +194,8 @@ export class UserSettings extends EventTarget {
       localTheme: 'default',
       // 재생목록 자동 재생 (재생목록 파일과 별도인 개인 로컬 설정)
       playlistAutoPlay: false,
-      // mpv 직접 재생 파일럿 (이 PC에서만 켜는 개인 로컬 설정)
-      mpvPilotEnabled: false,
+      // mpv 직접 재생 - 기본 재생 엔진. 끄면 기존 변환(FFmpeg) 방식으로 재생 (개인 로컬 설정)
+      mpvPlaybackEnabled: true,
       // 최초 이름 설정 여부 (모달 한 번만 표시)
       hasSetNameOnce: false,
       // 사용자 정의 단축키 (기본값 위에 덮어씀)
@@ -262,6 +262,20 @@ export class UserSettings extends EventTarget {
   }
 
   /**
+   * 구버전 설정 키 정리.
+   * mpvPilotEnabled(파일럿 옵트인)는 mpv 기본 엔진 승격으로 폐기 -
+   * 과거 저장값(false 포함)을 무효화하고 전원 기본 on으로 전환한다.
+   */
+  _migrateLegacySettings() {
+    if ('mpvPilotEnabled' in this.settings) {
+      delete this.settings.mpvPilotEnabled;
+    }
+    if (typeof this.settings.mpvPlaybackEnabled !== 'boolean') {
+      this.settings.mpvPlaybackEnabled = true;
+    }
+  }
+
+  /**
    * 로컬 스토리지에서 설정 로드
    */
   _loadFromStorage() {
@@ -270,6 +284,7 @@ export class UserSettings extends EventTarget {
       if (stored) {
         const parsed = JSON.parse(stored);
         this.settings = { ...this.settings, ...parsed };
+        this._migrateLegacySettings();
         log.info('설정 로드됨', { userName: this.settings.userName, source: this.settings.userSource });
 
         // 저장된 이름이 있으면 테마 자동 적용 (DOM 로드 후)
@@ -309,6 +324,7 @@ export class UserSettings extends EventTarget {
         const result = await window.electronAPI.loadSettings();
         if (result.success && result.data) {
           this.settings = { ...this.settings, ...result.data };
+          this._migrateLegacySettings();
           log.info('설정 파일에서 로드됨', { userName: this.settings.userName });
         }
       }
@@ -730,15 +746,15 @@ export class UserSettings extends EventTarget {
     log.info('재생목록 자동 재생 설정 변경됨', { enabled: this.settings.playlistAutoPlay });
   }
 
-  getMpvPilotEnabled() {
-    return this.settings.mpvPilotEnabled === true;
+  getMpvPlaybackEnabled() {
+    return this.settings.mpvPlaybackEnabled !== false;
   }
 
-  setMpvPilotEnabled(enabled) {
-    this.settings.mpvPilotEnabled = enabled === true;
+  setMpvPlaybackEnabled(enabled) {
+    this.settings.mpvPlaybackEnabled = enabled === true;
     this._save();
-    this._emit('mpvPilotEnabledChanged', { enabled: this.settings.mpvPilotEnabled });
-    log.info('mpv 직접 재생 파일럿 설정 변경됨', { enabled: this.settings.mpvPilotEnabled });
+    this._emit('mpvPlaybackEnabledChanged', { enabled: this.settings.mpvPlaybackEnabled });
+    log.info('mpv 직접 재생 설정 변경됨', { enabled: this.settings.mpvPlaybackEnabled });
   }
 
   /**
