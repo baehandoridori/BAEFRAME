@@ -11,6 +11,8 @@ const readSource = (relPath) =>
 const videoPlayerSource = readSource('renderer/scripts/modules/video-player.js');
 const appSource = readSource('renderer/scripts/app.js');
 const windowSource = readSource('main/window.js');
+const preloadSource = readSource('preload/preload.js');
+const ipcSource = readSource('main/ipc-handlers.js');
 
 test('external status polling escalates repeated failures to a stop event', () => {
   assert.match(videoPlayerSource, /this\._externalStatusFailureCount = 0;/);
@@ -44,4 +46,10 @@ test('renderer crash and reload clean up mpv processes and hosts', () => {
   assert.match(windowSource, /webContents\.on\('did-navigate'[\s\S]*?cleanupMpvAfterRendererGone/);
   assert.match(windowSource, /rendererCrashRecoveryCount/);
   assert.match(windowSource, /webContents\.reload\(\)/);
+});
+
+test('mpv screenshot ipc channel is wired end to end', () => {
+  assert.match(ipcSource, /ipcMain\.handle\('mpv:screenshot'/);
+  assert.match(ipcSource, /mpv-frames/);
+  assert.match(preloadSource, /mpvScreenshot: \(\) => ipcRenderer\.invoke\('mpv:screenshot'\),/);
 });

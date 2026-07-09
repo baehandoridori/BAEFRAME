@@ -1842,6 +1842,25 @@ function setupIpcHandlers() {
     }
   });
 
+  ipcMain.handle('mpv:screenshot', async () => {
+    const trace = log.trace('mpv:screenshot');
+    try {
+      const screenshotDir = path.join(app.getPath('userData'), 'mpv-frames');
+      if (!fs.existsSync(screenshotDir)) {
+        fs.mkdirSync(screenshotDir, { recursive: true });
+      }
+      const outputPath = path.join(screenshotDir, `frame-${Date.now()}-${process.pid}.png`);
+      await mpvManager.screenshot(outputPath);
+      const buffer = await fs.promises.readFile(outputPath);
+      await fs.promises.unlink(outputPath).catch(() => {});
+      trace.end({ success: true });
+      return { success: true, dataUrl: `data:image/png;base64,${buffer.toString('base64')}` };
+    } catch (error) {
+      trace.error(error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('mpv:stop', async () => {
     try {
       const result = await mpvManager.stop();
@@ -2688,5 +2707,4 @@ function createPathHash(filePath) {
 }
 
 module.exports = { setupIpcHandlers, pruneMissingRecentFiles };
-
 

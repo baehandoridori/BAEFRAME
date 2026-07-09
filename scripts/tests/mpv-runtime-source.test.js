@@ -35,6 +35,7 @@ test('preload exposes a narrow mpv API surface', () => {
   assert.match(preloadSource, /mpvSetMuted: \(muted\) => ipcRenderer\.invoke\('mpv:set-muted', muted\)/);
   assert.match(preloadSource, /mpvSetVideoTransform: \(transform\) => ipcRenderer\.invoke\('mpv:set-video-transform', transform\)/);
   assert.match(preloadSource, /mpvGetStatus: \(\) => ipcRenderer\.invoke\('mpv:get-status'\)/);
+  assert.match(preloadSource, /mpvScreenshot: \(\) => ipcRenderer\.invoke\('mpv:screenshot'\)/);
   assert.match(preloadSource, /mpvStop: \(\) => ipcRenderer\.invoke\('mpv:stop'\)/);
   assert.match(preloadSource, /mpvPrepareEmbed: \(bounds\) => ipcRenderer\.invoke\('mpv:prepare-embed', bounds\)/);
   assert.match(preloadSource, /mpvUpdateEmbedBounds: \(bounds\) => ipcRenderer\.invoke\('mpv:update-embed-bounds', bounds\)/);
@@ -63,6 +64,7 @@ test('main process registers mpv IPC handlers through the manager and embed host
     'mpv:set-muted',
     'mpv:set-video-transform',
     'mpv:get-status',
+    'mpv:screenshot',
     'mpv:stop',
     'mpv:prepare-embed',
     'mpv:update-embed-bounds',
