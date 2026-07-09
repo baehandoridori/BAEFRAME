@@ -142,6 +142,9 @@ export class ReviewDataManager extends EventTarget {
 
     // 저장 동시성 제어
     this._savePromise = null;  // 저장 중인 Promise (락)
+    this._hasPersistedFile = false;
+    this._beforeSaveHandler = null;
+    this._initialSaveConflictHandler = null;
 
     // 이벤트 바인딩
     this._onDataChanged = this._onDataChanged.bind(this);
@@ -162,6 +165,22 @@ export class ReviewDataManager extends EventTarget {
   setLiveblocksManager(manager) {
     this._liveblocksManager = manager;
     log.info('LiveblocksManager 연결됨');
+  }
+
+  /**
+   * 저장 직전 훅 설정
+   * @param {Function|null} handler
+   */
+  setBeforeSaveHandler(handler) {
+    this._beforeSaveHandler = typeof handler === 'function' ? handler : null;
+  }
+
+  /**
+   * 첫 저장 중 다른 사용자가 먼저 파일을 만든 경우의 처리 훅 설정
+   * @param {Function|null} handler
+   */
+  setInitialSaveConflictHandler(handler) {
+    this._initialSaveConflictHandler = typeof handler === 'function' ? handler : null;
   }
 
   /**
@@ -257,6 +276,12 @@ export class ReviewDataManager extends EventTarget {
 
     this.currentVideoPath = videoPath;
     this.currentBframePath = getBframePath(videoPath);
+    this._createdAt = null;
+    this._modifiedAt = null;
+    this._fps = 24;
+    this._liveblocksRoomId = null;
+    this._manualVersions = [];
+    this._hasPersistedFile = false;
     this.isDirty = false;
 
     log.info('영상 파일 설정됨', {
@@ -322,16 +347,46 @@ export class ReviewDataManager extends EventTarget {
    */
   async _doSave(_options = {}) {
     try {
-      const data = this._collectData();
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const wasInitialPersist = !this._hasPersistedFile;
 
-      // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
-      // 로컬 .bframe 스냅샷만 저장 (오프라인 백업 역할)
-      if (this._liveblocksManager?.isConnected) {
-        // liveblocksRoomId 포함
-        data.liveblocksRoomId = this._liveblocksManager.roomId || null;
+        if (this._beforeSaveHandler) {
+          await this._beforeSaveHandler({
+            path: this.currentBframePath,
+            videoPath: this.currentVideoPath,
+            hasPersistedFile: this._hasPersistedFile,
+            options: _options
+          });
+        }
+
+        const data = this._collectData();
+
+        // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
+        // 로컬 .bframe 스냅샷만 저장 (오프라인 백업 역할)
+        if (this._liveblocksManager?.isConnected) {
+          // liveblocksRoomId 포함
+          data.liveblocksRoomId = this._liveblocksManager.roomId || null;
+        }
+
+        const saveResult = await window.electronAPI.saveReview(this.currentBframePath, data, {
+          failIfExists: wasInitialPersist
+        });
+
+        if (saveResult?.exists === true && wasInitialPersist) {
+          this._hasPersistedFile = true;
+          log.info('첫 .bframe 저장 충돌 감지, 기존 파일과 병합 시도', {
+            path: this.currentBframePath
+          });
+          await this._initialSaveConflictHandler?.({
+            path: this.currentBframePath,
+            videoPath: this.currentVideoPath
+          });
+          continue;
+        }
+
+        this._hasPersistedFile = true;
+        break;
       }
-
-      await window.electronAPI.saveReview(this.currentBframePath, data);
 
       this.isDirty = false;
 
@@ -420,9 +475,12 @@ export class ReviewDataManager extends EventTarget {
       if (!data) {
         log.info('.bframe 파일 없음 (새 리뷰)', { path: this.currentBframePath });
         this.compositionLayerManager?.fromJSON?.([]);
+        this._hasPersistedFile = false;
         this.isLoading = false;
         return false;
       }
+
+      this._hasPersistedFile = true;
 
       // 버전 확인 및 마이그레이션
       const dataVersion = getDataVersion(data);
@@ -527,6 +585,8 @@ export class ReviewDataManager extends EventTarget {
         this.isLoading = wasLoading;
         return { success: false, added: 0, updated: 0 };
       }
+
+      this._hasPersistedFile = true;
 
       const result = { added: 0, updated: 0 };
 
@@ -923,6 +983,13 @@ export class ReviewDataManager extends EventTarget {
    */
   getBframePath() {
     return this.currentBframePath;
+  }
+
+  /**
+   * 현재 .bframe 파일이 실제로 존재하는 상태인지 반환
+   */
+  hasPersistedFile() {
+    return this._hasPersistedFile;
   }
 }
 

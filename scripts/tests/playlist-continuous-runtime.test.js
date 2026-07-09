@@ -833,10 +833,11 @@ test('continuous playlist source switches defer collaboration startup off the tr
   assert.notEqual(loadVideoEnd, -1, 'loadVideo boundary should exist');
   const loadVideoSource = appSource.slice(loadVideoStart, loadVideoEnd);
 
-  assert.match(appSource, /async function startCollaborationForVideoLoad\(loadToken, bframePath\)/);
+  assert.match(appSource, /async function startCollaborationForVideoLoad\(loadToken, bframePath, options = \{\}\)/);
   assert.match(appSource, /function scheduleDeferredCollaborationStart\(loadToken, bframePath\)/);
   assert.match(loadVideoSource, /deferCollaborationStart = false/);
-  assert.match(loadVideoSource, /if \(deferCollaborationStart\) \{[\s\S]*scheduleDeferredCollaborationStart\(loadToken, currentBframePath\);[\s\S]*\} else \{[\s\S]*await startCollaborationForVideoLoad\(loadToken, currentBframePath\);/);
+  assert.match(loadVideoSource, /if \(hasExistingData\) \{[\s\S]*if \(deferCollaborationStart\) \{[\s\S]*scheduleDeferredCollaborationStart\(loadToken, currentBframePath\);[\s\S]*\} else \{[\s\S]*await startCollaborationForVideoLoad\(loadToken, currentBframePath\);/);
+  assert.match(loadVideoSource, /else \{\s*startDeferredReviewFileDiscovery\(loadToken, currentBframePath\);\s*\}/);
 
   const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');

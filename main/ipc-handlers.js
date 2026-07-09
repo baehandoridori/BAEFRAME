@@ -302,15 +302,22 @@ function setupIpcHandlers() {
   });
 
   // 리뷰 데이터 저장 (경로 검증 포함)
-  ipcMain.handle('file:save-review', async (event, filePath, data) => {
+  ipcMain.handle('file:save-review', async (event, filePath, data, options = {}) => {
     const trace = log.trace('file:save-review');
     try {
       // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
       const validatedPath = validateFilePath(filePath);
-      await fs.promises.writeFile(validatedPath, JSON.stringify(data, null, 2), 'utf-8');
-      trace.end({ filePath: validatedPath });
+      await fs.promises.writeFile(validatedPath, JSON.stringify(data, null, 2), {
+        encoding: 'utf-8',
+        flag: options?.failIfExists ? 'wx' : 'w'
+      });
+      trace.end({ filePath: validatedPath, failIfExists: options?.failIfExists === true });
       return { success: true };
     } catch (error) {
+      if (options?.failIfExists && error.code === 'EEXIST') {
+        trace.end({ filePath, exists: true });
+        return { success: false, exists: true };
+      }
       trace.error(error);
       throw error;
     }
@@ -572,42 +579,65 @@ function setupIpcHandlers() {
   // 파일 감시 시작
   ipcMain.handle('file:watch-start', async (event, filePath) => {
     try {
+      const validatedPath = validateFilePath(filePath);
+
       // 이미 감시 중이면 무시
-      if (fileWatchers.has(filePath)) {
+      if (fileWatchers.has(validatedPath)) {
         return { success: true, alreadyWatching: true };
       }
 
-      const watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
+      let watchTarget = validatedPath;
+      let watchMode = 'file';
+      let targetBasename = null;
+
+      if (!fs.existsSync(validatedPath)) {
+        watchTarget = path.dirname(validatedPath);
+        watchMode = 'directory';
+        targetBasename = path.basename(validatedPath).toLowerCase();
+      }
+
+      const watcher = fs.watch(watchTarget, { persistent: false }, (eventType, changedName) => {
+        if (watchMode === 'directory') {
+          const changedBasename = changedName ? String(changedName).toLowerCase() : '';
+          if (changedBasename && changedBasename !== targetBasename) {
+            return;
+          }
+          if (!changedBasename && !fs.existsSync(validatedPath)) {
+            return;
+          }
+        }
+
         // 디바운스 (같은 파일의 연속 이벤트 방지)
-        if (watchDebounceTimers.has(filePath)) {
-          clearTimeout(watchDebounceTimers.get(filePath));
+        if (watchDebounceTimers.has(validatedPath)) {
+          clearTimeout(watchDebounceTimers.get(validatedPath));
         }
 
         const timer = setTimeout(() => {
-          watchDebounceTimers.delete(filePath);
+          watchDebounceTimers.delete(validatedPath);
 
           // 렌더러에 파일 변경 알림
           const mainWindow = getMainWindow();
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('file:changed', {
-              filePath,
-              eventType
+              filePath: validatedPath,
+              eventType,
+              watchMode
             });
-            log.info('파일 변경 감지됨', { filePath, eventType });
+            log.info('파일 변경 감지됨', { filePath: validatedPath, eventType, watchMode });
           }
         }, 300); // 300ms 디바운스
 
-        watchDebounceTimers.set(filePath, timer);
+        watchDebounceTimers.set(validatedPath, timer);
       });
 
       watcher.on('error', (error) => {
-        log.warn('파일 감시 에러', { filePath, error: error.message });
-        fileWatchers.delete(filePath);
+        log.warn('파일 감시 에러', { filePath: validatedPath, error: error.message });
+        fileWatchers.delete(validatedPath);
       });
 
-      fileWatchers.set(filePath, watcher);
-      log.info('파일 감시 시작', { filePath });
-      return { success: true };
+      fileWatchers.set(validatedPath, watcher);
+      log.info('파일 감시 시작', { filePath: validatedPath, watchTarget, watchMode });
+      return { success: true, watchMode };
     } catch (error) {
       log.error('파일 감시 시작 실패', { filePath, error: error.message });
       return { success: false, error: error.message };
@@ -617,17 +647,18 @@ function setupIpcHandlers() {
   // 파일 감시 중지
   ipcMain.handle('file:watch-stop', async (event, filePath) => {
     try {
-      const watcher = fileWatchers.get(filePath);
+      const validatedPath = validateFilePath(filePath);
+      const watcher = fileWatchers.get(validatedPath);
       if (watcher) {
         watcher.close();
-        fileWatchers.delete(filePath);
-        log.info('파일 감시 중지', { filePath });
+        fileWatchers.delete(validatedPath);
+        log.info('파일 감시 중지', { filePath: validatedPath });
       }
 
       // 타이머도 정리
-      if (watchDebounceTimers.has(filePath)) {
-        clearTimeout(watchDebounceTimers.get(filePath));
-        watchDebounceTimers.delete(filePath);
+      if (watchDebounceTimers.has(validatedPath)) {
+        clearTimeout(watchDebounceTimers.get(validatedPath));
+        watchDebounceTimers.delete(validatedPath);
       }
 
       return { success: true };
