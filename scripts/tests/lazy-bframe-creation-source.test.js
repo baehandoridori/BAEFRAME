@@ -21,6 +21,9 @@ test('missing .bframe loads enter deferred discovery instead of immediate collab
   assert.match(appSource, /function stopDeferredReviewFileDiscovery\(bframePath = null\)/);
   assert.match(appSource, /async function handleDeferredReviewFileDiscovered\(bframePath, source = 'watch'\)/);
   assert.match(appSource, /function isCurrentReviewPath\(bframePath\) \{\s*return !!bframePath && isSameFilePath\(reviewDataManager\.currentBframePath, bframePath\);/);
+  assert.match(appSource, /const synced = await syncReviewFileFromDisk\(bframePath, \{[\s\S]*bypassDebounce: true,/);
+  assert.match(appSource, /if \(synced\) \{\s*stopDeferredReviewFileDiscovery\(bframePath\);\s*\}/);
+  assert.doesNotMatch(appSource, /stopDeferredReviewFileDiscovery\(bframePath\);\s*log\.info\('지연 \.bframe 생성 감지됨'/);
 
   const renderMarkerIndex = appSource.indexOf('// 마커 및 그리기 렌더링 업데이트');
   const branchStart = appSource.lastIndexOf('if (hasExistingData) {', renderMarkerIndex);
@@ -48,7 +51,10 @@ test('first .bframe save is protected against another user creating the file fir
   assert.match(reviewDataManagerSource, /setInitialSaveConflictHandler\(handler\)/);
   assert.match(reviewDataManagerSource, /failIfExists: wasInitialPersist/);
   assert.match(reviewDataManagerSource, /saveResult\?\.exists === true/);
-  assert.match(reviewDataManagerSource, /await this\._initialSaveConflictHandler\?\.\(\{/);
+  assert.match(reviewDataManagerSource, /lastConflictResult = await this\._initialSaveConflictHandler\?\.\(\{/);
+  assert.match(reviewDataManagerSource, /if \(lastConflictResult\?\.success === true\) \{[\s\S]*this\._hasPersistedFile = true;[\s\S]*\} else \{[\s\S]*this\._hasPersistedFile = false;/);
+  assert.match(reviewDataManagerSource, /if \(!savedData\) \{[\s\S]*throw new Error\(lastConflictResult\?\.error/);
+  assert.match(appSource, /const mergeResult = await reviewDataManager\.reloadAndMerge\(\{ merge: true, force: true \}\);[\s\S]*if \(!mergeResult\.success\) \{[\s\S]*return mergeResult;/);
 
   assert.match(preloadSource, /saveReview: \(filePath, data, options = \{\}\) => ipcRenderer\.invoke\('file:save-review', filePath, data, options\)/);
   assert.match(ipcHandlersSource, /failIfExists/);

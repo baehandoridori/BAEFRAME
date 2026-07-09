@@ -348,8 +348,10 @@ export class ReviewDataManager extends EventTarget {
   async _doSave(_options = {}) {
     try {
       let savedData = null;
+      let lastConflictResult = null;
+      const maxAttempts = 5;
 
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         const wasInitialPersist = !this._hasPersistedFile;
 
         if (this._beforeSaveHandler) {
@@ -375,20 +377,37 @@ export class ReviewDataManager extends EventTarget {
         });
 
         if (saveResult?.exists === true && wasInitialPersist) {
-          this._hasPersistedFile = true;
           log.info('첫 .bframe 저장 충돌 감지, 기존 파일과 병합 시도', {
             path: this.currentBframePath
           });
-          await this._initialSaveConflictHandler?.({
+          lastConflictResult = await this._initialSaveConflictHandler?.({
             path: this.currentBframePath,
             videoPath: this.currentVideoPath
           });
+
+          if (lastConflictResult?.success === true) {
+            this._hasPersistedFile = true;
+          } else {
+            this._hasPersistedFile = false;
+            if (attempt < maxAttempts - 1) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+
           continue;
+        }
+
+        if (saveResult?.success !== true) {
+          throw new Error(saveResult?.error || '.bframe 저장 실패');
         }
 
         this._hasPersistedFile = true;
         savedData = data;
         break;
+      }
+
+      if (!savedData) {
+        throw new Error(lastConflictResult?.error || '첫 .bframe 저장 충돌 병합 실패');
       }
 
       this.isDirty = false;

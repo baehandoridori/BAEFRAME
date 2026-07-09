@@ -5312,13 +5312,16 @@ async function initApp() {
     }
     if (!exists) return false;
 
-    stopDeferredReviewFileDiscovery(bframePath);
     log.info('지연 .bframe 생성 감지됨', { path: bframePath, source });
-    await syncReviewFileFromDisk(bframePath, {
+    const synced = await syncReviewFileFromDisk(bframePath, {
       startCollaborationIfNeeded: true,
+      bypassDebounce: true,
       source
     });
-    return true;
+    if (synced) {
+      stopDeferredReviewFileDiscovery(bframePath);
+    }
+    return synced;
   }
 
   function startDeferredReviewFileDiscovery(loadToken, bframePath) {
@@ -5468,10 +5471,14 @@ async function initApp() {
     if (!bframePath || !isCurrentReviewPath(bframePath)) return;
 
     log.info('첫 .bframe 저장 충돌 처리 시작', { path: bframePath });
-    await reviewDataManager.reloadAndMerge({ merge: true, force: true });
+    const mergeResult = await reviewDataManager.reloadAndMerge({ merge: true, force: true });
+    if (!mergeResult.success) {
+      return mergeResult;
+    }
     await startCollaborationForVideoLoad(latestVideoLoadToken, bframePath, {
       persistNewRoom: false
     });
+    return mergeResult;
   }
 
   async function prepareCompositionLayerMedia(filePath) {
@@ -14143,6 +14150,7 @@ async function initApp() {
   async function syncReviewFileFromDisk(filePath, options = {}) {
     const {
       startCollaborationIfNeeded = false,
+      bypassDebounce = false,
       source = 'watch'
     } = options;
 
@@ -14158,7 +14166,7 @@ async function initApp() {
     // 오프라인 모드: 파일 기반 동기화 실행
     // 너무 빠른 연속 호출 방지
     const now = Date.now();
-    if (source !== 'poll' && now - lastSyncTime < MIN_SYNC_INTERVAL) return false;
+    if (!bypassDebounce && source !== 'poll' && now - lastSyncTime < MIN_SYNC_INTERVAL) return false;
     lastSyncTime = now;
 
     log.info('파일 변경 감지됨, 오프라인 모드 동기화', { filePath, source });
