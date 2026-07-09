@@ -248,6 +248,11 @@ test('floating drawing selections are resolved before context changes, not durin
   assert.match(drawingManagerSource, /moveActiveLayerByOffset\(offset\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
   assert.match(drawingManagerSource, /toggleLayerVisibility\(layerId\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?layer\.visible = !layer\.visible;/);
   assert.match(drawingManagerSource, /toggleLayerLock\(layerId\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?layer\.locked = !layer\.locked;/);
+  assert.match(drawingManagerSource, /addBlankKeyframe\(\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const layer = this\.getActiveLayer\(\);/);
+  assert.match(drawingManagerSource, /removeKeyframe\(\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const layer = this\.getActiveLayer\(\);/);
+  assert.match(drawingManagerSource, /insertFrame\(\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const layer = this\.getActiveLayer\(\);/);
+  assert.match(drawingManagerSource, /deleteFrame\(\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const layer = this\.getActiveLayer\(\);/);
+  assert.match(drawingManagerSource, /copyFrames\(targets = null\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const resolved = \[\];/);
   assert.match(drawingManagerSource, /pasteFrames\(targetFrame = this\.currentFrame\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
   assert.match(drawingManagerSource, /_restoreSnapshot\(snapshot\) \{[\s\S]*?this\.drawingCanvas\.clearSelection\?\.\(\);[\s\S]*?this\.layers = snapshot\.layers/);
 });

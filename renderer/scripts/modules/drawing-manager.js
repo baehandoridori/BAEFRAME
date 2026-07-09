@@ -711,6 +711,8 @@ export class DrawingManager extends EventTarget {
    * 빈 키프레임 추가 (F7)
    */
   addBlankKeyframe() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return;
 
@@ -730,6 +732,8 @@ export class DrawingManager extends EventTarget {
    * 키프레임 복제 추가 (F6)
    */
   addKeyframeWithContent() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return;
 
@@ -749,6 +753,8 @@ export class DrawingManager extends EventTarget {
    * 키프레임 삭제
    */
   removeKeyframe() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
     if (!layer.isKeyframe(this.currentFrame)) return false;
@@ -765,6 +771,8 @@ export class DrawingManager extends EventTarget {
   }
 
   convertKeyframeToFrame() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
     if (!layer.isKeyframe(this.currentFrame)) return false;
@@ -792,6 +800,8 @@ export class DrawingManager extends EventTarget {
    * @returns {number} 삭제된 키프레임 수
    */
   removeKeyframes(selectedKeyframes = []) {
+    this.commitActiveSelection();
+
     if (!Array.isArray(selectedKeyframes) || selectedKeyframes.length === 0) return 0;
 
     const uniqueTargets = [];
@@ -870,6 +880,8 @@ export class DrawingManager extends EventTarget {
    * 프레임 삽입 (홀드 추가) - 현재 프레임 이후의 모든 키프레임을 1프레임씩 뒤로 이동
    */
   insertFrame() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
 
@@ -888,6 +900,8 @@ export class DrawingManager extends EventTarget {
    * 프레임 삭제 - 현재 프레임 이후의 모든 키프레임을 1프레임씩 앞으로 이동
    */
   deleteFrame() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
 
@@ -906,6 +920,8 @@ export class DrawingManager extends EventTarget {
    * 프레임 복사 (Ctrl+Alt+C)
    */
   copyFrames(targets = null) {
+    this.commitActiveSelection();
+
     const resolved = [];
     if (Array.isArray(targets) && targets.length > 0) {
       for (const target of targets) {
@@ -982,6 +998,8 @@ export class DrawingManager extends EventTarget {
    * @param {Array} keyframesToMove - [ { layerId, fromFrame, toFrame } ]
    */
   moveKeyframes(keyframesToMove) {
+    this.commitActiveSelection();
+
     if (!keyframesToMove || keyframesToMove.length === 0) return false;
 
     // Undo를 위해 현재 상태 저장
