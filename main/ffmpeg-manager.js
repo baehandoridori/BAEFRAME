@@ -476,7 +476,12 @@ class FFmpegManager {
     if (!rateStr) return 24;
     const parts = rateStr.split('/');
     if (parts.length === 2) {
-      return Math.round(parseInt(parts[0]) / parseInt(parts[1]));
+      const num = parseInt(parts[0], 10);
+      const den = parseInt(parts[1], 10);
+      if (!Number.isFinite(num) || !Number.isFinite(den) || num <= 0 || den <= 0) return 24;
+      // 24000/1001 -> 23.976: mpv container-fps와 정밀도를 맞추기 위해 소수 유지 (소수점 3자리)
+      const fps = num / den;
+      return Math.round(fps * 1000) / 1000;
     }
     return parseFloat(rateStr) || 24;
   }
