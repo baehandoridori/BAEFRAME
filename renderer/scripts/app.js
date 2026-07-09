@@ -9711,7 +9711,7 @@ async function initApp() {
         // 이미 처리 중이면 무시 (중복 호출 방지)
         if (editFormEl.style.display === 'none') return;
         // 멘션 드롭다운 열림 중에는 멘션 매니저가 키를 처리
-        if (mentionManager.isVisible) return;
+        if (e.__mentionHandled || mentionManager.isVisible) return;
 
         if (e.key === 'Escape') {
           e.stopPropagation();

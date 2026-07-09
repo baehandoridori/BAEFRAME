@@ -147,43 +147,44 @@ export class MentionManager {
   _handleKeyDown(e, element, type) {
     if (this._dropdown.style.display === 'none') return;
     if (this._activeElement !== element) return;
+    e.__mentionHandled = true;
 
     switch (e.key) {
-      case 'ArrowDown':
+    case 'ArrowDown':
+      e.preventDefault();
+      e.stopPropagation();
+      this._activeIndex = (this._activeIndex + 1) % this._filteredMembers.length;
+      this._renderDropdown();
+      break;
+
+    case 'ArrowUp':
+      e.preventDefault();
+      e.stopPropagation();
+      this._activeIndex = (this._activeIndex - 1 + this._filteredMembers.length) % this._filteredMembers.length;
+      this._renderDropdown();
+      break;
+
+    case 'Enter':
+      if (this._filteredMembers.length > 0) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this._selectMember(this._activeIndex);
+      }
+      break;
+
+    case 'Escape':
+      e.preventDefault();
+      e.stopPropagation();
+      this.hide();
+      break;
+
+    case 'Tab':
+      if (this._filteredMembers.length > 0) {
         e.preventDefault();
         e.stopPropagation();
-        this._activeIndex = (this._activeIndex + 1) % this._filteredMembers.length;
-        this._renderDropdown();
-        break;
-
-      case 'ArrowUp':
-        e.preventDefault();
-        e.stopPropagation();
-        this._activeIndex = (this._activeIndex - 1 + this._filteredMembers.length) % this._filteredMembers.length;
-        this._renderDropdown();
-        break;
-
-      case 'Enter':
-        if (this._filteredMembers.length > 0) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          this._selectMember(this._activeIndex);
-        }
-        break;
-
-      case 'Escape':
-        e.preventDefault();
-        e.stopPropagation();
-        this.hide();
-        break;
-
-      case 'Tab':
-        if (this._filteredMembers.length > 0) {
-          e.preventDefault();
-          e.stopPropagation();
-          this._selectMember(this._activeIndex);
-        }
-        break;
+        this._selectMember(this._activeIndex);
+      }
+      break;
     }
   }
 

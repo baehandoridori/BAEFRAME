@@ -492,7 +492,10 @@ export class DrawingManager extends EventTarget {
    * 새 레이어 생성
    */
   createLayer(options = {}, saveHistory = true) {
-    this.commitActiveSelection();
+    const shouldActivate = options.skipActivate !== true;
+    if (shouldActivate) {
+      this.commitActiveSelection();
+    }
 
     // Undo를 위해 현재 상태 저장
     if (saveHistory && this.layers.length > 0) {
@@ -504,7 +507,7 @@ export class DrawingManager extends EventTarget {
       ? Math.max(0, Math.min(options.insertIndex, this.layers.length))
       : this.layers.length;
     this.layers.splice(insertIndex, 0, layer);
-    if (options.skipActivate !== true) {
+    if (shouldActivate) {
       this.activeLayerId = layer.id;
     }
 

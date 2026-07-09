@@ -258,7 +258,8 @@ test('floating drawing selections are resolved before context changes, not durin
   assert.match(drawingCanvasSource, /syncSize\(width, height\) \{[\s\S]*?if \(this\.canvas\.width === width && this\.canvas\.height === height\) \{[\s\S]*?return false;[\s\S]*?\}/);
   assert.match(drawingManagerSource, /setCanvasSize\(width, height\) \{[\s\S]*?const canvasSizeChanged = this\.drawingCanvas\?\.canvas &&[\s\S]*?this\.drawingCanvas\.canvas\.width !== width[\s\S]*?this\.drawingCanvas\.canvas\.height !== height[\s\S]*?if \(canvasSizeChanged && \(this\.drawingCanvas\.floatingImage \|\| this\.drawingCanvas\.selection\)\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?\}/);
   assert.match(drawingManagerSource, /_setCanvasElementSize\(canvas, width, height\) \{[\s\S]*?if \(canvas\.width === width && canvas\.height === height\) return false;[\s\S]*?canvas\.width = width;[\s\S]*?canvas\.height = height;/);
-  assert.match(drawingManagerSource, /createLayer\(options = \{\}, saveHistory = true\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
+  assert.match(drawingManagerSource, /createLayer\(options = \{\}, saveHistory = true\) \{[\s\S]*?const shouldActivate = options\.skipActivate !== true;[\s\S]*?if \(shouldActivate\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?\}/);
+  assert.match(drawingSyncSource, /this\._dm\.createLayer\(\{[\s\S]*?skipActivate: true,[\s\S]*?\}, false\);/);
   assert.match(drawingManagerSource, /setActiveLayer\(layerId\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\.activeLayerId = layerId;/);
   assert.match(drawingManagerSource, /moveActiveLayerByOffset\(offset\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
   assert.match(drawingManagerSource, /toggleLayerVisibility\(layerId\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?layer\.visible = !layer\.visible;/);

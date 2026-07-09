@@ -423,7 +423,7 @@ export class DrawingSync {
           ...layerData,
           skipActivate: true,
           ...(Number.isInteger(event.insertIndex) ? { insertIndex: event.insertIndex } : {})
-        });
+        }, false);
       }
       log.debug('원격 레이어 생성 적용', { id: layerData.id });
     } finally {
