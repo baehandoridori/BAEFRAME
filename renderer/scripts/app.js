@@ -1137,6 +1137,9 @@ async function initApp() {
       updatePresence: false,
       updateDrawing: true
     });
+    if (state.isDrawMode && isMpvPilotPlaybackActive()) {
+      scheduleMpvDrawFreezeRefresh();
+    }
   });
 
   // 재생 아이콘 SVG
@@ -4955,6 +4958,10 @@ async function initApp() {
     syncMpvVideoTransform();
   }
 
+  let mpvDrawFreezeElement = null;
+  let mpvDrawFreezeToken = 0;
+  let mpvDrawFreezeRefreshTimer = null;
+
   /**
    * 캔버스 및 마커 컨테이너 줌 동기화
    */
@@ -4988,6 +4995,10 @@ async function initApp() {
     if (videoTransitionFreezeCanvas) {
       videoTransitionFreezeCanvas.style.transform = transform;
       videoTransitionFreezeCanvas.style.transformOrigin = 'center center';
+    }
+    if (mpvDrawFreezeElement) {
+      mpvDrawFreezeElement.style.transform = transform;
+      mpvDrawFreezeElement.style.transformOrigin = 'center center';
     }
     scheduleMpvOverlayStateSync();
   }
@@ -5223,6 +5234,67 @@ async function initApp() {
     };
   }
 
+  // ====== 그리기 모드 mpv 정지 프레임 ======
+  function isMpvPilotPlaybackActive() {
+    return videoPlayer.engine !== 'html5' && document.body.classList.contains('mpv-pilot-mode');
+  }
+
+  function removeMpvDrawFreezeFrame() {
+    mpvDrawFreezeToken += 1;
+    if (mpvDrawFreezeElement) {
+      mpvDrawFreezeElement.remove();
+      mpvDrawFreezeElement = null;
+    }
+  }
+
+  function scheduleMpvDrawFreezeRefresh() {
+    if (mpvDrawFreezeRefreshTimer) clearTimeout(mpvDrawFreezeRefreshTimer);
+    mpvDrawFreezeRefreshTimer = setTimeout(() => {
+      mpvDrawFreezeRefreshTimer = null;
+      if (!state.isDrawMode || !isMpvPilotPlaybackActive()) return;
+      if (videoPlayer.isSeeking()) {
+        scheduleMpvDrawFreezeRefresh();
+        return;
+      }
+      void showMpvDrawFreezeFrame();
+    }, 160);
+  }
+
+  async function showMpvDrawFreezeFrame() {
+    if (!isMpvPilotPlaybackActive() || !window.electronAPI?.mpvScreenshot) return;
+    const token = ++mpvDrawFreezeToken;
+    try {
+      const result = await window.electronAPI.mpvScreenshot();
+      if (token !== mpvDrawFreezeToken || !state.isDrawMode) return;
+      if (!result?.success || !result.dataUrl) {
+        log.warn('mpv 정지 프레임 캡처 실패', { error: result?.error });
+        return;
+      }
+      if (!mpvDrawFreezeElement) {
+        mpvDrawFreezeElement = document.createElement('img');
+        mpvDrawFreezeElement.className = 'mpv-draw-freeze-frame';
+        mpvDrawFreezeElement.alt = '';
+        const anchor = elements.onionSkinCanvas;
+        if (anchor && anchor.parentElement === elements.videoWrapper) {
+          elements.videoWrapper.insertBefore(mpvDrawFreezeElement, anchor);
+        } else if (elements.videoWrapper) {
+          elements.videoWrapper.insertBefore(mpvDrawFreezeElement, elements.videoWrapper.firstChild);
+        }
+      }
+      const renderArea = getVideoRenderArea();
+      if (renderArea) {
+        mpvDrawFreezeElement.style.left = `${renderArea.left}px`;
+        mpvDrawFreezeElement.style.top = `${renderArea.top}px`;
+        mpvDrawFreezeElement.style.width = `${renderArea.width}px`;
+        mpvDrawFreezeElement.style.height = `${renderArea.height}px`;
+      }
+      mpvDrawFreezeElement.src = result.dataUrl;
+      syncCanvasZoom();
+    } catch (error) {
+      log.warn('mpv 정지 프레임 캡처 예외', { error: error.message });
+    }
+  }
+
   /**
    * 캔버스 오버레이를 비디오 실제 영역에 맞게 동기화
    */
@@ -5268,6 +5340,13 @@ async function initApp() {
       compositionOverlay.style.width = `${renderArea.width}px`;
       compositionOverlay.style.height = `${renderArea.height}px`;
       compositionLayerManager.renderOverlay();
+    }
+
+    if (mpvDrawFreezeElement) {
+      mpvDrawFreezeElement.style.left = `${renderArea.left}px`;
+      mpvDrawFreezeElement.style.top = `${renderArea.top}px`;
+      mpvDrawFreezeElement.style.width = `${renderArea.width}px`;
+      mpvDrawFreezeElement.style.height = `${renderArea.height}px`;
     }
 
     // 영상 어니언 스킨 캔버스도 동일하게 동기화 (TODO: 임시 비활성화)
@@ -7658,7 +7737,12 @@ async function initApp() {
     elements.drawingCanvas?.classList.toggle('active', enabled);
     elements.videoWrapper?.classList.toggle('drawing-mode', enabled);
     setCommentOverlaysDrawingPassthrough(enabled);
+    if (enabled && isMpvPilotPlaybackActive()) {
+      videoPlayer.pause();
+      void showMpvDrawFreezeFrame();
+    }
     if (!enabled) {
+      removeMpvDrawFreezeFrame();
       drawingManager.commitActiveSelection();
       state.isSpaceHeld = false;
       state.spacePanUsed = false;

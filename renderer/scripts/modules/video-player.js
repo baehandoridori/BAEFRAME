@@ -712,6 +712,13 @@ export class VideoPlayer extends EventTarget {
   }
 
   /**
+   * 수동 시크 진행 여부 (외부에서 시크 완료를 기다릴 때 사용)
+   */
+  isSeeking() {
+    return this._isSeeking === true;
+  }
+
+  /**
    * FPS 설정 (로드 전 호출이 원칙. 로드 후 호출 시 메타데이터 재전파)
    * @param {number} fps
    */

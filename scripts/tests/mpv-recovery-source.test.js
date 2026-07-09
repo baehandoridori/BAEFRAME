@@ -13,6 +13,7 @@ const appSource = readSource('renderer/scripts/app.js');
 const windowSource = readSource('main/window.js');
 const preloadSource = readSource('preload/preload.js');
 const ipcSource = readSource('main/ipc-handlers.js');
+const mainStyles = readSource('renderer/styles/main.css');
 
 test('external status polling escalates repeated failures to a stop event', () => {
   assert.match(videoPlayerSource, /this\._externalStatusFailureCount = 0;/);
@@ -52,4 +53,18 @@ test('mpv screenshot ipc channel is wired end to end', () => {
   assert.match(ipcSource, /ipcMain\.handle\('mpv:screenshot'/);
   assert.match(ipcSource, /mpv-frames/);
   assert.match(preloadSource, /mpvScreenshot: \(\) => ipcRenderer\.invoke\('mpv:screenshot'\),/);
+});
+
+test('draw mode shows a frozen mpv frame under the drawing canvases', () => {
+  assert.match(appSource, /async function showMpvDrawFreezeFrame\(\)/);
+  assert.match(appSource, /function removeMpvDrawFreezeFrame\(\)/);
+  assert.match(appSource, /function scheduleMpvDrawFreezeRefresh\(\)/);
+  const applyMatch = appSource.match(/function applyDrawModeState\(enabled\) \{([\s\S]*?)\n  \}/);
+  assert.ok(applyMatch, 'applyDrawModeState should exist');
+  assert.match(applyMatch[1], /videoPlayer\.pause\(\);/);
+  assert.match(applyMatch[1], /showMpvDrawFreezeFrame\(\)/);
+  assert.match(applyMatch[1], /removeMpvDrawFreezeFrame\(\)/);
+  assert.match(appSource, /videoPlayer\.addEventListener\('frameUpdate'[\s\S]*?scheduleMpvDrawFreezeRefresh\(\);/);
+  assert.match(videoPlayerSource, /isSeeking\(\) \{/);
+  assert.match(mainStyles, /\.mpv-draw-freeze-frame \{/);
 });
