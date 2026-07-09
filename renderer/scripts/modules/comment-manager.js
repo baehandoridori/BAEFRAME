@@ -63,11 +63,13 @@ function generateUUID() {
  * 프레임을 타임코드로 변환
  */
 function frameToTimecode(frame, fps = 24) {
-  const totalSeconds = frame / fps;
-  const hours = Math.floor(totalSeconds / 3600);
+  const rate = Math.max(1, Math.round(Number(fps) || 24));
+  const totalFrames = Math.max(0, Math.round(Number(frame) || 0));
+  const frames = totalFrames % rate;
+  const totalSeconds = Math.floor(totalFrames / rate);
+  const seconds = totalSeconds % 60;
   const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = Math.floor(totalSeconds % 60);
-  const frames = frame % fps;
+  const hours = Math.floor(totalSeconds / 3600);
 
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(frames).padStart(2, '0')}`;
 }

@@ -19,11 +19,13 @@ const userSettingsSource = readSource('renderer/scripts/modules/user-settings.js
 
 test('external status polling escalates repeated failures to a stop event', () => {
   assert.match(videoPlayerSource, /this\._externalStatusFailureCount = 0;/);
-  const watchdogMatch = videoPlayerSource.match(/_registerExternalStatusFailure\(pollingControls\) \{([\s\S]*?)\n  \}/);
+  const watchdogMatch = videoPlayerSource.match(/async _registerExternalStatusFailure\(pollingControls\) \{([\s\S]*?)\n  \}/);
   assert.ok(watchdogMatch, 'watchdog method should exist');
   assert.match(watchdogMatch[1], /this\._externalStatusFailureCount \+= 1;/);
   assert.match(watchdogMatch[1], /reason: 'unresponsive'/);
+  assert.match(watchdogMatch[1], /await Promise\.resolve\(pollingControls\?\.stop\?\.\(\)\)/);
   assert.match(watchdogMatch[1], /_emit\('externalstopped', detail\);/);
+  assert.match(videoPlayerSource, /await this\._registerExternalStatusFailure\(pollingControls\);/);
 });
 
 test('externalstopped carries recovery context', () => {
@@ -69,6 +71,16 @@ test('draw mode shows a frozen mpv frame under the drawing canvases', () => {
   assert.match(appSource, /videoPlayer\.addEventListener\('frameUpdate'[\s\S]*?scheduleMpvDrawFreezeRefresh\(\);/);
   assert.match(videoPlayerSource, /isSeeking\(\) \{/);
   assert.match(mainStyles, /\.mpv-draw-freeze-frame \{/);
+});
+
+test('mpv draw freeze frame is cleared and refreshed across media changes', () => {
+  const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\//);
+  assert.ok(loadVideoMatch, 'loadVideo should exist');
+  assert.match(loadVideoMatch[1], /removeMpvDrawFreezeFrame\(\);/);
+
+  const loadMpvMatch = appSource.match(/async function loadVideoWithMpvPilot\(filePath, \{([\s\S]*?)\n  \}\n\n  async function resolveMpvThumbnailVideoPath/);
+  assert.ok(loadMpvMatch, 'loadVideoWithMpvPilot should exist');
+  assert.match(loadMpvMatch[1], /if \(state\.isDrawMode\) \{[\s\S]*?await showMpvDrawFreezeFrame\(\);[\s\S]*?\}/);
 });
 
 test('mpv playback is enabled by default with legacy pilot key migration', () => {

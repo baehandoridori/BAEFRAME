@@ -62,6 +62,12 @@ test('timecode formatters round fps for frame digits (fractional fps safe)', () 
   assert.ok(timecodeMatch, 'timeToTimecode should exist');
   assert.match(timecodeMatch[1], /Math\.max\(1, Math\.round\(Number\(this\.fps\) \|\| 24\)\)/);
 
+  const commentTimecodeMatch = commentManagerSource.match(/function frameToTimecode\(frame, fps = 24\) \{([\s\S]*?)\n\}/);
+  assert.ok(commentTimecodeMatch, 'comment frameToTimecode should exist');
+  assert.match(commentTimecodeMatch[1], /const rate = Math\.max\(1, Math\.round\(Number\(fps\) \|\| 24\)\);/);
+  assert.match(commentTimecodeMatch[1], /const frames = totalFrames % rate;/);
+  assert.doesNotMatch(commentTimecodeMatch[1], /frame % fps/);
+
   assert.match(appSource, /function formatTimecode\(seconds, fps = 24\) \{[\s\S]*?Math\.max\(1, Math\.round\(Number\(fps\) \|\| 24\)\)/);
   assert.match(appSource, /function formatFpsLabel\(fps\)/);
   assert.match(appSource, /\$\{formatFpsLabel\(videoPlayer\.fps\)\}fps · Frame/);
@@ -82,6 +88,12 @@ test('bframe frame data is remapped when stored fps differs from playback fps', 
   assert.match(fromJsonMatch[1], /this\._remapMarkersToFps\(this\.fps\);/);
 
   assert.match(drawingManagerSource, /const sourceFps = Number\(data\.fps\) > 0 \? Number\(data\.fps\) : 24;/);
+  const importDataMatch = drawingManagerSource.match(/importData\(data\) \{([\s\S]*?)\n  \}/);
+  assert.ok(importDataMatch, 'drawing importData should exist');
+  assert.doesNotMatch(importDataMatch[1], /this\.totalFrames = data\.totalFrames \|\| this\.totalFrames;/);
+  assert.match(importDataMatch[1], /const playbackTotalFrames = Number\(this\.totalFrames\);/);
+  assert.match(importDataMatch[1], /const savedTotalFrames = Number\(data\.totalFrames\);/);
+  assert.match(importDataMatch[1], /Math\.round\(savedTotalFrames \* factor\)/);
   assert.match(appSource, /reviewDataManager\.setFps\(fps\);/);
 });
 

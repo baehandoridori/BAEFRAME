@@ -6887,6 +6887,14 @@ async function initApp() {
 
     mpvPilotHostPreparing = false;
     syncMpvHostVisibilityWithDom();
+    if (state.isDrawMode) {
+      videoPlayer.pause();
+      await showMpvDrawFreezeFrame();
+      if (isStaleVideoLoad()) {
+        await cleanupPendingMpvPilot();
+        return false;
+      }
+    }
 
     showToast(
       embedHost?.wid
@@ -6931,6 +6939,7 @@ async function initApp() {
     );
     if (!canContinueVideoLoad()) return false;
     activeVideoLoadPath = filePath;
+    removeMpvDrawFreezeFrame();
     supersedeActiveTranscodeOverlay('새 영상 선택');
     if (!preserveContinuousSession && continuousPlaybackState.active) {
       stopContinuousPlayback();

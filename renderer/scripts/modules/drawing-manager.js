@@ -1370,10 +1370,18 @@ export class DrawingManager extends EventTarget {
     this.drawingCanvas.clearSelection?.();
     this.layers = data.layers.map(l => DrawingLayer.fromJSON(l));
     this.activeLayerId = data.activeLayerId;
-    this.totalFrames = data.totalFrames || this.totalFrames;
+    const playbackTotalFrames = Number(this.totalFrames);
+    const savedTotalFrames = Number(data.totalFrames);
+    const hasPlaybackTotalFrames = Number.isFinite(playbackTotalFrames) && playbackTotalFrames > 0;
     const sourceFps = Number(data.fps) > 0 ? Number(data.fps) : 24;
-    if (Number(this.fps) > 0 && sourceFps !== this.fps) {
-      const factor = this.fps / sourceFps;
+    const shouldRemapFps = Number(this.fps) > 0 && sourceFps !== this.fps;
+    const factor = shouldRemapFps ? this.fps / sourceFps : 1;
+    if (!hasPlaybackTotalFrames && Number.isFinite(savedTotalFrames) && savedTotalFrames > 0) {
+      this.totalFrames = shouldRemapFps
+        ? Math.max(0, Math.round(savedTotalFrames * factor))
+        : savedTotalFrames;
+    }
+    if (shouldRemapFps) {
       this.layers.forEach((layer) => {
         layer.keyframes.forEach((kf) => {
           kf.frame = Math.max(0, Math.round(kf.frame * factor));

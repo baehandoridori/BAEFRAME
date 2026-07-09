@@ -934,7 +934,7 @@ export class VideoPlayer extends EventTarget {
    * mpv 행(hang)/IPC 오류 워치독.
    * 상태 폴링이 연속 3회 실패하면 엔진이 응답 불능이라 보고 복구 이벤트로 승격한다.
    */
-  _registerExternalStatusFailure(pollingControls) {
+  async _registerExternalStatusFailure(pollingControls) {
     this._externalStatusFailureCount += 1;
     if (this._externalStatusFailureCount < 3) return;
     this._externalStatusFailureCount = 0;
@@ -947,7 +947,7 @@ export class VideoPlayer extends EventTarget {
       reason: 'unresponsive'
     };
     log.warn('외부 플레이어 응답 없음, 엔진 정리', detail);
-    Promise.resolve(pollingControls?.stop?.()).catch(() => {});
+    await Promise.resolve(pollingControls?.stop?.()).catch(() => {});
     this.useHtml5Engine();
     this.isLoaded = false;
     this._emit('externalstopped', detail);
@@ -963,7 +963,7 @@ export class VideoPlayer extends EventTarget {
       const status = await pollingControls.getStatus();
       if (this.engine !== pollingEngine || this.externalControls !== pollingControls) return;
       if (!status?.success) {
-        this._registerExternalStatusFailure(pollingControls);
+        await this._registerExternalStatusFailure(pollingControls);
         return;
       }
       this._externalStatusFailureCount = 0;
@@ -1081,7 +1081,7 @@ export class VideoPlayer extends EventTarget {
     } catch (error) {
       log.debug('외부 플레이어 상태 동기화 실패', { error: error.message });
       if (this.engine === pollingEngine && this.externalControls === pollingControls) {
-        this._registerExternalStatusFailure(pollingControls);
+        await this._registerExternalStatusFailure(pollingControls);
       }
     } finally {
       this._externalStatusPending = false;
