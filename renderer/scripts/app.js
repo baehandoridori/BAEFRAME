@@ -1234,6 +1234,7 @@ async function initApp() {
 
     const detail = e.detail || {};
     const stoppedFilePath = detail.filePath || state.currentFile;
+    if (hasActiveVideoLoadForDifferentFile(stoppedFilePath)) return;
     if (!stoppedFilePath || !isSameFilePath(stoppedFilePath, state.currentFile)) return;
 
     const retryMpv = !mpvUnexpectedStopRecovery.attempted ||

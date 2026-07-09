@@ -38,6 +38,7 @@ test('unexpected mpv stop triggers reload with retry policy', () => {
   const handlerSource = handlerMatch[1];
   assert.match(handlerSource, /if \(isAppShuttingDown\) return;/);
   assert.match(handlerSource, /if \(mpvPilotHostPreparing\) return;/);
+  assert.match(handlerSource, /if \(hasActiveVideoLoadForDifferentFile\(stoppedFilePath\)\) return;/);
   assert.match(handlerSource, /allowMpvPilot: retryMpv/);
   assert.match(handlerSource, /initialFrame: resumeFrame/);
   assert.match(handlerSource, /showToast\(/);
