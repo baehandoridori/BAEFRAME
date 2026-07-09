@@ -1072,23 +1072,32 @@ export class DrawingManager extends EventTarget {
    * 캔버스 크기 설정
    */
   setCanvasSize(width, height) {
+    const canvasSizeChanged = this.drawingCanvas?.canvas &&
+      (this.drawingCanvas.canvas.width !== width || this.drawingCanvas.canvas.height !== height);
+    if (canvasSizeChanged && (this.drawingCanvas.floatingImage || this.drawingCanvas.selection)) {
+      this.commitActiveSelection();
+    }
+
     this.canvasWidth = width;
     this.canvasHeight = height;
     this.drawingCanvas.syncSize(width, height);
     [this.layersBelowCanvas, this.layersAboveCanvas, this.selectionOverlayCanvas].forEach((canvas) => {
-      if (!canvas) return;
-      canvas.width = width;
-      canvas.height = height;
+      this._setCanvasElementSize(canvas, width, height);
     });
 
     // 어니언 스킨 캔버스 크기도 동기화
-    if (this.onionSkinCanvasElement) {
-      this.onionSkinCanvasElement.width = width;
-      this.onionSkinCanvasElement.height = height;
-    }
+    this._setCanvasElementSize(this.onionSkinCanvasElement, width, height);
 
     log.debug('캔버스 크기 설정됨', { width, height });
     this.renderFrame(this.currentFrame);
+  }
+
+  _setCanvasElementSize(canvas, width, height) {
+    if (!canvas) return false;
+    if (canvas.width === width && canvas.height === height) return false;
+    canvas.width = width;
+    canvas.height = height;
+    return true;
   }
 
   /**

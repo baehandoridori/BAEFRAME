@@ -126,6 +126,12 @@ export class DrawingCanvas extends EventTarget {
    * 캔버스 크기 동기화
    */
   syncSize(width, height) {
+    if (this.canvas.width === width && this.canvas.height === height) {
+      if (this.tempCanvas.width !== width) this.tempCanvas.width = width;
+      if (this.tempCanvas.height !== height) this.tempCanvas.height = height;
+      return false;
+    }
+
     // 현재 내용 백업
     const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
 
@@ -139,6 +145,8 @@ export class DrawingCanvas extends EventTarget {
     if (imageData.width === width && imageData.height === height) {
       this.ctx.putImageData(imageData, 0, 0);
     }
+
+    return true;
   }
 
   /**

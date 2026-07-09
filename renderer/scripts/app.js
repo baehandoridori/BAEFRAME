@@ -5202,8 +5202,6 @@ async function initApp() {
       layerCanvas.style.top = `${renderArea.top}px`;
       layerCanvas.style.width = `${renderArea.width}px`;
       layerCanvas.style.height = `${renderArea.height}px`;
-      layerCanvas.width = renderArea.videoWidth;
-      layerCanvas.height = renderArea.videoHeight;
     });
 
     // 어니언 스킨 캔버스도 동일하게 동기화
@@ -5213,8 +5211,6 @@ async function initApp() {
       onionCanvas.style.top = `${renderArea.top}px`;
       onionCanvas.style.width = `${renderArea.width}px`;
       onionCanvas.style.height = `${renderArea.height}px`;
-      onionCanvas.width = renderArea.videoWidth;
-      onionCanvas.height = renderArea.videoHeight;
     }
 
     if (compositionOverlay) {

@@ -241,8 +241,16 @@ test('floating drawing selections are resolved before context changes, not durin
   const renderStart = drawingManagerSource.indexOf('async renderFrame(frame) {');
   const renderEnd = drawingManagerSource.indexOf('\n  _renderFrameSync', renderStart);
   const renderFrameBody = drawingManagerSource.slice(renderStart, renderEnd);
+  const syncOverlayStart = appSource.indexOf('function syncCanvasOverlay() {');
+  const syncOverlayEnd = appSource.indexOf('\n  // 윈도우 리사이즈', syncOverlayStart);
+  const syncOverlayBody = appSource.slice(syncOverlayStart, syncOverlayEnd);
 
   assert.doesNotMatch(renderFrameBody, /commitSelection|commitActiveSelection/);
+  assert.doesNotMatch(syncOverlayBody, /layerCanvas\.width = renderArea\.videoWidth;[\s\S]*?layerCanvas\.height = renderArea\.videoHeight;/);
+  assert.doesNotMatch(syncOverlayBody, /onionCanvas\.width = renderArea\.videoWidth;[\s\S]*?onionCanvas\.height = renderArea\.videoHeight;/);
+  assert.match(drawingCanvasSource, /syncSize\(width, height\) \{[\s\S]*?if \(this\.canvas\.width === width && this\.canvas\.height === height\) \{[\s\S]*?return false;[\s\S]*?\}/);
+  assert.match(drawingManagerSource, /setCanvasSize\(width, height\) \{[\s\S]*?const canvasSizeChanged = this\.drawingCanvas\?\.canvas &&[\s\S]*?this\.drawingCanvas\.canvas\.width !== width[\s\S]*?this\.drawingCanvas\.canvas\.height !== height[\s\S]*?if \(canvasSizeChanged && \(this\.drawingCanvas\.floatingImage \|\| this\.drawingCanvas\.selection\)\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?\}/);
+  assert.match(drawingManagerSource, /_setCanvasElementSize\(canvas, width, height\) \{[\s\S]*?if \(canvas\.width === width && canvas\.height === height\) return false;[\s\S]*?canvas\.width = width;[\s\S]*?canvas\.height = height;/);
   assert.match(drawingManagerSource, /createLayer\(options = \{\}, saveHistory = true\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
   assert.match(drawingManagerSource, /setActiveLayer\(layerId\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\.activeLayerId = layerId;/);
   assert.match(drawingManagerSource, /moveActiveLayerByOffset\(offset\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
