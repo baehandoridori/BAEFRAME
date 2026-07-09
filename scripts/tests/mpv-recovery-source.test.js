@@ -24,3 +24,16 @@ test('external status polling escalates repeated failures to a stop event', () =
 test('externalstopped carries recovery context', () => {
   assert.match(videoPlayerSource, /_emit\('externalstopped', \{[\s\S]*?engine: stoppedEngine,[\s\S]*?filePath:[\s\S]*?lastFrame:[\s\S]*?reason: 'stopped'/);
 });
+
+test('unexpected mpv stop triggers reload with retry policy', () => {
+  const handlerMatch = appSource.match(/videoPlayer\.addEventListener\('externalstopped', \(e\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(handlerMatch, 'externalstopped handler should exist');
+  const handlerSource = handlerMatch[1];
+  assert.match(handlerSource, /if \(isAppShuttingDown\) return;/);
+  assert.match(handlerSource, /if \(mpvPilotHostPreparing\) return;/);
+  assert.match(handlerSource, /allowMpvPilot: retryMpv/);
+  assert.match(handlerSource, /initialFrame: resumeFrame/);
+  assert.match(handlerSource, /showToast\(/);
+  assert.match(appSource, /let mpvUnexpectedStopRecovery = \{ filePath: null, attempted: false \};/);
+  assert.match(appSource, /isAppShuttingDown = true;/);
+});

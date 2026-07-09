@@ -864,8 +864,13 @@ async function initApp() {
   reviewDataManager.setBeforeSaveHandler(prepareReviewFileBeforeSave);
   reviewDataManager.setInitialSaveConflictHandler(handleInitialReviewFileSaveConflict);
 
+  // mpv 예기치 못한 중단(크래시/행) 복구 상태 - 같은 파일 mpv 재시도는 1회만
+  let mpvUnexpectedStopRecovery = { filePath: null, attempted: false };
+  let isAppShuttingDown = false;
+
   // 앱 종료/새로고침 시 정리
   window.addEventListener('beforeunload', () => {
+    isAppShuttingDown = true;
     void stopDeferredReviewFileDiscovery();
     // Liveblocks Room 퇴장 시 Presence 자동 정리됨
     liveblocksManager.releaseAllEditingLocks();
@@ -1214,10 +1219,40 @@ async function initApp() {
     showToast('비디오 재생 오류가 발생했습니다.', 'error');
   });
 
-  videoPlayer.addEventListener('externalstopped', () => {
+  videoPlayer.addEventListener('externalstopped', (e) => {
     elements.videoWrapper?.classList.remove('mpv-pilot-mode');
     document.body.classList.remove('mpv-pilot-mode');
     mpvHostLastRequestedVisible = null;
+
+    // 앱 종료 중 main의 mpv 정리를 크래시로 오인해 재기동하는 레이스 방지
+    if (isAppShuttingDown) return;
+    // mpv 재기동/파일 전환 중 폴링이 감지한 일시적 stopped는 복구 대상이 아님
+    if (mpvPilotHostPreparing) return;
+
+    const detail = e.detail || {};
+    const stoppedFilePath = detail.filePath || state.currentFile;
+    if (!stoppedFilePath || !isSameFilePath(stoppedFilePath, state.currentFile)) return;
+
+    const retryMpv = !mpvUnexpectedStopRecovery.attempted ||
+      !isSameFilePath(mpvUnexpectedStopRecovery.filePath, stoppedFilePath);
+    mpvUnexpectedStopRecovery = { filePath: stoppedFilePath, attempted: true };
+
+    const resumeFrame = Number.isFinite(Number(detail.lastFrame)) ? Number(detail.lastFrame) : null;
+    showToast(
+      retryMpv
+        ? 'mpv 재생이 중단되어 영상을 다시 불러옵니다.'
+        : 'mpv 재생이 반복 중단되어 기존 변환 방식으로 다시 불러옵니다.',
+      'warning',
+      null,
+      true
+    );
+    log.warn('mpv 예기치 못한 중단, 자동 복구', { reason: detail.reason, retryMpv, resumeFrame });
+    void loadVideo(stoppedFilePath, {
+      keepVersionContext: true,
+      allowMpvPilot: retryMpv,
+      initialFrame: resumeFrame,
+      playWhenMediaReady: false
+    });
   });
 
   // 코덱 미지원
