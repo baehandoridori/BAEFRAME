@@ -19,7 +19,7 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'
 test('package exposes an mpv pilot test command', () => {
   assert.equal(
     packageJson.scripts['test:mpv'],
-    'node --test scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-runtime-source.test.js'
+    'node --test scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js'
   );
 });
 
@@ -413,7 +413,7 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
   assert.match(videoPlayerSource, /_handleLoopRestartIfNeeded\(\) \{[\s\S]+this\.seek\(this\.loop\.inPoint\);[\s\S]+this\._emit\('loopRestart'\);[\s\S]+return true;/);
   assert.match(videoPlayerSource, /video\.addEventListener\('timeupdate', \(\) => \{[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}/);
   assert.match(videoPlayerSource, /const pollingControls = this\.externalControls;[\s\S]+const pollingEngine = this\.engine;[\s\S]+const status = await pollingControls\.getStatus\(\);[\s\S]+if \(this\.engine !== pollingEngine \|\| this\.externalControls !== pollingControls\) return;/);
-  assert.match(videoPlayerSource, /if \(status\.stopped === true\) \{[\s\S]+await pollingControls\?\.stop\?\.\(\);[\s\S]+this\.useHtml5Engine\(\);[\s\S]+this\.isLoaded = false;[\s\S]+this\._emit\('externalstopped', \{ engine: stoppedEngine \}\);[\s\S]+return;[\s\S]+\}/);
+  assert.match(videoPlayerSource, /if \(status\.stopped === true\) \{[\s\S]+const stoppedEngine = this\.engine;[\s\S]+const stoppedFilePath = this\.filePath;[\s\S]+const stoppedTime = this\.currentTime;[\s\S]+const stoppedFrame = this\.currentFrame;[\s\S]+await pollingControls\?\.stop\?\.\(\);[\s\S]+this\.useHtml5Engine\(\);[\s\S]+this\.isLoaded = false;[\s\S]+this\._emit\('externalstopped', \{[\s\S]+engine: stoppedEngine,[\s\S]+filePath: stoppedFilePath,[\s\S]+lastTime: stoppedTime,[\s\S]+lastFrame: stoppedFrame,[\s\S]+reason: 'stopped'[\s\S]+\}\);[\s\S]+return;[\s\S]+\}/);
   assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(\) => \{[\s\S]+elements\.videoWrapper\?\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+document\.body\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+\}\);/);
   assert.match(videoPlayerSource, /const nextWidth = Number\(status\.width\);[\s\S]+const nextHeight = Number\(status\.height\);[\s\S]+if \(Number\.isFinite\(nextWidth\) && nextWidth > 0 && this\.videoWidth !== nextWidth\) \{[\s\S]+this\.videoWidth = nextWidth;[\s\S]+\}[\s\S]+if \(Number\.isFinite\(nextHeight\) && nextHeight > 0 && this\.videoHeight !== nextHeight\) \{[\s\S]+this\.videoHeight = nextHeight;/);
   assert.match(videoPlayerSource, /let metadataChanged = false;[\s\S]+metadataChanged = true;[\s\S]+if \(metadataChanged\) \{[\s\S]+this\._emit\('loadedmetadata', \{[\s\S]+duration: this\.duration,[\s\S]+totalFrames: this\.totalFrames,[\s\S]+fps: this\.fps,[\s\S]+width: this\.videoWidth,[\s\S]+height: this\.videoHeight,[\s\S]+engine: this\.engine/);

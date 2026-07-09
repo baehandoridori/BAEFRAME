@@ -28,6 +28,7 @@ export class VideoPlayer extends EventTarget {
     this.externalControls = null;
     this._externalStatusTimer = null;
     this._externalStatusPending = false;
+    this._externalStatusFailureCount = 0;
     this._externalEndedEmitted = false;
     this.externalEofReached = false;
 
@@ -262,6 +263,7 @@ export class VideoPlayer extends EventTarget {
   useExternalEngine(config = {}) {
     this._stopFrameCallback();
     this._stopExternalStatusPolling();
+    this._externalStatusFailureCount = 0;
 
     this.engine = config.engineName || 'external';
     this.externalControls = config.controls || null;
@@ -921,6 +923,29 @@ export class VideoPlayer extends EventTarget {
     this._externalStatusPending = false;
   }
 
+  /**
+   * mpv 행(hang)/IPC 오류 워치독.
+   * 상태 폴링이 연속 3회 실패하면 엔진이 응답 불능이라 보고 복구 이벤트로 승격한다.
+   */
+  _registerExternalStatusFailure(pollingControls) {
+    this._externalStatusFailureCount += 1;
+    if (this._externalStatusFailureCount < 3) return;
+    this._externalStatusFailureCount = 0;
+    const stoppedEngine = this.engine;
+    const detail = {
+      engine: stoppedEngine,
+      filePath: this.filePath,
+      lastTime: this.currentTime,
+      lastFrame: this.currentFrame,
+      reason: 'unresponsive'
+    };
+    log.warn('외부 플레이어 응답 없음, 엔진 정리', detail);
+    Promise.resolve(pollingControls?.stop?.()).catch(() => {});
+    this.useHtml5Engine();
+    this.isLoaded = false;
+    this._emit('externalstopped', detail);
+  }
+
   async _syncExternalStatus() {
     if (this.engine === 'html5' || !this.externalControls?.getStatus || this._externalStatusPending) return;
 
@@ -930,9 +955,16 @@ export class VideoPlayer extends EventTarget {
     try {
       const status = await pollingControls.getStatus();
       if (this.engine !== pollingEngine || this.externalControls !== pollingControls) return;
-      if (!status?.success) return;
+      if (!status?.success) {
+        this._registerExternalStatusFailure(pollingControls);
+        return;
+      }
+      this._externalStatusFailureCount = 0;
       if (status.stopped === true) {
         const stoppedEngine = this.engine;
+        const stoppedFilePath = this.filePath;
+        const stoppedTime = this.currentTime;
+        const stoppedFrame = this.currentFrame;
         try {
           await pollingControls?.stop?.();
         } catch (error) {
@@ -940,7 +972,13 @@ export class VideoPlayer extends EventTarget {
         }
         this.useHtml5Engine();
         this.isLoaded = false;
-        this._emit('externalstopped', { engine: stoppedEngine });
+        this._emit('externalstopped', {
+          engine: stoppedEngine,
+          filePath: stoppedFilePath,
+          lastTime: stoppedTime,
+          lastFrame: stoppedFrame,
+          reason: 'stopped'
+        });
         return;
       }
 
@@ -1035,6 +1073,9 @@ export class VideoPlayer extends EventTarget {
       }
     } catch (error) {
       log.debug('외부 플레이어 상태 동기화 실패', { error: error.message });
+      if (this.engine === pollingEngine && this.externalControls === pollingControls) {
+        this._registerExternalStatusFailure(pollingControls);
+      }
     } finally {
       this._externalStatusPending = false;
     }
