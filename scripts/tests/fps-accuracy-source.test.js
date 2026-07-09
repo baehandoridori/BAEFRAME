@@ -84,3 +84,7 @@ test('bframe frame data is remapped when stored fps differs from playback fps', 
   assert.match(drawingManagerSource, /const sourceFps = Number\(data\.fps\) > 0 \? Number\(data\.fps\) : 24;/);
   assert.match(appSource, /reviewDataManager\.setFps\(fps\);/);
 });
+
+test('web viewer reads top-level bframe fps field', () => {
+  assert.match(webViewerSource, /state\.frameRate = state\.bframeData\?\.comments\?\.fps \|\| state\.bframeData\?\.fps \|\| state\.bframeData\?\.frameRate \|\| 24;/);
+});
