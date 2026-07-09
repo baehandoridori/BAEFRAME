@@ -45,3 +45,14 @@ test('video player resets fps on unload and setFps refreshes metadata', () => {
   assert.match(videoPlayerSource, /this\.fps = Math\.max\(1, normalizeFpsValue\(config\.fps\) \?\? this\.fps \?\? 24\);/);
   assert.match(videoPlayerSource, /const nextFps = normalizeFpsValue\(status\.fps\);/);
 });
+
+test('html5 load path feeds probed fps into the video player', () => {
+  assert.match(appSource, /async function resolveHtml5PlaybackFps\(filePath\)/);
+  // 참고: 이 추출 정규식은 기존 mpv-runtime-source.test.js:104와 같은 관례로,
+  // 실제로는 loadVideo보다 넓은 범위(다음 함수 포함)를 캡처한다 — 단언 목적에는 충분.
+  const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\//);
+  assert.ok(loadVideoMatch, 'loadVideo should exist');
+  const loadVideoSource = loadVideoMatch[1];
+  assert.match(loadVideoSource, /let html5ProbedFps = null;/);
+  assert.match(loadVideoSource, /videoPlayer\.setFps\(html5Fps\);/);
+});

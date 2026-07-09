@@ -6606,6 +6606,38 @@ async function initApp() {
     }
   }
 
+  /**
+   * HTML5 <video> 경로용 실제 fps 조회.
+   * 우선순위: ffprobe(frameRate) -> mpv 헤드리스 프로브(container-fps) -> 24.
+   * HTML5 video API는 fps를 제공하지 않으므로 로드 전에 반드시 외부 프로브가 필요하다.
+   */
+  async function resolveHtml5PlaybackFps(filePath) {
+    if (!filePath) return 24;
+    try {
+      if (await window.electronAPI.ffmpegIsAvailable()) {
+        const probe = await window.electronAPI.ffmpegProbeCodec(filePath);
+        const probedFps = Number(probe?.frameRate);
+        if (probe?.success && Number.isFinite(probedFps) && probedFps > 0) {
+          return probedFps;
+        }
+      }
+    } catch (error) {
+      log.warn('ffprobe fps 조회 실패', { error: error.message });
+    }
+    try {
+      if (window.electronAPI?.mpvIsAvailable && await window.electronAPI.mpvIsAvailable()) {
+        const mpvProbe = await window.electronAPI.mpvProbeMetadata(filePath);
+        const mpvFps = Number(mpvProbe?.fps);
+        if (mpvProbe?.success && Number.isFinite(mpvFps) && mpvFps > 0) {
+          return mpvFps;
+        }
+      }
+    } catch (error) {
+      log.warn('mpv 프로브 fps 조회 실패', { error: error.message });
+    }
+    return 24;
+  }
+
   async function loadVideoWithMpvPilot(filePath, {
     initialFrame = null,
     loadToken = null,
@@ -6814,11 +6846,17 @@ async function initApp() {
       if (hasPreparedVideoPath) {
         log.debug('준비된 연속 재생 미디어 경로 사용', { filePath, preparedVideoPath });
       }
+      let html5ProbedFps = null;
       const ffmpegAvailable = !useMpvPilot && !hasPreparedVideoPath && !fileIsAudio && await window.electronAPI.ffmpegIsAvailable();
 
       if (ffmpegAvailable) {
         const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
         if (!canContinueVideoLoad()) return false;
+
+        const probedFrameRate = Number(codecInfo?.frameRate);
+        if (codecInfo?.success && Number.isFinite(probedFrameRate) && probedFrameRate > 0) {
+          html5ProbedFps = probedFrameRate;
+        }
 
         if (codecInfo.success && !codecInfo.isSupported) {
           log.info('미지원 코덱 감지, 트랜스코딩 필요', { codec: codecInfo.codecName });
@@ -7078,6 +7116,9 @@ async function initApp() {
           }
 
           try {
+            const html5Fps = html5ProbedFps ?? (fileIsAudio ? 24 : await resolveHtml5PlaybackFps(filePath));
+            if (!canContinueVideoLoad()) return false;
+            videoPlayer.setFps(html5Fps);
             await videoPlayer.load(actualVideoPath);
             if (!canContinueVideoLoad()) return false;
 
