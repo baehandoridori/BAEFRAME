@@ -597,6 +597,7 @@ export class DrawingManager extends EventTarget {
   toggleLayerVisibility(layerId) {
     const layer = this.layers.find(l => l.id === layerId);
     if (layer) {
+      this.commitActiveSelection();
       layer.visible = !layer.visible;
       this._emit('layersChanged');
       this.renderFrame(this.currentFrame);
@@ -609,6 +610,7 @@ export class DrawingManager extends EventTarget {
   toggleLayerLock(layerId) {
     const layer = this.layers.find(l => l.id === layerId);
     if (layer) {
+      this.commitActiveSelection();
       layer.locked = !layer.locked;
       this._emit('layersChanged');
     }
@@ -942,6 +944,7 @@ export class DrawingManager extends EventTarget {
     const clip = this._frameClipboard;
     if (!clip?.items?.length) return 0;
 
+    this.commitActiveSelection();
     this._saveToHistory();
 
     let pasted = 0;
