@@ -221,7 +221,7 @@ export class DrawingSync {
 
     const currentFrame = this._dm.currentFrame ?? 0;
     const keyframe = layer.getKeyframeAtFrame?.(currentFrame);
-    if (!keyframe?.canvasData) return;
+    if (!keyframe?.canvasData && keyframe?.isEmpty !== true) return;
 
     await this._broadcastKeyframeUpdate(layer, keyframe);
   }

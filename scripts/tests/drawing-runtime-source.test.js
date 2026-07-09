@@ -266,6 +266,7 @@ test('pasted drawing frames are published to sync and save listeners', () => {
   assert.match(drawingSyncSource, /addEventListener\('keyframeUpdated', this\._onKeyframeUpdated\)/);
   assert.match(drawingSyncSource, /_onKeyframeUpdated\(e\)/);
   assert.match(drawingSyncSource, /isEmpty: keyframe\.isEmpty === true/);
+  assert.match(drawingSyncSource, /if \(!keyframe\?\.canvasData && keyframe\?\.isEmpty !== true\) return;/);
   assert.match(drawingSyncSource, /const \{ layerId, frame, canvasData, baseCanvasData, strokeRecords, isEmpty \} = event;/);
   assert.match(drawingSyncSource, /!canvasData && isEmpty !== true/);
 });
