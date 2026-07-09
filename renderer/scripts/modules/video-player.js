@@ -7,6 +7,12 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('VideoPlayer');
 
+function normalizeFpsValue(value, fallback = null) {
+  const fps = Number(value);
+  if (!Number.isFinite(fps) || fps <= 0) return fallback;
+  return Math.round(fps * 1000) / 1000;
+}
+
 /**
  * 비디오 플레이어 클래스
  * EventTarget을 상속하여 이벤트 기반 통신 지원
@@ -17,7 +23,7 @@ export class VideoPlayer extends EventTarget {
 
     this.videoElement = options.videoElement || document.getElementById('videoPlayer');
     this.container = options.container || document.getElementById('videoWrapper');
-    this.fps = options.fps || 24;
+    this.fps = Math.max(1, normalizeFpsValue(options.fps) ?? 24);
     this.engine = 'html5';
     this.externalControls = null;
     this._externalStatusTimer = null;
@@ -263,7 +269,7 @@ export class VideoPlayer extends EventTarget {
     this.externalEofReached = false;
     this.filePath = config.filePath || null;
     this.duration = Math.max(0, Number(config.duration) || 0);
-    this.fps = Math.max(1, Number(config.fps) || this.fps || 24);
+    this.fps = Math.max(1, normalizeFpsValue(config.fps) ?? this.fps ?? 24);
     this.totalFrames = Math.max(0, Math.floor(this.duration * this.fps));
     this.videoWidth = Math.max(0, Number(config.width) || 0);
     this.videoHeight = Math.max(0, Number(config.height) || 0);
@@ -704,15 +710,26 @@ export class VideoPlayer extends EventTarget {
   }
 
   /**
-   * FPS 설정
+   * FPS 설정 (로드 전 호출이 원칙. 로드 후 호출 시 메타데이터 재전파)
    * @param {number} fps
    */
   setFps(fps) {
-    this.fps = fps;
+    const nextFps = normalizeFpsValue(fps);
+    if (!Number.isFinite(nextFps) || nextFps <= 0) return;
+    if (this.fps === nextFps) return;
+    this.fps = nextFps;
     if (this.isLoaded) {
       this.totalFrames = Math.floor(this.duration * this.fps);
+      this._emit('loadedmetadata', {
+        duration: this.duration,
+        totalFrames: this.totalFrames,
+        fps: this.fps,
+        width: this.videoWidth,
+        height: this.videoHeight,
+        engine: this.engine
+      });
     }
-    log.info('FPS 변경', { fps });
+    log.info('FPS 변경', { fps: this.fps });
   }
 
   /**
@@ -874,6 +891,7 @@ export class VideoPlayer extends EventTarget {
     this.duration = 0;
     this.currentFrame = 0;
     this.totalFrames = 0;
+    this.fps = 24;
     this.filePath = null;
 
     // 구간 반복 초기화
@@ -927,7 +945,7 @@ export class VideoPlayer extends EventTarget {
 
       const nextTime = Number(status.time);
       const nextDuration = Number(status.duration);
-      const nextFps = Number(status.fps);
+      const nextFps = normalizeFpsValue(status.fps);
       const nextWidth = Number(status.width);
       const nextHeight = Number(status.height);
       const rawEofReached = status.eofReached === true;

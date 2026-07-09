@@ -28,3 +28,20 @@ test('ffprobe frame rate keeps fractional fps instead of integer rounding', () =
   assert.doesNotMatch(parseSource, /Math\.round\(parseInt\(parts\[0\]\) \/ parseInt\(parts\[1\]\)\)/);
   assert.match(parseSource, /Math\.round\(fps \* 1000\) \/ 1000/);
 });
+
+test('video player resets fps on unload and setFps refreshes metadata', () => {
+  const unloadMatch = videoPlayerSource.match(/unload\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(unloadMatch, 'unload should exist');
+  assert.match(unloadMatch[1], /this\.fps = 24;/);
+
+  const setFpsMatch = videoPlayerSource.match(/setFps\(fps\) \{([\s\S]*?)\n  \}/);
+  assert.ok(setFpsMatch, 'setFps should exist');
+  assert.match(setFpsMatch[1], /normalizeFpsValue\(fps\)/);
+  assert.match(setFpsMatch[1], /this\._emit\('loadedmetadata'/);
+
+  // mpv/ffprobe 양쪽 fps를 소수점 3자리로 통일하는 정규화 헬퍼 (설계 결정 2)
+  assert.match(videoPlayerSource, /function normalizeFpsValue\(value, fallback = null\) \{/);
+  assert.match(videoPlayerSource, /Math\.round\(fps \* 1000\) \/ 1000;/);
+  assert.match(videoPlayerSource, /this\.fps = Math\.max\(1, normalizeFpsValue\(config\.fps\) \?\? this\.fps \?\? 24\);/);
+  assert.match(videoPlayerSource, /const nextFps = normalizeFpsValue\(status\.fps\);/);
+});
