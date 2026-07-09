@@ -862,7 +862,7 @@ async function initApp() {
 
   // 앱 종료/새로고침 시 정리
   window.addEventListener('beforeunload', () => {
-    stopDeferredReviewFileDiscovery();
+    void stopDeferredReviewFileDiscovery();
     // Liveblocks Room 퇴장 시 Presence 자동 정리됨
     liveblocksManager.releaseAllEditingLocks();
     // 모든 파일 감시 중지 (누적 방지)
@@ -5286,7 +5286,7 @@ async function initApp() {
       isSameFilePath(deferredReviewFileDiscovery.bframePath, bframePath);
   }
 
-  function stopDeferredReviewFileDiscovery(bframePath = null) {
+  async function stopDeferredReviewFileDiscovery(bframePath = null) {
     if (!deferredReviewFileDiscovery) return;
     if (bframePath && !isSameFilePath(deferredReviewFileDiscovery.bframePath, bframePath)) return;
 
@@ -5295,7 +5295,11 @@ async function initApp() {
       clearInterval(pollTimer);
     }
     deferredReviewFileDiscovery = null;
-    void window.electronAPI.watchFileStop(pendingPath);
+    try {
+      await window.electronAPI.watchFileStop(pendingPath);
+    } catch (error) {
+      log.warn('지연 .bframe 생성 감지 중지 실패', { path: pendingPath, error: error.message });
+    }
     log.info('지연 .bframe 생성 감지 중지', { path: pendingPath });
   }
 
@@ -5316,18 +5320,16 @@ async function initApp() {
     const synced = await syncReviewFileFromDisk(bframePath, {
       startCollaborationIfNeeded: true,
       bypassDebounce: true,
+      replaceDeferredDiscovery: true,
       source
     });
-    if (synced) {
-      stopDeferredReviewFileDiscovery(bframePath);
-    }
     return synced;
   }
 
   function startDeferredReviewFileDiscovery(loadToken, bframePath) {
     if (!bframePath || isStaleVideoLoadToken(loadToken)) return;
 
-    stopDeferredReviewFileDiscovery();
+    void stopDeferredReviewFileDiscovery();
     const pollTimer = setInterval(() => {
       void handleDeferredReviewFileDiscovered(bframePath, 'poll');
     }, DEFERRED_REVIEW_FILE_POLL_INTERVAL_MS);
@@ -5441,7 +5443,7 @@ async function initApp() {
   async function prepareReviewFileBeforeSave({ path: bframePath, hasPersistedFile }) {
     if (!bframePath || hasPersistedFile || !isCurrentReviewPath(bframePath)) return;
 
-    stopDeferredReviewFileDiscovery(bframePath);
+    await stopDeferredReviewFileDiscovery(bframePath);
 
     let fileExists = false;
     try {
@@ -5455,7 +5457,7 @@ async function initApp() {
 
     if (fileExists) {
       log.info('첫 저장 전 기존 .bframe 발견, 병합 후 협업 시작', { path: bframePath });
-      await reviewDataManager.reloadAndMerge({ merge: true, force: true });
+      await reviewDataManager.reloadAndMerge({ merge: true, force: true, preserveLocal: true });
       await startCollaborationForVideoLoad(latestVideoLoadToken, bframePath, {
         persistNewRoom: false
       });
@@ -5471,7 +5473,7 @@ async function initApp() {
     if (!bframePath || !isCurrentReviewPath(bframePath)) return;
 
     log.info('첫 .bframe 저장 충돌 처리 시작', { path: bframePath });
-    const mergeResult = await reviewDataManager.reloadAndMerge({ merge: true, force: true });
+    const mergeResult = await reviewDataManager.reloadAndMerge({ merge: true, force: true, preserveLocal: true });
     if (!mergeResult.success) {
       return mergeResult;
     }
@@ -6805,7 +6807,7 @@ async function initApp() {
       allowNavigationGuardAbort = false;
 
       // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
-      stopDeferredReviewFileDiscovery();
+      void stopDeferredReviewFileDiscovery();
       if (reviewDataManager.currentBframePath) {
         await window.electronAPI.watchFileStop(reviewDataManager.currentBframePath);
         if (!canContinueVideoLoad()) return false;
@@ -14151,6 +14153,7 @@ async function initApp() {
     const {
       startCollaborationIfNeeded = false,
       bypassDebounce = false,
+      replaceDeferredDiscovery = false,
       source = 'watch'
     } = options;
 
@@ -14188,6 +14191,10 @@ async function initApp() {
         if (result.added > 0 || result.updated > 0) {
           showToast(`동기화 완료 (${result.added > 0 ? `추가 ${result.added}` : ''}${result.updated > 0 ? ` 수정 ${result.updated}` : ''})`, 'info');
         }
+      }
+
+      if (result.success && startCollaborationIfNeeded && replaceDeferredDiscovery) {
+        await stopDeferredReviewFileDiscovery(filePath);
       }
 
       if (result.success && startCollaborationIfNeeded && !liveblocksManager.isConnected) {

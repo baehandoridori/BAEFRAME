@@ -639,7 +639,7 @@ export class ReviewDataManager extends EventTarget {
         }
 
         // 드로잉 데이터 머지 (원격이 더 최신이면 적용)
-        if (remoteData.drawings && this.drawingManager) {
+        if (!options.preserveLocal && remoteData.drawings && this.drawingManager) {
           const localModified = new Date(this._modifiedAt || 0).getTime();
           const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
 
@@ -650,7 +650,7 @@ export class ReviewDataManager extends EventTarget {
         }
 
         // 하이라이트 데이터 (원격이 더 최신이면 적용)
-        if (remoteData.highlights && this.highlightManager) {
+        if (!options.preserveLocal && remoteData.highlights && this.highlightManager) {
           const localModified = new Date(this._modifiedAt || 0).getTime();
           const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
 

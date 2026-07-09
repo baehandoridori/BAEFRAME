@@ -18,11 +18,13 @@ const ipcHandlersSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, '
 
 test('missing .bframe loads enter deferred discovery instead of immediate collaboration save', () => {
   assert.match(appSource, /function startDeferredReviewFileDiscovery\(loadToken, bframePath\)/);
-  assert.match(appSource, /function stopDeferredReviewFileDiscovery\(bframePath = null\)/);
+  assert.match(appSource, /async function stopDeferredReviewFileDiscovery\(bframePath = null\)/);
   assert.match(appSource, /async function handleDeferredReviewFileDiscovered\(bframePath, source = 'watch'\)/);
   assert.match(appSource, /function isCurrentReviewPath\(bframePath\) \{\s*return !!bframePath && isSameFilePath\(reviewDataManager\.currentBframePath, bframePath\);/);
   assert.match(appSource, /const synced = await syncReviewFileFromDisk\(bframePath, \{[\s\S]*bypassDebounce: true,/);
-  assert.match(appSource, /if \(synced\) \{\s*stopDeferredReviewFileDiscovery\(bframePath\);\s*\}/);
+  assert.match(appSource, /replaceDeferredDiscovery: true,/);
+  assert.match(appSource, /replaceDeferredDiscovery = false,/);
+  assert.match(appSource, /if \(result\.success && startCollaborationIfNeeded && replaceDeferredDiscovery\) \{[\s\S]*await stopDeferredReviewFileDiscovery\(filePath\);[\s\S]*if \(result\.success && startCollaborationIfNeeded && !liveblocksManager\.isConnected\) \{[\s\S]*await startCollaborationForVideoLoad/);
   assert.doesNotMatch(appSource, /stopDeferredReviewFileDiscovery\(bframePath\);\s*log\.info\('지연 \.bframe 생성 감지됨'/);
 
   const renderMarkerIndex = appSource.indexOf('// 마커 및 그리기 렌더링 업데이트');
@@ -54,7 +56,9 @@ test('first .bframe save is protected against another user creating the file fir
   assert.match(reviewDataManagerSource, /lastConflictResult = await this\._initialSaveConflictHandler\?\.\(\{/);
   assert.match(reviewDataManagerSource, /if \(lastConflictResult\?\.success === true\) \{[\s\S]*this\._hasPersistedFile = true;[\s\S]*\} else \{[\s\S]*this\._hasPersistedFile = false;/);
   assert.match(reviewDataManagerSource, /if \(!savedData\) \{[\s\S]*throw new Error\(lastConflictResult\?\.error/);
-  assert.match(appSource, /const mergeResult = await reviewDataManager\.reloadAndMerge\(\{ merge: true, force: true \}\);[\s\S]*if \(!mergeResult\.success\) \{[\s\S]*return mergeResult;/);
+  assert.match(appSource, /const mergeResult = await reviewDataManager\.reloadAndMerge\(\{ merge: true, force: true, preserveLocal: true \}\);[\s\S]*if \(!mergeResult\.success\) \{[\s\S]*return mergeResult;/);
+  assert.match(reviewDataManagerSource, /if \(!options\.preserveLocal && remoteData\.drawings && this\.drawingManager\)/);
+  assert.match(reviewDataManagerSource, /if \(!options\.preserveLocal && remoteData\.highlights && this\.highlightManager\)/);
 
   assert.match(preloadSource, /saveReview: \(filePath, data, options = \{\}\) => ipcRenderer\.invoke\('file:save-review', filePath, data, options\)/);
   assert.match(ipcHandlersSource, /failIfExists/);
