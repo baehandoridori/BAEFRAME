@@ -100,6 +100,120 @@ function mergeLayers(localLayers, remoteLayers) {
   return { merged, added: totalAdded, updated: totalUpdated };
 }
 
+function cloneJson(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function jsonEquals(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function getNextPrefixedId(prefix, usedIds) {
+  let maxId = 0;
+  for (const id of usedIds) {
+    const match = String(id).match(new RegExp(`^${prefix}-(\\d+)$`));
+    if (match) {
+      maxId = Math.max(maxId, parseInt(match[1], 10));
+    }
+  }
+
+  let nextId = maxId + 1;
+  let candidate = `${prefix}-${nextId}`;
+  while (usedIds.has(candidate)) {
+    nextId += 1;
+    candidate = `${prefix}-${nextId}`;
+  }
+  usedIds.add(candidate);
+  return candidate;
+}
+
+function hasDrawingLayerContent(layer) {
+  return (layer?.keyframes || []).some(keyframe => {
+    return !keyframe?.isEmpty
+      || !!keyframe?.canvasData
+      || !!keyframe?.baseCanvasData
+      || (keyframe?.strokeRecords || []).length > 0;
+  });
+}
+
+function mergeDrawingData(localData = {}, remoteData = {}) {
+  const localLayers = Array.isArray(localData?.layers) ? localData.layers : [];
+  const remoteLayers = Array.isArray(remoteData?.layers) ? remoteData.layers : [];
+  const usedIds = new Set(localLayers.map(layer => layer.id).filter(Boolean));
+  const mergedLayers = localLayers.map(layer => cloneJson(layer));
+
+  for (const remoteLayer of remoteLayers) {
+    const remoteCopy = cloneJson(remoteLayer);
+    const existingIndex = mergedLayers.findIndex(layer => layer.id === remoteCopy.id);
+
+    if (existingIndex === -1) {
+      usedIds.add(remoteCopy.id);
+      mergedLayers.push(remoteCopy);
+      continue;
+    }
+
+    const localLayer = mergedLayers[existingIndex];
+    if (jsonEquals(localLayer, remoteCopy)) continue;
+
+    const localHasContent = hasDrawingLayerContent(localLayer);
+    const remoteHasContent = hasDrawingLayerContent(remoteCopy);
+
+    if (!localHasContent && remoteHasContent) {
+      usedIds.add(remoteCopy.id);
+      mergedLayers[existingIndex] = remoteCopy;
+    } else if (remoteHasContent) {
+      remoteCopy.id = getNextPrefixedId('layer', usedIds);
+      remoteCopy.name = `${remoteCopy.name || '원격 드로잉'} (원격)`;
+      mergedLayers.push(remoteCopy);
+    }
+  }
+
+  const activeLayerId = mergedLayers.some(layer => layer.id === localData?.activeLayerId)
+    ? localData.activeLayerId
+    : remoteData?.activeLayerId || mergedLayers[0]?.id || null;
+
+  return {
+    ...remoteData,
+    ...localData,
+    layers: mergedLayers,
+    activeLayerId
+  };
+}
+
+function getHighlightList(data) {
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.highlights) ? data.highlights : [];
+}
+
+function mergeHighlightData(localData = {}, remoteData = {}) {
+  const localHighlights = getHighlightList(localData);
+  const remoteHighlights = getHighlightList(remoteData);
+  const usedIds = new Set(localHighlights.map(highlight => highlight.id).filter(Boolean));
+  const mergedHighlights = localHighlights.map(highlight => cloneJson(highlight));
+
+  for (const remoteHighlight of remoteHighlights) {
+    const remoteCopy = cloneJson(remoteHighlight);
+    const existingIndex = mergedHighlights.findIndex(highlight => highlight.id === remoteCopy.id);
+
+    if (existingIndex === -1) {
+      usedIds.add(remoteCopy.id);
+      mergedHighlights.push(remoteCopy);
+      continue;
+    }
+
+    if (jsonEquals(mergedHighlights[existingIndex], remoteCopy)) continue;
+
+    remoteCopy.id = getNextPrefixedId('highlight', usedIds);
+    mergedHighlights.push(remoteCopy);
+  }
+
+  return {
+    ...(Array.isArray(remoteData) ? {} : remoteData),
+    ...(Array.isArray(localData) ? {} : localData),
+    highlights: mergedHighlights
+  };
+}
+
 const log = createLogger('ReviewDataManager');
 
 /**
@@ -638,8 +752,14 @@ export class ReviewDataManager extends EventTarget {
           }
         }
 
-        // 드로잉 데이터 머지 (원격이 더 최신이면 적용)
-        if (!options.preserveLocal && remoteData.drawings && this.drawingManager) {
+        // 드로잉 데이터 머지
+        if (options.preserveLocal && remoteData.drawings && this.drawingManager) {
+          const mergedDrawings = mergeDrawingData(this.drawingManager.exportData(), remoteData.drawings);
+          this.drawingManager.importData(mergedDrawings);
+          log.info('reloadAndMerge: 드로잉 데이터 보존 병합 완료', {
+            layers: mergedDrawings.layers?.length || 0
+          });
+        } else if (remoteData.drawings && this.drawingManager) {
           const localModified = new Date(this._modifiedAt || 0).getTime();
           const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
 
@@ -649,8 +769,14 @@ export class ReviewDataManager extends EventTarget {
           }
         }
 
-        // 하이라이트 데이터 (원격이 더 최신이면 적용)
-        if (!options.preserveLocal && remoteData.highlights && this.highlightManager) {
+        // 하이라이트 데이터
+        if (options.preserveLocal && remoteData.highlights && this.highlightManager) {
+          const mergedHighlights = mergeHighlightData(this.highlightManager.toJSON(), remoteData.highlights);
+          this.highlightManager.fromJSON(mergedHighlights);
+          log.info('reloadAndMerge: 하이라이트 데이터 보존 병합 완료', {
+            highlights: mergedHighlights.highlights?.length || 0
+          });
+        } else if (remoteData.highlights && this.highlightManager) {
           const localModified = new Date(this._modifiedAt || 0).getTime();
           const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
 

@@ -57,8 +57,12 @@ test('first .bframe save is protected against another user creating the file fir
   assert.match(reviewDataManagerSource, /if \(lastConflictResult\?\.success === true\) \{[\s\S]*this\._hasPersistedFile = true;[\s\S]*\} else \{[\s\S]*this\._hasPersistedFile = false;/);
   assert.match(reviewDataManagerSource, /if \(!savedData\) \{[\s\S]*throw new Error\(lastConflictResult\?\.error/);
   assert.match(appSource, /const mergeResult = await reviewDataManager\.reloadAndMerge\(\{ merge: true, force: true, preserveLocal: true \}\);[\s\S]*if \(!mergeResult\.success\) \{[\s\S]*return mergeResult;/);
-  assert.match(reviewDataManagerSource, /if \(!options\.preserveLocal && remoteData\.drawings && this\.drawingManager\)/);
-  assert.match(reviewDataManagerSource, /if \(!options\.preserveLocal && remoteData\.highlights && this\.highlightManager\)/);
+  assert.match(reviewDataManagerSource, /function mergeDrawingData\(localData = \{\}, remoteData = \{\}\)/);
+  assert.match(reviewDataManagerSource, /remoteCopy\.id = getNextPrefixedId\('layer', usedIds\);/);
+  assert.match(reviewDataManagerSource, /function mergeHighlightData\(localData = \{\}, remoteData = \{\}\)/);
+  assert.match(reviewDataManagerSource, /remoteCopy\.id = getNextPrefixedId\('highlight', usedIds\);/);
+  assert.match(reviewDataManagerSource, /const mergedDrawings = mergeDrawingData\(this\.drawingManager\.exportData\(\), remoteData\.drawings\);/);
+  assert.match(reviewDataManagerSource, /const mergedHighlights = mergeHighlightData\(this\.highlightManager\.toJSON\(\), remoteData\.highlights\);/);
 
   assert.match(preloadSource, /saveReview: \(filePath, data, options = \{\}\) => ipcRenderer\.invoke\('file:save-review', filePath, data, options\)/);
   assert.match(ipcHandlersSource, /failIfExists/);
