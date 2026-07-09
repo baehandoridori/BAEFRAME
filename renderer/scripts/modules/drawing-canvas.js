@@ -67,6 +67,7 @@ export class DrawingCanvas extends EventTarget {
 
     // 선택 도구 상태
     this.selectionCanvas = null;
+    this.selectionImageOpacity = 1;
     this.selection = null;
     this.floatingImage = null;
     this.floatingPos = null;
@@ -1020,7 +1021,10 @@ export class DrawingCanvas extends EventTarget {
     if (!ctx) return;
     ctx.clearRect(0, 0, this.selectionCanvas.width, this.selectionCanvas.height);
     if (this.floatingImage && this.floatingPos) {
+      ctx.save();
+      ctx.globalAlpha = this.selectionImageOpacity;
       ctx.drawImage(this.floatingImage, Math.round(this.floatingPos.x), Math.round(this.floatingPos.y));
+      ctx.restore();
     }
     const rect = this._normalizedSelection();
     if (!rect) {
@@ -1103,6 +1107,18 @@ export class DrawingCanvas extends EventTarget {
    */
   setOpacity(opacity) {
     this.opacity = opacity;
+  }
+
+  setSelectionImageOpacity(opacity) {
+    const value = Number(opacity);
+    const nextOpacity = Number.isFinite(value)
+      ? Math.max(0, Math.min(1, value))
+      : 1;
+    if (this.selectionImageOpacity === nextOpacity) return;
+    this.selectionImageOpacity = nextOpacity;
+    if (this.floatingImage || this.selection) {
+      this._renderSelectionOverlay();
+    }
   }
 
   /**

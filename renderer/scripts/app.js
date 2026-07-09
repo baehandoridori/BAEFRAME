@@ -6243,20 +6243,25 @@ async function initApp() {
     const baseCanvas = elements.drawingCanvas;
     if (!baseCanvas || baseCanvas.width <= 0 || baseCanvas.height <= 0) return '';
 
+    const activeLayerOpacity = Number(drawingManager.getActiveLayer?.()?.opacity);
+    const activeCanvasOpacity = Number.isFinite(activeLayerOpacity)
+      ? Math.max(0, Math.min(1, activeLayerOpacity))
+      : 1;
     const compositeCanvas = document.createElement('canvas');
     compositeCanvas.width = baseCanvas.width;
     compositeCanvas.height = baseCanvas.height;
     const ctx = compositeCanvas.getContext('2d');
-
-    [
-      elements.layersBelowCanvas,
-      baseCanvas,
-      elements.layersAboveCanvas,
-      elements.selectionOverlayCanvas
-    ].forEach((canvas) => {
+    const drawCanvas = (canvas, opacity = 1) => {
       if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
+      ctx.globalAlpha = opacity;
       ctx.drawImage(canvas, 0, 0);
-    });
+      ctx.globalAlpha = 1;
+    };
+
+    drawCanvas(elements.layersBelowCanvas);
+    drawCanvas(baseCanvas, activeCanvasOpacity);
+    drawCanvas(elements.layersAboveCanvas);
+    drawCanvas(elements.selectionOverlayCanvas);
 
     try {
       return compositeCanvas.toDataURL('image/png');

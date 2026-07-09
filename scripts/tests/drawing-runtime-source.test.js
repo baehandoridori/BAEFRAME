@@ -141,8 +141,14 @@ test('drawing layer rendering uses static below and above canvases around the ac
   assert.match(drawingManagerSource, /this\.layersAboveCtx = this\.layersAboveCanvas\?\.getContext\('2d'\)/);
   assert.match(drawingManagerSource, /_clearStaticLayerCanvases\(\)/);
   assert.match(drawingManagerSource, /_getLayerRenderBuckets\(\)/);
+  assert.match(drawingManagerSource, /applyLayerOpacity: false/);
+  assert.match(drawingManagerSource, /const opacity = bucket\.applyLayerOpacity === false \? 1 : layer\.opacity;/);
+  assert.match(drawingManagerSource, /_syncActiveLayerCanvasOpacity\(\)/);
+  assert.match(drawingCanvasSource, /setSelectionImageOpacity\(opacity\)/);
+  assert.match(drawingCanvasSource, /ctx\.globalAlpha = this\.selectionImageOpacity;/);
   assert.match(drawingManagerSource, /_drawImageToContext\(ctx, img, opacity\)/);
   assert.match(drawingManagerSource, /this\.renderFrame\(this\.currentFrame\);/);
+  assert.match(appSource, /drawCanvas\(baseCanvas, activeCanvasOpacity\);/);
 
   assert.match(drawingSyncSource, /skipActivate: true/);
   assert.match(drawingSyncSource, /insertIndex: Number\.isInteger\(insertIndex\) \? insertIndex : undefined/);

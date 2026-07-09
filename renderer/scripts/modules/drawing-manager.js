@@ -1132,10 +1132,25 @@ export class DrawingManager extends EventTarget {
   _getLayerRenderBuckets() {
     const { below, active, above } = partitionDrawingLayersForActive(this.layers, this.activeLayerId);
     return [
-      { layers: below, ctx: this.layersBelowCtx },
-      { layers: active ? [active] : [], ctx: this.drawingCanvas.ctx },
-      { layers: above, ctx: this.layersAboveCtx }
+      { layers: below, ctx: this.layersBelowCtx, applyLayerOpacity: true },
+      { layers: active ? [active] : [], ctx: this.drawingCanvas.ctx, applyLayerOpacity: false },
+      { layers: above, ctx: this.layersAboveCtx, applyLayerOpacity: true }
     ];
+  }
+
+  _getActiveLayerDisplayOpacity() {
+    const layer = this.getActiveLayer();
+    if (!layer || layer.visible === false) return 1;
+    const opacity = Number(layer.opacity);
+    return Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1;
+  }
+
+  _syncActiveLayerCanvasOpacity() {
+    const opacity = this._getActiveLayerDisplayOpacity();
+    if (this.canvas?.style) {
+      this.canvas.style.opacity = String(opacity);
+    }
+    this.drawingCanvas?.setSelectionImageOpacity?.(opacity);
   }
 
   _drawImageToContext(ctx, img, opacity) {
@@ -1149,6 +1164,8 @@ export class DrawingManager extends EventTarget {
    * 특정 프레임 렌더링 (모든 보이는 레이어 합성)
    */
   async renderFrame(frame) {
+    this._syncActiveLayerCanvasOpacity();
+
     if (this.drawingCanvas.floatingImage) {
       log.debug('플로팅 선택 영역이 있어 렌더링 보류', { frame });
       return;
@@ -1208,7 +1225,8 @@ export class DrawingManager extends EventTarget {
         // 이미지 캐시 확인 또는 새로 로드
         const img = await this._loadImage(keyframe.canvasData, keyframe);
         if (img) {
-          imagesToRender.push({ img, layer, ctx: bucket.ctx });
+          const opacity = bucket.applyLayerOpacity === false ? 1 : layer.opacity;
+          imagesToRender.push({ img, layer, ctx: bucket.ctx, opacity });
         }
 
         // 렌더링 취소 체크
@@ -1226,8 +1244,8 @@ export class DrawingManager extends EventTarget {
     }
 
     // 모든 이미지를 순서대로 그리기
-    for (const { img, layer, ctx } of imagesToRender) {
-      this._drawImageToContext(ctx, img, layer.opacity);
+    for (const { img, opacity, ctx } of imagesToRender) {
+      this._drawImageToContext(ctx, img, opacity);
     }
 
     log.debug('renderFrame 완료', { frame, renderedCount: imagesToRender.length });
@@ -1240,6 +1258,8 @@ export class DrawingManager extends EventTarget {
    * 캐시된 이미지만 사용, 캐시 미스 시 비동기 프리로드 후 다음 기회에 표시
    */
   _renderFrameSync(frame) {
+    this._syncActiveLayerCanvasOpacity();
+
     // 캐시된 이미지를 먼저 수집
     const images = [];
     let hasCacheMiss = false;
@@ -1252,7 +1272,8 @@ export class DrawingManager extends EventTarget {
         if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
         if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
-          images.push({ img: keyframe._cachedImage, opacity: layer.opacity, ctx: bucket.ctx });
+          const opacity = bucket.applyLayerOpacity === false ? 1 : layer.opacity;
+          images.push({ img: keyframe._cachedImage, opacity, ctx: bucket.ctx });
         } else {
           hasCacheMiss = true;
         }
