@@ -63,6 +63,35 @@ export class CommentSync {
     log.info('댓글 동기화 시작됨 (Broadcast 모드)');
   }
 
+  broadcastCurrentState() {
+    if (!this._started || !this._lm.hasOtherCollaborators()) return;
+
+    const data = this._cm.toJSON?.();
+    for (const layer of data?.layers || []) {
+      this._lm.broadcastEvent({
+        type: 'COMMENT_LAYER_ADDED',
+        layer: {
+          id: layer.id,
+          name: layer.name || '새 레이어',
+          visible: layer.visible !== false
+        }
+      });
+
+      for (const marker of layer.markers || []) {
+        if (marker.deleted) continue;
+        this._lm.broadcastEvent({
+          type: 'COMMENT_MARKER_ADDED',
+          marker: this._serializeMarker(marker),
+          layerId: layer.id
+        });
+      }
+    }
+
+    log.info('현재 댓글 상태 브로드캐스트 완료', {
+      layers: data?.layers?.length || 0
+    });
+  }
+
   /**
    * 동기화 중지
    */

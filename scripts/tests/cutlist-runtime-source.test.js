@@ -221,7 +221,7 @@ test('cutlist source switches defer collaboration startup until after the target
   const seekToCutBody = extractBalancedBlock(appSource, 'async function seekToCut');
   const commentReadyBody = extractBalancedBlock(appSource, 'async function ensureCutlistCommentTargetReady');
 
-  assert.match(appSource, /async function startCollaborationForVideoLoad\(loadToken, bframePath\)/);
+  assert.match(appSource, /async function startCollaborationForVideoLoad\(loadToken, bframePath, options = \{\}\)/);
   assert.match(appSource, /function scheduleDeferredCollaborationStart\(loadToken, bframePath\)/);
   assert.match(mappedSeekBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*deferCollaborationStart:\s*true[\s\S]*\}\)/);
   assert.match(seekToCutBody, /loadVideo\(source\.videoPath,\s*\{[\s\S]*deferCollaborationStart:\s*true[\s\S]*\}\)/);

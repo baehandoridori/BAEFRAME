@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ====== 파일 관련 ======
   openFileDialog: (options) => ipcRenderer.invoke('file:open-dialog', options),
   getFileInfo: (filePath) => ipcRenderer.invoke('file:get-info', filePath),
-  saveReview: (filePath, data) => ipcRenderer.invoke('file:save-review', filePath, data),
+  saveReview: (filePath, data, options = {}) => ipcRenderer.invoke('file:save-review', filePath, data, options),
   loadReview: (filePath) => ipcRenderer.invoke('file:load-review', filePath),
   fileExists: (filePath) => ipcRenderer.invoke('file:exists', filePath),
   scanVersions: (filePath) => ipcRenderer.invoke('file:scan-versions', filePath),

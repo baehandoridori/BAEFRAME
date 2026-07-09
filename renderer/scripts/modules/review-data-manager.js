@@ -100,6 +100,162 @@ function mergeLayers(localLayers, remoteLayers) {
   return { merged, added: totalAdded, updated: totalUpdated };
 }
 
+function cloneJson(value) {
+  return value === null || value === undefined ? value : JSON.parse(JSON.stringify(value));
+}
+
+function jsonEquals(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function getNextPrefixedId(prefix, usedIds) {
+  let maxId = 0;
+  for (const id of usedIds) {
+    const match = String(id).match(new RegExp(`^${prefix}-(\\d+)$`));
+    if (match) {
+      maxId = Math.max(maxId, parseInt(match[1], 10));
+    }
+  }
+
+  let nextId = maxId + 1;
+  let candidate = `${prefix}-${nextId}`;
+  while (usedIds.has(candidate)) {
+    nextId += 1;
+    candidate = `${prefix}-${nextId}`;
+  }
+  usedIds.add(candidate);
+  return candidate;
+}
+
+function hasDrawingLayerContent(layer) {
+  return (layer?.keyframes || []).some(keyframe => {
+    return !keyframe?.isEmpty
+      || !!keyframe?.canvasData
+      || !!keyframe?.baseCanvasData
+      || (keyframe?.strokeRecords || []).length > 0;
+  });
+}
+
+function mergeDrawingData(localData = {}, remoteData = {}) {
+  const localLayers = Array.isArray(localData?.layers) ? localData.layers : [];
+  const remoteLayers = Array.isArray(remoteData?.layers) ? remoteData.layers : [];
+  const usedIds = new Set(localLayers.map(layer => layer.id).filter(Boolean));
+  const mergedLayers = localLayers.map(layer => cloneJson(layer));
+
+  for (const remoteLayer of remoteLayers) {
+    const remoteCopy = cloneJson(remoteLayer);
+    const existingIndex = mergedLayers.findIndex(layer => layer.id === remoteCopy.id);
+
+    if (existingIndex === -1) {
+      usedIds.add(remoteCopy.id);
+      mergedLayers.push(remoteCopy);
+      continue;
+    }
+
+    const localLayer = mergedLayers[existingIndex];
+    if (jsonEquals(localLayer, remoteCopy)) continue;
+
+    const localHasContent = hasDrawingLayerContent(localLayer);
+    const remoteHasContent = hasDrawingLayerContent(remoteCopy);
+
+    if (!localHasContent && remoteHasContent) {
+      usedIds.add(remoteCopy.id);
+      mergedLayers[existingIndex] = remoteCopy;
+    } else if (remoteHasContent) {
+      remoteCopy.id = getNextPrefixedId('layer', usedIds);
+      remoteCopy.name = `${remoteCopy.name || '원격 드로잉'} (원격)`;
+      mergedLayers.push(remoteCopy);
+    }
+  }
+
+  const activeLayerId = mergedLayers.some(layer => layer.id === localData?.activeLayerId)
+    ? localData.activeLayerId
+    : remoteData?.activeLayerId || mergedLayers[0]?.id || null;
+
+  return {
+    ...remoteData,
+    ...localData,
+    layers: mergedLayers,
+    activeLayerId
+  };
+}
+
+function getHighlightList(data) {
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.highlights) ? data.highlights : [];
+}
+
+function mergeHighlightData(localData = {}, remoteData = {}) {
+  const localHighlights = getHighlightList(localData);
+  const remoteHighlights = getHighlightList(remoteData);
+  const usedIds = new Set(localHighlights.map(highlight => highlight.id).filter(Boolean));
+  const mergedHighlights = localHighlights.map(highlight => cloneJson(highlight));
+
+  for (const remoteHighlight of remoteHighlights) {
+    const remoteCopy = cloneJson(remoteHighlight);
+    const existingIndex = mergedHighlights.findIndex(highlight => highlight.id === remoteCopy.id);
+
+    if (existingIndex === -1) {
+      usedIds.add(remoteCopy.id);
+      mergedHighlights.push(remoteCopy);
+      continue;
+    }
+
+    if (jsonEquals(mergedHighlights[existingIndex], remoteCopy)) continue;
+
+    remoteCopy.id = getNextPrefixedId('highlight', usedIds);
+    mergedHighlights.push(remoteCopy);
+  }
+
+  return {
+    ...(Array.isArray(remoteData) ? {} : remoteData),
+    ...(Array.isArray(localData) ? {} : localData),
+    highlights: mergedHighlights
+  };
+}
+
+function mergeManualVersions(localVersions = [], remoteVersions = []) {
+  const merged = Array.isArray(localVersions) ? localVersions.map(version => cloneJson(version)) : [];
+  const keySet = new Set(merged.map(version => version.filePath || version.path || version.fileName).filter(Boolean));
+
+  for (const remoteVersion of Array.isArray(remoteVersions) ? remoteVersions : []) {
+    const key = remoteVersion.filePath || remoteVersion.path || remoteVersion.fileName;
+    if (key && keySet.has(key)) continue;
+    if (key) keySet.add(key);
+    merged.push(cloneJson(remoteVersion));
+  }
+
+  return merged;
+}
+
+function mergeCompositionLayers(localLayers = [], remoteLayers = []) {
+  const merged = Array.isArray(localLayers) ? localLayers.map(layer => cloneJson(layer)) : [];
+  const usedIds = new Set(merged.map(layer => layer.id).filter(Boolean));
+
+  for (const remoteLayer of Array.isArray(remoteLayers) ? remoteLayers : []) {
+    const remoteCopy = cloneJson(remoteLayer);
+    const existingIndex = merged.findIndex(layer => layer.id === remoteCopy.id);
+
+    if (existingIndex === -1) {
+      usedIds.add(remoteCopy.id);
+      merged.push(remoteCopy);
+      continue;
+    }
+
+    if (jsonEquals(merged[existingIndex], remoteCopy)) continue;
+
+    remoteCopy.id = `composition_${Date.now()}_${getNextPrefixedId('remote', usedIds)}`;
+    remoteCopy.name = `${remoteCopy.name || '원격 합성 레이어'} (원격)`;
+    remoteCopy.order = merged.length;
+    usedIds.add(remoteCopy.id);
+    merged.push(remoteCopy);
+  }
+
+  return merged
+    .map((layer, index) => ({ ...layer, order: Number.isFinite(layer.order) ? layer.order : index }))
+    .sort((a, b) => a.order - b.order);
+}
+
 const log = createLogger('ReviewDataManager');
 
 /**
@@ -142,6 +298,9 @@ export class ReviewDataManager extends EventTarget {
 
     // 저장 동시성 제어
     this._savePromise = null;  // 저장 중인 Promise (락)
+    this._hasPersistedFile = false;
+    this._beforeSaveHandler = null;
+    this._initialSaveConflictHandler = null;
 
     // 이벤트 바인딩
     this._onDataChanged = this._onDataChanged.bind(this);
@@ -162,6 +321,22 @@ export class ReviewDataManager extends EventTarget {
   setLiveblocksManager(manager) {
     this._liveblocksManager = manager;
     log.info('LiveblocksManager 연결됨');
+  }
+
+  /**
+   * 저장 직전 훅 설정
+   * @param {Function|null} handler
+   */
+  setBeforeSaveHandler(handler) {
+    this._beforeSaveHandler = typeof handler === 'function' ? handler : null;
+  }
+
+  /**
+   * 첫 저장 중 다른 사용자가 먼저 파일을 만든 경우의 처리 훅 설정
+   * @param {Function|null} handler
+   */
+  setInitialSaveConflictHandler(handler) {
+    this._initialSaveConflictHandler = typeof handler === 'function' ? handler : null;
   }
 
   /**
@@ -257,6 +432,12 @@ export class ReviewDataManager extends EventTarget {
 
     this.currentVideoPath = videoPath;
     this.currentBframePath = getBframePath(videoPath);
+    this._createdAt = null;
+    this._modifiedAt = null;
+    this._fps = 24;
+    this._liveblocksRoomId = null;
+    this._manualVersions = [];
+    this._hasPersistedFile = false;
     this.isDirty = false;
 
     log.info('영상 파일 설정됨', {
@@ -322,23 +503,75 @@ export class ReviewDataManager extends EventTarget {
    */
   async _doSave(_options = {}) {
     try {
-      const data = this._collectData();
+      let savedData = null;
+      let lastConflictResult = null;
+      const maxAttempts = 5;
 
-      // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
-      // 로컬 .bframe 스냅샷만 저장 (오프라인 백업 역할)
-      if (this._liveblocksManager?.isConnected) {
-        // liveblocksRoomId 포함
-        data.liveblocksRoomId = this._liveblocksManager.roomId || null;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const wasInitialPersist = !this._hasPersistedFile;
+
+        if (this._beforeSaveHandler) {
+          await this._beforeSaveHandler({
+            path: this.currentBframePath,
+            videoPath: this.currentVideoPath,
+            hasPersistedFile: this._hasPersistedFile,
+            options: _options
+          });
+        }
+
+        const data = this._collectData();
+
+        // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
+        // 로컬 .bframe 스냅샷만 저장 (오프라인 백업 역할)
+        if (this._liveblocksManager?.isConnected) {
+          // liveblocksRoomId 포함
+          data.liveblocksRoomId = this._liveblocksManager.roomId || null;
+        }
+
+        const saveResult = await window.electronAPI.saveReview(this.currentBframePath, data, {
+          failIfExists: wasInitialPersist
+        });
+
+        if (saveResult?.exists === true && wasInitialPersist) {
+          log.info('첫 .bframe 저장 충돌 감지, 기존 파일과 병합 시도', {
+            path: this.currentBframePath
+          });
+          lastConflictResult = await this._initialSaveConflictHandler?.({
+            path: this.currentBframePath,
+            videoPath: this.currentVideoPath
+          });
+
+          if (lastConflictResult?.success === true) {
+            this._hasPersistedFile = true;
+          } else {
+            this._hasPersistedFile = false;
+            if (attempt < maxAttempts - 1) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+
+          continue;
+        }
+
+        if (saveResult?.success !== true) {
+          throw new Error(saveResult?.error || '.bframe 저장 실패');
+        }
+
+        this._hasPersistedFile = true;
+        savedData = data;
+        break;
       }
 
-      await window.electronAPI.saveReview(this.currentBframePath, data);
+      if (!savedData) {
+        throw new Error(lastConflictResult?.error || '첫 .bframe 저장 충돌 병합 실패');
+      }
 
       this.isDirty = false;
 
       log.info('.bframe 파일 저장됨', {
         path: this.currentBframePath,
-        commentLayers: data.comments?.layers?.length || 0,
-        drawingLayers: data.drawings?.layers?.length || 0,
+        commentLayers: savedData?.comments?.layers?.length || 0,
+        drawingLayers: savedData?.drawings?.layers?.length || 0,
         liveblocksConnected: !!this._liveblocksManager?.isConnected
       });
 
@@ -392,6 +625,29 @@ export class ReviewDataManager extends EventTarget {
         log.info('원격 드로잉이 더 최신, 원격 데이터로 교체');
       }
 
+      if (remoteData.highlights) {
+        localData.highlights = mergeHighlightData(localData.highlights, remoteData.highlights);
+      }
+
+      if (remoteData.compositionLayers) {
+        localData.compositionLayers = mergeCompositionLayers(
+          localData.compositionLayers,
+          remoteData.compositionLayers
+        );
+      }
+
+      if (remoteData.manualVersions) {
+        localData.manualVersions = mergeManualVersions(localData.manualVersions, remoteData.manualVersions);
+      }
+
+      if (!localData.versionInfo && remoteData.versionInfo) {
+        localData.versionInfo = remoteData.versionInfo;
+      }
+
+      if (!localData.liveblocksRoomId && remoteData.liveblocksRoomId) {
+        localData.liveblocksRoomId = remoteData.liveblocksRoomId;
+      }
+
       // 머지 후 modifiedAt 갱신
       localData.modifiedAt = new Date().toISOString();
 
@@ -420,9 +676,12 @@ export class ReviewDataManager extends EventTarget {
       if (!data) {
         log.info('.bframe 파일 없음 (새 리뷰)', { path: this.currentBframePath });
         this.compositionLayerManager?.fromJSON?.([]);
+        this._hasPersistedFile = false;
         this.isLoading = false;
         return false;
       }
+
+      this._hasPersistedFile = true;
 
       // 버전 확인 및 마이그레이션
       const dataVersion = getDataVersion(data);
@@ -528,6 +787,8 @@ export class ReviewDataManager extends EventTarget {
         return { success: false, added: 0, updated: 0 };
       }
 
+      this._hasPersistedFile = true;
+
       const result = { added: 0, updated: 0 };
 
       if (options.merge && this.commentManager) {
@@ -556,8 +817,14 @@ export class ReviewDataManager extends EventTarget {
           }
         }
 
-        // 드로잉 데이터 머지 (원격이 더 최신이면 적용)
-        if (remoteData.drawings && this.drawingManager) {
+        // 드로잉 데이터 머지
+        if (options.preserveLocal && remoteData.drawings && this.drawingManager) {
+          const mergedDrawings = mergeDrawingData(this.drawingManager.exportData(), remoteData.drawings);
+          this.drawingManager.importData(mergedDrawings);
+          log.info('reloadAndMerge: 드로잉 데이터 보존 병합 완료', {
+            layers: mergedDrawings.layers?.length || 0
+          });
+        } else if (remoteData.drawings && this.drawingManager) {
           const localModified = new Date(this._modifiedAt || 0).getTime();
           const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
 
@@ -567,8 +834,14 @@ export class ReviewDataManager extends EventTarget {
           }
         }
 
-        // 하이라이트 데이터 (원격이 더 최신이면 적용)
-        if (remoteData.highlights && this.highlightManager) {
+        // 하이라이트 데이터
+        if (options.preserveLocal && remoteData.highlights && this.highlightManager) {
+          const mergedHighlights = mergeHighlightData(this.highlightManager.toJSON(), remoteData.highlights);
+          this.highlightManager.fromJSON(mergedHighlights);
+          log.info('reloadAndMerge: 하이라이트 데이터 보존 병합 완료', {
+            highlights: mergedHighlights.highlights?.length || 0
+          });
+        } else if (remoteData.highlights && this.highlightManager) {
           const localModified = new Date(this._modifiedAt || 0).getTime();
           const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
 
@@ -576,6 +849,33 @@ export class ReviewDataManager extends EventTarget {
             this.highlightManager.fromJSON(remoteData.highlights);
             log.info('reloadAndMerge: 하이라이트 데이터 업데이트됨');
           }
+        }
+
+        if (remoteData.liveblocksRoomId && !this._liveblocksRoomId) {
+          this._liveblocksRoomId = remoteData.liveblocksRoomId;
+        }
+
+        if (remoteData.versionInfo && !this._versionInfo) {
+          this._versionInfo = remoteData.versionInfo;
+        }
+
+        if (remoteData.manualVersions) {
+          this._manualVersions = mergeManualVersions(this._manualVersions, remoteData.manualVersions);
+        }
+
+        if (Array.isArray(remoteData.compositionLayers) && this.compositionLayerManager) {
+          const mergedCompositionLayers = mergeCompositionLayers(
+            this.compositionLayerManager.toJSON(),
+            remoteData.compositionLayers
+          );
+          this.compositionLayerManager.fromJSON(mergedCompositionLayers);
+          log.info('reloadAndMerge: 합성 레이어 데이터 병합 완료', {
+            layers: mergedCompositionLayers.length
+          });
+        }
+
+        if (remoteData.modifiedAt && toTime(remoteData.modifiedAt) > toTime(this._modifiedAt)) {
+          this._modifiedAt = remoteData.modifiedAt;
         }
 
       } else {
@@ -923,6 +1223,13 @@ export class ReviewDataManager extends EventTarget {
    */
   getBframePath() {
     return this.currentBframePath;
+  }
+
+  /**
+   * 현재 .bframe 파일이 실제로 존재하는 상태인지 반환
+   */
+  hasPersistedFile() {
+    return this._hasPersistedFile;
   }
 }
 
