@@ -353,8 +353,32 @@ export class CommentManager extends EventTarget {
    * FPS 설정
    */
   setFPS(fps) {
-    this.fps = fps;
-    log.debug('FPS 설정', { fps });
+    const nextFps = Number(fps);
+    if (!Number.isFinite(nextFps) || nextFps <= 0) return;
+    this.fps = nextFps;
+    this._remapMarkersToFps(nextFps);
+    log.debug('FPS 설정', { fps: nextFps });
+  }
+
+  /**
+   * 저장 시점 fps(marker.fps 스냅샷)와 현재 재생 fps가 다르면
+   * 벽시계 시각을 보존하도록 프레임 번호를 재매핑한다.
+   * 24fps 고정 시절 데이터(marker.fps 부재 또는 24)는 24를 기준으로 본다.
+   */
+  _remapMarkersToFps(nextFps) {
+    this.layers.forEach((layer) => {
+      layer.getAllMarkers(true).forEach((marker) => {
+        const sourceFps = Number(marker.fps) > 0 ? Number(marker.fps) : 24;
+        if (sourceFps !== nextFps) {
+          const factor = nextFps / sourceFps;
+          const startFrame = Number(marker.startFrame) || 0;
+          const endFrame = Number(marker.endFrame) || startFrame;
+          marker.startFrame = Math.max(0, Math.round(startFrame * factor));
+          marker.endFrame = Math.max(marker.startFrame, Math.round(endFrame * factor));
+        }
+        marker.fps = nextFps;
+      });
+    });
   }
 
   /**
@@ -1171,10 +1195,6 @@ export class CommentManager extends EventTarget {
   fromJSON(json) {
     this.layers = [];
 
-    if (json.fps) {
-      this.fps = json.fps;
-    }
-
     if (json.layers && Array.isArray(json.layers)) {
       for (const layerData of json.layers) {
         const layer = new CommentLayer({
@@ -1203,6 +1223,7 @@ export class CommentManager extends EventTarget {
       this._createDefaultLayer();
     }
 
+    this._remapMarkersToFps(this.fps);
     this._emit('markersChanged');
     this._emit('layersChanged');
   }

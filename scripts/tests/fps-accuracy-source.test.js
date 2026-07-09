@@ -67,3 +67,20 @@ test('timecode formatters round fps for frame digits (fractional fps safe)', () 
   assert.match(appSource, /\$\{formatFpsLabel\(videoPlayer\.fps\)\}fps · Frame/);
   assert.match(timelineSource, /_formatTimecode\(time\) \{[\s\S]*?Math\.max\(1, Math\.round\(Number\(this\.fps\) \|\| 24\)\)/);
 });
+
+test('bframe frame data is remapped when stored fps differs from playback fps', () => {
+  assert.match(commentManagerSource, /_remapMarkersToFps\(nextFps\)/);
+  const setFpsMatch = commentManagerSource.match(/setFPS\(fps\) \{([\s\S]*?)\n  \}/);
+  assert.ok(setFpsMatch, 'setFPS should exist');
+  assert.match(setFpsMatch[1], /this\._remapMarkersToFps\(/);
+  // 주의: comment-manager.js에는 CommentMarker의 `static fromJSON(json)`(258행 부근)이
+  // 매니저 fromJSON(1171행 부근)보다 먼저 나온다. 들여쓰기 앵커 `\n  fromJSON`으로
+  // 매니저 쪽만 매칭해야 한다 (`\n  static fromJSON`은 매칭되지 않음).
+  const fromJsonMatch = commentManagerSource.match(/\n  fromJSON\(json\) \{([\s\S]*?)\n  \}/);
+  assert.ok(fromJsonMatch, 'manager fromJSON should exist');
+  assert.doesNotMatch(fromJsonMatch[1], /this\.fps = json\.fps;/);
+  assert.match(fromJsonMatch[1], /this\._remapMarkersToFps\(this\.fps\);/);
+
+  assert.match(drawingManagerSource, /const sourceFps = Number\(data\.fps\) > 0 \? Number\(data\.fps\) : 24;/);
+  assert.match(appSource, /reviewDataManager\.setFps\(fps\);/);
+});

@@ -1040,6 +1040,7 @@ async function initApp() {
 
     // 댓글 매니저에 FPS 전달
     commentManager.setFPS(fps);
+    reviewDataManager.setFps(fps);
 
     // .bframe에서 로드된 데이터가 있으면 다시 렌더링
     if (drawingManager.layers.length > 0) {
@@ -7220,6 +7221,7 @@ async function initApp() {
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
       const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
       if (!canContinueVideoLoad()) return false;
+      reviewDataManager.setFps(videoPlayer.fps);
       const currentBframePath = reviewDataManager.currentBframePath;
 
       // keepVersionContext가 false일 때만 manualVersions 복원
