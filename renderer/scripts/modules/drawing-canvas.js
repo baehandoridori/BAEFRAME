@@ -1004,6 +1004,7 @@ export class DrawingCanvas extends EventTarget {
     const ctx = this.selectionCanvas?.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, this.selectionCanvas.width, this.selectionCanvas.height);
+    this._emitSelectionOverlayChanged();
   }
 
   _renderSelectionOverlay() {
@@ -1014,7 +1015,10 @@ export class DrawingCanvas extends EventTarget {
       ctx.drawImage(this.floatingImage, Math.round(this.floatingPos.x), Math.round(this.floatingPos.y));
     }
     const rect = this._normalizedSelection();
-    if (!rect) return;
+    if (!rect) {
+      this._emitSelectionOverlayChanged();
+      return;
+    }
     ctx.save();
     ctx.lineWidth = 1;
     ctx.setLineDash([6, 4]);
@@ -1024,6 +1028,14 @@ export class DrawingCanvas extends EventTarget {
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w, rect.h);
     ctx.restore();
+    this._emitSelectionOverlayChanged();
+  }
+
+  _emitSelectionOverlayChanged() {
+    this._emit('selectionoverlaychanged', {
+      hasFloating: !!this.floatingImage,
+      hasSelection: !!this.selection
+    });
   }
 
   /**

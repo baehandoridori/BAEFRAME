@@ -140,6 +140,13 @@ export class DrawingManager extends EventTarget {
     this.drawingCanvas.addEventListener('selectioncommitted', () => {
       this._onSelectionCommitted();
     });
+
+    this.drawingCanvas.addEventListener('selectionoverlaychanged', (e) => {
+      this._emit('selectionoverlaychanged', {
+        ...e.detail,
+        frame: this.currentFrame
+      });
+    });
   }
 
   /**

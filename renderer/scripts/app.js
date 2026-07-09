@@ -1291,6 +1291,10 @@ async function initApp() {
     scheduleMpvOverlayStateSync({ liveDrawing: true });
   });
 
+  drawingManager.addEventListener('selectionoverlaychanged', () => {
+    scheduleMpvOverlayStateSync({ liveDrawing: true });
+  });
+
   drawingManager.addEventListener('drawend', () => {
     scheduleMpvOverlayStateSync({ force: true });
   });
@@ -6242,7 +6246,12 @@ async function initApp() {
     compositeCanvas.height = baseCanvas.height;
     const ctx = compositeCanvas.getContext('2d');
 
-    [elements.layersBelowCanvas, baseCanvas, elements.layersAboveCanvas].forEach((canvas) => {
+    [
+      elements.layersBelowCanvas,
+      baseCanvas,
+      elements.layersAboveCanvas,
+      elements.selectionOverlayCanvas
+    ].forEach((canvas) => {
       if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
       ctx.drawImage(canvas, 0, 0);
     });
