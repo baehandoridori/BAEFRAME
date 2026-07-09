@@ -165,29 +165,29 @@ export class PlaybackSync extends EventTarget {
     const type = event.type.replace(PREFIX, '');
 
     switch (type) {
-      case 'PLAY':
-        log.info('리모트 재생 수신', { time: event.time });
-        this._setRemoteGuard();
-        this.dispatchEvent(new CustomEvent('remotePlay', {
-          detail: { time: event.time, playlistContinuous: event.playlistContinuous === true }
-        }));
-        break;
+    case 'PLAY':
+      log.info('리모트 재생 수신', { time: event.time });
+      this._setRemoteGuard();
+      this.dispatchEvent(new CustomEvent('remotePlay', {
+        detail: { time: event.time, playlistContinuous: event.playlistContinuous === true }
+      }));
+      break;
 
-      case 'PAUSE':
-        log.info('리모트 일시정지 수신', { time: event.time });
-        this._setRemoteGuard();
-        this.dispatchEvent(new CustomEvent('remotePause', {
-          detail: { time: event.time, playlistContinuous: event.playlistContinuous === true }
-        }));
-        break;
+    case 'PAUSE':
+      log.info('리모트 일시정지 수신', { time: event.time });
+      this._setRemoteGuard();
+      this.dispatchEvent(new CustomEvent('remotePause', {
+        detail: { time: event.time, playlistContinuous: event.playlistContinuous === true }
+      }));
+      break;
 
-      case 'SEEK':
-        log.info('리모트 탐색 수신', { time: event.time });
-        this._setRemoteGuard();
-        this.dispatchEvent(new CustomEvent('remoteSeek', {
-          detail: { time: event.time, playlistContinuous: event.playlistContinuous === true }
-        }));
-        break;
+    case 'SEEK':
+      log.info('리모트 탐색 수신', { time: event.time });
+      this._setRemoteGuard();
+      this.dispatchEvent(new CustomEvent('remoteSeek', {
+        detail: { time: event.time, playlistContinuous: event.playlistContinuous === true }
+      }));
+      break;
     }
   }
 

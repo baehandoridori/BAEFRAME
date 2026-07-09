@@ -124,7 +124,7 @@ class RecentFilesStore {
 
     if (existingIdx >= 0) {
       const existing = items[existingIdx];
-      const sizeChanged = input.size != null && existing.size !== input.size;
+      const sizeChanged = input.size !== null && input.size !== undefined && existing.size !== input.size;
 
       items[existingIdx] = {
         ...existing,
@@ -132,8 +132,8 @@ class RecentFilesStore {
         name: input.name,
         dir: input.dir,
         ext: input.ext,
-        size: input.size != null ? input.size : existing.size,
-        duration: input.duration != null ? input.duration : existing.duration,
+        size: input.size !== null && input.size !== undefined ? input.size : existing.size,
+        duration: input.duration !== null && input.duration !== undefined ? input.duration : existing.duration,
         thumbPath: sizeChanged ? null : existing.thumbPath,
         openedAt: now,
         openCount: (existing.openCount || 0) + 1
