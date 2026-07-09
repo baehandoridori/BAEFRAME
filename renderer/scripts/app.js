@@ -5365,7 +5365,10 @@ async function initApp() {
   }
 
   async function startCollaborationForVideoLoad(loadToken, bframePath, options = {}) {
-    const { persistNewRoom = true } = options;
+    const {
+      persistNewRoom = true,
+      seedCurrentState = false
+    } = options;
     if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
 
     const userName = userSettings.getUserName();
@@ -5407,6 +5410,10 @@ async function initApp() {
       }
       drawingSync.start();
       playbackSync.start();
+      if (seedCurrentState) {
+        commentSync.broadcastCurrentState?.();
+        drawingSync.broadcastCurrentState?.();
+      }
       log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
     } catch (error) {
       log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
@@ -5459,13 +5466,15 @@ async function initApp() {
       log.info('첫 저장 전 기존 .bframe 발견, 병합 후 협업 시작', { path: bframePath });
       await reviewDataManager.reloadAndMerge({ merge: true, force: true, preserveLocal: true });
       await startCollaborationForVideoLoad(latestVideoLoadToken, bframePath, {
-        persistNewRoom: false
+        persistNewRoom: false,
+        seedCurrentState: true
       });
       return;
     }
 
     await startCollaborationForVideoLoad(latestVideoLoadToken, bframePath, {
-      persistNewRoom: false
+      persistNewRoom: false,
+      seedCurrentState: true
     });
   }
 
@@ -5478,7 +5487,8 @@ async function initApp() {
       return mergeResult;
     }
     await startCollaborationForVideoLoad(latestVideoLoadToken, bframePath, {
-      persistNewRoom: false
+      persistNewRoom: false,
+      seedCurrentState: true
     });
     return mergeResult;
   }

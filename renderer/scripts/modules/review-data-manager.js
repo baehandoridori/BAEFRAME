@@ -101,7 +101,7 @@ function mergeLayers(localLayers, remoteLayers) {
 }
 
 function cloneJson(value) {
-  return value == null ? value : JSON.parse(JSON.stringify(value));
+  return value === null || value === undefined ? value : JSON.parse(JSON.stringify(value));
 }
 
 function jsonEquals(a, b) {
@@ -212,6 +212,48 @@ function mergeHighlightData(localData = {}, remoteData = {}) {
     ...(Array.isArray(localData) ? {} : localData),
     highlights: mergedHighlights
   };
+}
+
+function mergeManualVersions(localVersions = [], remoteVersions = []) {
+  const merged = Array.isArray(localVersions) ? localVersions.map(version => cloneJson(version)) : [];
+  const keySet = new Set(merged.map(version => version.filePath || version.path || version.fileName).filter(Boolean));
+
+  for (const remoteVersion of Array.isArray(remoteVersions) ? remoteVersions : []) {
+    const key = remoteVersion.filePath || remoteVersion.path || remoteVersion.fileName;
+    if (key && keySet.has(key)) continue;
+    if (key) keySet.add(key);
+    merged.push(cloneJson(remoteVersion));
+  }
+
+  return merged;
+}
+
+function mergeCompositionLayers(localLayers = [], remoteLayers = []) {
+  const merged = Array.isArray(localLayers) ? localLayers.map(layer => cloneJson(layer)) : [];
+  const usedIds = new Set(merged.map(layer => layer.id).filter(Boolean));
+
+  for (const remoteLayer of Array.isArray(remoteLayers) ? remoteLayers : []) {
+    const remoteCopy = cloneJson(remoteLayer);
+    const existingIndex = merged.findIndex(layer => layer.id === remoteCopy.id);
+
+    if (existingIndex === -1) {
+      usedIds.add(remoteCopy.id);
+      merged.push(remoteCopy);
+      continue;
+    }
+
+    if (jsonEquals(merged[existingIndex], remoteCopy)) continue;
+
+    remoteCopy.id = `composition_${Date.now()}_${getNextPrefixedId('remote', usedIds)}`;
+    remoteCopy.name = `${remoteCopy.name || '원격 합성 레이어'} (원격)`;
+    remoteCopy.order = merged.length;
+    usedIds.add(remoteCopy.id);
+    merged.push(remoteCopy);
+  }
+
+  return merged
+    .map((layer, index) => ({ ...layer, order: Number.isFinite(layer.order) ? layer.order : index }))
+    .sort((a, b) => a.order - b.order);
 }
 
 const log = createLogger('ReviewDataManager');
@@ -583,6 +625,29 @@ export class ReviewDataManager extends EventTarget {
         log.info('원격 드로잉이 더 최신, 원격 데이터로 교체');
       }
 
+      if (remoteData.highlights) {
+        localData.highlights = mergeHighlightData(localData.highlights, remoteData.highlights);
+      }
+
+      if (remoteData.compositionLayers) {
+        localData.compositionLayers = mergeCompositionLayers(
+          localData.compositionLayers,
+          remoteData.compositionLayers
+        );
+      }
+
+      if (remoteData.manualVersions) {
+        localData.manualVersions = mergeManualVersions(localData.manualVersions, remoteData.manualVersions);
+      }
+
+      if (!localData.versionInfo && remoteData.versionInfo) {
+        localData.versionInfo = remoteData.versionInfo;
+      }
+
+      if (!localData.liveblocksRoomId && remoteData.liveblocksRoomId) {
+        localData.liveblocksRoomId = remoteData.liveblocksRoomId;
+      }
+
       // 머지 후 modifiedAt 갱신
       localData.modifiedAt = new Date().toISOString();
 
@@ -784,6 +849,33 @@ export class ReviewDataManager extends EventTarget {
             this.highlightManager.fromJSON(remoteData.highlights);
             log.info('reloadAndMerge: 하이라이트 데이터 업데이트됨');
           }
+        }
+
+        if (remoteData.liveblocksRoomId && !this._liveblocksRoomId) {
+          this._liveblocksRoomId = remoteData.liveblocksRoomId;
+        }
+
+        if (remoteData.versionInfo && !this._versionInfo) {
+          this._versionInfo = remoteData.versionInfo;
+        }
+
+        if (remoteData.manualVersions) {
+          this._manualVersions = mergeManualVersions(this._manualVersions, remoteData.manualVersions);
+        }
+
+        if (Array.isArray(remoteData.compositionLayers) && this.compositionLayerManager) {
+          const mergedCompositionLayers = mergeCompositionLayers(
+            this.compositionLayerManager.toJSON(),
+            remoteData.compositionLayers
+          );
+          this.compositionLayerManager.fromJSON(mergedCompositionLayers);
+          log.info('reloadAndMerge: 합성 레이어 데이터 병합 완료', {
+            layers: mergedCompositionLayers.length
+          });
+        }
+
+        if (remoteData.modifiedAt && toTime(remoteData.modifiedAt) > toTime(this._modifiedAt)) {
+          this._modifiedAt = remoteData.modifiedAt;
         }
 
       } else {

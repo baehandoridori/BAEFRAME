@@ -15,6 +15,8 @@ const reviewDataManagerSource = normalizeNewlines(
 );
 const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
 const ipcHandlersSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
+const commentSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/comment-sync.js'), 'utf8'));
+const drawingSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-sync.js'), 'utf8'));
 
 test('missing .bframe loads enter deferred discovery instead of immediate collaboration save', () => {
   assert.match(appSource, /function startDeferredReviewFileDiscovery\(loadToken, bframePath\)/);
@@ -39,7 +41,9 @@ test('missing .bframe loads enter deferred discovery instead of immediate collab
 
 test('new review room can be attached to first save without recursively saving at load time', () => {
   assert.match(appSource, /async function startCollaborationForVideoLoad\(loadToken, bframePath, options = \{\}\)/);
-  assert.match(appSource, /const \{ persistNewRoom = true \} = options;/);
+  assert.match(appSource, /persistNewRoom = true,/);
+  assert.match(appSource, /seedCurrentState = false/);
+  assert.match(appSource, /if \(seedCurrentState\) \{[\s\S]*commentSync\.broadcastCurrentState\?\.\(\);[\s\S]*drawingSync\.broadcastCurrentState\?\.\(\);/);
 
   const newRoomBranch = appSource.match(/if \(isNewRoom && isCurrentReviewPath\(bframePath\)\) \{([\s\S]*?)\n      \}/);
   assert.ok(newRoomBranch, 'startCollaborationForVideoLoad should handle newly-created rooms explicitly');
@@ -57,12 +61,19 @@ test('first .bframe save is protected against another user creating the file fir
   assert.match(reviewDataManagerSource, /if \(lastConflictResult\?\.success === true\) \{[\s\S]*this\._hasPersistedFile = true;[\s\S]*\} else \{[\s\S]*this\._hasPersistedFile = false;/);
   assert.match(reviewDataManagerSource, /if \(!savedData\) \{[\s\S]*throw new Error\(lastConflictResult\?\.error/);
   assert.match(appSource, /const mergeResult = await reviewDataManager\.reloadAndMerge\(\{ merge: true, force: true, preserveLocal: true \}\);[\s\S]*if \(!mergeResult\.success\) \{[\s\S]*return mergeResult;/);
+  assert.match(appSource, /persistNewRoom: false,\s*seedCurrentState: true/);
+  assert.match(commentSyncSource, /broadcastCurrentState\(\) \{[\s\S]*type: 'COMMENT_MARKER_ADDED'/);
+  assert.match(drawingSyncSource, /broadcastCurrentState\(\) \{[\s\S]*type: 'DRAWING_KEYFRAME_UPDATE'/);
   assert.match(reviewDataManagerSource, /function mergeDrawingData\(localData = \{\}, remoteData = \{\}\)/);
   assert.match(reviewDataManagerSource, /remoteCopy\.id = getNextPrefixedId\('layer', usedIds\);/);
   assert.match(reviewDataManagerSource, /function mergeHighlightData\(localData = \{\}, remoteData = \{\}\)/);
   assert.match(reviewDataManagerSource, /remoteCopy\.id = getNextPrefixedId\('highlight', usedIds\);/);
+  assert.match(reviewDataManagerSource, /function mergeManualVersions\(localVersions = \[\], remoteVersions = \[\]\)/);
+  assert.match(reviewDataManagerSource, /function mergeCompositionLayers\(localLayers = \[\], remoteLayers = \[\]\)/);
   assert.match(reviewDataManagerSource, /const mergedDrawings = mergeDrawingData\(this\.drawingManager\.exportData\(\), remoteData\.drawings\);/);
   assert.match(reviewDataManagerSource, /const mergedHighlights = mergeHighlightData\(this\.highlightManager\.toJSON\(\), remoteData\.highlights\);/);
+  assert.match(reviewDataManagerSource, /this\._manualVersions = mergeManualVersions\(this\._manualVersions, remoteData\.manualVersions\);/);
+  assert.match(reviewDataManagerSource, /const mergedCompositionLayers = mergeCompositionLayers\([\s\S]*this\.compositionLayerManager\.toJSON\(\),[\s\S]*remoteData\.compositionLayers/);
 
   assert.match(preloadSource, /saveReview: \(filePath, data, options = \{\}\) => ipcRenderer\.invoke\('file:save-review', filePath, data, options\)/);
   assert.match(ipcHandlersSource, /failIfExists/);

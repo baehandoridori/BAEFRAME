@@ -69,6 +69,40 @@ export class DrawingSync {
     log.info('그리기 동기화 시작됨 (Broadcast 모드)');
   }
 
+  broadcastCurrentState() {
+    if (!this._started || !this._lm.hasOtherCollaborators()) return;
+
+    const layers = this._dm.getLayers?.() || this._dm.layers || [];
+    for (const layer of layers) {
+      this._lm.broadcastEvent({
+        type: 'DRAWING_LAYER_CREATED',
+        layer: {
+          id: layer.id,
+          name: layer.name,
+          visible: layer.visible,
+          color: layer.color,
+          opacity: layer.opacity
+        }
+      });
+
+      for (const keyframe of layer.keyframes || []) {
+        if (!keyframe?.canvasData) continue;
+        this._lm.broadcastEvent({
+          type: 'DRAWING_KEYFRAME_UPDATE',
+          layerId: layer.id,
+          frame: keyframe.frame,
+          canvasData: keyframe.canvasData,
+          baseCanvasData: keyframe.baseCanvasData,
+          strokeRecords: keyframe.strokeRecords
+        });
+      }
+    }
+
+    log.info('현재 그리기 상태 브로드캐스트 완료', {
+      layers: layers.length
+    });
+  }
+
   /**
    * 동기화 중지
    */
