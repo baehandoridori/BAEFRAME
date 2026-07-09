@@ -63,8 +63,8 @@ test('shift and ctrl keyframe clicks update selection before any drag ghost is c
   assert.match(timelineSource, /this\._setKeyframeSelection\(nextSelection, \{ anchor: \{ layerId, frame \} \}\);/);
   assert.match(timelineSource, /nextSelection\.some\(item =>[\s\S]*item\.layerId === this\.lastSelectedKeyframe\?\.layerId/);
 
-  const markerMouseDown = timelineSource.match(/marker\.addEventListener\('mousedown', \(e\) => \{([\s\S]*?)\n      \}\);/);
-  assert.ok(markerMouseDown, 'rendered keyframe marker mousedown handler should exist');
+  const markerMouseDown = timelineSource.match(/marker\.addEventListener\('pointerdown', \(e\) => \{([\s\S]*?)\n      \}\);/);
+  assert.ok(markerMouseDown, 'rendered keyframe marker pointerdown handler should exist');
   assert.ok(
     markerMouseDown[1].indexOf('const shouldStartDrag = this._handleKeyframePointerDown(e, layer.id, range.start);') <
       markerMouseDown[1].indexOf('this._startKeyframeDrag(e, layer.id, range.start, marker);'),

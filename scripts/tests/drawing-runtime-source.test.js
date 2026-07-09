@@ -12,6 +12,7 @@ const drawingCanvasSource = normalizeNewlines(fs.readFileSync(path.join(rootDir,
 const drawingManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-manager.js'), 'utf8'));
 const drawingStrokeRecordsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-stroke-records.js'), 'utf8'));
 const drawingSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-sync.js'), 'utf8'));
+const reviewDataManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/review-data-manager.js'), 'utf8'));
 const userSettingsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/user-settings.js'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
@@ -107,6 +108,8 @@ test('clearing the current drawing frame respects locked and hidden layers', () 
   assert.match(appSource, /if \(layer\.locked \|\| layer\.visible === false\) \{/);
   assert.match(appSource, /잠긴 레이어는 지울 수 없습니다/);
   assert.match(appSource, /숨긴 레이어는 지울 수 없습니다/);
+  assert.match(appSource, /const hasClearableSelection = !!\([\s\S]*?drawingManager\.drawingCanvas\?\.floatingImage[\s\S]*?drawingManager\.drawingCanvas\?\.selection[\s\S]*?\);/);
+  assert.match(appSource, /if \(\(keyframe && !keyframe\.isEmpty\) \|\| hasClearableSelection\) \{[\s\S]*?drawingManager\.drawingCanvas\?\.clearSelection\?\.\(\);[\s\S]*?if \(keyframe && !keyframe\.isEmpty\) \{[\s\S]*?keyframe\.setCanvasData\(null\);/);
 });
 
 test('drawing manager skips stroke record persistence when a save is blocked', () => {
@@ -124,6 +127,8 @@ test('drawing layer rendering uses static below and above canvases around the ac
   assert.match(indexSource, /id="layersAboveCanvas"/);
   assert.match(mainCss, /\.layers-below-layer/);
   assert.match(mainCss, /\.layers-above-layer/);
+  assert.match(mainCss, /\.layers-above-layer \{[\s\S]*?z-index: 4;[\s\S]*?\}/);
+  assert.match(mainCss, /\.selection-overlay \{[\s\S]*?z-index: 3;[\s\S]*?\}/);
 
   assert.match(appSource, /layersBelowCanvas: document\.getElementById\('layersBelowCanvas'\)/);
   assert.match(appSource, /layersAboveCanvas: document\.getElementById\('layersAboveCanvas'\)/);
@@ -139,10 +144,18 @@ test('drawing layer rendering uses static below and above canvases around the ac
   assert.match(drawingManagerSource, /this\.layersAboveCtx = this\.layersAboveCanvas\?\.getContext\('2d'\)/);
   assert.match(drawingManagerSource, /_clearStaticLayerCanvases\(\)/);
   assert.match(drawingManagerSource, /_getLayerRenderBuckets\(\)/);
+  assert.match(drawingManagerSource, /applyLayerOpacity: false/);
+  assert.match(drawingManagerSource, /const opacity = bucket\.applyLayerOpacity === false \? 1 : layer\.opacity;/);
+  assert.match(drawingManagerSource, /_syncActiveLayerCanvasOpacity\(\)/);
+  assert.match(drawingCanvasSource, /setSelectionImageOpacity\(opacity\)/);
+  assert.match(drawingCanvasSource, /ctx\.globalAlpha = this\.selectionImageOpacity;/);
   assert.match(drawingManagerSource, /_drawImageToContext\(ctx, img, opacity\)/);
   assert.match(drawingManagerSource, /this\.renderFrame\(this\.currentFrame\);/);
+  assert.match(appSource, /drawCanvas\(baseCanvas, activeCanvasOpacity\);[\s\S]*?drawCanvas\(elements\.selectionOverlayCanvas\);[\s\S]*?drawCanvas\(elements\.layersAboveCanvas\);/);
+  assert.match(appSource, /drawCanvas\(baseCanvas, activeCanvasOpacity\);/);
 
-  assert.match(drawingSyncSource, /createLayer\(\{ \.\.\.layerData, skipActivate: true \}\)/);
+  assert.match(drawingSyncSource, /skipActivate: true/);
+  assert.match(drawingSyncSource, /insertIndex: Number\.isInteger\(insertIndex\) \? insertIndex : undefined/);
 });
 
 test('drawing manager records freehand strokes and erases intersecting stroke records', () => {
@@ -218,4 +231,64 @@ test('pen and brush strokes use bundled perfect-freehand smoothing without chang
 
   assert.match(drawingStrokeRecordsSource, /points: record\.points\.map\(point => \(\{/);
   assert.doesNotMatch(drawingStrokeRecordsSource, /smoothVersion|freehandVersion|renderMode/);
+});
+
+test('drawing select tool supports marquee selection, move, copy and paste', () => {
+  assert.match(drawingCanvasSource, /SELECT: 'select'/);
+  assert.match(drawingCanvasSource, /_onSelectPointerDown\(e\)/);
+  assert.match(drawingCanvasSource, /commitSelection\(\)/);
+  assert.match(drawingCanvasSource, /clearSelection\(\)/);
+  assert.match(drawingCanvasSource, /copySelection\(\)/);
+  assert.match(drawingCanvasSource, /pasteSelection\(\)/);
+  assert.match(drawingManagerSource, /commitActiveSelection\(\)/);
+  assert.match(drawingManagerSource, /selectioncommitted/);
+  assert.match(drawingManagerSource, /exportData\(\) \{[\s\S]*?this\.drawingCanvas\?\.floatingImage[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?layers: this\.layers\.map/);
+  assert.match(indexSource, /data-tool="select"/);
+  assert.match(indexSource, /id="selectionOverlayCanvas"/);
+  assert.match(userSettingsSource, /'select', 'pen', 'brush', 'eraser', 'line', 'arrow', 'rect', 'circle'/);
+});
+
+test('floating drawing selections are resolved before context changes, not during render', () => {
+  const renderStart = drawingManagerSource.indexOf('async renderFrame(frame) {');
+  const renderEnd = drawingManagerSource.indexOf('\n  _renderFrameSync', renderStart);
+  const renderFrameBody = drawingManagerSource.slice(renderStart, renderEnd);
+  const syncOverlayStart = appSource.indexOf('function syncCanvasOverlay() {');
+  const syncOverlayEnd = appSource.indexOf('\n  // 윈도우 리사이즈', syncOverlayStart);
+  const syncOverlayBody = appSource.slice(syncOverlayStart, syncOverlayEnd);
+
+  assert.doesNotMatch(renderFrameBody, /commitSelection|commitActiveSelection/);
+  assert.doesNotMatch(syncOverlayBody, /layerCanvas\.width = renderArea\.videoWidth;[\s\S]*?layerCanvas\.height = renderArea\.videoHeight;/);
+  assert.doesNotMatch(syncOverlayBody, /onionCanvas\.width = renderArea\.videoWidth;[\s\S]*?onionCanvas\.height = renderArea\.videoHeight;/);
+  assert.match(drawingCanvasSource, /syncSize\(width, height\) \{[\s\S]*?if \(this\.canvas\.width === width && this\.canvas\.height === height\) \{[\s\S]*?return false;[\s\S]*?\}/);
+  assert.match(drawingManagerSource, /setCanvasSize\(width, height\) \{[\s\S]*?const canvasSizeChanged = this\.drawingCanvas\?\.canvas &&[\s\S]*?this\.drawingCanvas\.canvas\.width !== width[\s\S]*?this\.drawingCanvas\.canvas\.height !== height[\s\S]*?if \(canvasSizeChanged && \(this\.drawingCanvas\.floatingImage \|\| this\.drawingCanvas\.selection\)\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?\}/);
+  assert.match(drawingManagerSource, /_setCanvasElementSize\(canvas, width, height\) \{[\s\S]*?if \(canvas\.width === width && canvas\.height === height\) return false;[\s\S]*?canvas\.width = width;[\s\S]*?canvas\.height = height;/);
+  assert.match(drawingManagerSource, /createLayer\(options = \{\}, saveHistory = true\) \{[\s\S]*?const shouldActivate = options\.skipActivate !== true;[\s\S]*?if \(shouldActivate\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?\}/);
+  assert.match(drawingSyncSource, /this\._dm\.createLayer\(\{[\s\S]*?skipActivate: true,[\s\S]*?\}, false\);/);
+  assert.match(drawingManagerSource, /setActiveLayer\(layerId\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\.activeLayerId = layerId;/);
+  assert.match(drawingManagerSource, /moveActiveLayerByOffset\(offset\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
+  assert.match(drawingManagerSource, /toggleLayerVisibility\(layerId\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?layer\.visible = !layer\.visible;/);
+  assert.match(drawingManagerSource, /toggleLayerLock\(layerId\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?layer\.locked = !layer\.locked;/);
+  assert.match(drawingManagerSource, /addBlankKeyframe\(\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const layer = this\.getActiveLayer\(\);/);
+  assert.match(drawingManagerSource, /removeKeyframe\(\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const layer = this\.getActiveLayer\(\);/);
+  assert.match(drawingManagerSource, /insertFrame\(\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const layer = this\.getActiveLayer\(\);/);
+  assert.match(drawingManagerSource, /deleteFrame\(\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const layer = this\.getActiveLayer\(\);/);
+  assert.match(drawingManagerSource, /copyFrames\(targets = null\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const resolved = \[\];/);
+  assert.match(drawingManagerSource, /pasteFrames\(targetFrame = this\.currentFrame\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
+  assert.match(drawingManagerSource, /_restoreSnapshot\(snapshot\) \{[\s\S]*?this\.drawingCanvas\.clearSelection\?\.\(\);[\s\S]*?this\.layers = snapshot\.layers/);
+});
+
+test('pasted drawing frames are published to sync and save listeners', () => {
+  assert.match(drawingManagerSource, /const updatedKeyframes = \[\];/);
+  assert.match(drawingManagerSource, /updatedKeyframes\.push\(\{ layer, frame, keyframe \}\);/);
+  assert.match(drawingManagerSource, /this\._emit\('keyframeUpdated', \{ layer, frame, keyframe \}\);/);
+  assert.match(reviewDataManagerSource, /addEventListener\('keyframeUpdated', this\._onDataChanged\)/);
+  assert.match(reviewDataManagerSource, /removeEventListener\('keyframeUpdated', this\._onDataChanged\)/);
+  assert.match(drawingSyncSource, /addEventListener\('keyframeUpdated', this\._onKeyframeUpdated\)/);
+  assert.match(drawingSyncSource, /_onKeyframeUpdated\(e\)/);
+  assert.match(drawingSyncSource, /isEmpty: keyframe\.isEmpty === true/);
+  assert.match(drawingSyncSource, /if \(!keyframe\?\.canvasData && keyframe\?\.isEmpty !== true\) return;/);
+  assert.match(drawingSyncSource, /const \{ layerId, frame, canvasData, baseCanvasData, strokeRecords, isEmpty \} = event;/);
+  assert.match(drawingSyncSource, /!canvasData && isEmpty !== true/);
+  assert.match(drawingSyncSource, /_notifyRemoteKeyframeApplied\(layer, frame, keyframe\) \{[\s\S]*?this\._dm\._emit\?\.\('keyframeUpdated', \{ layer, frame, keyframe \}\);[\s\S]*?this\._dm\._emit\?\.\('layersChanged'\);[\s\S]*?\}/);
+  assert.match(drawingSyncSource, /_applyRemoteKeyframe\(event\) \{[\s\S]*?this\._notifyRemoteKeyframeApplied\(layer, frame, keyframe\);/);
 });

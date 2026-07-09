@@ -67,7 +67,7 @@ test('alt drag adjusts brush size before drawing or ctrl eraser handling', () =>
 });
 
 test('alt drag size adjustment follows pen pointer events until pointer release', () => {
-  assert.match(drawingCanvasSource, /e\.pointerType === 'pen'/);
+  assert.match(drawingCanvasSource, /e\.isPrimary/);
   assert.match(drawingCanvasSource, /e\.altKey && \(e\.button === 0 \|\| e\.button === 2\)/);
   assert.match(drawingCanvasSource, /this\.canvas\.setPointerCapture\?\.\(e\.pointerId\)/);
   assert.match(drawingCanvasSource, /window\.addEventListener\('pointermove', this\._sizeAdjustMoveHandler/);

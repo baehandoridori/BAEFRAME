@@ -53,12 +53,15 @@ export class DrawingManager extends EventTarget {
     this.onionSkinCtx = this.onionSkinCanvasElement?.getContext('2d');
     this.layersBelowCanvas = options.layersBelowCanvas;
     this.layersAboveCanvas = options.layersAboveCanvas;
+    this.selectionOverlayCanvas = options.selectionOverlayCanvas || null;
+    this.drawingCanvas.selectionCanvas = this.selectionOverlayCanvas;
     this.layersBelowCtx = this.layersBelowCanvas?.getContext('2d');
     this.layersAboveCtx = this.layersAboveCanvas?.getContext('2d');
 
     // 레이어 관리
     this.layers = [];
     this.activeLayerId = null;
+    this._frameClipboard = null;
 
     // 비디오 정보
     this.totalFrames = 0;
@@ -127,6 +130,21 @@ export class DrawingManager extends EventTarget {
       this._emit('drawblocked', {
         ...e.detail,
         reason: layer?.locked ? 'locked' : 'hidden'
+      });
+    });
+
+    this.drawingCanvas.addEventListener('selectionliftstart', () => {
+      this._saveToHistory();
+    });
+
+    this.drawingCanvas.addEventListener('selectioncommitted', () => {
+      this._onSelectionCommitted();
+    });
+
+    this.drawingCanvas.addEventListener('selectionoverlaychanged', (e) => {
+      this._emit('selectionoverlaychanged', {
+        ...e.detail,
+        frame: this.currentFrame
       });
     });
   }
@@ -231,6 +249,33 @@ export class DrawingManager extends EventTarget {
     this._emit('drawend', { frame: this.currentFrame });
     this._emit('layersChanged');
     this._activeStrokeBaseData = null;
+  }
+
+  /**
+   * 선택 도구 커밋 결과를 현재 키프레임 비트맵으로 저장
+   */
+  _onSelectionCommitted() {
+    const keyframe = this._saveCurrentFrameData({
+      editHeldSourceKeyframe: false,
+      preserveStrokeRecords: false
+    });
+    if (keyframe) {
+      this._freezeStrokeRecords(keyframe);
+    }
+    this._emit('drawend', { frame: this.currentFrame });
+    this._emit('layersChanged');
+  }
+
+  /**
+   * 진행 중인 선택을 커밋한다.
+   */
+  commitActiveSelection() {
+    if (!this.drawingCanvas) return;
+    if (this.drawingCanvas.floatingImage) {
+      this.drawingCanvas.commitSelection();
+    } else if (this.drawingCanvas.selection) {
+      this.drawingCanvas.commitSelection();
+    }
   }
 
   /**
@@ -447,18 +492,26 @@ export class DrawingManager extends EventTarget {
    * 새 레이어 생성
    */
   createLayer(options = {}, saveHistory = true) {
+    const shouldActivate = options.skipActivate !== true;
+    if (shouldActivate) {
+      this.commitActiveSelection();
+    }
+
     // Undo를 위해 현재 상태 저장
     if (saveHistory && this.layers.length > 0) {
       this._saveToHistory();
     }
 
     const layer = new DrawingLayer(options);
-    this.layers.push(layer);
-    if (options.skipActivate !== true) {
+    const insertIndex = Number.isInteger(options.insertIndex)
+      ? Math.max(0, Math.min(options.insertIndex, this.layers.length))
+      : this.layers.length;
+    this.layers.splice(insertIndex, 0, layer);
+    if (shouldActivate) {
       this.activeLayerId = layer.id;
     }
 
-    this._emit('layerCreated', { layer });
+    this._emit('layerCreated', { layer, insertIndex });
     this._emit('layersChanged');
     this.renderFrame(this.currentFrame);
 
@@ -472,6 +525,8 @@ export class DrawingManager extends EventTarget {
   deleteLayer(layerId) {
     const index = this.layers.findIndex(l => l.id === layerId);
     if (index === -1) return false;
+
+    this.commitActiveSelection();
 
     // Undo를 위해 현재 상태 저장
     this._saveToHistory();
@@ -507,6 +562,9 @@ export class DrawingManager extends EventTarget {
   setActiveLayer(layerId) {
     const layer = this.layers.find(l => l.id === layerId);
     if (layer) {
+      if (layerId !== this.activeLayerId) {
+        this.commitActiveSelection();
+      }
       this.activeLayerId = layerId;
       this._emit('activeLayerChanged', { layer });
       this.renderFrame(this.currentFrame);
@@ -532,6 +590,7 @@ export class DrawingManager extends EventTarget {
     const targetIndex = index + offset;
     if (targetIndex < 0 || targetIndex >= this.layers.length) return false;
 
+    this.commitActiveSelection();
     this._saveToHistory();
     const [layer] = this.layers.splice(index, 1);
     this.layers.splice(targetIndex, 0, layer);
@@ -548,6 +607,7 @@ export class DrawingManager extends EventTarget {
   toggleLayerVisibility(layerId) {
     const layer = this.layers.find(l => l.id === layerId);
     if (layer) {
+      this.commitActiveSelection();
       layer.visible = !layer.visible;
       this._emit('layersChanged');
       this.renderFrame(this.currentFrame);
@@ -560,6 +620,7 @@ export class DrawingManager extends EventTarget {
   toggleLayerLock(layerId) {
     const layer = this.layers.find(l => l.id === layerId);
     if (layer) {
+      this.commitActiveSelection();
       layer.locked = !layer.locked;
       this._emit('layersChanged');
     }
@@ -624,6 +685,8 @@ export class DrawingManager extends EventTarget {
   _restoreSnapshot(snapshot) {
     if (!snapshot) return;
 
+    this.drawingCanvas.clearSelection?.();
+
     // 레이어 복원
     this.layers = snapshot.layers.map(l => DrawingLayer.fromJSON(l));
     this.activeLayerId = snapshot.activeLayerId;
@@ -658,6 +721,8 @@ export class DrawingManager extends EventTarget {
    * 빈 키프레임 추가 (F7)
    */
   addBlankKeyframe() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return;
 
@@ -677,6 +742,8 @@ export class DrawingManager extends EventTarget {
    * 키프레임 복제 추가 (F6)
    */
   addKeyframeWithContent() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return;
 
@@ -696,6 +763,8 @@ export class DrawingManager extends EventTarget {
    * 키프레임 삭제
    */
   removeKeyframe() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
     if (!layer.isKeyframe(this.currentFrame)) return false;
@@ -712,6 +781,8 @@ export class DrawingManager extends EventTarget {
   }
 
   convertKeyframeToFrame() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
     if (!layer.isKeyframe(this.currentFrame)) return false;
@@ -739,6 +810,8 @@ export class DrawingManager extends EventTarget {
    * @returns {number} 삭제된 키프레임 수
    */
   removeKeyframes(selectedKeyframes = []) {
+    this.commitActiveSelection();
+
     if (!Array.isArray(selectedKeyframes) || selectedKeyframes.length === 0) return 0;
 
     const uniqueTargets = [];
@@ -817,6 +890,8 @@ export class DrawingManager extends EventTarget {
    * 프레임 삽입 (홀드 추가) - 현재 프레임 이후의 모든 키프레임을 1프레임씩 뒤로 이동
    */
   insertFrame() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
 
@@ -835,6 +910,8 @@ export class DrawingManager extends EventTarget {
    * 프레임 삭제 - 현재 프레임 이후의 모든 키프레임을 1프레임씩 앞으로 이동
    */
   deleteFrame() {
+    this.commitActiveSelection();
+
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
 
@@ -850,10 +927,89 @@ export class DrawingManager extends EventTarget {
   }
 
   /**
+   * 프레임 복사 (Ctrl+Alt+C)
+   */
+  copyFrames(targets = null) {
+    this.commitActiveSelection();
+
+    const resolved = [];
+    if (Array.isArray(targets) && targets.length > 0) {
+      for (const target of targets) {
+        const layer = this.layers.find(l => l.id === target.layerId);
+        const keyframe = layer?.keyframes.find(kf => kf.frame === Number(target.frame));
+        if (layer && keyframe) {
+          resolved.push({ layerId: layer.id, frame: keyframe.frame, keyframe: keyframe.clone() });
+        }
+      }
+    } else {
+      const layer = this.getActiveLayer();
+      const keyframe = layer?.getKeyframeAtFrame(this.currentFrame);
+      if (layer && keyframe) {
+        resolved.push({ layerId: layer.id, frame: keyframe.frame, keyframe: keyframe.clone() });
+      }
+    }
+    if (resolved.length === 0) return 0;
+
+    const minFrame = Math.min(...resolved.map(item => item.frame));
+    this._frameClipboard = {
+      items: resolved.map(item => ({
+        layerId: item.layerId,
+        offset: item.frame - minFrame,
+        isEmpty: item.keyframe.isEmpty,
+        keyframe: item.keyframe
+      }))
+    };
+    log.info('프레임 복사됨', { count: resolved.length });
+    return resolved.length;
+  }
+
+  /**
+   * 프레임 붙여넣기 (Ctrl+Alt+V)
+   */
+  pasteFrames(targetFrame = this.currentFrame) {
+    const clip = this._frameClipboard;
+    if (!clip?.items?.length) return 0;
+
+    this.commitActiveSelection();
+    this._saveToHistory();
+
+    let pasted = 0;
+    const updatedKeyframes = [];
+    for (const item of clip.items) {
+      const layer = this.layers.find(l => l.id === item.layerId) || this.getActiveLayer();
+      if (!layer || layer.locked) continue;
+
+      const frame = targetFrame + item.offset;
+      if (frame < 0 || frame >= this.totalFrames) continue;
+
+      layer.removeKeyframe(frame);
+      const keyframe = item.keyframe.clone();
+      keyframe.frame = frame;
+      keyframe.isEmpty = item.isEmpty;
+      layer.keyframes.push(keyframe);
+      layer._sortKeyframes();
+      updatedKeyframes.push({ layer, frame, keyframe });
+      pasted += 1;
+    }
+
+    if (pasted > 0) {
+      this.renderFrame(this.currentFrame);
+      for (const { layer, frame, keyframe } of updatedKeyframes) {
+        this._emit('keyframeUpdated', { layer, frame, keyframe });
+      }
+      this._emit('layersChanged');
+      log.info('프레임 붙여넣기됨', { targetFrame, count: pasted });
+    }
+    return pasted;
+  }
+
+  /**
    * 키프레임 이동 (드래그로 이동)
    * @param {Array} keyframesToMove - [ { layerId, fromFrame, toFrame } ]
    */
   moveKeyframes(keyframesToMove) {
+    this.commitActiveSelection();
+
     if (!keyframesToMove || keyframesToMove.length === 0) return false;
 
     // Undo를 위해 현재 상태 저장
@@ -919,23 +1075,32 @@ export class DrawingManager extends EventTarget {
    * 캔버스 크기 설정
    */
   setCanvasSize(width, height) {
+    const canvasSizeChanged = this.drawingCanvas?.canvas &&
+      (this.drawingCanvas.canvas.width !== width || this.drawingCanvas.canvas.height !== height);
+    if (canvasSizeChanged && (this.drawingCanvas.floatingImage || this.drawingCanvas.selection)) {
+      this.commitActiveSelection();
+    }
+
     this.canvasWidth = width;
     this.canvasHeight = height;
     this.drawingCanvas.syncSize(width, height);
-    [this.layersBelowCanvas, this.layersAboveCanvas].forEach((canvas) => {
-      if (!canvas) return;
-      canvas.width = width;
-      canvas.height = height;
+    [this.layersBelowCanvas, this.layersAboveCanvas, this.selectionOverlayCanvas].forEach((canvas) => {
+      this._setCanvasElementSize(canvas, width, height);
     });
 
     // 어니언 스킨 캔버스 크기도 동기화
-    if (this.onionSkinCanvasElement) {
-      this.onionSkinCanvasElement.width = width;
-      this.onionSkinCanvasElement.height = height;
-    }
+    this._setCanvasElementSize(this.onionSkinCanvasElement, width, height);
 
     log.debug('캔버스 크기 설정됨', { width, height });
     this.renderFrame(this.currentFrame);
+  }
+
+  _setCanvasElementSize(canvas, width, height) {
+    if (!canvas) return false;
+    if (canvas.width === width && canvas.height === height) return false;
+    canvas.width = width;
+    canvas.height = height;
+    return true;
   }
 
   /**
@@ -944,6 +1109,9 @@ export class DrawingManager extends EventTarget {
   setCurrentFrame(frame) {
     // 같은 프레임이면 무시 (불필요한 렌더링 방지)
     if (frame === this.currentFrame) return;
+    if (this.drawingCanvas.floatingImage || this.drawingCanvas.selection) {
+      this.commitActiveSelection();
+    }
 
     // 이전 프레임에서 그리기 중이었으면 저장
     if (this.drawingCanvas.isDrawing) {
@@ -967,10 +1135,25 @@ export class DrawingManager extends EventTarget {
   _getLayerRenderBuckets() {
     const { below, active, above } = partitionDrawingLayersForActive(this.layers, this.activeLayerId);
     return [
-      { layers: below, ctx: this.layersBelowCtx },
-      { layers: active ? [active] : [], ctx: this.drawingCanvas.ctx },
-      { layers: above, ctx: this.layersAboveCtx }
+      { layers: below, ctx: this.layersBelowCtx, applyLayerOpacity: true },
+      { layers: active ? [active] : [], ctx: this.drawingCanvas.ctx, applyLayerOpacity: false },
+      { layers: above, ctx: this.layersAboveCtx, applyLayerOpacity: true }
     ];
+  }
+
+  _getActiveLayerDisplayOpacity() {
+    const layer = this.getActiveLayer();
+    if (!layer || layer.visible === false) return 1;
+    const opacity = Number(layer.opacity);
+    return Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1;
+  }
+
+  _syncActiveLayerCanvasOpacity() {
+    const opacity = this._getActiveLayerDisplayOpacity();
+    if (this.canvas?.style) {
+      this.canvas.style.opacity = String(opacity);
+    }
+    this.drawingCanvas?.setSelectionImageOpacity?.(opacity);
   }
 
   _drawImageToContext(ctx, img, opacity) {
@@ -984,6 +1167,13 @@ export class DrawingManager extends EventTarget {
    * 특정 프레임 렌더링 (모든 보이는 레이어 합성)
    */
   async renderFrame(frame) {
+    this._syncActiveLayerCanvasOpacity();
+
+    if (this.drawingCanvas.floatingImage) {
+      log.debug('플로팅 선택 영역이 있어 렌더링 보류', { frame });
+      return;
+    }
+
     // 그리기 중이면 렌더링 스킵 (사용자가 그리는 중에 캔버스 지우기 방지)
     if (this.drawingCanvas.isDrawing) {
       log.debug('그리기 중이므로 렌더링 스킵', { frame });
@@ -1038,7 +1228,8 @@ export class DrawingManager extends EventTarget {
         // 이미지 캐시 확인 또는 새로 로드
         const img = await this._loadImage(keyframe.canvasData, keyframe);
         if (img) {
-          imagesToRender.push({ img, layer, ctx: bucket.ctx });
+          const opacity = bucket.applyLayerOpacity === false ? 1 : layer.opacity;
+          imagesToRender.push({ img, layer, ctx: bucket.ctx, opacity });
         }
 
         // 렌더링 취소 체크
@@ -1056,8 +1247,8 @@ export class DrawingManager extends EventTarget {
     }
 
     // 모든 이미지를 순서대로 그리기
-    for (const { img, layer, ctx } of imagesToRender) {
-      this._drawImageToContext(ctx, img, layer.opacity);
+    for (const { img, opacity, ctx } of imagesToRender) {
+      this._drawImageToContext(ctx, img, opacity);
     }
 
     log.debug('renderFrame 완료', { frame, renderedCount: imagesToRender.length });
@@ -1070,6 +1261,8 @@ export class DrawingManager extends EventTarget {
    * 캐시된 이미지만 사용, 캐시 미스 시 비동기 프리로드 후 다음 기회에 표시
    */
   _renderFrameSync(frame) {
+    this._syncActiveLayerCanvasOpacity();
+
     // 캐시된 이미지를 먼저 수집
     const images = [];
     let hasCacheMiss = false;
@@ -1082,7 +1275,8 @@ export class DrawingManager extends EventTarget {
         if (!keyframe || keyframe.isEmpty || !keyframe.canvasData) continue;
 
         if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
-          images.push({ img: keyframe._cachedImage, opacity: layer.opacity, ctx: bucket.ctx });
+          const opacity = bucket.applyLayerOpacity === false ? 1 : layer.opacity;
+          images.push({ img: keyframe._cachedImage, opacity, ctx: bucket.ctx });
         } else {
           hasCacheMiss = true;
         }
@@ -1157,6 +1351,10 @@ export class DrawingManager extends EventTarget {
    * 모든 레이어 데이터 가져오기 (저장용)
    */
   exportData() {
+    if (this.drawingCanvas?.floatingImage) {
+      this.commitActiveSelection();
+    }
+
     return {
       layers: this.layers.map(l => l.toJSON()),
       activeLayerId: this.activeLayerId,
@@ -1169,6 +1367,7 @@ export class DrawingManager extends EventTarget {
    * 레이어 데이터 불러오기
    */
   importData(data) {
+    this.drawingCanvas.clearSelection?.();
     this.layers = data.layers.map(l => DrawingLayer.fromJSON(l));
     this.activeLayerId = data.activeLayerId;
     this.totalFrames = data.totalFrames || this.totalFrames;
@@ -1187,6 +1386,7 @@ export class DrawingManager extends EventTarget {
    * 모든 레이어 초기화
    */
   clearAll() {
+    this.drawingCanvas.clearSelection?.();
     this.layers = [];
     this.activeLayerId = null;
     this.drawingCanvas.clear();
@@ -1200,6 +1400,7 @@ export class DrawingManager extends EventTarget {
    * 새 파일 로드 시 초기화 (기본 레이어 생성 포함)
    */
   reset() {
+    this.drawingCanvas.clearSelection?.();
     this.layers = [];
     this.activeLayerId = null;
     this.drawingCanvas.clear();

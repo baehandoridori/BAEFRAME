@@ -38,6 +38,7 @@ export class DrawingSync {
     this._onLayerCreated = this._onLayerCreated.bind(this);
     this._onLayerDeleted = this._onLayerDeleted.bind(this);
     this._onKeyframeRemoved = this._onKeyframeRemoved.bind(this);
+    this._onKeyframeUpdated = this._onKeyframeUpdated.bind(this);
     this._onBroadcast = this._onBroadcast.bind(this);
 
     this._started = false;
@@ -61,6 +62,7 @@ export class DrawingSync {
     this._dm.addEventListener('layerCreated', this._onLayerCreated);
     this._dm.addEventListener('layerDeleted', this._onLayerDeleted);
     this._dm.addEventListener('keyframeRemoved', this._onKeyframeRemoved);
+    this._dm.addEventListener('keyframeUpdated', this._onKeyframeUpdated);
 
     // Remote → Local: Broadcast 수신
     this._lm.addEventListener('broadcastReceived', this._onBroadcast);
@@ -86,14 +88,15 @@ export class DrawingSync {
       });
 
       for (const keyframe of layer.keyframes || []) {
-        if (!keyframe?.canvasData) continue;
+        if (!keyframe?.canvasData && keyframe?.isEmpty !== true) continue;
         this._lm.broadcastEvent({
           type: 'DRAWING_KEYFRAME_UPDATE',
           layerId: layer.id,
           frame: keyframe.frame,
           canvasData: keyframe.canvasData,
           baseCanvasData: keyframe.baseCanvasData,
-          strokeRecords: keyframe.strokeRecords
+          strokeRecords: keyframe.strokeRecords,
+          isEmpty: keyframe.isEmpty === true
         });
       }
     }
@@ -116,6 +119,7 @@ export class DrawingSync {
     this._dm.removeEventListener('layerCreated', this._onLayerCreated);
     this._dm.removeEventListener('layerDeleted', this._onLayerDeleted);
     this._dm.removeEventListener('keyframeRemoved', this._onKeyframeRemoved);
+    this._dm.removeEventListener('keyframeUpdated', this._onKeyframeUpdated);
     this._lm.removeEventListener('broadcastReceived', this._onBroadcast);
 
     this._started = false;
@@ -217,9 +221,27 @@ export class DrawingSync {
 
     const currentFrame = this._dm.currentFrame ?? 0;
     const keyframe = layer.getKeyframeAtFrame?.(currentFrame);
-    if (!keyframe?.canvasData) return;
+    if (!keyframe?.canvasData && keyframe?.isEmpty !== true) return;
 
-    let sendData = keyframe.canvasData;
+    await this._broadcastKeyframeUpdate(layer, keyframe);
+  }
+
+  async _onKeyframeUpdated(e) {
+    if (this._isRemoteUpdate) return;
+    if (!this._lm.hasOtherCollaborators()) return;
+
+    const { layer, frame, keyframe } = e.detail || {};
+    if (!layer) return;
+    const updatedKeyframe = keyframe || layer.getKeyframeAtFrame?.(frame);
+    await this._broadcastKeyframeUpdate(layer, updatedKeyframe);
+  }
+
+  async _broadcastKeyframeUpdate(layer, keyframe) {
+    if (!layer || !keyframe) return;
+
+    let sendData = keyframe.canvasData || null;
+    if (!sendData && keyframe.isEmpty !== true) return;
+
     const dataSize = typeof sendData === 'string' ? sendData.length : 0;
 
     if (dataSize > MAX_BROADCAST_SIZE) {
@@ -238,23 +260,25 @@ export class DrawingSync {
       frame: keyframe.frame,
       canvasData: sendData,
       baseCanvasData: keyframe.baseCanvasData,
-      strokeRecords: keyframe.strokeRecords
+      strokeRecords: keyframe.strokeRecords,
+      isEmpty: keyframe.isEmpty === true
     });
 
     log.debug('그리기 브로드캐스트 전송', {
       layerId: layer.id,
       frame: keyframe.frame,
-      size: ((typeof sendData === 'string' ? sendData.length : 0) / 1024).toFixed(0) + 'KB'
+      size: (dataSize / 1024).toFixed(0) + 'KB'
     });
   }
 
   _onLayerCreated(e) {
     if (this._isRemoteUpdate) return;
 
-    const { layer } = e.detail || {};
+    const { layer, insertIndex } = e.detail || {};
     if (layer) {
       this._lm.broadcastEvent({
         type: 'DRAWING_LAYER_CREATED',
+        insertIndex: Number.isInteger(insertIndex) ? insertIndex : undefined,
         layer: {
           id: layer.id,
           name: layer.name,
@@ -327,8 +351,8 @@ export class DrawingSync {
   }
 
   async _applyRemoteKeyframe(event) {
-    const { layerId, frame, canvasData, baseCanvasData, strokeRecords } = event;
-    if (!layerId || frame === undefined || !canvasData) return;
+    const { layerId, frame, canvasData, baseCanvasData, strokeRecords, isEmpty } = event;
+    if (!layerId || frame === undefined || (!canvasData && isEmpty !== true)) return;
 
     this._isRemoteUpdate = true;
     try {
@@ -352,12 +376,17 @@ export class DrawingSync {
       }
 
       if (keyframe) {
-        keyframe.setCanvasData?.(canvasData) || (keyframe.canvasData = canvasData);
+        if (isEmpty === true) {
+          keyframe.setCanvasData?.(null) || (keyframe.canvasData = null);
+          keyframe.isEmpty = true;
+        } else {
+          keyframe.setCanvasData?.(canvasData) || (keyframe.canvasData = canvasData);
+          keyframe.isEmpty = false;
+        }
         keyframe.baseCanvasData = baseCanvasData || null;
         keyframe.strokeRecords = Array.isArray(strokeRecords) ? strokeRecords : [];
         keyframe._cachedImage = null;
         keyframe._cachedSrc = null;
-        keyframe.isEmpty = false;
 
         // 현재 프레임이면 화면 갱신
         const currentFrame = this._dm.currentFrame ?? 0;
@@ -365,11 +394,17 @@ export class DrawingSync {
           this._dm.renderFrame?.(currentFrame);
         }
 
+        this._notifyRemoteKeyframeApplied(layer, frame, keyframe);
         log.debug('원격 키프레임 적용', { layerId, frame });
       }
     } finally {
       this._isRemoteUpdate = false;
     }
+  }
+
+  _notifyRemoteKeyframeApplied(layer, frame, keyframe) {
+    this._dm._emit?.('keyframeUpdated', { layer, frame, keyframe });
+    this._dm._emit?.('layersChanged');
   }
 
   _applyRemoteLayerCreated(event) {
@@ -384,7 +419,11 @@ export class DrawingSync {
 
       // DrawingManager에 레이어 추가
       if (this._dm.createLayer) {
-        this._dm.createLayer({ ...layerData, skipActivate: true });
+        this._dm.createLayer({
+          ...layerData,
+          skipActivate: true,
+          ...(Number.isInteger(event.insertIndex) ? { insertIndex: event.insertIndex } : {})
+        }, false);
       }
       log.debug('원격 레이어 생성 적용', { id: layerData.id });
     } finally {

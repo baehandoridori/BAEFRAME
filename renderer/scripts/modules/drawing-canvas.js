@@ -13,6 +13,7 @@ const log = createLogger('DrawingCanvas');
  * 그리기 도구 타입
  */
 export const DrawingTool = {
+  SELECT: 'select',
   PEN: 'pen',
   BRUSH: 'brush',
   ERASER: 'eraser',
@@ -58,10 +59,21 @@ export class DrawingCanvas extends EventTarget {
     this._sizeAdjustEndHandler = null;
     this._sizeAdjustUsesPointerEvents = false;
     this._activeSizeAdjustPointerId = null;
+    this._activeDrawPointerId = null;
     this.lastX = 0;
     this.lastY = 0;
     this.startX = 0;
     this.startY = 0;
+
+    // 선택 도구 상태
+    this.selectionCanvas = null;
+    this.selectionImageOpacity = 1;
+    this.selection = null;
+    this.floatingImage = null;
+    this.floatingPos = null;
+    this._selectPhase = null;
+    this._selectGrabOffset = null;
+    this._selectClipboard = null;
 
     // 스트로크 경로 저장 (외곽선용)
     this.currentStrokePath = [];
@@ -88,22 +100,16 @@ export class DrawingCanvas extends EventTarget {
   _setupEventListeners() {
     const signal = this._abortController.signal;
 
-    // 마우스 이벤트
+    // 포인터 이벤트 (마우스/펜/터치 통합)
     this.canvas.addEventListener('pointerdown', (e) => this._onPointerDown(e), { signal });
-    this.canvas.addEventListener('mousedown', (e) => this._onMouseDown(e), { signal });
-    this.canvas.addEventListener('mousemove', (e) => this._onMouseMove(e), { signal });
-    this.canvas.addEventListener('mouseup', (e) => this._onMouseUp(e), { signal });
-    this.canvas.addEventListener('mouseleave', (e) => this._onMouseUp(e), { signal });
+    this.canvas.addEventListener('pointermove', (e) => this._onPointerMove(e), { signal });
+    this.canvas.addEventListener('pointerup', (e) => this._onPointerUp(e), { signal });
+    this.canvas.addEventListener('pointercancel', (e) => this._onPointerUp(e), { signal });
     this.canvas.addEventListener('contextmenu', (e) => {
       if (e.altKey || this.isSizeAdjusting) {
         e.preventDefault();
       }
     }, { signal });
-
-    // 터치 이벤트 (태블릿 지원)
-    this.canvas.addEventListener('touchstart', (e) => this._onTouchStart(e), { signal });
-    this.canvas.addEventListener('touchmove', (e) => this._onTouchMove(e), { signal });
-    this.canvas.addEventListener('touchend', (e) => this._onTouchEnd(e), { signal });
 
     // 펜/터치 유래 이벤트는 ctrlKey가 비어 오는 환경이 있어 전역 Ctrl 상태를 함께 본다.
     document.addEventListener('keydown', (e) => {
@@ -121,6 +127,12 @@ export class DrawingCanvas extends EventTarget {
    * 캔버스 크기 동기화
    */
   syncSize(width, height) {
+    if (this.canvas.width === width && this.canvas.height === height) {
+      if (this.tempCanvas.width !== width) this.tempCanvas.width = width;
+      if (this.tempCanvas.height !== height) this.tempCanvas.height = height;
+      return false;
+    }
+
     // 현재 내용 백업
     const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
 
@@ -134,6 +146,8 @@ export class DrawingCanvas extends EventTarget {
     if (imageData.width === width && imageData.height === height) {
       this.ctx.putImageData(imageData, 0, 0);
     }
+
+    return true;
   }
 
   /**
@@ -174,6 +188,11 @@ export class DrawingCanvas extends EventTarget {
       return;
     }
 
+    if (this.tool === DrawingTool.SELECT) {
+      this._onSelectPointerDown(e);
+      return;
+    }
+
     const coords = this._getCanvasCoords(e);
     this.activeTool = this._resolveEffectiveTool(e);
     this.activeEraserMode = this.eraserMode;
@@ -211,10 +230,33 @@ export class DrawingCanvas extends EventTarget {
 
   _onPointerDown(e) {
     if (!this.canvas.classList.contains('active')) return;
-    if (e.pointerType === 'pen' && e.altKey && (e.button === 0 || e.button === 2)) {
-      e.preventDefault?.();
-      this._beginSizeAdjust(e);
+    if (!e.isPrimary) return;
+    if (!e.altKey && e.button !== 0) return;
+    this._activeDrawPointerId = e.pointerId;
+    this.canvas.setPointerCapture?.(e.pointerId);
+    this._onMouseDown(e);
+  }
+
+  _onPointerMove(e) {
+    if (this._activeDrawPointerId !== e.pointerId) return;
+    if (this._selectPhase) {
+      this._onSelectPointerMove(e);
+      return;
     }
+    this._onMouseMove(e);
+  }
+
+  _onPointerUp(e) {
+    if (this._activeDrawPointerId !== e.pointerId) return;
+    this._activeDrawPointerId = null;
+    if (this.canvas.hasPointerCapture?.(e.pointerId)) {
+      this.canvas.releasePointerCapture?.(e.pointerId);
+    }
+    if (this._selectPhase) {
+      this._onSelectPointerUp(e);
+      return;
+    }
+    this._onMouseUp(e);
   }
 
   _beginSizeAdjust(e) {
@@ -358,7 +400,7 @@ export class DrawingCanvas extends EventTarget {
     this.isDrawing = false;
 
     // 도형 도구일 경우 최종 그리기
-    if (this._isShapeTool(this.activeTool) && e.type !== 'mouseleave') {
+    if (this._isShapeTool(this.activeTool) && e.type !== 'pointercancel' && Number.isFinite(e.clientX)) {
       const coords = this._getCanvasCoords(e);
       this._drawShapeFinal(coords.x, coords.y);
     }
@@ -379,32 +421,6 @@ export class DrawingCanvas extends EventTarget {
     }));
     this.activeTool = this.tool;
     this.activeEraserMode = this.eraserMode;
-  }
-
-  /**
-   * 터치 시작
-   */
-  _onTouchStart(e) {
-    e.preventDefault();
-    const touch = e.touches[0];
-    this._onMouseDown({ clientX: touch.clientX, clientY: touch.clientY, ctrlKey: this._isCtrlActive(e) });
-  }
-
-  /**
-   * 터치 이동
-   */
-  _onTouchMove(e) {
-    e.preventDefault();
-    const touch = e.touches[0];
-    this._onMouseMove({ clientX: touch.clientX, clientY: touch.clientY, ctrlKey: this._isCtrlActive(e) });
-  }
-
-  /**
-   * 터치 종료
-   */
-  _onTouchEnd(e) {
-    e.preventDefault();
-    this._onMouseUp({ type: 'touchend', ctrlKey: this._isCtrlActive(e) });
   }
 
   /**
@@ -598,10 +614,29 @@ export class DrawingCanvas extends EventTarget {
   /**
    * 도형 그리기
    */
-  _drawShape(x1, y1, x2, y2, isFinal) {
-    this.ctx.save();
-    this._setupContext(this.activeTool);
+  _drawShape(x1, y1, x2, y2, _isFinal) {
+    const outlineEnabled = this.strokeEnabled && this.strokeWidth > 0 && this.activeTool !== DrawingTool.ERASER;
 
+    this.ctx.save();
+
+    if (outlineEnabled) {
+      this._setupContext(this.activeTool);
+      this.ctx.strokeStyle = this.strokeColor;
+      this.ctx.fillStyle = this.strokeColor;
+      this.ctx.lineWidth = this.lineWidth + (this.strokeWidth * 2);
+      this._traceShapePath(x1, y1, x2, y2);
+    }
+
+    this._setupContext(this.activeTool);
+    this._traceShapePath(x1, y1, x2, y2);
+
+    this.ctx.restore();
+  }
+
+  /**
+   * 현재 activeTool 기준으로 도형 지오메트리를 현재 ctx 스타일로 그림
+   */
+  _traceShapePath(x1, y1, x2, y2) {
     switch (this.activeTool) {
     case DrawingTool.LINE:
       this.ctx.beginPath();
@@ -618,7 +653,7 @@ export class DrawingCanvas extends EventTarget {
       this.ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
       break;
 
-    case DrawingTool.CIRCLE:
+    case DrawingTool.CIRCLE: {
       const rx = Math.abs(x2 - x1) / 2;
       const ry = Math.abs(y2 - y1) / 2;
       const cx = x1 + (x2 - x1) / 2;
@@ -629,8 +664,7 @@ export class DrawingCanvas extends EventTarget {
       this.ctx.stroke();
       break;
     }
-
-    this.ctx.restore();
+    }
   }
 
   /**
@@ -802,6 +836,220 @@ export class DrawingCanvas extends EventTarget {
     this.ctx.restore();
   }
 
+  // ====== 선택 도구 (select) ======
+
+  _onSelectPointerDown(e) {
+    const coords = this._getCanvasCoords(e);
+    if (this.selection && this._isInsideSelection(coords)) {
+      if (!this.floatingImage) this._liftSelection();
+      if (!this.floatingImage) return;
+      this._selectPhase = 'move';
+      this._selectGrabOffset = {
+        x: coords.x - this.floatingPos.x,
+        y: coords.y - this.floatingPos.y
+      };
+    } else {
+      this.commitSelection();
+      this._selectPhase = 'marquee';
+      this.selection = { x: coords.x, y: coords.y, w: 0, h: 0 };
+      this._selectGrabOffset = { x: coords.x, y: coords.y };
+    }
+    this._renderSelectionOverlay();
+  }
+
+  _onSelectPointerMove(e) {
+    const coords = this._getCanvasCoords(e);
+    if (this._selectPhase === 'marquee') {
+      const startX = this._selectGrabOffset.x;
+      const startY = this._selectGrabOffset.y;
+      this.selection = {
+        x: Math.min(startX, coords.x),
+        y: Math.min(startY, coords.y),
+        w: Math.abs(coords.x - startX),
+        h: Math.abs(coords.y - startY)
+      };
+    } else if (this._selectPhase === 'move' && this.floatingImage) {
+      this.floatingPos = {
+        x: coords.x - this._selectGrabOffset.x,
+        y: coords.y - this._selectGrabOffset.y
+      };
+      this.selection = {
+        x: this.floatingPos.x,
+        y: this.floatingPos.y,
+        w: this.floatingImage.width,
+        h: this.floatingImage.height
+      };
+    }
+    this._renderSelectionOverlay();
+  }
+
+  _onSelectPointerUp(_e) {
+    if (this._selectPhase === 'marquee') {
+      const rect = this._normalizedSelection();
+      if (!rect || rect.w < 2 || rect.h < 2) {
+        this.selection = null;
+      }
+    }
+    this._selectPhase = null;
+    this._renderSelectionOverlay();
+  }
+
+  _isInsideSelection(point) {
+    const rect = this._normalizedSelection();
+    if (!rect) return false;
+    return point.x >= rect.x && point.x <= rect.x + rect.w &&
+           point.y >= rect.y && point.y <= rect.y + rect.h;
+  }
+
+  _normalizedSelection() {
+    if (!this.selection) return null;
+    const x = Math.max(0, Math.round(this.selection.x));
+    const y = Math.max(0, Math.round(this.selection.y));
+    const right = Math.min(this.canvas.width, Math.round(this.selection.x + this.selection.w));
+    const bottom = Math.min(this.canvas.height, Math.round(this.selection.y + this.selection.h));
+    const w = right - x;
+    const h = bottom - y;
+    if (w < 1 || h < 1) return null;
+    return { x, y, w, h };
+  }
+
+  _liftSelection() {
+    const rect = this._normalizedSelection();
+    if (!rect) {
+      this.selection = null;
+      return;
+    }
+    this._emit('selectionliftstart');
+    const lifted = document.createElement('canvas');
+    lifted.width = rect.w;
+    lifted.height = rect.h;
+    lifted.getContext('2d').drawImage(this.canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    this.floatingImage = lifted;
+    this.floatingPos = { x: rect.x, y: rect.y };
+    this.selection = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+    this.ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
+  }
+
+  commitSelection() {
+    const hadFloating = !!this.floatingImage;
+    if (hadFloating) {
+      this.ctx.drawImage(this.floatingImage, Math.round(this.floatingPos.x), Math.round(this.floatingPos.y));
+      this.floatingImage = null;
+      this.floatingPos = null;
+    }
+    this.selection = null;
+    this._selectPhase = null;
+    this._clearSelectionOverlay();
+    if (hadFloating) {
+      this._emit('selectioncommitted');
+    }
+    return hadFloating;
+  }
+
+  copySelection() {
+    if (this.floatingImage) {
+      const copy = document.createElement('canvas');
+      copy.width = this.floatingImage.width;
+      copy.height = this.floatingImage.height;
+      copy.getContext('2d').drawImage(this.floatingImage, 0, 0);
+      this._selectClipboard = copy;
+      return true;
+    }
+    const rect = this._normalizedSelection();
+    if (!rect) return false;
+    const copy = document.createElement('canvas');
+    copy.width = rect.w;
+    copy.height = rect.h;
+    copy.getContext('2d').drawImage(this.canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    this._selectClipboard = copy;
+    return true;
+  }
+
+  hasSelectionClipboard() {
+    return !!this._selectClipboard;
+  }
+
+  pasteSelection() {
+    if (!this._selectClipboard) return false;
+    if (typeof this.canDraw === 'function' && !this.canDraw()) {
+      this._emit('drawblocked', {
+        tool: DrawingTool.SELECT,
+        ctrlKey: false
+      });
+      return false;
+    }
+    this.commitSelection();
+    this._emit('selectionliftstart');
+    const pasted = document.createElement('canvas');
+    pasted.width = this._selectClipboard.width;
+    pasted.height = this._selectClipboard.height;
+    pasted.getContext('2d').drawImage(this._selectClipboard, 0, 0);
+    this.floatingImage = pasted;
+    this.floatingPos = {
+      x: Math.round((this.canvas.width - pasted.width) / 2),
+      y: Math.round((this.canvas.height - pasted.height) / 2)
+    };
+    this.selection = {
+      x: this.floatingPos.x,
+      y: this.floatingPos.y,
+      w: pasted.width,
+      h: pasted.height
+    };
+    this._selectPhase = null;
+    this._renderSelectionOverlay();
+    return true;
+  }
+
+  clearSelection() {
+    this.selection = null;
+    this.floatingImage = null;
+    this.floatingPos = null;
+    this._selectPhase = null;
+    this._selectGrabOffset = null;
+    this._clearSelectionOverlay();
+  }
+
+  _clearSelectionOverlay() {
+    const ctx = this.selectionCanvas?.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, this.selectionCanvas.width, this.selectionCanvas.height);
+    this._emitSelectionOverlayChanged();
+  }
+
+  _renderSelectionOverlay() {
+    const ctx = this.selectionCanvas?.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, this.selectionCanvas.width, this.selectionCanvas.height);
+    if (this.floatingImage && this.floatingPos) {
+      ctx.save();
+      ctx.globalAlpha = this.selectionImageOpacity;
+      ctx.drawImage(this.floatingImage, Math.round(this.floatingPos.x), Math.round(this.floatingPos.y));
+      ctx.restore();
+    }
+    const rect = this._normalizedSelection();
+    if (!rect) {
+      this._emitSelectionOverlayChanged();
+      return;
+    }
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w, rect.h);
+    ctx.lineDashOffset = 5;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w, rect.h);
+    ctx.restore();
+    this._emitSelectionOverlayChanged();
+  }
+
+  _emitSelectionOverlayChanged() {
+    this._emit('selectionoverlaychanged', {
+      hasFloating: !!this.floatingImage,
+      hasSelection: !!this.selection
+    });
+  }
+
   /**
    * 캔버스가 비어있는지 확인
    */
@@ -861,6 +1109,18 @@ export class DrawingCanvas extends EventTarget {
     this.opacity = opacity;
   }
 
+  setSelectionImageOpacity(opacity) {
+    const value = Number(opacity);
+    const nextOpacity = Number.isFinite(value)
+      ? Math.max(0, Math.min(1, value))
+      : 1;
+    if (this.selectionImageOpacity === nextOpacity) return;
+    this.selectionImageOpacity = nextOpacity;
+    if (this.floatingImage || this.selection) {
+      this._renderSelectionOverlay();
+    }
+  }
+
   /**
    * 외곽선 활성화/비활성화
    */
@@ -908,6 +1168,9 @@ export class DrawingCanvas extends EventTarget {
     this.tempCanvas = null;
     this.tempCtx = null;
     this.backupImageData = null;
+    this.clearSelection();
+    this._selectClipboard = null;
+    this.selectionCanvas = null;
 
     log.info('DrawingCanvas 정리됨');
   }

@@ -35,6 +35,8 @@ test('drawing layer up/down shortcuts follow the visible layer list direction', 
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerSelectDown', e\)[\s\S]{0,140}selectDrawingLayerByOffset\(1\);/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveUp', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(-1\);/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveDown', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(1\);/);
+  assert.match(appSource, /더 큰 배열 인덱스가 화면 앞쪽이므로 새 레이어는 합성 기준으로 활성 레이어 위에 둔다\./);
+  assert.match(appSource, /const insertIndex = activeIndex === -1 \? drawingManager\.layers\.length : activeIndex \+ 1;/);
 });
 
 test('DrawingManager supports selecting and moving active layers by offset', () => {
@@ -79,4 +81,18 @@ test('timeline can center the viewport on the current playhead', () => {
 
 test('keyframe shortcut source coverage is part of the drawing test command', () => {
   assert.match(packageJson.scripts['test:drawing'], /keyframe-shortcuts-source\.test\.js/);
+});
+
+test('Animate-style playback, layer toggle, and frame clipboard shortcuts are configured', () => {
+  assert.match(userSettingsSource, /playPauseAlt:\s*\{ key: 'KeyV', ctrl: false, shift: true, alt: false/);
+  assert.match(userSettingsSource, /drawingLayerVisibilityToggle:\s*\{ key: 'Backquote', ctrl: false, shift: false, alt: false/);
+  assert.match(userSettingsSource, /drawingLayerLockToggle:\s*\{ key: 'Digit2', ctrl: true, shift: false, alt: false/);
+  assert.match(userSettingsSource, /frameCopy:\s*\{ key: 'KeyC', ctrl: true, shift: false, alt: true/);
+  assert.match(userSettingsSource, /framePaste:\s*\{ key: 'KeyV', ctrl: true, shift: false, alt: true/);
+  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerVisibilityToggle', e\)/);
+  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerLockToggle', e\)/);
+  assert.match(appSource, /userSettings\.matchShortcut\('frameCopy', e\)/);
+  assert.match(appSource, /userSettings\.matchShortcut\('framePaste', e\)/);
+  assert.match(drawingManagerSource, /copyFrames\(targets = null\)/);
+  assert.match(drawingManagerSource, /pasteFrames\(targetFrame = this\.currentFrame\)/);
 });

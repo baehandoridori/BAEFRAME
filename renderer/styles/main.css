@@ -1107,6 +1107,19 @@ body.mpv-pilot-mode .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
 .drawing-overlay.active {
   pointer-events: auto;
   cursor: crosshair;
+  touch-action: none;
+}
+
+.video-wrapper.space-pan .drawing-overlay.active {
+  pointer-events: none;
+}
+
+.video-wrapper.space-pan {
+  cursor: grab;
+}
+
+.video-wrapper.space-pan.panning {
+  cursor: grabbing;
 }
 
 /* Composition Layer Overlay */
@@ -1836,6 +1849,11 @@ body.mpv-pilot-mode .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
 
 .layers-above-layer {
   z-index: 4;
+}
+
+.selection-overlay {
+  z-index: 3;
+  pointer-events: none;
 }
 
 /* ========================================
@@ -3067,6 +3085,12 @@ body.app-fullscreen .video-comment-overlay-controls {
   flex: 1;
   display: flex;
   overflow: hidden;
+}
+
+#timelineTracks,
+#timelineRuler,
+#playheadHandle {
+  touch-action: none;
 }
 
 /* Layer Headers */

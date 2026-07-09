@@ -399,7 +399,14 @@ test('mpv overlay throttles live drawing snapshots but forces final drawing sync
   assert.match(appSource, /if \(options\.liveDrawing === true\) \{[\s\S]+const elapsed = now - mpvOverlayLastLiveDrawSyncAt;[\s\S]+if \(elapsed < MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS\) \{/);
   assert.match(appSource, /mpvOverlayStateSyncTimer = setTimeout\(\(\) => \{[\s\S]+mpvOverlayLastLiveDrawSyncAt = Date\.now\(\);[\s\S]+syncMpvOverlayState\(\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('drawmove', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\{ liveDrawing: true \}\);[\s\S]+\}\);/);
+  assert.match(appSource, /drawingManager\.addEventListener\('selectionoverlaychanged', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\{ liveDrawing: true \}\);[\s\S]+\}\);/);
   assert.match(appSource, /drawingManager\.addEventListener\('drawend', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+\}\);/);
+});
+
+test('mpv drawing overlay snapshot includes floating selection overlay', () => {
+  assert.match(appSource, /function getCompositedDrawingOverlayDataUrl\(\) \{[\s\S]+const activeLayerOpacity = Number\(drawingManager\.getActiveLayer\?\.\(\)\?\.opacity\);/);
+  assert.match(appSource, /const drawCanvas = \(canvas, opacity = 1\) => \{[\s\S]+ctx\.globalAlpha = opacity;[\s\S]+ctx\.drawImage\(canvas, 0, 0\);[\s\S]+ctx\.globalAlpha = 1;/);
+  assert.match(appSource, /drawCanvas\(baseCanvas, activeCanvasOpacity\);[\s\S]+drawCanvas\(elements\.selectionOverlayCanvas\);[\s\S]+drawCanvas\(elements\.layersAboveCanvas\);/);
 });
 
 test('mpv external playback preserves frame seek and loop behavior', () => {

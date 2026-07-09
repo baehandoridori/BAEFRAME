@@ -10,6 +10,7 @@ const htmlSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'rendere
 const cssSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/main.css'), 'utf8'));
 const commentManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/comment-manager.js'), 'utf8'));
 const commentSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/comment-sync.js'), 'utf8'));
+const mentionManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/mention-manager.js'), 'utf8'));
 const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
 const ipcHandlersSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
 
@@ -197,4 +198,11 @@ test('resolved author metadata is synced and visible for every resolved tooltip'
   assert.match(appSource, /해결한 사람 기록 없음/);
   assert.match(appSource, /marker\.resolved \? getResolveTooltipHtml\(marker\.resolvedBy, marker\.resolvedAt\) : ''/);
   assert.match(appSource, /range\.resolved \? getResolveTooltipHtml\(range\.resolvedBy, range\.resolvedAt\) : ''/);
+});
+
+test('comment edit textarea participates in mention autocomplete', () => {
+  assert.match(appSource, /if \(editTextarea\) mentionManager\.attach\(editTextarea\);/);
+  assert.match(appSource, /'\.comment-reply-input, \.comment-reply-edit-textarea, \.comment-edit-textarea'/);
+  assert.match(mentionManagerSource, /e\.__mentionHandled = true;/);
+  assert.match(appSource, /editTextarea\?\.addEventListener\('keydown', \(e\) => \{[\s\S]*?if \(e\.__mentionHandled \|\| mentionManager\.isVisible\) return;[\s\S]*?if \(e\.key === 'Escape'\) \{/);
 });
