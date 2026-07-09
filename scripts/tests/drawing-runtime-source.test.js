@@ -142,7 +142,8 @@ test('drawing layer rendering uses static below and above canvases around the ac
   assert.match(drawingManagerSource, /_drawImageToContext\(ctx, img, opacity\)/);
   assert.match(drawingManagerSource, /this\.renderFrame\(this\.currentFrame\);/);
 
-  assert.match(drawingSyncSource, /createLayer\(\{ \.\.\.layerData, skipActivate: true \}\)/);
+  assert.match(drawingSyncSource, /skipActivate: true/);
+  assert.match(drawingSyncSource, /insertIndex: Number\.isInteger\(insertIndex\) \? insertIndex : undefined/);
 });
 
 test('drawing manager records freehand strokes and erases intersecting stroke records', () => {
@@ -218,4 +219,17 @@ test('pen and brush strokes use bundled perfect-freehand smoothing without chang
 
   assert.match(drawingStrokeRecordsSource, /points: record\.points\.map\(point => \(\{/);
   assert.doesNotMatch(drawingStrokeRecordsSource, /smoothVersion|freehandVersion|renderMode/);
+});
+
+test('drawing select tool supports marquee selection, move, copy and paste', () => {
+  assert.match(drawingCanvasSource, /SELECT: 'select'/);
+  assert.match(drawingCanvasSource, /_onSelectPointerDown\(e\)/);
+  assert.match(drawingCanvasSource, /commitSelection\(\)/);
+  assert.match(drawingCanvasSource, /copySelection\(\)/);
+  assert.match(drawingCanvasSource, /pasteSelection\(\)/);
+  assert.match(drawingManagerSource, /commitActiveSelection\(\)/);
+  assert.match(drawingManagerSource, /selectioncommitted/);
+  assert.match(indexSource, /data-tool="select"/);
+  assert.match(indexSource, /id="selectionOverlayCanvas"/);
+  assert.match(userSettingsSource, /'select', 'pen', 'brush', 'eraser', 'line', 'arrow', 'rect', 'circle'/);
 });

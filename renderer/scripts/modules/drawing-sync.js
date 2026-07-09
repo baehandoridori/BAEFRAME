@@ -251,10 +251,11 @@ export class DrawingSync {
   _onLayerCreated(e) {
     if (this._isRemoteUpdate) return;
 
-    const { layer } = e.detail || {};
+    const { layer, insertIndex } = e.detail || {};
     if (layer) {
       this._lm.broadcastEvent({
         type: 'DRAWING_LAYER_CREATED',
+        insertIndex: Number.isInteger(insertIndex) ? insertIndex : undefined,
         layer: {
           id: layer.id,
           name: layer.name,
@@ -384,7 +385,11 @@ export class DrawingSync {
 
       // DrawingManager에 레이어 추가
       if (this._dm.createLayer) {
-        this._dm.createLayer({ ...layerData, skipActivate: true });
+        this._dm.createLayer({
+          ...layerData,
+          skipActivate: true,
+          ...(Number.isInteger(event.insertIndex) ? { insertIndex: event.insertIndex } : {})
+        });
       }
       log.debug('원격 레이어 생성 적용', { id: layerData.id });
     } finally {

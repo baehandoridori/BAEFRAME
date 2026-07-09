@@ -53,12 +53,15 @@ export class DrawingManager extends EventTarget {
     this.onionSkinCtx = this.onionSkinCanvasElement?.getContext('2d');
     this.layersBelowCanvas = options.layersBelowCanvas;
     this.layersAboveCanvas = options.layersAboveCanvas;
+    this.selectionOverlayCanvas = options.selectionOverlayCanvas || null;
+    this.drawingCanvas.selectionCanvas = this.selectionOverlayCanvas;
     this.layersBelowCtx = this.layersBelowCanvas?.getContext('2d');
     this.layersAboveCtx = this.layersAboveCanvas?.getContext('2d');
 
     // 레이어 관리
     this.layers = [];
     this.activeLayerId = null;
+    this._frameClipboard = null;
 
     // 비디오 정보
     this.totalFrames = 0;
@@ -128,6 +131,14 @@ export class DrawingManager extends EventTarget {
         ...e.detail,
         reason: layer?.locked ? 'locked' : 'hidden'
       });
+    });
+
+    this.drawingCanvas.addEventListener('selectionliftstart', () => {
+      this._saveToHistory();
+    });
+
+    this.drawingCanvas.addEventListener('selectioncommitted', () => {
+      this._onSelectionCommitted();
     });
   }
 
@@ -231,6 +242,33 @@ export class DrawingManager extends EventTarget {
     this._emit('drawend', { frame: this.currentFrame });
     this._emit('layersChanged');
     this._activeStrokeBaseData = null;
+  }
+
+  /**
+   * 선택 도구 커밋 결과를 현재 키프레임 비트맵으로 저장
+   */
+  _onSelectionCommitted() {
+    const keyframe = this._saveCurrentFrameData({
+      editHeldSourceKeyframe: false,
+      preserveStrokeRecords: false
+    });
+    if (keyframe) {
+      this._freezeStrokeRecords(keyframe);
+    }
+    this._emit('drawend', { frame: this.currentFrame });
+    this._emit('layersChanged');
+  }
+
+  /**
+   * 진행 중인 선택을 커밋한다.
+   */
+  commitActiveSelection() {
+    if (!this.drawingCanvas) return;
+    if (this.drawingCanvas.floatingImage) {
+      this.drawingCanvas.commitSelection();
+    } else if (this.drawingCanvas.selection) {
+      this.drawingCanvas.commitSelection();
+    }
   }
 
   /**
@@ -453,12 +491,15 @@ export class DrawingManager extends EventTarget {
     }
 
     const layer = new DrawingLayer(options);
-    this.layers.push(layer);
+    const insertIndex = Number.isInteger(options.insertIndex)
+      ? Math.max(0, Math.min(options.insertIndex, this.layers.length))
+      : this.layers.length;
+    this.layers.splice(insertIndex, 0, layer);
     if (options.skipActivate !== true) {
       this.activeLayerId = layer.id;
     }
 
-    this._emit('layerCreated', { layer });
+    this._emit('layerCreated', { layer, insertIndex });
     this._emit('layersChanged');
     this.renderFrame(this.currentFrame);
 
@@ -850,6 +891,75 @@ export class DrawingManager extends EventTarget {
   }
 
   /**
+   * 프레임 복사 (Ctrl+Alt+C)
+   */
+  copyFrames(targets = null) {
+    const resolved = [];
+    if (Array.isArray(targets) && targets.length > 0) {
+      for (const target of targets) {
+        const layer = this.layers.find(l => l.id === target.layerId);
+        const keyframe = layer?.keyframes.find(kf => kf.frame === Number(target.frame));
+        if (layer && keyframe) {
+          resolved.push({ layerId: layer.id, frame: keyframe.frame, keyframe: keyframe.clone() });
+        }
+      }
+    } else {
+      const layer = this.getActiveLayer();
+      const keyframe = layer?.getKeyframeAtFrame(this.currentFrame);
+      if (layer && keyframe) {
+        resolved.push({ layerId: layer.id, frame: keyframe.frame, keyframe: keyframe.clone() });
+      }
+    }
+    if (resolved.length === 0) return 0;
+
+    const minFrame = Math.min(...resolved.map(item => item.frame));
+    this._frameClipboard = {
+      items: resolved.map(item => ({
+        layerId: item.layerId,
+        offset: item.frame - minFrame,
+        isEmpty: item.keyframe.isEmpty,
+        keyframe: item.keyframe
+      }))
+    };
+    log.info('프레임 복사됨', { count: resolved.length });
+    return resolved.length;
+  }
+
+  /**
+   * 프레임 붙여넣기 (Ctrl+Alt+V)
+   */
+  pasteFrames(targetFrame = this.currentFrame) {
+    const clip = this._frameClipboard;
+    if (!clip?.items?.length) return 0;
+
+    this._saveToHistory();
+
+    let pasted = 0;
+    for (const item of clip.items) {
+      const layer = this.layers.find(l => l.id === item.layerId) || this.getActiveLayer();
+      if (!layer || layer.locked) continue;
+
+      const frame = targetFrame + item.offset;
+      if (frame < 0 || frame >= this.totalFrames) continue;
+
+      layer.removeKeyframe(frame);
+      const keyframe = item.keyframe.clone();
+      keyframe.frame = frame;
+      keyframe.isEmpty = item.isEmpty;
+      layer.keyframes.push(keyframe);
+      layer._sortKeyframes();
+      pasted += 1;
+    }
+
+    if (pasted > 0) {
+      this.renderFrame(this.currentFrame);
+      this._emit('layersChanged');
+      log.info('프레임 붙여넣기됨', { targetFrame, count: pasted });
+    }
+    return pasted;
+  }
+
+  /**
    * 키프레임 이동 (드래그로 이동)
    * @param {Array} keyframesToMove - [ { layerId, fromFrame, toFrame } ]
    */
@@ -922,7 +1032,7 @@ export class DrawingManager extends EventTarget {
     this.canvasWidth = width;
     this.canvasHeight = height;
     this.drawingCanvas.syncSize(width, height);
-    [this.layersBelowCanvas, this.layersAboveCanvas].forEach((canvas) => {
+    [this.layersBelowCanvas, this.layersAboveCanvas, this.selectionOverlayCanvas].forEach((canvas) => {
       if (!canvas) return;
       canvas.width = width;
       canvas.height = height;
@@ -944,6 +1054,9 @@ export class DrawingManager extends EventTarget {
   setCurrentFrame(frame) {
     // 같은 프레임이면 무시 (불필요한 렌더링 방지)
     if (frame === this.currentFrame) return;
+    if (this.drawingCanvas.floatingImage || this.drawingCanvas.selection) {
+      this.drawingCanvas.commitSelection();
+    }
 
     // 이전 프레임에서 그리기 중이었으면 저장
     if (this.drawingCanvas.isDrawing) {
@@ -984,6 +1097,10 @@ export class DrawingManager extends EventTarget {
    * 특정 프레임 렌더링 (모든 보이는 레이어 합성)
    */
   async renderFrame(frame) {
+    if (this.drawingCanvas.floatingImage) {
+      this.drawingCanvas.commitSelection();
+    }
+
     // 그리기 중이면 렌더링 스킵 (사용자가 그리는 중에 캔버스 지우기 방지)
     if (this.drawingCanvas.isDrawing) {
       log.debug('그리기 중이므로 렌더링 스킵', { frame });

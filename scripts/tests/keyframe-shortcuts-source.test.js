@@ -80,3 +80,17 @@ test('timeline can center the viewport on the current playhead', () => {
 test('keyframe shortcut source coverage is part of the drawing test command', () => {
   assert.match(packageJson.scripts['test:drawing'], /keyframe-shortcuts-source\.test\.js/);
 });
+
+test('Animate-style playback, layer toggle, and frame clipboard shortcuts are configured', () => {
+  assert.match(userSettingsSource, /playPauseAlt:\s*\{ key: 'KeyV', ctrl: false, shift: true, alt: false/);
+  assert.match(userSettingsSource, /drawingLayerVisibilityToggle:\s*\{ key: 'Backquote', ctrl: false, shift: false, alt: false/);
+  assert.match(userSettingsSource, /drawingLayerLockToggle:\s*\{ key: 'Digit2', ctrl: true, shift: false, alt: false/);
+  assert.match(userSettingsSource, /frameCopy:\s*\{ key: 'KeyC', ctrl: true, shift: false, alt: true/);
+  assert.match(userSettingsSource, /framePaste:\s*\{ key: 'KeyV', ctrl: true, shift: false, alt: true/);
+  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerVisibilityToggle', e\)/);
+  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerLockToggle', e\)/);
+  assert.match(appSource, /userSettings\.matchShortcut\('frameCopy', e\)/);
+  assert.match(appSource, /userSettings\.matchShortcut\('framePaste', e\)/);
+  assert.match(drawingManagerSource, /copyFrames\(targets = null\)/);
+  assert.match(drawingManagerSource, /pasteFrames\(targetFrame = this\.currentFrame\)/);
+});

@@ -46,11 +46,11 @@ test('Space play/pause shortcut suppresses focused control keyup activation', ()
   assert.match(appSource, /let suppressPlayPauseShortcutKeyup = false;/);
   assert.match(
     appSource,
-    /if \(isPlayPauseShortcut\) \{[\s\S]+if \(e\.code === 'Space'\) \{[\s\S]+suppressPlayPauseShortcutKeyup = true;[\s\S]+\}[\s\S]+e\.preventDefault\(\);[\s\S]+e\.stopPropagation\(\);[\s\S]+handleUserPlayPauseToggle\(\);/
+    /if \(isPlayPauseInput\) \{[\s\S]+if \(e\.code === 'Space' && state\.isDrawMode\) \{[\s\S]+state\.isSpaceHeld = true;[\s\S]+\}[\s\S]+if \(e\.code === 'Space'\) \{[\s\S]+suppressPlayPauseShortcutKeyup = true;[\s\S]+\}[\s\S]+e\.preventDefault\(\);[\s\S]+e\.stopPropagation\(\);[\s\S]+handleUserPlayPauseToggle\(\);/
   );
   assert.match(
     appSource,
-    /function handleKeyup\(e\) \{[\s\S]+if \(!suppressPlayPauseShortcutKeyup \|\| e\.code !== 'Space'\) return;[\s\S]+e\.preventDefault\(\);[\s\S]+e\.stopPropagation\(\);[\s\S]+suppressPlayPauseShortcutKeyup = false;[\s\S]+\}/
+    /function handleKeyup\(e\) \{[\s\S]+if \(e\.code !== 'Space'\) return;[\s\S]+if \(state\.isSpaceHeld\) \{[\s\S]+handleUserPlayPauseToggle\(\);[\s\S]+\}[\s\S]+if \(!suppressPlayPauseShortcutKeyup\) return;[\s\S]+suppressPlayPauseShortcutKeyup = false;[\s\S]+\}/
   );
   assert.match(appSource, /document\.addEventListener\('keydown', handleKeydown, true\);/);
   assert.match(appSource, /document\.addEventListener\('keyup', handleKeyup, true\);/);

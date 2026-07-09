@@ -121,6 +121,7 @@ async function initApp() {
     layersAboveCanvas: document.getElementById('layersAboveCanvas'),
     brushSizeHud: document.getElementById('brushSizeHud'),
     onionSkinCanvas: document.getElementById('onionSkinCanvas'),
+    selectionOverlayCanvas: document.getElementById('selectionOverlayCanvas'),
     drawingTools: document.getElementById('drawingTools'),
     btnOpenFile: document.getElementById('btnOpenFile'),
 
@@ -380,6 +381,8 @@ async function initApp() {
     panStartY: 0,
     panInitialX: 0,
     panInitialY: 0,
+    isSpaceHeld: false,
+    spacePanUsed: false,
     isFullscreenScrubbing: false,
     fullscreenScrubStartX: 0,
     fullscreenScrubStartTime: 0,
@@ -815,7 +818,8 @@ async function initApp() {
     canvas: elements.drawingCanvas,
     layersBelowCanvas: elements.layersBelowCanvas,
     layersAboveCanvas: elements.layersAboveCanvas,
-    onionSkinCanvas: elements.onionSkinCanvas
+    onionSkinCanvas: elements.onionSkinCanvas,
+    selectionOverlayCanvas: elements.selectionOverlayCanvas
   });
 
   // DrawingManager → 통합 undo 스택 연동
@@ -1408,7 +1412,7 @@ async function initApp() {
   });
 
   // 팝업 외부 클릭 시 닫기
-  document.addEventListener('mousedown', (e) => {
+  document.addEventListener('pointerdown', (e) => {
     if (layerSettingsPopup.style.display === 'block' &&
         !layerSettingsPopup.contains(e.target) &&
         !e.target.closest('.drawing-layer-header')) {
@@ -2818,6 +2822,7 @@ async function initApp() {
 
   // 도구 매핑
   const toolMap = {
+    select: DrawingTool.SELECT,
     pen: DrawingTool.PEN,
     brush: DrawingTool.BRUSH,
     eraser: DrawingTool.ERASER,
@@ -2983,6 +2988,7 @@ async function initApp() {
 
   function selectDrawingTool(toolName, options = {}) {
     const persist = options.persist !== false;
+    drawingManager.commitActiveSelection();
     toolName = toolMap[toolName] ? toolName : 'brush';
     document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.tool === toolName);
@@ -3191,7 +3197,9 @@ async function initApp() {
   }
 
   function addDrawingLayer() {
-    drawingManager.createLayer();
+    const activeIndex = drawingManager.layers.findIndex(l => l.id === drawingManager.activeLayerId);
+    const insertIndex = activeIndex === -1 ? drawingManager.layers.length : activeIndex;
+    drawingManager.createLayer({ insertIndex });
     renderDrawingLayerTimeline();
     showToast('새 레이어 추가됨', 'success');
   }
@@ -3914,6 +3922,8 @@ async function initApp() {
   document.addEventListener('keydown', (e) => {
     // input, textarea에서는 무시
     if (e.target.matches('input, textarea')) return;
+    // Alt 조합(Ctrl+Alt+C/V 프레임 복붙)은 하이라이트 복붙이 아님
+    if (e.altKey) return;
 
     // Ctrl+C: 선택된 하이라이트 복사
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
@@ -4856,7 +4866,9 @@ async function initApp() {
   }
 
   function canPanVideo() {
-    return !state.isDrawMode && (state.videoZoom > 100 || !state.videoCenterLocked);
+    const zoomAllowsPan = state.videoZoom > 100 || !state.videoCenterLocked;
+    if (state.isDrawMode) return state.isSpaceHeld && zoomAllowsPan;
+    return zoomAllowsPan;
   }
 
   /**
@@ -4895,7 +4907,12 @@ async function initApp() {
     const scale = state.videoZoom / 100;
     const transform = `scale(${scale}) translate(${state.videoPanX}px, ${state.videoPanY}px)`;
 
-    [elements.layersBelowCanvas, elements.drawingCanvas, elements.layersAboveCanvas].forEach((canvas) => {
+    [
+      elements.layersBelowCanvas,
+      elements.drawingCanvas,
+      elements.layersAboveCanvas,
+      elements.selectionOverlayCanvas
+    ].forEach((canvas) => {
       if (!canvas) return;
       canvas.style.transform = transform;
       canvas.style.transformOrigin = 'center center';
@@ -5010,6 +5027,7 @@ async function initApp() {
     }
 
     if (canPanVideo() && e.button === 0) {
+      if (state.isSpaceHeld) state.spacePanUsed = true;
       state.isPanningVideo = true;
       state.panStartX = e.clientX;
       state.panStartY = e.clientY;
@@ -5051,6 +5069,12 @@ async function initApp() {
       state.isPanningVideo = false;
       elements.videoWrapper?.classList.remove('panning');
     }
+  });
+
+  window.addEventListener('blur', () => {
+    state.isSpaceHeld = false;
+    state.spacePanUsed = false;
+    elements.videoWrapper?.classList.remove('space-pan');
   });
 
   // ====== 댓글 패널 토글 ======
@@ -5152,7 +5176,12 @@ async function initApp() {
   function syncCanvasOverlay() {
     const renderArea = getVideoRenderArea();
     const canvas = elements.drawingCanvas;
-    const layerCanvases = [elements.layersBelowCanvas, elements.drawingCanvas, elements.layersAboveCanvas];
+    const layerCanvases = [
+      elements.layersBelowCanvas,
+      elements.drawingCanvas,
+      elements.layersAboveCanvas,
+      elements.selectionOverlayCanvas
+    ];
     const onionCanvas = elements.onionSkinCanvas;
     const compositionOverlay = elements.compositionLayerOverlay;
 
@@ -7521,6 +7550,12 @@ async function initApp() {
     elements.drawingCanvas?.classList.toggle('active', enabled);
     elements.videoWrapper?.classList.toggle('drawing-mode', enabled);
     setCommentOverlaysDrawingPassthrough(enabled);
+    if (!enabled) {
+      drawingManager.commitActiveSelection();
+      state.isSpaceHeld = false;
+      state.spacePanUsed = false;
+      elements.videoWrapper?.classList.remove('space-pan');
+    }
   }
 
   function toggleDrawMode() {
@@ -9363,7 +9398,7 @@ async function initApp() {
     const thumbnailGenerator = getThumbnailGenerator();
 
     // 재렌더링 전: 기존 요소들의 mentionManager 핸들러 정리 (메모리 누수 방지)
-    container.querySelectorAll('.comment-reply-input, .comment-reply-edit-textarea').forEach(el => {
+    container.querySelectorAll('.comment-reply-input, .comment-reply-edit-textarea, .comment-edit-textarea').forEach(el => {
       mentionManager.detach(el);
     });
 
@@ -9558,6 +9593,7 @@ async function initApp() {
       const contentEl = item.querySelector('.comment-content');
       const editFormEl = item.querySelector('.comment-edit-form');
       const editTextarea = item.querySelector('.comment-edit-textarea');
+      if (editTextarea) mentionManager.attach(editTextarea);
       const actionsEl = item.querySelector('.comment-actions');
 
       editBtn?.addEventListener('click', async (e) => {
@@ -9657,6 +9693,8 @@ async function initApp() {
       editTextarea?.addEventListener('keydown', (e) => {
         // 이미 처리 중이면 무시 (중복 호출 방지)
         if (editFormEl.style.display === 'none') return;
+        // 멘션 드롭다운 열림 중에는 멘션 매니저가 키를 처리
+        if (mentionManager.isVisible) return;
 
         if (e.key === 'Escape') {
           e.stopPropagation();
@@ -10506,7 +10544,9 @@ async function initApp() {
 
     const shortcutTarget = getEffectiveKeyboardShortcutTarget(e, document);
     const isPlayPauseShortcut = userSettings.matchShortcut('playPause', e);
-    if (isPlayPauseShortcut && !shouldHandlePlayPauseShortcutFromTarget(shortcutTarget, e)) return;
+    const isPlayPauseAltShortcut = userSettings.matchShortcut('playPauseAlt', e);
+    const isPlayPauseInput = isPlayPauseShortcut || isPlayPauseAltShortcut;
+    if (isPlayPauseInput && !shouldHandlePlayPauseShortcutFromTarget(shortcutTarget, e)) return;
 
     // pending 마커 입력 중이면 단축키 무시 (textarea 포커스 전에도 적용)
     if (commentManager.pendingMarker) return;
@@ -10522,7 +10562,17 @@ async function initApp() {
     // ====== 공통 단축키 (사용자 설정 기반) ======
 
     // 재생/일시정지
-    if (isPlayPauseShortcut) {
+    if (isPlayPauseInput) {
+      if (e.code === 'Space' && state.isDrawMode) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.repeat) return;
+        if (drawingManager.drawingCanvas.isDrawing) return;
+        state.isSpaceHeld = true;
+        state.spacePanUsed = false;
+        elements.videoWrapper?.classList.add('space-pan');
+        return;
+      }
       if (e.code === 'Space') {
         suppressPlayPauseShortcutKeyup = true;
       }
@@ -10602,6 +10652,11 @@ async function initApp() {
     // ====== 시스템 단축키 (변경 불가) ======
     switch (e.code) {
     case 'Escape':
+      if (state.isDrawMode && drawingManager.drawingCanvas.selection) {
+        e.preventDefault();
+        drawingManager.commitActiveSelection();
+        return;
+      }
       if (state.isFullscreen) {
         e.preventDefault();
         toggleFullscreen();
@@ -10671,6 +10726,27 @@ async function initApp() {
       return;
     }
 
+    // 드로잉 선택 영역 복사/붙여넣기 (select 도구)
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyC'
+        && state.isDrawMode && drawingManager.drawingCanvas.selection) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (drawingManager.drawingCanvas.copySelection()) {
+        showToast('선택 영역이 복사되었습니다', 'success');
+      }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyV'
+        && state.isDrawMode && drawingManager.drawingCanvas.hasSelectionClipboard()) {
+      e.preventDefault();
+      e.stopPropagation();
+      selectDrawingTool('select');
+      if (drawingManager.drawingCanvas.pasteSelection()) {
+        showToast('선택 영역이 붙여넣기 되었습니다', 'success');
+      }
+      return;
+    }
+
     if (userSettings.matchShortcut('drawingLayerAdd', e)) {
       e.preventDefault();
       addDrawingLayer();
@@ -10699,6 +10775,26 @@ async function initApp() {
     if (userSettings.matchShortcut('drawingLayerMoveDown', e)) {
       e.preventDefault();
       moveDrawingLayerByOffset(1);
+      return;
+    }
+    if (userSettings.matchShortcut('drawingLayerVisibilityToggle', e)) {
+      if (!state.isDrawMode) return;
+      e.preventDefault();
+      const layer = drawingManager.getActiveLayer();
+      if (layer) {
+        drawingManager.toggleLayerVisibility(layer.id);
+        showToast(layer.visible ? '레이어 표시됨' : '레이어 숨김', 'info');
+      }
+      return;
+    }
+    if (userSettings.matchShortcut('drawingLayerLockToggle', e)) {
+      if (!state.isDrawMode) return;
+      e.preventDefault();
+      const layer = drawingManager.getActiveLayer();
+      if (layer) {
+        drawingManager.toggleLayerLock(layer.id);
+        showToast(layer.locked ? '레이어 잠금' : '레이어 잠금 해제', 'info');
+      }
       return;
     }
     if (userSettings.matchShortcut('timelineCenterOnPlayhead', e)) {
@@ -10740,6 +10836,37 @@ async function initApp() {
       if (state.isDrawMode) {
         drawingManager.addBlankKeyframe();
         showToast('빈 키프레임 추가됨', 'success');
+      }
+      return;
+    }
+
+    // 프레임 복사 (Ctrl+Alt+C)
+    if (userSettings.matchShortcut('frameCopy', e)) {
+      if (!state.isDrawMode) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const selected = Array.isArray(timeline.selectedKeyframes) && timeline.selectedKeyframes.length > 0
+        ? timeline.selectedKeyframes
+        : null;
+      const copiedCount = drawingManager.copyFrames(selected);
+      if (copiedCount > 0) {
+        showToast(`프레임 ${copiedCount}개 복사됨`, 'success');
+      } else {
+        showToast('복사할 프레임이 없습니다', 'warning');
+      }
+      return;
+    }
+    // 프레임 붙여넣기 (Ctrl+Alt+V)
+    if (userSettings.matchShortcut('framePaste', e)) {
+      if (!state.isDrawMode) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const pastedCount = drawingManager.pasteFrames();
+      if (pastedCount > 0) {
+        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        showToast(`프레임 ${pastedCount}개 붙여넣기됨`, 'success');
+      } else {
+        showToast('붙여넣을 프레임이 없습니다', 'warning');
       }
       return;
     }
@@ -10890,7 +11017,7 @@ async function initApp() {
       return;
     }
     // E: 지우개 모드 (드로잉 모드에서만 작동)
-    if (e.code === 'KeyE') {
+    if (e.code === 'KeyE' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
       // 드로잉 모드가 아니면 무시
       if (!state.isDrawMode) return;
       e.preventDefault();
@@ -10902,7 +11029,7 @@ async function initApp() {
       return;
     }
     // V: 선택 모드 (드로잉 모드 끄기)
-    if (e.code === 'KeyV') {
+    if (e.code === 'KeyV' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
       e.preventDefault();
       if (state.isDrawMode) {
         toggleDrawMode();
@@ -10912,7 +11039,18 @@ async function initApp() {
   }
 
   function handleKeyup(e) {
-    if (!suppressPlayPauseShortcutKeyup || e.code !== 'Space') return;
+    if (e.code !== 'Space') return;
+    if (state.isSpaceHeld) {
+      e.preventDefault();
+      e.stopPropagation();
+      const shouldTogglePlayback = !state.spacePanUsed && !state.isPanningVideo;
+      state.isSpaceHeld = false;
+      state.spacePanUsed = false;
+      elements.videoWrapper?.classList.remove('space-pan');
+      if (shouldTogglePlayback) handleUserPlayPauseToggle();
+      return;
+    }
+    if (!suppressPlayPauseShortcutKeyup) return;
     e.preventDefault();
     e.stopPropagation();
     suppressPlayPauseShortcutKeyup = false;
@@ -11461,13 +11599,13 @@ async function initApp() {
 
   // === 단축키 설정 UI ===
   const SHORTCUT_CATEGORIES = {
-    '재생': ['playPause', 'prevFrame', 'nextFrame', 'prevFrameFast', 'nextFrameFast', 'prevSecond', 'nextSecond', 'goToStart', 'goToEnd'],
+    '재생': ['playPause', 'playPauseAlt', 'prevFrame', 'nextFrame', 'prevFrameFast', 'nextFrameFast', 'prevSecond', 'nextSecond', 'goToStart', 'goToEnd'],
     '모드': ['commentMode', 'drawMode', 'fullscreen'],
     '구간 반복': ['setInPoint', 'setOutPoint', 'toggleLoop', 'clearLoop', 'addHighlight'],
     '실행취소': ['undo', 'redo'],
     '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeConvertToFrame', 'keyframeConvertToKeyframe', 'keyframeDelete', 'prevKeyframe', 'nextKeyframe'],
-    '프레임 편집': ['insertFrame', 'deleteFrame'],
-    '드로잉 레이어': ['drawingLayerAdd', 'drawingLayerDelete', 'drawingLayerSelectUp', 'drawingLayerSelectDown', 'drawingLayerMoveUp', 'drawingLayerMoveDown', 'timelineCenterOnPlayhead'],
+    '프레임 편집': ['insertFrame', 'deleteFrame', 'frameCopy', 'framePaste'],
+    '드로잉 레이어': ['drawingLayerAdd', 'drawingLayerDelete', 'drawingLayerVisibilityToggle', 'drawingLayerLockToggle', 'drawingLayerSelectUp', 'drawingLayerSelectDown', 'drawingLayerMoveUp', 'drawingLayerMoveDown', 'timelineCenterOnPlayhead'],
     '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp']
   };
 

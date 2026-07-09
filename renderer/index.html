@@ -501,6 +501,7 @@
           <canvas id="layersBelowCanvas" class="drawing-overlay layers-below-layer"></canvas>
           <canvas id="drawingCanvas" class="drawing-overlay"></canvas>
           <canvas id="layersAboveCanvas" class="drawing-overlay layers-above-layer"></canvas>
+          <canvas id="selectionOverlayCanvas" class="drawing-overlay selection-overlay"></canvas>
           <div id="brushSizeHud" class="brush-size-hud" hidden></div>
 
           <!-- Comment Range Overlay (비디오 하단 댓글 범위 표시) -->
@@ -594,6 +595,9 @@
               <div class="tools-section">
                 <div class="section-label">도구</div>
                 <div class="tools-row">
+                  <button class="tool-btn" data-tool="select" title="선택 (이동/복사/붙여넣기)">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l7 18 2.5-7.5L20 11z"/></svg>
+                  </button>
                   <button class="tool-btn active" data-tool="pen" title="펜 (P)">
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                   </button>

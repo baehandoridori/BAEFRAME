@@ -198,3 +198,8 @@ test('resolved author metadata is synced and visible for every resolved tooltip'
   assert.match(appSource, /marker\.resolved \? getResolveTooltipHtml\(marker\.resolvedBy, marker\.resolvedAt\) : ''/);
   assert.match(appSource, /range\.resolved \? getResolveTooltipHtml\(range\.resolvedBy, range\.resolvedAt\) : ''/);
 });
+
+test('comment edit textarea participates in mention autocomplete', () => {
+  assert.match(appSource, /if \(editTextarea\) mentionManager\.attach\(editTextarea\);/);
+  assert.match(appSource, /'\.comment-reply-input, \.comment-reply-edit-textarea, \.comment-edit-textarea'/);
+});

@@ -16,6 +16,7 @@ const STORAGE_KEY = 'baeframe_user_settings';
 const DEFAULT_SHORTCUTS = {
   // 재생 관련
   playPause: { key: 'Space', ctrl: false, shift: false, alt: false, label: '재생/일시정지' },
+  playPauseAlt: { key: 'KeyV', ctrl: false, shift: true, alt: false, label: '재생/일시정지 (보조)' },
   prevFrame: { key: 'ArrowLeft', ctrl: false, shift: false, alt: false, label: '이전 프레임' },
   nextFrame: { key: 'ArrowRight', ctrl: false, shift: false, alt: false, label: '다음 프레임' },
   prevFrameFast: { key: 'ArrowLeft', ctrl: false, shift: true, alt: false, label: '프레임 빨리 뒤로' },
@@ -54,10 +55,14 @@ const DEFAULT_SHORTCUTS = {
   // 프레임 편집
   insertFrame: { key: 'Digit3', ctrl: false, shift: false, alt: false, label: '프레임 삽입 (홀드)' },
   deleteFrame: { key: 'Digit4', ctrl: false, shift: false, alt: false, label: '프레임 삭제' },
+  frameCopy: { key: 'KeyC', ctrl: true, shift: false, alt: true, label: '프레임 복사' },
+  framePaste: { key: 'KeyV', ctrl: true, shift: false, alt: true, label: '프레임 붙여넣기' },
 
   // 드로잉 레이어 편집
   drawingLayerAdd: { key: 'F1', ctrl: false, shift: true, alt: false, label: '드로잉 레이어 추가' },
   drawingLayerDelete: { key: 'Backquote', ctrl: false, shift: true, alt: false, label: '드로잉 레이어 삭제' },
+  drawingLayerVisibilityToggle: { key: 'Backquote', ctrl: false, shift: false, alt: false, label: '활성 레이어 표시 토글' },
+  drawingLayerLockToggle: { key: 'Digit2', ctrl: true, shift: false, alt: false, label: '활성 레이어 잠금 토글' },
   drawingLayerSelectUp: { key: 'KeyX', ctrl: false, shift: true, alt: false, label: '위 레이어 선택' },
   drawingLayerSelectDown: { key: 'KeyC', ctrl: false, shift: true, alt: false, label: '아래 레이어 선택' },
   drawingLayerMoveUp: { key: 'KeyX', ctrl: true, shift: true, alt: false, label: '레이어 위로 이동' },
@@ -673,7 +678,7 @@ export class UserSettings extends EventTarget {
       strokeColor: '#ffffff'
     };
     const merged = { ...defaults, ...(this.settings.brushSettings || {}) };
-    const validTools = ['pen', 'brush', 'eraser', 'line', 'arrow', 'rect', 'circle'];
+    const validTools = ['select', 'pen', 'brush', 'eraser', 'line', 'arrow', 'rect', 'circle'];
 
     merged.tool = validTools.includes(merged.tool) ? merged.tool : defaults.tool;
     merged.color = typeof merged.color === 'string' ? merged.color : defaults.color;

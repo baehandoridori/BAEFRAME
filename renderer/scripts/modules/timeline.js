@@ -246,7 +246,8 @@ export class Timeline extends EventTarget {
     }, { passive: false });
 
     // 플레이헤드 드래그
-    this.playheadHandle?.addEventListener('mousedown', (e) => {
+    this.playheadHandle?.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
       e.preventDefault();
       this.isDraggingPlayhead = true;
       document.body.style.cursor = 'ew-resize';
@@ -258,15 +259,16 @@ export class Timeline extends EventTarget {
     }
 
     // 룰러 클릭/드래그로 시간 이동
-    this.timelineRuler?.addEventListener('mousedown', (e) => {
+    this.timelineRuler?.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
       e.preventDefault();
       this.isDraggingPlayhead = true;
       this._seekFromClick(e);
       document.body.style.cursor = 'ew-resize';
     });
 
-    // 트랙 영역 마우스 이벤트 (패닝 + 선택)
-    this.tracksContainer?.addEventListener('mousedown', (e) => {
+    // 트랙 영역 포인터 이벤트 (패닝 + 선택)
+    this.tracksContainer?.addEventListener('pointerdown', (e) => {
       if (this.isDraggingPlayhead) return;
 
       // Alt 키를 누른 상태면 선택 박스 모드
@@ -292,8 +294,7 @@ export class Timeline extends EventTarget {
       }
     });
 
-    // 전역 마우스 이벤트 (드래그용)
-    document.addEventListener('mousemove', (e) => {
+    const handleTimelinePointerMove = (e) => {
       // 플레이헤드 드래그 (스크러빙 모드)
       if (this.isDraggingPlayhead) {
         this._scrubFromClick(e);
@@ -315,9 +316,9 @@ export class Timeline extends EventTarget {
       if (this.isSelecting) {
         this._updateSelection(e);
       }
-    });
+    };
 
-    document.addEventListener('mouseup', (e) => {
+    const handleTimelinePointerUp = (e) => {
       if (this.isDraggingPlayhead) {
         // 드래그 종료 시 실제 seek 수행
         this._finishScrubbing(e);
@@ -339,7 +340,11 @@ export class Timeline extends EventTarget {
       if (this.isSelecting) {
         this._finishSelection(e);
       }
-    });
+    };
+
+    document.addEventListener('pointermove', handleTimelinePointerMove);
+    document.addEventListener('pointerup', handleTimelinePointerUp);
+    document.addEventListener('pointercancel', handleTimelinePointerUp);
   }
 
   /**
@@ -1580,7 +1585,7 @@ export class Timeline extends EventTarget {
       }
 
       // 키프레임 드래그
-      marker.addEventListener('mousedown', (e) => {
+      marker.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
         e.stopPropagation();
         const shouldStartDrag = this._handleKeyframePointerDown(e, layer.id, range.start);
@@ -1699,7 +1704,8 @@ export class Timeline extends EventTarget {
     marker.dataset.frame = range.start;
 
     // 키프레임 마커 드래그 시작
-    marker.addEventListener('mousedown', (e) => {
+    marker.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
       e.stopPropagation();
       const shouldStartDrag = this._handleKeyframePointerDown(e, layer.id, range.start);
       if (shouldStartDrag === false) return;
@@ -1827,9 +1833,9 @@ export class Timeline extends EventTarget {
       }));
       const selectionAnchor = this.draggedKeyframe
         ? {
-            layerId: this.draggedKeyframe.layerId,
-            frame: this.draggedKeyframe.frame + frameDelta
-          }
+          layerId: this.draggedKeyframe.layerId,
+          frame: this.draggedKeyframe.frame + frameDelta
+        }
         : null;
 
       if (keyframesToMove.length > 0) {
