@@ -14,6 +14,7 @@ const windowSource = readSource('main/window.js');
 const preloadSource = readSource('preload/preload.js');
 const ipcSource = readSource('main/ipc-handlers.js');
 const mainStyles = readSource('renderer/styles/main.css');
+const mpvManagerSource = readSource('main/mpv-manager.js');
 const userSettingsSource = readSource('renderer/scripts/modules/user-settings.js');
 
 test('external status polling escalates repeated failures to a stop event', () => {
@@ -85,4 +86,12 @@ test('mpv playback is enabled by default with legacy pilot key migration', () =>
   const loadFromFileMatch = userSettingsSource.match(/async _loadFromFile\(\) \{([\s\S]*?)\n  \}/);
   assert.ok(loadFromFileMatch, '_loadFromFile should exist');
   assert.match(loadFromFileMatch[1], /this\._migrateLegacySettings\(\);/);
+});
+
+test('mpv can be disabled per machine via env for troubleshooting', () => {
+  assert.match(mpvManagerSource, /function isMpvPlaybackDisabledByEnv\(env = process\.env\)/);
+  assert.match(mpvManagerSource, /BAEFRAME_DISABLE_MPV/);
+  const availableMatch = mpvManagerSource.match(/isAvailable\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(availableMatch, 'isAvailable should exist');
+  assert.match(availableMatch[1], /isMpvPlaybackDisabledByEnv\(this\.env\)/);
 });

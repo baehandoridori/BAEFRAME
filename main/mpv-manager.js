@@ -22,6 +22,11 @@ function isMpvPilotEnabled(env = process.env) {
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
+function isMpvPlaybackDisabledByEnv(env = process.env) {
+  const value = String(env.BAEFRAME_DISABLE_MPV || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
 function createMpvIpcPath({
   platform = process.platform,
   pid = process.pid,
@@ -136,6 +141,7 @@ class MPVManager {
   }
 
   isAvailable() {
+    if (isMpvPlaybackDisabledByEnv(this.env)) return false;
     return Boolean(this.mpvPath);
   }
 
@@ -632,5 +638,6 @@ module.exports = {
   createMpvIpcUniqueId,
   createMpvLaunchArgs,
   isMpvPilotEnabled,
+  isMpvPlaybackDisabledByEnv,
   mpvManager
 };

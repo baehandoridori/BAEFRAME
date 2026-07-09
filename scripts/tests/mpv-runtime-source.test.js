@@ -158,19 +158,19 @@ test('loadVideo shows Google Drive loading feedback before media preparation', (
   assert.match(loadVideoSource, /if \(driveLoadingFeedbackShown\) \{[\s\S]+hideVideoLoadingOverlay\('drive'\);[\s\S]+\}/);
 });
 
-test('mpv pilot can be enabled from app playback settings without an env var', () => {
-  assert.match(userSettingsSource, /mpvPilotEnabled:\s*false/);
-  assert.match(userSettingsSource, /getMpvPilotEnabled\(\) \{[\s\S]+return this\.settings\.mpvPilotEnabled === true;/);
-  assert.match(userSettingsSource, /setMpvPilotEnabled\(enabled\) \{[\s\S]+this\.settings\.mpvPilotEnabled = enabled === true;[\s\S]+this\._save\(\);[\s\S]+this\._emit\('mpvPilotEnabledChanged'/);
+test('mpv direct playback defaults on and can be opted out from app settings', () => {
+  assert.match(userSettingsSource, /mpvPlaybackEnabled:\s*true/);
+  assert.match(userSettingsSource, /getMpvPlaybackEnabled\(\) \{[\s\S]+return this\.settings\.mpvPlaybackEnabled !== false;/);
+  assert.match(userSettingsSource, /setMpvPlaybackEnabled\(enabled\) \{[\s\S]+this\.settings\.mpvPlaybackEnabled = enabled === true;[\s\S]+this\._save\(\);[\s\S]+this\._emit\('mpvPlaybackEnabledChanged'/);
 
   assert.match(indexSource, /data-tab="playback">재생<\/button>/);
   assert.match(indexSource, /id="appSettingsMpvPilotEnabled"[\s\S]*?<span class="toggle-slider"><\/span>/);
-  assert.match(indexSource, /mpv 직접 재생 파일럿/);
+  assert.match(indexSource, /mpv 직접 재생/);
 
   assert.match(appSource, /const mpvPilotEnabled = document\.getElementById\('appSettingsMpvPilotEnabled'\);/);
-  assert.match(appSource, /mpvPilotEnabled\.checked = userSettings\.getMpvPilotEnabled\(\);/);
-  assert.match(appSource, /document\.getElementById\('appSettingsMpvPilotEnabled'\)\?\.addEventListener\('change', \(e\) => \{[\s\S]+userSettings\.setMpvPilotEnabled\(e\.target\.checked\);/);
-  assert.match(appSource, /const locallyEnabled = userSettings\.getMpvPilotEnabled\(\);/);
+  assert.match(appSource, /mpvPilotEnabled\.checked = userSettings\.getMpvPlaybackEnabled\(\);/);
+  assert.match(appSource, /userSettings\.setMpvPlaybackEnabled\(e\.target\.checked\);/);
+  assert.match(appSource, /const locallyEnabled = userSettings\.getMpvPlaybackEnabled\(\);/);
   assert.match(appSource, /const envEnabled = await window\.electronAPI\.mpvIsEnabled\(\);/);
   assert.match(appSource, /if \(!locallyEnabled && !envEnabled\) return false;/);
 });

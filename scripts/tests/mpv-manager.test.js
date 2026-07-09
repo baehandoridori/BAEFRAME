@@ -58,6 +58,30 @@ test('mpv pilot is disabled unless BAEFRAME_MPV_PILOT is enabled', () => {
   assert.equal(isMpvPilotEnabled({ BAEFRAME_MPV_PILOT: 'true' }), true);
 });
 
+test('BAEFRAME_DISABLE_MPV forces availability off even when the binary exists', async () => {
+  const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
+  const manager = createManager({
+    env: { BAEFRAME_DISABLE_MPV: '1' },
+    existing: [bundledPath]
+  });
+
+  await manager.initialize();
+
+  assert.equal(manager.isAvailable(), false);
+});
+
+test('BAEFRAME_DISABLE_MPV wins over BAEFRAME_MPV_PILOT when both are set', async () => {
+  const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
+  const manager = createManager({
+    env: { BAEFRAME_MPV_PILOT: '1', BAEFRAME_DISABLE_MPV: '1' },
+    existing: [bundledPath]
+  });
+
+  await manager.initialize();
+
+  assert.equal(manager.isAvailable(), false);
+});
+
 test('detects bundled Windows mpv before system PATH', async () => {
   const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
   const manager = createManager({

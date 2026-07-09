@@ -6704,7 +6704,7 @@ async function initApp() {
     if (!window.electronAPI?.mpvIsEnabled || !window.electronAPI?.mpvIsAvailable) return false;
 
     try {
-      const locallyEnabled = userSettings.getMpvPilotEnabled();
+      const locallyEnabled = userSettings.getMpvPlaybackEnabled();
       const envEnabled = await window.electronAPI.mpvIsEnabled();
       if (!locallyEnabled && !envEnabled) return false;
 
@@ -11662,8 +11662,8 @@ async function initApp() {
     const status = document.getElementById('appSettingsMpvPilotStatus');
     if (!status) return;
 
-    if (!userSettings.getMpvPilotEnabled()) {
-      status.textContent = 'mpv.exe가 없으면 기존 변환 방식으로 재생됩니다.';
+    if (!userSettings.getMpvPlaybackEnabled()) {
+      status.textContent = '꺼져 있습니다. 영상은 기존 변환(FFmpeg) 방식으로 재생됩니다.';
       return;
     }
 
@@ -11717,7 +11717,7 @@ async function initApp() {
 
     // 재생 탭 초기값
     const mpvPilotEnabled = document.getElementById('appSettingsMpvPilotEnabled');
-    if (mpvPilotEnabled) mpvPilotEnabled.checked = userSettings.getMpvPilotEnabled();
+    if (mpvPilotEnabled) mpvPilotEnabled.checked = userSettings.getMpvPlaybackEnabled();
     updateMpvPilotSettingsStatus();
 
     const tGrid = document.getElementById('appThemeColorGrid');
@@ -11990,12 +11990,12 @@ async function initApp() {
   });
 
   document.getElementById('appSettingsMpvPilotEnabled')?.addEventListener('change', (e) => {
-    userSettings.setMpvPilotEnabled(e.target.checked);
+    userSettings.setMpvPlaybackEnabled(e.target.checked);
     updateMpvPilotSettingsStatus();
     showToast(
       e.target.checked
-        ? 'mpv 직접 재생을 켰습니다. 다음 영상부터 원본 재생을 시도합니다.'
-        : 'mpv 직접 재생을 껐습니다.',
+        ? 'mpv 직접 재생을 켰습니다. 다음 영상부터 원본을 바로 재생합니다.'
+        : 'mpv 직접 재생을 껐습니다. 다음 영상부터 기존 변환 방식으로 재생합니다.',
       'info'
     );
   });
