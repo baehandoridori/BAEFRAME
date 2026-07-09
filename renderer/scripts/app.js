@@ -6260,8 +6260,8 @@ async function initApp() {
 
     drawCanvas(elements.layersBelowCanvas);
     drawCanvas(baseCanvas, activeCanvasOpacity);
-    drawCanvas(elements.layersAboveCanvas);
     drawCanvas(elements.selectionOverlayCanvas);
+    drawCanvas(elements.layersAboveCanvas);
 
     try {
       return compositeCanvas.toDataURL('image/png');

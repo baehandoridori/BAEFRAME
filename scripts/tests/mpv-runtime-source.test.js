@@ -406,7 +406,7 @@ test('mpv overlay throttles live drawing snapshots but forces final drawing sync
 test('mpv drawing overlay snapshot includes floating selection overlay', () => {
   assert.match(appSource, /function getCompositedDrawingOverlayDataUrl\(\) \{[\s\S]+const activeLayerOpacity = Number\(drawingManager\.getActiveLayer\?\.\(\)\?\.opacity\);/);
   assert.match(appSource, /const drawCanvas = \(canvas, opacity = 1\) => \{[\s\S]+ctx\.globalAlpha = opacity;[\s\S]+ctx\.drawImage\(canvas, 0, 0\);[\s\S]+ctx\.globalAlpha = 1;/);
-  assert.match(appSource, /drawCanvas\(baseCanvas, activeCanvasOpacity\);[\s\S]+drawCanvas\(elements\.selectionOverlayCanvas\);/);
+  assert.match(appSource, /drawCanvas\(baseCanvas, activeCanvasOpacity\);[\s\S]+drawCanvas\(elements\.selectionOverlayCanvas\);[\s\S]+drawCanvas\(elements\.layersAboveCanvas\);/);
 });
 
 test('mpv external playback preserves frame seek and loop behavior', () => {

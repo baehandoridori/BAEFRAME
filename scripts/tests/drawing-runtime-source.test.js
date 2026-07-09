@@ -126,6 +126,8 @@ test('drawing layer rendering uses static below and above canvases around the ac
   assert.match(indexSource, /id="layersAboveCanvas"/);
   assert.match(mainCss, /\.layers-below-layer/);
   assert.match(mainCss, /\.layers-above-layer/);
+  assert.match(mainCss, /\.layers-above-layer \{[\s\S]*?z-index: 4;[\s\S]*?\}/);
+  assert.match(mainCss, /\.selection-overlay \{[\s\S]*?z-index: 3;[\s\S]*?\}/);
 
   assert.match(appSource, /layersBelowCanvas: document\.getElementById\('layersBelowCanvas'\)/);
   assert.match(appSource, /layersAboveCanvas: document\.getElementById\('layersAboveCanvas'\)/);
@@ -148,6 +150,7 @@ test('drawing layer rendering uses static below and above canvases around the ac
   assert.match(drawingCanvasSource, /ctx\.globalAlpha = this\.selectionImageOpacity;/);
   assert.match(drawingManagerSource, /_drawImageToContext\(ctx, img, opacity\)/);
   assert.match(drawingManagerSource, /this\.renderFrame\(this\.currentFrame\);/);
+  assert.match(appSource, /drawCanvas\(baseCanvas, activeCanvasOpacity\);[\s\S]*?drawCanvas\(elements\.selectionOverlayCanvas\);[\s\S]*?drawCanvas\(elements\.layersAboveCanvas\);/);
   assert.match(appSource, /drawCanvas\(baseCanvas, activeCanvasOpacity\);/);
 
   assert.match(drawingSyncSource, /skipActivate: true/);
