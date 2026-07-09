@@ -49,6 +49,12 @@ test('video can be panned at 100 percent or below when center lock is off', () =
   assert.doesNotMatch(appSource, /state\.videoZoom > 100 && !state\.isDrawMode && e\.button === 0/);
 });
 
+test('draw-mode Space pan clears active pan state on window blur', () => {
+  assert.match(appSource, /function endVideoPan\(\) \{[\s\S]*?state\.isPanningVideo = false;[\s\S]*?elements\.videoWrapper\?\.classList\.remove\('panning'\);[\s\S]*?return wasPanning;[\s\S]*?\}/);
+  assert.match(appSource, /document\.addEventListener\('mouseup', \(\) => \{[\s\S]*?if \(state\.isFullscreenScrubbing\) \{[\s\S]*?finishFullscreenMiddleScrub\(\);[\s\S]*?\}[\s\S]*?endVideoPan\(\);[\s\S]*?\}\);/);
+  assert.match(appSource, /window\.addEventListener\('blur', \(\) => \{[\s\S]*?endVideoPan\(\);[\s\S]*?state\.isSpaceHeld = false;[\s\S]*?state\.spacePanUsed = false;[\s\S]*?elements\.videoWrapper\?\.classList\.remove\('space-pan'\);[\s\S]*?\}\);/);
+});
+
 test('center lock keeps 100 percent and smaller zoom levels centered', () => {
   assert.match(appSource, /function shouldCenterVideo\(\) \{[\s\S]*state\.videoCenterLocked && state\.videoZoom <= 100[\s\S]*\}/);
   assert.match(appSource, /if \(shouldCenterVideo\(\)\) \{[\s\S]*state\.videoPanX = 0;[\s\S]*state\.videoPanY = 0;[\s\S]*\}/);

@@ -4876,6 +4876,13 @@ async function initApp() {
     return zoomAllowsPan;
   }
 
+  function endVideoPan() {
+    const wasPanning = state.isPanningVideo;
+    state.isPanningVideo = false;
+    elements.videoWrapper?.classList.remove('panning');
+    return wasPanning;
+  }
+
   /**
    * 비디오 줌 적용
    */
@@ -5070,13 +5077,11 @@ async function initApp() {
       finishFullscreenMiddleScrub();
     }
 
-    if (state.isPanningVideo) {
-      state.isPanningVideo = false;
-      elements.videoWrapper?.classList.remove('panning');
-    }
+    endVideoPan();
   });
 
   window.addEventListener('blur', () => {
+    endVideoPan();
     state.isSpaceHeld = false;
     state.spacePanUsed = false;
     elements.videoWrapper?.classList.remove('space-pan');
