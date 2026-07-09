@@ -108,7 +108,8 @@ test('clearing the current drawing frame respects locked and hidden layers', () 
   assert.match(appSource, /if \(layer\.locked \|\| layer\.visible === false\) \{/);
   assert.match(appSource, /잠긴 레이어는 지울 수 없습니다/);
   assert.match(appSource, /숨긴 레이어는 지울 수 없습니다/);
-  assert.match(appSource, /elements\.btnClearDrawing\?\.addEventListener\('click', \(\) => \{[\s\S]*?drawingManager\.drawingCanvas\?\.clearSelection\?\.\(\);[\s\S]*?keyframe\.setCanvasData\(null\);/);
+  assert.match(appSource, /const hasClearableSelection = !!\([\s\S]*?drawingManager\.drawingCanvas\?\.floatingImage[\s\S]*?drawingManager\.drawingCanvas\?\.selection[\s\S]*?\);/);
+  assert.match(appSource, /if \(\(keyframe && !keyframe\.isEmpty\) \|\| hasClearableSelection\) \{[\s\S]*?drawingManager\.drawingCanvas\?\.clearSelection\?\.\(\);[\s\S]*?if \(keyframe && !keyframe\.isEmpty\) \{[\s\S]*?keyframe\.setCanvasData\(null\);/);
 });
 
 test('drawing manager skips stroke record persistence when a save is blocked', () => {

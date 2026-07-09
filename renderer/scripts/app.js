@@ -3185,12 +3185,18 @@ async function initApp() {
 
       // 현재 키프레임의 데이터를 지움
       const keyframe = layer.getKeyframeAtFrame(drawingManager.currentFrame);
-      if (keyframe && !keyframe.isEmpty) {
-        drawingManager.drawingCanvas?.clearSelection?.();
+      const hasClearableSelection = !!(
+        drawingManager.drawingCanvas?.floatingImage ||
+        drawingManager.drawingCanvas?.selection
+      );
+      if ((keyframe && !keyframe.isEmpty) || hasClearableSelection) {
         drawingManager._saveToHistory();
-        keyframe.setCanvasData(null);
-        keyframe.baseCanvasData = null;
-        keyframe.strokeRecords = [];
+        drawingManager.drawingCanvas?.clearSelection?.();
+        if (keyframe && !keyframe.isEmpty) {
+          keyframe.setCanvasData(null);
+          keyframe.baseCanvasData = null;
+          keyframe.strokeRecords = [];
+        }
         drawingManager.renderFrame(drawingManager.currentFrame);
         showToast('현재 프레임 지워짐', 'info');
       }
