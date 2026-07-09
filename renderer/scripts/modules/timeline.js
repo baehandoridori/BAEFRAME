@@ -2307,11 +2307,11 @@ export class Timeline extends EventTarget {
    * @returns {string} 타임코드 문자열
    */
   _formatTimecode(time) {
-    const fps = this.fps || 24;
+    const rate = Math.max(1, Math.round(Number(this.fps) || 24));
     // Math.round로 부동소수점 오차 방지
-    const totalFrames = Math.round(time * fps);
-    const frames = totalFrames % fps;
-    const totalSeconds = Math.floor(totalFrames / fps);
+    const totalFrames = Math.round((Number(time) || 0) * rate);
+    const frames = totalFrames % rate;
+    const totalSeconds = Math.floor(totalFrames / rate);
     const seconds = totalSeconds % 60;
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const hours = Math.floor(totalSeconds / 3600);
@@ -3427,10 +3427,11 @@ export class Timeline extends EventTarget {
    * 시간 포맷 (HH:MM:SS)
    */
   _formatTime(seconds) {
+    const rate = Math.max(1, Math.round(Number(this.fps) || 24));
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
-    const f = Math.floor((seconds % 1) * this.fps);
+    const f = Math.floor((seconds % 1) * rate);
 
     if (h > 0) {
       return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;

@@ -7563,15 +7563,22 @@ async function initApp() {
    * 시간을 타임코드로 변환
    */
   function formatTimecode(seconds, fps = 24) {
+    const rate = Math.max(1, Math.round(Number(fps) || 24));
     // Math.round로 부동소수점 오차 방지
-    const totalFrames = Math.round(seconds * fps);
-    const f = totalFrames % fps;
-    const totalSeconds = Math.floor(totalFrames / fps);
+    const totalFrames = Math.round((Number(seconds) || 0) * rate);
+    const f = totalFrames % rate;
+    const totalSeconds = Math.floor(totalFrames / rate);
     const s = totalSeconds % 60;
     const m = Math.floor((totalSeconds % 3600) / 60);
     const h = Math.floor(totalSeconds / 3600);
 
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+  }
+
+  function formatFpsLabel(fps) {
+    const value = Number(fps) || 24;
+    if (Number.isInteger(value)) return String(value);
+    return value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
   }
 
   /**
@@ -7591,7 +7598,7 @@ async function initApp() {
       elements.timecodeTotal.textContent = videoPlayer.getDurationTimecode();
     }
     elements.frameIndicator.textContent =
-      `${videoPlayer.fps}fps · Frame ${videoPlayer.currentFrame} / ${videoPlayer.totalFrames}`;
+      `${formatFpsLabel(videoPlayer.fps)}fps · Frame ${videoPlayer.currentFrame} / ${videoPlayer.totalFrames}`;
   }
 
   /**
@@ -7725,7 +7732,7 @@ async function initApp() {
 
     const currentTime = videoPlayer.currentTime || 0;
     const duration = videoPlayer.duration || 0;
-    const fps = videoPlayer.fps || 24;
+    const fps = Math.max(1, Math.round(Number(videoPlayer.fps) || 24));
 
     const formatTimecode = (seconds) => {
       const totalFrames = Math.round(seconds * fps);

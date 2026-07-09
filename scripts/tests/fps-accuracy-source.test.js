@@ -56,3 +56,14 @@ test('html5 load path feeds probed fps into the video player', () => {
   assert.match(loadVideoSource, /let html5ProbedFps = null;/);
   assert.match(loadVideoSource, /videoPlayer\.setFps\(html5Fps\);/);
 });
+
+test('timecode formatters round fps for frame digits (fractional fps safe)', () => {
+  const timecodeMatch = videoPlayerSource.match(/timeToTimecode\(time\) \{([\s\S]*?)\n  \}/);
+  assert.ok(timecodeMatch, 'timeToTimecode should exist');
+  assert.match(timecodeMatch[1], /Math\.max\(1, Math\.round\(Number\(this\.fps\) \|\| 24\)\)/);
+
+  assert.match(appSource, /function formatTimecode\(seconds, fps = 24\) \{[\s\S]*?Math\.max\(1, Math\.round\(Number\(fps\) \|\| 24\)\)/);
+  assert.match(appSource, /function formatFpsLabel\(fps\)/);
+  assert.match(appSource, /\$\{formatFpsLabel\(videoPlayer\.fps\)\}fps · Frame/);
+  assert.match(timelineSource, /_formatTimecode\(time\) \{[\s\S]*?Math\.max\(1, Math\.round\(Number\(this\.fps\) \|\| 24\)\)/);
+});
