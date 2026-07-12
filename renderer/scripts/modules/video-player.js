@@ -30,6 +30,8 @@ export class VideoPlayer extends EventTarget {
     this._externalStatusPending = false;
     this._externalStatusFailureCount = 0;
     this._externalEndedEmitted = false;
+    this._externalFrameRafId = null;
+    this._externalPlaybackClock = null;
     this.externalEofReached = false;
 
     // 상태
@@ -248,6 +250,7 @@ export class VideoPlayer extends EventTarget {
 
   useHtml5Engine() {
     const wasExternalPlaying = this.engine !== 'html5' && this.isPlaying;
+    this._stopExternalFrameInterpolation();
     this._stopExternalStatusPolling();
     this.engine = 'html5';
     this.externalControls = null;
@@ -263,6 +266,7 @@ export class VideoPlayer extends EventTarget {
   useExternalEngine(config = {}) {
     this._stopFrameCallback();
     this._stopExternalStatusPolling();
+    this._stopExternalFrameInterpolation();
     this._externalStatusFailureCount = 0;
 
     this.engine = config.engineName || 'external';
@@ -302,6 +306,9 @@ export class VideoPlayer extends EventTarget {
     });
 
     this._startExternalStatusPolling();
+    if (this.isPlaying) {
+      this._startExternalFrameInterpolation(this.currentTime);
+    }
   }
 
   /**
@@ -464,6 +471,7 @@ export class VideoPlayer extends EventTarget {
         this.isPlaying = true;
         this._emit('play');
         this._startExternalStatusPolling();
+        this._startExternalFrameInterpolation(this.currentTime);
         return true;
       }
 
@@ -495,6 +503,7 @@ export class VideoPlayer extends EventTarget {
       this.externalControls?.pause?.().catch?.((error) => {
         log.warn('외부 플레이어 일시정지 실패', { error: error.message });
       });
+      this._stopExternalFrameInterpolation();
       this.isPlaying = false;
       this._emit('pause');
       return;
@@ -541,6 +550,7 @@ export class VideoPlayer extends EventTarget {
     this.currentFrame = this._timeToFrame(time);
 
     if (this.engine !== 'html5') {
+      this._stopExternalFrameInterpolation();
       this.externalControls.seek(time).catch?.((error) => {
         log.warn('외부 플레이어 시간 이동 실패', { error: error.message });
       });
@@ -593,6 +603,7 @@ export class VideoPlayer extends EventTarget {
     });
 
     if (this.engine !== 'html5') {
+      this._stopExternalFrameInterpolation();
       this._externalEndedEmitted = false;
       this.externalEofReached = false;
       this.externalControls.seek(time).catch?.((error) => {
@@ -930,6 +941,72 @@ export class VideoPlayer extends EventTarget {
     this._externalStatusPending = false;
   }
 
+  _getPlaybackClockNow() {
+    return typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  }
+
+  _setExternalPlaybackClock(anchorTime = this.currentTime) {
+    const time = Number.isFinite(Number(anchorTime))
+      ? Math.max(0, Math.min(Number(anchorTime), this.duration || Number(anchorTime)))
+      : this.currentTime;
+    this._externalPlaybackClock = {
+      anchorTime: time,
+      anchorNow: this._getPlaybackClockNow()
+    };
+  }
+
+  _getPredictedExternalTime() {
+    if (!this._externalPlaybackClock) return this.currentTime;
+    const elapsedSeconds = Math.max(0, (this._getPlaybackClockNow() - this._externalPlaybackClock.anchorNow) / 1000);
+    const predictedTime = this._externalPlaybackClock.anchorTime + elapsedSeconds;
+    return Math.max(0, Math.min(predictedTime, this.duration || predictedTime));
+  }
+
+  _startExternalFrameInterpolation(anchorTime = this.currentTime) {
+    if (this.engine === 'html5' || !this.isLoaded) return;
+    this._setExternalPlaybackClock(anchorTime);
+    if (this._externalFrameRafId) return;
+
+    const tick = () => {
+      this._externalFrameRafId = null;
+      if (this.engine === 'html5' || !this.isPlaying || this.externalEofReached) {
+        this._externalPlaybackClock = null;
+        return;
+      }
+
+      const predictedTime = this._getPredictedExternalTime();
+      const targetFrame = this._timeToFrame(predictedTime);
+      if (targetFrame > this.currentFrame) {
+        this.currentFrame = this._clampFrame(this.currentFrame + 1);
+        this.currentTime = this.fps > 0
+          ? Math.min(this.currentFrame / this.fps, this.duration || this.currentFrame / this.fps)
+          : predictedTime;
+        if (this.currentFrame !== this._lastEmittedFrame) {
+          this._lastEmittedFrame = this.currentFrame;
+          this._emit('frameUpdate', {
+            frame: this.currentFrame,
+            time: this.currentTime,
+            interpolated: true
+          });
+        }
+      }
+
+      this._externalFrameRafId = requestAnimationFrame(tick);
+    };
+
+    this._externalFrameRafId = requestAnimationFrame(tick);
+  }
+
+  _stopExternalFrameInterpolation() {
+    if (this._externalFrameRafId) {
+      cancelAnimationFrame(this._externalFrameRafId);
+      this._externalFrameRafId = null;
+    }
+    this._externalPlaybackClock = null;
+  }
+
   /**
    * mpv 행(hang)/IPC 오류 워치독.
    * 상태 폴링이 연속 3회 실패하면 엔진이 응답 불능이라 보고 복구 이벤트로 승격한다.
@@ -1014,21 +1091,22 @@ export class VideoPlayer extends EventTarget {
         this.videoHeight = nextHeight;
         metadataChanged = true;
       }
+      let candidateTime = this.currentTime;
       if (Number.isFinite(nextTime)) {
-        const candidateTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
+        const statusTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
         if (this._isSeeking && this._seekTargetFrame !== null) {
-          const candidateFrame = this._timeToFrame(candidateTime);
+          const candidateFrame = this._timeToFrame(statusTime);
           if (candidateFrame === this._seekTargetFrame) {
-            this.currentTime = candidateTime;
+            candidateTime = statusTime;
             this._finishManualSeek();
           }
         } else {
-          this.currentTime = candidateTime;
+          candidateTime = statusTime;
         }
       }
       this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
       const hasKnownDuration = this.duration > 0;
-      const eofReached = rawEofReached && (!hasKnownDuration || this.duration - this.currentTime <= 0.25);
+      const eofReached = rawEofReached && (!hasKnownDuration || this.duration - candidateTime <= 0.25);
       this.externalEofReached = eofReached;
       if (metadataChanged) {
         this._emit('loadedmetadata', {
@@ -1040,12 +1118,21 @@ export class VideoPlayer extends EventTarget {
           engine: this.engine
         });
       }
-      const nextFrame = this._timeToFrame(this.currentTime);
+      const nextFrame = this._timeToFrame(candidateTime);
       const wasPlaying = this.isPlaying;
       const externalIsPlaying = status.paused === false;
       const nextIsPlaying = !eofReached && externalIsPlaying;
+      const shouldInterpolateExternalPlayback = nextIsPlaying && !this._isSeeking;
+      const smoothedTime = this.currentTime;
+      const smoothedFrame = this.currentFrame;
       this.isPlaying = externalIsPlaying;
-      this.currentFrame = Math.max(0, Math.min(nextFrame, Math.max(0, this.totalFrames - 1)));
+      if (shouldInterpolateExternalPlayback) {
+        this.currentTime = candidateTime;
+      } else {
+        this._stopExternalFrameInterpolation();
+        this.currentTime = candidateTime;
+        this.currentFrame = Math.max(0, Math.min(nextFrame, Math.max(0, this.totalFrames - 1)));
+      }
       if (!eofReached) {
         this._externalEndedEmitted = false;
       }
@@ -1057,6 +1144,12 @@ export class VideoPlayer extends EventTarget {
         return;
       }
 
+      if (shouldInterpolateExternalPlayback) {
+        this.currentTime = smoothedTime;
+        this.currentFrame = smoothedFrame;
+        this._startExternalFrameInterpolation(candidateTime);
+      }
+
       this.isPlaying = nextIsPlaying;
 
       this._emit('timeupdate', {
@@ -1064,7 +1157,7 @@ export class VideoPlayer extends EventTarget {
         currentFrame: this.currentFrame
       });
 
-      if (this.currentFrame !== this._lastEmittedFrame) {
+      if (!shouldInterpolateExternalPlayback && this.currentFrame !== this._lastEmittedFrame) {
         this._lastEmittedFrame = this.currentFrame;
         this._emit('frameUpdate', {
           frame: this.currentFrame,

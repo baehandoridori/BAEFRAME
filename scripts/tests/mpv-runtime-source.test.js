@@ -438,7 +438,7 @@ test('mpv teardown gate waiters stay blocked when another teardown is chained', 
 test('package exposes an mpv pilot test command', () => {
   assert.equal(
     packageJson.scripts['test:mpv'],
-    'node --test scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js'
+    'node --test scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/external-frame-interpolation.test.mjs'
   );
 });
 
@@ -903,14 +903,32 @@ test('mpv external playback preserves frame seek and loop behavior', () => {
   assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(e\) => \{[\s\S]+elements\.videoWrapper\?\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+document\.body\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+allowMpvPilot: retryMpv[\s\S]+\}\);/);
   assert.match(videoPlayerSource, /const nextWidth = Number\(status\.width\);[\s\S]+const nextHeight = Number\(status\.height\);[\s\S]+if \(Number\.isFinite\(nextWidth\) && nextWidth > 0 && this\.videoWidth !== nextWidth\) \{[\s\S]+this\.videoWidth = nextWidth;[\s\S]+\}[\s\S]+if \(Number\.isFinite\(nextHeight\) && nextHeight > 0 && this\.videoHeight !== nextHeight\) \{[\s\S]+this\.videoHeight = nextHeight;/);
   assert.match(videoPlayerSource, /let metadataChanged = false;[\s\S]+metadataChanged = true;[\s\S]+if \(metadataChanged\) \{[\s\S]+this\._emit\('loadedmetadata', \{[\s\S]+duration: this\.duration,[\s\S]+totalFrames: this\.totalFrames,[\s\S]+fps: this\.fps,[\s\S]+width: this\.videoWidth,[\s\S]+height: this\.videoHeight,[\s\S]+engine: this\.engine/);
-  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const rawEofReached = status\.eofReached === true;[\s\S]+const hasKnownDuration = this\.duration > 0;[\s\S]+const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - this\.currentTime <= 0\.25\);[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
+  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const rawEofReached = status\.eofReached === true;[\s\S]+const hasKnownDuration = this\.duration > 0;[\s\S]+const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - candidateTime <= 0\.25\);[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
 
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}/);
   assert.ok(seekToFrameMatch, 'seekToFrame should exist');
   assert.match(seekToFrameMatch[1], /this\._seekTargetFrame = frame;/);
   assert.match(seekToFrameMatch[1], /if \(this\.engine !== 'html5'\) \{[\s\S]+this\.externalControls\.seek\(time\)[\s\S]+this\._finishManualSeek\(\);[\s\S]+return;/);
   assert.doesNotMatch(seekToFrameMatch[1], /if \(this\.engine !== 'html5'\) \{[\s\S]+this\.seek\(time\);[\s\S]+return;/);
-  assert.match(videoPlayerSource, /if \(this\._isSeeking && this\._seekTargetFrame !== null\) \{[\s\S]+const candidateFrame = this\._timeToFrame\(candidateTime\);[\s\S]+if \(candidateFrame === this\._seekTargetFrame\) \{[\s\S]+this\._finishManualSeek\(\);[\s\S]+return;[\s\S]+\}/);
+  assert.match(videoPlayerSource, /if \(this\._isSeeking && this\._seekTargetFrame !== null\) \{[\s\S]+const candidateFrame = this\._timeToFrame\(statusTime\);[\s\S]+if \(candidateFrame === this\._seekTargetFrame\) \{[\s\S]+this\._finishManualSeek\(\);[\s\S]+return;[\s\S]+\}/);
+});
+
+test('mpv external playback interpolates frame UI between status polls', () => {
+  assert.match(videoPlayerSource, /this\._externalFrameRafId = null;/);
+  assert.match(videoPlayerSource, /this\._externalPlaybackClock = null;/);
+  assert.match(videoPlayerSource, /_startExternalFrameInterpolation\(anchorTime = this\.currentTime\) \{/);
+  assert.match(videoPlayerSource, /const targetFrame = this\._timeToFrame\(predictedTime\);/);
+  assert.match(videoPlayerSource, /if \(targetFrame > this\.currentFrame\) \{/);
+  assert.match(videoPlayerSource, /this\.currentFrame = this\._clampFrame\(this\.currentFrame \+ 1\);/);
+  assert.doesNotMatch(videoPlayerSource, /targetFrame > this\.currentFrame \? 1 : -1/);
+  assert.match(videoPlayerSource, /this\._emit\('frameUpdate', \{[\s\S]+interpolated: true/);
+
+  const externalStatusMatch = videoPlayerSource.match(/async _syncExternalStatus\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/);
+  assert.ok(externalStatusMatch, 'external status polling should exist');
+  assert.match(externalStatusMatch[1], /const shouldInterpolateExternalPlayback = nextIsPlaying && !this\._isSeeking;/);
+  assert.match(externalStatusMatch[1], /if \(shouldInterpolateExternalPlayback\) \{[\s\S]+this\.currentTime = candidateTime;[\s\S]+\} else \{[\s\S]+this\._stopExternalFrameInterpolation\(\);/);
+  assert.match(externalStatusMatch[1], /if \(shouldInterpolateExternalPlayback\) \{[\s\S]+this\.currentTime = smoothedTime;[\s\S]+this\.currentFrame = smoothedFrame;[\s\S]+this\._startExternalFrameInterpolation\(candidateTime\);/);
+  assert.match(externalStatusMatch[1], /this\._stopExternalFrameInterpolation\(\);[\s\S]+this\.currentTime = candidateTime;[\s\S]+this\.currentFrame = Math\.max\(0, Math\.min\(nextFrame, Math\.max\(0, this\.totalFrames - 1\)\)\);/);
 });
 
 test('mpv external playback emits ended when keep-open reaches EOF', () => {
@@ -919,7 +937,7 @@ test('mpv external playback emits ended when keep-open reaches EOF', () => {
   assert.match(videoPlayerSource, /this\.externalEofReached = false;/);
   assert.match(videoPlayerSource, /const rawEofReached = status\.eofReached === true;/);
   assert.match(videoPlayerSource, /const hasKnownDuration = this\.duration > 0;/);
-  assert.match(videoPlayerSource, /const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - this\.currentTime <= 0\.25\);/);
+  assert.match(videoPlayerSource, /const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - candidateTime <= 0\.25\);/);
   assert.match(videoPlayerSource, /this\.externalEofReached = eofReached;/);
   assert.doesNotMatch(videoPlayerSource, /this\.externalEofReached = rawEofReached;/);
   assert.match(videoPlayerSource, /const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+this\.isPlaying = nextIsPlaying;/);
