@@ -850,7 +850,7 @@ export class DrawingSync {
 
     this._isRemoteUpdate = true;
     try {
-      this._dm.applyLayerOrder?.(event.layerIds);
+      this._dm.applyLayerOrder?.(event.layerIds, { emitOrder: true });
       this._lastAppliedOrderVersion = {
         clock: event.version.clock,
         actorId: event.version.actorId

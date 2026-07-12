@@ -724,6 +724,55 @@ test('pending layer order completes when a missing layer is learned to be delete
   assert.deepEqual(peer.sync._lastAppliedOrderVersion, { clock: 8, actorId: 'actor-sender' });
 });
 
+test('partial remote order preserves an omitted layer anchor until its anchor arrives', async () => {
+  const peer = await createPeer({ includeAnchor: false, actorId: 'actor-receiver' });
+  for (const layer of [
+    { id: 'known-a', name: 'Known A' },
+    { id: 'known-b', name: 'Known B' },
+    { id: 'waiting-x', name: 'Waiting X', insertBeforeLayerId: 'late-z' }
+  ]) {
+    peer.liveblocks.receive({
+      type: 'DRAWING_LAYER_CREATED',
+      insertBeforeLayerId: layer.insertBeforeLayerId,
+      layer
+    });
+  }
+
+  peer.liveblocks.receive({
+    type: 'DRAWING_LAYER_ORDER_CHANGED',
+    layerIds: ['known-b', 'known-a'],
+    version: { clock: 9, actorId: 'actor-sender' }
+  });
+  assert.equal(peer.manager.getLayerInsertBeforeId('waiting-x'), 'late-z');
+
+  peer.liveblocks.receive({
+    type: 'DRAWING_LAYER_CREATED',
+    insertIndex: 0,
+    layer: { id: 'late-z', name: 'Late Z' }
+  });
+
+  const ids = peer.manager.layers.map(layer => layer.id);
+  assert.equal(ids.indexOf('waiting-x') + 1, ids.indexOf('late-z'));
+});
+
+test('applied remote order emits one persistence-facing order event', async () => {
+  const peer = await createPeer({ actorId: 'actor-receiver' });
+  peer.manager.createLayer({ id: 'second', name: 'Second' }, false);
+  let orderEventCount = 0;
+  peer.manager.addEventListener('layerOrderChanged', () => { orderEventCount += 1; });
+
+  peer.liveblocks.receive({
+    type: 'DRAWING_LAYER_ORDER_CHANGED',
+    layerIds: ['second', 'anchor'],
+    version: { clock: 10, actorId: 'actor-sender' }
+  });
+
+  assert.equal(orderEventCount, 1);
+  assert.deepEqual(peer.liveblocks.events.filter(event => (
+    event.type === 'DRAWING_LAYER_ORDER_CHANGED'
+  )), []);
+});
+
 test('restore emits legacy create and keyframe fallbacks for old receivers', async () => {
   const peer = await createPeer({ actorId: 'actor-new' });
   const undoActions = [];

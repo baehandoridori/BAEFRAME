@@ -168,3 +168,20 @@ test('persisted review keeps metadata-only dirty state as unsaved', async () => 
   assert.equal(manager.isDirty, true);
   assert.equal(manager.hasUnsavedChanges(), true);
 });
+
+test('remote drawing layer order event marks a persisted review as unsaved', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const drawingManager = new EventTarget();
+  drawingManager.layers = [];
+  const manager = new ReviewDataManager({ autoSave: false, drawingManager });
+  manager.currentVideoPath = 'C:/reviews/existing.mp4';
+  manager.currentBframePath = 'C:/reviews/existing.bframe';
+  manager._hasPersistedFile = true;
+  manager.connect();
+
+  drawingManager.dispatchEvent(new Event('layerOrderChanged'));
+
+  assert.equal(manager.isDirty, true);
+  assert.equal(manager.hasUnsavedChanges(), true);
+  manager.disconnect();
+});

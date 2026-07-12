@@ -661,7 +661,9 @@ export class DrawingManager extends EventTarget {
     if (!changed) return false;
 
     this.layers = nextLayers;
-    this._layerInsertAnchors.clear();
+    for (const layerId of orderedIds) {
+      this._layerInsertAnchors.delete(layerId);
+    }
     this._emit('layersChanged');
     if (options.emitOrder === true) {
       this._emit('layerOrderChanged', { layerIds: this.layers.map(layer => layer.id) });
