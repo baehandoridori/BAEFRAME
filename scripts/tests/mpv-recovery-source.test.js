@@ -146,6 +146,7 @@ test('mpv review freeze decodes before hiding native video and releases in the r
   const readyIndex = captureSource.indexOf('markCandidateReady(candidate);');
   assert.ok(decodeIndex >= 0 && decodeIndex < commitIndex && commitIndex < hideIndex && hideIndex < readyIndex, 'candidate must decode and host hide must settle before the blocker becomes ready');
   assert.match(showSource, /candidate\.src = dataUrl;/);
+  assert.match(showSource, /return mpvReviewFreezeCaptureOwner\.capture\(async \(\) => \{[\s\S]+const token = \+\+mpvReviewFreezeToken;/);
   assert.match(showSource, /classList\.add\('mpv-review-freeze-ready'\)/);
   assert.match(showSource, /const hadValidFrame = Boolean\(/);
   assert.match(showSource, /if \(!hadValidFrame\) \{[\s\S]+disableMpvReviewInteractionAfterFreezeFailure\(\);/);
@@ -154,6 +155,7 @@ test('mpv review freeze decodes before hiding native video and releases in the r
   const restoreIndex = releaseSource.indexOf('await window.electronAPI.mpvSetHostVisible(true)');
   const removeFrameIndex = releaseSource.indexOf('freezeElement.remove()');
   assert.ok(removeReadyIndex >= 0 && removeReadyIndex < restoreIndex && restoreIndex < removeFrameIndex, 'release must restore native video before removing its fallback frame');
+  assert.match(releaseSource, /const token = \+\+mpvReviewFreezeToken;[\s\S]+mpvReviewFreezeCaptureOwner\.cancel\(\);/);
   assert.match(releaseSource, /if \(token !== mpvReviewFreezeToken\) return;/);
   assert.match(releaseSource, /if \(!result\?\.success\) \{[\s\S]+return;/);
 });
@@ -213,6 +215,120 @@ test('mpv review refresh coalescer keeps one slow capture and schedules one trai
   assert.equal(timers.length, 0, 'cancelled generations must not resurrect after stale settlement');
 });
 
+test('direct comment readiness and scheduled refreshes share one freeze capture owner', async () => {
+  const createSharedAsyncCaptureOwner = loadNamedFunction(appSource, 'createSharedAsyncCaptureOwner');
+  const createCoalescedAsyncScheduler = loadNamedFunction(appSource, 'createCoalescedAsyncScheduler');
+  const prepareMpvCommentReadiness = loadNamedFunction(appSource, 'prepareMpvCommentReadiness');
+  const owner = createSharedAsyncCaptureOwner();
+  const timers = [];
+  const screenshots = [createDeferred(), createDeferred()];
+  const decodes = [createDeferred(), createDeferred()];
+  let captureCount = 0;
+  let decodeCount = 0;
+  let captureToken = 0;
+  let pointerReady = false;
+
+  const showFreeze = () => owner.capture(async () => {
+    const token = ++captureToken;
+    const captureIndex = captureCount++;
+    await screenshots[captureIndex].promise;
+    decodeCount += 1;
+    await decodes[captureIndex].promise;
+    return token === captureToken;
+  });
+  const scheduler = createCoalescedAsyncScheduler({
+    delayMs: 160,
+    run: showFreeze,
+    shouldRun: () => true,
+    setTimer: callback => {
+      timers.push(callback);
+      return callback;
+    },
+    clearTimer: callback => {
+      const index = timers.indexOf(callback);
+      if (index >= 0) timers.splice(index, 1);
+    }
+  });
+  const readiness = prepareMpvCommentReadiness({
+    prepareFreeze: showFreeze,
+    isStillActive: () => true,
+    setReady: ready => { pointerReady = ready; },
+    showGuidance: () => {}
+  });
+
+  scheduler.schedule();
+  scheduler.schedule();
+  assert.equal(timers.length, 1, 'frame ticks should share one pending scheduler timer');
+  timers.shift()();
+  scheduler.schedule();
+  scheduler.schedule();
+  assert.equal(captureCount, 1, 'scheduler must join the direct comment capture');
+  assert.equal(captureToken, 1, 'joining callers must not supersede the direct capture token');
+  assert.equal(decodeCount, 0, 'a second screenshot/decode pipeline must not start');
+  assert.equal(pointerReady, false);
+
+  screenshots[0].resolve({ success: true });
+  await flushPromises();
+  assert.equal(decodeCount, 1);
+  assert.equal(captureCount, 1);
+  decodes[0].resolve();
+  assert.equal(await readiness, true);
+  assert.equal(pointerReady, true, 'the original readiness continuation should enable pointer input');
+  await flushPromises();
+  assert.equal(timers.length, 1, 'joined scheduler ticks should coalesce to one trailing refresh');
+
+  timers.shift()();
+  assert.equal(captureCount, 2, 'the one trailing refresh may start after initial readiness settles');
+  assert.equal(captureToken, 2);
+  scheduler.cancel();
+  owner.cancel();
+  screenshots[1].resolve({ success: true });
+  decodes[1].resolve();
+  await flushPromises();
+});
+
+test('cancelling a shared freeze capture detaches stale ownership from a fresh interaction', async () => {
+  const createSharedAsyncCaptureOwner = loadNamedFunction(appSource, 'createSharedAsyncCaptureOwner');
+  const owner = createSharedAsyncCaptureOwner();
+  const staleDeferred = createDeferred();
+  const freshDeferred = createDeferred();
+  let starts = 0;
+  let captureToken = 0;
+
+  const staleCapture = owner.capture(async () => {
+    const token = ++captureToken;
+    starts += 1;
+    await staleDeferred.promise;
+    return token === captureToken;
+  });
+  captureToken += 1;
+  owner.cancel();
+  const freshCapture = owner.capture(async () => {
+    const token = ++captureToken;
+    starts += 1;
+    await freshDeferred.promise;
+    return token === captureToken;
+  });
+
+  assert.equal(starts, 2, 'a fresh interaction must not wait for the detached stale capture');
+  staleDeferred.resolve();
+  assert.equal(await staleCapture, false, 'release token invalidation should stale the old capture');
+  await flushPromises();
+  assert.strictEqual(
+    owner.capture(() => assert.fail('stale completion must not clear the fresh owner')),
+    freshCapture
+  );
+
+  freshDeferred.resolve();
+  assert.equal(await freshCapture, true);
+  await flushPromises();
+  owner.capture(async () => {
+    starts += 1;
+    return true;
+  });
+  assert.equal(starts, 3, 'the fresh owner should clear itself after its own settlement');
+});
+
 test('comment readiness waits for screenshot, decode, and native host hide', async () => {
   const runMpvReviewFreezeCapture = loadNamedFunction(appSource, 'runMpvReviewFreezeCapture');
   const prepareMpvCommentReadiness = loadNamedFunction(appSource, 'prepareMpvCommentReadiness');
@@ -269,13 +385,16 @@ test('comment readiness waits for screenshot, decode, and native host hide', asy
   assert.equal(guidanceCount, 1);
 });
 
-test('initial host hide failure rolls back the freeze and keeps comment input disabled', async () => {
+test('initial host hide failure keeps the safety frame until native host restore succeeds', async () => {
   const runMpvReviewFreezeCapture = loadNamedFunction(appSource, 'runMpvReviewFreezeCapture');
   const prepareMpvCommentReadiness = loadNamedFunction(appSource, 'prepareMpvCommentReadiness');
+  const restore = createDeferred();
   let rollbackCount = 0;
   let restoreCount = 0;
   let failureCount = 0;
   let readyUi = false;
+  let candidatePresent = false;
+  const events = [];
 
   const readiness = prepareMpvCommentReadiness({
     prepareFreeze: () => runMpvReviewFreezeCapture({
@@ -285,13 +404,23 @@ test('initial host hide failure rolls back the freeze and keeps comment input di
       isCurrent: () => true,
       hasValidFrame: false,
       beginInitialHide: () => {},
-      commitCandidate: () => {},
+      commitCandidate: () => { candidatePresent = true; },
       hideNativeHost: async () => ({ success: false, error: 'hide failed' }),
       didHideApply: result => result?.success === true,
       markCandidateReady: () => {},
       endInitialHide: () => {},
-      rollbackCandidate: () => { rollbackCount += 1; },
-      restoreNativeHost: async () => { restoreCount += 1; },
+      rollbackCandidate: () => {
+        events.push('rollback');
+        candidatePresent = false;
+        rollbackCount += 1;
+      },
+      restoreNativeHost: async () => {
+        events.push('restore:start');
+        restoreCount += 1;
+        const restored = await restore.promise;
+        events.push('restore:end');
+        return restored;
+      },
       resyncAfterStale: async () => {}
     }).catch(() => {
       failureCount += 1;
@@ -302,13 +431,64 @@ test('initial host hide failure rolls back the freeze and keeps comment input di
     showGuidance: () => assert.fail('failed preparation must not show guidance')
   });
 
+  await flushPromises();
+  assert.equal(candidatePresent, true, 'candidate must cover a partially hidden host while restore is pending');
+  assert.equal(rollbackCount, 0, 'candidate rollback must wait for host restore acknowledgement');
+  assert.deepEqual(events, ['restore:start']);
+
+  restore.resolve(true);
   assert.equal(await readiness, false);
   assert.equal(rollbackCount, 1);
   assert.equal(restoreCount, 1);
   assert.equal(failureCount, 1);
   assert.equal(readyUi, false);
+  assert.equal(candidatePresent, false);
+  assert.deepEqual(events, ['restore:start', 'restore:end', 'rollback']);
   assert.match(appSource, /disableMpvReviewInteractionAfterFreezeFailure\(\)/);
   assert.match(appSource, /댓글·그리기 모드를 종료했습니다/);
+});
+
+test('failed native host restore retains the decoded safety frame and propagates the hide failure', async () => {
+  const runMpvReviewFreezeCapture = loadNamedFunction(appSource, 'runMpvReviewFreezeCapture');
+
+  for (const restoreMode of ['failure-result', 'throw']) {
+    const restore = createDeferred();
+    let candidatePresent = false;
+    let rollbackCount = 0;
+    const capture = runMpvReviewFreezeCapture({
+      captureFrame: async () => ({ success: true, dataUrl: 'data:image/png;base64,test' }),
+      createCandidate: dataUrl => ({ dataUrl }),
+      decodeCandidate: async () => {},
+      isCurrent: () => true,
+      hasValidFrame: false,
+      beginInitialHide: () => {},
+      commitCandidate: () => { candidatePresent = true; },
+      hideNativeHost: async () => {
+        if (restoreMode === 'throw') throw new Error('original hide exception');
+        return { success: false, error: 'original hide failed' };
+      },
+      didHideApply: result => result?.success === true,
+      markCandidateReady: () => {},
+      endInitialHide: () => {},
+      rollbackCandidate: () => {
+        candidatePresent = false;
+        rollbackCount += 1;
+      },
+      restoreNativeHost: async () => {
+        await restore.promise;
+        if (restoreMode === 'throw') throw new Error('restore failed');
+        return false;
+      },
+      resyncAfterStale: async () => {}
+    });
+
+    await flushPromises();
+    assert.equal(candidatePresent, true, `${restoreMode}: candidate must remain during restore await`);
+    restore.resolve();
+    await assert.rejects(capture, /original hide/);
+    assert.equal(rollbackCount, 0, `${restoreMode}: failed restore must not remove the last safety frame`);
+    assert.equal(candidatePresent, true, `${restoreMode}: release now owns eventual safety-frame removal`);
+  }
 });
 
 test('late stale host hide completion resynchronizes current native host visibility', async () => {
