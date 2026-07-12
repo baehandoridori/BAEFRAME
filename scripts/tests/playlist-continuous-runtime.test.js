@@ -690,7 +690,7 @@ test('manual video loads cancel active continuous playback and stale loads', () 
   assert.match(loadVideoSource, /const canContinueVideoLoad = \(\) => \([\s\S]+!isStaleVideoLoad\(\) &&[\s\S]+\(!allowNavigationGuardAbort \|\| shouldContinueVideoLoad\(\)\)[\s\S]+\);/);
   assert.match(loadVideoSource, /activeVideoLoadPath = filePath;/);
   assert.match(loadVideoSource, /allowNavigationGuardAbort = false;[\s\S]+\/\/ ====== 이전 파일 감시 및 협업 세션 정리/);
-  assert.match(loadVideoSource, /finally \{[\s\S]+if \(loadToken === latestVideoLoadToken\) \{[\s\S]+activeVideoLoadPath = null;/);
+  assert.match(loadVideoSource, /finally \{[\s\S]+if \(activeVideoLoadToken === loadToken\) \{[\s\S]+activeVideoLoadToken = null;[\s\S]+activeVideoLoadPath = null;/);
   assert.match(loadVideoSource, /if \(!preserveContinuousSession && continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
   assert.match(loadVideoSource, /const isStaleVideoLoad = \(\) => loadToken !== latestVideoLoadToken;/);
   assert.match(loadVideoSource, /if \(!canContinueVideoLoad\(\)\) return false;/);
@@ -954,7 +954,7 @@ test('playlist loading returns the real loadVideo result', () => {
 
   assert.match(appSource, /showToast\(`코덱 변환 실패: \$\{transcoded\.error \|\| '취소됨'\}`, 'error'\);\s*return false;/);
   assert.match(appSource, /showToast\('파일을 로드할 수 없습니다\.', 'error'\);\s*return false;/);
-  assert.match(appSource, /trace\.end\(\{ filePath, hasExistingData \}\);\s*return true;/);
+  assert.match(appSource, /trace\.end\(\{ filePath, hasExistingData \}\);\s*videoLoadCompleted = true;\s*return true;/);
 });
 
 test('continuous timeline uses aggregate time for playback and seek', () => {

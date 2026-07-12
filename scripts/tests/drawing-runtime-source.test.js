@@ -83,8 +83,8 @@ test('drawing mode makes video comment overlays click-through for uninterrupted 
   assert.match(appSource, /document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(tooltip => \{/);
   assert.match(appSource, /tooltip\.classList\.remove\('visible', 'pinned'\);/);
   assert.match(appSource, /function applyDrawModeState\(enabled\) \{/);
-  assert.match(appSource, /setCommentOverlaysDrawingPassthrough\(enabled\);/);
-  assert.match(appSource, /applyDrawModeState\(!state\.isDrawMode\);/);
+  assert.match(appSource, /function setDrawModeReadyState\(ready\) \{[\s\S]+setCommentOverlaysDrawingPassthrough\(ready\);/);
+  assert.match(appSource, /function toggleDrawMode\(\) \{[\s\S]+applyDrawModeState\(true\);[\s\S]+applyDrawModeState\(false\);/);
 
   assert.doesNotMatch(singleMarkerMatch[1], /pointer-events:\s*auto;/);
   assert.match(mainCss, /\.comment-marker\s*\{[\s\S]*?pointer-events:\s*auto;/);
@@ -97,8 +97,8 @@ test('non-toggle draw-mode shutdown paths clear drawing overlay state', () => {
   assert.ok(audioModeMatch, 'audio loading path should explicitly disable drawing mode');
 
   assert.match(appSource, /function applyDrawModeState\(enabled\) \{/);
-  assert.match(appSource, /setCommentOverlaysDrawingPassthrough\(enabled\);/);
-  assert.match(appSource, /applyDrawModeState\(!state\.isDrawMode\);/);
+  assert.match(appSource, /function setDrawModeReadyState\(ready\) \{[\s\S]+setCommentOverlaysDrawingPassthrough\(ready\);/);
+  assert.match(appSource, /function toggleDrawMode\(\) \{[\s\S]+applyDrawModeState\(true\);[\s\S]+applyDrawModeState\(false\);/);
   assert.match(audioModeMatch[1], /applyDrawModeState\(false\);/);
   assert.doesNotMatch(audioModeMatch[1], /state\.isDrawMode = false;/);
 });

@@ -606,6 +606,7 @@ class MPVOverlayHost {
     this.logger = options.logger || log;
     this.window = null;
     this.contentLoaded = false;
+    this.contentLoadGeneration = 0;
     this.lastBounds = null;
     this.parentWindow = null;
     this.parentRepositionHandler = null;
@@ -629,18 +630,27 @@ class MPVOverlayHost {
     hostWindow.setBounds(screenBounds);
 
     if (!this.contentLoaded) {
+      const contentLoadGeneration = ++this.contentLoadGeneration;
       try {
         await hostWindow.loadURL?.(OVERLAY_HOST_URL);
+        if (!this._isCurrentContentLoad(hostWindow, contentLoadGeneration)) {
+          return { success: false, error: 'mpv overlay host is no longer current' };
+        }
         const overlayApiReady = await hostWindow.webContents?.executeJavaScript?.(
           OVERLAY_API_READY_SCRIPT,
           true
         );
+        if (!this._isCurrentContentLoad(hostWindow, contentLoadGeneration)) {
+          return { success: false, error: 'mpv overlay host is no longer current' };
+        }
         if (overlayApiReady !== true) {
           return { success: false, error: 'mpv overlay API is not ready' };
         }
         this.contentLoaded = true;
       } catch (error) {
-        this.contentLoaded = false;
+        if (this._isCurrentContentLoad(hostWindow, contentLoadGeneration)) {
+          this.contentLoaded = false;
+        }
         this.logger.debug('mpv overlay host load failed', { error: error.message });
         return { success: false, error: error.message };
       }
@@ -727,6 +737,7 @@ class MPVOverlayHost {
 
   destroy() {
     const hostWindow = this.window;
+    this.contentLoadGeneration += 1;
     this.window = null;
     this.contentLoaded = false;
     this.lastBounds = null;
@@ -746,7 +757,7 @@ class MPVOverlayHost {
       return this.window;
     }
 
-    this.window = new this.BrowserWindow({
+    const hostWindow = new this.BrowserWindow({
       parent,
       modal: false,
       show: false,
@@ -768,14 +779,23 @@ class MPVOverlayHost {
         webSecurity: false
       }
     });
-    this.window.setIgnoreMouseEvents?.(true, { forward: true });
+    this.window = hostWindow;
+    hostWindow.setIgnoreMouseEvents?.(true, { forward: true });
 
-    this.window.on?.('closed', () => {
+    hostWindow.on?.('closed', () => {
+      if (this.window !== hostWindow) return;
+      this.contentLoadGeneration += 1;
       this.window = null;
       this.contentLoaded = false;
     });
 
-    return this.window;
+    return hostWindow;
+  }
+
+  _isCurrentContentLoad(hostWindow, contentLoadGeneration) {
+    return this.window === hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      this.contentLoadGeneration === contentLoadGeneration;
   }
 
   _bindParentWindow(parent) {

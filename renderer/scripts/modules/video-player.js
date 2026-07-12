@@ -948,6 +948,7 @@ export class VideoPlayer extends EventTarget {
     };
     log.warn('외부 플레이어 응답 없음, 엔진 정리', detail);
     await Promise.resolve(pollingControls?.stop?.()).catch(() => {});
+    if (this.engine !== stoppedEngine || this.externalControls !== pollingControls) return;
     this.useHtml5Engine();
     this.isLoaded = false;
     this._emit('externalstopped', detail);
@@ -977,6 +978,7 @@ export class VideoPlayer extends EventTarget {
         } catch (error) {
           log.warn('중지된 외부 플레이어 정리 실패', { error: error.message });
         }
+        if (this.engine !== pollingEngine || this.externalControls !== pollingControls) return;
         this.useHtml5Engine();
         this.isLoaded = false;
         this._emit('externalstopped', {
