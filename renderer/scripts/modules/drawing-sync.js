@@ -152,6 +152,7 @@ export class DrawingSync {
         const insertBeforeLayerId = this._dm.getLayerInsertBeforeId?.(layer.id);
         this._lm.broadcastEvent({
           type: 'DRAWING_LAYER_CREATED',
+          restore: true,
           insertBeforeLayerId: insertBeforeLayerId || undefined,
           layer: {
             id: layer.id,

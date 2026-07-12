@@ -330,6 +330,23 @@ test('current-state seed continues after one keyframe failure and sends order la
   assert.equal(sender.liveblocks.events.at(-1).type, 'DRAWING_LAYER_ORDER_CHANGED');
 });
 
+test('current-state seed restores a live layer over a stale deletion tombstone', async () => {
+  const sender = await createPeer({ actorId: 'actor-state-sender' });
+  const receiver = await createPeer({ actorId: 'actor-state-receiver' });
+  sender.manager.layers[0].getOrCreateKeyframe(33).setCanvasData('restored-state-data');
+  receiver.liveblocks.receive({ type: 'DRAWING_LAYER_DELETED', layerId: 'anchor' });
+  assert.equal(receiver.manager.isLayerDeleted('anchor'), true);
+  sender.liveblocks.events.length = 0;
+
+  await sender.sync.broadcastCurrentState();
+  for (const event of sender.liveblocks.events) receiver.liveblocks.receive(event);
+
+  const restored = receiver.manager.layers.find(layer => layer.id === 'anchor');
+  assert.ok(restored);
+  assert.equal(receiver.manager.isLayerDeleted('anchor'), false);
+  assert.equal(restored.getKeyframeAtFrame(33)?.canvasData, 'restored-state-data');
+});
+
 test('stopped current-state seed cannot broadcast old keyframes after restart', async () => {
   const peer = await createPeer({ actorId: 'actor-state-cancel' });
   const layer = peer.manager.layers.find(item => item.id === 'anchor');
