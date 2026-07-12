@@ -82,6 +82,58 @@ const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
 const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
+function createMpvOverlayLifecycle({ onWarning = () => {} } = {}) {
+  let generation = 0;
+  let activeOwner = null;
+  let ready = false;
+  let failureWarned = false;
+
+  const owns = (owner) => Boolean(owner && activeOwner && owner === activeOwner);
+
+  return {
+    begin(loadToken) {
+      activeOwner = Object.freeze({
+        generation: ++generation,
+        loadToken
+      });
+      ready = false;
+      failureWarned = false;
+      return activeOwner;
+    },
+    invalidate(owner = null) {
+      if (owner && !owns(owner)) return false;
+
+      generation += 1;
+      activeOwner = null;
+      ready = false;
+      failureWarned = false;
+      return true;
+    },
+    owns,
+    markReady(owner) {
+      if (!owns(owner)) return false;
+      ready = true;
+      return true;
+    },
+    isReady(owner) {
+      return ready && owns(owner);
+    },
+    captureReadyOwner() {
+      return ready ? activeOwner : null;
+    },
+    markUnavailable(owner, error) {
+      if (!owns(owner)) return false;
+
+      ready = false;
+      if (!failureWarned) {
+        failureWarned = true;
+        onWarning(error);
+      }
+      return true;
+    }
+  };
+}
+
 // 전역 에러 핸들러 설정
 setupGlobalErrorHandlers();
 
@@ -6080,10 +6132,15 @@ async function initApp() {
 
   let mpvEmbedBoundsSyncPending = false;
   let mpvVideoTransformSyncPending = false;
-  let mpvOverlayHostReady = false;
-  let mpvOverlayHostFailureWarned = false;
-  let mpvOverlayStateSyncPending = false;
-  let mpvOverlayRemoteCursorSyncPending = false;
+  const mpvOverlayLifecycle = createMpvOverlayLifecycle({
+    onWarning: (error) => {
+      log.warn('mpv 오버레이 동기화 실패, 이후 갱신을 중단합니다.', {
+        error: error || 'unknown'
+      });
+    }
+  });
+  let mpvOverlayStateSyncPendingOwner = null;
+  let mpvOverlayRemoteCursorSyncPendingOwner = null;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
   let mpvHostVisibilitySyncPending = false;
@@ -6093,19 +6150,8 @@ async function initApp() {
   let fullscreenScrubOverlay = null;
   let remoteCursorsContainer = null;
 
-  function resetMpvOverlayHostState() {
-    mpvOverlayHostReady = false;
-    mpvOverlayHostFailureWarned = false;
-  }
-
-  function markMpvOverlayHostUnavailable(error) {
-    mpvOverlayHostReady = false;
-    if (mpvOverlayHostFailureWarned) return;
-
-    mpvOverlayHostFailureWarned = true;
-    log.warn('mpv 오버레이 동기화 실패, 이후 갱신을 중단합니다.', {
-      error: error || 'unknown'
-    });
+  function markMpvOverlayHostUnavailable(owner, error) {
+    return mpvOverlayLifecycle.markUnavailable(owner, error);
   }
 
   const MPV_BLOCKING_OVERLAY_SELECTOR = [
@@ -6674,23 +6720,29 @@ async function initApp() {
   async function syncMpvOverlayState() {
     if (!document.body.classList.contains('mpv-pilot-mode')) return;
     if (!window.electronAPI?.mpvUpdateOverlayState) return;
-    if (!mpvOverlayHostReady) return;
-    if (mpvOverlayStateSyncPending) return;
+    const overlayOwner = mpvOverlayLifecycle.captureReadyOwner();
+    if (!overlayOwner) return;
+    if (mpvOverlayStateSyncPendingOwner === overlayOwner) return;
 
-    mpvOverlayStateSyncPending = true;
+    mpvOverlayStateSyncPendingOwner = overlayOwner;
     requestAnimationFrame(async () => {
-      mpvOverlayStateSyncPending = false;
-      if (!mpvOverlayHostReady) return;
+      if (mpvOverlayStateSyncPendingOwner === overlayOwner) {
+        mpvOverlayStateSyncPendingOwner = null;
+      }
+      if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
       const state = getMpvOverlayState();
       if (!state) return;
+      if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
 
       try {
         const result = await window.electronAPI.mpvUpdateOverlayState(state);
         if (!result?.success) {
-          markMpvOverlayHostUnavailable(result?.error);
+          if (!mpvOverlayLifecycle.owns(overlayOwner)) return;
+          markMpvOverlayHostUnavailable(overlayOwner, result?.error);
         }
       } catch (error) {
-        markMpvOverlayHostUnavailable(error.message);
+        if (!mpvOverlayLifecycle.owns(overlayOwner)) return;
+        markMpvOverlayHostUnavailable(overlayOwner, error.message);
       }
     });
   }
@@ -6698,22 +6750,28 @@ async function initApp() {
   function syncMpvOverlayRemoteCursorState() {
     if (!document.body.classList.contains('mpv-pilot-mode')) return;
     if (!window.electronAPI?.mpvUpdateOverlayRemoteCursors) return;
-    if (!mpvOverlayHostReady) return;
-    if (mpvOverlayRemoteCursorSyncPending) return;
+    const overlayOwner = mpvOverlayLifecycle.captureReadyOwner();
+    if (!overlayOwner) return;
+    if (mpvOverlayRemoteCursorSyncPendingOwner === overlayOwner) return;
 
-    mpvOverlayRemoteCursorSyncPending = true;
+    mpvOverlayRemoteCursorSyncPendingOwner = overlayOwner;
     requestAnimationFrame(async () => {
-      mpvOverlayRemoteCursorSyncPending = false;
-      if (!mpvOverlayHostReady) return;
+      if (mpvOverlayRemoteCursorSyncPendingOwner === overlayOwner) {
+        mpvOverlayRemoteCursorSyncPendingOwner = null;
+      }
+      if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
       const remoteCursorHtml = serializeMpvOverlayRemoteCursorHtml();
+      if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
 
       try {
         const result = await window.electronAPI.mpvUpdateOverlayRemoteCursors(remoteCursorHtml);
         if (!result?.success) {
-          markMpvOverlayHostUnavailable(result?.error);
+          if (!mpvOverlayLifecycle.owns(overlayOwner)) return;
+          markMpvOverlayHostUnavailable(overlayOwner, result?.error);
         }
       } catch (error) {
-        markMpvOverlayHostUnavailable(error.message);
+        if (!mpvOverlayLifecycle.owns(overlayOwner)) return;
+        markMpvOverlayHostUnavailable(overlayOwner, error.message);
       }
     });
   }
@@ -6808,9 +6866,9 @@ async function initApp() {
     }, 250);
   }
 
-  async function stopMpvPilotEngine() {
+  async function stopMpvPilotEngine(overlayOwner = null) {
+    if (!mpvOverlayLifecycle.invalidate(overlayOwner)) return false;
     await releaseMpvReviewFreezeFrame();
-    resetMpvOverlayHostState();
     try {
       return await window.electronAPI.mpvStop();
     } finally {
@@ -6880,46 +6938,65 @@ async function initApp() {
     isStaleVideoLoad = () => false
   } = {}) {
     activeMpvPilotLoadToken = loadToken;
+    const overlayOwner = mpvOverlayLifecycle.begin(loadToken);
     let embedHost = null;
     let overlayHost = null;
     let mpvLoadStarted = false;
     const ownsMpvPilotLoad = () => activeMpvPilotLoadToken === loadToken;
+    const ownsMpvOverlayLifecycle = () => (
+      ownsMpvPilotLoad() && mpvOverlayLifecycle.owns(overlayOwner)
+    );
+    const isStaleMpvPilotLifecycle = () => (
+      isStaleVideoLoad() || !ownsMpvOverlayLifecycle()
+    );
     const clearMpvPilotLoadOwner = () => {
       if (ownsMpvPilotLoad()) {
         activeMpvPilotLoadToken = null;
       }
     };
     const cleanupPendingMpvPilot = async () => {
-      if (isStaleVideoLoad() && !ownsMpvPilotLoad()) {
+      if (!ownsMpvOverlayLifecycle()) {
         log.debug('mpv 파일럿 준비 정리 건너뜀: 더 최신 mpv 영상 로드가 활성화됨', { filePath });
         return;
       }
 
-      resetMpvOverlayHostState();
       try {
         if (mpvLoadStarted) {
-          await stopMpvPilotEngine();
+          await stopMpvPilotEngine(overlayOwner);
         } else {
+          if (!mpvOverlayLifecycle.invalidate(overlayOwner)) return;
           await window.electronAPI?.mpvDestroyOverlay?.();
           await window.electronAPI?.mpvDestroyEmbed?.();
         }
       } catch (error) {
         log.debug('mpv 파일럿 준비 정리 실패', { error: error.message });
       } finally {
-        mpvPilotHostPreparing = false;
-        clearMpvPilotLoadOwner();
+        if (ownsMpvPilotLoad()) {
+          mpvPilotHostPreparing = false;
+          clearMpvPilotLoadOwner();
+        }
       }
     };
 
     try {
       mpvPilotHostPreparing = true;
       embedHost = await prepareMpvEmbedHost();
-      resetMpvOverlayHostState();
+      if (isStaleMpvPilotLifecycle()) {
+        await cleanupPendingMpvPilot();
+        return false;
+      }
       overlayHost = await prepareMpvOverlayHost();
+      if (isStaleMpvPilotLifecycle()) {
+        await cleanupPendingMpvPilot();
+        return false;
+      }
       if (!overlayHost) {
         throw new Error('mpv 오버레이 호스트 준비 실패');
       }
-      mpvOverlayHostReady = true;
+      if (!mpvOverlayLifecycle.markReady(overlayOwner)) {
+        await cleanupPendingMpvPilot();
+        return false;
+      }
     } catch (error) {
       await cleanupPendingMpvPilot();
       throw error;
@@ -6927,13 +7004,13 @@ async function initApp() {
 
     const stopCurrentMpvPilotEngine = async () => {
       try {
-        return await stopMpvPilotEngine();
+        return await stopMpvPilotEngine(overlayOwner);
       } finally {
         clearMpvPilotLoadOwner();
       }
     };
 
-    if (isStaleVideoLoad()) {
+    if (isStaleMpvPilotLifecycle()) {
       await cleanupPendingMpvPilot();
       return false;
     }
@@ -6951,7 +7028,7 @@ async function initApp() {
       throw error;
     }
 
-    if (isStaleVideoLoad()) {
+    if (isStaleMpvPilotLifecycle()) {
       await cleanupPendingMpvPilot();
       return false;
     }
@@ -6967,7 +7044,7 @@ async function initApp() {
       height: Number(loadResult.height) || 0
     };
 
-    if (isStaleVideoLoad()) {
+    if (isStaleMpvPilotLifecycle()) {
       await cleanupPendingMpvPilot();
       return false;
     }
@@ -7008,7 +7085,7 @@ async function initApp() {
       }
     }
 
-    if (isStaleVideoLoad()) {
+    if (isStaleMpvPilotLifecycle()) {
       await cleanupPendingMpvPilot();
       return false;
     }
@@ -7018,7 +7095,7 @@ async function initApp() {
     if (isMpvReviewInteractionActive()) {
       videoPlayer.pause();
       await showMpvReviewFreezeFrame();
-      if (isStaleVideoLoad()) {
+      if (isStaleMpvPilotLifecycle()) {
         await cleanupPendingMpvPilot();
         return false;
       }

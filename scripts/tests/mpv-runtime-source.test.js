@@ -16,6 +16,92 @@ const mainIndexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'ma
 const mpvManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/mpv-manager.js'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
+function loadMpvOverlayLifecycleFactory() {
+  const functionStart = appSource.indexOf('function createMpvOverlayLifecycle(');
+  assert.notEqual(functionStart, -1, 'mpv overlay lifecycle factory should exist');
+
+  const bodyStart = appSource.indexOf(') {', functionStart) + 2;
+  let depth = 0;
+  for (let index = bodyStart; index < appSource.length; index += 1) {
+    if (appSource[index] === '{') depth += 1;
+    if (appSource[index] === '}') depth -= 1;
+    if (depth === 0) {
+      const functionSource = appSource.slice(functionStart, index + 1);
+      return new Function(`return (${functionSource});`)();
+    }
+  }
+
+  assert.fail('mpv overlay lifecycle factory should have a complete body');
+}
+
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+test('mpv overlay lifecycle ignores stale prepare and sync completions', async () => {
+  const createMpvOverlayLifecycle = loadMpvOverlayLifecycleFactory();
+  const warnings = [];
+  const prepareLifecycle = createMpvOverlayLifecycle({
+    onWarning: (error) => warnings.push(error)
+  });
+
+  const stalePrepare = createDeferred();
+  const ownerA = prepareLifecycle.begin('load-a');
+  const finishPrepareA = (async () => {
+    await stalePrepare.promise;
+    prepareLifecycle.invalidate(ownerA);
+    prepareLifecycle.markReady(ownerA);
+  })();
+
+  const ownerB = prepareLifecycle.begin('load-b');
+  assert.equal(prepareLifecycle.markReady(ownerB), true);
+
+  stalePrepare.resolve();
+  await finishPrepareA;
+
+  assert.equal(prepareLifecycle.isReady(ownerB), true);
+
+  const syncLifecycle = createMpvOverlayLifecycle({
+    onWarning: (error) => warnings.push(error)
+  });
+  const syncOwnerA = syncLifecycle.begin('sync-load-a');
+  assert.equal(syncLifecycle.markReady(syncOwnerA), true);
+  const staleSync = createDeferred();
+  const finishSyncA = (async () => {
+    const capturedOwner = syncLifecycle.captureReadyOwner();
+    const result = await staleSync.promise;
+    if (!result.success) syncLifecycle.markUnavailable(capturedOwner, result.error);
+  })();
+
+  const syncOwnerB = syncLifecycle.begin('sync-load-b');
+  assert.equal(syncLifecycle.markReady(syncOwnerB), true);
+  staleSync.resolve({ success: false, error: 'stale-a-failure' });
+  await finishSyncA;
+
+  assert.equal(syncLifecycle.isReady(syncOwnerB), true);
+  assert.equal(warnings.length, 0);
+});
+
+test('mpv overlay lifecycle clears and warns once for a current-generation failure', () => {
+  const createMpvOverlayLifecycle = loadMpvOverlayLifecycleFactory();
+  const warnings = [];
+  const lifecycle = createMpvOverlayLifecycle({
+    onWarning: (error) => warnings.push(error)
+  });
+
+  const owner = lifecycle.begin('load-current');
+  assert.equal(lifecycle.markReady(owner), true);
+  assert.equal(lifecycle.markUnavailable(owner, 'first-failure'), true);
+  assert.equal(lifecycle.markUnavailable(owner, 'second-failure'), true);
+
+  assert.equal(lifecycle.isReady(owner), false);
+  assert.deepEqual(warnings, ['first-failure']);
+});
+
 test('package exposes an mpv pilot test command', () => {
   assert.equal(
     packageJson.scripts['test:mpv'],
@@ -206,57 +292,54 @@ test('mpv pilot requires a ready overlay host before loading media', () => {
   assert.ok(loadMpvMatch, 'loadVideoWithMpvPilot should exist');
   const loadMpvSource = loadMpvMatch[1];
 
-  assert.match(appSource, /let mpvOverlayHostReady = false;/);
+  assert.match(appSource, /function createMpvOverlayLifecycle\(\{ onWarning = \(\) => \{\} \} = \{\}\) \{/);
+  assert.match(appSource, /generation: \+\+generation,[\s\S]+loadToken/);
+  assert.match(loadMpvSource, /const overlayOwner = mpvOverlayLifecycle\.begin\(loadToken\);/);
   assert.match(loadMpvSource, /let overlayHost = null;/);
   assert.match(loadMpvSource, /overlayHost = await prepareMpvOverlayHost\(\);/);
   assert.match(loadMpvSource, /if \(!overlayHost\) \{[\s\S]+throw new Error\('mpv 오버레이 호스트 준비 실패'\);[\s\S]+\}/);
-  assert.match(loadMpvSource, /overlayHost = await prepareMpvOverlayHost\(\);[\s\S]+mpvOverlayHostReady = true;/);
+  assert.match(loadMpvSource, /overlayHost = await prepareMpvOverlayHost\(\);\n      if \(isStaleMpvPilotLifecycle\(\)\) \{[\s\S]+if \(!mpvOverlayLifecycle\.markReady\(overlayOwner\)\) \{/);
 });
 
 test('mpv overlay sync circuit-breaks failed IPC responses before taking more snapshots', () => {
   const stateSyncMatch = appSource.match(/async function syncMpvOverlayState\(\) \{([\s\S]*?)\n  \}\n\n  function syncMpvOverlayRemoteCursorState/);
   assert.ok(stateSyncMatch, 'syncMpvOverlayState should exist');
   const stateSyncSource = stateSyncMatch[1];
-  assert.match(stateSyncSource, /requestAnimationFrame\(async \(\) => \{[\s\S]+if \(!mpvOverlayHostReady\) return;[\s\S]+const state = getMpvOverlayState\(\);/);
-  assert.match(stateSyncSource, /const result = await window\.electronAPI\.mpvUpdateOverlayState\(state\);[\s\S]+if \(!result\?\.success\) \{[\s\S]+markMpvOverlayHostUnavailable\(result\?\.error\);/);
-  assert.match(stateSyncSource, /catch \(error\) \{[\s\S]+markMpvOverlayHostUnavailable\(error\.message\);/);
+  assert.match(stateSyncSource, /const overlayOwner = mpvOverlayLifecycle\.captureReadyOwner\(\);[\s\S]+requestAnimationFrame\(async \(\) => \{/);
+  assert.match(stateSyncSource, /if \(!mpvOverlayLifecycle\.isReady\(overlayOwner\)\) return;\n      const state = getMpvOverlayState\(\);[\s\S]+if \(!mpvOverlayLifecycle\.isReady\(overlayOwner\)\) return;/);
+  assert.match(stateSyncSource, /const result = await window\.electronAPI\.mpvUpdateOverlayState\(state\);[\s\S]+if \(!result\?\.success\) \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(overlayOwner\)\) return;[\s\S]+markMpvOverlayHostUnavailable\(overlayOwner, result\?\.error\);/);
+  assert.match(stateSyncSource, /catch \(error\) \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(overlayOwner\)\) return;[\s\S]+markMpvOverlayHostUnavailable\(overlayOwner, error\.message\);/);
 
   const remoteCursorSyncMatch = appSource.match(/function syncMpvOverlayRemoteCursorState\(\) \{([\s\S]*?)\n  \}\n\n  function scheduleMpvOverlayRemoteCursorStateSync/);
   assert.ok(remoteCursorSyncMatch, 'syncMpvOverlayRemoteCursorState should exist');
   const remoteCursorSyncSource = remoteCursorSyncMatch[1];
-  assert.match(remoteCursorSyncSource, /requestAnimationFrame\(async \(\) => \{[\s\S]+if \(!mpvOverlayHostReady\) return;[\s\S]+const remoteCursorHtml = serializeMpvOverlayRemoteCursorHtml\(\);/);
-  assert.match(remoteCursorSyncSource, /const result = await window\.electronAPI\.mpvUpdateOverlayRemoteCursors\(remoteCursorHtml\);[\s\S]+if \(!result\?\.success\) \{[\s\S]+markMpvOverlayHostUnavailable\(result\?\.error\);/);
-  assert.match(remoteCursorSyncSource, /catch \(error\) \{[\s\S]+markMpvOverlayHostUnavailable\(error\.message\);/);
-
-  const unavailableMatch = appSource.match(/function markMpvOverlayHostUnavailable\(error\) \{([\s\S]*?)\n  \}/);
-  assert.ok(unavailableMatch, 'markMpvOverlayHostUnavailable should exist');
-  assert.match(unavailableMatch[1], /mpvOverlayHostReady = false;/);
-  assert.match(unavailableMatch[1], /if \(mpvOverlayHostFailureWarned\) return;/);
-  assert.match(unavailableMatch[1], /mpvOverlayHostFailureWarned = true;/);
-  assert.match(unavailableMatch[1], /log\.warn\(/);
+  assert.match(remoteCursorSyncSource, /const overlayOwner = mpvOverlayLifecycle\.captureReadyOwner\(\);[\s\S]+requestAnimationFrame\(async \(\) => \{/);
+  assert.match(remoteCursorSyncSource, /if \(!mpvOverlayLifecycle\.isReady\(overlayOwner\)\) return;\n      const remoteCursorHtml = serializeMpvOverlayRemoteCursorHtml\(\);[\s\S]+if \(!mpvOverlayLifecycle\.isReady\(overlayOwner\)\) return;/);
+  assert.match(remoteCursorSyncSource, /const result = await window\.electronAPI\.mpvUpdateOverlayRemoteCursors\(remoteCursorHtml\);[\s\S]+if \(!result\?\.success\) \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(overlayOwner\)\) return;[\s\S]+markMpvOverlayHostUnavailable\(overlayOwner, result\?\.error\);/);
+  assert.match(remoteCursorSyncSource, /catch \(error\) \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(overlayOwner\)\) return;[\s\S]+markMpvOverlayHostUnavailable\(overlayOwner, error\.message\);/);
 });
 
-test('mpv overlay readiness resets before cleanup, stop, and a new prepare attempt', () => {
+test('mpv overlay lifecycle invalidates before cleanup, stop, and a new prepare attempt', () => {
   const loadMpvMatch = appSource.match(/async function loadVideoWithMpvPilot\(filePath, \{([\s\S]*?)\n  \}\n\n  async function resolveMpvThumbnailVideoPath/);
   assert.ok(loadMpvMatch, 'loadVideoWithMpvPilot should exist');
   const loadMpvSource = loadMpvMatch[1];
-  assert.match(loadMpvSource, /resetMpvOverlayHostState\(\);[\s\S]+overlayHost = await prepareMpvOverlayHost\(\);/);
+  const beginIndex = loadMpvSource.indexOf('const overlayOwner = mpvOverlayLifecycle.begin(loadToken);');
+  const embedPrepareIndex = loadMpvSource.indexOf('embedHost = await prepareMpvEmbedHost();');
+  assert.ok(beginIndex >= 0 && beginIndex < embedPrepareIndex, 'new preparation should invalidate older generations before awaiting embed preparation');
+  assert.match(loadMpvSource, /embedHost = await prepareMpvEmbedHost\(\);\n      if \(isStaleMpvPilotLifecycle\(\)\)/);
+  assert.match(loadMpvSource, /overlayHost = await prepareMpvOverlayHost\(\);\n      if \(isStaleMpvPilotLifecycle\(\)\)/);
   const cleanupMatch = loadMpvSource.match(/const cleanupPendingMpvPilot = async \(\) => \{([\s\S]*?)\n    \};/);
   assert.ok(cleanupMatch, 'cleanupPendingMpvPilot should exist');
   const cleanupSource = cleanupMatch[1];
-  const staleGuardIndex = cleanupSource.indexOf('if (isStaleVideoLoad() && !ownsMpvPilotLoad()) {');
-  const cleanupResetIndex = cleanupSource.indexOf('resetMpvOverlayHostState();');
-  const cleanupTryIndex = cleanupSource.indexOf('try {');
-  assert.ok(
-    staleGuardIndex < cleanupResetIndex && cleanupResetIndex < cleanupTryIndex,
-    'owned cleanup should reset overlay readiness before awaiting host teardown'
-  );
+  assert.match(cleanupSource, /if \(!ownsMpvOverlayLifecycle\(\)\) \{[\s\S]+return;/);
+  assert.match(cleanupSource, /await stopMpvPilotEngine\(overlayOwner\);/);
+  assert.match(cleanupSource, /if \(!mpvOverlayLifecycle\.invalidate\(overlayOwner\)\) return;\n          await window\.electronAPI\?\.mpvDestroyOverlay\?\.\(\);/);
 
-  const stopMpvMatch = appSource.match(/async function stopMpvPilotEngine\(\) \{([\s\S]*?)\n  \}/);
+  const stopMpvMatch = appSource.match(/async function stopMpvPilotEngine\(overlayOwner = null\) \{([\s\S]*?)\n  \}/);
   assert.ok(stopMpvMatch, 'stopMpvPilotEngine should exist');
   assert.ok(
-    stopMpvMatch[1].indexOf('resetMpvOverlayHostState();') < stopMpvMatch[1].indexOf('try {'),
-    'stop should reset overlay readiness before awaiting mpv shutdown'
+    stopMpvMatch[1].indexOf('mpvOverlayLifecycle.invalidate(overlayOwner)') < stopMpvMatch[1].indexOf('await releaseMpvReviewFreezeFrame();'),
+    'stop should invalidate overlay readiness before awaiting teardown'
   );
 });
 
@@ -302,7 +385,7 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
   assert.match(appSource, /async function prepareMpvEmbedHost\(\) \{[\s\S]+if \(result\?\.success && result\.wid\) \{[\s\S]+forceMpvHostVisibilitySync\(\);[\s\S]+return result;/);
   assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+if \(result\?\.success\) \{[\s\S]+forceMpvHostVisibilitySync\(\);[\s\S]+return result;/);
   assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(e\) => \{[\s\S]+mpvHostLastRequestedVisible = null;[\s\S]+if \(isAppShuttingDown\) return;[\s\S]+allowMpvPilot: retryMpv/);
-  assert.match(appSource, /async function stopMpvPilotEngine\(\) \{[\s\S]+finally \{[\s\S]+mpvHostLastRequestedVisible = null;/);
+  assert.match(appSource, /async function stopMpvPilotEngine\(overlayOwner = null\) \{[\s\S]+finally \{[\s\S]+mpvHostLastRequestedVisible = null;/);
 });
 
 test('mpv pilot waits for the requested initial frame before revealing the native host', () => {
@@ -316,10 +399,10 @@ test('mpv pilot waits for the requested initial frame before revealing the nativ
   assert.match(loadMpvSource, /const initialSeekReady = await seekMpvInitialFrameBeforeReveal\(initialFrame\);/);
   assert.match(loadMpvSource, /if \(!initialSeekReady\) \{[\s\S]+requestAnimationFrame\(resolve\)/);
   const initialSeekIndex = loadMpvSource.indexOf('const initialSeekReady = await seekMpvInitialFrameBeforeReveal(initialFrame);');
-  const staleRecheckIndex = loadMpvSource.indexOf('if (isStaleVideoLoad()) {', initialSeekIndex);
+  const staleRecheckIndex = loadMpvSource.indexOf('if (isStaleMpvPilotLifecycle()) {', initialSeekIndex);
   const revealReadyIndex = loadMpvSource.indexOf('mpvPilotHostPreparing = false;', initialSeekIndex);
   const visibilitySyncIndex = loadMpvSource.indexOf('syncMpvHostVisibilityWithDom();', revealReadyIndex);
-  assert.match(loadMpvSource, /if \(isStaleVideoLoad\(\)\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+return false;[\s\S]+\}/);
+  assert.match(loadMpvSource, /if \(isStaleMpvPilotLifecycle\(\)\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+return false;[\s\S]+\}/);
   assert.ok(
     initialSeekIndex < staleRecheckIndex && staleRecheckIndex < revealReadyIndex,
     'stale mpv loads should be cleaned up after initial-frame waits and before host reveal'
@@ -374,18 +457,20 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
   assert.match(appSource, /let activeMpvPilotLoadToken = null;/);
   assert.match(loadMpvSource, /loadToken = null,[\s\S]+isStaleVideoLoad = \(\) => false/);
   assert.match(loadMpvSource, /activeMpvPilotLoadToken = loadToken;/);
+  assert.match(loadMpvSource, /const overlayOwner = mpvOverlayLifecycle\.begin\(loadToken\);/);
   assert.match(loadMpvSource, /let embedHost = null;/);
   assert.match(loadMpvSource, /const ownsMpvPilotLoad = \(\) => activeMpvPilotLoadToken === loadToken;/);
+  assert.match(loadMpvSource, /const ownsMpvOverlayLifecycle = \(\) => \([\s\S]+ownsMpvPilotLoad\(\) && mpvOverlayLifecycle\.owns\(overlayOwner\)[\s\S]+\);/);
   assert.match(loadMpvSource, /const clearMpvPilotLoadOwner = \(\) => \{[\s\S]+if \(ownsMpvPilotLoad\(\)\) \{[\s\S]+activeMpvPilotLoadToken = null;[\s\S]+\}/);
   assert.match(loadMpvSource, /const cleanupPendingMpvPilot = async \(\) => \{/);
-  assert.match(loadMpvSource, /const cleanupPendingMpvPilot = async \(\) => \{[\s\S]+if \(isStaleVideoLoad\(\) && !ownsMpvPilotLoad\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+if \(mpvLoadStarted\)/);
-  assert.match(loadMpvSource, /if \(mpvLoadStarted\) \{[\s\S]+await stopMpvPilotEngine\(\);[\s\S]+\}/);
+  assert.match(loadMpvSource, /const cleanupPendingMpvPilot = async \(\) => \{[\s\S]+if \(!ownsMpvOverlayLifecycle\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+if \(mpvLoadStarted\)/);
+  assert.match(loadMpvSource, /if \(mpvLoadStarted\) \{[\s\S]+await stopMpvPilotEngine\(overlayOwner\);[\s\S]+\}/);
   assert.match(loadMpvSource, /await window\.electronAPI\?\.mpvDestroyEmbed\?\.\(\);/);
-  assert.match(loadMpvSource, /finally \{[\s\S]+mpvPilotHostPreparing = false;[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\}/);
-  assert.match(loadMpvSource, /try \{[\s\S]+mpvPilotHostPreparing = true;[\s\S]+embedHost = await prepareMpvEmbedHost\(\);[\s\S]+await prepareMpvOverlayHost\(\);[\s\S]+\} catch \(error\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw error;[\s\S]+\}/);
-  assert.match(loadMpvSource, /const stopCurrentMpvPilotEngine = async \(\) => \{[\s\S]+await stopMpvPilotEngine\(\);[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\};/);
+  assert.match(loadMpvSource, /finally \{[\s\S]+if \(ownsMpvPilotLoad\(\)\) \{[\s\S]+mpvPilotHostPreparing = false;[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\}[\s\S]+\}/);
+  assert.match(loadMpvSource, /try \{[\s\S]+mpvPilotHostPreparing = true;[\s\S]+embedHost = await prepareMpvEmbedHost\(\);[\s\S]+isStaleMpvPilotLifecycle\(\)[\s\S]+overlayHost = await prepareMpvOverlayHost\(\);[\s\S]+mpvOverlayLifecycle\.markReady\(overlayOwner\)[\s\S]+\} catch \(error\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw error;[\s\S]+\}/);
+  assert.match(loadMpvSource, /const stopCurrentMpvPilotEngine = async \(\) => \{[\s\S]+await stopMpvPilotEngine\(overlayOwner\);[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\};/);
   assert.match(loadMpvSource, /stop: \(\) => stopCurrentMpvPilotEngine\(\)/);
-  assert.match(loadMpvSource, /if \(isStaleVideoLoad\(\)\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+return false;[\s\S]+\}/);
+  assert.match(loadMpvSource, /if \(isStaleMpvPilotLifecycle\(\)\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+return false;[\s\S]+\}/);
   assert.match(loadMpvSource, /catch \(error\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw error;[\s\S]+\}/);
   assert.match(loadMpvSource, /if \(!loadResult\?\.success\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw new Error/);
   assert.doesNotMatch(loadMpvSource, /ffmpegIsAvailable|ffmpegProbeCodec/);
@@ -443,7 +528,7 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /const showTooltipHover = \(\) => \{[\s\S]+tooltip\.classList\.add\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\};/);
   assert.match(appSource, /const hideTooltipHover = \(\) => \{[\s\S]+tooltip\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}, 100\);/);
   assert.match(appSource, /function updateMarkerTooltipState\(marker\) \{[\s\S]+marker\.tooltipElement\.classList\.add\('visible', 'pinned'\);[\s\S]+scheduleMpvOverlayStateSync\(\);/);
-  assert.match(appSource, /async function stopMpvPilotEngine\(\) \{[\s\S]+await window\.electronAPI\?\.mpvDestroyOverlay\?\.\(\);/);
+  assert.match(appSource, /async function stopMpvPilotEngine\(overlayOwner = null\) \{[\s\S]+await window\.electronAPI\?\.mpvDestroyOverlay\?\.\(\);/);
 });
 
 test('mpv pilot keeps toast notifications visible above the native video host', () => {
