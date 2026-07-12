@@ -17,6 +17,50 @@ const mainStyles = readSource('renderer/styles/main.css');
 const mpvManagerSource = readSource('main/mpv-manager.js');
 const userSettingsSource = readSource('renderer/scripts/modules/user-settings.js');
 
+function extractNamedFunction(source, functionName) {
+  const functionKeywordStart = source.indexOf(`function ${functionName}`);
+  assert.ok(functionKeywordStart >= 0, `${functionName} should exist`);
+  const start = source.slice(Math.max(0, functionKeywordStart - 6), functionKeywordStart) === 'async '
+    ? functionKeywordStart - 6
+    : functionKeywordStart;
+  const signatureEndMatch = /\)\s*\{/.exec(source.slice(functionKeywordStart));
+  const bodyStart = signatureEndMatch
+    ? functionKeywordStart + signatureEndMatch.index + signatureEndMatch[0].lastIndexOf('{')
+    : -1;
+  assert.ok(bodyStart > start, `${functionName} should have a body`);
+
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    if (source[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+
+  assert.fail(`${functionName} body should be balanced`);
+}
+
+function loadNamedFunction(source, functionName) {
+  const functionSource = extractNamedFunction(source, functionName);
+  return Function(`"use strict"; return (${functionSource});`)();
+}
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 test('external status polling escalates repeated failures to a stop event', () => {
   assert.match(videoPlayerSource, /this\._externalStatusFailureCount = 0;/);
   const watchdogMatch = videoPlayerSource.match(/async _registerExternalStatusFailure\(pollingControls\) \{([\s\S]*?)\n  \}/);
@@ -94,11 +138,15 @@ test('mpv review freeze decodes before hiding native video and releases in the r
   assert.ok(showStart >= 0 && releaseStart > showStart && releaseEnd > releaseStart, 'shared freeze functions should be bounded');
   const showSource = appSource.slice(showStart, releaseStart);
   const releaseSource = appSource.slice(releaseStart, releaseEnd);
+  const captureSource = extractNamedFunction(appSource, 'runMpvReviewFreezeCapture');
 
-  const assignIndex = showSource.indexOf('candidate.src = result.dataUrl;');
-  const decodeIndex = showSource.indexOf('await candidate.decode();');
-  const readyIndex = showSource.indexOf("classList.add('mpv-review-freeze-ready')");
-  assert.ok(assignIndex >= 0 && assignIndex < decodeIndex && decodeIndex < readyIndex, 'candidate must decode before the native host blocker becomes ready');
+  const decodeIndex = captureSource.indexOf('await decodeCandidate(candidate);');
+  const commitIndex = captureSource.indexOf('commitCandidate(candidate);', decodeIndex);
+  const hideIndex = captureSource.indexOf('hideResult = await hideNativeHost();');
+  const readyIndex = captureSource.indexOf('markCandidateReady(candidate);');
+  assert.ok(decodeIndex >= 0 && decodeIndex < commitIndex && commitIndex < hideIndex && hideIndex < readyIndex, 'candidate must decode and host hide must settle before the blocker becomes ready');
+  assert.match(showSource, /candidate\.src = dataUrl;/);
+  assert.match(showSource, /classList\.add\('mpv-review-freeze-ready'\)/);
   assert.match(showSource, /const hadValidFrame = Boolean\(/);
   assert.match(showSource, /if \(!hadValidFrame\) \{[\s\S]+disableMpvReviewInteractionAfterFreezeFailure\(\);/);
 
@@ -115,8 +163,196 @@ test('mpv review freeze refresh is throttled instead of perpetually debounced', 
   const nextFunction = appSource.indexOf('\n  function ', scheduleStart + 1);
   assert.ok(scheduleStart >= 0 && nextFunction > scheduleStart, 'review freeze refresh scheduler should exist');
   const scheduleSource = appSource.slice(scheduleStart, nextFunction);
-  assert.match(scheduleSource, /if \(mpvReviewFreezeRefreshTimer\) return;/);
-  assert.doesNotMatch(scheduleSource, /clearTimeout\(mpvReviewFreezeRefreshTimer\)/);
+  assert.match(scheduleSource, /mpvReviewFreezeRefreshScheduler\.schedule\(\);/);
+  const coalescerSource = extractNamedFunction(appSource, 'createCoalescedAsyncScheduler');
+  assert.match(coalescerSource, /if \(inFlight\) \{[\s\S]+trailing = true;/);
+  assert.match(coalescerSource, /if \(!trailing\) return;[\s\S]+schedule\(\);/);
+});
+
+test('mpv review refresh coalescer keeps one slow capture and schedules one trailing refresh', async () => {
+  const createCoalescedAsyncScheduler = loadNamedFunction(appSource, 'createCoalescedAsyncScheduler');
+  const timers = [];
+  const captures = [createDeferred(), createDeferred()];
+  let captureCount = 0;
+  let active = true;
+  const scheduler = createCoalescedAsyncScheduler({
+    delayMs: 160,
+    run: () => captures[captureCount++].promise,
+    shouldRun: () => active,
+    setTimer: callback => {
+      timers.push(callback);
+      return callback;
+    },
+    clearTimer: callback => {
+      const index = timers.indexOf(callback);
+      if (index >= 0) timers.splice(index, 1);
+    }
+  });
+
+  scheduler.schedule();
+  scheduler.schedule();
+  assert.equal(timers.length, 1, 'pending ticks should share one timer');
+  timers.shift()();
+  assert.equal(captureCount, 1, 'the first timer should start one capture');
+
+  scheduler.schedule();
+  scheduler.schedule();
+  assert.equal(captureCount, 1, 'ticks must not start another capture while one is in flight');
+  assert.equal(timers.length, 0, 'in-flight ticks should coalesce without an extra active timer');
+
+  captures[0].resolve(true);
+  await flushPromises();
+  assert.equal(timers.length, 1, 'settlement should schedule exactly one trailing refresh');
+  timers.shift()();
+  assert.equal(captureCount, 2, 'the trailing timer should start the queued refresh');
+
+  active = false;
+  scheduler.cancel();
+  captures[1].resolve(true);
+  await flushPromises();
+  assert.equal(timers.length, 0, 'cancelled generations must not resurrect after stale settlement');
+});
+
+test('comment readiness waits for screenshot, decode, and native host hide', async () => {
+  const runMpvReviewFreezeCapture = loadNamedFunction(appSource, 'runMpvReviewFreezeCapture');
+  const prepareMpvCommentReadiness = loadNamedFunction(appSource, 'prepareMpvCommentReadiness');
+  const screenshot = createDeferred();
+  const decode = createDeferred();
+  const hide = createDeferred();
+  let candidateCommitted = false;
+  let readyUi = false;
+  let pointerEvents = 'none';
+  let guidanceCount = 0;
+
+  const readiness = prepareMpvCommentReadiness({
+    prepareFreeze: () => runMpvReviewFreezeCapture({
+      captureFrame: () => screenshot.promise,
+      createCandidate: dataUrl => ({ dataUrl }),
+      decodeCandidate: () => decode.promise,
+      isCurrent: () => true,
+      hasValidFrame: false,
+      beginInitialHide: () => {},
+      commitCandidate: () => { candidateCommitted = true; },
+      hideNativeHost: () => hide.promise,
+      didHideApply: result => result?.success === true,
+      markCandidateReady: () => {},
+      endInitialHide: () => {},
+      rollbackCandidate: () => {},
+      restoreNativeHost: async () => {},
+      resyncAfterStale: async () => {}
+    }),
+    isStillActive: () => true,
+    setReady: ready => {
+      readyUi = ready;
+      pointerEvents = ready ? 'auto' : 'none';
+    },
+    showGuidance: () => { guidanceCount += 1; }
+  });
+
+  assert.equal(readyUi, false);
+  assert.equal(pointerEvents, 'none');
+  screenshot.resolve({ success: true, dataUrl: 'data:image/png;base64,test' });
+  await flushPromises();
+  assert.equal(candidateCommitted, false, 'candidate must wait for image decode');
+  assert.equal(readyUi, false, 'screenshot alone must not enable comment input');
+
+  decode.resolve();
+  await flushPromises();
+  assert.equal(candidateCommitted, true, 'decoded candidate should be committed behind native mpv');
+  assert.equal(readyUi, false, 'native host hide acknowledgement is still required');
+  assert.equal(pointerEvents, 'none');
+
+  hide.resolve({ success: true });
+  assert.equal(await readiness, true);
+  assert.equal(readyUi, true);
+  assert.equal(pointerEvents, 'auto');
+  assert.equal(guidanceCount, 1);
+});
+
+test('initial host hide failure rolls back the freeze and keeps comment input disabled', async () => {
+  const runMpvReviewFreezeCapture = loadNamedFunction(appSource, 'runMpvReviewFreezeCapture');
+  const prepareMpvCommentReadiness = loadNamedFunction(appSource, 'prepareMpvCommentReadiness');
+  let rollbackCount = 0;
+  let restoreCount = 0;
+  let failureCount = 0;
+  let readyUi = false;
+
+  const readiness = prepareMpvCommentReadiness({
+    prepareFreeze: () => runMpvReviewFreezeCapture({
+      captureFrame: async () => ({ success: true, dataUrl: 'data:image/png;base64,test' }),
+      createCandidate: dataUrl => ({ dataUrl }),
+      decodeCandidate: async () => {},
+      isCurrent: () => true,
+      hasValidFrame: false,
+      beginInitialHide: () => {},
+      commitCandidate: () => {},
+      hideNativeHost: async () => ({ success: false, error: 'hide failed' }),
+      didHideApply: result => result?.success === true,
+      markCandidateReady: () => {},
+      endInitialHide: () => {},
+      rollbackCandidate: () => { rollbackCount += 1; },
+      restoreNativeHost: async () => { restoreCount += 1; },
+      resyncAfterStale: async () => {}
+    }).catch(() => {
+      failureCount += 1;
+      return false;
+    }),
+    isStillActive: () => true,
+    setReady: ready => { readyUi = ready; },
+    showGuidance: () => assert.fail('failed preparation must not show guidance')
+  });
+
+  assert.equal(await readiness, false);
+  assert.equal(rollbackCount, 1);
+  assert.equal(restoreCount, 1);
+  assert.equal(failureCount, 1);
+  assert.equal(readyUi, false);
+  assert.match(appSource, /disableMpvReviewInteractionAfterFreezeFailure\(\)/);
+  assert.match(appSource, /댓글·그리기 모드를 종료했습니다/);
+});
+
+test('late stale host hide completion resynchronizes current native host visibility', async () => {
+  const runMpvReviewFreezeCapture = loadNamedFunction(appSource, 'runMpvReviewFreezeCapture');
+  const hide = createDeferred();
+  let current = true;
+  let readyCount = 0;
+  let resyncCount = 0;
+
+  const capture = runMpvReviewFreezeCapture({
+    captureFrame: async () => ({ success: true, dataUrl: 'data:image/png;base64,test' }),
+    createCandidate: dataUrl => ({ dataUrl }),
+    decodeCandidate: async () => {},
+    isCurrent: () => current,
+    hasValidFrame: false,
+    beginInitialHide: () => {},
+    commitCandidate: () => {},
+    hideNativeHost: () => hide.promise,
+    didHideApply: result => result?.success === true,
+    markCandidateReady: () => { readyCount += 1; },
+    endInitialHide: () => {},
+    rollbackCandidate: () => {},
+    restoreNativeHost: async () => {},
+    resyncAfterStale: async () => { resyncCount += 1; }
+  });
+
+  await flushPromises();
+  current = false;
+  hide.resolve({ success: true });
+  const result = await capture;
+  assert.equal(result, false);
+  assert.equal(readyCount, 0);
+  assert.equal(resyncCount, 1, 'stale hide must be followed by current-state visibility sync');
+});
+
+test('shared mpv freeze releases only after the final review mode turns off', () => {
+  const commentHandlerStart = appSource.indexOf("  commentManager.addEventListener('commentModeChanged'");
+  const commentHandlerEnd = appSource.indexOf("  commentManager.addEventListener('markerCreationStarted'", commentHandlerStart);
+  const commentHandler = appSource.slice(commentHandlerStart, commentHandlerEnd);
+  const drawMatch = appSource.match(/function applyDrawModeState\(enabled\) \{([\s\S]*?)\n  \}/);
+  assert.ok(drawMatch, 'draw mode state handler should exist');
+
+  assert.match(commentHandler, /state\.isCommentMode = isCommentMode;[\s\S]+if \(!isMpvReviewInteractionActive\(\)\) \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
+  assert.match(drawMatch[1], /state\.isDrawMode = enabled;[\s\S]+if \(!isMpvReviewInteractionActive\(\)\) \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
 });
 
 test('mpv playback is enabled by default with legacy pilot key migration', () => {

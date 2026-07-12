@@ -68,8 +68,10 @@ test('comment mode pauses mpv and waits for a shared review freeze before native
   const handlerEnd = appSource.indexOf("  commentManager.addEventListener('markerCreationStarted'", handlerStart);
   assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, 'comment mode change handler should be bounded');
   const commentModeHandler = appSource.slice(handlerStart, handlerEnd);
-  assert.match(commentModeHandler, /if \(isCommentMode\) \{[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+videoPlayer\.pause\(\);[\s\S]+showMpvReviewFreezeFrame\(\)/);
-  assert.match(commentModeHandler, /else \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
+  assert.match(commentModeHandler, /if \(isCommentMode\) \{[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+videoPlayer\.pause\(\);[\s\S]+prepareMpvCommentMode\(\)/);
+  assert.match(commentModeHandler, /else \{[\s\S]+if \(!isMpvReviewInteractionActive\(\)\) \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
+  assert.match(appSource, /async function prepareMpvCommentMode\(\) \{[\s\S]+prepareFreeze: \(\) => showMpvReviewFreezeFrame\(\)[\s\S]+setReady: setCommentModeReadyState/);
+  assert.match(appSource, /function setCommentModeReadyState\(ready\) \{[\s\S]+pointerEvents = ready \? 'auto' : 'none'/);
   assert.match(appSource, /'\.video-wrapper\.mpv-review-freeze-ready'/);
 });
 
