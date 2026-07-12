@@ -919,7 +919,7 @@ test('mpv external playback interpolates frame UI between status polls', () => {
   assert.match(videoPlayerSource, /_startExternalFrameInterpolation\(anchorTime = this\.currentTime\) \{/);
   assert.match(videoPlayerSource, /const targetFrame = this\._timeToFrame\(predictedTime\);/);
   assert.match(videoPlayerSource, /if \(targetFrame > this\.currentFrame\) \{/);
-  assert.match(videoPlayerSource, /this\.currentFrame = this\._clampFrame\(this\.currentFrame \+ 1\);/);
+  assert.match(videoPlayerSource, /this\.currentFrame = this\._clampFrame\(targetFrame\);/);
   assert.doesNotMatch(videoPlayerSource, /targetFrame > this\.currentFrame \? 1 : -1/);
   assert.match(videoPlayerSource, /this\._emit\('frameUpdate', \{[\s\S]+interpolated: true/);
 

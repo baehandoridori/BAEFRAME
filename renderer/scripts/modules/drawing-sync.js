@@ -210,6 +210,8 @@ export class DrawingSync {
     this._lm.removeEventListener('broadcastReceived', this._onBroadcast);
     this._clearKeyframeChunkTransfers();
     this._pendingRemoteLayerOrder = null;
+    this._orderClock = 0;
+    this._lastAppliedOrderVersion = { clock: 0, actorId: '' };
     this._broadcastGeneration += 1;
     this._pendingHistoryRestoreBroadcast = Promise.resolve();
 

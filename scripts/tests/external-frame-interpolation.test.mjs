@@ -3,18 +3,18 @@ import assert from 'node:assert/strict';
 
 import { VideoPlayer } from '../../renderer/scripts/modules/video-player.js';
 
-function createExternalPlayer(currentFrame) {
+function createExternalPlayer(currentFrame, fps = 24) {
   const player = Object.create(VideoPlayer.prototype);
   Object.assign(player, {
     engine: 'mpv',
     isLoaded: true,
     isPlaying: true,
     externalEofReached: false,
-    fps: 24,
+    fps,
     duration: 10,
-    totalFrames: 240,
+    totalFrames: 10 * fps,
     currentFrame,
-    currentTime: currentFrame / 24,
+    currentTime: currentFrame / fps,
     _lastEmittedFrame: currentFrame,
     _externalFrameRafId: null,
     _externalPlaybackClock: null,
@@ -32,17 +32,20 @@ function createExternalPlayer(currentFrame) {
   return player;
 }
 
-function runFirstInterpolationTick(player, anchorFrame) {
+function runFirstInterpolationTick(player, anchorFrame, elapsedMs = 0) {
   let pendingTick = null;
+  let now = 0;
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
   globalThis.requestAnimationFrame = callback => {
     pendingTick = callback;
     return 1;
   };
+  player._getPlaybackClockNow = () => now;
 
   try {
     player._startExternalFrameInterpolation(anchorFrame / player.fps);
     assert.equal(typeof pendingTick, 'function', 'interpolation should schedule a frame tick');
+    now = elapsedMs;
     pendingTick();
   } finally {
     globalThis.requestAnimationFrame = originalRequestAnimationFrame;
@@ -59,6 +62,12 @@ test('forward external playback interpolation advances one frame toward a newer 
   const forwardPlayer = createExternalPlayer(10);
   runFirstInterpolationTick(forwardPlayer, 11);
   assert.equal(forwardPlayer.currentFrame, 11, 'a newer poll anchor should advance by one frame');
+});
+
+test('high-fps interpolation advances by the predicted elapsed frame delta', () => {
+  const highFpsPlayer = createExternalPlayer(10, 120);
+  runFirstInterpolationTick(highFpsPlayer, 10, 1000 / 60);
+  assert.equal(highFpsPlayer.currentFrame, 12, '120fps playback should advance two frames per 60Hz tick');
 });
 
 test('paused external polling holds one-frame seek noise but adopts a real two-frame backward move', async () => {

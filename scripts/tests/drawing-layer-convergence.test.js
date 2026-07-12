@@ -773,6 +773,28 @@ test('simultaneous layer orders converge by Lamport clock and actor tie-break', 
   assert.deepEqual(peerA.manager.layers.map(layer => layer.id), ['anchor', 'third', 'second']);
 });
 
+test('stopping sync resets layer-order clocks for the next collaboration room', async () => {
+  const peer = await createPeer({ actorId: 'actor-reused' });
+  peer.manager.createLayer({ id: 'second', name: 'Second' }, false);
+  peer.liveblocks.receive({
+    type: 'DRAWING_LAYER_ORDER_CHANGED',
+    layerIds: ['second', 'anchor'],
+    version: { clock: 100, actorId: 'old-room' }
+  });
+  assert.deepEqual(peer.manager.layers.map(layer => layer.id), ['second', 'anchor']);
+
+  peer.sync.stop();
+  peer.sync.start();
+  peer.liveblocks.receive({
+    type: 'DRAWING_LAYER_ORDER_CHANGED',
+    layerIds: ['anchor', 'second'],
+    version: { clock: 1, actorId: 'new-room' }
+  });
+
+  assert.deepEqual(peer.manager.layers.map(layer => layer.id), ['anchor', 'second']);
+  assert.deepEqual(peer.sync._lastAppliedOrderVersion, { clock: 1, actorId: 'new-room' });
+});
+
 test('layer order waits for a referenced layer and applies when that layer arrives', async () => {
   const peer = await createPeer({ actorId: 'actor-receiver' });
   peer.manager.createLayer({ id: 'second', name: 'Second' }, false);

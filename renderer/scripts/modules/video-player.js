@@ -985,7 +985,7 @@ export class VideoPlayer extends EventTarget {
       const predictedTime = this._getPredictedExternalTime();
       const targetFrame = this._timeToFrame(predictedTime);
       if (targetFrame > this.currentFrame) {
-        this.currentFrame = this._clampFrame(this.currentFrame + 1);
+        this.currentFrame = this._clampFrame(targetFrame);
         this.currentTime = this.fps > 0
           ? Math.min(this.currentFrame / this.fps, this.duration || this.currentFrame / this.fps)
           : predictedTime;
