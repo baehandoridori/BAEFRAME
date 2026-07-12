@@ -271,7 +271,7 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
     '.composition-layer-context-menu',
     '.comment-marker-input-wrapper',
     '.composition-drop-choice-overlay',
-    '.drawing-tools.visible',
+    '.video-wrapper.mpv-review-freeze-ready',
     '.marker-popup',
     '.layer-settings-popup',
     '.highlight-popup',
@@ -285,6 +285,9 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
   ].forEach((selector) => {
     assert.match(appSource, new RegExp(`'${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`));
   });
+  const blockingSelectorMatch = appSource.match(/const MPV_BLOCKING_OVERLAY_SELECTOR = \[([\s\S]*?)\]\.join\(','\);/);
+  assert.ok(blockingSelectorMatch, 'mpv blocking selector list should exist');
+  assert.doesNotMatch(blockingSelectorMatch[1], /\.drawing-tools\.visible/);
   assert.doesNotMatch(appSource, /'\.credits-overlay\.open'/);
   assert.doesNotMatch(appSource, /'\.video-loading-overlay\.active'/);
   assert.match(appSource, /function doesRectOverlapMpvHost\(rect\) \{[\s\S]+elements\.videoWrapper\?\.getBoundingClientRect\(\)[\s\S]+rect\.right > hostRect\.left[\s\S]+rect\.left < hostRect\.right[\s\S]+rect\.bottom > hostRect\.top[\s\S]+rect\.top < hostRect\.bottom/);

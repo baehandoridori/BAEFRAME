@@ -1137,8 +1137,8 @@ async function initApp() {
       updatePresence: false,
       updateDrawing: true
     });
-    if (state.isDrawMode && isMpvPilotPlaybackActive()) {
-      scheduleMpvDrawFreezeRefresh();
+    if (isMpvReviewInteractionActive() && isMpvPilotPlaybackActive()) {
+      scheduleMpvReviewFreezeRefresh();
     }
   });
 
@@ -1579,6 +1579,10 @@ async function initApp() {
     if (isCommentMode) {
       elements.videoWrapper.classList.add('comment-mode');
       markerContainer.style.pointerEvents = 'auto';
+      if (isMpvPilotPlaybackActive()) {
+        videoPlayer.pause();
+        void showMpvReviewFreezeFrame();
+      }
       // pendingText가 있으면 토스트 생략 (역순 플로우에서는 Enter 핸들러가 토스트 표시)
       if (!commentManager.getPendingText()) {
         showToast('댓글 모드: 영상을 클릭하여 댓글을 추가하세요', 'info');
@@ -1588,6 +1592,7 @@ async function initApp() {
       markerContainer.style.pointerEvents = 'none';
       markerContainer.style.zIndex = '15';
       removePendingMarkerUI();
+      void releaseMpvReviewFreezeFrame();
     }
 
     markerContainer.style.zIndex = isCommentMode ? '30' : '15';
@@ -4959,9 +4964,10 @@ async function initApp() {
     syncMpvVideoTransform();
   }
 
-  let mpvDrawFreezeElement = null;
-  let mpvDrawFreezeToken = 0;
-  let mpvDrawFreezeRefreshTimer = null;
+  let mpvReviewFreezeElement = null;
+  let mpvReviewFreezeToken = 0;
+  let mpvReviewFreezeRefreshTimer = null;
+  let mpvReviewFreezeFailureHandling = false;
 
   /**
    * 캔버스 및 마커 컨테이너 줌 동기화
@@ -4997,9 +5003,9 @@ async function initApp() {
       videoTransitionFreezeCanvas.style.transform = transform;
       videoTransitionFreezeCanvas.style.transformOrigin = 'center center';
     }
-    if (mpvDrawFreezeElement) {
-      mpvDrawFreezeElement.style.transform = transform;
-      mpvDrawFreezeElement.style.transformOrigin = 'center center';
+    if (mpvReviewFreezeElement) {
+      mpvReviewFreezeElement.style.transform = transform;
+      mpvReviewFreezeElement.style.transformOrigin = 'center center';
     }
     scheduleMpvOverlayStateSync();
   }
@@ -5235,65 +5241,150 @@ async function initApp() {
     };
   }
 
-  // ====== 그리기 모드 mpv 정지 프레임 ======
+  // ====== 댓글/그리기 모드 mpv 정지 프레임 ======
   function isMpvPilotPlaybackActive() {
     return videoPlayer.engine !== 'html5' && document.body.classList.contains('mpv-pilot-mode');
   }
 
-  function removeMpvDrawFreezeFrame() {
-    mpvDrawFreezeToken += 1;
-    if (mpvDrawFreezeElement) {
-      mpvDrawFreezeElement.remove();
-      mpvDrawFreezeElement = null;
+  function isMpvReviewInteractionActive() {
+    return state.isDrawMode || state.isCommentMode;
+  }
+
+  function disableMpvReviewInteractionAfterFreezeFailure() {
+    if (mpvReviewFreezeFailureHandling) return;
+
+    mpvReviewFreezeFailureHandling = true;
+    try {
+      if (state.isDrawMode) {
+        applyDrawModeState(false);
+      }
+      if (state.isCommentMode) {
+        commentManager.setCommentMode(false);
+      }
+      showToast('mpv 화면을 준비하지 못해 댓글·그리기 모드를 종료했습니다.', 'error');
+    } finally {
+      mpvReviewFreezeFailureHandling = false;
     }
   }
 
-  function scheduleMpvDrawFreezeRefresh() {
-    if (mpvDrawFreezeRefreshTimer) clearTimeout(mpvDrawFreezeRefreshTimer);
-    mpvDrawFreezeRefreshTimer = setTimeout(() => {
-      mpvDrawFreezeRefreshTimer = null;
-      if (!state.isDrawMode || !isMpvPilotPlaybackActive()) return;
-      if (videoPlayer.isSeeking()) {
-        scheduleMpvDrawFreezeRefresh();
-        return;
-      }
-      void showMpvDrawFreezeFrame();
-    }, 160);
-  }
+  async function showMpvReviewFreezeFrame() {
+    if (!isMpvPilotPlaybackActive() || !isMpvReviewInteractionActive()) return false;
 
-  async function showMpvDrawFreezeFrame() {
-    if (!isMpvPilotPlaybackActive() || !window.electronAPI?.mpvScreenshot) return;
-    const token = ++mpvDrawFreezeToken;
+    const token = ++mpvReviewFreezeToken;
+    const hadValidFrame = Boolean(
+      mpvReviewFreezeElement &&
+      elements.videoWrapper?.classList.contains('mpv-review-freeze-ready')
+    );
+
     try {
+      if (!window.electronAPI?.mpvScreenshot) {
+        throw new Error('mpv screenshot API unavailable');
+      }
+
       const result = await window.electronAPI.mpvScreenshot();
-      if (token !== mpvDrawFreezeToken || !state.isDrawMode) return;
+      if (token !== mpvReviewFreezeToken || !isMpvReviewInteractionActive()) return false;
       if (!result?.success || !result.dataUrl) {
-        log.warn('mpv 정지 프레임 캡처 실패', { error: result?.error });
-        return;
+        throw new Error(result?.error || 'mpv 정지 프레임 캡처 실패');
       }
-      if (!mpvDrawFreezeElement) {
-        mpvDrawFreezeElement = document.createElement('img');
-        mpvDrawFreezeElement.className = 'mpv-draw-freeze-frame';
-        mpvDrawFreezeElement.alt = '';
-        const anchor = elements.onionSkinCanvas;
-        if (anchor && anchor.parentElement === elements.videoWrapper) {
-          elements.videoWrapper.insertBefore(mpvDrawFreezeElement, anchor);
-        } else if (elements.videoWrapper) {
-          elements.videoWrapper.insertBefore(mpvDrawFreezeElement, elements.videoWrapper.firstChild);
-        }
-      }
+
+      const candidate = new Image();
+      candidate.className = 'mpv-review-freeze-frame';
+      candidate.alt = '';
+      candidate.src = result.dataUrl;
+      await candidate.decode();
+
+      if (token !== mpvReviewFreezeToken || !isMpvReviewInteractionActive()) return false;
+
       const renderArea = getVideoRenderArea();
       if (renderArea) {
-        mpvDrawFreezeElement.style.left = `${renderArea.left}px`;
-        mpvDrawFreezeElement.style.top = `${renderArea.top}px`;
-        mpvDrawFreezeElement.style.width = `${renderArea.width}px`;
-        mpvDrawFreezeElement.style.height = `${renderArea.height}px`;
+        candidate.style.left = `${renderArea.left}px`;
+        candidate.style.top = `${renderArea.top}px`;
+        candidate.style.width = `${renderArea.width}px`;
+        candidate.style.height = `${renderArea.height}px`;
       }
-      mpvDrawFreezeElement.src = result.dataUrl;
+
+      const previousFreezeElement = mpvReviewFreezeElement;
+      if (previousFreezeElement?.isConnected) {
+        previousFreezeElement.replaceWith(candidate);
+      } else {
+        const anchor = elements.onionSkinCanvas;
+        if (anchor && anchor.parentElement === elements.videoWrapper) {
+          elements.videoWrapper.insertBefore(candidate, anchor);
+        } else if (elements.videoWrapper) {
+          elements.videoWrapper.insertBefore(candidate, elements.videoWrapper.firstChild);
+        }
+      }
+
+      mpvReviewFreezeElement = candidate;
       syncCanvasZoom();
+      elements.videoWrapper?.classList.add('mpv-review-freeze-ready');
+      forceMpvHostVisibilitySync();
+      return true;
     } catch (error) {
-      log.warn('mpv 정지 프레임 캡처 예외', { error: error.message });
+      if (token !== mpvReviewFreezeToken || !isMpvReviewInteractionActive()) return false;
+      log.warn('mpv 리뷰 정지 프레임 준비 실패', { error: error.message });
+      if (!hadValidFrame) {
+        disableMpvReviewInteractionAfterFreezeFailure();
+      }
+      return false;
     }
+  }
+
+  async function releaseMpvReviewFreezeFrame() {
+    const token = ++mpvReviewFreezeToken;
+    const freezeElement = mpvReviewFreezeElement;
+
+    if (mpvReviewFreezeRefreshTimer) {
+      clearTimeout(mpvReviewFreezeRefreshTimer);
+      mpvReviewFreezeRefreshTimer = null;
+    }
+
+    elements.videoWrapper?.classList.remove('mpv-review-freeze-ready');
+
+    const shouldRestoreNativeHost = isMpvPilotPlaybackActive() && !hasBlockingOverlayForMpv();
+    if (shouldRestoreNativeHost) {
+      if (!window.electronAPI?.mpvSetHostVisible) {
+        log.warn('mpv 호스트 복원 API를 찾지 못해 정지 프레임을 유지합니다.');
+        return false;
+      }
+
+      try {
+        mpvHostLastRequestedVisible = null;
+        const result = await window.electronAPI.mpvSetHostVisible(true);
+        if (token !== mpvReviewFreezeToken) return;
+        if (!result?.success) {
+          log.warn('mpv 호스트 복원 실패, 정지 프레임을 유지합니다.', { error: result?.error });
+          return false;
+        }
+        mpvHostLastRequestedVisible = true;
+      } catch (error) {
+        if (token !== mpvReviewFreezeToken) return;
+        log.warn('mpv 호스트 복원 예외, 정지 프레임을 유지합니다.', { error: error.message });
+        return false;
+      }
+    }
+
+    if (token !== mpvReviewFreezeToken) return;
+    if (freezeElement) {
+      freezeElement.remove();
+      if (mpvReviewFreezeElement === freezeElement) {
+        mpvReviewFreezeElement = null;
+      }
+    }
+    return true;
+  }
+
+  function scheduleMpvReviewFreezeRefresh() {
+    if (mpvReviewFreezeRefreshTimer) return;
+    mpvReviewFreezeRefreshTimer = setTimeout(() => {
+      mpvReviewFreezeRefreshTimer = null;
+      if (!isMpvReviewInteractionActive() || !isMpvPilotPlaybackActive()) return;
+      if (videoPlayer.isSeeking()) {
+        scheduleMpvReviewFreezeRefresh();
+        return;
+      }
+      void showMpvReviewFreezeFrame();
+    }, 160);
   }
 
   /**
@@ -5343,11 +5434,11 @@ async function initApp() {
       compositionLayerManager.renderOverlay();
     }
 
-    if (mpvDrawFreezeElement) {
-      mpvDrawFreezeElement.style.left = `${renderArea.left}px`;
-      mpvDrawFreezeElement.style.top = `${renderArea.top}px`;
-      mpvDrawFreezeElement.style.width = `${renderArea.width}px`;
-      mpvDrawFreezeElement.style.height = `${renderArea.height}px`;
+    if (mpvReviewFreezeElement) {
+      mpvReviewFreezeElement.style.left = `${renderArea.left}px`;
+      mpvReviewFreezeElement.style.top = `${renderArea.top}px`;
+      mpvReviewFreezeElement.style.width = `${renderArea.width}px`;
+      mpvReviewFreezeElement.style.height = `${renderArea.height}px`;
     }
 
     // 영상 어니언 스킨 캔버스도 동일하게 동기화 (TODO: 임시 비활성화)
@@ -6031,7 +6122,7 @@ async function initApp() {
     '.composition-layer-context-menu',
     '.comment-marker-input-wrapper',
     '.composition-drop-choice-overlay',
-    '.drawing-tools.visible',
+    '.video-wrapper.mpv-review-freeze-ready',
     '.marker-popup',
     '.layer-settings-popup',
     '.highlight-popup',
@@ -6718,6 +6809,7 @@ async function initApp() {
   }
 
   async function stopMpvPilotEngine() {
+    await releaseMpvReviewFreezeFrame();
     resetMpvOverlayHostState();
     try {
       return await window.electronAPI.mpvStop();
@@ -6923,9 +7015,9 @@ async function initApp() {
 
     mpvPilotHostPreparing = false;
     syncMpvHostVisibilityWithDom();
-    if (state.isDrawMode) {
+    if (isMpvReviewInteractionActive()) {
       videoPlayer.pause();
-      await showMpvDrawFreezeFrame();
+      await showMpvReviewFreezeFrame();
       if (isStaleVideoLoad()) {
         await cleanupPendingMpvPilot();
         return false;
@@ -6975,7 +7067,7 @@ async function initApp() {
     );
     if (!canContinueVideoLoad()) return false;
     activeVideoLoadPath = filePath;
-    removeMpvDrawFreezeFrame();
+    await releaseMpvReviewFreezeFrame();
     supersedeActiveTranscodeOverlay('새 영상 선택');
     if (!preserveContinuousSession && continuousPlaybackState.active) {
       stopContinuousPlayback();
@@ -7784,10 +7876,10 @@ async function initApp() {
     setCommentOverlaysDrawingPassthrough(enabled);
     if (enabled && isMpvPilotPlaybackActive()) {
       videoPlayer.pause();
-      void showMpvDrawFreezeFrame();
+      void showMpvReviewFreezeFrame();
     }
     if (!enabled) {
-      removeMpvDrawFreezeFrame();
+      void releaseMpvReviewFreezeFrame();
       drawingManager.commitActiveSelection();
       state.isSpaceHeld = false;
       state.spacePanUsed = false;

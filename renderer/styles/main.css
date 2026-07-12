@@ -1110,11 +1110,11 @@ body.mpv-pilot-mode .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
   touch-action: none;
 }
 
-.mpv-draw-freeze-frame {
+.mpv-review-freeze-frame {
   position: absolute;
+  z-index: 1;
   pointer-events: none;
   object-fit: fill;
-  background: #000;
 }
 
 .video-wrapper.space-pan .drawing-overlay.active {

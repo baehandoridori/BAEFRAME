@@ -62,6 +62,17 @@ test('comment mode is visibly marked on the video surface outside fullscreen', (
   assert.match(cssSource, /body\.app-fullscreen \.video-wrapper\.comment-mode::after\s*\{[\s\S]+width:\s*auto;[\s\S]+height:\s*auto;[\s\S]+animation:\s*none;/);
 });
 
+test('comment mode pauses mpv and waits for a shared review freeze before native input is blocked', () => {
+  assert.match(appSource, /function isMpvReviewInteractionActive\(\) \{[\s\S]+state\.isDrawMode \|\| state\.isCommentMode/);
+  const handlerStart = appSource.indexOf("  commentManager.addEventListener('commentModeChanged'");
+  const handlerEnd = appSource.indexOf("  commentManager.addEventListener('markerCreationStarted'", handlerStart);
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, 'comment mode change handler should be bounded');
+  const commentModeHandler = appSource.slice(handlerStart, handlerEnd);
+  assert.match(commentModeHandler, /if \(isCommentMode\) \{[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+videoPlayer\.pause\(\);[\s\S]+showMpvReviewFreezeFrame\(\)/);
+  assert.match(commentModeHandler, /else \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
+  assert.match(appSource, /'\.video-wrapper\.mpv-review-freeze-ready'/);
+});
+
 test('pending comment editor stays visible near video edges', () => {
   const pendingMarkerMatch = appSource.match(/function renderPendingMarker\(marker\) \{([\s\S]*?)\n  \}\n\n  \/\*\*\n   \* Pending 마커 UI 제거/);
   assert.ok(pendingMarkerMatch, 'pending marker renderer should exist');

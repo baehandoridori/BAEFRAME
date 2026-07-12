@@ -60,28 +60,63 @@ test('mpv screenshot ipc channel is wired end to end', () => {
   assert.match(preloadSource, /mpvScreenshot: \(\) => ipcRenderer\.invoke\('mpv:screenshot'\),/);
 });
 
-test('draw mode shows a frozen mpv frame under the drawing canvases', () => {
-  assert.match(appSource, /async function showMpvDrawFreezeFrame\(\)/);
-  assert.match(appSource, /function removeMpvDrawFreezeFrame\(\)/);
-  assert.match(appSource, /function scheduleMpvDrawFreezeRefresh\(\)/);
+test('comment and draw modes share a decoded mpv review freeze frame', () => {
+  assert.match(appSource, /function isMpvReviewInteractionActive\(\)/);
+  assert.match(appSource, /async function showMpvReviewFreezeFrame\(\)/);
+  assert.match(appSource, /async function releaseMpvReviewFreezeFrame\(\)/);
+  assert.match(appSource, /function scheduleMpvReviewFreezeRefresh\(\)/);
   const applyMatch = appSource.match(/function applyDrawModeState\(enabled\) \{([\s\S]*?)\n  \}/);
   assert.ok(applyMatch, 'applyDrawModeState should exist');
   assert.match(applyMatch[1], /videoPlayer\.pause\(\);/);
-  assert.match(applyMatch[1], /showMpvDrawFreezeFrame\(\)/);
-  assert.match(applyMatch[1], /removeMpvDrawFreezeFrame\(\)/);
-  assert.match(appSource, /videoPlayer\.addEventListener\('frameUpdate'[\s\S]*?scheduleMpvDrawFreezeRefresh\(\);/);
+  assert.match(applyMatch[1], /showMpvReviewFreezeFrame\(\)/);
+  assert.match(applyMatch[1], /releaseMpvReviewFreezeFrame\(\)/);
+  assert.match(appSource, /videoPlayer\.addEventListener\('frameUpdate'[\s\S]*?isMpvReviewInteractionActive\(\)[\s\S]*?scheduleMpvReviewFreezeRefresh\(\);/);
   assert.match(videoPlayerSource, /isSeeking\(\) \{/);
-  assert.match(mainStyles, /\.mpv-draw-freeze-frame \{/);
+  assert.match(mainStyles, /\.mpv-review-freeze-frame \{[\s\S]+z-index:\s*1;[\s\S]+pointer-events:\s*none;[\s\S]+object-fit:\s*fill;/);
+  const freezeStyles = mainStyles.match(/\.mpv-review-freeze-frame \{([\s\S]*?)\}/)?.[1] || '';
+  assert.doesNotMatch(freezeStyles, /background:/);
 });
 
-test('mpv draw freeze frame is cleared and refreshed across media changes', () => {
+test('mpv review freeze frame is cleared and refreshed across media changes', () => {
   const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\//);
   assert.ok(loadVideoMatch, 'loadVideo should exist');
-  assert.match(loadVideoMatch[1], /removeMpvDrawFreezeFrame\(\);/);
+  assert.match(loadVideoMatch[1], /releaseMpvReviewFreezeFrame\(\)/);
 
   const loadMpvMatch = appSource.match(/async function loadVideoWithMpvPilot\(filePath, \{([\s\S]*?)\n  \}\n\n  async function resolveMpvThumbnailVideoPath/);
   assert.ok(loadMpvMatch, 'loadVideoWithMpvPilot should exist');
-  assert.match(loadMpvMatch[1], /if \(state\.isDrawMode\) \{[\s\S]*?await showMpvDrawFreezeFrame\(\);[\s\S]*?\}/);
+  assert.match(loadMpvMatch[1], /if \(isMpvReviewInteractionActive\(\)\) \{[\s\S]*?await showMpvReviewFreezeFrame\(\);[\s\S]*?\}/);
+});
+
+test('mpv review freeze decodes before hiding native video and releases in the reverse order', () => {
+  const showStart = appSource.indexOf('  async function showMpvReviewFreezeFrame()');
+  const releaseStart = appSource.indexOf('  async function releaseMpvReviewFreezeFrame()', showStart);
+  const releaseEnd = appSource.indexOf('  function scheduleMpvReviewFreezeRefresh()', releaseStart);
+  assert.ok(showStart >= 0 && releaseStart > showStart && releaseEnd > releaseStart, 'shared freeze functions should be bounded');
+  const showSource = appSource.slice(showStart, releaseStart);
+  const releaseSource = appSource.slice(releaseStart, releaseEnd);
+
+  const assignIndex = showSource.indexOf('candidate.src = result.dataUrl;');
+  const decodeIndex = showSource.indexOf('await candidate.decode();');
+  const readyIndex = showSource.indexOf("classList.add('mpv-review-freeze-ready')");
+  assert.ok(assignIndex >= 0 && assignIndex < decodeIndex && decodeIndex < readyIndex, 'candidate must decode before the native host blocker becomes ready');
+  assert.match(showSource, /const hadValidFrame = Boolean\(/);
+  assert.match(showSource, /if \(!hadValidFrame\) \{[\s\S]+disableMpvReviewInteractionAfterFreezeFailure\(\);/);
+
+  const removeReadyIndex = releaseSource.indexOf("classList.remove('mpv-review-freeze-ready')");
+  const restoreIndex = releaseSource.indexOf('await window.electronAPI.mpvSetHostVisible(true)');
+  const removeFrameIndex = releaseSource.indexOf('freezeElement.remove()');
+  assert.ok(removeReadyIndex >= 0 && removeReadyIndex < restoreIndex && restoreIndex < removeFrameIndex, 'release must restore native video before removing its fallback frame');
+  assert.match(releaseSource, /if \(token !== mpvReviewFreezeToken\) return;/);
+  assert.match(releaseSource, /if \(!result\?\.success\) \{[\s\S]+return;/);
+});
+
+test('mpv review freeze refresh is throttled instead of perpetually debounced', () => {
+  const scheduleStart = appSource.indexOf('  function scheduleMpvReviewFreezeRefresh()');
+  const nextFunction = appSource.indexOf('\n  function ', scheduleStart + 1);
+  assert.ok(scheduleStart >= 0 && nextFunction > scheduleStart, 'review freeze refresh scheduler should exist');
+  const scheduleSource = appSource.slice(scheduleStart, nextFunction);
+  assert.match(scheduleSource, /if \(mpvReviewFreezeRefreshTimer\) return;/);
+  assert.doesNotMatch(scheduleSource, /clearTimeout\(mpvReviewFreezeRefreshTimer\)/);
 });
 
 test('mpv playback is enabled by default with legacy pilot key migration', () => {
