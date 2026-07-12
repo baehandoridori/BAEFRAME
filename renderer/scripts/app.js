@@ -5989,6 +5989,8 @@ async function initApp() {
 
   let mpvEmbedBoundsSyncPending = false;
   let mpvVideoTransformSyncPending = false;
+  let mpvOverlayHostReady = false;
+  let mpvOverlayHostFailureWarned = false;
   let mpvOverlayStateSyncPending = false;
   let mpvOverlayRemoteCursorSyncPending = false;
   let mpvOverlayStateSyncTimer = null;
@@ -5999,6 +6001,21 @@ async function initApp() {
   let fullscreenTimecodeOverlay = null;
   let fullscreenScrubOverlay = null;
   let remoteCursorsContainer = null;
+
+  function resetMpvOverlayHostState() {
+    mpvOverlayHostReady = false;
+    mpvOverlayHostFailureWarned = false;
+  }
+
+  function markMpvOverlayHostUnavailable(error) {
+    mpvOverlayHostReady = false;
+    if (mpvOverlayHostFailureWarned) return;
+
+    mpvOverlayHostFailureWarned = true;
+    log.warn('mpv 오버레이 동기화 실패, 이후 갱신을 중단합니다.', {
+      error: error || 'unknown'
+    });
+  }
 
   const MPV_BLOCKING_OVERLAY_SELECTOR = [
     '.modal-overlay.active',
@@ -6566,18 +6583,23 @@ async function initApp() {
   async function syncMpvOverlayState() {
     if (!document.body.classList.contains('mpv-pilot-mode')) return;
     if (!window.electronAPI?.mpvUpdateOverlayState) return;
+    if (!mpvOverlayHostReady) return;
     if (mpvOverlayStateSyncPending) return;
 
     mpvOverlayStateSyncPending = true;
     requestAnimationFrame(async () => {
       mpvOverlayStateSyncPending = false;
+      if (!mpvOverlayHostReady) return;
       const state = getMpvOverlayState();
       if (!state) return;
 
       try {
-        await window.electronAPI.mpvUpdateOverlayState(state);
+        const result = await window.electronAPI.mpvUpdateOverlayState(state);
+        if (!result?.success) {
+          markMpvOverlayHostUnavailable(result?.error);
+        }
       } catch (error) {
-        log.debug('mpv 오버레이 상태 갱신 실패', { error: error.message });
+        markMpvOverlayHostUnavailable(error.message);
       }
     });
   }
@@ -6585,17 +6607,22 @@ async function initApp() {
   function syncMpvOverlayRemoteCursorState() {
     if (!document.body.classList.contains('mpv-pilot-mode')) return;
     if (!window.electronAPI?.mpvUpdateOverlayRemoteCursors) return;
+    if (!mpvOverlayHostReady) return;
     if (mpvOverlayRemoteCursorSyncPending) return;
 
     mpvOverlayRemoteCursorSyncPending = true;
     requestAnimationFrame(async () => {
       mpvOverlayRemoteCursorSyncPending = false;
+      if (!mpvOverlayHostReady) return;
       const remoteCursorHtml = serializeMpvOverlayRemoteCursorHtml();
 
       try {
-        await window.electronAPI.mpvUpdateOverlayRemoteCursors(remoteCursorHtml);
+        const result = await window.electronAPI.mpvUpdateOverlayRemoteCursors(remoteCursorHtml);
+        if (!result?.success) {
+          markMpvOverlayHostUnavailable(result?.error);
+        }
       } catch (error) {
-        log.debug('mpv 오버레이 원격 커서 갱신 실패', { error: error.message });
+        markMpvOverlayHostUnavailable(error.message);
       }
     });
   }
@@ -6691,6 +6718,7 @@ async function initApp() {
   }
 
   async function stopMpvPilotEngine() {
+    resetMpvOverlayHostState();
     try {
       return await window.electronAPI.mpvStop();
     } finally {
@@ -6761,6 +6789,7 @@ async function initApp() {
   } = {}) {
     activeMpvPilotLoadToken = loadToken;
     let embedHost = null;
+    let overlayHost = null;
     let mpvLoadStarted = false;
     const ownsMpvPilotLoad = () => activeMpvPilotLoadToken === loadToken;
     const clearMpvPilotLoadOwner = () => {
@@ -6774,6 +6803,7 @@ async function initApp() {
         return;
       }
 
+      resetMpvOverlayHostState();
       try {
         if (mpvLoadStarted) {
           await stopMpvPilotEngine();
@@ -6792,7 +6822,12 @@ async function initApp() {
     try {
       mpvPilotHostPreparing = true;
       embedHost = await prepareMpvEmbedHost();
-      await prepareMpvOverlayHost();
+      resetMpvOverlayHostState();
+      overlayHost = await prepareMpvOverlayHost();
+      if (!overlayHost) {
+        throw new Error('mpv 오버레이 호스트 준비 실패');
+      }
+      mpvOverlayHostReady = true;
     } catch (error) {
       await cleanupPendingMpvPilot();
       throw error;
