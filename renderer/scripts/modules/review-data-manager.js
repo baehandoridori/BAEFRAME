@@ -358,6 +358,7 @@ export class ReviewDataManager extends EventTarget {
       this.drawingManager.addEventListener('drawend', this._onDataChanged);
       this.drawingManager.addEventListener('layerCreated', this._onDataChanged);
       this.drawingManager.addEventListener('layerDeleted', this._onDataChanged);
+      this.drawingManager.addEventListener('layerRestored', this._onDataChanged);
       this.drawingManager.addEventListener('layerOrderChanged', this._onDataChanged);
       this.drawingManager.addEventListener('activeLayerChanged', this._onDataChanged);
       this.drawingManager.addEventListener('keyframeAdded', this._onDataChanged);
@@ -397,6 +398,7 @@ export class ReviewDataManager extends EventTarget {
       this.drawingManager.removeEventListener('drawend', this._onDataChanged);
       this.drawingManager.removeEventListener('layerCreated', this._onDataChanged);
       this.drawingManager.removeEventListener('layerDeleted', this._onDataChanged);
+      this.drawingManager.removeEventListener('layerRestored', this._onDataChanged);
       this.drawingManager.removeEventListener('layerOrderChanged', this._onDataChanged);
       this.drawingManager.removeEventListener('activeLayerChanged', this._onDataChanged);
       this.drawingManager.removeEventListener('keyframeAdded', this._onDataChanged);
