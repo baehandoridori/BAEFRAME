@@ -52,6 +52,24 @@ function loadMpvTeardownGateFactory() {
   assert.fail('mpv teardown gate factory should have a complete body');
 }
 
+function loadMpvPilotOwnershipGateFactory() {
+  const functionStart = appSource.indexOf('function createMpvPilotOwnershipGate(');
+  assert.notEqual(functionStart, -1, 'mpv pilot ownership gate factory should exist');
+
+  const bodyStart = appSource.indexOf(') {', functionStart) + 2;
+  let depth = 0;
+  for (let index = bodyStart; index < appSource.length; index += 1) {
+    if (appSource[index] === '{') depth += 1;
+    if (appSource[index] === '}') depth -= 1;
+    if (depth === 0) {
+      const functionSource = appSource.slice(functionStart, index + 1);
+      return new Function(`return (${functionSource});`)();
+    }
+  }
+
+  assert.fail('mpv pilot ownership gate factory should have a complete body');
+}
+
 function createDeferred() {
   let resolve;
   const promise = new Promise((resolvePromise) => {
@@ -123,6 +141,126 @@ test('mpv overlay lifecycle clears and warns once for a current-generation failu
 
   assert.equal(lifecycle.isReady(owner), false);
   assert.deepEqual(warnings, ['first-failure']);
+});
+
+test('mpv ownership claim queued before an old stop makes that stop stale after prior work', async () => {
+  const createMpvOverlayLifecycle = loadMpvOverlayLifecycleFactory();
+  const createMpvTeardownGate = loadMpvTeardownGateFactory();
+  const createMpvPilotOwnershipGate = loadMpvPilotOwnershipGateFactory();
+  const lifecycle = createMpvOverlayLifecycle();
+  const teardownGate = createMpvTeardownGate();
+  const priorWork = createDeferred();
+  const events = [];
+  let activeLoadToken = 'load-a';
+  const ownershipGate = createMpvPilotOwnershipGate({
+    teardownGate,
+    overlayLifecycle: lifecycle,
+    setActiveLoadToken: (loadToken) => {
+      activeLoadToken = loadToken;
+      events.push(`${loadToken}:claim`);
+    }
+  });
+  const ownerA = lifecycle.begin('load-a');
+
+  const priorTeardown = teardownGate.run(async () => {
+    events.push('prior:start');
+    await priorWork.promise;
+    events.push('prior:done');
+  });
+  const claimB = ownershipGate.claim('load-b');
+  const stopA = ownershipGate.runOwnedTeardown(ownerA, async () => {
+    events.push('load-a:stop');
+    return true;
+  }, {
+    isOwnerCurrent: () => activeLoadToken === 'load-a'
+  });
+
+  await flushMicrotasks();
+  assert.deepEqual(events, ['prior:start']);
+
+  priorWork.resolve();
+  await priorTeardown;
+  const [ownerB, stopResult] = await Promise.all([claimB, stopA]);
+
+  assert.deepEqual(events, ['prior:start', 'prior:done', 'load-b:claim']);
+  assert.equal(stopResult, false, 'the old stop must skip destructive teardown after B claims first');
+  assert.equal(lifecycle.owns(ownerB), true);
+  assert.equal(activeLoadToken, 'load-b');
+});
+
+test('mpv old stop queued before a new claim finishes teardown before the claim begins', async () => {
+  const createMpvOverlayLifecycle = loadMpvOverlayLifecycleFactory();
+  const createMpvTeardownGate = loadMpvTeardownGateFactory();
+  const createMpvPilotOwnershipGate = loadMpvPilotOwnershipGateFactory();
+  const lifecycle = createMpvOverlayLifecycle();
+  const teardownGate = createMpvTeardownGate();
+  const stopWork = createDeferred();
+  const events = [];
+  let activeLoadToken = 'load-a';
+  const ownershipGate = createMpvPilotOwnershipGate({
+    teardownGate,
+    overlayLifecycle: lifecycle,
+    setActiveLoadToken: (loadToken) => {
+      activeLoadToken = loadToken;
+      events.push(`${loadToken}:claim`);
+    }
+  });
+  const ownerA = lifecycle.begin('load-a');
+
+  const stopA = ownershipGate.runOwnedTeardown(ownerA, async () => {
+    events.push('load-a:stop:start');
+    await stopWork.promise;
+    events.push('load-a:stop:done');
+    return true;
+  }, {
+    isOwnerCurrent: () => activeLoadToken === 'load-a'
+  });
+  const claimB = ownershipGate.claim('load-b');
+
+  await flushMicrotasks();
+  assert.deepEqual(events, ['load-a:stop:start']);
+
+  stopWork.resolve();
+  const [stopResult, ownerB] = await Promise.all([stopA, claimB]);
+
+  assert.deepEqual(events, ['load-a:stop:start', 'load-a:stop:done', 'load-b:claim']);
+  assert.equal(stopResult, true);
+  assert.equal(lifecycle.owns(ownerB), true);
+  assert.equal(activeLoadToken, 'load-b');
+});
+
+test('mpv idle ownership operations preserve adjacent microtask queue order atomically', async () => {
+  const createMpvOverlayLifecycle = loadMpvOverlayLifecycleFactory();
+  const createMpvTeardownGate = loadMpvTeardownGateFactory();
+  const createMpvPilotOwnershipGate = loadMpvPilotOwnershipGateFactory();
+  const lifecycle = createMpvOverlayLifecycle();
+  const teardownGate = createMpvTeardownGate();
+  const events = [];
+  let activeLoadToken = 'load-a';
+  const ownershipGate = createMpvPilotOwnershipGate({
+    teardownGate,
+    overlayLifecycle: lifecycle,
+    setActiveLoadToken: (loadToken) => {
+      activeLoadToken = loadToken;
+      events.push(`${loadToken}:claim`);
+    }
+  });
+  const ownerA = lifecycle.begin('load-a');
+
+  const claimB = Promise.resolve().then(() => ownershipGate.claim('load-b'));
+  const stopA = Promise.resolve().then(() => ownershipGate.runOwnedTeardown(ownerA, async () => {
+    events.push('load-a:stop');
+    return true;
+  }, {
+    isOwnerCurrent: () => activeLoadToken === 'load-a'
+  }));
+
+  const [ownerB, stopResult] = await Promise.all([claimB, stopA]);
+
+  assert.deepEqual(events, ['load-b:claim']);
+  assert.equal(stopResult, false, 'the adjacent old stop must observe B as the current owner');
+  assert.equal(lifecycle.owns(ownerB), true);
+  assert.equal(activeLoadToken, 'load-b');
 });
 
 test('mpv teardown gate keeps a new load behind the complete owned stop sequence', async () => {
@@ -489,7 +627,7 @@ test('mpv pilot requires a ready overlay host before loading media', () => {
 
   assert.match(appSource, /function createMpvOverlayLifecycle\(\{ onWarning = \(\) => \{\} \} = \{\}\) \{/);
   assert.match(appSource, /generation: \+\+generation,[\s\S]+loadToken/);
-  assert.match(loadMpvSource, /const overlayOwner = mpvOverlayLifecycle\.begin\(loadToken\);/);
+  assert.match(loadMpvSource, /const overlayOwner = await mpvPilotOwnershipGate\.claim\(loadToken, \{ isStaleVideoLoad \}\);/);
   assert.match(loadMpvSource, /let overlayHost = null;/);
   assert.match(loadMpvSource, /overlayHost = await prepareMpvOverlayHost\(\);/);
   assert.match(loadMpvSource, /if \(!overlayHost\) \{[\s\S]+throw new Error\('mpv 오버레이 호스트 준비 실패'\);[\s\S]+\}/);
@@ -514,23 +652,17 @@ test('mpv overlay sync circuit-breaks failed IPC responses before taking more sn
   assert.match(remoteCursorSyncSource, /catch \(error\) \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(overlayOwner\)\) return;[\s\S]+markMpvOverlayHostUnavailable\(overlayOwner, error\.message\);/);
 });
 
-test('mpv overlay lifecycle invalidates before cleanup, stop, and a new prepare attempt', () => {
+test('mpv overlay lifecycle serializes claim, cleanup, and stop ownership changes', () => {
   const loadMpvMatch = appSource.match(/async function loadVideoWithMpvPilot\(filePath, \{([\s\S]*?)\n  \}\n\n  async function resolveMpvThumbnailVideoPath/);
   assert.ok(loadMpvMatch, 'loadVideoWithMpvPilot should exist');
   const loadMpvSource = loadMpvMatch[1];
-  const teardownWaitIndex = loadMpvSource.indexOf('await mpvTeardownGate.waitForIdle();');
-  const staleWaiterIndex = loadMpvSource.indexOf('if (isStaleVideoLoad()) return false;', teardownWaitIndex);
-  const loadOwnerIndex = loadMpvSource.indexOf('activeMpvPilotLoadToken = loadToken;');
-  const beginIndex = loadMpvSource.indexOf('const overlayOwner = mpvOverlayLifecycle.begin(loadToken);');
+  const ownershipGateSource = String(loadMpvPilotOwnershipGateFactory());
+  const claimIndex = loadMpvSource.indexOf('const overlayOwner = await mpvPilotOwnershipGate.claim(loadToken, { isStaleVideoLoad });');
   const embedPrepareIndex = loadMpvSource.indexOf('embedHost = await prepareMpvEmbedHost();');
-  assert.ok(
-    teardownWaitIndex >= 0 &&
-      teardownWaitIndex < staleWaiterIndex &&
-      staleWaiterIndex < loadOwnerIndex &&
-      loadOwnerIndex < beginIndex,
-    'new loads should wait for every teardown and re-check staleness before claiming lifecycle ownership'
-  );
-  assert.ok(beginIndex >= 0 && beginIndex < embedPrepareIndex, 'new preparation should invalidate older generations before awaiting embed preparation');
+  assert.doesNotMatch(loadMpvSource, /mpvTeardownGate\.waitForIdle\(\)/);
+  assert.ok(claimIndex >= 0 && claimIndex < embedPrepareIndex, 'new preparation should claim ownership through the gate before awaiting host preparation');
+  assert.match(ownershipGateSource, /claim\(loadToken,[\s\S]+return teardownGate\.run\(\(\) => \{[\s\S]+if \(isStaleVideoLoad\(\)\) return null;[\s\S]+setActiveLoadToken\(loadToken\);[\s\S]+return overlayLifecycle\.begin\(loadToken\);/);
+  assert.match(ownershipGateSource, /runOwnedTeardown\([\s\S]+return teardownGate\.run\(async \(\) => \{[\s\S]+if \(!isOwnerCurrent\(\)\) return false;[\s\S]+if \(!overlayLifecycle\.invalidate\(overlayOwner\)\) return false;[\s\S]+return teardown\(\);/);
   assert.match(loadMpvSource, /embedHost = await prepareMpvEmbedHost\(\);\n      if \(isStaleMpvPilotLifecycle\(\)\)/);
   assert.match(loadMpvSource, /overlayHost = await prepareMpvOverlayHost\(\);\n      if \(isStaleMpvPilotLifecycle\(\)\)/);
   const cleanupMatch = loadMpvSource.match(/const cleanupPendingMpvPilot = async \(\) => \{([\s\S]*?)\n    \};/);
@@ -538,15 +670,13 @@ test('mpv overlay lifecycle invalidates before cleanup, stop, and a new prepare 
   const cleanupSource = cleanupMatch[1];
   assert.match(cleanupSource, /if \(!ownsMpvOverlayLifecycle\(\)\) \{[\s\S]+return;/);
   assert.match(cleanupSource, /await stopMpvPilotEngine\(overlayOwner\);/);
-  assert.match(cleanupSource, /if \(!mpvOverlayLifecycle\.invalidate\(overlayOwner\)\) return;\n          await mpvTeardownGate\.run\(async \(\) => \{[\s\S]+await destroyMpvPilotHosts\(\);/);
+  assert.match(cleanupSource, /await mpvPilotOwnershipGate\.runOwnedTeardown\(overlayOwner, async \(\) => \{[\s\S]+await destroyMpvPilotHosts\(\);[\s\S]+isOwnerCurrent: ownsMpvPilotLoad/);
+  assert.doesNotMatch(cleanupSource, /mpvOverlayLifecycle\.invalidate\(overlayOwner\)/);
 
   const stopMpvMatch = appSource.match(/async function stopMpvPilotEngine\(overlayOwner = null\) \{([\s\S]*?)\n  \}/);
   assert.ok(stopMpvMatch, 'stopMpvPilotEngine should exist');
-  assert.ok(
-    stopMpvMatch[1].indexOf('mpvOverlayLifecycle.invalidate(overlayOwner)') < stopMpvMatch[1].indexOf('return mpvTeardownGate.run(async () => {'),
-    'stop should invalidate overlay readiness before synchronously publishing teardown'
-  );
-  assert.match(stopMpvMatch[1], /return mpvTeardownGate\.run\(async \(\) => \{[\s\S]+await releaseMpvReviewFreezeFrame\(\);[\s\S]+await window\.electronAPI\.mpvStop\(\);[\s\S]+await destroyMpvPilotHosts\(\);/);
+  assert.doesNotMatch(stopMpvMatch[1], /mpvOverlayLifecycle\.invalidate\(overlayOwner\)/);
+  assert.match(stopMpvMatch[1], /return mpvPilotOwnershipGate\.runOwnedTeardown\(overlayOwner, async \(\) => \{[\s\S]+await releaseMpvReviewFreezeFrame\(\);[\s\S]+await window\.electronAPI\.mpvStop\(\);[\s\S]+await destroyMpvPilotHosts\(\);/);
 });
 
 test('mpv pilot hides native host while DOM blocking overlays are open', () => {
@@ -662,9 +792,9 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
   const loadMpvSource = loadMpvMatch[0];
 
   assert.match(appSource, /let activeMpvPilotLoadToken = null;/);
+  assert.match(appSource, /const mpvPilotOwnershipGate = createMpvPilotOwnershipGate\(\{[\s\S]+setActiveLoadToken: \(loadToken\) => \{[\s\S]+activeMpvPilotLoadToken = loadToken;/);
   assert.match(loadMpvSource, /loadToken = null,[\s\S]+isStaleVideoLoad = \(\) => false/);
-  assert.match(loadMpvSource, /activeMpvPilotLoadToken = loadToken;/);
-  assert.match(loadMpvSource, /const overlayOwner = mpvOverlayLifecycle\.begin\(loadToken\);/);
+  assert.match(loadMpvSource, /const overlayOwner = await mpvPilotOwnershipGate\.claim\(loadToken, \{ isStaleVideoLoad \}\);\n    if \(!overlayOwner\) return false;/);
   assert.match(loadMpvSource, /let embedHost = null;/);
   assert.match(loadMpvSource, /const ownsMpvPilotLoad = \(\) => activeMpvPilotLoadToken === loadToken;/);
   assert.match(loadMpvSource, /const ownsMpvOverlayLifecycle = \(\) => \([\s\S]+ownsMpvPilotLoad\(\) && mpvOverlayLifecycle\.owns\(overlayOwner\)[\s\S]+\);/);
@@ -672,7 +802,7 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
   assert.match(loadMpvSource, /const cleanupPendingMpvPilot = async \(\) => \{/);
   assert.match(loadMpvSource, /const cleanupPendingMpvPilot = async \(\) => \{[\s\S]+if \(!ownsMpvOverlayLifecycle\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+if \(mpvLoadStarted\)/);
   assert.match(loadMpvSource, /if \(mpvLoadStarted\) \{[\s\S]+await stopMpvPilotEngine\(overlayOwner\);[\s\S]+\}/);
-  assert.match(loadMpvSource, /await mpvTeardownGate\.run\(async \(\) => \{[\s\S]+await destroyMpvPilotHosts\(\);[\s\S]+\}\);/);
+  assert.match(loadMpvSource, /await mpvPilotOwnershipGate\.runOwnedTeardown\(overlayOwner, async \(\) => \{[\s\S]+await destroyMpvPilotHosts\(\);[\s\S]+isOwnerCurrent: ownsMpvPilotLoad/);
   assert.match(loadMpvSource, /finally \{[\s\S]+if \(ownsMpvPilotLoad\(\)\) \{[\s\S]+mpvPilotHostPreparing = false;[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\}[\s\S]+\}/);
   assert.match(loadMpvSource, /try \{[\s\S]+mpvPilotHostPreparing = true;[\s\S]+embedHost = await prepareMpvEmbedHost\(\);[\s\S]+isStaleMpvPilotLifecycle\(\)[\s\S]+overlayHost = await prepareMpvOverlayHost\(\);[\s\S]+mpvOverlayLifecycle\.markReady\(overlayOwner\)[\s\S]+\} catch \(error\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw error;[\s\S]+\}/);
   assert.match(loadMpvSource, /const stopCurrentMpvPilotEngine = async \(\) => \{[\s\S]+await stopMpvPilotEngine\(overlayOwner\);[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\};/);

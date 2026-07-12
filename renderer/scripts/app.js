@@ -170,6 +170,33 @@ function createMpvTeardownGate() {
   };
 }
 
+function createMpvPilotOwnershipGate({
+  teardownGate,
+  overlayLifecycle,
+  setActiveLoadToken
+}) {
+  return {
+    claim(loadToken, { isStaleVideoLoad = () => false } = {}) {
+      return teardownGate.run(() => {
+        if (isStaleVideoLoad()) return null;
+        setActiveLoadToken(loadToken);
+        return overlayLifecycle.begin(loadToken);
+      });
+    },
+    runOwnedTeardown(
+      overlayOwner,
+      teardown,
+      { isOwnerCurrent = () => true } = {}
+    ) {
+      return teardownGate.run(async () => {
+        if (!isOwnerCurrent()) return false;
+        if (!overlayLifecycle.invalidate(overlayOwner)) return false;
+        return teardown();
+      });
+    }
+  };
+}
+
 function createCoalescedAsyncScheduler({
   delayMs,
   run,
@@ -6446,6 +6473,13 @@ async function initApp() {
     }
   });
   const mpvTeardownGate = createMpvTeardownGate();
+  const mpvPilotOwnershipGate = createMpvPilotOwnershipGate({
+    teardownGate: mpvTeardownGate,
+    overlayLifecycle: mpvOverlayLifecycle,
+    setActiveLoadToken: (loadToken) => {
+      activeMpvPilotLoadToken = loadToken;
+    }
+  });
   let mpvOverlayStateSyncPendingOwner = null;
   let mpvOverlayRemoteCursorSyncPendingOwner = null;
   let mpvOverlayStateSyncTimer = null;
@@ -7205,8 +7239,7 @@ async function initApp() {
   }
 
   async function stopMpvPilotEngine(overlayOwner = null) {
-    if (!mpvOverlayLifecycle.invalidate(overlayOwner)) return false;
-    return mpvTeardownGate.run(async () => {
+    return mpvPilotOwnershipGate.runOwnedTeardown(overlayOwner, async () => {
       try {
         await releaseMpvReviewFreezeFrame();
         return await window.electronAPI.mpvStop();
@@ -7276,10 +7309,8 @@ async function initApp() {
     loadToken = null,
     isStaleVideoLoad = () => false
   } = {}) {
-    await mpvTeardownGate.waitForIdle();
-    if (isStaleVideoLoad()) return false;
-    activeMpvPilotLoadToken = loadToken;
-    const overlayOwner = mpvOverlayLifecycle.begin(loadToken);
+    const overlayOwner = await mpvPilotOwnershipGate.claim(loadToken, { isStaleVideoLoad });
+    if (!overlayOwner) return false;
     let embedHost = null;
     let overlayHost = null;
     let mpvLoadStarted = false;
@@ -7305,9 +7336,11 @@ async function initApp() {
         if (mpvLoadStarted) {
           await stopMpvPilotEngine(overlayOwner);
         } else {
-          if (!mpvOverlayLifecycle.invalidate(overlayOwner)) return;
-          await mpvTeardownGate.run(async () => {
+          await mpvPilotOwnershipGate.runOwnedTeardown(overlayOwner, async () => {
             await destroyMpvPilotHosts();
+            return true;
+          }, {
+            isOwnerCurrent: ownsMpvPilotLoad
           });
         }
       } catch (error) {
