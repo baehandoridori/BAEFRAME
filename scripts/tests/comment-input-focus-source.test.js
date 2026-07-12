@@ -62,6 +62,19 @@ test('comment mode is visibly marked on the video surface outside fullscreen', (
   assert.match(cssSource, /body\.app-fullscreen \.video-wrapper\.comment-mode::after\s*\{[\s\S]+width:\s*auto;[\s\S]+height:\s*auto;[\s\S]+animation:\s*none;/);
 });
 
+test('comment mode pauses mpv and waits for a shared review freeze before native input is blocked', () => {
+  assert.match(appSource, /function isMpvReviewInteractionActive\(\) \{[\s\S]+state\.isDrawMode \|\| state\.isCommentMode/);
+  const handlerStart = appSource.indexOf("  commentManager.addEventListener('commentModeChanged'");
+  const handlerEnd = appSource.indexOf("  commentManager.addEventListener('markerCreationStarted'", handlerStart);
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, 'comment mode change handler should be bounded');
+  const commentModeHandler = appSource.slice(handlerStart, handlerEnd);
+  assert.match(commentModeHandler, /if \(isCommentMode\) \{[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+videoPlayer\.pause\(\);[\s\S]+prepareMpvCommentMode\(preparationToken\)/);
+  assert.match(commentModeHandler, /else \{[\s\S]+if \(!isMpvReviewInteractionActive\(\) && !suppressReviewFreezeReleaseForMediaChange\) \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
+  assert.match(appSource, /async function prepareMpvCommentMode\(preparationToken\) \{[\s\S]+prepareFreeze: \(\) => showMpvReviewFreezeFrame\(\)[\s\S]+setReady: setCommentModeReadyState/);
+  assert.match(appSource, /function setCommentModeReadyState\(ready\) \{[\s\S]+pointerEvents = ready \? 'auto' : 'none'/);
+  assert.match(appSource, /'\.video-wrapper\.mpv-review-freeze-ready'/);
+});
+
 test('pending comment editor stays visible near video edges', () => {
   const pendingMarkerMatch = appSource.match(/function renderPendingMarker\(marker\) \{([\s\S]*?)\n  \}\n\n  \/\*\*\n   \* Pending 마커 UI 제거/);
   assert.ok(pendingMarkerMatch, 'pending marker renderer should exist');
@@ -90,6 +103,28 @@ test('comment mode shortcut follows the same readiness guard as the toolbar butt
   assert.ok(shortcutMatch, 'comment shortcut branch should exist');
   assert.match(shortcutMatch[1], /if \(!state\.isCommentMode && !\(await ensureCutlistCommentTargetReady\(\)\)\) return;/);
   assert.match(shortcutMatch[1], /toggleCommentMode\(\);/);
+});
+
+test('media load keeps the current review input until navigation is committed', () => {
+  const loadMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \//);
+  assert.ok(loadMatch, 'loadVideo should exist');
+  const loadSource = loadMatch[1];
+  const commitIndex = loadSource.indexOf('allowNavigationGuardAbort = false;');
+  const releaseIndex = loadSource.indexOf('await releaseMpvReviewFreezeFrame();');
+
+  assert.ok(commitIndex >= 0, 'media navigation should have an explicit commit point');
+  assert.ok(releaseIndex > commitIndex, 'a cancelled or early-failed load must keep the current review freeze and input');
+});
+
+test('media change resets comment mode through its event and unconditionally clears stale DOM readiness', () => {
+  const loadMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \//);
+  assert.ok(loadMatch, 'loadVideo should exist');
+  const loadSource = loadMatch[1];
+  const eventfulResetIndex = loadSource.indexOf('commentManager.setCommentMode(false);');
+  const clearIndex = loadSource.indexOf('commentManager.clear();');
+
+  assert.ok(eventfulResetIndex >= 0 && eventfulResetIndex < clearIndex, 'comment mode event must fire before clear suppresses it');
+  assert.match(loadSource, /state\.isCommentMode = false;[\s\S]+setCommentModeReadyState\(false\);[\s\S]+setCommentModePreparingState\(false\);[\s\S]+commentManager\.clear\(\);/);
 });
 
 test('loading review comments refreshes the right sidebar comment list', () => {

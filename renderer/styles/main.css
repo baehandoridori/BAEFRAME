@@ -1110,11 +1110,11 @@ body.mpv-pilot-mode .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
   touch-action: none;
 }
 
-.mpv-draw-freeze-frame {
+.mpv-review-freeze-frame {
   position: absolute;
+  z-index: 1;
   pointer-events: none;
   object-fit: fill;
-  background: #000;
 }
 
 .video-wrapper.space-pan .drawing-overlay.active {
@@ -2647,6 +2647,25 @@ body.app-fullscreen .video-comment-overlay-controls {
   border-color: var(--accent-primary);
   color: var(--accent-primary);
   box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.action-btn.preparing {
+  cursor: progress;
+  opacity: 0.8;
+}
+
+.action-btn.preparing::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: review-mode-preparing-spin 0.7s linear infinite;
+}
+
+@keyframes review-mode-preparing-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* 댓글/하이라이트 네비게이션 그룹 */

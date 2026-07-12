@@ -24,7 +24,7 @@ const PARENT_REPOSITION_EVENTS = [
 const PARENT_HIDE_EVENTS = ['minimize', 'hide'];
 const PARENT_SHOW_EVENTS = ['restore', 'show'];
 
-const OVERLAY_HTML = `
+const OVERLAY_HTML = String.raw`
 <!doctype html>
 <html>
 <head>
@@ -513,6 +513,10 @@ const OVERLAY_HTML = `
 </html>`;
 
 const OVERLAY_HOST_URL = `data:text/html;charset=utf-8,${encodeURIComponent(OVERLAY_HTML)}`;
+const OVERLAY_API_READY_SCRIPT = [
+  "typeof window.__applyMpvOverlayState === 'function'",
+  "typeof window.__applyMpvRemoteCursorState === 'function'"
+].join(' && ');
 
 function getDefaultBrowserWindow() {
   return require('electron').BrowserWindow;
@@ -602,6 +606,7 @@ class MPVOverlayHost {
     this.logger = options.logger || log;
     this.window = null;
     this.contentLoaded = false;
+    this.contentLoadGeneration = 0;
     this.lastBounds = null;
     this.parentWindow = null;
     this.parentRepositionHandler = null;
@@ -625,11 +630,29 @@ class MPVOverlayHost {
     hostWindow.setBounds(screenBounds);
 
     if (!this.contentLoaded) {
+      const contentLoadGeneration = ++this.contentLoadGeneration;
       try {
         await hostWindow.loadURL?.(OVERLAY_HOST_URL);
+        if (!this._isCurrentContentLoad(hostWindow, contentLoadGeneration)) {
+          return { success: false, error: 'mpv overlay host is no longer current' };
+        }
+        const overlayApiReady = await hostWindow.webContents?.executeJavaScript?.(
+          OVERLAY_API_READY_SCRIPT,
+          true
+        );
+        if (!this._isCurrentContentLoad(hostWindow, contentLoadGeneration)) {
+          return { success: false, error: 'mpv overlay host is no longer current' };
+        }
+        if (overlayApiReady !== true) {
+          return { success: false, error: 'mpv overlay API is not ready' };
+        }
         this.contentLoaded = true;
       } catch (error) {
+        if (this._isCurrentContentLoad(hostWindow, contentLoadGeneration)) {
+          this.contentLoaded = false;
+        }
         this.logger.debug('mpv overlay host load failed', { error: error.message });
+        return { success: false, error: error.message };
       }
     }
 
@@ -659,7 +682,7 @@ class MPVOverlayHost {
   }
 
   async updateState(state) {
-    if (!this.window || this.window.isDestroyed?.()) {
+    if (!this.window || this.window.isDestroyed?.() || !this.contentLoaded) {
       return { success: false, error: 'mpv overlay host is not ready' };
     }
 
@@ -677,7 +700,7 @@ class MPVOverlayHost {
   }
 
   async updateRemoteCursorState(remoteCursorHtml) {
-    if (!this.window || this.window.isDestroyed?.()) {
+    if (!this.window || this.window.isDestroyed?.() || !this.contentLoaded) {
       return { success: false, error: 'mpv overlay host is not ready' };
     }
 
@@ -714,6 +737,7 @@ class MPVOverlayHost {
 
   destroy() {
     const hostWindow = this.window;
+    this.contentLoadGeneration += 1;
     this.window = null;
     this.contentLoaded = false;
     this.lastBounds = null;
@@ -733,7 +757,7 @@ class MPVOverlayHost {
       return this.window;
     }
 
-    this.window = new this.BrowserWindow({
+    const hostWindow = new this.BrowserWindow({
       parent,
       modal: false,
       show: false,
@@ -755,14 +779,23 @@ class MPVOverlayHost {
         webSecurity: false
       }
     });
-    this.window.setIgnoreMouseEvents?.(true, { forward: true });
+    this.window = hostWindow;
+    hostWindow.setIgnoreMouseEvents?.(true, { forward: true });
 
-    this.window.on?.('closed', () => {
+    hostWindow.on?.('closed', () => {
+      if (this.window !== hostWindow) return;
+      this.contentLoadGeneration += 1;
       this.window = null;
       this.contentLoaded = false;
     });
 
-    return this.window;
+    return hostWindow;
+  }
+
+  _isCurrentContentLoad(hostWindow, contentLoadGeneration) {
+    return this.window === hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      this.contentLoadGeneration === contentLoadGeneration;
   }
 
   _bindParentWindow(parent) {

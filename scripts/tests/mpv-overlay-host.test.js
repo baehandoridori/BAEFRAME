@@ -10,6 +10,16 @@ function waitForAsyncReposition() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 test('normalizes overlay state to bounded serializable fields', () => {
   const state = normalizeOverlayState({
     drawingDataUrl: 'data:image/png;base64,abc',
@@ -62,6 +72,8 @@ test('creates a click-through overlay window above the viewer area', async () =>
       this.webContents = {
         executeJavaScript: async (script) => {
           events.push(['executeJavaScript', script]);
+          return script.includes("typeof window.__applyMpvOverlayState === 'function'") &&
+            script.includes("typeof window.__applyMpvRemoteCursorState === 'function'");
         }
       };
       events.push(['construct', options]);
@@ -111,7 +123,12 @@ test('creates a click-through overlay window above the viewer area', async () =>
     events.find(([name]) => name === 'setIgnoreMouseEvents'),
     ['setIgnoreMouseEvents', true, { forward: true }]
   );
-  const overlayHtml = decodeURIComponent(events.find(([name]) => name === 'loadURL')?.[1] || '');
+  const loadUrl = events.find(([name]) => name === 'loadURL')?.[1] || '';
+  const overlayDocument = decodeURIComponent(loadUrl.replace(/^data:text\/html;charset=utf-8,/, ''));
+  const inlineScript = overlayDocument.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(inlineScript, 'overlay inline script should exist');
+  assert.doesNotThrow(() => new Function(inlineScript));
+  const overlayHtml = overlayDocument;
   assert.equal(overlayHtml.includes('__applyMpvOverlayState'), true);
   assert.equal(overlayHtml.includes('applyOverlayTransform'), true);
   assert.equal(overlayHtml.includes('htmlOverlay'), true);
@@ -140,6 +157,208 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.ok(events.some(([name]) => name === 'moveTop'));
 });
 
+test('keeps the overlay host unready when the document APIs are unavailable', async () => {
+  const scripts = [];
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    getContentBounds: () => ({ x: 20, y: 30, width: 1200, height: 800 })
+  };
+  class FakeBrowserWindow {
+    constructor() {
+      this.destroyed = false;
+      this.webContents = {
+        executeJavaScript: async (script) => {
+          scripts.push(script);
+          return false;
+        }
+      };
+    }
+    loadURL() {
+      return Promise.resolve();
+    }
+    setBounds() {}
+    setIgnoreMouseEvents() {}
+    showInactive() {}
+    moveTop() {}
+    isDestroyed() {
+      return this.destroyed;
+    }
+    on() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow
+  });
+
+  const result = await host.ensure({ x: 0, y: 0, width: 300, height: 200 });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /overlay API/i);
+  assert.equal(host.contentLoaded, false);
+
+  const updateResult = await host.updateState({
+    markerHtml: '<div class="comment-marker pending"></div>'
+  });
+  assert.equal(updateResult.success, false);
+  assert.equal(
+    scripts.some((script) => script.startsWith('window.__applyMpvOverlayState(')),
+    false
+  );
+});
+
+test('keeps the newest successful ensure ready when an older overlapping load rejects late', async () => {
+  const loadAttempts = [];
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    getContentBounds: () => ({ x: 20, y: 30, width: 1200, height: 800 })
+  };
+  class FakeBrowserWindow {
+    constructor() {
+      this.destroyed = false;
+      this.webContents = {
+        executeJavaScript: async () => true
+      };
+    }
+    loadURL() {
+      const attempt = createDeferred();
+      loadAttempts.push(attempt);
+      return attempt.promise;
+    }
+    setBounds() {}
+    setIgnoreMouseEvents() {}
+    showInactive() {}
+    moveTop() {}
+    isDestroyed() {
+      return this.destroyed;
+    }
+    on() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow
+  });
+
+  const olderEnsure = host.ensure({ x: 0, y: 0, width: 300, height: 200 });
+  const newerEnsure = host.ensure({ x: 5, y: 6, width: 320, height: 180 });
+  assert.equal(loadAttempts.length, 2);
+
+  loadAttempts[1].resolve();
+  const newerResult = await newerEnsure;
+  assert.equal(newerResult.success, true);
+  assert.equal(host.contentLoaded, true);
+
+  loadAttempts[0].reject(new Error('older overlay load failed'));
+  const olderResult = await olderEnsure;
+  assert.equal(olderResult.success, false);
+  assert.equal(host.contentLoaded, true);
+});
+
+test('ignores a pending ensure completion after the overlay host is destroyed', async () => {
+  const loadAttempt = createDeferred();
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    getContentBounds: () => ({ x: 20, y: 30, width: 1200, height: 800 })
+  };
+  class FakeBrowserWindow {
+    constructor() {
+      this.destroyed = false;
+      this.webContents = {
+        executeJavaScript: async () => true
+      };
+    }
+    loadURL() {
+      return loadAttempt.promise;
+    }
+    setBounds() {}
+    setIgnoreMouseEvents() {}
+    showInactive() {}
+    moveTop() {}
+    isDestroyed() {
+      return this.destroyed;
+    }
+    on() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow
+  });
+
+  const pendingEnsure = host.ensure({ x: 0, y: 0, width: 300, height: 200 });
+  host.destroy();
+  loadAttempt.resolve();
+
+  const result = await pendingEnsure;
+  assert.equal(result.success, false);
+  assert.match(result.error, /no longer current/i);
+  assert.equal(host.window, null);
+  assert.equal(host.contentLoaded, false);
+});
+
+test('ignores a late closed event from a replaced overlay window', async () => {
+  const windows = [];
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    getContentBounds: () => ({ x: 20, y: 30, width: 1200, height: 800 })
+  };
+  class FakeBrowserWindow {
+    constructor() {
+      this.destroyed = false;
+      this.listeners = new Map();
+      this.webContents = {
+        executeJavaScript: async () => true
+      };
+      windows.push(this);
+    }
+    loadURL() {
+      return Promise.resolve();
+    }
+    setBounds() {}
+    setIgnoreMouseEvents() {}
+    showInactive() {}
+    moveTop() {}
+    isDestroyed() {
+      return this.destroyed;
+    }
+    on(eventName, handler) {
+      this.listeners.set(eventName, handler);
+    }
+    emit(eventName) {
+      this.listeners.get(eventName)?.();
+    }
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow
+  });
+
+  await host.ensure({ x: 0, y: 0, width: 300, height: 200 });
+  const replacedWindow = windows[0];
+  host.destroy();
+  await host.ensure({ x: 1, y: 2, width: 320, height: 180 });
+  const currentWindow = windows[1];
+
+  replacedWindow.emit('closed');
+
+  assert.equal(host.window, currentWindow);
+  assert.equal(host.contentLoaded, true);
+});
+
 test('updates overlay state through the isolated overlay document', async () => {
   const scripts = [];
   const fakeMainWindow = {
@@ -151,6 +370,9 @@ test('updates overlay state through the isolated overlay document', async () => 
       this.destroyed = false;
       this.webContents = {
         executeJavaScript: async (script) => {
+          if (script.includes("typeof window.__applyMpvOverlayState === 'function'")) {
+            return true;
+          }
           scripts.push(script);
         }
       };
@@ -214,7 +436,7 @@ test('hides and restores the native overlay host with the mpv embed host', async
     constructor() {
       this.destroyed = false;
       this.webContents = {
-        executeJavaScript: async () => {}
+        executeJavaScript: async () => true
       };
     }
     loadURL() {
@@ -282,6 +504,9 @@ test('repositions and hides overlay with the parent window', async () => {
       this.visible = false;
       this.destroyed = false;
       this.showCount = 0;
+      this.webContents = {
+        executeJavaScript: async () => true
+      };
     }
     loadURL() {
       return Promise.resolve();
