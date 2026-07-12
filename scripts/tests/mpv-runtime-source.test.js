@@ -34,12 +34,35 @@ function loadMpvOverlayLifecycleFactory() {
   assert.fail('mpv overlay lifecycle factory should have a complete body');
 }
 
+function loadMpvTeardownGateFactory() {
+  const functionStart = appSource.indexOf('function createMpvTeardownGate(');
+  assert.notEqual(functionStart, -1, 'mpv teardown gate factory should exist');
+
+  const bodyStart = appSource.indexOf(') {', functionStart) + 2;
+  let depth = 0;
+  for (let index = bodyStart; index < appSource.length; index += 1) {
+    if (appSource[index] === '{') depth += 1;
+    if (appSource[index] === '}') depth -= 1;
+    if (depth === 0) {
+      const functionSource = appSource.slice(functionStart, index + 1);
+      return new Function(`return (${functionSource});`)();
+    }
+  }
+
+  assert.fail('mpv teardown gate factory should have a complete body');
+}
+
 function createDeferred() {
   let resolve;
   const promise = new Promise((resolvePromise) => {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 test('mpv overlay lifecycle ignores stale prepare and sync completions', async () => {
@@ -100,6 +123,178 @@ test('mpv overlay lifecycle clears and warns once for a current-generation failu
 
   assert.equal(lifecycle.isReady(owner), false);
   assert.deepEqual(warnings, ['first-failure']);
+});
+
+test('mpv teardown gate keeps a new load behind the complete owned stop sequence', async () => {
+  const createMpvOverlayLifecycle = loadMpvOverlayLifecycleFactory();
+  const createMpvTeardownGate = loadMpvTeardownGateFactory();
+  const lifecycle = createMpvOverlayLifecycle();
+  const teardownGate = createMpvTeardownGate();
+  const releaseFreeze = createDeferred();
+  const stopEngine = createDeferred();
+  const destroyOverlay = createDeferred();
+  const destroyEmbed = createDeferred();
+  const events = [];
+
+  const ownerA = lifecycle.begin('load-a');
+  assert.equal(lifecycle.invalidate(ownerA), true);
+  const stopA = teardownGate.run(async () => {
+    events.push('a:release:start');
+    await releaseFreeze.promise;
+    events.push('a:stop:start');
+    await stopEngine.promise;
+    events.push('a:overlay:start');
+    await destroyOverlay.promise;
+    events.push('a:embed:start');
+    await destroyEmbed.promise;
+    events.push('a:done');
+  });
+
+  const loadB = (async () => {
+    await teardownGate.waitForIdle();
+    events.push('b:begin');
+    const ownerB = lifecycle.begin('load-b');
+    events.push('b:prepare');
+    events.push('b:mpvLoad');
+    return ownerB;
+  })();
+
+  await flushMicrotasks();
+  assert.deepEqual(events, ['a:release:start']);
+
+  releaseFreeze.resolve();
+  await flushMicrotasks();
+  assert.deepEqual(events, ['a:release:start', 'a:stop:start']);
+
+  stopEngine.resolve();
+  await flushMicrotasks();
+  assert.deepEqual(events, ['a:release:start', 'a:stop:start', 'a:overlay:start']);
+
+  destroyOverlay.resolve();
+  await flushMicrotasks();
+  assert.deepEqual(events, ['a:release:start', 'a:stop:start', 'a:overlay:start', 'a:embed:start']);
+
+  destroyEmbed.resolve();
+  await stopA;
+  const ownerB = await loadB;
+
+  assert.deepEqual(events, [
+    'a:release:start',
+    'a:stop:start',
+    'a:overlay:start',
+    'a:embed:start',
+    'a:done',
+    'b:begin',
+    'b:prepare',
+    'b:mpvLoad'
+  ]);
+  assert.equal(lifecycle.owns(ownerB), true, 'load B should remain the current lifecycle owner');
+});
+
+test('mpv teardown gate keeps a new load behind both pre-load host destroys', async () => {
+  const createMpvOverlayLifecycle = loadMpvOverlayLifecycleFactory();
+  const createMpvTeardownGate = loadMpvTeardownGateFactory();
+  const lifecycle = createMpvOverlayLifecycle();
+  const teardownGate = createMpvTeardownGate();
+  const destroyOverlay = createDeferred();
+  const destroyEmbed = createDeferred();
+  const events = [];
+
+  const ownerA = lifecycle.begin('prepare-a');
+  assert.equal(lifecycle.invalidate(ownerA), true);
+  const cleanupA = teardownGate.run(async () => {
+    events.push('a:overlay:start');
+    await destroyOverlay.promise;
+    events.push('a:embed:start');
+    await destroyEmbed.promise;
+    events.push('a:done');
+  });
+
+  const loadB = (async () => {
+    await teardownGate.waitForIdle();
+    events.push('b:begin');
+    const ownerB = lifecycle.begin('load-b');
+    events.push('b:prepare');
+    events.push('b:mpvLoad');
+    return ownerB;
+  })();
+
+  await flushMicrotasks();
+  assert.deepEqual(events, ['a:overlay:start']);
+
+  destroyOverlay.resolve();
+  await flushMicrotasks();
+  assert.deepEqual(events, ['a:overlay:start', 'a:embed:start']);
+
+  destroyEmbed.resolve();
+  await cleanupA;
+  const ownerB = await loadB;
+
+  assert.deepEqual(events, [
+    'a:overlay:start',
+    'a:embed:start',
+    'a:done',
+    'b:begin',
+    'b:prepare',
+    'b:mpvLoad'
+  ]);
+  assert.equal(lifecycle.owns(ownerB), true);
+});
+
+test('mpv teardown gate clears after rejection without hiding the caller error', async () => {
+  const createMpvTeardownGate = loadMpvTeardownGateFactory();
+  const teardownGate = createMpvTeardownGate();
+  const expectedError = new Error('teardown failed');
+
+  await assert.rejects(
+    teardownGate.run(async () => {
+      throw expectedError;
+    }),
+    expectedError
+  );
+  await teardownGate.waitForIdle();
+
+  let nextTeardownRan = false;
+  await teardownGate.run(async () => {
+    nextTeardownRan = true;
+  });
+  assert.equal(nextTeardownRan, true);
+});
+
+test('mpv teardown gate waiters stay blocked when another teardown is chained', async () => {
+  const createMpvTeardownGate = loadMpvTeardownGateFactory();
+  const teardownGate = createMpvTeardownGate();
+  const teardownA = createDeferred();
+  const teardownC = createDeferred();
+  const events = [];
+
+  const runA = teardownGate.run(async () => {
+    events.push('a:start');
+    await teardownA.promise;
+    events.push('a:done');
+  });
+  const loadB = (async () => {
+    await teardownGate.waitForIdle();
+    events.push('b:begin');
+  })();
+  const runC = teardownGate.run(async () => {
+    events.push('c:start');
+    await teardownC.promise;
+    events.push('c:done');
+  });
+
+  await flushMicrotasks();
+  assert.deepEqual(events, ['a:start']);
+
+  teardownA.resolve();
+  await runA;
+  await flushMicrotasks();
+  assert.deepEqual(events, ['a:start', 'a:done', 'c:start']);
+
+  teardownC.resolve();
+  await runC;
+  await loadB;
+  assert.deepEqual(events, ['a:start', 'a:done', 'c:start', 'c:done', 'b:begin']);
 });
 
 test('package exposes an mpv pilot test command', () => {
@@ -323,8 +518,18 @@ test('mpv overlay lifecycle invalidates before cleanup, stop, and a new prepare 
   const loadMpvMatch = appSource.match(/async function loadVideoWithMpvPilot\(filePath, \{([\s\S]*?)\n  \}\n\n  async function resolveMpvThumbnailVideoPath/);
   assert.ok(loadMpvMatch, 'loadVideoWithMpvPilot should exist');
   const loadMpvSource = loadMpvMatch[1];
+  const teardownWaitIndex = loadMpvSource.indexOf('await mpvTeardownGate.waitForIdle();');
+  const staleWaiterIndex = loadMpvSource.indexOf('if (isStaleVideoLoad()) return false;', teardownWaitIndex);
+  const loadOwnerIndex = loadMpvSource.indexOf('activeMpvPilotLoadToken = loadToken;');
   const beginIndex = loadMpvSource.indexOf('const overlayOwner = mpvOverlayLifecycle.begin(loadToken);');
   const embedPrepareIndex = loadMpvSource.indexOf('embedHost = await prepareMpvEmbedHost();');
+  assert.ok(
+    teardownWaitIndex >= 0 &&
+      teardownWaitIndex < staleWaiterIndex &&
+      staleWaiterIndex < loadOwnerIndex &&
+      loadOwnerIndex < beginIndex,
+    'new loads should wait for every teardown and re-check staleness before claiming lifecycle ownership'
+  );
   assert.ok(beginIndex >= 0 && beginIndex < embedPrepareIndex, 'new preparation should invalidate older generations before awaiting embed preparation');
   assert.match(loadMpvSource, /embedHost = await prepareMpvEmbedHost\(\);\n      if \(isStaleMpvPilotLifecycle\(\)\)/);
   assert.match(loadMpvSource, /overlayHost = await prepareMpvOverlayHost\(\);\n      if \(isStaleMpvPilotLifecycle\(\)\)/);
@@ -333,14 +538,15 @@ test('mpv overlay lifecycle invalidates before cleanup, stop, and a new prepare 
   const cleanupSource = cleanupMatch[1];
   assert.match(cleanupSource, /if \(!ownsMpvOverlayLifecycle\(\)\) \{[\s\S]+return;/);
   assert.match(cleanupSource, /await stopMpvPilotEngine\(overlayOwner\);/);
-  assert.match(cleanupSource, /if \(!mpvOverlayLifecycle\.invalidate\(overlayOwner\)\) return;\n          await window\.electronAPI\?\.mpvDestroyOverlay\?\.\(\);/);
+  assert.match(cleanupSource, /if \(!mpvOverlayLifecycle\.invalidate\(overlayOwner\)\) return;\n          await mpvTeardownGate\.run\(async \(\) => \{[\s\S]+await destroyMpvPilotHosts\(\);/);
 
   const stopMpvMatch = appSource.match(/async function stopMpvPilotEngine\(overlayOwner = null\) \{([\s\S]*?)\n  \}/);
   assert.ok(stopMpvMatch, 'stopMpvPilotEngine should exist');
   assert.ok(
-    stopMpvMatch[1].indexOf('mpvOverlayLifecycle.invalidate(overlayOwner)') < stopMpvMatch[1].indexOf('await releaseMpvReviewFreezeFrame();'),
-    'stop should invalidate overlay readiness before awaiting teardown'
+    stopMpvMatch[1].indexOf('mpvOverlayLifecycle.invalidate(overlayOwner)') < stopMpvMatch[1].indexOf('return mpvTeardownGate.run(async () => {'),
+    'stop should invalidate overlay readiness before synchronously publishing teardown'
   );
+  assert.match(stopMpvMatch[1], /return mpvTeardownGate\.run\(async \(\) => \{[\s\S]+await releaseMpvReviewFreezeFrame\(\);[\s\S]+await window\.electronAPI\.mpvStop\(\);[\s\S]+await destroyMpvPilotHosts\(\);/);
 });
 
 test('mpv pilot hides native host while DOM blocking overlays are open', () => {
@@ -466,7 +672,7 @@ test('mpv pilot cleans up pending embed host when load is stale or fails before 
   assert.match(loadMpvSource, /const cleanupPendingMpvPilot = async \(\) => \{/);
   assert.match(loadMpvSource, /const cleanupPendingMpvPilot = async \(\) => \{[\s\S]+if \(!ownsMpvOverlayLifecycle\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+if \(mpvLoadStarted\)/);
   assert.match(loadMpvSource, /if \(mpvLoadStarted\) \{[\s\S]+await stopMpvPilotEngine\(overlayOwner\);[\s\S]+\}/);
-  assert.match(loadMpvSource, /await window\.electronAPI\?\.mpvDestroyEmbed\?\.\(\);/);
+  assert.match(loadMpvSource, /await mpvTeardownGate\.run\(async \(\) => \{[\s\S]+await destroyMpvPilotHosts\(\);[\s\S]+\}\);/);
   assert.match(loadMpvSource, /finally \{[\s\S]+if \(ownsMpvPilotLoad\(\)\) \{[\s\S]+mpvPilotHostPreparing = false;[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\}[\s\S]+\}/);
   assert.match(loadMpvSource, /try \{[\s\S]+mpvPilotHostPreparing = true;[\s\S]+embedHost = await prepareMpvEmbedHost\(\);[\s\S]+isStaleMpvPilotLifecycle\(\)[\s\S]+overlayHost = await prepareMpvOverlayHost\(\);[\s\S]+mpvOverlayLifecycle\.markReady\(overlayOwner\)[\s\S]+\} catch \(error\) \{[\s\S]+await cleanupPendingMpvPilot\(\);[\s\S]+throw error;[\s\S]+\}/);
   assert.match(loadMpvSource, /const stopCurrentMpvPilotEngine = async \(\) => \{[\s\S]+await stopMpvPilotEngine\(overlayOwner\);[\s\S]+clearMpvPilotLoadOwner\(\);[\s\S]+\};/);
@@ -529,7 +735,8 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /const showTooltipHover = \(\) => \{[\s\S]+tooltip\.classList\.add\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\};/);
   assert.match(appSource, /const hideTooltipHover = \(\) => \{[\s\S]+tooltip\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}, 100\);/);
   assert.match(appSource, /function updateMarkerTooltipState\(marker\) \{[\s\S]+marker\.tooltipElement\.classList\.add\('visible', 'pinned'\);[\s\S]+scheduleMpvOverlayStateSync\(\);/);
-  assert.match(appSource, /async function stopMpvPilotEngine\(overlayOwner = null\) \{[\s\S]+await window\.electronAPI\?\.mpvDestroyOverlay\?\.\(\);/);
+  assert.match(appSource, /async function destroyMpvPilotHosts\(\) \{[\s\S]+await window\.electronAPI\?\.mpvDestroyOverlay\?\.\(\);[\s\S]+await window\.electronAPI\?\.mpvDestroyEmbed\?\.\(\);/);
+  assert.match(appSource, /async function stopMpvPilotEngine\(overlayOwner = null\) \{[\s\S]+await destroyMpvPilotHosts\(\);/);
 });
 
 test('mpv pilot keeps toast notifications visible above the native video host', () => {

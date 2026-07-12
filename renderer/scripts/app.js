@@ -134,6 +134,42 @@ function createMpvOverlayLifecycle({ onWarning = () => {} } = {}) {
   };
 }
 
+function createMpvTeardownGate() {
+  let activeTeardown = null;
+
+  return {
+    run(teardown) {
+      if (typeof teardown !== 'function') {
+        throw new TypeError('mpv teardown must be a function');
+      }
+
+      const previousTeardown = activeTeardown;
+      const teardownPromise = Promise.resolve(previousTeardown)
+        .catch(() => {})
+        .then(() => teardown());
+      activeTeardown = teardownPromise;
+
+      const clearIfCurrent = () => {
+        if (activeTeardown === teardownPromise) {
+          activeTeardown = null;
+        }
+      };
+      teardownPromise.then(clearIfCurrent, clearIfCurrent);
+      return teardownPromise;
+    },
+    async waitForIdle() {
+      while (activeTeardown) {
+        const pendingTeardown = activeTeardown;
+        try {
+          await pendingTeardown;
+        } catch {
+          // The teardown caller still observes the original failure. New loads only wait for settlement.
+        }
+      }
+    }
+  };
+}
+
 function createCoalescedAsyncScheduler({
   delayMs,
   run,
@@ -6353,6 +6389,7 @@ async function initApp() {
       });
     }
   });
+  const mpvTeardownGate = createMpvTeardownGate();
   let mpvOverlayStateSyncPendingOwner = null;
   let mpvOverlayRemoteCursorSyncPendingOwner = null;
   let mpvOverlayStateSyncTimer = null;
@@ -7103,16 +7140,25 @@ async function initApp() {
     }, 250);
   }
 
-  async function stopMpvPilotEngine(overlayOwner = null) {
-    if (!mpvOverlayLifecycle.invalidate(overlayOwner)) return false;
-    await releaseMpvReviewFreezeFrame();
+  async function destroyMpvPilotHosts() {
     try {
-      return await window.electronAPI.mpvStop();
-    } finally {
-      mpvHostLastRequestedVisible = null;
       await window.electronAPI?.mpvDestroyOverlay?.();
+    } finally {
       await window.electronAPI?.mpvDestroyEmbed?.();
     }
+  }
+
+  async function stopMpvPilotEngine(overlayOwner = null) {
+    if (!mpvOverlayLifecycle.invalidate(overlayOwner)) return false;
+    return mpvTeardownGate.run(async () => {
+      try {
+        await releaseMpvReviewFreezeFrame();
+        return await window.electronAPI.mpvStop();
+      } finally {
+        mpvHostLastRequestedVisible = null;
+        await destroyMpvPilotHosts();
+      }
+    });
   }
 
   async function shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath } = {}) {
@@ -7174,6 +7220,8 @@ async function initApp() {
     loadToken = null,
     isStaleVideoLoad = () => false
   } = {}) {
+    await mpvTeardownGate.waitForIdle();
+    if (isStaleVideoLoad()) return false;
     activeMpvPilotLoadToken = loadToken;
     const overlayOwner = mpvOverlayLifecycle.begin(loadToken);
     let embedHost = null;
@@ -7202,8 +7250,9 @@ async function initApp() {
           await stopMpvPilotEngine(overlayOwner);
         } else {
           if (!mpvOverlayLifecycle.invalidate(overlayOwner)) return;
-          await window.electronAPI?.mpvDestroyOverlay?.();
-          await window.electronAPI?.mpvDestroyEmbed?.();
+          await mpvTeardownGate.run(async () => {
+            await destroyMpvPilotHosts();
+          });
         }
       } catch (error) {
         log.debug('mpv 파일럿 준비 정리 실패', { error: error.message });
