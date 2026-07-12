@@ -928,7 +928,7 @@ test('mpv external playback interpolates frame UI between status polls', () => {
   assert.match(externalStatusMatch[1], /const shouldInterpolateExternalPlayback = nextIsPlaying && !this\._isSeeking;/);
   assert.match(externalStatusMatch[1], /if \(shouldInterpolateExternalPlayback\) \{[\s\S]+this\.currentTime = candidateTime;[\s\S]+\} else \{[\s\S]+this\._stopExternalFrameInterpolation\(\);/);
   assert.match(externalStatusMatch[1], /if \(shouldInterpolateExternalPlayback\) \{[\s\S]+this\.currentTime = smoothedTime;[\s\S]+this\.currentFrame = smoothedFrame;[\s\S]+this\._startExternalFrameInterpolation\(candidateTime\);/);
-  assert.match(externalStatusMatch[1], /this\._stopExternalFrameInterpolation\(\);[\s\S]+this\.currentTime = candidateTime;[\s\S]+this\.currentFrame = Math\.max\(0, Math\.min\(nextFrame, Math\.max\(0, this\.totalFrames - 1\)\)\);/);
+  assert.match(externalStatusMatch[1], /this\._stopExternalFrameInterpolation\(\);[\s\S]+const clampedNextFrame = Math\.max\(0, Math\.min\(nextFrame, Math\.max\(0, this\.totalFrames - 1\)\)\);[\s\S]+this\.currentTime = candidateTime;[\s\S]+this\.currentFrame = clampedNextFrame;/);
 });
 
 test('mpv external playback emits ended when keep-open reaches EOF', () => {

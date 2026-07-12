@@ -36,7 +36,7 @@ test('playback frame updates drive the same UI path as timeupdate ticks', () => 
 test('rapid frame stepping accumulates from the last requested frame', () => {
   assert.match(videoPlayerSource, /this\._seekTargetFrame = null;/);
   assert.match(videoPlayerSource, /this\._seekToken = 0;/);
-  assert.match(videoPlayerSource, /_timeToFrame\(time\) \{[\s\S]+Math\.floor\(\(Number\(time\) \|\| 0\) \* fps \+ 1e-4\)/);
+  assert.match(videoPlayerSource, /_timeToFrame\(time\) \{[\s\S]+Math\.floor\(\(Number\(time\) \|\| 0\) \* fps \+ 0\.05\)/);
 
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}\n\n  stepFrames/);
   assert.ok(seekToFrameMatch, 'seekToFrame should exist before stepFrames');
@@ -65,4 +65,33 @@ test('keyboard frame skip shortcuts use VideoPlayer frame stepping', () => {
   assert.match(appSource, /if \(userSettings\.matchShortcut\('prevFrameFast', e\)\) \{[\s\S]+videoPlayer\.stepFrames\(-frameAmount\);/);
   assert.match(appSource, /if \(userSettings\.matchShortcut\('nextFrameFast', e\)\) \{[\s\S]+videoPlayer\.stepFrames\(frameAmount\);/);
   assert.doesNotMatch(appSource, /const currentFrame = videoPlayer\.currentFrame \|\| 0;[\s\S]+const newFrame = Math\.max\(0, currentFrame - frameAmount\);/);
+});
+
+test('paused seek hold initializes and resets at playback lifecycle boundaries', () => {
+  const constructorMatch = videoPlayerSource.match(/constructor\(options = \{\}\) \{([\s\S]*?)\n  \}\n\n  _clampFrame/);
+  assert.ok(constructorMatch, 'VideoPlayer constructor should exist before _clampFrame');
+  assert.match(constructorMatch[1], /this\._seekToken = 0;\s*this\._pausedSeekHoldFrame = null;/);
+
+  const unloadMatch = videoPlayerSource.match(/unload\(\) \{([\s\S]*?)\n  \}\n\n  _startExternalStatusPolling/);
+  assert.ok(unloadMatch, 'unload should exist before external status polling');
+  assert.match(unloadMatch[1], /this\.fps = 24;\s*this\.filePath = null;\s*this\._pausedSeekHoldFrame = null;/);
+});
+
+test('time and frame seeks hold the frame immediately after calculating their targets', () => {
+  const seekMatch = videoPlayerSource.match(/\n  seek\(time\) \{([\s\S]*?)\n  \}\n\n  \/\*\*\n   \* 특정 프레임으로 이동/);
+  assert.ok(seekMatch, 'seek should exist before seekToFrame');
+  assert.match(seekMatch[1], /this\.currentFrame = this\._timeToFrame\(time\);\s*this\._pausedSeekHoldFrame = this\.currentFrame;/);
+
+  const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}\n\n  stepFrames/);
+  assert.ok(seekToFrameMatch, 'seekToFrame should exist before stepFrames');
+  assert.match(seekToFrameMatch[1], /this\._seekTargetTime = time;\s*this\._pausedSeekHoldFrame = frame;/);
+});
+
+test('paused polling keeps plus or minus one frame noise and adopts larger external drift', () => {
+  const externalStatusMatch = videoPlayerSource.match(/async _syncExternalStatus\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/);
+  assert.ok(externalStatusMatch, 'external status polling should exist');
+  const externalStatusSource = externalStatusMatch[1];
+
+  assert.match(externalStatusSource, /const nextIsPlaying = !eofReached && externalIsPlaying;\s*if \(nextIsPlaying\) \{\s*this\._pausedSeekHoldFrame = null; \/\/ 재생이 시작되면 유지 해제\s*\}\s*const shouldInterpolateExternalPlayback = nextIsPlaying && !this\._isSeeking;/);
+  assert.match(externalStatusSource, /this\._stopExternalFrameInterpolation\(\);\s*const clampedNextFrame = Math\.max\(0, Math\.min\(nextFrame, Math\.max\(0, this\.totalFrames - 1\)\)\);\s*const holdFrame = this\._pausedSeekHoldFrame;\s*if \(holdFrame !== null && Math\.abs\(clampedNextFrame - holdFrame\) <= 1\) \{[\s\S]*?this\.currentFrame = this\._clampFrame\(holdFrame\);\s*this\.currentTime = this\.currentFrame \/ Math\.max\(1, Number\(this\.fps\) \|\| 24\);\s*\} else \{\s*this\._pausedSeekHoldFrame = null;\s*this\.currentTime = candidateTime;\s*this\.currentFrame = clampedNextFrame;\s*\}/);
 });

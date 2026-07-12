@@ -61,6 +61,7 @@ export class VideoPlayer extends EventTarget {
     this._seekTargetFrame = null;
     this._seekTargetTime = null;
     this._seekToken = 0;
+    this._pausedSeekHoldFrame = null; // 정지 상태 seek 목표 프레임 유지 (폴링 -1 되돌림 방지, 피드백 24)
 
     // seeked 이벤트 핸들러 (seek 완료 시 플래그 해제)
     this._onSeeked = () => {
@@ -98,7 +99,9 @@ export class VideoPlayer extends EventTarget {
 
   _timeToFrame(time) {
     const fps = Math.max(1, Number(this.fps) || 24);
-    const frame = Math.floor((Number(time) || 0) * fps + 1e-4);
+    // 프레임의 5%까지 경계 오차 허용: 컨테이너 PTS 양자화·소수 fps 정규화 절삭으로
+    // 정지 프레임 시간이 경계보다 미세하게 낮게 보고되어도 N-1로 떨어지지 않게 한다. (피드백 24)
+    const frame = Math.floor((Number(time) || 0) * fps + 0.05);
     return this._clampFrame(frame);
   }
 
@@ -548,6 +551,7 @@ export class VideoPlayer extends EventTarget {
     // 내부 상태 즉시 업데이트 (timeupdate 이벤트 전에)
     this.currentTime = time;
     this.currentFrame = this._timeToFrame(time);
+    this._pausedSeekHoldFrame = this.currentFrame;
 
     if (this.engine !== 'html5') {
       this._stopExternalFrameInterpolation();
@@ -588,6 +592,7 @@ export class VideoPlayer extends EventTarget {
     this._isSeeking = true;
     this._seekTargetFrame = frame;
     this._seekTargetTime = time;
+    this._pausedSeekHoldFrame = frame;
     if (this._seekTimeout) {
       clearTimeout(this._seekTimeout);
     }
@@ -914,6 +919,7 @@ export class VideoPlayer extends EventTarget {
     this.totalFrames = 0;
     this.fps = 24;
     this.filePath = null;
+    this._pausedSeekHoldFrame = null;
 
     // 구간 반복 초기화
     this.clearLoop();
@@ -1122,6 +1128,9 @@ export class VideoPlayer extends EventTarget {
       const wasPlaying = this.isPlaying;
       const externalIsPlaying = status.paused === false;
       const nextIsPlaying = !eofReached && externalIsPlaying;
+      if (nextIsPlaying) {
+        this._pausedSeekHoldFrame = null; // 재생이 시작되면 유지 해제
+      }
       const shouldInterpolateExternalPlayback = nextIsPlaying && !this._isSeeking;
       const smoothedTime = this.currentTime;
       const smoothedFrame = this.currentFrame;
@@ -1130,8 +1139,18 @@ export class VideoPlayer extends EventTarget {
         this.currentTime = candidateTime;
       } else {
         this._stopExternalFrameInterpolation();
-        this.currentTime = candidateTime;
-        this.currentFrame = Math.max(0, Math.min(nextFrame, Math.max(0, this.totalFrames - 1)));
+        const clampedNextFrame = Math.max(0, Math.min(nextFrame, Math.max(0, this.totalFrames - 1)));
+        const holdFrame = this._pausedSeekHoldFrame;
+        if (holdFrame !== null && Math.abs(clampedNextFrame - holdFrame) <= 1) {
+          // 정지 상태: 폴링이 보고한 프레임이 seek 목표의 ±1 이내면 PTS 양자화 노이즈로 보고
+          // 앱이 세팅한 목표 프레임을 유지한다. (피드백 24: -1 되돌림 방지)
+          this.currentFrame = this._clampFrame(holdFrame);
+          this.currentTime = this.currentFrame / Math.max(1, Number(this.fps) || 24);
+        } else {
+          this._pausedSeekHoldFrame = null;
+          this.currentTime = candidateTime;
+          this.currentFrame = clampedNextFrame;
+        }
       }
       if (!eofReached) {
         this._externalEndedEmitted = false;
