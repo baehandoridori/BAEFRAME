@@ -8,6 +8,29 @@ import { normalizeStrokeRecords } from './drawing-stroke-records.js';
 
 const log = createLogger('DrawingLayer');
 
+function createLayerId() {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.randomUUID) {
+    return `layer-${cryptoApi.randomUUID()}`;
+  }
+  if (cryptoApi?.getRandomValues) {
+    const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    const uuid = [
+      hex.slice(0, 8),
+      hex.slice(8, 12),
+      hex.slice(12, 16),
+      hex.slice(16, 20),
+      hex.slice(20)
+    ].join('-');
+    return `layer-${uuid}`;
+  }
+
+  throw new Error('DrawingLayer ID 생성에는 Web Crypto가 필요합니다.');
+}
+
 /**
  * 키프레임 클래스
  * Adobe Animate의 키프레임과 유사
@@ -101,8 +124,9 @@ export class DrawingLayer {
   }
 
   constructor(options = {}) {
-    this.id = options.id || `layer-${DrawingLayer.nextId++}`;
-    this.name = options.name || `드로잉 ${DrawingLayer.nextId - 1}`;
+    const generatedNumber = options.id ? null : DrawingLayer.nextId++;
+    this.id = options.id || createLayerId();
+    this.name = options.name || `드로잉 ${generatedNumber ?? DrawingLayer.nextId - 1}`;
     this.visible = options.visible !== false;
     this.locked = options.locked || false;
     this.color = options.color || this._generateColor();
