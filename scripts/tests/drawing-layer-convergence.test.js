@@ -330,6 +330,66 @@ test('current-state seed continues after one keyframe failure and sends order la
   assert.equal(sender.liveblocks.events.at(-1).type, 'DRAWING_LAYER_ORDER_CHANGED');
 });
 
+test('stopped current-state seed cannot broadcast old keyframes after restart', async () => {
+  const peer = await createPeer({ actorId: 'actor-state-cancel' });
+  const layer = peer.manager.layers.find(item => item.id === 'anchor');
+  layer.getOrCreateKeyframe(41).setCanvasData(
+    `data:image/png;base64,${'x'.repeat(1024 * 1024 + 64)}`
+  );
+  let releaseReduction;
+  let reductionStarted;
+  const started = new Promise(resolve => { reductionStarted = resolve; });
+  peer.sync._reduceCanvasData = async () => {
+    reductionStarted();
+    return new Promise(resolve => { releaseReduction = resolve; });
+  };
+  peer.liveblocks.events.length = 0;
+
+  const seed = peer.sync.broadcastCurrentState();
+  await started;
+  peer.sync.stop();
+  const eventCountAtStop = peer.liveblocks.events.length;
+  peer.sync.start();
+  releaseReduction('reduced-preview');
+  await seed;
+
+  assert.equal(peer.liveblocks.events.length, eventCountAtStop);
+  assert.equal(peer.liveblocks.events.some(event => (
+    event.type === 'DRAWING_KEYFRAME_UPDATE' || event.type === 'DRAWING_KEYFRAME_CHUNK'
+  )), false);
+});
+
+test('stopped layer restore cannot finish broadcasting into a restarted session', async () => {
+  const peer = await createPeer({ actorId: 'actor-restore-cancel' });
+  const layer = peer.manager.layers.find(item => item.id === 'anchor');
+  layer.getOrCreateKeyframe(42).setCanvasData(
+    `data:image/png;base64,${'y'.repeat(1024 * 1024 + 64)}`
+  );
+  let releaseReduction;
+  let reductionStarted;
+  const started = new Promise(resolve => { reductionStarted = resolve; });
+  peer.sync._reduceCanvasData = async () => {
+    reductionStarted();
+    return new Promise(resolve => { releaseReduction = resolve; });
+  };
+  peer.liveblocks.events.length = 0;
+
+  const restore = peer.sync._broadcastRestoredLayer(layer, 0);
+  await started;
+  peer.sync.stop();
+  const eventCountAtStop = peer.liveblocks.events.length;
+  peer.sync.start();
+  releaseReduction('reduced-preview');
+  await restore;
+
+  assert.equal(peer.liveblocks.events.length, eventCountAtStop);
+  assert.equal(peer.liveblocks.events.some(event => (
+    event.type === 'DRAWING_KEYFRAME_UPDATE'
+      || event.type === 'DRAWING_KEYFRAME_CHUNK'
+      || event.type === 'DRAWING_LAYER_ORDER_CHANGED'
+  )), false);
+});
+
 test('layer id generation fails explicitly when Web Crypto is unavailable', async () => {
   const { DrawingLayer } = await import('../../renderer/scripts/modules/drawing-layer.js');
   const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');

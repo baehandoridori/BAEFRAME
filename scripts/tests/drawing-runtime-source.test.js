@@ -306,8 +306,9 @@ test('global drawing redo forwards action-scoped lifecycle metadata', () => {
   assert.match(drawingSyncSource, /type: 'DRAWING_LAYER_ORDER_CHANGED',[\s\S]*?version/);
   assert.match(drawingSyncSource, /compareOrderVersions\(version, this\._lastAppliedOrderVersion\) <= 0/);
   assert.match(drawingSyncSource, /type: 'DRAWING_LAYER_CREATED',[\s\S]*?restore: true/);
-  assert.match(drawingSyncSource, /_broadcastRestoredLayer\(layer, insertIndex\)/);
-  assert.match(drawingSyncSource, /await this\._broadcastKeyframeUpdate\(layer, keyframe\)/);
+  assert.match(drawingSyncSource, /_broadcastRestoredLayer\(layer, insertIndex, generation\)/);
+  assert.match(drawingSyncSource, /await this\._broadcastKeyframeUpdate\(layer, keyframe, \{ generation \}\)/);
+  assert.match(drawingSyncSource, /_isBroadcastGenerationCurrent\(generation\)/);
   assert.match(drawingSyncSource, /waitForPendingBroadcasts\(\)/);
   assert.match(drawingSyncSource, /type: 'DRAWING_KEYFRAME_CHUNK'/);
   assert.match(drawingSyncSource, /serializedByteSize\(event\) >= MAX_BROADCAST_SIZE/);

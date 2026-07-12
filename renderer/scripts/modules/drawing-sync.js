@@ -92,6 +92,7 @@ export class DrawingSync {
     this._lastAppliedOrderVersion = { clock: 0, actorId: '' };
     this._pendingRemoteLayerOrder = null;
     this._pendingHistoryRestoreBroadcast = Promise.resolve();
+    this._broadcastGeneration = 0;
     this._keyframeChunkTransfers = new Map();
     this._keyframeChunkBufferedBytes = 0;
 
@@ -122,6 +123,7 @@ export class DrawingSync {
     this._lm.addEventListener('broadcastReceived', this._onBroadcast);
 
     this._started = true;
+    this._broadcastGeneration += 1;
     this._actorId = this._resolveActorId();
     log.info('그리기 동기화 시작됨 (Broadcast 모드)');
   }
@@ -130,7 +132,8 @@ export class DrawingSync {
     if (!this._started || !this._lm.hasOtherCollaborators()) return Promise.resolve();
 
     const layers = this._dm.getLayers?.() || this._dm.layers || [];
-    const task = this._broadcastCurrentState(layers).catch(error => {
+    const generation = this._broadcastGeneration;
+    const task = this._broadcastCurrentState(layers, generation).catch(error => {
       log.error('현재 그리기 상태 브로드캐스트 실패', {
         error: error?.message || String(error)
       });
@@ -142,9 +145,10 @@ export class DrawingSync {
     return task;
   }
 
-  async _broadcastCurrentState(layers) {
+  async _broadcastCurrentState(layers, generation) {
     try {
       for (const layer of layers) {
+        if (!this._isBroadcastGenerationCurrent(generation)) return;
         const insertBeforeLayerId = this._dm.getLayerInsertBeforeId?.(layer.id);
         this._lm.broadcastEvent({
           type: 'DRAWING_LAYER_CREATED',
@@ -161,9 +165,10 @@ export class DrawingSync {
 
       for (const layer of layers) {
         for (const keyframe of layer.keyframes || []) {
+          if (!this._isBroadcastGenerationCurrent(generation)) return;
           if (!keyframe?.canvasData && keyframe?.isEmpty !== true) continue;
           try {
-            await this._broadcastKeyframeUpdate(layer, keyframe);
+            await this._broadcastKeyframeUpdate(layer, keyframe, { generation });
           } catch (error) {
             log.error('현재 상태 키프레임 브로드캐스트 실패', {
               layerId: layer.id,
@@ -174,11 +179,14 @@ export class DrawingSync {
         }
       }
     } finally {
-      this._broadcastLayerOrder();
-
-      log.info('현재 그리기 상태 브로드캐스트 완료', {
-        layers: layers.length
-      });
+      if (this._isBroadcastGenerationCurrent(generation)) {
+        this._broadcastLayerOrder();
+        log.info('현재 그리기 상태 브로드캐스트 완료', {
+          layers: layers.length
+        });
+      } else {
+        log.debug('오래된 현재 상태 브로드캐스트 취소됨');
+      }
     }
   }
 
@@ -201,6 +209,8 @@ export class DrawingSync {
     this._lm.removeEventListener('broadcastReceived', this._onBroadcast);
     this._clearKeyframeChunkTransfers();
     this._pendingRemoteLayerOrder = null;
+    this._broadcastGeneration += 1;
+    this._pendingHistoryRestoreBroadcast = Promise.resolve();
 
     this._started = false;
     log.info('그리기 동기화 중지됨');
@@ -320,8 +330,10 @@ export class DrawingSync {
     await this._broadcastKeyframeUpdate(layer, updatedKeyframe);
   }
 
-  async _broadcastKeyframeUpdate(layer, keyframe) {
+  async _broadcastKeyframeUpdate(layer, keyframe, options = {}) {
     if (!layer || !keyframe) return;
+    const generation = options.generation ?? this._broadcastGeneration;
+    if (!this._isBroadcastGenerationCurrent(generation)) return;
 
     const originalCanvasData = keyframe.canvasData || null;
     if (!originalCanvasData && keyframe.isEmpty !== true) return;
@@ -339,6 +351,7 @@ export class DrawingSync {
     const originalEvent = createEvent(originalCanvasData);
     const originalEventSize = serializedByteSize(originalEvent);
     if (originalEventSize < MAX_BROADCAST_SIZE) {
+      if (!this._isBroadcastGenerationCurrent(generation)) return;
       this._lm.broadcastEvent(originalEvent);
       log.debug('그리기 브로드캐스트 전송', {
         layerId: layer.id,
@@ -354,6 +367,7 @@ export class DrawingSync {
       });
       try {
         const reduced = await this._reduceCanvasData(originalCanvasData);
+        if (!this._isBroadcastGenerationCurrent(generation)) return;
         if (reduced) {
           const reducedEvent = createEvent(reduced);
           if (serializedByteSize(reducedEvent) < MAX_BROADCAST_SIZE) {
@@ -365,6 +379,7 @@ export class DrawingSync {
       }
     }
 
+    if (!this._isBroadcastGenerationCurrent(generation)) return;
     this._broadcastChunkedKeyframeEvent(originalEvent);
 
     log.debug('그리기 브로드캐스트 전송', {
@@ -398,6 +413,10 @@ export class DrawingSync {
       }
       this._lm.broadcastEvent(chunkEvent);
     }
+  }
+
+  _isBroadcastGenerationCurrent(generation) {
+    return this._started && generation === this._broadcastGeneration;
   }
 
   _onLayerCreated(e) {
@@ -448,7 +467,8 @@ export class DrawingSync {
       const insertIndex = layers.findIndex(layer => layer.id === delta.layerId);
       const layer = layers[insertIndex];
       if (layer) {
-        const task = this._broadcastRestoredLayer(layer, insertIndex)
+        const generation = this._broadcastGeneration;
+        const task = this._broadcastRestoredLayer(layer, insertIndex, generation)
           .catch(error => {
             log.error('복원 레이어 브로드캐스트 실패', {
               layerId: layer.id,
@@ -477,7 +497,8 @@ export class DrawingSync {
     });
   }
 
-  async _broadcastRestoredLayer(layer, insertIndex) {
+  async _broadcastRestoredLayer(layer, insertIndex, generation = this._broadcastGeneration) {
+    if (!this._isBroadcastGenerationCurrent(generation)) return;
     const layerData = layer.toJSON?.() || layer;
     const { keyframes = [], ...layerMetadata } = layerData;
     const insertBeforeLayerId = this._dm.getLayerInsertBeforeId?.(layer.id) || undefined;
@@ -496,8 +517,9 @@ export class DrawingSync {
     });
     try {
       for (const keyframe of keyframes) {
+        if (!this._isBroadcastGenerationCurrent(generation)) return;
         try {
-          await this._broadcastKeyframeUpdate(layer, keyframe);
+          await this._broadcastKeyframeUpdate(layer, keyframe, { generation });
         } catch (error) {
           log.error('복원 키프레임 브로드캐스트 실패', {
             layerId: layer.id,
@@ -507,7 +529,9 @@ export class DrawingSync {
         }
       }
     } finally {
-      this._broadcastLayerOrder();
+      if (this._isBroadcastGenerationCurrent(generation)) {
+        this._broadcastLayerOrder();
+      }
     }
   }
 
