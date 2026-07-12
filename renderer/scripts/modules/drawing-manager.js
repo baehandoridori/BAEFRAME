@@ -61,6 +61,10 @@ export class DrawingManager extends EventTarget {
     // 레이어 관리
     this.layers = [];
     this.activeLayerId = null;
+    // 동시 생성된 레이어를 같은 기준점에서 결정론적으로 정렬하기 위한 런타임 메타데이터.
+    // .bframe 저장 스키마에는 포함하지 않는다.
+    this._layerInsertAnchors = new Map();
+    this._deletedLayerIds = new Set();
     this._frameClipboard = null;
 
     // 비디오 정보
@@ -491,27 +495,74 @@ export class DrawingManager extends EventTarget {
   /**
    * 새 레이어 생성
    */
+  getLayerInsertBeforeId(layerId) {
+    return this._layerInsertAnchors.get(layerId) || null;
+  }
+
+  isLayerDeleted(layerId) {
+    return this._deletedLayerIds.has(layerId);
+  }
+
+  _normalizeLayerAnchorGroup(anchorId) {
+    if (!anchorId) return;
+
+    const siblingIndexes = [];
+    const siblings = [];
+    this.layers.forEach((existingLayer, index) => {
+      if (this._layerInsertAnchors.get(existingLayer.id) === anchorId) {
+        siblingIndexes.push(index);
+        siblings.push(existingLayer);
+      }
+    });
+    if (siblings.length === 0) return;
+
+    const firstSiblingIndex = Math.min(...siblingIndexes);
+    const siblingIds = new Set(siblings.map(sibling => sibling.id));
+    siblings.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    this.layers = this.layers.filter(existingLayer => !siblingIds.has(existingLayer.id));
+
+    const anchorIndex = this.layers.findIndex(existingLayer => existingLayer.id === anchorId);
+    const targetIndex = anchorIndex === -1
+      ? Math.min(firstSiblingIndex, this.layers.length)
+      : anchorIndex;
+    this.layers.splice(targetIndex, 0, ...siblings);
+  }
+
   createLayer(options = {}, saveHistory = true) {
     const shouldActivate = options.skipActivate !== true;
     if (shouldActivate) {
       this.commitActiveSelection();
     }
 
+    const layer = new DrawingLayer(options);
+
     // Undo를 위해 현재 상태 저장
     if (saveHistory && this.layers.length > 0) {
-      this._saveToHistory();
+      this._saveToHistory({ kind: 'create', layerId: layer.id });
     }
 
-    const layer = new DrawingLayer(options);
-    const insertIndex = Number.isInteger(options.insertIndex)
+    const insertBeforeLayerId = typeof options.insertBeforeLayerId === 'string'
+      ? options.insertBeforeLayerId
+      : null;
+    const anchorIndex = insertBeforeLayerId
+      ? this.layers.findIndex(existingLayer => existingLayer.id === insertBeforeLayerId)
+      : -1;
+    const fallbackIndex = Number.isInteger(options.insertIndex)
       ? Math.max(0, Math.min(options.insertIndex, this.layers.length))
       : this.layers.length;
-    this.layers.splice(insertIndex, 0, layer);
+    this.layers.splice(anchorIndex === -1 ? fallbackIndex : anchorIndex, 0, layer);
+    if (insertBeforeLayerId) {
+      this._layerInsertAnchors.set(layer.id, insertBeforeLayerId);
+      this._normalizeLayerAnchorGroup(insertBeforeLayerId);
+    }
+    // anchor보다 먼저 도착한 대기 형제 그룹이 있으면 anchor 바로 앞으로 이동한다.
+    this._normalizeLayerAnchorGroup(layer.id);
+    const insertIndex = this.layers.findIndex(existingLayer => existingLayer.id === layer.id);
     if (shouldActivate) {
       this.activeLayerId = layer.id;
     }
 
-    this._emit('layerCreated', { layer, insertIndex });
+    this._emit('layerCreated', { layer, insertIndex, insertBeforeLayerId });
     this._emit('layersChanged');
     this.renderFrame(this.currentFrame);
 
@@ -522,17 +573,21 @@ export class DrawingManager extends EventTarget {
   /**
    * 레이어 삭제
    */
-  deleteLayer(layerId) {
+  deleteLayer(layerId, saveHistory = true) {
     const index = this.layers.findIndex(l => l.id === layerId);
     if (index === -1) return false;
 
     this.commitActiveSelection();
 
     // Undo를 위해 현재 상태 저장
-    this._saveToHistory();
+    if (saveHistory) {
+      this._saveToHistory({ kind: 'delete', layerId });
+    }
 
     const layer = this.layers[index];
     this.layers.splice(index, 1);
+    this._layerInsertAnchors.delete(layerId);
+    this._deletedLayerIds.add(layerId);
 
     // 활성 레이어가 삭제된 경우 다른 레이어 선택
     if (this.activeLayerId === layerId) {
@@ -546,6 +601,74 @@ export class DrawingManager extends EventTarget {
     this.renderFrame(this.currentFrame);
 
     log.info('레이어 삭제됨', { id: layer.id, name: layer.name });
+    return true;
+  }
+
+  markLayerDeleted(layerId, saveHistory = true) {
+    if (this.layers.some(layer => layer.id === layerId)) {
+      return this.deleteLayer(layerId, saveHistory);
+    }
+    this._deletedLayerIds.add(layerId);
+    return false;
+  }
+
+  restoreLayer(layerData, options = {}) {
+    if (!layerData?.id) return null;
+
+    this._deletedLayerIds.delete(layerData.id);
+    const existing = this.layers.find(layer => layer.id === layerData.id);
+    if (existing) return existing;
+
+    const restoredLayer = DrawingLayer.fromJSON({
+      ...layerData,
+      keyframes: Array.isArray(layerData.keyframes) ? layerData.keyframes : []
+    });
+    const insertIndex = Number.isInteger(options.insertIndex)
+      ? Math.max(0, Math.min(options.insertIndex, this.layers.length))
+      : this.layers.length;
+    this.layers.splice(insertIndex, 0, restoredLayer);
+    if (typeof options.insertBeforeLayerId === 'string') {
+      this._layerInsertAnchors.set(restoredLayer.id, options.insertBeforeLayerId);
+      this._normalizeLayerAnchorGroup(options.insertBeforeLayerId);
+    }
+    this._normalizeLayerAnchorGroup(restoredLayer.id);
+    this._emit('layerRestored', { layer: restoredLayer, insertIndex });
+    this._emit('layersChanged');
+    this.renderFrame(this.currentFrame);
+    return restoredLayer;
+  }
+
+  applyLayerOrder(layerIds, options = {}) {
+    if (!Array.isArray(layerIds)) return false;
+
+    const existingById = new Map(this.layers.map(layer => [layer.id, layer]));
+    const orderedLayers = [];
+    const orderedIds = new Set();
+    for (const layerId of layerIds) {
+      const layer = existingById.get(layerId);
+      if (layer && !orderedIds.has(layerId)) {
+        orderedLayers.push(layer);
+        orderedIds.add(layerId);
+      }
+    }
+    if (orderedLayers.length < 2) return false;
+
+    let orderedIndex = 0;
+    const nextLayers = this.layers.map(layer => (
+      orderedIds.has(layer.id) ? orderedLayers[orderedIndex++] : layer
+    ));
+    const changed = nextLayers.some((layer, index) => layer !== this.layers[index]);
+    if (!changed) return false;
+
+    this.layers = nextLayers;
+    for (const layerId of orderedIds) {
+      this._layerInsertAnchors.delete(layerId);
+    }
+    this._emit('layersChanged');
+    if (options.emitOrder === true) {
+      this._emit('layerOrderChanged', { layerIds: this.layers.map(layer => layer.id) });
+    }
+    this.renderFrame(this.currentFrame);
     return true;
   }
 
@@ -591,12 +714,15 @@ export class DrawingManager extends EventTarget {
     if (targetIndex < 0 || targetIndex >= this.layers.length) return false;
 
     this.commitActiveSelection();
-    this._saveToHistory();
+    this._saveToHistory({ kind: 'order', layerId: this.activeLayerId });
+    // 사용자가 정한 현재 배열 순서를 source of truth로 삼는다.
+    this._layerInsertAnchors.clear();
     const [layer] = this.layers.splice(index, 1);
     this.layers.splice(targetIndex, 0, layer);
     this.activeLayerId = layer.id;
     this._emit('activeLayerChanged', { layer });
     this._emit('layersChanged');
+    this._emit('layerOrderChanged', { layerIds: this.layers.map(item => item.id) });
     this.renderFrame(this.currentFrame);
     return true;
   }
@@ -632,14 +758,16 @@ export class DrawingManager extends EventTarget {
     return {
       layers: this.layers.map(l => l.toJSON()),
       activeLayerId: this.activeLayerId,
-      currentFrame: this.currentFrame
+      currentFrame: this.currentFrame,
+      layerInsertAnchors: [...this._layerInsertAnchors],
+      deletedLayerIds: [...this._deletedLayerIds]
     };
   }
 
   /**
    * 현재 상태를 히스토리에 저장
    */
-  _saveToHistory() {
+  _saveToHistory(actionMetadata = null) {
     if (this._isUndoingOrRedoing) return;
 
     // 현재 상태 스냅샷 생성
@@ -650,9 +778,13 @@ export class DrawingManager extends EventTarget {
       this._onUndoPush({
         type: 'DRAWING',
         timestamp: Date.now(),
+        drawingAction: actionMetadata,
         undo: async () => {
           this._isUndoingOrRedoing = true;
-          this._restoreSnapshot(snapshotBefore);
+          this._restoreSnapshot(snapshotBefore, {
+            actionMetadata,
+            direction: 'undo'
+          });
           this._isUndoingOrRedoing = false;
           this._emit('undo');
         },
@@ -682,18 +814,91 @@ export class DrawingManager extends EventTarget {
   /**
    * 스냅샷에서 상태 복원
    */
-  _restoreSnapshot(snapshot) {
+  _restoreSnapshot(snapshot, context = {}) {
     if (!snapshot) return;
 
     this.drawingCanvas.clearSelection?.();
 
-    // 레이어 복원
-    this.layers = snapshot.layers.map(l => DrawingLayer.fromJSON(l));
-    this.activeLayerId = snapshot.activeLayerId;
+    const actionMetadata = context.actionMetadata || null;
+    const direction = context.direction || null;
+    const targetLayerId = actionMetadata?.layerId || null;
+    const targetShouldExist = (
+      (actionMetadata?.kind === 'delete' && direction === 'undo')
+      || (actionMetadata?.kind === 'create' && direction === 'redo')
+    );
+    const targetShouldBeRemoved = (
+      (actionMetadata?.kind === 'create' && direction === 'undo')
+      || (actionMetadata?.kind === 'delete' && direction === 'redo')
+    );
+    const isLifecycleAction = actionMetadata?.kind === 'create' || actionMetadata?.kind === 'delete';
+    const isOrderAction = actionMetadata?.kind === 'order';
+
+    const currentLayers = [...this.layers];
+    const currentById = new Map(currentLayers.map(layer => [layer.id, layer]));
+    const snapshotLayers = Array.isArray(snapshot.layers) ? snapshot.layers : [];
+    const snapshotIds = new Set(snapshotLayers.map(layer => layer.id));
+    const restoredLayers = [];
+
+    for (const layerData of snapshotLayers) {
+      if (layerData.id === targetLayerId && targetShouldBeRemoved) continue;
+      const currentLayer = currentById.get(layerData.id);
+      if (currentLayer) {
+        const preservesCurrentLayer = isOrderAction
+          || (isLifecycleAction && layerData.id !== targetLayerId);
+        restoredLayers.push(preservesCurrentLayer ? currentLayer : DrawingLayer.fromJSON(layerData));
+      } else if (layerData.id === targetLayerId && targetShouldExist) {
+        restoredLayers.push(DrawingLayer.fromJSON(layerData));
+      }
+    }
+
+    currentLayers.forEach((layer, currentIndex) => {
+      if (snapshotIds.has(layer.id)) return;
+      if (layer.id === targetLayerId && targetShouldBeRemoved) return;
+      restoredLayers.splice(Math.min(currentIndex, restoredLayers.length), 0, layer);
+    });
+
+    this.layers = restoredLayers;
+    const restoredIds = new Set(this.layers.map(layer => layer.id));
+    const nextAnchors = new Map(this._layerInsertAnchors);
+    if (!isOrderAction) {
+      for (const [layerId, anchorId] of snapshot.layerInsertAnchors || []) {
+        const shouldRestoreAnchor = !isLifecycleAction
+          || (layerId === targetLayerId && targetShouldExist);
+        if (restoredIds.has(layerId) && shouldRestoreAnchor) {
+          nextAnchors.set(layerId, anchorId);
+        }
+      }
+    }
+    for (const layerId of [...nextAnchors.keys()]) {
+      if (!restoredIds.has(layerId)) nextAnchors.delete(layerId);
+    }
+    this._layerInsertAnchors = nextAnchors;
+
+    const nextDeletedIds = new Set(this._deletedLayerIds);
+    for (const layerId of restoredIds) nextDeletedIds.delete(layerId);
+    if (targetLayerId && targetShouldExist) nextDeletedIds.delete(targetLayerId);
+    if (targetLayerId && targetShouldBeRemoved) nextDeletedIds.add(targetLayerId);
+    this._deletedLayerIds = nextDeletedIds;
+
+    this.activeLayerId = restoredIds.has(snapshot.activeLayerId)
+      ? snapshot.activeLayerId
+      : restoredIds.has(this.activeLayerId)
+        ? this.activeLayerId
+        : this.layers[0]?.id || null;
 
     // UI 업데이트
     this._emit('layersChanged');
     this.renderFrame(this.currentFrame);
+    if (direction) {
+      const delta = actionMetadata?.kind === 'order'
+        ? { type: 'order', layerId: targetLayerId }
+        : targetLayerId && targetShouldExist
+          ? { type: 'restore', layerId: targetLayerId }
+          : targetLayerId && targetShouldBeRemoved
+            ? { type: 'delete', layerId: targetLayerId }
+            : null;
+      this._emit('historyRestored', { actionMetadata, direction, delta });
+    }
   }
 
   /**
@@ -1369,6 +1574,8 @@ export class DrawingManager extends EventTarget {
   importData(data) {
     this.drawingCanvas.clearSelection?.();
     this.layers = data.layers.map(l => DrawingLayer.fromJSON(l));
+    this._layerInsertAnchors.clear();
+    this._deletedLayerIds.clear();
     this.activeLayerId = data.activeLayerId;
     const playbackTotalFrames = Number(this.totalFrames);
     const savedTotalFrames = Number(data.totalFrames);
@@ -1409,6 +1616,8 @@ export class DrawingManager extends EventTarget {
   clearAll() {
     this.drawingCanvas.clearSelection?.();
     this.layers = [];
+    this._layerInsertAnchors.clear();
+    this._deletedLayerIds.clear();
     this.activeLayerId = null;
     this.drawingCanvas.clear();
     this._clearStaticLayerCanvases();
@@ -1423,6 +1632,8 @@ export class DrawingManager extends EventTarget {
   reset() {
     this.drawingCanvas.clearSelection?.();
     this.layers = [];
+    this._layerInsertAnchors.clear();
+    this._deletedLayerIds.clear();
     this.activeLayerId = null;
     this.drawingCanvas.clear();
     this._clearStaticLayerCanvases();
@@ -1787,6 +1998,8 @@ export class DrawingManager extends EventTarget {
   destroy() {
     this.drawingCanvas.destroy();
     this.layers = [];
+    this._layerInsertAnchors.clear();
+    this._deletedLayerIds.clear();
     this.preloadedFrames.clear();
     log.info('DrawingManager 정리됨');
   }

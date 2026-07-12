@@ -15,12 +15,54 @@ const log = createLogger('DrawingSync');
 
 // Broadcast 메시지 사이즈 제한 (1MB)
 const MAX_BROADCAST_SIZE = 1024 * 1024;
+const KEYFRAME_CHUNK_RAW_SIZE = 384 * 1024;
+const KEYFRAME_CHUNK_TIMEOUT_MS = 30000;
+const MAX_ACTIVE_KEYFRAME_TRANSFERS = 8;
+const MAX_KEYFRAME_TRANSFER_BYTES = 32 * 1024 * 1024;
+const MAX_TOTAL_KEYFRAME_BUFFERED_BYTES = 64 * 1024 * 1024;
+const MAX_KEYFRAME_CHUNK_DATA_BYTES = 600 * 1024;
+const MAX_KEYFRAME_CHUNKS = Math.ceil(
+  MAX_KEYFRAME_TRANSFER_BYTES / (KEYFRAME_CHUNK_RAW_SIZE * 4 / 3)
+);
+
+function serializedByteSize(value) {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function createSecureActorId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    return [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+  throw new Error('DrawingSync actor ID 생성에는 Web Crypto가 필요합니다.');
+}
+
+function compareOrderVersions(left, right) {
+  if (left.clock !== right.clock) return left.clock - right.clock;
+  return left.actorId < right.actorId ? -1 : left.actorId > right.actorId ? 1 : 0;
+}
 
 /**
  * 그리기 동기화 매니저 (Broadcast 기반)
  */
 export class DrawingSync {
-  constructor({ liveblocksManager, drawingManager }) {
+  constructor({ liveblocksManager, drawingManager, actorId = null }) {
     this._lm = liveblocksManager;
     this._dm = drawingManager;
 
@@ -37,11 +79,22 @@ export class DrawingSync {
     this._onDrawEnd = this._onDrawEnd.bind(this);
     this._onLayerCreated = this._onLayerCreated.bind(this);
     this._onLayerDeleted = this._onLayerDeleted.bind(this);
+    this._onLayerOrderChanged = this._onLayerOrderChanged.bind(this);
+    this._onHistoryRestored = this._onHistoryRestored.bind(this);
     this._onKeyframeRemoved = this._onKeyframeRemoved.bind(this);
     this._onKeyframeUpdated = this._onKeyframeUpdated.bind(this);
     this._onBroadcast = this._onBroadcast.bind(this);
 
     this._started = false;
+    this._explicitActorId = actorId === null || actorId === undefined ? null : String(actorId);
+    this._actorId = null;
+    this._orderClock = 0;
+    this._lastAppliedOrderVersion = { clock: 0, actorId: '' };
+    this._pendingRemoteLayerOrder = null;
+    this._pendingHistoryRestoreBroadcast = Promise.resolve();
+    this._broadcastGeneration = 0;
+    this._keyframeChunkTransfers = new Map();
+    this._keyframeChunkBufferedBytes = 0;
 
     log.info('DrawingSync 초기화됨 (Broadcast 모드)');
   }
@@ -61,6 +114,8 @@ export class DrawingSync {
     this._dm.addEventListener('drawend', this._onDrawEnd);
     this._dm.addEventListener('layerCreated', this._onLayerCreated);
     this._dm.addEventListener('layerDeleted', this._onLayerDeleted);
+    this._dm.addEventListener('layerOrderChanged', this._onLayerOrderChanged);
+    this._dm.addEventListener('historyRestored', this._onHistoryRestored);
     this._dm.addEventListener('keyframeRemoved', this._onKeyframeRemoved);
     this._dm.addEventListener('keyframeUpdated', this._onKeyframeUpdated);
 
@@ -68,42 +123,72 @@ export class DrawingSync {
     this._lm.addEventListener('broadcastReceived', this._onBroadcast);
 
     this._started = true;
+    this._broadcastGeneration += 1;
+    this._actorId = this._resolveActorId();
     log.info('그리기 동기화 시작됨 (Broadcast 모드)');
   }
 
   broadcastCurrentState() {
-    if (!this._started || !this._lm.hasOtherCollaborators()) return;
+    if (!this._started || !this._lm.hasOtherCollaborators()) return Promise.resolve();
 
     const layers = this._dm.getLayers?.() || this._dm.layers || [];
-    for (const layer of layers) {
-      this._lm.broadcastEvent({
-        type: 'DRAWING_LAYER_CREATED',
-        layer: {
-          id: layer.id,
-          name: layer.name,
-          visible: layer.visible,
-          color: layer.color,
-          opacity: layer.opacity
-        }
+    const generation = this._broadcastGeneration;
+    const task = this._broadcastCurrentState(layers, generation).catch(error => {
+      log.error('현재 그리기 상태 브로드캐스트 실패', {
+        error: error?.message || String(error)
       });
+    });
+    this._pendingHistoryRestoreBroadcast = Promise.all([
+      this._pendingHistoryRestoreBroadcast,
+      task
+    ]).then(() => undefined);
+    return task;
+  }
 
-      for (const keyframe of layer.keyframes || []) {
-        if (!keyframe?.canvasData && keyframe?.isEmpty !== true) continue;
+  async _broadcastCurrentState(layers, generation) {
+    try {
+      for (const layer of layers) {
+        if (!this._isBroadcastGenerationCurrent(generation)) return;
+        const insertBeforeLayerId = this._dm.getLayerInsertBeforeId?.(layer.id);
         this._lm.broadcastEvent({
-          type: 'DRAWING_KEYFRAME_UPDATE',
-          layerId: layer.id,
-          frame: keyframe.frame,
-          canvasData: keyframe.canvasData,
-          baseCanvasData: keyframe.baseCanvasData,
-          strokeRecords: keyframe.strokeRecords,
-          isEmpty: keyframe.isEmpty === true
+          type: 'DRAWING_LAYER_CREATED',
+          restore: true,
+          insertBeforeLayerId: insertBeforeLayerId || undefined,
+          layer: {
+            id: layer.id,
+            name: layer.name,
+            visible: layer.visible,
+            color: layer.color,
+            opacity: layer.opacity
+          }
         });
       }
-    }
 
-    log.info('현재 그리기 상태 브로드캐스트 완료', {
-      layers: layers.length
-    });
+      for (const layer of layers) {
+        for (const keyframe of layer.keyframes || []) {
+          if (!this._isBroadcastGenerationCurrent(generation)) return;
+          if (!keyframe?.canvasData && keyframe?.isEmpty !== true) continue;
+          try {
+            await this._broadcastKeyframeUpdate(layer, keyframe, { generation });
+          } catch (error) {
+            log.error('현재 상태 키프레임 브로드캐스트 실패', {
+              layerId: layer.id,
+              frame: keyframe.frame,
+              error: error?.message || String(error)
+            });
+          }
+        }
+      }
+    } finally {
+      if (this._isBroadcastGenerationCurrent(generation)) {
+        this._broadcastLayerOrder();
+        log.info('현재 그리기 상태 브로드캐스트 완료', {
+          layers: layers.length
+        });
+      } else {
+        log.debug('오래된 현재 상태 브로드캐스트 취소됨');
+      }
+    }
   }
 
   /**
@@ -118,9 +203,17 @@ export class DrawingSync {
     this._dm.removeEventListener('drawend', this._onDrawEnd);
     this._dm.removeEventListener('layerCreated', this._onLayerCreated);
     this._dm.removeEventListener('layerDeleted', this._onLayerDeleted);
+    this._dm.removeEventListener('layerOrderChanged', this._onLayerOrderChanged);
+    this._dm.removeEventListener('historyRestored', this._onHistoryRestored);
     this._dm.removeEventListener('keyframeRemoved', this._onKeyframeRemoved);
     this._dm.removeEventListener('keyframeUpdated', this._onKeyframeUpdated);
     this._lm.removeEventListener('broadcastReceived', this._onBroadcast);
+    this._clearKeyframeChunkTransfers();
+    this._pendingRemoteLayerOrder = null;
+    this._orderClock = 0;
+    this._lastAppliedOrderVersion = { clock: 0, actorId: '' };
+    this._broadcastGeneration += 1;
+    this._pendingHistoryRestoreBroadcast = Promise.resolve();
 
     this._started = false;
     log.info('그리기 동기화 중지됨');
@@ -131,6 +224,10 @@ export class DrawingSync {
    */
   get isRemoteUpdate() {
     return this._isRemoteUpdate;
+  }
+
+  waitForPendingBroadcasts() {
+    return this._pendingHistoryRestoreBroadcast;
   }
 
   // ============================================================================
@@ -236,49 +333,104 @@ export class DrawingSync {
     await this._broadcastKeyframeUpdate(layer, updatedKeyframe);
   }
 
-  async _broadcastKeyframeUpdate(layer, keyframe) {
+  async _broadcastKeyframeUpdate(layer, keyframe, options = {}) {
     if (!layer || !keyframe) return;
+    const generation = options.generation ?? this._broadcastGeneration;
+    if (!this._isBroadcastGenerationCurrent(generation)) return;
 
-    let sendData = keyframe.canvasData || null;
-    if (!sendData && keyframe.isEmpty !== true) return;
+    const originalCanvasData = keyframe.canvasData || null;
+    if (!originalCanvasData && keyframe.isEmpty !== true) return;
 
-    const dataSize = typeof sendData === 'string' ? sendData.length : 0;
-
-    if (dataSize > MAX_BROADCAST_SIZE) {
-      log.warn('캔버스 데이터가 1MB 초과, 품질 낮춰서 전송', {
-        size: (dataSize / 1024).toFixed(0) + 'KB'
-      });
-      const reduced = await this._reduceCanvasData(sendData);
-      if (reduced) {
-        sendData = reduced;
-      }
-    }
-
-    this._lm.broadcastEvent({
+    const createEvent = canvasData => ({
       type: 'DRAWING_KEYFRAME_UPDATE',
       layerId: layer.id,
       frame: keyframe.frame,
-      canvasData: sendData,
+      canvasData,
       baseCanvasData: keyframe.baseCanvasData,
       strokeRecords: keyframe.strokeRecords,
       isEmpty: keyframe.isEmpty === true
     });
 
+    const originalEvent = createEvent(originalCanvasData);
+    const originalEventSize = serializedByteSize(originalEvent);
+    if (originalEventSize < MAX_BROADCAST_SIZE) {
+      if (!this._isBroadcastGenerationCurrent(generation)) return;
+      this._lm.broadcastEvent(originalEvent);
+      log.debug('그리기 브로드캐스트 전송', {
+        layerId: layer.id,
+        frame: keyframe.frame,
+        size: (originalEventSize / 1024).toFixed(0) + 'KB'
+      });
+      return;
+    }
+
+    if (typeof originalCanvasData === 'string') {
+      log.warn('키프레임 이벤트가 1MB 초과, 품질 낮춰서 전송 시도', {
+        size: (originalEventSize / 1024).toFixed(0) + 'KB'
+      });
+      try {
+        const reduced = await this._reduceCanvasData(originalCanvasData);
+        if (!this._isBroadcastGenerationCurrent(generation)) return;
+        if (reduced) {
+          const reducedEvent = createEvent(reduced);
+          if (serializedByteSize(reducedEvent) < MAX_BROADCAST_SIZE) {
+            this._lm.broadcastEvent(reducedEvent);
+          }
+        }
+      } catch (error) {
+        log.warn('키프레임 축소 처리 실패', { error: error?.message || String(error) });
+      }
+    }
+
+    if (!this._isBroadcastGenerationCurrent(generation)) return;
+    this._broadcastChunkedKeyframeEvent(originalEvent);
+
     log.debug('그리기 브로드캐스트 전송', {
       layerId: layer.id,
       frame: keyframe.frame,
-      size: (dataSize / 1024).toFixed(0) + 'KB'
+      size: (originalEventSize / 1024).toFixed(0) + 'KB'
     });
+  }
+
+  _broadcastChunkedKeyframeEvent(event) {
+    const payloadBytes = new TextEncoder().encode(JSON.stringify(event));
+    const count = Math.ceil(payloadBytes.length / KEYFRAME_CHUNK_RAW_SIZE);
+    if (count < 1 || count > MAX_KEYFRAME_CHUNKS) {
+      throw new Error(`키프레임 청크 수가 허용 범위를 벗어났습니다: ${count}`);
+    }
+
+    const transferId = `${this._actorId || this._resolveActorId()}:${createSecureActorId()}`;
+    for (let index = 0; index < count; index++) {
+      const start = index * KEYFRAME_CHUNK_RAW_SIZE;
+      const chunkEvent = {
+        type: 'DRAWING_KEYFRAME_CHUNK',
+        transferId,
+        index,
+        count,
+        layerId: event.layerId,
+        frame: event.frame,
+        data: bytesToBase64(payloadBytes.subarray(start, start + KEYFRAME_CHUNK_RAW_SIZE))
+      };
+      if (serializedByteSize(chunkEvent) >= MAX_BROADCAST_SIZE) {
+        throw new Error('키프레임 청크가 브로드캐스트 제한을 초과했습니다.');
+      }
+      this._lm.broadcastEvent(chunkEvent);
+    }
+  }
+
+  _isBroadcastGenerationCurrent(generation) {
+    return this._started && generation === this._broadcastGeneration;
   }
 
   _onLayerCreated(e) {
     if (this._isRemoteUpdate) return;
 
-    const { layer, insertIndex } = e.detail || {};
+    const { layer, insertIndex, insertBeforeLayerId } = e.detail || {};
     if (layer) {
       this._lm.broadcastEvent({
         type: 'DRAWING_LAYER_CREATED',
         insertIndex: Number.isInteger(insertIndex) ? insertIndex : undefined,
+        insertBeforeLayerId: insertBeforeLayerId || undefined,
         layer: {
           id: layer.id,
           name: layer.name,
@@ -301,6 +453,104 @@ export class DrawingSync {
         layerId
       });
     }
+  }
+
+  _onLayerOrderChanged() {
+    if (this._isRemoteUpdate) return;
+    this._broadcastLayerOrder();
+  }
+
+  _onHistoryRestored(e) {
+    if (this._isRemoteUpdate) return;
+
+    const { delta } = e.detail || {};
+    if (!delta) return;
+    const layers = this._dm.getLayers?.() || this._dm.layers || [];
+    if (delta.type === 'restore') {
+      const insertIndex = layers.findIndex(layer => layer.id === delta.layerId);
+      const layer = layers[insertIndex];
+      if (layer) {
+        const generation = this._broadcastGeneration;
+        const task = this._broadcastRestoredLayer(layer, insertIndex, generation)
+          .catch(error => {
+            log.error('복원 레이어 브로드캐스트 실패', {
+              layerId: layer.id,
+              error: error?.message || String(error)
+            });
+          });
+        this._pendingHistoryRestoreBroadcast = Promise.all([
+          this._pendingHistoryRestoreBroadcast,
+          task
+        ]).then(() => undefined);
+      }
+      return;
+    } else if (delta.type === 'delete') {
+      this._lm.broadcastEvent({ type: 'DRAWING_LAYER_DELETED', layerId: delta.layerId });
+    }
+    this._broadcastLayerOrder();
+  }
+
+  _broadcastLayerOrder() {
+    const layers = this._dm.getLayers?.() || this._dm.layers || [];
+    const version = this._nextLocalOrderVersion();
+    this._lm.broadcastEvent({
+      type: 'DRAWING_LAYER_ORDER_CHANGED',
+      layerIds: layers.map(layer => layer.id),
+      version
+    });
+  }
+
+  async _broadcastRestoredLayer(layer, insertIndex, generation = this._broadcastGeneration) {
+    if (!this._isBroadcastGenerationCurrent(generation)) return;
+    const layerData = layer.toJSON?.() || layer;
+    const { keyframes = [], ...layerMetadata } = layerData;
+    const insertBeforeLayerId = this._dm.getLayerInsertBeforeId?.(layer.id) || undefined;
+    this._lm.broadcastEvent({
+      type: 'DRAWING_LAYER_RESTORED',
+      insertIndex,
+      insertBeforeLayerId,
+      layer: layerMetadata
+    });
+    this._lm.broadcastEvent({
+      type: 'DRAWING_LAYER_CREATED',
+      restore: true,
+      insertIndex,
+      insertBeforeLayerId,
+      layer: layerMetadata
+    });
+    try {
+      for (const keyframe of keyframes) {
+        if (!this._isBroadcastGenerationCurrent(generation)) return;
+        try {
+          await this._broadcastKeyframeUpdate(layer, keyframe, { generation });
+        } catch (error) {
+          log.error('복원 키프레임 브로드캐스트 실패', {
+            layerId: layer.id,
+            frame: keyframe.frame,
+            error: error?.message || String(error)
+          });
+        }
+      }
+    } finally {
+      if (this._isBroadcastGenerationCurrent(generation)) {
+        this._broadcastLayerOrder();
+      }
+    }
+  }
+
+  _resolveActorId() {
+    if (this._explicitActorId) return this._explicitActorId;
+    const connectionId = this._lm.getSelf?.()?.connectionId;
+    return connectionId === null || connectionId === undefined
+      ? createSecureActorId()
+      : String(connectionId);
+  }
+
+  _nextLocalOrderVersion() {
+    this._orderClock = Math.max(this._orderClock, this._lastAppliedOrderVersion.clock) + 1;
+    const version = { clock: this._orderClock, actorId: this._actorId || this._resolveActorId() };
+    this._lastAppliedOrderVersion = version;
+    return version;
   }
 
   _onKeyframeRemoved(e) {
@@ -329,11 +579,20 @@ export class DrawingSync {
     case 'DRAWING_KEYFRAME_UPDATE':
       this._applyRemoteKeyframe(event);
       break;
+    case 'DRAWING_KEYFRAME_CHUNK':
+      this._applyRemoteKeyframeChunk(event);
+      break;
     case 'DRAWING_LAYER_CREATED':
       this._applyRemoteLayerCreated(event);
       break;
     case 'DRAWING_LAYER_DELETED':
       this._applyRemoteLayerDeleted(event);
+      break;
+    case 'DRAWING_LAYER_RESTORED':
+      this._applyRemoteLayerRestored(event);
+      break;
+    case 'DRAWING_LAYER_ORDER_CHANGED':
+      this._applyRemoteLayerOrderChanged(event);
       break;
     case 'DRAWING_KEYFRAME_REMOVED':
       this._applyRemoteKeyframeRemoved(event);
@@ -402,6 +661,105 @@ export class DrawingSync {
     }
   }
 
+  _applyRemoteKeyframeChunk(event) {
+    const { transferId, index, count, layerId, frame, data } = event;
+    if (typeof transferId !== 'string' || !transferId || transferId.length > 256
+      || !Number.isSafeInteger(index) || !Number.isSafeInteger(count)
+      || index < 0 || count < 1 || count > MAX_KEYFRAME_CHUNKS || index >= count
+      || typeof layerId !== 'string' || !layerId
+      || !Number.isSafeInteger(frame) || typeof data !== 'string'
+      || serializedByteSize(event) >= MAX_BROADCAST_SIZE) return;
+
+    const chunkDataBytes = new TextEncoder().encode(data).byteLength;
+    if (chunkDataBytes < 1 || chunkDataBytes > MAX_KEYFRAME_CHUNK_DATA_BYTES) return;
+
+    this._pruneExpiredKeyframeChunks();
+    let transfer = this._keyframeChunkTransfers.get(transferId);
+    if (!transfer) {
+      if (this._keyframeChunkTransfers.size >= MAX_ACTIVE_KEYFRAME_TRANSFERS) return;
+      const timeoutId = setTimeout(() => {
+        this._deleteKeyframeChunkTransfer(transferId);
+      }, KEYFRAME_CHUNK_TIMEOUT_MS);
+      transfer = {
+        count,
+        layerId,
+        frame,
+        chunks: new Array(count),
+        received: 0,
+        bufferedBytes: 0,
+        expiresAt: Date.now() + KEYFRAME_CHUNK_TIMEOUT_MS,
+        timeoutId
+      };
+      this._keyframeChunkTransfers.set(transferId, transfer);
+    }
+
+    if (transfer.count !== count || transfer.layerId !== layerId || transfer.frame !== frame) {
+      this._deleteKeyframeChunkTransfer(transferId);
+      return;
+    }
+    if (transfer.chunks[index] !== undefined) {
+      if (transfer.chunks[index] !== data) this._deleteKeyframeChunkTransfer(transferId);
+      return;
+    }
+
+    if (transfer.bufferedBytes + chunkDataBytes > MAX_KEYFRAME_TRANSFER_BYTES
+      || this._keyframeChunkBufferedBytes + chunkDataBytes > MAX_TOTAL_KEYFRAME_BUFFERED_BYTES) {
+      this._deleteKeyframeChunkTransfer(transferId);
+      return;
+    }
+
+    transfer.chunks[index] = data;
+    transfer.received += 1;
+    transfer.bufferedBytes += chunkDataBytes;
+    this._keyframeChunkBufferedBytes += chunkDataBytes;
+    if (transfer.received !== transfer.count) return;
+
+    this._deleteKeyframeChunkTransfer(transferId);
+    try {
+      const byteChunks = transfer.chunks.map(base64ToBytes);
+      const totalLength = byteChunks.reduce((total, chunk) => total + chunk.length, 0);
+      const payloadBytes = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of byteChunks) {
+        payloadBytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const payload = JSON.parse(new TextDecoder().decode(payloadBytes));
+      if (payload?.type !== 'DRAWING_KEYFRAME_UPDATE'
+        || payload.layerId !== layerId || payload.frame !== frame) return;
+      void this._applyRemoteKeyframe(payload).catch(error => {
+        log.warn('청크 키프레임 적용 실패', { error: error?.message || String(error) });
+      });
+    } catch (error) {
+      log.warn('키프레임 청크 재조립 실패', { error: error?.message || String(error) });
+    }
+  }
+
+  _deleteKeyframeChunkTransfer(transferId) {
+    const transfer = this._keyframeChunkTransfers.get(transferId);
+    if (transfer?.timeoutId) clearTimeout(transfer.timeoutId);
+    if (transfer?.bufferedBytes) {
+      this._keyframeChunkBufferedBytes = Math.max(
+        0,
+        this._keyframeChunkBufferedBytes - transfer.bufferedBytes
+      );
+    }
+    this._keyframeChunkTransfers.delete(transferId);
+  }
+
+  _pruneExpiredKeyframeChunks(now = Date.now()) {
+    for (const [transferId, transfer] of this._keyframeChunkTransfers) {
+      if (transfer.expiresAt <= now) this._deleteKeyframeChunkTransfer(transferId);
+    }
+  }
+
+  _clearKeyframeChunkTransfers() {
+    for (const transferId of [...this._keyframeChunkTransfers.keys()]) {
+      this._deleteKeyframeChunkTransfer(transferId);
+    }
+    this._keyframeChunkBufferedBytes = 0;
+  }
+
   _notifyRemoteKeyframeApplied(layer, frame, keyframe) {
     this._dm._emit?.('keyframeUpdated', { layer, frame, keyframe });
     this._dm._emit?.('layersChanged');
@@ -413,21 +771,35 @@ export class DrawingSync {
 
     this._isRemoteUpdate = true;
     try {
+      if (event.restore === true && this._dm.restoreLayer) {
+        this._dm.restoreLayer({ ...layerData, keyframes: [] }, {
+          insertIndex: Number.isInteger(event.insertIndex) ? event.insertIndex : undefined,
+          insertBeforeLayerId: typeof event.insertBeforeLayerId === 'string'
+            ? event.insertBeforeLayerId
+            : undefined
+        });
+        return;
+      }
       const layers = this._dm.getLayers?.() || this._dm.layers || [];
       const exists = layers.find(l => l.id === layerData.id);
       if (exists) return;
+      if (this._dm.isLayerDeleted?.(layerData.id)) return;
 
       // DrawingManager에 레이어 추가
       if (this._dm.createLayer) {
         this._dm.createLayer({
           ...layerData,
           skipActivate: true,
+          ...(typeof event.insertBeforeLayerId === 'string'
+            ? { insertBeforeLayerId: event.insertBeforeLayerId }
+            : {}),
           ...(Number.isInteger(event.insertIndex) ? { insertIndex: event.insertIndex } : {})
         }, false);
       }
       log.debug('원격 레이어 생성 적용', { id: layerData.id });
     } finally {
       this._isRemoteUpdate = false;
+      this._retryPendingRemoteLayerOrder();
     }
   }
 
@@ -437,10 +809,81 @@ export class DrawingSync {
 
     this._isRemoteUpdate = true;
     try {
-      if (this._dm.deleteLayer) {
-        this._dm.deleteLayer(layerId);
+      if (this._dm.markLayerDeleted) {
+        this._dm.markLayerDeleted(layerId, false);
+      } else if (this._dm.deleteLayer) {
+        this._dm.deleteLayer(layerId, false);
       }
       log.debug('원격 레이어 삭제 적용', { layerId });
+    } finally {
+      this._isRemoteUpdate = false;
+      this._retryPendingRemoteLayerOrder();
+    }
+  }
+
+  _applyRemoteLayerRestored(event) {
+    const { layer: layerData } = event;
+    if (!layerData?.id) return;
+
+    this._isRemoteUpdate = true;
+    try {
+      this._dm.restoreLayer?.(layerData, {
+        insertIndex: Number.isInteger(event.insertIndex) ? event.insertIndex : undefined,
+        insertBeforeLayerId: typeof event.insertBeforeLayerId === 'string'
+          ? event.insertBeforeLayerId
+          : undefined
+      });
+      log.debug('원격 레이어 복원 적용', { id: layerData.id });
+    } finally {
+      this._isRemoteUpdate = false;
+      this._retryPendingRemoteLayerOrder();
+    }
+  }
+
+  _applyRemoteLayerOrderChanged(event) {
+    const version = event.version;
+    if (!Array.isArray(event.layerIds)
+      || !Number.isSafeInteger(version?.clock)
+      || version.clock < 1
+      || typeof version.actorId !== 'string'
+      || !version.actorId) return;
+
+    this._orderClock = Math.max(this._orderClock, version.clock);
+    if (compareOrderVersions(version, this._lastAppliedOrderVersion) <= 0) return;
+    if (this._pendingRemoteLayerOrder
+      && compareOrderVersions(version, this._pendingRemoteLayerOrder.version) < 0) return;
+
+    this._pendingRemoteLayerOrder = {
+      layerIds: [...event.layerIds],
+      version: { clock: version.clock, actorId: version.actorId }
+    };
+    this._retryPendingRemoteLayerOrder();
+  }
+
+  _retryPendingRemoteLayerOrder() {
+    const event = this._pendingRemoteLayerOrder;
+    if (!event) return;
+    if (compareOrderVersions(event.version, this._lastAppliedOrderVersion) <= 0) {
+      this._pendingRemoteLayerOrder = null;
+      return;
+    }
+
+    const layers = this._dm.getLayers?.() || this._dm.layers || [];
+    const existingLayerIds = new Set(layers.map(layer => layer.id));
+    const hasUnavailableLayer = event.layerIds.some(layerId => (
+      !existingLayerIds.has(layerId) && !this._dm.isLayerDeleted?.(layerId)
+    ));
+    if (hasUnavailableLayer) return;
+
+    this._isRemoteUpdate = true;
+    try {
+      this._dm.applyLayerOrder?.(event.layerIds, { emitOrder: true });
+      this._lastAppliedOrderVersion = {
+        clock: event.version.clock,
+        actorId: event.version.actorId
+      };
+      this._pendingRemoteLayerOrder = null;
+      log.debug('원격 레이어 순서 적용', { count: event.layerIds.length });
     } finally {
       this._isRemoteUpdate = false;
     }

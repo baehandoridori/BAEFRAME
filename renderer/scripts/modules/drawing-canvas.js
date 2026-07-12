@@ -51,6 +51,7 @@ export class DrawingCanvas extends EventTarget {
     this.isDrawing = false;
     this.canDraw = null;
     this._modifierCtrlDown = false;
+    this._modifierAltDown = false;
     this.isSizeAdjusting = false;
     this._sizeAdjustStartX = 0;
     this._sizeAdjustStartY = 0;
@@ -111,15 +112,18 @@ export class DrawingCanvas extends EventTarget {
       }
     }, { signal });
 
-    // 펜/터치 유래 이벤트는 ctrlKey가 비어 오는 환경이 있어 전역 Ctrl 상태를 함께 본다.
+    // 펜/터치 유래 이벤트는 modifier가 비어 오는 환경이 있어 전역 키 상태를 함께 본다.
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Control') this._modifierCtrlDown = true;
+      if (e.key === 'Alt') this._modifierAltDown = true;
     }, { signal });
     document.addEventListener('keyup', (e) => {
       if (e.key === 'Control') this._modifierCtrlDown = false;
+      if (e.key === 'Alt') this._modifierAltDown = false;
     }, { signal });
     window.addEventListener('blur', () => {
       this._modifierCtrlDown = false;
+      this._modifierAltDown = false;
     }, { signal });
   }
 
@@ -170,7 +174,7 @@ export class DrawingCanvas extends EventTarget {
   _onMouseDown(e) {
     if (!this.canvas.classList.contains('active')) return;
 
-    if (e.altKey && (e.button === 0 || e.button === 2)) {
+    if (this._isAltActive(e) && (e.button === 0 || e.button === 2)) {
       e.preventDefault?.();
       this._beginSizeAdjust(e);
       return;
@@ -231,7 +235,7 @@ export class DrawingCanvas extends EventTarget {
   _onPointerDown(e) {
     if (!this.canvas.classList.contains('active')) return;
     if (!e.isPrimary) return;
-    if (!e.altKey && e.button !== 0) return;
+    if (!this._isAltActive(e) && e.button !== 0) return;
     this._activeDrawPointerId = e.pointerId;
     this.canvas.setPointerCapture?.(e.pointerId);
     this._onMouseDown(e);
@@ -447,6 +451,13 @@ export class DrawingCanvas extends EventTarget {
 
   _isCtrlActive(e) {
     return e?.ctrlKey === true || this._modifierCtrlDown === true;
+  }
+
+  /**
+   * 펜/터치 유래 이벤트는 altKey가 비어 오는 환경이 있어 전역 Alt 상태를 함께 본다. (피드백 22)
+   */
+  _isAltActive(e) {
+    return e?.altKey === true || this._modifierAltDown === true;
   }
 
   _resolveEffectiveTool(e) {

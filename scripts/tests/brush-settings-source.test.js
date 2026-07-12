@@ -53,22 +53,43 @@ test('alt drag adjusts brush size before drawing or ctrl eraser handling', () =>
   assert.match(drawingCanvasSource, /_endSizeAdjust\(\)/);
   assert.match(drawingCanvasSource, /sizeadjuststart/);
   assert.match(drawingCanvasSource, /sizeadjustend/);
-  assert.match(mouseDownBody, /e\.altKey && \(e\.button === 0 \|\| e\.button === 2\)/);
+  assert.match(mouseDownBody, /this\._isAltActive\(e\) && \(e\.button === 0 \|\| e\.button === 2\)/);
+  assert.match(
+    mouseDownBody,
+    /if \(this\._isAltActive\(e\) && \(e\.button === 0 \|\| e\.button === 2\)\) \{[\s\S]*?this\._beginSizeAdjust\(e\);\s*return;/
+  );
   assert.ok(
-    mouseDownBody.indexOf('e.altKey') < mouseDownBody.indexOf('this._isCtrlActive(e)'),
+    mouseDownBody.indexOf('this._isAltActive(e)') < mouseDownBody.indexOf('this._isCtrlActive(e)'),
     'Alt size adjustment must run before Ctrl eraser handling'
   );
   assert.ok(
-    mouseDownBody.indexOf('e.altKey') < mouseDownBody.indexOf('typeof this.canDraw'),
+    mouseDownBody.indexOf('this._isAltActive(e)') < mouseDownBody.indexOf('typeof this.canDraw'),
     'Alt size adjustment must not be blocked by drawing-layer lock gates'
   );
   assert.match(drawingCanvasSource, /contextmenu/);
   assert.match(drawingCanvasSource, /this\.setLineWidth\(nextSize\)/);
 });
 
+test('alt modifier fallback tracks keyboard state and resets on blur', () => {
+  const constructorBody = drawingCanvasSource.match(/constructor\(canvas\) \{[\s\S]*?\n  \}/)?.[0] || '';
+  const setupListenersBody = drawingCanvasSource.match(/_setupEventListeners\(\) \{[\s\S]*?\n  \}/)?.[0] || '';
+  const isAltActiveBody = drawingCanvasSource.match(/_isAltActive\(e\) \{[\s\S]*?\n  \}/)?.[0] || '';
+
+  assert.match(constructorBody, /this\._modifierAltDown = false;/);
+  assert.match(setupListenersBody, /keydown[\s\S]*?e\.key === 'Alt'\) this\._modifierAltDown = true;/);
+  assert.match(setupListenersBody, /keyup[\s\S]*?e\.key === 'Alt'\) this\._modifierAltDown = false;/);
+  assert.match(setupListenersBody, /blur[\s\S]*?this\._modifierAltDown = false;/);
+  assert.match(
+    isAltActiveBody,
+    /return e\?\.altKey === true \|\| this\._modifierAltDown === true;/
+  );
+});
+
 test('alt drag size adjustment follows pen pointer events until pointer release', () => {
+  const pointerDownBody = drawingCanvasSource.match(/_onPointerDown\(e\) \{[\s\S]*?\n  \}/)?.[0] || '';
   assert.match(drawingCanvasSource, /e\.isPrimary/);
-  assert.match(drawingCanvasSource, /e\.altKey && \(e\.button === 0 \|\| e\.button === 2\)/);
+  assert.match(drawingCanvasSource, /this\._isAltActive\(e\) && \(e\.button === 0 \|\| e\.button === 2\)/);
+  assert.match(pointerDownBody, /if \(!this\._isAltActive\(e\) && e\.button !== 0\) return;/);
   assert.match(drawingCanvasSource, /this\.canvas\.setPointerCapture\?\.\(e\.pointerId\)/);
   assert.match(drawingCanvasSource, /window\.addEventListener\('pointermove', this\._sizeAdjustMoveHandler/);
   assert.match(drawingCanvasSource, /window\.addEventListener\('pointerup', this\._sizeAdjustEndHandler/);

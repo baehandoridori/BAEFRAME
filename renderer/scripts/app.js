@@ -1113,7 +1113,10 @@ async function initApp() {
         // (redo 콜백은 null — drawing-manager.js _saveToHistory 참고)
         if (action.type === 'DRAWING' && action._redoSnapshot) {
           drawingManager._isUndoingOrRedoing = true;
-          drawingManager._restoreSnapshot(action._redoSnapshot);
+          drawingManager._restoreSnapshot(action._redoSnapshot, {
+            actionMetadata: action.drawingAction,
+            direction: 'redo'
+          });
           drawingManager._isUndoingOrRedoing = false;
           drawingManager._emit('redo');
         } else if (action.redo) {
@@ -3679,9 +3682,12 @@ async function initApp() {
 
   function addDrawingLayer() {
     const activeIndex = drawingManager.layers.findIndex(l => l.id === drawingManager.activeLayerId);
-    // 더 큰 배열 인덱스가 화면 앞쪽이므로 새 레이어는 합성 기준으로 활성 레이어 위에 둔다.
-    const insertIndex = activeIndex === -1 ? drawingManager.layers.length : activeIndex + 1;
-    drawingManager.createLayer({ insertIndex });
+    // 피드백 23: 사용자 기준(패널 시각)으로 활성 레이어 "바로 위 행"에 추가한다.
+    // 패널은 배열 인덱스 0이 최상단이므로 activeIndex 위치에 삽입한다.
+    // (합성 기준으로는 활성 레이어 뒤가 되는 트레이드오프 — 패널 기준을 우선한다.)
+    const insertIndex = activeIndex === -1 ? drawingManager.layers.length : activeIndex;
+    const insertBeforeLayerId = activeIndex === -1 ? null : drawingManager.activeLayerId;
+    drawingManager.createLayer({ insertIndex, insertBeforeLayerId });
     renderDrawingLayerTimeline();
     showToast('새 레이어 추가됨', 'success');
   }

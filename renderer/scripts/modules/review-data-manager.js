@@ -358,6 +358,8 @@ export class ReviewDataManager extends EventTarget {
       this.drawingManager.addEventListener('drawend', this._onDataChanged);
       this.drawingManager.addEventListener('layerCreated', this._onDataChanged);
       this.drawingManager.addEventListener('layerDeleted', this._onDataChanged);
+      this.drawingManager.addEventListener('layerRestored', this._onDataChanged);
+      this.drawingManager.addEventListener('layerOrderChanged', this._onDataChanged);
       this.drawingManager.addEventListener('activeLayerChanged', this._onDataChanged);
       this.drawingManager.addEventListener('keyframeAdded', this._onDataChanged);
       this.drawingManager.addEventListener('keyframeUpdated', this._onDataChanged);
@@ -396,6 +398,8 @@ export class ReviewDataManager extends EventTarget {
       this.drawingManager.removeEventListener('drawend', this._onDataChanged);
       this.drawingManager.removeEventListener('layerCreated', this._onDataChanged);
       this.drawingManager.removeEventListener('layerDeleted', this._onDataChanged);
+      this.drawingManager.removeEventListener('layerRestored', this._onDataChanged);
+      this.drawingManager.removeEventListener('layerOrderChanged', this._onDataChanged);
       this.drawingManager.removeEventListener('activeLayerChanged', this._onDataChanged);
       this.drawingManager.removeEventListener('keyframeAdded', this._onDataChanged);
       this.drawingManager.removeEventListener('keyframeUpdated', this._onDataChanged);
@@ -428,7 +432,7 @@ export class ReviewDataManager extends EventTarget {
     this.isLoading = true;
 
     // 이전 파일의 변경사항 저장 (skipSave가 true면 건너뛰기)
-    if (!options.skipSave && this.isDirty && this.currentBframePath) {
+    if (!options.skipSave && this.hasUnsavedChanges() && this.currentBframePath) {
       await this.save();
     }
 
@@ -1165,7 +1169,7 @@ export class ReviewDataManager extends EventTarget {
     this._cancelAutoSave();
 
     this.autoSaveTimer = setTimeout(async () => {
-      if (this.isDirty) {
+      if (this.hasUnsavedChanges()) {
         log.info('자동 저장 실행');
         await this.save();
       }
@@ -1215,10 +1219,31 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
+   * 실질 리뷰 데이터(댓글/드로잉/하이라이트/합성 레이어/수동 버전) 존재 여부.
+   * fps·versionInfo 같은 자동 메타데이터만으로는 true가 되지 않는다. (피드백 20)
+   */
+  hasSubstantiveContent() {
+    const hasComments = (this.commentManager?.layers || []).some(
+      layer => Array.from(layer.markers?.values?.() || []).some(marker => marker && !marker.deleted)
+    );
+    const hasDrawings = (this.drawingManager?.layers || []).some(
+      layer => (layer.keyframes?.length || 0) > 0
+    );
+    const hasHighlights = (this.highlightManager?.highlights?.length || 0) > 0;
+    const hasCompositionLayers = (this.compositionLayerManager?.layers?.length || 0) > 0;
+    const hasManualVersions = (this._manualVersions?.length || 0) > 0;
+    return hasComments || hasDrawings || hasHighlights || hasCompositionLayers || hasManualVersions;
+  }
+
+  /**
    * 저장되지 않은 변경사항 있는지 확인
    */
   hasUnsavedChanges() {
-    return this.isDirty;
+    if (!this.isDirty) return false;
+    // 파일이 아직 없고 실질 데이터도 없으면(fps 등 메타데이터만 dirty)
+    // 파일을 만들 이유가 없으므로 저장할 변경사항 없음으로 취급한다. (피드백 20)
+    if (!this._hasPersistedFile && !this.hasSubstantiveContent()) return false;
+    return true;
   }
 
   /**

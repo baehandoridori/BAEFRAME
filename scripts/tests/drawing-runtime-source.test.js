@@ -274,7 +274,9 @@ test('floating drawing selections are resolved before context changes, not durin
   assert.match(drawingManagerSource, /deleteFrame\(\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const layer = this\.getActiveLayer\(\);/);
   assert.match(drawingManagerSource, /copyFrames\(targets = null\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?const resolved = \[\];/);
   assert.match(drawingManagerSource, /pasteFrames\(targetFrame = this\.currentFrame\) \{[\s\S]*?this\.commitActiveSelection\(\);[\s\S]*?this\._saveToHistory\(\);/);
-  assert.match(drawingManagerSource, /_restoreSnapshot\(snapshot\) \{[\s\S]*?this\.drawingCanvas\.clearSelection\?\.\(\);[\s\S]*?this\.layers = snapshot\.layers/);
+  assert.match(drawingManagerSource, /_restoreSnapshot\(snapshot, context = \{\}\) \{[\s\S]*?this\.drawingCanvas\.clearSelection\?\.\(\);/);
+  assert.match(drawingManagerSource, /currentLayers\.forEach\(\(layer, currentIndex\) => \{[\s\S]*?restoredLayers\.splice/);
+  assert.match(drawingManagerSource, /layerData\.id === targetLayerId && targetShouldExist/);
 });
 
 test('pasted drawing frames are published to sync and save listeners', () => {
@@ -291,4 +293,29 @@ test('pasted drawing frames are published to sync and save listeners', () => {
   assert.match(drawingSyncSource, /!canvasData && isEmpty !== true/);
   assert.match(drawingSyncSource, /_notifyRemoteKeyframeApplied\(layer, frame, keyframe\) \{[\s\S]*?this\._dm\._emit\?\.\('keyframeUpdated', \{ layer, frame, keyframe \}\);[\s\S]*?this\._dm\._emit\?\.\('layersChanged'\);[\s\S]*?\}/);
   assert.match(drawingSyncSource, /_applyRemoteKeyframe\(event\) \{[\s\S]*?this\._notifyRemoteKeyframeApplied\(layer, frame, keyframe\);/);
+});
+
+test('global drawing redo forwards action-scoped lifecycle metadata', () => {
+  assert.match(appSource, /drawingManager\._restoreSnapshot\(action\._redoSnapshot, \{/);
+  assert.match(appSource, /actionMetadata: action\.drawingAction/);
+  assert.match(appSource, /direction: 'redo'/);
+  assert.match(drawingManagerSource, /drawingAction: actionMetadata/);
+  assert.match(drawingManagerSource, /this\._emit\('historyRestored', \{ actionMetadata, direction, delta \}\);/);
+  assert.match(drawingSyncSource, /addEventListener\('historyRestored', this\._onHistoryRestored\)/);
+  assert.doesNotMatch(drawingSyncSource, /_localLifecycleLayerIds/);
+  assert.match(drawingSyncSource, /type: 'DRAWING_LAYER_ORDER_CHANGED',[\s\S]*?version/);
+  assert.match(drawingSyncSource, /compareOrderVersions\(version, this\._lastAppliedOrderVersion\) <= 0/);
+  assert.match(drawingSyncSource, /type: 'DRAWING_LAYER_CREATED',[\s\S]*?restore: true/);
+  assert.match(drawingSyncSource, /_broadcastRestoredLayer\(layer, insertIndex, generation\)/);
+  assert.match(drawingSyncSource, /await this\._broadcastKeyframeUpdate\(layer, keyframe, \{ generation \}\)/);
+  assert.match(drawingSyncSource, /_isBroadcastGenerationCurrent\(generation\)/);
+  assert.match(drawingSyncSource, /waitForPendingBroadcasts\(\)/);
+  assert.match(drawingSyncSource, /type: 'DRAWING_KEYFRAME_CHUNK'/);
+  assert.match(drawingSyncSource, /serializedByteSize\(event\) >= MAX_BROADCAST_SIZE/);
+  assert.match(drawingSyncSource, /_pruneExpiredKeyframeChunks/);
+  assert.match(drawingSyncSource, /_clearKeyframeChunkTransfers\(\)/);
+  assert.match(drawingSyncSource, /MAX_ACTIVE_KEYFRAME_TRANSFERS = 8/);
+  assert.match(drawingSyncSource, /MAX_KEYFRAME_TRANSFER_BYTES = 32 \* 1024 \* 1024/);
+  assert.match(drawingSyncSource, /MAX_TOTAL_KEYFRAME_BUFFERED_BYTES = 64 \* 1024 \* 1024/);
+  assert.match(drawingSyncSource, /this\._keyframeChunkBufferedBytes = Math\.max/);
 });

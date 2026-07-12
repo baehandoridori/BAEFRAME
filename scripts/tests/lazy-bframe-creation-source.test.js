@@ -80,3 +80,19 @@ test('first .bframe save is protected against another user creating the file fir
   assert.match(ipcHandlersSource, /flag: options\?\.failIfExists \? 'wx' : 'w'/);
   assert.match(ipcHandlersSource, /error\.code === 'EEXIST'/);
 });
+
+test('metadata-only dirty state does not create a bframe file', () => {
+  assert.match(reviewDataManagerSource, /hasSubstantiveContent\(\) \{/);
+  assert.match(
+    reviewDataManagerSource,
+    /if \(!this\._hasPersistedFile && !this\.hasSubstantiveContent\(\)\) return false;/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /if \(!options\.skipSave && this\.hasUnsavedChanges\(\) && this\.currentBframePath\) \{/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /this\.autoSaveTimer = setTimeout\(async \(\) => \{\s*\n\s*if \(this\.hasUnsavedChanges\(\)\) \{/
+  );
+});
