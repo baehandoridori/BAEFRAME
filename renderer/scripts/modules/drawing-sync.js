@@ -90,6 +90,7 @@ export class DrawingSync {
     this._actorId = null;
     this._orderClock = 0;
     this._lastAppliedOrderVersion = { clock: 0, actorId: '' };
+    this._pendingRemoteLayerOrder = null;
     this._pendingHistoryRestoreBroadcast = Promise.resolve();
     this._keyframeChunkTransfers = new Map();
     this._keyframeChunkBufferedBytes = 0;
@@ -199,6 +200,7 @@ export class DrawingSync {
     this._dm.removeEventListener('keyframeUpdated', this._onKeyframeUpdated);
     this._lm.removeEventListener('broadcastReceived', this._onBroadcast);
     this._clearKeyframeChunkTransfers();
+    this._pendingRemoteLayerOrder = null;
 
     this._started = false;
     log.info('그리기 동기화 중지됨');
@@ -770,6 +772,7 @@ export class DrawingSync {
       log.debug('원격 레이어 생성 적용', { id: layerData.id });
     } finally {
       this._isRemoteUpdate = false;
+      this._retryPendingRemoteLayerOrder();
     }
   }
 
@@ -787,6 +790,7 @@ export class DrawingSync {
       log.debug('원격 레이어 삭제 적용', { layerId });
     } finally {
       this._isRemoteUpdate = false;
+      this._retryPendingRemoteLayerOrder();
     }
   }
 
@@ -805,6 +809,7 @@ export class DrawingSync {
       log.debug('원격 레이어 복원 적용', { id: layerData.id });
     } finally {
       this._isRemoteUpdate = false;
+      this._retryPendingRemoteLayerOrder();
     }
   }
 
@@ -818,11 +823,39 @@ export class DrawingSync {
 
     this._orderClock = Math.max(this._orderClock, version.clock);
     if (compareOrderVersions(version, this._lastAppliedOrderVersion) <= 0) return;
+    if (this._pendingRemoteLayerOrder
+      && compareOrderVersions(version, this._pendingRemoteLayerOrder.version) < 0) return;
+
+    this._pendingRemoteLayerOrder = {
+      layerIds: [...event.layerIds],
+      version: { clock: version.clock, actorId: version.actorId }
+    };
+    this._retryPendingRemoteLayerOrder();
+  }
+
+  _retryPendingRemoteLayerOrder() {
+    const event = this._pendingRemoteLayerOrder;
+    if (!event) return;
+    if (compareOrderVersions(event.version, this._lastAppliedOrderVersion) <= 0) {
+      this._pendingRemoteLayerOrder = null;
+      return;
+    }
+
+    const layers = this._dm.getLayers?.() || this._dm.layers || [];
+    const existingLayerIds = new Set(layers.map(layer => layer.id));
+    const hasUnavailableLayer = event.layerIds.some(layerId => (
+      !existingLayerIds.has(layerId) && !this._dm.isLayerDeleted?.(layerId)
+    ));
+    if (hasUnavailableLayer) return;
 
     this._isRemoteUpdate = true;
     try {
       this._dm.applyLayerOrder?.(event.layerIds);
-      this._lastAppliedOrderVersion = { clock: version.clock, actorId: version.actorId };
+      this._lastAppliedOrderVersion = {
+        clock: event.version.clock,
+        actorId: event.version.actorId
+      };
+      this._pendingRemoteLayerOrder = null;
       log.debug('원격 레이어 순서 적용', { count: event.layerIds.length });
     } finally {
       this._isRemoteUpdate = false;

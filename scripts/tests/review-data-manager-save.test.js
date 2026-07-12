@@ -121,6 +121,26 @@ test('first substantive comment makes a new review save once', async () => {
   assert.equal(manager.hasUnsavedChanges(), false);
 });
 
+test('new review with only a soft-deleted comment does not create a file', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const commentManager = createCommentManager();
+  const manager = new ReviewDataManager({ autoSave: false, commentManager });
+  manager.currentVideoPath = 'C:/reviews/deleted-comment.mp4';
+  manager.currentBframePath = 'C:/reviews/deleted-comment.bframe';
+  commentManager.layers[0].markers.set('marker-deleted', {
+    id: 'marker-deleted',
+    text: '삭제된 댓글',
+    frame: 4,
+    deleted: true,
+    deletedAt: new Date().toISOString(),
+    replies: []
+  });
+  manager._onDataChanged(new Event('markerDeleted'));
+
+  assert.equal(manager.hasSubstantiveContent(), false);
+  assert.equal(manager.hasUnsavedChanges(), false);
+});
+
 test('persisted review keeps metadata-only dirty state as unsaved', async () => {
   const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
   window.electronAPI = {

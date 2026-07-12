@@ -1220,7 +1220,7 @@ export class ReviewDataManager extends EventTarget {
    */
   hasSubstantiveContent() {
     const hasComments = (this.commentManager?.layers || []).some(
-      layer => (layer.markers?.size || 0) > 0
+      layer => Array.from(layer.markers?.values?.() || []).some(marker => marker && !marker.deleted)
     );
     const hasDrawings = (this.drawingManager?.layers || []).some(
       layer => (layer.keyframes?.length || 0) > 0

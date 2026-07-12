@@ -681,6 +681,49 @@ test('simultaneous layer orders converge by Lamport clock and actor tie-break', 
   assert.deepEqual(peerA.manager.layers.map(layer => layer.id), ['anchor', 'third', 'second']);
 });
 
+test('layer order waits for a referenced layer and applies when that layer arrives', async () => {
+  const peer = await createPeer({ actorId: 'actor-receiver' });
+  peer.manager.createLayer({ id: 'second', name: 'Second' }, false);
+  peer.liveblocks.events.length = 0;
+
+  peer.liveblocks.receive({
+    type: 'DRAWING_LAYER_ORDER_CHANGED',
+    layerIds: ['late-layer', 'anchor', 'second'],
+    version: { clock: 7, actorId: 'actor-sender' }
+  });
+
+  assert.deepEqual(peer.manager.layers.map(layer => layer.id), ['anchor', 'second']);
+  assert.deepEqual(peer.sync._lastAppliedOrderVersion, { clock: 0, actorId: '' });
+
+  peer.liveblocks.receive({
+    type: 'DRAWING_LAYER_CREATED',
+    insertIndex: 2,
+    layer: { id: 'late-layer', name: 'Late Layer' }
+  });
+
+  assert.deepEqual(peer.manager.layers.map(layer => layer.id), ['late-layer', 'anchor', 'second']);
+  assert.deepEqual(peer.sync._lastAppliedOrderVersion, { clock: 7, actorId: 'actor-sender' });
+});
+
+test('pending layer order completes when a missing layer is learned to be deleted', async () => {
+  const peer = await createPeer({ actorId: 'actor-receiver' });
+  peer.manager.createLayer({ id: 'second', name: 'Second' }, false);
+  peer.liveblocks.events.length = 0;
+
+  peer.liveblocks.receive({
+    type: 'DRAWING_LAYER_ORDER_CHANGED',
+    layerIds: ['anchor', 'deleted-before-arrival', 'second'],
+    version: { clock: 8, actorId: 'actor-sender' }
+  });
+  peer.liveblocks.receive({
+    type: 'DRAWING_LAYER_DELETED',
+    layerId: 'deleted-before-arrival'
+  });
+
+  assert.equal(peer.sync._pendingRemoteLayerOrder, null);
+  assert.deepEqual(peer.sync._lastAppliedOrderVersion, { clock: 8, actorId: 'actor-sender' });
+});
+
 test('restore emits legacy create and keyframe fallbacks for old receivers', async () => {
   const peer = await createPeer({ actorId: 'actor-new' });
   const undoActions = [];
