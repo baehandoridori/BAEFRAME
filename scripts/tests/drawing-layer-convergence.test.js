@@ -126,6 +126,21 @@ test('new layer ids remain unique even when peers start from the same legacy cou
   assert.notEqual(peerAId, peerBId);
 });
 
+test('default layer names continue after loaded UUID layer names', async () => {
+  const { DrawingLayer } = await import('../../renderer/scripts/modules/drawing-layer.js');
+  DrawingLayer.resetNextId();
+  const loadedLayers = [
+    new DrawingLayer({ id: 'layer-uuid-a', name: '드로잉 2' }),
+    new DrawingLayer({ id: 'layer-uuid-b', name: '드로잉 7' }),
+    new DrawingLayer({ id: 'layer-uuid-c', name: '참고선' })
+  ];
+
+  DrawingLayer.updateNextIdFromLayers(loadedLayers);
+  const nextLayer = new DrawingLayer();
+
+  assert.equal(nextLayer.name, '드로잉 8');
+});
+
 test('siblings converge before a missing anchor and move directly before it when it arrives', async () => {
   const peerA = await createPeer({ includeAnchor: false });
   const peerB = await createPeer({ includeAnchor: false });

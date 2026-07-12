@@ -105,19 +105,19 @@ export class DrawingLayer {
   }
 
   /**
-   * 로드된 레이어들의 ID를 기반으로 nextId 업데이트
-   * ID 충돌 방지를 위해 가장 높은 ID + 1로 설정
+   * 로드된 레이어들의 기존 숫자 ID와 기본 이름을 기반으로 nextId 업데이트
+   * UUID ID에서도 기본 표시 이름이 되돌아가지 않도록 가장 높은 번호 + 1로 설정
    * @param {DrawingLayer[]} layers - 로드된 레이어 배열
    */
   static updateNextIdFromLayers(layers) {
     let maxId = 0;
     layers.forEach(layer => {
-      const match = layer.id.match(/^layer-(\d+)$/);
-      if (match) {
-        const idNum = parseInt(match[1], 10);
-        if (idNum > maxId) {
-          maxId = idNum;
-        }
+      const idMatch = typeof layer.id === 'string' ? layer.id.match(/^layer-(\d+)$/) : null;
+      const nameMatch = typeof layer.name === 'string' ? layer.name.match(/^드로잉\s+(\d+)$/) : null;
+      for (const match of [idMatch, nameMatch]) {
+        if (!match) continue;
+        const number = parseInt(match[1], 10);
+        if (number > maxId) maxId = number;
       }
     });
     DrawingLayer.nextId = maxId + 1;
