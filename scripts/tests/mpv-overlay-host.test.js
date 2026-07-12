@@ -62,6 +62,8 @@ test('creates a click-through overlay window above the viewer area', async () =>
       this.webContents = {
         executeJavaScript: async (script) => {
           events.push(['executeJavaScript', script]);
+          return script.includes("typeof window.__applyMpvOverlayState === 'function'") &&
+            script.includes("typeof window.__applyMpvRemoteCursorState === 'function'");
         }
       };
       events.push(['construct', options]);
@@ -111,7 +113,12 @@ test('creates a click-through overlay window above the viewer area', async () =>
     events.find(([name]) => name === 'setIgnoreMouseEvents'),
     ['setIgnoreMouseEvents', true, { forward: true }]
   );
-  const overlayHtml = decodeURIComponent(events.find(([name]) => name === 'loadURL')?.[1] || '');
+  const loadUrl = events.find(([name]) => name === 'loadURL')?.[1] || '';
+  const overlayDocument = decodeURIComponent(loadUrl.replace(/^data:text\/html;charset=utf-8,/, ''));
+  const inlineScript = overlayDocument.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(inlineScript, 'overlay inline script should exist');
+  assert.doesNotThrow(() => new Function(inlineScript));
+  const overlayHtml = overlayDocument;
   assert.equal(overlayHtml.includes('__applyMpvOverlayState'), true);
   assert.equal(overlayHtml.includes('applyOverlayTransform'), true);
   assert.equal(overlayHtml.includes('htmlOverlay'), true);
@@ -140,6 +147,59 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.ok(events.some(([name]) => name === 'moveTop'));
 });
 
+test('keeps the overlay host unready when the document APIs are unavailable', async () => {
+  const scripts = [];
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    getContentBounds: () => ({ x: 20, y: 30, width: 1200, height: 800 })
+  };
+  class FakeBrowserWindow {
+    constructor() {
+      this.destroyed = false;
+      this.webContents = {
+        executeJavaScript: async (script) => {
+          scripts.push(script);
+          return false;
+        }
+      };
+    }
+    loadURL() {
+      return Promise.resolve();
+    }
+    setBounds() {}
+    setIgnoreMouseEvents() {}
+    showInactive() {}
+    moveTop() {}
+    isDestroyed() {
+      return this.destroyed;
+    }
+    on() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow
+  });
+
+  const result = await host.ensure({ x: 0, y: 0, width: 300, height: 200 });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /overlay API/i);
+  assert.equal(host.contentLoaded, false);
+
+  const updateResult = await host.updateState({
+    markerHtml: '<div class="comment-marker pending"></div>'
+  });
+  assert.equal(updateResult.success, false);
+  assert.equal(
+    scripts.some((script) => script.startsWith('window.__applyMpvOverlayState(')),
+    false
+  );
+});
+
 test('updates overlay state through the isolated overlay document', async () => {
   const scripts = [];
   const fakeMainWindow = {
@@ -151,6 +211,9 @@ test('updates overlay state through the isolated overlay document', async () => 
       this.destroyed = false;
       this.webContents = {
         executeJavaScript: async (script) => {
+          if (script.includes("typeof window.__applyMpvOverlayState === 'function'")) {
+            return true;
+          }
           scripts.push(script);
         }
       };
@@ -214,7 +277,7 @@ test('hides and restores the native overlay host with the mpv embed host', async
     constructor() {
       this.destroyed = false;
       this.webContents = {
-        executeJavaScript: async () => {}
+        executeJavaScript: async () => true
       };
     }
     loadURL() {
@@ -282,6 +345,9 @@ test('repositions and hides overlay with the parent window', async () => {
       this.visible = false;
       this.destroyed = false;
       this.showCount = 0;
+      this.webContents = {
+        executeJavaScript: async () => true
+      };
     }
     loadURL() {
       return Promise.resolve();
