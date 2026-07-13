@@ -7085,7 +7085,12 @@ async function initApp() {
     '.fullscreen-timecode-overlay',
     '.fullscreen-scrub-overlay',
     '.toast-container',
-    '#compositionLayerOverlay'
+    '#compositionLayerOverlay',
+    // 피드백 28(a): 반드시 전체화면+표시 중으로 한정할 것. 무조건 '.controls-bar'로
+    // 넣으면 재생 중 매 프레임 갱신되는 진행률 바(#seekbarProgress)·타임코드 변이가
+    // installMpvMirroredOverlayObserver(6198~)를 통해 모든 mpv 재생에서 프레임당
+    // 전체 미러 재동기화(= 드로잉 합성 PNG 재인코딩 포함)를 유발한다.
+    'body.app-fullscreen.show-controls .controls-bar'
   ].join(',');
 
   const MPV_HTML_OVERLAY_STYLE_PROPERTIES = [
@@ -7342,13 +7347,35 @@ async function initApp() {
     const controlsRect = elements.controlsBar?.getBoundingClientRect();
     if (!controlsRect || controlsRect.height <= 0) return 0;
 
+    // 피드백 28(b): 트랜지션 중간 위치(controlsRect.top)를 읽으면 wrapper가 0.3초 동안
+    // 매 프레임 계단식으로 mpv 네이티브 창을 리사이즈해 비율이 깨져 보인다.
+    // 높이·상대 돌출량은 translateY 트랜지션과 무관한 상수이므로, 표시 완료 시점의
+    // 최종 인셋을 즉시 계산해 축소를 1회 스냅으로 만든다.
     const seekbarRect = elements.fullscreenSeekbar?.getBoundingClientRect();
-    const cutoutTop = seekbarRect && seekbarRect.height > 0
-      ? Math.min(controlsRect.top, seekbarRect.top)
-      : controlsRect.top;
+    const seekbarProtrusion = seekbarRect && seekbarRect.height > 0
+      ? Math.max(0, controlsRect.top - seekbarRect.top)
+      : 0;
     const viewportBottom = Math.max(1, window.innerHeight || controlsRect.bottom);
-    const visibleTop = Math.max(0, Math.min(viewportBottom, cutoutTop));
-    return Math.max(0, Math.min(viewportBottom - 1, viewportBottom - visibleTop));
+    const inset = Math.max(0, Math.min(viewportBottom - 1, controlsRect.height + seekbarProtrusion));
+
+    // 피드백 28(a): 영상 하단 검은 여백이 컨트롤바를 다 수용하면 화면을 줄이지
+    // 않는다(인셋 0). 컨트롤바는 오버레이 미러로 여백 위에 표시된다. 여백은
+    // ① 레터박스(영상비 vs 화면비 차이)와 ② 배율 축소(videoZoom < 100) 둘 다에서
+    // 생기므로 줌 배율을 반영해 계산한다. 중앙 고정 상태(shouldCenterVideo)에서
+    // 영상은 wrapper 중앙 기준 scale 배율로 표시된다(applyVideoZoom의
+    // transform-origin: 'center center' + pan 0 리셋). 팬/확대 상태에서는 영상이
+    // 여백을 침범할 수 있어 기존대로 축소한다.
+    if (inset > 0 && shouldCenterVideo()) {
+      const renderArea = getVideoRenderArea();
+      const wrapperHeight = elements.videoWrapper?.clientHeight || 0;
+      if (renderArea && wrapperHeight > 0) {
+        const scale = Math.max(0.01, state.videoZoom / 100);
+        const scaledBottom = wrapperHeight / 2 + (renderArea.height * scale) / 2;
+        const bottomGap = Math.max(0, wrapperHeight - scaledBottom);
+        if (bottomGap >= inset) return 0;
+      }
+    }
+    return inset;
   }
 
   function syncMpvFullscreenViewportInset() {
@@ -7561,7 +7588,10 @@ async function initApp() {
       elements.zoomIndicatorOverlay,
       videoCommentRangeOverlay,
       fullscreenTimecodeOverlay,
-      fullscreenScrubOverlay
+      fullscreenScrubOverlay,
+      // 피드백 28(a): 전체화면 컨트롤바(자식인 전체화면 시크바 포함)를 mpv 위에 미러링.
+      // 숨김(opacity 0)·wrapper 비겹침이면 cloneMpvHtmlOverlayElement가 스스로 스킵한다.
+      elements.controlsBar
     ].forEach((element) => {
       const clone = cloneMpvHtmlOverlayElement(element, wrapperRect);
       if (clone) htmlOverlay.appendChild(clone);
@@ -9008,6 +9038,10 @@ async function initApp() {
     document.body.classList.toggle('show-controls', visible);
     if (wasVisible !== visible) {
       scheduleMpvEmbedBoundsSyncAfterLayout();
+      // 피드백 28(a): 컨트롤바 슬라이드 트랜지션(0.3s)이 끝난 뒤 미러를 최종 위치로 맞춘다.
+      setTimeout(() => {
+        scheduleMpvOverlayStateSync({ force: true });
+      }, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS);
     }
   }
 

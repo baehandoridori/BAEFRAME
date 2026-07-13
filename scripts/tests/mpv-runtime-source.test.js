@@ -1070,3 +1070,14 @@ test('intentional html5 fallback stop is consumed instead of triggering mpv auto
   assert.match(appSource, /const overlayOwner = await mpvPilotOwnershipGate\.claim\(loadToken, \{ isStaleVideoLoad \}\);[\s\S]+if \(!overlayOwner\) return false;[\s\S]+clearExpectedMpvHtml5FallbackStop\(\);/);
   assert.match(videoPlayerSource, /if \(status\.stopped === true\) \{[\s\S]+await pollingControls\?\.stop\?\.\(\);[\s\S]+if \(this\.engine !== pollingEngine \|\| this\.externalControls !== pollingControls\) return;[\s\S]+this\.useHtml5Engine\(\);/);
 });
+
+test('fullscreen controls inset snaps to final size and yields to letterbox gap', () => {
+  assert.match(appSource, /const seekbarProtrusion = seekbarRect && seekbarRect\.height > 0/);
+  assert.match(appSource, /controlsRect\.height \+ seekbarProtrusion/);
+  assert.match(appSource, /if \(inset > 0 && shouldCenterVideo\(\)\) \{/);
+  assert.match(appSource, /const scaledBottom = wrapperHeight \/ 2 \+ \(renderArea\.height \* scale\) \/ 2;/);
+  assert.match(appSource, /if \(bottomGap >= inset\) return 0;/);
+  assert.match(appSource, /elements\.controlsBar\s*\]\.forEach/);
+  assert.match(appSource, /'body\.app-fullscreen\.show-controls \.controls-bar'\s*\]\.join\(','\);/);
+  assert.match(appSource, /scheduleMpvOverlayStateSync\(\{ force: true \}\);\s*\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
+});
