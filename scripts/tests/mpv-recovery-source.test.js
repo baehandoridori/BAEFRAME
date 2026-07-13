@@ -827,6 +827,12 @@ test('mpv can be disabled per machine via env for troubleshooting', () => {
 
 test('draw mode playback uses the shared review freeze only after playback stops', () => {
   assert.match(mainStyles, /\.drawing-tools\.visible\.playback-hidden \{[\s\S]*?visibility: hidden;[\s\S]*?transition: none;/);
+  const timeUpdateHandler = appSource.match(/videoPlayer\.addEventListener\('timeupdate', \(e\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(timeUpdateHandler, 'timeupdate handler should exist');
+  assert.match(
+    timeUpdateHandler[1],
+    /isMpvReviewInteractionActive\(\)[\s\S]*?!elements\.drawingTools\?\.classList\.contains\('playback-hidden'\)[\s\S]*?scheduleMpvReviewFreezeRefresh\(\);/
+  );
   assert.match(
     appSource,
     /addEventListener\('frameUpdate'[\s\S]*?isMpvReviewInteractionActive\(\)[\s\S]*?!elements\.drawingTools\?\.classList\.contains\('playback-hidden'\)[\s\S]*?scheduleMpvReviewFreezeRefresh\(\);/

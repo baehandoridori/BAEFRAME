@@ -1509,6 +1509,7 @@ async function initApp() {
     if (
       isMpvReviewInteractionActive() &&
       isMpvPilotPlaybackActive() &&
+      !elements.drawingTools?.classList.contains('playback-hidden') &&
       invalidateMpvReviewFreezeForFrameChange()
     ) {
       scheduleMpvReviewFreezeRefresh();
