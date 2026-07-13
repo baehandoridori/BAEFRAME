@@ -5532,12 +5532,12 @@ async function initApp() {
 
   // 비디오 영역 휠 줌
   elements.viewerContainer?.addEventListener('wheel', (e) => {
-    // 그리기 모드가 아닐 때만 줌 적용
-    if (!state.isDrawMode) {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -25 : 25;
-      setVideoZoom(state.videoZoom + delta);
-    }
+    // 피드백 30: 드로잉 모드에서도 휠 줌을 허용한다.
+    // 단 획을 긋는 도중에는 좌표계가 흔들리지 않게 줌을 막는다.
+    if (state.isDrawMode && drawingManager.drawingCanvas.isDrawing) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -25 : 25;
+    setVideoZoom(state.videoZoom + delta);
   }, { passive: false });
 
   // 비디오 패닝
