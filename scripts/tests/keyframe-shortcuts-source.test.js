@@ -30,14 +30,14 @@ test('Animate-style drawing layer shortcuts are configured and handled', () => {
   assert.match(appSource, /timeline\.centerOnPlayhead\(\)/);
 });
 
-test('new drawing layers are inserted above the active layer in compositing order', () => {
+test('new drawing layers are inserted above the active layer in the timeline list', () => {
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerSelectUp', e\)[\s\S]{0,140}selectDrawingLayerByOffset\(-1\);/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerSelectDown', e\)[\s\S]{0,140}selectDrawingLayerByOffset\(1\);/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveUp', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(-1\);/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveDown', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(1\);/);
-  assert.match(appSource, /새 레이어는 합성 기준으로 활성 레이어 바로 위에 둔다\./);
-  assert.match(appSource, /const insertIndex = activeIndex === -1 \? drawingManager\.layers\.length : activeIndex \+ 1;/);
-  assert.match(appSource, /const insertBeforeLayerId = activeIndex === -1 \? null : drawingManager\.layers\[activeIndex \+ 1\]\?\.id \|\| null;/);
+  assert.match(appSource, /패널은 배열 인덱스 0이 최상단이므로 activeIndex 위치에 삽입한다\./);
+  assert.match(appSource, /const insertIndex = activeIndex === -1 \? drawingManager\.layers\.length : activeIndex;/);
+  assert.match(appSource, /const insertBeforeLayerId = activeIndex === -1 \? null : drawingManager\.activeLayerId;/);
 });
 
 test('DrawingManager supports selecting and moving active layers by offset', () => {
