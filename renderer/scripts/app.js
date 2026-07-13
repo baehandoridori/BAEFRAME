@@ -1804,6 +1804,7 @@ async function initApp() {
   const layerColorPicker = document.getElementById('layerColorPicker');
   const layerOpacitySlider = document.getElementById('layerOpacitySlider');
   const layerOpacityValue = document.getElementById('layerOpacityValue');
+  const layerDeleteBtn = document.getElementById('layerDeleteBtn');
   let selectedLayerIdForPopup = null;
 
   function showLayerSettingsPopup(layerId, x, y) {
@@ -1918,6 +1919,10 @@ async function initApp() {
       `.drawing-layer-header[data-layer-id="${selectedLayerIdForPopup}"] .layer-opacity-badge`
     );
     if (badge) badge.textContent = `${val}%`;
+  });
+
+  layerDeleteBtn.addEventListener('click', () => {
+    deleteDrawingLayer(selectedLayerIdForPopup);
   });
 
   // 키프레임 이동
@@ -3721,9 +3726,8 @@ async function initApp() {
     showToast('새 레이어 추가됨', 'success');
   }
 
-  function deleteActiveDrawingLayer() {
-    const activeLayerId = drawingManager.activeLayerId;
-    if (!activeLayerId) {
+  function deleteDrawingLayer(layerId) {
+    if (!layerId) {
       showToast('삭제할 레이어가 없습니다.', 'warn');
       return;
     }
@@ -3731,10 +3735,15 @@ async function initApp() {
       showToast('마지막 레이어는 삭제할 수 없습니다.', 'warn');
       return;
     }
-    if (drawingManager.deleteLayer(activeLayerId)) {
+    if (drawingManager.deleteLayer(layerId)) {
+      hideLayerSettingsPopup();
       renderDrawingLayerTimeline();
       showToast('레이어 삭제됨', 'info');
     }
+  }
+
+  function deleteActiveDrawingLayer() {
+    deleteDrawingLayer(drawingManager.activeLayerId);
   }
 
   function selectDrawingLayerByOffset(offset) {
