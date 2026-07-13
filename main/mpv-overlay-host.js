@@ -780,7 +780,10 @@ class MPVOverlayHost {
       }
     });
     this.window = hostWindow;
-    hostWindow.setIgnoreMouseEvents?.(true, { forward: true });
+    // 피드백 27·29·31: forward는 mousemove를 이 창의 Chromium에도 전달해
+    // 기본 화살표 커서가 메인 창 커서와 경합(깜빡임)한다. 이 창은 마우스 이벤트를
+    // 쓰지 않으므로 전달 없이 완전 관통시킨다.
+    hostWindow.setIgnoreMouseEvents?.(true);
 
     hostWindow.on?.('closed', () => {
       if (this.window !== hostWindow) return;
