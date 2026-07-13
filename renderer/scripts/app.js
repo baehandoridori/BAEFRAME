@@ -5990,11 +5990,17 @@ async function initApp() {
     const restoreToken = ++mpvDrawPlaybackTransitionToken;
     const freezePrepared = await showMpvReviewFreezeFrame();
     if (
-      !freezePrepared ||
       restoreToken !== mpvDrawPlaybackTransitionToken ||
       !state.isDrawMode ||
       videoPlayer.isPlaying
     ) return;
+
+    if (!freezePrepared) {
+      elements.drawingTools?.classList.remove('playback-hidden');
+      scheduleMpvReviewFreezeRefresh();
+      forceMpvHostVisibilitySync();
+      return false;
+    }
 
     elements.drawingTools?.classList.remove('playback-hidden');
     scheduleMpvOverlayStateSync({ force: true });

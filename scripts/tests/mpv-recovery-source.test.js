@@ -859,7 +859,11 @@ test('latest draw playback transition alone may reveal the restored drawing pane
 
   assert.match(restoreSource, /const restoreToken = \+\+mpvDrawPlaybackTransitionToken;/);
   assert.match(restoreSource, /const freezePrepared = await showMpvReviewFreezeFrame\(\);/);
-  assert.match(restoreSource, /if \([\s\S]*?!freezePrepared \|\|[\s\S]*?restoreToken !== mpvDrawPlaybackTransitionToken[\s\S]*?!state\.isDrawMode \|\|[\s\S]*?videoPlayer\.isPlaying[\s\S]*?\) return;/);
+  assert.match(restoreSource, /if \([\s\S]*?restoreToken !== mpvDrawPlaybackTransitionToken[\s\S]*?!state\.isDrawMode \|\|[\s\S]*?videoPlayer\.isPlaying[\s\S]*?\) return;/);
+  assert.match(
+    restoreSource,
+    /if \(!freezePrepared\) \{[\s\S]*?classList\.remove\('playback-hidden'\);[\s\S]*?scheduleMpvReviewFreezeRefresh\(\);[\s\S]*?forceMpvHostVisibilitySync\(\);[\s\S]*?return false;/
+  );
   assert.match(restoreSource, /classList\.remove\('playback-hidden'\);[\s\S]*?forceMpvHostVisibilitySync\(\);/);
 });
 
