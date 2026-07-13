@@ -124,3 +124,8 @@ test('timeline height resizer sits below playback controls, not on the seekbar e
   );
   assert.match(indexSource, /id="viewerResizer"[^>]*title="타임라인 높이 조절"/);
 });
+
+test('wheel zoom stays available in draw mode except while a stroke is active', () => {
+  assert.match(appSource, /if \(state\.isDrawMode && drawingManager\.drawingCanvas\.isDrawing\) return;/);
+  assert.doesNotMatch(appSource, /\/\/ 그리기 모드가 아닐 때만 줌 적용/);
+});

@@ -93,7 +93,7 @@ test('creates a child host window positioned over the main content area', async 
   assert.equal(events[0][1].webPreferences.backgroundThrottling, false);
   assert.deepEqual(
     events.find(([name]) => name === 'setIgnoreMouseEvents'),
-    ['setIgnoreMouseEvents', true, { forward: true }]
+    ['setIgnoreMouseEvents', true, undefined]
   );
   assert.equal(events.find(([name]) => name === 'loadURL')?.[1].includes('background:transparent'), true);
   assert.ok(events.some(([name]) => name === 'showInactive'));

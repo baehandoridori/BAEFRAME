@@ -121,7 +121,7 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.equal(events[0][1].focusable, false);
   assert.deepEqual(
     events.find(([name]) => name === 'setIgnoreMouseEvents'),
-    ['setIgnoreMouseEvents', true, { forward: true }]
+    ['setIgnoreMouseEvents', true, undefined]
   );
   const loadUrl = events.find(([name]) => name === 'loadURL')?.[1] || '';
   const overlayDocument = decodeURIComponent(loadUrl.replace(/^data:text\/html;charset=utf-8,/, ''));

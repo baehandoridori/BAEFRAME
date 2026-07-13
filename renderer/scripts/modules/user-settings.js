@@ -74,7 +74,8 @@ const DEFAULT_SHORTCUTS = {
   prevFrameDraw: { key: 'KeyA', ctrl: false, shift: true, alt: false, label: '1프레임 이전 (Shift+A)' },
   nextFrameDraw: { key: 'KeyD', ctrl: false, shift: true, alt: false, label: '1프레임 다음 (Shift+D)' },
   brushSizeDown: { key: 'BracketLeft', ctrl: false, shift: false, alt: false, label: '브러시 크기 줄이기' },
-  brushSizeUp: { key: 'BracketRight', ctrl: false, shift: false, alt: false, label: '브러시 크기 키우기' }
+  brushSizeUp: { key: 'BracketRight', ctrl: false, shift: false, alt: false, label: '브러시 크기 키우기' },
+  drawingToolSelect: { key: 'KeyV', ctrl: false, shift: false, alt: false, label: '선택 도구 (드로잉)' }
 };
 
 // 이름별 테마 매핑

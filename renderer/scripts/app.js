@@ -1509,6 +1509,7 @@ async function initApp() {
     if (
       isMpvReviewInteractionActive() &&
       isMpvPilotPlaybackActive() &&
+      !elements.drawingTools?.classList.contains('playback-hidden') &&
       invalidateMpvReviewFreezeForFrameChange()
     ) {
       scheduleMpvReviewFreezeRefresh();
@@ -1523,7 +1524,11 @@ async function initApp() {
       updatePresence: false,
       updateDrawing: true
     });
-    if (isMpvReviewInteractionActive() && isMpvPilotPlaybackActive()) {
+    if (
+      isMpvReviewInteractionActive() &&
+      isMpvPilotPlaybackActive() &&
+      !elements.drawingTools?.classList.contains('playback-hidden')
+    ) {
       invalidateMpvReviewFreezeForFrameChange();
       scheduleMpvReviewFreezeRefresh();
     }
@@ -1544,6 +1549,15 @@ async function initApp() {
     timeline.scrollToPlayhead();
     // 재생 중에는 온디맨드 썸네일 캡처를 중단해 재생 방해를 방지
     getThumbnailGenerator()?._abortExactDrain?.();
+    // 피드백 25: 재생 중에는 공용 리뷰 freeze를 해제해 mpv 영상을 표시한다.
+    // 패널은 즉시 감추고, release가 호스트 복원을 확인한 뒤 freeze를 제거하므로
+    // 정지 화면과 실제 영상 사이에 검은 구간이 생기지 않는다.
+    if (state.isDrawMode && isMpvPilotPlaybackActive()) {
+      mpvDrawPlaybackTransitionToken += 1;
+      elements.drawingTools?.classList.add('playback-hidden');
+      scheduleMpvOverlayStateSync({ force: true });
+      void releaseMpvReviewFreezeFrame();
+    }
   });
 
   videoPlayer.addEventListener('pause', () => {
@@ -1554,6 +1568,13 @@ async function initApp() {
     getAudioWaveform()?.setPlaying(false);
     // 일시정지 시점에 누적된 온디맨드 정확-프레임 큐를 소진
     getThumbnailGenerator()?._drainExactQueue?.();
+    if (
+      state.isDrawMode &&
+      isMpvPilotPlaybackActive() &&
+      elements.drawingTools?.classList.contains('playback-hidden')
+    ) {
+      void restoreMpvDrawFreezeAfterPlayback();
+    }
   });
 
   videoPlayer.addEventListener('ended', () => {
@@ -1562,6 +1583,14 @@ async function initApp() {
     timeline.setPlayingState(false);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
     getAudioWaveform()?.setPlaying(false);
+
+    if (
+      state.isDrawMode &&
+      isMpvPilotPlaybackActive() &&
+      elements.drawingTools?.classList.contains('playback-hidden')
+    ) {
+      void restoreMpvDrawFreezeAfterPlayback();
+    }
 
     if (cutlistUIState.active && getCutlistManager().isActive()) {
       const currentCut = getCutlistManager().getCutById(getCutlistManager().currentCutId);
@@ -5401,6 +5430,7 @@ async function initApp() {
   let mpvReviewFreezeFailureHandling = false;
   let mpvReviewFreezeFrameSnapshot = null;
   let mpvReviewTargetFrameSnapshot = null;
+  let mpvDrawPlaybackTransitionToken = 0;
   let pendingMpvReviewFreezeMediaChange = null;
   const mpvReviewFrameTracker = createMpvReviewFrameTracker();
   const mpvReviewFreezeCaptureOwner = createSharedAsyncCaptureOwner();
@@ -5532,12 +5562,12 @@ async function initApp() {
 
   // 비디오 영역 휠 줌
   elements.viewerContainer?.addEventListener('wheel', (e) => {
-    // 그리기 모드가 아닐 때만 줌 적용
-    if (!state.isDrawMode) {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -25 : 25;
-      setVideoZoom(state.videoZoom + delta);
-    }
+    // 피드백 30: 드로잉 모드에서도 휠 줌을 허용한다.
+    // 단 획을 긋는 도중에는 좌표계가 흔들리지 않게 줌을 막는다.
+    if (state.isDrawMode && drawingManager.drawingCanvas.isDrawing) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -25 : 25;
+    setVideoZoom(state.videoZoom + delta);
   }, { passive: false });
 
   // 비디오 패닝
@@ -5953,6 +5983,28 @@ async function initApp() {
     }
     mpvReviewFreezeFrameSnapshot = null;
     mpvReviewTargetFrameSnapshot = null;
+    return true;
+  }
+
+  async function restoreMpvDrawFreezeAfterPlayback() {
+    const restoreToken = ++mpvDrawPlaybackTransitionToken;
+    const freezePrepared = await showMpvReviewFreezeFrame();
+    if (
+      restoreToken !== mpvDrawPlaybackTransitionToken ||
+      !state.isDrawMode ||
+      videoPlayer.isPlaying
+    ) return;
+
+    if (!freezePrepared) {
+      elements.drawingTools?.classList.remove('playback-hidden');
+      scheduleMpvReviewFreezeRefresh();
+      forceMpvHostVisibilitySync();
+      return false;
+    }
+
+    elements.drawingTools?.classList.remove('playback-hidden');
+    scheduleMpvOverlayStateSync({ force: true });
+    forceMpvHostVisibilitySync();
     return true;
   }
 
@@ -7040,7 +7092,12 @@ async function initApp() {
     '.fullscreen-timecode-overlay',
     '.fullscreen-scrub-overlay',
     '.toast-container',
-    '#compositionLayerOverlay'
+    '#compositionLayerOverlay',
+    // 피드백 28(a): 반드시 전체화면+표시 중으로 한정할 것. 무조건 '.controls-bar'로
+    // 넣으면 재생 중 매 프레임 갱신되는 진행률 바(#seekbarProgress)·타임코드 변이가
+    // installMpvMirroredOverlayObserver(6198~)를 통해 모든 mpv 재생에서 프레임당
+    // 전체 미러 재동기화(= 드로잉 합성 PNG 재인코딩 포함)를 유발한다.
+    'body.app-fullscreen.show-controls .controls-bar'
   ].join(',');
 
   const MPV_HTML_OVERLAY_STYLE_PROPERTIES = [
@@ -7297,13 +7354,35 @@ async function initApp() {
     const controlsRect = elements.controlsBar?.getBoundingClientRect();
     if (!controlsRect || controlsRect.height <= 0) return 0;
 
+    // 피드백 28(b): 트랜지션 중간 위치(controlsRect.top)를 읽으면 wrapper가 0.3초 동안
+    // 매 프레임 계단식으로 mpv 네이티브 창을 리사이즈해 비율이 깨져 보인다.
+    // 높이·상대 돌출량은 translateY 트랜지션과 무관한 상수이므로, 표시 완료 시점의
+    // 최종 인셋을 즉시 계산해 축소를 1회 스냅으로 만든다.
     const seekbarRect = elements.fullscreenSeekbar?.getBoundingClientRect();
-    const cutoutTop = seekbarRect && seekbarRect.height > 0
-      ? Math.min(controlsRect.top, seekbarRect.top)
-      : controlsRect.top;
+    const seekbarProtrusion = seekbarRect && seekbarRect.height > 0
+      ? Math.max(0, controlsRect.top - seekbarRect.top)
+      : 0;
     const viewportBottom = Math.max(1, window.innerHeight || controlsRect.bottom);
-    const visibleTop = Math.max(0, Math.min(viewportBottom, cutoutTop));
-    return Math.max(0, Math.min(viewportBottom - 1, viewportBottom - visibleTop));
+    const inset = Math.max(0, Math.min(viewportBottom - 1, controlsRect.height + seekbarProtrusion));
+
+    // 피드백 28(a): 영상 하단 검은 여백이 컨트롤바를 다 수용하면 화면을 줄이지
+    // 않는다(인셋 0). 컨트롤바는 오버레이 미러로 여백 위에 표시된다. 여백은
+    // ① 레터박스(영상비 vs 화면비 차이)와 ② 배율 축소(videoZoom < 100) 둘 다에서
+    // 생기므로 줌 배율을 반영해 계산한다. 중앙 고정 상태(shouldCenterVideo)에서
+    // 영상은 wrapper 중앙 기준 scale 배율로 표시된다(applyVideoZoom의
+    // transform-origin: 'center center' + pan 0 리셋). 팬/확대 상태에서는 영상이
+    // 여백을 침범할 수 있어 기존대로 축소한다.
+    if (inset > 0 && shouldCenterVideo()) {
+      const renderArea = getVideoRenderArea();
+      const wrapperHeight = elements.videoWrapper?.clientHeight || 0;
+      if (renderArea && wrapperHeight > 0) {
+        const scale = Math.max(0.01, state.videoZoom / 100);
+        const scaledBottom = wrapperHeight / 2 + (renderArea.height * scale) / 2;
+        const bottomGap = Math.max(0, wrapperHeight - scaledBottom);
+        if (bottomGap >= inset) return 0;
+      }
+    }
+    return inset;
   }
 
   function syncMpvFullscreenViewportInset() {
@@ -7516,7 +7595,10 @@ async function initApp() {
       elements.zoomIndicatorOverlay,
       videoCommentRangeOverlay,
       fullscreenTimecodeOverlay,
-      fullscreenScrubOverlay
+      fullscreenScrubOverlay,
+      // 피드백 28(a): 전체화면 컨트롤바(자식인 전체화면 시크바 포함)를 mpv 위에 미러링.
+      // 숨김(opacity 0)·wrapper 비겹침이면 cloneMpvHtmlOverlayElement가 스스로 스킵한다.
+      elements.controlsBar
     ].forEach((element) => {
       const clone = cloneMpvHtmlOverlayElement(element, wrapperRect);
       if (clone) htmlOverlay.appendChild(clone);
@@ -8037,6 +8119,8 @@ async function initApp() {
     if (!canContinueVideoLoad()) return false;
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
+    mpvDrawPlaybackTransitionToken += 1;
+    elements.drawingTools?.classList.remove('playback-hidden');
     let videoLoadCompleted = false;
     supersedeActiveTranscodeOverlay('새 영상 선택');
     if (!preserveContinuousSession && continuousPlaybackState.active) {
@@ -8908,6 +8992,8 @@ async function initApp() {
       setDrawModeReadyState(enabled);
     }
     if (!enabled) {
+      mpvDrawPlaybackTransitionToken += 1;
+      elements.drawingTools?.classList.remove('playback-hidden');
       if (!isMpvReviewInteractionActive()) {
         void releaseMpvReviewFreezeFrame();
       }
@@ -8959,6 +9045,10 @@ async function initApp() {
     document.body.classList.toggle('show-controls', visible);
     if (wasVisible !== visible) {
       scheduleMpvEmbedBoundsSyncAfterLayout();
+      // 피드백 28(a): 컨트롤바 슬라이드 트랜지션(0.3s)이 끝난 뒤 미러를 최종 위치로 맞춘다.
+      setTimeout(() => {
+        scheduleMpvOverlayStateSync({ force: true });
+      }, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS);
     }
   }
 
@@ -12401,11 +12491,15 @@ async function initApp() {
       }
       return;
     }
-    // V: 선택 모드 (드로잉 모드 끄기)
-    if (e.code === 'KeyV' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    // 피드백 26: V = 선택 도구 활성화 (Animate와 동일). 기존 '드로잉 모드 종료' 동작을 대체한다.
+    if (userSettings.matchShortcut('drawingToolSelect', e)) {
+      // 드로잉 모드가 아니면 무시
+      if (!state.isDrawMode) return;
       e.preventDefault();
-      if (state.isDrawMode) {
-        toggleDrawMode();
+      // 선택 버튼 클릭으로 UI와 도구 함께 전환 (E 지우개 패턴과 동일)
+      const selectBtn = document.querySelector('.tool-btn[data-tool="select"]');
+      if (selectBtn) {
+        selectBtn.click();
       }
       return;
     }
@@ -12979,7 +13073,7 @@ async function initApp() {
     '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeConvertToFrame', 'keyframeConvertToKeyframe', 'keyframeDelete', 'prevKeyframe', 'nextKeyframe'],
     '프레임 편집': ['insertFrame', 'deleteFrame', 'frameCopy', 'framePaste'],
     '드로잉 레이어': ['drawingLayerAdd', 'drawingLayerDelete', 'drawingLayerVisibilityToggle', 'drawingLayerLockToggle', 'drawingLayerSelectUp', 'drawingLayerSelectDown', 'drawingLayerMoveUp', 'drawingLayerMoveDown', 'timelineCenterOnPlayhead'],
-    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp']
+    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp', 'drawingToolSelect']
   };
 
   let capturingShortcutAction = null;
