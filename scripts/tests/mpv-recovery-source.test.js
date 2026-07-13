@@ -824,3 +824,50 @@ test('mpv can be disabled per machine via env for troubleshooting', () => {
   assert.ok(availableMatch, 'isAvailable should exist');
   assert.match(availableMatch[1], /isMpvPlaybackDisabledByEnv\(this\.env\)/);
 });
+
+test('draw mode playback uses the shared review freeze only after playback stops', () => {
+  assert.match(mainStyles, /\.drawing-tools\.visible\.playback-hidden \{[\s\S]*?visibility: hidden;[\s\S]*?transition: none;/);
+  assert.match(
+    appSource,
+    /addEventListener\('frameUpdate'[\s\S]*?isMpvReviewInteractionActive\(\)[\s\S]*?!elements\.drawingTools\?\.classList\.contains\('playback-hidden'\)[\s\S]*?scheduleMpvReviewFreezeRefresh\(\);/
+  );
+  assert.match(
+    appSource,
+    /addEventListener\('play'[\s\S]*?mpvDrawPlaybackTransitionToken \+= 1;[\s\S]*?classList\.add\('playback-hidden'\);[\s\S]*?scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]*?releaseMpvReviewFreezeFrame\(\);/
+  );
+  assert.match(
+    appSource,
+    /addEventListener\('pause'[\s\S]*?elements\.drawingTools\?\.classList\.contains\('playback-hidden'\)[\s\S]*?restoreMpvDrawFreezeAfterPlayback\(\);/
+  );
+  const endedHandler = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(endedHandler, 'ended handler should exist');
+  assert.match(endedHandler[1], /elements\.drawingTools\?\.classList\.contains\('playback-hidden'\)[\s\S]*?restoreMpvDrawFreezeAfterPlayback\(\);/);
+  assert.ok(
+    endedHandler[1].indexOf('restoreMpvDrawFreezeAfterPlayback()') < endedHandler[1].indexOf('if (cutlistUIState.active'),
+    'ended restore must precede cutlist navigation'
+  );
+});
+
+test('latest draw playback transition alone may reveal the restored drawing panel', () => {
+  const restoreSource = extractNamedFunction(appSource, 'restoreMpvDrawFreezeAfterPlayback');
+
+  assert.match(restoreSource, /const restoreToken = \+\+mpvDrawPlaybackTransitionToken;/);
+  assert.match(restoreSource, /const freezePrepared = await showMpvReviewFreezeFrame\(\);/);
+  assert.match(restoreSource, /if \([\s\S]*?!freezePrepared \|\|[\s\S]*?restoreToken !== mpvDrawPlaybackTransitionToken[\s\S]*?!state\.isDrawMode \|\|[\s\S]*?videoPlayer\.isPlaying[\s\S]*?\) return;/);
+  assert.match(restoreSource, /classList\.remove\('playback-hidden'\);[\s\S]*?forceMpvHostVisibilitySync\(\);/);
+});
+
+test('draw playback state is cancelled before mode exit or media replacement', () => {
+  const drawStateSource = extractNamedFunction(appSource, 'applyDrawModeState');
+  assert.match(
+    drawStateSource,
+    /if \(!enabled\) \{[\s\S]*?mpvDrawPlaybackTransitionToken \+= 1;[\s\S]*?classList\.remove\('playback-hidden'\);[\s\S]*?releaseMpvReviewFreezeFrame\(\);/
+  );
+
+  const loadVideoSource = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  async function handleImportFeedbackFromVersion/);
+  assert.ok(loadVideoSource, 'loadVideo should exist');
+  assert.match(
+    loadVideoSource[1],
+    /activeVideoLoadPath = filePath;[\s\S]*?mpvDrawPlaybackTransitionToken \+= 1;[\s\S]*?classList\.remove\('playback-hidden'\);[\s\S]*?let videoLoadCompleted = false;/
+  );
+});

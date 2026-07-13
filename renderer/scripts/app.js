@@ -1523,7 +1523,11 @@ async function initApp() {
       updatePresence: false,
       updateDrawing: true
     });
-    if (isMpvReviewInteractionActive() && isMpvPilotPlaybackActive()) {
+    if (
+      isMpvReviewInteractionActive() &&
+      isMpvPilotPlaybackActive() &&
+      !elements.drawingTools?.classList.contains('playback-hidden')
+    ) {
       invalidateMpvReviewFreezeForFrameChange();
       scheduleMpvReviewFreezeRefresh();
     }
@@ -1544,6 +1548,15 @@ async function initApp() {
     timeline.scrollToPlayhead();
     // 재생 중에는 온디맨드 썸네일 캡처를 중단해 재생 방해를 방지
     getThumbnailGenerator()?._abortExactDrain?.();
+    // 피드백 25: 재생 중에는 공용 리뷰 freeze를 해제해 mpv 영상을 표시한다.
+    // 패널은 즉시 감추고, release가 호스트 복원을 확인한 뒤 freeze를 제거하므로
+    // 정지 화면과 실제 영상 사이에 검은 구간이 생기지 않는다.
+    if (state.isDrawMode && isMpvPilotPlaybackActive()) {
+      mpvDrawPlaybackTransitionToken += 1;
+      elements.drawingTools?.classList.add('playback-hidden');
+      scheduleMpvOverlayStateSync({ force: true });
+      void releaseMpvReviewFreezeFrame();
+    }
   });
 
   videoPlayer.addEventListener('pause', () => {
@@ -1554,6 +1567,13 @@ async function initApp() {
     getAudioWaveform()?.setPlaying(false);
     // 일시정지 시점에 누적된 온디맨드 정확-프레임 큐를 소진
     getThumbnailGenerator()?._drainExactQueue?.();
+    if (
+      state.isDrawMode &&
+      isMpvPilotPlaybackActive() &&
+      elements.drawingTools?.classList.contains('playback-hidden')
+    ) {
+      void restoreMpvDrawFreezeAfterPlayback();
+    }
   });
 
   videoPlayer.addEventListener('ended', () => {
@@ -1562,6 +1582,14 @@ async function initApp() {
     timeline.setPlayingState(false);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
     getAudioWaveform()?.setPlaying(false);
+
+    if (
+      state.isDrawMode &&
+      isMpvPilotPlaybackActive() &&
+      elements.drawingTools?.classList.contains('playback-hidden')
+    ) {
+      void restoreMpvDrawFreezeAfterPlayback();
+    }
 
     if (cutlistUIState.active && getCutlistManager().isActive()) {
       const currentCut = getCutlistManager().getCutById(getCutlistManager().currentCutId);
@@ -5401,6 +5429,7 @@ async function initApp() {
   let mpvReviewFreezeFailureHandling = false;
   let mpvReviewFreezeFrameSnapshot = null;
   let mpvReviewTargetFrameSnapshot = null;
+  let mpvDrawPlaybackTransitionToken = 0;
   let pendingMpvReviewFreezeMediaChange = null;
   const mpvReviewFrameTracker = createMpvReviewFrameTracker();
   const mpvReviewFreezeCaptureOwner = createSharedAsyncCaptureOwner();
@@ -5953,6 +5982,22 @@ async function initApp() {
     }
     mpvReviewFreezeFrameSnapshot = null;
     mpvReviewTargetFrameSnapshot = null;
+    return true;
+  }
+
+  async function restoreMpvDrawFreezeAfterPlayback() {
+    const restoreToken = ++mpvDrawPlaybackTransitionToken;
+    const freezePrepared = await showMpvReviewFreezeFrame();
+    if (
+      !freezePrepared ||
+      restoreToken !== mpvDrawPlaybackTransitionToken ||
+      !state.isDrawMode ||
+      videoPlayer.isPlaying
+    ) return;
+
+    elements.drawingTools?.classList.remove('playback-hidden');
+    scheduleMpvOverlayStateSync({ force: true });
+    forceMpvHostVisibilitySync();
     return true;
   }
 
@@ -8037,6 +8082,8 @@ async function initApp() {
     if (!canContinueVideoLoad()) return false;
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
+    mpvDrawPlaybackTransitionToken += 1;
+    elements.drawingTools?.classList.remove('playback-hidden');
     let videoLoadCompleted = false;
     supersedeActiveTranscodeOverlay('새 영상 선택');
     if (!preserveContinuousSession && continuousPlaybackState.active) {
@@ -8908,6 +8955,8 @@ async function initApp() {
       setDrawModeReadyState(enabled);
     }
     if (!enabled) {
+      mpvDrawPlaybackTransitionToken += 1;
+      elements.drawingTools?.classList.remove('playback-hidden');
       if (!isMpvReviewInteractionActive()) {
         void releaseMpvReviewFreezeFrame();
       }

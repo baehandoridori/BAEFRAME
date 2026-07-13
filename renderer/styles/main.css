@@ -2038,6 +2038,14 @@ body.app-fullscreen .video-comment-overlay-controls {
   transform: translateY(0);
 }
 
+/* 피드백 25: 재생 중에는 도구 패널을 즉시 감춰 mpv 영상을 보이게 한다. */
+.drawing-tools.visible.playback-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: none;
+}
+
 /* 헤더 (드래그 핸들) */
 .drawing-tools-header {
   display: flex;
