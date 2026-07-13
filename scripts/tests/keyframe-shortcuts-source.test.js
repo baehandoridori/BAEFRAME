@@ -95,4 +95,7 @@ test('Animate-style playback, layer toggle, and frame clipboard shortcuts are co
   assert.match(appSource, /userSettings\.matchShortcut\('framePaste', e\)/);
   assert.match(drawingManagerSource, /copyFrames\(targets = null\)/);
   assert.match(drawingManagerSource, /pasteFrames\(targetFrame = this\.currentFrame\)/);
+  assert.match(userSettingsSource, /drawingToolSelect:\s*\{ key: 'KeyV', ctrl: false, shift: false, alt: false/);
+  assert.match(appSource, /userSettings\.matchShortcut\('drawingToolSelect', e\)/);
+  assert.doesNotMatch(appSource, /\/\/ V: 선택 모드 \(드로잉 모드 끄기\)/);
 });

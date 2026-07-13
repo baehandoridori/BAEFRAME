@@ -12401,11 +12401,15 @@ async function initApp() {
       }
       return;
     }
-    // V: 선택 모드 (드로잉 모드 끄기)
-    if (e.code === 'KeyV' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    // 피드백 26: V = 선택 도구 활성화 (Animate와 동일). 기존 '드로잉 모드 종료' 동작을 대체한다.
+    if (userSettings.matchShortcut('drawingToolSelect', e)) {
+      // 드로잉 모드가 아니면 무시
+      if (!state.isDrawMode) return;
       e.preventDefault();
-      if (state.isDrawMode) {
-        toggleDrawMode();
+      // 선택 버튼 클릭으로 UI와 도구 함께 전환 (E 지우개 패턴과 동일)
+      const selectBtn = document.querySelector('.tool-btn[data-tool="select"]');
+      if (selectBtn) {
+        selectBtn.click();
       }
       return;
     }
@@ -12979,7 +12983,7 @@ async function initApp() {
     '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeConvertToFrame', 'keyframeConvertToKeyframe', 'keyframeDelete', 'prevKeyframe', 'nextKeyframe'],
     '프레임 편집': ['insertFrame', 'deleteFrame', 'frameCopy', 'framePaste'],
     '드로잉 레이어': ['drawingLayerAdd', 'drawingLayerDelete', 'drawingLayerVisibilityToggle', 'drawingLayerLockToggle', 'drawingLayerSelectUp', 'drawingLayerSelectDown', 'drawingLayerMoveUp', 'drawingLayerMoveDown', 'timelineCenterOnPlayhead'],
-    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp']
+    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp', 'drawingToolSelect']
   };
 
   let capturingShortcutAction = null;
