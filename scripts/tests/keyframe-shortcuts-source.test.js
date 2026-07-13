@@ -6,6 +6,7 @@ const path = require('node:path');
 const rootDir = path.resolve(__dirname, '../..');
 const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
 const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8'));
+const indexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8'));
 const drawingLayerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-layer.js'), 'utf8'));
 const drawingManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-manager.js'), 'utf8'));
 const timelineSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/timeline.js'), 'utf8'));
@@ -30,13 +31,23 @@ test('Animate-style drawing layer shortcuts are configured and handled', () => {
   assert.match(appSource, /timeline\.centerOnPlayhead\(\)/);
 });
 
-test('drawing layer up/down shortcuts follow the visible layer list direction', () => {
+test('new drawing layers are inserted above the active layer in the timeline list', () => {
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerSelectUp', e\)[\s\S]{0,140}selectDrawingLayerByOffset\(-1\);/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerSelectDown', e\)[\s\S]{0,140}selectDrawingLayerByOffset\(1\);/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveUp', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(-1\);/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveDown', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(1\);/);
   assert.match(appSource, /패널은 배열 인덱스 0이 최상단이므로 activeIndex 위치에 삽입한다\./);
   assert.match(appSource, /const insertIndex = activeIndex === -1 \? drawingManager\.layers\.length : activeIndex;/);
+  assert.match(appSource, /const insertBeforeLayerId = activeIndex === -1 \? null : drawingManager\.activeLayerId;/);
+});
+
+test('layer settings popup deletes the layer that was right-clicked', () => {
+  assert.match(indexSource, /id="layerDeleteBtn"[\s\S]{0,120}>레이어 삭제<\/button>/);
+  assert.match(appSource, /const layerDeleteBtn = document\.getElementById\('layerDeleteBtn'\);/);
+  assert.match(appSource, /function deleteDrawingLayer\(layerId\) \{[\s\S]{0,300}drawingManager\.layers\.length <= 1/);
+  assert.match(appSource, /drawingManager\.deleteLayer\(layerId\)/);
+  assert.match(appSource, /layerDeleteBtn\.addEventListener\('click', \(\) => \{[\s\S]{0,120}deleteDrawingLayer\(selectedLayerIdForPopup\);/);
+  assert.match(appSource, /function deleteActiveDrawingLayer\(\) \{[\s\S]{0,160}deleteDrawingLayer\(drawingManager\.activeLayerId\);/);
 });
 
 test('DrawingManager supports selecting and moving active layers by offset', () => {

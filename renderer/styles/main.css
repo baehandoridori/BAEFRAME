@@ -3472,6 +3472,21 @@ button.layer-lock:not(.locked):hover {
   text-align: right;
 }
 
+.layer-settings-delete {
+  width: 100%;
+  min-height: 30px;
+  border: 1px solid rgba(255, 107, 107, 0.45);
+  border-radius: 6px;
+  background: transparent;
+  color: #ff8a8a;
+  cursor: pointer;
+}
+
+.layer-settings-delete:hover {
+  background: rgba(255, 107, 107, 0.14);
+  border-color: #ff8a8a;
+}
+
 /* Timeline Tracks */
 .timeline-tracks {
   flex: 1;
