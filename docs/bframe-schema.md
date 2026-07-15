@@ -326,14 +326,14 @@ drawings
 
 ### 3.6 레이어 합성 (compositionLayers)
 
-레이어 합성은 사용자가 이미지나 영상을 원본 영상 위에 얹어 임시 편집/검토하는 데이터입니다. 이 단계에서는 원본 미디어를 복사하지 않고 `filePath`에 원본 경로만 저장합니다.
+레이어 합성은 사용자가 이미지나 영상을 원본 영상 위에 얹어 임시 편집/검토하는 데이터입니다. 파일 기반 레이어는 원본 미디어를 복사하지 않고 `filePath`에 원본 경로만 저장합니다. 클립보드에서 붙여넣은 캡처 이미지는 `sourceDataUrl`에 base64 데이터 URL로 임베드되어, `.bframe` 파일만 동기화되면 다른 사용자도 볼 수 있습니다.
 
 | 필드 | 타입 | 설명 |
 |------|------|------|
 | `id` | string | 합성 레이어 고유 ID |
 | `name` | string | 레이어 탭에 표시되는 이름 |
 | `type` | string | `image` 또는 `video` |
-| `filePath` | string | 원본 이미지/영상 파일 경로 |
+| `filePath` | string | 원본 이미지/영상 파일 경로. 임베드 레이어는 빈 문자열 |
 | `enabled` | boolean | 표시 여부 |
 | `order` | number | 합성 순서. 값이 클수록 위에 렌더링됩니다. |
 | `startTime` | number | 레이어 시작 시간(초) |
@@ -347,6 +347,7 @@ drawings
 | `color` | string | 선택. 레이어 기본 표시 색상(HEX) |
 | `selectedColor` | string | 선택. 레이어 선택 표시 색상(HEX) |
 | `sourceDuration` | number \| null | 영상 레이어의 원본 길이(초). 이미지 레이어는 `null` 가능 |
+| `sourceDataUrl` | string | 선택. 클립보드 캡처 임베드용 `data:image/` base64 데이터 URL. 값이 있으면 `filePath`가 비어 있어도 유효하며 렌더링 시 이 값을 우선 사용 |
 
 ---
 

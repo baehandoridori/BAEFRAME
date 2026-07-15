@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ====== 클립보드 관련 ======
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
+  clipboardHasImage: () => ipcRenderer.invoke('clipboard:has-image'),
   readGDriveLink: () => ipcRenderer.invoke('clipboard:read-gdrive-link'),
   generateWebShareLink: (videoUrl, bframeUrl) =>
     ipcRenderer.invoke('webshare:generate-link', videoUrl, bframeUrl),

@@ -543,9 +543,9 @@ function normalizeImageDataUrl(value) {
 
 function normalizeCompositionLayer(layer = {}) {
   const type = layer.type === 'video' ? 'video' : layer.type === 'image' ? 'image' : null;
-  const fileUrl = typeof layer.fileUrl === 'string' && /^file:\/\//i.test(layer.fileUrl)
-    ? layer.fileUrl
-    : '';
+  const rawFileUrl = typeof layer.fileUrl === 'string' ? layer.fileUrl : '';
+  const isEmbeddedImageUrl = type === 'image' && rawFileUrl.startsWith('data:image/');
+  const fileUrl = /^file:\/\//i.test(rawFileUrl) || isEmbeddedImageUrl ? rawFileUrl : '';
   if (!type || !fileUrl || !layer.id) return null;
 
   return {
