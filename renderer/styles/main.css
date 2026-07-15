@@ -7018,6 +7018,45 @@ body.resizing .comment-panel {
   text-align: center;
 }
 
+/* 피드백 36: 이전 버전 댓글 (읽기 전용 고스트) */
+.comment-ghost-section {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color, rgba(255, 255, 255, 0.2));
+  opacity: 0.62;
+}
+.comment-ghost-section-title {
+  font-size: 11px;
+  color: var(--text-muted, #9aa0a6);
+  margin-bottom: 6px;
+}
+.comment-ghost-item {
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.comment-ghost-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.comment-ghost-item-header {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+.comment-ghost-time {
+  color: var(--accent-color, #4a9eff);
+}
+.comment-ghost-author {
+  color: var(--text-muted, #9aa0a6);
+}
+.comment-ghost-text {
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 /* Comment Marker on Timeline */
 .comment-marker-track {
   position: absolute;

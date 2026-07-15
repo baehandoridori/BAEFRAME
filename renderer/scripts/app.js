@@ -3037,6 +3037,46 @@ async function initApp() {
     }
   });
 
+  // 피드백 36: 이전 버전 댓글 보기 드롭다운
+  function renderPrevVersionCommentsMenu() {
+    const menu = document.getElementById('prevVersionCommentsMenu');
+    if (!menu) return;
+    const versions = getVersionManager().getAllVersions()
+      .filter((v) => v?.path && !isSameFilePath(v.path, state.currentFile));
+    const activeLabel = previousVersionComments?.label || null;
+    menu.innerHTML = [
+      `<button class="filter-dropdown-item${activeLabel === null ? ' active' : ''}" data-version-path="">표시 안 함</button>`,
+      ...versions.map((v) => {
+        const label = v.displayLabel || (v.version ? `v${v.version}` : v.fileName);
+        return `<button class="filter-dropdown-item${activeLabel === label ? ' active' : ''}" data-version-path="${escapeHtmlAttribute(v.path)}">${escapeHtml(label)}</button>`;
+      })
+    ].join('');
+    menu.querySelectorAll('[data-version-path]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        menu.classList.remove('open');
+        const path = btn.dataset.versionPath;
+        if (!path) { void togglePreviousVersionComments(null); return; }
+        const version = versions.find((v) => v.path === path);
+        void togglePreviousVersionComments(version || null);
+      });
+    });
+  }
+
+  document.getElementById('prevVersionCommentsBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('prevVersionCommentsMenu');
+    if (!menu) return;
+    renderPrevVersionCommentsMenu();
+    menu.classList.toggle('open');
+  });
+
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('prevVersionCommentsMenu');
+    if (menu?.classList.contains('open') && !e.target.closest('#prevVersionCommentsWrapper')) {
+      menu.classList.remove('open');
+    }
+  });
+
   // 작성자 선택/해제 (체크박스 토글 + 이름 솔로)
   document.getElementById('authorFilterMenu')?.addEventListener('click', (e) => {
     e.stopPropagation(); // 드롭다운 닫힘 방지
@@ -8326,6 +8366,8 @@ async function initApp() {
         suppressReviewFreezeReleaseForMediaChange = false;
       }
       commentManager.clear();
+      // 피드백 36: 버전 전환·파일 로드 시 이전 버전 댓글 고스트 자동 해제
+      previousVersionComments = null;
       // 댓글 필터 상태 초기화
       resetCommentFilters();
       // Undo/Redo 스택 초기화 (파일 전환 시 크로스파일 오염 방지)
@@ -8721,6 +8763,36 @@ async function initApp() {
         retryDeferredMpvOverlayFallback();
       }
     }
+  }
+
+  // 피드백 36: 이전 버전 댓글 읽기 전용 표시 상태
+  let previousVersionComments = null; // { label, comments: [...평탄화된 마커...] } | null
+
+  async function togglePreviousVersionComments(versionInfo) {
+    if (!versionInfo?.path) {
+      previousVersionComments = null;
+      updateCommentList();
+      return;
+    }
+    try {
+      const sourceData = await window.electronAPI.loadReview(getBframePath(versionInfo.path));
+      const sourceComments = normalizeFeedbackSourceComments(sourceData);
+      const markers = [];
+      (sourceComments?.layers || []).forEach((layer) => {
+        (layer?.markers || []).forEach((marker) => {
+          if (marker) markers.push(marker);
+        });
+      });
+      previousVersionComments = {
+        label: versionInfo.displayLabel || (versionInfo.version ? `v${versionInfo.version}` : versionInfo.fileName || '이전 버전'),
+        comments: markers
+      };
+    } catch (error) {
+      log.warn('이전 버전 댓글 로드 실패', { path: versionInfo.path, error: error?.message });
+      showToast('선택한 버전의 피드백 파일을 열 수 없습니다.', 'warning');
+      previousVersionComments = null;
+    }
+    updateCommentList();
   }
 
   async function handleImportFeedbackFromVersion(versionInfo) {
@@ -10851,6 +10923,38 @@ async function initApp() {
     container.scrollTop = savedScrollTop;
   }
 
+  // 피드백 36: 이전 버전 댓글을 읽기 전용 고스트 섹션으로 목록 하단에 덧붙인다.
+  function appendPreviousVersionCommentSection(container) {
+    if (!previousVersionComments || !container) return;
+    const { label, comments } = previousVersionComments;
+    const currentFps = Number(videoPlayer.fps) > 0 ? Number(videoPlayer.fps) : 24;
+    const itemsHtml = comments.map((marker) => {
+      const sourceFps = Number(marker.fps) > 0 ? Number(marker.fps) : 24;
+      const seconds = Number(marker.startFrame || 0) / sourceFps;
+      const targetFrame = Math.max(0, Math.round(seconds * currentFps));
+      const timecode = formatTimecode(seconds, currentFps);
+      return `
+        <div class="comment-ghost-item" data-ghost-frame="${targetFrame}">
+          <div class="comment-ghost-item-header">
+            <span class="comment-ghost-time">${timecode}</span>
+            <span class="comment-ghost-author">${escapeHtml(marker.author || '')}</span>
+          </div>
+          <div class="comment-ghost-text">${escapeHtml(marker.text || '')}</div>
+        </div>`;
+    }).join('');
+    container.insertAdjacentHTML('beforeend', `
+      <div class="comment-ghost-section">
+        <div class="comment-ghost-section-title">${escapeHtml(label)}의 댓글 (읽기 전용 · ${comments.length}개)</div>
+        ${itemsHtml}
+      </div>`);
+    container.querySelectorAll('.comment-ghost-item').forEach((item) => {
+      item.addEventListener('click', () => {
+        const frame = Number(item.dataset.ghostFrame);
+        if (Number.isFinite(frame)) videoPlayer.seekToFrame(frame);
+      });
+    });
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
@@ -10919,6 +11023,7 @@ async function initApp() {
           <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
         </div>
       `;
+      appendPreviousVersionCommentSection(container);
       return;
     }
 
@@ -11053,6 +11158,8 @@ async function initApp() {
       </div>
     `;
     }).join('');
+
+    appendPreviousVersionCommentSection(container);
 
     // 이벤트 바인딩
     container.querySelectorAll('.comment-item').forEach(item => {
