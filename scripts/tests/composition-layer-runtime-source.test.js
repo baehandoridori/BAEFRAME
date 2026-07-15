@@ -14,6 +14,8 @@ const mpvOverlayHostSource = normalizeNewlines(fs.readFileSync(path.join(rootDir
 const compositionManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/composition-layer-manager.js'), 'utf8'));
 const drawingManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-manager.js'), 'utf8'));
 const schemaDocs = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'docs/bframe-schema.md'), 'utf8'));
+const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
+const ipcHandlersSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
 
 test('renderer exposes layer compositing controls and surfaces', () => {
   assert.match(indexSource, /id="btnLayerCompositing"/);
@@ -222,7 +224,7 @@ test('composition live edits avoid full panel and timeline churn until commit', 
 });
 
 test('draw mode lets the drawing canvas receive events above composition layers', () => {
-  assert.match(appSource, /elements\.videoWrapper\?\.classList\.toggle\('drawing-mode', state\.isDrawMode\);/);
+  assert.match(appSource, /elements\.videoWrapper\?\.classList\.toggle\('drawing-mode', ready\);/);
   assert.match(mainStyles, /\.video-wrapper\.drawing-mode \.composition-layer-preview\s*\{[^}]*pointer-events:\s*none;/s);
 });
 
@@ -234,4 +236,32 @@ test('bframe schema documentation includes compositionLayers', () => {
   assert.match(schemaDocs, /compositionLayers/);
   assert.match(schemaDocs, /레이어 합성/);
   assert.match(schemaDocs, /filePath/);
+});
+
+test('clipboard image paste embeds a composition layer', () => {
+  assert.match(appSource, /document\.addEventListener\('paste', async \(e\) => \{/);
+  assert.match(appSource, /hasImageInClipboard\(e\)/);
+  assert.match(appSource, /compositionLayerManager\.addLayerFromDataUrl\(image\.base64\)/);
+  assert.match(compositionManagerSource, /async addLayerFromDataUrl\(dataUrl, options = \{\}\) \{/);
+  assert.match(compositionManagerSource, /export function isEmbeddedImageDataUrl\(value\) \{/);
+  assert.match(compositionManagerSource, /export function getCompositionLayerMediaUrl\(layer\) \{/);
+});
+
+test('mpv overlay mirror accepts embedded image data urls', () => {
+  assert.match(mpvOverlayHostSource, /const isEmbeddedImageUrl = type === 'image' && rawFileUrl\.startsWith\('data:image\/'\);/);
+});
+
+test('composition layers warn when the file lives on a different drive than the base video', () => {
+  assert.match(appSource, /function getPathShareRoot\(filePath\) \{/);
+  assert.match(appSource, /다른 팀원에게는 보이지 않을 수 있어요/);
+});
+
+test('bframe schema documentation includes embedded source data url', () => {
+  assert.match(schemaDocs, /sourceDataUrl/);
+});
+
+test('highlight paste yields ctrl+v to clipboard image capture', () => {
+  assert.match(appSource, /await window\.electronAPI\.clipboardHasImage\(\)/);
+  assert.match(preloadSource, /clipboardHasImage: \(\) => ipcRenderer\.invoke\('clipboard:has-image'\)/);
+  assert.match(ipcHandlersSource, /ipcMain\.handle\('clipboard:has-image'/);
 });

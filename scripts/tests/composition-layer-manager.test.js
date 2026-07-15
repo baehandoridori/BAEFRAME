@@ -471,3 +471,112 @@ test('manager seeks paused video overlays below the playback drift threshold', a
   assert.equal(video.currentTime, 1.05);
   assert.equal(video.playCalled, true);
 });
+
+test('composition layers keep embedded data url sources through normalize, serialize, and visibility', async () => {
+  const {
+    normalizeCompositionLayer,
+    serializeCompositionLayer,
+    getVisibleCompositionLayers,
+    getCompositionLayerMediaUrl
+  } = await loadModule();
+
+  const embedded = normalizeCompositionLayer({
+    id: 'composition_embed',
+    name: '클립보드 캡처',
+    type: 'image',
+    filePath: '',
+    sourceDataUrl: 'data:image/jpeg;base64,abc123',
+    startTime: 0,
+    endTime: 2
+  });
+  assert.equal(embedded.sourceDataUrl, 'data:image/jpeg;base64,abc123');
+  assert.equal(getCompositionLayerMediaUrl(embedded), 'data:image/jpeg;base64,abc123');
+  assert.deepEqual(
+    getVisibleCompositionLayers([embedded], 1).map(layer => layer.id),
+    ['composition_embed']
+  );
+  assert.equal(serializeCompositionLayer(embedded).sourceDataUrl, 'data:image/jpeg;base64,abc123');
+
+  const fileLayer = normalizeCompositionLayer({
+    id: 'composition_file',
+    name: 'plate.png',
+    type: 'image',
+    filePath: 'C:/shot/plate.png',
+    startTime: 0,
+    endTime: 2
+  });
+  assert.equal(fileLayer.sourceDataUrl, '');
+  assert.equal('sourceDataUrl' in serializeCompositionLayer(fileLayer), false);
+  assert.equal(
+    normalizeCompositionLayer({ ...embedded, sourceDataUrl: 'http://example.com/a.png' }).sourceDataUrl,
+    ''
+  );
+});
+
+test('manager embeds clipboard captures as image layers and mirrors them to mpv', async () => {
+  const { CompositionLayerManager } = await loadModule();
+  const manager = new CompositionLayerManager({
+    getCurrentTime: () => 1,
+    getBaseDuration: () => 10
+  });
+
+  const layer = await manager.addLayerFromDataUrl('data:image/png;base64,xyz789');
+  assert.equal(layer.type, 'image');
+  assert.equal(layer.filePath, '');
+  assert.equal(layer.name, '클립보드 캡처');
+  assert.equal(layer.missing, false);
+
+  const second = await manager.addLayerFromDataUrl('data:image/png;base64,xyz790');
+  assert.equal(second.name, '클립보드 캡처 2');
+
+  assert.equal(manager.toJSON()[0].sourceDataUrl, 'data:image/png;base64,xyz789');
+  assert.equal(
+    manager.getMpvOverlayLayers({ currentTime: 1.5, isPlaying: false })[0].fileUrl,
+    'data:image/png;base64,xyz789'
+  );
+
+  assert.equal(await manager.addLayerFromDataUrl('not-a-data-url'), null);
+});
+
+test('mpv overlay state keeps embedded image layers and drops unknown url schemes', () => {
+  const { normalizeOverlayState } = require('../../main/mpv-overlay-host.js');
+
+  const state = normalizeOverlayState({
+    compositionLayers: [
+      { id: 'embed', type: 'image', fileUrl: 'data:image/png;base64,abc' },
+      { id: 'file', type: 'image', fileUrl: 'file:///C:/shot/plate.png' },
+      { id: 'video-embed', type: 'video', fileUrl: 'data:image/png;base64,abc' },
+      { id: 'http', type: 'image', fileUrl: 'https://example.com/a.png' }
+    ]
+  });
+
+  assert.deepEqual(state.compositionLayers.map(layer => layer.id), ['embed', 'file']);
+});
+
+test('manager clears embedded data url on relink and keeps it on duplicate', async () => {
+  const { CompositionLayerManager } = await loadModule();
+  const manager = new CompositionLayerManager({
+    openFileDialog: async () => ({ canceled: false, filePaths: ['C:/shot/replacement.png'] }),
+    fileExists: async () => true
+  });
+
+  manager.fromJSON([
+    {
+      id: 'embed',
+      name: '클립보드 캡처',
+      type: 'image',
+      filePath: '',
+      sourceDataUrl: 'data:image/png;base64,abc',
+      startTime: 0,
+      endTime: 2,
+      order: 0
+    }
+  ]);
+
+  const duplicate = manager.duplicateLayer('embed', { id: 'embed_copy' });
+  assert.equal(duplicate.sourceDataUrl, 'data:image/png;base64,abc');
+
+  const relinked = await manager.relinkLayerFile('embed');
+  assert.equal(relinked.filePath, 'C:/shot/replacement.png');
+  assert.equal(relinked.sourceDataUrl, '');
+});

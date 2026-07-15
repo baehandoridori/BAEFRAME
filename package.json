@@ -1,6 +1,6 @@
 {
   "name": "baeframe",
-  "version": "1.4.0-beta",
+  "version": "1.5.0-beta",
   "description": "애니메이션 스튜디오를 위한 비디오 리뷰/피드백 도구",
   "main": "main/index.js",
   "scripts": {
@@ -14,6 +14,7 @@
     "test:recent": "node --test scripts/tests/recent-files-store.test.js scripts/tests/recent-files-source.test.js",
     "test:frame-grid": "node --test scripts/tests/frame-grid-tiers.test.js scripts/tests/keyframe-drag-ghost-source.test.js scripts/tests/layer-visibility-hit-area.test.js scripts/tests/timeline-frame-ui-source.test.js",
     "test:cluster": "node --test scripts/tests/comment-cluster.test.js scripts/tests/comment-track-header-sync-source.test.js",
+    "test:composition": "node --test scripts/tests/composition-layer-manager.test.js scripts/tests/composition-layer-runtime-source.test.js scripts/tests/composition-layer-schema.test.js",
     "test:playlist-ordering": "node --test scripts/tests/playlist-ordering.test.js",
     "test:playlist-continuous": "node --test scripts/tests/playlist-continuous-core.test.js",
     "test:playlist-comments": "node --test scripts/tests/playlist-comment-index.test.js",

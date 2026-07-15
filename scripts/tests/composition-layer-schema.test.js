@@ -100,3 +100,75 @@ test('review validator rejects invalid composition layer fields', async () => {
   assert.match(errors, /compositionLayers\[0\].*color/);
   assert.match(errors, /compositionLayers\[0\].*selectedColor/);
 });
+
+test('review validator accepts embedded composition layers without filePath', async () => {
+  const { validateReviewData } = await importShared('shared/validators.js');
+
+  const result = validateReviewData({
+    bframeVersion: '2.0',
+    videoFile: 'base.mp4',
+    videoPath: 'C:/shot/base.mp4',
+    fps: 24,
+    comments: { layers: [] },
+    drawings: { layers: [] },
+    highlights: [],
+    compositionLayers: [
+      {
+        id: 'composition_embed',
+        name: '클립보드 캡처',
+        type: 'image',
+        filePath: '',
+        sourceDataUrl: 'data:image/jpeg;base64,abc',
+        enabled: true,
+        order: 0,
+        startTime: 0,
+        endTime: 2,
+        opacity: 1,
+        x: 0.25,
+        y: 0.25,
+        width: 0.5,
+        height: 0.5,
+        sourceDuration: null
+      }
+    ]
+  });
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.errors, []);
+});
+
+test('review validator rejects malformed embedded source data urls', async () => {
+  const { validateReviewData } = await importShared('shared/validators.js');
+
+  const result = validateReviewData({
+    bframeVersion: '2.0',
+    videoFile: 'base.mp4',
+    videoPath: 'C:/shot/base.mp4',
+    fps: 24,
+    comments: { layers: [] },
+    drawings: { layers: [] },
+    highlights: [],
+    compositionLayers: [
+      {
+        id: 'composition_embed',
+        name: '클립보드 캡처',
+        type: 'image',
+        filePath: '',
+        sourceDataUrl: 'https://example.com/a.png',
+        enabled: true,
+        order: 0,
+        startTime: 0,
+        endTime: 2,
+        opacity: 1,
+        x: 0.25,
+        y: 0.25,
+        width: 0.5,
+        height: 0.5,
+        sourceDuration: null
+      }
+    ]
+  });
+
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join('\n'), /compositionLayers\[0\].*sourceDataUrl/);
+});
