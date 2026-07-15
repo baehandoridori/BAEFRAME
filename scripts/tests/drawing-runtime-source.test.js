@@ -249,6 +249,12 @@ test('drawing select tool supports marquee selection, move, copy and paste', () 
   assert.match(indexSource, /data-tool="select"/);
   assert.match(indexSource, /id="selectionOverlayCanvas"/);
   assert.match(userSettingsSource, /'select', 'pen', 'brush', 'eraser', 'line', 'arrow', 'rect', 'circle'/);
+  // 피드백 35: 클릭 획 선택 (래스터 리프트)
+  assert.match(drawingCanvasSource, /_emit\('strokeselectrequest'/);
+  assert.match(drawingCanvasSource, /beginStrokeFloating\(record\)/);
+  assert.match(drawingManagerSource, /_onStrokeSelectRequest\(detail\)/);
+  assert.match(drawingManagerSource, /findStrokeAtPoint\(readRecords, point\)/);
+  assert.match(drawingStrokeRecordsSource, /export function findStrokeAtPoint\(strokes, point, extraTolerance = 6\)/);
 });
 
 test('floating drawing selections are resolved before context changes, not during render', () => {

@@ -9,6 +9,7 @@ import { DrawingCanvas, DrawingTool } from './drawing-canvas.js';
 import {
   ERASER_MODES,
   createStrokeRecord,
+  findStrokeAtPoint,
   isRecordableStrokeTool,
   normalizeEraserMode,
   removeIntersectingStrokes
@@ -146,6 +147,11 @@ export class DrawingManager extends EventTarget {
       this._saveToHistory();
     });
 
+    // 피드백 35: 클릭 획 선택 요청
+    this.drawingCanvas.addEventListener('strokeselectrequest', (e) => {
+      void this._onStrokeSelectRequest(e.detail);
+    });
+
     this.drawingCanvas.addEventListener('selectioncommitted', () => {
       this._onSelectionCommitted();
     });
@@ -273,6 +279,53 @@ export class DrawingManager extends EventTarget {
       this._freezeStrokeRecords(keyframe);
     }
     this._emit('drawend', { frame: this.currentFrame });
+    this._emit('layersChanged');
+  }
+
+  /**
+   * 피드백 35: 클릭 좌표의 획을 floating 선택으로 리프트한다.
+   * 비트맵-only 키프레임(레코드 동결)이면 조용히 무시 — 마퀴 선택은 계속 가능.
+   */
+  async _onStrokeSelectRequest(detail) {
+    const point = { x: Number(detail?.x), y: Number(detail?.y) };
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+
+    // 1) 읽기 전용 조회로 히트부터 판정 — 빈 곳 클릭(선택 해제 의도)에서
+    //    _getEditableKeyframeForCurrentFrame이 빈 키프레임을 생성하는 부작용을 막는다.
+    const layer = this.getActiveLayer();
+    const readKeyframe = layer?.getKeyframeAtFrame?.(this.currentFrame) || null;
+    const readRecords = readKeyframe?.strokeRecords;
+    if (!layer || !Array.isArray(readRecords) || readRecords.length === 0) return;
+
+    const hit = findStrokeAtPoint(readRecords, point);
+    if (!hit) return;
+
+    // 2) 히트 확정 후에만 편집 가능 키프레임 취득 (홀드 프레임 규칙은 획 지우개와 동일)
+    const keyframe = this._getEditableKeyframeForCurrentFrame({ editHeldSourceKeyframe: true });
+    const records = keyframe?.strokeRecords;
+    if (!keyframe || !Array.isArray(records) || records.length === 0) return;
+    const target = records.find((r) => r.id === hit.id);
+    if (!target) return;
+
+    // undo 스냅샷 (기존 리프트와 동일 경로)
+    this._saveToHistory();
+
+    keyframe.strokeRecords = records.filter((r) => r !== target);
+    await this._redrawKeyframeFromRecords(keyframe);
+    // 재진입 가드: redraw await 중 사용자가 그리기/선택을 시작했다면 리프트를 포기하고 원복
+    if (this.drawingCanvas.isDrawing || this.drawingCanvas.floatingImage) {
+      keyframe.strokeRecords = records;
+      await this._redrawKeyframeFromRecords(keyframe);
+      return;
+    }
+    const started = this.drawingCanvas.beginStrokeFloating(target);
+    if (!started) {
+      // 리프트 실패 시 원복
+      keyframe.strokeRecords = records;
+      await this._redrawKeyframeFromRecords(keyframe);
+      return;
+    }
+    this.paintStamp += 1;
     this._emit('layersChanged');
   }
 
