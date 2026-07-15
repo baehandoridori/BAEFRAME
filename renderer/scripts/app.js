@@ -12447,16 +12447,20 @@ async function initApp() {
       return;
     }
 
-    // 그리기 모드 토글
+    // 그리기 모드 토글 (피드백 33: 모드 중 B는 먼저 브러시로 복귀, 브러시 상태에서 B면 종료)
     if (userSettings.matchShortcut('drawMode', e)) {
       e.preventDefault();
-      const wasOff = !state.isDrawMode;
-      toggleDrawMode();
-      if (wasOff) {
+      if (!state.isDrawMode) {
+        toggleDrawMode();
         // 진입 시에는 마지막으로 저장된 도구를 복원
         const savedTool = userSettings.getBrushSettings().tool || currentToolName || 'brush';
         const toolBtn = document.querySelector(`.tool-btn[data-tool="${savedTool}"]`) || document.querySelector('.tool-btn[data-tool="brush"]');
         if (toolBtn) toolBtn.click();
+      } else if (currentToolName !== 'brush') {
+        const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
+        if (brushBtn) brushBtn.click();
+      } else {
+        toggleDrawMode();
       }
       return;
     }
