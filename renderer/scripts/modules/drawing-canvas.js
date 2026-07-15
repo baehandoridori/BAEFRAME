@@ -461,7 +461,16 @@ export class DrawingCanvas extends EventTarget {
   }
 
   _resolveEffectiveTool(e) {
-    if ((this.tool === DrawingTool.PEN || this.tool === DrawingTool.BRUSH) && this._isCtrlActive(e)) {
+    // 피드백 34: Ctrl 임시 지우개를 도형 도구까지 허용 (select 제외 — select는 별도 포인터 경로)
+    const ctrlEraserTools = [
+      DrawingTool.PEN,
+      DrawingTool.BRUSH,
+      DrawingTool.LINE,
+      DrawingTool.ARROW,
+      DrawingTool.RECT,
+      DrawingTool.CIRCLE
+    ];
+    if (ctrlEraserTools.includes(this.tool) && this._isCtrlActive(e)) {
       return DrawingTool.ERASER;
     }
     return this.tool;

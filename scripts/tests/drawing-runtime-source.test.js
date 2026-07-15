@@ -49,6 +49,9 @@ test('drawing canvas resolves Ctrl pen and brush strokes as eraser at stroke sta
   assert.match(drawingCanvasSource, /this\.activeTool = this\._resolveEffectiveTool\(e\);/);
   assert.match(drawingCanvasSource, /effectiveTool: this\.activeTool/);
   assert.match(drawingCanvasSource, /eraserMode: this\.activeEraserMode/);
+  // 피드백 34: 도형 도구에서도 Ctrl 임시 지우개
+  assert.match(drawingCanvasSource, /const ctrlEraserTools = \[[\s\S]*?DrawingTool\.LINE,[\s\S]*?DrawingTool\.CIRCLE[\s\S]*?\];/);
+  assert.match(drawingCanvasSource, /ctrlEraserTools\.includes\(this\.tool\) && this\._isCtrlActive\(e\)/);
 });
 
 test('drawing input is blocked before stroke events when the active layer is locked or hidden', () => {
