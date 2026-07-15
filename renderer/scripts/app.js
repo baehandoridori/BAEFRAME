@@ -575,6 +575,7 @@ async function initApp() {
 
     // 비디오 줌 컨트롤
     videoZoomControls: document.getElementById('videoZoomControls'),
+    videoCommentOverlayControls: document.getElementById('videoCommentOverlayControls'),
     btnVideoZoomIn: document.getElementById('btnVideoZoomIn'),
     btnVideoZoomOut: document.getElementById('btnVideoZoomOut'),
     btnVideoZoomReset: document.getElementById('btnVideoZoomReset'),
@@ -3033,6 +3034,46 @@ async function initApp() {
     if (wrapper && !wrapper.contains(e.target)) {
       const menu = document.getElementById('authorFilterMenu');
       if (menu) menu.classList.remove('open');
+    }
+  });
+
+  // 피드백 36: 이전 버전 댓글 보기 드롭다운
+  function renderPrevVersionCommentsMenu() {
+    const menu = document.getElementById('prevVersionCommentsMenu');
+    if (!menu) return;
+    const versions = getVersionManager().getAllVersions()
+      .filter((v) => v?.path && !isSameFilePath(v.path, state.currentFile));
+    const activeLabel = previousVersionComments?.label || null;
+    menu.innerHTML = [
+      `<button class="filter-dropdown-item${activeLabel === null ? ' active' : ''}" data-version-path="">표시 안 함</button>`,
+      ...versions.map((v) => {
+        const label = v.displayLabel || (v.version ? `v${v.version}` : v.fileName);
+        return `<button class="filter-dropdown-item${activeLabel === label ? ' active' : ''}" data-version-path="${escapeHtmlAttribute(v.path)}">${escapeHtml(label)}</button>`;
+      })
+    ].join('');
+    menu.querySelectorAll('[data-version-path]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        menu.classList.remove('open');
+        const path = btn.dataset.versionPath;
+        if (!path) { void togglePreviousVersionComments(null); return; }
+        const version = versions.find((v) => v.path === path);
+        void togglePreviousVersionComments(version || null);
+      });
+    });
+  }
+
+  document.getElementById('prevVersionCommentsBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('prevVersionCommentsMenu');
+    if (!menu) return;
+    renderPrevVersionCommentsMenu();
+    menu.classList.toggle('open');
+  });
+
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('prevVersionCommentsMenu');
+    if (menu?.classList.contains('open') && !e.target.closest('#prevVersionCommentsWrapper')) {
+      menu.classList.remove('open');
     }
   });
 
@@ -7102,6 +7143,9 @@ async function initApp() {
     '.fullscreen-scrub-overlay',
     '.toast-container',
     '#compositionLayerOverlay',
+    '.composition-layer-panel',
+    '.video-zoom-controls',
+    '.video-comment-overlay-controls',
     // 피드백 28(a): 반드시 전체화면+표시 중으로 한정할 것. 무조건 '.controls-bar'로
     // 넣으면 재생 중 매 프레임 갱신되는 진행률 바(#seekbarProgress)·타임코드 변이가
     // installMpvMirroredOverlayObserver(6198~)를 통해 모든 mpv 재생에서 프레임당
@@ -7475,6 +7519,9 @@ async function initApp() {
     }
   }
 
+  // 피드백 32: 드로잉 미러 PNG 캐시 — paintStamp가 같으면 재인코딩하지 않는다.
+  let mpvDrawingMirrorCache = { key: '', dataUrl: '' };
+
   function getCompositedDrawingOverlayDataUrl() {
     const baseCanvas = elements.drawingCanvas;
     if (!baseCanvas || baseCanvas.width <= 0 || baseCanvas.height <= 0) return '';
@@ -7483,6 +7530,24 @@ async function initApp() {
     const activeCanvasOpacity = Number.isFinite(activeLayerOpacity)
       ? Math.max(0, Math.min(1, activeLayerOpacity))
       : 1;
+
+    // 스트로크·선택 조작 중에는 캔버스가 이벤트 없이 계속 변하므로 캐시를 쓰지 않는다.
+    const canvasBusy = drawingManager.drawingCanvas?.isDrawing === true ||
+      !!drawingManager.drawingCanvas?.floatingImage ||
+      !!drawingManager.drawingCanvas?.selection;
+    const cacheKey = canvasBusy
+      ? ''
+      : [
+        drawingManager.paintStamp,
+        drawingManager.activeLayerId,
+        baseCanvas.width,
+        baseCanvas.height,
+        activeCanvasOpacity
+      ].join('|');
+    if (cacheKey && mpvDrawingMirrorCache.key === cacheKey) {
+      return mpvDrawingMirrorCache.dataUrl;
+    }
+
     const compositeCanvas = document.createElement('canvas');
     compositeCanvas.width = baseCanvas.width;
     compositeCanvas.height = baseCanvas.height;
@@ -7500,7 +7565,11 @@ async function initApp() {
     drawCanvas(elements.layersAboveCanvas);
 
     try {
-      return compositeCanvas.toDataURL('image/png');
+      const dataUrl = compositeCanvas.toDataURL('image/png');
+      if (cacheKey) {
+        mpvDrawingMirrorCache = { key: cacheKey, dataUrl };
+      }
+      return dataUrl;
     } catch (error) {
       log.debug('mpv 드로잉 합성 스냅샷 실패', { error: error.message });
       return '';
@@ -7607,8 +7676,13 @@ async function initApp() {
       fullscreenScrubOverlay,
       // 피드백 28(a): 전체화면 컨트롤바(자식인 전체화면 시크바 포함)를 mpv 위에 미러링.
       // 숨김(opacity 0)·wrapper 비겹침이면 cloneMpvHtmlOverlayElement가 스스로 스킵한다.
-      elements.controlsBar
-    ].forEach((element) => {
+      elements.controlsBar,
+      // 사용자 지시(2026-07-15): mpv에 가려지던 UI를 미러로 표시.
+      // 클릭은 호스트 창 관통으로 실제 DOM에 도달하므로 보이기만 하면 조작된다.
+      elements.compositionLayerPanel?.classList.contains('open') ? elements.compositionLayerPanel : null,
+      elements.videoZoomControls,
+      elements.videoCommentOverlayControls
+    ].filter(Boolean).forEach((element) => {
       const clone = cloneMpvHtmlOverlayElement(element, wrapperRect);
       if (clone) htmlOverlay.appendChild(clone);
     });
@@ -7658,7 +7732,10 @@ async function initApp() {
 
     return {
       drawingDataUrl: getCompositedDrawingOverlayDataUrl(),
-      onionDataUrl: getCanvasOverlayDataUrl(elements.onionSkinCanvas),
+      // 피드백 32: 어니언 스킨이 꺼져 있으면 전체 해상도 투명 PNG 인코딩을 생략한다.
+      onionDataUrl: drawingManager.onionSkin?.enabled
+        ? getCanvasOverlayDataUrl(elements.onionSkinCanvas)
+        : '',
       markerHtml: serializeMpvOverlayMarkerHtml(),
       tooltipHtml: serializeMpvOverlayTooltipHtml(),
       htmlOverlayHtml: serializeMpvOverlayHtml(),
@@ -7911,6 +7988,7 @@ async function initApp() {
 
   async function loadVideoWithMpvPilot(filePath, {
     initialFrame = null,
+    initialTime = null,
     loadToken = null,
     isStaleVideoLoad = () => false
   } = {}) {
@@ -8049,10 +8127,11 @@ async function initApp() {
     syncMpvVideoTransform();
     scheduleMpvOverlayStateSync();
 
-    if (Number.isFinite(Number(initialFrame)) && Number(initialFrame) > 0) {
-      const initialSeekReady = await seekMpvInitialFrameBeforeReveal(initialFrame);
+    const mpvInitialFrame = resolveInitialFrameFromOptions(initialFrame, initialTime);
+    if (Number.isFinite(Number(mpvInitialFrame)) && Number(mpvInitialFrame) > 0) {
+      const initialSeekReady = await seekMpvInitialFrameBeforeReveal(mpvInitialFrame);
       if (!initialSeekReady) {
-        log.debug('mpv 초기 프레임 확인 시간 초과, 호스트 공개 전 한 프레임 더 대기', { filePath, initialFrame });
+        log.debug('mpv 초기 프레임 확인 시간 초과, 호스트 공개 전 한 프레임 더 대기', { filePath, initialFrame: mpvInitialFrame });
         await new Promise(resolve => requestAnimationFrame(resolve));
       }
     }
@@ -8101,6 +8180,22 @@ async function initApp() {
     return null;
   }
 
+  // 피드백 36: 버전 전환 등에서 초 단위 위치를 유지한다. fps는 엔진 로드 후 확정되므로
+  // initialFrame이 명시되지 않은 경우에만 호출 시점의 fps로 프레임을 계산한다.
+  function resolveInitialFrameFromOptions(initialFrame, initialTime) {
+    if (Number.isFinite(Number(initialFrame)) && Number(initialFrame) > 0) {
+      return Number(initialFrame);
+    }
+    if (Number.isFinite(Number(initialTime)) && Number(initialTime) > 0 && Number(videoPlayer.fps) > 0) {
+      const frame = Math.round(Number(initialTime) * Number(videoPlayer.fps));
+      const maxFrame = Number.isFinite(Number(videoPlayer.totalFrames)) && Number(videoPlayer.totalFrames) > 0
+        ? Number(videoPlayer.totalFrames) - 1
+        : frame;
+      return Math.max(0, Math.min(frame, maxFrame));
+    }
+    return null;
+  }
+
   async function loadVideo(filePath, options = {}) {
     const {
       keepVersionContext = false,
@@ -8108,6 +8203,7 @@ async function initApp() {
       preserveContinuousSession = false,
       playWhenMediaReady = false,
       initialFrame = null,
+      initialTime = null,
       revealAfterInitialSeek = false,
       holdPreviousFrameUntilReady = false,
       deferCollaborationStart = false,
@@ -8270,6 +8366,8 @@ async function initApp() {
         suppressReviewFreezeReleaseForMediaChange = false;
       }
       commentManager.clear();
+      // 피드백 36: 버전 전환·파일 로드 시 이전 버전 댓글 고스트 자동 해제
+      previousVersionComments = null;
       // 댓글 필터 상태 초기화
       resetCommentFilters();
       // Undo/Redo 스택 초기화 (파일 전환 시 크로스파일 오염 방지)
@@ -8414,6 +8512,7 @@ async function initApp() {
           try {
             const mpvLoaded = await loadVideoWithMpvPilot(filePath, {
               initialFrame,
+              initialTime,
               loadToken,
               isStaleVideoLoad
             });
@@ -8444,9 +8543,10 @@ async function initApp() {
           document.body.classList.remove('mpv-pilot-mode');
 
           // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
+          const html5InitialFrame = () => resolveInitialFrameFromOptions(initialFrame, initialTime);
           const shouldDelayVideoReveal = revealAfterInitialSeek &&
-            Number.isFinite(Number(initialFrame)) &&
-            Number(initialFrame) > 0;
+            (Number.isFinite(Number(initialFrame)) && Number(initialFrame) > 0 ||
+              Number.isFinite(Number(initialTime)) && Number(initialTime) > 0);
           const shouldHoldVideoReveal = holdPreviousFrameUntilReady || shouldDelayVideoReveal;
           const previousVideoVisibility = elements.videoPlayer.style.visibility;
           const transitionFreezeCaptured = shouldHoldVideoReveal && captureVideoTransitionFreezeFrame();
@@ -8462,8 +8562,16 @@ async function initApp() {
             await videoPlayer.load(actualVideoPath);
             if (!canContinueVideoLoad()) return false;
 
+            // 피드백 36: reveal 지연이 없는 경로에서도 초 단위 위치를 복원한다.
+            if (!shouldDelayVideoReveal) {
+              const resumeFrame = resolveInitialFrameFromOptions(initialFrame, initialTime);
+              if (Number.isFinite(Number(resumeFrame)) && Number(resumeFrame) > 0) {
+                videoPlayer.seekToFrame(resumeFrame);
+              }
+            }
+
             if (shouldDelayVideoReveal) {
-              await seekInitialVideoFrameBeforeReveal(initialFrame);
+              await seekInitialVideoFrameBeforeReveal(html5InitialFrame());
               if (!canContinueVideoLoad()) return false;
             } else if (shouldHoldVideoReveal) {
               await waitForVideoRenderable(elements.videoPlayer);
@@ -8521,10 +8629,15 @@ async function initApp() {
       versionDropdown.onVersionSelect(async (versionInfo) => {
         log.info('버전 전환 요청', versionInfo);
         if (versionInfo.path) {
+          // 피드백 36: 전환 직전 위치(초)를 캡처해 새 버전에서도 같은 시간으로 이어본다.
+          const resumeTime = Number.isFinite(Number(videoPlayer.currentTime)) && Number(videoPlayer.currentTime) > 0
+            ? Number(videoPlayer.currentTime)
+            : null;
           // 버전 컨텍스트 유지하고, 해당 버전 번호도 함께 전달
           await loadVideo(versionInfo.path, {
             keepVersionContext: true,
-            targetVersion: versionInfo.version
+            targetVersion: versionInfo.version,
+            initialTime: resumeTime
           });
         }
       });
@@ -8650,6 +8763,36 @@ async function initApp() {
         retryDeferredMpvOverlayFallback();
       }
     }
+  }
+
+  // 피드백 36: 이전 버전 댓글 읽기 전용 표시 상태
+  let previousVersionComments = null; // { label, comments: [...평탄화된 마커...] } | null
+
+  async function togglePreviousVersionComments(versionInfo) {
+    if (!versionInfo?.path) {
+      previousVersionComments = null;
+      updateCommentList();
+      return;
+    }
+    try {
+      const sourceData = await window.electronAPI.loadReview(getBframePath(versionInfo.path));
+      const sourceComments = normalizeFeedbackSourceComments(sourceData);
+      const markers = [];
+      (sourceComments?.layers || []).forEach((layer) => {
+        (layer?.markers || []).forEach((marker) => {
+          if (marker) markers.push(marker);
+        });
+      });
+      previousVersionComments = {
+        label: versionInfo.displayLabel || (versionInfo.version ? `v${versionInfo.version}` : versionInfo.fileName || '이전 버전'),
+        comments: markers
+      };
+    } catch (error) {
+      log.warn('이전 버전 댓글 로드 실패', { path: versionInfo.path, error: error?.message });
+      showToast('선택한 버전의 피드백 파일을 열 수 없습니다.', 'warning');
+      previousVersionComments = null;
+    }
+    updateCommentList();
   }
 
   async function handleImportFeedbackFromVersion(versionInfo) {
@@ -10780,6 +10923,38 @@ async function initApp() {
     container.scrollTop = savedScrollTop;
   }
 
+  // 피드백 36: 이전 버전 댓글을 읽기 전용 고스트 섹션으로 목록 하단에 덧붙인다.
+  function appendPreviousVersionCommentSection(container) {
+    if (!previousVersionComments || !container) return;
+    const { label, comments } = previousVersionComments;
+    const currentFps = Number(videoPlayer.fps) > 0 ? Number(videoPlayer.fps) : 24;
+    const itemsHtml = comments.map((marker) => {
+      const sourceFps = Number(marker.fps) > 0 ? Number(marker.fps) : 24;
+      const seconds = Number(marker.startFrame || 0) / sourceFps;
+      const targetFrame = Math.max(0, Math.round(seconds * currentFps));
+      const timecode = formatTimecode(seconds, currentFps);
+      return `
+        <div class="comment-ghost-item" data-ghost-frame="${targetFrame}">
+          <div class="comment-ghost-item-header">
+            <span class="comment-ghost-time">${timecode}</span>
+            <span class="comment-ghost-author">${escapeHtml(marker.author || '')}</span>
+          </div>
+          <div class="comment-ghost-text">${escapeHtml(marker.text || '')}</div>
+        </div>`;
+    }).join('');
+    container.insertAdjacentHTML('beforeend', `
+      <div class="comment-ghost-section">
+        <div class="comment-ghost-section-title">${escapeHtml(label)}의 댓글 (읽기 전용 · ${comments.length}개)</div>
+        ${itemsHtml}
+      </div>`);
+    container.querySelectorAll('.comment-ghost-item').forEach((item) => {
+      item.addEventListener('click', () => {
+        const frame = Number(item.dataset.ghostFrame);
+        if (Number.isFinite(frame)) videoPlayer.seekToFrame(frame);
+      });
+    });
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
@@ -10848,6 +11023,7 @@ async function initApp() {
           <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
         </div>
       `;
+      appendPreviousVersionCommentSection(container);
       return;
     }
 
@@ -10982,6 +11158,8 @@ async function initApp() {
       </div>
     `;
     }).join('');
+
+    appendPreviousVersionCommentSection(container);
 
     // 이벤트 바인딩
     container.querySelectorAll('.comment-item').forEach(item => {
@@ -12410,16 +12588,20 @@ async function initApp() {
       return;
     }
 
-    // 그리기 모드 토글
+    // 그리기 모드 토글 (피드백 33: 모드 중 B는 먼저 브러시로 복귀, 브러시 상태에서 B면 종료)
     if (userSettings.matchShortcut('drawMode', e)) {
       e.preventDefault();
-      const wasOff = !state.isDrawMode;
-      toggleDrawMode();
-      if (wasOff) {
+      if (!state.isDrawMode) {
+        toggleDrawMode();
         // 진입 시에는 마지막으로 저장된 도구를 복원
         const savedTool = userSettings.getBrushSettings().tool || currentToolName || 'brush';
         const toolBtn = document.querySelector(`.tool-btn[data-tool="${savedTool}"]`) || document.querySelector('.tool-btn[data-tool="brush"]');
         if (toolBtn) toolBtn.click();
+      } else if (currentToolName !== 'brush') {
+        const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
+        if (brushBtn) brushBtn.click();
+      } else {
+        toggleDrawMode();
       }
       return;
     }

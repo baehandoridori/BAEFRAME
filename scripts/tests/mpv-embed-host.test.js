@@ -408,3 +408,50 @@ test('destroys the host and unbinds parent listeners when the parent closes', as
   assert.equal((listeners.get('minimize') || []).length, 0);
   assert.equal((listeners.get('restore') || []).length, 0);
 });
+
+test('동일 bounds 재호출은 setBounds를 생략한다 (피드백 32)', async () => {
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    getContentBounds: () => ({ x: 20, y: 30, width: 800, height: 600 })
+  };
+  class FakeBrowserWindow {
+    constructor() {
+      this.bounds = null;
+      this.destroyed = false;
+      this.setBoundsCalls = [];
+    }
+    loadURL() {
+      return Promise.resolve();
+    }
+    setBounds(bounds) {
+      this.bounds = bounds;
+      this.setBoundsCalls.push(bounds);
+    }
+    showInactive() {}
+    isDestroyed() {
+      return this.destroyed;
+    }
+    getNativeWindowHandle() {
+      return createHandleBuffer(99);
+    }
+    on() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVEmbedHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow,
+    platform: 'win32'
+  });
+
+  await host.ensure({ x: 1, y: 2, width: 300, height: 200 });
+  const fakeWindow = host.window;
+  const bounds = { x: 5, y: 7, width: 320, height: 180 };
+  host.updateBounds(bounds);
+  const callsAfterFirst = fakeWindow.setBoundsCalls.length;
+  const result = host.updateBounds({ ...bounds });
+  assert.equal(result.success, true);
+  assert.equal(fakeWindow.setBoundsCalls.length, callsAfterFirst);
+});

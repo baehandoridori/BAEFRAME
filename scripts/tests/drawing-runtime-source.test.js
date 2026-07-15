@@ -49,6 +49,9 @@ test('drawing canvas resolves Ctrl pen and brush strokes as eraser at stroke sta
   assert.match(drawingCanvasSource, /this\.activeTool = this\._resolveEffectiveTool\(e\);/);
   assert.match(drawingCanvasSource, /effectiveTool: this\.activeTool/);
   assert.match(drawingCanvasSource, /eraserMode: this\.activeEraserMode/);
+  // 피드백 34: 도형 도구에서도 Ctrl 임시 지우개
+  assert.match(drawingCanvasSource, /const ctrlEraserTools = \[[\s\S]*?DrawingTool\.LINE,[\s\S]*?DrawingTool\.CIRCLE[\s\S]*?\];/);
+  assert.match(drawingCanvasSource, /ctrlEraserTools\.includes\(this\.tool\) && this\._isCtrlActive\(e\)/);
 });
 
 test('drawing input is blocked before stroke events when the active layer is locked or hidden', () => {
@@ -246,6 +249,12 @@ test('drawing select tool supports marquee selection, move, copy and paste', () 
   assert.match(indexSource, /data-tool="select"/);
   assert.match(indexSource, /id="selectionOverlayCanvas"/);
   assert.match(userSettingsSource, /'select', 'pen', 'brush', 'eraser', 'line', 'arrow', 'rect', 'circle'/);
+  // 피드백 35: 클릭 획 선택 (래스터 리프트)
+  assert.match(drawingCanvasSource, /_emit\('strokeselectrequest'/);
+  assert.match(drawingCanvasSource, /beginStrokeFloating\(record\)/);
+  assert.match(drawingManagerSource, /_onStrokeSelectRequest\(detail\)/);
+  assert.match(drawingManagerSource, /findStrokeAtPoint\(readRecords, point\)/);
+  assert.match(drawingStrokeRecordsSource, /export function findStrokeAtPoint\(strokes, point, extraTolerance = 6\)/);
 });
 
 test('floating drawing selections are resolved before context changes, not during render', () => {
@@ -318,4 +327,11 @@ test('global drawing redo forwards action-scoped lifecycle metadata', () => {
   assert.match(drawingSyncSource, /MAX_KEYFRAME_TRANSFER_BYTES = 32 \* 1024 \* 1024/);
   assert.match(drawingSyncSource, /MAX_TOTAL_KEYFRAME_BUFFERED_BYTES = 64 \* 1024 \* 1024/);
   assert.match(drawingSyncSource, /this\._keyframeChunkBufferedBytes = Math\.max/);
+});
+
+test('드로잉 매니저가 실제 페인트 변화에서만 paintStamp를 올린다 (피드백 32)', () => {
+  assert.match(drawingManagerSource, /this\.paintStamp = 0;/);
+  assert.match(drawingManagerSource, /_notePlaybackRenderKey\(renderKey\)/);
+  assert.match(drawingManagerSource, /this\.paintStamp \+= 1;/);
+  assert.match(drawingManagerSource, /renderKeyParts\.push\(`\$\{layer\.id\}:\$\{keyframe\.frame\}/);
 });

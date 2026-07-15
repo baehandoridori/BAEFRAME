@@ -733,9 +733,9 @@ test('mpv pilot waits for the requested initial frame before revealing the nativ
   assert.match(appSource, /async function waitForMpvPlaybackTime\(targetTime, \{ timeoutMs = 700, tolerance = 0\.12 \} = \{\}\)/);
   assert.match(appSource, /async function seekMpvInitialFrameBeforeReveal\(initialFrame\)/);
   assert.match(appSource, /tolerance: Math\.max\(0\.004, \(1 \/ fps\) \* 0\.45\)/);
-  assert.match(loadMpvSource, /const initialSeekReady = await seekMpvInitialFrameBeforeReveal\(initialFrame\);/);
+  assert.match(loadMpvSource, /const initialSeekReady = await seekMpvInitialFrameBeforeReveal\(mpvInitialFrame\);/);
   assert.match(loadMpvSource, /if \(!initialSeekReady\) \{[\s\S]+requestAnimationFrame\(resolve\)/);
-  const initialSeekIndex = loadMpvSource.indexOf('const initialSeekReady = await seekMpvInitialFrameBeforeReveal(initialFrame);');
+  const initialSeekIndex = loadMpvSource.indexOf('const initialSeekReady = await seekMpvInitialFrameBeforeReveal(mpvInitialFrame);');
   const staleRecheckIndex = loadMpvSource.indexOf('if (isStaleMpvPilotLifecycle()) {', initialSeekIndex);
   const revealReadyIndex = loadMpvSource.indexOf('mpvPilotHostPreparing = false;', initialSeekIndex);
   const visibilitySyncIndex = loadMpvSource.indexOf('syncMpvHostVisibilityWithDom();', revealReadyIndex);
@@ -1077,7 +1077,20 @@ test('fullscreen controls inset snaps to final size and yields to letterbox gap'
   assert.match(appSource, /if \(inset > 0 && shouldCenterVideo\(\)\) \{/);
   assert.match(appSource, /const scaledBottom = wrapperHeight \/ 2 \+ \(renderArea\.height \* scale\) \/ 2;/);
   assert.match(appSource, /if \(bottomGap >= inset\) return 0;/);
-  assert.match(appSource, /elements\.controlsBar\s*\]\.forEach/);
+  assert.match(appSource, /elements\.controlsBar,[\s\S]*?\]\.filter\(Boolean\)\.forEach/);
   assert.match(appSource, /'body\.app-fullscreen\.show-controls \.controls-bar'\s*\]\.join\(','\);/);
   assert.match(appSource, /scheduleMpvOverlayStateSync\(\{ force: true \}\);\s*\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
+});
+
+test('드로잉 미러 PNG가 paintStamp 캐시로 재생 중 재인코딩을 피한다 (피드백 32)', () => {
+  assert.match(appSource, /let mpvDrawingMirrorCache = \{ key: '', dataUrl: '' \};/);
+  assert.match(appSource, /drawingManager\.paintStamp,/);
+  assert.match(appSource, /mpvDrawingMirrorCache\.key === cacheKey/);
+  assert.match(appSource, /onionSkin\?\.enabled\s*\?\s*getCanvasOverlayDataUrl\(elements\.onionSkinCanvas\)\s*:\s*''/);
+});
+
+test('mpv에 가려지던 패널·컨트롤이 오버레이 미러 대상에 포함된다 (사용자 지시 2026-07-15)', () => {
+  assert.match(appSource, /'\.composition-layer-panel',\s*\n\s*'\.video-zoom-controls',\s*\n\s*'\.video-comment-overlay-controls',/);
+  assert.match(appSource, /classList\.contains\('open'\) \? elements\.compositionLayerPanel : null/);
+  assert.match(appSource, /elements\.videoCommentOverlayControls\s*\n?\s*\]\.filter\(Boolean\)\.forEach/);
 });

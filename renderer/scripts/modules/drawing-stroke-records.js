@@ -156,3 +156,23 @@ export function removeIntersectingStrokes(strokes, eraserPath, eraserSize) {
 
   return { remaining, removed };
 }
+
+/**
+ * 좌표 위의 획을 찾는다 (위에 그려진 최신 획 우선).
+ * threshold = 획 선폭 반경 + 외곽선 + 여유 픽셀.
+ */
+export function findStrokeAtPoint(strokes, point, extraTolerance = 6) {
+  const list = Array.isArray(strokes) ? strokes : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const stroke = list[i];
+    const points = Array.isArray(stroke?.points) ? stroke.points : [];
+    if (points.length === 0) continue;
+    const threshold = Math.max(1, Number(stroke.lineWidth) || 1) / 2 +
+      Math.max(0, Number(stroke.strokeWidth) || 0) +
+      Math.max(0, Number(extraTolerance) || 0);
+    for (const [a, b] of pathSegments(points)) {
+      if (distancePointToSegment(point, a, b) <= threshold) return stroke;
+    }
+  }
+  return null;
+}

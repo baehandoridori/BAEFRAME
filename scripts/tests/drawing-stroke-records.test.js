@@ -97,3 +97,13 @@ test('keyframe JSON preserves stroke metadata for reopen', async () => {
   assert.equal(keyframe.toJSON().strokeRecords[0].id, 'stroke-1');
   assert.deepEqual(keyframe.toJSON().strokeRecords[0].points, json.strokeRecords[0].points);
 });
+
+test('findStrokeAtPoint는 선폭 허용 오차 안의 최신 획을 반환한다', () => {
+  const strokes = [
+    strokeRecords.createStrokeRecord({ id: 'a', tool: 'pen', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }], lineWidth: 4 }),
+    strokeRecords.createStrokeRecord({ id: 'b', tool: 'pen', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }], lineWidth: 4 })
+  ];
+  assert.equal(strokeRecords.findStrokeAtPoint(strokes, { x: 50, y: 3 })?.id, 'b'); // 위에 그려진 b 우선
+  assert.equal(strokeRecords.findStrokeAtPoint(strokes, { x: 50, y: 40 }), null);   // 허용 오차 밖
+  assert.equal(strokeRecords.findStrokeAtPoint([], { x: 0, y: 0 }), null);
+});

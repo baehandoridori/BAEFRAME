@@ -204,7 +204,7 @@ test('cutlist source switches reveal new video only after the target cut frame i
   assert.match(appSource, /revealAfterInitialSeek = false/);
   assert.match(appSource, /async function seekInitialVideoFrameBeforeReveal\(initialFrame\)/);
   assert.match(appSource, /elements\.videoPlayer\.style\.visibility = 'hidden'/);
-  assert.match(appSource, /await seekInitialVideoFrameBeforeReveal\(initialFrame\)/);
+  assert.match(appSource, /await seekInitialVideoFrameBeforeReveal\(html5InitialFrame\(\)\)/);
 
   const frameIndex = mappedSeekBody.indexOf('const frame = Math.max');
   const loadIndex = mappedSeekBody.indexOf('await loadVideo(source.videoPath, {');

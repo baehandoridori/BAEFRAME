@@ -461,7 +461,16 @@ export class DrawingCanvas extends EventTarget {
   }
 
   _resolveEffectiveTool(e) {
-    if ((this.tool === DrawingTool.PEN || this.tool === DrawingTool.BRUSH) && this._isCtrlActive(e)) {
+    // 피드백 34: Ctrl 임시 지우개를 도형 도구까지 허용 (select 제외 — select는 별도 포인터 경로)
+    const ctrlEraserTools = [
+      DrawingTool.PEN,
+      DrawingTool.BRUSH,
+      DrawingTool.LINE,
+      DrawingTool.ARROW,
+      DrawingTool.RECT,
+      DrawingTool.CIRCLE
+    ];
+    if (ctrlEraserTools.includes(this.tool) && this._isCtrlActive(e)) {
       return DrawingTool.ERASER;
     }
     return this.tool;
@@ -899,6 +908,13 @@ export class DrawingCanvas extends EventTarget {
       const rect = this._normalizedSelection();
       if (!rect || rect.w < 2 || rect.h < 2) {
         this.selection = null;
+        // 피드백 35: 드래그 없는 클릭 → 획 단위 선택 시도 (매니저가 레코드를 보유)
+        if (this._selectGrabOffset) {
+          this._emit('strokeselectrequest', {
+            x: this._selectGrabOffset.x,
+            y: this._selectGrabOffset.y
+          });
+        }
       }
     }
     this._selectPhase = null;
@@ -939,6 +955,58 @@ export class DrawingCanvas extends EventTarget {
     this.floatingPos = { x: rect.x, y: rect.y };
     this.selection = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
     this.ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
+  }
+
+  /**
+   * 피드백 35: 획 레코드 하나를 floating 선택으로 만든다 (래스터 리프트).
+   * 호출 전에 매니저가 해당 레코드를 키프레임에서 제거하고 캔버스를 재합성해 둔 상태여야 한다.
+   */
+  beginStrokeFloating(record) {
+    const points = Array.isArray(record?.points) ? record.points : [];
+    if (points.length === 0) return false;
+
+    const margin = Math.ceil(
+      Math.max(1, Number(record.lineWidth) || 1) / 2 +
+      Math.max(0, Number(record.strokeWidth) || 0) + 2
+    );
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const x = Math.max(0, Math.floor(minX - margin));
+    const y = Math.max(0, Math.floor(minY - margin));
+    const w = Math.min(this.canvas.width, Math.ceil(maxX + margin)) - x;
+    const h = Math.min(this.canvas.height, Math.ceil(maxY + margin)) - y;
+    if (w < 1 || h < 1) return false;
+
+    // 전체 캔버스 크기의 오프스크린에 획만 그린 뒤 bbox로 잘라낸다.
+    // drawStrokeRecord가 this.ctx에 그리므로 잠시 스왑한다 (동기 구간, 재진입 없음).
+    const full = document.createElement('canvas');
+    full.width = this.canvas.width;
+    full.height = this.canvas.height;
+    const originalCtx = this.ctx;
+    this.ctx = full.getContext('2d');
+    try {
+      this.drawStrokeRecord(record);
+    } finally {
+      this.ctx = originalCtx;
+    }
+
+    const lifted = document.createElement('canvas');
+    lifted.width = w;
+    lifted.height = h;
+    lifted.getContext('2d').drawImage(full, x, y, w, h, 0, 0, w, h);
+
+    this.floatingImage = lifted;
+    this.floatingPos = { x, y };
+    this.selection = { x, y, w, h };
+    this._selectPhase = null;
+    this._renderSelectionOverlay();
+    this._emitSelectionOverlayChanged();
+    return true;
   }
 
   commitSelection() {
