@@ -575,6 +575,7 @@ async function initApp() {
 
     // 비디오 줌 컨트롤
     videoZoomControls: document.getElementById('videoZoomControls'),
+    videoCommentOverlayControls: document.getElementById('videoCommentOverlayControls'),
     btnVideoZoomIn: document.getElementById('btnVideoZoomIn'),
     btnVideoZoomOut: document.getElementById('btnVideoZoomOut'),
     btnVideoZoomReset: document.getElementById('btnVideoZoomReset'),
@@ -7102,6 +7103,9 @@ async function initApp() {
     '.fullscreen-scrub-overlay',
     '.toast-container',
     '#compositionLayerOverlay',
+    '.composition-layer-panel',
+    '.video-zoom-controls',
+    '.video-comment-overlay-controls',
     // 피드백 28(a): 반드시 전체화면+표시 중으로 한정할 것. 무조건 '.controls-bar'로
     // 넣으면 재생 중 매 프레임 갱신되는 진행률 바(#seekbarProgress)·타임코드 변이가
     // installMpvMirroredOverlayObserver(6198~)를 통해 모든 mpv 재생에서 프레임당
@@ -7632,8 +7636,13 @@ async function initApp() {
       fullscreenScrubOverlay,
       // 피드백 28(a): 전체화면 컨트롤바(자식인 전체화면 시크바 포함)를 mpv 위에 미러링.
       // 숨김(opacity 0)·wrapper 비겹침이면 cloneMpvHtmlOverlayElement가 스스로 스킵한다.
-      elements.controlsBar
-    ].forEach((element) => {
+      elements.controlsBar,
+      // 사용자 지시(2026-07-15): mpv에 가려지던 UI를 미러로 표시.
+      // 클릭은 호스트 창 관통으로 실제 DOM에 도달하므로 보이기만 하면 조작된다.
+      elements.compositionLayerPanel?.classList.contains('open') ? elements.compositionLayerPanel : null,
+      elements.videoZoomControls,
+      elements.videoCommentOverlayControls
+    ].filter(Boolean).forEach((element) => {
       const clone = cloneMpvHtmlOverlayElement(element, wrapperRect);
       if (clone) htmlOverlay.appendChild(clone);
     });
