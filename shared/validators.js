@@ -328,7 +328,16 @@ export function validateCompositionLayer(layer, index) {
   if (!['image', 'video'].includes(layer.type)) {
     errors.push(`${prefix}: type은 image 또는 video여야 합니다.`);
   }
-  if (!layer.filePath) errors.push(`${prefix}: filePath 필드가 없습니다.`);
+  if (!layer.filePath && !layer.sourceDataUrl) {
+    errors.push(`${prefix}: filePath 또는 sourceDataUrl 중 하나가 필요합니다.`);
+  }
+  if (
+    layer.sourceDataUrl !== undefined &&
+    layer.sourceDataUrl !== '' &&
+    (typeof layer.sourceDataUrl !== 'string' || !layer.sourceDataUrl.startsWith('data:image/'))
+  ) {
+    errors.push(`${prefix}: sourceDataUrl은 data:image/ 형식의 데이터 URL이어야 합니다.`);
+  }
   if (typeof layer.enabled !== 'boolean') errors.push(`${prefix}: enabled는 boolean이어야 합니다.`);
   if (!Number.isFinite(layer.order)) errors.push(`${prefix}: order는 숫자여야 합니다.`);
   if (!Number.isFinite(layer.startTime) || layer.startTime < 0) {

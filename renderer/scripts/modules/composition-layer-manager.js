@@ -175,6 +175,16 @@ function filePathToFileUrl(filePath) {
   return `file://${encodedPath}`;
 }
 
+export function isEmbeddedImageDataUrl(value) {
+  return typeof value === 'string' && value.startsWith('data:image/');
+}
+
+export function getCompositionLayerMediaUrl(layer) {
+  if (!layer) return '';
+  if (isEmbeddedImageDataUrl(layer.sourceDataUrl)) return layer.sourceDataUrl;
+  return filePathToFileUrl(layer.displayFilePath || layer.filePath);
+}
+
 export function getCompositionLayerType(filePath) {
   const extension = extensionOf(filePath);
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
@@ -244,6 +254,7 @@ export function normalizeCompositionLayer(layer = {}, context = {}) {
     name: String(layer.name || basename(filePath) || '합성 레이어').trim() || basename(filePath) || '합성 레이어',
     type,
     filePath,
+    sourceDataUrl: isEmbeddedImageDataUrl(layer.sourceDataUrl) ? layer.sourceDataUrl : '',
     displayFilePath: typeof layer.displayFilePath === 'string' ? layer.displayFilePath : '',
     enabled: layer.enabled !== false,
     missing: layer.missing === true,
@@ -291,6 +302,7 @@ export function createCompositionLayer(filePath, options = {}) {
     name: options.name || getUniqueCompositionLayerName(filePath, existingNames),
     type,
     filePath,
+    sourceDataUrl: options.sourceDataUrl,
     enabled: true,
     order: Math.max(0, Math.round(toFiniteNumber(options.order, 0))),
     startTime: currentTime,
@@ -309,7 +321,7 @@ export function getVisibleCompositionLayers(layers = [], currentTime = 0) {
     .filter(layer => layer?.enabled !== false)
     .filter(layer => layer?.missing !== true)
     .filter(layer => !['converting', 'error'].includes(layer?.mediaStatus))
-    .filter(layer => layer?.filePath)
+    .filter(layer => layer?.filePath || isEmbeddedImageDataUrl(layer?.sourceDataUrl))
     .filter(layer => time >= toFiniteNumber(layer.startTime, 0) && time < toFiniteNumber(layer.endTime, 0))
     .sort((a, b) => toFiniteNumber(a.order, 0) - toFiniteNumber(b.order, 0));
 }
@@ -485,7 +497,8 @@ export function serializeCompositionLayer(layer) {
     aspectLocked: normalized.aspectLocked,
     color: normalized.color,
     selectedColor: normalized.selectedColor,
-    sourceDuration: normalized.sourceDuration
+    sourceDuration: normalized.sourceDuration,
+    ...(normalized.sourceDataUrl ? { sourceDataUrl: normalized.sourceDataUrl } : {})
   };
 }
 
@@ -598,6 +611,30 @@ export class CompositionLayerManager extends EventTarget {
     await this._checkMissingFile(layer);
     this._changed('layerAdded', { layer });
     void this.prepareLayerMedia(layer.id);
+    return layer;
+  }
+
+  async addLayerFromDataUrl(dataUrl, options = {}) {
+    if (!isEmbeddedImageDataUrl(dataUrl)) {
+      this.showToast('클립보드에서 이미지를 읽지 못했습니다.', 'warning');
+      return null;
+    }
+
+    const existingNames = this.layers.map(item => item.name);
+    const layer = createCompositionLayer('', {
+      mediaType: 'image',
+      sourceDataUrl: dataUrl,
+      name: getUniqueCompositionLayerName(options.name || '클립보드 캡처', existingNames),
+      currentTime: options.currentTime ?? this.getCurrentTime(),
+      baseDuration: options.baseDuration ?? this.getBaseDuration(),
+      existingNames,
+      order: this.layers.length
+    });
+
+    this._recordUndo();
+    this.layers = [...this.layers, layer];
+    this.selectedLayerId = layer.id;
+    this._changed('layerAdded', { layer });
     return layer;
   }
 
@@ -717,6 +754,7 @@ export class CompositionLayerManager extends EventTarget {
     const sourceDuration = type === 'video' ? await this._probeVideoDuration(filePath) : null;
     const updated = this.updateLayer(layerId, {
       filePath,
+      sourceDataUrl: '',
       type,
       displayFilePath: '',
       mediaStatus: 'ready',
@@ -844,7 +882,7 @@ export class CompositionLayerManager extends EventTarget {
         type: layer.type,
         sourceFilePath: layer.filePath,
         filePath: displayFilePath,
-        fileUrl: filePathToFileUrl(displayFilePath),
+        fileUrl: getCompositionLayerMediaUrl(layer),
         order: layer.order,
         opacity: layer.opacity,
         x: layer.x,
@@ -944,7 +982,7 @@ export class CompositionLayerManager extends EventTarget {
     const typeLabel = layer.type === 'video' ? '영상' : '이미지';
     const left = Number.isFinite(this.contextMenuState.x) ? this.contextMenuState.x : 0;
     const top = Number.isFinite(this.contextMenuState.y) ? this.contextMenuState.y : 0;
-    const sourcePath = layer.filePath || '연결된 파일 없음';
+    const sourcePath = layer.filePath || (layer.sourceDataUrl ? '임베드된 이미지 (클립보드)' : '연결된 파일 없음');
 
     return `
       <div class="composition-layer-context-menu" data-layer-id="${escapeHtml(layer.id)}" style="left: ${left}px; top: ${top}px;">
@@ -1065,7 +1103,7 @@ export class CompositionLayerManager extends EventTarget {
     wrapper.style.setProperty('--composition-layer-selected-color', layer.selectedColor);
 
     const media = wrapper.querySelector?.('.composition-layer-preview-media');
-    const fileUrl = filePathToFileUrl(layer.displayFilePath || layer.filePath);
+    const fileUrl = getCompositionLayerMediaUrl(layer);
     if (media && media.getAttribute('src') !== fileUrl) {
       media.setAttribute('src', fileUrl);
     }
