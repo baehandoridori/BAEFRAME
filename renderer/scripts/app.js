@@ -7948,6 +7948,7 @@ async function initApp() {
 
   async function loadVideoWithMpvPilot(filePath, {
     initialFrame = null,
+    initialTime = null,
     loadToken = null,
     isStaleVideoLoad = () => false
   } = {}) {
@@ -8086,10 +8087,11 @@ async function initApp() {
     syncMpvVideoTransform();
     scheduleMpvOverlayStateSync();
 
-    if (Number.isFinite(Number(initialFrame)) && Number(initialFrame) > 0) {
-      const initialSeekReady = await seekMpvInitialFrameBeforeReveal(initialFrame);
+    const mpvInitialFrame = resolveInitialFrameFromOptions(initialFrame, initialTime);
+    if (Number.isFinite(Number(mpvInitialFrame)) && Number(mpvInitialFrame) > 0) {
+      const initialSeekReady = await seekMpvInitialFrameBeforeReveal(mpvInitialFrame);
       if (!initialSeekReady) {
-        log.debug('mpv 초기 프레임 확인 시간 초과, 호스트 공개 전 한 프레임 더 대기', { filePath, initialFrame });
+        log.debug('mpv 초기 프레임 확인 시간 초과, 호스트 공개 전 한 프레임 더 대기', { filePath, initialFrame: mpvInitialFrame });
         await new Promise(resolve => requestAnimationFrame(resolve));
       }
     }
@@ -8138,6 +8140,22 @@ async function initApp() {
     return null;
   }
 
+  // 피드백 36: 버전 전환 등에서 초 단위 위치를 유지한다. fps는 엔진 로드 후 확정되므로
+  // initialFrame이 명시되지 않은 경우에만 호출 시점의 fps로 프레임을 계산한다.
+  function resolveInitialFrameFromOptions(initialFrame, initialTime) {
+    if (Number.isFinite(Number(initialFrame)) && Number(initialFrame) > 0) {
+      return Number(initialFrame);
+    }
+    if (Number.isFinite(Number(initialTime)) && Number(initialTime) > 0 && Number(videoPlayer.fps) > 0) {
+      const frame = Math.round(Number(initialTime) * Number(videoPlayer.fps));
+      const maxFrame = Number.isFinite(Number(videoPlayer.totalFrames)) && Number(videoPlayer.totalFrames) > 0
+        ? Number(videoPlayer.totalFrames) - 1
+        : frame;
+      return Math.max(0, Math.min(frame, maxFrame));
+    }
+    return null;
+  }
+
   async function loadVideo(filePath, options = {}) {
     const {
       keepVersionContext = false,
@@ -8145,6 +8163,7 @@ async function initApp() {
       preserveContinuousSession = false,
       playWhenMediaReady = false,
       initialFrame = null,
+      initialTime = null,
       revealAfterInitialSeek = false,
       holdPreviousFrameUntilReady = false,
       deferCollaborationStart = false,
@@ -8451,6 +8470,7 @@ async function initApp() {
           try {
             const mpvLoaded = await loadVideoWithMpvPilot(filePath, {
               initialFrame,
+              initialTime,
               loadToken,
               isStaleVideoLoad
             });
@@ -8481,9 +8501,10 @@ async function initApp() {
           document.body.classList.remove('mpv-pilot-mode');
 
           // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
+          const html5InitialFrame = () => resolveInitialFrameFromOptions(initialFrame, initialTime);
           const shouldDelayVideoReveal = revealAfterInitialSeek &&
-            Number.isFinite(Number(initialFrame)) &&
-            Number(initialFrame) > 0;
+            (Number.isFinite(Number(initialFrame)) && Number(initialFrame) > 0 ||
+              Number.isFinite(Number(initialTime)) && Number(initialTime) > 0);
           const shouldHoldVideoReveal = holdPreviousFrameUntilReady || shouldDelayVideoReveal;
           const previousVideoVisibility = elements.videoPlayer.style.visibility;
           const transitionFreezeCaptured = shouldHoldVideoReveal && captureVideoTransitionFreezeFrame();
@@ -8499,8 +8520,16 @@ async function initApp() {
             await videoPlayer.load(actualVideoPath);
             if (!canContinueVideoLoad()) return false;
 
+            // 피드백 36: reveal 지연이 없는 경로에서도 초 단위 위치를 복원한다.
+            if (!shouldDelayVideoReveal) {
+              const resumeFrame = resolveInitialFrameFromOptions(initialFrame, initialTime);
+              if (Number.isFinite(Number(resumeFrame)) && Number(resumeFrame) > 0) {
+                videoPlayer.seekToFrame(resumeFrame);
+              }
+            }
+
             if (shouldDelayVideoReveal) {
-              await seekInitialVideoFrameBeforeReveal(initialFrame);
+              await seekInitialVideoFrameBeforeReveal(html5InitialFrame());
               if (!canContinueVideoLoad()) return false;
             } else if (shouldHoldVideoReveal) {
               await waitForVideoRenderable(elements.videoPlayer);
@@ -8558,10 +8587,15 @@ async function initApp() {
       versionDropdown.onVersionSelect(async (versionInfo) => {
         log.info('버전 전환 요청', versionInfo);
         if (versionInfo.path) {
+          // 피드백 36: 전환 직전 위치(초)를 캡처해 새 버전에서도 같은 시간으로 이어본다.
+          const resumeTime = Number.isFinite(Number(videoPlayer.currentTime)) && Number(videoPlayer.currentTime) > 0
+            ? Number(videoPlayer.currentTime)
+            : null;
           // 버전 컨텍스트 유지하고, 해당 버전 번호도 함께 전달
           await loadVideo(versionInfo.path, {
             keepVersionContext: true,
-            targetVersion: versionInfo.version
+            targetVersion: versionInfo.version,
+            initialTime: resumeTime
           });
         }
       });
