@@ -6378,6 +6378,14 @@ button.layer-lock:not(.locked):hover {
   margin-right: auto;
 }
 
+/* 피드백 37: 버전 드롭다운이 열려 있는 동안 토스트를 하단으로 회피시켜 메뉴를 가리지 않게 한다.
+   위치는 JS(_applyToastPosition)가 인라인으로 적용하므로 !important로만 이길 수 있다. */
+body:has(.version-dropdown.open) .toast-container {
+  top: auto !important;
+  bottom: 52px !important;
+  flex-direction: column-reverse !important;
+}
+
 .toast-container .toast {
   pointer-events: auto;
 }

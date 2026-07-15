@@ -26,7 +26,7 @@
     "test:audio-waveform": "node --test scripts/tests/audio-waveform-hit-area.test.js",
     "test:collaboration": "node --test scripts/tests/collaboration-cursors-source.test.js",
     "test:comment-input": "node --test scripts/tests/comment-input-focus-source.test.js",
-    "test:toast-stack": "node --test scripts/tests/toast-stack-core.test.js",
+    "test:toast-stack": "node --test scripts/tests/toast-stack-core.test.js scripts/tests/toast-position-source.test.js",
     "bundle:liveblocks": "esbuild ./node_modules/@liveblocks/client/dist/index.js --bundle --format=esm --outfile=renderer/scripts/lib/liveblocks-client.js",
     "bundle:perfect-freehand": "esbuild ./node_modules/perfect-freehand/dist/esm/index.mjs --bundle --format=esm --outfile=renderer/scripts/lib/perfect-freehand.js",
     "postinstall": "npm run bundle:liveblocks && npm run bundle:perfect-freehand"
