@@ -676,9 +676,20 @@ class MPVOverlayHost {
 
     this.lastBounds = normalizeEmbedBounds(bounds);
     const screenBounds = this._toScreenBounds(this.lastBounds, mainWindow);
+    // 피드백 32: 동일 bounds 재적용은 생략 — 네이티브 창의 계단식 리사이즈/진동 방지.
+    // moveTop은 기존 z-order 의미론(호출마다 최상위 보장)을 보존하기 위해 항상 호출한다.
+    if (this._boundsEquals(this._lastAppliedScreenBounds, screenBounds)) {
+      this.window.moveTop?.();
+      return { success: true, bounds: screenBounds };
+    }
+    this._lastAppliedScreenBounds = { ...screenBounds };
     this.window.setBounds(screenBounds);
     this.window.moveTop?.();
     return { success: true, bounds: screenBounds };
+  }
+
+  _boundsEquals(a, b) {
+    return !!a && !!b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
   }
 
   async updateState(state) {
@@ -720,6 +731,10 @@ class MPVOverlayHost {
   setVisible(visible) {
     const nextVisible = visible !== false;
     this.requestedVisible = nextVisible;
+    if (nextVisible) {
+      // 표시 복귀 시에는 다음 updateBounds가 반드시 실제 적용되도록 캐시를 비운다.
+      this._lastAppliedScreenBounds = null;
+    }
 
     if (!this.window || this.window.isDestroyed?.()) {
       return { success: true, visible: nextVisible, ready: false };
@@ -741,6 +756,8 @@ class MPVOverlayHost {
     this.window = null;
     this.contentLoaded = false;
     this.lastBounds = null;
+    // 피드백 32: 호스트 재생성 후 동일 bounds 스킵 오판 방지
+    this._lastAppliedScreenBounds = null;
     this.requestedVisible = true;
     this._unbindParentWindow();
 

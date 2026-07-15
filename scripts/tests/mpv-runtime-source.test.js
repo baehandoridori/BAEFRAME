@@ -1081,3 +1081,10 @@ test('fullscreen controls inset snaps to final size and yields to letterbox gap'
   assert.match(appSource, /'body\.app-fullscreen\.show-controls \.controls-bar'\s*\]\.join\(','\);/);
   assert.match(appSource, /scheduleMpvOverlayStateSync\(\{ force: true \}\);\s*\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
 });
+
+test('드로잉 미러 PNG가 paintStamp 캐시로 재생 중 재인코딩을 피한다 (피드백 32)', () => {
+  assert.match(appSource, /let mpvDrawingMirrorCache = \{ key: '', dataUrl: '' \};/);
+  assert.match(appSource, /drawingManager\.paintStamp,/);
+  assert.match(appSource, /mpvDrawingMirrorCache\.key === cacheKey/);
+  assert.match(appSource, /onionSkin\?\.enabled\s*\?\s*getCanvasOverlayDataUrl\(elements\.onionSkinCanvas\)\s*:\s*''/);
+});

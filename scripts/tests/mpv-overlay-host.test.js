@@ -564,3 +564,57 @@ test('repositions and hides overlay with the parent window', async () => {
   assert.equal(host.window.visible, false);
   assert.equal(host.window.showCount, showCountBeforeHiddenRestore);
 });
+
+test('동일 bounds 재호출은 setBounds를 생략한다 (피드백 32)', async () => {
+  const events = [];
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    getContentBounds: () => ({ x: 100, y: 80, width: 1200, height: 800 })
+  };
+  class FakeBrowserWindow {
+    constructor(options) {
+      this.options = options;
+      this.bounds = null;
+      this.destroyed = false;
+      this.webContents = {
+        executeJavaScript: async (script) => {
+          events.push(['executeJavaScript', script]);
+          return script.includes("typeof window.__applyMpvOverlayState === 'function'") &&
+            script.includes("typeof window.__applyMpvRemoteCursorState === 'function'");
+        }
+      };
+    }
+    loadURL() {
+      return Promise.resolve();
+    }
+    setBounds(bounds) {
+      this.bounds = bounds;
+      events.push(['setBounds', bounds]);
+    }
+    setIgnoreMouseEvents() {}
+    showInactive() {}
+    moveTop() {
+      events.push(['moveTop']);
+    }
+    isDestroyed() {
+      return this.destroyed;
+    }
+    on() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow
+  });
+
+  await host.ensure({ x: 0, y: 0, width: 300, height: 200 });
+  const bounds = { x: 5, y: 7, width: 320, height: 180 };
+  host.updateBounds(bounds);
+  const callsAfterFirst = events.filter(([name]) => name === 'setBounds').length;
+  const result = host.updateBounds({ ...bounds });
+  assert.equal(result.success, true);
+  assert.equal(events.filter(([name]) => name === 'setBounds').length, callsAfterFirst);
+});

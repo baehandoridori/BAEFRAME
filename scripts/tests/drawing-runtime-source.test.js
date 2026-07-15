@@ -319,3 +319,10 @@ test('global drawing redo forwards action-scoped lifecycle metadata', () => {
   assert.match(drawingSyncSource, /MAX_TOTAL_KEYFRAME_BUFFERED_BYTES = 64 \* 1024 \* 1024/);
   assert.match(drawingSyncSource, /this\._keyframeChunkBufferedBytes = Math\.max/);
 });
+
+test('드로잉 매니저가 실제 페인트 변화에서만 paintStamp를 올린다 (피드백 32)', () => {
+  assert.match(drawingManagerSource, /this\.paintStamp = 0;/);
+  assert.match(drawingManagerSource, /_notePlaybackRenderKey\(renderKey\)/);
+  assert.match(drawingManagerSource, /this\.paintStamp \+= 1;/);
+  assert.match(drawingManagerSource, /renderKeyParts\.push\(`\$\{layer\.id\}:\$\{keyframe\.frame\}/);
+});

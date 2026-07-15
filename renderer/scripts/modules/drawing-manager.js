@@ -93,6 +93,10 @@ export class DrawingManager extends EventTarget {
     this._lastPlaybackPreloadCenterFrame = null;
     this._playbackCanvasCleared = false;
 
+    // 피드백 32: 드로잉 캔버스 픽셀이 실제로 바뀔 때만 증가 — mpv 미러 PNG 캐시 키
+    this.paintStamp = 0;
+    this._lastPlaybackRenderKey = null;
+
     // 렌더링 상태 관리
     this._renderingId = 0;  // 렌더링 취소용 ID
     this.eraserMode = ERASER_MODES.PIXEL;
@@ -126,6 +130,7 @@ export class DrawingManager extends EventTarget {
 
     // 그리기 완료 시
     this.drawingCanvas.addEventListener('drawend', (e) => {
+      this.paintStamp += 1;
       void this._onDrawEnd(e.detail);
     });
 
@@ -259,6 +264,7 @@ export class DrawingManager extends EventTarget {
    * 선택 도구 커밋 결과를 현재 키프레임 비트맵으로 저장
    */
   _onSelectionCommitted() {
+    this.paintStamp += 1;
     const keyframe = this._saveCurrentFrameData({
       editHeldSourceKeyframe: false,
       preserveStrokeRecords: false
@@ -456,6 +462,7 @@ export class DrawingManager extends EventTarget {
     keyframe.setCanvasData(imageData);
     keyframe._cachedImage = null;
     keyframe._cachedSrc = null;
+    this.paintStamp += 1;
   }
 
   _loadBaseCanvasImage(keyframe) {
@@ -1457,6 +1464,8 @@ export class DrawingManager extends EventTarget {
     }
 
     log.debug('renderFrame 완료', { frame, renderedCount: imagesToRender.length });
+    this.paintStamp += 1;
+    this._lastPlaybackRenderKey = null;
     this._emit('frameRendered', { frame });
   }
 
@@ -1470,6 +1479,7 @@ export class DrawingManager extends EventTarget {
 
     // 캐시된 이미지를 먼저 수집
     const images = [];
+    const renderKeyParts = [];
     let hasCacheMiss = false;
 
     for (const bucket of this._getLayerRenderBuckets()) {
@@ -1482,6 +1492,7 @@ export class DrawingManager extends EventTarget {
         if (keyframe._cachedImage && keyframe._cachedSrc === keyframe.canvasData) {
           const opacity = bucket.applyLayerOpacity === false ? 1 : layer.opacity;
           images.push({ img: keyframe._cachedImage, opacity, ctx: bucket.ctx });
+          renderKeyParts.push(`${layer.id}:${keyframe.frame}:${opacity}:${keyframe.canvasData.length}`);
         } else {
           hasCacheMiss = true;
         }
@@ -1493,6 +1504,7 @@ export class DrawingManager extends EventTarget {
         this.drawingCanvas.clear({ silent: true });
         this._clearStaticLayerCanvases();
         this._playbackCanvasCleared = true;
+        this._notePlaybackRenderKey('cleared');
       }
       return;
     }
@@ -1505,10 +1517,20 @@ export class DrawingManager extends EventTarget {
       this._drawImageToContext(ctx, img, opacity);
     }
 
+    // 피드백 32: 그려진 조합이 실제로 바뀐 프레임에서만 paintStamp를 올린다.
+    // 캐시 미스 프레임은 고유 키로 처리해 안정될 때까지 캐시를 쓰지 않게 한다.
+    this._notePlaybackRenderKey(hasCacheMiss ? `miss:${frame}:${Date.now()}` : renderKeyParts.join('|'));
+
     // 캐시 미스가 있으면 백그라운드에서 로드 (다음 프레임에서 사용됨)
     if (hasCacheMiss) {
       this._preloadMissingImages(frame);
     }
+  }
+
+  _notePlaybackRenderKey(renderKey) {
+    if (renderKey === this._lastPlaybackRenderKey) return;
+    this._lastPlaybackRenderKey = renderKey;
+    this.paintStamp += 1;
   }
 
   /**
@@ -1622,6 +1644,8 @@ export class DrawingManager extends EventTarget {
     this.drawingCanvas.clear();
     this._clearStaticLayerCanvases();
 
+    // 피드백 32: 영상 전환 등에서 이전 드로잉 미러 PNG 잔존 방지
+    this.paintStamp += 1;
     this._emit('layersChanged');
     log.info('모든 레이어 초기화됨');
   }
@@ -1645,6 +1669,8 @@ export class DrawingManager extends EventTarget {
     // 기본 레이어 생성
     this.createLayer({ name: '레이어 1' }, false);
 
+    // 피드백 32: 영상 전환 등에서 이전 드로잉 미러 PNG 잔존 방지
+    this.paintStamp += 1;
     this._emit('layersChanged');
     log.info('DrawingManager 초기화됨 (기본 레이어 생성)');
   }

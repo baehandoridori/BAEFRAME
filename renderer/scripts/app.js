@@ -7475,6 +7475,9 @@ async function initApp() {
     }
   }
 
+  // 피드백 32: 드로잉 미러 PNG 캐시 — paintStamp가 같으면 재인코딩하지 않는다.
+  let mpvDrawingMirrorCache = { key: '', dataUrl: '' };
+
   function getCompositedDrawingOverlayDataUrl() {
     const baseCanvas = elements.drawingCanvas;
     if (!baseCanvas || baseCanvas.width <= 0 || baseCanvas.height <= 0) return '';
@@ -7483,6 +7486,24 @@ async function initApp() {
     const activeCanvasOpacity = Number.isFinite(activeLayerOpacity)
       ? Math.max(0, Math.min(1, activeLayerOpacity))
       : 1;
+
+    // 스트로크·선택 조작 중에는 캔버스가 이벤트 없이 계속 변하므로 캐시를 쓰지 않는다.
+    const canvasBusy = drawingManager.drawingCanvas?.isDrawing === true ||
+      !!drawingManager.drawingCanvas?.floatingImage ||
+      !!drawingManager.drawingCanvas?.selection;
+    const cacheKey = canvasBusy
+      ? ''
+      : [
+        drawingManager.paintStamp,
+        drawingManager.activeLayerId,
+        baseCanvas.width,
+        baseCanvas.height,
+        activeCanvasOpacity
+      ].join('|');
+    if (cacheKey && mpvDrawingMirrorCache.key === cacheKey) {
+      return mpvDrawingMirrorCache.dataUrl;
+    }
+
     const compositeCanvas = document.createElement('canvas');
     compositeCanvas.width = baseCanvas.width;
     compositeCanvas.height = baseCanvas.height;
@@ -7500,7 +7521,11 @@ async function initApp() {
     drawCanvas(elements.layersAboveCanvas);
 
     try {
-      return compositeCanvas.toDataURL('image/png');
+      const dataUrl = compositeCanvas.toDataURL('image/png');
+      if (cacheKey) {
+        mpvDrawingMirrorCache = { key: cacheKey, dataUrl };
+      }
+      return dataUrl;
     } catch (error) {
       log.debug('mpv 드로잉 합성 스냅샷 실패', { error: error.message });
       return '';
@@ -7658,7 +7683,10 @@ async function initApp() {
 
     return {
       drawingDataUrl: getCompositedDrawingOverlayDataUrl(),
-      onionDataUrl: getCanvasOverlayDataUrl(elements.onionSkinCanvas),
+      // 피드백 32: 어니언 스킨이 꺼져 있으면 전체 해상도 투명 PNG 인코딩을 생략한다.
+      onionDataUrl: drawingManager.onionSkin?.enabled
+        ? getCanvasOverlayDataUrl(elements.onionSkinCanvas)
+        : '',
       markerHtml: serializeMpvOverlayMarkerHtml(),
       tooltipHtml: serializeMpvOverlayTooltipHtml(),
       htmlOverlayHtml: serializeMpvOverlayHtml(),
