@@ -1014,6 +1014,15 @@ function setupIpcHandlers() {
     return clipboard.readText();
   });
 
+  // 클립보드에 이미지가 있는지 확인
+  ipcMain.handle('clipboard:has-image', () => {
+    try {
+      return !clipboard.readImage().isEmpty();
+    } catch (_) {
+      return false;
+    }
+  });
+
   // 웹 공유 링크 생성 (URL에서)
   ipcMain.handle('webshare:generate-link', (event, videoUrl, bframeUrl) => {
     const webShareUrl = `https://baeframe.vercel.app/open.html?video=${encodeURIComponent(videoUrl)}&bframe=${encodeURIComponent(bframeUrl)}`;

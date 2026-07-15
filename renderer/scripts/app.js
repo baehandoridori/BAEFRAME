@@ -2226,6 +2226,15 @@ async function initApp() {
     });
   }
 
+  function getPathShareRoot(filePath) {
+    const normalized = String(filePath || '').replace(/\\/g, '/');
+    const unc = normalized.match(/^\/\/([^/]+)\/([^/]+)/);
+    if (unc) return `//${unc[1].toLowerCase()}/${unc[2].toLowerCase()}`;
+    const drive = normalized.match(/^([a-zA-Z]):\//);
+    if (drive) return `${drive[1].toUpperCase()}:`;
+    return '';
+  }
+
   async function addCompositionLayerFromPath(filePath) {
     if (!videoPlayer.isLoaded) {
       showToast('먼저 기준 영상을 열어주세요.', 'warning');
@@ -2236,7 +2245,13 @@ async function initApp() {
       compositionLayerManager.togglePanel(true);
       renderCompositionLayerTimeline();
       scheduleMpvOverlayStateSync({ force: true });
-      showToast('합성 레이어가 추가되었습니다.', 'success');
+      const layerRoot = getPathShareRoot(filePath);
+      const baseRoot = getPathShareRoot(videoPlayer.filePath);
+      if (layerRoot && baseRoot && layerRoot !== baseRoot) {
+        showToast('기준 영상과 다른 드라이브의 파일이라 다른 팀원에게는 보이지 않을 수 있어요.', 'warn', 6000);
+      } else {
+        showToast('합성 레이어가 추가되었습니다.', 'success');
+      }
     }
     return layer;
   }
@@ -2438,6 +2453,35 @@ async function initApp() {
       } else {
         showToast('지원하지 않는 파일 형식입니다.', 'error');
       }
+    }
+  });
+
+  // 클립보드 이미지 붙여넣기 → 합성 레이어 임베드 (피드백 38)
+  document.addEventListener('paste', async (e) => {
+    if (shouldIgnoreGlobalShortcutTarget(e.target)) return;
+    if (!hasImageInClipboard(e)) return;
+    if (!videoPlayer.isLoaded) {
+      showToast('먼저 기준 영상을 열어주세요.', 'warning');
+      return;
+    }
+    e.preventDefault();
+
+    try {
+      const image = await getImageFromClipboard(e);
+      if (!image?.base64) {
+        showToast('클립보드에서 이미지를 읽지 못했습니다.', 'error');
+        return;
+      }
+      const layer = await compositionLayerManager.addLayerFromDataUrl(image.base64);
+      if (layer) {
+        compositionLayerManager.togglePanel(true);
+        renderCompositionLayerTimeline();
+        scheduleMpvOverlayStateSync({ force: true });
+        showToast('클립보드 이미지를 합성 레이어로 추가했습니다.', 'success');
+      }
+    } catch (error) {
+      log.error('클립보드 이미지 붙여넣기 실패', error);
+      showToast('클립보드 이미지를 추가하지 못했습니다.', 'error');
     }
   });
 
@@ -4502,16 +4546,18 @@ async function initApp() {
       }
     }
 
-    // Ctrl+V: 하이라이트 붙여넣기
+    // Ctrl+V: 하이라이트 붙여넣기 (클립보드에 이미지가 있으면 캡처 붙여넣기에 양보)
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
       if (highlightManager.hasClipboard() && videoPlayer.duration) {
-        e.preventDefault();
-        const currentTime = videoPlayer.currentTime || 0;
-        const highlight = highlightManager.pasteHighlight(currentTime);
-        if (highlight) {
-          renderHighlights();
-          showToast('하이라이트가 붙여넣기 되었습니다', 'info');
-        }
+        void (async () => {
+          if (await window.electronAPI.clipboardHasImage()) return;
+          const currentTime = videoPlayer.currentTime || 0;
+          const highlight = highlightManager.pasteHighlight(currentTime);
+          if (highlight) {
+            renderHighlights();
+            showToast('하이라이트가 붙여넣기 되었습니다', 'info');
+          }
+        })();
       }
     }
   });
