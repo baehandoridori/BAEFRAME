@@ -30,6 +30,7 @@
     "test:toast-stack": "node --test scripts/tests/toast-stack-core.test.js scripts/tests/toast-position-source.test.js",
     "test:version": "node --test scripts/tests/version-switch-source.test.js",
     "test:file-drop": "node --test scripts/tests/file-drop-source.test.js",
+    "test:hybrid": "node --test scripts/tests/hybrid-review-engine-source.test.js",
     "bundle:liveblocks": "esbuild ./node_modules/@liveblocks/client/dist/index.js --bundle --format=esm --outfile=renderer/scripts/lib/liveblocks-client.js",
     "bundle:perfect-freehand": "esbuild ./node_modules/perfect-freehand/dist/esm/index.mjs --bundle --format=esm --outfile=renderer/scripts/lib/perfect-freehand.js",
     "postinstall": "npm run bundle:liveblocks && npm run bundle:perfect-freehand"

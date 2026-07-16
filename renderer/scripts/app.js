@@ -2048,7 +2048,22 @@ async function initApp() {
     if (isCommentMode) {
       if (isMpvPilotPlaybackActive()) {
         videoPlayer.pause();
-        void prepareMpvCommentMode(preparationToken);
+        // 작업 4: 하이브리드 우선 — 성공 시 직접 ready, 실패 시 기존 freeze 준비로 폴백.
+        // (c-0)의 skipReviewTransition 없이는 전이 헬퍼가 댓글 모드를 강제 종료해 자멸한다.
+        void enterHybridReviewEngineIfPossible().then((swapped) => {
+          // 전환 중 사용자가 모드를 껐으면 mpv 복귀만 정리
+          if (!state.isCommentMode) {
+            void exitHybridReviewEngineIfNeeded();
+            return;
+          }
+          if (swapped) {
+            setCommentModePreparingState(false);
+            setCommentModeReadyState(true);
+            showCommentModeGuidance();
+          } else {
+            void prepareMpvCommentMode(preparationToken);
+          }
+        });
       } else {
         setCommentModePreparingState(false);
         setCommentModeReadyState(true);
@@ -2061,6 +2076,7 @@ async function initApp() {
       if (!isMpvReviewInteractionActive() && !suppressReviewFreezeReleaseForMediaChange) {
         void releaseMpvReviewFreezeFrame();
       }
+      void exitHybridReviewEngineIfNeeded();
     }
   });
 
@@ -6996,8 +7012,10 @@ async function initApp() {
     applyDrawModeState(false);
   }
 
-  async function loadVideoWithHtml5Fallback(filePath, options = {}, { owner = null } = {}) {
-    const reviewTransition = beginMpvHtml5FallbackReviewTransition();
+  async function loadVideoWithHtml5Fallback(filePath, options = {}, { owner = null, skipReviewTransition = false } = {}) {
+    // 작업 4: 하이브리드 전환은 리뷰 모드(드로잉/댓글)를 유지한 채 엔진만 바꾸므로
+    // 모드 강제 종료·토큰 무효화를 수행하는 리뷰 전이를 건너뛴다.
+    const reviewTransition = skipReviewTransition ? null : beginMpvHtml5FallbackReviewTransition();
     const expectedStopToken = beginExpectedMpvHtml5FallbackStop(owner, filePath);
     let loaded = false;
     try {
@@ -7007,9 +7025,90 @@ async function initApp() {
       });
       return loaded;
     } finally {
-      finishMpvHtml5FallbackReviewTransition(reviewTransition, { filePath, loaded });
+      if (!skipReviewTransition) {
+        finishMpvHtml5FallbackReviewTransition(reviewTransition, { filePath, loaded });
+      }
       scheduleExpectedMpvHtml5FallbackStopCleanup(expectedStopToken);
     }
+  }
+
+  // 작업 4: 드로잉/댓글 모드 하이브리드 엔진 — HTML5 직재생 가능 코덱이면 모드 동안 HTML5로 전환
+  const hybridReviewCodecCache = new Map(); // filePath -> boolean
+
+  async function isHtml5DirectPlayableForReview(filePath) {
+    if (!filePath) return false;
+    if (hybridReviewCodecCache.has(filePath)) return hybridReviewCodecCache.get(filePath);
+    let playable = false;
+    try {
+      // loadVideo HTML5 경로와 동일한 프로브 재사용
+      const available = await window.electronAPI.ffmpegIsAvailable?.();
+      if (available) {
+        const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
+        playable = codecInfo?.isSupported === true;
+      }
+    } catch (error) {
+      log.debug('하이브리드 코덱 프로브 실패 — freeze 방식 유지', { error: error?.message });
+    }
+    hybridReviewCodecCache.set(filePath, playable);
+    return playable;
+  }
+
+  let hybridReviewSwapInFlight = false;
+  let hybridReviewResumeMpvFile = null; // 모드 종료 시 mpv로 복귀할 파일 경로
+
+  async function enterHybridReviewEngineIfPossible() {
+    if (hybridReviewSwapInFlight) return false;
+    if (!userSettings.getHybridReviewEngine()) return false;
+    if (!isMpvPilotPlaybackActive()) return false;
+    if (state.isAudioMode || !state.currentFile) return false;
+    if (!(await isHtml5DirectPlayableForReview(state.currentFile))) return false;
+
+    hybridReviewSwapInFlight = true;
+    try {
+      const resumeFrame = Number.isFinite(Number(videoPlayer.currentFrame)) ? Number(videoPlayer.currentFrame) : null;
+      const swapped = await loadVideoWithHtml5Fallback(state.currentFile, {
+        keepVersionContext: true,
+        engineSwap: true,
+        initialFrame: resumeFrame,
+        playWhenMediaReady: false
+      }, { skipReviewTransition: true });
+      if (swapped) hybridReviewResumeMpvFile = state.currentFile;
+      return swapped;
+    } catch (error) {
+      log.warn('하이브리드 진입 실패 — freeze 방식으로 폴백', { error: error?.message });
+      return false;
+    } finally {
+      hybridReviewSwapInFlight = false;
+    }
+  }
+
+  async function exitHybridReviewEngineIfNeeded() {
+    if (hybridReviewSwapInFlight) return;
+    if (!hybridReviewResumeMpvFile) return;
+    if (isMpvReviewInteractionActive()) return; // 아직 다른 리뷰 모드가 켜져 있음
+    // 다른 파일 열기가 이미 진행돼 currentFile이 바뀌었으면 복귀하지 않는다 —
+    // 아래 hybridReviewResumeMpvFile === state.currentFile 비교가 이를 차단하고,
+    // (c) 말미의 정리 규칙(비-engineSwap loadVideo 초입에서 hybridReviewResumeMpvFile = null)이
+    // 로드 시작 직후의 좁은 경합 창까지 닫는다. 별도 토큰 가드는 두지 않는다.
+    if (videoPlayer.engine === 'html5' && hybridReviewResumeMpvFile === state.currentFile) {
+      hybridReviewSwapInFlight = true;
+      const resumeFrame = Number.isFinite(Number(videoPlayer.currentFrame)) ? Number(videoPlayer.currentFrame) : null;
+      const resumePlayback = videoPlayer.isPlaying === true;
+      try {
+        await loadVideo(state.currentFile, {
+          allowMpvPilot: true,
+          keepVersionContext: true,
+          engineSwap: true,
+          initialFrame: resumeFrame,
+          playWhenMediaReady: resumePlayback
+        });
+      } catch (error) {
+        log.warn('하이브리드 복귀 실패 — HTML5 유지', { error: error?.message });
+      } finally {
+        hybridReviewSwapInFlight = false;
+      }
+    }
+    hybridReviewResumeMpvFile = null;
   }
 
   async function fallbackFromMpvOverlayRecoveryFailure(owner, filePath, error) {
@@ -8315,6 +8414,7 @@ async function initApp() {
       deferCollaborationStart = false,
       preparedVideoPath = null,
       allowMpvPilot = true,
+      engineSwap = false,
       shouldContinue = null
     } = options;
     const shouldContinueVideoLoad = typeof shouldContinue === 'function'
@@ -8334,11 +8434,18 @@ async function initApp() {
     elements.drawingTools?.classList.remove('playback-hidden');
     let videoLoadCompleted = false;
     supersedeActiveTranscodeOverlay('새 영상 선택');
-    if (!preserveContinuousSession && continuousPlaybackState.active) {
-      stopContinuousPlayback();
+    // 작업 4: engineSwap(같은 파일 엔진 전환)에서는 연속 재생 세션을 끊지 않는다.
+    if (!engineSwap) {
+      if (!preserveContinuousSession && continuousPlaybackState.active) {
+        stopContinuousPlayback();
+      }
     }
 
     const driveLoadingFeedbackShown = showDriveVideoLoadingFeedback(filePath, { preparedVideoPath });
+    // 작업 4: engineSwap에서는 G:드라이브 로딩 오버레이 플래시를 억제한다(호출 리터럴은 테스트가 단언).
+    if (engineSwap && driveLoadingFeedbackShown) {
+      hideVideoLoadingOverlay('drive');
+    }
     const trace = log.trace('loadVideo');
     try {
       // 파일 정보 가져오기
@@ -8404,91 +8511,97 @@ async function initApp() {
       }
       thumbnailVideoPath = actualVideoPath;
 
-      // ====== 이전 데이터 저장 (clear 전에 수행!) ======
-      // 저장되지 않은 변경사항이 있으면 먼저 저장
-      if (reviewDataManager.hasUnsavedChanges()) {
-        log.info('파일 전환 전 변경사항 저장 시도');
-        const saved = await reviewDataManager.save();
-        if (!canContinueVideoLoad()) return false;
-        if (!saved) {
+      // 작업 4: engineSwap(같은 파일 엔진 전환)에서는 저장·초기화·협업stop·undo초기화 등
+      // 파괴 구간 전체를 건너뛴다 — B/C 모드 토글마다 상태가 날아가는 것을 막는 핵심.
+      if (!engineSwap) {
+      // 다른 파일을 여는 일반 로드가 시작되면 하이브리드 복귀 대상을 정리한다(경합 방지).
+        hybridReviewResumeMpvFile = null;
+        // ====== 이전 데이터 저장 (clear 전에 수행!) ======
+        // 저장되지 않은 변경사항이 있으면 먼저 저장
+        if (reviewDataManager.hasUnsavedChanges()) {
+          log.info('파일 전환 전 변경사항 저장 시도');
+          const saved = await reviewDataManager.save();
+          if (!canContinueVideoLoad()) return false;
+          if (!saved) {
           // 저장 실패 시 사용자에게 확인
-          const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
-          if (!proceed) {
-            log.info('사용자가 파일 전환 취소');
-            return false;
+            const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
+            if (!proceed) {
+              log.info('사용자가 파일 전환 취소');
+              return false;
+            }
+            log.warn('저장 실패했지만 사용자가 전환 진행 선택');
           }
-          log.warn('저장 실패했지만 사용자가 전환 진행 선택');
         }
-      }
 
-      allowNavigationGuardAbort = false;
+        allowNavigationGuardAbort = false;
 
-      // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
-      void stopDeferredReviewFileDiscovery();
-      if (reviewDataManager.currentBframePath) {
-        await window.electronAPI.watchFileStop(reviewDataManager.currentBframePath);
+        // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
+        void stopDeferredReviewFileDiscovery();
+        if (reviewDataManager.currentBframePath) {
+          await window.electronAPI.watchFileStop(reviewDataManager.currentBframePath);
+          if (!canContinueVideoLoad()) return false;
+          log.info('이전 파일 감시 중지', { path: reviewDataManager.currentBframePath });
+          try {
+            await liveblocksManager.stop();
+          } catch (e) {
+            log.warn('Liveblocks 세션 종료 중 오류', { error: e.message });
+          } finally {
+            commentSync.stop();
+            drawingSync.stop();
+          }
+          // 협업 UI 초기화 (이전 세션의 아바타/인원 표시 제거)
+          updateCollaboratorsUI([]);
+          // 원격 커서 및 재생헤드 제거
+          document.querySelectorAll('.remote-cursor').forEach(el => el.remove());
+          document.querySelectorAll('.remote-playhead').forEach(el => el.remove());
+          log.info('이전 협업 세션 종료');
+        }
+
+        // ====== 이전 데이터 초기화 ======
+        // 자동 저장 일시 중지 (초기화 중 빈 데이터가 저장되는 것 방지)
         if (!canContinueVideoLoad()) return false;
-        log.info('이전 파일 감시 중지', { path: reviewDataManager.currentBframePath });
-        try {
-          await liveblocksManager.stop();
-        } catch (e) {
-          log.warn('Liveblocks 세션 종료 중 오류', { error: e.message });
-        } finally {
-          commentSync.stop();
-          drawingSync.stop();
-        }
-        // 협업 UI 초기화 (이전 세션의 아바타/인원 표시 제거)
-        updateCollaboratorsUI([]);
-        // 원격 커서 및 재생헤드 제거
-        document.querySelectorAll('.remote-cursor').forEach(el => el.remove());
-        document.querySelectorAll('.remote-playhead').forEach(el => el.remove());
-        log.info('이전 협업 세션 종료');
-      }
+        if (!beginDestructiveMpvReviewMediaChange(loadToken)) return false;
+        reviewDataManager.pauseAutoSave();
 
-      // ====== 이전 데이터 초기화 ======
-      // 자동 저장 일시 중지 (초기화 중 빈 데이터가 저장되는 것 방지)
-      if (!canContinueVideoLoad()) return false;
-      if (!beginDestructiveMpvReviewMediaChange(loadToken)) return false;
-      reviewDataManager.pauseAutoSave();
-
-      // 댓글 모드를 이벤트 경로로 먼저 종료한 뒤, DOM 준비 상태도 무조건 초기화한다.
-      // clear()는 commentModeChanged를 발생시키지 않으므로 이 순서가 중요하다.
-      const shouldKeepMpvReviewFreeze = isMpvPilotPlaybackActive() &&
+        // 댓글 모드를 이벤트 경로로 먼저 종료한 뒤, DOM 준비 상태도 무조건 초기화한다.
+        // clear()는 commentModeChanged를 발생시키지 않으므로 이 순서가 중요하다.
+        const shouldKeepMpvReviewFreeze = isMpvPilotPlaybackActive() &&
         state.isDrawMode &&
         useMpvPilot &&
         !fileIsAudio &&
         preserveMpvReviewFreezeFrameForMediaChange();
-      suppressReviewFreezeReleaseForMediaChange = true;
-      try {
-        commentManager.setCommentMode(false);
-        state.isCommentMode = false;
-        setCommentModeReadyState(false);
-        setCommentModePreparingState(false);
-        if (isMpvPilotPlaybackActive() && !shouldKeepMpvReviewFreeze) {
-          await releaseMpvReviewFreezeFrame();
-          if (!canContinueVideoLoad()) return false;
+        suppressReviewFreezeReleaseForMediaChange = true;
+        try {
+          commentManager.setCommentMode(false);
+          state.isCommentMode = false;
+          setCommentModeReadyState(false);
+          setCommentModePreparingState(false);
+          if (isMpvPilotPlaybackActive() && !shouldKeepMpvReviewFreeze) {
+            await releaseMpvReviewFreezeFrame();
+            if (!canContinueVideoLoad()) return false;
+          }
+        } finally {
+          suppressReviewFreezeReleaseForMediaChange = false;
         }
-      } finally {
-        suppressReviewFreezeReleaseForMediaChange = false;
-      }
-      commentManager.clear();
-      // 피드백 36: 버전 전환·파일 로드 시 이전 버전 댓글 고스트 자동 해제
-      previousVersionComments = null;
-      // 댓글 필터 상태 초기화
-      resetCommentFilters();
-      // Undo/Redo 스택 초기화 (파일 전환 시 크로스파일 오염 방지)
-      undoStack.length = 0;
-      redoStack.length = 0;
-      // 그리기 매니저 초기화
-      drawingManager.reset();
-      // 하이라이트 매니저 초기화
-      highlightManager.reset();
-      // 타임라인 마커 초기화
-      timeline.clearMarkers();
-      // 영상 위 마커 UI 초기화
-      markerContainer.innerHTML = '';
-      // 코덱 에러 오버레이 숨기기
-      codecErrorOverlay?.classList.remove('active');
+        commentManager.clear();
+        // 피드백 36: 버전 전환·파일 로드 시 이전 버전 댓글 고스트 자동 해제
+        previousVersionComments = null;
+        // 댓글 필터 상태 초기화
+        resetCommentFilters();
+        // Undo/Redo 스택 초기화 (파일 전환 시 크로스파일 오염 방지)
+        undoStack.length = 0;
+        redoStack.length = 0;
+        // 그리기 매니저 초기화
+        drawingManager.reset();
+        // 하이라이트 매니저 초기화
+        highlightManager.reset();
+        // 타임라인 마커 초기화
+        timeline.clearMarkers();
+        // 영상 위 마커 UI 초기화
+        markerContainer.innerHTML = '';
+        // 코덱 에러 오버레이 숨기기
+        codecErrorOverlay?.classList.remove('active');
+      } // end if (!engineSwap) — 파괴 구간
 
       // ====== 오디오/비디오 모드 분기 ======
       const audioWaveform = getAudioWaveform();
@@ -8753,34 +8866,42 @@ async function initApp() {
 
       // 썸네일 생성 시작 (비디오만, 트랜스코딩된 경우 변환된 파일 사용)
       if (!fileIsAudio) {
-        let shouldGenerateThumbnails = true;
-        if (useMpvPilot) {
-          thumbnailVideoPath = await resolveMpvThumbnailVideoPath(filePath, {
-            isStaleVideoLoad
-          });
-          if (!canContinueVideoLoad()) return false;
-          shouldGenerateThumbnails = Boolean(thumbnailVideoPath);
-        }
-        if (shouldGenerateThumbnails) {
-          await generateThumbnails(thumbnailVideoPath);
-        } else {
-          getThumbnailGenerator().clear();
-          if (driveLoadingFeedbackShown) {
-            hideVideoLoadingOverlay('drive');
+        // 작업 4: engineSwap은 같은 파일 — 썸네일 재생성 생략(타임라인 깜빡임·비용 회피)
+        if (!engineSwap) {
+          let shouldGenerateThumbnails = true;
+          if (useMpvPilot) {
+            thumbnailVideoPath = await resolveMpvThumbnailVideoPath(filePath, {
+              isStaleVideoLoad
+            });
+            if (!canContinueVideoLoad()) return false;
+            shouldGenerateThumbnails = Boolean(thumbnailVideoPath);
           }
-          document.getElementById('videoLoadingOverlay')?.classList.remove('active');
-        }
-        if (!canContinueVideoLoad()) return false;
+          if (shouldGenerateThumbnails) {
+            await generateThumbnails(thumbnailVideoPath);
+          } else {
+            getThumbnailGenerator().clear();
+            if (driveLoadingFeedbackShown) {
+              hideVideoLoadingOverlay('drive');
+            }
+            document.getElementById('videoLoadingOverlay')?.classList.remove('active');
+          }
+          if (!canContinueVideoLoad()) return false;
+        } // end if (!engineSwap) — 썸네일 재생성
       } else {
         // 오디오 파일 로드 시 이전 비디오의 썸네일 상태 정리
         getThumbnailGenerator().clear();
       }
 
       // .bframe 파일 로드 시도 (이미 저장했으므로 skipSave: true)
-      const hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
-      if (!canContinueVideoLoad()) return false;
+      // 작업 4: engineSwap에서는 같은 파일이므로 .bframe 재로드를 건너뛴다(메모리 데이터 유지).
+      let hasExistingData = false;
+      let currentBframePath = reviewDataManager.currentBframePath;
+      if (!engineSwap) {
+        hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
+        if (!canContinueVideoLoad()) return false;
+        currentBframePath = reviewDataManager.currentBframePath;
+      }
       reviewDataManager.setFps(videoPlayer.fps);
-      const currentBframePath = reviewDataManager.currentBframePath;
 
       // keepVersionContext가 false일 때만 manualVersions 복원
       // (true면 기존 버전 목록 유지)
@@ -8795,22 +8916,25 @@ async function initApp() {
       // 드롭다운 다시 렌더링 (버전 목록 갱신)
       versionDropdown._render();
 
-      if (hasExistingData) {
-        showToast(`"${fileInfo.name}" 로드됨 (리뷰 데이터 복원)`, 'success');
-      } else {
-        showToast(`"${fileInfo.name}" 로드됨`, 'success');
-      }
-
-      if (hasExistingData) {
-        if (deferCollaborationStart) {
-          scheduleDeferredCollaborationStart(loadToken, currentBframePath);
+      // 작업 4: engineSwap에서는 "로드됨" 토스트·협업 재시작을 건너뛴다(같은 파일 — 세션 유지).
+      if (!engineSwap) {
+        if (hasExistingData) {
+          showToast(`"${fileInfo.name}" 로드됨 (리뷰 데이터 복원)`, 'success');
         } else {
-          await startCollaborationForVideoLoad(loadToken, currentBframePath);
-          if (!canContinueVideoLoad()) return false;
+          showToast(`"${fileInfo.name}" 로드됨`, 'success');
         }
-      } else {
-        startDeferredReviewFileDiscovery(loadToken, currentBframePath);
-      }
+
+        if (hasExistingData) {
+          if (deferCollaborationStart) {
+            scheduleDeferredCollaborationStart(loadToken, currentBframePath);
+          } else {
+            await startCollaborationForVideoLoad(loadToken, currentBframePath);
+            if (!canContinueVideoLoad()) return false;
+          }
+        } else {
+          startDeferredReviewFileDiscovery(loadToken, currentBframePath);
+        }
+      } // end if (!engineSwap) — 토스트·협업
 
       // 마커 및 그리기 렌더링 업데이트 (항상 실행)
       renderVideoMarkers();
@@ -8839,14 +8963,17 @@ async function initApp() {
 
       // ====== 최근 파일 목록에 추가 ======
       // fire-and-forget: manager 내부에서 자체 에러 처리함
-      recentFilesManager.add({
-        path: filePath,
-        name: fileInfo.name,
-        dir: fileInfo.dir,
-        ext: fileInfo.ext,
-        size: fileInfo.size,
-        duration: videoPlayer.duration || 0
-      });
+      // 작업 4: engineSwap은 같은 파일 재등록 불필요 — 건너뛴다.
+      if (!engineSwap) {
+        recentFilesManager.add({
+          path: filePath,
+          name: fileInfo.name,
+          dir: fileInfo.dir,
+          ext: fileInfo.ext,
+          size: fileInfo.size,
+          duration: videoPlayer.duration || 0
+        });
+      }
 
       trace.end({ filePath, hasExistingData });
       videoLoadCompleted = true;
@@ -9244,7 +9371,21 @@ async function initApp() {
     }
     if (enabled && isMpvPilotPlaybackActive()) {
       videoPlayer.pause();
-      void prepareMpvDrawMode(preparationToken);
+      // 작업 4: 하이브리드 우선 — HTML5 직재생 가능하면 엔진 전환, 아니면 기존 freeze 준비.
+      // (c-0)의 skipReviewTransition 덕에 preparationToken이 보존되어 실패 폴백이 성립한다.
+      void enterHybridReviewEngineIfPossible().then((swapped) => {
+        // 전환 중 사용자가 모드를 껐으면(B 재입력) 캔버스를 활성화하지 않고 mpv 복귀만 정리
+        if (!state.isDrawMode) {
+          void exitHybridReviewEngineIfNeeded();
+          return;
+        }
+        if (swapped) {
+          setDrawModePreparingState(false);
+          setDrawModeReadyState(true);
+        } else {
+          void prepareMpvDrawMode(preparationToken);
+        }
+      });
     } else {
       setDrawModePreparingState(false);
       setDrawModeReadyState(enabled);
@@ -9260,6 +9401,7 @@ async function initApp() {
       state.isSpaceHeld = false;
       state.spacePanUsed = false;
       elements.videoWrapper?.classList.remove('space-pan');
+      void exitHybridReviewEngineIfNeeded();
     }
   }
 
@@ -13290,6 +13432,8 @@ async function initApp() {
     // 재생 탭 초기값
     const mpvPilotEnabled = document.getElementById('appSettingsMpvPilotEnabled');
     if (mpvPilotEnabled) mpvPilotEnabled.checked = userSettings.getMpvPlaybackEnabled();
+    const hybridReviewEngineToggle = document.getElementById('appSettingsHybridReviewEngine');
+    if (hybridReviewEngineToggle) hybridReviewEngineToggle.checked = userSettings.getHybridReviewEngine();
     updateMpvPilotSettingsStatus();
 
     const tGrid = document.getElementById('appThemeColorGrid');
@@ -13568,6 +13712,16 @@ async function initApp() {
       e.target.checked
         ? 'mpv 직접 재생을 켰습니다. 다음 영상부터 원본을 바로 재생합니다.'
         : 'mpv 직접 재생을 껐습니다. 다음 영상부터 기존 변환 방식으로 재생합니다.',
+      'info'
+    );
+  });
+
+  document.getElementById('appSettingsHybridReviewEngine')?.addEventListener('change', (e) => {
+    userSettings.setHybridReviewEngine(e.target.checked);
+    showToast(
+      e.target.checked
+        ? '그리기/댓글 모드에서 표준 재생을 사용합니다. 다음 모드 진입부터 적용됩니다.'
+        : '그리기/댓글 모드에서 기존 freeze 방식을 사용합니다.',
       'info'
     );
   });

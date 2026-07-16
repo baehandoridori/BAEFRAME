@@ -197,6 +197,8 @@ export class UserSettings extends EventTarget {
       playlistAutoPlay: false,
       // mpv 직접 재생 - 기본 재생 엔진. 끄면 기존 변환(FFmpeg) 방식으로 재생 (개인 로컬 설정)
       mpvPlaybackEnabled: true,
+      // 그리기/댓글 모드 동안 HTML5 엔진으로 전환 (구조 개선 — 끄면 기존 freeze 방식)
+      hybridReviewEngine: true,
       // 최초 이름 설정 여부 (모달 한 번만 표시)
       hasSetNameOnce: false,
       // 사용자 정의 단축키 (기본값 위에 덮어씀)
@@ -756,6 +758,17 @@ export class UserSettings extends EventTarget {
     this._save();
     this._emit('mpvPlaybackEnabledChanged', { enabled: this.settings.mpvPlaybackEnabled });
     log.info('mpv 직접 재생 설정 변경됨', { enabled: this.settings.mpvPlaybackEnabled });
+  }
+
+  getHybridReviewEngine() {
+    return this.settings.hybridReviewEngine !== false;
+  }
+
+  setHybridReviewEngine(enabled) {
+    this.settings.hybridReviewEngine = enabled === true;
+    this._save();
+    this._emit('hybridReviewEngineChanged', { enabled: this.settings.hybridReviewEngine });
+    log.info('하이브리드 리뷰 엔진 설정 변경됨', { enabled: this.settings.hybridReviewEngine });
   }
 
   /**

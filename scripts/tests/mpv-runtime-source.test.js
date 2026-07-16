@@ -1050,9 +1050,9 @@ test('html5 overlay fallback settles pending draw readiness without leaving a sp
   assert.match(appSource, /function beginMpvHtml5FallbackReviewTransition\(\) \{[\s\S]+const drawModeWasActive = state\.isDrawMode;[\s\S]+const drawPreparationToken = drawModeWasActive \? \+\+drawModePreparationToken : null;[\s\S]+setDrawModePreparingState\(false\);[\s\S]+setDrawModeReadyState\(false\);/);
   assert.match(appSource, /function finishMpvHtml5FallbackReviewTransition\(transition, \{ filePath, loaded \}\) \{[\s\S]+drawModePreparationToken !== transition\.drawPreparationToken[\s\S]+loaded[\s\S]+videoPlayer\.engine === 'html5'[\s\S]+isSameFilePath\(filePath, state\.currentFile\)[\s\S]+setDrawModePreparingState\(false\);[\s\S]+setDrawModeReadyState\(true\);[\s\S]+applyDrawModeState\(false\);/);
 
-  const fallbackLoadMatch = appSource.match(/async function loadVideoWithHtml5Fallback\(filePath, options = \{\}, \{ owner = null \} = \{\}\) \{([\s\S]*?)\n  \}/);
+  const fallbackLoadMatch = appSource.match(/async function loadVideoWithHtml5Fallback\(filePath, options = \{\}, \{ owner = null, skipReviewTransition = false \} = \{\}\) \{([\s\S]*?)\n  \}/);
   assert.ok(fallbackLoadMatch, 'loadVideoWithHtml5Fallback should exist');
-  assert.match(fallbackLoadMatch[1], /const reviewTransition = beginMpvHtml5FallbackReviewTransition\(\);[\s\S]+let loaded = false;[\s\S]+loaded = await loadVideo\(filePath, \{[\s\S]+allowMpvPilot: false[\s\S]+finishMpvHtml5FallbackReviewTransition\(reviewTransition, \{ filePath, loaded \}\);/);
+  assert.match(fallbackLoadMatch[1], /const reviewTransition = skipReviewTransition \? null : beginMpvHtml5FallbackReviewTransition\(\);[\s\S]+let loaded = false;[\s\S]+loaded = await loadVideo\(filePath, \{[\s\S]+allowMpvPilot: false[\s\S]+finishMpvHtml5FallbackReviewTransition\(reviewTransition, \{ filePath, loaded \}\);/);
 });
 
 test('intentional html5 fallback stop is consumed instead of triggering mpv auto-recovery', () => {
@@ -1064,7 +1064,7 @@ test('intentional html5 fallback stop is consumed instead of triggering mpv auto
   assert.ok(handlerMatch, 'externalstopped handler should exist');
   assert.match(handlerMatch[1], /const stoppedFilePath = detail\.filePath \|\| state\.currentFile;[\s\S]+if \(consumeExpectedMpvHtml5FallbackStop\(stoppedFilePath\)\) \{[\s\S]+return;[\s\S]+\}/);
 
-  const fallbackLoadMatch = appSource.match(/async function loadVideoWithHtml5Fallback\(filePath, options = \{\}, \{ owner = null \} = \{\}\) \{([\s\S]*?)\n  \}/);
+  const fallbackLoadMatch = appSource.match(/async function loadVideoWithHtml5Fallback\(filePath, options = \{\}, \{ owner = null, skipReviewTransition = false \} = \{\}\) \{([\s\S]*?)\n  \}/);
   assert.ok(fallbackLoadMatch, 'loadVideoWithHtml5Fallback should exist');
   assert.match(fallbackLoadMatch[1], /const expectedStopToken = beginExpectedMpvHtml5FallbackStop\(owner, filePath\);[\s\S]+scheduleExpectedMpvHtml5FallbackStopCleanup\(expectedStopToken\);/);
   assert.match(appSource, /const overlayOwner = await mpvPilotOwnershipGate\.claim\(loadToken, \{ isStaleVideoLoad \}\);[\s\S]+if \(!overlayOwner\) return false;[\s\S]+clearExpectedMpvHtml5FallbackStop\(\);/);
