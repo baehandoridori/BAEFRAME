@@ -12,7 +12,8 @@ import {
   findStrokeAtPoint,
   isRecordableStrokeTool,
   normalizeEraserMode,
-  removeIntersectingStrokes
+  removeIntersectingStrokes,
+  strokesInRect
 } from './drawing-stroke-records.js';
 
 const log = createLogger('DrawingManager');
@@ -151,9 +152,17 @@ export class DrawingManager extends EventTarget {
     this.drawingCanvas.addEventListener('strokeselectrequest', (e) => {
       void this._onStrokeSelectRequest(e.detail);
     });
+    // 피드백 35 v2: 마퀴에 획이 걸리면 벡터 다중 선택
+    this.drawingCanvas.addEventListener('strokemarqueeselect', (e) => {
+      void this._onStrokeMarqueeSelect(e.detail);
+    });
+    // 피드백 35 v2: select 도구 hover 하이라이트
+    this.drawingCanvas.addEventListener('strokehoverprobe', (e) => {
+      this._onStrokeHoverProbe(e.detail);
+    });
 
-    this.drawingCanvas.addEventListener('selectioncommitted', () => {
-      this._onSelectionCommitted();
+    this.drawingCanvas.addEventListener('selectioncommitted', (e) => {
+      this._onSelectionCommitted(e.detail);
     });
 
     this.drawingCanvas.addEventListener('selectionoverlaychanged', (e) => {
@@ -269,8 +278,37 @@ export class DrawingManager extends EventTarget {
   /**
    * 선택 도구 커밋 결과를 현재 키프레임 비트맵으로 저장
    */
-  _onSelectionCommitted() {
+  _onSelectionCommitted(detail = {}) {
     this.paintStamp += 1;
+    const records = Array.isArray(detail.records) ? detail.records : null;
+    if (records && records.length > 0) {
+      // 피드백 35 v2: 벡터 커밋 — 이동 오프셋을 레코드에 반영해 되살린다. 동결하지 않으므로
+      // 커밋 후에도 이 획과 프레임의 다른 획을 다시 클릭 선택할 수 있다.
+      // 중요: 리프트와 동일한 키프레임(editHeldSourceKeyframe: true)을 편집해야 한다 —
+      // _saveCurrentFrameData(editHeldSourceKeyframe: false)는 홀드 프레임에서 base 없는
+      // 새 키프레임을 파생시켜 나머지 획·비트맵을 소실시킨다 (검증으로 확정된 결함 경로).
+      const keyframe = this._getEditableKeyframeForCurrentFrame({ editHeldSourceKeyframe: true });
+      if (keyframe) {
+        const dx = Number(detail.dx) || 0;
+        const dy = Number(detail.dy) || 0;
+        const movedRecords = records.map((record) => createStrokeRecord({
+          ...record,
+          points: record.points.map((p) => ({ x: p.x + dx, y: p.y + dy }))
+        }));
+        keyframe.strokeRecords = [...(keyframe.strokeRecords || []), ...movedRecords];
+        const commitFrame = this.currentFrame;
+        void this._redrawKeyframeFromRecords(keyframe).then(() => {
+          // redraw는 async — 완료 전에 프레임이 바뀌었으면 화면 덮어쓰기를 피한다
+          // (키프레임 데이터 자체는 이미 갱신됨; 현재 프레임 화면은 renderFrame이 담당)
+          if (this.currentFrame !== commitFrame) {
+            void this.renderFrame(this.currentFrame);
+          }
+          this._emit('drawend', { frame: commitFrame });
+          this._emit('layersChanged');
+        });
+        return;
+      }
+    }
     const keyframe = this._saveCurrentFrameData({
       editHeldSourceKeyframe: false,
       preserveStrokeRecords: false
@@ -307,18 +345,25 @@ export class DrawingManager extends EventTarget {
     const target = records.find((r) => r.id === hit.id);
     if (!target) return;
 
-    // undo 스냅샷 (기존 리프트와 동일 경로)
-    this._saveToHistory();
+    // 피드백 35 v2: additive(Shift) 리프트는 기존 floating을 유지한 채 획만 추가한다.
+    const additiveLift = detail.additive === true && !!this.drawingCanvas._floatingRecords;
+
+    // undo 스냅샷 (기존 리프트와 동일 경로) — additive는 첫 리프트의 스냅샷 하나로 undo 단위를 유지
+    // (Shift+클릭마다 스냅샷이 쌓이면 undo 1회가 "일부 획만 사라진 중간 상태"를 노출한다)
+    if (!additiveLift) this._saveToHistory();
 
     keyframe.strokeRecords = records.filter((r) => r !== target);
     await this._redrawKeyframeFromRecords(keyframe);
-    // 재진입 가드: redraw await 중 사용자가 그리기/선택을 시작했다면 리프트를 포기하고 원복
-    if (this.drawingCanvas.isDrawing || this.drawingCanvas.floatingImage) {
+    // 재진입 가드: redraw await 중 사용자가 그리기/선택을 시작했다면 리프트를 포기하고 원복.
+    // additive는 floating이 살아있는 것이 정상이므로 예외로 둔다.
+    if (this.drawingCanvas.isDrawing || (this.drawingCanvas.floatingImage && !additiveLift)) {
       keyframe.strokeRecords = records;
       await this._redrawKeyframeFromRecords(keyframe);
       return;
     }
-    const started = this.drawingCanvas.beginStrokeFloating(target);
+    const started = additiveLift
+      ? this.drawingCanvas.addStrokeToFloating(target)
+      : this.drawingCanvas.beginStrokeFloating(target);
     if (!started) {
       // 리프트 실패 시 원복
       keyframe.strokeRecords = records;
@@ -327,6 +372,53 @@ export class DrawingManager extends EventTarget {
     }
     this.paintStamp += 1;
     this._emit('layersChanged');
+  }
+
+  /** 마퀴 사각형과 교차하는 획들을 벡터 다중 리프트한다. 획이 없으면 기존 래스터 마퀴 유지. */
+  async _onStrokeMarqueeSelect(detail) {
+    const rect = { x: Number(detail?.x), y: Number(detail?.y), w: Number(detail?.w), h: Number(detail?.h) };
+    if (![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite)) return;
+    const layer = this.getActiveLayer();
+    const readRecords = layer?.getKeyframeAtFrame?.(this.currentFrame)?.strokeRecords;
+    if (!layer || !Array.isArray(readRecords) || readRecords.length === 0) return;
+    const hits = strokesInRect(readRecords, rect);
+    if (hits.length === 0) return; // 래스터 마퀴(빈 영역/비트맵 선택)로 폴백 — selection 사각형은 유지됨
+    const keyframe = this._getEditableKeyframeForCurrentFrame({ editHeldSourceKeyframe: true });
+    const records = keyframe?.strokeRecords;
+    if (!keyframe || !Array.isArray(records) || records.length === 0) return;
+    const hitIds = new Set(hits.map((s) => s.id));
+    const targets = records.filter((r) => hitIds.has(r.id));
+    if (targets.length === 0) return;
+    // 히스토리는 실제로 리프트가 성공 확정된 뒤에만 남긴다 (abort 경로의 no-op 스냅샷 방지)
+    this._saveToHistory();
+    keyframe.strokeRecords = records.filter((r) => !hitIds.has(r.id));
+    await this._redrawKeyframeFromRecords(keyframe);
+    if (this.drawingCanvas.isDrawing) {
+      keyframe.strokeRecords = records;
+      await this._redrawKeyframeFromRecords(keyframe);
+      return;
+    }
+    const started = this.drawingCanvas.beginStrokeFloating(targets);
+    if (!started) {
+      keyframe.strokeRecords = records;
+      await this._redrawKeyframeFromRecords(keyframe);
+      return;
+    }
+    this.paintStamp += 1;
+    this._emit('layersChanged');
+  }
+
+  /** hover 좌표의 획을 찾아 캔버스 하이라이트를 갱신한다 (조회 전용 — 키프레임 생성 없음). */
+  _onStrokeHoverProbe(detail) {
+    const point = { x: Number(detail?.x), y: Number(detail?.y) };
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    const layer = this.getActiveLayer();
+    const readRecords = layer?.getKeyframeAtFrame?.(this.currentFrame)?.strokeRecords;
+    if (!layer || !Array.isArray(readRecords) || readRecords.length === 0) {
+      this.drawingCanvas.setHoverStroke(null);
+      return;
+    }
+    this.drawingCanvas.setHoverStroke(findStrokeAtPoint(readRecords, point));
   }
 
   /**

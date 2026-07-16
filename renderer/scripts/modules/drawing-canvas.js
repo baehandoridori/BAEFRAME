@@ -52,6 +52,7 @@ export class DrawingCanvas extends EventTarget {
     this.canDraw = null;
     this._modifierCtrlDown = false;
     this._modifierAltDown = false;
+    this._modifierShiftDown = false;
     this.isSizeAdjusting = false;
     this._sizeAdjustStartX = 0;
     this._sizeAdjustStartY = 0;
@@ -75,6 +76,9 @@ export class DrawingCanvas extends EventTarget {
     this._selectPhase = null;
     this._selectGrabOffset = null;
     this._selectClipboard = null;
+    this._floatingRecords = null;   // 벡터 리프트된 레코드 배열 (래스터 마퀴 floating이면 null)
+    this._floatingOrigin = null;    // 리프트 시점 bbox 원점 {x,y} — 이동 delta 계산 기준
+    this._hoverStroke = null;       // select 도구 hover 중인 획 레코드
 
     // 스트로크 경로 저장 (외곽선용)
     this.currentStrokePath = [];
@@ -116,14 +120,17 @@ export class DrawingCanvas extends EventTarget {
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Control') this._modifierCtrlDown = true;
       if (e.key === 'Alt') this._modifierAltDown = true;
+      if (e.key === 'Shift') this._modifierShiftDown = true;
     }, { signal });
     document.addEventListener('keyup', (e) => {
       if (e.key === 'Control') this._modifierCtrlDown = false;
       if (e.key === 'Alt') this._modifierAltDown = false;
+      if (e.key === 'Shift') this._modifierShiftDown = false;
     }, { signal });
     window.addEventListener('blur', () => {
       this._modifierCtrlDown = false;
       this._modifierAltDown = false;
+      this._modifierShiftDown = false;
     }, { signal });
   }
 
@@ -242,6 +249,11 @@ export class DrawingCanvas extends EventTarget {
   }
 
   _onPointerMove(e) {
+    // 피드백 35 v2: select 도구 hover — 포인터를 누르지 않은 이동은 아래 activeDrawPointerId 가드에
+    // 걸리므로 반드시 그 앞에서 처리한다.
+    if (this.tool === DrawingTool.SELECT && !this._selectPhase && !this.isDrawing) {
+      this._emit('strokehoverprobe', this._getCanvasCoords(e));
+    }
     if (this._activeDrawPointerId !== e.pointerId) return;
     if (this._selectPhase) {
       this._onSelectPointerMove(e);
@@ -869,7 +881,11 @@ export class DrawingCanvas extends EventTarget {
         y: coords.y - this.floatingPos.y
       };
     } else {
-      this.commitSelection();
+      // 피드백 35 v2: Shift+클릭 추가 선택 — 벡터 floating은 커밋하지 않고 유지한 채 진행
+      const additive = (e?.shiftKey === true || this._modifierShiftDown === true) && !!this._floatingRecords;
+      if (!additive) {
+        this.commitSelection();
+      }
       this._selectPhase = 'marquee';
       this.selection = { x: coords.x, y: coords.y, w: 0, h: 0 };
       this._selectGrabOffset = { x: coords.x, y: coords.y };
@@ -907,14 +923,29 @@ export class DrawingCanvas extends EventTarget {
     if (this._selectPhase === 'marquee') {
       const rect = this._normalizedSelection();
       if (!rect || rect.w < 2 || rect.h < 2) {
-        this.selection = null;
+        const additive = (_e?.shiftKey === true || this._modifierShiftDown === true) && !!this._floatingRecords;
+        if (additive && this.floatingImage && this.floatingPos) {
+          // 추가 선택 클릭이 빗나가도 기존 floating 선택 표시를 유지한다
+          this.selection = {
+            x: this.floatingPos.x,
+            y: this.floatingPos.y,
+            w: this.floatingImage.width,
+            h: this.floatingImage.height
+          };
+        } else {
+          this.selection = null;
+        }
         // 피드백 35: 드래그 없는 클릭 → 획 단위 선택 시도 (매니저가 레코드를 보유)
         if (this._selectGrabOffset) {
           this._emit('strokeselectrequest', {
             x: this._selectGrabOffset.x,
-            y: this._selectGrabOffset.y
+            y: this._selectGrabOffset.y,
+            additive
           });
         }
+      } else {
+        // 피드백 35 v2: 마퀴에 획이 걸리면 벡터 다중 선택으로 승격 (매니저가 판정)
+        this._emit('strokemarqueeselect', { x: rect.x, y: rect.y, w: rect.w, h: rect.h });
       }
     }
     this._selectPhase = null;
@@ -958,52 +989,84 @@ export class DrawingCanvas extends EventTarget {
   }
 
   /**
-   * 피드백 35: 획 레코드 하나를 floating 선택으로 만든다 (래스터 리프트).
-   * 호출 전에 매니저가 해당 레코드를 키프레임에서 제거하고 캔버스를 재합성해 둔 상태여야 한다.
+   * 피드백 35 v2: 획 레코드(1개 이상)를 floating 선택으로 만든다 (래스터 리프트 + 벡터 보관).
+   * 호출 전에 매니저가 해당 레코드들을 키프레임에서 제거하고 캔버스를 재합성해 둔 상태여야 한다.
    */
-  beginStrokeFloating(record) {
-    const points = Array.isArray(record?.points) ? record.points : [];
-    if (points.length === 0) return false;
-
-    const margin = Math.ceil(
-      Math.max(1, Number(record.lineWidth) || 1) / 2 +
-      Math.max(0, Number(record.strokeWidth) || 0) + 2
+  beginStrokeFloating(records) {
+    const list = (Array.isArray(records) ? records : [records]).filter(
+      (record) => Array.isArray(record?.points) && record.points.length > 0
     );
+    if (list.length === 0) return false;
+    const built = this._buildStrokeFloating(list);
+    if (!built) return false;
+    this.floatingImage = built.lifted;
+    this.floatingPos = { x: built.x, y: built.y };
+    this.selection = { x: built.x, y: built.y, w: built.w, h: built.h };
+    this._floatingRecords = list;
+    this._floatingOrigin = { x: built.x, y: built.y };
+    this._selectPhase = null;
+    this.setHoverStroke(null);
+    this._renderSelectionOverlay();
+    this._emitSelectionOverlayChanged();
+    return true;
+  }
+
+  /** 레코드들을 원좌표로 그려 union bbox로 잘라낸 캔버스를 만든다. */
+  _buildStrokeFloating(list) {
+    let margin = 0;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of points) {
-      if (p.x < minX) minX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y > maxY) maxY = p.y;
+    for (const record of list) {
+      margin = Math.max(margin, Math.ceil(
+        Math.max(1, Number(record.lineWidth) || 1) / 2 +
+        Math.max(0, Number(record.strokeWidth) || 0) + 2
+      ));
+      for (const p of record.points) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
     }
     const x = Math.max(0, Math.floor(minX - margin));
     const y = Math.max(0, Math.floor(minY - margin));
     const w = Math.min(this.canvas.width, Math.ceil(maxX + margin)) - x;
     const h = Math.min(this.canvas.height, Math.ceil(maxY + margin)) - y;
-    if (w < 1 || h < 1) return false;
-
-    // 전체 캔버스 크기의 오프스크린에 획만 그린 뒤 bbox로 잘라낸다.
-    // drawStrokeRecord가 this.ctx에 그리므로 잠시 스왑한다 (동기 구간, 재진입 없음).
+    if (w < 1 || h < 1) return null;
     const full = document.createElement('canvas');
     full.width = this.canvas.width;
     full.height = this.canvas.height;
     const originalCtx = this.ctx;
     this.ctx = full.getContext('2d');
     try {
-      this.drawStrokeRecord(record);
+      for (const record of list) this.drawStrokeRecord(record);
     } finally {
       this.ctx = originalCtx;
     }
-
     const lifted = document.createElement('canvas');
     lifted.width = w;
     lifted.height = h;
     lifted.getContext('2d').drawImage(full, x, y, w, h, 0, 0, w, h);
+    return { lifted, x, y, w, h };
+  }
 
-    this.floatingImage = lifted;
-    this.floatingPos = { x, y };
-    this.selection = { x, y, w, h };
-    this._selectPhase = null;
+  /** 피드백 35 v2: Shift+클릭 추가 선택 — 기존 floating에 획을 합친다 (이동 delta 유지). */
+  addStrokeToFloating(record) {
+    if (!this._floatingRecords || !this.floatingImage || !this._floatingOrigin) {
+      return this.beginStrokeFloating(record);
+    }
+    const delta = {
+      x: this.floatingPos.x - this._floatingOrigin.x,
+      y: this.floatingPos.y - this._floatingOrigin.y
+    };
+    const list = [...this._floatingRecords, record];
+    const built = this._buildStrokeFloating(list);
+    if (!built) return false;
+    this.floatingImage = built.lifted;
+    this._floatingRecords = list;
+    this._floatingOrigin = { x: built.x, y: built.y };
+    this.floatingPos = { x: built.x + delta.x, y: built.y + delta.y };
+    this.selection = { x: this.floatingPos.x, y: this.floatingPos.y, w: built.w, h: built.h };
+    this.setHoverStroke(null);
     this._renderSelectionOverlay();
     this._emitSelectionOverlayChanged();
     return true;
@@ -1011,16 +1074,27 @@ export class DrawingCanvas extends EventTarget {
 
   commitSelection() {
     const hadFloating = !!this.floatingImage;
+    let commitDetail = null;
     if (hadFloating) {
+      // 피드백 35 v2: 벡터 리프트였다면 이동 오프셋과 레코드를 매니저에 넘겨 벡터로 되살린다.
+      if (this._floatingRecords && this._floatingOrigin && this.floatingPos) {
+        commitDetail = {
+          records: this._floatingRecords,
+          dx: Math.round(this.floatingPos.x - this._floatingOrigin.x),
+          dy: Math.round(this.floatingPos.y - this._floatingOrigin.y)
+        };
+      }
       this.ctx.drawImage(this.floatingImage, Math.round(this.floatingPos.x), Math.round(this.floatingPos.y));
       this.floatingImage = null;
       this.floatingPos = null;
     }
+    this._floatingRecords = null;
+    this._floatingOrigin = null;
     this.selection = null;
     this._selectPhase = null;
     this._clearSelectionOverlay();
     if (hadFloating) {
-      this._emit('selectioncommitted');
+      this._emit('selectioncommitted', commitDetail || {});
     }
     return hadFloating;
   }
@@ -1074,6 +1148,9 @@ export class DrawingCanvas extends EventTarget {
       w: pasted.width,
       h: pasted.height
     };
+    // 붙여넣기는 래스터 클립보드 — 벡터 리프트가 아니므로 벡터 상태를 비운다.
+    this._floatingRecords = null;
+    this._floatingOrigin = null;
     this._selectPhase = null;
     this._renderSelectionOverlay();
     return true;
@@ -1083,6 +1160,8 @@ export class DrawingCanvas extends EventTarget {
     this.selection = null;
     this.floatingImage = null;
     this.floatingPos = null;
+    this._floatingRecords = null;
+    this._floatingOrigin = null;
     this._selectPhase = null;
     this._selectGrabOffset = null;
     this._clearSelectionOverlay();
@@ -1099,6 +1178,19 @@ export class DrawingCanvas extends EventTarget {
     const ctx = this.selectionCanvas?.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, this.selectionCanvas.width, this.selectionCanvas.height);
+    if (this._hoverStroke && !this.floatingImage && Array.isArray(this._hoverStroke.points) && this._hoverStroke.points.length > 0) {
+      const pts = this._hoverStroke.points;
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = Math.max(1, Number(this._hoverStroke.lineWidth) || 1) + 6;
+      ctx.strokeStyle = 'rgba(74, 158, 255, 0.45)';
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+      ctx.restore();
+    }
     if (this.floatingImage && this.floatingPos) {
       ctx.save();
       ctx.globalAlpha = this.selectionImageOpacity;
@@ -1129,6 +1221,16 @@ export class DrawingCanvas extends EventTarget {
     });
   }
 
+  /** 피드백 35 v2: hover 중인 획 하이라이트 + move 커서. 같은 획이면 재렌더 생략. */
+  setHoverStroke(record) {
+    const nextId = record?.id || null;
+    const prevId = this._hoverStroke?.id || null;
+    if (nextId === prevId) return;
+    this._hoverStroke = record || null;
+    this.canvas.style.cursor = record ? 'move' : '';
+    this._renderSelectionOverlay();
+  }
+
   /**
    * 캔버스가 비어있는지 확인
    */
@@ -1151,6 +1253,7 @@ export class DrawingCanvas extends EventTarget {
     if (!this.isDrawing) {
       this.activeTool = tool;
     }
+    this.setHoverStroke(null);
     log.debug('도구 변경', { tool });
   }
 
