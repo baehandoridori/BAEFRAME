@@ -455,3 +455,11 @@ test('동일 bounds 재호출은 setBounds를 생략한다 (피드백 32)', asyn
   assert.equal(result.success, true);
   assert.equal(fakeWindow.setBoundsCalls.length, callsAfterFirst);
 });
+
+test('호스트 창이 파일 드롭 네비게이션을 가로채 메인 창으로 전달한다 (드래그드롭 수복)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const hostSource = fs.readFileSync(path.join(__dirname, '../../main/mpv-embed-host.js'), 'utf8');
+  assert.match(hostSource, /webContents\?\.on\?\.\('will-navigate'/);
+  assert.match(hostSource, /open-from-protocol/);
+});

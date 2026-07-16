@@ -809,6 +809,28 @@ class MPVOverlayHost {
     // 쓰지 않으므로 전달 없이 완전 관통시킨다.
     hostWindow.setIgnoreMouseEvents?.(true);
 
+    // 신규: 이 네이티브 창이 OS 파일 드롭을 가로채므로(마우스 관통과 별개),
+    // 드롭으로 인한 file:// 네비게이션을 메인 창의 파일 열기로 전달한다.
+    // (window.js의 sendDroppedPathToRenderer와 동일한 확장자 분기 — 호스트 소스 단언
+    //  및 순환 require 회피를 위해 인라인으로 라우팅)
+    hostWindow.webContents?.on?.('will-navigate', (event, url) => {
+      event.preventDefault();
+      if (!url.startsWith('file://')) return;
+      const mainWindow = this.getMainWindow();
+      if (!mainWindow || mainWindow.isDestroyed?.()) return;
+      try {
+        const filePath = require('url').fileURLToPath(url);
+        const lower = String(filePath).toLowerCase();
+        if (lower.endsWith('.bplaylist')) {
+          mainWindow.webContents.send('open-playlist', filePath);
+        } else if (lower.endsWith('.bcutlist')) {
+          mainWindow.webContents.send('open-cutlist', filePath);
+        } else {
+          mainWindow.webContents.send('open-from-protocol', filePath, null);
+        }
+      } catch (_error) { /* 차단만 */ }
+    });
+
     hostWindow.on?.('closed', () => {
       if (this.window !== hostWindow) return;
       this.contentLoadGeneration += 1;

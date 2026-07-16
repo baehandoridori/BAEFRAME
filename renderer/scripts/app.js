@@ -2398,6 +2398,30 @@ async function initApp() {
     }
   });
 
+  // 드롭된 파일 열기 (드롭존·문서 레벨 공용) — 기존 dropZone drop 분기를 그대로 이동
+  async function handleDroppedFiles(files) {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (isPlaylistFilePath(file.path || file.name)) {
+      await openPlaylistFile(file.path);
+    } else if (isCutlistFilePath(file.path || file.name)) {
+      await openCutlistFile(file.path);
+    } else if (videoPlayer.isLoaded && isVideoFile(file.path || file.name)) {
+      const videoAction = await chooseDroppedVideoAction(file.path);
+      if (videoAction === 'overlay') {
+        await addCompositionLayerFromPath(file.path);
+      } else if (videoAction === 'open') {
+        await loadVideo(file.path);
+      }
+    } else if (videoPlayer.isLoaded && isCompositionLayerFile(file.path || file.name)) {
+      await addCompositionLayerFromPath(file.path);
+    } else if (isMediaFile(file.name)) {
+      await loadVideo(file.path);
+    } else {
+      showToast('지원하지 않는 파일 형식입니다.', 'error');
+    }
+  }
+
   // 드래그 앤 드롭
   elements.dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -2432,28 +2456,24 @@ async function initApp() {
       }
     }
 
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      const file = files[0];
-      if (isPlaylistFilePath(file.path || file.name)) {
-        await openPlaylistFile(file.path);
-      } else if (isCutlistFilePath(file.path || file.name)) {
-        await openCutlistFile(file.path);
-      } else if (videoPlayer.isLoaded && isVideoFile(file.path || file.name)) {
-        const videoAction = await chooseDroppedVideoAction(file.path);
-        if (videoAction === 'overlay') {
-          await addCompositionLayerFromPath(file.path);
-        } else if (videoAction === 'open') {
-          await loadVideo(file.path);
-        }
-      } else if (videoPlayer.isLoaded && isCompositionLayerFile(file.path || file.name)) {
-        await addCompositionLayerFromPath(file.path);
-      } else if (isMediaFile(file.name)) {
-        await loadVideo(file.path);
-      } else {
-        showToast('지원하지 않는 파일 형식입니다.', 'error');
-      }
+    await handleDroppedFiles(e.dataTransfer.files);
+  });
+
+  // 신규: 영상 로드 후에도(드롭존 숨김) 창 어디에나 드롭해 파일을 열 수 있게 한다.
+  // preventDefault가 없으면 Electron 기본 동작이 페이지를 file:// 로 네비게이트한다.
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    // 내부 HTML5 드래그(재생목록 정렬·키프레임 드래그)의 커서 피드백을 덮지 않도록 파일 드래그에만 적용
+    if (e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy';
     }
+  });
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    // 재생목록 사이드바/추가영역의 자체 핸들러는 stopPropagation으로 여기 오지 않는다.
+    // 드롭존이 보이는 상태(첫 화면)면 드롭존 핸들러가 이미 처리했으므로 중복 방지.
+    if (!elements.dropZone.classList.contains('hidden')) return;
+    void handleDroppedFiles(e.dataTransfer?.files);
   });
 
   // 클립보드 이미지 붙여넣기 → 합성 레이어 임베드 (피드백 38)
