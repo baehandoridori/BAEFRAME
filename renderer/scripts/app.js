@@ -7693,6 +7693,11 @@ async function initApp() {
       if (targetElement) copyComputedMpvOverlayStyles(sourceElement, targetElement);
     });
 
+    // 32 잔존: 미러는 정지 스냅샷이다 — 복사된 animation이 재주입 때마다 0%부터 재생되는 것을 차단.
+    targetElements.forEach((targetElement) => {
+      if (targetElement) targetElement.style.animation = 'none';
+    });
+
     clone.removeAttribute('id');
     clone.querySelectorAll('[id]').forEach((child) => child.removeAttribute('id'));
     clone.style.position = 'absolute';
@@ -7731,6 +7736,13 @@ async function initApp() {
     ].filter(Boolean).forEach((element) => {
       const clone = cloneMpvHtmlOverlayElement(element, wrapperRect);
       if (clone) htmlOverlay.appendChild(clone);
+    });
+
+    // 32 잔존(f): 재생 중 매 프레임 갱신되는 playhead의 인라인 left를 고정값으로 정규화한다.
+    // 그래야 htmlOverlay 직렬화 문자열이 프레임마다 바뀌지 않아 diff가 실효하고, playhead는
+    // 별도 필드(commentPlayheadLeft)로 호스트에서 스타일만 갱신된다.
+    htmlOverlay.querySelectorAll('.video-comment-range-playhead').forEach((playhead) => {
+      playhead.style.left = '0%';
     });
 
     return htmlOverlay.innerHTML;
@@ -7791,6 +7803,8 @@ async function initApp() {
         currentTime: videoPlayer.currentTime,
         isPlaying: videoPlayer.isPlaying
       }),
+      // 32 잔존(f): playhead 위치는 diff 대상이 아닌 별도 필드로 항상 전송(저비용) — 미러 재주입과 분리.
+      commentPlayheadLeft: videoCommentPlayhead?.style.left || '',
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
@@ -7801,6 +7815,32 @@ async function initApp() {
         height: canvasRect.height
       }
     };
+  }
+
+  // 32 잔존: 미러 HTML/이미지 필드를 이전 전송값과 비교해, 변경 없으면 생략한다.
+  // 생략된 필드는 JSON.stringify에서 사라지고, 호스트는 undefined 필드를 건너뛴다(부분 업데이트).
+  // 호스트가 재생성되면 owner가 바뀌어 전체 재전송된다.
+  const MPV_OVERLAY_DIFF_FIELDS = ['drawingDataUrl', 'onionDataUrl', 'markerHtml', 'tooltipHtml', 'htmlOverlayHtml', 'toastHtml'];
+  const mpvOverlayMirrorFieldCache = { owner: null, canvasKey: '', fields: {} };
+
+  function filterUnchangedMpvOverlayFields(state, owner) {
+    const canvasKey = `${state.canvas.left}|${state.canvas.top}|${state.canvas.width}|${state.canvas.height}`;
+    const cacheValid = owner !== null && mpvOverlayMirrorFieldCache.owner === owner;
+    const canvasChanged = !cacheValid || mpvOverlayMirrorFieldCache.canvasKey !== canvasKey;
+    const next = { ...state };
+    for (const field of MPV_OVERLAY_DIFF_FIELDS) {
+      const value = state[field];
+      // 이미지 필드는 canvas 사각형이 바뀌면 위치 재적용이 필요해 생략하지 않는다.
+      const isImageField = field === 'drawingDataUrl' || field === 'onionDataUrl';
+      if (cacheValid && !(isImageField && canvasChanged) && mpvOverlayMirrorFieldCache.fields[field] === value) {
+        delete next[field];
+      } else {
+        mpvOverlayMirrorFieldCache.fields[field] = value;
+      }
+    }
+    mpvOverlayMirrorFieldCache.owner = owner;
+    mpvOverlayMirrorFieldCache.canvasKey = canvasKey;
+    return next;
   }
 
   async function syncMpvOverlayState() {
@@ -7822,7 +7862,7 @@ async function initApp() {
       if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
 
       try {
-        const result = await window.electronAPI.mpvUpdateOverlayState(state);
+        const result = await window.electronAPI.mpvUpdateOverlayState(filterUnchangedMpvOverlayFields(state, overlayOwner));
         if (!result?.success) {
           if (!mpvOverlayLifecycle.owns(overlayOwner) || overlaySyncEpoch !== mpvOverlaySyncEpoch) return;
           markMpvOverlayHostUnavailable(overlayOwner, result?.error);

@@ -607,7 +607,7 @@ test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(appSource, /async function prepareMpvEmbedHost\(\) \{[\s\S]+window\.electronAPI\.mpvPrepareEmbed\(bounds\)/);
   assert.match(appSource, /async function syncMpvEmbedBounds\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateEmbedBounds\(bounds\)/);
   assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+window\.electronAPI\.mpvPrepareOverlay\(bounds\)/);
-  assert.match(appSource, /async function syncMpvOverlayState\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateOverlayState\(state\)/);
+  assert.match(appSource, /async function syncMpvOverlayState\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateOverlayState\(filterUnchangedMpvOverlayFields\(state, overlayOwner\)\)/);
   assert.match(appSource, /let embedHost = null;[\s\S]+embedHost = await prepareMpvEmbedHost\(\);/);
   assert.match(appSource, /await prepareMpvOverlayHost\(\);/);
   assert.match(appSource, /loadResult = await window\.electronAPI\.mpvLoad\(filePath, \{[\s\S]+pause: true,[\s\S]+wid: embedHost\?\.wid,[\s\S]+videoTransform: getMpvVideoTransform\(\)[\s\S]+\}\);/);
@@ -640,7 +640,7 @@ test('mpv overlay sync circuit-breaks failed IPC responses before taking more sn
   const stateSyncSource = stateSyncMatch[1];
   assert.match(stateSyncSource, /const overlayOwner = mpvOverlayLifecycle\.captureReadyOwner\(\);[\s\S]+requestAnimationFrame\(async \(\) => \{/);
   assert.match(stateSyncSource, /if \(!mpvOverlayLifecycle\.isReady\(overlayOwner\)\) return;\n      const state = getMpvOverlayState\(\);[\s\S]+if \(!mpvOverlayLifecycle\.isReady\(overlayOwner\)\) return;/);
-  assert.match(stateSyncSource, /const result = await window\.electronAPI\.mpvUpdateOverlayState\(state\);[\s\S]+if \(!result\?\.success\) \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(overlayOwner\) \|\| overlaySyncEpoch !== mpvOverlaySyncEpoch\) return;[\s\S]+markMpvOverlayHostUnavailable\(overlayOwner, result\?\.error\);/);
+  assert.match(stateSyncSource, /const result = await window\.electronAPI\.mpvUpdateOverlayState\(filterUnchangedMpvOverlayFields\(state, overlayOwner\)\);[\s\S]+if \(!result\?\.success\) \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(overlayOwner\) \|\| overlaySyncEpoch !== mpvOverlaySyncEpoch\) return;[\s\S]+markMpvOverlayHostUnavailable\(overlayOwner, result\?\.error\);/);
   assert.match(stateSyncSource, /catch \(error\) \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(overlayOwner\) \|\| overlaySyncEpoch !== mpvOverlaySyncEpoch\) return;[\s\S]+markMpvOverlayHostUnavailable\(overlayOwner, error\.message\);/);
 
   const remoteCursorSyncMatch = appSource.match(/function syncMpvOverlayRemoteCursorState\(\) \{([\s\S]*?)\n  \}\n\n  function scheduleMpvOverlayRemoteCursorStateSync/);
@@ -1093,4 +1093,13 @@ test('mpv에 가려지던 패널·컨트롤이 오버레이 미러 대상에 포
   assert.match(appSource, /'\.composition-layer-panel',\s*\n\s*'\.video-zoom-controls',\s*\n\s*'\.video-comment-overlay-controls',/);
   assert.match(appSource, /classList\.contains\('open'\) \? elements\.compositionLayerPanel : null/);
   assert.match(appSource, /elements\.videoCommentOverlayControls\s*\n?\s*\]\.filter\(Boolean\)\.forEach/);
+});
+
+test('미러 전송이 변경 필드만 보낸다 (32 잔존)', () => {
+  assert.match(appSource, /const MPV_OVERLAY_DIFF_FIELDS = \['drawingDataUrl', 'onionDataUrl', 'markerHtml', 'tooltipHtml', 'htmlOverlayHtml', 'toastHtml'\];/);
+  assert.match(appSource, /function filterUnchangedMpvOverlayFields\(state, owner\)/);
+  assert.match(appSource, /mpvUpdateOverlayState\(filterUnchangedMpvOverlayFields\(state, overlayOwner\)\)/);
+  assert.match(appSource, /targetElement\.style\.animation = 'none';/);
+  // 32 잔존(f): 재생 playhead를 미러 재주입에서 분리하는 별도 필드
+  assert.match(appSource, /commentPlayheadLeft:/);
 });

@@ -618,3 +618,29 @@ test('동일 bounds 재호출은 setBounds를 생략한다 (피드백 32)', asyn
   assert.equal(result.success, true);
   assert.equal(events.filter(([name]) => name === 'setBounds').length, callsAfterFirst);
 });
+
+test('생략된 미러 필드는 이전 DOM을 유지하고 playhead는 별도 필드로 갱신된다 (32 잔존)', () => {
+  // 전체 필드로 정규화하면 6필드 모두 정상 문자열
+  const full = normalizeOverlayState({
+    markerHtml: '<div class="comment-marker"></div>',
+    htmlOverlayHtml: '<div class="current-cut-overlay"></div>',
+    toastHtml: '<div class="toast-container"></div>',
+    commentPlayheadLeft: '42%'
+  });
+  assert.equal(full.markerHtml, '<div class="comment-marker"></div>');
+  assert.equal(full.commentPlayheadLeft, '42%');
+
+  // markerHtml만 담은 부분 state → 나머지 diff 필드는 undefined로 보존되어 JSON.stringify에서 생략된다
+  const partial = normalizeOverlayState({ markerHtml: '<div class="comment-marker"></div>' });
+  assert.equal(partial.htmlOverlayHtml, undefined);
+  assert.equal(partial.toastHtml, undefined);
+  assert.equal(partial.drawingDataUrl, undefined);
+  assert.equal(partial.onionDataUrl, undefined);
+  assert.equal(partial.markerHtml, '<div class="comment-marker"></div>');
+
+  // 호스트 적용부가 playhead를 별도 필드로 갱신한다
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const hostSource = fs.readFileSync(path.join(__dirname, '../../main/mpv-overlay-host.js'), 'utf8');
+  assert.match(hostSource, /playheadMirror\.style\.left = nextState\.commentPlayheadLeft;/);
+});
