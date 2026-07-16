@@ -176,3 +176,30 @@ export function findStrokeAtPoint(strokes, point, extraTolerance = 6) {
   }
   return null;
 }
+
+/**
+ * 사각형과 교차하거나 내부에 포함된 획들을 반환한다 (마퀴 다중 선택용).
+ */
+export function strokesInRect(strokes, rect) {
+  const list = Array.isArray(strokes) ? strokes : [];
+  if (!rect || !(rect.w > 0) || !(rect.h > 0)) return [];
+  const corners = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y + rect.h },
+    { x: rect.x, y: rect.y + rect.h }
+  ];
+  const edges = [
+    [corners[0], corners[1]],
+    [corners[1], corners[2]],
+    [corners[2], corners[3]],
+    [corners[3], corners[0]]
+  ];
+  const inRect = (p) => p.x >= rect.x && p.x <= rect.x + rect.w && p.y >= rect.y && p.y <= rect.y + rect.h;
+  return list.filter((stroke) => {
+    const points = Array.isArray(stroke?.points) ? stroke.points : [];
+    if (points.length === 0) return false;
+    if (points.some(inRect)) return true;
+    return pathSegments(points).some(([a, b]) => edges.some(([c, d]) => segmentsIntersect(a, b, c, d)));
+  });
+}

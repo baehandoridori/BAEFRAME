@@ -43,6 +43,20 @@ async function cleanupMpvAfterRendererGone(reason) {
   }
 }
 
+// 드롭된 경로를 확장자에 따라 렌더러의 올바른 열기 채널로 보낸다.
+// (open-from-protocol의 handleExternalFile은 재생목록/컷 묶음을 모른다 — main/index.js의 분기와 동일)
+function sendDroppedPathToRenderer(mainWindow, filePath) {
+  if (!mainWindow || mainWindow.isDestroyed?.()) return;
+  const lower = String(filePath).toLowerCase();
+  if (lower.endsWith('.bplaylist')) {
+    mainWindow.webContents.send('open-playlist', filePath);
+  } else if (lower.endsWith('.bcutlist')) {
+    mainWindow.webContents.send('open-cutlist', filePath);
+  } else {
+    mainWindow.webContents.send('open-from-protocol', filePath, null);
+  }
+}
+
 /**
  * 로딩 창 생성
  * @param {object} [options] - 로딩창 옵션
@@ -219,6 +233,21 @@ function createMainWindow() {
   mainWindow.webContents.on('did-navigate', () => {
     // 리로드/내비게이션 시 렌더러 상태가 초기화되므로 mpv도 함께 정리
     void cleanupMpvAfterRendererGone('did-navigate');
+  });
+
+  // 신규: 파일 드롭이 페이지 네비게이션으로 새는 것을 차단하고 파일 열기로 라우팅한다.
+  // (렌더러의 document dragover preventDefault 이후 메인 창 드롭은 렌더러가 소비하므로
+  //  이 가드는 주로 방어용이다 — 기존 did-navigate 리스너가 네비게이션을 렌더러-사망 정리로
+  //  이어가는 파괴 경로를 원천 차단하는 가치가 있다.)
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault();
+    if (!url.startsWith('file://')) return;
+    try {
+      const filePath = require('url').fileURLToPath(url);
+      const rendererUrl = mainWindow.webContents.getURL();
+      if (require('url').pathToFileURL(filePath).href === rendererUrl) return; // 자기 자신 재로드는 무시
+      sendDroppedPathToRenderer(mainWindow, filePath);
+    } catch (_error) { /* 파싱 실패 시 네비게이션만 차단 */ }
   });
 
   mainWindow.webContents.on('unresponsive', () => {

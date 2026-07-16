@@ -496,17 +496,23 @@ const OVERLAY_HTML = String.raw`
       const markerMirror = document.getElementById('markerMirror');
       const tooltipMirror = document.getElementById('tooltipMirror');
       const toastMirror = document.getElementById('toastMirror');
-      applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
-      applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
+      // 32 잔존: 필드가 생략(undefined)되면 이전 DOM을 유지한다 — 무-diff 통째 재주입이
+      // 재생 중 프레임마다 미러를 파괴·재생성해 등장/확대 애니메이션을 반복 재생하던 문제의 수정.
+      if (nextState.onionDataUrl !== undefined) applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
+      if (nextState.drawingDataUrl !== undefined) applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
       applyCompositionLayers(nextState.compositionLayers, nextState.canvas);
-      htmlOverlay.innerHTML = nextState.htmlOverlayHtml || '';
-      markerMirror.innerHTML = nextState.markerHtml || '';
-      tooltipMirror.innerHTML = nextState.tooltipHtml || '';
+      if (typeof nextState.htmlOverlayHtml === 'string') htmlOverlay.innerHTML = nextState.htmlOverlayHtml;
+      if (typeof nextState.markerHtml === 'string') markerMirror.innerHTML = nextState.markerHtml;
+      if (typeof nextState.tooltipHtml === 'string') tooltipMirror.innerHTML = nextState.tooltipHtml;
       applyRemoteCursorHtml(nextState.remoteCursorHtml);
-      toastMirror.innerHTML = nextState.toastHtml || '';
+      if (typeof nextState.toastHtml === 'string') toastMirror.innerHTML = nextState.toastHtml;
       applyOverlayTransform(markerMirror, nextState);
       tooltipMirror.style.transform = 'none';
       tooltipMirror.style.transformOrigin = 'center center';
+      const playheadMirror = htmlOverlay.querySelector('.video-comment-range-playhead');
+      if (playheadMirror && nextState.commentPlayheadLeft) {
+        playheadMirror.style.left = nextState.commentPlayheadLeft;
+      }
     };
   </script>
 </body>
@@ -578,12 +584,13 @@ function normalizeCompositionLayers(layers) {
 function normalizeOverlayState(state = {}) {
   const canvas = state.canvas || {};
   return {
-    drawingDataUrl: normalizeImageDataUrl(state.drawingDataUrl),
-    onionDataUrl: normalizeImageDataUrl(state.onionDataUrl),
-    markerHtml: typeof state.markerHtml === 'string' ? state.markerHtml : '',
-    tooltipHtml: typeof state.tooltipHtml === 'string' ? state.tooltipHtml : '',
-    htmlOverlayHtml: typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : '',
-    toastHtml: typeof state.toastHtml === 'string' ? state.toastHtml : '',
+    drawingDataUrl: state.drawingDataUrl === undefined ? undefined : normalizeImageDataUrl(state.drawingDataUrl),
+    onionDataUrl: state.onionDataUrl === undefined ? undefined : normalizeImageDataUrl(state.onionDataUrl),
+    markerHtml: state.markerHtml === undefined ? undefined : (typeof state.markerHtml === 'string' ? state.markerHtml : ''),
+    tooltipHtml: state.tooltipHtml === undefined ? undefined : (typeof state.tooltipHtml === 'string' ? state.tooltipHtml : ''),
+    htmlOverlayHtml: state.htmlOverlayHtml === undefined ? undefined : (typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : ''),
+    toastHtml: state.toastHtml === undefined ? undefined : (typeof state.toastHtml === 'string' ? state.toastHtml : ''),
+    commentPlayheadLeft: typeof state.commentPlayheadLeft === 'string' ? state.commentPlayheadLeft : '',
     remoteCursorHtml: typeof state.remoteCursorHtml === 'string' ? state.remoteCursorHtml : '',
     compositionLayers: normalizeCompositionLayers(state.compositionLayers),
     markerTransform: typeof state.markerTransform === 'string' ? state.markerTransform : '',
@@ -801,6 +808,28 @@ class MPVOverlayHost {
     // 기본 화살표 커서가 메인 창 커서와 경합(깜빡임)한다. 이 창은 마우스 이벤트를
     // 쓰지 않으므로 전달 없이 완전 관통시킨다.
     hostWindow.setIgnoreMouseEvents?.(true);
+
+    // 신규: 이 네이티브 창이 OS 파일 드롭을 가로채므로(마우스 관통과 별개),
+    // 드롭으로 인한 file:// 네비게이션을 메인 창의 파일 열기로 전달한다.
+    // (window.js의 sendDroppedPathToRenderer와 동일한 확장자 분기 — 호스트 소스 단언
+    //  및 순환 require 회피를 위해 인라인으로 라우팅)
+    hostWindow.webContents?.on?.('will-navigate', (event, url) => {
+      event.preventDefault();
+      if (!url.startsWith('file://')) return;
+      const mainWindow = this.getMainWindow();
+      if (!mainWindow || mainWindow.isDestroyed?.()) return;
+      try {
+        const filePath = require('url').fileURLToPath(url);
+        const lower = String(filePath).toLowerCase();
+        if (lower.endsWith('.bplaylist')) {
+          mainWindow.webContents.send('open-playlist', filePath);
+        } else if (lower.endsWith('.bcutlist')) {
+          mainWindow.webContents.send('open-cutlist', filePath);
+        } else {
+          mainWindow.webContents.send('open-from-protocol', filePath, null);
+        }
+      } catch (_error) { /* 차단만 */ }
+    });
 
     hostWindow.on?.('closed', () => {
       if (this.window !== hostWindow) return;
