@@ -45,6 +45,7 @@ let shutdownCleanupStarted = false;
 const { createLogger } = require('./logger');
 const { createMainWindow, getMainWindow, createLoadingWindow, closeLoadingWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
+const { resolveFabricDrawingPilot } = require('./experiment-flags');
 const { registerProjectFileAssociations } = require('./project-file-associations');
 const { mpvManager } = require('./mpv-manager');
 const { mpvEmbedHost } = require('./mpv-embed-host');
@@ -59,6 +60,7 @@ const {
   resolveMultiInstanceUserDataPath,
   shouldAllowMultipleInstances
 } = require('./instance-policy');
+const fabricDrawingPilot = resolveFabricDrawingPilot();
 debugLog('내부 모듈 로드 완료');
 
 const log = createLogger('Main');
@@ -461,7 +463,7 @@ if (!gotTheLock) {
       debugLog('로딩 창 표시됨 (일반/재생목록/컷 묶음 시작)');
     }
 
-    setupIpcHandlers();
+    setupIpcHandlers({ fabricDrawingPilot });
 
     // 최근 파일 목록 정리 (경로가 없어진 항목 제거)
     // 비동기로 실행하고 실패해도 앱 시작을 막지 않는다

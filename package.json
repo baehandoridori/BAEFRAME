@@ -48,7 +48,7 @@
   "dependencies": {
     "@liveblocks/client": "^2.0.0",
     "electron-store": "^8.1.0",
-    "perfect-freehand": "^1.2.3",
+    "perfect-freehand": "1.2.3",
     "sql.js": "^1.10.0"
   },
   "devDependencies": {
@@ -58,6 +58,7 @@
     "electron-reload": "^2.0.0-alpha.1",
     "esbuild": "^0.24.0",
     "eslint": "^8.56.0",
+    "fabric": "7.4.0",
     "prettier": "^3.2.0"
   }
 }
