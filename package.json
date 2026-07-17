@@ -33,7 +33,8 @@
     "test:hybrid": "node --test scripts/tests/hybrid-review-engine-source.test.js",
     "bundle:liveblocks": "esbuild ./node_modules/@liveblocks/client/dist/index.js --bundle --format=esm --outfile=renderer/scripts/lib/liveblocks-client.js",
     "bundle:perfect-freehand": "esbuild ./node_modules/perfect-freehand/dist/esm/index.mjs --bundle --format=esm --outfile=renderer/scripts/lib/perfect-freehand.js",
-    "postinstall": "npm run bundle:liveblocks && npm run bundle:perfect-freehand"
+    "bundle:mpv-fabric-overlay": "esbuild renderer/scripts/modules/mpv-fabric-overlay-runtime.js --bundle --platform=browser --format=iife --target=chrome120 --outfile=renderer/scripts/lib/mpv-fabric-overlay.iife.js --legal-comments=eof",
+    "postinstall": "npm run bundle:liveblocks && npm run bundle:perfect-freehand && npm run bundle:mpv-fabric-overlay"
   },
   "keywords": [
     "video",

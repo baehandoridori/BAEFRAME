@@ -222,7 +222,7 @@ test('drawing playback avoids noisy per-frame canvas clears and preload churn', 
 });
 
 test('pen and brush strokes use bundled perfect-freehand smoothing without changing record storage', () => {
-  assert.equal(packageJson.dependencies['perfect-freehand'], '^1.2.3');
+  assert.equal(packageJson.dependencies['perfect-freehand'], '1.2.3');
   assert.match(packageJson.scripts['bundle:perfect-freehand'], /perfect-freehand[\s\S]+renderer\/scripts\/lib\/perfect-freehand\.js/);
   assert.match(packageJson.scripts.postinstall, /bundle:perfect-freehand/);
 
