@@ -97,6 +97,30 @@ test('main process starts project file association repair during app startup', (
   assert.match(mainIndex, /appPath: process\.execPath/);
 });
 
+test('manual validation flag skips protocol and project file registration together', () => {
+  const mainIndex = read('main/index.js');
+
+  assert.match(
+    mainIndex,
+    /const skipShellRegistration = process\.argv\.includes\('--skip-shell-registration'\);/
+  );
+
+  const protocolRegistration = mainIndex.match(
+    /if \(!skipShellRegistration\) \{\n([\s\S]*?)\n\}\n\n\/\/ 단일 인스턴스 잠금/
+  );
+  assert.ok(protocolRegistration, 'protocol registration must use the shared shell-registration guard');
+  assert.equal(
+    (protocolRegistration[1].match(/app\.setAsDefaultProtocolClient\(/g) || []).length,
+    2
+  );
+
+  const projectFileRegistration = mainIndex.match(
+    /app\.whenReady\(\)\.then\(\(\) => \{[\s\S]*?\n    if \(!skipShellRegistration\) \{\n([\s\S]*?)\n    \}\n\n    \/\/ 시작 시 전달된 파일\/프로토콜 인자 확인/
+  );
+  assert.ok(projectFileRegistration, 'project file registration must use the shared shell-registration guard');
+  assert.match(projectFileRegistration[1], /registerProjectFileAssociations\(/);
+});
+
 test('main process keeps single-instance default but allows explicit comparison instances', () => {
   const mainIndex = read('main/index.js');
 
