@@ -260,6 +260,10 @@ test('prepare creates one Fabric canvas and the browser runtime stays reusable',
   });
 
   assert.equal(runtime.prepare(root).prepared, true);
+  const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
+  assert.equal(toolbar.style.visibility, 'hidden');
+  assert.equal(toolbar.style.opacity, '0');
+  assert.equal(toolbar.style.pointerEvents, 'none');
   assert.equal(runtime.prepare(root).reused, true);
   assert.equal(FakeCanvas.instances.length, 1);
   assert.deepEqual(FakeCanvas.instances[0].options, {
@@ -434,7 +438,11 @@ test('pressure strokes, selection, move, delete, clear, cancellation, and stale 
 
   assert.equal(runtime.setDrawingInput(makeInput()).accepted, true);
   const canvas = FakeCanvas.instances[0];
+  const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
   assert.equal(canvas.upperCanvasEl.style.pointerEvents, 'auto');
+  assert.equal(toolbar.style.visibility, 'visible');
+  assert.equal(toolbar.style.opacity, '1');
+  assert.equal(toolbar.style.pointerEvents, 'auto');
   drawStroke(canvas.upperCanvasEl);
   assert.equal(runtime.getDiagnostics().objectCount, 1);
   assert.equal(runtime.getDiagnostics().mutationCount, 1);
@@ -512,6 +520,9 @@ test('pressure strokes, selection, move, delete, clear, cancellation, and stale 
     enabled: false
   }).accepted, true);
   assert.equal(canvas.upperCanvasEl.style.pointerEvents, 'none');
+  assert.equal(toolbar.style.visibility, 'hidden');
+  assert.equal(toolbar.style.opacity, '0');
+  assert.equal(toolbar.style.pointerEvents, 'none');
   assert.equal(canvas.getObjects()[0], warmSceneObject, 'warm disable must not rebuild a settled scene');
   assert.equal(runtime.getDiagnostics().state, 'passive');
   assert.equal(runtime.setDrawingInput(makeInput({ inputRevision: 3 })).accepted, false);

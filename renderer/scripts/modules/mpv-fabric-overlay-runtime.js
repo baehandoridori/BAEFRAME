@@ -630,7 +630,11 @@ function createFabricOverlayRuntime(options = {}) {
     const pointerEvents = enabled ? 'auto' : 'none';
     setStyles(fabricCanvas?.upperCanvasEl, { pointerEvents });
     setStyles(fabricCanvas?.lowerCanvasEl, { pointerEvents });
-    setStyles(toolbar, { pointerEvents });
+    setStyles(toolbar, {
+      pointerEvents,
+      visibility: enabled ? 'visible' : 'hidden',
+      opacity: enabled ? '1' : '0'
+    });
   }
 
   function toSourceSample(event) {
@@ -909,6 +913,7 @@ function createFabricOverlayRuntime(options = {}) {
         display: 'flex',
         gap: '6px',
         zIndex: '2',
+        transition: 'opacity 100ms ease',
         pointerEvents: 'none'
       });
       const brushButton = createButton('Brush', 'brush');
