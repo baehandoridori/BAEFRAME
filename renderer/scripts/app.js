@@ -81,6 +81,7 @@ const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
 const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
+const FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS = 250;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 function createMpvOverlayLifecycle({ onWarning = () => {} } = {}) {
@@ -1508,6 +1509,7 @@ async function initApp() {
       updatePresence: true,
       updateDrawing: !videoPlayer.isPlaying
     });
+    scheduleFabricPilotStatusRefresh();
     if (
       isMpvReviewInteractionActive() &&
       isMpvPilotPlaybackActive() &&
@@ -1526,6 +1528,7 @@ async function initApp() {
       updatePresence: false,
       updateDrawing: true
     });
+    scheduleFabricPilotStatusRefresh();
     if (
       isMpvReviewInteractionActive() &&
       isMpvPilotPlaybackActive() &&
@@ -1543,6 +1546,7 @@ async function initApp() {
   // 비디오 재생 상태 변경
   videoPlayer.addEventListener('play', () => {
     elements.btnPlay.innerHTML = pauseIconSVG;
+    scheduleFabricPilotStatusRefresh({ force: true });
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, true);
@@ -1568,6 +1572,7 @@ async function initApp() {
 
   videoPlayer.addEventListener('pause', () => {
     elements.btnPlay.innerHTML = playIconSVG;
+    scheduleFabricPilotStatusRefresh({ force: true });
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
@@ -1586,6 +1591,7 @@ async function initApp() {
 
   videoPlayer.addEventListener('ended', () => {
     elements.btnPlay.innerHTML = playIconSVG;
+    scheduleFabricPilotStatusRefresh({ force: true });
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
@@ -7063,6 +7069,7 @@ async function initApp() {
   });
   const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize().then(enabled => {
     document.body.classList.toggle('fabric-drawing-pilot-enabled', enabled);
+    scheduleFabricPilotStatusRefresh({ force: true });
     return enabled;
   });
   const mpvTeardownGate = createMpvTeardownGate();
@@ -7077,6 +7084,10 @@ async function initApp() {
   let mpvOverlayRemoteCursorSyncPendingOwner = null;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
+  let fabricPilotStatusText = '';
+  let fabricPilotStatusRefreshTimer = null;
+  let fabricPilotStatusLastRefreshAt = 0;
+  let fabricPilotStatusRefreshSequence = 0;
   let mpvOverlayRecoveryOwner = null;
   let mpvOverlayRecoveryInFlightOwner = null;
   let mpvOverlayFallbackOwner = null;
@@ -8074,6 +8085,9 @@ async function initApp() {
         currentTime: videoPlayer.currentTime,
         isPlaying: videoPlayer.isPlaying
       }),
+      fabricPilotStatusText: fabricDrawingPilotController.isEnabled()
+        ? fabricPilotStatusText
+        : '',
       // 32 잔존(f): playhead 위치는 diff 대상이 아닌 별도 필드로 항상 전송(저비용) — 미러 재주입과 분리.
       commentPlayheadLeft: videoCommentPlayhead?.style.left || '',
       markerTransform: markerContainer?.style.transform || '',
@@ -8092,7 +8106,78 @@ async function initApp() {
   // 생략된 필드는 JSON.stringify에서 사라지고, 호스트는 undefined 필드를 건너뛴다(부분 업데이트).
   // 호스트가 재생성되면 owner가 바뀌어 전체 재전송된다.
   const MPV_OVERLAY_DIFF_FIELDS = ['drawingDataUrl', 'onionDataUrl', 'markerHtml', 'tooltipHtml', 'htmlOverlayHtml', 'toastHtml'];
+  MPV_OVERLAY_DIFF_FIELDS.push('fabricPilotStatusText');
   const mpvOverlayMirrorFieldCache = { owner: null, canvasKey: '', fields: {} };
+
+  function formatFabricPilotStatusText(snapshot, diagnostics, owner) {
+    const overlay = diagnostics?.overlay;
+    const attempted = Math.max(0, Math.trunc(Number(snapshot?.bInput?.attempted) || 0));
+    const accepted = Math.max(0, Math.trunc(Number(snapshot?.bInput?.accepted) || 0));
+    const localRevision = Math.max(0, Math.trunc(Number(snapshot?.inputRevision) || 0));
+    const overlayRevision = Math.max(0, Math.trunc(Number(overlay?.inputRevision) || 0));
+    const frame = Math.max(0, Math.trunc(Number(videoPlayer.currentFrame) || 0));
+    const hostGeneration = Math.max(0, Math.trunc(Number(snapshot?.hostGeneration) || 0));
+    const mpvOwner = owner && isMpvPilotPlaybackActive() && videoPlayer.isPlaying ? 1 : 0;
+    const htmlOwner = Array.from(document.querySelectorAll('audio, video'))
+      .filter(media => media.paused === false && media.ended !== true)
+      .length;
+    const playbackOwnerCount = mpvOwner + htmlOwner;
+    const saveAttempts = Math.max(0, Math.trunc(Number(overlay?.metrics?.saveAttemptCount) || 0));
+    const surfaceErrors = Math.max(0, Math.trunc(Number(overlay?.metrics?.surfaceErrorCount) || 0));
+    const errorCount = Math.max(
+      surfaceErrors,
+      snapshot?.lastError ? 1 : 0
+    );
+    const drawingState = String(snapshot?.state || 'unknown').toUpperCase();
+
+    return `FABRIC TEST · DRAW ${drawingState} · B ${attempted}/${accepted} · ` +
+      `rev ${localRevision}/${overlayRevision} · hostGen ${hostGeneration}\n` +
+      `${videoPlayer.isPlaying ? 'PLAY' : 'PAUSE'} · F ${frame} · owner ${playbackOwnerCount} ` +
+      `(mpv ${mpvOwner}/html ${htmlOwner}) · save ${saveAttempts} · err ${errorCount}`;
+  }
+
+  async function refreshFabricPilotStatus() {
+    const sequence = ++fabricPilotStatusRefreshSequence;
+    const snapshot = fabricDrawingPilotController.getStatusSnapshot();
+    const diagnostics = await fabricDrawingPilotController.diagnostics();
+    if (sequence !== fabricPilotStatusRefreshSequence || !fabricDrawingPilotController.isEnabled()) return;
+
+    const owner = mpvOverlayLifecycle.captureReadyOwner();
+    const nextStatusText = formatFabricPilotStatusText(snapshot, diagnostics, owner);
+    if (nextStatusText === fabricPilotStatusText) return;
+    fabricPilotStatusText = nextStatusText;
+    scheduleMpvOverlayStateSync({ force: true });
+  }
+
+  function scheduleFabricPilotStatusRefresh({ force = false } = {}) {
+    if (!fabricDrawingPilotController.isEnabled()) {
+      fabricPilotStatusRefreshSequence += 1;
+      if (fabricPilotStatusRefreshTimer) clearTimeout(fabricPilotStatusRefreshTimer);
+      fabricPilotStatusRefreshTimer = null;
+      fabricPilotStatusLastRefreshAt = 0;
+      if (!fabricPilotStatusText) return;
+      fabricPilotStatusText = '';
+      scheduleMpvOverlayStateSync({ force: true });
+      return;
+    }
+
+    const now = Date.now();
+    const elapsed = now - fabricPilotStatusLastRefreshAt;
+    if (force || elapsed >= FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS) {
+      if (fabricPilotStatusRefreshTimer) clearTimeout(fabricPilotStatusRefreshTimer);
+      fabricPilotStatusRefreshTimer = null;
+      fabricPilotStatusLastRefreshAt = now;
+      void refreshFabricPilotStatus();
+      return;
+    }
+    if (fabricPilotStatusRefreshTimer) return;
+
+    fabricPilotStatusRefreshTimer = setTimeout(() => {
+      fabricPilotStatusRefreshTimer = null;
+      fabricPilotStatusLastRefreshAt = Date.now();
+      void refreshFabricPilotStatus();
+    }, FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS - elapsed);
+  }
 
   function filterUnchangedMpvOverlayFields(state, owner) {
     const canvasKey = `${state.canvas.left}|${state.canvas.top}|${state.canvas.width}|${state.canvas.height}`;
@@ -8405,6 +8490,7 @@ async function initApp() {
         await cleanupPendingMpvPilot();
         return false;
       }
+      scheduleFabricPilotStatusRefresh({ force: true });
     } catch (error) {
       await cleanupPendingMpvPilot();
       throw error;
@@ -9534,6 +9620,7 @@ async function initApp() {
     const engaged = isMpvPilotPlaybackActive() &&
       (active || preparing || nextState === 'recovering');
     const wasEngaged = fabricDrawingPilotUiEngaged;
+    scheduleFabricPilotStatusRefresh({ force: true });
     scheduleMpvOverlayStateSync({ force: true });
     if (!engaged && !wasEngaged) {
       if (nextState === 'failed') notifyFabricDrawingPilotFailure();

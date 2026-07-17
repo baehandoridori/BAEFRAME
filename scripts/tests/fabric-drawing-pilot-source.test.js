@@ -74,3 +74,67 @@ test('freeze and system shutdown paths are conditional on pilot ownership', () =
   assert.doesNotMatch(appSource, /mpv 엔진을 BAEFRAME 영상 영역에 연결했습니다|mpv 파일럿으로 원본 영상을 직접 열었습니다/);
   assert.doesNotMatch(appSource, /showToast\([^;]*(?:mpv|원본 영상)[^;]*['"]success['"]/i);
 });
+
+test('Fabric 수동 검증 HUD는 제한된 진단값을 조합하고 재생 중 250ms 안에 갱신한다', () => {
+  assert.match(appSource, /const FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS = 250;/);
+  assert.match(appSource, /fabricDrawingPilotController\.getStatusSnapshot\(\)/);
+  assert.match(appSource, /await fabricDrawingPilotController\.diagnostics\(\)/);
+  assert.match(appSource, /mpvOverlayLifecycle\.captureReadyOwner\(\)/);
+
+  const formatter = appSource.match(
+    /function formatFabricPilotStatusText\(snapshot, diagnostics, owner\) \{([\s\S]*?)\n  \}/
+  )?.[1] || '';
+  assert.match(formatter, /snapshot\?\.state/);
+  assert.match(formatter, /bInput\?\.attempted/);
+  assert.match(formatter, /bInput\?\.accepted/);
+  assert.match(formatter, /snapshot\?\.inputRevision/);
+  assert.match(formatter, /overlay\?\.inputRevision/);
+  assert.match(formatter, /videoPlayer\.isPlaying \? 'PLAY' : 'PAUSE'/);
+  assert.match(formatter, /videoPlayer\.currentFrame/);
+  assert.match(formatter, /snapshot\?\.hostGeneration/);
+  assert.match(formatter, /owner && isMpvPilotPlaybackActive\(\) && videoPlayer\.isPlaying/);
+  assert.match(formatter, /document\.querySelectorAll\('audio, video'\)/);
+  assert.match(formatter, /media\.paused === false/);
+  assert.match(formatter, /const playbackOwnerCount = mpvOwner \+ htmlOwner;/);
+  assert.match(formatter, /owner \$\{playbackOwnerCount\}/);
+  assert.match(formatter, /hostGen \$\{hostGeneration\}/);
+  assert.doesNotMatch(formatter, /owner\?\.generation|ownerGeneration|videoPlayer\.engine === 'html5'/);
+  assert.match(formatter, /saveAttemptCount/);
+  assert.match(formatter, /surfaceErrorCount/);
+  assert.match(formatter, /\\n/);
+  assert.doesNotMatch(
+    formatter,
+    /overlay\?\.success/,
+    'an intentionally unprepared passive surface must not be counted as an error'
+  );
+  assert.doesNotMatch(
+    formatter,
+    /filePath|currentFile|comment|stroke|canvas|coordinate|sessionId|targetFrame/i,
+    'HUD formatter must never include paths, comments, stroke coordinates, or session ids'
+  );
+
+  assert.match(appSource, /fabricPilotStatusText:\s*fabricDrawingPilotController\.isEnabled\(\)\s*\?\s*fabricPilotStatusText\s*:\s*''/);
+  assert.match(appSource, /function scheduleFabricPilotStatusRefresh\(\{ force = false \} = \{\}\) \{[\s\S]*setTimeout\([\s\S]*FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS - elapsed/s);
+
+  const timeUpdateHandler = appSource.match(
+    /videoPlayer\.addEventListener\('timeupdate', \(e\) => \{([\s\S]*?)\n  \}\);/
+  )?.[1] || '';
+  const frameUpdateHandler = appSource.match(
+    /videoPlayer\.addEventListener\('frameUpdate', \(e\) => \{([\s\S]*?)\n  \}\);/
+  )?.[1] || '';
+  assert.match(timeUpdateHandler, /scheduleFabricPilotStatusRefresh\(\);/);
+  assert.match(frameUpdateHandler, /scheduleFabricPilotStatusRefresh\(\);/);
+
+  for (const eventName of ['play', 'pause', 'ended']) {
+    const handler = appSource.match(
+      new RegExp(`videoPlayer\\.addEventListener\\('${eventName}', \\(\\) => \\{([\\s\\S]*?)\\n  \\}\\);`)
+    )?.[1] || '';
+    assert.match(
+      handler,
+      /scheduleFabricPilotStatusRefresh\(\{ force: true \}\);/,
+      `${eventName} must refresh the HUD immediately`
+    );
+  }
+
+  assert.match(appSource, /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]*scheduleFabricPilotStatusRefresh\(\{ force: true \}\);/);
+});

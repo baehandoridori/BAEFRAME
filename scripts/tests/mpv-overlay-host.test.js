@@ -1789,3 +1789,30 @@ test('Fabric 시험 툴바는 작은 화면에서도 읽기 쉽고 현재 도구
     /\.mpv-fabric-pilot-toolbar(?: button)?\s*\{[^}]*transition:\s*all\b/s
   );
 });
+
+test('Fabric 수동 검증 HUD는 항상 존재하며 click-through textContent로만 갱신된다', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const hostSource = fs.readFileSync(path.join(__dirname, '../../main/mpv-overlay-host.js'), 'utf8');
+
+  assert.match(hostSource, /#fabricPilotStatusMirror\s*\{[^}]*top:\s*12px;[^}]*right:\s*12px;[^}]*pointer-events:\s*none;/s);
+  assert.match(hostSource, /<div id="fabricPilotStatusMirror"[^>]*><\/div>/);
+
+  const applyStatusBlock = hostSource.match(
+    /const fabricPilotStatusMirror = document\.getElementById\('fabricPilotStatusMirror'\);([\s\S]*?)\n\s*if \(nextState\.fabricViewport !== undefined\)/
+  )?.[1] || '';
+  assert.match(applyStatusBlock, /if \(nextState\.fabricPilotStatusText !== undefined\)/);
+  assert.match(applyStatusBlock, /fabricPilotStatusMirror\.textContent = statusText;/);
+  assert.match(applyStatusBlock, /fabricPilotStatusMirror\.style\.display = statusText \? 'block' : 'none';/);
+  assert.doesNotMatch(applyStatusBlock, /innerHTML/);
+});
+
+test('Fabric 수동 검증 HUD 상태는 512자로 제한되고 생략 시 기존 값을 보존한다', () => {
+  const longStatus = '상'.repeat(600);
+  const normalized = normalizeOverlayState({ fabricPilotStatusText: longStatus });
+  assert.equal(normalized.fabricPilotStatusText, longStatus.slice(0, 512));
+
+  const partial = normalizeOverlayState({ markerHtml: '<div></div>' });
+  assert.equal(partial.fabricPilotStatusText, undefined);
+  assert.doesNotMatch(JSON.stringify(partial), /fabricPilotStatusText/);
+});
