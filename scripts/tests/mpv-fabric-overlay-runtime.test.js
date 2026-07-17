@@ -97,12 +97,15 @@ class FakeCanvas {
   constructor(element, options) {
     this.lowerCanvasEl = element;
     this.upperCanvasEl = element;
+    this.wrapperEl = new FakeElement('div', element.ownerDocument);
     this.options = options;
     this.selection = options.selection;
     this.isDrawingMode = false;
     this.objects = [];
     this.activeObjects = [];
     this.listeners = new Map();
+    this.dimensionCalls = [];
+    this.calcOffsetCalls = 0;
     this.disposed = false;
     FakeCanvas.instances.push(this);
   }
@@ -147,8 +150,24 @@ class FakeCanvas {
     this.activeObjects = [];
   }
 
-  setDimensions(dimensions) {
-    this.dimensions = dimensions;
+  setDimensions(dimensions, options = {}) {
+    this.dimensionCalls.push({ dimensions: { ...dimensions }, options: { ...options } });
+    if (options.backstoreOnly) {
+      this.lowerCanvasEl.width = dimensions.width;
+      this.lowerCanvasEl.height = dimensions.height;
+      this.upperCanvasEl.width = dimensions.width;
+      this.upperCanvasEl.height = dimensions.height;
+    }
+    if (options.cssOnly) {
+      for (const element of [this.lowerCanvasEl, this.upperCanvasEl, this.wrapperEl]) {
+        element.style.width = `${dimensions.width}px`;
+        element.style.height = `${dimensions.height}px`;
+      }
+    }
+  }
+
+  calcOffset() {
+    this.calcOffsetCalls += 1;
   }
 
   requestRenderAll() {}
@@ -246,6 +265,31 @@ test('prepare creates one Fabric canvas and the browser runtime stays reusable',
   assert.equal(root.querySelectorAllByClass('mpv-fabric-delta-canvas').length, 1);
 });
 
+test('viewport separates Fabric source backstore from display CSS dimensions', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const canvas = FakeCanvas.instances[0];
+
+  assert.deepEqual(canvas.dimensionCalls, [
+    { dimensions: { width: 1920, height: 1080 }, options: { backstoreOnly: true } },
+    { dimensions: { width: 960, height: 540 }, options: { cssOnly: true } }
+  ]);
+  assert.equal(canvas.lowerCanvasEl.width, 1920);
+  assert.equal(canvas.upperCanvasEl.height, 1080);
+  for (const element of [canvas.wrapperEl, canvas.lowerCanvasEl, canvas.upperCanvasEl]) {
+    assert.equal(element.style.width, '960px');
+    assert.equal(element.style.height, '540px');
+  }
+  assert.equal(canvas.calcOffsetCalls, 1);
+});
+
 test('selection updates synchronize the complete Fabric active selection', () => {
   FakeCanvas.instances = [];
   const document = new FakeDocument();
@@ -298,6 +342,76 @@ test('local toolbar changes do not consume controller tool revisions', () => {
 
   assert.equal(controllerUpdate.accepted, true);
   assert.equal(runtime.getDiagnostics().tool, 'select');
+});
+
+test('Phase 0 selection moves while scale rotate and skew remain locked across reactivation', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  const firstInput = makeInput();
+  runtime.prepare(root);
+  runtime.setDrawingInput(firstInput);
+  const canvas = FakeCanvas.instances[0];
+  drawStroke(canvas.upperCanvasEl, 31);
+  runtime.updateDrawingTool({ sessionId: 'runtime-session', toolRevision: 1, tool: 'select' });
+
+  const selected = canvas.getObjects()[0];
+  const activeSelection = new FakePath('');
+  activeSelection.getObjects = () => [selected];
+  canvas.activeObjects = [selected];
+  canvas.emit('selection:created', { target: activeSelection, selected: [selected] });
+
+  for (const target of [selected, activeSelection]) {
+    assert.equal(target.hasControls, false);
+    assert.equal(target.lockScalingX, true);
+    assert.equal(target.lockScalingY, true);
+    assert.equal(target.lockRotation, true);
+    assert.equal(target.lockSkewingX, true);
+    assert.equal(target.lockSkewingY, true);
+    assert.notEqual(target.lockMovementX, true);
+    assert.notEqual(target.lockMovementY, true);
+  }
+
+  canvas.emit('before:transform', { target: selected, transform: { target: selected } });
+  selected.left += 12;
+  selected.scaleX = 2;
+  selected.scaleY = 0.5;
+  selected.angle = 30;
+  selected.skewX = 8;
+  canvas.emit('object:modified', { target: selected });
+
+  assert.equal(selected.left, 12, 'move remains enabled');
+  assert.equal(selected.scaleX, 1);
+  assert.equal(selected.scaleY, 1);
+  assert.equal(selected.angle, 0);
+  assert.equal(selected.skewX, 0);
+  assert.equal(runtime.getDiagnostics().mutationCount, 2);
+
+  runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 2,
+    enabled: false
+  });
+  runtime.setDrawingInput({
+    ...firstInput,
+    inputRevision: 3,
+    session: { ...firstInput.session, sessionId: 'runtime-session-2' }
+  });
+  const restored = canvas.getObjects()[0];
+
+  assert.notEqual(restored, selected);
+  assert.equal(restored.left, 12);
+  assert.equal(restored.scaleX, 1);
+  assert.equal(restored.scaleY, 1);
+  assert.equal(restored.angle, 0);
+  assert.equal(restored.skewX, 0);
+  assert.equal(restored.hasControls, false);
+  assert.equal(restored.lockRotation, true);
 });
 
 test('pressure strokes, selection, move, delete, clear, cancellation, and stale revisions stay local', () => {

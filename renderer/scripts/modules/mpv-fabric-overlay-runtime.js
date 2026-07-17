@@ -11,6 +11,7 @@ const DEFAULT_MAX_ACTIONS = 2048;
 const MAX_STROKE_POINTS = 20000;
 const DEFAULT_MAX_OBJECTS = 10000;
 const TRANSFORM_FIELDS = ['left', 'top', 'scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY'];
+const UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ['scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY'];
 
 function clonePlain(value) {
   if (value === undefined) return undefined;
@@ -541,6 +542,32 @@ function createFabricOverlayRuntime(options = {}) {
     return transform;
   }
 
+  function applyMoveOnlyConstraints(object) {
+    if (!object?.set) return;
+    object.set({
+      hasControls: false,
+      lockMovementX: false,
+      lockMovementY: false,
+      lockScalingX: true,
+      lockScalingY: true,
+      lockScalingFlip: true,
+      lockRotation: true,
+      lockSkewingX: true,
+      lockSkewingY: true
+    });
+    object.setCoords?.();
+  }
+
+  function restoreUnsupportedTransform(object, persistedTransform = {}) {
+    const values = {};
+    for (const field of UNSUPPORTED_PHASE0_TRANSFORM_FIELDS) {
+      const fallback = field === 'scaleX' || field === 'scaleY' ? 1 : field === 'flipX' || field === 'flipY' ? false : 0;
+      values[field] = persistedTransform[field] ?? fallback;
+    }
+    object.set(values);
+    applyMoveOnlyConstraints(object);
+  }
+
   function makeFabricPath(record, transient = false) {
     const { Path } = resolveFabric();
     const path = new Path(record.pathData, {
@@ -550,9 +577,19 @@ function createFabricOverlayRuntime(options = {}) {
       selectable: !transient && sceneStore.getDiagnostics().tool === 'select',
       evented: !transient && sceneStore.getDiagnostics().tool === 'select',
       objectCaching: !transient,
-      perPixelTargetFind: !transient
+      perPixelTargetFind: !transient,
+      hasControls: false,
+      lockMovementX: false,
+      lockMovementY: false,
+      lockScalingX: true,
+      lockScalingY: true,
+      lockScalingFlip: true,
+      lockRotation: true,
+      lockSkewingX: true,
+      lockSkewingY: true
     });
     if (record.transform) path.set(record.transform);
+    if (!transient) applyMoveOnlyConstraints(path);
     path.__baeframeObjectId = record.id || null;
     path.__baeframeTransient = transient;
     path.setCoords?.();
@@ -580,7 +617,7 @@ function createFabricOverlayRuntime(options = {}) {
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
       object.set({ selectable: selectMode, evented: selectMode });
-      object.setCoords?.();
+      applyMoveOnlyConstraints(object);
     }
     if (!selectMode) {
       fabricCanvas.discardActiveObject();
@@ -724,7 +761,9 @@ function createFabricOverlayRuntime(options = {}) {
     return objects.map(object => object.__baeframeObjectId).filter(Boolean);
   }
 
-  function onSelectionChanged() {
+  function onSelectionChanged(event) {
+    applyMoveOnlyConstraints(event?.target);
+    for (const object of fabricCanvas?.getActiveObjects?.() || []) applyMoveOnlyConstraints(object);
     sceneStore.selectObjects(selectionIds());
   }
 
@@ -749,13 +788,23 @@ function createFabricOverlayRuntime(options = {}) {
     sceneStore.selectObjects(ids);
     let result;
     if (children.length > 1 && transformStart?.target === target) {
+      restoreUnsupportedTransform(target, transformStart.transform);
       result = sceneStore.transformSelection({
         dx: finiteNumber(target.left) - finiteNumber(transformStart.transform.left),
         dy: finiteNumber(target.top) - finiteNumber(transformStart.transform.top)
       });
     } else {
+      const persistedObjects = new Map(
+        (sceneStore.getActiveSceneSnapshot()?.objects || []).map(object => [object.id, object.transform || {}])
+      );
       result = sceneStore.transformSelection({
-        transforms: children.map(object => ({ id: object.__baeframeObjectId, transform: captureTransform(object) }))
+        transforms: children.map(object => {
+          const persisted = persistedObjects.get(object.__baeframeObjectId) || {};
+          const left = finiteNumber(object.left, finiteNumber(persisted.left));
+          const top = finiteNumber(object.top, finiteNumber(persisted.top));
+          restoreUnsupportedTransform(object, persisted);
+          return { id: object.__baeframeObjectId, transform: { ...captureTransform(object), left, top } };
+        })
       });
     }
     transformStart = null;
@@ -792,15 +841,21 @@ function createFabricOverlayRuntime(options = {}) {
 
   function applyViewport(session) {
     const rect = session.canvasRect;
-    fabricCanvas.setDimensions({ width: session.sourceWidth, height: session.sourceHeight });
+    fabricCanvas.setDimensions(
+      { width: session.sourceWidth, height: session.sourceHeight },
+      { backstoreOnly: true }
+    );
+    fabricCanvas.setDimensions(
+      { width: rect.width, height: rect.height },
+      { cssOnly: true }
+    );
     setStyles(container, {
       left: `${rect.left}px`,
       top: `${rect.top}px`,
       width: `${rect.width}px`,
       height: `${rect.height}px`
     });
-    setStyles(fabricCanvas.lowerCanvasEl, { width: `${rect.width}px`, height: `${rect.height}px` });
-    setStyles(fabricCanvas.upperCanvasEl, { width: `${rect.width}px`, height: `${rect.height}px` });
+    fabricCanvas.calcOffset();
   }
 
   function validateSession(session) {
