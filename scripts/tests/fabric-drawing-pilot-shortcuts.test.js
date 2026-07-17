@@ -505,6 +505,25 @@ test('a settled load token rejects a later conflicting identity without dropping
   assert.equal(harness.calls.input.length, inputCount);
 });
 
+test('a ready event without a pending transition cannot replace a settled active video', async () => {
+  const harness = createHarness();
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  const activeSessionId = (await harness.controller.diagnostics()).sessionId;
+  const inputCount = harness.calls.input.length;
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'video-b',
+    targetFrame: 88
+  }), false);
+  const snapshot = await harness.controller.diagnostics();
+  assert.equal(snapshot.videoGeneration, 1);
+  assert.equal(snapshot.sessionId, activeSessionId);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.equal(harness.calls.input.length, inputCount);
+});
+
 test('afterVideoReady uses its confirmed context when resuming before getContext catches up', async () => {
   const harness = createHarness();
   await preparePassive(harness);
@@ -887,6 +906,31 @@ test('a tokenless transition rejects the prior identity until a fresh load token
         .map(request => request.videoGeneration), [2, 2]);
     }
   }
+});
+
+test('a tokenless transition rejects the prior load token even when its identity conflicts', async () => {
+  const harness = createHarness();
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  await harness.controller.beforeVideoChange();
+  const inputCount = harness.calls.input.length;
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-a',
+    stableVideoIdentity: 'video-b',
+    targetFrame: 50
+  }), false);
+  assert.equal((await harness.controller.diagnostics()).videoGeneration, 1);
+  assert.equal(harness.controller.getState(), 'recovering');
+  assert.equal(harness.calls.input.length, inputCount);
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'video-b',
+    targetFrame: 51
+  }), true);
+  assert.equal((await harness.controller.diagnostics()).videoGeneration, 2);
+  assert.equal(harness.controller.getState(), 'active');
 });
 
 test('a recovered host generation reconciles disable-first before an optional fresh session', async () => {
