@@ -253,6 +253,43 @@ test('a preparing B exits immediately and a stale enable response cannot reactiv
   assert.ok(harness.calls.input.at(-1).inputRevision > harness.calls.input.at(-2).inputRevision);
 });
 
+test('B cancels a recovering resume with a newer disable instead of reactivating', async () => {
+  const pendingRecoveryDisable = deferred();
+  let heldRecoveryDisable = false;
+  const harness = createHarness({
+    onInput(request) {
+      if (request.hostGeneration === 2 && !request.enabled && !heldRecoveryDisable) {
+        heldRecoveryDisable = true;
+        return pendingRecoveryDisable.promise;
+      }
+      return { success: true, accepted: true, enabled: request.enabled };
+    }
+  });
+  await preparePassive(harness);
+  await harness.controller.toggle();
+
+  const recovery = harness.controller.adoptOverlayCapability({
+    passiveReady: true,
+    hostGeneration: 2
+  });
+  assert.equal(harness.controller.getState(), 'recovering');
+  const recoveryRevision = harness.calls.input.at(-1).inputRevision;
+
+  const cancelEvent = createKeyEvent('b');
+  assert.equal(harness.controller.routeKeydown(cancelEvent), true);
+  assert.deepEqual(cancelEvent.calls, ['preventDefault', 'stopImmediatePropagation']);
+  assert.equal(harness.controller.getState(), 'passive');
+  assert.equal(harness.calls.input.at(-1).enabled, false);
+  assert.ok(harness.calls.input.at(-1).inputRevision > recoveryRevision);
+
+  pendingRecoveryDisable.resolve({ success: true, accepted: true, enabled: false });
+  assert.equal(await recovery, false);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.input.filter(request =>
+    request.hostGeneration === 2 && request.enabled).length, 0);
+  assert.equal((await harness.controller.diagnostics()).resumeRequested, false);
+});
+
 test('targetFrame is pinned once for each fresh enable session', async () => {
   const pendingEnable = deferred();
   const harness = createHarness({
@@ -382,6 +419,41 @@ test('editable targets, modifiers, non-mpv, audio, and pilot OFF never consume k
   assert.equal(off.calls.input.length, 0);
 });
 
+test('IME composition is ignored while repeated pilot keys are consumed without actions', async () => {
+  const harness = createHarness();
+  await preparePassive(harness);
+  const inputCount = harness.calls.input.length;
+
+  const composing = createKeyEvent('b', { isComposing: true });
+  assert.equal(harness.controller.routeKeydown(composing), false);
+  assert.deepEqual(composing.calls, []);
+  const processKey = createKeyEvent('b', { keyCode: 229 });
+  assert.equal(harness.controller.routeKeydown(processKey), false);
+  assert.deepEqual(processKey.calls, []);
+
+  const repeatedPassiveB = createKeyEvent('b', { repeat: true });
+  assert.equal(harness.controller.routeKeydown(repeatedPassiveB), true);
+  assert.deepEqual(repeatedPassiveB.calls, ['preventDefault', 'stopImmediatePropagation']);
+  assert.equal(harness.calls.input.length, inputCount);
+
+  await harness.controller.toggle();
+  const activeCounts = {
+    input: harness.calls.input.length,
+    tool: harness.calls.tool.length,
+    action: harness.calls.action.length
+  };
+  for (const key of ['b', 'v', 'Delete']) {
+    const event = createKeyEvent(key, { repeat: true });
+    assert.equal(harness.controller.routeKeydown(event), true);
+    assert.deepEqual(event.calls, ['preventDefault', 'stopImmediatePropagation']);
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.input.length, activeCounts.input);
+  assert.equal(harness.calls.tool.length, activeCounts.tool);
+  assert.equal(harness.calls.action.length, activeCounts.action);
+  assert.equal(harness.controller.getState(), 'active');
+});
+
 test('video confirmations advance exactly once, disable first, and resume with a fresh session', async () => {
   const harness = createHarness();
   await preparePassive(harness, { loadToken: 'load-a' });
@@ -426,6 +498,32 @@ test('afterVideoReady uses its confirmed context when resuming before getContext
   assert.equal(resumed.session.stableVideoIdentity, 'video-b');
   assert.equal(resumed.session.targetFrame, 77);
   assert.equal(resumed.session.sourceWidth, 3840);
+});
+
+test('a pending load token rejects late confirmation without advancing or reactivating', async () => {
+  const harness = createHarness();
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  await harness.controller.beforeVideoChange('load-b');
+  const beforeLateConfirmation = harness.calls.input.length;
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-a',
+    stableVideoIdentity: 'video-a'
+  }), false);
+  assert.equal(harness.calls.input.length, beforeLateConfirmation);
+  assert.equal((await harness.controller.diagnostics()).videoGeneration, 1);
+  assert.equal(harness.controller.getState(), 'recovering');
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'video-b',
+    targetFrame: 51
+  }), true);
+  const acceptedTransition = harness.calls.input.slice(beforeLateConfirmation);
+  assert.deepEqual(acceptedTransition.map(request => request.enabled), [false, true]);
+  assert.deepEqual(acceptedTransition.map(request => request.videoGeneration), [2, 2]);
+  assert.equal(acceptedTransition[1].session.stableVideoIdentity, 'video-b');
 });
 
 test('a recovered host generation reconciles disable-first before an optional fresh session', async () => {
@@ -481,11 +579,11 @@ test('all dependencies and request envelopes stay inside the Task 3 pilot bridge
   for (const request of [
     ...harness.calls.input,
     ...harness.calls.tool,
-    ...harness.calls.action,
-    ...harness.calls.diagnostics
+    ...harness.calls.action
   ]) {
     assertEnvelope(request);
   }
+  assert.deepEqual(harness.calls.diagnostics, [undefined]);
   assert.equal(snapshot.overlay.success, true);
 
   const source = fs.readFileSync(controllerPath, 'utf8');

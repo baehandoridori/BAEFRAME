@@ -56,6 +56,7 @@ export function createFabricDrawingPilotController(options = {}) {
   let currentSession = null;
   let videoReady = false;
   let videoChangePending = false;
+  let pendingLoadToken = null;
   let confirmedVideoIdentity = null;
   let confirmedLoadToken = null;
   let resumeRequested = false;
@@ -318,12 +319,18 @@ export function createFabricDrawingPilotController(options = {}) {
     return reconcileCurrentVideo(shouldResume);
   }
 
-  async function beforeVideoChange() {
+  async function beforeVideoChange(nextLoadToken = null) {
     if (!pilotEnabled) return false;
     const shouldResume = resumeRequested || state === 'active' || state === 'preparing';
     resumeRequested = shouldResume;
     videoReady = false;
     videoChangePending = true;
+    const tokenValue = nextLoadToken && typeof nextLoadToken === 'object'
+      ? nextLoadToken.loadToken ?? nextLoadToken.videoLoadToken ?? nextLoadToken.confirmationToken ?? null
+      : nextLoadToken;
+    pendingLoadToken = tokenValue === null || tokenValue === undefined
+      ? null
+      : String(tokenValue);
     setState('recovering');
     if (!desiredInputEnabled || !hostGeneration || !videoGeneration) return true;
 
@@ -350,6 +357,7 @@ export function createFabricDrawingPilotController(options = {}) {
     const loadToken = loadTokenValue === null || loadTokenValue === undefined
       ? null
       : String(loadTokenValue);
+    if (pendingLoadToken !== null && loadToken !== pendingLoadToken) return false;
     const duplicate = !videoChangePending &&
       videoGeneration > 0 &&
       identity === confirmedVideoIdentity &&
@@ -359,6 +367,7 @@ export function createFabricDrawingPilotController(options = {}) {
     videoGeneration += 1;
     videoReady = true;
     videoChangePending = false;
+    pendingLoadToken = null;
     confirmedVideoIdentity = identity;
     confirmedLoadToken = loadToken;
     const shouldResume = resumeRequested;
@@ -388,13 +397,18 @@ export function createFabricDrawingPilotController(options = {}) {
     if (!pilotEnabled) return Promise.resolve(false);
     const context = contextSnapshot();
     if (!validPilotContext(context)) return Promise.resolve(false);
-    if (state === 'active' || state === 'preparing') return disable();
+    if (state === 'active' || state === 'preparing' ||
+        (state === 'recovering' && resumeRequested)) {
+      return disable();
+    }
     if (state !== 'passive') return Promise.resolve(false);
     return startEnable();
   }
 
   function routeKeydown(event = {}) {
     if (!pilotEnabled ||
+        event.isComposing === true ||
+        event.keyCode === 229 ||
         event.ctrlKey === true ||
         event.metaKey === true ||
         event.altKey === true ||
@@ -406,6 +420,12 @@ export function createFabricDrawingPilotController(options = {}) {
     if (!validPilotContext(context)) return false;
 
     const key = String(event.key || '').toLowerCase();
+    const repeatIsRelevant = key === 'b' ||
+      ((key === 'v' || key === 'delete') && (state === 'preparing' || state === 'active'));
+    if (event.repeat === true && repeatIsRelevant) {
+      consumeKeyEvent(event);
+      return true;
+    }
     if (key === 'b') {
       consumeKeyEvent(event);
       runDetached(toggle());
@@ -440,14 +460,8 @@ export function createFabricDrawingPilotController(options = {}) {
   async function diagnostics() {
     const local = localSnapshot();
     if (typeof electronAPI.mpvGetOverlayDrawingDiagnostics !== 'function') return local;
-    const request = {
-      ...makeEnvelope('surface-diagnostics'),
-      hostGeneration,
-      videoGeneration,
-      inputRevision
-    };
     try {
-      const overlay = await electronAPI.mpvGetOverlayDrawingDiagnostics(request);
+      const overlay = await electronAPI.mpvGetOverlayDrawingDiagnostics();
       return { ...local, overlay };
     } catch (error) {
       return {
