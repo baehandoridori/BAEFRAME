@@ -272,7 +272,8 @@ function setupIpcHandlers({
     }
     return operation();
   };
-  ipcMain.handle('fabric-drawing:get-pilot-state', () => isFabricDrawingPilotEnabled);
+  ipcMain.handle('fabric-drawing:get-pilot-state', (event) =>
+    isCurrentMainRendererSender(event) && isFabricDrawingPilotEnabled);
   ipcMain.handle('mpv:set-overlay-drawing-input', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.setDrawingInput(request)));
   ipcMain.handle('mpv:update-overlay-drawing-tool', (event, request) =>

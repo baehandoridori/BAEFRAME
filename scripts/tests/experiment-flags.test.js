@@ -12,7 +12,7 @@ function loadResolver() {
   return require(resolverPath).resolveFabricDrawingPilot;
 }
 
-function loadIpcSetupWithHandlerRegistry() {
+function loadIpcSetupWithHandlerRegistry(options = {}) {
   const handlers = new Map();
   const noop = () => {};
   const ipcMain = {
@@ -34,7 +34,7 @@ function loadIpcSetupWithHandlerRegistry() {
     }],
     ['./window', {
       closeWindow: noop,
-      getMainWindow: () => null,
+      getMainWindow: () => options.mainWindow || null,
       isFullscreen: () => false,
       isMaximized: () => false,
       minimizeWindow: noop,
@@ -46,7 +46,7 @@ function loadIpcSetupWithHandlerRegistry() {
     ['./cutlist-paths', { validateCutlistFilePath: (value) => value }],
     ['./mpv-manager', { MPVManager: class MPVManager {}, mpvManager: {} }],
     ['./mpv-embed-host', { mpvEmbedHost: {} }],
-    ['./mpv-overlay-host', { mpvOverlayHost: {} }],
+    ['./mpv-overlay-host', { mpvOverlayHost: options.mpvOverlayHost || {} }],
     ['electron-store', class Store {}]
   ]);
   const originalLoad = Module._load;
@@ -181,13 +181,15 @@ test('IPC pilot state handler defaults off and returns only a boolean snapshot',
   ];
 
   for (const [options, expected] of cases) {
-    const { setupIpcHandlers, handlers } = loadIpcSetupWithHandlerRegistry();
+    const sender = { id: 42 };
+    const mainWindow = { isDestroyed: () => false, webContents: sender };
+    const { setupIpcHandlers, handlers } = loadIpcSetupWithHandlerRegistry({ mainWindow });
     setupIpcHandlers(options);
 
     const stateHandler = handlers.get('fabric-drawing:get-pilot-state');
     assert.equal(typeof stateHandler, 'function');
 
-    const state = stateHandler({ sender: { id: 42 } });
+    const state = stateHandler({ sender });
     assert.equal(state, expected);
     assert.equal(typeof state, 'boolean');
   }
@@ -202,6 +204,24 @@ test('IPC pilot state handler defaults off and returns only a boolean snapshot',
   );
   assert.ok(registration);
   assert.doesNotMatch(registration[0], /\b(?:argv|env|source)\b/);
+});
+
+test('IPC pilot state returns enabled only to the current main renderer sender', () => {
+  const currentSender = { id: 41 };
+  const mainWindow = {
+    isDestroyed: () => false,
+    webContents: currentSender
+  };
+  const { setupIpcHandlers, handlers } = loadIpcSetupWithHandlerRegistry({ mainWindow });
+  setupIpcHandlers({
+    fabricDrawingPilot: Object.freeze({ enabled: true, source: 'cli' })
+  });
+  const stateHandler = handlers.get('fabric-drawing:get-pilot-state');
+
+  assert.equal(stateHandler({ sender: currentSender }), true);
+  assert.equal(stateHandler({ sender: { id: 42 } }), false);
+  assert.equal(stateHandler({}), false);
+  assert.equal(typeof stateHandler({ sender: { id: 42 } }), 'boolean');
 });
 
 test('Fabric and perfect-freehand versions are exact and Fabric stays build-only', () => {

@@ -695,7 +695,8 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
-    this.processedActionIds = new Map();
+    this.completedActionIds = new Map();
+    this.inFlightDrawingActions = new Map();
     this.maxProcessedActionIds = 2048;
   }
 
@@ -749,6 +750,9 @@ class MPVOverlayHost {
       }
       return { success: false, accepted: false, enabled: false, error: prepared.error };
     }
+    if (!this._inputRequestStillDesired(hostWindow, request)) {
+      return { success: false, accepted: false, enabled: false, error: 'stale drawing input request' };
+    }
 
     let runtimeResult;
     try {
@@ -759,16 +763,13 @@ class MPVOverlayHost {
       return { success: false, accepted: false, enabled: false, error: error.message };
     }
 
-    const stillCurrent = this.window === hostWindow &&
-      !hostWindow.isDestroyed?.() &&
-      this.hostGeneration === hostGeneration &&
-      this.currentVideoGeneration === videoGeneration &&
-      this.currentInputRevision === inputRevision &&
-      this.desiredInputEnabled === request.enabled;
+    const stillCurrent = this._inputRequestStillDesired(hostWindow, request);
     if (request.enabled && runtimeResult?.accepted === true && stillCurrent) {
       this.activeSessionId = request.session?.sessionId || null;
       this.currentToolRevision = 0;
       hostWindow.setIgnoreMouseEvents?.(false);
+    } else if (request.enabled && runtimeResult?.accepted === true && !stillCurrent) {
+      await this._compensateStaleDrawingEnable(hostWindow, hostGeneration);
     }
 
     return {
@@ -817,11 +818,26 @@ class MPVOverlayHost {
         request.actionId.length === 0 || request.actionId.length > 256) {
       return { success: false, applied: false, error: 'stale or invalid drawing action request' };
     }
-    if (this.processedActionIds.has(request.actionId)) {
+    if (this.completedActionIds.has(request.actionId)) {
       return { success: true, applied: false, duplicate: true, deletedCount: 0 };
     }
+    const inFlight = this.inFlightDrawingActions.get(request.actionId);
+    if (inFlight) return inFlight;
 
-    this._rememberDrawingAction(request.actionId);
+    const operation = this._performDrawingAction(request);
+    this.inFlightDrawingActions.set(request.actionId, operation);
+    try {
+      const result = await operation;
+      if (result.success) this._rememberDrawingAction(request.actionId);
+      return result;
+    } finally {
+      if (this.inFlightDrawingActions.get(request.actionId) === operation) {
+        this.inFlightDrawingActions.delete(request.actionId);
+      }
+    }
+  }
+
+  async _performDrawingAction(request) {
     try {
       const result = await this._executeFabricMethod('applyDrawingAction', request);
       if (!this._drawingTokensMatch(request)) {
@@ -834,7 +850,6 @@ class MPVOverlayHost {
         deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount)))
       };
     } catch (error) {
-      this.processedActionIds.delete(request.actionId);
       return { success: false, applied: false, error: error.message };
     }
   }
@@ -882,6 +897,7 @@ class MPVOverlayHost {
   async _ensureFabricRuntime() {
     const hostWindow = this.window;
     const hostGeneration = this.hostGeneration;
+    const contentLoadGeneration = this.contentLoadGeneration;
     if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded) {
       return { success: false, error: 'mpv overlay host is not ready' };
     }
@@ -896,15 +912,15 @@ class MPVOverlayHost {
     this.fabricPreparationPromise = (async () => {
       try {
         const bundleSource = await this.readFile(this.fabricBundlePath, 'utf8');
-        if (!this._isCurrentHostGeneration(hostWindow, hostGeneration)) {
+        if (!this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
           return { success: false, error: 'mpv overlay host generation changed' };
         }
         await hostWindow.webContents?.executeJavaScript?.(String(bundleSource), true);
-        if (!this._isCurrentHostGeneration(hostWindow, hostGeneration)) {
+        if (!this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
           return { success: false, error: 'mpv overlay host generation changed' };
         }
         const preparation = await hostWindow.webContents?.executeJavaScript?.(FABRIC_PREPARE_SCRIPT, true);
-        if (!this._isCurrentHostGeneration(hostWindow, hostGeneration)) {
+        if (!this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
           return { success: false, error: 'mpv overlay host generation changed' };
         }
         if (preparation?.prepared !== true) {
@@ -929,6 +945,12 @@ class MPVOverlayHost {
       this.hostGeneration === hostGeneration;
   }
 
+  _isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration) {
+    return this._isCurrentHostGeneration(hostWindow, hostGeneration) &&
+      this.contentLoaded &&
+      this.contentLoadGeneration === contentLoadGeneration;
+  }
+
   _drawingTokensMatch(request = {}) {
     return request.hostGeneration === this.hostGeneration &&
       request.videoGeneration === this.currentVideoGeneration &&
@@ -937,10 +959,44 @@ class MPVOverlayHost {
       this.desiredInputEnabled;
   }
 
+  _inputRequestStillDesired(hostWindow, request = {}) {
+    return this.window === hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      Number(request.hostGeneration) === this.hostGeneration &&
+      Number(request.videoGeneration) === this.currentVideoGeneration &&
+      Number(request.inputRevision) === this.currentInputRevision &&
+      request.enabled === this.desiredInputEnabled;
+  }
+
+  async _compensateStaleDrawingEnable(hostWindow, staleHostGeneration) {
+    if (this.window !== hostWindow ||
+        hostWindow.isDestroyed?.() ||
+        this.hostGeneration !== staleHostGeneration ||
+        this.desiredInputEnabled !== false ||
+        this.fabricReadyGeneration !== this.hostGeneration ||
+        this.currentVideoGeneration < 0 ||
+        this.currentInputRevision < 0) {
+      return;
+    }
+    hostWindow.setIgnoreMouseEvents?.(true);
+    const disableRequest = {
+      hostGeneration: this.hostGeneration,
+      videoGeneration: this.currentVideoGeneration,
+      inputRevision: this.currentInputRevision,
+      enabled: false
+    };
+    try {
+      await this._executeFabricMethod('setDrawingInput', disableRequest);
+    } catch (error) {
+      this.fabricLastError = error.message;
+      this.logger.debug('stale Fabric drawing enable compensation failed', { error: error.message });
+    }
+  }
+
   _rememberDrawingAction(actionId) {
-    this.processedActionIds.set(actionId, true);
-    while (this.processedActionIds.size > this.maxProcessedActionIds) {
-      this.processedActionIds.delete(this.processedActionIds.keys().next().value);
+    this.completedActionIds.set(actionId, true);
+    while (this.completedActionIds.size > this.maxProcessedActionIds) {
+      this.completedActionIds.delete(this.completedActionIds.keys().next().value);
     }
   }
 
@@ -1105,7 +1161,8 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
-    this.processedActionIds.clear();
+    this.completedActionIds.clear();
+    this.inFlightDrawingActions.clear();
     this.lastBounds = null;
     // 피드백 32: 호스트 재생성 후 동일 bounds 스킵 오판 방지
     this._lastAppliedScreenBounds = null;
@@ -1158,7 +1215,8 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
-    this.processedActionIds.clear();
+    this.completedActionIds.clear();
+    this.inFlightDrawingActions.clear();
     this.window = hostWindow;
     // 피드백 27·29·31: forward는 mousemove를 이 창의 Chromium에도 전달해
     // 기본 화살표 커서가 메인 창 커서와 경합(깜빡임)한다. 이 창은 마우스 이벤트를
@@ -1185,6 +1243,26 @@ class MPVOverlayHost {
           mainWindow.webContents.send('open-from-protocol', filePath, null);
         }
       } catch (_error) { /* 차단만 */ }
+    });
+
+    const hostGeneration = this.hostGeneration;
+    hostWindow.webContents?.on?.('render-process-gone', () => {
+      if (this.window !== hostWindow || this.hostGeneration !== hostGeneration) return;
+      hostWindow.setIgnoreMouseEvents?.(true);
+      this.contentLoadGeneration += 1;
+      this.contentLoaded = false;
+      this.fabricReadyGeneration = 0;
+      this.fabricAttemptGeneration = 0;
+      this.fabricPreparationPromise = null;
+      this.fabricPreparationResult = null;
+      this.fabricLastError = null;
+      this.currentVideoGeneration = -1;
+      this.currentInputRevision = -1;
+      this.desiredInputEnabled = false;
+      this.activeSessionId = null;
+      this.currentToolRevision = -1;
+      this.completedActionIds.clear();
+      this.inFlightDrawingActions.clear();
     });
 
     hostWindow.on?.('closed', () => {

@@ -34,7 +34,14 @@ function createDrawingHostHarness(options = {}) {
       this.options = windowOptions;
       this.destroyed = false;
       this.listeners = new Map();
+      this.webContentsListeners = new Map();
       this.webContents = {
+        on: (eventName, handler) => {
+          this.webContentsListeners.set(eventName, handler);
+        },
+        emit: (eventName, ...args) => {
+          this.webContentsListeners.get(eventName)?.(...args);
+        },
         executeJavaScript: async (script) => {
           events.push(['executeJavaScript', script]);
           if (script.includes("typeof window.__applyMpvOverlayState === 'function'")) return true;
@@ -137,6 +144,14 @@ function makeDrawingInput(hostGeneration, overrides = {}) {
     enabled: false,
     ...overrides
   };
+}
+
+function readFabricMethodPayload(script, method) {
+  const marker = `.${method}(`;
+  const start = script.indexOf(marker);
+  if (start < 0) return null;
+  const argument = script.slice(start + marker.length, script.lastIndexOf(');'));
+  return argument ? JSON.parse(argument) : null;
 }
 
 test('exposes the MPV overlay Fabric drawing host capability API', () => {
@@ -322,14 +337,87 @@ test('deduplicates drawing actions and allowlists lightweight host responses', a
   assert.doesNotMatch(JSON.stringify(diagnostics), /fabricJSON|objects|scene\s*:/i);
 });
 
+test('shares an in-flight action failure and keeps the action ID retryable until success', async () => {
+  const firstAttempt = createDeferred();
+  const retryAttempt = createDeferred();
+  let actionCallCount = 0;
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      actionCallCount += 1;
+      return actionCallCount === 1 ? firstAttempt.promise : retryAttempt.promise;
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, { videoGeneration: 4, inputRevision: 1 }));
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 4,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-action-retry',
+      stableVideoIdentity: 'video-action-retry',
+      targetFrame: 4,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'select'
+    }
+  }));
+  const action = {
+    hostGeneration,
+    videoGeneration: 4,
+    inputRevision: 2,
+    sessionId: 'session-action-retry',
+    actionId: 'action-retry-after-failure',
+    action: 'clear-session'
+  };
+
+  const first = host.applyDrawingAction(action);
+  const inFlightDuplicate = host.applyDrawingAction(action);
+  let duplicateSettled = false;
+  inFlightDuplicate.finally(() => { duplicateSettled = true; });
+  await waitForAsyncReposition();
+  assert.equal(actionCallCount, 1);
+  assert.equal(duplicateSettled, false);
+
+  firstAttempt.reject(new Error('transient action failure'));
+  const [firstFailure, duplicateFailure] = await Promise.all([first, inFlightDuplicate]);
+  assert.deepEqual(firstFailure, { success: false, applied: false, error: 'transient action failure' });
+  assert.deepEqual(duplicateFailure, firstFailure);
+
+  const retry = host.applyDrawingAction(action);
+  await waitForAsyncReposition();
+  assert.equal(actionCallCount, 2);
+  retryAttempt.resolve({ applied: true, deletedCount: 2 });
+  assert.deepEqual(await retry, { success: true, applied: true, duplicate: false, deletedCount: 2 });
+  assert.deepEqual(await host.applyDrawingAction(action), {
+    success: true,
+    applied: false,
+    duplicate: true,
+    deletedCount: 0
+  });
+  assert.equal(actionCallCount, 2);
+});
+
 test('a later disable keeps click-through when an older enable finishes late', async () => {
   const lateEnable = createDeferred();
+  const runtimeRequests = [];
+  let runtimeEnabled = false;
   const { host, events } = createDrawingHostHarness({
     executeDrawing(script) {
-      if (script.includes('.setDrawingInput(') && script.includes('"enabled":true')) {
-        return lateEnable.promise;
+      if (!script.includes('.setDrawingInput(')) return undefined;
+      const request = readFabricMethodPayload(script, 'setDrawingInput');
+      runtimeRequests.push(request);
+      if (request.enabled) {
+        return lateEnable.promise.then((result) => {
+          runtimeEnabled = true;
+          return result;
+        });
       }
-      return undefined;
+      runtimeEnabled = false;
+      return { accepted: true, enabled: false };
     }
   });
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
@@ -366,6 +454,57 @@ test('a later disable keeps click-through when an older enable finishes late', a
     events.slice(disableEventIndex).some(([name, value]) => name === 'setIgnoreMouseEvents' && value === false),
     false
   );
+  assert.equal(runtimeEnabled, false, 'a compensating runtime disable closes a stale late activation');
+  assert.deepEqual(runtimeRequests.at(-1), {
+    hostGeneration,
+    videoGeneration: 8,
+    inputRevision: 3,
+    enabled: false
+  });
+});
+
+test('revalidates desired input tokens after Fabric preparation before invoking the runtime', async () => {
+  const { host, events } = createDrawingHostHarness();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, { videoGeneration: 6, inputRevision: 1 }));
+
+  const preparation = createDeferred();
+  host._ensureFabricRuntime = () => preparation.promise;
+  const runtimeCallCount = events.filter(([name, value]) =>
+    name === 'executeJavaScript' && value.includes?.('.setDrawingInput(')).length;
+  const staleEnable = host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 6,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-before-prepare',
+      stableVideoIdentity: 'video-before-prepare',
+      targetFrame: 6,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  const latestDisable = host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 6,
+    inputRevision: 3
+  }));
+
+  preparation.resolve({ success: true, reused: true });
+  assert.equal((await staleEnable).success, false);
+  assert.equal((await latestDisable).success, true);
+  const callsAfterPreparation = events
+    .filter(([name, value]) => name === 'executeJavaScript' && value.includes?.('.setDrawingInput('))
+    .slice(runtimeCallCount)
+    .map(([, script]) => readFabricMethodPayload(script, 'setDrawingInput'));
+  assert.deepEqual(callsAfterPreparation, [{
+    hostGeneration,
+    videoGeneration: 6,
+    inputRevision: 3,
+    enabled: false
+  }]);
 });
 
 test('destroy restores click-through and only a newly constructed window advances host generation', async () => {
@@ -432,6 +571,54 @@ test('Fabric readiness failure stays isolated from the passive mirror and is not
   assert.equal(host.getDrawingCapability().fabricReady, false);
   assert.equal(getReadCount(), 1);
   assert.equal(events.some(([name, value]) => name === 'setIgnoreMouseEvents' && value === false), false);
+});
+
+test('renderer crash invalidates only its current overlay generation and recovers click-through', async () => {
+  const { host, events, windows, getReadCount } = createDrawingHostHarness();
+  const first = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const firstGeneration = first.drawingCapability.hostGeneration;
+  await host.setDrawingInput(makeDrawingInput(firstGeneration, { videoGeneration: 2, inputRevision: 1 }));
+  await host.setDrawingInput(makeDrawingInput(firstGeneration, {
+    videoGeneration: 2,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-before-crash',
+      stableVideoIdentity: 'video-before-crash',
+      targetFrame: 2,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  const crashedWindow = windows[0];
+  events.length = 0;
+
+  crashedWindow.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+
+  assert.deepEqual(events[0], ['setIgnoreMouseEvents', true, undefined]);
+  assert.equal(host.getDrawingCapability().hostGeneration, firstGeneration);
+  assert.equal(host.getDrawingCapability().passiveReady, false);
+  assert.equal(host.getDrawingCapability().fabricReady, false);
+  assert.equal((await host.getDrawingDiagnostics()).success, false);
+
+  const recovered = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  assert.equal(recovered.success, true);
+  assert.equal(recovered.drawingCapability.hostGeneration, firstGeneration);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(firstGeneration, {
+    videoGeneration: 3,
+    inputRevision: 1
+  }))).success, true);
+  assert.equal(getReadCount(), 2, 'the recovered renderer document receives one fresh bundle injection');
+
+  host.destroy();
+  const replacement = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const eventCountBeforeStaleCrash = events.length;
+  crashedWindow.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  assert.equal(events.length, eventCountBeforeStaleCrash);
+  assert.equal(host.getDrawingCapability().hostGeneration, replacement.drawingCapability.hostGeneration);
+  assert.equal(host.getDrawingCapability().passiveReady, true);
 });
 
 test('normalizes overlay state to bounded serializable fields', () => {
