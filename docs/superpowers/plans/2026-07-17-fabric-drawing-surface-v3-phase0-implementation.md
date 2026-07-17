@@ -31,8 +31,8 @@ const cases = [
   [{ argv: [], env: {} }, false],
   [{ argv: ['--fabric-drawing-pilot'], env: {} }, true],
   [{ argv: [], env: { BAEFRAME_FABRIC_DRAWING_PILOT: '1' } }, true],
-  [{ argv: ['--fabric-drawing-pilot'], env: { BAEFRAME_DISABLE_FABRIC_DRAWING: '1' } }, false],
-  [{ argv: [], env: { BAEFRAME_FABRIC_DRAWING_PILOT: '1', BAEFRAME_DISABLE_FABRIC_DRAWING: 'true' } }, false]
+  [{ argv: ['--fabric-drawing-pilot'], env: { BAEFRAME_DISABLE_FABRIC_DRAWING_PILOT: '1' } }, false],
+  [{ argv: [], env: { BAEFRAME_FABRIC_DRAWING_PILOT: '1', BAEFRAME_DISABLE_FABRIC_DRAWING_PILOT: 'true' } }, false]
 ];
 ```
 
@@ -50,7 +50,7 @@ Expected: `Cannot find module '../../main/experiment-flags'` 또는 구현되지
 
 ```js
 function resolveFabricDrawingPilot({ argv = process.argv, env = process.env } = {}) {
-  const disabled = argv.includes('--disable-fabric-drawing') || isTruthy(env.BAEFRAME_DISABLE_FABRIC_DRAWING);
+  const disabled = argv.includes('--disable-fabric-drawing-pilot') || isTruthy(env.BAEFRAME_DISABLE_FABRIC_DRAWING_PILOT);
   if (disabled) return Object.freeze({ enabled: false, source: 'kill-switch' });
   if (argv.includes('--fabric-drawing-pilot')) return Object.freeze({ enabled: true, source: 'cli' });
   if (isTruthy(env.BAEFRAME_FABRIC_DRAWING_PILOT)) return Object.freeze({ enabled: true, source: 'env' });
