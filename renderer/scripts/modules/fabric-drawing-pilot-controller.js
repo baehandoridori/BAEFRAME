@@ -403,6 +403,21 @@ export function createFabricDrawingPilotController(options = {}) {
     const context = contextSnapshot(overrides);
     const loadToken = normalizeLoadToken(confirmation);
     if (pendingLoadToken !== null && loadToken !== pendingLoadToken) return false;
+    const identity = String(context.stableVideoIdentity || '');
+    const repeatsPreviousWithoutExpectedToken = videoChangePending &&
+      pendingLoadToken === null &&
+      videoGeneration > 0 &&
+      identity === confirmedVideoIdentity &&
+      (loadToken === null || loadToken === confirmedLoadToken);
+    if (repeatsPreviousWithoutExpectedToken) return false;
+    if (inFlightReadyReconciliation &&
+        inFlightReadyReconciliation.epoch === videoChangeEpoch &&
+        inFlightReadyReconciliation.loadToken === loadToken) {
+      if (validPilotContext(context) && identity === inFlightReadyReconciliation.identity) {
+        return inFlightReadyReconciliation.promise;
+      }
+      return false;
+    }
     if (!validPilotContext(context)) {
       if (!videoChangePending) return false;
       if (pendingLoadToken === null && loadToken !== null) {
@@ -411,20 +426,7 @@ export function createFabricDrawingPilotController(options = {}) {
       return cancelVideoChange(loadToken);
     }
 
-    const identity = String(context.stableVideoIdentity || '');
     if (!identity) return false;
-    if (inFlightReadyReconciliation &&
-        inFlightReadyReconciliation.epoch === videoChangeEpoch &&
-        inFlightReadyReconciliation.loadToken === loadToken &&
-        inFlightReadyReconciliation.identity === identity) {
-      return inFlightReadyReconciliation.promise;
-    }
-    const repeatsPreviousWithoutExpectedToken = videoChangePending &&
-      pendingLoadToken === null &&
-      videoGeneration > 0 &&
-      identity === confirmedVideoIdentity &&
-      (loadToken === null || loadToken === confirmedLoadToken);
-    if (repeatsPreviousWithoutExpectedToken) return false;
     const duplicate = !videoChangePending &&
       videoGeneration > 0 &&
       identity === confirmedVideoIdentity &&

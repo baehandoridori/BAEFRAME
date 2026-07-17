@@ -580,6 +580,32 @@ test('a fresh unsupported confirmation can settle a tokenless pending transition
   assert.equal(snapshot.sessionId, null);
 });
 
+test('a late unsupported confirmation from the prior video cannot cancel a tokenless transition', async () => {
+  const harness = createHarness();
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  await harness.controller.beforeVideoChange();
+  const inputCountAfterDisable = harness.calls.input.length;
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-a',
+    stableVideoIdentity: 'video-a',
+    isMpvActive: false
+  }), false);
+  assert.equal(harness.controller.getState(), 'recovering');
+  assert.equal(harness.calls.input.length, inputCountAfterDisable);
+  assert.equal((await harness.controller.diagnostics()).resumeRequested, true);
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'video-b',
+    isMpvActive: true,
+    targetFrame: 67
+  }), true);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.equal(harness.calls.input.at(-1).session.stableVideoIdentity, 'video-b');
+});
+
 test('an unsupported confirmation without a pending load cannot silently drop active input', async () => {
   const harness = createHarness();
   await preparePassive(harness, { loadToken: 'load-a' });
@@ -731,6 +757,46 @@ test('duplicate ready confirmations share one in-flight reconciliation', async (
   assert.deepEqual(harness.calls.input
     .filter(request => request.videoGeneration >= 2)
     .map(request => request.enabled), [false, true]);
+});
+
+test('the same pending load token rejects a conflicting ready identity', async () => {
+  const heldReconciliation = deferred();
+  let holdGenerationTwoDisable = true;
+  const harness = createHarness({
+    onInput(request) {
+      if (holdGenerationTwoDisable && request.videoGeneration === 2 && request.enabled === false) {
+        holdGenerationTwoDisable = false;
+        return heldReconciliation.promise;
+      }
+      return { success: true, accepted: true, enabled: request.enabled };
+    }
+  });
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  await harness.controller.beforeVideoChange('load-b');
+
+  const firstReady = harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'video-b',
+    targetFrame: 45
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'video-c',
+    targetFrame: 90
+  }), false);
+  assert.equal((await harness.controller.diagnostics()).videoGeneration, 2);
+  assert.deepEqual(harness.calls.input
+    .filter(request => request.videoGeneration >= 2)
+    .map(request => request.enabled), [false]);
+
+  heldReconciliation.resolve({ success: true, accepted: true, enabled: false });
+  assert.equal(await firstReady, true);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.equal(harness.calls.input.at(-1).session.stableVideoIdentity, 'video-b');
+  assert.equal((await harness.controller.diagnostics()).videoGeneration, 2);
 });
 
 test('a tokenless transition rejects the prior identity until a fresh load token arrives', async () => {
