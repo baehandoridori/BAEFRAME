@@ -5925,8 +5925,40 @@ async function initApp() {
     return videoPlayer.engine !== 'html5' && document.body.classList.contains('mpv-pilot-mode');
   }
 
-  function getFabricDrawingPilotContext() {
+  function getFabricDrawingPilotViewport() {
     const renderArea = getVideoRenderArea();
+    if (!renderArea) return null;
+    const viewport = {
+      canvasRect: {
+        left: renderArea.left,
+        top: renderArea.top,
+        width: renderArea.width,
+        height: renderArea.height
+      },
+      scale: Math.max(0.01, Number(state.videoZoom) / 100 || 1),
+      panX: Number(state.videoPanX) || 0,
+      panY: Number(state.videoPanY) || 0,
+      devicePixelRatio: window.devicePixelRatio || 1
+    };
+    const signature = [
+      viewport.canvasRect.left,
+      viewport.canvasRect.top,
+      viewport.canvasRect.width,
+      viewport.canvasRect.height,
+      viewport.scale,
+      viewport.panX,
+      viewport.panY,
+      viewport.devicePixelRatio
+    ].join('|');
+    if (signature !== fabricDrawingViewportSignature) {
+      fabricDrawingViewportSignature = signature;
+      fabricDrawingViewportRevision += 1;
+    }
+    return { ...viewport, revision: fabricDrawingViewportRevision };
+  }
+
+  function getFabricDrawingPilotContext() {
+    const viewport = getFabricDrawingPilotViewport();
     return {
       isMpvActive: isMpvPilotPlaybackActive(),
       isAudio: state.isAudioMode,
@@ -5934,15 +5966,16 @@ async function initApp() {
       targetFrame: videoPlayer.currentFrame,
       sourceWidth: videoPlayer.videoWidth,
       sourceHeight: videoPlayer.videoHeight,
-      canvasRect: renderArea
-        ? {
-          left: renderArea.left,
-          top: renderArea.top,
-          width: renderArea.width,
-          height: renderArea.height
-        }
+      canvasRect: viewport?.canvasRect || null,
+      viewportRevision: viewport?.revision ?? 0,
+      viewportTransform: viewport
+        ? { scale: viewport.scale, panX: viewport.panX, panY: viewport.panY }
         : null
     };
+  }
+
+  function shouldSuppressLegacyDrawingForFabricPilot() {
+    return fabricDrawingPilotController.isEnabled() && isMpvPilotPlaybackActive();
   }
 
   function isFabricDrawingPilotControllerEngaged() {
@@ -7014,6 +7047,8 @@ async function initApp() {
   let mpvVideoTransformSyncPending = false;
   let fabricDrawingPilotFailureToastShown = false;
   let fabricDrawingPilotUiEngaged = false;
+  let fabricDrawingViewportRevision = 0;
+  let fabricDrawingViewportSignature = '';
   const mpvOverlayLifecycle = createMpvOverlayLifecycle({
     onWarning: (error) => {
       log.warn('mpv 오버레이 동기화 실패, 호스트 복구를 시도합니다.', {
@@ -7026,7 +7061,10 @@ async function initApp() {
     getContext: getFabricDrawingPilotContext,
     onStateChange: handleFabricDrawingPilotStateChange
   });
-  const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize();
+  const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize().then(enabled => {
+    document.body.classList.toggle('fabric-drawing-pilot-enabled', enabled);
+    return enabled;
+  });
   const mpvTeardownGate = createMpvTeardownGate();
   const mpvPilotOwnershipGate = createMpvPilotOwnershipGate({
     teardownGate: mpvTeardownGate,
@@ -8018,13 +8056,15 @@ async function initApp() {
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
     if (!wrapperRect || !canvasRect) return null;
+    const suppressLegacyDrawing = shouldSuppressLegacyDrawingForFabricPilot();
 
     return {
-      drawingDataUrl: isFabricDrawingPilotEngaged() ? '' : getCompositedDrawingOverlayDataUrl(),
+      drawingDataUrl: suppressLegacyDrawing ? '' : getCompositedDrawingOverlayDataUrl(),
       // 피드백 32: 어니언 스킨이 꺼져 있으면 전체 해상도 투명 PNG 인코딩을 생략한다.
-      onionDataUrl: drawingManager.onionSkin?.enabled
+      onionDataUrl: !suppressLegacyDrawing && drawingManager.onionSkin?.enabled
         ? getCanvasOverlayDataUrl(elements.onionSkinCanvas)
         : '',
+      fabricViewport: getFabricDrawingPilotViewport(),
       markerHtml: serializeMpvOverlayMarkerHtml(),
       tooltipHtml: serializeMpvOverlayTooltipHtml(),
       htmlOverlayHtml: serializeMpvOverlayHtml(),
@@ -9481,6 +9521,12 @@ async function initApp() {
     elements.btnDrawMode?.setAttribute('aria-busy', String(preparing));
   }
 
+  function notifyFabricDrawingPilotFailure() {
+    if (fabricDrawingPilotFailureToastShown) return;
+    fabricDrawingPilotFailureToastShown = true;
+    showToast('새 드로잉 화면을 준비하지 못했습니다.', 'error');
+  }
+
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
     const active = nextState === 'active';
     const preparing = nextState === 'preparing';
@@ -9488,7 +9534,12 @@ async function initApp() {
     const engaged = isMpvPilotPlaybackActive() &&
       (active || preparing || nextState === 'recovering');
     const wasEngaged = fabricDrawingPilotUiEngaged;
-    if (!engaged && !wasEngaged) return;
+    scheduleMpvOverlayStateSync({ force: true });
+    if (!engaged && !wasEngaged) {
+      if (nextState === 'failed') notifyFabricDrawingPilotFailure();
+      else fabricDrawingPilotFailureToastShown = false;
+      return;
+    }
     fabricDrawingPilotUiEngaged = engaged;
 
     document.body.classList.toggle('fabric-drawing-pilot-engaged', engaged);
@@ -9498,10 +9549,7 @@ async function initApp() {
     elements.btnDrawMode?.classList.toggle('active', active);
 
     if (nextState === 'failed') {
-      if (!fabricDrawingPilotFailureToastShown) {
-        fabricDrawingPilotFailureToastShown = true;
-        showToast('새 드로잉 화면을 준비하지 못했습니다.', 'error');
-      }
+      notifyFabricDrawingPilotFailure();
       return;
     }
     fabricDrawingPilotFailureToastShown = false;

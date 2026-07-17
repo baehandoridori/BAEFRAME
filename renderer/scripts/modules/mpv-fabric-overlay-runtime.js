@@ -23,6 +23,44 @@ function finiteNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function normalizeViewportTransform(value = {}) {
+  const scale = finiteNumber(value.scale, 1);
+  return {
+    scale: scale > 0 ? scale : 1,
+    panX: finiteNumber(value.panX, 0),
+    panY: finiteNumber(value.panY, 0)
+  };
+}
+
+function resolveEffectiveCanvasRect(canvasRect = {}, viewportTransform = {}) {
+  const left = finiteNumber(canvasRect.left, 0);
+  const top = finiteNumber(canvasRect.top, 0);
+  const width = Math.max(0, finiteNumber(canvasRect.width, 0));
+  const height = Math.max(0, finiteNumber(canvasRect.height, 0));
+  const { scale, panX, panY } = normalizeViewportTransform(viewportTransform);
+  return {
+    left: left + ((1 - scale) * width) / 2 + scale * panX,
+    top: top + ((1 - scale) * height) / 2 + scale * panY,
+    width: width * scale,
+    height: height * scale
+  };
+}
+
+function mapClientPointToSource(point = {}, canvasRect = {}, viewportTransform = {}, source = {}) {
+  const effectiveRect = resolveEffectiveCanvasRect(canvasRect, viewportTransform);
+  const sourceWidth = Math.max(0, finiteNumber(source.width, 0));
+  const sourceHeight = Math.max(0, finiteNumber(source.height, 0));
+  if (effectiveRect.width <= 0 || effectiveRect.height <= 0 || sourceWidth <= 0 || sourceHeight <= 0) {
+    return null;
+  }
+  const x = (finiteNumber(point.clientX) - effectiveRect.left) * sourceWidth / effectiveRect.width;
+  const y = (finiteNumber(point.clientY) - effectiveRect.top) * sourceHeight / effectiveRect.height;
+  return {
+    x: Math.min(sourceWidth, Math.max(0, x)),
+    y: Math.min(sourceHeight, Math.max(0, y))
+  };
+}
+
 function positiveInteger(value, fallback) {
   const number = Number(value);
   return Number.isInteger(number) && number > 0 ? number : fallback;
@@ -482,6 +520,7 @@ function createFabricOverlayRuntime(options = {}) {
   let fabricModule = null;
   let root = null;
   let container = null;
+  let viewportElement = null;
   let canvasElement = null;
   let toolbar = null;
   let badge = null;
@@ -496,6 +535,8 @@ function createFabricOverlayRuntime(options = {}) {
   let longTaskObserver = null;
   let localSequence = 0;
   let lastError = null;
+  let appliedSourceWidth = null;
+  let appliedSourceHeight = null;
 
   function resolveFabric() {
     if (!fabricModule) fabricModule = options.fabric || require('fabric');
@@ -504,13 +545,13 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function addDomListener(target, type, listener, listenerOptions) {
-    target?.addEventListener?.(type, listener, listenerOptions);
     domListeners.push({ target, type, listener, listenerOptions });
+    target?.addEventListener?.(type, listener, listenerOptions);
   }
 
   function addFabricListener(type, listener) {
-    fabricCanvas.on(type, listener);
     fabricListeners.push({ type, listener });
+    fabricCanvas.on(type, listener);
   }
 
   function setStyles(element, styles) {
@@ -649,13 +690,16 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function toSourceSample(event) {
-    const rect = currentSession?.canvasRect;
-    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
-    const x = (finiteNumber(event.clientX) - rect.left) * currentSession.sourceWidth / rect.width;
-    const y = (finiteNumber(event.clientY) - rect.top) * currentSession.sourceHeight / rect.height;
+    if (!currentSession) return null;
+    const point = mapClientPointToSource(
+      event,
+      currentSession.canvasRect,
+      currentSession.viewportTransform,
+      { width: currentSession.sourceWidth, height: currentSession.sourceHeight }
+    );
+    if (!point) return null;
     return {
-      x: Math.min(currentSession.sourceWidth, Math.max(0, x)),
-      y: Math.min(currentSession.sourceHeight, Math.max(0, y)),
+      ...point,
       pressure: normalizePressure(event.pressure, event.pointerType),
       pointerType: event.pointerType || 'mouse',
       time: finiteNumber(event.timeStamp, now())
@@ -856,21 +900,29 @@ function createFabricOverlayRuntime(options = {}) {
 
   function applyViewport(session) {
     const rect = session.canvasRect;
-    fabricCanvas.setDimensions(
-      { width: session.sourceWidth, height: session.sourceHeight },
-      { backstoreOnly: true }
-    );
+    if (session.sourceWidth !== appliedSourceWidth || session.sourceHeight !== appliedSourceHeight) {
+      fabricCanvas.setDimensions(
+        { width: session.sourceWidth, height: session.sourceHeight },
+        { backstoreOnly: true }
+      );
+      appliedSourceWidth = session.sourceWidth;
+      appliedSourceHeight = session.sourceHeight;
+    }
     fabricCanvas.setDimensions(
       { width: rect.width, height: rect.height },
       { cssOnly: true }
     );
-    setStyles(container, {
+    const viewportTransform = normalizeViewportTransform(session.viewportTransform);
+    setStyles(viewportElement, {
       left: `${rect.left}px`,
       top: `${rect.top}px`,
       width: `${rect.width}px`,
-      height: `${rect.height}px`
+      height: `${rect.height}px`,
+      transform: `scale(${viewportTransform.scale}) translate(${viewportTransform.panX}px, ${viewportTransform.panY}px)`,
+      transformOrigin: 'center center'
     });
     fabricCanvas.calcOffset();
+    fabricCanvas.requestRenderAll();
   }
 
   function validateSession(session) {
@@ -896,6 +948,44 @@ function createFabricOverlayRuntime(options = {}) {
     if (badge) badge.textContent = '새 드로잉 시험판 · 저장 안 됨 · 시험 프레임 -';
   }
 
+  function releaseSurfaceResources() {
+    for (const { target, type, listener, listenerOptions } of domListeners.splice(0)) {
+      try {
+        target?.removeEventListener?.(type, listener, listenerOptions);
+      } catch (_error) { /* best-effort prepare rollback */ }
+    }
+    for (const { type, listener } of fabricListeners.splice(0)) {
+      try {
+        fabricCanvas?.off?.(type, listener);
+      } catch (_error) { /* best-effort prepare rollback */ }
+    }
+    try {
+      longTaskObserver?.disconnect?.();
+    } catch (_error) { /* best-effort prepare rollback */ }
+    longTaskObserver = null;
+    try {
+      fabricCanvas?.dispose?.();
+    } catch (_error) { /* best-effort prepare rollback */ }
+    try {
+      container?.remove?.();
+    } catch (_error) { /* best-effort prepare rollback */ }
+    toolButtons.clear();
+    fabricCanvas = null;
+    appliedSourceWidth = null;
+    appliedSourceHeight = null;
+    activeStroke = null;
+    transformStart = null;
+    inputEnabled = false;
+    currentSession = null;
+    viewportElement = null;
+    canvasElement = null;
+    toolbar = null;
+    badge = null;
+    container = null;
+    root = null;
+    prepared = false;
+  }
+
   function prepare(nextRoot) {
     if (destroyed) return { prepared: false, reason: 'destroyed' };
     if (prepared) {
@@ -912,7 +1002,17 @@ function createFabricOverlayRuntime(options = {}) {
       root = nextRoot;
       container = documentRef.createElement('div');
       container.className = 'mpv-fabric-overlay-surface';
-      setStyles(container, { position: 'absolute', pointerEvents: 'none', zIndex: '40' });
+      setStyles(container, {
+        position: 'absolute',
+        inset: '0',
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: '40'
+      });
+      viewportElement = documentRef.createElement('div');
+      viewportElement.className = 'mpv-fabric-pilot-viewport';
+      setStyles(viewportElement, { position: 'absolute', pointerEvents: 'none' });
       canvasElement = documentRef.createElement('canvas');
       canvasElement.className = 'mpv-fabric-delta-canvas';
       toolbar = documentRef.createElement('div');
@@ -939,7 +1039,8 @@ function createFabricOverlayRuntime(options = {}) {
       toolbar.appendChild(deleteButton);
       toolbar.appendChild(clearButton);
       toolbar.appendChild(badge);
-      container.appendChild(canvasElement);
+      viewportElement.appendChild(canvasElement);
+      container.appendChild(viewportElement);
       container.appendChild(toolbar);
       root.appendChild(container);
 
@@ -967,6 +1068,7 @@ function createFabricOverlayRuntime(options = {}) {
       prepared = true;
       return { prepared: true, reused: false };
     } catch (error) {
+      releaseSurfaceResources();
       lastError = error.message;
       metrics.recordSurfaceError();
       return { prepared: false, reason: 'fabric-prepare-failed', error: error.message };
@@ -989,9 +1091,10 @@ function createFabricOverlayRuntime(options = {}) {
     tokenState.inputRevision = Number(request.inputRevision);
 
     if (!request.enabled) {
+      const lastTool = currentSession?.tool === 'select' ? 'select' : 'brush';
       disableInput();
       metrics.recordToggleLatency(now() - startedAt);
-      return { accepted: true, enabled: false };
+      return { accepted: true, enabled: false, tool: lastTool };
     }
 
     const session = {
@@ -1000,6 +1103,8 @@ function createFabricOverlayRuntime(options = {}) {
       sourceWidth: Number(request.session.sourceWidth),
       sourceHeight: Number(request.session.sourceHeight),
       videoGeneration: Number(request.videoGeneration),
+      viewportRevision: Math.max(-1, Math.trunc(Number(request.session.viewportRevision) || 0)),
+      viewportTransform: normalizeViewportTransform(request.session.viewportTransform),
       tool: request.session.tool === 'select' ? 'select' : 'brush'
     };
     const activation = sceneStore.activateSession(session);
@@ -1016,6 +1121,37 @@ function createFabricOverlayRuntime(options = {}) {
     badge.textContent = `새 드로잉 시험판 · 저장 안 됨 · 시험 프레임 ${session.targetFrame}`;
     metrics.recordToggleLatency(now() - startedAt);
     return { accepted: true, enabled: true, restored: activation.restored };
+  }
+
+  function updateViewport(command = {}) {
+    if (!inputEnabled || !currentSession) return { accepted: false, reason: 'input-disabled' };
+    const revision = Number(command.revision);
+    const rect = command.canvasRect;
+    if (!Number.isInteger(revision) || revision < 0 ||
+        !rect || finiteNumber(rect.width) <= 0 || finiteNumber(rect.height) <= 0) {
+      return { accepted: false, reason: 'invalid-viewport' };
+    }
+    if (revision <= currentSession.viewportRevision) {
+      return { accepted: false, reason: 'stale-viewport' };
+    }
+
+    cancelActiveStroke();
+    if (transformStart !== null) {
+      renderActiveScene();
+      transformStart = null;
+      fabricCanvas.discardActiveObject();
+      sceneStore.selectObjects([]);
+    }
+    currentSession.canvasRect = {
+      left: finiteNumber(rect.left),
+      top: finiteNumber(rect.top),
+      width: finiteNumber(rect.width),
+      height: finiteNumber(rect.height)
+    };
+    currentSession.viewportTransform = normalizeViewportTransform(command);
+    currentSession.viewportRevision = revision;
+    applyViewport(currentSession);
+    return { accepted: true, revision };
   }
 
   function updateDrawingTool(command = {}) {
@@ -1096,21 +1232,9 @@ function createFabricOverlayRuntime(options = {}) {
   function destroy() {
     if (destroyed) return { destroyed: true, reused: true };
     disableInput();
-    for (const { target, type, listener, listenerOptions } of domListeners.splice(0)) {
-      target?.removeEventListener?.(type, listener, listenerOptions);
-    }
-    for (const { type, listener } of fabricListeners.splice(0)) fabricCanvas?.off?.(type, listener);
-    longTaskObserver?.disconnect?.();
-    longTaskObserver = null;
-    fabricCanvas?.dispose?.();
-    container?.remove?.();
+    releaseSurfaceResources();
     sceneStore.destroy();
     actionDeduper.clear();
-    toolButtons.clear();
-    fabricCanvas = null;
-    container = null;
-    root = null;
-    prepared = false;
     destroyed = true;
     return { destroyed: true, reused: false };
   }
@@ -1119,6 +1243,7 @@ function createFabricOverlayRuntime(options = {}) {
     prepare,
     setDrawingInput,
     updateDrawingTool,
+    updateViewport,
     applyDrawingAction,
     getDiagnostics,
     destroy
@@ -1138,5 +1263,7 @@ module.exports = {
   normalizePressure,
   createStrokePathData,
   createActionDeduper,
-  shouldAcceptInputRequest
+  shouldAcceptInputRequest,
+  resolveEffectiveCanvasRect,
+  mapClientPointToSource
 };

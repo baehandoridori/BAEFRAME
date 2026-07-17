@@ -1179,4 +1179,14 @@ test('package exposes focused Fabric pilot test and diagnostics commands', () =>
     appPackage.scripts['diagnostics:fabric-drawing-pilot'],
     'node scripts/run-fabric-drawing-pilot-diagnostics.js'
   );
+  assert.equal(
+    appPackage.scripts.prebuild,
+    'npm run bundle:mpv-fabric-overlay',
+    'npm run build must regenerate the Fabric browser bundle before packaging'
+  );
+  assert.equal(
+    appPackage.scripts['prebuild:installer'],
+    'npm run bundle:mpv-fabric-overlay',
+    'npm run build:installer must regenerate the Fabric browser bundle before packaging'
+  );
 });

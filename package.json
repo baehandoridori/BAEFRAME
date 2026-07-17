@@ -6,7 +6,9 @@
   "scripts": {
     "start": "electron .",
     "dev": "cross-env NODE_ENV=development electron .",
+    "prebuild": "npm run bundle:mpv-fabric-overlay",
     "build": "electron-builder --dir",
+    "prebuild:installer": "npm run bundle:mpv-fabric-overlay",
     "build:installer": "electron-builder",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

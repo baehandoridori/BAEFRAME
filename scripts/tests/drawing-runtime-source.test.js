@@ -139,7 +139,7 @@ test('drawing layer rendering uses static below and above canvases around the ac
   assert.match(appSource, /layersBelowCanvas: elements\.layersBelowCanvas/);
   assert.match(appSource, /layersAboveCanvas: elements\.layersAboveCanvas/);
   assert.match(appSource, /getCompositedDrawingOverlayDataUrl\(\)/);
-  assert.match(appSource, /drawingDataUrl: isFabricDrawingPilotEngaged\(\) \? '' : getCompositedDrawingOverlayDataUrl\(\)/);
+  assert.match(appSource, /drawingDataUrl: suppressLegacyDrawing \? '' : getCompositedDrawingOverlayDataUrl\(\)/);
 
   assert.match(drawingManagerSource, /partitionDrawingLayersForActive\(layers = \[\], activeLayerId\)/);
   assert.match(drawingManagerSource, /this\.layersBelowCanvas = options\.layersBelowCanvas/);

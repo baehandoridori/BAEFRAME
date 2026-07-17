@@ -566,6 +566,9 @@ const OVERLAY_HTML = String.raw`
       const markerMirror = document.getElementById('markerMirror');
       const tooltipMirror = document.getElementById('tooltipMirror');
       const toastMirror = document.getElementById('toastMirror');
+      if (nextState.fabricViewport !== undefined) {
+        window.__mpvFabricOverlay?.updateViewport?.(nextState.fabricViewport);
+      }
       // 32 잔존: 필드가 생략(undefined)되면 이전 DOM을 유지한다 — 무-diff 통째 재주입이
       // 재생 중 프레임마다 미러를 파괴·재생성해 등장/확대 애니메이션을 반복 재생하던 문제의 수정.
       if (nextState.onionDataUrl !== undefined) applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
@@ -651,6 +654,29 @@ function normalizeCompositionLayers(layers) {
     .slice(0, 24);
 }
 
+function normalizeFabricViewport(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const canvasRect = value.canvasRect && typeof value.canvasRect === 'object'
+    ? value.canvasRect
+    : {};
+  const rawRevision = normalizeFloat(value.revision, 0);
+  const scale = normalizeFloat(value.scale, 1);
+  const devicePixelRatio = normalizeFloat(value.devicePixelRatio, 1);
+  return {
+    revision: Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(rawRevision))),
+    canvasRect: {
+      left: normalizeFloat(canvasRect.left, 0),
+      top: normalizeFloat(canvasRect.top, 0),
+      width: Math.max(0, normalizeFloat(canvasRect.width, 0)),
+      height: Math.max(0, normalizeFloat(canvasRect.height, 0))
+    },
+    scale: scale > 0 ? scale : 1,
+    panX: normalizeFloat(value.panX, 0),
+    panY: normalizeFloat(value.panY, 0),
+    devicePixelRatio: devicePixelRatio > 0 ? devicePixelRatio : 1
+  };
+}
+
 function normalizeOverlayState(state = {}) {
   const canvas = state.canvas || {};
   return {
@@ -662,6 +688,7 @@ function normalizeOverlayState(state = {}) {
     toastHtml: state.toastHtml === undefined ? undefined : (typeof state.toastHtml === 'string' ? state.toastHtml : ''),
     commentPlayheadLeft: typeof state.commentPlayheadLeft === 'string' ? state.commentPlayheadLeft : '',
     remoteCursorHtml: typeof state.remoteCursorHtml === 'string' ? state.remoteCursorHtml : '',
+    fabricViewport: normalizeFabricViewport(state.fabricViewport),
     compositionLayers: normalizeCompositionLayers(state.compositionLayers),
     markerTransform: typeof state.markerTransform === 'string' ? state.markerTransform : '',
     markerTransformOrigin: typeof state.markerTransformOrigin === 'string'
@@ -674,6 +701,53 @@ function normalizeOverlayState(state = {}) {
       height: Math.max(0, normalizeNumber(canvas.height, 0))
     }
   };
+}
+
+const FORWARDED_KEY_ALIASES = Object.freeze({
+  ' ': 'Space',
+  Spacebar: 'Space',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  Esc: 'Escape'
+});
+const FORWARDED_NAMED_KEYS = new Set([
+  'Backspace',
+  'Delete',
+  'Insert',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'Escape'
+]);
+
+function createForwardedKeyboardInput(input = {}) {
+  if (input.type !== 'keyDown' && input.type !== 'keyUp') return null;
+  const key = typeof input.key === 'string' ? input.key : '';
+  const code = typeof input.code === 'string' ? input.code : '';
+  if (input.isComposing === true ||
+      ['Process', 'Dead', 'Unidentified'].includes(key) ||
+      ['Process', 'Dead'].includes(code) ||
+      key === 'Tab' || key === 'Enter') {
+    return null;
+  }
+
+  let keyCode = FORWARDED_KEY_ALIASES[key] || '';
+  if (!keyCode && /^[\x21-\x7e]$/.test(key)) keyCode = key;
+  if (!keyCode && (FORWARDED_NAMED_KEYS.has(key) || /^F(?:[1-9]|1\d|2[0-4])$/.test(key))) {
+    keyCode = key;
+  }
+  if (!keyCode) return null;
+
+  const modifiers = [];
+  if (input.shift === true) modifiers.push('shift');
+  if (input.control === true) modifiers.push('control');
+  if (input.alt === true) modifiers.push('alt');
+  if (input.meta === true) modifiers.push('meta');
+  if (input.isAutoRepeat === true) modifiers.push('isAutoRepeat');
+  return { type: input.type, keyCode, modifiers };
 }
 
 function finiteDiagnosticNumber(value, fallback = 0) {
@@ -747,6 +821,17 @@ class MPVOverlayHost {
     this.fabricPreparationPromise = null;
     this.fabricPreparationResult = null;
     this.fabricLastError = null;
+    this.now = typeof options.now === 'function' ? options.now : Date.now;
+    const retryBaseMs = Number(options.fabricRetryBaseMs);
+    const retryMaxMs = Number(options.fabricRetryMaxMs);
+    this.fabricRetryBaseMs = Number.isFinite(retryBaseMs) && retryBaseMs >= 0
+      ? retryBaseMs
+      : 250;
+    this.fabricRetryMaxMs = Number.isFinite(retryMaxMs) && retryMaxMs >= this.fabricRetryBaseMs
+      ? retryMaxMs
+      : Math.max(2000, this.fabricRetryBaseMs);
+    this.fabricFailureCount = 0;
+    this.fabricRetryAfter = 0;
     this.fabricBundlePath = options.fabricBundlePath || DEFAULT_FABRIC_BUNDLE_PATH;
     this.readFile = options.readFile || fs.promises.readFile.bind(fs.promises);
     this.currentVideoGeneration = -1;
@@ -771,9 +856,6 @@ class MPVOverlayHost {
   async setDrawingInput() {
     const request = arguments[0] || {};
     const hostWindow = this.window;
-    if (request.enabled === false) {
-      hostWindow?.setIgnoreMouseEvents?.(true);
-    }
     if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded) {
       return { success: false, error: 'mpv overlay host is not ready' };
     }
@@ -793,6 +875,9 @@ class MPVOverlayHost {
     if (!request.enabled && videoGeneration < this.currentVideoGeneration) {
       return { success: false, accepted: false, error: 'stale drawing video generation' };
     }
+    if (!request.enabled) {
+      this._setNativeDrawingInput(hostWindow, false);
+    }
 
     this.currentVideoGeneration = videoGeneration;
     this.currentInputRevision = inputRevision;
@@ -800,6 +885,12 @@ class MPVOverlayHost {
     if (!request.enabled) {
       this.activeSessionId = null;
       this.currentToolRevision = -1;
+    }
+
+    // 준비된 Fabric surface가 없다면 disable은 native click-through만 보장하면 된다.
+    // 영구적인 bundle 오류 상태에서 B-off가 또 read/injection을 시작하지 않게 한다.
+    if (!request.enabled && this.fabricReadyGeneration !== this.hostGeneration) {
+      return { success: true, accepted: true, enabled: false, fabricReady: false };
     }
 
     const prepared = await this._ensureFabricRuntime();
@@ -817,7 +908,7 @@ class MPVOverlayHost {
     try {
       runtimeResult = await this._executeFabricMethod('setDrawingInput', request);
     } catch (error) {
-      hostWindow.setIgnoreMouseEvents?.(true);
+      this._setNativeDrawingInput(hostWindow, false);
       this.fabricLastError = error.message;
       return { success: false, accepted: false, enabled: false, error: error.message };
     }
@@ -826,17 +917,21 @@ class MPVOverlayHost {
     if (request.enabled && runtimeResult?.accepted === true && stillCurrent) {
       this.activeSessionId = request.session?.sessionId || null;
       this.currentToolRevision = 0;
-      hostWindow.setIgnoreMouseEvents?.(false);
+      this._setNativeDrawingInput(hostWindow, true);
     } else if (request.enabled && runtimeResult?.accepted === true && !stillCurrent) {
       await this._compensateStaleDrawingEnable(hostWindow, hostGeneration);
     }
 
-    return {
+    const response = {
       success: runtimeResult?.accepted === true && (!request.enabled || stillCurrent),
       accepted: runtimeResult?.accepted === true,
       enabled: request.enabled && runtimeResult?.accepted === true && stillCurrent,
       restored: runtimeResult?.restored === true
     };
+    if (runtimeResult?.tool === 'brush' || runtimeResult?.tool === 'select') {
+      response.tool = runtimeResult.tool;
+    }
+    return response;
   }
 
   async updateDrawingTool(request = {}) {
@@ -966,9 +1061,18 @@ class MPVOverlayHost {
     if (this.fabricAttemptGeneration === hostGeneration && this.fabricPreparationPromise) {
       return this.fabricPreparationPromise;
     }
+    const currentTime = this.now();
+    if (this.fabricAttemptGeneration === hostGeneration &&
+        this.fabricPreparationResult?.success === false &&
+        currentTime < this.fabricRetryAfter) {
+      return {
+        ...this.fabricPreparationResult,
+        retryAfterMs: Math.max(0, this.fabricRetryAfter - currentTime)
+      };
+    }
 
     this.fabricAttemptGeneration = hostGeneration;
-    this.fabricPreparationPromise = (async () => {
+    const preparationPromise = (async () => {
       try {
         const bundleSource = await this.readFile(this.fabricBundlePath, 'utf8');
         if (!this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
@@ -989,19 +1093,57 @@ class MPVOverlayHost {
         this.fabricLastError = null;
         return { success: true, reused: preparation.reused === true };
       } catch (error) {
-        this.fabricLastError = error.message;
-        this.logger.debug('Fabric drawing runtime prepare failed', { error: error.message });
+        if (this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
+          this.fabricLastError = error.message;
+          this.logger.debug('Fabric drawing runtime prepare failed', { error: error.message });
+        }
         return { success: false, error: error.message };
       }
     })();
-    this.fabricPreparationResult = await this.fabricPreparationPromise;
-    return this.fabricPreparationResult;
+    this.fabricPreparationPromise = preparationPromise;
+    const preparationResult = await preparationPromise;
+    if (this.fabricAttemptGeneration === hostGeneration &&
+        this.fabricPreparationPromise === preparationPromise) {
+      this.fabricPreparationResult = preparationResult;
+      if (preparationResult.success) {
+        this.fabricFailureCount = 0;
+        this.fabricRetryAfter = 0;
+      } else if (this.fabricReadyGeneration !== hostGeneration) {
+        this.fabricFailureCount += 1;
+        const exponent = Math.min(10, this.fabricFailureCount - 1);
+        const delay = Math.min(
+          this.fabricRetryMaxMs,
+          this.fabricRetryBaseMs * (2 ** exponent)
+        );
+        this.fabricRetryAfter = this.now() + delay;
+        this.fabricPreparationPromise = null;
+      }
+    }
+    return preparationResult;
   }
 
   _isCurrentHostGeneration(hostWindow, hostGeneration) {
     return this.window === hostWindow &&
       !hostWindow.isDestroyed?.() &&
       this.hostGeneration === hostGeneration;
+  }
+
+  _setNativeDrawingInput(hostWindow, enabled) {
+    if (!hostWindow || hostWindow.isDestroyed?.()) return;
+    if (enabled) {
+      // Windows의 focusable:false native 창은 mouseup/move와 달리 pointerdown을
+      // Chromium에 전달하지 않는다. Fabric이 activation을 승인한 뒤에만 열어 둔다.
+      hostWindow.setFocusable?.(true);
+      hostWindow.setIgnoreMouseEvents?.(false);
+      return;
+    }
+
+    const shouldRestoreMainFocus = hostWindow.isFocused?.() === true;
+    hostWindow.setIgnoreMouseEvents?.(true);
+    hostWindow.setFocusable?.(false);
+    if (!shouldRestoreMainFocus) return;
+    const mainWindow = this.getMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed?.()) mainWindow.focus?.();
   }
 
   _isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration) {
@@ -1037,7 +1179,7 @@ class MPVOverlayHost {
         this.currentInputRevision < 0) {
       return;
     }
-    hostWindow.setIgnoreMouseEvents?.(true);
+    this._setNativeDrawingInput(hostWindow, false);
     const disableRequest = {
       hostGeneration: this.hostGeneration,
       videoGeneration: this.currentVideoGeneration,
@@ -1207,6 +1349,7 @@ class MPVOverlayHost {
   destroy() {
     const hostWindow = this.window;
     hostWindow?.setIgnoreMouseEvents?.(true);
+    hostWindow?.setFocusable?.(false);
     this.contentLoadGeneration += 1;
     this.window = null;
     this.contentLoaded = false;
@@ -1215,6 +1358,8 @@ class MPVOverlayHost {
     this.fabricPreparationPromise = null;
     this.fabricPreparationResult = null;
     this.fabricLastError = null;
+    this.fabricFailureCount = 0;
+    this.fabricRetryAfter = 0;
     this.currentVideoGeneration = -1;
     this.currentInputRevision = -1;
     this.desiredInputEnabled = false;
@@ -1269,6 +1414,8 @@ class MPVOverlayHost {
     this.fabricPreparationPromise = null;
     this.fabricPreparationResult = null;
     this.fabricLastError = null;
+    this.fabricFailureCount = 0;
+    this.fabricRetryAfter = 0;
     this.currentVideoGeneration = -1;
     this.currentInputRevision = -1;
     this.desiredInputEnabled = false;
@@ -1305,9 +1452,36 @@ class MPVOverlayHost {
     });
 
     const hostGeneration = this.hostGeneration;
+    hostWindow.webContents?.on?.('before-input-event', (event, input) => {
+      if (this.window !== hostWindow ||
+          this.hostGeneration !== hostGeneration ||
+          this.desiredInputEnabled !== true ||
+          this.fabricReadyGeneration !== hostGeneration ||
+          !this.activeSessionId) {
+        return;
+      }
+      const forwardedInput = createForwardedKeyboardInput(input);
+      const mainWindow = this.getMainWindow();
+      if (!forwardedInput ||
+          !mainWindow ||
+          mainWindow.isDestroyed?.() ||
+          typeof mainWindow.webContents?.sendInputEvent !== 'function') {
+        return;
+      }
+      try {
+        // overlay가 획 클릭으로 포커스를 얻어도 기존 B/V/Delete/Space 단축키는
+        // 메인 renderer의 단일 처리 경로를 그대로 이용한다.
+        mainWindow.focus?.();
+        mainWindow.webContents.sendInputEvent(forwardedInput);
+        event?.preventDefault?.();
+      } catch (error) {
+        this.logger.debug('Fabric overlay keyboard relay failed', { error: error.message });
+      }
+    });
     hostWindow.webContents?.on?.('render-process-gone', () => {
       if (this.window !== hostWindow || this.hostGeneration !== hostGeneration) return;
       hostWindow.setIgnoreMouseEvents?.(true);
+      hostWindow.setFocusable?.(false);
       this.contentLoadGeneration += 1;
       this.window = null;
       this.contentLoaded = false;
@@ -1316,6 +1490,8 @@ class MPVOverlayHost {
       this.fabricPreparationPromise = null;
       this.fabricPreparationResult = null;
       this.fabricLastError = null;
+      this.fabricFailureCount = 0;
+      this.fabricRetryAfter = 0;
       this.currentVideoGeneration = -1;
       this.currentInputRevision = -1;
       this.desiredInputEnabled = false;

@@ -7,7 +7,9 @@ const rootDir = path.resolve(__dirname, '../..');
 const runtimePath = path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-overlay-runtime.js');
 const {
   createFabricOverlayRuntime,
-  createStrokePathData
+  createStrokePathData,
+  resolveEffectiveCanvasRect,
+  mapClientPointToSource
 } = require(runtimePath);
 
 class FakeElement {
@@ -28,6 +30,16 @@ class FakeElement {
     child.parentNode = this;
     this.children.push(child);
     return child;
+  }
+
+  removeChild(child) {
+    this.children = this.children.filter(candidate => candidate !== child);
+    child.parentNode = null;
+    return child;
+  }
+
+  remove() {
+    this.parentNode?.removeChild(this);
   }
 
   remove() {
@@ -250,7 +262,8 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
     'getDiagnostics',
     'prepare',
     'setDrawingInput',
-    'updateDrawingTool'
+    'updateDrawingTool',
+    'updateViewport'
   ]);
   assert.equal(FakeCanvas.instances.length, 0);
   assert.equal(runtime.getDiagnostics().state, 'passive');
@@ -281,7 +294,53 @@ test('prepare creates one Fabric canvas and the browser runtime stays reusable',
     enableRetinaScaling: false
   });
   assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-toolbar').length, 1);
+  assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-viewport').length, 1);
   assert.equal(root.querySelectorAllByClass('mpv-fabric-delta-canvas').length, 1);
+});
+
+test('a failed partial prepare rolls back its surface and retries without duplicate listeners', () => {
+  class FailOnceCanvas extends FakeCanvas {
+    static shouldFail = true;
+
+    on(type, listener) {
+      super.on(type, listener);
+      if (FailOnceCanvas.shouldFail && type === 'selection:created') {
+        FailOnceCanvas.shouldFail = false;
+        throw new Error('synthetic partial configure failure');
+      }
+    }
+  }
+
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FailOnceCanvas, Path: FakePath },
+    document
+  });
+
+  const failed = runtime.prepare(root);
+  const failedCanvas = FakeCanvas.instances[0];
+  assert.equal(failed.prepared, false);
+  assert.equal(failedCanvas.disposed, true);
+  assert.equal(root.children.length, 0);
+  assert.equal([...failedCanvas.listeners.values()]
+    .every(listeners => listeners.size === 0), true);
+
+  assert.equal(runtime.prepare(root).prepared, true);
+  const recoveredCanvas = FakeCanvas.instances[1];
+  assert.equal(root.children.length, 1);
+  assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-toolbar').length, 1);
+  assert.equal(root.querySelectorAllByClass('mpv-fabric-delta-canvas').length, 1);
+  assert.equal([...recoveredCanvas.listeners.values()]
+    .every(listeners => listeners.size === 1), true);
+  assert.equal([...recoveredCanvas.upperCanvasEl.listeners.values()]
+    .every(listeners => listeners.size === 1), true);
+
+  assert.equal(runtime.setDrawingInput(makeInput()).accepted, true);
+  drawStroke(recoveredCanvas.upperCanvasEl, 77);
+  assert.equal(runtime.getDiagnostics().objectCount, 1);
+  assert.equal(runtime.getDiagnostics().mutationCount, 1);
 });
 
 test('viewport separates Fabric source backstore from display CSS dimensions', () => {
@@ -307,6 +366,63 @@ test('viewport separates Fabric source backstore from display CSS dimensions', (
     assert.equal(element.style.height, '540px');
   }
   assert.equal(canvas.calcOffsetCalls, 1);
+});
+
+test('viewport updates keep source coordinates aligned across resize, zoom, and pan', () => {
+  const baseRect = { left: 100, top: 50, width: 800, height: 450 };
+  const transform = { scale: 1.25, panX: 20, panY: -10 };
+  assert.deepEqual(resolveEffectiveCanvasRect(baseRect, transform), {
+    left: 25,
+    top: -18.75,
+    width: 1000,
+    height: 562.5
+  });
+  assert.deepEqual(
+    mapClientPointToSource(
+      { clientX: 525, clientY: 262.5 },
+      baseRect,
+      transform,
+      { width: 1920, height: 1080 }
+    ),
+    { x: 960, y: 540 }
+  );
+
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const canvas = FakeCanvas.instances[0];
+  const viewport = root.querySelectorAllByClass('mpv-fabric-pilot-viewport')[0];
+  const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
+  const before = runtime.getDiagnostics();
+  const result = runtime.updateViewport({
+    revision: 1,
+    canvasRect: baseRect,
+    ...transform
+  });
+
+  assert.deepEqual(result, { accepted: true, revision: 1 });
+  assert.equal(FakeCanvas.instances.length, 1);
+  assert.deepEqual(canvas.dimensionCalls.at(-1), {
+    dimensions: { width: 800, height: 450 },
+    options: { cssOnly: true }
+  });
+  assert.equal(canvas.calcOffsetCalls, 2);
+  assert.equal(viewport.style.transform, 'scale(1.25) translate(20px, -10px)');
+  assert.equal(toolbar.style.transform, undefined);
+  assert.equal(runtime.getDiagnostics().mutationCount, before.mutationCount);
+  assert.equal(runtime.updateViewport({
+    revision: 0,
+    canvasRect: { left: 0, top: 0, width: 1, height: 1 },
+    scale: 1,
+    panX: 0,
+    panY: 0
+  }).accepted, false);
 });
 
 test('selection updates synchronize the complete Fabric active selection', () => {
@@ -377,6 +493,14 @@ test('local toolbar changes do not consume controller tool revisions', () => {
   assert.equal(selectButton.dataset.active, 'true');
   assert.equal(brushButton.getAttribute('aria-pressed'), 'false');
   assert.equal(selectButton.getAttribute('aria-pressed'), 'true');
+
+  const disabled = runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 2,
+    enabled: false
+  });
+  assert.equal(disabled.tool, 'select');
 });
 
 test('Phase 0 selection moves while scale rotate and skew remain locked across reactivation', () => {

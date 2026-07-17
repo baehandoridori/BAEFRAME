@@ -5,6 +5,15 @@ function copyRect(rect) {
   return rect && typeof rect === 'object' ? { ...rect } : null;
 }
 
+function copyViewportTransform(transform) {
+  const value = transform && typeof transform === 'object' ? transform : {};
+  return {
+    scale: Number(value.scale) || 1,
+    panX: Number(value.panX) || 0,
+    panY: Number(value.panY) || 0
+  };
+}
+
 function isAcceptedInputResponse(response, enabled) {
   return response?.success === true &&
     response.accepted === true &&
@@ -141,7 +150,13 @@ export function createFabricDrawingPilotController(options = {}) {
       return { success: false, accepted: false, enabled: false };
     }
     try {
-      return await electronAPI.mpvSetOverlayDrawingInput(request);
+      const response = await electronAPI.mpvSetOverlayDrawingInput(request);
+      if (!request.enabled && isCurrentInputRequest(request) &&
+          isAcceptedInputResponse(response, false) &&
+          (response.tool === 'brush' || response.tool === 'select')) {
+        desiredTool = response.tool;
+      }
+      return response;
     } catch (error) {
       return {
         success: false,
@@ -227,6 +242,8 @@ export function createFabricDrawingPilotController(options = {}) {
       sourceWidth: Number(context.sourceWidth),
       sourceHeight: Number(context.sourceHeight),
       canvasRect: copyRect(context.canvasRect),
+      viewportRevision: Math.max(0, Math.trunc(Number(context.viewportRevision) || 0)),
+      viewportTransform: copyViewportTransform(context.viewportTransform),
       tool: desiredTool,
       toolRevision: 0
     };
@@ -295,6 +312,8 @@ export function createFabricDrawingPilotController(options = {}) {
       sourceWidth: session.sourceWidth,
       sourceHeight: session.sourceHeight,
       canvasRect: copyRect(session.canvasRect),
+      viewportRevision: session.viewportRevision,
+      viewportTransform: copyViewportTransform(session.viewportTransform),
       tool: session.tool
     });
     setState('preparing');
@@ -463,6 +482,7 @@ export function createFabricDrawingPilotController(options = {}) {
       setState('recovering');
       if (!hostGeneration) {
         finishVideoChange(owner);
+        setState('passive');
         return false;
       }
       const reconciled = await reconcileCurrentVideo(
@@ -520,6 +540,9 @@ export function createFabricDrawingPilotController(options = {}) {
       return disable();
     }
     if (state !== 'passive') return Promise.resolve(false);
+    if (!hostGeneration || !videoGeneration || !videoReady) {
+      return enterFailure('drawing surface is unavailable');
+    }
     return startEnable();
   }
 

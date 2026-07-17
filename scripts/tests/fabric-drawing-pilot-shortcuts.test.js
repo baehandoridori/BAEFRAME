@@ -166,6 +166,20 @@ test('controller exposes the complete public API and initialize reads a boolean 
   assert.equal(rejected.controller.getState(), 'disabled');
 });
 
+test('B reports a failed surface after video readiness settles without an overlay capability', async () => {
+  const harness = createHarness();
+  assert.equal(await harness.controller.initialize(), true);
+  assert.equal(await harness.controller.afterVideoReady({ loadToken: 'load-a' }), false);
+  assert.equal(harness.controller.getState(), 'passive');
+
+  assert.equal(await harness.controller.toggle(), false);
+  const diagnostics = await harness.controller.diagnostics();
+  assert.equal(harness.controller.getState(), 'failed');
+  assert.match(diagnostics.lastError, /drawing surface/i);
+  assert.equal(harness.calls.input.length, 0);
+  assert.equal(harness.states.at(-1).state, 'failed');
+});
+
 test('capability adoption validates passive readiness and never creates a video generation', async () => {
   const harness = createHarness();
   await harness.controller.initialize();
@@ -228,6 +242,52 @@ test('100 direct B toggles issue exactly 50 enables and 50 disables after setup'
   assert.equal(new Set(toggles.filter(request => request.enabled)
     .map(request => request.session.sessionId)).size, 50);
   assert.equal(harness.controller.getState(), 'passive');
+});
+
+test('an accepted disable remembers the overlay toolbar tool for the next B session', async () => {
+  const harness = createHarness({
+    onInput(request) {
+      return {
+        success: true,
+        accepted: true,
+        enabled: request.enabled,
+        ...(request.enabled ? {} : { tool: 'select' })
+      };
+    }
+  });
+  await preparePassive(harness);
+  await harness.controller.toggle();
+  await harness.controller.toggle();
+  assert.equal((await harness.controller.diagnostics()).desiredTool, 'select');
+
+  await harness.controller.toggle();
+  assert.equal(harness.calls.input.at(-1).session.tool, 'select');
+});
+
+test('a stale disable tool response cannot overwrite the newer active tool preference', async () => {
+  const heldDisable = deferred();
+  let holdNextDisable = false;
+  const harness = createHarness({
+    onInput(request) {
+      if (!request.enabled && holdNextDisable) {
+        holdNextDisable = false;
+        return heldDisable.promise;
+      }
+      return { success: true, accepted: true, enabled: request.enabled };
+    }
+  });
+  await preparePassive(harness);
+  await harness.controller.toggle();
+
+  holdNextDisable = true;
+  const staleDisable = harness.controller.disable();
+  const newerEnable = harness.controller.toggle();
+  heldDisable.resolve({ success: true, accepted: true, enabled: false, tool: 'select' });
+
+  assert.equal(await staleDisable, false);
+  assert.equal(await newerEnable, true);
+  assert.equal((await harness.controller.diagnostics()).desiredTool, 'brush');
+  assert.equal(harness.controller.getState(), 'active');
 });
 
 test('a preparing B exits immediately and a stale enable response cannot reactivate input', async () => {
