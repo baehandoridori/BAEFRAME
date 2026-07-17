@@ -358,6 +358,12 @@ export function createFabricDrawingPilotController(options = {}) {
       ? null
       : String(loadTokenValue);
     if (pendingLoadToken !== null && loadToken !== pendingLoadToken) return false;
+    const repeatsPreviousWithoutExpectedToken = videoChangePending &&
+      pendingLoadToken === null &&
+      videoGeneration > 0 &&
+      identity === confirmedVideoIdentity &&
+      (loadToken === null || loadToken === confirmedLoadToken);
+    if (repeatsPreviousWithoutExpectedToken) return false;
     const duplicate = !videoChangePending &&
       videoGeneration > 0 &&
       identity === confirmedVideoIdentity &&

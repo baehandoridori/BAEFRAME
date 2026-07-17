@@ -526,6 +526,33 @@ test('a pending load token rejects late confirmation without advancing or reacti
   assert.equal(acceptedTransition[1].session.stableVideoIdentity, 'video-b');
 });
 
+test('a tokenless transition rejects the prior identity until a fresh load token arrives', async () => {
+  for (const lateToken of [null, 'load-a']) {
+    const harness = createHarness();
+    await preparePassive(harness, { loadToken: 'load-a' });
+    await harness.controller.toggle();
+    await harness.controller.beforeVideoChange();
+    const beforeLateConfirmation = harness.calls.input.length;
+    const confirmation = { stableVideoIdentity: 'video-a' };
+    if (lateToken !== null) confirmation.loadToken = lateToken;
+
+    assert.equal(await harness.controller.afterVideoReady(confirmation), false);
+    assert.equal(harness.calls.input.length, beforeLateConfirmation);
+    assert.equal((await harness.controller.diagnostics()).videoGeneration, 1);
+    assert.equal(harness.controller.getState(), 'recovering');
+
+    if (lateToken === null) {
+      assert.equal(await harness.controller.afterVideoReady({
+        loadToken: 'load-b',
+        stableVideoIdentity: 'video-a',
+        targetFrame: 61
+      }), true);
+      assert.deepEqual(harness.calls.input.slice(beforeLateConfirmation)
+        .map(request => request.videoGeneration), [2, 2]);
+    }
+  }
+});
+
 test('a recovered host generation reconciles disable-first before an optional fresh session', async () => {
   const harness = createHarness();
   await preparePassive(harness);
