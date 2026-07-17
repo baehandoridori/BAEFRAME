@@ -57,6 +57,7 @@ export function createFabricDrawingPilotController(options = {}) {
   let videoReady = false;
   let videoChangePending = false;
   let pendingLoadToken = null;
+  let videoChangeEpoch = 0;
   let confirmedVideoIdentity = null;
   let confirmedLoadToken = null;
   let resumeRequested = false;
@@ -181,6 +182,7 @@ export function createFabricDrawingPilotController(options = {}) {
   }
 
   function settleWithoutPilotVideo() {
+    videoChangeEpoch += 1;
     desiredInputEnabled = false;
     currentSession = null;
     videoReady = false;
@@ -188,6 +190,30 @@ export function createFabricDrawingPilotController(options = {}) {
     pendingLoadToken = null;
     resumeRequested = false;
     setState(pilotEnabled ? 'passive' : 'disabled');
+    return true;
+  }
+
+  function currentVideoChangeOwner() {
+    return {
+      epoch: videoChangeEpoch,
+      loadToken: pendingLoadToken
+    };
+  }
+
+  function ownsVideoChange(owner) {
+    return Boolean(
+      owner &&
+      videoChangePending &&
+      owner.epoch === videoChangeEpoch &&
+      owner.loadToken === pendingLoadToken
+    );
+  }
+
+  function finishVideoChange(owner) {
+    if (!ownsVideoChange(owner)) return false;
+    videoChangeEpoch += 1;
+    videoChangePending = false;
+    pendingLoadToken = null;
     return true;
   }
 
@@ -253,8 +279,8 @@ export function createFabricDrawingPilotController(options = {}) {
     Promise.resolve(operation).catch(() => {});
   }
 
-  async function startEnable(contextOverrides = null) {
-    if (!pilotEnabled || !hostGeneration || !videoGeneration || !videoReady) return false;
+  async function startEnable(contextOverrides = null, isStillCurrent = () => true) {
+    if (!isStillCurrent() || !pilotEnabled || !hostGeneration || !videoGeneration || !videoReady) return false;
     const context = contextSnapshot(contextOverrides);
     if (!validPilotContext(context) || !context.stableVideoIdentity) return false;
 
@@ -273,6 +299,7 @@ export function createFabricDrawingPilotController(options = {}) {
     setState('preparing');
     const response = await invokeInput(request);
     const stillCurrent = isCurrentInputRequest(request) &&
+      isStillCurrent() &&
       currentSession?.sessionId === session.sessionId &&
       state === 'preparing';
     if (!stillCurrent) return false;
@@ -287,17 +314,23 @@ export function createFabricDrawingPilotController(options = {}) {
     return state === 'active' && currentSession?.sessionId === session.sessionId;
   }
 
-  async function reconcileCurrentVideo(shouldResume, settledState = 'passive', enableContext = null) {
-    if (!hostGeneration || !videoGeneration || !videoReady) return false;
+  async function reconcileCurrentVideo(
+    shouldResume,
+    settledState = 'passive',
+    enableContext = null,
+    isStillCurrent = () => true
+  ) {
+    if (!isStillCurrent() || !hostGeneration || !videoGeneration || !videoReady) return false;
     desiredInputEnabled = false;
     currentSession = null;
     const request = makeInputRequest(false);
     const response = await invokeInput(request);
-    if (!isCurrentInputRequest(request)) return false;
+    if (!isCurrentInputRequest(request) || !isStillCurrent()) return false;
     if (!isAcceptedInputResponse(response, false)) {
       return enterFailure(response?.error);
     }
-    if (shouldResume) return startEnable(enableContext);
+    if (shouldResume) return startEnable(enableContext, isStillCurrent);
+    if (!isStillCurrent()) return false;
     setState(settledState);
     return true;
   }
@@ -346,14 +379,17 @@ export function createFabricDrawingPilotController(options = {}) {
     videoReady = false;
     videoChangePending = true;
     pendingLoadToken = normalizeLoadToken(nextLoadToken);
+    videoChangeEpoch += 1;
+    const owner = currentVideoChangeOwner();
     setState('recovering');
     if (!desiredInputEnabled || !hostGeneration || !videoGeneration) return true;
 
     currentSession = null;
     const request = makeInputRequest(false);
     const response = await invokeInput(request);
-    if (!isCurrentInputRequest(request)) return false;
+    if (!isCurrentInputRequest(request) || !ownsVideoChange(owner)) return false;
     if (!isAcceptedInputResponse(response, false)) {
+      finishVideoChange(owner);
       return enterFailure(response?.error);
     }
     setState('recovering');
@@ -368,7 +404,7 @@ export function createFabricDrawingPilotController(options = {}) {
     if (pendingLoadToken !== null && loadToken !== pendingLoadToken) return false;
     if (!validPilotContext(context)) {
       if (!videoChangePending) return false;
-      return settleWithoutPilotVideo();
+      return cancelVideoChange(loadToken);
     }
 
     const identity = String(context.stableVideoIdentity || '');
@@ -385,23 +421,43 @@ export function createFabricDrawingPilotController(options = {}) {
       (loadToken === null || loadToken === confirmedLoadToken);
     if (duplicate) return true;
 
+    if (!videoChangePending) {
+      videoChangePending = true;
+      pendingLoadToken = loadToken;
+      videoChangeEpoch += 1;
+    } else if (pendingLoadToken === null && loadToken !== null) {
+      pendingLoadToken = loadToken;
+    }
+    const owner = currentVideoChangeOwner();
+
     videoGeneration += 1;
     videoReady = true;
-    videoChangePending = false;
-    pendingLoadToken = null;
     confirmedVideoIdentity = identity;
     confirmedLoadToken = loadToken;
     const shouldResume = resumeRequested;
     setState('recovering');
-    if (!hostGeneration) return false;
-    return reconcileCurrentVideo(shouldResume, 'passive', context);
+    if (!hostGeneration) {
+      finishVideoChange(owner);
+      return false;
+    }
+    const reconciled = await reconcileCurrentVideo(
+      shouldResume,
+      'passive',
+      context,
+      () => ownsVideoChange(owner)
+    );
+    if (!ownsVideoChange(owner)) return false;
+    finishVideoChange(owner);
+    return reconciled;
   }
 
-  function cancelVideoChange(loadTokenValue = null) {
-    if (!pilotEnabled || !videoChangePending) return Promise.resolve(false);
+  async function cancelVideoChange(loadTokenValue = null) {
+    if (!pilotEnabled || !videoChangePending) return false;
     const loadToken = normalizeLoadToken(loadTokenValue);
-    if (loadToken !== pendingLoadToken) return Promise.resolve(false);
-    return Promise.resolve(settleWithoutPilotVideo());
+    if (loadToken !== pendingLoadToken) return false;
+    settleWithoutPilotVideo();
+    await bestEffortDisable();
+    return true;
   }
 
   function disable() {

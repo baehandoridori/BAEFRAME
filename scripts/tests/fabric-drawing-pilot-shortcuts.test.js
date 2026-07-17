@@ -544,7 +544,8 @@ test('HTML5 or audio fallback settles an active resume request back to passive',
       ...unsupportedContext
     }), true);
     assert.equal(harness.controller.getState(), 'passive');
-    assert.equal(harness.calls.input.length, inputCountAfterDisable);
+    assert.equal(harness.calls.input.length, inputCountAfterDisable + 1);
+    assert.equal(harness.calls.input.at(-1).enabled, false);
 
     const snapshot = await harness.controller.diagnostics();
     assert.equal(snapshot.videoGeneration, 1);
@@ -584,12 +585,86 @@ test('only the current load token can cancel a recovering video change', async (
 
   assert.equal(await harness.controller.cancelVideoChange('load-b'), true);
   assert.equal(harness.controller.getState(), 'passive');
-  assert.equal(harness.calls.input.length, inputCountAfterDisable);
+  assert.equal(harness.calls.input.length, inputCountAfterDisable + 1);
+  assert.equal(harness.calls.input.at(-1).enabled, false);
   const snapshot = await harness.controller.diagnostics();
   assert.equal(snapshot.videoGeneration, 1);
   assert.equal(snapshot.videoReady, false);
   assert.equal(snapshot.resumeRequested, false);
   assert.equal(snapshot.desiredInputEnabled, false);
+  assert.equal(snapshot.sessionId, null);
+});
+
+test('a late disable response from an older beforeVideoChange cannot restore recovering', async () => {
+  const heldDisable = deferred();
+  let holdNextDisable = false;
+  const harness = createHarness({
+    onInput(request) {
+      if (holdNextDisable && request.enabled === false) {
+        holdNextDisable = false;
+        return heldDisable.promise;
+      }
+      return { success: true, accepted: true, enabled: request.enabled };
+    }
+  });
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+
+  holdNextDisable = true;
+  const olderChange = harness.controller.beforeVideoChange('load-b');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.controller.getState(), 'recovering');
+
+  assert.equal(await harness.controller.beforeVideoChange('load-c'), true);
+  assert.equal(await harness.controller.cancelVideoChange('load-c'), true);
+  assert.equal(harness.controller.getState(), 'passive');
+
+  heldDisable.resolve({ success: true, accepted: true, enabled: false });
+  assert.equal(await olderChange, false);
+  assert.equal(harness.controller.getState(), 'passive');
+  const snapshot = await harness.controller.diagnostics();
+  assert.equal(snapshot.videoReady, false);
+  assert.equal(snapshot.resumeRequested, false);
+  assert.equal(snapshot.sessionId, null);
+});
+
+test('cancel wins while afterVideoReady reconciliation is in flight', async () => {
+  const heldReconciliation = deferred();
+  let holdGenerationTwoDisable = true;
+  const harness = createHarness({
+    onInput(request) {
+      if (holdGenerationTwoDisable && request.videoGeneration === 2 && request.enabled === false) {
+        holdGenerationTwoDisable = false;
+        return heldReconciliation.promise;
+      }
+      return { success: true, accepted: true, enabled: request.enabled };
+    }
+  });
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  await harness.controller.beforeVideoChange('load-b');
+
+  const ready = harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'video-b',
+    targetFrame: 33
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.controller.getState(), 'recovering');
+
+  assert.equal(await harness.controller.cancelVideoChange('load-b'), true);
+  const cancelRevision = harness.calls.input.at(-1).inputRevision;
+  assert.equal(harness.calls.input.at(-1).enabled, false);
+  assert.equal(harness.controller.getState(), 'passive');
+
+  heldReconciliation.resolve({ success: true, accepted: true, enabled: false });
+  assert.equal(await ready, false);
+  assert.equal(harness.controller.getState(), 'passive');
+  assert.equal(harness.calls.input.some(request =>
+    request.inputRevision > cancelRevision && request.enabled === true), false);
+  const snapshot = await harness.controller.diagnostics();
+  assert.equal(snapshot.videoReady, false);
+  assert.equal(snapshot.resumeRequested, false);
   assert.equal(snapshot.sessionId, null);
 });
 
