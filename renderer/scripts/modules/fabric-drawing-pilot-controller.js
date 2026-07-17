@@ -405,9 +405,10 @@ export function createFabricDrawingPilotController(options = {}) {
     if (pendingLoadToken !== null && loadToken !== pendingLoadToken) return false;
     const identity = String(context.stableVideoIdentity || '');
     if (inFlightReadyReconciliation &&
-        inFlightReadyReconciliation.epoch === videoChangeEpoch &&
-        inFlightReadyReconciliation.loadToken === loadToken) {
-      if (validPilotContext(context) && identity === inFlightReadyReconciliation.identity) {
+        inFlightReadyReconciliation.epoch === videoChangeEpoch) {
+      if (inFlightReadyReconciliation.loadToken === loadToken &&
+          validPilotContext(context) &&
+          identity === inFlightReadyReconciliation.identity) {
         return inFlightReadyReconciliation.promise;
       }
       return false;
