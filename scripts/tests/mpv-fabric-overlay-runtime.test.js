@@ -18,6 +18,7 @@ class FakeElement {
     this.parentNode = null;
     this.dataset = {};
     this.style = {};
+    this.attributes = new Map();
     this.className = '';
     this.textContent = '';
     this.listeners = new Map();
@@ -42,6 +43,14 @@ class FakeElement {
 
   removeEventListener(type, listener) {
     this.listeners.get(type)?.delete(listener);
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+
+  getAttribute(name) {
+    return this.attributes.has(name) ? this.attributes.get(name) : null;
   }
 
   dispatch(type, event = {}) {
@@ -344,12 +353,18 @@ test('local toolbar changes do not consume controller tool revisions', () => {
 
   assert.equal(brushButton.dataset.active, 'true');
   assert.equal(selectButton.dataset.active, 'false');
+  assert.equal(brushButton.getAttribute('aria-pressed'), 'true');
+  assert.equal(selectButton.getAttribute('aria-pressed'), 'false');
   selectButton.dispatch('click');
   assert.equal(brushButton.dataset.active, 'false');
   assert.equal(selectButton.dataset.active, 'true');
+  assert.equal(brushButton.getAttribute('aria-pressed'), 'false');
+  assert.equal(selectButton.getAttribute('aria-pressed'), 'true');
   brushButton.dispatch('click');
   assert.equal(brushButton.dataset.active, 'true');
   assert.equal(selectButton.dataset.active, 'false');
+  assert.equal(brushButton.getAttribute('aria-pressed'), 'true');
+  assert.equal(selectButton.getAttribute('aria-pressed'), 'false');
   const controllerUpdate = runtime.updateDrawingTool({
     sessionId: 'runtime-session',
     toolRevision: 1,
@@ -360,6 +375,8 @@ test('local toolbar changes do not consume controller tool revisions', () => {
   assert.equal(runtime.getDiagnostics().tool, 'select');
   assert.equal(brushButton.dataset.active, 'false');
   assert.equal(selectButton.dataset.active, 'true');
+  assert.equal(brushButton.getAttribute('aria-pressed'), 'false');
+  assert.equal(selectButton.getAttribute('aria-pressed'), 'true');
 });
 
 test('Phase 0 selection moves while scale rotate and skew remain locked across reactivation', () => {
