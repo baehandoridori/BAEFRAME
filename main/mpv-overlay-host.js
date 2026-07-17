@@ -1184,12 +1184,19 @@ class MPVOverlayHost {
       return;
     }
 
-    const shouldRestoreMainFocus = hostWindow.isFocused?.() === true;
+    const mainWindow = this.getMainWindow();
+    // B를 overlay에서 relay하면 sendInputEvent를 위해 main이 먼저 focus된다.
+    // Windows의 setFocusable(false)는 그 직후 다른 owned window로 focus를
+    // 다시 넘길 수 있으므로, disable 직전 main이 focus owner인 경우도 기억한다.
+    const shouldRestoreMainFocus = hostWindow.isFocused?.() === true ||
+      mainWindow?.isFocused?.() === true;
     hostWindow.setIgnoreMouseEvents?.(true);
     hostWindow.setFocusable?.(false);
     if (!shouldRestoreMainFocus) return;
-    const mainWindow = this.getMainWindow();
-    if (mainWindow && !mainWindow.isDestroyed?.()) mainWindow.focus?.();
+    if (mainWindow && !mainWindow.isDestroyed?.()) {
+      mainWindow.focus?.();
+      mainWindow.webContents?.focus?.();
+    }
   }
 
   _isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration) {

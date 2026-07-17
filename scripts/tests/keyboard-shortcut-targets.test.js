@@ -46,7 +46,7 @@ test('Space play/pause shortcut suppresses focused control keyup activation', ()
   assert.match(appSource, /let suppressPlayPauseShortcutKeyup = false;/);
   assert.match(
     appSource,
-    /if \(isPlayPauseInput\) \{[\s\S]+if \(e\.code === 'Space' && state\.isDrawMode\) \{[\s\S]+state\.isSpaceHeld = true;[\s\S]+\}[\s\S]+if \(e\.code === 'Space'\) \{[\s\S]+suppressPlayPauseShortcutKeyup = true;[\s\S]+\}[\s\S]+e\.preventDefault\(\);[\s\S]+e\.stopPropagation\(\);[\s\S]+handleUserPlayPauseToggle\(\);/
+    /if \(isPlayPauseInput\) \{[\s\S]+if \(e\.code === 'Space' && state\.isDrawMode && !isFabricDrawingPilotEngaged\(\)\) \{[\s\S]+state\.isSpaceHeld = true;[\s\S]+\}[\s\S]+if \(e\.code === 'Space'\) \{[\s\S]+suppressPlayPauseShortcutKeyup = true;[\s\S]+\}[\s\S]+e\.preventDefault\(\);[\s\S]+e\.stopPropagation\(\);[\s\S]+handleUserPlayPauseToggle\(\);/
   );
   assert.match(
     appSource,

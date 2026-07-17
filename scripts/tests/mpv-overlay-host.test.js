@@ -25,10 +25,16 @@ function createDrawingHostHarness(options = {}) {
   const windows = [];
   const bundleSource = options.bundleSource || '/* fixed Fabric bundle */';
   const fakeMainWindow = {
+    focused: false,
     isDestroyed: () => false,
+    isFocused: () => fakeMainWindow.focused,
     getContentBounds: () => ({ x: 100, y: 80, width: 1200, height: 800 }),
-    focus: () => events.push(['mainWindow.focus']),
+    focus: () => {
+      fakeMainWindow.focused = true;
+      events.push(['mainWindow.focus']);
+    },
     webContents: {
+      focus: () => events.push(['mainWindow.webContents.focus']),
       sendInputEvent: input => {
         events.push(['mainWindow.sendInputEvent', input]);
         if (options.sendInputEventError) throw options.sendInputEventError;
@@ -107,7 +113,12 @@ function createDrawingHostHarness(options = {}) {
     }
     setFocusable(focusable) {
       events.push(['setFocusable', focusable]);
-      if (!focusable) this.focused = false;
+      if (!focusable) {
+        this.focused = false;
+        if (options.simulateFocusableDisableDeactivation === true) {
+          fakeMainWindow.focused = false;
+        }
+      }
     }
     showInactive() {
       events.push(['showInactive']);
@@ -150,6 +161,7 @@ function createDrawingHostHarness(options = {}) {
     host,
     events,
     windows,
+    mainWindow: fakeMainWindow,
     getReadCount: () => readCount
   };
 }
@@ -334,8 +346,63 @@ test('returns focus to the main window and relays keyboard input while the drawi
   assert.ok(mainFocusIndex > focusableDisableIndex);
 });
 
+test('completes the main-window focus handoff when relayed B disables a focused drawing overlay', async () => {
+  const { host, events, windows, mainWindow } = createDrawingHostHarness({
+    simulateFocusableDisableDeactivation: true
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await host.setDrawingInput(makeDrawingInput(hostGeneration));
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-focus-handoff-race',
+      stableVideoIdentity: 'video-focus-handoff-race',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+
+  // A pointer interaction gives the native overlay keyboard focus. Relaying B moves
+  // focus to main, then Electron's Windows setFocusable(false) deactivation can move
+  // it again to a sibling owned window unless main is restored afterward.
+  windows[0].focused = true;
+  windows[0].webContents.emit('before-input-event', { preventDefault() {} }, {
+    type: 'keyDown',
+    key: 'b',
+    shift: false,
+    control: false,
+    alt: false,
+    meta: false,
+    isAutoRepeat: false
+  });
+  windows[0].focused = false;
+  events.length = 0;
+
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    inputRevision: 3,
+    enabled: false
+  }));
+
+  const focusableDisableIndex = events.findIndex(([name, value]) =>
+    name === 'setFocusable' && value === false);
+  const finalMainFocusIndex = events.findIndex(([name]) => name === 'mainWindow.focus');
+  const finalMainWebContentsFocusIndex = events.findIndex(([name]) =>
+    name === 'mainWindow.webContents.focus');
+  assert.ok(focusableDisableIndex >= 0);
+  assert.ok(finalMainFocusIndex > focusableDisableIndex,
+    'the B-triggered handoff must finish after the drawing overlay becomes non-focusable');
+  assert.ok(finalMainWebContentsFocusIndex > finalMainFocusIndex,
+    'keyboard input must return to the main renderer after the native focus handoff');
+  assert.equal(mainWindow.focused, true);
+});
+
 test('canonicalizes overlay keys, drops IME composition, and never steals focus after Alt-Tab', async () => {
-  const { host, events, windows } = createDrawingHostHarness();
+  const { host, events, windows, mainWindow } = createDrawingHostHarness();
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
   const { hostGeneration } = ensured.drawingCapability;
   await host.setDrawingInput(makeDrawingInput(hostGeneration));
@@ -384,6 +451,7 @@ test('canonicalizes overlay keys, drops IME composition, and never steals focus 
 
   events.length = 0;
   windows[0].focused = false;
+  mainWindow.focused = false;
   await host.setDrawingInput(makeDrawingInput(hostGeneration, {
     inputRevision: 3,
     enabled: false
