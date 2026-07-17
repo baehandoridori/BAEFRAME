@@ -145,20 +145,22 @@
 - Consumes: 새 worktree 실행 파일과 고유 profile
 - Produces: 사용자가 조작할 독립 시험 앱
 
-- [ ] **Step 1: 회귀·빌드 검증**
+- [x] **Step 1: 회귀·빌드 검증**
 
   Run: `npm run test:drawing`, `npm run test:mpv`, `npm run test:playlist`, `npm run build`
 
   Expected: 모든 명령 exit 0.
 
-- [ ] **Step 2: 기존 PID 스냅샷 보존**
+- [x] **Step 2: 기존 PID 스냅샷 보존**
 
   실행 전 기존 BAEFRAME main PID와 경로를 저장하고 어떤 프로세스에도 Stop/Kill/Close를 호출하지 않는다.
 
-- [ ] **Step 3: 고유 프로필로 시작**
+- [x] **Step 3: 고유 프로필로 시작**
 
   새 실행 파일에 `--fabric-drawing-pilot`, `--skip-shell-registration`, `--multi-instance-profile=fabric-manual-<timestamp>`와 테스트 `.bframe`을 각각 별도 인자로 전달한다. 자식 환경에서 `BAEFRAME_MPV_PILOT=1`을 설정한다.
 
-- [ ] **Step 4: 런타임 검증**
+- [x] **Step 4: 런타임 검증**
 
   새 main PID의 실행 경로·profile 인자와 자식 `--user-data-dir`을 확인하고, 실행 전 기존 main PID가 모두 살아 있는지 다시 확인한다. 실행 전후 `baeframe://`, `.bframe`, `.bplaylist` 레지스트리 값을 읽기 전용으로 비교한다. 새 인스턴스만 foreground로 둔다.
+
+  GUI 시험판은 작업 셸의 stdout/stderr 파이프를 상속하지 않는 분리 실행 방식으로 시작한다. 파이프를 상속한 채 작업 셸이 먼저 종료되면 기존 logger의 콘솔 출력이 `EPIPE`를 반복할 수 있으므로, 정상 실행 판정에는 응답성·메모리 안정성과 새 `EPIPE` 0회를 함께 확인한다.
