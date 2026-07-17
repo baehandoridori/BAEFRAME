@@ -11,6 +11,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
+    "test:fabric-drawing-pilot": "node --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs",
+    "diagnostics:fabric-drawing-pilot": "node scripts/run-fabric-drawing-pilot-diagnostics.js",
     "test:recent": "node --test scripts/tests/recent-files-store.test.js scripts/tests/recent-files-source.test.js",
     "test:frame-grid": "node --test scripts/tests/frame-grid-tiers.test.js scripts/tests/keyframe-drag-ghost-source.test.js scripts/tests/layer-visibility-hit-area.test.js scripts/tests/timeline-frame-ui-source.test.js",
     "test:cluster": "node --test scripts/tests/comment-cluster.test.js scripts/tests/comment-track-header-sync-source.test.js",

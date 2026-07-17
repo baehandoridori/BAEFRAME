@@ -58,6 +58,7 @@ export function createFabricDrawingPilotController(options = {}) {
   let videoChangePending = false;
   let pendingLoadToken = null;
   let videoChangeEpoch = 0;
+  let inFlightReadyReconciliation = null;
   let confirmedVideoIdentity = null;
   let confirmedLoadToken = null;
   let resumeRequested = false;
@@ -404,11 +405,20 @@ export function createFabricDrawingPilotController(options = {}) {
     if (pendingLoadToken !== null && loadToken !== pendingLoadToken) return false;
     if (!validPilotContext(context)) {
       if (!videoChangePending) return false;
+      if (pendingLoadToken === null && loadToken !== null) {
+        pendingLoadToken = loadToken;
+      }
       return cancelVideoChange(loadToken);
     }
 
     const identity = String(context.stableVideoIdentity || '');
     if (!identity) return false;
+    if (inFlightReadyReconciliation &&
+        inFlightReadyReconciliation.epoch === videoChangeEpoch &&
+        inFlightReadyReconciliation.loadToken === loadToken &&
+        inFlightReadyReconciliation.identity === identity) {
+      return inFlightReadyReconciliation.promise;
+    }
     const repeatsPreviousWithoutExpectedToken = videoChangePending &&
       pendingLoadToken === null &&
       videoGeneration > 0 &&
@@ -429,26 +439,41 @@ export function createFabricDrawingPilotController(options = {}) {
       pendingLoadToken = loadToken;
     }
     const owner = currentVideoChangeOwner();
-
-    videoGeneration += 1;
-    videoReady = true;
-    confirmedVideoIdentity = identity;
-    confirmedLoadToken = loadToken;
-    const shouldResume = resumeRequested;
-    setState('recovering');
-    if (!hostGeneration) {
+    const operation = {
+      epoch: videoChangeEpoch,
+      loadToken,
+      identity,
+      promise: null
+    };
+    operation.promise = (async () => {
+      videoGeneration += 1;
+      videoReady = true;
+      confirmedVideoIdentity = identity;
+      confirmedLoadToken = loadToken;
+      const shouldResume = resumeRequested;
+      setState('recovering');
+      if (!hostGeneration) {
+        finishVideoChange(owner);
+        return false;
+      }
+      const reconciled = await reconcileCurrentVideo(
+        shouldResume,
+        'passive',
+        context,
+        () => ownsVideoChange(owner)
+      );
+      if (!ownsVideoChange(owner)) return false;
       finishVideoChange(owner);
-      return false;
+      return reconciled;
+    })();
+    inFlightReadyReconciliation = operation;
+    try {
+      return await operation.promise;
+    } finally {
+      if (inFlightReadyReconciliation === operation) {
+        inFlightReadyReconciliation = null;
+      }
     }
-    const reconciled = await reconcileCurrentVideo(
-      shouldResume,
-      'passive',
-      context,
-      () => ownsVideoChange(owner)
-    );
-    if (!ownsVideoChange(owner)) return false;
-    finishVideoChange(owner);
-    return reconciled;
   }
 
   async function cancelVideoChange(loadTokenValue = null) {
