@@ -404,12 +404,6 @@ export function createFabricDrawingPilotController(options = {}) {
     const loadToken = normalizeLoadToken(confirmation);
     if (pendingLoadToken !== null && loadToken !== pendingLoadToken) return false;
     const identity = String(context.stableVideoIdentity || '');
-    const repeatsPreviousWithoutExpectedToken = videoChangePending &&
-      pendingLoadToken === null &&
-      videoGeneration > 0 &&
-      identity === confirmedVideoIdentity &&
-      (loadToken === null || loadToken === confirmedLoadToken);
-    if (repeatsPreviousWithoutExpectedToken) return false;
     if (inFlightReadyReconciliation &&
         inFlightReadyReconciliation.epoch === videoChangeEpoch &&
         inFlightReadyReconciliation.loadToken === loadToken) {
@@ -418,6 +412,12 @@ export function createFabricDrawingPilotController(options = {}) {
       }
       return false;
     }
+    const repeatsPreviousWithoutExpectedToken = videoChangePending &&
+      pendingLoadToken === null &&
+      videoGeneration > 0 &&
+      identity === confirmedVideoIdentity &&
+      (loadToken === null || loadToken === confirmedLoadToken);
+    if (repeatsPreviousWithoutExpectedToken) return false;
     if (!validPilotContext(context)) {
       if (!videoChangePending) return false;
       if (pendingLoadToken === null && loadToken !== null) {
@@ -427,6 +427,12 @@ export function createFabricDrawingPilotController(options = {}) {
     }
 
     if (!identity) return false;
+    if (!videoChangePending &&
+        videoGeneration > 0 &&
+        loadToken !== null &&
+        loadToken === confirmedLoadToken) {
+      return identity === confirmedVideoIdentity;
+    }
     const duplicate = !videoChangePending &&
       videoGeneration > 0 &&
       identity === confirmedVideoIdentity &&
