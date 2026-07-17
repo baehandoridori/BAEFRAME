@@ -7012,6 +7012,8 @@ async function initApp() {
 
   let mpvEmbedBoundsSyncPending = false;
   let mpvVideoTransformSyncPending = false;
+  let fabricDrawingPilotFailureToastShown = false;
+  let fabricDrawingPilotUiEngaged = false;
   const mpvOverlayLifecycle = createMpvOverlayLifecycle({
     onWarning: (error) => {
       log.warn('mpv 오버레이 동기화 실패, 호스트 복구를 시도합니다.', {
@@ -8540,7 +8542,14 @@ async function initApp() {
     activeVideoLoadPath = filePath;
     if (!engineSwap) {
       await fabricDrawingPilotController.beforeVideoChange(loadToken);
-      if (!canContinueVideoLoad()) return false;
+      if (!canContinueVideoLoad()) {
+        await fabricDrawingPilotController.cancelVideoChange(loadToken);
+        if (activeVideoLoadToken === loadToken) {
+          activeVideoLoadToken = null;
+          activeVideoLoadPath = null;
+        }
+        return false;
+      }
     }
     mpvDrawPlaybackTransitionToken += 1;
     elements.drawingTools?.classList.remove('playback-hidden');
@@ -9110,6 +9119,9 @@ async function initApp() {
       return false;
     } finally {
       if (activeVideoLoadToken === loadToken) {
+        if (!engineSwap && !videoLoadCompleted) {
+          await fabricDrawingPilotController.cancelVideoChange(loadToken);
+        }
         activeVideoLoadToken = null;
         activeVideoLoadPath = null;
         await settlePendingMpvReviewFreezeMediaChange({ loaded: videoLoadCompleted });
@@ -9468,9 +9480,6 @@ async function initApp() {
     elements.btnDrawMode?.classList.toggle('preparing', preparing);
     elements.btnDrawMode?.setAttribute('aria-busy', String(preparing));
   }
-
-  let fabricDrawingPilotFailureToastShown = false;
-  let fabricDrawingPilotUiEngaged = false;
 
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
     const active = nextState === 'active';

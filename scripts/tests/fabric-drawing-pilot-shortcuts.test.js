@@ -139,6 +139,7 @@ test('controller exposes the complete public API and initialize reads a boolean 
     'adoptOverlayCapability',
     'beforeVideoChange',
     'afterVideoReady',
+    'cancelVideoChange',
     'toggle',
     'routeKeydown',
     'disable',
@@ -524,6 +525,72 @@ test('a pending load token rejects late confirmation without advancing or reacti
   assert.deepEqual(acceptedTransition.map(request => request.enabled), [false, true]);
   assert.deepEqual(acceptedTransition.map(request => request.videoGeneration), [2, 2]);
   assert.equal(acceptedTransition[1].session.stableVideoIdentity, 'video-b');
+});
+
+test('HTML5 or audio fallback settles an active resume request back to passive', async () => {
+  for (const unsupportedContext of [
+    { isMpvActive: false, isAudio: false },
+    { isMpvActive: true, isAudio: true }
+  ]) {
+    const harness = createHarness();
+    await preparePassive(harness, { loadToken: 'load-a' });
+    await harness.controller.toggle();
+    await harness.controller.beforeVideoChange('load-b');
+    const inputCountAfterDisable = harness.calls.input.length;
+
+    assert.equal(await harness.controller.afterVideoReady({
+      loadToken: 'load-b',
+      stableVideoIdentity: 'video-b',
+      ...unsupportedContext
+    }), true);
+    assert.equal(harness.controller.getState(), 'passive');
+    assert.equal(harness.calls.input.length, inputCountAfterDisable);
+
+    const snapshot = await harness.controller.diagnostics();
+    assert.equal(snapshot.videoGeneration, 1);
+    assert.equal(snapshot.videoReady, false);
+    assert.equal(snapshot.resumeRequested, false);
+    assert.equal(snapshot.desiredInputEnabled, false);
+    assert.equal(snapshot.sessionId, null);
+  }
+});
+
+test('an unsupported confirmation without a pending load cannot silently drop active input', async () => {
+  const harness = createHarness();
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  const inputCount = harness.calls.input.length;
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'unowned-load',
+    stableVideoIdentity: 'video-b',
+    isMpvActive: false
+  }), false);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.equal(harness.calls.input.length, inputCount);
+  assert.equal((await harness.controller.diagnostics()).resumeRequested, false);
+});
+
+test('only the current load token can cancel a recovering video change', async () => {
+  const harness = createHarness();
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  await harness.controller.beforeVideoChange('load-b');
+  const inputCountAfterDisable = harness.calls.input.length;
+
+  assert.equal(await harness.controller.cancelVideoChange('load-a'), false);
+  assert.equal(harness.controller.getState(), 'recovering');
+  assert.equal((await harness.controller.diagnostics()).resumeRequested, true);
+
+  assert.equal(await harness.controller.cancelVideoChange('load-b'), true);
+  assert.equal(harness.controller.getState(), 'passive');
+  assert.equal(harness.calls.input.length, inputCountAfterDisable);
+  const snapshot = await harness.controller.diagnostics();
+  assert.equal(snapshot.videoGeneration, 1);
+  assert.equal(snapshot.videoReady, false);
+  assert.equal(snapshot.resumeRequested, false);
+  assert.equal(snapshot.desiredInputEnabled, false);
+  assert.equal(snapshot.sessionId, null);
 });
 
 test('a tokenless transition rejects the prior identity until a fresh load token arrives', async () => {

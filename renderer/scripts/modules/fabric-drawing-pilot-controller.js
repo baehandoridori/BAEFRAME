@@ -171,6 +171,26 @@ export function createFabricDrawingPilotController(options = {}) {
     return context.isMpvActive === true && context.isAudio !== true;
   }
 
+  function normalizeLoadToken(value) {
+    const tokenValue = value && typeof value === 'object'
+      ? value.loadToken ?? value.videoLoadToken ?? value.confirmationToken ?? null
+      : value;
+    return tokenValue === null || tokenValue === undefined
+      ? null
+      : String(tokenValue);
+  }
+
+  function settleWithoutPilotVideo() {
+    desiredInputEnabled = false;
+    currentSession = null;
+    videoReady = false;
+    videoChangePending = false;
+    pendingLoadToken = null;
+    resumeRequested = false;
+    setState(pilotEnabled ? 'passive' : 'disabled');
+    return true;
+  }
+
   function buildSession(context) {
     const sessionId = uuid();
     return {
@@ -325,12 +345,7 @@ export function createFabricDrawingPilotController(options = {}) {
     resumeRequested = shouldResume;
     videoReady = false;
     videoChangePending = true;
-    const tokenValue = nextLoadToken && typeof nextLoadToken === 'object'
-      ? nextLoadToken.loadToken ?? nextLoadToken.videoLoadToken ?? nextLoadToken.confirmationToken ?? null
-      : nextLoadToken;
-    pendingLoadToken = tokenValue === null || tokenValue === undefined
-      ? null
-      : String(tokenValue);
+    pendingLoadToken = normalizeLoadToken(nextLoadToken);
     setState('recovering');
     if (!desiredInputEnabled || !hostGeneration || !videoGeneration) return true;
 
@@ -349,15 +364,15 @@ export function createFabricDrawingPilotController(options = {}) {
     if (!pilotEnabled) return false;
     const overrides = confirmation && typeof confirmation === 'object' ? confirmation : null;
     const context = contextSnapshot(overrides);
+    const loadToken = normalizeLoadToken(confirmation);
+    if (pendingLoadToken !== null && loadToken !== pendingLoadToken) return false;
+    if (!validPilotContext(context)) {
+      if (!videoChangePending) return false;
+      return settleWithoutPilotVideo();
+    }
+
     const identity = String(context.stableVideoIdentity || '');
     if (!identity) return false;
-    const loadTokenValue = typeof confirmation === 'string'
-      ? confirmation
-      : confirmation?.loadToken ?? confirmation?.videoLoadToken ?? confirmation?.confirmationToken ?? null;
-    const loadToken = loadTokenValue === null || loadTokenValue === undefined
-      ? null
-      : String(loadTokenValue);
-    if (pendingLoadToken !== null && loadToken !== pendingLoadToken) return false;
     const repeatsPreviousWithoutExpectedToken = videoChangePending &&
       pendingLoadToken === null &&
       videoGeneration > 0 &&
@@ -380,6 +395,13 @@ export function createFabricDrawingPilotController(options = {}) {
     setState('recovering');
     if (!hostGeneration) return false;
     return reconcileCurrentVideo(shouldResume, 'passive', context);
+  }
+
+  function cancelVideoChange(loadTokenValue = null) {
+    if (!pilotEnabled || !videoChangePending) return Promise.resolve(false);
+    const loadToken = normalizeLoadToken(loadTokenValue);
+    if (loadToken !== pendingLoadToken) return Promise.resolve(false);
+    return Promise.resolve(settleWithoutPilotVideo());
   }
 
   function disable() {
@@ -485,6 +507,7 @@ export function createFabricDrawingPilotController(options = {}) {
     adoptOverlayCapability,
     beforeVideoChange,
     afterVideoReady,
+    cancelVideoChange,
     toggle,
     routeKeydown,
     disable,
