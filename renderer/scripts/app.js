@@ -13,6 +13,7 @@ import { ReviewDataManager, getBframePath } from './modules/review-data-manager.
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
 import { DrawingSync } from './modules/drawing-sync.js';
+import { createFabricDrawingPilotController } from './modules/fabric-drawing-pilot-controller.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getAuthManager } from './modules/auth-manager.js';
@@ -1553,7 +1554,11 @@ async function initApp() {
     // 피드백 25: 재생 중에는 공용 리뷰 freeze를 해제해 mpv 영상을 표시한다.
     // 패널은 즉시 감추고, release가 호스트 복원을 확인한 뒤 freeze를 제거하므로
     // 정지 화면과 실제 영상 사이에 검은 구간이 생기지 않는다.
-    if (state.isDrawMode && isMpvPilotPlaybackActive()) {
+    if (
+      state.isDrawMode &&
+      !fabricDrawingPilotController.isActiveOrPreparing() &&
+      isMpvPilotPlaybackActive()
+    ) {
       mpvDrawPlaybackTransitionToken += 1;
       elements.drawingTools?.classList.add('playback-hidden');
       scheduleMpvOverlayStateSync({ force: true });
@@ -1571,6 +1576,7 @@ async function initApp() {
     getThumbnailGenerator()?._drainExactQueue?.();
     if (
       state.isDrawMode &&
+      !fabricDrawingPilotController.isActiveOrPreparing() &&
       isMpvPilotPlaybackActive() &&
       elements.drawingTools?.classList.contains('playback-hidden')
     ) {
@@ -1587,6 +1593,7 @@ async function initApp() {
 
     if (
       state.isDrawMode &&
+      !fabricDrawingPilotController.isActiveOrPreparing() &&
       isMpvPilotPlaybackActive() &&
       elements.drawingTools?.classList.contains('playback-hidden')
     ) {
@@ -2040,8 +2047,8 @@ async function initApp() {
     const { isCommentMode } = e.detail;
     const preparationToken = ++commentModePreparationToken;
     state.isCommentMode = isCommentMode;
-    if (isCommentMode && state.isDrawMode) {
-      applyDrawModeState(false);
+    if (isCommentMode && (state.isDrawMode || isFabricDrawingPilotControllerEngaged())) {
+      exitDrawModeForSystemPath();
     }
 
     // 커서 변경
@@ -5800,9 +5807,69 @@ async function initApp() {
     }
   });
 
+  const FABRIC_DRAWING_LEGACY_SHORTCUTS = new Set([
+    'undo',
+    'redo',
+    'drawMode',
+    'drawingLayerAdd',
+    'drawingLayerDelete',
+    'drawingLayerSelectUp',
+    'drawingLayerSelectDown',
+    'drawingLayerMoveUp',
+    'drawingLayerMoveDown',
+    'drawingLayerVisibilityToggle',
+    'drawingLayerLockToggle',
+    'keyframeDelete',
+    'keyframeAddWithCopy',
+    'keyframeAddBlank',
+    'keyframeAddBlank2',
+    'keyframeConvertToFrame',
+    'keyframeConvertToKeyframe',
+    'insertFrame',
+    'deleteFrame',
+    'frameCopy',
+    'framePaste',
+    'onionSkinToggle',
+    'brushSizeDown',
+    'brushSizeUp',
+    'drawingToolSelect'
+  ]);
+  const FABRIC_DRAWING_LEGACY_CLICK_SELECTOR = [
+    '#drawingTools',
+    '#btnUndo',
+    '#btnClearDrawing',
+    '#btnAddLayer',
+    '#btnDeleteLayer',
+    '.layer-settings-popup',
+    '.layer-action-btn',
+    '.drawing-layer-header',
+    '.drawing-track-row'
+  ].join(',');
+
+  function shouldBlockFabricDrawingLegacyShortcut(event) {
+    if (!isFabricDrawingPilotEngaged()) return false;
+    const key = String(event.key || '').toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && ['c', 'v', 'z', 'y'].includes(key)) return true;
+    if (event.code === 'KeyE' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      return true;
+    }
+    return [...FABRIC_DRAWING_LEGACY_SHORTCUTS]
+      .some(action => userSettings.matchShortcut(action, event));
+  }
+
+  function handleFabricDrawingPilotLegacyClick(event) {
+    if (!isFabricDrawingPilotEngaged()) return;
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    if (!target.closest(FABRIC_DRAWING_LEGACY_CLICK_SELECTOR)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
   // 키보드 단축키
   document.addEventListener('keydown', handleKeydown, true);
   document.addEventListener('keyup', handleKeyup, true);
+  document.addEventListener('click', handleFabricDrawingPilotLegacyClick, true);
 
   // ====== 캔버스 오버레이 동기화 ======
 
@@ -5858,8 +5925,43 @@ async function initApp() {
     return videoPlayer.engine !== 'html5' && document.body.classList.contains('mpv-pilot-mode');
   }
 
+  function getFabricDrawingPilotContext() {
+    const renderArea = getVideoRenderArea();
+    return {
+      isMpvActive: isMpvPilotPlaybackActive(),
+      isAudio: state.isAudioMode,
+      stableVideoIdentity: videoPlayer.filePath || state.currentFile || '',
+      targetFrame: videoPlayer.currentFrame,
+      sourceWidth: videoPlayer.videoWidth,
+      sourceHeight: videoPlayer.videoHeight,
+      canvasRect: renderArea
+        ? {
+          left: renderArea.left,
+          top: renderArea.top,
+          width: renderArea.width,
+          height: renderArea.height
+        }
+        : null
+    };
+  }
+
+  function isFabricDrawingPilotControllerEngaged() {
+    const pilotState = fabricDrawingPilotController.getState();
+    return fabricDrawingPilotController.isEnabled() &&
+      (pilotState === 'active' || pilotState === 'preparing' || pilotState === 'recovering');
+  }
+
+  function isFabricDrawingPilotEngaged() {
+    return isMpvPilotPlaybackActive() && isFabricDrawingPilotControllerEngaged();
+  }
+
+  function requiresMpvReviewFreeze() {
+    return state.isCommentMode ||
+      (state.isDrawMode && !fabricDrawingPilotController.isActiveOrPreparing());
+  }
+
   function isMpvReviewInteractionActive() {
-    return state.isDrawMode || state.isCommentMode;
+    return requiresMpvReviewFreeze();
   }
 
   function invalidateMpvReviewFreezeForFrameChange() {
@@ -5938,8 +6040,8 @@ async function initApp() {
 
     mpvReviewFreezeFailureHandling = true;
     try {
-      if (state.isDrawMode) {
-        applyDrawModeState(false);
+      if (state.isDrawMode || isFabricDrawingPilotControllerEngaged()) {
+        exitDrawModeForSystemPath();
       }
       if (state.isCommentMode) {
         commentManager.setCommentMode(false);
@@ -6181,8 +6283,8 @@ async function initApp() {
     mpvHostLastRequestedVisible = null;
     videoPlayer.useHtml5Engine();
     videoPlayer.isLoaded = false;
-    if (state.isDrawMode) {
-      applyDrawModeState(false);
+    if (state.isDrawMode || isFabricDrawingPilotControllerEngaged()) {
+      exitDrawModeForSystemPath();
     }
     if (state.isCommentMode) {
       commentManager.setCommentMode(false);
@@ -6917,6 +7019,12 @@ async function initApp() {
       });
     }
   });
+  const fabricDrawingPilotController = createFabricDrawingPilotController({
+    electronAPI: window.electronAPI,
+    getContext: getFabricDrawingPilotContext,
+    onStateChange: handleFabricDrawingPilotStateChange
+  });
+  const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize();
   const mpvTeardownGate = createMpvTeardownGate();
   const mpvPilotOwnershipGate = createMpvPilotOwnershipGate({
     teardownGate: mpvTeardownGate,
@@ -7009,7 +7117,7 @@ async function initApp() {
       return;
     }
 
-    applyDrawModeState(false);
+    exitDrawModeForSystemPath();
   }
 
   async function loadVideoWithHtml5Fallback(filePath, options = {}, { owner = null, skipReviewTransition = false } = {}) {
@@ -7652,6 +7760,8 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareOverlay(bounds);
     if (result?.success) {
+      await fabricDrawingPilotInitialization;
+      await fabricDrawingPilotController.adoptOverlayCapability(result.drawingCapability);
       forceMpvHostVisibilitySync();
       return result;
     }
@@ -7908,7 +8018,7 @@ async function initApp() {
     if (!wrapperRect || !canvasRect) return null;
 
     return {
-      drawingDataUrl: getCompositedDrawingOverlayDataUrl(),
+      drawingDataUrl: isFabricDrawingPilotEngaged() ? '' : getCompositedDrawingOverlayDataUrl(),
       // 피드백 32: 어니언 스킨이 꺼져 있으면 전체 해상도 투명 PNG 인코딩을 생략한다.
       onionDataUrl: drawingManager.onionSkin?.enabled
         ? getCanvasOverlayDataUrl(elements.onionSkinCanvas)
@@ -8368,12 +8478,6 @@ async function initApp() {
       }
     }
 
-    showToast(
-      embedHost?.wid
-        ? 'mpv 엔진을 BAEFRAME 영상 영역에 연결했습니다.'
-        : 'mpv 파일럿으로 원본 영상을 직접 열었습니다.',
-      'info'
-    );
     return true;
   }
 
@@ -8428,8 +8532,16 @@ async function initApp() {
       (!allowNavigationGuardAbort || shouldContinueVideoLoad())
     );
     if (!canContinueVideoLoad()) return false;
+    if (!engineSwap) {
+      await fabricDrawingPilotInitialization;
+      if (!canContinueVideoLoad()) return false;
+    }
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
+    if (!engineSwap) {
+      await fabricDrawingPilotController.beforeVideoChange(loadToken);
+      if (!canContinueVideoLoad()) return false;
+    }
     mpvDrawPlaybackTransitionToken += 1;
     elements.drawingTools?.classList.remove('playback-hidden');
     let videoLoadCompleted = false;
@@ -8691,8 +8803,8 @@ async function initApp() {
         audioWaveform.addEventListener('seek', audioWaveform._seekHandler);
 
         // 그리기 모드 비활성화 (오디오에서는 의미 없음)
-        if (state.isDrawMode) {
-          applyDrawModeState(false);
+        if (state.isDrawMode || isFabricDrawingPilotControllerEngaged()) {
+          exitDrawModeForSystemPath();
           drawingManager.disable();
         }
         elements.btnDrawMode?.setAttribute('disabled', 'true');
@@ -8973,6 +9085,14 @@ async function initApp() {
           size: fileInfo.size,
           duration: videoPlayer.duration || 0
         });
+      }
+
+      if (!engineSwap && canContinueVideoLoad()) {
+        await fabricDrawingPilotController.afterVideoReady({
+          ...getFabricDrawingPilotContext(),
+          loadToken
+        });
+        if (!canContinueVideoLoad()) return false;
       }
 
       trace.end({ filePath, hasExistingData });
@@ -9349,6 +9469,43 @@ async function initApp() {
     elements.btnDrawMode?.setAttribute('aria-busy', String(preparing));
   }
 
+  let fabricDrawingPilotFailureToastShown = false;
+  let fabricDrawingPilotUiEngaged = false;
+
+  function handleFabricDrawingPilotStateChange(nextState, snapshot) {
+    const active = nextState === 'active';
+    const preparing = nextState === 'preparing';
+    const recoveringForResume = nextState === 'recovering' && snapshot?.resumeRequested === true;
+    const engaged = isMpvPilotPlaybackActive() &&
+      (active || preparing || nextState === 'recovering');
+    const wasEngaged = fabricDrawingPilotUiEngaged;
+    if (!engaged && !wasEngaged) return;
+    fabricDrawingPilotUiEngaged = engaged;
+
+    document.body.classList.toggle('fabric-drawing-pilot-engaged', engaged);
+    state.isDrawMode = nextState === 'active' || nextState === 'preparing';
+    setDrawModePreparingState(preparing || recoveringForResume);
+    setDrawModeReadyState(false);
+    elements.btnDrawMode?.classList.toggle('active', active);
+
+    if (nextState === 'failed') {
+      if (!fabricDrawingPilotFailureToastShown) {
+        fabricDrawingPilotFailureToastShown = true;
+        showToast('새 드로잉 화면을 준비하지 못했습니다.', 'error');
+      }
+      return;
+    }
+    fabricDrawingPilotFailureToastShown = false;
+  }
+
+  function exitDrawModeForSystemPath() {
+    if (isFabricDrawingPilotControllerEngaged()) {
+      void fabricDrawingPilotController.disable();
+      return;
+    }
+    applyDrawModeState(false);
+  }
+
   async function prepareMpvDrawMode(preparationToken) {
     return prepareMpvCommentReadiness({
       prepareFreeze: () => showMpvReviewFreezeFrame(),
@@ -9408,6 +9565,10 @@ async function initApp() {
   function toggleDrawMode() {
     // 오디오 모드에서는 그리기 모드 진입 차단
     if (state.isAudioMode) return;
+    if (fabricDrawingPilotController.isEnabled() && isMpvPilotPlaybackActive()) {
+      void fabricDrawingPilotController.toggle();
+      return;
+    }
     const shouldEnable = !state.isDrawMode;
     if (shouldEnable) {
       applyDrawModeState(true);
@@ -9427,8 +9588,8 @@ async function initApp() {
     const shouldEnable = !state.isCommentMode;
     if (shouldEnable) {
       commentManager.setCommentMode(true);
-      if (state.isDrawMode) {
-        applyDrawModeState(false);
+      if (state.isDrawMode || isFabricDrawingPilotControllerEngaged()) {
+        exitDrawModeForSystemPath();
       }
     } else {
       commentManager.setCommentMode(false);
@@ -12461,7 +12622,7 @@ async function initApp() {
 
     // 재생/일시정지
     if (isPlayPauseInput) {
-      if (e.code === 'Space' && state.isDrawMode) {
+      if (e.code === 'Space' && state.isDrawMode && !isFabricDrawingPilotEngaged()) {
         e.preventDefault();
         e.stopPropagation();
         if (e.repeat) return;
@@ -12482,6 +12643,13 @@ async function initApp() {
 
     // 폼 컨트롤에서는 Space 재생을 제외한 전역 단축키를 무시한다.
     if (shouldIgnoreGlobalShortcutTarget(shortcutTarget)) return;
+
+    if (fabricDrawingPilotController.routeKeydown(e)) return;
+    if (shouldBlockFabricDrawingLegacyShortcut(e)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
 
     // 댓글 모드
     if (userSettings.matchShortcut('commentMode', e)) {

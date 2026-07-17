@@ -102,7 +102,8 @@ test('non-toggle draw-mode shutdown paths clear drawing overlay state', () => {
   assert.match(appSource, /function applyDrawModeState\(enabled\) \{/);
   assert.match(appSource, /function setDrawModeReadyState\(ready\) \{[\s\S]+setCommentOverlaysDrawingPassthrough\(ready\);/);
   assert.match(appSource, /function toggleDrawMode\(\) \{[\s\S]+applyDrawModeState\(true\);[\s\S]+applyDrawModeState\(false\);/);
-  assert.match(audioModeMatch[1], /applyDrawModeState\(false\);/);
+  assert.match(audioModeMatch[1], /if \(state\.isDrawMode \|\| isFabricDrawingPilotControllerEngaged\(\)\) \{[\s\S]+exitDrawModeForSystemPath\(\);/);
+  assert.match(appSource, /function exitDrawModeForSystemPath\(\) \{[\s\S]+fabricDrawingPilotController\.disable\(\)[\s\S]+applyDrawModeState\(false\);/);
   assert.doesNotMatch(audioModeMatch[1], /state\.isDrawMode = false;/);
 });
 
@@ -138,7 +139,7 @@ test('drawing layer rendering uses static below and above canvases around the ac
   assert.match(appSource, /layersBelowCanvas: elements\.layersBelowCanvas/);
   assert.match(appSource, /layersAboveCanvas: elements\.layersAboveCanvas/);
   assert.match(appSource, /getCompositedDrawingOverlayDataUrl\(\)/);
-  assert.match(appSource, /drawingDataUrl: getCompositedDrawingOverlayDataUrl\(\)/);
+  assert.match(appSource, /drawingDataUrl: isFabricDrawingPilotEngaged\(\) \? '' : getCompositedDrawingOverlayDataUrl\(\)/);
 
   assert.match(drawingManagerSource, /partitionDrawingLayersForActive\(layers = \[\], activeLayerId\)/);
   assert.match(drawingManagerSource, /this\.layersBelowCanvas = options\.layersBelowCanvas/);
