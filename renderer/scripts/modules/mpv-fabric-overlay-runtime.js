@@ -485,6 +485,7 @@ function createFabricOverlayRuntime(options = {}) {
   let canvasElement = null;
   let toolbar = null;
   let badge = null;
+  const toolButtons = new Map();
   let fabricCanvas = null;
   let prepared = false;
   let destroyed = false;
@@ -522,6 +523,11 @@ function createFabricOverlayRuntime(options = {}) {
     button.type = 'button';
     button.textContent = label;
     button.dataset.fabricPilotAction = action;
+    if (action === 'brush' || action === 'select') {
+      button.dataset.active = 'false';
+      button.setAttribute?.('aria-pressed', 'false');
+      toolButtons.set(action, button);
+    }
     return button;
   }
 
@@ -612,6 +618,11 @@ function createFabricOverlayRuntime(options = {}) {
   function setToolMode(tool) {
     if (!fabricCanvas) return;
     const selectMode = tool === 'select';
+    for (const [buttonTool, button] of toolButtons) {
+      const active = buttonTool === tool;
+      button.dataset.active = String(active);
+      button.setAttribute?.('aria-pressed', String(active));
+    }
     fabricCanvas.isDrawingMode = false;
     fabricCanvas.selection = selectMode;
     for (const object of fabricCanvas.getObjects()) {
@@ -1095,6 +1106,7 @@ function createFabricOverlayRuntime(options = {}) {
     container?.remove?.();
     sceneStore.destroy();
     actionDeduper.clear();
+    toolButtons.clear();
     fabricCanvas = null;
     container = null;
     root = null;

@@ -72,6 +72,65 @@ const OVERLAY_HTML = String.raw`
       overflow: hidden;
       pointer-events: none;
     }
+    .mpv-fabric-pilot-toolbar {
+      align-items: center;
+      padding: 6px;
+      border-radius: 14px;
+      background: rgba(15, 15, 15, 0.86);
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.1),
+        0 8px 24px rgba(0, 0, 0, 0.35);
+      color: var(--text-primary);
+      font-family: Inter, Pretendard, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .mpv-fabric-pilot-toolbar button {
+      min-width: 40px;
+      min-height: 40px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+      color: var(--text-primary);
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 650;
+      transition-property: transform, background-color, box-shadow;
+      transition-duration: 120ms;
+      transition-timing-function: ease-out;
+    }
+    .mpv-fabric-pilot-toolbar button:hover {
+      background: rgba(255, 255, 255, 0.14);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+    }
+    .mpv-fabric-pilot-toolbar button[data-active="true"] {
+      background: rgba(255, 85, 85, 0.22);
+      box-shadow:
+        0 0 0 1px rgba(255, 112, 112, 0.72),
+        0 0 16px rgba(255, 85, 85, 0.18);
+      color: #fff;
+    }
+    .mpv-fabric-pilot-toolbar button:active {
+      transform: scale(0.96);
+    }
+    .mpv-fabric-pilot-toolbar button:focus-visible {
+      outline: 2px solid var(--accent-secondary);
+      outline-offset: 2px;
+    }
+    .mpv-fabric-pilot-badge {
+      display: flex;
+      align-items: center;
+      min-height: 40px;
+      padding: 0 12px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.28);
+      color: var(--text-tertiary);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
     .mirror-canvas {
       position: absolute;
       display: none;

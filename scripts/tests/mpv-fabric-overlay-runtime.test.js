@@ -342,8 +342,14 @@ test('local toolbar changes do not consume controller tool revisions', () => {
   const selectButton = toolbar.children.find(child => child.dataset.fabricPilotAction === 'select');
   const brushButton = toolbar.children.find(child => child.dataset.fabricPilotAction === 'brush');
 
+  assert.equal(brushButton.dataset.active, 'true');
+  assert.equal(selectButton.dataset.active, 'false');
   selectButton.dispatch('click');
+  assert.equal(brushButton.dataset.active, 'false');
+  assert.equal(selectButton.dataset.active, 'true');
   brushButton.dispatch('click');
+  assert.equal(brushButton.dataset.active, 'true');
+  assert.equal(selectButton.dataset.active, 'false');
   const controllerUpdate = runtime.updateDrawingTool({
     sessionId: 'runtime-session',
     toolRevision: 1,
@@ -352,6 +358,8 @@ test('local toolbar changes do not consume controller tool revisions', () => {
 
   assert.equal(controllerUpdate.accepted, true);
   assert.equal(runtime.getDiagnostics().tool, 'select');
+  assert.equal(brushButton.dataset.active, 'false');
+  assert.equal(selectButton.dataset.active, 'true');
 });
 
 test('Phase 0 selection moves while scale rotate and skew remain locked across reactivation', () => {

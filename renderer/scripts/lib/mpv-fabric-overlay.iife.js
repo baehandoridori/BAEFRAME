@@ -8100,6 +8100,7 @@ void main() {
         let canvasElement = null;
         let toolbar = null;
         let badge = null;
+        const toolButtons = /* @__PURE__ */ new Map();
         let fabricCanvas = null;
         let prepared = false;
         let destroyed = false;
@@ -8132,6 +8133,11 @@ void main() {
           button.type = "button";
           button.textContent = label;
           button.dataset.fabricPilotAction = action;
+          if (action === "brush" || action === "select") {
+            button.dataset.active = "false";
+            button.setAttribute?.("aria-pressed", "false");
+            toolButtons.set(action, button);
+          }
           return button;
         }
         function createId(prefix) {
@@ -8212,6 +8218,11 @@ void main() {
         function setToolMode(tool) {
           if (!fabricCanvas) return;
           const selectMode = tool === "select";
+          for (const [buttonTool, button] of toolButtons) {
+            const active = buttonTool === tool;
+            button.dataset.active = String(active);
+            button.setAttribute?.("aria-pressed", String(active));
+          }
           fabricCanvas.isDrawingMode = false;
           fabricCanvas.selection = selectMode;
           for (const object of fabricCanvas.getObjects()) {
@@ -8654,6 +8665,7 @@ void main() {
           container?.remove?.();
           sceneStore.destroy();
           actionDeduper.clear();
+          toolButtons.clear();
           fabricCanvas = null;
           container = null;
           root = null;
