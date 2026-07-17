@@ -103,6 +103,7 @@ class FakeCanvas {
     this.isDrawingMode = false;
     this.objects = [];
     this.activeObjects = [];
+    this.activeObject = null;
     this.listeners = new Map();
     this.dimensionCalls = [];
     this.calcOffsetCalls = 0;
@@ -146,8 +147,13 @@ class FakeCanvas {
     return [...this.activeObjects];
   }
 
+  getActiveObject() {
+    return this.activeObject || this.activeObjects[0] || null;
+  }
+
   discardActiveObject() {
     this.activeObjects = [];
+    this.activeObject = null;
   }
 
   setDimensions(dimensions, options = {}) {
@@ -363,7 +369,8 @@ test('Phase 0 selection moves while scale rotate and skew remain locked across r
   const activeSelection = new FakePath('');
   activeSelection.getObjects = () => [selected];
   canvas.activeObjects = [selected];
-  canvas.emit('selection:created', { target: activeSelection, selected: [selected] });
+  canvas.activeObject = activeSelection;
+  canvas.emit('selection:created', { selected: [selected], deselected: [] });
 
   for (const target of [selected, activeSelection]) {
     assert.equal(target.hasControls, false);

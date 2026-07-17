@@ -761,8 +761,8 @@ function createFabricOverlayRuntime(options = {}) {
     return objects.map(object => object.__baeframeObjectId).filter(Boolean);
   }
 
-  function onSelectionChanged(event) {
-    applyMoveOnlyConstraints(event?.target);
+  function onSelectionChanged() {
+    applyMoveOnlyConstraints(fabricCanvas?.getActiveObject?.());
     for (const object of fabricCanvas?.getActiveObjects?.() || []) applyMoveOnlyConstraints(object);
     sceneStore.selectObjects(selectionIds());
   }
