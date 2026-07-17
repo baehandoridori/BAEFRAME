@@ -205,6 +205,28 @@ test('passive ensure stays ready without reading or injecting the Fabric bundle'
   assert.equal(result.drawingCapability.fabricReady, false);
 });
 
+test('passive diagnostics expose accepted host tokens before the Fabric runtime is prepared', async () => {
+  const { host, getReadCount } = createDrawingHostHarness();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+
+  const disabled = await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 11,
+    enabled: false
+  }));
+  assert.equal(disabled.success, true);
+
+  const diagnostics = await host.getDrawingDiagnostics();
+  assert.equal(diagnostics.success, false);
+  assert.match(diagnostics.error, /not ready/i);
+  assert.equal(diagnostics.hostGeneration, hostGeneration);
+  assert.equal(diagnostics.videoGeneration, 7);
+  assert.equal(diagnostics.inputRevision, 11);
+  assert.equal(diagnostics.desiredInputEnabled, false);
+  assert.equal(getReadCount(), 0, 'passive diagnostics must not prepare Fabric');
+});
+
 test('injects and prepares Fabric once per host generation before enabling native input', async () => {
   const { host, events, getReadCount } = createDrawingHostHarness();
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });

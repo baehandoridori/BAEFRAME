@@ -136,6 +136,60 @@ function createMpvOverlayLifecycle({ onWarning = () => {} } = {}) {
   };
 }
 
+function createFabricPilotStatusRefreshCoordinator({ run, shouldRun = () => true, onError = () => {} } = {}) {
+  if (typeof run !== 'function') {
+    throw new TypeError('Fabric pilot status refresh run must be a function');
+  }
+
+  let inFlight = null;
+  let trailing = false;
+  let generation = 0;
+  let requestRevision = 0;
+
+  function request() {
+    if (!shouldRun()) return null;
+    const currentRequestRevision = ++requestRevision;
+    if (inFlight) {
+      trailing = true;
+      return inFlight;
+    }
+
+    const requestGeneration = generation;
+    const operation = Promise.resolve()
+      .then(() => run({
+        isCurrent: () => requestGeneration === generation &&
+          currentRequestRevision === requestRevision &&
+          shouldRun()
+      }))
+      .catch(error => {
+        onError(error);
+        return false;
+      });
+    inFlight = operation;
+
+    const settle = () => {
+      if (inFlight !== operation) return;
+      inFlight = null;
+      if (!shouldRun()) {
+        trailing = false;
+        return;
+      }
+      if (!trailing) return;
+      trailing = false;
+      request();
+    };
+    void operation.then(settle, settle);
+    return operation;
+  }
+
+  function cancel() {
+    generation += 1;
+    trailing = false;
+  }
+
+  return { request, cancel };
+}
+
 function createMpvTeardownGate() {
   let activeTeardown = null;
 
@@ -7087,7 +7141,15 @@ async function initApp() {
   let fabricPilotStatusText = '';
   let fabricPilotStatusRefreshTimer = null;
   let fabricPilotStatusLastRefreshAt = 0;
-  let fabricPilotStatusRefreshSequence = 0;
+  const fabricPilotStatusRefreshCoordinator = createFabricPilotStatusRefreshCoordinator({
+    shouldRun: () => fabricDrawingPilotController.isEnabled(),
+    run: refreshFabricPilotStatus,
+    onError: (error) => {
+      log.debug('Fabric 수동 검증 HUD 갱신 실패', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
   let mpvOverlayRecoveryOwner = null;
   let mpvOverlayRecoveryInFlightOwner = null;
   let mpvOverlayFallbackOwner = null;
@@ -8109,7 +8171,7 @@ async function initApp() {
   MPV_OVERLAY_DIFF_FIELDS.push('fabricPilotStatusText');
   const mpvOverlayMirrorFieldCache = { owner: null, canvasKey: '', fields: {} };
 
-  function formatFabricPilotStatusText(snapshot, diagnostics, owner) {
+  function formatFabricPilotStatusText(snapshot, diagnostics) {
     const overlay = diagnostics?.overlay;
     const attempted = Math.max(0, Math.trunc(Number(snapshot?.bInput?.attempted) || 0));
     const accepted = Math.max(0, Math.trunc(Number(snapshot?.bInput?.accepted) || 0));
@@ -8117,7 +8179,7 @@ async function initApp() {
     const overlayRevision = Math.max(0, Math.trunc(Number(overlay?.inputRevision) || 0));
     const frame = Math.max(0, Math.trunc(Number(videoPlayer.currentFrame) || 0));
     const hostGeneration = Math.max(0, Math.trunc(Number(snapshot?.hostGeneration) || 0));
-    const mpvOwner = owner && isMpvPilotPlaybackActive() && videoPlayer.isPlaying ? 1 : 0;
+    const mpvOwner = isMpvPilotPlaybackActive() && videoPlayer.isPlaying ? 1 : 0;
     const htmlOwner = Array.from(document.querySelectorAll('audio, video'))
       .filter(media => media.paused === false && media.ended !== true)
       .length;
@@ -8136,14 +8198,12 @@ async function initApp() {
       `(mpv ${mpvOwner}/html ${htmlOwner}) · save ${saveAttempts} · err ${errorCount}`;
   }
 
-  async function refreshFabricPilotStatus() {
-    const sequence = ++fabricPilotStatusRefreshSequence;
+  async function refreshFabricPilotStatus({ isCurrent }) {
     const snapshot = fabricDrawingPilotController.getStatusSnapshot();
     const diagnostics = await fabricDrawingPilotController.diagnostics();
-    if (sequence !== fabricPilotStatusRefreshSequence || !fabricDrawingPilotController.isEnabled()) return;
+    if (!isCurrent()) return;
 
-    const owner = mpvOverlayLifecycle.captureReadyOwner();
-    const nextStatusText = formatFabricPilotStatusText(snapshot, diagnostics, owner);
+    const nextStatusText = formatFabricPilotStatusText(snapshot, diagnostics);
     if (nextStatusText === fabricPilotStatusText) return;
     fabricPilotStatusText = nextStatusText;
     scheduleMpvOverlayStateSync({ force: true });
@@ -8151,7 +8211,7 @@ async function initApp() {
 
   function scheduleFabricPilotStatusRefresh({ force = false } = {}) {
     if (!fabricDrawingPilotController.isEnabled()) {
-      fabricPilotStatusRefreshSequence += 1;
+      fabricPilotStatusRefreshCoordinator.cancel();
       if (fabricPilotStatusRefreshTimer) clearTimeout(fabricPilotStatusRefreshTimer);
       fabricPilotStatusRefreshTimer = null;
       fabricPilotStatusLastRefreshAt = 0;
@@ -8167,7 +8227,7 @@ async function initApp() {
       if (fabricPilotStatusRefreshTimer) clearTimeout(fabricPilotStatusRefreshTimer);
       fabricPilotStatusRefreshTimer = null;
       fabricPilotStatusLastRefreshAt = now;
-      void refreshFabricPilotStatus();
+      fabricPilotStatusRefreshCoordinator.request();
       return;
     }
     if (fabricPilotStatusRefreshTimer) return;
@@ -8175,7 +8235,7 @@ async function initApp() {
     fabricPilotStatusRefreshTimer = setTimeout(() => {
       fabricPilotStatusRefreshTimer = null;
       fabricPilotStatusLastRefreshAt = Date.now();
-      void refreshFabricPilotStatus();
+      fabricPilotStatusRefreshCoordinator.request();
     }, FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS - elapsed);
   }
 

@@ -1039,24 +1039,36 @@ class MPVOverlayHost {
   }
 
   async getDrawingDiagnostics() {
+    const hostDiagnostics = {
+      hostGeneration: this.hostGeneration,
+      videoGeneration: this.currentVideoGeneration,
+      inputRevision: this.currentInputRevision,
+      desiredInputEnabled: this.desiredInputEnabled
+    };
     if (this.fabricReadyGeneration !== this.hostGeneration) {
-      return { success: false, error: 'Fabric drawing runtime is not ready' };
+      return {
+        success: false,
+        ...hostDiagnostics,
+        error: 'Fabric drawing runtime is not ready'
+      };
     }
-    const hostGeneration = this.hostGeneration;
+    const { hostGeneration } = hostDiagnostics;
     try {
       const result = await this._executeFabricMethod('getDiagnostics');
       if (hostGeneration !== this.hostGeneration || this.fabricReadyGeneration !== hostGeneration) {
-        return { success: false, error: 'stale drawing diagnostics response' };
+        return {
+          success: false,
+          ...hostDiagnostics,
+          error: 'stale drawing diagnostics response'
+        };
       }
       const cache = result?.cache && typeof result.cache === 'object' ? result.cache : {};
       return {
         success: true,
+        ...hostDiagnostics,
         state: result?.state === 'active' ? 'active' : 'passive',
         prepared: result?.prepared === true,
         inputEnabled: result?.inputEnabled === true,
-        hostGeneration,
-        videoGeneration: this.currentVideoGeneration,
-        inputRevision: this.currentInputRevision,
         activeSessionId: this.activeSessionId,
         targetFrame: Number.isInteger(Number(result?.targetFrame)) ? Number(result.targetFrame) : null,
         tool: result?.tool === 'select' ? 'select' : 'brush',
@@ -1074,7 +1086,11 @@ class MPVOverlayHost {
         lastError: typeof result?.lastError === 'string' ? result.lastError.slice(0, 512) : null
       };
     } catch (error) {
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        ...hostDiagnostics,
+        error: error.message
+      };
     }
   }
 
