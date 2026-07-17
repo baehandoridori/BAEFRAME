@@ -18,6 +18,7 @@ const { mpvOverlayHost } = require('./mpv-overlay-host');
 const Store = require('electron-store');
 
 const log = createLogger('IPC');
+const DEFAULT_FABRIC_DRAWING_PILOT_STATE = Object.freeze({ enabled: false });
 
 /**
  * 허용된 파일 확장자 목록
@@ -249,8 +250,13 @@ async function pruneMissingRecentFiles() {
 /**
  * IPC 핸들러 설정
  */
-function setupIpcHandlers() {
+function setupIpcHandlers({
+  fabricDrawingPilot = DEFAULT_FABRIC_DRAWING_PILOT_STATE
+} = {}) {
   log.info('IPC 핸들러 등록 시작');
+
+  const isFabricDrawingPilotEnabled = fabricDrawingPilot?.enabled === true;
+  ipcMain.handle('fabric-drawing:get-pilot-state', () => isFabricDrawingPilotEnabled);
 
   // ====== 파일 관련 ======
 
@@ -2716,4 +2722,3 @@ function createPathHash(filePath) {
 }
 
 module.exports = { setupIpcHandlers, pruneMissingRecentFiles };
-
