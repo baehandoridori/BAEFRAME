@@ -146,6 +146,7 @@ test('controller exposes the complete public API and initialize reads a boolean 
     'isEnabled',
     'isActiveOrPreparing',
     'getState',
+    'getStatusSnapshot',
     'diagnostics'
   ];
 
@@ -513,6 +514,62 @@ test('IME composition is ignored while repeated pilot keys are consumed without 
   assert.equal(harness.calls.tool.length, activeCounts.tool);
   assert.equal(harness.calls.action.length, activeCounts.action);
   assert.equal(harness.controller.getState(), 'active');
+});
+
+test('B input counters distinguish accepted, repeated, IME, and rejected attempts', async () => {
+  const harness = createHarness();
+  await preparePassive(harness);
+  assert.deepEqual(harness.controller.getStatusSnapshot().bInput, {
+    attempted: 0,
+    accepted: 0,
+    rejected: 0,
+    autoRepeatIgnored: 0
+  });
+
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('b')), true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(harness.controller.getStatusSnapshot().bInput, {
+    attempted: 1,
+    accepted: 1,
+    rejected: 0,
+    autoRepeatIgnored: 0
+  });
+
+  const stateChangeCount = harness.states.length;
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('b', { repeat: true })), true);
+  assert.equal(harness.states.length, stateChangeCount + 1);
+  assert.equal(harness.states.at(-1).state, 'active');
+  assert.deepEqual(harness.states.at(-1).snapshot.bInput, {
+    attempted: 1,
+    accepted: 1,
+    rejected: 0,
+    autoRepeatIgnored: 1
+  });
+
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('b', { isComposing: true })), false);
+  assert.deepEqual(harness.controller.getStatusSnapshot().bInput, {
+    attempted: 1,
+    accepted: 1,
+    rejected: 0,
+    autoRepeatIgnored: 1
+  });
+
+  const rejected = createHarness({
+    onInput(request) {
+      return request.enabled
+        ? { success: false, accepted: false, enabled: false }
+        : { success: true, accepted: true, enabled: false };
+    }
+  });
+  await preparePassive(rejected);
+  assert.equal(rejected.controller.routeKeydown(createKeyEvent('b')), true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(rejected.controller.getStatusSnapshot().bInput, {
+    attempted: 1,
+    accepted: 0,
+    rejected: 1,
+    autoRepeatIgnored: 0
+  });
 });
 
 test('video confirmations advance exactly once, disable first, and resume with a fresh session', async () => {

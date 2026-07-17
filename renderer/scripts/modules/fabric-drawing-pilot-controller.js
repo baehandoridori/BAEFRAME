@@ -72,6 +72,10 @@ export function createFabricDrawingPilotController(options = {}) {
   let confirmedLoadToken = null;
   let resumeRequested = false;
   let lastError = null;
+  let bInputAttempted = 0;
+  let bInputAccepted = 0;
+  let bInputRejected = 0;
+  let bAutoRepeatIgnored = 0;
 
   function contextSnapshot(overrides) {
     let current = {};
@@ -99,19 +103,29 @@ export function createFabricDrawingPilotController(options = {}) {
       toolRevision: currentSession?.toolRevision ?? 0,
       videoReady,
       resumeRequested,
-      lastError
+      lastError,
+      bInput: {
+        attempted: bInputAttempted,
+        accepted: bInputAccepted,
+        rejected: bInputRejected,
+        autoRepeatIgnored: bAutoRepeatIgnored
+      }
     };
   }
 
-  function setState(nextState) {
-    if (state === nextState) return;
-    state = nextState;
+  function notifyStateChange() {
     const snapshot = localSnapshot();
     try {
       onStateChange(state, snapshot);
     } catch {
       // State delivery is advisory and must not change the input boundary.
     }
+  }
+
+  function setState(nextState) {
+    if (state === nextState) return;
+    state = nextState;
+    notifyStateChange();
   }
 
   function makeEnvelope(type, payload = {}) {
@@ -565,11 +579,30 @@ export function createFabricDrawingPilotController(options = {}) {
       ((key === 'v' || key === 'delete') && (state === 'preparing' || state === 'active'));
     if (event.repeat === true && repeatIsRelevant) {
       consumeKeyEvent(event);
+      if (key === 'b') {
+        bAutoRepeatIgnored += 1;
+        notifyStateChange();
+      }
       return true;
     }
     if (key === 'b') {
       consumeKeyEvent(event);
-      runDetached(toggle());
+      bInputAttempted += 1;
+      notifyStateChange();
+      runDetached(Promise.resolve(toggle()).then(
+        accepted => {
+          if (accepted) {
+            bInputAccepted += 1;
+          } else {
+            bInputRejected += 1;
+          }
+          notifyStateChange();
+        },
+        () => {
+          bInputRejected += 1;
+          notifyStateChange();
+        }
+      ));
       return true;
     }
     if (key === 'v' && (state === 'preparing' || state === 'active')) {
@@ -596,6 +629,10 @@ export function createFabricDrawingPilotController(options = {}) {
 
   function getState() {
     return state;
+  }
+
+  function getStatusSnapshot() {
+    return localSnapshot();
   }
 
   async function diagnostics() {
@@ -627,6 +664,7 @@ export function createFabricDrawingPilotController(options = {}) {
     isEnabled,
     isActiveOrPreparing,
     getState,
+    getStatusSnapshot,
     diagnostics
   };
 }
