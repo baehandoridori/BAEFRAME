@@ -650,7 +650,7 @@ function makeValidRawDiagnostics() {
   };
 }
 
-test('100 controller toggles and real runtime actions preserve file, playback, owner, media, timeline, and save canaries', async (t) => {
+test('synthetic controller/runtime boundary preserves no-save, playback, owner, media, and timeline canaries', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'baeframe-fabric-drawing-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
   const bframePath = path.join(tempDir, 'integration-evidence.bframe');
@@ -864,6 +864,26 @@ test('validator rejects playback, save, host, file, owner, media, timeline, cont
       }
     ],
     [
+      'host baseline is not a single fresh host',
+      /host/i,
+      (raw) => {
+        for (const snapshot of [raw.before.host, raw.after.host]) {
+          snapshot.construct = 2;
+          snapshot.loadURL = 2;
+          snapshot.destroy = 1;
+          snapshot.generation = 2;
+        }
+      }
+    ],
+    [
+      'host generation is inconsistent with construction count',
+      /host/i,
+      (raw) => {
+        raw.before.host.generation = 7;
+        raw.after.host.generation = 7;
+      }
+    ],
+    [
       'host generation',
       /host/i,
       (raw) => {
@@ -962,6 +982,38 @@ test('validator rejects playback, save, host, file, owner, media, timeline, cont
       }
     ],
     [
+      'zero video generation',
+      /videoGeneration|video generation/i,
+      (raw) => {
+        raw.before.controller.videoGeneration = 0;
+        raw.after.controller.videoGeneration = 0;
+      }
+    ],
+    [
+      'negative timeline duration',
+      /timeline|duration/i,
+      (raw) => {
+        raw.before.timeline.duration = -1;
+        raw.after.timeline.duration = -1;
+      }
+    ],
+    [
+      'negative timeline current frame',
+      /timeline|currentFrame/i,
+      (raw) => {
+        raw.before.timeline.currentFrame = -1;
+        raw.after.timeline.currentFrame = -1;
+      }
+    ],
+    [
+      'negative playlist continuous offset',
+      /timeline|playlistContinuousOffset/i,
+      (raw) => {
+        raw.before.timeline.playlistContinuousOffset = -1;
+        raw.after.timeline.playlistContinuousOffset = -1;
+      }
+    ],
+    [
       'session residue',
       /session/i,
       (raw) => {
@@ -987,6 +1039,14 @@ test('validator rejects playback, save, host, file, owner, media, timeline, cont
       /stale/i,
       (raw) => {
         raw.staleProbe.activeGeneration = 2;
+      }
+    ],
+    [
+      'stale generation jump',
+      /stale/i,
+      (raw) => {
+        raw.staleProbe.newerGeneration = 99;
+        raw.staleProbe.activeGeneration = 99;
       }
     ],
     [
@@ -1079,6 +1139,27 @@ test('CLI reads raw JSON, emits only the bounded summary, and exits 1 for violat
   });
   assert.equal(invalid.status, 1, invalid.stderr || invalid.stdout);
   assert.notEqual(JSON.parse(invalid.stdout).violations.length, 0);
+
+  const semanticallyImpossible = makeValidRawDiagnostics();
+  for (const snapshot of [semanticallyImpossible.before, semanticallyImpossible.after]) {
+    snapshot.host.construct = 2;
+    snapshot.host.loadURL = 2;
+    snapshot.host.destroy = 1;
+    snapshot.host.generation = 7;
+    snapshot.controller.videoGeneration = 0;
+    snapshot.timeline.duration = -1;
+    snapshot.timeline.currentFrame = -1;
+    snapshot.timeline.playlistContinuousOffset = -1;
+  }
+  semanticallyImpossible.staleProbe.newerGeneration = 99;
+  semanticallyImpossible.staleProbe.activeGeneration = 99;
+  const impossible = spawnSync(process.execPath, [diagnosticsRunnerPath], {
+    cwd: rootDir,
+    input: JSON.stringify(semanticallyImpossible),
+    encoding: 'utf8'
+  });
+  assert.equal(impossible.status, 1, impossible.stderr || impossible.stdout);
+  assert.notEqual(JSON.parse(impossible.stdout).violations.length, 0);
 
   const malformed = spawnSync(process.execPath, [diagnosticsRunnerPath], {
     cwd: rootDir,

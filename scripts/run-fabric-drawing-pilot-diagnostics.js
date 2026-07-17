@@ -93,7 +93,7 @@ function validateControllerSnapshot(snapshot, prefix, violations) {
     addMalformed(violations, prefix);
     return;
   }
-  if (!isNonNegativeInteger(snapshot.videoGeneration)) {
+  if (!isPositiveInteger(snapshot.videoGeneration)) {
     addMalformed(violations, `${prefix}.videoGeneration`);
   }
   if (!isNonNegativeInteger(snapshot.inputRevision)) {
@@ -132,6 +132,12 @@ function validateHostSnapshot(snapshot, prefix, violations) {
   if (!isIdentity(snapshot.windowIdentity)) {
     addMalformed(violations, `${prefix}.windowIdentity`);
   }
+  if (snapshot.construct !== 1 ||
+      snapshot.loadURL !== 1 ||
+      snapshot.destroy !== 0 ||
+      snapshot.generation !== 1) {
+    violations.push(`${prefix} must describe exactly one fresh live overlay host`);
+  }
 }
 
 function validateTimelineSnapshot(snapshot, prefix, violations) {
@@ -140,7 +146,7 @@ function validateTimelineSnapshot(snapshot, prefix, violations) {
     return;
   }
   for (const field of TIMELINE_FIELDS) {
-    if (!isFiniteNumber(snapshot[field])) {
+    if (!isFiniteNumber(snapshot[field]) || snapshot[field] < 0) {
       addMalformed(violations, `${prefix}.${field}`);
     }
   }
@@ -293,7 +299,7 @@ function validateDiagnostics(raw) {
   }
 
   const staleOrderingValid =
-    staleProbe.olderGeneration < staleProbe.newerGeneration &&
+    staleProbe.newerGeneration === staleProbe.olderGeneration + 1 &&
     staleProbe.lateAccepted === false &&
     staleProbe.activeGeneration === staleProbe.newerGeneration &&
     staleProbe.activeSessionId === staleProbe.expectedSessionId;
