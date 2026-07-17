@@ -1250,6 +1250,7 @@ class MPVOverlayHost {
       if (this.window !== hostWindow || this.hostGeneration !== hostGeneration) return;
       hostWindow.setIgnoreMouseEvents?.(true);
       this.contentLoadGeneration += 1;
+      this.window = null;
       this.contentLoaded = false;
       this.fabricReadyGeneration = 0;
       this.fabricAttemptGeneration = 0;
@@ -1263,6 +1264,8 @@ class MPVOverlayHost {
       this.currentToolRevision = -1;
       this.completedActionIds.clear();
       this.inFlightDrawingActions.clear();
+      this._lastAppliedScreenBounds = null;
+      if (!hostWindow.isDestroyed?.()) hostWindow.destroy();
     });
 
     hostWindow.on?.('closed', () => {

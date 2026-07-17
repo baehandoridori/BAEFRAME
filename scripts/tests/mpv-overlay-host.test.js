@@ -573,7 +573,7 @@ test('Fabric readiness failure stays isolated from the passive mirror and is not
   assert.equal(events.some(([name, value]) => name === 'setIgnoreMouseEvents' && value === false), false);
 });
 
-test('renderer crash invalidates only its current overlay generation and recovers click-through', async () => {
+test('renderer crash discards its current overlay and recovers in a new host generation', async () => {
   const { host, events, windows, getReadCount } = createDrawingHostHarness();
   const first = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
   const firstGeneration = first.drawingCapability.hostGeneration;
@@ -598,26 +598,35 @@ test('renderer crash invalidates only its current overlay generation and recover
   crashedWindow.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
 
   assert.deepEqual(events[0], ['setIgnoreMouseEvents', true, undefined]);
+  assert.equal(crashedWindow.destroyed, true);
+  assert.equal(host.window, null);
   assert.equal(host.getDrawingCapability().hostGeneration, firstGeneration);
   assert.equal(host.getDrawingCapability().passiveReady, false);
   assert.equal(host.getDrawingCapability().fabricReady, false);
   assert.equal((await host.getDrawingDiagnostics()).success, false);
 
   const recovered = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const replacementWindow = windows[1];
   assert.equal(recovered.success, true);
-  assert.equal(recovered.drawingCapability.hostGeneration, firstGeneration);
-  assert.equal((await host.setDrawingInput(makeDrawingInput(firstGeneration, {
+  assert.notEqual(replacementWindow, crashedWindow);
+  assert.equal(recovered.drawingCapability.hostGeneration, firstGeneration + 1);
+  assert.equal(getReadCount(), 1, 'passive recovery does not inject Fabric into the new generation');
+  assert.equal((await host.setDrawingInput(makeDrawingInput(firstGeneration + 1, {
     videoGeneration: 3,
     inputRevision: 1
   }))).success, true);
-  assert.equal(getReadCount(), 2, 'the recovered renderer document receives one fresh bundle injection');
+  assert.equal(getReadCount(), 2, 'each of the two host generations receives exactly one bundle injection');
 
-  host.destroy();
-  const replacement = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  await host.getDrawingDiagnostics();
+  await host.ensure({ x: 1, y: 2, width: 640, height: 360 });
+  assert.equal(getReadCount(), 2, 'the recovered generation does not reinject its bundle');
+
   const eventCountBeforeStaleCrash = events.length;
   crashedWindow.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
   assert.equal(events.length, eventCountBeforeStaleCrash);
-  assert.equal(host.getDrawingCapability().hostGeneration, replacement.drawingCapability.hostGeneration);
+  assert.equal(host.window, replacementWindow);
+  assert.equal(replacementWindow.destroyed, false);
+  assert.equal(host.getDrawingCapability().hostGeneration, recovered.drawingCapability.hostGeneration);
   assert.equal(host.getDrawingCapability().passiveReady, true);
 });
 
