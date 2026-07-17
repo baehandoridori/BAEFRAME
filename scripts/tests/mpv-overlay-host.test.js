@@ -20,6 +20,420 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
+function createDrawingHostHarness(options = {}) {
+  const events = [];
+  const windows = [];
+  const bundleSource = options.bundleSource || '/* fixed Fabric bundle */';
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    getContentBounds: () => ({ x: 100, y: 80, width: 1200, height: 800 })
+  };
+
+  class FakeBrowserWindow {
+    constructor(windowOptions) {
+      this.options = windowOptions;
+      this.destroyed = false;
+      this.listeners = new Map();
+      this.webContents = {
+        executeJavaScript: async (script) => {
+          events.push(['executeJavaScript', script]);
+          if (script.includes("typeof window.__applyMpvOverlayState === 'function'")) return true;
+          if (script === bundleSource) return true;
+          if (script.includes('.prepare(')) return { prepared: true, reused: false };
+          if (typeof options.executeDrawing === 'function') {
+            const result = options.executeDrawing(script);
+            if (result !== undefined) return result;
+          }
+          if (script.includes('.setDrawingInput(')) {
+            return { accepted: true, enabled: script.includes('"enabled":true'), restored: false };
+          }
+          if (script.includes('.updateDrawingTool(')) return { accepted: true, tool: 'select' };
+          if (script.includes('.applyDrawingAction(')) {
+            return {
+              applied: true,
+              deletedCount: 1,
+              deletedIds: ['must-not-leak'],
+              scene: { objects: [{ type: 'fabric.Path' }] }
+            };
+          }
+          if (script.includes('.getDiagnostics(')) {
+            return {
+              state: 'active',
+              prepared: true,
+              inputEnabled: true,
+              activeSessionId: 'session-1',
+              targetFrame: 24,
+              tool: 'select',
+              objectCount: 1,
+              selectionCount: 1,
+              mutationCount: 2,
+              dirty: true,
+              cache: { videoCount: 1, sceneCount: 1, estimatedBytes: 512, evictionCount: 0 },
+              metrics: { staleMessageDropCount: 0, saveAttemptCount: 0 },
+              scene: { objects: [{ type: 'fabric.Path' }] },
+              fabricJSON: { version: '7.4.0' }
+            };
+          }
+          return undefined;
+        }
+      };
+      events.push(['construct', windowOptions]);
+      windows.push(this);
+    }
+    loadURL(url) {
+      events.push(['loadURL', url]);
+      return Promise.resolve();
+    }
+    setBounds(bounds) {
+      events.push(['setBounds', bounds]);
+    }
+    setIgnoreMouseEvents(ignore, mouseOptions) {
+      events.push(['setIgnoreMouseEvents', ignore, mouseOptions]);
+    }
+    showInactive() {
+      events.push(['showInactive']);
+    }
+    moveTop() {
+      events.push(['moveTop']);
+    }
+    isDestroyed() {
+      return this.destroyed;
+    }
+    on(eventName, handler) {
+      this.listeners.set(eventName, handler);
+    }
+    destroy() {
+      this.destroyed = true;
+      events.push(['destroy']);
+    }
+  }
+
+  let readCount = 0;
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow,
+    fabricBundlePath: 'fixed/app/renderer/scripts/lib/mpv-fabric-overlay.iife.js',
+    readFile: async (filePath, encoding) => {
+      readCount += 1;
+      events.push(['readFile', filePath, encoding]);
+      if (options.readFile) return options.readFile(filePath, encoding);
+      return bundleSource;
+    }
+  });
+
+  return {
+    host,
+    events,
+    windows,
+    getReadCount: () => readCount
+  };
+}
+
+function makeDrawingInput(hostGeneration, overrides = {}) {
+  return {
+    hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 1,
+    enabled: false,
+    ...overrides
+  };
+}
+
+test('exposes the MPV overlay Fabric drawing host capability API', () => {
+  const { host } = createDrawingHostHarness();
+
+  assert.equal(typeof host.getDrawingCapability, 'function');
+  assert.equal(typeof host.setDrawingInput, 'function');
+  assert.equal(typeof host.updateDrawingTool, 'function');
+  assert.equal(typeof host.applyDrawingAction, 'function');
+  assert.equal(typeof host.getDrawingDiagnostics, 'function');
+});
+
+test('passive ensure stays ready without reading or injecting the Fabric bundle', async () => {
+  const { host, events, windows, getReadCount } = createDrawingHostHarness({
+    readFile: async () => {
+      throw new Error('Fabric bundle unavailable');
+    }
+  });
+
+  const result = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+
+  assert.equal(result.success, true);
+  assert.equal(getReadCount(), 0);
+  assert.equal(events.some(([name, script]) => name === 'executeJavaScript' && script === '/* fixed Fabric bundle */'), false);
+  assert.equal(windows[0].options.focusable, false);
+  assert.equal(windows[0].options.webPreferences.contextIsolation, true);
+  assert.equal(windows[0].options.webPreferences.nodeIntegration, false);
+  assert.equal(windows[0].options.webPreferences.sandbox, true);
+  assert.equal(windows[0].options.webPreferences.preload, undefined);
+  assert.ok(result.drawingCapability, 'ensure should return the current drawing capability');
+  assert.equal(result.drawingCapability.hostGeneration, 1);
+  assert.equal(result.drawingCapability.passiveReady, true);
+  assert.equal(result.drawingCapability.fabricReady, false);
+});
+
+test('injects and prepares Fabric once per host generation before enabling native input', async () => {
+  const { host, events, getReadCount } = createDrawingHostHarness();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  events.length = 0;
+
+  const disabling = host.setDrawingInput(makeDrawingInput(hostGeneration));
+  assert.deepEqual(events[0], ['setIgnoreMouseEvents', true, undefined]);
+  assert.equal((await disabling).success, true);
+
+  const enabled = await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-1',
+      stableVideoIdentity: 'video-1',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+
+  assert.equal(enabled.success, true);
+  assert.equal(enabled.enabled, true);
+  assert.equal(getReadCount(), 1);
+  assert.equal(events.filter(([name, value]) => name === 'executeJavaScript' && value === '/* fixed Fabric bundle */').length, 1);
+  assert.equal(events.filter(([name, value]) => name === 'executeJavaScript' && value.includes?.('.prepare(document.getElementById(\'root\'))')).length, 1);
+  const runtimeEnableIndex = events.findIndex(([name, value]) =>
+    name === 'executeJavaScript' && value.includes?.('.setDrawingInput(') && value.includes('"enabled":true'));
+  const nativeEnableIndex = events.findIndex(([name, value]) => name === 'setIgnoreMouseEvents' && value === false);
+  assert.ok(runtimeEnableIndex >= 0);
+  assert.ok(nativeEnableIndex > runtimeEnableIndex, 'native input opens only after the runtime accepted activation');
+  assert.equal(events.some(([name, , mouseOptions]) => name === 'setIgnoreMouseEvents' && mouseOptions?.forward === true), false);
+
+  await host.getDrawingDiagnostics();
+  await host.ensure({ x: 1, y: 2, width: 640, height: 360 });
+  assert.equal(getReadCount(), 1);
+});
+
+test('rejects stale host video input session and tool revisions at the host boundary', async () => {
+  const { host } = createDrawingHostHarness();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  const session = {
+    sessionId: 'session-current',
+    stableVideoIdentity: 'video-current',
+    targetFrame: 12,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+    tool: 'brush'
+  };
+
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 5,
+    inputRevision: 10
+  }))).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 6,
+    inputRevision: 11,
+    enabled: true,
+    session
+  }))).success, false, 'a larger video generation cannot arrive through enable');
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration - 1, {
+    videoGeneration: 5,
+    inputRevision: 11,
+    enabled: true,
+    session
+  }))).success, false);
+
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 5,
+    inputRevision: 11,
+    enabled: true,
+    session
+  }))).success, true);
+
+  const currentTool = {
+    hostGeneration,
+    videoGeneration: 5,
+    inputRevision: 11,
+    sessionId: 'session-current',
+    toolRevision: 1,
+    tool: 'select'
+  };
+  assert.equal((await host.updateDrawingTool({ ...currentTool, hostGeneration: hostGeneration - 1 })).success, false);
+  assert.equal((await host.updateDrawingTool({ ...currentTool, videoGeneration: 4 })).success, false);
+  assert.equal((await host.updateDrawingTool({ ...currentTool, inputRevision: 10 })).success, false);
+  assert.equal((await host.updateDrawingTool({ ...currentTool, sessionId: 'session-stale' })).success, false);
+  assert.equal((await host.updateDrawingTool(currentTool)).success, true);
+  assert.equal((await host.updateDrawingTool({ ...currentTool, toolRevision: 1, tool: 'brush' })).success, false);
+});
+
+test('deduplicates drawing actions and allowlists lightweight host responses', async () => {
+  const { host, events } = createDrawingHostHarness();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  const input = makeDrawingInput(hostGeneration, { videoGeneration: 3, inputRevision: 1 });
+  assert.equal((await host.setDrawingInput(input)).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 3,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-actions',
+      stableVideoIdentity: 'video-actions',
+      targetFrame: 42,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'select'
+    }
+  }))).success, true);
+
+  const action = {
+    hostGeneration,
+    videoGeneration: 3,
+    inputRevision: 2,
+    sessionId: 'session-actions',
+    actionId: 'action-delete-1',
+    action: 'delete-selection'
+  };
+  const first = await host.applyDrawingAction(action);
+  const duplicate = await host.applyDrawingAction(action);
+  assert.deepEqual(first, { success: true, applied: true, duplicate: false, deletedCount: 1 });
+  assert.deepEqual(duplicate, { success: true, applied: false, duplicate: true, deletedCount: 0 });
+  assert.equal(
+    events.filter(([name, value]) => name === 'executeJavaScript' && value.includes?.('.applyDrawingAction(')).length,
+    1
+  );
+  assert.doesNotMatch(JSON.stringify(first), /deletedIds|objects|scene|fabric/i);
+
+  const diagnostics = await host.getDrawingDiagnostics();
+  assert.equal(diagnostics.success, true);
+  assert.equal(diagnostics.hostGeneration, hostGeneration);
+  assert.equal(diagnostics.videoGeneration, 3);
+  assert.equal(diagnostics.inputRevision, 2);
+  assert.equal(diagnostics.activeSessionId, 'session-actions');
+  assert.equal(diagnostics.objectCount, 1);
+  assert.deepEqual(diagnostics.cache, {
+    videoCount: 1,
+    sceneCount: 1,
+    estimatedBytes: 512,
+    evictionCount: 0
+  });
+  assert.doesNotMatch(JSON.stringify(diagnostics), /fabricJSON|objects|scene\s*:/i);
+});
+
+test('a later disable keeps click-through when an older enable finishes late', async () => {
+  const lateEnable = createDeferred();
+  const { host, events } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.setDrawingInput(') && script.includes('"enabled":true')) {
+        return lateEnable.promise;
+      }
+      return undefined;
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, { videoGeneration: 8, inputRevision: 1 }));
+
+  const pendingEnable = host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 8,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-late',
+      stableVideoIdentity: 'video-late',
+      targetFrame: 8,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  await waitForAsyncReposition();
+
+  const disableEventIndex = events.length;
+  const disabling = host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 8,
+    inputRevision: 3
+  }));
+  assert.deepEqual(events[disableEventIndex], ['setIgnoreMouseEvents', true, undefined]);
+  assert.equal((await disabling).success, true);
+
+  lateEnable.resolve({ accepted: true, enabled: true });
+  assert.equal((await pendingEnable).success, false);
+  assert.equal(
+    events.slice(disableEventIndex).some(([name, value]) => name === 'setIgnoreMouseEvents' && value === false),
+    false
+  );
+});
+
+test('destroy restores click-through and only a newly constructed window advances host generation', async () => {
+  const { host, events, getReadCount } = createDrawingHostHarness();
+  const first = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const firstGeneration = first.drawingCapability.hostGeneration;
+  await host.setDrawingInput(makeDrawingInput(firstGeneration, { videoGeneration: 4, inputRevision: 1 }));
+  events.length = 0;
+
+  const destroyed = host.destroy();
+
+  assert.deepEqual(events[0], ['setIgnoreMouseEvents', true, undefined]);
+  assert.equal(destroyed.destroyed, true);
+  assert.equal(host.getDrawingCapability().hostGeneration, firstGeneration);
+  assert.equal(host.getDrawingCapability().passiveReady, false);
+  assert.equal(host.getDrawingCapability().fabricReady, false);
+  assert.equal((await host.getDrawingDiagnostics()).success, false);
+
+  const second = await host.ensure({ x: 1, y: 2, width: 640, height: 360 });
+  assert.equal(second.drawingCapability.hostGeneration, firstGeneration + 1);
+  assert.equal(getReadCount(), 1, 'passive recreation does not inject Fabric');
+  assert.equal((await host.setDrawingInput(makeDrawingInput(firstGeneration + 1, {
+    videoGeneration: 9,
+    inputRevision: 1
+  }))).success, true);
+  assert.equal(getReadCount(), 2, 'the replacement generation injects its own fixed bundle once');
+});
+
+test('Fabric readiness failure stays isolated from the passive mirror and is not retried in one generation', async () => {
+  const { host, events, getReadCount } = createDrawingHostHarness({
+    readFile: async () => {
+      throw new Error('fixed bundle read failed');
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+
+  const disabled = await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 2,
+    inputRevision: 1
+  }));
+  const failedEnable = await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 2,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-failure',
+      stableVideoIdentity: 'video-failure',
+      targetFrame: 2,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  const mirrorUpdate = await host.updateState({ markerHtml: '<div class="comment-marker"></div>' });
+  const passiveEnsure = await host.ensure({ x: 1, y: 2, width: 640, height: 360 });
+
+  assert.equal(disabled.success, true);
+  assert.equal(failedEnable.success, false);
+  assert.equal(mirrorUpdate.success, true);
+  assert.equal(passiveEnsure.success, true);
+  assert.equal(host.getDrawingCapability().passiveReady, true);
+  assert.equal(host.getDrawingCapability().fabricReady, false);
+  assert.equal(getReadCount(), 1);
+  assert.equal(events.some(([name, value]) => name === 'setIgnoreMouseEvents' && value === false), false);
+});
+
 test('normalizes overlay state to bounded serializable fields', () => {
   const state = normalizeOverlayState({
     drawingDataUrl: 'data:image/png;base64,abc',

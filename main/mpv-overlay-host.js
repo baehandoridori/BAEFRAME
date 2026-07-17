@@ -6,10 +6,21 @@
  * overlay state in a second transparent, click-through child window.
  */
 
+const fs = require('fs');
+const path = require('path');
 const { createLogger } = require('./logger');
 const { normalizeEmbedBounds } = require('./mpv-embed-host');
 
 const log = createLogger('MPVOverlayHost');
+const DEFAULT_FABRIC_BUNDLE_PATH = path.join(
+  __dirname,
+  '..',
+  'renderer',
+  'scripts',
+  'lib',
+  'mpv-fabric-overlay.iife.js'
+);
+const FABRIC_PREPARE_SCRIPT = "window.__mpvFabricOverlay.prepare(document.getElementById('root'));";
 const PARENT_REPOSITION_EVENTS = [
   'move',
   'moved',
@@ -54,7 +65,7 @@ const OVERLAY_HTML = String.raw`
       pointer-events: none;
       user-select: none;
     }
-    #overlayRoot {
+    #root {
       position: relative;
       width: 100vw;
       height: 100vh;
@@ -315,7 +326,7 @@ const OVERLAY_HTML = String.raw`
   </style>
 </head>
 <body>
-  <div id="overlayRoot">
+  <div id="root">
     <img id="onionCanvasMirror" class="mirror-canvas" alt="">
     <img id="drawingCanvasMirror" class="mirror-canvas" alt="">
     <div id="compositionMirror"></div>
@@ -606,6 +617,55 @@ function normalizeOverlayState(state = {}) {
   };
 }
 
+function finiteDiagnosticNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function sanitizeFabricMetrics(metrics = {}) {
+  const scalarKeys = [
+    'maxSamples',
+    'duplicateActionCount',
+    'saveAttemptCount',
+    'staleMessageDropCount',
+    'surfaceErrorCount'
+  ];
+  const sanitized = {};
+  for (const key of scalarKeys) {
+    if (metrics[key] !== undefined) sanitized[key] = finiteDiagnosticNumber(metrics[key]);
+  }
+  for (const key of ['toggleLatency', 'pointerPreviewLatency', 'longTasks']) {
+    const series = metrics[key];
+    if (!series || typeof series !== 'object') continue;
+    sanitized[key] = {
+      count: finiteDiagnosticNumber(series.count),
+      average: finiteDiagnosticNumber(series.average),
+      max: finiteDiagnosticNumber(series.max),
+      p50: finiteDiagnosticNumber(series.p50),
+      p95: finiteDiagnosticNumber(series.p95)
+    };
+  }
+  if (metrics.pointerSamples && typeof metrics.pointerSamples === 'object') {
+    sanitized.pointerSamples = {
+      count: finiteDiagnosticNumber(metrics.pointerSamples.count),
+      pressureMin: metrics.pointerSamples.pressureMin === null
+        ? null
+        : finiteDiagnosticNumber(metrics.pointerSamples.pressureMin),
+      pressureMax: metrics.pointerSamples.pressureMax === null
+        ? null
+        : finiteDiagnosticNumber(metrics.pointerSamples.pressureMax),
+      pressureRange: finiteDiagnosticNumber(metrics.pointerSamples.pressureRange)
+    };
+  }
+  if (metrics.objectCount && typeof metrics.objectCount === 'object') {
+    sanitized.objectCount = {
+      current: finiteDiagnosticNumber(metrics.objectCount.current),
+      peak: finiteDiagnosticNumber(metrics.objectCount.peak)
+    };
+  }
+  return sanitized;
+}
+
 class MPVOverlayHost {
   constructor(options = {}) {
     this.BrowserWindow = options.BrowserWindow || getDefaultBrowserWindow();
@@ -622,6 +682,274 @@ class MPVOverlayHost {
     this.parentClosedHandler = null;
     this.repositionPending = false;
     this.requestedVisible = true;
+    this.hostGeneration = 0;
+    this.fabricReadyGeneration = 0;
+    this.fabricAttemptGeneration = 0;
+    this.fabricPreparationPromise = null;
+    this.fabricPreparationResult = null;
+    this.fabricLastError = null;
+    this.fabricBundlePath = options.fabricBundlePath || DEFAULT_FABRIC_BUNDLE_PATH;
+    this.readFile = options.readFile || fs.promises.readFile.bind(fs.promises);
+    this.currentVideoGeneration = -1;
+    this.currentInputRevision = -1;
+    this.desiredInputEnabled = false;
+    this.activeSessionId = null;
+    this.currentToolRevision = -1;
+    this.processedActionIds = new Map();
+    this.maxProcessedActionIds = 2048;
+  }
+
+  getDrawingCapability() {
+    const passiveReady = !!this.window && !this.window.isDestroyed?.() && this.contentLoaded;
+    return {
+      hostGeneration: this.hostGeneration,
+      passiveReady,
+      fabricReady: passiveReady && this.fabricReadyGeneration === this.hostGeneration
+    };
+  }
+
+  async setDrawingInput() {
+    const request = arguments[0] || {};
+    const hostWindow = this.window;
+    if (request.enabled === false) {
+      hostWindow?.setIgnoreMouseEvents?.(true);
+    }
+    if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded) {
+      return { success: false, error: 'mpv overlay host is not ready' };
+    }
+
+    const hostGeneration = Number(request.hostGeneration);
+    const videoGeneration = Number(request.videoGeneration);
+    const inputRevision = Number(request.inputRevision);
+    if (hostGeneration !== this.hostGeneration ||
+        !Number.isInteger(videoGeneration) || videoGeneration < 0 ||
+        !Number.isInteger(inputRevision) || inputRevision <= this.currentInputRevision ||
+        typeof request.enabled !== 'boolean') {
+      return { success: false, accepted: false, error: 'stale or invalid drawing input request' };
+    }
+    if (request.enabled && videoGeneration !== this.currentVideoGeneration) {
+      return { success: false, accepted: false, error: 'stale drawing video generation' };
+    }
+    if (!request.enabled && videoGeneration < this.currentVideoGeneration) {
+      return { success: false, accepted: false, error: 'stale drawing video generation' };
+    }
+
+    this.currentVideoGeneration = videoGeneration;
+    this.currentInputRevision = inputRevision;
+    this.desiredInputEnabled = request.enabled;
+    if (!request.enabled) {
+      this.activeSessionId = null;
+      this.currentToolRevision = -1;
+    }
+
+    const prepared = await this._ensureFabricRuntime();
+    if (!prepared.success) {
+      if (!request.enabled) {
+        return { success: true, accepted: true, enabled: false, fabricReady: false };
+      }
+      return { success: false, accepted: false, enabled: false, error: prepared.error };
+    }
+
+    let runtimeResult;
+    try {
+      runtimeResult = await this._executeFabricMethod('setDrawingInput', request);
+    } catch (error) {
+      hostWindow.setIgnoreMouseEvents?.(true);
+      this.fabricLastError = error.message;
+      return { success: false, accepted: false, enabled: false, error: error.message };
+    }
+
+    const stillCurrent = this.window === hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      this.hostGeneration === hostGeneration &&
+      this.currentVideoGeneration === videoGeneration &&
+      this.currentInputRevision === inputRevision &&
+      this.desiredInputEnabled === request.enabled;
+    if (request.enabled && runtimeResult?.accepted === true && stillCurrent) {
+      this.activeSessionId = request.session?.sessionId || null;
+      this.currentToolRevision = 0;
+      hostWindow.setIgnoreMouseEvents?.(false);
+    }
+
+    return {
+      success: runtimeResult?.accepted === true && (!request.enabled || stillCurrent),
+      accepted: runtimeResult?.accepted === true,
+      enabled: request.enabled && runtimeResult?.accepted === true && stillCurrent,
+      restored: runtimeResult?.restored === true
+    };
+  }
+
+  async updateDrawingTool(request = {}) {
+    const toolRevision = Number(request.toolRevision);
+    const currentTokensMatch = request.hostGeneration === this.hostGeneration &&
+      request.videoGeneration === this.currentVideoGeneration &&
+      request.inputRevision === this.currentInputRevision &&
+      request.sessionId === this.activeSessionId;
+    const validTool = request.tool === 'brush' || request.tool === 'select' || request.tool === 'V';
+    if (!this.desiredInputEnabled ||
+        this.fabricReadyGeneration !== this.hostGeneration ||
+        !currentTokensMatch ||
+        !Number.isInteger(toolRevision) || toolRevision <= this.currentToolRevision ||
+        !validTool) {
+      return { success: false, accepted: false, error: 'stale or invalid drawing tool request' };
+    }
+
+    try {
+      const result = await this._executeFabricMethod('updateDrawingTool', request);
+      if (result?.accepted !== true) {
+        return { success: false, accepted: false, error: result?.reason || 'drawing tool update rejected' };
+      }
+      if (!this._drawingTokensMatch(request) || toolRevision <= this.currentToolRevision) {
+        return { success: false, accepted: false, error: 'stale drawing tool response' };
+      }
+      this.currentToolRevision = toolRevision;
+      return { success: true, accepted: true, tool: result.tool === 'select' ? 'select' : 'brush' };
+    } catch (error) {
+      return { success: false, accepted: false, error: error.message };
+    }
+  }
+
+  async applyDrawingAction(request = {}) {
+    const validAction = request.action === 'delete-selection' || request.action === 'clear-session';
+    if (!this._drawingTokensMatch(request) ||
+        !validAction ||
+        typeof request.actionId !== 'string' ||
+        request.actionId.length === 0 || request.actionId.length > 256) {
+      return { success: false, applied: false, error: 'stale or invalid drawing action request' };
+    }
+    if (this.processedActionIds.has(request.actionId)) {
+      return { success: true, applied: false, duplicate: true, deletedCount: 0 };
+    }
+
+    this._rememberDrawingAction(request.actionId);
+    try {
+      const result = await this._executeFabricMethod('applyDrawingAction', request);
+      if (!this._drawingTokensMatch(request)) {
+        return { success: false, applied: false, error: 'stale drawing action response' };
+      }
+      return {
+        success: result?.applied === true || result?.duplicate === true,
+        applied: result?.applied === true,
+        duplicate: result?.duplicate === true,
+        deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount)))
+      };
+    } catch (error) {
+      this.processedActionIds.delete(request.actionId);
+      return { success: false, applied: false, error: error.message };
+    }
+  }
+
+  async getDrawingDiagnostics() {
+    if (this.fabricReadyGeneration !== this.hostGeneration) {
+      return { success: false, error: 'Fabric drawing runtime is not ready' };
+    }
+    const hostGeneration = this.hostGeneration;
+    try {
+      const result = await this._executeFabricMethod('getDiagnostics');
+      if (hostGeneration !== this.hostGeneration || this.fabricReadyGeneration !== hostGeneration) {
+        return { success: false, error: 'stale drawing diagnostics response' };
+      }
+      const cache = result?.cache && typeof result.cache === 'object' ? result.cache : {};
+      return {
+        success: true,
+        state: result?.state === 'active' ? 'active' : 'passive',
+        prepared: result?.prepared === true,
+        inputEnabled: result?.inputEnabled === true,
+        hostGeneration,
+        videoGeneration: this.currentVideoGeneration,
+        inputRevision: this.currentInputRevision,
+        activeSessionId: this.activeSessionId,
+        targetFrame: Number.isInteger(Number(result?.targetFrame)) ? Number(result.targetFrame) : null,
+        tool: result?.tool === 'select' ? 'select' : 'brush',
+        objectCount: Math.trunc(finiteDiagnosticNumber(result?.objectCount)),
+        selectionCount: Math.trunc(finiteDiagnosticNumber(result?.selectionCount)),
+        mutationCount: Math.trunc(finiteDiagnosticNumber(result?.mutationCount)),
+        dirty: result?.dirty === true,
+        cache: {
+          videoCount: Math.trunc(finiteDiagnosticNumber(cache.videoCount)),
+          sceneCount: Math.trunc(finiteDiagnosticNumber(cache.sceneCount)),
+          estimatedBytes: Math.trunc(finiteDiagnosticNumber(cache.estimatedBytes)),
+          evictionCount: Math.trunc(finiteDiagnosticNumber(cache.evictionCount))
+        },
+        metrics: sanitizeFabricMetrics(result?.metrics),
+        lastError: typeof result?.lastError === 'string' ? result.lastError.slice(0, 512) : null
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async _ensureFabricRuntime() {
+    const hostWindow = this.window;
+    const hostGeneration = this.hostGeneration;
+    if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded) {
+      return { success: false, error: 'mpv overlay host is not ready' };
+    }
+    if (this.fabricReadyGeneration === hostGeneration) {
+      return { success: true, reused: true };
+    }
+    if (this.fabricAttemptGeneration === hostGeneration && this.fabricPreparationPromise) {
+      return this.fabricPreparationPromise;
+    }
+
+    this.fabricAttemptGeneration = hostGeneration;
+    this.fabricPreparationPromise = (async () => {
+      try {
+        const bundleSource = await this.readFile(this.fabricBundlePath, 'utf8');
+        if (!this._isCurrentHostGeneration(hostWindow, hostGeneration)) {
+          return { success: false, error: 'mpv overlay host generation changed' };
+        }
+        await hostWindow.webContents?.executeJavaScript?.(String(bundleSource), true);
+        if (!this._isCurrentHostGeneration(hostWindow, hostGeneration)) {
+          return { success: false, error: 'mpv overlay host generation changed' };
+        }
+        const preparation = await hostWindow.webContents?.executeJavaScript?.(FABRIC_PREPARE_SCRIPT, true);
+        if (!this._isCurrentHostGeneration(hostWindow, hostGeneration)) {
+          return { success: false, error: 'mpv overlay host generation changed' };
+        }
+        if (preparation?.prepared !== true) {
+          throw new Error(preparation?.error || preparation?.reason || 'Fabric drawing runtime prepare failed');
+        }
+        this.fabricReadyGeneration = hostGeneration;
+        this.fabricLastError = null;
+        return { success: true, reused: preparation.reused === true };
+      } catch (error) {
+        this.fabricLastError = error.message;
+        this.logger.debug('Fabric drawing runtime prepare failed', { error: error.message });
+        return { success: false, error: error.message };
+      }
+    })();
+    this.fabricPreparationResult = await this.fabricPreparationPromise;
+    return this.fabricPreparationResult;
+  }
+
+  _isCurrentHostGeneration(hostWindow, hostGeneration) {
+    return this.window === hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      this.hostGeneration === hostGeneration;
+  }
+
+  _drawingTokensMatch(request = {}) {
+    return request.hostGeneration === this.hostGeneration &&
+      request.videoGeneration === this.currentVideoGeneration &&
+      request.inputRevision === this.currentInputRevision &&
+      request.sessionId === this.activeSessionId &&
+      this.desiredInputEnabled;
+  }
+
+  _rememberDrawingAction(actionId) {
+    this.processedActionIds.set(actionId, true);
+    while (this.processedActionIds.size > this.maxProcessedActionIds) {
+      this.processedActionIds.delete(this.processedActionIds.keys().next().value);
+    }
+  }
+
+  _executeFabricMethod(method, payload) {
+    const argument = payload === undefined ? '' : JSON.stringify(payload);
+    return this.window.webContents?.executeJavaScript?.(
+      `window.__mpvFabricOverlay.${method}(${argument});`,
+      true
+    );
   }
 
   async ensure(bounds) {
@@ -668,7 +996,11 @@ class MPVOverlayHost {
     } else {
       this._showOverlayWindow(mainWindow);
     }
-    return { success: true, bounds: screenBounds };
+    return {
+      success: true,
+      bounds: screenBounds,
+      drawingCapability: this.getDrawingCapability()
+    };
   }
 
   updateBounds(bounds) {
@@ -759,9 +1091,21 @@ class MPVOverlayHost {
 
   destroy() {
     const hostWindow = this.window;
+    hostWindow?.setIgnoreMouseEvents?.(true);
     this.contentLoadGeneration += 1;
     this.window = null;
     this.contentLoaded = false;
+    this.fabricReadyGeneration = 0;
+    this.fabricAttemptGeneration = 0;
+    this.fabricPreparationPromise = null;
+    this.fabricPreparationResult = null;
+    this.fabricLastError = null;
+    this.currentVideoGeneration = -1;
+    this.currentInputRevision = -1;
+    this.desiredInputEnabled = false;
+    this.activeSessionId = null;
+    this.currentToolRevision = -1;
+    this.processedActionIds.clear();
     this.lastBounds = null;
     // 피드백 32: 호스트 재생성 후 동일 bounds 스킵 오판 방지
     this._lastAppliedScreenBounds = null;
@@ -803,6 +1147,18 @@ class MPVOverlayHost {
         webSecurity: false
       }
     });
+    this.hostGeneration += 1;
+    this.fabricReadyGeneration = 0;
+    this.fabricAttemptGeneration = 0;
+    this.fabricPreparationPromise = null;
+    this.fabricPreparationResult = null;
+    this.fabricLastError = null;
+    this.currentVideoGeneration = -1;
+    this.currentInputRevision = -1;
+    this.desiredInputEnabled = false;
+    this.activeSessionId = null;
+    this.currentToolRevision = -1;
+    this.processedActionIds.clear();
     this.window = hostWindow;
     // 피드백 27·29·31: forward는 mousemove를 이 창의 Chromium에도 전달해
     // 기본 화살표 커서가 메인 창 커서와 경합(깜빡임)한다. 이 창은 마우스 이벤트를

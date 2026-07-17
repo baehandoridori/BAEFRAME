@@ -16,6 +16,46 @@ const mainIndexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'ma
 const mpvManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/mpv-manager.js'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
+test('Fabric drawing pilot IPC channels and preload bridge names stay fixed', () => {
+  const contracts = [
+    ['fabric-drawing:get-pilot-state', 'getFabricDrawingPilotState'],
+    ['mpv:set-overlay-drawing-input', 'mpvSetOverlayDrawingInput'],
+    ['mpv:update-overlay-drawing-tool', 'mpvUpdateOverlayDrawingTool'],
+    ['mpv:apply-overlay-drawing-action', 'mpvApplyOverlayDrawingAction'],
+    ['mpv:get-overlay-drawing-diagnostics', 'mpvGetOverlayDrawingDiagnostics']
+  ];
+
+  for (const [channel, bridgeName] of contracts) {
+    assert.match(ipcSource, new RegExp(`ipcMain\\.handle\\(\\s*['"]${channel}['"]`));
+    assert.match(preloadSource, new RegExp(`${bridgeName}\\s*:`));
+    assert.match(preloadSource, new RegExp(`ipcRenderer\\.invoke\\(\\s*['"]${channel}['"]`));
+  }
+});
+
+test('Fabric drawing mutation IPC rejects pilot-off and non-main-renderer calls before touching the host', () => {
+  assert.match(
+    ipcSource,
+    /function isCurrentMainRendererSender\(event\)[\s\S]*?event\?\.sender === mainWindow\.webContents/
+  );
+  assert.match(
+    ipcSource,
+    /const invokeFabricDrawingHost = \(event, operation\) => \{[\s\S]*?if \(!isFabricDrawingPilotEnabled\)[\s\S]*?if \(!isCurrentMainRendererSender\(event\)\)[\s\S]*?return operation\(\);/
+  );
+
+  const guardedCalls = [
+    ['mpv:set-overlay-drawing-input', 'setDrawingInput'],
+    ['mpv:update-overlay-drawing-tool', 'updateDrawingTool'],
+    ['mpv:apply-overlay-drawing-action', 'applyDrawingAction'],
+    ['mpv:get-overlay-drawing-diagnostics', 'getDrawingDiagnostics']
+  ];
+  for (const [channel, method] of guardedCalls) {
+    assert.match(
+      ipcSource,
+      new RegExp(`ipcMain\\.handle\\(\\s*['"]${channel}['"][\\s\\S]{0,260}invokeFabricDrawingHost\\(event, \\(\\) => mpvOverlayHost\\.${method}\\(`)
+    );
+  }
+});
+
 function loadMpvOverlayLifecycleFactory() {
   const functionStart = appSource.indexOf('function createMpvOverlayLifecycle(');
   assert.notEqual(functionStart, -1, 'mpv overlay lifecycle factory should exist');
