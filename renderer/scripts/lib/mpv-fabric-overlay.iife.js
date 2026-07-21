@@ -8739,10 +8739,16 @@ void main() {
         }
         function cancelSelectInteraction(event) {
           const gesture = selectGesture;
+          const hadTransformTarget = !!transformStart?.target;
           const wasTracking = gesture?.phase === "tracking";
           if (gesture) gesture.phase = "cancelling";
           rollbackSelectTransform(event, wasTracking);
           drainFabricPointerLifecycle(gesture, event);
+          if (gesture && !hadTransformTarget) {
+            fabricCanvas?.discardActiveObject();
+            sceneStore.selectObjects([]);
+            fabricCanvas?.requestRenderAll();
+          }
           if (gesture) {
             releasePointerCapture(fabricCanvas?.upperCanvasEl || canvasElement, gesture.pointerId);
           }
@@ -8818,7 +8824,7 @@ void main() {
           const gesture = selectGesture;
           if (!gesture || gesture.phase !== "tracking" || event.pointerId !== gesture.pointerId) return;
           gesture.phase = "settling";
-          releasePointerCapture(event.currentTarget, event.pointerId);
+          releasePointerCapture(fabricCanvas?.upperCanvasEl || canvasElement, event.pointerId);
           scheduleSelectGestureSettle(gesture);
         }
         function onPointerCancel(event) {
@@ -8831,6 +8837,14 @@ void main() {
           if (!gesture || event.pointerId !== void 0 && event.pointerId !== gesture.pointerId) return;
           if (event.type === "lostpointercapture" && gesture.phase === "settling") return;
           cancelSelectInteraction(event);
+        }
+        function onDocumentPointerUp(event) {
+          if (!selectGesture || event.pointerId !== selectGesture.pointerId) return;
+          onPointerUp(event);
+        }
+        function onDocumentPointerCancel(event) {
+          if (!selectGesture || event.pointerId !== selectGesture.pointerId) return;
+          onPointerCancel(event);
         }
         function selectionIds() {
           const objects = fabricCanvas?.getActiveObjects?.() || [];
@@ -8906,6 +8920,8 @@ void main() {
           addDomListener(pointerTarget, "pointerup", onPointerUp);
           addDomListener(pointerTarget, "pointercancel", onPointerCancel);
           addDomListener(pointerTarget, "lostpointercapture", onPointerCancel);
+          addDomListener(documentRef, "pointerup", onDocumentPointerUp);
+          addDomListener(documentRef, "pointercancel", onDocumentPointerCancel);
           addDomListener(windowRef, "blur", onPointerCancel);
           addFabricListener("selection:created", onSelectionChanged);
           addFabricListener("selection:updated", onSelectionChanged);
@@ -9137,6 +9153,7 @@ void main() {
           if (request.enabled && !validateSession(request.session)) {
             return { accepted: false, reason: "invalid-session" };
           }
+          if (activeStroke) cancelActiveStroke();
           if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
           tokenState.hostGeneration = Number(request.hostGeneration);
           tokenState.videoGeneration = Number(request.videoGeneration);

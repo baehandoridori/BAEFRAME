@@ -672,6 +672,81 @@ test('viewport update during a stroke click waits and preserves the new selectio
   }
 });
 
+test('document fallback settles a select gesture when pointer capture fails', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(30, 180);
+    harness.drawStrokeAt(90, 181);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+    harness.element.setPointerCapture = pointerId => {
+      harness.pointerCapture.captureRequests.push(pointerId);
+      throw new Error('pointer capture unavailable');
+    };
+    harness.element.hasPointerCapture = () => false;
+
+    const firstCenter = harness.canvas.getObjects()[0].getCenterPoint();
+    harness.dispatchPointer(harness.element, 'pointerdown', firstCenter.x, firstCenter.y, 182, 1);
+    assert.deepEqual(harness.runtime.updateViewport({
+      revision: 1,
+      canvasRect: { left: 2, top: 4, width: 200, height: 200 },
+      scale: 1.1,
+      panX: 1,
+      panY: -1
+    }), { accepted: true, deferred: true, revision: 1 });
+    assert.deepEqual(harness.runtime.updateViewport({
+      revision: 3,
+      canvasRect: { left: 6, top: 8, width: 200, height: 200 },
+      scale: 1.2,
+      panX: 2,
+      panY: -2
+    }), { accepted: true, deferred: true, revision: 3 });
+    harness.dispatchPointer(
+      harness.environment.document,
+      'pointermove',
+      firstCenter.x,
+      firstCenter.y,
+      182,
+      1
+    );
+    harness.dispatchPointer(
+      harness.environment.document,
+      'pointerup',
+      firstCenter.x,
+      firstCenter.y,
+      182,
+      0
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(harness.pointerCapture.captureRequests.filter(pointerId => pointerId === 182).length, 1);
+    assert.equal(harness.runtime.getDiagnostics().viewportRevision, 3);
+    assert.deepEqual(harness.canvas.getActiveObjects(), [harness.canvas.getObjects()[0]]);
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 2);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+
+    harness.clickStroke(1, 183);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(harness.canvas.getActiveObjects(), [harness.canvas.getObjects()[1]]);
+    assert.deepEqual(harness.runtime.updateViewport({
+      revision: 4,
+      canvasRect: { left: 8, top: 10, width: 200, height: 200 },
+      scale: 1.25,
+      panX: 3,
+      panY: -1
+    }), { accepted: true, revision: 4 });
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 2);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('cancelled select gestures restore Fabric input for paths, active selections, and blank marquees', async () => {
   const harness = createRealFabricHarness();
   let fabricMoveCount = 0;
@@ -746,10 +821,12 @@ test('cancelled select gestures restore Fabric input for paths, active selection
     assert.equal(harness.element.hasPointerCapture(157), false);
     assertPointerRoutingRestored(158);
 
-    harness.dispatchPointer(harness.element, 'pointerdown', 140, 140, 159, 1);
-    harness.dispatchPointer(harness.environment.document, 'pointermove', 180, 180, 159, 1);
+    harness.dispatchPointer(harness.element, 'pointerdown', 5, 5, 159, 1);
+    harness.dispatchPointer(harness.environment.document, 'pointermove', 100, 120, 159, 1);
     harness.environment.window.dispatchEvent(new harness.environment.window.Event('blur'));
     await Promise.resolve();
+    assert.equal(harness.canvas.getActiveObjects().length, 0);
+    assert.equal(harness.runtime.getDiagnostics().selectionCount, 0);
     assert.equal(harness.runtime.getDiagnostics().mutationCount, 2);
     assert.equal(harness.element.hasPointerCapture(159), false);
     assertPointerRoutingRestored(160);
@@ -816,6 +893,75 @@ test('latest deferred viewport wins after one select gesture settles', () => {
   });
   assert.equal(runtime.getDiagnostics().mutationCount, 0);
   assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+});
+
+test('brush stroke from a replaced enabled input cannot mutate the new session', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const canvas = FakeCanvas.instances[0];
+  const element = canvas.upperCanvasEl;
+
+  element.dispatch('pointerdown', {
+    pointerId: 170,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.4,
+    timeStamp: 1
+  });
+  element.dispatch('pointermove', {
+    pointerId: 170,
+    pointerType: 'pen',
+    buttons: 1,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.7,
+    timeStamp: 2
+  });
+  assert.equal(canvas.getObjects().length, 1);
+
+  const replacementInput = makeInput({
+    inputRevision: 2,
+    session: {
+      ...makeInput().session,
+      sessionId: 'replacement-brush-session',
+      stableVideoIdentity: 'replacement-brush-video',
+      targetFrame: 25,
+      tool: 'brush'
+    }
+  });
+  assert.equal(runtime.setDrawingInput(replacementInput).accepted, true);
+  assert.equal(canvas.getObjects().length, 0);
+  const beforeRelease = runtime.getDiagnostics();
+
+  element.dispatch('pointerup', {
+    pointerId: 170,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 50,
+    clientY: 60,
+    pressure: 0,
+    timeStamp: 3
+  });
+
+  const afterRelease = runtime.getDiagnostics();
+  assert.equal(afterRelease.activeSessionId, 'replacement-brush-session');
+  assert.equal(afterRelease.objectCount, 0);
+  assert.equal(afterRelease.mutationCount, beforeRelease.mutationCount);
+  assert.equal(afterRelease.dirty, beforeRelease.dirty);
+  assert.equal(afterRelease.dirty, false);
+  assert.equal(afterRelease.metrics.saveAttemptCount, 0);
+  assert.equal(canvas.getObjects().length, 0);
 });
 
 test('stale deferred viewport is discarded by input disable or session replacement', () => {
