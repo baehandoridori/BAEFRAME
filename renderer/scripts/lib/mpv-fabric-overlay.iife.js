@@ -7675,6 +7675,31 @@ void main() {
       var DEFAULT_MAX_OBJECTS = 1e4;
       var TRANSFORM_FIELDS = ["left", "top", "scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
       var UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ["scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
+      var BRUSH_COLORS = Object.freeze([
+        "#ff4757",
+        "#ffd000",
+        "#26de81",
+        "#4a9eff",
+        "#ffffff",
+        "#000000",
+        "#1abc9c",
+        "#ff6b9d"
+      ]);
+      var BRUSH_COLOR_LABELS = Object.freeze({
+        "#ff4757": "\uBE68\uAC15",
+        "#ffd000": "\uB178\uB791",
+        "#26de81": "\uCD08\uB85D",
+        "#4a9eff": "\uD30C\uB791",
+        "#ffffff": "\uD558\uC591",
+        "#000000": "\uAC80\uC815",
+        "#1abc9c": "\uBBFC\uD2B8",
+        "#ff6b9d": "\uD551\uD06C"
+      });
+      var DEFAULT_BRUSH_STYLE = Object.freeze({ color: "#ff4757", size: 3, opacity: 1 });
+      var MIN_BRUSH_SIZE = 1;
+      var MAX_BRUSH_SIZE = 50;
+      var MIN_BRUSH_OPACITY_PERCENT = 10;
+      var MAX_BRUSH_OPACITY_PERCENT = 100;
       function clonePlain(value) {
         if (value === void 0) return void 0;
         return JSON.parse(JSON.stringify(value));
@@ -7682,6 +7707,18 @@ void main() {
       function finiteNumber(value, fallback = 0) {
         const number = Number(value);
         return Number.isFinite(number) ? number : fallback;
+      }
+      function boundedInteger(value, min, max, fallback) {
+        if (value === null || value === void 0 || value === "") return fallback;
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isFinite(parsed)) return fallback;
+        return Math.min(max, Math.max(min, parsed));
+      }
+      function normalizePathOpacity(value) {
+        if (value === null || value === void 0 || value === "") return 1;
+        const number = Number(value);
+        if (!Number.isFinite(number) || number < 0.1 || number > 1) return 1;
+        return number;
       }
       function normalizeViewportTransform(value = {}) {
         const scale = finiteNumber(value.scale, 1);
@@ -8143,6 +8180,9 @@ void main() {
         let inputEnabled = false;
         let currentSession = null;
         let activeStroke = null;
+        let brushStyle = { ...DEFAULT_BRUSH_STYLE };
+        let brushControls = null;
+        let brushPanelOpen = false;
         let transformStart = null;
         let longTaskObserver = null;
         let localSequence = 0;
@@ -8177,6 +8217,236 @@ void main() {
             toolButtons.set(action, button);
           }
           return button;
+        }
+        function setBrushColor(color) {
+          if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
+          brushStyle = { ...brushStyle, color };
+          syncBrushControls();
+          return brushStyle.color;
+        }
+        function setBrushSize(value) {
+          brushStyle = {
+            ...brushStyle,
+            size: boundedInteger(value, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE, brushStyle.size)
+          };
+          syncBrushControls();
+          return brushStyle.size;
+        }
+        function setBrushOpacityPercent(value) {
+          const currentPercent = Math.round(brushStyle.opacity * 100);
+          const percent = boundedInteger(
+            value,
+            MIN_BRUSH_OPACITY_PERCENT,
+            MAX_BRUSH_OPACITY_PERCENT,
+            currentPercent
+          );
+          brushStyle = { ...brushStyle, opacity: percent / 100 };
+          syncBrushControls();
+          return percent;
+        }
+        function syncBrushControls() {
+          if (!brushControls) return;
+          const opacityPercent = Math.round(brushStyle.opacity * 100);
+          brushControls.settingsButton.setAttribute?.("aria-expanded", String(brushPanelOpen));
+          brushControls.panel.style.display = brushPanelOpen ? "flex" : "none";
+          brushControls.sizeInput.value = String(brushStyle.size);
+          brushControls.opacityInput.value = String(opacityPercent);
+          brushControls.sizeOutput.textContent = `${brushStyle.size}px`;
+          brushControls.opacityOutput.textContent = `${opacityPercent}%`;
+          brushControls.summary.textContent = `${brushStyle.size}px \xB7 ${opacityPercent}%`;
+          brushControls.colorPreview.style.background = brushStyle.color;
+          brushControls.sizePreview.style.width = `${Math.min(22, Math.max(2, brushStyle.size))}px`;
+          brushControls.sizePreview.style.height = brushControls.sizePreview.style.width;
+          brushControls.sizePreview.style.background = brushStyle.color;
+          brushControls.sizePreview.style.opacity = String(brushStyle.opacity);
+          for (const button of brushControls.colorButtons) {
+            const active = button.dataset.fabricPilotColor === brushStyle.color;
+            button.setAttribute?.("aria-pressed", String(active));
+            button.style.boxShadow = active ? "0 0 0 2px #fff, 0 0 0 4px rgba(255, 71, 87, 0.75)" : "none";
+          }
+        }
+        function createBrushSettingsControls() {
+          const settingsButton = createButton("", "brush-settings");
+          settingsButton.setAttribute?.("aria-expanded", "false");
+          settingsButton.setAttribute?.("aria-label", "\uBE0C\uB7EC\uC2DC \uC124\uC815");
+          setStyles(settingsButton, {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "8px",
+            minHeight: "40px"
+          });
+          const colorPreview = documentRef.createElement("span");
+          colorPreview.dataset.fabricPilotOutput = "color-preview";
+          setStyles(colorPreview, {
+            width: "18px",
+            height: "18px",
+            borderRadius: "50%",
+            border: "1px solid rgba(0, 0, 0, 0.35)",
+            flex: "0 0 auto"
+          });
+          const summary = documentRef.createElement("span");
+          summary.dataset.fabricPilotOutput = "summary";
+          settingsButton.appendChild(colorPreview);
+          settingsButton.appendChild(summary);
+          const panel = documentRef.createElement("div");
+          panel.dataset.fabricPilotPanel = "brush-settings";
+          panel.setAttribute?.("role", "group");
+          panel.setAttribute?.("aria-label", "\uBE0C\uB7EC\uC2DC \uC124\uC815");
+          setStyles(panel, {
+            display: "none",
+            position: "absolute",
+            top: "52px",
+            left: "0",
+            width: "360px",
+            maxWidth: "calc(100vw - 24px)",
+            flexDirection: "column",
+            gap: "12px",
+            padding: "12px",
+            boxSizing: "border-box",
+            borderRadius: "8px",
+            background: "rgba(24, 24, 28, 0.96)",
+            color: "#fff"
+          });
+          const previewRow = documentRef.createElement("div");
+          setStyles(previewRow, {
+            display: "flex",
+            alignItems: "center",
+            minHeight: "22px"
+          });
+          const sizePreview = documentRef.createElement("span");
+          sizePreview.dataset.fabricPilotOutput = "size-preview";
+          setStyles(sizePreview, {
+            display: "block",
+            borderRadius: "50%",
+            flex: "0 0 auto"
+          });
+          previewRow.appendChild(sizePreview);
+          const palette = documentRef.createElement("div");
+          setStyles(palette, {
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px"
+          });
+          const colorButtons = BRUSH_COLORS.map((color) => {
+            const button = createButton("", "brush-color");
+            button.dataset.fabricPilotColor = color;
+            button.setAttribute?.("aria-label", `\uBE0C\uB7EC\uC2DC \uC0C9\uC0C1 ${BRUSH_COLOR_LABELS[color]}`);
+            button.setAttribute?.("aria-pressed", "false");
+            setStyles(button, {
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minWidth: "40px",
+              minHeight: "40px"
+            });
+            const dot = documentRef.createElement("span");
+            setStyles(dot, {
+              width: "22px",
+              height: "22px",
+              borderRadius: "50%",
+              background: color,
+              border: color === "#ffffff" ? "1px solid rgba(0, 0, 0, 0.7)" : "none"
+            });
+            button.appendChild(dot);
+            palette.appendChild(button);
+            return button;
+          });
+          const createRangeRow = ({
+            label,
+            setting,
+            min,
+            max,
+            decreaseAction,
+            decreaseLabel,
+            increaseAction,
+            increaseLabel,
+            output
+          }) => {
+            const row = documentRef.createElement("div");
+            setStyles(row, {
+              display: "flex",
+              alignItems: "center",
+              gap: "6px"
+            });
+            const labelElement = documentRef.createElement("span");
+            labelElement.textContent = label;
+            const decrease = createButton("\u2212", decreaseAction);
+            decrease.setAttribute?.("aria-label", decreaseLabel);
+            const input = documentRef.createElement("input");
+            input.type = "range";
+            input.min = String(min);
+            input.max = String(max);
+            input.step = "1";
+            input.dataset.fabricPilotSetting = setting;
+            input.setAttribute?.("aria-label", label);
+            setStyles(input, { flex: "1 1 auto", minWidth: "0" });
+            const increase = createButton("+", increaseAction);
+            increase.setAttribute?.("aria-label", increaseLabel);
+            const outputElement = documentRef.createElement("span");
+            outputElement.dataset.fabricPilotOutput = output;
+            setStyles(outputElement, { minWidth: "42px", textAlign: "right" });
+            row.appendChild(labelElement);
+            row.appendChild(decrease);
+            row.appendChild(input);
+            row.appendChild(increase);
+            row.appendChild(outputElement);
+            return { row, decrease, input, increase, output: outputElement };
+          };
+          const sizeRow = createRangeRow({
+            label: "\uBE0C\uB7EC\uC2DC \uD06C\uAE30",
+            setting: "size",
+            min: MIN_BRUSH_SIZE,
+            max: MAX_BRUSH_SIZE,
+            decreaseAction: "size-decrease",
+            decreaseLabel: "\uBE0C\uB7EC\uC2DC \uD06C\uAE30 1px \uC904\uC774\uAE30",
+            increaseAction: "size-increase",
+            increaseLabel: "\uBE0C\uB7EC\uC2DC \uD06C\uAE30 1px \uB298\uB9AC\uAE30",
+            output: "size"
+          });
+          const opacityRow = createRangeRow({
+            label: "\uBE0C\uB7EC\uC2DC \uBD88\uD22C\uBA85\uB3C4",
+            setting: "opacity",
+            min: MIN_BRUSH_OPACITY_PERCENT,
+            max: MAX_BRUSH_OPACITY_PERCENT,
+            decreaseAction: "opacity-decrease",
+            decreaseLabel: "\uBE0C\uB7EC\uC2DC \uBD88\uD22C\uBA85\uB3C4 1% \uC904\uC774\uAE30",
+            increaseAction: "opacity-increase",
+            increaseLabel: "\uBE0C\uB7EC\uC2DC \uBD88\uD22C\uBA85\uB3C4 1% \uB298\uB9AC\uAE30",
+            output: "opacity"
+          });
+          panel.appendChild(previewRow);
+          panel.appendChild(palette);
+          panel.appendChild(sizeRow.row);
+          panel.appendChild(opacityRow.row);
+          addDomListener(settingsButton, "click", () => {
+            brushPanelOpen = !brushPanelOpen;
+            syncBrushControls();
+          });
+          addDomListener(sizeRow.input, "input", () => setBrushSize(sizeRow.input.value));
+          addDomListener(opacityRow.input, "input", () => setBrushOpacityPercent(opacityRow.input.value));
+          addDomListener(sizeRow.decrease, "click", () => setBrushSize(brushStyle.size - 1));
+          addDomListener(sizeRow.increase, "click", () => setBrushSize(brushStyle.size + 1));
+          addDomListener(opacityRow.decrease, "click", () => {
+            setBrushOpacityPercent(Math.round(brushStyle.opacity * 100) - 1);
+          });
+          addDomListener(opacityRow.increase, "click", () => {
+            setBrushOpacityPercent(Math.round(brushStyle.opacity * 100) + 1);
+          });
+          for (const button of colorButtons) {
+            addDomListener(button, "click", () => setBrushColor(button.dataset.fabricPilotColor));
+          }
+          return {
+            settingsButton,
+            panel,
+            colorButtons,
+            sizeInput: sizeRow.input,
+            opacityInput: opacityRow.input,
+            sizeOutput: sizeRow.output,
+            opacityOutput: opacityRow.output,
+            summary,
+            colorPreview,
+            sizePreview
+          };
         }
         function createId(prefix) {
           localSequence += 1;
@@ -8218,7 +8488,8 @@ void main() {
         function makeFabricPath(record, transient = false) {
           const { Path } = resolveFabric();
           const path = new Path(record.pathData, {
-            fill: record.style?.color || "#ff3355",
+            fill: record.style?.color || DEFAULT_BRUSH_STYLE.color,
+            opacity: normalizePathOpacity(record.style?.opacity),
             stroke: null,
             strokeWidth: 0,
             selectable: !transient && sceneStore.getDiagnostics().tool === "select",
@@ -8316,12 +8587,12 @@ void main() {
           const startedAt = now();
           removeTransientPreview();
           try {
-            const strokeData = strokePathFactory(activeStroke.samples, { size: currentSession?.toolOptions?.size || 8 });
+            const strokeData = strokePathFactory(activeStroke.samples, { size: activeStroke.style.size });
             if (!strokeData.pathData) return;
             activeStroke.preview = makeFabricPath({
               id: null,
               pathData: strokeData.pathData,
-              style: { color: currentSession?.toolOptions?.color || "#ff3355" }
+              style: { ...activeStroke.style }
             }, true);
             fabricCanvas.add(activeStroke.preview);
             fabricCanvas.requestRenderAll();
@@ -8343,10 +8614,11 @@ void main() {
             return { applied: false };
           }
           const samples = activeStroke.samples;
+          const style = { ...activeStroke.style };
           removeTransientPreview();
           let strokeData;
           try {
-            strokeData = strokePathFactory(samples, { size: currentSession?.toolOptions?.size || 8, last: true });
+            strokeData = strokePathFactory(samples, { size: style.size, last: true });
           } catch (error) {
             lastError = error.message;
             metrics.recordSurfaceError();
@@ -8358,10 +8630,7 @@ void main() {
             type: "stroke",
             pathData: strokeData.pathData,
             sourcePoints: strokeData.sourcePoints,
-            style: {
-              color: currentSession?.toolOptions?.color || "#ff3355",
-              size: currentSession?.toolOptions?.size || 8
-            }
+            style
           };
           const path = makeFabricPath(record);
           record.transform = captureTransform(path);
@@ -8375,7 +8644,12 @@ void main() {
         }
         function onPointerDown(event) {
           if (!inputEnabled || sceneStore.getDiagnostics().tool !== "brush" || event.button !== 0 || activeStroke) return;
-          activeStroke = { pointerId: event.pointerId, samples: [], preview: null };
+          activeStroke = {
+            pointerId: event.pointerId,
+            samples: [],
+            preview: null,
+            style: { ...brushStyle }
+          };
           event.currentTarget?.setPointerCapture?.(event.pointerId);
           appendPointerSample(event);
           updateTransientPreview();
@@ -8555,6 +8829,7 @@ void main() {
           viewportElement = null;
           canvasElement = null;
           toolbar = null;
+          brushControls = null;
           badge = null;
           container = null;
           root = null;
@@ -8602,6 +8877,7 @@ void main() {
             const selectButton = createButton("V", "select");
             const deleteButton = createButton("Delete", "delete-selection");
             const clearButton = createButton("Clear", "clear-session");
+            brushControls = createBrushSettingsControls();
             badge = documentRef.createElement("span");
             badge.className = "mpv-fabric-pilot-badge";
             badge.textContent = "\uC0C8 \uB4DC\uB85C\uC789 \uC2DC\uD5D8\uD310 \xB7 \uC800\uC7A5 \uC548 \uB428 \xB7 \uC2DC\uD5D8 \uD504\uB808\uC784 -";
@@ -8609,6 +8885,8 @@ void main() {
             toolbar.appendChild(selectButton);
             toolbar.appendChild(deleteButton);
             toolbar.appendChild(clearButton);
+            toolbar.appendChild(brushControls.settingsButton);
+            toolbar.appendChild(brushControls.panel);
             toolbar.appendChild(badge);
             viewportElement.appendChild(canvasElement);
             container.appendChild(viewportElement);
@@ -8633,6 +8911,7 @@ void main() {
               actionId: createId("clear"),
               action: "clear-session"
             }));
+            syncBrushControls();
             setSurfaceInput(false);
             configureLongTaskObserver();
             prepared = true;

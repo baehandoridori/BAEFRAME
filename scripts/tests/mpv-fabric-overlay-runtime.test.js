@@ -7,6 +7,7 @@ const rootDir = path.resolve(__dirname, '../..');
 const runtimePath = path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-overlay-runtime.js');
 const {
   createFabricOverlayRuntime,
+  createSessionSceneStore,
   createStrokePathData,
   resolveEffectiveCanvasRect,
   mapClientPointToSource
@@ -248,6 +249,37 @@ const drawStroke = (element, pointerId = 1) => {
     timeStamp: 3
   });
 };
+
+function findAll(root, predicate) {
+  if (!root) return [];
+  const matches = predicate(root) ? [root] : [];
+  return matches.concat((root.children || []).flatMap(child => findAll(child, predicate)));
+}
+
+function findOne(root, predicate) {
+  return findAll(root, predicate)[0] || null;
+}
+
+function getBrushControls(root) {
+  const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
+  return {
+    toolbar,
+    settingsButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'brush-settings'),
+    panel: findOne(toolbar, node => node.dataset.fabricPilotPanel === 'brush-settings'),
+    colorButtons: findAll(toolbar, node => typeof node.dataset.fabricPilotColor === 'string'),
+    sizeInput: findOne(toolbar, node => node.dataset.fabricPilotSetting === 'size'),
+    opacityInput: findOne(toolbar, node => node.dataset.fabricPilotSetting === 'opacity'),
+    sizeOutput: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'size'),
+    opacityOutput: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'opacity'),
+    summary: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'summary'),
+    colorPreview: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'color-preview'),
+    sizePreview: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'size-preview'),
+    sizeDecrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'size-decrease'),
+    sizeIncrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'size-increase'),
+    opacityDecrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'opacity-decrease'),
+    opacityIncrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'opacity-increase')
+  };
+}
 
 test('pure exports load without constructing a DOM or Fabric canvas', () => {
   FakeCanvas.instances = [];
@@ -501,6 +533,301 @@ test('local toolbar changes do not consume controller tool revisions', () => {
     enabled: false
   });
   assert.equal(disabled.tool, 'select');
+});
+
+test('brush settings expose the familiar bounded palette without mutating the scene', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+
+  const controls = getBrushControls(root);
+  const before = runtime.getDiagnostics();
+  assert.ok(controls.settingsButton);
+  assert.ok(controls.panel);
+  assert.equal(controls.settingsButton.getAttribute('aria-expanded'), 'false');
+  assert.equal(controls.panel.style.display, 'none');
+  assert.equal(controls.panel.getAttribute('role'), 'group');
+  assert.equal(controls.panel.getAttribute('aria-label'), '브러시 설정');
+  assert.deepEqual(
+    controls.colorButtons.map(button => button.dataset.fabricPilotColor),
+    ['#ff4757', '#ffd000', '#26de81', '#4a9eff', '#ffffff', '#000000', '#1abc9c', '#ff6b9d']
+  );
+  assert.equal(controls.colorButtons[0].getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(
+    controls.colorButtons.map(button => button.getAttribute('aria-label')),
+    ['브러시 색상 빨강', '브러시 색상 노랑', '브러시 색상 초록', '브러시 색상 파랑',
+      '브러시 색상 하양', '브러시 색상 검정', '브러시 색상 민트', '브러시 색상 핑크']
+  );
+  assert.equal(controls.sizeInput.type, 'range');
+  assert.equal(controls.sizeInput.min, '1');
+  assert.equal(controls.sizeInput.max, '50');
+  assert.equal(controls.sizeInput.step, '1');
+  assert.equal(controls.sizeInput.value, '3');
+  assert.equal(controls.sizeInput.getAttribute('aria-label'), '브러시 크기');
+  assert.equal(controls.opacityInput.min, '10');
+  assert.equal(controls.opacityInput.max, '100');
+  assert.equal(controls.opacityInput.step, '1');
+  assert.equal(controls.opacityInput.value, '100');
+  assert.equal(controls.opacityInput.getAttribute('aria-label'), '브러시 불투명도');
+  assert.equal(controls.sizeDecrease.getAttribute('aria-label'), '브러시 크기 1px 줄이기');
+  assert.equal(controls.sizeIncrease.getAttribute('aria-label'), '브러시 크기 1px 늘리기');
+  assert.equal(controls.opacityDecrease.getAttribute('aria-label'), '브러시 불투명도 1% 줄이기');
+  assert.equal(controls.opacityIncrease.getAttribute('aria-label'), '브러시 불투명도 1% 늘리기');
+  assert.equal(controls.sizeOutput.textContent, '3px');
+  assert.equal(controls.opacityOutput.textContent, '100%');
+  assert.equal(controls.summary.textContent, '3px · 100%');
+  assert.equal(controls.colorPreview.style.background, '#ff4757');
+  assert.equal(controls.sizePreview.style.width, '3px');
+  assert.equal(controls.sizePreview.style.height, '3px');
+  assert.equal(controls.sizePreview.style.background, '#ff4757');
+  assert.equal(controls.sizePreview.style.opacity, '1');
+
+  controls.settingsButton.dispatch('click');
+  assert.equal(controls.settingsButton.getAttribute('aria-expanded'), 'true');
+  assert.equal(controls.panel.style.display, 'flex');
+
+  controls.colorButtons[1].dispatch('click');
+  controls.sizeInput.value = '24';
+  controls.sizeInput.dispatch('input');
+  controls.opacityInput.value = '40';
+  controls.opacityInput.dispatch('input');
+  assert.equal(controls.colorButtons[0].getAttribute('aria-pressed'), 'false');
+  assert.equal(controls.colorButtons[1].getAttribute('aria-pressed'), 'true');
+  assert.equal(controls.sizeOutput.textContent, '24px');
+  assert.equal(controls.opacityOutput.textContent, '40%');
+  assert.equal(controls.summary.textContent, '24px · 40%');
+  assert.equal(controls.colorPreview.style.background, '#ffd000');
+  assert.equal(controls.sizePreview.style.width, '22px');
+  assert.equal(controls.sizePreview.style.background, '#ffd000');
+  assert.equal(controls.sizePreview.style.opacity, '0.4');
+
+  controls.sizeDecrease.dispatch('click');
+  assert.equal(controls.sizeInput.value, '23');
+  controls.sizeIncrease.dispatch('click');
+  controls.sizeIncrease.dispatch('click');
+  assert.equal(controls.sizeInput.value, '25');
+  controls.opacityDecrease.dispatch('click');
+  assert.equal(controls.opacityInput.value, '39');
+  controls.opacityIncrease.dispatch('click');
+  controls.opacityIncrease.dispatch('click');
+  assert.equal(controls.opacityInput.value, '41');
+
+  controls.sizeInput.value = '1';
+  controls.sizeInput.dispatch('input');
+  controls.sizeDecrease.dispatch('click');
+  assert.equal(controls.sizeInput.value, '1');
+  controls.sizeInput.value = '50';
+  controls.sizeInput.dispatch('input');
+  controls.sizeIncrease.dispatch('click');
+  assert.equal(controls.sizeInput.value, '50');
+  controls.opacityInput.value = '10';
+  controls.opacityInput.dispatch('input');
+  controls.opacityDecrease.dispatch('click');
+  assert.equal(controls.opacityInput.value, '10');
+  controls.opacityInput.value = '100';
+  controls.opacityInput.dispatch('input');
+  controls.opacityIncrease.dispatch('click');
+  assert.equal(controls.opacityInput.value, '100');
+
+  controls.sizeInput.value = 'invalid';
+  controls.sizeInput.dispatch('input');
+  assert.equal(controls.sizeInput.value, '50');
+  controls.opacityInput.value = 'invalid';
+  controls.opacityInput.dispatch('input');
+  assert.equal(controls.opacityInput.value, '100');
+
+  const after = runtime.getDiagnostics();
+  assert.equal(after.objectCount, before.objectCount);
+  assert.equal(after.mutationCount, before.mutationCount);
+  assert.equal(after.dirty, before.dirty);
+  assert.equal(after.metrics.saveAttemptCount, before.metrics.saveAttemptCount);
+});
+
+test('each stroke snapshots color size and opacity and warm reactivation restores mixed styles', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const sceneStore = createSessionSceneStore();
+  const observedSizes = [];
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    sceneStore,
+    strokePathFactory(samples, options) {
+      observedSizes.push(options.size);
+      return createStrokePathData(samples, options);
+    }
+  });
+  const firstInput = makeInput();
+  runtime.prepare(root);
+  runtime.setDrawingInput(firstInput);
+  const canvas = FakeCanvas.instances[0];
+  const controls = getBrushControls(root);
+
+  drawStroke(canvas.upperCanvasEl, 41);
+  const firstCallCount = observedSizes.length;
+  assert.equal(observedSizes.slice(0, firstCallCount).every(size => size === 3), true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects[0].style, {
+    color: '#ff4757',
+    size: 3,
+    opacity: 1
+  });
+  assert.equal(canvas.getObjects()[0].fill, '#ff4757');
+  assert.equal(canvas.getObjects()[0].opacity, 1);
+
+  controls.colorButtons[1].dispatch('click');
+  controls.sizeInput.value = '24';
+  controls.sizeInput.dispatch('input');
+  controls.opacityInput.value = '40';
+  controls.opacityInput.dispatch('input');
+  drawStroke(canvas.upperCanvasEl, 42);
+
+  assert.equal(observedSizes.slice(firstCallCount).every(size => size === 24), true);
+  const records = sceneStore.getActiveSceneSnapshot().objects;
+  assert.deepEqual(records.map(record => record.style), [
+    { color: '#ff4757', size: 3, opacity: 1 },
+    { color: '#ffd000', size: 24, opacity: 0.4 }
+  ]);
+  assert.deepEqual(canvas.getObjects().map(path => [path.fill, path.opacity]), [
+    ['#ff4757', 1],
+    ['#ffd000', 0.4]
+  ]);
+
+  sceneStore.addStroke({
+    id: 'legacy-opacity-less',
+    type: 'stroke',
+    pathData: 'M 0 0 L 1 1 Z',
+    sourcePoints: [{ x: 0, y: 0, pressure: 0.5, pointerType: 'mouse', time: 0 }],
+    style: { color: '#000000', size: 5 }
+  });
+  sceneStore.addStroke({
+    id: 'legacy-invalid-opacity',
+    type: 'stroke',
+    pathData: 'M 1 1 L 2 2 Z',
+    sourcePoints: [{ x: 1, y: 1, pressure: 0.5, pointerType: 'mouse', time: 1 }],
+    style: { color: '#ff6b9d', size: 5, opacity: 0 }
+  });
+
+  controls.settingsButton.dispatch('click');
+  assert.equal(controls.settingsButton.getAttribute('aria-expanded'), 'true');
+
+  runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 2,
+    enabled: false
+  });
+  runtime.setDrawingInput({
+    ...firstInput,
+    inputRevision: 3,
+    session: { ...firstInput.session, sessionId: 'runtime-session-restored' }
+  });
+
+  const restoredControls = getBrushControls(root);
+  assert.equal(restoredControls.sizeInput.value, '24');
+  assert.equal(restoredControls.opacityInput.value, '40');
+  assert.equal(restoredControls.colorButtons[1].getAttribute('aria-pressed'), 'true');
+  assert.equal(restoredControls.settingsButton.getAttribute('aria-expanded'), 'true');
+  assert.equal(restoredControls.panel.style.display, 'flex');
+  assert.deepEqual(canvas.getObjects().map(path => [path.fill, path.opacity]), [
+    ['#ff4757', 1],
+    ['#ffd000', 0.4],
+    ['#000000', 1],
+    ['#ff6b9d', 1]
+  ]);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+
+  runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 4,
+    enabled: false
+  });
+  runtime.setDrawingInput({
+    ...firstInput,
+    inputRevision: 5,
+    session: {
+      ...firstInput.session,
+      sessionId: 'runtime-session-frame-25',
+      targetFrame: 25
+    }
+  });
+  const nextFrameControls = getBrushControls(root);
+  assert.equal(nextFrameControls.sizeInput.value, '24');
+  assert.equal(nextFrameControls.opacityInput.value, '40');
+  assert.equal(nextFrameControls.colorButtons[1].getAttribute('aria-pressed'), 'true');
+});
+
+test('an active stroke keeps the pointerdown style while controls change', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const sceneStore = createSessionSceneStore();
+  const observedSizes = [];
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    sceneStore,
+    strokePathFactory(samples, options) {
+      observedSizes.push(options.size);
+      return createStrokePathData(samples, options);
+    }
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const canvas = FakeCanvas.instances[0];
+  const controls = getBrushControls(root);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 51,
+    pointerType: 'pen',
+    button: 0,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.5,
+    timeStamp: 1
+  });
+  controls.colorButtons[1].dispatch('click');
+  controls.sizeInput.value = '24';
+  controls.sizeInput.dispatch('input');
+  controls.opacityInput.value = '40';
+  controls.opacityInput.dispatch('input');
+  canvas.upperCanvasEl.dispatch('pointermove', {
+    pointerId: 51,
+    pointerType: 'pen',
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.5,
+    timeStamp: 2
+  });
+  const transient = canvas.getObjects().find(path => path.__baeframeTransient === true);
+  assert.ok(transient);
+  assert.equal(transient.fill, '#ff4757');
+  assert.equal(transient.opacity, 1);
+  assert.equal(observedSizes.every(size => size === 3), true);
+  canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 51,
+    pointerType: 'pen',
+    clientX: 50,
+    clientY: 60,
+    pressure: 0.5,
+    timeStamp: 3
+  });
+
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects[0].style, {
+    color: '#ff4757',
+    size: 3,
+    opacity: 1
+  });
+  assert.equal(canvas.getObjects()[0].fill, '#ff4757');
+  assert.equal(canvas.getObjects()[0].opacity, 1);
+  assert.equal(observedSizes.every(size => size === 3), true);
 });
 
 test('Phase 0 selection moves while scale rotate and skew remain locked across reactivation', () => {
