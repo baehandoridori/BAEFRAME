@@ -10,6 +10,7 @@ const {
   createSessionSceneStore,
   createStrokePathData,
   resolveEffectiveCanvasRect,
+  resolveSelectionHitTolerance,
   mapClientPointToSource
 } = require(runtimePath);
 
@@ -121,6 +122,12 @@ class FakeCanvas {
     this.upperCanvasEl = element;
     this.wrapperEl = new FakeElement('div', element.ownerDocument);
     this.options = options;
+    this.defaultCursor = options.defaultCursor;
+    this.hoverCursor = options.hoverCursor;
+    this.moveCursor = options.moveCursor;
+    this.freeDrawingCursor = options.freeDrawingCursor;
+    this.targetFindTolerance = 0;
+    this.cursorHistory = [];
     this.selection = options.selection;
     this.isDrawingMode = false;
     this.objects = [];
@@ -176,6 +183,15 @@ class FakeCanvas {
   discardActiveObject() {
     this.activeObjects = [];
     this.activeObject = null;
+  }
+
+  setTargetFindTolerance(value) {
+    this.targetFindTolerance = Math.round(value);
+  }
+
+  setCursor(value) {
+    this.upperCanvasEl.style.cursor = value;
+    this.cursorHistory.push(value);
   }
 
   setDimensions(dimensions, options = {}) {
@@ -323,7 +339,11 @@ test('prepare creates one Fabric canvas and the browser runtime stays reusable',
   assert.deepEqual(FakeCanvas.instances[0].options, {
     selection: true,
     preserveObjectStacking: true,
-    enableRetinaScaling: false
+    enableRetinaScaling: false,
+    defaultCursor: 'default',
+    hoverCursor: 'grab',
+    moveCursor: 'grabbing',
+    freeDrawingCursor: 'crosshair'
   });
   assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-toolbar').length, 1);
   assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-viewport').length, 1);
@@ -455,6 +475,75 @@ test('viewport updates keep source coordinates aligned across resize, zoom, and 
     panX: 0,
     panY: 0
   }).accepted, false);
+});
+
+test('selection hit tolerance converts displayed pixels to source coordinates within bounds', () => {
+  assert.equal(resolveSelectionHitTolerance({}), 6);
+  assert.equal(resolveSelectionHitTolerance(makeInput().session), 12);
+  assert.equal(resolveSelectionHitTolerance({
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { width: 960, height: 540 },
+    viewportTransform: { scale: 2 }
+  }), 6);
+  assert.equal(resolveSelectionHitTolerance({
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { width: 960, height: 540 },
+    viewportTransform: { scale: 0.5 }
+  }), 24);
+  assert.equal(resolveSelectionHitTolerance({
+    sourceWidth: 100,
+    sourceHeight: 100,
+    canvasRect: { width: 1200, height: 1200 },
+    viewportTransform: { scale: 2 }
+  }), 2);
+  assert.equal(resolveSelectionHitTolerance({
+    sourceWidth: 7680,
+    sourceHeight: 4320,
+    canvasRect: { width: 100, height: 56.25 },
+    viewportTransform: { scale: 0.25 }
+  }), 96);
+});
+
+test('selection hit margin and cursors follow displayed pixels without scene mutations', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const canvas = FakeCanvas.instances[0];
+  drawStroke(canvas.upperCanvasEl, 61);
+  const path = canvas.getObjects()[0];
+  const before = runtime.getDiagnostics();
+
+  assert.equal(canvas.defaultCursor, 'crosshair');
+  assert.equal(canvas.upperCanvasEl.style.cursor, 'crosshair');
+  assert.equal(canvas.targetFindTolerance, 12);
+  assert.equal(path.padding, 12);
+  assert.equal(path.hoverCursor, 'grab');
+  assert.equal(path.moveCursor, 'grabbing');
+
+  runtime.updateDrawingTool({ sessionId: 'runtime-session', toolRevision: 1, tool: 'select' });
+  assert.equal(canvas.defaultCursor, 'default');
+  assert.equal(canvas.upperCanvasEl.style.cursor, 'default');
+
+  runtime.updateViewport({
+    revision: 1,
+    canvasRect: { left: 0, top: 0, width: 960, height: 540 },
+    scale: 2,
+    panX: 0,
+    panY: 0
+  });
+  assert.equal(canvas.targetFindTolerance, 6);
+  assert.equal(path.padding, 6);
+  assert.equal(runtime.getDiagnostics().mutationCount, before.mutationCount);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
 });
 
 test('selection updates synchronize the complete Fabric active selection', () => {
@@ -868,6 +957,8 @@ test('Phase 0 selection moves while scale rotate and skew remain locked across r
     assert.equal(target.lockSkewingY, true);
     assert.notEqual(target.lockMovementX, true);
     assert.notEqual(target.lockMovementY, true);
+    assert.equal(target.hoverCursor, 'grab');
+    assert.equal(target.moveCursor, 'grabbing');
   }
 
   canvas.emit('before:transform', { target: selected, transform: { target: selected } });
@@ -885,12 +976,15 @@ test('Phase 0 selection moves while scale rotate and skew remain locked across r
   assert.equal(selected.skewX, 0);
   assert.equal(runtime.getDiagnostics().mutationCount, 2);
 
+  runtime.updateDrawingTool({ sessionId: 'runtime-session', toolRevision: 2, tool: 'brush' });
+  assert.equal(canvas.upperCanvasEl.style.cursor, 'crosshair');
   runtime.setDrawingInput({
     hostGeneration: 1,
     videoGeneration: 1,
     inputRevision: 2,
     enabled: false
   });
+  assert.equal(canvas.upperCanvasEl.style.cursor, 'default');
   runtime.setDrawingInput({
     ...firstInput,
     inputRevision: 3,

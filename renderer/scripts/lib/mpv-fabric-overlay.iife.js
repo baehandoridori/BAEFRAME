@@ -7700,6 +7700,9 @@ void main() {
       var MAX_BRUSH_SIZE = 50;
       var MIN_BRUSH_OPACITY_PERCENT = 10;
       var MAX_BRUSH_OPACITY_PERCENT = 100;
+      var SELECTION_HIT_MARGIN_CSS_PX = 6;
+      var MIN_SELECTION_HIT_TOLERANCE = 2;
+      var MAX_SELECTION_HIT_TOLERANCE = 96;
       function clonePlain(value) {
         if (value === void 0) return void 0;
         return JSON.parse(JSON.stringify(value));
@@ -7727,6 +7730,25 @@ void main() {
           panX: finiteNumber(value.panX, 0),
           panY: finiteNumber(value.panY, 0)
         };
+      }
+      function resolveSelectionHitTolerance(session = {}) {
+        const rect = session.canvasRect || {};
+        const sourceWidth = Math.max(0, finiteNumber(session.sourceWidth));
+        const sourceHeight = Math.max(0, finiteNumber(session.sourceHeight));
+        const displayWidth = Math.max(0, finiteNumber(rect.width));
+        const displayHeight = Math.max(0, finiteNumber(rect.height));
+        const scale = normalizeViewportTransform(session.viewportTransform).scale;
+        if (!sourceWidth || !sourceHeight || !displayWidth || !displayHeight) {
+          return SELECTION_HIT_MARGIN_CSS_PX;
+        }
+        const sourcePerCssPixel = Math.max(
+          sourceWidth / displayWidth / scale,
+          sourceHeight / displayHeight / scale
+        );
+        return Math.min(
+          MAX_SELECTION_HIT_TOLERANCE,
+          Math.max(MIN_SELECTION_HIT_TOLERANCE, Math.ceil(SELECTION_HIT_MARGIN_CSS_PX * sourcePerCssPixel))
+        );
       }
       function resolveEffectiveCanvasRect(canvasRect = {}, viewportTransform = {}) {
         const left = finiteNumber(canvasRect.left, 0);
@@ -8476,7 +8498,9 @@ void main() {
             lockScalingFlip: true,
             lockRotation: true,
             lockSkewingX: true,
-            lockSkewingY: true
+            lockSkewingY: true,
+            hoverCursor: "grab",
+            moveCursor: "grabbing"
           });
           object.setCoords?.();
         }
@@ -8500,6 +8524,9 @@ void main() {
             evented: !transient && sceneStore.getDiagnostics().tool === "select",
             objectCaching: !transient,
             perPixelTargetFind: !transient,
+            padding: transient ? 0 : resolveSelectionHitTolerance(currentSession || {}),
+            hoverCursor: transient ? null : "grab",
+            moveCursor: transient ? null : "grabbing",
             hasControls: false,
             lockMovementX: false,
             lockMovementY: false,
@@ -8538,6 +8565,11 @@ void main() {
           }
           fabricCanvas.isDrawingMode = false;
           fabricCanvas.selection = selectMode;
+          fabricCanvas.defaultCursor = selectMode ? "default" : "crosshair";
+          fabricCanvas.hoverCursor = "grab";
+          fabricCanvas.moveCursor = "grabbing";
+          fabricCanvas.freeDrawingCursor = "crosshair";
+          fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
             object.set({ selectable: selectMode, evented: selectMode });
@@ -8754,6 +8786,16 @@ void main() {
             longTaskObserver = null;
           }
         }
+        function applySelectionHitPolicy(session = currentSession) {
+          if (!fabricCanvas) return;
+          const tolerance = resolveSelectionHitTolerance(session || {});
+          fabricCanvas.setTargetFindTolerance?.(tolerance);
+          for (const object of fabricCanvas.getObjects()) {
+            if (object.__baeframeTransient) continue;
+            object.set({ padding: tolerance, hoverCursor: "grab", moveCursor: "grabbing" });
+            object.setCoords?.();
+          }
+        }
         function applyViewport(session) {
           const rect = session.canvasRect;
           if (session.sourceWidth !== appliedSourceWidth || session.sourceHeight !== appliedSourceHeight) {
@@ -8768,6 +8810,7 @@ void main() {
             { width: rect.width, height: rect.height },
             { cssOnly: true }
           );
+          applySelectionHitPolicy(session);
           const viewportTransform = normalizeViewportTransform(session.viewportTransform);
           setStyles(viewportElement, {
             left: `${rect.left}px`,
@@ -8786,6 +8829,7 @@ void main() {
         function disableInput() {
           const shouldRollbackTransform = transformStart !== null;
           setSurfaceInput(false);
+          fabricCanvas?.setCursor?.("default");
           cancelActiveStroke();
           if (shouldRollbackTransform && fabricCanvas && sceneStore.getActiveSceneSnapshot()) renderActiveScene();
           transformStart = null;
@@ -8900,7 +8944,11 @@ void main() {
             fabricCanvas = new Canvas(canvasElement, {
               selection: true,
               preserveObjectStacking: true,
-              enableRetinaScaling: false
+              enableRetinaScaling: false,
+              defaultCursor: "default",
+              hoverCursor: "grab",
+              moveCursor: "grabbing",
+              freeDrawingCursor: "crosshair"
             });
             configureCanvasEvents();
             addDomListener(brushButton, "click", () => updateLocalDrawingTool("brush"));
@@ -9102,6 +9150,7 @@ void main() {
         createActionDeduper,
         shouldAcceptInputRequest,
         resolveEffectiveCanvasRect,
+        resolveSelectionHitTolerance,
         mapClientPointToSource
       };
     }
