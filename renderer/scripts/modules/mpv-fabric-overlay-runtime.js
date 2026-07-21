@@ -570,6 +570,10 @@ function createFabricOverlayRuntime(options = {}) {
   const documentRef = options.document || (typeof document !== 'undefined' ? document : null);
   const windowRef = options.window || (typeof window !== 'undefined' ? window : null);
   const performanceRef = options.performance || (typeof performance !== 'undefined' ? performance : null);
+  const queueMicrotaskRef = options.queueMicrotask ||
+    windowRef?.queueMicrotask?.bind(windowRef) ||
+    globalThis.queueMicrotask?.bind(globalThis) ||
+    (callback => Promise.resolve().then(callback));
   const now = () => typeof performanceRef?.now === 'function' ? performanceRef.now() : Date.now();
   const devicePixelRatio = finiteNumber(options.devicePixelRatio ?? windowRef?.devicePixelRatio, 1) || 1;
   const metrics = options.metrics || createFabricDrawingPilotMetrics(options.metricsOptions);
@@ -1149,6 +1153,22 @@ function createFabricOverlayRuntime(options = {}) {
     return objects.map(object => object.__baeframeObjectId).filter(Boolean);
   }
 
+  function scheduleMovedMultiSelectionRelease(target, selectedIds) {
+    const sessionId = currentSession?.sessionId;
+    const inputRevision = tokenState.inputRevision;
+    const expectedSelection = [...selectedIds].sort().join(SCENE_KEY_SEPARATOR);
+    queueMicrotaskRef(() => {
+      if (destroyed || !inputEnabled || !fabricCanvas) return;
+      if (currentSession?.sessionId !== sessionId || tokenState.inputRevision !== inputRevision) return;
+      if (fabricCanvas.getActiveObject?.() !== target) return;
+      if (selectionIds().sort().join(SCENE_KEY_SEPARATOR) !== expectedSelection) return;
+      fabricCanvas.discardActiveObject();
+      sceneStore.selectObjects([]);
+      fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || 'default');
+      fabricCanvas.requestRenderAll();
+    });
+  }
+
   function onSelectionChanged() {
     applyMoveOnlyConstraints(fabricCanvas?.getActiveObject?.());
     for (const object of fabricCanvas?.getActiveObjects?.() || []) applyMoveOnlyConstraints(object);
@@ -1195,8 +1215,10 @@ function createFabricOverlayRuntime(options = {}) {
         })
       });
     }
+    const shouldReleaseMultiSelection = result.applied && children.length > 1;
     transformStart = null;
     if (result.applied) updateObjectMetric();
+    if (shouldReleaseMultiSelection) scheduleMovedMultiSelectionRelease(target, ids);
   }
 
   function configureCanvasEvents() {

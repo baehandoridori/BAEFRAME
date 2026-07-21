@@ -297,6 +297,274 @@ function getBrushControls(root) {
   };
 }
 
+function createRealFabricHarness() {
+  const realFabric = require('fabric/node');
+  const environment = realFabric.getEnv();
+  const canvases = [];
+  const sceneStore = createSessionSceneStore();
+  class CaptureCanvas extends realFabric.Canvas {
+    constructor(...args) {
+      super(...args);
+      this.__disposePromise = Promise.resolve();
+      canvases.push(this);
+    }
+
+    dispose() {
+      const result = super.dispose();
+      this.__disposePromise = Promise.resolve(result);
+      return result;
+    }
+  }
+  const root = environment.document.createElement('div');
+  environment.document.body.appendChild(root);
+  const runtime = createFabricOverlayRuntime({
+    fabric: { ...realFabric, Canvas: CaptureCanvas },
+    document: environment.document,
+    window: environment.window,
+    sceneStore
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 1,
+    enabled: true,
+    session: {
+      sessionId: 'real-fabric-session',
+      stableVideoIdentity: 'real-fabric-video',
+      targetFrame: 0,
+      sourceWidth: 200,
+      sourceHeight: 200,
+      canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+      viewportTransform: { scale: 1, panX: 0, panY: 0 },
+      tool: 'brush'
+    }
+  });
+
+  const canvas = canvases[0];
+  const element = canvas.upperCanvasEl;
+  const rect = {
+    left: 0,
+    top: 0,
+    right: 200,
+    bottom: 200,
+    width: 200,
+    height: 200,
+    x: 0,
+    y: 0,
+    toJSON() { return this; }
+  };
+  for (const node of [canvas.upperCanvasEl, canvas.lowerCanvasEl, canvas.wrapperEl]) {
+    node.getBoundingClientRect = () => rect;
+  }
+  canvas.calcOffset();
+
+  function dispatchPointer(type, x, y, pointerId) {
+    const event = new environment.window.Event(type, { bubbles: true, cancelable: true });
+    for (const [name, value] of Object.entries({
+      clientX: x,
+      clientY: y,
+      pointerId,
+      pointerType: 'mouse',
+      button: 0,
+      pressure: 0.5
+    })) {
+      Object.defineProperty(event, name, { value });
+    }
+    element.dispatchEvent(event);
+  }
+
+  function dispatchMouse(target, type, x, y, buttons = type === 'mousedown' ? 1 : 0) {
+    target.dispatchEvent(new environment.window.MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons
+    }));
+  }
+
+  function drawStrokeAt(y, pointerId) {
+    dispatchPointer('pointerdown', 20, y, pointerId);
+    dispatchPointer('pointermove', 60, y, pointerId);
+    dispatchPointer('pointerup', 60, y, pointerId);
+  }
+
+  function dragMarquee(from, to) {
+    dispatchMouse(element, 'mousedown', from.x, from.y);
+    dispatchMouse(environment.document, 'mousemove', to.x, to.y, 1);
+    dispatchMouse(environment.document, 'mouseup', to.x, to.y);
+  }
+
+  function dragActiveSelectionBy(dx, dy) {
+    const center = canvas.getActiveObject().getCenterPoint();
+    dispatchMouse(element, 'mousedown', center.x, center.y);
+    dispatchMouse(environment.document, 'mousemove', center.x + dx, center.y + dy, 1);
+    dispatchMouse(environment.document, 'mouseup', center.x + dx, center.y + dy);
+  }
+
+  function dragStrokeBy(index, dx, dy, onMove) {
+    const center = canvas.getObjects()[index].getCenterPoint();
+    dispatchMouse(element, 'mousedown', center.x, center.y);
+    dispatchMouse(environment.document, 'mousemove', center.x + dx, center.y + dy, 1);
+    onMove?.();
+    dispatchMouse(environment.document, 'mouseup', center.x + dx, center.y + dy);
+  }
+
+  function hoverAt(x, y) {
+    dispatchMouse(element, 'mousemove', x, y);
+  }
+
+  function sceneTransforms() {
+    return sceneStore.getActiveSceneSnapshot().objects.map(object => ({
+      left: Number(object.transform?.left) || 0,
+      top: Number(object.transform?.top) || 0
+    }));
+  }
+
+  return {
+    runtime,
+    canvas,
+    environment,
+    drawStrokeAt,
+    dragMarquee,
+    dragActiveSelectionBy,
+    dragStrokeBy,
+    hoverAt,
+    sceneTransforms,
+    async destroy() {
+      runtime.destroy();
+      await canvas.__disposePromise;
+      root.remove();
+    }
+  };
+}
+
+test('real Fabric thin stroke hit margin drives honest hover cursors', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(30, 70);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+    const center = harness.canvas.getObjects()[0].getCenterPoint();
+
+    harness.hoverAt(center.x, center.y + 5);
+    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'grab');
+    harness.hoverAt(center.x, center.y + 20);
+    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'default');
+    harness.dragStrokeBy(0, 2, 0, () => {
+      assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'grabbing');
+    });
+    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'grab');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('moved real Fabric marquee settles before the next single-stroke drag', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(30, 71);
+    harness.drawStrokeAt(70, 72);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+
+    harness.dragMarquee({ x: 10, y: 10 }, { x: 100, y: 100 });
+    assert.equal(harness.canvas.getActiveObjects().length, 2);
+    harness.dragActiveSelectionBy(20, 10);
+    await Promise.resolve();
+
+    assert.equal(harness.canvas.getActiveObjects().length, 0);
+    assert.equal(harness.runtime.getDiagnostics().selectionCount, 0);
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 3);
+
+    const before = harness.sceneTransforms();
+    harness.dragStrokeBy(0, 15, 5);
+    const after = harness.sceneTransforms();
+    assert.deepEqual(after[0], { ...before[0], left: before[0].left + 15, top: before[0].top + 5 });
+    assert.deepEqual(after[1], before[1]);
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 4);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('stale multi-selection release respects membership and input revisions', () => {
+  FakeCanvas.instances = [];
+  const queuedMicrotasks = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    queueMicrotask: callback => queuedMicrotasks.push(callback)
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const canvas = FakeCanvas.instances[0];
+  drawStroke(canvas.upperCanvasEl, 81);
+  drawStroke(canvas.upperCanvasEl, 82);
+  runtime.updateDrawingTool({ sessionId: 'runtime-session', toolRevision: 1, tool: 'select' });
+
+  const [first, second] = canvas.getObjects();
+  const group = new FakePath('');
+  let members = [first, second];
+  group.type = 'activeselection';
+  group.getObjects = () => members;
+  canvas.activeObject = group;
+  canvas.activeObjects = members;
+  canvas.emit('selection:created', { selected: [first, second] });
+  canvas.emit('before:transform', { target: group, transform: { target: group } });
+  group.left += 10;
+  canvas.emit('object:modified', { target: group });
+
+  assert.equal(queuedMicrotasks.length, 1);
+  assert.equal(runtime.getDiagnostics().mutationCount, 3);
+  members = [first];
+  canvas.activeObjects = [first];
+  canvas.emit('selection:updated', { selected: [first], deselected: [second] });
+  queuedMicrotasks.shift()();
+
+  assert.equal(canvas.getActiveObject(), group);
+  assert.equal(runtime.getDiagnostics().selectionCount, 1);
+  assert.equal(runtime.getDiagnostics().mutationCount, 3);
+
+  members = [first, second];
+  canvas.activeObjects = members;
+  canvas.emit('selection:updated', { selected: members, deselected: [] });
+  canvas.emit('before:transform', { target: group, transform: { target: group } });
+  group.left += 5;
+  canvas.emit('object:modified', { target: group });
+  assert.equal(queuedMicrotasks.length, 1);
+  assert.equal(runtime.getDiagnostics().mutationCount, 4);
+
+  runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 2,
+    enabled: false
+  });
+  queuedMicrotasks.shift()();
+  assert.equal(runtime.getDiagnostics().state, 'passive');
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+
+  const restoredInput = makeInput();
+  assert.equal(runtime.setDrawingInput({
+    ...restoredInput,
+    inputRevision: 3,
+    session: { ...restoredInput.session, sessionId: 'runtime-session-restored' }
+  }).accepted, true);
+  assert.equal(runtime.getDiagnostics().mutationCount, 4);
+});
+
 test('pure exports load without constructing a DOM or Fabric canvas', () => {
   FakeCanvas.instances = [];
   const runtime = createFabricOverlayRuntime({
