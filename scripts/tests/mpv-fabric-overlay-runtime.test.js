@@ -26,6 +26,9 @@ class FakeElement {
     this.className = '';
     this.textContent = '';
     this.listeners = new Map();
+    this.capturedPointerIds = new Set();
+    this.pointerCaptureRequests = [];
+    this.pointerReleaseRequests = [];
   }
 
   appendChild(child) {
@@ -57,6 +60,20 @@ class FakeElement {
 
   removeEventListener(type, listener) {
     this.listeners.get(type)?.delete(listener);
+  }
+
+  setPointerCapture(pointerId) {
+    this.pointerCaptureRequests.push(pointerId);
+    this.capturedPointerIds.add(pointerId);
+  }
+
+  releasePointerCapture(pointerId) {
+    this.pointerReleaseRequests.push(pointerId);
+    this.capturedPointerIds.delete(pointerId);
+  }
+
+  hasPointerCapture(pointerId) {
+    return this.capturedPointerIds.has(pointerId);
   }
 
   setAttribute(name, value) {
@@ -343,6 +360,30 @@ function createRealFabricHarness() {
 
   const canvas = canvases[0];
   const element = canvas.upperCanvasEl;
+  const pointerCapture = {
+    capturedPointerIds: new Set(),
+    captureRequests: [],
+    releaseRequests: [],
+    lostEvents: [],
+    retargets: []
+  };
+  const dispatchLostPointerCapture = pointerId => {
+    const event = new environment.window.Event('lostpointercapture', { bubbles: true });
+    Object.defineProperty(event, 'pointerId', { value: pointerId });
+    pointerCapture.capturedPointerIds.delete(pointerId);
+    pointerCapture.lostEvents.push(pointerId);
+    element.dispatchEvent(event);
+  };
+  element.setPointerCapture = pointerId => {
+    pointerCapture.captureRequests.push(pointerId);
+    pointerCapture.capturedPointerIds.add(pointerId);
+  };
+  element.releasePointerCapture = pointerId => {
+    pointerCapture.releaseRequests.push(pointerId);
+    pointerCapture.capturedPointerIds.delete(pointerId);
+    queueMicrotask(() => dispatchLostPointerCapture(pointerId));
+  };
+  element.hasPointerCapture = pointerId => pointerCapture.capturedPointerIds.has(pointerId);
   const rect = {
     left: 0,
     top: 0,
@@ -358,8 +399,9 @@ function createRealFabricHarness() {
     node.getBoundingClientRect = () => rect;
   }
   canvas.calcOffset();
+  const pointerDispatches = [];
 
-  function dispatchPointer(type, x, y, pointerId) {
+  function dispatchPointer(target, type, x, y, pointerId, buttons) {
     const event = new environment.window.Event(type, { bubbles: true, cancelable: true });
     for (const [name, value] of Object.entries({
       clientX: x,
@@ -367,53 +409,66 @@ function createRealFabricHarness() {
       pointerId,
       pointerType: 'mouse',
       button: 0,
-      pressure: 0.5
+      buttons,
+      pressure: buttons === 0 ? 0 : 0.5
     })) {
       Object.defineProperty(event, name, { value });
     }
-    element.dispatchEvent(event);
-  }
-
-  function dispatchMouse(target, type, x, y, buttons = type === 'mousedown' ? 1 : 0) {
-    target.dispatchEvent(new environment.window.MouseEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      clientX: x,
-      clientY: y,
-      button: 0,
-      buttons
-    }));
+    pointerDispatches.push({
+      target: target === element ? 'upperCanvasEl' : 'document',
+      type,
+      pointerId
+    });
+    target.dispatchEvent(event);
   }
 
   function drawStrokeAt(y, pointerId) {
-    dispatchPointer('pointerdown', 20, y, pointerId);
-    dispatchPointer('pointermove', 60, y, pointerId);
-    dispatchPointer('pointerup', 60, y, pointerId);
+    dispatchPointer(element, 'pointerdown', 20, y, pointerId, 1);
+    dispatchPointer(element, 'pointermove', 60, y, pointerId, 1);
+    dispatchPointer(element, 'pointerup', 60, y, pointerId, 0);
   }
 
-  function dragMarquee(from, to) {
-    dispatchMouse(element, 'mousedown', from.x, from.y);
-    dispatchMouse(environment.document, 'mousemove', to.x, to.y, 1);
-    dispatchMouse(environment.document, 'mouseup', to.x, to.y);
+  function dispatchCapturedPointerUp(x, y, pointerId) {
+    const captured = element.hasPointerCapture(pointerId);
+    const target = captured ? element : environment.document;
+    pointerCapture.retargets.push({
+      pointerId,
+      from: 'document',
+      to: captured ? 'upperCanvasEl' : 'document'
+    });
+    dispatchPointer(target, 'pointerup', x, y, pointerId, 0);
   }
 
-  function dragActiveSelectionBy(dx, dy) {
+  function dragMarquee(from, to, pointerId = 101) {
+    dispatchPointer(element, 'pointerdown', from.x, from.y, pointerId, 1);
+    dispatchPointer(environment.document, 'pointermove', to.x, to.y, pointerId, 1);
+    dispatchCapturedPointerUp(to.x, to.y, pointerId);
+  }
+
+  function dragActiveSelectionBy(dx, dy, pointerId = 102) {
     const center = canvas.getActiveObject().getCenterPoint();
-    dispatchMouse(element, 'mousedown', center.x, center.y);
-    dispatchMouse(environment.document, 'mousemove', center.x + dx, center.y + dy, 1);
-    dispatchMouse(environment.document, 'mouseup', center.x + dx, center.y + dy);
+    dispatchPointer(element, 'pointerdown', center.x, center.y, pointerId, 1);
+    dispatchPointer(environment.document, 'pointermove', center.x + dx, center.y + dy, pointerId, 1);
+    dispatchCapturedPointerUp(center.x + dx, center.y + dy, pointerId);
   }
 
-  function dragStrokeBy(index, dx, dy, onMove) {
+  function dragStrokeBy(index, dx, dy, onMove, pointerId = 103) {
     const center = canvas.getObjects()[index].getCenterPoint();
-    dispatchMouse(element, 'mousedown', center.x, center.y);
-    dispatchMouse(environment.document, 'mousemove', center.x + dx, center.y + dy, 1);
+    dispatchPointer(element, 'pointerdown', center.x, center.y, pointerId, 1);
+    dispatchPointer(environment.document, 'pointermove', center.x + dx, center.y + dy, pointerId, 1);
     onMove?.();
-    dispatchMouse(environment.document, 'mouseup', center.x + dx, center.y + dy);
+    dispatchCapturedPointerUp(center.x + dx, center.y + dy, pointerId);
+  }
+
+  function clickStroke(index, pointerId, onPointerDown) {
+    const center = canvas.getObjects()[index].getCenterPoint();
+    dispatchPointer(element, 'pointerdown', center.x, center.y, pointerId, 1);
+    onPointerDown?.();
+    dispatchCapturedPointerUp(center.x, center.y, pointerId);
   }
 
   function hoverAt(x, y) {
-    dispatchMouse(element, 'mousemove', x, y);
+    dispatchPointer(element, 'pointermove', x, y, 0, 0);
   }
 
   function sceneTransforms() {
@@ -427,10 +482,16 @@ function createRealFabricHarness() {
     runtime,
     canvas,
     environment,
+    element,
+    pointerCapture,
+    dispatchLostPointerCapture,
+    pointerDispatches,
+    dispatchPointer,
     drawStrokeAt,
     dragMarquee,
     dragActiveSelectionBy,
     dragStrokeBy,
+    clickStroke,
     hoverAt,
     sceneTransforms,
     async destroy() {
@@ -477,6 +538,7 @@ test('moved real Fabric marquee settles before the next single-stroke drag', asy
     });
 
     harness.dragMarquee({ x: 10, y: 10 }, { x: 100, y: 100 });
+    await Promise.resolve();
     assert.equal(harness.canvas.getActiveObjects().length, 2);
     harness.dragActiveSelectionBy(20, 10);
     await Promise.resolve();
@@ -495,6 +557,356 @@ test('moved real Fabric marquee settles before the next single-stroke drag', asy
   } finally {
     await harness.destroy();
   }
+});
+
+test('captured select pointerup settles a moved marquee without a direct document mouseup', async () => {
+  const harness = createRealFabricHarness();
+  const selectionPointerId = 112;
+  try {
+    harness.drawStrokeAt(30, 110);
+    harness.drawStrokeAt(70, 111);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+
+    harness.dragMarquee({ x: 10, y: 10 }, { x: 100, y: 100 }, 113);
+    await Promise.resolve();
+    assert.equal(harness.canvas.getActiveObjects().length, 2);
+    const before = harness.sceneTransforms();
+
+    harness.dragActiveSelectionBy(20, 10, selectionPointerId);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(harness.canvas.getActiveObjects().length, 0);
+    assert.equal(harness.runtime.getDiagnostics().selectionCount, 0);
+    assert.deepEqual(harness.sceneTransforms(), before.map(transform => ({
+      left: transform.left + 20,
+      top: transform.top + 10
+    })));
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 3);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+    assert.equal(
+      harness.pointerCapture.captureRequests.filter(pointerId => pointerId === selectionPointerId).length,
+      1
+    );
+    assert.equal(
+      harness.pointerCapture.releaseRequests.filter(pointerId => pointerId === selectionPointerId).length,
+      1
+    );
+    assert.equal(harness.element.hasPointerCapture(selectionPointerId), false);
+    assert.deepEqual(
+      harness.pointerDispatches.filter(event => event.pointerId === selectionPointerId && event.type === 'pointerup'),
+      [{ target: 'upperCanvasEl', type: 'pointerup', pointerId: selectionPointerId }]
+    );
+    assert.deepEqual(
+      harness.pointerCapture.retargets.filter(event => event.pointerId === selectionPointerId),
+      [{ pointerId: selectionPointerId, from: 'document', to: 'upperCanvasEl' }]
+    );
+    assert.equal(
+      harness.pointerCapture.lostEvents.filter(pointerId => pointerId === selectionPointerId).length,
+      1
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('viewport update during a stroke click waits and preserves the new selection', async () => {
+  const harness = createRealFabricHarness();
+  let selectionClearedCount = 0;
+  const onSelectionCleared = () => { selectionClearedCount += 1; };
+  try {
+    harness.drawStrokeAt(30, 120);
+    harness.drawStrokeAt(90, 121);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+
+    harness.clickStroke(0, 122);
+    await Promise.resolve();
+    assert.deepEqual(harness.canvas.getActiveObjects(), [harness.canvas.getObjects()[0]]);
+    harness.canvas.on('selection:cleared', onSelectionCleared);
+
+    let viewportResult;
+    harness.clickStroke(1, 123, () => {
+      viewportResult = harness.runtime.updateViewport({
+        revision: 1,
+        canvasRect: { left: 5, top: 10, width: 200, height: 200 },
+        scale: 1.1,
+        panX: 3,
+        panY: -2
+      });
+      assert.deepEqual(viewportResult, { accepted: true, deferred: true, revision: 1 });
+      assert.equal(harness.runtime.getDiagnostics().viewportRevision, 0);
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(harness.runtime.getDiagnostics().viewportRevision, 1);
+    assert.deepEqual(harness.canvas.getActiveObjects(), [harness.canvas.getObjects()[1]]);
+    assert.equal(selectionClearedCount, 0);
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 2);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+
+    harness.clickStroke(0, 124);
+    await Promise.resolve();
+    assert.deepEqual(harness.canvas.getActiveObjects(), [harness.canvas.getObjects()[0]]);
+    assert.equal(selectionClearedCount, 0);
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 2);
+    assert.deepEqual(harness.runtime.updateViewport({
+      revision: 2,
+      canvasRect: { left: 8, top: 12, width: 200, height: 200 },
+      scale: 1.2,
+      panX: 4,
+      panY: -1
+    }), { accepted: true, revision: 2 });
+    assert.equal(harness.runtime.getDiagnostics().viewportRevision, 2);
+  } finally {
+    harness.canvas.off('selection:cleared', onSelectionCleared);
+    await harness.destroy();
+  }
+});
+
+test('cancelled select gestures restore Fabric input for paths, active selections, and blank marquees', async () => {
+  const harness = createRealFabricHarness();
+  let fabricMoveCount = 0;
+  const onFabricMove = () => { fabricMoveCount += 1; };
+  const cancelDrag = (point, delta, pointerId, cancelType = 'pointercancel') => {
+    harness.dispatchPointer(harness.element, 'pointerdown', point.x, point.y, pointerId, 1);
+    harness.dispatchPointer(
+      harness.environment.document,
+      'pointermove',
+      point.x + delta.x,
+      point.y + delta.y,
+      pointerId,
+      1
+    );
+    if (cancelType === 'lostpointercapture') {
+      harness.dispatchLostPointerCapture(pointerId);
+    } else {
+      harness.dispatchPointer(
+        harness.element,
+        'pointercancel',
+        point.x + delta.x,
+        point.y + delta.y,
+        pointerId,
+        0
+      );
+    }
+  };
+  const assertPointerRoutingRestored = pointerId => {
+    const beforeDocumentMove = fabricMoveCount;
+    harness.dispatchPointer(harness.environment.document, 'pointermove', 150, 150, pointerId, 0);
+    assert.equal(fabricMoveCount, beforeDocumentMove);
+    harness.hoverAt(150, 150);
+    assert.equal(fabricMoveCount, beforeDocumentMove + 1);
+  };
+
+  try {
+    harness.drawStrokeAt(30, 150);
+    harness.drawStrokeAt(90, 151);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+    harness.canvas.on('mouse:move', onFabricMove);
+
+    harness.clickStroke(0, 152);
+    await Promise.resolve();
+    const beforePathCancel = harness.sceneTransforms();
+    cancelDrag(harness.canvas.getObjects()[0].getCenterPoint(), { x: 15, y: 5 }, 153);
+    await Promise.resolve();
+    assert.deepEqual(harness.sceneTransforms(), beforePathCancel);
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 2);
+    assert.equal(harness.element.hasPointerCapture(153), false);
+    assertPointerRoutingRestored(154);
+    harness.clickStroke(1, 155);
+    await Promise.resolve();
+    assert.deepEqual(harness.canvas.getActiveObjects(), [harness.canvas.getObjects()[1]]);
+
+    harness.dragMarquee({ x: 10, y: 10 }, { x: 100, y: 120 }, 156);
+    await Promise.resolve();
+    assert.equal(harness.canvas.getActiveObjects().length, 2);
+    const beforeGroupCancel = harness.sceneTransforms();
+    cancelDrag(
+      harness.canvas.getActiveObject().getCenterPoint(),
+      { x: 20, y: 10 },
+      157,
+      'lostpointercapture'
+    );
+    await Promise.resolve();
+    assert.deepEqual(harness.sceneTransforms(), beforeGroupCancel);
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 2);
+    assert.equal(harness.element.hasPointerCapture(157), false);
+    assertPointerRoutingRestored(158);
+
+    harness.dispatchPointer(harness.element, 'pointerdown', 140, 140, 159, 1);
+    harness.dispatchPointer(harness.environment.document, 'pointermove', 180, 180, 159, 1);
+    harness.environment.window.dispatchEvent(new harness.environment.window.Event('blur'));
+    await Promise.resolve();
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 2);
+    assert.equal(harness.element.hasPointerCapture(159), false);
+    assertPointerRoutingRestored(160);
+    harness.clickStroke(0, 161);
+    await Promise.resolve();
+    assert.deepEqual(harness.canvas.getActiveObjects(), [harness.canvas.getObjects()[0]]);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    harness.canvas.off('mouse:move', onFabricMove);
+    await harness.destroy();
+  }
+});
+
+test('latest deferred viewport wins after one select gesture settles', () => {
+  FakeCanvas.instances = [];
+  const queuedMicrotasks = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    queueMicrotask: callback => queuedMicrotasks.push(callback)
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  runtime.updateDrawingTool({ sessionId: 'runtime-session', toolRevision: 1, tool: 'select' });
+  const canvas = FakeCanvas.instances[0];
+  const element = canvas.upperCanvasEl;
+
+  element.dispatch('pointerdown', { pointerId: 130, pointerType: 'mouse', button: 0, buttons: 1 });
+  assert.deepEqual(runtime.updateViewport({
+    revision: 1,
+    canvasRect: { left: 1, top: 1, width: 900, height: 500 },
+    scale: 1.1,
+    panX: 1,
+    panY: 1
+  }), { accepted: true, deferred: true, revision: 1 });
+  assert.deepEqual(runtime.updateViewport({
+    revision: 3,
+    canvasRect: { left: 3, top: 3, width: 700, height: 400 },
+    scale: 1.3,
+    panX: 3,
+    panY: 3
+  }), { accepted: true, deferred: true, revision: 3 });
+  assert.deepEqual(runtime.updateViewport({
+    revision: 2,
+    canvasRect: { left: 2, top: 2, width: 800, height: 450 },
+    scale: 1.2,
+    panX: 2,
+    panY: 2
+  }), { accepted: false, reason: 'stale-viewport' });
+  assert.equal(runtime.getDiagnostics().viewportRevision, 0);
+  assert.equal(canvas.calcOffsetCalls, 1);
+
+  element.dispatch('pointerup', { pointerId: 130, pointerType: 'mouse', button: 0, buttons: 0 });
+  assert.equal(queuedMicrotasks.length, 1);
+  queuedMicrotasks.shift()();
+
+  assert.equal(runtime.getDiagnostics().viewportRevision, 3);
+  assert.equal(canvas.calcOffsetCalls, 2);
+  assert.deepEqual(canvas.dimensionCalls.at(-1), {
+    dimensions: { width: 700, height: 400 },
+    options: { cssOnly: true }
+  });
+  assert.equal(runtime.getDiagnostics().mutationCount, 0);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+});
+
+test('stale deferred viewport is discarded by input disable or session replacement', () => {
+  function createHarness() {
+    const queuedMicrotasks = [];
+    const document = new FakeDocument();
+    const root = document.createElement('div');
+    const runtime = createFabricOverlayRuntime({
+      fabric: { Canvas: FakeCanvas, Path: FakePath },
+      document,
+      queueMicrotask: callback => queuedMicrotasks.push(callback)
+    });
+    runtime.prepare(root);
+    runtime.setDrawingInput(makeInput());
+    runtime.updateDrawingTool({ sessionId: 'runtime-session', toolRevision: 1, tool: 'select' });
+    return { runtime, canvas: FakeCanvas.instances.at(-1), queuedMicrotasks };
+  }
+
+  FakeCanvas.instances = [];
+  const replacementHarness = createHarness();
+  replacementHarness.canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 140,
+    pointerType: 'mouse',
+    button: 0,
+    buttons: 1
+  });
+  assert.deepEqual(replacementHarness.runtime.updateViewport({
+    revision: 5,
+    canvasRect: { left: 5, top: 5, width: 500, height: 300 },
+    scale: 1.5,
+    panX: 5,
+    panY: 5
+  }), { accepted: true, deferred: true, revision: 5 });
+  replacementHarness.canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 140,
+    pointerType: 'mouse',
+    button: 0,
+    buttons: 0
+  });
+  assert.equal(replacementHarness.queuedMicrotasks.length, 1);
+
+  const replacementInput = makeInput({
+    inputRevision: 2,
+    session: {
+      ...makeInput().session,
+      sessionId: 'replacement-session',
+      canvasRect: { left: 20, top: 30, width: 640, height: 360 },
+      viewportRevision: 0,
+      tool: 'select'
+    }
+  });
+  assert.equal(replacementHarness.runtime.setDrawingInput(replacementInput).accepted, true);
+  const replacementApplyCount = replacementHarness.canvas.calcOffsetCalls;
+  replacementHarness.queuedMicrotasks.shift()();
+  assert.equal(replacementHarness.runtime.getDiagnostics().activeSessionId, 'replacement-session');
+  assert.equal(replacementHarness.runtime.getDiagnostics().viewportRevision, 0);
+  assert.equal(replacementHarness.canvas.calcOffsetCalls, replacementApplyCount);
+  replacementHarness.runtime.destroy();
+
+  const disabledHarness = createHarness();
+  disabledHarness.canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 141,
+    pointerType: 'mouse',
+    button: 0,
+    buttons: 1
+  });
+  assert.deepEqual(disabledHarness.runtime.updateViewport({
+    revision: 6,
+    canvasRect: { left: 6, top: 6, width: 600, height: 340 },
+    scale: 1.6,
+    panX: 6,
+    panY: 6
+  }), { accepted: true, deferred: true, revision: 6 });
+  disabledHarness.canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 141,
+    pointerType: 'mouse',
+    button: 0,
+    buttons: 0
+  });
+  assert.equal(disabledHarness.queuedMicrotasks.length, 1);
+  const disabledApplyCount = disabledHarness.canvas.calcOffsetCalls;
+  assert.equal(disabledHarness.runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 2,
+    enabled: false
+  }).accepted, true);
+  disabledHarness.queuedMicrotasks.shift()();
+  assert.equal(disabledHarness.runtime.getDiagnostics().state, 'passive');
+  assert.equal(disabledHarness.canvas.calcOffsetCalls, disabledApplyCount);
+  disabledHarness.runtime.destroy();
 });
 
 test('stale multi-selection release respects membership and input revisions', () => {
@@ -701,6 +1113,7 @@ test('prepare creates one Fabric canvas and the browser runtime stays reusable',
     selection: true,
     preserveObjectStacking: true,
     enableRetinaScaling: false,
+    enablePointerEvents: true,
     defaultCursor: 'default',
     hoverCursor: 'grab',
     moveCursor: 'grabbing',

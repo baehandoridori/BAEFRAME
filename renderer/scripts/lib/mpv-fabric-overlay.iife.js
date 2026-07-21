@@ -8207,6 +8207,8 @@ void main() {
         let brushControls = null;
         let brushPanelOpen = false;
         let transformStart = null;
+        let selectGesture = null;
+        let deferredViewport = null;
         let longTaskObserver = null;
         let localSequence = 0;
         let lastError = null;
@@ -8679,18 +8681,122 @@ void main() {
           updateObjectMetric();
           return result;
         }
+        function releasePointerCapture(target, pointerId) {
+          try {
+            if (typeof target?.hasPointerCapture === "function" && !target.hasPointerCapture(pointerId)) return;
+            target?.releasePointerCapture?.(pointerId);
+          } catch (_error) {
+          }
+        }
+        function rollbackSelectTransform(event, shouldEndTransform) {
+          const start = transformStart;
+          if (!start?.target) {
+            transformStart = null;
+            return;
+          }
+          try {
+            start.target.set?.(start.transform);
+            applyMoveOnlyConstraints(start.target);
+            start.target.setCoords?.();
+            if (shouldEndTransform) fabricCanvas?.endCurrentTransform?.(event);
+          } catch (error) {
+            lastError = error.message;
+            metrics.recordSurfaceError();
+          }
+          transformStart = null;
+          fabricCanvas?.requestRenderAll();
+        }
+        function drainFabricPointerLifecycle(gesture, event) {
+          const targetDocument = fabricCanvas?.upperCanvasEl?.ownerDocument || documentRef;
+          if (!gesture || typeof targetDocument?.dispatchEvent !== "function") return;
+          try {
+            const properties = {
+              clientX: finiteNumber(event?.clientX),
+              clientY: finiteNumber(event?.clientY),
+              pointerId: gesture.pointerId,
+              pointerType: event?.pointerType || "mouse",
+              isPrimary: true,
+              button: 0,
+              buttons: 0,
+              pressure: 0
+            };
+            let pointerUp;
+            if (typeof windowRef?.PointerEvent === "function") {
+              pointerUp = new windowRef.PointerEvent("pointerup", {
+                bubbles: true,
+                cancelable: true,
+                ...properties
+              });
+            } else {
+              pointerUp = new windowRef.Event("pointerup", { bubbles: true, cancelable: true });
+              for (const [name, value] of Object.entries(properties)) {
+                Object.defineProperty(pointerUp, name, { value });
+              }
+            }
+            targetDocument.dispatchEvent(pointerUp);
+          } catch (_error) {
+          }
+        }
+        function cancelSelectInteraction(event) {
+          const gesture = selectGesture;
+          const wasTracking = gesture?.phase === "tracking";
+          if (gesture) gesture.phase = "cancelling";
+          rollbackSelectTransform(event, wasTracking);
+          drainFabricPointerLifecycle(gesture, event);
+          if (gesture) {
+            releasePointerCapture(fabricCanvas?.upperCanvasEl || canvasElement, gesture.pointerId);
+          }
+          selectGesture = null;
+          transformStart = null;
+          deferredViewport = null;
+        }
+        function scheduleSelectGestureSettle(gesture) {
+          const pointerId = gesture.pointerId;
+          queueMicrotaskRef(() => {
+            if (selectGesture !== gesture || gesture.pointerId !== pointerId || gesture.phase !== "settling") return;
+            if (destroyed || !inputEnabled || !fabricCanvas || currentSession?.sessionId !== gesture.sessionId || tokenState.inputRevision !== gesture.inputRevision) {
+              selectGesture = null;
+              transformStart = null;
+              deferredViewport = null;
+              return;
+            }
+            transformStart = null;
+            selectGesture = null;
+            const pending = deferredViewport;
+            deferredViewport = null;
+            if (!pending || pending.sessionId !== gesture.sessionId || pending.inputRevision !== gesture.inputRevision) return;
+            if (pending.command.revision <= currentSession.viewportRevision) return;
+            applyViewportCommand(pending.command);
+          });
+        }
         function onPointerDown(event) {
-          if (!inputEnabled || sceneStore.getDiagnostics().tool !== "brush" || event.button !== 0 || activeStroke) return;
-          activeStroke = {
+          if (!inputEnabled || event.button !== 0) return;
+          const tool = sceneStore.getDiagnostics().tool;
+          if (tool === "brush") {
+            if (activeStroke || selectGesture) return;
+            activeStroke = {
+              pointerId: event.pointerId,
+              samples: [],
+              preview: null,
+              style: { ...brushStyle }
+            };
+            event.currentTarget?.setPointerCapture?.(event.pointerId);
+            appendPointerSample(event);
+            updateTransientPreview();
+            event.preventDefault?.();
+            return;
+          }
+          if (tool !== "select" || selectGesture || activeStroke) return;
+          selectGesture = {
             pointerId: event.pointerId,
-            samples: [],
-            preview: null,
-            style: { ...brushStyle }
+            sessionId: currentSession?.sessionId,
+            inputRevision: tokenState.inputRevision,
+            phase: "tracking"
           };
-          event.currentTarget?.setPointerCapture?.(event.pointerId);
-          appendPointerSample(event);
-          updateTransientPreview();
-          event.preventDefault?.();
+          try {
+            event.currentTarget?.setPointerCapture?.(event.pointerId);
+          } catch (_error) {
+          }
         }
         function onPointerMove(event) {
           if (!activeStroke || event.pointerId !== activeStroke.pointerId) return;
@@ -8701,15 +8807,30 @@ void main() {
           event.preventDefault?.();
         }
         function onPointerUp(event) {
-          if (!activeStroke || event.pointerId !== activeStroke.pointerId) return;
-          appendPointerSample(event);
-          event.currentTarget?.releasePointerCapture?.(event.pointerId);
-          finalizeActiveStroke();
-          event.preventDefault?.();
+          if (activeStroke) {
+            if (event.pointerId !== activeStroke.pointerId) return;
+            appendPointerSample(event);
+            releasePointerCapture(event.currentTarget, event.pointerId);
+            finalizeActiveStroke();
+            event.preventDefault?.();
+            return;
+          }
+          const gesture = selectGesture;
+          if (!gesture || gesture.phase !== "tracking" || event.pointerId !== gesture.pointerId) return;
+          gesture.phase = "settling";
+          releasePointerCapture(event.currentTarget, event.pointerId);
+          scheduleSelectGestureSettle(gesture);
         }
         function onPointerCancel(event) {
-          if (!activeStroke || event.pointerId !== void 0 && event.pointerId !== activeStroke.pointerId) return;
-          cancelActiveStroke();
+          if (activeStroke) {
+            if (event.pointerId !== void 0 && event.pointerId !== activeStroke.pointerId) return;
+            cancelActiveStroke();
+            return;
+          }
+          const gesture = selectGesture;
+          if (!gesture || event.pointerId !== void 0 && event.pointerId !== gesture.pointerId) return;
+          if (event.type === "lostpointercapture" && gesture.phase === "settling") return;
+          cancelSelectInteraction(event);
         }
         function selectionIds() {
           const objects = fabricCanvas?.getActiveObjects?.() || [];
@@ -8841,16 +8962,25 @@ void main() {
           fabricCanvas.calcOffset();
           fabricCanvas.requestRenderAll();
         }
+        function applyViewportCommand(command) {
+          currentSession.canvasRect = {
+            left: finiteNumber(command.canvasRect.left),
+            top: finiteNumber(command.canvasRect.top),
+            width: finiteNumber(command.canvasRect.width),
+            height: finiteNumber(command.canvasRect.height)
+          };
+          currentSession.viewportTransform = normalizeViewportTransform(command);
+          currentSession.viewportRevision = command.revision;
+          applyViewport(currentSession);
+        }
         function validateSession(session) {
           return !!session && typeof session.sessionId === "string" && session.sessionId.length > 0 && typeof session.stableVideoIdentity === "string" && session.stableVideoIdentity.length > 0 && Number.isInteger(Number(session.targetFrame)) && Number(session.targetFrame) >= 0 && finiteNumber(session.sourceWidth) > 0 && finiteNumber(session.sourceHeight) > 0 && finiteNumber(session.canvasRect?.width) > 0 && finiteNumber(session.canvasRect?.height) > 0;
         }
         function disableInput() {
-          const shouldRollbackTransform = transformStart !== null;
+          cancelSelectInteraction();
           setSurfaceInput(false);
           fabricCanvas?.setCursor?.("default");
           cancelActiveStroke();
-          if (shouldRollbackTransform && fabricCanvas && sceneStore.getActiveSceneSnapshot()) renderActiveScene();
-          transformStart = null;
           fabricCanvas?.discardActiveObject();
           sceneStore.selectObjects([]);
           inputEnabled = false;
@@ -8859,6 +8989,7 @@ void main() {
           if (badge) badge.textContent = "\uC0C8 \uB4DC\uB85C\uC789 \uC2DC\uD5D8\uD310 \xB7 \uC800\uC7A5 \uC548 \uB428 \xB7 \uC2DC\uD5D8 \uD504\uB808\uC784 -";
         }
         function releaseSurfaceResources() {
+          cancelSelectInteraction();
           for (const { target, type, listener, listenerOptions } of domListeners.splice(0)) {
             try {
               target?.removeEventListener?.(type, listener, listenerOptions);
@@ -8890,6 +9021,8 @@ void main() {
           appliedSourceHeight = null;
           activeStroke = null;
           transformStart = null;
+          selectGesture = null;
+          deferredViewport = null;
           inputEnabled = false;
           currentSession = null;
           viewportElement = null;
@@ -8963,6 +9096,7 @@ void main() {
               selection: true,
               preserveObjectStacking: true,
               enableRetinaScaling: false,
+              enablePointerEvents: true,
               defaultCursor: "default",
               hoverCursor: "grab",
               moveCursor: "grabbing",
@@ -9003,6 +9137,7 @@ void main() {
           if (request.enabled && !validateSession(request.session)) {
             return { accepted: false, reason: "invalid-session" };
           }
+          if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
           tokenState.hostGeneration = Number(request.hostGeneration);
           tokenState.videoGeneration = Number(request.videoGeneration);
           tokenState.inputRevision = Number(request.inputRevision);
@@ -9044,25 +9179,30 @@ void main() {
           if (!Number.isInteger(revision) || revision < 0 || !rect || finiteNumber(rect.width) <= 0 || finiteNumber(rect.height) <= 0) {
             return { accepted: false, reason: "invalid-viewport" };
           }
-          if (revision <= currentSession.viewportRevision) {
+          const pendingRevision = deferredViewport?.command?.revision ?? -1;
+          if (revision <= Math.max(currentSession.viewportRevision, pendingRevision)) {
             return { accepted: false, reason: "stale-viewport" };
           }
-          cancelActiveStroke();
-          if (transformStart !== null) {
-            renderActiveScene();
-            transformStart = null;
-            fabricCanvas.discardActiveObject();
-            sceneStore.selectObjects([]);
-          }
-          currentSession.canvasRect = {
-            left: finiteNumber(rect.left),
-            top: finiteNumber(rect.top),
-            width: finiteNumber(rect.width),
-            height: finiteNumber(rect.height)
+          const normalizedCommand = {
+            revision,
+            canvasRect: {
+              left: finiteNumber(rect.left),
+              top: finiteNumber(rect.top),
+              width: finiteNumber(rect.width),
+              height: finiteNumber(rect.height)
+            },
+            ...normalizeViewportTransform(command)
           };
-          currentSession.viewportTransform = normalizeViewportTransform(command);
-          currentSession.viewportRevision = revision;
-          applyViewport(currentSession);
+          if (selectGesture || transformStart !== null) {
+            deferredViewport = {
+              sessionId: currentSession.sessionId,
+              inputRevision: tokenState.inputRevision,
+              command: normalizedCommand
+            };
+            return { accepted: true, deferred: true, revision };
+          }
+          cancelActiveStroke();
+          applyViewportCommand(normalizedCommand);
           return { accepted: true, revision };
         }
         function updateDrawingTool(command = {}) {
@@ -9120,6 +9260,7 @@ void main() {
             activeSessionId: scene.activeSessionId,
             activeSceneKey: scene.activeSceneKey,
             targetFrame: currentSession?.targetFrame ?? null,
+            viewportRevision: currentSession?.viewportRevision ?? null,
             tool: scene.tool,
             objectCount: scene.objectCount,
             selectionCount: scene.selectionCount,
