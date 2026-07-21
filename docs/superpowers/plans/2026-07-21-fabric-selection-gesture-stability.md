@@ -136,6 +136,13 @@ The select-settle microtask must first verify runtime, input, session ID, input 
 
 Do not advance the applied revision when queuing. Do not use `renderActiveScene()`, `discardActiveObject()`, or `sceneStore.selectObjects([])` in the ordinary viewport path.
 
+**Binding review corrections:**
+
+- Install matching-pointer document `pointerup` and `pointercancel` fallbacks so capture API failure cannot leave the gesture tracking forever. Release capture through the upper canvas, and use the gesture phase to make canvas-plus-document duplicate delivery a no-op.
+- For transform-less blank marquee cancellation, drain Fabric's document lifecycle and then discard any selection produced by that synthetic completion. Assert both Fabric active objects and store selection are empty immediately after cancel/blur.
+- Cancel an active brush stroke before accepting any higher enabled input/session token. A pointerup belonging to the replaced input must not add an object or mutation to the new session.
+- The real Fabric harness must install capture behavior on its actual `upperCanvasEl`, retarget an outside release through that registry, and reproduce normal `lostpointercapture` before the settle microtask.
+
 - [ ] **Step 6: Verify GREEN and existing runtime behavior**
 
 Run:
