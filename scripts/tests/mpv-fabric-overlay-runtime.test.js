@@ -565,6 +565,99 @@ test('stale multi-selection release respects membership and input revisions', ()
   assert.equal(runtime.getDiagnostics().mutationCount, 4);
 });
 
+test('stale multi-selection release preserves a newer active object with identical membership', () => {
+  FakeCanvas.instances = [];
+  const queuedMicrotasks = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    queueMicrotask: callback => queuedMicrotasks.push(callback)
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const canvas = FakeCanvas.instances[0];
+  drawStroke(canvas.upperCanvasEl, 83);
+  drawStroke(canvas.upperCanvasEl, 84);
+  runtime.updateDrawingTool({ sessionId: 'runtime-session', toolRevision: 1, tool: 'select' });
+
+  const [first, second] = canvas.getObjects();
+  const movedGroup = new FakePath('');
+  movedGroup.type = 'activeselection';
+  movedGroup.getObjects = () => [first, second];
+  canvas.activeObject = movedGroup;
+  canvas.activeObjects = [first, second];
+  canvas.emit('selection:created', { selected: [first, second] });
+  canvas.emit('before:transform', { target: movedGroup, transform: { target: movedGroup } });
+  movedGroup.left += 10;
+  canvas.emit('object:modified', { target: movedGroup });
+
+  assert.equal(queuedMicrotasks.length, 1);
+  const newerGroup = new FakePath('');
+  newerGroup.type = 'activeselection';
+  newerGroup.getObjects = () => [first, second];
+  canvas.activeObject = newerGroup;
+  canvas.activeObjects = [first, second];
+  canvas.emit('selection:updated', { selected: [first, second], deselected: [] });
+  queuedMicrotasks.shift()();
+
+  assert.equal(canvas.getActiveObject(), newerGroup);
+  assert.deepEqual(canvas.getActiveObjects(), [first, second]);
+  assert.equal(runtime.getDiagnostics().selectionCount, 2);
+  assert.equal(runtime.getDiagnostics().mutationCount, 3);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+});
+
+test('stale multi-selection release preserves selection after a higher enabled input revision', () => {
+  FakeCanvas.instances = [];
+  const queuedMicrotasks = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    queueMicrotask: callback => queuedMicrotasks.push(callback)
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const canvas = FakeCanvas.instances[0];
+  drawStroke(canvas.upperCanvasEl, 85);
+  drawStroke(canvas.upperCanvasEl, 86);
+  runtime.updateDrawingTool({ sessionId: 'runtime-session', toolRevision: 1, tool: 'select' });
+
+  let members = canvas.getObjects();
+  const movedGroup = new FakePath('');
+  movedGroup.type = 'activeselection';
+  movedGroup.getObjects = () => members;
+  canvas.activeObject = movedGroup;
+  canvas.activeObjects = members;
+  canvas.emit('selection:created', { selected: members });
+  canvas.emit('before:transform', { target: movedGroup, transform: { target: movedGroup } });
+  movedGroup.left += 10;
+  canvas.emit('object:modified', { target: movedGroup });
+
+  assert.equal(queuedMicrotasks.length, 1);
+  const nextInput = makeInput({
+    inputRevision: 2,
+    session: { ...makeInput().session, tool: 'select' }
+  });
+  assert.equal(runtime.setDrawingInput(nextInput).accepted, true);
+  members = canvas.getObjects();
+  canvas.activeObject = movedGroup;
+  canvas.activeObjects = members;
+  canvas.emit('selection:updated', { selected: members, deselected: [] });
+  queuedMicrotasks.shift()();
+
+  assert.equal(runtime.getDiagnostics().state, 'active');
+  assert.equal(runtime.getDiagnostics().tokens.inputRevision, 2);
+  assert.equal(canvas.getActiveObject(), movedGroup);
+  assert.deepEqual(canvas.getActiveObjects(), members);
+  assert.equal(runtime.getDiagnostics().selectionCount, 2);
+  assert.equal(runtime.getDiagnostics().mutationCount, 3);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+});
+
 test('pure exports load without constructing a DOM or Fabric canvas', () => {
   FakeCanvas.instances = [];
   const runtime = createFabricOverlayRuntime({
