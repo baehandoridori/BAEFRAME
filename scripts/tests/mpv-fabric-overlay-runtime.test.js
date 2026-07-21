@@ -569,11 +569,13 @@ test('brush settings expose the familiar bounded palette without mutating the sc
   assert.equal(controls.sizeInput.max, '50');
   assert.equal(controls.sizeInput.step, '1');
   assert.equal(controls.sizeInput.value, '3');
+  assert.equal(controls.sizeInput.tabIndex, -1);
   assert.equal(controls.sizeInput.getAttribute('aria-label'), '브러시 크기');
   assert.equal(controls.opacityInput.min, '10');
   assert.equal(controls.opacityInput.max, '100');
   assert.equal(controls.opacityInput.step, '1');
   assert.equal(controls.opacityInput.value, '100');
+  assert.equal(controls.opacityInput.tabIndex, -1);
   assert.equal(controls.opacityInput.getAttribute('aria-label'), '브러시 불투명도');
   assert.equal(controls.sizeDecrease.getAttribute('aria-label'), '브러시 크기 1px 줄이기');
   assert.equal(controls.sizeIncrease.getAttribute('aria-label'), '브러시 크기 1px 늘리기');
@@ -581,6 +583,11 @@ test('brush settings expose the familiar bounded palette without mutating the sc
   assert.equal(controls.opacityIncrease.getAttribute('aria-label'), '브러시 불투명도 1% 늘리기');
   assert.equal(controls.sizeOutput.textContent, '3px');
   assert.equal(controls.opacityOutput.textContent, '100%');
+  for (const output of [controls.sizeOutput, controls.opacityOutput]) {
+    assert.equal(output.getAttribute('role'), 'status');
+    assert.equal(output.getAttribute('aria-live'), 'polite');
+    assert.equal(output.getAttribute('aria-atomic'), 'true');
+  }
   assert.equal(controls.summary.textContent, '3px · 100%');
   assert.equal(controls.colorPreview.style.background, '#ff4757');
   assert.equal(controls.sizePreview.style.width, '3px');

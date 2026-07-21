@@ -8374,6 +8374,7 @@ void main() {
             decrease.setAttribute?.("aria-label", decreaseLabel);
             const input = documentRef.createElement("input");
             input.type = "range";
+            input.tabIndex = -1;
             input.min = String(min);
             input.max = String(max);
             input.step = "1";
@@ -8384,6 +8385,9 @@ void main() {
             increase.setAttribute?.("aria-label", increaseLabel);
             const outputElement = documentRef.createElement("span");
             outputElement.dataset.fabricPilotOutput = output;
+            outputElement.setAttribute?.("role", "status");
+            outputElement.setAttribute?.("aria-live", "polite");
+            outputElement.setAttribute?.("aria-atomic", "true");
             setStyles(outputElement, { minWidth: "42px", textAlign: "right" });
             row.appendChild(labelElement);
             row.appendChild(decrease);
