@@ -8501,11 +8501,25 @@ void main() {
             lockScalingFlip: true,
             lockRotation: true,
             lockSkewingX: true,
-            lockSkewingY: true,
+            lockSkewingY: true
+          });
+        }
+        function applyUnselectedPermanentPathPolicy(object, tolerance = resolveSelectionHitTolerance(currentSession || {})) {
+          if (!object?.set) return;
+          object.set({
+            padding: tolerance,
+            perPixelTargetFind: true,
             hoverCursor: "grab",
             moveCursor: "grabbing"
           });
-          object.setCoords?.();
+        }
+        function applySelectedActivePolicy(object) {
+          if (!object?.set) return;
+          object.set({
+            perPixelTargetFind: false,
+            hoverCursor: "move",
+            moveCursor: "grabbing"
+          });
         }
         function restoreUnsupportedTransform(object, persistedTransform = {}) {
           const values = {};
@@ -8515,6 +8529,7 @@ void main() {
           }
           object.set(values);
           applyMoveOnlyConstraints(object);
+          object.setCoords?.();
         }
         function makeFabricPath(record, transient = false) {
           const { Path } = resolveFabric();
@@ -8541,7 +8556,10 @@ void main() {
             lockSkewingY: true
           });
           if (record.transform) path.set(record.transform);
-          if (!transient) applyMoveOnlyConstraints(path);
+          if (!transient) {
+            applyMoveOnlyConstraints(path);
+            applyUnselectedPermanentPathPolicy(path);
+          }
           path.__baeframeObjectId = record.id || null;
           path.__baeframeTransient = transient;
           path.setCoords?.();
@@ -8555,6 +8573,7 @@ void main() {
           const snapshot = sceneStore.getActiveSceneSnapshot();
           fabricCanvas.clear();
           for (const record of snapshot?.objects || []) fabricCanvas.add(makeFabricPath(record));
+          refreshSelectionInteractionPolicy();
           fabricCanvas.requestRenderAll();
           updateObjectMetric();
         }
@@ -8572,16 +8591,16 @@ void main() {
           fabricCanvas.hoverCursor = "grab";
           fabricCanvas.moveCursor = "grabbing";
           fabricCanvas.freeDrawingCursor = "crosshair";
-          fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
             object.set({ selectable: selectMode, evented: selectMode });
-            applyMoveOnlyConstraints(object);
           }
           if (!selectMode) {
             fabricCanvas.discardActiveObject();
             sceneStore.selectObjects([]);
           }
+          refreshSelectionInteractionPolicy();
+          fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
           fabricCanvas.requestRenderAll();
         }
         function setSurfaceInput(enabled) {
@@ -8747,7 +8766,6 @@ void main() {
           if (gesture && !hadTransformTarget) {
             fabricCanvas?.discardActiveObject();
             sceneStore.selectObjects([]);
-            fabricCanvas?.requestRenderAll();
           }
           if (gesture) {
             releasePointerCapture(fabricCanvas?.upperCanvasEl || canvasElement, gesture.pointerId);
@@ -8755,6 +8773,8 @@ void main() {
           selectGesture = null;
           transformStart = null;
           deferredViewport = null;
+          refreshSelectionInteractionPolicy();
+          fabricCanvas?.requestRenderAll();
         }
         function scheduleSelectGestureSettle(gesture) {
           const pointerId = gesture.pointerId;
@@ -8861,16 +8881,17 @@ void main() {
             if (selectionIds().sort().join(SCENE_KEY_SEPARATOR) !== expectedSelection) return;
             fabricCanvas.discardActiveObject();
             sceneStore.selectObjects([]);
+            refreshSelectionInteractionPolicy();
             fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || "default");
             fabricCanvas.requestRenderAll();
           });
         }
         function onSelectionChanged() {
-          applyMoveOnlyConstraints(fabricCanvas?.getActiveObject?.());
-          for (const object of fabricCanvas?.getActiveObjects?.() || []) applyMoveOnlyConstraints(object);
+          refreshSelectionInteractionPolicy();
           sceneStore.selectObjects(selectionIds());
         }
         function onSelectionCleared() {
+          refreshSelectionInteractionPolicy();
           sceneStore.selectObjects([]);
         }
         function onBeforeTransform(event) {
@@ -8941,14 +8962,26 @@ void main() {
             longTaskObserver = null;
           }
         }
-        function applySelectionHitPolicy(session = currentSession) {
+        function refreshSelectionInteractionPolicy(session = currentSession) {
           if (!fabricCanvas) return;
           const tolerance = resolveSelectionHitTolerance(session || {});
           fabricCanvas.setTargetFindTolerance?.(tolerance);
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
-            object.set({ padding: tolerance, hoverCursor: "grab", moveCursor: "grabbing" });
+            applyMoveOnlyConstraints(object);
+            applyUnselectedPermanentPathPolicy(object, tolerance);
             object.setCoords?.();
+          }
+          const activeObject = fabricCanvas.getActiveObject?.();
+          const activeChildren = typeof activeObject?.getObjects === "function" ? activeObject.getObjects() : [];
+          const isPermanentPath = !!activeObject?.__baeframeObjectId && !activeObject.__baeframeTransient;
+          const isPermanentActiveSelection = activeChildren.length > 0 && activeChildren.every(
+            (object) => !!object?.__baeframeObjectId && !object.__baeframeTransient
+          );
+          if (isPermanentPath || isPermanentActiveSelection) {
+            applyMoveOnlyConstraints(activeObject);
+            applySelectedActivePolicy(activeObject);
+            activeObject.setCoords?.();
           }
         }
         function applyViewport(session) {
@@ -8965,7 +8998,7 @@ void main() {
             { width: rect.width, height: rect.height },
             { cssOnly: true }
           );
-          applySelectionHitPolicy(session);
+          refreshSelectionInteractionPolicy(session);
           const viewportTransform = normalizeViewportTransform(session.viewportTransform);
           setStyles(viewportElement, {
             left: `${rect.left}px`,
@@ -8998,6 +9031,7 @@ void main() {
           fabricCanvas?.setCursor?.("default");
           cancelActiveStroke();
           fabricCanvas?.discardActiveObject();
+          refreshSelectionInteractionPolicy();
           sceneStore.selectObjects([]);
           inputEnabled = false;
           currentSession = null;
@@ -9261,6 +9295,7 @@ void main() {
               if (action === "clear-session" || deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
             }
             fabricCanvas.discardActiveObject();
+            refreshSelectionInteractionPolicy();
             fabricCanvas.requestRenderAll();
             updateObjectMetric();
           }

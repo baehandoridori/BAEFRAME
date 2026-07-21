@@ -420,12 +420,21 @@ function createRealFabricHarness() {
       pointerId
     });
     target.dispatchEvent(event);
+    return event;
+  }
+
+  function drawStroke(points, pointerId) {
+    const [first, ...rest] = points;
+    dispatchPointer(element, 'pointerdown', first.x, first.y, pointerId, 1);
+    for (const point of rest) {
+      dispatchPointer(element, 'pointermove', point.x, point.y, pointerId, 1);
+    }
+    const last = rest.at(-1) || first;
+    dispatchPointer(element, 'pointerup', last.x, last.y, pointerId, 0);
   }
 
   function drawStrokeAt(y, pointerId) {
-    dispatchPointer(element, 'pointerdown', 20, y, pointerId, 1);
-    dispatchPointer(element, 'pointermove', 60, y, pointerId, 1);
-    dispatchPointer(element, 'pointerup', 60, y, pointerId, 0);
+    drawStroke([{ x: 20, y }, { x: 60, y }], pointerId);
   }
 
   function dispatchCapturedPointerUp(x, y, pointerId) {
@@ -454,10 +463,14 @@ function createRealFabricHarness() {
 
   function dragStrokeBy(index, dx, dy, onMove, pointerId = 103) {
     const center = canvas.getObjects()[index].getCenterPoint();
-    dispatchPointer(element, 'pointerdown', center.x, center.y, pointerId, 1);
-    dispatchPointer(environment.document, 'pointermove', center.x + dx, center.y + dy, pointerId, 1);
+    dragFrom(center, dx, dy, onMove, pointerId);
+  }
+
+  function dragFrom(point, dx, dy, onMove, pointerId = 103) {
+    dispatchPointer(element, 'pointerdown', point.x, point.y, pointerId, 1);
+    dispatchPointer(environment.document, 'pointermove', point.x + dx, point.y + dy, pointerId, 1);
     onMove?.();
-    dispatchCapturedPointerUp(center.x + dx, center.y + dy, pointerId);
+    dispatchCapturedPointerUp(point.x + dx, point.y + dy, pointerId);
   }
 
   function clickStroke(index, pointerId, onPointerDown) {
@@ -468,7 +481,7 @@ function createRealFabricHarness() {
   }
 
   function hoverAt(x, y) {
-    dispatchPointer(element, 'pointermove', x, y, 0, 0);
+    return dispatchPointer(element, 'pointermove', x, y, 0, 0);
   }
 
   function sceneTransforms() {
@@ -487,10 +500,12 @@ function createRealFabricHarness() {
     dispatchLostPointerCapture,
     pointerDispatches,
     dispatchPointer,
+    drawStroke,
     drawStrokeAt,
     dragMarquee,
     dragActiveSelectionBy,
     dragStrokeBy,
+    dragFrom,
     clickStroke,
     hoverAt,
     sceneTransforms,
@@ -520,7 +535,152 @@ test('real Fabric thin stroke hit margin drives honest hover cursors', async () 
     harness.dragStrokeBy(0, 2, 0, () => {
       assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'grabbing');
     });
-    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'grab');
+    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'move');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('selected stroke owns its full bounds with a move cursor and restores pixel hit testing on switch', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([
+      { x: 20, y: 20 },
+      { x: 40, y: 40 },
+      { x: 60, y: 60 },
+      { x: 80, y: 80 }
+    ], 200);
+    harness.drawStroke([
+      { x: 120, y: 20 },
+      { x: 140, y: 40 },
+      { x: 160, y: 60 },
+      { x: 180, y: 80 }
+    ], 201);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+
+    const [first, second] = harness.canvas.getObjects();
+    harness.clickStroke(0, 202);
+    await Promise.resolve();
+    assert.deepEqual(harness.canvas.getActiveObjects(), [first]);
+
+    const firstBounds = first.getBoundingRect();
+    const firstTransparentPoint = {
+      x: firstBounds.left + (firstBounds.width * 0.25),
+      y: firstBounds.top + (firstBounds.height * 0.75)
+    };
+    const firstHover = harness.hoverAt(firstTransparentPoint.x, firstTransparentPoint.y);
+    assert.equal(harness.canvas.findTarget(firstHover).target, first);
+    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'move');
+    assert.equal(first.perPixelTargetFind, false);
+    assert.equal(first.hoverCursor, 'move');
+    assert.equal(second.perPixelTargetFind, true);
+    assert.equal(second.hoverCursor, 'grab');
+
+    const beforeMove = harness.sceneTransforms();
+    harness.dragFrom(firstTransparentPoint, 10, 5, () => {
+      assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'grabbing');
+    }, 203);
+    await Promise.resolve();
+    const afterMove = harness.sceneTransforms();
+    assert.deepEqual(afterMove[0], {
+      left: beforeMove[0].left + 10,
+      top: beforeMove[0].top + 5
+    });
+    assert.deepEqual(afterMove[1], beforeMove[1]);
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 3);
+
+    harness.clickStroke(1, 204);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(harness.canvas.getActiveObjects(), [second]);
+    assert.equal(first.perPixelTargetFind, true);
+    assert.equal(first.hoverCursor, 'grab');
+    assert.equal(second.perPixelTargetFind, false);
+    assert.equal(second.hoverCursor, 'move');
+
+    const secondBounds = second.getBoundingRect();
+    const secondTransparentPoint = {
+      x: secondBounds.left + (secondBounds.width * 0.25),
+      y: secondBounds.top + (secondBounds.height * 0.75)
+    };
+    const secondHover = harness.hoverAt(secondTransparentPoint.x, secondTransparentPoint.y);
+    assert.equal(harness.canvas.findTarget(secondHover).target, second);
+    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'move');
+
+    const blankHover = harness.hoverAt(195, 195);
+    assert.equal(harness.canvas.findTarget(blankHover).target, undefined);
+    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'default');
+    const finalDiagnostics = harness.runtime.getDiagnostics();
+    assert.equal(finalDiagnostics.mutationCount, 3);
+    assert.equal(finalDiagnostics.dirty, true);
+    assert.equal(finalDiagnostics.metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('active selection bounds use move and released strokes return to grab', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(30, 210);
+    harness.drawStroke([
+      { x: 120, y: 90 },
+      { x: 170, y: 90 }
+    ], 211);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+
+    harness.dragMarquee({ x: 10, y: 10 }, { x: 190, y: 110 }, 212);
+    await Promise.resolve();
+    const activeSelection = harness.canvas.getActiveObject();
+    const paths = harness.canvas.getObjects();
+    assert.equal(harness.canvas.getActiveObjects().length, 2);
+    const emptyGroupPoint = activeSelection.getCenterPoint();
+    const groupHover = harness.hoverAt(emptyGroupPoint.x, emptyGroupPoint.y);
+    assert.equal(harness.canvas.findTarget(groupHover).target, activeSelection);
+    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'move');
+    assert.equal(activeSelection.perPixelTargetFind, false);
+    assert.equal(activeSelection.hoverCursor, 'move');
+    for (const path of paths) {
+      assert.equal(path.perPixelTargetFind, true);
+      assert.equal(path.hoverCursor, 'grab');
+    }
+
+    const beforeMove = harness.sceneTransforms();
+    harness.dragFrom(emptyGroupPoint, 12, 8, () => {
+      assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'grabbing');
+    }, 213);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(harness.canvas.getActiveObjects().length, 0);
+    assert.equal(harness.runtime.getDiagnostics().selectionCount, 0);
+    assert.deepEqual(harness.sceneTransforms(), beforeMove.map(transform => ({
+      left: transform.left + 12,
+      top: transform.top + 8
+    })));
+    for (const path of paths) {
+      assert.equal(path.perPixelTargetFind, true);
+      assert.equal(path.hoverCursor, 'grab');
+      const center = path.getCenterPoint();
+      const pathHover = harness.hoverAt(center.x, center.y);
+      assert.equal(harness.canvas.findTarget(pathHover).target, path);
+      assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'grab');
+    }
+
+    const blankHover = harness.hoverAt(195, 195);
+    assert.equal(harness.canvas.findTarget(blankHover).target, undefined);
+    assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'default');
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 3);
+    assert.equal(harness.runtime.getDiagnostics().dirty, true);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
   } finally {
     await harness.destroy();
   }
@@ -1877,9 +2037,12 @@ test('Phase 0 selection moves while scale rotate and skew remain locked across r
     assert.equal(target.lockSkewingY, true);
     assert.notEqual(target.lockMovementX, true);
     assert.notEqual(target.lockMovementY, true);
-    assert.equal(target.hoverCursor, 'grab');
     assert.equal(target.moveCursor, 'grabbing');
   }
+  assert.equal(selected.perPixelTargetFind, true);
+  assert.equal(selected.hoverCursor, 'grab');
+  assert.equal(activeSelection.perPixelTargetFind, false);
+  assert.equal(activeSelection.hoverCursor, 'move');
 
   canvas.emit('before:transform', { target: selected, transform: { target: selected } });
   selected.left += 12;
