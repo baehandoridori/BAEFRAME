@@ -64,7 +64,28 @@ const STYLE_KEYS = Object.freeze([
   'outlineColor',
   'outlineWidth'
 ]);
+const COMMAND_KEYS = Object.freeze([
+  'id',
+  'actorId',
+  'baseRevision',
+  'target',
+  'kind',
+  'operations',
+  'createdAt'
+]);
+const COMMAND_TARGET_KEYS = Object.freeze([
+  'layerId',
+  'keyframeId',
+  'frame'
+]);
+const COMMAND_KINDS = Object.freeze(new Set([
+  'add-objects',
+  'delete-objects',
+  'transform-objects',
+  'split-stroke'
+]));
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/;
+const ISO_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 function clonePlain(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -341,21 +362,355 @@ function resolveFrameSnapshot(content, request) {
   };
 }
 
+function deepEqualPlain(left, right) {
+  if (left === right) return true;
+
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) ||
+      left.length !== right.length) {
+      return false;
+    }
+    return left.every((value, index) => deepEqualPlain(value, right[index]));
+  }
+
+  if (!isPlainRecord(left) || !isPlainRecord(right)) return false;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key, index) =>
+    key === rightKeys[index] && deepEqualPlain(left[key], right[key]));
+}
+
+function isValidIsoTimestamp(value) {
+  if (typeof value !== 'string') return false;
+  const match = ISO_TIMESTAMP_PATTERN.exec(value);
+  if (!match) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31, leapYear ? 29 : 28, 31, 30, 31, 30,
+    31, 31, 30, 31, 30, 31
+  ];
+  return day >= 1 && day <= daysInMonth[month - 1] &&
+    hour <= 23 && minute <= 59 && second <= 59 &&
+    Number.isFinite(Date.parse(value));
+}
+
+function isValidOperationStructure(operation) {
+  if (!isPlainRecord(operation)) return false;
+  const typeDescriptor = Object.getOwnPropertyDescriptor(operation, 'type');
+  if (!typeDescriptor || !typeDescriptor.enumerable ||
+    !Object.hasOwn(typeDescriptor, 'value')) {
+    return false;
+  }
+
+  if (typeDescriptor.value === 'insert-objects') {
+    return hasExactDataKeys(operation, ['type', 'index', 'objects']) &&
+      isNonnegativeInteger(operation.index) &&
+      isDenseArray(operation.objects) && operation.objects.length > 0;
+  }
+
+  if (typeDescriptor.value === 'remove-objects') {
+    if (!hasExactDataKeys(operation, ['type', 'objectIds']) ||
+      !isDenseArray(operation.objectIds) || operation.objectIds.length === 0 ||
+      !operation.objectIds.every(isNonemptyString)) {
+      return false;
+    }
+    return new Set(operation.objectIds).size === operation.objectIds.length;
+  }
+
+  if (typeDescriptor.value === 'set-transforms') {
+    if (!hasExactDataKeys(operation, ['type', 'transforms']) ||
+      !isDenseArray(operation.transforms) || operation.transforms.length === 0) {
+      return false;
+    }
+    const objectIds = new Set();
+    for (const transform of operation.transforms) {
+      if (!hasExactDataKeys(transform, ['objectId', 'transform']) ||
+        !isNonemptyString(transform.objectId) || objectIds.has(transform.objectId)) {
+        return false;
+      }
+      objectIds.add(transform.objectId);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function commandKindMatchesOperations(kind, operations) {
+  const types = operations.map(operation => operation.type);
+  if (kind === 'add-objects') {
+    return types.every(type => type === 'insert-objects');
+  }
+  if (kind === 'delete-objects') {
+    return types.every(type => type === 'remove-objects');
+  }
+  if (kind === 'transform-objects') {
+    return types.every(type => type === 'set-transforms');
+  }
+  return kind === 'split-stroke' &&
+    types.includes('insert-objects') &&
+    types.includes('remove-objects') &&
+    types.every(type => [
+      'insert-objects',
+      'remove-objects',
+      'set-transforms'
+    ].includes(type));
+}
+
+function isValidCommandEnvelope(command, content) {
+  if (!hasExactDataKeys(command, COMMAND_KEYS) ||
+    !isNonemptyString(command.id) ||
+    !isNonemptyString(command.actorId) ||
+    !isNonnegativeInteger(command.baseRevision) ||
+    !hasExactDataKeys(command.target, COMMAND_TARGET_KEYS) ||
+    !isNonemptyString(command.target.layerId) ||
+    !isNonemptyString(command.target.keyframeId) ||
+    !isNonnegativeInteger(command.target.frame) ||
+    command.target.frame >= content.timebase.totalFrames ||
+    !COMMAND_KINDS.has(command.kind) ||
+    !isDenseArray(command.operations) || command.operations.length === 0 ||
+    !isValidIsoTimestamp(command.createdAt)) {
+    return false;
+  }
+  return command.operations.every(isValidOperationStructure) &&
+    commandKindMatchesOperations(command.kind, command.operations);
+}
+
+function resolveApplySource(applyOptions) {
+  if (!hasExactDataKeys(applyOptions, [], ['source'])) return null;
+  const source = Object.hasOwn(applyOptions, 'source')
+    ? applyOptions.source
+    : 'user';
+  return source === 'user' || source === 'history' ? source : null;
+}
+
+function findExactTarget(content, request) {
+  const layer = content.layers.find(candidate => candidate.id === request.layerId);
+  if (!layer) return null;
+  const keyframe = layer.keyframes.find(candidate =>
+    candidate.id === request.keyframeId && candidate.frame === request.frame);
+  if (!keyframe || keyframe.empty) return null;
+  return { layer, keyframe };
+}
+
+function collectDocumentObjectIds(content) {
+  const objectIds = new Set();
+  for (const layer of content.layers) {
+    for (const keyframe of layer.keyframes) {
+      for (const object of keyframe.objects) objectIds.add(object.id);
+    }
+  }
+  return objectIds;
+}
+
+function applyInsertOperation(
+  documentObjectIds,
+  keyframe,
+  operation,
+  limits,
+  source
+) {
+  if (operation.index > keyframe.objects.length) {
+    return { applied: false, reason: 'invalid-command' };
+  }
+
+  for (const object of operation.objects) {
+    const reason = validateStrokeObject(object, limits, source);
+    if (reason) return { applied: false, reason };
+  }
+  if (keyframe.objects.length + operation.objects.length >
+    limits.maxObjectsPerKeyframe) {
+    return { applied: false, reason: 'object-limit-exceeded' };
+  }
+
+  const insertedObjectIds = new Set();
+  for (const object of operation.objects) {
+    if (documentObjectIds.has(object.id) || insertedObjectIds.has(object.id)) {
+      return { applied: false, reason: 'duplicate-object-id' };
+    }
+    insertedObjectIds.add(object.id);
+  }
+
+  const insertedObjects = clonePlain(operation.objects);
+  keyframe.objects.splice(operation.index, 0, ...insertedObjects);
+  for (const objectId of insertedObjectIds) documentObjectIds.add(objectId);
+  return {
+    applied: true,
+    inverseOperations: [{
+      type: 'remove-objects',
+      objectIds: insertedObjects.map(object => object.id)
+    }]
+  };
+}
+
+function applyRemoveOperation(documentObjectIds, keyframe, operation) {
+  const indexedObjects = new Map(
+    keyframe.objects.map((object, index) => [object.id, { index, object }])
+  );
+  const removals = [];
+  for (const objectId of operation.objectIds) {
+    const match = indexedObjects.get(objectId);
+    if (!match) return { applied: false, reason: 'object-not-found' };
+    removals.push(match);
+  }
+  removals.sort((left, right) => left.index - right.index);
+  for (let index = removals.length - 1; index >= 0; index -= 1) {
+    keyframe.objects.splice(removals[index].index, 1);
+  }
+  for (const removal of removals) documentObjectIds.delete(removal.object.id);
+  return {
+    applied: true,
+    inverseOperations: removals.map(removal => ({
+      type: 'insert-objects',
+      index: removal.index,
+      objects: [clonePlain(removal.object)]
+    }))
+  };
+}
+
+function applyTransformOperation(keyframe, operation) {
+  for (const entry of operation.transforms) {
+    if (!isValidAffineTransform(entry.transform)) {
+      return { applied: false, reason: 'invalid-transform' };
+    }
+  }
+
+  const objectsById = new Map(keyframe.objects.map(object => [object.id, object]));
+  const inverseTransforms = [];
+  for (const entry of operation.transforms) {
+    const object = objectsById.get(entry.objectId);
+    if (!object) return { applied: false, reason: 'object-not-found' };
+    inverseTransforms.push({
+      objectId: object.id,
+      transform: clonePlain(object.transform)
+    });
+  }
+  for (const entry of operation.transforms) {
+    objectsById.get(entry.objectId).transform = clonePlain(entry.transform);
+  }
+  return {
+    applied: true,
+    inverseOperations: [{
+      type: 'set-transforms',
+      transforms: inverseTransforms
+    }]
+  };
+}
+
+function applyOperation(documentObjectIds, keyframe, operation, limits, source) {
+  if (operation.type === 'insert-objects') {
+    return applyInsertOperation(
+      documentObjectIds,
+      keyframe,
+      operation,
+      limits,
+      source
+    );
+  }
+  if (operation.type === 'remove-objects') {
+    return applyRemoveOperation(documentObjectIds, keyframe, operation);
+  }
+  return applyTransformOperation(keyframe, operation);
+}
+
+function applyCommandAtomically({
+  content,
+  head,
+  limits,
+  command,
+  appliedCommandIds,
+  source
+}, commit) {
+  if (!isValidCommandEnvelope(command, content) || source === null) {
+    return { applied: false, reason: 'invalid-command' };
+  }
+  if (appliedCommandIds.has(command.id)) {
+    return { applied: false, reason: 'duplicate-command-id' };
+  }
+  if (command.baseRevision !== head.sequence) {
+    return { applied: false, reason: 'stale-revision' };
+  }
+
+  const draft = clonePlain(content);
+  const target = findExactTarget(draft, command.target);
+  if (!target) return { applied: false, reason: 'target-not-found' };
+  if (target.layer.locked) return { applied: false, reason: 'layer-locked' };
+
+  const objectsBefore = clonePlain(target.keyframe.objects);
+  const documentObjectIds = collectDocumentObjectIds(draft);
+  const inverseOperations = [];
+  for (const operation of command.operations) {
+    const result = applyOperation(
+      documentObjectIds,
+      target.keyframe,
+      operation,
+      limits,
+      source
+    );
+    if (!result.applied) return { applied: false, reason: result.reason };
+    inverseOperations.unshift(...result.inverseOperations);
+  }
+
+  if (deepEqualPlain(objectsBefore, target.keyframe.objects)) {
+    return { applied: false, reason: 'no-change' };
+  }
+  if (head.sequence === Number.MAX_SAFE_INTEGER ||
+    target.keyframe.revision === Number.MAX_SAFE_INTEGER) {
+    return { applied: false, reason: 'revision-limit-exceeded' };
+  }
+
+  target.keyframe.revision += 1;
+  const nextHead = {
+    sequence: head.sequence + 1,
+    lastCommandId: command.id
+  };
+  commit({ content: draft, head: nextHead });
+  appliedCommandIds.add(command.id);
+  return {
+    applied: true,
+    commandId: command.id,
+    sequence: nextHead.sequence,
+    inverseOperations: clonePlain(inverseOperations)
+  };
+}
+
 function createDrawingDocumentV3(options = {}) {
   if (!hasExactDataKeys(options, CREATE_OPTION_KEYS, ['limits'])) {
     throw new TypeError('Invalid DrawingDocumentV3 options');
   }
   const limits = validateLimits(options.limits);
-  const content = validateAndCloneInitialContent(options, limits);
-  const head = {
+  let content = validateAndCloneInitialContent(options, limits);
+  let head = {
     sequence: options.revisionSequence,
     lastCommandId: null
   };
+  const appliedCommandIds = new Set();
 
   return {
     getContentSnapshot: () => clonePlain(content),
     getHead: () => ({ ...head }),
-    resolveFrame: request => resolveFrameSnapshot(content, request)
+    resolveFrame: request => resolveFrameSnapshot(content, request),
+    applyCommand(command, applyOptions = {}) {
+      return applyCommandAtomically({
+        content,
+        head,
+        limits,
+        command,
+        appliedCommandIds,
+        source: resolveApplySource(applyOptions)
+      }, next => {
+        content = next.content;
+        head = next.head;
+      });
+    }
   };
 }
 

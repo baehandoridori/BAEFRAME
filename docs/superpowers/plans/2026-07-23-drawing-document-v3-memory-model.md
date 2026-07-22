@@ -362,6 +362,8 @@ Phase 1A command envelope 규칙은 다음과 같다.
 
 operation payload도 적용 전에 전부 검증한다. `insert-objects.index`는 해당 operation이 적용되는 그 시점의 `0..objects.length` 범위 safe integer이고 `objects`는 비어 있지 않은 배열이어야 한다. `remove-objects.objectIds`와 `set-transforms.transforms`도 비어 있지 않은 배열이어야 하며, 모든 object ID는 비어 있지 않은 문자열이어야 한다. unknown operation, malformed payload, unsupported kind, kind와 맞지 않는 operation 조합, 중복 `remove-objects.objectIds`, 중복 `set-transforms.transforms[].objectId`는 `invalid-command`로 command 전체를 원자적으로 거부한다. payload shape는 유효하지만 canonical object 자체가 잘못되면 `invalid-object`, affine matrix가 잘못되면 `invalid-transform`을 사용한다.
 
+검증 순서는 malformed `applyOptions`/command shape → 이미 성공한 command ID 중복 → base revision → exact non-empty target → layer lock → draft에서 operation 순차 적용 → 최종-state no-op → revision overflow → single commit/ID 기록이다. 따라서 같은 성공 command를 stale baseRevision 그대로 재전송해도 `duplicate-command-id`가 우선하고, malformed command/source는 dedupe보다 먼저 `invalid-command`다. 새로 insert한 fragment는 같은 compound command의 뒤 operation에서 transform할 수 있다.
+
 `empty:true` keyframe은 hold를 끊는 표식이며 Phase 1A object command target이 아니다. 이 keyframe을 target으로 한 insert/remove/transform은 `target-not-found`로 거부한다. command 테스트의 ‘빈 keyframe’ fixture는 `empty:false, objects:[]`인 편집 가능한 keyframe을 뜻한다. `empty:true`를 편집 가능 keyframe으로 전환하는 create-keyframe command는 후속 layer/keyframe slice 책임이다.
 
 성공 반환값:
@@ -484,9 +486,17 @@ function applyCommandAtomically({
   if (target.layer.locked) return { applied: false, reason: 'layer-locked' };
 
   const objectsBefore = clonePlain(target.keyframe.objects);
+  const documentObjectIds = collectDocumentObjectIds(draft);
   const inverseOperations = [];
   for (const operation of command.operations) {
-    const result = applyOperation(target.keyframe, operation, limits, draft, source);
+    const result = applyOperation(
+      target.keyframe,
+      operation,
+      limits,
+      draft,
+      source,
+      documentObjectIds
+    );
     if (!result.applied) return { applied: false, reason: result.reason };
     inverseOperations.unshift(...result.inverseOperations);
   }
@@ -574,7 +584,13 @@ test('affine transform changes only transform and identical transform is a no-op
 
 operation payload 회귀 표에는 최소한 음수 index, 소수 index, 현재 objects.length 초과 index, 빈 `objects`/`objectIds`/`transforms`, 빈 object ID, unknown operation type을 넣는다. 각 case는 `invalid-command`이고 앞선 operation을 포함한 command여도 snapshot/head가 완전히 불변이어야 한다. compound command 안의 두 번째 insert index는 첫 번째 operation까지 반영된 draft의 현재 objects.length를 기준으로 검증한다.
 
+object ID 유일성은 현재 target만이 아니라 draft document 전체를 기준으로 유지한다. 다른 layer/keyframe의 ID와 충돌, 한 insert 안의 중복, 연속 insert operation 사이 중복은 `duplicate-object-id`로 원자 거부한다. 반대로 앞 operation에서 object를 remove한 뒤 같은 ID의 canonical object를 다시 insert하는 것은 draft의 현재 전역 ID 집합을 기준으로 허용한다. 전역 ID Set은 command마다 draft에서 한 번만 만들고, 완전히 검증된 remove/insert가 적용될 때 함께 갱신한다. 이 index 자체도 draft-local이어야 실패 command가 다음 command에 흔적을 남기지 않으며, inverse에 insert가 많이 포함돼도 매 operation마다 문서 전체를 재스캔하지 않는다.
+
+검증 precedence 회귀는 malformed source/command가 duplicate ID보다 먼저 `invalid-command`, 성공 command 재전송은 stale보다 먼저 `duplicate-command-id`인지 확인한다. 실패/no-op/overflow command ID는 기록하지 않아 같은 ID로 안전한 state에서 재시도할 수 있어야 한다. 최종-state no-op은 `transform A→B→A`와 insert→remove를 포함하고, no-op transform 뒤 실제 insert가 이어지는 command는 성공해야 한다. 연속된 두 remove operation의 inverse도 operation group은 역순이되 각 group 내부 insert index는 오름차순을 유지해 round-trip z-order가 복원되어야 한다.
+
 revision overflow 회귀는 `revisionSequence:Number.MAX_SAFE_INTEGER`인 문서와 target keyframe `revision:Number.MAX_SAFE_INTEGER`인 문서를 각각 만든다. 실제 순변화 command는 commit 직전에 `revision-limit-exceeded`이고 content/head/command-ID dedupe가 불변이어야 한다. 같은 command ID를 안전한 state에서 다시 쓸 수 있어야 한다. transform 결과가 이미 같은 no-op은 revision을 올리지 않으므로 overflow보다 먼저 `{applied:false, reason:'no-change'}`를 반환한다.
+
+경계 성공도 별도로 고정한다. head와 target keyframe revision이 각각 `Number.MAX_SAFE_INTEGER - 1`일 때 한 번의 실제 변경은 둘 다 정확히 `Number.MAX_SAFE_INTEGER`로 증가해야 하고, 그 다음 실제 변경부터 거부되어야 한다. command 입력과 삽입 stroke/transform, 성공 반환 inverse를 사후 변경해도 내부 snapshot/head가 바뀌지 않아야 한다.
 
 - [ ] **Step 7: Task 2 GREEN 확인**
 
