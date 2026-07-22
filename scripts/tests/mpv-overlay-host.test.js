@@ -74,7 +74,8 @@ function createDrawingHostHarness(options = {}) {
               applied: true,
               deletedCount: 1,
               deletedIds: ['must-not-leak'],
-              scene: { objects: [{ type: 'fabric.Path' }] }
+              scene: { objects: [{ type: 'fabric.Path' }] },
+              command: { undoState: { mustNotLeak: true } }
             };
           }
           if (script.includes('.getDiagnostics(')) {
@@ -88,6 +89,10 @@ function createDrawingHostHarness(options = {}) {
               objectCount: 1,
               selectionCount: 1,
               mutationCount: 2,
+              undoDepth: 2,
+              redoDepth: 1,
+              historyBytes: 1024,
+              undoBytes: 768,
               dirty: true,
               cache: { videoCount: 1, sceneCount: 1, estimatedBytes: 512, evictionCount: 0 },
               metrics: { staleMessageDropCount: 0, saveAttemptCount: 0 },
@@ -182,6 +187,34 @@ function readFabricMethodPayload(script, method) {
   if (start < 0) return null;
   const argument = script.slice(start + marker.length, script.lastIndexOf(');'));
   return argument ? JSON.parse(argument) : null;
+}
+
+async function activateDrawingHost(harness, overrides = {}) {
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  const videoGeneration = overrides.videoGeneration ?? 1;
+  const inputRevision = overrides.inputRevision ?? 2;
+  const sessionId = overrides.sessionId || 'session-active-actions';
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration,
+    inputRevision: inputRevision - 1,
+    enabled: false
+  }));
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration,
+    inputRevision,
+    enabled: true,
+    session: {
+      sessionId,
+      stableVideoIdentity: 'video-active-actions',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'select'
+    }
+  }));
+  return { hostGeneration, videoGeneration, inputRevision, sessionId };
 }
 
 test('exposes the MPV overlay Fabric drawing host capability API', () => {
@@ -460,6 +493,249 @@ test('canonicalizes overlay keys, drops IME composition, and never steals focus 
   assert.equal(events.some(([name, value]) => name === 'setFocusable' && value === false), true);
 });
 
+test('overlay history shortcuts execute once without relaying to the main window', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, {
+    videoGeneration: 12,
+    sessionId: 'session-overlay-history'
+  });
+  const overlay = harness.windows[0];
+  harness.events.length = 0;
+
+  const emit = input => {
+    let prevented = false;
+    overlay.webContents.emit('before-input-event', {
+      preventDefault() {
+        prevented = true;
+      }
+    }, {
+      type: 'keyDown',
+      key: 'z',
+      code: 'KeyZ',
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+    return prevented;
+  };
+
+  assert.equal(emit({ control: true }), true);
+  assert.equal(emit({
+    control: false,
+    isAutoRepeat: true
+  }), true, 'repeat remains suppressed after the modifier is released');
+  assert.equal(emit({
+    type: 'keyUp',
+    control: false
+  }), true, 'keyup remains suppressed after the modifier is released');
+  assert.equal(emit({ meta: true }), true);
+  assert.equal(emit({ key: 'y', code: 'KeyY', control: true }), true);
+  assert.equal(emit({ control: true, shift: true }), true);
+  assert.equal(emit({ control: true, isAutoRepeat: true }), true);
+  await waitForAsyncReposition();
+  await waitForAsyncReposition();
+
+  const actionPayloads = harness.events
+    .filter(([name, script]) => name === 'executeJavaScript' && script.includes?.('.applyDrawingAction('))
+    .map(([, script]) => readFabricMethodPayload(script, 'applyDrawingAction'));
+  assert.deepEqual(actionPayloads.map(request => request.action), ['undo', 'undo', 'redo', 'redo']);
+  assert.equal(new Set(actionPayloads.map(request => request.actionId)).size, 4);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), false);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
+});
+
+test('overlay history routing leaves invalid combinations and Electron IME input alone', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, {
+    videoGeneration: 13,
+    sessionId: 'session-overlay-invalid-history'
+  });
+  const overlay = harness.windows[0];
+  harness.events.length = 0;
+
+  const emit = input => {
+    let prevented = false;
+    overlay.webContents.emit('before-input-event', {
+      preventDefault() {
+        prevented = true;
+      }
+    }, {
+      type: 'keyDown',
+      key: 'z',
+      code: 'KeyZ',
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+    return prevented;
+  };
+
+  const forwarded = [
+    { key: 'z', code: 'KeyZ' },
+    { key: 'y', code: 'KeyY' },
+    { key: 'z', code: 'KeyZ', control: true, alt: true },
+    { key: 'z', code: 'KeyZ', control: true, meta: true },
+    { key: 'y', code: 'KeyY', control: true, shift: true },
+    { key: 'c', code: 'KeyC', control: true },
+    { key: 'v', code: 'KeyV', control: true }
+  ];
+  for (const input of forwarded) assert.equal(emit(input), true);
+
+  const eventCount = harness.events.length;
+  assert.equal(emit({ key: 'z', code: 'KeyZ', control: true, isComposing: true }), false);
+  assert.equal(emit({ key: 'Process', code: 'KeyZ', control: true }), false);
+  assert.equal(emit({ key: 'Dead', code: 'KeyZ', control: true }), false);
+  assert.equal(harness.events.length, eventCount);
+  await waitForAsyncReposition();
+
+  assert.equal(harness.events.some(([name, script]) =>
+    name === 'executeJavaScript' && script.includes?.('.applyDrawingAction(')), false);
+  assert.equal(harness.events.filter(([name]) => name === 'mainWindow.sendInputEvent').length, 7);
+});
+
+test('controller-origin and overlay-origin actions share one serialized host queue', async () => {
+  const firstAttempt = createDeferred();
+  const actionOrder = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      const request = readFabricMethodPayload(script, 'applyDrawingAction');
+      actionOrder.push(request.action);
+      if (actionOrder.length === 1) return firstAttempt.promise;
+      return { applied: true, deletedCount: 0 };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 14,
+    sessionId: 'session-mixed-action-queue'
+  });
+
+  const controllerAction = harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'undo',
+    actionId: 'controller-origin-undo'
+  });
+  let overlayPrevented = false;
+  harness.windows[0].webContents.emit('before-input-event', {
+    preventDefault() {
+      overlayPrevented = true;
+    }
+  }, {
+    type: 'keyDown',
+    key: 'y',
+    code: 'KeyY',
+    shift: false,
+    control: true,
+    alt: false,
+    meta: false,
+    isAutoRepeat: false
+  });
+  assert.equal(overlayPrevented, true);
+  await waitForAsyncReposition();
+  assert.deepEqual(actionOrder, ['undo']);
+
+  firstAttempt.resolve({ applied: true, deletedCount: 0 });
+  assert.equal((await controllerAction).success, true);
+  await waitForAsyncReposition();
+  await waitForAsyncReposition();
+  assert.deepEqual(actionOrder, ['undo', 'redo']);
+});
+
+test('overlay keeps forwarding B V Delete and Space through the main renderer route', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, {
+    videoGeneration: 15,
+    sessionId: 'session-overlay-forwarding-regression'
+  });
+  harness.events.length = 0;
+
+  for (const input of [
+    { key: 'b', code: 'KeyB' },
+    { key: 'v', code: 'KeyV' },
+    { key: 'Delete', code: 'Delete' },
+    { key: ' ', code: 'Space' }
+  ]) {
+    harness.windows[0].webContents.emit('before-input-event', { preventDefault() {} }, {
+      type: 'keyDown',
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+  }
+
+  assert.deepEqual(harness.events
+    .filter(([name]) => name === 'mainWindow.sendInputEvent')
+    .map(([, input]) => input.keyCode), ['b', 'v', 'Delete', 'Space']);
+});
+
+test('overlay history keyup suppression is cleared when drawing input is disabled', async () => {
+  const harness = createDrawingHostHarness();
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 16,
+    sessionId: 'session-overlay-keyup-lifecycle'
+  });
+  const overlay = harness.windows[0];
+  overlay.webContents.emit('before-input-event', { preventDefault() {} }, {
+    type: 'keyDown',
+    key: 'z',
+    code: 'KeyZ',
+    shift: false,
+    control: true,
+    alt: false,
+    meta: false,
+    isAutoRepeat: true
+  });
+  await harness.host.setDrawingInput(makeDrawingInput(tokens.hostGeneration, {
+    videoGeneration: tokens.videoGeneration,
+    inputRevision: tokens.inputRevision + 1,
+    enabled: false
+  }));
+  await harness.host.setDrawingInput(makeDrawingInput(tokens.hostGeneration, {
+    videoGeneration: tokens.videoGeneration,
+    inputRevision: tokens.inputRevision + 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-overlay-keyup-lifecycle-next',
+      stableVideoIdentity: 'video-overlay-keyup-lifecycle',
+      targetFrame: 25,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'select'
+    }
+  }));
+  harness.events.length = 0;
+
+  let prevented = false;
+  overlay.webContents.emit('before-input-event', {
+    preventDefault() {
+      prevented = true;
+    }
+  }, {
+    type: 'keyUp',
+    key: 'z',
+    code: 'KeyZ',
+    shift: false,
+    control: false,
+    alt: false,
+    meta: false,
+    isAutoRepeat: false
+  });
+
+  assert.equal(prevented, true, 'the ordinary keyup is forwarded and consumed by the relay');
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), true,
+    'an old suppressed key must not leak into a new drawing session');
+});
+
 test('leaves the original overlay key untouched when forwarding fails', async () => {
   const { host, events, windows } = createDrawingHostHarness({
     sendInputEventError: new Error('synthetic forwarding failure')
@@ -639,13 +915,251 @@ test('deduplicates drawing actions and allowlists lightweight host responses', a
   assert.equal(diagnostics.inputRevision, 2);
   assert.equal(diagnostics.activeSessionId, 'session-actions');
   assert.equal(diagnostics.objectCount, 1);
+  assert.equal(diagnostics.undoDepth, 2);
+  assert.equal(diagnostics.redoDepth, 1);
+  assert.equal(diagnostics.historyBytes, 1024);
   assert.deepEqual(diagnostics.cache, {
     videoCount: 1,
     sceneCount: 1,
     estimatedBytes: 512,
     evictionCount: 0
   });
-  assert.doesNotMatch(JSON.stringify(diagnostics), /fabricJSON|objects|scene\s*:/i);
+  assert.doesNotMatch(JSON.stringify(diagnostics),
+    /fabricJSON|objects|scene\s*:|deletedIds|undoBytes|undoState|command/i);
+});
+
+test('allowlists undo and redo while rejecting unknown drawing actions', async () => {
+  const harness = createDrawingHostHarness();
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 9,
+    sessionId: 'session-history-allowlist'
+  });
+  const makeAction = (action, actionId) => ({ ...tokens, action, actionId });
+
+  assert.deepEqual(await harness.host.applyDrawingAction(makeAction('undo', 'history-undo-1')), {
+    success: true,
+    applied: true,
+    duplicate: false,
+    deletedCount: 1
+  });
+  assert.deepEqual(await harness.host.applyDrawingAction(makeAction('redo', 'history-redo-1')), {
+    success: true,
+    applied: true,
+    duplicate: false,
+    deletedCount: 1
+  });
+  assert.deepEqual(await harness.host.applyDrawingAction(makeAction('export-scene', 'unknown-1')), {
+    success: false,
+    applied: false,
+    error: 'stale or invalid drawing action request'
+  });
+  const payloads = harness.events
+    .filter(([name, script]) => name === 'executeJavaScript' && script.includes?.('.applyDrawingAction('))
+    .map(([, script]) => readFabricMethodPayload(script, 'applyDrawingAction'));
+  assert.deepEqual(payloads.map(payload => payload.action), ['undo', 'redo']);
+});
+
+test('serializes different actions and continues after the first action fails', async () => {
+  const firstAttempt = createDeferred();
+  const actionOrder = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      const request = readFabricMethodPayload(script, 'applyDrawingAction');
+      actionOrder.push(request.action);
+      if (actionOrder.length === 1) return firstAttempt.promise;
+      return { applied: true, deletedCount: 0 };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 10,
+    sessionId: 'session-serialized-actions'
+  });
+  const first = harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'undo',
+    actionId: 'serialized-undo'
+  });
+  const second = harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'redo',
+    actionId: 'serialized-redo'
+  });
+  await waitForAsyncReposition();
+  assert.deepEqual(actionOrder, ['undo']);
+
+  firstAttempt.reject(new Error('synthetic queued failure'));
+  assert.deepEqual(await first, {
+    success: false,
+    applied: false,
+    error: 'synthetic queued failure'
+  });
+  assert.deepEqual(await second, {
+    success: true,
+    applied: true,
+    duplicate: false,
+    deletedCount: 0
+  });
+  assert.deepEqual(actionOrder, ['undo', 'redo']);
+});
+
+test('revalidates queued action tokens before runtime execution', async () => {
+  const firstAttempt = createDeferred();
+  const actionPayloads = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      const request = readFabricMethodPayload(script, 'applyDrawingAction');
+      actionPayloads.push(request);
+      if (actionPayloads.length === 1) return firstAttempt.promise;
+      return { applied: true, deletedCount: 0 };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 11,
+    sessionId: 'session-stale-queued-action'
+  });
+  const first = harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'undo',
+    actionId: 'stale-first'
+  });
+  const staleQueued = harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'redo',
+    actionId: 'stale-second'
+  });
+  await waitForAsyncReposition();
+  assert.equal(actionPayloads.length, 1);
+
+  await harness.host.setDrawingInput(makeDrawingInput(tokens.hostGeneration, {
+    videoGeneration: tokens.videoGeneration,
+    inputRevision: tokens.inputRevision + 1,
+    enabled: false
+  }));
+  firstAttempt.resolve({ applied: true, deletedCount: 0 });
+  assert.equal((await first).success, false, 'the in-flight response also becomes stale');
+  assert.deepEqual(await staleQueued, {
+    success: false,
+    applied: false,
+    error: 'stale drawing action request'
+  });
+  assert.equal(actionPayloads.length, 1,
+    'a queued stale action must not reach the Fabric runtime');
+});
+
+test('revalidates the host window and Fabric generation before queued execution', async () => {
+  const firstAttempt = createDeferred();
+  let runtimeActionCount = 0;
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      runtimeActionCount += 1;
+      if (runtimeActionCount === 1) return firstAttempt.promise;
+      return { applied: true, deletedCount: 0 };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 17,
+    sessionId: 'session-stale-window-action'
+  });
+  const first = harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'undo',
+    actionId: 'stale-window-first'
+  });
+  const staleQueued = harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'redo',
+    actionId: 'stale-window-second'
+  });
+  await waitForAsyncReposition();
+  assert.equal(runtimeActionCount, 1);
+
+  harness.host.destroy();
+  const recovered = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  assert.equal(recovered.drawingCapability.hostGeneration, tokens.hostGeneration + 1);
+  firstAttempt.resolve({ applied: true, deletedCount: 0 });
+
+  assert.equal((await first).success, false);
+  assert.deepEqual(await staleQueued, {
+    success: false,
+    applied: false,
+    error: 'stale drawing action request'
+  });
+  assert.equal(runtimeActionCount, 1);
+});
+
+test('a recovered host generation is not blocked by the previous generation queue tail', async () => {
+  const oldAttempt = createDeferred();
+  const actionPayloads = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      const request = readFabricMethodPayload(script, 'applyDrawingAction');
+      actionPayloads.push(request);
+      if (actionPayloads.length === 1) return oldAttempt.promise;
+      return { applied: true, deletedCount: 0 };
+    }
+  });
+  const oldTokens = await activateDrawingHost(harness, {
+    videoGeneration: 19,
+    sessionId: 'session-old-generation-queue'
+  });
+  const oldAction = harness.host.applyDrawingAction({
+    ...oldTokens,
+    action: 'undo',
+    actionId: 'old-generation-action'
+  });
+  await waitForAsyncReposition();
+  assert.equal(actionPayloads.length, 1);
+
+  harness.host.destroy();
+  const freshTokens = await activateDrawingHost(harness, {
+    videoGeneration: 20,
+    sessionId: 'session-fresh-generation-queue'
+  });
+  const freshAction = harness.host.applyDrawingAction({
+    ...freshTokens,
+    action: 'redo',
+    actionId: 'fresh-generation-action'
+  });
+  await waitForAsyncReposition();
+  assert.equal(actionPayloads.length, 2,
+    'the new generation must not wait for an abandoned old-window action');
+  assert.equal((await freshAction).success, true);
+
+  oldAttempt.resolve({ applied: true, deletedCount: 0 });
+  assert.equal((await oldAction).success, false);
+});
+
+test('bounds history diagnostics to finite nonnegative integers', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.getDiagnostics(')) return undefined;
+      return {
+        state: 'active',
+        prepared: true,
+        inputEnabled: true,
+        undoDepth: -4,
+        redoDepth: Number.POSITIVE_INFINITY,
+        historyBytes: Number.NaN,
+        undoBytes: 999,
+        scene: { objects: ['must-not-leak'] }
+      };
+    }
+  });
+  await activateDrawingHost(harness, {
+    videoGeneration: 18,
+    sessionId: 'session-bounded-history-diagnostics'
+  });
+
+  const diagnostics = await harness.host.getDrawingDiagnostics();
+  assert.equal(diagnostics.undoDepth, 0);
+  assert.equal(diagnostics.redoDepth, 0);
+  assert.equal(diagnostics.historyBytes, 0);
+  assert.doesNotMatch(JSON.stringify(diagnostics),
+    /"(?:undoBytes|scene|objects)"|must-not-leak/i);
 });
 
 test('disable responses expose only the normalized local tool for controller continuity', async () => {

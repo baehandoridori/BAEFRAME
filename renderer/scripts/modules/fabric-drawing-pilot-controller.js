@@ -1,5 +1,6 @@
 const DRAWING_PROTOCOL = 'baeframe-drawing-surface';
 const DRAWING_PROTOCOL_VERSION = 1;
+const CONTROLLER_DRAWING_ACTIONS = new Set(['delete-selection', 'undo', 'redo']);
 
 function copyRect(rect) {
   return rect && typeof rect === 'object' ? { ...rect } : null;
@@ -45,6 +46,24 @@ function consumeKeyEvent(event) {
   }
 }
 
+function isImeKeyEvent(event = {}) {
+  const key = String(event.key || '');
+  const code = String(event.code || '');
+  return event.isComposing === true ||
+    Number(event.keyCode) === 229 ||
+    ['Process', 'Dead', 'Unidentified'].includes(key) ||
+    ['Process', 'Dead'].includes(code);
+}
+
+function drawingHistoryActionFromKeyEvent(event = {}) {
+  const exactlyOnePrimaryModifier =
+    (event.ctrlKey === true) !== (event.metaKey === true);
+  if (!exactlyOnePrimaryModifier || event.altKey === true) return null;
+  if (event.code === 'KeyZ') return event.shiftKey === true ? 'redo' : 'undo';
+  if (event.code === 'KeyY' && event.shiftKey !== true) return 'redo';
+  return null;
+}
+
 export function createFabricDrawingPilotController(options = {}) {
   const electronAPI = options.electronAPI || {};
   const getContext = typeof options.getContext === 'function' ? options.getContext : () => ({});
@@ -76,6 +95,7 @@ export function createFabricDrawingPilotController(options = {}) {
   let bInputAccepted = 0;
   let bInputRejected = 0;
   let bAutoRepeatIgnored = 0;
+  let drawingActionQueue = Promise.resolve(false);
 
   function contextSnapshot(overrides) {
     let current = {};
@@ -288,23 +308,38 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
-  async function applyDeleteSelection() {
-    if (state !== 'active' || !currentSession) return false;
+  function makeDrawingActionRequest(action) {
+    if (state !== 'active' || !currentSession || !CONTROLLER_DRAWING_ACTIONS.has(action)) {
+      return null;
+    }
+    const sessionId = currentSession.sessionId;
     const request = {
-      ...makeEnvelope('drawing-action', { action: 'delete-selection' }),
+      ...makeEnvelope('drawing-action', { action }),
       hostGeneration,
       videoGeneration,
       inputRevision,
-      sessionId: currentSession.sessionId,
+      sessionId,
       actionId: uuid(),
-      action: 'delete-selection'
+      action
     };
+    return { ...request };
+  }
+
+  async function sendDrawingActionRequest(request) {
     try {
       const response = await electronAPI.mpvApplyOverlayDrawingAction(request);
       return response?.success === true;
     } catch {
       return false;
     }
+  }
+
+  function applyDrawingAction(action) {
+    const request = makeDrawingActionRequest(action);
+    if (!request) return Promise.resolve(false);
+    const operation = drawingActionQueue.then(() => sendDrawingActionRequest(request));
+    drawingActionQueue = operation.catch(() => false);
+    return operation;
   }
 
   function runDetached(operation) {
@@ -562,17 +597,28 @@ export function createFabricDrawingPilotController(options = {}) {
 
   function routeKeydown(event = {}) {
     if (!pilotEnabled ||
-        event.isComposing === true ||
-        event.keyCode === 229 ||
-        event.ctrlKey === true ||
-        event.metaKey === true ||
-        event.altKey === true ||
-        event.shiftKey === true ||
+        isImeKeyEvent(event) ||
         isEditableTarget(event.target)) {
       return false;
     }
     const context = contextSnapshot();
     if (!validPilotContext(context)) return false;
+
+    const historyAction = drawingHistoryActionFromKeyEvent(event);
+    if (historyAction) {
+      if (state !== 'preparing' && state !== 'active') return false;
+      consumeKeyEvent(event);
+      if (event.repeat !== true && state === 'active') {
+        runDetached(applyDrawingAction(historyAction));
+      }
+      return true;
+    }
+    if (event.ctrlKey === true ||
+        event.metaKey === true ||
+        event.altKey === true ||
+        event.shiftKey === true) {
+      return false;
+    }
 
     const key = String(event.key || '').toLowerCase();
     const repeatIsRelevant = key === 'b' ||
@@ -613,7 +659,7 @@ export function createFabricDrawingPilotController(options = {}) {
     }
     if (key === 'delete' && (state === 'preparing' || state === 'active')) {
       consumeKeyEvent(event);
-      if (state === 'active') runDetached(applyDeleteSelection());
+      if (state === 'active') runDetached(applyDrawingAction('delete-selection'));
       return true;
     }
     return false;
@@ -659,6 +705,7 @@ export function createFabricDrawingPilotController(options = {}) {
     afterVideoReady,
     cancelVideoChange,
     toggle,
+    applyDrawingAction,
     routeKeydown,
     disable,
     isEnabled,

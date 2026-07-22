@@ -210,7 +210,7 @@ function waitForDetachedControllerAction() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-function createKeyEvent(key) {
+function createKeyEvent(key, overrides = {}) {
   const calls = [];
   return {
     key,
@@ -221,7 +221,8 @@ function createKeyEvent(key) {
     stopImmediatePropagation() {
       calls.push('stopImmediatePropagation');
     },
-    calls
+    calls,
+    ...overrides
   };
 }
 
@@ -649,6 +650,43 @@ function makeValidRawDiagnostics() {
     }
   };
 }
+
+test('controller history shortcuts round-trip a real Fabric stroke without persistence', async () => {
+  const harness = createRuntimeControllerHarness();
+  assert.equal(await harness.controller.initialize(), true);
+  assert.equal(await harness.controller.adoptOverlayCapability({
+    passiveReady: true,
+    hostGeneration: 1
+  }), true);
+  assert.equal(await harness.controller.afterVideoReady({ loadToken: 'load-history-integration' }), true);
+  assert.equal(await harness.controller.toggle(), true);
+
+  const playbackBefore = structuredClone(harness.playbackCanaries);
+  const canvas = FakeCanvas.instances.at(-1);
+  drawStroke(canvas.upperCanvasEl, 51);
+  assert.equal(harness.runtime.getDiagnostics().objectCount, 1);
+  assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+
+  const undo = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(undo), true);
+  await waitForDetachedControllerAction();
+  assert.deepEqual(undo.calls, ['preventDefault', 'stopImmediatePropagation']);
+  assert.equal(harness.runtime.getDiagnostics().objectCount, 0);
+  assert.equal(harness.runtime.getDiagnostics().redoDepth, 1);
+
+  const redo = createKeyEvent('y', { code: 'KeyY', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(redo), true);
+  await waitForDetachedControllerAction();
+  assert.deepEqual(redo.calls, ['preventDefault', 'stopImmediatePropagation']);
+  assert.equal(harness.runtime.getDiagnostics().objectCount, 1);
+  assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
+
+  assert.equal(harness.ledger.action, 2);
+  assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  assert.equal(harness.ledger.saveReview, 0);
+  assert.equal(harness.ledger.reviewDataManagerSave, 0);
+  assert.deepEqual(harness.playbackCanaries, playbackBefore);
+});
 
 test('synthetic controller/runtime boundary preserves no-save, playback, owner, media, and timeline canaries', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'baeframe-fabric-drawing-'));

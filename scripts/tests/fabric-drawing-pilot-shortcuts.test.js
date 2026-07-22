@@ -141,6 +141,7 @@ test('controller exposes the complete public API and initialize reads a boolean 
     'afterVideoReady',
     'cancelVideoChange',
     'toggle',
+    'applyDrawingAction',
     'routeKeydown',
     'disable',
     'isEnabled',
@@ -450,6 +451,171 @@ test('Delete is consumed while preparing or active and only active invokes the p
   assert.match(harness.calls.action[0].actionId, /^uuid-\d+$/);
   assertEnvelope(harness.calls.action[0]);
   assert.equal(harness.controller.getState(), 'active');
+});
+
+test('active Ctrl or Cmd history shortcuts send exactly one semantic action', async () => {
+  const harness = createHarness();
+  await preparePassive(harness);
+  await harness.controller.toggle();
+
+  const cases = [
+    ['z', { code: 'KeyZ', ctrlKey: true }, 'undo'],
+    ['z', { code: 'KeyZ', metaKey: true }, 'undo'],
+    ['y', { code: 'KeyY', ctrlKey: true }, 'redo'],
+    ['z', { code: 'KeyZ', ctrlKey: true, shiftKey: true }, 'redo'],
+    ['z', { code: 'KeyZ', metaKey: true, shiftKey: true }, 'redo']
+  ];
+
+  for (const [key, modifiers, action] of cases) {
+    const event = createKeyEvent(key, modifiers);
+    assert.equal(harness.controller.routeKeydown(event), true);
+    assert.deepEqual(event.calls, ['preventDefault', 'stopImmediatePropagation']);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(harness.calls.action.at(-1).action, action);
+  }
+
+  assert.deepEqual(harness.calls.action.map(request => request.action),
+    ['undo', 'undo', 'redo', 'redo', 'redo']);
+  assert.equal(new Set(harness.calls.action.map(request => request.actionId)).size, 5);
+  for (const request of harness.calls.action) {
+    assert.equal(request.hostGeneration, 1);
+    assert.equal(request.videoGeneration, 1);
+    assert.equal(request.inputRevision, 2);
+    assert.equal(request.sessionId, harness.calls.input.at(-1).session.sessionId);
+    assertEnvelope(request);
+  }
+});
+
+test('preparing and auto-repeat history shortcuts are consumed without actions', async () => {
+  const pendingEnable = deferred();
+  const harness = createHarness({
+    onInput(request) {
+      if (request.enabled) return pendingEnable.promise;
+      return { success: true, accepted: true, enabled: false };
+    }
+  });
+  await preparePassive(harness);
+  const enabling = harness.controller.toggle();
+
+  const preparing = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(preparing), true);
+  assert.deepEqual(preparing.calls, ['preventDefault', 'stopImmediatePropagation']);
+  assert.equal(harness.calls.action.length, 0);
+
+  pendingEnable.resolve({ success: true, accepted: true, enabled: true });
+  assert.equal(await enabling, true);
+  const repeated = createKeyEvent('z', {
+    code: 'KeyZ',
+    ctrlKey: true,
+    repeat: true
+  });
+  assert.equal(harness.controller.routeKeydown(repeated), true);
+  assert.deepEqual(repeated.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.action.length, 0);
+});
+
+test('history routing rejects editable, IME, ambiguous modifiers, and unrelated keys', async () => {
+  const harness = createHarness();
+  await preparePassive(harness);
+  await harness.controller.toggle();
+
+  const excluded = [
+    createKeyEvent('z', { code: 'KeyZ', ctrlKey: true, target: { tagName: 'INPUT' } }),
+    createKeyEvent('z', { code: 'KeyZ', ctrlKey: true, target: { tagName: 'TEXTAREA' } }),
+    createKeyEvent('z', {
+      code: 'KeyZ',
+      ctrlKey: true,
+      target: { tagName: 'DIV', isContentEditable: true }
+    }),
+    createKeyEvent('z', { code: 'KeyZ', ctrlKey: true, isComposing: true }),
+    createKeyEvent('Process', { code: 'KeyZ', ctrlKey: true }),
+    createKeyEvent('Dead', { code: 'KeyZ', ctrlKey: true }),
+    createKeyEvent('z', { code: 'KeyZ', ctrlKey: true, keyCode: 229 }),
+    createKeyEvent('z', { code: 'KeyZ', ctrlKey: true, altKey: true }),
+    createKeyEvent('z', { code: 'KeyZ', ctrlKey: true, metaKey: true }),
+    createKeyEvent('y', { code: 'KeyY', ctrlKey: true, shiftKey: true }),
+    createKeyEvent('z', { code: 'KeyZ' }),
+    createKeyEvent('y', { code: 'KeyY' }),
+    createKeyEvent('c', { code: 'KeyC', ctrlKey: true }),
+    createKeyEvent('v', { code: 'KeyV', ctrlKey: true })
+  ];
+
+  for (const event of excluded) {
+    assert.equal(harness.controller.routeKeydown(event), false);
+    assert.deepEqual(event.calls, []);
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.action.length, 0);
+});
+
+test('queued history requests keep keydown tokens and order across B disable', async () => {
+  const firstAction = deferred();
+  const harness = createHarness({
+    onAction(_request, index) {
+      if (index === 0) return firstAction.promise;
+      return { success: true, applied: true };
+    }
+  });
+  await preparePassive(harness);
+  await harness.controller.toggle();
+  const active = await harness.controller.diagnostics();
+
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('z', {
+    code: 'KeyZ', ctrlKey: true
+  })), true);
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('y', {
+    code: 'KeyY', ctrlKey: true
+  })), true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.action.length, 1, 'the second request waits behind the first');
+
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('b')), true);
+  assert.equal(harness.controller.getState(), 'passive');
+  firstAction.reject(new Error('synthetic first history failure'));
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(harness.calls.action.length, 2, 'a failure must not poison the action queue');
+  assert.deepEqual(harness.calls.action.map(request => request.action), ['undo', 'redo']);
+  assert.equal(harness.calls.action[1].hostGeneration, active.hostGeneration);
+  assert.equal(harness.calls.action[1].videoGeneration, active.videoGeneration);
+  assert.equal(harness.calls.action[1].inputRevision, active.inputRevision);
+  assert.equal(harness.calls.action[1].sessionId, active.sessionId);
+  assert.notEqual(harness.calls.action[0].actionId, harness.calls.action[1].actionId);
+  assert.ok(harness.calls.input.at(-1).inputRevision > harness.calls.action[1].inputRevision,
+    'the queued request must not retarget to the later B transition');
+});
+
+test('queued history requests cannot retarget across a media transition', async () => {
+  const firstAction = deferred();
+  const harness = createHarness({
+    onAction(_request, index) {
+      if (index === 0) return firstAction.promise;
+      return { success: true, applied: true };
+    }
+  });
+  await preparePassive(harness);
+  await harness.controller.toggle();
+  const active = await harness.controller.diagnostics();
+
+  harness.controller.routeKeydown(createKeyEvent('z', { code: 'KeyZ', ctrlKey: true }));
+  harness.controller.routeKeydown(createKeyEvent('y', { code: 'KeyY', ctrlKey: true }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.action.length, 1);
+
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+  assert.equal(harness.controller.getState(), 'recovering');
+  firstAction.resolve({ success: true, applied: true });
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(harness.calls.action.length, 2);
+  assert.equal(harness.calls.action[1].hostGeneration, active.hostGeneration);
+  assert.equal(harness.calls.action[1].videoGeneration, active.videoGeneration);
+  assert.equal(harness.calls.action[1].inputRevision, active.inputRevision);
+  assert.equal(harness.calls.action[1].sessionId, active.sessionId);
+  assert.ok(harness.calls.input.at(-1).inputRevision > harness.calls.action[1].inputRevision);
 });
 
 test('editable targets, modifiers, non-mpv, audio, and pilot OFF never consume keys', async () => {

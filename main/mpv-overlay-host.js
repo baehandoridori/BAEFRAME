@@ -34,6 +34,12 @@ const PARENT_REPOSITION_EVENTS = [
 ];
 const PARENT_HIDE_EVENTS = ['minimize', 'hide'];
 const PARENT_SHOW_EVENTS = ['restore', 'show'];
+const HOST_DRAWING_ACTIONS = new Set([
+  'delete-selection',
+  'clear-session',
+  'undo',
+  'redo'
+]);
 
 const OVERLAY_HTML = String.raw`
 <!doctype html>
@@ -780,6 +786,21 @@ function createForwardedKeyboardInput(input = {}) {
   return { type: input.type, keyCode, modifiers };
 }
 
+function overlayHistoryActionFromInput(input = {}) {
+  if (input.type !== 'keyDown' ||
+      input.isComposing === true ||
+      ['Process', 'Dead', 'Unidentified'].includes(String(input.key || '')) ||
+      ['Process', 'Dead'].includes(String(input.code || ''))) {
+    return null;
+  }
+  const exactlyOnePrimaryModifier =
+    (input.control === true) !== (input.meta === true);
+  if (!exactlyOnePrimaryModifier || input.alt === true) return null;
+  if (input.code === 'KeyZ') return input.shift === true ? 'redo' : 'undo';
+  if (input.code === 'KeyY' && input.shift !== true) return 'redo';
+  return null;
+}
+
 function finiteDiagnosticNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : fallback;
@@ -872,6 +893,9 @@ class MPVOverlayHost {
     this.completedActionIds = new Map();
     this.inFlightDrawingActions = new Map();
     this.maxProcessedActionIds = 2048;
+    this.drawingActionQueue = Promise.resolve();
+    this.suppressedOverlayHistoryKeys = new Set();
+    this.overlayHistoryActionSequence = 0;
   }
 
   getDrawingCapability() {
@@ -913,6 +937,7 @@ class MPVOverlayHost {
     this.currentInputRevision = inputRevision;
     this.desiredInputEnabled = request.enabled;
     if (!request.enabled) {
+      this.suppressedOverlayHistoryKeys.clear();
       this.activeSessionId = null;
       this.currentToolRevision = -1;
     }
@@ -995,7 +1020,7 @@ class MPVOverlayHost {
   }
 
   async applyDrawingAction(request = {}) {
-    const validAction = request.action === 'delete-selection' || request.action === 'clear-session';
+    const validAction = HOST_DRAWING_ACTIONS.has(request.action);
     if (!this._drawingTokensMatch(request) ||
         !validAction ||
         typeof request.actionId !== 'string' ||
@@ -1008,23 +1033,59 @@ class MPVOverlayHost {
     const inFlight = this.inFlightDrawingActions.get(request.actionId);
     if (inFlight) return inFlight;
 
-    const operation = this._performDrawingAction(request);
-    this.inFlightDrawingActions.set(request.actionId, operation);
-    try {
-      const result = await operation;
-      if (result.success) this._rememberDrawingAction(request.actionId);
+    const queuedRequest = {
+      hostGeneration: request.hostGeneration,
+      videoGeneration: request.videoGeneration,
+      inputRevision: request.inputRevision,
+      sessionId: request.sessionId,
+      actionId: request.actionId,
+      action: request.action
+    };
+    const executionContext = {
+      hostWindow: this.window,
+      hostGeneration: this.hostGeneration,
+      fabricReadyGeneration: this.fabricReadyGeneration
+    };
+    const actionId = queuedRequest.actionId;
+    const operation = this.drawingActionQueue.then(
+      () => this._performDrawingAction(queuedRequest, executionContext)
+    );
+    const trackedOperation = operation.then(result => {
+      if (result.success) this._rememberDrawingAction(actionId);
       return result;
-    } finally {
-      if (this.inFlightDrawingActions.get(request.actionId) === operation) {
-        this.inFlightDrawingActions.delete(request.actionId);
+    }).finally(() => {
+      if (this.inFlightDrawingActions.get(actionId) === trackedOperation) {
+        this.inFlightDrawingActions.delete(actionId);
       }
+    });
+    this.inFlightDrawingActions.set(actionId, trackedOperation);
+    this.drawingActionQueue = trackedOperation.catch(() => undefined);
+    try {
+      return await trackedOperation;
+    } catch (error) {
+      return { success: false, applied: false, error: error.message };
     }
   }
 
-  async _performDrawingAction(request) {
+  _drawingActionExecutionIsCurrent(request, executionContext) {
+    const hostWindow = executionContext?.hostWindow;
+    return !!hostWindow &&
+      this.window === hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      this.contentLoaded === true &&
+      this.hostGeneration === executionContext.hostGeneration &&
+      this.fabricReadyGeneration === executionContext.fabricReadyGeneration &&
+      this.fabricReadyGeneration === this.hostGeneration &&
+      this._drawingTokensMatch(request);
+  }
+
+  async _performDrawingAction(request, executionContext) {
+    if (!this._drawingActionExecutionIsCurrent(request, executionContext)) {
+      return { success: false, applied: false, error: 'stale drawing action request' };
+    }
     try {
       const result = await this._executeFabricMethod('applyDrawingAction', request);
-      if (!this._drawingTokensMatch(request)) {
+      if (!this._drawingActionExecutionIsCurrent(request, executionContext)) {
         return { success: false, applied: false, error: 'stale drawing action response' };
       }
       return {
@@ -1075,6 +1136,9 @@ class MPVOverlayHost {
         objectCount: Math.trunc(finiteDiagnosticNumber(result?.objectCount)),
         selectionCount: Math.trunc(finiteDiagnosticNumber(result?.selectionCount)),
         mutationCount: Math.trunc(finiteDiagnosticNumber(result?.mutationCount)),
+        undoDepth: Math.trunc(finiteDiagnosticNumber(result?.undoDepth)),
+        redoDepth: Math.trunc(finiteDiagnosticNumber(result?.redoDepth)),
+        historyBytes: Math.trunc(finiteDiagnosticNumber(result?.historyBytes)),
         dirty: result?.dirty === true,
         cache: {
           videoCount: Math.trunc(finiteDiagnosticNumber(cache.videoCount)),
@@ -1254,6 +1318,18 @@ class MPVOverlayHost {
     }
   }
 
+  _makeOverlayHistoryActionRequest(action) {
+    this.overlayHistoryActionSequence += 1;
+    return {
+      hostGeneration: this.hostGeneration,
+      videoGeneration: this.currentVideoGeneration,
+      inputRevision: this.currentInputRevision,
+      sessionId: this.activeSessionId,
+      actionId: `overlay-history-${this.hostGeneration}-${this.overlayHistoryActionSequence}`,
+      action
+    };
+  }
+
   _executeFabricMethod(method, payload) {
     const argument = payload === undefined ? '' : JSON.stringify(payload);
     return this.window.webContents?.executeJavaScript?.(
@@ -1420,6 +1496,7 @@ class MPVOverlayHost {
     this.currentToolRevision = -1;
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
+    this.suppressedOverlayHistoryKeys.clear();
     this.lastBounds = null;
     // 피드백 32: 호스트 재생성 후 동일 bounds 스킵 오판 방지
     this._lastAppliedScreenBounds = null;
@@ -1462,6 +1539,7 @@ class MPVOverlayHost {
       }
     });
     this.hostGeneration += 1;
+    this.drawingActionQueue = Promise.resolve();
     this.fabricReadyGeneration = 0;
     this.fabricAttemptGeneration = 0;
     this.fabricPreparationPromise = null;
@@ -1476,6 +1554,7 @@ class MPVOverlayHost {
     this.currentToolRevision = -1;
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
+    this.suppressedOverlayHistoryKeys.clear();
     this.window = hostWindow;
     // 피드백 27·29·31: forward는 mousemove를 이 창의 Chromium에도 전달해
     // 기본 화살표 커서가 메인 창 커서와 경합(깜빡임)한다. 이 창은 마우스 이벤트를
@@ -1511,6 +1590,28 @@ class MPVOverlayHost {
           this.desiredInputEnabled !== true ||
           this.fabricReadyGeneration !== hostGeneration ||
           !this.activeSessionId) {
+        return;
+      }
+      const inputCode = String(input?.code || '');
+      if (this.suppressedOverlayHistoryKeys.has(inputCode)) {
+        if (input?.type === 'keyUp') {
+          this.suppressedOverlayHistoryKeys.delete(inputCode);
+          event?.preventDefault?.();
+          return;
+        }
+        if (input?.type === 'keyDown' && input.isAutoRepeat === true) {
+          event?.preventDefault?.();
+          return;
+        }
+      }
+      const historyAction = overlayHistoryActionFromInput(input);
+      if (historyAction) {
+        this.suppressedOverlayHistoryKeys.add(inputCode);
+        event?.preventDefault?.();
+        if (input.isAutoRepeat !== true) {
+          const request = this._makeOverlayHistoryActionRequest(historyAction);
+          this.applyDrawingAction(request).catch(() => {});
+        }
         return;
       }
       const forwardedInput = createForwardedKeyboardInput(input);
@@ -1552,6 +1653,7 @@ class MPVOverlayHost {
       this.currentToolRevision = -1;
       this.completedActionIds.clear();
       this.inFlightDrawingActions.clear();
+      this.suppressedOverlayHistoryKeys.clear();
       this._lastAppliedScreenBounds = null;
       if (!hostWindow.isDestroyed?.()) hostWindow.destroy();
     });
@@ -1561,6 +1663,7 @@ class MPVOverlayHost {
       this.contentLoadGeneration += 1;
       this.window = null;
       this.contentLoaded = false;
+      this.suppressedOverlayHistoryKeys.clear();
     });
 
     return hostWindow;
