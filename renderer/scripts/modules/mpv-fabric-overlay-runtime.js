@@ -3,12 +3,22 @@
 const {
   createFabricDrawingPilotMetrics
 } = require('./fabric-drawing-pilot-metrics.js');
+const {
+  splitStrokePointsByPolygon
+} = require('./drawing-v3/stroke-splitter.js');
+const {
+  polygonHasArea,
+  boundsForPoints,
+  boundsIntersect,
+  simplifyClosedPolygon
+} = require('./drawing-v3/lasso-geometry.js');
 
 const SCENE_KEY_SEPARATOR = '\u0000';
 const DEFAULT_MAX_VIDEOS = 10;
 const DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
 const DEFAULT_MAX_ACTIONS = 2048;
 const MAX_STROKE_POINTS = 20000;
+const MAX_LASSO_POINTS = 1024;
 const DEFAULT_MAX_OBJECTS = 10000;
 const TRANSFORM_FIELDS = ['left', 'top', 'scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY'];
 const UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ['scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY'];
@@ -144,6 +154,11 @@ function createSessionSceneStore(options = {}) {
   const maxVideos = positiveInteger(options.maxVideos, DEFAULT_MAX_VIDEOS);
   const maxBytes = positiveInteger(options.maxBytes, DEFAULT_MAX_BYTES);
   const maxObjects = positiveInteger(options.maxObjects, DEFAULT_MAX_OBJECTS);
+  const maxHistory = positiveInteger(options.maxHistory, 32);
+  const maxHistoryBytes = positiveInteger(
+    options.maxHistoryBytes,
+    Math.max(1, Math.min(16 * 1024 * 1024, Math.floor(maxBytes / 4)))
+  );
   const estimateObjectBytes = typeof options.estimateObjectBytes === 'function'
     ? options.estimateObjectBytes
     : defaultEstimateObjectBytes;
@@ -166,7 +181,7 @@ function createSessionSceneStore(options = {}) {
 
   function calculateEstimatedBytes() {
     let total = 0;
-    for (const scene of scenes.values()) total += scene.estimatedBytes;
+    for (const scene of scenes.values()) total += scene.estimatedBytes + finiteNumber(scene.undoBytes);
     return total;
   }
 
@@ -215,6 +230,45 @@ function createSessionSceneStore(options = {}) {
     }, 0);
   }
 
+  function clearUndoHistory(scene) {
+    if (!scene) return;
+    scene.undoStack.length = 0;
+    scene.undoBytes = 0;
+  }
+
+  function estimateUndoEntryBytes(entry) {
+    let bytes = 0;
+    for (const object of entry.removedObjects || []) {
+      bytes += Math.max(1, finiteNumber(estimateObjectBytes(object), 1));
+    }
+    for (const id of [
+      ...(entry.previousOrder || []),
+      ...(entry.addedIds || []),
+      ...(entry.previousSelection || []),
+      ...(entry.coalesceIds || [])
+    ]) {
+      bytes += Math.max(2, String(id).length * 2);
+    }
+    bytes += defaultEstimateObjectBytes(entry.survivingTransforms || []);
+    return bytes;
+  }
+
+  function pushUndoEntry(scene, entry) {
+    const estimatedBytes = estimateUndoEntryBytes(entry);
+    while (scene.undoStack.length > 0 && (
+      scene.undoStack.length >= maxHistory ||
+      scene.undoBytes + estimatedBytes > maxHistoryBytes ||
+      calculateEstimatedBytes() + estimatedBytes > maxBytes
+    )) {
+      const removed = scene.undoStack.shift();
+      scene.undoBytes = Math.max(0, scene.undoBytes - finiteNumber(removed?.estimatedBytes));
+    }
+    if (estimatedBytes > maxHistoryBytes || calculateEstimatedBytes() + estimatedBytes > maxBytes) return false;
+    scene.undoStack.push({ ...entry, estimatedBytes });
+    scene.undoBytes += estimatedBytes;
+    return true;
+  }
+
   function activateSession(session) {
     if (!session || typeof session.sessionId !== 'string' || session.sessionId.length === 0) {
       return { accepted: false, reason: 'invalid-session' };
@@ -241,6 +295,8 @@ function createSessionSceneStore(options = {}) {
         targetFrame,
         objects: new Map(),
         selectedObjectIds: new Set(),
+        undoStack: [],
+        undoBytes: 0,
         dirty: false,
         mutationCount: 0,
         estimatedBytes: 0
@@ -286,10 +342,11 @@ function createSessionSceneStore(options = {}) {
     }
 
     const record = clonePlain(stroke);
+    clearUndoHistory(scene);
     scene.objects.set(record.id, record);
     recalculateSceneBytes(scene);
     enforceLimits();
-    if (calculateEstimatedBytes() > maxBytes) {
+    if (calculateEstimatedBytes() - scene.undoBytes > maxBytes) {
       scene.objects.delete(record.id);
       recalculateSceneBytes(scene);
       return { applied: false, reason: 'scene-capacity-exceeded' };
@@ -336,10 +393,127 @@ function createSessionSceneStore(options = {}) {
     }
 
     if (!changed) return { applied: false, objectIds: [] };
+    const latestUndo = scene.undoStack.at(-1);
+    const coalesceIds = new Set(latestUndo?.coalesceIds || latestUndo?.addedIds || []);
+    const selectedIds = [...scene.selectedObjectIds];
+    const coalescesLatestSplit = !!latestUndo &&
+      selectedIds.length === coalesceIds.size &&
+      selectedIds.every(id => coalesceIds.has(id)) &&
+      changedIds.every(id => coalesceIds.has(id));
+    if (!coalescesLatestSplit) clearUndoHistory(scene);
     recalculateSceneBytes(scene);
     noteMutation(scene);
     touchVideo(scene.stableVideoIdentity);
     return { applied: true, objectIds: changedIds };
+  }
+
+  function replaceObjects(change = {}) {
+    const scene = activeScene();
+    if (!scene) return { applied: false, reason: 'no-active-session' };
+    let replacements = Array.isArray(change.replacements)
+      ? change.replacements.map(replacement => ({
+        removeId: replacement?.removeId,
+        addObjects: Array.isArray(replacement?.addObjects) ? replacement.addObjects.map(clonePlain) : []
+      }))
+      : [];
+    if (replacements.length === 0 && Array.isArray(change.removeIds)) {
+      const legacyRemoveIds = [...new Set(change.removeIds)];
+      replacements = legacyRemoveIds.map((removeId, index) => ({
+        removeId,
+        addObjects: index === 0 && Array.isArray(change.addObjects) ? change.addObjects.map(clonePlain) : []
+      }));
+    }
+    const removeIds = new Set(replacements.map(replacement => replacement.removeId));
+    const additions = replacements.flatMap(replacement => replacement.addObjects);
+    if (removeIds.size === 0 || ![...removeIds].every(id => scene.objects.has(id))) {
+      return { applied: false, reason: 'invalid-replacement-source' };
+    }
+    if (removeIds.size !== replacements.length) {
+      return { applied: false, reason: 'duplicate-replacement-source' };
+    }
+    const survivingIds = new Set([...scene.objects.keys()].filter(id => !removeIds.has(id)));
+    const additionIds = new Set();
+    for (const object of additions) {
+      if (!object || typeof object.id !== 'string' || !object.id ||
+          !Array.isArray(object.sourcePoints) || object.sourcePoints.length > MAX_STROKE_POINTS ||
+          survivingIds.has(object.id) || additionIds.has(object.id)) {
+        return { applied: false, reason: 'invalid-replacement-object' };
+      }
+      additionIds.add(object.id);
+    }
+    if (survivingIds.size + additions.length > maxObjects) {
+      return { applied: false, reason: 'scene-object-limit-exceeded' };
+    }
+
+    const previousObjects = scene.objects;
+    const previousSelection = scene.selectedObjectIds;
+    const previousBytes = scene.estimatedBytes;
+    const requestedSelection = Array.isArray(change.selectedObjectIds) ? change.selectedObjectIds : [];
+    const historyEntry = {
+      previousOrder: [...previousObjects.keys()],
+      removedObjects: [...removeIds].map(id => clonePlain(previousObjects.get(id))),
+      addedIds: additions.map(object => object.id),
+      previousSelection: [...previousSelection],
+      coalesceIds: [...requestedSelection],
+      survivingTransforms: requestedSelection
+        .filter(id => previousObjects.has(id) && !removeIds.has(id))
+        .map(id => ({ id, transform: clonePlain(previousObjects.get(id)?.transform || {}) }))
+    };
+    const nextObjects = new Map();
+    const replacementsById = new Map(replacements.map(replacement => [replacement.removeId, replacement.addObjects]));
+    for (const [id, object] of previousObjects) {
+      if (!removeIds.has(id)) {
+        nextObjects.set(id, object);
+        continue;
+      }
+      for (const addition of replacementsById.get(id) || []) nextObjects.set(addition.id, addition);
+    }
+    scene.objects = nextObjects;
+    scene.selectedObjectIds = new Set(
+      (Array.isArray(change.selectedObjectIds) ? change.selectedObjectIds : [])
+        .filter(id => nextObjects.has(id))
+    );
+    recalculateSceneBytes(scene);
+    if (calculateEstimatedBytes() - scene.undoBytes > maxBytes) {
+      scene.objects = previousObjects;
+      scene.selectedObjectIds = previousSelection;
+      scene.estimatedBytes = previousBytes;
+      return { applied: false, reason: 'scene-capacity-exceeded' };
+    }
+    const undoRecorded = pushUndoEntry(scene, historyEntry);
+    noteMutation(scene);
+    touchVideo(scene.stableVideoIdentity);
+    return {
+      applied: true,
+      removedIds: [...removeIds],
+      addedIds: additions.map(object => object.id),
+      selectedObjectIds: [...scene.selectedObjectIds],
+      undoRecorded
+    };
+  }
+
+  function undo() {
+    const scene = activeScene();
+    if (!scene || scene.undoStack.length === 0) return { applied: false, reason: 'history-empty' };
+    const previous = scene.undoStack.pop();
+    scene.undoBytes = Math.max(0, scene.undoBytes - finiteNumber(previous.estimatedBytes));
+    const restoredById = new Map(scene.objects);
+    for (const id of previous.addedIds) restoredById.delete(id);
+    for (const object of previous.removedObjects) restoredById.set(object.id, clonePlain(object));
+    for (const item of previous.survivingTransforms || []) {
+      const object = restoredById.get(item.id);
+      if (object) object.transform = clonePlain(item.transform);
+    }
+    scene.objects = new Map(
+      previous.previousOrder
+        .filter(id => restoredById.has(id))
+        .map(id => [id, restoredById.get(id)])
+    );
+    scene.selectedObjectIds = new Set();
+    recalculateSceneBytes(scene);
+    noteMutation(scene);
+    touchVideo(scene.stableVideoIdentity);
+    return { applied: true, objectCount: scene.objects.size, selectedObjectIds: [] };
   }
 
   function deleteSelection() {
@@ -354,6 +528,7 @@ function createSessionSceneStore(options = {}) {
     }
     scene.selectedObjectIds.clear();
     if (deletedIds.length === 0) return { applied: false, deletedCount: 0, deletedIds };
+    clearUndoHistory(scene);
     recalculateSceneBytes(scene);
     noteMutation(scene);
     touchVideo(scene.stableVideoIdentity);
@@ -365,6 +540,7 @@ function createSessionSceneStore(options = {}) {
     const deletedCount = scene?.objects.size || 0;
     if (!scene || deletedCount === 0) return { applied: false, deletedCount: 0, deletedIds: [] };
     const deletedIds = [...scene.objects.keys()];
+    clearUndoHistory(scene);
     scene.objects.clear();
     scene.selectedObjectIds.clear();
     recalculateSceneBytes(scene);
@@ -418,6 +594,7 @@ function createSessionSceneStore(options = {}) {
       maxVideos,
       maxBytes,
       maxObjects,
+      maxHistoryBytes,
       videoCount: videoAccess.size,
       sceneCount: scenes.size,
       estimatedBytes: calculateEstimatedBytes(),
@@ -431,6 +608,8 @@ function createSessionSceneStore(options = {}) {
       selectionCount: scene?.selectedObjectIds.size || 0,
       mutationCount: scene?.mutationCount || 0,
       dirty: scene?.dirty || false,
+      undoDepth: scene?.undoStack.length || 0,
+      undoBytes: scene?.undoBytes || 0,
       sceneKeys: [...scenes.keys()]
     };
   }
@@ -447,6 +626,8 @@ function createSessionSceneStore(options = {}) {
     addStroke,
     selectObjects,
     transformSelection,
+    replaceObjects,
+    undo,
     deleteSelection,
     clearSession,
     updateTool,
@@ -580,6 +761,7 @@ function createFabricOverlayRuntime(options = {}) {
   const sceneStore = options.sceneStore || createSessionSceneStore(options.sceneStoreOptions);
   const actionDeduper = options.actionDeduper || createActionDeduper(options.actionDeduperOptions);
   const strokePathFactory = options.strokePathFactory || createStrokePathData;
+  const maxLassoFragments = positiveInteger(options.maxLassoFragments, 512);
   const tokenState = { hostGeneration: -1, videoGeneration: -1, inputRevision: -1 };
   const domListeners = [];
   const fabricListeners = [];
@@ -597,9 +779,13 @@ function createFabricOverlayRuntime(options = {}) {
   let inputEnabled = false;
   let currentSession = null;
   let activeStroke = null;
+  let activeLasso = null;
+  let pendingLassoVisual = null;
   let brushStyle = { ...DEFAULT_BRUSH_STYLE };
   let brushControls = null;
   let brushPanelOpen = false;
+  let selectionMode = 'stroke';
+  let selectionControls = null;
   let transformStart = null;
   let selectGesture = null;
   let deferredViewport = null;
@@ -641,6 +827,64 @@ function createFabricOverlayRuntime(options = {}) {
       toolButtons.set(action, button);
     }
     return button;
+  }
+
+  function syncSelectionControls(tool = currentSession?.tool) {
+    if (!selectionControls) return;
+    selectionControls.group.style.display = tool === 'select' ? 'flex' : 'none';
+    for (const [mode, button] of selectionControls.buttons) {
+      const active = selectionMode === mode;
+      button.dataset.active = String(active);
+      button.setAttribute?.('aria-pressed', String(active));
+    }
+  }
+
+  function setSelectionMode(mode) {
+    const nextMode = mode === 'lasso' ? 'lasso' : 'stroke';
+    if (selectionMode !== nextMode) rollbackPendingLassoVisual();
+    const selectedObjectIds = sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
+    if (selectionMode !== nextMode && (activeLasso || selectGesture || transformStart || deferredViewport)) {
+      cancelActiveLasso();
+      cancelSelectInteraction();
+    }
+    selectionMode = nextMode;
+    if (currentSession?.tool === 'select') {
+      setToolMode('select');
+      if (selectionMode === 'lasso' && selectedObjectIds.length > 0) activateObjectIds(selectedObjectIds);
+    }
+    else syncSelectionControls();
+    return selectionMode;
+  }
+
+  function createSelectionModeControls() {
+    const group = documentRef.createElement('div');
+    group.dataset.fabricPilotGroup = 'selection-mode';
+    group.setAttribute?.('role', 'group');
+    group.setAttribute?.('aria-label', '선택 방식');
+    setStyles(group, {
+      display: 'none',
+      alignItems: 'center',
+      gap: '4px',
+      padding: '3px',
+      borderRadius: '8px',
+      background: 'rgba(255, 255, 255, 0.08)'
+    });
+
+    const strokeButton = createButton('획', 'select-stroke');
+    strokeButton.setAttribute?.('aria-label', '획 전체 선택');
+    const lassoButton = createButton('라쏘', 'select-lasso');
+    lassoButton.setAttribute?.('aria-label', '라쏘 부분 선택');
+    const buttons = new Map([
+      ['stroke', strokeButton],
+      ['lasso', lassoButton]
+    ]);
+    for (const button of buttons.values()) {
+      button.setAttribute?.('aria-pressed', 'false');
+      group.appendChild(button);
+    }
+    addDomListener(strokeButton, 'click', () => setSelectionMode('stroke'));
+    addDomListener(lassoButton, 'click', () => setSelectionMode('lasso'));
+    return { group, buttons, strokeButton, lassoButton };
   }
 
   function setBrushColor(color) {
@@ -1006,26 +1250,31 @@ function createFabricOverlayRuntime(options = {}) {
 
   function setToolMode(tool) {
     if (!fabricCanvas) return;
+    if (tool !== 'select') rollbackPendingLassoVisual();
     const selectMode = tool === 'select';
+    const nativeSelectMode = selectMode && selectionMode === 'stroke';
     for (const [buttonTool, button] of toolButtons) {
       const active = buttonTool === tool;
       button.dataset.active = String(active);
       button.setAttribute?.('aria-pressed', String(active));
     }
     fabricCanvas.isDrawingMode = false;
-    fabricCanvas.selection = selectMode;
-    fabricCanvas.defaultCursor = selectMode ? 'default' : 'crosshair';
+    fabricCanvas.selection = nativeSelectMode;
+    fabricCanvas.defaultCursor = selectMode
+      ? (selectionMode === 'lasso' ? 'crosshair' : 'default')
+      : 'crosshair';
     fabricCanvas.hoverCursor = 'grab';
     fabricCanvas.moveCursor = 'grabbing';
     fabricCanvas.freeDrawingCursor = 'crosshair';
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
-      object.set({ selectable: selectMode, evented: selectMode });
+      object.set({ selectable: nativeSelectMode, evented: nativeSelectMode });
     }
     if (!selectMode) {
       fabricCanvas.discardActiveObject();
       sceneStore.selectObjects([]);
     }
+    syncSelectionControls(tool);
     refreshSelectionInteractionPolicy();
     fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
     fabricCanvas.requestRenderAll();
@@ -1097,7 +1346,350 @@ function createFabricOverlayRuntime(options = {}) {
   function cancelActiveStroke() {
     removeTransientPreview();
     activeStroke = null;
+    activeLasso = null;
     fabricCanvas?.requestRenderAll();
+  }
+
+  function removeLassoPreview() {
+    if (!activeLasso?.preview || !fabricCanvas) return;
+    fabricCanvas.remove(activeLasso.preview);
+    activeLasso.preview = null;
+  }
+
+  function appendLassoPoint(event) {
+    if (!activeLasso) return;
+    const point = mapClientPointToSource(
+      event,
+      currentSession?.canvasRect,
+      currentSession?.viewportTransform,
+      { width: currentSession?.sourceWidth, height: currentSession?.sourceHeight }
+    );
+    if (!point) return;
+    const previous = activeLasso.points[activeLasso.points.length - 1];
+    if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < 0.5) return;
+    if (activeLasso.points.length >= MAX_LASSO_POINTS) {
+      activeLasso.points = activeLasso.points.filter((_sample, index) => index === 0 || index % 2 === 0);
+    }
+    activeLasso.points.push(point);
+  }
+
+  function updateLassoPreview() {
+    if (!activeLasso || activeLasso.points.length < 2 || !fabricCanvas) return;
+    removeLassoPreview();
+    const { Path } = resolveFabric();
+    const [first, ...rest] = activeLasso.points;
+    const pathData = `M ${first.x} ${first.y} ${rest.map(point => `L ${point.x} ${point.y}`).join(' ')}`;
+    const preview = new Path(pathData, {
+      fill: 'rgba(255, 208, 0, 0.08)',
+      stroke: '#ffd000',
+      strokeWidth: Math.max(1, resolveSelectionHitTolerance(currentSession || {}) / 3),
+      strokeDashArray: [8, 6],
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+      perPixelTargetFind: false
+    });
+    preview.__baeframeObjectId = null;
+    preview.__baeframeTransient = true;
+    activeLasso.preview = preview;
+    fabricCanvas.add(preview);
+    fabricCanvas.requestRenderAll();
+  }
+
+  function cancelActiveLasso() {
+    if (!activeLasso) return;
+    const pointerId = activeLasso.pointerId;
+    removeLassoPreview();
+    activeLasso = null;
+    releasePointerCapture(fabricCanvas?.upperCanvasEl || canvasElement, pointerId);
+    fabricCanvas?.requestRenderAll();
+  }
+
+  function flattenStrokeSourcePoints(record, object) {
+    const points = Array.isArray(record?.sourcePoints) ? record.sourcePoints : [];
+    const { Point, util } = resolveFabric();
+    if (!object?.calcTransformMatrix || !object?.pathOffset || !Point || !util?.transformPoint) {
+      return points.map(point => ({ ...point }));
+    }
+    const matrix = object.calcTransformMatrix();
+    return points.map(point => {
+      const local = new Point(
+        finiteNumber(point.x) - finiteNumber(object.pathOffset.x),
+        finiteNumber(point.y) - finiteNumber(object.pathOffset.y)
+      );
+      const transformed = util.transformPoint(local, matrix);
+      return { ...point, x: transformed.x, y: transformed.y };
+    });
+  }
+
+  function createStrokeFragment(record, points, selected, caps = {}) {
+    if (!Array.isArray(points) || points.length < 2) return null;
+    let strokeData;
+    try {
+      strokeData = strokePathFactory(points, {
+        size: record.style?.size,
+        last: true,
+        start: { cap: caps.start !== false },
+        end: { cap: caps.end !== false }
+      });
+    } catch (error) {
+      lastError = error.message;
+      metrics.recordSurfaceError();
+      return null;
+    }
+    if (!strokeData?.pathData || !Array.isArray(strokeData.sourcePoints) || strokeData.sourcePoints.length < 2) {
+      return null;
+    }
+    const fragment = {
+      id: createId(selected ? 'lasso-selected' : 'lasso-remain'),
+      type: 'stroke',
+      pathData: strokeData.pathData,
+      sourcePoints: strokeData.sourcePoints,
+      style: clonePlain(record.style || DEFAULT_BRUSH_STYLE),
+      strokeCaps: {
+        start: caps.start !== false,
+        end: caps.end !== false
+      }
+    };
+    const path = makeFabricPath(fragment);
+    fragment.transform = captureTransform(path);
+    return fragment;
+  }
+
+  function pendingTargetIncludes(target, objectIds) {
+    if (!target || !objectIds?.size) return false;
+    const children = typeof target.getObjects === 'function' ? target.getObjects() : [target];
+    return children.some(object => objectIds.has(object?.__baeframeObjectId));
+  }
+
+  function materializePendingLassoVisual() {
+    const pending = pendingLassoVisual;
+    if (!pending || !fabricCanvas) return false;
+    if (pending.sessionId !== currentSession?.sessionId || pending.inputRevision !== tokenState.inputRevision) {
+      pendingLassoVisual = null;
+      renderActiveScene();
+      return false;
+    }
+
+    pendingLassoVisual = null;
+    const selectedObjects = new Map(
+      fabricCanvas.getObjects()
+        .filter(object => pending.selectedIds.has(object.__baeframeObjectId))
+        .map(object => [object.__baeframeObjectId, object])
+    );
+    for (const original of pending.originalObjects) fabricCanvas.remove(original);
+    for (const record of pending.addedObjects) {
+      const selectedObject = selectedObjects.get(record.id);
+      if (selectedObject) {
+        selectedObject.set({ opacity: normalizePathOpacity(record.style?.opacity) });
+        selectedObject.__baeframePendingLasso = false;
+        selectedObject.setCoords?.();
+        continue;
+      }
+      fabricCanvas.add(makeFabricPath(record));
+    }
+
+    const order = sceneStore.getActiveSceneSnapshot()?.objects.map(object => object.id) || [];
+    const objectsById = new Map(
+      fabricCanvas.getObjects()
+        .filter(object => object.__baeframeObjectId)
+        .map(object => [object.__baeframeObjectId, object])
+    );
+    order.forEach((id, index) => {
+      const object = objectsById.get(id);
+      if (object) fabricCanvas.moveObjectTo?.(object, index);
+    });
+    refreshSelectionInteractionPolicy();
+    fabricCanvas.requestRenderAll();
+    return true;
+  }
+
+  function rollbackPendingLassoVisual() {
+    const pending = pendingLassoVisual;
+    if (!pending || !fabricCanvas) return false;
+    pendingLassoVisual = null;
+    fabricCanvas.discardActiveObject();
+    for (const object of [...fabricCanvas.getObjects()]) {
+      if (object.__baeframePendingLasso) fabricCanvas.remove(object);
+    }
+    const result = sceneStore.undo();
+    if (!result.applied) {
+      renderActiveScene();
+      return false;
+    }
+    sceneStore.selectObjects([]);
+    refreshSelectionInteractionPolicy();
+    fabricCanvas.requestRenderAll();
+    updateObjectMetric();
+    return true;
+  }
+
+  function activateObjectIds(objectIds = []) {
+    if (!fabricCanvas) return;
+    const ids = new Set(objectIds);
+    fabricCanvas.discardActiveObject();
+    const objects = fabricCanvas.getObjects().filter(object => ids.has(object.__baeframeObjectId));
+    for (const object of fabricCanvas.getObjects()) {
+      if (object.__baeframeTransient) continue;
+      const selected = ids.has(object.__baeframeObjectId);
+      object.set({ selectable: selected, evented: selected });
+    }
+    if (objects.length === 1) {
+      fabricCanvas.setActiveObject?.(objects[0]);
+    } else if (objects.length > 1) {
+      const { ActiveSelection } = resolveFabric();
+      if (ActiveSelection) {
+        fabricCanvas.setActiveObject?.(new ActiveSelection(objects, { canvas: fabricCanvas }));
+      }
+    }
+    sceneStore.selectObjects(objects.map(object => object.__baeframeObjectId));
+    refreshSelectionInteractionPolicy();
+    fabricCanvas.requestRenderAll();
+  }
+
+  function finalizeActiveLasso() {
+    if (!activeLasso) return { applied: false, reason: 'no-active-lasso' };
+    const sourcePerCssPixel = currentSession
+      ? currentSession.sourceWidth / Math.max(1, currentSession.canvasRect.width) /
+        Math.max(0.01, Math.abs(finiteNumber(currentSession.viewportTransform?.scale, 1)))
+      : 1;
+    const polygon = simplifyClosedPolygon(
+      activeLasso.points,
+      Math.min(8, Math.max(0.25, sourcePerCssPixel * 1.5))
+    );
+    removeLassoPreview();
+    activeLasso = null;
+    if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
+      activateObjectIds([]);
+      return { applied: false, reason: 'lasso-too-small' };
+    }
+
+    const snapshot = sceneStore.getActiveSceneSnapshot();
+    const canvasObjects = new Map(
+      fabricCanvas.getObjects()
+        .filter(object => object.__baeframeObjectId)
+        .map(object => [object.__baeframeObjectId, object])
+    );
+    const replacements = [];
+    const selectedObjectIds = [];
+    const polygonBounds = boundsForPoints(polygon);
+    const sceneLimits = sceneStore.getDiagnostics();
+    let accumulatedFragments = 0;
+
+    for (const record of snapshot?.objects || []) {
+      if (record.type !== 'stroke') continue;
+      const flattenedPoints = flattenStrokeSourcePoints(record, canvasObjects.get(record.id));
+      const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
+      if (!boundsIntersect(boundsForPoints(flattenedPoints, maximumRadius), polygonBounds)) continue;
+      const split = splitStrokePointsByPolygon(flattenedPoints, polygon, {
+        size: record.style?.size,
+        thinning: 0.65,
+        maxRuns: Math.max(1, maxLassoFragments - accumulatedFragments + 1)
+      });
+      if (split.limitExceeded) {
+        activateObjectIds([]);
+        return { applied: false, reason: 'lasso-fragment-limit-exceeded', selectedObjectIds: [] };
+      }
+      if (split.inside.length === 0) continue;
+      if (split.outside.length === 0) {
+        selectedObjectIds.push(record.id);
+        continue;
+      }
+      accumulatedFragments += split.runs.length;
+      const projectedObjectCount = snapshot.objects.length - (replacements.length + 1) + accumulatedFragments;
+      if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
+        activateObjectIds([]);
+        return { applied: false, reason: 'lasso-fragment-limit-exceeded', selectedObjectIds: [] };
+      }
+      const addObjects = [];
+      let fragmentBuildFailed = false;
+      const originalCaps = record.strokeCaps || { start: true, end: true };
+      for (let runIndex = 0; runIndex < split.runs.length; runIndex += 1) {
+        const run = split.runs[runIndex];
+        const selected = run.kind === 'inside';
+        const fragment = createStrokeFragment(record, run.points, selected, {
+          start: runIndex === 0 ? originalCaps.start !== false : false,
+          end: runIndex === split.runs.length - 1 ? originalCaps.end !== false : false
+        });
+        if (!fragment) {
+          fragmentBuildFailed = true;
+          break;
+        }
+        addObjects.push(fragment);
+        if (selected) selectedObjectIds.push(fragment.id);
+      }
+      if (fragmentBuildFailed) {
+        activateObjectIds([]);
+        return { applied: false, reason: 'fragment-build-failed', selectedObjectIds: [] };
+      }
+      replacements.push({ removeId: record.id, addObjects });
+    }
+
+    let result = { applied: false, selectedObjectIds };
+    if (replacements.length > 0 && selectedObjectIds.length > 0) {
+      result = sceneStore.replaceObjects({ replacements, selectedObjectIds });
+      if (!result.applied) {
+        activateObjectIds([]);
+        return result;
+      }
+      const addedObjects = replacements.flatMap(replacement => replacement.addObjects);
+      const selectedIds = new Set(selectedObjectIds);
+      const originalObjects = replacements
+        .map(replacement => canvasObjects.get(replacement.removeId))
+        .filter(Boolean);
+      const selectedFragments = addedObjects.filter(record => selectedIds.has(record.id));
+      const canDeferVisualSplit = result.undoRecorded === true &&
+        originalObjects.length === replacements.length &&
+        selectedFragments.length > 0;
+      if (canDeferVisualSplit) {
+        const proxyObjects = [];
+        for (const record of selectedFragments) {
+          const proxy = makeFabricPath(record);
+          proxy.set({ opacity: 0 });
+          proxy.__baeframePendingLasso = true;
+          proxyObjects.push(proxy);
+          fabricCanvas.add(proxy);
+        }
+        pendingLassoVisual = {
+          sessionId: currentSession?.sessionId,
+          inputRevision: tokenState.inputRevision,
+          originalObjects,
+          addedObjects,
+          selectedIds,
+          proxyObjects
+        };
+        refreshSelectionInteractionPolicy();
+        fabricCanvas.requestRenderAll();
+      } else {
+        renderActiveScene();
+      }
+      updateObjectMetric();
+    }
+    activateObjectIds(selectedObjectIds);
+    return { ...result, selectedObjectIds };
+  }
+
+  function pointerTargetsActiveSelection(event) {
+    const activeObject = fabricCanvas?.getActiveObject?.();
+    if (!activeObject) return false;
+    try {
+      const point = fabricCanvas.getScenePoint?.(event) || {
+        x: finiteNumber(event?.clientX),
+        y: finiteNumber(event?.clientY)
+      };
+      const bounds = activeObject.getBoundingRect?.();
+      if (bounds && point.x >= bounds.left && point.x <= bounds.left + bounds.width &&
+          point.y >= bounds.top && point.y <= bounds.top + bounds.height) {
+        return true;
+      }
+    } catch (_error) { /* bounds lookup is best-effort */ }
+    let target = null;
+    try {
+      target = fabricCanvas.findTarget?.(event) || null;
+    } catch (_error) { /* target lookup is best-effort */ }
+    if (target === activeObject) return true;
+    const activeChildren = typeof activeObject.getObjects === 'function' ? activeObject.getObjects() : [];
+    return activeChildren.includes(target);
   }
 
   function finalizeActiveStroke() {
@@ -1209,8 +1801,22 @@ function createFabricOverlayRuntime(options = {}) {
     selectGesture = null;
     transformStart = null;
     deferredViewport = null;
+    if (gesture && pendingLassoVisual) {
+      rollbackPendingLassoVisual();
+      return;
+    }
     refreshSelectionInteractionPolicy();
     fabricCanvas?.requestRenderAll();
+  }
+
+  function settleDeferredViewport(sessionId, inputRevision) {
+    const pending = deferredViewport;
+    deferredViewport = null;
+    if (!pending || pending.sessionId !== sessionId || pending.inputRevision !== inputRevision) return false;
+    if (destroyed || !inputEnabled || !fabricCanvas || currentSession?.sessionId !== sessionId) return false;
+    if (pending.command.revision <= currentSession.viewportRevision) return false;
+    applyViewportCommand(pending.command);
+    return true;
   }
 
   function scheduleSelectGestureSettle(gesture) {
@@ -1228,11 +1834,7 @@ function createFabricOverlayRuntime(options = {}) {
 
       transformStart = null;
       selectGesture = null;
-      const pending = deferredViewport;
-      deferredViewport = null;
-      if (!pending || pending.sessionId !== gesture.sessionId || pending.inputRevision !== gesture.inputRevision) return;
-      if (pending.command.revision <= currentSession.viewportRevision) return;
-      applyViewportCommand(pending.command);
+      settleDeferredViewport(gesture.sessionId, gesture.inputRevision);
     });
   }
 
@@ -1254,6 +1856,37 @@ function createFabricOverlayRuntime(options = {}) {
       return;
     }
     if (tool !== 'select' || selectGesture || activeStroke) return;
+    if (selectionMode === 'lasso') {
+      if (activeLasso) return;
+      if (pointerTargetsActiveSelection(event)) {
+        selectGesture = {
+          pointerId: event.pointerId,
+          sessionId: currentSession?.sessionId,
+          inputRevision: tokenState.inputRevision,
+          phase: 'tracking'
+        };
+        try {
+          event.currentTarget?.setPointerCapture?.(event.pointerId);
+        } catch (_error) { /* pointer capture is best-effort */ }
+        return;
+      }
+      rollbackPendingLassoVisual();
+      activeLasso = {
+        pointerId: event.pointerId,
+        sessionId: currentSession?.sessionId,
+        inputRevision: tokenState.inputRevision,
+        points: [],
+        preview: null
+      };
+      fabricCanvas.discardActiveObject();
+      sceneStore.selectObjects([]);
+      try {
+        event.currentTarget?.setPointerCapture?.(event.pointerId);
+      } catch (_error) { /* pointer capture is best-effort */ }
+      appendLassoPoint(event);
+      event.preventDefault?.();
+      return;
+    }
     selectGesture = {
       pointerId: event.pointerId,
       sessionId: currentSession?.sessionId,
@@ -1266,6 +1899,13 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerMove(event) {
+    if (activeLasso) {
+      if (event.pointerId !== activeLasso.pointerId) return;
+      appendLassoPoint(event);
+      updateLassoPreview();
+      event.preventDefault?.();
+      return;
+    }
     if (!activeStroke || event.pointerId !== activeStroke.pointerId) return;
     const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : [];
     const samples = coalesced.length > 0 ? coalesced : [event];
@@ -1275,6 +1915,16 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerUp(event) {
+    if (activeLasso) {
+      if (event.pointerId !== activeLasso.pointerId) return;
+      const { sessionId, inputRevision } = activeLasso;
+      appendLassoPoint(event);
+      releasePointerCapture(event.currentTarget || fabricCanvas?.upperCanvasEl, event.pointerId);
+      finalizeActiveLasso();
+      settleDeferredViewport(sessionId, inputRevision);
+      event.preventDefault?.();
+      return;
+    }
     if (activeStroke) {
       if (event.pointerId !== activeStroke.pointerId) return;
       appendPointerSample(event);
@@ -1291,6 +1941,13 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerCancel(event) {
+    if (activeLasso) {
+      if (event.pointerId !== undefined && event.pointerId !== activeLasso.pointerId) return;
+      const { sessionId, inputRevision } = activeLasso;
+      cancelActiveLasso();
+      settleDeferredViewport(sessionId, inputRevision);
+      return;
+    }
     if (activeStroke) {
       if (event.pointerId !== undefined && event.pointerId !== activeStroke.pointerId) return;
       cancelActiveStroke();
@@ -1303,11 +1960,19 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onDocumentPointerUp(event) {
+    if (activeLasso && event.pointerId === activeLasso.pointerId) {
+      onPointerUp(event);
+      return;
+    }
     if (!selectGesture || event.pointerId !== selectGesture.pointerId) return;
     onPointerUp(event);
   }
 
   function onDocumentPointerCancel(event) {
+    if (activeLasso && event.pointerId === activeLasso.pointerId) {
+      onPointerCancel(event);
+      return;
+    }
     if (!selectGesture || event.pointerId !== selectGesture.pointerId) return;
     onPointerCancel(event);
   }
@@ -1353,6 +2018,12 @@ function createFabricOverlayRuntime(options = {}) {
     };
   }
 
+  function onObjectMoving(event) {
+    const target = event?.target;
+    if (!pendingLassoVisual || !pendingTargetIncludes(target, pendingLassoVisual.selectedIds)) return;
+    materializePendingLassoVisual();
+  }
+
   function onObjectModified(event) {
     const target = event?.target;
     if (!target) return;
@@ -1388,7 +2059,7 @@ function createFabricOverlayRuntime(options = {}) {
 
   function configureCanvasEvents() {
     const pointerTarget = fabricCanvas.upperCanvasEl || canvasElement;
-    addDomListener(pointerTarget, 'pointerdown', onPointerDown);
+    addDomListener(pointerTarget, 'pointerdown', onPointerDown, true);
     addDomListener(pointerTarget, 'pointermove', onPointerMove);
     addDomListener(pointerTarget, 'pointerup', onPointerUp);
     addDomListener(pointerTarget, 'pointercancel', onPointerCancel);
@@ -1400,6 +2071,7 @@ function createFabricOverlayRuntime(options = {}) {
     addFabricListener('selection:updated', onSelectionChanged);
     addFabricListener('selection:cleared', onSelectionCleared);
     addFabricListener('before:transform', onBeforeTransform);
+    addFabricListener('object:moving', onObjectMoving);
     addFabricListener('object:modified', onObjectModified);
   }
 
@@ -1419,11 +2091,16 @@ function createFabricOverlayRuntime(options = {}) {
   function refreshSelectionInteractionPolicy(session = currentSession) {
     if (!fabricCanvas) return;
     const tolerance = resolveSelectionHitTolerance(session || {});
+    const selectTool = sceneStore.getDiagnostics().tool === 'select';
+    const nativeSelection = selectTool && selectionMode === 'stroke';
+    const activeIds = new Set(selectionIds());
     fabricCanvas.setTargetFindTolerance?.(tolerance);
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
       applyMoveOnlyConstraints(object);
       applyUnselectedPermanentPathPolicy(object, tolerance);
+      const activeInLasso = selectTool && selectionMode === 'lasso' && activeIds.has(object.__baeframeObjectId);
+      object.set({ selectable: nativeSelection || activeInLasso, evented: nativeSelection || activeInLasso });
       object.setCoords?.();
     }
 
@@ -1438,6 +2115,7 @@ function createFabricOverlayRuntime(options = {}) {
     if (isPermanentPath || isPermanentActiveSelection) {
       applyMoveOnlyConstraints(activeObject);
       applySelectedActivePolicy(activeObject);
+      activeObject.set?.({ selectable: true, evented: true });
       activeObject.setCoords?.();
     }
   }
@@ -1492,6 +2170,8 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function disableInput() {
+    rollbackPendingLassoVisual();
+    cancelActiveLasso();
     cancelSelectInteraction();
     setSurfaceInput(false);
     fabricCanvas?.setCursor?.('default');
@@ -1532,6 +2212,7 @@ function createFabricOverlayRuntime(options = {}) {
     appliedSourceWidth = null;
     appliedSourceHeight = null;
     activeStroke = null;
+    pendingLassoVisual = null;
     transformStart = null;
     selectGesture = null;
     deferredViewport = null;
@@ -1541,6 +2222,7 @@ function createFabricOverlayRuntime(options = {}) {
     canvasElement = null;
     toolbar = null;
     brushControls = null;
+    selectionControls = null;
     badge = null;
     container = null;
     root = null;
@@ -1593,11 +2275,13 @@ function createFabricOverlayRuntime(options = {}) {
       const deleteButton = createButton('Delete', 'delete-selection');
       const clearButton = createButton('Clear', 'clear-session');
       brushControls = createBrushSettingsControls();
+      selectionControls = createSelectionModeControls();
       badge = documentRef.createElement('span');
       badge.className = 'mpv-fabric-pilot-badge';
       badge.textContent = '새 드로잉 시험판 · 저장 안 됨 · 시험 프레임 -';
       toolbar.appendChild(brushButton);
       toolbar.appendChild(selectButton);
+      toolbar.appendChild(selectionControls.group);
       toolbar.appendChild(deleteButton);
       toolbar.appendChild(clearButton);
       toolbar.appendChild(brushControls.settingsButton);
@@ -1633,6 +2317,7 @@ function createFabricOverlayRuntime(options = {}) {
         action: 'clear-session'
       }));
       syncBrushControls();
+      syncSelectionControls('brush');
       setSurfaceInput(false);
       configureLongTaskObserver();
       prepared = true;
@@ -1656,7 +2341,9 @@ function createFabricOverlayRuntime(options = {}) {
       return { accepted: false, reason: 'invalid-session' };
     }
 
+    rollbackPendingLassoVisual();
     if (activeStroke) cancelActiveStroke();
+    if (activeLasso) cancelActiveLasso();
     if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
 
     tokenState.hostGeneration = Number(request.hostGeneration);
@@ -1719,7 +2406,7 @@ function createFabricOverlayRuntime(options = {}) {
       },
       ...normalizeViewportTransform(command)
     };
-    if (selectGesture || transformStart !== null) {
+    if (activeLasso || selectGesture || transformStart !== null) {
       deferredViewport = {
         sessionId: currentSession.sessionId,
         inputRevision: tokenState.inputRevision,
@@ -1760,16 +2447,29 @@ function createFabricOverlayRuntime(options = {}) {
       return { applied: false, reason: 'stale-session' };
     }
     const action = command.action || command.type;
-    if (action !== 'delete-selection' && action !== 'clear-session') {
+    if (action !== 'delete-selection' && action !== 'clear-session' && action !== 'undo') {
       return { applied: false, reason: 'invalid-action' };
     }
     if (!actionDeduper.accept(command.actionId)) {
       metrics.recordDuplicateAction();
       return { applied: false, duplicate: true };
     }
+    materializePendingLassoVisual();
 
-    const result = action === 'delete-selection' ? sceneStore.deleteSelection() : sceneStore.clearSession();
+    const result = action === 'delete-selection'
+      ? sceneStore.deleteSelection()
+      : action === 'clear-session'
+        ? sceneStore.clearSession()
+        : sceneStore.undo();
     if (result.applied) {
+      if (action === 'undo') {
+        renderActiveScene();
+        fabricCanvas.discardActiveObject();
+        sceneStore.selectObjects([]);
+        setToolMode(currentSession?.tool || 'brush');
+        updateObjectMetric();
+        return result;
+      }
       const deletedIds = new Set(result.deletedIds);
       for (const object of fabricCanvas.getObjects()) {
         if (action === 'clear-session' || deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
@@ -1795,10 +2495,13 @@ function createFabricOverlayRuntime(options = {}) {
       targetFrame: currentSession?.targetFrame ?? null,
       viewportRevision: currentSession?.viewportRevision ?? null,
       tool: scene.tool,
+      selectionMode,
       objectCount: scene.objectCount,
       selectionCount: scene.selectionCount,
       mutationCount: scene.mutationCount,
       dirty: scene.dirty,
+      undoDepth: scene.undoDepth,
+      undoBytes: scene.undoBytes,
       cache: {
         videoCount: scene.videoCount,
         sceneCount: scene.sceneCount,
@@ -1847,5 +2550,6 @@ module.exports = {
   shouldAcceptInputRequest,
   resolveEffectiveCanvasRect,
   resolveSelectionHitTolerance,
-  mapClientPointToSource
+  mapClientPointToSource,
+  splitStrokePointsByPolygon
 };

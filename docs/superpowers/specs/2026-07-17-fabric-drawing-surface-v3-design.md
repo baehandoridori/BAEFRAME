@@ -753,6 +753,12 @@ SVG와 외부 네트워크 URL은 공식 객체로 허용하지 않는다.
 
 ## 13. 선택과 변형
 
+V 도구는 첫 시험 단계에서 두 가지 명시적 선택 프리셋을 제공한다.
+
+- `획`: 클릭 또는 사각 드래그로 닿은 StrokeObject 전체를 선택하고 이동한다.
+- `라쏘`: 자유형 영역에 닿은 StrokeObject의 실제 보이는 부분을 분리해 선택하고 이동한다.
+- 두 프리셋은 Alt 같은 보조키에 의존하지 않는다. 현재 프리셋은 B/V 전환 뒤에도 유지하지만 리뷰 데이터에는 저장하지 않는다.
+
 ### 13.1 클릭 선택
 
 - Fabric hit testing으로 최상위 객체를 선택한다.
@@ -765,14 +771,21 @@ SVG와 외부 네트워크 URL은 공식 객체로 허용하지 않는다.
 - 완전히 포함된 객체만 선택하는 별도 모드는 두지 않는다.
 - locked 객체는 선택 대상에서 제외한다.
 - 기본 드래그는 닿은 객체 전체를 선택한다.
-- Alt+드래그는 사각형을 split polygon으로 사용해 StrokeObject의 닿은 부분을 분리한다.
+- 사각형 부분 분리는 후속 프리셋으로 추가하며 자유형 라쏘와 같은 split command를 사용한다.
 
 ### 13.3 자유형 라쏘
 
 라쏘 polygon과 transform이 적용된 실제 렌더 outline이 교차하는지 계산한다. bounding box만으로 최종 hit를 확정하지 않는다.
 
-- 기본 동작: 닿은 객체 전체 선택
-- Alt 라쏘: 자유선 획 부분 분리
+- `라쏘` 프리셋의 기본 동작은 자유선 획 부분 분리다.
+- pressure와 brush size에 따른 실제 반폭까지 hit 판정에 포함한다.
+- 화면 약 1.5px 범위에서 입력 polygon을 단순화하고 stroke bounding box로 먼저 거른 뒤 정밀 판정한다.
+- 면적이 없는 선형 입력은 취소하며, 과도한 fragment가 예상되면 원본을 유지한 채 작업을 중단한다.
+- 라쏘를 놓아 선택만 한 시점에는 원본 획의 lower-canvas 픽셀이 한 픽셀도 달라지지 않아야 한다.
+- 선택 직후에는 원본 Fabric path를 비상호작용 시각 bridge로 유지하고, fragment는 투명한 hit/transform 객체로 준비한다.
+- 첫 실제 `object:moving`에서만 시각 bridge를 제거하고 fragment를 표시한다. 단순 클릭과 무이동 release는 실체화로 취급하지 않는다.
+- 이동 없이 새 라쏘, 도구/선택 프리셋 전환, B 해제, session 변경, pointer cancel 또는 blur가 발생하면 준비된 split을 원본으로 되돌리고 투명 객체를 모두 제거한다.
+- 라쏘 pointerup만으로 Fabric scene 전체를 clear/rebuild하지 않는다. 선택 순간의 영상 깜빡임과 객체 정체성 손실을 막기 위해서다.
 
 ### 13.4 획 부분 분리
 
@@ -785,6 +798,9 @@ StrokeObject의 원본 points를 선택 polygon 안팎 경계에서 분할한다
 5. inside와 outside 연속 구간을 별도 StrokeObject로 만든다.
 6. 2점 미만이거나 화면 길이 1 source pixel 미만인 조각은 폐기한다.
 7. 원본 획 제거와 새 조각 추가를 한 split-stroke command로 묶는다.
+8. 여러 원본을 동시에 분할할 때 각 원본 위치에 fragment를 삽입해 기존 z-order를 유지한다.
+9. fragment 하나라도 생성에 실패하면 전체 command를 취소하고 모든 원본을 유지한다.
+10. 실제 분할이 표시될 때 원래 획의 바깥 시작/끝 cap은 유지하고 내부 절단 경계는 flat cap으로 만들어 반투명 fragment의 겹침 이음매를 막는다.
 
 도형과 RasterObject의 부분 선택은 geometry split이 아니라 MaskObject로 처리한다.
 
