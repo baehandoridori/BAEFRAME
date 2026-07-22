@@ -2,6 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const packageJson = require('../../package.json');
 const {
   createDrawingDocumentV3
 } = require('../../renderer/scripts/modules/drawing-v3/drawing-document.js');
@@ -28,6 +29,20 @@ function createStroke(id = 'stroke-1', overrides = {}) {
     },
     ...overrides
   };
+}
+
+function createPoints(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    x: index,
+    y: index,
+    pressure: 0.5,
+    time: index
+  }));
+}
+
+function createManyStrokes(count) {
+  return Array.from({ length: count }, (_, index) =>
+    createStroke(`stroke-${index}`));
 }
 
 function createKeyframeFixture(overrides = {}) {
@@ -524,6 +539,7 @@ test('initial validator enforces lowered positive integer limits', () => {
 
   const invalidLimits = [
     { maxObjectsPerKeyframe: 0 },
+    { maxInputPointsPerStroke: -1 },
     { maxObjectsPerKeyframe: 10_001 },
     { maxInputPointsPerStroke: 20_001 },
     { maxStoredPointsPerStroke: 100_001 },
@@ -563,10 +579,97 @@ test('insert command increments revisions once and returns an isolated inverse r
   assert.deepEqual(getKeyframe(document).objects, [stroke]);
 
   stroke.points[0].x = 999;
+  stroke.transform[4] = 999;
   command.operations[0].objects[0].style.size = 999;
   result.inverseOperations[0].objectIds[0] = 'mutated-result';
   assert.equal(getObjectById(document, 'stroke-1').points[0].x, 10);
   assert.equal(getObjectById(document, 'stroke-1').style.size, 12);
+  assert.deepEqual(getObjectById(document, 'stroke-1').transform,
+    [1, 0, 0, 1, 0, 0]);
+});
+
+test('insert boundary separates non-canonical strokes from malformed transforms', () => {
+  const fabricPath = createStroke('fabric-path');
+  fabricPath.pathData = 'M 0 0';
+  const fabricPoints = createStroke('fabric-points');
+  fabricPoints.sourcePoints = [[0, 0]];
+  const missingTransform = createStroke('missing-transform');
+  delete missingTransform.transform;
+  const unsupportedTool = createStroke('unsupported-tool', { tool: 'eraser' });
+  const invalidPoint = createStroke('invalid-point');
+  invalidPoint.points[0].pressure = 2;
+  const invalidStyle = createStroke('invalid-style');
+  invalidStyle.style.size = 0;
+
+  for (const stroke of [
+    fabricPath,
+    fabricPoints,
+    missingTransform,
+    unsupportedTool,
+    invalidPoint,
+    invalidStyle
+  ]) {
+    const document = createDocumentWithObjects();
+    assertAtomicFailure(document, createCommand({
+      operations: [{ type: 'insert-objects', index: 0, objects: [stroke] }]
+    }), 'invalid-object');
+  }
+
+  const document = createDocumentWithObjects();
+  assertAtomicFailure(document, createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: [createStroke('fabric-transform', {
+        transform: { left: 10, top: 20, scaleX: 1, angle: 0 }
+      })]
+    }]
+  }), 'invalid-transform');
+});
+
+test('object limit takes precedence over defects in an extra object', () => {
+  const objectLimited = createDrawingDocumentV3(createDocumentOptions({
+    limits: {
+      maxObjectsPerKeyframe: 1,
+      maxInputPointsPerStroke: 4,
+      maxStoredPointsPerStroke: 8
+    },
+    initialLayers: [createLayerFixture({
+      keyframes: [createKeyframeFixture({
+        objects: [createStroke('existing')]
+      })]
+    })]
+  }));
+  const malformedExtraObject = createStroke('malformed-extra');
+  malformedExtraObject.pathData = 'M 0 0';
+  assertAtomicFailure(objectLimited, createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 1,
+      objects: [malformedExtraObject]
+    }]
+  }), 'object-limit-exceeded');
+});
+
+test('point limit takes precedence over nested defects past the input cap', () => {
+  const pointLimited = createDrawingDocumentV3(createDocumentOptions({
+    limits: {
+      maxObjectsPerKeyframe: 2,
+      maxInputPointsPerStroke: 4,
+      maxStoredPointsPerStroke: 8
+    }
+  }));
+  const malformedOversizedStroke = createStroke('malformed-oversized', {
+    points: createPoints(5)
+  });
+  malformedOversizedStroke.style.color = 'red';
+  assertAtomicFailure(pointLimited, createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: [malformedOversizedStroke]
+    }]
+  }), 'point-limit-exceeded');
 });
 
 test('command envelope and kind mapping reject malformed commands atomically', () => {
@@ -1351,4 +1454,208 @@ test('MAX_SAFE_INTEGER minus one can commit once, then only no-ops remain possib
       }]
     }]
   }), 'revision-limit-exceeded');
+});
+
+test('lowered point and object limits reject whole commands without truncation', () => {
+  const limits = {
+    maxObjectsPerKeyframe: 2,
+    maxInputPointsPerStroke: 4,
+    maxStoredPointsPerStroke: 8
+  };
+  const pointLimited = createDrawingDocumentV3(createDocumentOptions({
+    limits,
+    initialLayers: [createLayerFixture()]
+  }));
+  assertAtomicFailure(pointLimited, createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: [createStroke('five-points', { points: createPoints(5) })]
+    }]
+  }), 'point-limit-exceeded');
+
+  const objectLimited = createDrawingDocumentV3(createDocumentOptions({
+    limits,
+    initialLayers: [createLayerFixture({
+      keyframes: [createKeyframeFixture({
+        objects: [createStroke('stroke-a'), createStroke('stroke-b')]
+      })]
+    })]
+  }));
+  assertAtomicFailure(objectLimited, createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 2,
+      objects: [createStroke('stroke-c')]
+    }]
+  }), 'object-limit-exceeded');
+
+  const storedTooLarge = createDocumentOptions({
+    limits,
+    initialLayers: [createLayerFixture({
+      keyframes: [createKeyframeFixture({
+        objects: [createStroke('nine-points', { points: createPoints(9) })]
+      })]
+    })]
+  });
+  assert.throws(() => createDrawingDocumentV3(storedTooLarge), TypeError);
+});
+
+test('lowered limits accept values exactly at every configured boundary', () => {
+  const limits = {
+    maxObjectsPerKeyframe: 2,
+    maxInputPointsPerStroke: 4,
+    maxStoredPointsPerStroke: 8
+  };
+  const document = createDrawingDocumentV3(createDocumentOptions({
+    limits,
+    initialLayers: [createLayerFixture({
+      keyframes: [createKeyframeFixture({
+        objects: [createStroke('stored-boundary', {
+          points: createPoints(8)
+        })]
+      })]
+    })]
+  }));
+  const inserted = document.applyCommand(createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 1,
+      objects: [createStroke('input-boundary', {
+        points: createPoints(4)
+      })]
+    }]
+  }));
+
+  assert.equal(inserted.applied, true);
+  assert.equal(getKeyframe(document).objects.length, 2);
+  assert.equal(getObjectById(document, 'stored-boundary').points.length, 8);
+  assert.equal(getObjectById(document, 'input-boundary').points.length, 4);
+});
+
+test('hard limits accept exact user, stored, history, and object boundaries', () => {
+  const userBoundary = createDocumentWithObjects();
+  const userInserted = userBoundary.applyCommand(createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: [createStroke('user-boundary', {
+        points: createPoints(20_000)
+      })]
+    }]
+  }));
+  assert.equal(userInserted.applied, true);
+  assert.equal(getObjectById(userBoundary, 'user-boundary').points.length, 20_000);
+
+  const storedBoundaryPoints = createPoints(100_000);
+  const storedBoundary = createDocumentWithObjects([
+    createStroke('stored-boundary', { points: storedBoundaryPoints })
+  ]);
+  assert.equal(
+    getObjectById(storedBoundary, 'stored-boundary').points.length,
+    100_000
+  );
+
+  const historyBoundary = createDocumentWithObjects();
+  const historyInserted = historyBoundary.applyCommand(createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: [createStroke('history-boundary', {
+        points: storedBoundaryPoints
+      })]
+    }]
+  }), { source: 'history' });
+  assert.equal(historyInserted.applied, true);
+  assert.equal(
+    getObjectById(historyBoundary, 'history-boundary').points.length,
+    100_000
+  );
+
+  const objectBoundary = createDocumentWithObjects(createManyStrokes(9_999));
+  const objectInserted = objectBoundary.applyCommand(createCommand({
+    id: 'reach-object-boundary',
+    operations: [{
+      type: 'insert-objects',
+      index: 9_999,
+      objects: [createStroke('stroke-9999')]
+    }]
+  }));
+  assert.equal(objectInserted.applied, true);
+  assert.equal(getKeyframe(objectBoundary).objects.length, 10_000);
+  assertAtomicFailure(objectBoundary, createCommand({
+    id: 'exceed-object-boundary',
+    baseRevision: 1,
+    operations: [{
+      type: 'insert-objects',
+      index: 10_000,
+      objects: [createStroke('one-too-many')]
+    }]
+  }), 'object-limit-exceeded');
+});
+
+test('hard point limits distinguish stored content from user input', () => {
+  const storedPoints = createPoints(20_001);
+  const storedDocument = createDocumentWithObjects([
+    createStroke('stored-stroke', { points: storedPoints })
+  ]);
+  assert.equal(getObjectById(storedDocument, 'stored-stroke').points.length, 20_001);
+
+  const userPointLimited = createDocumentWithObjects();
+  assertAtomicFailure(userPointLimited, createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: [createStroke('user-stroke', { points: storedPoints })]
+    }]
+  }), 'point-limit-exceeded');
+
+  const oversizedStoredOptions = createDocumentOptions({
+    initialLayers: [createLayerFixture({
+      keyframes: [createKeyframeFixture({
+        objects: [createStroke('oversized-stored', {
+          points: createPoints(100_001)
+        })]
+      })]
+    })]
+  });
+  assert.throws(() => createDrawingDocumentV3(oversizedStoredOptions), TypeError);
+});
+
+test('history restores a large stored stroke without weakening the user limit', () => {
+  const largeStroke = createStroke('large-stored', {
+    points: createPoints(50_000)
+  });
+  const document = createDocumentWithObjects([largeStroke]);
+  const removed = document.applyCommand(createCommand({
+    id: 'remove-large',
+    kind: 'delete-objects',
+    operations: [{ type: 'remove-objects', objectIds: ['large-stored'] }]
+  }));
+  assert.equal(removed.applied, true);
+
+  const inverse = createInverseCommand(removed, { id: 'restore-large' });
+  assertAtomicFailure(document, inverse, 'point-limit-exceeded');
+  const restored = document.applyCommand(inverse, { source: 'history' });
+  assert.equal(restored.applied, true);
+  assert.equal(getObjectById(document, 'large-stored').points.length, 50_000);
+
+  const historyLimited = createDocumentWithObjects();
+  assertAtomicFailure(historyLimited, createCommand({
+    id: 'history-too-large',
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: [createStroke('history-oversized', {
+        points: createPoints(100_001)
+      })]
+    }]
+  }), 'point-limit-exceeded', { source: 'history' });
+});
+
+test('drawing regression suite includes DrawingDocumentV3 coverage', () => {
+  assert.match(
+    packageJson.scripts['test:drawing'],
+    /(?:^|\s)scripts\/tests\/drawing-v3-document\.test\.js(?:\s|$)/
+  );
 });

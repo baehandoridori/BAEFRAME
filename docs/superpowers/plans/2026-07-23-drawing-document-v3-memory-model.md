@@ -622,7 +622,7 @@ git commit -m "feat: DrawingDocumentV3 원자 명령 적용"
 
 `pathData`, `sourcePoints`, 또는 property-object transform이 들어간 stroke insert를 `invalid-object` 또는 `invalid-transform`으로 거부한다. command의 points/style/transform과 성공 반환 inverse를 호출 뒤 변경해도 document snapshot이 바뀌지 않아야 한다.
 
-strict field matrix는 위 표에서 최소 한 case씩 포함한다: missing/unknown stroke key, unsupported tool/blendMode, non-boolean flags, sparse/empty points, point의 missing/unknown key, non-finite x/y/time, pressure 범위 이탈, time 역행, style의 missing/unknown key, 대문자/비-hex color, size 0, thinning/smoothing/streamline 범위 이탈, outlineColor 오류, 음수 outlineWidth. 초기 문서는 `TypeError`, 같은 stroke를 insert하는 command는 `{applied:false, reason:'invalid-object'}`이고 snapshot/head가 불변이어야 한다. malformed transform만 `invalid-transform`으로 구분한다.
+strict field matrix의 모든 field case는 Task 1 constructor 테스트로 고정한다: missing/unknown stroke key, unsupported tool/blendMode, non-boolean flags, sparse/empty points, point의 missing/unknown key, non-finite x/y/time, pressure 범위 이탈, time 역행, style의 missing/unknown key, 대문자/비-hex color, size 0, thinning/smoothing/streamline 범위 이탈, outlineColor 오류, 음수 outlineWidth. command 경계는 같은 `validateStrokeObject()`를 재사용하므로 이 전체 표를 중복하지 않고 root(Fabric-only/missing key/unsupported tool), nested point, nested style 대표 case를 table-driven으로 넣어 모두 `invalid-object`와 snapshot/head 불변을 확인한다. transform key가 존재하지만 값이 malformed인 대표 case만 `invalid-transform`으로 구분한다.
 
 `limits`에는 낮춘 양의 정수만 허용한다. `maxObjectsPerKeyframe:10001`, `maxInputPointsPerStroke:20001`, `maxStoredPointsPerStroke:100001`, input이 stored보다 큰 조합, `0`, 음수, 소수는 constructor `TypeError`여야 한다. `{maxObjectsPerKeyframe:2,maxInputPointsPerStroke:4,maxStoredPointsPerStroke:8}`은 허용되어 실제 command 검증에 적용되어야 한다.
 
@@ -653,6 +653,8 @@ test('input limits reject instead of truncating or partially applying', () => {
 
 같은 테스트 묶음에서 초기 문서의 `20,001` points stroke는 저장 문서 한도 안이므로 그대로 허용되고, `100,001` points stroke는 constructor가 `TypeError`로 거부되는지 확인한다. 이로써 constructor의 `maxStoredPointsPerStroke`와 command의 `maxInputPointsPerStroke`가 뒤바뀌지 않게 한다.
 
+inclusive 성공 경계도 반드시 고정한다. user insert `20,000` points, 초기 stored stroke `100,000` points, history insert `100,000` points, command 결과가 정확히 `10,000` objects가 되는 경우, lowered limits 각각과 정확히 같은 points/object 수는 모두 성공해야 한다. 실패 경계만 검사해 `>`가 `>=`로 바뀌는 off-by-one 회귀를 놓치지 않는다.
+
 - [ ] **Step 3: strict validator와 limit check 최소 구현**
 
 ```js
@@ -681,7 +683,9 @@ function validateStrokeObject(object, limits, source = 'user') {
 }
 ```
 
-검증 순서는 plain/exact required keys와 transform key 존재 여부 → 나머지 canonical fields → 존재하는 transform 값의 matrix 유효성이다. 따라서 missing `transform`은 `invalid-object`, transform key는 있지만 property object·길이 오류·non-finite·singular matrix면 `invalid-transform`이다. 이 두 경우를 별도 테스트로 고정한다.
+검증 순서는 plain/exact required keys와 기본 object type/ID/flags 및 dense nonempty points → point count 한도 → 나머지 canonical point/style fields → 존재하는 transform 값의 matrix 유효성이다. 따라서 missing `transform`은 `invalid-object`, transform key는 있지만 property object·길이 오류·non-finite·singular matrix면 `invalid-transform`이다. over-point stroke는 nested style/point/transform도 잘못됐더라도 깊은 검증 전에 `point-limit-exceeded`로 조기 거부한다. 이 precedence를 별도 테스트로 고정한다.
+
+insert operation은 dynamic index를 확인한 직후 `currentObjects + insertedObjects` count를 먼저 계산해 초과면 `object-limit-exceeded`로 거부하고, 그 뒤에만 각 object schema/points와 ID 중복을 검사한다. 따라서 object cap을 넘긴 payload가 malformed object까지 포함해도 전수 깊은 검증 없이 `object-limit-exceeded`이며 snapshot/head/ID index가 불변이어야 한다.
 
 초기 document도 같은 canonical validator를 사용하되 저장 문서 한도 `maxStoredPointsPerStroke:100000`을 적용한다. 기본 `user` source의 새 `insert-objects` command에는 더 낮은 `maxInputPointsPerStroke:20000`을 적용한다. 모델이 반환한 inverse를 재적용하는 `history` source만 `maxStoredPointsPerStroke:100000`을 사용한다. 한도를 넘거나 잘못된 초기 문서는 잘라내지 않고 `TypeError`를 던지고, command 적용 중에는 structured `{ applied:false, reason }`을 반환한다.
 
@@ -749,4 +753,6 @@ npm run build
 git diff --check cab9336..HEAD
 ```
 
-이 phase는 앱에서 보이는 동작을 바꾸지 않으므로 앱 실행이나 커서 자동 조작을 하지 않는다. 다음 phase는 별도 계획으로 `drawing-engine-adapter.js`를 만들고, 현재 `SessionSceneStore` 결과와 canonical 문서 결과를 test fixture에서 비교한다. 그 전에는 두 저장소를 동시에 authoritative하게 운영하거나 `.bframe drawingsV3` writer를 켜지 않는다.
+이 phase는 앱에서 보이는 동작을 바꾸지 않으므로 앱 실행이나 커서 자동 조작을 하지 않는다. 또한 correctness용 pure model 완료를 runtime-ready 판정으로 해석하지 않는다. 현재 valid command는 전체 content clone과 전역 ID scan을 수행하고, command operation 수·aggregate points/payload bytes 상한도 아직 없다.
+
+다음 phase의 첫 조각은 adapter 연결이 아니라 **runtime hardening gate**다. 별도 계획에서 `maxOperationsPerCommand`와 aggregate point/byte budget, command-level object index 재사용, target-local copy-on-write를 구현·benchmark해 큰 문서의 작은 이동과 악의적 다-operation command가 UI를 막지 않는다는 기준을 통과해야 한다. 그 뒤 `drawing-engine-adapter.js`를 만들고 현재 `SessionSceneStore` 결과와 canonical 문서 결과를 test fixture에서 비교한다. 그 전에는 실제 Fabric warm path에 이 model을 연결하거나, 두 저장소를 동시에 authoritative하게 운영하거나, `.bframe drawingsV3` writer를 켜지 않는다.

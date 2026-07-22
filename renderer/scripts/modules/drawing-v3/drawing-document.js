@@ -235,8 +235,7 @@ function validateStrokeObject(object, limits, source = 'user') {
     typeof object.locked !== 'boolean' ||
     !isFiniteInRange(object.opacity, 0, 1) ||
     object.blendMode !== 'source-over' ||
-    !isDenseArray(object.points) || object.points.length === 0 ||
-    !isValidStyle(object.style)) {
+    !isDenseArray(object.points) || object.points.length === 0) {
     return 'invalid-object';
   }
 
@@ -244,6 +243,7 @@ function validateStrokeObject(object, limits, source = 'user') {
     ? limits.maxStoredPointsPerStroke
     : limits.maxInputPointsPerStroke;
   if (object.points.length > pointLimit) return 'point-limit-exceeded';
+  if (!isValidStyle(object.style)) return 'invalid-object';
 
   let previousTime = 0;
   for (const point of object.points) {
@@ -521,14 +521,14 @@ function applyInsertOperation(
   if (operation.index > keyframe.objects.length) {
     return { applied: false, reason: 'invalid-command' };
   }
+  if (keyframe.objects.length + operation.objects.length >
+    limits.maxObjectsPerKeyframe) {
+    return { applied: false, reason: 'object-limit-exceeded' };
+  }
 
   for (const object of operation.objects) {
     const reason = validateStrokeObject(object, limits, source);
     if (reason) return { applied: false, reason };
-  }
-  if (keyframe.objects.length + operation.objects.length >
-    limits.maxObjectsPerKeyframe) {
-    return { applied: false, reason: 'object-limit-exceeded' };
   }
 
   const insertedObjectIds = new Set();
