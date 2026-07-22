@@ -301,6 +301,8 @@ function getBrushControls(root) {
   const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
   return {
     toolbar,
+    undoButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'undo'),
+    redoButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'redo'),
     settingsButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'brush-settings'),
     panel: findOne(toolbar, node => node.dataset.fabricPilotPanel === 'brush-settings'),
     colorButtons: findAll(toolbar, node => typeof node.dataset.fabricPilotColor === 'string'),
@@ -316,6 +318,63 @@ function getBrushControls(root) {
     opacityDecrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'opacity-decrease'),
     opacityIncrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'opacity-increase')
   };
+}
+
+function makeHistoryStroke(id, overrides = {}) {
+  const base = {
+    id,
+    type: 'stroke',
+    pathData: `M 0 0 L ${id.length + 1} ${id.length + 2} Z`,
+    sourcePoints: [
+      { x: 0, y: 0, pressure: 0.5, pointerType: 'pen', time: 0 },
+      { x: id.length + 1, y: id.length + 2, pressure: 0.5, pointerType: 'pen', time: 1 }
+    ],
+    style: { color: '#ff4757', size: 3, opacity: 1 },
+    transform: {
+      left: 0,
+      top: 0,
+      scaleX: 1,
+      scaleY: 1,
+      angle: 0,
+      skewX: 0,
+      skewY: 0,
+      flipX: false,
+      flipY: false
+    }
+  };
+  return {
+    ...base,
+    ...overrides,
+    style: { ...base.style, ...(overrides.style || {}) },
+    transform: { ...base.transform, ...(overrides.transform || {}) }
+  };
+}
+
+function createHistoryHarness(storeOptions = {}) {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const sceneStore = createSessionSceneStore(storeOptions);
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    sceneStore
+  });
+  assert.equal(runtime.prepare(root).prepared, true);
+  assert.equal(runtime.setDrawingInput(makeInput()).accepted, true);
+  return { document, root, sceneStore, runtime, canvas: FakeCanvas.instances[0] };
+}
+
+function assertHistoryDiagnostics(harness, expected) {
+  const diagnostics = harness.runtime.getDiagnostics();
+  assert.equal(diagnostics.mutationCount, expected.mutationCount);
+  assert.equal(diagnostics.undoDepth, expected.undoDepth);
+  assert.equal(diagnostics.redoDepth, expected.redoDepth);
+  assert.equal(diagnostics.metrics.saveAttemptCount, 0);
+  if (expected.historyBytes !== undefined) {
+    assert.equal(diagnostics.historyBytes, expected.historyBytes);
+  }
+  return diagnostics;
 }
 
 function createRealFabricHarness(runtimeOptions = {}) {
@@ -806,7 +865,7 @@ test('one undo restores both a split fragment move and a fully enclosed stroke m
   }
 });
 
-test('later drawing mutations invalidate an old lasso undo instead of deleting newer work', async () => {
+test('later drawing mutations keep ordered undo redo history without skipping newer work', async () => {
   const harness = createRealFabricHarness();
   try {
     harness.drawStroke([
@@ -828,7 +887,7 @@ test('later drawing mutations invalidate an old lasso undo instead of deleting n
       { x: 70, y: 100 },
       { x: 70, y: 60 }
     ], 714);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 2);
     harness.runtime.applyDrawingAction({
       sessionId: 'real-fabric-session',
       actionId: 'clear-after-split',
@@ -848,13 +907,25 @@ test('later drawing mutations invalidate an old lasso undo instead of deleting n
 
     const undo = harness.runtime.applyDrawingAction({
       sessionId: 'real-fabric-session',
-      actionId: 'stale-undo-must-not-apply',
+      actionId: 'undo-newer-stroke-first',
       action: 'undo'
     });
 
-    assert.equal(undo.applied, false);
-    assert.equal(undo.reason, 'history-empty');
+    assert.equal(undo.applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, []);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 3);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 1);
+
+    const redo = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'redo-newer-stroke-first',
+      action: 'redo'
+    });
+    assert.equal(redo.applied, true);
     assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, [newer]);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 4);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
   } finally {
     await harness.destroy();
   }
@@ -897,7 +968,8 @@ test('a failed fragment build aborts the whole lasso split without losing stroke
     const snapshot = harness.sceneStore.getActiveSceneSnapshot();
     assert.deepEqual(snapshot.objects, [original]);
     assert.deepEqual(snapshot.selectedObjectIds, []);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
   } finally {
     await harness.destroy();
   }
@@ -930,7 +1002,8 @@ test('lasso fragment limits abort before replacing a complex stroke', async () =
     const snapshot = harness.sceneStore.getActiveSceneSnapshot();
     assert.deepEqual(snapshot.objects, [original]);
     assert.deepEqual(snapshot.selectedObjectIds, []);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
   } finally {
     await harness.destroy();
   }
@@ -962,7 +1035,8 @@ test('cancelling an in-progress lasso leaves the original stroke untouched', asy
     assert.deepEqual(after, before);
     assert.equal(harness.canvas.getObjects().filter(object => !object.__baeframeTransient).length, 1);
     assert.equal(harness.canvas.getObjects().some(object => object.__baeframeTransient), false);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
     assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
   } finally {
     await harness.destroy();
@@ -1000,7 +1074,8 @@ test('cancelling a no-move pending fragment selection rolls back to the original
     const restored = harness.sceneStore.getActiveSceneSnapshot();
     assert.deepEqual(restored.objects, [original]);
     assert.deepEqual(restored.selectedObjectIds, []);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 1);
     assert.equal(harness.canvas.getObjects().filter(object => !object.__baeframeTransient).length, 1);
   } finally {
     await harness.destroy();
@@ -1060,7 +1135,8 @@ test('a zero-area lasso line never cuts a nearby thick stroke', async () => {
     const snapshot = harness.sceneStore.getActiveSceneSnapshot();
     assert.deepEqual(snapshot.objects, [original]);
     assert.deepEqual(snapshot.selectedObjectIds, []);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
   } finally {
     await harness.destroy();
   }
@@ -1092,7 +1168,8 @@ test('empty and fully enclosing lassos select non-destructively', async () => {
     let snapshot = harness.sceneStore.getActiveSceneSnapshot();
     assert.deepEqual(snapshot.objects, [original]);
     assert.deepEqual(snapshot.selectedObjectIds, []);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
 
     harness.dragLasso([
       { x: 20, y: 70 },
@@ -1104,7 +1181,8 @@ test('empty and fully enclosing lassos select non-destructively', async () => {
     snapshot = harness.sceneStore.getActiveSceneSnapshot();
     assert.deepEqual(snapshot.objects, [original]);
     assert.deepEqual(snapshot.selectedObjectIds, [original.id]);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
   } finally {
     await harness.destroy();
   }
@@ -2699,6 +2777,376 @@ test('brush settings expose the familiar bounded palette without mutating the sc
   assert.equal(after.metrics.saveAttemptCount, before.metrics.saveAttemptCount);
 });
 
+test('add stroke undo redo restores the exact record and z-order through runtime controls', () => {
+  const harness = createHistoryHarness();
+  drawStroke(harness.canvas.upperCanvasEl, 501);
+  drawStroke(harness.canvas.upperCanvasEl, 502);
+  const before = harness.sceneStore.getActiveSceneSnapshot();
+  const beforeIds = before.objects.map(object => object.id);
+  const controls = getBrushControls(harness.root);
+
+  assert.ok(controls.undoButton);
+  assert.ok(controls.redoButton);
+  assertHistoryDiagnostics(harness, { mutationCount: 2, undoDepth: 2, redoDepth: 0 });
+
+  controls.undoButton.dispatch('click');
+  assert.deepEqual(
+    harness.sceneStore.getActiveSceneSnapshot().objects,
+    before.objects.slice(0, 1)
+  );
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 1 });
+
+  controls.redoButton.dispatch('click');
+  assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, before.objects);
+  assert.deepEqual(
+    harness.canvas.getObjects().map(object => object.__baeframeObjectId),
+    beforeIds
+  );
+  assertHistoryDiagnostics(harness, { mutationCount: 4, undoDepth: 2, redoDepth: 0 });
+});
+
+test('single and multi stroke moves each round-trip through one undo and one redo', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore } = harness;
+  sceneStore.addStroke(makeHistoryStroke('move-a', { transform: { left: 2, top: 3 } }));
+  sceneStore.addStroke(makeHistoryStroke('move-b', { transform: { left: 20, top: 30 } }));
+
+  sceneStore.selectObjects(['move-a']);
+  assert.equal(sceneStore.transformSelection({ dx: 5, dy: -2 }).applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects[0].transform, {
+    left: 7, top: 1, scaleX: 1, scaleY: 1, angle: 0,
+    skewX: 0, skewY: 0, flipX: false, flipY: false
+  });
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 3, redoDepth: 0 });
+
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects[0].transform, makeHistoryStroke('x', {
+    transform: { left: 2, top: 3 }
+  }).transform);
+  assertHistoryDiagnostics(harness, { mutationCount: 4, undoDepth: 2, redoDepth: 1 });
+
+  assert.equal(sceneStore.redo().applied, true);
+  assert.equal(sceneStore.getActiveSceneSnapshot().objects[0].transform.left, 7);
+  assert.equal(sceneStore.getActiveSceneSnapshot().objects[0].transform.top, 1);
+  assertHistoryDiagnostics(harness, { mutationCount: 5, undoDepth: 3, redoDepth: 0 });
+
+  sceneStore.selectObjects(['move-a', 'move-b']);
+  assert.equal(sceneStore.transformSelection({ dx: 4, dy: 6 }).applied, true);
+  const moved = new Map(sceneStore.getActiveSceneSnapshot().objects.map(object => [object.id, object.transform]));
+  assert.deepEqual([moved.get('move-a').left, moved.get('move-a').top], [11, 7]);
+  assert.deepEqual([moved.get('move-b').left, moved.get('move-b').top], [24, 36]);
+  assertHistoryDiagnostics(harness, { mutationCount: 6, undoDepth: 4, redoDepth: 0 });
+
+  assert.equal(sceneStore.undo().applied, true);
+  const multiUndone = new Map(sceneStore.getActiveSceneSnapshot().objects.map(object => [object.id, object.transform]));
+  assert.deepEqual([multiUndone.get('move-a').left, multiUndone.get('move-a').top], [7, 1]);
+  assert.deepEqual([multiUndone.get('move-b').left, multiUndone.get('move-b').top], [20, 30]);
+  assertHistoryDiagnostics(harness, { mutationCount: 7, undoDepth: 3, redoDepth: 1 });
+
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => [
+    object.id, object.transform.left, object.transform.top
+  ]), [
+    ['move-a', 11, 7],
+    ['move-b', 24, 36]
+  ]);
+  assertHistoryDiagnostics(harness, { mutationCount: 8, undoDepth: 4, redoDepth: 0 });
+});
+
+test('replaceObjects applies structure and selected transforms as one undo redo command', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore } = harness;
+  const original = makeHistoryStroke('split-original', { transform: { left: 1, top: 2 } });
+  const survivor = makeHistoryStroke('split-survivor', { transform: { left: 20, top: 30 } });
+  const inside = makeHistoryStroke('split-inside', { transform: { left: 1, top: 2 } });
+  const outside = makeHistoryStroke('split-outside', { transform: { left: 1, top: 2 } });
+  sceneStore.addStroke(original);
+  sceneStore.addStroke(survivor);
+
+  assert.equal(sceneStore.replaceObjects({
+    kind: 'split-stroke',
+    replacements: [{ removeId: original.id, addObjects: [inside, outside] }],
+    selectedObjectIds: [inside.id, survivor.id],
+    transforms: [{ id: survivor.id, transform: { left: 40, top: 50 } }],
+    dx: 7,
+    dy: -3
+  }).applied, true);
+  const replaced = sceneStore.getActiveSceneSnapshot();
+  assert.deepEqual(replaced.objects.map(object => object.id), [inside.id, outside.id, survivor.id]);
+  assert.deepEqual(replaced.objects.map(object => [object.id, object.transform.left, object.transform.top]), [
+    [inside.id, 8, -1],
+    [outside.id, 1, 2],
+    [survivor.id, 40, 50]
+  ]);
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 3, redoDepth: 0 });
+
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, [original, survivor]);
+  assertHistoryDiagnostics(harness, { mutationCount: 4, undoDepth: 2, redoDepth: 1 });
+
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot(), {
+    ...replaced,
+    selectedObjectIds: [],
+    mutationCount: 5
+  });
+  assertHistoryDiagnostics(harness, { mutationCount: 5, undoDepth: 3, redoDepth: 0 });
+});
+
+test('full stroke Delete undo redo restores the deleted record and its z-order', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore, runtime } = harness;
+  const records = ['delete-a', 'delete-b', 'delete-c'].map(makeHistoryStroke);
+  records.forEach(record => sceneStore.addStroke(record));
+  sceneStore.selectObjects(['delete-b']);
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session', actionId: 'delete-history-1', action: 'delete-selection'
+  }).applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['delete-a', 'delete-c']);
+  assertHistoryDiagnostics(harness, { mutationCount: 4, undoDepth: 4, redoDepth: 0 });
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session', actionId: 'delete-history-undo', action: 'undo'
+  }).applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, records);
+  assertHistoryDiagnostics(harness, { mutationCount: 5, undoDepth: 3, redoDepth: 1 });
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session', actionId: 'delete-history-redo', action: 'redo'
+  }).applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['delete-a', 'delete-c']);
+  assertHistoryDiagnostics(harness, { mutationCount: 6, undoDepth: 4, redoDepth: 0 });
+});
+
+test('Clear undo redo restores every record in its original z-order', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore, runtime } = harness;
+  const records = ['clear-a', 'clear-b', 'clear-c'].map(makeHistoryStroke);
+  records.forEach(record => sceneStore.addStroke(record));
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session', actionId: 'clear-history-1', action: 'clear-session'
+  }).applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, []);
+  assertHistoryDiagnostics(harness, { mutationCount: 4, undoDepth: 4, redoDepth: 0 });
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session', actionId: 'clear-history-undo', action: 'undo'
+  }).applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, records);
+  assertHistoryDiagnostics(harness, { mutationCount: 5, undoDepth: 3, redoDepth: 1 });
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session', actionId: 'clear-history-redo', action: 'redo'
+  }).applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, []);
+  assertHistoryDiagnostics(harness, { mutationCount: 6, undoDepth: 4, redoDepth: 0 });
+});
+
+test('undo then selection-only and no-op edits preserve redo while a new stroke clears it', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore } = harness;
+  sceneStore.addStroke(makeHistoryStroke('redo-a'));
+  sceneStore.addStroke(makeHistoryStroke('redo-b'));
+  assert.equal(sceneStore.undo().applied, true);
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 1 });
+
+  assert.equal(sceneStore.selectObjects(['redo-a']).changed, true);
+  assert.equal(sceneStore.transformSelection({ dx: 0, dy: 0 }).applied, false);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('redo-a')).reason, 'duplicate-object-id');
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 1 });
+
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('redo-c')).applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['redo-a', 'redo-c']);
+  assertHistoryDiagnostics(harness, { mutationCount: 4, undoDepth: 2, redoDepth: 0 });
+
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['redo-a']);
+  assertHistoryDiagnostics(harness, { mutationCount: 5, undoDepth: 1, redoDepth: 1 });
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, []);
+  assertHistoryDiagnostics(harness, { mutationCount: 6, undoDepth: 0, redoDepth: 2 });
+});
+
+test('two consecutive moves create two distinct undo redo commands', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore } = harness;
+  sceneStore.addStroke(makeHistoryStroke('two-moves'));
+  sceneStore.selectObjects(['two-moves']);
+  sceneStore.transformSelection({ dx: 10, dy: 0 });
+  sceneStore.transformSelection({ dx: 5, dy: 0 });
+  assert.equal(sceneStore.getActiveSceneSnapshot().objects[0].transform.left, 15);
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 3, redoDepth: 0 });
+
+  assert.equal(sceneStore.undo().applied, true);
+  assert.equal(sceneStore.getActiveSceneSnapshot().objects[0].transform.left, 10);
+  assertHistoryDiagnostics(harness, { mutationCount: 4, undoDepth: 2, redoDepth: 1 });
+  assert.equal(sceneStore.undo().applied, true);
+  assert.equal(sceneStore.getActiveSceneSnapshot().objects[0].transform.left, 0);
+  assertHistoryDiagnostics(harness, { mutationCount: 5, undoDepth: 1, redoDepth: 2 });
+
+  assert.equal(sceneStore.redo().applied, true);
+  assert.equal(sceneStore.getActiveSceneSnapshot().objects[0].transform.left, 10);
+  assertHistoryDiagnostics(harness, { mutationCount: 6, undoDepth: 2, redoDepth: 1 });
+  assert.equal(sceneStore.redo().applied, true);
+  assert.equal(sceneStore.getActiveSceneSnapshot().objects[0].transform.left, 15);
+  assertHistoryDiagnostics(harness, { mutationCount: 7, undoDepth: 3, redoDepth: 0 });
+});
+
+test('video and frame scene histories remain independent across undo and redo', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore } = harness;
+  const activate = (sessionId, stableVideoIdentity, targetFrame) => sceneStore.activateSession({
+    sessionId, stableVideoIdentity, targetFrame, videoGeneration: 1, tool: 'brush'
+  });
+
+  sceneStore.addStroke(makeHistoryStroke('scene-base'));
+  assertHistoryDiagnostics(harness, { mutationCount: 1, undoDepth: 1, redoDepth: 0 });
+
+  assert.equal(activate('frame-session', 'runtime-video', 25).accepted, true);
+  sceneStore.addStroke(makeHistoryStroke('scene-frame'));
+  assertHistoryDiagnostics(harness, { mutationCount: 1, undoDepth: 1, redoDepth: 0 });
+
+  assert.equal(activate('video-session', 'other-video', 24).accepted, true);
+  sceneStore.addStroke(makeHistoryStroke('scene-video'));
+  assert.equal(sceneStore.undo().applied, true);
+  assertHistoryDiagnostics(harness, { mutationCount: 2, undoDepth: 0, redoDepth: 1 });
+
+  assert.equal(activate('frame-session-2', 'runtime-video', 25).restored, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-frame']);
+  assert.equal(sceneStore.undo().applied, true);
+  assertHistoryDiagnostics(harness, { mutationCount: 2, undoDepth: 0, redoDepth: 1 });
+
+  assert.equal(activate('base-session-2', 'runtime-video', 24).restored, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-base']);
+  assert.equal(sceneStore.undo().applied, true);
+  assertHistoryDiagnostics(harness, { mutationCount: 2, undoDepth: 0, redoDepth: 1 });
+
+  assert.equal(activate('video-session-2', 'other-video', 24).restored, true);
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-video']);
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 0 });
+
+  assert.equal(activate('frame-session-3', 'runtime-video', 25).restored, true);
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-frame']);
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 0 });
+
+  assert.equal(activate('base-session-3', 'runtime-video', 24).restored, true);
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-base']);
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 0 });
+});
+
+test('redo history bytes remain in the store-wide maxBytes calculation across scenes', () => {
+  const harness = createHistoryHarness({
+    maxBytes: 1500,
+    maxHistoryBytes: 10000,
+    estimateObjectBytes: () => 100
+  });
+  const { sceneStore } = harness;
+  const minimalStroke = id => ({
+    id,
+    type: 'stroke',
+    pathData: 'M',
+    sourcePoints: [],
+    style: {},
+    transform: { left: 0, top: 0 }
+  });
+  sceneStore.addStroke(minimalStroke('redo-bytes-a'));
+  assert.equal(sceneStore.undo().applied, true);
+  const firstScene = assertHistoryDiagnostics(harness, {
+    mutationCount: 2, undoDepth: 0, redoDepth: 1
+  });
+  assert.ok(firstScene.historyBytes > 0);
+  assert.equal(firstScene.undoBytes, 0);
+  assert.equal(firstScene.cache.estimatedBytes, firstScene.historyBytes);
+
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'redo-bytes-frame',
+    stableVideoIdentity: 'runtime-video',
+    targetFrame: 25,
+    videoGeneration: 1,
+    tool: 'brush'
+  }).accepted, true);
+  assert.deepEqual(sceneStore.addStroke(minimalStroke('redo-bytes-b')), {
+    applied: false,
+    reason: 'scene-capacity-exceeded'
+  });
+  const secondScene = assertHistoryDiagnostics(harness, {
+    mutationCount: 0, undoDepth: 0, redoDepth: 0
+  });
+  assert.equal(secondScene.cache.estimatedBytes, firstScene.historyBytes);
+
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'redo-bytes-original',
+    stableVideoIdentity: 'runtime-video',
+    targetFrame: 24,
+    videoGeneration: 1,
+    tool: 'brush'
+  }).restored, true);
+  assertHistoryDiagnostics(harness, { mutationCount: 2, undoDepth: 0, redoDepth: 1 });
+});
+
+test('undo and redo history apply failures after validation injection are atomic', () => {
+  let failValidation = false;
+  const harness = createHistoryHarness({
+    estimateObjectBytes(object) {
+      if (failValidation) throw new Error('validation-injected');
+      return JSON.stringify(object).length * 2;
+    }
+  });
+  const { sceneStore } = harness;
+  sceneStore.addStroke(makeHistoryStroke('atomic-history'));
+  sceneStore.selectObjects(['atomic-history']);
+  sceneStore.transformSelection({ dx: 12, dy: 4 });
+  const beforeUndoScene = JSON.stringify(sceneStore.getActiveSceneSnapshot());
+  const beforeUndo = assertHistoryDiagnostics(harness, {
+    mutationCount: 2, undoDepth: 2, redoDepth: 0
+  });
+
+  failValidation = true;
+  assert.deepEqual(sceneStore.undo(), { applied: false, reason: 'validation-injected' });
+  assert.equal(JSON.stringify(sceneStore.getActiveSceneSnapshot()), beforeUndoScene);
+  assertHistoryDiagnostics(harness, {
+    mutationCount: 2,
+    undoDepth: 2,
+    redoDepth: 0,
+    historyBytes: beforeUndo.historyBytes
+  });
+
+  failValidation = false;
+  assert.equal(sceneStore.undo().applied, true);
+  const beforeRedoScene = JSON.stringify(sceneStore.getActiveSceneSnapshot());
+  const beforeRedo = assertHistoryDiagnostics(harness, {
+    mutationCount: 3, undoDepth: 1, redoDepth: 1
+  });
+
+  failValidation = true;
+  assert.deepEqual(sceneStore.redo(), { applied: false, reason: 'validation-injected' });
+  assert.equal(JSON.stringify(sceneStore.getActiveSceneSnapshot()), beforeRedoScene);
+  assertHistoryDiagnostics(harness, {
+    mutationCount: 3,
+    undoDepth: 1,
+    redoDepth: 1,
+    historyBytes: beforeRedo.historyBytes
+  });
+
+  failValidation = false;
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(
+    sceneStore.getActiveSceneSnapshot().objects[0].transform,
+    makeHistoryStroke('atomic-history', { transform: { left: 12, top: 4 } }).transform
+  );
+  assertHistoryDiagnostics(harness, {
+    mutationCount: 4,
+    undoDepth: 2,
+    redoDepth: 0,
+    historyBytes: beforeRedo.historyBytes
+  });
+});
+
 test('each stroke snapshots color size and opacity and warm reactivation restores mixed styles', () => {
   FakeCanvas.instances = [];
   const document = new FakeDocument();
@@ -3078,37 +3526,120 @@ test('stroke path data preserves source pressure separately from its Fabric path
   assert.ok(result.outline.length >= 3);
 });
 
-test('oversized lasso history is dropped instead of escaping the scene memory budget', () => {
-  const store = createSessionSceneStore({
+test('destructive command over maxHistoryBytes is rejected without changing the scene', () => {
+  const harness = createHistoryHarness({
     maxBytes: 100000,
-    maxHistoryBytes: 64,
+    maxHistoryBytes: 2048,
+    estimateObjectBytes: () => 50
+  });
+  const { sceneStore } = harness;
+  for (let index = 0; index < 12; index += 1) {
+    assert.equal(sceneStore.addStroke(makeHistoryStroke(`capacity-${index}`)).applied, true);
+  }
+  assert.equal(sceneStore.undo().applied, true);
+  const beforeScene = JSON.stringify(sceneStore.getActiveSceneSnapshot());
+  const before = assertHistoryDiagnostics(harness, {
+    mutationCount: 13,
+    undoDepth: sceneStore.getDiagnostics().undoDepth,
+    redoDepth: 1
+  });
+
+  assert.deepEqual(sceneStore.clearSession(), {
+    applied: false,
+    reason: 'history-capacity-exceeded'
+  });
+  assert.equal(JSON.stringify(sceneStore.getActiveSceneSnapshot()), beforeScene);
+  assertHistoryDiagnostics(harness, {
+    mutationCount: 13,
+    undoDepth: before.undoDepth,
+    redoDepth: 1,
+    historyBytes: before.historyBytes
+  });
+});
+
+test('destructive command whose undo state would exceed maxBytes is rejected atomically', () => {
+  const harness = createHistoryHarness({
+    maxBytes: 2000,
+    maxHistoryBytes: 10000,
     estimateObjectBytes: () => 1000
   });
-  store.activateSession({
-    sessionId: 'history-cap-session',
-    stableVideoIdentity: 'history-cap-video',
+  const { sceneStore } = harness;
+  const record = {
+    id: 'inverse-capacity',
+    type: 'stroke',
+    pathData: 'M',
+    sourcePoints: [],
+    style: {},
+    transform: { left: 0, top: 0 }
+  };
+  assert.equal(sceneStore.addStroke(record).applied, true);
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'unrelated-cache-session',
+    stableVideoIdentity: 'unrelated-cache-video',
     targetFrame: 0,
     videoGeneration: 1,
     tool: 'brush'
+  }).accepted, true);
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'inverse-capacity-session',
+    stableVideoIdentity: 'runtime-video',
+    targetFrame: 24,
+    videoGeneration: 1,
+    tool: 'brush'
+  }).restored, true);
+  sceneStore.selectObjects([record.id]);
+  const beforeScene = JSON.stringify(sceneStore.getActiveSceneSnapshot());
+  const before = assertHistoryDiagnostics(harness, {
+    mutationCount: 1,
+    undoDepth: 1,
+    redoDepth: 0
   });
-  const stroke = id => ({
-    id,
-    type: 'stroke',
-    pathData: 'M 0 0 L 10 0 Z',
-    sourcePoints: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
-    style: { color: '#fff', size: 3, opacity: 1 },
-    transform: { left: 5, top: 0 }
-  });
-  store.addStroke(stroke('original'));
-  assert.equal(store.replaceObjects({
-    replacements: [{ removeId: 'original', addObjects: [stroke('left'), stroke('right')] }],
-    selectedObjectIds: ['left']
-  }).applied, true);
+  assert.equal(sceneStore.hasScene('unrelated-cache-video', 0), true);
 
-  assert.equal(store.getDiagnostics().undoDepth, 0);
-  assert.equal(store.getDiagnostics().undoBytes, 0);
-  assert.equal(store.undo().reason, 'history-empty');
-  assert.deepEqual(store.getActiveSceneSnapshot().objects.map(object => object.id), ['left', 'right']);
+  assert.deepEqual(sceneStore.deleteSelection(), {
+    applied: false,
+    reason: 'scene-capacity-exceeded'
+  });
+  assert.equal(JSON.stringify(sceneStore.getActiveSceneSnapshot()), beforeScene);
+  assert.equal(sceneStore.hasScene('unrelated-cache-video', 0), true);
+  assert.equal(sceneStore.getDiagnostics().evictionCount, before.cache.evictionCount);
+  assertHistoryDiagnostics(harness, {
+    mutationCount: 1,
+    undoDepth: 1,
+    redoDepth: 0,
+    historyBytes: before.historyBytes
+  });
+});
+
+test('maxEntries eviction lets a replacement history command use the freed store bytes', () => {
+  const harness = createHistoryHarness({
+    maxBytes: 1400,
+    maxHistoryBytes: 10000,
+    maxHistory: 1,
+    estimateObjectBytes: () => 100
+  });
+  const { sceneStore } = harness;
+  const record = {
+    id: 'entry-eviction',
+    type: 'stroke',
+    pathData: 'M',
+    sourcePoints: [],
+    style: {},
+    transform: { left: 0, top: 0 }
+  };
+  assert.equal(sceneStore.addStroke(record).applied, true);
+  assertHistoryDiagnostics(harness, { mutationCount: 1, undoDepth: 1, redoDepth: 0 });
+
+  assert.equal(sceneStore.clearSession().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, []);
+  assertHistoryDiagnostics(harness, { mutationCount: 2, undoDepth: 1, redoDepth: 0 });
+
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, [record]);
+  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 0, redoDepth: 1 });
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, []);
+  assertHistoryDiagnostics(harness, { mutationCount: 4, undoDepth: 1, redoDepth: 0 });
 });
 
 test('lasso split interpolates a crossing stroke into selected and remaining runs', () => {

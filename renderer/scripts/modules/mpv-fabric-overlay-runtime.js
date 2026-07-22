@@ -12,6 +12,9 @@ const {
   boundsIntersect,
   simplifyClosedPolygon
 } = require('./drawing-v3/lasso-geometry.js');
+const {
+  createDrawingCommandHistory
+} = require('./drawing-v3/drawing-command-history.js');
 
 const SCENE_KEY_SEPARATOR = '\u0000';
 const DEFAULT_MAX_VIDEOS = 10;
@@ -50,6 +53,12 @@ const MAX_BRUSH_OPACITY_PERCENT = 100;
 const SELECTION_HIT_MARGIN_CSS_PX = 6;
 const MIN_SELECTION_HIT_TOLERANCE = 2;
 const MAX_SELECTION_HIT_TOLERANCE = 96;
+const DRAWING_ACTIONS = new Set([
+  'delete-selection',
+  'clear-session',
+  'undo',
+  'redo'
+]);
 
 function clonePlain(value) {
   if (value === undefined) return undefined;
@@ -150,6 +159,27 @@ function defaultEstimateObjectBytes(object) {
   }
 }
 
+function makeObjectsState(objects, touchedIds, order) {
+  return {
+    type: 'objects',
+    touchedIds: [...touchedIds],
+    objects: [...touchedIds]
+      .filter(id => objects.has(id))
+      .map(id => clonePlain(objects.get(id))),
+    order: [...order]
+  };
+}
+
+function makeTransformsState(objects, objectIds) {
+  return {
+    type: 'transforms',
+    transforms: objectIds.map(id => ({
+      id,
+      transform: clonePlain(objects.get(id)?.transform || {})
+    }))
+  };
+}
+
 function createSessionSceneStore(options = {}) {
   const maxVideos = positiveInteger(options.maxVideos, DEFAULT_MAX_VIDEOS);
   const maxBytes = positiveInteger(options.maxBytes, DEFAULT_MAX_BYTES);
@@ -168,9 +198,20 @@ function createSessionSceneStore(options = {}) {
   let latestVideoGeneration = -1;
   let activeSession = null;
   let evictionCount = 0;
+  let commandSequence = 0;
 
   function activeScene() {
     return activeSession ? scenes.get(activeSession.sceneKey) || null : null;
+  }
+
+  function historyDiagnostics(scene) {
+    return scene?.history?.getDiagnostics() || {
+      undoDepth: 0,
+      redoDepth: 0,
+      undoBytes: 0,
+      redoBytes: 0,
+      historyBytes: 0
+    };
   }
 
   function touchVideo(stableVideoIdentity) {
@@ -181,7 +222,9 @@ function createSessionSceneStore(options = {}) {
 
   function calculateEstimatedBytes() {
     let total = 0;
-    for (const scene of scenes.values()) total += scene.estimatedBytes + finiteNumber(scene.undoBytes);
+    for (const scene of scenes.values()) {
+      total += scene.estimatedBytes + historyDiagnostics(scene).historyBytes;
+    }
     return total;
   }
 
@@ -204,6 +247,43 @@ function createSessionSceneStore(options = {}) {
     return estimatedBytes;
   }
 
+  function estimateVideoBytes(stableVideoIdentity) {
+    let total = 0;
+    for (const scene of scenes.values()) {
+      if (scene.stableVideoIdentity !== stableVideoIdentity) continue;
+      total += scene.estimatedBytes + historyDiagnostics(scene).historyBytes;
+    }
+    return total;
+  }
+
+  function planProjectedEvictions(scene, nextObjectBytes, nextHistoryBytes) {
+    let projectedBytes = calculateEstimatedBytes() - scene.estimatedBytes -
+      historyDiagnostics(scene).historyBytes + nextObjectBytes + nextHistoryBytes;
+    const planned = [];
+    for (const candidate of videoAccess.keys()) {
+      if (projectedBytes <= maxBytes) break;
+      if (candidate === activeSession?.stableVideoIdentity) continue;
+      projectedBytes -= estimateVideoBytes(candidate);
+      planned.push(candidate);
+    }
+    return projectedBytes <= maxBytes ? planned : null;
+  }
+
+  function projectHistoryRecord(scene, commandId, commandBytes, entries = scene.historyEntries) {
+    const undo = entries.undo.map(entry => ({ ...entry }));
+    let undoBytes = undo.reduce((total, entry) => total + entry.estimatedBytes, 0);
+    while (undo.length >= maxHistory || undoBytes + commandBytes > maxHistoryBytes) {
+      const [removed] = undo.splice(0, 1);
+      undoBytes = Math.max(0, undoBytes - finiteNumber(removed?.estimatedBytes));
+    }
+    undo.push({ id: commandId, estimatedBytes: commandBytes });
+    return {
+      undo,
+      redo: [],
+      historyBytes: undoBytes + commandBytes
+    };
+  }
+
   function snapshotScene(scene) {
     if (!scene) return null;
     return {
@@ -223,50 +303,132 @@ function createSessionSceneStore(options = {}) {
     scene.mutationCount += 1;
   }
 
-  function recalculateSceneBytes(scene) {
-    scene.estimatedBytes = [...scene.objects.values()].reduce((total, object) => {
+  function estimateObjectsBytes(objects) {
+    return [...objects.values()].reduce((total, object) => {
       const estimated = finiteNumber(estimateObjectBytes(object), 1);
       return total + Math.max(1, estimated);
     }, 0);
   }
 
-  function clearUndoHistory(scene) {
-    if (!scene) return;
-    scene.undoStack.length = 0;
-    scene.undoBytes = 0;
+  function nextCommandId(scene, kind) {
+    commandSequence += 1;
+    return `${kind}:${scene.key}:${commandSequence}`;
   }
 
-  function estimateUndoEntryBytes(entry) {
-    let bytes = 0;
-    for (const object of entry.removedObjects || []) {
-      bytes += Math.max(1, finiteNumber(estimateObjectBytes(object), 1));
-    }
-    for (const id of [
-      ...(entry.previousOrder || []),
-      ...(entry.addedIds || []),
-      ...(entry.previousSelection || []),
-      ...(entry.coalesceIds || [])
-    ]) {
-      bytes += Math.max(2, String(id).length * 2);
-    }
-    bytes += defaultEstimateObjectBytes(entry.survivingTransforms || []);
-    return bytes;
+  function makeHistoryCommand(scene, kind, undoState, redoState) {
+    return {
+      id: nextCommandId(scene, kind),
+      kind,
+      undoState,
+      redoState
+    };
   }
 
-  function pushUndoEntry(scene, entry) {
-    const estimatedBytes = estimateUndoEntryBytes(entry);
-    while (scene.undoStack.length > 0 && (
-      scene.undoStack.length >= maxHistory ||
-      scene.undoBytes + estimatedBytes > maxHistoryBytes ||
-      calculateEstimatedBytes() + estimatedBytes > maxBytes
-    )) {
-      const removed = scene.undoStack.shift();
-      scene.undoBytes = Math.max(0, scene.undoBytes - finiteNumber(removed?.estimatedBytes));
+  function commitStagedMutation(scene, change) {
+    const previousEstimatedBytes = scene.estimatedBytes;
+    let nextEstimatedBytes;
+    try {
+      nextEstimatedBytes = estimateObjectsBytes(change.nextObjects);
+    } catch (error) {
+      return { applied: false, reason: error?.message || 'scene-validation-failed' };
     }
-    if (estimatedBytes > maxHistoryBytes || calculateEstimatedBytes() + estimatedBytes > maxBytes) return false;
-    scene.undoStack.push({ ...entry, estimatedBytes });
-    scene.undoBytes += estimatedBytes;
-    return true;
+    const command = makeHistoryCommand(scene, change.kind, change.undoState, change.redoState);
+    const commandBytes = defaultEstimateObjectBytes(command);
+    if (commandBytes > maxHistoryBytes) {
+      return { applied: false, reason: 'history-capacity-exceeded' };
+    }
+    const projectedHistory = projectHistoryRecord(scene, command.id, commandBytes);
+    const plannedEvictions = planProjectedEvictions(
+      scene,
+      Math.max(previousEstimatedBytes, nextEstimatedBytes),
+      projectedHistory.historyBytes
+    );
+    if (!plannedEvictions) {
+      return { applied: false, reason: 'scene-capacity-exceeded' };
+    }
+    const recorded = scene.history.record(command);
+    if (!recorded.recorded) {
+      return { applied: false, reason: recorded.reason || 'history-record-failed' };
+    }
+    for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
+
+    scene.historyEntries = { undo: projectedHistory.undo, redo: projectedHistory.redo };
+    scene.objects = change.nextObjects;
+    scene.selectedObjectIds = new Set(change.nextSelection || []);
+    scene.estimatedBytes = nextEstimatedBytes;
+    scene.pendingCoalesce = change.coalesce
+      ? {
+        commandId: command.id,
+        commandBytes,
+        kind: change.kind,
+        undoState: clonePlain(change.undoState),
+        undoEstimatedBytes: previousEstimatedBytes,
+        touchedIds: [...change.coalesce.touchedIds],
+        selectedIds: [...change.coalesce.selectedIds]
+      }
+      : null;
+    noteMutation(scene);
+    touchVideo(scene.stableVideoIdentity);
+    return { applied: true, commandId: command.id, ...recorded };
+  }
+
+  function commitCoalescedMutation(scene, pending, change) {
+    let nextEstimatedBytes;
+    try {
+      nextEstimatedBytes = estimateObjectsBytes(change.nextObjects);
+    } catch (error) {
+      return { applied: false, reason: error?.message || 'scene-validation-failed' };
+    }
+    const command = makeHistoryCommand(scene, pending.kind, pending.undoState, change.redoState);
+    const commandBytes = defaultEstimateObjectBytes(command);
+    if (commandBytes > maxHistoryBytes) {
+      return { applied: false, reason: 'history-capacity-exceeded' };
+    }
+    const pendingEntry = scene.historyEntries.undo.at(-1);
+    if (!pendingEntry || pendingEntry.id !== pending.commandId) {
+      scene.pendingCoalesce = null;
+      return { applied: false, reason: 'history-coalesce-stale' };
+    }
+    const displacedEntries = {
+      undo: scene.historyEntries.undo.slice(0, -1),
+      redo: [...scene.historyEntries.redo, pendingEntry]
+    };
+    const projectedHistory = projectHistoryRecord(
+      scene,
+      command.id,
+      commandBytes,
+      displacedEntries
+    );
+    const plannedEvictions = planProjectedEvictions(
+      scene,
+      Math.max(pending.undoEstimatedBytes, nextEstimatedBytes),
+      projectedHistory.historyBytes
+    );
+    if (!plannedEvictions) {
+      return { applied: false, reason: 'scene-capacity-exceeded' };
+    }
+
+    const displaced = scene.history.undo(() => ({ applied: true }));
+    if (!displaced.applied || displaced.commandId !== pending.commandId) {
+      if (displaced.applied) scene.history.redo(() => ({ applied: true }));
+      scene.pendingCoalesce = null;
+      return { applied: false, reason: 'history-coalesce-stale' };
+    }
+    const recorded = scene.history.record(command);
+    if (!recorded.recorded) {
+      scene.history.redo(() => ({ applied: true }));
+      return { applied: false, reason: recorded.reason || 'history-record-failed' };
+    }
+    for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
+
+    scene.historyEntries = { undo: projectedHistory.undo, redo: projectedHistory.redo };
+    scene.objects = change.nextObjects;
+    scene.selectedObjectIds = new Set(change.nextSelection || []);
+    scene.estimatedBytes = nextEstimatedBytes;
+    scene.pendingCoalesce = null;
+    noteMutation(scene);
+    touchVideo(scene.stableVideoIdentity);
+    return { applied: true, commandId: command.id, ...recorded };
   }
 
   function activateSession(session) {
@@ -295,8 +457,12 @@ function createSessionSceneStore(options = {}) {
         targetFrame,
         objects: new Map(),
         selectedObjectIds: new Set(),
-        undoStack: [],
-        undoBytes: 0,
+        history: createDrawingCommandHistory({
+          maxEntries: maxHistory,
+          maxBytes: maxHistoryBytes
+        }),
+        historyEntries: { undo: [], redo: [] },
+        pendingCoalesce: null,
         dirty: false,
         mutationCount: 0,
         estimatedBytes: 0
@@ -314,6 +480,7 @@ function createSessionSceneStore(options = {}) {
     };
     const scene = activeScene();
     scene.selectedObjectIds.clear();
+    scene.pendingCoalesce = null;
     touchVideo(session.stableVideoIdentity);
     enforceLimits();
     return { accepted: true, restored, sceneKey };
@@ -324,7 +491,9 @@ function createSessionSceneStore(options = {}) {
     if (sessionId && sessionId !== activeSession.sessionId) {
       return { accepted: false, reason: 'stale-session' };
     }
-    activeScene()?.selectedObjectIds.clear();
+    const scene = activeScene();
+    scene?.selectedObjectIds.clear();
+    if (scene) scene.pendingCoalesce = null;
     activeSession = null;
     return { accepted: true, active: false };
   }
@@ -342,17 +511,17 @@ function createSessionSceneStore(options = {}) {
     }
 
     const record = clonePlain(stroke);
-    clearUndoHistory(scene);
-    scene.objects.set(record.id, record);
-    recalculateSceneBytes(scene);
-    enforceLimits();
-    if (calculateEstimatedBytes() - scene.undoBytes > maxBytes) {
-      scene.objects.delete(record.id);
-      recalculateSceneBytes(scene);
-      return { applied: false, reason: 'scene-capacity-exceeded' };
-    }
-    noteMutation(scene);
-    touchVideo(scene.stableVideoIdentity);
+    const nextObjects = new Map(scene.objects);
+    nextObjects.set(record.id, record);
+    const touchedIds = [record.id];
+    const result = commitStagedMutation(scene, {
+      kind: 'add-objects',
+      nextObjects,
+      nextSelection: scene.selectedObjectIds,
+      undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
+      redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys())
+    });
+    if (!result.applied) return result;
     return { applied: true, objectId: record.id };
   }
 
@@ -369,7 +538,7 @@ function createSessionSceneStore(options = {}) {
   function transformSelection(change = {}) {
     const scene = activeScene();
     if (!scene || scene.selectedObjectIds.size === 0) return { applied: false, objectIds: [] };
-    let changed = false;
+    const nextObjects = new Map(scene.objects);
     const changedIds = [];
     const transformById = new Map((change.transforms || []).map(item => [item.id, item.transform]));
     const dx = finiteNumber(change.dx, 0);
@@ -387,23 +556,36 @@ function createSessionSceneStore(options = {}) {
       }
       const objectChanged = TRANSFORM_FIELDS.some(field => current[field] !== next[field]);
       if (!objectChanged) continue;
-      object.transform = next;
-      changed = true;
+      nextObjects.set(id, { ...clonePlain(object), transform: next });
       changedIds.push(id);
     }
 
-    if (!changed) return { applied: false, objectIds: [] };
-    const latestUndo = scene.undoStack.at(-1);
-    const coalesceIds = new Set(latestUndo?.coalesceIds || latestUndo?.addedIds || []);
+    if (changedIds.length === 0) return { applied: false, objectIds: [] };
+    const pending = scene.pendingCoalesce;
+    const coalesceIds = new Set(pending?.selectedIds || []);
     const selectedIds = [...scene.selectedObjectIds];
-    const coalescesLatestSplit = !!latestUndo &&
+    const coalescesLatestSplit = !!pending &&
       selectedIds.length === coalesceIds.size &&
       selectedIds.every(id => coalesceIds.has(id)) &&
       changedIds.every(id => coalesceIds.has(id));
-    if (!coalescesLatestSplit) clearUndoHistory(scene);
-    recalculateSceneBytes(scene);
-    noteMutation(scene);
-    touchVideo(scene.stableVideoIdentity);
+    const result = coalescesLatestSplit
+      ? commitCoalescedMutation(scene, pending, {
+        nextObjects,
+        nextSelection: scene.selectedObjectIds,
+        redoState: makeObjectsState(
+          nextObjects,
+          new Set([...pending.touchedIds, ...changedIds]),
+          nextObjects.keys()
+        )
+      })
+      : commitStagedMutation(scene, {
+        kind: 'transform-objects',
+        nextObjects,
+        nextSelection: scene.selectedObjectIds,
+        undoState: makeTransformsState(scene.objects, changedIds),
+        redoState: makeTransformsState(nextObjects, changedIds)
+      });
+    if (!result.applied) return { ...result, objectIds: [] };
     return { applied: true, objectIds: changedIds };
   }
 
@@ -445,75 +627,171 @@ function createSessionSceneStore(options = {}) {
       return { applied: false, reason: 'scene-object-limit-exceeded' };
     }
 
-    const previousObjects = scene.objects;
-    const previousSelection = scene.selectedObjectIds;
-    const previousBytes = scene.estimatedBytes;
     const requestedSelection = Array.isArray(change.selectedObjectIds) ? change.selectedObjectIds : [];
-    const historyEntry = {
-      previousOrder: [...previousObjects.keys()],
-      removedObjects: [...removeIds].map(id => clonePlain(previousObjects.get(id))),
-      addedIds: additions.map(object => object.id),
-      previousSelection: [...previousSelection],
-      coalesceIds: [...requestedSelection],
-      survivingTransforms: requestedSelection
-        .filter(id => previousObjects.has(id) && !removeIds.has(id))
-        .map(id => ({ id, transform: clonePlain(previousObjects.get(id)?.transform || {}) }))
-    };
     const nextObjects = new Map();
     const replacementsById = new Map(replacements.map(replacement => [replacement.removeId, replacement.addObjects]));
-    for (const [id, object] of previousObjects) {
+    for (const [id, object] of scene.objects) {
       if (!removeIds.has(id)) {
         nextObjects.set(id, object);
         continue;
       }
       for (const addition of replacementsById.get(id) || []) nextObjects.set(addition.id, addition);
     }
-    scene.objects = nextObjects;
-    scene.selectedObjectIds = new Set(
-      (Array.isArray(change.selectedObjectIds) ? change.selectedObjectIds : [])
-        .filter(id => nextObjects.has(id))
-    );
-    recalculateSceneBytes(scene);
-    if (calculateEstimatedBytes() - scene.undoBytes > maxBytes) {
-      scene.objects = previousObjects;
-      scene.selectedObjectIds = previousSelection;
-      scene.estimatedBytes = previousBytes;
-      return { applied: false, reason: 'scene-capacity-exceeded' };
+
+    const nextSelection = new Set(requestedSelection.filter(id => nextObjects.has(id)));
+    const transformItems = Array.isArray(change.transforms) ? change.transforms : [];
+    const transformById = new Map();
+    for (const item of transformItems) {
+      if (!item || typeof item.id !== 'string' || !nextObjects.has(item.id) ||
+          !item.transform || typeof item.transform !== 'object' || Array.isArray(item.transform) ||
+          transformById.has(item.id)) {
+        return { applied: false, reason: 'invalid-replacement-transform' };
+      }
+      transformById.set(item.id, clonePlain(item.transform));
     }
-    const undoRecorded = pushUndoEntry(scene, historyEntry);
-    noteMutation(scene);
-    touchVideo(scene.stableVideoIdentity);
+    const dx = finiteNumber(change.dx, 0);
+    const dy = finiteNumber(change.dy, 0);
+    const transformTargetIds = new Set(transformById.keys());
+    if (dx !== 0 || dy !== 0) {
+      for (const id of nextSelection) transformTargetIds.add(id);
+    }
+    const changedTransformIds = [];
+    for (const id of transformTargetIds) {
+      const object = nextObjects.get(id);
+      if (!object) continue;
+      const current = {
+        left: 0, top: 0, scaleX: 1, scaleY: 1, angle: 0,
+        skewX: 0, skewY: 0, flipX: false, flipY: false,
+        ...(object.transform || {})
+      };
+      const next = transformById.has(id)
+        ? { ...current, ...transformById.get(id) }
+        : { ...current, left: finiteNumber(current.left) + dx, top: finiteNumber(current.top) + dy };
+      if (!TRANSFORM_FIELDS.some(field => current[field] !== next[field])) continue;
+      nextObjects.set(id, { ...clonePlain(object), transform: next });
+      changedTransformIds.push(id);
+    }
+
+    const shouldCoalesceNextMove = changedTransformIds.length === 0 && nextSelection.size > 0;
+    const touchedIds = new Set([
+      ...removeIds,
+      ...additions.map(object => object.id),
+      ...changedTransformIds,
+      ...(shouldCoalesceNextMove ? nextSelection : [])
+    ]);
+    const result = commitStagedMutation(scene, {
+      kind: typeof change.kind === 'string' && change.kind ? change.kind : 'split-stroke',
+      nextObjects,
+      nextSelection,
+      undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
+      redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys()),
+      coalesce: shouldCoalesceNextMove
+        ? { touchedIds, selectedIds: nextSelection }
+        : null
+    });
+    if (!result.applied) return result;
     return {
       applied: true,
       removedIds: [...removeIds],
       addedIds: additions.map(object => object.id),
       selectedObjectIds: [...scene.selectedObjectIds],
-      undoRecorded
+      undoRecorded: true
+    };
+  }
+
+  function applyHistoryState(scene, state) {
+    if (!state || typeof state !== 'object') {
+      return { applied: false, reason: 'invalid-history-state' };
+    }
+    let nextObjects;
+    if (state.type === 'objects') {
+      if (!Array.isArray(state.touchedIds) || !Array.isArray(state.objects) || !Array.isArray(state.order)) {
+        return { applied: false, reason: 'invalid-history-state' };
+      }
+      const touchedIds = new Set(state.touchedIds);
+      if (touchedIds.size !== state.touchedIds.length ||
+          state.touchedIds.some(id => typeof id !== 'string' || !id)) {
+        return { applied: false, reason: 'invalid-history-state' };
+      }
+      nextObjects = new Map(scene.objects);
+      for (const id of touchedIds) nextObjects.delete(id);
+      const restoredIds = new Set();
+      for (const object of state.objects) {
+        if (!object || typeof object.id !== 'string' || !object.id ||
+            !touchedIds.has(object.id) || restoredIds.has(object.id)) {
+          return { applied: false, reason: 'invalid-history-state' };
+        }
+        restoredIds.add(object.id);
+        nextObjects.set(object.id, clonePlain(object));
+      }
+      const order = [...state.order];
+      const orderedIds = new Set(order);
+      if (orderedIds.size !== order.length || order.length !== nextObjects.size ||
+          order.some(id => typeof id !== 'string' || !nextObjects.has(id))) {
+        return { applied: false, reason: 'invalid-history-state' };
+      }
+      nextObjects = new Map(order.map(id => [id, nextObjects.get(id)]));
+    } else if (state.type === 'transforms') {
+      if (!Array.isArray(state.transforms)) {
+        return { applied: false, reason: 'invalid-history-state' };
+      }
+      nextObjects = new Map(scene.objects);
+      const transformedIds = new Set();
+      for (const item of state.transforms) {
+        if (!item || typeof item.id !== 'string' || !item.id || transformedIds.has(item.id) ||
+            !nextObjects.has(item.id) || !item.transform || typeof item.transform !== 'object' ||
+            Array.isArray(item.transform)) {
+          return { applied: false, reason: 'invalid-history-state' };
+        }
+        transformedIds.add(item.id);
+        nextObjects.set(item.id, {
+          ...clonePlain(nextObjects.get(item.id)),
+          transform: clonePlain(item.transform)
+        });
+      }
+    } else {
+      return { applied: false, reason: 'invalid-history-state' };
+    }
+
+    const nextEstimatedBytes = estimateObjectsBytes(nextObjects);
+    const projectedBytes = calculateEstimatedBytes() - scene.estimatedBytes + nextEstimatedBytes;
+    if (projectedBytes > maxBytes) {
+      return { applied: false, reason: 'scene-capacity-exceeded' };
+    }
+    scene.objects = nextObjects;
+    scene.selectedObjectIds = new Set();
+    scene.estimatedBytes = nextEstimatedBytes;
+    scene.pendingCoalesce = null;
+    noteMutation(scene);
+    touchVideo(scene.stableVideoIdentity);
+    return { applied: true };
+  }
+
+  function moveHistory(direction) {
+    const scene = activeScene();
+    if (!scene) return { applied: false, reason: 'history-empty' };
+    const result = scene.history[direction](state => applyHistoryState(scene, state));
+    if (!result.applied) return result;
+    const from = direction === 'undo' ? scene.historyEntries.undo : scene.historyEntries.redo;
+    const to = direction === 'undo' ? scene.historyEntries.redo : scene.historyEntries.undo;
+    const entryIndex = from.findLastIndex(entry => entry.id === result.commandId);
+    if (entryIndex >= 0) {
+      const [entry] = from.splice(entryIndex, 1);
+      to.push(entry);
+    }
+    return {
+      ...result,
+      objectCount: scene.objects.size,
+      selectedObjectIds: []
     };
   }
 
   function undo() {
-    const scene = activeScene();
-    if (!scene || scene.undoStack.length === 0) return { applied: false, reason: 'history-empty' };
-    const previous = scene.undoStack.pop();
-    scene.undoBytes = Math.max(0, scene.undoBytes - finiteNumber(previous.estimatedBytes));
-    const restoredById = new Map(scene.objects);
-    for (const id of previous.addedIds) restoredById.delete(id);
-    for (const object of previous.removedObjects) restoredById.set(object.id, clonePlain(object));
-    for (const item of previous.survivingTransforms || []) {
-      const object = restoredById.get(item.id);
-      if (object) object.transform = clonePlain(item.transform);
-    }
-    scene.objects = new Map(
-      previous.previousOrder
-        .filter(id => restoredById.has(id))
-        .map(id => [id, restoredById.get(id)])
-    );
-    scene.selectedObjectIds = new Set();
-    recalculateSceneBytes(scene);
-    noteMutation(scene);
-    touchVideo(scene.stableVideoIdentity);
-    return { applied: true, objectCount: scene.objects.size, selectedObjectIds: [] };
+    return moveHistory('undo');
+  }
+
+  function redo() {
+    return moveHistory('redo');
   }
 
   function deleteSelection() {
@@ -521,17 +799,18 @@ function createSessionSceneStore(options = {}) {
     if (!scene || scene.selectedObjectIds.size === 0) {
       return { applied: false, deletedCount: 0, deletedIds: [] };
     }
-    const deletedIds = [];
-    for (const id of scene.selectedObjectIds) {
-      if (!scene.objects.delete(id)) continue;
-      deletedIds.push(id);
-    }
-    scene.selectedObjectIds.clear();
+    const deletedIds = [...scene.selectedObjectIds].filter(id => scene.objects.has(id));
     if (deletedIds.length === 0) return { applied: false, deletedCount: 0, deletedIds };
-    clearUndoHistory(scene);
-    recalculateSceneBytes(scene);
-    noteMutation(scene);
-    touchVideo(scene.stableVideoIdentity);
+    const nextObjects = new Map(scene.objects);
+    for (const id of deletedIds) nextObjects.delete(id);
+    const result = commitStagedMutation(scene, {
+      kind: 'delete-objects',
+      nextObjects,
+      nextSelection: [],
+      undoState: makeObjectsState(scene.objects, deletedIds, scene.objects.keys()),
+      redoState: makeObjectsState(nextObjects, deletedIds, nextObjects.keys())
+    });
+    if (!result.applied) return result;
     return { applied: true, deletedCount: deletedIds.length, deletedIds };
   }
 
@@ -540,12 +819,15 @@ function createSessionSceneStore(options = {}) {
     const deletedCount = scene?.objects.size || 0;
     if (!scene || deletedCount === 0) return { applied: false, deletedCount: 0, deletedIds: [] };
     const deletedIds = [...scene.objects.keys()];
-    clearUndoHistory(scene);
-    scene.objects.clear();
-    scene.selectedObjectIds.clear();
-    recalculateSceneBytes(scene);
-    noteMutation(scene);
-    touchVideo(scene.stableVideoIdentity);
+    const nextObjects = new Map();
+    const result = commitStagedMutation(scene, {
+      kind: 'clear-keyframe',
+      nextObjects,
+      nextSelection: [],
+      undoState: makeObjectsState(scene.objects, deletedIds, scene.objects.keys()),
+      redoState: makeObjectsState(nextObjects, deletedIds, nextObjects.keys())
+    });
+    if (!result.applied) return result;
     return { applied: true, deletedCount, deletedIds };
   }
 
@@ -590,6 +872,7 @@ function createSessionSceneStore(options = {}) {
 
   function getDiagnostics() {
     const scene = activeScene();
+    const history = historyDiagnostics(scene);
     return {
       maxVideos,
       maxBytes,
@@ -608,8 +891,10 @@ function createSessionSceneStore(options = {}) {
       selectionCount: scene?.selectedObjectIds.size || 0,
       mutationCount: scene?.mutationCount || 0,
       dirty: scene?.dirty || false,
-      undoDepth: scene?.undoStack.length || 0,
-      undoBytes: scene?.undoBytes || 0,
+      undoDepth: history.undoDepth,
+      redoDepth: history.redoDepth,
+      undoBytes: history.undoBytes,
+      historyBytes: history.historyBytes,
       sceneKeys: [...scenes.keys()]
     };
   }
@@ -628,6 +913,7 @@ function createSessionSceneStore(options = {}) {
     transformSelection,
     replaceObjects,
     undo,
+    redo,
     deleteSelection,
     clearSession,
     updateTool,
@@ -2272,6 +2558,8 @@ function createFabricOverlayRuntime(options = {}) {
       });
       const brushButton = createButton('Brush', 'brush');
       const selectButton = createButton('V', 'select');
+      const undoButton = createButton('Undo', 'undo');
+      const redoButton = createButton('Redo', 'redo');
       const deleteButton = createButton('Delete', 'delete-selection');
       const clearButton = createButton('Clear', 'clear-session');
       brushControls = createBrushSettingsControls();
@@ -2282,6 +2570,8 @@ function createFabricOverlayRuntime(options = {}) {
       toolbar.appendChild(brushButton);
       toolbar.appendChild(selectButton);
       toolbar.appendChild(selectionControls.group);
+      toolbar.appendChild(undoButton);
+      toolbar.appendChild(redoButton);
       toolbar.appendChild(deleteButton);
       toolbar.appendChild(clearButton);
       toolbar.appendChild(brushControls.settingsButton);
@@ -2306,6 +2596,16 @@ function createFabricOverlayRuntime(options = {}) {
       configureCanvasEvents();
       addDomListener(brushButton, 'click', () => updateLocalDrawingTool('brush'));
       addDomListener(selectButton, 'click', () => updateLocalDrawingTool('select'));
+      addDomListener(undoButton, 'click', () => applyDrawingAction({
+        sessionId: currentSession?.sessionId,
+        actionId: createId('undo'),
+        action: 'undo'
+      }));
+      addDomListener(redoButton, 'click', () => applyDrawingAction({
+        sessionId: currentSession?.sessionId,
+        actionId: createId('redo'),
+        action: 'redo'
+      }));
       addDomListener(deleteButton, 'click', () => applyDrawingAction({
         sessionId: currentSession?.sessionId,
         actionId: createId('delete'),
@@ -2447,7 +2747,7 @@ function createFabricOverlayRuntime(options = {}) {
       return { applied: false, reason: 'stale-session' };
     }
     const action = command.action || command.type;
-    if (action !== 'delete-selection' && action !== 'clear-session' && action !== 'undo') {
+    if (!DRAWING_ACTIONS.has(action)) {
       return { applied: false, reason: 'invalid-action' };
     }
     if (!actionDeduper.accept(command.actionId)) {
@@ -2460,9 +2760,11 @@ function createFabricOverlayRuntime(options = {}) {
       ? sceneStore.deleteSelection()
       : action === 'clear-session'
         ? sceneStore.clearSession()
-        : sceneStore.undo();
+        : action === 'undo'
+          ? sceneStore.undo()
+          : sceneStore.redo();
     if (result.applied) {
-      if (action === 'undo') {
+      if (action === 'undo' || action === 'redo') {
         renderActiveScene();
         fabricCanvas.discardActiveObject();
         sceneStore.selectObjects([]);
@@ -2501,7 +2803,9 @@ function createFabricOverlayRuntime(options = {}) {
       mutationCount: scene.mutationCount,
       dirty: scene.dirty,
       undoDepth: scene.undoDepth,
+      redoDepth: scene.redoDepth,
       undoBytes: scene.undoBytes,
+      historyBytes: scene.historyBytes,
       cache: {
         videoCount: scene.videoCount,
         sceneCount: scene.sceneCount,
