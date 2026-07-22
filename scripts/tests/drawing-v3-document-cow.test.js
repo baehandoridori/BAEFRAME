@@ -956,3 +956,21 @@ test('drawing regression script includes the COW safety suite', () => {
     /(?:^|\s)scripts\/tests\/drawing-v3-document-cow\.test\.js(?:\s|$)/
   );
 });
+
+test('drawing hardening and benchmark commands stay isolated', () => {
+  assert.equal(
+    packageJson.scripts['test:drawing-v3-hardening'],
+    'node --test --test-concurrency=1 ' +
+      'scripts/tests/drawing-v3-document.test.js ' +
+      'scripts/tests/drawing-v3-document-cow.test.js'
+  );
+  assert.equal(
+    packageJson.scripts['benchmark:drawing-v3'],
+    'node --test --test-concurrency=1 ' +
+      'scripts/tests/drawing-v3-document-benchmark.test.mjs'
+  );
+  assert.doesNotMatch(
+    packageJson.scripts['test:drawing'],
+    /drawing-v3-document-benchmark/
+  );
+});
