@@ -381,7 +381,12 @@ function createRealFabricHarness(runtimeOptions = {}) {
   const realFabric = require('fabric/node');
   const environment = realFabric.getEnv();
   const canvases = [];
-  const sceneStore = createSessionSceneStore();
+  const sceneStore = runtimeOptions.sceneStore || createSessionSceneStore(runtimeOptions.sceneStoreOptions);
+  const overlayOptions = { ...runtimeOptions };
+  const fabricOverrides = overlayOptions.fabric || {};
+  delete overlayOptions.sceneStore;
+  delete overlayOptions.sceneStoreOptions;
+  delete overlayOptions.fabric;
   class CaptureCanvas extends realFabric.Canvas {
     constructor(...args) {
       super(...args);
@@ -398,8 +403,8 @@ function createRealFabricHarness(runtimeOptions = {}) {
   const root = environment.document.createElement('div');
   environment.document.body.appendChild(root);
   const runtime = createFabricOverlayRuntime({
-    ...runtimeOptions,
-    fabric: { ...realFabric, Canvas: CaptureCanvas },
+    ...overlayOptions,
+    fabric: { ...realFabric, ...fabricOverrides, Canvas: CaptureCanvas },
     document: environment.document,
     window: environment.window,
     sceneStore
@@ -588,6 +593,7 @@ function createRealFabricHarness(runtimeOptions = {}) {
     hoverAt,
     sceneTransforms,
     async destroy() {
+      assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
       runtime.destroy();
       await canvas.__disposePromise;
       root.remove();
@@ -595,62 +601,156 @@ function createRealFabricHarness(runtimeOptions = {}) {
   };
 }
 
-test('lasso selection splits one crossing stroke and selects only the enclosed fragment', async () => {
+const crossingStrokePoints = (y = 100) => [
+  { x: 20, y },
+  { x: 50, y },
+  { x: 80, y },
+  { x: 110, y },
+  { x: 140, y },
+  { x: 180, y }
+];
+
+const middleLassoPoints = (top = 75, bottom = 125) => [
+  { x: 70, y: top },
+  { x: 130, y: top },
+  { x: 130, y: bottom },
+  { x: 70, y: bottom },
+  { x: 70, y: top }
+];
+
+function enableRealFabricLasso(harness, toolRevision = 1) {
+  harness.runtime.updateDrawingTool({
+    sessionId: 'real-fabric-session',
+    toolRevision,
+    tool: 'select'
+  });
+  findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+}
+
+function lassoHistoryState(runtime) {
+  const diagnostics = runtime.getDiagnostics();
+  return {
+    mutationCount: diagnostics.mutationCount,
+    dirty: diagnostics.dirty,
+    undoDepth: diagnostics.undoDepth,
+    redoDepth: diagnostics.redoDepth,
+    historyBytes: diagnostics.historyBytes
+  };
+}
+
+function pendingLassoObjects(canvas) {
+  return canvas.getObjects().filter(object => object.__baeframePendingLasso);
+}
+
+function stageCrossingLasso(harness, pointerBase = 800) {
+  harness.drawStroke(crossingStrokePoints(), pointerBase);
+  const before = harness.sceneStore.getActiveSceneSnapshot();
+  enableRealFabricLasso(harness);
+  harness.dragLasso(middleLassoPoints(), pointerBase + 1);
+  return before;
+}
+
+test('lasso pointerup keeps scene objects mutation dirty undo and redo unchanged', async () => {
   const harness = createRealFabricHarness();
   try {
-    harness.drawStroke([
-      { x: 20, y: 100 },
-      { x: 50, y: 100 },
-      { x: 80, y: 100 },
-      { x: 110, y: 100 },
-      { x: 140, y: 100 },
-      { x: 180, y: 100 }
-    ], 60);
-    const original = harness.sceneStore.getActiveSceneSnapshot().objects[0];
-    harness.runtime.updateDrawingTool({
+    harness.drawStroke(crossingStrokePoints(), 60);
+    harness.drawStroke(crossingStrokePoints(175), 600);
+    assert.equal(harness.runtime.applyDrawingAction({
       sessionId: 'real-fabric-session',
-      toolRevision: 1,
-      tool: 'select'
+      actionId: 'lasso-pointerup-create-redo',
+      action: 'undo'
+    }).applied, true);
+    enableRealFabricLasso(harness);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+
+    harness.dragLasso(middleLassoPoints(), 61);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(after.objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(after.objects.length, 1);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 1);
+    assert.equal(pendingLassoObjects(harness.canvas)[0].opacity, 0);
+    assert.equal(harness.canvas.getActiveObject().__baeframePendingLasso, true);
+    assert.equal(harness.canvas.getObjects().filter(object => !object.__baeframePendingLasso).length, 1);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial lasso Delete commits one command and round-trips exact ID path and z-order', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 610);
+    harness.drawStroke(crossingStrokePoints(170), 611);
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    enableRealFabricLasso(harness);
+    harness.dragLasso(middleLassoPoints(), 612);
+    const beforeDelete = lassoHistoryState(harness.runtime);
+
+    const deleted = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'partial-lasso-delete',
+      action: 'delete-selection'
     });
-    const lassoButton = findOne(
-      harness.root,
-      node => node.dataset.fabricPilotAction === 'select-lasso'
-    );
-    lassoButton.click();
 
+    const holed = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(deleted.applied, true);
+    assert.equal(holed.objects.length, 3);
+    assert.equal(holed.objects.some(object => object.id === original.objects[0].id), false);
+    assert.equal(holed.objects[2].id, original.objects[1].id);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, beforeDelete.undoDepth + 1);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'undo-partial-delete', action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, original.objects);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'redo-partial-delete', action: 'redo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, holed.objects);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial fragments plus a fully enclosed stroke Delete round-trip as one command', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(80), 613);
+    harness.drawStroke([{ x: 85, y: 120 }, { x: 105, y: 120 }, { x: 125, y: 120 }], 614);
+    harness.drawStroke(crossingStrokePoints(175), 615);
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    enableRealFabricLasso(harness);
     harness.dragLasso([
-      { x: 70, y: 75 },
-      { x: 130, y: 75 },
-      { x: 130, y: 125 },
-      { x: 70, y: 125 },
-      { x: 70, y: 75 }
-    ], 61);
+      { x: 70, y: 55 }, { x: 135, y: 55 }, { x: 135, y: 140 },
+      { x: 70, y: 140 }, { x: 70, y: 55 }
+    ], 616);
+    const beforeDelete = lassoHistoryState(harness.runtime);
+    assert.equal(harness.canvas.getActiveObjects().length, 2);
 
-    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
-    const fragments = snapshot.objects
-      .map(object => ({
-        id: object.id,
-        minX: Math.min(...object.sourcePoints.map(point => point.x)),
-        maxX: Math.max(...object.sourcePoints.map(point => point.x))
-      }))
-      .sort((left, right) => left.minX - right.minX);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'delete-mixed-partial', action: 'delete-selection'
+    }).applied, true);
+    const deleted = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(deleted.objects.length, 3);
+    assert.equal(deleted.objects.some(object => object.id === original.objects[0].id), false);
+    assert.equal(deleted.objects.some(object => object.id === original.objects[1].id), false);
+    assert.equal(deleted.objects.at(-1).id, original.objects[2].id);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, beforeDelete.undoDepth + 1);
 
-    assert.equal(snapshot.objects.length, 3);
-    assert.equal(snapshot.objects.some(object => object.id === original.id), false);
-    assert.deepEqual(fragments.map(fragment => [
-      Number(fragment.minX.toFixed(1)),
-      Number(fragment.maxX.toFixed(1))
-    ]), [
-      [20, 68.5],
-      [68.5, 131.5],
-      [131.5, 180]
-    ]);
-    assert.deepEqual(snapshot.selectedObjectIds, [fragments[1].id]);
-    assert.deepEqual(
-      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
-      [fragments[1].id]
-    );
-    assert.equal(harness.runtime.getDiagnostics().selectionMode, 'lasso');
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'undo-mixed-partial-delete', action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, original.objects);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'redo-mixed-partial-delete', action: 'redo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, deleted.objects);
     assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
   } finally {
     await harness.destroy();
@@ -748,8 +848,10 @@ test('dragging a lasso-selected fragment moves only that fragment', async () => 
     ], 63);
 
     const before = harness.sceneStore.getActiveSceneSnapshot();
-    const selectedId = before.selectedObjectIds[0];
-    const beforeById = new Map(before.objects.map(object => [object.id, object]));
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    const selectedObject = harness.canvas.getActiveObjects()[0];
+    const selectedId = selectedObject.__baeframeObjectId;
+    const selectedStart = { left: selectedObject.left, top: selectedObject.top };
     harness.dragActiveSelectionBy(20, -30, 64);
     await Promise.resolve();
 
@@ -757,16 +859,46 @@ test('dragging a lasso-selected fragment moves only that fragment', async () => 
     const afterById = new Map(after.objects.map(object => [object.id, object]));
     assert.equal(after.objects.length, 3);
     assert.deepEqual(after.selectedObjectIds, [selectedId]);
-    for (const [id, original] of beforeById) {
-      const moved = afterById.get(id);
-      assert.deepEqual(moved.sourcePoints, original.sourcePoints);
-      if (id === selectedId) {
-        assert.equal(moved.transform.left, original.transform.left + 20);
-        assert.equal(moved.transform.top, original.transform.top - 30);
-      } else {
-        assert.deepEqual(moved.transform, original.transform);
-      }
-    }
+    assert.equal(afterById.get(selectedId).transform.left, selectedStart.left + 20);
+    assert.equal(afterById.get(selectedId).transform.top, selectedStart.top - 30);
+    assert.equal(after.objects.filter(object => object.id !== selectedId).every(
+      object => object.transform.top === 100
+    ), true);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, beforeHistory.undoDepth + 1);
+    assert.deepEqual(before.objects.length, 1);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('moving the same lasso fragment twice records two separate commands', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 617);
+    enableRealFabricLasso(harness);
+    harness.dragLasso(middleLassoPoints(), 618);
+    const depthBeforeMove = harness.runtime.getDiagnostics().undoDepth;
+
+    harness.dragActiveSelectionBy(20, -10, 619);
+    await Promise.resolve();
+    const firstMove = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, depthBeforeMove + 1);
+
+    harness.dragActiveSelectionBy(5, 15, 620);
+    await Promise.resolve();
+    const secondMove = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, depthBeforeMove + 2);
+    assert.notDeepEqual(secondMove.objects, firstMove.objects);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'undo-second-fragment-move', action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, firstMove.objects);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'redo-second-fragment-move', action: 'redo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, secondMove.objects);
     assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
   } finally {
     await harness.destroy();
@@ -800,6 +932,7 @@ test('one undo restores the original stroke after lasso split and fragment move'
     ], 66);
     harness.dragActiveSelectionBy(20, -30, 67);
     await Promise.resolve();
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
 
     const undo = harness.runtime.applyDrawingAction({
       sessionId: 'real-fabric-session',
@@ -814,6 +947,13 @@ test('one undo restores the original stroke after lasso split and fragment move'
     assert.deepEqual(restored.selectedObjectIds, []);
     assert.equal(harness.canvas.getObjects().length, 1);
     assert.equal(harness.canvas.getActiveObject(), undefined);
+    const redo = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'redo-lasso-split-1',
+      action: 'redo'
+    });
+    assert.equal(redo.applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, moved.objects);
     assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
   } finally {
     await harness.destroy();
@@ -848,9 +988,11 @@ test('one undo restores both a split fragment move and a fully enclosed stroke m
       { x: 70, y: 140 },
       { x: 70, y: 55 }
     ], 718);
-    assert.equal(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds.length, 2);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, originals);
+    assert.equal(harness.canvas.getActiveObjects().length, 2);
     harness.dragActiveSelectionBy(15, 10, 719);
     await Promise.resolve();
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
 
     const undo = harness.runtime.applyDrawingAction({
       sessionId: 'real-fabric-session',
@@ -860,6 +1002,15 @@ test('one undo restores both a split fragment move and a fully enclosed stroke m
 
     assert.equal(undo.applied, true);
     assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, originals);
+    const redo = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'redo-mixed-lasso-move',
+      action: 'redo'
+    });
+    assert.equal(redo.applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, moved.objects);
+    assert.deepEqual(moved.objects.map(object => object.id), harness.sceneStore.getActiveSceneSnapshot().objects.map(object => object.id));
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
   } finally {
     await harness.destroy();
   }
@@ -887,7 +1038,7 @@ test('later drawing mutations keep ordered undo redo history without skipping ne
       { x: 70, y: 100 },
       { x: 70, y: 60 }
     ], 714);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 2);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
     harness.runtime.applyDrawingAction({
       sessionId: 'real-fabric-session',
       actionId: 'clear-after-split',
@@ -913,7 +1064,7 @@ test('later drawing mutations keep ordered undo redo history without skipping ne
 
     assert.equal(undo.applied, true);
     assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, []);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 3);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 2);
     assert.equal(harness.runtime.getDiagnostics().redoDepth, 1);
 
     const redo = harness.runtime.applyDrawingAction({
@@ -923,7 +1074,7 @@ test('later drawing mutations keep ordered undo redo history without skipping ne
     });
     assert.equal(redo.applied, true);
     assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, [newer]);
-    assert.equal(harness.runtime.getDiagnostics().undoDepth, 4);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 3);
     assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
     assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
   } finally {
@@ -1075,8 +1226,380 @@ test('cancelling a no-move pending fragment selection rolls back to the original
     assert.deepEqual(restored.objects, [original]);
     assert.deepEqual(restored.selectedObjectIds, []);
     assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
-    assert.equal(harness.runtime.getDiagnostics().redoDepth, 1);
+    assert.equal(harness.runtime.getDiagnostics().redoDepth, 0);
     assert.equal(harness.canvas.getObjects().filter(object => !object.__baeframeTransient).length, 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('pending lasso cancellation paths leave no proxy mutation or history', async t => {
+  const scenarios = [
+    ['blur', harness => {
+      harness.environment.window.dispatchEvent(new harness.environment.window.Event('blur'));
+    }],
+    ['pointercancel', harness => {
+      const center = harness.canvas.getActiveObject().getCenterPoint();
+      harness.dispatchPointer(harness.element, 'pointerdown', center.x, center.y, 830, 1);
+      harness.dispatchPointer(harness.element, 'pointercancel', center.x, center.y, 830, 0);
+    }],
+    ['pointercancel after materialize', harness => {
+      const center = harness.canvas.getActiveObject().getCenterPoint();
+      harness.dispatchPointer(harness.element, 'pointerdown', center.x, center.y, 832, 1);
+      harness.dispatchPointer(harness.environment.document, 'pointermove', center.x + 20, center.y + 10, 832, 1);
+      assert.equal(harness.canvas.getObjects().filter(object => object.__baeframeObjectId).length, 3);
+      harness.dispatchPointer(harness.element, 'pointercancel', center.x + 20, center.y + 10, 832, 0);
+    }],
+    ['B disable', harness => {
+      assert.equal(harness.runtime.setDrawingInput({
+        hostGeneration: 1,
+        videoGeneration: 1,
+        inputRevision: 2,
+        enabled: false
+      }).accepted, true);
+      assert.equal(harness.runtime.setDrawingInput({
+        hostGeneration: 1,
+        videoGeneration: 1,
+        inputRevision: 3,
+        enabled: true,
+        session: {
+          sessionId: 'real-fabric-session',
+          stableVideoIdentity: 'real-fabric-video',
+          targetFrame: 0,
+          sourceWidth: 200,
+          sourceHeight: 200,
+          canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+          viewportTransform: { scale: 1, panX: 0, panY: 0 },
+          tool: 'brush'
+        }
+      }).accepted, true);
+    }],
+    ['tool mode change', harness => {
+      assert.equal(harness.runtime.updateDrawingTool({
+        sessionId: 'real-fabric-session', toolRevision: 2, tool: 'brush'
+      }).accepted, true);
+    }],
+    ['selection preset change', harness => {
+      findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-stroke').click();
+    }],
+    ['new lasso', harness => {
+      harness.dispatchPointer(harness.element, 'pointerdown', 10, 10, 831, 1);
+      harness.dispatchPointer(harness.element, 'pointercancel', 10, 10, 831, 0);
+    }]
+  ];
+
+  for (let index = 0; index < scenarios.length; index += 1) {
+    const [name, cancel] = scenarios[index];
+    await t.test(name, async () => {
+      const harness = createRealFabricHarness();
+      try {
+        const before = stageCrossingLasso(harness, 840 + index * 10);
+        const beforeHistory = {
+          mutationCount: before.mutationCount,
+          dirty: before.dirty,
+          undoDepth: 1,
+          redoDepth: 0
+        };
+        assert.equal(pendingLassoObjects(harness.canvas).length, 1);
+        cancel(harness);
+        await Promise.resolve();
+
+        const after = harness.sceneStore.getActiveSceneSnapshot();
+        assert.deepEqual(after.objects, before.objects);
+        assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+        const diagnostics = harness.runtime.getDiagnostics();
+        assert.equal(diagnostics.mutationCount, beforeHistory.mutationCount);
+        assert.equal(diagnostics.dirty, beforeHistory.dirty);
+        assert.equal(diagnostics.undoDepth, beforeHistory.undoDepth);
+        assert.equal(diagnostics.redoDepth, beforeHistory.redoDepth);
+        assert.equal(diagnostics.metrics.saveAttemptCount, 0);
+      } finally {
+        await harness.destroy();
+      }
+    });
+  }
+});
+
+test('pending lasso Undo and Redo abort selection before applying committed history', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 900);
+    const first = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    harness.drawStroke(crossingStrokePoints(175), 901);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'prepare-pending-redo', action: 'undo'
+    }).applied, true);
+    enableRealFabricLasso(harness);
+    harness.dragLasso(middleLassoPoints(), 902);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 1);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'redo-with-pending-lasso', action: 'redo'
+    }).applied, true);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'remove-second-before-pending-undo', action: 'undo'
+    }).applied, true);
+    enableRealFabricLasso(harness, 2);
+    harness.dragLasso(middleLassoPoints(), 903);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'undo-with-pending-lasso', action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, []);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.equal(first.type, 'stroke');
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('zero-distance pending lasso move restores original visual and remains a no-op', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const before = stageCrossingLasso(harness, 910);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    const target = harness.canvas.getActiveObject();
+    harness.canvas.fire('before:transform', { transform: { target } });
+    harness.canvas.fire('object:moving', { target });
+    assert.equal(harness.canvas.getObjects().length, 3);
+    harness.canvas.fire('object:modified', { target });
+
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot(), before);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.equal(harness.canvas.getObjects().filter(object => object.__baeframeObjectId).length, 1);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('stale pending lasso session revision and source mutation never commit a split', async t => {
+  await t.test('input revision', async () => {
+    const harness = createRealFabricHarness();
+    try {
+      const before = stageCrossingLasso(harness, 920);
+      assert.equal(harness.runtime.setDrawingInput({
+        hostGeneration: 1,
+        videoGeneration: 1,
+        inputRevision: 2,
+        enabled: true,
+        session: {
+          sessionId: 'real-fabric-session', stableVideoIdentity: 'real-fabric-video', targetFrame: 0,
+          sourceWidth: 200, sourceHeight: 200,
+          canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+          viewportTransform: { scale: 1, panX: 0, panY: 0 }, tool: 'select'
+        }
+      }).accepted, true);
+      assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, before.objects);
+      assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    } finally {
+      await harness.destroy();
+    }
+  });
+
+  await t.test('session', async () => {
+    const harness = createRealFabricHarness();
+    try {
+      stageCrossingLasso(harness, 930);
+      assert.equal(harness.runtime.setDrawingInput({
+        hostGeneration: 1,
+        videoGeneration: 1,
+        inputRevision: 2,
+        enabled: true,
+        session: {
+          sessionId: 'next-real-fabric-session', stableVideoIdentity: 'real-fabric-video', targetFrame: 1,
+          sourceWidth: 200, sourceHeight: 200,
+          canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+          viewportTransform: { scale: 1, panX: 0, panY: 0 }, tool: 'select'
+        }
+      }).accepted, true);
+      assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, []);
+      assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    } finally {
+      await harness.destroy();
+    }
+  });
+
+  await t.test('source mutation count', async () => {
+    const harness = createRealFabricHarness();
+    try {
+      const before = stageCrossingLasso(harness, 940);
+      const target = harness.canvas.getActiveObject();
+      const external = makeHistoryStroke('external-after-lasso', {
+        sourcePoints: [{ x: 10, y: 180 }, { x: 30, y: 180 }]
+      });
+      assert.equal(harness.sceneStore.addStroke(external).applied, true);
+      harness.canvas.fire('before:transform', { transform: { target } });
+      target.set({ left: target.left + 20 });
+      harness.canvas.fire('object:moving', { target });
+      harness.canvas.fire('object:modified', { target });
+
+      const after = harness.sceneStore.getActiveSceneSnapshot();
+      assert.deepEqual(after.objects.map(object => object.id), [before.objects[0].id, external.id]);
+      assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+      assert.deepEqual(harness.canvas.getObjects().map(object => object.__baeframeObjectId), [before.objects[0].id, external.id]);
+      assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+    } finally {
+      await harness.destroy();
+    }
+  });
+});
+
+test('pending lasso commit failure restores the original scene and Fabric paths', async () => {
+  const sceneStore = createSessionSceneStore();
+  const realReplaceObjects = sceneStore.replaceObjects;
+  let replaceAttempts = 0;
+  sceneStore.replaceObjects = change => {
+    replaceAttempts += 1;
+    if (change?.kind === 'split-stroke') return { applied: false, reason: 'history-capacity-exceeded' };
+    return realReplaceObjects(change);
+  };
+  const harness = createRealFabricHarness({ sceneStore });
+  try {
+    const before = stageCrossingLasso(harness, 950);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    harness.dragActiveSelectionBy(20, 10, 952);
+    await Promise.resolve();
+
+    assert.equal(replaceAttempts, 1);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(harness.canvas.getObjects().map(object => object.__baeframeObjectId), [before.objects[0].id]);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('pending lasso history capacity rejection preserves the original scene atomically', async () => {
+  const harness = createRealFabricHarness({ sceneStoreOptions: { maxHistoryBytes: 10000 } });
+  try {
+    const before = stageCrossingLasso(harness, 960);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    harness.dragActiveSelectionBy(20, 10, 962);
+    await Promise.resolve();
+
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(harness.canvas.getObjects().map(object => object.__baeframeObjectId), [before.objects[0].id]);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('pending multi-lasso aborts if Fabric transforms only a subset of its selection', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(90), 970);
+    harness.drawStroke(crossingStrokePoints(110), 971);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    enableRealFabricLasso(harness);
+    harness.dragLasso(middleLassoPoints(70, 130), 972);
+
+    const activeSelection = harness.canvas.getActiveObject();
+    const [subset] = activeSelection.getObjects();
+    assert.equal(activeSelection.getObjects().length, 2);
+    harness.canvas.fire('before:transform', { transform: { target: subset } });
+    subset.set({ left: subset.left + 20, top: subset.top + 10 });
+    harness.canvas.fire('object:moving', { target: subset });
+    harness.canvas.fire('object:modified', { target: subset });
+
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(
+      harness.canvas.getObjects().map(object => object.__baeframeObjectId),
+      before.objects.map(object => object.id)
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('pending lasso proxy construction failure restores the untouched original', async () => {
+  const realFabric = require('fabric/node');
+  let armed = false;
+  let repeatedStrokePathCount = 0;
+  const constructionCountsByPath = new Map();
+  class ThrowingPendingPath extends realFabric.Path {
+    constructor(...args) {
+      if (armed) {
+        const pathData = String(args[0] || '');
+        const constructionCount = (constructionCountsByPath.get(pathData) || 0) + 1;
+        constructionCountsByPath.set(pathData, constructionCount);
+        if (constructionCount === 2 && pathData.includes(' Q ')) {
+          repeatedStrokePathCount += 1;
+          if (repeatedStrokePathCount === 2) {
+            throw new Error('synthetic pending proxy construction failure');
+          }
+        }
+      }
+      super(...args);
+    }
+  }
+  const harness = createRealFabricHarness({ fabric: { Path: ThrowingPendingPath } });
+  try {
+    harness.drawStroke(crossingStrokePoints(90), 980);
+    harness.drawStroke(crossingStrokePoints(110), 981);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    enableRealFabricLasso(harness);
+    armed = true;
+
+    assert.doesNotThrow(() => harness.dragLasso(middleLassoPoints(70, 130), 982));
+    assert.equal(repeatedStrokePathCount, 2);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot(), before);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(
+      harness.canvas.getObjects().map(object => object.__baeframeObjectId),
+      before.objects.map(object => object.id)
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('pending lasso materialization failure restores the untouched original', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const before = stageCrossingLasso(harness, 990);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    const originalAdd = harness.canvas.add.bind(harness.canvas);
+    let rejectNextMaterializedFragment = true;
+    harness.canvas.add = (...objects) => {
+      if (rejectNextMaterializedFragment && objects.some(object => (
+        object.__baeframePendingLasso && object.opacity !== 0
+      ))) {
+        rejectNextMaterializedFragment = false;
+        throw new Error('synthetic pending fragment add failure');
+      }
+      return originalAdd(...objects);
+    };
+    const target = harness.canvas.getActiveObject();
+
+    assert.doesNotThrow(() => {
+      harness.canvas.fire('before:transform', { transform: { target } });
+      target.set({ left: target.left + 20, top: target.top + 10 });
+      harness.canvas.fire('object:moving', { target });
+      harness.canvas.fire('object:modified', { target });
+    });
+
+    assert.equal(rejectNextMaterializedFragment, false);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot(), before);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(
+      harness.canvas.getObjects().map(object => object.__baeframeObjectId),
+      before.objects.map(object => object.id)
+    );
   } finally {
     await harness.destroy();
   }
@@ -1218,7 +1741,7 @@ test('switching a selected stroke into lasso mode keeps it immediately movable',
   }
 });
 
-test('lasso splits an already moved stroke at its visible position without jumping', async () => {
+test('lasso commits an already moved stroke at its visible position without jumping', async () => {
   const harness = createRealFabricHarness();
   try {
     harness.drawStroke([
@@ -1245,6 +1768,9 @@ test('lasso splits an already moved stroke at its visible position without jumpi
       { x: 90, y: 155 },
       { x: 90, y: 105 }
     ], 73);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+    harness.dragActiveSelectionBy(10, 0, 731);
+    await Promise.resolve();
 
     const snapshot = harness.sceneStore.getActiveSceneSnapshot();
     const fragments = snapshot.objects
@@ -1271,7 +1797,7 @@ test('lasso splits an already moved stroke at its visible position without jumpi
   }
 });
 
-test('lasso selects the visible edge of a thick stroke even when its centerline stays outside', async () => {
+test('lasso stages the visible edge of a thick stroke without mutating the scene', async () => {
   const harness = createRealFabricHarness();
   try {
     const sizeInput = findOne(harness.root, node => node.dataset.fabricPilotSetting === 'size');
@@ -1301,9 +1827,10 @@ test('lasso selects the visible edge of a thick stroke even when its centerline 
     ], 707);
 
     const snapshot = harness.sceneStore.getActiveSceneSnapshot();
-    assert.equal(snapshot.objects.some(object => object.id === originalId), false);
-    assert.equal(snapshot.objects.length > 1, true);
-    assert.equal(snapshot.selectedObjectIds.length > 0, true);
+    assert.equal(snapshot.objects.some(object => object.id === originalId), true);
+    assert.equal(snapshot.objects.length, 1);
+    assert.equal(pendingLassoObjects(harness.canvas).length > 0, true);
+    assert.equal(harness.canvas.getActiveObjects().length > 0, true);
   } finally {
     await harness.destroy();
   }
@@ -1322,6 +1849,7 @@ test('one lasso moves matching segments from two strokes and releases the group 
     ];
     harness.drawStroke(pointsAt(80), 74);
     harness.drawStroke(pointsAt(120), 75);
+    const originals = harness.sceneStore.getActiveSceneSnapshot().objects;
     harness.runtime.updateDrawingTool({
       sessionId: 'real-fabric-session',
       toolRevision: 1,
@@ -1336,17 +1864,16 @@ test('one lasso moves matching segments from two strokes and releases the group 
       { x: 70, y: 50 }
     ], 76);
 
-    const before = harness.sceneStore.getActiveSceneSnapshot();
-    assert.equal(before.objects.length, 6);
-    assert.equal(before.selectedObjectIds.length, 2);
+    const staged = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(staged.objects, originals);
     assert.equal(harness.canvas.getActiveObjects().length, 2);
-    const selectedIds = new Set(before.selectedObjectIds);
-    const beforeById = new Map(before.objects.map(object => [object.id, object]));
+    const selectedIds = new Set(harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId));
 
     harness.dragActiveSelectionBy(15, -10, 77);
     await Promise.resolve();
 
     const after = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(after.objects.length, 6);
     assert.deepEqual(after.selectedObjectIds, []);
     assert.equal(harness.canvas.getActiveObject(), undefined);
     const formerlySelected = harness.canvas.getObjects().filter(
@@ -1354,14 +1881,12 @@ test('one lasso moves matching segments from two strokes and releases the group 
     );
     assert.equal(formerlySelected.every(object => object.selectable === false && object.evented === false), true);
     assert.equal(harness.canvas.upperCanvasEl.style.cursor, 'crosshair');
-    for (const object of after.objects) {
-      const original = beforeById.get(object.id);
-      if (selectedIds.has(object.id)) {
-        assert.equal(object.transform.left, original.transform.left + 15);
-        assert.equal(object.transform.top, original.transform.top - 10);
-      } else {
-        assert.deepEqual(object.transform, original.transform);
-      }
+    for (const id of selectedIds) {
+      const moved = after.objects.find(object => object.id === id);
+      const xs = moved.sourcePoints.map(point => point.x);
+      const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
+      assert.equal(Math.round(moved.transform.left), Math.round(centerX + 15));
+      assert.equal(Math.round(moved.transform.top), Math.round(moved.sourcePoints[0].y - 10));
     }
     const nextLassoStart = formerlySelected[0].getCenterPoint();
     harness.dispatchPointer(harness.element, 'pointerdown', nextLassoStart.x, nextLassoStart.y, 771, 1);
@@ -1409,6 +1934,9 @@ test('lasso keeps untouched strokes between the replacement fragments at their o
       { x: 70, y: 80 },
       { x: 70, y: 45 }
     ], 81);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 3);
+    harness.dragActiveSelectionBy(1, 0, 811);
+    await Promise.resolve();
 
     const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
     const middleIndex = objects.findIndex(object => object.id === middleId);
