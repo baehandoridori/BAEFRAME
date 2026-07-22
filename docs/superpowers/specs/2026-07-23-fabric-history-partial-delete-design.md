@@ -233,6 +233,7 @@ host는 controller IPC와 overlay-origin shortcut을 같은 직렬 action queue�
 - `main/mpv-overlay-host.js`
 - `scripts/tests/mpv-fabric-overlay-runtime.test.js`
 - `scripts/tests/fabric-drawing-pilot-shortcuts.test.js`
+- `scripts/tests/fabric-drawing-pilot-integration.test.js`
 - `scripts/tests/mpv-overlay-host.test.js`
 - `package.json` — 새 순수 history 테스트를 기존 집중 테스트에 포함
 
