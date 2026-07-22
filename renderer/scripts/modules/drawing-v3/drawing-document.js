@@ -3,7 +3,21 @@
 const HARD_LIMITS = Object.freeze({
   maxObjectsPerKeyframe: 10_000,
   maxInputPointsPerStroke: 20_000,
-  maxStoredPointsPerStroke: 100_000
+  maxStoredPointsPerStroke: 100_000,
+  maxUserOperationsPerCommand: 1_024,
+  maxHistoryOperationsPerCommand: 10_000,
+  maxUserInsertedObjectsPerCommand: 512,
+  maxHistoryInsertedObjectsPerCommand: 10_000,
+  maxUserRemovedIdsPerCommand: 10_000,
+  maxHistoryRemovedIdsPerCommand: 10_000,
+  maxUserTransformedIdsPerCommand: 10_000,
+  maxHistoryTransformedIdsPerCommand: 10_000,
+  maxUserObjectReferencesPerCommand: 10_000,
+  maxHistoryObjectReferencesPerCommand: 10_000,
+  maxUserInsertedPointsPerCommand: 20_000,
+  maxHistoryInsertedPointsPerCommand: 100_000,
+  maxUserCommandBytes: 4 * 1024 * 1024,
+  maxHistoryCommandBytes: 16 * 1024 * 1024
 });
 
 const CREATE_OPTION_KEYS = Object.freeze([
@@ -170,7 +184,39 @@ function validateLimits(value) {
       throw new TypeError('Invalid DrawingDocumentV3 limits');
     }
   }
-  if (limits.maxInputPointsPerStroke > limits.maxStoredPointsPerStroke) {
+  const invalidRelationships = [
+    ['maxInputPointsPerStroke', 'maxStoredPointsPerStroke'],
+    ['maxUserOperationsPerCommand', 'maxHistoryOperationsPerCommand'],
+    ['maxUserInsertedObjectsPerCommand',
+      'maxHistoryInsertedObjectsPerCommand'],
+    ['maxUserRemovedIdsPerCommand', 'maxHistoryRemovedIdsPerCommand'],
+    ['maxUserTransformedIdsPerCommand',
+      'maxHistoryTransformedIdsPerCommand'],
+    ['maxUserObjectReferencesPerCommand',
+      'maxHistoryObjectReferencesPerCommand'],
+    ['maxUserInsertedPointsPerCommand',
+      'maxHistoryInsertedPointsPerCommand'],
+    ['maxUserCommandBytes', 'maxHistoryCommandBytes'],
+    ['maxUserInsertedObjectsPerCommand',
+      'maxUserObjectReferencesPerCommand'],
+    ['maxUserRemovedIdsPerCommand', 'maxUserObjectReferencesPerCommand'],
+    ['maxUserTransformedIdsPerCommand',
+      'maxUserObjectReferencesPerCommand'],
+    ['maxHistoryInsertedObjectsPerCommand',
+      'maxHistoryObjectReferencesPerCommand'],
+    ['maxHistoryRemovedIdsPerCommand',
+      'maxHistoryObjectReferencesPerCommand'],
+    ['maxHistoryTransformedIdsPerCommand',
+      'maxHistoryObjectReferencesPerCommand'],
+    ['maxInputPointsPerStroke', 'maxUserInsertedPointsPerCommand'],
+    ['maxStoredPointsPerStroke', 'maxHistoryInsertedPointsPerCommand'],
+    ['maxUserInsertedObjectsPerCommand', 'maxHistoryRemovedIdsPerCommand'],
+    ['maxUserRemovedIdsPerCommand', 'maxHistoryInsertedObjectsPerCommand'],
+    ['maxUserObjectReferencesPerCommand',
+      'maxHistoryOperationsPerCommand']
+  ];
+  if (invalidRelationships.some(([lowerKey, upperKey]) =>
+    limits[lowerKey] > limits[upperKey])) {
     throw new TypeError('Invalid DrawingDocumentV3 limits');
   }
   return limits;
@@ -402,46 +448,276 @@ function isValidIsoTimestamp(value) {
     Number.isFinite(Date.parse(value));
 }
 
-function isValidOperationStructure(operation) {
-  if (!isPlainRecord(operation)) return false;
+function isArrayHeader(value, allowEmpty = false) {
+  return Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Array.prototype &&
+    (allowEmpty || value.length > 0);
+}
+
+function getCommandBudget(limits, source) {
+  const history = source === 'history';
+  return {
+    maxOperations: history
+      ? limits.maxHistoryOperationsPerCommand
+      : limits.maxUserOperationsPerCommand,
+    maxInsertedObjects: history
+      ? limits.maxHistoryInsertedObjectsPerCommand
+      : limits.maxUserInsertedObjectsPerCommand,
+    maxRemovedIds: history
+      ? limits.maxHistoryRemovedIdsPerCommand
+      : limits.maxUserRemovedIdsPerCommand,
+    maxTransformedIds: history
+      ? limits.maxHistoryTransformedIdsPerCommand
+      : limits.maxUserTransformedIdsPerCommand,
+    maxObjectReferences: Math.min(
+      history
+        ? limits.maxHistoryObjectReferencesPerCommand
+        : limits.maxUserObjectReferencesPerCommand,
+      limits.maxObjectsPerKeyframe
+    ),
+    maxInsertedPoints: history
+      ? limits.maxHistoryInsertedPointsPerCommand
+      : limits.maxUserInsertedPointsPerCommand,
+    maxPointsPerStroke: history
+      ? limits.maxStoredPointsPerStroke
+      : limits.maxInputPointsPerStroke,
+    maxBytes: history
+      ? limits.maxHistoryCommandBytes
+      : limits.maxUserCommandBytes
+  };
+}
+
+function getOperationHeader(operation) {
+  if (!isPlainRecord(operation)) return null;
   const typeDescriptor = Object.getOwnPropertyDescriptor(operation, 'type');
   if (!typeDescriptor || !typeDescriptor.enumerable ||
     !Object.hasOwn(typeDescriptor, 'value')) {
-    return false;
+    return null;
   }
 
   if (typeDescriptor.value === 'insert-objects') {
-    return hasExactDataKeys(operation, ['type', 'index', 'objects']) &&
-      isNonnegativeInteger(operation.index) &&
-      isDenseArray(operation.objects) && operation.objects.length > 0;
+    if (!hasExactDataKeys(operation, ['type', 'index', 'objects']) ||
+      !isNonnegativeInteger(operation.index) ||
+      !isArrayHeader(operation.objects)) {
+      return null;
+    }
+    return { type: typeDescriptor.value, payload: operation.objects };
   }
 
   if (typeDescriptor.value === 'remove-objects') {
     if (!hasExactDataKeys(operation, ['type', 'objectIds']) ||
-      !isDenseArray(operation.objectIds) || operation.objectIds.length === 0 ||
-      !operation.objectIds.every(isNonemptyString)) {
-      return false;
+      !isArrayHeader(operation.objectIds)) {
+      return null;
     }
-    return new Set(operation.objectIds).size === operation.objectIds.length;
+    return { type: typeDescriptor.value, payload: operation.objectIds };
   }
 
   if (typeDescriptor.value === 'set-transforms') {
     if (!hasExactDataKeys(operation, ['type', 'transforms']) ||
-      !isDenseArray(operation.transforms) || operation.transforms.length === 0) {
-      return false;
+      !isArrayHeader(operation.transforms)) {
+      return null;
     }
-    const objectIds = new Set();
-    for (const transform of operation.transforms) {
-      if (!hasExactDataKeys(transform, ['objectId', 'transform']) ||
-        !isNonemptyString(transform.objectId) || objectIds.has(transform.objectId)) {
-        return false;
-      }
-      objectIds.add(transform.objectId);
-    }
-    return true;
+    return { type: typeDescriptor.value, payload: operation.transforms };
   }
 
-  return false;
+  return null;
+}
+
+function validateOperationPayload(header) {
+  if (!isDenseArray(header.payload)) return false;
+  if (header.type === 'insert-objects') return true;
+  if (header.type === 'remove-objects') {
+    if (!header.payload.every(isNonemptyString)) return false;
+    return new Set(header.payload).size === header.payload.length;
+  }
+
+  const objectIds = new Set();
+  for (const transform of header.payload) {
+    if (!hasExactDataKeys(transform, ['objectId', 'transform']) ||
+      !isNonemptyString(transform.objectId) || objectIds.has(transform.objectId)) {
+      return false;
+    }
+    objectIds.add(transform.objectId);
+  }
+  return true;
+}
+
+function addSaturated(total, addition, limit) {
+  return addition > limit || total > limit - addition
+    ? limit + 1
+    : total + addition;
+}
+
+function estimateApproximateBytes(root, limit) {
+  let total = 0;
+  const activePath = new WeakSet();
+  const stack = [{ kind: 'value', value: root }];
+
+  while (stack.length > 0) {
+    const frame = stack.pop();
+    if (frame.kind === 'exit') {
+      activePath.delete(frame.value);
+      continue;
+    }
+    if (frame.kind === 'array') {
+      if (frame.index >= frame.value.length) continue;
+      total = addSaturated(total, 4, limit);
+      if (total > limit) return { measurable: true, exceeded: true };
+      const descriptor = Object.getOwnPropertyDescriptor(
+        frame.value,
+        String(frame.index)
+      );
+      if (!descriptor || !descriptor.enumerable ||
+        !Object.hasOwn(descriptor, 'value') || descriptor.value === undefined) {
+        return { measurable: false, exceeded: false };
+      }
+      stack.push({ ...frame, index: frame.index + 1 });
+      stack.push({ kind: 'value', value: descriptor.value });
+      continue;
+    }
+    if (frame.kind === 'record') {
+      if (frame.index >= frame.keys.length) continue;
+      const key = frame.keys[frame.index];
+      if (typeof key !== 'string') {
+        return { measurable: false, exceeded: false };
+      }
+      total = addSaturated(total, 4, limit);
+      total = addSaturated(total, 4 + key.length * 2, limit);
+      if (total > limit) return { measurable: true, exceeded: true };
+      const descriptor = Object.getOwnPropertyDescriptor(frame.value, key);
+      if (!descriptor || !descriptor.enumerable ||
+        !Object.hasOwn(descriptor, 'value') || descriptor.value === undefined) {
+        return { measurable: false, exceeded: false };
+      }
+      stack.push({ ...frame, index: frame.index + 1 });
+      stack.push({ kind: 'value', value: descriptor.value });
+      continue;
+    }
+
+    const value = frame.value;
+    if (value === null) {
+      total = addSaturated(total, 4, limit);
+    } else if (typeof value === 'boolean') {
+      total = addSaturated(total, 5, limit);
+    } else if (typeof value === 'number' && Number.isFinite(value)) {
+      total = addSaturated(total, 8, limit);
+    } else if (typeof value === 'string') {
+      total = addSaturated(total, 4 + value.length * 2, limit);
+    } else if (typeof value === 'object') {
+      if (activePath.has(value)) {
+        return { measurable: false, exceeded: false };
+      }
+      if (Array.isArray(value)) {
+        if (Object.getPrototypeOf(value) !== Array.prototype) {
+          return { measurable: false, exceeded: false };
+        }
+        total = addSaturated(total, 8, limit);
+        if (total > limit) return { measurable: true, exceeded: true };
+        activePath.add(value);
+        stack.push({ kind: 'exit', value });
+        stack.push({ kind: 'array', value, index: 0 });
+      } else if (isPlainRecord(value)) {
+        total = addSaturated(total, 8, limit);
+        if (total > limit) return { measurable: true, exceeded: true };
+        activePath.add(value);
+        stack.push({ kind: 'exit', value });
+        stack.push({
+          kind: 'record',
+          value,
+          keys: Reflect.ownKeys(value),
+          index: 0
+        });
+      } else {
+        return { measurable: false, exceeded: false };
+      }
+    } else {
+      return { measurable: false, exceeded: false };
+    }
+    if (total > limit) return { measurable: true, exceeded: true };
+  }
+
+  return { measurable: true, exceeded: false };
+}
+
+function preflightOperationArray(operations, limits, source, measuredValue) {
+  const budget = getCommandBudget(limits, source);
+  if (!isArrayHeader(operations)) {
+    return { valid: false, reason: 'invalid-command' };
+  }
+  if (operations.length > budget.maxOperations) {
+    return { valid: false, reason: 'operation-limit-exceeded' };
+  }
+  if (!isDenseArray(operations)) {
+    return { valid: false, reason: 'invalid-command' };
+  }
+
+  const headers = [];
+  for (const operation of operations) {
+    const header = getOperationHeader(operation);
+    if (!header) return { valid: false, reason: 'invalid-command' };
+    headers.push(header);
+  }
+
+  let insertedObjects = 0;
+  let removedIds = 0;
+  let transformedIds = 0;
+  for (const header of headers) {
+    if (header.type === 'insert-objects') {
+      insertedObjects += header.payload.length;
+    } else if (header.type === 'remove-objects') {
+      removedIds += header.payload.length;
+    } else {
+      transformedIds += header.payload.length;
+    }
+  }
+  const objectReferences = insertedObjects + removedIds + transformedIds;
+  if (insertedObjects > budget.maxInsertedObjects ||
+    removedIds > budget.maxRemovedIds ||
+    transformedIds > budget.maxTransformedIds ||
+    objectReferences > budget.maxObjectReferences) {
+    return {
+      valid: false,
+      reason: 'command-object-reference-limit-exceeded'
+    };
+  }
+
+  let insertedPoints = 0;
+  for (const header of headers) {
+    if (header.type !== 'insert-objects') continue;
+    for (let index = 0; index < header.payload.length; index += 1) {
+      const objectDescriptor = Object.getOwnPropertyDescriptor(
+        header.payload,
+        String(index)
+      );
+      if (!objectDescriptor || !Object.hasOwn(objectDescriptor, 'value') ||
+        !isPlainRecord(objectDescriptor.value)) {
+        continue;
+      }
+      const pointsDescriptor = Object.getOwnPropertyDescriptor(
+        objectDescriptor.value,
+        'points'
+      );
+      if (!pointsDescriptor || !pointsDescriptor.enumerable ||
+        !Object.hasOwn(pointsDescriptor, 'value') ||
+        !isArrayHeader(pointsDescriptor.value, true)) {
+        continue;
+      }
+      if (pointsDescriptor.value.length > budget.maxPointsPerStroke) {
+        return { valid: false, reason: 'point-limit-exceeded' };
+      }
+      insertedPoints += pointsDescriptor.value.length;
+    }
+  }
+  if (insertedPoints > budget.maxInsertedPoints) {
+    return { valid: false, reason: 'command-point-limit-exceeded' };
+  }
+
+  if (headers.some(header => !validateOperationPayload(header))) {
+    return { valid: false, reason: 'invalid-command' };
+  }
+
+  const byteEstimate = estimateApproximateBytes(measuredValue, budget.maxBytes);
+  return { valid: true, headers, byteEstimate };
 }
 
 function commandKindMatchesOperations(kind, operations) {
@@ -465,7 +741,7 @@ function commandKindMatchesOperations(kind, operations) {
     ].includes(type));
 }
 
-function isValidCommandEnvelope(command, content) {
+function preflightCommand(command, content, limits, source) {
   if (!hasExactDataKeys(command, COMMAND_KEYS) ||
     !isNonemptyString(command.id) ||
     !isNonemptyString(command.actorId) ||
@@ -476,12 +752,21 @@ function isValidCommandEnvelope(command, content) {
     !isNonnegativeInteger(command.target.frame) ||
     command.target.frame >= content.timebase.totalFrames ||
     !COMMAND_KINDS.has(command.kind) ||
-    !isDenseArray(command.operations) || command.operations.length === 0 ||
+    !isArrayHeader(command.operations) ||
     !isValidIsoTimestamp(command.createdAt)) {
-    return false;
+    return { valid: false, reason: 'invalid-command' };
   }
-  return command.operations.every(isValidOperationStructure) &&
-    commandKindMatchesOperations(command.kind, command.operations);
+  const preflight = preflightOperationArray(
+    command.operations,
+    limits,
+    source,
+    command
+  );
+  if (!preflight.valid) return preflight;
+  if (!commandKindMatchesOperations(command.kind, command.operations)) {
+    return { valid: false, reason: 'invalid-command' };
+  }
+  return preflight;
 }
 
 function resolveApplySource(applyOptions) {
@@ -629,8 +914,12 @@ function applyCommandAtomically({
   appliedCommandIds,
   source
 }, commit) {
-  if (!isValidCommandEnvelope(command, content) || source === null) {
+  if (source === null) {
     return { applied: false, reason: 'invalid-command' };
+  }
+  const preflight = preflightCommand(command, content, limits, source);
+  if (!preflight.valid) {
+    return { applied: false, reason: preflight.reason };
   }
   if (appliedCommandIds.has(command.id)) {
     return { applied: false, reason: 'duplicate-command-id' };
@@ -659,6 +948,13 @@ function applyCommandAtomically({
     inverseOperations.unshift(...result.inverseOperations);
   }
 
+  if (!preflight.byteEstimate.measurable) {
+    return { applied: false, reason: 'invalid-command' };
+  }
+  if (preflight.byteEstimate.exceeded) {
+    return { applied: false, reason: 'command-payload-limit-exceeded' };
+  }
+
   if (deepEqualPlain(objectsBefore, target.keyframe.objects)) {
     return { applied: false, reason: 'no-change' };
   }
@@ -667,19 +963,33 @@ function applyCommandAtomically({
     return { applied: false, reason: 'revision-limit-exceeded' };
   }
 
+  const inversePreflight = preflightOperationArray(
+    inverseOperations,
+    limits,
+    'history',
+    inverseOperations
+  );
+  if (!inversePreflight.valid ||
+    !inversePreflight.byteEstimate.measurable ||
+    inversePreflight.byteEstimate.exceeded) {
+    return { applied: false, reason: 'inverse-command-limit-exceeded' };
+  }
+
   target.keyframe.revision += 1;
   const nextHead = {
     sequence: head.sequence + 1,
     lastCommandId: command.id
   };
-  commit({ content: draft, head: nextHead });
-  appliedCommandIds.add(command.id);
-  return {
+  const publicInverseOperations = clonePlain(inverseOperations);
+  const successResult = {
     applied: true,
     commandId: command.id,
     sequence: nextHead.sequence,
-    inverseOperations: clonePlain(inverseOperations)
+    inverseOperations: publicInverseOperations
   };
+  commit({ content: draft, head: nextHead });
+  appliedCommandIds.add(command.id);
+  return successResult;
 }
 
 function createDrawingDocumentV3(options = {}) {

@@ -107,7 +107,7 @@ function deleteRequiredKey(record, key) {
 function createDocumentWithObjects(objects = [], overrides = {}) {
   const keyframeOverrides = overrides.keyframe || {};
   const layerOverrides = overrides.layer || {};
-  return createDrawingDocumentV3(createDocumentOptions({
+  const options = createDocumentOptions({
     revisionSequence: overrides.revisionSequence ?? 0,
     initialLayers: [createLayerFixture({
       ...layerOverrides,
@@ -116,7 +116,9 @@ function createDocumentWithObjects(objects = [], overrides = {}) {
         ...keyframeOverrides
       })]
     })]
-  }));
+  });
+  if (overrides.limits !== undefined) options.limits = overrides.limits;
+  return createDrawingDocumentV3(options);
 }
 
 function createCommand(overrides = {}) {
@@ -183,6 +185,46 @@ function assertAtomicFailure(document, command, reason, applyOptions) {
   });
   assert.deepEqual(document.getContentSnapshot(), before);
   assert.deepEqual(document.getHead(), head);
+}
+
+function createSmallCommandBudgetLimits(overrides = {}) {
+  return {
+    maxObjectsPerKeyframe: 10,
+    maxInputPointsPerStroke: 1,
+    maxStoredPointsPerStroke: 1,
+    maxUserOperationsPerCommand: 2,
+    maxHistoryOperationsPerCommand: 3,
+    maxUserInsertedObjectsPerCommand: 2,
+    maxHistoryInsertedObjectsPerCommand: 3,
+    maxUserRemovedIdsPerCommand: 2,
+    maxHistoryRemovedIdsPerCommand: 3,
+    maxUserTransformedIdsPerCommand: 2,
+    maxHistoryTransformedIdsPerCommand: 3,
+    maxUserObjectReferencesPerCommand: 2,
+    maxHistoryObjectReferencesPerCommand: 3,
+    maxUserInsertedPointsPerCommand: 2,
+    maxHistoryInsertedPointsPerCommand: 3,
+    maxUserCommandBytes: 1_000_000,
+    maxHistoryCommandBytes: 2_000_000,
+    ...overrides
+  };
+}
+
+function estimateCommandBytesForTest(value) {
+  if (value === null) return 4;
+  if (typeof value === 'boolean') return 5;
+  if (typeof value === 'number') return 8;
+  if (typeof value === 'string') return 4 + value.length * 2;
+  if (Array.isArray(value)) {
+    return 8 + value.length * 4 + value.reduce(
+      (total, entry) => total + estimateCommandBytesForTest(entry),
+      0
+    );
+  }
+  const keys = Reflect.ownKeys(value);
+  return 8 + keys.reduce((total, key) =>
+    total + 4 + estimateCommandBytesForTest(key) +
+      estimateCommandBytesForTest(value[key]), 0);
 }
 
 test('document snapshots are isolated from constructor input and returned mutations', () => {
@@ -1651,6 +1693,708 @@ test('history restores a large stored stroke without weakening the user limit', 
       })]
     }]
   }), 'point-limit-exceeded', { source: 'history' });
+});
+
+test('user and history command count budgets accept exact boundaries and reject +1', () => {
+  for (const [source, boundary] of [['user', 2], ['history', 3]]) {
+    const applyOptions = source === 'history' ? { source } : undefined;
+    const makeOperations = count => Array.from({ length: count }, (_, index) => ({
+      type: 'set-transforms',
+      transforms: [{
+        objectId: 'stroke-1',
+        transform: [1, 0, 0, 1, index + 1, 0]
+      }]
+    }));
+    const exact = createDocumentWithObjects([createStroke('stroke-1')], {
+      limits: createSmallCommandBudgetLimits()
+    });
+    assert.equal(exact.applyCommand(createCommand({
+      kind: 'transform-objects',
+      operations: makeOperations(boundary)
+    }), applyOptions).applied, true);
+
+    const over = createDocumentWithObjects([createStroke('stroke-1')], {
+      limits: createSmallCommandBudgetLimits()
+    });
+    assertAtomicFailure(over, createCommand({
+      kind: 'transform-objects',
+      operations: makeOperations(boundary + 1)
+    }), 'operation-limit-exceeded', applyOptions);
+  }
+});
+
+test('user and history occurrence budgets cover insert, remove, and transform payloads', () => {
+  for (const [source, boundary] of [['user', 2], ['history', 3]]) {
+    const applyOptions = source === 'history' ? { source } : undefined;
+    const limits = createSmallCommandBudgetLimits();
+
+    const exactInsert = createDocumentWithObjects([], { limits });
+    assert.equal(exactInsert.applyCommand(createCommand({
+      operations: [{
+        type: 'insert-objects',
+        index: 0,
+        objects: createManyStrokes(boundary)
+      }]
+    }), applyOptions).applied, true);
+    const overInsert = createDocumentWithObjects([], { limits });
+    assertAtomicFailure(overInsert, createCommand({
+      operations: [{
+        type: 'insert-objects',
+        index: 0,
+        objects: createManyStrokes(boundary + 1)
+      }]
+    }), 'command-object-reference-limit-exceeded', applyOptions);
+
+    const exactRemove = createDocumentWithObjects(createManyStrokes(boundary), {
+      limits
+    });
+    assert.equal(exactRemove.applyCommand(createCommand({
+      kind: 'delete-objects',
+      operations: [{
+        type: 'remove-objects',
+        objectIds: createManyStrokes(boundary).map(stroke => stroke.id)
+      }]
+    }), applyOptions).applied, true);
+    const overRemove = createDocumentWithObjects(
+      createManyStrokes(boundary + 1),
+      { limits }
+    );
+    assertAtomicFailure(overRemove, createCommand({
+      kind: 'delete-objects',
+      operations: [{
+        type: 'remove-objects',
+        objectIds: createManyStrokes(boundary + 1).map(stroke => stroke.id)
+      }]
+    }), 'command-object-reference-limit-exceeded', applyOptions);
+
+    const exactTransform = createDocumentWithObjects(createManyStrokes(boundary), {
+      limits
+    });
+    assert.equal(exactTransform.applyCommand(createCommand({
+      kind: 'transform-objects',
+      operations: [{
+        type: 'set-transforms',
+        transforms: createManyStrokes(boundary).map((stroke, index) => ({
+          objectId: stroke.id,
+          transform: [1, 0, 0, 1, index + 1, 0]
+        }))
+      }]
+    }), applyOptions).applied, true);
+    const overTransform = createDocumentWithObjects(
+      createManyStrokes(boundary + 1),
+      { limits }
+    );
+    assertAtomicFailure(overTransform, createCommand({
+      kind: 'transform-objects',
+      operations: [{
+        type: 'set-transforms',
+        transforms: createManyStrokes(boundary + 1).map((stroke, index) => ({
+          objectId: stroke.id,
+          transform: [1, 0, 0, 1, index + 1, 0]
+        }))
+      }]
+    }), 'command-object-reference-limit-exceeded', applyOptions);
+  }
+});
+
+test('combined references count repeated IDs by occurrence for both sources', () => {
+  for (const [source, boundary] of [['user', 2], ['history', 3]]) {
+    const applyOptions = source === 'history' ? { source } : undefined;
+    const limits = createSmallCommandBudgetLimits({
+      maxUserOperationsPerCommand: 5,
+      maxHistoryOperationsPerCommand: 5
+    });
+    const operations = [
+      { type: 'remove-objects', objectIds: ['stroke-same'] },
+      {
+        type: 'insert-objects',
+        index: 0,
+        objects: [createStroke('stroke-same', { opacity: 0.5 })]
+      }
+    ];
+    if (boundary >= 3) {
+      operations.push({
+        type: 'set-transforms',
+        transforms: [{
+          objectId: 'stroke-same',
+          transform: [1, 0, 0, 1, 1, 0]
+        }]
+      });
+    }
+    const exact = createDocumentWithObjects([
+      createStroke('stroke-same'),
+      createStroke('stroke-other')
+    ], { limits });
+    assert.equal(exact.applyCommand(createCommand({
+      kind: 'split-stroke',
+      operations
+    }), applyOptions).applied, true);
+
+    const overOperations = structuredClone(operations);
+    const transforms = overOperations.at(-1).type === 'set-transforms'
+      ? overOperations.at(-1).transforms
+      : null;
+    if (transforms) {
+      transforms.push({
+        objectId: 'stroke-other',
+        transform: [1, 0, 0, 1, 2, 0]
+      });
+    } else {
+      overOperations.push({
+        type: 'set-transforms',
+        transforms: [{
+          objectId: 'stroke-same',
+          transform: [1, 0, 0, 1, 1, 0]
+        }]
+      });
+    }
+    const over = createDocumentWithObjects([
+      createStroke('stroke-same'),
+      createStroke('stroke-other')
+    ], { limits });
+    assertAtomicFailure(over, createCommand({
+      kind: 'split-stroke',
+      operations: overOperations
+    }), 'command-object-reference-limit-exceeded', applyOptions);
+  }
+});
+
+test('aggregate inserted point budgets accept exact boundaries and reject +1', () => {
+  const limits = createSmallCommandBudgetLimits({
+    maxUserOperationsPerCommand: 5,
+    maxHistoryOperationsPerCommand: 5,
+    maxUserInsertedObjectsPerCommand: 5,
+    maxHistoryInsertedObjectsPerCommand: 5,
+    maxUserRemovedIdsPerCommand: 5,
+    maxHistoryRemovedIdsPerCommand: 5,
+    maxUserTransformedIdsPerCommand: 5,
+    maxHistoryTransformedIdsPerCommand: 5,
+    maxUserObjectReferencesPerCommand: 5,
+    maxHistoryObjectReferencesPerCommand: 5
+  });
+  for (const [source, boundary] of [['user', 2], ['history', 3]]) {
+    const applyOptions = source === 'history' ? { source } : undefined;
+    const commandFor = count => createCommand({
+      operations: [{
+        type: 'insert-objects',
+        index: 0,
+        objects: createManyStrokes(count)
+      }]
+    });
+    const exact = createDocumentWithObjects([], { limits });
+    assert.equal(exact.applyCommand(commandFor(boundary), applyOptions).applied, true);
+    const over = createDocumentWithObjects([], { limits });
+    assertAtomicFailure(over, commandFor(boundary + 1),
+      'command-point-limit-exceeded', applyOptions);
+  }
+});
+
+test('single-stroke source caps keep point-limit reason at exact and +1', () => {
+  const limits = createSmallCommandBudgetLimits({
+    maxInputPointsPerStroke: 2,
+    maxStoredPointsPerStroke: 3,
+    maxUserInsertedPointsPerCommand: 2,
+    maxHistoryInsertedPointsPerCommand: 3
+  });
+  for (const [source, boundary] of [['user', 2], ['history', 3]]) {
+    const applyOptions = source === 'history' ? { source } : undefined;
+    const commandFor = count => createCommand({
+      operations: [{
+        type: 'insert-objects',
+        index: 0,
+        objects: [createStroke(`${source}-${count}`, {
+          points: createPoints(count)
+        })]
+      }]
+    });
+    const exact = createDocumentWithObjects([], { limits });
+    assert.equal(exact.applyCommand(commandFor(boundary), applyOptions).applied,
+      true);
+    const over = createDocumentWithObjects([], { limits });
+    assertAtomicFailure(over, commandFor(boundary + 1),
+      'point-limit-exceeded', applyOptions);
+  }
+});
+
+test('approximate command bytes count UTF-16 and shared occurrences at exact boundaries', () => {
+  const command = createCommand();
+  const exactBytes = estimateCommandBytesForTest(command);
+  assert.ok(exactBytes < 4 * 1024 * 1024);
+  assert.equal(
+    estimateCommandBytesForTest(createCommand({ actorId: 'A' })),
+    estimateCommandBytesForTest(createCommand({ actorId: '한' }))
+  );
+  assert.equal(
+    estimateCommandBytesForTest(createCommand({ actorId: '😀' })),
+    estimateCommandBytesForTest(createCommand({ actorId: 'A' })) + 2
+  );
+  for (const source of ['user', 'history']) {
+    const applyOptions = source === 'history' ? { source } : undefined;
+    const limits = {
+      maxUserCommandBytes: exactBytes,
+      maxHistoryCommandBytes: exactBytes
+    };
+    const exact = createDocumentWithObjects([], { limits });
+    assert.equal(exact.applyCommand(command, applyOptions).applied, true);
+
+    const overCommand = createCommand({ actorId: `${command.actorId}한` });
+    assert.equal(estimateCommandBytesForTest(overCommand), exactBytes + 2);
+    const over = createDocumentWithObjects([], { limits });
+    assertAtomicFailure(over, overCommand, 'command-payload-limit-exceeded',
+      applyOptions);
+  }
+
+  const sharedPoint = { x: 10, y: 20, pressure: 0.5, time: 0 };
+  const sharedCommand = createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: [createStroke('shared-points', {
+        points: [sharedPoint, sharedPoint]
+      })]
+    }]
+  });
+  const sharedBytes = estimateCommandBytesForTest(sharedCommand);
+  const sharedLimited = createDocumentWithObjects([], {
+    limits: {
+      maxUserCommandBytes: sharedBytes - 1,
+      maxHistoryCommandBytes: sharedBytes
+    }
+  });
+  assertAtomicFailure(sharedLimited, sharedCommand,
+    'command-payload-limit-exceeded');
+});
+
+test('count-first gates reject oversized sparse arrays without deep inspection', {
+  concurrency: false
+}, () => {
+  const cases = [];
+  let getterCalls = 0;
+  let ownKeysCalls = 0;
+  const guardedArrays = new Set();
+  const guardedSparse = length => {
+    const array = new Array(length);
+    guardedArrays.add(array);
+    Object.defineProperty(array, '0', {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error('nested getter must not run');
+      }
+    });
+    return array;
+  };
+
+  cases.push([
+    createCommand({ operations: guardedSparse(1_025) }),
+    'operation-limit-exceeded'
+  ]);
+  cases.push([
+    createCommand({
+      operations: [{
+        type: 'insert-objects',
+        index: 0,
+        objects: guardedSparse(513)
+      }]
+    }),
+    'command-object-reference-limit-exceeded'
+  ]);
+  cases.push([
+    createCommand({
+      kind: 'delete-objects',
+      operations: [{
+        type: 'remove-objects',
+        objectIds: guardedSparse(10_001)
+      }]
+    }),
+    'command-object-reference-limit-exceeded'
+  ]);
+  cases.push([
+    createCommand({
+      kind: 'transform-objects',
+      operations: [{
+        type: 'set-transforms',
+        transforms: guardedSparse(10_001)
+      }]
+    }),
+    'command-object-reference-limit-exceeded'
+  ]);
+  const pointHeavy = createStroke('point-heavy', {
+    points: guardedSparse(20_001)
+  });
+  pointHeavy.style.color = 'bad';
+  cases.push([
+    createCommand({
+      operations: [{ type: 'insert-objects', index: 0, objects: [pointHeavy] }]
+    }),
+    'point-limit-exceeded'
+  ]);
+
+  const originalOwnKeys = Reflect.ownKeys;
+  Reflect.ownKeys = value => {
+    if (guardedArrays.has(value)) ownKeysCalls += 1;
+    return originalOwnKeys(value);
+  };
+  try {
+    for (const [commandValue, reason] of cases) {
+      assertAtomicFailure(createDocumentWithObjects(), commandValue, reason);
+    }
+  } finally {
+    Reflect.ownKeys = originalOwnKeys;
+  }
+  assert.equal(getterCalls, 0);
+  assert.equal(ownKeysCalls, 0);
+});
+
+test('at-limit sparse, accessor, and class payloads keep malformed reasons', () => {
+  let getterCalls = 0;
+  const guardedSparse = length => {
+    const array = new Array(length);
+    Object.defineProperty(array, '0', {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error('getter must not run');
+      }
+    });
+    return array;
+  };
+  assertAtomicFailure(createDocumentWithObjects(), createCommand({
+    operations: guardedSparse(1_024)
+  }), 'invalid-command');
+  assertAtomicFailure(createDocumentWithObjects(), createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: guardedSparse(512)
+    }]
+  }), 'invalid-command');
+  assertAtomicFailure(createDocumentWithObjects(), createCommand({
+    operations: [{
+      type: 'insert-objects',
+      index: 0,
+      objects: [createStroke('sparse-points', {
+        points: guardedSparse(20_000)
+      })]
+    }]
+  }), 'invalid-object');
+  class Operation {
+    constructor() {
+      this.type = 'insert-objects';
+      this.index = 0;
+      this.objects = [createStroke('class-op')];
+    }
+  }
+  assertAtomicFailure(createDocumentWithObjects(), createCommand({
+    operations: [new Operation()]
+  }), 'invalid-command');
+  class OperationArray extends Array {}
+  assertAtomicFailure(createDocumentWithObjects(), createCommand({
+    operations: new OperationArray(1_025)
+  }), 'invalid-command');
+  assert.equal(getterCalls, 0);
+});
+
+test('the 512-fragment split shape fits while 1,025 operations are rejected', () => {
+  const operations = [{ type: 'remove-objects', objectIds: ['source'] }];
+  for (let index = 0; index < 512; index += 1) {
+    operations.push({
+      type: 'insert-objects',
+      index,
+      objects: [createStroke(`fragment-${index}`)]
+    });
+  }
+  const document = createDocumentWithObjects([createStroke('source')]);
+  const result = document.applyCommand(createCommand({
+    kind: 'split-stroke',
+    operations
+  }));
+  assert.equal(result.applied, true);
+  assert.equal(getKeyframe(document).objects.length, 512);
+
+  const tooMany = Array.from({ length: 1_025 }, () => ({
+    type: 'insert-objects',
+    index: 0,
+    objects: [createStroke('duplicate-after-gate')]
+  }));
+  assertAtomicFailure(createDocumentWithObjects(), createCommand({
+    operations: tooMany
+  }), 'operation-limit-exceeded');
+});
+
+test('byte estimation is deferred behind dedupe, stale, target, lock, and semantics', () => {
+  const lowByteLimits = {
+    maxUserCommandBytes: 1_500,
+    maxHistoryCommandBytes: 2_000
+  };
+  const used = createDocumentWithObjects([], { limits: lowByteLimits });
+  assert.equal(used.applyCommand(createCommand({ id: 'used-id' })).applied, true);
+  assertAtomicFailure(used, createCommand({
+    id: 'used-id',
+    baseRevision: 1,
+    actorId: '한'.repeat(1_000),
+    kind: 'transform-objects',
+    operations: [{
+      type: 'set-transforms',
+      transforms: [{ objectId: 'stroke-new', transform: [0, 0, 0, 0, 0, 0] }]
+    }]
+  }), 'duplicate-command-id');
+
+  const invalidStroke = createStroke('invalid-stale');
+  invalidStroke.style.color = 'red';
+  const stale = createDocumentWithObjects([], { limits: lowByteLimits });
+  assertAtomicFailure(stale, createCommand({
+    baseRevision: 1,
+    actorId: '한'.repeat(1_000),
+    operations: [{ type: 'insert-objects', index: 0, objects: [invalidStroke] }]
+  }), 'stale-revision');
+
+  const missingTarget = createDocumentWithObjects([], { limits: lowByteLimits });
+  assertAtomicFailure(missingTarget, createCommand({
+    actorId: '한'.repeat(1_000),
+    target: { layerId: 'missing', keyframeId: 'missing', frame: 0 },
+    operations: [{ type: 'insert-objects', index: 0, objects: [invalidStroke] }]
+  }), 'target-not-found');
+
+  const locked = createDocumentWithObjects([], {
+    limits: lowByteLimits,
+    layer: { locked: true }
+  });
+  assertAtomicFailure(locked, createCommand({
+    actorId: '한'.repeat(1_000),
+    operations: [{ type: 'insert-objects', index: 0, objects: [invalidStroke] }]
+  }), 'layer-locked');
+
+  const semanticOrder = createDocumentWithObjects([createStroke('existing')]);
+  assertAtomicFailure(semanticOrder, createCommand({
+    kind: 'split-stroke',
+    operations: [
+      { type: 'remove-objects', objectIds: ['missing'] },
+      {
+        type: 'set-transforms',
+        transforms: [{ objectId: 'existing', transform: [0, 0, 0, 0, 0, 0] }]
+      },
+      {
+        type: 'insert-objects',
+        index: 1,
+        objects: [createStroke('inserted')]
+      }
+    ]
+  }), 'object-not-found');
+
+  const malformedOversized = createCommand({
+    actorId: '',
+    operations: new Array(1_025)
+  });
+  assertAtomicFailure(createDocumentWithObjects(), malformedOversized,
+    'invalid-command');
+  assertAtomicFailure(createDocumentWithObjects(), createCommand({
+    operations: new Array(1_025)
+  }), 'invalid-command', { source: 'external' });
+});
+
+test('byte and revision precedence is fixed before inverse admission', () => {
+  const oversized = createCommand({
+    baseRevision: Number.MAX_SAFE_INTEGER,
+    actorId: '한'.repeat(1_000)
+  });
+  const byteLimit = estimateCommandBytesForTest(oversized) - 1;
+  const byteFirst = createDocumentWithObjects([], {
+    revisionSequence: Number.MAX_SAFE_INTEGER,
+    limits: {
+      maxUserCommandBytes: byteLimit,
+      maxHistoryCommandBytes: byteLimit + 1
+    }
+  });
+  assertAtomicFailure(byteFirst, oversized, 'command-payload-limit-exceeded');
+
+  const inverseLimited = createSmallCommandBudgetLimits({
+    maxStoredPointsPerStroke: 2,
+    maxHistoryInsertedPointsPerCommand: 2
+  });
+  const revisionFirst = createDocumentWithObjects([
+    createStroke('revision-a', { points: createPoints(2) }),
+    createStroke('revision-b', { points: createPoints(2) })
+  ], {
+    revisionSequence: Number.MAX_SAFE_INTEGER,
+    limits: inverseLimited
+  });
+  assertAtomicFailure(revisionFirst, createCommand({
+    baseRevision: Number.MAX_SAFE_INTEGER,
+    kind: 'delete-objects',
+    operations: [{
+      type: 'remove-objects',
+      objectIds: ['revision-a', 'revision-b']
+    }]
+  }), 'revision-limit-exceeded');
+});
+
+test('cyclic and accessor records keep field-specific invalid reasons without getters', () => {
+  const cyclic = createStroke('cyclic');
+  cyclic.style.self = cyclic.style;
+  const cycleDocument = createDocumentWithObjects([], {
+    limits: { maxUserCommandBytes: 1, maxHistoryCommandBytes: 1 }
+  });
+  assertAtomicFailure(cycleDocument, createCommand({
+    operations: [{ type: 'insert-objects', index: 0, objects: [cyclic] }]
+  }), 'invalid-object');
+
+  let getterCalls = 0;
+  const accessor = createStroke('accessor');
+  Object.defineProperty(accessor.style, 'color', {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      throw new Error('style getter must not run');
+    }
+  });
+  const accessorDocument = createDocumentWithObjects([], {
+    limits: { maxUserCommandBytes: 1, maxHistoryCommandBytes: 1 }
+  });
+  assertAtomicFailure(accessorDocument, createCommand({
+    operations: [{ type: 'insert-objects', index: 0, objects: [accessor] }]
+  }), 'invalid-object');
+  assert.equal(getterCalls, 0);
+});
+
+test('generated inverse operation and point budgets fail atomically and keep IDs reusable', () => {
+  const operationLimits = createSmallCommandBudgetLimits({
+    maxUserOperationsPerCommand: 1,
+    maxHistoryOperationsPerCommand: 2,
+    maxUserInsertedObjectsPerCommand: 1,
+    maxHistoryInsertedObjectsPerCommand: 3,
+    maxUserRemovedIdsPerCommand: 1,
+    maxHistoryRemovedIdsPerCommand: 3,
+    maxUserTransformedIdsPerCommand: 1,
+    maxHistoryTransformedIdsPerCommand: 3,
+    maxUserObjectReferencesPerCommand: 1,
+    maxHistoryObjectReferencesPerCommand: 3,
+    maxUserInsertedPointsPerCommand: 1,
+    maxHistoryInsertedPointsPerCommand: 3
+  });
+  const operationDocument = createDocumentWithObjects(createManyStrokes(3), {
+    limits: operationLimits
+  });
+  assertAtomicFailure(operationDocument, createCommand({
+    id: 'inverse-operation-overflow',
+    kind: 'delete-objects',
+    operations: [{
+      type: 'remove-objects',
+      objectIds: ['stroke-0', 'stroke-1', 'stroke-2']
+    }]
+  }), 'inverse-command-limit-exceeded', { source: 'history' });
+  assert.equal(operationDocument.applyCommand(createCommand({
+    id: 'inverse-operation-overflow',
+    kind: 'delete-objects',
+    operations: [{
+      type: 'remove-objects',
+      objectIds: ['stroke-0', 'stroke-1']
+    }]
+  }), { source: 'history' }).applied, true);
+
+  const pointLimits = createSmallCommandBudgetLimits({
+    maxStoredPointsPerStroke: 2,
+    maxHistoryInsertedPointsPerCommand: 2
+  });
+  const pointDocument = createDocumentWithObjects([
+    createStroke('two-a', { points: createPoints(2) }),
+    createStroke('two-b', { points: createPoints(2) })
+  ], { limits: pointLimits });
+  assertAtomicFailure(pointDocument, createCommand({
+    id: 'inverse-point-overflow',
+    kind: 'delete-objects',
+    operations: [{ type: 'remove-objects', objectIds: ['two-a', 'two-b'] }]
+  }), 'inverse-command-limit-exceeded');
+  const retry = pointDocument.applyCommand(createCommand({
+    id: 'inverse-point-overflow',
+    kind: 'delete-objects',
+    operations: [{ type: 'remove-objects', objectIds: ['two-a'] }]
+  }));
+  assert.equal(retry.applied, true);
+});
+
+test('generated inverse byte budget is checked before commit', () => {
+  const stroke = createStroke('inverse-byte-stroke');
+  const forward = createCommand({
+    id: 'inverse-byte',
+    kind: 'delete-objects',
+    operations: [{ type: 'remove-objects', objectIds: [stroke.id] }]
+  });
+  const inverseOperations = [{
+    type: 'insert-objects',
+    index: 0,
+    objects: [stroke]
+  }];
+  const forwardBytes = estimateCommandBytesForTest(forward);
+  const inverseBytes = estimateCommandBytesForTest(inverseOperations);
+  assert.ok(inverseBytes > forwardBytes);
+  const document = createDocumentWithObjects([stroke], {
+    limits: {
+      maxUserCommandBytes: forwardBytes,
+      maxHistoryCommandBytes: inverseBytes - 1
+    }
+  });
+  assertAtomicFailure(document, forward, 'inverse-command-limit-exceeded');
+});
+
+test('public inverse clone failure cannot partially commit or consume the command ID', () => {
+  const document = createDocumentWithObjects();
+  const command = createCommand({ id: 'clone-failure' });
+  const before = document.getContentSnapshot();
+  const head = document.getHead();
+  const originalStructuredClone = global.structuredClone;
+  global.structuredClone = value => {
+    if (Array.isArray(value) && value.length === 1 &&
+      value[0]?.type === 'remove-objects') {
+      throw new Error('injected public inverse clone failure');
+    }
+    return originalStructuredClone(value);
+  };
+  try {
+    assert.throws(() => document.applyCommand(command),
+      /injected public inverse clone failure/);
+  } finally {
+    global.structuredClone = originalStructuredClone;
+  }
+  assert.deepEqual(document.getContentSnapshot(), before);
+  assert.deepEqual(document.getHead(), head);
+  assert.equal(document.applyCommand(command).applied, true);
+});
+
+test('new limit overrides enforce hard caps and cross-profile relationships', () => {
+  assert.doesNotThrow(() => createDrawingDocumentV3(createDocumentOptions({
+    limits: createSmallCommandBudgetLimits()
+  })));
+  const invalidLimits = [
+    { maxUserOperationsPerCommand: 0 },
+    { maxHistoryOperationsPerCommand: 10_001 },
+    { maxUserOperationsPerCommand: 4, maxHistoryOperationsPerCommand: 3 },
+    {
+      maxUserInsertedObjectsPerCommand: 4,
+      maxUserObjectReferencesPerCommand: 3
+    },
+    {
+      maxInputPointsPerStroke: 4,
+      maxUserInsertedPointsPerCommand: 3
+    },
+    {
+      maxStoredPointsPerStroke: 4,
+      maxHistoryInsertedPointsPerCommand: 3
+    },
+    {
+      maxUserRemovedIdsPerCommand: 4,
+      maxHistoryInsertedObjectsPerCommand: 3
+    },
+    {
+      maxUserObjectReferencesPerCommand: 4,
+      maxHistoryOperationsPerCommand: 3
+    },
+    { maxUserCommandBytes: 2_000, maxHistoryCommandBytes: 1_000 }
+  ];
+  for (const limits of invalidLimits) {
+    assert.throws(() => createDrawingDocumentV3(createDocumentOptions({ limits })),
+      TypeError);
+  }
 });
 
 test('drawing regression suite includes DrawingDocumentV3 coverage', () => {
