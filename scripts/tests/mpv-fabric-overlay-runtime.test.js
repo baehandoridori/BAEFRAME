@@ -3381,6 +3381,252 @@ test('single and multi stroke moves each round-trip through one undo and one red
   assertHistoryDiagnostics(harness, { mutationCount: 8, undoDepth: 4, redoDepth: 0 });
 });
 
+test('a rejected Fabric multi-stroke move rolls the visible selection back to the authoritative scene', () => {
+  const harness = createHistoryHarness({ maxBytes: 100000, maxHistoryBytes: 1800 });
+  const { canvas, runtime, sceneStore } = harness;
+  for (let index = 0; index < 8; index += 1) drawStroke(canvas.upperCanvasEl, 610 + index);
+  assert.equal(runtime.updateDrawingTool({
+    sessionId: 'runtime-session',
+    toolRevision: 1,
+    tool: 'select'
+  }).accepted, true);
+
+  const paths = canvas.getObjects();
+  const ids = paths.map(object => object.__baeframeObjectId);
+  const activeSelection = new FakePath('', { left: 0, top: 0 });
+  activeSelection.getObjects = () => paths;
+  canvas.activeObject = activeSelection;
+  canvas.activeObjects = paths;
+  canvas.emit('selection:created', { selected: paths });
+  canvas.emit('before:transform', { transform: { target: activeSelection } });
+
+  const sceneBefore = JSON.stringify(sceneStore.getActiveSceneSnapshot());
+  const diagnosticsBefore = runtime.getDiagnostics();
+  const canvasBefore = canvas.getObjects().map(object => ({
+    id: object.__baeframeObjectId,
+    transform: {
+      left: object.left,
+      top: object.top,
+      scaleX: object.scaleX,
+      scaleY: object.scaleY,
+      angle: object.angle,
+      skewX: object.skewX,
+      skewY: object.skewY
+    }
+  }));
+  activeSelection.left = 18;
+  activeSelection.top = 9;
+  canvas.emit('object:modified', { target: activeSelection });
+
+  assert.equal(activeSelection.left, 0);
+  assert.equal(activeSelection.top, 0);
+  assert.equal(JSON.stringify(sceneStore.getActiveSceneSnapshot()), sceneBefore);
+  assert.deepEqual(canvas.getObjects().map(object => ({
+    id: object.__baeframeObjectId,
+    transform: {
+      left: object.left,
+      top: object.top,
+      scaleX: object.scaleX,
+      scaleY: object.scaleY,
+      angle: object.angle,
+      skewX: object.skewX,
+      skewY: object.skewY
+    }
+  })), canvasBefore);
+  assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), ids);
+  assert.equal(canvas.getActiveObject(), activeSelection);
+  assert.deepEqual(canvas.getActiveObjects(), paths);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().selectedObjectIds, ids);
+  assert.deepEqual(runtime.getDiagnostics(), diagnosticsBefore);
+});
+
+test('a rejected Fabric single-stroke move preserves its active selection and visible transform', () => {
+  let rejectValidation = false;
+  const harness = createHistoryHarness({
+    maxBytes: 100000,
+    estimateObjectBytes(object) {
+      if (rejectValidation) throw new Error('single-transform-rejected');
+      return JSON.stringify(object).length * 2;
+    }
+  });
+  const { canvas, runtime, sceneStore } = harness;
+  drawStroke(canvas.upperCanvasEl, 640);
+  assert.equal(runtime.updateDrawingTool({
+    sessionId: 'runtime-session',
+    toolRevision: 1,
+    tool: 'select'
+  }).accepted, true);
+  const path = canvas.getObjects()[0];
+  canvas.activeObject = path;
+  canvas.activeObjects = [path];
+  canvas.emit('selection:created', { selected: [path] });
+  canvas.emit('before:transform', { transform: { target: path } });
+  const sceneBefore = JSON.stringify(sceneStore.getActiveSceneSnapshot());
+  const diagnosticsBefore = runtime.getDiagnostics();
+
+  path.left = 14;
+  path.top = 6;
+  rejectValidation = true;
+  canvas.emit('object:modified', { target: path });
+  rejectValidation = false;
+
+  assert.equal(path.left, 0);
+  assert.equal(path.top, 0);
+  assert.equal(canvas.getActiveObject(), path);
+  assert.deepEqual(canvas.getActiveObjects(), [path]);
+  assert.equal(JSON.stringify(sceneStore.getActiveSceneSnapshot()), sceneBefore);
+  assert.deepEqual(runtime.getDiagnostics(), diagnosticsBefore);
+});
+
+test('undo redo during an active stroke drag cancels the gesture and ignores its late modified event', () => {
+  const harness = createHistoryHarness();
+  const { canvas, runtime, sceneStore } = harness;
+  drawStroke(canvas.upperCanvasEl, 650);
+  assert.equal(runtime.updateDrawingTool({
+    sessionId: 'runtime-session',
+    toolRevision: 1,
+    tool: 'select'
+  }).accepted, true);
+
+  const initiallyMovedPath = canvas.getObjects()[0];
+  const objectId = initiallyMovedPath.__baeframeObjectId;
+  canvas.activeObject = initiallyMovedPath;
+  canvas.activeObjects = [initiallyMovedPath];
+  canvas.emit('selection:created', { selected: [initiallyMovedPath] });
+  canvas.emit('before:transform', { transform: { target: initiallyMovedPath } });
+  initiallyMovedPath.left = 10;
+  canvas.emit('object:modified', { target: initiallyMovedPath });
+  assert.equal(sceneStore.getActiveSceneSnapshot().objects[0].transform.left, 10);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 651,
+    pointerType: 'mouse',
+    button: 0,
+    clientX: 10,
+    clientY: 10
+  });
+  canvas.emit('before:transform', { transform: { target: initiallyMovedPath } });
+  initiallyMovedPath.left = 25;
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'undo-during-active-drag',
+    action: 'undo'
+  }).applied, true);
+
+  assert.equal(initiallyMovedPath.left, 10, 'the cancelled Fabric target returns to its drag start');
+  assert.equal(canvas.upperCanvasEl.capturedPointerIds.has(651), false);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+  assert.equal(canvas.getActiveObject(), null);
+  assert.deepEqual(canvas.getActiveObjects(), []);
+  assert.equal(canvas.getObjects()[0].left, 0);
+  const afterUndoScene = JSON.stringify(sceneStore.getActiveSceneSnapshot());
+  const afterUndoDiagnostics = runtime.getDiagnostics();
+  const afterUndoCanvasIds = canvas.getObjects().map(object => object.__baeframeObjectId);
+
+  canvas.emit('object:modified', { target: initiallyMovedPath });
+  assert.equal(JSON.stringify(sceneStore.getActiveSceneSnapshot()), afterUndoScene);
+  assert.deepEqual(runtime.getDiagnostics(), afterUndoDiagnostics);
+  assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), afterUndoCanvasIds);
+
+  const redoDragPath = canvas.getObjects()[0];
+  assert.equal(redoDragPath.__baeframeObjectId, objectId);
+  canvas.activeObject = redoDragPath;
+  canvas.activeObjects = [redoDragPath];
+  canvas.emit('selection:created', { selected: [redoDragPath] });
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 652,
+    pointerType: 'mouse',
+    button: 0,
+    clientX: 10,
+    clientY: 10
+  });
+  canvas.emit('before:transform', { transform: { target: redoDragPath } });
+  redoDragPath.left = 7;
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'redo-during-active-drag',
+    action: 'redo'
+  }).applied, true);
+
+  assert.equal(redoDragPath.left, 0, 'redo also rolls the in-flight target back before history applies');
+  assert.equal(canvas.upperCanvasEl.capturedPointerIds.has(652), false);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+  assert.equal(canvas.getObjects()[0].transform?.left ?? canvas.getObjects()[0].left, 10);
+  const afterRedoScene = JSON.stringify(sceneStore.getActiveSceneSnapshot());
+  const afterRedoDiagnostics = runtime.getDiagnostics();
+  const afterRedoCanvasIds = canvas.getObjects().map(object => object.__baeframeObjectId);
+
+  canvas.emit('object:modified', { target: redoDragPath });
+  assert.equal(JSON.stringify(sceneStore.getActiveSceneSnapshot()), afterRedoScene);
+  assert.deepEqual(runtime.getDiagnostics(), afterRedoDiagnostics);
+  assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), afterRedoCanvasIds);
+});
+
+test('redo during an active multi-stroke drag ignores the cancelled group modified event', () => {
+  const harness = createHistoryHarness();
+  const { canvas, runtime, sceneStore } = harness;
+  drawStroke(canvas.upperCanvasEl, 660);
+  drawStroke(canvas.upperCanvasEl, 661);
+  assert.equal(runtime.updateDrawingTool({
+    sessionId: 'runtime-session',
+    toolRevision: 1,
+    tool: 'select'
+  }).accepted, true);
+
+  const paths = canvas.getObjects();
+  const ids = paths.map(object => object.__baeframeObjectId);
+  sceneStore.selectObjects(ids);
+  assert.equal(sceneStore.transformSelection({ dx: 10, dy: 4 }).applied, true);
+  assert.equal(sceneStore.undo().applied, true);
+  const activeSelection = new FakePath('', { left: 0, top: 0 });
+  activeSelection.getObjects = () => paths;
+  canvas.activeObject = activeSelection;
+  canvas.activeObjects = paths;
+  canvas.emit('selection:created', { selected: paths });
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 662,
+    pointerType: 'mouse',
+    button: 0,
+    clientX: 10,
+    clientY: 10
+  });
+  canvas.emit('before:transform', { transform: { target: activeSelection } });
+  activeSelection.left = 6;
+  activeSelection.top = 3;
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'redo-during-active-multi-drag',
+    action: 'redo'
+  }).applied, true);
+  assert.equal(activeSelection.left, 0);
+  assert.equal(activeSelection.top, 0);
+  assert.equal(canvas.upperCanvasEl.capturedPointerIds.has(662), false);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => [
+    object.id,
+    object.transform.left,
+    object.transform.top
+  ]), [
+    [ids[0], 10, 4],
+    [ids[1], 10, 4]
+  ]);
+  assert.deepEqual(canvas.getObjects().map(object => [
+    object.__baeframeObjectId,
+    object.left,
+    object.top
+  ]), [
+    [ids[0], 10, 4],
+    [ids[1], 10, 4]
+  ]);
+  const settledScene = JSON.stringify(sceneStore.getActiveSceneSnapshot());
+  const settledDiagnostics = runtime.getDiagnostics();
+
+  canvas.emit('object:modified', { target: activeSelection });
+  assert.equal(JSON.stringify(sceneStore.getActiveSceneSnapshot()), settledScene);
+  assert.deepEqual(runtime.getDiagnostics(), settledDiagnostics);
+});
+
 test('replaceObjects applies structure and selected transforms as one undo redo command', () => {
   const harness = createHistoryHarness();
   const { sceneStore } = harness;
@@ -3589,7 +3835,7 @@ test('redo history bytes remain in the store-wide maxBytes calculation across sc
   });
   assert.ok(firstScene.historyBytes > 0);
   assert.equal(firstScene.undoBytes, 0);
-  assert.equal(firstScene.cache.estimatedBytes, firstScene.historyBytes);
+  assert.equal(firstScene.cache.estimatedBytes, firstScene.historyBytes + 100);
 
   assert.equal(sceneStore.activateSession({
     sessionId: 'redo-bytes-frame',
@@ -3605,7 +3851,7 @@ test('redo history bytes remain in the store-wide maxBytes calculation across sc
   const secondScene = assertHistoryDiagnostics(harness, {
     mutationCount: 0, undoDepth: 0, redoDepth: 0
   });
-  assert.equal(secondScene.cache.estimatedBytes, firstScene.historyBytes);
+  assert.equal(secondScene.cache.estimatedBytes, firstScene.cache.estimatedBytes);
 
   assert.equal(sceneStore.activateSession({
     sessionId: 'redo-bytes-original',
@@ -3615,6 +3861,59 @@ test('redo history bytes remain in the store-wide maxBytes calculation across sc
     tool: 'brush'
   }).restored, true);
   assertHistoryDiagnostics(harness, { mutationCount: 2, undoDepth: 0, redoDepth: 1 });
+});
+
+test('later commands on sibling frames cannot consume the capacity reserved for an admitted undo redo', () => {
+  const sceneStore = createSessionSceneStore({ maxBytes: 30000 });
+  const activate = (targetFrame, suffix) => sceneStore.activateSession({
+    sessionId: `capacity-${suffix}`,
+    stableVideoIdentity: 'capacity-video',
+    targetFrame,
+    videoGeneration: 1,
+    tool: 'brush'
+  });
+  const makeSizedStroke = (id, pointCount) => makeHistoryStroke(id, {
+    pathData: `M ${Array.from({ length: pointCount }, (_value, index) => `${index} ${index} L`).join(' ')} Z`,
+    sourcePoints: Array.from({ length: pointCount }, (_value, index) => ({
+      x: index,
+      y: index,
+      pressure: 0.5,
+      pointerType: 'pen',
+      time: index
+    }))
+  });
+
+  assert.equal(activate(0, 'frame-0').accepted, true);
+  const restorable = makeSizedStroke('restorable-large-stroke', 40);
+  assert.equal(sceneStore.addStroke(restorable).applied, true);
+  sceneStore.selectObjects([restorable.id]);
+  assert.equal(sceneStore.deleteSelection().applied, true);
+  const admittedHistory = sceneStore.getDiagnostics();
+  assert.equal(admittedHistory.undoDepth, 1);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, []);
+
+  let acceptedSiblingCommands = 0;
+  for (let index = 0; index < 80; index += 1) {
+    const frame = index % 2 === 0 ? 1 : 2;
+    activate(frame, `fill-${index}`);
+    const result = sceneStore.addStroke(makeSizedStroke(`small-${index}`, 2));
+    if (!result.applied) {
+      assert.equal(result.reason, 'scene-capacity-exceeded');
+      break;
+    }
+    acceptedSiblingCommands += 1;
+  }
+  assert.ok(acceptedSiblingCommands > 0, 'sibling frames should still use genuinely free capacity');
+  assert.ok(sceneStore.getDiagnostics().estimatedBytes <= 30000);
+
+  assert.equal(activate(0, 'return-frame-0').restored, true);
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, [restorable]);
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, []);
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, [restorable]);
+  assert.ok(sceneStore.getDiagnostics().estimatedBytes <= 30000);
 });
 
 test('undo and redo history apply failures after validation injection are atomic', () => {

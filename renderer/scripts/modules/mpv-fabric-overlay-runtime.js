@@ -214,6 +214,22 @@ function createSessionSceneStore(options = {}) {
     };
   }
 
+  function reachableObjectBytes(scene, entries = scene?.historyEntries, currentBytes = scene?.estimatedBytes) {
+    let reservedBytes = Math.max(0, finiteNumber(currentBytes));
+    for (const entry of entries?.undo || []) {
+      reservedBytes = Math.max(reservedBytes, Math.max(0, finiteNumber(entry.undoObjectBytes)));
+    }
+    for (const entry of entries?.redo || []) {
+      reservedBytes = Math.max(reservedBytes, Math.max(0, finiteNumber(entry.redoObjectBytes)));
+    }
+    return reservedBytes;
+  }
+
+  function estimateSceneBytes(scene, entries = scene?.historyEntries, currentBytes = scene?.estimatedBytes,
+    historyBytes = historyDiagnostics(scene).historyBytes) {
+    return reachableObjectBytes(scene, entries, currentBytes) + Math.max(0, finiteNumber(historyBytes));
+  }
+
   function touchVideo(stableVideoIdentity) {
     accessClock += 1;
     videoAccess.delete(stableVideoIdentity);
@@ -223,7 +239,7 @@ function createSessionSceneStore(options = {}) {
   function calculateEstimatedBytes() {
     let total = 0;
     for (const scene of scenes.values()) {
-      total += scene.estimatedBytes + historyDiagnostics(scene).historyBytes;
+      total += estimateSceneBytes(scene);
     }
     return total;
   }
@@ -251,14 +267,14 @@ function createSessionSceneStore(options = {}) {
     let total = 0;
     for (const scene of scenes.values()) {
       if (scene.stableVideoIdentity !== stableVideoIdentity) continue;
-      total += scene.estimatedBytes + historyDiagnostics(scene).historyBytes;
+      total += estimateSceneBytes(scene);
     }
     return total;
   }
 
-  function planProjectedEvictions(scene, nextObjectBytes, nextHistoryBytes) {
-    let projectedBytes = calculateEstimatedBytes() - scene.estimatedBytes -
-      historyDiagnostics(scene).historyBytes + nextObjectBytes + nextHistoryBytes;
+  function planProjectedEvictions(scene, nextObjectBytes, nextHistory) {
+    let projectedBytes = calculateEstimatedBytes() - estimateSceneBytes(scene) +
+      estimateSceneBytes(scene, nextHistory, nextObjectBytes, nextHistory.historyBytes);
     const planned = [];
     for (const candidate of videoAccess.keys()) {
       if (projectedBytes <= maxBytes) break;
@@ -269,14 +285,20 @@ function createSessionSceneStore(options = {}) {
     return projectedBytes <= maxBytes ? planned : null;
   }
 
-  function projectHistoryRecord(scene, commandId, commandBytes, entries = scene.historyEntries) {
+  function projectHistoryRecord(scene, commandId, commandBytes, undoObjectBytes, redoObjectBytes,
+    entries = scene.historyEntries) {
     const undo = entries.undo.map(entry => ({ ...entry }));
     let undoBytes = undo.reduce((total, entry) => total + entry.estimatedBytes, 0);
     while (undo.length >= maxHistory || undoBytes + commandBytes > maxHistoryBytes) {
       const [removed] = undo.splice(0, 1);
       undoBytes = Math.max(0, undoBytes - finiteNumber(removed?.estimatedBytes));
     }
-    undo.push({ id: commandId, estimatedBytes: commandBytes });
+    undo.push({
+      id: commandId,
+      estimatedBytes: commandBytes,
+      undoObjectBytes,
+      redoObjectBytes
+    });
     return {
       undo,
       redo: [],
@@ -337,11 +359,17 @@ function createSessionSceneStore(options = {}) {
     if (commandBytes > maxHistoryBytes) {
       return { applied: false, reason: 'history-capacity-exceeded' };
     }
-    const projectedHistory = projectHistoryRecord(scene, command.id, commandBytes);
+    const projectedHistory = projectHistoryRecord(
+      scene,
+      command.id,
+      commandBytes,
+      previousEstimatedBytes,
+      nextEstimatedBytes
+    );
     const plannedEvictions = planProjectedEvictions(
       scene,
-      Math.max(previousEstimatedBytes, nextEstimatedBytes),
-      projectedHistory.historyBytes
+      nextEstimatedBytes,
+      projectedHistory
     );
     if (!plannedEvictions) {
       return { applied: false, reason: 'scene-capacity-exceeded' };
@@ -659,8 +687,10 @@ function createSessionSceneStore(options = {}) {
     }
 
     const nextEstimatedBytes = estimateObjectsBytes(nextObjects);
-    const projectedBytes = calculateEstimatedBytes() - scene.estimatedBytes + nextEstimatedBytes;
-    if (projectedBytes > maxBytes) {
+    const reservedObjectBytes = reachableObjectBytes(scene);
+    const projectedBytes = calculateEstimatedBytes() - estimateSceneBytes(scene) +
+      estimateSceneBytes(scene, scene.historyEntries, nextEstimatedBytes, historyDiagnostics(scene).historyBytes);
+    if (nextEstimatedBytes > reservedObjectBytes || projectedBytes > maxBytes) {
       return { applied: false, reason: 'scene-capacity-exceeded' };
     }
     scene.objects = nextObjects;
@@ -978,6 +1008,7 @@ function createFabricOverlayRuntime(options = {}) {
   let selectionControls = null;
   let transformStart = null;
   let selectGesture = null;
+  const ignoredModifiedTargets = new WeakSet();
   let deferredViewport = null;
   let longTaskObserver = null;
   let localSequence = 0;
@@ -1342,6 +1373,26 @@ function createFabricOverlayRuntime(options = {}) {
       else transform[field] = finiteNumber(object?.[field], field === 'scaleX' || field === 'scaleY' ? 1 : 0);
     }
     return transform;
+  }
+
+  function transformTargets(target) {
+    if (!target || (typeof target !== 'object' && typeof target !== 'function')) return [];
+    const children = typeof target.getObjects === 'function' ? target.getObjects() : [];
+    return [target, ...children].filter(candidate =>
+      candidate && (typeof candidate === 'object' || typeof candidate === 'function'));
+  }
+
+  function ignoreLateModifiedEvents(target) {
+    for (const candidate of transformTargets(target)) ignoredModifiedTargets.add(candidate);
+  }
+
+  function acceptsModifiedEvent(target) {
+    const candidates = transformTargets(target);
+    return candidates.length === 0 || !candidates.some(candidate => ignoredModifiedTargets.has(candidate));
+  }
+
+  function beginModifiedEventGeneration(target) {
+    for (const candidate of transformTargets(target)) ignoredModifiedTargets.delete(candidate);
   }
 
   function applyMoveOnlyConstraints(object) {
@@ -2427,6 +2478,7 @@ function createFabricOverlayRuntime(options = {}) {
   function onBeforeTransform(event) {
     const target = event?.transform?.target || event?.target;
     if (!target) return;
+    beginModifiedEventGeneration(target);
     if (pendingLassoSelection && !pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
       transformStart = null;
       abortPendingLassoSelection();
@@ -2456,6 +2508,10 @@ function createFabricOverlayRuntime(options = {}) {
   function onObjectModified(event) {
     const target = event?.target;
     if (!target) return;
+    if (!acceptsModifiedEvent(target)) {
+      transformStart = null;
+      return;
+    }
     if (pendingLassoSelection && !pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
       abortPendingLassoSelection();
       transformStart = null;
@@ -2490,6 +2546,10 @@ function createFabricOverlayRuntime(options = {}) {
           return { id: object.__baeframeObjectId, transform: { ...captureTransform(object), left, top } };
         })
       });
+    }
+    if (!result.applied) {
+      rollbackSelectTransform(event, false);
+      return;
     }
     const shouldReleaseMultiSelection = result.applied && children.length > 1;
     transformStart = null;
@@ -2911,6 +2971,10 @@ function createFabricOverlayRuntime(options = {}) {
     if (pendingLassoSelection) {
       if (action === 'delete-selection') return commitPendingLassoDelete();
       abortPendingLassoSelection();
+    }
+    if ((action === 'undo' || action === 'redo') && (selectGesture || transformStart)) {
+      ignoreLateModifiedEvents(transformStart?.target || fabricCanvas?.getActiveObject?.());
+      cancelSelectInteraction();
     }
 
     const result = action === 'delete-selection'
