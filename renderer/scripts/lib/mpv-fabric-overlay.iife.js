@@ -510,6 +510,105 @@
     }
   });
 
+  // renderer/scripts/modules/drawing-v3/drawing-command-history.js
+  var require_drawing_command_history = __commonJS({
+    "renderer/scripts/modules/drawing-v3/drawing-command-history.js"(exports, module) {
+      "use strict";
+      function positiveInteger(value, fallback) {
+        const number = Math.trunc(Number(value));
+        return Number.isInteger(number) && number > 0 ? number : fallback;
+      }
+      function clonePlain(value) {
+        return value === void 0 ? void 0 : JSON.parse(JSON.stringify(value));
+      }
+      function defaultEstimateEntryBytes(entry) {
+        return Math.max(1, JSON.stringify(entry).length * 2);
+      }
+      function createDrawingCommandHistory(options = {}) {
+        const maxEntries = positiveInteger(options.maxEntries, 32);
+        const maxBytes = positiveInteger(options.maxBytes, 16 * 1024 * 1024);
+        const estimateEntryBytes = options.estimateEntryBytes || defaultEstimateEntryBytes;
+        const undoStack = [];
+        const redoStack = [];
+        const knownIds = /* @__PURE__ */ new Set();
+        let historyBytes = 0;
+        function removeAt(stack, index) {
+          const [entry] = stack.splice(index, 1);
+          if (!entry) return;
+          historyBytes = Math.max(0, historyBytes - entry.estimatedBytes);
+          knownIds.delete(entry.id);
+        }
+        function clearStack(stack) {
+          while (stack.length > 0) removeAt(stack, stack.length - 1);
+        }
+        function record(command) {
+          if (!command || typeof command.id !== "string" || !command.id || typeof command.kind !== "string" || !command.kind || command.undoState === void 0 || command.redoState === void 0) {
+            return { recorded: false, reason: "invalid-command" };
+          }
+          if (knownIds.has(command.id)) return { recorded: false, reason: "duplicate-command" };
+          const stored = clonePlain(command);
+          const estimatedBytes = Math.max(1, Math.trunc(Number(estimateEntryBytes(stored)) || 1));
+          if (estimatedBytes > maxBytes) return { recorded: false, reason: "history-capacity-exceeded" };
+          clearStack(redoStack);
+          while (undoStack.length >= maxEntries || historyBytes + estimatedBytes > maxBytes) {
+            if (undoStack.length === 0) return { recorded: false, reason: "history-capacity-exceeded" };
+            removeAt(undoStack, 0);
+          }
+          undoStack.push({ ...stored, estimatedBytes });
+          knownIds.add(stored.id);
+          historyBytes += estimatedBytes;
+          return { recorded: true, undoDepth: undoStack.length, redoDepth: 0 };
+        }
+        function moveTop(from, to, stateKey, applyState, direction) {
+          const entry = from.at(-1);
+          if (!entry) return { applied: false, reason: "history-empty" };
+          try {
+            const result = applyState(clonePlain(entry[stateKey]), direction, clonePlain(entry));
+            if (result?.applied !== true) {
+              return { applied: false, reason: result?.reason || "history-apply-failed" };
+            }
+          } catch (error) {
+            return { applied: false, reason: error?.message || "history-apply-failed" };
+          }
+          from.pop();
+          to.push(entry);
+          return {
+            applied: true,
+            commandId: entry.id,
+            kind: entry.kind,
+            undoDepth: undoStack.length,
+            redoDepth: redoStack.length
+          };
+        }
+        function undo(applyState) {
+          return moveTop(undoStack, redoStack, "undoState", applyState, "undo");
+        }
+        function redo(applyState) {
+          return moveTop(redoStack, undoStack, "redoState", applyState, "redo");
+        }
+        function clear() {
+          clearStack(undoStack);
+          clearStack(redoStack);
+        }
+        function getDiagnostics() {
+          const undoBytes = undoStack.reduce((total, entry) => total + entry.estimatedBytes, 0);
+          const redoBytes = redoStack.reduce((total, entry) => total + entry.estimatedBytes, 0);
+          return {
+            undoDepth: undoStack.length,
+            redoDepth: redoStack.length,
+            undoBytes,
+            redoBytes,
+            historyBytes,
+            maxEntries,
+            maxBytes
+          };
+        }
+        return { record, undo, redo, clear, getDiagnostics };
+      }
+      module.exports = { createDrawingCommandHistory };
+    }
+  });
+
   // node_modules/perfect-freehand/dist/cjs/index.js
   var require_cjs = __commonJS({
     "node_modules/perfect-freehand/dist/cjs/index.js"(exports) {
@@ -8062,6 +8161,9 @@ void main() {
         boundsIntersect,
         simplifyClosedPolygon
       } = require_lasso_geometry();
+      var {
+        createDrawingCommandHistory
+      } = require_drawing_command_history();
       var SCENE_KEY_SEPARATOR = "\0";
       var DEFAULT_MAX_VIDEOS = 10;
       var DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
@@ -8099,6 +8201,12 @@ void main() {
       var SELECTION_HIT_MARGIN_CSS_PX = 6;
       var MIN_SELECTION_HIT_TOLERANCE = 2;
       var MAX_SELECTION_HIT_TOLERANCE = 96;
+      var DRAWING_ACTIONS = /* @__PURE__ */ new Set([
+        "delete-selection",
+        "clear-session",
+        "undo",
+        "redo"
+      ]);
       function clonePlain(value) {
         if (value === void 0) return void 0;
         return JSON.parse(JSON.stringify(value));
@@ -8187,6 +8295,23 @@ void main() {
           return 1;
         }
       }
+      function makeObjectsState(objects, touchedIds, order) {
+        return {
+          type: "objects",
+          touchedIds: [...touchedIds],
+          objects: [...touchedIds].filter((id) => objects.has(id)).map((id) => clonePlain(objects.get(id))),
+          order: [...order]
+        };
+      }
+      function makeTransformsState(objects, objectIds) {
+        return {
+          type: "transforms",
+          transforms: objectIds.map((id) => ({
+            id,
+            transform: clonePlain(objects.get(id)?.transform || {})
+          }))
+        };
+      }
       function createSessionSceneStore(options = {}) {
         const maxVideos = positiveInteger(options.maxVideos, DEFAULT_MAX_VIDEOS);
         const maxBytes = positiveInteger(options.maxBytes, DEFAULT_MAX_BYTES);
@@ -8203,8 +8328,31 @@ void main() {
         let latestVideoGeneration = -1;
         let activeSession = null;
         let evictionCount = 0;
+        let commandSequence = 0;
         function activeScene() {
           return activeSession ? scenes.get(activeSession.sceneKey) || null : null;
+        }
+        function historyDiagnostics(scene) {
+          return scene?.history?.getDiagnostics() || {
+            undoDepth: 0,
+            redoDepth: 0,
+            undoBytes: 0,
+            redoBytes: 0,
+            historyBytes: 0
+          };
+        }
+        function reachableObjectBytes(scene, entries = scene?.historyEntries, currentBytes = scene?.estimatedBytes) {
+          let reservedBytes = Math.max(0, finiteNumber(currentBytes));
+          for (const entry of entries?.undo || []) {
+            reservedBytes = Math.max(reservedBytes, Math.max(0, finiteNumber(entry.undoObjectBytes)));
+          }
+          for (const entry of entries?.redo || []) {
+            reservedBytes = Math.max(reservedBytes, Math.max(0, finiteNumber(entry.redoObjectBytes)));
+          }
+          return reservedBytes;
+        }
+        function estimateSceneBytes(scene, entries = scene?.historyEntries, currentBytes = scene?.estimatedBytes, historyBytes = historyDiagnostics(scene).historyBytes) {
+          return reachableObjectBytes(scene, entries, currentBytes) + Math.max(0, finiteNumber(historyBytes));
         }
         function touchVideo(stableVideoIdentity) {
           accessClock += 1;
@@ -8213,7 +8361,9 @@ void main() {
         }
         function calculateEstimatedBytes() {
           let total = 0;
-          for (const scene of scenes.values()) total += scene.estimatedBytes + finiteNumber(scene.undoBytes);
+          for (const scene of scenes.values()) {
+            total += estimateSceneBytes(scene);
+          }
           return total;
         }
         function evictVideo(stableVideoIdentity) {
@@ -8233,6 +8383,44 @@ void main() {
           }
           return estimatedBytes;
         }
+        function estimateVideoBytes(stableVideoIdentity) {
+          let total = 0;
+          for (const scene of scenes.values()) {
+            if (scene.stableVideoIdentity !== stableVideoIdentity) continue;
+            total += estimateSceneBytes(scene);
+          }
+          return total;
+        }
+        function planProjectedEvictions(scene, nextObjectBytes, nextHistory) {
+          let projectedBytes = calculateEstimatedBytes() - estimateSceneBytes(scene) + estimateSceneBytes(scene, nextHistory, nextObjectBytes, nextHistory.historyBytes);
+          const planned = [];
+          for (const candidate of videoAccess.keys()) {
+            if (projectedBytes <= maxBytes) break;
+            if (candidate === activeSession?.stableVideoIdentity) continue;
+            projectedBytes -= estimateVideoBytes(candidate);
+            planned.push(candidate);
+          }
+          return projectedBytes <= maxBytes ? planned : null;
+        }
+        function projectHistoryRecord(scene, commandId, commandBytes, undoObjectBytes, redoObjectBytes, entries = scene.historyEntries) {
+          const undo2 = entries.undo.map((entry) => ({ ...entry }));
+          let undoBytes = undo2.reduce((total, entry) => total + entry.estimatedBytes, 0);
+          while (undo2.length >= maxHistory || undoBytes + commandBytes > maxHistoryBytes) {
+            const [removed] = undo2.splice(0, 1);
+            undoBytes = Math.max(0, undoBytes - finiteNumber(removed?.estimatedBytes));
+          }
+          undo2.push({
+            id: commandId,
+            estimatedBytes: commandBytes,
+            undoObjectBytes,
+            redoObjectBytes
+          });
+          return {
+            undo: undo2,
+            redo: [],
+            historyBytes: undoBytes + commandBytes
+          };
+        }
         function snapshotScene(scene) {
           if (!scene) return null;
           return {
@@ -8250,43 +8438,64 @@ void main() {
           scene.dirty = true;
           scene.mutationCount += 1;
         }
-        function recalculateSceneBytes(scene) {
-          scene.estimatedBytes = [...scene.objects.values()].reduce((total, object) => {
+        function estimateObjectsBytes(objects) {
+          return [...objects.values()].reduce((total, object) => {
             const estimated = finiteNumber(estimateObjectBytes(object), 1);
             return total + Math.max(1, estimated);
           }, 0);
         }
-        function clearUndoHistory(scene) {
-          if (!scene) return;
-          scene.undoStack.length = 0;
-          scene.undoBytes = 0;
+        function nextCommandId(scene, kind) {
+          commandSequence += 1;
+          return `${kind}:${scene.key}:${commandSequence}`;
         }
-        function estimateUndoEntryBytes(entry) {
-          let bytes = 0;
-          for (const object of entry.removedObjects || []) {
-            bytes += Math.max(1, finiteNumber(estimateObjectBytes(object), 1));
-          }
-          for (const id of [
-            ...entry.previousOrder || [],
-            ...entry.addedIds || [],
-            ...entry.previousSelection || [],
-            ...entry.coalesceIds || []
-          ]) {
-            bytes += Math.max(2, String(id).length * 2);
-          }
-          bytes += defaultEstimateObjectBytes(entry.survivingTransforms || []);
-          return bytes;
+        function makeHistoryCommand(scene, kind, undoState, redoState) {
+          return {
+            id: nextCommandId(scene, kind),
+            kind,
+            undoState,
+            redoState
+          };
         }
-        function pushUndoEntry(scene, entry) {
-          const estimatedBytes = estimateUndoEntryBytes(entry);
-          while (scene.undoStack.length > 0 && (scene.undoStack.length >= maxHistory || scene.undoBytes + estimatedBytes > maxHistoryBytes || calculateEstimatedBytes() + estimatedBytes > maxBytes)) {
-            const removed = scene.undoStack.shift();
-            scene.undoBytes = Math.max(0, scene.undoBytes - finiteNumber(removed?.estimatedBytes));
+        function commitStagedMutation(scene, change) {
+          const previousEstimatedBytes = scene.estimatedBytes;
+          let nextEstimatedBytes;
+          try {
+            nextEstimatedBytes = estimateObjectsBytes(change.nextObjects);
+          } catch (error) {
+            return { applied: false, reason: error?.message || "scene-validation-failed" };
           }
-          if (estimatedBytes > maxHistoryBytes || calculateEstimatedBytes() + estimatedBytes > maxBytes) return false;
-          scene.undoStack.push({ ...entry, estimatedBytes });
-          scene.undoBytes += estimatedBytes;
-          return true;
+          const command = makeHistoryCommand(scene, change.kind, change.undoState, change.redoState);
+          const commandBytes = defaultEstimateObjectBytes(command);
+          if (commandBytes > maxHistoryBytes) {
+            return { applied: false, reason: "history-capacity-exceeded" };
+          }
+          const projectedHistory = projectHistoryRecord(
+            scene,
+            command.id,
+            commandBytes,
+            previousEstimatedBytes,
+            nextEstimatedBytes
+          );
+          const plannedEvictions = planProjectedEvictions(
+            scene,
+            nextEstimatedBytes,
+            projectedHistory
+          );
+          if (!plannedEvictions) {
+            return { applied: false, reason: "scene-capacity-exceeded" };
+          }
+          const recorded = scene.history.record(command);
+          if (!recorded.recorded) {
+            return { applied: false, reason: recorded.reason || "history-record-failed" };
+          }
+          for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
+          scene.historyEntries = { undo: projectedHistory.undo, redo: projectedHistory.redo };
+          scene.objects = change.nextObjects;
+          scene.selectedObjectIds = new Set(change.nextSelection || []);
+          scene.estimatedBytes = nextEstimatedBytes;
+          noteMutation(scene);
+          touchVideo(scene.stableVideoIdentity);
+          return { applied: true, commandId: command.id, ...recorded };
         }
         function activateSession(session) {
           if (!session || typeof session.sessionId !== "string" || session.sessionId.length === 0) {
@@ -8313,8 +8522,11 @@ void main() {
               targetFrame,
               objects: /* @__PURE__ */ new Map(),
               selectedObjectIds: /* @__PURE__ */ new Set(),
-              undoStack: [],
-              undoBytes: 0,
+              history: createDrawingCommandHistory({
+                maxEntries: maxHistory,
+                maxBytes: maxHistoryBytes
+              }),
+              historyEntries: { undo: [], redo: [] },
               dirty: false,
               mutationCount: 0,
               estimatedBytes: 0
@@ -8340,7 +8552,8 @@ void main() {
           if (sessionId && sessionId !== activeSession.sessionId) {
             return { accepted: false, reason: "stale-session" };
           }
-          activeScene()?.selectedObjectIds.clear();
+          const scene = activeScene();
+          scene?.selectedObjectIds.clear();
           activeSession = null;
           return { accepted: true, active: false };
         }
@@ -8356,17 +8569,17 @@ void main() {
             return { applied: false, reason: "invalid-stroke-points" };
           }
           const record = clonePlain(stroke);
-          clearUndoHistory(scene);
-          scene.objects.set(record.id, record);
-          recalculateSceneBytes(scene);
-          enforceLimits();
-          if (calculateEstimatedBytes() - scene.undoBytes > maxBytes) {
-            scene.objects.delete(record.id);
-            recalculateSceneBytes(scene);
-            return { applied: false, reason: "scene-capacity-exceeded" };
-          }
-          noteMutation(scene);
-          touchVideo(scene.stableVideoIdentity);
+          const nextObjects = new Map(scene.objects);
+          nextObjects.set(record.id, record);
+          const touchedIds = [record.id];
+          const result = commitStagedMutation(scene, {
+            kind: "add-objects",
+            nextObjects,
+            nextSelection: scene.selectedObjectIds,
+            undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
+            redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys())
+          });
+          if (!result.applied) return result;
           return { applied: true, objectId: record.id };
         }
         function selectObjects(objectIds = []) {
@@ -8380,7 +8593,7 @@ void main() {
         function transformSelection(change = {}) {
           const scene = activeScene();
           if (!scene || scene.selectedObjectIds.size === 0) return { applied: false, objectIds: [] };
-          let changed = false;
+          const nextObjects = new Map(scene.objects);
           const changedIds = [];
           const transformById = new Map((change.transforms || []).map((item) => [item.id, item.transform]));
           const dx = finiteNumber(change.dx, 0);
@@ -8397,19 +8610,18 @@ void main() {
             }
             const objectChanged = TRANSFORM_FIELDS.some((field) => current[field] !== next[field]);
             if (!objectChanged) continue;
-            object.transform = next;
-            changed = true;
+            nextObjects.set(id, { ...clonePlain(object), transform: next });
             changedIds.push(id);
           }
-          if (!changed) return { applied: false, objectIds: [] };
-          const latestUndo = scene.undoStack.at(-1);
-          const coalesceIds = new Set(latestUndo?.coalesceIds || latestUndo?.addedIds || []);
-          const selectedIds = [...scene.selectedObjectIds];
-          const coalescesLatestSplit = !!latestUndo && selectedIds.length === coalesceIds.size && selectedIds.every((id) => coalesceIds.has(id)) && changedIds.every((id) => coalesceIds.has(id));
-          if (!coalescesLatestSplit) clearUndoHistory(scene);
-          recalculateSceneBytes(scene);
-          noteMutation(scene);
-          touchVideo(scene.stableVideoIdentity);
+          if (changedIds.length === 0) return { applied: false, objectIds: [] };
+          const result = commitStagedMutation(scene, {
+            kind: "transform-objects",
+            nextObjects,
+            nextSelection: scene.selectedObjectIds,
+            undoState: makeTransformsState(scene.objects, changedIds),
+            redoState: makeTransformsState(nextObjects, changedIds)
+          });
+          if (!result.applied) return { ...result, objectIds: [] };
           return { applied: true, objectIds: changedIds };
         }
         function replaceObjects(change = {}) {
@@ -8445,86 +8657,175 @@ void main() {
           if (survivingIds.size + additions.length > maxObjects) {
             return { applied: false, reason: "scene-object-limit-exceeded" };
           }
-          const previousObjects = scene.objects;
-          const previousSelection = scene.selectedObjectIds;
-          const previousBytes = scene.estimatedBytes;
           const requestedSelection = Array.isArray(change.selectedObjectIds) ? change.selectedObjectIds : [];
-          const historyEntry = {
-            previousOrder: [...previousObjects.keys()],
-            removedObjects: [...removeIds].map((id) => clonePlain(previousObjects.get(id))),
-            addedIds: additions.map((object) => object.id),
-            previousSelection: [...previousSelection],
-            coalesceIds: [...requestedSelection],
-            survivingTransforms: requestedSelection.filter((id) => previousObjects.has(id) && !removeIds.has(id)).map((id) => ({ id, transform: clonePlain(previousObjects.get(id)?.transform || {}) }))
-          };
           const nextObjects = /* @__PURE__ */ new Map();
           const replacementsById = new Map(replacements.map((replacement) => [replacement.removeId, replacement.addObjects]));
-          for (const [id, object] of previousObjects) {
+          for (const [id, object] of scene.objects) {
             if (!removeIds.has(id)) {
               nextObjects.set(id, object);
               continue;
             }
             for (const addition of replacementsById.get(id) || []) nextObjects.set(addition.id, addition);
           }
-          scene.objects = nextObjects;
-          scene.selectedObjectIds = new Set(
-            (Array.isArray(change.selectedObjectIds) ? change.selectedObjectIds : []).filter((id) => nextObjects.has(id))
-          );
-          recalculateSceneBytes(scene);
-          if (calculateEstimatedBytes() - scene.undoBytes > maxBytes) {
-            scene.objects = previousObjects;
-            scene.selectedObjectIds = previousSelection;
-            scene.estimatedBytes = previousBytes;
-            return { applied: false, reason: "scene-capacity-exceeded" };
+          const nextSelection = new Set(requestedSelection.filter((id) => nextObjects.has(id)));
+          const transformItems = Array.isArray(change.transforms) ? change.transforms : [];
+          const transformById = /* @__PURE__ */ new Map();
+          for (const item of transformItems) {
+            if (!item || typeof item.id !== "string" || !nextObjects.has(item.id) || !item.transform || typeof item.transform !== "object" || Array.isArray(item.transform) || transformById.has(item.id)) {
+              return { applied: false, reason: "invalid-replacement-transform" };
+            }
+            transformById.set(item.id, clonePlain(item.transform));
           }
-          const undoRecorded = pushUndoEntry(scene, historyEntry);
-          noteMutation(scene);
-          touchVideo(scene.stableVideoIdentity);
+          const dx = finiteNumber(change.dx, 0);
+          const dy = finiteNumber(change.dy, 0);
+          const transformTargetIds = new Set(transformById.keys());
+          if (dx !== 0 || dy !== 0) {
+            for (const id of nextSelection) transformTargetIds.add(id);
+          }
+          const changedTransformIds = [];
+          for (const id of transformTargetIds) {
+            const object = nextObjects.get(id);
+            if (!object) continue;
+            const current = {
+              left: 0,
+              top: 0,
+              scaleX: 1,
+              scaleY: 1,
+              angle: 0,
+              skewX: 0,
+              skewY: 0,
+              flipX: false,
+              flipY: false,
+              ...object.transform || {}
+            };
+            const next = transformById.has(id) ? { ...current, ...transformById.get(id) } : { ...current, left: finiteNumber(current.left) + dx, top: finiteNumber(current.top) + dy };
+            if (!TRANSFORM_FIELDS.some((field) => current[field] !== next[field])) continue;
+            nextObjects.set(id, { ...clonePlain(object), transform: next });
+            changedTransformIds.push(id);
+          }
+          const touchedIds = /* @__PURE__ */ new Set([
+            ...removeIds,
+            ...additions.map((object) => object.id),
+            ...changedTransformIds
+          ]);
+          const result = commitStagedMutation(scene, {
+            kind: typeof change.kind === "string" && change.kind ? change.kind : "split-stroke",
+            nextObjects,
+            nextSelection,
+            undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
+            redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys())
+          });
+          if (!result.applied) return result;
           return {
             applied: true,
             removedIds: [...removeIds],
             addedIds: additions.map((object) => object.id),
             selectedObjectIds: [...scene.selectedObjectIds],
-            undoRecorded
+            undoRecorded: true
+          };
+        }
+        function applyHistoryState(scene, state) {
+          if (!state || typeof state !== "object") {
+            return { applied: false, reason: "invalid-history-state" };
+          }
+          let nextObjects;
+          if (state.type === "objects") {
+            if (!Array.isArray(state.touchedIds) || !Array.isArray(state.objects) || !Array.isArray(state.order)) {
+              return { applied: false, reason: "invalid-history-state" };
+            }
+            const touchedIds = new Set(state.touchedIds);
+            if (touchedIds.size !== state.touchedIds.length || state.touchedIds.some((id) => typeof id !== "string" || !id)) {
+              return { applied: false, reason: "invalid-history-state" };
+            }
+            nextObjects = new Map(scene.objects);
+            for (const id of touchedIds) nextObjects.delete(id);
+            const restoredIds = /* @__PURE__ */ new Set();
+            for (const object of state.objects) {
+              if (!object || typeof object.id !== "string" || !object.id || !touchedIds.has(object.id) || restoredIds.has(object.id)) {
+                return { applied: false, reason: "invalid-history-state" };
+              }
+              restoredIds.add(object.id);
+              nextObjects.set(object.id, clonePlain(object));
+            }
+            const order = [...state.order];
+            const orderedIds = new Set(order);
+            if (orderedIds.size !== order.length || order.length !== nextObjects.size || order.some((id) => typeof id !== "string" || !nextObjects.has(id))) {
+              return { applied: false, reason: "invalid-history-state" };
+            }
+            nextObjects = new Map(order.map((id) => [id, nextObjects.get(id)]));
+          } else if (state.type === "transforms") {
+            if (!Array.isArray(state.transforms)) {
+              return { applied: false, reason: "invalid-history-state" };
+            }
+            nextObjects = new Map(scene.objects);
+            const transformedIds = /* @__PURE__ */ new Set();
+            for (const item of state.transforms) {
+              if (!item || typeof item.id !== "string" || !item.id || transformedIds.has(item.id) || !nextObjects.has(item.id) || !item.transform || typeof item.transform !== "object" || Array.isArray(item.transform)) {
+                return { applied: false, reason: "invalid-history-state" };
+              }
+              transformedIds.add(item.id);
+              nextObjects.set(item.id, {
+                ...clonePlain(nextObjects.get(item.id)),
+                transform: clonePlain(item.transform)
+              });
+            }
+          } else {
+            return { applied: false, reason: "invalid-history-state" };
+          }
+          const nextEstimatedBytes = estimateObjectsBytes(nextObjects);
+          const reservedObjectBytes = reachableObjectBytes(scene);
+          const projectedBytes = calculateEstimatedBytes() - estimateSceneBytes(scene) + estimateSceneBytes(scene, scene.historyEntries, nextEstimatedBytes, historyDiagnostics(scene).historyBytes);
+          if (nextEstimatedBytes > reservedObjectBytes || projectedBytes > maxBytes) {
+            return { applied: false, reason: "scene-capacity-exceeded" };
+          }
+          scene.objects = nextObjects;
+          scene.selectedObjectIds = /* @__PURE__ */ new Set();
+          scene.estimatedBytes = nextEstimatedBytes;
+          noteMutation(scene);
+          touchVideo(scene.stableVideoIdentity);
+          return { applied: true };
+        }
+        function moveHistory(direction) {
+          const scene = activeScene();
+          if (!scene) return { applied: false, reason: "history-empty" };
+          const result = scene.history[direction]((state) => applyHistoryState(scene, state));
+          if (!result.applied) return result;
+          const from = direction === "undo" ? scene.historyEntries.undo : scene.historyEntries.redo;
+          const to = direction === "undo" ? scene.historyEntries.redo : scene.historyEntries.undo;
+          const entryIndex = from.findLastIndex((entry) => entry.id === result.commandId);
+          if (entryIndex >= 0) {
+            const [entry] = from.splice(entryIndex, 1);
+            to.push(entry);
+          }
+          return {
+            ...result,
+            objectCount: scene.objects.size,
+            selectedObjectIds: []
           };
         }
         function undo() {
-          const scene = activeScene();
-          if (!scene || scene.undoStack.length === 0) return { applied: false, reason: "history-empty" };
-          const previous = scene.undoStack.pop();
-          scene.undoBytes = Math.max(0, scene.undoBytes - finiteNumber(previous.estimatedBytes));
-          const restoredById = new Map(scene.objects);
-          for (const id of previous.addedIds) restoredById.delete(id);
-          for (const object of previous.removedObjects) restoredById.set(object.id, clonePlain(object));
-          for (const item of previous.survivingTransforms || []) {
-            const object = restoredById.get(item.id);
-            if (object) object.transform = clonePlain(item.transform);
-          }
-          scene.objects = new Map(
-            previous.previousOrder.filter((id) => restoredById.has(id)).map((id) => [id, restoredById.get(id)])
-          );
-          scene.selectedObjectIds = /* @__PURE__ */ new Set();
-          recalculateSceneBytes(scene);
-          noteMutation(scene);
-          touchVideo(scene.stableVideoIdentity);
-          return { applied: true, objectCount: scene.objects.size, selectedObjectIds: [] };
+          return moveHistory("undo");
+        }
+        function redo() {
+          return moveHistory("redo");
         }
         function deleteSelection() {
           const scene = activeScene();
           if (!scene || scene.selectedObjectIds.size === 0) {
             return { applied: false, deletedCount: 0, deletedIds: [] };
           }
-          const deletedIds = [];
-          for (const id of scene.selectedObjectIds) {
-            if (!scene.objects.delete(id)) continue;
-            deletedIds.push(id);
-          }
-          scene.selectedObjectIds.clear();
+          const deletedIds = [...scene.selectedObjectIds].filter((id) => scene.objects.has(id));
           if (deletedIds.length === 0) return { applied: false, deletedCount: 0, deletedIds };
-          clearUndoHistory(scene);
-          recalculateSceneBytes(scene);
-          noteMutation(scene);
-          touchVideo(scene.stableVideoIdentity);
+          const nextObjects = new Map(scene.objects);
+          for (const id of deletedIds) nextObjects.delete(id);
+          const result = commitStagedMutation(scene, {
+            kind: "delete-objects",
+            nextObjects,
+            nextSelection: [],
+            undoState: makeObjectsState(scene.objects, deletedIds, scene.objects.keys()),
+            redoState: makeObjectsState(nextObjects, deletedIds, nextObjects.keys())
+          });
+          if (!result.applied) return result;
           return { applied: true, deletedCount: deletedIds.length, deletedIds };
         }
         function clearSession() {
@@ -8532,12 +8833,15 @@ void main() {
           const deletedCount = scene?.objects.size || 0;
           if (!scene || deletedCount === 0) return { applied: false, deletedCount: 0, deletedIds: [] };
           const deletedIds = [...scene.objects.keys()];
-          clearUndoHistory(scene);
-          scene.objects.clear();
-          scene.selectedObjectIds.clear();
-          recalculateSceneBytes(scene);
-          noteMutation(scene);
-          touchVideo(scene.stableVideoIdentity);
+          const nextObjects = /* @__PURE__ */ new Map();
+          const result = commitStagedMutation(scene, {
+            kind: "clear-keyframe",
+            nextObjects,
+            nextSelection: [],
+            undoState: makeObjectsState(scene.objects, deletedIds, scene.objects.keys()),
+            redoState: makeObjectsState(nextObjects, deletedIds, nextObjects.keys())
+          });
+          if (!result.applied) return result;
           return { applied: true, deletedCount, deletedIds };
         }
         function updateTool(command = {}) {
@@ -8576,6 +8880,7 @@ void main() {
         }
         function getDiagnostics() {
           const scene = activeScene();
+          const history = historyDiagnostics(scene);
           return {
             maxVideos,
             maxBytes,
@@ -8594,8 +8899,10 @@ void main() {
             selectionCount: scene?.selectedObjectIds.size || 0,
             mutationCount: scene?.mutationCount || 0,
             dirty: scene?.dirty || false,
-            undoDepth: scene?.undoStack.length || 0,
-            undoBytes: scene?.undoBytes || 0,
+            undoDepth: history.undoDepth,
+            redoDepth: history.redoDepth,
+            undoBytes: history.undoBytes,
+            historyBytes: history.historyBytes,
             sceneKeys: [...scenes.keys()]
           };
         }
@@ -8612,6 +8919,7 @@ void main() {
           transformSelection,
           replaceObjects,
           undo,
+          redo,
           deleteSelection,
           clearSession,
           updateTool,
@@ -8750,7 +9058,7 @@ void main() {
         let currentSession = null;
         let activeStroke = null;
         let activeLasso = null;
-        let pendingLassoVisual = null;
+        let pendingLassoSelection = null;
         let brushStyle = { ...DEFAULT_BRUSH_STYLE };
         let brushControls = null;
         let brushPanelOpen = false;
@@ -8758,6 +9066,7 @@ void main() {
         let selectionControls = null;
         let transformStart = null;
         let selectGesture = null;
+        const ignoredModifiedTargets = /* @__PURE__ */ new WeakSet();
         let deferredViewport = null;
         let longTaskObserver = null;
         let localSequence = 0;
@@ -8804,7 +9113,7 @@ void main() {
         }
         function setSelectionMode(mode) {
           const nextMode = mode === "lasso" ? "lasso" : "stroke";
-          if (selectionMode !== nextMode) rollbackPendingLassoVisual();
+          if (selectionMode !== nextMode) abortPendingLassoSelection();
           const selectedObjectIds = sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
           if (selectionMode !== nextMode && (activeLasso || selectGesture || transformStart || deferredViewport)) {
             cancelActiveLasso();
@@ -9093,6 +9402,21 @@ void main() {
           }
           return transform;
         }
+        function transformTargets(target) {
+          if (!target || typeof target !== "object" && typeof target !== "function") return [];
+          const children = typeof target.getObjects === "function" ? target.getObjects() : [];
+          return [target, ...children].filter((candidate) => candidate && (typeof candidate === "object" || typeof candidate === "function"));
+        }
+        function ignoreLateModifiedEvents(target) {
+          for (const candidate of transformTargets(target)) ignoredModifiedTargets.add(candidate);
+        }
+        function acceptsModifiedEvent(target) {
+          const candidates = transformTargets(target);
+          return candidates.length === 0 || !candidates.some((candidate) => ignoredModifiedTargets.has(candidate));
+        }
+        function beginModifiedEventGeneration(target) {
+          for (const candidate of transformTargets(target)) ignoredModifiedTargets.delete(candidate);
+        }
         function applyMoveOnlyConstraints(object) {
           if (!object?.set) return;
           object.set({
@@ -9182,7 +9506,7 @@ void main() {
         }
         function setToolMode(tool) {
           if (!fabricCanvas) return;
-          if (tool !== "select") rollbackPendingLassoVisual();
+          if (tool !== "select") abortPendingLassoSelection();
           const selectMode = tool === "select";
           const nativeSelectMode = selectMode && selectionMode === "stroke";
           for (const [buttonTool, button] of toolButtons) {
@@ -9373,35 +9697,20 @@ void main() {
           fragment.transform = captureTransform(path);
           return fragment;
         }
-        function pendingTargetIncludes(target, objectIds) {
+        function pendingTargetMatches(target, objectIds) {
           if (!target || !objectIds?.size) return false;
           const children = typeof target.getObjects === "function" ? target.getObjects() : [target];
-          return children.some((object) => objectIds.has(object?.__baeframeObjectId));
+          const targetIds = children.map((object) => object?.__baeframeObjectId).filter(Boolean);
+          if (targetIds.length !== objectIds.size) return false;
+          const uniqueTargetIds = new Set(targetIds);
+          return uniqueTargetIds.size === objectIds.size && targetIds.every((id) => objectIds.has(id));
         }
-        function materializePendingLassoVisual() {
-          const pending = pendingLassoVisual;
-          if (!pending || !fabricCanvas) return false;
-          if (pending.sessionId !== currentSession?.sessionId || pending.inputRevision !== tokenState.inputRevision) {
-            pendingLassoVisual = null;
-            renderActiveScene();
-            return false;
-          }
-          pendingLassoVisual = null;
-          const selectedObjects = new Map(
-            fabricCanvas.getObjects().filter((object) => pending.selectedIds.has(object.__baeframeObjectId)).map((object) => [object.__baeframeObjectId, object])
-          );
-          for (const original of pending.originalObjects) fabricCanvas.remove(original);
-          for (const record of pending.addedObjects) {
-            const selectedObject = selectedObjects.get(record.id);
-            if (selectedObject) {
-              selectedObject.set({ opacity: normalizePathOpacity(record.style?.opacity) });
-              selectedObject.__baeframePendingLasso = false;
-              selectedObject.setCoords?.();
-              continue;
-            }
-            fabricCanvas.add(makeFabricPath(record));
-          }
-          const order = sceneStore.getActiveSceneSnapshot()?.objects.map((object) => object.id) || [];
+        function pendingLassoIsFresh(pending = pendingLassoSelection) {
+          if (!pending) return false;
+          return pending.sessionId === currentSession?.sessionId && pending.inputRevision === tokenState.inputRevision && pending.sourceMutationCount === sceneStore.getDiagnostics().mutationCount;
+        }
+        function reorderCanvasObjects(order = []) {
+          if (!fabricCanvas) return;
           const objectsById = new Map(
             fabricCanvas.getObjects().filter((object) => object.__baeframeObjectId).map((object) => [object.__baeframeObjectId, object])
           );
@@ -9409,28 +9718,260 @@ void main() {
             const object = objectsById.get(id);
             if (object) fabricCanvas.moveObjectTo?.(object, index);
           });
+        }
+        function pendingReplacementOrder(pending) {
+          const replacementsById = new Map(
+            pending.replacements.map((replacement) => [replacement.removeId, replacement.addObjects])
+          );
+          return pending.originalOrder.flatMap((id) => replacementsById.has(id) ? replacementsById.get(id).map((object) => object.id) : [id]);
+        }
+        function stagePendingLassoSelection({
+          replacements,
+          selectedPersistedIds,
+          selectedFragmentIds,
+          snapshot,
+          canvasObjects
+        }) {
+          if (!fabricCanvas || !currentSession || replacements.length === 0 || selectedFragmentIds.size === 0) {
+            return { staged: false, reason: "invalid-pending-lasso" };
+          }
+          abortPendingLassoSelection();
+          const originalFabricObjects = replacements.map((replacement) => {
+            const object = canvasObjects.get(replacement.removeId);
+            return object ? {
+              id: replacement.removeId,
+              object,
+              transform: captureTransform(object),
+              opacity: object.opacity
+            } : null;
+          });
+          if (originalFabricObjects.some((entry) => !entry)) {
+            return { staged: false, reason: "missing-original-fabric-object" };
+          }
+          const selectedPersistedFabricObjects = [...selectedPersistedIds].map((id) => {
+            const object = canvasObjects.get(id);
+            return object ? { id, object, transform: captureTransform(object), opacity: object.opacity } : null;
+          }).filter(Boolean);
+          if (selectedPersistedFabricObjects.length !== selectedPersistedIds.size) {
+            return { staged: false, reason: "missing-selected-fabric-object" };
+          }
+          const fragmentFabricObjects = /* @__PURE__ */ new Map();
+          try {
+            for (const record of replacements.flatMap((replacement) => replacement.addObjects)) {
+              if (!selectedFragmentIds.has(record.id)) continue;
+              const proxy = makeFabricPath(record);
+              proxy.set({ opacity: 0 });
+              proxy.__baeframePendingLasso = true;
+              proxy.setCoords?.();
+              fragmentFabricObjects.set(record.id, proxy);
+              fabricCanvas.add(proxy);
+            }
+          } catch (error) {
+            lastError = error.message;
+            metrics.recordSurfaceError();
+            for (const object of fragmentFabricObjects.values()) {
+              try {
+                fabricCanvas.remove(object);
+              } catch (_error) {
+              }
+            }
+            fabricCanvas.requestRenderAll?.();
+            return { staged: false, reason: "fragment-proxy-build-failed" };
+          }
+          if (fragmentFabricObjects.size !== selectedFragmentIds.size) {
+            for (const object of fragmentFabricObjects.values()) fabricCanvas.remove(object);
+            return { staged: false, reason: "fragment-proxy-build-failed" };
+          }
+          pendingLassoSelection = {
+            sessionId: currentSession.sessionId,
+            inputRevision: tokenState.inputRevision,
+            sourceMutationCount: sceneStore.getDiagnostics().mutationCount,
+            replacements: clonePlain(replacements),
+            selectedPersistedIds: new Set(selectedPersistedIds),
+            selectedFragmentIds: new Set(selectedFragmentIds),
+            selectedIds: /* @__PURE__ */ new Set([...selectedPersistedIds, ...selectedFragmentIds]),
+            originalFabricObjects,
+            selectedPersistedFabricObjects,
+            fragmentFabricObjects,
+            originalOrder: (snapshot?.objects || []).map((object) => object.id),
+            activeTarget: null,
+            initialTargetTransform: null,
+            startTargetTransform: null,
+            phase: "selected"
+          };
           refreshSelectionInteractionPolicy();
           fabricCanvas.requestRenderAll();
-          return true;
+          return { staged: true };
         }
-        function rollbackPendingLassoVisual() {
-          const pending = pendingLassoVisual;
-          if (!pending || !fabricCanvas) return false;
-          pendingLassoVisual = null;
+        function abortPendingLassoSelection(options2 = {}) {
+          const pending = pendingLassoSelection;
+          if (!pending) return false;
+          pendingLassoSelection = null;
+          if (!fabricCanvas) return true;
+          const authoritative = options2.authoritative === true || !pendingLassoIsFresh(pending);
           fabricCanvas.discardActiveObject();
+          sceneStore.selectObjects([]);
+          if (authoritative) {
+            renderActiveScene();
+            return true;
+          }
           for (const object of [...fabricCanvas.getObjects()]) {
             if (object.__baeframePendingLasso) fabricCanvas.remove(object);
           }
-          const result = sceneStore.undo();
-          if (!result.applied) {
-            renderActiveScene();
-            return false;
+          const existingIds = new Set(
+            fabricCanvas.getObjects().map((object) => object.__baeframeObjectId).filter(Boolean)
+          );
+          for (const entry of pending.originalFabricObjects) {
+            entry.object.set({ ...entry.transform, opacity: entry.opacity });
+            entry.object.__baeframePendingLasso = false;
+            entry.object.setCoords?.();
+            if (!existingIds.has(entry.id)) {
+              fabricCanvas.add(entry.object);
+              existingIds.add(entry.id);
+            }
           }
-          sceneStore.selectObjects([]);
+          for (const entry of pending.selectedPersistedFabricObjects) {
+            entry.object.set({ ...entry.transform, opacity: entry.opacity });
+            entry.object.setCoords?.();
+          }
+          reorderCanvasObjects(pending.originalOrder);
           refreshSelectionInteractionPolicy();
           fabricCanvas.requestRenderAll();
           updateObjectMetric();
           return true;
+        }
+        function materializePendingLassoSelection(target = fabricCanvas?.getActiveObject?.()) {
+          const pending = pendingLassoSelection;
+          if (!pending || !fabricCanvas) return false;
+          if (!pendingLassoIsFresh(pending)) {
+            abortPendingLassoSelection({ authoritative: true });
+            return false;
+          }
+          if (pending.phase === "moving") return true;
+          pending.phase = "moving";
+          pending.activeTarget = target || pending.activeTarget;
+          pending.startTargetTransform = transformStart?.target === pending.activeTarget ? clonePlain(transformStart.transform) : clonePlain(pending.initialTargetTransform || captureTransform(pending.activeTarget));
+          try {
+            const createdFragmentIds = [];
+            for (const replacement of pending.replacements) {
+              for (const record of replacement.addObjects) {
+                if (pending.fragmentFabricObjects.has(record.id)) continue;
+                const object = makeFabricPath(record);
+                object.__baeframePendingLasso = true;
+                pending.fragmentFabricObjects.set(record.id, object);
+                createdFragmentIds.push(record.id);
+              }
+            }
+            for (const entry of pending.originalFabricObjects) fabricCanvas.remove(entry.object);
+            for (const id of createdFragmentIds) {
+              fabricCanvas.add(pending.fragmentFabricObjects.get(id));
+            }
+            for (const replacement of pending.replacements) {
+              for (const record of replacement.addObjects) {
+                if (!pending.selectedFragmentIds.has(record.id)) continue;
+                const object = pending.fragmentFabricObjects.get(record.id);
+                object.set({ opacity: normalizePathOpacity(record.style?.opacity) });
+                object.setCoords?.();
+              }
+            }
+            reorderCanvasObjects(pendingReplacementOrder(pending));
+            refreshSelectionInteractionPolicy();
+            fabricCanvas.requestRenderAll();
+            return true;
+          } catch (error) {
+            lastError = error.message;
+            metrics.recordSurfaceError();
+            abortPendingLassoSelection();
+            return false;
+          }
+        }
+        function commitPendingLassoMove(target = fabricCanvas?.getActiveObject?.()) {
+          const pending = pendingLassoSelection;
+          if (!pending) return { applied: false, reason: "no-pending-lasso" };
+          if (!pendingLassoIsFresh(pending)) {
+            abortPendingLassoSelection({ authoritative: true });
+            return { applied: false, reason: "stale-pending-lasso" };
+          }
+          if (pending.phase !== "moving" && !materializePendingLassoSelection(target)) {
+            return { applied: false, reason: "pending-lasso-materialize-failed" };
+          }
+          const activeTarget = target || pending.activeTarget;
+          const start = pending.startTargetTransform || pending.initialTargetTransform || {};
+          const dx = finiteNumber(activeTarget?.left) - finiteNumber(start.left);
+          const dy = finiteNumber(activeTarget?.top) - finiteNumber(start.top);
+          if (Math.abs(dx) <= 1e-7 && Math.abs(dy) <= 1e-7) {
+            abortPendingLassoSelection();
+            return { applied: false, reason: "no-op-transform" };
+          }
+          if (!pendingLassoIsFresh(pending)) {
+            abortPendingLassoSelection({ authoritative: true });
+            return { applied: false, reason: "stale-pending-lasso" };
+          }
+          const selectedObjectIds = [...pending.selectedIds];
+          const result = sceneStore.replaceObjects({
+            replacements: pending.replacements,
+            selectedObjectIds,
+            dx,
+            dy,
+            kind: "split-stroke"
+          });
+          if (!result.applied) {
+            abortPendingLassoSelection();
+            return result;
+          }
+          pendingLassoSelection = null;
+          renderActiveScene();
+          if (selectedObjectIds.length === 1) activateObjectIds(selectedObjectIds);
+          else {
+            fabricCanvas.discardActiveObject();
+            sceneStore.selectObjects([]);
+            refreshSelectionInteractionPolicy();
+            fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || "default");
+            fabricCanvas.requestRenderAll();
+            const sessionId = currentSession?.sessionId;
+            const inputRevision = tokenState.inputRevision;
+            queueMicrotaskRef(() => {
+              if (destroyed || !inputEnabled || !fabricCanvas || fabricCanvas.getActiveObject?.()) return;
+              if (currentSession?.sessionId !== sessionId || tokenState.inputRevision !== inputRevision) return;
+              fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || "default");
+            });
+          }
+          updateObjectMetric();
+          return { ...result, selectedObjectIds };
+        }
+        function commitPendingLassoDelete() {
+          const pending = pendingLassoSelection;
+          if (!pending) return { applied: false, reason: "no-pending-lasso" };
+          if (!pendingLassoIsFresh(pending)) {
+            abortPendingLassoSelection({ authoritative: true });
+            return { applied: false, reason: "stale-pending-lasso" };
+          }
+          const replacements = pending.replacements.map((replacement) => ({
+            removeId: replacement.removeId,
+            addObjects: replacement.addObjects.filter((object) => !pending.selectedFragmentIds.has(object.id))
+          }));
+          const replacementSourceIds = new Set(replacements.map((replacement) => replacement.removeId));
+          for (const id of pending.selectedPersistedIds) {
+            if (!replacementSourceIds.has(id)) replacements.push({ removeId: id, addObjects: [] });
+          }
+          const deletedIds = [...pending.selectedFragmentIds, ...pending.selectedPersistedIds];
+          const result = sceneStore.replaceObjects({
+            replacements,
+            selectedObjectIds: [],
+            kind: "split-stroke"
+          });
+          if (!result.applied) {
+            abortPendingLassoSelection();
+            return result;
+          }
+          pendingLassoSelection = null;
+          renderActiveScene();
+          fabricCanvas.discardActiveObject();
+          sceneStore.selectObjects([]);
+          refreshSelectionInteractionPolicy();
+          fabricCanvas.requestRenderAll();
+          updateObjectMetric();
+          return { ...result, deletedCount: deletedIds.length, deletedIds };
         }
         function activateObjectIds(objectIds = []) {
           if (!fabricCanvas) return;
@@ -9472,7 +10013,8 @@ void main() {
             fabricCanvas.getObjects().filter((object) => object.__baeframeObjectId).map((object) => [object.__baeframeObjectId, object])
           );
           const replacements = [];
-          const selectedObjectIds = [];
+          const selectedPersistedIds = /* @__PURE__ */ new Set();
+          const selectedFragmentIds = /* @__PURE__ */ new Set();
           const polygonBounds = boundsForPoints(polygon);
           const sceneLimits = sceneStore.getDiagnostics();
           let accumulatedFragments = 0;
@@ -9492,7 +10034,7 @@ void main() {
             }
             if (split.inside.length === 0) continue;
             if (split.outside.length === 0) {
-              selectedObjectIds.push(record.id);
+              selectedPersistedIds.add(record.id);
               continue;
             }
             accumulatedFragments += split.runs.length;
@@ -9516,7 +10058,7 @@ void main() {
                 break;
               }
               addObjects.push(fragment);
-              if (selected) selectedObjectIds.push(fragment.id);
+              if (selected) selectedFragmentIds.add(fragment.id);
             }
             if (fragmentBuildFailed) {
               activateObjectIds([]);
@@ -9524,43 +10066,27 @@ void main() {
             }
             replacements.push({ removeId: record.id, addObjects });
           }
+          const selectedObjectIds = [...selectedPersistedIds, ...selectedFragmentIds];
           let result = { applied: false, selectedObjectIds };
-          if (replacements.length > 0 && selectedObjectIds.length > 0) {
-            result = sceneStore.replaceObjects({ replacements, selectedObjectIds });
-            if (!result.applied) {
+          if (replacements.length > 0 && selectedFragmentIds.size > 0) {
+            const staged = stagePendingLassoSelection({
+              replacements,
+              selectedPersistedIds,
+              selectedFragmentIds,
+              snapshot,
+              canvasObjects
+            });
+            if (!staged.staged) {
               activateObjectIds([]);
-              return result;
+              return { applied: false, reason: staged.reason, selectedObjectIds: [] };
             }
-            const addedObjects = replacements.flatMap((replacement) => replacement.addObjects);
-            const selectedIds = new Set(selectedObjectIds);
-            const originalObjects = replacements.map((replacement) => canvasObjects.get(replacement.removeId)).filter(Boolean);
-            const selectedFragments = addedObjects.filter((record) => selectedIds.has(record.id));
-            const canDeferVisualSplit = result.undoRecorded === true && originalObjects.length === replacements.length && selectedFragments.length > 0;
-            if (canDeferVisualSplit) {
-              const proxyObjects = [];
-              for (const record of selectedFragments) {
-                const proxy = makeFabricPath(record);
-                proxy.set({ opacity: 0 });
-                proxy.__baeframePendingLasso = true;
-                proxyObjects.push(proxy);
-                fabricCanvas.add(proxy);
-              }
-              pendingLassoVisual = {
-                sessionId: currentSession?.sessionId,
-                inputRevision: tokenState.inputRevision,
-                originalObjects,
-                addedObjects,
-                selectedIds,
-                proxyObjects
-              };
-              refreshSelectionInteractionPolicy();
-              fabricCanvas.requestRenderAll();
-            } else {
-              renderActiveScene();
-            }
-            updateObjectMetric();
+            result = { applied: false, pending: true, selectedObjectIds };
           }
           activateObjectIds(selectedObjectIds);
+          if (pendingLassoSelection) {
+            pendingLassoSelection.activeTarget = fabricCanvas.getActiveObject?.() || null;
+            pendingLassoSelection.initialTargetTransform = captureTransform(pendingLassoSelection.activeTarget);
+          }
           return { ...result, selectedObjectIds };
         }
         function pointerTargetsActiveSelection(event) {
@@ -9693,8 +10219,8 @@ void main() {
           selectGesture = null;
           transformStart = null;
           deferredViewport = null;
-          if (gesture && pendingLassoVisual) {
-            rollbackPendingLassoVisual();
+          if (gesture && pendingLassoSelection) {
+            abortPendingLassoSelection();
             return;
           }
           refreshSelectionInteractionPolicy();
@@ -9757,7 +10283,7 @@ void main() {
               }
               return;
             }
-            rollbackPendingLassoVisual();
+            abortPendingLassoSelection();
             activeLasso = {
               pointerId: event.pointerId,
               sessionId: currentSession?.sessionId,
@@ -9840,7 +10366,11 @@ void main() {
             return;
           }
           const gesture = selectGesture;
-          if (!gesture || event.pointerId !== void 0 && event.pointerId !== gesture.pointerId) return;
+          if (!gesture) {
+            if (pendingLassoSelection) abortPendingLassoSelection();
+            return;
+          }
+          if (event.pointerId !== void 0 && event.pointerId !== gesture.pointerId) return;
           if (event.type === "lostpointercapture" && gesture.phase === "settling") return;
           cancelSelectInteraction(event);
         }
@@ -9881,29 +10411,67 @@ void main() {
           });
         }
         function onSelectionChanged() {
+          if (pendingLassoSelection && !pendingTargetMatches(fabricCanvas?.getActiveObject?.(), pendingLassoSelection.selectedIds)) {
+            abortPendingLassoSelection();
+            return;
+          }
           refreshSelectionInteractionPolicy();
           sceneStore.selectObjects(selectionIds());
         }
         function onSelectionCleared() {
+          if (pendingLassoSelection) {
+            abortPendingLassoSelection();
+            return;
+          }
           refreshSelectionInteractionPolicy();
           sceneStore.selectObjects([]);
         }
         function onBeforeTransform(event) {
           const target = event?.transform?.target || event?.target;
           if (!target) return;
+          beginModifiedEventGeneration(target);
+          if (pendingLassoSelection && !pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
+            transformStart = null;
+            abortPendingLassoSelection();
+            return;
+          }
           transformStart = {
             target,
             transform: captureTransform(target)
           };
+          if (pendingLassoSelection) {
+            pendingLassoSelection.activeTarget = target;
+            pendingLassoSelection.startTargetTransform = clonePlain(transformStart.transform);
+          }
         }
         function onObjectMoving(event) {
           const target = event?.target;
-          if (!pendingLassoVisual || !pendingTargetIncludes(target, pendingLassoVisual.selectedIds)) return;
-          materializePendingLassoVisual();
+          if (!pendingLassoSelection) return;
+          if (!pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
+            transformStart = null;
+            abortPendingLassoSelection();
+            return;
+          }
+          if (!materializePendingLassoSelection(target)) transformStart = null;
         }
         function onObjectModified(event) {
           const target = event?.target;
           if (!target) return;
+          if (!acceptsModifiedEvent(target)) {
+            transformStart = null;
+            return;
+          }
+          if (pendingLassoSelection && !pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
+            abortPendingLassoSelection();
+            transformStart = null;
+            return;
+          }
+          if (pendingLassoSelection) {
+            const result2 = commitPendingLassoMove(target);
+            transformStart = null;
+            if (result2.applied) updateObjectMetric();
+            return;
+          }
           const children = typeof target.getObjects === "function" ? target.getObjects() : [target];
           const ids = children.map((object) => object.__baeframeObjectId).filter(Boolean);
           sceneStore.selectObjects(ids);
@@ -9927,6 +10495,10 @@ void main() {
                 return { id: object.__baeframeObjectId, transform: { ...captureTransform(object), left, top } };
               })
             });
+          }
+          if (!result.applied) {
+            rollbackSelectTransform(event, false);
+            return;
           }
           const shouldReleaseMultiSelection = result.applied && children.length > 1;
           transformStart = null;
@@ -10032,7 +10604,7 @@ void main() {
           return !!session && typeof session.sessionId === "string" && session.sessionId.length > 0 && typeof session.stableVideoIdentity === "string" && session.stableVideoIdentity.length > 0 && Number.isInteger(Number(session.targetFrame)) && Number(session.targetFrame) >= 0 && finiteNumber(session.sourceWidth) > 0 && finiteNumber(session.sourceHeight) > 0 && finiteNumber(session.canvasRect?.width) > 0 && finiteNumber(session.canvasRect?.height) > 0;
         }
         function disableInput() {
-          rollbackPendingLassoVisual();
+          abortPendingLassoSelection();
           cancelActiveLasso();
           cancelSelectInteraction();
           setSurfaceInput(false);
@@ -10078,7 +10650,7 @@ void main() {
           appliedSourceWidth = null;
           appliedSourceHeight = null;
           activeStroke = null;
-          pendingLassoVisual = null;
+          pendingLassoSelection = null;
           transformStart = null;
           selectGesture = null;
           deferredViewport = null;
@@ -10134,6 +10706,8 @@ void main() {
             });
             const brushButton = createButton("Brush", "brush");
             const selectButton = createButton("V", "select");
+            const undoButton = createButton("Undo", "undo");
+            const redoButton = createButton("Redo", "redo");
             const deleteButton = createButton("Delete", "delete-selection");
             const clearButton = createButton("Clear", "clear-session");
             brushControls = createBrushSettingsControls();
@@ -10144,6 +10718,8 @@ void main() {
             toolbar.appendChild(brushButton);
             toolbar.appendChild(selectButton);
             toolbar.appendChild(selectionControls.group);
+            toolbar.appendChild(undoButton);
+            toolbar.appendChild(redoButton);
             toolbar.appendChild(deleteButton);
             toolbar.appendChild(clearButton);
             toolbar.appendChild(brushControls.settingsButton);
@@ -10167,6 +10743,16 @@ void main() {
             configureCanvasEvents();
             addDomListener(brushButton, "click", () => updateLocalDrawingTool("brush"));
             addDomListener(selectButton, "click", () => updateLocalDrawingTool("select"));
+            addDomListener(undoButton, "click", () => applyDrawingAction({
+              sessionId: currentSession?.sessionId,
+              actionId: createId("undo"),
+              action: "undo"
+            }));
+            addDomListener(redoButton, "click", () => applyDrawingAction({
+              sessionId: currentSession?.sessionId,
+              actionId: createId("redo"),
+              action: "redo"
+            }));
             addDomListener(deleteButton, "click", () => applyDrawingAction({
               sessionId: currentSession?.sessionId,
               actionId: createId("delete"),
@@ -10200,7 +10786,7 @@ void main() {
           if (request.enabled && !validateSession(request.session)) {
             return { accepted: false, reason: "invalid-session" };
           }
-          rollbackPendingLassoVisual();
+          abortPendingLassoSelection();
           if (activeStroke) cancelActiveStroke();
           if (activeLasso) cancelActiveLasso();
           if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
@@ -10296,17 +10882,24 @@ void main() {
             return { applied: false, reason: "stale-session" };
           }
           const action = command.action || command.type;
-          if (action !== "delete-selection" && action !== "clear-session" && action !== "undo") {
+          if (!DRAWING_ACTIONS.has(action)) {
             return { applied: false, reason: "invalid-action" };
           }
           if (!actionDeduper.accept(command.actionId)) {
             metrics.recordDuplicateAction();
             return { applied: false, duplicate: true };
           }
-          materializePendingLassoVisual();
-          const result = action === "delete-selection" ? sceneStore.deleteSelection() : action === "clear-session" ? sceneStore.clearSession() : sceneStore.undo();
+          if (pendingLassoSelection) {
+            if (action === "delete-selection") return commitPendingLassoDelete();
+            abortPendingLassoSelection();
+          }
+          if ((action === "undo" || action === "redo") && (selectGesture || transformStart)) {
+            ignoreLateModifiedEvents(transformStart?.target || fabricCanvas?.getActiveObject?.());
+            cancelSelectInteraction();
+          }
+          const result = action === "delete-selection" ? sceneStore.deleteSelection() : action === "clear-session" ? sceneStore.clearSession() : action === "undo" ? sceneStore.undo() : sceneStore.redo();
           if (result.applied) {
-            if (action === "undo") {
+            if (action === "undo" || action === "redo") {
               renderActiveScene();
               fabricCanvas.discardActiveObject();
               sceneStore.selectObjects([]);
@@ -10344,7 +10937,9 @@ void main() {
             mutationCount: scene.mutationCount,
             dirty: scene.dirty,
             undoDepth: scene.undoDepth,
+            redoDepth: scene.redoDepth,
             undoBytes: scene.undoBytes,
+            historyBytes: scene.historyBytes,
             cache: {
               videoCount: scene.videoCount,
               sceneCount: scene.sceneCount,
