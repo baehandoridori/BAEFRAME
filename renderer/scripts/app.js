@@ -3,6 +3,12 @@
  */
 
 import { createLogger, setupGlobalErrorHandlers } from './logger.js';
+import { BFRAME_VERSION, getDataVersion, hasExplicitBframeVersion } from '../../shared/schema.js';
+import {
+  ensureReviewDocumentId,
+  getUnsupportedBframeMajor,
+  isValidReviewDocumentId
+} from '../../shared/bframe-root-envelope.js';
 import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
 import { CompositionLayerManager } from './modules/composition-layer-manager.js';
@@ -11080,6 +11086,21 @@ async function initApp() {
     const marker = findMarkerRecordInBframeData(bframeData, range.markerId, range.layerId);
     if (!marker) {
       throw new Error('원본 댓글을 찾을 수 없습니다.');
+    }
+
+    const dataVersion = getDataVersion(bframeData);
+    const unsupportedMajor = getUnsupportedBframeMajor(
+      dataVersion,
+      BFRAME_VERSION,
+      !hasExplicitBframeVersion(bframeData)
+    );
+    if (unsupportedMajor !== null) {
+      throw new Error(`지원하지 않는 .bframe ${dataVersion} 파일은 이 버전에서 저장할 수 없습니다.`);
+    }
+
+    ensureReviewDocumentId(bframeData);
+    if (!isValidReviewDocumentId(bframeData.reviewDocumentId)) {
+      throw new Error('유효하지 않은 reviewDocumentId가 있어 원본 보호를 위해 저장을 중단했습니다.');
     }
 
     const previous = applyMarkerResolutionToggle(marker);

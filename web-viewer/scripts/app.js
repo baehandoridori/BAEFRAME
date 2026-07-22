@@ -2,6 +2,16 @@
  * BAEFRAME 웹 뷰어 - 메인 애플리케이션
  */
 
+import {
+  createTrailingSingleFlight,
+  isValidReviewDocumentId,
+  prepareContextBoundDriveBframeForWrite,
+  reconcileDriveBframeAfterWrite,
+  runContextBoundBframeLoad,
+  runContextBoundDriveSave,
+  serializeBframeForWrite
+} from './bframe-write-guard.js';
+
 // ============================================
 // 전역 상태
 // ============================================
@@ -18,6 +28,8 @@ const state = {
   videoFileId: null,
   bframeFileId: null,
   bframeData: null,
+  bframeIdentityPersisted: false,
+  bframeDocumentGeneration: 0,
 
   // 비디오 상태
   isPlaying: false,
@@ -42,6 +54,13 @@ const state = {
   isDrawing: false,
   currentStroke: []
 };
+
+function beginBframeDocument(fileId) {
+  state.bframeDocumentGeneration += 1;
+  state.bframeFileId = fileId;
+  state.bframeData = null;
+  state.bframeIdentityPersisted = false;
+}
 
 // Google API 설정
 const CONFIG = {
@@ -309,7 +328,7 @@ async function autoLoadFromUrlParams(videoUrl, bframeUrl) {
   try {
     // 파일 ID 추출
     state.videoFileId = extractDriveFileId(videoUrl);
-    state.bframeFileId = extractDriveFileId(bframeUrl);
+    beginBframeDocument(extractDriveFileId(bframeUrl));
 
     // .bframe 파일 로드
     updateLoadingStatus('.bframe 파일 로드 중...');
@@ -774,6 +793,7 @@ async function openDemoMode() {
 
   try {
     // 샘플 .bframe 데이터 로드
+    beginBframeDocument(null);
     state.bframeData = getSampleBframeData();
 
     // 테스트용 공개 비디오 로드
@@ -819,7 +839,7 @@ async function handleOpenFiles() {
   try {
     // Google Drive ID 추출
     state.videoFileId = extractDriveFileId(videoUrl);
-    state.bframeFileId = extractDriveFileId(bframeUrl);
+    beginBframeDocument(extractDriveFileId(bframeUrl));
 
     // .bframe 파일 로드
     updateLoadingStatus('.bframe 파일 로드 중...');
@@ -905,62 +925,70 @@ function extractDriveFileId(url) {
 }
 
 async function loadBframeFile(url) {
-  // 개발 모드: 샘플 데이터 사용
-  if (url.startsWith('sample://') || !url.includes('drive.google.com')) {
-    state.bframeData = getSampleBframeData();
-    return;
-  }
-
-  // Google Drive에서 파일 로드
-  const fileId = extractDriveFileId(url);
-  if (!fileId) {
+  const isSample = url.startsWith('sample://') || !url.includes('drive.google.com');
+  const fileId = isSample ? state.bframeFileId : extractDriveFileId(url);
+  if (!isSample && !fileId) {
     throw new Error('올바른 Google Drive URL이 아닙니다');
   }
+  const loadContext = {
+    fileId: fileId,
+    documentGeneration: state.bframeDocumentGeneration,
+    accessToken: state.accessToken
+  };
 
-  console.log('📁 bframe 파일 ID:', fileId);
-  console.log('🔑 Access Token:', state.accessToken ? '있음 (' + state.accessToken.substring(0, 20) + '...)' : '없음');
+  try {
+    const loadedRoot = await runContextBoundBframeLoad(loadContext, {
+      isCurrent: context => state.bframeFileId === context.fileId &&
+        state.bframeDocumentGeneration === context.documentGeneration,
+      load: async () => {
+        if (isSample) return getSampleBframeData();
+        if (!loadContext.accessToken) throw new Error('로그인이 필요합니다');
 
-  // 인증된 fetch 사용 (Shared Drive 지원)
-  if (state.accessToken) {
-    try {
-      const apiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
-      console.log('🌐 API 요청 URL:', apiUrl);
+        console.log('📁 bframe 파일 ID:', fileId);
+        console.log('🔑 Access Token:', loadContext.accessToken ? '있음 (' + loadContext.accessToken.substring(0, 20) + '...)' : '없음');
 
-      const response = await fetch(apiUrl, {
-        headers: {
-          'Authorization': `Bearer ${state.accessToken}`
+        const apiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
+        console.log('🌐 API 요청 URL:', apiUrl);
+
+        const response = await fetch(apiUrl, {
+          headers: {
+            'Authorization': `Bearer ${loadContext.accessToken}`
+          }
+        });
+
+        console.log('📡 API 응답 상태:', response.status, response.statusText);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('❌ API 에러 응답:', errorText);
+          console.error('❌ 파일 ID 확인:', fileId, '(길이:', fileId.length, ')');
+
+          // 에러 코드별 메시지
+          if (response.status === 401) {
+            throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
+          } else if (response.status === 403) {
+            throw new Error('파일 접근 권한이 없습니다. 해당 계정으로 로그인했는지 확인해주세요.');
+          } else if (response.status === 404) {
+            throw new Error('파일을 찾을 수 없습니다. URL을 확인해주세요.');
+          } else {
+            throw new Error(`API 오류 (${response.status}): ${errorText.substring(0, 100)}`);
+          }
         }
-      });
 
-      console.log('📡 API 응답 상태:', response.status, response.statusText);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ API 에러 응답:', errorText);
-        console.error('❌ 파일 ID 확인:', fileId, '(길이:', fileId.length, ')');
-
-        // 에러 코드별 메시지
-        if (response.status === 401) {
-          throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
-        } else if (response.status === 403) {
-          throw new Error('파일 접근 권한이 없습니다. 해당 계정으로 로그인했는지 확인해주세요.');
-        } else if (response.status === 404) {
-          throw new Error('파일을 찾을 수 없습니다. URL을 확인해주세요.');
-        } else {
-          throw new Error(`API 오류 (${response.status}): ${errorText.substring(0, 100)}`);
-        }
+        return response.json();
+      },
+      commit: root => {
+        state.bframeData = root;
+        state.bframeIdentityPersisted = isValidReviewDocumentId(root?.reviewDocumentId);
       }
+    });
 
-      state.bframeData = await response.json();
-      console.log('✅ bframe 로드 완료:', state.bframeData);
-      return;
-    } catch (error) {
-      console.error('인증된 접근 실패:', error);
-      throw error; // 원래 에러 메시지 그대로 전달
-    }
+    console.log('✅ bframe 로드 완료:', loadedRoot);
+    return loadedRoot;
+  } catch (error) {
+    if (!isSample) console.error('인증된 접근 실패:', error);
+    throw error;
   }
-
-  throw new Error('로그인이 필요합니다');
 }
 
 async function loadVideo(url) {
@@ -2091,36 +2119,96 @@ async function handleSave() {
   }
 }
 
+const requestDriveSave = createTrailingSingleFlight(persistDriveBframe);
+
 async function saveToDrive() {
-  const content = JSON.stringify(state.bframeData, null, 2);
+  return requestDriveSave(captureDriveSaveContext());
+}
 
-  // fetch API 사용 (Shared Drive 지원)
-  const response = await fetch(
-    `https://www.googleapis.com/upload/drive/v3/files/${state.bframeFileId}?uploadType=media&supportsAllDrives=true`,
-    {
-      method: 'PATCH',
-      headers: {
-        'Authorization': `Bearer ${state.accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: content
+function captureDriveSaveContext() {
+  return {
+    fileId: state.bframeFileId,
+    documentGeneration: state.bframeDocumentGeneration,
+    root: state.bframeData,
+    accessToken: state.accessToken,
+    localIdentityPersisted: state.bframeIdentityPersisted
+  };
+}
+
+function isDriveSaveContextCurrent(saveContext) {
+  return state.bframeFileId === saveContext.fileId &&
+    state.bframeDocumentGeneration === saveContext.documentGeneration &&
+    state.bframeData === saveContext.root;
+}
+
+async function persistDriveBframe(saveContext) {
+  const result = await runContextBoundDriveSave(saveContext, {
+    isCurrent: isDriveSaveContextCurrent,
+    loadLatest: async () => {
+      const latestResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${saveContext.fileId}?alt=media&supportsAllDrives=true`,
+        {
+          headers: { 'Authorization': `Bearer ${saveContext.accessToken}` },
+          cache: 'no-store'
+        }
+      );
+      if (!latestResponse.ok) {
+        throw new Error(`최신 .bframe 확인 실패 (${latestResponse.status})`);
+      }
+      const latestRoot = await latestResponse.json();
+      return latestRoot;
+    },
+    prepare: latestRoot => {
+      const prepared = prepareContextBoundDriveBframeForWrite(
+        latestRoot,
+        saveContext,
+        { currentIdentityPersisted: state.bframeIdentityPersisted }
+      );
+      if (prepared.identityPersisted) {
+        state.bframeIdentityPersisted = true;
+      }
+      return prepared;
+    },
+    persist: async prepared => {
+      const content = serializeBframeForWrite(prepared.data);
+
+      // fetch API 사용 (Shared Drive 지원)
+      const response = await fetch(
+        `https://www.googleapis.com/upload/drive/v3/files/${saveContext.fileId}?uploadType=media&supportsAllDrives=true`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${saveContext.accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: content
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('저장 실패:', response.status, errorText);
+
+        if (response.status === 401) {
+          throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
+        } else if (response.status === 403) {
+          throw new Error('파일 수정 권한이 없습니다.');
+        } else {
+          throw new Error(`저장 실패 (${response.status})`);
+        }
+      }
+    },
+    commit: prepared => {
+      reconcileDriveBframeAfterWrite(prepared.data, saveContext.root);
+      state.bframeIdentityPersisted = true;
     }
-  );
+  });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('저장 실패:', response.status, errorText);
-
-    if (response.status === 401) {
-      throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
-    } else if (response.status === 403) {
-      throw new Error('파일 수정 권한이 없습니다.');
-    } else {
-      throw new Error(`저장 실패 (${response.status})`);
-    }
+  if (result.applied) {
+    console.log('✅ Google Drive 저장 완료');
+  } else {
+    console.log('ℹ️ 이전 문서 저장 완료: 현재 문서 상태는 변경하지 않음');
   }
-
-  console.log('✅ Google Drive 저장 완료');
 }
 
 // ============================================
@@ -2168,7 +2256,7 @@ async function handleShare() {
 }
 
 function downloadBframe() {
-  const content = JSON.stringify(state.bframeData, null, 2);
+  const content = serializeBframeForWrite(state.bframeData);
   const blob = new Blob([content], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
 
@@ -2260,7 +2348,7 @@ function handleBack() {
     showScreen('select');
     elements.videoPlayer.pause();
     elements.videoPlayer.src = '';
-    state.bframeData = null;
+    beginBframeDocument(null);
   }
 }
 

@@ -890,8 +890,14 @@ rollback backup 경로는 기존 일반 `.bak`과 섞지 않는 `<review>.bframe
 - drawingsV3를 이해하지 못해도 원문을 통과시킨다.
 - review 파일 계보를 식별하는 top-level reviewDocumentId를 known field로 생성·보존한다.
 - 지원하지 않는 top-level major version은 자동 하향 변환하지 않는다.
+- reviewDocumentId는 실제 데이터 저장 직전에만 생성하고, 저장 실패·reload/merge·재시도 사이에도 같은 미저장 ID를 유지한다. disk에 한 번 확인된 ID가 사라지거나 달라지면 자동으로 새 계보를 쓰지 않고 저장을 차단한다.
+- desktop bridge는 저장 직전 최신 disk root를 다시 읽는다. 최신 root를 읽지 못하거나 malformed/future version이면 opaque 데이터 손실 위험이 있으므로 저장하지 않는다.
+- Web Viewer의 같은 페이지 안에서는 Drive 저장을 single-flight로 직렬화하고, 저장 중 들어온 요청은 하나의 trailing 저장으로 합친다. PATCH 대기 중 생긴 known-field 편집은 메모리에 유지하고 trailing 저장이 다시 반영한다.
+- Web Viewer의 GET, PATCH, 지연 load는 호출 시점 fileId와 document generation에 묶는다. 그 사이 다른 문서를 열면 이전 요청은 새 문서 상태에 commit하지 않는다.
 
 bridge는 V3 writer가 없는 별도 선행 릴리스인 Phase 2A로 먼저 배포한다. unknown-field round-trip과 reviewDocumentId 보존이 확인되기 전에는 Phase 2B의 drawingsV3 write flag를 켜지 않는다.
+
+Phase 2A의 single-flight와 최신-root refresh는 같은 앱 안의 stale overwrite를 막는 bridge 안전장치다. 여러 process가 동시에 저장할 때의 cross-process lock, fingerprint/CAS, atomic compare-and-replace, rollback/recovery는 15.2의 Phase 2B 계약으로 남긴다.
 
 bridge 이전 구버전에 대한 복구 사본은 다음 경로를 사용한다.
 

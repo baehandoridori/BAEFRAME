@@ -7,6 +7,12 @@
  * @version 2.0
  */
 
+import {
+  extractOpaqueBframeRoot,
+  getUnsupportedBframeMajor,
+  mergeBframeRoot
+} from './bframe-root-envelope.js';
+
 // ============================================================================
 // 버전 상수
 // ============================================================================
@@ -124,6 +130,7 @@ export const SUPPORTED_MEDIA_EXTENSIONS = [...SUPPORTED_VIDEO_EXTENSIONS, ...SUP
 /**
  * @typedef {Object} BframeData
  * @property {string} bframeVersion - 스키마 버전 (예: "2.0")
+ * @property {string} [reviewDocumentId] - 리뷰 문서 계보 ID (`reviewdoc-<UUID>`)
  * @property {string} videoFile - 비디오 파일명 (확장자 포함)
  * @property {string} videoPath - 전체 파일 경로
  * @property {number} fps - 프레임 레이트
@@ -218,17 +225,23 @@ export function getDataVersion(data) {
   }
 
   // v2.0: bframeVersion 필드 사용
-  if (data.bframeVersion) {
+  if (Object.hasOwn(data, 'bframeVersion')) {
     return data.bframeVersion;
   }
 
   // v1.0: version 필드 사용
-  if (data.version) {
+  if (Object.hasOwn(data, 'version')) {
     return data.version;
   }
 
   // 레거시: 버전 필드 없음
   return 'legacy';
+}
+
+export function hasExplicitBframeVersion(data) {
+  return !!data && typeof data === 'object' && (
+    Object.hasOwn(data, 'bframeVersion') || Object.hasOwn(data, 'version')
+  );
 }
 
 /**
@@ -254,13 +267,24 @@ export function migrateToV2(data) {
   const version = getDataVersion(data);
   const now = new Date().toISOString();
 
+  const unsupportedMajor = getUnsupportedBframeMajor(
+    version,
+    BFRAME_VERSION,
+    !hasExplicitBframeVersion(data)
+  );
+  if (unsupportedMajor !== null) {
+    throw new Error(`지원하지 않는 미래 .bframe 버전입니다: ${version}`);
+  }
+
   // 이미 v2.0인 경우
   if (version === BFRAME_VERSION) {
     return data;
   }
 
+  const opaqueRoot = extractOpaqueBframeRoot(data);
+
   // 마이그레이션 시작
-  const migrated = {
+  const migratedKnownRoot = {
     // 새 버전 표시
     bframeVersion: BFRAME_VERSION,
 
@@ -273,9 +297,12 @@ export function migrateToV2(data) {
     createdAt: data.createdAt || now,
     modifiedAt: now,
 
+    // 실시간 협업 정보
+    liveblocksRoomId: data.liveblocksRoomId ?? null,
+
     // 버전 관리 필드 (신규)
-    versionInfo: null,
-    manualVersions: [],
+    versionInfo: data.versionInfo ?? null,
+    manualVersions: Array.isArray(data.manualVersions) ? data.manualVersions : [],
 
     // 댓글 데이터 마이그레이션
     comments: migrateComments(data.comments),
@@ -290,9 +317,14 @@ export function migrateToV2(data) {
     compositionLayers: Array.isArray(data.compositionLayers) ? data.compositionLayers : []
   };
 
+  // ID가 이미 존재하면 값의 유효성 판단과 별개로 교체하지 않는다.
+  if (Object.hasOwn(data, 'reviewDocumentId')) {
+    migratedKnownRoot.reviewDocumentId = data.reviewDocumentId;
+  }
+
   // versions 필드가 있었다면 manualVersions로 변환 (문서 기반 레거시)
   if (Array.isArray(data.versions)) {
-    migrated.manualVersions = data.versions.map((v) => ({
+    migratedKnownRoot.manualVersions = data.versions.map((v) => ({
       version: v.version || 0,
       fileName: v.filename || v.fileName || '',
       filePath: '',
@@ -300,7 +332,7 @@ export function migrateToV2(data) {
     }));
   }
 
-  return migrated;
+  return mergeBframeRoot(opaqueRoot, migratedKnownRoot);
 }
 
 /**
@@ -422,6 +454,7 @@ export default {
   createDefaultCommentLayer,
   createDefaultDrawingLayer,
   getDataVersion,
+  hasExplicitBframeVersion,
   needsMigration,
   migrateToV2,
   extractFileName,

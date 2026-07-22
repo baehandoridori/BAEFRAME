@@ -8,6 +8,7 @@ import {
   isValidVideoFile,
   isValidCoordinate
 } from './schema.js';
+import { isValidReviewDocumentId } from './bframe-root-envelope.js';
 
 // re-export for backward compatibility
 export { isValidVideoFile, isValidCoordinate };
@@ -33,6 +34,14 @@ export function validateReviewData(data) {
     warnings.push('버전 필드가 없습니다. 레거시 데이터일 수 있습니다.');
   } else if (!SUPPORTED_VERSIONS.includes(version)) {
     warnings.push(`알 수 없는 버전: ${version}`);
+  }
+
+  // 리뷰 문서 ID는 선택 필드지만, 존재하면 계보 식별 형식을 지켜야 한다.
+  if (
+    Object.hasOwn(data, 'reviewDocumentId') &&
+    !isValidReviewDocumentId(data.reviewDocumentId)
+  ) {
+    errors.push('reviewDocumentId는 reviewdoc-<UUID> 형식의 문자열이어야 합니다.');
   }
 
   // 비디오 파일 검증
