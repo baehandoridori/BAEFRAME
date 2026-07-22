@@ -115,6 +115,7 @@
 - operations length가 cap을 넘으면 sparse/hole/accessor element를 보지 않고 `operation-limit-exceeded`다.
 - payload array length의 누적 category/combined cap을 넘으면 해당 payload의 density와 nested ID/object/transform entry를 보지 않고 `command-object-reference-limit-exceeded`다.
 - inserted object occurrence cap 안에서 각 object의 `points`는 `Object.getOwnPropertyDescriptor()`로 data property인지 확인한다. 유효한 array header의 length만 합산하고 point/style element는 읽지 않는다. aggregate cap을 넘으면 nested style/point 결함보다 `command-point-limit-exceeded`가 우선한다.
+- 단, 한 stroke의 points length가 source별 기존 cap(`maxInputPointsPerStroke` 또는 `maxStoredPointsPerStroke`)을 넘으면 aggregate 합산보다 먼저 기존 `point-limit-exceeded`를 반환한다. 모든 개별 stroke가 자기 cap 안에 있고 합계만 넘을 때에만 `command-point-limit-exceeded`다.
 - cap 안에 들어온 배열만 기존 exact density 검사를 수행한다. 따라서 at-limit sparse/hole/accessor는 기존 field-specific malformed reason이고, over-limit sparse 배열은 limit reason이다.
 - count reason의 동시 초과 우선순위는 operations → inserted objects → removed IDs → transformed IDs → combined refs → aggregate points → bytes다.
 
@@ -172,6 +173,7 @@ objectLocations: Map<objectId, {
 - 같은 ID가 여러 operation에 반복되어도 occurrence로 합산되는 테스트를 작성한다.
 - 512-fragment-shaped split command와 여러 비연속 insert group이 user profile에서 PASS하고 1,025 operations는 FAIL하는 테스트를 작성한다.
 - oversized outer array가 extra nested defect보다 먼저 budget reason을 내는 테스트를 작성한다. 최소 조합은 oversized+duplicate ID, oversized+bad transform entry, oversized points+bad stroke style이다.
+- 단일 stroke의 기존 point cap exact/+1은 계속 `point-limit-exceeded`, 여러 valid stroke의 aggregate exact/+1만 `command-point-limit-exceeded`인지 user/history 양쪽에서 고정한다.
 - length만 큰 sparse `operations`, `objects`, `objectIds`, `transforms`, `points`가 nested getter를 실행하거나 전체 key를 열거하지 않고 즉시 해당 limit reason을 내는 테스트를 작성한다.
 - at-limit accessor, sparse array, class instance는 estimator에 닿기 전에 기존 malformed reason으로 거부되고 getter가 실행되지 않는 테스트를 작성한다.
 - lowered overrides의 exact/+1과 잘못된 관계를 constructor `TypeError`로 고정한다.
