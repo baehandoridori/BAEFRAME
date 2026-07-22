@@ -40,13 +40,16 @@ graph LR
 **방법 1: 공식 사이트**
 
 1. [mpv 공식 사이트](https://mpv.io/installation/)에서 Windows 빌드 다운로드
-2. `mpv.exe`를 `mpv/win32/` 폴더에 복사
+2. 아래 "필요한 파일 구조"의 네 파일을 `mpv/win32/` 폴더에 복사
 
 **방법 2: shinchiro builds (권장)**
 
 1. [shinchiro builds](https://sourceforge.net/projects/mpv-player-windows/files/)에서 다운로드
 2. 최신 버전의 `mpv-x86_64-YYYYMMDD.7z` 다운로드
-3. 압축 해제 후 `mpv.exe`를 `mpv/win32/`에 복사
+3. 압축 해제 후 아래 "필요한 파일 구조"의 네 파일을 `mpv/win32/`에 복사
+
+격리된 Git worktree에서 빌드할 때는 메인 checkout의 `mpv/win32/`를 자동으로 사용합니다.
+CI처럼 메인 checkout이 없는 환경에서는 `BAEFRAME_MPV_SOURCE_DIR`을 네 파일이 직접 들어 있는 런타임 폴더로 지정합니다.
 
 ### macOS
 
@@ -67,8 +70,11 @@ sudo apt install mpv
 ```
 mpv/
 └── win32/
-    ├── mpv.exe           # 필수
-    └── mpv-2.dll         # 있는 경우 포함
+    ├── mpv.exe              # 필수
+    ├── mpv.com              # 필수
+    ├── d3dcompiler_43.dll   # 필수
+    └── mpv/
+        └── fonts.conf       # 필수
 ```
 
 ---
@@ -78,7 +84,7 @@ mpv/
 터미널에서 다음 명령 실행:
 
 ```bash
-mpv --version
+.\mpv\win32\mpv.com --version
 ```
 
 정상 출력 예시:
@@ -92,7 +98,7 @@ mpv 0.36.0 Copyright © 2000-2023 mpv/MPlayer/mplayer2 projects
 
 | 문제 | 원인 | 해결 |
 |------|------|------|
-| mpv 로드 실패 | 바이너리 경로 오류 | `mpv/win32/mpv.exe` 위치 확인 |
+| mpv 로드 실패 | 런타임 파일 누락 | 위 네 파일이 모두 존재하고 비어 있지 않은지 확인 |
 | MOV 재생 안 됨 | 코덱 미지원 | 최신 mpv 버전 사용 |
 | 하드웨어 가속 안 됨 | GPU 드라이버 | 그래픽 드라이버 업데이트 |
 

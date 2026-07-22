@@ -6,6 +6,8 @@ directories:
   output: dist
   buildResources: build
 
+beforePack: ./scripts/electron-builder-before-pack.js
+
 files:
   - main/**/*
   - preload/**/*
