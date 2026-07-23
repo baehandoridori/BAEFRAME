@@ -20,6 +20,7 @@ function createStroke(id, overrides = {}) {
     blendMode: 'source-over',
     transform: [1, 0, 0, 1, 0, 0],
     points: [{ x: 10, y: 20, pressure: 0.5, time: 0 }],
+    caps: { start: true, end: true },
     style: {
       color: '#ff4757',
       size: 12,
@@ -632,6 +633,48 @@ test('a valid transform followed by a late failure never touches shared state', 
       objects: [createStroke('late-failure-insert')]
     }]
   })).applied, true);
+});
+
+test('a failed split cannot leak caps, content, or object index mutations', () => {
+  const document = createDrawingDocumentV3(createOptions());
+  const before = document.getContentSnapshot();
+  const fragment = createStroke('capped-fragment', {
+    caps: { start: false, end: true }
+  });
+
+  assertAtomicFailure(document, createCommand({
+    id: 'caps-before-late-failure',
+    kind: 'split-stroke',
+    operations: [
+      { type: 'remove-objects', objectIds: ['target-stroke'] },
+      { type: 'insert-objects', index: 0, objects: [fragment] },
+      {
+        type: 'set-transforms',
+        transforms: [{
+          objectId: 'missing-after-caps',
+          transform: [1, 0, 0, 1, 5, 6]
+        }]
+      }
+    ]
+  }), 'object-not-found');
+
+  fragment.caps.start = true;
+  assert.deepEqual(document.getContentSnapshot(), before);
+  assert.equal(document.applyCommand(createCommand({
+    id: 'caps-fragment-id-reusable',
+    kind: 'add-objects',
+    operations: [{
+      type: 'insert-objects',
+      index: 1,
+      objects: [createStroke('capped-fragment', {
+        caps: { start: false, end: true }
+      })]
+    }]
+  })).applied, true);
+  assert.deepEqual(
+    getTargetKeyframe(document).objects[1].caps,
+    { start: false, end: true }
+  );
 });
 
 test('insert-before plus unordered removal keeps exact inverse indices', () => {

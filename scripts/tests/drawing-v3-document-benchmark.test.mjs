@@ -33,6 +33,7 @@ function createStroke(id) {
     blendMode: 'source-over',
     transform: IDENTITY_TRANSFORM.slice(),
     points: [{ x: 10, y: 20, pressure: 0.5, time: 0 }],
+    caps: { start: true, end: true },
     style: {
       color: '#ff4757',
       size: 12,

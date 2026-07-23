@@ -66,9 +66,11 @@ const STROKE_KEYS = Object.freeze([
   'blendMode',
   'transform',
   'points',
+  'caps',
   'style'
 ]);
 const POINT_KEYS = Object.freeze(['x', 'y', 'pressure', 'time']);
+const CAPS_KEYS = Object.freeze(['start', 'end']);
 const STYLE_KEYS = Object.freeze([
   'color',
   'size',
@@ -273,6 +275,12 @@ function isValidStyle(value) {
     value.outlineWidth >= 0;
 }
 
+function isValidCaps(value) {
+  return hasExactDataKeys(value, CAPS_KEYS) &&
+    typeof value.start === 'boolean' &&
+    typeof value.end === 'boolean';
+}
+
 function validateStrokeObject(object, limits, source = 'user') {
   if (!hasExactDataKeys(object, STROKE_KEYS)) return 'invalid-object';
   if (!isNonemptyString(object.id) || object.type !== 'stroke' ||
@@ -289,6 +297,7 @@ function validateStrokeObject(object, limits, source = 'user') {
     ? limits.maxStoredPointsPerStroke
     : limits.maxInputPointsPerStroke;
   if (object.points.length > pointLimit) return 'point-limit-exceeded';
+  if (!isValidCaps(object.caps)) return 'invalid-object';
   if (!isValidStyle(object.style)) return 'invalid-object';
 
   let previousTime = 0;

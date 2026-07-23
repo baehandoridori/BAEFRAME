@@ -18,6 +18,7 @@ function createStroke(id = 'stroke-1', overrides = {}) {
     blendMode: 'source-over',
     transform: [1, 0, 0, 1, 0, 0],
     points: [{ x: 10, y: 20, pressure: 0.5, time: 0 }],
+    caps: { start: true, end: true },
     style: {
       color: '#ff4757',
       size: 12,
@@ -251,6 +252,28 @@ test('document snapshots are isolated from constructor input and returned mutati
   assert.deepEqual(document.getHead(), { sequence: 0, lastCommandId: null });
 });
 
+test('constructor snapshots preserve full-stroke caps without input aliases', () => {
+  const stroke = createStroke('stroke-caps');
+  const document = createDrawingDocumentV3(createDocumentOptions({
+    initialLayers: [createLayerFixture({
+      keyframes: [createKeyframeFixture({ objects: [stroke] })]
+    })]
+  }));
+
+  stroke.caps.start = false;
+  const first = document.getContentSnapshot();
+  assert.deepEqual(first.layers[0].keyframes[0].objects[0].caps, {
+    start: true,
+    end: true
+  });
+
+  first.layers[0].keyframes[0].objects[0].caps.end = false;
+  assert.deepEqual(
+    document.getContentSnapshot().layers[0].keyframes[0].objects[0].caps,
+    { start: true, end: true }
+  );
+});
+
 test('resolveFrame distinguishes exact, held, empty-break, and no-source frames', () => {
   const stroke = createStroke('stroke-1', { opacity: 0 });
   const document = createDrawingDocumentV3(createDocumentOptions({
@@ -387,6 +410,10 @@ const invalidInitialCases = [
   ['empty keyframe with objects', options => { options.initialLayers[0].keyframes[0].empty = true; }],
   ['unknown stroke key', options => { options.initialLayers[0].keyframes[0].objects[0].pathData = 'M 0 0'; }],
   ['missing stroke key', options => deleteRequiredKey(options.initialLayers[0].keyframes[0].objects[0], 'tool')],
+  ['missing stroke caps', options => deleteRequiredKey(options.initialLayers[0].keyframes[0].objects[0], 'caps')],
+  ['unknown stroke caps key', options => { options.initialLayers[0].keyframes[0].objects[0].caps.flat = true; }],
+  ['non-boolean stroke caps start', options => { options.initialLayers[0].keyframes[0].objects[0].caps.start = 1; }],
+  ['non-boolean stroke caps end', options => { options.initialLayers[0].keyframes[0].objects[0].caps.end = 0; }],
   ['empty stroke id', options => { options.initialLayers[0].keyframes[0].objects[0].id = ''; }],
   ['unsupported object type', options => { options.initialLayers[0].keyframes[0].objects[0].type = 'shape'; }],
   ['unsupported stroke tool', options => { options.initialLayers[0].keyframes[0].objects[0].tool = 'eraser'; }],
@@ -1023,8 +1050,12 @@ test('compound split preserves z-order and its derived inverse round-trips canon
         type: 'insert-objects',
         index: 1,
         objects: [
-          createStroke('fragment-1'),
-          createStroke('fragment-2')
+          createStroke('fragment-1', {
+            caps: { start: true, end: false }
+          }),
+          createStroke('fragment-2', {
+            caps: { start: false, end: true }
+          })
         ]
       },
       {
@@ -1043,6 +1074,14 @@ test('compound split preserves z-order and its derived inverse round-trips canon
     ['stroke-a', 'fragment-1', 'fragment-2', 'stroke-c']
   );
   assert.deepEqual(getObjectById(document, 'fragment-2').transform, [1, 0, 0, 1, 30, 40]);
+  assert.deepEqual(getObjectById(document, 'fragment-1').caps, {
+    start: true,
+    end: false
+  });
+  assert.deepEqual(getObjectById(document, 'fragment-2').caps, {
+    start: false,
+    end: true
+  });
 
   const inverse = createInverseCommand(result);
   assert.equal(inverse.kind, 'split-stroke');
