@@ -2215,6 +2215,8 @@ class MPVOverlayHost {
     if (enabled) {
       // Windows의 focusable:false native 창은 mouseup/move와 달리 pointerdown을
       // Chromium에 전달하지 않는다. Fabric이 activation을 승인한 뒤에만 열어 둔다.
+      // 투명 BrowserWindow는 DOM visibility 변경을 다음 입력까지 늦게 그릴 수 있다.
+      hostWindow.webContents?.invalidate?.();
       hostWindow.setFocusable?.(true);
       hostWindow.setIgnoreMouseEvents?.(false);
       return;
