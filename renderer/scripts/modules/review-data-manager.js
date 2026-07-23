@@ -116,6 +116,52 @@ function jsonEquals(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function canonicalizeJson(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(item => canonicalizeJson(item));
+  const result = {};
+  for (const key of Object.keys(value).sort()) {
+    if (value[key] !== undefined) {
+      result[key] = canonicalizeJson(value[key]);
+    }
+  }
+  return result;
+}
+
+function captureDrawingsV3DiskState(data) {
+  const present = Boolean(
+    data &&
+    typeof data === 'object' &&
+    !Array.isArray(data) &&
+    Object.hasOwn(data, 'drawingsV3')
+  );
+  const value = present ? cloneJson(data.drawingsV3) : undefined;
+  let serialized = 'undefined';
+  if (present) {
+    try {
+      const candidate = JSON.stringify(canonicalizeJson(value));
+      if (candidate !== undefined) serialized = candidate;
+    } catch (_error) {
+      serialized = 'unserializable';
+    }
+  }
+  return {
+    known: true,
+    present,
+    value,
+    fingerprint: present ? `present:${serialized}` : 'missing'
+  };
+}
+
+function createUnknownDrawingsV3DiskState() {
+  return {
+    known: false,
+    present: false,
+    value: undefined,
+    fingerprint: null
+  };
+}
+
 function getNextPrefixedId(prefix, usedIds) {
   let maxId = 0;
   for (const id of usedIds) {
@@ -311,6 +357,7 @@ export class ReviewDataManager extends EventTarget {
     this._changeRevision = 0;
     this._hasPersistedFile = false;
     this._beforeSaveHandler = null;
+    this._finalFabricSnapshotHandler = null;
     this._initialSaveConflictHandler = null;
     this._opaqueRootFields = {};
     this._fabricDrawingPersistenceContext = {};
@@ -318,6 +365,8 @@ export class ReviewDataManager extends EventTarget {
     this._fabricDrawingHasLocalChanges = false;
     this._fabricDrawingCollectedRevision = null;
     this._fabricDrawingProviderUnsubscribe = null;
+    this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+    this._hasCompletedReviewLoad = false;
     this._isConnected = false;
     this._reviewDocumentId = null;
     this._reviewDocumentIdPersisted = false;
@@ -358,6 +407,15 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
+   * 최신 root 확인 뒤 최종 Fabric snapshot을 가져오는 훅 설정
+   * @param {Function|null} handler
+   */
+  setFinalFabricSnapshotHandler(handler) {
+    this._finalFabricSnapshotHandler =
+      typeof handler === 'function' ? handler : null;
+  }
+
+  /**
    * 첫 저장 중 다른 사용자가 먼저 파일을 만든 경우의 처리 훅 설정
    * @param {Function|null} handler
    */
@@ -370,8 +428,43 @@ export class ReviewDataManager extends EventTarget {
    * @param {Object|null} provider
    */
   setFabricDrawingPersistenceProvider(provider) {
+    let transferableLocalRoot = null;
+    const hadLocalChanges = this._fabricDrawingHasLocalChanges;
+    if (hadLocalChanges &&
+        this.fabricDrawingPersistenceProvider?.getStatus?.()?.state === 'ready') {
+      try {
+        transferableLocalRoot =
+          this.fabricDrawingPersistenceProvider.exportRootValue?.() || null;
+      } catch (_error) {
+        transferableLocalRoot = null;
+      }
+    }
+
     this._disconnectFabricDrawingPersistenceProvider();
     this.fabricDrawingPersistenceProvider = provider || null;
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    this._invalidateFabricDrawingPersistenceProvider(
+      this._hasCompletedReviewLoad ? 'provider-replaced' : 'no-current-review',
+      { clearLocalChanges: false }
+    );
+
+    if (this._hasCompletedReviewLoad) {
+      if (transferableLocalRoot) {
+        this._installFabricDrawingRootInProvider({
+          present: true,
+          value: transferableLocalRoot
+        }, {
+          clearLocalChanges: false,
+          failureReason: 'provider-replacement-failed'
+        });
+      } else {
+        this._installRecordedDiskStateInProvider({
+          clearLocalChanges: !hadLocalChanges,
+          failureReason: 'provider-replacement-failed'
+        });
+      }
+    }
+
     if (this._isConnected) {
       this._connectFabricDrawingPersistenceProvider();
     }
@@ -498,6 +591,9 @@ export class ReviewDataManager extends EventTarget {
       await this.save();
     }
 
+    this._invalidateFabricDrawingPersistenceProvider('video-load-started');
+    this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+    this._hasCompletedReviewLoad = false;
     this.currentVideoPath = videoPath;
     this.currentBframePath = getBframePath(videoPath);
     this._fabricDrawingPersistenceContext = {
@@ -601,6 +697,14 @@ export class ReviewDataManager extends EventTarget {
         await this._refreshRootEnvelopeBeforeSave();
         this._assertRootEnvelopeWritable();
         this._ensureReviewDocumentId();
+        if (this._finalFabricSnapshotHandler) {
+          await this._finalFabricSnapshotHandler({
+            path: this.currentBframePath,
+            videoPath: this.currentVideoPath,
+            hasPersistedFile: this._hasPersistedFile,
+            options: _options
+          });
+        }
         const data = this._collectData();
         const attemptChangeRevision = this._changeRevision;
         const attemptFabricDrawingRevision = this._fabricDrawingCollectedRevision;
@@ -655,6 +759,7 @@ export class ReviewDataManager extends EventTarget {
 
       const hasConcurrentChanges = this._changeRevision !== savedChangeRevision;
       this.isDirty = hasConcurrentChanges;
+      this._recordDrawingsV3DiskState(savedData);
       this._acknowledgeFabricDrawingSave(savedFabricDrawingRevision);
 
       log.info('.bframe 파일 저장됨', {
@@ -772,6 +877,7 @@ export class ReviewDataManager extends EventTarget {
         this._hasPersistedFile = false;
         this._resetRootEnvelopeState();
         this._resetFabricDrawingPersistenceProvider();
+        this._recordDrawingsV3DiskState({});
         this.isLoading = false;
         return false;
       }
@@ -848,6 +954,9 @@ export class ReviewDataManager extends EventTarget {
       return true;
     } catch (error) {
       log.error('.bframe 로드 실패', error);
+      this._hasCompletedReviewLoad = false;
+      this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+      this._invalidateFabricDrawingPersistenceProvider('review-load-failed');
       this.isLoading = false;
       this._emit('loadError', { error });
       return false;
@@ -894,10 +1003,13 @@ export class ReviewDataManager extends EventTarget {
 
       const retainIdentityWhenMissing = !this._reviewDocumentIdPersisted;
       const allowIdentityReplacement = options.merge === false;
-      this._captureRootEnvelope(remoteData, {
+      const rootCaptured = this._captureRootEnvelope(remoteData, {
         retainIdentityWhenMissing,
         allowIdentityReplacement
       });
+      if (rootCaptured && !allowIdentityReplacement) {
+        this._reconcileDrawingsV3DiskState(remoteData);
+      }
       if (!allowIdentityReplacement) {
         this._assertRootEnvelopeWritable();
       }
@@ -1097,49 +1209,133 @@ export class ReviewDataManager extends EventTarget {
   _resetFabricDrawingPersistenceProvider() {
     this._fabricDrawingHasLocalChanges = false;
     this._fabricDrawingCollectedRevision = null;
+    return this._installFabricDrawingRootInProvider({
+      present: false,
+      value: undefined
+    }, {
+      clearLocalChanges: true,
+      failureReason: 'review-reset-failed'
+    });
+  }
+
+  _importFabricDrawingPersistenceRoot(data) {
+    this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingCollectedRevision = null;
+    const state = captureDrawingsV3DiskState(data);
+    const result = this._installFabricDrawingRootInProvider(state, {
+      clearLocalChanges: true,
+      failureReason: 'review-import-failed'
+    });
+    this._recordDrawingsV3DiskState(data);
+    return result;
+  }
+
+  _installRecordedDiskStateInProvider(options = {}) {
+    if (!this._drawingsV3DiskState.known) {
+      this._invalidateFabricDrawingPersistenceProvider(
+        options.failureReason || 'disk-state-unavailable',
+        { clearLocalChanges: options.clearLocalChanges !== false }
+      );
+      return null;
+    }
+    return this._installFabricDrawingRootInProvider(
+      this._drawingsV3DiskState,
+      options
+    );
+  }
+
+  _installFabricDrawingRootInProvider(state, options = {}) {
+    const {
+      clearLocalChanges = true,
+      failureReason = 'provider-install-failed'
+    } = options;
+    this._fabricDrawingCollectedRevision = null;
     this._fabricDrawingProviderLoadedForCurrentReview = false;
-    if (typeof this.fabricDrawingPersistenceProvider?.reset !== 'function') return null;
+    if (clearLocalChanges) {
+      this._fabricDrawingHasLocalChanges = false;
+    }
+
+    const provider = this.fabricDrawingPersistenceProvider;
+    const method = state.present ? 'importRootValue' : 'reset';
+    if (typeof provider?.[method] !== 'function') {
+      this._invalidateFabricDrawingPersistenceProvider(failureReason, {
+        clearLocalChanges
+      });
+      return null;
+    }
 
     try {
-      const result = this.fabricDrawingPersistenceProvider.reset(
-        this._fabricDrawingPersistenceContext
-      );
+      const result = state.present
+        ? provider.importRootValue(
+          cloneJson(state.value),
+          this._fabricDrawingPersistenceContext
+        )
+        : provider.reset(this._fabricDrawingPersistenceContext);
       this._fabricDrawingProviderLoadedForCurrentReview =
         result?.accepted === true || result?.preserved === true;
+      if (!this._fabricDrawingProviderLoadedForCurrentReview) {
+        this._invalidateFabricDrawingPersistenceProvider(failureReason, {
+          clearLocalChanges
+        });
+      }
       return result;
     } catch (error) {
-      log.warn('Fabric 드로잉 새 문서 초기화 실패', {
+      this._invalidateFabricDrawingPersistenceProvider(failureReason, {
+        clearLocalChanges
+      });
+      log.warn('Fabric 드로잉 provider 설치 실패', {
         error: error instanceof Error ? error.message : String(error)
       });
       return null;
     }
   }
 
-  _importFabricDrawingPersistenceRoot(data) {
-    this._fabricDrawingHasLocalChanges = false;
-    this._fabricDrawingCollectedRevision = null;
+  _invalidateFabricDrawingPersistenceProvider(reason, options = {}) {
+    const { clearLocalChanges = true } = options;
     this._fabricDrawingProviderLoadedForCurrentReview = false;
-    if (typeof this.fabricDrawingPersistenceProvider?.importRootValue !== 'function') {
-      return null;
+    this._fabricDrawingCollectedRevision = null;
+    if (clearLocalChanges) {
+      this._fabricDrawingHasLocalChanges = false;
     }
-
-    const rawValue = Object.hasOwn(data, 'drawingsV3')
-      ? data.drawingsV3
-      : undefined;
     try {
-      const result = this.fabricDrawingPersistenceProvider.importRootValue(
-        rawValue,
-        this._fabricDrawingPersistenceContext
-      );
-      this._fabricDrawingProviderLoadedForCurrentReview =
-        result?.accepted === true || result?.preserved === true;
-      return result;
+      this.fabricDrawingPersistenceProvider?.invalidate?.(reason);
     } catch (error) {
-      log.warn('Fabric 드로잉 문서 불러오기 실패', {
+      log.warn('Fabric 드로잉 provider 무효화 실패', {
         error: error instanceof Error ? error.message : String(error)
       });
-      return null;
     }
+  }
+
+  _recordDrawingsV3DiskState(data) {
+    this._drawingsV3DiskState = captureDrawingsV3DiskState(data);
+    this._hasCompletedReviewLoad = true;
+  }
+
+  _reconcileDrawingsV3DiskState(data) {
+    const latestState = captureDrawingsV3DiskState(data);
+    if (!this._drawingsV3DiskState.known) {
+      this._recordDrawingsV3DiskState(data);
+      this._installRecordedDiskStateInProvider({
+        clearLocalChanges: true,
+        failureReason: 'disk-reconcile-failed'
+      });
+      return true;
+    }
+    if (latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
+      return true;
+    }
+    if (this._fabricDrawingHasLocalChanges) {
+      this._writeBlockedReason = 'fabric-drawing-conflict';
+      return false;
+    }
+
+    this._drawingsV3DiskState = latestState;
+    this._hasCompletedReviewLoad = true;
+    this._installRecordedDiskStateInProvider({
+      clearLocalChanges: true,
+      failureReason: 'disk-reconcile-failed'
+    });
+    return true;
   }
 
   _captureRootEnvelope(data, options = {}) {
@@ -1191,6 +1387,7 @@ export class ReviewDataManager extends EventTarget {
       this._reviewDocumentId = null;
       this._reviewDocumentIdPersisted = false;
     }
+    return true;
   }
 
   async _refreshRootEnvelopeBeforeSave() {
@@ -1201,9 +1398,12 @@ export class ReviewDataManager extends EventTarget {
       throw new Error('최신 .bframe root를 다시 읽지 못해 저장을 중단했습니다.');
     }
 
-    this._captureRootEnvelope(latestRoot, {
+    const rootCaptured = this._captureRootEnvelope(latestRoot, {
       retainIdentityWhenMissing: !this._reviewDocumentIdPersisted
     });
+    if (rootCaptured) {
+      this._reconcileDrawingsV3DiskState(latestRoot);
+    }
   }
 
   _assertRootEnvelopeWritable() {
@@ -1223,6 +1423,10 @@ export class ReviewDataManager extends EventTarget {
 
     if (this._writeBlockedReason === 'review-document-id-mismatch') {
       throw new Error('최신 .bframe의 reviewDocumentId가 달라 계보 충돌로 저장을 중단했습니다.');
+    }
+
+    if (this._writeBlockedReason === 'fabric-drawing-conflict') {
+      throw new Error('다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.');
     }
   }
 

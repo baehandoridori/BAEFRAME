@@ -942,3 +942,35 @@ test('unsubscribe stops isolated change delivery and returned values stay owned 
   assert.equal(changes.length, 1);
   assert.equal(store.getRevision(), 2);
 });
+
+test('invalidate makes prior-video content unavailable without reporting a drawing change', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const changes = [];
+  const store = createFabricDrawingPersistenceStore();
+  const loaded = rootValue({
+    keyframes: [keyframe(12, [record('prior-video-stroke')], {
+      mutationSequence: 1
+    })]
+  });
+  assert.equal(store.importRootValue(loaded, META).accepted, true);
+  store.subscribe(change => changes.push(change));
+
+  assert.equal(store.invalidate('video-load-started'), true);
+  assert.deepEqual(store.getStatus(), {
+    state: 'unavailable',
+    compatible: false,
+    reason: 'video-load-started',
+    revision: null,
+    keyframeCount: 0,
+    objectCount: 0
+  });
+  assert.equal(store.exportRootValue(), null);
+  assert.equal(store.getHydrationDocument(), null);
+  assert.equal(store.getRevision(), null);
+  assert.deepEqual(store.applyTransition(event(2)), {
+    applied: false,
+    reason: 'store-incompatible',
+    needsResync: false
+  });
+  assert.deepEqual(changes, []);
+});

@@ -528,6 +528,29 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     recordBytesByFrame = new Map();
   }
 
+  function invalidate(reason = 'unavailable') {
+    documentValue = null;
+    opaqueRootValue = null;
+    context = {
+      hostGeneration: null,
+      videoGeneration: null,
+      persistenceSessionId: null,
+      stableVideoIdentity: null
+    };
+    state = 'unavailable';
+    incompatibleReason =
+      typeof reason === 'string' && reason.length > 0
+        ? reason.slice(0, 512)
+        : 'unavailable';
+    sceneInstances = new Map();
+    issuedIds.clear();
+    documentBytes = 0;
+    objectCount = 0;
+    frameBytesByFrame = new Map();
+    recordBytesByFrame = new Map();
+    return true;
+  }
+
   function reset(meta = {}) {
     const nextContext = normalizeContext(meta);
     if (!nextContext) {
@@ -944,7 +967,9 @@ export function createFabricDrawingPersistenceStore(options = {}) {
   function getStatus() {
     if (state !== 'ready' || !documentValue) {
       return {
-        state: state === 'uninitialized' ? 'uninitialized' : 'incompatible',
+        state: ['uninitialized', 'unavailable'].includes(state)
+          ? state
+          : 'incompatible',
         compatible: false,
         reason: incompatibleReason,
         revision: null,
@@ -975,6 +1000,7 @@ export function createFabricDrawingPersistenceStore(options = {}) {
   return Object.freeze({
     importRootValue,
     reset,
+    invalidate,
     applyTransition,
     replaceFromOverlay,
     exportRootValue,
