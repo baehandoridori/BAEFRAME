@@ -292,6 +292,8 @@ export class ReviewDataManager extends EventTarget {
     this.drawingManager = options.drawingManager;
     this.highlightManager = options.highlightManager;
     this.compositionLayerManager = options.compositionLayerManager;
+    this.fabricDrawingPersistenceProvider =
+      options.fabricDrawingPersistenceProvider || null;
 
     // 현재 상태
     this.currentVideoPath = null;
@@ -306,10 +308,17 @@ export class ReviewDataManager extends EventTarget {
 
     // 저장 동시성 제어
     this._savePromise = null;  // 저장 중인 Promise (락)
+    this._changeRevision = 0;
     this._hasPersistedFile = false;
     this._beforeSaveHandler = null;
     this._initialSaveConflictHandler = null;
     this._opaqueRootFields = {};
+    this._fabricDrawingPersistenceContext = {};
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingCollectedRevision = null;
+    this._fabricDrawingProviderUnsubscribe = null;
+    this._isConnected = false;
     this._reviewDocumentId = null;
     this._reviewDocumentIdPersisted = false;
     this._reviewDocumentIdFactory = options.reviewDocumentIdFactory || createReviewDocumentId;
@@ -319,6 +328,8 @@ export class ReviewDataManager extends EventTarget {
 
     // 이벤트 바인딩
     this._onDataChanged = this._onDataChanged.bind(this);
+    this._onFabricDrawingPersistenceChanged =
+      this._onFabricDrawingPersistenceChanged.bind(this);
 
     // Liveblocks 매니저 연결 (실시간 협업용)
     this._liveblocksManager = null;
@@ -355,9 +366,42 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
+   * Fabric 드로잉 persistence provider 교체
+   * @param {Object|null} provider
+   */
+  setFabricDrawingPersistenceProvider(provider) {
+    this._disconnectFabricDrawingPersistenceProvider();
+    this.fabricDrawingPersistenceProvider = provider || null;
+    if (this._isConnected) {
+      this._connectFabricDrawingPersistenceProvider();
+    }
+  }
+
+  _connectFabricDrawingPersistenceProvider() {
+    if (this._fabricDrawingProviderUnsubscribe ||
+        typeof this.fabricDrawingPersistenceProvider?.subscribe !== 'function') {
+      return;
+    }
+    this._fabricDrawingProviderUnsubscribe =
+      this.fabricDrawingPersistenceProvider.subscribe(
+        this._onFabricDrawingPersistenceChanged
+      );
+  }
+
+  _disconnectFabricDrawingPersistenceProvider() {
+    if (typeof this._fabricDrawingProviderUnsubscribe === 'function') {
+      this._fabricDrawingProviderUnsubscribe();
+    }
+    this._fabricDrawingProviderUnsubscribe = null;
+  }
+
+  /**
    * 매니저들 연결 및 이벤트 리스너 설정
    */
   connect() {
+    this._isConnected = true;
+    this._connectFabricDrawingPersistenceProvider();
+
     if (this.commentManager) {
       this.commentManager.addEventListener('markerAdded', this._onDataChanged);
       this.commentManager.addEventListener('markerUpdated', this._onDataChanged);
@@ -398,6 +442,9 @@ export class ReviewDataManager extends EventTarget {
    * 이벤트 리스너 해제
    */
   disconnect() {
+    this._isConnected = false;
+    this._disconnectFabricDrawingPersistenceProvider();
+
     if (this.commentManager) {
       this.commentManager.removeEventListener('markerAdded', this._onDataChanged);
       this.commentManager.removeEventListener('markerUpdated', this._onDataChanged);
@@ -453,6 +500,10 @@ export class ReviewDataManager extends EventTarget {
 
     this.currentVideoPath = videoPath;
     this.currentBframePath = getBframePath(videoPath);
+    this._fabricDrawingPersistenceContext = {
+      stableVideoIdentity: videoPath,
+      ...(options.fabricDrawingPersistenceContext || {})
+    };
     this._createdAt = null;
     this._modifiedAt = null;
     this._fps = 24;
@@ -460,6 +511,10 @@ export class ReviewDataManager extends EventTarget {
     this._manualVersions = [];
     this._hasPersistedFile = false;
     this.isDirty = false;
+    this._changeRevision = 0;
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingCollectedRevision = null;
     this._resetRootEnvelopeState();
 
     log.info('영상 파일 설정됨', {
@@ -511,7 +566,7 @@ export class ReviewDataManager extends EventTarget {
     this._cancelAutoSave();
 
     // 저장 Promise 생성 (락)
-    this._savePromise = this._doSave(options);
+    this._savePromise = Promise.resolve().then(() => this._doSave(options));
 
     try {
       return await this._savePromise;
@@ -526,6 +581,8 @@ export class ReviewDataManager extends EventTarget {
   async _doSave(_options = {}) {
     try {
       let savedData = null;
+      let savedChangeRevision = null;
+      let savedFabricDrawingRevision = null;
       let lastConflictResult = null;
       const maxAttempts = 5;
 
@@ -545,6 +602,8 @@ export class ReviewDataManager extends EventTarget {
         this._assertRootEnvelopeWritable();
         this._ensureReviewDocumentId();
         const data = this._collectData();
+        const attemptChangeRevision = this._changeRevision;
+        const attemptFabricDrawingRevision = this._fabricDrawingCollectedRevision;
 
         // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
         // 로컬 .bframe 스냅샷만 저장 (오프라인 백업 역할)
@@ -585,6 +644,8 @@ export class ReviewDataManager extends EventTarget {
         this._hasPersistedFile = true;
         this._reviewDocumentIdPersisted = true;
         savedData = data;
+        savedChangeRevision = attemptChangeRevision;
+        savedFabricDrawingRevision = attemptFabricDrawingRevision;
         break;
       }
 
@@ -592,7 +653,9 @@ export class ReviewDataManager extends EventTarget {
         throw new Error(lastConflictResult?.error || '첫 .bframe 저장 충돌 병합 실패');
       }
 
-      this.isDirty = false;
+      const hasConcurrentChanges = this._changeRevision !== savedChangeRevision;
+      this.isDirty = hasConcurrentChanges;
+      this._acknowledgeFabricDrawingSave(savedFabricDrawingRevision);
 
       log.info('.bframe 파일 저장됨', {
         path: this.currentBframePath,
@@ -602,6 +665,10 @@ export class ReviewDataManager extends EventTarget {
       });
 
       this._emit('saved', { path: this.currentBframePath });
+
+      if (hasConcurrentChanges && this.autoSaveEnabled) {
+        this._scheduleAutoSave();
+      }
 
       return true;
     } catch (error) {
@@ -704,6 +771,7 @@ export class ReviewDataManager extends EventTarget {
         this.compositionLayerManager?.fromJSON?.([]);
         this._hasPersistedFile = false;
         this._resetRootEnvelopeState();
+        this._resetFabricDrawingPersistenceProvider();
         this.isLoading = false;
         return false;
       }
@@ -1026,6 +1094,54 @@ export class ReviewDataManager extends EventTarget {
     this._writeBlockedReason = null;
   }
 
+  _resetFabricDrawingPersistenceProvider() {
+    this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingCollectedRevision = null;
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    if (typeof this.fabricDrawingPersistenceProvider?.reset !== 'function') return null;
+
+    try {
+      const result = this.fabricDrawingPersistenceProvider.reset(
+        this._fabricDrawingPersistenceContext
+      );
+      this._fabricDrawingProviderLoadedForCurrentReview =
+        result?.accepted === true || result?.preserved === true;
+      return result;
+    } catch (error) {
+      log.warn('Fabric 드로잉 새 문서 초기화 실패', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
+  }
+
+  _importFabricDrawingPersistenceRoot(data) {
+    this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingCollectedRevision = null;
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    if (typeof this.fabricDrawingPersistenceProvider?.importRootValue !== 'function') {
+      return null;
+    }
+
+    const rawValue = Object.hasOwn(data, 'drawingsV3')
+      ? data.drawingsV3
+      : undefined;
+    try {
+      const result = this.fabricDrawingPersistenceProvider.importRootValue(
+        rawValue,
+        this._fabricDrawingPersistenceContext
+      );
+      this._fabricDrawingProviderLoadedForCurrentReview =
+        result?.accepted === true || result?.preserved === true;
+      return result;
+    } catch (error) {
+      log.warn('Fabric 드로잉 문서 불러오기 실패', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
+  }
+
   _captureRootEnvelope(data, options = {}) {
     const {
       retainIdentityWhenMissing = false,
@@ -1129,6 +1245,7 @@ export class ReviewDataManager extends EventTarget {
   _collectData() {
     const now = new Date().toISOString();
     const videoFile = extractFileName(this.currentVideoPath);
+    this._collectFabricDrawingPersistenceRoot();
 
     const knownRoot = {
       // v2.0 스키마 필드
@@ -1160,11 +1277,47 @@ export class ReviewDataManager extends EventTarget {
     return mergeBframeRoot(this._opaqueRootFields, knownRoot);
   }
 
+  _collectFabricDrawingPersistenceRoot() {
+    this._fabricDrawingCollectedRevision = null;
+    if (!this._fabricDrawingHasLocalChanges) return;
+    if (!this._fabricDrawingProviderLoadedForCurrentReview) {
+      throw new Error('현재 영상의 Fabric 드로잉 저장소가 준비되지 않았습니다.');
+    }
+
+    const provider = this.fabricDrawingPersistenceProvider;
+    const status = provider?.getStatus?.();
+    if (status?.state !== 'ready' || status?.compatible !== true) {
+      throw new Error('Fabric 드로잉 저장 문서가 호환되지 않아 저장을 중단했습니다.');
+    }
+    if (typeof provider.exportRootValue !== 'function') {
+      throw new Error('Fabric 드로잉 저장 문서를 가져올 수 없습니다.');
+    }
+
+    const snapshot = provider.exportRootValue();
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+      throw new Error('Fabric 드로잉 저장 문서가 유효하지 않습니다.');
+    }
+    this._opaqueRootFields = {
+      ...this._opaqueRootFields,
+      drawingsV3: snapshot
+    };
+    this._fabricDrawingCollectedRevision = status.revision;
+  }
+
+  _acknowledgeFabricDrawingSave(savedRevision) {
+    if (savedRevision === null || savedRevision === undefined) return;
+    const currentRevision = this.fabricDrawingPersistenceProvider?.getRevision?.();
+    if (currentRevision === savedRevision) {
+      this._fabricDrawingHasLocalChanges = false;
+    }
+  }
+
   /**
    * 로드한 데이터 적용 (v2.0 스키마)
    */
   _applyData(data, options = {}) {
     this._captureRootEnvelope(data, options);
+    this._importFabricDrawingPersistenceRoot(data);
 
     // 메타데이터
     this._createdAt = data.createdAt;
@@ -1205,7 +1358,7 @@ export class ReviewDataManager extends EventTarget {
     if (!Number.isFinite(nextFps) || nextFps <= 0) return;
     if (this._fps === nextFps) return;
     this._fps = nextFps;
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1230,7 +1383,7 @@ export class ReviewDataManager extends EventTarget {
    */
   setLiveblocksRoomId(roomId) {
     this._liveblocksRoomId = roomId;
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1239,7 +1392,7 @@ export class ReviewDataManager extends EventTarget {
    */
   setVersionInfo(versionInfo) {
     this._versionInfo = versionInfo;
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1259,7 +1412,7 @@ export class ReviewDataManager extends EventTarget {
       this._manualVersions = [];
     }
     this._manualVersions.push(manualVersion);
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1276,7 +1429,7 @@ export class ReviewDataManager extends EventTarget {
    */
   setManualVersions(manualVersions) {
     this._manualVersions = manualVersions || [];
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1294,8 +1447,29 @@ export class ReviewDataManager extends EventTarget {
     if (index === -1) return false;
 
     this._manualVersions.splice(index, 1);
-    this.isDirty = true;
+    this._markDirty();
     return true;
+  }
+
+  _markDirty({ eventType = null, event = null, scheduleAutoSave = false } = {}) {
+    this.isDirty = true;
+    this._changeRevision += 1;
+    if (eventType) {
+      this._emit('dataChanged', { event: eventType, data: event });
+    }
+    if (scheduleAutoSave && this.autoSaveEnabled && !this._savePromise) {
+      this._scheduleAutoSave();
+    }
+  }
+
+  _onFabricDrawingPersistenceChanged(change) {
+    if (!this._fabricDrawingProviderLoadedForCurrentReview) return;
+    this._fabricDrawingHasLocalChanges = true;
+    this._markDirty({
+      eventType: 'fabricDrawingChanged',
+      event: change,
+      scheduleAutoSave: true
+    });
   }
 
   /**
@@ -1305,15 +1479,11 @@ export class ReviewDataManager extends EventTarget {
     // 로딩 중이면 무시
     if (this.isLoading) return;
 
-    this.isDirty = true;
-    this._emit('dataChanged', { event: e.type });
-
-    // Liveblocks는 자동으로 활동을 감지하므로 별도 기록 불필요
-
-    // 자동 저장 스케줄
-    if (this.autoSaveEnabled) {
-      this._scheduleAutoSave();
-    }
+    this._markDirty({
+      eventType: e.type,
+      event: e,
+      scheduleAutoSave: true
+    });
   }
 
   /**
@@ -1383,10 +1553,18 @@ export class ReviewDataManager extends EventTarget {
     const hasDrawings = (this.drawingManager?.layers || []).some(
       layer => (layer.keyframes?.length || 0) > 0
     );
+    const fabricDrawingStatus =
+      this._fabricDrawingProviderLoadedForCurrentReview
+        ? this.fabricDrawingPersistenceProvider?.getStatus?.()
+        : null;
+    const hasFabricDrawings = fabricDrawingStatus?.state === 'ready' &&
+      fabricDrawingStatus.compatible === true &&
+      fabricDrawingStatus.objectCount > 0;
     const hasHighlights = (this.highlightManager?.highlights?.length || 0) > 0;
     const hasCompositionLayers = (this.compositionLayerManager?.layers?.length || 0) > 0;
     const hasManualVersions = (this._manualVersions?.length || 0) > 0;
-    return hasComments || hasDrawings || hasHighlights || hasCompositionLayers || hasManualVersions;
+    return hasComments || hasDrawings || hasFabricDrawings ||
+      hasHighlights || hasCompositionLayers || hasManualVersions;
   }
 
   /**

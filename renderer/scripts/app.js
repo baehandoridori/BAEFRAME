@@ -20,6 +20,7 @@ import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
 import { DrawingSync } from './modules/drawing-sync.js';
 import { createFabricDrawingPilotController } from './modules/fabric-drawing-pilot-controller.js';
+import { createFabricDrawingPersistenceStore } from './modules/fabric-drawing-persistence-store.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getAuthManager } from './modules/auth-manager.js';
@@ -1283,11 +1284,13 @@ async function initApp() {
   const highlightManager = new HighlightManager();
 
   // 리뷰 데이터 매니저 (.bframe 파일 저장/로드)
+  const fabricDrawingPersistenceStore = createFabricDrawingPersistenceStore();
   const reviewDataManager = new ReviewDataManager({
     commentManager,
     drawingManager,
     highlightManager,
     compositionLayerManager,
+    fabricDrawingPersistenceProvider: fabricDrawingPersistenceStore,
     autoSave: true,
     autoSaveDelay: 500 // 500ms 디바운스
   });
@@ -7125,6 +7128,7 @@ async function initApp() {
   const fabricDrawingPilotController = createFabricDrawingPilotController({
     electronAPI: window.electronAPI,
     getContext: getFabricDrawingPilotContext,
+    persistenceStore: fabricDrawingPersistenceStore,
     onStateChange: handleFabricDrawingPilotStateChange
   });
   const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize().then(enabled => {
@@ -9210,7 +9214,14 @@ async function initApp() {
       let hasExistingData = false;
       let currentBframePath = reviewDataManager.currentBframePath;
       if (!engineSwap) {
-        hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
+        hasExistingData = await reviewDataManager.setVideoFile(filePath, {
+          skipSave: true,
+          fabricDrawingPersistenceContext: {
+            fps: videoPlayer.fps,
+            totalFrames: Math.max(1, Math.round(videoPlayer.totalFrames)),
+            stableVideoIdentity: filePath
+          }
+        });
         if (!canContinueVideoLoad()) return false;
         currentBframePath = reviewDataManager.currentBframePath;
       }

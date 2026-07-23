@@ -7,6 +7,7 @@ global.window = {
 };
 
 function createCommentManager() {
+  const events = new EventTarget();
   const layer = {
     id: 'layer-1',
     name: '기본 댓글 레이어',
@@ -15,6 +16,8 @@ function createCommentManager() {
 
   return {
     layers: [layer],
+    addEventListener: events.addEventListener.bind(events),
+    removeEventListener: events.removeEventListener.bind(events),
     toJSON() {
       return {
         layers: [{
@@ -62,6 +65,99 @@ const REVIEW_ID_EXISTING = 'reviewdoc-11111111-1111-4111-8111-111111111111';
 const REVIEW_ID_GENERATED = 'reviewdoc-22222222-2222-4222-8222-222222222222';
 const REVIEW_ID_REMOTE = 'reviewdoc-33333333-3333-4333-8333-333333333333';
 const REVIEW_ID_FUTURE = 'reviewdoc-44444444-4444-4444-8444-444444444444';
+const FABRIC_CONTEXT = Object.freeze({
+  fps: 24,
+  totalFrames: 240,
+  hostGeneration: 3,
+  videoGeneration: 7,
+  persistenceSessionId: 'review-save-session',
+  stableVideoIdentity: 'C:/reviews/fabric.mp4'
+});
+const FABRIC_IDENTITY_TRANSFORM = Object.freeze({
+  left: 0,
+  top: 0,
+  scaleX: 1,
+  scaleY: 1,
+  angle: 0,
+  skewX: 0,
+  skewY: 0,
+  flipX: false,
+  flipY: false
+});
+
+function createFabricRecord(id, overrides = {}) {
+  return {
+    id,
+    type: 'stroke',
+    pathData: 'M 0 0 Q 5 10 10 10',
+    sourcePoints: [
+      { x: 0, y: 0, pressure: 0.25, time: 0, pointerType: 'pen' },
+      { x: 10, y: 10, pressure: 0.75, time: 8, pointerType: 'pen' }
+    ],
+    strokeCaps: { start: true, end: true },
+    style: { color: '#ff4757', size: 7.5, opacity: 0.65 },
+    transform: { ...FABRIC_IDENTITY_TRANSFORM },
+    ...overrides
+  };
+}
+
+function createFabricRoot(overrides = {}) {
+  return {
+    storageSchema: 'baeframe-fabric-scenes',
+    storageVersion: '1.0.0',
+    engine: 'fabric-7',
+    documentId: 'fabric-document-review-save',
+    revision: 0,
+    fps: FABRIC_CONTEXT.fps,
+    totalFrames: FABRIC_CONTEXT.totalFrames,
+    keyframes: [],
+    ...overrides
+  };
+}
+
+function createFabricTransition(sequence, record, index = 0) {
+  return {
+    hostGeneration: FABRIC_CONTEXT.hostGeneration,
+    videoGeneration: FABRIC_CONTEXT.videoGeneration,
+    persistenceSessionId: FABRIC_CONTEXT.persistenceSessionId,
+    stableVideoIdentity: FABRIC_CONTEXT.stableVideoIdentity,
+    scene: {
+      sceneInstanceId: 'review-save-scene-12',
+      targetFrame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080
+    },
+    mutationSequence: sequence,
+    origin: 'live',
+    kind: 'add-objects',
+    estimatedBytes: 512,
+    unsupportedReason: null,
+    removals: [],
+    insertions: [{
+      index,
+      record,
+      baseTransform: { ...record.transform }
+    }],
+    transforms: []
+  };
+}
+
+async function createFabricStore() {
+  const { createFabricDrawingPersistenceStore } = await import(
+    '../../renderer/scripts/modules/fabric-drawing-persistence-store.js'
+  );
+  return createFabricDrawingPersistenceStore({
+    createId: prefix => `${prefix}-review-save`
+  });
+}
+
+function createDeferred() {
+  let resolve;
+  const promise = new Promise(resolver => {
+    resolve = resolver;
+  });
+  return { promise, resolve };
+}
 
 test('new metadata-only review skips save while switching videos', async () => {
   const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
@@ -591,4 +687,396 @@ test('invalid persisted review identity blocks saving instead of silently replac
   assert.equal(await manager.save(), false);
   assert.equal(saveCount, 0);
   assert.equal(manager.hasUnsavedChanges(), true);
+});
+
+test('valid drawingsV3 loads into the shared provider while legacy drawings stay unchanged', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const legacyDrawings = {
+    layers: [{ id: 'legacy-layer', keyframes: [{ frame: 8, canvasData: 'legacy-png' }] }]
+  };
+  const fabricRoot = createFabricRoot({
+    revision: 4,
+    keyframes: [{
+      id: 'fabric-keyframe-12',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [createFabricRecord('fabric-loaded')]
+    }]
+  });
+  let importedLegacy = null;
+  const drawingManager = {
+    layers: [],
+    importData(value) {
+      importedLegacy = structuredClone(value);
+    },
+    exportData() {
+      return structuredClone(legacyDrawings);
+    }
+  };
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawings: legacyDrawings,
+      drawingsV3: fabricRoot
+    })
+  };
+
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    drawingManager,
+    fabricDrawingPersistenceProvider: fabricStore
+  });
+  assert.equal(await manager.setVideoFile('C:/reviews/fabric.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  }), true);
+
+  assert.deepEqual(importedLegacy, legacyDrawings);
+  assert.deepEqual(fabricStore.exportRootValue(), fabricRoot);
+  assert.deepEqual(manager._collectData().drawings, legacyDrawings);
+  assert.deepEqual(manager._collectData().drawingsV3, fabricRoot);
+});
+
+test('new review resets the shared provider and a first Fabric-only stroke creates a bframe', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const saveCalls = [];
+  window.electronAPI = {
+    loadReview: async () => null,
+    saveReview: async (...args) => {
+      saveCalls.push(args);
+      return { success: true };
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    fabricDrawingPersistenceProvider: fabricStore,
+    reviewDocumentIdFactory: () => REVIEW_ID_GENERATED
+  });
+  manager.connect();
+
+  assert.equal(await manager.setVideoFile('C:/reviews/fabric.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  }), false);
+  const record = createFabricRecord('fabric-first-stroke');
+  assert.equal(fabricStore.applyTransition(
+    createFabricTransition(1, record)
+  ).applied, true);
+
+  assert.equal(manager.hasSubstantiveContent(), true);
+  assert.equal(manager.hasUnsavedChanges(), true);
+  assert.equal(await manager.save(), true);
+  assert.equal(saveCalls.length, 1);
+  assert.deepEqual(saveCalls[0][2], { failIfExists: true });
+  assert.equal(saveCalls[0][1].drawingsV3.keyframes[0].objects[0].id, record.id);
+  assert.deepEqual(saveCalls[0][1].drawings, { layers: [] });
+  manager.disconnect();
+});
+
+test('provider changes use the normal autosave path and disconnect removes the subscription', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const saveCalls = [];
+  window.electronAPI = {
+    loadReview: async () => null,
+    saveReview: async (...args) => {
+      saveCalls.push(args);
+      return { success: true };
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSaveDelay: 5,
+    fabricDrawingPersistenceProvider: fabricStore,
+    reviewDocumentIdFactory: () => REVIEW_ID_GENERATED
+  });
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/fabric.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  });
+
+  const first = createFabricRecord('fabric-auto-save');
+  assert.equal(fabricStore.applyTransition(
+    createFabricTransition(1, first)
+  ).applied, true);
+  await wait(40);
+
+  assert.equal(saveCalls.length, 1);
+  assert.equal(manager.isDirty, false);
+  manager.disconnect();
+  manager.isDirty = false;
+  const second = createFabricRecord('fabric-after-disconnect');
+  assert.equal(fabricStore.applyTransition(
+    createFabricTransition(2, second, 1)
+  ).applied, true);
+  await wait(20);
+  assert.equal(manager.isDirty, false);
+  assert.equal(saveCalls.length, 1);
+});
+
+test('latest opaque drawingsV3 is preserved until a real local Fabric change replaces it', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const loadedFabric = createFabricRoot();
+  const remoteFabric = createFabricRoot({
+    documentId: 'fabric-document-remote',
+    revision: 8,
+    keyframes: [{
+      id: 'remote-keyframe',
+      frame: 20,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [createFabricRecord('remote-stroke')]
+    }]
+  });
+  let diskRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    drawingsV3: loadedFabric
+  });
+  const saveCalls = [];
+  window.electronAPI = {
+    loadReview: async () => diskRoot,
+    saveReview: async (_path, data) => {
+      saveCalls.push(structuredClone(data));
+      diskRoot = structuredClone(data);
+      return { success: true };
+    }
+  };
+  const commentManager = createCommentManager();
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    commentManager,
+    fabricDrawingPersistenceProvider: fabricStore
+  });
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/fabric.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  });
+
+  diskRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    drawingsV3: remoteFabric
+  });
+  addSubstantiveComment(manager, commentManager, 'comment-only-save');
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(saveCalls[0].drawingsV3, remoteFabric);
+
+  const local = createFabricRecord('local-after-remote');
+  assert.equal(fabricStore.applyTransition(
+    createFabricTransition(1, local)
+  ).applied, true);
+  assert.equal(await manager.save(), true);
+  assert.equal(saveCalls[1].drawingsV3.documentId, loadedFabric.documentId);
+  assert.equal(saveCalls[1].drawingsV3.keyframes[0].objects[0].id, local.id);
+  manager.disconnect();
+});
+
+test('future or malformed drawingsV3 stays byte-equivalent through unrelated saves', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+
+  for (const [label, opaqueDrawing] of [
+    ['future', {
+      storageSchema: 'baeframe-fabric-scenes',
+      storageVersion: '9.0.0',
+      engine: 'future-fabric',
+      nested: { bytes: [0, 1, 2, 255], keep: true }
+    }],
+    ['malformed', {
+      storageSchema: 'baeframe-fabric-scenes',
+      storageVersion: '1.0.0',
+      engine: 'fabric-7',
+      documentId: null,
+      nested: { malformed: ['must', 'stay', 'opaque'] }
+    }]
+  ]) {
+    const fabricStore = await createFabricStore();
+    const commentManager = createCommentManager();
+    let savedRoot = null;
+    const diskRoot = createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: opaqueDrawing
+    });
+    window.electronAPI = {
+      loadReview: async () => diskRoot,
+      saveReview: async (_path, data) => {
+        savedRoot = structuredClone(data);
+        return { success: true };
+      }
+    };
+    const manager = new ReviewDataManager({
+      autoSave: false,
+      commentManager,
+      fabricDrawingPersistenceProvider: fabricStore
+    });
+    manager.connect();
+    await manager.setVideoFile(`C:/reviews/${label}.mp4`, {
+      fabricDrawingPersistenceContext: {
+        ...FABRIC_CONTEXT,
+        stableVideoIdentity: `C:/reviews/${label}.mp4`
+      }
+    });
+    addSubstantiveComment(manager, commentManager, `comment-${label}`);
+
+    assert.equal(await manager.save(), true);
+    assert.deepEqual(savedRoot.drawingsV3, opaqueDrawing);
+    assert.equal(fabricStore.getStatus().compatible, false);
+    manager.disconnect();
+  }
+});
+
+test('before-save hook can update the provider before data collection', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  let savedRoot = null;
+  window.electronAPI = {
+    loadReview: async () => null,
+    saveReview: async (_path, data) => {
+      savedRoot = structuredClone(data);
+      return { success: true };
+    }
+  };
+  const commentManager = createCommentManager();
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    commentManager,
+    fabricDrawingPersistenceProvider: fabricStore,
+    reviewDocumentIdFactory: () => REVIEW_ID_GENERATED
+  });
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/fabric.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  });
+  addSubstantiveComment(manager, commentManager, 'save-hook-comment');
+  const pulled = createFabricRecord('pulled-before-collect');
+  manager.setBeforeSaveHandler(async () => {
+    fabricStore.applyTransition(createFabricTransition(1, pulled));
+  });
+
+  assert.equal(await manager.save(), true);
+  assert.equal(savedRoot.drawingsV3.keyframes[0].objects[0].id, pulled.id);
+  manager.disconnect();
+});
+
+test('successful save with a concurrent manager change schedules exactly one trailing autosave', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const commentManager = createCommentManager();
+  const saveStarted = createDeferred();
+  const releaseFirstSave = createDeferred();
+  const saveCalls = [];
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING
+    }),
+    saveReview: async (_path, data) => {
+      saveCalls.push(structuredClone(data));
+      if (saveCalls.length === 1) {
+        saveStarted.resolve();
+        return releaseFirstSave.promise;
+      }
+      return { success: true };
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSaveDelay: 5,
+    commentManager
+  });
+  await manager.setVideoFile('C:/reviews/concurrent.mp4');
+  addSubstantiveComment(manager, commentManager, 'concurrent-comment');
+  manager.setVersionInfo({ fileName: 'before-save.mp4' });
+
+  const firstSave = manager.save();
+  await saveStarted.promise;
+  manager.setVersionInfo({ fileName: 'during-save.mp4' });
+  releaseFirstSave.resolve({ success: true });
+
+  assert.equal(await firstSave, true);
+  assert.equal(manager.isDirty, true);
+  await wait(50);
+  assert.equal(saveCalls.length, 2);
+  assert.deepEqual(saveCalls[0].versionInfo, { fileName: 'before-save.mp4' });
+  assert.deepEqual(saveCalls[1].versionInfo, { fileName: 'during-save.mp4' });
+  assert.equal(manager.isDirty, false);
+  await wait(30);
+  assert.equal(saveCalls.length, 2);
+});
+
+test('failed save with a concurrent provider mutation stays dirty without automatic retry', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const saveStarted = createDeferred();
+  const releaseSave = createDeferred();
+  let saveCount = 0;
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: createFabricRoot()
+    }),
+    saveReview: async () => {
+      saveCount += 1;
+      saveStarted.resolve();
+      return releaseSave.promise;
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSaveDelay: 5,
+    fabricDrawingPersistenceProvider: fabricStore
+  });
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/fabric.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  });
+  const first = createFabricRecord('failure-before-save');
+  fabricStore.applyTransition(createFabricTransition(1, first));
+
+  const saveResult = manager.save();
+  await saveStarted.promise;
+  const second = createFabricRecord('failure-during-save');
+  fabricStore.applyTransition(createFabricTransition(2, second, 1));
+  releaseSave.resolve({ success: false, error: 'injected Fabric save failure' });
+
+  assert.equal(await saveResult, false);
+  assert.equal(manager.isDirty, true);
+  assert.equal(manager.hasUnsavedChanges(), true);
+  await wait(50);
+  assert.equal(saveCount, 1);
+  manager.disconnect();
+});
+
+test('provider change inside a failing before-save hook never arms an automatic retry', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const commentManager = createCommentManager();
+  let saveCount = 0;
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: createFabricRoot()
+    }),
+    saveReview: async () => {
+      saveCount += 1;
+      return { success: false, error: 'injected before-save failure' };
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSaveDelay: 5,
+    commentManager,
+    fabricDrawingPersistenceProvider: fabricStore
+  });
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/fabric.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  });
+  addSubstantiveComment(manager, commentManager, 'before-save-failure-comment');
+  const pulled = createFabricRecord('failure-inside-before-save');
+  manager.setBeforeSaveHandler(async () => {
+    fabricStore.applyTransition(createFabricTransition(1, pulled));
+  });
+
+  assert.equal(await manager.save(), false);
+  assert.equal(manager.isDirty, true);
+  await wait(50);
+  assert.equal(saveCount, 1);
+  manager.disconnect();
 });
