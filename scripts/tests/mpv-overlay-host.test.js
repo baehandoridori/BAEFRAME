@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const vm = require('node:vm');
 
 const {
   MPVOverlayHost,
@@ -61,6 +62,13 @@ function createDrawingHostHarness(options = {}) {
           if (typeof options.executeJavaScriptError === 'function') {
             const injectedError = options.executeJavaScriptError(script);
             if (injectedError) throw injectedError;
+          }
+          const bootstrapValue = readDrawingV3BootstrapValue(script);
+          if (bootstrapValue !== undefined) {
+            if (options.bootstrapWindow) {
+              return vm.runInNewContext(script, { window: options.bootstrapWindow });
+            }
+            return true;
           }
           if (script.includes("typeof window.__applyMpvOverlayState === 'function'")) return true;
           if (script === bundleSource) return true;
@@ -414,6 +422,50 @@ test('a true V3 bootstrap injection failure falls back false without poisoning F
   assert.equal(host.fabricFailureCount, 0);
   assert.equal(host.fabricRetryAfter, 0);
   assert.equal(host.fabricLastError, null);
+  assert.deepEqual(drawingRuntimeExecutionSteps(harness.events), [
+    'bootstrap:true',
+    'bootstrap:false',
+    'bundle-and-singleton',
+    'prepare',
+    'input:true'
+  ]);
+});
+
+test('hostile bootstrap accessors cannot block the bundle when both standalone injections fail', async () => {
+  let getterCalls = 0;
+  let setterCalls = 0;
+  const bootstrapWindow = {};
+  Object.defineProperty(bootstrapWindow, '__mpvFabricOverlayBootstrap', {
+    configurable: false,
+    get() {
+      getterCalls += 1;
+      return { drawingV3ShadowEnabled: true };
+    },
+    set() {
+      setterCalls += 1;
+      throw new Error('hostile bootstrap setter');
+    }
+  });
+  const harness = createDrawingHostHarness({ bootstrapWindow });
+  const { host } = harness;
+  assert.equal(host.configureDrawingV3Shadow(true).success, true);
+
+  const active = await activateDrawingHost(harness, {
+    sessionId: 'session-v3-hostile-bootstrap-slot'
+  });
+
+  assert.equal(active.hostGeneration, 1);
+  assert.equal(host.getDrawingCapability().fabricReady, true);
+  assert.equal(host.fabricFailureCount, 0);
+  assert.equal(host.fabricRetryAfter, 0);
+  assert.equal(host.fabricLastError, null);
+  assert.equal(getterCalls, 0, 'bootstrap installation must not invoke a hostile getter');
+  assert.equal(setterCalls, 0, 'bootstrap installation must not invoke a hostile setter');
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(bootstrapWindow, '__mpvFabricOverlayBootstrap'),
+    true,
+    'an unremovable hostile slot may remain, but it must never block Fabric startup'
+  );
   assert.deepEqual(drawingRuntimeExecutionSteps(harness.events), [
     'bootstrap:true',
     'bootstrap:false',

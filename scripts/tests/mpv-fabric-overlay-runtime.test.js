@@ -688,9 +688,13 @@ function createRealFabricHarness(runtimeOptions = {}) {
 test('auto singleton enables Drawing V3 shadow only for a strict true bootstrap field and consumes it', () => {
   const result = runAutoSingletonProbe(`
     global.document = null;
-    global.window = {
-      __mpvFabricOverlayBootstrap: { drawingV3ShadowEnabled: true }
-    };
+    global.window = {};
+    Object.defineProperty(window, '__mpvFabricOverlayBootstrap', {
+      configurable: true,
+      enumerable: false,
+      writable: false,
+      value: Object.freeze({ drawingV3ShadowEnabled: true })
+    });
     require(runtimePath);
     const diagnostics = window.__mpvFabricOverlay.getDiagnostics();
     emit({
@@ -707,6 +711,100 @@ test('auto singleton enables Drawing V3 shadow only for a strict true bootstrap 
     bootstrapPresent: false,
     enabled: true,
     status: 'idle'
+  });
+});
+
+test('auto singleton ignores non-configurable bootstrap accessors and stays safely off', () => {
+  const cases = [
+    {
+      name: 'getter returns enabled and setter ignores writes',
+      accessors: `
+        get() {
+          getterCalls += 1;
+          return { drawingV3ShadowEnabled: true };
+        },
+        set() { setterCalls += 1; }
+      `
+    },
+    {
+      name: 'getter and setter throw',
+      accessors: `
+        get() {
+          getterCalls += 1;
+          throw new Error('hostile bootstrap getter');
+        },
+        set() {
+          setterCalls += 1;
+          throw new Error('hostile bootstrap setter');
+        }
+      `
+    }
+  ];
+
+  for (const probe of cases) {
+    const result = runAutoSingletonProbe(`
+      global.document = null;
+      let getterCalls = 0;
+      let setterCalls = 0;
+      global.window = {};
+      Object.defineProperty(window, '__mpvFabricOverlayBootstrap', {
+        configurable: false,
+        ${probe.accessors}
+      });
+      require(runtimePath);
+      const diagnostics = window.__mpvFabricOverlay.getDiagnostics();
+      emit({
+        bootstrapPresent: Object.prototype.hasOwnProperty.call(
+          window,
+          '__mpvFabricOverlayBootstrap'
+        ),
+        getterCalls,
+        setterCalls,
+        singletonPresent: !!window.__mpvFabricOverlay,
+        enabled: diagnostics.drawingV3Shadow.enabled,
+        status: diagnostics.drawingV3Shadow.status
+      });
+    `);
+
+    assert.deepEqual(result, {
+      bootstrapPresent: true,
+      getterCalls: 0,
+      setterCalls: 0,
+      singletonPresent: true,
+      enabled: false,
+      status: 'disabled'
+    }, probe.name);
+  }
+});
+
+test('auto singleton stays off and initializes when bootstrap descriptor inspection throws', () => {
+  const result = runAutoSingletonProbe(`
+    global.document = null;
+    let descriptorCalls = 0;
+    global.window = new Proxy({}, {
+      getOwnPropertyDescriptor(target, property) {
+        if (property === '__mpvFabricOverlayBootstrap') {
+          descriptorCalls += 1;
+          throw new Error('hostile bootstrap descriptor');
+        }
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      }
+    });
+    require(runtimePath);
+    const diagnostics = window.__mpvFabricOverlay.getDiagnostics();
+    emit({
+      descriptorCalls,
+      singletonPresent: !!window.__mpvFabricOverlay,
+      enabled: diagnostics.drawingV3Shadow.enabled,
+      status: diagnostics.drawingV3Shadow.status
+    });
+  `);
+
+  assert.deepEqual(result, {
+    descriptorCalls: 1,
+    singletonPresent: true,
+    enabled: false,
+    status: 'disabled'
   });
 });
 

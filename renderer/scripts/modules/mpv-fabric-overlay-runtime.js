@@ -3546,19 +3546,54 @@ function createFabricOverlayRuntime(options = {}) {
   };
 }
 
-if (typeof window !== 'undefined' && window) {
-  let bootstrap = null;
+function consumeDrawingV3Bootstrap(target) {
+  let descriptor;
   try {
-    bootstrap = window.__mpvFabricOverlayBootstrap;
-  } catch (_error) { /* fail closed */ }
-  try {
-    delete window.__mpvFabricOverlayBootstrap;
+    descriptor = Object.getOwnPropertyDescriptor(target, '__mpvFabricOverlayBootstrap');
   } catch (_error) {
-    try {
-      window.__mpvFabricOverlayBootstrap = undefined;
-    } catch (_ignored) { /* best effort one-shot consumption */ }
+    return false;
   }
-  const drawingV3ShadowEnabled = bootstrap?.drawingV3ShadowEnabled === true;
+  if (!descriptor) return false;
+
+  let requestedEnabled = false;
+  try {
+    const bootstrap = descriptor.value;
+    const bootstrapKeys = Reflect.ownKeys(bootstrap);
+    const enabledDescriptor = Object.getOwnPropertyDescriptor(
+      bootstrap,
+      'drawingV3ShadowEnabled'
+    );
+    const trusted = descriptor.configurable === true &&
+      descriptor.enumerable === false &&
+      descriptor.writable === false &&
+      bootstrap &&
+      typeof bootstrap === 'object' &&
+      !Array.isArray(bootstrap) &&
+      Object.isFrozen(bootstrap) &&
+      bootstrapKeys.length === 1 &&
+      bootstrapKeys[0] === 'drawingV3ShadowEnabled' &&
+      enabledDescriptor?.configurable === false &&
+      enabledDescriptor.enumerable === true &&
+      enabledDescriptor.writable === false &&
+      typeof enabledDescriptor.value === 'boolean';
+    requestedEnabled = trusted && enabledDescriptor.value === true;
+  } catch (_error) {
+    requestedEnabled = false;
+  }
+
+  try {
+    if (Reflect.deleteProperty(target, '__mpvFabricOverlayBootstrap') !== true) return false;
+    if (Object.getOwnPropertyDescriptor(target, '__mpvFabricOverlayBootstrap') !== undefined) {
+      return false;
+    }
+  } catch (_error) {
+    return false;
+  }
+  return requestedEnabled;
+}
+
+if (typeof window !== 'undefined' && window) {
+  const drawingV3ShadowEnabled = consumeDrawingV3Bootstrap(window);
   if (!window.__mpvFabricOverlay) {
     window.__mpvFabricOverlay = createFabricOverlayRuntime({
       window,

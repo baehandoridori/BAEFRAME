@@ -73,9 +73,35 @@ const DRAWING_V3_DIAGNOSTIC_REASONS = new Set([
 ]);
 
 function createDrawingV3BootstrapScript(enabled) {
-  return `window.__mpvFabricOverlayBootstrap = Object.freeze(${JSON.stringify({
+  return `(() => {
+    const slot = '__mpvFabricOverlayBootstrap';
+    let bootstrap;
+    try {
+      bootstrap = Object.freeze(${JSON.stringify({
     drawingV3ShadowEnabled: enabled === true
-  })});`;
+  })});
+      Object.defineProperty(window, slot, {
+        configurable: true,
+        enumerable: false,
+        writable: false,
+        value: bootstrap
+      });
+      const descriptor = Object.getOwnPropertyDescriptor(window, slot);
+      if (descriptor?.configurable === true &&
+          descriptor.enumerable === false &&
+          descriptor.writable === false &&
+          descriptor.value === bootstrap) {
+        return true;
+      }
+    } catch (_error) {}
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(window, slot);
+      if (descriptor?.configurable === true && descriptor.value === bootstrap) {
+        Reflect.deleteProperty(window, slot);
+      }
+    } catch (_error) {}
+    return false;
+  })();`;
 }
 
 const OVERLAY_HTML = String.raw`
@@ -1281,29 +1307,39 @@ class MPVOverlayHost {
         }
         const requestedBootstrap = createDrawingV3BootstrapScript(this.drawingV3ShadowEnabled);
         const disabledBootstrap = createDrawingV3BootstrapScript(false);
-        let bundlePrefix = '';
+        let bootstrapInstalled = false;
         try {
-          await hostWindow.webContents?.executeJavaScript?.(requestedBootstrap, true);
+          bootstrapInstalled = await hostWindow.webContents?.executeJavaScript?.(
+            requestedBootstrap,
+            true
+          ) === true;
+          if (!bootstrapInstalled) {
+            this.logger.debug('Drawing V3 shadow bootstrap was not installed; continuing disabled');
+          }
         } catch (error) {
           this.logger.debug('Drawing V3 shadow bootstrap failed; continuing disabled', {
             error: error.message
           });
+        }
+        if (!bootstrapInstalled) {
           try {
-            await hostWindow.webContents?.executeJavaScript?.(disabledBootstrap, true);
+            const disabledInstalled = await hostWindow.webContents?.executeJavaScript?.(
+              disabledBootstrap,
+              true
+            ) === true;
+            if (!disabledInstalled) {
+              this.logger.debug('Drawing V3 disabled bootstrap was not installed; loading bundle off');
+            }
           } catch (fallbackError) {
-            this.logger.debug('Drawing V3 disabled bootstrap retry failed; prefixing bundle', {
+            this.logger.debug('Drawing V3 disabled bootstrap retry failed; loading bundle off', {
               error: fallbackError.message
             });
-            bundlePrefix = `${disabledBootstrap}\n`;
           }
         }
         if (!this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
           return { success: false, error: 'mpv overlay host generation changed' };
         }
-        await hostWindow.webContents?.executeJavaScript?.(
-          `${bundlePrefix}${String(bundleSource)}`,
-          true
-        );
+        await hostWindow.webContents?.executeJavaScript?.(String(bundleSource), true);
         if (!this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
           return { success: false, error: 'mpv overlay host generation changed' };
         }
