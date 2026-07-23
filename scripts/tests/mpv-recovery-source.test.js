@@ -638,6 +638,7 @@ test('shared mpv freeze releases only after the final review mode turns off', ()
 test('comment and draw handoffs acquire the next mode before releasing the previous mode', () => {
   const toggleDrawSource = extractNamedFunction(appSource, 'toggleDrawMode');
   const toggleCommentSource = extractNamedFunction(appSource, 'toggleCommentMode');
+  const systemDrawExitSource = extractNamedFunction(appSource, 'exitDrawModeForSystemPath');
 
   const drawAcquireIndex = toggleDrawSource.indexOf('applyDrawModeState(true)');
   const commentReleaseIndex = toggleDrawSource.indexOf('commentManager.setCommentMode(false)');
@@ -645,9 +646,10 @@ test('comment and draw handoffs acquire the next mode before releasing the previ
   assert.ok(commentReleaseIndex > drawAcquireIndex, 'draw must own the shared freeze before comment mode turns off');
 
   const commentAcquireIndex = toggleCommentSource.indexOf('commentManager.setCommentMode(true)');
-  const drawReleaseIndex = toggleCommentSource.indexOf('applyDrawModeState(false)');
+  const drawReleaseIndex = toggleCommentSource.indexOf('exitDrawModeForSystemPath()');
   assert.ok(commentAcquireIndex >= 0, 'comment handoff should acquire comment mode explicitly');
   assert.ok(drawReleaseIndex > commentAcquireIndex, 'comment must own the shared freeze before draw mode turns off');
+  assert.match(systemDrawExitSource, /if \(isFabricDrawingPilotControllerEngaged\(\)\) \{[\s\S]+fabricDrawingPilotController\.disable\(\);[\s\S]+return;[\s\S]+applyDrawModeState\(false\);/);
 });
 
 test('every comment and draw entry path enforces mutual exclusion in the central state handlers', () => {
@@ -656,7 +658,7 @@ test('every comment and draw entry path enforces mutual exclusion in the central
   const commentHandler = appSource.slice(commentHandlerStart, commentHandlerEnd);
   const drawStateSource = extractNamedFunction(appSource, 'applyDrawModeState');
 
-  assert.match(commentHandler, /state\.isCommentMode = isCommentMode;[\s\S]+if \(isCommentMode && state\.isDrawMode\) \{[\s\S]+applyDrawModeState\(false\);/);
+  assert.match(commentHandler, /state\.isCommentMode = isCommentMode;[\s\S]+if \(isCommentMode && \(state\.isDrawMode \|\| isFabricDrawingPilotControllerEngaged\(\)\)\) \{[\s\S]+exitDrawModeForSystemPath\(\);/);
   assert.match(drawStateSource, /state\.isDrawMode = enabled;[\s\S]+if \(enabled && state\.isCommentMode\) \{[\s\S]+commentManager\.setCommentMode\(false\);/);
   const sidebarSubmitSource = extractNamedFunction(appSource, 'submitSidebarCommentDraft');
   assert.match(sidebarSubmitSource, /commentManager\.setPendingText\(text \|\| '\(이미지\)'\)/);
@@ -725,7 +727,7 @@ test('failed superseding video load safely tears down a destructive review trans
   assert.match(beginTransitionSource, /frame: videoPlayer\.currentFrame/);
 
   const settleSource = extractNamedFunction(appSource, 'settlePendingMpvReviewFreezeMediaChange');
-  assert.match(settleSource, /applyDrawModeState\(false\);/);
+  assert.match(settleSource, /if \(state\.isDrawMode \|\| isFabricDrawingPilotControllerEngaged\(\)\) \{[\s\S]+exitDrawModeForSystemPath\(\);/);
   assert.match(settleSource, /commentManager\.setCommentMode\(false\);/);
   assert.match(settleSource, /forceRemoveMpvReviewFreezeFrame\(\);/);
   assert.match(settleSource, /await stopMpvPilotEngine\(\);/);

@@ -1110,6 +1110,27 @@ body.mpv-pilot-mode .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
   touch-action: none;
 }
 
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode #drawingTools {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-overlay {
+  visibility: hidden;
+  pointer-events: none !important;
+}
+
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .layer-settings-popup {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .layer-action-btn,
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header,
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-track-row {
+  pointer-events: none;
+}
+
 .mpv-review-freeze-frame {
   position: absolute;
   z-index: 1;

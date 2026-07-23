@@ -102,7 +102,8 @@ test('non-toggle draw-mode shutdown paths clear drawing overlay state', () => {
   assert.match(appSource, /function applyDrawModeState\(enabled\) \{/);
   assert.match(appSource, /function setDrawModeReadyState\(ready\) \{[\s\S]+setCommentOverlaysDrawingPassthrough\(ready\);/);
   assert.match(appSource, /function toggleDrawMode\(\) \{[\s\S]+applyDrawModeState\(true\);[\s\S]+applyDrawModeState\(false\);/);
-  assert.match(audioModeMatch[1], /applyDrawModeState\(false\);/);
+  assert.match(audioModeMatch[1], /if \(state\.isDrawMode \|\| isFabricDrawingPilotControllerEngaged\(\)\) \{[\s\S]+exitDrawModeForSystemPath\(\);/);
+  assert.match(appSource, /function exitDrawModeForSystemPath\(\) \{[\s\S]+fabricDrawingPilotController\.disable\(\)[\s\S]+applyDrawModeState\(false\);/);
   assert.doesNotMatch(audioModeMatch[1], /state\.isDrawMode = false;/);
 });
 
@@ -138,7 +139,7 @@ test('drawing layer rendering uses static below and above canvases around the ac
   assert.match(appSource, /layersBelowCanvas: elements\.layersBelowCanvas/);
   assert.match(appSource, /layersAboveCanvas: elements\.layersAboveCanvas/);
   assert.match(appSource, /getCompositedDrawingOverlayDataUrl\(\)/);
-  assert.match(appSource, /drawingDataUrl: getCompositedDrawingOverlayDataUrl\(\)/);
+  assert.match(appSource, /drawingDataUrl: suppressLegacyDrawing \? '' : getCompositedDrawingOverlayDataUrl\(\)/);
 
   assert.match(drawingManagerSource, /partitionDrawingLayersForActive\(layers = \[\], activeLayerId\)/);
   assert.match(drawingManagerSource, /this\.layersBelowCanvas = options\.layersBelowCanvas/);
@@ -222,7 +223,7 @@ test('drawing playback avoids noisy per-frame canvas clears and preload churn', 
 });
 
 test('pen and brush strokes use bundled perfect-freehand smoothing without changing record storage', () => {
-  assert.equal(packageJson.dependencies['perfect-freehand'], '^1.2.3');
+  assert.equal(packageJson.dependencies['perfect-freehand'], '1.2.3');
   assert.match(packageJson.scripts['bundle:perfect-freehand'], /perfect-freehand[\s\S]+renderer\/scripts\/lib\/perfect-freehand\.js/);
   assert.match(packageJson.scripts.postinstall, /bundle:perfect-freehand/);
 

@@ -96,3 +96,42 @@ test('metadata-only dirty state does not create a bframe file', () => {
     /this\.autoSaveTimer = setTimeout\(async \(\) => \{\s*\n\s*if \(this\.hasUnsavedChanges\(\)\) \{/
   );
 });
+
+test('playlist aggregate direct save adds a stable review identity without touching future majors', () => {
+  assert.match(
+    appSource,
+    /import \{ BFRAME_VERSION, getDataVersion, hasExplicitBframeVersion \} from '\.\.\/\.\.\/shared\/schema\.js';/
+  );
+  assert.match(
+    appSource,
+    /import \{[\s\S]*ensureReviewDocumentId,[\s\S]*getUnsupportedBframeMajor,[\s\S]*isValidReviewDocumentId[\s\S]*\} from '\.\.\/\.\.\/shared\/bframe-root-envelope\.js';/
+  );
+
+  const directSaveStart = appSource.indexOf(
+    'async function togglePlaylistAggregateResolvedWithoutNavigation(range)'
+  );
+  const directSaveEnd = appSource.indexOf(
+    'function renderPlaylistAggregateReplies(range, normalizedSearch)',
+    directSaveStart
+  );
+  assert.ok(directSaveStart > -1 && directSaveEnd > directSaveStart);
+  const directSaveSource = appSource.slice(directSaveStart, directSaveEnd);
+
+  assert.match(
+    directSaveSource,
+    /const dataVersion = getDataVersion\(bframeData\);[\s\S]*getUnsupportedBframeMajor\([\s\S]*dataVersion,[\s\S]*BFRAME_VERSION,[\s\S]*!hasExplicitBframeVersion\(bframeData\)[\s\S]*\)/
+  );
+  assert.match(
+    directSaveSource,
+    /if \(unsupportedMajor !== null\) \{[\s\S]*throw new Error\([\s\S]*?\);[\s\S]*\}/
+  );
+  assert.match(
+    directSaveSource,
+    /ensureReviewDocumentId\(bframeData\);[\s\S]*if \(!isValidReviewDocumentId\(bframeData\.reviewDocumentId\)\) \{[\s\S]*throw new Error/
+  );
+  assert.ok(
+    directSaveSource.indexOf('ensureReviewDocumentId(bframeData);') <
+      directSaveSource.indexOf('window.electronAPI.saveReview(bframePath, bframeData)'),
+    'review identity must be prepared before direct save'
+  );
+});

@@ -18,6 +18,14 @@ const { mpvOverlayHost } = require('./mpv-overlay-host');
 const Store = require('electron-store');
 
 const log = createLogger('IPC');
+const DEFAULT_FABRIC_DRAWING_PILOT_STATE = Object.freeze({ enabled: false });
+
+function isCurrentMainRendererSender(event) {
+  const mainWindow = getMainWindow();
+  return !!mainWindow &&
+    !mainWindow.isDestroyed?.() &&
+    event?.sender === mainWindow.webContents;
+}
 
 /**
  * 허용된 파일 확장자 목록
@@ -249,8 +257,31 @@ async function pruneMissingRecentFiles() {
 /**
  * IPC 핸들러 설정
  */
-function setupIpcHandlers() {
+function setupIpcHandlers({
+  fabricDrawingPilot = DEFAULT_FABRIC_DRAWING_PILOT_STATE
+} = {}) {
   log.info('IPC 핸들러 등록 시작');
+
+  const isFabricDrawingPilotEnabled = fabricDrawingPilot?.enabled === true;
+  const invokeFabricDrawingHost = (event, operation) => {
+    if (!isFabricDrawingPilotEnabled) {
+      return { success: false, error: 'Fabric drawing pilot is disabled' };
+    }
+    if (!isCurrentMainRendererSender(event)) {
+      return { success: false, error: 'Fabric drawing IPC sender is not allowed' };
+    }
+    return operation();
+  };
+  ipcMain.handle('fabric-drawing:get-pilot-state', (event) =>
+    isCurrentMainRendererSender(event) && isFabricDrawingPilotEnabled);
+  ipcMain.handle('mpv:set-overlay-drawing-input', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.setDrawingInput(request)));
+  ipcMain.handle('mpv:update-overlay-drawing-tool', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingTool(request)));
+  ipcMain.handle('mpv:apply-overlay-drawing-action', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.applyDrawingAction(request)));
+  ipcMain.handle('mpv:get-overlay-drawing-diagnostics', (event) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.getDrawingDiagnostics()));
 
   // ====== 파일 관련 ======
 
@@ -2716,4 +2747,3 @@ function createPathHash(filePath) {
 }
 
 module.exports = { setupIpcHandlers, pruneMissingRecentFiles };
-

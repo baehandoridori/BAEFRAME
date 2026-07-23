@@ -9,11 +9,19 @@ import { createLogger } from '../logger.js';
 import {
   BFRAME_VERSION,
   getDataVersion,
+  hasExplicitBframeVersion,
   needsMigration,
   migrateToV2,
   extractFileName,
   extractFileNameWithoutExt
 } from '../../../shared/schema.js';
+import {
+  createReviewDocumentId,
+  extractOpaqueBframeRoot,
+  getUnsupportedBframeMajor,
+  isValidReviewDocumentId,
+  mergeBframeRoot
+} from '../../../shared/bframe-root-envelope.js';
 // 오프라인 머지 유틸리티 (Liveblocks 비활성 시 폴백)
 
 function toTime(value) {
@@ -301,6 +309,13 @@ export class ReviewDataManager extends EventTarget {
     this._hasPersistedFile = false;
     this._beforeSaveHandler = null;
     this._initialSaveConflictHandler = null;
+    this._opaqueRootFields = {};
+    this._reviewDocumentId = null;
+    this._reviewDocumentIdPersisted = false;
+    this._reviewDocumentIdFactory = options.reviewDocumentIdFactory || createReviewDocumentId;
+    this._writeBlockedVersion = null;
+    this._writeBlockedVersionDetected = false;
+    this._writeBlockedReason = null;
 
     // 이벤트 바인딩
     this._onDataChanged = this._onDataChanged.bind(this);
@@ -445,6 +460,7 @@ export class ReviewDataManager extends EventTarget {
     this._manualVersions = [];
     this._hasPersistedFile = false;
     this.isDirty = false;
+    this._resetRootEnvelopeState();
 
     log.info('영상 파일 설정됨', {
       videoPath: this.currentVideoPath,
@@ -525,6 +541,9 @@ export class ReviewDataManager extends EventTarget {
           });
         }
 
+        await this._refreshRootEnvelopeBeforeSave();
+        this._assertRootEnvelopeWritable();
+        this._ensureReviewDocumentId();
         const data = this._collectData();
 
         // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
@@ -564,6 +583,7 @@ export class ReviewDataManager extends EventTarget {
         }
 
         this._hasPersistedFile = true;
+        this._reviewDocumentIdPersisted = true;
         savedData = data;
         break;
       }
@@ -683,6 +703,7 @@ export class ReviewDataManager extends EventTarget {
         log.info('.bframe 파일 없음 (새 리뷰)', { path: this.currentBframePath });
         this.compositionLayerManager?.fromJSON?.([]);
         this._hasPersistedFile = false;
+        this._resetRootEnvelopeState();
         this.isLoading = false;
         return false;
       }
@@ -692,8 +713,18 @@ export class ReviewDataManager extends EventTarget {
       // 버전 확인 및 마이그레이션
       const dataVersion = getDataVersion(data);
       let migratedData = data;
+      const unsupportedMajor = getUnsupportedBframeMajor(
+        dataVersion,
+        BFRAME_VERSION,
+        !hasExplicitBframeVersion(data)
+      );
 
-      if (needsMigration(data)) {
+      if (unsupportedMajor !== null) {
+        log.warn('지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다', {
+          version: dataVersion,
+          supportedVersion: BFRAME_VERSION
+        });
+      } else if (needsMigration(data)) {
         log.info('마이그레이션 필요', { from: dataVersion, to: BFRAME_VERSION });
 
         // 마이그레이션 전 백업 생성
@@ -793,6 +824,15 @@ export class ReviewDataManager extends EventTarget {
         return { success: false, added: 0, updated: 0 };
       }
 
+      const retainIdentityWhenMissing = !this._reviewDocumentIdPersisted;
+      const allowIdentityReplacement = options.merge === false;
+      this._captureRootEnvelope(remoteData, {
+        retainIdentityWhenMissing,
+        allowIdentityReplacement
+      });
+      if (!allowIdentityReplacement) {
+        this._assertRootEnvelopeWritable();
+      }
       this._hasPersistedFile = true;
 
       const result = { added: 0, updated: 0 };
@@ -886,7 +926,7 @@ export class ReviewDataManager extends EventTarget {
 
       } else {
         // 덮어쓰기 모드: 원격 데이터로 전체 교체
-        this._applyData(remoteData);
+        this._applyData(remoteData, { allowIdentityReplacement: true });
         log.info('reloadAndMerge: 데이터 덮어쓰기 완료');
       }
 
@@ -977,6 +1017,112 @@ export class ReviewDataManager extends EventTarget {
     }
   }
 
+  _resetRootEnvelopeState() {
+    this._opaqueRootFields = {};
+    this._reviewDocumentId = null;
+    this._reviewDocumentIdPersisted = false;
+    this._writeBlockedVersion = null;
+    this._writeBlockedVersionDetected = false;
+    this._writeBlockedReason = null;
+  }
+
+  _captureRootEnvelope(data, options = {}) {
+    const {
+      retainIdentityWhenMissing = false,
+      allowIdentityReplacement = false
+    } = options;
+    const hasIncomingIdentity = Object.hasOwn(data, 'reviewDocumentId');
+    const incomingIdentityIsValid = hasIncomingIdentity &&
+      isValidReviewDocumentId(data.reviewDocumentId);
+
+    if (this._reviewDocumentIdPersisted && !allowIdentityReplacement) {
+      if (!hasIncomingIdentity) {
+        this._writeBlockedReason = 'review-document-id-missing';
+        return false;
+      }
+      if (!incomingIdentityIsValid) {
+        this._writeBlockedReason = 'invalid-review-document-id';
+        return false;
+      }
+      if (data.reviewDocumentId !== this._reviewDocumentId) {
+        this._writeBlockedReason = 'review-document-id-mismatch';
+        return false;
+      }
+    }
+
+    this._opaqueRootFields = extractOpaqueBframeRoot(data);
+
+    const dataVersion = getDataVersion(data);
+    const unsupportedMajor = getUnsupportedBframeMajor(
+      dataVersion,
+      BFRAME_VERSION,
+      !hasExplicitBframeVersion(data)
+    );
+    this._writeBlockedVersionDetected = unsupportedMajor !== null;
+    this._writeBlockedVersion = unsupportedMajor === null ? null : dataVersion;
+    this._writeBlockedReason = null;
+
+    if (hasIncomingIdentity) {
+      if (incomingIdentityIsValid) {
+        this._reviewDocumentId = data.reviewDocumentId;
+        this._reviewDocumentIdPersisted = true;
+      } else {
+        this._reviewDocumentId = null;
+        this._reviewDocumentIdPersisted = false;
+        this._writeBlockedReason = 'invalid-review-document-id';
+      }
+    } else if (!retainIdentityWhenMissing) {
+      this._reviewDocumentId = null;
+      this._reviewDocumentIdPersisted = false;
+    }
+  }
+
+  async _refreshRootEnvelopeBeforeSave() {
+    if (!this._hasPersistedFile) return;
+
+    const latestRoot = await window.electronAPI.loadReview(this.currentBframePath);
+    if (!latestRoot || typeof latestRoot !== 'object' || Array.isArray(latestRoot)) {
+      throw new Error('최신 .bframe root를 다시 읽지 못해 저장을 중단했습니다.');
+    }
+
+    this._captureRootEnvelope(latestRoot, {
+      retainIdentityWhenMissing: !this._reviewDocumentIdPersisted
+    });
+  }
+
+  _assertRootEnvelopeWritable() {
+    if (this._writeBlockedVersionDetected) {
+      throw new Error(
+        `지원하지 않는 .bframe ${this._writeBlockedVersion} 파일은 이 버전에서 저장할 수 없습니다.`
+      );
+    }
+
+    if (this._writeBlockedReason === 'invalid-review-document-id') {
+      throw new Error('유효하지 않은 reviewDocumentId가 있어 원본 보호를 위해 저장을 중단했습니다.');
+    }
+
+    if (this._writeBlockedReason === 'review-document-id-missing') {
+      throw new Error('최신 .bframe에서 reviewDocumentId가 사라져 계보 충돌로 저장을 중단했습니다.');
+    }
+
+    if (this._writeBlockedReason === 'review-document-id-mismatch') {
+      throw new Error('최신 .bframe의 reviewDocumentId가 달라 계보 충돌로 저장을 중단했습니다.');
+    }
+  }
+
+  _ensureReviewDocumentId() {
+    if (this._reviewDocumentId) return this._reviewDocumentId;
+
+    const reviewDocumentId = this._reviewDocumentIdFactory();
+    if (!isValidReviewDocumentId(reviewDocumentId)) {
+      throw new Error('reviewDocumentId 생성기가 유효하지 않은 ID를 반환했습니다.');
+    }
+
+    this._reviewDocumentId = reviewDocumentId;
+    this._reviewDocumentIdPersisted = false;
+    return reviewDocumentId;
+  }
+
   /**
    * 현재 모든 데이터 수집 (v2.0 스키마)
    */
@@ -984,7 +1130,7 @@ export class ReviewDataManager extends EventTarget {
     const now = new Date().toISOString();
     const videoFile = extractFileName(this.currentVideoPath);
 
-    return {
+    const knownRoot = {
       // v2.0 스키마 필드
       bframeVersion: BFRAME_VERSION,
       videoFile: videoFile,
@@ -1006,12 +1152,20 @@ export class ReviewDataManager extends EventTarget {
       highlights: this.highlightManager?.toJSON() || [],
       compositionLayers: this.compositionLayerManager?.toJSON() || []
     };
+
+    if (this._reviewDocumentId) {
+      knownRoot.reviewDocumentId = this._reviewDocumentId;
+    }
+
+    return mergeBframeRoot(this._opaqueRootFields, knownRoot);
   }
 
   /**
    * 로드한 데이터 적용 (v2.0 스키마)
    */
-  _applyData(data) {
+  _applyData(data, options = {}) {
+    this._captureRootEnvelope(data, options);
+
     // 메타데이터
     this._createdAt = data.createdAt;
     this._modifiedAt = data.modifiedAt;  // 머지 비교용

@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // ====== MPV 파일럿 관련 ======
+  getFabricDrawingPilotState: () => ipcRenderer.invoke('fabric-drawing:get-pilot-state'),
   mpvIsEnabled: () => ipcRenderer.invoke('mpv:is-enabled'),
   mpvIsAvailable: () => ipcRenderer.invoke('mpv:is-available'),
   mpvLoad: (filePath, options) => ipcRenderer.invoke('mpv:load', filePath, options),
@@ -135,6 +136,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvUpdateOverlayBounds: (bounds) => ipcRenderer.invoke('mpv:update-overlay-bounds', bounds),
   mpvUpdateOverlayState: (state) => ipcRenderer.invoke('mpv:update-overlay-state', state),
   mpvUpdateOverlayRemoteCursors: (remoteCursorHtml) => ipcRenderer.invoke('mpv:update-overlay-remote-cursors', remoteCursorHtml),
+  mpvSetOverlayDrawingInput: (request) => ipcRenderer.invoke('mpv:set-overlay-drawing-input', request),
+  mpvUpdateOverlayDrawingTool: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-tool', request),
+  mpvApplyOverlayDrawingAction: (request) => ipcRenderer.invoke('mpv:apply-overlay-drawing-action', request),
+  mpvGetOverlayDrawingDiagnostics: () => ipcRenderer.invoke('mpv:get-overlay-drawing-diagnostics'),
   mpvDestroyOverlay: () => ipcRenderer.invoke('mpv:destroy-overlay'),
 
   // ====== 파일 관련 (유틸리티) ======

@@ -45,6 +45,10 @@ let shutdownCleanupStarted = false;
 const { createLogger } = require('./logger');
 const { createMainWindow, getMainWindow, createLoadingWindow, closeLoadingWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
+const {
+  resolveFabricDrawingPilot,
+  resolveFabricDrawingV3Shadow
+} = require('./experiment-flags');
 const { registerProjectFileAssociations } = require('./project-file-associations');
 const { mpvManager } = require('./mpv-manager');
 const { mpvEmbedHost } = require('./mpv-embed-host');
@@ -59,6 +63,10 @@ const {
   resolveMultiInstanceUserDataPath,
   shouldAllowMultipleInstances
 } = require('./instance-policy');
+const fabricDrawingPilot = resolveFabricDrawingPilot();
+const fabricDrawingV3Shadow = resolveFabricDrawingV3Shadow({ fabricDrawingPilot });
+mpvOverlayHost.configureDrawingV3Shadow(fabricDrawingV3Shadow.enabled);
+const skipShellRegistration = process.argv.includes('--skip-shell-registration');
 debugLog('내부 모듈 로드 완료');
 
 const log = createLogger('Main');
@@ -212,22 +220,24 @@ log.info('비디오 하드웨어 가속 플래그 적용됨');
 // 개발 모드, 빌드된 앱 모두 프로토콜 등록
 // 개발 모드에서도 Slack 링크 테스트가 가능하도록 함
 // 팀원 배포 시 빌드된 exe 한 번 실행하면 해당 경로로 덮어씌워짐
-if (process.defaultApp) {
-  // 개발 모드: electron 실행 파일 + 스크립트 경로로 등록
-  app.setAsDefaultProtocolClient('baeframe', process.execPath, [path.resolve(process.argv[1])]);
-  log.info('개발 모드 - 프로토콜 등록됨', {
-    execPath: process.execPath,
-    scriptPath: path.resolve(process.argv[1])
-  });
-  debugLog(`개발 모드 프로토콜 등록됨: ${process.execPath} ${path.resolve(process.argv[1])}`);
-} else {
-  // 빌드된 exe - 현재 실행 파일로 등록
-  app.setAsDefaultProtocolClient('baeframe');
-  log.info('baeframe:// 프로토콜 등록됨', {
-    execPath: process.execPath,
-    defaultApp: process.defaultApp
-  });
-  debugLog(`프로토콜 등록됨: ${process.execPath}`);
+if (!skipShellRegistration) {
+  if (process.defaultApp) {
+    // 개발 모드: electron 실행 파일 + 스크립트 경로로 등록
+    app.setAsDefaultProtocolClient('baeframe', process.execPath, [path.resolve(process.argv[1])]);
+    log.info('개발 모드 - 프로토콜 등록됨', {
+      execPath: process.execPath,
+      scriptPath: path.resolve(process.argv[1])
+    });
+    debugLog(`개발 모드 프로토콜 등록됨: ${process.execPath} ${path.resolve(process.argv[1])}`);
+  } else {
+    // 빌드된 exe - 현재 실행 파일로 등록
+    app.setAsDefaultProtocolClient('baeframe');
+    log.info('baeframe:// 프로토콜 등록됨', {
+      execPath: process.execPath,
+      defaultApp: process.defaultApp
+    });
+    debugLog(`프로토콜 등록됨: ${process.execPath}`);
+  }
 }
 
 // 단일 인스턴스 잠금 (개발 모드에서는 다중 인스턴스 허용)
@@ -363,12 +373,14 @@ if (!gotTheLock) {
     debugLog(`앱 준비 완료: ${Date.now() - appStartTime}ms`);
     log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
-    registerProjectFileAssociations({
-      appPath: process.execPath,
-      logger: log
-    }).catch((error) => {
-      log.warn('프로젝트 파일 연결 자동 등록 예외', { error: error.message });
-    });
+    if (!skipShellRegistration) {
+      registerProjectFileAssociations({
+        appPath: process.execPath,
+        logger: log
+      }).catch((error) => {
+        log.warn('프로젝트 파일 연결 자동 등록 예외', { error: error.message });
+      });
+    }
 
     // 시작 시 전달된 파일/프로토콜 인자 확인
     log.info('process.argv 전체', { argv: process.argv });
@@ -461,7 +473,7 @@ if (!gotTheLock) {
       debugLog('로딩 창 표시됨 (일반/재생목록/컷 묶음 시작)');
     }
 
-    setupIpcHandlers();
+    setupIpcHandlers({ fabricDrawingPilot });
 
     // 최근 파일 목록 정리 (경로가 없어진 항목 제거)
     // 비동기로 실행하고 실패해도 앱 시작을 막지 않는다
