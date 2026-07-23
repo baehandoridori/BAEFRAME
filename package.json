@@ -29,6 +29,7 @@
     "test:drawing-v3-adapter": "node --test --test-concurrency=1 scripts/tests/drawing-v3-engine-adapter.test.js",
     "test:drawing-v3-store-observer": "node --test --test-concurrency=1 scripts/tests/fabric-drawing-scene-observer.test.js",
     "benchmark:drawing-v3": "node --test --test-concurrency=1 scripts/tests/drawing-v3-document-benchmark.test.mjs",
+    "benchmark:drawing-v3-adapter": "node --test --test-concurrency=1 scripts/tests/drawing-v3-engine-adapter-benchmark.test.mjs && node --test --test-concurrency=1 --test-name-pattern=\"Drawing V3 runtime shadow is disabled by default\" scripts/tests/mpv-fabric-overlay-runtime.test.js",
     "test:video-pan": "node --test scripts/tests/video-pan-controls.test.js scripts/tests/playhead-frame-step-source.test.js",
     "test:mpv": "node --test scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/external-frame-interpolation.test.mjs",
     "test:fps": "node --test scripts/tests/fps-accuracy-source.test.js",

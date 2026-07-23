@@ -1088,7 +1088,9 @@ test('quarantines only the overflowing scene for item, byte and oversize limits'
     'queue-event-too-large'
   );
 
-  const accountingHarness = makeHarness({ limits: { maxQueueItems: 2 } });
+  const accountingHarness = makeHarness({
+    limits: { maxQueueItems: 2, maxQueueBytes: 10 }
+  });
   const retained = makeScene({ sceneInstanceId: 'retained', targetFrame: 0 });
   const overflowed = makeScene({ sceneInstanceId: 'overflowed', targetFrame: 0 });
   const admitted = makeScene({ sceneInstanceId: 'admitted', targetFrame: 0 });
@@ -1096,15 +1098,20 @@ test('quarantines only the overflowing scene for item, byte and oversize limits'
     accountingHarness.adapter.activateScene(candidate, new Map());
   }
   accountingHarness.adapter.enqueueTransition(makeEvent(retained, 1, {
+    estimatedBytes: 4,
     insertions: [{ index: 0, record: makeRecord('r'), baseTransform: makeTransform() }]
   }));
   accountingHarness.adapter.enqueueTransition(makeEvent(overflowed, 1, {
+    estimatedBytes: 6,
     insertions: [{ index: 0, record: makeRecord('o'), baseTransform: makeTransform() }]
   }));
-  assert.equal(accountingHarness.adapter.enqueueTransition(makeEvent(overflowed, 2)), false);
+  assert.equal(accountingHarness.adapter.enqueueTransition(makeEvent(overflowed, 2, {
+    estimatedBytes: 1
+  })), false);
   assert.equal(accountingHarness.adapter.enqueueTransition(makeEvent(admitted, 1, {
+    estimatedBytes: 6,
     insertions: [{ index: 0, record: makeRecord('n'), baseTransform: makeTransform() }]
-  })), true, 'removing overflowed-scene payloads must restore exact queue capacity');
+  })), true, 'removing overflowed payloads must restore exact item and byte capacity');
   accountingHarness.flushAll();
   assert.deepEqual(projectionObjects(
     accountingHarness.adapter,
