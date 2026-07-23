@@ -5,6 +5,8 @@ const path = require('node:path');
 
 const {
   RUNTIME_PROFILE_MARKER_FILE,
+  STABLE_RUNTIME_PROFILE_CHANNEL,
+  STABLE_RUNTIME_PROFILE_MARKER,
   TRIAL_RUNTIME_PROFILE_CHANNEL,
   TRIAL_RUNTIME_PROFILE_MARKER
 } = require('../main/runtime-profile');
@@ -49,20 +51,23 @@ function reconcileRuntimeProfileMarker({
   }
 
   const markerPath = path.join(resourcesDir, RUNTIME_PROFILE_MARKER_FILE);
-  const markerExisted = Boolean(fsModule.existsSync?.(markerPath));
   removeFileIfPresent(markerPath, fsModule);
   removeTemporaryMarkers(resourcesDir, fsModule);
 
   const requestedChannel = String(env?.BAEFRAME_RUNTIME_PROFILE || '').trim();
-  if (requestedChannel !== TRIAL_RUNTIME_PROFILE_CHANNEL) {
-    return {
-      status: markerExisted ? 'removed' : 'absent',
-      markerPath
-    };
+  let runtimeProfileMarker;
+  if (!requestedChannel || requestedChannel === STABLE_RUNTIME_PROFILE_CHANNEL) {
+    runtimeProfileMarker = STABLE_RUNTIME_PROFILE_MARKER;
+  } else if (requestedChannel === TRIAL_RUNTIME_PROFILE_CHANNEL) {
+    runtimeProfileMarker = TRIAL_RUNTIME_PROFILE_MARKER;
+  } else {
+    throw new RangeError(
+      `Unsupported BAEFRAME runtime profile: ${requestedChannel}`
+    );
   }
 
   fsModule.mkdirSync(resourcesDir, { recursive: true });
-  const serialized = `${JSON.stringify(TRIAL_RUNTIME_PROFILE_MARKER, null, 2)}\n`;
+  const serialized = `${JSON.stringify(runtimeProfileMarker, null, 2)}\n`;
   const randomSuffix = Math.floor(Number(random()) * Number.MAX_SAFE_INTEGER)
     .toString(36)
     .replace(/[^a-z0-9]/gi, '');

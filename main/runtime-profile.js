@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const MAX_RUNTIME_PROFILE_BYTES = 4096;
 const RUNTIME_PROFILE_MARKER_FILE = 'baeframe-runtime-profile.json';
+const STABLE_RUNTIME_PROFILE_CHANNEL = 'fabric-v3-stable';
 const TRIAL_RUNTIME_PROFILE_CHANNEL = 'fabric-v3-trial';
 
 function deepFreeze(value) {
@@ -31,6 +32,19 @@ const TRIAL_RUNTIME_PROFILE_MARKER = deepFreeze({
   skipShellRegistration: true
 });
 
+const STABLE_RUNTIME_PROFILE_MARKER = deepFreeze({
+  schemaVersion: 1,
+  channel: STABLE_RUNTIME_PROFILE_CHANNEL,
+  features: {
+    mpvPlaybackPilot: true,
+    fabricDrawingPilot: true,
+    fabricDrawingV3Shadow: true,
+    fabricDrawingPersistence: true
+  },
+  isolateUserData: false,
+  skipShellRegistration: false
+});
+
 const DEFAULT_RUNTIME_PROFILE = deepFreeze({
   active: false,
   source: 'default',
@@ -52,6 +66,12 @@ const TRIAL_RUNTIME_PROFILE = deepFreeze({
   ...TRIAL_RUNTIME_PROFILE_MARKER
 });
 
+const STABLE_RUNTIME_PROFILE = deepFreeze({
+  active: true,
+  source: 'marker',
+  ...STABLE_RUNTIME_PROFILE_MARKER
+});
+
 function isPlainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
@@ -66,7 +86,11 @@ function hasExactKeys(value, expectedKeys) {
     actualKeys.every((key, index) => key === normalizedExpectedKeys[index]);
 }
 
-function isExactTrialMarker(value) {
+function isExactMarkerForChannel(value, {
+  channel,
+  isolateUserData,
+  skipShellRegistration
+}) {
   if (!hasExactKeys(value, [
     'schemaVersion',
     'channel',
@@ -77,9 +101,9 @@ function isExactTrialMarker(value) {
     return false;
   }
   if (value.schemaVersion !== 1 ||
-      value.channel !== TRIAL_RUNTIME_PROFILE_CHANNEL ||
-      value.isolateUserData !== true ||
-      value.skipShellRegistration !== true) {
+      value.channel !== channel ||
+      value.isolateUserData !== isolateUserData ||
+      value.skipShellRegistration !== skipShellRegistration) {
     return false;
   }
   if (!hasExactKeys(value.features, [
@@ -91,6 +115,22 @@ function isExactTrialMarker(value) {
     return false;
   }
   return Object.values(value.features).every(feature => feature === true);
+}
+
+function isExactTrialMarker(value) {
+  return isExactMarkerForChannel(value, {
+    channel: TRIAL_RUNTIME_PROFILE_CHANNEL,
+    isolateUserData: true,
+    skipShellRegistration: true
+  });
+}
+
+function isExactStableMarker(value) {
+  return isExactMarkerForChannel(value, {
+    channel: STABLE_RUNTIME_PROFILE_CHANNEL,
+    isolateUserData: false,
+    skipShellRegistration: false
+  });
 }
 
 function loadRuntimeProfile({
@@ -117,9 +157,13 @@ function loadRuntimeProfile({
     }
 
     const parsed = JSON.parse(raw.toString('utf8'));
-    return isExactTrialMarker(parsed)
-      ? TRIAL_RUNTIME_PROFILE
-      : DEFAULT_RUNTIME_PROFILE;
+    if (isExactTrialMarker(parsed)) {
+      return TRIAL_RUNTIME_PROFILE;
+    }
+    if (isExactStableMarker(parsed)) {
+      return STABLE_RUNTIME_PROFILE;
+    }
+    return DEFAULT_RUNTIME_PROFILE;
   } catch (_error) {
     return DEFAULT_RUNTIME_PROFILE;
   }
@@ -129,9 +173,13 @@ module.exports = {
   DEFAULT_RUNTIME_PROFILE,
   MAX_RUNTIME_PROFILE_BYTES,
   RUNTIME_PROFILE_MARKER_FILE,
+  STABLE_RUNTIME_PROFILE,
+  STABLE_RUNTIME_PROFILE_CHANNEL,
+  STABLE_RUNTIME_PROFILE_MARKER,
   TRIAL_RUNTIME_PROFILE,
   TRIAL_RUNTIME_PROFILE_CHANNEL,
   TRIAL_RUNTIME_PROFILE_MARKER,
+  isExactStableMarker,
   isExactTrialMarker,
   loadRuntimeProfile
 };

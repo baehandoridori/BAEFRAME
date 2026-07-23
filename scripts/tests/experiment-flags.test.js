@@ -49,6 +49,23 @@ function trialRuntimeProfile() {
   });
 }
 
+function stableRuntimeProfile() {
+  return Object.freeze({
+    active: true,
+    source: 'marker',
+    schemaVersion: 1,
+    channel: 'fabric-v3-stable',
+    features: Object.freeze({
+      mpvPlaybackPilot: true,
+      fabricDrawingPilot: true,
+      fabricDrawingV3Shadow: true,
+      fabricDrawingPersistence: true
+    }),
+    isolateUserData: false,
+    skipShellRegistration: false
+  });
+}
+
 function loadIpcSetupWithHandlerRegistry(options = {}) {
   const handlers = new Map();
   const noop = () => {};
@@ -160,6 +177,66 @@ test('valid trial marker enables mpv, Fabric, and V3 shadow without environment 
   assert.deepEqual(env, {});
 });
 
+test('valid stable marker enables mpv, Fabric, and V3 shadow without trial isolation', () => {
+  const resolveMpvPlaybackPilot = loadMpvResolver();
+  const resolveFabricDrawingPilot = loadResolver();
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+  const runtimeProfile = stableRuntimeProfile();
+
+  const mpvPlaybackPilot = resolveMpvPlaybackPilot({
+    argv: [],
+    env: {},
+    runtimeProfile
+  });
+  const fabricDrawingPilot = resolveFabricDrawingPilot({
+    argv: [],
+    env: {},
+    runtimeProfile
+  });
+  const fabricDrawingV3Shadow = resolveFabricDrawingV3Shadow({
+    argv: [],
+    env: {},
+    runtimeProfile,
+    fabricDrawingPilot
+  });
+
+  assert.deepEqual(mpvPlaybackPilot, { enabled: true, source: 'marker' });
+  assert.deepEqual(fabricDrawingPilot, { enabled: true, source: 'marker' });
+  assert.deepEqual(fabricDrawingV3Shadow, { enabled: true, source: 'marker' });
+  assert.equal(runtimeProfile.isolateUserData, false);
+  assert.equal(runtimeProfile.skipShellRegistration, false);
+});
+
+test('kill switches win over the valid stable marker', () => {
+  const runtimeProfile = stableRuntimeProfile();
+  const resolveMpvPlaybackPilot = loadMpvResolver();
+  const resolveFabricDrawingPilot = loadResolver();
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+
+  const mpvPlaybackPilot = resolveMpvPlaybackPilot({
+    argv: [],
+    env: { BAEFRAME_DISABLE_MPV: '1' },
+    runtimeProfile
+  });
+  const fabricDrawingPilot = resolveFabricDrawingPilot({
+    argv: [],
+    env: { BAEFRAME_DISABLE_FABRIC_DRAWING_PILOT: '1' },
+    runtimeProfile
+  });
+
+  assert.deepEqual(mpvPlaybackPilot, { enabled: false, source: 'kill-switch' });
+  assert.deepEqual(fabricDrawingPilot, { enabled: false, source: 'kill-switch' });
+  assert.deepEqual(
+    resolveFabricDrawingV3Shadow({
+      argv: [],
+      env: { BAEFRAME_DISABLE_FABRIC_DRAWING_V3_SHADOW: '1' },
+      runtimeProfile,
+      fabricDrawingPilot: { enabled: true, source: 'marker' }
+    }),
+    { enabled: false, source: 'kill-switch' }
+  );
+});
+
 test('kill switches win over the valid trial marker and explicit flags win over marker source', () => {
   const runtimeProfile = trialRuntimeProfile();
   const resolveMpvPlaybackPilot = loadMpvResolver();
@@ -235,7 +312,7 @@ test('mpv resolver keeps default OFF and supports existing explicit environment 
   );
 });
 
-test('a partial or future trial object cannot enable any runtime feature', () => {
+test('a partial, future, or cross-channel profile cannot enable any runtime feature', () => {
   const resolveMpvPlaybackPilot = loadMpvResolver();
   const resolveFabricDrawingPilot = loadResolver();
   const resolveFabricDrawingV3Shadow = loadShadowResolver();
@@ -254,6 +331,25 @@ test('a partial or future trial object cannot enable any runtime feature', () =>
     {
       ...trialRuntimeProfile(),
       unknown: true
+    },
+    {
+      ...stableRuntimeProfile(),
+      schemaVersion: 2
+    },
+    {
+      ...stableRuntimeProfile(),
+      features: {
+        ...stableRuntimeProfile().features,
+        fabricDrawingPersistence: false
+      }
+    },
+    {
+      ...stableRuntimeProfile(),
+      isolateUserData: true
+    },
+    {
+      ...stableRuntimeProfile(),
+      channel: 'fabric-v3-trial'
     }
   ];
 

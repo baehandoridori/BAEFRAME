@@ -15,8 +15,8 @@ function hasExactKeys(value, expectedKeys) {
     keys.every((key, index) => key === expected[index]);
 }
 
-function isActiveTrialRuntimeProfile(runtimeProfile) {
-  return hasExactKeys(runtimeProfile, [
+function isActiveFabricRuntimeProfile(runtimeProfile) {
+  const hasExactProfileShape = hasExactKeys(runtimeProfile, [
     'active',
     'source',
     'schemaVersion',
@@ -24,13 +24,24 @@ function isActiveTrialRuntimeProfile(runtimeProfile) {
     'features',
     'isolateUserData',
     'skipShellRegistration'
-  ]) &&
-    runtimeProfile.active === true &&
-    runtimeProfile.source === 'marker' &&
-    runtimeProfile.schemaVersion === 1 &&
+  ]);
+  if (!hasExactProfileShape) {
+    return false;
+  }
+
+  const isTrialProfile =
     runtimeProfile.channel === 'fabric-v3-trial' &&
     runtimeProfile.isolateUserData === true &&
-    runtimeProfile.skipShellRegistration === true &&
+    runtimeProfile.skipShellRegistration === true;
+  const isStableProfile =
+    runtimeProfile.channel === 'fabric-v3-stable' &&
+    runtimeProfile.isolateUserData === false &&
+    runtimeProfile.skipShellRegistration === false;
+
+  return runtimeProfile.active === true &&
+    runtimeProfile.source === 'marker' &&
+    runtimeProfile.schemaVersion === 1 &&
+    (isTrialProfile || isStableProfile) &&
     hasExactKeys(runtimeProfile.features, [
       'mpvPlaybackPilot',
       'fabricDrawingPilot',
@@ -58,7 +69,7 @@ function resolveMpvPlaybackPilot({
   if (isTruthyEnvValue(env.BAEFRAME_MPV_PILOT)) {
     return Object.freeze({ enabled: true, source: 'env' });
   }
-  if (isActiveTrialRuntimeProfile(runtimeProfile) &&
+  if (isActiveFabricRuntimeProfile(runtimeProfile) &&
       runtimeProfile.features.mpvPlaybackPilot === true) {
     return Object.freeze({ enabled: true, source: 'marker' });
   }
@@ -82,7 +93,7 @@ function resolveFabricDrawingPilot({
   if (isEnabledEnvValue(env.BAEFRAME_FABRIC_DRAWING_PILOT)) {
     return Object.freeze({ enabled: true, source: 'env' });
   }
-  if (isActiveTrialRuntimeProfile(runtimeProfile) &&
+  if (isActiveFabricRuntimeProfile(runtimeProfile) &&
       runtimeProfile.features.fabricDrawingPilot === true) {
     return Object.freeze({ enabled: true, source: 'marker' });
   }
@@ -110,7 +121,7 @@ function resolveFabricDrawingV3Shadow({
   if (isEnabledEnvValue(env.BAEFRAME_FABRIC_DRAWING_V3_SHADOW)) {
     return Object.freeze({ enabled: true, source: 'env' });
   }
-  if (isActiveTrialRuntimeProfile(runtimeProfile) &&
+  if (isActiveFabricRuntimeProfile(runtimeProfile) &&
       runtimeProfile.features.fabricDrawingV3Shadow === true) {
     return Object.freeze({ enabled: true, source: 'marker' });
   }

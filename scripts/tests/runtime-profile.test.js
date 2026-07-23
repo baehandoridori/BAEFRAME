@@ -10,6 +10,7 @@ const {
   DEFAULT_RUNTIME_PROFILE,
   MAX_RUNTIME_PROFILE_BYTES,
   RUNTIME_PROFILE_MARKER_FILE,
+  STABLE_RUNTIME_PROFILE_MARKER,
   TRIAL_RUNTIME_PROFILE_MARKER,
   loadRuntimeProfile
 } = require('../../main/runtime-profile');
@@ -50,6 +51,19 @@ function assertDefaultOff(profile) {
   assert.equal(Object.isFrozen(profile.features), true);
 }
 
+const EXPECTED_STABLE_RUNTIME_PROFILE_MARKER = Object.freeze({
+  schemaVersion: 1,
+  channel: 'fabric-v3-stable',
+  features: Object.freeze({
+    mpvPlaybackPilot: true,
+    fabricDrawingPilot: true,
+    fabricDrawingV3Shadow: true,
+    fabricDrawingPersistence: true
+  }),
+  isolateUserData: false,
+  skipShellRegistration: false
+});
+
 test('runtime profile stays off when unpackaged, missing, malformed, or oversized', (t) => {
   const { resourcesDir } = createResourcesSandbox(t);
 
@@ -87,7 +101,13 @@ test('runtime profile rejects unknown or inexact marker contracts atomically', (
       }
     },
     { ...TRIAL_RUNTIME_PROFILE_MARKER, isolateUserData: false },
-    { ...TRIAL_RUNTIME_PROFILE_MARKER, skipShellRegistration: false }
+    { ...TRIAL_RUNTIME_PROFILE_MARKER, skipShellRegistration: false },
+    { ...EXPECTED_STABLE_RUNTIME_PROFILE_MARKER, isolateUserData: true },
+    { ...EXPECTED_STABLE_RUNTIME_PROFILE_MARKER, skipShellRegistration: true },
+    {
+      ...EXPECTED_STABLE_RUNTIME_PROFILE_MARKER,
+      channel: 'fabric-v3-trial'
+    }
   ];
 
   for (const invalidMarker of invalidMarkers) {
@@ -124,7 +144,30 @@ test('valid packaged trial marker enables the complete deeply frozen profile', (
   assert.equal(Object.isFrozen(TRIAL_RUNTIME_PROFILE_MARKER.features), true);
 });
 
-test('afterPack removes stale markers and writes trial markers atomically only for trial builds', async (t) => {
+test('valid packaged stable marker enables the complete non-isolated profile', (t) => {
+  const { resourcesDir } = createResourcesSandbox(t);
+  writeMarker(resourcesDir, EXPECTED_STABLE_RUNTIME_PROFILE_MARKER);
+
+  const profile = loadRuntimeProfile({
+    isPackaged: true,
+    resourcesPath: resourcesDir
+  });
+
+  assert.deepEqual(STABLE_RUNTIME_PROFILE_MARKER, EXPECTED_STABLE_RUNTIME_PROFILE_MARKER);
+  assert.equal(profile.active, true);
+  assert.equal(profile.source, 'marker');
+  assert.equal(profile.schemaVersion, 1);
+  assert.equal(profile.channel, 'fabric-v3-stable');
+  assert.deepEqual(profile.features, EXPECTED_STABLE_RUNTIME_PROFILE_MARKER.features);
+  assert.equal(profile.isolateUserData, false);
+  assert.equal(profile.skipShellRegistration, false);
+  assert.equal(Object.isFrozen(profile), true);
+  assert.equal(Object.isFrozen(profile.features), true);
+  assert.equal(Object.isFrozen(STABLE_RUNTIME_PROFILE_MARKER), true);
+  assert.equal(Object.isFrozen(STABLE_RUNTIME_PROFILE_MARKER.features), true);
+});
+
+test('afterPack writes stable markers for normal builds and trial markers for trial builds', async (t) => {
   const { rootDir, resourcesDir } = createResourcesSandbox(t);
   const context = {
     appOutDir: rootDir,
@@ -135,8 +178,11 @@ test('afterPack removes stale markers and writes trial markers atomically only f
 
   writeMarker(resourcesDir, { stale: true });
   const normalResult = await afterPack(context, { env: {} });
-  assert.equal(normalResult.status, 'removed');
-  assert.equal(fs.existsSync(markerPath(resourcesDir)), false);
+  assert.equal(normalResult.status, 'written');
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(markerPath(resourcesDir), 'utf8')),
+    EXPECTED_STABLE_RUNTIME_PROFILE_MARKER
+  );
 
   const trialResult = await afterPack(context, {
     env: { BAEFRAME_RUNTIME_PROFILE: 'fabric-v3-trial' }
@@ -155,7 +201,18 @@ test('afterPack removes stale markers and writes trial markers atomically only f
     resourcesDir,
     env: {}
   });
-  assert.equal(cleanupResult.status, 'removed');
+  assert.equal(cleanupResult.status, 'written');
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(markerPath(resourcesDir), 'utf8')),
+    EXPECTED_STABLE_RUNTIME_PROFILE_MARKER
+  );
+
+  await assert.rejects(
+    afterPack(context, {
+      env: { BAEFRAME_RUNTIME_PROFILE: 'future-profile' }
+    }),
+    /unsupported BAEFRAME runtime profile/i
+  );
   assert.equal(fs.existsSync(markerPath(resourcesDir)), false);
 });
 
@@ -174,4 +231,14 @@ test('trial build scripts rebuild the Fabric bundle and directory-package with t
     /^afterPack:\s*\.\/scripts\/electron-builder-after-pack\.js$/m
   );
   assert.match(packageJson.scripts['test:mpv'], /runtime-profile\.test\.js/);
+});
+
+test('stable engine promotion uses the 2.0.0 beta release version consistently', () => {
+  const rootDir = path.resolve(__dirname, '..', '..');
+  const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(rootDir, 'package-lock.json'), 'utf8'));
+
+  assert.equal(packageJson.version, '2.0.0-beta');
+  assert.equal(packageLock.version, '2.0.0-beta');
+  assert.equal(packageLock.packages[''].version, '2.0.0-beta');
 });

@@ -185,4 +185,3 @@ Expected: `MismatchCount=0`
 
 실행 파일, `app.asar`, marker, mpv child process가 모두 공유 드라이브 배포 경로를
 가리키는지 확인한다. 마우스와 키보드는 사용자가 직접 조작한다.
-

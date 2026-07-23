@@ -42,6 +42,32 @@ test('packaged Fabric trial allows a direct second instance without launch switc
   }), false);
 });
 
+test('packaged Fabric stable profile keeps normal single-instance user data', () => {
+  const runtimeProfile = {
+    active: true,
+    channel: 'fabric-v3-stable',
+    isolateUserData: false
+  };
+
+  const allowMultipleInstances = shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe'],
+    env: {},
+    runtimeProfile
+  });
+
+  assert.equal(allowMultipleInstances, false);
+  assert.equal(resolveMultiInstanceUserDataPath({
+    allowMultipleInstances,
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe'],
+    env: {},
+    appDataDir: 'C:\\Users\\tester\\AppData\\Roaming',
+    pid: 1234,
+    runtimeProfile
+  }), null);
+});
+
 test('packaged file launches open in a new instance by default', () => {
   assert.equal(shouldAllowMultipleInstances({
     isDev: false,
