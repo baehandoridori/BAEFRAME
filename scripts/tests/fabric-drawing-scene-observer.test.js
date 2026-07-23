@@ -351,6 +351,111 @@ test('real V3 adapter bootstraps once from a persisted nonzero sequence', () => 
   assert.equal(adapter.getDiagnostics('real-hydrated-scene').bootstrapCount, 1);
 });
 
+test('hydrate capacity and diagnostics count UTF-8 JSON bytes exactly', () => {
+  const record = stroke('utf8-byte-stroke', {
+    pathData: `M 0 0 ${'가'.repeat(2000)}`
+  });
+  const expectedRecordBytes = new TextEncoder().encode(JSON.stringify(record)).byteLength;
+  assert.ok(expectedRecordBytes > JSON.stringify(record).length * 2);
+
+  const rejected = createSessionSceneStore({
+    maxBytes: expectedRecordBytes - 1
+  });
+  assert.deepEqual(rejected.hydrateVideo(persistenceRequest({
+    keyframes: [{
+      id: 'utf8-rejected-frame',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 0,
+      objects: [record]
+    }]
+  })), {
+    accepted: false,
+    reason: 'scene-capacity-exceeded'
+  });
+
+  const accepted = createSessionSceneStore({
+    maxBytes: expectedRecordBytes
+  });
+  assert.equal(accepted.hydrateVideo(persistenceRequest({
+    keyframes: [{
+      id: 'utf8-accepted-frame',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 0,
+      objects: [record]
+    }]
+  })).accepted, true);
+  assert.equal(accepted.getDiagnostics().estimatedBytes, expectedRecordBytes);
+});
+
+test('mutation sequence ceiling never produces an unsafe committed sequence', () => {
+  const atCeilingEvents = [];
+  const atCeiling = createSessionSceneStore({
+    createSceneInstanceId: () => 'sequence-at-ceiling',
+    committedTransitionObserver(event) {
+      atCeilingEvents.push(event);
+    }
+  });
+  const record = stroke('sequence-ceiling-stroke');
+  assert.equal(atCeiling.hydrateVideo(persistenceRequest({
+    keyframes: [{
+      id: 'sequence-ceiling-frame',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: Number.MAX_SAFE_INTEGER,
+      objects: [record]
+    }]
+  })).accepted, true);
+  assert.equal(atCeiling.activateSession(session({ videoGeneration: 7 })).accepted, true);
+  atCeiling.selectObjects([record.id]);
+  const ceilingBefore = atCeiling.getActiveSceneSnapshot();
+  assert.deepEqual(atCeiling.transformSelection({ dx: 1, dy: 0 }), {
+    applied: false,
+    reason: 'mutation-sequence-overflow',
+    objectIds: []
+  });
+  assert.deepEqual(atCeiling.getActiveSceneSnapshot(), ceilingBefore);
+  assert.equal(atCeilingEvents.length, 0);
+
+  const oneRemainingEvents = [];
+  const oneRemaining = createSessionSceneStore({
+    createSceneInstanceId: () => 'sequence-one-remaining',
+    committedTransitionObserver(event) {
+      oneRemainingEvents.push(event);
+    }
+  });
+  assert.equal(oneRemaining.hydrateVideo(persistenceRequest({
+    keyframes: [{
+      id: 'sequence-one-remaining-frame',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: Number.MAX_SAFE_INTEGER - 1,
+      objects: [record]
+    }]
+  })).accepted, true);
+  oneRemaining.activateSession(session({ videoGeneration: 7 }));
+  oneRemaining.selectObjects([record.id]);
+  assert.equal(oneRemaining.transformSelection({ dx: 1, dy: 0 }).applied, true);
+  assert.equal(oneRemainingEvents[0].mutationSequence, Number.MAX_SAFE_INTEGER);
+  const exhaustedBefore = oneRemaining.getActiveSceneSnapshot();
+  assert.deepEqual(oneRemaining.transformSelection({ dx: 1, dy: 0 }), {
+    applied: false,
+    reason: 'mutation-sequence-overflow',
+    objectIds: []
+  });
+  assert.deepEqual(oneRemaining.undo(), {
+    applied: false,
+    reason: 'mutation-sequence-overflow'
+  });
+  assert.deepEqual(oneRemaining.getActiveSceneSnapshot(), exhaustedBefore);
+  assert.equal(oneRemainingEvents.length, 1);
+});
+
 test('new and warm activation reuse one opaque scene while UI-only paths emit no transition', () => {
   const harness = createObserverHarness();
   const { store, activations, transitions } = harness;

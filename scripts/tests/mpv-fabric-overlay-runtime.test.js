@@ -596,6 +596,100 @@ test('runtime hydrate and export round-trip one video atomically while drawing i
   runtime.destroy();
 });
 
+test('runtime hydrate rejects every persistence-store record violation atomically', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  const baseline = makePersistenceHydration({
+    keyframes: [{
+      id: 'strict-keyframe',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 6,
+      objects: [makeHistoryStroke('strict-stroke', {
+        strokeCaps: { start: true, end: false }
+      })]
+    }]
+  });
+  assert.equal(runtime.hydrateDrawingVideo(baseline).accepted, true);
+  const baselineSnapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+
+  const invalidCases = [
+    ['unknown record field', value => { value.keyframes[0].objects[0].vendor = true; }],
+    ['unknown point field', value => { value.keyframes[0].objects[0].sourcePoints[0].vendor = true; }],
+    ['missing point field', value => { delete value.keyframes[0].objects[0].sourcePoints[0].time; }],
+    ['pressure above one', value => { value.keyframes[0].objects[0].sourcePoints[0].pressure = 1.01; }],
+    ['point coordinate above limit', value => {
+      value.keyframes[0].objects[0].sourcePoints[0].x = 1_000_000_001;
+    }],
+    ['point time above limit', value => {
+      value.keyframes[0].objects[0].sourcePoints[0].time = 1_000_000_000_001;
+    }],
+    ['decreasing point time', value => {
+      value.keyframes[0].objects[0].sourcePoints[0].time = 2;
+      value.keyframes[0].objects[0].sourcePoints[1].time = 1;
+    }],
+    ['unknown pointer type', value => {
+      value.keyframes[0].objects[0].sourcePoints[0].pointerType = 'trackball';
+    }],
+    ['unknown style field', value => { value.keyframes[0].objects[0].style.vendor = true; }],
+    ['missing style field', value => { delete value.keyframes[0].objects[0].style.opacity; }],
+    ['invalid style color', value => { value.keyframes[0].objects[0].style.color = 'red'; }],
+    ['non-positive brush size', value => { value.keyframes[0].objects[0].style.size = 0; }],
+    ['opacity above one', value => { value.keyframes[0].objects[0].style.opacity = 1.01; }],
+    ['unknown transform field', value => {
+      value.keyframes[0].objects[0].transform.vendor = true;
+    }],
+    ['missing transform field', value => {
+      delete value.keyframes[0].objects[0].transform.flipY;
+    }],
+    ['zero transform scale', value => {
+      value.keyframes[0].objects[0].transform.scaleX = 0;
+    }],
+    ['transform above limit', value => {
+      value.keyframes[0].objects[0].transform.left = 1_000_000_001;
+    }],
+    ['non-boolean transform flip', value => {
+      value.keyframes[0].objects[0].transform.flipX = 0;
+    }],
+    ['unknown cap field', value => {
+      value.keyframes[0].objects[0].strokeCaps.vendor = true;
+    }],
+    ['non-boolean cap', value => {
+      value.keyframes[0].objects[0].strokeCaps.start = 1;
+    }],
+    ['duplicate keyframe id', value => {
+      value.keyframes.push({
+        ...structuredClone(value.keyframes[0]),
+        frame: 25,
+        objects: []
+      });
+    }]
+  ];
+
+  for (const [label, mutate] of invalidCases) {
+    const candidate = structuredClone(baseline);
+    mutate(candidate);
+    assert.deepEqual(
+      runtime.hydrateDrawingVideo(candidate),
+      { accepted: false, reason: 'invalid-hydration-request' },
+      label
+    );
+    assert.deepEqual(
+      runtime.exportDrawingVideo(makePersistenceExport()).snapshot,
+      baselineSnapshot,
+      `${label} must not replace the accepted snapshot`
+    );
+  }
+  runtime.destroy();
+});
+
 test('runtime persistence bridge ignores hover and cannot roll back a committed stroke', () => {
   FakeCanvas.instances = [];
   const document = new FakeDocument();
@@ -2661,7 +2755,7 @@ test('pending lasso commit failure restores the original scene and Fabric paths'
 });
 
 test('pending lasso history capacity rejection preserves the original scene atomically', async () => {
-  const harness = createRealFabricHarness({ sceneStoreOptions: { maxHistoryBytes: 10000 } });
+  const harness = createRealFabricHarness({ sceneStoreOptions: { maxHistoryBytes: 5000 } });
   try {
     const before = stageCrossingLasso(harness, 960);
     const beforeHistory = lassoHistoryState(harness.runtime);
@@ -5001,7 +5095,7 @@ test('video and frame scene histories remain independent across undo and redo', 
 
 test('redo history bytes remain in the store-wide maxBytes calculation across scenes', () => {
   const harness = createHistoryHarness({
-    maxBytes: 1500,
+    maxBytes: 700,
     maxHistoryBytes: 10000,
     estimateObjectBytes: () => 100
   });
@@ -5050,7 +5144,7 @@ test('redo history bytes remain in the store-wide maxBytes calculation across sc
 });
 
 test('later commands on sibling frames cannot consume the capacity reserved for an admitted undo redo', () => {
-  const sceneStore = createSessionSceneStore({ maxBytes: 30000 });
+  const sceneStore = createSessionSceneStore({ maxBytes: 30000, maxHistory: 1 });
   const activate = (targetFrame, suffix) => sceneStore.activateSession({
     sessionId: `capacity-${suffix}`,
     stableVideoIdentity: 'capacity-video',
@@ -5572,7 +5666,7 @@ test('destructive command over maxHistoryBytes is rejected without changing the 
 
 test('destructive command whose undo state would exceed maxBytes is rejected atomically', () => {
   const harness = createHistoryHarness({
-    maxBytes: 2000,
+    maxBytes: 1600,
     maxHistoryBytes: 10000,
     estimateObjectBytes: () => 1000
   });

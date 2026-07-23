@@ -10382,6 +10382,10 @@ void main() {
       var MAX_PERSISTED_OBJECTS_TOTAL = 1e5;
       var MAX_PERSISTED_SOURCE_DIMENSION = 1e6;
       var MAX_PERSISTED_TOTAL_FRAMES = 1e9;
+      var MAX_PERSISTED_POINT_COORDINATE = 1e9;
+      var MAX_PERSISTED_POINT_TIME = 1e12;
+      var MAX_PERSISTED_BRUSH_SIZE = 1e6;
+      var MAX_PERSISTED_TRANSFORM_MAGNITUDE = 1e9;
       var MAX_PERSISTENCE_STRING_LENGTH = 32768;
       var TRANSFORM_FIELDS = ["left", "top", "scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
       var UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ["scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
@@ -10470,6 +10474,22 @@ void main() {
         "mutationSequence",
         "objects"
       ]);
+      var PERSISTENCE_RECORD_REQUIRED_KEYS = Object.freeze([
+        "id",
+        "type",
+        "pathData",
+        "sourcePoints",
+        "style",
+        "transform"
+      ]);
+      var PERSISTENCE_RECORD_OPTIONAL_KEYS = Object.freeze(["strokeCaps"]);
+      var PERSISTENCE_STYLE_KEYS = Object.freeze(["color", "size", "opacity"]);
+      var PERSISTENCE_POINT_REQUIRED_KEYS = Object.freeze(["x", "y", "pressure", "time"]);
+      var PERSISTENCE_POINT_OPTIONAL_KEYS = Object.freeze(["pointerType"]);
+      var PERSISTENCE_CAPS_KEYS = Object.freeze(["start", "end"]);
+      var PERSISTENCE_POINTER_TYPES = /* @__PURE__ */ new Set(["mouse", "pen", "touch"]);
+      var PERSISTENCE_HEX_COLOR = /^#[0-9a-f]{6}$/i;
+      var persistenceUtf8Encoder = new TextEncoder();
       function clonePlain(value) {
         if (value === void 0) return void 0;
         return JSON.parse(JSON.stringify(value));
@@ -10552,10 +10572,16 @@ void main() {
         return `${stableVideoIdentity}${SCENE_KEY_SEPARATOR}${targetFrame}`;
       }
       function defaultEstimateObjectBytes(object) {
+        const bytes = jsonUtf8Bytes(object);
+        return Number.isFinite(bytes) ? Math.max(1, bytes) : Number.POSITIVE_INFINITY;
+      }
+      function jsonUtf8Bytes(value) {
         try {
-          return Math.max(1, JSON.stringify(object).length * 2);
+          const serialized = JSON.stringify(value);
+          if (typeof serialized !== "string") return Number.POSITIVE_INFINITY;
+          return persistenceUtf8Encoder.encode(serialized).byteLength;
         } catch (_error) {
-          return 1;
+          return Number.POSITIVE_INFINITY;
         }
       }
       function makeObjectsState(objects, touchedIds, order) {
@@ -10611,10 +10637,13 @@ void main() {
           (key) => key === "length" || typeof key === "string" && /^(0|[1-9]\d*)$/.test(key) && Number(key) < value.length
         );
       }
-      function hasExactKeys(value, keys) {
+      function hasExactKeys(value, required, optional = []) {
         if (!isPlainRecord(value)) return false;
         const ownKeys = Reflect.ownKeys(value);
-        return ownKeys.length === keys.length && ownKeys.every((key) => typeof key === "string" && keys.includes(key));
+        if (ownKeys.some((key) => typeof key !== "string")) return false;
+        const allowed = /* @__PURE__ */ new Set([...required, ...optional]);
+        if (ownKeys.some((key) => !allowed.has(key))) return false;
+        return required.every((key) => Object.hasOwn(value, key));
       }
       function isBoundedPersistenceString(value) {
         return typeof value === "string" && value.length > 0 && value.length <= MAX_PERSISTENCE_STRING_LENGTH;
@@ -10629,13 +10658,47 @@ void main() {
         }
         return !includeKeyframes || isDenseArray(request.keyframes) && request.keyframes.length <= MAX_PERSISTED_KEYFRAMES;
       }
-      function validatePersistedRecord(record) {
-        if (!isPlainRecord(record) || typeof record.id !== "string" || record.id.length === 0 || record.id.length > 512 || record.type !== "stroke" || typeof record.pathData !== "string" || record.pathData.length === 0 || !isDenseArray(record.sourcePoints) || record.sourcePoints.length === 0 || record.sourcePoints.length > MAX_STROKE_POINTS || !isPlainRecord(record.style) || !isPlainRecord(record.transform)) {
+      function validatePersistedTransform(transform) {
+        if (!hasExactKeys(transform, TRANSFORM_FIELDS)) return false;
+        for (const field of TRANSFORM_FIELDS) {
+          if (field === "flipX" || field === "flipY") {
+            if (typeof transform[field] !== "boolean") return false;
+          } else if (!Number.isFinite(transform[field]) || Math.abs(transform[field]) > MAX_PERSISTED_TRANSFORM_MAGNITUDE) {
+            return false;
+          }
+        }
+        return transform.scaleX !== 0 && transform.scaleY !== 0;
+      }
+      function validatePersistedPoint(point) {
+        if (!hasExactKeys(
+          point,
+          PERSISTENCE_POINT_REQUIRED_KEYS,
+          PERSISTENCE_POINT_OPTIONAL_KEYS
+        )) {
           return false;
         }
-        return record.sourcePoints.every(
-          (point) => isPlainRecord(point) && Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.pressure) && Number.isFinite(point.time)
-        );
+        if (!Number.isFinite(point.x) || Math.abs(point.x) > MAX_PERSISTED_POINT_COORDINATE || !Number.isFinite(point.y) || Math.abs(point.y) > MAX_PERSISTED_POINT_COORDINATE || !Number.isFinite(point.pressure) || point.pressure < 0 || point.pressure > 1 || !Number.isFinite(point.time) || point.time < 0 || point.time > MAX_PERSISTED_POINT_TIME) {
+          return false;
+        }
+        return point.pointerType === void 0 || typeof point.pointerType === "string" && PERSISTENCE_POINTER_TYPES.has(point.pointerType);
+      }
+      function validatePersistedRecord(record, maxDocumentBytes) {
+        if (!hasExactKeys(
+          record,
+          PERSISTENCE_RECORD_REQUIRED_KEYS,
+          PERSISTENCE_RECORD_OPTIONAL_KEYS
+        ) || typeof record.id !== "string" || record.id.length === 0 || record.id.length > 512 || record.type !== "stroke" || typeof record.pathData !== "string" || record.pathData.length === 0 || record.pathData.length > maxDocumentBytes || !isDenseArray(record.sourcePoints) || record.sourcePoints.length === 0 || record.sourcePoints.length > MAX_STROKE_POINTS || !hasExactKeys(record.style, PERSISTENCE_STYLE_KEYS) || !PERSISTENCE_HEX_COLOR.test(record.style.color) || !Number.isFinite(record.style.size) || record.style.size <= 0 || record.style.size > MAX_PERSISTED_BRUSH_SIZE || !Number.isFinite(record.style.opacity) || record.style.opacity < 0 || record.style.opacity > 1 || !validatePersistedTransform(record.transform)) {
+          return false;
+        }
+        let previousTime = 0;
+        for (const point of record.sourcePoints) {
+          if (!validatePersistedPoint(point) || point.time < previousTime) return false;
+          previousTime = point.time;
+        }
+        if (record.strokeCaps !== void 0 && (!hasExactKeys(record.strokeCaps, PERSISTENCE_CAPS_KEYS) || typeof record.strokeCaps.start !== "boolean" || typeof record.strokeCaps.end !== "boolean")) {
+          return false;
+        }
+        return true;
       }
       function drawingV3Count(value) {
         const number = Math.trunc(Number(value));
@@ -11103,6 +11166,9 @@ void main() {
           return command;
         }
         function commitStagedMutation(scene, change) {
+          if (!isSafeCount(scene.mutationSequence) || scene.mutationSequence >= Number.MAX_SAFE_INTEGER) {
+            return { applied: false, reason: "mutation-sequence-overflow" };
+          }
           const previousEstimatedBytes = scene.estimatedBytes;
           let nextEstimatedBytes;
           try {
@@ -11163,18 +11229,19 @@ void main() {
         }
         function validateHydrationFrames(request) {
           const preparedFrames = [];
+          const keyframeIds = /* @__PURE__ */ new Set();
           const frameNumbers = /* @__PURE__ */ new Set();
           let previousFrame = -1;
           let objectCount = 0;
           let estimatedBytes = 0;
           try {
             for (const keyframe of request.keyframes) {
-              if (!hasExactKeys(keyframe, PERSISTENCE_KEYFRAME_KEYS) || typeof keyframe.id !== "string" || keyframe.id.length === 0 || keyframe.id.length > 512 || !Number.isSafeInteger(keyframe.frame) || keyframe.frame < 0 || keyframe.frame >= request.totalFrames || keyframe.frame <= previousFrame || !Number.isFinite(keyframe.sourceWidth) || keyframe.sourceWidth <= 0 || keyframe.sourceWidth > MAX_PERSISTED_SOURCE_DIMENSION || !Number.isFinite(keyframe.sourceHeight) || keyframe.sourceHeight <= 0 || keyframe.sourceHeight > MAX_PERSISTED_SOURCE_DIMENSION || !isSafeCount(keyframe.mutationSequence) || keyframe.mutationSequence >= Number.MAX_SAFE_INTEGER || !isDenseArray(keyframe.objects) || keyframe.objects.length > maxObjects || frameNumbers.has(keyframe.frame)) {
+              if (!hasExactKeys(keyframe, PERSISTENCE_KEYFRAME_KEYS) || typeof keyframe.id !== "string" || keyframe.id.length === 0 || keyframe.id.length > 512 || !Number.isSafeInteger(keyframe.frame) || keyframe.frame < 0 || keyframe.frame >= request.totalFrames || keyframe.frame <= previousFrame || !Number.isFinite(keyframe.sourceWidth) || keyframe.sourceWidth <= 0 || keyframe.sourceWidth > MAX_PERSISTED_SOURCE_DIMENSION || !Number.isFinite(keyframe.sourceHeight) || keyframe.sourceHeight <= 0 || keyframe.sourceHeight > MAX_PERSISTED_SOURCE_DIMENSION || !isSafeCount(keyframe.mutationSequence) || !isDenseArray(keyframe.objects) || keyframe.objects.length > maxObjects || keyframeIds.has(keyframe.id) || frameNumbers.has(keyframe.frame)) {
                 return { accepted: false, reason: "invalid-hydration-request" };
               }
               const objects = /* @__PURE__ */ new Map();
               for (const object of keyframe.objects) {
-                if (!validatePersistedRecord(object) || objects.has(object.id)) {
+                if (!validatePersistedRecord(object, maxBytes) || objects.has(object.id)) {
                   return { accepted: false, reason: "invalid-hydration-request" };
                 }
                 const cloned = clonePlain(object);
@@ -11197,6 +11264,7 @@ void main() {
                 objects,
                 estimatedBytes: frameBytes
               });
+              keyframeIds.add(keyframe.id);
               frameNumbers.add(keyframe.frame);
               previousFrame = keyframe.frame;
             }
@@ -11253,7 +11321,8 @@ void main() {
               selectedObjectIds: /* @__PURE__ */ new Set(),
               history: createDrawingCommandHistory({
                 maxEntries: maxHistory,
-                maxBytes: maxHistoryBytes
+                maxBytes: maxHistoryBytes,
+                estimateEntryBytes: defaultEstimateObjectBytes
               }),
               historyEntries: { undo: [], redo: [] },
               dirty: false,
@@ -11369,7 +11438,8 @@ void main() {
               selectedObjectIds: /* @__PURE__ */ new Set(),
               history: createDrawingCommandHistory({
                 maxEntries: maxHistory,
-                maxBytes: maxHistoryBytes
+                maxBytes: maxHistoryBytes,
+                estimateEntryBytes: defaultEstimateObjectBytes
               }),
               historyEntries: { undo: [], redo: [] },
               dirty: false,
@@ -11581,6 +11651,9 @@ void main() {
           };
         }
         function applyHistoryState(scene, state) {
+          if (!isSafeCount(scene.mutationSequence) || scene.mutationSequence >= Number.MAX_SAFE_INTEGER) {
+            return { applied: false, reason: "mutation-sequence-overflow" };
+          }
           if (!state || typeof state !== "object") {
             return { applied: false, reason: "invalid-history-state" };
           }
