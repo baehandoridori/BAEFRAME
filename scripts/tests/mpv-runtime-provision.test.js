@@ -199,11 +199,12 @@ test('electron-builder hook skips non-Windows targets', async (t) => {
   assert.equal(result.status, 'skipped');
 });
 
-test('electron-builder config wires the mpv provisioning hook before packing', () => {
+test('electron-builder config wires mpv provisioning before pack and runtime marker cleanup after pack', () => {
   const rootDir = path.resolve(__dirname, '../..');
   const builderConfig = fs.readFileSync(path.join(rootDir, 'electron-builder.yml'), 'utf8');
 
   assert.match(builderConfig, /^beforePack:\s*\.\/scripts\/electron-builder-before-pack\.js$/m);
+  assert.match(builderConfig, /^afterPack:\s*\.\/scripts\/electron-builder-after-pack\.js$/m);
 });
 
 test('the standard mpv test command includes the packaging regression', () => {
@@ -211,4 +212,5 @@ test('the standard mpv test command includes the packaging regression', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
   assert.match(packageJson.scripts['test:mpv'], /mpv-runtime-provision\.test\.js/);
+  assert.match(packageJson.scripts['test:mpv'], /runtime-profile\.test\.js/);
 });

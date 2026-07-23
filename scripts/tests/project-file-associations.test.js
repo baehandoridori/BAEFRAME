@@ -97,12 +97,12 @@ test('main process starts project file association repair during app startup', (
   assert.match(mainIndex, /appPath: process\.execPath/);
 });
 
-test('manual validation flag skips protocol and project file registration together', () => {
+test('manual validation flag and trial profile skip protocol and project file registration together', () => {
   const mainIndex = read('main/index.js');
 
   assert.match(
     mainIndex,
-    /const skipShellRegistration = process\.argv\.includes\('--skip-shell-registration'\);/
+    /const skipShellRegistration = process\.argv\.includes\('--skip-shell-registration'\) \|\|\n\s+runtimeProfile\.skipShellRegistration === true;/
   );
 
   const protocolRegistration = mainIndex.match(
@@ -126,7 +126,14 @@ test('main process keeps single-instance default but allows explicit comparison 
 
   assert.match(mainIndex, /shouldAllowMultipleInstances/);
   assert.match(mainIndex, /resolveMultiInstanceUserDataPath/);
-  assert.match(mainIndex, /const allowMultipleInstances = shouldAllowMultipleInstances\(/);
+  assert.match(
+    mainIndex,
+    /const allowMultipleInstances = shouldAllowMultipleInstances\(\{[\s\S]*?runtimeProfile[\s\S]*?\}\);/
+  );
+  assert.match(
+    mainIndex,
+    /const multiInstanceUserDataPath = resolveMultiInstanceUserDataPath\(\{[\s\S]*?runtimeProfile[\s\S]*?\}\);/
+  );
   assert.match(mainIndex, /const gotTheLock = allowMultipleInstances \? true : app\.requestSingleInstanceLock\(\);/);
   assert.match(mainIndex, /app\.setPath\('userData', multiInstanceUserDataPath\);/);
 });

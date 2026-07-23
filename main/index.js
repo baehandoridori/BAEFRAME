@@ -7,7 +7,40 @@
 // ============================================
 const fs = require('fs');
 const path = require('path');
-const baeframeDataDir = path.join(process.env.APPDATA || '', 'baeframe');
+const { app, BrowserWindow, ipcMain, protocol } = require('electron');
+const { loadRuntimeProfile } = require('./runtime-profile');
+const {
+  resolveMultiInstanceUserDataPath,
+  shouldAllowMultipleInstances
+} = require('./instance-policy');
+
+const runtimeProfile = loadRuntimeProfile({
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath
+});
+const isDev = process.env.NODE_ENV === 'development';
+const allowMultipleInstances = shouldAllowMultipleInstances({
+  isDev,
+  argv: process.argv,
+  env: process.env,
+  runtimeProfile
+});
+const multiInstanceUserDataPath = resolveMultiInstanceUserDataPath({
+  allowMultipleInstances,
+  isDev,
+  argv: process.argv,
+  env: process.env,
+  appDataDir: process.env.APPDATA,
+  pid: process.pid,
+  runtimeProfile
+});
+if (multiInstanceUserDataPath) {
+  fs.mkdirSync(multiInstanceUserDataPath, { recursive: true });
+  app.setPath('userData', multiInstanceUserDataPath);
+}
+
+const baeframeDataDir = multiInstanceUserDataPath ||
+  path.join(process.env.APPDATA || '', 'baeframe');
 const startupDebugPath = path.join(baeframeDataDir, 'startup-debug.log');
 
 // 디버그 로그 폴더가 없으면 생성
@@ -32,7 +65,6 @@ debugLog(`__dirname: ${__dirname}`);
 // 앱 시작 시간 측정
 const appStartTime = Date.now();
 
-const { app, BrowserWindow, ipcMain, protocol } = require('electron');
 debugLog('electron 모듈 로드 완료');
 
 // ============================================
@@ -47,7 +79,8 @@ const { createMainWindow, getMainWindow, createLoadingWindow, closeLoadingWindow
 const { setupIpcHandlers } = require('./ipc-handlers');
 const {
   resolveFabricDrawingPilot,
-  resolveFabricDrawingV3Shadow
+  resolveFabricDrawingV3Shadow,
+  resolveMpvPlaybackPilot
 } = require('./experiment-flags');
 const { registerProjectFileAssociations } = require('./project-file-associations');
 const { mpvManager } = require('./mpv-manager');
@@ -59,14 +92,16 @@ const {
   parseRoutedFileUrl,
   safeDecodeURIComponent
 } = require('./launch-routing');
-const {
-  resolveMultiInstanceUserDataPath,
-  shouldAllowMultipleInstances
-} = require('./instance-policy');
-const fabricDrawingPilot = resolveFabricDrawingPilot();
-const fabricDrawingV3Shadow = resolveFabricDrawingV3Shadow({ fabricDrawingPilot });
+const mpvPlaybackPilot = resolveMpvPlaybackPilot({ runtimeProfile });
+const fabricDrawingPilot = resolveFabricDrawingPilot({ runtimeProfile });
+const fabricDrawingV3Shadow = resolveFabricDrawingV3Shadow({
+  fabricDrawingPilot,
+  runtimeProfile
+});
+mpvManager.configurePilotState(mpvPlaybackPilot);
 mpvOverlayHost.configureDrawingV3Shadow(fabricDrawingV3Shadow.enabled);
-const skipShellRegistration = process.argv.includes('--skip-shell-registration');
+const skipShellRegistration = process.argv.includes('--skip-shell-registration') ||
+  runtimeProfile.skipShellRegistration === true;
 debugLog('내부 모듈 로드 완료');
 
 const log = createLogger('Main');
@@ -240,31 +275,12 @@ if (!skipShellRegistration) {
   }
 }
 
-// 단일 인스턴스 잠금 (개발 모드에서는 다중 인스턴스 허용)
-const isDev = process.env.NODE_ENV === 'development';
-const allowMultipleInstances = shouldAllowMultipleInstances({
-  isDev,
-  argv: process.argv,
-  env: process.env
-});
-const multiInstanceUserDataPath = resolveMultiInstanceUserDataPath({
-  allowMultipleInstances,
-  isDev,
-  argv: process.argv,
-  env: process.env,
-  appDataDir: process.env.APPDATA,
-  pid: process.pid
-});
+// 단일 인스턴스 잠금 (개발/프로젝트/시험판 격리 실행에서는 다중 인스턴스 허용)
 if (multiInstanceUserDataPath) {
-  try {
-    fs.mkdirSync(multiInstanceUserDataPath, { recursive: true });
-    app.setPath('userData', multiInstanceUserDataPath);
-    log.info('다중 인스턴스 전용 사용자 데이터 폴더 사용', { userData: multiInstanceUserDataPath });
-    debugLog(`다중 인스턴스 전용 userData: ${multiInstanceUserDataPath}`);
-  } catch (error) {
-    log.warn('다중 인스턴스 사용자 데이터 폴더 설정 실패', { error: error.message, userData: multiInstanceUserDataPath });
-    debugLog(`다중 인스턴스 userData 설정 실패: ${error.message}`);
-  }
+  log.info('다중 인스턴스 전용 사용자 데이터 폴더 사용', {
+    userData: multiInstanceUserDataPath
+  });
+  debugLog(`다중 인스턴스 전용 userData: ${multiInstanceUserDataPath}`);
 }
 debugLog(`개발 모드: ${isDev}`);
 debugLog(`다중 인스턴스 허용: ${allowMultipleInstances}`);

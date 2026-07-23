@@ -24,6 +24,7 @@ function createManager(options = {}) {
     platform,
     processPid: 4242,
     env: options.env || {},
+    pilotState: options.pilotState,
     appRoot: options.appRoot || 'C:\\repo',
     resourcesPath: options.resourcesPath || 'C:\\repo\\resources',
     executableDir: options.executableDir || 'C:\\Program Files\\BAEFRAME',
@@ -58,6 +59,39 @@ test('mpv pilot is disabled unless BAEFRAME_MPV_PILOT is enabled', () => {
   assert.equal(isMpvPilotEnabled({ BAEFRAME_MPV_PILOT: 'true' }), true);
 });
 
+test('resolved mpv pilot state is injected without mutating or depending on the environment', () => {
+  const env = Object.freeze({ BAEFRAME_MPV_PILOT: '0' });
+  const enabledState = Object.freeze({ enabled: true, source: 'marker' });
+  const enabledManager = createManager({ env, pilotState: enabledState });
+
+  assert.equal(enabledManager.isEnabled(), true);
+  assert.deepEqual(env, { BAEFRAME_MPV_PILOT: '0' });
+  assert.deepEqual(enabledState, { enabled: true, source: 'marker' });
+
+  const disabledManager = createManager({
+    env: Object.freeze({ BAEFRAME_MPV_PILOT: '1' }),
+    pilotState: Object.freeze({ enabled: false, source: 'kill-switch' })
+  });
+  assert.equal(disabledManager.isEnabled(), false);
+});
+
+test('mpv manager accepts one resolved pilot state through its explicit configuration boundary', () => {
+  const manager = createManager({ env: { BAEFRAME_MPV_PILOT: '0' } });
+  assert.equal(manager.isEnabled(), false);
+
+  const configured = manager.configurePilotState(
+    Object.freeze({ enabled: true, source: 'marker' })
+  );
+
+  assert.deepEqual(configured, { enabled: true, source: 'marker' });
+  assert.equal(Object.isFrozen(configured), true);
+  assert.equal(manager.isEnabled(), true);
+  assert.throws(
+    () => manager.configurePilotState({ enabled: 'true', source: 'marker' }),
+    /valid resolved mpv pilot state/i
+  );
+});
+
 test('BAEFRAME_DISABLE_MPV forces availability off even when the binary exists', async () => {
   const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
   const manager = createManager({
@@ -67,6 +101,20 @@ test('BAEFRAME_DISABLE_MPV forces availability off even when the binary exists',
 
   await manager.initialize();
 
+  assert.equal(manager.isAvailable(), false);
+});
+
+test('injected mpv kill-switch state forces availability off without an environment write', async () => {
+  const bundledPath = path.normalize('C:\\repo\\mpv\\win32\\mpv.exe');
+  const manager = createManager({
+    env: {},
+    pilotState: { enabled: false, source: 'kill-switch' },
+    existing: [bundledPath]
+  });
+
+  await manager.initialize();
+
+  assert.equal(manager.isEnabled(), false);
   assert.equal(manager.isAvailable(), false);
 });
 
