@@ -5,6 +5,10 @@ const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '../..');
 const runtimePath = path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-overlay-runtime.js');
+const drawingV3AdapterPath = path.join(
+  rootDir,
+  'renderer/scripts/modules/drawing-v3/drawing-engine-adapter.js'
+);
 const {
   createFabricOverlayRuntime,
   createSessionSceneStore,
@@ -17,6 +21,9 @@ const {
 const {
   polygonHasArea
 } = require(path.join(rootDir, 'renderer/scripts/modules/drawing-v3/lasso-geometry.js'));
+const {
+  createDrawingEngineAdapter
+} = require(drawingV3AdapterPath);
 
 class FakeElement {
   constructor(tagName, ownerDocument) {
@@ -124,6 +131,8 @@ class FakePath {
     this.angle = 0;
     this.skewX = 0;
     this.skewY = 0;
+    this.flipX = false;
+    this.flipY = false;
     Object.assign(this, options);
   }
 
@@ -377,15 +386,60 @@ function assertHistoryDiagnostics(harness, expected) {
   return diagnostics;
 }
 
+function createObservedDrawingV3Adapter(overrides = {}) {
+  const scheduled = [];
+  const sceneInstanceIds = [];
+  let idSequence = 0;
+  const adapter = createDrawingEngineAdapter({
+    createId: prefix => `${prefix}-${++idSequence}`,
+    nowIso: () => '2026-07-23T01:02:03.456Z',
+    latencyNow: () => 0,
+    scheduleWork: overrides.scheduleWork || (callback => scheduled.push(callback)),
+    fallbackScheduleWork: overrides.fallbackScheduleWork || (callback => scheduled.push(callback))
+  });
+  const observer = {
+    activateScene(scene, objects) {
+      sceneInstanceIds.push(scene.sceneInstanceId);
+      return adapter.activateScene(scene, objects);
+    },
+    enqueueTransition: overrides.enqueueTransition || adapter.enqueueTransition,
+    quarantineScene: adapter.quarantineScene,
+    dropScenes: adapter.dropScenes,
+    destroy: adapter.destroy,
+    getDiagnostics: adapter.getDiagnostics,
+    getSceneProjection: adapter.getSceneProjection
+  };
+  return {
+    adapter,
+    observer,
+    scheduled,
+    sceneInstanceIds,
+    flushAll() {
+      while (scheduled.length > 0) scheduled.shift()();
+    }
+  };
+}
+
+function getObservedProjection(observed, sceneIndex = 0) {
+  const sceneInstanceId = observed.sceneInstanceIds[sceneIndex];
+  const projection = observed.adapter.getSceneProjection(sceneInstanceId);
+  assert.ok(projection, 'expected an active Drawing V3 shadow projection');
+  return projection;
+}
+
 function createRealFabricHarness(runtimeOptions = {}) {
   const realFabric = require('fabric/node');
   const environment = realFabric.getEnv();
   const canvases = [];
-  const sceneStore = runtimeOptions.sceneStore || createSessionSceneStore(runtimeOptions.sceneStoreOptions);
+  const useRuntimeSceneStore = runtimeOptions.useRuntimeSceneStore === true;
+  const sceneStore = useRuntimeSceneStore
+    ? null
+    : runtimeOptions.sceneStore || createSessionSceneStore(runtimeOptions.sceneStoreOptions);
   const overlayOptions = { ...runtimeOptions };
   const fabricOverrides = overlayOptions.fabric || {};
+  delete overlayOptions.useRuntimeSceneStore;
   delete overlayOptions.sceneStore;
-  delete overlayOptions.sceneStoreOptions;
+  if (!useRuntimeSceneStore) delete overlayOptions.sceneStoreOptions;
   delete overlayOptions.fabric;
   class CaptureCanvas extends realFabric.Canvas {
     constructor(...args) {
@@ -407,7 +461,7 @@ function createRealFabricHarness(runtimeOptions = {}) {
     fabric: { ...realFabric, ...fabricOverrides, Canvas: CaptureCanvas },
     document: environment.document,
     window: environment.window,
-    sceneStore
+    ...(sceneStore ? { sceneStore } : {})
   });
   runtime.prepare(root);
   runtime.setDrawingInput({
@@ -564,9 +618,15 @@ function createRealFabricHarness(runtimeOptions = {}) {
   }
 
   function sceneTransforms() {
-    return sceneStore.getActiveSceneSnapshot().objects.map(object => ({
-      left: Number(object.transform?.left) || 0,
-      top: Number(object.transform?.top) || 0
+    if (sceneStore) {
+      return sceneStore.getActiveSceneSnapshot().objects.map(object => ({
+        left: Number(object.transform?.left) || 0,
+        top: Number(object.transform?.top) || 0
+      }));
+    }
+    return canvas.getObjects().map(object => ({
+      left: Number(object.left) || 0,
+      top: Number(object.top) || 0
     }));
   }
 
@@ -600,6 +660,409 @@ function createRealFabricHarness(runtimeOptions = {}) {
     }
   };
 }
+
+test('Drawing V3 runtime shadow is disabled by default and never constructs an adapter', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  let factoryCalls = 0;
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    drawingV3AdapterFactory() {
+      factoryCalls += 1;
+      return createObservedDrawingV3Adapter().observer;
+    }
+  });
+
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 501);
+
+  assert.equal(factoryCalls, 0);
+  assert.equal(runtime.getDiagnostics().drawingV3Shadow.enabled, false);
+  assert.equal(runtime.getDiagnostics().drawingV3Shadow.status, 'disabled');
+  assert.equal(runtime.getDiagnostics().mutationCount, 1);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  runtime.destroy();
+});
+
+test('enabled runtime-owned store wires one adapter and exposes only bounded shadow diagnostics', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const observed = createObservedDrawingV3Adapter();
+  let factoryCalls = 0;
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory() {
+      factoryCalls += 1;
+      return observed.observer;
+    }
+  });
+
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 502);
+  observed.flushAll();
+
+  const sceneInstanceId = observed.sceneInstanceIds[0];
+  const projection = observed.adapter.getSceneProjection(sceneInstanceId);
+  assert.equal(factoryCalls, 1);
+  assert.ok(projection);
+  assert.equal(projection.headSequence, 1);
+  assert.equal(projection.document.layers[0].keyframes[0].objects.length, 1);
+  assert.deepEqual(runtime.getDiagnostics().drawingV3Shadow, observed.adapter.getDiagnostics());
+  assert.equal(runtime.getDiagnostics().lastError, null);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  runtime.destroy();
+});
+
+test('enabled runtime never monkey-patches a caller-supplied scene store', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const sceneStore = createSessionSceneStore();
+  let factoryCalls = 0;
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    sceneStore,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory() {
+      factoryCalls += 1;
+      return createObservedDrawingV3Adapter().observer;
+    }
+  });
+
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 503);
+
+  assert.equal(factoryCalls, 0);
+  assert.equal(sceneStore.getDiagnostics().mutationCount, 1);
+  assert.equal(runtime.getDiagnostics().drawingV3Shadow.enabled, false);
+  assert.equal(runtime.getDiagnostics().drawingV3Shadow.status, 'not-connected');
+  runtime.destroy();
+});
+
+test('shadow adapter startup failure leaves the Fabric primary fully usable', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory() {
+      throw new Error('shadow-startup-injected');
+    }
+  });
+
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 507);
+
+  const diagnostics = runtime.getDiagnostics();
+  assert.equal(diagnostics.objectCount, 1);
+  assert.equal(diagnostics.mutationCount, 1);
+  assert.equal(diagnostics.lastError, null);
+  assert.equal(diagnostics.metrics.saveAttemptCount, 0);
+  assert.equal(diagnostics.drawingV3Shadow.enabled, false);
+  assert.equal(diagnostics.drawingV3Shadow.status, 'degraded');
+  assert.equal(diagnostics.drawingV3Shadow.failureCount, 1);
+  assert.equal(diagnostics.drawingV3Shadow.lastReason, 'adapter-failed');
+  runtime.destroy();
+});
+
+test('runtime exposes a fixed sanitized Drawing V3 diagnostic schema only', () => {
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const observer = {
+    activateScene() {},
+    enqueueTransition() {},
+    quarantineScene() {},
+    dropScenes() {},
+    destroy() {},
+    getDiagnostics() {
+      return {
+        enabled: true,
+        status: 'C:\\private\\status',
+        sceneCount: '3',
+        bootstrapCount: -1,
+        commitCount: 2.9,
+        failureCount: Number.MAX_SAFE_INTEGER + 1,
+        divergenceCount: 4,
+        resyncCount: 5,
+        staleCount: 6,
+        gapCount: 7,
+        headSequence: 8,
+        objectCount: 9,
+        estimatedBytes: 10,
+        latencyP50Ms: Number.POSITIVE_INFINITY,
+        latencyP95Ms: 120_000,
+        lastReason: 'C:\\private\\reason',
+        privateProjection: { points: ['must-not-leak'] }
+      };
+    }
+  };
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory: () => observer
+  });
+  runtime.prepare(root);
+
+  const diagnostics = runtime.getDiagnostics().drawingV3Shadow;
+  assert.deepEqual(Object.keys(diagnostics), [
+    'enabled', 'status', 'sceneCount', 'bootstrapCount', 'commitCount',
+    'failureCount', 'divergenceCount', 'resyncCount', 'staleCount', 'gapCount',
+    'headSequence', 'objectCount', 'estimatedBytes', 'latencyP50Ms',
+    'latencyP95Ms', 'lastReason'
+  ]);
+  assert.deepEqual(diagnostics, {
+    enabled: true,
+    status: 'degraded',
+    sceneCount: 3,
+    bootstrapCount: 0,
+    commitCount: 2,
+    failureCount: 0,
+    divergenceCount: 4,
+    resyncCount: 5,
+    staleCount: 6,
+    gapCount: 7,
+    headSequence: 8,
+    objectCount: 9,
+    estimatedBytes: 10,
+    latencyP50Ms: 0,
+    latencyP95Ms: 60_000,
+    lastReason: null
+  });
+  assert.doesNotMatch(JSON.stringify(diagnostics), /private|points|must-not-leak/);
+  runtime.destroy();
+});
+
+test('runtime shadow teardown drops scenes before one idempotent adapter destroy', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const lifecycle = [];
+  const observer = {
+    activateScene(scene) {
+      lifecycle.push(['activate', scene.sceneInstanceId]);
+    },
+    enqueueTransition() {},
+    quarantineScene() {},
+    dropScenes(sceneInstanceIds) {
+      lifecycle.push(['drop', ...sceneInstanceIds]);
+    },
+    destroy() {
+      lifecycle.push(['destroy']);
+    },
+    getDiagnostics() {
+      return {
+        enabled: true,
+        status: 'active',
+        sceneCount: 1,
+        bootstrapCount: 1,
+        commitCount: 0,
+        failureCount: 0,
+        divergenceCount: 0,
+        resyncCount: 0,
+        staleCount: 0,
+        gapCount: 0,
+        headSequence: 0,
+        objectCount: 0,
+        estimatedBytes: 0,
+        latencyP50Ms: 0,
+        latencyP95Ms: 0,
+        lastReason: null
+      };
+    }
+  };
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory: () => observer
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const sceneInstanceId = lifecycle[0][1];
+
+  assert.deepEqual(runtime.destroy(), { destroyed: true, reused: false });
+  assert.deepEqual(runtime.destroy(), { destroyed: true, reused: true });
+  assert.deepEqual(lifecycle, [
+    ['activate', sceneInstanceId],
+    ['drop', sceneInstanceId],
+    ['destroy']
+  ]);
+});
+
+test('runtime shadow keeps video and frame documents isolated across warm restoration', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const observed = createObservedDrawingV3Adapter();
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory: () => observed.observer
+  });
+  runtime.prepare(root);
+
+  const activate = ({ inputRevision, videoGeneration, stableVideoIdentity, targetFrame }) => {
+    const base = makeInput();
+    return runtime.setDrawingInput({
+      ...base,
+      inputRevision,
+      videoGeneration,
+      session: {
+        ...base.session,
+        sessionId: `session-${inputRevision}`,
+        stableVideoIdentity,
+        targetFrame
+      }
+    });
+  };
+  assert.equal(activate({
+    inputRevision: 1, videoGeneration: 1,
+    stableVideoIdentity: 'video-a', targetFrame: 24
+  }).accepted, true);
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 508);
+  assert.equal(activate({
+    inputRevision: 2, videoGeneration: 1,
+    stableVideoIdentity: 'video-a', targetFrame: 25
+  }).accepted, true);
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 509);
+  assert.equal(activate({
+    inputRevision: 2, videoGeneration: 1,
+    stableVideoIdentity: 'video-a', targetFrame: 25
+  }).accepted, false, 'duplicate input revisions remain stale');
+  assert.equal(runtime.setDrawingInput({
+    hostGeneration: 1, videoGeneration: 2, inputRevision: 3, enabled: false
+  }).accepted, true);
+  assert.equal(activate({
+    inputRevision: 4, videoGeneration: 2,
+    stableVideoIdentity: 'video-b', targetFrame: 0
+  }).accepted, true);
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 510);
+  const firstSceneInstanceId = observed.sceneInstanceIds[0];
+  assert.equal(runtime.setDrawingInput({
+    hostGeneration: 1, videoGeneration: 3, inputRevision: 5, enabled: false
+  }).accepted, true);
+  assert.equal(activate({
+    inputRevision: 6, videoGeneration: 3,
+    stableVideoIdentity: 'video-a', targetFrame: 24
+  }).accepted, true);
+  observed.flushAll();
+
+  const uniqueSceneInstanceIds = [...new Set(observed.sceneInstanceIds)];
+  assert.equal(observed.sceneInstanceIds.at(-1), firstSceneInstanceId);
+  assert.equal(uniqueSceneInstanceIds.length, 3);
+  for (const sceneInstanceId of uniqueSceneInstanceIds) {
+    const projection = observed.adapter.getSceneProjection(sceneInstanceId);
+    assert.ok(projection);
+    assert.equal(projection.headSequence, 1);
+    assert.equal(projection.document.layers[0].keyframes[0].objects.length, 1);
+  }
+  const aggregate = observed.adapter.getDiagnostics();
+  assert.equal(aggregate.sceneCount, 3);
+  assert.equal(aggregate.bootstrapCount, 3);
+  assert.equal(aggregate.commitCount, 3);
+  assert.equal(aggregate.divergenceCount, 0);
+  assert.equal(aggregate.headSequence, 1);
+  assert.equal(aggregate.objectCount, 3);
+  assert.equal(runtime.getDiagnostics().objectCount, 1);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  runtime.destroy();
+});
+
+test('shadow enqueue failure stays out of Fabric errors saves and the next gesture', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const observed = createObservedDrawingV3Adapter({
+    enqueueTransition() {
+      throw new Error('shadow-enqueue-injected');
+    }
+  });
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory: () => observed.observer
+  });
+
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 504);
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 505);
+
+  assert.equal(runtime.getDiagnostics().objectCount, 2);
+  assert.equal(runtime.getDiagnostics().mutationCount, 2);
+  assert.equal(runtime.getDiagnostics().lastError, null);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  assert.equal(runtime.getDiagnostics().drawingV3Shadow.status, 'degraded');
+  assert.equal(runtime.getDiagnostics().drawingV3Shadow.lastReason, 'observer-failed');
+  runtime.destroy();
+});
+
+test('one hundred B-style warm reentries never duplicate the shadow document or revision', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const observed = createObservedDrawingV3Adapter();
+  let factoryCalls = 0;
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory() {
+      factoryCalls += 1;
+      return observed.observer;
+    }
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 506);
+  observed.flushAll();
+  const before = observed.adapter.getDiagnostics();
+  assert.equal(factoryCalls, 1);
+  assert.equal(before.bootstrapCount, 1);
+
+  let inputRevision = 1;
+  for (let index = 0; index < 100; index += 1) {
+    inputRevision += 1;
+    assert.equal(runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision,
+      enabled: false
+    }).accepted, true);
+    inputRevision += 1;
+    assert.equal(runtime.setDrawingInput({
+      ...makeInput(),
+      inputRevision,
+      session: { ...makeInput().session, sessionId: `runtime-session-${index}` }
+    }).accepted, true);
+  }
+  observed.flushAll();
+  const after = observed.adapter.getDiagnostics();
+
+  assert.equal(after.bootstrapCount, before.bootstrapCount);
+  assert.equal(after.sceneCount, before.sceneCount);
+  assert.equal(after.headSequence, before.headSequence);
+  assert.equal(after.objectCount, before.objectCount);
+  assert.equal(after.estimatedBytes, before.estimatedBytes);
+  assert.equal(after.divergenceCount, 0);
+  assert.equal(runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  runtime.destroy();
+});
 
 const crossingStrokePoints = (y = 100) => [
   { x: 20, y },
@@ -641,6 +1104,232 @@ function lassoHistoryState(runtime) {
 function pendingLassoObjects(canvas) {
   return canvas.getObjects().filter(object => object.__baeframePendingLasso);
 }
+
+test('real Fabric brush mutations stay in exact runtime-owned V3 shadow parity', async () => {
+  const observed = createObservedDrawingV3Adapter();
+  const harness = createRealFabricHarness({
+    useRuntimeSceneStore: true,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory: () => observed.observer
+  });
+  const readParity = () => {
+    observed.flushAll();
+    const projection = getObservedProjection(observed);
+    const canvasIds = harness.canvas.getObjects().map(object => object.__baeframeObjectId);
+    const projectionObjects = projection.document.layers[0].keyframes[0].objects;
+    assert.deepEqual(projectionObjects.map(object => object.id), canvasIds);
+    assert.equal(projection.headSequence, harness.runtime.getDiagnostics().mutationCount);
+    assert.equal(projectionObjects.length, harness.runtime.getDiagnostics().objectCount);
+    assert.equal(harness.runtime.getDiagnostics().drawingV3Shadow.divergenceCount, 0);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+    assert.equal(harness.runtime.getDiagnostics().lastError, null);
+    return { projection, objects: projectionObjects };
+  };
+
+  try {
+    harness.drawStrokeAt(40, 700);
+    harness.drawStrokeAt(80, 701);
+    let state = readParity();
+    assert.equal(state.projection.headSequence, 2);
+
+    assert.equal(harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session', toolRevision: 1, tool: 'select'
+    }).accepted, true);
+    const movedId = harness.canvas.getObjects()[0].__baeframeObjectId;
+    harness.dragStrokeBy(0, 12, -8, undefined, 702);
+    await Promise.resolve();
+    state = readParity();
+    assert.deepEqual(
+      state.objects.find(object => object.id === movedId).transform,
+      [1, 0, 0, 1, 12, -8]
+    );
+
+    harness.clickStroke(1, 703);
+    await Promise.resolve();
+    assert.equal(harness.runtime.getDiagnostics().selectionCount, 1);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'shadow-real-delete', action: 'delete-selection'
+    }).applied, true);
+    state = readParity();
+    assert.deepEqual(state.objects.map(object => object.id), [movedId]);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'shadow-real-delete-undo', action: 'undo'
+    }).applied, true);
+    assert.equal(readParity().objects.length, 2);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'shadow-real-delete-redo', action: 'redo'
+    }).applied, true);
+    assert.deepEqual(readParity().objects.map(object => object.id), [movedId]);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'shadow-real-clear', action: 'clear-session'
+    }).applied, true);
+    assert.deepEqual(readParity().objects, []);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'shadow-real-clear-undo', action: 'undo'
+    }).applied, true);
+    assert.deepEqual(readParity().objects.map(object => object.id), [movedId]);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'shadow-real-clear-redo', action: 'redo'
+    }).applied, true);
+    assert.deepEqual(readParity().objects, []);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('real Fabric primary mutation history and selection are identical with shadow off and on', async () => {
+  const runSequence = async enabled => {
+    const observed = enabled ? createObservedDrawingV3Adapter() : null;
+    const harness = createRealFabricHarness({
+      useRuntimeSceneStore: true,
+      ...(enabled ? {
+        drawingV3ShadowEnabled: true,
+        drawingV3AdapterFactory: () => observed.observer
+      } : {})
+    });
+    try {
+      harness.drawStrokeAt(45, enabled ? 720 : 730);
+      harness.drawStrokeAt(85, enabled ? 721 : 731);
+      assert.equal(harness.runtime.updateDrawingTool({
+        sessionId: 'real-fabric-session', toolRevision: 1, tool: 'select'
+      }).accepted, true);
+      harness.dragStrokeBy(0, 9, -4, undefined, enabled ? 722 : 732);
+      await Promise.resolve();
+      harness.clickStroke(1, enabled ? 723 : 733);
+      await Promise.resolve();
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session',
+        actionId: `shadow-${enabled ? 'on' : 'off'}-delete`,
+        action: 'delete-selection'
+      }).applied, true);
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session',
+        actionId: `shadow-${enabled ? 'on' : 'off'}-undo`,
+        action: 'undo'
+      }).applied, true);
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session',
+        actionId: `shadow-${enabled ? 'on' : 'off'}-redo`,
+        action: 'redo'
+      }).applied, true);
+      observed?.flushAll();
+      const diagnostics = harness.runtime.getDiagnostics();
+      return {
+        state: {
+          objectCount: diagnostics.objectCount,
+          selectionCount: diagnostics.selectionCount,
+          mutationCount: diagnostics.mutationCount,
+          dirty: diagnostics.dirty,
+          undoDepth: diagnostics.undoDepth,
+          redoDepth: diagnostics.redoDepth,
+          historyBytes: diagnostics.historyBytes,
+          saveAttemptCount: diagnostics.metrics.saveAttemptCount
+        },
+        transforms: harness.canvas.getObjects().map(object => ({
+          left: object.left,
+          top: object.top,
+          scaleX: object.scaleX,
+          scaleY: object.scaleY,
+          angle: object.angle,
+          skewX: object.skewX,
+          skewY: object.skewY,
+          flipX: object.flipX,
+          flipY: object.flipY
+        })),
+        shadow: diagnostics.drawingV3Shadow
+      };
+    } finally {
+      await harness.destroy();
+    }
+  };
+
+  const off = await runSequence(false);
+  const on = await runSequence(true);
+  assert.deepEqual(on.state, off.state);
+  assert.deepEqual(on.transforms, off.transforms);
+  assert.equal(off.shadow.status, 'disabled');
+  assert.equal(on.shadow.failureCount, 0);
+  assert.equal(on.shadow.divergenceCount, 0);
+});
+
+test('real Fabric lasso split caps order translation undo and redo stay in V3 shadow parity', async () => {
+  const observed = createObservedDrawingV3Adapter();
+  const harness = createRealFabricHarness({
+    useRuntimeSceneStore: true,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory: () => observed.observer
+  });
+  try {
+    harness.drawStroke(crossingStrokePoints(), 710);
+    observed.flushAll();
+    const originalId = harness.canvas.getObjects()[0].__baeframeObjectId;
+    enableRealFabricLasso(harness);
+    harness.dragLasso(middleLassoPoints(), 711);
+    observed.flushAll();
+    assert.equal(getObservedProjection(observed).headSequence, 1,
+      'staging the lasso must remain non-destructive');
+
+    harness.dragActiveSelectionBy(20, -30, 712);
+    await Promise.resolve();
+    observed.flushAll();
+    const splitProjection = getObservedProjection(observed);
+    const splitObjects = splitProjection.document.layers[0].keyframes[0].objects;
+    assert.equal(splitProjection.headSequence, 2);
+    assert.deepEqual(
+      splitObjects.map(object => object.id),
+      harness.canvas.getObjects().map(object => object.__baeframeObjectId)
+    );
+    assert.deepEqual(splitObjects.map(object => object.caps), [
+      { start: true, end: false },
+      { start: false, end: false },
+      { start: false, end: true }
+    ]);
+    assert.deepEqual(splitObjects.map(object => object.transform), [
+      [1, 0, 0, 1, 0, 0],
+      [1, 0, 0, 1, 20, -30],
+      [1, 0, 0, 1, 0, 0]
+    ]);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'shadow-lasso-undo', action: 'undo'
+    }).applied, true);
+    observed.flushAll();
+    const undone = getObservedProjection(observed);
+    assert.equal(undone.headSequence, 3);
+    assert.deepEqual(undone.document.layers[0].keyframes[0].objects.map(object => ({
+      id: object.id, caps: object.caps, transform: object.transform
+    })), [{
+      id: originalId,
+      caps: { start: true, end: true },
+      transform: [1, 0, 0, 1, 0, 0]
+    }]);
+    assert.deepEqual(
+      harness.canvas.getObjects().map(object => object.__baeframeObjectId),
+      [originalId]
+    );
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'shadow-lasso-redo', action: 'redo'
+    }).applied, true);
+    observed.flushAll();
+    const redone = getObservedProjection(observed);
+    assert.equal(redone.headSequence, 4);
+    assert.deepEqual(redone.document.layers[0].keyframes[0].objects, splitObjects);
+    assert.deepEqual(
+      redone.document.layers[0].keyframes[0].objects.map(object => object.id),
+      harness.canvas.getObjects().map(object => object.__baeframeObjectId)
+    );
+    const diagnostics = harness.runtime.getDiagnostics();
+    assert.equal(diagnostics.drawingV3Shadow.failureCount, 0);
+    assert.equal(diagnostics.drawingV3Shadow.divergenceCount, 0);
+    assert.equal(diagnostics.metrics.saveAttemptCount, 0);
+    assert.equal(diagnostics.lastError, null);
+  } finally {
+    await harness.destroy();
+  }
+});
 
 function stageCrossingLasso(harness, pointerBase = 800) {
   harness.drawStroke(crossingStrokePoints(), pointerBase);
@@ -4541,7 +5230,12 @@ test('a non-collinear lasso that exactly retraces its path still has zero area',
   assert.equal(polygonHasArea(retracedLasso, 1), false);
 });
 
-test('runtime source has no review persistence integration', () => {
-  const source = fs.readFileSync(runtimePath, 'utf8');
-  assert.doesNotMatch(source, /ReviewDataManager|saveReview|saveError|_onDataChanged/);
+test('runtime and adapter sources have no review persistence or IPC integration', () => {
+  const source = [runtimePath, drawingV3AdapterPath]
+    .map(filePath => fs.readFileSync(filePath, 'utf8'))
+    .join('\n');
+  assert.doesNotMatch(
+    source,
+    /ReviewDataManager|saveReview|saveError|_onDataChanged|ipcRenderer|electronAPI/
+  );
 });

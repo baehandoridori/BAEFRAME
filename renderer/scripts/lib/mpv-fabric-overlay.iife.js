@@ -609,6 +609,2210 @@
     }
   });
 
+  // renderer/scripts/modules/drawing-v3/drawing-document.js
+  var require_drawing_document = __commonJS({
+    "renderer/scripts/modules/drawing-v3/drawing-document.js"(exports, module) {
+      "use strict";
+      var HARD_LIMITS = Object.freeze({
+        maxObjectsPerKeyframe: 1e4,
+        maxInputPointsPerStroke: 2e4,
+        maxStoredPointsPerStroke: 1e5,
+        maxUserOperationsPerCommand: 1024,
+        maxHistoryOperationsPerCommand: 1e4,
+        maxUserInsertedObjectsPerCommand: 512,
+        maxHistoryInsertedObjectsPerCommand: 1e4,
+        maxUserRemovedIdsPerCommand: 1e4,
+        maxHistoryRemovedIdsPerCommand: 1e4,
+        maxUserTransformedIdsPerCommand: 1e4,
+        maxHistoryTransformedIdsPerCommand: 1e4,
+        maxUserObjectReferencesPerCommand: 1e4,
+        maxHistoryObjectReferencesPerCommand: 1e4,
+        maxUserInsertedPointsPerCommand: 2e4,
+        maxHistoryInsertedPointsPerCommand: 1e5,
+        maxUserCommandBytes: 4 * 1024 * 1024,
+        maxHistoryCommandBytes: 16 * 1024 * 1024
+      });
+      var CREATE_OPTION_KEYS = Object.freeze([
+        "documentId",
+        "coordinateSpace",
+        "timebase",
+        "initialLayers",
+        "revisionSequence"
+      ]);
+      var LIMIT_KEYS = Object.freeze(Object.keys(HARD_LIMITS));
+      var COORDINATE_SPACE_KEYS = Object.freeze([
+        "unit",
+        "origin",
+        "yAxis",
+        "pixelRatio",
+        "width",
+        "height"
+      ]);
+      var TIMEBASE_KEYS = Object.freeze([
+        "fpsNumerator",
+        "fpsDenominator",
+        "totalFrames"
+      ]);
+      var LAYER_KEYS = Object.freeze([
+        "id",
+        "name",
+        "visible",
+        "locked",
+        "opacity",
+        "keyframes"
+      ]);
+      var KEYFRAME_KEYS = Object.freeze([
+        "id",
+        "frame",
+        "empty",
+        "revision",
+        "objects"
+      ]);
+      var STROKE_KEYS = Object.freeze([
+        "id",
+        "type",
+        "tool",
+        "visible",
+        "locked",
+        "opacity",
+        "blendMode",
+        "transform",
+        "points",
+        "caps",
+        "style"
+      ]);
+      var POINT_KEYS = Object.freeze(["x", "y", "pressure", "time"]);
+      var CAPS_KEYS = Object.freeze(["start", "end"]);
+      var STYLE_KEYS = Object.freeze([
+        "color",
+        "size",
+        "thinning",
+        "smoothing",
+        "streamline",
+        "outlineColor",
+        "outlineWidth"
+      ]);
+      var COMMAND_KEYS = Object.freeze([
+        "id",
+        "actorId",
+        "baseRevision",
+        "target",
+        "kind",
+        "operations",
+        "createdAt"
+      ]);
+      var COMMAND_TARGET_KEYS = Object.freeze([
+        "layerId",
+        "keyframeId",
+        "frame"
+      ]);
+      var COMMAND_KINDS = Object.freeze(/* @__PURE__ */ new Set([
+        "add-objects",
+        "delete-objects",
+        "transform-objects",
+        "split-stroke"
+      ]));
+      var HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/;
+      var ISO_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+      function clonePlain(value) {
+        return value === void 0 ? void 0 : structuredClone(value);
+      }
+      function isPlainRecord(value) {
+        if (value === null || typeof value !== "object" || Array.isArray(value)) {
+          return false;
+        }
+        const prototype = Object.getPrototypeOf(value);
+        return prototype === Object.prototype || prototype === null;
+      }
+      function hasExactDataKeys(value, requiredKeys, optionalKeys = []) {
+        if (!isPlainRecord(value)) return false;
+        const allowedKeys = /* @__PURE__ */ new Set([...requiredKeys, ...optionalKeys]);
+        const ownKeys = Reflect.ownKeys(value);
+        if (ownKeys.some((key) => typeof key !== "string" || !allowedKeys.has(key))) {
+          return false;
+        }
+        if (requiredKeys.some((key) => !Object.hasOwn(value, key))) return false;
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        return ownKeys.every((key) => {
+          const descriptor = descriptors[key];
+          return descriptor.enumerable && Object.hasOwn(descriptor, "value") && descriptor.value !== void 0;
+        });
+      }
+      function isDenseArray(value) {
+        if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+          return false;
+        }
+        const ownKeys = Reflect.ownKeys(value);
+        if (ownKeys.length !== value.length + 1 || !ownKeys.includes("length")) {
+          return false;
+        }
+        for (let index = 0; index < value.length; index += 1) {
+          const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+          if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value") || descriptor.value === void 0) {
+            return false;
+          }
+        }
+        return true;
+      }
+      function isNonemptyString(value) {
+        return typeof value === "string" && value.length > 0;
+      }
+      function isFinitePositive(value) {
+        return Number.isFinite(value) && value > 0;
+      }
+      function isFiniteInRange(value, minimum, maximum) {
+        return Number.isFinite(value) && value >= minimum && value <= maximum;
+      }
+      function isPositiveInteger(value) {
+        return Number.isSafeInteger(value) && value > 0;
+      }
+      function isNonnegativeInteger(value) {
+        return Number.isSafeInteger(value) && value >= 0;
+      }
+      function validateLimits(value) {
+        if (value !== void 0 && !hasExactDataKeys(value, [], LIMIT_KEYS)) {
+          throw new TypeError("Invalid DrawingDocumentV3 limits");
+        }
+        const limits = { ...HARD_LIMITS };
+        if (value !== void 0) {
+          for (const key of Object.keys(value)) limits[key] = value[key];
+        }
+        for (const key of LIMIT_KEYS) {
+          if (!isPositiveInteger(limits[key]) || limits[key] > HARD_LIMITS[key]) {
+            throw new TypeError("Invalid DrawingDocumentV3 limits");
+          }
+        }
+        const invalidRelationships = [
+          ["maxInputPointsPerStroke", "maxStoredPointsPerStroke"],
+          ["maxUserOperationsPerCommand", "maxHistoryOperationsPerCommand"],
+          [
+            "maxUserInsertedObjectsPerCommand",
+            "maxHistoryInsertedObjectsPerCommand"
+          ],
+          ["maxUserRemovedIdsPerCommand", "maxHistoryRemovedIdsPerCommand"],
+          [
+            "maxUserTransformedIdsPerCommand",
+            "maxHistoryTransformedIdsPerCommand"
+          ],
+          [
+            "maxUserObjectReferencesPerCommand",
+            "maxHistoryObjectReferencesPerCommand"
+          ],
+          [
+            "maxUserInsertedPointsPerCommand",
+            "maxHistoryInsertedPointsPerCommand"
+          ],
+          ["maxUserCommandBytes", "maxHistoryCommandBytes"],
+          [
+            "maxUserInsertedObjectsPerCommand",
+            "maxUserObjectReferencesPerCommand"
+          ],
+          ["maxUserRemovedIdsPerCommand", "maxUserObjectReferencesPerCommand"],
+          [
+            "maxUserTransformedIdsPerCommand",
+            "maxUserObjectReferencesPerCommand"
+          ],
+          [
+            "maxHistoryInsertedObjectsPerCommand",
+            "maxHistoryObjectReferencesPerCommand"
+          ],
+          [
+            "maxHistoryRemovedIdsPerCommand",
+            "maxHistoryObjectReferencesPerCommand"
+          ],
+          [
+            "maxHistoryTransformedIdsPerCommand",
+            "maxHistoryObjectReferencesPerCommand"
+          ],
+          ["maxInputPointsPerStroke", "maxUserInsertedPointsPerCommand"],
+          ["maxStoredPointsPerStroke", "maxHistoryInsertedPointsPerCommand"],
+          ["maxUserInsertedObjectsPerCommand", "maxHistoryRemovedIdsPerCommand"],
+          ["maxUserRemovedIdsPerCommand", "maxHistoryInsertedObjectsPerCommand"],
+          [
+            "maxUserObjectReferencesPerCommand",
+            "maxHistoryOperationsPerCommand"
+          ]
+        ];
+        if (invalidRelationships.some(([lowerKey, upperKey]) => limits[lowerKey] > limits[upperKey])) {
+          throw new TypeError("Invalid DrawingDocumentV3 limits");
+        }
+        return limits;
+      }
+      function isValidCoordinateSpace(value) {
+        return hasExactDataKeys(value, COORDINATE_SPACE_KEYS) && value.unit === "source-pixel" && value.origin === "top-left" && value.yAxis === "down" && isFinitePositive(value.pixelRatio) && isFinitePositive(value.width) && isFinitePositive(value.height);
+      }
+      function isValidTimebase(value) {
+        return hasExactDataKeys(value, TIMEBASE_KEYS) && isPositiveInteger(value.fpsNumerator) && isPositiveInteger(value.fpsDenominator) && isPositiveInteger(value.totalFrames);
+      }
+      function isValidAffineTransform(value) {
+        if (!isDenseArray(value) || value.length !== 6 || !value.every(Number.isFinite)) {
+          return false;
+        }
+        const determinant = value[0] * value[3] - value[1] * value[2];
+        return Math.abs(determinant) > 1e-8;
+      }
+      function isValidPoint(value, previousTime) {
+        return hasExactDataKeys(value, POINT_KEYS) && Number.isFinite(value.x) && Number.isFinite(value.y) && isFiniteInRange(value.pressure, 0, 1) && Number.isFinite(value.time) && value.time >= 0 && value.time >= previousTime;
+      }
+      function isValidStyle(value) {
+        return hasExactDataKeys(value, STYLE_KEYS) && typeof value.color === "string" && HEX_COLOR_PATTERN.test(value.color) && isFinitePositive(value.size) && isFiniteInRange(value.thinning, -1, 1) && isFiniteInRange(value.smoothing, 0, 1) && isFiniteInRange(value.streamline, 0, 1) && (value.outlineColor === null || typeof value.outlineColor === "string" && HEX_COLOR_PATTERN.test(value.outlineColor)) && Number.isFinite(value.outlineWidth) && value.outlineWidth >= 0;
+      }
+      function isValidCaps(value) {
+        return hasExactDataKeys(value, CAPS_KEYS) && typeof value.start === "boolean" && typeof value.end === "boolean";
+      }
+      function validateStrokeObject(object, limits, source = "user") {
+        if (!hasExactDataKeys(object, STROKE_KEYS)) return "invalid-object";
+        if (!isNonemptyString(object.id) || object.type !== "stroke" || object.tool !== "pen" && object.tool !== "brush" || typeof object.visible !== "boolean" || typeof object.locked !== "boolean" || !isFiniteInRange(object.opacity, 0, 1) || object.blendMode !== "source-over" || !isDenseArray(object.points) || object.points.length === 0) {
+          return "invalid-object";
+        }
+        const pointLimit = source === "history" ? limits.maxStoredPointsPerStroke : limits.maxInputPointsPerStroke;
+        if (object.points.length > pointLimit) return "point-limit-exceeded";
+        if (!isValidCaps(object.caps)) return "invalid-object";
+        if (!isValidStyle(object.style)) return "invalid-object";
+        let previousTime = 0;
+        for (const point of object.points) {
+          if (!isValidPoint(point, previousTime)) return "invalid-object";
+          previousTime = point.time;
+        }
+        if (!isValidAffineTransform(object.transform)) return "invalid-transform";
+        return null;
+      }
+      function validateInitialLayers(layers, timebase, limits) {
+        if (!isDenseArray(layers)) {
+          throw new TypeError("Invalid DrawingDocumentV3 layers");
+        }
+        const layerIds = /* @__PURE__ */ new Set();
+        const keyframeIds = /* @__PURE__ */ new Set();
+        const objectIds = /* @__PURE__ */ new Set();
+        const keyframeLocations = /* @__PURE__ */ new Map();
+        const objectLocations = /* @__PURE__ */ new Map();
+        for (let layerIndex = 0; layerIndex < layers.length; layerIndex += 1) {
+          const layer = layers[layerIndex];
+          if (!hasExactDataKeys(layer, LAYER_KEYS) || !isNonemptyString(layer.id) || !isNonemptyString(layer.name) || typeof layer.visible !== "boolean" || typeof layer.locked !== "boolean" || !isFiniteInRange(layer.opacity, 0, 1) || !isDenseArray(layer.keyframes) || layerIds.has(layer.id)) {
+            throw new TypeError("Invalid DrawingDocumentV3 layer");
+          }
+          layerIds.add(layer.id);
+          let previousFrame = -1;
+          for (let keyframeIndex = 0; keyframeIndex < layer.keyframes.length; keyframeIndex += 1) {
+            const keyframe = layer.keyframes[keyframeIndex];
+            if (!hasExactDataKeys(keyframe, KEYFRAME_KEYS) || !isNonemptyString(keyframe.id) || !isNonnegativeInteger(keyframe.frame) || keyframe.frame >= timebase.totalFrames || !isNonnegativeInteger(keyframe.revision) || typeof keyframe.empty !== "boolean" || !isDenseArray(keyframe.objects) || keyframe.frame <= previousFrame || keyframeIds.has(keyframe.id) || keyframe.empty && keyframe.objects.length > 0 || keyframe.objects.length > limits.maxObjectsPerKeyframe) {
+              throw new TypeError("Invalid DrawingDocumentV3 keyframe");
+            }
+            keyframeIds.add(keyframe.id);
+            keyframeLocations.set(keyframe.id, {
+              layerIndex,
+              keyframeIndex,
+              layerId: layer.id,
+              frame: keyframe.frame
+            });
+            previousFrame = keyframe.frame;
+            for (let objectIndex = 0; objectIndex < keyframe.objects.length; objectIndex += 1) {
+              const object = keyframe.objects[objectIndex];
+              const reason = validateStrokeObject(object, limits, "history");
+              if (reason || objectIds.has(object.id)) {
+                throw new TypeError("Invalid DrawingDocumentV3 object");
+              }
+              objectIds.add(object.id);
+              objectLocations.set(object.id, {
+                keyframeId: keyframe.id,
+                objectIndex
+              });
+            }
+          }
+        }
+        return { keyframeLocations, objectLocations };
+      }
+      function validateAndCloneInitialContent(options, limits) {
+        if (!isNonemptyString(options.documentId) || !isValidCoordinateSpace(options.coordinateSpace) || !isValidTimebase(options.timebase) || !isNonnegativeInteger(options.revisionSequence)) {
+          throw new TypeError("Invalid DrawingDocumentV3 options");
+        }
+        const indexes = validateInitialLayers(
+          options.initialLayers,
+          options.timebase,
+          limits
+        );
+        return {
+          content: {
+            schemaVersion: "3.0.0",
+            documentId: options.documentId,
+            engine: "baeframe-drawing",
+            coordinateSpace: clonePlain(options.coordinateSpace),
+            timebase: clonePlain(options.timebase),
+            layers: clonePlain(options.initialLayers)
+          },
+          ...indexes
+        };
+      }
+      function resolveFrameSnapshot(content, request) {
+        if (!hasExactDataKeys(request, ["layerId", "frame"]) || !isNonemptyString(request.layerId) || !Number.isSafeInteger(request.frame) || request.frame < 0 || request.frame >= content.timebase.totalFrames) {
+          return null;
+        }
+        const layer = content.layers.find((candidate) => candidate.id === request.layerId);
+        if (!layer) return null;
+        let source = null;
+        for (const keyframe of layer.keyframes) {
+          if (keyframe.frame > request.frame) break;
+          source = keyframe;
+        }
+        if (!source) {
+          return {
+            layerId: layer.id,
+            frame: request.frame,
+            sourceFrame: null,
+            keyframeId: null,
+            held: false,
+            empty: true,
+            objects: []
+          };
+        }
+        return {
+          layerId: layer.id,
+          frame: request.frame,
+          sourceFrame: source.frame,
+          keyframeId: source.id,
+          held: source.frame !== request.frame,
+          empty: source.empty,
+          objects: source.empty ? [] : clonePlain(source.objects)
+        };
+      }
+      function deepEqualPlain(left, right) {
+        if (left === right) return true;
+        if (Array.isArray(left) || Array.isArray(right)) {
+          if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+            return false;
+          }
+          return left.every((value, index) => deepEqualPlain(value, right[index]));
+        }
+        if (!isPlainRecord(left) || !isPlainRecord(right)) return false;
+        const leftKeys = Object.keys(left).sort();
+        const rightKeys = Object.keys(right).sort();
+        if (leftKeys.length !== rightKeys.length) return false;
+        return leftKeys.every((key, index) => key === rightKeys[index] && deepEqualPlain(left[key], right[key]));
+      }
+      function isValidIsoTimestamp(value) {
+        if (typeof value !== "string") return false;
+        const match = ISO_TIMESTAMP_PATTERN.exec(value);
+        if (!match) return false;
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        const hour = Number(match[4]);
+        const minute = Number(match[5]);
+        const second = Number(match[6]);
+        const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+        const daysInMonth = [
+          31,
+          leapYear ? 29 : 28,
+          31,
+          30,
+          31,
+          30,
+          31,
+          31,
+          30,
+          31,
+          30,
+          31
+        ];
+        return day >= 1 && day <= daysInMonth[month - 1] && hour <= 23 && minute <= 59 && second <= 59 && Number.isFinite(Date.parse(value));
+      }
+      function isArrayHeader(value, allowEmpty = false) {
+        return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype && (allowEmpty || value.length > 0);
+      }
+      function getCommandBudget(limits, source) {
+        const history = source === "history";
+        return {
+          maxOperations: history ? limits.maxHistoryOperationsPerCommand : limits.maxUserOperationsPerCommand,
+          maxInsertedObjects: history ? limits.maxHistoryInsertedObjectsPerCommand : limits.maxUserInsertedObjectsPerCommand,
+          maxRemovedIds: history ? limits.maxHistoryRemovedIdsPerCommand : limits.maxUserRemovedIdsPerCommand,
+          maxTransformedIds: history ? limits.maxHistoryTransformedIdsPerCommand : limits.maxUserTransformedIdsPerCommand,
+          maxObjectReferences: Math.min(
+            history ? limits.maxHistoryObjectReferencesPerCommand : limits.maxUserObjectReferencesPerCommand,
+            limits.maxObjectsPerKeyframe
+          ),
+          maxInsertedPoints: history ? limits.maxHistoryInsertedPointsPerCommand : limits.maxUserInsertedPointsPerCommand,
+          maxPointsPerStroke: history ? limits.maxStoredPointsPerStroke : limits.maxInputPointsPerStroke,
+          maxBytes: history ? limits.maxHistoryCommandBytes : limits.maxUserCommandBytes
+        };
+      }
+      function getOperationHeader(operation) {
+        if (!isPlainRecord(operation)) return null;
+        const typeDescriptor = Object.getOwnPropertyDescriptor(operation, "type");
+        if (!typeDescriptor || !typeDescriptor.enumerable || !Object.hasOwn(typeDescriptor, "value")) {
+          return null;
+        }
+        if (typeDescriptor.value === "insert-objects") {
+          if (!hasExactDataKeys(operation, ["type", "index", "objects"]) || !isNonnegativeInteger(operation.index) || !isArrayHeader(operation.objects)) {
+            return null;
+          }
+          return { type: typeDescriptor.value, payload: operation.objects };
+        }
+        if (typeDescriptor.value === "remove-objects") {
+          if (!hasExactDataKeys(operation, ["type", "objectIds"]) || !isArrayHeader(operation.objectIds)) {
+            return null;
+          }
+          return { type: typeDescriptor.value, payload: operation.objectIds };
+        }
+        if (typeDescriptor.value === "set-transforms") {
+          if (!hasExactDataKeys(operation, ["type", "transforms"]) || !isArrayHeader(operation.transforms)) {
+            return null;
+          }
+          return { type: typeDescriptor.value, payload: operation.transforms };
+        }
+        return null;
+      }
+      function validateOperationPayload(header) {
+        if (!isDenseArray(header.payload)) return false;
+        if (header.type === "insert-objects") return true;
+        if (header.type === "remove-objects") {
+          if (!header.payload.every(isNonemptyString)) return false;
+          return new Set(header.payload).size === header.payload.length;
+        }
+        const objectIds = /* @__PURE__ */ new Set();
+        for (const transform of header.payload) {
+          if (!hasExactDataKeys(transform, ["objectId", "transform"]) || !isNonemptyString(transform.objectId) || objectIds.has(transform.objectId)) {
+            return false;
+          }
+          objectIds.add(transform.objectId);
+        }
+        return true;
+      }
+      function addSaturated(total, addition, limit) {
+        return addition > limit || total > limit - addition ? limit + 1 : total + addition;
+      }
+      function estimateApproximateBytes(root, limit) {
+        let total = 0;
+        const activePath = /* @__PURE__ */ new WeakSet();
+        const stack = [{ kind: "value", value: root }];
+        while (stack.length > 0) {
+          const frame = stack.pop();
+          if (frame.kind === "exit") {
+            activePath.delete(frame.value);
+            continue;
+          }
+          if (frame.kind === "array") {
+            if (frame.index >= frame.value.length) continue;
+            total = addSaturated(total, 4, limit);
+            if (total > limit) return { measurable: true, exceeded: true };
+            const descriptor = Object.getOwnPropertyDescriptor(
+              frame.value,
+              String(frame.index)
+            );
+            if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value") || descriptor.value === void 0) {
+              return { measurable: false, exceeded: false };
+            }
+            stack.push({ ...frame, index: frame.index + 1 });
+            stack.push({ kind: "value", value: descriptor.value });
+            continue;
+          }
+          if (frame.kind === "record") {
+            if (frame.index >= frame.keys.length) continue;
+            const key = frame.keys[frame.index];
+            if (typeof key !== "string") {
+              return { measurable: false, exceeded: false };
+            }
+            total = addSaturated(total, 4, limit);
+            total = addSaturated(total, 4 + key.length * 2, limit);
+            if (total > limit) return { measurable: true, exceeded: true };
+            const descriptor = Object.getOwnPropertyDescriptor(frame.value, key);
+            if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value") || descriptor.value === void 0) {
+              return { measurable: false, exceeded: false };
+            }
+            stack.push({ ...frame, index: frame.index + 1 });
+            stack.push({ kind: "value", value: descriptor.value });
+            continue;
+          }
+          const value = frame.value;
+          if (value === null) {
+            total = addSaturated(total, 4, limit);
+          } else if (typeof value === "boolean") {
+            total = addSaturated(total, 5, limit);
+          } else if (typeof value === "number" && Number.isFinite(value)) {
+            total = addSaturated(total, 8, limit);
+          } else if (typeof value === "string") {
+            total = addSaturated(total, 4 + value.length * 2, limit);
+          } else if (typeof value === "object") {
+            if (activePath.has(value)) {
+              return { measurable: false, exceeded: false };
+            }
+            if (Array.isArray(value)) {
+              if (Object.getPrototypeOf(value) !== Array.prototype) {
+                return { measurable: false, exceeded: false };
+              }
+              total = addSaturated(total, 8, limit);
+              if (total > limit) return { measurable: true, exceeded: true };
+              activePath.add(value);
+              stack.push({ kind: "exit", value });
+              stack.push({ kind: "array", value, index: 0 });
+            } else if (isPlainRecord(value)) {
+              total = addSaturated(total, 8, limit);
+              if (total > limit) return { measurable: true, exceeded: true };
+              activePath.add(value);
+              stack.push({ kind: "exit", value });
+              stack.push({
+                kind: "record",
+                value,
+                keys: Reflect.ownKeys(value),
+                index: 0
+              });
+            } else {
+              return { measurable: false, exceeded: false };
+            }
+          } else {
+            return { measurable: false, exceeded: false };
+          }
+          if (total > limit) return { measurable: true, exceeded: true };
+        }
+        return { measurable: true, exceeded: false };
+      }
+      function preflightOperationArray(operations, limits, source, measuredValue) {
+        const budget = getCommandBudget(limits, source);
+        if (!isArrayHeader(operations)) {
+          return { valid: false, reason: "invalid-command" };
+        }
+        if (operations.length > budget.maxOperations) {
+          return { valid: false, reason: "operation-limit-exceeded" };
+        }
+        if (!isDenseArray(operations)) {
+          return { valid: false, reason: "invalid-command" };
+        }
+        const headers = [];
+        for (const operation of operations) {
+          const header = getOperationHeader(operation);
+          if (!header) return { valid: false, reason: "invalid-command" };
+          headers.push(header);
+        }
+        let insertedObjects = 0;
+        let removedIds = 0;
+        let transformedIds = 0;
+        for (const header of headers) {
+          if (header.type === "insert-objects") {
+            insertedObjects += header.payload.length;
+          } else if (header.type === "remove-objects") {
+            removedIds += header.payload.length;
+          } else {
+            transformedIds += header.payload.length;
+          }
+        }
+        const objectReferences = insertedObjects + removedIds + transformedIds;
+        if (insertedObjects > budget.maxInsertedObjects || removedIds > budget.maxRemovedIds || transformedIds > budget.maxTransformedIds || objectReferences > budget.maxObjectReferences) {
+          return {
+            valid: false,
+            reason: "command-object-reference-limit-exceeded"
+          };
+        }
+        let insertedPoints = 0;
+        for (const header of headers) {
+          if (header.type !== "insert-objects") continue;
+          for (let index = 0; index < header.payload.length; index += 1) {
+            const objectDescriptor = Object.getOwnPropertyDescriptor(
+              header.payload,
+              String(index)
+            );
+            if (!objectDescriptor || !Object.hasOwn(objectDescriptor, "value") || !isPlainRecord(objectDescriptor.value)) {
+              continue;
+            }
+            const pointsDescriptor = Object.getOwnPropertyDescriptor(
+              objectDescriptor.value,
+              "points"
+            );
+            if (!pointsDescriptor || !pointsDescriptor.enumerable || !Object.hasOwn(pointsDescriptor, "value") || !isArrayHeader(pointsDescriptor.value, true)) {
+              continue;
+            }
+            if (pointsDescriptor.value.length > budget.maxPointsPerStroke) {
+              return { valid: false, reason: "point-limit-exceeded" };
+            }
+            insertedPoints += pointsDescriptor.value.length;
+          }
+        }
+        if (insertedPoints > budget.maxInsertedPoints) {
+          return { valid: false, reason: "command-point-limit-exceeded" };
+        }
+        if (headers.some((header) => !validateOperationPayload(header))) {
+          return { valid: false, reason: "invalid-command" };
+        }
+        const byteEstimate = estimateApproximateBytes(measuredValue, budget.maxBytes);
+        return { valid: true, headers, byteEstimate };
+      }
+      function commandKindMatchesOperations(kind, operations) {
+        const types = operations.map((operation) => operation.type);
+        if (kind === "add-objects") {
+          return types.every((type) => type === "insert-objects");
+        }
+        if (kind === "delete-objects") {
+          return types.every((type) => type === "remove-objects");
+        }
+        if (kind === "transform-objects") {
+          return types.every((type) => type === "set-transforms");
+        }
+        return kind === "split-stroke" && types.includes("insert-objects") && types.includes("remove-objects") && types.every((type) => [
+          "insert-objects",
+          "remove-objects",
+          "set-transforms"
+        ].includes(type));
+      }
+      function preflightCommand(command, content, limits, source) {
+        if (!hasExactDataKeys(command, COMMAND_KEYS) || !isNonemptyString(command.id) || !isNonemptyString(command.actorId) || !isNonnegativeInteger(command.baseRevision) || !hasExactDataKeys(command.target, COMMAND_TARGET_KEYS) || !isNonemptyString(command.target.layerId) || !isNonemptyString(command.target.keyframeId) || !isNonnegativeInteger(command.target.frame) || command.target.frame >= content.timebase.totalFrames || !COMMAND_KINDS.has(command.kind) || !isArrayHeader(command.operations) || !isValidIsoTimestamp(command.createdAt)) {
+          return { valid: false, reason: "invalid-command" };
+        }
+        const preflight = preflightOperationArray(
+          command.operations,
+          limits,
+          source,
+          command
+        );
+        if (!preflight.valid) return preflight;
+        if (!commandKindMatchesOperations(command.kind, command.operations)) {
+          return { valid: false, reason: "invalid-command" };
+        }
+        return preflight;
+      }
+      function resolveApplySource(applyOptions) {
+        if (!hasExactDataKeys(applyOptions, [], ["source"])) return null;
+        const source = Object.hasOwn(applyOptions, "source") ? applyOptions.source : "user";
+        return source === "user" || source === "history" ? source : null;
+      }
+      function findIndexedTarget(content, keyframeLocations, request) {
+        const location = keyframeLocations.get(request.keyframeId);
+        if (!location || location.layerId !== request.layerId || location.frame !== request.frame) {
+          return null;
+        }
+        const layer = content.layers[location.layerIndex];
+        const keyframe = layer?.keyframes[location.keyframeIndex];
+        if (!layer || layer.id !== request.layerId || !keyframe || keyframe.id !== request.keyframeId || keyframe.frame !== request.frame || keyframe.empty) {
+          return null;
+        }
+        return { layer, keyframe, location };
+      }
+      function createTargetDraft(target, objectLocations) {
+        return {
+          target,
+          objectLocations,
+          objects: target.keyframe.objects,
+          objectsCopied: false,
+          structuralChanged: false,
+          sequenceMaterialized: false,
+          sequenceBlocks: null,
+          sequenceEntries: null,
+          sequenceLength: target.keyframe.objects.length,
+          addedIds: /* @__PURE__ */ new Set(),
+          removedBaseIds: /* @__PURE__ */ new Set()
+        };
+      }
+      function ensureDraftObjects(draft) {
+        if (!draft.objectsCopied) {
+          draft.objects = draft.objects.slice();
+          draft.objectsCopied = true;
+        }
+        return draft.objects;
+      }
+      var SEQUENCE_BLOCK_CAPACITY = 128;
+      var SEQUENCE_BLOCK_MINIMUM = 32;
+      function createSequenceBlock(entries) {
+        const block = { entries };
+        for (const entry of entries) entry.block = block;
+        return block;
+      }
+      function ensureDraftSequence(draft) {
+        if (draft.sequenceMaterialized) return;
+        draft.sequenceBlocks = [];
+        draft.sequenceEntries = /* @__PURE__ */ new Map();
+        for (let start = 0; start < draft.objects.length; start += SEQUENCE_BLOCK_CAPACITY) {
+          const entries = draft.objects.slice(start, start + SEQUENCE_BLOCK_CAPACITY).map((object) => ({ object, block: null }));
+          const block = createSequenceBlock(entries);
+          draft.sequenceBlocks.push(block);
+          for (const entry of entries) {
+            draft.sequenceEntries.set(entry.object.id, entry);
+          }
+        }
+        draft.sequenceMaterialized = true;
+      }
+      function getDraftObjectCount(draft) {
+        return draft.sequenceMaterialized ? draft.sequenceLength : draft.objects.length;
+      }
+      function findSequencePosition(draft, index) {
+        if (draft.sequenceBlocks.length === 0) {
+          return { blockIndex: 0, offset: 0 };
+        }
+        let remaining = index;
+        for (let blockIndex2 = 0; blockIndex2 < draft.sequenceBlocks.length; blockIndex2 += 1) {
+          const blockLength = draft.sequenceBlocks[blockIndex2].entries.length;
+          if (remaining <= blockLength) return { blockIndex: blockIndex2, offset: remaining };
+          remaining -= blockLength;
+        }
+        const blockIndex = draft.sequenceBlocks.length - 1;
+        return {
+          blockIndex,
+          offset: draft.sequenceBlocks[blockIndex].entries.length
+        };
+      }
+      function replaceSequenceBlock(draft, blockIndex, entries, replaceCount) {
+        const blockCount = Math.max(
+          1,
+          Math.ceil(entries.length / SEQUENCE_BLOCK_CAPACITY)
+        );
+        const blockSize = Math.ceil(entries.length / blockCount);
+        const blocks = [];
+        for (let start = 0; start < entries.length; start += blockSize) {
+          blocks.push(createSequenceBlock(entries.slice(start, start + blockSize)));
+        }
+        draft.sequenceBlocks.splice(blockIndex, replaceCount, ...blocks);
+      }
+      function insertSequenceEntries(draft, index, insertedEntries) {
+        const position = findSequencePosition(draft, index);
+        const existingBlock = draft.sequenceBlocks[position.blockIndex] ?? null;
+        const existingEntries = existingBlock === null ? [] : existingBlock.entries;
+        const entries = [
+          ...existingEntries.slice(0, position.offset),
+          ...insertedEntries,
+          ...existingEntries.slice(position.offset)
+        ];
+        replaceSequenceBlock(
+          draft,
+          position.blockIndex,
+          entries,
+          existingBlock === null ? 0 : 1
+        );
+        draft.sequenceLength += insertedEntries.length;
+      }
+      function getSequenceEntryIndex(draft, entry) {
+        const blockIndex = draft.sequenceBlocks.indexOf(entry.block);
+        let index = entry.block.entries.indexOf(entry);
+        for (let current = 0; current < blockIndex; current += 1) {
+          index += draft.sequenceBlocks[current].entries.length;
+        }
+        return index;
+      }
+      function mergeSequenceBlocks(draft, leftIndex, rightIndex) {
+        const left = draft.sequenceBlocks[leftIndex];
+        const right = draft.sequenceBlocks[rightIndex];
+        left.entries.push(...right.entries);
+        for (const entry of right.entries) entry.block = left;
+        draft.sequenceBlocks.splice(rightIndex, 1);
+        return left;
+      }
+      function normalizeSequenceBlock(draft, initialBlock) {
+        let block = initialBlock;
+        while (block.entries.length < SEQUENCE_BLOCK_MINIMUM) {
+          const blockIndex = draft.sequenceBlocks.indexOf(block);
+          if (blockIndex < 0) return;
+          if (block.entries.length === 0) {
+            draft.sequenceBlocks.splice(blockIndex, 1);
+            return;
+          }
+          const left = blockIndex > 0 ? draft.sequenceBlocks[blockIndex - 1] : null;
+          const right = blockIndex + 1 < draft.sequenceBlocks.length ? draft.sequenceBlocks[blockIndex + 1] : null;
+          const canMergeLeft = left !== null && left.entries.length + block.entries.length <= SEQUENCE_BLOCK_CAPACITY;
+          const canMergeRight = right !== null && block.entries.length + right.entries.length <= SEQUENCE_BLOCK_CAPACITY;
+          if (!canMergeLeft && !canMergeRight) return;
+          if (canMergeLeft && (!canMergeRight || left.entries.length <= right.entries.length)) {
+            block = mergeSequenceBlocks(draft, blockIndex - 1, blockIndex);
+          } else {
+            block = mergeSequenceBlocks(draft, blockIndex, blockIndex + 1);
+          }
+        }
+      }
+      function getDraftObjectMatch(draft, objectId) {
+        if (draft.sequenceMaterialized) {
+          const entry = draft.sequenceEntries.get(objectId);
+          return entry === void 0 ? null : { entry, object: entry.object };
+        }
+        const location = draft.objectLocations.get(objectId);
+        if (location?.keyframeId !== draft.target.keyframe.id) return null;
+        return {
+          index: location.objectIndex,
+          object: draft.objects[location.objectIndex]
+        };
+      }
+      function materializeDraftSequence(draft) {
+        if (!draft.sequenceMaterialized) return draft.objects;
+        return draft.sequenceBlocks.flatMap((block) => block.entries.map((entry) => entry.object));
+      }
+      function isDocumentObjectIdLive(draft, objectId) {
+        if (draft.addedIds.has(objectId)) return true;
+        if (draft.removedBaseIds.has(objectId)) return false;
+        return draft.objectLocations.has(objectId);
+      }
+      function markObjectInserted(draft, objectId) {
+        draft.addedIds.add(objectId);
+        draft.removedBaseIds.delete(objectId);
+      }
+      function markObjectRemoved(draft, objectId) {
+        draft.addedIds.delete(objectId);
+        const baseLocation = draft.objectLocations.get(objectId);
+        if (baseLocation?.keyframeId === draft.target.keyframe.id) {
+          draft.removedBaseIds.add(objectId);
+        }
+      }
+      function applyInsertOperation(draft, operation, limits, source) {
+        const objectCount = getDraftObjectCount(draft);
+        if (operation.index > objectCount) {
+          return { applied: false, reason: "invalid-command" };
+        }
+        if (objectCount + operation.objects.length > limits.maxObjectsPerKeyframe) {
+          return { applied: false, reason: "object-limit-exceeded" };
+        }
+        for (const object of operation.objects) {
+          const reason = validateStrokeObject(object, limits, source);
+          if (reason) return { applied: false, reason };
+        }
+        const insertedObjectIds = /* @__PURE__ */ new Set();
+        for (const object of operation.objects) {
+          if (isDocumentObjectIdLive(draft, object.id) || insertedObjectIds.has(object.id)) {
+            return { applied: false, reason: "duplicate-object-id" };
+          }
+          insertedObjectIds.add(object.id);
+        }
+        ensureDraftSequence(draft);
+        const insertedEntries = [];
+        for (const object of operation.objects) {
+          const entry = { object, block: null };
+          insertedEntries.push(entry);
+          draft.sequenceEntries.set(object.id, entry);
+        }
+        insertSequenceEntries(draft, operation.index, insertedEntries);
+        for (const objectId of insertedObjectIds) {
+          markObjectInserted(draft, objectId);
+        }
+        draft.structuralChanged = true;
+        return {
+          applied: true,
+          inverseOperations: [{
+            type: "remove-objects",
+            objectIds: operation.objects.map((object) => object.id)
+          }]
+        };
+      }
+      function applyRemoveOperation(draft, operation) {
+        ensureDraftSequence(draft);
+        const removals = [];
+        for (const objectId of operation.objectIds) {
+          const entry = draft.sequenceEntries.get(objectId);
+          if (entry === void 0) {
+            return { applied: false, reason: "object-not-found" };
+          }
+          removals.push({
+            index: getSequenceEntryIndex(draft, entry),
+            entry,
+            object: entry.object
+          });
+        }
+        removals.sort((left, right) => left.index - right.index);
+        const affectedBlocks = /* @__PURE__ */ new Set();
+        for (let index = removals.length - 1; index >= 0; index -= 1) {
+          const removal = removals[index];
+          const block = removal.entry.block;
+          block.entries.splice(block.entries.indexOf(removal.entry), 1);
+          affectedBlocks.add(block);
+          draft.sequenceEntries.delete(removal.object.id);
+          markObjectRemoved(draft, removal.object.id);
+          draft.sequenceLength -= 1;
+        }
+        for (const block of affectedBlocks) normalizeSequenceBlock(draft, block);
+        draft.structuralChanged = true;
+        return {
+          applied: true,
+          inverseOperations: removals.map((removal) => ({
+            type: "insert-objects",
+            index: removal.index,
+            objects: [removal.object]
+          }))
+        };
+      }
+      function applyTransformOperation(draft, operation) {
+        for (const entry of operation.transforms) {
+          if (!isValidAffineTransform(entry.transform)) {
+            return { applied: false, reason: "invalid-transform" };
+          }
+        }
+        const matches = [];
+        const inverseTransforms = [];
+        for (const entry of operation.transforms) {
+          const match = getDraftObjectMatch(draft, entry.objectId);
+          if (match === null) {
+            return { applied: false, reason: "object-not-found" };
+          }
+          matches.push({ ...match, transform: entry.transform });
+          inverseTransforms.push({
+            objectId: match.object.id,
+            transform: match.object.transform.slice()
+          });
+        }
+        for (const match of matches) {
+          const transformedObject = {
+            ...match.object,
+            transform: match.transform.slice()
+          };
+          if (match.entry !== void 0) {
+            match.entry.object = transformedObject;
+          } else {
+            ensureDraftObjects(draft)[match.index] = transformedObject;
+          }
+        }
+        return {
+          applied: true,
+          inverseOperations: [{
+            type: "set-transforms",
+            transforms: inverseTransforms
+          }]
+        };
+      }
+      function applyOperation(draft, operation, limits, source) {
+        if (operation.type === "insert-objects") {
+          return applyInsertOperation(draft, operation, limits, source);
+        }
+        if (operation.type === "remove-objects") {
+          return applyRemoveOperation(draft, operation);
+        }
+        return applyTransformOperation(draft, operation);
+      }
+      function materializeCommittedObjects(draft, plannedObjects) {
+        if (draft.addedIds.size === 0) return plannedObjects;
+        const committedObjects = plannedObjects.slice();
+        for (let index = 0; index < committedObjects.length; index += 1) {
+          if (draft.addedIds.has(committedObjects[index].id)) {
+            committedObjects[index] = clonePlain(committedObjects[index]);
+          }
+        }
+        return committedObjects;
+      }
+      function createPathCopy(content, target, committedObjects) {
+        const nextKeyframe = {
+          ...target.keyframe,
+          revision: target.keyframe.revision + 1,
+          objects: committedObjects
+        };
+        const nextKeyframes = target.layer.keyframes.slice();
+        nextKeyframes[target.location.keyframeIndex] = nextKeyframe;
+        const nextLayer = { ...target.layer, keyframes: nextKeyframes };
+        const nextLayers = content.layers.slice();
+        nextLayers[target.location.layerIndex] = nextLayer;
+        return { ...content, layers: nextLayers };
+      }
+      function createTargetIndexDelta(draft, committedObjects) {
+        if (!draft.structuralChanged) return null;
+        return {
+          removedObjectIds: draft.target.keyframe.objects.map((object) => object.id),
+          insertedLocations: committedObjects.map((object, objectIndex) => [
+            object.id,
+            {
+              keyframeId: draft.target.keyframe.id,
+              objectIndex
+            }
+          ])
+        };
+      }
+      function applyCommandAtomically({
+        content,
+        head,
+        limits,
+        command,
+        appliedCommandIds,
+        keyframeLocations,
+        objectLocations,
+        source
+      }, commit) {
+        if (source === null) {
+          return { applied: false, reason: "invalid-command" };
+        }
+        const preflight = preflightCommand(command, content, limits, source);
+        if (!preflight.valid) {
+          return { applied: false, reason: preflight.reason };
+        }
+        if (appliedCommandIds.has(command.id)) {
+          return { applied: false, reason: "duplicate-command-id" };
+        }
+        if (command.baseRevision !== head.sequence) {
+          return { applied: false, reason: "stale-revision" };
+        }
+        const target = findIndexedTarget(content, keyframeLocations, command.target);
+        if (!target) return { applied: false, reason: "target-not-found" };
+        if (target.layer.locked) return { applied: false, reason: "layer-locked" };
+        const draft = createTargetDraft(target, objectLocations);
+        const inverseOperations = [];
+        for (const operation of command.operations) {
+          const result = applyOperation(draft, operation, limits, source);
+          if (!result.applied) return { applied: false, reason: result.reason };
+          inverseOperations.unshift(...result.inverseOperations);
+        }
+        const plannedObjects = materializeDraftSequence(draft);
+        if (!preflight.byteEstimate.measurable) {
+          return { applied: false, reason: "invalid-command" };
+        }
+        if (preflight.byteEstimate.exceeded) {
+          return { applied: false, reason: "command-payload-limit-exceeded" };
+        }
+        if (deepEqualPlain(target.keyframe.objects, plannedObjects)) {
+          return { applied: false, reason: "no-change" };
+        }
+        if (head.sequence === Number.MAX_SAFE_INTEGER || target.keyframe.revision === Number.MAX_SAFE_INTEGER) {
+          return { applied: false, reason: "revision-limit-exceeded" };
+        }
+        const inversePreflight = preflightOperationArray(
+          inverseOperations,
+          limits,
+          "history",
+          inverseOperations
+        );
+        if (!inversePreflight.valid || !inversePreflight.byteEstimate.measurable || inversePreflight.byteEstimate.exceeded) {
+          return { applied: false, reason: "inverse-command-limit-exceeded" };
+        }
+        const nextHead = {
+          sequence: head.sequence + 1,
+          lastCommandId: command.id
+        };
+        const publicInverseOperations = clonePlain(inverseOperations);
+        const committedObjects = materializeCommittedObjects(draft, plannedObjects);
+        const nextContent = createPathCopy(content, target, committedObjects);
+        const objectIndexDelta = createTargetIndexDelta(draft, committedObjects);
+        const successResult = {
+          applied: true,
+          commandId: command.id,
+          sequence: nextHead.sequence,
+          inverseOperations: publicInverseOperations
+        };
+        commit({
+          content: nextContent,
+          head: nextHead,
+          objectIndexDelta,
+          commandId: command.id
+        });
+        return successResult;
+      }
+      function createDrawingDocumentV3(options = {}) {
+        if (!hasExactDataKeys(options, CREATE_OPTION_KEYS, ["limits"])) {
+          throw new TypeError("Invalid DrawingDocumentV3 options");
+        }
+        const limits = validateLimits(options.limits);
+        const initial = validateAndCloneInitialContent(options, limits);
+        let content = initial.content;
+        let head = {
+          sequence: options.revisionSequence,
+          lastCommandId: null
+        };
+        const keyframeLocations = initial.keyframeLocations;
+        const objectLocations = initial.objectLocations;
+        const appliedCommandIds = /* @__PURE__ */ new Set();
+        return {
+          getContentSnapshot: () => clonePlain(content),
+          getHead: () => ({ ...head }),
+          resolveFrame: (request) => resolveFrameSnapshot(content, request),
+          applyCommand(command, applyOptions = {}) {
+            return applyCommandAtomically({
+              content,
+              head,
+              limits,
+              command,
+              appliedCommandIds,
+              keyframeLocations,
+              objectLocations,
+              source: resolveApplySource(applyOptions)
+            }, (next) => {
+              if (next.objectIndexDelta !== null) {
+                for (const objectId of next.objectIndexDelta.removedObjectIds) {
+                  objectLocations.delete(objectId);
+                }
+                for (const [objectId, location] of next.objectIndexDelta.insertedLocations) {
+                  objectLocations.set(objectId, location);
+                }
+              }
+              content = next.content;
+              head = next.head;
+              appliedCommandIds.add(next.commandId);
+            });
+          }
+        };
+      }
+      module.exports = { createDrawingDocumentV3 };
+    }
+  });
+
+  // renderer/scripts/modules/drawing-v3/drawing-engine-adapter.js
+  var require_drawing_engine_adapter = __commonJS({
+    "renderer/scripts/modules/drawing-v3/drawing-engine-adapter.js"(exports, module) {
+      "use strict";
+      var {
+        createDrawingDocumentV3
+      } = require_drawing_document();
+      var DEFAULT_LIMITS = Object.freeze({
+        maxSeedObjects: 1e4,
+        maxSeedBytes: 32 * 1024 * 1024,
+        maxQueueItems: 128,
+        maxQueueBytes: 32 * 1024 * 1024,
+        maxWorkItems: 4,
+        maxWorkMs: 4,
+        maxLatencySamples: 256
+      });
+      var LIMIT_KEYS = Object.freeze(Object.keys(DEFAULT_LIMITS));
+      var UNSUPPORTED_TRANSFORM_FIELDS = Object.freeze([
+        "scaleX",
+        "scaleY",
+        "angle",
+        "skewX",
+        "skewY",
+        "flipX",
+        "flipY"
+      ]);
+      var TRANSFORM_FIELDS = Object.freeze([
+        "left",
+        "top",
+        ...UNSUPPORTED_TRANSFORM_FIELDS
+      ]);
+      var REASON_ALLOWLIST = Object.freeze(/* @__PURE__ */ new Set([
+        "adapter-failed",
+        "document-rejected",
+        "document-sequence-mismatch",
+        "invalid-seed",
+        "invalid-transition",
+        "missing-baseline",
+        "observer-failed",
+        "queue-capacity-exceeded",
+        "queue-event-too-large",
+        "scheduler-failed",
+        "seed-capacity-exceeded",
+        "seed-signature-changed",
+        "sequence-gap",
+        "stale-transition",
+        "transition-before-mismatch",
+        "unsupported-field-mutation",
+        "unsupported-order-mutation",
+        "unsupported-transform",
+        "warm-seed-mismatch"
+      ]));
+      var HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
+      function isPlainRecord(value) {
+        if (value === null || typeof value !== "object" || Array.isArray(value)) {
+          return false;
+        }
+        const prototype = Object.getPrototypeOf(value);
+        return prototype === Object.prototype || prototype === null;
+      }
+      function isNonemptyString(value) {
+        return typeof value === "string" && value.length > 0;
+      }
+      function isNonnegativeSafeInteger(value) {
+        return Number.isSafeInteger(value) && value >= 0;
+      }
+      function resolveLimits(value) {
+        if (value === void 0) return { ...DEFAULT_LIMITS };
+        if (!isPlainRecord(value) || Reflect.ownKeys(value).some((key) => typeof key !== "string" || !LIMIT_KEYS.includes(key))) {
+          throw new TypeError("Invalid DrawingEngineAdapter limits");
+        }
+        const limits = { ...DEFAULT_LIMITS, ...value };
+        for (const key of LIMIT_KEYS) {
+          if (!Number.isSafeInteger(limits[key]) || limits[key] <= 0) {
+            throw new TypeError("Invalid DrawingEngineAdapter limits");
+          }
+        }
+        if (limits.maxWorkItems > DEFAULT_LIMITS.maxWorkItems || limits.maxWorkMs > DEFAULT_LIMITS.maxWorkMs) {
+          throw new TypeError("Invalid DrawingEngineAdapter limits");
+        }
+        return limits;
+      }
+      function defaultCreateId(prefix) {
+        const randomUUID = globalThis.crypto?.randomUUID;
+        if (typeof randomUUID === "function") return randomUUID.call(globalThis.crypto);
+        defaultCreateId.sequence = (defaultCreateId.sequence || 0) + 1;
+        return `${prefix}-${Date.now()}-${defaultCreateId.sequence}`;
+      }
+      function defaultLatencyNow() {
+        return typeof globalThis.performance?.now === "function" ? globalThis.performance.now() : Date.now();
+      }
+      function clonePlain(value) {
+        return structuredClone(value);
+      }
+      function sanitizeReason(reason) {
+        return REASON_ALLOWLIST.has(reason) ? reason : "adapter-failed";
+      }
+      function snapshotTransitionEnvelope(event) {
+        return {
+          ...event,
+          scene: isPlainRecord(event.scene) ? { ...event.scene } : event.scene,
+          removals: Array.isArray(event.removals) ? event.removals.map((item) => isPlainRecord(item) ? { ...item } : item) : event.removals,
+          insertions: Array.isArray(event.insertions) ? event.insertions.map((item) => isPlainRecord(item) ? {
+            ...item,
+            baseTransform: isPlainRecord(item.baseTransform) ? { ...item.baseTransform } : item.baseTransform
+          } : item) : event.insertions,
+          transforms: Array.isArray(event.transforms) ? event.transforms.map((item) => isPlainRecord(item) ? {
+            ...item,
+            beforeTransform: isPlainRecord(item.beforeTransform) ? { ...item.beforeTransform } : item.beforeTransform,
+            afterTransform: isPlainRecord(item.afterTransform) ? { ...item.afterTransform } : item.afterTransform
+          } : item) : event.transforms
+        };
+      }
+      function normalizeFabricTransform(value) {
+        if (!isPlainRecord(value)) return null;
+        const defaults = {
+          left: 0,
+          top: 0,
+          scaleX: 1,
+          scaleY: 1,
+          angle: 0,
+          skewX: 0,
+          skewY: 0,
+          flipX: false,
+          flipY: false
+        };
+        const transform = {};
+        for (const field of TRANSFORM_FIELDS) {
+          const candidate = Object.hasOwn(value, field) ? value[field] : defaults[field];
+          if (field === "flipX" || field === "flipY") {
+            if (typeof candidate !== "boolean") return null;
+          } else if (!Number.isFinite(candidate)) {
+            return null;
+          }
+          transform[field] = candidate;
+        }
+        if (transform.scaleX === 0 || transform.scaleY === 0) return null;
+        return transform;
+      }
+      function transformsEqual(left, right, fields = TRANSFORM_FIELDS) {
+        return fields.every((field) => left[field] === right[field]);
+      }
+      function canonicalTransform(finalTransform, baseline) {
+        if (!transformsEqual(finalTransform, baseline, UNSUPPORTED_TRANSFORM_FIELDS)) {
+          return null;
+        }
+        return [
+          1,
+          0,
+          0,
+          1,
+          finalTransform.left - baseline.left,
+          finalTransform.top - baseline.top
+        ];
+      }
+      function hashText(text, seed, multiplier) {
+        let hash = seed >>> 0;
+        for (let index = 0; index < text.length; index += 1) {
+          hash = Math.imul(hash ^ text.charCodeAt(index), multiplier) >>> 0;
+        }
+        return hash.toString(16).padStart(8, "0");
+      }
+      function immutableContentSignature(object) {
+        const serialized = JSON.stringify({
+          id: object.id,
+          type: object.type,
+          tool: object.tool,
+          visible: object.visible,
+          locked: object.locked,
+          opacity: object.opacity,
+          blendMode: object.blendMode,
+          points: object.points,
+          caps: object.caps,
+          style: object.style
+        });
+        return `${serialized.length}:${hashText(serialized, 2166136261, 16777619)}:` + hashText(serialized, 2654435769, 2246822507);
+      }
+      function canonicalizeRecord(record, baseline) {
+        if (!isPlainRecord(record) || !isNonemptyString(record.id) || record.type !== "stroke" || !Array.isArray(record.sourcePoints) || record.sourcePoints.length === 0 || !isPlainRecord(record.style) || !HEX_COLOR_PATTERN.test(record.style.color) || !Number.isFinite(record.style.size) || record.style.size <= 0 || !Number.isFinite(record.style.opacity) || record.style.opacity < 0 || record.style.opacity > 1) {
+          return { valid: false, reason: "invalid-transition" };
+        }
+        const finalTransform = normalizeFabricTransform(record.transform);
+        const normalizedBaseline = normalizeFabricTransform(baseline);
+        if (finalTransform === null || normalizedBaseline === null) {
+          return { valid: false, reason: "invalid-transition" };
+        }
+        const transform = canonicalTransform(finalTransform, normalizedBaseline);
+        if (transform === null) {
+          return { valid: false, reason: "unsupported-transform" };
+        }
+        const points = [];
+        let previousTime = 0;
+        for (const point of record.sourcePoints) {
+          if (!isPlainRecord(point) || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.pressure) || point.pressure < 0 || point.pressure > 1 || !Number.isFinite(point.time) || point.time < previousTime || point.time < 0) {
+            return { valid: false, reason: "invalid-transition" };
+          }
+          points.push({
+            x: point.x,
+            y: point.y,
+            pressure: point.pressure,
+            time: point.time
+          });
+          previousTime = point.time;
+        }
+        let caps = { start: true, end: true };
+        if (record.strokeCaps !== void 0) {
+          if (!isPlainRecord(record.strokeCaps) || typeof record.strokeCaps.start !== "boolean" || typeof record.strokeCaps.end !== "boolean") {
+            return { valid: false, reason: "invalid-transition" };
+          }
+          caps = {
+            start: record.strokeCaps.start,
+            end: record.strokeCaps.end
+          };
+        }
+        const object = {
+          id: record.id,
+          type: "stroke",
+          tool: "brush",
+          visible: true,
+          locked: false,
+          opacity: record.style.opacity,
+          blendMode: "source-over",
+          transform,
+          points,
+          caps,
+          style: {
+            color: record.style.color.toLowerCase(),
+            size: record.style.size,
+            thinning: 0.65,
+            smoothing: 0.55,
+            streamline: 0.5,
+            outlineColor: null,
+            outlineWidth: 0
+          }
+        };
+        let estimatedBytes;
+        let contentSignature;
+        try {
+          estimatedBytes = Math.max(1, JSON.stringify(object).length * 2);
+          contentSignature = immutableContentSignature(object);
+        } catch (_error) {
+          return { valid: false, reason: "invalid-transition" };
+        }
+        return {
+          valid: true,
+          object,
+          finalTransform,
+          baseline: normalizedBaseline,
+          contentSignature,
+          estimatedBytes
+        };
+      }
+      function makeSceneSignature(scene) {
+        if (!isPlainRecord(scene) || !isNonemptyString(scene.sceneInstanceId) || !Number.isFinite(scene.sourceWidth) || scene.sourceWidth <= 0 || !Number.isFinite(scene.sourceHeight) || scene.sourceHeight <= 0 || !isNonnegativeSafeInteger(scene.targetFrame) || !Number.isSafeInteger(scene.targetFrame + 1) || scene.targetFrame + 1 <= 0) {
+          return null;
+        }
+        return {
+          targetFrame: scene.targetFrame,
+          sourceWidth: scene.sourceWidth,
+          sourceHeight: scene.sourceHeight
+        };
+      }
+      function signaturesEqual(left, right) {
+        return left.targetFrame === right.targetFrame && left.sourceWidth === right.sourceWidth && left.sourceHeight === right.sourceHeight;
+      }
+      function percentile(samples, ratio) {
+        if (samples.length === 0) return 0;
+        const sorted = [...samples].sort((left, right) => left - right);
+        const index = Math.max(0, Math.ceil(sorted.length * ratio) - 1);
+        return sorted[index];
+      }
+      function createDrawingEngineAdapter(options = {}) {
+        if (!isPlainRecord(options)) {
+          throw new TypeError("Invalid DrawingEngineAdapter options");
+        }
+        const createDocument = options.createDocument || createDrawingDocumentV3;
+        const createId = options.createId || defaultCreateId;
+        const nowIso = options.nowIso || (() => (/* @__PURE__ */ new Date()).toISOString());
+        const latencyNow = options.latencyNow || defaultLatencyNow;
+        const scheduleWork = options.scheduleWork || ((callback) => setTimeout(callback, 0));
+        const fallbackScheduleWork = options.fallbackScheduleWork || ((callback) => setTimeout(callback, 0));
+        if (typeof createDocument !== "function" || typeof createId !== "function" || typeof nowIso !== "function" || typeof latencyNow !== "function" || typeof scheduleWork !== "function" || typeof fallbackScheduleWork !== "function") {
+          throw new TypeError("Invalid DrawingEngineAdapter options");
+        }
+        const limits = resolveLimits(options.limits);
+        const scenes = /* @__PURE__ */ new Map();
+        const queue = [];
+        const aggregate = {
+          bootstrapCount: 0,
+          commitCount: 0,
+          failureCount: 0,
+          divergenceCount: 0,
+          resyncCount: 0,
+          staleCount: 0,
+          gapCount: 0,
+          latencies: []
+        };
+        let queueBytes = 0;
+        let workScheduled = false;
+        let destroyed = false;
+        let schedulerGeneration = 0;
+        function deferSynchronousWork(callback) {
+          globalThis.setTimeout(callback, 0);
+        }
+        function invokeScheduler(scheduler, callback) {
+          let schedulerReturned = false;
+          scheduler(() => {
+            if (!schedulerReturned) {
+              deferSynchronousWork(callback);
+              return;
+            }
+            callback();
+          });
+          schedulerReturned = true;
+        }
+        function emptyState(sceneInstanceId, signature = null) {
+          return {
+            sceneInstanceId,
+            signature,
+            status: "initializing",
+            lastReason: null,
+            document: null,
+            layerId: null,
+            keyframeId: null,
+            actorId: null,
+            headSequence: 0,
+            objectOrder: [],
+            baselines: /* @__PURE__ */ new Map(),
+            contentSignatures: /* @__PURE__ */ new Map(),
+            currentTransforms: /* @__PURE__ */ new Map(),
+            objectBytes: /* @__PURE__ */ new Map(),
+            estimatedBytes: 0,
+            bootstrapCount: 0,
+            commitCount: 0,
+            failureCount: 0,
+            divergenceCount: 0,
+            resyncCount: 0,
+            staleCount: 0,
+            gapCount: 0,
+            latencies: []
+          };
+        }
+        function removeQueuedScene(sceneInstanceId) {
+          for (let index = queue.length - 1; index >= 0; index -= 1) {
+            if (queue[index].sceneInstanceId !== sceneInstanceId) continue;
+            queueBytes = Math.max(0, queueBytes - queue[index].estimatedBytes);
+            queue.splice(index, 1);
+          }
+          if (queue.length === 0 && workScheduled) {
+            workScheduled = false;
+            schedulerGeneration += 1;
+          }
+        }
+        function quarantineInternal(sceneInstanceId, rawReason) {
+          const state = scenes.get(sceneInstanceId);
+          if (!state) return false;
+          const reason = sanitizeReason(rawReason);
+          removeQueuedScene(sceneInstanceId);
+          if (state.status !== "desynced") {
+            state.status = "desynced";
+            state.lastReason = reason;
+            state.failureCount += 1;
+            state.divergenceCount += 1;
+            aggregate.failureCount += 1;
+            aggregate.divergenceCount += 1;
+          }
+          return false;
+        }
+        function failResult(state, reason) {
+          quarantineInternal(state.sceneInstanceId, reason);
+          return { applied: false, reason: sanitizeReason(reason) };
+        }
+        function makeOpaqueId(prefix) {
+          const id = createId(prefix);
+          if (!isNonemptyString(id)) throw new TypeError("Invalid opaque ID");
+          return id;
+        }
+        function projectPendingWarmState(state) {
+          let sequence = state.headSequence;
+          let order = state.objectOrder.slice();
+          for (const item of queue) {
+            if (item.sceneInstanceId !== state.sceneInstanceId) continue;
+            const event = item.event;
+            if (event.mutationSequence !== sequence + 1 || !Array.isArray(event.removals) || !Array.isArray(event.insertions)) {
+              return null;
+            }
+            const removalIds = /* @__PURE__ */ new Set();
+            for (const removal of event.removals) {
+              if (!isPlainRecord(removal) || !isNonemptyString(removal.id) || !isNonnegativeSafeInteger(removal.index) || removalIds.has(removal.id) || order[removal.index] !== removal.id) {
+                return null;
+              }
+              removalIds.add(removal.id);
+            }
+            order = order.filter((id) => !removalIds.has(id));
+            const insertions = event.insertions.slice().sort((left, right) => Number(left?.index) - Number(right?.index));
+            const insertionIds = /* @__PURE__ */ new Set();
+            let previousIndex = -1;
+            for (const insertion of insertions) {
+              const objectId = insertion?.record?.id;
+              if (!isPlainRecord(insertion) || !isNonnegativeSafeInteger(insertion.index) || insertion.index <= previousIndex || !isNonemptyString(objectId) || insertionIds.has(objectId) || order.includes(objectId) || insertion.index > order.length) {
+                return null;
+              }
+              previousIndex = insertion.index;
+              insertionIds.add(objectId);
+              order.splice(insertion.index, 0, objectId);
+            }
+            sequence = event.mutationSequence;
+          }
+          return { sequence, order };
+        }
+        function mapOrderMatches(objects, order) {
+          if (!(objects instanceof Map) || objects.size !== order.length) return false;
+          let index = 0;
+          for (const objectId of objects.keys()) {
+            if (objectId !== order[index]) return false;
+            index += 1;
+          }
+          return true;
+        }
+        function activateScene(scene, authoritativeObjects) {
+          let sceneInstanceId = null;
+          try {
+            sceneInstanceId = isPlainRecord(scene) && isNonemptyString(scene.sceneInstanceId) ? scene.sceneInstanceId : null;
+            if (destroyed || sceneInstanceId === null) {
+              return { activated: false, restored: false, reason: "invalid-seed" };
+            }
+            const signature = makeSceneSignature(scene);
+            const existing = scenes.get(sceneInstanceId);
+            if (existing) {
+              const pendingState = projectPendingWarmState(existing);
+              if (signature === null) {
+                quarantineInternal(sceneInstanceId, "invalid-seed");
+              } else if (!signaturesEqual(existing.signature, signature)) {
+                quarantineInternal(sceneInstanceId, "seed-signature-changed");
+              } else if (pendingState === null || !isNonnegativeSafeInteger(scene.mutationSequence) || scene.mutationSequence !== pendingState.sequence || !mapOrderMatches(authoritativeObjects, pendingState.order)) {
+                quarantineInternal(sceneInstanceId, "warm-seed-mismatch");
+              }
+              if (existing.status !== "synced") {
+                return {
+                  activated: false,
+                  restored: true,
+                  reason: existing.lastReason
+                };
+              }
+              return { activated: true, restored: true };
+            }
+            const state = emptyState(sceneInstanceId, signature);
+            scenes.set(sceneInstanceId, state);
+            if (signature === null || !isNonnegativeSafeInteger(scene.mutationSequence) || !(authoritativeObjects instanceof Map)) {
+              quarantineInternal(sceneInstanceId, "invalid-seed");
+              return { activated: false, restored: false, reason: "invalid-seed" };
+            }
+            if (authoritativeObjects.size > limits.maxSeedObjects) {
+              quarantineInternal(sceneInstanceId, "seed-capacity-exceeded");
+              return {
+                activated: false,
+                restored: false,
+                reason: "seed-capacity-exceeded"
+              };
+            }
+            const canonicalObjects = [];
+            const objectOrder = [];
+            const baselines = /* @__PURE__ */ new Map();
+            const currentTransforms = /* @__PURE__ */ new Map();
+            const contentSignatures = /* @__PURE__ */ new Map();
+            const objectBytes = /* @__PURE__ */ new Map();
+            let estimatedBytes = 0;
+            for (const [objectId, record] of authoritativeObjects) {
+              if (!isNonemptyString(objectId) || objectId !== record?.id || baselines.has(objectId)) {
+                quarantineInternal(sceneInstanceId, "invalid-seed");
+                return { activated: false, restored: false, reason: "invalid-seed" };
+              }
+              const baseline = normalizeFabricTransform(record.transform);
+              const converted = canonicalizeRecord(record, baseline);
+              if (!converted.valid) {
+                const reason = "invalid-seed";
+                quarantineInternal(sceneInstanceId, reason);
+                return { activated: false, restored: false, reason };
+              }
+              estimatedBytes += converted.estimatedBytes;
+              if (!Number.isSafeInteger(estimatedBytes) || estimatedBytes > limits.maxSeedBytes) {
+                quarantineInternal(sceneInstanceId, "seed-capacity-exceeded");
+                return {
+                  activated: false,
+                  restored: false,
+                  reason: "seed-capacity-exceeded"
+                };
+              }
+              canonicalObjects.push(converted.object);
+              objectOrder.push(objectId);
+              baselines.set(objectId, converted.baseline);
+              currentTransforms.set(objectId, converted.finalTransform);
+              contentSignatures.set(objectId, converted.contentSignature);
+              objectBytes.set(objectId, converted.estimatedBytes);
+            }
+            const documentId = makeOpaqueId("document");
+            const layerId = makeOpaqueId("layer");
+            const keyframeId = makeOpaqueId("keyframe");
+            const actorId = makeOpaqueId("actor");
+            const document2 = createDocument({
+              documentId,
+              coordinateSpace: {
+                unit: "source-pixel",
+                origin: "top-left",
+                yAxis: "down",
+                pixelRatio: 1,
+                width: signature.sourceWidth,
+                height: signature.sourceHeight
+              },
+              timebase: {
+                fpsNumerator: 1,
+                fpsDenominator: 1,
+                totalFrames: signature.targetFrame + 1
+              },
+              initialLayers: [{
+                id: layerId,
+                name: "Session shadow",
+                visible: true,
+                locked: false,
+                opacity: 1,
+                keyframes: [{
+                  id: keyframeId,
+                  frame: signature.targetFrame,
+                  empty: false,
+                  revision: 0,
+                  objects: canonicalObjects
+                }]
+              }],
+              revisionSequence: scene.mutationSequence
+            });
+            if (!document2 || typeof document2.applyCommand !== "function" || typeof document2.getContentSnapshot !== "function" || typeof document2.getHead !== "function" || document2.getHead()?.sequence !== scene.mutationSequence) {
+              throw new TypeError("Invalid DrawingDocumentV3 instance");
+            }
+            state.status = "synced";
+            state.document = document2;
+            state.layerId = layerId;
+            state.keyframeId = keyframeId;
+            state.actorId = actorId;
+            state.headSequence = scene.mutationSequence;
+            state.objectOrder = objectOrder;
+            state.baselines = baselines;
+            state.currentTransforms = currentTransforms;
+            state.contentSignatures = contentSignatures;
+            state.objectBytes = objectBytes;
+            state.estimatedBytes = estimatedBytes;
+            state.bootstrapCount = 1;
+            aggregate.bootstrapCount += 1;
+            return { activated: true, restored: false };
+          } catch (_error) {
+            if (sceneInstanceId !== null) {
+              if (!scenes.has(sceneInstanceId)) {
+                scenes.set(sceneInstanceId, emptyState(sceneInstanceId));
+              }
+              quarantineInternal(sceneInstanceId, "adapter-failed");
+            }
+            return {
+              activated: false,
+              restored: false,
+              reason: "adapter-failed"
+            };
+          }
+        }
+        function validateEventEnvelope(event, state) {
+          if (!isPlainRecord(event) || !isPlainRecord(event.scene) || event.scene.sceneInstanceId !== state.sceneInstanceId || !isNonnegativeSafeInteger(event.mutationSequence) || event.origin !== "live" && event.origin !== "history" || !isNonemptyString(event.kind) || !(event.unsupportedReason === null || isNonemptyString(event.unsupportedReason)) || !Array.isArray(event.removals) || !Array.isArray(event.insertions) || !Array.isArray(event.transforms) || !isNonnegativeSafeInteger(event.estimatedBytes)) {
+            return "invalid-transition";
+          }
+          const signature = makeSceneSignature(event.scene);
+          if (signature === null || !signaturesEqual(signature, state.signature)) {
+            return "seed-signature-changed";
+          }
+          if (event.mutationSequence <= state.headSequence) return "stale-transition";
+          if (event.mutationSequence !== state.headSequence + 1) return "sequence-gap";
+          if (event.unsupportedReason !== null) {
+            return sanitizeReason(event.unsupportedReason);
+          }
+          return null;
+        }
+        function deriveKind(event, hasRemovals, hasInsertions, hasTransforms) {
+          if (hasRemovals && hasInsertions) {
+            return event.kind === "split-stroke" ? "split-stroke" : null;
+          }
+          if (hasInsertions && !hasRemovals && !hasTransforms) {
+            return event.kind === "add-objects" ? "add-objects" : null;
+          }
+          if (hasRemovals && !hasInsertions && !hasTransforms) {
+            return event.kind === "delete-objects" || event.kind === "clear-keyframe" ? "delete-objects" : null;
+          }
+          if (hasTransforms && !hasRemovals && !hasInsertions) {
+            return event.kind === "transform-objects" ? "transform-objects" : null;
+          }
+          return null;
+        }
+        function prepareTransition(state, event) {
+          const operations = [];
+          const baselineAdds = /* @__PURE__ */ new Map();
+          const contentSignatureAdds = /* @__PURE__ */ new Map();
+          const currentUpdates = /* @__PURE__ */ new Map();
+          const currentDeletes = /* @__PURE__ */ new Set();
+          const byteUpdates = /* @__PURE__ */ new Map();
+          const byteDeletes = /* @__PURE__ */ new Set();
+          let nextEstimatedBytes = state.estimatedBytes;
+          const structurallyChanged = event.removals.length > 0 || event.insertions.length > 0;
+          let nextOrder = structurallyChanged ? state.objectOrder.slice() : state.objectOrder;
+          const removalIds = /* @__PURE__ */ new Set();
+          for (const removal of event.removals) {
+            if (!isPlainRecord(removal) || !isNonemptyString(removal.id) || !isNonnegativeSafeInteger(removal.index) || removalIds.has(removal.id) || state.objectOrder[removal.index] !== removal.id) {
+              return { valid: false, reason: "invalid-transition" };
+            }
+            removalIds.add(removal.id);
+          }
+          if (removalIds.size > 0) {
+            operations.push({
+              type: "remove-objects",
+              objectIds: [...removalIds]
+            });
+            nextOrder = nextOrder.filter((id) => !removalIds.has(id));
+            for (const id of removalIds) {
+              currentDeletes.add(id);
+              byteDeletes.add(id);
+              nextEstimatedBytes = Math.max(
+                0,
+                nextEstimatedBytes - (state.objectBytes.get(id) || 0)
+              );
+            }
+          }
+          const sortedInsertions = event.insertions.slice().sort((left, right) => Number(left?.index) - Number(right?.index));
+          const insertionIds = /* @__PURE__ */ new Set();
+          const preparedInsertions = [];
+          let previousIndex = -1;
+          for (const insertion of sortedInsertions) {
+            if (!isPlainRecord(insertion) || !isNonnegativeSafeInteger(insertion.index) || insertion.index <= previousIndex || !isPlainRecord(insertion.record) || !isNonemptyString(insertion.record.id) || insertionIds.has(insertion.record.id) || nextOrder.includes(insertion.record.id)) {
+              return { valid: false, reason: "invalid-transition" };
+            }
+            previousIndex = insertion.index;
+            const objectId = insertion.record.id;
+            if (removalIds.has(objectId) || event.origin === "live" && state.baselines.has(objectId)) {
+              return { valid: false, reason: "unsupported-field-mutation" };
+            }
+            insertionIds.add(objectId);
+            let baseline = null;
+            if (insertion.baseTransform === null) {
+              if (event.origin !== "history") {
+                return { valid: false, reason: "missing-baseline" };
+              }
+              baseline = state.baselines.get(objectId) || baselineAdds.get(objectId);
+              if (!baseline) {
+                return { valid: false, reason: "missing-baseline" };
+              }
+            } else {
+              baseline = normalizeFabricTransform(insertion.baseTransform);
+              if (baseline === null) {
+                return { valid: false, reason: "invalid-transition" };
+              }
+              const archived = state.baselines.get(objectId) || baselineAdds.get(objectId);
+              if (archived && !transformsEqual(archived, baseline)) {
+                return { valid: false, reason: "transition-before-mismatch" };
+              }
+              if (!archived) baselineAdds.set(objectId, baseline);
+            }
+            const converted = canonicalizeRecord(insertion.record, baseline);
+            if (!converted.valid) return converted;
+            if (event.origin === "live" && !transformsEqual(converted.finalTransform, baseline)) {
+              return { valid: false, reason: "transition-before-mismatch" };
+            }
+            const archivedSignature = state.contentSignatures.get(objectId) || contentSignatureAdds.get(objectId);
+            if (event.origin === "history") {
+              if (!archivedSignature) {
+                return { valid: false, reason: "missing-baseline" };
+              }
+              if (archivedSignature !== converted.contentSignature) {
+                return { valid: false, reason: "unsupported-field-mutation" };
+              }
+            } else if (!archivedSignature) {
+              contentSignatureAdds.set(objectId, converted.contentSignature);
+            }
+            if (insertion.index > nextOrder.length) {
+              return { valid: false, reason: "invalid-transition" };
+            }
+            nextOrder.splice(insertion.index, 0, objectId);
+            currentDeletes.delete(objectId);
+            byteDeletes.delete(objectId);
+            currentUpdates.set(objectId, converted.finalTransform);
+            byteUpdates.set(objectId, converted.estimatedBytes);
+            nextEstimatedBytes += converted.estimatedBytes;
+            preparedInsertions.push({
+              index: insertion.index,
+              object: converted.object
+            });
+          }
+          for (let index = 0; index < preparedInsertions.length; ) {
+            const first = preparedInsertions[index];
+            const objects = [first.object];
+            let next = index + 1;
+            while (next < preparedInsertions.length && preparedInsertions[next].index === preparedInsertions[next - 1].index + 1) {
+              objects.push(preparedInsertions[next].object);
+              next += 1;
+            }
+            operations.push({
+              type: "insert-objects",
+              index: first.index,
+              objects
+            });
+            index = next;
+          }
+          const transformIds = /* @__PURE__ */ new Set();
+          const canonicalTransforms = [];
+          for (const transform of event.transforms) {
+            if (!isPlainRecord(transform) || !isNonemptyString(transform.id) || transformIds.has(transform.id) || !nextOrder.includes(transform.id)) {
+              return { valid: false, reason: "invalid-transition" };
+            }
+            transformIds.add(transform.id);
+            const before = normalizeFabricTransform(transform.beforeTransform);
+            const after = normalizeFabricTransform(transform.afterTransform);
+            if (before === null || after === null) {
+              return { valid: false, reason: "invalid-transition" };
+            }
+            const current = currentUpdates.get(transform.id) || (currentDeletes.has(transform.id) ? null : state.currentTransforms.get(transform.id));
+            if (!current || !transformsEqual(current, before)) {
+              return { valid: false, reason: "transition-before-mismatch" };
+            }
+            if (!transformsEqual(before, after, UNSUPPORTED_TRANSFORM_FIELDS)) {
+              return { valid: false, reason: "unsupported-transform" };
+            }
+            const baseline = state.baselines.get(transform.id) || baselineAdds.get(transform.id);
+            if (!baseline) return { valid: false, reason: "missing-baseline" };
+            const projected = canonicalTransform(after, baseline);
+            if (projected === null) {
+              return { valid: false, reason: "unsupported-transform" };
+            }
+            currentUpdates.set(transform.id, after);
+            canonicalTransforms.push({
+              objectId: transform.id,
+              transform: projected
+            });
+          }
+          if (canonicalTransforms.length > 0) {
+            operations.push({
+              type: "set-transforms",
+              transforms: canonicalTransforms
+            });
+          }
+          const commandKind = deriveKind(
+            event,
+            removalIds.size > 0,
+            preparedInsertions.length > 0,
+            canonicalTransforms.length > 0
+          );
+          if (commandKind === null || operations.length === 0) {
+            return { valid: false, reason: "invalid-transition" };
+          }
+          return {
+            valid: true,
+            operations,
+            commandKind,
+            baselineAdds,
+            contentSignatureAdds,
+            currentUpdates,
+            currentDeletes,
+            byteUpdates,
+            byteDeletes,
+            nextEstimatedBytes,
+            nextOrder
+          };
+        }
+        function applyTransition(event) {
+          let state = null;
+          try {
+            const sceneInstanceId = event?.scene?.sceneInstanceId;
+            if (!isNonemptyString(sceneInstanceId)) {
+              return { applied: false, reason: "invalid-transition" };
+            }
+            state = scenes.get(sceneInstanceId);
+            if (!state || destroyed) {
+              return { applied: false, reason: "invalid-transition" };
+            }
+            if (state.status !== "synced") {
+              return { applied: false, reason: state.lastReason || "adapter-failed" };
+            }
+            const envelopeReason = validateEventEnvelope(event, state);
+            if (envelopeReason !== null) {
+              if (envelopeReason === "stale-transition") {
+                state.staleCount += 1;
+                aggregate.staleCount += 1;
+              } else if (envelopeReason === "sequence-gap") {
+                state.gapCount += 1;
+                aggregate.gapCount += 1;
+              }
+              return failResult(state, envelopeReason);
+            }
+            const prepared = prepareTransition(state, event);
+            if (!prepared.valid) return failResult(state, prepared.reason);
+            const command = {
+              id: makeOpaqueId("command"),
+              actorId: state.actorId,
+              baseRevision: state.headSequence,
+              target: {
+                layerId: state.layerId,
+                keyframeId: state.keyframeId,
+                frame: state.signature.targetFrame
+              },
+              kind: prepared.commandKind,
+              operations: prepared.operations,
+              createdAt: nowIso()
+            };
+            const result = state.document.applyCommand(command, {
+              source: event.origin === "history" ? "history" : "user"
+            });
+            if (!result?.applied) return failResult(state, "document-rejected");
+            const documentHead = state.document.getHead();
+            if (result.sequence !== event.mutationSequence || documentHead?.sequence !== event.mutationSequence) {
+              return failResult(state, "document-sequence-mismatch");
+            }
+            for (const [id, baseline] of prepared.baselineAdds) {
+              state.baselines.set(id, baseline);
+            }
+            for (const [id, signature] of prepared.contentSignatureAdds) {
+              state.contentSignatures.set(id, signature);
+            }
+            for (const id of prepared.currentDeletes) state.currentTransforms.delete(id);
+            for (const [id, transform] of prepared.currentUpdates) {
+              state.currentTransforms.set(id, transform);
+            }
+            for (const id of prepared.byteDeletes) state.objectBytes.delete(id);
+            for (const [id, bytes] of prepared.byteUpdates) {
+              state.objectBytes.set(id, bytes);
+            }
+            state.objectOrder = prepared.nextOrder;
+            state.estimatedBytes = prepared.nextEstimatedBytes;
+            state.headSequence = event.mutationSequence;
+            state.commitCount += 1;
+            aggregate.commitCount += 1;
+            return {
+              applied: true,
+              commandId: result.commandId,
+              sequence: result.sequence
+            };
+          } catch (_error) {
+            if (state) return failResult(state, "adapter-failed");
+            return { applied: false, reason: "invalid-transition" };
+          }
+        }
+        function recordLatency(state, startedAt, finishedAt) {
+          const latency = Number.isFinite(startedAt) && Number.isFinite(finishedAt) ? Math.max(0, finishedAt - startedAt) : 0;
+          state.latencies.push(latency);
+          aggregate.latencies.push(latency);
+          while (state.latencies.length > limits.maxLatencySamples) {
+            state.latencies.shift();
+          }
+          while (aggregate.latencies.length > limits.maxLatencySamples) {
+            aggregate.latencies.shift();
+          }
+        }
+        function scheduleNext(_sceneInstanceId) {
+          if (destroyed || workScheduled || queue.length === 0) return true;
+          workScheduled = true;
+          schedulerGeneration += 1;
+          const generation = schedulerGeneration;
+          const callback = () => runScheduledWork(generation);
+          try {
+            invokeScheduler(scheduleWork, callback);
+            return true;
+          } catch (_error) {
+            try {
+              invokeScheduler(fallbackScheduleWork, callback);
+              return true;
+            } catch (_fallbackError) {
+              workScheduled = false;
+              const queuedSceneIds = [...new Set(queue.map((item) => item.sceneInstanceId))];
+              for (const queuedSceneId of queuedSceneIds) {
+                quarantineInternal(queuedSceneId, "scheduler-failed");
+              }
+              queue.length = 0;
+              queueBytes = 0;
+              schedulerGeneration += 1;
+              return false;
+            }
+          }
+        }
+        function runScheduledWork(generation) {
+          if (destroyed || generation !== schedulerGeneration || !workScheduled) {
+            return;
+          }
+          workScheduled = false;
+          if (queue.length === 0) return;
+          let batchStarted;
+          try {
+            batchStarted = latencyNow();
+            if (!Number.isFinite(batchStarted)) throw new TypeError("Invalid clock");
+          } catch (_error) {
+            const failedSceneId = queue[0]?.sceneInstanceId;
+            if (failedSceneId) quarantineInternal(failedSceneId, "adapter-failed");
+            if (queue.length > 0) scheduleNext(queue[0].sceneInstanceId);
+            return;
+          }
+          let processed = 0;
+          while (!destroyed && queue.length > 0 && processed < limits.maxWorkItems) {
+            const item = queue.shift();
+            queueBytes = Math.max(0, queueBytes - item.estimatedBytes);
+            const state = scenes.get(item.sceneInstanceId);
+            if (state?.status === "synced") applyTransition(item.event);
+            processed += 1;
+            let finishedAt;
+            try {
+              finishedAt = latencyNow();
+              if (!Number.isFinite(finishedAt)) throw new TypeError("Invalid clock");
+            } catch (_error) {
+              if (state) quarantineInternal(state.sceneInstanceId, "adapter-failed");
+              finishedAt = batchStarted + limits.maxWorkMs;
+            }
+            if (state) recordLatency(state, item.enqueuedAt, finishedAt);
+            if (finishedAt - batchStarted >= limits.maxWorkMs) break;
+          }
+          if (!destroyed && queue.length > 0) {
+            scheduleNext(queue[0].sceneInstanceId);
+          }
+        }
+        function enqueueTransition(event) {
+          try {
+            if (destroyed || !isPlainRecord(event) || !isPlainRecord(event.scene) || !isNonemptyString(event.scene.sceneInstanceId)) {
+              return false;
+            }
+            const sceneInstanceId = event.scene.sceneInstanceId;
+            const state = scenes.get(sceneInstanceId);
+            if (!state || state.status !== "synced" || !isNonnegativeSafeInteger(event.estimatedBytes)) {
+              if (state?.status === "synced") {
+                quarantineInternal(sceneInstanceId, "invalid-transition");
+              }
+              return false;
+            }
+            if (event.estimatedBytes > limits.maxQueueBytes) {
+              quarantineInternal(sceneInstanceId, "queue-event-too-large");
+              return false;
+            }
+            if (queue.length + 1 > limits.maxQueueItems || queueBytes + event.estimatedBytes > limits.maxQueueBytes) {
+              quarantineInternal(sceneInstanceId, "queue-capacity-exceeded");
+              return false;
+            }
+            const enqueuedAt = latencyNow();
+            if (!Number.isFinite(enqueuedAt)) throw new TypeError("Invalid clock");
+            const queuedEvent = snapshotTransitionEnvelope(event);
+            queue.push({
+              event: queuedEvent,
+              sceneInstanceId,
+              estimatedBytes: event.estimatedBytes,
+              enqueuedAt
+            });
+            queueBytes += event.estimatedBytes;
+            if (!scheduleNext(sceneInstanceId)) return false;
+            return true;
+          } catch (_error) {
+            const sceneInstanceId = event?.scene?.sceneInstanceId;
+            if (isNonemptyString(sceneInstanceId)) {
+              quarantineInternal(sceneInstanceId, "adapter-failed");
+            }
+            return false;
+          }
+        }
+        function quarantineScene(sceneInstanceId, reason) {
+          try {
+            if (!isNonemptyString(sceneInstanceId)) return false;
+            return quarantineInternal(sceneInstanceId, reason);
+          } catch (_error) {
+            return false;
+          }
+        }
+        function dropScenes(sceneInstanceIds) {
+          if (destroyed || !Array.isArray(sceneInstanceIds)) return 0;
+          let dropped = 0;
+          const uniqueIds = new Set(sceneInstanceIds.filter(isNonemptyString));
+          for (const sceneInstanceId of uniqueIds) {
+            removeQueuedScene(sceneInstanceId);
+            if (scenes.delete(sceneInstanceId)) dropped += 1;
+          }
+          return dropped;
+        }
+        function destroy() {
+          if (destroyed) return;
+          destroyed = true;
+          schedulerGeneration += 1;
+          workScheduled = false;
+          queue.length = 0;
+          queueBytes = 0;
+          scenes.clear();
+        }
+        function getSceneProjection(sceneInstanceId) {
+          const state = scenes.get(sceneInstanceId);
+          if (!state || state.status !== "synced" || destroyed) return null;
+          try {
+            return {
+              headSequence: state.headSequence,
+              document: clonePlain(state.document.getContentSnapshot())
+            };
+          } catch (_error) {
+            quarantineInternal(sceneInstanceId, "adapter-failed");
+            return null;
+          }
+        }
+        function makeDiagnostics({
+          status,
+          sceneCount,
+          bootstrapCount,
+          commitCount,
+          failureCount,
+          divergenceCount,
+          resyncCount,
+          staleCount,
+          gapCount,
+          headSequence,
+          objectCount,
+          estimatedBytes,
+          latencies,
+          lastReason
+        }) {
+          return {
+            enabled: !destroyed,
+            status,
+            sceneCount,
+            bootstrapCount,
+            commitCount,
+            failureCount,
+            divergenceCount,
+            resyncCount,
+            staleCount,
+            gapCount,
+            headSequence,
+            objectCount,
+            estimatedBytes,
+            latencyP50Ms: percentile(latencies, 0.5),
+            latencyP95Ms: percentile(latencies, 0.95),
+            lastReason
+          };
+        }
+        function getDiagnostics(sceneInstanceId) {
+          const state = isNonemptyString(sceneInstanceId) ? scenes.get(sceneInstanceId) : null;
+          if (state) {
+            return makeDiagnostics({
+              status: state.status,
+              sceneCount: 1,
+              bootstrapCount: state.bootstrapCount,
+              commitCount: state.commitCount,
+              failureCount: state.failureCount,
+              divergenceCount: state.divergenceCount,
+              resyncCount: state.resyncCount,
+              staleCount: state.staleCount,
+              gapCount: state.gapCount,
+              headSequence: state.headSequence,
+              objectCount: state.objectOrder.length,
+              estimatedBytes: state.estimatedBytes,
+              latencies: state.latencies,
+              lastReason: state.lastReason
+            });
+          }
+          const states = [...scenes.values()];
+          const anyDesynced = states.some((candidate) => candidate.status === "desynced");
+          return makeDiagnostics({
+            status: destroyed ? "destroyed" : anyDesynced ? "degraded" : states.length > 0 ? "active" : "idle",
+            sceneCount: states.length,
+            bootstrapCount: aggregate.bootstrapCount,
+            commitCount: aggregate.commitCount,
+            failureCount: aggregate.failureCount,
+            divergenceCount: aggregate.divergenceCount,
+            resyncCount: aggregate.resyncCount,
+            staleCount: aggregate.staleCount,
+            gapCount: aggregate.gapCount,
+            headSequence: states.reduce((maximum, candidate) => Math.max(maximum, candidate.headSequence), 0),
+            objectCount: states.reduce((total, candidate) => total + candidate.objectOrder.length, 0),
+            estimatedBytes: states.reduce((total, candidate) => total + candidate.estimatedBytes, 0),
+            latencies: aggregate.latencies,
+            lastReason: states.find((candidate) => candidate.status === "desynced")?.lastReason || null
+          });
+        }
+        return {
+          activateScene,
+          enqueueTransition,
+          applyTransition,
+          quarantineScene,
+          dropScenes,
+          destroy,
+          getSceneProjection,
+          getDiagnostics
+        };
+      }
+      module.exports = { createDrawingEngineAdapter };
+    }
+  });
+
   // node_modules/perfect-freehand/dist/cjs/index.js
   var require_cjs = __commonJS({
     "node_modules/perfect-freehand/dist/cjs/index.js"(exports) {
@@ -8164,6 +10368,9 @@ void main() {
       var {
         createDrawingCommandHistory
       } = require_drawing_command_history();
+      var {
+        createDrawingEngineAdapter
+      } = require_drawing_engine_adapter();
       var SCENE_KEY_SEPARATOR = "\0";
       var DEFAULT_MAX_VIDEOS = 10;
       var DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
@@ -8206,6 +10413,37 @@ void main() {
         "clear-session",
         "undo",
         "redo"
+      ]);
+      var DRAWING_V3_DIAGNOSTIC_STATUSES = /* @__PURE__ */ new Set([
+        "active",
+        "degraded",
+        "desynced",
+        "destroyed",
+        "disabled",
+        "idle",
+        "not-connected",
+        "synced"
+      ]);
+      var DRAWING_V3_DIAGNOSTIC_REASONS = /* @__PURE__ */ new Set([
+        "adapter-failed",
+        "document-rejected",
+        "document-sequence-mismatch",
+        "invalid-seed",
+        "invalid-transition",
+        "missing-baseline",
+        "observer-failed",
+        "queue-capacity-exceeded",
+        "queue-event-too-large",
+        "scheduler-failed",
+        "seed-capacity-exceeded",
+        "seed-signature-changed",
+        "sequence-gap",
+        "stale-transition",
+        "transition-before-mismatch",
+        "unsupported-field-mutation",
+        "unsupported-order-mutation",
+        "unsupported-transform",
+        "warm-seed-mismatch"
       ]);
       function clonePlain(value) {
         if (value === void 0) return void 0;
@@ -8312,6 +10550,79 @@ void main() {
           }))
         };
       }
+      function normalizedStoredTransform(value = {}) {
+        return {
+          left: finiteNumber(value.left),
+          top: finiteNumber(value.top),
+          scaleX: finiteNumber(value.scaleX, 1),
+          scaleY: finiteNumber(value.scaleY, 1),
+          angle: finiteNumber(value.angle),
+          skewX: finiteNumber(value.skewX),
+          skewY: finiteNumber(value.skewY),
+          flipX: value.flipX === true,
+          flipY: value.flipY === true
+        };
+      }
+      function storedTransformsEqual(left, right, fields = TRANSFORM_FIELDS) {
+        const normalizedLeft = normalizedStoredTransform(left);
+        const normalizedRight = normalizedStoredTransform(right);
+        return fields.every((field) => normalizedLeft[field] === normalizedRight[field]);
+      }
+      function safeEstimatedBytes(value) {
+        const number = Math.trunc(Number(value));
+        return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+      }
+      function drawingV3Count(value) {
+        const number = Math.trunc(Number(value));
+        return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+      }
+      function drawingV3Latency(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0 ? Math.min(number, 6e4) : 0;
+      }
+      function emptyDrawingV3Diagnostics(status, reason = null, failureCount = 0) {
+        return {
+          enabled: false,
+          status,
+          sceneCount: 0,
+          bootstrapCount: 0,
+          commitCount: 0,
+          failureCount,
+          divergenceCount: 0,
+          resyncCount: 0,
+          staleCount: 0,
+          gapCount: 0,
+          headSequence: 0,
+          objectCount: 0,
+          estimatedBytes: 0,
+          latencyP50Ms: 0,
+          latencyP95Ms: 0,
+          lastReason: reason
+        };
+      }
+      function sanitizeDrawingV3Diagnostics(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return emptyDrawingV3Diagnostics("degraded", "adapter-failed", 1);
+        }
+        return {
+          enabled: value.enabled === true,
+          status: DRAWING_V3_DIAGNOSTIC_STATUSES.has(value.status) ? value.status : "degraded",
+          sceneCount: drawingV3Count(value.sceneCount),
+          bootstrapCount: drawingV3Count(value.bootstrapCount),
+          commitCount: drawingV3Count(value.commitCount),
+          failureCount: drawingV3Count(value.failureCount),
+          divergenceCount: drawingV3Count(value.divergenceCount),
+          resyncCount: drawingV3Count(value.resyncCount),
+          staleCount: drawingV3Count(value.staleCount),
+          gapCount: drawingV3Count(value.gapCount),
+          headSequence: drawingV3Count(value.headSequence),
+          objectCount: drawingV3Count(value.objectCount),
+          estimatedBytes: drawingV3Count(value.estimatedBytes),
+          latencyP50Ms: drawingV3Latency(value.latencyP50Ms),
+          latencyP95Ms: drawingV3Latency(value.latencyP95Ms),
+          lastReason: DRAWING_V3_DIAGNOSTIC_REASONS.has(value.lastReason) ? value.lastReason : null
+        };
+      }
       function createSessionSceneStore(options = {}) {
         const maxVideos = positiveInteger(options.maxVideos, DEFAULT_MAX_VIDEOS);
         const maxBytes = positiveInteger(options.maxBytes, DEFAULT_MAX_BYTES);
@@ -8322,13 +10633,104 @@ void main() {
           Math.max(1, Math.min(16 * 1024 * 1024, Math.floor(maxBytes / 4)))
         );
         const estimateObjectBytes = typeof options.estimateObjectBytes === "function" ? options.estimateObjectBytes : defaultEstimateObjectBytes;
+        const drawingEngineObserver = options.drawingEngineObserver && typeof options.drawingEngineObserver === "object" ? options.drawingEngineObserver : null;
+        const createSceneInstanceId = typeof options.createSceneInstanceId === "function" ? options.createSceneInstanceId : null;
         const scenes = /* @__PURE__ */ new Map();
+        const issuedSceneInstanceIds = /* @__PURE__ */ new Set();
         const videoAccess = /* @__PURE__ */ new Map();
         let accessClock = 0;
         let latestVideoGeneration = -1;
         let activeSession = null;
         let evictionCount = 0;
         let commandSequence = 0;
+        let sceneInstanceSequence = 0;
+        let observerFailureCount = 0;
+        let observerQuarantineFailureCount = 0;
+        let observerLifecycleFailureCount = 0;
+        let destroyed = false;
+        function sourceDimension(value) {
+          const number = Number(value);
+          return Number.isFinite(number) && number > 0 ? number : 1;
+        }
+        function allocateSceneInstanceId() {
+          let candidate = null;
+          try {
+            candidate = createSceneInstanceId?.();
+          } catch (_error) {
+            candidate = null;
+          }
+          if (typeof candidate === "string" && candidate && !issuedSceneInstanceIds.has(candidate)) {
+            issuedSceneInstanceIds.add(candidate);
+            return candidate;
+          }
+          do {
+            sceneInstanceSequence += 1;
+            candidate = `scene-instance-${Date.now()}-${sceneInstanceSequence}`;
+          } while (issuedSceneInstanceIds.has(candidate));
+          issuedSceneInstanceIds.add(candidate);
+          return candidate;
+        }
+        function sceneDescriptor(scene, dimensions = scene) {
+          return {
+            sceneInstanceId: scene.sceneInstanceId,
+            targetFrame: scene.targetFrame,
+            sourceWidth: sourceDimension(dimensions.sourceWidth),
+            sourceHeight: sourceDimension(dimensions.sourceHeight)
+          };
+        }
+        function quarantineObserverScene(sceneInstanceId) {
+          try {
+            const quarantine = drawingEngineObserver?.quarantineScene;
+            if (typeof quarantine === "function") {
+              quarantine.call(drawingEngineObserver, sceneInstanceId, "observer-failed");
+            }
+          } catch (_error) {
+            observerQuarantineFailureCount += 1;
+          }
+        }
+        function recordObserverFailure(sceneInstanceId) {
+          observerFailureCount += 1;
+          quarantineObserverScene(sceneInstanceId);
+        }
+        function activationObjectView(scene, restored) {
+          const authoritativeObjects = /* @__PURE__ */ new Map();
+          for (const [id, record] of scene.objects) {
+            authoritativeObjects.set(id, restored ? null : clonePlain(record));
+          }
+          return authoritativeObjects;
+        }
+        function notifySceneActivation(scene, incomingSession, restored) {
+          try {
+            const activate = drawingEngineObserver?.activateScene;
+            if (typeof activate !== "function") return;
+            activate.call(drawingEngineObserver, {
+              ...sceneDescriptor(scene, incomingSession),
+              mutationSequence: scene.mutationSequence
+            }, activationObjectView(scene, restored));
+          } catch (_error) {
+            recordObserverFailure(scene.sceneInstanceId);
+          }
+        }
+        function notifyCommittedTransition(scene, eventFactory) {
+          try {
+            const enqueue = drawingEngineObserver?.enqueueTransition;
+            if (typeof enqueue !== "function") return;
+            enqueue.call(drawingEngineObserver, eventFactory());
+          } catch (_error) {
+            recordObserverFailure(scene.sceneInstanceId);
+          }
+        }
+        function notifyScenesDropped(sceneInstanceIds) {
+          if (!Array.isArray(sceneInstanceIds) || sceneInstanceIds.length === 0) return;
+          try {
+            const dropScenes = drawingEngineObserver?.dropScenes;
+            if (typeof dropScenes === "function") {
+              dropScenes.call(drawingEngineObserver, sceneInstanceIds);
+            }
+          } catch (_error) {
+            observerLifecycleFailureCount += 1;
+          }
+        }
         function activeScene() {
           return activeSession ? scenes.get(activeSession.sceneKey) || null : null;
         }
@@ -8367,11 +10769,15 @@ void main() {
           return total;
         }
         function evictVideo(stableVideoIdentity) {
+          const droppedSceneInstanceIds = [];
           for (const [key, scene] of scenes) {
-            if (scene.stableVideoIdentity === stableVideoIdentity) scenes.delete(key);
+            if (scene.stableVideoIdentity !== stableVideoIdentity) continue;
+            droppedSceneInstanceIds.push(scene.sceneInstanceId);
+            scenes.delete(key);
           }
           videoAccess.delete(stableVideoIdentity);
           evictionCount += 1;
+          notifyScenesDropped(droppedSceneInstanceIds);
         }
         function enforceLimits() {
           let estimatedBytes = calculateEstimatedBytes();
@@ -8437,6 +10843,7 @@ void main() {
         function noteMutation(scene) {
           scene.dirty = true;
           scene.mutationCount += 1;
+          scene.mutationSequence += 1;
         }
         function estimateObjectsBytes(objects) {
           return [...objects.values()].reduce((total, object) => {
@@ -8444,17 +10851,154 @@ void main() {
             return total + Math.max(1, estimated);
           }, 0);
         }
+        function transitionKind(sourceKind, removalCount, insertionCount, transformCount) {
+          if (removalCount > 0 && insertionCount > 0) return "split-stroke";
+          if (insertionCount > 0 && removalCount === 0) return "add-objects";
+          if (removalCount > 0 && insertionCount === 0) {
+            return sourceKind === "clear-keyframe" ? "clear-keyframe" : "delete-objects";
+          }
+          if (transformCount > 0) return "transform-objects";
+          return typeof sourceKind === "string" && sourceKind ? sourceKind : "unsupported-transition";
+        }
+        function makeTransitionEvent(scene, transition) {
+          const event = {
+            scene: sceneDescriptor(scene),
+            mutationSequence: scene.mutationSequence,
+            origin: transition.origin,
+            kind: transition.kind,
+            estimatedBytes: safeEstimatedBytes(transition.estimatedBytes),
+            unsupportedReason: null,
+            removals: [],
+            insertions: [],
+            transforms: []
+          };
+          const beforeState = transition.beforeState;
+          const afterState = transition.afterState;
+          if (!beforeState || !afterState || beforeState.type !== afterState.type) {
+            event.unsupportedReason = "unsupported-field-mutation";
+            return event;
+          }
+          if (beforeState.type === "transforms") {
+            const beforeTransforms = new Map((beforeState.transforms || []).map((item) => [item.id, item.transform]));
+            const afterTransforms = new Map((afterState.transforms || []).map((item) => [item.id, item.transform]));
+            const objectIds = [.../* @__PURE__ */ new Set([...beforeTransforms.keys(), ...afterTransforms.keys()])];
+            if (beforeTransforms.size !== afterTransforms.size || objectIds.some((id) => !beforeTransforms.has(id) || !afterTransforms.has(id))) {
+              event.unsupportedReason = "unsupported-field-mutation";
+            }
+            for (const id of objectIds) {
+              if (!beforeTransforms.has(id) || !afterTransforms.has(id)) continue;
+              const beforeTransform = beforeTransforms.get(id);
+              const afterTransform = afterTransforms.get(id);
+              if (storedTransformsEqual(beforeTransform, afterTransform)) continue;
+              if (!storedTransformsEqual(
+                beforeTransform,
+                afterTransform,
+                UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
+              )) {
+                event.unsupportedReason = "unsupported-transform";
+              }
+              event.transforms.push({ id, beforeTransform, afterTransform });
+            }
+            event.kind = transitionKind(
+              transition.kind,
+              event.removals.length,
+              event.insertions.length,
+              event.transforms.length
+            );
+            return event;
+          }
+          if (beforeState.type !== "objects" || !Array.isArray(beforeState.order) || !Array.isArray(afterState.order)) {
+            event.unsupportedReason = "unsupported-field-mutation";
+            return event;
+          }
+          const beforeObjects = new Map((beforeState.objects || []).map((object) => [object.id, object]));
+          const afterObjects = new Map((afterState.objects || []).map((object) => [object.id, object]));
+          const beforeIndices = new Map(beforeState.order.map((id, index) => [id, index]));
+          const afterIndices = new Map(afterState.order.map((id, index) => [id, index]));
+          const touchedIds = [.../* @__PURE__ */ new Set([
+            ...beforeState.touchedIds || [],
+            ...afterState.touchedIds || []
+          ])];
+          const removedIds = touchedIds.filter((id) => beforeObjects.has(id) && !afterObjects.has(id));
+          const insertedIds = touchedIds.filter((id) => !beforeObjects.has(id) && afterObjects.has(id));
+          const commonIds = touchedIds.filter((id) => beforeObjects.has(id) && afterObjects.has(id));
+          const removedIdSet = new Set(removedIds);
+          event.removals = removedIds.map((id) => ({ id, index: beforeIndices.get(id) ?? -1 })).sort((left, right) => left.index - right.index);
+          const baseTransforms = transition.baseTransforms instanceof Map ? transition.baseTransforms : /* @__PURE__ */ new Map();
+          const contentStableIds = transition.contentStableIds instanceof Set ? transition.contentStableIds : new Set(Array.isArray(transition.contentStableIds) ? transition.contentStableIds : []);
+          event.insertions = insertedIds.map((id) => {
+            const record = afterObjects.get(id);
+            const index = afterIndices.get(id) ?? -1;
+            if (transition.origin === "history") {
+              return { index, record, baseTransform: null };
+            }
+            const baseTransform = baseTransforms.get(id) || clonePlain(record?.transform || {});
+            const finalTransform = record?.transform || {};
+            const insertionRecord = storedTransformsEqual(baseTransform, finalTransform) ? record : { ...record, transform: baseTransform };
+            if (!storedTransformsEqual(baseTransform, finalTransform)) {
+              if (!storedTransformsEqual(
+                baseTransform,
+                finalTransform,
+                UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
+              )) {
+                event.unsupportedReason = "unsupported-transform";
+              }
+              event.transforms.push({
+                id,
+                beforeTransform: baseTransform,
+                afterTransform: finalTransform
+              });
+            }
+            return { index, record: insertionRecord, baseTransform };
+          }).sort((left, right) => left.index - right.index);
+          for (const id of commonIds) {
+            const beforeObject = beforeObjects.get(id);
+            const afterObject = afterObjects.get(id);
+            if (!contentStableIds.has(id)) {
+              event.unsupportedReason = "unsupported-field-mutation";
+            }
+            const beforeTransform = beforeObject?.transform || {};
+            const afterTransform = afterObject?.transform || {};
+            if (storedTransformsEqual(beforeTransform, afterTransform)) continue;
+            if (!storedTransformsEqual(
+              beforeTransform,
+              afterTransform,
+              UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
+            )) {
+              event.unsupportedReason = "unsupported-transform";
+            }
+            event.transforms.push({ id, beforeTransform, afterTransform });
+          }
+          const expectedOrder = beforeState.order.filter((id) => !removedIdSet.has(id));
+          for (const insertion of event.insertions) {
+            expectedOrder.splice(insertion.index, 0, insertion.record.id);
+          }
+          if (expectedOrder.length !== afterState.order.length || expectedOrder.some((id, index) => id !== afterState.order[index])) {
+            event.unsupportedReason = "unsupported-order-mutation";
+          }
+          event.kind = transitionKind(
+            transition.kind,
+            event.removals.length,
+            event.insertions.length,
+            event.transforms.length
+          );
+          return event;
+        }
         function nextCommandId(scene, kind) {
           commandSequence += 1;
           return `${kind}:${scene.key}:${commandSequence}`;
         }
-        function makeHistoryCommand(scene, kind, undoState, redoState) {
-          return {
+        function makeHistoryCommand(scene, kind, undoState, redoState, contentStableIds) {
+          const command = {
             id: nextCommandId(scene, kind),
             kind,
             undoState,
             redoState
           };
+          if (contentStableIds instanceof Set && contentStableIds.size > 0) {
+            command.contentStableIds = [...contentStableIds];
+          }
+          return command;
         }
         function commitStagedMutation(scene, change) {
           const previousEstimatedBytes = scene.estimatedBytes;
@@ -8464,7 +11008,13 @@ void main() {
           } catch (error) {
             return { applied: false, reason: error?.message || "scene-validation-failed" };
           }
-          const command = makeHistoryCommand(scene, change.kind, change.undoState, change.redoState);
+          const command = makeHistoryCommand(
+            scene,
+            change.kind,
+            change.undoState,
+            change.redoState,
+            change.contentStableIds
+          );
           const commandBytes = defaultEstimateObjectBytes(command);
           if (commandBytes > maxHistoryBytes) {
             return { applied: false, reason: "history-capacity-exceeded" };
@@ -8495,9 +11045,19 @@ void main() {
           scene.estimatedBytes = nextEstimatedBytes;
           noteMutation(scene);
           touchVideo(scene.stableVideoIdentity);
+          notifyCommittedTransition(scene, () => makeTransitionEvent(scene, {
+            origin: "live",
+            kind: change.kind,
+            estimatedBytes: commandBytes,
+            beforeState: change.undoState,
+            afterState: change.redoState,
+            baseTransforms: change.baseTransforms,
+            contentStableIds: change.contentStableIds
+          }));
           return { applied: true, commandId: command.id, ...recorded };
         }
         function activateSession(session) {
+          if (destroyed) return { accepted: false, reason: "store-destroyed" };
           if (!session || typeof session.sessionId !== "string" || session.sessionId.length === 0) {
             return { accepted: false, reason: "invalid-session" };
           }
@@ -8518,8 +11078,11 @@ void main() {
           if (!restored) {
             scenes.set(sceneKey, {
               key: sceneKey,
+              sceneInstanceId: allocateSceneInstanceId(),
               stableVideoIdentity: session.stableVideoIdentity,
               targetFrame,
+              sourceWidth: sourceDimension(session.sourceWidth),
+              sourceHeight: sourceDimension(session.sourceHeight),
               objects: /* @__PURE__ */ new Map(),
               selectedObjectIds: /* @__PURE__ */ new Set(),
               history: createDrawingCommandHistory({
@@ -8529,6 +11092,7 @@ void main() {
               historyEntries: { undo: [], redo: [] },
               dirty: false,
               mutationCount: 0,
+              mutationSequence: 0,
               estimatedBytes: 0
             });
           }
@@ -8545,6 +11109,7 @@ void main() {
           scene.selectedObjectIds.clear();
           touchVideo(session.stableVideoIdentity);
           enforceLimits();
+          notifySceneActivation(scene, session, restored);
           return { accepted: true, restored, sceneKey };
         }
         function deactivateSession(sessionId) {
@@ -8577,7 +11142,8 @@ void main() {
             nextObjects,
             nextSelection: scene.selectedObjectIds,
             undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
-            redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys())
+            redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys()),
+            baseTransforms: /* @__PURE__ */ new Map([[record.id, clonePlain(record.transform || {})]])
           });
           if (!result.applied) return result;
           return { applied: true, objectId: record.id };
@@ -8658,6 +11224,10 @@ void main() {
             return { applied: false, reason: "scene-object-limit-exceeded" };
           }
           const requestedSelection = Array.isArray(change.selectedObjectIds) ? change.selectedObjectIds : [];
+          const additionBaseTransforms = new Map(additions.map((object) => [
+            object.id,
+            clonePlain(object.transform || {})
+          ]));
           const nextObjects = /* @__PURE__ */ new Map();
           const replacementsById = new Map(replacements.map((replacement) => [replacement.removeId, replacement.addObjects]));
           for (const [id, object] of scene.objects) {
@@ -8708,12 +11278,15 @@ void main() {
             ...additions.map((object) => object.id),
             ...changedTransformIds
           ]);
+          const contentStableIds = new Set(changedTransformIds.filter((id) => !removeIds.has(id) && !additionIds.has(id)));
           const result = commitStagedMutation(scene, {
             kind: typeof change.kind === "string" && change.kind ? change.kind : "split-stroke",
             nextObjects,
             nextSelection,
             undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
-            redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys())
+            redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys()),
+            baseTransforms: additionBaseTransforms,
+            contentStableIds
           });
           if (!result.applied) return result;
           return {
@@ -8788,7 +11361,21 @@ void main() {
         function moveHistory(direction) {
           const scene = activeScene();
           if (!scene) return { applied: false, reason: "history-empty" };
-          const result = scene.history[direction]((state) => applyHistoryState(scene, state));
+          let transition = null;
+          const result = scene.history[direction]((state, _historyDirection, entry) => {
+            const applied = applyHistoryState(scene, state);
+            if (applied.applied) {
+              transition = {
+                origin: "history",
+                kind: entry.kind,
+                estimatedBytes: entry.estimatedBytes,
+                beforeState: direction === "undo" ? entry.redoState : entry.undoState,
+                afterState: direction === "undo" ? entry.undoState : entry.redoState,
+                contentStableIds: entry.contentStableIds
+              };
+            }
+            return applied;
+          });
           if (!result.applied) return result;
           const from = direction === "undo" ? scene.historyEntries.undo : scene.historyEntries.redo;
           const to = direction === "undo" ? scene.historyEntries.redo : scene.historyEntries.undo;
@@ -8796,6 +11383,9 @@ void main() {
           if (entryIndex >= 0) {
             const [entry] = from.splice(entryIndex, 1);
             to.push(entry);
+          }
+          if (transition) {
+            notifyCommittedTransition(scene, () => makeTransitionEvent(scene, transition));
           }
           return {
             ...result,
@@ -8890,6 +11480,9 @@ void main() {
             sceneCount: scenes.size,
             estimatedBytes: calculateEstimatedBytes(),
             evictionCount,
+            observerFailureCount,
+            observerQuarantineFailureCount,
+            observerLifecycleFailureCount,
             latestVideoGeneration,
             activeSessionId: activeSession?.sessionId || null,
             activeSceneKey: activeSession?.sceneKey || null,
@@ -8907,9 +11500,13 @@ void main() {
           };
         }
         function destroy() {
+          if (destroyed) return;
+          destroyed = true;
+          const droppedSceneInstanceIds = [...scenes.values()].map((scene) => scene.sceneInstanceId);
           scenes.clear();
           videoAccess.clear();
           activeSession = null;
+          notifyScenesDropped(droppedSceneInstanceIds);
         }
         return {
           activateSession,
@@ -9036,7 +11633,35 @@ void main() {
         const now = () => typeof performanceRef?.now === "function" ? performanceRef.now() : Date.now();
         const devicePixelRatio = finiteNumber(options.devicePixelRatio ?? windowRef?.devicePixelRatio, 1) || 1;
         const metrics = options.metrics || createFabricDrawingPilotMetrics(options.metricsOptions);
-        const sceneStore = options.sceneStore || createSessionSceneStore(options.sceneStoreOptions);
+        const drawingV3ShadowRequested = options.drawingV3ShadowEnabled === true;
+        const customSceneStore = options.sceneStore || null;
+        let drawingV3Adapter = null;
+        let drawingV3ShadowStartupFailed = false;
+        if (drawingV3ShadowRequested && !customSceneStore) {
+          try {
+            const adapterFactory = options.drawingV3AdapterFactory === void 0 ? createDrawingEngineAdapter : options.drawingV3AdapterFactory;
+            if (typeof adapterFactory !== "function") throw new TypeError("Invalid Drawing V3 adapter factory");
+            const candidate = adapterFactory(options.drawingV3AdapterOptions || {});
+            const requiredMethods = [
+              "activateScene",
+              "enqueueTransition",
+              "quarantineScene",
+              "dropScenes",
+              "destroy",
+              "getDiagnostics"
+            ];
+            if (!candidate || requiredMethods.some((method) => typeof candidate[method] !== "function")) {
+              throw new TypeError("Invalid Drawing V3 adapter");
+            }
+            drawingV3Adapter = candidate;
+          } catch (_error) {
+            drawingV3ShadowStartupFailed = true;
+          }
+        }
+        const sceneStore = customSceneStore || createSessionSceneStore({
+          ...options.sceneStoreOptions || {},
+          ...drawingV3Adapter ? { drawingEngineObserver: drawingV3Adapter } : {}
+        });
         const actionDeduper = options.actionDeduper || createActionDeduper(options.actionDeduperOptions);
         const strokePathFactory = options.strokePathFactory || createStrokePathData;
         const maxLassoFragments = positiveInteger(options.maxLassoFragments, 512);
@@ -10918,6 +13543,21 @@ void main() {
           }
           return result;
         }
+        function getDrawingV3Diagnostics() {
+          if (drawingV3Adapter) {
+            try {
+              return sanitizeDrawingV3Diagnostics(drawingV3Adapter.getDiagnostics());
+            } catch (_error) {
+              return emptyDrawingV3Diagnostics("degraded", "adapter-failed", 1);
+            }
+          }
+          if (drawingV3ShadowStartupFailed) {
+            return emptyDrawingV3Diagnostics("degraded", "adapter-failed", 1);
+          }
+          return emptyDrawingV3Diagnostics(
+            drawingV3ShadowRequested && customSceneStore ? "not-connected" : "disabled"
+          );
+        }
         function getDiagnostics() {
           const scene = sceneStore.getDiagnostics();
           return {
@@ -10946,6 +13586,7 @@ void main() {
               estimatedBytes: scene.estimatedBytes,
               evictionCount: scene.evictionCount
             },
+            drawingV3Shadow: getDrawingV3Diagnostics(),
             metrics: metrics.snapshot(),
             lastError
           };
@@ -10955,6 +13596,10 @@ void main() {
           disableInput();
           releaseSurfaceResources();
           sceneStore.destroy();
+          try {
+            drawingV3Adapter?.destroy();
+          } catch (_error) {
+          }
           actionDeduper.clear();
           destroyed = true;
           return { destroyed: true, reused: false };

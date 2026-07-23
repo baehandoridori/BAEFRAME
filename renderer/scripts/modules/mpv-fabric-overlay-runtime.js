@@ -15,6 +15,9 @@ const {
 const {
   createDrawingCommandHistory
 } = require('./drawing-v3/drawing-command-history.js');
+const {
+  createDrawingEngineAdapter
+} = require('./drawing-v3/drawing-engine-adapter.js');
 
 const SCENE_KEY_SEPARATOR = '\u0000';
 const DEFAULT_MAX_VIDEOS = 10;
@@ -58,6 +61,37 @@ const DRAWING_ACTIONS = new Set([
   'clear-session',
   'undo',
   'redo'
+]);
+const DRAWING_V3_DIAGNOSTIC_STATUSES = new Set([
+  'active',
+  'degraded',
+  'desynced',
+  'destroyed',
+  'disabled',
+  'idle',
+  'not-connected',
+  'synced'
+]);
+const DRAWING_V3_DIAGNOSTIC_REASONS = new Set([
+  'adapter-failed',
+  'document-rejected',
+  'document-sequence-mismatch',
+  'invalid-seed',
+  'invalid-transition',
+  'missing-baseline',
+  'observer-failed',
+  'queue-capacity-exceeded',
+  'queue-event-too-large',
+  'scheduler-failed',
+  'seed-capacity-exceeded',
+  'seed-signature-changed',
+  'sequence-gap',
+  'stale-transition',
+  'transition-before-mismatch',
+  'unsupported-field-mutation',
+  'unsupported-order-mutation',
+  'unsupported-transform',
+  'warm-seed-mismatch'
 ]);
 
 function clonePlain(value) {
@@ -203,6 +237,61 @@ function storedTransformsEqual(left, right, fields = TRANSFORM_FIELDS) {
 function safeEstimatedBytes(value) {
   const number = Math.trunc(Number(value));
   return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+}
+
+function drawingV3Count(value) {
+  const number = Math.trunc(Number(value));
+  return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+}
+
+function drawingV3Latency(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.min(number, 60_000) : 0;
+}
+
+function emptyDrawingV3Diagnostics(status, reason = null, failureCount = 0) {
+  return {
+    enabled: false,
+    status,
+    sceneCount: 0,
+    bootstrapCount: 0,
+    commitCount: 0,
+    failureCount,
+    divergenceCount: 0,
+    resyncCount: 0,
+    staleCount: 0,
+    gapCount: 0,
+    headSequence: 0,
+    objectCount: 0,
+    estimatedBytes: 0,
+    latencyP50Ms: 0,
+    latencyP95Ms: 0,
+    lastReason: reason
+  };
+}
+
+function sanitizeDrawingV3Diagnostics(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return emptyDrawingV3Diagnostics('degraded', 'adapter-failed', 1);
+  }
+  return {
+    enabled: value.enabled === true,
+    status: DRAWING_V3_DIAGNOSTIC_STATUSES.has(value.status) ? value.status : 'degraded',
+    sceneCount: drawingV3Count(value.sceneCount),
+    bootstrapCount: drawingV3Count(value.bootstrapCount),
+    commitCount: drawingV3Count(value.commitCount),
+    failureCount: drawingV3Count(value.failureCount),
+    divergenceCount: drawingV3Count(value.divergenceCount),
+    resyncCount: drawingV3Count(value.resyncCount),
+    staleCount: drawingV3Count(value.staleCount),
+    gapCount: drawingV3Count(value.gapCount),
+    headSequence: drawingV3Count(value.headSequence),
+    objectCount: drawingV3Count(value.objectCount),
+    estimatedBytes: drawingV3Count(value.estimatedBytes),
+    latencyP50Ms: drawingV3Latency(value.latencyP50Ms),
+    latencyP95Ms: drawingV3Latency(value.latencyP95Ms),
+    lastReason: DRAWING_V3_DIAGNOSTIC_REASONS.has(value.lastReason) ? value.lastReason : null
+  };
 }
 
 function createSessionSceneStore(options = {}) {
@@ -1326,7 +1415,37 @@ function createFabricOverlayRuntime(options = {}) {
   const now = () => typeof performanceRef?.now === 'function' ? performanceRef.now() : Date.now();
   const devicePixelRatio = finiteNumber(options.devicePixelRatio ?? windowRef?.devicePixelRatio, 1) || 1;
   const metrics = options.metrics || createFabricDrawingPilotMetrics(options.metricsOptions);
-  const sceneStore = options.sceneStore || createSessionSceneStore(options.sceneStoreOptions);
+  const drawingV3ShadowRequested = options.drawingV3ShadowEnabled === true;
+  const customSceneStore = options.sceneStore || null;
+  let drawingV3Adapter = null;
+  let drawingV3ShadowStartupFailed = false;
+  if (drawingV3ShadowRequested && !customSceneStore) {
+    try {
+      const adapterFactory = options.drawingV3AdapterFactory === undefined
+        ? createDrawingEngineAdapter
+        : options.drawingV3AdapterFactory;
+      if (typeof adapterFactory !== 'function') throw new TypeError('Invalid Drawing V3 adapter factory');
+      const candidate = adapterFactory(options.drawingV3AdapterOptions || {});
+      const requiredMethods = [
+        'activateScene',
+        'enqueueTransition',
+        'quarantineScene',
+        'dropScenes',
+        'destroy',
+        'getDiagnostics'
+      ];
+      if (!candidate || requiredMethods.some(method => typeof candidate[method] !== 'function')) {
+        throw new TypeError('Invalid Drawing V3 adapter');
+      }
+      drawingV3Adapter = candidate;
+    } catch (_error) {
+      drawingV3ShadowStartupFailed = true;
+    }
+  }
+  const sceneStore = customSceneStore || createSessionSceneStore({
+    ...(options.sceneStoreOptions || {}),
+    ...(drawingV3Adapter ? { drawingEngineObserver: drawingV3Adapter } : {})
+  });
   const actionDeduper = options.actionDeduper || createActionDeduper(options.actionDeduperOptions);
   const strokePathFactory = options.strokePathFactory || createStrokePathData;
   const maxLassoFragments = positiveInteger(options.maxLassoFragments, 512);
@@ -3353,6 +3472,22 @@ function createFabricOverlayRuntime(options = {}) {
     return result;
   }
 
+  function getDrawingV3Diagnostics() {
+    if (drawingV3Adapter) {
+      try {
+        return sanitizeDrawingV3Diagnostics(drawingV3Adapter.getDiagnostics());
+      } catch (_error) {
+        return emptyDrawingV3Diagnostics('degraded', 'adapter-failed', 1);
+      }
+    }
+    if (drawingV3ShadowStartupFailed) {
+      return emptyDrawingV3Diagnostics('degraded', 'adapter-failed', 1);
+    }
+    return emptyDrawingV3Diagnostics(
+      drawingV3ShadowRequested && customSceneStore ? 'not-connected' : 'disabled'
+    );
+  }
+
   function getDiagnostics() {
     const scene = sceneStore.getDiagnostics();
     return {
@@ -3381,6 +3516,7 @@ function createFabricOverlayRuntime(options = {}) {
         estimatedBytes: scene.estimatedBytes,
         evictionCount: scene.evictionCount
       },
+      drawingV3Shadow: getDrawingV3Diagnostics(),
       metrics: metrics.snapshot(),
       lastError
     };
@@ -3391,6 +3527,9 @@ function createFabricOverlayRuntime(options = {}) {
     disableInput();
     releaseSurfaceResources();
     sceneStore.destroy();
+    try {
+      drawingV3Adapter?.destroy();
+    } catch (_error) { /* shadow teardown must not affect Fabric */ }
     actionDeduper.clear();
     destroyed = true;
     return { destroyed: true, reused: false };

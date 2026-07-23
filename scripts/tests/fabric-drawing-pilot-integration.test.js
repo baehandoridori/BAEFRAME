@@ -16,6 +16,9 @@ const diagnosticsRunnerPath = path.join(rootDir, 'scripts/run-fabric-drawing-pil
 const {
   createFabricOverlayRuntime
 } = require('../../renderer/scripts/modules/mpv-fabric-overlay-runtime.js');
+const {
+  createDrawingEngineAdapter
+} = require('../../renderer/scripts/modules/drawing-v3/drawing-engine-adapter.js');
 const { MPVOverlayHost } = require('../../main/mpv-overlay-host.js');
 const { validateDiagnostics, runCli } = require('../run-fabric-drawing-pilot-diagnostics.js');
 const appPackage = require('../../package.json');
@@ -287,11 +290,12 @@ function controllerSnapshot(diagnostics) {
   };
 }
 
-function createRuntimeControllerHarness() {
+function createRuntimeControllerHarness(runtimeOptions = {}) {
   FakeCanvas.instances = [];
   const documentRef = new FakeDocument();
   const root = documentRef.createElement('div');
   const runtime = createFabricOverlayRuntime({
+    ...runtimeOptions,
     fabric: { Canvas: FakeCanvas, Path: FakePath },
     document: documentRef,
     now: () => 1
@@ -390,6 +394,20 @@ function createRuntimeControllerHarness() {
     playbackCanaries,
     root,
     runtime
+  };
+}
+
+function createThrowingDrawingV3Observer() {
+  const adapter = createDrawingEngineAdapter();
+  return {
+    activateScene: adapter.activateScene,
+    enqueueTransition() {
+      throw new Error('integration-shadow-enqueue-injected');
+    },
+    quarantineScene: adapter.quarantineScene,
+    dropScenes: adapter.dropScenes,
+    destroy: adapter.destroy,
+    getDiagnostics: adapter.getDiagnostics
   };
 }
 
@@ -652,7 +670,11 @@ function makeValidRawDiagnostics() {
 }
 
 test('controller history shortcuts round-trip a real Fabric stroke without persistence', async () => {
-  const harness = createRuntimeControllerHarness();
+  const shadowObserver = createThrowingDrawingV3Observer();
+  const harness = createRuntimeControllerHarness({
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory: () => shadowObserver
+  });
   assert.equal(await harness.controller.initialize(), true);
   assert.equal(await harness.controller.adoptOverlayCapability({
     passiveReady: true,
@@ -686,6 +708,8 @@ test('controller history shortcuts round-trip a real Fabric stroke without persi
   assert.equal(harness.ledger.saveReview, 0);
   assert.equal(harness.ledger.reviewDataManagerSave, 0);
   assert.deepEqual(harness.playbackCanaries, playbackBefore);
+  assert.equal(harness.runtime.getDiagnostics().drawingV3Shadow.status, 'degraded');
+  assert.equal(harness.runtime.getDiagnostics().lastError, null);
 });
 
 test('synthetic controller/runtime boundary preserves no-save, playback, owner, media, and timeline canaries', async (t) => {
@@ -727,7 +751,11 @@ test('synthetic controller/runtime boundary preserves no-save, playback, owner, 
   assert.equal(hostHarness.host.window, hostWindow);
   assert.deepEqual(hostAfter, hostBefore);
 
-  const harness = createRuntimeControllerHarness();
+  const shadowObserver = createThrowingDrawingV3Observer();
+  const harness = createRuntimeControllerHarness({
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory: () => shadowObserver
+  });
   assert.equal(await harness.controller.initialize(), true);
   assert.equal(
     await harness.controller.adoptOverlayCapability({
@@ -855,6 +883,9 @@ test('synthetic controller/runtime boundary preserves no-save, playback, owner, 
     true,
     'stroke, move, Delete, and Clear mutated only runtime memory'
   );
+  assert.equal(runtimeAfter.drawingV3Shadow.status, 'degraded');
+  assert.equal(runtimeAfter.drawingV3Shadow.lastReason, 'observer-failed');
+  assert.equal(runtimeAfter.lastError, null);
 });
 
 test('a late generation N response cannot reactivate or replace the ready N+1 session', async () => {
