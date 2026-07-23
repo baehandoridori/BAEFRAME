@@ -25,9 +25,11 @@ const DEFAULT_FABRIC_DRAWING_PILOT_STATE = Object.freeze({ enabled: false });
 
 function isCurrentMainRendererSender(event) {
   const mainWindow = getMainWindow();
-  return !!mainWindow &&
-    !mainWindow.isDestroyed?.() &&
-    event?.sender === mainWindow.webContents;
+  if (!mainWindow || mainWindow.isDestroyed?.()) return false;
+  const mainWebContents = mainWindow.webContents;
+  return !!mainWebContents &&
+    !mainWebContents.isDestroyed?.() &&
+    event?.sender === mainWebContents;
 }
 
 /**
@@ -298,7 +300,13 @@ function setupIpcHandlers({
     if (!normalized) return;
     const mainWindow = getMainWindow();
     if (!mainWindow || mainWindow.isDestroyed?.()) return;
-    mainWindow.webContents.send('fabric-drawing:persistence-event', normalized);
+    const mainWebContents = mainWindow.webContents;
+    if (!mainWebContents || mainWebContents.isDestroyed?.()) return;
+    try {
+      mainWebContents.send('fabric-drawing:persistence-event', normalized);
+    } catch (_error) {
+      // 이 이벤트는 보조 신호이며, 누락 시 전체 동기화로 복구된다.
+    }
   });
 
   // ====== 파일 관련 ======

@@ -172,6 +172,7 @@ function createDrawingHostHarness(options = {}) {
     now: options.now,
     fabricRetryBaseMs: options.fabricRetryBaseMs,
     fabricRetryMaxMs: options.fabricRetryMaxMs,
+    fabricDrawingSnapshotMaxBytes: options.fabricDrawingSnapshotMaxBytes,
     readFile: async (filePath, encoding) => {
       readCount += 1;
       events.push(['readFile', filePath, encoding]);
@@ -218,6 +219,60 @@ function makePersistenceExport(hostGeneration, overrides = {}) {
   return request;
 }
 
+function makePersistenceTransform(overrides = {}) {
+  return {
+    left: 0,
+    top: 0,
+    scaleX: 1,
+    scaleY: 1,
+    angle: 0,
+    skewX: 0,
+    skewY: 0,
+    flipX: false,
+    flipY: false,
+    ...overrides
+  };
+}
+
+function makePersistenceRecord(overrides = {}) {
+  return {
+    id: 'host-stroke-1',
+    type: 'stroke',
+    pathData: 'M 0 0 L 10 10',
+    sourcePoints: [
+      { x: 0, y: 0, pressure: 0.5, time: 0, pointerType: 'pen' },
+      { x: 10, y: 10, pressure: 0.75, time: 1, pointerType: 'pen' }
+    ],
+    style: {
+      color: '#ff4757',
+      size: 3,
+      opacity: 1
+    },
+    transform: makePersistenceTransform(),
+    ...overrides
+  };
+}
+
+function makePersistenceSnapshot(hostGeneration, overrides = {}) {
+  return {
+    hostGeneration,
+    videoGeneration: 7,
+    persistenceSessionId: 'host-persistence-session',
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    fps: 24,
+    totalFrames: 240,
+    scenes: [{
+      sceneInstanceId: 'host-scene-1',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makePersistenceRecord()]
+    }],
+    ...overrides
+  };
+}
+
 function makePersistenceTransition(overrides = {}) {
   return {
     hostGeneration: 3,
@@ -236,7 +291,11 @@ function makePersistenceTransition(overrides = {}) {
     estimatedBytes: 64,
     unsupportedReason: null,
     removals: [],
-    insertions: [],
+    insertions: [{
+      index: 0,
+      record: makePersistenceRecord(),
+      baseTransform: makePersistenceTransform()
+    }],
     transforms: [],
     ...overrides
   };
@@ -686,6 +745,36 @@ test('drawing persistence hydrate/export enforce fences, input state, and bounde
     enabled: false
   }));
 
+  assert.deepEqual(await harness.host.hydrateDrawingVideo({
+    ...makePersistenceHydration(hostGeneration),
+    secret: 'must-not-reach-runtime'
+  }), {
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-request'
+  });
+  assert.deepEqual(await harness.host.hydrateDrawingVideo(makePersistenceHydration(
+    hostGeneration,
+    {
+      keyframes: [{
+        id: 'host-scene-1',
+        frame: 24,
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        mutationSequence: 1,
+        objects: [{
+          ...makePersistenceRecord(),
+          secret: 'must-not-reach-runtime'
+        }]
+      }]
+    }
+  )), {
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-request'
+  });
+  assert.equal(executed.length, 0);
+
   const hydration = makePersistenceHydration(hostGeneration);
   assert.deepEqual(await harness.host.hydrateDrawingVideo(hydration), {
     success: true,
@@ -732,6 +821,270 @@ test('drawing persistence hydrate/export enforce fences, input state, and bounde
   });
   assert.equal(executed.filter(([kind]) => kind === 'hydrate').length, 1);
   assert.equal(JSON.stringify(executed).includes('must-not-leak'), false);
+});
+
+test('drawing export rejects non-exact requests and returns only a validated cloned snapshot', async () => {
+  let exportCalls = 0;
+  const runtimeSnapshot = makePersistenceSnapshot(1);
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      exportCalls += 1;
+      return {
+        accepted: true,
+        snapshot: runtimeSnapshot,
+        secret: 'outer-secret-must-not-leak'
+      };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  const request = makePersistenceExport(hostGeneration);
+
+  assert.deepEqual(await harness.host.exportDrawingVideo({
+    ...request,
+    secret: 'request-secret-must-not-reach-overlay'
+  }), {
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-request'
+  });
+  assert.equal(exportCalls, 0);
+
+  const exported = await harness.host.exportDrawingVideo(request);
+  assert.deepEqual(exported, {
+    success: true,
+    accepted: true,
+    snapshot: runtimeSnapshot
+  });
+  assert.notEqual(exported.snapshot, runtimeSnapshot);
+  assert.notEqual(exported.snapshot.scenes[0], runtimeSnapshot.scenes[0]);
+  assert.notEqual(
+    exported.snapshot.scenes[0].objects[0],
+    runtimeSnapshot.scenes[0].objects[0]
+  );
+  runtimeSnapshot.scenes[0].objects[0].style.color = '#000000';
+  assert.equal(exported.snapshot.scenes[0].objects[0].style.color, '#ff4757');
+  assert.doesNotMatch(JSON.stringify(exported), /outer-secret-must-not-leak/);
+});
+
+test('drawing export rejects snapshot fence mismatches and every non-exact inner record shape', async () => {
+  let runtimeSnapshot;
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      return { accepted: true, snapshot: runtimeSnapshot };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  const request = makePersistenceExport(hostGeneration);
+
+  const mismatchedFences = [
+    ['hostGeneration', hostGeneration + 1],
+    ['videoGeneration', 8],
+    ['persistenceSessionId', 'other-persistence-session'],
+    ['stableVideoIdentity', 'C:/shots/other-video.mov'],
+    ['fps', 30],
+    ['totalFrames', 241]
+  ];
+  for (const [field, value] of mismatchedFences) {
+    runtimeSnapshot = makePersistenceSnapshot(hostGeneration, { [field]: value });
+    assert.deepEqual(
+      await harness.host.exportDrawingVideo(request),
+      {
+        success: false,
+        accepted: false,
+        reason: 'invalid-persistence-snapshot'
+      },
+      `snapshot ${field} must match the exact request fence`
+    );
+  }
+
+  const invalidSnapshots = [
+    ['snapshot extra field', value => { value.secret = 'snapshot-secret'; }],
+    ['scene extra field', value => { value.scenes[0].secret = 'scene-secret'; }],
+    ['record extra field', value => { value.scenes[0].objects[0].secret = 'record-secret'; }],
+    ['style extra field', value => { value.scenes[0].objects[0].style.secret = true; }],
+    ['point coordinate bound', value => {
+      value.scenes[0].objects[0].sourcePoints[0].x = 1_000_000_001;
+    }],
+    ['point time order', value => {
+      value.scenes[0].objects[0].sourcePoints[0].time = 2;
+    }],
+    ['transform extra field', value => {
+      value.scenes[0].objects[0].transform.secret = true;
+    }],
+    ['zero transform scale', value => {
+      value.scenes[0].objects[0].transform.scaleX = 0;
+    }],
+    ['duplicate scene id', value => {
+      const duplicate = structuredClone(value.scenes[0]);
+      duplicate.targetFrame = 48;
+      value.scenes.push(duplicate);
+    }],
+    ['duplicate object id', value => {
+      value.scenes[0].objects.push(structuredClone(value.scenes[0].objects[0]));
+    }],
+    ['unsorted scenes', value => {
+      const earlier = structuredClone(value.scenes[0]);
+      earlier.sceneInstanceId = 'host-scene-0';
+      earlier.targetFrame = 12;
+      value.scenes.push(earlier);
+    }]
+  ];
+  for (const [label, mutate] of invalidSnapshots) {
+    runtimeSnapshot = makePersistenceSnapshot(hostGeneration);
+    mutate(runtimeSnapshot);
+    const rejected = await harness.host.exportDrawingVideo(request);
+    assert.deepEqual(rejected, {
+      success: false,
+      accepted: false,
+      reason: 'invalid-persistence-snapshot'
+    }, label);
+    assert.doesNotMatch(JSON.stringify(rejected), /secret/i, label);
+  }
+});
+
+test('drawing export enforces the configured snapshot byte ceiling before returning data', async () => {
+  const runtimeSnapshot = makePersistenceSnapshot(1);
+  runtimeSnapshot.scenes[0].objects[0].pathData = `M 0 0 ${'x'.repeat(2048)}`;
+  const harness = createDrawingHostHarness({
+    fabricDrawingSnapshotMaxBytes: 1024,
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      return { accepted: true, snapshot: runtimeSnapshot };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  assert.deepEqual(
+    await harness.host.exportDrawingVideo(makePersistenceExport(hostGeneration)),
+    {
+      success: false,
+      accepted: false,
+      reason: 'persistence-snapshot-too-large'
+    }
+  );
+});
+
+test('drawing persistence maps prepare, runtime rejection, and runtime exceptions to fixed public reasons', async () => {
+  const prepareFailure = createDrawingHostHarness({
+    readFile: async () => {
+      throw new Error('C:/private/user/project/fabric-bundle.js');
+    }
+  });
+  const prepared = await prepareFailure.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  await prepareFailure.host.setDrawingInput(makeDrawingInput(
+    prepared.drawingCapability.hostGeneration,
+    { videoGeneration: 7, inputRevision: 1, enabled: false }
+  ));
+  const prepareResult = await prepareFailure.host.hydrateDrawingVideo(
+    makePersistenceHydration(prepared.drawingCapability.hostGeneration)
+  );
+  assert.deepEqual(prepareResult, {
+    success: false,
+    accepted: false,
+    reason: 'drawing-runtime-unavailable'
+  });
+
+  const runtimeFailure = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: false, reason: 'C:/private/reviews/secret.bframe' };
+      }
+      if (script.includes('.exportDrawingVideo(')) {
+        throw new Error('token=super-secret-runtime-token');
+      }
+      return undefined;
+    }
+  });
+  const ensured = await runtimeFailure.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await runtimeFailure.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  const hydration = await runtimeFailure.host.hydrateDrawingVideo(
+    makePersistenceHydration(hostGeneration)
+  );
+  const exported = await runtimeFailure.host.exportDrawingVideo(
+    makePersistenceExport(hostGeneration)
+  );
+  assert.deepEqual(hydration, {
+    success: false,
+    accepted: false,
+    reason: 'drawing-hydration-rejected'
+  });
+  assert.deepEqual(exported, {
+    success: false,
+    accepted: false,
+    reason: 'drawing-export-failed'
+  });
+  assert.doesNotMatch(
+    JSON.stringify([prepareResult, hydration, exported]),
+    /private|secret|token|bframe/i
+  );
+
+  const knownRuntimeRejections = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: false, reason: 'input-enabled' };
+      }
+      if (script.includes('.exportDrawingVideo(')) {
+        return { accepted: false, reason: 'stale-fence' };
+      }
+      return undefined;
+    }
+  });
+  const knownRuntime = await knownRuntimeRejections.host.ensure({
+    x: 0,
+    y: 0,
+    width: 640,
+    height: 360
+  });
+  const knownHostGeneration = knownRuntime.drawingCapability.hostGeneration;
+  await knownRuntimeRejections.host.setDrawingInput(makeDrawingInput(knownHostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  assert.deepEqual(
+    await knownRuntimeRejections.host.hydrateDrawingVideo(
+      makePersistenceHydration(knownHostGeneration)
+    ),
+    {
+      success: false,
+      accepted: false,
+      reason: 'drawing-input-enabled'
+    }
+  );
+  assert.deepEqual(
+    await knownRuntimeRejections.host.exportDrawingVideo(
+      makePersistenceExport(knownHostGeneration)
+    ),
+    {
+      success: false,
+      accepted: false,
+      reason: 'stale-persistence-fence'
+    }
+  );
 });
 
 test('drawing persistence rejects a result that becomes stale during host execution', async () => {
@@ -819,6 +1172,105 @@ test('drawing persistence IPC normalization preserves small transitions and neve
     type: 'transition',
     transition: makePersistenceTransition({ hostGeneration: -1 })
   }), null);
+});
+
+test('drawing persistence IPC normalization resyncs malformed nested deltas with a valid fence', () => {
+  const expectedResync = {
+    type: 'resync-required',
+    hostGeneration: 3,
+    videoGeneration: 7,
+    persistenceSessionId: 'host-persistence-session',
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    reason: 'transition-invalid-at-boundary'
+  };
+  const invalidTransitions = [
+    ['removal extra field', value => {
+      value.kind = 'delete-objects';
+      value.insertions = [];
+      value.removals = [{ id: 'host-stroke-1', index: 0, secret: true }];
+    }],
+    ['insertion extra field', value => {
+      value.insertions[0].secret = true;
+    }],
+    ['record extra field', value => {
+      value.insertions[0].record.secret = true;
+    }],
+    ['style extra field', value => {
+      value.insertions[0].record.style.secret = true;
+    }],
+    ['invalid point pressure', value => {
+      value.insertions[0].record.sourcePoints[0].pressure = 1.01;
+    }],
+    ['decreasing point time', value => {
+      value.insertions[0].record.sourcePoints[0].time = 2;
+    }],
+    ['transform extra field', value => {
+      value.insertions[0].record.transform.secret = true;
+    }],
+    ['invalid base transform', value => {
+      value.insertions[0].baseTransform.scaleX = 0;
+    }],
+    ['transform change extra field', value => {
+      value.kind = 'transform-objects';
+      value.insertions = [];
+      value.transforms = [{
+        id: 'host-stroke-1',
+        beforeTransform: makePersistenceTransform(),
+        afterTransform: makePersistenceTransform({ left: 10 }),
+        secret: true
+      }];
+    }],
+    ['unsupported transition', value => {
+      value.unsupportedReason = 'unsupported-transform';
+    }],
+    ['kind mismatch', value => {
+      value.kind = 'delete-objects';
+    }],
+    ['duplicate insertion id', value => {
+      value.insertions.push(structuredClone(value.insertions[0]));
+    }],
+    ['no-op delta', value => {
+      value.insertions = [];
+    }],
+    ['target frame ceiling', value => {
+      value.scene.targetFrame = 1_000_000_000;
+    }],
+    ['removal index ceiling', value => {
+      value.kind = 'delete-objects';
+      value.insertions = [];
+      value.removals = [{ id: 'host-stroke-1', index: 10_000 }];
+    }],
+    ['insertion index ceiling', value => {
+      value.insertions[0].index = 10_001;
+    }]
+  ];
+
+  for (const [label, mutate] of invalidTransitions) {
+    const transition = makePersistenceTransition();
+    mutate(transition);
+    assert.deepEqual(
+      normalizeFabricDrawingPersistenceMessage({
+        type: 'transition',
+        transition
+      }),
+      expectedResync,
+      label
+    );
+  }
+
+  const estimatedOversize = makePersistenceTransition({
+    estimatedBytes: 8 * 1024 * 1024 + 1
+  });
+  assert.deepEqual(
+    normalizeFabricDrawingPersistenceMessage({
+      type: 'transition',
+      transition: estimatedOversize
+    }),
+    {
+      ...expectedResync,
+      reason: 'transition-too-large'
+    }
+  );
 });
 
 test('passive diagnostics expose accepted host tokens before the Fabric runtime is prepared', async () => {

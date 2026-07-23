@@ -50,7 +50,11 @@ test('Fabric overlay persistence uses a narrow sender-fenced event bridge', () =
   assert.doesNotMatch(overlayPreloadSource, /ipcRenderer\.(?:on|invoke)/);
   assert.match(
     ipcSource,
-    /ipcMain\.on\(\s*['"]mpv-overlay:fabric-drawing-persistence['"][\s\S]*?isCurrentOverlaySender\(event\)[\s\S]*?normalizeFabricDrawingPersistenceMessage[\s\S]*?webContents\.send\(\s*['"]fabric-drawing:persistence-event['"]/
+    /ipcMain\.on\(\s*['"]mpv-overlay:fabric-drawing-persistence['"][\s\S]*?isCurrentOverlaySender\(event\)[\s\S]*?normalizeFabricDrawingPersistenceMessage[\s\S]*?mainWebContents\.send\(\s*['"]fabric-drawing:persistence-event['"]/
+  );
+  assert.match(
+    ipcSource,
+    /const mainWebContents = mainWindow\.webContents;[\s\S]*?!mainWebContents[\s\S]*?mainWebContents\.isDestroyed\?\.\(\)[\s\S]*?try \{[\s\S]*?mainWebContents\.send\(\s*['"]fabric-drawing:persistence-event['"][\s\S]*?\} catch \(/
   );
   assert.match(
     preloadSource,
@@ -61,7 +65,7 @@ test('Fabric overlay persistence uses a narrow sender-fenced event bridge', () =
 test('Fabric drawing mutation IPC rejects pilot-off and non-main-renderer calls before touching the host', () => {
   assert.match(
     ipcSource,
-    /function isCurrentMainRendererSender\(event\)[\s\S]*?event\?\.sender === mainWindow\.webContents/
+    /function isCurrentMainRendererSender\(event\)[\s\S]*?const mainWebContents = mainWindow\.webContents;[\s\S]*?!mainWebContents\.isDestroyed\?\.\(\)[\s\S]*?event\?\.sender === mainWebContents/
   );
   assert.match(
     ipcSource,
@@ -72,7 +76,9 @@ test('Fabric drawing mutation IPC rejects pilot-off and non-main-renderer calls 
     ['mpv:set-overlay-drawing-input', 'setDrawingInput'],
     ['mpv:update-overlay-drawing-tool', 'updateDrawingTool'],
     ['mpv:apply-overlay-drawing-action', 'applyDrawingAction'],
-    ['mpv:get-overlay-drawing-diagnostics', 'getDrawingDiagnostics']
+    ['mpv:get-overlay-drawing-diagnostics', 'getDrawingDiagnostics'],
+    ['mpv:hydrate-overlay-drawing-video', 'hydrateDrawingVideo'],
+    ['mpv:export-overlay-drawing-video', 'exportDrawingVideo']
   ];
   for (const [channel, method] of guardedCalls) {
     assert.match(
