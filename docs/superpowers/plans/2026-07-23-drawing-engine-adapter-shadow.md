@@ -332,6 +332,9 @@ Undo authority다.
   adapter `destroy()`를 정확히 한 번 소유해 scheduler와 aggregate telemetry까지 닫는다.
 - eviction/destroy 뒤 이미 예약된 callback은 no-op이며 payload 참조를 다시 살리지 않는다.
 - B off는 scene을 제거하지 않는다. 같은 scene 재진입은 warm shadow를 재사용한다.
+- activation observer에는 primary `scene.objects` 자체를 넘기지 않는다. 최초 bootstrap은
+  독립 record Map, warm activation은 ID/order만 가진 key-only Map을 넘겨 point scan 없이
+  observer의 `clear()`/record mutation이 Fabric state를 바꾸지 못하게 한다.
 - 같은 `sceneInstanceId` warm activation에 다른 dimensions, sequence, authoritative objects가
   들어오면 새 baseline을 잡지 않고 `warm-seed-mismatch`로 격리한다.
 - scene source dimensions가 바뀌면 기존 shadow를 재사용하거나 가짜 resync하지 않고
@@ -343,6 +346,8 @@ Undo authority다.
   non-throwing quarantine 규칙을 따른다.
 - primary scheduler가 throw하면 fallback macrotask scheduler를 한 번 사용한다. fallback도
   실패하면 현재 queued scene들을 각각 격리하고 queue/payload bytes를 0으로 정리한다.
+- 주입 scheduler가 callback을 동기 호출해도 adapter apply는 현재 primary call stack에서
+  실행하지 않고 다음 macrotask로 넘긴다.
 
 ## 9. Diagnostics
 
@@ -534,6 +539,8 @@ Implementation:
 - 새 scene activation은 빈 authoritative state를 bootstrap한다. restored warm scene은 같은
   adapter scene을 재사용하고 full-scene clone을 만들지 않는다.
 - `commitStagedMutation()` captures touched delta and notifies only after primary commit.
+- structural transition은 store가 이미 아는 transform-only survivor ID metadata와 before/after
+  order index Map을 사용한다. points/style을 다시 stringify하거나 ID마다 `indexOf()`하지 않는다.
 - `applyHistoryState()`는 before/after transition을 capture만 한다. `moveHistory()`가
   `DrawingCommandHistory` stack과 mirrored `historyEntries`를 모두 옮긴 뒤에만
   `origin:'history'` event를 enqueue한다.

@@ -365,6 +365,22 @@ function createDrawingEngineAdapter(options = {}) {
   let destroyed = false;
   let schedulerGeneration = 0;
 
+  function deferSynchronousWork(callback) {
+    globalThis.setTimeout(callback, 0);
+  }
+
+  function invokeScheduler(scheduler, callback) {
+    let schedulerReturned = false;
+    scheduler(() => {
+      if (!schedulerReturned) {
+        deferSynchronousWork(callback);
+        return;
+      }
+      callback();
+    });
+    schedulerReturned = true;
+  }
+
   function emptyState(sceneInstanceId, signature = null) {
     return {
       sceneInstanceId,
@@ -989,11 +1005,11 @@ function createDrawingEngineAdapter(options = {}) {
     const generation = schedulerGeneration;
     const callback = () => runScheduledWork(generation);
     try {
-      scheduleWork(callback);
+      invokeScheduler(scheduleWork, callback);
       return true;
     } catch (_error) {
       try {
-        fallbackScheduleWork(callback);
+        invokeScheduler(fallbackScheduleWork, callback);
         return true;
       } catch (_fallbackError) {
         workScheduled = false;

@@ -993,6 +993,27 @@ test('ignores a duplicate callback from an older scheduled queue slice', () => {
   assert.equal(harness.adapter.getDiagnostics(scene.sceneInstanceId).headSequence, 5);
 });
 
+test('a synchronous scheduler cannot apply adapter work before enqueue returns', async () => {
+  const harness = makeHarness({
+    scheduleWork(callback) {
+      callback();
+    }
+  });
+  const scene = makeScene({ targetFrame: 0 });
+  harness.adapter.activateScene(scene, new Map());
+  assert.equal(harness.adapter.enqueueTransition(makeEvent(scene, 1, {
+    insertions: [{
+      index: 0,
+      record: makeRecord('deferred'),
+      baseTransform: makeTransform()
+    }]
+  })), true);
+
+  assert.equal(harness.adapter.getDiagnostics(scene.sceneInstanceId).headSequence, 0);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(harness.adapter.getDiagnostics(scene.sceneInstanceId).headSequence, 1);
+});
+
 test('yields a queue batch after the four millisecond budget', () => {
   let now = 0;
   const harness = makeHarness({

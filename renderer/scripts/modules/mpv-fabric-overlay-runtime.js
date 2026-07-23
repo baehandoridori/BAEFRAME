@@ -180,6 +180,31 @@ function makeTransformsState(objects, objectIds) {
   };
 }
 
+function normalizedStoredTransform(value = {}) {
+  return {
+    left: finiteNumber(value.left),
+    top: finiteNumber(value.top),
+    scaleX: finiteNumber(value.scaleX, 1),
+    scaleY: finiteNumber(value.scaleY, 1),
+    angle: finiteNumber(value.angle),
+    skewX: finiteNumber(value.skewX),
+    skewY: finiteNumber(value.skewY),
+    flipX: value.flipX === true,
+    flipY: value.flipY === true
+  };
+}
+
+function storedTransformsEqual(left, right, fields = TRANSFORM_FIELDS) {
+  const normalizedLeft = normalizedStoredTransform(left);
+  const normalizedRight = normalizedStoredTransform(right);
+  return fields.every(field => normalizedLeft[field] === normalizedRight[field]);
+}
+
+function safeEstimatedBytes(value) {
+  const number = Math.trunc(Number(value));
+  return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+}
+
 function createSessionSceneStore(options = {}) {
   const maxVideos = positiveInteger(options.maxVideos, DEFAULT_MAX_VIDEOS);
   const maxBytes = positiveInteger(options.maxBytes, DEFAULT_MAX_BYTES);
@@ -192,13 +217,118 @@ function createSessionSceneStore(options = {}) {
   const estimateObjectBytes = typeof options.estimateObjectBytes === 'function'
     ? options.estimateObjectBytes
     : defaultEstimateObjectBytes;
+  const drawingEngineObserver = options.drawingEngineObserver &&
+    typeof options.drawingEngineObserver === 'object'
+    ? options.drawingEngineObserver
+    : null;
+  const createSceneInstanceId = typeof options.createSceneInstanceId === 'function'
+    ? options.createSceneInstanceId
+    : null;
   const scenes = new Map();
+  const issuedSceneInstanceIds = new Set();
   const videoAccess = new Map();
   let accessClock = 0;
   let latestVideoGeneration = -1;
   let activeSession = null;
   let evictionCount = 0;
   let commandSequence = 0;
+  let sceneInstanceSequence = 0;
+  let observerFailureCount = 0;
+  let observerQuarantineFailureCount = 0;
+  let observerLifecycleFailureCount = 0;
+  let destroyed = false;
+
+  function sourceDimension(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : 1;
+  }
+
+  function allocateSceneInstanceId() {
+    let candidate = null;
+    try {
+      candidate = createSceneInstanceId?.();
+    } catch (_error) {
+      candidate = null;
+    }
+    if (typeof candidate === 'string' && candidate && !issuedSceneInstanceIds.has(candidate)) {
+      issuedSceneInstanceIds.add(candidate);
+      return candidate;
+    }
+    do {
+      sceneInstanceSequence += 1;
+      candidate = `scene-instance-${Date.now()}-${sceneInstanceSequence}`;
+    } while (issuedSceneInstanceIds.has(candidate));
+    issuedSceneInstanceIds.add(candidate);
+    return candidate;
+  }
+
+  function sceneDescriptor(scene, dimensions = scene) {
+    return {
+      sceneInstanceId: scene.sceneInstanceId,
+      targetFrame: scene.targetFrame,
+      sourceWidth: sourceDimension(dimensions.sourceWidth),
+      sourceHeight: sourceDimension(dimensions.sourceHeight)
+    };
+  }
+
+  function quarantineObserverScene(sceneInstanceId) {
+    try {
+      const quarantine = drawingEngineObserver?.quarantineScene;
+      if (typeof quarantine === 'function') {
+        quarantine.call(drawingEngineObserver, sceneInstanceId, 'observer-failed');
+      }
+    } catch (_error) {
+      observerQuarantineFailureCount += 1;
+    }
+  }
+
+  function recordObserverFailure(sceneInstanceId) {
+    observerFailureCount += 1;
+    quarantineObserverScene(sceneInstanceId);
+  }
+
+  function activationObjectView(scene, restored) {
+    const authoritativeObjects = new Map();
+    for (const [id, record] of scene.objects) {
+      authoritativeObjects.set(id, restored ? null : clonePlain(record));
+    }
+    return authoritativeObjects;
+  }
+
+  function notifySceneActivation(scene, incomingSession, restored) {
+    try {
+      const activate = drawingEngineObserver?.activateScene;
+      if (typeof activate !== 'function') return;
+      activate.call(drawingEngineObserver, {
+        ...sceneDescriptor(scene, incomingSession),
+        mutationSequence: scene.mutationSequence
+      }, activationObjectView(scene, restored));
+    } catch (_error) {
+      recordObserverFailure(scene.sceneInstanceId);
+    }
+  }
+
+  function notifyCommittedTransition(scene, eventFactory) {
+    try {
+      const enqueue = drawingEngineObserver?.enqueueTransition;
+      if (typeof enqueue !== 'function') return;
+      enqueue.call(drawingEngineObserver, eventFactory());
+    } catch (_error) {
+      recordObserverFailure(scene.sceneInstanceId);
+    }
+  }
+
+  function notifyScenesDropped(sceneInstanceIds) {
+    if (!Array.isArray(sceneInstanceIds) || sceneInstanceIds.length === 0) return;
+    try {
+      const dropScenes = drawingEngineObserver?.dropScenes;
+      if (typeof dropScenes === 'function') {
+        dropScenes.call(drawingEngineObserver, sceneInstanceIds);
+      }
+    } catch (_error) {
+      observerLifecycleFailureCount += 1;
+    }
+  }
 
   function activeScene() {
     return activeSession ? scenes.get(activeSession.sceneKey) || null : null;
@@ -245,11 +375,15 @@ function createSessionSceneStore(options = {}) {
   }
 
   function evictVideo(stableVideoIdentity) {
+    const droppedSceneInstanceIds = [];
     for (const [key, scene] of scenes) {
-      if (scene.stableVideoIdentity === stableVideoIdentity) scenes.delete(key);
+      if (scene.stableVideoIdentity !== stableVideoIdentity) continue;
+      droppedSceneInstanceIds.push(scene.sceneInstanceId);
+      scenes.delete(key);
     }
     videoAccess.delete(stableVideoIdentity);
     evictionCount += 1;
+    notifyScenesDropped(droppedSceneInstanceIds);
   }
 
   function enforceLimits() {
@@ -323,6 +457,7 @@ function createSessionSceneStore(options = {}) {
   function noteMutation(scene) {
     scene.dirty = true;
     scene.mutationCount += 1;
+    scene.mutationSequence += 1;
   }
 
   function estimateObjectsBytes(objects) {
@@ -332,18 +467,177 @@ function createSessionSceneStore(options = {}) {
     }, 0);
   }
 
+  function transitionKind(sourceKind, removalCount, insertionCount, transformCount) {
+    if (removalCount > 0 && insertionCount > 0) return 'split-stroke';
+    if (insertionCount > 0 && removalCount === 0) return 'add-objects';
+    if (removalCount > 0 && insertionCount === 0) {
+      return sourceKind === 'clear-keyframe' ? 'clear-keyframe' : 'delete-objects';
+    }
+    if (transformCount > 0) return 'transform-objects';
+    return typeof sourceKind === 'string' && sourceKind ? sourceKind : 'unsupported-transition';
+  }
+
+  function makeTransitionEvent(scene, transition) {
+    const event = {
+      scene: sceneDescriptor(scene),
+      mutationSequence: scene.mutationSequence,
+      origin: transition.origin,
+      kind: transition.kind,
+      estimatedBytes: safeEstimatedBytes(transition.estimatedBytes),
+      unsupportedReason: null,
+      removals: [],
+      insertions: [],
+      transforms: []
+    };
+    const beforeState = transition.beforeState;
+    const afterState = transition.afterState;
+    if (!beforeState || !afterState || beforeState.type !== afterState.type) {
+      event.unsupportedReason = 'unsupported-field-mutation';
+      return event;
+    }
+
+    if (beforeState.type === 'transforms') {
+      const beforeTransforms = new Map((beforeState.transforms || []).map(item => [item.id, item.transform]));
+      const afterTransforms = new Map((afterState.transforms || []).map(item => [item.id, item.transform]));
+      const objectIds = [...new Set([...beforeTransforms.keys(), ...afterTransforms.keys()])];
+      if (beforeTransforms.size !== afterTransforms.size ||
+          objectIds.some(id => !beforeTransforms.has(id) || !afterTransforms.has(id))) {
+        event.unsupportedReason = 'unsupported-field-mutation';
+      }
+      for (const id of objectIds) {
+        if (!beforeTransforms.has(id) || !afterTransforms.has(id)) continue;
+        const beforeTransform = beforeTransforms.get(id);
+        const afterTransform = afterTransforms.get(id);
+        if (storedTransformsEqual(beforeTransform, afterTransform)) continue;
+        if (!storedTransformsEqual(
+          beforeTransform,
+          afterTransform,
+          UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
+        )) {
+          event.unsupportedReason = 'unsupported-transform';
+        }
+        event.transforms.push({ id, beforeTransform, afterTransform });
+      }
+      event.kind = transitionKind(
+        transition.kind,
+        event.removals.length,
+        event.insertions.length,
+        event.transforms.length
+      );
+      return event;
+    }
+
+    if (beforeState.type !== 'objects' || !Array.isArray(beforeState.order) ||
+        !Array.isArray(afterState.order)) {
+      event.unsupportedReason = 'unsupported-field-mutation';
+      return event;
+    }
+
+    const beforeObjects = new Map((beforeState.objects || []).map(object => [object.id, object]));
+    const afterObjects = new Map((afterState.objects || []).map(object => [object.id, object]));
+    const beforeIndices = new Map(beforeState.order.map((id, index) => [id, index]));
+    const afterIndices = new Map(afterState.order.map((id, index) => [id, index]));
+    const touchedIds = [...new Set([
+      ...(beforeState.touchedIds || []),
+      ...(afterState.touchedIds || [])
+    ])];
+    const removedIds = touchedIds.filter(id => beforeObjects.has(id) && !afterObjects.has(id));
+    const insertedIds = touchedIds.filter(id => !beforeObjects.has(id) && afterObjects.has(id));
+    const commonIds = touchedIds.filter(id => beforeObjects.has(id) && afterObjects.has(id));
+    const removedIdSet = new Set(removedIds);
+
+    event.removals = removedIds
+      .map(id => ({ id, index: beforeIndices.get(id) ?? -1 }))
+      .sort((left, right) => left.index - right.index);
+
+    const baseTransforms = transition.baseTransforms instanceof Map
+      ? transition.baseTransforms
+      : new Map();
+    const contentStableIds = transition.contentStableIds instanceof Set
+      ? transition.contentStableIds
+      : new Set(Array.isArray(transition.contentStableIds) ? transition.contentStableIds : []);
+    event.insertions = insertedIds
+      .map(id => {
+        const record = afterObjects.get(id);
+        const index = afterIndices.get(id) ?? -1;
+        if (transition.origin === 'history') {
+          return { index, record, baseTransform: null };
+        }
+        const baseTransform = baseTransforms.get(id) || clonePlain(record?.transform || {});
+        const finalTransform = record?.transform || {};
+        const insertionRecord = storedTransformsEqual(baseTransform, finalTransform)
+          ? record
+          : { ...record, transform: baseTransform };
+        if (!storedTransformsEqual(baseTransform, finalTransform)) {
+          if (!storedTransformsEqual(
+            baseTransform,
+            finalTransform,
+            UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
+          )) {
+            event.unsupportedReason = 'unsupported-transform';
+          }
+          event.transforms.push({
+            id,
+            beforeTransform: baseTransform,
+            afterTransform: finalTransform
+          });
+        }
+        return { index, record: insertionRecord, baseTransform };
+      })
+      .sort((left, right) => left.index - right.index);
+
+    for (const id of commonIds) {
+      const beforeObject = beforeObjects.get(id);
+      const afterObject = afterObjects.get(id);
+      if (!contentStableIds.has(id)) {
+        event.unsupportedReason = 'unsupported-field-mutation';
+      }
+      const beforeTransform = beforeObject?.transform || {};
+      const afterTransform = afterObject?.transform || {};
+      if (storedTransformsEqual(beforeTransform, afterTransform)) continue;
+      if (!storedTransformsEqual(
+        beforeTransform,
+        afterTransform,
+        UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
+      )) {
+        event.unsupportedReason = 'unsupported-transform';
+      }
+      event.transforms.push({ id, beforeTransform, afterTransform });
+    }
+
+    const expectedOrder = beforeState.order.filter(id => !removedIdSet.has(id));
+    for (const insertion of event.insertions) {
+      expectedOrder.splice(insertion.index, 0, insertion.record.id);
+    }
+    if (expectedOrder.length !== afterState.order.length ||
+        expectedOrder.some((id, index) => id !== afterState.order[index])) {
+      event.unsupportedReason = 'unsupported-order-mutation';
+    }
+    event.kind = transitionKind(
+      transition.kind,
+      event.removals.length,
+      event.insertions.length,
+      event.transforms.length
+    );
+    return event;
+  }
+
   function nextCommandId(scene, kind) {
     commandSequence += 1;
     return `${kind}:${scene.key}:${commandSequence}`;
   }
 
-  function makeHistoryCommand(scene, kind, undoState, redoState) {
-    return {
+  function makeHistoryCommand(scene, kind, undoState, redoState, contentStableIds) {
+    const command = {
       id: nextCommandId(scene, kind),
       kind,
       undoState,
       redoState
     };
+    if (contentStableIds instanceof Set && contentStableIds.size > 0) {
+      command.contentStableIds = [...contentStableIds];
+    }
+    return command;
   }
 
   function commitStagedMutation(scene, change) {
@@ -354,7 +648,13 @@ function createSessionSceneStore(options = {}) {
     } catch (error) {
       return { applied: false, reason: error?.message || 'scene-validation-failed' };
     }
-    const command = makeHistoryCommand(scene, change.kind, change.undoState, change.redoState);
+    const command = makeHistoryCommand(
+      scene,
+      change.kind,
+      change.undoState,
+      change.redoState,
+      change.contentStableIds
+    );
     const commandBytes = defaultEstimateObjectBytes(command);
     if (commandBytes > maxHistoryBytes) {
       return { applied: false, reason: 'history-capacity-exceeded' };
@@ -386,10 +686,20 @@ function createSessionSceneStore(options = {}) {
     scene.estimatedBytes = nextEstimatedBytes;
     noteMutation(scene);
     touchVideo(scene.stableVideoIdentity);
+    notifyCommittedTransition(scene, () => makeTransitionEvent(scene, {
+      origin: 'live',
+      kind: change.kind,
+      estimatedBytes: commandBytes,
+      beforeState: change.undoState,
+      afterState: change.redoState,
+      baseTransforms: change.baseTransforms,
+      contentStableIds: change.contentStableIds
+    }));
     return { applied: true, commandId: command.id, ...recorded };
   }
 
   function activateSession(session) {
+    if (destroyed) return { accepted: false, reason: 'store-destroyed' };
     if (!session || typeof session.sessionId !== 'string' || session.sessionId.length === 0) {
       return { accepted: false, reason: 'invalid-session' };
     }
@@ -411,8 +721,11 @@ function createSessionSceneStore(options = {}) {
     if (!restored) {
       scenes.set(sceneKey, {
         key: sceneKey,
+        sceneInstanceId: allocateSceneInstanceId(),
         stableVideoIdentity: session.stableVideoIdentity,
         targetFrame,
+        sourceWidth: sourceDimension(session.sourceWidth),
+        sourceHeight: sourceDimension(session.sourceHeight),
         objects: new Map(),
         selectedObjectIds: new Set(),
         history: createDrawingCommandHistory({
@@ -422,6 +735,7 @@ function createSessionSceneStore(options = {}) {
         historyEntries: { undo: [], redo: [] },
         dirty: false,
         mutationCount: 0,
+        mutationSequence: 0,
         estimatedBytes: 0
       });
     }
@@ -439,6 +753,7 @@ function createSessionSceneStore(options = {}) {
     scene.selectedObjectIds.clear();
     touchVideo(session.stableVideoIdentity);
     enforceLimits();
+    notifySceneActivation(scene, session, restored);
     return { accepted: true, restored, sceneKey };
   }
 
@@ -474,7 +789,8 @@ function createSessionSceneStore(options = {}) {
       nextObjects,
       nextSelection: scene.selectedObjectIds,
       undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
-      redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys())
+      redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys()),
+      baseTransforms: new Map([[record.id, clonePlain(record.transform || {})]])
     });
     if (!result.applied) return result;
     return { applied: true, objectId: record.id };
@@ -566,6 +882,10 @@ function createSessionSceneStore(options = {}) {
     }
 
     const requestedSelection = Array.isArray(change.selectedObjectIds) ? change.selectedObjectIds : [];
+    const additionBaseTransforms = new Map(additions.map(object => [
+      object.id,
+      clonePlain(object.transform || {})
+    ]));
     const nextObjects = new Map();
     const replacementsById = new Map(replacements.map(replacement => [replacement.removeId, replacement.addObjects]));
     for (const [id, object] of scene.objects) {
@@ -615,12 +935,16 @@ function createSessionSceneStore(options = {}) {
       ...additions.map(object => object.id),
       ...changedTransformIds
     ]);
+    const contentStableIds = new Set(changedTransformIds.filter(id =>
+      !removeIds.has(id) && !additionIds.has(id)));
     const result = commitStagedMutation(scene, {
       kind: typeof change.kind === 'string' && change.kind ? change.kind : 'split-stroke',
       nextObjects,
       nextSelection,
       undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
-      redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys())
+      redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys()),
+      baseTransforms: additionBaseTransforms,
+      contentStableIds
     });
     if (!result.applied) return result;
     return {
@@ -704,7 +1028,21 @@ function createSessionSceneStore(options = {}) {
   function moveHistory(direction) {
     const scene = activeScene();
     if (!scene) return { applied: false, reason: 'history-empty' };
-    const result = scene.history[direction](state => applyHistoryState(scene, state));
+    let transition = null;
+    const result = scene.history[direction]((state, _historyDirection, entry) => {
+      const applied = applyHistoryState(scene, state);
+      if (applied.applied) {
+        transition = {
+          origin: 'history',
+          kind: entry.kind,
+          estimatedBytes: entry.estimatedBytes,
+          beforeState: direction === 'undo' ? entry.redoState : entry.undoState,
+          afterState: direction === 'undo' ? entry.undoState : entry.redoState,
+          contentStableIds: entry.contentStableIds
+        };
+      }
+      return applied;
+    });
     if (!result.applied) return result;
     const from = direction === 'undo' ? scene.historyEntries.undo : scene.historyEntries.redo;
     const to = direction === 'undo' ? scene.historyEntries.redo : scene.historyEntries.undo;
@@ -712,6 +1050,9 @@ function createSessionSceneStore(options = {}) {
     if (entryIndex >= 0) {
       const [entry] = from.splice(entryIndex, 1);
       to.push(entry);
+    }
+    if (transition) {
+      notifyCommittedTransition(scene, () => makeTransitionEvent(scene, transition));
     }
     return {
       ...result,
@@ -816,6 +1157,9 @@ function createSessionSceneStore(options = {}) {
       sceneCount: scenes.size,
       estimatedBytes: calculateEstimatedBytes(),
       evictionCount,
+      observerFailureCount,
+      observerQuarantineFailureCount,
+      observerLifecycleFailureCount,
       latestVideoGeneration,
       activeSessionId: activeSession?.sessionId || null,
       activeSceneKey: activeSession?.sceneKey || null,
@@ -834,9 +1178,13 @@ function createSessionSceneStore(options = {}) {
   }
 
   function destroy() {
+    if (destroyed) return;
+    destroyed = true;
+    const droppedSceneInstanceIds = [...scenes.values()].map(scene => scene.sceneInstanceId);
     scenes.clear();
     videoAccess.clear();
     activeSession = null;
+    notifyScenesDropped(droppedSceneInstanceIds);
   }
 
   return {

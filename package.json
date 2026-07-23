@@ -27,6 +27,7 @@
     "test:drawing": "node --test scripts/tests/drawing-stroke-records.test.js scripts/tests/drawing-layer-partition.test.js scripts/tests/drawing-layer-convergence.test.js scripts/tests/drawing-runtime-source.test.js scripts/tests/keyframe-multi-select-source.test.js scripts/tests/keyframe-shortcuts-source.test.js scripts/tests/brush-settings-source.test.js scripts/tests/drawing-v3-command-history.test.js scripts/tests/drawing-v3-document.test.js scripts/tests/drawing-v3-document-cow.test.js",
     "test:drawing-v3-hardening": "node --test --test-concurrency=1 scripts/tests/drawing-v3-document.test.js scripts/tests/drawing-v3-document-cow.test.js",
     "test:drawing-v3-adapter": "node --test --test-concurrency=1 scripts/tests/drawing-v3-engine-adapter.test.js",
+    "test:drawing-v3-store-observer": "node --test --test-concurrency=1 scripts/tests/fabric-drawing-scene-observer.test.js",
     "benchmark:drawing-v3": "node --test --test-concurrency=1 scripts/tests/drawing-v3-document-benchmark.test.mjs",
     "test:video-pan": "node --test scripts/tests/video-pan-controls.test.js scripts/tests/playhead-frame-step-source.test.js",
     "test:mpv": "node --test scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/external-frame-interpolation.test.mjs",
