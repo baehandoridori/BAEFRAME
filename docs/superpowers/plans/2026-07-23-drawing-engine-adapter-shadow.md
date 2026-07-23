@@ -214,6 +214,11 @@ canonical translation으로 복사하면 안 된다.
 - history insertion은 `baseTransform:null`을 허용하고 archive의 기존 baseline을 사용한다.
   archive에 없는 ID가 history에서 들어오면 현재 final transform을 baseline으로 가장하지
   않고 `missing-baseline`으로 격리한다.
+- baseline과 함께 transform을 제외한 canonical points/style/caps/opacity의 compact content
+  signature를 ID lifetime 동안 보존한다. history insertion이 이 signature와 다르면
+  `unsupported-field-mutation`으로 격리한다.
+- 첫 live insertion의 record transform은 선언한 `baseTransform`과 같아야 한다. 최초부터
+  offset이 있으면 숨은 move를 정상 add로 꾸미지 않고 `transition-before-mismatch`다.
 - 같은 split commit 안에서 fragment가 생성 즉시 이동하면 insertion의 `baseTransform`을
   baseline으로 사용한다.
 - scale/rotation/skew/flip 변화가 발견되면 이번 adapter가 거짓 parity를 만들지 않고
@@ -255,6 +260,7 @@ Store가 observer에 보내는 event는 point-heavy 전체 scene clone이 아니
   mutationSequence,
   origin: 'live' | 'history',
   kind,
+  estimatedBytes,
   unsupportedReason: null,
   removals: [{ id, index }],
   insertions: [{ index, record, baseTransform }], // history replay는 null 가능
@@ -266,9 +272,14 @@ Store가 observer에 보내는 event는 point-heavy 전체 scene clone이 아니
   만든 독립 redo-state clone 중 필요한 insertion record/transform의 소유권을 event로 넘긴다.
   history apply는 `DrawingCommandHistory.moveTop()`이 callback에 넘긴 독립 state clone을
   사용한다. scene object와 stored history entry는 별도 clone이므로 alias되지 않는다.
+- enqueue 시 scene/scalar envelope와 touched 배열 항목/작은 transform object만 얕게 복사해
+  deferred callback 전 routing 변경을 막는다. insertion record의 point 배열은 exclusive
+  ownership transfer 계약으로 유지해 primary stack에서 추가 복사하지 않는다.
 - queue byte admission도 point payload를 다시 순회하지 않는다. live는 이미 계산한
   `commandBytes`, history는 cloned entry의 `estimatedBytes`를 conservative upper bound로
   event에 싣는다. removal은 ID와 index만 전달한다.
+- `estimatedBytes`는 nonnegative safe integer이며 queue admission 전용이다. V3 exact
+  command payload에는 복사하지 않는다.
 - one successful primary commit = one transition = one V3 command.
 - `mutationSequence`는 scene에서 정확히 +1이어야 한다.
 - insertions는 final order 기준 contiguous run으로 묶어 `insert-objects` operations를 만든다.
@@ -278,6 +289,8 @@ Store가 observer에 보내는 event는 point-heavy 전체 scene clone이 아니
   store는 같은 sequence의 event에 `unsupportedReason`을
   `unsupported-field-mutation | unsupported-order-mutation | unsupported-transform` 중 하나로
   넣고, adapter는 payload를 적용하지 않은 채 그 scene만 격리한다.
+- 한 transition에서 같은 ID를 remove+reinsert해 points/style incarnation을 바꾸는 방식도
+  `unsupported-field-mutation`이다. lifetime baseline을 덮어쓰지 않는다.
 
 Mapping:
 
@@ -306,8 +319,10 @@ Undo authority다.
   macrotask로 넘긴다. 느린 command 하나는 끝까지 원자 적용하되 그 뒤 즉시 양보한다.
 - queue overflow는 Fabric action을 막지 않고 해당 shadow scene을 `desynced` 처리한다.
 - A scene의 overflow/apply failure는 B scene의 queue/status를 바꾸지 않는다.
-- scene별 expected sequence를 검사한다.
-- late, duplicate, gap event는 apply하지 않고 진단 counter를 증가시킨다.
+- A가 overflow/desync되면 A의 기존 pending event도 즉시 제거하고 queue bytes를 정확히
+  차감한다. B의 pending order/bytes/status는 유지한다.
+- scene별 expected sequence를 검사한다. late, duplicate, gap event는 apply하지 않고 해당
+  scene을 격리하며 각각의 bounded diagnostic counter를 증가시킨다.
 - transition은 `sceneInstanceId`만 사용하며 private file/video identity나 store `sceneKey`를
   adapter command/diagnostics에 전달하지 않는다.
 - store의 video LRU eviction은 실제 제거한 opaque `sceneInstanceId[]`를
@@ -317,6 +332,8 @@ Undo authority다.
   adapter `destroy()`를 정확히 한 번 소유해 scheduler와 aggregate telemetry까지 닫는다.
 - eviction/destroy 뒤 이미 예약된 callback은 no-op이며 payload 참조를 다시 살리지 않는다.
 - B off는 scene을 제거하지 않는다. 같은 scene 재진입은 warm shadow를 재사용한다.
+- 같은 `sceneInstanceId` warm activation에 다른 dimensions, sequence, authoritative objects가
+  들어오면 새 baseline을 잡지 않고 `warm-seed-mismatch`로 격리한다.
 - scene source dimensions가 바뀌면 기존 shadow를 재사용하거나 가짜 resync하지 않고
   `seed-signature-changed`로 격리한다.
 - `enqueueTransition()`과 `quarantineScene()`은 외부에 예외를 던지지 않는 API다. 그래도
@@ -324,6 +341,8 @@ Undo authority다.
   `quarantineScene(sceneInstanceId, 'observer-failed')`를 다시 시도한다. 마지막 mutation 뒤
   후속 event가 없어도 synced로 남으면 안 된다. activation/scheduler 내부 예외도 같은
   non-throwing quarantine 규칙을 따른다.
+- primary scheduler가 throw하면 fallback macrotask scheduler를 한 번 사용한다. fallback도
+  실패하면 현재 queued scene들을 각각 격리하고 queue/payload bytes를 0으로 정리한다.
 
 ## 9. Diagnostics
 
@@ -449,6 +468,7 @@ createDrawingEngineAdapter({
   latencyNow,
   createId,
   scheduleWork,
+  fallbackScheduleWork,
   limits
 })
 ```
