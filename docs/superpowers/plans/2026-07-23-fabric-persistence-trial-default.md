@@ -35,9 +35,11 @@
 
 1. `drawingsV3` load/collect, legacy drawings 불변 테스트를 먼저 실패시킨다.
 2. persistence 변경이 dirty/autosave를 만드는 테스트를 추가한다.
-3. 저장 실패 dirty 유지와 저장 도중 새 변경의 trailing save 테스트를 추가한다.
-4. provider 연결과 revision-aware save ack를 구현한다.
-5. playlist, drawing, 저장 테스트를 실행한다.
+3. 기존 `.bframe`이 없는 영상에서 Fabric 첫 획만으로 파일이 생성되는 테스트를 추가한다.
+4. 저장 실패 dirty 유지와 저장 도중 새 변경의 trailing save 테스트를 추가한다.
+5. provider snapshot을 `_opaqueRootFields.drawingsV3`에 반영하고 future raw를 보존하는 테스트를 추가한다.
+6. provider 연결과 revision-aware save ack를 구현한다.
+7. playlist, drawing, 저장 테스트를 실행한다.
 
 **Commit**
 
@@ -62,12 +64,15 @@
 **TDD**
 
 1. 확정 commit별 1회, selection/no-op 0회 observer 테스트를 먼저 실패시킨다.
-2. hydrate/export round-trip과 history 비복원 테스트를 추가한다.
+2. hydrate/export round-trip, history 비복원, hydrate commit/dirty 0회 테스트를 추가한다.
 3. sender 위조, payload size, stale generation 테스트를 추가한다.
 4. controller가 review load 뒤 hydrate 성공 후에만 enable하는 테스트를 추가한다.
 5. 좁은 overlay preload, main 전달, renderer listener, runtime API를 구현한다.
-6. sequence gap 시 full snapshot resync를 구현한다.
-7. Fabric bundle을 재생성하고 관련 테스트를 실행한다.
+6. delta는 dirty/cache에만 사용하고 매 save 직전 full video snapshot을 pull해 sequence와 함께 확정한다.
+7. sequence gap 시 full snapshot resync를 구현한다.
+8. snapshot pull 실패 시 dirty 유지와 video/quit 차단 또는 명시 경고를 구현한다.
+9. 영상별 `legacyBypass`와 `shouldOwnDrawingShortcut()`를 구현하고 실패 뒤 B가 legacy로 전달되는지 검증한다.
+10. Fabric bundle을 재생성하고 관련 테스트를 실행한다.
 
 **Commit**
 
@@ -95,7 +100,9 @@
 3. kill switch가 marker보다 우선하는 테스트를 추가한다.
 4. 시험판에서 userData 격리와 shell registration skip을 검증한다.
 5. `build:trial`에만 marker가 생성되고 일반 build에는 없는 테스트를 추가한다.
-6. resolver, build hook, main wiring을 구현한다.
+6. trial build 뒤 같은 출력 폴더의 normal build가 기존 marker를 제거하는 테스트를 추가한다.
+7. `prebuild:trial`에서 Fabric bundle이 항상 재생성되는지 검증한다.
+8. resolver, 원자적 marker build hook, main wiring을 구현한다.
 
 **Commit**
 

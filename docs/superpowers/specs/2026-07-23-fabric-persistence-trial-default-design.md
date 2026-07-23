@@ -10,7 +10,7 @@
 2. Fabric으로 만든 그림이 현재 영상의 `.bframe`에 자동 저장된다.
 3. 앱을 완전히 종료한 뒤 같은 영상 또는 `.bframe`을 다시 열면 프레임별 그림이 정확히 복원된다.
 4. 기존 `drawings` 데이터, 기존 배프레임 인스턴스, Windows 파일 연결은 건드리지 않는다.
-5. 저장 계층에 이상이 있으면 새 엔진을 조용히 계속 사용해 데이터를 잃지 않고, 해당 영상에서는 기존 엔진으로 안전하게 되돌아간다.
+5. 저장 계층에 이상이 있으면 새 편집을 허용하지 않고, 해당 영상에서는 B 입력을 기존 엔진으로 안전하게 넘긴다.
 
 ## 2. 확인된 현재 상태
 
@@ -89,7 +89,11 @@ selection 변경, hover, preview, 거부된 명령, no-op은 저장 이벤트를
 - scene metadata: frame, source size, mutation sequence
 - stale fence: host generation, video generation, session ID, video identity
 
-메인 렌더러의 persistence store가 이 delta를 순서대로 적용해 저장용 정본을 유지한다. sequence gap이나 잘못된 payload가 발견되면 해당 이벤트를 적용하지 않고 오버레이 전체 snapshot을 한 번 다시 받아 resync한다.
+메인 렌더러의 persistence store가 이 delta를 순서대로 적용해 dirty/autosave를 빠르게 감지하고 저장 후보 cache를 유지한다. sequence gap이나 잘못된 payload가 발견되면 해당 이벤트를 적용하지 않고 오버레이 전체 snapshot을 한 번 다시 받아 resync한다.
+
+delta는 최종 저장 정본이 아니다. 마지막 IPC 이벤트 하나가 통째로 유실되면 gap도 관찰할 수 없기 때문이다. 매 실제 save 직전에는 현재 host/video generation과 identity를 포함해 오버레이의 전체 video snapshot을 pull하고, 그 snapshot과 sequence를 이번 저장 정본으로 확정한다. 저장 성공 ack는 pull한 sequence와 현재 sequence가 같을 때만 dirty를 해제한다.
+
+영상 전환 또는 앱 종료 시 snapshot pull이 실패하면 이전 cache를 성공 저장으로 처리하지 않는다. dirty를 유지하고 전환/종료를 중단하거나 사용자에게 명시적인 저장 실패를 알린다.
 
 ### 4.3 보안 경계
 
@@ -119,18 +123,24 @@ Main IPC는 다음을 검증한다.
 
 디스크에서 hydrate한 scene은 V3 shadow에도 최초 한 번 전체 seed를 보낸다. 이후 같은 프레임에 B로 재진입할 때는 중복 seed를 보내지 않는다.
 
+hydrate는 scene 전체를 한 번에 교체하며 commit observer와 dirty 이벤트를 만들지 않는다. 복원 뒤 undo/redo history는 빈 상태다.
+
 ## 6. ReviewDataManager 연결
 
 `ReviewDataManager`는 persistence store를 provider로 받는다.
 
 - load: opaque root의 `drawingsV3`를 provider에 전달
-- collect: 지원되는 현재 snapshot만 `drawingsV3`에 반영
+- collect: 지원되는 현재 snapshot만 `_opaqueRootFields.drawingsV3`에 원자적으로 반영한 뒤 known root와 병합
 - changed: 기존 데이터와 같은 dirty/autosave 경로 사용
 - save success: 저장 시작 revision과 현재 revision이 같을 때만 dirty 해제
 - save 중 새 commit: dirty를 유지하고 trailing autosave 예약
 - save failure: dirty 유지
 
 미지원 future version이나 손상된 `drawingsV3`는 원문 그대로 opaque 보존한다. 해당 영상에서는 Fabric을 활성화하지 않고 기존 엔진으로 되돌아가며, 댓글과 기존 그림 저장은 계속 가능하다.
+
+controller는 영상별 `legacyBypass` 상태를 가진다. 이 상태에서는 `isEnabled()`와 별개로 `shouldOwnDrawingShortcut()`가 false를 반환한다. 앱의 B routing과 legacy UI 억제 조건은 이 API를 사용한다. malformed/future/hydrate/pull 실패 뒤에도 B가 소비되지 않고 기존 드로잉 동작으로 이어져야 한다.
+
+새 `.bframe`에서 Fabric 그림만 있는 경우도 substantive content로 판정한다. 첫 획 뒤 autosave가 실제 `.bframe` 파일을 생성해야 한다.
 
 ## 7. 시험판 기본 활성화
 
@@ -159,12 +169,15 @@ Main IPC는 다음을 검증한다.
 
 marker가 없거나 깨졌거나 알 수 없는 schema면 default OFF다. 시험판은 pid별 userData에 격리되고 프로토콜 및 `.bframe` 파일 연결을 등록하지 않으므로 현재 사용 중인 배프레임을 흡수하거나 연결을 덮어쓰지 않는다.
 
+패키징 hook은 실행할 때마다 기존 marker를 먼저 제거한다. trial 환경에서만 임시 파일에 정확한 JSON을 쓴 뒤 rename한다. 같은 `dist/win-unpacked`에 trial build 후 일반 build를 실행해도 marker가 남지 않아야 한다.
+
 ## 8. 실패 처리
 
 - persistence API 누락/초기화 실패: Fabric pilot 비활성화, legacy 사용
 - 지원하지 않는 저장 version: 원문 보존, 해당 영상 Fabric 비활성화
 - hydrate 실패: Fabric input을 열지 않고 legacy 복귀
 - commit bridge 일시 실패: full snapshot resync 시도
+- save 직전 snapshot pull 실패: 저장 성공 처리 금지, dirty 유지, 영상 전환/종료 차단 또는 명시 경고
 - autosave 실패: dirty 유지, 기존 저장 실패 알림 1회
 - shadow 실패: 화면과 저장에는 영향 없이 shadow만 격리
 
@@ -182,11 +195,15 @@ marker가 없거나 깨졌거나 알 수 없는 schema면 default OFF다. 시험
 - future version opaque 보존
 - save 중 mutation 시 trailing save
 - save failure dirty 유지
+- save 직전 full snapshot pull과 matching sequence ack
+- 기존 파일이 없는 영상에서 Fabric 첫 획만으로 `.bframe` 생성
 
 ### 통합
 
 - overlay sender 위조 거부
 - review load → hydrate → enable 순서
+- load/hydrate는 commit 0회, dirty 0회
+- malformed/future/hydrate 실패 뒤 B가 legacy로 전달
 - 비디오/load generation stale 차단
 - disk hydrate 첫 activation에서 V3 full seed
 - legacy `drawings` byte-equivalent 보존
@@ -201,6 +218,7 @@ marker가 없거나 깨졌거나 알 수 없는 schema면 default OFF다. 시험
 - 같은 `.bframe` 재열기
 - 프레임, 획, 스타일, 위치 복원 확인
 - 기존 BAEFRAME PID와 Windows 연결 상태 불변 확인
+- trial build 뒤 같은 출력 폴더의 normal build에서 marker 잔여 0개 확인
 
 ## 10. 이번 단계의 비목표
 
