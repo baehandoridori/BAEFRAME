@@ -538,6 +538,30 @@ test('an active external drawingsV3 refresh resumes drawing only after rehydrate
   );
 });
 
+test('an external future drawingsV3 refresh preserves the root and hands B to legacy without blocking save', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  const futureRoot = {
+    ...makeRoot({ revision: 8 }),
+    storageVersion: '9.0.0'
+  };
+  const imported = harness.store.importRootValue(futureRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  });
+  assert.equal(imported.accepted, false);
+  assert.equal(imported.preserved, true);
+
+  assert.equal(
+    await harness.controller.preparePersistenceSnapshotForSave(),
+    true
+  );
+  assert.equal(harness.controller.shouldOwnDrawingShortcut(), false);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, false);
+  assert.deepEqual(harness.store.exportRootValue(), futureRoot);
+});
+
 test('authoritative pull failure blocks leave and immediately hands B back to legacy', async () => {
   const harness = createHarness();
   assert.equal(await prepareVideo(harness), true);

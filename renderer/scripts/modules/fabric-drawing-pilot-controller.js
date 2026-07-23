@@ -782,6 +782,13 @@ export function createFabricDrawingPilotController(options = {}) {
   async function pullWithCurrentPersistenceBinding() {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (!await ensurePersistenceBindingCurrent()) {
+        if (legacyBypass && !persistenceBlocked) {
+          return {
+            ok: true,
+            bypassed: true,
+            eventEpoch: persistenceEventEpoch
+          };
+        }
         return {
           ok: false,
           eventEpoch: persistenceEventEpoch,
