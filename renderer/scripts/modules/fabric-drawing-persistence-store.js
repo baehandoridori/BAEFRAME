@@ -455,6 +455,7 @@ export function createFabricDrawingPersistenceStore(options = {}) {
   let objectCount = 0;
   let frameBytesByFrame = new Map();
   let recordBytesByFrame = new Map();
+  let sourceEpoch = 0;
 
   function allocateId(prefix) {
     for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -529,6 +530,7 @@ export function createFabricDrawingPersistenceStore(options = {}) {
   }
 
   function invalidate(reason = 'unavailable') {
+    sourceEpoch += 1;
     documentValue = null;
     opaqueRootValue = null;
     context = {
@@ -556,6 +558,7 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     if (!nextContext) {
       return { accepted: false, compatible: false, reason: 'invalid-metadata' };
     }
+    sourceEpoch += 1;
     issuedIds.clear();
     const documentId = meta.documentId || allocateId('fabric-document');
     const candidate = createRootValue({
@@ -579,6 +582,7 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     if (!nextContext) {
       return { accepted: false, compatible: false, reason: 'invalid-metadata' };
     }
+    sourceEpoch += 1;
 
     if (isPlainRecord(raw) &&
         raw.storageSchema === STORAGE_SCHEMA &&
@@ -991,6 +995,10 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     return state === 'ready' && documentValue ? documentValue.revision : null;
   }
 
+  function getSourceEpoch() {
+    return sourceEpoch;
+  }
+
   function subscribe(listener) {
     if (typeof listener !== 'function') throw new TypeError('listener must be a function');
     listeners.add(listener);
@@ -1007,6 +1015,7 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     getHydrationDocument,
     getStatus,
     getRevision,
+    getSourceEpoch,
     subscribe
   });
 }

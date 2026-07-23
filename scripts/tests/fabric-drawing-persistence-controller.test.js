@@ -464,6 +464,80 @@ test('a video-switch save still performs its final pull after drawing input is d
   assert.equal(harness.calls.export.length, exportCountBeforeSave + 1);
 });
 
+test('a clean external drawingsV3 refresh rehydrates the overlay before final export', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  const hydrateCount = harness.calls.hydrate.length;
+  const exportCount = harness.calls.export.length;
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-stroke')]
+    }]
+  });
+  assert.equal(harness.store.importRootValue(externalRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  }).accepted, true);
+
+  assert.equal(
+    await harness.controller.preparePersistenceSnapshotForSave(),
+    true
+  );
+  assert.equal(harness.calls.hydrate.length, hydrateCount + 1);
+  assert.equal(harness.calls.export.length, exportCount + 2);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['external-stroke']
+  );
+});
+
+test('an active external drawingsV3 refresh resumes drawing only after rehydrate verification', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  harness.calls.order.length = 0;
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-active-stroke')]
+    }]
+  });
+  assert.equal(harness.store.importRootValue(externalRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  }).accepted, true);
+
+  assert.equal(
+    await harness.controller.preparePersistenceSnapshotForSave(),
+    true
+  );
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'hydrate:1',
+    'export:1',
+    'input:on:1',
+    'export:1'
+  ]);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['external-active-stroke']
+  );
+});
+
 test('authoritative pull failure blocks leave and immediately hands B back to legacy', async () => {
   const harness = createHarness();
   assert.equal(await prepareVideo(harness), true);

@@ -154,6 +154,51 @@ test('reset creates an empty canonical document without reporting a user change'
   assert.deepEqual(changes, []);
 });
 
+test('source epoch changes only when a review root is installed or invalidated', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const store = createFabricDrawingPersistenceStore();
+
+  assert.equal(typeof store.getSourceEpoch, 'function');
+  assert.equal(store.getSourceEpoch(), 0);
+  assert.equal(store.importRootValue(rootValue(), META).accepted, true);
+  const importedEpoch = store.getSourceEpoch();
+  assert.equal(importedEpoch, 1);
+
+  const inserted = record('source-epoch-stroke');
+  assert.equal(store.applyTransition(event(1, {
+    insertions: [{
+      index: 0,
+      record: inserted,
+      baseTransform: inserted.transform
+    }]
+  })).applied, true);
+  assert.equal(store.getSourceEpoch(), importedEpoch);
+
+  const snapshot = {
+    hostGeneration: META.hostGeneration,
+    videoGeneration: META.videoGeneration,
+    persistenceSessionId: META.persistenceSessionId,
+    stableVideoIdentity: META.stableVideoIdentity,
+    fps: META.fps,
+    totalFrames: META.totalFrames,
+    scenes: [{
+      sceneInstanceId: 'source-epoch-scene',
+      targetFrame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [inserted]
+    }]
+  };
+  assert.equal(store.replaceFromOverlay(snapshot, { mode: 'resync' }).accepted, true);
+  assert.equal(store.getSourceEpoch(), importedEpoch);
+
+  assert.equal(store.importRootValue(rootValue({ revision: 9 }), META).accepted, true);
+  assert.equal(store.getSourceEpoch(), importedEpoch + 1);
+  store.invalidate('video-switch');
+  assert.equal(store.getSourceEpoch(), importedEpoch + 2);
+});
+
 test('multiple frames and every Fabric record field round-trip exactly without aliases', async () => {
   const { createFabricDrawingPersistenceStore } = await loadModule();
   const first = record('first', {
