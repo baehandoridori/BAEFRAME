@@ -197,6 +197,55 @@ test('multiple frames and every Fabric record field round-trip exactly without a
   assert.equal(store.exportRootValue().keyframes[0].objects[0].sourcePoints[0].x, 0);
 });
 
+test('delta byte accounting never stringifies untouched records in the active frame', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const untouched = record('untouched-large', {
+    sourcePoints: Array.from({ length: 10000 }, (_, index) => ({
+      x: index,
+      y: index % 100,
+      pressure: 0.5,
+      time: index
+    }))
+  });
+  const store = createFabricDrawingPersistenceStore();
+  assert.equal(store.importRootValue(rootValue({
+    revision: 1,
+    keyframes: [keyframe(12, [untouched], { mutationSequence: 1 })]
+  }), META).accepted, true);
+  const inserted = record('small-inserted');
+  const originalStringify = JSON.stringify;
+  let untouchedSerializationCount = 0;
+  let result;
+  JSON.stringify = function instrumentedStringify(value, ...args) {
+    const touchesUntouched = value?.id === untouched.id ||
+      (Array.isArray(value?.objects) &&
+       value.objects.some(object => object?.id === untouched.id));
+    if (touchesUntouched) {
+      untouchedSerializationCount += 1;
+      throw new Error('untouched record entered the delta serialization path');
+    }
+    return originalStringify.call(this, value, ...args);
+  };
+  try {
+    result = store.applyTransition(event(2, {
+      insertions: [{
+        index: 1,
+        record: inserted,
+        baseTransform: inserted.transform
+      }]
+    }));
+  } finally {
+    JSON.stringify = originalStringify;
+  }
+
+  assert.deepEqual(result, { applied: true, revision: 2 });
+  assert.equal(untouchedSerializationCount, 0);
+  assert.deepEqual(
+    store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['untouched-large', 'small-inserted']
+  );
+});
+
 test('add, move, split, delete, Undo, Redo, and clear deltas preserve final order', async () => {
   const { createFabricDrawingPersistenceStore } = await loadModule();
   const changes = [];
@@ -319,6 +368,53 @@ test('independent frame scenes track their own mutation sequence', async () => {
       [30, 1280, 720, 1, 'frame-30']
     ]
   );
+});
+
+test('identical transforms are ignored alone and beside a real insertion', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const changes = [];
+  const store = createFabricDrawingPersistenceStore();
+  store.reset(META);
+  const first = record('no-op-first');
+  assert.equal(store.applyTransition(event(1, {
+    insertions: [{ index: 0, record: first, baseTransform: first.transform }]
+  })).applied, true);
+  store.subscribe(change => changes.push(change));
+  const beforeNoOp = store.exportRootValue();
+
+  assert.deepEqual(store.applyTransition(event(2, {
+    kind: 'transform-objects',
+    transforms: [{
+      id: first.id,
+      beforeTransform: first.transform,
+      afterTransform: { ...first.transform }
+    }]
+  })), {
+    applied: false,
+    reason: 'no-op',
+    needsResync: false
+  });
+  assert.deepEqual(store.exportRootValue(), beforeNoOp);
+  assert.deepEqual(changes, []);
+
+  const second = record('real-insertion');
+  assert.deepEqual(store.applyTransition(event(2, {
+    kind: 'add-objects',
+    insertions: [{ index: 1, record: second, baseTransform: second.transform }],
+    transforms: [{
+      id: first.id,
+      beforeTransform: first.transform,
+      afterTransform: { ...first.transform }
+    }]
+  })), {
+    applied: true,
+    revision: 2
+  });
+  assert.deepEqual(
+    store.exportRootValue().keyframes[0].objects,
+    [first, second]
+  );
+  assert.deepEqual(changes.map(change => change.kind), ['add-objects']);
 });
 
 test('duplicate, stale, and sequence-gap events are rejected atomically', async () => {
@@ -530,8 +626,8 @@ test('replaceFromOverlay installs an authoritative clone without a user-change e
     videoGeneration: META.videoGeneration,
     persistenceSessionId: META.persistenceSessionId,
     stableVideoIdentity: META.stableVideoIdentity,
-    fps: 23.976,
-    totalFrames: 120,
+    fps: META.fps,
+    totalFrames: META.totalFrames,
     scenes: [
       {
         sceneInstanceId: 'overlay-scene-3',
@@ -561,8 +657,8 @@ test('replaceFromOverlay installs an authoritative clone without a user-change e
     {
       documentId: META.documentId,
       revision: 0,
-      fps: 23.976,
-      totalFrames: 120,
+      fps: META.fps,
+      totalFrames: META.totalFrames,
       keyframes: [
         keyframe(3, [record('overlay-first')], {
           id: store.exportRootValue().keyframes[0].id,
@@ -582,6 +678,152 @@ test('replaceFromOverlay installs an authoritative clone without a user-change e
   snapshot.scenes[0].objects[0].style.color = '#000000';
   assert.equal(store.exportRootValue().keyframes[0].objects[0].style.color, '#ff4757');
   assert.deepEqual(changes, []);
+});
+
+test('numeric ceilings and exact active timeline reject hostile finite values', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const oversizedDocuments = [
+    rootValue({
+      totalFrames: Number.MAX_SAFE_INTEGER,
+      keyframes: [keyframe(3, [record('huge-total-frames')])]
+    }),
+    rootValue({
+      keyframes: [keyframe(3, [record('huge-source')], {
+        sourceWidth: Number.MAX_VALUE
+      })]
+    }),
+    rootValue({
+      keyframes: [keyframe(3, [record('huge-point', {
+        sourcePoints: [
+          { x: Number.MAX_VALUE, y: 0, pressure: 0.5, time: 0 },
+          { x: 1, y: 1, pressure: 0.5, time: 1 }
+        ]
+      })])]
+    }),
+    rootValue({
+      keyframes: [keyframe(3, [record('huge-brush', {
+        style: { size: Number.MAX_VALUE }
+      })])]
+    }),
+    rootValue({
+      keyframes: [keyframe(3, [record('huge-transform', {
+        transform: { left: Number.MAX_VALUE }
+      })])]
+    }),
+    rootValue({
+      keyframes: [keyframe(3, [record('huge-time', {
+        sourcePoints: [
+          { x: 0, y: 0, pressure: 0.5, time: 0 },
+          { x: 1, y: 1, pressure: 0.5, time: Number.MAX_VALUE }
+        ]
+      })])]
+    })
+  ];
+  for (const input of oversizedDocuments) {
+    const store = createFabricDrawingPersistenceStore();
+    assert.deepEqual(store.importRootValue(input, META), {
+      accepted: false,
+      compatible: false,
+      reason: 'invalid-document',
+      preserved: true
+    });
+    assert.deepEqual(store.exportRootValue(), input);
+  }
+
+  const store = createFabricDrawingPersistenceStore();
+  store.reset(META);
+  const snapshot = {
+    hostGeneration: META.hostGeneration,
+    videoGeneration: META.videoGeneration,
+    persistenceSessionId: META.persistenceSessionId,
+    stableVideoIdentity: META.stableVideoIdentity,
+    fps: META.fps,
+    totalFrames: META.totalFrames,
+    scenes: []
+  };
+  assert.deepEqual(store.replaceFromOverlay({
+    ...snapshot,
+    fps: 23.976
+  }, { mode: 'hydrate' }), {
+    accepted: false,
+    reason: 'timeline-mismatch'
+  });
+  assert.deepEqual(store.replaceFromOverlay({
+    ...snapshot,
+    totalFrames: META.totalFrames + 1
+  }, { mode: 'hydrate' }), {
+    accepted: false,
+    reason: 'timeline-mismatch'
+  });
+  assert.deepEqual(store.replaceFromOverlay({
+    ...snapshot,
+    scenes: [{
+      sceneInstanceId: 'huge-overlay-source',
+      targetFrame: 0,
+      sourceWidth: Number.MAX_VALUE,
+      sourceHeight: 1080,
+      mutationSequence: 0,
+      objects: []
+    }]
+  }, { mode: 'hydrate' }), {
+    accepted: false,
+    reason: 'invalid-overlay-snapshot'
+  });
+});
+
+test('overlay snapshot persistence session requires exact match or explicit one-shot adoption', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const snapshot = {
+    hostGeneration: META.hostGeneration,
+    videoGeneration: META.videoGeneration,
+    persistenceSessionId: META.persistenceSessionId,
+    stableVideoIdentity: META.stableVideoIdentity,
+    fps: META.fps,
+    totalFrames: META.totalFrames,
+    scenes: []
+  };
+
+  const bound = createFabricDrawingPersistenceStore();
+  bound.reset(META);
+  assert.deepEqual(bound.replaceFromOverlay({
+    ...snapshot,
+    persistenceSessionId: 'late-old-persistence-session'
+  }, { mode: 'hydrate' }), {
+    accepted: false,
+    reason: 'stale-persistence-session'
+  });
+  assert.deepEqual(bound.exportRootValue(), rootValue({ revision: 0 }));
+
+  const unboundMeta = { ...META };
+  delete unboundMeta.persistenceSessionId;
+  const unbound = createFabricDrawingPersistenceStore();
+  unbound.reset(unboundMeta);
+  assert.deepEqual(unbound.applyTransition(event(1)), {
+    applied: false,
+    reason: 'unbound-persistence-session',
+    needsResync: false
+  });
+  assert.deepEqual(unbound.replaceFromOverlay(snapshot, { mode: 'hydrate' }), {
+    accepted: false,
+    reason: 'unbound-persistence-session'
+  });
+  assert.deepEqual(unbound.replaceFromOverlay(snapshot, {
+    mode: 'hydrate',
+    adoptPersistenceSession: true
+  }), {
+    accepted: true,
+    revision: 0
+  });
+  assert.deepEqual(unbound.replaceFromOverlay({
+    ...snapshot,
+    persistenceSessionId: 'late-after-adoption'
+  }, {
+    mode: 'hydrate',
+    adoptPersistenceSession: true
+  }), {
+    accepted: false,
+    reason: 'stale-persistence-session'
+  });
 });
 
 test('resync replacement reports one real lost delta while identical resync is silent', async () => {

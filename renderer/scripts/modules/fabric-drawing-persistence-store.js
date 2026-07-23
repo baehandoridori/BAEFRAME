@@ -104,6 +104,12 @@ const VALID_KINDS = new Set([
 ]);
 const VALID_POINTER_TYPES = new Set(['mouse', 'pen', 'touch']);
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+const MAX_TOTAL_FRAMES = 1_000_000_000;
+const MAX_SOURCE_DIMENSION = 1_000_000;
+const MAX_POINT_COORDINATE = 1_000_000_000;
+const MAX_POINT_TIME = 1_000_000_000_000;
+const MAX_BRUSH_SIZE = 1_000_000;
+const MAX_TRANSFORM_MAGNITUDE = 1_000_000_000;
 const encoder = new TextEncoder();
 
 function isPlainRecord(value) {
@@ -167,7 +173,8 @@ function validateTransform(value) {
   for (const key of TRANSFORM_KEYS) {
     if (key === 'flipX' || key === 'flipY') {
       if (typeof value[key] !== 'boolean') return false;
-    } else if (!Number.isFinite(value[key])) {
+    } else if (!Number.isFinite(value[key]) ||
+        Math.abs(value[key]) > MAX_TRANSFORM_MAGNITUDE) {
       return false;
     }
   }
@@ -176,9 +183,10 @@ function validateTransform(value) {
 
 function validatePoint(value) {
   if (!hasExactKeys(value, POINT_REQUIRED_KEYS, POINT_OPTIONAL_KEYS)) return false;
-  if (!Number.isFinite(value.x) || !Number.isFinite(value.y) ||
+  if (!Number.isFinite(value.x) || Math.abs(value.x) > MAX_POINT_COORDINATE ||
+      !Number.isFinite(value.y) || Math.abs(value.y) > MAX_POINT_COORDINATE ||
       !Number.isFinite(value.pressure) || value.pressure < 0 || value.pressure > 1 ||
-      !Number.isFinite(value.time) || value.time < 0) {
+      !Number.isFinite(value.time) || value.time < 0 || value.time > MAX_POINT_TIME) {
     return false;
   }
   return value.pointerType === undefined ||
@@ -193,7 +201,7 @@ function validateRecord(value, limits) {
       value.sourcePoints.length > limits.maxPointsPerStroke ||
       !hasExactKeys(value.style, STYLE_KEYS) ||
       !HEX_COLOR.test(value.style.color) ||
-      !isPositiveFinite(value.style.size) ||
+      !isPositiveFinite(value.style.size) || value.style.size > MAX_BRUSH_SIZE ||
       !Number.isFinite(value.style.opacity) ||
       value.style.opacity < 0 || value.style.opacity > 1 ||
       !validateTransform(value.transform)) {
@@ -216,7 +224,8 @@ function validateRecord(value, limits) {
 
 function validateFpsAndFrames(fps, totalFrames) {
   return isPositiveFinite(fps) && fps <= 1000 &&
-    Number.isSafeInteger(totalFrames) && totalFrames > 0;
+    Number.isSafeInteger(totalFrames) && totalFrames > 0 &&
+    totalFrames <= MAX_TOTAL_FRAMES;
 }
 
 function validateKeyframes(keyframes, totalFrames, limits) {
@@ -234,7 +243,9 @@ function validateKeyframes(keyframes, totalFrames, limits) {
         !Number.isSafeInteger(keyframe.frame) || keyframe.frame < 0 ||
         keyframe.frame >= totalFrames || keyframe.frame <= previousFrame ||
         !isPositiveFinite(keyframe.sourceWidth) ||
+        keyframe.sourceWidth > MAX_SOURCE_DIMENSION ||
         !isPositiveFinite(keyframe.sourceHeight) ||
+        keyframe.sourceHeight > MAX_SOURCE_DIMENSION ||
         !isSafeCount(keyframe.mutationSequence) ||
         !isDenseArray(keyframe.objects) ||
         keyframe.objects.length > limits.maxObjectsPerKeyframe ||
@@ -326,6 +337,20 @@ function createRootValue({ documentId, fps, totalFrames }) {
   };
 }
 
+function calculateFrameBytes(frame, bytesByObjectId) {
+  const emptyFrameBytes = jsonBytes({
+    id: frame.id,
+    frame: frame.frame,
+    sourceWidth: frame.sourceWidth,
+    sourceHeight: frame.sourceHeight,
+    mutationSequence: frame.mutationSequence,
+    objects: []
+  });
+  let objectBytes = 0;
+  for (const bytes of bytesByObjectId.values()) objectBytes += bytes;
+  return emptyFrameBytes + objectBytes + Math.max(0, bytesByObjectId.size - 1);
+}
+
 function eventFailure(reason, needsResync = false) {
   return { applied: false, reason, needsResync };
 }
@@ -340,7 +365,9 @@ function exactEventEnvelope(event) {
     isNonemptyString(event.scene.sceneInstanceId, 512) &&
     Number.isSafeInteger(event.scene.targetFrame) && event.scene.targetFrame >= 0 &&
     isPositiveFinite(event.scene.sourceWidth) &&
+    event.scene.sourceWidth <= MAX_SOURCE_DIMENSION &&
     isPositiveFinite(event.scene.sourceHeight) &&
+    event.scene.sourceHeight <= MAX_SOURCE_DIMENSION &&
     isSafeCount(event.mutationSequence) &&
     VALID_ORIGINS.has(event.origin) &&
     VALID_KINDS.has(event.kind) &&
@@ -426,6 +453,8 @@ export function createFabricDrawingPersistenceStore(options = {}) {
   let fallbackIdSequence = 0;
   let documentBytes = 0;
   let objectCount = 0;
+  let frameBytesByFrame = new Map();
+  let recordBytesByFrame = new Map();
 
   function allocateId(prefix) {
     for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -458,6 +487,22 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     }
   }
 
+  function rebuildByteAccounting(value) {
+    documentBytes = jsonBytes(value);
+    objectCount = 0;
+    frameBytesByFrame = new Map();
+    recordBytesByFrame = new Map();
+    for (const frame of value.keyframes) {
+      const recordBytes = new Map();
+      for (const object of frame.objects) {
+        recordBytes.set(object.id, jsonBytes(object));
+      }
+      recordBytesByFrame.set(frame.frame, recordBytes);
+      frameBytesByFrame.set(frame.frame, calculateFrameBytes(frame, recordBytes));
+      objectCount += frame.objects.length;
+    }
+  }
+
   function installReady(value, nextContext, nextSceneInstances = new Map()) {
     documentValue = clonePlain(value);
     opaqueRootValue = null;
@@ -466,11 +511,7 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     incompatibleReason = null;
     sceneInstances = new Map(nextSceneInstances);
     registerDocumentIds(documentValue);
-    documentBytes = jsonBytes(documentValue);
-    objectCount = documentValue.keyframes.reduce(
-      (total, frame) => total + frame.objects.length,
-      0
-    );
+    rebuildByteAccounting(documentValue);
   }
 
   function installOpaque(value, reason, nextContext) {
@@ -483,6 +524,8 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     issuedIds.clear();
     documentBytes = 0;
     objectCount = 0;
+    frameBytesByFrame = new Map();
+    recordBytesByFrame = new Map();
   }
 
   function reset(meta = {}) {
@@ -556,6 +599,9 @@ export function createFabricDrawingPersistenceStore(options = {}) {
       return eventFailure('store-incompatible');
     }
     if (!exactEventEnvelope(event)) return eventFailure('invalid-transition');
+    if (context.persistenceSessionId === null) {
+      return eventFailure('unbound-persistence-session');
+    }
     if (!fenceMatches(context, event)) return eventFailure('stale-fence');
     if (event.scene.targetFrame >= documentValue.totalFrames) {
       return eventFailure('invalid-transition');
@@ -597,10 +643,6 @@ export function createFabricDrawingPersistenceStore(options = {}) {
         !event.transforms.every(validateTransformChange)) {
       return eventFailure('invalid-transition', true);
     }
-    if (deriveTransitionKind(event) !== event.kind) {
-      return eventFailure('invalid-transition', true);
-    }
-
     const removals = [...event.removals];
     const insertions = [...event.insertions];
     if (removals.some((item, index) =>
@@ -619,12 +661,16 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     }
 
     const objects = currentFrame ? [...currentFrame.objects] : [];
+    const nextRecordBytes = new Map(
+      recordBytesByFrame.get(event.scene.targetFrame) || []
+    );
     for (const removal of removals) {
       if (removal.index >= objects.length || objects[removal.index]?.id !== removal.id) {
         return eventFailure('transition-before-mismatch', true);
       }
     }
     for (let index = removals.length - 1; index >= 0; index -= 1) {
+      nextRecordBytes.delete(removals[index].id);
       objects.splice(removals[index].index, 1);
     }
 
@@ -638,20 +684,40 @@ export function createFabricDrawingPersistenceStore(options = {}) {
         return eventFailure('transition-before-mismatch', true);
       }
       const inserted = clonePlain(insertion.record);
+      const insertedBytes = jsonBytes(inserted);
+      if (!Number.isFinite(insertedBytes)) {
+        return eventFailure('invalid-transition', true);
+      }
       objects.splice(insertion.index, 0, inserted);
       liveIds.add(inserted.id);
+      nextRecordBytes.set(inserted.id, insertedBytes);
     }
 
+    const effectiveTransforms = [];
     for (const transform of event.transforms) {
       const objectIndex = objects.findIndex(object => object.id === transform.id);
       if (objectIndex < 0 ||
           !sameTransform(objects[objectIndex].transform, transform.beforeTransform)) {
         return eventFailure('transition-before-mismatch', true);
       }
-      objects[objectIndex] = {
+      if (sameTransform(transform.beforeTransform, transform.afterTransform)) continue;
+      const transformedObject = {
         ...objects[objectIndex],
         transform: clonePlain(transform.afterTransform)
       };
+      const transformedBytes = jsonBytes(transformedObject);
+      if (!Number.isFinite(transformedBytes)) {
+        return eventFailure('invalid-transition', true);
+      }
+      objects[objectIndex] = transformedObject;
+      nextRecordBytes.set(transform.id, transformedBytes);
+      effectiveTransforms.push(transform);
+    }
+    if (removals.length === 0 && insertions.length === 0 && effectiveTransforms.length === 0) {
+      return eventFailure('no-op');
+    }
+    if (deriveTransitionKind({ ...event, transforms: effectiveTransforms }) !== event.kind) {
+      return eventFailure('invalid-transition', true);
     }
 
     const nextObjectCount = objectCount - (currentFrame?.objects.length || 0) + objects.length;
@@ -677,13 +743,15 @@ export function createFabricDrawingPersistenceStore(options = {}) {
       nextKeyframes.push(nextFrame);
       nextKeyframes.sort((left, right) => left.frame - right.frame);
     }
+    const nextFrameBytes = calculateFrameBytes(nextFrame, nextRecordBytes);
     const nextDocumentBytes = documentBytes -
-      (currentFrame ? jsonBytes(currentFrame) : 0) +
-      jsonBytes(nextFrame) +
+      (currentFrame ? frameBytesByFrame.get(currentFrame.frame) : 0) +
+      nextFrameBytes +
       (currentFrame ? 0 : (documentValue.keyframes.length > 0 ? 1 : 0)) +
       jsonBytes(nextRevision) -
       jsonBytes(documentValue.revision);
-    if (nextDocumentBytes > limits.maxDocumentBytes) {
+    if (!Number.isFinite(nextDocumentBytes) ||
+        nextDocumentBytes > limits.maxDocumentBytes) {
       return eventFailure('document-too-large', true);
     }
 
@@ -694,6 +762,8 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     };
     documentBytes = nextDocumentBytes;
     objectCount = nextObjectCount;
+    frameBytesByFrame.set(nextFrame.frame, nextFrameBytes);
+    recordBytesByFrame.set(nextFrame.frame, nextRecordBytes);
     sceneInstances.set(event.scene.targetFrame, event.scene.sceneInstanceId);
     context = {
       hostGeneration: event.hostGeneration,
@@ -734,7 +804,9 @@ export function createFabricDrawingPersistenceStore(options = {}) {
           !Number.isSafeInteger(scene.targetFrame) || scene.targetFrame < 0 ||
           scene.targetFrame >= snapshot.totalFrames ||
           !isPositiveFinite(scene.sourceWidth) ||
+          scene.sourceWidth > MAX_SOURCE_DIMENSION ||
           !isPositiveFinite(scene.sourceHeight) ||
+          scene.sourceHeight > MAX_SOURCE_DIMENSION ||
           !isSafeCount(scene.mutationSequence) ||
           !isDenseArray(scene.objects) ||
           scene.objects.length > limits.maxObjectsPerKeyframe ||
@@ -772,6 +844,17 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     }
     const validation = validateOverlaySnapshot(snapshot);
     if (!validation.valid) return { accepted: false, reason: validation.reason };
+    if (snapshot.fps !== documentValue.fps ||
+        snapshot.totalFrames !== documentValue.totalFrames) {
+      return { accepted: false, reason: 'timeline-mismatch' };
+    }
+    if (context.persistenceSessionId === null) {
+      if (mode !== 'hydrate' || replaceOptions.adoptPersistenceSession !== true) {
+        return { accepted: false, reason: 'unbound-persistence-session' };
+      }
+    } else if (snapshot.persistenceSessionId !== context.persistenceSessionId) {
+      return { accepted: false, reason: 'stale-persistence-session' };
+    }
 
     const existingByFrame = new Map(documentValue.keyframes.map(frame => [frame.frame, frame]));
     const nextSceneInstances = new Map();
