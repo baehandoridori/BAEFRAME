@@ -39,7 +39,10 @@ test('renderer exposes layer compositing controls and surfaces', () => {
 test('app wires composition manager into video, timeline, save, drop, and mpv overlay state', () => {
   assert.match(appSource, /import \{ CompositionLayerManager \} from '\.\/modules\/composition-layer-manager\.js';/);
   assert.match(appSource, /const compositionLayerManager = new CompositionLayerManager\(\{/);
-  assert.match(appSource, /compositionLayerManager,\s*\n\s*autoSave: true/);
+  assert.match(
+    appSource,
+    /compositionLayerManager,\s*\n\s*fabricDrawingPersistenceProvider:[\s\S]*?\n\s*autoSave: true/
+  );
   assert.match(appSource, /btnLayerCompositing: document\.getElementById\('btnLayerCompositing'\)/);
   assert.match(appSource, /compositionLayerOverlay: document\.getElementById\('compositionLayerOverlay'\)/);
   assert.match(appSource, /compositionLayerPanel: document\.getElementById\('compositionLayerPanel'\)/);
@@ -58,7 +61,11 @@ test('app wires composition manager into video, timeline, save, drop, and mpv ov
 test('review data manager saves and restores compositionLayers', () => {
   assert.match(reviewDataSource, /this\.compositionLayerManager = options\.compositionLayerManager;/);
   assert.match(reviewDataSource, /this\.compositionLayerManager\.addEventListener\('changed', this\._onDataChanged\)/);
-  assert.match(reviewDataSource, /compositionLayers: this\.compositionLayerManager\?\.toJSON\(\) \|\| \[\]/);
+  assert.match(
+    reviewDataSource,
+    /compositionLayers: collectManagerData\(\s*this\.compositionLayerManager,\s*'toJSON',\s*mergeBase\.compositionLayers\s*\)/
+  );
+  assert.match(reviewDataSource, /compositionLayers: reviewData\.compositionLayers/);
   assert.match(reviewDataSource, /this\.compositionLayerManager\.fromJSON\(data\.compositionLayers \|\| \[\]\)/);
 });
 

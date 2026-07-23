@@ -14,7 +14,14 @@ const recentThumbCapture = require('./recent-thumb-capture');
 const { validateCutlistFilePath } = require('./cutlist-paths');
 const { MPVManager, mpvManager } = require('./mpv-manager');
 const { mpvEmbedHost } = require('./mpv-embed-host');
-const { mpvOverlayHost } = require('./mpv-overlay-host');
+const {
+  mpvOverlayHost,
+  normalizeFabricDrawingPersistenceMessage
+} = require('./mpv-overlay-host');
+const {
+  readReviewSnapshot,
+  saveReviewFile
+} = require('./review-file-store');
 const Store = require('electron-store');
 
 const log = createLogger('IPC');
@@ -22,9 +29,11 @@ const DEFAULT_FABRIC_DRAWING_PILOT_STATE = Object.freeze({ enabled: false });
 
 function isCurrentMainRendererSender(event) {
   const mainWindow = getMainWindow();
-  return !!mainWindow &&
-    !mainWindow.isDestroyed?.() &&
-    event?.sender === mainWindow.webContents;
+  if (!mainWindow || mainWindow.isDestroyed?.()) return false;
+  const mainWebContents = mainWindow.webContents;
+  return !!mainWebContents &&
+    !mainWebContents.isDestroyed?.() &&
+    event?.sender === mainWebContents;
 }
 
 /**
@@ -282,6 +291,27 @@ function setupIpcHandlers({
     invokeFabricDrawingHost(event, () => mpvOverlayHost.applyDrawingAction(request)));
   ipcMain.handle('mpv:get-overlay-drawing-diagnostics', (event) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.getDrawingDiagnostics()));
+  ipcMain.handle('mpv:hydrate-overlay-drawing-video', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.hydrateDrawingVideo(request)));
+  ipcMain.handle('mpv:export-overlay-drawing-video', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.exportDrawingVideo(request)));
+  ipcMain.on('mpv-overlay:fabric-drawing-persistence', (event, message) => {
+    if (!isFabricDrawingPilotEnabled ||
+        !mpvOverlayHost.isCurrentOverlaySender(event)) {
+      return;
+    }
+    const normalized = normalizeFabricDrawingPersistenceMessage(message);
+    if (!normalized) return;
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed?.()) return;
+    const mainWebContents = mainWindow.webContents;
+    if (!mainWebContents || mainWebContents.isDestroyed?.()) return;
+    try {
+      mainWebContents.send('fabric-drawing:persistence-event', normalized);
+    } catch (_error) {
+      // 이 이벤트는 보조 신호이며, 누락 시 전체 동기화로 복구된다.
+    }
+  });
 
   // ====== 파일 관련 ======
 
@@ -338,17 +368,38 @@ function setupIpcHandlers({
     try {
       // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
       const validatedPath = validateFilePath(filePath);
-      await fs.promises.writeFile(validatedPath, JSON.stringify(data, null, 2), {
-        encoding: 'utf-8',
-        flag: options?.failIfExists ? 'wx' : 'w'
+      const result = await saveReviewFile(validatedPath, data, {
+        expectedVersionToken: options?.expectedVersionToken,
+        failIfExists: options?.failIfExists === true
       });
-      trace.end({ filePath: validatedPath, failIfExists: options?.failIfExists === true });
-      return { success: true };
+      trace.end({
+        filePath: validatedPath,
+        failIfExists: options?.failIfExists === true,
+        ...result
+      });
+      return result;
     } catch (error) {
-      if (options?.failIfExists && error.code === 'EEXIST') {
-        trace.end({ filePath, exists: true });
-        return { success: false, exists: true };
+      trace.error(error);
+      throw error;
+    }
+  });
+
+  // 리뷰 데이터와 현재 파일 버전 토큰을 함께 로드
+  ipcMain.handle('file:load-review-snapshot', async (event, filePath) => {
+    const trace = log.trace('file:load-review-snapshot');
+    try {
+      const validatedPath = validateFilePath(filePath);
+      const snapshot = await readReviewSnapshot(validatedPath);
+      if (!snapshot.data) {
+        trace.end({ filePath, exists: false });
+      } else {
+        trace.end({
+          filePath: validatedPath,
+          versionToken: snapshot.versionToken
+        });
       }
+      return snapshot;
+    } catch (error) {
       trace.error(error);
       throw error;
     }
@@ -360,37 +411,17 @@ function setupIpcHandlers({
     try {
       // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
       const validatedPath = validateFilePath(filePath);
-      const content = await fs.promises.readFile(validatedPath, 'utf-8');
-      const data = JSON.parse(content);
+      const { data } = await readReviewSnapshot(validatedPath);
+      if (!data) {
+        trace.end({ filePath, exists: false });
+        return null;
+      }
       trace.end({ filePath: validatedPath });
       return data;
     } catch (error) {
       if (error.code === 'ENOENT') {
         trace.end({ filePath, exists: false });
         return null;
-      }
-
-      // JSON 파싱 실패 시 .bak 파일에서 복구 시도
-      if (error instanceof SyntaxError) {
-        const backupPath = filePath + '.bak';
-        log.warn('JSON 파싱 실패, 백업에서 복구 시도', { filePath, backupPath });
-
-        try {
-          const backupContent = await fs.promises.readFile(backupPath, 'utf-8');
-          const backupData = JSON.parse(backupContent);
-
-          // 복구 성공 - 손상된 원본을 .corrupted로 이동하고 백업을 원본으로 복원
-          const corruptedPath = filePath + '.corrupted';
-          await fs.promises.rename(filePath, corruptedPath);
-          await fs.promises.writeFile(filePath, JSON.stringify(backupData, null, 2), 'utf-8');
-
-          log.info('백업에서 복구 성공', { filePath, backupPath });
-          trace.end({ filePath, recoveredFromBackup: true });
-          return backupData;
-        } catch (backupError) {
-          log.error('백업 복구 실패', { filePath, backupError: backupError.message });
-          // 백업도 실패하면 원래 오류 던지기
-        }
       }
 
       trace.error(error);

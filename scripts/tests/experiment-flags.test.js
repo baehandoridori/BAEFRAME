@@ -22,6 +22,50 @@ function loadShadowResolver() {
   return resolver;
 }
 
+function loadMpvResolver() {
+  const resolver = require(resolverPath).resolveMpvPlaybackPilot;
+  assert.equal(
+    typeof resolver,
+    'function',
+    'experiment-flags must export resolveMpvPlaybackPilot'
+  );
+  return resolver;
+}
+
+function trialRuntimeProfile() {
+  return Object.freeze({
+    active: true,
+    source: 'marker',
+    schemaVersion: 1,
+    channel: 'fabric-v3-trial',
+    features: Object.freeze({
+      mpvPlaybackPilot: true,
+      fabricDrawingPilot: true,
+      fabricDrawingV3Shadow: true,
+      fabricDrawingPersistence: true
+    }),
+    isolateUserData: true,
+    skipShellRegistration: true
+  });
+}
+
+function stableRuntimeProfile() {
+  return Object.freeze({
+    active: true,
+    source: 'marker',
+    schemaVersion: 1,
+    channel: 'fabric-v3-stable',
+    features: Object.freeze({
+      mpvPlaybackPilot: true,
+      fabricDrawingPilot: true,
+      fabricDrawingV3Shadow: true,
+      fabricDrawingPersistence: true
+    }),
+    isolateUserData: false,
+    skipShellRegistration: false
+  });
+}
+
 function loadIpcSetupWithHandlerRegistry(options = {}) {
   const handlers = new Map();
   const noop = () => {};
@@ -103,6 +147,236 @@ test('Fabric drawing pilot resolves enable and disable sources by priority', () 
 
   for (const [input, expected] of cases) {
     assert.deepEqual(resolveFabricDrawingPilot(input), expected);
+  }
+});
+
+test('valid trial marker enables mpv, Fabric, and V3 shadow without environment mutation', () => {
+  const resolveMpvPlaybackPilot = loadMpvResolver();
+  const resolveFabricDrawingPilot = loadResolver();
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+  const runtimeProfile = trialRuntimeProfile();
+  const argv = Object.freeze([]);
+  const env = Object.freeze({});
+
+  const mpvPlaybackPilot = resolveMpvPlaybackPilot({ argv, env, runtimeProfile });
+  const fabricDrawingPilot = resolveFabricDrawingPilot({ argv, env, runtimeProfile });
+  const fabricDrawingV3Shadow = resolveFabricDrawingV3Shadow({
+    argv,
+    env,
+    runtimeProfile,
+    fabricDrawingPilot
+  });
+
+  assert.deepEqual(mpvPlaybackPilot, { enabled: true, source: 'marker' });
+  assert.deepEqual(fabricDrawingPilot, { enabled: true, source: 'marker' });
+  assert.deepEqual(fabricDrawingV3Shadow, { enabled: true, source: 'marker' });
+  assert.equal(Object.isFrozen(mpvPlaybackPilot), true);
+  assert.equal(Object.isFrozen(fabricDrawingPilot), true);
+  assert.equal(Object.isFrozen(fabricDrawingV3Shadow), true);
+  assert.deepEqual(argv, []);
+  assert.deepEqual(env, {});
+});
+
+test('valid stable marker enables mpv, Fabric, and V3 shadow without trial isolation', () => {
+  const resolveMpvPlaybackPilot = loadMpvResolver();
+  const resolveFabricDrawingPilot = loadResolver();
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+  const runtimeProfile = stableRuntimeProfile();
+
+  const mpvPlaybackPilot = resolveMpvPlaybackPilot({
+    argv: [],
+    env: {},
+    runtimeProfile
+  });
+  const fabricDrawingPilot = resolveFabricDrawingPilot({
+    argv: [],
+    env: {},
+    runtimeProfile
+  });
+  const fabricDrawingV3Shadow = resolveFabricDrawingV3Shadow({
+    argv: [],
+    env: {},
+    runtimeProfile,
+    fabricDrawingPilot
+  });
+
+  assert.deepEqual(mpvPlaybackPilot, { enabled: true, source: 'marker' });
+  assert.deepEqual(fabricDrawingPilot, { enabled: true, source: 'marker' });
+  assert.deepEqual(fabricDrawingV3Shadow, { enabled: true, source: 'marker' });
+  assert.equal(runtimeProfile.isolateUserData, false);
+  assert.equal(runtimeProfile.skipShellRegistration, false);
+});
+
+test('kill switches win over the valid stable marker', () => {
+  const runtimeProfile = stableRuntimeProfile();
+  const resolveMpvPlaybackPilot = loadMpvResolver();
+  const resolveFabricDrawingPilot = loadResolver();
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+
+  const mpvPlaybackPilot = resolveMpvPlaybackPilot({
+    argv: [],
+    env: { BAEFRAME_DISABLE_MPV: '1' },
+    runtimeProfile
+  });
+  const fabricDrawingPilot = resolveFabricDrawingPilot({
+    argv: [],
+    env: { BAEFRAME_DISABLE_FABRIC_DRAWING_PILOT: '1' },
+    runtimeProfile
+  });
+
+  assert.deepEqual(mpvPlaybackPilot, { enabled: false, source: 'kill-switch' });
+  assert.deepEqual(fabricDrawingPilot, { enabled: false, source: 'kill-switch' });
+  assert.deepEqual(
+    resolveFabricDrawingV3Shadow({
+      argv: [],
+      env: { BAEFRAME_DISABLE_FABRIC_DRAWING_V3_SHADOW: '1' },
+      runtimeProfile,
+      fabricDrawingPilot: { enabled: true, source: 'marker' }
+    }),
+    { enabled: false, source: 'kill-switch' }
+  );
+});
+
+test('kill switches win over the valid trial marker and explicit flags win over marker source', () => {
+  const runtimeProfile = trialRuntimeProfile();
+  const resolveMpvPlaybackPilot = loadMpvResolver();
+  const resolveFabricDrawingPilot = loadResolver();
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+
+  assert.deepEqual(
+    resolveMpvPlaybackPilot({
+      argv: [],
+      env: { BAEFRAME_DISABLE_MPV: '1', BAEFRAME_MPV_PILOT: '1' },
+      runtimeProfile
+    }),
+    { enabled: false, source: 'kill-switch' }
+  );
+  assert.deepEqual(
+    resolveFabricDrawingPilot({
+      argv: ['--fabric-drawing-pilot'],
+      env: { BAEFRAME_DISABLE_FABRIC_DRAWING_PILOT: '1' },
+      runtimeProfile
+    }),
+    { enabled: false, source: 'kill-switch' }
+  );
+  assert.deepEqual(
+    resolveFabricDrawingV3Shadow({
+      argv: ['--fabric-drawing-v3-shadow'],
+      env: { BAEFRAME_DISABLE_FABRIC_DRAWING_V3_SHADOW: '1' },
+      runtimeProfile,
+      fabricDrawingPilot: { enabled: true, source: 'marker' }
+    }),
+    { enabled: false, source: 'kill-switch' }
+  );
+
+  assert.deepEqual(
+    resolveMpvPlaybackPilot({
+      argv: [],
+      env: { BAEFRAME_MPV_PILOT: '1' },
+      runtimeProfile
+    }),
+    { enabled: true, source: 'env' }
+  );
+  assert.deepEqual(
+    resolveFabricDrawingPilot({
+      argv: ['--fabric-drawing-pilot'],
+      env: {},
+      runtimeProfile
+    }),
+    { enabled: true, source: 'cli' }
+  );
+});
+
+test('mpv resolver keeps default OFF and supports existing explicit environment activation', () => {
+  const resolveMpvPlaybackPilot = loadMpvResolver();
+
+  assert.deepEqual(
+    resolveMpvPlaybackPilot({ argv: [], env: {}, runtimeProfile: null }),
+    { enabled: false, source: 'default' }
+  );
+  assert.deepEqual(
+    resolveMpvPlaybackPilot({
+      argv: [],
+      env: { BAEFRAME_MPV_PILOT: 'true' },
+      runtimeProfile: null
+    }),
+    { enabled: true, source: 'env' }
+  );
+  assert.deepEqual(
+    resolveMpvPlaybackPilot({
+      argv: ['--mpv-pilot'],
+      env: {},
+      runtimeProfile: null
+    }),
+    { enabled: true, source: 'cli' }
+  );
+});
+
+test('a partial, future, or cross-channel profile cannot enable any runtime feature', () => {
+  const resolveMpvPlaybackPilot = loadMpvResolver();
+  const resolveFabricDrawingPilot = loadResolver();
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+  const invalidProfiles = [
+    {
+      ...trialRuntimeProfile(),
+      schemaVersion: 2
+    },
+    {
+      ...trialRuntimeProfile(),
+      features: {
+        ...trialRuntimeProfile().features,
+        fabricDrawingPersistence: false
+      }
+    },
+    {
+      ...trialRuntimeProfile(),
+      unknown: true
+    },
+    {
+      ...stableRuntimeProfile(),
+      schemaVersion: 2
+    },
+    {
+      ...stableRuntimeProfile(),
+      features: {
+        ...stableRuntimeProfile().features,
+        fabricDrawingPersistence: false
+      }
+    },
+    {
+      ...stableRuntimeProfile(),
+      isolateUserData: true
+    },
+    {
+      ...stableRuntimeProfile(),
+      channel: 'fabric-v3-trial'
+    }
+  ];
+
+  for (const runtimeProfile of invalidProfiles) {
+    const mpvPlaybackPilot = resolveMpvPlaybackPilot({
+      argv: [],
+      env: {},
+      runtimeProfile
+    });
+    const fabricDrawingPilot = resolveFabricDrawingPilot({
+      argv: [],
+      env: {},
+      runtimeProfile
+    });
+    const fabricDrawingV3Shadow = resolveFabricDrawingV3Shadow({
+      argv: [],
+      env: {},
+      runtimeProfile,
+      fabricDrawingPilot
+    });
+
+    assert.deepEqual(mpvPlaybackPilot, { enabled: false, source: 'default' });
+    assert.deepEqual(fabricDrawingPilot, { enabled: false, source: 'default' });
+    assert.deepEqual(
+      fabricDrawingV3Shadow,
+      { enabled: false, source: 'fabric-pilot-disabled' }
+    );
   }
 });
 
@@ -259,7 +533,7 @@ test('Fabric drawing V3 shadow returns a frozen exact result without mutating in
 
   assert.deepEqual(
     Object.keys(resolverModule).sort(),
-    ['resolveFabricDrawingPilot', 'resolveFabricDrawingV3Shadow']
+    ['resolveFabricDrawingPilot', 'resolveFabricDrawingV3Shadow', 'resolveMpvPlaybackPilot']
   );
 
   const result = resolverModule.resolveFabricDrawingV3Shadow(input);
@@ -280,7 +554,7 @@ test('resolver returns a frozen exact result without mutating explicit inputs', 
 
   assert.deepEqual(
     Object.keys(resolverModule).sort(),
-    ['resolveFabricDrawingPilot', 'resolveFabricDrawingV3Shadow']
+    ['resolveFabricDrawingPilot', 'resolveFabricDrawingV3Shadow', 'resolveMpvPlaybackPilot']
   );
 
   const result = resolverModule.resolveFabricDrawingPilot({ argv, env });
@@ -292,40 +566,66 @@ test('resolver returns a frozen exact result without mutating explicit inputs', 
 
   const resolverSource = fs.readFileSync(resolverPath, 'utf8');
   assert.doesNotMatch(resolverSource, /electron-store|localStorage|writeFile|appendFile/);
+  const mainSource = fs.readFileSync(path.join(repoRoot, 'main', 'index.js'), 'utf8');
+  assert.doesNotMatch(
+    mainSource,
+    /process\.env\.(?:BAEFRAME_MPV_PILOT|BAEFRAME_FABRIC_DRAWING_PILOT|BAEFRAME_FABRIC_DRAWING_V3_SHADOW)\s*=/
+  );
 });
 
-test('main startup resolves and configures V3 shadow once before app readiness without widening IPC state', () => {
+test('main startup resolves the packaged profile and injects mpv/Fabric states once before app readiness', () => {
   const mainSource = fs.readFileSync(path.join(repoRoot, 'main', 'index.js'), 'utf8');
+  const runtimeProfileCalls = mainSource.match(/loadRuntimeProfile\s*\(/g) || [];
+  const mpvResolverCalls = mainSource.match(/resolveMpvPlaybackPilot\s*\(/g) || [];
   const fabricResolverCalls = mainSource.match(/resolveFabricDrawingPilot\s*\(/g) || [];
   const shadowResolverCalls = mainSource.match(/resolveFabricDrawingV3Shadow\s*\(/g) || [];
+  const mpvConfigureCalls = mainSource.match(/mpvManager\.configurePilotState\s*\(/g) || [];
   const shadowConfigureCalls = mainSource.match(
     /mpvOverlayHost\.configureDrawingV3Shadow\s*\(/g
   ) || [];
   const readyCalls = mainSource.match(/app\.whenReady\s*\(/g) || [];
 
+  assert.equal(runtimeProfileCalls.length, 1);
+  assert.equal(mpvResolverCalls.length, 1);
   assert.equal(fabricResolverCalls.length, 1);
   assert.equal(shadowResolverCalls.length, 1);
+  assert.equal(mpvConfigureCalls.length, 1);
   assert.equal(shadowConfigureCalls.length, 1);
   assert.equal(readyCalls.length, 1);
 
+  const runtimeProfileResolution = mainSource.match(
+    /const\s+runtimeProfile\s*=\s*loadRuntimeProfile\s*\(\s*\{[\s\S]*?isPackaged:\s*app\.isPackaged,[\s\S]*?resourcesPath:\s*process\.resourcesPath[\s\S]*?\}\s*\)\s*;/
+  );
+  const mpvResolution = mainSource.match(
+    /const\s+mpvPlaybackPilot\s*=\s*resolveMpvPlaybackPilot\s*\(\s*\{\s*runtimeProfile\s*\}\s*\)\s*;/
+  );
   const fabricResolution = mainSource.match(
-    /const\s+fabricDrawingPilot\s*=\s*resolveFabricDrawingPilot\s*\(\s*\)\s*;/
+    /const\s+fabricDrawingPilot\s*=\s*resolveFabricDrawingPilot\s*\(\s*\{\s*runtimeProfile\s*\}\s*\)\s*;/
   );
   const shadowResolution = mainSource.match(
-    /const\s+([A-Za-z_$][\w$]*)\s*=\s*resolveFabricDrawingV3Shadow\s*\(\s*\{\s*fabricDrawingPilot\s*\}\s*\)\s*;/
+    /const\s+([A-Za-z_$][\w$]*)\s*=\s*resolveFabricDrawingV3Shadow\s*\(\s*\{\s*fabricDrawingPilot,\s*runtimeProfile\s*\}\s*\)\s*;/
   );
+  assert.ok(runtimeProfileResolution);
+  assert.ok(mpvResolution);
   assert.ok(fabricResolution);
   assert.ok(shadowResolution);
 
   const shadowStateName = shadowResolution[1];
   const escapedShadowStateName = shadowStateName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const mpvConfiguration = mainSource.match(
+    /mpvManager\.configurePilotState\s*\(\s*mpvPlaybackPilot\s*\)\s*;/
+  );
   const shadowConfiguration = mainSource.match(new RegExp(
     `mpvOverlayHost\\.configureDrawingV3Shadow\\s*\\(\\s*${escapedShadowStateName}\\.enabled\\s*\\)\\s*;`
   ));
+  assert.ok(mpvConfiguration);
   assert.ok(shadowConfiguration);
 
   const readyIndex = mainSource.search(/app\.whenReady\s*\(/);
+  assert.ok(runtimeProfileResolution.index < mpvResolution.index);
+  assert.ok(mpvResolution.index < fabricResolution.index);
   assert.ok(fabricResolution.index < shadowResolution.index);
+  assert.ok(shadowResolution.index < mpvConfiguration.index);
   assert.ok(shadowResolution.index < shadowConfiguration.index);
   assert.ok(shadowConfiguration.index < readyIndex);
 

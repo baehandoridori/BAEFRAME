@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+dist-trial/
+dist-stable-release-*/
 out/
 
 # Build resources (아이콘 등은 추적)
@@ -77,3 +79,6 @@ integration/installer/certs/*.cer
 # Integration build/release artifacts (built locally)
 integration/package/*.msix
 integration/*.zip
+
+# Native review-file CAS helper (generated from tracked C# source)
+native/review-file-cas-helper/bin/

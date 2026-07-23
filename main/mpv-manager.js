@@ -27,6 +27,21 @@ function isMpvPlaybackDisabledByEnv(env = process.env) {
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
+function normalizeResolvedMpvPilotState(value) {
+  if (!value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      Object.keys(value).length !== 2 ||
+      typeof value.enabled !== 'boolean' ||
+      !['kill-switch', 'cli', 'env', 'marker', 'default'].includes(value.source)) {
+    throw new TypeError('A valid resolved mpv pilot state is required');
+  }
+  return Object.freeze({
+    enabled: value.enabled,
+    source: value.source
+  });
+}
+
 function createMpvIpcPath({
   platform = process.platform,
   pid = process.pid,
@@ -134,13 +149,25 @@ class MPVManager {
     this.forceWindow = true;
     this.headless = false;
     this.loadQueue = Promise.resolve();
+    this.pilotState = null;
+    if (options.pilotState !== undefined) {
+      this.configurePilotState(options.pilotState);
+    }
+  }
+
+  configurePilotState(pilotState) {
+    this.pilotState = normalizeResolvedMpvPilotState(pilotState);
+    return this.pilotState;
   }
 
   isEnabled() {
-    return isMpvPilotEnabled(this.env);
+    return this.pilotState
+      ? this.pilotState.enabled === true
+      : isMpvPilotEnabled(this.env);
   }
 
   isAvailable() {
+    if (this.pilotState?.source === 'kill-switch') return false;
     if (isMpvPlaybackDisabledByEnv(this.env)) return false;
     return Boolean(this.mpvPath);
   }

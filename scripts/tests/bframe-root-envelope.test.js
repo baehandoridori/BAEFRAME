@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -48,6 +49,34 @@ test('opaque root fields round-trip without interpreting drawingsV3 or vendor da
   assert.deepEqual(merged.drawingsV3, drawingsV3);
   assert.deepEqual(merged.vendorReviewState, vendorReviewState);
   assert.equal(merged.modifiedAt, '2026-07-23T00:00:00.000Z');
+});
+
+test('renderer creates one shared Fabric persistence store for review save and pilot control', () => {
+  const appSource = fs.readFileSync(
+    path.join(__dirname, '../../renderer/scripts/app.js'),
+    'utf8'
+  );
+
+  assert.match(
+    appSource,
+    /import \{ createFabricDrawingPersistenceStore \} from '\.\/modules\/fabric-drawing-persistence-store\.js';/
+  );
+  assert.equal(
+    (appSource.match(/const fabricDrawingPersistenceStore = createFabricDrawingPersistenceStore\(\);/g) || []).length,
+    1
+  );
+  assert.match(
+    appSource,
+    /fabricDrawingPersistenceProvider: fabricDrawingPersistenceStore/
+  );
+  assert.match(
+    appSource,
+    /persistenceStore: fabricDrawingPersistenceStore/
+  );
+  assert.match(
+    appSource,
+    /fabricDrawingPersistenceContext: \{[\s\S]*fps: videoPlayer\.fps,[\s\S]*totalFrames: Math\.max\(1, Math\.round\(videoPlayer\.totalFrames\)\),[\s\S]*stableVideoIdentity: filePath/
+  );
 });
 
 test('canonical known root fields win and obsolete legacy fields are not resurrected', async () => {

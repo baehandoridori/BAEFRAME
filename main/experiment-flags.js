@@ -2,7 +2,85 @@ function isEnabledEnvValue(value) {
   return String(value || '').trim() === '1';
 }
 
-function resolveFabricDrawingPilot({ argv = process.argv, env = process.env } = {}) {
+function isTruthyEnvValue(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(normalized);
+}
+
+function hasExactKeys(value, expectedKeys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const keys = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  return keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index]);
+}
+
+function isActiveFabricRuntimeProfile(runtimeProfile) {
+  const hasExactProfileShape = hasExactKeys(runtimeProfile, [
+    'active',
+    'source',
+    'schemaVersion',
+    'channel',
+    'features',
+    'isolateUserData',
+    'skipShellRegistration'
+  ]);
+  if (!hasExactProfileShape) {
+    return false;
+  }
+
+  const isTrialProfile =
+    runtimeProfile.channel === 'fabric-v3-trial' &&
+    runtimeProfile.isolateUserData === true &&
+    runtimeProfile.skipShellRegistration === true;
+  const isStableProfile =
+    runtimeProfile.channel === 'fabric-v3-stable' &&
+    runtimeProfile.isolateUserData === false &&
+    runtimeProfile.skipShellRegistration === false;
+
+  return runtimeProfile.active === true &&
+    runtimeProfile.source === 'marker' &&
+    runtimeProfile.schemaVersion === 1 &&
+    (isTrialProfile || isStableProfile) &&
+    hasExactKeys(runtimeProfile.features, [
+      'mpvPlaybackPilot',
+      'fabricDrawingPilot',
+      'fabricDrawingV3Shadow',
+      'fabricDrawingPersistence'
+    ]) &&
+    Object.values(runtimeProfile.features).every(value => value === true);
+}
+
+function resolveMpvPlaybackPilot({
+  argv = process.argv,
+  env = process.env,
+  runtimeProfile = null
+} = {}) {
+  const disabled = argv.includes('--disable-mpv') ||
+    argv.includes('--disable-mpv-pilot') ||
+    isTruthyEnvValue(env.BAEFRAME_DISABLE_MPV);
+
+  if (disabled) {
+    return Object.freeze({ enabled: false, source: 'kill-switch' });
+  }
+  if (argv.includes('--mpv-pilot')) {
+    return Object.freeze({ enabled: true, source: 'cli' });
+  }
+  if (isTruthyEnvValue(env.BAEFRAME_MPV_PILOT)) {
+    return Object.freeze({ enabled: true, source: 'env' });
+  }
+  if (isActiveFabricRuntimeProfile(runtimeProfile) &&
+      runtimeProfile.features.mpvPlaybackPilot === true) {
+    return Object.freeze({ enabled: true, source: 'marker' });
+  }
+  return Object.freeze({ enabled: false, source: 'default' });
+}
+
+function resolveFabricDrawingPilot({
+  argv = process.argv,
+  env = process.env,
+  runtimeProfile = null
+} = {}) {
   const disabled = argv.includes('--disable-fabric-drawing-pilot') ||
     isEnabledEnvValue(env.BAEFRAME_DISABLE_FABRIC_DRAWING_PILOT);
 
@@ -15,13 +93,18 @@ function resolveFabricDrawingPilot({ argv = process.argv, env = process.env } = 
   if (isEnabledEnvValue(env.BAEFRAME_FABRIC_DRAWING_PILOT)) {
     return Object.freeze({ enabled: true, source: 'env' });
   }
+  if (isActiveFabricRuntimeProfile(runtimeProfile) &&
+      runtimeProfile.features.fabricDrawingPilot === true) {
+    return Object.freeze({ enabled: true, source: 'marker' });
+  }
   return Object.freeze({ enabled: false, source: 'default' });
 }
 
 function resolveFabricDrawingV3Shadow({
   argv = process.argv,
   env = process.env,
-  fabricDrawingPilot
+  fabricDrawingPilot,
+  runtimeProfile = null
 } = {}) {
   const disabled = argv.includes('--disable-fabric-drawing-v3-shadow') ||
     isEnabledEnvValue(env.BAEFRAME_DISABLE_FABRIC_DRAWING_V3_SHADOW);
@@ -38,7 +121,15 @@ function resolveFabricDrawingV3Shadow({
   if (isEnabledEnvValue(env.BAEFRAME_FABRIC_DRAWING_V3_SHADOW)) {
     return Object.freeze({ enabled: true, source: 'env' });
   }
+  if (isActiveFabricRuntimeProfile(runtimeProfile) &&
+      runtimeProfile.features.fabricDrawingV3Shadow === true) {
+    return Object.freeze({ enabled: true, source: 'marker' });
+  }
   return Object.freeze({ enabled: false, source: 'default' });
 }
 
-module.exports = { resolveFabricDrawingPilot, resolveFabricDrawingV3Shadow };
+module.exports = {
+  resolveFabricDrawingPilot,
+  resolveFabricDrawingV3Shadow,
+  resolveMpvPlaybackPilot
+};

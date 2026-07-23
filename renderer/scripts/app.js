@@ -20,6 +20,7 @@ import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
 import { DrawingSync } from './modules/drawing-sync.js';
 import { createFabricDrawingPilotController } from './modules/fabric-drawing-pilot-controller.js';
+import { createFabricDrawingPersistenceStore } from './modules/fabric-drawing-persistence-store.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { getAuthManager } from './modules/auth-manager.js';
@@ -74,6 +75,9 @@ import {
   shouldHandlePlayPauseShortcutFromTarget,
   shouldIgnoreGlobalShortcutTarget
 } from './modules/keyboard-shortcut-targets.js';
+import {
+  dispatchMpvOverlayKeyboardInput
+} from './modules/mpv-overlay-keyboard-relay.js';
 
 const log = createLogger('App');
 
@@ -87,7 +91,6 @@ const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
 const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
-const FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS = 250;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 function createMpvOverlayLifecycle({ onWarning = () => {} } = {}) {
@@ -140,60 +143,6 @@ function createMpvOverlayLifecycle({ onWarning = () => {} } = {}) {
       return true;
     }
   };
-}
-
-function createFabricPilotStatusRefreshCoordinator({ run, shouldRun = () => true, onError = () => {} } = {}) {
-  if (typeof run !== 'function') {
-    throw new TypeError('Fabric pilot status refresh run must be a function');
-  }
-
-  let inFlight = null;
-  let trailing = false;
-  let generation = 0;
-  let requestRevision = 0;
-
-  function request() {
-    if (!shouldRun()) return null;
-    const currentRequestRevision = ++requestRevision;
-    if (inFlight) {
-      trailing = true;
-      return inFlight;
-    }
-
-    const requestGeneration = generation;
-    const operation = Promise.resolve()
-      .then(() => run({
-        isCurrent: () => requestGeneration === generation &&
-          currentRequestRevision === requestRevision &&
-          shouldRun()
-      }))
-      .catch(error => {
-        onError(error);
-        return false;
-      });
-    inFlight = operation;
-
-    const settle = () => {
-      if (inFlight !== operation) return;
-      inFlight = null;
-      if (!shouldRun()) {
-        trailing = false;
-        return;
-      }
-      if (!trailing) return;
-      trailing = false;
-      request();
-    };
-    void operation.then(settle, settle);
-    return operation;
-  }
-
-  function cancel() {
-    generation += 1;
-    trailing = false;
-  }
-
-  return { request, cancel };
 }
 
 function createMpvTeardownGate() {
@@ -1283,11 +1232,13 @@ async function initApp() {
   const highlightManager = new HighlightManager();
 
   // 리뷰 데이터 매니저 (.bframe 파일 저장/로드)
+  const fabricDrawingPersistenceStore = createFabricDrawingPersistenceStore();
   const reviewDataManager = new ReviewDataManager({
     commentManager,
     drawingManager,
     highlightManager,
     compositionLayerManager,
+    fabricDrawingPersistenceProvider: fabricDrawingPersistenceStore,
     autoSave: true,
     autoSaveDelay: 500 // 500ms 디바운스
   });
@@ -1569,7 +1520,6 @@ async function initApp() {
       updatePresence: true,
       updateDrawing: !videoPlayer.isPlaying
     });
-    scheduleFabricPilotStatusRefresh();
     if (
       isMpvReviewInteractionActive() &&
       isMpvPilotPlaybackActive() &&
@@ -1588,7 +1538,6 @@ async function initApp() {
       updatePresence: false,
       updateDrawing: true
     });
-    scheduleFabricPilotStatusRefresh();
     if (
       isMpvReviewInteractionActive() &&
       isMpvPilotPlaybackActive() &&
@@ -1606,7 +1555,6 @@ async function initApp() {
   // 비디오 재생 상태 변경
   videoPlayer.addEventListener('play', () => {
     elements.btnPlay.innerHTML = pauseIconSVG;
-    scheduleFabricPilotStatusRefresh({ force: true });
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, true);
@@ -1632,7 +1580,6 @@ async function initApp() {
 
   videoPlayer.addEventListener('pause', () => {
     elements.btnPlay.innerHTML = playIconSVG;
-    scheduleFabricPilotStatusRefresh({ force: true });
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
@@ -1651,7 +1598,6 @@ async function initApp() {
 
   videoPlayer.addEventListener('ended', () => {
     elements.btnPlay.innerHTML = playIconSVG;
-    scheduleFabricPilotStatusRefresh({ force: true });
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
@@ -5935,6 +5881,9 @@ async function initApp() {
   // 키보드 단축키
   document.addEventListener('keydown', handleKeydown, true);
   document.addEventListener('keyup', handleKeyup, true);
+  window.electronAPI.onMpvOverlayKeyboardInput?.((input) => {
+    dispatchMpvOverlayKeyboardInput(input, { ownerDocument: document });
+  });
   document.addEventListener('click', handleFabricDrawingPilotLegacyClick, true);
 
   // ====== 캔버스 오버레이 동기화 ======
@@ -6032,6 +5981,8 @@ async function initApp() {
       targetFrame: videoPlayer.currentFrame,
       sourceWidth: videoPlayer.videoWidth,
       sourceHeight: videoPlayer.videoHeight,
+      fps: videoPlayer.fps,
+      totalFrames: Math.max(1, Math.round(videoPlayer.totalFrames)),
       canvasRect: viewport?.canvasRect || null,
       viewportRevision: viewport?.revision ?? 0,
       viewportTransform: viewport
@@ -6041,12 +5992,13 @@ async function initApp() {
   }
 
   function shouldSuppressLegacyDrawingForFabricPilot() {
-    return fabricDrawingPilotController.isEnabled() && isMpvPilotPlaybackActive();
+    return fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
+      isMpvPilotPlaybackActive();
   }
 
   function isFabricDrawingPilotControllerEngaged() {
     const pilotState = fabricDrawingPilotController.getState();
-    return fabricDrawingPilotController.isEnabled() &&
+    return fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
       (pilotState === 'active' || pilotState === 'preparing' || pilotState === 'recovering');
   }
 
@@ -7125,11 +7077,27 @@ async function initApp() {
   const fabricDrawingPilotController = createFabricDrawingPilotController({
     electronAPI: window.electronAPI,
     getContext: getFabricDrawingPilotContext,
+    matchesDrawingToggleShortcut: event => userSettings.matchShortcut('drawMode', event),
+    matchesSelectionShortcut: event => userSettings.matchShortcut('drawingToolSelect', event),
+    persistenceStore: fabricDrawingPersistenceStore,
     onStateChange: handleFabricDrawingPilotStateChange
   });
+  reviewDataManager.setFabricDrawingSourceRefreshHandler(
+    ({ installSource }) =>
+      fabricDrawingPilotController.refreshPersistenceSource(installSource)
+  );
+  reviewDataManager.setFinalFabricSnapshotHandler(async () => {
+    const prepared =
+      await fabricDrawingPilotController.preparePersistenceSnapshotForSave();
+    if (!prepared) {
+      throw new Error('Fabric 드로잉 최신 상태를 가져오지 못했습니다.');
+    }
+  });
   const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize().then(enabled => {
-    document.body.classList.toggle('fabric-drawing-pilot-enabled', enabled);
-    scheduleFabricPilotStatusRefresh({ force: true });
+    document.body.classList.toggle(
+      'fabric-drawing-pilot-enabled',
+      enabled && fabricDrawingPilotController.shouldOwnDrawingShortcut()
+    );
     return enabled;
   });
   const mpvTeardownGate = createMpvTeardownGate();
@@ -7144,18 +7112,6 @@ async function initApp() {
   let mpvOverlayRemoteCursorSyncPendingOwner = null;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
-  let fabricPilotStatusText = '';
-  let fabricPilotStatusRefreshTimer = null;
-  let fabricPilotStatusLastRefreshAt = 0;
-  const fabricPilotStatusRefreshCoordinator = createFabricPilotStatusRefreshCoordinator({
-    shouldRun: () => fabricDrawingPilotController.isEnabled(),
-    run: refreshFabricPilotStatus,
-    onError: (error) => {
-      log.debug('Fabric 수동 검증 HUD 갱신 실패', {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  });
   let mpvOverlayRecoveryOwner = null;
   let mpvOverlayRecoveryInFlightOwner = null;
   let mpvOverlayFallbackOwner = null;
@@ -8153,9 +8109,6 @@ async function initApp() {
         currentTime: videoPlayer.currentTime,
         isPlaying: videoPlayer.isPlaying
       }),
-      fabricPilotStatusText: fabricDrawingPilotController.isEnabled()
-        ? fabricPilotStatusText
-        : '',
       // 32 잔존(f): playhead 위치는 diff 대상이 아닌 별도 필드로 항상 전송(저비용) — 미러 재주입과 분리.
       commentPlayheadLeft: videoCommentPlayhead?.style.left || '',
       markerTransform: markerContainer?.style.transform || '',
@@ -8174,76 +8127,7 @@ async function initApp() {
   // 생략된 필드는 JSON.stringify에서 사라지고, 호스트는 undefined 필드를 건너뛴다(부분 업데이트).
   // 호스트가 재생성되면 owner가 바뀌어 전체 재전송된다.
   const MPV_OVERLAY_DIFF_FIELDS = ['drawingDataUrl', 'onionDataUrl', 'markerHtml', 'tooltipHtml', 'htmlOverlayHtml', 'toastHtml'];
-  MPV_OVERLAY_DIFF_FIELDS.push('fabricPilotStatusText');
   const mpvOverlayMirrorFieldCache = { owner: null, canvasKey: '', fields: {} };
-
-  function formatFabricPilotStatusText(snapshot, diagnostics) {
-    const overlay = diagnostics?.overlay;
-    const attempted = Math.max(0, Math.trunc(Number(snapshot?.bInput?.attempted) || 0));
-    const accepted = Math.max(0, Math.trunc(Number(snapshot?.bInput?.accepted) || 0));
-    const localRevision = Math.max(0, Math.trunc(Number(snapshot?.inputRevision) || 0));
-    const overlayRevision = Math.max(0, Math.trunc(Number(overlay?.inputRevision) || 0));
-    const frame = Math.max(0, Math.trunc(Number(videoPlayer.currentFrame) || 0));
-    const hostGeneration = Math.max(0, Math.trunc(Number(snapshot?.hostGeneration) || 0));
-    const mpvOwner = isMpvPilotPlaybackActive() && videoPlayer.isPlaying ? 1 : 0;
-    const htmlOwner = Array.from(document.querySelectorAll('audio, video'))
-      .filter(media => media.paused === false && media.ended !== true)
-      .length;
-    const playbackOwnerCount = mpvOwner + htmlOwner;
-    const saveAttempts = Math.max(0, Math.trunc(Number(overlay?.metrics?.saveAttemptCount) || 0));
-    const surfaceErrors = Math.max(0, Math.trunc(Number(overlay?.metrics?.surfaceErrorCount) || 0));
-    const errorCount = Math.max(
-      surfaceErrors,
-      snapshot?.lastError ? 1 : 0
-    );
-    const drawingState = String(snapshot?.state || 'unknown').toUpperCase();
-
-    return `FABRIC TEST · DRAW ${drawingState} · B ${attempted}/${accepted} · ` +
-      `rev ${localRevision}/${overlayRevision} · hostGen ${hostGeneration}\n` +
-      `${videoPlayer.isPlaying ? 'PLAY' : 'PAUSE'} · F ${frame} · owner ${playbackOwnerCount} ` +
-      `(mpv ${mpvOwner}/html ${htmlOwner}) · save ${saveAttempts} · err ${errorCount}`;
-  }
-
-  async function refreshFabricPilotStatus({ isCurrent }) {
-    const snapshot = fabricDrawingPilotController.getStatusSnapshot();
-    const diagnostics = await fabricDrawingPilotController.diagnostics();
-    if (!isCurrent()) return;
-
-    const nextStatusText = formatFabricPilotStatusText(snapshot, diagnostics);
-    if (nextStatusText === fabricPilotStatusText) return;
-    fabricPilotStatusText = nextStatusText;
-    scheduleMpvOverlayStateSync({ force: true });
-  }
-
-  function scheduleFabricPilotStatusRefresh({ force = false } = {}) {
-    if (!fabricDrawingPilotController.isEnabled()) {
-      fabricPilotStatusRefreshCoordinator.cancel();
-      if (fabricPilotStatusRefreshTimer) clearTimeout(fabricPilotStatusRefreshTimer);
-      fabricPilotStatusRefreshTimer = null;
-      fabricPilotStatusLastRefreshAt = 0;
-      if (!fabricPilotStatusText) return;
-      fabricPilotStatusText = '';
-      scheduleMpvOverlayStateSync({ force: true });
-      return;
-    }
-
-    const now = Date.now();
-    const elapsed = now - fabricPilotStatusLastRefreshAt;
-    if (force || elapsed >= FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS) {
-      if (fabricPilotStatusRefreshTimer) clearTimeout(fabricPilotStatusRefreshTimer);
-      fabricPilotStatusRefreshTimer = null;
-      fabricPilotStatusLastRefreshAt = now;
-      fabricPilotStatusRefreshCoordinator.request();
-      return;
-    }
-    if (fabricPilotStatusRefreshTimer) return;
-
-    fabricPilotStatusRefreshTimer = setTimeout(() => {
-      fabricPilotStatusRefreshTimer = null;
-      fabricPilotStatusLastRefreshAt = Date.now();
-      fabricPilotStatusRefreshCoordinator.request();
-    }, FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS - elapsed);
-  }
 
   function filterUnchangedMpvOverlayFields(state, owner) {
     const canvasKey = `${state.canvas.left}|${state.canvas.top}|${state.canvas.width}|${state.canvas.height}`;
@@ -8446,8 +8330,8 @@ async function initApp() {
 
     try {
       const locallyEnabled = userSettings.getMpvPlaybackEnabled();
-      const envEnabled = await window.electronAPI.mpvIsEnabled();
-      if (!locallyEnabled && !envEnabled) return false;
+      const runtimeEnabled = await window.electronAPI.mpvIsEnabled();
+      if (!locallyEnabled || !runtimeEnabled) return false;
 
       const available = await window.electronAPI.mpvIsAvailable();
       if (!available) {
@@ -8556,7 +8440,6 @@ async function initApp() {
         await cleanupPendingMpvPilot();
         return false;
       }
-      scheduleFabricPilotStatusRefresh({ force: true });
     } catch (error) {
       await cleanupPendingMpvPilot();
       throw error;
@@ -8729,23 +8612,23 @@ async function initApp() {
     if (!engineSwap) {
       await fabricDrawingPilotInitialization;
       if (!canContinueVideoLoad()) return false;
+      const fabricPersistenceReadyToLeave =
+        await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+      if (!canContinueVideoLoad()) return false;
+      if (!fabricPersistenceReadyToLeave) {
+        showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
+        return false;
+      }
+      await reviewDataManager.waitForPendingSave();
+      if (!canContinueVideoLoad()) return false;
     }
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
-    if (!engineSwap) {
-      await fabricDrawingPilotController.beforeVideoChange(loadToken);
-      if (!canContinueVideoLoad()) {
-        await fabricDrawingPilotController.cancelVideoChange(loadToken);
-        if (activeVideoLoadToken === loadToken) {
-          activeVideoLoadToken = null;
-          activeVideoLoadPath = null;
-        }
-        return false;
-      }
-    }
     mpvDrawPlaybackTransitionToken += 1;
     elements.drawingTools?.classList.remove('playback-hidden');
     let videoLoadCompleted = false;
+    let fabricVideoChangeStarted = false;
+    let destructiveMpvReviewMediaChangeStarted = false;
     supersedeActiveTranscodeOverlay('새 영상 선택');
     // 작업 4: engineSwap(같은 파일 엔진 전환)에서는 연속 재생 세션을 끊지 않는다.
     if (!engineSwap) {
@@ -8846,7 +8729,44 @@ async function initApp() {
           }
         }
 
+        // 사용자의 첫 저장 결정을 기다리는 동안 새 획이 들어올 수 있다.
+        // 입력을 먼저 fence한 뒤 최종 snapshot을 한 번 더 저장해야 마지막 획이 유실되지 않는다.
+        fabricVideoChangeStarted = true;
+        const fabricReadyForVideoChange =
+          await fabricDrawingPilotController.beforeVideoChange(loadToken);
+        if (!fabricReadyForVideoChange || !canContinueVideoLoad()) return false;
+
+        const finalFabricPersistenceReadyToLeave =
+          await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+        if (!canContinueVideoLoad()) return false;
+        if (!finalFabricPersistenceReadyToLeave) {
+          showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
+          return false;
+        }
+        await reviewDataManager.waitForPendingSave();
+        if (!canContinueVideoLoad()) return false;
+
+        if (reviewDataManager.hasUnsavedChanges()) {
+          log.info('Fabric 입력 차단 후 최종 변경사항 저장 시도');
+          const finalSavedBeforeVideoChange = await reviewDataManager.save();
+          if (!canContinueVideoLoad()) return false;
+          if (!finalSavedBeforeVideoChange) {
+            const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
+            if (!proceed) {
+              log.info('최종 저장 실패 후 사용자가 파일 전환 취소');
+              return false;
+            }
+            log.warn('최종 저장 실패했지만 사용자가 전환 진행 선택');
+          }
+        }
+
         allowNavigationGuardAbort = false;
+
+        // 파일 감시와 협업 세션을 끊는 순간부터는 이전 리뷰 화면을 온전히
+        // 복원할 수 없다. 따라서 이 정리 작업도 파괴 경계 안에 포함한다.
+        destructiveMpvReviewMediaChangeStarted =
+          Boolean(beginDestructiveMpvReviewMediaChange(loadToken));
+        if (!destructiveMpvReviewMediaChangeStarted) return false;
 
         // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
         void stopDeferredReviewFileDiscovery();
@@ -8873,8 +8793,9 @@ async function initApp() {
         // ====== 이전 데이터 초기화 ======
         // 자동 저장 일시 중지 (초기화 중 빈 데이터가 저장되는 것 방지)
         if (!canContinueVideoLoad()) return false;
-        if (!beginDestructiveMpvReviewMediaChange(loadToken)) return false;
         reviewDataManager.pauseAutoSave();
+        await reviewDataManager.waitForPendingSave();
+        if (!canContinueVideoLoad()) return false;
 
         // 댓글 모드를 이벤트 경로로 먼저 종료한 뒤, DOM 준비 상태도 무조건 초기화한다.
         // clear()는 commentModeChanged를 발생시키지 않으므로 이 순서가 중요하다.
@@ -9210,7 +9131,14 @@ async function initApp() {
       let hasExistingData = false;
       let currentBframePath = reviewDataManager.currentBframePath;
       if (!engineSwap) {
-        hasExistingData = await reviewDataManager.setVideoFile(filePath, { skipSave: true });
+        hasExistingData = await reviewDataManager.setVideoFile(filePath, {
+          skipSave: true,
+          fabricDrawingPersistenceContext: {
+            fps: videoPlayer.fps,
+            totalFrames: Math.max(1, Math.round(videoPlayer.totalFrames)),
+            stableVideoIdentity: filePath
+          }
+        });
         if (!canContinueVideoLoad()) return false;
         currentBframePath = reviewDataManager.currentBframePath;
       }
@@ -9310,10 +9238,12 @@ async function initApp() {
       showToast('파일을 로드할 수 없습니다.', 'error');
       return false;
     } finally {
+      if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
+        await fabricDrawingPilotController.cancelVideoChange(loadToken, {
+          restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted
+        });
+      }
       if (activeVideoLoadToken === loadToken) {
-        if (!engineSwap && !videoLoadCompleted) {
-          await fabricDrawingPilotController.cancelVideoChange(loadToken);
-        }
         activeVideoLoadToken = null;
         activeVideoLoadPath = null;
         await settlePendingMpvReviewFreezeMediaChange({ loaded: videoLoadCompleted });
@@ -9680,13 +9610,18 @@ async function initApp() {
   }
 
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
+    const ownsDrawingShortcut =
+      fabricDrawingPilotController.shouldOwnDrawingShortcut();
+    document.body.classList.toggle(
+      'fabric-drawing-pilot-enabled',
+      ownsDrawingShortcut
+    );
     const active = nextState === 'active';
     const preparing = nextState === 'preparing';
     const recoveringForResume = nextState === 'recovering' && snapshot?.resumeRequested === true;
-    const engaged = isMpvPilotPlaybackActive() &&
+    const engaged = ownsDrawingShortcut && isMpvPilotPlaybackActive() &&
       (active || preparing || nextState === 'recovering');
     const wasEngaged = fabricDrawingPilotUiEngaged;
-    scheduleFabricPilotStatusRefresh({ force: true });
     scheduleMpvOverlayStateSync({ force: true });
     if (!engaged && !wasEngaged) {
       if (nextState === 'failed') notifyFabricDrawingPilotFailure();
@@ -9775,7 +9710,8 @@ async function initApp() {
   function toggleDrawMode() {
     // 오디오 모드에서는 그리기 모드 진입 차단
     if (state.isAudioMode) return;
-    if (fabricDrawingPilotController.isEnabled() && isMpvPilotPlaybackActive()) {
+    if (fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
+        isMpvPilotPlaybackActive()) {
       void fabricDrawingPilotController.toggle();
       return;
     }
@@ -11082,7 +11018,12 @@ async function initApp() {
       return marker;
     }
 
-    const bframeData = await window.electronAPI.loadReview(bframePath);
+    const bframeSnapshot = await window.electronAPI.loadReviewSnapshot(bframePath);
+    const bframeData = bframeSnapshot?.data;
+    const expectedVersionToken = bframeSnapshot?.versionToken;
+    if (!bframeData || typeof expectedVersionToken !== 'string') {
+      throw new Error('댓글 파일의 최신 저장 버전을 확인할 수 없습니다.');
+    }
     const marker = findMarkerRecordInBframeData(bframeData, range.markerId, range.layerId);
     if (!marker) {
       throw new Error('원본 댓글을 찾을 수 없습니다.');
@@ -11105,10 +11046,17 @@ async function initApp() {
 
     const previous = applyMarkerResolutionToggle(marker);
     try {
-      const saved = await window.electronAPI.saveReview(bframePath, bframeData);
-      if (saved === false) {
+      const saved = await window.electronAPI.saveReview(
+        bframePath,
+        bframeData,
+        { expectedVersionToken: expectedVersionToken }
+      );
+      if (saved?.success !== true) {
         restoreMarkerResolution(marker, previous);
-        throw new Error('해결 상태 저장에 실패했습니다.');
+        const reason = saved?.conflict === true
+          ? '다른 변경이 먼저 저장되어 해결 상태를 덮어쓰지 않았습니다.'
+          : '해결 상태 저장에 실패했습니다.';
+        throw new Error(reason);
       }
     } catch (error) {
       restoreMarkerResolution(marker, previous);
@@ -13438,14 +13386,43 @@ async function initApp() {
   });
 
   // ====== 앱 종료 전 저장 처리 ======
+  let saveBeforeQuitInProgress = false;
   window.electronAPI.onRequestSaveBeforeQuit(async () => {
+    if (saveBeforeQuitInProgress) return;
+    saveBeforeQuitInProgress = true;
     log.info('앱 종료 전 저장 요청 수신');
     const savingOverlay = document.getElementById('appSavingOverlay');
+    savingOverlay?.classList.add('active');
+    const fabricPersistenceReadyToLeave =
+      await fabricDrawingPilotController.preparePersistenceForQuit();
+    if (!fabricPersistenceReadyToLeave) {
+      const forceQuit = confirm(
+        '새 드로잉의 최신 상태를 저장할 수 없습니다.\n\n저장하지 않고 종료하시겠습니까?'
+      );
+      if (forceQuit) {
+        await window.electronAPI.confirmQuit();
+      } else {
+        savingOverlay?.classList.remove('active');
+        await window.electronAPI.cancelQuit();
+        await fabricDrawingPilotController.resumeAfterQuitCancelled();
+        saveBeforeQuitInProgress = false;
+      }
+      return;
+    }
+
+    reviewDataManager.pauseAutoSave();
+    await reviewDataManager.waitForPendingSave();
 
     // 협업 세션 종료 (presence 제거)
     commentSync.stop();
     drawingSync.stop();
-    await liveblocksManager.stop();
+    try {
+      await liveblocksManager.stop();
+    } catch (error) {
+      log.warn('종료 전 협업 세션 정리 실패, 로컬 저장 계속 진행', {
+        error: error.message
+      });
+    }
 
     // 미저장 변경사항 확인
     if (!reviewDataManager.hasUnsavedChanges()) {
@@ -13453,9 +13430,6 @@ async function initApp() {
       await window.electronAPI.confirmQuit();
       return;
     }
-
-    // 저장 오버레이 표시
-    savingOverlay?.classList.add('active');
 
     try {
       log.info('종료 전 저장 시작');
@@ -13474,6 +13448,14 @@ async function initApp() {
           await window.electronAPI.confirmQuit();
         } else {
           await window.electronAPI.cancelQuit();
+          await fabricDrawingPilotController.resumeAfterQuitCancelled();
+          reviewDataManager.resumeAutoSave();
+          await startCollaborationForVideoLoad(
+            latestVideoLoadToken,
+            reviewDataManager.currentBframePath,
+            { persistNewRoom: false, seedCurrentState: true }
+          );
+          saveBeforeQuitInProgress = false;
         }
       }
     } catch (error) {
@@ -13486,6 +13468,14 @@ async function initApp() {
         await window.electronAPI.confirmQuit();
       } else {
         await window.electronAPI.cancelQuit();
+        await fabricDrawingPilotController.resumeAfterQuitCancelled();
+        reviewDataManager.resumeAutoSave();
+        await startCollaborationForVideoLoad(
+          latestVideoLoadToken,
+          reviewDataManager.currentBframePath,
+          { persistNewRoom: false, seedCurrentState: true }
+        );
+        saveBeforeQuitInProgress = false;
       }
     }
   });

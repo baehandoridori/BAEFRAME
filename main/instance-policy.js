@@ -39,9 +39,24 @@ function sanitizeProfileName(value) {
     .slice(0, 80) || 'default';
 }
 
-function shouldAllowMultipleInstances({ isDev = false, argv = process.argv, env = process.env } = {}) {
+function isIsolatedTrialRuntimeProfile(runtimeProfile) {
+  return Boolean(
+    runtimeProfile &&
+    runtimeProfile.active === true &&
+    runtimeProfile.channel === 'fabric-v3-trial' &&
+    runtimeProfile.isolateUserData === true
+  );
+}
+
+function shouldAllowMultipleInstances({
+  isDev = false,
+  argv = process.argv,
+  env = process.env,
+  runtimeProfile = null
+} = {}) {
   return Boolean(
     isDev ||
+    isIsolatedTrialRuntimeProfile(runtimeProfile) ||
     hasProjectLaunchArgument(argv) ||
     hasSwitch(argv, '--multi-instance') ||
     hasSwitch(argv, '--multi-instance-isolated') ||
@@ -60,7 +75,8 @@ function resolveMultiInstanceUserDataPath({
   argv = process.argv,
   env = process.env,
   appDataDir = env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
-  pid = process.pid
+  pid = process.pid,
+  runtimeProfile = null
 } = {}) {
   if (!allowMultipleInstances || isDev) return null;
 
@@ -72,6 +88,7 @@ function resolveMultiInstanceUserDataPath({
     env.BAEFRAME_MULTI_INSTANCE_PROFILE;
   const shouldIsolate = Boolean(
     profileName ||
+    isIsolatedTrialRuntimeProfile(runtimeProfile) ||
     hasSwitch(argv, '--multi-instance-isolated') ||
     isTruthy(env.BAEFRAME_MULTI_INSTANCE_ISOLATED)
   );

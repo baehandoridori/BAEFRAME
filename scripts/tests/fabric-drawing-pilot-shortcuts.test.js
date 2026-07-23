@@ -87,6 +87,8 @@ function createHarness(options = {}) {
     electronAPI,
     getContext: () => context,
     onStateChange: (state, snapshot) => states.push({ state, snapshot }),
+    matchesDrawingToggleShortcut: options.matchesDrawingToggleShortcut,
+    matchesSelectionShortcut: options.matchesSelectionShortcut,
     uuid: () => `uuid-${++id}`
   });
 
@@ -166,6 +168,14 @@ test('controller exposes the complete public API and initialize reads a boolean 
   const rejected = createHarness({ pilotError: new Error('unavailable') });
   assert.equal(await rejected.controller.initialize(), false);
   assert.equal(rejected.controller.getState(), 'disabled');
+});
+
+test('a disabled Fabric controller treats video changes as a no-op success', async () => {
+  const harness = createHarness({ pilotState: false });
+  assert.equal(await harness.controller.initialize(), false);
+  assert.equal(await harness.controller.beforeVideoChange('load-disabled'), true);
+  assert.equal(harness.controller.getState(), 'disabled');
+  assert.equal(harness.calls.input.length, 0);
 });
 
 test('B reports a failed surface after video readiness settles without an overlay capability', async () => {
@@ -409,6 +419,47 @@ test('V updates desired tool during preparing and sends one monotonic update aft
   assert.equal(harness.calls.tool[1].toolRevision, 2);
 });
 
+test('the configured selection shortcut replaces V and preserves input exclusions', async () => {
+  const harness = createHarness({
+    matchesSelectionShortcut(event) {
+      return event.code === 'KeyQ' &&
+        event.ctrlKey !== true &&
+        event.metaKey !== true &&
+        event.altKey !== true &&
+        event.shiftKey !== true;
+    }
+  });
+  await preparePassive(harness);
+  await harness.controller.toggle();
+
+  const oldDefault = createKeyEvent('v', { code: 'KeyV' });
+  assert.equal(harness.controller.routeKeydown(oldDefault), false);
+  assert.deepEqual(oldDefault.calls, []);
+
+  const configured = createKeyEvent('q', { code: 'KeyQ' });
+  assert.equal(harness.controller.routeKeydown(configured), true);
+  assert.deepEqual(configured.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.tool.length, 1);
+  assert.equal(harness.calls.tool[0].tool, 'select');
+
+  const excluded = [
+    createKeyEvent('q', { code: 'KeyQ', target: { tagName: 'INPUT' } }),
+    createKeyEvent('q', { code: 'KeyQ', isComposing: true }),
+    createKeyEvent('q', { code: 'KeyQ', ctrlKey: true })
+  ];
+  for (const event of excluded) {
+    assert.equal(harness.controller.routeKeydown(event), false);
+    assert.deepEqual(event.calls, []);
+  }
+
+  const repeated = createKeyEvent('q', { code: 'KeyQ', repeat: true });
+  assert.equal(harness.controller.routeKeydown(repeated), true);
+  assert.deepEqual(repeated.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.tool.length, 1);
+});
+
 test('B always exits active mode directly even when the current tool is select', async () => {
   const harness = createHarness();
   await preparePassive(harness);
@@ -421,6 +472,86 @@ test('B always exits active mode directly even when the current tool is select',
   assert.equal(harness.controller.getState(), 'passive');
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(harness.calls.input.at(-1).enabled, false);
+});
+
+test('a configured Q drawing shortcut enters and exits Fabric without leaving B hardcoded', async () => {
+  const matchesDrawingToggleShortcut = event =>
+    event.code === 'KeyQ' &&
+    event.ctrlKey === false &&
+    event.metaKey === false &&
+    event.altKey === false &&
+    event.shiftKey === false;
+  const harness = createHarness({ matchesDrawingToggleShortcut });
+  await preparePassive(harness);
+
+  const editable = createKeyEvent('q', {
+    code: 'KeyQ',
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    target: { tagName: 'INPUT', isContentEditable: false }
+  });
+  assert.equal(harness.controller.routeKeydown(editable), false);
+  assert.deepEqual(editable.calls, []);
+
+  const composing = createKeyEvent('q', {
+    code: 'KeyQ',
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    isComposing: true
+  });
+  assert.equal(harness.controller.routeKeydown(composing), false);
+  assert.deepEqual(composing.calls, []);
+
+  const enter = createKeyEvent('q', {
+    code: 'KeyQ',
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false
+  });
+  assert.equal(harness.controller.routeKeydown(enter), true);
+  assert.deepEqual(enter.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.controller.getState(), 'active');
+
+  const repeated = createKeyEvent('q', {
+    code: 'KeyQ',
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    repeat: true
+  });
+  assert.equal(harness.controller.routeKeydown(repeated), true);
+  assert.deepEqual(repeated.calls, ['preventDefault', 'stopImmediatePropagation']);
+  assert.equal(harness.controller.getState(), 'active');
+
+  const exit = createKeyEvent('q', {
+    code: 'KeyQ',
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false
+  });
+  assert.equal(harness.controller.routeKeydown(exit), true);
+  assert.deepEqual(exit.calls, ['preventDefault', 'stopImmediatePropagation']);
+  assert.equal(harness.controller.getState(), 'passive');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.input.at(-1).enabled, false);
+
+  const formerDefault = createKeyEvent('b', {
+    code: 'KeyB',
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false
+  });
+  assert.equal(harness.controller.routeKeydown(formerDefault), false);
+  assert.deepEqual(formerDefault.calls, []);
 });
 
 test('Delete is consumed while preparing or active and only active invokes the pilot action', async () => {
@@ -973,6 +1104,75 @@ test('only the current load token can cancel a recovering video change', async (
   assert.equal(snapshot.sessionId, null);
 });
 
+test('a pre-destructive cancelled video change restores the confirmed video and a fresh drawing session', async () => {
+  const heldDisable = deferred();
+  let holdNextDisable = false;
+  const harness = createHarness({
+    onInput(request) {
+      if (holdNextDisable && request.enabled === false) {
+        holdNextDisable = false;
+        return heldDisable.promise;
+      }
+      return { success: true, accepted: true, enabled: request.enabled };
+    }
+  });
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  const firstSessionId = (await harness.controller.diagnostics()).sessionId;
+
+  holdNextDisable = true;
+  const changing = harness.controller.beforeVideoChange('load-b');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.controller.getState(), 'recovering');
+
+  heldDisable.resolve({ success: true, accepted: true, enabled: false });
+  assert.equal(await changing, true);
+  assert.equal(await harness.controller.cancelVideoChange('load-b', {
+    restorePreviousVideo: true
+  }), true);
+
+  const restored = await harness.controller.diagnostics();
+  assert.equal(restored.videoReady, true);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.notEqual(restored.sessionId, firstSessionId);
+  assert.equal(harness.calls.input.at(-1).enabled, true);
+  assert.equal(harness.calls.input.at(-1).session.stableVideoIdentity, 'video-a');
+});
+
+test('a rejected transition disable restores the old video instead of leaving Fabric failed', async () => {
+  let rejectNextDisable = false;
+  const harness = createHarness({
+    onInput(request) {
+      if (rejectNextDisable && request.enabled === false) {
+        rejectNextDisable = false;
+        return {
+          success: false,
+          accepted: false,
+          enabled: true,
+          error: 'transient transition disable rejection'
+        };
+      }
+      return { success: true, accepted: true, enabled: request.enabled };
+    }
+  });
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+  const firstSessionId = (await harness.controller.diagnostics()).sessionId;
+
+  rejectNextDisable = true;
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), false);
+
+  const restored = await harness.controller.diagnostics();
+  assert.equal(restored.videoReady, true);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.notEqual(restored.sessionId, firstSessionId);
+  assert.equal(harness.calls.input.at(-1).enabled, true);
+  assert.equal(harness.calls.input.at(-1).session.stableVideoIdentity, 'video-a');
+  assert.equal(await harness.controller.cancelVideoChange('load-b', {
+    restorePreviousVideo: true
+  }), false);
+});
+
 test('a late disable response from an older beforeVideoChange cannot restore recovering', async () => {
   const heldDisable = deferred();
   let holdNextDisable = false;
@@ -1004,6 +1204,65 @@ test('a late disable response from an older beforeVideoChange cannot restore rec
   assert.equal(snapshot.videoReady, false);
   assert.equal(snapshot.resumeRequested, false);
   assert.equal(snapshot.sessionId, null);
+});
+
+test('a superseding video change confirms its own disable after an older disable is rejected', async () => {
+  const olderDisable = deferred();
+  const newerDisable = deferred();
+  let transitionDisableCount = 0;
+  const harness = createHarness({
+    onInput(request) {
+      if (request.enabled === false && request.videoGeneration === 1) {
+        transitionDisableCount += 1;
+        if (transitionDisableCount === 2) return olderDisable.promise;
+        if (transitionDisableCount === 3) return newerDisable.promise;
+      }
+      return { success: true, accepted: true, enabled: request.enabled };
+    }
+  });
+  await preparePassive(harness, { loadToken: 'load-a' });
+  await harness.controller.toggle();
+
+  const olderChange = harness.controller.beforeVideoChange('load-b');
+  await new Promise(resolve => setImmediate(resolve));
+  const olderRequest = harness.calls.input.at(-1);
+  assert.equal(olderRequest.enabled, false);
+
+  const newerChange = harness.controller.beforeVideoChange('load-c');
+  await new Promise(resolve => setImmediate(resolve));
+  const newerRequest = harness.calls.input.at(-1);
+  assert.equal(
+    transitionDisableCount,
+    3,
+    'the superseding transition must issue its own disable request'
+  );
+  assert.equal(newerRequest.enabled, false);
+  assert.ok(newerRequest.inputRevision > olderRequest.inputRevision);
+  assert.equal(harness.controller.getState(), 'recovering');
+
+  olderDisable.resolve({
+    success: false,
+    accepted: false,
+    enabled: true,
+    error: 'older transition disable rejected'
+  });
+  assert.equal(await olderChange, false);
+  assert.equal(harness.controller.getState(), 'recovering');
+
+  let newerSettled = false;
+  void newerChange.finally(() => {
+    newerSettled = true;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(newerSettled, false, 'the current transition must await its own disable acceptance');
+
+  newerDisable.resolve({ success: true, accepted: true, enabled: false });
+  assert.equal(await newerChange, true);
+  assert.equal(harness.controller.getState(), 'recovering');
+  assert.equal(await harness.controller.cancelVideoChange('load-c', {
+    restorePreviousVideo: true
+  }), true);
+  assert.equal(harness.controller.getState(), 'active');
 });
 
 test('cancel wins while afterVideoReady reconciliation is in flight', async () => {
@@ -1293,6 +1552,40 @@ test('current failures enter failed, clear draw state, and issue a newer best-ef
   assert.equal(harness.controller.getState(), 'failed');
   assert.equal(harness.controller.isActiveOrPreparing(), false);
   assert.equal((await harness.controller.diagnostics()).sessionId, null);
+});
+
+test('a later B press retries a transient enable failure with a fresh session', async () => {
+  let enableAttempts = 0;
+  const harness = createHarness({
+    onInput(request) {
+      if (!request.enabled) {
+        return { success: true, accepted: true, enabled: false };
+      }
+      enableAttempts += 1;
+      if (enableAttempts === 1) {
+        return {
+          success: false,
+          accepted: false,
+          enabled: false,
+          error: 'transient overlay rejection'
+        };
+      }
+      return { success: true, accepted: true, enabled: true };
+    }
+  });
+  await preparePassive(harness);
+  const setupCount = harness.calls.input.length;
+
+  assert.equal(await harness.controller.toggle(), false);
+  const firstSessionId = harness.calls.input[setupCount].session.sessionId;
+  assert.equal(harness.controller.getState(), 'failed');
+
+  assert.equal(await harness.controller.toggle(), true);
+  const retryRequests = harness.calls.input.slice(setupCount);
+  assert.deepEqual(retryRequests.map(request => request.enabled), [true, false, true]);
+  assert.notEqual(retryRequests[2].session.sessionId, firstSessionId);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.equal((await harness.controller.diagnostics()).lastError, null);
 });
 
 test('all dependencies and request envelopes stay inside the Task 3 pilot bridge', async () => {

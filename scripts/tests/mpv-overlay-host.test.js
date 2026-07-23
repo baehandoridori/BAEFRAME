@@ -1,10 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const vm = require('node:vm');
 
 const {
   MPVOverlayHost,
-  normalizeOverlayState
+  normalizeOverlayState,
+  normalizeFabricDrawingPersistenceMessage
 } = require('../../main/mpv-overlay-host');
 
 function waitForAsyncReposition() {
@@ -36,6 +38,10 @@ function createDrawingHostHarness(options = {}) {
     },
     webContents: {
       focus: () => events.push(['mainWindow.webContents.focus']),
+      send: (channel, payload) => {
+        events.push(['mainWindow.send', channel, payload]);
+        if (options.sendError) throw options.sendError;
+      },
       sendInputEvent: input => {
         events.push(['mainWindow.sendInputEvent', input]);
         if (options.sendInputEventError) throw options.sendInputEventError;
@@ -51,6 +57,10 @@ function createDrawingHostHarness(options = {}) {
       this.listeners = new Map();
       this.webContentsListeners = new Map();
       this.webContents = {
+        destroyed: false,
+        isDestroyed() {
+          return this.destroyed;
+        },
         on: (eventName, handler) => {
           this.webContentsListeners.set(eventName, handler);
         },
@@ -166,6 +176,7 @@ function createDrawingHostHarness(options = {}) {
     now: options.now,
     fabricRetryBaseMs: options.fabricRetryBaseMs,
     fabricRetryMaxMs: options.fabricRetryMaxMs,
+    fabricDrawingSnapshotMaxBytes: options.fabricDrawingSnapshotMaxBytes,
     readFile: async (filePath, encoding) => {
       readCount += 1;
       events.push(['readFile', filePath, encoding]);
@@ -189,6 +200,107 @@ function makeDrawingInput(hostGeneration, overrides = {}) {
     videoGeneration: 1,
     inputRevision: 1,
     enabled: false,
+    ...overrides
+  };
+}
+
+function makePersistenceHydration(hostGeneration, overrides = {}) {
+  return {
+    hostGeneration,
+    videoGeneration: 7,
+    persistenceSessionId: 'host-persistence-session',
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    fps: 24,
+    totalFrames: 240,
+    keyframes: [],
+    ...overrides
+  };
+}
+
+function makePersistenceExport(hostGeneration, overrides = {}) {
+  const request = makePersistenceHydration(hostGeneration, overrides);
+  delete request.keyframes;
+  return request;
+}
+
+function makePersistenceTransform(overrides = {}) {
+  return {
+    left: 0,
+    top: 0,
+    scaleX: 1,
+    scaleY: 1,
+    angle: 0,
+    skewX: 0,
+    skewY: 0,
+    flipX: false,
+    flipY: false,
+    ...overrides
+  };
+}
+
+function makePersistenceRecord(overrides = {}) {
+  return {
+    id: 'host-stroke-1',
+    type: 'stroke',
+    pathData: 'M 0 0 L 10 10',
+    sourcePoints: [
+      { x: 0, y: 0, pressure: 0.5, time: 0, pointerType: 'pen' },
+      { x: 10, y: 10, pressure: 0.75, time: 1, pointerType: 'pen' }
+    ],
+    style: {
+      color: '#ff4757',
+      size: 3,
+      opacity: 1
+    },
+    transform: makePersistenceTransform(),
+    ...overrides
+  };
+}
+
+function makePersistenceSnapshot(hostGeneration, overrides = {}) {
+  return {
+    hostGeneration,
+    videoGeneration: 7,
+    persistenceSessionId: 'host-persistence-session',
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    fps: 24,
+    totalFrames: 240,
+    scenes: [{
+      sceneInstanceId: 'host-scene-1',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makePersistenceRecord()]
+    }],
+    ...overrides
+  };
+}
+
+function makePersistenceTransition(overrides = {}) {
+  return {
+    hostGeneration: 3,
+    videoGeneration: 7,
+    persistenceSessionId: 'host-persistence-session',
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    scene: {
+      sceneInstanceId: 'host-scene-1',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080
+    },
+    mutationSequence: 1,
+    origin: 'live',
+    kind: 'add-objects',
+    estimatedBytes: 64,
+    unsupportedReason: null,
+    removals: [],
+    insertions: [{
+      index: 0,
+      record: makePersistenceRecord(),
+      baseTransform: makePersistenceTransform()
+    }],
+    transforms: [],
     ...overrides
   };
 }
@@ -568,11 +680,601 @@ test('passive ensure stays ready without reading or injecting the Fabric bundle'
   assert.equal(windows[0].options.webPreferences.contextIsolation, true);
   assert.equal(windows[0].options.webPreferences.nodeIntegration, false);
   assert.equal(windows[0].options.webPreferences.sandbox, true);
-  assert.equal(windows[0].options.webPreferences.preload, undefined);
+  assert.equal(
+    windows[0].options.webPreferences.preload,
+    path.resolve(__dirname, '../../preload/mpv-overlay-preload.js')
+  );
   assert.ok(result.drawingCapability, 'ensure should return the current drawing capability');
   assert.equal(result.drawingCapability.hostGeneration, 1);
   assert.equal(result.drawingCapability.passiveReady, true);
   assert.equal(result.drawingCapability.fabricReady, false);
+});
+
+test('only the current live overlay webContents is accepted as a persistence sender', async () => {
+  const { host, windows } = createDrawingHostHarness();
+  await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const firstSender = windows[0].webContents;
+  assert.equal(typeof host.isCurrentOverlaySender, 'function');
+  assert.equal(host.isCurrentOverlaySender({ sender: firstSender }), true);
+  assert.equal(host.isCurrentOverlaySender({ sender: {} }), false);
+  firstSender.destroyed = true;
+  assert.equal(host.isCurrentOverlaySender({ sender: firstSender }), false);
+  firstSender.destroyed = false;
+
+  host.destroy();
+  assert.equal(host.isCurrentOverlaySender({ sender: firstSender }), false);
+  await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  assert.equal(host.isCurrentOverlaySender({ sender: firstSender }), false);
+  assert.equal(host.isCurrentOverlaySender({ sender: windows[1].webContents }), true);
+});
+
+test('drawing persistence hydrate/export enforce fences, input state, and bounded host responses', async () => {
+  const executed = [];
+  const snapshot = {
+    hostGeneration: 1,
+    videoGeneration: 7,
+    persistenceSessionId: 'host-persistence-session',
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    fps: 24,
+    totalFrames: 240,
+    scenes: []
+  };
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        executed.push(['hydrate', readFabricMethodPayload(script, 'hydrateDrawingVideo')]);
+        return {
+          accepted: true,
+          sceneCount: 2,
+          objectCount: 3,
+          secret: 'must-not-leak'
+        };
+      }
+      if (script.includes('.exportDrawingVideo(')) {
+        executed.push(['export', readFabricMethodPayload(script, 'exportDrawingVideo')]);
+        return {
+          accepted: true,
+          snapshot,
+          secret: 'must-not-leak'
+        };
+      }
+      return undefined;
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+
+  assert.deepEqual(await harness.host.hydrateDrawingVideo({
+    ...makePersistenceHydration(hostGeneration),
+    secret: 'must-not-reach-runtime'
+  }), {
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-request'
+  });
+  assert.deepEqual(await harness.host.hydrateDrawingVideo(makePersistenceHydration(
+    hostGeneration,
+    {
+      keyframes: [{
+        id: 'host-scene-1',
+        frame: 24,
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        mutationSequence: 1,
+        objects: [{
+          ...makePersistenceRecord(),
+          secret: 'must-not-reach-runtime'
+        }]
+      }]
+    }
+  )), {
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-request'
+  });
+  assert.equal(executed.length, 0);
+
+  const hydration = makePersistenceHydration(hostGeneration);
+  assert.deepEqual(await harness.host.hydrateDrawingVideo(hydration), {
+    success: true,
+    accepted: true,
+    sceneCount: 2,
+    objectCount: 3
+  });
+  assert.deepEqual(executed[0], ['hydrate', hydration]);
+  assert.deepEqual(await harness.host.exportDrawingVideo(makePersistenceExport(hostGeneration)), {
+    success: true,
+    accepted: true,
+    snapshot
+  });
+
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'host-active-session',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  assert.equal((await harness.host.exportDrawingVideo(
+    makePersistenceExport(hostGeneration)
+  )).success, true, 'export stays available while drawing input is active');
+  assert.deepEqual(await harness.host.hydrateDrawingVideo(hydration), {
+    success: false,
+    accepted: false,
+    reason: 'drawing-input-enabled'
+  });
+  assert.deepEqual(await harness.host.exportDrawingVideo(makePersistenceExport(
+    hostGeneration,
+    { videoGeneration: 6 }
+  )), {
+    success: false,
+    accepted: false,
+    reason: 'stale-persistence-fence'
+  });
+  assert.equal(executed.filter(([kind]) => kind === 'hydrate').length, 1);
+  assert.equal(JSON.stringify(executed).includes('must-not-leak'), false);
+});
+
+test('drawing export rejects non-exact requests and returns only a validated cloned snapshot', async () => {
+  let exportCalls = 0;
+  const runtimeSnapshot = makePersistenceSnapshot(1);
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      exportCalls += 1;
+      return {
+        accepted: true,
+        snapshot: runtimeSnapshot,
+        secret: 'outer-secret-must-not-leak'
+      };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  const request = makePersistenceExport(hostGeneration);
+
+  assert.deepEqual(await harness.host.exportDrawingVideo({
+    ...request,
+    secret: 'request-secret-must-not-reach-overlay'
+  }), {
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-request'
+  });
+  assert.equal(exportCalls, 0);
+
+  const exported = await harness.host.exportDrawingVideo(request);
+  assert.deepEqual(exported, {
+    success: true,
+    accepted: true,
+    snapshot: runtimeSnapshot
+  });
+  assert.notEqual(exported.snapshot, runtimeSnapshot);
+  assert.notEqual(exported.snapshot.scenes[0], runtimeSnapshot.scenes[0]);
+  assert.notEqual(
+    exported.snapshot.scenes[0].objects[0],
+    runtimeSnapshot.scenes[0].objects[0]
+  );
+  runtimeSnapshot.scenes[0].objects[0].style.color = '#000000';
+  assert.equal(exported.snapshot.scenes[0].objects[0].style.color, '#ff4757');
+  assert.doesNotMatch(JSON.stringify(exported), /outer-secret-must-not-leak/);
+});
+
+test('drawing export rejects snapshot fence mismatches and every non-exact inner record shape', async () => {
+  let runtimeSnapshot;
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      return { accepted: true, snapshot: runtimeSnapshot };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  const request = makePersistenceExport(hostGeneration);
+
+  const mismatchedFences = [
+    ['hostGeneration', hostGeneration + 1],
+    ['videoGeneration', 8],
+    ['persistenceSessionId', 'other-persistence-session'],
+    ['stableVideoIdentity', 'C:/shots/other-video.mov'],
+    ['fps', 30],
+    ['totalFrames', 241]
+  ];
+  for (const [field, value] of mismatchedFences) {
+    runtimeSnapshot = makePersistenceSnapshot(hostGeneration, { [field]: value });
+    assert.deepEqual(
+      await harness.host.exportDrawingVideo(request),
+      {
+        success: false,
+        accepted: false,
+        reason: 'invalid-persistence-snapshot'
+      },
+      `snapshot ${field} must match the exact request fence`
+    );
+  }
+
+  const invalidSnapshots = [
+    ['snapshot extra field', value => { value.secret = 'snapshot-secret'; }],
+    ['scene extra field', value => { value.scenes[0].secret = 'scene-secret'; }],
+    ['record extra field', value => { value.scenes[0].objects[0].secret = 'record-secret'; }],
+    ['style extra field', value => { value.scenes[0].objects[0].style.secret = true; }],
+    ['point coordinate bound', value => {
+      value.scenes[0].objects[0].sourcePoints[0].x = 1_000_000_001;
+    }],
+    ['point time order', value => {
+      value.scenes[0].objects[0].sourcePoints[0].time = 2;
+    }],
+    ['transform extra field', value => {
+      value.scenes[0].objects[0].transform.secret = true;
+    }],
+    ['zero transform scale', value => {
+      value.scenes[0].objects[0].transform.scaleX = 0;
+    }],
+    ['duplicate scene id', value => {
+      const duplicate = structuredClone(value.scenes[0]);
+      duplicate.targetFrame = 48;
+      value.scenes.push(duplicate);
+    }],
+    ['duplicate object id', value => {
+      value.scenes[0].objects.push(structuredClone(value.scenes[0].objects[0]));
+    }],
+    ['unsorted scenes', value => {
+      const earlier = structuredClone(value.scenes[0]);
+      earlier.sceneInstanceId = 'host-scene-0';
+      earlier.targetFrame = 12;
+      value.scenes.push(earlier);
+    }]
+  ];
+  for (const [label, mutate] of invalidSnapshots) {
+    runtimeSnapshot = makePersistenceSnapshot(hostGeneration);
+    mutate(runtimeSnapshot);
+    const rejected = await harness.host.exportDrawingVideo(request);
+    assert.deepEqual(rejected, {
+      success: false,
+      accepted: false,
+      reason: 'invalid-persistence-snapshot'
+    }, label);
+    assert.doesNotMatch(JSON.stringify(rejected), /secret/i, label);
+  }
+});
+
+test('drawing export enforces the configured snapshot byte ceiling before returning data', async () => {
+  const runtimeSnapshot = makePersistenceSnapshot(1);
+  runtimeSnapshot.scenes[0].objects[0].pathData = `M 0 0 ${'x'.repeat(2048)}`;
+  const harness = createDrawingHostHarness({
+    fabricDrawingSnapshotMaxBytes: 1024,
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      return { accepted: true, snapshot: runtimeSnapshot };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  assert.deepEqual(
+    await harness.host.exportDrawingVideo(makePersistenceExport(hostGeneration)),
+    {
+      success: false,
+      accepted: false,
+      reason: 'persistence-snapshot-too-large'
+    }
+  );
+});
+
+test('drawing persistence maps prepare, runtime rejection, and runtime exceptions to fixed public reasons', async () => {
+  const prepareFailure = createDrawingHostHarness({
+    readFile: async () => {
+      throw new Error('C:/private/user/project/fabric-bundle.js');
+    }
+  });
+  const prepared = await prepareFailure.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  await prepareFailure.host.setDrawingInput(makeDrawingInput(
+    prepared.drawingCapability.hostGeneration,
+    { videoGeneration: 7, inputRevision: 1, enabled: false }
+  ));
+  const prepareResult = await prepareFailure.host.hydrateDrawingVideo(
+    makePersistenceHydration(prepared.drawingCapability.hostGeneration)
+  );
+  assert.deepEqual(prepareResult, {
+    success: false,
+    accepted: false,
+    reason: 'drawing-runtime-unavailable'
+  });
+
+  const runtimeFailure = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: false, reason: 'C:/private/reviews/secret.bframe' };
+      }
+      if (script.includes('.exportDrawingVideo(')) {
+        throw new Error('token=super-secret-runtime-token');
+      }
+      return undefined;
+    }
+  });
+  const ensured = await runtimeFailure.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await runtimeFailure.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  const hydration = await runtimeFailure.host.hydrateDrawingVideo(
+    makePersistenceHydration(hostGeneration)
+  );
+  const exported = await runtimeFailure.host.exportDrawingVideo(
+    makePersistenceExport(hostGeneration)
+  );
+  assert.deepEqual(hydration, {
+    success: false,
+    accepted: false,
+    reason: 'drawing-hydration-rejected'
+  });
+  assert.deepEqual(exported, {
+    success: false,
+    accepted: false,
+    reason: 'drawing-export-failed'
+  });
+  assert.doesNotMatch(
+    JSON.stringify([prepareResult, hydration, exported]),
+    /private|secret|token|bframe/i
+  );
+
+  const knownRuntimeRejections = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: false, reason: 'input-enabled' };
+      }
+      if (script.includes('.exportDrawingVideo(')) {
+        return { accepted: false, reason: 'stale-fence' };
+      }
+      return undefined;
+    }
+  });
+  const knownRuntime = await knownRuntimeRejections.host.ensure({
+    x: 0,
+    y: 0,
+    width: 640,
+    height: 360
+  });
+  const knownHostGeneration = knownRuntime.drawingCapability.hostGeneration;
+  await knownRuntimeRejections.host.setDrawingInput(makeDrawingInput(knownHostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  assert.deepEqual(
+    await knownRuntimeRejections.host.hydrateDrawingVideo(
+      makePersistenceHydration(knownHostGeneration)
+    ),
+    {
+      success: false,
+      accepted: false,
+      reason: 'drawing-input-enabled'
+    }
+  );
+  assert.deepEqual(
+    await knownRuntimeRejections.host.exportDrawingVideo(
+      makePersistenceExport(knownHostGeneration)
+    ),
+    {
+      success: false,
+      accepted: false,
+      reason: 'stale-persistence-fence'
+    }
+  );
+});
+
+test('drawing persistence rejects a result that becomes stale during host execution', async () => {
+  const deferred = createDeferred();
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.exportDrawingVideo(')) return deferred.promise;
+      return undefined;
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  await harness.host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration));
+
+  const pending = harness.host.exportDrawingVideo(makePersistenceExport(hostGeneration));
+  harness.host.destroy();
+  deferred.resolve({
+    accepted: true,
+    snapshot: {
+      hostGeneration,
+      videoGeneration: 7,
+      persistenceSessionId: 'host-persistence-session',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      fps: 24,
+      totalFrames: 240,
+      scenes: []
+    }
+  });
+  assert.deepEqual(await pending, {
+    success: false,
+    accepted: false,
+    reason: 'stale-persistence-response'
+  });
+});
+
+test('drawing persistence IPC normalization preserves small transitions and never drops oversize dirty signals', () => {
+  assert.equal(typeof normalizeFabricDrawingPersistenceMessage, 'function');
+  const transition = makePersistenceTransition();
+  const normalized = normalizeFabricDrawingPersistenceMessage({
+    type: 'transition',
+    transition
+  });
+  assert.deepEqual(normalized, { type: 'transition', transition });
+  assert.notEqual(normalized.transition, transition);
+
+  const oversized = makePersistenceTransition({
+    insertions: [{ payload: 'x'.repeat(8 * 1024 * 1024) }]
+  });
+  assert.deepEqual(
+    normalizeFabricDrawingPersistenceMessage({
+      type: 'transition',
+      transition: oversized
+    }),
+    {
+      type: 'resync-required',
+      hostGeneration: 3,
+      videoGeneration: 7,
+      persistenceSessionId: 'host-persistence-session',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      reason: 'transition-too-large'
+    }
+  );
+
+  const invalid = makePersistenceTransition({ extra: true });
+  assert.deepEqual(
+    normalizeFabricDrawingPersistenceMessage({
+      type: 'transition',
+      transition: invalid
+    }),
+    {
+      type: 'resync-required',
+      hostGeneration: 3,
+      videoGeneration: 7,
+      persistenceSessionId: 'host-persistence-session',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      reason: 'transition-invalid-at-boundary'
+    }
+  );
+  assert.equal(normalizeFabricDrawingPersistenceMessage({
+    type: 'transition',
+    transition: makePersistenceTransition({ hostGeneration: -1 })
+  }), null);
+});
+
+test('drawing persistence IPC normalization resyncs malformed nested deltas with a valid fence', () => {
+  const expectedResync = {
+    type: 'resync-required',
+    hostGeneration: 3,
+    videoGeneration: 7,
+    persistenceSessionId: 'host-persistence-session',
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    reason: 'transition-invalid-at-boundary'
+  };
+  const invalidTransitions = [
+    ['removal extra field', value => {
+      value.kind = 'delete-objects';
+      value.insertions = [];
+      value.removals = [{ id: 'host-stroke-1', index: 0, secret: true }];
+    }],
+    ['insertion extra field', value => {
+      value.insertions[0].secret = true;
+    }],
+    ['record extra field', value => {
+      value.insertions[0].record.secret = true;
+    }],
+    ['style extra field', value => {
+      value.insertions[0].record.style.secret = true;
+    }],
+    ['invalid point pressure', value => {
+      value.insertions[0].record.sourcePoints[0].pressure = 1.01;
+    }],
+    ['decreasing point time', value => {
+      value.insertions[0].record.sourcePoints[0].time = 2;
+    }],
+    ['transform extra field', value => {
+      value.insertions[0].record.transform.secret = true;
+    }],
+    ['invalid base transform', value => {
+      value.insertions[0].baseTransform.scaleX = 0;
+    }],
+    ['transform change extra field', value => {
+      value.kind = 'transform-objects';
+      value.insertions = [];
+      value.transforms = [{
+        id: 'host-stroke-1',
+        beforeTransform: makePersistenceTransform(),
+        afterTransform: makePersistenceTransform({ left: 10 }),
+        secret: true
+      }];
+    }],
+    ['unsupported transition', value => {
+      value.unsupportedReason = 'unsupported-transform';
+    }],
+    ['kind mismatch', value => {
+      value.kind = 'delete-objects';
+    }],
+    ['duplicate insertion id', value => {
+      value.insertions.push(structuredClone(value.insertions[0]));
+    }],
+    ['no-op delta', value => {
+      value.insertions = [];
+    }],
+    ['target frame ceiling', value => {
+      value.scene.targetFrame = 1_000_000_000;
+    }],
+    ['removal index ceiling', value => {
+      value.kind = 'delete-objects';
+      value.insertions = [];
+      value.removals = [{ id: 'host-stroke-1', index: 10_000 }];
+    }],
+    ['insertion index ceiling', value => {
+      value.insertions[0].index = 10_001;
+    }]
+  ];
+
+  for (const [label, mutate] of invalidTransitions) {
+    const transition = makePersistenceTransition();
+    mutate(transition);
+    assert.deepEqual(
+      normalizeFabricDrawingPersistenceMessage({
+        type: 'transition',
+        transition
+      }),
+      expectedResync,
+      label
+    );
+  }
+
+  const estimatedOversize = makePersistenceTransition({
+    estimatedBytes: 8 * 1024 * 1024 + 1
+  });
+  assert.deepEqual(
+    normalizeFabricDrawingPersistenceMessage({
+      type: 'transition',
+      transition: estimatedOversize
+    }),
+    {
+      ...expectedResync,
+      reason: 'transition-too-large'
+    }
+  );
 });
 
 test('passive diagnostics expose accepted host tokens before the Fabric runtime is prepared', async () => {
@@ -671,6 +1373,7 @@ test('returns focus to the main window and relays keyboard input while the drawi
   }, {
     type: 'keyDown',
     key: 'b',
+    code: 'KeyB',
     shift: false,
     control: true,
     alt: false,
@@ -681,10 +1384,15 @@ test('returns focus to the main window and relays keyboard input while the drawi
   assert.equal(prevented, true);
   assert.deepEqual(events, [
     ['mainWindow.focus'],
-    ['mainWindow.sendInputEvent', {
+    ['mainWindow.send', 'mpv-overlay:keyboard-input', {
       type: 'keyDown',
-      keyCode: 'b',
-      modifiers: ['control', 'isAutoRepeat']
+      key: 'b',
+      code: 'KeyB',
+      shiftKey: false,
+      ctrlKey: true,
+      altKey: false,
+      metaKey: false,
+      repeat: true
     }]
   ]);
 
@@ -732,6 +1440,7 @@ test('completes the main-window focus handoff when relayed B disables a focused 
   windows[0].webContents.emit('before-input-event', { preventDefault() {} }, {
     type: 'keyDown',
     key: 'b',
+    code: 'KeyB',
     shift: false,
     control: false,
     alt: false,
@@ -796,15 +1505,33 @@ test('canonicalizes overlay keys, drops IME composition, and never steals focus 
     return prevented;
   };
 
-  assert.equal(emitKey({ key: ' ' }), true);
-  assert.equal(emitKey({ key: 'ArrowLeft' }), true);
+  assert.equal(emitKey({ key: ' ', code: 'Space' }), true);
+  assert.equal(emitKey({ key: 'ArrowLeft', code: 'ArrowLeft' }), true);
   const eventCountBeforeComposition = events.length;
   assert.equal(emitKey({ key: 'Process', code: 'KeyR', isComposing: true }), false);
   assert.equal(emitKey({ key: 'Dead', code: 'Quote' }), false);
   assert.equal(events.length, eventCountBeforeComposition);
-  assert.deepEqual(events.filter(([name]) => name === 'mainWindow.sendInputEvent'), [
-    ['mainWindow.sendInputEvent', { type: 'keyDown', keyCode: 'Space', modifiers: [] }],
-    ['mainWindow.sendInputEvent', { type: 'keyDown', keyCode: 'Left', modifiers: [] }]
+  assert.deepEqual(events.filter(([name]) => name === 'mainWindow.send'), [
+    ['mainWindow.send', 'mpv-overlay:keyboard-input', {
+      type: 'keyDown',
+      key: ' ',
+      code: 'Space',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    }],
+    ['mainWindow.send', 'mpv-overlay:keyboard-input', {
+      type: 'keyDown',
+      key: 'ArrowLeft',
+      code: 'ArrowLeft',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    }]
   ]);
 
   events.length = 0;
@@ -816,6 +1543,140 @@ test('canonicalizes overlay keys, drops IME composition, and never steals focus 
   }));
   assert.equal(events.some(([name]) => name === 'mainWindow.focus'), false);
   assert.equal(events.some(([name, value]) => name === 'setFocusable' && value === false), true);
+});
+
+test('relays exact validated physical key codes including Enter Tab and Numpad keys', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, {
+    videoGeneration: 11,
+    sessionId: 'session-physical-key-relay'
+  });
+  const overlay = harness.windows[0];
+  harness.events.length = 0;
+
+  const emit = input => {
+    let prevented = false;
+    overlay.webContents.emit('before-input-event', {
+      preventDefault() {
+        prevented = true;
+      }
+    }, {
+      type: 'keyDown',
+      key: '',
+      code: '',
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+    return prevented;
+  };
+
+  assert.equal(emit({ key: 'ㅂ', code: 'KeyQ' }), true);
+  assert.equal(emit({ key: 'Enter', code: 'Enter' }), true);
+  assert.equal(emit({ key: 'Tab', code: 'Tab', shift: true }), true);
+  assert.equal(emit({ key: '1', code: 'Numpad1' }), true);
+  assert.equal(emit({ key: 'Enter', code: 'NumpadEnter' }), true);
+
+  const payloads = harness.events
+    .filter(([name, channel]) =>
+      name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , payload]) => payload);
+  assert.deepEqual(payloads, [
+    {
+      type: 'keyDown',
+      key: 'ㅂ',
+      code: 'KeyQ',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    },
+    {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    },
+    {
+      type: 'keyDown',
+      key: 'Tab',
+      code: 'Tab',
+      shiftKey: true,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    },
+    {
+      type: 'keyDown',
+      key: '1',
+      code: 'Numpad1',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    },
+    {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'NumpadEnter',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    }
+  ]);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), false);
+});
+
+test('overlay physical key relay rejects malformed and composing input without focusing main', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, {
+    videoGeneration: 12,
+    sessionId: 'session-physical-key-validation'
+  });
+  const overlay = harness.windows[0];
+  harness.events.length = 0;
+
+  const invalidInputs = [
+    { type: 'char', key: 'b', code: 'KeyB' },
+    { type: 'keyDown', key: 'b', code: 'InjectedCode' },
+    { type: 'keyDown', key: 'x'.repeat(65), code: 'KeyX' },
+    { type: 'keyDown', key: 'Process', code: 'KeyB' },
+    { type: 'keyDown', key: 'Dead', code: 'Quote' },
+    { type: 'keyDown', key: 'b', code: 'KeyB', isComposing: true },
+    { type: 'keyDown', key: 'b', code: 'KeyB', shift: 'yes' }
+  ];
+  for (const input of invalidInputs) {
+    let prevented = false;
+    overlay.webContents.emit('before-input-event', {
+      preventDefault() {
+        prevented = true;
+      }
+    }, {
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+    assert.equal(prevented, false);
+  }
+
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), false);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
 });
 
 test('overlay history shortcuts execute once without relaying to the main window', async () => {
@@ -868,6 +1729,7 @@ test('overlay history shortcuts execute once without relaying to the main window
     .map(([, script]) => readFabricMethodPayload(script, 'applyDrawingAction'));
   assert.deepEqual(actionPayloads.map(request => request.action), ['undo', 'undo', 'redo', 'redo']);
   assert.equal(new Set(actionPayloads.map(request => request.actionId)).size, 4);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), false);
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
 });
@@ -921,7 +1783,7 @@ test('overlay history routing leaves invalid combinations and Electron IME input
 
   assert.equal(harness.events.some(([name, script]) =>
     name === 'executeJavaScript' && script.includes?.('.applyDrawingAction(')), false);
-  assert.equal(harness.events.filter(([name]) => name === 'mainWindow.sendInputEvent').length, 7);
+  assert.equal(harness.events.filter(([name]) => name === 'mainWindow.send').length, 7);
 });
 
 test('controller-origin and overlay-origin actions share one serialized host queue', async () => {
@@ -998,8 +1860,9 @@ test('overlay keeps forwarding B V Delete and Space through the main renderer ro
   }
 
   assert.deepEqual(harness.events
-    .filter(([name]) => name === 'mainWindow.sendInputEvent')
-    .map(([, input]) => input.keyCode), ['b', 'v', 'Delete', 'Space']);
+    .filter(([name, channel]) =>
+      name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , input]) => input.code), ['KeyB', 'KeyV', 'Delete', 'Space']);
 });
 
 test('overlay history keyup suppression is cleared when drawing input is disabled', async () => {
@@ -1057,13 +1920,13 @@ test('overlay history keyup suppression is cleared when drawing input is disable
   });
 
   assert.equal(prevented, true, 'the ordinary keyup is forwarded and consumed by the relay');
-  assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), true,
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), true,
     'an old suppressed key must not leak into a new drawing session');
 });
 
 test('leaves the original overlay key untouched when forwarding fails', async () => {
   const { host, events, windows } = createDrawingHostHarness({
-    sendInputEventError: new Error('synthetic forwarding failure')
+    sendError: new Error('synthetic forwarding failure')
   });
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
   const { hostGeneration } = ensured.drawingCapability;
@@ -1088,9 +1951,9 @@ test('leaves the original overlay key untouched when forwarding fails', async ()
     preventDefault: () => {
       prevented = true;
     }
-  }, { type: 'keyDown', key: 'v' }));
+  }, { type: 'keyDown', key: 'v', code: 'KeyV' }));
   assert.equal(prevented, false);
-  assert.equal(events.some(([name]) => name === 'mainWindow.sendInputEvent'), true);
+  assert.equal(events.some(([name]) => name === 'mainWindow.send'), true);
 });
 
 test('rejects stale host video input session and tool revisions at the host boundary', async () => {
@@ -2719,29 +3582,18 @@ test('Fabric 시험 툴바는 작은 화면에서도 읽기 쉽고 현재 도구
   );
 });
 
-test('Fabric 수동 검증 HUD는 항상 존재하며 click-through textContent로만 갱신된다', () => {
+test('stable overlay host does not include the old manual verification HUD', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const hostSource = fs.readFileSync(path.join(__dirname, '../../main/mpv-overlay-host.js'), 'utf8');
 
-  assert.match(hostSource, /#fabricPilotStatusMirror\s*\{[^}]*top:\s*12px;[^}]*right:\s*12px;[^}]*pointer-events:\s*none;/s);
-  assert.match(hostSource, /<div id="fabricPilotStatusMirror"[^>]*><\/div>/);
-
-  const applyStatusBlock = hostSource.match(
-    /const fabricPilotStatusMirror = document\.getElementById\('fabricPilotStatusMirror'\);([\s\S]*?)\n\s*if \(nextState\.fabricViewport !== undefined\)/
-  )?.[1] || '';
-  assert.match(applyStatusBlock, /if \(nextState\.fabricPilotStatusText !== undefined\)/);
-  assert.match(applyStatusBlock, /fabricPilotStatusMirror\.textContent = statusText;/);
-  assert.match(applyStatusBlock, /fabricPilotStatusMirror\.style\.display = statusText \? 'block' : 'none';/);
-  assert.doesNotMatch(applyStatusBlock, /innerHTML/);
-});
-
-test('Fabric 수동 검증 HUD 상태는 512자로 제한되고 생략 시 기존 값을 보존한다', () => {
-  const longStatus = '상'.repeat(600);
-  const normalized = normalizeOverlayState({ fabricPilotStatusText: longStatus });
-  assert.equal(normalized.fabricPilotStatusText, longStatus.slice(0, 512));
-
-  const partial = normalizeOverlayState({ markerHtml: '<div></div>' });
-  assert.equal(partial.fabricPilotStatusText, undefined);
-  assert.doesNotMatch(JSON.stringify(partial), /fabricPilotStatusText/);
+  assert.doesNotMatch(hostSource, /fabricPilotStatusMirror|fabricPilotStatusText|FABRIC TEST/);
+  const normalized = normalizeOverlayState({
+    markerHtml: '<div></div>',
+    fabricPilotStatusText: 'must be ignored'
+  });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(normalized, 'fabricPilotStatusText'),
+    false
+  );
 });

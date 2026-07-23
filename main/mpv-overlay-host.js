@@ -40,6 +40,154 @@ const HOST_DRAWING_ACTIONS = new Set([
   'undo',
   'redo'
 ]);
+const FABRIC_DRAWING_TRANSITION_MAX_BYTES = 8 * 1024 * 1024;
+const FABRIC_DRAWING_SNAPSHOT_MAX_BYTES = 128 * 1024 * 1024;
+const FABRIC_DRAWING_MAX_KEYFRAMES = 10000;
+const FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME = 10000;
+const FABRIC_DRAWING_MAX_OBJECTS_TOTAL = 100000;
+const FABRIC_DRAWING_MAX_POINTS_PER_STROKE = 20000;
+const FABRIC_DRAWING_MAX_SOURCE_DIMENSION = 1_000_000;
+const FABRIC_DRAWING_MAX_TOTAL_FRAMES = 1_000_000_000;
+const FABRIC_DRAWING_MAX_POINT_COORDINATE = 1_000_000_000;
+const FABRIC_DRAWING_MAX_POINT_TIME = 1_000_000_000_000;
+const FABRIC_DRAWING_MAX_BRUSH_SIZE = 1_000_000;
+const FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE = 1_000_000_000;
+const FABRIC_DRAWING_MAX_STRING_LENGTH = 32768;
+const FABRIC_DRAWING_TRANSITION_KEYS = Object.freeze([
+  'hostGeneration',
+  'videoGeneration',
+  'persistenceSessionId',
+  'stableVideoIdentity',
+  'scene',
+  'mutationSequence',
+  'origin',
+  'kind',
+  'estimatedBytes',
+  'unsupportedReason',
+  'removals',
+  'insertions',
+  'transforms'
+]);
+const FABRIC_DRAWING_SCENE_KEYS = Object.freeze([
+  'sceneInstanceId',
+  'targetFrame',
+  'sourceWidth',
+  'sourceHeight'
+]);
+const FABRIC_DRAWING_HYDRATE_REQUEST_KEYS = Object.freeze([
+  'hostGeneration',
+  'videoGeneration',
+  'persistenceSessionId',
+  'stableVideoIdentity',
+  'fps',
+  'totalFrames',
+  'keyframes'
+]);
+const FABRIC_DRAWING_EXPORT_REQUEST_KEYS = Object.freeze(
+  FABRIC_DRAWING_HYDRATE_REQUEST_KEYS.filter(key => key !== 'keyframes')
+);
+const FABRIC_DRAWING_HYDRATE_KEYFRAME_KEYS = Object.freeze([
+  'id',
+  'frame',
+  'sourceWidth',
+  'sourceHeight',
+  'mutationSequence',
+  'objects'
+]);
+const FABRIC_DRAWING_SNAPSHOT_KEYS = Object.freeze([
+  'hostGeneration',
+  'videoGeneration',
+  'persistenceSessionId',
+  'stableVideoIdentity',
+  'fps',
+  'totalFrames',
+  'scenes'
+]);
+const FABRIC_DRAWING_SNAPSHOT_SCENE_KEYS = Object.freeze([
+  'sceneInstanceId',
+  'targetFrame',
+  'sourceWidth',
+  'sourceHeight',
+  'mutationSequence',
+  'objects'
+]);
+const FABRIC_DRAWING_RECORD_REQUIRED_KEYS = Object.freeze([
+  'id',
+  'type',
+  'pathData',
+  'sourcePoints',
+  'style',
+  'transform'
+]);
+const FABRIC_DRAWING_RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps']);
+const FABRIC_DRAWING_STYLE_KEYS = Object.freeze(['color', 'size', 'opacity']);
+const FABRIC_DRAWING_TRANSFORM_KEYS = Object.freeze([
+  'left',
+  'top',
+  'scaleX',
+  'scaleY',
+  'angle',
+  'skewX',
+  'skewY',
+  'flipX',
+  'flipY'
+]);
+const FABRIC_DRAWING_POINT_REQUIRED_KEYS = Object.freeze([
+  'x',
+  'y',
+  'pressure',
+  'time'
+]);
+const FABRIC_DRAWING_POINT_OPTIONAL_KEYS = Object.freeze(['pointerType']);
+const FABRIC_DRAWING_CAPS_KEYS = Object.freeze(['start', 'end']);
+const FABRIC_DRAWING_REMOVAL_KEYS = Object.freeze(['id', 'index']);
+const FABRIC_DRAWING_INSERTION_KEYS = Object.freeze([
+  'index',
+  'record',
+  'baseTransform'
+]);
+const FABRIC_DRAWING_TRANSFORM_CHANGE_KEYS = Object.freeze([
+  'id',
+  'beforeTransform',
+  'afterTransform'
+]);
+const FABRIC_DRAWING_RESYNC_KEYS = Object.freeze([
+  'type',
+  'hostGeneration',
+  'videoGeneration',
+  'persistenceSessionId',
+  'stableVideoIdentity',
+  'reason'
+]);
+const FABRIC_DRAWING_TRANSITION_ORIGINS = new Set(['live', 'history']);
+const FABRIC_DRAWING_TRANSITION_KINDS = new Set([
+  'add-objects',
+  'transform-objects',
+  'split-stroke',
+  'delete-objects',
+  'clear-keyframe'
+]);
+const FABRIC_DRAWING_RESYNC_REASONS = new Set([
+  'transition-too-large',
+  'transition-serialization-failed',
+  'transition-invalid-at-boundary'
+]);
+const FABRIC_DRAWING_POINTER_TYPES = new Set(['mouse', 'pen', 'touch']);
+const FABRIC_DRAWING_HEX_COLOR = /^#[0-9a-f]{6}$/i;
+const FABRIC_DRAWING_PUBLIC_RUNTIME_REASON_MAP = new Map([
+  ['destroyed', 'drawing-runtime-unavailable'],
+  ['not-prepared', 'drawing-runtime-unavailable'],
+  ['input-enabled', 'drawing-input-enabled'],
+  ['persistence-unavailable', 'drawing-runtime-unavailable'],
+  ['invalid-hydration-request', 'drawing-hydration-rejected'],
+  ['store-destroyed', 'drawing-runtime-unavailable'],
+  ['video-active', 'drawing-hydration-rejected'],
+  ['stale-fence', 'stale-persistence-fence'],
+  ['scene-capacity-exceeded', 'drawing-hydration-rejected'],
+  ['invalid-export-request', 'drawing-export-rejected'],
+  ['timeline-mismatch', 'drawing-export-rejected'],
+  ['snapshot-export-failed', 'drawing-export-rejected']
+]);
 const DRAWING_V3_DIAGNOSTIC_STATUSES = new Set([
   'active',
   'degraded',
@@ -139,24 +287,6 @@ const OVERLAY_HTML = String.raw`
       width: 100vw;
       height: 100vh;
       overflow: hidden;
-      pointer-events: none;
-    }
-    #fabricPilotStatusMirror {
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      z-index: 60;
-      display: none;
-      max-width: calc(100% - 24px);
-      padding: 8px 10px;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: 6px;
-      background: rgba(15, 15, 15, 0.82);
-      color: #f5f5f5;
-      font: 600 11px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-      font-variant-numeric: tabular-nums;
-      text-align: right;
-      white-space: pre-line;
       pointer-events: none;
     }
     .mpv-fabric-pilot-toolbar {
@@ -473,7 +603,6 @@ const OVERLAY_HTML = String.raw`
 </head>
 <body>
   <div id="root">
-    <div id="fabricPilotStatusMirror" aria-live="off"></div>
     <img id="onionCanvasMirror" class="mirror-canvas" alt="">
     <img id="drawingCanvasMirror" class="mirror-canvas" alt="">
     <div id="compositionMirror"></div>
@@ -654,14 +783,6 @@ const OVERLAY_HTML = String.raw`
       const markerMirror = document.getElementById('markerMirror');
       const tooltipMirror = document.getElementById('tooltipMirror');
       const toastMirror = document.getElementById('toastMirror');
-      const fabricPilotStatusMirror = document.getElementById('fabricPilotStatusMirror');
-      if (nextState.fabricPilotStatusText !== undefined) {
-        const statusText = typeof nextState.fabricPilotStatusText === 'string'
-          ? nextState.fabricPilotStatusText
-          : '';
-        fabricPilotStatusMirror.textContent = statusText;
-        fabricPilotStatusMirror.style.display = statusText ? 'block' : 'none';
-      }
       if (nextState.fabricViewport !== undefined) {
         window.__mpvFabricOverlay?.updateViewport?.(nextState.fabricViewport);
       }
@@ -782,9 +903,6 @@ function normalizeOverlayState(state = {}) {
     tooltipHtml: state.tooltipHtml === undefined ? undefined : (typeof state.tooltipHtml === 'string' ? state.tooltipHtml : ''),
     htmlOverlayHtml: state.htmlOverlayHtml === undefined ? undefined : (typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : ''),
     toastHtml: state.toastHtml === undefined ? undefined : (typeof state.toastHtml === 'string' ? state.toastHtml : ''),
-    fabricPilotStatusText: state.fabricPilotStatusText === undefined
-      ? undefined
-      : (typeof state.fabricPilotStatusText === 'string' ? state.fabricPilotStatusText.slice(0, 512) : ''),
     commentPlayheadLeft: typeof state.commentPlayheadLeft === 'string' ? state.commentPlayheadLeft : '',
     remoteCursorHtml: typeof state.remoteCursorHtml === 'string' ? state.remoteCursorHtml : '',
     fabricViewport: normalizeFabricViewport(state.fabricViewport),
@@ -802,51 +920,129 @@ function normalizeOverlayState(state = {}) {
   };
 }
 
-const FORWARDED_KEY_ALIASES = Object.freeze({
-  ' ': 'Space',
-  Spacebar: 'Space',
-  ArrowLeft: 'Left',
-  ArrowRight: 'Right',
-  ArrowUp: 'Up',
-  ArrowDown: 'Down',
-  Esc: 'Escape'
-});
-const FORWARDED_NAMED_KEYS = new Set([
+const FORWARDED_KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
+const FORWARDED_NAMED_KEY_CODES = new Set([
   'Backspace',
+  'Tab',
+  'Enter',
   'Delete',
   'Insert',
   'Home',
   'End',
   'PageUp',
   'PageDown',
-  'Escape'
+  'Escape',
+  'Space',
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Backquote',
+  'Minus',
+  'Equal',
+  'BracketLeft',
+  'BracketRight',
+  'Backslash',
+  'CapsLock',
+  'Semicolon',
+  'Quote',
+  'Comma',
+  'Period',
+  'Slash',
+  'PrintScreen',
+  'ScrollLock',
+  'Pause',
+  'NumLock',
+  'ContextMenu',
+  'IntlBackslash',
+  'IntlRo',
+  'IntlYen',
+  'Convert',
+  'NonConvert',
+  'KanaMode',
+  'Lang1',
+  'Lang2',
+  'Lang3',
+  'Lang4',
+  'Lang5',
+  'Help',
+  'Again',
+  'Undo',
+  'Cut',
+  'Copy',
+  'Paste',
+  'Find',
+  'Props',
+  'Select',
+  'Open',
+  'Eject',
+  'Power',
+  'WakeUp',
+  'BrowserBack',
+  'BrowserForward',
+  'BrowserRefresh',
+  'BrowserStop',
+  'BrowserSearch',
+  'BrowserFavorites',
+  'BrowserHome',
+  'AudioVolumeMute',
+  'AudioVolumeDown',
+  'AudioVolumeUp',
+  'MediaTrackNext',
+  'MediaTrackPrevious',
+  'MediaStop',
+  'MediaPlayPause',
+  'MediaSelect',
+  'LaunchMail',
+  'LaunchApp1',
+  'LaunchApp2'
 ]);
+
+function isForwardedPhysicalKeyCode(code) {
+  if (typeof code !== 'string' || code.length === 0 || code.length > 32) return false;
+  if (/^Key[A-Z]$/.test(code) ||
+      /^Digit[0-9]$/.test(code) ||
+      /^F(?:[1-9]|1\d|2[0-4])$/.test(code) ||
+      /^Numpad(?:[0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal|Comma|ParenLeft|ParenRight|Backspace|Clear|ClearEntry|MemoryAdd|MemoryClear|MemoryRecall|MemoryStore|MemorySubtract)$/.test(code)) {
+    return true;
+  }
+  return FORWARDED_NAMED_KEY_CODES.has(code);
+}
+
+function isOptionalBoolean(value) {
+  return value === undefined || typeof value === 'boolean';
+}
 
 function createForwardedKeyboardInput(input = {}) {
   if (input.type !== 'keyDown' && input.type !== 'keyUp') return null;
   const key = typeof input.key === 'string' ? input.key : '';
   const code = typeof input.code === 'string' ? input.code : '';
+  if (key.length === 0 || key.length > 64 || key.includes('\u0000') ||
+      !isForwardedPhysicalKeyCode(code) ||
+      !isOptionalBoolean(input.shift) ||
+      !isOptionalBoolean(input.control) ||
+      !isOptionalBoolean(input.alt) ||
+      !isOptionalBoolean(input.meta) ||
+      !isOptionalBoolean(input.isAutoRepeat) ||
+      !isOptionalBoolean(input.isComposing)) {
+    return null;
+  }
   if (input.isComposing === true ||
       ['Process', 'Dead', 'Unidentified'].includes(key) ||
-      ['Process', 'Dead'].includes(code) ||
-      key === 'Tab' || key === 'Enter') {
+      ['Process', 'Dead', 'Unidentified'].includes(code)) {
     return null;
   }
 
-  let keyCode = FORWARDED_KEY_ALIASES[key] || '';
-  if (!keyCode && /^[\x21-\x7e]$/.test(key)) keyCode = key;
-  if (!keyCode && (FORWARDED_NAMED_KEYS.has(key) || /^F(?:[1-9]|1\d|2[0-4])$/.test(key))) {
-    keyCode = key;
-  }
-  if (!keyCode) return null;
-
-  const modifiers = [];
-  if (input.shift === true) modifiers.push('shift');
-  if (input.control === true) modifiers.push('control');
-  if (input.alt === true) modifiers.push('alt');
-  if (input.meta === true) modifiers.push('meta');
-  if (input.isAutoRepeat === true) modifiers.push('isAutoRepeat');
-  return { type: input.type, keyCode, modifiers };
+  return {
+    type: input.type,
+    key,
+    code,
+    shiftKey: input.shift === true,
+    ctrlKey: input.control === true,
+    altKey: input.alt === true,
+    metaKey: input.meta === true,
+    repeat: input.isAutoRepeat === true
+  };
 }
 
 function overlayHistoryActionFromInput(input = {}) {
@@ -951,6 +1147,442 @@ function sanitizeFabricMetrics(metrics = {}) {
   return sanitized;
 }
 
+function isPlainPersistenceRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactPersistenceKeys(value, expectedKeys, optionalKeys = []) {
+  if (!isPlainPersistenceRecord(value)) return false;
+  const keys = Reflect.ownKeys(value);
+  if (keys.some(key => typeof key !== 'string')) return false;
+  const allowedKeys = new Set([...expectedKeys, ...optionalKeys]);
+  return keys.every(key => allowedKeys.has(key)) &&
+    expectedKeys.every(key => Object.hasOwn(value, key));
+}
+
+function isDensePersistenceArray(value) {
+  if (!Array.isArray(value)) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) return false;
+  }
+  return Reflect.ownKeys(value).every(key =>
+    key === 'length' ||
+    (typeof key === 'string' && /^(0|[1-9]\d*)$/.test(key) && Number(key) < value.length)
+  );
+}
+
+function isSafePersistenceCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isBoundedPersistenceString(value, maximum = FABRIC_DRAWING_MAX_STRING_LENGTH) {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= maximum;
+}
+
+function clonePersistenceJson(value, maxBytes) {
+  let serialized;
+  try {
+    serialized = JSON.stringify(value);
+  } catch (_error) {
+    return { success: false, reason: 'serialization-failed' };
+  }
+  if (typeof serialized !== 'string') {
+    return { success: false, reason: 'serialization-failed' };
+  }
+  if (Buffer.byteLength(serialized, 'utf8') > maxBytes) {
+    return { success: false, reason: 'too-large' };
+  }
+  try {
+    return { success: true, value: JSON.parse(serialized) };
+  } catch (_error) {
+    return { success: false, reason: 'serialization-failed' };
+  }
+}
+
+function validateFabricDrawingTimeline(value) {
+  return Number.isFinite(value.fps) &&
+    value.fps > 0 &&
+    value.fps <= 1000 &&
+    Number.isSafeInteger(value.totalFrames) &&
+    value.totalFrames > 0 &&
+    value.totalFrames <= FABRIC_DRAWING_MAX_TOTAL_FRAMES;
+}
+
+function validateFabricDrawingTransform(value) {
+  if (!hasExactPersistenceKeys(value, FABRIC_DRAWING_TRANSFORM_KEYS)) return false;
+  for (const key of FABRIC_DRAWING_TRANSFORM_KEYS) {
+    if (key === 'flipX' || key === 'flipY') {
+      if (typeof value[key] !== 'boolean') return false;
+      continue;
+    }
+    if (!Number.isFinite(value[key]) ||
+        Math.abs(value[key]) > FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE) {
+      return false;
+    }
+  }
+  return value.scaleX !== 0 && value.scaleY !== 0;
+}
+
+function fabricDrawingTransformsEqual(left, right) {
+  return FABRIC_DRAWING_TRANSFORM_KEYS.every(key => left[key] === right[key]);
+}
+
+function validateFabricDrawingPoint(value) {
+  if (!hasExactPersistenceKeys(
+    value,
+    FABRIC_DRAWING_POINT_REQUIRED_KEYS,
+    FABRIC_DRAWING_POINT_OPTIONAL_KEYS
+  )) {
+    return false;
+  }
+  if (!Number.isFinite(value.x) ||
+      Math.abs(value.x) > FABRIC_DRAWING_MAX_POINT_COORDINATE ||
+      !Number.isFinite(value.y) ||
+      Math.abs(value.y) > FABRIC_DRAWING_MAX_POINT_COORDINATE ||
+      !Number.isFinite(value.pressure) ||
+      value.pressure < 0 ||
+      value.pressure > 1 ||
+      !Number.isFinite(value.time) ||
+      value.time < 0 ||
+      value.time > FABRIC_DRAWING_MAX_POINT_TIME) {
+    return false;
+  }
+  return value.pointerType === undefined ||
+    (typeof value.pointerType === 'string' &&
+     FABRIC_DRAWING_POINTER_TYPES.has(value.pointerType));
+}
+
+function validateFabricDrawingRecord(value, maxPathLength) {
+  if (!hasExactPersistenceKeys(
+    value,
+    FABRIC_DRAWING_RECORD_REQUIRED_KEYS,
+    FABRIC_DRAWING_RECORD_OPTIONAL_KEYS
+  ) ||
+      !isBoundedPersistenceString(value.id, 512) ||
+      value.type !== 'stroke' ||
+      !isBoundedPersistenceString(value.pathData, maxPathLength) ||
+      !isDensePersistenceArray(value.sourcePoints) ||
+      value.sourcePoints.length === 0 ||
+      value.sourcePoints.length > FABRIC_DRAWING_MAX_POINTS_PER_STROKE ||
+      !hasExactPersistenceKeys(value.style, FABRIC_DRAWING_STYLE_KEYS) ||
+      !FABRIC_DRAWING_HEX_COLOR.test(value.style.color) ||
+      !Number.isFinite(value.style.size) ||
+      value.style.size <= 0 ||
+      value.style.size > FABRIC_DRAWING_MAX_BRUSH_SIZE ||
+      !Number.isFinite(value.style.opacity) ||
+      value.style.opacity < 0 ||
+      value.style.opacity > 1 ||
+      !validateFabricDrawingTransform(value.transform)) {
+    return false;
+  }
+
+  let previousTime = 0;
+  for (const point of value.sourcePoints) {
+    if (!validateFabricDrawingPoint(point) || point.time < previousTime) return false;
+    previousTime = point.time;
+  }
+  return value.strokeCaps === undefined ||
+    (hasExactPersistenceKeys(value.strokeCaps, FABRIC_DRAWING_CAPS_KEYS) &&
+     typeof value.strokeCaps.start === 'boolean' &&
+     typeof value.strokeCaps.end === 'boolean');
+}
+
+function normalizeFabricDrawingPersistenceRequest(request, {
+  includeKeyframes,
+  maxBytes
+}) {
+  const cloned = clonePersistenceJson(request, maxBytes);
+  if (!cloned.success) return null;
+  const value = cloned.value;
+  const expectedKeys = includeKeyframes
+    ? FABRIC_DRAWING_HYDRATE_REQUEST_KEYS
+    : FABRIC_DRAWING_EXPORT_REQUEST_KEYS;
+  if (!hasExactPersistenceKeys(value, expectedKeys) ||
+      !readFabricDrawingPersistenceFence(value) ||
+      !validateFabricDrawingTimeline(value)) {
+    return null;
+  }
+  if (!includeKeyframes) return value;
+  if (!isDensePersistenceArray(value.keyframes) ||
+      value.keyframes.length > FABRIC_DRAWING_MAX_KEYFRAMES) {
+    return null;
+  }
+
+  const keyframeIds = new Set();
+  const frames = new Set();
+  let previousFrame = -1;
+  let objectCount = 0;
+  for (const keyframe of value.keyframes) {
+    if (!hasExactPersistenceKeys(keyframe, FABRIC_DRAWING_HYDRATE_KEYFRAME_KEYS) ||
+        !isBoundedPersistenceString(keyframe.id, 512) ||
+        !Number.isSafeInteger(keyframe.frame) ||
+        keyframe.frame < 0 ||
+        keyframe.frame >= value.totalFrames ||
+        keyframe.frame <= previousFrame ||
+        !Number.isFinite(keyframe.sourceWidth) ||
+        keyframe.sourceWidth <= 0 ||
+        keyframe.sourceWidth > FABRIC_DRAWING_MAX_SOURCE_DIMENSION ||
+        !Number.isFinite(keyframe.sourceHeight) ||
+        keyframe.sourceHeight <= 0 ||
+        keyframe.sourceHeight > FABRIC_DRAWING_MAX_SOURCE_DIMENSION ||
+        !isSafePersistenceCount(keyframe.mutationSequence) ||
+        !isDensePersistenceArray(keyframe.objects) ||
+        keyframe.objects.length > FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME ||
+        keyframeIds.has(keyframe.id) ||
+        frames.has(keyframe.frame)) {
+      return null;
+    }
+    const objectIds = new Set();
+    for (const object of keyframe.objects) {
+      if (!validateFabricDrawingRecord(object, maxBytes) || objectIds.has(object.id)) {
+        return null;
+      }
+      objectIds.add(object.id);
+    }
+    objectCount += keyframe.objects.length;
+    if (objectCount > FABRIC_DRAWING_MAX_OBJECTS_TOTAL) return null;
+    keyframeIds.add(keyframe.id);
+    frames.add(keyframe.frame);
+    previousFrame = keyframe.frame;
+  }
+  return value;
+}
+
+function readFabricDrawingPersistenceFence(value) {
+  try {
+    if (!value ||
+        !isSafePersistenceCount(value.hostGeneration) ||
+        !isSafePersistenceCount(value.videoGeneration) ||
+        !isBoundedPersistenceString(value.persistenceSessionId) ||
+        !isBoundedPersistenceString(value.stableVideoIdentity)) {
+      return null;
+    }
+    return {
+      hostGeneration: value.hostGeneration,
+      videoGeneration: value.videoGeneration,
+      persistenceSessionId: value.persistenceSessionId,
+      stableVideoIdentity: value.stableVideoIdentity
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function createFabricDrawingResyncMessage(fence, reason) {
+  return {
+    type: 'resync-required',
+    ...fence,
+    reason
+  };
+}
+
+function validateFabricDrawingRemoval(value) {
+  return hasExactPersistenceKeys(value, FABRIC_DRAWING_REMOVAL_KEYS) &&
+    isBoundedPersistenceString(value.id, 512) &&
+    isSafePersistenceCount(value.index) &&
+    value.index < FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME;
+}
+
+function validateFabricDrawingInsertion(value) {
+  if (!hasExactPersistenceKeys(value, FABRIC_DRAWING_INSERTION_KEYS) ||
+      !isSafePersistenceCount(value.index) ||
+      value.index > FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME ||
+      !validateFabricDrawingRecord(value.record, FABRIC_DRAWING_TRANSITION_MAX_BYTES) ||
+      (value.baseTransform !== null &&
+       !validateFabricDrawingTransform(value.baseTransform))) {
+    return false;
+  }
+  return value.baseTransform === null ||
+    fabricDrawingTransformsEqual(value.record.transform, value.baseTransform);
+}
+
+function validateFabricDrawingTransformChange(value) {
+  return hasExactPersistenceKeys(value, FABRIC_DRAWING_TRANSFORM_CHANGE_KEYS) &&
+    isBoundedPersistenceString(value.id, 512) &&
+    validateFabricDrawingTransform(value.beforeTransform) &&
+    validateFabricDrawingTransform(value.afterTransform) &&
+    !fabricDrawingTransformsEqual(value.beforeTransform, value.afterTransform);
+}
+
+function deriveFabricDrawingTransitionKind(value) {
+  if (value.removals.length > 0 && value.insertions.length > 0) return 'split-stroke';
+  if (value.insertions.length > 0) return 'add-objects';
+  if (value.removals.length > 0) {
+    return value.kind === 'clear-keyframe' ? 'clear-keyframe' : 'delete-objects';
+  }
+  if (value.transforms.length > 0) return 'transform-objects';
+  return null;
+}
+
+function isValidFabricDrawingTransitionEnvelope(value) {
+  if (!hasExactPersistenceKeys(value, FABRIC_DRAWING_TRANSITION_KEYS) ||
+      !hasExactPersistenceKeys(value.scene, FABRIC_DRAWING_SCENE_KEYS) ||
+      !isBoundedPersistenceString(value.scene.sceneInstanceId, 512) ||
+      !isSafePersistenceCount(value.scene.targetFrame) ||
+      value.scene.targetFrame >= FABRIC_DRAWING_MAX_TOTAL_FRAMES ||
+      !Number.isFinite(value.scene.sourceWidth) ||
+      value.scene.sourceWidth <= 0 ||
+      value.scene.sourceWidth > FABRIC_DRAWING_MAX_SOURCE_DIMENSION ||
+      !Number.isFinite(value.scene.sourceHeight) ||
+      value.scene.sourceHeight <= 0 ||
+      value.scene.sourceHeight > FABRIC_DRAWING_MAX_SOURCE_DIMENSION ||
+      !isSafePersistenceCount(value.mutationSequence) ||
+      !FABRIC_DRAWING_TRANSITION_ORIGINS.has(value.origin) ||
+      !FABRIC_DRAWING_TRANSITION_KINDS.has(value.kind) ||
+      !isSafePersistenceCount(value.estimatedBytes) ||
+      value.unsupportedReason !== null ||
+      !isDensePersistenceArray(value.removals) ||
+      !isDensePersistenceArray(value.insertions) ||
+      !isDensePersistenceArray(value.transforms) ||
+      value.removals.length > FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME ||
+      value.insertions.length > FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME ||
+      value.transforms.length > FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME ||
+      !value.removals.every(validateFabricDrawingRemoval) ||
+      !value.insertions.every(validateFabricDrawingInsertion) ||
+      !value.transforms.every(validateFabricDrawingTransformChange)) {
+    return false;
+  }
+
+  const removalIds = new Set(value.removals.map(item => item.id));
+  const insertionIds = new Set(value.insertions.map(item => item.record.id));
+  const transformIds = new Set(value.transforms.map(item => item.id));
+  if (removalIds.size !== value.removals.length ||
+      insertionIds.size !== value.insertions.length ||
+      transformIds.size !== value.transforms.length ||
+      value.removals.some((item, index) =>
+        index > 0 && value.removals[index - 1].index >= item.index) ||
+      value.insertions.some((item, index) =>
+        index > 0 && value.insertions[index - 1].index > item.index)) {
+    return false;
+  }
+  return deriveFabricDrawingTransitionKind(value) === value.kind;
+}
+
+function normalizeFabricDrawingPersistenceMessage(message) {
+  if (!isPlainPersistenceRecord(message)) return null;
+  if (message.type === 'resync-required') {
+    const fence = readFabricDrawingPersistenceFence(message);
+    if (!fence ||
+        !hasExactPersistenceKeys(message, FABRIC_DRAWING_RESYNC_KEYS) ||
+        !FABRIC_DRAWING_RESYNC_REASONS.has(message.reason)) {
+      return null;
+    }
+    return createFabricDrawingResyncMessage(fence, message.reason);
+  }
+  if (message.type !== 'transition' ||
+      !hasExactPersistenceKeys(message, ['type', 'transition'])) {
+    return null;
+  }
+
+  const fence = readFabricDrawingPersistenceFence(message.transition);
+  if (!fence) return null;
+  let serialized;
+  try {
+    serialized = JSON.stringify(message.transition);
+  } catch (_error) {
+    return createFabricDrawingResyncMessage(
+      fence,
+      'transition-serialization-failed'
+    );
+  }
+  if (typeof serialized !== 'string') {
+    return createFabricDrawingResyncMessage(
+      fence,
+      'transition-serialization-failed'
+    );
+  }
+  if (Buffer.byteLength(serialized, 'utf8') > FABRIC_DRAWING_TRANSITION_MAX_BYTES) {
+    return createFabricDrawingResyncMessage(fence, 'transition-too-large');
+  }
+
+  let transition;
+  try {
+    transition = JSON.parse(serialized);
+  } catch (_error) {
+    return createFabricDrawingResyncMessage(
+      fence,
+      'transition-serialization-failed'
+    );
+  }
+  if (isSafePersistenceCount(transition.estimatedBytes) &&
+      transition.estimatedBytes > FABRIC_DRAWING_TRANSITION_MAX_BYTES) {
+    return createFabricDrawingResyncMessage(fence, 'transition-too-large');
+  }
+  if (!isValidFabricDrawingTransitionEnvelope(transition)) {
+    return createFabricDrawingResyncMessage(
+      fence,
+      'transition-invalid-at-boundary'
+    );
+  }
+  return { type: 'transition', transition };
+}
+
+function normalizeFabricDrawingExportSnapshot(snapshot, request, maxBytes) {
+  const cloned = clonePersistenceJson(snapshot, maxBytes);
+  if (!cloned.success) {
+    return {
+      success: false,
+      reason: cloned.reason === 'too-large'
+        ? 'persistence-snapshot-too-large'
+        : 'invalid-persistence-snapshot'
+    };
+  }
+  const value = cloned.value;
+  if (!hasExactPersistenceKeys(value, FABRIC_DRAWING_SNAPSHOT_KEYS) ||
+      !readFabricDrawingPersistenceFence(value) ||
+      !validateFabricDrawingTimeline(value) ||
+      FABRIC_DRAWING_EXPORT_REQUEST_KEYS.some(key => value[key] !== request[key]) ||
+      !isDensePersistenceArray(value.scenes) ||
+      value.scenes.length > FABRIC_DRAWING_MAX_KEYFRAMES) {
+    return { success: false, reason: 'invalid-persistence-snapshot' };
+  }
+
+  const sceneIds = new Set();
+  const frames = new Set();
+  let objectCount = 0;
+  let previousFrame = -1;
+  for (const scene of value.scenes) {
+    if (!hasExactPersistenceKeys(scene, FABRIC_DRAWING_SNAPSHOT_SCENE_KEYS) ||
+        !isBoundedPersistenceString(scene.sceneInstanceId, 512) ||
+        !Number.isSafeInteger(scene.targetFrame) ||
+        scene.targetFrame < 0 ||
+        scene.targetFrame >= value.totalFrames ||
+        scene.targetFrame <= previousFrame ||
+        !Number.isFinite(scene.sourceWidth) ||
+        scene.sourceWidth <= 0 ||
+        scene.sourceWidth > FABRIC_DRAWING_MAX_SOURCE_DIMENSION ||
+        !Number.isFinite(scene.sourceHeight) ||
+        scene.sourceHeight <= 0 ||
+        scene.sourceHeight > FABRIC_DRAWING_MAX_SOURCE_DIMENSION ||
+        !isSafePersistenceCount(scene.mutationSequence) ||
+        !isDensePersistenceArray(scene.objects) ||
+        scene.objects.length > FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME ||
+        sceneIds.has(scene.sceneInstanceId) ||
+        frames.has(scene.targetFrame)) {
+      return { success: false, reason: 'invalid-persistence-snapshot' };
+    }
+    const objectIds = new Set();
+    for (const object of scene.objects) {
+      if (!validateFabricDrawingRecord(object, maxBytes) || objectIds.has(object.id)) {
+        return { success: false, reason: 'invalid-persistence-snapshot' };
+      }
+      objectIds.add(object.id);
+    }
+    objectCount += scene.objects.length;
+    if (objectCount > FABRIC_DRAWING_MAX_OBJECTS_TOTAL) {
+      return { success: false, reason: 'persistence-snapshot-too-large' };
+    }
+    sceneIds.add(scene.sceneInstanceId);
+    frames.add(scene.targetFrame);
+    previousFrame = scene.targetFrame;
+  }
+  return { success: true, snapshot: value };
+}
+
 class MPVOverlayHost {
   constructor(options = {}) {
     this.BrowserWindow = options.BrowserWindow || getDefaultBrowserWindow();
@@ -986,6 +1618,11 @@ class MPVOverlayHost {
     this.fabricRetryAfter = 0;
     this.fabricBundlePath = options.fabricBundlePath || DEFAULT_FABRIC_BUNDLE_PATH;
     this.readFile = options.readFile || fs.promises.readFile.bind(fs.promises);
+    const snapshotMaxBytes = Number(options.fabricDrawingSnapshotMaxBytes);
+    this.fabricDrawingSnapshotMaxBytes =
+      Number.isSafeInteger(snapshotMaxBytes) && snapshotMaxBytes > 0
+        ? Math.min(snapshotMaxBytes, FABRIC_DRAWING_SNAPSHOT_MAX_BYTES)
+        : FABRIC_DRAWING_SNAPSHOT_MAX_BYTES;
     this.currentVideoGeneration = -1;
     this.currentInputRevision = -1;
     this.desiredInputEnabled = false;
@@ -1021,6 +1658,14 @@ class MPVOverlayHost {
       passiveReady,
       fabricReady: passiveReady && this.fabricReadyGeneration === this.hostGeneration
     };
+  }
+
+  isCurrentOverlaySender(event) {
+    const hostWindow = this.window;
+    return !!hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      !hostWindow.webContents?.isDestroyed?.() &&
+      event?.sender === hostWindow.webContents;
   }
 
   async setDrawingInput() {
@@ -1275,6 +1920,182 @@ class MPVOverlayHost {
     }
   }
 
+  async hydrateDrawingVideo(request = {}) {
+    const normalizedRequest = normalizeFabricDrawingPersistenceRequest(request, {
+      includeKeyframes: true,
+      maxBytes: this.fabricDrawingSnapshotMaxBytes
+    });
+    if (!normalizedRequest) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'invalid-persistence-request'
+      };
+    }
+    const hostWindow = this.window;
+    if (!this._drawingPersistenceRequestIsCurrent(hostWindow, normalizedRequest)) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'stale-persistence-fence'
+      };
+    }
+    if (this.desiredInputEnabled) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'drawing-input-enabled'
+      };
+    }
+    const prepared = await this._ensureFabricRuntime();
+    if (!prepared.success) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'drawing-runtime-unavailable'
+      };
+    }
+    if (!this._drawingPersistenceRequestIsCurrent(hostWindow, normalizedRequest, true)) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'stale-persistence-response'
+      };
+    }
+    try {
+      const result = await this._executeFabricMethod(
+        'hydrateDrawingVideo',
+        normalizedRequest
+      );
+      if (!this._drawingPersistenceRequestIsCurrent(
+        hostWindow,
+        normalizedRequest,
+        true
+      )) {
+        return {
+          success: false,
+          accepted: false,
+          reason: 'stale-persistence-response'
+        };
+      }
+      if (result?.accepted !== true) {
+        return {
+          success: false,
+          accepted: false,
+          reason: this._drawingPersistenceReason(
+            result?.reason,
+            'drawing-hydration-rejected'
+          )
+        };
+      }
+      return {
+        success: true,
+        accepted: true,
+        sceneCount: Math.min(
+          FABRIC_DRAWING_MAX_KEYFRAMES,
+          Math.max(0, Math.trunc(finiteDiagnosticNumber(result.sceneCount)))
+        ),
+        objectCount: Math.min(
+          FABRIC_DRAWING_MAX_OBJECTS_TOTAL,
+          Math.max(0, Math.trunc(finiteDiagnosticNumber(result.objectCount)))
+        )
+      };
+    } catch (_error) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'drawing-hydration-failed'
+      };
+    }
+  }
+
+  async exportDrawingVideo(request = {}) {
+    const normalizedRequest = normalizeFabricDrawingPersistenceRequest(request, {
+      includeKeyframes: false,
+      maxBytes: this.fabricDrawingSnapshotMaxBytes
+    });
+    if (!normalizedRequest) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'invalid-persistence-request'
+      };
+    }
+    const hostWindow = this.window;
+    if (!this._drawingPersistenceRequestIsCurrent(hostWindow, normalizedRequest)) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'stale-persistence-fence'
+      };
+    }
+    const prepared = await this._ensureFabricRuntime();
+    if (!prepared.success) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'drawing-runtime-unavailable'
+      };
+    }
+    if (!this._drawingPersistenceRequestIsCurrent(hostWindow, normalizedRequest, true)) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'stale-persistence-response'
+      };
+    }
+    try {
+      const result = await this._executeFabricMethod(
+        'exportDrawingVideo',
+        normalizedRequest
+      );
+      if (!this._drawingPersistenceRequestIsCurrent(
+        hostWindow,
+        normalizedRequest,
+        true
+      )) {
+        return {
+          success: false,
+          accepted: false,
+          reason: 'stale-persistence-response'
+        };
+      }
+      if (result?.accepted !== true) {
+        return {
+          success: false,
+          accepted: false,
+          reason: this._drawingPersistenceReason(
+            result?.reason,
+            'drawing-export-rejected'
+          )
+        };
+      }
+      const normalizedSnapshot = normalizeFabricDrawingExportSnapshot(
+        result.snapshot,
+        normalizedRequest,
+        this.fabricDrawingSnapshotMaxBytes
+      );
+      if (!normalizedSnapshot.success) {
+        return {
+          success: false,
+          accepted: false,
+          reason: normalizedSnapshot.reason
+        };
+      }
+      return {
+        success: true,
+        accepted: true,
+        snapshot: normalizedSnapshot.snapshot
+      };
+    } catch (_error) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'drawing-export-failed'
+      };
+    }
+  }
+
   async _ensureFabricRuntime() {
     const hostWindow = this.window;
     const hostGeneration = this.hostGeneration;
@@ -1426,6 +2247,20 @@ class MPVOverlayHost {
       request.inputRevision === this.currentInputRevision &&
       request.sessionId === this.activeSessionId &&
       this.desiredInputEnabled;
+  }
+
+  _drawingPersistenceRequestIsCurrent(hostWindow, request = {}, requireReady = false) {
+    return !!hostWindow &&
+      this.window === hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      this.contentLoaded === true &&
+      request.hostGeneration === this.hostGeneration &&
+      request.videoGeneration === this.currentVideoGeneration &&
+      (!requireReady || this.fabricReadyGeneration === this.hostGeneration);
+  }
+
+  _drawingPersistenceReason(value, fallback) {
+    return FABRIC_DRAWING_PUBLIC_RUNTIME_REASON_MAP.get(value) || fallback;
   }
 
   _inputRequestStillDesired(hostWindow, request = {}) {
@@ -1687,6 +2522,7 @@ class MPVOverlayHost {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        preload: path.join(__dirname, '..', 'preload', 'mpv-overlay-preload.js'),
         webSecurity: false
       }
     });
@@ -1771,14 +2607,14 @@ class MPVOverlayHost {
       if (!forwardedInput ||
           !mainWindow ||
           mainWindow.isDestroyed?.() ||
-          typeof mainWindow.webContents?.sendInputEvent !== 'function') {
+          typeof mainWindow.webContents?.send !== 'function') {
         return;
       }
       try {
-        // overlay가 획 클릭으로 포커스를 얻어도 기존 B/V/Delete/Space 단축키는
-        // 메인 renderer의 단일 처리 경로를 그대로 이용한다.
+        // overlay가 획 클릭으로 포커스를 얻어도 물리 키 위치(code)를 보존해
+        // 사용자 지정 단축키를 메인 renderer의 단일 처리 경로로 보낸다.
         mainWindow.focus?.();
-        mainWindow.webContents.sendInputEvent(forwardedInput);
+        mainWindow.webContents.send(FORWARDED_KEYBOARD_CHANNEL, forwardedInput);
         event?.preventDefault?.();
       } catch (error) {
         this.logger.debug('Fabric overlay keyboard relay failed', { error: error.message });
@@ -1962,5 +2798,6 @@ const mpvOverlayHost = new MPVOverlayHost();
 module.exports = {
   MPVOverlayHost,
   mpvOverlayHost,
-  normalizeOverlayState
+  normalizeOverlayState,
+  normalizeFabricDrawingPersistenceMessage
 };

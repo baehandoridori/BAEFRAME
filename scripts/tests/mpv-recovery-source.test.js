@@ -735,10 +735,22 @@ test('failed superseding video load safely tears down a destructive review trans
 
   const loadVideoSource = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  async function handleImportFeedbackFromVersion/);
   assert.ok(loadVideoSource, 'loadVideo should exist');
-  assert.match(loadVideoSource[1], /let videoLoadCompleted = false;/);
-  assert.match(loadVideoSource[1], /if \(!canContinueVideoLoad\(\)\) return false;\s+if \(!beginDestructiveMpvReviewMediaChange\(loadToken\)\) return false;\s+reviewDataManager\.pauseAutoSave\(\);/);
-  assert.match(loadVideoSource[1], /videoLoadCompleted = true;[\s\S]+return true;/);
-  assert.match(loadVideoSource[1], /if \(activeVideoLoadToken === loadToken\) \{[\s\S]+await settlePendingMpvReviewFreezeMediaChange\(\{ loaded: videoLoadCompleted \}\);/);
+  const source = loadVideoSource[1];
+  assert.match(source, /let videoLoadCompleted = false;/);
+  assert.match(source, /fabricVideoChangeStarted = true;\s+const fabricReadyForVideoChange =\s+await fabricDrawingPilotController\.beforeVideoChange\(loadToken\);\s+if \(!fabricReadyForVideoChange \|\| !canContinueVideoLoad\(\)\) return false;/);
+  const destructiveIndex = source.indexOf('beginDestructiveMpvReviewMediaChange(loadToken)');
+  const watchStopIndex = source.indexOf('await window.electronAPI.watchFileStop(');
+  const collaborationStopIndex = source.indexOf('await liveblocksManager.stop()');
+  const pauseAutoSaveIndex = source.indexOf('reviewDataManager.pauseAutoSave()');
+  assert.ok(
+    destructiveIndex >= 0 &&
+      destructiveIndex < watchStopIndex &&
+      watchStopIndex < collaborationStopIndex &&
+      collaborationStopIndex < pauseAutoSaveIndex,
+    'watch and collaboration teardown must run inside the destructive transition boundary'
+  );
+  assert.match(source, /videoLoadCompleted = true;[\s\S]+return true;/);
+  assert.match(source, /if \(activeVideoLoadToken === loadToken\) \{[\s\S]+await settlePendingMpvReviewFreezeMediaChange\(\{ loaded: videoLoadCompleted \}\);/);
 });
 
 test('leaving draw mode forces a final mpv overlay sync so saved drawings stay visible', () => {

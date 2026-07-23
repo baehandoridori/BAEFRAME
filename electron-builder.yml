@@ -7,6 +7,7 @@ directories:
   buildResources: build
 
 beforePack: ./scripts/electron-builder-before-pack.js
+afterPack: ./scripts/electron-builder-after-pack.js
 
 files:
   - main/**/*
@@ -18,6 +19,8 @@ files:
 extraResources:
   - from: BFRAME_ico.ico
     to: project-file.ico
+  - from: native/review-file-cas-helper/bin/ReviewFileCasHelper.exe
+    to: native/ReviewFileCasHelper.exe
   - from: mpv/
     to: mpv/
     filter:

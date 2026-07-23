@@ -116,75 +116,49 @@ function jsonEquals(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function getNextPrefixedId(prefix, usedIds) {
-  let maxId = 0;
-  for (const id of usedIds) {
-    const match = String(id).match(new RegExp(`^${prefix}-(\\d+)$`));
-    if (match) {
-      maxId = Math.max(maxId, parseInt(match[1], 10));
+function canonicalizeJson(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(item => canonicalizeJson(item));
+  const result = {};
+  for (const key of Object.keys(value).sort()) {
+    if (value[key] !== undefined) {
+      result[key] = canonicalizeJson(value[key]);
     }
   }
-
-  let nextId = maxId + 1;
-  let candidate = `${prefix}-${nextId}`;
-  while (usedIds.has(candidate)) {
-    nextId += 1;
-    candidate = `${prefix}-${nextId}`;
-  }
-  usedIds.add(candidate);
-  return candidate;
+  return result;
 }
 
-function hasDrawingLayerContent(layer) {
-  return (layer?.keyframes || []).some(keyframe => {
-    return !keyframe?.isEmpty
-      || !!keyframe?.canvasData
-      || !!keyframe?.baseCanvasData
-      || (keyframe?.strokeRecords || []).length > 0;
-  });
-}
-
-function mergeDrawingData(localData = {}, remoteData = {}) {
-  const localLayers = Array.isArray(localData?.layers) ? localData.layers : [];
-  const remoteLayers = Array.isArray(remoteData?.layers) ? remoteData.layers : [];
-  const usedIds = new Set(localLayers.map(layer => layer.id).filter(Boolean));
-  const mergedLayers = localLayers.map(layer => cloneJson(layer));
-
-  for (const remoteLayer of remoteLayers) {
-    const remoteCopy = cloneJson(remoteLayer);
-    const existingIndex = mergedLayers.findIndex(layer => layer.id === remoteCopy.id);
-
-    if (existingIndex === -1) {
-      usedIds.add(remoteCopy.id);
-      mergedLayers.push(remoteCopy);
-      continue;
-    }
-
-    const localLayer = mergedLayers[existingIndex];
-    if (jsonEquals(localLayer, remoteCopy)) continue;
-
-    const localHasContent = hasDrawingLayerContent(localLayer);
-    const remoteHasContent = hasDrawingLayerContent(remoteCopy);
-
-    if (!localHasContent && remoteHasContent) {
-      usedIds.add(remoteCopy.id);
-      mergedLayers[existingIndex] = remoteCopy;
-    } else if (remoteHasContent) {
-      remoteCopy.id = getNextPrefixedId('layer', usedIds);
-      remoteCopy.name = `${remoteCopy.name || '원격 드로잉'} (원격)`;
-      mergedLayers.push(remoteCopy);
+function captureDrawingsV3DiskState(data) {
+  const present = Boolean(
+    data &&
+    typeof data === 'object' &&
+    !Array.isArray(data) &&
+    Object.hasOwn(data, 'drawingsV3')
+  );
+  const value = present ? cloneJson(data.drawingsV3) : undefined;
+  let serialized = 'undefined';
+  if (present) {
+    try {
+      const candidate = JSON.stringify(canonicalizeJson(value));
+      if (candidate !== undefined) serialized = candidate;
+    } catch (_error) {
+      serialized = 'unserializable';
     }
   }
-
-  const activeLayerId = mergedLayers.some(layer => layer.id === localData?.activeLayerId)
-    ? localData.activeLayerId
-    : remoteData?.activeLayerId || mergedLayers[0]?.id || null;
-
   return {
-    ...remoteData,
-    ...localData,
-    layers: mergedLayers,
-    activeLayerId
+    known: true,
+    present,
+    value,
+    fingerprint: present ? `present:${serialized}` : 'missing'
+  };
+}
+
+function createUnknownDrawingsV3DiskState() {
+  return {
+    known: false,
+    present: false,
+    value: undefined,
+    fingerprint: null
   };
 }
 
@@ -193,75 +167,630 @@ function getHighlightList(data) {
   return Array.isArray(data?.highlights) ? data.highlights : [];
 }
 
-function mergeHighlightData(localData = {}, remoteData = {}) {
-  const localHighlights = getHighlightList(localData);
-  const remoteHighlights = getHighlightList(remoteData);
-  const usedIds = new Set(localHighlights.map(highlight => highlight.id).filter(Boolean));
-  const mergedHighlights = localHighlights.map(highlight => cloneJson(highlight));
-
-  for (const remoteHighlight of remoteHighlights) {
-    const remoteCopy = cloneJson(remoteHighlight);
-    const existingIndex = mergedHighlights.findIndex(highlight => highlight.id === remoteCopy.id);
-
-    if (existingIndex === -1) {
-      usedIds.add(remoteCopy.id);
-      mergedHighlights.push(remoteCopy);
-      continue;
-    }
-
-    if (jsonEquals(mergedHighlights[existingIndex], remoteCopy)) continue;
-
-    remoteCopy.id = getNextPrefixedId('highlight', usedIds);
-    mergedHighlights.push(remoteCopy);
-  }
-
+function normalizeHighlightData(data) {
   return {
-    ...(Array.isArray(remoteData) ? {} : remoteData),
-    ...(Array.isArray(localData) ? {} : localData),
-    highlights: mergedHighlights
+    ...(data && typeof data === 'object' && !Array.isArray(data)
+      ? cloneJson(data)
+      : {}),
+    highlights: cloneJson(getHighlightList(data))
   };
 }
 
-function mergeManualVersions(localVersions = [], remoteVersions = []) {
-  const merged = Array.isArray(localVersions) ? localVersions.map(version => cloneJson(version)) : [];
-  const keySet = new Set(merged.map(version => version.filePath || version.path || version.fileName).filter(Boolean));
+function normalizeReviewRootForMerge(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
 
-  for (const remoteVersion of Array.isArray(remoteVersions) ? remoteVersions : []) {
-    const key = remoteVersion.filePath || remoteVersion.path || remoteVersion.fileName;
-    if (key && keySet.has(key)) continue;
-    if (key) keySet.add(key);
-    merged.push(cloneJson(remoteVersion));
+  const dataVersion = getDataVersion(data);
+  const unsupportedMajor = getUnsupportedBframeMajor(
+    dataVersion,
+    BFRAME_VERSION,
+    !hasExplicitBframeVersion(data)
+  );
+  if (unsupportedMajor !== null) {
+    return data;
   }
 
-  return merged;
+  return needsMigration(data) ? migrateToV2(data) : data;
 }
 
-function mergeCompositionLayers(localLayers = [], remoteLayers = []) {
-  const merged = Array.isArray(localLayers) ? localLayers.map(layer => cloneJson(layer)) : [];
-  const usedIds = new Set(merged.map(layer => layer.id).filter(Boolean));
+function createEmptyReviewMergeBase() {
+  return {
+    comments: { layers: [] },
+    drawings: { layers: [] },
+    highlights: { highlights: [] },
+    compositionLayers: [],
+    manualVersions: [],
+    versionInfo: null,
+    liveblocksRoomId: null
+  };
+}
 
-  for (const remoteLayer of Array.isArray(remoteLayers) ? remoteLayers : []) {
-    const remoteCopy = cloneJson(remoteLayer);
-    const existingIndex = merged.findIndex(layer => layer.id === remoteCopy.id);
+function captureReviewMergeBase(data) {
+  const source = data && typeof data === 'object' && !Array.isArray(data)
+    ? data
+    : {};
+  return {
+    comments: cloneJson(source.comments || { layers: [] }),
+    drawings: cloneJson(source.drawings || { layers: [] }),
+    highlights: normalizeHighlightData(source.highlights),
+    compositionLayers: cloneJson(
+      Array.isArray(source.compositionLayers) ? source.compositionLayers : []
+    ),
+    manualVersions: cloneJson(
+      Array.isArray(source.manualVersions) ? source.manualVersions : []
+    ),
+    versionInfo: cloneJson(source.versionInfo ?? null),
+    liveblocksRoomId: source.liveblocksRoomId ?? null
+  };
+}
 
-    if (existingIndex === -1) {
-      usedIds.add(remoteCopy.id);
-      merged.push(remoteCopy);
+function filterAcceptedItems(sourceItems, appliedItems, options = {}) {
+  const getKey = options.getKey || (item => item?.id);
+  const mergeAccepted = options.mergeAccepted ||
+    ((sourceItem) => cloneJson(sourceItem));
+  const appliedByKey = new Map(
+    (Array.isArray(appliedItems) ? appliedItems : [])
+      .map((item, index) => [String(getKey(item) ?? `__index-${index}`), item])
+  );
+
+  return (Array.isArray(sourceItems) ? sourceItems : []).flatMap(
+    (sourceItem, index) => {
+      const key = String(getKey(sourceItem) ?? `__index-${index}`);
+      const appliedItem = appliedByKey.get(key);
+      return appliedItem
+        ? [mergeAccepted(sourceItem, appliedItem)]
+        : [];
+    }
+  );
+}
+
+function captureAcceptedReviewMergeBase(sourceData, appliedData) {
+  const source = captureReviewMergeBase(sourceData);
+  const applied = captureReviewMergeBase(appliedData);
+  const comments = {
+    ...cloneJson(source.comments),
+    layers: filterAcceptedItems(
+      source.comments.layers,
+      applied.comments.layers,
+      {
+        mergeAccepted: (sourceLayer, appliedLayer) => ({
+          ...cloneJson(sourceLayer),
+          markers: filterAcceptedItems(
+            sourceLayer?.markers,
+            appliedLayer?.markers,
+            {
+              mergeAccepted: (sourceMarker, appliedMarker) => ({
+                ...cloneJson(sourceMarker),
+                replies: filterAcceptedItems(
+                  sourceMarker?.replies,
+                  appliedMarker?.replies
+                )
+              })
+            }
+          )
+        })
+      }
+    )
+  };
+
+  return {
+    ...source,
+    comments,
+    drawings: {
+      ...cloneJson(source.drawings),
+      layers: filterAcceptedItems(
+        source.drawings.layers,
+        applied.drawings.layers
+      )
+    },
+    highlights: {
+      ...cloneJson(source.highlights),
+      highlights: filterAcceptedItems(
+        source.highlights.highlights,
+        applied.highlights.highlights
+      )
+    },
+    compositionLayers: filterAcceptedItems(
+      source.compositionLayers,
+      applied.compositionLayers
+    ),
+    manualVersions: filterAcceptedItems(
+      source.manualVersions,
+      applied.manualVersions,
+      { getKey: getManualVersionMergeKey }
+    )
+  };
+}
+
+function createDeterministicConflictCopy(
+  item,
+  usedIds,
+  {
+    idKey = 'id',
+    conflictKind = 'remote',
+    labelKey = 'name'
+  } = {}
+) {
+  const copy = cloneJson(item);
+  const originalId = String(copy?.[idKey] || 'item');
+  const suffix = conflictKind === 'local'
+    ? '__local-conflict'
+    : '__remote-conflict';
+  let candidate = `${originalId}${suffix}`;
+  let sequence = 2;
+  while (usedIds.has(candidate)) {
+    candidate = `${originalId}${suffix}-${sequence}`;
+    sequence += 1;
+  }
+  usedIds.add(candidate);
+  copy[idKey] = candidate;
+  if (labelKey && typeof copy[labelKey] === 'string') {
+    copy[labelKey] = `${copy[labelKey]} (${conflictKind === 'local' ? '로컬' : '원격'} 충돌)`;
+  }
+  return copy;
+}
+
+function mergeEntityCollectionThreeWay(
+  baseItems,
+  localItems,
+  remoteItems,
+  {
+    getKey = item => item?.id,
+    createConflictCopy = (item, usedKeys, conflictKind) =>
+      createDeterministicConflictCopy(item, usedKeys, { conflictKind }),
+    mergeConcurrent = null
+  } = {}
+) {
+  const normalizeKey = (item, index, source) => {
+    const key = getKey(item);
+    if (key !== null && key !== undefined && String(key).length > 0) {
+      return String(key);
+    }
+    return `__anonymous-${source}-${index}-${JSON.stringify(canonicalizeJson(item))}`;
+  };
+  const makeMap = (items, source) => new Map(
+    (Array.isArray(items) ? items : []).map((item, index) => [
+      normalizeKey(item, index, source),
+      item
+    ])
+  );
+  const baseMap = makeMap(baseItems, 'base');
+  const localMap = makeMap(localItems, 'local');
+  const remoteMap = makeMap(remoteItems, 'remote');
+  const baseKeys = [...baseMap.keys()];
+  const localKeys = [...localMap.keys()];
+  const remoteKeys = [...remoteMap.keys()];
+  const localOrderChanged = !jsonEquals(localKeys, baseKeys);
+  const remoteOrderChanged = !jsonEquals(remoteKeys, baseKeys);
+  // 한쪽만 순서를 바꿨으면 그 순서를 따른다. 양쪽이 동시에 서로 다른
+  // 순서를 만들었으면 저장 직전에 읽은 최신 디스크 순서를 결정적으로 따른다.
+  const preferLocalOrder = localOrderChanged && !remoteOrderChanged;
+  const preferredKeys = preferLocalOrder ? localKeys : remoteKeys;
+  const secondaryKeys = preferLocalOrder ? remoteKeys : localKeys;
+  const orderedKeys = [
+    ...preferredKeys,
+    ...secondaryKeys,
+    ...baseKeys
+  ].filter((key, index, all) => all.indexOf(key) === index);
+  const usedKeys = new Set([...localMap.keys(), ...remoteMap.keys()]);
+  const mergedByKey = new Map();
+
+  for (const key of orderedKeys) {
+    const hasBase = baseMap.has(key);
+    const hasLocal = localMap.has(key);
+    const hasRemote = remoteMap.has(key);
+    const base = baseMap.get(key);
+    const local = localMap.get(key);
+    const remote = remoteMap.get(key);
+
+    if (!hasBase) {
+      if (hasLocal && hasRemote) {
+        if (jsonEquals(local, remote)) {
+          mergedByKey.set(key, [cloneJson(local)]);
+        } else if (typeof mergeConcurrent === 'function') {
+          mergedByKey.set(key, mergeConcurrent({
+            base: undefined,
+            local,
+            remote,
+            usedKeys
+          }));
+        } else {
+          mergedByKey.set(key, [
+            cloneJson(local),
+            createConflictCopy(remote, usedKeys, 'remote')
+          ]);
+        }
+      } else if (hasLocal) {
+        mergedByKey.set(key, [cloneJson(local)]);
+      } else if (hasRemote) {
+        mergedByKey.set(key, [cloneJson(remote)]);
+      }
       continue;
     }
 
-    if (jsonEquals(merged[existingIndex], remoteCopy)) continue;
+    if (!hasLocal && !hasRemote) {
+      mergedByKey.set(key, []);
+      continue;
+    }
+    if (!hasLocal) {
+      if (!jsonEquals(remote, base)) {
+        mergedByKey.set(key, [
+          createConflictCopy(remote, usedKeys, 'remote')
+        ]);
+      } else {
+        mergedByKey.set(key, []);
+      }
+      continue;
+    }
+    if (!hasRemote) {
+      if (!jsonEquals(local, base)) {
+        mergedByKey.set(key, [
+          createConflictCopy(local, usedKeys, 'local')
+        ]);
+      } else {
+        mergedByKey.set(key, []);
+      }
+      continue;
+    }
 
-    remoteCopy.id = `composition_${Date.now()}_${getNextPrefixedId('remote', usedIds)}`;
-    remoteCopy.name = `${remoteCopy.name || '원격 합성 레이어'} (원격)`;
-    remoteCopy.order = merged.length;
-    usedIds.add(remoteCopy.id);
-    merged.push(remoteCopy);
+    if (jsonEquals(local, remote)) {
+      mergedByKey.set(key, [cloneJson(local)]);
+    } else if (jsonEquals(local, base)) {
+      mergedByKey.set(key, [cloneJson(remote)]);
+    } else if (jsonEquals(remote, base)) {
+      mergedByKey.set(key, [cloneJson(local)]);
+    } else if (typeof mergeConcurrent === 'function') {
+      mergedByKey.set(key, mergeConcurrent({
+        base,
+        local,
+        remote,
+        usedKeys
+      }));
+    } else {
+      mergedByKey.set(key, [
+        cloneJson(local),
+        createConflictCopy(remote, usedKeys, 'remote')
+      ]);
+    }
   }
 
-  return merged
-    .map((layer, index) => ({ ...layer, order: Number.isFinite(layer.order) ? layer.order : index }))
-    .sort((a, b) => a.order - b.order);
+  return orderedKeys.flatMap(key => mergedByKey.get(key) || []);
+}
+
+function withoutReplies(marker) {
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) {
+    return marker;
+  }
+  const metadata = cloneJson(marker);
+  delete metadata.replies;
+  return metadata;
+}
+
+function getMarkerContentForMerge(marker) {
+  const content = withoutReplies(marker);
+  if (!content || typeof content !== 'object' || Array.isArray(content)) {
+    return content;
+  }
+  // 답글 추가/수정도 parent.updatedAt을 올리므로 revision 시각 자체는
+  // 부모 본문 충돌 판정에서 제외하고 실제 필드 변경만 비교한다.
+  delete content.updatedAt;
+  return content;
+}
+
+function mergeRepliesThreeWay(baseReplies, localReplies, remoteReplies) {
+  return mergeEntityCollectionThreeWay(
+    baseReplies,
+    localReplies,
+    remoteReplies,
+    {
+      createConflictCopy: (reply, replyIds, conflictKind) =>
+        createDeterministicConflictCopy(reply, replyIds, {
+          conflictKind,
+          labelKey: null
+        }),
+      mergeConcurrent: ({ local, remote, usedKeys }) => [
+        cloneJson(local),
+        createDeterministicConflictCopy(remote, usedKeys, {
+          conflictKind: 'remote',
+          labelKey: null
+        })
+      ]
+    }
+  );
+}
+
+function selectMarkerMetadata(baseMarker, localMarker, remoteMarker) {
+  const localMetadata = withoutReplies(localMarker);
+  const remoteMetadata = withoutReplies(remoteMarker);
+  const baseContent = getMarkerContentForMerge(baseMarker);
+  const localContent = getMarkerContentForMerge(localMarker);
+  const remoteContent = getMarkerContentForMerge(remoteMarker);
+
+  if (jsonEquals(localContent, remoteContent)) {
+    const selected = getCommentRevisionTime(remoteMetadata) >
+      getCommentRevisionTime(localMetadata)
+      ? remoteMetadata
+      : localMetadata;
+    return {
+      selected: cloneJson(selected),
+      conflict: null,
+      conflictKind: null
+    };
+  }
+  if (baseMarker && jsonEquals(localContent, baseContent)) {
+    return {
+      selected: cloneJson(remoteMetadata),
+      conflict: null,
+      conflictKind: null
+    };
+  }
+  if (baseMarker && jsonEquals(remoteContent, baseContent)) {
+    return {
+      selected: cloneJson(localMetadata),
+      conflict: null,
+      conflictKind: null
+    };
+  }
+
+  const localDeleted = localMarker?.deleted === true;
+  const remoteDeleted = remoteMarker?.deleted === true;
+  if (localDeleted !== remoteDeleted) {
+    // 삭제 tombstone이 원래 ID를 계속 소유해 뒤늦은 저장이 원본 댓글을
+    // 부활시키지 않게 하고, 반대편 편집은 결정적인 conflict copy로 보존한다.
+    return localDeleted
+      ? {
+        selected: cloneJson(localMetadata),
+        conflict: cloneJson(remoteMetadata),
+        conflictKind: 'remote'
+      }
+      : {
+        selected: cloneJson(remoteMetadata),
+        conflict: cloneJson(localMetadata),
+        conflictKind: 'local'
+      };
+  }
+
+  return {
+    selected: cloneJson(localMetadata),
+    conflict: cloneJson(remoteMetadata),
+    conflictKind: 'remote'
+  };
+}
+
+function mergeMarkerThreeWay(baseMarker, localMarker, remoteMarker, usedKeys) {
+  const replies = mergeRepliesThreeWay(
+    baseMarker?.replies,
+    localMarker?.replies,
+    remoteMarker?.replies
+  );
+  const { selected, conflict, conflictKind } = selectMarkerMetadata(
+    baseMarker,
+    localMarker,
+    remoteMarker
+  );
+  const mergedMarker = { ...selected, replies };
+  if (!conflict) return [mergedMarker];
+
+  return [
+    mergedMarker,
+    createDeterministicConflictCopy(
+      { ...conflict, replies: cloneJson(replies) },
+      usedKeys,
+      { conflictKind, labelKey: null }
+    )
+  ];
+}
+
+function mergeCommentDataThreeWay(baseData, localData, remoteData) {
+  const baseLayers = Array.isArray(baseData?.layers) ? baseData.layers : [];
+  const localLayers = Array.isArray(localData?.layers) ? localData.layers : [];
+  const remoteLayers = Array.isArray(remoteData?.layers) ? remoteData.layers : [];
+  const layers = mergeEntityCollectionThreeWay(
+    baseLayers,
+    localLayers,
+    remoteLayers,
+    {
+      createConflictCopy: (layer, usedIds, conflictKind) =>
+        createDeterministicConflictCopy(layer, usedIds, {
+          conflictKind,
+          labelKey: 'name'
+        }),
+      mergeConcurrent: ({ base, local, remote, usedKeys }) => {
+        const markers = mergeEntityCollectionThreeWay(
+          base?.markers,
+          local.markers,
+          remote.markers,
+          {
+            createConflictCopy: (marker, markerIds, conflictKind) =>
+              createDeterministicConflictCopy(marker, markerIds, {
+                conflictKind,
+                labelKey: null
+              }),
+            mergeConcurrent: ({
+              base: baseMarker,
+              local: localMarker,
+              remote: remoteMarker,
+              usedKeys: markerIds
+            }) => mergeMarkerThreeWay(
+              baseMarker,
+              localMarker,
+              remoteMarker,
+              markerIds
+            )
+          }
+        );
+        const localMetadata = { ...local, markers: undefined };
+        const remoteMetadata = { ...remote, markers: undefined };
+        const baseMetadata = base ? { ...base, markers: undefined } : null;
+        if (jsonEquals(localMetadata, remoteMetadata) ||
+            (baseMetadata && jsonEquals(remoteMetadata, baseMetadata))) {
+          return [{ ...cloneJson(local), markers }];
+        }
+        if (baseMetadata && jsonEquals(localMetadata, baseMetadata)) {
+          return [{ ...cloneJson(remote), markers }];
+        }
+        const localLayer = { ...cloneJson(local), markers };
+        const remoteLayer = createDeterministicConflictCopy(
+          { ...cloneJson(remote), markers: [] },
+          usedKeys,
+          { conflictKind: 'remote', labelKey: 'name' }
+        );
+        return [localLayer, remoteLayer];
+      }
+    }
+  );
+  return {
+    ...(remoteData && !Array.isArray(remoteData) ? cloneJson(remoteData) : {}),
+    ...(localData && !Array.isArray(localData) ? cloneJson(localData) : {}),
+    layers
+  };
+}
+
+function mergeDrawingDataThreeWay(baseData, localData, remoteData) {
+  const layers = mergeEntityCollectionThreeWay(
+    baseData?.layers,
+    localData?.layers,
+    remoteData?.layers,
+    {
+      createConflictCopy: (layer, usedIds, conflictKind) =>
+        createDeterministicConflictCopy(layer, usedIds, {
+          conflictKind,
+          labelKey: 'name'
+        })
+    }
+  );
+  const activeLayerId = layers.some(layer => layer.id === localData?.activeLayerId)
+    ? localData.activeLayerId
+    : layers.some(layer => layer.id === remoteData?.activeLayerId)
+      ? remoteData.activeLayerId
+      : layers[0]?.id || null;
+  return {
+    ...(remoteData || {}),
+    ...(localData || {}),
+    layers,
+    activeLayerId
+  };
+}
+
+function mergeHighlightDataThreeWay(baseData, localData, remoteData) {
+  const highlights = mergeEntityCollectionThreeWay(
+    getHighlightList(baseData),
+    getHighlightList(localData),
+    getHighlightList(remoteData),
+    {
+      createConflictCopy: (highlight, usedIds, conflictKind) =>
+        createDeterministicConflictCopy(highlight, usedIds, {
+          conflictKind,
+          labelKey: 'note'
+        })
+    }
+  );
+  return {
+    ...(Array.isArray(remoteData) ? {} : remoteData || {}),
+    ...(Array.isArray(localData) ? {} : localData || {}),
+    highlights
+  };
+}
+
+function mergeCompositionLayersThreeWay(baseLayers, localLayers, remoteLayers) {
+  return mergeEntityCollectionThreeWay(
+    baseLayers,
+    localLayers,
+    remoteLayers,
+    {
+      createConflictCopy: (layer, usedIds, conflictKind) =>
+        createDeterministicConflictCopy(layer, usedIds, {
+          conflictKind,
+          labelKey: 'name'
+        })
+    }
+  ).map((layer, order) => ({ ...layer, order }));
+}
+
+function getManualVersionMergeKey(version) {
+  return version?.__baeframeMergeConflictId ||
+    version?.filePath ||
+    version?.path ||
+    version?.fileName;
+}
+
+function mergeManualVersionsThreeWay(baseVersions, localVersions, remoteVersions) {
+  return mergeEntityCollectionThreeWay(
+    baseVersions,
+    localVersions,
+    remoteVersions,
+    {
+      getKey: getManualVersionMergeKey,
+      createConflictCopy: (version, usedKeys, conflictKind) => {
+        const copy = cloneJson(version);
+        const originalKey = String(getManualVersionMergeKey(copy) || 'manual-version');
+        const suffix = conflictKind === 'local'
+          ? '__local-conflict'
+          : '__remote-conflict';
+        let candidate = `${originalKey}${suffix}`;
+        let sequence = 2;
+        while (usedKeys.has(candidate)) {
+          candidate = `${originalKey}${suffix}-${sequence}`;
+          sequence += 1;
+        }
+        usedKeys.add(candidate);
+        copy.__baeframeMergeConflictId = candidate;
+        return copy;
+      }
+    }
+  );
+}
+
+function mergeScalarThreeWay(baseValue, localValue, remoteValue) {
+  if (jsonEquals(localValue, remoteValue)) return cloneJson(localValue);
+  if (jsonEquals(localValue, baseValue)) return cloneJson(remoteValue);
+  if (jsonEquals(remoteValue, baseValue)) return cloneJson(localValue);
+  // 두 인스턴스가 동시에 바꾼 단일 값은 데이터를 복제할 수 없으므로
+  // 저장 직전에 읽은 최신 디스크 값을 결정적으로 보존한다.
+  return cloneJson(remoteValue);
+}
+
+function mergeReviewDataThreeWay(baseData, localData, remoteData) {
+  const base = captureReviewMergeBase(baseData);
+  const local = captureReviewMergeBase(localData);
+  const remote = captureReviewMergeBase(remoteData);
+  return {
+    ...localData,
+    comments: mergeCommentDataThreeWay(
+      base.comments,
+      local.comments,
+      remote.comments
+    ),
+    drawings: mergeDrawingDataThreeWay(
+      base.drawings,
+      local.drawings,
+      remote.drawings
+    ),
+    highlights: mergeHighlightDataThreeWay(
+      base.highlights,
+      local.highlights,
+      remote.highlights
+    ),
+    compositionLayers: mergeCompositionLayersThreeWay(
+      base.compositionLayers,
+      local.compositionLayers,
+      remote.compositionLayers
+    ),
+    manualVersions: mergeManualVersionsThreeWay(
+      base.manualVersions,
+      local.manualVersions,
+      remote.manualVersions
+    ),
+    versionInfo: mergeScalarThreeWay(
+      base.versionInfo,
+      local.versionInfo,
+      remote.versionInfo
+    ),
+    liveblocksRoomId: mergeScalarThreeWay(
+      base.liveblocksRoomId,
+      local.liveblocksRoomId,
+      remote.liveblocksRoomId
+    )
+  };
 }
 
 const log = createLogger('ReviewDataManager');
@@ -292,6 +821,8 @@ export class ReviewDataManager extends EventTarget {
     this.drawingManager = options.drawingManager;
     this.highlightManager = options.highlightManager;
     this.compositionLayerManager = options.compositionLayerManager;
+    this.fabricDrawingPersistenceProvider =
+      options.fabricDrawingPersistenceProvider || null;
 
     // 현재 상태
     this.currentVideoPath = null;
@@ -306,10 +837,26 @@ export class ReviewDataManager extends EventTarget {
 
     // 저장 동시성 제어
     this._savePromise = null;  // 저장 중인 Promise (락)
+    this._videoFileRequestEpoch = 0;
+    this._reviewContextEpoch = 0;
+    this._reviewFileObservationEpoch = 0;
+    this._reviewFileVersionToken = null;
+    this._changeRevision = 0;
     this._hasPersistedFile = false;
     this._beforeSaveHandler = null;
+    this._finalFabricSnapshotHandler = null;
+    this._fabricDrawingSourceRefreshHandler = null;
     this._initialSaveConflictHandler = null;
     this._opaqueRootFields = {};
+    this._fabricDrawingPersistenceContext = {};
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingCollectedRevision = null;
+    this._fabricDrawingProviderUnsubscribe = null;
+    this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+    this._reviewMergeBase = createEmptyReviewMergeBase();
+    this._hasCompletedReviewLoad = false;
+    this._isConnected = false;
     this._reviewDocumentId = null;
     this._reviewDocumentIdPersisted = false;
     this._reviewDocumentIdFactory = options.reviewDocumentIdFactory || createReviewDocumentId;
@@ -319,6 +866,8 @@ export class ReviewDataManager extends EventTarget {
 
     // 이벤트 바인딩
     this._onDataChanged = this._onDataChanged.bind(this);
+    this._onFabricDrawingPersistenceChanged =
+      this._onFabricDrawingPersistenceChanged.bind(this);
 
     // Liveblocks 매니저 연결 (실시간 협업용)
     this._liveblocksManager = null;
@@ -347,6 +896,24 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
+   * 최신 root 확인 뒤 최종 Fabric snapshot을 가져오는 훅 설정
+   * @param {Function|null} handler
+   */
+  setFinalFabricSnapshotHandler(handler) {
+    this._finalFabricSnapshotHandler =
+      typeof handler === 'function' ? handler : null;
+  }
+
+  /**
+   * 외부 drawingsV3 교체를 활성 Fabric 입력 수명주기와 원자적으로 연결
+   * @param {Function|null} handler
+   */
+  setFabricDrawingSourceRefreshHandler(handler) {
+    this._fabricDrawingSourceRefreshHandler =
+      typeof handler === 'function' ? handler : null;
+  }
+
+  /**
    * 첫 저장 중 다른 사용자가 먼저 파일을 만든 경우의 처리 훅 설정
    * @param {Function|null} handler
    */
@@ -355,9 +922,77 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
+   * Fabric 드로잉 persistence provider 교체
+   * @param {Object|null} provider
+   */
+  setFabricDrawingPersistenceProvider(provider) {
+    let transferableLocalRoot = null;
+    const hadLocalChanges = this._fabricDrawingHasLocalChanges;
+    if (hadLocalChanges &&
+        this.fabricDrawingPersistenceProvider?.getStatus?.()?.state === 'ready') {
+      try {
+        transferableLocalRoot =
+          this.fabricDrawingPersistenceProvider.exportRootValue?.() || null;
+      } catch (_error) {
+        transferableLocalRoot = null;
+      }
+    }
+
+    this._disconnectFabricDrawingPersistenceProvider();
+    this.fabricDrawingPersistenceProvider = provider || null;
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    this._invalidateFabricDrawingPersistenceProvider(
+      this._hasCompletedReviewLoad ? 'provider-replaced' : 'no-current-review',
+      { clearLocalChanges: false }
+    );
+
+    if (this._hasCompletedReviewLoad) {
+      if (transferableLocalRoot) {
+        this._installFabricDrawingRootInProvider({
+          present: true,
+          value: transferableLocalRoot
+        }, {
+          clearLocalChanges: false,
+          failureReason: 'provider-replacement-failed'
+        });
+      } else {
+        this._installRecordedDiskStateInProvider({
+          clearLocalChanges: !hadLocalChanges,
+          failureReason: 'provider-replacement-failed'
+        });
+      }
+    }
+
+    if (this._isConnected) {
+      this._connectFabricDrawingPersistenceProvider();
+    }
+  }
+
+  _connectFabricDrawingPersistenceProvider() {
+    if (this._fabricDrawingProviderUnsubscribe ||
+        typeof this.fabricDrawingPersistenceProvider?.subscribe !== 'function') {
+      return;
+    }
+    this._fabricDrawingProviderUnsubscribe =
+      this.fabricDrawingPersistenceProvider.subscribe(
+        this._onFabricDrawingPersistenceChanged
+      );
+  }
+
+  _disconnectFabricDrawingPersistenceProvider() {
+    if (typeof this._fabricDrawingProviderUnsubscribe === 'function') {
+      this._fabricDrawingProviderUnsubscribe();
+    }
+    this._fabricDrawingProviderUnsubscribe = null;
+  }
+
+  /**
    * 매니저들 연결 및 이벤트 리스너 설정
    */
   connect() {
+    this._isConnected = true;
+    this._connectFabricDrawingPersistenceProvider();
+
     if (this.commentManager) {
       this.commentManager.addEventListener('markerAdded', this._onDataChanged);
       this.commentManager.addEventListener('markerUpdated', this._onDataChanged);
@@ -398,6 +1033,9 @@ export class ReviewDataManager extends EventTarget {
    * 이벤트 리스너 해제
    */
   disconnect() {
+    this._isConnected = false;
+    this._disconnectFabricDrawingPersistenceProvider();
+
     if (this.commentManager) {
       this.commentManager.removeEventListener('markerAdded', this._onDataChanged);
       this.commentManager.removeEventListener('markerUpdated', this._onDataChanged);
@@ -442,17 +1080,39 @@ export class ReviewDataManager extends EventTarget {
    * @param {boolean} options.skipSave - true면 이전 파일 저장 건너뛰기 (외부에서 이미 저장한 경우)
    */
   async setVideoFile(videoPath, options = {}) {
+    const requestEpoch = ++this._videoFileRequestEpoch;
+
     // 자동 저장 일시 중지 및 대기 중인 저장 취소
     this._cancelAutoSave();
-    this.isLoading = true;
+    if (this._savePromise) {
+      await this._savePromise;
+    }
+    if (requestEpoch !== this._videoFileRequestEpoch) {
+      return false;
+    }
 
     // 이전 파일의 변경사항 저장 (skipSave가 true면 건너뛰기)
     if (!options.skipSave && this.hasUnsavedChanges() && this.currentBframePath) {
       await this.save();
     }
+    if (requestEpoch !== this._videoFileRequestEpoch) {
+      return false;
+    }
 
+    this.isLoading = true;
+    this._reviewContextEpoch += 1;
+    this._reviewFileObservationEpoch += 1;
+    this._reviewFileVersionToken = null;
+    this._invalidateFabricDrawingPersistenceProvider('video-load-started');
+    this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+    this._reviewMergeBase = createEmptyReviewMergeBase();
+    this._hasCompletedReviewLoad = false;
     this.currentVideoPath = videoPath;
     this.currentBframePath = getBframePath(videoPath);
+    this._fabricDrawingPersistenceContext = {
+      stableVideoIdentity: videoPath,
+      ...(options.fabricDrawingPersistenceContext || {})
+    };
     this._createdAt = null;
     this._modifiedAt = null;
     this._fps = 24;
@@ -460,6 +1120,10 @@ export class ReviewDataManager extends EventTarget {
     this._manualVersions = [];
     this._hasPersistedFile = false;
     this.isDirty = false;
+    this._changeRevision = 0;
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingCollectedRevision = null;
     this._resetRootEnvelopeState();
 
     log.info('영상 파일 설정됨', {
@@ -468,14 +1132,18 @@ export class ReviewDataManager extends EventTarget {
     });
 
     // 기존 .bframe 파일이 있으면 로드
-    const loaded = await this.load();
+    const loadOwner = this._captureReviewContextOwner(requestEpoch);
+    const loaded = await this.load(loadOwner);
+    if (!this._ownsReviewContext(loadOwner)) {
+      return false;
+    }
 
     // 로딩 완료 후 isLoading 해제 (load() 내부에서도 설정하지만 여기서 확실히 해제)
     this.isLoading = false;
 
     this._emit('videoFileSet', {
-      videoPath: this.currentVideoPath,
-      bframePath: this.currentBframePath,
+      videoPath: loadOwner.videoPath,
+      bframePath: loadOwner.bframePath,
       hasExistingData: loaded
     });
 
@@ -511,7 +1179,10 @@ export class ReviewDataManager extends EventTarget {
     this._cancelAutoSave();
 
     // 저장 Promise 생성 (락)
-    this._savePromise = this._doSave(options);
+    const saveOwner = this._captureSaveOwner();
+    this._savePromise = Promise.resolve().then(
+      () => this._doSave(options, saveOwner)
+    );
 
     try {
       return await this._savePromise;
@@ -520,12 +1191,63 @@ export class ReviewDataManager extends EventTarget {
     }
   }
 
+  async waitForPendingSave() {
+    if (!this._savePromise) return true;
+    return this._savePromise;
+  }
+
+  _captureSaveOwner() {
+    return Object.freeze({
+      contextEpoch: this._reviewContextEpoch,
+      videoPath: this.currentVideoPath,
+      bframePath: this.currentBframePath
+    });
+  }
+
+  _captureReviewContextOwner(requestEpoch = this._videoFileRequestEpoch) {
+    return Object.freeze({
+      requestEpoch,
+      contextEpoch: this._reviewContextEpoch,
+      videoPath: this.currentVideoPath,
+      bframePath: this.currentBframePath
+    });
+  }
+
+  _ownsReviewContext(owner) {
+    return Boolean(
+      owner &&
+      owner.requestEpoch === this._videoFileRequestEpoch &&
+      owner.contextEpoch === this._reviewContextEpoch &&
+      owner.videoPath === this.currentVideoPath &&
+      owner.bframePath === this.currentBframePath
+    );
+  }
+
+  _ownsSave(owner) {
+    return Boolean(
+      owner &&
+      owner.contextEpoch === this._reviewContextEpoch &&
+      owner.videoPath === this.currentVideoPath &&
+      owner.bframePath === this.currentBframePath
+    );
+  }
+
+  _assertSaveOwner(owner) {
+    if (!this._ownsSave(owner)) {
+      throw new Error('저장 중 영상이 바뀌어 이전 영상의 저장 결과를 적용하지 않았습니다.');
+    }
+  }
+
   /**
    * 실제 저장 수행 (내부용)
    */
-  async _doSave(_options = {}) {
+  async _doSave(_options = {}, saveOwner = this._captureSaveOwner()) {
     try {
+      this._assertSaveOwner(saveOwner);
       let savedData = null;
+      let savedChangeRevision = null;
+      let savedFabricDrawingRevision = null;
+      let savedReviewMergeBase = null;
       let lastConflictResult = null;
       const maxAttempts = 5;
 
@@ -534,37 +1256,92 @@ export class ReviewDataManager extends EventTarget {
 
         if (this._beforeSaveHandler) {
           await this._beforeSaveHandler({
-            path: this.currentBframePath,
-            videoPath: this.currentVideoPath,
+            path: saveOwner.bframePath,
+            videoPath: saveOwner.videoPath,
             hasPersistedFile: this._hasPersistedFile,
             options: _options
           });
         }
 
-        await this._refreshRootEnvelopeBeforeSave();
+        this._assertSaveOwner(saveOwner);
+        const latestRoot = await this._refreshRootEnvelopeBeforeSave(saveOwner);
+        this._assertSaveOwner(saveOwner);
         this._assertRootEnvelopeWritable();
         this._ensureReviewDocumentId();
-        const data = this._collectData();
+        if (this._finalFabricSnapshotHandler) {
+          await this._finalFabricSnapshotHandler({
+            path: saveOwner.bframePath,
+            videoPath: saveOwner.videoPath,
+            hasPersistedFile: this._hasPersistedFile,
+            options: _options
+          });
+        }
+        this._assertSaveOwner(saveOwner);
+        const localData = this._collectData();
+        const attemptReviewMergeBase = captureReviewMergeBase(localData);
+        const data = this._mergeBeforeSave(localData, latestRoot);
+        const attemptChangeRevision = this._changeRevision;
+        const attemptFabricDrawingRevision = this._fabricDrawingCollectedRevision;
+        const attemptObservationEpoch = this._reviewFileObservationEpoch;
 
-        // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
-        // 로컬 .bframe 스냅샷만 저장 (오프라인 백업 역할)
+        // Liveblocks 연결 중에도 로컬 .bframe에는 최신 병합 snapshot을 백업한다.
         if (this._liveblocksManager?.isConnected) {
           // liveblocksRoomId 포함
           data.liveblocksRoomId = this._liveblocksManager.roomId || null;
         }
 
-        const saveResult = await window.electronAPI.saveReview(this.currentBframePath, data, {
+        const saveOptions = {
           failIfExists: wasInitialPersist
-        });
+        };
+        if (!wasInitialPersist && this._reviewFileVersionToken) {
+          saveOptions.expectedVersionToken = this._reviewFileVersionToken;
+        }
+        const saveResult = await window.electronAPI.saveReview(
+          saveOwner.bframePath,
+          data,
+          saveOptions
+        );
+        this._assertSaveOwner(saveOwner);
+
+        if (saveResult?.conflict === true) {
+          this._writeBlockedReason = 'review-file-version-conflict';
+          throw new Error('저장 직전 .bframe이 다시 변경되어 덮어쓰기를 중단했습니다.');
+        }
+        if (saveResult?.retryable === true) {
+          this.isDirty = true;
+          log.warn('.bframe 저장이 잠시 지연됨', {
+            path: saveOwner.bframePath,
+            reason: saveResult.reason || 'review-file-busy'
+          });
+          this._emit('saveDeferred', {
+            path: saveOwner.bframePath,
+            reason: saveResult.reason || 'review-file-busy'
+          });
+          if (this.autoSaveEnabled) {
+            this._scheduleAutoSave();
+          }
+          return false;
+        }
+        const observationChanged = attemptObservationEpoch !==
+          this._reviewFileObservationEpoch;
+        const observationMatchesCompletedWrite =
+          saveResult?.success === true &&
+          typeof saveResult.versionToken === 'string' &&
+          saveResult.versionToken === this._reviewFileVersionToken;
+        if (observationChanged && !observationMatchesCompletedWrite) {
+          this._writeBlockedReason = 'review-file-version-conflict';
+          throw new Error('저장 중 .bframe 상태가 바뀌어 저장 완료 처리를 중단했습니다.');
+        }
 
         if (saveResult?.exists === true && wasInitialPersist) {
           log.info('첫 .bframe 저장 충돌 감지, 기존 파일과 병합 시도', {
-            path: this.currentBframePath
+            path: saveOwner.bframePath
           });
           lastConflictResult = await this._initialSaveConflictHandler?.({
-            path: this.currentBframePath,
-            videoPath: this.currentVideoPath
+            path: saveOwner.bframePath,
+            videoPath: saveOwner.videoPath
           });
+          this._assertSaveOwner(saveOwner);
 
           if (lastConflictResult?.success === true) {
             this._hasPersistedFile = true;
@@ -582,9 +1359,16 @@ export class ReviewDataManager extends EventTarget {
           throw new Error(saveResult?.error || '.bframe 저장 실패');
         }
 
+        if (typeof saveResult.versionToken === 'string' &&
+            saveResult.versionToken.length > 0) {
+          this._reviewFileVersionToken = saveResult.versionToken;
+        }
         this._hasPersistedFile = true;
         this._reviewDocumentIdPersisted = true;
         savedData = data;
+        savedChangeRevision = attemptChangeRevision;
+        savedFabricDrawingRevision = attemptFabricDrawingRevision;
+        savedReviewMergeBase = attemptReviewMergeBase;
         break;
       }
 
@@ -592,16 +1376,26 @@ export class ReviewDataManager extends EventTarget {
         throw new Error(lastConflictResult?.error || '첫 .bframe 저장 충돌 병합 실패');
       }
 
-      this.isDirty = false;
+      const hasConcurrentChanges = this._changeRevision !== savedChangeRevision;
+      this.isDirty = hasConcurrentChanges;
+      this._assertSaveOwner(saveOwner);
+      this._recordDrawingsV3DiskState(savedData);
+      this._reviewMergeBase = savedReviewMergeBase ||
+        captureReviewMergeBase(savedData);
+      this._acknowledgeFabricDrawingSave(savedFabricDrawingRevision);
 
       log.info('.bframe 파일 저장됨', {
-        path: this.currentBframePath,
+        path: saveOwner.bframePath,
         commentLayers: savedData?.comments?.layers?.length || 0,
         drawingLayers: savedData?.drawings?.layers?.length || 0,
         liveblocksConnected: !!this._liveblocksManager?.isConnected
       });
 
-      this._emit('saved', { path: this.currentBframePath });
+      this._emit('saved', { path: saveOwner.bframePath });
+
+      if (hasConcurrentChanges && this.autoSaveEnabled) {
+        this._scheduleAutoSave();
+      }
 
       return true;
     } catch (error) {
@@ -612,98 +1406,54 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
-   * 저장 전 원격 데이터와 머지
+   * 저장 직전 읽은 최신 root의 리뷰 데이터와 로컬 미저장 데이터를 병합한다.
+   * 버전 토큰을 얻은 snapshot과 동일한 데이터를 사용해야 CAS 저장 전에
+   * 다른 인스턴스의 변경을 다시 덮어쓰지 않는다.
    * @param {Object} localData - 로컬에서 수집한 데이터
-   * @returns {Promise<Object>} 머지된 데이터
+   * @param {Object|null} remoteData - 저장 직전 읽은 최신 root
+   * @returns {Object} 병합된 데이터
    */
-  async _mergeBeforeSave(localData) {
-    try {
-      const remoteData = await window.electronAPI.loadReview(this.currentBframePath);
-
-      if (!remoteData) {
-        // 원격 파일 없음 → 로컬 데이터 그대로 저장
-        return localData;
-      }
-
-      // 협업 중이면 항상 머지 (타임스탬프와 무관하게)
-      // 개별 댓글의 updatedAt으로 충돌 해결
-      if (remoteData.comments?.layers && localData.comments?.layers) {
-        const { merged, added, updated } = mergeLayers(
-          localData.comments.layers,
-          remoteData.comments.layers
-        );
-        localData.comments.layers = merged;
-
-        if (added > 0 || updated > 0) {
-          log.info('저장 전 댓글 머지 완료', { added, updated });
-        }
-      }
-
-      // 드로잉은 타임스탬프 기반 (전체 교체)
-      // 주의: localData.modifiedAt은 _collectData()에서 now로 설정되므로 사용 불가
-      // 파일에서 로드된 원래 시간인 this._modifiedAt을 사용해야 원격 최신 변경 보호 가능
-      const localModified = new Date(this._modifiedAt || 0).getTime();
-      const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
-
-      if (remoteModified > localModified && remoteData.drawings) {
-        // 원격 드로잉이 더 최신이면 원격 데이터로 교체 (다른 협업자 작업 보호)
-        localData.drawings = remoteData.drawings;
-        log.info('원격 드로잉이 더 최신, 원격 데이터로 교체');
-      }
-
-      if (remoteData.highlights) {
-        localData.highlights = mergeHighlightData(localData.highlights, remoteData.highlights);
-      }
-
-      if (remoteData.compositionLayers) {
-        localData.compositionLayers = mergeCompositionLayers(
-          localData.compositionLayers,
-          remoteData.compositionLayers
-        );
-      }
-
-      if (remoteData.manualVersions) {
-        localData.manualVersions = mergeManualVersions(localData.manualVersions, remoteData.manualVersions);
-      }
-
-      if (!localData.versionInfo && remoteData.versionInfo) {
-        localData.versionInfo = remoteData.versionInfo;
-      }
-
-      if (!localData.liveblocksRoomId && remoteData.liveblocksRoomId) {
-        localData.liveblocksRoomId = remoteData.liveblocksRoomId;
-      }
-
-      // 머지 후 modifiedAt 갱신
-      localData.modifiedAt = new Date().toISOString();
-
-      return localData;
-
-    } catch (error) {
-      log.warn('저장 전 머지 실패, 로컬 데이터로 저장', { error: error.message });
+  _mergeBeforeSave(localData, remoteData) {
+    if (!remoteData || typeof remoteData !== 'object' || Array.isArray(remoteData)) {
       return localData;
     }
+
+    const mergedData = mergeReviewDataThreeWay(
+      this._reviewMergeBase,
+      localData,
+      remoteData
+    );
+
+    mergedData.modifiedAt = new Date().toISOString();
+    return mergedData;
   }
 
   /**
    * .bframe 파일에서 데이터 로드 (마이그레이션 포함)
    */
-  async load() {
-    if (!this.currentBframePath) {
+  async load(loadOwner = this._captureReviewContextOwner()) {
+    if (!loadOwner?.bframePath || !this._ownsReviewContext(loadOwner)) {
       log.warn('로드할 파일 경로가 없음');
       return false;
     }
 
     try {
       this.isLoading = true;
+      let shouldSaveAfterMigration = false;
 
-      const data = await window.electronAPI.loadReview(this.currentBframePath);
+      const data = await window.electronAPI.loadReview(loadOwner.bframePath);
+      if (!this._ownsReviewContext(loadOwner)) {
+        return false;
+      }
 
       if (!data) {
-        log.info('.bframe 파일 없음 (새 리뷰)', { path: this.currentBframePath });
+        log.info('.bframe 파일 없음 (새 리뷰)', { path: loadOwner.bframePath });
         this.compositionLayerManager?.fromJSON?.([]);
         this._hasPersistedFile = false;
         this._resetRootEnvelopeState();
+        this._resetFabricDrawingPersistenceProvider();
+        this._recordDrawingsV3DiskState({});
+        this._reviewMergeBase = createEmptyReviewMergeBase();
         this.isLoading = false;
         return false;
       }
@@ -728,9 +1478,12 @@ export class ReviewDataManager extends EventTarget {
         log.info('마이그레이션 필요', { from: dataVersion, to: BFRAME_VERSION });
 
         // 마이그레이션 전 백업 생성
-        const backupCreated = await this._createBackup();
+        const backupCreated = await this._createBackup(loadOwner.bframePath);
+        if (!this._ownsReviewContext(loadOwner)) {
+          return false;
+        }
         if (!backupCreated) {
-          log.warn('백업 생성 실패, 마이그레이션 계속 진행');
+          log.warn('백업 생성 실패, 마이그레이션 결과의 자동 저장을 보류');
         }
 
         try {
@@ -738,13 +1491,16 @@ export class ReviewDataManager extends EventTarget {
           log.info('마이그레이션 성공', { version: migratedData.bframeVersion });
 
           // 마이그레이션 후 자동 저장 (새 스키마로 업데이트)
-          this._shouldSaveAfterMigration = true;
+          shouldSaveAfterMigration = backupCreated;
         } catch (migrationError) {
           log.error('마이그레이션 실패', migrationError);
 
           // 백업에서 복구 시도
           if (backupCreated) {
-            const restored = await this._restoreFromBackup();
+            const restored = await this._restoreFromBackup(loadOwner.bframePath);
+            if (!this._ownsReviewContext(loadOwner)) {
+              return false;
+            }
             if (restored) {
               log.info('백업에서 복구됨');
               migratedData = restored;
@@ -756,30 +1512,48 @@ export class ReviewDataManager extends EventTarget {
       }
 
       // 데이터 적용
+      if (!this._ownsReviewContext(loadOwner)) {
+        return false;
+      }
+      const loadedReviewMergeBase = captureReviewMergeBase(migratedData);
       this._applyData(migratedData);
+      this._reviewMergeBase = captureAcceptedReviewMergeBase(
+        loadedReviewMergeBase,
+        this._collectReviewDataForMerge(loadedReviewMergeBase)
+      );
 
       this.isDirty = false;
       this.isLoading = false;
 
       log.info('.bframe 파일 로드됨', {
-        path: this.currentBframePath,
+        path: loadOwner.bframePath,
         version: migratedData.bframeVersion || migratedData.version,
         commentLayers: migratedData.comments?.layers?.length || 0,
         drawingLayers: migratedData.drawings?.layers?.length || 0
       });
 
-      this._emit('loaded', { path: this.currentBframePath, data: migratedData });
+      this._emit('loaded', { path: loadOwner.bframePath, data: migratedData });
 
       // 마이그레이션 후 자동 저장
-      if (this._shouldSaveAfterMigration) {
-        this._shouldSaveAfterMigration = false;
+      if (shouldSaveAfterMigration) {
         // 약간의 딜레이 후 저장 (데이터 적용 완료 보장)
-        setTimeout(() => this.save(), 100);
+        setTimeout(() => {
+          if (this._ownsReviewContext(loadOwner)) {
+            this.save();
+          }
+        }, 100);
       }
 
       return true;
     } catch (error) {
+      if (!this._ownsReviewContext(loadOwner)) {
+        return false;
+      }
       log.error('.bframe 로드 실패', error);
+      this._hasCompletedReviewLoad = false;
+      this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+      this._reviewMergeBase = createEmptyReviewMergeBase();
+      this._invalidateFabricDrawingPersistenceProvider('review-load-failed');
       this.isLoading = false;
       this._emit('loadError', { error });
       return false;
@@ -801,12 +1575,15 @@ export class ReviewDataManager extends EventTarget {
       return { success: false, added: 0, updated: 0 };
     }
 
+    const reloadOwner = this._captureReviewContextOwner();
+    const reloadOptions = { ...options };
+
     // 미저장 작업 보호: isDirty이고 force가 아니면 머지만 하고 덮어쓰기 방지
-    if (this.isDirty && !options.force) {
+    if (this.isDirty && !reloadOptions.force) {
       log.info('reloadAndMerge: 미저장 작업 있음 - 안전 머지 모드');
       // 강제 머지 모드로 전환 (로컬 데이터 유지하면서 원격 추가분만 반영)
-      options.merge = true;
-      options.preserveLocal = true;
+      reloadOptions.merge = true;
+      reloadOptions.preserveLocal = true;
     }
 
     // 자동저장 일시 중지
@@ -816,7 +1593,13 @@ export class ReviewDataManager extends EventTarget {
 
     try {
       // 원격 데이터 로드
-      const remoteData = await window.electronAPI.loadReview(this.currentBframePath);
+      const remoteSnapshot = await this._readReviewSnapshot(reloadOwner.bframePath);
+      if (!this._ownsReviewContext(reloadOwner)) {
+        return { success: false, added: 0, updated: 0, skipped: true };
+      }
+      const remoteData = remoteSnapshot.data;
+      this._reviewFileObservationEpoch += 1;
+      this._reviewFileVersionToken = remoteSnapshot.versionToken;
 
       if (!remoteData) {
         log.info('reloadAndMerge: 원격 파일 없음');
@@ -825,114 +1608,84 @@ export class ReviewDataManager extends EventTarget {
       }
 
       const retainIdentityWhenMissing = !this._reviewDocumentIdPersisted;
-      const allowIdentityReplacement = options.merge === false;
-      this._captureRootEnvelope(remoteData, {
+      const allowIdentityReplacement = reloadOptions.merge === false;
+      const rootCaptured = this._captureRootEnvelope(remoteData, {
         retainIdentityWhenMissing,
         allowIdentityReplacement
       });
+      if (rootCaptured) {
+        const reconciled = await this._reconcileDrawingsV3DiskState(
+          remoteData,
+          reloadOwner
+        );
+        if (!this._ownsReviewContext(reloadOwner)) {
+          return { success: false, added: 0, updated: 0, skipped: true };
+        }
+        if (!reconciled) {
+          this._assertRootEnvelopeWritable();
+          throw new Error('외부 Fabric 드로잉 교체를 안전하게 완료하지 못했습니다.');
+        }
+      }
       if (!allowIdentityReplacement) {
         this._assertRootEnvelopeWritable();
       }
+      const remoteReviewData = normalizeReviewRootForMerge(remoteData);
       this._hasPersistedFile = true;
 
       const result = { added: 0, updated: 0 };
 
-      if (options.merge && this.commentManager) {
-        // 로컬 댓글 데이터 수집
-        const localComments = this.commentManager.toJSON();
-
-        // 원격과 머지
-        if (remoteData.comments?.layers && localComments.layers) {
+      if (reloadOptions.merge) {
+        const localReviewData = this._collectReviewDataForMerge();
+        if (Array.isArray(remoteData.comments?.layers) &&
+            Array.isArray(localReviewData.comments?.layers)) {
           const mergeResult = mergeLayers(
-            localComments.layers,
+            localReviewData.comments.layers,
             remoteData.comments.layers
           );
-
           result.added = mergeResult.added;
           result.updated = mergeResult.updated;
-
-          // 변경이 있으면 머지된 데이터 적용
-          if (mergeResult.added > 0 || mergeResult.updated > 0) {
-            // 댓글 매니저에 머지된 데이터 적용
-            this.commentManager.fromJSON({ layers: mergeResult.merged });
-
-            log.info('reloadAndMerge: 댓글 머지 완료', {
-              added: result.added,
-              updated: result.updated
-            });
-          }
         }
+        const mergedReviewData = mergeReviewDataThreeWay(
+          this._reviewMergeBase,
+          localReviewData,
+          remoteReviewData
+        );
 
-        // 드로잉 데이터 머지
-        if (options.preserveLocal && remoteData.drawings && this.drawingManager) {
-          const mergedDrawings = mergeDrawingData(this.drawingManager.exportData(), remoteData.drawings);
-          this.drawingManager.importData(mergedDrawings);
-          log.info('reloadAndMerge: 드로잉 데이터 보존 병합 완료', {
-            layers: mergedDrawings.layers?.length || 0
-          });
-        } else if (remoteData.drawings && this.drawingManager) {
-          const localModified = new Date(this._modifiedAt || 0).getTime();
-          const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
+        this.commentManager?.fromJSON?.(mergedReviewData.comments);
+        this.drawingManager?.importData?.(mergedReviewData.drawings);
+        this.highlightManager?.fromJSON?.(mergedReviewData.highlights);
+        this.compositionLayerManager?.fromJSON?.(
+          mergedReviewData.compositionLayers
+        );
+        this._manualVersions = mergedReviewData.manualVersions;
+        this._liveblocksRoomId = mergedReviewData.liveblocksRoomId ?? null;
+        this._versionInfo = cloneJson(mergedReviewData.versionInfo ?? null);
+        // reload merge의 공통 기준점은 ID가 conflict copy로 바뀐 적용 결과가
+        // 아니라 저장 직전에 읽은 원격 원본이어야 삭제가 다시 살아나지 않는다.
+        this._reviewMergeBase = captureReviewMergeBase(remoteReviewData);
 
-          if (remoteModified > localModified) {
-            this.drawingManager.importData(remoteData.drawings);
-            log.info('reloadAndMerge: 드로잉 데이터 업데이트됨');
-          }
-        }
-
-        // 하이라이트 데이터
-        if (options.preserveLocal && remoteData.highlights && this.highlightManager) {
-          const mergedHighlights = mergeHighlightData(this.highlightManager.toJSON(), remoteData.highlights);
-          this.highlightManager.fromJSON(mergedHighlights);
-          log.info('reloadAndMerge: 하이라이트 데이터 보존 병합 완료', {
-            highlights: mergedHighlights.highlights?.length || 0
-          });
-        } else if (remoteData.highlights && this.highlightManager) {
-          const localModified = new Date(this._modifiedAt || 0).getTime();
-          const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
-
-          if (remoteModified > localModified) {
-            this.highlightManager.fromJSON(remoteData.highlights);
-            log.info('reloadAndMerge: 하이라이트 데이터 업데이트됨');
-          }
-        }
-
-        if (remoteData.liveblocksRoomId && !this._liveblocksRoomId) {
-          this._liveblocksRoomId = remoteData.liveblocksRoomId;
-        }
-
-        if (remoteData.versionInfo && !this._versionInfo) {
-          this._versionInfo = remoteData.versionInfo;
-        }
-
-        if (remoteData.manualVersions) {
-          this._manualVersions = mergeManualVersions(this._manualVersions, remoteData.manualVersions);
-        }
-
-        if (Array.isArray(remoteData.compositionLayers) && this.compositionLayerManager) {
-          const mergedCompositionLayers = mergeCompositionLayers(
-            this.compositionLayerManager.toJSON(),
-            remoteData.compositionLayers
-          );
-          this.compositionLayerManager.fromJSON(mergedCompositionLayers);
-          log.info('reloadAndMerge: 합성 레이어 데이터 병합 완료', {
-            layers: mergedCompositionLayers.length
-          });
-        }
-
-        if (remoteData.modifiedAt && toTime(remoteData.modifiedAt) > toTime(this._modifiedAt)) {
-          this._modifiedAt = remoteData.modifiedAt;
+        if (remoteReviewData.modifiedAt &&
+            toTime(remoteReviewData.modifiedAt) > toTime(this._modifiedAt)) {
+          this._modifiedAt = remoteReviewData.modifiedAt;
         }
 
       } else {
         // 덮어쓰기 모드: 원격 데이터로 전체 교체
-        this._applyData(remoteData, { allowIdentityReplacement: true });
+        this._applyData(remoteReviewData, {
+          allowIdentityReplacement: true,
+          skipFabricDrawingImport: true
+        });
+        const overwrittenReviewMergeBase = captureReviewMergeBase(remoteReviewData);
+        this._reviewMergeBase = captureAcceptedReviewMergeBase(
+          overwrittenReviewMergeBase,
+          this._collectReviewDataForMerge(overwrittenReviewMergeBase)
+        );
         log.info('reloadAndMerge: 데이터 덮어쓰기 완료');
       }
 
       this.isLoading = wasLoading;
       this._emit('reloaded', {
-        merged: options.merge,
+        merged: reloadOptions.merge,
         added: result.added,
         updated: result.updated
       });
@@ -940,6 +1693,9 @@ export class ReviewDataManager extends EventTarget {
       return { success: true, ...result };
 
     } catch (error) {
+      if (!this._ownsReviewContext(reloadOwner)) {
+        return { success: false, added: 0, updated: 0, skipped: true };
+      }
       log.error('reloadAndMerge 실패', error);
       this.isLoading = wasLoading;
       this._emit('reloadError', { error });
@@ -951,27 +1707,28 @@ export class ReviewDataManager extends EventTarget {
    * .bframe 파일 백업 생성
    * @returns {Promise<boolean>} 백업 성공 여부
    */
-  async _createBackup() {
-    if (!this.currentBframePath) return false;
+  async _createBackup(reviewPath = this.currentBframePath) {
+    if (!reviewPath) return false;
 
-    const backupPath = this.currentBframePath + '.bak';
+    const backupPath = reviewPath + '.bak';
 
     try {
-      await window.electronAPI.copyFile(this.currentBframePath, backupPath);
+      const data = await window.electronAPI.loadReview(reviewPath);
+      if (!data) return false;
+
+      const saveResult = await window.electronAPI.saveReview(backupPath, data);
+      if (saveResult?.success !== true) {
+        log.warn('백업 저장이 완료되지 않음', {
+          path: backupPath,
+          reason: saveResult?.reason || saveResult?.error || 'unknown'
+        });
+        return false;
+      }
+
       log.info('백업 생성됨', { path: backupPath });
       return true;
     } catch (error) {
-      // copyFile API가 없으면 읽고 쓰기로 대체
-      try {
-        const data = await window.electronAPI.loadReview(this.currentBframePath);
-        if (data) {
-          await window.electronAPI.saveReview(backupPath, data);
-          log.info('백업 생성됨 (대체 방식)', { path: backupPath });
-          return true;
-        }
-      } catch (fallbackError) {
-        log.warn('백업 생성 실패', fallbackError);
-      }
+      log.warn('백업 생성 실패', error);
       return false;
     }
   }
@@ -980,10 +1737,10 @@ export class ReviewDataManager extends EventTarget {
    * 백업에서 데이터 복구
    * @returns {Promise<Object|null>} 복구된 데이터 또는 null
    */
-  async _restoreFromBackup() {
-    if (!this.currentBframePath) return null;
+  async _restoreFromBackup(reviewPath = this.currentBframePath) {
+    if (!reviewPath) return null;
 
-    const backupPath = this.currentBframePath + '.bak';
+    const backupPath = reviewPath + '.bak';
 
     try {
       const data = await window.electronAPI.loadReview(backupPath);
@@ -1002,10 +1759,10 @@ export class ReviewDataManager extends EventTarget {
    * 백업 파일 삭제
    * @returns {Promise<boolean>}
    */
-  async _deleteBackup() {
-    if (!this.currentBframePath) return false;
+  async _deleteBackup(reviewPath = this.currentBframePath) {
+    if (!reviewPath) return false;
 
-    const backupPath = this.currentBframePath + '.bak';
+    const backupPath = reviewPath + '.bak';
 
     try {
       await window.electronAPI.deleteFile(backupPath);
@@ -1024,6 +1781,214 @@ export class ReviewDataManager extends EventTarget {
     this._writeBlockedVersion = null;
     this._writeBlockedVersionDetected = false;
     this._writeBlockedReason = null;
+  }
+
+  _resetFabricDrawingPersistenceProvider() {
+    this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingCollectedRevision = null;
+    return this._installFabricDrawingRootInProvider({
+      present: false,
+      value: undefined
+    }, {
+      clearLocalChanges: true,
+      failureReason: 'review-reset-failed'
+    });
+  }
+
+  _importFabricDrawingPersistenceRoot(data) {
+    this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingCollectedRevision = null;
+    const state = captureDrawingsV3DiskState(data);
+    const result = this._installFabricDrawingRootInProvider(state, {
+      clearLocalChanges: true,
+      failureReason: 'review-import-failed'
+    });
+    this._recordDrawingsV3DiskState(data);
+    return result;
+  }
+
+  _installRecordedDiskStateInProvider(options = {}) {
+    if (!this._drawingsV3DiskState.known) {
+      this._invalidateFabricDrawingPersistenceProvider(
+        options.failureReason || 'disk-state-unavailable',
+        { clearLocalChanges: options.clearLocalChanges !== false }
+      );
+      return null;
+    }
+    return this._installFabricDrawingRootInProvider(
+      this._drawingsV3DiskState,
+      options
+    );
+  }
+
+  _installFabricDrawingRootInProvider(state, options = {}) {
+    const {
+      clearLocalChanges = true,
+      failureReason = 'provider-install-failed'
+    } = options;
+    this._fabricDrawingCollectedRevision = null;
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    if (clearLocalChanges) {
+      this._fabricDrawingHasLocalChanges = false;
+    }
+
+    const provider = this.fabricDrawingPersistenceProvider;
+    const method = state.present ? 'importRootValue' : 'reset';
+    if (typeof provider?.[method] !== 'function') {
+      this._invalidateFabricDrawingPersistenceProvider(failureReason, {
+        clearLocalChanges
+      });
+      return null;
+    }
+
+    try {
+      const result = state.present
+        ? provider.importRootValue(
+          cloneJson(state.value),
+          this._fabricDrawingPersistenceContext
+        )
+        : provider.reset(this._fabricDrawingPersistenceContext);
+      this._fabricDrawingProviderLoadedForCurrentReview =
+        result?.accepted === true || result?.preserved === true;
+      if (!this._fabricDrawingProviderLoadedForCurrentReview) {
+        this._invalidateFabricDrawingPersistenceProvider(failureReason, {
+          clearLocalChanges
+        });
+      }
+      return result;
+    } catch (error) {
+      this._invalidateFabricDrawingPersistenceProvider(failureReason, {
+        clearLocalChanges
+      });
+      log.warn('Fabric 드로잉 provider 설치 실패', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
+  }
+
+  _invalidateFabricDrawingPersistenceProvider(reason, options = {}) {
+    const { clearLocalChanges = true } = options;
+    this._fabricDrawingProviderLoadedForCurrentReview = false;
+    this._fabricDrawingCollectedRevision = null;
+    if (clearLocalChanges) {
+      this._fabricDrawingHasLocalChanges = false;
+    }
+    try {
+      this.fabricDrawingPersistenceProvider?.invalidate?.(reason);
+    } catch (error) {
+      log.warn('Fabric 드로잉 provider 무효화 실패', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  _recordDrawingsV3DiskState(data) {
+    this._drawingsV3DiskState = captureDrawingsV3DiskState(data);
+    this._hasCompletedReviewLoad = true;
+  }
+
+  async _readReviewSnapshot(filePath) {
+    if (typeof window.electronAPI.loadReviewSnapshot === 'function') {
+      const snapshot = await window.electronAPI.loadReviewSnapshot(filePath);
+      if (!snapshot ||
+          typeof snapshot !== 'object' ||
+          Array.isArray(snapshot) ||
+          !Object.hasOwn(snapshot, 'data')) {
+        throw new Error('버전이 포함된 .bframe snapshot을 읽지 못했습니다.');
+      }
+      const versionToken =
+        typeof snapshot.versionToken === 'string' &&
+        snapshot.versionToken.length > 0 &&
+        snapshot.versionToken.length <= 512
+          ? snapshot.versionToken
+          : null;
+      return {
+        data: snapshot.data,
+        versionToken
+      };
+    }
+    return {
+      data: await window.electronAPI.loadReview(filePath),
+      versionToken: null
+    };
+  }
+
+  async _runFabricDrawingSourceRefresh(
+    installSource,
+    details = {},
+    isOwnerCurrent = () => true
+  ) {
+    let installInvoked = false;
+    let installResult = false;
+    const guardedInstallSource = async () => {
+      if (installInvoked) return installResult;
+      installInvoked = true;
+      installResult = await installSource();
+      return installResult;
+    };
+
+    if (!this._fabricDrawingSourceRefreshHandler) {
+      return guardedInstallSource();
+    }
+
+    await this._fabricDrawingSourceRefreshHandler({
+      installSource: guardedInstallSource,
+      path: this.currentBframePath,
+      videoPath: this.currentVideoPath,
+      ...details
+    });
+    if (!installInvoked) {
+      if (isOwnerCurrent()) {
+        this._writeBlockedReason = 'fabric-drawing-source-refresh-failed';
+      }
+      return false;
+    }
+    return installResult;
+  }
+
+  async _reconcileDrawingsV3DiskState(
+    data,
+    owner = this._captureReviewContextOwner(),
+    ownsOwner = candidate => this._ownsReviewContext(candidate)
+  ) {
+    const latestState = captureDrawingsV3DiskState(data);
+    if (this._drawingsV3DiskState.known &&
+        latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
+      return true;
+    }
+
+    return this._runFabricDrawingSourceRefresh(async () => {
+      if (!ownsOwner(owner)) {
+        return false;
+      }
+      if (this._drawingsV3DiskState.known &&
+          latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
+        return true;
+      }
+      if (this._fabricDrawingHasLocalChanges) {
+        this._writeBlockedReason = 'fabric-drawing-conflict';
+        return false;
+      }
+
+      this._drawingsV3DiskState = latestState;
+      this._hasCompletedReviewLoad = true;
+      const installed = this._installRecordedDiskStateInProvider({
+        clearLocalChanges: true,
+        failureReason: 'disk-reconcile-failed'
+      });
+      const accepted = !this.fabricDrawingPersistenceProvider ||
+        installed?.accepted === true ||
+        installed?.preserved === true;
+      if (!accepted) {
+        this._writeBlockedReason = 'fabric-drawing-source-refresh-failed';
+        return false;
+      }
+      return true;
+    }, {
+      reason: 'external-drawings-v3-changed',
+      fingerprint: latestState.fingerprint
+    }, () => ownsOwner(owner));
   }
 
   _captureRootEnvelope(data, options = {}) {
@@ -1075,19 +2040,33 @@ export class ReviewDataManager extends EventTarget {
       this._reviewDocumentId = null;
       this._reviewDocumentIdPersisted = false;
     }
+    return true;
   }
 
-  async _refreshRootEnvelopeBeforeSave() {
-    if (!this._hasPersistedFile) return;
+  async _refreshRootEnvelopeBeforeSave(saveOwner = null) {
+    if (!this._hasPersistedFile) return null;
 
-    const latestRoot = await window.electronAPI.loadReview(this.currentBframePath);
+    const reviewPath = saveOwner?.bframePath || this.currentBframePath;
+    const snapshot = await this._readReviewSnapshot(reviewPath);
+    if (saveOwner) this._assertSaveOwner(saveOwner);
+    const latestRoot = snapshot.data;
     if (!latestRoot || typeof latestRoot !== 'object' || Array.isArray(latestRoot)) {
       throw new Error('최신 .bframe root를 다시 읽지 못해 저장을 중단했습니다.');
     }
+    this._reviewFileObservationEpoch += 1;
+    this._reviewFileVersionToken = snapshot.versionToken;
 
-    this._captureRootEnvelope(latestRoot, {
+    const rootCaptured = this._captureRootEnvelope(latestRoot, {
       retainIdentityWhenMissing: !this._reviewDocumentIdPersisted
     });
+    if (rootCaptured) {
+      await this._reconcileDrawingsV3DiskState(
+        latestRoot,
+        saveOwner || this._captureSaveOwner(),
+        owner => this._ownsSave(owner)
+      );
+    }
+    return normalizeReviewRootForMerge(latestRoot);
   }
 
   _assertRootEnvelopeWritable() {
@@ -1108,6 +2087,18 @@ export class ReviewDataManager extends EventTarget {
     if (this._writeBlockedReason === 'review-document-id-mismatch') {
       throw new Error('최신 .bframe의 reviewDocumentId가 달라 계보 충돌로 저장을 중단했습니다.');
     }
+
+    if (this._writeBlockedReason === 'fabric-drawing-conflict') {
+      throw new Error('다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.');
+    }
+
+    if (this._writeBlockedReason === 'fabric-drawing-source-refresh-stale') {
+      throw new Error('영상이 바뀌어 외부 Fabric 드로잉 갱신을 안전하게 중단했습니다.');
+    }
+
+    if (this._writeBlockedReason === 'fabric-drawing-source-refresh-failed') {
+      throw new Error('외부 Fabric 드로잉 갱신을 안전하게 완료하지 못해 저장을 중단했습니다.');
+    }
   }
 
   _ensureReviewDocumentId() {
@@ -1126,9 +2117,48 @@ export class ReviewDataManager extends EventTarget {
   /**
    * 현재 모든 데이터 수집 (v2.0 스키마)
    */
+  _collectReviewDataForMerge(fallbackReviewData = this._reviewMergeBase) {
+    const collectManagerData = (manager, method, fallback) => {
+      if (typeof manager?.[method] !== 'function') {
+        return cloneJson(fallback);
+      }
+      const value = manager[method]();
+      return value === undefined ? cloneJson(fallback) : value;
+    };
+    const mergeBase = fallbackReviewData || createEmptyReviewMergeBase();
+
+    return {
+      comments: collectManagerData(
+        this.commentManager,
+        'toJSON',
+        mergeBase.comments
+      ),
+      drawings: collectManagerData(
+        this.drawingManager,
+        'exportData',
+        mergeBase.drawings
+      ),
+      highlights: collectManagerData(
+        this.highlightManager,
+        'toJSON',
+        mergeBase.highlights
+      ),
+      compositionLayers: collectManagerData(
+        this.compositionLayerManager,
+        'toJSON',
+        mergeBase.compositionLayers
+      ),
+      manualVersions: cloneJson(this._manualVersions || []),
+      versionInfo: cloneJson(this._versionInfo ?? null),
+      liveblocksRoomId: this._liveblocksRoomId ?? null
+    };
+  }
+
   _collectData() {
     const now = new Date().toISOString();
     const videoFile = extractFileName(this.currentVideoPath);
+    this._collectFabricDrawingPersistenceRoot();
+    const reviewData = this._collectReviewDataForMerge();
 
     const knownRoot = {
       // v2.0 스키마 필드
@@ -1144,13 +2174,13 @@ export class ReviewDataManager extends EventTarget {
 
       // 버전 관리 필드
       versionInfo: this._versionInfo || null,
-      manualVersions: this._manualVersions || [],
+      manualVersions: reviewData.manualVersions,
 
       // 리뷰 데이터
-      comments: this.commentManager?.toJSON() || { layers: [] },
-      drawings: this.drawingManager?.exportData() || { layers: [] },
-      highlights: this.highlightManager?.toJSON() || [],
-      compositionLayers: this.compositionLayerManager?.toJSON() || []
+      comments: reviewData.comments,
+      drawings: reviewData.drawings,
+      highlights: reviewData.highlights,
+      compositionLayers: reviewData.compositionLayers
     };
 
     if (this._reviewDocumentId) {
@@ -1160,11 +2190,49 @@ export class ReviewDataManager extends EventTarget {
     return mergeBframeRoot(this._opaqueRootFields, knownRoot);
   }
 
+  _collectFabricDrawingPersistenceRoot() {
+    this._fabricDrawingCollectedRevision = null;
+    if (!this._fabricDrawingHasLocalChanges) return;
+    if (!this._fabricDrawingProviderLoadedForCurrentReview) {
+      throw new Error('현재 영상의 Fabric 드로잉 저장소가 준비되지 않았습니다.');
+    }
+
+    const provider = this.fabricDrawingPersistenceProvider;
+    const status = provider?.getStatus?.();
+    if (status?.state !== 'ready' || status?.compatible !== true) {
+      throw new Error('Fabric 드로잉 저장 문서가 호환되지 않아 저장을 중단했습니다.');
+    }
+    if (typeof provider.exportRootValue !== 'function') {
+      throw new Error('Fabric 드로잉 저장 문서를 가져올 수 없습니다.');
+    }
+
+    const snapshot = provider.exportRootValue();
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+      throw new Error('Fabric 드로잉 저장 문서가 유효하지 않습니다.');
+    }
+    this._opaqueRootFields = {
+      ...this._opaqueRootFields,
+      drawingsV3: snapshot
+    };
+    this._fabricDrawingCollectedRevision = status.revision;
+  }
+
+  _acknowledgeFabricDrawingSave(savedRevision) {
+    if (savedRevision === null || savedRevision === undefined) return;
+    const currentRevision = this.fabricDrawingPersistenceProvider?.getRevision?.();
+    if (currentRevision === savedRevision) {
+      this._fabricDrawingHasLocalChanges = false;
+    }
+  }
+
   /**
    * 로드한 데이터 적용 (v2.0 스키마)
    */
   _applyData(data, options = {}) {
     this._captureRootEnvelope(data, options);
+    if (!options.skipFabricDrawingImport) {
+      this._importFabricDrawingPersistenceRoot(data);
+    }
 
     // 메타데이터
     this._createdAt = data.createdAt;
@@ -1188,7 +2256,7 @@ export class ReviewDataManager extends EventTarget {
     }
 
     if (data.highlights && this.highlightManager) {
-      this.highlightManager.fromJSON(data.highlights);
+      this.highlightManager.fromJSON(normalizeHighlightData(data.highlights));
     }
 
     if (this.compositionLayerManager) {
@@ -1205,7 +2273,7 @@ export class ReviewDataManager extends EventTarget {
     if (!Number.isFinite(nextFps) || nextFps <= 0) return;
     if (this._fps === nextFps) return;
     this._fps = nextFps;
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1230,7 +2298,7 @@ export class ReviewDataManager extends EventTarget {
    */
   setLiveblocksRoomId(roomId) {
     this._liveblocksRoomId = roomId;
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1239,7 +2307,7 @@ export class ReviewDataManager extends EventTarget {
    */
   setVersionInfo(versionInfo) {
     this._versionInfo = versionInfo;
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1259,7 +2327,7 @@ export class ReviewDataManager extends EventTarget {
       this._manualVersions = [];
     }
     this._manualVersions.push(manualVersion);
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1276,7 +2344,7 @@ export class ReviewDataManager extends EventTarget {
    */
   setManualVersions(manualVersions) {
     this._manualVersions = manualVersions || [];
-    this.isDirty = true;
+    this._markDirty();
   }
 
   /**
@@ -1294,8 +2362,29 @@ export class ReviewDataManager extends EventTarget {
     if (index === -1) return false;
 
     this._manualVersions.splice(index, 1);
-    this.isDirty = true;
+    this._markDirty();
     return true;
+  }
+
+  _markDirty({ eventType = null, event = null, scheduleAutoSave = false } = {}) {
+    this.isDirty = true;
+    this._changeRevision += 1;
+    if (eventType) {
+      this._emit('dataChanged', { event: eventType, data: event });
+    }
+    if (scheduleAutoSave && this.autoSaveEnabled && !this._savePromise) {
+      this._scheduleAutoSave();
+    }
+  }
+
+  _onFabricDrawingPersistenceChanged(change) {
+    if (!this._fabricDrawingProviderLoadedForCurrentReview) return;
+    this._fabricDrawingHasLocalChanges = true;
+    this._markDirty({
+      eventType: 'fabricDrawingChanged',
+      event: change,
+      scheduleAutoSave: true
+    });
   }
 
   /**
@@ -1305,15 +2394,11 @@ export class ReviewDataManager extends EventTarget {
     // 로딩 중이면 무시
     if (this.isLoading) return;
 
-    this.isDirty = true;
-    this._emit('dataChanged', { event: e.type });
-
-    // Liveblocks는 자동으로 활동을 감지하므로 별도 기록 불필요
-
-    // 자동 저장 스케줄
-    if (this.autoSaveEnabled) {
-      this._scheduleAutoSave();
-    }
+    this._markDirty({
+      eventType: e.type,
+      event: e,
+      scheduleAutoSave: true
+    });
   }
 
   /**
@@ -1383,10 +2468,18 @@ export class ReviewDataManager extends EventTarget {
     const hasDrawings = (this.drawingManager?.layers || []).some(
       layer => (layer.keyframes?.length || 0) > 0
     );
+    const fabricDrawingStatus =
+      this._fabricDrawingProviderLoadedForCurrentReview
+        ? this.fabricDrawingPersistenceProvider?.getStatus?.()
+        : null;
+    const hasFabricDrawings = fabricDrawingStatus?.state === 'ready' &&
+      fabricDrawingStatus.compatible === true &&
+      fabricDrawingStatus.objectCount > 0;
     const hasHighlights = (this.highlightManager?.highlights?.length || 0) > 0;
     const hasCompositionLayers = (this.compositionLayerManager?.layers?.length || 0) > 0;
     const hasManualVersions = (this._manualVersions?.length || 0) > 0;
-    return hasComments || hasDrawings || hasHighlights || hasCompositionLayers || hasManualVersions;
+    return hasComments || hasDrawings || hasFabricDrawings ||
+      hasHighlights || hasCompositionLayers || hasManualVersions;
   }
 
   /**

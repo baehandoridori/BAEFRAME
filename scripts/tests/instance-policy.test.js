@@ -18,6 +18,56 @@ test('packaged mode stays single-instance by default', () => {
   assert.equal(shouldAllowMultipleInstances({ isDev: false, argv: [], env: {} }), false);
 });
 
+test('packaged Fabric trial allows a direct second instance without launch switches', () => {
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe'],
+    env: {},
+    runtimeProfile: {
+      active: true,
+      channel: 'fabric-v3-trial',
+      isolateUserData: true
+    }
+  }), true);
+
+  assert.equal(shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe'],
+    env: {},
+    runtimeProfile: {
+      active: false,
+      channel: null,
+      isolateUserData: false
+    }
+  }), false);
+});
+
+test('packaged Fabric stable profile keeps normal single-instance user data', () => {
+  const runtimeProfile = {
+    active: true,
+    channel: 'fabric-v3-stable',
+    isolateUserData: false
+  };
+
+  const allowMultipleInstances = shouldAllowMultipleInstances({
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe'],
+    env: {},
+    runtimeProfile
+  });
+
+  assert.equal(allowMultipleInstances, false);
+  assert.equal(resolveMultiInstanceUserDataPath({
+    allowMultipleInstances,
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe'],
+    env: {},
+    appDataDir: 'C:\\Users\\tester\\AppData\\Roaming',
+    pid: 1234,
+    runtimeProfile
+  }), null);
+});
+
 test('packaged file launches open in a new instance by default', () => {
   assert.equal(shouldAllowMultipleInstances({
     isDev: false,
@@ -101,6 +151,66 @@ test('multi-instance profile uses an isolated user data folder only when request
     pid: 1234
   });
   assert.equal(isolated, path.join('C:\\Users\\tester\\AppData\\Roaming', 'baeframe', 'multi-instance', 'shot-A'));
+});
+
+test('Fabric trial defaults to a PID-isolated user data folder', () => {
+  const isolated = resolveMultiInstanceUserDataPath({
+    allowMultipleInstances: true,
+    isDev: false,
+    argv: ['BFRAME_alpha_v2.exe'],
+    env: {},
+    appDataDir: 'C:\\Users\\tester\\AppData\\Roaming',
+    pid: 1234,
+    runtimeProfile: {
+      active: true,
+      channel: 'fabric-v3-trial',
+      isolateUserData: true
+    }
+  });
+
+  assert.equal(
+    isolated,
+    path.join('C:\\Users\\tester\\AppData\\Roaming', 'baeframe', 'multi-instance', 'pid-1234')
+  );
+});
+
+test('explicit user data and named profiles override the trial PID default', () => {
+  const runtimeProfile = {
+    active: true,
+    channel: 'fabric-v3-trial',
+    isolateUserData: true
+  };
+
+  assert.equal(
+    resolveMultiInstanceUserDataPath({
+      allowMultipleInstances: true,
+      isDev: false,
+      argv: ['BFRAME_alpha_v2.exe', '--multi-instance-user-data=C:\\trial\\manual'],
+      env: {},
+      appDataDir: 'C:\\Users\\tester\\AppData\\Roaming',
+      pid: 1234,
+      runtimeProfile
+    }),
+    path.resolve('C:\\trial\\manual')
+  );
+
+  assert.equal(
+    resolveMultiInstanceUserDataPath({
+      allowMultipleInstances: true,
+      isDev: false,
+      argv: ['BFRAME_alpha_v2.exe', '--multi-instance-profile=manual-check'],
+      env: {},
+      appDataDir: 'C:\\Users\\tester\\AppData\\Roaming',
+      pid: 1234,
+      runtimeProfile
+    }),
+    path.join(
+      'C:\\Users\\tester\\AppData\\Roaming',
+      'baeframe',
+      'multi-instance',
+      'manual-check'
+    )
+  );
 });
 
 test('multi-instance profile names are sanitized for filesystem use', () => {

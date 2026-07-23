@@ -26,6 +26,15 @@ const DEFAULT_MAX_ACTIONS = 2048;
 const MAX_STROKE_POINTS = 20000;
 const MAX_LASSO_POINTS = 1024;
 const DEFAULT_MAX_OBJECTS = 10000;
+const MAX_PERSISTED_KEYFRAMES = 10000;
+const MAX_PERSISTED_OBJECTS_TOTAL = 100000;
+const MAX_PERSISTED_SOURCE_DIMENSION = 1_000_000;
+const MAX_PERSISTED_TOTAL_FRAMES = 1_000_000_000;
+const MAX_PERSISTED_POINT_COORDINATE = 1_000_000_000;
+const MAX_PERSISTED_POINT_TIME = 1_000_000_000_000;
+const MAX_PERSISTED_BRUSH_SIZE = 1_000_000;
+const MAX_PERSISTED_TRANSFORM_MAGNITUDE = 1_000_000_000;
+const MAX_PERSISTENCE_STRING_LENGTH = 32768;
 const TRANSFORM_FIELDS = ['left', 'top', 'scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY'];
 const UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ['scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY'];
 const BRUSH_COLORS = Object.freeze([
@@ -53,6 +62,7 @@ const MIN_BRUSH_SIZE = 1;
 const MAX_BRUSH_SIZE = 50;
 const MIN_BRUSH_OPACITY_PERCENT = 10;
 const MAX_BRUSH_OPACITY_PERCENT = 100;
+const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 · 리뷰 자동 저장';
 const SELECTION_HIT_MARGIN_CSS_PX = 6;
 const MIN_SELECTION_HIT_TOLERANCE = 2;
 const MAX_SELECTION_HIT_TOLERANCE = 96;
@@ -93,6 +103,49 @@ const DRAWING_V3_DIAGNOSTIC_REASONS = new Set([
   'unsupported-transform',
   'warm-seed-mismatch'
 ]);
+const PERSISTENCE_HYDRATE_KEYS = Object.freeze([
+  'hostGeneration',
+  'videoGeneration',
+  'persistenceSessionId',
+  'stableVideoIdentity',
+  'fps',
+  'totalFrames',
+  'keyframes'
+]);
+const PERSISTENCE_EXPORT_KEYS = Object.freeze(
+  PERSISTENCE_HYDRATE_KEYS.filter(key => key !== 'keyframes')
+);
+const PERSISTENCE_KEYFRAME_KEYS = Object.freeze([
+  'id',
+  'frame',
+  'sourceWidth',
+  'sourceHeight',
+  'mutationSequence',
+  'objects'
+]);
+const PERSISTENCE_RECORD_REQUIRED_KEYS = Object.freeze([
+  'id',
+  'type',
+  'pathData',
+  'sourcePoints',
+  'style',
+  'transform'
+]);
+const PERSISTENCE_RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps']);
+const PERSISTENCE_STYLE_KEYS = Object.freeze(['color', 'size', 'opacity']);
+const PERSISTENCE_POINT_REQUIRED_KEYS = Object.freeze(['x', 'y', 'pressure', 'time']);
+const PERSISTENCE_POINT_OPTIONAL_KEYS = Object.freeze(['pointerType']);
+const PERSISTENCE_CAPS_KEYS = Object.freeze(['start', 'end']);
+const PERSISTENCE_POINTER_TYPES = new Set(['mouse', 'pen', 'touch']);
+const PERSISTENCE_HEX_COLOR = /^#[0-9a-f]{6}$/i;
+const persistenceUtf8Encoder = new TextEncoder();
+
+function formatFabricPersistenceBadge(targetFrame = null) {
+  const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0
+    ? targetFrame
+    : '-';
+  return `${FABRIC_PERSISTENCE_BADGE_PREFIX} · 프레임 ${frameLabel}`;
+}
 
 function clonePlain(value) {
   if (value === undefined) return undefined;
@@ -186,10 +239,17 @@ function makeSceneKey(stableVideoIdentity, targetFrame) {
 }
 
 function defaultEstimateObjectBytes(object) {
+  const bytes = jsonUtf8Bytes(object);
+  return Number.isFinite(bytes) ? Math.max(1, bytes) : Number.POSITIVE_INFINITY;
+}
+
+function jsonUtf8Bytes(value) {
   try {
-    return Math.max(1, JSON.stringify(object).length * 2);
+    const serialized = JSON.stringify(value);
+    if (typeof serialized !== 'string') return Number.POSITIVE_INFINITY;
+    return persistenceUtf8Encoder.encode(serialized).byteLength;
   } catch (_error) {
-    return 1;
+    return Number.POSITIVE_INFINITY;
   }
 }
 
@@ -237,6 +297,133 @@ function storedTransformsEqual(left, right, fields = TRANSFORM_FIELDS) {
 function safeEstimatedBytes(value) {
   const number = Math.trunc(Number(value));
   return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+}
+
+function isPlainRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isDenseArray(value) {
+  if (!Array.isArray(value)) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) return false;
+  }
+  return Reflect.ownKeys(value).every(key =>
+    key === 'length' ||
+    (typeof key === 'string' && /^(0|[1-9]\d*)$/.test(key) && Number(key) < value.length)
+  );
+}
+
+function hasExactKeys(value, required, optional = []) {
+  if (!isPlainRecord(value)) return false;
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some(key => typeof key !== 'string')) return false;
+  const allowed = new Set([...required, ...optional]);
+  if (ownKeys.some(key => !allowed.has(key))) return false;
+  return required.every(key => Object.hasOwn(value, key));
+}
+
+function isBoundedPersistenceString(value) {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= MAX_PERSISTENCE_STRING_LENGTH;
+}
+
+function isSafeCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function validatePersistenceEnvelope(request, includeKeyframes) {
+  const keys = includeKeyframes ? PERSISTENCE_HYDRATE_KEYS : PERSISTENCE_EXPORT_KEYS;
+  if (!hasExactKeys(request, keys) ||
+      !isSafeCount(request.hostGeneration) ||
+      !isSafeCount(request.videoGeneration) ||
+      !isBoundedPersistenceString(request.persistenceSessionId) ||
+      !isBoundedPersistenceString(request.stableVideoIdentity) ||
+      !Number.isFinite(request.fps) || request.fps <= 0 || request.fps > 1000 ||
+      !Number.isSafeInteger(request.totalFrames) || request.totalFrames <= 0 ||
+      request.totalFrames > MAX_PERSISTED_TOTAL_FRAMES) {
+    return false;
+  }
+  return !includeKeyframes ||
+    (isDenseArray(request.keyframes) && request.keyframes.length <= MAX_PERSISTED_KEYFRAMES);
+}
+
+function validatePersistedTransform(transform) {
+  if (!hasExactKeys(transform, TRANSFORM_FIELDS)) return false;
+  for (const field of TRANSFORM_FIELDS) {
+    if (field === 'flipX' || field === 'flipY') {
+      if (typeof transform[field] !== 'boolean') return false;
+    } else if (!Number.isFinite(transform[field]) ||
+        Math.abs(transform[field]) > MAX_PERSISTED_TRANSFORM_MAGNITUDE) {
+      return false;
+    }
+  }
+  return transform.scaleX !== 0 && transform.scaleY !== 0;
+}
+
+function validatePersistedPoint(point) {
+  if (!hasExactKeys(
+    point,
+    PERSISTENCE_POINT_REQUIRED_KEYS,
+    PERSISTENCE_POINT_OPTIONAL_KEYS
+  )) {
+    return false;
+  }
+  if (!Number.isFinite(point.x) ||
+      Math.abs(point.x) > MAX_PERSISTED_POINT_COORDINATE ||
+      !Number.isFinite(point.y) ||
+      Math.abs(point.y) > MAX_PERSISTED_POINT_COORDINATE ||
+      !Number.isFinite(point.pressure) ||
+      point.pressure < 0 || point.pressure > 1 ||
+      !Number.isFinite(point.time) ||
+      point.time < 0 || point.time > MAX_PERSISTED_POINT_TIME) {
+    return false;
+  }
+  return point.pointerType === undefined ||
+    (typeof point.pointerType === 'string' &&
+     PERSISTENCE_POINTER_TYPES.has(point.pointerType));
+}
+
+function validatePersistedRecord(record, maxDocumentBytes) {
+  if (!hasExactKeys(
+    record,
+    PERSISTENCE_RECORD_REQUIRED_KEYS,
+    PERSISTENCE_RECORD_OPTIONAL_KEYS
+  ) ||
+      typeof record.id !== 'string' || record.id.length === 0 ||
+      record.id.length > 512 ||
+      record.type !== 'stroke' ||
+      typeof record.pathData !== 'string' || record.pathData.length === 0 ||
+      record.pathData.length > maxDocumentBytes ||
+      !isDenseArray(record.sourcePoints) ||
+      record.sourcePoints.length === 0 ||
+      record.sourcePoints.length > MAX_STROKE_POINTS ||
+      !hasExactKeys(record.style, PERSISTENCE_STYLE_KEYS) ||
+      !PERSISTENCE_HEX_COLOR.test(record.style.color) ||
+      !Number.isFinite(record.style.size) ||
+      record.style.size <= 0 ||
+      record.style.size > MAX_PERSISTED_BRUSH_SIZE ||
+      !Number.isFinite(record.style.opacity) ||
+      record.style.opacity < 0 || record.style.opacity > 1 ||
+      !validatePersistedTransform(record.transform)) {
+    return false;
+  }
+
+  let previousTime = 0;
+  for (const point of record.sourcePoints) {
+    if (!validatePersistedPoint(point) || point.time < previousTime) return false;
+    previousTime = point.time;
+  }
+  if (record.strokeCaps !== undefined &&
+      (!hasExactKeys(record.strokeCaps, PERSISTENCE_CAPS_KEYS) ||
+       typeof record.strokeCaps.start !== 'boolean' ||
+       typeof record.strokeCaps.end !== 'boolean')) {
+    return false;
+  }
+  return true;
 }
 
 function drawingV3Count(value) {
@@ -310,14 +497,19 @@ function createSessionSceneStore(options = {}) {
     typeof options.drawingEngineObserver === 'object'
     ? options.drawingEngineObserver
     : null;
+  const committedTransitionObserver = typeof options.committedTransitionObserver === 'function'
+    ? options.committedTransitionObserver
+    : null;
   const createSceneInstanceId = typeof options.createSceneInstanceId === 'function'
     ? options.createSceneInstanceId
     : null;
   const scenes = new Map();
+  const persistenceByVideo = new Map();
   const issuedSceneInstanceIds = new Set();
   const videoAccess = new Map();
   let accessClock = 0;
   let latestVideoGeneration = -1;
+  let latestPersistenceHostGeneration = -1;
   let activeSession = null;
   let evictionCount = 0;
   let commandSequence = 0;
@@ -325,6 +517,8 @@ function createSessionSceneStore(options = {}) {
   let observerFailureCount = 0;
   let observerQuarantineFailureCount = 0;
   let observerLifecycleFailureCount = 0;
+  let persistenceObserverFailureCount = 0;
+  let persistenceUnboundCommitCount = 0;
   let destroyed = false;
 
   function sourceDimension(value) {
@@ -384,20 +578,22 @@ function createSessionSceneStore(options = {}) {
     return authoritativeObjects;
   }
 
-  function notifySceneActivation(scene, incomingSession, restored) {
+  function notifySceneActivation(scene, incomingSession) {
+    const alreadySeeded = scene.drawingObserverSeeded === true;
+    scene.drawingObserverSeeded = true;
     try {
       const activate = drawingEngineObserver?.activateScene;
       if (typeof activate !== 'function') return;
       activate.call(drawingEngineObserver, {
         ...sceneDescriptor(scene, incomingSession),
         mutationSequence: scene.mutationSequence
-      }, activationObjectView(scene, restored));
+      }, activationObjectView(scene, alreadySeeded));
     } catch (_error) {
       recordObserverFailure(scene.sceneInstanceId);
     }
   }
 
-  function notifyCommittedTransition(scene, eventFactory) {
+  function notifyDrawingEngineTransition(scene, eventFactory) {
     try {
       const enqueue = drawingEngineObserver?.enqueueTransition;
       if (typeof enqueue !== 'function') return;
@@ -405,6 +601,38 @@ function createSessionSceneStore(options = {}) {
     } catch (_error) {
       recordObserverFailure(scene.sceneInstanceId);
     }
+  }
+
+  function recordPersistenceObserverFailure() {
+    persistenceObserverFailureCount += 1;
+  }
+
+  function notifyPersistenceTransition(scene, eventFactory) {
+    if (!committedTransitionObserver) return;
+    const persistence = persistenceByVideo.get(scene.stableVideoIdentity);
+    if (!persistence) {
+      persistenceUnboundCommitCount += 1;
+      return;
+    }
+    try {
+      const result = committedTransitionObserver({
+        hostGeneration: persistence.hostGeneration,
+        videoGeneration: persistence.videoGeneration,
+        persistenceSessionId: persistence.persistenceSessionId,
+        stableVideoIdentity: scene.stableVideoIdentity,
+        ...eventFactory()
+      });
+      if (result && typeof result.then === 'function') {
+        Promise.resolve(result).catch(recordPersistenceObserverFailure);
+      }
+    } catch (_error) {
+      recordPersistenceObserverFailure();
+    }
+  }
+
+  function notifyCommittedTransition(scene, eventFactory) {
+    notifyDrawingEngineTransition(scene, () => clonePlain(eventFactory()));
+    notifyPersistenceTransition(scene, () => clonePlain(eventFactory()));
   }
 
   function notifyScenesDropped(sceneInstanceIds) {
@@ -471,6 +699,7 @@ function createSessionSceneStore(options = {}) {
       scenes.delete(key);
     }
     videoAccess.delete(stableVideoIdentity);
+    persistenceByVideo.delete(stableVideoIdentity);
     evictionCount += 1;
     notifyScenesDropped(droppedSceneInstanceIds);
   }
@@ -730,6 +959,10 @@ function createSessionSceneStore(options = {}) {
   }
 
   function commitStagedMutation(scene, change) {
+    if (!isSafeCount(scene.mutationSequence) ||
+        scene.mutationSequence >= Number.MAX_SAFE_INTEGER) {
+      return { applied: false, reason: 'mutation-sequence-overflow' };
+    }
     const previousEstimatedBytes = scene.estimatedBytes;
     let nextEstimatedBytes;
     try {
@@ -787,6 +1020,225 @@ function createSessionSceneStore(options = {}) {
     return { applied: true, commandId: command.id, ...recorded };
   }
 
+  function persistenceFenceMatches(binding, request) {
+    return binding.hostGeneration === request.hostGeneration &&
+      binding.videoGeneration === request.videoGeneration &&
+      binding.persistenceSessionId === request.persistenceSessionId &&
+      binding.stableVideoIdentity === request.stableVideoIdentity;
+  }
+
+  function validateHydrationFrames(request) {
+    const preparedFrames = [];
+    const keyframeIds = new Set();
+    const frameNumbers = new Set();
+    let previousFrame = -1;
+    let objectCount = 0;
+    let estimatedBytes = 0;
+
+    try {
+      for (const keyframe of request.keyframes) {
+        if (!hasExactKeys(keyframe, PERSISTENCE_KEYFRAME_KEYS) ||
+            typeof keyframe.id !== 'string' || keyframe.id.length === 0 ||
+            keyframe.id.length > 512 ||
+            !Number.isSafeInteger(keyframe.frame) || keyframe.frame < 0 ||
+            keyframe.frame >= request.totalFrames ||
+            keyframe.frame <= previousFrame ||
+            !Number.isFinite(keyframe.sourceWidth) || keyframe.sourceWidth <= 0 ||
+            keyframe.sourceWidth > MAX_PERSISTED_SOURCE_DIMENSION ||
+            !Number.isFinite(keyframe.sourceHeight) || keyframe.sourceHeight <= 0 ||
+            keyframe.sourceHeight > MAX_PERSISTED_SOURCE_DIMENSION ||
+            !isSafeCount(keyframe.mutationSequence) ||
+            !isDenseArray(keyframe.objects) ||
+            keyframe.objects.length > maxObjects ||
+            keyframeIds.has(keyframe.id) ||
+            frameNumbers.has(keyframe.frame)) {
+          return { accepted: false, reason: 'invalid-hydration-request' };
+        }
+        const objects = new Map();
+        for (const object of keyframe.objects) {
+          if (!validatePersistedRecord(object, maxBytes) || objects.has(object.id)) {
+            return { accepted: false, reason: 'invalid-hydration-request' };
+          }
+          const cloned = clonePlain(object);
+          objects.set(cloned.id, cloned);
+        }
+        const frameBytes = estimateObjectsBytes(objects);
+        if (!Number.isFinite(frameBytes) || frameBytes > maxBytes) {
+          return { accepted: false, reason: 'scene-capacity-exceeded' };
+        }
+        objectCount += objects.size;
+        estimatedBytes += frameBytes;
+        if (objectCount > MAX_PERSISTED_OBJECTS_TOTAL ||
+            estimatedBytes > maxBytes) {
+          return { accepted: false, reason: 'scene-capacity-exceeded' };
+        }
+        preparedFrames.push({
+          targetFrame: keyframe.frame,
+          sourceWidth: keyframe.sourceWidth,
+          sourceHeight: keyframe.sourceHeight,
+          mutationSequence: keyframe.mutationSequence,
+          objects,
+          estimatedBytes: frameBytes
+        });
+        keyframeIds.add(keyframe.id);
+        frameNumbers.add(keyframe.frame);
+        previousFrame = keyframe.frame;
+      }
+    } catch (_error) {
+      return { accepted: false, reason: 'invalid-hydration-request' };
+    }
+    return { accepted: true, preparedFrames, objectCount, estimatedBytes };
+  }
+
+  function planHydrationEvictions(stableVideoIdentity, nextVideoBytes) {
+    let projectedBytes = calculateEstimatedBytes() -
+      estimateVideoBytes(stableVideoIdentity) +
+      nextVideoBytes;
+    let projectedVideoCount = videoAccess.size +
+      (videoAccess.has(stableVideoIdentity) ? 0 : 1);
+    const planned = [];
+    for (const candidate of videoAccess.keys()) {
+      if (projectedBytes <= maxBytes && projectedVideoCount <= maxVideos) break;
+      if (candidate === stableVideoIdentity ||
+          candidate === activeSession?.stableVideoIdentity) {
+        continue;
+      }
+      projectedBytes -= estimateVideoBytes(candidate);
+      projectedVideoCount -= 1;
+      planned.push(candidate);
+    }
+    return projectedBytes <= maxBytes && projectedVideoCount <= maxVideos
+      ? planned
+      : null;
+  }
+
+  function hydrateVideo(request = {}) {
+    if (destroyed) return { accepted: false, reason: 'store-destroyed' };
+    if (!validatePersistenceEnvelope(request, true)) {
+      return { accepted: false, reason: 'invalid-hydration-request' };
+    }
+    if (activeSession?.stableVideoIdentity === request.stableVideoIdentity) {
+      return { accepted: false, reason: 'video-active' };
+    }
+    if (request.hostGeneration < latestPersistenceHostGeneration ||
+        (request.hostGeneration === latestPersistenceHostGeneration &&
+         request.videoGeneration < latestVideoGeneration)) {
+      return { accepted: false, reason: 'stale-fence' };
+    }
+
+    const validation = validateHydrationFrames(request);
+    if (!validation.accepted) return validation;
+    const plannedEvictions = planHydrationEvictions(
+      request.stableVideoIdentity,
+      validation.estimatedBytes
+    );
+    if (!plannedEvictions) {
+      return { accepted: false, reason: 'scene-capacity-exceeded' };
+    }
+
+    const hydratedScenes = [];
+    for (const frame of validation.preparedFrames) {
+      hydratedScenes.push({
+        key: makeSceneKey(request.stableVideoIdentity, frame.targetFrame),
+        sceneInstanceId: allocateSceneInstanceId(),
+        stableVideoIdentity: request.stableVideoIdentity,
+        targetFrame: frame.targetFrame,
+        sourceWidth: frame.sourceWidth,
+        sourceHeight: frame.sourceHeight,
+        objects: frame.objects,
+        selectedObjectIds: new Set(),
+        history: createDrawingCommandHistory({
+          maxEntries: maxHistory,
+          maxBytes: maxHistoryBytes,
+          estimateEntryBytes: defaultEstimateObjectBytes
+        }),
+        historyEntries: { undo: [], redo: [] },
+        dirty: false,
+        mutationCount: 0,
+        mutationSequence: frame.mutationSequence,
+        estimatedBytes: frame.estimatedBytes,
+        drawingObserverSeeded: false
+      });
+    }
+
+    const droppedSceneInstanceIds = [];
+    for (const [key, scene] of scenes) {
+      if (scene.stableVideoIdentity !== request.stableVideoIdentity) continue;
+      droppedSceneInstanceIds.push(scene.sceneInstanceId);
+      scenes.delete(key);
+    }
+    for (const scene of hydratedScenes) scenes.set(scene.key, scene);
+    persistenceByVideo.set(request.stableVideoIdentity, {
+      hostGeneration: request.hostGeneration,
+      videoGeneration: request.videoGeneration,
+      persistenceSessionId: request.persistenceSessionId,
+      stableVideoIdentity: request.stableVideoIdentity,
+      fps: request.fps,
+      totalFrames: request.totalFrames
+    });
+    if (request.hostGeneration > latestPersistenceHostGeneration) {
+      latestVideoGeneration = request.videoGeneration;
+    } else {
+      latestVideoGeneration = Math.max(latestVideoGeneration, request.videoGeneration);
+    }
+    latestPersistenceHostGeneration = Math.max(
+      latestPersistenceHostGeneration,
+      request.hostGeneration
+    );
+    touchVideo(request.stableVideoIdentity);
+    for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
+    notifyScenesDropped(droppedSceneInstanceIds);
+    return {
+      accepted: true,
+      sceneCount: hydratedScenes.length,
+      objectCount: validation.objectCount
+    };
+  }
+
+  function exportVideo(request = {}) {
+    if (destroyed) return { accepted: false, reason: 'store-destroyed' };
+    if (!validatePersistenceEnvelope(request, false)) {
+      return { accepted: false, reason: 'invalid-export-request' };
+    }
+    const binding = persistenceByVideo.get(request.stableVideoIdentity);
+    if (!binding ||
+        request.hostGeneration !== latestPersistenceHostGeneration ||
+        !persistenceFenceMatches(binding, request)) {
+      return { accepted: false, reason: 'stale-fence' };
+    }
+    if (binding.fps !== request.fps || binding.totalFrames !== request.totalFrames) {
+      return { accepted: false, reason: 'timeline-mismatch' };
+    }
+
+    try {
+      const scenesForVideo = [...scenes.values()]
+        .filter(scene => scene.stableVideoIdentity === request.stableVideoIdentity)
+        .sort((left, right) => left.targetFrame - right.targetFrame)
+        .map(scene => ({
+          sceneInstanceId: scene.sceneInstanceId,
+          targetFrame: scene.targetFrame,
+          sourceWidth: scene.sourceWidth,
+          sourceHeight: scene.sourceHeight,
+          mutationSequence: scene.mutationSequence,
+          objects: [...scene.objects.values()].map(clonePlain)
+        }));
+      return {
+        accepted: true,
+        snapshot: {
+          hostGeneration: binding.hostGeneration,
+          videoGeneration: binding.videoGeneration,
+          persistenceSessionId: binding.persistenceSessionId,
+          stableVideoIdentity: binding.stableVideoIdentity,
+          fps: binding.fps,
+          totalFrames: binding.totalFrames,
+          scenes: scenesForVideo
+        }
+      };
+    } catch (_error) {
+      return { accepted: false, reason: 'snapshot-export-failed' };
+    }
+  }
+
   function activateSession(session) {
     if (destroyed) return { accepted: false, reason: 'store-destroyed' };
     if (!session || typeof session.sessionId !== 'string' || session.sessionId.length === 0) {
@@ -797,11 +1249,20 @@ function createSessionSceneStore(options = {}) {
     }
     const targetFrame = Number(session.targetFrame);
     const videoGeneration = Number(session.videoGeneration);
+    const hostGeneration = Number(session.hostGeneration);
     if (!Number.isInteger(targetFrame) || targetFrame < 0 || !Number.isInteger(videoGeneration) || videoGeneration < 0) {
       return { accepted: false, reason: 'invalid-session-coordinates' };
     }
     if (videoGeneration < latestVideoGeneration) {
       return { accepted: false, reason: 'stale-video-generation' };
+    }
+    const persistence = persistenceByVideo.get(session.stableVideoIdentity);
+    if (persistence &&
+        (!Number.isSafeInteger(hostGeneration) ||
+         persistence.hostGeneration !== hostGeneration ||
+         persistence.videoGeneration !== videoGeneration ||
+         targetFrame >= persistence.totalFrames)) {
+      return { accepted: false, reason: 'stale-persistence-session' };
     }
 
     latestVideoGeneration = Math.max(latestVideoGeneration, videoGeneration);
@@ -819,13 +1280,15 @@ function createSessionSceneStore(options = {}) {
         selectedObjectIds: new Set(),
         history: createDrawingCommandHistory({
           maxEntries: maxHistory,
-          maxBytes: maxHistoryBytes
+          maxBytes: maxHistoryBytes,
+          estimateEntryBytes: defaultEstimateObjectBytes
         }),
         historyEntries: { undo: [], redo: [] },
         dirty: false,
         mutationCount: 0,
         mutationSequence: 0,
-        estimatedBytes: 0
+        estimatedBytes: 0,
+        drawingObserverSeeded: false
       });
     }
 
@@ -842,7 +1305,7 @@ function createSessionSceneStore(options = {}) {
     scene.selectedObjectIds.clear();
     touchVideo(session.stableVideoIdentity);
     enforceLimits();
-    notifySceneActivation(scene, session, restored);
+    notifySceneActivation(scene, session);
     return { accepted: true, restored, sceneKey };
   }
 
@@ -1046,6 +1509,10 @@ function createSessionSceneStore(options = {}) {
   }
 
   function applyHistoryState(scene, state) {
+    if (!isSafeCount(scene.mutationSequence) ||
+        scene.mutationSequence >= Number.MAX_SAFE_INTEGER) {
+      return { applied: false, reason: 'mutation-sequence-overflow' };
+    }
     if (!state || typeof state !== 'object') {
       return { applied: false, reason: 'invalid-history-state' };
     }
@@ -1249,6 +1716,10 @@ function createSessionSceneStore(options = {}) {
       observerFailureCount,
       observerQuarantineFailureCount,
       observerLifecycleFailureCount,
+      persistenceObserverFailureCount,
+      persistenceUnboundCommitCount,
+      persistenceVideoCount: persistenceByVideo.size,
+      latestPersistenceHostGeneration,
       latestVideoGeneration,
       activeSessionId: activeSession?.sessionId || null,
       activeSceneKey: activeSession?.sceneKey || null,
@@ -1272,6 +1743,7 @@ function createSessionSceneStore(options = {}) {
     const droppedSceneInstanceIds = [...scenes.values()].map(scene => scene.sceneInstanceId);
     scenes.clear();
     videoAccess.clear();
+    persistenceByVideo.clear();
     activeSession = null;
     notifyScenesDropped(droppedSceneInstanceIds);
   }
@@ -1279,6 +1751,8 @@ function createSessionSceneStore(options = {}) {
   return {
     activateSession,
     deactivateSession,
+    hydrateVideo,
+    exportVideo,
     addStroke,
     selectObjects,
     transformSelection,
@@ -1404,6 +1878,20 @@ function shouldAcceptInputRequest(current = {}, request = {}) {
   return true;
 }
 
+function resolvePersistenceCommitObserver(options, windowRef) {
+  if (typeof options.persistenceCommitObserver === 'function') {
+    return options.persistenceCommitObserver;
+  }
+  try {
+    const bridge = windowRef?.mpvOverlayPersistence;
+    return typeof bridge?.notifyCommittedTransition === 'function'
+      ? bridge.notifyCommittedTransition.bind(bridge)
+      : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 function createFabricOverlayRuntime(options = {}) {
   const documentRef = options.document || (typeof document !== 'undefined' ? document : null);
   const windowRef = options.window || (typeof window !== 'undefined' ? window : null);
@@ -1416,6 +1904,7 @@ function createFabricOverlayRuntime(options = {}) {
   const devicePixelRatio = finiteNumber(options.devicePixelRatio ?? windowRef?.devicePixelRatio, 1) || 1;
   const metrics = options.metrics || createFabricDrawingPilotMetrics(options.metricsOptions);
   const drawingV3ShadowRequested = options.drawingV3ShadowEnabled === true;
+  const persistenceCommitObserver = resolvePersistenceCommitObserver(options, windowRef);
   const customSceneStore = options.sceneStore || null;
   let drawingV3Adapter = null;
   let drawingV3ShadowStartupFailed = false;
@@ -1444,7 +1933,8 @@ function createFabricOverlayRuntime(options = {}) {
   }
   const sceneStore = customSceneStore || createSessionSceneStore({
     ...(options.sceneStoreOptions || {}),
-    ...(drawingV3Adapter ? { drawingEngineObserver: drawingV3Adapter } : {})
+    ...(drawingV3Adapter ? { drawingEngineObserver: drawingV3Adapter } : {}),
+    ...(persistenceCommitObserver ? { committedTransitionObserver: persistenceCommitObserver } : {})
   });
   const actionDeduper = options.actionDeduper || createActionDeduper(options.actionDeduperOptions);
   const strokePathFactory = options.strokePathFactory || createStrokePathData;
@@ -3149,7 +3639,7 @@ function createFabricOverlayRuntime(options = {}) {
     inputEnabled = false;
     currentSession = null;
     sceneStore.deactivateSession();
-    if (badge) badge.textContent = '새 드로잉 시험판 · 저장 안 됨 · 시험 프레임 -';
+    if (badge) badge.textContent = formatFabricPersistenceBadge();
   }
 
   function releaseSurfaceResources() {
@@ -3247,7 +3737,7 @@ function createFabricOverlayRuntime(options = {}) {
       selectionControls = createSelectionModeControls();
       badge = documentRef.createElement('span');
       badge.className = 'mpv-fabric-pilot-badge';
-      badge.textContent = '새 드로잉 시험판 · 저장 안 됨 · 시험 프레임 -';
+      badge.textContent = formatFabricPersistenceBadge();
       toolbar.appendChild(brushButton);
       toolbar.appendChild(selectButton);
       toolbar.appendChild(selectionControls.group);
@@ -3327,11 +3817,10 @@ function createFabricOverlayRuntime(options = {}) {
     if (activeLasso) cancelActiveLasso();
     if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
 
-    tokenState.hostGeneration = Number(request.hostGeneration);
-    tokenState.videoGeneration = Number(request.videoGeneration);
-    tokenState.inputRevision = Number(request.inputRevision);
-
     if (!request.enabled) {
+      tokenState.hostGeneration = Number(request.hostGeneration);
+      tokenState.videoGeneration = Number(request.videoGeneration);
+      tokenState.inputRevision = Number(request.inputRevision);
       const lastTool = currentSession?.tool === 'select' ? 'select' : 'brush';
       disableInput();
       metrics.recordToggleLatency(now() - startedAt);
@@ -3343,6 +3832,7 @@ function createFabricOverlayRuntime(options = {}) {
       targetFrame: Number(request.session.targetFrame),
       sourceWidth: Number(request.session.sourceWidth),
       sourceHeight: Number(request.session.sourceHeight),
+      hostGeneration: Number(request.hostGeneration),
       videoGeneration: Number(request.videoGeneration),
       viewportRevision: Math.max(-1, Math.trunc(Number(request.session.viewportRevision) || 0)),
       viewportTransform: normalizeViewportTransform(request.session.viewportTransform),
@@ -3353,15 +3843,53 @@ function createFabricOverlayRuntime(options = {}) {
       metrics.recordStaleMessageDrop();
       return activation;
     }
+    tokenState.hostGeneration = Number(request.hostGeneration);
+    tokenState.videoGeneration = Number(request.videoGeneration);
+    tokenState.inputRevision = Number(request.inputRevision);
     currentSession = session;
     applyViewport(session);
     renderActiveScene();
     setToolMode(session.tool);
     inputEnabled = true;
     setSurfaceInput(true);
-    badge.textContent = `새 드로잉 시험판 · 저장 안 됨 · 시험 프레임 ${session.targetFrame}`;
+    badge.textContent = formatFabricPersistenceBadge(session.targetFrame);
     metrics.recordToggleLatency(now() - startedAt);
     return { accepted: true, enabled: true, restored: activation.restored };
+  }
+
+  function hydrateDrawingVideo(request = {}) {
+    if (destroyed || !prepared) {
+      return {
+        accepted: false,
+        reason: destroyed ? 'destroyed' : 'not-prepared'
+      };
+    }
+    if (inputEnabled) return { accepted: false, reason: 'input-enabled' };
+    if (typeof sceneStore.hydrateVideo !== 'function') {
+      return { accepted: false, reason: 'persistence-unavailable' };
+    }
+    try {
+      return sceneStore.hydrateVideo(clonePlain(request));
+    } catch (_error) {
+      return { accepted: false, reason: 'invalid-hydration-request' };
+    }
+  }
+
+  function exportDrawingVideo(request = {}) {
+    if (destroyed || !prepared) {
+      return {
+        accepted: false,
+        reason: destroyed ? 'destroyed' : 'not-prepared'
+      };
+    }
+    if (typeof sceneStore.exportVideo !== 'function') {
+      return { accepted: false, reason: 'persistence-unavailable' };
+    }
+    try {
+      return sceneStore.exportVideo(clonePlain(request));
+    } catch (_error) {
+      return { accepted: false, reason: 'invalid-export-request' };
+    }
   }
 
   function updateViewport(command = {}) {
@@ -3516,6 +4044,11 @@ function createFabricOverlayRuntime(options = {}) {
         estimatedBytes: scene.estimatedBytes,
         evictionCount: scene.evictionCount
       },
+      drawingPersistence: {
+        videoCount: drawingV3Count(scene.persistenceVideoCount),
+        observerFailureCount: drawingV3Count(scene.persistenceObserverFailureCount),
+        unboundCommitCount: drawingV3Count(scene.persistenceUnboundCommitCount)
+      },
       drawingV3Shadow: getDrawingV3Diagnostics(),
       metrics: metrics.snapshot(),
       lastError
@@ -3538,6 +4071,8 @@ function createFabricOverlayRuntime(options = {}) {
   return {
     prepare,
     setDrawingInput,
+    hydrateDrawingVideo,
+    exportDrawingVideo,
     updateDrawingTool,
     updateViewport,
     applyDrawingAction,

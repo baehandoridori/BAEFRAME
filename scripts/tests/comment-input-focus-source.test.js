@@ -63,7 +63,14 @@ test('comment mode is visibly marked on the video surface outside fullscreen', (
 });
 
 test('comment mode pauses mpv and waits for a shared review freeze before native input is blocked', () => {
-  assert.match(appSource, /function isMpvReviewInteractionActive\(\) \{[\s\S]+state\.isDrawMode \|\| state\.isCommentMode/);
+  assert.match(
+    appSource,
+    /function requiresMpvReviewFreeze\(\) \{[\s\S]+state\.isCommentMode \|\|[\s\S]+state\.isDrawMode && !fabricDrawingPilotController\.isActiveOrPreparing\(\)/
+  );
+  assert.match(
+    appSource,
+    /function isMpvReviewInteractionActive\(\) \{\s+return requiresMpvReviewFreeze\(\);\s+\}/
+  );
   const handlerStart = appSource.indexOf("  commentManager.addEventListener('commentModeChanged'");
   const handlerEnd = appSource.indexOf("  commentManager.addEventListener('markerCreationStarted'", handlerStart);
   assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, 'comment mode change handler should be bounded');
@@ -191,8 +198,12 @@ test('playlist aggregate replies can expand and resolved state can be toggled fr
   assert.match(appSource, /async function togglePlaylistAggregateResolvedWithoutNavigation\(range\) \{/);
   assert.match(appSource, /const bframePath = await playlistManager\.ensureItemBframePath\(item\);/);
   assert.match(appSource, /commentManager\.getMarker\(range\.markerId\)/);
-  assert.match(appSource, /window\.electronAPI\.loadReview\(bframePath\)/);
-  assert.match(appSource, /window\.electronAPI\.saveReview\(bframePath, bframeData\)/);
+  assert.match(appSource, /window\.electronAPI\.loadReviewSnapshot\(bframePath\)/);
+  assert.match(appSource, /const expectedVersionToken = bframeSnapshot\?\.versionToken;/);
+  assert.match(
+    appSource,
+    /window\.electronAPI\.saveReview\(\s*bframePath,\s*bframeData,\s*\{ expectedVersionToken: expectedVersionToken \}\s*\)/
+  );
   assert.match(appSource, /marker\.resolved = !previous\.resolved;/);
   assert.match(appSource, /restoreMarkerResolution\(marker, previous\);/);
   assert.match(appSource, /marker\.updatedAt = new Date\(\);/);

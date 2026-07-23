@@ -1296,9 +1296,11 @@ test('mpv pilot playlist preparation skips background transcode work', () => {
 
 test('mpv pilot video loads cancel already-running FFmpeg background work before playback', () => {
   const loadVideoStart = appSource.indexOf('  async function loadVideo(filePath, options = {}) {');
+  const loadVideoEnd = appSource.indexOf('  async function generateThumbnails', loadVideoStart);
   assert.notEqual(loadVideoStart, -1, 'loadVideo should exist');
+  assert.notEqual(loadVideoEnd, -1, 'loadVideo boundary should exist');
 
-  const loadVideoSource = appSource.slice(loadVideoStart, loadVideoStart + 3600);
+  const loadVideoSource = appSource.slice(loadVideoStart, loadVideoEnd);
   assert.match(loadVideoSource, /const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot/);
   assert.match(loadVideoSource, /if \(useMpvPilot\) \{[\s\S]+await cancelPlaylistBackgroundTranscodesForMpvPilot\('mpv 직접 재생 시작'\);[\s\S]+if \(!canContinueVideoLoad\(\)\) return false;[\s\S]+\}/);
   assert.ok(
