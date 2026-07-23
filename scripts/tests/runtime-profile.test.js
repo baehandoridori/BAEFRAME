@@ -216,15 +216,26 @@ test('afterPack writes stable markers for normal builds and trial markers for tr
   assert.equal(fs.existsSync(markerPath(resourcesDir)), false);
 });
 
-test('trial build scripts rebuild the Fabric bundle and directory-package with the marker channel', () => {
+test('release build scripts pin stable while trial build scripts pin trial regardless of parent env', () => {
   const rootDir = path.resolve(__dirname, '..', '..');
   const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
   const builderConfig = fs.readFileSync(path.join(rootDir, 'electron-builder.yml'), 'utf8');
 
-  assert.equal(packageJson.scripts['prebuild:trial'], 'npm run bundle:mpv-fabric-overlay');
+  assert.equal(
+    packageJson.scripts.build,
+    'cross-env BAEFRAME_RUNTIME_PROFILE=fabric-v3-stable electron-builder --dir'
+  );
+  assert.equal(
+    packageJson.scripts['build:installer'],
+    'cross-env BAEFRAME_RUNTIME_PROFILE=fabric-v3-stable electron-builder'
+  );
+  assert.equal(
+    packageJson.scripts['prebuild:trial'],
+    'npm run bundle:mpv-fabric-overlay && npm run build:review-file-cas-helper'
+  );
   assert.equal(
     packageJson.scripts['build:trial'],
-    'cross-env BAEFRAME_RUNTIME_PROFILE=fabric-v3-trial electron-builder --dir'
+    'cross-env BAEFRAME_RUNTIME_PROFILE=fabric-v3-trial electron-builder --dir --config.directories.output=dist-trial'
   );
   assert.match(
     builderConfig,

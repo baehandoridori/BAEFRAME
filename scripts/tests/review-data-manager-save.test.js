@@ -31,6 +31,49 @@ function createCommentManager() {
   };
 }
 
+function createMutableReviewManagers() {
+  let comments = { layers: [] };
+  let drawings = { layers: [] };
+  let highlights = { highlights: [] };
+  let compositionLayers = [];
+
+  return {
+    commentManager: {
+      get layers() {
+        return comments.layers || [];
+      },
+      toJSON: () => structuredClone(comments),
+      fromJSON(data) {
+        comments = structuredClone(data || { layers: [] });
+      }
+    },
+    drawingManager: {
+      exportData: () => structuredClone(drawings),
+      importData(data) {
+        drawings = structuredClone(data || { layers: [] });
+      }
+    },
+    highlightManager: {
+      get highlights() {
+        return highlights.highlights || [];
+      },
+      toJSON: () => structuredClone(highlights),
+      fromJSON(data) {
+        highlights = structuredClone(data || { highlights: [] });
+      }
+    },
+    compositionLayerManager: {
+      get layers() {
+        return compositionLayers;
+      },
+      toJSON: () => structuredClone(compositionLayers),
+      fromJSON(data) {
+        compositionLayers = structuredClone(data || []);
+      }
+    }
+  };
+}
+
 function wait(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
@@ -1026,6 +1069,49 @@ test('stale version-token conflict never acknowledges or cleans a Fabric save', 
   manager.disconnect();
 });
 
+test('retryable review lock contention keeps changes dirty without a save error alert', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const commentManager = createCommentManager();
+  const diskRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING
+  });
+  window.electronAPI = {
+    loadReview: async () => structuredClone(diskRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'a'.repeat(64)
+    }),
+    saveReview: async () => ({
+      success: false,
+      retryable: true,
+      reason: 'lock-timeout'
+    })
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    commentManager
+  });
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/retryable-lock.mp4');
+  addSubstantiveComment(manager, commentManager, 'retryable-lock-comment');
+  let deferredEvents = 0;
+  let saveErrorEvents = 0;
+  manager.addEventListener('saveDeferred', () => {
+    deferredEvents += 1;
+  });
+  manager.addEventListener('saveError', () => {
+    saveErrorEvents += 1;
+  });
+
+  assert.equal(await manager.save(), false);
+  assert.equal(manager.isDirty, true);
+  assert.equal(manager.hasUnsavedChanges(), true);
+  assert.equal(manager._writeBlockedReason, null);
+  assert.equal(deferredEvents, 1);
+  assert.equal(saveErrorEvents, 0);
+  manager.disconnect();
+});
+
 test('remote drawing layer order event marks a persisted review as unsaved', async () => {
   const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
   const drawingManager = new EventTarget();
@@ -1094,6 +1180,509 @@ test('persisted save preserves the latest opaque root fields and review identity
   assert.deepEqual(savedRoot.drawingsV3, latestRoot.drawingsV3);
   assert.deepEqual(savedRoot.vendorEnvelope, { revision: 2 });
   assert.deepEqual(savedRoot.externallyAdded, { keep: true });
+});
+
+test('persisted save merges latest external review data with local unsaved changes', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const commentManager = createCommentManager();
+  const drawingManager = {
+    exportData: () => ({
+      layers: [{
+        id: 'local-drawing-layer',
+        name: '로컬 드로잉',
+        keyframes: [{ id: 'local-keyframe', isEmpty: false }]
+      }]
+    }),
+    importData() {}
+  };
+  const highlightManager = {
+    toJSON: () => ({
+      highlights: [{ id: 'local-highlight', startTime: 1, endTime: 2 }]
+    }),
+    fromJSON() {}
+  };
+  const compositionLayerManager = {
+    toJSON: () => [{
+      id: 'local-composition',
+      name: '로컬 합성',
+      order: 0
+    }],
+    fromJSON() {}
+  };
+  const initialRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING
+  });
+  const latestRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{
+        id: 'layer-1',
+        name: '기본 댓글 레이어',
+        markers: [{
+          id: 'remote-comment',
+          text: '다른 인스턴스 댓글',
+          frame: 24,
+          createdAt: '2026-07-23T00:00:00.000Z',
+          replies: []
+        }]
+      }]
+    },
+    drawings: {
+      layers: [{
+        id: 'remote-drawing-layer',
+        name: '원격 드로잉',
+        keyframes: [{ id: 'remote-keyframe', isEmpty: false }]
+      }]
+    },
+    highlights: {
+      highlights: [{ id: 'remote-highlight', startTime: 3, endTime: 4 }]
+    },
+    compositionLayers: [{
+      id: 'remote-composition',
+      name: '원격 합성',
+      order: 0
+    }],
+    manualVersions: [{
+      filePath: 'C:/reviews/remote-version.mp4',
+      fileName: 'remote-version.mp4'
+    }]
+  });
+  let savedRoot = null;
+  let savedOptions = null;
+  window.electronAPI = {
+    loadReview: async () => structuredClone(initialRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(latestRoot),
+      versionToken: 'latest-review-token'
+    }),
+    saveReview: async (_path, data, options) => {
+      savedRoot = structuredClone(data);
+      savedOptions = structuredClone(options);
+      return {
+        success: true,
+        versionToken: 'saved-review-token'
+      };
+    }
+  };
+
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    commentManager,
+    drawingManager,
+    highlightManager,
+    compositionLayerManager
+  });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+  addSubstantiveComment(manager, commentManager, 'local-comment');
+  manager.addManualVersion({
+    filePath: 'C:/reviews/local-version.mp4',
+    fileName: 'local-version.mp4'
+  });
+
+  assert.equal(await manager.save(), true);
+  assert.equal(savedOptions.expectedVersionToken, 'latest-review-token');
+  assert.deepEqual(
+    savedRoot.comments.layers[0].markers.map(marker => marker.id).sort(),
+    ['local-comment', 'remote-comment']
+  );
+  assert.deepEqual(
+    savedRoot.drawings.layers.map(layer => layer.id).sort(),
+    ['local-drawing-layer', 'remote-drawing-layer']
+  );
+  assert.deepEqual(
+    savedRoot.highlights.highlights.map(highlight => highlight.id).sort(),
+    ['local-highlight', 'remote-highlight']
+  );
+  assert.deepEqual(
+    savedRoot.compositionLayers.map(layer => layer.id).sort(),
+    ['local-composition', 'remote-composition']
+  );
+  assert.deepEqual(
+    savedRoot.manualVersions.map(version => version.fileName).sort(),
+    ['local-version.mp4', 'remote-version.mp4']
+  );
+});
+
+test('save without review managers preserves loaded and externally added review collections', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const initialRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{
+        id: 'comment-layer-base',
+        name: '기존 댓글',
+        markers: [{ id: 'comment-base', text: '기존 댓글', replies: [] }]
+      }]
+    },
+    drawings: {
+      layers: [{
+        id: 'drawing-base',
+        name: '기존 드로잉',
+        keyframes: [{ id: 'drawing-frame-base', isEmpty: false }]
+      }]
+    },
+    highlights: {
+      highlights: [{ id: 'highlight-base', startTime: 1, endTime: 2 }]
+    },
+    compositionLayers: [{
+      id: 'composition-base',
+      name: '기존 합성',
+      order: 0
+    }]
+  });
+  const latestRoot = structuredClone(initialRoot);
+  latestRoot.comments.layers[0].markers.push({
+    id: 'comment-remote',
+    text: '원격 댓글',
+    replies: []
+  });
+  latestRoot.drawings.layers.push({
+    id: 'drawing-remote',
+    name: '원격 드로잉',
+    keyframes: [{ id: 'drawing-frame-remote', isEmpty: false }]
+  });
+  latestRoot.highlights.highlights.push({
+    id: 'highlight-remote',
+    startTime: 3,
+    endTime: 4
+  });
+  latestRoot.compositionLayers.push({
+    id: 'composition-remote',
+    name: '원격 합성',
+    order: 1
+  });
+
+  let savedRoot = null;
+  window.electronAPI = {
+    loadReview: async () => structuredClone(initialRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(latestRoot),
+      versionToken: 'managerless-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      savedRoot = structuredClone(data);
+      return { success: true, versionToken: 'managerless-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({ autoSave: false });
+  assert.equal(await manager.setVideoFile('C:/reviews/existing.mp4'), true);
+  assert.equal(await manager.save(), true);
+
+  assert.deepEqual(
+    savedRoot.comments.layers[0].markers.map(marker => marker.id).sort(),
+    ['comment-base', 'comment-remote']
+  );
+  assert.deepEqual(
+    savedRoot.drawings.layers.map(layer => layer.id).sort(),
+    ['drawing-base', 'drawing-remote']
+  );
+  assert.deepEqual(
+    savedRoot.highlights.highlights.map(highlight => highlight.id).sort(),
+    ['highlight-base', 'highlight-remote']
+  );
+  assert.deepEqual(
+    savedRoot.compositionLayers.map(layer => layer.id).sort(),
+    ['composition-base', 'composition-remote']
+  );
+});
+
+test('three-way save keeps local deletions and remote additions across repeated saves', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{
+        id: 'comment-base',
+        name: '삭제할 댓글 레이어',
+        markers: [{ id: 'comment-base-marker', text: '삭제 대상', replies: [] }]
+      }]
+    },
+    drawings: {
+      layers: [{
+        id: 'drawing-base',
+        name: '삭제할 드로잉',
+        keyframes: [{ frame: 1, isEmpty: false, canvasData: 'base-drawing' }]
+      }]
+    },
+    highlights: {
+      highlights: [{
+        id: 'highlight-base',
+        startTime: 1,
+        endTime: 2,
+        modifiedAt: '2026-07-01T00:00:00.000Z'
+      }]
+    },
+    compositionLayers: [{
+      id: 'composition-base',
+      name: '삭제할 합성',
+      order: 0
+    }],
+    manualVersions: [{
+      filePath: 'C:/reviews/base-version.mp4',
+      fileName: 'base-version.mp4',
+      addedAt: '2026-07-01T00:00:00.000Z'
+    }]
+  });
+  let diskRoot = structuredClone(baseRoot);
+  let saveCount = 0;
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: `${saveCount + 1}`.repeat(64).slice(0, 64)
+    }),
+    saveReview: async (_path, data) => {
+      saveCount += 1;
+      diskRoot = structuredClone(data);
+      return {
+        success: true,
+        versionToken: `${saveCount + 5}`.repeat(64).slice(0, 64)
+      };
+    }
+  };
+
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    ...managers
+  });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+
+  managers.commentManager.fromJSON({ layers: [] });
+  managers.drawingManager.importData({ layers: [] });
+  managers.highlightManager.fromJSON({ highlights: [] });
+  managers.compositionLayerManager.fromJSON([]);
+  manager.removeManualVersion('C:/reviews/base-version.mp4');
+
+  diskRoot.comments.layers.push({
+    id: 'comment-remote',
+    name: '원격 댓글 레이어',
+    markers: [{ id: 'comment-remote-marker', text: '원격 추가', replies: [] }]
+  });
+  diskRoot.drawings.layers.push({
+    id: 'drawing-remote',
+    name: '원격 드로잉',
+    keyframes: [{ frame: 2, isEmpty: false, canvasData: 'remote-drawing' }]
+  });
+  diskRoot.highlights.highlights.push({
+    id: 'highlight-remote',
+    startTime: 3,
+    endTime: 4,
+    modifiedAt: '2026-07-02T00:00:00.000Z'
+  });
+  diskRoot.compositionLayers.push({
+    id: 'composition-remote',
+    name: '원격 합성',
+    order: 1
+  });
+  diskRoot.manualVersions.push({
+    filePath: 'C:/reviews/remote-version.mp4',
+    fileName: 'remote-version.mp4',
+    addedAt: '2026-07-02T00:00:00.000Z'
+  });
+
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(diskRoot.comments.layers.map(layer => layer.id), ['comment-remote']);
+  assert.deepEqual(diskRoot.drawings.layers.map(layer => layer.id), ['drawing-remote']);
+  assert.deepEqual(diskRoot.highlights.highlights.map(item => item.id), ['highlight-remote']);
+  assert.deepEqual(diskRoot.compositionLayers.map(layer => layer.id), ['composition-remote']);
+  assert.deepEqual(
+    diskRoot.manualVersions.map(version => version.filePath),
+    ['C:/reviews/remote-version.mp4']
+  );
+
+  manager._markDirty();
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(diskRoot.comments.layers.map(layer => layer.id), ['comment-remote']);
+  assert.deepEqual(diskRoot.drawings.layers.map(layer => layer.id), ['drawing-remote']);
+  assert.deepEqual(diskRoot.highlights.highlights.map(item => item.id), ['highlight-remote']);
+  assert.deepEqual(diskRoot.compositionLayers.map(layer => layer.id), ['composition-remote']);
+  assert.deepEqual(
+    diskRoot.manualVersions.map(version => version.filePath),
+    ['C:/reviews/remote-version.mp4']
+  );
+});
+
+test('three-way save preserves both sides of edit and delete conflicts without duplicate retries', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{
+        id: 'comment-shared',
+        name: '공유 댓글 레이어',
+        markers: [{ id: 'comment-base-marker', text: '기준', replies: [] }]
+      }]
+    },
+    drawings: {
+      layers: [{
+        id: 'drawing-shared',
+        name: '공유 드로잉',
+        keyframes: [{ frame: 1, isEmpty: false, canvasData: 'base-drawing' }]
+      }]
+    },
+    highlights: {
+      highlights: [{
+        id: 'highlight-shared',
+        startTime: 1,
+        endTime: 2,
+        note: '기준',
+        modifiedAt: '2026-07-01T00:00:00.000Z'
+      }]
+    },
+    compositionLayers: [{
+      id: 'composition-shared',
+      name: '공유 합성',
+      opacity: 1,
+      order: 0
+    }]
+  });
+  let diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'a'.repeat(64)
+    }),
+    saveReview: async (_path, data) => {
+      diskRoot = structuredClone(data);
+      return { success: true, versionToken: 'b'.repeat(64) };
+    }
+  };
+
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    ...managers
+  });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+  managers.commentManager.fromJSON({ layers: [] });
+  managers.drawingManager.importData({ layers: [] });
+  managers.highlightManager.fromJSON({ highlights: [] });
+  managers.compositionLayerManager.fromJSON([]);
+  manager._markDirty();
+
+  diskRoot.comments.layers[0].markers.push({
+    id: 'comment-remote-marker',
+    text: '원격 수정',
+    replies: []
+  });
+  diskRoot.drawings.layers[0].keyframes[0].canvasData = 'remote-drawing-change';
+  diskRoot.highlights.highlights[0].note = '원격 수정';
+  diskRoot.highlights.highlights[0].modifiedAt = '2026-07-02T00:00:00.000Z';
+  diskRoot.compositionLayers[0].opacity = 0.5;
+
+  assert.equal(await manager.save(), true);
+  const firstConflictIds = {
+    comments: diskRoot.comments.layers.map(layer => layer.id),
+    drawings: diskRoot.drawings.layers.map(layer => layer.id),
+    highlights: diskRoot.highlights.highlights.map(item => item.id),
+    composition: diskRoot.compositionLayers.map(layer => layer.id)
+  };
+  for (const [kind, ids] of Object.entries(firstConflictIds)) {
+    assert.equal(ids.length, 1, kind);
+    assert.notEqual(ids[0], `${kind === 'comments' ? 'comment' : kind === 'drawings' ? 'drawing' : kind === 'highlights' ? 'highlight' : 'composition'}-shared`);
+  }
+
+  manager._markDirty();
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(diskRoot.comments.layers.map(layer => layer.id), firstConflictIds.comments);
+  assert.deepEqual(diskRoot.drawings.layers.map(layer => layer.id), firstConflictIds.drawings);
+  assert.deepEqual(diskRoot.highlights.highlights.map(item => item.id), firstConflictIds.highlights);
+  assert.deepEqual(
+    diskRoot.compositionLayers.map(layer => layer.id),
+    firstConflictIds.composition
+  );
+});
+
+test('reloadAndMerge keeps local collection deletions while adopting remote additions', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{ id: 'comment-base', name: '삭제 대상', markers: [] }]
+    },
+    drawings: {
+      layers: [{
+        id: 'drawing-base',
+        name: '삭제 대상',
+        keyframes: [{ frame: 1, isEmpty: false, canvasData: 'base' }]
+      }]
+    },
+    highlights: {
+      highlights: [{ id: 'highlight-base', startTime: 1, endTime: 2 }]
+    },
+    compositionLayers: [{ id: 'composition-base', name: '삭제 대상', order: 0 }],
+    manualVersions: [{
+      filePath: 'C:/reviews/base-version.mp4',
+      fileName: 'base-version.mp4'
+    }]
+  });
+  const diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'c'.repeat(64)
+    })
+  };
+
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    ...managers
+  });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+  managers.commentManager.fromJSON({ layers: [] });
+  managers.drawingManager.importData({ layers: [] });
+  managers.highlightManager.fromJSON({ highlights: [] });
+  managers.compositionLayerManager.fromJSON([]);
+  manager.removeManualVersion('C:/reviews/base-version.mp4');
+
+  diskRoot.comments.layers.push({ id: 'comment-remote', name: '원격 추가', markers: [] });
+  diskRoot.drawings.layers.push({
+    id: 'drawing-remote',
+    name: '원격 추가',
+    keyframes: [{ frame: 2, isEmpty: false, canvasData: 'remote' }]
+  });
+  diskRoot.highlights.highlights.push({
+    id: 'highlight-remote',
+    startTime: 3,
+    endTime: 4
+  });
+  diskRoot.compositionLayers.push({
+    id: 'composition-remote',
+    name: '원격 추가',
+    order: 1
+  });
+  diskRoot.manualVersions.push({
+    filePath: 'C:/reviews/remote-version.mp4',
+    fileName: 'remote-version.mp4'
+  });
+
+  const result = await manager.reloadAndMerge({ merge: true });
+  assert.equal(result.success, true);
+  assert.deepEqual(
+    managers.commentManager.toJSON().layers.map(layer => layer.id),
+    ['comment-remote']
+  );
+  assert.deepEqual(
+    managers.drawingManager.exportData().layers.map(layer => layer.id),
+    ['drawing-remote']
+  );
+  assert.deepEqual(
+    managers.highlightManager.toJSON().highlights.map(item => item.id),
+    ['highlight-remote']
+  );
+  assert.deepEqual(
+    managers.compositionLayerManager.toJSON().map(layer => layer.id),
+    ['composition-remote']
+  );
+  assert.deepEqual(
+    manager.getManualVersions().map(version => version.filePath),
+    ['C:/reviews/remote-version.mp4']
+  );
 });
 
 test('persisted review identity mismatch blocks save instead of mixing two lineages', async () => {
@@ -1694,16 +2283,21 @@ test('successful save with a concurrent manager change schedules exactly one tra
   const saveStarted = createDeferred();
   const releaseFirstSave = createDeferred();
   const saveCalls = [];
+  let diskRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING
+  });
   window.electronAPI = {
-    loadReview: async () => createReviewRoot({
-      reviewDocumentId: REVIEW_ID_EXISTING
-    }),
+    loadReview: async () => structuredClone(diskRoot),
     saveReview: async (_path, data) => {
-      saveCalls.push(structuredClone(data));
+      const savedSnapshot = structuredClone(data);
+      saveCalls.push(savedSnapshot);
       if (saveCalls.length === 1) {
         saveStarted.resolve();
-        return releaseFirstSave.promise;
+        const result = await releaseFirstSave.promise;
+        diskRoot = savedSnapshot;
+        return result;
       }
+      diskRoot = savedSnapshot;
       return { success: true };
     }
   };
@@ -2297,4 +2891,823 @@ test('final Fabric snapshot failure blocks disk write and keeps dirty state', as
   assert.equal(saveCount, 0);
   assert.equal(manager.isDirty, true);
   assert.equal(manager.hasUnsavedChanges(), true);
+});
+
+test('backup fallback reports failure when transactional backup save is deferred', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const backupRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING
+  });
+  window.electronAPI = {
+    loadReview: async () => structuredClone(backupRoot),
+    saveReview: async () => ({
+      success: false,
+      retryable: true,
+      reason: 'lock-timeout'
+    })
+  };
+  const manager = new ReviewDataManager({ autoSave: false });
+
+  assert.equal(
+    await manager._createBackup('C:/reviews/backup-result.bframe'),
+    false
+  );
+});
+
+test('backup fallback succeeds only after the backup file is confirmed saved', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const backupRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING
+  });
+  const saveCalls = [];
+  window.electronAPI = {
+    loadReview: async () => structuredClone(backupRoot),
+    saveReview: async (...args) => {
+      saveCalls.push(args);
+      return { success: true };
+    }
+  };
+  const manager = new ReviewDataManager({ autoSave: false });
+
+  assert.equal(
+    await manager._createBackup('C:/reviews/backup-result.bframe'),
+    true
+  );
+  assert.equal(saveCalls.length, 1);
+  assert.equal(saveCalls[0][0], 'C:/reviews/backup-result.bframe.bak');
+  assert.deepEqual(saveCalls[0][1], backupRoot);
+});
+
+test('scheduled legacy migration save preserves migrated comments and manual versions', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const legacyRoot = {
+    videoFile: 'legacy.mp4',
+    videoPath: 'C:/reviews/legacy.mp4',
+    fps: 24,
+    comments: [{
+      id: 'legacy-comment',
+      text: '구형 댓글',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      replies: []
+    }],
+    versions: [{
+      version: 7,
+      filename: 'legacy_v7.mp4',
+      createdAt: '2026-07-01T00:00:00.000Z'
+    }],
+    vendorEnvelope: { preserve: true }
+  };
+  const saveCalls = [];
+  window.electronAPI = {
+    loadReview: async () => structuredClone(legacyRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(legacyRoot),
+      versionToken: 'legacy-root-token'
+    }),
+    saveReview: async (reviewPath, data) => {
+      saveCalls.push([reviewPath, structuredClone(data)]);
+      return {
+        success: true,
+        versionToken: reviewPath.endsWith('.bak') ? undefined : 'legacy-saved-token'
+      };
+    }
+  };
+
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    reviewDocumentIdFactory: () => REVIEW_ID_GENERATED,
+    ...managers
+  });
+  assert.equal(await manager.setVideoFile('C:/reviews/legacy.mp4'), true);
+
+  await wait(160);
+
+  const mainSave = saveCalls.find(([reviewPath]) =>
+    reviewPath === 'C:/reviews/legacy.bframe'
+  );
+  assert.ok(mainSave, 'migration should schedule a canonical main-file save');
+  const savedRoot = mainSave[1];
+  assert.equal(savedRoot.bframeVersion, '2.0');
+  assert.equal(savedRoot.reviewDocumentId, REVIEW_ID_GENERATED);
+  assert.deepEqual(savedRoot.vendorEnvelope, { preserve: true });
+  assert.equal(Object.hasOwn(savedRoot, 'versions'), false);
+  assert.deepEqual(
+    savedRoot.comments.layers[0].markers.map(marker => marker.id),
+    ['legacy-comment']
+  );
+  assert.deepEqual(
+    savedRoot.manualVersions.map(version => version.fileName),
+    ['legacy_v7.mp4']
+  );
+});
+
+test('three-way save preserves replies concurrently added to the same marker', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseMarker = {
+    id: 'shared-marker',
+    text: '공유 댓글',
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+    replies: []
+  };
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{
+        id: 'shared-layer',
+        name: '공유 댓글',
+        markers: [baseMarker]
+      }]
+    }
+  });
+  let diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'reply-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      diskRoot = structuredClone(data);
+      return { success: true, versionToken: 'reply-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({ autoSave: false, ...managers });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+
+  const localMarker = structuredClone(baseMarker);
+  localMarker.updatedAt = '2026-07-01T00:01:00.000Z';
+  localMarker.replies.push({
+    id: 'reply-local',
+    text: '로컬 답글',
+    createdAt: '2026-07-01T00:01:00.000Z',
+    updatedAt: '2026-07-01T00:01:00.000Z'
+  });
+  managers.commentManager.fromJSON({
+    layers: [{
+      id: 'shared-layer',
+      name: '공유 댓글',
+      markers: [localMarker]
+    }]
+  });
+
+  const remoteMarker = diskRoot.comments.layers[0].markers[0];
+  remoteMarker.updatedAt = '2026-07-01T00:02:00.000Z';
+  remoteMarker.replies.push({
+    id: 'reply-remote',
+    text: '원격 답글',
+    createdAt: '2026-07-01T00:02:00.000Z',
+    updatedAt: '2026-07-01T00:02:00.000Z'
+  });
+  manager._markDirty();
+
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(
+    diskRoot.comments.layers[0].markers[0].replies
+      .map(reply => reply.id)
+      .sort(),
+    ['reply-local', 'reply-remote']
+  );
+});
+
+test('soft-deleted marker stays deleted when a concurrent newer reply arrives', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseMarker = {
+    id: 'deleted-marker',
+    text: '삭제할 댓글',
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+    deleted: false,
+    deletedAt: null,
+    replies: []
+  };
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{
+        id: 'shared-layer',
+        name: '공유 댓글',
+        markers: [baseMarker]
+      }]
+    }
+  });
+  let diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'delete-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      diskRoot = structuredClone(data);
+      return { success: true, versionToken: 'delete-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({ autoSave: false, ...managers });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+
+  managers.commentManager.fromJSON({
+    layers: [{
+      id: 'shared-layer',
+      name: '공유 댓글',
+      markers: [{
+        ...structuredClone(baseMarker),
+        updatedAt: '2026-07-01T00:01:00.000Z',
+        deleted: true,
+        deletedAt: '2026-07-01T00:01:00.000Z'
+      }]
+    }]
+  });
+  const remoteMarker = diskRoot.comments.layers[0].markers[0];
+  remoteMarker.updatedAt = '2026-07-01T00:02:00.000Z';
+  remoteMarker.replies.push({
+    id: 'reply-after-delete',
+    text: '뒤늦게 도착한 답글',
+    createdAt: '2026-07-01T00:02:00.000Z',
+    updatedAt: '2026-07-01T00:02:00.000Z'
+  });
+  manager._markDirty();
+
+  assert.equal(await manager.save(), true);
+  const savedMarker = diskRoot.comments.layers[0].markers[0];
+  assert.equal(savedMarker.deleted, true);
+  assert.equal(savedMarker.deletedAt, '2026-07-01T00:01:00.000Z');
+  assert.deepEqual(
+    savedMarker.replies.map(reply => reply.id),
+    ['reply-after-delete']
+  );
+
+  manager._markDirty();
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(
+    diskRoot.comments.layers[0].markers.map(marker => marker.id),
+    ['deleted-marker']
+  );
+  assert.equal(diskRoot.comments.layers[0].markers[0].deleted, true);
+});
+
+test('unrelated save preserves the latest remote order of review layers', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [
+        { id: 'comment-a', name: 'A', markers: [] },
+        { id: 'comment-b', name: 'B', markers: [] }
+      ]
+    },
+    drawings: {
+      layers: [
+        { id: 'drawing-a', name: 'A', keyframes: [] },
+        { id: 'drawing-b', name: 'B', keyframes: [] }
+      ]
+    },
+    compositionLayers: [
+      { id: 'composition-a', name: 'A', order: 0 },
+      { id: 'composition-b', name: 'B', order: 1 }
+    ]
+  });
+  let diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'reorder-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      diskRoot = structuredClone(data);
+      return { success: true, versionToken: 'reorder-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({ autoSave: false, ...managers });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+
+  diskRoot.comments.layers.reverse();
+  diskRoot.drawings.layers.reverse();
+  diskRoot.drawings.layers.splice(1, 0, {
+    id: 'drawing-remote-insert',
+    name: '원격 중간 삽입',
+    keyframes: []
+  });
+  diskRoot.compositionLayers.reverse();
+  diskRoot.compositionLayers.unshift({
+    id: 'composition-remote-insert',
+    name: '원격 맨 앞 삽입',
+    order: 0
+  });
+  diskRoot.compositionLayers.forEach((layer, order) => {
+    layer.order = order;
+  });
+  manager.addManualVersion({
+    filePath: 'C:/reviews/unrelated.mp4',
+    fileName: 'unrelated.mp4'
+  });
+
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(
+    diskRoot.comments.layers.map(layer => layer.id),
+    ['comment-b', 'comment-a']
+  );
+  assert.deepEqual(
+    diskRoot.drawings.layers.map(layer => layer.id),
+    ['drawing-b', 'drawing-remote-insert', 'drawing-a']
+  );
+  assert.deepEqual(
+    diskRoot.compositionLayers.map(layer => layer.id),
+    ['composition-remote-insert', 'composition-b', 'composition-a']
+  );
+  assert.deepEqual(
+    diskRoot.compositionLayers.map(layer => layer.order),
+    [0, 1, 2]
+  );
+});
+
+test('conflicting local and remote reorders deterministically keep remote order and all layers', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const layerIds = ['a', 'b', 'c'];
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    drawings: {
+      layers: layerIds.map(id => ({
+        id: `drawing-${id}`,
+        name: id.toUpperCase(),
+        keyframes: []
+      }))
+    }
+  });
+  let diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'conflicting-order-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      diskRoot = structuredClone(data);
+      return { success: true, versionToken: 'conflicting-order-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({ autoSave: false, ...managers });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+  managers.drawingManager.importData({
+    layers: [
+      baseRoot.drawings.layers[1],
+      baseRoot.drawings.layers[0],
+      baseRoot.drawings.layers[2]
+    ]
+  });
+  diskRoot.drawings.layers = [
+    diskRoot.drawings.layers[0],
+    diskRoot.drawings.layers[2],
+    diskRoot.drawings.layers[1]
+  ];
+  manager._markDirty();
+
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(
+    diskRoot.drawings.layers.map(layer => layer.id),
+    ['drawing-a', 'drawing-c', 'drawing-b']
+  );
+  assert.deepEqual(
+    new Set(diskRoot.drawings.layers.map(layer => layer.id)),
+    new Set(['drawing-a', 'drawing-b', 'drawing-c'])
+  );
+});
+
+test('array-form highlights load into HighlightManager and survive an unrelated save', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const { HighlightManager } = await import('../../renderer/scripts/modules/highlight-manager.js');
+  const highlightManager = new HighlightManager();
+  const root = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    highlights: [{
+      id: 'highlight-array',
+      startTime: 3,
+      endTime: 7,
+      colorKey: 'yellow',
+      note: '배열형 하이라이트',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      modifiedAt: '2026-07-01T00:00:00.000Z'
+    }]
+  });
+  let savedRoot = null;
+  window.electronAPI = {
+    loadReview: async () => structuredClone(root),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(root),
+      versionToken: 'highlight-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      savedRoot = structuredClone(data);
+      return { success: true, versionToken: 'highlight-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    highlightManager
+  });
+  assert.equal(await manager.setVideoFile('C:/reviews/existing.mp4'), true);
+  assert.deepEqual(
+    highlightManager.getAllHighlights().map(highlight => highlight.id),
+    ['highlight-array']
+  );
+
+  manager.addManualVersion({
+    filePath: 'C:/reviews/unrelated.mp4',
+    fileName: 'unrelated.mp4'
+  });
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(
+    savedRoot.highlights.highlights.map(highlight => highlight.id),
+    ['highlight-array']
+  );
+});
+
+test('concurrent edits to the same reply create one deterministic conflict copy', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseMarker = {
+    id: 'shared-marker',
+    text: '공유 댓글',
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+    replies: [{
+      id: 'shared-reply',
+      text: '기준 답글',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z'
+    }]
+  };
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{
+        id: 'shared-layer',
+        name: '공유 댓글',
+        markers: [baseMarker]
+      }]
+    }
+  });
+  let diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'same-reply-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      diskRoot = structuredClone(data);
+      return { success: true, versionToken: 'same-reply-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({ autoSave: false, ...managers });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+  const localMarker = structuredClone(baseMarker);
+  localMarker.updatedAt = '2026-07-01T00:01:00.000Z';
+  localMarker.replies[0].text = '로컬 답글 수정';
+  localMarker.replies[0].updatedAt = '2026-07-01T00:01:00.000Z';
+  managers.commentManager.fromJSON({
+    layers: [{
+      id: 'shared-layer',
+      name: '공유 댓글',
+      markers: [localMarker]
+    }]
+  });
+  const remoteMarker = diskRoot.comments.layers[0].markers[0];
+  remoteMarker.updatedAt = '2026-07-01T00:02:00.000Z';
+  remoteMarker.replies[0].text = '원격 답글 수정';
+  remoteMarker.replies[0].updatedAt = '2026-07-01T00:02:00.000Z';
+  manager._markDirty();
+
+  assert.equal(await manager.save(), true);
+  const firstReplies = diskRoot.comments.layers[0].markers[0].replies;
+  assert.deepEqual(
+    firstReplies.map(reply => reply.id),
+    ['shared-reply', 'shared-reply__remote-conflict']
+  );
+  assert.deepEqual(
+    firstReplies.map(reply => reply.text),
+    ['로컬 답글 수정', '원격 답글 수정']
+  );
+
+  manager._markDirty();
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(
+    diskRoot.comments.layers[0].markers[0].replies.map(reply => reply.id),
+    ['shared-reply', 'shared-reply__remote-conflict']
+  );
+});
+
+test('concurrent marker metadata edits keep both parents and independently merged replies', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseMarker = {
+    id: 'metadata-marker',
+    text: '기준 댓글',
+    resolved: false,
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+    replies: []
+  };
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{
+        id: 'shared-layer',
+        name: '공유 댓글',
+        markers: [baseMarker]
+      }]
+    }
+  });
+  let diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'marker-metadata-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      diskRoot = structuredClone(data);
+      return { success: true, versionToken: 'marker-metadata-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({ autoSave: false, ...managers });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+  managers.commentManager.fromJSON({
+    layers: [{
+      id: 'shared-layer',
+      name: '공유 댓글',
+      markers: [{
+        ...structuredClone(baseMarker),
+        text: '로컬 본문 수정',
+        updatedAt: '2026-07-01T00:01:00.000Z',
+        replies: [{
+          id: 'reply-local',
+          text: '로컬 답글',
+          createdAt: '2026-07-01T00:01:00.000Z',
+          updatedAt: '2026-07-01T00:01:00.000Z'
+        }]
+      }]
+    }]
+  });
+  const remoteMarker = diskRoot.comments.layers[0].markers[0];
+  remoteMarker.resolved = true;
+  remoteMarker.updatedAt = '2026-07-01T00:02:00.000Z';
+  remoteMarker.replies.push({
+    id: 'reply-remote',
+    text: '원격 답글',
+    createdAt: '2026-07-01T00:02:00.000Z',
+    updatedAt: '2026-07-01T00:02:00.000Z'
+  });
+  manager._markDirty();
+
+  assert.equal(await manager.save(), true);
+  const firstMarkers = diskRoot.comments.layers[0].markers;
+  assert.deepEqual(
+    firstMarkers.map(marker => marker.id),
+    ['metadata-marker', 'metadata-marker__remote-conflict']
+  );
+  assert.equal(firstMarkers[0].text, '로컬 본문 수정');
+  assert.equal(firstMarkers[0].resolved, false);
+  assert.equal(firstMarkers[1].text, '기준 댓글');
+  assert.equal(firstMarkers[1].resolved, true);
+  for (const marker of firstMarkers) {
+    assert.deepEqual(
+      marker.replies.map(reply => reply.id).sort(),
+      ['reply-local', 'reply-remote']
+    );
+  }
+
+  manager._markDirty();
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(
+    diskRoot.comments.layers[0].markers.map(marker => marker.id),
+    ['metadata-marker', 'metadata-marker__remote-conflict']
+  );
+});
+
+test('soft delete and concurrent marker edit preserve tombstone plus one conflict copy', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseMarker = {
+    id: 'delete-edit-marker',
+    text: '기준 댓글',
+    deleted: false,
+    deletedAt: null,
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+    replies: []
+  };
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    comments: {
+      layers: [{
+        id: 'shared-layer',
+        name: '공유 댓글',
+        markers: [baseMarker]
+      }]
+    }
+  });
+  let diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'delete-edit-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      diskRoot = structuredClone(data);
+      return { success: true, versionToken: 'delete-edit-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({ autoSave: false, ...managers });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+  managers.commentManager.fromJSON({
+    layers: [{
+      id: 'shared-layer',
+      name: '공유 댓글',
+      markers: [{
+        ...structuredClone(baseMarker),
+        deleted: true,
+        deletedAt: '2026-07-01T00:01:00.000Z',
+        updatedAt: '2026-07-01T00:01:00.000Z'
+      }]
+    }]
+  });
+  const remoteMarker = diskRoot.comments.layers[0].markers[0];
+  remoteMarker.text = '원격 본문 수정';
+  remoteMarker.updatedAt = '2026-07-01T00:02:00.000Z';
+  manager._markDirty();
+
+  assert.equal(await manager.save(), true);
+  const firstMarkers = diskRoot.comments.layers[0].markers;
+  assert.deepEqual(
+    firstMarkers.map(marker => marker.id),
+    ['delete-edit-marker', 'delete-edit-marker__remote-conflict']
+  );
+  assert.equal(firstMarkers[0].deleted, true);
+  assert.equal(firstMarkers[1].deleted, false);
+  assert.equal(firstMarkers[1].text, '원격 본문 수정');
+
+  manager._markDirty();
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(
+    diskRoot.comments.layers[0].markers.map(marker => marker.id),
+    ['delete-edit-marker', 'delete-edit-marker__remote-conflict']
+  );
+});
+
+test('reload merge keeps latest remote as base so delete-edit conflicts do not resurrect on save', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const managers = createMutableReviewManagers();
+  const baseRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    drawings: {
+      layers: [{
+        id: 'drawing-shared',
+        name: '공유 드로잉',
+        keyframes: [{ frame: 1, isEmpty: false, canvasData: 'base' }]
+      }]
+    }
+  });
+  let diskRoot = structuredClone(baseRoot);
+  window.electronAPI = {
+    loadReview: async () => structuredClone(baseRoot),
+    loadReviewSnapshot: async () => ({
+      data: structuredClone(diskRoot),
+      versionToken: 'reload-base-latest-token'
+    }),
+    saveReview: async (_path, data) => {
+      diskRoot = structuredClone(data);
+      return { success: true, versionToken: 'reload-base-saved-token' };
+    }
+  };
+
+  const manager = new ReviewDataManager({ autoSave: false, ...managers });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+  managers.drawingManager.importData({ layers: [] });
+  manager._markDirty();
+  diskRoot.drawings.layers[0].keyframes[0].canvasData = 'remote-edit';
+
+  assert.equal((await manager.reloadAndMerge({ merge: true })).success, true);
+  assert.deepEqual(
+    managers.drawingManager.exportData().layers.map(layer => layer.id),
+    ['drawing-shared__remote-conflict']
+  );
+
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(
+    diskRoot.drawings.layers.map(layer => layer.id),
+    ['drawing-shared__remote-conflict']
+  );
+});
+
+test('scalar metadata uses three-way merge and keeps remote on concurrent conflicts', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const cases = [
+    {
+      name: 'remote-only',
+      localVersion: { label: 'base' },
+      localRoom: 'room-base',
+      localChanged: false,
+      remoteVersion: { label: 'remote' },
+      remoteRoom: 'room-remote',
+      expectedVersion: { label: 'remote' },
+      expectedRoom: 'room-remote'
+    },
+    {
+      name: 'local-only',
+      localVersion: { label: 'local' },
+      localRoom: 'room-local',
+      localChanged: true,
+      remoteVersion: { label: 'base' },
+      remoteRoom: 'room-base',
+      expectedVersion: { label: 'local' },
+      expectedRoom: 'room-local'
+    },
+    {
+      name: 'concurrent',
+      localVersion: { label: 'local' },
+      localRoom: 'room-local',
+      localChanged: true,
+      remoteVersion: { label: 'remote' },
+      remoteRoom: 'room-remote',
+      expectedVersion: { label: 'remote' },
+      expectedRoom: 'room-remote'
+    },
+    {
+      name: 'local-clear',
+      localVersion: null,
+      localRoom: null,
+      localChanged: true,
+      remoteVersion: { label: 'base' },
+      remoteRoom: 'room-base',
+      expectedVersion: null,
+      expectedRoom: null
+    }
+  ];
+
+  for (const mergeCase of cases) {
+    const baseRoot = createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      versionInfo: { label: 'base' },
+      liveblocksRoomId: 'room-base'
+    });
+    const diskRoot = structuredClone(baseRoot);
+    diskRoot.versionInfo = mergeCase.remoteVersion;
+    diskRoot.liveblocksRoomId = mergeCase.remoteRoom;
+    let savedRoot = null;
+    window.electronAPI = {
+      loadReview: async () => structuredClone(baseRoot),
+      loadReviewSnapshot: async () => ({
+        data: structuredClone(diskRoot),
+        versionToken: `scalar-${mergeCase.name}-latest`
+      }),
+      saveReview: async (_path, data) => {
+        savedRoot = structuredClone(data);
+        return {
+          success: true,
+          versionToken: `scalar-${mergeCase.name}-saved`
+        };
+      }
+    };
+
+    const manager = new ReviewDataManager({ autoSave: false });
+    await manager.setVideoFile('C:/reviews/existing.mp4');
+    if (mergeCase.localChanged) {
+      manager.setVersionInfo(mergeCase.localVersion);
+      manager.setLiveblocksRoomId(mergeCase.localRoom);
+    }
+    if (mergeCase.name === 'remote-only') {
+      manager.addManualVersion({
+        filePath: 'C:/reviews/unrelated.mp4',
+        fileName: 'unrelated.mp4'
+      });
+    }
+
+    assert.equal(await manager.save(), true, mergeCase.name);
+    assert.deepEqual(
+      savedRoot.versionInfo,
+      mergeCase.expectedVersion,
+      mergeCase.name
+    );
+    assert.equal(
+      savedRoot.liveblocksRoomId,
+      mergeCase.expectedRoom,
+      mergeCase.name
+    );
+  }
 });

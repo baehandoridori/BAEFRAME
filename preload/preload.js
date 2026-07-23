@@ -5,6 +5,73 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+const MPV_OVERLAY_KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
+const MPV_OVERLAY_NAMED_KEY_CODES = new Set([
+  'Backspace', 'Tab', 'Enter', 'Delete', 'Insert', 'Home', 'End', 'PageUp', 'PageDown',
+  'Escape', 'Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backquote',
+  'Minus', 'Equal', 'BracketLeft', 'BracketRight', 'Backslash', 'CapsLock', 'Semicolon',
+  'Quote', 'Comma', 'Period', 'Slash', 'PrintScreen', 'ScrollLock', 'Pause', 'NumLock',
+  'ContextMenu', 'IntlBackslash', 'IntlRo', 'IntlYen', 'Convert', 'NonConvert', 'KanaMode',
+  'Lang1', 'Lang2', 'Lang3', 'Lang4', 'Lang5', 'Help', 'Again', 'Undo', 'Cut', 'Copy',
+  'Paste', 'Find', 'Props', 'Select', 'Open', 'Eject', 'Power', 'WakeUp', 'BrowserBack',
+  'BrowserForward', 'BrowserRefresh', 'BrowserStop', 'BrowserSearch', 'BrowserFavorites',
+  'BrowserHome', 'AudioVolumeMute', 'AudioVolumeDown', 'AudioVolumeUp', 'MediaTrackNext',
+  'MediaTrackPrevious', 'MediaStop', 'MediaPlayPause', 'MediaSelect', 'LaunchMail',
+  'LaunchApp1', 'LaunchApp2'
+]);
+const MPV_OVERLAY_KEYBOARD_FIELDS = new Set([
+  'type', 'key', 'code', 'shiftKey', 'ctrlKey', 'altKey', 'metaKey', 'repeat'
+]);
+
+function isMpvOverlayPhysicalKeyCode(code) {
+  if (typeof code !== 'string' || code.length === 0 || code.length > 32) return false;
+  if (/^Key[A-Z]$/.test(code) ||
+      /^Digit[0-9]$/.test(code) ||
+      /^F(?:[1-9]|1\d|2[0-4])$/.test(code) ||
+      /^Numpad(?:[0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal|Comma|ParenLeft|ParenRight|Backspace|Clear|ClearEntry|MemoryAdd|MemoryClear|MemoryRecall|MemoryStore|MemorySubtract)$/.test(code)) {
+    return true;
+  }
+  return MPV_OVERLAY_NAMED_KEY_CODES.has(code);
+}
+
+function normalizeMpvOverlayKeyboardInput(value) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const fields = Object.keys(value);
+    if (fields.length !== MPV_OVERLAY_KEYBOARD_FIELDS.size ||
+        fields.some(field => !MPV_OVERLAY_KEYBOARD_FIELDS.has(field))) {
+      return null;
+    }
+    if (value.type !== 'keyDown' && value.type !== 'keyUp') return null;
+    if (typeof value.key !== 'string' ||
+        value.key.length === 0 ||
+        value.key.length > 64 ||
+        value.key.includes('\u0000') ||
+        ['Process', 'Dead', 'Unidentified'].includes(value.key) ||
+        !isMpvOverlayPhysicalKeyCode(value.code) ||
+        ['Process', 'Dead', 'Unidentified'].includes(value.code) ||
+        typeof value.shiftKey !== 'boolean' ||
+        typeof value.ctrlKey !== 'boolean' ||
+        typeof value.altKey !== 'boolean' ||
+        typeof value.metaKey !== 'boolean' ||
+        typeof value.repeat !== 'boolean') {
+      return null;
+    }
+    return {
+      type: value.type,
+      key: value.key,
+      code: value.code,
+      shiftKey: value.shiftKey,
+      ctrlKey: value.ctrlKey,
+      altKey: value.altKey,
+      metaKey: value.metaKey,
+      repeat: value.repeat
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
 // Renderer에 노출할 API
 contextBridge.exposeInMainWorld('electronAPI', {
   // ====== 파일 관련 ======
@@ -143,6 +210,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvGetOverlayDrawingDiagnostics: () => ipcRenderer.invoke('mpv:get-overlay-drawing-diagnostics'),
   mpvHydrateOverlayDrawingVideo: (request) => ipcRenderer.invoke('mpv:hydrate-overlay-drawing-video', request),
   mpvExportOverlayDrawingVideo: (request) => ipcRenderer.invoke('mpv:export-overlay-drawing-video', request),
+  onMpvOverlayKeyboardInput: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, input) => {
+      const normalized = normalizeMpvOverlayKeyboardInput(input);
+      if (normalized) callback(normalized);
+    };
+    ipcRenderer.on(MPV_OVERLAY_KEYBOARD_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(MPV_OVERLAY_KEYBOARD_CHANNEL, listener);
+  },
   onFabricDrawingPersistenceEvent: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (event, message) => callback(message);

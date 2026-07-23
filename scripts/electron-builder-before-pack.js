@@ -1,12 +1,20 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const {
+  buildReviewFileCasHelper
+} = require('./build-review-file-cas-helper');
 
 const REQUIRED_WINDOWS_MPV_FILES = Object.freeze([
   'mpv.exe',
   'mpv.com',
   'd3dcompiler_43.dll',
   path.join('mpv', 'fonts.conf')
+]);
+
+const REQUIRED_WINDOWS_FFMPEG_FILES = Object.freeze([
+  'ffmpeg.exe',
+  'ffprobe.exe'
 ]);
 
 function getMissingRuntimeFiles(runtimeDir) {
@@ -18,6 +26,31 @@ function getMissingRuntimeFiles(runtimeDir) {
       return true;
     }
   });
+}
+
+function ensureWindowsFfmpegRuntime({ projectDir }) {
+  const runtimeDir = path.join(path.resolve(projectDir), 'ffmpeg', 'win32');
+  const invalidFiles = REQUIRED_WINDOWS_FFMPEG_FILES.filter(fileName => {
+    try {
+      const stats = fs.statSync(path.join(runtimeDir, fileName));
+      return !stats.isFile() || stats.size <= 0;
+    } catch (_error) {
+      return true;
+    }
+  });
+
+  if (invalidFiles.length > 0) {
+    throw new Error(
+      [
+        `Windows FFmpeg runtime is incomplete at ${runtimeDir}.`,
+        `Missing, empty, or non-file entries: ${invalidFiles.join(', ')}`,
+        'Packaging was stopped before creating a build without video conversion tools.',
+        'ffmpeg.exe and ffprobe.exe must both be non-empty regular files in ffmpeg/win32.'
+      ].join('\n')
+    );
+  }
+
+  return { status: 'present', runtimeDir };
 }
 
 function resolveGitCommonDir(projectDir) {
@@ -140,19 +173,29 @@ async function beforePack(context) {
   const result = ensureWindowsMpvRuntime({
     projectDir: context.packager.projectDir
   });
+  const ffmpeg = ensureWindowsFfmpegRuntime({
+    projectDir: context.packager.projectDir
+  });
+  const casHelper = buildReviewFileCasHelper();
 
   if (result.status === 'provisioned') {
     console.log(`[beforePack] Prepared Windows mpv runtime from ${result.sourceDir}`);
   }
 
-  return result;
+  return {
+    ...result,
+    ffmpeg,
+    casHelper
+  };
 }
 
 module.exports = {
   beforePack,
+  ensureWindowsFfmpegRuntime,
   ensureWindowsMpvRuntime,
   getMissingRuntimeFiles,
   resolveGitCommonDir,
   resolveMainCheckoutDir,
+  REQUIRED_WINDOWS_FFMPEG_FILES,
   REQUIRED_WINDOWS_MPV_FILES
 };

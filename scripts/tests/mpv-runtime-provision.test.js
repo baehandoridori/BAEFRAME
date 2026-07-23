@@ -7,6 +7,7 @@ const { execFileSync } = require('node:child_process');
 
 const {
   beforePack,
+  ensureWindowsFfmpegRuntime,
   ensureWindowsMpvRuntime,
   resolveGitCommonDir,
   resolveMainCheckoutDir
@@ -38,6 +39,14 @@ function writeRuntimeDirectory(runtimeDir, prefix = 'fake') {
 
 function writeFakeRuntime(mainCheckoutDir) {
   return writeRuntimeDirectory(path.join(mainCheckoutDir, 'mpv', 'win32'));
+}
+
+function writeFfmpegRuntime(projectDir) {
+  const runtimeDir = path.join(projectDir, 'ffmpeg', 'win32');
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  fs.writeFileSync(path.join(runtimeDir, 'ffmpeg.exe'), 'fake-ffmpeg-executable');
+  fs.writeFileSync(path.join(runtimeDir, 'ffprobe.exe'), 'fake-ffprobe-executable');
+  return runtimeDir;
 }
 
 test('copies the complete Windows mpv runtime from the main checkout into a linked worktree', (t) => {
@@ -185,6 +194,63 @@ test('fails before packaging when no Windows mpv runtime can be found', (t) => {
   assert.throws(
     () => ensureWindowsMpvRuntime({ projectDir: worktreeDir, gitCommonDir, env: {} }),
     /Windows mpv runtime is missing[\s\S]*BAEFRAME_MPV_SOURCE_DIR/
+  );
+});
+
+test('accepts complete non-empty Windows FFmpeg tools from the project runtime directory', (t) => {
+  const { worktreeDir } = createSandbox(t);
+  const runtimeDir = writeFfmpegRuntime(worktreeDir);
+
+  const result = ensureWindowsFfmpegRuntime({ projectDir: worktreeDir });
+
+  assert.equal(result.status, 'present');
+  assert.equal(result.runtimeDir, runtimeDir);
+});
+
+test('rejects a Windows FFmpeg runtime when either executable is missing', (t) => {
+  const { worktreeDir } = createSandbox(t);
+  const runtimeDir = writeFfmpegRuntime(worktreeDir);
+  fs.rmSync(path.join(runtimeDir, 'ffprobe.exe'));
+
+  assert.throws(
+    () => ensureWindowsFfmpegRuntime({ projectDir: worktreeDir }),
+    /Windows FFmpeg runtime is incomplete[\s\S]*ffprobe\.exe[\s\S]*packaging was stopped/i
+  );
+});
+
+test('rejects empty Windows FFmpeg executables', (t) => {
+  const { worktreeDir } = createSandbox(t);
+  const runtimeDir = writeFfmpegRuntime(worktreeDir);
+  fs.writeFileSync(path.join(runtimeDir, 'ffmpeg.exe'), '');
+
+  assert.throws(
+    () => ensureWindowsFfmpegRuntime({ projectDir: worktreeDir }),
+    /Windows FFmpeg runtime is incomplete[\s\S]*ffmpeg\.exe[\s\S]*non-empty regular files/i
+  );
+});
+
+test('rejects Windows FFmpeg runtime entries that are not regular files', (t) => {
+  const { worktreeDir } = createSandbox(t);
+  const runtimeDir = writeFfmpegRuntime(worktreeDir);
+  fs.rmSync(path.join(runtimeDir, 'ffprobe.exe'));
+  fs.mkdirSync(path.join(runtimeDir, 'ffprobe.exe'));
+
+  assert.throws(
+    () => ensureWindowsFfmpegRuntime({ projectDir: worktreeDir }),
+    /Windows FFmpeg runtime is incomplete[\s\S]*ffprobe\.exe[\s\S]*non-empty regular files/i
+  );
+});
+
+test('Windows beforePack stops before building a package with missing FFmpeg tools', async (t) => {
+  const { worktreeDir } = createSandbox(t);
+  writeRuntimeDirectory(path.join(worktreeDir, 'mpv', 'win32'));
+
+  await assert.rejects(
+    () => beforePack({
+      electronPlatformName: 'win32',
+      packager: { projectDir: worktreeDir }
+    }),
+    /Windows FFmpeg runtime is incomplete[\s\S]*packaging was stopped/i
   );
 });
 

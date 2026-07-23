@@ -38,6 +38,10 @@ function createDrawingHostHarness(options = {}) {
     },
     webContents: {
       focus: () => events.push(['mainWindow.webContents.focus']),
+      send: (channel, payload) => {
+        events.push(['mainWindow.send', channel, payload]);
+        if (options.sendError) throw options.sendError;
+      },
       sendInputEvent: input => {
         events.push(['mainWindow.sendInputEvent', input]);
         if (options.sendInputEventError) throw options.sendInputEventError;
@@ -1369,6 +1373,7 @@ test('returns focus to the main window and relays keyboard input while the drawi
   }, {
     type: 'keyDown',
     key: 'b',
+    code: 'KeyB',
     shift: false,
     control: true,
     alt: false,
@@ -1379,10 +1384,15 @@ test('returns focus to the main window and relays keyboard input while the drawi
   assert.equal(prevented, true);
   assert.deepEqual(events, [
     ['mainWindow.focus'],
-    ['mainWindow.sendInputEvent', {
+    ['mainWindow.send', 'mpv-overlay:keyboard-input', {
       type: 'keyDown',
-      keyCode: 'b',
-      modifiers: ['control', 'isAutoRepeat']
+      key: 'b',
+      code: 'KeyB',
+      shiftKey: false,
+      ctrlKey: true,
+      altKey: false,
+      metaKey: false,
+      repeat: true
     }]
   ]);
 
@@ -1430,6 +1440,7 @@ test('completes the main-window focus handoff when relayed B disables a focused 
   windows[0].webContents.emit('before-input-event', { preventDefault() {} }, {
     type: 'keyDown',
     key: 'b',
+    code: 'KeyB',
     shift: false,
     control: false,
     alt: false,
@@ -1494,15 +1505,33 @@ test('canonicalizes overlay keys, drops IME composition, and never steals focus 
     return prevented;
   };
 
-  assert.equal(emitKey({ key: ' ' }), true);
-  assert.equal(emitKey({ key: 'ArrowLeft' }), true);
+  assert.equal(emitKey({ key: ' ', code: 'Space' }), true);
+  assert.equal(emitKey({ key: 'ArrowLeft', code: 'ArrowLeft' }), true);
   const eventCountBeforeComposition = events.length;
   assert.equal(emitKey({ key: 'Process', code: 'KeyR', isComposing: true }), false);
   assert.equal(emitKey({ key: 'Dead', code: 'Quote' }), false);
   assert.equal(events.length, eventCountBeforeComposition);
-  assert.deepEqual(events.filter(([name]) => name === 'mainWindow.sendInputEvent'), [
-    ['mainWindow.sendInputEvent', { type: 'keyDown', keyCode: 'Space', modifiers: [] }],
-    ['mainWindow.sendInputEvent', { type: 'keyDown', keyCode: 'Left', modifiers: [] }]
+  assert.deepEqual(events.filter(([name]) => name === 'mainWindow.send'), [
+    ['mainWindow.send', 'mpv-overlay:keyboard-input', {
+      type: 'keyDown',
+      key: ' ',
+      code: 'Space',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    }],
+    ['mainWindow.send', 'mpv-overlay:keyboard-input', {
+      type: 'keyDown',
+      key: 'ArrowLeft',
+      code: 'ArrowLeft',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    }]
   ]);
 
   events.length = 0;
@@ -1514,6 +1543,140 @@ test('canonicalizes overlay keys, drops IME composition, and never steals focus 
   }));
   assert.equal(events.some(([name]) => name === 'mainWindow.focus'), false);
   assert.equal(events.some(([name, value]) => name === 'setFocusable' && value === false), true);
+});
+
+test('relays exact validated physical key codes including Enter Tab and Numpad keys', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, {
+    videoGeneration: 11,
+    sessionId: 'session-physical-key-relay'
+  });
+  const overlay = harness.windows[0];
+  harness.events.length = 0;
+
+  const emit = input => {
+    let prevented = false;
+    overlay.webContents.emit('before-input-event', {
+      preventDefault() {
+        prevented = true;
+      }
+    }, {
+      type: 'keyDown',
+      key: '',
+      code: '',
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+    return prevented;
+  };
+
+  assert.equal(emit({ key: 'ㅂ', code: 'KeyQ' }), true);
+  assert.equal(emit({ key: 'Enter', code: 'Enter' }), true);
+  assert.equal(emit({ key: 'Tab', code: 'Tab', shift: true }), true);
+  assert.equal(emit({ key: '1', code: 'Numpad1' }), true);
+  assert.equal(emit({ key: 'Enter', code: 'NumpadEnter' }), true);
+
+  const payloads = harness.events
+    .filter(([name, channel]) =>
+      name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , payload]) => payload);
+  assert.deepEqual(payloads, [
+    {
+      type: 'keyDown',
+      key: 'ㅂ',
+      code: 'KeyQ',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    },
+    {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    },
+    {
+      type: 'keyDown',
+      key: 'Tab',
+      code: 'Tab',
+      shiftKey: true,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    },
+    {
+      type: 'keyDown',
+      key: '1',
+      code: 'Numpad1',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    },
+    {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'NumpadEnter',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    }
+  ]);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), false);
+});
+
+test('overlay physical key relay rejects malformed and composing input without focusing main', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, {
+    videoGeneration: 12,
+    sessionId: 'session-physical-key-validation'
+  });
+  const overlay = harness.windows[0];
+  harness.events.length = 0;
+
+  const invalidInputs = [
+    { type: 'char', key: 'b', code: 'KeyB' },
+    { type: 'keyDown', key: 'b', code: 'InjectedCode' },
+    { type: 'keyDown', key: 'x'.repeat(65), code: 'KeyX' },
+    { type: 'keyDown', key: 'Process', code: 'KeyB' },
+    { type: 'keyDown', key: 'Dead', code: 'Quote' },
+    { type: 'keyDown', key: 'b', code: 'KeyB', isComposing: true },
+    { type: 'keyDown', key: 'b', code: 'KeyB', shift: 'yes' }
+  ];
+  for (const input of invalidInputs) {
+    let prevented = false;
+    overlay.webContents.emit('before-input-event', {
+      preventDefault() {
+        prevented = true;
+      }
+    }, {
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+    assert.equal(prevented, false);
+  }
+
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), false);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
 });
 
 test('overlay history shortcuts execute once without relaying to the main window', async () => {
@@ -1566,6 +1729,7 @@ test('overlay history shortcuts execute once without relaying to the main window
     .map(([, script]) => readFabricMethodPayload(script, 'applyDrawingAction'));
   assert.deepEqual(actionPayloads.map(request => request.action), ['undo', 'undo', 'redo', 'redo']);
   assert.equal(new Set(actionPayloads.map(request => request.actionId)).size, 4);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), false);
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
 });
@@ -1619,7 +1783,7 @@ test('overlay history routing leaves invalid combinations and Electron IME input
 
   assert.equal(harness.events.some(([name, script]) =>
     name === 'executeJavaScript' && script.includes?.('.applyDrawingAction(')), false);
-  assert.equal(harness.events.filter(([name]) => name === 'mainWindow.sendInputEvent').length, 7);
+  assert.equal(harness.events.filter(([name]) => name === 'mainWindow.send').length, 7);
 });
 
 test('controller-origin and overlay-origin actions share one serialized host queue', async () => {
@@ -1696,8 +1860,9 @@ test('overlay keeps forwarding B V Delete and Space through the main renderer ro
   }
 
   assert.deepEqual(harness.events
-    .filter(([name]) => name === 'mainWindow.sendInputEvent')
-    .map(([, input]) => input.keyCode), ['b', 'v', 'Delete', 'Space']);
+    .filter(([name, channel]) =>
+      name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , input]) => input.code), ['KeyB', 'KeyV', 'Delete', 'Space']);
 });
 
 test('overlay history keyup suppression is cleared when drawing input is disabled', async () => {
@@ -1755,13 +1920,13 @@ test('overlay history keyup suppression is cleared when drawing input is disable
   });
 
   assert.equal(prevented, true, 'the ordinary keyup is forwarded and consumed by the relay');
-  assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), true,
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), true,
     'an old suppressed key must not leak into a new drawing session');
 });
 
 test('leaves the original overlay key untouched when forwarding fails', async () => {
   const { host, events, windows } = createDrawingHostHarness({
-    sendInputEventError: new Error('synthetic forwarding failure')
+    sendError: new Error('synthetic forwarding failure')
   });
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
   const { hostGeneration } = ensured.drawingCapability;
@@ -1786,9 +1951,9 @@ test('leaves the original overlay key untouched when forwarding fails', async ()
     preventDefault: () => {
       prevented = true;
     }
-  }, { type: 'keyDown', key: 'v' }));
+  }, { type: 'keyDown', key: 'v', code: 'KeyV' }));
   assert.equal(prevented, false);
-  assert.equal(events.some(([name]) => name === 'mainWindow.sendInputEvent'), true);
+  assert.equal(events.some(([name]) => name === 'mainWindow.send'), true);
 });
 
 test('rejects stale host video input session and tool revisions at the host boundary', async () => {

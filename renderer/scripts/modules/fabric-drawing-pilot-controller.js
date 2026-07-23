@@ -68,6 +68,14 @@ export function createFabricDrawingPilotController(options = {}) {
   const electronAPI = options.electronAPI || {};
   const getContext = typeof options.getContext === 'function' ? options.getContext : () => ({});
   const onStateChange = typeof options.onStateChange === 'function' ? options.onStateChange : () => {};
+  const configuredDrawingToggleMatcher =
+    typeof options.matchesDrawingToggleShortcut === 'function'
+      ? options.matchesDrawingToggleShortcut
+      : null;
+  const configuredSelectionShortcutMatcher =
+    typeof options.matchesSelectionShortcut === 'function'
+      ? options.matchesSelectionShortcut
+      : null;
   const persistenceStore = options.persistenceStore || null;
   let fallbackId = 0;
   const uuid = typeof options.uuid === 'function'
@@ -91,6 +99,7 @@ export function createFabricDrawingPilotController(options = {}) {
   let videoChangePending = false;
   let pendingLoadToken = null;
   let videoChangeEpoch = 0;
+  let videoChangeRollback = null;
   let inFlightReadyReconciliation = null;
   let confirmedVideoIdentity = null;
   let confirmedLoadToken = null;
@@ -169,6 +178,36 @@ export function createFabricDrawingPilotController(options = {}) {
     } catch {
       // State delivery is advisory and must not change the input boundary.
     }
+  }
+
+  function matchesDrawingToggleShortcut(event = {}) {
+    if (configuredDrawingToggleMatcher) {
+      try {
+        return configuredDrawingToggleMatcher(event) === true;
+      } catch {
+        return false;
+      }
+    }
+    return String(event.key || '').toLowerCase() === 'b' &&
+      event.ctrlKey !== true &&
+      event.metaKey !== true &&
+      event.altKey !== true &&
+      event.shiftKey !== true;
+  }
+
+  function matchesSelectionShortcut(event = {}) {
+    if (configuredSelectionShortcutMatcher) {
+      try {
+        return configuredSelectionShortcutMatcher(event) === true;
+      } catch {
+        return false;
+      }
+    }
+    return String(event.key || '').toLowerCase() === 'v' &&
+      event.ctrlKey !== true &&
+      event.metaKey !== true &&
+      event.altKey !== true &&
+      event.shiftKey !== true;
   }
 
   function setState(nextState) {
@@ -376,6 +415,7 @@ export function createFabricDrawingPilotController(options = {}) {
     videoReady = false;
     videoChangePending = false;
     pendingLoadToken = null;
+    videoChangeRollback = null;
     resumeRequested = false;
     persistenceOwnerEpoch += 1;
     persistenceSessionId = null;
@@ -408,6 +448,7 @@ export function createFabricDrawingPilotController(options = {}) {
     videoChangeEpoch += 1;
     videoChangePending = false;
     pendingLoadToken = null;
+    videoChangeRollback = null;
     return true;
   }
 
@@ -1157,6 +1198,7 @@ export function createFabricDrawingPilotController(options = {}) {
       return enterFailure(response?.error);
     }
 
+    lastError = null;
     setState('active');
     if (desiredTool !== session.tool) {
       await sendTool(desiredTool);
@@ -1260,27 +1302,48 @@ export function createFabricDrawingPilotController(options = {}) {
   }
 
   async function beforeVideoChange(nextLoadToken = null) {
-    if (!pilotEnabled) return false;
+    if (!pilotEnabled) return true;
     await persistenceSourceRefreshQueue;
     const shouldResume = resumeRequested || state === 'active' || state === 'preparing';
+    const previousRollback = videoChangePending ? videoChangeRollback : null;
+    const previousContext = contextSnapshot();
+    const canRestorePreviousVideo = videoReady &&
+      videoGeneration > 0 &&
+      validPilotContext(previousContext) &&
+      String(previousContext.stableVideoIdentity || '') === confirmedVideoIdentity;
+    const rollback = previousRollback || (canRestorePreviousVideo
+      ? {
+        context: {
+          ...previousContext,
+          canvasRect: copyRect(previousContext.canvasRect),
+          viewportTransform: copyViewportTransform(previousContext.viewportTransform)
+        },
+        shouldResume
+      }
+      : null);
     resumeRequested = shouldResume;
     videoReady = false;
     persistenceOwnerEpoch += 1;
     persistenceResyncTrailing = false;
     videoChangePending = true;
     pendingLoadToken = normalizeLoadToken(nextLoadToken);
+    videoChangeRollback = rollback;
     videoChangeEpoch += 1;
     const owner = currentVideoChangeOwner();
     setState('recovering');
-    if (!desiredInputEnabled || !hostGeneration || !videoGeneration) return true;
+    if (!hostGeneration || !videoGeneration) return true;
 
+    // A newer media transition must prove that its own input revision is disabled.
+    // desiredInputEnabled may already be false only because an older disable request
+    // is still in flight and can later be rejected by the overlay host.
     currentSession = null;
     const request = makeInputRequest(false);
     const response = await invokeInput(request);
     if (!isCurrentInputRequest(request) || !ownsVideoChange(owner)) return false;
     if (!isAcceptedInputResponse(response, false)) {
-      finishVideoChange(owner);
-      return enterFailure(response?.error);
+      await enterFailure(response?.error);
+      await cancelVideoChange(nextLoadToken, { restorePreviousVideo: true });
+      return false;
     }
     setState('recovering');
     return true;
@@ -1389,10 +1452,34 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
-  async function cancelVideoChange(loadTokenValue = null) {
+  async function cancelVideoChange(loadTokenValue = null, options = {}) {
     if (!pilotEnabled || !videoChangePending) return false;
     const loadToken = normalizeLoadToken(loadTokenValue);
     if (loadToken !== pendingLoadToken) return false;
+    const shouldRestorePreviousVideo = options?.restorePreviousVideo === true;
+    const rollback = shouldRestorePreviousVideo ? videoChangeRollback : null;
+    if (rollback) {
+      const owner = currentVideoChangeOwner();
+      if (!finishVideoChange(owner)) return false;
+      const restoreEpoch = videoChangeEpoch;
+      videoReady = true;
+      resumeRequested = rollback.shouldResume;
+      setState('recovering');
+      const isStillCurrent = () => (
+        !videoChangePending &&
+        videoChangeEpoch === restoreEpoch &&
+        videoReady &&
+        String(rollback.context.stableVideoIdentity || '') === confirmedVideoIdentity
+      );
+      const restored = await reconcileCurrentVideo(
+        rollback.shouldResume,
+        'passive',
+        rollback.context,
+        isStillCurrent
+      );
+      if (!isStillCurrent()) return false;
+      return restored;
+    }
     settleWithoutPilotVideo();
     await bestEffortDisable();
     return true;
@@ -1428,7 +1515,7 @@ export function createFabricDrawingPilotController(options = {}) {
         (state === 'recovering' && resumeRequested)) {
       return disable();
     }
-    if (state !== 'passive') return Promise.resolve(false);
+    if (state !== 'passive' && state !== 'failed') return Promise.resolve(false);
     if (!hostGeneration || !videoGeneration || !videoReady) {
       return enterFailure('drawing surface is unavailable');
     }
@@ -1453,25 +1540,29 @@ export function createFabricDrawingPilotController(options = {}) {
       }
       return true;
     }
-    if (event.ctrlKey === true ||
-        event.metaKey === true ||
-        event.altKey === true ||
-        event.shiftKey === true) {
+    const isDrawingToggleShortcut = matchesDrawingToggleShortcut(event);
+    const isSelectionShortcut = matchesSelectionShortcut(event);
+    if (!isDrawingToggleShortcut && !isSelectionShortcut && (
+      event.ctrlKey === true ||
+      event.metaKey === true ||
+      event.altKey === true ||
+      event.shiftKey === true)) {
       return false;
     }
 
     const key = String(event.key || '').toLowerCase();
-    const repeatIsRelevant = key === 'b' ||
-      ((key === 'v' || key === 'delete') && (state === 'preparing' || state === 'active'));
+    const repeatIsRelevant = isDrawingToggleShortcut ||
+      ((isSelectionShortcut || key === 'delete') &&
+        (state === 'preparing' || state === 'active'));
     if (event.repeat === true && repeatIsRelevant) {
       consumeKeyEvent(event);
-      if (key === 'b') {
+      if (isDrawingToggleShortcut) {
         bAutoRepeatIgnored += 1;
         notifyStateChange();
       }
       return true;
     }
-    if (key === 'b') {
+    if (isDrawingToggleShortcut) {
       consumeKeyEvent(event);
       bInputAttempted += 1;
       notifyStateChange();
@@ -1491,7 +1582,7 @@ export function createFabricDrawingPilotController(options = {}) {
       ));
       return true;
     }
-    if (key === 'v' && (state === 'preparing' || state === 'active')) {
+    if (isSelectionShortcut && (state === 'preparing' || state === 'active')) {
       consumeKeyEvent(event);
       desiredTool = 'select';
       if (state === 'active') runDetached(sendTool('select'));

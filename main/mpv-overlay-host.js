@@ -920,51 +920,129 @@ function normalizeOverlayState(state = {}) {
   };
 }
 
-const FORWARDED_KEY_ALIASES = Object.freeze({
-  ' ': 'Space',
-  Spacebar: 'Space',
-  ArrowLeft: 'Left',
-  ArrowRight: 'Right',
-  ArrowUp: 'Up',
-  ArrowDown: 'Down',
-  Esc: 'Escape'
-});
-const FORWARDED_NAMED_KEYS = new Set([
+const FORWARDED_KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
+const FORWARDED_NAMED_KEY_CODES = new Set([
   'Backspace',
+  'Tab',
+  'Enter',
   'Delete',
   'Insert',
   'Home',
   'End',
   'PageUp',
   'PageDown',
-  'Escape'
+  'Escape',
+  'Space',
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Backquote',
+  'Minus',
+  'Equal',
+  'BracketLeft',
+  'BracketRight',
+  'Backslash',
+  'CapsLock',
+  'Semicolon',
+  'Quote',
+  'Comma',
+  'Period',
+  'Slash',
+  'PrintScreen',
+  'ScrollLock',
+  'Pause',
+  'NumLock',
+  'ContextMenu',
+  'IntlBackslash',
+  'IntlRo',
+  'IntlYen',
+  'Convert',
+  'NonConvert',
+  'KanaMode',
+  'Lang1',
+  'Lang2',
+  'Lang3',
+  'Lang4',
+  'Lang5',
+  'Help',
+  'Again',
+  'Undo',
+  'Cut',
+  'Copy',
+  'Paste',
+  'Find',
+  'Props',
+  'Select',
+  'Open',
+  'Eject',
+  'Power',
+  'WakeUp',
+  'BrowserBack',
+  'BrowserForward',
+  'BrowserRefresh',
+  'BrowserStop',
+  'BrowserSearch',
+  'BrowserFavorites',
+  'BrowserHome',
+  'AudioVolumeMute',
+  'AudioVolumeDown',
+  'AudioVolumeUp',
+  'MediaTrackNext',
+  'MediaTrackPrevious',
+  'MediaStop',
+  'MediaPlayPause',
+  'MediaSelect',
+  'LaunchMail',
+  'LaunchApp1',
+  'LaunchApp2'
 ]);
+
+function isForwardedPhysicalKeyCode(code) {
+  if (typeof code !== 'string' || code.length === 0 || code.length > 32) return false;
+  if (/^Key[A-Z]$/.test(code) ||
+      /^Digit[0-9]$/.test(code) ||
+      /^F(?:[1-9]|1\d|2[0-4])$/.test(code) ||
+      /^Numpad(?:[0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal|Comma|ParenLeft|ParenRight|Backspace|Clear|ClearEntry|MemoryAdd|MemoryClear|MemoryRecall|MemoryStore|MemorySubtract)$/.test(code)) {
+    return true;
+  }
+  return FORWARDED_NAMED_KEY_CODES.has(code);
+}
+
+function isOptionalBoolean(value) {
+  return value === undefined || typeof value === 'boolean';
+}
 
 function createForwardedKeyboardInput(input = {}) {
   if (input.type !== 'keyDown' && input.type !== 'keyUp') return null;
   const key = typeof input.key === 'string' ? input.key : '';
   const code = typeof input.code === 'string' ? input.code : '';
+  if (key.length === 0 || key.length > 64 || key.includes('\u0000') ||
+      !isForwardedPhysicalKeyCode(code) ||
+      !isOptionalBoolean(input.shift) ||
+      !isOptionalBoolean(input.control) ||
+      !isOptionalBoolean(input.alt) ||
+      !isOptionalBoolean(input.meta) ||
+      !isOptionalBoolean(input.isAutoRepeat) ||
+      !isOptionalBoolean(input.isComposing)) {
+    return null;
+  }
   if (input.isComposing === true ||
       ['Process', 'Dead', 'Unidentified'].includes(key) ||
-      ['Process', 'Dead'].includes(code) ||
-      key === 'Tab' || key === 'Enter') {
+      ['Process', 'Dead', 'Unidentified'].includes(code)) {
     return null;
   }
 
-  let keyCode = FORWARDED_KEY_ALIASES[key] || '';
-  if (!keyCode && /^[\x21-\x7e]$/.test(key)) keyCode = key;
-  if (!keyCode && (FORWARDED_NAMED_KEYS.has(key) || /^F(?:[1-9]|1\d|2[0-4])$/.test(key))) {
-    keyCode = key;
-  }
-  if (!keyCode) return null;
-
-  const modifiers = [];
-  if (input.shift === true) modifiers.push('shift');
-  if (input.control === true) modifiers.push('control');
-  if (input.alt === true) modifiers.push('alt');
-  if (input.meta === true) modifiers.push('meta');
-  if (input.isAutoRepeat === true) modifiers.push('isAutoRepeat');
-  return { type: input.type, keyCode, modifiers };
+  return {
+    type: input.type,
+    key,
+    code,
+    shiftKey: input.shift === true,
+    ctrlKey: input.control === true,
+    altKey: input.alt === true,
+    metaKey: input.meta === true,
+    repeat: input.isAutoRepeat === true
+  };
 }
 
 function overlayHistoryActionFromInput(input = {}) {
@@ -2529,14 +2607,14 @@ class MPVOverlayHost {
       if (!forwardedInput ||
           !mainWindow ||
           mainWindow.isDestroyed?.() ||
-          typeof mainWindow.webContents?.sendInputEvent !== 'function') {
+          typeof mainWindow.webContents?.send !== 'function') {
         return;
       }
       try {
-        // overlay가 획 클릭으로 포커스를 얻어도 기존 B/V/Delete/Space 단축키는
-        // 메인 renderer의 단일 처리 경로를 그대로 이용한다.
+        // overlay가 획 클릭으로 포커스를 얻어도 물리 키 위치(code)를 보존해
+        // 사용자 지정 단축키를 메인 renderer의 단일 처리 경로로 보낸다.
         mainWindow.focus?.();
-        mainWindow.webContents.sendInputEvent(forwardedInput);
+        mainWindow.webContents.send(FORWARDED_KEYBOARD_CHANNEL, forwardedInput);
         event?.preventDefault?.();
       } catch (error) {
         this.logger.debug('Fabric overlay keyboard relay failed', { error: error.message });

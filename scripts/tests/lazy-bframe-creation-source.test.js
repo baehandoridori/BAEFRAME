@@ -15,6 +15,9 @@ const reviewDataManagerSource = normalizeNewlines(
 );
 const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
 const ipcHandlersSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
+const reviewFileStoreSource = normalizeNewlines(
+  fs.readFileSync(path.join(rootDir, 'main/review-file-store.js'), 'utf8')
+);
 const commentSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/comment-sync.js'), 'utf8'));
 const drawingSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-sync.js'), 'utf8'));
 
@@ -64,21 +67,47 @@ test('first .bframe save is protected against another user creating the file fir
   assert.match(appSource, /persistNewRoom: false,\s*seedCurrentState: true/);
   assert.match(commentSyncSource, /broadcastCurrentState\(\) \{[\s\S]*type: 'COMMENT_MARKER_ADDED'/);
   assert.match(drawingSyncSource, /broadcastCurrentState\(\) \{[\s\S]*type: 'DRAWING_KEYFRAME_UPDATE'/);
-  assert.match(reviewDataManagerSource, /function mergeDrawingData\(localData = \{\}, remoteData = \{\}\)/);
-  assert.match(reviewDataManagerSource, /remoteCopy\.id = getNextPrefixedId\('layer', usedIds\);/);
-  assert.match(reviewDataManagerSource, /function mergeHighlightData\(localData = \{\}, remoteData = \{\}\)/);
-  assert.match(reviewDataManagerSource, /remoteCopy\.id = getNextPrefixedId\('highlight', usedIds\);/);
-  assert.match(reviewDataManagerSource, /function mergeManualVersions\(localVersions = \[\], remoteVersions = \[\]\)/);
-  assert.match(reviewDataManagerSource, /function mergeCompositionLayers\(localLayers = \[\], remoteLayers = \[\]\)/);
-  assert.match(reviewDataManagerSource, /const mergedDrawings = mergeDrawingData\(this\.drawingManager\.exportData\(\), remoteData\.drawings\);/);
-  assert.match(reviewDataManagerSource, /const mergedHighlights = mergeHighlightData\(this\.highlightManager\.toJSON\(\), remoteData\.highlights\);/);
-  assert.match(reviewDataManagerSource, /this\._manualVersions = mergeManualVersions\(this\._manualVersions, remoteData\.manualVersions\);/);
-  assert.match(reviewDataManagerSource, /const mergedCompositionLayers = mergeCompositionLayers\([\s\S]*this\.compositionLayerManager\.toJSON\(\),[\s\S]*remoteData\.compositionLayers/);
+  assert.match(reviewDataManagerSource, /function mergeReviewDataThreeWay\(baseData, localData, remoteData\)/);
+  assert.match(
+    reviewDataManagerSource,
+    /constructor\(options = \{\}\) \{[\s\S]*?this\._reviewMergeBase = createEmptyReviewMergeBase\(\);/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /async setVideoFile\(videoPath, options = \{\}\) \{[\s\S]*?this\._reviewMergeBase = createEmptyReviewMergeBase\(\);/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /const loadedReviewMergeBase = captureReviewMergeBase\(migratedData\);[\s\S]*?this\._applyData\(migratedData\);[\s\S]*?this\._reviewMergeBase = captureAcceptedReviewMergeBase\([\s\S]*?loadedReviewMergeBase,[\s\S]*?this\._collectReviewDataForMerge\(loadedReviewMergeBase\)/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /const attemptReviewMergeBase = captureReviewMergeBase\(localData\);[\s\S]*?savedReviewMergeBase = attemptReviewMergeBase;/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /this\._reviewMergeBase = savedReviewMergeBase \|\|[\s\S]*?captureReviewMergeBase\(savedData\);/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /const mergedData = mergeReviewDataThreeWay\(\s*this\._reviewMergeBase,\s*localData,\s*remoteData\s*\);/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /const localReviewData = this\._collectReviewDataForMerge\(\);[\s\S]*?const mergedReviewData = mergeReviewDataThreeWay\(\s*this\._reviewMergeBase,[\s\S]*?remoteReviewData[\s\S]*?this\._reviewMergeBase = captureReviewMergeBase\(remoteReviewData\);/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /const overwrittenReviewMergeBase = captureReviewMergeBase\(remoteReviewData\);[\s\S]*?this\._reviewMergeBase = captureAcceptedReviewMergeBase\(\s*overwrittenReviewMergeBase/
+  );
 
   assert.match(preloadSource, /saveReview: \(filePath, data, options = \{\}\) => ipcRenderer\.invoke\('file:save-review', filePath, data, options\)/);
   assert.match(ipcHandlersSource, /failIfExists/);
-  assert.match(ipcHandlersSource, /flag: options\?\.failIfExists \? 'wx' : 'w'/);
-  assert.match(ipcHandlersSource, /error\.code === 'EEXIST'/);
+  assert.match(ipcHandlersSource, /saveReviewFile\(validatedPath,\s*data,/);
+  assert.match(reviewFileStoreSource, /fileHandle = await fsPromises\.open\(filePath,\s*'wx'/);
+  assert.match(reviewFileStoreSource, /if \(failIfExists\) \{[\s\S]*currentContent !== null[\s\S]*exists: true/);
+  assert.match(reviewFileStoreSource, /commitWithRetry\(\{[\s\S]*failIfExists/);
+  assert.match(reviewFileStoreSource, /expectedVersionToken:\s*baseContent === null[\s\S]*ABSENT_VERSION_TOKEN/);
 });
 
 test('metadata-only dirty state does not create a bframe file', () => {

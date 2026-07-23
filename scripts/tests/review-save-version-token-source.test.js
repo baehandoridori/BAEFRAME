@@ -12,6 +12,10 @@ const ipcSource = fs.readFileSync(
   path.join(rootDir, 'main/ipc-handlers.js'),
   'utf8'
 ).replace(/\r\n/g, '\n');
+const reviewFileStoreSource = fs.readFileSync(
+  path.join(rootDir, 'main/review-file-store.js'),
+  'utf8'
+).replace(/\r\n/g, '\n');
 
 test('preload exposes a separate review snapshot API without changing loadReview', () => {
   assert.ok(
@@ -28,7 +32,7 @@ test('preload exposes a separate review snapshot API without changing loadReview
   );
 });
 
-test('main review snapshot and save handlers enforce the version-token conflict contract before writing', () => {
+test('main review IPC delegates versioned snapshots and transactional saves to the review file store', () => {
   const saveStart = ipcSource.indexOf("ipcMain.handle('file:save-review'");
   const snapshotStart = ipcSource.indexOf("ipcMain.handle('file:load-review-snapshot'");
   const loadStart = ipcSource.indexOf("ipcMain.handle('file:load-review'");
@@ -40,13 +44,55 @@ test('main review snapshot and save handlers enforce the version-token conflict 
   const snapshotHandler = ipcSource.slice(snapshotStart, loadStart);
   assert.match(snapshotHandler, /versionToken/);
   assert.match(snapshotHandler, /data/);
+  assert.match(snapshotHandler, /readReviewSnapshot\(validatedPath\)/);
   assert.match(saveHandler, /expectedVersionToken/);
-  assert.match(saveHandler, /conflict:\s*true/);
-  assert.match(saveHandler, /reason:\s*'stale-version-token'/);
+  assert.match(saveHandler, /saveReviewFile\(validatedPath,\s*data,/);
+  assert.match(saveHandler, /failIfExists:\s*options\?\.failIfExists === true/);
+});
 
-  const tokenCheckIndex = saveHandler.indexOf('expectedVersionToken');
-  const staleConflictIndex = saveHandler.indexOf("'stale-version-token'");
-  const writeIndex = saveHandler.indexOf('writeFile');
-  assert.ok(tokenCheckIndex >= 0 && tokenCheckIndex < writeIndex);
-  assert.ok(staleConflictIndex >= 0 && staleConflictIndex < writeIndex);
+test('review file store checks the token before preparing and uses guarded CAS at commit', () => {
+  assert.match(reviewFileStoreSource, /reason:\s*'stale-version-token'/);
+  assert.match(reviewFileStoreSource, /createReviewVersionToken\(currentContent\)/);
+
+  const transactionStart = reviewFileStoreSource.indexOf(
+    'async function saveWithoutQueue'
+  );
+  const transactionEnd = reviewFileStoreSource.indexOf(
+    'async function saveReviewFile',
+    transactionStart
+  );
+  assert.ok(transactionStart >= 0 && transactionEnd > transactionStart);
+  const transaction = reviewFileStoreSource.slice(
+    transactionStart,
+    transactionEnd
+  );
+  const initialCheckIndex = transaction.indexOf('initialStateResult');
+  const transactionCommitIndex = transaction.indexOf(
+    'commitSerializedUnderLock'
+  );
+  assert.ok(
+    initialCheckIndex >= 0 &&
+    initialCheckIndex < transactionCommitIndex
+  );
+
+  const commitStart = reviewFileStoreSource.indexOf(
+    'async function commitSerializedUnderLock'
+  );
+  const commitEnd = reviewFileStoreSource.indexOf(
+    'async function saveWithoutQueue',
+    commitStart
+  );
+  const commitTransaction = reviewFileStoreSource.slice(
+    commitStart,
+    commitEnd
+  );
+  assert.ok(
+    commitTransaction.indexOf('waitForRecoverySlot') <
+      commitTransaction.indexOf('commitWithRetry')
+  );
+  assert.match(commitTransaction, /currentBeforeCommitToken !== baseVersionToken/);
+  assert.match(
+    reviewFileStoreSource,
+    /atomicCompareAndReplace\(\{[\s\S]*expectedVersionToken,[\s\S]*replacementVersionToken/
+  );
 });

@@ -16,6 +16,14 @@ test('Fabric pilot controller is initialized with live mpv video and canvas cont
   assert.match(appSource, /import \{ createFabricDrawingPilotController \} from '\.\/modules\/fabric-drawing-pilot-controller\.js';/);
   assert.match(appSource, /const mpvOverlayLifecycle = createMpvOverlayLifecycle\([\s\S]+const fabricDrawingPilotController = createFabricDrawingPilotController\(\{/);
   assert.match(appSource, /getContext: getFabricDrawingPilotContext/);
+  assert.match(
+    appSource,
+    /matchesDrawingToggleShortcut:\s*event\s*=>\s*userSettings\.matchShortcut\('drawMode', event\)/
+  );
+  assert.match(
+    appSource,
+    /matchesSelectionShortcut:\s*event\s*=>\s*userSettings\.matchShortcut\('drawingToolSelect', event\)/
+  );
   assert.match(appSource, /function getFabricDrawingPilotContext\(\) \{[\s\S]+const viewport = getFabricDrawingPilotViewport\(\);[\s\S]+isMpvActive: isMpvPilotPlaybackActive\(\),[\s\S]+isAudio: state\.isAudioMode,[\s\S]+stableVideoIdentity: videoPlayer\.filePath \|\| state\.currentFile \|\| '',[\s\S]+targetFrame: videoPlayer\.currentFrame,[\s\S]+sourceWidth: videoPlayer\.videoWidth,[\s\S]+sourceHeight: videoPlayer\.videoHeight,[\s\S]+fps: videoPlayer\.fps,[\s\S]+totalFrames: Math\.max\(1, Math\.round\(videoPlayer\.totalFrames\)\),[\s\S]+canvasRect: viewport\?\.canvasRect[\s\S]+viewportTransform:/);
   assert.match(appSource, /const fabricDrawingPilotInitialization = fabricDrawingPilotController\.initialize\(\)\.then\(enabled => \{[\s\S]+document\.body\.classList\.toggle\([\s\S]+fabric-drawing-pilot-enabled[\s\S]+enabled && fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)[\s\S]+return enabled;[\s\S]+\}\);/);
   assert.ok(
@@ -27,10 +35,62 @@ test('Fabric pilot controller is initialized with live mpv video and canvas cont
 
 test('overlay capability and real load tokens reconcile only confirmed normal video loads', () => {
   assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+await fabricDrawingPilotInitialization;[\s\S]+await fabricDrawingPilotController\.adoptOverlayCapability\(result\.drawingCapability\);/);
-  assert.match(appSource, /activeVideoLoadToken = loadToken;\n\s+activeVideoLoadPath = filePath;\n\s+if \(!engineSwap\) \{\n\s+await fabricDrawingPilotController\.beforeVideoChange\(loadToken\);/);
-  assert.match(appSource, /await fabricDrawingPilotController\.beforeVideoChange\(loadToken\);\n\s+if \(!canContinueVideoLoad\(\)\) \{\n\s+await fabricDrawingPilotController\.cancelVideoChange\(loadToken\);[\s\S]+activeVideoLoadToken = null;[\s\S]+activeVideoLoadPath = null;[\s\S]+return false;\n\s+\}/);
+  const loadVideo = appSource.match(
+    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
+  )?.[1] || '';
+  const saveDecisionIndex = loadVideo.indexOf("confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?')");
+  const beforeChangeIndex = loadVideo.indexOf(
+    'await fabricDrawingPilotController.beforeVideoChange(loadToken)'
+  );
+  const destructiveChangeIndex = loadVideo.indexOf(
+    'beginDestructiveMpvReviewMediaChange(loadToken)'
+  );
+  const finalFlushIndex = loadVideo.indexOf(
+    'const finalFabricPersistenceReadyToLeave'
+  );
+  const finalSaveIndex = loadVideo.indexOf(
+    'const finalSavedBeforeVideoChange = await reviewDataManager.save()'
+  );
+  const collaborationStopIndex = loadVideo.indexOf(
+    'await liveblocksManager.stop()'
+  );
+  assert.ok(saveDecisionIndex >= 0, 'the previous review save decision must exist');
+  assert.ok(
+    saveDecisionIndex < beforeChangeIndex,
+    'a cancelled save decision must leave the current Fabric video lifecycle intact'
+  );
+  assert.ok(
+    beforeChangeIndex < destructiveChangeIndex,
+    'Fabric input must be fenced immediately before destructive media replacement'
+  );
+  assert.ok(
+    beforeChangeIndex < finalFlushIndex &&
+      finalFlushIndex < finalSaveIndex &&
+      finalSaveIndex < destructiveChangeIndex &&
+      destructiveChangeIndex < collaborationStopIndex,
+    'the fenced final pull and save must complete before the destructive boundary, which must own collaboration teardown'
+  );
+  assert.match(
+    loadVideo,
+    /await fabricDrawingPilotController\.beforeVideoChange\(loadToken\);\n\s+if \(!fabricReadyForVideoChange \|\| !canContinueVideoLoad\(\)\) return false;[\s\S]+Boolean\(beginDestructiveMpvReviewMediaChange\(loadToken\)\);\n\s+if \(!destructiveMpvReviewMediaChangeStarted\) return false;/
+  );
+  assert.match(
+    loadVideo,
+    /fabricVideoChangeStarted = true;\n\s+const fabricReadyForVideoChange =\s*await fabricDrawingPilotController\.beforeVideoChange\(loadToken\);/
+  );
+  assert.match(
+    loadVideo,
+    /if \(!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted\) \{\n\s+await fabricDrawingPilotController\.cancelVideoChange\(loadToken, \{\n\s+restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted/
+  );
+  const unconditionalCancelIndex = loadVideo.indexOf(
+    'if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted)'
+  );
+  const activeCleanupIndex = loadVideo.indexOf('if (activeVideoLoadToken === loadToken)');
+  assert.ok(
+    unconditionalCancelIndex >= 0 && unconditionalCancelIndex < activeCleanupIndex,
+    'a superseded load must token-cancel its own pending Fabric transition'
+  );
   assert.match(appSource, /if \(!engineSwap && canContinueVideoLoad\(\)\) \{[\s\S]+await fabricDrawingPilotController\.afterVideoReady\(\{[\s\S]+\.\.\.getFabricDrawingPilotContext\(\),[\s\S]+loadToken[\s\S]+\}\);/);
-  assert.match(appSource, /if \(!engineSwap && !videoLoadCompleted\) \{\n\s+await fabricDrawingPilotController\.cancelVideoChange\(loadToken\);\n\s+\}/);
 });
 
 test('pilot state and B routing avoid every legacy playback and persistence mutation', () => {
@@ -90,9 +150,29 @@ test('Fabric persistence is pulled after root refresh and before save and video 
   const dirtyCheckIndex = loadVideo.indexOf(
     'if (reviewDataManager.hasUnsavedChanges())'
   );
+  const finalFlushIndex = loadVideo.indexOf(
+    'const finalFabricPersistenceReadyToLeave'
+  );
+  const finalDirtyCheckIndex = loadVideo.indexOf(
+    'if (reviewDataManager.hasUnsavedChanges())',
+    dirtyCheckIndex + 1
+  );
+  const finalSaveIndex = loadVideo.indexOf(
+    'const finalSavedBeforeVideoChange = await reviewDataManager.save()'
+  );
   assert.ok(flushIndex >= 0, 'video leave must pull the current overlay');
   assert.ok(flushIndex < beforeChangeIndex, 'pull must happen before Fabric input is disabled');
   assert.ok(flushIndex < dirtyCheckIndex, 'pull must happen before the dirty check');
+  assert.ok(
+    dirtyCheckIndex < beforeChangeIndex,
+    'Fabric input must stay usable until the previous review save decision is complete'
+  );
+  assert.ok(
+    beforeChangeIndex < finalFlushIndex &&
+      finalFlushIndex < finalDirtyCheckIndex &&
+      finalDirtyCheckIndex < finalSaveIndex,
+    'a fenced second pull and save must catch strokes made during the first save decision'
+  );
   assert.match(
     loadVideo,
     /const fabricPersistenceReadyToLeave =\s*await fabricDrawingPilotController\.flushPersistenceBeforeLeave\(\);[\s\S]+if \(!fabricPersistenceReadyToLeave\) \{[\s\S]+showToast\('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다\.', 'error'\);[\s\S]+return false;[\s\S]+\}/

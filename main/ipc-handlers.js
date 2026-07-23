@@ -18,42 +18,14 @@ const {
   mpvOverlayHost,
   normalizeFabricDrawingPersistenceMessage
 } = require('./mpv-overlay-host');
+const {
+  readReviewSnapshot,
+  saveReviewFile
+} = require('./review-file-store');
 const Store = require('electron-store');
 
 const log = createLogger('IPC');
 const DEFAULT_FABRIC_DRAWING_PILOT_STATE = Object.freeze({ enabled: false });
-const reviewFileWriteQueues = new Map();
-
-function createReviewVersionToken(content) {
-  return crypto.createHash('sha256').update(content).digest('hex');
-}
-
-function isReviewVersionToken(value) {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
-}
-
-function reviewFileQueueKey(filePath) {
-  return process.platform === 'win32' ? filePath.toLowerCase() : filePath;
-}
-
-function enqueueReviewFileWrite(filePath, writeOperation) {
-  const key = reviewFileQueueKey(filePath);
-  const previous = reviewFileWriteQueues.get(key) || Promise.resolve();
-  const operation = previous.catch(() => {}).then(writeOperation);
-  let tracked = null;
-  tracked = operation.finally(() => {
-    if (reviewFileWriteQueues.get(key) === tracked) {
-      reviewFileWriteQueues.delete(key);
-    }
-  });
-  reviewFileWriteQueues.set(key, tracked);
-  return tracked;
-}
-
-async function waitForReviewFileWrite(filePath) {
-  const pending = reviewFileWriteQueues.get(reviewFileQueueKey(filePath));
-  if (pending) await pending.catch(() => {});
-}
 
 function isCurrentMainRendererSender(event) {
   const mainWindow = getMainWindow();
@@ -396,54 +368,17 @@ function setupIpcHandlers({
     try {
       // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
       const validatedPath = validateFilePath(filePath);
-      return await enqueueReviewFileWrite(validatedPath, async () => {
-        const expectedVersionToken = options?.expectedVersionToken;
-        const requiresVersionToken =
-          path.extname(validatedPath).toLowerCase() === '.bframe' &&
-          options?.failIfExists !== true;
-        if (requiresVersionToken || expectedVersionToken !== undefined) {
-          let currentContent = null;
-          try {
-            currentContent = await fs.promises.readFile(validatedPath, 'utf-8');
-          } catch (error) {
-            if (error.code !== 'ENOENT') throw error;
-          }
-          const currentVersionToken = currentContent === null
-            ? null
-            : createReviewVersionToken(currentContent);
-          if (!isReviewVersionToken(expectedVersionToken) ||
-              currentVersionToken !== expectedVersionToken) {
-            trace.end({
-              filePath: validatedPath,
-              conflict: true,
-              reason: 'stale-version-token'
-            });
-            return {
-              success: false,
-              conflict: true,
-              reason: 'stale-version-token'
-            };
-          }
-        }
-
-        const serialized = JSON.stringify(data, null, 2);
-        await fs.promises.writeFile(validatedPath, serialized, {
-          encoding: 'utf-8',
-          flag: options?.failIfExists ? 'wx' : 'w'
-        });
-        const versionToken = createReviewVersionToken(serialized);
-        trace.end({
-          filePath: validatedPath,
-          failIfExists: options?.failIfExists === true,
-          versionToken
-        });
-        return { success: true, versionToken };
+      const result = await saveReviewFile(validatedPath, data, {
+        expectedVersionToken: options?.expectedVersionToken,
+        failIfExists: options?.failIfExists === true
       });
+      trace.end({
+        filePath: validatedPath,
+        failIfExists: options?.failIfExists === true,
+        ...result
+      });
+      return result;
     } catch (error) {
-      if (options?.failIfExists && error.code === 'EEXIST') {
-        trace.end({ filePath, exists: true });
-        return { success: false, exists: true };
-      }
       trace.error(error);
       throw error;
     }
@@ -454,17 +389,17 @@ function setupIpcHandlers({
     const trace = log.trace('file:load-review-snapshot');
     try {
       const validatedPath = validateFilePath(filePath);
-      await waitForReviewFileWrite(validatedPath);
-      const content = await fs.promises.readFile(validatedPath, 'utf-8');
-      const data = JSON.parse(content);
-      const versionToken = createReviewVersionToken(content);
-      trace.end({ filePath: validatedPath, versionToken });
-      return { data, versionToken };
-    } catch (error) {
-      if (error.code === 'ENOENT') {
+      const snapshot = await readReviewSnapshot(validatedPath);
+      if (!snapshot.data) {
         trace.end({ filePath, exists: false });
-        return { data: null, versionToken: null };
+      } else {
+        trace.end({
+          filePath: validatedPath,
+          versionToken: snapshot.versionToken
+        });
       }
+      return snapshot;
+    } catch (error) {
       trace.error(error);
       throw error;
     }
@@ -476,38 +411,17 @@ function setupIpcHandlers({
     try {
       // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
       const validatedPath = validateFilePath(filePath);
-      await waitForReviewFileWrite(validatedPath);
-      const content = await fs.promises.readFile(validatedPath, 'utf-8');
-      const data = JSON.parse(content);
+      const { data } = await readReviewSnapshot(validatedPath);
+      if (!data) {
+        trace.end({ filePath, exists: false });
+        return null;
+      }
       trace.end({ filePath: validatedPath });
       return data;
     } catch (error) {
       if (error.code === 'ENOENT') {
         trace.end({ filePath, exists: false });
         return null;
-      }
-
-      // JSON 파싱 실패 시 .bak 파일에서 복구 시도
-      if (error instanceof SyntaxError) {
-        const backupPath = filePath + '.bak';
-        log.warn('JSON 파싱 실패, 백업에서 복구 시도', { filePath, backupPath });
-
-        try {
-          const backupContent = await fs.promises.readFile(backupPath, 'utf-8');
-          const backupData = JSON.parse(backupContent);
-
-          // 복구 성공 - 손상된 원본을 .corrupted로 이동하고 백업을 원본으로 복원
-          const corruptedPath = filePath + '.corrupted';
-          await fs.promises.rename(filePath, corruptedPath);
-          await fs.promises.writeFile(filePath, JSON.stringify(backupData, null, 2), 'utf-8');
-
-          log.info('백업에서 복구 성공', { filePath, backupPath });
-          trace.end({ filePath, recoveredFromBackup: true });
-          return backupData;
-        } catch (backupError) {
-          log.error('백업 복구 실패', { filePath, backupError: backupError.message });
-          // 백업도 실패하면 원래 오류 던지기
-        }
       }
 
       trace.error(error);

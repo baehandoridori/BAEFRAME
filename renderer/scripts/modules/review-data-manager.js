@@ -162,152 +162,635 @@ function createUnknownDrawingsV3DiskState() {
   };
 }
 
-function getNextPrefixedId(prefix, usedIds) {
-  let maxId = 0;
-  for (const id of usedIds) {
-    const match = String(id).match(new RegExp(`^${prefix}-(\\d+)$`));
-    if (match) {
-      maxId = Math.max(maxId, parseInt(match[1], 10));
-    }
-  }
-
-  let nextId = maxId + 1;
-  let candidate = `${prefix}-${nextId}`;
-  while (usedIds.has(candidate)) {
-    nextId += 1;
-    candidate = `${prefix}-${nextId}`;
-  }
-  usedIds.add(candidate);
-  return candidate;
-}
-
-function hasDrawingLayerContent(layer) {
-  return (layer?.keyframes || []).some(keyframe => {
-    return !keyframe?.isEmpty
-      || !!keyframe?.canvasData
-      || !!keyframe?.baseCanvasData
-      || (keyframe?.strokeRecords || []).length > 0;
-  });
-}
-
-function mergeDrawingData(localData = {}, remoteData = {}) {
-  const localLayers = Array.isArray(localData?.layers) ? localData.layers : [];
-  const remoteLayers = Array.isArray(remoteData?.layers) ? remoteData.layers : [];
-  const usedIds = new Set(localLayers.map(layer => layer.id).filter(Boolean));
-  const mergedLayers = localLayers.map(layer => cloneJson(layer));
-
-  for (const remoteLayer of remoteLayers) {
-    const remoteCopy = cloneJson(remoteLayer);
-    const existingIndex = mergedLayers.findIndex(layer => layer.id === remoteCopy.id);
-
-    if (existingIndex === -1) {
-      usedIds.add(remoteCopy.id);
-      mergedLayers.push(remoteCopy);
-      continue;
-    }
-
-    const localLayer = mergedLayers[existingIndex];
-    if (jsonEquals(localLayer, remoteCopy)) continue;
-
-    const localHasContent = hasDrawingLayerContent(localLayer);
-    const remoteHasContent = hasDrawingLayerContent(remoteCopy);
-
-    if (!localHasContent && remoteHasContent) {
-      usedIds.add(remoteCopy.id);
-      mergedLayers[existingIndex] = remoteCopy;
-    } else if (remoteHasContent) {
-      remoteCopy.id = getNextPrefixedId('layer', usedIds);
-      remoteCopy.name = `${remoteCopy.name || '원격 드로잉'} (원격)`;
-      mergedLayers.push(remoteCopy);
-    }
-  }
-
-  const activeLayerId = mergedLayers.some(layer => layer.id === localData?.activeLayerId)
-    ? localData.activeLayerId
-    : remoteData?.activeLayerId || mergedLayers[0]?.id || null;
-
-  return {
-    ...remoteData,
-    ...localData,
-    layers: mergedLayers,
-    activeLayerId
-  };
-}
-
 function getHighlightList(data) {
   if (Array.isArray(data)) return data;
   return Array.isArray(data?.highlights) ? data.highlights : [];
 }
 
-function mergeHighlightData(localData = {}, remoteData = {}) {
-  const localHighlights = getHighlightList(localData);
-  const remoteHighlights = getHighlightList(remoteData);
-  const usedIds = new Set(localHighlights.map(highlight => highlight.id).filter(Boolean));
-  const mergedHighlights = localHighlights.map(highlight => cloneJson(highlight));
-
-  for (const remoteHighlight of remoteHighlights) {
-    const remoteCopy = cloneJson(remoteHighlight);
-    const existingIndex = mergedHighlights.findIndex(highlight => highlight.id === remoteCopy.id);
-
-    if (existingIndex === -1) {
-      usedIds.add(remoteCopy.id);
-      mergedHighlights.push(remoteCopy);
-      continue;
-    }
-
-    if (jsonEquals(mergedHighlights[existingIndex], remoteCopy)) continue;
-
-    remoteCopy.id = getNextPrefixedId('highlight', usedIds);
-    mergedHighlights.push(remoteCopy);
-  }
-
+function normalizeHighlightData(data) {
   return {
-    ...(Array.isArray(remoteData) ? {} : remoteData),
-    ...(Array.isArray(localData) ? {} : localData),
-    highlights: mergedHighlights
+    ...(data && typeof data === 'object' && !Array.isArray(data)
+      ? cloneJson(data)
+      : {}),
+    highlights: cloneJson(getHighlightList(data))
   };
 }
 
-function mergeManualVersions(localVersions = [], remoteVersions = []) {
-  const merged = Array.isArray(localVersions) ? localVersions.map(version => cloneJson(version)) : [];
-  const keySet = new Set(merged.map(version => version.filePath || version.path || version.fileName).filter(Boolean));
+function normalizeReviewRootForMerge(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
 
-  for (const remoteVersion of Array.isArray(remoteVersions) ? remoteVersions : []) {
-    const key = remoteVersion.filePath || remoteVersion.path || remoteVersion.fileName;
-    if (key && keySet.has(key)) continue;
-    if (key) keySet.add(key);
-    merged.push(cloneJson(remoteVersion));
+  const dataVersion = getDataVersion(data);
+  const unsupportedMajor = getUnsupportedBframeMajor(
+    dataVersion,
+    BFRAME_VERSION,
+    !hasExplicitBframeVersion(data)
+  );
+  if (unsupportedMajor !== null) {
+    return data;
   }
 
-  return merged;
+  return needsMigration(data) ? migrateToV2(data) : data;
 }
 
-function mergeCompositionLayers(localLayers = [], remoteLayers = []) {
-  const merged = Array.isArray(localLayers) ? localLayers.map(layer => cloneJson(layer)) : [];
-  const usedIds = new Set(merged.map(layer => layer.id).filter(Boolean));
+function createEmptyReviewMergeBase() {
+  return {
+    comments: { layers: [] },
+    drawings: { layers: [] },
+    highlights: { highlights: [] },
+    compositionLayers: [],
+    manualVersions: [],
+    versionInfo: null,
+    liveblocksRoomId: null
+  };
+}
 
-  for (const remoteLayer of Array.isArray(remoteLayers) ? remoteLayers : []) {
-    const remoteCopy = cloneJson(remoteLayer);
-    const existingIndex = merged.findIndex(layer => layer.id === remoteCopy.id);
+function captureReviewMergeBase(data) {
+  const source = data && typeof data === 'object' && !Array.isArray(data)
+    ? data
+    : {};
+  return {
+    comments: cloneJson(source.comments || { layers: [] }),
+    drawings: cloneJson(source.drawings || { layers: [] }),
+    highlights: normalizeHighlightData(source.highlights),
+    compositionLayers: cloneJson(
+      Array.isArray(source.compositionLayers) ? source.compositionLayers : []
+    ),
+    manualVersions: cloneJson(
+      Array.isArray(source.manualVersions) ? source.manualVersions : []
+    ),
+    versionInfo: cloneJson(source.versionInfo ?? null),
+    liveblocksRoomId: source.liveblocksRoomId ?? null
+  };
+}
 
-    if (existingIndex === -1) {
-      usedIds.add(remoteCopy.id);
-      merged.push(remoteCopy);
+function filterAcceptedItems(sourceItems, appliedItems, options = {}) {
+  const getKey = options.getKey || (item => item?.id);
+  const mergeAccepted = options.mergeAccepted ||
+    ((sourceItem) => cloneJson(sourceItem));
+  const appliedByKey = new Map(
+    (Array.isArray(appliedItems) ? appliedItems : [])
+      .map((item, index) => [String(getKey(item) ?? `__index-${index}`), item])
+  );
+
+  return (Array.isArray(sourceItems) ? sourceItems : []).flatMap(
+    (sourceItem, index) => {
+      const key = String(getKey(sourceItem) ?? `__index-${index}`);
+      const appliedItem = appliedByKey.get(key);
+      return appliedItem
+        ? [mergeAccepted(sourceItem, appliedItem)]
+        : [];
+    }
+  );
+}
+
+function captureAcceptedReviewMergeBase(sourceData, appliedData) {
+  const source = captureReviewMergeBase(sourceData);
+  const applied = captureReviewMergeBase(appliedData);
+  const comments = {
+    ...cloneJson(source.comments),
+    layers: filterAcceptedItems(
+      source.comments.layers,
+      applied.comments.layers,
+      {
+        mergeAccepted: (sourceLayer, appliedLayer) => ({
+          ...cloneJson(sourceLayer),
+          markers: filterAcceptedItems(
+            sourceLayer?.markers,
+            appliedLayer?.markers,
+            {
+              mergeAccepted: (sourceMarker, appliedMarker) => ({
+                ...cloneJson(sourceMarker),
+                replies: filterAcceptedItems(
+                  sourceMarker?.replies,
+                  appliedMarker?.replies
+                )
+              })
+            }
+          )
+        })
+      }
+    )
+  };
+
+  return {
+    ...source,
+    comments,
+    drawings: {
+      ...cloneJson(source.drawings),
+      layers: filterAcceptedItems(
+        source.drawings.layers,
+        applied.drawings.layers
+      )
+    },
+    highlights: {
+      ...cloneJson(source.highlights),
+      highlights: filterAcceptedItems(
+        source.highlights.highlights,
+        applied.highlights.highlights
+      )
+    },
+    compositionLayers: filterAcceptedItems(
+      source.compositionLayers,
+      applied.compositionLayers
+    ),
+    manualVersions: filterAcceptedItems(
+      source.manualVersions,
+      applied.manualVersions,
+      { getKey: getManualVersionMergeKey }
+    )
+  };
+}
+
+function createDeterministicConflictCopy(
+  item,
+  usedIds,
+  {
+    idKey = 'id',
+    conflictKind = 'remote',
+    labelKey = 'name'
+  } = {}
+) {
+  const copy = cloneJson(item);
+  const originalId = String(copy?.[idKey] || 'item');
+  const suffix = conflictKind === 'local'
+    ? '__local-conflict'
+    : '__remote-conflict';
+  let candidate = `${originalId}${suffix}`;
+  let sequence = 2;
+  while (usedIds.has(candidate)) {
+    candidate = `${originalId}${suffix}-${sequence}`;
+    sequence += 1;
+  }
+  usedIds.add(candidate);
+  copy[idKey] = candidate;
+  if (labelKey && typeof copy[labelKey] === 'string') {
+    copy[labelKey] = `${copy[labelKey]} (${conflictKind === 'local' ? '로컬' : '원격'} 충돌)`;
+  }
+  return copy;
+}
+
+function mergeEntityCollectionThreeWay(
+  baseItems,
+  localItems,
+  remoteItems,
+  {
+    getKey = item => item?.id,
+    createConflictCopy = (item, usedKeys, conflictKind) =>
+      createDeterministicConflictCopy(item, usedKeys, { conflictKind }),
+    mergeConcurrent = null
+  } = {}
+) {
+  const normalizeKey = (item, index, source) => {
+    const key = getKey(item);
+    if (key !== null && key !== undefined && String(key).length > 0) {
+      return String(key);
+    }
+    return `__anonymous-${source}-${index}-${JSON.stringify(canonicalizeJson(item))}`;
+  };
+  const makeMap = (items, source) => new Map(
+    (Array.isArray(items) ? items : []).map((item, index) => [
+      normalizeKey(item, index, source),
+      item
+    ])
+  );
+  const baseMap = makeMap(baseItems, 'base');
+  const localMap = makeMap(localItems, 'local');
+  const remoteMap = makeMap(remoteItems, 'remote');
+  const baseKeys = [...baseMap.keys()];
+  const localKeys = [...localMap.keys()];
+  const remoteKeys = [...remoteMap.keys()];
+  const localOrderChanged = !jsonEquals(localKeys, baseKeys);
+  const remoteOrderChanged = !jsonEquals(remoteKeys, baseKeys);
+  // 한쪽만 순서를 바꿨으면 그 순서를 따른다. 양쪽이 동시에 서로 다른
+  // 순서를 만들었으면 저장 직전에 읽은 최신 디스크 순서를 결정적으로 따른다.
+  const preferLocalOrder = localOrderChanged && !remoteOrderChanged;
+  const preferredKeys = preferLocalOrder ? localKeys : remoteKeys;
+  const secondaryKeys = preferLocalOrder ? remoteKeys : localKeys;
+  const orderedKeys = [
+    ...preferredKeys,
+    ...secondaryKeys,
+    ...baseKeys
+  ].filter((key, index, all) => all.indexOf(key) === index);
+  const usedKeys = new Set([...localMap.keys(), ...remoteMap.keys()]);
+  const mergedByKey = new Map();
+
+  for (const key of orderedKeys) {
+    const hasBase = baseMap.has(key);
+    const hasLocal = localMap.has(key);
+    const hasRemote = remoteMap.has(key);
+    const base = baseMap.get(key);
+    const local = localMap.get(key);
+    const remote = remoteMap.get(key);
+
+    if (!hasBase) {
+      if (hasLocal && hasRemote) {
+        if (jsonEquals(local, remote)) {
+          mergedByKey.set(key, [cloneJson(local)]);
+        } else if (typeof mergeConcurrent === 'function') {
+          mergedByKey.set(key, mergeConcurrent({
+            base: undefined,
+            local,
+            remote,
+            usedKeys
+          }));
+        } else {
+          mergedByKey.set(key, [
+            cloneJson(local),
+            createConflictCopy(remote, usedKeys, 'remote')
+          ]);
+        }
+      } else if (hasLocal) {
+        mergedByKey.set(key, [cloneJson(local)]);
+      } else if (hasRemote) {
+        mergedByKey.set(key, [cloneJson(remote)]);
+      }
       continue;
     }
 
-    if (jsonEquals(merged[existingIndex], remoteCopy)) continue;
+    if (!hasLocal && !hasRemote) {
+      mergedByKey.set(key, []);
+      continue;
+    }
+    if (!hasLocal) {
+      if (!jsonEquals(remote, base)) {
+        mergedByKey.set(key, [
+          createConflictCopy(remote, usedKeys, 'remote')
+        ]);
+      } else {
+        mergedByKey.set(key, []);
+      }
+      continue;
+    }
+    if (!hasRemote) {
+      if (!jsonEquals(local, base)) {
+        mergedByKey.set(key, [
+          createConflictCopy(local, usedKeys, 'local')
+        ]);
+      } else {
+        mergedByKey.set(key, []);
+      }
+      continue;
+    }
 
-    remoteCopy.id = `composition_${Date.now()}_${getNextPrefixedId('remote', usedIds)}`;
-    remoteCopy.name = `${remoteCopy.name || '원격 합성 레이어'} (원격)`;
-    remoteCopy.order = merged.length;
-    usedIds.add(remoteCopy.id);
-    merged.push(remoteCopy);
+    if (jsonEquals(local, remote)) {
+      mergedByKey.set(key, [cloneJson(local)]);
+    } else if (jsonEquals(local, base)) {
+      mergedByKey.set(key, [cloneJson(remote)]);
+    } else if (jsonEquals(remote, base)) {
+      mergedByKey.set(key, [cloneJson(local)]);
+    } else if (typeof mergeConcurrent === 'function') {
+      mergedByKey.set(key, mergeConcurrent({
+        base,
+        local,
+        remote,
+        usedKeys
+      }));
+    } else {
+      mergedByKey.set(key, [
+        cloneJson(local),
+        createConflictCopy(remote, usedKeys, 'remote')
+      ]);
+    }
   }
 
-  return merged
-    .map((layer, index) => ({ ...layer, order: Number.isFinite(layer.order) ? layer.order : index }))
-    .sort((a, b) => a.order - b.order);
+  return orderedKeys.flatMap(key => mergedByKey.get(key) || []);
+}
+
+function withoutReplies(marker) {
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) {
+    return marker;
+  }
+  const metadata = cloneJson(marker);
+  delete metadata.replies;
+  return metadata;
+}
+
+function getMarkerContentForMerge(marker) {
+  const content = withoutReplies(marker);
+  if (!content || typeof content !== 'object' || Array.isArray(content)) {
+    return content;
+  }
+  // 답글 추가/수정도 parent.updatedAt을 올리므로 revision 시각 자체는
+  // 부모 본문 충돌 판정에서 제외하고 실제 필드 변경만 비교한다.
+  delete content.updatedAt;
+  return content;
+}
+
+function mergeRepliesThreeWay(baseReplies, localReplies, remoteReplies) {
+  return mergeEntityCollectionThreeWay(
+    baseReplies,
+    localReplies,
+    remoteReplies,
+    {
+      createConflictCopy: (reply, replyIds, conflictKind) =>
+        createDeterministicConflictCopy(reply, replyIds, {
+          conflictKind,
+          labelKey: null
+        }),
+      mergeConcurrent: ({ local, remote, usedKeys }) => [
+        cloneJson(local),
+        createDeterministicConflictCopy(remote, usedKeys, {
+          conflictKind: 'remote',
+          labelKey: null
+        })
+      ]
+    }
+  );
+}
+
+function selectMarkerMetadata(baseMarker, localMarker, remoteMarker) {
+  const localMetadata = withoutReplies(localMarker);
+  const remoteMetadata = withoutReplies(remoteMarker);
+  const baseContent = getMarkerContentForMerge(baseMarker);
+  const localContent = getMarkerContentForMerge(localMarker);
+  const remoteContent = getMarkerContentForMerge(remoteMarker);
+
+  if (jsonEquals(localContent, remoteContent)) {
+    const selected = getCommentRevisionTime(remoteMetadata) >
+      getCommentRevisionTime(localMetadata)
+      ? remoteMetadata
+      : localMetadata;
+    return {
+      selected: cloneJson(selected),
+      conflict: null,
+      conflictKind: null
+    };
+  }
+  if (baseMarker && jsonEquals(localContent, baseContent)) {
+    return {
+      selected: cloneJson(remoteMetadata),
+      conflict: null,
+      conflictKind: null
+    };
+  }
+  if (baseMarker && jsonEquals(remoteContent, baseContent)) {
+    return {
+      selected: cloneJson(localMetadata),
+      conflict: null,
+      conflictKind: null
+    };
+  }
+
+  const localDeleted = localMarker?.deleted === true;
+  const remoteDeleted = remoteMarker?.deleted === true;
+  if (localDeleted !== remoteDeleted) {
+    // 삭제 tombstone이 원래 ID를 계속 소유해 뒤늦은 저장이 원본 댓글을
+    // 부활시키지 않게 하고, 반대편 편집은 결정적인 conflict copy로 보존한다.
+    return localDeleted
+      ? {
+        selected: cloneJson(localMetadata),
+        conflict: cloneJson(remoteMetadata),
+        conflictKind: 'remote'
+      }
+      : {
+        selected: cloneJson(remoteMetadata),
+        conflict: cloneJson(localMetadata),
+        conflictKind: 'local'
+      };
+  }
+
+  return {
+    selected: cloneJson(localMetadata),
+    conflict: cloneJson(remoteMetadata),
+    conflictKind: 'remote'
+  };
+}
+
+function mergeMarkerThreeWay(baseMarker, localMarker, remoteMarker, usedKeys) {
+  const replies = mergeRepliesThreeWay(
+    baseMarker?.replies,
+    localMarker?.replies,
+    remoteMarker?.replies
+  );
+  const { selected, conflict, conflictKind } = selectMarkerMetadata(
+    baseMarker,
+    localMarker,
+    remoteMarker
+  );
+  const mergedMarker = { ...selected, replies };
+  if (!conflict) return [mergedMarker];
+
+  return [
+    mergedMarker,
+    createDeterministicConflictCopy(
+      { ...conflict, replies: cloneJson(replies) },
+      usedKeys,
+      { conflictKind, labelKey: null }
+    )
+  ];
+}
+
+function mergeCommentDataThreeWay(baseData, localData, remoteData) {
+  const baseLayers = Array.isArray(baseData?.layers) ? baseData.layers : [];
+  const localLayers = Array.isArray(localData?.layers) ? localData.layers : [];
+  const remoteLayers = Array.isArray(remoteData?.layers) ? remoteData.layers : [];
+  const layers = mergeEntityCollectionThreeWay(
+    baseLayers,
+    localLayers,
+    remoteLayers,
+    {
+      createConflictCopy: (layer, usedIds, conflictKind) =>
+        createDeterministicConflictCopy(layer, usedIds, {
+          conflictKind,
+          labelKey: 'name'
+        }),
+      mergeConcurrent: ({ base, local, remote, usedKeys }) => {
+        const markers = mergeEntityCollectionThreeWay(
+          base?.markers,
+          local.markers,
+          remote.markers,
+          {
+            createConflictCopy: (marker, markerIds, conflictKind) =>
+              createDeterministicConflictCopy(marker, markerIds, {
+                conflictKind,
+                labelKey: null
+              }),
+            mergeConcurrent: ({
+              base: baseMarker,
+              local: localMarker,
+              remote: remoteMarker,
+              usedKeys: markerIds
+            }) => mergeMarkerThreeWay(
+              baseMarker,
+              localMarker,
+              remoteMarker,
+              markerIds
+            )
+          }
+        );
+        const localMetadata = { ...local, markers: undefined };
+        const remoteMetadata = { ...remote, markers: undefined };
+        const baseMetadata = base ? { ...base, markers: undefined } : null;
+        if (jsonEquals(localMetadata, remoteMetadata) ||
+            (baseMetadata && jsonEquals(remoteMetadata, baseMetadata))) {
+          return [{ ...cloneJson(local), markers }];
+        }
+        if (baseMetadata && jsonEquals(localMetadata, baseMetadata)) {
+          return [{ ...cloneJson(remote), markers }];
+        }
+        const localLayer = { ...cloneJson(local), markers };
+        const remoteLayer = createDeterministicConflictCopy(
+          { ...cloneJson(remote), markers: [] },
+          usedKeys,
+          { conflictKind: 'remote', labelKey: 'name' }
+        );
+        return [localLayer, remoteLayer];
+      }
+    }
+  );
+  return {
+    ...(remoteData && !Array.isArray(remoteData) ? cloneJson(remoteData) : {}),
+    ...(localData && !Array.isArray(localData) ? cloneJson(localData) : {}),
+    layers
+  };
+}
+
+function mergeDrawingDataThreeWay(baseData, localData, remoteData) {
+  const layers = mergeEntityCollectionThreeWay(
+    baseData?.layers,
+    localData?.layers,
+    remoteData?.layers,
+    {
+      createConflictCopy: (layer, usedIds, conflictKind) =>
+        createDeterministicConflictCopy(layer, usedIds, {
+          conflictKind,
+          labelKey: 'name'
+        })
+    }
+  );
+  const activeLayerId = layers.some(layer => layer.id === localData?.activeLayerId)
+    ? localData.activeLayerId
+    : layers.some(layer => layer.id === remoteData?.activeLayerId)
+      ? remoteData.activeLayerId
+      : layers[0]?.id || null;
+  return {
+    ...(remoteData || {}),
+    ...(localData || {}),
+    layers,
+    activeLayerId
+  };
+}
+
+function mergeHighlightDataThreeWay(baseData, localData, remoteData) {
+  const highlights = mergeEntityCollectionThreeWay(
+    getHighlightList(baseData),
+    getHighlightList(localData),
+    getHighlightList(remoteData),
+    {
+      createConflictCopy: (highlight, usedIds, conflictKind) =>
+        createDeterministicConflictCopy(highlight, usedIds, {
+          conflictKind,
+          labelKey: 'note'
+        })
+    }
+  );
+  return {
+    ...(Array.isArray(remoteData) ? {} : remoteData || {}),
+    ...(Array.isArray(localData) ? {} : localData || {}),
+    highlights
+  };
+}
+
+function mergeCompositionLayersThreeWay(baseLayers, localLayers, remoteLayers) {
+  return mergeEntityCollectionThreeWay(
+    baseLayers,
+    localLayers,
+    remoteLayers,
+    {
+      createConflictCopy: (layer, usedIds, conflictKind) =>
+        createDeterministicConflictCopy(layer, usedIds, {
+          conflictKind,
+          labelKey: 'name'
+        })
+    }
+  ).map((layer, order) => ({ ...layer, order }));
+}
+
+function getManualVersionMergeKey(version) {
+  return version?.__baeframeMergeConflictId ||
+    version?.filePath ||
+    version?.path ||
+    version?.fileName;
+}
+
+function mergeManualVersionsThreeWay(baseVersions, localVersions, remoteVersions) {
+  return mergeEntityCollectionThreeWay(
+    baseVersions,
+    localVersions,
+    remoteVersions,
+    {
+      getKey: getManualVersionMergeKey,
+      createConflictCopy: (version, usedKeys, conflictKind) => {
+        const copy = cloneJson(version);
+        const originalKey = String(getManualVersionMergeKey(copy) || 'manual-version');
+        const suffix = conflictKind === 'local'
+          ? '__local-conflict'
+          : '__remote-conflict';
+        let candidate = `${originalKey}${suffix}`;
+        let sequence = 2;
+        while (usedKeys.has(candidate)) {
+          candidate = `${originalKey}${suffix}-${sequence}`;
+          sequence += 1;
+        }
+        usedKeys.add(candidate);
+        copy.__baeframeMergeConflictId = candidate;
+        return copy;
+      }
+    }
+  );
+}
+
+function mergeScalarThreeWay(baseValue, localValue, remoteValue) {
+  if (jsonEquals(localValue, remoteValue)) return cloneJson(localValue);
+  if (jsonEquals(localValue, baseValue)) return cloneJson(remoteValue);
+  if (jsonEquals(remoteValue, baseValue)) return cloneJson(localValue);
+  // 두 인스턴스가 동시에 바꾼 단일 값은 데이터를 복제할 수 없으므로
+  // 저장 직전에 읽은 최신 디스크 값을 결정적으로 보존한다.
+  return cloneJson(remoteValue);
+}
+
+function mergeReviewDataThreeWay(baseData, localData, remoteData) {
+  const base = captureReviewMergeBase(baseData);
+  const local = captureReviewMergeBase(localData);
+  const remote = captureReviewMergeBase(remoteData);
+  return {
+    ...localData,
+    comments: mergeCommentDataThreeWay(
+      base.comments,
+      local.comments,
+      remote.comments
+    ),
+    drawings: mergeDrawingDataThreeWay(
+      base.drawings,
+      local.drawings,
+      remote.drawings
+    ),
+    highlights: mergeHighlightDataThreeWay(
+      base.highlights,
+      local.highlights,
+      remote.highlights
+    ),
+    compositionLayers: mergeCompositionLayersThreeWay(
+      base.compositionLayers,
+      local.compositionLayers,
+      remote.compositionLayers
+    ),
+    manualVersions: mergeManualVersionsThreeWay(
+      base.manualVersions,
+      local.manualVersions,
+      remote.manualVersions
+    ),
+    versionInfo: mergeScalarThreeWay(
+      base.versionInfo,
+      local.versionInfo,
+      remote.versionInfo
+    ),
+    liveblocksRoomId: mergeScalarThreeWay(
+      base.liveblocksRoomId,
+      local.liveblocksRoomId,
+      remote.liveblocksRoomId
+    )
+  };
 }
 
 const log = createLogger('ReviewDataManager');
@@ -371,6 +854,7 @@ export class ReviewDataManager extends EventTarget {
     this._fabricDrawingCollectedRevision = null;
     this._fabricDrawingProviderUnsubscribe = null;
     this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+    this._reviewMergeBase = createEmptyReviewMergeBase();
     this._hasCompletedReviewLoad = false;
     this._isConnected = false;
     this._reviewDocumentId = null;
@@ -621,6 +1105,7 @@ export class ReviewDataManager extends EventTarget {
     this._reviewFileVersionToken = null;
     this._invalidateFabricDrawingPersistenceProvider('video-load-started');
     this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+    this._reviewMergeBase = createEmptyReviewMergeBase();
     this._hasCompletedReviewLoad = false;
     this.currentVideoPath = videoPath;
     this.currentBframePath = getBframePath(videoPath);
@@ -762,6 +1247,7 @@ export class ReviewDataManager extends EventTarget {
       let savedData = null;
       let savedChangeRevision = null;
       let savedFabricDrawingRevision = null;
+      let savedReviewMergeBase = null;
       let lastConflictResult = null;
       const maxAttempts = 5;
 
@@ -778,7 +1264,7 @@ export class ReviewDataManager extends EventTarget {
         }
 
         this._assertSaveOwner(saveOwner);
-        await this._refreshRootEnvelopeBeforeSave(saveOwner);
+        const latestRoot = await this._refreshRootEnvelopeBeforeSave(saveOwner);
         this._assertSaveOwner(saveOwner);
         this._assertRootEnvelopeWritable();
         this._ensureReviewDocumentId();
@@ -791,13 +1277,14 @@ export class ReviewDataManager extends EventTarget {
           });
         }
         this._assertSaveOwner(saveOwner);
-        const data = this._collectData();
+        const localData = this._collectData();
+        const attemptReviewMergeBase = captureReviewMergeBase(localData);
+        const data = this._mergeBeforeSave(localData, latestRoot);
         const attemptChangeRevision = this._changeRevision;
         const attemptFabricDrawingRevision = this._fabricDrawingCollectedRevision;
         const attemptObservationEpoch = this._reviewFileObservationEpoch;
 
-        // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
-        // 로컬 .bframe 스냅샷만 저장 (오프라인 백업 역할)
+        // Liveblocks 연결 중에도 로컬 .bframe에는 최신 병합 snapshot을 백업한다.
         if (this._liveblocksManager?.isConnected) {
           // liveblocksRoomId 포함
           data.liveblocksRoomId = this._liveblocksManager.roomId || null;
@@ -819,6 +1306,21 @@ export class ReviewDataManager extends EventTarget {
         if (saveResult?.conflict === true) {
           this._writeBlockedReason = 'review-file-version-conflict';
           throw new Error('저장 직전 .bframe이 다시 변경되어 덮어쓰기를 중단했습니다.');
+        }
+        if (saveResult?.retryable === true) {
+          this.isDirty = true;
+          log.warn('.bframe 저장이 잠시 지연됨', {
+            path: saveOwner.bframePath,
+            reason: saveResult.reason || 'review-file-busy'
+          });
+          this._emit('saveDeferred', {
+            path: saveOwner.bframePath,
+            reason: saveResult.reason || 'review-file-busy'
+          });
+          if (this.autoSaveEnabled) {
+            this._scheduleAutoSave();
+          }
+          return false;
         }
         const observationChanged = attemptObservationEpoch !==
           this._reviewFileObservationEpoch;
@@ -866,6 +1368,7 @@ export class ReviewDataManager extends EventTarget {
         savedData = data;
         savedChangeRevision = attemptChangeRevision;
         savedFabricDrawingRevision = attemptFabricDrawingRevision;
+        savedReviewMergeBase = attemptReviewMergeBase;
         break;
       }
 
@@ -877,6 +1380,8 @@ export class ReviewDataManager extends EventTarget {
       this.isDirty = hasConcurrentChanges;
       this._assertSaveOwner(saveOwner);
       this._recordDrawingsV3DiskState(savedData);
+      this._reviewMergeBase = savedReviewMergeBase ||
+        captureReviewMergeBase(savedData);
       this._acknowledgeFabricDrawingSave(savedFabricDrawingRevision);
 
       log.info('.bframe 파일 저장됨', {
@@ -901,80 +1406,26 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
-   * 저장 전 원격 데이터와 머지
+   * 저장 직전 읽은 최신 root의 리뷰 데이터와 로컬 미저장 데이터를 병합한다.
+   * 버전 토큰을 얻은 snapshot과 동일한 데이터를 사용해야 CAS 저장 전에
+   * 다른 인스턴스의 변경을 다시 덮어쓰지 않는다.
    * @param {Object} localData - 로컬에서 수집한 데이터
-   * @returns {Promise<Object>} 머지된 데이터
+   * @param {Object|null} remoteData - 저장 직전 읽은 최신 root
+   * @returns {Object} 병합된 데이터
    */
-  async _mergeBeforeSave(localData) {
-    try {
-      const remoteSnapshot = await this._readReviewSnapshot(this.currentBframePath);
-      const remoteData = remoteSnapshot.data;
-      this._reviewFileObservationEpoch += 1;
-      this._reviewFileVersionToken = remoteSnapshot.versionToken;
-
-      if (!remoteData) {
-        // 원격 파일 없음 → 로컬 데이터 그대로 저장
-        return localData;
-      }
-
-      // 협업 중이면 항상 머지 (타임스탬프와 무관하게)
-      // 개별 댓글의 updatedAt으로 충돌 해결
-      if (remoteData.comments?.layers && localData.comments?.layers) {
-        const { merged, added, updated } = mergeLayers(
-          localData.comments.layers,
-          remoteData.comments.layers
-        );
-        localData.comments.layers = merged;
-
-        if (added > 0 || updated > 0) {
-          log.info('저장 전 댓글 머지 완료', { added, updated });
-        }
-      }
-
-      // 드로잉은 타임스탬프 기반 (전체 교체)
-      // 주의: localData.modifiedAt은 _collectData()에서 now로 설정되므로 사용 불가
-      // 파일에서 로드된 원래 시간인 this._modifiedAt을 사용해야 원격 최신 변경 보호 가능
-      const localModified = new Date(this._modifiedAt || 0).getTime();
-      const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
-
-      if (remoteModified > localModified && remoteData.drawings) {
-        // 원격 드로잉이 더 최신이면 원격 데이터로 교체 (다른 협업자 작업 보호)
-        localData.drawings = remoteData.drawings;
-        log.info('원격 드로잉이 더 최신, 원격 데이터로 교체');
-      }
-
-      if (remoteData.highlights) {
-        localData.highlights = mergeHighlightData(localData.highlights, remoteData.highlights);
-      }
-
-      if (remoteData.compositionLayers) {
-        localData.compositionLayers = mergeCompositionLayers(
-          localData.compositionLayers,
-          remoteData.compositionLayers
-        );
-      }
-
-      if (remoteData.manualVersions) {
-        localData.manualVersions = mergeManualVersions(localData.manualVersions, remoteData.manualVersions);
-      }
-
-      if (!localData.versionInfo && remoteData.versionInfo) {
-        localData.versionInfo = remoteData.versionInfo;
-      }
-
-      if (!localData.liveblocksRoomId && remoteData.liveblocksRoomId) {
-        localData.liveblocksRoomId = remoteData.liveblocksRoomId;
-      }
-
-      // 머지 후 modifiedAt 갱신
-      localData.modifiedAt = new Date().toISOString();
-
-      return localData;
-
-    } catch (error) {
-      log.warn('저장 전 머지 실패, 로컬 데이터로 저장', { error: error.message });
+  _mergeBeforeSave(localData, remoteData) {
+    if (!remoteData || typeof remoteData !== 'object' || Array.isArray(remoteData)) {
       return localData;
     }
+
+    const mergedData = mergeReviewDataThreeWay(
+      this._reviewMergeBase,
+      localData,
+      remoteData
+    );
+
+    mergedData.modifiedAt = new Date().toISOString();
+    return mergedData;
   }
 
   /**
@@ -1002,6 +1453,7 @@ export class ReviewDataManager extends EventTarget {
         this._resetRootEnvelopeState();
         this._resetFabricDrawingPersistenceProvider();
         this._recordDrawingsV3DiskState({});
+        this._reviewMergeBase = createEmptyReviewMergeBase();
         this.isLoading = false;
         return false;
       }
@@ -1031,7 +1483,7 @@ export class ReviewDataManager extends EventTarget {
           return false;
         }
         if (!backupCreated) {
-          log.warn('백업 생성 실패, 마이그레이션 계속 진행');
+          log.warn('백업 생성 실패, 마이그레이션 결과의 자동 저장을 보류');
         }
 
         try {
@@ -1039,7 +1491,7 @@ export class ReviewDataManager extends EventTarget {
           log.info('마이그레이션 성공', { version: migratedData.bframeVersion });
 
           // 마이그레이션 후 자동 저장 (새 스키마로 업데이트)
-          shouldSaveAfterMigration = true;
+          shouldSaveAfterMigration = backupCreated;
         } catch (migrationError) {
           log.error('마이그레이션 실패', migrationError);
 
@@ -1063,7 +1515,12 @@ export class ReviewDataManager extends EventTarget {
       if (!this._ownsReviewContext(loadOwner)) {
         return false;
       }
+      const loadedReviewMergeBase = captureReviewMergeBase(migratedData);
       this._applyData(migratedData);
+      this._reviewMergeBase = captureAcceptedReviewMergeBase(
+        loadedReviewMergeBase,
+        this._collectReviewDataForMerge(loadedReviewMergeBase)
+      );
 
       this.isDirty = false;
       this.isLoading = false;
@@ -1095,6 +1552,7 @@ export class ReviewDataManager extends EventTarget {
       log.error('.bframe 로드 실패', error);
       this._hasCompletedReviewLoad = false;
       this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+      this._reviewMergeBase = createEmptyReviewMergeBase();
       this._invalidateFabricDrawingPersistenceProvider('review-load-failed');
       this.isLoading = false;
       this._emit('loadError', { error });
@@ -1171,103 +1629,57 @@ export class ReviewDataManager extends EventTarget {
       if (!allowIdentityReplacement) {
         this._assertRootEnvelopeWritable();
       }
+      const remoteReviewData = normalizeReviewRootForMerge(remoteData);
       this._hasPersistedFile = true;
 
       const result = { added: 0, updated: 0 };
 
-      if (reloadOptions.merge && this.commentManager) {
-        // 로컬 댓글 데이터 수집
-        const localComments = this.commentManager.toJSON();
-
-        // 원격과 머지
-        if (remoteData.comments?.layers && localComments.layers) {
+      if (reloadOptions.merge) {
+        const localReviewData = this._collectReviewDataForMerge();
+        if (Array.isArray(remoteData.comments?.layers) &&
+            Array.isArray(localReviewData.comments?.layers)) {
           const mergeResult = mergeLayers(
-            localComments.layers,
+            localReviewData.comments.layers,
             remoteData.comments.layers
           );
-
           result.added = mergeResult.added;
           result.updated = mergeResult.updated;
-
-          // 변경이 있으면 머지된 데이터 적용
-          if (mergeResult.added > 0 || mergeResult.updated > 0) {
-            // 댓글 매니저에 머지된 데이터 적용
-            this.commentManager.fromJSON({ layers: mergeResult.merged });
-
-            log.info('reloadAndMerge: 댓글 머지 완료', {
-              added: result.added,
-              updated: result.updated
-            });
-          }
         }
+        const mergedReviewData = mergeReviewDataThreeWay(
+          this._reviewMergeBase,
+          localReviewData,
+          remoteReviewData
+        );
 
-        // 드로잉 데이터 머지
-        if (reloadOptions.preserveLocal && remoteData.drawings && this.drawingManager) {
-          const mergedDrawings = mergeDrawingData(this.drawingManager.exportData(), remoteData.drawings);
-          this.drawingManager.importData(mergedDrawings);
-          log.info('reloadAndMerge: 드로잉 데이터 보존 병합 완료', {
-            layers: mergedDrawings.layers?.length || 0
-          });
-        } else if (remoteData.drawings && this.drawingManager) {
-          const localModified = new Date(this._modifiedAt || 0).getTime();
-          const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
+        this.commentManager?.fromJSON?.(mergedReviewData.comments);
+        this.drawingManager?.importData?.(mergedReviewData.drawings);
+        this.highlightManager?.fromJSON?.(mergedReviewData.highlights);
+        this.compositionLayerManager?.fromJSON?.(
+          mergedReviewData.compositionLayers
+        );
+        this._manualVersions = mergedReviewData.manualVersions;
+        this._liveblocksRoomId = mergedReviewData.liveblocksRoomId ?? null;
+        this._versionInfo = cloneJson(mergedReviewData.versionInfo ?? null);
+        // reload merge의 공통 기준점은 ID가 conflict copy로 바뀐 적용 결과가
+        // 아니라 저장 직전에 읽은 원격 원본이어야 삭제가 다시 살아나지 않는다.
+        this._reviewMergeBase = captureReviewMergeBase(remoteReviewData);
 
-          if (remoteModified > localModified) {
-            this.drawingManager.importData(remoteData.drawings);
-            log.info('reloadAndMerge: 드로잉 데이터 업데이트됨');
-          }
-        }
-
-        // 하이라이트 데이터
-        if (reloadOptions.preserveLocal && remoteData.highlights && this.highlightManager) {
-          const mergedHighlights = mergeHighlightData(this.highlightManager.toJSON(), remoteData.highlights);
-          this.highlightManager.fromJSON(mergedHighlights);
-          log.info('reloadAndMerge: 하이라이트 데이터 보존 병합 완료', {
-            highlights: mergedHighlights.highlights?.length || 0
-          });
-        } else if (remoteData.highlights && this.highlightManager) {
-          const localModified = new Date(this._modifiedAt || 0).getTime();
-          const remoteModified = new Date(remoteData.modifiedAt || 0).getTime();
-
-          if (remoteModified > localModified) {
-            this.highlightManager.fromJSON(remoteData.highlights);
-            log.info('reloadAndMerge: 하이라이트 데이터 업데이트됨');
-          }
-        }
-
-        if (remoteData.liveblocksRoomId && !this._liveblocksRoomId) {
-          this._liveblocksRoomId = remoteData.liveblocksRoomId;
-        }
-
-        if (remoteData.versionInfo && !this._versionInfo) {
-          this._versionInfo = remoteData.versionInfo;
-        }
-
-        if (remoteData.manualVersions) {
-          this._manualVersions = mergeManualVersions(this._manualVersions, remoteData.manualVersions);
-        }
-
-        if (Array.isArray(remoteData.compositionLayers) && this.compositionLayerManager) {
-          const mergedCompositionLayers = mergeCompositionLayers(
-            this.compositionLayerManager.toJSON(),
-            remoteData.compositionLayers
-          );
-          this.compositionLayerManager.fromJSON(mergedCompositionLayers);
-          log.info('reloadAndMerge: 합성 레이어 데이터 병합 완료', {
-            layers: mergedCompositionLayers.length
-          });
-        }
-
-        if (remoteData.modifiedAt && toTime(remoteData.modifiedAt) > toTime(this._modifiedAt)) {
-          this._modifiedAt = remoteData.modifiedAt;
+        if (remoteReviewData.modifiedAt &&
+            toTime(remoteReviewData.modifiedAt) > toTime(this._modifiedAt)) {
+          this._modifiedAt = remoteReviewData.modifiedAt;
         }
 
       } else {
         // 덮어쓰기 모드: 원격 데이터로 전체 교체
-        this._applyData(remoteData, {
+        this._applyData(remoteReviewData, {
           allowIdentityReplacement: true,
           skipFabricDrawingImport: true
         });
+        const overwrittenReviewMergeBase = captureReviewMergeBase(remoteReviewData);
+        this._reviewMergeBase = captureAcceptedReviewMergeBase(
+          overwrittenReviewMergeBase,
+          this._collectReviewDataForMerge(overwrittenReviewMergeBase)
+        );
         log.info('reloadAndMerge: 데이터 덮어쓰기 완료');
       }
 
@@ -1301,21 +1713,22 @@ export class ReviewDataManager extends EventTarget {
     const backupPath = reviewPath + '.bak';
 
     try {
-      await window.electronAPI.copyFile(reviewPath, backupPath);
+      const data = await window.electronAPI.loadReview(reviewPath);
+      if (!data) return false;
+
+      const saveResult = await window.electronAPI.saveReview(backupPath, data);
+      if (saveResult?.success !== true) {
+        log.warn('백업 저장이 완료되지 않음', {
+          path: backupPath,
+          reason: saveResult?.reason || saveResult?.error || 'unknown'
+        });
+        return false;
+      }
+
       log.info('백업 생성됨', { path: backupPath });
       return true;
     } catch (error) {
-      // copyFile API가 없으면 읽고 쓰기로 대체
-      try {
-        const data = await window.electronAPI.loadReview(reviewPath);
-        if (data) {
-          await window.electronAPI.saveReview(backupPath, data);
-          log.info('백업 생성됨 (대체 방식)', { path: backupPath });
-          return true;
-        }
-      } catch (fallbackError) {
-        log.warn('백업 생성 실패', fallbackError);
-      }
+      log.warn('백업 생성 실패', error);
       return false;
     }
   }
@@ -1631,7 +2044,7 @@ export class ReviewDataManager extends EventTarget {
   }
 
   async _refreshRootEnvelopeBeforeSave(saveOwner = null) {
-    if (!this._hasPersistedFile) return;
+    if (!this._hasPersistedFile) return null;
 
     const reviewPath = saveOwner?.bframePath || this.currentBframePath;
     const snapshot = await this._readReviewSnapshot(reviewPath);
@@ -1653,6 +2066,7 @@ export class ReviewDataManager extends EventTarget {
         owner => this._ownsSave(owner)
       );
     }
+    return normalizeReviewRootForMerge(latestRoot);
   }
 
   _assertRootEnvelopeWritable() {
@@ -1703,10 +2117,48 @@ export class ReviewDataManager extends EventTarget {
   /**
    * 현재 모든 데이터 수집 (v2.0 스키마)
    */
+  _collectReviewDataForMerge(fallbackReviewData = this._reviewMergeBase) {
+    const collectManagerData = (manager, method, fallback) => {
+      if (typeof manager?.[method] !== 'function') {
+        return cloneJson(fallback);
+      }
+      const value = manager[method]();
+      return value === undefined ? cloneJson(fallback) : value;
+    };
+    const mergeBase = fallbackReviewData || createEmptyReviewMergeBase();
+
+    return {
+      comments: collectManagerData(
+        this.commentManager,
+        'toJSON',
+        mergeBase.comments
+      ),
+      drawings: collectManagerData(
+        this.drawingManager,
+        'exportData',
+        mergeBase.drawings
+      ),
+      highlights: collectManagerData(
+        this.highlightManager,
+        'toJSON',
+        mergeBase.highlights
+      ),
+      compositionLayers: collectManagerData(
+        this.compositionLayerManager,
+        'toJSON',
+        mergeBase.compositionLayers
+      ),
+      manualVersions: cloneJson(this._manualVersions || []),
+      versionInfo: cloneJson(this._versionInfo ?? null),
+      liveblocksRoomId: this._liveblocksRoomId ?? null
+    };
+  }
+
   _collectData() {
     const now = new Date().toISOString();
     const videoFile = extractFileName(this.currentVideoPath);
     this._collectFabricDrawingPersistenceRoot();
+    const reviewData = this._collectReviewDataForMerge();
 
     const knownRoot = {
       // v2.0 스키마 필드
@@ -1722,13 +2174,13 @@ export class ReviewDataManager extends EventTarget {
 
       // 버전 관리 필드
       versionInfo: this._versionInfo || null,
-      manualVersions: this._manualVersions || [],
+      manualVersions: reviewData.manualVersions,
 
       // 리뷰 데이터
-      comments: this.commentManager?.toJSON() || { layers: [] },
-      drawings: this.drawingManager?.exportData() || { layers: [] },
-      highlights: this.highlightManager?.toJSON() || [],
-      compositionLayers: this.compositionLayerManager?.toJSON() || []
+      comments: reviewData.comments,
+      drawings: reviewData.drawings,
+      highlights: reviewData.highlights,
+      compositionLayers: reviewData.compositionLayers
     };
 
     if (this._reviewDocumentId) {
@@ -1804,7 +2256,7 @@ export class ReviewDataManager extends EventTarget {
     }
 
     if (data.highlights && this.highlightManager) {
-      this.highlightManager.fromJSON(data.highlights);
+      this.highlightManager.fromJSON(normalizeHighlightData(data.highlights));
     }
 
     if (this.compositionLayerManager) {

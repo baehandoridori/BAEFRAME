@@ -516,6 +516,7 @@ function createHostLifecycleHarness() {
 async function runDeferredStaleGenerationProbe() {
   const staleDisable = deferred();
   const requests = [];
+  let heldGenerationTwoDisable = false;
   let uuid = 0;
   const controller = createFabricDrawingPilotController({
     electronAPI: {
@@ -524,7 +525,12 @@ async function runDeferredStaleGenerationProbe() {
       },
       async mpvSetOverlayDrawingInput(request) {
         requests.push(request);
-        if (request.videoGeneration === 2 && request.enabled === false) {
+        if (
+          !heldGenerationTwoDisable &&
+          request.videoGeneration === 2 &&
+          request.enabled === false
+        ) {
+          heldGenerationTwoDisable = true;
           return staleDisable.promise;
         }
         return { success: true, accepted: true, enabled: request.enabled };
@@ -1242,11 +1248,11 @@ test('CLI reads raw JSON, emits only the bounded summary, and exits 1 for violat
 test('package exposes focused Fabric pilot test and diagnostics commands', () => {
   assert.equal(
     appPackage.scripts['test:fabric-drawing-pilot'],
-    'node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs scripts/tests/fabric-drawing-pilot-session.test.js scripts/tests/fabric-drawing-pilot-shortcuts.test.js scripts/tests/fabric-drawing-pilot-source.test.js scripts/tests/fabric-drawing-persistence-controller.test.js'
+    'node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs scripts/tests/fabric-drawing-pilot-session.test.js scripts/tests/fabric-drawing-pilot-shortcuts.test.js scripts/tests/fabric-drawing-pilot-source.test.js scripts/tests/fabric-drawing-persistence-controller.test.js scripts/tests/mpv-fabric-overlay-runtime.test.js'
   );
   assert.equal(
     appPackage.scripts['test:fabric-drawing-persistence'],
-    'node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-persistence-store.test.mjs scripts/tests/review-data-manager-save.test.js scripts/tests/review-save-version-token-source.test.js scripts/tests/review-save-version-token-ipc.test.js scripts/tests/lazy-bframe-creation-source.test.js'
+    'npm run build:review-file-cas-helper && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --test-concurrency=1 scripts/tests/fabric-drawing-persistence-store.test.mjs scripts/tests/review-data-manager-save.test.js scripts/tests/review-save-version-token-source.test.js scripts/tests/review-save-version-token-ipc.test.js scripts/tests/lazy-bframe-creation-source.test.js scripts/tests/review-file-cas-helper.test.js scripts/tests/review-file-store-contract.test.js scripts/tests/review-file-store-cross-process.test.js scripts/tests/review-file-store-recovery.test.js'
   );
   assert.equal(
     appPackage.scripts['diagnostics:fabric-drawing-pilot'],
@@ -1254,12 +1260,12 @@ test('package exposes focused Fabric pilot test and diagnostics commands', () =>
   );
   assert.equal(
     appPackage.scripts.prebuild,
-    'npm run bundle:mpv-fabric-overlay',
-    'npm run build must regenerate the Fabric browser bundle before packaging'
+    'npm run bundle:mpv-fabric-overlay && npm run build:review-file-cas-helper',
+    'npm run build must regenerate the browser bundle and native CAS helper before packaging'
   );
   assert.equal(
     appPackage.scripts['prebuild:installer'],
-    'npm run bundle:mpv-fabric-overlay',
-    'npm run build:installer must regenerate the Fabric browser bundle before packaging'
+    'npm run bundle:mpv-fabric-overlay && npm run build:review-file-cas-helper',
+    'npm run build:installer must regenerate the browser bundle and native CAS helper before packaging'
   );
 });

@@ -75,6 +75,9 @@ import {
   shouldHandlePlayPauseShortcutFromTarget,
   shouldIgnoreGlobalShortcutTarget
 } from './modules/keyboard-shortcut-targets.js';
+import {
+  dispatchMpvOverlayKeyboardInput
+} from './modules/mpv-overlay-keyboard-relay.js';
 
 const log = createLogger('App');
 
@@ -5878,6 +5881,9 @@ async function initApp() {
   // 키보드 단축키
   document.addEventListener('keydown', handleKeydown, true);
   document.addEventListener('keyup', handleKeyup, true);
+  window.electronAPI.onMpvOverlayKeyboardInput?.((input) => {
+    dispatchMpvOverlayKeyboardInput(input, { ownerDocument: document });
+  });
   document.addEventListener('click', handleFabricDrawingPilotLegacyClick, true);
 
   // ====== 캔버스 오버레이 동기화 ======
@@ -7071,6 +7077,8 @@ async function initApp() {
   const fabricDrawingPilotController = createFabricDrawingPilotController({
     electronAPI: window.electronAPI,
     getContext: getFabricDrawingPilotContext,
+    matchesDrawingToggleShortcut: event => userSettings.matchShortcut('drawMode', event),
+    matchesSelectionShortcut: event => userSettings.matchShortcut('drawingToolSelect', event),
     persistenceStore: fabricDrawingPersistenceStore,
     onStateChange: handleFabricDrawingPilotStateChange
   });
@@ -8616,20 +8624,11 @@ async function initApp() {
     }
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
-    if (!engineSwap) {
-      await fabricDrawingPilotController.beforeVideoChange(loadToken);
-      if (!canContinueVideoLoad()) {
-        await fabricDrawingPilotController.cancelVideoChange(loadToken);
-        if (activeVideoLoadToken === loadToken) {
-          activeVideoLoadToken = null;
-          activeVideoLoadPath = null;
-        }
-        return false;
-      }
-    }
     mpvDrawPlaybackTransitionToken += 1;
     elements.drawingTools?.classList.remove('playback-hidden');
     let videoLoadCompleted = false;
+    let fabricVideoChangeStarted = false;
+    let destructiveMpvReviewMediaChangeStarted = false;
     supersedeActiveTranscodeOverlay('새 영상 선택');
     // 작업 4: engineSwap(같은 파일 엔진 전환)에서는 연속 재생 세션을 끊지 않는다.
     if (!engineSwap) {
@@ -8730,7 +8729,44 @@ async function initApp() {
           }
         }
 
+        // 사용자의 첫 저장 결정을 기다리는 동안 새 획이 들어올 수 있다.
+        // 입력을 먼저 fence한 뒤 최종 snapshot을 한 번 더 저장해야 마지막 획이 유실되지 않는다.
+        fabricVideoChangeStarted = true;
+        const fabricReadyForVideoChange =
+          await fabricDrawingPilotController.beforeVideoChange(loadToken);
+        if (!fabricReadyForVideoChange || !canContinueVideoLoad()) return false;
+
+        const finalFabricPersistenceReadyToLeave =
+          await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+        if (!canContinueVideoLoad()) return false;
+        if (!finalFabricPersistenceReadyToLeave) {
+          showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
+          return false;
+        }
+        await reviewDataManager.waitForPendingSave();
+        if (!canContinueVideoLoad()) return false;
+
+        if (reviewDataManager.hasUnsavedChanges()) {
+          log.info('Fabric 입력 차단 후 최종 변경사항 저장 시도');
+          const finalSavedBeforeVideoChange = await reviewDataManager.save();
+          if (!canContinueVideoLoad()) return false;
+          if (!finalSavedBeforeVideoChange) {
+            const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
+            if (!proceed) {
+              log.info('최종 저장 실패 후 사용자가 파일 전환 취소');
+              return false;
+            }
+            log.warn('최종 저장 실패했지만 사용자가 전환 진행 선택');
+          }
+        }
+
         allowNavigationGuardAbort = false;
+
+        // 파일 감시와 협업 세션을 끊는 순간부터는 이전 리뷰 화면을 온전히
+        // 복원할 수 없다. 따라서 이 정리 작업도 파괴 경계 안에 포함한다.
+        destructiveMpvReviewMediaChangeStarted =
+          Boolean(beginDestructiveMpvReviewMediaChange(loadToken));
+        if (!destructiveMpvReviewMediaChangeStarted) return false;
 
         // ====== 이전 파일 감시 및 협업 세션 정리 (누적 방지) ======
         void stopDeferredReviewFileDiscovery();
@@ -8757,7 +8793,6 @@ async function initApp() {
         // ====== 이전 데이터 초기화 ======
         // 자동 저장 일시 중지 (초기화 중 빈 데이터가 저장되는 것 방지)
         if (!canContinueVideoLoad()) return false;
-        if (!beginDestructiveMpvReviewMediaChange(loadToken)) return false;
         reviewDataManager.pauseAutoSave();
         await reviewDataManager.waitForPendingSave();
         if (!canContinueVideoLoad()) return false;
@@ -9203,10 +9238,12 @@ async function initApp() {
       showToast('파일을 로드할 수 없습니다.', 'error');
       return false;
     } finally {
+      if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
+        await fabricDrawingPilotController.cancelVideoChange(loadToken, {
+          restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted
+        });
+      }
       if (activeVideoLoadToken === loadToken) {
-        if (!engineSwap && !videoLoadCompleted) {
-          await fabricDrawingPilotController.cancelVideoChange(loadToken);
-        }
         activeVideoLoadToken = null;
         activeVideoLoadPath = null;
         await settlePendingMpvReviewFreezeMediaChange({ loaded: videoLoadCompleted });
