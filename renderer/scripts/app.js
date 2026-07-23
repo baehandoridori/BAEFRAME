@@ -6035,6 +6035,8 @@ async function initApp() {
       targetFrame: videoPlayer.currentFrame,
       sourceWidth: videoPlayer.videoWidth,
       sourceHeight: videoPlayer.videoHeight,
+      fps: videoPlayer.fps,
+      totalFrames: Math.max(1, Math.round(videoPlayer.totalFrames)),
       canvasRect: viewport?.canvasRect || null,
       viewportRevision: viewport?.revision ?? 0,
       viewportTransform: viewport
@@ -6044,12 +6046,13 @@ async function initApp() {
   }
 
   function shouldSuppressLegacyDrawingForFabricPilot() {
-    return fabricDrawingPilotController.isEnabled() && isMpvPilotPlaybackActive();
+    return fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
+      isMpvPilotPlaybackActive();
   }
 
   function isFabricDrawingPilotControllerEngaged() {
     const pilotState = fabricDrawingPilotController.getState();
-    return fabricDrawingPilotController.isEnabled() &&
+    return fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
       (pilotState === 'active' || pilotState === 'preparing' || pilotState === 'recovering');
   }
 
@@ -7131,8 +7134,18 @@ async function initApp() {
     persistenceStore: fabricDrawingPersistenceStore,
     onStateChange: handleFabricDrawingPilotStateChange
   });
+  reviewDataManager.setFinalFabricSnapshotHandler(async () => {
+    const prepared =
+      await fabricDrawingPilotController.preparePersistenceSnapshotForSave();
+    if (!prepared) {
+      throw new Error('Fabric 드로잉 최신 상태를 가져오지 못했습니다.');
+    }
+  });
   const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize().then(enabled => {
-    document.body.classList.toggle('fabric-drawing-pilot-enabled', enabled);
+    document.body.classList.toggle(
+      'fabric-drawing-pilot-enabled',
+      enabled && fabricDrawingPilotController.shouldOwnDrawingShortcut()
+    );
     scheduleFabricPilotStatusRefresh({ force: true });
     return enabled;
   });
@@ -8733,6 +8746,13 @@ async function initApp() {
     if (!engineSwap) {
       await fabricDrawingPilotInitialization;
       if (!canContinueVideoLoad()) return false;
+      const fabricPersistenceReadyToLeave =
+        await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+      if (!canContinueVideoLoad()) return false;
+      if (!fabricPersistenceReadyToLeave) {
+        showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
+        return false;
+      }
     }
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
@@ -9691,10 +9711,16 @@ async function initApp() {
   }
 
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
+    const ownsDrawingShortcut =
+      fabricDrawingPilotController.shouldOwnDrawingShortcut();
+    document.body.classList.toggle(
+      'fabric-drawing-pilot-enabled',
+      ownsDrawingShortcut
+    );
     const active = nextState === 'active';
     const preparing = nextState === 'preparing';
     const recoveringForResume = nextState === 'recovering' && snapshot?.resumeRequested === true;
-    const engaged = isMpvPilotPlaybackActive() &&
+    const engaged = ownsDrawingShortcut && isMpvPilotPlaybackActive() &&
       (active || preparing || nextState === 'recovering');
     const wasEngaged = fabricDrawingPilotUiEngaged;
     scheduleFabricPilotStatusRefresh({ force: true });
@@ -9786,7 +9812,8 @@ async function initApp() {
   function toggleDrawMode() {
     // 오디오 모드에서는 그리기 모드 진입 차단
     if (state.isAudioMode) return;
-    if (fabricDrawingPilotController.isEnabled() && isMpvPilotPlaybackActive()) {
+    if (fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
+        isMpvPilotPlaybackActive()) {
       void fabricDrawingPilotController.toggle();
       return;
     }
@@ -13452,6 +13479,19 @@ async function initApp() {
   window.electronAPI.onRequestSaveBeforeQuit(async () => {
     log.info('앱 종료 전 저장 요청 수신');
     const savingOverlay = document.getElementById('appSavingOverlay');
+    const fabricPersistenceReadyToLeave =
+      await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+    if (!fabricPersistenceReadyToLeave) {
+      const forceQuit = confirm(
+        '새 드로잉의 최신 상태를 저장할 수 없습니다.\n\n저장하지 않고 종료하시겠습니까?'
+      );
+      if (forceQuit) {
+        await window.electronAPI.confirmQuit();
+      } else {
+        await window.electronAPI.cancelQuit();
+      }
+      return;
+    }
 
     // 협업 세션 종료 (presence 제거)
     commentSync.stop();

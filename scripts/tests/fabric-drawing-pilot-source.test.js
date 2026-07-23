@@ -44,8 +44,8 @@ test('Fabric pilot controller is initialized with live mpv video and canvas cont
   assert.match(appSource, /import \{ createFabricDrawingPilotController \} from '\.\/modules\/fabric-drawing-pilot-controller\.js';/);
   assert.match(appSource, /const mpvOverlayLifecycle = createMpvOverlayLifecycle\([\s\S]+const fabricDrawingPilotController = createFabricDrawingPilotController\(\{/);
   assert.match(appSource, /getContext: getFabricDrawingPilotContext/);
-  assert.match(appSource, /function getFabricDrawingPilotContext\(\) \{[\s\S]+const viewport = getFabricDrawingPilotViewport\(\);[\s\S]+isMpvActive: isMpvPilotPlaybackActive\(\),[\s\S]+isAudio: state\.isAudioMode,[\s\S]+stableVideoIdentity: videoPlayer\.filePath \|\| state\.currentFile \|\| '',[\s\S]+targetFrame: videoPlayer\.currentFrame,[\s\S]+sourceWidth: videoPlayer\.videoWidth,[\s\S]+sourceHeight: videoPlayer\.videoHeight,[\s\S]+canvasRect: viewport\?\.canvasRect[\s\S]+viewportTransform:/);
-  assert.match(appSource, /const fabricDrawingPilotInitialization = fabricDrawingPilotController\.initialize\(\)\.then\(enabled => \{[\s\S]+document\.body\.classList\.toggle\('fabric-drawing-pilot-enabled', enabled\);[\s\S]+return enabled;[\s\S]+\}\);/);
+  assert.match(appSource, /function getFabricDrawingPilotContext\(\) \{[\s\S]+const viewport = getFabricDrawingPilotViewport\(\);[\s\S]+isMpvActive: isMpvPilotPlaybackActive\(\),[\s\S]+isAudio: state\.isAudioMode,[\s\S]+stableVideoIdentity: videoPlayer\.filePath \|\| state\.currentFile \|\| '',[\s\S]+targetFrame: videoPlayer\.currentFrame,[\s\S]+sourceWidth: videoPlayer\.videoWidth,[\s\S]+sourceHeight: videoPlayer\.videoHeight,[\s\S]+fps: videoPlayer\.fps,[\s\S]+totalFrames: Math\.max\(1, Math\.round\(videoPlayer\.totalFrames\)\),[\s\S]+canvasRect: viewport\?\.canvasRect[\s\S]+viewportTransform:/);
+  assert.match(appSource, /const fabricDrawingPilotInitialization = fabricDrawingPilotController\.initialize\(\)\.then\(enabled => \{[\s\S]+document\.body\.classList\.toggle\([\s\S]+fabric-drawing-pilot-enabled[\s\S]+enabled && fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)[\s\S]+return enabled;[\s\S]+\}\);/);
   assert.ok(
     appSource.indexOf('let fabricDrawingPilotUiEngaged = false;') <
       appSource.indexOf('const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize().then'),
@@ -66,9 +66,9 @@ test('pilot state and B routing avoid every legacy playback and persistence muta
   assert.match(appSource, /let fabricDrawingPilotUiEngaged = false;/);
   assert.match(appSource, /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{/);
   const toggle = appSource.match(/function toggleDrawMode\(\) \{([\s\S]*?)\n  \}\n\n  \/\*\*/)?.[1] || '';
-  assert.match(toggle, /fabricDrawingPilotController\.isEnabled\(\) && isMpvPilotPlaybackActive\(\)/);
+  assert.match(toggle, /fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\) &&\s+isMpvPilotPlaybackActive\(\)/);
   assert.match(toggle, /void fabricDrawingPilotController\.toggle\(\);\n\s+return;/);
-  const pilotBranch = toggle.match(/if \(fabricDrawingPilotController\.isEnabled\(\) && isMpvPilotPlaybackActive\(\)\) \{([\s\S]*?)\n\s+\}/)?.[1] || '';
+  const pilotBranch = toggle.match(/if \(fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\) &&\s+isMpvPilotPlaybackActive\(\)\) \{([\s\S]*?)\n\s+\}/)?.[1] || '';
   assert.doesNotMatch(pilotBranch, /videoPlayer\.pause|loadVideo|enterHybridReviewEngineIfPossible|showMpvReviewFreezeFrame|drawingManager|reviewDataManager/);
   const stateHandler = appSource.match(/function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{([\s\S]*?)\n  \}/)?.[1] || '';
   assert.match(stateHandler, /const wasEngaged = fabricDrawingPilotUiEngaged;/);
@@ -89,11 +89,51 @@ test('capture keyboard and click firewalls stop legacy drawing mutations while k
   assert.match(appSource, /#drawingTools[\s\S]+#btnUndo[\s\S]+#btnClearDrawing[\s\S]+#btnAddLayer[\s\S]+#btnDeleteLayer[\s\S]+\.layer-settings-popup[\s\S]+\.drawing-layer-header[\s\S]+\.drawing-track-row/);
   assert.match(mainCss, /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode #drawingTools[\s\S]+visibility:\s*hidden;[\s\S]+pointer-events:\s*none;/);
   assert.match(mainCss, /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-overlay[\s\S]+visibility:\s*hidden;[\s\S]+pointer-events:\s*none(?:\s*!important)?;/);
-  assert.match(appSource, /function shouldSuppressLegacyDrawingForFabricPilot\(\) \{[\s\S]+fabricDrawingPilotController\.isEnabled\(\)[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+\}/);
+  assert.match(appSource, /function shouldSuppressLegacyDrawingForFabricPilot\(\) \{[\s\S]+fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+\}/);
   assert.match(appSource, /const suppressLegacyDrawing = shouldSuppressLegacyDrawingForFabricPilot\(\);[\s\S]+drawingDataUrl: suppressLegacyDrawing \? '' : getCompositedDrawingOverlayDataUrl\(\),[\s\S]+onionDataUrl: !suppressLegacyDrawing && drawingManager\.onionSkin\?\.enabled/);
   assert.match(appSource, /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
   assert.match(appSource, /if \(!engaged && !wasEngaged\) \{\n\s+if \(nextState === 'failed'\) notifyFabricDrawingPilotFailure\(\);\n\s+else fabricDrawingPilotFailureToastShown = false;\n\s+return;\n\s+\}/);
   assert.match(appSource, /fabricViewport:\s*getFabricDrawingPilotViewport\(\)/);
+});
+
+test('Fabric persistence is pulled after root refresh and before save, video leave, and quit dirty checks', () => {
+  assert.match(
+    appSource,
+    /reviewDataManager\.setFinalFabricSnapshotHandler\(async \(\) => \{[\s\S]+await fabricDrawingPilotController\.preparePersistenceSnapshotForSave\(\)[\s\S]+throw new Error\('Fabric 드로잉 최신 상태를 가져오지 못했습니다\.'\);[\s\S]+\}\);/
+  );
+
+  const loadVideo = appSource.match(
+    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
+  )?.[1] || '';
+  const flushIndex = loadVideo.indexOf(
+    'await fabricDrawingPilotController.flushPersistenceBeforeLeave()'
+  );
+  const beforeChangeIndex = loadVideo.indexOf(
+    'await fabricDrawingPilotController.beforeVideoChange(loadToken)'
+  );
+  const dirtyCheckIndex = loadVideo.indexOf(
+    'if (reviewDataManager.hasUnsavedChanges())'
+  );
+  assert.ok(flushIndex >= 0, 'video leave must pull the current overlay');
+  assert.ok(flushIndex < beforeChangeIndex, 'pull must happen before Fabric input is disabled');
+  assert.ok(flushIndex < dirtyCheckIndex, 'pull must happen before the dirty check');
+  assert.match(
+    loadVideo,
+    /const fabricPersistenceReadyToLeave =\s*await fabricDrawingPilotController\.flushPersistenceBeforeLeave\(\);[\s\S]+if \(!fabricPersistenceReadyToLeave\) \{[\s\S]+showToast\('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다\.', 'error'\);[\s\S]+return false;[\s\S]+\}/
+  );
+
+  const quitHandler = appSource.match(
+    /window\.electronAPI\.onRequestSaveBeforeQuit\(async \(\) => \{([\s\S]*?)\n  \}\);/
+  )?.[1] || '';
+  const quitFlushIndex = quitHandler.indexOf(
+    'await fabricDrawingPilotController.flushPersistenceBeforeLeave()'
+  );
+  const quitDirtyIndex = quitHandler.indexOf(
+    'if (!reviewDataManager.hasUnsavedChanges())'
+  );
+  assert.ok(quitFlushIndex >= 0, 'quit must pull the current overlay');
+  assert.ok(quitFlushIndex < quitDirtyIndex, 'quit pull must happen before the dirty check');
+  assert.match(quitHandler, /await window\.electronAPI\.cancelQuit\(\);/);
 });
 
 test('freeze and system shutdown paths are conditional on pilot ownership', () => {
