@@ -40,6 +40,49 @@ const HOST_DRAWING_ACTIONS = new Set([
   'undo',
   'redo'
 ]);
+const FABRIC_DRAWING_TRANSITION_MAX_BYTES = 8 * 1024 * 1024;
+const FABRIC_DRAWING_TRANSITION_KEYS = Object.freeze([
+  'hostGeneration',
+  'videoGeneration',
+  'persistenceSessionId',
+  'stableVideoIdentity',
+  'scene',
+  'mutationSequence',
+  'origin',
+  'kind',
+  'estimatedBytes',
+  'unsupportedReason',
+  'removals',
+  'insertions',
+  'transforms'
+]);
+const FABRIC_DRAWING_SCENE_KEYS = Object.freeze([
+  'sceneInstanceId',
+  'targetFrame',
+  'sourceWidth',
+  'sourceHeight'
+]);
+const FABRIC_DRAWING_RESYNC_KEYS = Object.freeze([
+  'type',
+  'hostGeneration',
+  'videoGeneration',
+  'persistenceSessionId',
+  'stableVideoIdentity',
+  'reason'
+]);
+const FABRIC_DRAWING_TRANSITION_ORIGINS = new Set(['live', 'history']);
+const FABRIC_DRAWING_TRANSITION_KINDS = new Set([
+  'add-objects',
+  'transform-objects',
+  'split-stroke',
+  'delete-objects',
+  'clear-keyframe'
+]);
+const FABRIC_DRAWING_RESYNC_REASONS = new Set([
+  'transition-too-large',
+  'transition-serialization-failed',
+  'transition-invalid-at-boundary'
+]);
 const DRAWING_V3_DIAGNOSTIC_STATUSES = new Set([
   'active',
   'degraded',
@@ -951,6 +994,143 @@ function sanitizeFabricMetrics(metrics = {}) {
   return sanitized;
 }
 
+function isPlainPersistenceRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactPersistenceKeys(value, expectedKeys) {
+  if (!isPlainPersistenceRecord(value)) return false;
+  const keys = Reflect.ownKeys(value);
+  return keys.length === expectedKeys.length &&
+    keys.every(key => typeof key === 'string' && expectedKeys.includes(key));
+}
+
+function isDensePersistenceArray(value) {
+  if (!Array.isArray(value)) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) return false;
+  }
+  return Reflect.ownKeys(value).every(key =>
+    key === 'length' ||
+    (typeof key === 'string' && /^(0|[1-9]\d*)$/.test(key) && Number(key) < value.length)
+  );
+}
+
+function readFabricDrawingPersistenceFence(value) {
+  try {
+    if (!value ||
+        !Number.isSafeInteger(value.hostGeneration) || value.hostGeneration < 0 ||
+        !Number.isSafeInteger(value.videoGeneration) || value.videoGeneration < 0 ||
+        typeof value.persistenceSessionId !== 'string' ||
+        value.persistenceSessionId.length === 0 ||
+        value.persistenceSessionId.length > 32768 ||
+        typeof value.stableVideoIdentity !== 'string' ||
+        value.stableVideoIdentity.length === 0 ||
+        value.stableVideoIdentity.length > 32768) {
+      return null;
+    }
+    return {
+      hostGeneration: value.hostGeneration,
+      videoGeneration: value.videoGeneration,
+      persistenceSessionId: value.persistenceSessionId,
+      stableVideoIdentity: value.stableVideoIdentity
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function createFabricDrawingResyncMessage(fence, reason) {
+  return {
+    type: 'resync-required',
+    ...fence,
+    reason
+  };
+}
+
+function isValidFabricDrawingTransitionEnvelope(value) {
+  return hasExactPersistenceKeys(value, FABRIC_DRAWING_TRANSITION_KEYS) &&
+    hasExactPersistenceKeys(value.scene, FABRIC_DRAWING_SCENE_KEYS) &&
+    typeof value.scene.sceneInstanceId === 'string' &&
+    value.scene.sceneInstanceId.length > 0 &&
+    value.scene.sceneInstanceId.length <= 512 &&
+    Number.isSafeInteger(value.scene.targetFrame) &&
+    value.scene.targetFrame >= 0 &&
+    Number.isFinite(value.scene.sourceWidth) &&
+    value.scene.sourceWidth > 0 &&
+    Number.isFinite(value.scene.sourceHeight) &&
+    value.scene.sourceHeight > 0 &&
+    Number.isSafeInteger(value.mutationSequence) &&
+    value.mutationSequence >= 0 &&
+    FABRIC_DRAWING_TRANSITION_ORIGINS.has(value.origin) &&
+    FABRIC_DRAWING_TRANSITION_KINDS.has(value.kind) &&
+    Number.isSafeInteger(value.estimatedBytes) &&
+    value.estimatedBytes >= 0 &&
+    (value.unsupportedReason === null ||
+      (typeof value.unsupportedReason === 'string' &&
+       value.unsupportedReason.length <= 512)) &&
+    isDensePersistenceArray(value.removals) &&
+    isDensePersistenceArray(value.insertions) &&
+    isDensePersistenceArray(value.transforms);
+}
+
+function normalizeFabricDrawingPersistenceMessage(message) {
+  if (!isPlainPersistenceRecord(message)) return null;
+  if (message.type === 'resync-required') {
+    const fence = readFabricDrawingPersistenceFence(message);
+    if (!fence ||
+        !hasExactPersistenceKeys(message, FABRIC_DRAWING_RESYNC_KEYS) ||
+        !FABRIC_DRAWING_RESYNC_REASONS.has(message.reason)) {
+      return null;
+    }
+    return createFabricDrawingResyncMessage(fence, message.reason);
+  }
+  if (message.type !== 'transition' ||
+      !hasExactPersistenceKeys(message, ['type', 'transition'])) {
+    return null;
+  }
+
+  const fence = readFabricDrawingPersistenceFence(message.transition);
+  if (!fence) return null;
+  let serialized;
+  try {
+    serialized = JSON.stringify(message.transition);
+  } catch (_error) {
+    return createFabricDrawingResyncMessage(
+      fence,
+      'transition-serialization-failed'
+    );
+  }
+  if (typeof serialized !== 'string') {
+    return createFabricDrawingResyncMessage(
+      fence,
+      'transition-serialization-failed'
+    );
+  }
+  if (Buffer.byteLength(serialized, 'utf8') > FABRIC_DRAWING_TRANSITION_MAX_BYTES) {
+    return createFabricDrawingResyncMessage(fence, 'transition-too-large');
+  }
+
+  let transition;
+  try {
+    transition = JSON.parse(serialized);
+  } catch (_error) {
+    return createFabricDrawingResyncMessage(
+      fence,
+      'transition-serialization-failed'
+    );
+  }
+  if (!isValidFabricDrawingTransitionEnvelope(transition)) {
+    return createFabricDrawingResyncMessage(
+      fence,
+      'transition-invalid-at-boundary'
+    );
+  }
+  return { type: 'transition', transition };
+}
+
 class MPVOverlayHost {
   constructor(options = {}) {
     this.BrowserWindow = options.BrowserWindow || getDefaultBrowserWindow();
@@ -1021,6 +1201,14 @@ class MPVOverlayHost {
       passiveReady,
       fabricReady: passiveReady && this.fabricReadyGeneration === this.hostGeneration
     };
+  }
+
+  isCurrentOverlaySender(event) {
+    const hostWindow = this.window;
+    return !!hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      !hostWindow.webContents?.isDestroyed?.() &&
+      event?.sender === hostWindow.webContents;
   }
 
   async setDrawingInput() {
@@ -1275,6 +1463,143 @@ class MPVOverlayHost {
     }
   }
 
+  async hydrateDrawingVideo(request = {}) {
+    const hostWindow = this.window;
+    if (!this._drawingPersistenceRequestIsCurrent(hostWindow, request)) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'stale-persistence-fence'
+      };
+    }
+    if (this.desiredInputEnabled) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'drawing-input-enabled'
+      };
+    }
+    const prepared = await this._ensureFabricRuntime();
+    if (!prepared.success) {
+      return {
+        success: false,
+        accepted: false,
+        reason: this._drawingPersistenceReason(
+          prepared.error,
+          'drawing-runtime-unavailable'
+        )
+      };
+    }
+    if (!this._drawingPersistenceRequestIsCurrent(hostWindow, request, true)) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'stale-persistence-response'
+      };
+    }
+    try {
+      const result = await this._executeFabricMethod('hydrateDrawingVideo', request);
+      if (!this._drawingPersistenceRequestIsCurrent(hostWindow, request, true)) {
+        return {
+          success: false,
+          accepted: false,
+          reason: 'stale-persistence-response'
+        };
+      }
+      if (result?.accepted !== true) {
+        return {
+          success: false,
+          accepted: false,
+          reason: this._drawingPersistenceReason(
+            result?.reason,
+            'drawing-hydration-rejected'
+          )
+        };
+      }
+      return {
+        success: true,
+        accepted: true,
+        sceneCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result.sceneCount))),
+        objectCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result.objectCount)))
+      };
+    } catch (error) {
+      return {
+        success: false,
+        accepted: false,
+        reason: this._drawingPersistenceReason(
+          error?.message,
+          'drawing-hydration-failed'
+        )
+      };
+    }
+  }
+
+  async exportDrawingVideo(request = {}) {
+    const hostWindow = this.window;
+    if (!this._drawingPersistenceRequestIsCurrent(hostWindow, request)) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'stale-persistence-fence'
+      };
+    }
+    const prepared = await this._ensureFabricRuntime();
+    if (!prepared.success) {
+      return {
+        success: false,
+        accepted: false,
+        reason: this._drawingPersistenceReason(
+          prepared.error,
+          'drawing-runtime-unavailable'
+        )
+      };
+    }
+    if (!this._drawingPersistenceRequestIsCurrent(hostWindow, request, true)) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'stale-persistence-response'
+      };
+    }
+    try {
+      const result = await this._executeFabricMethod('exportDrawingVideo', request);
+      if (!this._drawingPersistenceRequestIsCurrent(hostWindow, request, true)) {
+        return {
+          success: false,
+          accepted: false,
+          reason: 'stale-persistence-response'
+        };
+      }
+      if (result?.accepted !== true ||
+          !result.snapshot ||
+          typeof result.snapshot !== 'object' ||
+          Array.isArray(result.snapshot)) {
+        return {
+          success: false,
+          accepted: false,
+          reason: this._drawingPersistenceReason(
+            result?.reason,
+            'drawing-export-rejected'
+          )
+        };
+      }
+      return {
+        success: true,
+        accepted: true,
+        snapshot: result.snapshot
+      };
+    } catch (error) {
+      return {
+        success: false,
+        accepted: false,
+        reason: this._drawingPersistenceReason(
+          error?.message,
+          'drawing-export-failed'
+        )
+      };
+    }
+  }
+
   async _ensureFabricRuntime() {
     const hostWindow = this.window;
     const hostGeneration = this.hostGeneration;
@@ -1426,6 +1751,22 @@ class MPVOverlayHost {
       request.inputRevision === this.currentInputRevision &&
       request.sessionId === this.activeSessionId &&
       this.desiredInputEnabled;
+  }
+
+  _drawingPersistenceRequestIsCurrent(hostWindow, request = {}, requireReady = false) {
+    return !!hostWindow &&
+      this.window === hostWindow &&
+      !hostWindow.isDestroyed?.() &&
+      this.contentLoaded === true &&
+      request.hostGeneration === this.hostGeneration &&
+      request.videoGeneration === this.currentVideoGeneration &&
+      (!requireReady || this.fabricReadyGeneration === this.hostGeneration);
+  }
+
+  _drawingPersistenceReason(value, fallback) {
+    return typeof value === 'string' && value
+      ? value.slice(0, 512)
+      : fallback;
   }
 
   _inputRequestStillDesired(hostWindow, request = {}) {
@@ -1687,6 +2028,7 @@ class MPVOverlayHost {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        preload: path.join(__dirname, '..', 'preload', 'mpv-overlay-preload.js'),
         webSecurity: false
       }
     });
@@ -1962,5 +2304,6 @@ const mpvOverlayHost = new MPVOverlayHost();
 module.exports = {
   MPVOverlayHost,
   mpvOverlayHost,
-  normalizeOverlayState
+  normalizeOverlayState,
+  normalizeFabricDrawingPersistenceMessage
 };

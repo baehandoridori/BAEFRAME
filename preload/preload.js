@@ -140,6 +140,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvUpdateOverlayDrawingTool: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-tool', request),
   mpvApplyOverlayDrawingAction: (request) => ipcRenderer.invoke('mpv:apply-overlay-drawing-action', request),
   mpvGetOverlayDrawingDiagnostics: () => ipcRenderer.invoke('mpv:get-overlay-drawing-diagnostics'),
+  mpvHydrateOverlayDrawingVideo: (request) => ipcRenderer.invoke('mpv:hydrate-overlay-drawing-video', request),
+  mpvExportOverlayDrawingVideo: (request) => ipcRenderer.invoke('mpv:export-overlay-drawing-video', request),
+  onFabricDrawingPersistenceEvent: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (event, message) => callback(message);
+    ipcRenderer.on('fabric-drawing:persistence-event', listener);
+    return () => ipcRenderer.removeListener('fabric-drawing:persistence-event', listener);
+  },
   mpvDestroyOverlay: () => ipcRenderer.invoke('mpv:destroy-overlay'),
 
   // ====== 파일 관련 (유틸리티) ======

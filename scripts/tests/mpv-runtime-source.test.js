@@ -11,6 +11,10 @@ const mainStyles = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'rendere
 const videoPlayerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/video-player.js'), 'utf8'));
 const userSettingsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/user-settings.js'), 'utf8'));
 const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
+const overlayPreloadPath = path.join(rootDir, 'preload/mpv-overlay-preload.js');
+const overlayPreloadSource = fs.existsSync(overlayPreloadPath)
+  ? normalizeNewlines(fs.readFileSync(overlayPreloadPath, 'utf8'))
+  : '';
 const ipcSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
 const mainIndexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/index.js'), 'utf8'));
 const mpvManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/mpv-manager.js'), 'utf8'));
@@ -22,7 +26,9 @@ test('Fabric drawing pilot IPC channels and preload bridge names stay fixed', ()
     ['mpv:set-overlay-drawing-input', 'mpvSetOverlayDrawingInput'],
     ['mpv:update-overlay-drawing-tool', 'mpvUpdateOverlayDrawingTool'],
     ['mpv:apply-overlay-drawing-action', 'mpvApplyOverlayDrawingAction'],
-    ['mpv:get-overlay-drawing-diagnostics', 'mpvGetOverlayDrawingDiagnostics']
+    ['mpv:get-overlay-drawing-diagnostics', 'mpvGetOverlayDrawingDiagnostics'],
+    ['mpv:hydrate-overlay-drawing-video', 'mpvHydrateOverlayDrawingVideo'],
+    ['mpv:export-overlay-drawing-video', 'mpvExportOverlayDrawingVideo']
   ];
 
   for (const [channel, bridgeName] of contracts) {
@@ -30,6 +36,26 @@ test('Fabric drawing pilot IPC channels and preload bridge names stay fixed', ()
     assert.match(preloadSource, new RegExp(`${bridgeName}\\s*:`));
     assert.match(preloadSource, new RegExp(`ipcRenderer\\.invoke\\(\\s*['"]${channel}['"]`));
   }
+});
+
+test('Fabric overlay persistence uses a narrow sender-fenced event bridge', () => {
+  assert.match(
+    overlayPreloadSource,
+    /exposeInMainWorld\(\s*['"]mpvOverlayPersistence['"]/
+  );
+  assert.match(
+    overlayPreloadSource,
+    /notifyCommittedTransition/
+  );
+  assert.doesNotMatch(overlayPreloadSource, /ipcRenderer\.(?:on|invoke)/);
+  assert.match(
+    ipcSource,
+    /ipcMain\.on\(\s*['"]mpv-overlay:fabric-drawing-persistence['"][\s\S]*?isCurrentOverlaySender\(event\)[\s\S]*?normalizeFabricDrawingPersistenceMessage[\s\S]*?webContents\.send\(\s*['"]fabric-drawing:persistence-event['"]/
+  );
+  assert.match(
+    preloadSource,
+    /onFabricDrawingPersistenceEvent:[\s\S]*?ipcRenderer\.on\('fabric-drawing:persistence-event', listener\)[\s\S]*?removeListener\('fabric-drawing:persistence-event', listener\)/
+  );
 });
 
 test('Fabric drawing mutation IPC rejects pilot-off and non-main-renderer calls before touching the host', () => {
@@ -478,7 +504,7 @@ test('mpv teardown gate waiters stay blocked when another teardown is chained', 
 test('package exposes an mpv pilot test command', () => {
   assert.equal(
     packageJson.scripts['test:mpv'],
-    'node --test scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/external-frame-interpolation.test.mjs'
+    'node --test scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/external-frame-interpolation.test.mjs'
   );
 });
 
@@ -510,7 +536,10 @@ test('preload exposes a narrow mpv API surface', () => {
 test('main process registers mpv IPC handlers through the manager and embed host', () => {
   assert.match(ipcSource, /const \{ MPVManager, mpvManager \} = require\('\.\/mpv-manager'\);/);
   assert.match(ipcSource, /const \{ mpvEmbedHost \} = require\('\.\/mpv-embed-host'\);/);
-  assert.match(ipcSource, /const \{ mpvOverlayHost \} = require\('\.\/mpv-overlay-host'\);/);
+  assert.match(
+    ipcSource,
+    /const \{[\s\S]*?mpvOverlayHost,[\s\S]*?normalizeFabricDrawingPersistenceMessage[\s\S]*?\} = require\('\.\/mpv-overlay-host'\);/
+  );
   for (const channel of [
     'mpv:is-enabled',
     'mpv:is-available',

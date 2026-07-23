@@ -14,7 +14,10 @@ const recentThumbCapture = require('./recent-thumb-capture');
 const { validateCutlistFilePath } = require('./cutlist-paths');
 const { MPVManager, mpvManager } = require('./mpv-manager');
 const { mpvEmbedHost } = require('./mpv-embed-host');
-const { mpvOverlayHost } = require('./mpv-overlay-host');
+const {
+  mpvOverlayHost,
+  normalizeFabricDrawingPersistenceMessage
+} = require('./mpv-overlay-host');
 const Store = require('electron-store');
 
 const log = createLogger('IPC');
@@ -282,6 +285,21 @@ function setupIpcHandlers({
     invokeFabricDrawingHost(event, () => mpvOverlayHost.applyDrawingAction(request)));
   ipcMain.handle('mpv:get-overlay-drawing-diagnostics', (event) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.getDrawingDiagnostics()));
+  ipcMain.handle('mpv:hydrate-overlay-drawing-video', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.hydrateDrawingVideo(request)));
+  ipcMain.handle('mpv:export-overlay-drawing-video', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.exportDrawingVideo(request)));
+  ipcMain.on('mpv-overlay:fabric-drawing-persistence', (event, message) => {
+    if (!isFabricDrawingPilotEnabled ||
+        !mpvOverlayHost.isCurrentOverlaySender(event)) {
+      return;
+    }
+    const normalized = normalizeFabricDrawingPersistenceMessage(message);
+    if (!normalized) return;
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed?.()) return;
+    mainWindow.webContents.send('fabric-drawing:persistence-event', normalized);
+  });
 
   // ====== 파일 관련 ======
 
