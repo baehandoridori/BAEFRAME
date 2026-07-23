@@ -100,7 +100,7 @@ test('capture keyboard and click firewalls stop legacy drawing mutations while k
   assert.match(appSource, /fabricViewport:\s*getFabricDrawingPilotViewport\(\)/);
 });
 
-test('Fabric persistence is pulled after root refresh and before save, video leave, and quit dirty checks', () => {
+test('Fabric persistence is pulled after root refresh and before save and video leave', () => {
   assert.match(
     appSource,
     /reviewDataManager\.setFinalFabricSnapshotHandler\(async \(\) => \{[\s\S]+await fabricDrawingPilotController\.preparePersistenceSnapshotForSave\(\)[\s\S]+throw new Error\('Fabric 드로잉 최신 상태를 가져오지 못했습니다\.'\);[\s\S]+\}\);/
@@ -125,19 +125,80 @@ test('Fabric persistence is pulled after root refresh and before save, video lea
     loadVideo,
     /const fabricPersistenceReadyToLeave =\s*await fabricDrawingPilotController\.flushPersistenceBeforeLeave\(\);[\s\S]+if \(!fabricPersistenceReadyToLeave\) \{[\s\S]+showToast\('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다\.', 'error'\);[\s\S]+return false;[\s\S]+\}/
   );
+});
 
+test('quit transaction disables Fabric before dirty/save decisions and resumes every cancelled quit path', () => {
   const quitHandler = appSource.match(
     /window\.electronAPI\.onRequestSaveBeforeQuit\(async \(\) => \{([\s\S]*?)\n  \}\);/
   )?.[1] || '';
-  const quitFlushIndex = quitHandler.indexOf(
-    'await fabricDrawingPilotController.flushPersistenceBeforeLeave()'
+  const prepareIndex = quitHandler.indexOf(
+    'await fabricDrawingPilotController.preparePersistenceForQuit()'
   );
-  const quitDirtyIndex = quitHandler.indexOf(
+  const dirtyIndex = quitHandler.indexOf(
     'if (!reviewDataManager.hasUnsavedChanges())'
   );
-  assert.ok(quitFlushIndex >= 0, 'quit must pull the current overlay');
-  assert.ok(quitFlushIndex < quitDirtyIndex, 'quit pull must happen before the dirty check');
-  assert.match(quitHandler, /await window\.electronAPI\.cancelQuit\(\);/);
+  const saveIndex = quitHandler.indexOf(
+    'await reviewDataManager.save()'
+  );
+
+  assert.ok(prepareIndex >= 0, 'quit must first disable Fabric input and pull its final snapshot');
+  assert.ok(prepareIndex < dirtyIndex, 'quit preparation must finish before the dirty check');
+  assert.ok(dirtyIndex < saveIndex, 'dirty state must be checked before a quit save');
+  assert.match(
+    quitHandler,
+    /await fabricDrawingPilotController\.preparePersistenceForQuit\(\)[\s\S]+if \(!reviewDataManager\.hasUnsavedChanges\(\)\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(\);/
+  );
+  assert.match(
+    quitHandler,
+    /await reviewDataManager\.save\(\);[\s\S]+if \(saved\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(\);/
+  );
+  assert.match(
+    quitHandler,
+    /commentSync\.stop\(\);[\s\S]+drawingSync\.stop\(\);[\s\S]+try \{[\s\S]+await liveblocksManager\.stop\(\);[\s\S]+\} catch \(error\) \{[\s\S]+log\.warn\('종료 전 협업 세션 정리 실패, 로컬 저장 계속 진행'/
+  );
+
+  const cancelCalls = [
+    ...quitHandler.matchAll(/await window\.electronAPI\.cancelQuit\(\);/g)
+  ];
+  assert.ok(cancelCalls.length > 0, 'quit handler must expose at least one cancellation path');
+  for (const cancelCall of cancelCalls) {
+    const cancellationPath = quitHandler.slice(
+      cancelCall.index,
+      cancelCall.index + 240
+    );
+    assert.match(
+      cancellationPath,
+      /await fabricDrawingPilotController\.resumeAfterQuitCancelled\(\);/,
+      'every cancelQuit branch must await Fabric input restoration'
+    );
+  }
+});
+
+test('video teardown drains any late autosave after pausing it and before clearing review managers', () => {
+  const loadVideo = appSource.match(
+    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
+  )?.[1] || '';
+  const pauseIndex = loadVideo.indexOf('reviewDataManager.pauseAutoSave()');
+  const finalSaveDrainIndex = loadVideo.indexOf(
+    'await reviewDataManager.waitForPendingSave()',
+    pauseIndex
+  );
+  const commentClearIndex = loadVideo.indexOf('commentManager.clear()', pauseIndex);
+  const drawingResetIndex = loadVideo.indexOf('drawingManager.reset()', pauseIndex);
+
+  assert.ok(pauseIndex >= 0, 'destructive video teardown must pause autosave');
+  assert.ok(
+    finalSaveDrainIndex > pauseIndex,
+    'a save can start during earlier async cleanup, so teardown must drain it after autosave is paused'
+  );
+  assert.ok(
+    finalSaveDrainIndex < commentClearIndex,
+    'comment data must not be cleared while an old-video save is still running'
+  );
+  assert.ok(
+    finalSaveDrainIndex < drawingResetIndex,
+    'drawing data must not be reset while an old-video save is still running'
+  );
 });
 
 test('freeze and system shutdown paths are conditional on pilot ownership', () => {

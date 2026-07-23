@@ -1242,7 +1242,11 @@ test('CLI reads raw JSON, emits only the bounded summary, and exits 1 for violat
 test('package exposes focused Fabric pilot test and diagnostics commands', () => {
   assert.equal(
     appPackage.scripts['test:fabric-drawing-pilot'],
-    'node --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs'
+    'node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs scripts/tests/fabric-drawing-pilot-session.test.js scripts/tests/fabric-drawing-pilot-shortcuts.test.js scripts/tests/fabric-drawing-pilot-source.test.js scripts/tests/fabric-drawing-persistence-controller.test.js'
+  );
+  assert.equal(
+    appPackage.scripts['test:fabric-drawing-persistence'],
+    'node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-persistence-store.test.mjs scripts/tests/review-data-manager-save.test.js scripts/tests/review-save-version-token-source.test.js scripts/tests/review-save-version-token-ipc.test.js scripts/tests/lazy-bframe-creation-source.test.js'
   );
   assert.equal(
     appPackage.scripts['diagnostics:fabric-drawing-pilot'],

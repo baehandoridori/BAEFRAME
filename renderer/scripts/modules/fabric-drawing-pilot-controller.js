@@ -107,6 +107,10 @@ export function createFabricDrawingPilotController(options = {}) {
   let persistenceEventEpoch = 0;
   let persistenceOwnerEpoch = 0;
   let persistencePullQueue = Promise.resolve(true);
+  let persistenceSourceRefreshQueue = Promise.resolve(true);
+  let persistenceSourceRefreshInProgress = false;
+  let persistenceQuitSuspension = null;
+  let persistenceQuitPreparationPromise = null;
   let persistenceResyncPromise = null;
   let persistenceResyncTrailing = false;
   let legacyBypass = false;
@@ -145,6 +149,8 @@ export function createFabricDrawingPilotController(options = {}) {
       legacyBypass,
       persistenceBlocked,
       persistenceFailureReason,
+      persistenceSourceRefreshInProgress,
+      persistenceQuitPrepared: persistenceQuitSuspension !== null,
       persistenceReady: persistenceStore === null ||
         (persistenceBridgeReady && persistenceSessionId !== null),
       bInput: {
@@ -185,6 +191,9 @@ export function createFabricDrawingPilotController(options = {}) {
     resumeRequested = false;
     currentSession = null;
     persistenceBoundSourceEpoch = null;
+    if (persistenceQuitSuspension) {
+      persistenceQuitSuspension.shouldResume = false;
+    }
     if (state !== 'disabled' && state !== 'passive') {
       setState('passive');
     } else if (changed) {
@@ -372,6 +381,7 @@ export function createFabricDrawingPilotController(options = {}) {
     persistenceSessionId = null;
     persistenceVideoContext = null;
     persistenceBoundSourceEpoch = null;
+    persistenceQuitSuspension = null;
     clearPersistenceBypass();
     setState(pilotEnabled ? 'passive' : 'disabled');
     return true;
@@ -405,6 +415,7 @@ export function createFabricDrawingPilotController(options = {}) {
     const sessionId = uuid();
     return {
       sessionId,
+      persistenceSessionId,
       stableVideoIdentity: String(context.stableVideoIdentity || ''),
       targetFrame: Math.max(0, Math.trunc(Number(context.targetFrame) || 0)),
       sourceWidth: Number(context.sourceWidth),
@@ -516,6 +527,22 @@ export function createFabricDrawingPilotController(options = {}) {
     } catch (_error) {
       return { accepted: false, reason: 'persistence-store-rebind-failed' };
     }
+  }
+
+  function allocatePersistenceSessionId() {
+    let nextPersistenceSessionId = null;
+    try {
+      nextPersistenceSessionId = persistenceSessionIdFactory();
+    } catch (_error) {
+      nextPersistenceSessionId = null;
+    }
+    persistenceSessionId =
+      typeof nextPersistenceSessionId === 'string' &&
+      nextPersistenceSessionId.length > 0 &&
+      nextPersistenceSessionId.length <= 32768
+        ? nextPersistenceSessionId
+        : null;
+    return persistenceSessionId !== null;
   }
 
   function getPersistenceSourceEpoch() {
@@ -807,6 +834,7 @@ export function createFabricDrawingPilotController(options = {}) {
   }
 
   async function preparePersistenceSnapshotForSave() {
+    await persistenceSourceRefreshQueue;
     if (!persistenceStore) return true;
     if (legacyBypass) return !persistenceBlocked;
     if (!persistenceSessionId) return true;
@@ -850,6 +878,8 @@ export function createFabricDrawingPilotController(options = {}) {
 
   function handlePersistenceEvent(message) {
     if (!persistenceStore ||
+        persistenceSourceRefreshInProgress ||
+        persistenceQuitSuspension !== null ||
         legacyBypass ||
         !videoReady ||
         !messageMatchesPersistenceOwner(message)) {
@@ -872,6 +902,223 @@ export function createFabricDrawingPilotController(options = {}) {
       runDetached(requestPersistenceResync());
     }
     return result?.applied === true || result?.needsResync === true;
+  }
+
+  function persistenceVideoMatches(owner) {
+    const context = normalizePersistenceContext(
+      persistenceVideoContext || contextSnapshot()
+    );
+    return Boolean(
+      owner &&
+      context &&
+      videoReady &&
+      owner.hostGeneration === hostGeneration &&
+      owner.videoGeneration === videoGeneration &&
+      owner.stableVideoIdentity === context.stableVideoIdentity
+    );
+  }
+
+  async function runPersistenceSourceRefresh(installSource) {
+    if (typeof installSource !== 'function') return false;
+    if (!persistenceStore ||
+        !pilotEnabled ||
+        !persistenceBridgeReady ||
+        !persistenceSessionId ||
+        !hostGeneration ||
+        !videoGeneration ||
+        !videoReady) {
+      await installSource();
+      return true;
+    }
+
+    const owner = capturePersistenceOwner();
+    if (!owner) {
+      await installSource();
+      return true;
+    }
+
+    const quitResumeIntent = persistenceQuitSuspension?.shouldResume === true;
+    const shouldResume = persistenceQuitSuspension === null && (
+      resumeRequested ||
+      state === 'active' ||
+      state === 'preparing'
+    );
+    persistenceSourceRefreshInProgress = true;
+    resumeRequested = shouldResume;
+    desiredInputEnabled = false;
+    currentSession = null;
+    setState('recovering');
+
+    let installError = null;
+    try {
+      const request = makeInputRequest(false);
+      const response = await invokeInput(request);
+      if (!isCurrentInputRequest(request) ||
+          !persistenceVideoMatches(owner)) {
+        return false;
+      }
+      if (!isAcceptedInputResponse(response, false)) {
+        await enterFailure(response?.error);
+        return false;
+      }
+
+      const pulled = await enqueuePersistencePull();
+      if (!persistenceVideoMatches(owner)) return false;
+      if (pulled?.ok !== true) {
+        await blockPersistenceAfterPullFailure(pulled);
+        return false;
+      }
+
+      try {
+        await installSource();
+      } catch (error) {
+        installError = error;
+      }
+      if (!persistenceVideoMatches(owner)) return false;
+
+      persistenceOwnerEpoch += 1;
+      persistenceBoundSourceEpoch = null;
+      persistenceResyncTrailing = false;
+      if (!allocatePersistenceSessionId()) {
+        setPersistenceBypass('invalid-persistence-context', {
+          blocked: true
+        });
+        await bestEffortDisable();
+        return false;
+      }
+
+      clearPersistenceBypass();
+      const refreshOwner = capturePersistenceOwner();
+      const hydrated = await hydratePersistenceForCurrentVideo(
+        persistenceVideoContext,
+        () => ownsPersistenceOwner(refreshOwner)
+      );
+      if (installError) throw installError;
+      if (!hydrated) {
+        setState('passive');
+        return true;
+      }
+      if (persistenceQuitSuspension) {
+        persistenceQuitSuspension = {
+          owner: refreshOwner,
+          shouldResume: quitResumeIntent,
+          context: { ...persistenceVideoContext }
+        };
+        resumeRequested = quitResumeIntent;
+        setState('recovering');
+        return true;
+      }
+      if (shouldResume) {
+        return startEnable(
+          persistenceVideoContext,
+          () => ownsPersistenceOwner(refreshOwner)
+        );
+      }
+      setState('passive');
+      return true;
+    } finally {
+      persistenceSourceRefreshInProgress = false;
+      notifyStateChange();
+    }
+  }
+
+  function refreshPersistenceSource(installSource) {
+    if (typeof installSource !== 'function') return Promise.resolve(false);
+    const operation = persistenceSourceRefreshQueue.then(
+      () => runPersistenceSourceRefresh(installSource),
+      () => runPersistenceSourceRefresh(installSource)
+    );
+    persistenceSourceRefreshQueue = operation.then(() => true, () => false);
+    return operation;
+  }
+
+  async function runPersistenceQuitPreparation() {
+    await persistenceSourceRefreshQueue;
+    if (!pilotEnabled ||
+        !persistenceStore ||
+        !persistenceBridgeReady ||
+        !persistenceSessionId ||
+        !hostGeneration ||
+        !videoGeneration ||
+        !videoReady) {
+      return true;
+    }
+    if (persistenceQuitSuspension) return true;
+
+    const owner = capturePersistenceOwner();
+    if (!owner) return true;
+    const shouldResume = resumeRequested ||
+      state === 'active' ||
+      state === 'preparing';
+    persistenceQuitSuspension = {
+      owner,
+      shouldResume,
+      context: { ...persistenceVideoContext }
+    };
+    resumeRequested = shouldResume;
+    desiredInputEnabled = false;
+    currentSession = null;
+    setState('recovering');
+
+    const request = makeInputRequest(false);
+    const response = await invokeInput(request);
+    if (!isCurrentInputRequest(request) ||
+        !ownsPersistenceOwner(owner)) {
+      persistenceQuitSuspension = null;
+      return false;
+    }
+    if (!isAcceptedInputResponse(response, false)) {
+      persistenceQuitSuspension = null;
+      return enterFailure(response?.error);
+    }
+
+    const pulled = await enqueuePersistencePull();
+    if (!ownsPersistenceOwner(owner)) {
+      persistenceQuitSuspension = null;
+      return false;
+    }
+    if (pulled?.ok !== true) {
+      persistenceQuitSuspension = null;
+      return blockPersistenceAfterPullFailure(pulled);
+    }
+    setState('recovering');
+    return true;
+  }
+
+  function preparePersistenceForQuit() {
+    if (persistenceQuitPreparationPromise) {
+      return persistenceQuitPreparationPromise;
+    }
+    const operation = runPersistenceQuitPreparation();
+    persistenceQuitPreparationPromise = operation.finally(() => {
+      if (persistenceQuitPreparationPromise) {
+        persistenceQuitPreparationPromise = null;
+      }
+    });
+    return persistenceQuitPreparationPromise;
+  }
+
+  async function resumeAfterQuitCancelled() {
+    if (persistenceQuitPreparationPromise) {
+      await persistenceQuitPreparationPromise;
+    }
+    const suspension = persistenceQuitSuspension;
+    persistenceQuitSuspension = null;
+    if (!suspension ||
+        legacyBypass ||
+        persistenceBlocked ||
+        !ownsPersistenceOwner(suspension.owner)) {
+      return false;
+    }
+    resumeRequested = false;
+    if (!suspension.shouldResume) {
+      setState('passive');
+      return true;
+    }
+    return startEnable(
+      suspension.context,
+      () => ownsPersistenceOwner(suspension.owner)
+    );
   }
 
   async function startEnable(contextOverrides = null, isStillCurrent = () => true) {
@@ -1014,6 +1261,7 @@ export function createFabricDrawingPilotController(options = {}) {
 
   async function beforeVideoChange(nextLoadToken = null) {
     if (!pilotEnabled) return false;
+    await persistenceSourceRefreshQueue;
     const shouldResume = resumeRequested || state === 'active' || state === 'preparing';
     resumeRequested = shouldResume;
     videoReady = false;
@@ -1106,18 +1354,7 @@ export function createFabricDrawingPilotController(options = {}) {
       persistenceVideoContext = normalizePersistenceContext(context);
       persistenceBoundSourceEpoch = null;
       if (persistenceStore) {
-        let nextPersistenceSessionId = null;
-        try {
-          nextPersistenceSessionId = persistenceSessionIdFactory();
-        } catch (_error) {
-          nextPersistenceSessionId = null;
-        }
-        persistenceSessionId =
-          typeof nextPersistenceSessionId === 'string' &&
-          nextPersistenceSessionId.length > 0 &&
-          nextPersistenceSessionId.length <= 32768
-            ? nextPersistenceSessionId
-            : null;
+        allocatePersistenceSessionId();
         clearPersistenceBypass();
         if (!persistenceSessionId || !persistenceVideoContext) {
           setPersistenceBypass('invalid-persistence-context');
@@ -1162,6 +1399,7 @@ export function createFabricDrawingPilotController(options = {}) {
   }
 
   function disable() {
+    persistenceQuitSuspension = null;
     resumeRequested = false;
     desiredInputEnabled = false;
     currentSession = null;
@@ -1180,6 +1418,10 @@ export function createFabricDrawingPilotController(options = {}) {
 
   function toggle() {
     if (!shouldOwnDrawingShortcut()) return Promise.resolve(false);
+    if (persistenceSourceRefreshInProgress ||
+        persistenceQuitSuspension !== null) {
+      return Promise.resolve(false);
+    }
     const context = contextSnapshot();
     if (!validPilotContext(context)) return Promise.resolve(false);
     if (state === 'active' || state === 'preparing' ||
@@ -1314,6 +1556,9 @@ export function createFabricDrawingPilotController(options = {}) {
     disable,
     preparePersistenceSnapshotForSave,
     flushPersistenceBeforeLeave,
+    refreshPersistenceSource,
+    preparePersistenceForQuit,
+    resumeAfterQuitCancelled,
     shouldOwnDrawingShortcut,
     isEnabled,
     isActiveOrPreparing,

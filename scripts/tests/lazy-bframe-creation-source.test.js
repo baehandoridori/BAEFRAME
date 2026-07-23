@@ -97,7 +97,7 @@ test('metadata-only dirty state does not create a bframe file', () => {
   );
 });
 
-test('playlist aggregate direct save adds a stable review identity without touching future majors', () => {
+test('playlist aggregate direct save protects identity and uses a version token without touching future majors', () => {
   assert.match(
     appSource,
     /import \{ BFRAME_VERSION, getDataVersion, hasExplicitBframeVersion \} from '\.\.\/\.\.\/shared\/schema\.js';/
@@ -129,9 +129,21 @@ test('playlist aggregate direct save adds a stable review identity without touch
     directSaveSource,
     /ensureReviewDocumentId\(bframeData\);[\s\S]*if \(!isValidReviewDocumentId\(bframeData\.reviewDocumentId\)\) \{[\s\S]*throw new Error/
   );
+  assert.match(
+    directSaveSource,
+    /window\.electronAPI\.loadReviewSnapshot\(bframePath\)/
+  );
+  assert.match(
+    directSaveSource,
+    /window\.electronAPI\.saveReview\([\s\S]*?bframePath,[\s\S]*?bframeData,[\s\S]*?\{[\s\S]*?expectedVersionToken(?:\s*:|\s*\})/
+  );
+  assert.match(
+    directSaveSource,
+    /if \(saved\?\.success !== true\) \{[\s\S]*?restoreMarkerResolution\(marker, previous\);[\s\S]*?saved\?\.conflict[\s\S]*?throw new Error/
+  );
   assert.ok(
     directSaveSource.indexOf('ensureReviewDocumentId(bframeData);') <
-      directSaveSource.indexOf('window.electronAPI.saveReview(bframePath, bframeData)'),
+      directSaveSource.indexOf('window.electronAPI.saveReview('),
     'review identity must be prepared before direct save'
   );
 });

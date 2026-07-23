@@ -10414,6 +10414,7 @@ void main() {
       var MAX_BRUSH_SIZE = 50;
       var MIN_BRUSH_OPACITY_PERCENT = 10;
       var MAX_BRUSH_OPACITY_PERCENT = 100;
+      var FABRIC_PERSISTENCE_BADGE_PREFIX = "\uC0C8 \uB4DC\uB85C\uC789 \uC2DC\uD5D8\uD310 \xB7 \uB9AC\uBDF0 \uC800\uC7A5 \uC5F0\uACB0\uB428";
       var SELECTION_HIT_MARGIN_CSS_PX = 6;
       var MIN_SELECTION_HIT_TOLERANCE = 2;
       var MAX_SELECTION_HIT_TOLERANCE = 96;
@@ -10490,6 +10491,10 @@ void main() {
       var PERSISTENCE_POINTER_TYPES = /* @__PURE__ */ new Set(["mouse", "pen", "touch"]);
       var PERSISTENCE_HEX_COLOR = /^#[0-9a-f]{6}$/i;
       var persistenceUtf8Encoder = new TextEncoder();
+      function formatFabricPersistenceBadge(targetFrame = null) {
+        const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0 ? targetFrame : "-";
+        return `${FABRIC_PERSISTENCE_BADGE_PREFIX} \xB7 \uC2DC\uD5D8 \uD504\uB808\uC784 ${frameLabel}`;
+      }
       function clonePlain(value) {
         if (value === void 0) return void 0;
         return JSON.parse(JSON.stringify(value));
@@ -13617,7 +13622,7 @@ void main() {
           inputEnabled = false;
           currentSession = null;
           sceneStore.deactivateSession();
-          if (badge) badge.textContent = "\uC0C8 \uB4DC\uB85C\uC789 \uC2DC\uD5D8\uD310 \xB7 \uC800\uC7A5 \uC548 \uB428 \xB7 \uC2DC\uD5D8 \uD504\uB808\uC784 -";
+          if (badge) badge.textContent = formatFabricPersistenceBadge();
         }
         function releaseSurfaceResources() {
           cancelSelectInteraction();
@@ -13715,7 +13720,7 @@ void main() {
             selectionControls = createSelectionModeControls();
             badge = documentRef.createElement("span");
             badge.className = "mpv-fabric-pilot-badge";
-            badge.textContent = "\uC0C8 \uB4DC\uB85C\uC789 \uC2DC\uD5D8\uD310 \xB7 \uC800\uC7A5 \uC548 \uB428 \xB7 \uC2DC\uD5D8 \uD504\uB808\uC784 -";
+            badge.textContent = formatFabricPersistenceBadge();
             toolbar.appendChild(brushButton);
             toolbar.appendChild(selectButton);
             toolbar.appendChild(selectionControls.group);
@@ -13825,7 +13830,7 @@ void main() {
           setToolMode(session.tool);
           inputEnabled = true;
           setSurfaceInput(true);
-          badge.textContent = `\uC0C8 \uB4DC\uB85C\uC789 \uC2DC\uD5D8\uD310 \xB7 \uC800\uC7A5 \uC548 \uB428 \xB7 \uC2DC\uD5D8 \uD504\uB808\uC784 ${session.targetFrame}`;
+          badge.textContent = formatFabricPersistenceBadge(session.targetFrame);
           metrics.recordToggleLatency(now() - startedAt);
           return { accepted: true, enabled: true, restored: activation.restored };
         }

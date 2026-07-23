@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileInfo: (filePath) => ipcRenderer.invoke('file:get-info', filePath),
   saveReview: (filePath, data, options = {}) => ipcRenderer.invoke('file:save-review', filePath, data, options),
   loadReview: (filePath) => ipcRenderer.invoke('file:load-review', filePath),
+  loadReviewSnapshot: (filePath) => ipcRenderer.invoke('file:load-review-snapshot', filePath),
   fileExists: (filePath) => ipcRenderer.invoke('file:exists', filePath),
   scanVersions: (filePath) => ipcRenderer.invoke('file:scan-versions', filePath),
 

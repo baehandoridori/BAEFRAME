@@ -354,10 +354,15 @@ export class ReviewDataManager extends EventTarget {
 
     // 저장 동시성 제어
     this._savePromise = null;  // 저장 중인 Promise (락)
+    this._videoFileRequestEpoch = 0;
+    this._reviewContextEpoch = 0;
+    this._reviewFileObservationEpoch = 0;
+    this._reviewFileVersionToken = null;
     this._changeRevision = 0;
     this._hasPersistedFile = false;
     this._beforeSaveHandler = null;
     this._finalFabricSnapshotHandler = null;
+    this._fabricDrawingSourceRefreshHandler = null;
     this._initialSaveConflictHandler = null;
     this._opaqueRootFields = {};
     this._fabricDrawingPersistenceContext = {};
@@ -412,6 +417,15 @@ export class ReviewDataManager extends EventTarget {
    */
   setFinalFabricSnapshotHandler(handler) {
     this._finalFabricSnapshotHandler =
+      typeof handler === 'function' ? handler : null;
+  }
+
+  /**
+   * 외부 drawingsV3 교체를 활성 Fabric 입력 수명주기와 원자적으로 연결
+   * @param {Function|null} handler
+   */
+  setFabricDrawingSourceRefreshHandler(handler) {
+    this._fabricDrawingSourceRefreshHandler =
       typeof handler === 'function' ? handler : null;
   }
 
@@ -582,15 +596,29 @@ export class ReviewDataManager extends EventTarget {
    * @param {boolean} options.skipSave - true면 이전 파일 저장 건너뛰기 (외부에서 이미 저장한 경우)
    */
   async setVideoFile(videoPath, options = {}) {
+    const requestEpoch = ++this._videoFileRequestEpoch;
+
     // 자동 저장 일시 중지 및 대기 중인 저장 취소
     this._cancelAutoSave();
-    this.isLoading = true;
+    if (this._savePromise) {
+      await this._savePromise;
+    }
+    if (requestEpoch !== this._videoFileRequestEpoch) {
+      return false;
+    }
 
     // 이전 파일의 변경사항 저장 (skipSave가 true면 건너뛰기)
     if (!options.skipSave && this.hasUnsavedChanges() && this.currentBframePath) {
       await this.save();
     }
+    if (requestEpoch !== this._videoFileRequestEpoch) {
+      return false;
+    }
 
+    this.isLoading = true;
+    this._reviewContextEpoch += 1;
+    this._reviewFileObservationEpoch += 1;
+    this._reviewFileVersionToken = null;
     this._invalidateFabricDrawingPersistenceProvider('video-load-started');
     this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
     this._hasCompletedReviewLoad = false;
@@ -619,14 +647,18 @@ export class ReviewDataManager extends EventTarget {
     });
 
     // 기존 .bframe 파일이 있으면 로드
-    const loaded = await this.load();
+    const loadOwner = this._captureReviewContextOwner(requestEpoch);
+    const loaded = await this.load(loadOwner);
+    if (!this._ownsReviewContext(loadOwner)) {
+      return false;
+    }
 
     // 로딩 완료 후 isLoading 해제 (load() 내부에서도 설정하지만 여기서 확실히 해제)
     this.isLoading = false;
 
     this._emit('videoFileSet', {
-      videoPath: this.currentVideoPath,
-      bframePath: this.currentBframePath,
+      videoPath: loadOwner.videoPath,
+      bframePath: loadOwner.bframePath,
       hasExistingData: loaded
     });
 
@@ -662,7 +694,10 @@ export class ReviewDataManager extends EventTarget {
     this._cancelAutoSave();
 
     // 저장 Promise 생성 (락)
-    this._savePromise = Promise.resolve().then(() => this._doSave(options));
+    const saveOwner = this._captureSaveOwner();
+    this._savePromise = Promise.resolve().then(
+      () => this._doSave(options, saveOwner)
+    );
 
     try {
       return await this._savePromise;
@@ -671,11 +706,59 @@ export class ReviewDataManager extends EventTarget {
     }
   }
 
+  async waitForPendingSave() {
+    if (!this._savePromise) return true;
+    return this._savePromise;
+  }
+
+  _captureSaveOwner() {
+    return Object.freeze({
+      contextEpoch: this._reviewContextEpoch,
+      videoPath: this.currentVideoPath,
+      bframePath: this.currentBframePath
+    });
+  }
+
+  _captureReviewContextOwner(requestEpoch = this._videoFileRequestEpoch) {
+    return Object.freeze({
+      requestEpoch,
+      contextEpoch: this._reviewContextEpoch,
+      videoPath: this.currentVideoPath,
+      bframePath: this.currentBframePath
+    });
+  }
+
+  _ownsReviewContext(owner) {
+    return Boolean(
+      owner &&
+      owner.requestEpoch === this._videoFileRequestEpoch &&
+      owner.contextEpoch === this._reviewContextEpoch &&
+      owner.videoPath === this.currentVideoPath &&
+      owner.bframePath === this.currentBframePath
+    );
+  }
+
+  _ownsSave(owner) {
+    return Boolean(
+      owner &&
+      owner.contextEpoch === this._reviewContextEpoch &&
+      owner.videoPath === this.currentVideoPath &&
+      owner.bframePath === this.currentBframePath
+    );
+  }
+
+  _assertSaveOwner(owner) {
+    if (!this._ownsSave(owner)) {
+      throw new Error('저장 중 영상이 바뀌어 이전 영상의 저장 결과를 적용하지 않았습니다.');
+    }
+  }
+
   /**
    * 실제 저장 수행 (내부용)
    */
-  async _doSave(_options = {}) {
+  async _doSave(_options = {}, saveOwner = this._captureSaveOwner()) {
     try {
+      this._assertSaveOwner(saveOwner);
       let savedData = null;
       let savedChangeRevision = null;
       let savedFabricDrawingRevision = null;
@@ -687,27 +770,31 @@ export class ReviewDataManager extends EventTarget {
 
         if (this._beforeSaveHandler) {
           await this._beforeSaveHandler({
-            path: this.currentBframePath,
-            videoPath: this.currentVideoPath,
+            path: saveOwner.bframePath,
+            videoPath: saveOwner.videoPath,
             hasPersistedFile: this._hasPersistedFile,
             options: _options
           });
         }
 
-        await this._refreshRootEnvelopeBeforeSave();
+        this._assertSaveOwner(saveOwner);
+        await this._refreshRootEnvelopeBeforeSave(saveOwner);
+        this._assertSaveOwner(saveOwner);
         this._assertRootEnvelopeWritable();
         this._ensureReviewDocumentId();
         if (this._finalFabricSnapshotHandler) {
           await this._finalFabricSnapshotHandler({
-            path: this.currentBframePath,
-            videoPath: this.currentVideoPath,
+            path: saveOwner.bframePath,
+            videoPath: saveOwner.videoPath,
             hasPersistedFile: this._hasPersistedFile,
             options: _options
           });
         }
+        this._assertSaveOwner(saveOwner);
         const data = this._collectData();
         const attemptChangeRevision = this._changeRevision;
         const attemptFabricDrawingRevision = this._fabricDrawingCollectedRevision;
+        const attemptObservationEpoch = this._reviewFileObservationEpoch;
 
         // Liveblocks 연결 시 CRDT가 머지를 처리하므로 _mergeBeforeSave 불필요
         // 로컬 .bframe 스냅샷만 저장 (오프라인 백업 역할)
@@ -716,18 +803,43 @@ export class ReviewDataManager extends EventTarget {
           data.liveblocksRoomId = this._liveblocksManager.roomId || null;
         }
 
-        const saveResult = await window.electronAPI.saveReview(this.currentBframePath, data, {
+        const saveOptions = {
           failIfExists: wasInitialPersist
-        });
+        };
+        if (!wasInitialPersist && this._reviewFileVersionToken) {
+          saveOptions.expectedVersionToken = this._reviewFileVersionToken;
+        }
+        const saveResult = await window.electronAPI.saveReview(
+          saveOwner.bframePath,
+          data,
+          saveOptions
+        );
+        this._assertSaveOwner(saveOwner);
+
+        if (saveResult?.conflict === true) {
+          this._writeBlockedReason = 'review-file-version-conflict';
+          throw new Error('저장 직전 .bframe이 다시 변경되어 덮어쓰기를 중단했습니다.');
+        }
+        const observationChanged = attemptObservationEpoch !==
+          this._reviewFileObservationEpoch;
+        const observationMatchesCompletedWrite =
+          saveResult?.success === true &&
+          typeof saveResult.versionToken === 'string' &&
+          saveResult.versionToken === this._reviewFileVersionToken;
+        if (observationChanged && !observationMatchesCompletedWrite) {
+          this._writeBlockedReason = 'review-file-version-conflict';
+          throw new Error('저장 중 .bframe 상태가 바뀌어 저장 완료 처리를 중단했습니다.');
+        }
 
         if (saveResult?.exists === true && wasInitialPersist) {
           log.info('첫 .bframe 저장 충돌 감지, 기존 파일과 병합 시도', {
-            path: this.currentBframePath
+            path: saveOwner.bframePath
           });
           lastConflictResult = await this._initialSaveConflictHandler?.({
-            path: this.currentBframePath,
-            videoPath: this.currentVideoPath
+            path: saveOwner.bframePath,
+            videoPath: saveOwner.videoPath
           });
+          this._assertSaveOwner(saveOwner);
 
           if (lastConflictResult?.success === true) {
             this._hasPersistedFile = true;
@@ -745,6 +857,10 @@ export class ReviewDataManager extends EventTarget {
           throw new Error(saveResult?.error || '.bframe 저장 실패');
         }
 
+        if (typeof saveResult.versionToken === 'string' &&
+            saveResult.versionToken.length > 0) {
+          this._reviewFileVersionToken = saveResult.versionToken;
+        }
         this._hasPersistedFile = true;
         this._reviewDocumentIdPersisted = true;
         savedData = data;
@@ -759,17 +875,18 @@ export class ReviewDataManager extends EventTarget {
 
       const hasConcurrentChanges = this._changeRevision !== savedChangeRevision;
       this.isDirty = hasConcurrentChanges;
+      this._assertSaveOwner(saveOwner);
       this._recordDrawingsV3DiskState(savedData);
       this._acknowledgeFabricDrawingSave(savedFabricDrawingRevision);
 
       log.info('.bframe 파일 저장됨', {
-        path: this.currentBframePath,
+        path: saveOwner.bframePath,
         commentLayers: savedData?.comments?.layers?.length || 0,
         drawingLayers: savedData?.drawings?.layers?.length || 0,
         liveblocksConnected: !!this._liveblocksManager?.isConnected
       });
 
-      this._emit('saved', { path: this.currentBframePath });
+      this._emit('saved', { path: saveOwner.bframePath });
 
       if (hasConcurrentChanges && this.autoSaveEnabled) {
         this._scheduleAutoSave();
@@ -790,7 +907,10 @@ export class ReviewDataManager extends EventTarget {
    */
   async _mergeBeforeSave(localData) {
     try {
-      const remoteData = await window.electronAPI.loadReview(this.currentBframePath);
+      const remoteSnapshot = await this._readReviewSnapshot(this.currentBframePath);
+      const remoteData = remoteSnapshot.data;
+      this._reviewFileObservationEpoch += 1;
+      this._reviewFileVersionToken = remoteSnapshot.versionToken;
 
       if (!remoteData) {
         // 원격 파일 없음 → 로컬 데이터 그대로 저장
@@ -860,19 +980,23 @@ export class ReviewDataManager extends EventTarget {
   /**
    * .bframe 파일에서 데이터 로드 (마이그레이션 포함)
    */
-  async load() {
-    if (!this.currentBframePath) {
+  async load(loadOwner = this._captureReviewContextOwner()) {
+    if (!loadOwner?.bframePath || !this._ownsReviewContext(loadOwner)) {
       log.warn('로드할 파일 경로가 없음');
       return false;
     }
 
     try {
       this.isLoading = true;
+      let shouldSaveAfterMigration = false;
 
-      const data = await window.electronAPI.loadReview(this.currentBframePath);
+      const data = await window.electronAPI.loadReview(loadOwner.bframePath);
+      if (!this._ownsReviewContext(loadOwner)) {
+        return false;
+      }
 
       if (!data) {
-        log.info('.bframe 파일 없음 (새 리뷰)', { path: this.currentBframePath });
+        log.info('.bframe 파일 없음 (새 리뷰)', { path: loadOwner.bframePath });
         this.compositionLayerManager?.fromJSON?.([]);
         this._hasPersistedFile = false;
         this._resetRootEnvelopeState();
@@ -902,7 +1026,10 @@ export class ReviewDataManager extends EventTarget {
         log.info('마이그레이션 필요', { from: dataVersion, to: BFRAME_VERSION });
 
         // 마이그레이션 전 백업 생성
-        const backupCreated = await this._createBackup();
+        const backupCreated = await this._createBackup(loadOwner.bframePath);
+        if (!this._ownsReviewContext(loadOwner)) {
+          return false;
+        }
         if (!backupCreated) {
           log.warn('백업 생성 실패, 마이그레이션 계속 진행');
         }
@@ -912,13 +1039,16 @@ export class ReviewDataManager extends EventTarget {
           log.info('마이그레이션 성공', { version: migratedData.bframeVersion });
 
           // 마이그레이션 후 자동 저장 (새 스키마로 업데이트)
-          this._shouldSaveAfterMigration = true;
+          shouldSaveAfterMigration = true;
         } catch (migrationError) {
           log.error('마이그레이션 실패', migrationError);
 
           // 백업에서 복구 시도
           if (backupCreated) {
-            const restored = await this._restoreFromBackup();
+            const restored = await this._restoreFromBackup(loadOwner.bframePath);
+            if (!this._ownsReviewContext(loadOwner)) {
+              return false;
+            }
             if (restored) {
               log.info('백업에서 복구됨');
               migratedData = restored;
@@ -930,29 +1060,38 @@ export class ReviewDataManager extends EventTarget {
       }
 
       // 데이터 적용
+      if (!this._ownsReviewContext(loadOwner)) {
+        return false;
+      }
       this._applyData(migratedData);
 
       this.isDirty = false;
       this.isLoading = false;
 
       log.info('.bframe 파일 로드됨', {
-        path: this.currentBframePath,
+        path: loadOwner.bframePath,
         version: migratedData.bframeVersion || migratedData.version,
         commentLayers: migratedData.comments?.layers?.length || 0,
         drawingLayers: migratedData.drawings?.layers?.length || 0
       });
 
-      this._emit('loaded', { path: this.currentBframePath, data: migratedData });
+      this._emit('loaded', { path: loadOwner.bframePath, data: migratedData });
 
       // 마이그레이션 후 자동 저장
-      if (this._shouldSaveAfterMigration) {
-        this._shouldSaveAfterMigration = false;
+      if (shouldSaveAfterMigration) {
         // 약간의 딜레이 후 저장 (데이터 적용 완료 보장)
-        setTimeout(() => this.save(), 100);
+        setTimeout(() => {
+          if (this._ownsReviewContext(loadOwner)) {
+            this.save();
+          }
+        }, 100);
       }
 
       return true;
     } catch (error) {
+      if (!this._ownsReviewContext(loadOwner)) {
+        return false;
+      }
       log.error('.bframe 로드 실패', error);
       this._hasCompletedReviewLoad = false;
       this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
@@ -978,12 +1117,15 @@ export class ReviewDataManager extends EventTarget {
       return { success: false, added: 0, updated: 0 };
     }
 
+    const reloadOwner = this._captureReviewContextOwner();
+    const reloadOptions = { ...options };
+
     // 미저장 작업 보호: isDirty이고 force가 아니면 머지만 하고 덮어쓰기 방지
-    if (this.isDirty && !options.force) {
+    if (this.isDirty && !reloadOptions.force) {
       log.info('reloadAndMerge: 미저장 작업 있음 - 안전 머지 모드');
       // 강제 머지 모드로 전환 (로컬 데이터 유지하면서 원격 추가분만 반영)
-      options.merge = true;
-      options.preserveLocal = true;
+      reloadOptions.merge = true;
+      reloadOptions.preserveLocal = true;
     }
 
     // 자동저장 일시 중지
@@ -993,7 +1135,13 @@ export class ReviewDataManager extends EventTarget {
 
     try {
       // 원격 데이터 로드
-      const remoteData = await window.electronAPI.loadReview(this.currentBframePath);
+      const remoteSnapshot = await this._readReviewSnapshot(reloadOwner.bframePath);
+      if (!this._ownsReviewContext(reloadOwner)) {
+        return { success: false, added: 0, updated: 0, skipped: true };
+      }
+      const remoteData = remoteSnapshot.data;
+      this._reviewFileObservationEpoch += 1;
+      this._reviewFileVersionToken = remoteSnapshot.versionToken;
 
       if (!remoteData) {
         log.info('reloadAndMerge: 원격 파일 없음');
@@ -1002,13 +1150,23 @@ export class ReviewDataManager extends EventTarget {
       }
 
       const retainIdentityWhenMissing = !this._reviewDocumentIdPersisted;
-      const allowIdentityReplacement = options.merge === false;
+      const allowIdentityReplacement = reloadOptions.merge === false;
       const rootCaptured = this._captureRootEnvelope(remoteData, {
         retainIdentityWhenMissing,
         allowIdentityReplacement
       });
-      if (rootCaptured && !allowIdentityReplacement) {
-        this._reconcileDrawingsV3DiskState(remoteData);
+      if (rootCaptured) {
+        const reconciled = await this._reconcileDrawingsV3DiskState(
+          remoteData,
+          reloadOwner
+        );
+        if (!this._ownsReviewContext(reloadOwner)) {
+          return { success: false, added: 0, updated: 0, skipped: true };
+        }
+        if (!reconciled) {
+          this._assertRootEnvelopeWritable();
+          throw new Error('외부 Fabric 드로잉 교체를 안전하게 완료하지 못했습니다.');
+        }
       }
       if (!allowIdentityReplacement) {
         this._assertRootEnvelopeWritable();
@@ -1017,7 +1175,7 @@ export class ReviewDataManager extends EventTarget {
 
       const result = { added: 0, updated: 0 };
 
-      if (options.merge && this.commentManager) {
+      if (reloadOptions.merge && this.commentManager) {
         // 로컬 댓글 데이터 수집
         const localComments = this.commentManager.toJSON();
 
@@ -1044,7 +1202,7 @@ export class ReviewDataManager extends EventTarget {
         }
 
         // 드로잉 데이터 머지
-        if (options.preserveLocal && remoteData.drawings && this.drawingManager) {
+        if (reloadOptions.preserveLocal && remoteData.drawings && this.drawingManager) {
           const mergedDrawings = mergeDrawingData(this.drawingManager.exportData(), remoteData.drawings);
           this.drawingManager.importData(mergedDrawings);
           log.info('reloadAndMerge: 드로잉 데이터 보존 병합 완료', {
@@ -1061,7 +1219,7 @@ export class ReviewDataManager extends EventTarget {
         }
 
         // 하이라이트 데이터
-        if (options.preserveLocal && remoteData.highlights && this.highlightManager) {
+        if (reloadOptions.preserveLocal && remoteData.highlights && this.highlightManager) {
           const mergedHighlights = mergeHighlightData(this.highlightManager.toJSON(), remoteData.highlights);
           this.highlightManager.fromJSON(mergedHighlights);
           log.info('reloadAndMerge: 하이라이트 데이터 보존 병합 완료', {
@@ -1106,13 +1264,16 @@ export class ReviewDataManager extends EventTarget {
 
       } else {
         // 덮어쓰기 모드: 원격 데이터로 전체 교체
-        this._applyData(remoteData, { allowIdentityReplacement: true });
+        this._applyData(remoteData, {
+          allowIdentityReplacement: true,
+          skipFabricDrawingImport: true
+        });
         log.info('reloadAndMerge: 데이터 덮어쓰기 완료');
       }
 
       this.isLoading = wasLoading;
       this._emit('reloaded', {
-        merged: options.merge,
+        merged: reloadOptions.merge,
         added: result.added,
         updated: result.updated
       });
@@ -1120,6 +1281,9 @@ export class ReviewDataManager extends EventTarget {
       return { success: true, ...result };
 
     } catch (error) {
+      if (!this._ownsReviewContext(reloadOwner)) {
+        return { success: false, added: 0, updated: 0, skipped: true };
+      }
       log.error('reloadAndMerge 실패', error);
       this.isLoading = wasLoading;
       this._emit('reloadError', { error });
@@ -1131,19 +1295,19 @@ export class ReviewDataManager extends EventTarget {
    * .bframe 파일 백업 생성
    * @returns {Promise<boolean>} 백업 성공 여부
    */
-  async _createBackup() {
-    if (!this.currentBframePath) return false;
+  async _createBackup(reviewPath = this.currentBframePath) {
+    if (!reviewPath) return false;
 
-    const backupPath = this.currentBframePath + '.bak';
+    const backupPath = reviewPath + '.bak';
 
     try {
-      await window.electronAPI.copyFile(this.currentBframePath, backupPath);
+      await window.electronAPI.copyFile(reviewPath, backupPath);
       log.info('백업 생성됨', { path: backupPath });
       return true;
     } catch (error) {
       // copyFile API가 없으면 읽고 쓰기로 대체
       try {
-        const data = await window.electronAPI.loadReview(this.currentBframePath);
+        const data = await window.electronAPI.loadReview(reviewPath);
         if (data) {
           await window.electronAPI.saveReview(backupPath, data);
           log.info('백업 생성됨 (대체 방식)', { path: backupPath });
@@ -1160,10 +1324,10 @@ export class ReviewDataManager extends EventTarget {
    * 백업에서 데이터 복구
    * @returns {Promise<Object|null>} 복구된 데이터 또는 null
    */
-  async _restoreFromBackup() {
-    if (!this.currentBframePath) return null;
+  async _restoreFromBackup(reviewPath = this.currentBframePath) {
+    if (!reviewPath) return null;
 
-    const backupPath = this.currentBframePath + '.bak';
+    const backupPath = reviewPath + '.bak';
 
     try {
       const data = await window.electronAPI.loadReview(backupPath);
@@ -1182,10 +1346,10 @@ export class ReviewDataManager extends EventTarget {
    * 백업 파일 삭제
    * @returns {Promise<boolean>}
    */
-  async _deleteBackup() {
-    if (!this.currentBframePath) return false;
+  async _deleteBackup(reviewPath = this.currentBframePath) {
+    if (!reviewPath) return false;
 
-    const backupPath = this.currentBframePath + '.bak';
+    const backupPath = reviewPath + '.bak';
 
     try {
       await window.electronAPI.deleteFile(backupPath);
@@ -1311,31 +1475,107 @@ export class ReviewDataManager extends EventTarget {
     this._hasCompletedReviewLoad = true;
   }
 
-  _reconcileDrawingsV3DiskState(data) {
+  async _readReviewSnapshot(filePath) {
+    if (typeof window.electronAPI.loadReviewSnapshot === 'function') {
+      const snapshot = await window.electronAPI.loadReviewSnapshot(filePath);
+      if (!snapshot ||
+          typeof snapshot !== 'object' ||
+          Array.isArray(snapshot) ||
+          !Object.hasOwn(snapshot, 'data')) {
+        throw new Error('버전이 포함된 .bframe snapshot을 읽지 못했습니다.');
+      }
+      const versionToken =
+        typeof snapshot.versionToken === 'string' &&
+        snapshot.versionToken.length > 0 &&
+        snapshot.versionToken.length <= 512
+          ? snapshot.versionToken
+          : null;
+      return {
+        data: snapshot.data,
+        versionToken
+      };
+    }
+    return {
+      data: await window.electronAPI.loadReview(filePath),
+      versionToken: null
+    };
+  }
+
+  async _runFabricDrawingSourceRefresh(
+    installSource,
+    details = {},
+    isOwnerCurrent = () => true
+  ) {
+    let installInvoked = false;
+    let installResult = false;
+    const guardedInstallSource = async () => {
+      if (installInvoked) return installResult;
+      installInvoked = true;
+      installResult = await installSource();
+      return installResult;
+    };
+
+    if (!this._fabricDrawingSourceRefreshHandler) {
+      return guardedInstallSource();
+    }
+
+    await this._fabricDrawingSourceRefreshHandler({
+      installSource: guardedInstallSource,
+      path: this.currentBframePath,
+      videoPath: this.currentVideoPath,
+      ...details
+    });
+    if (!installInvoked) {
+      if (isOwnerCurrent()) {
+        this._writeBlockedReason = 'fabric-drawing-source-refresh-failed';
+      }
+      return false;
+    }
+    return installResult;
+  }
+
+  async _reconcileDrawingsV3DiskState(
+    data,
+    owner = this._captureReviewContextOwner(),
+    ownsOwner = candidate => this._ownsReviewContext(candidate)
+  ) {
     const latestState = captureDrawingsV3DiskState(data);
-    if (!this._drawingsV3DiskState.known) {
-      this._recordDrawingsV3DiskState(data);
-      this._installRecordedDiskStateInProvider({
+    if (this._drawingsV3DiskState.known &&
+        latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
+      return true;
+    }
+
+    return this._runFabricDrawingSourceRefresh(async () => {
+      if (!ownsOwner(owner)) {
+        return false;
+      }
+      if (this._drawingsV3DiskState.known &&
+          latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
+        return true;
+      }
+      if (this._fabricDrawingHasLocalChanges) {
+        this._writeBlockedReason = 'fabric-drawing-conflict';
+        return false;
+      }
+
+      this._drawingsV3DiskState = latestState;
+      this._hasCompletedReviewLoad = true;
+      const installed = this._installRecordedDiskStateInProvider({
         clearLocalChanges: true,
         failureReason: 'disk-reconcile-failed'
       });
+      const accepted = !this.fabricDrawingPersistenceProvider ||
+        installed?.accepted === true ||
+        installed?.preserved === true;
+      if (!accepted) {
+        this._writeBlockedReason = 'fabric-drawing-source-refresh-failed';
+        return false;
+      }
       return true;
-    }
-    if (latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
-      return true;
-    }
-    if (this._fabricDrawingHasLocalChanges) {
-      this._writeBlockedReason = 'fabric-drawing-conflict';
-      return false;
-    }
-
-    this._drawingsV3DiskState = latestState;
-    this._hasCompletedReviewLoad = true;
-    this._installRecordedDiskStateInProvider({
-      clearLocalChanges: true,
-      failureReason: 'disk-reconcile-failed'
-    });
-    return true;
+    }, {
+      reason: 'external-drawings-v3-changed',
+      fingerprint: latestState.fingerprint
+    }, () => ownsOwner(owner));
   }
 
   _captureRootEnvelope(data, options = {}) {
@@ -1390,19 +1630,28 @@ export class ReviewDataManager extends EventTarget {
     return true;
   }
 
-  async _refreshRootEnvelopeBeforeSave() {
+  async _refreshRootEnvelopeBeforeSave(saveOwner = null) {
     if (!this._hasPersistedFile) return;
 
-    const latestRoot = await window.electronAPI.loadReview(this.currentBframePath);
+    const reviewPath = saveOwner?.bframePath || this.currentBframePath;
+    const snapshot = await this._readReviewSnapshot(reviewPath);
+    if (saveOwner) this._assertSaveOwner(saveOwner);
+    const latestRoot = snapshot.data;
     if (!latestRoot || typeof latestRoot !== 'object' || Array.isArray(latestRoot)) {
       throw new Error('최신 .bframe root를 다시 읽지 못해 저장을 중단했습니다.');
     }
+    this._reviewFileObservationEpoch += 1;
+    this._reviewFileVersionToken = snapshot.versionToken;
 
     const rootCaptured = this._captureRootEnvelope(latestRoot, {
       retainIdentityWhenMissing: !this._reviewDocumentIdPersisted
     });
     if (rootCaptured) {
-      this._reconcileDrawingsV3DiskState(latestRoot);
+      await this._reconcileDrawingsV3DiskState(
+        latestRoot,
+        saveOwner || this._captureSaveOwner(),
+        owner => this._ownsSave(owner)
+      );
     }
   }
 
@@ -1427,6 +1676,14 @@ export class ReviewDataManager extends EventTarget {
 
     if (this._writeBlockedReason === 'fabric-drawing-conflict') {
       throw new Error('다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.');
+    }
+
+    if (this._writeBlockedReason === 'fabric-drawing-source-refresh-stale') {
+      throw new Error('영상이 바뀌어 외부 Fabric 드로잉 갱신을 안전하게 중단했습니다.');
+    }
+
+    if (this._writeBlockedReason === 'fabric-drawing-source-refresh-failed') {
+      throw new Error('외부 Fabric 드로잉 갱신을 안전하게 완료하지 못해 저장을 중단했습니다.');
     }
   }
 
@@ -1521,7 +1778,9 @@ export class ReviewDataManager extends EventTarget {
    */
   _applyData(data, options = {}) {
     this._captureRootEnvelope(data, options);
-    this._importFabricDrawingPersistenceRoot(data);
+    if (!options.skipFabricDrawingImport) {
+      this._importFabricDrawingPersistenceRoot(data);
+    }
 
     // 메타데이터
     this._createdAt = data.createdAt;

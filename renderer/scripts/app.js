@@ -7134,6 +7134,10 @@ async function initApp() {
     persistenceStore: fabricDrawingPersistenceStore,
     onStateChange: handleFabricDrawingPilotStateChange
   });
+  reviewDataManager.setFabricDrawingSourceRefreshHandler(
+    ({ installSource }) =>
+      fabricDrawingPilotController.refreshPersistenceSource(installSource)
+  );
   reviewDataManager.setFinalFabricSnapshotHandler(async () => {
     const prepared =
       await fabricDrawingPilotController.preparePersistenceSnapshotForSave();
@@ -8753,6 +8757,8 @@ async function initApp() {
         showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
         return false;
       }
+      await reviewDataManager.waitForPendingSave();
+      if (!canContinueVideoLoad()) return false;
     }
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
@@ -8899,6 +8905,8 @@ async function initApp() {
         if (!canContinueVideoLoad()) return false;
         if (!beginDestructiveMpvReviewMediaChange(loadToken)) return false;
         reviewDataManager.pauseAutoSave();
+        await reviewDataManager.waitForPendingSave();
+        if (!canContinueVideoLoad()) return false;
 
         // 댓글 모드를 이벤트 경로로 먼저 종료한 뒤, DOM 준비 상태도 무조건 초기화한다.
         // clear()는 commentModeChanged를 발생시키지 않으므로 이 순서가 중요하다.
@@ -11120,7 +11128,12 @@ async function initApp() {
       return marker;
     }
 
-    const bframeData = await window.electronAPI.loadReview(bframePath);
+    const bframeSnapshot = await window.electronAPI.loadReviewSnapshot(bframePath);
+    const bframeData = bframeSnapshot?.data;
+    const expectedVersionToken = bframeSnapshot?.versionToken;
+    if (!bframeData || typeof expectedVersionToken !== 'string') {
+      throw new Error('댓글 파일의 최신 저장 버전을 확인할 수 없습니다.');
+    }
     const marker = findMarkerRecordInBframeData(bframeData, range.markerId, range.layerId);
     if (!marker) {
       throw new Error('원본 댓글을 찾을 수 없습니다.');
@@ -11143,10 +11156,17 @@ async function initApp() {
 
     const previous = applyMarkerResolutionToggle(marker);
     try {
-      const saved = await window.electronAPI.saveReview(bframePath, bframeData);
-      if (saved === false) {
+      const saved = await window.electronAPI.saveReview(
+        bframePath,
+        bframeData,
+        { expectedVersionToken: expectedVersionToken }
+      );
+      if (saved?.success !== true) {
         restoreMarkerResolution(marker, previous);
-        throw new Error('해결 상태 저장에 실패했습니다.');
+        const reason = saved?.conflict === true
+          ? '다른 변경이 먼저 저장되어 해결 상태를 덮어쓰지 않았습니다.'
+          : '해결 상태 저장에 실패했습니다.';
+        throw new Error(reason);
       }
     } catch (error) {
       restoreMarkerResolution(marker, previous);
@@ -13476,11 +13496,15 @@ async function initApp() {
   });
 
   // ====== 앱 종료 전 저장 처리 ======
+  let saveBeforeQuitInProgress = false;
   window.electronAPI.onRequestSaveBeforeQuit(async () => {
+    if (saveBeforeQuitInProgress) return;
+    saveBeforeQuitInProgress = true;
     log.info('앱 종료 전 저장 요청 수신');
     const savingOverlay = document.getElementById('appSavingOverlay');
+    savingOverlay?.classList.add('active');
     const fabricPersistenceReadyToLeave =
-      await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+      await fabricDrawingPilotController.preparePersistenceForQuit();
     if (!fabricPersistenceReadyToLeave) {
       const forceQuit = confirm(
         '새 드로잉의 최신 상태를 저장할 수 없습니다.\n\n저장하지 않고 종료하시겠습니까?'
@@ -13488,15 +13512,27 @@ async function initApp() {
       if (forceQuit) {
         await window.electronAPI.confirmQuit();
       } else {
+        savingOverlay?.classList.remove('active');
         await window.electronAPI.cancelQuit();
+        await fabricDrawingPilotController.resumeAfterQuitCancelled();
+        saveBeforeQuitInProgress = false;
       }
       return;
     }
 
+    reviewDataManager.pauseAutoSave();
+    await reviewDataManager.waitForPendingSave();
+
     // 협업 세션 종료 (presence 제거)
     commentSync.stop();
     drawingSync.stop();
-    await liveblocksManager.stop();
+    try {
+      await liveblocksManager.stop();
+    } catch (error) {
+      log.warn('종료 전 협업 세션 정리 실패, 로컬 저장 계속 진행', {
+        error: error.message
+      });
+    }
 
     // 미저장 변경사항 확인
     if (!reviewDataManager.hasUnsavedChanges()) {
@@ -13504,9 +13540,6 @@ async function initApp() {
       await window.electronAPI.confirmQuit();
       return;
     }
-
-    // 저장 오버레이 표시
-    savingOverlay?.classList.add('active');
 
     try {
       log.info('종료 전 저장 시작');
@@ -13525,6 +13558,14 @@ async function initApp() {
           await window.electronAPI.confirmQuit();
         } else {
           await window.electronAPI.cancelQuit();
+          await fabricDrawingPilotController.resumeAfterQuitCancelled();
+          reviewDataManager.resumeAutoSave();
+          await startCollaborationForVideoLoad(
+            latestVideoLoadToken,
+            reviewDataManager.currentBframePath,
+            { persistNewRoom: false, seedCurrentState: true }
+          );
+          saveBeforeQuitInProgress = false;
         }
       }
     } catch (error) {
@@ -13537,6 +13578,14 @@ async function initApp() {
         await window.electronAPI.confirmQuit();
       } else {
         await window.electronAPI.cancelQuit();
+        await fabricDrawingPilotController.resumeAfterQuitCancelled();
+        reviewDataManager.resumeAutoSave();
+        await startCollaborationForVideoLoad(
+          latestVideoLoadToken,
+          reviewDataManager.currentBframePath,
+          { persistNewRoom: false, seedCurrentState: true }
+        );
+        saveBeforeQuitInProgress = false;
       }
     }
   });

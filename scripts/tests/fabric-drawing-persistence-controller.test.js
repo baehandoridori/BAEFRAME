@@ -161,6 +161,7 @@ function createHarness(options = {}) {
   let persistenceListener = null;
   let runtimeSnapshot = null;
   let exportHandler = null;
+  let inputHandler = null;
   const calls = {
     input: [],
     hydrate: [],
@@ -180,6 +181,7 @@ function createHarness(options = {}) {
     async mpvSetOverlayDrawingInput(request) {
       calls.input.push(clone(request));
       calls.order.push(`input:${request.enabled ? 'on' : 'off'}:${request.hostGeneration}`);
+      if (inputHandler) return inputHandler(request);
       return { success: true, accepted: true, enabled: request.enabled };
     },
     async mpvUpdateOverlayDrawingTool(request) {
@@ -222,7 +224,8 @@ function createHarness(options = {}) {
     electronAPI,
     getContext: () => ({ ...context }),
     persistenceStore: store,
-    persistenceSessionIdFactory: () => 'persistence-session-1',
+    persistenceSessionIdFactory:
+      options.persistenceSessionIdFactory || (() => 'persistence-session-1'),
     uuid: (() => {
       let sequence = 0;
       return () => `request-${++sequence}`;
@@ -235,7 +238,7 @@ function createHarness(options = {}) {
     store,
     emitPersistence(message) {
       assert.equal(typeof persistenceListener, 'function');
-      persistenceListener(clone(message));
+      return persistenceListener(clone(message));
     },
     getRuntimeSnapshot() {
       return clone(runtimeSnapshot);
@@ -245,6 +248,9 @@ function createHarness(options = {}) {
     },
     setExportHandler(handler) {
       exportHandler = handler;
+    },
+    setInputHandler(handler) {
+      inputHandler = handler;
     },
     setRuntimeSnapshot(snapshot) {
       runtimeSnapshot = clone(snapshot);
@@ -599,4 +605,251 @@ test('overlay host recovery rehydrates before restoring an active Fabric session
   ]);
   assert.equal(harness.calls.hydrate.at(-1).persistenceSessionId, originalSession);
   assert.equal(harness.controller.getState(), 'active');
+});
+
+test('active source refresh disables input, pulls the old source, installs, hydrates, verifies, and only then resumes', async () => {
+  const persistenceSessions = [
+    'persistence-session-before-refresh',
+    'persistence-session-after-refresh'
+  ];
+  const harness = createHarness({
+    persistenceSessionIdFactory: () => persistenceSessions.shift()
+  });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+
+  const oldRuntime = harness.getRuntimeSnapshot();
+  oldRuntime.scenes[0].objects.push(makeRecord('committed-before-refresh'));
+  oldRuntime.scenes[0].mutationSequence = 2;
+  harness.setRuntimeSnapshot(oldRuntime);
+  harness.calls.order.length = 0;
+
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-source-stroke')]
+    }]
+  });
+
+  assert.equal(
+    await harness.controller.refreshPersistenceSource(() => {
+      assert.deepEqual(
+        harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+        ['stroke-1', 'committed-before-refresh'],
+        'the old authoritative overlay must be pulled before replacement'
+      );
+      harness.calls.order.push('install-source');
+      return harness.store.importRootValue(externalRoot, {
+        fps: 24,
+        totalFrames: 240,
+        stableVideoIdentity: 'C:/shot/scene-001.mov'
+      });
+    }),
+    true
+  );
+
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1',
+    'install-source',
+    'hydrate:1',
+    'export:1',
+    'input:on:1'
+  ]);
+  assert.equal(
+    harness.calls.hydrate.at(-1).persistenceSessionId,
+    'persistence-session-after-refresh'
+  );
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['external-source-stroke']
+  );
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('active source refresh rejects old-session transitions while source installation is pending', async () => {
+  const persistenceSessions = [
+    'persistence-session-before-refresh',
+    'persistence-session-after-refresh'
+  ];
+  const harness = createHarness({
+    persistenceSessionIdFactory: () => persistenceSessions.shift()
+  });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+
+  const installStarted = deferred();
+  const releaseInstall = deferred();
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-source-stroke')]
+    }]
+  });
+  const refresh = harness.controller.refreshPersistenceSource(async () => {
+    const result = harness.store.importRootValue(externalRoot, {
+      fps: 24,
+      totalFrames: 240,
+      stableVideoIdentity: 'C:/shot/scene-001.mov'
+    });
+    installStarted.resolve();
+    await releaseInstall.promise;
+    return result;
+  });
+  await installStarted.promise;
+
+  const staleRecord = makeRecord('stale-transition-stroke');
+  const staleTransition = {
+    hostGeneration: 1,
+    videoGeneration: 1,
+    persistenceSessionId: 'persistence-session-before-refresh',
+    stableVideoIdentity: 'C:/shot/scene-001.mov',
+    scene: {
+      sceneInstanceId: 'overlay-scene-12',
+      targetFrame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080
+    },
+    mutationSequence: 2,
+    origin: 'live',
+    kind: 'add-objects',
+    estimatedBytes: 512,
+    unsupportedReason: null,
+    removals: [],
+    insertions: [{
+      index: 1,
+      record: staleRecord,
+      baseTransform: { ...staleRecord.transform }
+    }],
+    transforms: []
+  };
+  assert.equal(
+    harness.emitPersistence({ type: 'transition', transition: staleTransition }),
+    false
+  );
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['external-source-stroke']
+  );
+
+  releaseInstall.resolve();
+  assert.equal(await refresh, true);
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('quit preparation disables input before the final pull, rejects a late transition, and resumes only after cancellation', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(typeof harness.controller.preparePersistenceForQuit, 'function');
+  assert.equal(typeof harness.controller.resumeAfterQuitCancelled, 'function');
+
+  const finalRuntime = harness.getRuntimeSnapshot();
+  finalRuntime.scenes[0].objects.push(makeRecord('quit-final-stroke'));
+  finalRuntime.scenes[0].mutationSequence = 2;
+  harness.setRuntimeSnapshot(finalRuntime);
+
+  const releaseInputOff = deferred();
+  harness.setInputHandler(request => {
+    if (!request.enabled) return releaseInputOff.promise;
+    return { success: true, accepted: true, enabled: true };
+  });
+  harness.calls.order.length = 0;
+
+  const preparingQuit = harness.controller.preparePersistenceForQuit();
+  await flushDetachedWork();
+  assert.deepEqual(harness.calls.order, ['input:off:1']);
+
+  const lateRecord = makeRecord('late-old-session-stroke');
+  assert.equal(
+    harness.emitPersistence({
+      type: 'transition',
+      transition: {
+        hostGeneration: 1,
+        videoGeneration: 1,
+        persistenceSessionId: 'persistence-session-1',
+        stableVideoIdentity: 'C:/shot/scene-001.mov',
+        scene: {
+          sceneInstanceId: 'overlay-scene-12',
+          targetFrame: 12,
+          sourceWidth: 1920,
+          sourceHeight: 1080
+        },
+        mutationSequence: 2,
+        origin: 'live',
+        kind: 'add-objects',
+        estimatedBytes: 512,
+        unsupportedReason: null,
+        removals: [],
+        insertions: [{
+          index: 1,
+          record: lateRecord,
+          baseTransform: { ...lateRecord.transform }
+        }],
+        transforms: []
+      }
+    }),
+    false,
+    'an event from the disabled drawing session must not race the authoritative quit pull'
+  );
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['stroke-1']
+  );
+
+  releaseInputOff.resolve({
+    success: true,
+    accepted: true,
+    enabled: false
+  });
+  assert.equal(await preparingQuit, true);
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1'
+  ]);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['stroke-1', 'quit-final-stroke']
+  );
+  assert.equal(harness.controller.getStatusSnapshot().resumeRequested, true);
+
+  assert.equal(await harness.controller.resumeAfterQuitCancelled(), true);
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1',
+    'input:on:1'
+  ]);
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('quit cancellation cannot resume Fabric after the prepared video owner has changed', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(typeof harness.controller.preparePersistenceForQuit, 'function');
+  assert.equal(typeof harness.controller.resumeAfterQuitCancelled, 'function');
+
+  assert.equal(await harness.controller.preparePersistenceForQuit(), true);
+  const inputOnCountBeforeVideoChange = harness.calls.input.filter(
+    request => request.enabled
+  ).length;
+
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+  assert.equal(await harness.controller.resumeAfterQuitCancelled(), false);
+  assert.equal(
+    harness.calls.input.filter(request => request.enabled).length,
+    inputOnCountBeforeVideoChange,
+    'a cancelled quit must not enable input on a different or changing video owner'
+  );
+  assert.notEqual(harness.controller.getState(), 'active');
 });
