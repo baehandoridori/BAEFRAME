@@ -447,6 +447,23 @@ test('final save pull catches a lost last event without disabling active input',
   );
 });
 
+test('a video-switch save still performs its final pull after drawing input is disabled', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  const initialExportCount = harness.calls.export.length;
+
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+  const exportCountBeforeSave = harness.calls.export.length;
+  assert.equal(exportCountBeforeSave, initialExportCount + 1);
+
+  assert.equal(
+    await harness.controller.preparePersistenceSnapshotForSave(),
+    true
+  );
+  assert.equal(harness.calls.export.length, exportCountBeforeSave + 1);
+});
+
 test('authoritative pull failure blocks leave and immediately hands B back to legacy', async () => {
   const harness = createHarness();
   assert.equal(await prepareVideo(harness), true);

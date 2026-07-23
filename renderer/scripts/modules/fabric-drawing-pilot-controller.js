@@ -215,13 +215,16 @@ export function createFabricDrawingPilotController(options = {}) {
     };
   }
 
-  function capturePersistenceOwner(contextOverrides = null) {
+  function capturePersistenceOwner(
+    contextOverrides = null,
+    { allowVideoNotReady = false } = {}
+  ) {
     if (!persistenceStore ||
         !persistenceBridgeReady ||
         !persistenceSessionId ||
         !hostGeneration ||
         !videoGeneration ||
-        !videoReady) {
+        (!videoReady && !allowVideoNotReady)) {
       return null;
     }
     const rawContext = contextOverrides
@@ -240,9 +243,9 @@ export function createFabricDrawingPilotController(options = {}) {
     };
   }
 
-  function ownsPersistenceOwner(owner) {
+  function ownsPersistenceOwner(owner, options = {}) {
     if (!owner) return false;
-    const current = capturePersistenceOwner();
+    const current = capturePersistenceOwner(null, options);
     return Boolean(
       current &&
       owner.ownerEpoch === current.ownerEpoch &&
@@ -606,7 +609,9 @@ export function createFabricDrawingPilotController(options = {}) {
     }
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const owner = capturePersistenceOwner();
+      const owner = capturePersistenceOwner(null, {
+        allowVideoNotReady: true
+      });
       if (!owner) {
         return {
           ok: false,
@@ -624,7 +629,7 @@ export function createFabricDrawingPilotController(options = {}) {
       } catch (_error) {
         exported = null;
       }
-      if (!ownsPersistenceOwner(owner)) {
+      if (!ownsPersistenceOwner(owner, { allowVideoNotReady: true })) {
         return {
           ok: false,
           stale: true,
@@ -693,7 +698,7 @@ export function createFabricDrawingPilotController(options = {}) {
   async function preparePersistenceSnapshotForSave() {
     if (!persistenceStore) return true;
     if (legacyBypass) return !persistenceBlocked;
-    if (!videoReady || !persistenceSessionId) return true;
+    if (!persistenceSessionId) return true;
     const result = await enqueuePersistencePull();
     if (result?.ok === true) return true;
     return blockPersistenceAfterPullFailure(result);
