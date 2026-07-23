@@ -40,6 +40,43 @@ const HOST_DRAWING_ACTIONS = new Set([
   'undo',
   'redo'
 ]);
+const DRAWING_V3_DIAGNOSTIC_STATUSES = new Set([
+  'active',
+  'degraded',
+  'desynced',
+  'destroyed',
+  'disabled',
+  'idle',
+  'not-connected',
+  'synced'
+]);
+const DRAWING_V3_DIAGNOSTIC_REASONS = new Set([
+  'adapter-failed',
+  'document-rejected',
+  'document-sequence-mismatch',
+  'invalid-seed',
+  'invalid-transition',
+  'missing-baseline',
+  'observer-failed',
+  'queue-capacity-exceeded',
+  'queue-event-too-large',
+  'scheduler-failed',
+  'seed-capacity-exceeded',
+  'seed-signature-changed',
+  'sequence-gap',
+  'stale-transition',
+  'transition-before-mismatch',
+  'unsupported-field-mutation',
+  'unsupported-order-mutation',
+  'unsupported-transform',
+  'warm-seed-mismatch'
+]);
+
+function createDrawingV3BootstrapScript(enabled) {
+  return `window.__mpvFabricOverlayBootstrap = Object.freeze(${JSON.stringify({
+    drawingV3ShadowEnabled: enabled === true
+  })});`;
+}
 
 const OVERLAY_HTML = String.raw`
 <!doctype html>
@@ -806,6 +843,44 @@ function finiteDiagnosticNumber(value, fallback = 0) {
   return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
+function drawingV3DiagnosticCount(value) {
+  const number = Math.trunc(Number(value));
+  return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+}
+
+function drawingV3DiagnosticLatency(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.min(number, 60_000) : 0;
+}
+
+function sanitizeDrawingV3Diagnostics(value) {
+  const diagnostics = value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : { status: 'degraded', failureCount: 1, lastReason: 'adapter-failed' };
+  return {
+    enabled: diagnostics.enabled === true,
+    status: DRAWING_V3_DIAGNOSTIC_STATUSES.has(diagnostics.status)
+      ? diagnostics.status
+      : 'degraded',
+    sceneCount: drawingV3DiagnosticCount(diagnostics.sceneCount),
+    bootstrapCount: drawingV3DiagnosticCount(diagnostics.bootstrapCount),
+    commitCount: drawingV3DiagnosticCount(diagnostics.commitCount),
+    failureCount: drawingV3DiagnosticCount(diagnostics.failureCount),
+    divergenceCount: drawingV3DiagnosticCount(diagnostics.divergenceCount),
+    resyncCount: drawingV3DiagnosticCount(diagnostics.resyncCount),
+    staleCount: drawingV3DiagnosticCount(diagnostics.staleCount),
+    gapCount: drawingV3DiagnosticCount(diagnostics.gapCount),
+    headSequence: drawingV3DiagnosticCount(diagnostics.headSequence),
+    objectCount: drawingV3DiagnosticCount(diagnostics.objectCount),
+    estimatedBytes: drawingV3DiagnosticCount(diagnostics.estimatedBytes),
+    latencyP50Ms: drawingV3DiagnosticLatency(diagnostics.latencyP50Ms),
+    latencyP95Ms: drawingV3DiagnosticLatency(diagnostics.latencyP95Ms),
+    lastReason: DRAWING_V3_DIAGNOSTIC_REASONS.has(diagnostics.lastReason)
+      ? diagnostics.lastReason
+      : null
+  };
+}
+
 function sanitizeFabricMetrics(metrics = {}) {
   const scalarKeys = [
     'maxSamples',
@@ -896,6 +971,21 @@ class MPVOverlayHost {
     this.drawingActionQueue = Promise.resolve();
     this.suppressedOverlayHistoryKeys = new Set();
     this.overlayHistoryActionSequence = 0;
+    this.drawingV3ShadowEnabled = false;
+    this.drawingV3ShadowConfigured = false;
+    this.drawingV3ShadowLocked = false;
+  }
+
+  configureDrawingV3Shadow(enabled) {
+    if (typeof enabled !== 'boolean') {
+      return { success: false, enabled: this.drawingV3ShadowEnabled, reason: 'invalid-value' };
+    }
+    if (this.drawingV3ShadowConfigured || this.drawingV3ShadowLocked) {
+      return { success: false, enabled: this.drawingV3ShadowEnabled, reason: 'configuration-locked' };
+    }
+    this.drawingV3ShadowEnabled = enabled;
+    this.drawingV3ShadowConfigured = true;
+    return { success: true, enabled };
   }
 
   getDrawingCapability() {
@@ -1146,6 +1236,7 @@ class MPVOverlayHost {
           estimatedBytes: Math.trunc(finiteDiagnosticNumber(cache.estimatedBytes)),
           evictionCount: Math.trunc(finiteDiagnosticNumber(cache.evictionCount))
         },
+        drawingV3Shadow: sanitizeDrawingV3Diagnostics(result?.drawingV3Shadow),
         metrics: sanitizeFabricMetrics(result?.metrics),
         lastError: typeof result?.lastError === 'string' ? result.lastError.slice(0, 512) : null
       };
@@ -1188,7 +1279,31 @@ class MPVOverlayHost {
         if (!this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
           return { success: false, error: 'mpv overlay host generation changed' };
         }
-        await hostWindow.webContents?.executeJavaScript?.(String(bundleSource), true);
+        const requestedBootstrap = createDrawingV3BootstrapScript(this.drawingV3ShadowEnabled);
+        const disabledBootstrap = createDrawingV3BootstrapScript(false);
+        let bundlePrefix = '';
+        try {
+          await hostWindow.webContents?.executeJavaScript?.(requestedBootstrap, true);
+        } catch (error) {
+          this.logger.debug('Drawing V3 shadow bootstrap failed; continuing disabled', {
+            error: error.message
+          });
+          try {
+            await hostWindow.webContents?.executeJavaScript?.(disabledBootstrap, true);
+          } catch (fallbackError) {
+            this.logger.debug('Drawing V3 disabled bootstrap retry failed; prefixing bundle', {
+              error: fallbackError.message
+            });
+            bundlePrefix = `${disabledBootstrap}\n`;
+          }
+        }
+        if (!this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
+          return { success: false, error: 'mpv overlay host generation changed' };
+        }
+        await hostWindow.webContents?.executeJavaScript?.(
+          `${bundlePrefix}${String(bundleSource)}`,
+          true
+        );
         if (!this._isCurrentDrawingDocument(hostWindow, hostGeneration, contentLoadGeneration)) {
           return { success: false, error: 'mpv overlay host generation changed' };
         }
@@ -1339,6 +1454,7 @@ class MPVOverlayHost {
   }
 
   async ensure(bounds) {
+    this.drawingV3ShadowLocked = true;
     const mainWindow = this.getMainWindow();
     if (!mainWindow || mainWindow.isDestroyed?.()) {
       return { success: false, error: 'main window is not available' };

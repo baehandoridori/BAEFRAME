@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -24,6 +25,29 @@ const {
 const {
   createDrawingEngineAdapter
 } = require(drawingV3AdapterPath);
+
+function runAutoSingletonProbe(source) {
+  const result = spawnSync(process.execPath, ['-e', [
+    "'use strict';",
+    `const runtimePath = ${JSON.stringify(runtimePath)};`,
+    "const emit = value => console.log('__BAEFRAME_PROBE__' + JSON.stringify(value));",
+    source
+  ].join('\n')], {
+    cwd: rootDir,
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 0, [
+    'isolated runtime probe failed',
+    result.stdout,
+    result.stderr
+  ].filter(Boolean).join('\n'));
+  const outputLine = result.stdout
+    .split(/\r?\n/)
+    .find(line => line.startsWith('__BAEFRAME_PROBE__'));
+  assert.ok(outputLine, `isolated runtime probe returned no result:\n${result.stdout}\n${result.stderr}`);
+  return JSON.parse(outputLine.slice('__BAEFRAME_PROBE__'.length));
+}
 
 class FakeElement {
   constructor(tagName, ownerDocument) {
@@ -660,6 +684,142 @@ function createRealFabricHarness(runtimeOptions = {}) {
     }
   };
 }
+
+test('auto singleton enables Drawing V3 shadow only for a strict true bootstrap field and consumes it', () => {
+  const result = runAutoSingletonProbe(`
+    global.document = null;
+    global.window = {
+      __mpvFabricOverlayBootstrap: { drawingV3ShadowEnabled: true }
+    };
+    require(runtimePath);
+    const diagnostics = window.__mpvFabricOverlay.getDiagnostics();
+    emit({
+      bootstrapPresent: Object.prototype.hasOwnProperty.call(
+        window,
+        '__mpvFabricOverlayBootstrap'
+      ),
+      enabled: diagnostics.drawingV3Shadow.enabled,
+      status: diagnostics.drawingV3Shadow.status
+    });
+  `);
+
+  assert.deepEqual(result, {
+    bootstrapPresent: false,
+    enabled: true,
+    status: 'idle'
+  });
+});
+
+test('auto singleton keeps Drawing V3 shadow off for missing or non-boolean bootstrap values', () => {
+  const cases = [
+    {
+      name: 'missing bootstrap',
+      setup: 'global.window = {};'
+    },
+    {
+      name: 'missing field',
+      setup: 'global.window = { __mpvFabricOverlayBootstrap: {} };'
+    },
+    {
+      name: 'string true field',
+      setup: `global.window = {
+        __mpvFabricOverlayBootstrap: { drawingV3ShadowEnabled: 'true' }
+      };`
+    },
+    {
+      name: 'bare true bootstrap',
+      setup: 'global.window = { __mpvFabricOverlayBootstrap: true };'
+    }
+  ];
+
+  for (const probe of cases) {
+    const result = runAutoSingletonProbe(`
+      global.document = null;
+      ${probe.setup}
+      require(runtimePath);
+      const diagnostics = window.__mpvFabricOverlay.getDiagnostics();
+      emit({
+        bootstrapPresent: Object.prototype.hasOwnProperty.call(
+          window,
+          '__mpvFabricOverlayBootstrap'
+        ),
+        enabled: diagnostics.drawingV3Shadow.enabled,
+        status: diagnostics.drawingV3Shadow.status
+      });
+    `);
+
+    assert.deepEqual(result, {
+      bootstrapPresent: false,
+      enabled: false,
+      status: 'disabled'
+    }, probe.name);
+  }
+});
+
+test('late bootstrap is consumed without replacing or mutating an existing singleton', () => {
+  const result = runAutoSingletonProbe(`
+    global.document = null;
+    const state = { phase: 'active', revision: 17 };
+    const existing = { state };
+    global.window = {
+      __mpvFabricOverlay: existing,
+      __mpvFabricOverlayBootstrap: { drawingV3ShadowEnabled: true }
+    };
+    require(runtimePath);
+    emit({
+      bootstrapPresent: Object.prototype.hasOwnProperty.call(
+        window,
+        '__mpvFabricOverlayBootstrap'
+      ),
+      sameIdentity: window.__mpvFabricOverlay === existing,
+      sameStateIdentity: window.__mpvFabricOverlay.state === state,
+      state: window.__mpvFabricOverlay.state
+    });
+  `);
+
+  assert.deepEqual(result, {
+    bootstrapPresent: false,
+    sameIdentity: true,
+    sameStateIdentity: true,
+    state: { phase: 'active', revision: 17 }
+  });
+});
+
+test('module cache re-evaluation consumes late bootstrap without replacing the auto singleton', () => {
+  const result = runAutoSingletonProbe(`
+    global.document = null;
+    global.window = {};
+    require(runtimePath);
+    const existing = window.__mpvFabricOverlay;
+    existing.destroy();
+    const before = existing.getDiagnostics();
+
+    window.__mpvFabricOverlayBootstrap = { drawingV3ShadowEnabled: true };
+    delete require.cache[require.resolve(runtimePath)];
+    require(runtimePath);
+    const after = window.__mpvFabricOverlay.getDiagnostics();
+    emit({
+      bootstrapPresent: Object.prototype.hasOwnProperty.call(
+        window,
+        '__mpvFabricOverlayBootstrap'
+      ),
+      sameIdentity: window.__mpvFabricOverlay === existing,
+      stateBefore: before.state,
+      stateAfter: after.state,
+      shadowBefore: before.drawingV3Shadow.enabled,
+      shadowAfter: after.drawingV3Shadow.enabled
+    });
+  `);
+
+  assert.deepEqual(result, {
+    bootstrapPresent: false,
+    sameIdentity: true,
+    stateBefore: 'destroyed',
+    stateAfter: 'destroyed',
+    shadowBefore: false,
+    shadowAfter: false
+  });
+});
 
 test('Drawing V3 runtime shadow is disabled by default and never constructs an adapter', () => {
   FakeCanvas.instances = [];

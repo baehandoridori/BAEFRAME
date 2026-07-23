@@ -13614,11 +13614,28 @@ void main() {
           destroy
         };
       }
-      if (typeof window !== "undefined" && window && !window.__mpvFabricOverlay) {
-        window.__mpvFabricOverlay = createFabricOverlayRuntime({
-          window,
-          document: typeof document !== "undefined" ? document : null
-        });
+      if (typeof window !== "undefined" && window) {
+        let bootstrap = null;
+        try {
+          bootstrap = window.__mpvFabricOverlayBootstrap;
+        } catch (_error) {
+        }
+        try {
+          delete window.__mpvFabricOverlayBootstrap;
+        } catch (_error) {
+          try {
+            window.__mpvFabricOverlayBootstrap = void 0;
+          } catch (_ignored) {
+          }
+        }
+        const drawingV3ShadowEnabled = bootstrap?.drawingV3ShadowEnabled === true;
+        if (!window.__mpvFabricOverlay) {
+          window.__mpvFabricOverlay = createFabricOverlayRuntime({
+            window,
+            document: typeof document !== "undefined" ? document : null,
+            drawingV3ShadowEnabled
+          });
+        }
       }
       module.exports = {
         createFabricOverlayRuntime,

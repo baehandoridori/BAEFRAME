@@ -3546,11 +3546,26 @@ function createFabricOverlayRuntime(options = {}) {
   };
 }
 
-if (typeof window !== 'undefined' && window && !window.__mpvFabricOverlay) {
-  window.__mpvFabricOverlay = createFabricOverlayRuntime({
-    window,
-    document: typeof document !== 'undefined' ? document : null
-  });
+if (typeof window !== 'undefined' && window) {
+  let bootstrap = null;
+  try {
+    bootstrap = window.__mpvFabricOverlayBootstrap;
+  } catch (_error) { /* fail closed */ }
+  try {
+    delete window.__mpvFabricOverlayBootstrap;
+  } catch (_error) {
+    try {
+      window.__mpvFabricOverlayBootstrap = undefined;
+    } catch (_ignored) { /* best effort one-shot consumption */ }
+  }
+  const drawingV3ShadowEnabled = bootstrap?.drawingV3ShadowEnabled === true;
+  if (!window.__mpvFabricOverlay) {
+    window.__mpvFabricOverlay = createFabricOverlayRuntime({
+      window,
+      document: typeof document !== 'undefined' ? document : null,
+      drawingV3ShadowEnabled
+    });
+  }
 }
 
 module.exports = {

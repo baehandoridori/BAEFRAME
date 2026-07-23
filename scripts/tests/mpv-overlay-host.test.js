@@ -58,6 +58,10 @@ function createDrawingHostHarness(options = {}) {
         },
         executeJavaScript: async (script) => {
           events.push(['executeJavaScript', script]);
+          if (typeof options.executeJavaScriptError === 'function') {
+            const injectedError = options.executeJavaScriptError(script);
+            if (injectedError) throw injectedError;
+          }
           if (script.includes("typeof window.__applyMpvOverlayState === 'function'")) return true;
           if (script === bundleSource) return true;
           if (script.includes('.prepare(')) return { prepared: true, reused: false };
@@ -189,6 +193,29 @@ function readFabricMethodPayload(script, method) {
   return argument ? JSON.parse(argument) : null;
 }
 
+function readDrawingV3BootstrapValue(script) {
+  if (typeof script !== 'string' || !script.includes('__mpvFabricOverlayBootstrap')) {
+    return undefined;
+  }
+  const match = script.match(/["']?drawingV3ShadowEnabled["']?\s*:\s*(true|false)/);
+  if (!match) return undefined;
+  return match[1] === 'true';
+}
+
+function drawingRuntimeExecutionSteps(events, bundleSource = '/* fixed Fabric bundle */') {
+  return events.flatMap(([name, script]) => {
+    if (name !== 'executeJavaScript') return [];
+    const bootstrapValue = readDrawingV3BootstrapValue(script);
+    if (bootstrapValue !== undefined) return [`bootstrap:${bootstrapValue}`];
+    if (script === bundleSource) return ['bundle-and-singleton'];
+    if (script.includes?.('.prepare(document.getElementById(\'root\'))')) return ['prepare'];
+    if (script.includes?.('.setDrawingInput(') && script.includes('"enabled":true')) {
+      return ['input:true'];
+    }
+    return [];
+  });
+}
+
 async function activateDrawingHost(harness, overrides = {}) {
   const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
   const { hostGeneration } = ensured.drawingCapability;
@@ -225,6 +252,252 @@ test('exposes the MPV overlay Fabric drawing host capability API', () => {
   assert.equal(typeof host.updateDrawingTool, 'function');
   assert.equal(typeof host.applyDrawingAction, 'function');
   assert.equal(typeof host.getDrawingDiagnostics, 'function');
+  assert.equal(typeof host.configureDrawingV3Shadow, 'function');
+});
+
+test('drawing V3 shadow configuration accepts only the first valid strict boolean', async () => {
+  const harness = createDrawingHostHarness();
+  const { host } = harness;
+  assert.equal(typeof host.configureDrawingV3Shadow, 'function');
+
+  const invalid = host.configureDrawingV3Shadow('true');
+  const accepted = host.configureDrawingV3Shadow(true);
+  const repeated = host.configureDrawingV3Shadow(false);
+
+  assert.equal(invalid.success, false, 'truthy non-booleans must not enable the experiment');
+  assert.equal(accepted.success, true, 'an invalid call must not consume the one configuration slot');
+  assert.equal(repeated.success, false, 'the first valid configuration is immutable');
+
+  await activateDrawingHost(harness, { sessionId: 'session-v3-first-valid' });
+  assert.deepEqual(
+    harness.events
+      .filter(([name]) => name === 'executeJavaScript')
+      .map(([, script]) => readDrawingV3BootstrapValue(script))
+      .filter(value => value !== undefined),
+    [true],
+    'a rejected later false value must not replace the accepted true value'
+  );
+});
+
+test('the first ensure entry locks the default V3 shadow setting even when ensure fails', async () => {
+  const harness = createDrawingHostHarness();
+  const { host, mainWindow } = harness;
+  host.getMainWindow = () => null;
+
+  const failedEnsure = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  assert.equal(failedEnsure.success, false);
+  assert.equal(typeof host.configureDrawingV3Shadow, 'function');
+  assert.equal(host.configureDrawingV3Shadow(true).success, false,
+    'entering ensure locks the startup-only default before any early return');
+
+  host.getMainWindow = () => mainWindow;
+  await activateDrawingHost(harness, { sessionId: 'session-v3-lock-after-failed-ensure' });
+  assert.deepEqual(
+    harness.events
+      .filter(([name]) => name === 'executeJavaScript')
+      .map(([, script]) => readDrawingV3BootstrapValue(script))
+      .filter(value => value !== undefined),
+    [false]
+  );
+});
+
+test('destroying and recreating the overlay host does not unlock V3 shadow configuration', async () => {
+  const harness = createDrawingHostHarness();
+  const { host } = harness;
+  assert.equal(typeof host.configureDrawingV3Shadow, 'function');
+  assert.equal(host.configureDrawingV3Shadow(true).success, true);
+  assert.equal((await host.ensure({ x: 0, y: 0, width: 640, height: 360 })).success, true);
+
+  host.destroy();
+  assert.equal(host.configureDrawingV3Shadow(false).success, false,
+    'destroy is a window lifecycle event, not a process-startup configuration reset');
+
+  await activateDrawingHost(harness, { sessionId: 'session-v3-recreated-host' });
+  assert.deepEqual(
+    harness.events
+      .filter(([name]) => name === 'executeJavaScript')
+      .map(([, script]) => readDrawingV3BootstrapValue(script))
+      .filter(value => value !== undefined),
+    [true]
+  );
+});
+
+test('default-false V3 bootstrap runs before bundle singleton creation, prepare, and drawing input', async () => {
+  const harness = createDrawingHostHarness();
+  await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  harness.events.length = 0;
+
+  await activateDrawingHost(harness, { sessionId: 'session-v3-default-order' });
+
+  assert.deepEqual(drawingRuntimeExecutionSteps(harness.events), [
+    'bootstrap:false',
+    'bundle-and-singleton',
+    'prepare',
+    'input:true'
+  ]);
+});
+
+test('configured-true V3 bootstrap runs before bundle singleton creation, prepare, and drawing input', async () => {
+  const harness = createDrawingHostHarness();
+  assert.equal(typeof harness.host.configureDrawingV3Shadow, 'function');
+  assert.equal(harness.host.configureDrawingV3Shadow(true).success, true);
+  await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  harness.events.length = 0;
+
+  await activateDrawingHost(harness, { sessionId: 'session-v3-enabled-order' });
+
+  assert.deepEqual(drawingRuntimeExecutionSteps(harness.events), [
+    'bootstrap:true',
+    'bundle-and-singleton',
+    'prepare',
+    'input:true'
+  ]);
+});
+
+test('a warm Fabric runtime injects the configured V3 bootstrap only once per host generation', async () => {
+  const harness = createDrawingHostHarness();
+  const { host } = harness;
+  assert.equal(typeof host.configureDrawingV3Shadow, 'function');
+  assert.equal(host.configureDrawingV3Shadow(true).success, true);
+  const active = await activateDrawingHost(harness, {
+    inputRevision: 2,
+    sessionId: 'session-v3-warm-first'
+  });
+
+  await host.getDrawingDiagnostics();
+  await host.ensure({ x: 1, y: 2, width: 640, height: 360 });
+  assert.equal((await host.setDrawingInput(makeDrawingInput(active.hostGeneration, {
+    videoGeneration: active.videoGeneration,
+    inputRevision: 3,
+    enabled: false
+  }))).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(active.hostGeneration, {
+    videoGeneration: active.videoGeneration,
+    inputRevision: 4,
+    enabled: true,
+    session: {
+      sessionId: 'session-v3-warm-second',
+      stableVideoIdentity: 'video-v3-warm',
+      targetFrame: 25,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }))).success, true);
+
+  const steps = drawingRuntimeExecutionSteps(harness.events);
+  assert.equal(steps.filter(step => step === 'bootstrap:true').length, 1);
+  assert.equal(steps.filter(step => step === 'bundle-and-singleton').length, 1);
+  assert.equal(steps.filter(step => step === 'prepare').length, 1);
+});
+
+test('a true V3 bootstrap injection failure falls back false without poisoning Fabric retry state', async () => {
+  const harness = createDrawingHostHarness({
+    executeJavaScriptError(script) {
+      if (readDrawingV3BootstrapValue(script) === true) {
+        return new Error('injected V3 bootstrap failure');
+      }
+      return null;
+    }
+  });
+  const { host } = harness;
+  assert.equal(typeof host.configureDrawingV3Shadow, 'function');
+  assert.equal(host.configureDrawingV3Shadow(true).success, true);
+
+  const active = await activateDrawingHost(harness, {
+    sessionId: 'session-v3-bootstrap-fallback'
+  });
+
+  assert.equal(active.hostGeneration, 1);
+  assert.equal(host.getDrawingCapability().fabricReady, true);
+  assert.equal(host.fabricFailureCount, 0);
+  assert.equal(host.fabricRetryAfter, 0);
+  assert.equal(host.fabricLastError, null);
+  assert.deepEqual(drawingRuntimeExecutionSteps(harness.events), [
+    'bootstrap:true',
+    'bootstrap:false',
+    'bundle-and-singleton',
+    'prepare',
+    'input:true'
+  ]);
+});
+
+test('drawing diagnostics expose only the exact bounded 16-key V3 shadow aggregate', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.getDiagnostics(')) return undefined;
+      return {
+        state: 'active',
+        prepared: true,
+        inputEnabled: true,
+        drawingV3Shadow: {
+          enabled: 'true',
+          status: '<script>must-not-leak</script>',
+          sceneCount: -1,
+          bootstrapCount: 3.9,
+          commitCount: '7',
+          failureCount: Number.POSITIVE_INFINITY,
+          divergenceCount: Number.MAX_SAFE_INTEGER + 1,
+          resyncCount: Number.NaN,
+          staleCount: -4,
+          gapCount: null,
+          headSequence: 9.8,
+          objectCount: '11.2',
+          estimatedBytes: { secret: 'must-not-leak' },
+          latencyP50Ms: 60_001,
+          latencyP95Ms: '12.5',
+          lastReason: 'secret-reason-must-not-leak',
+          queue: [{ points: ['must-not-leak'] }],
+          document: { actors: ['must-not-leak'] },
+          extraSecret: 'must-not-leak'
+        }
+      };
+    }
+  });
+  await activateDrawingHost(harness, { sessionId: 'session-v3-sanitizer' });
+
+  const diagnostics = await harness.host.getDrawingDiagnostics();
+  assert.equal(diagnostics.success, true);
+  assert.ok(diagnostics.drawingV3Shadow, 'the bounded V3 aggregate must be present');
+  assert.deepEqual(Object.keys(diagnostics.drawingV3Shadow).sort(), [
+    'bootstrapCount',
+    'commitCount',
+    'divergenceCount',
+    'enabled',
+    'estimatedBytes',
+    'failureCount',
+    'gapCount',
+    'headSequence',
+    'lastReason',
+    'latencyP50Ms',
+    'latencyP95Ms',
+    'objectCount',
+    'resyncCount',
+    'sceneCount',
+    'staleCount',
+    'status'
+  ]);
+  assert.deepEqual(diagnostics.drawingV3Shadow, {
+    enabled: false,
+    status: 'degraded',
+    sceneCount: 0,
+    bootstrapCount: 3,
+    commitCount: 7,
+    failureCount: 0,
+    divergenceCount: 0,
+    resyncCount: 0,
+    staleCount: 0,
+    gapCount: 0,
+    headSequence: 9,
+    objectCount: 11,
+    estimatedBytes: 0,
+    latencyP50Ms: 60_000,
+    latencyP95Ms: 12.5,
+    lastReason: null
+  });
+  assert.doesNotMatch(JSON.stringify(diagnostics),
+    /must-not-leak|extraSecret|secret-reason|"(?:queue|document|actors|points|secret)"/i);
 });
 
 test('passive ensure stays ready without reading or injecting the Fabric bundle', async () => {

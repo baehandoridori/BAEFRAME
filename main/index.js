@@ -45,7 +45,10 @@ let shutdownCleanupStarted = false;
 const { createLogger } = require('./logger');
 const { createMainWindow, getMainWindow, createLoadingWindow, closeLoadingWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
-const { resolveFabricDrawingPilot } = require('./experiment-flags');
+const {
+  resolveFabricDrawingPilot,
+  resolveFabricDrawingV3Shadow
+} = require('./experiment-flags');
 const { registerProjectFileAssociations } = require('./project-file-associations');
 const { mpvManager } = require('./mpv-manager');
 const { mpvEmbedHost } = require('./mpv-embed-host');
@@ -61,6 +64,8 @@ const {
   shouldAllowMultipleInstances
 } = require('./instance-policy');
 const fabricDrawingPilot = resolveFabricDrawingPilot();
+const fabricDrawingV3Shadow = resolveFabricDrawingV3Shadow({ fabricDrawingPilot });
+mpvOverlayHost.configureDrawingV3Shadow(fabricDrawingV3Shadow.enabled);
 const skipShellRegistration = process.argv.includes('--skip-shell-registration');
 debugLog('내부 모듈 로드 완료');
 

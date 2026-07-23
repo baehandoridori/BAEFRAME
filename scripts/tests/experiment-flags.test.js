@@ -12,6 +12,16 @@ function loadResolver() {
   return require(resolverPath).resolveFabricDrawingPilot;
 }
 
+function loadShadowResolver() {
+  const resolver = require(resolverPath).resolveFabricDrawingV3Shadow;
+  assert.equal(
+    typeof resolver,
+    'function',
+    'experiment-flags must export resolveFabricDrawingV3Shadow'
+  );
+  return resolver;
+}
+
 function loadIpcSetupWithHandlerRegistry(options = {}) {
   const handlers = new Map();
   const noop = () => {};
@@ -139,12 +149,139 @@ test('legacy shortened kill-switch names do not change the approved flag contrac
   );
 });
 
+test('Fabric drawing V3 shadow resolves kill, pilot dependency, CLI, env, and default in priority order', () => {
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+  const enabledPilot = Object.freeze({ enabled: true, source: 'cli' });
+  const disabledPilot = Object.freeze({ enabled: false, source: 'default' });
+  const cases = [
+    [{
+      argv: ['--fabric-drawing-v3-shadow', '--disable-fabric-drawing-v3-shadow'],
+      env: { BAEFRAME_FABRIC_DRAWING_V3_SHADOW: '1' },
+      fabricDrawingPilot: disabledPilot
+    }, { enabled: false, source: 'kill-switch' }],
+    [{
+      argv: ['--fabric-drawing-v3-shadow'],
+      env: { BAEFRAME_DISABLE_FABRIC_DRAWING_V3_SHADOW: '1' },
+      fabricDrawingPilot: enabledPilot
+    }, { enabled: false, source: 'kill-switch' }],
+    [{
+      argv: ['--fabric-drawing-v3-shadow'],
+      env: { BAEFRAME_FABRIC_DRAWING_V3_SHADOW: '1' },
+      fabricDrawingPilot: disabledPilot
+    }, { enabled: false, source: 'fabric-pilot-disabled' }],
+    [{
+      argv: ['--fabric-drawing-v3-shadow'],
+      env: { BAEFRAME_FABRIC_DRAWING_V3_SHADOW: '1' },
+      fabricDrawingPilot: enabledPilot
+    }, { enabled: true, source: 'cli' }],
+    [{
+      argv: [],
+      env: { BAEFRAME_FABRIC_DRAWING_V3_SHADOW: '1' },
+      fabricDrawingPilot: enabledPilot
+    }, { enabled: true, source: 'env' }],
+    [{
+      argv: [],
+      env: {},
+      fabricDrawingPilot: enabledPilot
+    }, { enabled: false, source: 'default' }]
+  ];
+
+  for (const [input, expected] of cases) {
+    const result = resolveFabricDrawingV3Shadow(input);
+    assert.equal(Object.isFrozen(result), true);
+    assert.deepEqual(Object.keys(result).sort(), ['enabled', 'source']);
+    assert.deepEqual(result, expected);
+  }
+});
+
+test('Fabric drawing V3 shadow environment flags accept only the trimmed exact value 1', () => {
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+  const fabricDrawingPilot = Object.freeze({ enabled: true, source: 'env' });
+
+  assert.deepEqual(
+    resolveFabricDrawingV3Shadow({
+      argv: [],
+      env: { BAEFRAME_FABRIC_DRAWING_V3_SHADOW: ' 1 ' },
+      fabricDrawingPilot
+    }),
+    { enabled: true, source: 'env' }
+  );
+
+  for (const value of ['true', 'yes', 'on', '01', '1.0']) {
+    assert.deepEqual(
+      resolveFabricDrawingV3Shadow({
+        argv: [],
+        env: { BAEFRAME_FABRIC_DRAWING_V3_SHADOW: value },
+        fabricDrawingPilot
+      }),
+      { enabled: false, source: 'default' }
+    );
+    assert.deepEqual(
+      resolveFabricDrawingV3Shadow({
+        argv: ['--fabric-drawing-v3-shadow'],
+        env: { BAEFRAME_DISABLE_FABRIC_DRAWING_V3_SHADOW: value },
+        fabricDrawingPilot
+      }),
+      { enabled: true, source: 'cli' }
+    );
+  }
+});
+
+test('Fabric drawing V3 shadow stays off for missing or invalid Fabric pilot state', () => {
+  const resolveFabricDrawingV3Shadow = loadShadowResolver();
+
+  for (const fabricDrawingPilot of [
+    undefined,
+    null,
+    true,
+    {},
+    { enabled: false },
+    { enabled: 'true' },
+    { enabled: 1 }
+  ]) {
+    assert.deepEqual(
+      resolveFabricDrawingV3Shadow({
+        argv: ['--fabric-drawing-v3-shadow'],
+        env: {},
+        fabricDrawingPilot
+      }),
+      { enabled: false, source: 'fabric-pilot-disabled' }
+    );
+  }
+});
+
+test('Fabric drawing V3 shadow returns a frozen exact result without mutating inputs', () => {
+  const resolverModule = require(resolverPath);
+  const argv = Object.freeze(['--fabric-drawing-v3-shadow']);
+  const env = Object.freeze({ BAEFRAME_FABRIC_DRAWING_V3_SHADOW: '1' });
+  const fabricDrawingPilot = Object.freeze({ enabled: true, source: 'cli' });
+  const input = Object.freeze({ argv, env, fabricDrawingPilot });
+
+  assert.deepEqual(
+    Object.keys(resolverModule).sort(),
+    ['resolveFabricDrawingPilot', 'resolveFabricDrawingV3Shadow']
+  );
+
+  const result = resolverModule.resolveFabricDrawingV3Shadow(input);
+
+  assert.equal(Object.isFrozen(result), true);
+  assert.deepEqual(Object.keys(result).sort(), ['enabled', 'source']);
+  assert.deepEqual(result, { enabled: true, source: 'cli' });
+  assert.deepEqual(argv, ['--fabric-drawing-v3-shadow']);
+  assert.deepEqual(env, { BAEFRAME_FABRIC_DRAWING_V3_SHADOW: '1' });
+  assert.deepEqual(fabricDrawingPilot, { enabled: true, source: 'cli' });
+  assert.deepEqual(input, { argv, env, fabricDrawingPilot });
+});
+
 test('resolver returns a frozen exact result without mutating explicit inputs', () => {
   const resolverModule = require(resolverPath);
   const argv = Object.freeze(['--fabric-drawing-pilot']);
   const env = Object.freeze({ BAEFRAME_FABRIC_DRAWING_PILOT: '1' });
 
-  assert.deepEqual(Object.keys(resolverModule), ['resolveFabricDrawingPilot']);
+  assert.deepEqual(
+    Object.keys(resolverModule).sort(),
+    ['resolveFabricDrawingPilot', 'resolveFabricDrawingV3Shadow']
+  );
 
   const result = resolverModule.resolveFabricDrawingPilot({ argv, env });
 
@@ -157,19 +294,47 @@ test('resolver returns a frozen exact result without mutating explicit inputs', 
   assert.doesNotMatch(resolverSource, /electron-store|localStorage|writeFile|appendFile/);
 });
 
-test('main startup resolves the pilot once and injects the frozen state into IPC setup', () => {
+test('main startup resolves and configures V3 shadow once before app readiness without widening IPC state', () => {
   const mainSource = fs.readFileSync(path.join(repoRoot, 'main', 'index.js'), 'utf8');
-  const resolverCalls = mainSource.match(/resolveFabricDrawingPilot\s*\(/g) || [];
+  const fabricResolverCalls = mainSource.match(/resolveFabricDrawingPilot\s*\(/g) || [];
+  const shadowResolverCalls = mainSource.match(/resolveFabricDrawingV3Shadow\s*\(/g) || [];
+  const shadowConfigureCalls = mainSource.match(
+    /mpvOverlayHost\.configureDrawingV3Shadow\s*\(/g
+  ) || [];
+  const readyCalls = mainSource.match(/app\.whenReady\s*\(/g) || [];
 
-  assert.equal(resolverCalls.length, 1);
-  assert.match(
-    mainSource,
+  assert.equal(fabricResolverCalls.length, 1);
+  assert.equal(shadowResolverCalls.length, 1);
+  assert.equal(shadowConfigureCalls.length, 1);
+  assert.equal(readyCalls.length, 1);
+
+  const fabricResolution = mainSource.match(
     /const\s+fabricDrawingPilot\s*=\s*resolveFabricDrawingPilot\s*\(\s*\)\s*;/
   );
-  assert.match(
-    mainSource,
-    /setupIpcHandlers\s*\(\s*\{\s*fabricDrawingPilot\s*\}\s*\)\s*;/
+  const shadowResolution = mainSource.match(
+    /const\s+([A-Za-z_$][\w$]*)\s*=\s*resolveFabricDrawingV3Shadow\s*\(\s*\{\s*fabricDrawingPilot\s*\}\s*\)\s*;/
   );
+  assert.ok(fabricResolution);
+  assert.ok(shadowResolution);
+
+  const shadowStateName = shadowResolution[1];
+  const escapedShadowStateName = shadowStateName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const shadowConfiguration = mainSource.match(new RegExp(
+    `mpvOverlayHost\\.configureDrawingV3Shadow\\s*\\(\\s*${escapedShadowStateName}\\.enabled\\s*\\)\\s*;`
+  ));
+  assert.ok(shadowConfiguration);
+
+  const readyIndex = mainSource.search(/app\.whenReady\s*\(/);
+  assert.ok(fabricResolution.index < shadowResolution.index);
+  assert.ok(shadowResolution.index < shadowConfiguration.index);
+  assert.ok(shadowConfiguration.index < readyIndex);
+
+  const setupCalls = Array.from(
+    mainSource.matchAll(/setupIpcHandlers\s*\(\s*([^)]*?)\s*\)\s*;/g)
+  );
+  assert.equal(setupCalls.length, 1);
+  assert.match(setupCalls[0][1], /^\{\s*fabricDrawingPilot\s*\}$/);
+  assert.doesNotMatch(setupCalls[0][1], /shadow|drawingV3/i);
 });
 
 test('IPC pilot state handler defaults off and returns only a boolean snapshot', () => {
