@@ -7,6 +7,10 @@ const rootDir = path.resolve(__dirname, '../..');
 const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
 const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8'));
 const mainCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/main.css'), 'utf8'));
+const fabricRuntimeSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-overlay-runtime.js'),
+  'utf8'
+));
 
 function loadFabricPilotStatusRefreshCoordinatorFactory() {
   const functionStart = appSource.indexOf('function createFabricPilotStatusRefreshCoordinator(');
@@ -145,6 +149,18 @@ test('freeze and system shutdown paths are conditional on pilot ownership', () =
   }
   assert.doesNotMatch(appSource, /mpv 엔진을 BAEFRAME 영상 영역에 연결했습니다|mpv 파일럿으로 원본 영상을 직접 열었습니다/);
   assert.doesNotMatch(appSource, /showToast\([^;]*(?:mpv|원본 영상)[^;]*['"]success['"]/i);
+});
+
+test('Fabric toolbar reports review persistence as active without the old session-only warning', () => {
+  assert.doesNotMatch(fabricRuntimeSource, /저장 안 됨/);
+  assert.match(
+    fabricRuntimeSource,
+    /const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 시험판 · 리뷰 저장 연결됨';/
+  );
+  assert.match(
+    fabricRuntimeSource,
+    /function formatFabricPersistenceBadge\(targetFrame = null\) \{[\s\S]+FABRIC_PERSISTENCE_BADGE_PREFIX[\s\S]+시험 프레임/
+  );
 });
 
 test('Fabric 수동 검증 HUD는 제한된 진단값을 조합하고 재생 중 250ms 안에 갱신한다', () => {

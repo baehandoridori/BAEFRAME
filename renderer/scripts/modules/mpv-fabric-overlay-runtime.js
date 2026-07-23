@@ -62,6 +62,7 @@ const MIN_BRUSH_SIZE = 1;
 const MAX_BRUSH_SIZE = 50;
 const MIN_BRUSH_OPACITY_PERCENT = 10;
 const MAX_BRUSH_OPACITY_PERCENT = 100;
+const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 시험판 · 리뷰 저장 연결됨';
 const SELECTION_HIT_MARGIN_CSS_PX = 6;
 const MIN_SELECTION_HIT_TOLERANCE = 2;
 const MAX_SELECTION_HIT_TOLERANCE = 96;
@@ -138,6 +139,13 @@ const PERSISTENCE_CAPS_KEYS = Object.freeze(['start', 'end']);
 const PERSISTENCE_POINTER_TYPES = new Set(['mouse', 'pen', 'touch']);
 const PERSISTENCE_HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const persistenceUtf8Encoder = new TextEncoder();
+
+function formatFabricPersistenceBadge(targetFrame = null) {
+  const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0
+    ? targetFrame
+    : '-';
+  return `${FABRIC_PERSISTENCE_BADGE_PREFIX} · 시험 프레임 ${frameLabel}`;
+}
 
 function clonePlain(value) {
   if (value === undefined) return undefined;
@@ -3631,7 +3639,7 @@ function createFabricOverlayRuntime(options = {}) {
     inputEnabled = false;
     currentSession = null;
     sceneStore.deactivateSession();
-    if (badge) badge.textContent = '새 드로잉 시험판 · 저장 안 됨 · 시험 프레임 -';
+    if (badge) badge.textContent = formatFabricPersistenceBadge();
   }
 
   function releaseSurfaceResources() {
@@ -3729,7 +3737,7 @@ function createFabricOverlayRuntime(options = {}) {
       selectionControls = createSelectionModeControls();
       badge = documentRef.createElement('span');
       badge.className = 'mpv-fabric-pilot-badge';
-      badge.textContent = '새 드로잉 시험판 · 저장 안 됨 · 시험 프레임 -';
+      badge.textContent = formatFabricPersistenceBadge();
       toolbar.appendChild(brushButton);
       toolbar.appendChild(selectButton);
       toolbar.appendChild(selectionControls.group);
@@ -3844,7 +3852,7 @@ function createFabricOverlayRuntime(options = {}) {
     setToolMode(session.tool);
     inputEnabled = true;
     setSurfaceInput(true);
-    badge.textContent = `새 드로잉 시험판 · 저장 안 됨 · 시험 프레임 ${session.targetFrame}`;
+    badge.textContent = formatFabricPersistenceBadge(session.targetFrame);
     metrics.recordToggleLatency(now() - startedAt);
     return { accepted: true, enabled: true, restored: activation.restored };
   }
