@@ -85,24 +85,28 @@
 - Create: `main/runtime-profile.js`
 - Create: `scripts/electron-builder-after-pack.js`
 - Modify: `main/experiment-flags.js`
+- Modify: `main/mpv-manager.js`
 - Modify: `main/index.js`
+- Modify: `main/instance-policy.js`
 - Modify: `electron-builder.yml`
 - Modify: `package.json`
 - Modify: `scripts/tests/experiment-flags.test.js`
 - Modify: `scripts/tests/instance-policy.test.js`
+- Modify: `scripts/tests/mpv-manager.test.js`
+- Modify: `scripts/tests/project-file-associations.test.js`
 - Create: `scripts/tests/runtime-profile.test.js`
 - Modify: `scripts/tests/mpv-runtime-provision.test.js`
 
 **TDD**
 
 1. marker 없음/손상/unknown schema는 OFF인 테스트를 먼저 실패시킨다.
-2. 유효 marker는 pilot+shadow+persistence ON 테스트를 추가한다.
-3. kill switch가 marker보다 우선하는 테스트를 추가한다.
+2. 유효 marker는 mpv+pilot+shadow+persistence ON 테스트를 추가한다.
+3. mpv/Fabric kill switch가 marker보다 우선하는 테스트를 추가한다.
 4. 시험판에서 userData 격리와 shell registration skip을 검증한다.
 5. `build:trial`에만 marker가 생성되고 일반 build에는 없는 테스트를 추가한다.
 6. trial build 뒤 같은 출력 폴더의 normal build가 기존 marker를 제거하는 테스트를 추가한다.
 7. `prebuild:trial`에서 Fabric bundle이 항상 재생성되는지 검증한다.
-8. resolver, 원자적 marker build hook, main wiring을 구현한다.
+8. 전역 환경변수 변경 없이 해석된 mpv/Fabric 상태를 각 manager에 주입하고, 원자적 marker build hook과 main wiring을 구현한다.
 
 **Commit**
 

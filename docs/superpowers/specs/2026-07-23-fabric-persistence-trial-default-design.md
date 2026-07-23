@@ -151,6 +151,7 @@ controller는 영상별 `legacyBypass` 상태를 가진다. 이 상태에서는 
   "schemaVersion": 1,
   "channel": "fabric-v3-trial",
   "features": {
+    "mpvPlaybackPilot": true,
     "fabricDrawingPilot": true,
     "fabricDrawingV3Shadow": true,
     "fabricDrawingPersistence": true
@@ -167,7 +168,9 @@ controller는 영상별 `legacyBypass` 상태를 가진다. 이 상태에서는 
 3. 유효한 시험판 marker
 4. 기본 OFF
 
-marker가 없거나 깨졌거나 알 수 없는 schema면 default OFF다. 시험판은 pid별 userData에 격리되고 프로토콜 및 `.bframe` 파일 연결을 등록하지 않으므로 현재 사용 중인 배프레임을 흡수하거나 연결을 덮어쓰지 않는다.
+marker가 없거나 깨졌거나 알 수 없는 schema면 default OFF다. `mpvPlaybackPilot`까지 유효해야 시험 profile 전체를 인정한다. 전역 환경변수를 덮어쓰지 않고 mpv manager에 해석된 상태를 주입하며, `BAEFRAME_DISABLE_MPV=1` kill switch는 marker보다 우선한다.
+
+시험판은 pid별 userData에 격리되고 프로토콜 및 `.bframe` 파일 연결을 등록하지 않으므로 현재 사용 중인 배프레임을 흡수하거나 연결을 덮어쓰지 않는다.
 
 패키징 hook은 실행할 때마다 기존 marker를 먼저 제거한다. trial 환경에서만 임시 파일에 정확한 JSON을 쓴 뒤 rename한다. 같은 `dist/win-unpacked`에 trial build 후 일반 build를 실행해도 marker가 남지 않아야 한다.
 
@@ -219,6 +222,7 @@ marker가 없거나 깨졌거나 알 수 없는 schema면 default OFF다. 시험
 - 프레임, 획, 스타일, 위치 복원 확인
 - 기존 BAEFRAME PID와 Windows 연결 상태 불변 확인
 - trial build 뒤 같은 출력 폴더의 normal build에서 marker 잔여 0개 확인
+- trial EXE를 mpv/Fabric 인자 없이 직접 실행해 mpv + Fabric 활성 확인
 
 ## 10. 이번 단계의 비목표
 
