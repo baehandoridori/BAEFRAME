@@ -383,6 +383,25 @@ function makeHistoryStroke(id, overrides = {}) {
   };
 }
 
+function makePersistenceHydration(overrides = {}) {
+  return {
+    hostGeneration: 3,
+    videoGeneration: 7,
+    persistenceSessionId: 'runtime-persistence-session',
+    stableVideoIdentity: 'runtime-video',
+    fps: 24,
+    totalFrames: 240,
+    keyframes: [],
+    ...overrides
+  };
+}
+
+function makePersistenceExport(overrides = {}) {
+  const request = makePersistenceHydration(overrides);
+  delete request.keyframes;
+  return request;
+}
+
 function createHistoryHarness(storeOptions = {}) {
   FakeCanvas.instances = [];
   const document = new FakeDocument();
@@ -409,6 +428,224 @@ function assertHistoryDiagnostics(harness, expected) {
   }
   return diagnostics;
 }
+
+test('runtime hydrate and export round-trip one video atomically while drawing input is off', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  assert.equal(runtime.prepare(root).prepared, true);
+
+  const persisted = makeHistoryStroke('persisted-runtime-stroke', {
+    transform: {
+      left: 12,
+      top: -4,
+      scaleX: 1,
+      scaleY: 1,
+      angle: 0,
+      skewX: 0,
+      skewY: 0,
+      flipX: false,
+      flipY: false
+    }
+  });
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [{
+      id: 'disk-keyframe-a',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 6,
+      objects: [persisted]
+    }]
+  })).accepted, true);
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    persistenceSessionId: 'runtime-persistence-session-b',
+    stableVideoIdentity: 'runtime-video-b',
+    keyframes: [{
+      id: 'disk-keyframe-b',
+      frame: 5,
+      sourceWidth: 1280,
+      sourceHeight: 720,
+      mutationSequence: 2,
+      objects: [makeHistoryStroke('video-b-stroke')]
+    }]
+  })).accepted, true);
+
+  const firstExport = runtime.exportDrawingVideo(makePersistenceExport());
+  assert.equal(firstExport.accepted, true);
+  assert.deepEqual(firstExport.snapshot, {
+    hostGeneration: 3,
+    videoGeneration: 7,
+    persistenceSessionId: 'runtime-persistence-session',
+    stableVideoIdentity: 'runtime-video',
+    fps: 24,
+    totalFrames: 240,
+    scenes: [{
+      sceneInstanceId: firstExport.snapshot.scenes[0].sceneInstanceId,
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 6,
+      objects: [persisted]
+    }]
+  });
+  assert.equal(typeof firstExport.snapshot.scenes[0].sceneInstanceId, 'string');
+  assert.notEqual(firstExport.snapshot.scenes[0].sceneInstanceId, 'disk-keyframe-a');
+  assert.equal(Object.hasOwn(firstExport.snapshot.scenes[0], 'id'), false);
+  assert.equal(runtime.getDiagnostics().inputEnabled, false);
+
+  const beforeRejectedHydrate = structuredClone(firstExport.snapshot);
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [
+      {
+        id: 'duplicate-frame-a',
+        frame: 24,
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        mutationSequence: 6,
+        objects: [persisted]
+      },
+      {
+        id: 'duplicate-frame-b',
+        frame: 24,
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        mutationSequence: 7,
+        objects: []
+      }
+    ]
+  })).accepted, false);
+  assert.deepEqual(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot,
+    beforeRejectedHydrate,
+    'rejected hydrate leaves the previous video snapshot untouched'
+  );
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport({
+      persistenceSessionId: 'runtime-persistence-session-b',
+      stableVideoIdentity: 'runtime-video-b'
+    })).accepted,
+    true,
+    'hydrating video A does not replace video B'
+  );
+
+  assert.deepEqual(
+    runtime.exportDrawingVideo(makePersistenceExport({ fps: 23.976 })),
+    { accepted: false, reason: 'timeline-mismatch' }
+  );
+  assert.deepEqual(
+    runtime.exportDrawingVideo(makePersistenceExport({ hostGeneration: 2 })),
+    { accepted: false, reason: 'stale-fence' }
+  );
+
+  assert.deepEqual(runtime.setDrawingInput(makeInput({
+    hostGeneration: 4,
+    videoGeneration: 7,
+    inputRevision: 1,
+    session: {
+      ...makeInput().session,
+      sessionId: 'stale-host-session',
+      targetFrame: 24
+    }
+  })), {
+    accepted: false,
+    reason: 'stale-persistence-session'
+  });
+
+  const input = makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 2,
+    session: {
+      ...makeInput().session,
+      sessionId: 'hydrated-runtime-session',
+      targetFrame: 24
+    }
+  });
+  assert.deepEqual(runtime.setDrawingInput(input), {
+    accepted: true,
+    enabled: true,
+    restored: true
+  });
+  const diagnostics = runtime.getDiagnostics();
+  assert.equal(diagnostics.objectCount, 1);
+  assert.equal(diagnostics.mutationCount, 0);
+  assert.equal(diagnostics.dirty, false);
+  assert.equal(diagnostics.selectionCount, 0);
+  assert.equal(diagnostics.undoDepth, 0);
+  assert.equal(diagnostics.redoDepth, 0);
+
+  assert.equal(runtime.setDrawingInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 3,
+    enabled: false
+  }).accepted, true);
+  const disabledExport = runtime.exportDrawingVideo(makePersistenceExport());
+  assert.equal(disabledExport.accepted, true);
+  disabledExport.snapshot.scenes[0].objects[0].style.color = '#000000';
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects[0].style.color,
+    '#ff4757',
+    'exported payload cannot mutate the authoritative scene'
+  );
+  runtime.destroy();
+});
+
+test('runtime persistence bridge ignores hover and cannot roll back a committed stroke', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const persistenceTransitions = [];
+  let throwFromBridge = false;
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    persistenceCommitObserver(event) {
+      persistenceTransitions.push(event);
+      if (throwFromBridge) throw new Error('persistence-bridge-injected');
+    }
+  });
+  runtime.prepare(root);
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration()).accepted, true);
+  assert.equal(runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    session: {
+      ...makeInput().session,
+      targetFrame: 24
+    }
+  })).accepted, true);
+
+  const canvasElement = FakeCanvas.instances[0].upperCanvasEl;
+  canvasElement.dispatch('pointermove', {
+    pointerId: 0,
+    pointerType: 'mouse',
+    buttons: 0,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0,
+    timeStamp: 1
+  });
+  assert.equal(persistenceTransitions.length, 0);
+
+  throwFromBridge = true;
+  drawStroke(canvasElement, 601);
+  assert.equal(runtime.getDiagnostics().objectCount, 1);
+  assert.equal(persistenceTransitions.length, 1);
+  assert.equal(persistenceTransitions[0].hostGeneration, 3);
+  assert.equal(persistenceTransitions[0].videoGeneration, 7);
+  assert.equal(
+    runtime.getDiagnostics().drawingPersistence.observerFailureCount,
+    1
+  );
+  assert.equal(runtime.getDiagnostics().lastError, null);
+  runtime.destroy();
+});
 
 function createObservedDrawingV3Adapter(overrides = {}) {
   const scheduled = [];
@@ -3768,7 +4005,9 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
   assert.deepEqual(Object.keys(runtime).sort(), [
     'applyDrawingAction',
     'destroy',
+    'exportDrawingVideo',
     'getDiagnostics',
+    'hydrateDrawingVideo',
     'prepare',
     'setDrawingInput',
     'updateDrawingTool',

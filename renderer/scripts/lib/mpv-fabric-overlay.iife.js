@@ -10378,6 +10378,11 @@ void main() {
       var MAX_STROKE_POINTS = 2e4;
       var MAX_LASSO_POINTS = 1024;
       var DEFAULT_MAX_OBJECTS = 1e4;
+      var MAX_PERSISTED_KEYFRAMES = 1e4;
+      var MAX_PERSISTED_OBJECTS_TOTAL = 1e5;
+      var MAX_PERSISTED_SOURCE_DIMENSION = 1e6;
+      var MAX_PERSISTED_TOTAL_FRAMES = 1e9;
+      var MAX_PERSISTENCE_STRING_LENGTH = 32768;
       var TRANSFORM_FIELDS = ["left", "top", "scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
       var UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ["scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
       var BRUSH_COLORS = Object.freeze([
@@ -10444,6 +10449,26 @@ void main() {
         "unsupported-order-mutation",
         "unsupported-transform",
         "warm-seed-mismatch"
+      ]);
+      var PERSISTENCE_HYDRATE_KEYS = Object.freeze([
+        "hostGeneration",
+        "videoGeneration",
+        "persistenceSessionId",
+        "stableVideoIdentity",
+        "fps",
+        "totalFrames",
+        "keyframes"
+      ]);
+      var PERSISTENCE_EXPORT_KEYS = Object.freeze(
+        PERSISTENCE_HYDRATE_KEYS.filter((key) => key !== "keyframes")
+      );
+      var PERSISTENCE_KEYFRAME_KEYS = Object.freeze([
+        "id",
+        "frame",
+        "sourceWidth",
+        "sourceHeight",
+        "mutationSequence",
+        "objects"
       ]);
       function clonePlain(value) {
         if (value === void 0) return void 0;
@@ -10572,6 +10597,46 @@ void main() {
         const number = Math.trunc(Number(value));
         return Number.isSafeInteger(number) && number >= 0 ? number : 0;
       }
+      function isPlainRecord(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+        const prototype = Object.getPrototypeOf(value);
+        return prototype === Object.prototype || prototype === null;
+      }
+      function isDenseArray(value) {
+        if (!Array.isArray(value)) return false;
+        for (let index = 0; index < value.length; index += 1) {
+          if (!Object.hasOwn(value, index)) return false;
+        }
+        return Reflect.ownKeys(value).every(
+          (key) => key === "length" || typeof key === "string" && /^(0|[1-9]\d*)$/.test(key) && Number(key) < value.length
+        );
+      }
+      function hasExactKeys(value, keys) {
+        if (!isPlainRecord(value)) return false;
+        const ownKeys = Reflect.ownKeys(value);
+        return ownKeys.length === keys.length && ownKeys.every((key) => typeof key === "string" && keys.includes(key));
+      }
+      function isBoundedPersistenceString(value) {
+        return typeof value === "string" && value.length > 0 && value.length <= MAX_PERSISTENCE_STRING_LENGTH;
+      }
+      function isSafeCount(value) {
+        return Number.isSafeInteger(value) && value >= 0;
+      }
+      function validatePersistenceEnvelope(request, includeKeyframes) {
+        const keys = includeKeyframes ? PERSISTENCE_HYDRATE_KEYS : PERSISTENCE_EXPORT_KEYS;
+        if (!hasExactKeys(request, keys) || !isSafeCount(request.hostGeneration) || !isSafeCount(request.videoGeneration) || !isBoundedPersistenceString(request.persistenceSessionId) || !isBoundedPersistenceString(request.stableVideoIdentity) || !Number.isFinite(request.fps) || request.fps <= 0 || request.fps > 1e3 || !Number.isSafeInteger(request.totalFrames) || request.totalFrames <= 0 || request.totalFrames > MAX_PERSISTED_TOTAL_FRAMES) {
+          return false;
+        }
+        return !includeKeyframes || isDenseArray(request.keyframes) && request.keyframes.length <= MAX_PERSISTED_KEYFRAMES;
+      }
+      function validatePersistedRecord(record) {
+        if (!isPlainRecord(record) || typeof record.id !== "string" || record.id.length === 0 || record.id.length > 512 || record.type !== "stroke" || typeof record.pathData !== "string" || record.pathData.length === 0 || !isDenseArray(record.sourcePoints) || record.sourcePoints.length === 0 || record.sourcePoints.length > MAX_STROKE_POINTS || !isPlainRecord(record.style) || !isPlainRecord(record.transform)) {
+          return false;
+        }
+        return record.sourcePoints.every(
+          (point) => isPlainRecord(point) && Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.pressure) && Number.isFinite(point.time)
+        );
+      }
       function drawingV3Count(value) {
         const number = Math.trunc(Number(value));
         return Number.isSafeInteger(number) && number >= 0 ? number : 0;
@@ -10634,12 +10699,15 @@ void main() {
         );
         const estimateObjectBytes = typeof options.estimateObjectBytes === "function" ? options.estimateObjectBytes : defaultEstimateObjectBytes;
         const drawingEngineObserver = options.drawingEngineObserver && typeof options.drawingEngineObserver === "object" ? options.drawingEngineObserver : null;
+        const committedTransitionObserver = typeof options.committedTransitionObserver === "function" ? options.committedTransitionObserver : null;
         const createSceneInstanceId = typeof options.createSceneInstanceId === "function" ? options.createSceneInstanceId : null;
         const scenes = /* @__PURE__ */ new Map();
+        const persistenceByVideo = /* @__PURE__ */ new Map();
         const issuedSceneInstanceIds = /* @__PURE__ */ new Set();
         const videoAccess = /* @__PURE__ */ new Map();
         let accessClock = 0;
         let latestVideoGeneration = -1;
+        let latestPersistenceHostGeneration = -1;
         let activeSession = null;
         let evictionCount = 0;
         let commandSequence = 0;
@@ -10647,6 +10715,8 @@ void main() {
         let observerFailureCount = 0;
         let observerQuarantineFailureCount = 0;
         let observerLifecycleFailureCount = 0;
+        let persistenceObserverFailureCount = 0;
+        let persistenceUnboundCommitCount = 0;
         let destroyed = false;
         function sourceDimension(value) {
           const number = Number(value);
@@ -10699,19 +10769,21 @@ void main() {
           }
           return authoritativeObjects;
         }
-        function notifySceneActivation(scene, incomingSession, restored) {
+        function notifySceneActivation(scene, incomingSession) {
+          const alreadySeeded = scene.drawingObserverSeeded === true;
+          scene.drawingObserverSeeded = true;
           try {
             const activate = drawingEngineObserver?.activateScene;
             if (typeof activate !== "function") return;
             activate.call(drawingEngineObserver, {
               ...sceneDescriptor(scene, incomingSession),
               mutationSequence: scene.mutationSequence
-            }, activationObjectView(scene, restored));
+            }, activationObjectView(scene, alreadySeeded));
           } catch (_error) {
             recordObserverFailure(scene.sceneInstanceId);
           }
         }
-        function notifyCommittedTransition(scene, eventFactory) {
+        function notifyDrawingEngineTransition(scene, eventFactory) {
           try {
             const enqueue = drawingEngineObserver?.enqueueTransition;
             if (typeof enqueue !== "function") return;
@@ -10719,6 +10791,35 @@ void main() {
           } catch (_error) {
             recordObserverFailure(scene.sceneInstanceId);
           }
+        }
+        function recordPersistenceObserverFailure() {
+          persistenceObserverFailureCount += 1;
+        }
+        function notifyPersistenceTransition(scene, eventFactory) {
+          if (!committedTransitionObserver) return;
+          const persistence = persistenceByVideo.get(scene.stableVideoIdentity);
+          if (!persistence) {
+            persistenceUnboundCommitCount += 1;
+            return;
+          }
+          try {
+            const result = committedTransitionObserver({
+              hostGeneration: persistence.hostGeneration,
+              videoGeneration: persistence.videoGeneration,
+              persistenceSessionId: persistence.persistenceSessionId,
+              stableVideoIdentity: scene.stableVideoIdentity,
+              ...eventFactory()
+            });
+            if (result && typeof result.then === "function") {
+              Promise.resolve(result).catch(recordPersistenceObserverFailure);
+            }
+          } catch (_error) {
+            recordPersistenceObserverFailure();
+          }
+        }
+        function notifyCommittedTransition(scene, eventFactory) {
+          notifyDrawingEngineTransition(scene, () => clonePlain(eventFactory()));
+          notifyPersistenceTransition(scene, () => clonePlain(eventFactory()));
         }
         function notifyScenesDropped(sceneInstanceIds) {
           if (!Array.isArray(sceneInstanceIds) || sceneInstanceIds.length === 0) return;
@@ -10776,6 +10877,7 @@ void main() {
             scenes.delete(key);
           }
           videoAccess.delete(stableVideoIdentity);
+          persistenceByVideo.delete(stableVideoIdentity);
           evictionCount += 1;
           notifyScenesDropped(droppedSceneInstanceIds);
         }
@@ -11056,6 +11158,181 @@ void main() {
           }));
           return { applied: true, commandId: command.id, ...recorded };
         }
+        function persistenceFenceMatches(binding, request) {
+          return binding.hostGeneration === request.hostGeneration && binding.videoGeneration === request.videoGeneration && binding.persistenceSessionId === request.persistenceSessionId && binding.stableVideoIdentity === request.stableVideoIdentity;
+        }
+        function validateHydrationFrames(request) {
+          const preparedFrames = [];
+          const frameNumbers = /* @__PURE__ */ new Set();
+          let previousFrame = -1;
+          let objectCount = 0;
+          let estimatedBytes = 0;
+          try {
+            for (const keyframe of request.keyframes) {
+              if (!hasExactKeys(keyframe, PERSISTENCE_KEYFRAME_KEYS) || typeof keyframe.id !== "string" || keyframe.id.length === 0 || keyframe.id.length > 512 || !Number.isSafeInteger(keyframe.frame) || keyframe.frame < 0 || keyframe.frame >= request.totalFrames || keyframe.frame <= previousFrame || !Number.isFinite(keyframe.sourceWidth) || keyframe.sourceWidth <= 0 || keyframe.sourceWidth > MAX_PERSISTED_SOURCE_DIMENSION || !Number.isFinite(keyframe.sourceHeight) || keyframe.sourceHeight <= 0 || keyframe.sourceHeight > MAX_PERSISTED_SOURCE_DIMENSION || !isSafeCount(keyframe.mutationSequence) || keyframe.mutationSequence >= Number.MAX_SAFE_INTEGER || !isDenseArray(keyframe.objects) || keyframe.objects.length > maxObjects || frameNumbers.has(keyframe.frame)) {
+                return { accepted: false, reason: "invalid-hydration-request" };
+              }
+              const objects = /* @__PURE__ */ new Map();
+              for (const object of keyframe.objects) {
+                if (!validatePersistedRecord(object) || objects.has(object.id)) {
+                  return { accepted: false, reason: "invalid-hydration-request" };
+                }
+                const cloned = clonePlain(object);
+                objects.set(cloned.id, cloned);
+              }
+              const frameBytes = estimateObjectsBytes(objects);
+              if (!Number.isFinite(frameBytes) || frameBytes > maxBytes) {
+                return { accepted: false, reason: "scene-capacity-exceeded" };
+              }
+              objectCount += objects.size;
+              estimatedBytes += frameBytes;
+              if (objectCount > MAX_PERSISTED_OBJECTS_TOTAL || estimatedBytes > maxBytes) {
+                return { accepted: false, reason: "scene-capacity-exceeded" };
+              }
+              preparedFrames.push({
+                targetFrame: keyframe.frame,
+                sourceWidth: keyframe.sourceWidth,
+                sourceHeight: keyframe.sourceHeight,
+                mutationSequence: keyframe.mutationSequence,
+                objects,
+                estimatedBytes: frameBytes
+              });
+              frameNumbers.add(keyframe.frame);
+              previousFrame = keyframe.frame;
+            }
+          } catch (_error) {
+            return { accepted: false, reason: "invalid-hydration-request" };
+          }
+          return { accepted: true, preparedFrames, objectCount, estimatedBytes };
+        }
+        function planHydrationEvictions(stableVideoIdentity, nextVideoBytes) {
+          let projectedBytes = calculateEstimatedBytes() - estimateVideoBytes(stableVideoIdentity) + nextVideoBytes;
+          let projectedVideoCount = videoAccess.size + (videoAccess.has(stableVideoIdentity) ? 0 : 1);
+          const planned = [];
+          for (const candidate of videoAccess.keys()) {
+            if (projectedBytes <= maxBytes && projectedVideoCount <= maxVideos) break;
+            if (candidate === stableVideoIdentity || candidate === activeSession?.stableVideoIdentity) {
+              continue;
+            }
+            projectedBytes -= estimateVideoBytes(candidate);
+            projectedVideoCount -= 1;
+            planned.push(candidate);
+          }
+          return projectedBytes <= maxBytes && projectedVideoCount <= maxVideos ? planned : null;
+        }
+        function hydrateVideo(request = {}) {
+          if (destroyed) return { accepted: false, reason: "store-destroyed" };
+          if (!validatePersistenceEnvelope(request, true)) {
+            return { accepted: false, reason: "invalid-hydration-request" };
+          }
+          if (activeSession?.stableVideoIdentity === request.stableVideoIdentity) {
+            return { accepted: false, reason: "video-active" };
+          }
+          if (request.hostGeneration < latestPersistenceHostGeneration || request.hostGeneration === latestPersistenceHostGeneration && request.videoGeneration < latestVideoGeneration) {
+            return { accepted: false, reason: "stale-fence" };
+          }
+          const validation = validateHydrationFrames(request);
+          if (!validation.accepted) return validation;
+          const plannedEvictions = planHydrationEvictions(
+            request.stableVideoIdentity,
+            validation.estimatedBytes
+          );
+          if (!plannedEvictions) {
+            return { accepted: false, reason: "scene-capacity-exceeded" };
+          }
+          const hydratedScenes = [];
+          for (const frame of validation.preparedFrames) {
+            hydratedScenes.push({
+              key: makeSceneKey(request.stableVideoIdentity, frame.targetFrame),
+              sceneInstanceId: allocateSceneInstanceId(),
+              stableVideoIdentity: request.stableVideoIdentity,
+              targetFrame: frame.targetFrame,
+              sourceWidth: frame.sourceWidth,
+              sourceHeight: frame.sourceHeight,
+              objects: frame.objects,
+              selectedObjectIds: /* @__PURE__ */ new Set(),
+              history: createDrawingCommandHistory({
+                maxEntries: maxHistory,
+                maxBytes: maxHistoryBytes
+              }),
+              historyEntries: { undo: [], redo: [] },
+              dirty: false,
+              mutationCount: 0,
+              mutationSequence: frame.mutationSequence,
+              estimatedBytes: frame.estimatedBytes,
+              drawingObserverSeeded: false
+            });
+          }
+          const droppedSceneInstanceIds = [];
+          for (const [key, scene] of scenes) {
+            if (scene.stableVideoIdentity !== request.stableVideoIdentity) continue;
+            droppedSceneInstanceIds.push(scene.sceneInstanceId);
+            scenes.delete(key);
+          }
+          for (const scene of hydratedScenes) scenes.set(scene.key, scene);
+          persistenceByVideo.set(request.stableVideoIdentity, {
+            hostGeneration: request.hostGeneration,
+            videoGeneration: request.videoGeneration,
+            persistenceSessionId: request.persistenceSessionId,
+            stableVideoIdentity: request.stableVideoIdentity,
+            fps: request.fps,
+            totalFrames: request.totalFrames
+          });
+          if (request.hostGeneration > latestPersistenceHostGeneration) {
+            latestVideoGeneration = request.videoGeneration;
+          } else {
+            latestVideoGeneration = Math.max(latestVideoGeneration, request.videoGeneration);
+          }
+          latestPersistenceHostGeneration = Math.max(
+            latestPersistenceHostGeneration,
+            request.hostGeneration
+          );
+          touchVideo(request.stableVideoIdentity);
+          for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
+          notifyScenesDropped(droppedSceneInstanceIds);
+          return {
+            accepted: true,
+            sceneCount: hydratedScenes.length,
+            objectCount: validation.objectCount
+          };
+        }
+        function exportVideo(request = {}) {
+          if (destroyed) return { accepted: false, reason: "store-destroyed" };
+          if (!validatePersistenceEnvelope(request, false)) {
+            return { accepted: false, reason: "invalid-export-request" };
+          }
+          const binding = persistenceByVideo.get(request.stableVideoIdentity);
+          if (!binding || request.hostGeneration !== latestPersistenceHostGeneration || !persistenceFenceMatches(binding, request)) {
+            return { accepted: false, reason: "stale-fence" };
+          }
+          if (binding.fps !== request.fps || binding.totalFrames !== request.totalFrames) {
+            return { accepted: false, reason: "timeline-mismatch" };
+          }
+          try {
+            const scenesForVideo = [...scenes.values()].filter((scene) => scene.stableVideoIdentity === request.stableVideoIdentity).sort((left, right) => left.targetFrame - right.targetFrame).map((scene) => ({
+              sceneInstanceId: scene.sceneInstanceId,
+              targetFrame: scene.targetFrame,
+              sourceWidth: scene.sourceWidth,
+              sourceHeight: scene.sourceHeight,
+              mutationSequence: scene.mutationSequence,
+              objects: [...scene.objects.values()].map(clonePlain)
+            }));
+            return {
+              accepted: true,
+              snapshot: {
+                hostGeneration: binding.hostGeneration,
+                videoGeneration: binding.videoGeneration,
+                persistenceSessionId: binding.persistenceSessionId,
+                stableVideoIdentity: binding.stableVideoIdentity,
+                fps: binding.fps,
+                totalFrames: binding.totalFrames,
+                scenes: scenesForVideo
+              }
+            };
+          } catch (_error) {
+            return { accepted: false, reason: "snapshot-export-failed" };
+          }
+        }
         function activateSession(session) {
           if (destroyed) return { accepted: false, reason: "store-destroyed" };
           if (!session || typeof session.sessionId !== "string" || session.sessionId.length === 0) {
@@ -11066,11 +11343,16 @@ void main() {
           }
           const targetFrame = Number(session.targetFrame);
           const videoGeneration = Number(session.videoGeneration);
+          const hostGeneration = Number(session.hostGeneration);
           if (!Number.isInteger(targetFrame) || targetFrame < 0 || !Number.isInteger(videoGeneration) || videoGeneration < 0) {
             return { accepted: false, reason: "invalid-session-coordinates" };
           }
           if (videoGeneration < latestVideoGeneration) {
             return { accepted: false, reason: "stale-video-generation" };
+          }
+          const persistence = persistenceByVideo.get(session.stableVideoIdentity);
+          if (persistence && (!Number.isSafeInteger(hostGeneration) || persistence.hostGeneration !== hostGeneration || persistence.videoGeneration !== videoGeneration || targetFrame >= persistence.totalFrames)) {
+            return { accepted: false, reason: "stale-persistence-session" };
           }
           latestVideoGeneration = Math.max(latestVideoGeneration, videoGeneration);
           const sceneKey = makeSceneKey(session.stableVideoIdentity, targetFrame);
@@ -11093,7 +11375,8 @@ void main() {
               dirty: false,
               mutationCount: 0,
               mutationSequence: 0,
-              estimatedBytes: 0
+              estimatedBytes: 0,
+              drawingObserverSeeded: false
             });
           }
           activeSession = {
@@ -11109,7 +11392,7 @@ void main() {
           scene.selectedObjectIds.clear();
           touchVideo(session.stableVideoIdentity);
           enforceLimits();
-          notifySceneActivation(scene, session, restored);
+          notifySceneActivation(scene, session);
           return { accepted: true, restored, sceneKey };
         }
         function deactivateSession(sessionId) {
@@ -11483,6 +11766,10 @@ void main() {
             observerFailureCount,
             observerQuarantineFailureCount,
             observerLifecycleFailureCount,
+            persistenceObserverFailureCount,
+            persistenceUnboundCommitCount,
+            persistenceVideoCount: persistenceByVideo.size,
+            latestPersistenceHostGeneration,
             latestVideoGeneration,
             activeSessionId: activeSession?.sessionId || null,
             activeSceneKey: activeSession?.sceneKey || null,
@@ -11505,12 +11792,15 @@ void main() {
           const droppedSceneInstanceIds = [...scenes.values()].map((scene) => scene.sceneInstanceId);
           scenes.clear();
           videoAccess.clear();
+          persistenceByVideo.clear();
           activeSession = null;
           notifyScenesDropped(droppedSceneInstanceIds);
         }
         return {
           activateSession,
           deactivateSession,
+          hydrateVideo,
+          exportVideo,
           addStroke,
           selectObjects,
           transformSelection,
@@ -11625,6 +11915,17 @@ void main() {
         if (request.enabled && currentVideo >= 0 && videoGeneration > currentVideo) return false;
         return true;
       }
+      function resolvePersistenceCommitObserver(options, windowRef) {
+        if (typeof options.persistenceCommitObserver === "function") {
+          return options.persistenceCommitObserver;
+        }
+        try {
+          const bridge = windowRef?.mpvOverlayPersistence;
+          return typeof bridge?.notifyCommittedTransition === "function" ? bridge.notifyCommittedTransition.bind(bridge) : null;
+        } catch (_error) {
+          return null;
+        }
+      }
       function createFabricOverlayRuntime(options = {}) {
         const documentRef = options.document || (typeof document !== "undefined" ? document : null);
         const windowRef = options.window || (typeof window !== "undefined" ? window : null);
@@ -11634,6 +11935,7 @@ void main() {
         const devicePixelRatio = finiteNumber(options.devicePixelRatio ?? windowRef?.devicePixelRatio, 1) || 1;
         const metrics = options.metrics || createFabricDrawingPilotMetrics(options.metricsOptions);
         const drawingV3ShadowRequested = options.drawingV3ShadowEnabled === true;
+        const persistenceCommitObserver = resolvePersistenceCommitObserver(options, windowRef);
         const customSceneStore = options.sceneStore || null;
         let drawingV3Adapter = null;
         let drawingV3ShadowStartupFailed = false;
@@ -11660,7 +11962,8 @@ void main() {
         }
         const sceneStore = customSceneStore || createSessionSceneStore({
           ...options.sceneStoreOptions || {},
-          ...drawingV3Adapter ? { drawingEngineObserver: drawingV3Adapter } : {}
+          ...drawingV3Adapter ? { drawingEngineObserver: drawingV3Adapter } : {},
+          ...persistenceCommitObserver ? { committedTransitionObserver: persistenceCommitObserver } : {}
         });
         const actionDeduper = options.actionDeduper || createActionDeduper(options.actionDeduperOptions);
         const strokePathFactory = options.strokePathFactory || createStrokePathData;
@@ -13415,10 +13718,10 @@ void main() {
           if (activeStroke) cancelActiveStroke();
           if (activeLasso) cancelActiveLasso();
           if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
-          tokenState.hostGeneration = Number(request.hostGeneration);
-          tokenState.videoGeneration = Number(request.videoGeneration);
-          tokenState.inputRevision = Number(request.inputRevision);
           if (!request.enabled) {
+            tokenState.hostGeneration = Number(request.hostGeneration);
+            tokenState.videoGeneration = Number(request.videoGeneration);
+            tokenState.inputRevision = Number(request.inputRevision);
             const lastTool = currentSession?.tool === "select" ? "select" : "brush";
             disableInput();
             metrics.recordToggleLatency(now() - startedAt);
@@ -13429,6 +13732,7 @@ void main() {
             targetFrame: Number(request.session.targetFrame),
             sourceWidth: Number(request.session.sourceWidth),
             sourceHeight: Number(request.session.sourceHeight),
+            hostGeneration: Number(request.hostGeneration),
             videoGeneration: Number(request.videoGeneration),
             viewportRevision: Math.max(-1, Math.trunc(Number(request.session.viewportRevision) || 0)),
             viewportTransform: normalizeViewportTransform(request.session.viewportTransform),
@@ -13439,6 +13743,9 @@ void main() {
             metrics.recordStaleMessageDrop();
             return activation;
           }
+          tokenState.hostGeneration = Number(request.hostGeneration);
+          tokenState.videoGeneration = Number(request.videoGeneration);
+          tokenState.inputRevision = Number(request.inputRevision);
           currentSession = session;
           applyViewport(session);
           renderActiveScene();
@@ -13448,6 +13755,39 @@ void main() {
           badge.textContent = `\uC0C8 \uB4DC\uB85C\uC789 \uC2DC\uD5D8\uD310 \xB7 \uC800\uC7A5 \uC548 \uB428 \xB7 \uC2DC\uD5D8 \uD504\uB808\uC784 ${session.targetFrame}`;
           metrics.recordToggleLatency(now() - startedAt);
           return { accepted: true, enabled: true, restored: activation.restored };
+        }
+        function hydrateDrawingVideo(request = {}) {
+          if (destroyed || !prepared) {
+            return {
+              accepted: false,
+              reason: destroyed ? "destroyed" : "not-prepared"
+            };
+          }
+          if (inputEnabled) return { accepted: false, reason: "input-enabled" };
+          if (typeof sceneStore.hydrateVideo !== "function") {
+            return { accepted: false, reason: "persistence-unavailable" };
+          }
+          try {
+            return sceneStore.hydrateVideo(clonePlain(request));
+          } catch (_error) {
+            return { accepted: false, reason: "invalid-hydration-request" };
+          }
+        }
+        function exportDrawingVideo(request = {}) {
+          if (destroyed || !prepared) {
+            return {
+              accepted: false,
+              reason: destroyed ? "destroyed" : "not-prepared"
+            };
+          }
+          if (typeof sceneStore.exportVideo !== "function") {
+            return { accepted: false, reason: "persistence-unavailable" };
+          }
+          try {
+            return sceneStore.exportVideo(clonePlain(request));
+          } catch (_error) {
+            return { accepted: false, reason: "invalid-export-request" };
+          }
         }
         function updateViewport(command = {}) {
           if (!inputEnabled || !currentSession) return { accepted: false, reason: "input-disabled" };
@@ -13586,6 +13926,11 @@ void main() {
               estimatedBytes: scene.estimatedBytes,
               evictionCount: scene.evictionCount
             },
+            drawingPersistence: {
+              videoCount: drawingV3Count(scene.persistenceVideoCount),
+              observerFailureCount: drawingV3Count(scene.persistenceObserverFailureCount),
+              unboundCommitCount: drawingV3Count(scene.persistenceUnboundCommitCount)
+            },
             drawingV3Shadow: getDrawingV3Diagnostics(),
             metrics: metrics.snapshot(),
             lastError
@@ -13607,6 +13952,8 @@ void main() {
         return {
           prepare,
           setDrawingInput,
+          hydrateDrawingVideo,
+          exportDrawingVideo,
           updateDrawingTool,
           updateViewport,
           applyDrawingAction,

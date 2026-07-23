@@ -25,6 +25,7 @@ function session(overrides = {}) {
     sessionId: 'session-a',
     stableVideoIdentity: 'video-a',
     targetFrame: 12,
+    hostGeneration: 3,
     videoGeneration: 1,
     sourceWidth: 1920,
     sourceHeight: 1080,
@@ -105,6 +106,250 @@ function eventShape(event) {
     transforms: event.transforms
   };
 }
+
+function persistenceRequest(overrides = {}) {
+  return {
+    hostGeneration: 3,
+    videoGeneration: 7,
+    persistenceSessionId: 'persistence-session-a',
+    stableVideoIdentity: 'video-a',
+    fps: 24,
+    totalFrames: 240,
+    keyframes: [],
+    ...overrides
+  };
+}
+
+function exportRequest(overrides = {}) {
+  const request = persistenceRequest(overrides);
+  delete request.keyframes;
+  return request;
+}
+
+test('persistence observer emits one fenced event per committed mutation and ignores UI-only work', () => {
+  const persistenceTransitions = [];
+  const store = createSessionSceneStore({
+    createSceneInstanceId: (() => {
+      let sequence = 0;
+      return () => `persistence-scene-${++sequence}`;
+    })(),
+    committedTransitionObserver(event) {
+      persistenceTransitions.push(event);
+    }
+  });
+
+  assert.equal(store.hydrateVideo(persistenceRequest()).accepted, true);
+  assert.equal(store.activateSession(session({
+    videoGeneration: 7
+  })).accepted, true);
+  assert.equal(persistenceTransitions.length, 0, 'hydrate and activation are not commits');
+
+  const original = stroke('persist-original');
+  assert.equal(store.addStroke(original).applied, true);
+  assert.equal(store.selectObjects([original.id]).changed, true);
+  assert.equal(store.selectObjects([original.id]).changed, false);
+  assert.equal(store.transformSelection({ dx: 0, dy: 0 }).applied, false);
+  assert.equal(store.addStroke(original).applied, false);
+  assert.equal(persistenceTransitions.length, 1, 'selection and rejected no-ops stay silent');
+
+  assert.equal(store.transformSelection({ dx: 4, dy: -2 }).applied, true);
+  const inside = stroke('persist-inside', { transform: { left: 4, top: -2 } });
+  const outside = stroke('persist-outside', { transform: { left: 4, top: -2 } });
+  assert.equal(store.replaceObjects({
+    kind: 'split-stroke',
+    replacements: [{ removeId: original.id, addObjects: [inside, outside] }],
+    selectedObjectIds: [inside.id]
+  }).applied, true);
+  assert.equal(store.deleteSelection().applied, true);
+  assert.equal(store.clearSession().applied, true);
+
+  assert.deepEqual(
+    persistenceTransitions.map(event => event.kind),
+    [
+      'add-objects',
+      'transform-objects',
+      'split-stroke',
+      'delete-objects',
+      'clear-keyframe'
+    ]
+  );
+  assert.deepEqual(
+    persistenceTransitions.map(event => event.mutationSequence),
+    [1, 2, 3, 4, 5]
+  );
+  for (const event of persistenceTransitions) {
+    assert.equal(event.hostGeneration, 3);
+    assert.equal(event.videoGeneration, 7);
+    assert.equal(event.persistenceSessionId, 'persistence-session-a');
+    assert.equal(event.stableVideoIdentity, 'video-a');
+    assert.equal(event.scene.targetFrame, 12);
+  }
+});
+
+test('persistence history events observe finalized stacks and observer failures stay isolated', () => {
+  const v3Transitions = [];
+  const persistenceTransitions = [];
+  const observedHistory = [];
+  let throwFromV3 = true;
+  let throwFromPersistence = false;
+  const store = createSessionSceneStore({
+    createSceneInstanceId: () => 'persistence-history-scene',
+    drawingEngineObserver: {
+      activateScene() {},
+      enqueueTransition(event) {
+        v3Transitions.push(event);
+        if (throwFromV3) throw new Error('v3-observer-injected');
+      },
+      quarantineScene() {},
+      dropScenes() {}
+    },
+    committedTransitionObserver(event) {
+      persistenceTransitions.push(event);
+      if (event.origin === 'history') {
+        const diagnostics = store.getDiagnostics();
+        observedHistory.push({
+          kind: event.kind,
+          undoDepth: diagnostics.undoDepth,
+          redoDepth: diagnostics.redoDepth
+        });
+      }
+      if (throwFromPersistence) throw new Error('persistence-observer-injected');
+    }
+  });
+  store.hydrateVideo(persistenceRequest());
+  store.activateSession(session({ videoGeneration: 7 }));
+
+  assert.equal(store.addStroke(stroke('isolated-add')).applied, true);
+  assert.equal(store.getActiveSceneSnapshot().objects.length, 1);
+  assert.equal(persistenceTransitions.length, 1, 'V3 failure does not suppress persistence');
+
+  throwFromV3 = false;
+  throwFromPersistence = true;
+  assert.equal(store.undo().applied, true);
+  assert.equal(store.getActiveSceneSnapshot().objects.length, 0);
+  assert.equal(v3Transitions.length, 2, 'persistence failure does not suppress V3');
+  assert.deepEqual(observedHistory, [{
+    kind: 'delete-objects',
+    undoDepth: 0,
+    redoDepth: 1
+  }]);
+
+  throwFromPersistence = false;
+  assert.equal(store.redo().applied, true);
+  assert.deepEqual(observedHistory, [
+    { kind: 'delete-objects', undoDepth: 0, redoDepth: 1 },
+    { kind: 'add-objects', undoDepth: 1, redoDepth: 0 }
+  ]);
+  assert.equal(store.getActiveSceneSnapshot().objects.length, 1);
+  assert.equal(store.getDiagnostics().observerFailureCount, 1);
+  assert.equal(store.getDiagnostics().persistenceObserverFailureCount, 1);
+});
+
+test('hydrate restores sequence atomically, clears transient state, and gives V3 one full seed', () => {
+  const seededValues = [];
+  const persistenceTransitions = [];
+  const record = stroke('hydrated-stroke');
+  const store = createSessionSceneStore({
+    createSceneInstanceId: () => 'hydrated-runtime-scene',
+    drawingEngineObserver: {
+      activateScene(_scene, authoritativeObjects) {
+        seededValues.push(authoritativeObjects.get(record.id));
+      },
+      enqueueTransition() {},
+      quarantineScene() {},
+      dropScenes() {}
+    },
+    committedTransitionObserver(event) {
+      persistenceTransitions.push(event);
+    }
+  });
+
+  const hydrateResult = store.hydrateVideo(persistenceRequest({
+    keyframes: [{
+      id: 'persisted-keyframe-id-is-not-runtime-identity',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 9,
+      objects: [record]
+    }]
+  }));
+  assert.equal(hydrateResult.accepted, true);
+  assert.equal(persistenceTransitions.length, 0);
+
+  assert.equal(store.activateSession(session({ videoGeneration: 7 })).accepted, true);
+  assert.deepEqual(seededValues[0], record, 'first activation receives the full persisted record');
+  assert.equal(store.getDiagnostics().dirty, false);
+  assert.equal(store.getDiagnostics().undoDepth, 0);
+  assert.equal(store.getDiagnostics().redoDepth, 0);
+  assert.equal(store.getDiagnostics().mutationCount, 0);
+
+  store.selectObjects([record.id]);
+  store.deactivateSession('session-a');
+  assert.equal(store.activateSession(session({
+    sessionId: 'session-warm',
+    videoGeneration: 7
+  })).accepted, true);
+  assert.equal(seededValues[1], null, 'warm activation receives only the identity seed');
+  assert.equal(store.getDiagnostics().selectionCount, 0);
+
+  assert.equal(store.selectObjects([record.id]).changed, true);
+  assert.equal(store.transformSelection({ dx: 1, dy: 0 }).applied, true);
+  assert.equal(persistenceTransitions[0].mutationSequence, 10);
+  assert.equal(
+    store.exportVideo(exportRequest()).snapshot.scenes[0].sceneInstanceId,
+    'hydrated-runtime-scene',
+    'persisted keyframe id is never reused as the runtime scene identity'
+  );
+});
+
+test('real V3 adapter bootstraps once from a persisted nonzero sequence', () => {
+  const scheduled = [];
+  let adapterId = 0;
+  const adapter = createDrawingEngineAdapter({
+    createId: prefix => `${prefix}-hydrate-${++adapterId}`,
+    nowIso: () => '2026-07-23T01:02:03.456Z',
+    latencyNow: () => 0,
+    scheduleWork: callback => scheduled.push(callback),
+    fallbackScheduleWork: callback => scheduled.push(callback)
+  });
+  const store = createSessionSceneStore({
+    drawingEngineObserver: adapter,
+    createSceneInstanceId: () => 'real-hydrated-scene'
+  });
+  const record = stroke('real-hydrated-stroke');
+  assert.equal(store.hydrateVideo(persistenceRequest({
+    keyframes: [{
+      id: 'disk-real-v3-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 9,
+      objects: [record]
+    }]
+  })).accepted, true);
+  assert.equal(store.activateSession(session({ videoGeneration: 7 })).accepted, true);
+
+  let projection = adapter.getSceneProjection('real-hydrated-scene');
+  assert.ok(projection);
+  assert.equal(projection.headSequence, 9);
+  assert.deepEqual(
+    projection.document.layers[0].keyframes[0].objects.map(object => object.id),
+    [record.id]
+  );
+  assert.equal(adapter.getDiagnostics('real-hydrated-scene').bootstrapCount, 1);
+
+  store.deactivateSession('session-a');
+  assert.equal(store.activateSession(session({
+    sessionId: 'real-hydrated-warm',
+    videoGeneration: 7
+  })).accepted, true);
+  while (scheduled.length > 0) scheduled.shift()();
+  projection = adapter.getSceneProjection('real-hydrated-scene');
+  assert.ok(projection);
+  assert.equal(projection.headSequence, 9);
+  assert.equal(adapter.getDiagnostics('real-hydrated-scene').bootstrapCount, 1);
+});
 
 test('new and warm activation reuse one opaque scene while UI-only paths emit no transition', () => {
   const harness = createObserverHarness();
