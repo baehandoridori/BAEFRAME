@@ -88,7 +88,6 @@ const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
 const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
-const FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS = 250;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 function createMpvOverlayLifecycle({ onWarning = () => {} } = {}) {
@@ -141,60 +140,6 @@ function createMpvOverlayLifecycle({ onWarning = () => {} } = {}) {
       return true;
     }
   };
-}
-
-function createFabricPilotStatusRefreshCoordinator({ run, shouldRun = () => true, onError = () => {} } = {}) {
-  if (typeof run !== 'function') {
-    throw new TypeError('Fabric pilot status refresh run must be a function');
-  }
-
-  let inFlight = null;
-  let trailing = false;
-  let generation = 0;
-  let requestRevision = 0;
-
-  function request() {
-    if (!shouldRun()) return null;
-    const currentRequestRevision = ++requestRevision;
-    if (inFlight) {
-      trailing = true;
-      return inFlight;
-    }
-
-    const requestGeneration = generation;
-    const operation = Promise.resolve()
-      .then(() => run({
-        isCurrent: () => requestGeneration === generation &&
-          currentRequestRevision === requestRevision &&
-          shouldRun()
-      }))
-      .catch(error => {
-        onError(error);
-        return false;
-      });
-    inFlight = operation;
-
-    const settle = () => {
-      if (inFlight !== operation) return;
-      inFlight = null;
-      if (!shouldRun()) {
-        trailing = false;
-        return;
-      }
-      if (!trailing) return;
-      trailing = false;
-      request();
-    };
-    void operation.then(settle, settle);
-    return operation;
-  }
-
-  function cancel() {
-    generation += 1;
-    trailing = false;
-  }
-
-  return { request, cancel };
 }
 
 function createMpvTeardownGate() {
@@ -1572,7 +1517,6 @@ async function initApp() {
       updatePresence: true,
       updateDrawing: !videoPlayer.isPlaying
     });
-    scheduleFabricPilotStatusRefresh();
     if (
       isMpvReviewInteractionActive() &&
       isMpvPilotPlaybackActive() &&
@@ -1591,7 +1535,6 @@ async function initApp() {
       updatePresence: false,
       updateDrawing: true
     });
-    scheduleFabricPilotStatusRefresh();
     if (
       isMpvReviewInteractionActive() &&
       isMpvPilotPlaybackActive() &&
@@ -1609,7 +1552,6 @@ async function initApp() {
   // 비디오 재생 상태 변경
   videoPlayer.addEventListener('play', () => {
     elements.btnPlay.innerHTML = pauseIconSVG;
-    scheduleFabricPilotStatusRefresh({ force: true });
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, true);
@@ -1635,7 +1577,6 @@ async function initApp() {
 
   videoPlayer.addEventListener('pause', () => {
     elements.btnPlay.innerHTML = playIconSVG;
-    scheduleFabricPilotStatusRefresh({ force: true });
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
@@ -1654,7 +1595,6 @@ async function initApp() {
 
   videoPlayer.addEventListener('ended', () => {
     elements.btnPlay.innerHTML = playIconSVG;
-    scheduleFabricPilotStatusRefresh({ force: true });
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
@@ -7150,7 +7090,6 @@ async function initApp() {
       'fabric-drawing-pilot-enabled',
       enabled && fabricDrawingPilotController.shouldOwnDrawingShortcut()
     );
-    scheduleFabricPilotStatusRefresh({ force: true });
     return enabled;
   });
   const mpvTeardownGate = createMpvTeardownGate();
@@ -7165,18 +7104,6 @@ async function initApp() {
   let mpvOverlayRemoteCursorSyncPendingOwner = null;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
-  let fabricPilotStatusText = '';
-  let fabricPilotStatusRefreshTimer = null;
-  let fabricPilotStatusLastRefreshAt = 0;
-  const fabricPilotStatusRefreshCoordinator = createFabricPilotStatusRefreshCoordinator({
-    shouldRun: () => fabricDrawingPilotController.isEnabled(),
-    run: refreshFabricPilotStatus,
-    onError: (error) => {
-      log.debug('Fabric 수동 검증 HUD 갱신 실패', {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  });
   let mpvOverlayRecoveryOwner = null;
   let mpvOverlayRecoveryInFlightOwner = null;
   let mpvOverlayFallbackOwner = null;
@@ -8174,9 +8101,6 @@ async function initApp() {
         currentTime: videoPlayer.currentTime,
         isPlaying: videoPlayer.isPlaying
       }),
-      fabricPilotStatusText: fabricDrawingPilotController.isEnabled()
-        ? fabricPilotStatusText
-        : '',
       // 32 잔존(f): playhead 위치는 diff 대상이 아닌 별도 필드로 항상 전송(저비용) — 미러 재주입과 분리.
       commentPlayheadLeft: videoCommentPlayhead?.style.left || '',
       markerTransform: markerContainer?.style.transform || '',
@@ -8195,76 +8119,7 @@ async function initApp() {
   // 생략된 필드는 JSON.stringify에서 사라지고, 호스트는 undefined 필드를 건너뛴다(부분 업데이트).
   // 호스트가 재생성되면 owner가 바뀌어 전체 재전송된다.
   const MPV_OVERLAY_DIFF_FIELDS = ['drawingDataUrl', 'onionDataUrl', 'markerHtml', 'tooltipHtml', 'htmlOverlayHtml', 'toastHtml'];
-  MPV_OVERLAY_DIFF_FIELDS.push('fabricPilotStatusText');
   const mpvOverlayMirrorFieldCache = { owner: null, canvasKey: '', fields: {} };
-
-  function formatFabricPilotStatusText(snapshot, diagnostics) {
-    const overlay = diagnostics?.overlay;
-    const attempted = Math.max(0, Math.trunc(Number(snapshot?.bInput?.attempted) || 0));
-    const accepted = Math.max(0, Math.trunc(Number(snapshot?.bInput?.accepted) || 0));
-    const localRevision = Math.max(0, Math.trunc(Number(snapshot?.inputRevision) || 0));
-    const overlayRevision = Math.max(0, Math.trunc(Number(overlay?.inputRevision) || 0));
-    const frame = Math.max(0, Math.trunc(Number(videoPlayer.currentFrame) || 0));
-    const hostGeneration = Math.max(0, Math.trunc(Number(snapshot?.hostGeneration) || 0));
-    const mpvOwner = isMpvPilotPlaybackActive() && videoPlayer.isPlaying ? 1 : 0;
-    const htmlOwner = Array.from(document.querySelectorAll('audio, video'))
-      .filter(media => media.paused === false && media.ended !== true)
-      .length;
-    const playbackOwnerCount = mpvOwner + htmlOwner;
-    const saveAttempts = Math.max(0, Math.trunc(Number(overlay?.metrics?.saveAttemptCount) || 0));
-    const surfaceErrors = Math.max(0, Math.trunc(Number(overlay?.metrics?.surfaceErrorCount) || 0));
-    const errorCount = Math.max(
-      surfaceErrors,
-      snapshot?.lastError ? 1 : 0
-    );
-    const drawingState = String(snapshot?.state || 'unknown').toUpperCase();
-
-    return `FABRIC TEST · DRAW ${drawingState} · B ${attempted}/${accepted} · ` +
-      `rev ${localRevision}/${overlayRevision} · hostGen ${hostGeneration}\n` +
-      `${videoPlayer.isPlaying ? 'PLAY' : 'PAUSE'} · F ${frame} · owner ${playbackOwnerCount} ` +
-      `(mpv ${mpvOwner}/html ${htmlOwner}) · save ${saveAttempts} · err ${errorCount}`;
-  }
-
-  async function refreshFabricPilotStatus({ isCurrent }) {
-    const snapshot = fabricDrawingPilotController.getStatusSnapshot();
-    const diagnostics = await fabricDrawingPilotController.diagnostics();
-    if (!isCurrent()) return;
-
-    const nextStatusText = formatFabricPilotStatusText(snapshot, diagnostics);
-    if (nextStatusText === fabricPilotStatusText) return;
-    fabricPilotStatusText = nextStatusText;
-    scheduleMpvOverlayStateSync({ force: true });
-  }
-
-  function scheduleFabricPilotStatusRefresh({ force = false } = {}) {
-    if (!fabricDrawingPilotController.isEnabled()) {
-      fabricPilotStatusRefreshCoordinator.cancel();
-      if (fabricPilotStatusRefreshTimer) clearTimeout(fabricPilotStatusRefreshTimer);
-      fabricPilotStatusRefreshTimer = null;
-      fabricPilotStatusLastRefreshAt = 0;
-      if (!fabricPilotStatusText) return;
-      fabricPilotStatusText = '';
-      scheduleMpvOverlayStateSync({ force: true });
-      return;
-    }
-
-    const now = Date.now();
-    const elapsed = now - fabricPilotStatusLastRefreshAt;
-    if (force || elapsed >= FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS) {
-      if (fabricPilotStatusRefreshTimer) clearTimeout(fabricPilotStatusRefreshTimer);
-      fabricPilotStatusRefreshTimer = null;
-      fabricPilotStatusLastRefreshAt = now;
-      fabricPilotStatusRefreshCoordinator.request();
-      return;
-    }
-    if (fabricPilotStatusRefreshTimer) return;
-
-    fabricPilotStatusRefreshTimer = setTimeout(() => {
-      fabricPilotStatusRefreshTimer = null;
-      fabricPilotStatusLastRefreshAt = Date.now();
-      fabricPilotStatusRefreshCoordinator.request();
-    }, FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS - elapsed);
-  }
 
   function filterUnchangedMpvOverlayFields(state, owner) {
     const canvasKey = `${state.canvas.left}|${state.canvas.top}|${state.canvas.width}|${state.canvas.height}`;
@@ -8467,8 +8322,8 @@ async function initApp() {
 
     try {
       const locallyEnabled = userSettings.getMpvPlaybackEnabled();
-      const envEnabled = await window.electronAPI.mpvIsEnabled();
-      if (!locallyEnabled && !envEnabled) return false;
+      const runtimeEnabled = await window.electronAPI.mpvIsEnabled();
+      if (!locallyEnabled || !runtimeEnabled) return false;
 
       const available = await window.electronAPI.mpvIsAvailable();
       if (!available) {
@@ -8577,7 +8432,6 @@ async function initApp() {
         await cleanupPendingMpvPilot();
         return false;
       }
-      scheduleFabricPilotStatusRefresh({ force: true });
     } catch (error) {
       await cleanupPendingMpvPilot();
       throw error;
@@ -9731,7 +9585,6 @@ async function initApp() {
     const engaged = ownsDrawingShortcut && isMpvPilotPlaybackActive() &&
       (active || preparing || nextState === 'recovering');
     const wasEngaged = fabricDrawingPilotUiEngaged;
-    scheduleFabricPilotStatusRefresh({ force: true });
     scheduleMpvOverlayStateSync({ force: true });
     if (!engaged && !wasEngaged) {
       if (nextState === 'failed') notifyFabricDrawingPilotFailure();

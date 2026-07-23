@@ -62,7 +62,7 @@ const MIN_BRUSH_SIZE = 1;
 const MAX_BRUSH_SIZE = 50;
 const MIN_BRUSH_OPACITY_PERCENT = 10;
 const MAX_BRUSH_OPACITY_PERCENT = 100;
-const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 시험판 · 리뷰 저장 연결됨';
+const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 · 리뷰 자동 저장';
 const SELECTION_HIT_MARGIN_CSS_PX = 6;
 const MIN_SELECTION_HIT_TOLERANCE = 2;
 const MAX_SELECTION_HIT_TOLERANCE = 96;
@@ -144,7 +144,7 @@ function formatFabricPersistenceBadge(targetFrame = null) {
   const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0
     ? targetFrame
     : '-';
-  return `${FABRIC_PERSISTENCE_BADGE_PREFIX} · 시험 프레임 ${frameLabel}`;
+  return `${FABRIC_PERSISTENCE_BADGE_PREFIX} · 프레임 ${frameLabel}`;
 }
 
 function clonePlain(value) {

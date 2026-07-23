@@ -665,8 +665,8 @@ test('mpv direct playback defaults on and can be opted out from app settings', (
   assert.match(appSource, /mpvPilotEnabled\.checked = userSettings\.getMpvPlaybackEnabled\(\);/);
   assert.match(appSource, /userSettings\.setMpvPlaybackEnabled\(e\.target\.checked\);/);
   assert.match(appSource, /const locallyEnabled = userSettings\.getMpvPlaybackEnabled\(\);/);
-  assert.match(appSource, /const envEnabled = await window\.electronAPI\.mpvIsEnabled\(\);/);
-  assert.match(appSource, /if \(!locallyEnabled && !envEnabled\) return false;/);
+  assert.match(appSource, /const runtimeEnabled = await window\.electronAPI\.mpvIsEnabled\(\);/);
+  assert.match(appSource, /if \(!locallyEnabled \|\| !runtimeEnabled\) return false;/);
 });
 
 test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {

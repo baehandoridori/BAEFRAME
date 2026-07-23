@@ -12,38 +12,6 @@ const fabricRuntimeSource = normalizeNewlines(fs.readFileSync(
   'utf8'
 ));
 
-function loadFabricPilotStatusRefreshCoordinatorFactory() {
-  const functionStart = appSource.indexOf('function createFabricPilotStatusRefreshCoordinator(');
-  assert.notEqual(functionStart, -1, 'Fabric pilot status refresh coordinator should exist');
-
-  const bodyStart = appSource.indexOf(') {', functionStart) + 2;
-  let depth = 0;
-  for (let index = bodyStart; index < appSource.length; index += 1) {
-    if (appSource[index] === '{') depth += 1;
-    if (appSource[index] === '}') depth -= 1;
-    if (depth === 0) {
-      const functionSource = appSource.slice(functionStart, index + 1);
-      return new Function(`return (${functionSource});`)();
-    }
-  }
-
-  assert.fail('Fabric pilot status refresh coordinator should have a complete body');
-}
-
-function createDeferred() {
-  let resolve;
-  const promise = new Promise(resolvePromise => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
-
-async function flushCoordinator() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await new Promise(resolve => setImmediate(resolve));
-}
-
 test('Fabric pilot controller is initialized with live mpv video and canvas context', () => {
   assert.match(appSource, /import \{ createFabricDrawingPilotController \} from '\.\/modules\/fabric-drawing-pilot-controller\.js';/);
   assert.match(appSource, /const mpvOverlayLifecycle = createMpvOverlayLifecycle\([\s\S]+const fabricDrawingPilotController = createFabricDrawingPilotController\(\{/);
@@ -91,8 +59,12 @@ test('capture keyboard and click firewalls stop legacy drawing mutations while k
   assert.match(appSource, /function handleFabricDrawingPilotLegacyClick\(event\) \{[\s\S]+event\.preventDefault\(\);[\s\S]+event\.stopImmediatePropagation\(\);[\s\S]+\}/);
   assert.match(appSource, /if \(shouldBlockFabricDrawingLegacyShortcut\(e\)\) \{\n\s+e\.preventDefault\(\);\n\s+e\.stopImmediatePropagation\(\);\n\s+return;\n\s+\}/);
   assert.match(appSource, /#drawingTools[\s\S]+#btnUndo[\s\S]+#btnClearDrawing[\s\S]+#btnAddLayer[\s\S]+#btnDeleteLayer[\s\S]+\.layer-settings-popup[\s\S]+\.drawing-layer-header[\s\S]+\.drawing-track-row/);
-  assert.match(mainCss, /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode #drawingTools[\s\S]+visibility:\s*hidden;[\s\S]+pointer-events:\s*none;/);
+  assert.match(mainCss, /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode #drawingTools[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/);
   assert.match(mainCss, /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-overlay[\s\S]+visibility:\s*hidden;[\s\S]+pointer-events:\s*none(?:\s*!important)?;/);
+  assert.match(
+    mainCss,
+    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header,[\s\S]+body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-track-row[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/
+  );
   assert.match(appSource, /function shouldSuppressLegacyDrawingForFabricPilot\(\) \{[\s\S]+fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+\}/);
   assert.match(appSource, /const suppressLegacyDrawing = shouldSuppressLegacyDrawingForFabricPilot\(\);[\s\S]+drawingDataUrl: suppressLegacyDrawing \? '' : getCompositedDrawingOverlayDataUrl\(\),[\s\S]+onionDataUrl: !suppressLegacyDrawing && drawingManager\.onionSkin\?\.enabled/);
   assert.match(appSource, /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
@@ -214,136 +186,20 @@ test('freeze and system shutdown paths are conditional on pilot ownership', () =
 
 test('Fabric toolbar reports review persistence as active without the old session-only warning', () => {
   assert.doesNotMatch(fabricRuntimeSource, /저장 안 됨/);
+  assert.doesNotMatch(fabricRuntimeSource, /시험판|시험 프레임/);
   assert.match(
     fabricRuntimeSource,
-    /const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 시험판 · 리뷰 저장 연결됨';/
+    /const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 · 리뷰 자동 저장';/
   );
   assert.match(
     fabricRuntimeSource,
-    /function formatFabricPersistenceBadge\(targetFrame = null\) \{[\s\S]+FABRIC_PERSISTENCE_BADGE_PREFIX[\s\S]+시험 프레임/
+    /function formatFabricPersistenceBadge\(targetFrame = null\) \{[\s\S]+FABRIC_PERSISTENCE_BADGE_PREFIX[\s\S]+프레임/
   );
 });
 
-test('Fabric 수동 검증 HUD는 제한된 진단값을 조합하고 재생 중 250ms 안에 갱신한다', () => {
-  assert.match(appSource, /const FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS = 250;/);
-  assert.match(appSource, /fabricDrawingPilotController\.getStatusSnapshot\(\)/);
-  assert.match(appSource, /await fabricDrawingPilotController\.diagnostics\(\)/);
-  assert.match(appSource, /mpvOverlayLifecycle\.captureReadyOwner\(\)/);
-
-  const formatter = appSource.match(
-    /function formatFabricPilotStatusText\(snapshot, diagnostics\) \{([\s\S]*?)\n  \}/
-  )?.[1] || '';
-  assert.match(formatter, /snapshot\?\.state/);
-  assert.match(formatter, /bInput\?\.attempted/);
-  assert.match(formatter, /bInput\?\.accepted/);
-  assert.match(formatter, /snapshot\?\.inputRevision/);
-  assert.match(formatter, /overlay\?\.inputRevision/);
-  assert.match(formatter, /videoPlayer\.isPlaying \? 'PLAY' : 'PAUSE'/);
-  assert.match(formatter, /videoPlayer\.currentFrame/);
-  assert.match(formatter, /snapshot\?\.hostGeneration/);
-  assert.match(formatter, /const mpvOwner = isMpvPilotPlaybackActive\(\) && videoPlayer\.isPlaying \? 1 : 0;/);
-  assert.match(formatter, /document\.querySelectorAll\('audio, video'\)/);
-  assert.match(formatter, /media\.paused === false/);
-  assert.match(formatter, /const playbackOwnerCount = mpvOwner \+ htmlOwner;/);
-  assert.match(formatter, /owner \$\{playbackOwnerCount\}/);
-  assert.match(formatter, /hostGen \$\{hostGeneration\}/);
-  assert.doesNotMatch(formatter, /captureReadyOwner|owner\?\.generation|ownerGeneration|videoPlayer\.engine === 'html5'/);
-  assert.match(formatter, /saveAttemptCount/);
-  assert.match(formatter, /surfaceErrorCount/);
-  assert.match(formatter, /\\n/);
-  assert.doesNotMatch(
-    formatter,
-    /overlay\?\.success/,
-    'an intentionally unprepared passive surface must not be counted as an error'
-  );
-  assert.doesNotMatch(
-    formatter,
-    /filePath|currentFile|comment|stroke|canvas|coordinate|sessionId|targetFrame/i,
-    'HUD formatter must never include paths, comments, stroke coordinates, or session ids'
-  );
-
-  assert.match(appSource, /fabricPilotStatusText:\s*fabricDrawingPilotController\.isEnabled\(\)\s*\?\s*fabricPilotStatusText\s*:\s*''/);
-  assert.match(appSource, /function scheduleFabricPilotStatusRefresh\(\{ force = false \} = \{\}\) \{[\s\S]*setTimeout\([\s\S]*FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS - elapsed/s);
-  assert.match(appSource, /const fabricPilotStatusRefreshCoordinator = createFabricPilotStatusRefreshCoordinator\(\{/);
-  assert.match(appSource, /fabricPilotStatusRefreshCoordinator\.request\(\)/);
-  assert.match(appSource, /fabricPilotStatusRefreshCoordinator\.cancel\(\)/);
-  assert.doesNotMatch(appSource, /fabricPilotStatusRefreshSequence/);
-
-  const timeUpdateHandler = appSource.match(
-    /videoPlayer\.addEventListener\('timeupdate', \(e\) => \{([\s\S]*?)\n  \}\);/
-  )?.[1] || '';
-  const frameUpdateHandler = appSource.match(
-    /videoPlayer\.addEventListener\('frameUpdate', \(e\) => \{([\s\S]*?)\n  \}\);/
-  )?.[1] || '';
-  assert.match(timeUpdateHandler, /scheduleFabricPilotStatusRefresh\(\);/);
-  assert.match(frameUpdateHandler, /scheduleFabricPilotStatusRefresh\(\);/);
-
-  for (const eventName of ['play', 'pause', 'ended']) {
-    const handler = appSource.match(
-      new RegExp(`videoPlayer\\.addEventListener\\('${eventName}', \\(\\) => \\{([\\s\\S]*?)\\n  \\}\\);`)
-    )?.[1] || '';
-    assert.match(
-      handler,
-      /scheduleFabricPilotStatusRefresh\(\{ force: true \}\);/,
-      `${eventName} must refresh the HUD immediately`
-    );
-  }
-
-  assert.match(appSource, /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]*scheduleFabricPilotStatusRefresh\(\{ force: true \}\);/);
-});
-
-test('Fabric HUD refresh coordinator is single-flight, coalesces trailing work, and cancels stale pilot work', async () => {
-  const createCoordinator = loadFabricPilotStatusRefreshCoordinatorFactory();
-  const gates = [];
-  const committed = [];
-  let enabled = true;
-  let active = 0;
-  let maxConcurrency = 0;
-
-  const coordinator = createCoordinator({
-    shouldRun: () => enabled,
-    run: async ({ isCurrent }) => {
-      const id = gates.length + 1;
-      const gate = createDeferred();
-      gates.push(gate);
-      active += 1;
-      maxConcurrency = Math.max(maxConcurrency, active);
-      await gate.promise;
-      active -= 1;
-      if (isCurrent()) committed.push(id);
-    }
-  });
-
-  coordinator.request();
-  await flushCoordinator();
-  assert.equal(gates.length, 1);
-
-  coordinator.request();
-  coordinator.request();
-  await flushCoordinator();
-  assert.equal(gates.length, 1, 'pending requests must not overlap diagnostics');
-
-  gates[0].resolve();
-  await flushCoordinator();
-  assert.equal(gates.length, 2, 'pending requests coalesce into one trailing refresh');
-  assert.equal(maxConcurrency, 1);
-  assert.deepEqual(committed, [], 'a newer pending request must invalidate the older HUD result');
-
-  gates[1].resolve();
-  await flushCoordinator();
-  assert.deepEqual(committed, [2]);
-
-  coordinator.request();
-  await flushCoordinator();
-  assert.equal(gates.length, 3);
-  coordinator.request();
-  enabled = false;
-  coordinator.cancel();
-  gates[2].resolve();
-  await flushCoordinator();
-
-  assert.equal(maxConcurrency, 1);
-  assert.equal(gates.length, 3, 'cancellation must discard queued trailing work');
-  assert.deepEqual(committed, [2], 'cancelled in-flight work must not commit');
-  assert.equal(coordinator.request(), null, 'pilot OFF must reject new work');
+test('stable Fabric UI does not create or poll the old manual verification HUD', () => {
+  assert.doesNotMatch(appSource, /FABRIC TEST|FABRIC_PILOT_STATUS_SYNC_INTERVAL_MS/);
+  assert.doesNotMatch(appSource, /fabricPilotStatusText|scheduleFabricPilotStatusRefresh/);
+  assert.doesNotMatch(appSource, /createFabricPilotStatusRefreshCoordinator/);
+  assert.doesNotMatch(appSource, /fabricDrawingPilotController\.(?:getStatusSnapshot|diagnostics)\(\)/);
 });

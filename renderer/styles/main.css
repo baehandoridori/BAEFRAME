@@ -1111,7 +1111,7 @@ body.mpv-pilot-mode .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
 }
 
 body.fabric-drawing-pilot-enabled.mpv-pilot-mode #drawingTools {
-  visibility: hidden;
+  display: none;
   pointer-events: none;
 }
 
@@ -1121,13 +1121,14 @@ body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-overlay {
 }
 
 body.fabric-drawing-pilot-enabled.mpv-pilot-mode .layer-settings-popup {
-  visibility: hidden;
+  display: none;
   pointer-events: none;
 }
 
 body.fabric-drawing-pilot-enabled.mpv-pilot-mode .layer-action-btn,
 body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header,
 body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-track-row {
+  display: none;
   pointer-events: none;
 }
 

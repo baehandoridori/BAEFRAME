@@ -289,24 +289,6 @@ const OVERLAY_HTML = String.raw`
       overflow: hidden;
       pointer-events: none;
     }
-    #fabricPilotStatusMirror {
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      z-index: 60;
-      display: none;
-      max-width: calc(100% - 24px);
-      padding: 8px 10px;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: 6px;
-      background: rgba(15, 15, 15, 0.82);
-      color: #f5f5f5;
-      font: 600 11px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-      font-variant-numeric: tabular-nums;
-      text-align: right;
-      white-space: pre-line;
-      pointer-events: none;
-    }
     .mpv-fabric-pilot-toolbar {
       align-items: center;
       padding: 6px;
@@ -621,7 +603,6 @@ const OVERLAY_HTML = String.raw`
 </head>
 <body>
   <div id="root">
-    <div id="fabricPilotStatusMirror" aria-live="off"></div>
     <img id="onionCanvasMirror" class="mirror-canvas" alt="">
     <img id="drawingCanvasMirror" class="mirror-canvas" alt="">
     <div id="compositionMirror"></div>
@@ -802,14 +783,6 @@ const OVERLAY_HTML = String.raw`
       const markerMirror = document.getElementById('markerMirror');
       const tooltipMirror = document.getElementById('tooltipMirror');
       const toastMirror = document.getElementById('toastMirror');
-      const fabricPilotStatusMirror = document.getElementById('fabricPilotStatusMirror');
-      if (nextState.fabricPilotStatusText !== undefined) {
-        const statusText = typeof nextState.fabricPilotStatusText === 'string'
-          ? nextState.fabricPilotStatusText
-          : '';
-        fabricPilotStatusMirror.textContent = statusText;
-        fabricPilotStatusMirror.style.display = statusText ? 'block' : 'none';
-      }
       if (nextState.fabricViewport !== undefined) {
         window.__mpvFabricOverlay?.updateViewport?.(nextState.fabricViewport);
       }
@@ -930,9 +903,6 @@ function normalizeOverlayState(state = {}) {
     tooltipHtml: state.tooltipHtml === undefined ? undefined : (typeof state.tooltipHtml === 'string' ? state.tooltipHtml : ''),
     htmlOverlayHtml: state.htmlOverlayHtml === undefined ? undefined : (typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : ''),
     toastHtml: state.toastHtml === undefined ? undefined : (typeof state.toastHtml === 'string' ? state.toastHtml : ''),
-    fabricPilotStatusText: state.fabricPilotStatusText === undefined
-      ? undefined
-      : (typeof state.fabricPilotStatusText === 'string' ? state.fabricPilotStatusText.slice(0, 512) : ''),
     commentPlayheadLeft: typeof state.commentPlayheadLeft === 'string' ? state.commentPlayheadLeft : '',
     remoteCursorHtml: typeof state.remoteCursorHtml === 'string' ? state.remoteCursorHtml : '',
     fabricViewport: normalizeFabricViewport(state.fabricViewport),

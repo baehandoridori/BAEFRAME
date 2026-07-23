@@ -10414,7 +10414,7 @@ void main() {
       var MAX_BRUSH_SIZE = 50;
       var MIN_BRUSH_OPACITY_PERCENT = 10;
       var MAX_BRUSH_OPACITY_PERCENT = 100;
-      var FABRIC_PERSISTENCE_BADGE_PREFIX = "\uC0C8 \uB4DC\uB85C\uC789 \uC2DC\uD5D8\uD310 \xB7 \uB9AC\uBDF0 \uC800\uC7A5 \uC5F0\uACB0\uB428";
+      var FABRIC_PERSISTENCE_BADGE_PREFIX = "\uC0C8 \uB4DC\uB85C\uC789 \xB7 \uB9AC\uBDF0 \uC790\uB3D9 \uC800\uC7A5";
       var SELECTION_HIT_MARGIN_CSS_PX = 6;
       var MIN_SELECTION_HIT_TOLERANCE = 2;
       var MAX_SELECTION_HIT_TOLERANCE = 96;
@@ -10493,7 +10493,7 @@ void main() {
       var persistenceUtf8Encoder = new TextEncoder();
       function formatFabricPersistenceBadge(targetFrame = null) {
         const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0 ? targetFrame : "-";
-        return `${FABRIC_PERSISTENCE_BADGE_PREFIX} \xB7 \uC2DC\uD5D8 \uD504\uB808\uC784 ${frameLabel}`;
+        return `${FABRIC_PERSISTENCE_BADGE_PREFIX} \xB7 \uD504\uB808\uC784 ${frameLabel}`;
       }
       function clonePlain(value) {
         if (value === void 0) return void 0;
