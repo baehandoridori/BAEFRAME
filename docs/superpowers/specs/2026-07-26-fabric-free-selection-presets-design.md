@@ -119,4 +119,3 @@ fragment나 history를 만들지 않는다.
 8. 획 전체 + 사각형의 기존 click/marquee/hover/이동 동작이 유지된다.
 9. 선택 설정과 선택만으로 review save attempt가 발생하지 않는다.
 10. browser bundle과 소스 runtime의 선택 계약이 일치한다.
-
