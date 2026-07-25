@@ -342,6 +342,11 @@ function selectPartialLasso(root) {
   clickSelectionControl(root, 'select-shape-lasso');
 }
 
+function selectPartialRectangle(root) {
+  clickSelectionControl(root, 'select-target-partial');
+  clickSelectionControl(root, 'select-shape-rectangle');
+}
+
 function getBrushControls(root) {
   const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
   return {
@@ -1691,6 +1696,15 @@ function enableRealFabricLasso(harness, toolRevision = 1) {
   selectPartialLasso(harness.root);
 }
 
+function enableRealFabricPartialRectangle(harness, toolRevision = 1) {
+  harness.runtime.updateDrawingTool({
+    sessionId: 'real-fabric-session',
+    toolRevision,
+    tool: 'select'
+  });
+  selectPartialRectangle(harness.root);
+}
+
 function lassoHistoryState(runtime) {
   const diagnostics = runtime.getDiagnostics();
   return {
@@ -1705,6 +1719,118 @@ function lassoHistoryState(runtime) {
 function pendingLassoObjects(canvas) {
   return canvas.getObjects().filter(object => object.__baeframePendingLasso);
 }
+
+test('rectangle partial selection stages without mutation and moves only the inside fragment', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 800);
+    const original = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    enableRealFabricPartialRectangle(harness);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+
+    harness.dragLasso([{ x: 70, y: 70 }, { x: 130, y: 130 }], 801);
+
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, [original]);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 1);
+    assert.equal(pendingLassoObjects(harness.canvas)[0].opacity, 0);
+    const selectedProxy = harness.canvas.getActiveObjects()[0];
+    const selectedId = selectedProxy.__baeframeObjectId;
+    const selectedStart = { left: selectedProxy.left, top: selectedProxy.top };
+
+    harness.dragActiveSelectionBy(15, -10, 802);
+    await Promise.resolve();
+
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    const movedById = new Map(moved.objects.map(object => [object.id, object]));
+    assert.equal(moved.objects.length, 3);
+    assert.deepEqual(moved.selectedObjectIds, [selectedId]);
+    assert.equal(movedById.get(selectedId).transform.left, selectedStart.left + 15);
+    assert.equal(movedById.get(selectedId).transform.top, selectedStart.top - 10);
+    assert.equal(moved.objects.filter(object => object.id !== selectedId).every(
+      object => object.transform.top === 100
+    ), true);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, beforeHistory.undoDepth + 1);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('rectangle partial selection reverse drag selects the same middle fragment range', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 810);
+    enableRealFabricPartialRectangle(harness);
+
+    harness.dragLasso([{ x: 130, y: 130 }, { x: 70, y: 70 }], 811);
+    const selectedId = harness.canvas.getActiveObjects()[0].__baeframeObjectId;
+    harness.dragActiveSelectionBy(5, 0, 812);
+    await Promise.resolve();
+
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    const originalSampleXs = new Set(crossingStrokePoints().map(point => point.x));
+    const originalXsByFragment = moved.objects.map(object => object.sourcePoints
+      .map(point => point.x)
+      .filter(x => originalSampleXs.has(x)));
+    const selected = moved.objects.find(object => object.id === selectedId);
+    assert.equal(moved.objects.length, 3);
+    assert.deepEqual(originalXsByFragment, [
+      [20, 50],
+      [80, 110],
+      [140, 180]
+    ]);
+    assert.deepEqual(
+      selected.sourcePoints.map(point => point.x).filter(x => originalSampleXs.has(x)),
+      [80, 110]
+    );
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('rectangle partial selection Delete Undo and Redo round-trip one atomic split command', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 820);
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    enableRealFabricPartialRectangle(harness);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    harness.dragLasso([{ x: 70, y: 70 }, { x: 130, y: 130 }], 821);
+
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, original.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    const deleted = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'rectangle-partial-delete',
+      action: 'delete-selection'
+    });
+
+    const outsideFragments = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(deleted.applied, true);
+    assert.equal(outsideFragments.objects.length, 2);
+    assert.equal(outsideFragments.objects.some(object => object.id === original.objects[0].id), false);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, beforeHistory.undoDepth + 1);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'undo-rectangle-partial-delete',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, original.objects);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'redo-rectangle-partial-delete',
+      action: 'redo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, outsideFragments.objects);
+    assert.equal(harness.runtime.getDiagnostics().metrics.saveAttemptCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
 
 test('real Fabric brush mutations stay in exact runtime-owned V3 shadow parity', async () => {
   const observed = createObservedDrawingV3Adapter();

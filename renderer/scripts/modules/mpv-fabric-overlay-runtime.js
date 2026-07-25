@@ -2626,6 +2626,11 @@ function createFabricOverlayRuntime(options = {}) {
     if (!point) return;
     const previous = activeLasso.points[activeLasso.points.length - 1];
     if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < 0.5) return;
+    if (activeLasso.shape === 'rectangle') {
+      if (activeLasso.points.length === 0) activeLasso.points.push(point);
+      else activeLasso.points[1] = point;
+      return;
+    }
     if (activeLasso.points.length >= MAX_LASSO_POINTS) {
       activeLasso.points = activeLasso.points.filter((_sample, index) => index === 0 || index % 2 === 0);
     }
@@ -2636,8 +2641,13 @@ function createFabricOverlayRuntime(options = {}) {
     if (!activeLasso || activeLasso.points.length < 2 || !fabricCanvas) return;
     removeLassoPreview();
     const { Path } = resolveFabric();
-    const [first, ...rest] = activeLasso.points;
-    const pathData = `M ${first.x} ${first.y} ${rest.map(point => `L ${point.x} ${point.y}`).join(' ')}`;
+    const previewPoints = activeLasso.shape === 'rectangle'
+      ? rectanglePolygon(activeLasso.points[0], activeLasso.points.at(-1))
+      : activeLasso.points;
+    const [first, ...rest] = previewPoints;
+    const pathData = `M ${first.x} ${first.y} ${rest.map(point => `L ${point.x} ${point.y}`).join(' ')}${
+      activeLasso.shape === 'rectangle' ? ' Z' : ''
+    }`;
     const preview = new Path(pathData, {
       fill: 'rgba(255, 208, 0, 0.08)',
       stroke: '#ffd000',
@@ -3037,18 +3047,17 @@ function createFabricOverlayRuntime(options = {}) {
     fabricCanvas.requestRenderAll();
   }
 
-  function finalizeActiveLasso() {
-    if (!activeLasso) return { applied: false, reason: 'no-active-lasso' };
-    const sourcePerCssPixel = currentSession
-      ? currentSession.sourceWidth / Math.max(1, currentSession.canvasRect.width) /
-        Math.max(0.01, Math.abs(finiteNumber(currentSession.viewportTransform?.scale, 1)))
-      : 1;
-    const polygon = simplifyClosedPolygon(
-      activeLasso.points,
-      Math.min(8, Math.max(0.25, sourcePerCssPixel * 1.5))
-    );
-    removeLassoPreview();
-    activeLasso = null;
+  function rectanglePolygon(start, end) {
+    if (!start || !end) return [];
+    return [
+      { x: start.x, y: start.y },
+      { x: end.x, y: start.y },
+      { x: end.x, y: end.y },
+      { x: start.x, y: end.y }
+    ];
+  }
+
+  function finalizePartialSelectionPolygon(polygon) {
     if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
       activateObjectIds([]);
       return { applied: false, reason: 'lasso-too-small' };
@@ -3138,6 +3147,24 @@ function createFabricOverlayRuntime(options = {}) {
       pendingLassoSelection.initialTargetTransform = captureTransform(pendingLassoSelection.activeTarget);
     }
     return { ...result, selectedObjectIds };
+  }
+
+  function finalizeActiveLasso() {
+    if (!activeLasso) return { applied: false, reason: 'no-active-lasso' };
+    const gesture = activeLasso;
+    const sourcePerCssPixel = currentSession
+      ? currentSession.sourceWidth / Math.max(1, currentSession.canvasRect.width) /
+        Math.max(0.01, Math.abs(finiteNumber(currentSession.viewportTransform?.scale, 1)))
+      : 1;
+    const polygon = gesture.shape === 'rectangle'
+      ? rectanglePolygon(gesture.points[0], gesture.points.at(-1))
+      : simplifyClosedPolygon(
+        gesture.points,
+        Math.min(8, Math.max(0.25, sourcePerCssPixel * 1.5))
+      );
+    removeLassoPreview();
+    activeLasso = null;
+    return finalizePartialSelectionPolygon(polygon);
   }
 
   function pointerTargetsActiveSelection(event) {
@@ -3346,6 +3373,7 @@ function createFabricOverlayRuntime(options = {}) {
         pointerId: event.pointerId,
         sessionId: currentSession?.sessionId,
         inputRevision: tokenState.inputRevision,
+        shape: selectionShape,
         points: [],
         preview: null
       };
