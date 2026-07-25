@@ -3,6 +3,7 @@
 const {
   EPSILON,
   pointInPolygon,
+  pointToPolygonDistance,
   pointToSegmentDistance,
   segmentPolygonIntersectionParameters
 } = require('./lasso-geometry.js');
@@ -154,6 +155,36 @@ function intervalContains(intervals, amount) {
   return intervals.some(interval => amount >= interval[0] - EPSILON && amount <= interval[1] + EPSILON);
 }
 
+function shortStrokeTouchesPolygon(points = [], polygon = [], options = {}) {
+  if (!Array.isArray(points) || points.length === 0 ||
+      !Array.isArray(polygon) || polygon.length < 3) {
+    return false;
+  }
+  const deduplicated = [];
+  for (const point of points) {
+    if (!deduplicated.length || !samePoint(deduplicated[deduplicated.length - 1], point)) {
+      deduplicated.push(point);
+    }
+  }
+  if (hasVisibleLength(deduplicated)) return false;
+  if (deduplicated.length === 1) {
+    return pointInPolygon(deduplicated[0], polygon) ||
+      pointToPolygonDistance(deduplicated[0], polygon) <=
+        strokeRadius(deduplicated[0], options) + EPSILON;
+  }
+  for (let index = 0; index < deduplicated.length - 1; index += 1) {
+    if (segmentSelectionIntervals(
+      deduplicated[index],
+      deduplicated[index + 1],
+      polygon,
+      options
+    ).length > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
   if (!Array.isArray(points) || points.length < 2 || !Array.isArray(polygon) || polygon.length < 3) {
     const outside = Array.isArray(points) && points.length ? [[...points]] : [];
@@ -206,6 +237,7 @@ function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
 
 module.exports = {
   interpolateSample,
+  shortStrokeTouchesPolygon,
   strokeRadius,
   splitStrokePointsByPolygon
 };

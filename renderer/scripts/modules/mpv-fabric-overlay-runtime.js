@@ -4,6 +4,7 @@ const {
   createFabricDrawingPilotMetrics
 } = require('./fabric-drawing-pilot-metrics.js');
 const {
+  shortStrokeTouchesPolygon,
   splitStrokePointsByPolygon
 } = require('./drawing-v3/stroke-splitter.js');
 const {
@@ -3077,11 +3078,15 @@ function createFabricOverlayRuntime(options = {}) {
       const flattenedPoints = flattenStrokeSourcePoints(record, canvasObjects.get(record.id));
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       if (!boundsIntersect(boundsForPoints(flattenedPoints, maximumRadius), polygonBounds)) continue;
-      const split = splitStrokePointsByPolygon(flattenedPoints, polygon, {
+      const splitOptions = {
         size: record.style?.size,
         thinning: 0.65
-      });
-      if (split.inside.length > 0) selectedObjectIds.push(record.id);
+      };
+      const split = splitStrokePointsByPolygon(flattenedPoints, polygon, splitOptions);
+      if (split.inside.length > 0 ||
+          shortStrokeTouchesPolygon(flattenedPoints, polygon, splitOptions)) {
+        selectedObjectIds.push(record.id);
+      }
     }
 
     activateObjectIds(selectedObjectIds);

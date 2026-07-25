@@ -896,7 +896,7 @@ function createRealFabricHarness(runtimeOptions = {}) {
   canvas.calcOffset();
   const pointerDispatches = [];
 
-  function dispatchPointer(target, type, x, y, pointerId, buttons) {
+  function dispatchPointer(target, type, x, y, pointerId, buttons, overrides = {}) {
     const event = new environment.window.Event(type, { bubbles: true, cancelable: true });
     for (const [name, value] of Object.entries({
       clientX: x,
@@ -905,7 +905,8 @@ function createRealFabricHarness(runtimeOptions = {}) {
       pointerType: 'mouse',
       button: 0,
       buttons,
-      pressure: buttons === 0 ? 0 : 0.5
+      pressure: buttons === 0 ? 0 : 0.5,
+      ...overrides
     })) {
       Object.defineProperty(event, name, { value });
     }
@@ -1762,6 +1763,183 @@ test('whole-stroke lasso selects two touched pressure strokes by original ID wit
     assert.equal(afterDiagnostics.mutationCount, beforeDiagnostics.mutationCount);
     assert.equal(afterDiagnostics.metrics.saveAttemptCount, beforeDiagnostics.metrics.saveAttemptCount);
     assert.equal(harness.canvas.getObjects().length, originalIds.length);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('whole-stroke lasso selects a visible point stroke without mutation', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 50, y: 50 }, { x: 50, y: 50 }], 793);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const pointId = before.objects[0].id;
+    assert.equal(before.objects[0].pathData.length > 0, true);
+    assert.equal(before.objects[0].sourcePoints.every(
+      point => point.x === 50 && point.y === 50
+    ), true);
+    enableRealFabricWholeStrokeLasso(harness);
+    const beforeDiagnostics = harness.runtime.getDiagnostics();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+
+    harness.dragLasso([
+      { x: 40, y: 40 }, { x: 60, y: 40 }, { x: 60, y: 60 },
+      { x: 40, y: 60 }, { x: 40, y: 40 }
+    ], 794);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    const afterDiagnostics = harness.runtime.getDiagnostics();
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [pointId]
+    );
+    assert.deepEqual(after.selectedObjectIds, [pointId]);
+    assert.deepEqual(after.objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(afterDiagnostics.objectCount, beforeDiagnostics.objectCount);
+    assert.equal(afterDiagnostics.mutationCount, beforeDiagnostics.mutationCount);
+    assert.equal(afterDiagnostics.metrics.saveAttemptCount, beforeDiagnostics.metrics.saveAttemptCount);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('whole-stroke lasso selects a sub-unit stroke while leaving a distant point unselected', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 90, y: 50 }, { x: 90.4, y: 50 }], 795);
+    harness.drawStroke([{ x: 150, y: 150 }, { x: 150, y: 150 }], 796);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [shortStroke, distantPoint] = before.objects;
+    const shortLength = shortStroke.sourcePoints.slice(1).reduce(
+      (length, point, index) => length + Math.hypot(
+        point.x - shortStroke.sourcePoints[index].x,
+        point.y - shortStroke.sourcePoints[index].y
+      ),
+      0
+    );
+    assert.equal(shortLength > 0 && shortLength < 1, true);
+    enableRealFabricWholeStrokeLasso(harness);
+    const beforeDiagnostics = harness.runtime.getDiagnostics();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+
+    harness.dragLasso([
+      { x: 80, y: 40 }, { x: 100, y: 40 }, { x: 100, y: 60 },
+      { x: 80, y: 60 }, { x: 80, y: 40 }
+    ], 797);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    const afterDiagnostics = harness.runtime.getDiagnostics();
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [shortStroke.id]
+    );
+    assert.deepEqual(after.selectedObjectIds, [shortStroke.id]);
+    assert.equal(after.selectedObjectIds.includes(distantPoint.id), false);
+    assert.deepEqual(after.objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(afterDiagnostics.objectCount, beforeDiagnostics.objectCount);
+    assert.equal(afterDiagnostics.mutationCount, beforeDiagnostics.mutationCount);
+    assert.equal(afterDiagnostics.metrics.saveAttemptCount, beforeDiagnostics.metrics.saveAttemptCount);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('whole-stroke lasso uses visible radius without selecting a point beyond the brush edge', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    assert.ok(sizeInput);
+    sizeInput.value = '24';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke([{ x: 50, y: 50 }, { x: 50, y: 50 }], 798);
+    harness.drawStroke([{ x: 80, y: 50 }, { x: 80, y: 50 }], 799);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [radiusHit, outsideRadius] = before.objects;
+    assert.equal(radiusHit.style.size, 24);
+    assert.equal(radiusHit.sourcePoints[0].pressure, 0.5);
+    enableRealFabricWholeStrokeLasso(harness);
+    const beforeDiagnostics = harness.runtime.getDiagnostics();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+
+    harness.dragLasso([
+      { x: 61, y: 45 }, { x: 65, y: 45 }, { x: 65, y: 55 },
+      { x: 61, y: 55 }, { x: 61, y: 45 }
+    ], 803);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    const afterDiagnostics = harness.runtime.getDiagnostics();
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [radiusHit.id]
+    );
+    assert.deepEqual(after.selectedObjectIds, [radiusHit.id]);
+    assert.equal(after.selectedObjectIds.includes(outsideRadius.id), false);
+    assert.deepEqual(after.objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(afterDiagnostics.objectCount, beforeDiagnostics.objectCount);
+    assert.equal(afterDiagnostics.mutationCount, beforeDiagnostics.mutationCount);
+    assert.equal(afterDiagnostics.metrics.saveAttemptCount, beforeDiagnostics.metrics.saveAttemptCount);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('whole-stroke lasso ignores duplicate pressure that exceeds the rendered point radius', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    assert.ok(sizeInput);
+    sizeInput.value = '24';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.dispatchPointer(harness.element, 'pointerdown', 50, 50, 804, 1, {
+      pointerType: 'pen',
+      pressure: 0.1
+    });
+    harness.dispatchPointer(harness.element, 'pointermove', 50, 50, 804, 1, {
+      pointerType: 'pen',
+      pressure: 1
+    });
+    harness.dispatchPointer(harness.element, 'pointerup', 50, 50, 804, 0, {
+      pointerType: 'pen',
+      pressure: 0
+    });
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(before.objects[0].sourcePoints.map(point => point.pressure), [0.1, 1, 0]);
+    const renderedBounds = harness.canvas.getObjects()[0].getBoundingRect();
+    assert.equal(renderedBounds.left + renderedBounds.width < 60, true);
+    enableRealFabricWholeStrokeLasso(harness);
+    const beforeDiagnostics = harness.runtime.getDiagnostics();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+
+    harness.dragLasso([
+      { x: 60, y: 45 }, { x: 64, y: 45 }, { x: 64, y: 55 },
+      { x: 60, y: 55 }, { x: 60, y: 45 }
+    ], 805);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    const afterDiagnostics = harness.runtime.getDiagnostics();
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      []
+    );
+    assert.deepEqual(after.selectedObjectIds, []);
+    assert.deepEqual(after.objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(afterDiagnostics.objectCount, beforeDiagnostics.objectCount);
+    assert.equal(afterDiagnostics.mutationCount, beforeDiagnostics.mutationCount);
+    assert.equal(afterDiagnostics.metrics.saveAttemptCount, beforeDiagnostics.metrics.saveAttemptCount);
     assert.equal(pendingLassoObjects(harness.canvas).length, 0);
   } finally {
     await harness.destroy();
