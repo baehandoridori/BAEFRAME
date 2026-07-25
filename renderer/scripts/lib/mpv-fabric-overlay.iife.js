@@ -336,6 +336,7 @@
       var {
         EPSILON,
         pointInPolygon,
+        pointToPolygonDistance,
         pointToSegmentDistance,
         segmentPolygonIntersectionParameters
       } = require_lasso_geometry();
@@ -462,6 +463,32 @@
       function intervalContains(intervals, amount) {
         return intervals.some((interval) => amount >= interval[0] - EPSILON && amount <= interval[1] + EPSILON);
       }
+      function shortStrokeTouchesPolygon(points = [], polygon = [], options = {}) {
+        if (!Array.isArray(points) || points.length === 0 || !Array.isArray(polygon) || polygon.length < 3) {
+          return false;
+        }
+        const deduplicated = [];
+        for (const point of points) {
+          if (!deduplicated.length || !samePoint(deduplicated[deduplicated.length - 1], point)) {
+            deduplicated.push(point);
+          }
+        }
+        if (hasVisibleLength(deduplicated)) return false;
+        if (deduplicated.length === 1) {
+          return pointInPolygon(deduplicated[0], polygon) || pointToPolygonDistance(deduplicated[0], polygon) <= strokeRadius(deduplicated[0], options) + EPSILON;
+        }
+        for (let index = 0; index < deduplicated.length - 1; index += 1) {
+          if (segmentSelectionIntervals(
+            deduplicated[index],
+            deduplicated[index + 1],
+            polygon,
+            options
+          ).length > 0) {
+            return true;
+          }
+        }
+        return false;
+      }
       function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
         if (!Array.isArray(points) || points.length < 2 || !Array.isArray(polygon) || polygon.length < 3) {
           const outside = Array.isArray(points) && points.length ? [[...points]] : [];
@@ -504,6 +531,7 @@
       }
       module.exports = {
         interpolateSample,
+        shortStrokeTouchesPolygon,
         strokeRadius,
         splitStrokePointsByPolygon
       };
@@ -10357,6 +10385,7 @@ void main() {
         createFabricDrawingPilotMetrics
       } = require_fabric_drawing_pilot_metrics();
       var {
+        shortStrokeTouchesPolygon,
         splitStrokePointsByPolygon
       } = require_stroke_splitter();
       var {
@@ -12068,7 +12097,8 @@ void main() {
         let brushStyle = { ...DEFAULT_BRUSH_STYLE };
         let brushControls = null;
         let brushPanelOpen = false;
-        let selectionMode = "stroke";
+        let selectionTarget = "stroke";
+        let selectionShape = "rectangle";
         let selectionControls = null;
         let transformStart = null;
         let selectGesture = null;
@@ -12111,32 +12141,57 @@ void main() {
         function syncSelectionControls(tool = currentSession?.tool) {
           if (!selectionControls) return;
           selectionControls.group.style.display = tool === "select" ? "flex" : "none";
-          for (const [mode, button] of selectionControls.buttons) {
-            const active = selectionMode === mode;
+          for (const [target, button] of selectionControls.targetButtons) {
+            const active = selectionTarget === target;
+            button.dataset.active = String(active);
+            button.setAttribute?.("aria-pressed", String(active));
+          }
+          for (const [shape, button] of selectionControls.shapeButtons) {
+            const active = selectionShape === shape;
             button.dataset.active = String(active);
             button.setAttribute?.("aria-pressed", String(active));
           }
         }
-        function setSelectionMode(mode) {
-          const nextMode = mode === "lasso" ? "lasso" : "stroke";
-          if (selectionMode !== nextMode) abortPendingLassoSelection();
-          const selectedObjectIds = sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
-          if (selectionMode !== nextMode && (activeLasso || selectGesture || transformStart || deferredViewport)) {
-            cancelActiveLasso();
-            cancelSelectInteraction();
-          }
-          selectionMode = nextMode;
+        function usesNativeRectangleSelection(tool = currentSession?.tool) {
+          return tool === "select" && selectionTarget === "stroke" && selectionShape === "rectangle";
+        }
+        function clearSelectionForConfigurationChange() {
+          abortPendingLassoSelection();
+          if (activeLasso) cancelActiveLasso();
+          if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
+          fabricCanvas?.discardActiveObject();
+          sceneStore.selectObjects([]);
+          refreshSelectionInteractionPolicy();
+          fabricCanvas?.requestRenderAll();
+        }
+        function syncChangedSelectionConfiguration() {
           if (currentSession?.tool === "select") {
             setToolMode("select");
-            if (selectionMode === "lasso" && selectedObjectIds.length > 0) activateObjectIds(selectedObjectIds);
-          } else syncSelectionControls();
-          return selectionMode;
+          } else {
+            syncSelectionControls();
+          }
         }
-        function createSelectionModeControls() {
+        function setSelectionTarget(target) {
+          const nextTarget = target === "partial" ? "partial" : "stroke";
+          if (selectionTarget === nextTarget) return selectionTarget;
+          clearSelectionForConfigurationChange();
+          selectionTarget = nextTarget;
+          syncChangedSelectionConfiguration();
+          return selectionTarget;
+        }
+        function setSelectionShape(shape) {
+          const nextShape = shape === "lasso" ? "lasso" : "rectangle";
+          if (selectionShape === nextShape) return selectionShape;
+          clearSelectionForConfigurationChange();
+          selectionShape = nextShape;
+          syncChangedSelectionConfiguration();
+          return selectionShape;
+        }
+        function createSelectionControls() {
           const group = documentRef.createElement("div");
-          group.dataset.fabricPilotGroup = "selection-mode";
+          group.dataset.fabricPilotGroup = "selection-controls";
           group.setAttribute?.("role", "group");
-          group.setAttribute?.("aria-label", "\uC120\uD0DD \uBC29\uC2DD");
+          group.setAttribute?.("aria-label", "\uC120\uD0DD \uC124\uC815");
           setStyles(group, {
             display: "none",
             alignItems: "center",
@@ -12145,21 +12200,47 @@ void main() {
             borderRadius: "8px",
             background: "rgba(255, 255, 255, 0.08)"
           });
-          const strokeButton = createButton("\uD68D", "select-stroke");
-          strokeButton.setAttribute?.("aria-label", "\uD68D \uC804\uCCB4 \uC120\uD0DD");
-          const lassoButton = createButton("\uB77C\uC3D8", "select-lasso");
-          lassoButton.setAttribute?.("aria-label", "\uB77C\uC3D8 \uBD80\uBD84 \uC120\uD0DD");
-          const buttons = /* @__PURE__ */ new Map([
-            ["stroke", strokeButton],
-            ["lasso", lassoButton]
+          const targetGroup = documentRef.createElement("div");
+          targetGroup.dataset.fabricPilotGroup = "selection-target";
+          targetGroup.setAttribute?.("role", "group");
+          targetGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uB300\uC0C1");
+          setStyles(targetGroup, { display: "flex", alignItems: "center", gap: "4px" });
+          const strokeTargetButton = createButton("\uD68D", "select-target-stroke");
+          strokeTargetButton.setAttribute?.("aria-label", "\uD68D \uC804\uCCB4 \uC120\uD0DD");
+          const partialTargetButton = createButton("\uBD80\uBD84", "select-target-partial");
+          partialTargetButton.setAttribute?.("aria-label", "\uD68D \uC77C\uBD80 \uC120\uD0DD");
+          const targetButtons = /* @__PURE__ */ new Map([
+            ["stroke", strokeTargetButton],
+            ["partial", partialTargetButton]
           ]);
-          for (const button of buttons.values()) {
+          for (const button of targetButtons.values()) {
             button.setAttribute?.("aria-pressed", "false");
-            group.appendChild(button);
+            targetGroup.appendChild(button);
           }
-          addDomListener(strokeButton, "click", () => setSelectionMode("stroke"));
-          addDomListener(lassoButton, "click", () => setSelectionMode("lasso"));
-          return { group, buttons, strokeButton, lassoButton };
+          const shapeGroup = documentRef.createElement("div");
+          shapeGroup.dataset.fabricPilotGroup = "selection-shape";
+          shapeGroup.setAttribute?.("role", "group");
+          shapeGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uBAA8\uC591");
+          setStyles(shapeGroup, { display: "flex", alignItems: "center", gap: "4px" });
+          const rectangleShapeButton = createButton("\uC0AC\uAC01\uD615", "select-shape-rectangle");
+          rectangleShapeButton.setAttribute?.("aria-label", "\uC0AC\uAC01\uD615 \uC120\uD0DD");
+          const lassoShapeButton = createButton("\uB77C\uC3D8", "select-shape-lasso");
+          lassoShapeButton.setAttribute?.("aria-label", "\uB77C\uC3D8 \uC120\uD0DD");
+          const shapeButtons = /* @__PURE__ */ new Map([
+            ["rectangle", rectangleShapeButton],
+            ["lasso", lassoShapeButton]
+          ]);
+          for (const button of shapeButtons.values()) {
+            button.setAttribute?.("aria-pressed", "false");
+            shapeGroup.appendChild(button);
+          }
+          group.appendChild(targetGroup);
+          group.appendChild(shapeGroup);
+          addDomListener(strokeTargetButton, "click", () => setSelectionTarget("stroke"));
+          addDomListener(partialTargetButton, "click", () => setSelectionTarget("partial"));
+          addDomListener(rectangleShapeButton, "click", () => setSelectionShape("rectangle"));
+          addDomListener(lassoShapeButton, "click", () => setSelectionShape("lasso"));
+          return { group, targetGroup, shapeGroup, targetButtons, shapeButtons };
         }
         function setBrushColor(color) {
           if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
@@ -12514,7 +12595,7 @@ void main() {
           if (!fabricCanvas) return;
           if (tool !== "select") abortPendingLassoSelection();
           const selectMode = tool === "select";
-          const nativeSelectMode = selectMode && selectionMode === "stroke";
+          const nativeSelectMode = usesNativeRectangleSelection(tool);
           for (const [buttonTool, button] of toolButtons) {
             const active = buttonTool === tool;
             button.dataset.active = String(active);
@@ -12522,7 +12603,7 @@ void main() {
           }
           fabricCanvas.isDrawingMode = false;
           fabricCanvas.selection = nativeSelectMode;
-          fabricCanvas.defaultCursor = selectMode ? selectionMode === "lasso" ? "crosshair" : "default" : "crosshair";
+          fabricCanvas.defaultCursor = selectMode ? nativeSelectMode ? "default" : "crosshair" : "crosshair";
           fabricCanvas.hoverCursor = "grab";
           fabricCanvas.moveCursor = "grabbing";
           fabricCanvas.freeDrawingCursor = "crosshair";
@@ -12619,6 +12700,11 @@ void main() {
           if (!point) return;
           const previous = activeLasso.points[activeLasso.points.length - 1];
           if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < 0.5) return;
+          if (activeLasso.shape === "rectangle") {
+            if (activeLasso.points.length === 0) activeLasso.points.push(point);
+            else activeLasso.points[1] = point;
+            return;
+          }
           if (activeLasso.points.length >= MAX_LASSO_POINTS) {
             activeLasso.points = activeLasso.points.filter((_sample, index) => index === 0 || index % 2 === 0);
           }
@@ -12628,8 +12714,9 @@ void main() {
           if (!activeLasso || activeLasso.points.length < 2 || !fabricCanvas) return;
           removeLassoPreview();
           const { Path } = resolveFabric();
-          const [first, ...rest] = activeLasso.points;
-          const pathData = `M ${first.x} ${first.y} ${rest.map((point) => `L ${point.x} ${point.y}`).join(" ")}`;
+          const previewPoints = activeLasso.shape === "rectangle" ? rectanglePolygon(activeLasso.points[0], activeLasso.points.at(-1)) : activeLasso.points;
+          const [first, ...rest] = previewPoints;
+          const pathData = `M ${first.x} ${first.y} ${rest.map((point) => `L ${point.x} ${point.y}`).join(" ")}${activeLasso.shape === "rectangle" ? " Z" : ""}`;
           const preview = new Path(pathData, {
             fill: "rgba(255, 208, 0, 0.08)",
             stroke: "#ffd000",
@@ -13001,15 +13088,44 @@ void main() {
           refreshSelectionInteractionPolicy();
           fabricCanvas.requestRenderAll();
         }
-        function finalizeActiveLasso() {
-          if (!activeLasso) return { applied: false, reason: "no-active-lasso" };
-          const sourcePerCssPixel = currentSession ? currentSession.sourceWidth / Math.max(1, currentSession.canvasRect.width) / Math.max(0.01, Math.abs(finiteNumber(currentSession.viewportTransform?.scale, 1))) : 1;
-          const polygon = simplifyClosedPolygon(
-            activeLasso.points,
-            Math.min(8, Math.max(0.25, sourcePerCssPixel * 1.5))
+        function rectanglePolygon(start, end) {
+          if (!start || !end) return [];
+          return [
+            { x: start.x, y: start.y },
+            { x: end.x, y: start.y },
+            { x: end.x, y: end.y },
+            { x: start.x, y: end.y }
+          ];
+        }
+        function finalizeWholeStrokeSelectionPolygon(polygon) {
+          if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
+            activateObjectIds([]);
+            return { applied: false, reason: "lasso-too-small", selectedObjectIds: [] };
+          }
+          const snapshot = sceneStore.getActiveSceneSnapshot();
+          const canvasObjects = new Map(
+            fabricCanvas.getObjects().filter((object) => object.__baeframeObjectId).map((object) => [object.__baeframeObjectId, object])
           );
-          removeLassoPreview();
-          activeLasso = null;
+          const polygonBounds = boundsForPoints(polygon);
+          const selectedObjectIds = [];
+          for (const record of snapshot?.objects || []) {
+            if (record.type !== "stroke") continue;
+            const flattenedPoints = flattenStrokeSourcePoints(record, canvasObjects.get(record.id));
+            const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
+            if (!boundsIntersect(boundsForPoints(flattenedPoints, maximumRadius), polygonBounds)) continue;
+            const splitOptions = {
+              size: record.style?.size,
+              thinning: 0.65
+            };
+            const split = splitStrokePointsByPolygon(flattenedPoints, polygon, splitOptions);
+            if (split.inside.length > 0 || shortStrokeTouchesPolygon(flattenedPoints, polygon, splitOptions)) {
+              selectedObjectIds.push(record.id);
+            }
+          }
+          activateObjectIds(selectedObjectIds);
+          return { applied: false, selectedObjectIds };
+        }
+        function finalizePartialSelectionPolygon(polygon) {
           if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
             activateObjectIds([]);
             return { applied: false, reason: "lasso-too-small" };
@@ -13094,6 +13210,18 @@ void main() {
             pendingLassoSelection.initialTargetTransform = captureTransform(pendingLassoSelection.activeTarget);
           }
           return { ...result, selectedObjectIds };
+        }
+        function finalizeActiveLasso() {
+          if (!activeLasso) return { applied: false, reason: "no-active-lasso" };
+          const gesture = activeLasso;
+          const sourcePerCssPixel = currentSession ? currentSession.sourceWidth / Math.max(1, currentSession.canvasRect.width) / Math.max(0.01, Math.abs(finiteNumber(currentSession.viewportTransform?.scale, 1))) : 1;
+          const polygon = gesture.shape === "rectangle" ? rectanglePolygon(gesture.points[0], gesture.points.at(-1)) : simplifyClosedPolygon(
+            gesture.points,
+            Math.min(8, Math.max(0.25, sourcePerCssPixel * 1.5))
+          );
+          removeLassoPreview();
+          activeLasso = null;
+          return selectionTarget === "stroke" ? finalizeWholeStrokeSelectionPolygon(polygon) : finalizePartialSelectionPolygon(polygon);
         }
         function pointerTargetsActiveSelection(event) {
           const activeObject = fabricCanvas?.getActiveObject?.();
@@ -13274,7 +13402,7 @@ void main() {
             return;
           }
           if (tool !== "select" || selectGesture || activeStroke) return;
-          if (selectionMode === "lasso") {
+          if (!usesNativeRectangleSelection(tool)) {
             if (activeLasso) return;
             if (pointerTargetsActiveSelection(event)) {
               selectGesture = {
@@ -13294,6 +13422,7 @@ void main() {
               pointerId: event.pointerId,
               sessionId: currentSession?.sessionId,
               inputRevision: tokenState.inputRevision,
+              shape: selectionShape,
               points: [],
               preview: null
             };
@@ -13543,16 +13672,20 @@ void main() {
         function refreshSelectionInteractionPolicy(session = currentSession) {
           if (!fabricCanvas) return;
           const tolerance = resolveSelectionHitTolerance(session || {});
-          const selectTool = sceneStore.getDiagnostics().tool === "select";
-          const nativeSelection = selectTool && selectionMode === "stroke";
+          const tool = sceneStore.getDiagnostics().tool;
+          const selectTool = tool === "select";
+          const nativeSelection = usesNativeRectangleSelection(tool);
           const activeIds = new Set(selectionIds());
           fabricCanvas.setTargetFindTolerance?.(tolerance);
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
             applyMoveOnlyConstraints(object);
             applyUnselectedPermanentPathPolicy(object, tolerance);
-            const activeInLasso = selectTool && selectionMode === "lasso" && activeIds.has(object.__baeframeObjectId);
-            object.set({ selectable: nativeSelection || activeInLasso, evented: nativeSelection || activeInLasso });
+            const activeInCustomSelection = selectTool && !nativeSelection && activeIds.has(object.__baeframeObjectId);
+            object.set({
+              selectable: nativeSelection || activeInCustomSelection,
+              evented: nativeSelection || activeInCustomSelection
+            });
             object.setCoords?.();
           }
           const activeObject = fabricCanvas.getActiveObject?.();
@@ -13717,7 +13850,7 @@ void main() {
             const deleteButton = createButton("Delete", "delete-selection");
             const clearButton = createButton("Clear", "clear-session");
             brushControls = createBrushSettingsControls();
-            selectionControls = createSelectionModeControls();
+            selectionControls = createSelectionControls();
             badge = documentRef.createElement("span");
             badge.className = "mpv-fabric-pilot-badge";
             badge.textContent = formatFabricPersistenceBadge();
@@ -13989,7 +14122,8 @@ void main() {
             targetFrame: currentSession?.targetFrame ?? null,
             viewportRevision: currentSession?.viewportRevision ?? null,
             tool: scene.tool,
-            selectionMode,
+            selectionTarget,
+            selectionShape,
             objectCount: scene.objectCount,
             selectionCount: scene.selectionCount,
             mutationCount: scene.mutationCount,
