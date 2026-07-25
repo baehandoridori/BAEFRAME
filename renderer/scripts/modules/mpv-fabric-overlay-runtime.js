@@ -2704,26 +2704,52 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function createSourcePolygonQuery(object, scenePolygon, budget) {
-    if (!object?.calcTransformMatrix) {
-      return {
-        query: createPolygonEdgeIndex(scenePolygon, { budget }),
-        reason: null
-      };
-    }
-    const { Point, util } = resolveFabric();
-    if (!Point || !util?.transformPoint || !util?.invertTransform || !object.pathOffset) {
+    const { Path, Point, util } = resolveFabric();
+    if (!object || !Path || !(object instanceof Path) ||
+        typeof object.calcTransformMatrix !== 'function' ||
+        !object.pathOffset ||
+        !Number.isFinite(Number(object.pathOffset.x)) ||
+        !Number.isFinite(Number(object.pathOffset.y)) ||
+        !Point || !util?.transformPoint || !util?.invertTransform) {
       return { query: null, reason: 'selection-complexity-limit-exceeded' };
     }
-    const matrix = Array.from(object.calcTransformMatrix() || []);
+    let matrix;
+    try {
+      matrix = Array.from(object.calcTransformMatrix() || []);
+    } catch (_error) {
+      return { query: null, reason: 'selection-complexity-limit-exceeded' };
+    }
     if (matrix.length < 6 || matrix.some(value => !Number.isFinite(Number(value)))) {
       return { query: null, reason: 'selection-complexity-limit-exceeded' };
     }
-    const determinant = finiteNumber(matrix[0]) * finiteNumber(matrix[3]) -
-      finiteNumber(matrix[1]) * finiteNumber(matrix[2]);
-    if (!Number.isFinite(determinant) || Math.abs(determinant) <= 1e-8) {
+    const a = finiteNumber(matrix[0]);
+    const b = finiteNumber(matrix[1]);
+    const c = finiteNumber(matrix[2]);
+    const d = finiteNumber(matrix[3]);
+    const determinant = a * d - b * c;
+    const linearMagnitudeSquared = a * a + b * b + c * c + d * d;
+    const discriminant = Math.max(
+      0,
+      linearMagnitudeSquared * linearMagnitudeSquared - 4 * determinant * determinant
+    );
+    const maximumSingularValueSquared = (
+      linearMagnitudeSquared + Math.sqrt(discriminant)
+    ) / 2;
+    const relativeDeterminant = Math.abs(determinant) / maximumSingularValueSquared;
+    if (!Number.isFinite(determinant) ||
+        !Number.isFinite(maximumSingularValueSquared) ||
+        maximumSingularValueSquared <= 0 ||
+        Math.abs(determinant) <= 1e-8 ||
+        !Number.isFinite(relativeDeterminant) ||
+        relativeDeterminant <= 1e-8) {
       return { query: null, reason: 'selection-complexity-limit-exceeded' };
     }
-    const inverse = util.invertTransform(matrix);
+    let inverse;
+    try {
+      inverse = util.invertTransform(matrix);
+    } catch (_error) {
+      return { query: null, reason: 'selection-complexity-limit-exceeded' };
+    }
     if (!Array.isArray(inverse) || inverse.length < 6 ||
         inverse.some(value => !Number.isFinite(Number(value)))) {
       return { query: null, reason: 'selection-complexity-limit-exceeded' };
@@ -2733,10 +2759,18 @@ function createFabricOverlayRuntime(options = {}) {
       if (!budget.consume()) {
         return { query: null, reason: 'selection-complexity-limit-exceeded' };
       }
-      const local = util.transformPoint(
-        new Point(finiteNumber(point?.x), finiteNumber(point?.y)),
-        inverse
-      );
+      let local;
+      try {
+        local = util.transformPoint(
+          new Point(finiteNumber(point?.x), finiteNumber(point?.y)),
+          inverse
+        );
+      } catch (_error) {
+        return { query: null, reason: 'selection-complexity-limit-exceeded' };
+      }
+      if (!Number.isFinite(Number(local?.x)) || !Number.isFinite(Number(local?.y))) {
+        return { query: null, reason: 'selection-complexity-limit-exceeded' };
+      }
       sourcePolygon.push({
         x: finiteNumber(local?.x) + finiteNumber(object.pathOffset.x),
         y: finiteNumber(local?.y) + finiteNumber(object.pathOffset.y)
@@ -3183,6 +3217,7 @@ function createFabricOverlayRuntime(options = {}) {
       const splitOptions = {
         size: record.style?.size,
         thinning: 0.65,
+        strokeCaps: record.strokeCaps,
         budget: geometryBudget
       };
       const touch = strokeTouchesPolygon(
@@ -3244,6 +3279,7 @@ function createFabricOverlayRuntime(options = {}) {
       const splitOptions = {
         size: record.style?.size,
         thinning: 0.65,
+        strokeCaps: record.strokeCaps,
         maxRuns: Math.max(1, maxLassoFragments - accumulatedFragments + 1),
         budget: geometryBudget
       };

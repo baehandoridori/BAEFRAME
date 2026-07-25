@@ -37,8 +37,15 @@ function samePoint(left, right) {
     Math.abs(finiteNumber(left?.y) - finiteNumber(right?.y)) <= EPSILON;
 }
 
+function sameGeometrySample(left, right) {
+  return samePoint(left, right) &&
+    Math.abs(
+      finiteNumber(left?.pressure, 0.5) - finiteNumber(right?.pressure, 0.5)
+    ) <= PARAMETER_EPSILON;
+}
+
 function appendPoint(run, point) {
-  if (!run.length || !samePoint(run[run.length - 1], point)) run.push(point);
+  if (!run.length || !sameGeometrySample(run[run.length - 1], point)) run.push(point);
 }
 
 function hasVisibleLength(run) {
@@ -87,17 +94,16 @@ function segmentBounds(start, end, padding = 0) {
 function deduplicateStrokePoints(points = []) {
   const deduplicated = [];
   for (const point of points) {
-    if (!deduplicated.length || !samePoint(deduplicated[deduplicated.length - 1], point)) {
+    if (!deduplicated.length ||
+        !sameGeometrySample(deduplicated[deduplicated.length - 1], point)) {
       deduplicated.push(point);
     }
   }
+  if (deduplicated.length > 1 &&
+      deduplicated.every(point => samePoint(point, deduplicated[0]))) {
+    return [deduplicated[0]];
+  }
   return deduplicated;
-}
-
-function quadraticValue(coefficients, amount) {
-  return coefficients.a * amount * amount +
-    coefficients.b * amount +
-    coefficients.c;
 }
 
 function quadraticRoots(coefficients) {
@@ -123,7 +129,7 @@ function quadraticRoots(coefficients) {
   return [q / a, c / q].sort((left, right) => left - right);
 }
 
-function quadraticHitIntervals(coefficients, from, to, budget) {
+function quadraticHitIntervals(coefficients, from, to, budget, hitAtAmount) {
   if (!budget.consume()) return { intervals: [], limitExceeded: true };
   const roots = quadraticRoots(coefficients)
     .filter(root => root >= from - PARAMETER_EPSILON && root <= to + PARAMETER_EPSILON)
@@ -133,20 +139,17 @@ function quadraticHitIntervals(coefficients, from, to, budget) {
     .filter((value, index, values) => (
       index === 0 || Math.abs(value - values[index - 1]) > PARAMETER_EPSILON
     ));
-  const evaluationTolerance = Number.EPSILON *
-    Math.max(1, Math.abs(coefficients.a), Math.abs(coefficients.b), Math.abs(coefficients.c)) *
-    256;
   const intervals = [];
   for (let index = 0; index < cuts.length - 1; index += 1) {
     const intervalStart = cuts[index];
     const intervalEnd = cuts[index + 1];
     const middle = (intervalStart + intervalEnd) / 2;
-    if (quadraticValue(coefficients, middle) <= evaluationTolerance) {
+    if (hitAtAmount(middle)) {
       intervals.push([intervalStart, intervalEnd]);
     }
   }
   for (const cut of cuts) {
-    if (quadraticValue(coefficients, cut) > evaluationTolerance) continue;
+    if (!hitAtAmount(cut)) continue;
     if (!intervals.some(interval => (
       cut >= interval[0] - PARAMETER_EPSILON &&
       cut <= interval[1] + PARAMETER_EPSILON
@@ -194,17 +197,102 @@ function subtractRadiusSquared(coefficients, start, end, options) {
   };
 }
 
-function edgeProximityIntervals(start, end, edgeStart, edgeEnd, options, budget) {
+function clipEdgeToStrokeCaps(start, end, edgeStart, edgeEnd, caps = {}) {
+  if (caps.start !== false && caps.end !== false) {
+    return { start: edgeStart, end: edgeEnd };
+  }
+  const strokeDelta = {
+    x: finiteNumber(end?.x) - finiteNumber(start?.x),
+    y: finiteNumber(end?.y) - finiteNumber(start?.y)
+  };
+  const strokeLength = Math.hypot(strokeDelta.x, strokeDelta.y);
+  if (strokeLength <= EPSILON) return null;
+  const direction = {
+    x: strokeDelta.x / strokeLength,
+    y: strokeDelta.y / strokeLength
+  };
+  const edgeDelta = {
+    x: finiteNumber(edgeEnd?.x) - finiteNumber(edgeStart?.x),
+    y: finiteNumber(edgeEnd?.y) - finiteNumber(edgeStart?.y)
+  };
+  const edgeStartDistance = (
+    (finiteNumber(edgeStart?.x) - finiteNumber(start?.x)) * direction.x +
+    (finiteNumber(edgeStart?.y) - finiteNumber(start?.y)) * direction.y
+  );
+  const edgeDistanceDelta = edgeDelta.x * direction.x + edgeDelta.y * direction.y;
+  let from = 0;
+  let to = 1;
+
+  const clipLower = boundary => {
+    if (Math.abs(edgeDistanceDelta) <= EPSILON) {
+      return edgeStartDistance >= boundary - EPSILON;
+    }
+    const amount = (boundary - edgeStartDistance) / edgeDistanceDelta;
+    if (edgeDistanceDelta > 0) from = Math.max(from, amount);
+    else to = Math.min(to, amount);
+    return from <= to + PARAMETER_EPSILON;
+  };
+  const clipUpper = boundary => {
+    if (Math.abs(edgeDistanceDelta) <= EPSILON) {
+      return edgeStartDistance <= boundary + EPSILON;
+    }
+    const amount = (boundary - edgeStartDistance) / edgeDistanceDelta;
+    if (edgeDistanceDelta > 0) to = Math.min(to, amount);
+    else from = Math.max(from, amount);
+    return from <= to + PARAMETER_EPSILON;
+  };
+
+  if (caps.start === false && !clipLower(0)) return null;
+  if (caps.end === false && !clipUpper(strokeLength)) return null;
+  const clippedFrom = Math.min(1, Math.max(0, from));
+  const clippedTo = Math.min(1, Math.max(0, to));
+  if (clippedFrom > clippedTo + PARAMETER_EPSILON) return null;
+  return {
+    start: {
+      x: finiteNumber(edgeStart?.x) + edgeDelta.x * clippedFrom,
+      y: finiteNumber(edgeStart?.y) + edgeDelta.y * clippedFrom
+    },
+    end: {
+      x: finiteNumber(edgeStart?.x) + edgeDelta.x * clippedTo,
+      y: finiteNumber(edgeStart?.y) + edgeDelta.y * clippedTo
+    }
+  };
+}
+
+function proximityHitAtAmount(start, end, edgeStart, edgeEnd, options, amount) {
+  const sample = interpolateSample(start, end, amount);
+  const distance = pointToSegmentDistance(sample, edgeStart, edgeEnd);
+  const radius = strokeRadius(sample, options) + EPSILON;
+  const distanceSquared = distance * distance;
+  const radiusSquared = radius * radius;
+  const distanceTolerance = Number.EPSILON *
+    Math.max(1, distanceSquared, radiusSquared) * 64;
+  return distanceSquared - radiusSquared <= distanceTolerance;
+}
+
+function edgeProximityIntervals(
+  start,
+  end,
+  edgeStart,
+  edgeEnd,
+  options,
+  budget,
+  caps = {}
+) {
+  const clippedEdge = clipEdgeToStrokeCaps(start, end, edgeStart, edgeEnd, caps);
+  if (!clippedEdge) return { intervals: [], limitExceeded: false };
+  const clippedEdgeStart = clippedEdge.start;
+  const clippedEdgeEnd = clippedEdge.end;
   const maximumRadius = Math.max(strokeRadius(start, options), strokeRadius(end, options));
   if (!boundsIntersect(
     segmentBounds(start, end, maximumRadius),
-    segmentBounds(edgeStart, edgeEnd)
+    segmentBounds(clippedEdgeStart, clippedEdgeEnd)
   )) {
     return { intervals: [], limitExceeded: false };
   }
   const edgeDelta = {
-    x: finiteNumber(edgeEnd?.x) - finiteNumber(edgeStart?.x),
-    y: finiteNumber(edgeEnd?.y) - finiteNumber(edgeStart?.y)
+    x: finiteNumber(clippedEdgeEnd?.x) - finiteNumber(clippedEdgeStart?.x),
+    y: finiteNumber(clippedEdgeEnd?.y) - finiteNumber(clippedEdgeStart?.y)
   };
   const edgeLengthSquared = edgeDelta.x * edgeDelta.x + edgeDelta.y * edgeDelta.y;
   const domains = [0, 1];
@@ -216,8 +304,8 @@ function edgeProximityIntervals(start, end, edgeStart, edgeEnd, options, budget)
       y: finiteNumber(end?.y) - finiteNumber(start?.y)
     };
     projectionStart = (
-      (finiteNumber(start?.x) - finiteNumber(edgeStart?.x)) * edgeDelta.x +
-      (finiteNumber(start?.y) - finiteNumber(edgeStart?.y)) * edgeDelta.y
+      (finiteNumber(start?.x) - finiteNumber(clippedEdgeStart?.x)) * edgeDelta.x +
+      (finiteNumber(start?.y) - finiteNumber(clippedEdgeStart?.y)) * edgeDelta.y
     ) / edgeLengthSquared;
     projectionDelta = (
       strokeDelta.x * edgeDelta.x +
@@ -242,14 +330,14 @@ function edgeProximityIntervals(start, end, edgeStart, edgeEnd, options, budget)
     const projection = projectionStart + projectionDelta * middle;
     let distanceSquared;
     if (edgeLengthSquared <= EPSILON || projection <= 0) {
-      distanceSquared = pointDistanceSquaredCoefficients(start, end, edgeStart);
+      distanceSquared = pointDistanceSquaredCoefficients(start, end, clippedEdgeStart);
     } else if (projection >= 1) {
-      distanceSquared = pointDistanceSquaredCoefficients(start, end, edgeEnd);
+      distanceSquared = pointDistanceSquaredCoefficients(start, end, clippedEdgeEnd);
     } else {
       distanceSquared = lineDistanceSquaredCoefficients(
         start,
         end,
-        edgeStart,
+        clippedEdgeStart,
         edgeDelta,
         edgeLengthSquared
       );
@@ -258,7 +346,15 @@ function edgeProximityIntervals(start, end, edgeStart, edgeEnd, options, budget)
       subtractRadiusSquared(distanceSquared, start, end, options),
       from,
       to,
-      budget
+      budget,
+      amount => proximityHitAtAmount(
+        start,
+        end,
+        clippedEdgeStart,
+        clippedEdgeEnd,
+        options,
+        amount
+      )
     );
     if (hit.limitExceeded) return hit;
     intervals.push(...hit.intervals);
@@ -276,7 +372,9 @@ function centerlineIntervals(start, end, query, budget) {
   }
   const cuts = [0, ...parameters, 1]
     .sort((left, right) => left - right)
-    .filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > EPSILON);
+    .filter((value, index, values) => (
+      index === 0 || Math.abs(value - values[index - 1]) > PARAMETER_EPSILON
+    ));
   const intervals = [];
   for (let index = 0; index < cuts.length - 1; index += 1) {
     const from = cuts[index];
@@ -292,18 +390,19 @@ function centerlineIntervals(start, end, query, budget) {
 
 function mergeIntervals(intervals) {
   const ordered = intervals
-    .filter(interval => interval && interval[1] - interval[0] > EPSILON)
+    .filter(interval => interval && interval[1] - interval[0] > PARAMETER_EPSILON)
     .sort((left, right) => left[0] - right[0]);
   const merged = [];
   for (const interval of ordered) {
     const previous = merged[merged.length - 1];
-    if (!previous || interval[0] > previous[1] + EPSILON) merged.push([...interval]);
-    else previous[1] = Math.max(previous[1], interval[1]);
+    if (!previous || interval[0] > previous[1] + PARAMETER_EPSILON) {
+      merged.push([...interval]);
+    } else previous[1] = Math.max(previous[1], interval[1]);
   }
   return merged;
 }
 
-function segmentSelectionIntervals(start, end, query, options, budget) {
+function segmentSelectionIntervals(start, end, query, options, budget, caps) {
   const centerline = centerlineIntervals(start, end, query, budget);
   if (centerline.limitExceeded) return centerline;
   const intervals = centerline.intervals;
@@ -319,7 +418,8 @@ function segmentSelectionIntervals(start, end, query, options, budget) {
         edge.start,
         edge.end,
         options,
-        budget
+        budget,
+        caps
       );
       if (proximity.limitExceeded) return { intervals: [], limitExceeded: true };
       intervals.push(...proximity.intervals);
@@ -329,13 +429,17 @@ function segmentSelectionIntervals(start, end, query, options, budget) {
 }
 
 function intervalContains(intervals, amount) {
-  return intervals.some(interval => amount >= interval[0] - EPSILON && amount <= interval[1] + EPSILON);
+  return intervals.some(interval => (
+    amount >= interval[0] - PARAMETER_EPSILON &&
+    amount <= interval[1] + PARAMETER_EPSILON
+  ));
 }
 
-function pointTouchesPolygon(point, query, options, budget) {
+function pointTouchesPolygon(point, query, options, budget, includeRadius = true) {
   const contained = query.contains(point);
   if (contained === null) return { hit: false, limitExceeded: true };
   if (contained) return { hit: true, limitExceeded: false };
+  if (!includeRadius) return { hit: false, limitExceeded: false };
   const radius = strokeRadius(point, options);
   const candidates = query.queryEdges(segmentBounds(point, point, radius));
   if (candidates === null) return { hit: false, limitExceeded: true };
@@ -348,8 +452,8 @@ function pointTouchesPolygon(point, query, options, budget) {
   return { hit: false, limitExceeded: false };
 }
 
-function segmentTouchesPolygon(start, end, query, options, budget) {
-  const startTouch = pointTouchesPolygon(start, query, options, budget);
+function segmentTouchesPolygon(start, end, query, options, budget, caps) {
+  const startTouch = pointTouchesPolygon(start, query, options, budget, caps.start !== false);
   if (startTouch.hit || startTouch.limitExceeded) return startTouch;
   const endContained = query.contains(end);
   if (endContained === null) return { hit: false, limitExceeded: true };
@@ -363,11 +467,26 @@ function segmentTouchesPolygon(start, end, query, options, budget) {
     if (segmentEdgeIntersectionParameters(start, end, edge.start, edge.end).length > 0) {
       return { hit: true, limitExceeded: false };
     }
-    const proximity = edgeProximityIntervals(start, end, edge.start, edge.end, options, budget);
+    const proximity = edgeProximityIntervals(
+      start,
+      end,
+      edge.start,
+      edge.end,
+      options,
+      budget,
+      caps
+    );
     if (proximity.limitExceeded) return { hit: false, limitExceeded: true };
     if (proximity.intervals.length > 0) return { hit: true, limitExceeded: false };
   }
   return { hit: false, limitExceeded: false };
+}
+
+function segmentCaps(options, index, segmentCount) {
+  return {
+    start: index > 0 || options?.strokeCaps?.start !== false,
+    end: index < segmentCount - 1 || options?.strokeCaps?.end !== false
+  };
 }
 
 function strokeTouchesPolygon(points = [], polygon = [], options = {}) {
@@ -390,16 +509,26 @@ function strokeTouchesPolygon(points = [], polygon = [], options = {}) {
     return { hit: false, limitExceeded: false };
   }
   if (deduplicated.length === 1) {
-    return pointTouchesPolygon(deduplicated[0], query, options, budget);
+    const pointHasVisibleCap = options?.strokeCaps?.start !== false ||
+      options?.strokeCaps?.end !== false;
+    return pointTouchesPolygon(deduplicated[0], query, options, budget, pointHasVisibleCap);
   }
+  const visibleSegmentIndexes = [];
   for (let index = 0; index < deduplicated.length - 1; index += 1) {
+    if (!samePoint(deduplicated[index], deduplicated[index + 1])) {
+      visibleSegmentIndexes.push(index);
+    }
+  }
+  for (let visibleIndex = 0; visibleIndex < visibleSegmentIndexes.length; visibleIndex += 1) {
     if (!budget.consume()) return { hit: false, limitExceeded: true };
+    const pointIndex = visibleSegmentIndexes[visibleIndex];
     const result = segmentTouchesPolygon(
-      deduplicated[index],
-      deduplicated[index + 1],
+      deduplicated[pointIndex],
+      deduplicated[pointIndex + 1],
       query,
       options,
-      budget
+      budget,
+      segmentCaps(options, visibleIndex, visibleSegmentIndexes.length)
     );
     if (result.hit || result.limitExceeded) return result;
   }
@@ -414,7 +543,8 @@ function shortStrokeTouchesPolygon(points = [], polygon = [], options = {}) {
 
 function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
   const polygonArray = isPolygonQuery(polygon) ? polygon.polygon : polygon;
-  if (!Array.isArray(points) || points.length < 2 ||
+  const sourcePoints = Array.isArray(points) ? deduplicateStrokePoints(points) : [];
+  if (sourcePoints.length < 2 ||
       !Array.isArray(polygonArray) || polygonArray.length < 3) {
     const outside = Array.isArray(points) && points.length ? [[...points]] : [];
     return { inside: [], outside, runs: outside.map(run => ({ kind: 'outside', points: run })) };
@@ -448,15 +578,34 @@ function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
     return true;
   };
 
-  outer: for (let index = 0; index < points.length - 1; index += 1) {
+  const visibleSegmentIndexes = [];
+  for (let index = 0; index < sourcePoints.length - 1; index += 1) {
+    if (!samePoint(sourcePoints[index], sourcePoints[index + 1])) {
+      visibleSegmentIndexes.push(index);
+    }
+  }
+
+  outer: for (
+    let visibleIndex = 0;
+    visibleIndex < visibleSegmentIndexes.length;
+    visibleIndex += 1
+  ) {
     if (!budget.consume()) {
       result.limitExceeded = true;
       limitReason = 'operations';
       break;
     }
-    const start = points[index];
-    const end = points[index + 1];
-    const selection = segmentSelectionIntervals(start, end, query, options, budget);
+    const pointIndex = visibleSegmentIndexes[visibleIndex];
+    const start = sourcePoints[pointIndex];
+    const end = sourcePoints[pointIndex + 1];
+    const selection = segmentSelectionIntervals(
+      start,
+      end,
+      query,
+      options,
+      budget,
+      segmentCaps(options, visibleIndex, visibleSegmentIndexes.length)
+    );
     if (selection.limitExceeded) {
       result.limitExceeded = true;
       limitReason = 'operations';
@@ -465,7 +614,10 @@ function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
     const selectionIntervals = selection.intervals;
     const cuts = [0, ...selectionIntervals.flat(), 1]
       .sort((left, right) => left - right)
-      .filter((value, cutIndex, values) => cutIndex === 0 || Math.abs(value - values[cutIndex - 1]) > EPSILON);
+      .filter((value, cutIndex, values) => (
+        cutIndex === 0 ||
+        Math.abs(value - values[cutIndex - 1]) > PARAMETER_EPSILON
+      ));
 
     for (let cutIndex = 0; cutIndex < cuts.length - 1; cutIndex += 1) {
       const from = interpolateSample(start, end, cuts[cutIndex]);

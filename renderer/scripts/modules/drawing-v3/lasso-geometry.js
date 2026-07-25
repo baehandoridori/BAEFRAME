@@ -1,6 +1,7 @@
 'use strict';
 
 const EPSILON = 1e-7;
+const PARAMETER_EPSILON = 1e-12;
 const DEFAULT_EDGE_INDEX_LEAF_SIZE = 8;
 
 function finiteNumber(value, fallback = 0) {
@@ -350,14 +351,15 @@ function segmentEdgeIntersectionParameters(start, end, edgeStart, edgeEnd) {
     for (const edgePoint of [edgeStart, edgeEnd]) {
       const t = ((finiteNumber(edgePoint?.x) - ax) * rx +
         (finiteNumber(edgePoint?.y) - ay) * ry) / lengthSquared;
-      if (t > EPSILON && t < 1 - EPSILON) parameters.push(t);
+      if (t > PARAMETER_EPSILON && t < 1 - PARAMETER_EPSILON) parameters.push(t);
     }
     return parameters;
   }
 
   const t = cross(qpx, qpy, sx, sy) / denominator;
   const u = cross(qpx, qpy, rx, ry) / denominator;
-  if (t >= -EPSILON && t <= 1 + EPSILON && u >= -EPSILON && u <= 1 + EPSILON) {
+  if (t >= -PARAMETER_EPSILON && t <= 1 + PARAMETER_EPSILON &&
+      u >= -PARAMETER_EPSILON && u <= 1 + PARAMETER_EPSILON) {
     parameters.push(Math.min(1, Math.max(0, t)));
   }
   return parameters;
@@ -375,7 +377,9 @@ function segmentPolygonIntersectionParameters(start, end, polygon = []) {
   }
   return parameters
     .sort((left, right) => left - right)
-    .filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > EPSILON);
+    .filter((value, index, values) => (
+      index === 0 || Math.abs(value - values[index - 1]) > PARAMETER_EPSILON
+    ));
 }
 
 module.exports = {
