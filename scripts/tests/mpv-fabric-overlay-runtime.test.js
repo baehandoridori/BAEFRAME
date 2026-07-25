@@ -2353,6 +2353,46 @@ test('whole-stroke selection aborts for a scale-relative near-singular Fabric tr
   }
 });
 
+test('whole-stroke selection accepts a well-conditioned uniform 1e-5 Fabric scale', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 907);
+    const sourceObject = harness.canvas.getObjects()[0];
+    const originalId = sourceObject.__baeframeObjectId;
+    const originalMatrixResolver = sourceObject.calcTransformMatrix;
+    sourceObject.calcTransformMatrix = () => [1e-5, 0, 0, 1e-5, 100, 100];
+    sourceObject.getBoundingRect = () => ({
+      left: 0,
+      top: 0,
+      width: 200,
+      height: 200
+    });
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    enableRealFabricWholeStrokeLasso(harness);
+
+    harness.dragLasso([
+      { x: 99, y: 99 },
+      { x: 101, y: 99 },
+      { x: 101, y: 101 },
+      { x: 99, y: 101 },
+      { x: 99, y: 99 }
+    ], 908);
+    sourceObject.calcTransformMatrix = originalMatrixResolver;
+
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, [originalId]);
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [originalId]
+    );
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('whole-stroke selection rejects a Fabric object without local Path geometry', async () => {
   const harness = createRealFabricHarness();
   try {
@@ -2571,6 +2611,161 @@ test('runtime respects flat stroke caps when a short stroke cannot be split', as
     assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
     assert.equal(harness.canvas.getActiveObjects().length, 0);
     assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial pressure-chain fragments keep exact shapes through Move Delete Undo and Redo', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '10';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 100, 909, 1, {
+      pointerType: 'pen',
+      pressure: 0
+    });
+    harness.dispatchPointer(harness.element, 'pointermove', 20, 100, 909, 1, {
+      pointerType: 'pen',
+      pressure: 1
+    });
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, 909, 1, {
+      pointerType: 'pen',
+      pressure: 1
+    });
+    harness.dispatchPointer(harness.element, 'pointermove', 180, 100, 909, 1, {
+      pointerType: 'pen',
+      pressure: 1
+    });
+    harness.dispatchPointer(harness.element, 'pointerup', 180, 100, 909, 0, {
+      pointerType: 'pen',
+      pressure: 0
+    });
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    const originalRecord = original.objects[0];
+    assert.deepEqual(
+      originalRecord.sourcePoints.map(point => point.pressure),
+      [0, 1, 1, 1, 0]
+    );
+    const sourceObject = harness.canvas.getObjects()[0];
+    const sourcePolygon = [
+      { x: 80, y: 80 },
+      { x: 120, y: 80 },
+      { x: 120, y: 120 },
+      { x: 80, y: 120 }
+    ];
+    const expectedSplit = splitStrokePointsByPolygon(
+      originalRecord.sourcePoints,
+      sourcePolygon,
+      {
+        size: originalRecord.style.size,
+        thinning: 0.65,
+        strokeCaps: originalRecord.strokeCaps
+      }
+    );
+    assert.equal(expectedSplit.runs.length, 3);
+    const expectedShapes = expectedSplit.runs.map((run, index) => {
+      const caps = {
+        start: index === 0,
+        end: index === expectedSplit.runs.length - 1
+      };
+      const canonical = createStrokePathData(run.points.map(point => ({
+        ...point,
+        pointerType: 'pen'
+      })), {
+        size: originalRecord.style.size,
+        last: true,
+        start: { cap: caps.start },
+        end: { cap: caps.end }
+      });
+      return {
+        sourcePoints: canonical.sourcePoints,
+        pathData: canonical.pathData,
+        strokeCaps: caps
+      };
+    });
+    const sceneLasso = sourcePolygonInRealFabricScene(sourceObject, [
+      ...sourcePolygon,
+      sourcePolygon[0]
+    ]);
+    enableRealFabricLasso(harness);
+    const beforeMoveDepth = harness.runtime.getDiagnostics().undoDepth;
+
+    harness.dragLasso(sceneLasso, 910);
+
+    const selectedProxy = harness.canvas.getActiveObjects()[0];
+    assert.ok(selectedProxy);
+    const selectedId = selectedProxy.__baeframeObjectId;
+    harness.dragActiveSelectionBy(9, -4, 911);
+    await Promise.resolve();
+
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, beforeMoveDepth + 1);
+    assert.deepEqual(moved.objects.map(record => ({
+      sourcePoints: record.sourcePoints,
+      pathData: record.pathData,
+      strokeCaps: record.strokeCaps
+    })), expectedShapes);
+    assert.deepEqual(
+      moved.objects[0].sourcePoints.slice(0, 2).map(point => point.pressure),
+      [0, 1]
+    );
+    assert.deepEqual(
+      moved.objects.at(-1).sourcePoints.slice(-2).map(point => point.pressure),
+      [1, 0]
+    );
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'undo-pressure-chain-move',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, original.objects);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'redo-pressure-chain-move',
+      action: 'redo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, moved.objects);
+    clickSelectionControl(harness.root, 'select-target-stroke');
+    clickSelectionControl(harness.root, 'select-shape-rectangle');
+    const selectedIndex = harness.canvas.getObjects().findIndex(
+      object => object.__baeframeObjectId === selectedId
+    );
+    assert.ok(selectedIndex >= 0);
+    harness.clickStroke(selectedIndex, 912);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [selectedId]
+    );
+
+    const beforeDeleteDepth = harness.runtime.getDiagnostics().undoDepth;
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'delete-pressure-chain-fragment',
+      action: 'delete-selection'
+    }).applied, true);
+    const deleted = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, beforeDeleteDepth + 1);
+    assert.equal(deleted.objects.length, moved.objects.length - 1);
+    assert.equal(deleted.objects.some(record => record.id === selectedId), false);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'undo-pressure-chain-delete',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, moved.objects);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'redo-pressure-chain-delete',
+      action: 'redo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, deleted.objects);
   } finally {
     await harness.destroy();
   }
@@ -6699,6 +6894,34 @@ test('stroke path data preserves source pressure separately from its Fabric path
   assert.ok(result.outline.length >= 3);
 });
 
+test('stored normalized pressure reconstructs the exact pen path without changing live mouse input', () => {
+  const stored = [
+    { x: 0, y: 0, pressure: 0, time: 0 },
+    { x: 10, y: 0, pressure: 1, time: 1 }
+  ];
+  const canonicalPen = createStrokePathData(stored.map(point => ({
+    ...point,
+    pointerType: 'pen'
+  })), { size: 10, last: true });
+  const reconstructed = createStrokePathData(stored, {
+    size: 10,
+    last: true,
+    alreadyNormalizedPressure: true
+  });
+
+  assert.deepEqual(reconstructed.sourcePoints, canonicalPen.sourcePoints);
+  assert.deepEqual(reconstructed.outline, canonicalPen.outline);
+  assert.equal(reconstructed.pathData, canonicalPen.pathData);
+  assert.deepEqual(
+    createStrokePathData(stored, { size: 10 }).sourcePoints.map(point => point.pressure),
+    [0.5, 1]
+  );
+  assert.deepEqual(
+    canonicalPen.sourcePoints.map(point => point.pressure),
+    [0, 1]
+  );
+});
+
 test('destructive command over maxHistoryBytes is rejected without changing the scene', () => {
   const harness = createHistoryHarness({
     maxBytes: 100000,
@@ -7020,6 +7243,139 @@ test('pressure changes at one coordinate affect the following visible segment wi
     thinning: 0.65
   }), {
     hit: false,
+    limitExceeded: false
+  });
+});
+
+test('partial split preserves leading trailing and internal same-position pressure chains', () => {
+  const leading = [
+    { x: 0, y: 0, pressure: 0, time: 0 },
+    { x: 0, y: 0, pressure: 1, time: 1 },
+    { x: 10, y: 0, pressure: 1, time: 2 },
+    { x: 20, y: 0, pressure: 1, time: 3 }
+  ];
+  const middlePolygon = [
+    { x: 8, y: -2 },
+    { x: 12, y: -2 },
+    { x: 12, y: 2 },
+    { x: 8, y: 2 }
+  ];
+
+  const leadingSplit = splitStrokePointsByPolygon(leading, middlePolygon);
+  assert.deepEqual(
+    leadingSplit.runs[0].points.slice(0, 2).map(point => ({
+      x: point.x,
+      y: point.y,
+      pressure: point.pressure
+    })),
+    [
+      { x: 0, y: 0, pressure: 0 },
+      { x: 0, y: 0, pressure: 1 }
+    ]
+  );
+
+  const internalAndTrailing = [
+    { x: 0, y: 0, pressure: 1, time: 0 },
+    { x: 10, y: 0, pressure: 1, time: 1 },
+    { x: 10, y: 0, pressure: 0.2, time: 2 },
+    { x: 10, y: 0, pressure: 0.8, time: 3 },
+    { x: 20, y: 0, pressure: 0.8, time: 4 },
+    { x: 20, y: 0, pressure: 0, time: 5 }
+  ];
+  const internalSplit = splitStrokePointsByPolygon(internalAndTrailing, middlePolygon);
+  const samePositionPressures = internalSplit.runs
+    .flatMap(run => run.points)
+    .filter(point => point.x === 10)
+    .map(point => point.pressure);
+  assert.deepEqual(samePositionPressures, [1, 0.2, 0.8]);
+  assert.deepEqual(
+    internalSplit.runs.at(-1).points.slice(-2).map(point => ({
+      x: point.x,
+      y: point.y,
+      pressure: point.pressure
+    })),
+    [
+      { x: 20, y: 0, pressure: 0.8 },
+      { x: 20, y: 0, pressure: 0 }
+    ]
+  );
+});
+
+test('partial split keeps separate pressure chains when a stroke revisits one position', () => {
+  const points = [
+    { x: 0, y: 0, pressure: 0, time: 0 },
+    { x: 0, y: 0, pressure: 1, time: 0 },
+    { x: 10, y: 0, pressure: 1, time: 0 },
+    { x: 0, y: 0, pressure: 0.2, time: 0 },
+    { x: 0, y: 0, pressure: 0.8, time: 0 },
+    { x: 0, y: 10, pressure: 0.8, time: 0 }
+  ];
+  const split = splitStrokePointsByPolygon(points, [
+    { x: 4, y: -2 },
+    { x: 6, y: -2 },
+    { x: 6, y: 2 },
+    { x: 4, y: 2 }
+  ]);
+
+  assert.deepEqual(
+    split.runs[0].points.slice(0, 2).map(point => ({
+      pressure: point.pressure,
+      time: point.time
+    })),
+    [
+      { pressure: 0, time: 0 },
+      { pressure: 1, time: 0 }
+    ]
+  );
+  assert.deepEqual(
+    split.runs.at(-1).points
+      .filter(point => point.x === 0 && point.y === 0)
+      .map(point => ({
+        pressure: point.pressure,
+        time: point.time
+      })),
+    [
+      { pressure: 0.2, time: 0 },
+      { pressure: 0.8, time: 0 }
+    ]
+  );
+});
+
+test('round cap hit testing uses the actual trailing pressure sample', () => {
+  const points = [
+    { x: 0, y: 0, pressure: 1, time: 0 },
+    { x: 10, y: 0, pressure: 1, time: 1 },
+    { x: 10, y: 0, pressure: 0, time: 2 }
+  ];
+  const options = {
+    size: 10,
+    thinning: 0.65,
+    strokeCaps: { start: true, end: true }
+  };
+  const actualPath = createStrokePathData(points.map(point => ({
+    ...point,
+    pointerType: 'pen'
+  })), { size: 10, last: true });
+  const beyondActualCap = [
+    { x: 16, y: -1 },
+    { x: 17, y: -1 },
+    { x: 17, y: 1 },
+    { x: 16, y: 1 }
+  ];
+  const touchingActualCap = [
+    { x: 11, y: -1 },
+    { x: 12, y: -1 },
+    { x: 12, y: 1 },
+    { x: 11, y: 1 }
+  ];
+
+  assert.ok(Math.max(...actualPath.outline.map(point => point[0])) < 12);
+  assert.deepEqual(strokeTouchesPolygon(points, beyondActualCap, options), {
+    hit: false,
+    limitExceeded: false
+  });
+  assert.deepEqual(strokeTouchesPolygon(points, touchingActualCap, options), {
+    hit: true,
     limitExceeded: false
   });
 });

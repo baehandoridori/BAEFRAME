@@ -1812,7 +1812,9 @@ function createStrokePathData(samples, options = {}) {
   const sourcePoints = samples.map(sample => ({
     x: finiteNumber(sample.x),
     y: finiteNumber(sample.y),
-    pressure: normalizePressure(sample.pressure, sample.pointerType),
+    pressure: options.alreadyNormalizedPressure === true
+      ? Math.min(1, Math.max(0, finiteNumber(sample.pressure, 0.5)))
+      : normalizePressure(sample.pressure, sample.pointerType),
     time: finiteNumber(sample.time ?? sample.timeStamp)
   }));
   const { getStroke } = require('perfect-freehand');
@@ -2739,7 +2741,6 @@ function createFabricOverlayRuntime(options = {}) {
     if (!Number.isFinite(determinant) ||
         !Number.isFinite(maximumSingularValueSquared) ||
         maximumSingularValueSquared <= 0 ||
-        Math.abs(determinant) <= 1e-8 ||
         !Number.isFinite(relativeDeterminant) ||
         relativeDeterminant <= 1e-8) {
       return { query: null, reason: 'selection-complexity-limit-exceeded' };
@@ -2822,6 +2823,7 @@ function createFabricOverlayRuntime(options = {}) {
       strokeData = strokePathFactory(points, {
         size: record.style?.size,
         last: true,
+        alreadyNormalizedPressure: true,
         start: { cap: caps.start !== false },
         end: { cap: caps.end !== false }
       });

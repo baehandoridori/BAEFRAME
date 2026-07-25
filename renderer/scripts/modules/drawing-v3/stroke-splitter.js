@@ -106,6 +106,52 @@ function deduplicateStrokePoints(points = []) {
   return deduplicated;
 }
 
+function restoreSamePositionPressureChains(runs, sourcePoints, samplePositions) {
+  const chainsBySegmentStart = new Map();
+  const chainsBySegmentEnd = new Map();
+  for (let startIndex = 0; startIndex < sourcePoints.length;) {
+    let endIndex = startIndex + 1;
+    while (endIndex < sourcePoints.length &&
+        samePoint(sourcePoints[startIndex], sourcePoints[endIndex])) {
+      endIndex += 1;
+    }
+    if (endIndex - startIndex > 1) {
+      const chain = sourcePoints.slice(startIndex, endIndex);
+      if (startIndex > 0) chainsBySegmentEnd.set(startIndex - 1, chain);
+      if (endIndex < sourcePoints.length) chainsBySegmentStart.set(endIndex - 1, chain);
+    }
+    startIndex = endIndex;
+  }
+  const chainForPoint = point => {
+    const position = samplePositions.get(point);
+    if (!position) return null;
+    if (position.amount <= PARAMETER_EPSILON) {
+      return chainsBySegmentStart.get(position.segmentIndex) || null;
+    }
+    if (position.amount >= 1 - PARAMETER_EPSILON) {
+      return chainsBySegmentEnd.get(position.segmentIndex) || null;
+    }
+    return null;
+  };
+  for (const run of runs) {
+    const restored = [];
+    for (let index = 0; index < run.points.length;) {
+      let endIndex = index + 1;
+      while (endIndex < run.points.length &&
+          samePoint(run.points[index], run.points[endIndex])) {
+        endIndex += 1;
+      }
+      const chain = run.points
+        .slice(index, endIndex)
+        .map(chainForPoint)
+        .find(Boolean);
+      restored.push(...(chain || run.points.slice(index, endIndex)));
+      index = endIndex;
+    }
+    run.points.splice(0, run.points.length, ...restored);
+  }
+}
+
 function quadraticRoots(coefficients) {
   const { a, b, c } = coefficients;
   const coefficientScale = Math.max(1, Math.abs(a), Math.abs(b), Math.abs(c));
@@ -362,6 +408,38 @@ function edgeProximityIntervals(
   return { intervals, limitExceeded: false };
 }
 
+function endpointCapIntervals(
+  start,
+  end,
+  edgeStart,
+  edgeEnd,
+  capSample,
+  endpoint,
+  options,
+  budget
+) {
+  if (!capSample) return { intervals: [], limitExceeded: false };
+  const pressure = finiteNumber(capSample.pressure, 0.5);
+  const proximity = edgeProximityIntervals(
+    { ...start, pressure },
+    { ...end, pressure },
+    edgeStart,
+    edgeEnd,
+    options,
+    budget,
+    { start: true, end: true }
+  );
+  if (proximity.limitExceeded) return proximity;
+  return {
+    intervals: proximity.intervals.filter(interval => (
+      endpoint === 'start'
+        ? interval[0] <= PARAMETER_EPSILON
+        : interval[1] >= 1 - PARAMETER_EPSILON
+    )),
+    limitExceeded: false
+  };
+}
+
 function centerlineIntervals(start, end, query, budget) {
   const candidates = query.queryEdges(segmentBounds(start, end));
   if (candidates === null) return { intervals: [], limitExceeded: true };
@@ -408,7 +486,12 @@ function segmentSelectionIntervals(start, end, query, options, budget, caps) {
   const intervals = centerline.intervals;
   const radiusEnabled = Number.isFinite(Number(options?.size)) && Number(options.size) > 0;
   if (radiusEnabled) {
-    const maximumRadius = Math.max(strokeRadius(start, options), strokeRadius(end, options));
+    const maximumRadius = Math.max(
+      strokeRadius(start, options),
+      strokeRadius(end, options),
+      caps.roundStart ? strokeRadius(caps.roundStart, options) : 0,
+      caps.roundEnd ? strokeRadius(caps.roundEnd, options) : 0
+    );
     const candidates = query.queryEdges(segmentBounds(start, end, maximumRadius));
     if (candidates === null) return { intervals: [], limitExceeded: true };
     for (const edge of candidates) {
@@ -419,10 +502,27 @@ function segmentSelectionIntervals(start, end, query, options, budget, caps) {
         edge.end,
         options,
         budget,
-        caps
+        { start: caps.bodyStart, end: caps.bodyEnd }
       );
       if (proximity.limitExceeded) return { intervals: [], limitExceeded: true };
       intervals.push(...proximity.intervals);
+      for (const [capSample, endpoint] of [
+        [caps.roundStart, 'start'],
+        [caps.roundEnd, 'end']
+      ]) {
+        const cap = endpointCapIntervals(
+          start,
+          end,
+          edge.start,
+          edge.end,
+          capSample,
+          endpoint,
+          options,
+          budget
+        );
+        if (cap.limitExceeded) return { intervals: [], limitExceeded: true };
+        intervals.push(...cap.intervals);
+      }
     }
   }
   return { intervals: mergeIntervals(intervals), limitExceeded: false };
@@ -453,11 +553,19 @@ function pointTouchesPolygon(point, query, options, budget, includeRadius = true
 }
 
 function segmentTouchesPolygon(start, end, query, options, budget, caps) {
-  const startTouch = pointTouchesPolygon(start, query, options, budget, caps.start !== false);
+  const startTouch = pointTouchesPolygon(start, query, options, budget, caps.bodyStart);
   if (startTouch.hit || startTouch.limitExceeded) return startTouch;
+  if (caps.roundStart) {
+    const roundStartTouch = pointTouchesPolygon(caps.roundStart, query, options, budget);
+    if (roundStartTouch.hit || roundStartTouch.limitExceeded) return roundStartTouch;
+  }
   const endContained = query.contains(end);
   if (endContained === null) return { hit: false, limitExceeded: true };
   if (endContained) return { hit: true, limitExceeded: false };
+  if (caps.roundEnd) {
+    const roundEndTouch = pointTouchesPolygon(caps.roundEnd, query, options, budget);
+    if (roundEndTouch.hit || roundEndTouch.limitExceeded) return roundEndTouch;
+  }
 
   const maximumRadius = Math.max(strokeRadius(start, options), strokeRadius(end, options));
   const candidates = query.queryEdges(segmentBounds(start, end, maximumRadius));
@@ -474,7 +582,7 @@ function segmentTouchesPolygon(start, end, query, options, budget, caps) {
       edge.end,
       options,
       budget,
-      caps
+      { start: caps.bodyStart, end: caps.bodyEnd }
     );
     if (proximity.limitExceeded) return { hit: false, limitExceeded: true };
     if (proximity.intervals.length > 0) return { hit: true, limitExceeded: false };
@@ -482,10 +590,18 @@ function segmentTouchesPolygon(start, end, query, options, budget, caps) {
   return { hit: false, limitExceeded: false };
 }
 
-function segmentCaps(options, index, segmentCount) {
+function segmentCaps(options, index, segmentCount, sourcePoints) {
+  const firstSegment = index === 0;
+  const lastSegment = index === segmentCount - 1;
   return {
-    start: index > 0 || options?.strokeCaps?.start !== false,
-    end: index < segmentCount - 1 || options?.strokeCaps?.end !== false
+    bodyStart: !firstSegment,
+    bodyEnd: !lastSegment,
+    roundStart: firstSegment && options?.strokeCaps?.start !== false
+      ? sourcePoints[0]
+      : null,
+    roundEnd: lastSegment && options?.strokeCaps?.end !== false
+      ? sourcePoints.at(-1)
+      : null
   };
 }
 
@@ -528,7 +644,7 @@ function strokeTouchesPolygon(points = [], polygon = [], options = {}) {
       query,
       options,
       budget,
-      segmentCaps(options, visibleIndex, visibleSegmentIndexes.length)
+      segmentCaps(options, visibleIndex, visibleSegmentIndexes.length, deduplicated)
     );
     if (result.hit || result.limitExceeded) return result;
   }
@@ -564,6 +680,7 @@ function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
   let limitReason = null;
   let currentKind = null;
   let currentRun = null;
+  const samplePositions = new WeakMap();
 
   const startRun = (kind, point) => {
     if (result.runs.length >= maxRuns) {
@@ -604,7 +721,7 @@ function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
       query,
       options,
       budget,
-      segmentCaps(options, visibleIndex, visibleSegmentIndexes.length)
+      segmentCaps(options, visibleIndex, visibleSegmentIndexes.length, sourcePoints)
     );
     if (selection.limitExceeded) {
       result.limitExceeded = true;
@@ -620,8 +737,12 @@ function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
       ));
 
     for (let cutIndex = 0; cutIndex < cuts.length - 1; cutIndex += 1) {
-      const from = interpolateSample(start, end, cuts[cutIndex]);
-      const to = interpolateSample(start, end, cuts[cutIndex + 1]);
+      const fromAmount = cuts[cutIndex];
+      const toAmount = cuts[cutIndex + 1];
+      const from = interpolateSample(start, end, fromAmount);
+      const to = interpolateSample(start, end, toAmount);
+      samplePositions.set(from, { segmentIndex: pointIndex, amount: fromAmount });
+      samplePositions.set(to, { segmentIndex: pointIndex, amount: toAmount });
       const midpoint = (cuts[cutIndex] + cuts[cutIndex + 1]) / 2;
       const kind = intervalContains(selectionIntervals, midpoint) ? 'inside' : 'outside';
       if ((currentKind !== kind || !currentRun) && !startRun(kind, from)) break outer;
@@ -630,6 +751,7 @@ function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
     }
   }
 
+  restoreSamePositionPressureChains(result.runs, sourcePoints, samplePositions);
   result.runs = result.runs.filter(({ points: run }) => run.length >= 2 && hasVisibleLength(run));
   result.inside = result.runs.filter(run => run.kind === 'inside').map(run => run.points);
   result.outside = result.runs.filter(run => run.kind === 'outside').map(run => run.points);
