@@ -3057,6 +3057,37 @@ function createFabricOverlayRuntime(options = {}) {
     ];
   }
 
+  function finalizeWholeStrokeSelectionPolygon(polygon) {
+    if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
+      activateObjectIds([]);
+      return { applied: false, reason: 'lasso-too-small', selectedObjectIds: [] };
+    }
+
+    const snapshot = sceneStore.getActiveSceneSnapshot();
+    const canvasObjects = new Map(
+      fabricCanvas.getObjects()
+        .filter(object => object.__baeframeObjectId)
+        .map(object => [object.__baeframeObjectId, object])
+    );
+    const polygonBounds = boundsForPoints(polygon);
+    const selectedObjectIds = [];
+
+    for (const record of snapshot?.objects || []) {
+      if (record.type !== 'stroke') continue;
+      const flattenedPoints = flattenStrokeSourcePoints(record, canvasObjects.get(record.id));
+      const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
+      if (!boundsIntersect(boundsForPoints(flattenedPoints, maximumRadius), polygonBounds)) continue;
+      const split = splitStrokePointsByPolygon(flattenedPoints, polygon, {
+        size: record.style?.size,
+        thinning: 0.65
+      });
+      if (split.inside.length > 0) selectedObjectIds.push(record.id);
+    }
+
+    activateObjectIds(selectedObjectIds);
+    return { applied: false, selectedObjectIds };
+  }
+
   function finalizePartialSelectionPolygon(polygon) {
     if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
       activateObjectIds([]);
@@ -3164,7 +3195,9 @@ function createFabricOverlayRuntime(options = {}) {
       );
     removeLassoPreview();
     activeLasso = null;
-    return finalizePartialSelectionPolygon(polygon);
+    return selectionTarget === 'stroke'
+      ? finalizeWholeStrokeSelectionPolygon(polygon)
+      : finalizePartialSelectionPolygon(polygon);
   }
 
   function pointerTargetsActiveSelection(event) {

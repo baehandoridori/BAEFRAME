@@ -1696,6 +1696,15 @@ function enableRealFabricLasso(harness, toolRevision = 1) {
   selectPartialLasso(harness.root);
 }
 
+function enableRealFabricWholeStrokeLasso(harness, toolRevision = 1) {
+  harness.runtime.updateDrawingTool({
+    sessionId: 'real-fabric-session',
+    toolRevision,
+    tool: 'select'
+  });
+  clickSelectionControl(harness.root, 'select-shape-lasso');
+}
+
 function enableRealFabricPartialRectangle(harness, toolRevision = 1) {
   harness.runtime.updateDrawingTool({
     sessionId: 'real-fabric-session',
@@ -1719,6 +1728,45 @@ function lassoHistoryState(runtime) {
 function pendingLassoObjects(canvas) {
   return canvas.getObjects().filter(object => object.__baeframePendingLasso);
 }
+
+test('whole-stroke lasso selects two touched pressure strokes by original ID without mutation', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    assert.ok(sizeInput);
+    sizeInput.value = '24';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(crossingStrokePoints(80), 790);
+    harness.drawStroke(crossingStrokePoints(120), 791);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const originalIds = before.objects.map(object => object.id);
+    enableRealFabricWholeStrokeLasso(harness);
+    const beforeDiagnostics = harness.runtime.getDiagnostics();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+
+    harness.dragLasso(middleLassoPoints(91, 109), 792);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    const afterDiagnostics = harness.runtime.getDiagnostics();
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      originalIds
+    );
+    assert.deepEqual(after.selectedObjectIds, originalIds);
+    assert.deepEqual(after.objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(afterDiagnostics.objectCount, beforeDiagnostics.objectCount);
+    assert.equal(afterDiagnostics.mutationCount, beforeDiagnostics.mutationCount);
+    assert.equal(afterDiagnostics.metrics.saveAttemptCount, beforeDiagnostics.metrics.saveAttemptCount);
+    assert.equal(harness.canvas.getObjects().length, originalIds.length);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
 
 test('rectangle partial selection stages without mutation and moves only the inside fragment', async () => {
   const harness = createRealFabricHarness();
