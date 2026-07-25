@@ -5676,6 +5676,81 @@ test('prepare creates one Fabric canvas and the browser runtime stays reusable',
   assert.equal(root.querySelectorAllByClass('mpv-fabric-delta-canvas').length, 1);
 });
 
+test('responsive toolbar keeps one accessible DOM and a compact persistence badge', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+
+  assert.equal(runtime.prepare(root).prepared, true);
+  const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
+  const panel = findOne(toolbar, node => node.dataset.fabricPilotPanel === 'brush-settings');
+  const badge = findOne(toolbar, node =>
+    node.className.split(/\s+/).includes('mpv-fabric-pilot-badge'));
+  const expectedLabels = new Map([
+    ['brush', '브러시 도구 (B)'],
+    ['select', '선택 도구 (V)'],
+    ['undo', '실행 취소 (Ctrl+Z)'],
+    ['redo', '다시 실행 (Ctrl+Y)'],
+    ['delete-selection', '선택한 획 삭제 (Delete)'],
+    ['clear-session', '현재 프레임 드로잉 전체 삭제'],
+    ['brush-settings', '브러시 설정'],
+    ['select-target-stroke', '획 전체 선택'],
+    ['select-target-partial', '획 일부 선택'],
+    ['select-shape-rectangle', '사각형 선택'],
+    ['select-shape-lasso', '라쏘 선택']
+  ]);
+
+  assert.equal(toolbar.style.gap, undefined);
+  assert.equal(panel.style.top, 'calc(100% + 6px)');
+  assert.equal(panel.style.maxHeight, 'calc(100vh - 100% - 30px)');
+  assert.equal(panel.style.overflowY, 'auto');
+  assert.equal(panel.style.overscrollBehavior, 'contain');
+  for (const [action, label] of expectedLabels) {
+    const button = findOne(toolbar, node => node.dataset.fabricPilotAction === action);
+    assert.ok(button, `expected ${action} toolbar button`);
+    assert.equal(button.getAttribute('aria-label'), label);
+    assert.equal(button.getAttribute('title'), label);
+  }
+  assert.equal(badge.getAttribute('role'), 'status');
+  assert.equal(badge.getAttribute('aria-live'), 'polite');
+  assert.equal(badge.textContent, '자동 저장 · F-');
+  assert.equal(badge.getAttribute('aria-label'), '새 드로잉 · 리뷰 자동 저장 · 프레임 -');
+  assert.equal(badge.getAttribute('title'), '새 드로잉 · 리뷰 자동 저장 · 프레임 -');
+
+  const enabled = runtime.setDrawingInput(makeInput({
+    session: {
+      ...makeInput().session,
+      targetFrame: 12345,
+      tool: 'select'
+    }
+  }));
+  assert.equal(enabled.accepted, true);
+  assert.equal(badge.textContent, '자동 저장 · F12345');
+  assert.equal(badge.getAttribute('aria-label'), '새 드로잉 · 리뷰 자동 저장 · 프레임 12345');
+  assert.equal(badge.getAttribute('title'), '새 드로잉 · 리뷰 자동 저장 · 프레임 12345');
+
+  const selectButton = findOne(toolbar, node => node.dataset.fabricPilotAction === 'select');
+  const brushButton = findOne(toolbar, node => node.dataset.fabricPilotAction === 'brush');
+  brushButton.dispatch('click');
+  selectButton.dispatch('click');
+  assert.strictEqual(root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0], toolbar);
+  assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-toolbar').length, 1);
+
+  assert.deepEqual(runtime.updateViewport({
+    revision: 1,
+    canvasRect: { left: 0, top: 0, width: 400, height: 360 },
+    scale: 1,
+    panX: 0,
+    panY: 0
+  }), { accepted: true, revision: 1 });
+  assert.strictEqual(root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0], toolbar);
+  assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-toolbar').length, 1);
+});
+
 test('a failed partial prepare rolls back its surface and retries without duplicate listeners', () => {
   class FailOnceCanvas extends FakeCanvas {
     static shouldFail = true;

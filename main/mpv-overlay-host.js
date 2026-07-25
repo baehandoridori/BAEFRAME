@@ -290,8 +290,15 @@ const OVERLAY_HTML = String.raw`
       pointer-events: none;
     }
     .mpv-fabric-pilot-toolbar {
+      --fabric-toolbar-gap: 6px;
+      flex-flow: row wrap;
       align-items: center;
+      align-content: flex-start;
+      gap: var(--fabric-toolbar-gap);
+      width: max-content;
+      max-width: calc(100% - 24px);
       padding: 6px;
+      box-sizing: border-box;
       border-radius: 14px;
       background: rgba(15, 15, 15, 0.86);
       box-shadow:
@@ -300,6 +307,10 @@ const OVERLAY_HTML = String.raw`
       color: var(--text-primary);
       font-family: Inter, Pretendard, "Segoe UI", sans-serif;
       -webkit-font-smoothing: antialiased;
+    }
+    .mpv-fabric-pilot-toolbar > button,
+    .mpv-fabric-pilot-toolbar > [data-fabric-pilot-group="selection-controls"] {
+      flex: 0 0 auto;
     }
     .mpv-fabric-pilot-toolbar button {
       min-width: 40px;
@@ -314,6 +325,7 @@ const OVERLAY_HTML = String.raw`
       font: inherit;
       font-size: 12px;
       font-weight: 650;
+      white-space: nowrap;
       transition-property: transform, background-color, box-shadow;
       transition-duration: 120ms;
       transition-timing-function: ease-out;
@@ -338,7 +350,10 @@ const OVERLAY_HTML = String.raw`
     }
     .mpv-fabric-pilot-badge {
       display: flex;
+      flex: 0 1 120px;
       align-items: center;
+      min-width: 72px;
+      max-width: 120px;
       min-height: 40px;
       padding: 0 12px;
       border-radius: 8px;
@@ -347,6 +362,26 @@ const OVERLAY_HTML = String.raw`
       font-size: 11px;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    @media (max-width: 640px) {
+      .mpv-fabric-pilot-toolbar {
+        --fabric-toolbar-gap: 4px;
+        padding: 4px;
+        border-radius: 10px;
+      }
+      .mpv-fabric-pilot-toolbar button {
+        padding-inline: 8px;
+      }
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="summary"] {
+        display: none;
+      }
+      .mpv-fabric-pilot-badge {
+        flex-basis: 108px;
+        max-width: 108px;
+        padding-inline: 6px;
+      }
     }
     .mirror-canvas {
       position: absolute;

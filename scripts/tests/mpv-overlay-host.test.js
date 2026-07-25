@@ -3622,10 +3622,44 @@ test('Fabric 시험 툴바는 작은 화면에서도 읽기 쉽고 현재 도구
 
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*background:\s*rgba\(/s);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*border-radius:\s*14px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*--fabric-toolbar-gap:\s*6px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*flex-flow:\s*row wrap/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*width:\s*max-content/s);
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar\s*\{[^}]*max-width:\s*calc\(100% - 24px\)/s
+  );
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*box-sizing:\s*border-box/s);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*min-width:\s*40px[^}]*min-height:\s*40px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar\s*>\s*button,[\s\S]*?data-fabric-pilot-group="selection-controls"[\s\S]*?\{[^}]*flex:\s*0 0 auto/s
+  );
   assert.match(hostSource, /button\[data-active="true"\]\s*\{/);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button:active\s*\{[^}]*transform:\s*scale\(0\.96\)/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-badge\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-badge\s*\{[^}]*font-variant-numeric:\s*tabular-nums[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s
+  );
+  assert.match(hostSource, /@media\s*\(max-width:\s*640px\)\s*\{/s);
+  assert.match(
+    hostSource,
+    /@media\s*\(max-width:\s*640px\)[\s\S]*?--fabric-toolbar-gap:\s*4px[\s\S]*?padding:\s*4px/s
+  );
+  assert.match(
+    hostSource,
+    /@media\s*\(max-width:\s*640px\)[\s\S]*?\.mpv-fabric-pilot-toolbar button\s*\{[^}]*padding-inline:\s*8px/s
+  );
+  assert.match(
+    hostSource,
+    /@media\s*\(max-width:\s*640px\)[\s\S]*?data-fabric-pilot-output="summary"[\s\S]*?display:\s*none/s
+  );
+  assert.match(hostSource, /#root\s*\{[^}]*overflow:\s*hidden/s);
+  assert.doesNotMatch(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar\s*\{[^}]*overflow-x:\s*auto/s
+  );
   assert.doesNotMatch(
     hostSource,
     /\.mpv-fabric-pilot-toolbar(?: button)?\s*\{[^}]*transition:\s*all\b/s

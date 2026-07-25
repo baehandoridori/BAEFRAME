@@ -152,6 +152,13 @@ function formatFabricPersistenceBadge(targetFrame = null) {
   return `${FABRIC_PERSISTENCE_BADGE_PREFIX} · 프레임 ${frameLabel}`;
 }
 
+function formatCompactFabricPersistenceBadge(targetFrame = null) {
+  const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0
+    ? targetFrame
+    : '-';
+  return `자동 저장 · F${frameLabel}`;
+}
+
 function clonePlain(value) {
   if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
@@ -2019,6 +2026,20 @@ function createFabricOverlayRuntime(options = {}) {
     return button;
   }
 
+  function labelToolbarButton(button, label) {
+    button.setAttribute?.('aria-label', label);
+    button.setAttribute?.('title', label);
+    return button;
+  }
+
+  function syncPersistenceBadge(targetFrame = null) {
+    if (!badge) return;
+    const fullLabel = formatFabricPersistenceBadge(targetFrame);
+    badge.textContent = formatCompactFabricPersistenceBadge(targetFrame);
+    badge.setAttribute?.('aria-label', fullLabel);
+    badge.setAttribute?.('title', fullLabel);
+  }
+
   function syncSelectionControls(tool = currentSession?.tool) {
     if (!selectionControls) return;
     selectionControls.group.style.display = tool === 'select' ? 'flex' : 'none';
@@ -2106,10 +2127,14 @@ function createFabricOverlayRuntime(options = {}) {
     targetGroup.setAttribute?.('aria-label', '선택 대상');
     setStyles(targetGroup, { display: 'flex', alignItems: 'center', gap: '4px' });
 
-    const strokeTargetButton = createButton('획', 'select-target-stroke');
-    strokeTargetButton.setAttribute?.('aria-label', '획 전체 선택');
-    const partialTargetButton = createButton('부분', 'select-target-partial');
-    partialTargetButton.setAttribute?.('aria-label', '획 일부 선택');
+    const strokeTargetButton = labelToolbarButton(
+      createButton('획', 'select-target-stroke'),
+      '획 전체 선택'
+    );
+    const partialTargetButton = labelToolbarButton(
+      createButton('부분', 'select-target-partial'),
+      '획 일부 선택'
+    );
     const targetButtons = new Map([
       ['stroke', strokeTargetButton],
       ['partial', partialTargetButton]
@@ -2125,10 +2150,14 @@ function createFabricOverlayRuntime(options = {}) {
     shapeGroup.setAttribute?.('aria-label', '선택 모양');
     setStyles(shapeGroup, { display: 'flex', alignItems: 'center', gap: '4px' });
 
-    const rectangleShapeButton = createButton('사각형', 'select-shape-rectangle');
-    rectangleShapeButton.setAttribute?.('aria-label', '사각형 선택');
-    const lassoShapeButton = createButton('라쏘', 'select-shape-lasso');
-    lassoShapeButton.setAttribute?.('aria-label', '라쏘 선택');
+    const rectangleShapeButton = labelToolbarButton(
+      createButton('사각형', 'select-shape-rectangle'),
+      '사각형 선택'
+    );
+    const lassoShapeButton = labelToolbarButton(
+      createButton('라쏘', 'select-shape-lasso'),
+      '라쏘 선택'
+    );
     const shapeButtons = new Map([
       ['rectangle', rectangleShapeButton],
       ['lasso', lassoShapeButton]
@@ -2201,9 +2230,11 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function createBrushSettingsControls() {
-    const settingsButton = createButton('', 'brush-settings');
+    const settingsButton = labelToolbarButton(
+      createButton('', 'brush-settings'),
+      '브러시 설정'
+    );
     settingsButton.setAttribute?.('aria-expanded', 'false');
-    settingsButton.setAttribute?.('aria-label', '브러시 설정');
     setStyles(settingsButton, {
       display: 'inline-flex',
       alignItems: 'center',
@@ -2232,10 +2263,13 @@ function createFabricOverlayRuntime(options = {}) {
     setStyles(panel, {
       display: 'none',
       position: 'absolute',
-      top: '52px',
+      top: 'calc(100% + 6px)',
       left: '0',
       width: '360px',
       maxWidth: 'calc(100vw - 24px)',
+      maxHeight: 'calc(100vh - 100% - 30px)',
+      overflowY: 'auto',
+      overscrollBehavior: 'contain',
       flexDirection: 'column',
       gap: '12px',
       padding: '12px',
@@ -3974,7 +4008,7 @@ function createFabricOverlayRuntime(options = {}) {
     inputEnabled = false;
     currentSession = null;
     sceneStore.deactivateSession();
-    if (badge) badge.textContent = formatFabricPersistenceBadge();
+    syncPersistenceBadge();
   }
 
   function releaseSurfaceResources() {
@@ -4057,22 +4091,30 @@ function createFabricOverlayRuntime(options = {}) {
         top: '12px',
         left: '12px',
         display: 'flex',
-        gap: '6px',
         zIndex: '2',
         transition: 'opacity 100ms ease',
         pointerEvents: 'none'
       });
-      const brushButton = createButton('Brush', 'brush');
-      const selectButton = createButton('V', 'select');
-      const undoButton = createButton('Undo', 'undo');
-      const redoButton = createButton('Redo', 'redo');
-      const deleteButton = createButton('Delete', 'delete-selection');
-      const clearButton = createButton('Clear', 'clear-session');
+      const brushButton = labelToolbarButton(createButton('Brush', 'brush'), '브러시 도구 (B)');
+      const selectButton = labelToolbarButton(createButton('V', 'select'), '선택 도구 (V)');
+      const undoButton = labelToolbarButton(createButton('Undo', 'undo'), '실행 취소 (Ctrl+Z)');
+      const redoButton = labelToolbarButton(createButton('Redo', 'redo'), '다시 실행 (Ctrl+Y)');
+      const deleteButton = labelToolbarButton(
+        createButton('Delete', 'delete-selection'),
+        '선택한 획 삭제 (Delete)'
+      );
+      const clearButton = labelToolbarButton(
+        createButton('Clear', 'clear-session'),
+        '현재 프레임 드로잉 전체 삭제'
+      );
       brushControls = createBrushSettingsControls();
       selectionControls = createSelectionControls();
       badge = documentRef.createElement('span');
       badge.className = 'mpv-fabric-pilot-badge';
-      badge.textContent = formatFabricPersistenceBadge();
+      badge.setAttribute?.('role', 'status');
+      badge.setAttribute?.('aria-live', 'polite');
+      badge.setAttribute?.('aria-atomic', 'true');
+      syncPersistenceBadge();
       toolbar.appendChild(brushButton);
       toolbar.appendChild(selectButton);
       toolbar.appendChild(selectionControls.group);
@@ -4187,7 +4229,7 @@ function createFabricOverlayRuntime(options = {}) {
     setToolMode(session.tool);
     inputEnabled = true;
     setSurfaceInput(true);
-    badge.textContent = formatFabricPersistenceBadge(session.targetFrame);
+    syncPersistenceBadge(session.targetFrame);
     metrics.recordToggleLatency(now() - startedAt);
     return { accepted: true, enabled: true, restored: activation.restored };
   }
