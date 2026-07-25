@@ -4,13 +4,16 @@ const {
   createFabricDrawingPilotMetrics
 } = require('./fabric-drawing-pilot-metrics.js');
 const {
-  shortStrokeTouchesPolygon,
+  strokeHasSplittableLength,
+  strokeTouchesPolygon,
   splitStrokePointsByPolygon
 } = require('./drawing-v3/stroke-splitter.js');
 const {
   polygonHasArea,
   boundsForPoints,
   boundsIntersect,
+  createGeometryBudget,
+  createPolygonEdgeIndex,
   simplifyClosedPolygon
 } = require('./drawing-v3/lasso-geometry.js');
 const {
@@ -26,6 +29,7 @@ const DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
 const DEFAULT_MAX_ACTIONS = 2048;
 const MAX_STROKE_POINTS = 20000;
 const MAX_LASSO_POINTS = 1024;
+const DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS = 250_000;
 const DEFAULT_MAX_OBJECTS = 10000;
 const MAX_PERSISTED_KEYFRAMES = 10000;
 const MAX_PERSISTED_OBJECTS_TOTAL = 100000;
@@ -1940,6 +1944,10 @@ function createFabricOverlayRuntime(options = {}) {
   const actionDeduper = options.actionDeduper || createActionDeduper(options.actionDeduperOptions);
   const strokePathFactory = options.strokePathFactory || createStrokePathData;
   const maxLassoFragments = positiveInteger(options.maxLassoFragments, 512);
+  const maxSelectionGeometryOperations = positiveInteger(
+    options.maxSelectionGeometryOperations,
+    DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS
+  );
   const tokenState = { hostGeneration: -1, videoGeneration: -1, inputRevision: -1 };
   const domListeners = [];
   const fabricListeners = [];
@@ -2675,24 +2683,105 @@ function createFabricOverlayRuntime(options = {}) {
     fabricCanvas?.requestRenderAll();
   }
 
-  function flattenStrokeSourcePoints(record, object) {
-    const points = Array.isArray(record?.sourcePoints) ? record.sourcePoints : [];
-    const { Point, util } = resolveFabric();
-    if (!object?.calcTransformMatrix || !object?.pathOffset || !Point || !util?.transformPoint) {
-      return points.map(point => ({ ...point }));
+  function strokeObjectSceneBounds(record, object, padding = 0) {
+    const safePadding = Math.max(0, finiteNumber(padding));
+    const rectangle = object?.getBoundingRect?.();
+    if (rectangle &&
+        [rectangle.left, rectangle.top, rectangle.width, rectangle.height]
+          .every(value => Number.isFinite(Number(value)))) {
+      const left = finiteNumber(rectangle.left);
+      const top = finiteNumber(rectangle.top);
+      const right = left + finiteNumber(rectangle.width);
+      const bottom = top + finiteNumber(rectangle.height);
+      return {
+        left: Math.min(left, right) - safePadding,
+        right: Math.max(left, right) + safePadding,
+        top: Math.min(top, bottom) - safePadding,
+        bottom: Math.max(top, bottom) + safePadding
+      };
     }
-    const matrix = object.calcTransformMatrix();
-    return points.map(point => {
-      const local = new Point(
-        finiteNumber(point.x) - finiteNumber(object.pathOffset.x),
-        finiteNumber(point.y) - finiteNumber(object.pathOffset.y)
-      );
-      const transformed = util.transformPoint(local, matrix);
-      return { ...point, x: transformed.x, y: transformed.y };
-    });
+    return boundsForPoints(record?.sourcePoints || [], safePadding);
   }
 
-  function createStrokeFragment(record, points, selected, caps = {}) {
+  function createSourcePolygonQuery(object, scenePolygon, budget) {
+    if (!object?.calcTransformMatrix) {
+      return {
+        query: createPolygonEdgeIndex(scenePolygon, { budget }),
+        reason: null
+      };
+    }
+    const { Point, util } = resolveFabric();
+    if (!Point || !util?.transformPoint || !util?.invertTransform || !object.pathOffset) {
+      return { query: null, reason: 'selection-complexity-limit-exceeded' };
+    }
+    const matrix = Array.from(object.calcTransformMatrix() || []);
+    if (matrix.length < 6 || matrix.some(value => !Number.isFinite(Number(value)))) {
+      return { query: null, reason: 'selection-complexity-limit-exceeded' };
+    }
+    const determinant = finiteNumber(matrix[0]) * finiteNumber(matrix[3]) -
+      finiteNumber(matrix[1]) * finiteNumber(matrix[2]);
+    if (!Number.isFinite(determinant) || Math.abs(determinant) <= 1e-8) {
+      return { query: null, reason: 'selection-complexity-limit-exceeded' };
+    }
+    const inverse = util.invertTransform(matrix);
+    if (!Array.isArray(inverse) || inverse.length < 6 ||
+        inverse.some(value => !Number.isFinite(Number(value)))) {
+      return { query: null, reason: 'selection-complexity-limit-exceeded' };
+    }
+    const sourcePolygon = [];
+    for (const point of scenePolygon) {
+      if (!budget.consume()) {
+        return { query: null, reason: 'selection-complexity-limit-exceeded' };
+      }
+      const local = util.transformPoint(
+        new Point(finiteNumber(point?.x), finiteNumber(point?.y)),
+        inverse
+      );
+      sourcePolygon.push({
+        x: finiteNumber(local?.x) + finiteNumber(object.pathOffset.x),
+        y: finiteNumber(local?.y) + finiteNumber(object.pathOffset.y)
+      });
+    }
+    return {
+      query: createPolygonEdgeIndex(sourcePolygon, { budget }),
+      reason: budget.limitExceeded ? 'selection-complexity-limit-exceeded' : null
+    };
+  }
+
+  function applySourceTransformToFragment(path, sourceObject) {
+    if (!sourceObject) return true;
+    const sourceTransform = captureTransform(sourceObject);
+    if (!sourceObject.calcTransformMatrix) {
+      path.set(sourceTransform);
+      path.setCoords?.();
+      return true;
+    }
+    const inheritedTransform = {};
+    for (const field of TRANSFORM_FIELDS) {
+      if (field !== 'left' && field !== 'top') inheritedTransform[field] = sourceTransform[field];
+    }
+    path.set(inheritedTransform);
+
+    const { Point, util } = resolveFabric();
+    if (!path.pathOffset || !sourceObject.pathOffset || !path.setPositionByOrigin ||
+        !Point || !util?.transformPoint) {
+      return false;
+    }
+    const sourceMatrix = sourceObject.calcTransformMatrix();
+    const fragmentCenter = util.transformPoint(new Point(
+      finiteNumber(path.pathOffset.x) - finiteNumber(sourceObject.pathOffset.x),
+      finiteNumber(path.pathOffset.y) - finiteNumber(sourceObject.pathOffset.y)
+    ), sourceMatrix);
+    if (!Number.isFinite(Number(fragmentCenter?.x)) ||
+        !Number.isFinite(Number(fragmentCenter?.y))) {
+      return false;
+    }
+    path.setPositionByOrigin(fragmentCenter, 'center', 'center');
+    path.setCoords?.();
+    return true;
+  }
+
+  function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null) {
     if (!Array.isArray(points) || points.length < 2) return null;
     let strokeData;
     try {
@@ -2722,6 +2811,7 @@ function createFabricOverlayRuntime(options = {}) {
       }
     };
     const path = makeFabricPath(fragment);
+    if (!applySourceTransformToFragment(path, sourceObject)) return null;
     fragment.transform = captureTransform(path);
     return fragment;
   }
@@ -3072,21 +3162,43 @@ function createFabricOverlayRuntime(options = {}) {
     );
     const polygonBounds = boundsForPoints(polygon);
     const selectedObjectIds = [];
+    const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
 
     for (const record of snapshot?.objects || []) {
       if (record.type !== 'stroke') continue;
-      const flattenedPoints = flattenStrokeSourcePoints(record, canvasObjects.get(record.id));
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
-      if (!boundsIntersect(boundsForPoints(flattenedPoints, maximumRadius), polygonBounds)) continue;
+      const object = canvasObjects.get(record.id);
+      if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
+        continue;
+      }
+      const sourceSelection = createSourcePolygonQuery(object, polygon, geometryBudget);
+      if (!sourceSelection.query || sourceSelection.reason) {
+        activateObjectIds([]);
+        return {
+          applied: false,
+          reason: sourceSelection.reason || 'selection-geometry-unavailable',
+          selectedObjectIds: []
+        };
+      }
       const splitOptions = {
         size: record.style?.size,
-        thinning: 0.65
+        thinning: 0.65,
+        budget: geometryBudget
       };
-      const split = splitStrokePointsByPolygon(flattenedPoints, polygon, splitOptions);
-      if (split.inside.length > 0 ||
-          shortStrokeTouchesPolygon(flattenedPoints, polygon, splitOptions)) {
-        selectedObjectIds.push(record.id);
+      const touch = strokeTouchesPolygon(
+        record.sourcePoints,
+        sourceSelection.query,
+        splitOptions
+      );
+      if (touch.limitExceeded) {
+        activateObjectIds([]);
+        return {
+          applied: false,
+          reason: 'selection-complexity-limit-exceeded',
+          selectedObjectIds: []
+        };
       }
+      if (touch.hit) selectedObjectIds.push(record.id);
     }
 
     activateObjectIds(selectedObjectIds);
@@ -3110,21 +3222,62 @@ function createFabricOverlayRuntime(options = {}) {
     const selectedFragmentIds = new Set();
     const polygonBounds = boundsForPoints(polygon);
     const sceneLimits = sceneStore.getDiagnostics();
+    const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
     let accumulatedFragments = 0;
 
     for (const record of snapshot?.objects || []) {
       if (record.type !== 'stroke') continue;
-      const flattenedPoints = flattenStrokeSourcePoints(record, canvasObjects.get(record.id));
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
-      if (!boundsIntersect(boundsForPoints(flattenedPoints, maximumRadius), polygonBounds)) continue;
-      const split = splitStrokePointsByPolygon(flattenedPoints, polygon, {
+      const object = canvasObjects.get(record.id);
+      if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
+        continue;
+      }
+      const sourceSelection = createSourcePolygonQuery(object, polygon, geometryBudget);
+      if (!sourceSelection.query || sourceSelection.reason) {
+        activateObjectIds([]);
+        return {
+          applied: false,
+          reason: sourceSelection.reason || 'selection-geometry-unavailable',
+          selectedObjectIds: []
+        };
+      }
+      const splitOptions = {
         size: record.style?.size,
         thinning: 0.65,
-        maxRuns: Math.max(1, maxLassoFragments - accumulatedFragments + 1)
-      });
+        maxRuns: Math.max(1, maxLassoFragments - accumulatedFragments + 1),
+        budget: geometryBudget
+      };
+      if (!strokeHasSplittableLength(record.sourcePoints)) {
+        const touch = strokeTouchesPolygon(
+          record.sourcePoints,
+          sourceSelection.query,
+          splitOptions
+        );
+        if (touch.limitExceeded) {
+          activateObjectIds([]);
+          return {
+            applied: false,
+            reason: 'selection-complexity-limit-exceeded',
+            selectedObjectIds: []
+          };
+        }
+        if (touch.hit) selectedPersistedIds.add(record.id);
+        continue;
+      }
+      const split = splitStrokePointsByPolygon(
+        record.sourcePoints,
+        sourceSelection.query,
+        splitOptions
+      );
       if (split.limitExceeded) {
         activateObjectIds([]);
-        return { applied: false, reason: 'lasso-fragment-limit-exceeded', selectedObjectIds: [] };
+        return {
+          applied: false,
+          reason: split.limitReason === 'operations'
+            ? 'selection-complexity-limit-exceeded'
+            : 'lasso-fragment-limit-exceeded',
+          selectedObjectIds: []
+        };
       }
       if (split.inside.length === 0) continue;
       if (split.outside.length === 0) {
@@ -3146,7 +3299,7 @@ function createFabricOverlayRuntime(options = {}) {
         const fragment = createStrokeFragment(record, run.points, selected, {
           start: runIndex === 0 ? originalCaps.start !== false : false,
           end: runIndex === split.runs.length - 1 ? originalCaps.end !== false : false
-        });
+        }, object);
         if (!fragment) {
           fragmentBuildFailed = true;
           break;

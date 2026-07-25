@@ -20,8 +20,13 @@ const {
   splitStrokePointsByPolygon
 } = require(runtimePath);
 const {
+  createGeometryBudget,
+  createPolygonEdgeIndex,
   polygonHasArea
 } = require(path.join(rootDir, 'renderer/scripts/modules/drawing-v3/lasso-geometry.js'));
+const {
+  strokeTouchesPolygon
+} = require(path.join(rootDir, 'renderer/scripts/modules/drawing-v3/stroke-splitter.js'));
 const {
   createDrawingEngineAdapter
 } = require(drawingV3AdapterPath);
@@ -1715,6 +1720,49 @@ function enableRealFabricPartialRectangle(harness, toolRevision = 1) {
   selectPartialRectangle(harness.root);
 }
 
+function captureRealFabricTransform(object) {
+  return {
+    left: object.left,
+    top: object.top,
+    scaleX: object.scaleX,
+    scaleY: object.scaleY,
+    angle: object.angle,
+    skewX: object.skewX,
+    skewY: object.skewY,
+    flipX: object.flipX,
+    flipY: object.flipY
+  };
+}
+
+function transformRealFabricStroke(harness, objectIndex, transform) {
+  const object = harness.canvas.getObjects()[objectIndex];
+  const id = object.__baeframeObjectId;
+  object.set(transform);
+  object.setCoords();
+  harness.sceneStore.selectObjects([id]);
+  assert.equal(harness.sceneStore.transformSelection({
+    transforms: [{ id, transform: captureRealFabricTransform(object) }]
+  }).applied, true);
+  harness.sceneStore.selectObjects([]);
+  harness.canvas.discardActiveObject();
+  return object;
+}
+
+function sourcePointInRealFabricScene(object, point) {
+  const realFabric = require('fabric/node');
+  return realFabric.util.transformPoint(
+    new realFabric.Point(
+      point.x - object.pathOffset.x,
+      point.y - object.pathOffset.y
+    ),
+    object.calcTransformMatrix()
+  );
+}
+
+function sourcePolygonInRealFabricScene(object, polygon) {
+  return polygon.map(point => sourcePointInRealFabricScene(object, point));
+}
+
 function lassoHistoryState(runtime) {
   const diagnostics = runtime.getDiagnostics();
   return {
@@ -1940,6 +1988,324 @@ test('whole-stroke lasso ignores duplicate pressure that exceeds the rendered po
     assert.equal(afterDiagnostics.objectCount, beforeDiagnostics.objectCount);
     assert.equal(afterDiagnostics.mutationCount, beforeDiagnostics.mutationCount);
     assert.equal(afterDiagnostics.metrics.saveAttemptCount, beforeDiagnostics.metrics.saveAttemptCount);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('whole-stroke lasso keeps a normal stroke when only a sub-unit visible cap touches', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '24';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(crossingStrokePoints(), 806);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const originalId = before.objects[0].id;
+    enableRealFabricWholeStrokeLasso(harness);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+
+    harness.dragLasso([
+      { x: 0, y: 80 },
+      { x: 8.5, y: 100 },
+      { x: 0, y: 120 },
+      { x: 0, y: 80 }
+    ], 807);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(after.selectedObjectIds, [originalId]);
+    assert.deepEqual(after.objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+for (const transformCase of [
+  {
+    name: 'scaleY',
+    transform: { scaleY: 4 }
+  },
+  {
+    name: 'scale and rotate',
+    transform: { scaleX: 0.8, scaleY: 3, angle: 24 }
+  },
+  {
+    name: 'scale skew and flip',
+    transform: { scaleX: 1.2, scaleY: 3.5, skewX: 18, skewY: -7, flipX: true }
+  }
+]) {
+  test(`whole-stroke lasso hits the visible affine stroke under ${transformCase.name}`, async () => {
+    const harness = createRealFabricHarness();
+    try {
+      const sizeInput = findOne(
+        harness.root,
+        node => node.dataset?.fabricPilotSetting === 'size'
+      );
+      sizeInput.value = '24';
+      sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+      harness.drawStroke(crossingStrokePoints(), 830);
+      const sourceObject = transformRealFabricStroke(harness, 0, transformCase.transform);
+      const before = harness.sceneStore.getActiveSceneSnapshot();
+      const originalId = before.objects[0].id;
+      enableRealFabricWholeStrokeLasso(harness);
+      const lasso = sourcePolygonInRealFabricScene(sourceObject, [
+        { x: 95, y: 108 },
+        { x: 105, y: 108 },
+        { x: 105, y: 111 },
+        { x: 95, y: 111 },
+        { x: 95, y: 108 }
+      ]);
+
+      harness.dragLasso(lasso, 831);
+
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+        [originalId]
+      );
+    } finally {
+      await harness.destroy();
+    }
+  });
+}
+
+for (const selectionShape of ['rectangle', 'lasso']) {
+  for (const strokeCase of [
+    {
+      name: 'point',
+      points: [{ x: 90, y: 90 }, { x: 90, y: 90 }]
+    },
+    {
+      name: '0.4-unit',
+      points: [{ x: 90, y: 90 }, { x: 90.4, y: 90 }]
+    }
+  ]) {
+    test(`partial ${selectionShape} selects and moves the original ${strokeCase.name} stroke atomically`, async () => {
+      const harness = createRealFabricHarness();
+      try {
+        harness.drawStroke(strokeCase.points, 840);
+        const before = harness.sceneStore.getActiveSceneSnapshot();
+        const original = before.objects[0];
+        harness.runtime.updateDrawingTool({
+          sessionId: 'real-fabric-session',
+          toolRevision: 1,
+          tool: 'select'
+        });
+        if (selectionShape === 'rectangle') selectPartialRectangle(harness.root);
+        else selectPartialLasso(harness.root);
+        const gesture = selectionShape === 'rectangle'
+          ? [{ x: 80, y: 80 }, { x: 100, y: 100 }]
+          : [
+              { x: 80, y: 80 }, { x: 100, y: 80 }, { x: 100, y: 100 },
+              { x: 80, y: 100 }, { x: 80, y: 80 }
+            ];
+
+        harness.dragLasso(gesture, 841);
+
+        assert.deepEqual(
+          harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+          [original.id]
+        );
+        assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+        const undoDepth = harness.runtime.getDiagnostics().undoDepth;
+        harness.dragActiveSelectionBy(7, -3, 842);
+        await Promise.resolve();
+        const moved = harness.sceneStore.getActiveSceneSnapshot();
+        assert.equal(moved.objects.length, 1);
+        assert.equal(moved.objects[0].id, original.id);
+        assert.deepEqual(moved.objects[0].sourcePoints, original.sourcePoints);
+        assert.equal(moved.objects[0].transform.left, original.transform.left + 7);
+        assert.equal(moved.objects[0].transform.top, original.transform.top - 3);
+        assert.equal(harness.runtime.getDiagnostics().undoDepth, undoDepth + 1);
+
+        assert.equal(harness.runtime.applyDrawingAction({
+          sessionId: 'real-fabric-session',
+          actionId: `undo-${selectionShape}-${strokeCase.name}`,
+          action: 'undo'
+        }).applied, true);
+        assert.deepEqual(
+          harness.sceneStore.getActiveSceneSnapshot().objects,
+          before.objects
+        );
+      } finally {
+        await harness.destroy();
+      }
+    });
+  }
+}
+
+test('partial affine fragments preserve source transform and source-point scene position', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 850);
+    const sourceObject = transformRealFabricStroke(harness, 0, {
+      scaleX: 0.85,
+      scaleY: 2.75,
+      angle: 17,
+      skewX: 13,
+      skewY: -4,
+      flipX: true
+    });
+    const sourceTransform = captureRealFabricTransform(sourceObject);
+    const expectedScenePoint = sourcePointInRealFabricScene(sourceObject, { x: 110, y: 100 });
+    enableRealFabricLasso(harness);
+    const lasso = sourcePolygonInRealFabricScene(sourceObject, [
+      { x: 70, y: 88 },
+      { x: 130, y: 88 },
+      { x: 130, y: 112 },
+      { x: 70, y: 112 },
+      { x: 70, y: 88 }
+    ]);
+
+    harness.dragLasso(lasso, 851);
+
+    const proxy = harness.canvas.getActiveObjects()[0];
+    assert.ok(proxy);
+    for (const field of ['scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY']) {
+      assert.equal(proxy[field], sourceTransform[field], field);
+    }
+    const proxyScenePoint = sourcePointInRealFabricScene(proxy, { x: 110, y: 100 });
+    assert.ok(Math.abs(proxyScenePoint.x - expectedScenePoint.x) < 1e-6);
+    assert.ok(Math.abs(proxyScenePoint.y - expectedScenePoint.y) < 1e-6);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial fragment plus point stroke move round-trips original IDs transforms and z-order once', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(80), 860);
+    harness.drawStroke([{ x: 100, y: 120 }, { x: 100, y: 120 }], 861);
+    harness.drawStroke(crossingStrokePoints(175), 862);
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    const pointRecord = original.objects[1];
+    const untouchedRecord = original.objects[2];
+    enableRealFabricLasso(harness);
+    harness.dragLasso([
+      { x: 70, y: 55 }, { x: 135, y: 55 }, { x: 135, y: 140 },
+      { x: 70, y: 140 }, { x: 70, y: 55 }
+    ], 863);
+
+    assert.equal(harness.canvas.getActiveObjects().length, 2);
+    assert.ok(harness.canvas.getActiveObjects().some(
+      object => object.__baeframeObjectId === pointRecord.id
+    ));
+    const undoDepth = harness.runtime.getDiagnostics().undoDepth;
+    harness.dragActiveSelectionBy(15, 10, 864);
+    await Promise.resolve();
+
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    const movedPoint = moved.objects.find(object => object.id === pointRecord.id);
+    assert.ok(movedPoint);
+    assert.equal(movedPoint.transform.left, pointRecord.transform.left + 15);
+    assert.equal(movedPoint.transform.top, pointRecord.transform.top + 10);
+    assert.equal(moved.objects.at(-1).id, untouchedRecord.id);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, undoDepth + 1);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'undo-short-mixed-partial-move',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, original.objects);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'redo-short-mixed-partial-move',
+      action: 'redo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, moved.objects);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial fragment plus point stroke Delete round-trips original IDs and z-order once', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(80), 870);
+    harness.drawStroke([{ x: 100, y: 120 }, { x: 100, y: 120 }], 871);
+    harness.drawStroke(crossingStrokePoints(175), 872);
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    const pointRecord = original.objects[1];
+    const untouchedRecord = original.objects[2];
+    enableRealFabricLasso(harness);
+    harness.dragLasso([
+      { x: 70, y: 55 }, { x: 135, y: 55 }, { x: 135, y: 140 },
+      { x: 70, y: 140 }, { x: 70, y: 55 }
+    ], 873);
+    const undoDepth = harness.runtime.getDiagnostics().undoDepth;
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'delete-short-mixed-partial',
+      action: 'delete-selection'
+    }).applied, true);
+
+    const deleted = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(deleted.objects.some(object => object.id === pointRecord.id), false);
+    assert.equal(deleted.objects.some(object => object.id === original.objects[0].id), false);
+    assert.equal(deleted.objects.at(-1).id, untouchedRecord.id);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, undoDepth + 1);
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'undo-short-mixed-partial-delete',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, original.objects);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'redo-short-mixed-partial-delete',
+      action: 'redo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, deleted.objects);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial selection aborts atomically when the shared geometry operation budget is exhausted', async () => {
+  const harness = createRealFabricHarness({ maxSelectionGeometryOperations: 3 });
+  try {
+    harness.drawStroke(crossingStrokePoints(), 880);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    enableRealFabricPartialRectangle(harness);
+
+    harness.dragLasso([{ x: 70, y: 70 }, { x: 130, y: 130 }], 881);
+
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial selection aborts atomically for a near-singular Fabric transform', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 890);
+    const sourceObject = transformRealFabricStroke(harness, 0, { scaleX: 1e-10 });
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    const center = sourceObject.getCenterPoint();
+    enableRealFabricPartialRectangle(harness);
+
+    harness.dragLasso([
+      { x: center.x - 10, y: center.y - 30 },
+      { x: center.x + 10, y: center.y + 30 }
+    ], 891);
+
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, before.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
     assert.equal(pendingLassoObjects(harness.canvas).length, 0);
   } finally {
     await harness.destroy();
@@ -3385,24 +3751,46 @@ test('lasso commits an already moved stroke at its visible position without jump
     await Promise.resolve();
 
     const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    const fabricObjects = new Map(
+      harness.canvas.getObjects().map(object => [object.__baeframeObjectId, object])
+    );
     const fragments = snapshot.objects
-      .map(object => ({
-        id: object.id,
-        minX: Math.min(...object.sourcePoints.map(point => point.x)),
-        maxX: Math.max(...object.sourcePoints.map(point => point.x)),
-        ys: object.sourcePoints.map(point => point.y)
-      }))
+      .map(object => {
+        const scenePoints = object.sourcePoints.map(point => (
+          sourcePointInRealFabricScene(fabricObjects.get(object.id), point)
+        ));
+        return {
+          id: object.id,
+          minX: Math.min(...object.sourcePoints.map(point => point.x)),
+          maxX: Math.max(...object.sourcePoints.map(point => point.x)),
+          ys: object.sourcePoints.map(point => point.y),
+          sceneMinX: Math.min(...scenePoints.map(point => point.x)),
+          sceneMaxX: Math.max(...scenePoints.map(point => point.x)),
+          sceneYs: scenePoints.map(point => point.y)
+        };
+      })
       .sort((left, right) => left.minX - right.minX);
 
     assert.deepEqual(fragments.map(fragment => [
       Number(fragment.minX.toFixed(1)),
       Number(fragment.maxX.toFixed(1))
     ]), [
+      [20, 68.5],
+      [68.5, 131.5],
+      [131.5, 180]
+    ]);
+    assert.equal(fragments.every(fragment => fragment.ys.every(y => y === 100)), true);
+    assert.deepEqual(fragments.map(fragment => [
+      Number(fragment.sceneMinX.toFixed(1)),
+      Number(fragment.sceneMaxX.toFixed(1))
+    ]), [
       [40, 88.5],
-      [88.5, 151.5],
+      [98.5, 161.5],
       [151.5, 200]
     ]);
-    assert.equal(fragments.every(fragment => fragment.ys.every(y => y === 130)), true);
+    assert.equal(fragments.every(
+      fragment => fragment.sceneYs.every(y => Number(y.toFixed(1)) === 130)
+    ), true);
     assert.deepEqual(snapshot.selectedObjectIds, [fragments[1].id]);
   } finally {
     await harness.destroy();
@@ -6186,6 +6574,202 @@ test('lasso split interpolates a crossing stroke into selected and remaining run
   assert.equal(result.inside[0][2].pressure, 0.62);
   assert.equal(result.inside[0][0].time, 3);
   assert.equal(result.inside[0][2].time, 7);
+});
+
+test('bounded whole-stroke hit exits early for 20k points and 512 or 1024 polygon edges', () => {
+  const points = Array.from({ length: 20_000 }, (_value, index) => ({
+    x: index,
+    y: 0,
+    pressure: 0.5,
+    time: index
+  }));
+  for (const edgeCount of [512, 1024]) {
+    const polygon = Array.from({ length: edgeCount }, (_value, index) => {
+      const angle = index * Math.PI * 2 / edgeCount;
+      return {
+        x: 0.25 + Math.cos(angle) * 10,
+        y: Math.sin(angle) * 10
+      };
+    });
+    const budget = createGeometryBudget(250_000);
+    const query = createPolygonEdgeIndex(polygon, { budget });
+
+    const result = strokeTouchesPolygon(points, query, {
+      size: 3,
+      thinning: 0.65,
+      budget
+    });
+
+    assert.deepEqual(result, { hit: true, limitExceeded: false });
+    assert.equal(budget.limitExceeded, false);
+    assert.ok(budget.operations < 25_000, `${edgeCount}: ${budget.operations}`);
+  }
+});
+
+test('bounded whole-stroke no-hit never exceeds the deterministic operation cap', () => {
+  const perimeter = [
+    { x: -1000, y: -1000 },
+    { x: 1000, y: -1000 },
+    { x: 1000, y: 1000 },
+    { x: -1000, y: 1000 }
+  ];
+  const points = Array.from({ length: 20_000 }, (_value, index) => ({
+    ...perimeter[index % perimeter.length],
+    pressure: 0.5,
+    time: index
+  }));
+  for (const edgeCount of [512, 1024]) {
+    const polygon = Array.from({ length: edgeCount }, (_value, index) => {
+      const angle = index * Math.PI * 2 / edgeCount;
+      return {
+        x: Math.cos(angle) * 300,
+        y: Math.sin(angle) * 300
+      };
+    });
+    const budget = createGeometryBudget(250_000);
+    const query = createPolygonEdgeIndex(polygon, { budget });
+
+    const result = strokeTouchesPolygon(points, query, {
+      size: 3,
+      thinning: 0.65,
+      budget
+    });
+
+    assert.equal(result.hit, false);
+    assert.ok(budget.operations <= 250_000);
+    assert.equal(result.limitExceeded, budget.limitExceeded);
+  }
+});
+
+test('bounded proximity finds a sub-unit edge overlap at the middle of a long segment', () => {
+  const points = [
+    { x: 0, y: 100.9, pressure: 0.5, time: 0 },
+    { x: 1920, y: 100.9, pressure: 0.5, time: 1920 }
+  ];
+  const polygon = [
+    { x: 959.5, y: 99.5 },
+    { x: 960.5, y: 99.5 },
+    { x: 960.5, y: 100.5 },
+    { x: 959.5, y: 100.5 }
+  ];
+  const options = { size: 1, thinning: 0.65 };
+
+  assert.deepEqual(strokeTouchesPolygon(points, polygon, options), {
+    hit: true,
+    limitExceeded: false
+  });
+  const split = splitStrokePointsByPolygon(points, polygon, options);
+  assert.equal(split.limitExceeded, false);
+  assert.equal(split.inside.length, 1);
+  assert.ok(split.inside[0][0].x > 959 && split.inside[0].at(-1).x < 961);
+});
+
+test('analytic proximity keeps an isolated tangent as a whole hit without a fake fragment', () => {
+  const points = [
+    { x: 0, y: 1.5, pressure: 0.5, time: 0 },
+    { x: 5, y: 1.5, pressure: 0.5, time: 5 }
+  ];
+  const polygon = [
+    { x: 5, y: 0 },
+    { x: 6, y: 0 },
+    { x: 6, y: 1 },
+    { x: 5, y: 1 }
+  ];
+  const options = { size: 1, thinning: 0.65 };
+
+  assert.deepEqual(strokeTouchesPolygon(points, polygon, options), {
+    hit: true,
+    limitExceeded: false
+  });
+  assert.deepEqual(splitStrokePointsByPolygon(points, polygon, options).inside, []);
+});
+
+test('analytic splitting preserves a centerline collinear with a polygon edge', () => {
+  const result = splitStrokePointsByPolygon([
+    { x: 0, y: 1, pressure: 0.5, time: 0 },
+    { x: 10, y: 1, pressure: 0.5, time: 10 }
+  ], [
+    { x: 4, y: 1 },
+    { x: 6, y: 1 },
+    { x: 6, y: 3 },
+    { x: 4, y: 3 }
+  ]);
+
+  assert.deepEqual(result.inside.map(run => run.map(point => point.x)), [[4, 6]]);
+  assert.deepEqual(result.outside.map(run => run.map(point => point.x)), [[0, 4], [6, 10]]);
+});
+
+test('analytic proximity tolerates a zero-length polygon edge without NaN or false abort', () => {
+  const points = [
+    { x: 0, y: 0.5, pressure: 0.5, time: 0 },
+    { x: 10, y: 0.5, pressure: 0.5, time: 10 }
+  ];
+  const polygon = [
+    { x: 4, y: 0 },
+    { x: 6, y: 0 },
+    { x: 6, y: 1 },
+    { x: 6, y: 1 },
+    { x: 4, y: 1 }
+  ];
+
+  assert.deepEqual(strokeTouchesPolygon(points, polygon), {
+    hit: true,
+    limitExceeded: false
+  });
+  const split = splitStrokePointsByPolygon(points, polygon);
+  assert.equal(split.limitExceeded, false);
+  assert.deepEqual(split.inside.map(run => run.map(point => point.x)), [[4, 6]]);
+});
+
+test('analytic proximity follows linearly varying pressure radius', () => {
+  const points = [
+    { x: 0, y: 1.6, pressure: 0, time: 0 },
+    { x: 100, y: 1.6, pressure: 1, time: 100 }
+  ];
+  const polygon = [
+    { x: 64, y: 0 },
+    { x: 67, y: 0 },
+    { x: 67, y: 1 },
+    { x: 64, y: 1 }
+  ];
+  const options = { size: 1, thinning: 0.65 };
+
+  assert.deepEqual(strokeTouchesPolygon(points, polygon, options), {
+    hit: true,
+    limitExceeded: false
+  });
+  const split = splitStrokePointsByPolygon(points, polygon, options);
+  assert.equal(split.limitExceeded, false);
+  assert.equal(split.inside.length, 1);
+  assert.ok(split.inside[0][0].pressure > 0.64);
+});
+
+test('analytic proximity handles near-parallel edges and a negative-discriminant no-hit safely', () => {
+  const options = { size: 1, thinning: 0.65 };
+  const longStroke = [
+    { x: 0, y: 100.9, pressure: 0.5, time: 0 },
+    { x: 1920, y: 100.9, pressure: 0.5, time: 1920 }
+  ];
+  const nearParallelPolygon = [
+    { x: 959.5, y: 99.5 },
+    { x: 960.5, y: 99.500001 },
+    { x: 960.5, y: 100.500001 },
+    { x: 959.5, y: 100.5 }
+  ];
+  assert.deepEqual(strokeTouchesPolygon(longStroke, nearParallelPolygon, options), {
+    hit: true,
+    limitExceeded: false
+  });
+
+  const noHit = strokeTouchesPolygon([
+    { x: 0, y: 0, pressure: 0.5, time: 0 },
+    { x: 10, y: 0, pressure: 0.5, time: 10 }
+  ], [
+    { x: 5, y: 0.6 },
+    { x: 6, y: 0.6 },
+    { x: 100, y: 0 }
+  ], options);
+  assert.deepEqual(noHit, { hit: false, limitExceeded: false });
 });
 
 test('lasso split discards sub-pixel fragments that cannot be manipulated reliably', () => {
