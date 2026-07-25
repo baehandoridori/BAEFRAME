@@ -123,7 +123,8 @@ function createDrawingHostHarness(options = {}) {
             };
           }
           return undefined;
-        }
+        },
+        invalidate: () => events.push(['webContents.invalidate'])
       };
       events.push(['construct', windowOptions]);
       windows.push(this);
@@ -1343,6 +1344,55 @@ test('injects and prepares Fabric once per host generation before enabling nativ
   await host.getDrawingDiagnostics();
   await host.ensure({ x: 1, y: 2, width: 640, height: 360 });
   assert.equal(getReadCount(), 1);
+});
+
+test('successful drawing activation repaints before pointer input without z-order churn', async () => {
+  const { host, events } = createDrawingHostHarness();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await host.setDrawingInput(makeDrawingInput(hostGeneration));
+  events.length = 0;
+
+  const enabled = await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-immediate-toolbar',
+      stableVideoIdentity: 'video-immediate-toolbar',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+
+  assert.equal(enabled.success, true);
+  const runtimeEnableIndex = events.findIndex(([name, value]) =>
+    name === 'executeJavaScript' &&
+    value.includes?.('.setDrawingInput(') &&
+    value.includes('"enabled":true'));
+  const repaintIndex = events.findIndex(([name]) =>
+    name === 'webContents.invalidate');
+  const focusableEnableIndex = events.findIndex(([name, value]) =>
+    name === 'setFocusable' && value === true);
+  const nativeEnableIndex = events.findIndex(([name, value]) =>
+    name === 'setIgnoreMouseEvents' && value === false);
+  assert.ok(runtimeEnableIndex >= 0);
+  assert.ok(
+    repaintIndex > runtimeEnableIndex,
+    'the activated toolbar must schedule a repaint after its DOM becomes visible'
+  );
+  assert.ok(
+    focusableEnableIndex > repaintIndex,
+    'pointer activation must wait until the visible toolbar repaint is scheduled'
+  );
+  assert.ok(nativeEnableIndex > focusableEnableIndex);
+  assert.equal(
+    events.filter(([name]) => name === 'moveTop').length,
+    0,
+    'toggling drawing input must not restack the native window or reintroduce flicker'
+  );
 });
 
 test('returns focus to the main window and relays keyboard input while the drawing overlay owns focus', async () => {
