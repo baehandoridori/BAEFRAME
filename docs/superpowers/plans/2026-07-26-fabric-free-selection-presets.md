@@ -241,3 +241,103 @@ branch를 push하고 사용자용 변경 요약, 상세 기술 설명, 개발 �
 프로세스를 종료하지 않고 사용자 종료 상태를 확인한 뒤 공유 드라이브에 mirror한다.
 로컬과 배포본 전체 manifest의 파일 수, 크기, SHA-256을 비교해
 `MismatchCount=0`을 확인한다.
+
+---
+
+## Final review hardening addendum
+
+최초 Task 4 뒤 whole-branch 독립 리뷰에서 실제 재현된 여섯 Important를 출시 전에
+닫는다. 아래 Task 5~7이 완료되기 전에는 PR, 병합, 배포하지 않는다.
+
+### Task 5: 변환 정확도·boolean hit·부분 점 획·연산 한도
+
+**Files:**
+- Modify: `renderer/scripts/modules/drawing-v3/lasso-geometry.js`
+- Modify: `renderer/scripts/modules/drawing-v3/stroke-splitter.js`
+- Modify: `renderer/scripts/modules/mpv-fabric-overlay-runtime.js`
+- Test: `scripts/tests/mpv-fabric-overlay-runtime.test.js`
+- Test: focused geometry/performance tests under `scripts/tests/`
+
+**Interfaces:**
+- Produces: source-coordinate polygon query, bounded `strokeTouchesPolygon()`
+- Preserves: existing fragment splitter output and atomic pending transaction
+
+- [ ] **Step 1: 리뷰 결함을 RED로 고정**
+
+다음을 실제 Fabric 경로로 먼저 실패시킨다.
+
+- 정상 길이 획의 1 source-unit 미만 가시 가장자리 접촉을 whole lasso가 놓침
+- `scaleY`, scale+rotate, scale+skew/flip 획의 보이는 영역을 놓침
+- partial rectangle/lasso가 점·0.4-unit 획을 완전히 감싸도 선택하지 못함
+- 20,000점 × 512/1024-edge whole hit가 동기 O(points*edges)로 오래 멈춤
+
+- [ ] **Step 2: polygon을 원본 획 좌표로 역변환**
+
+`calcTransformMatrix()`를 역변환하고 `pathOffset`을 더해 scene polygon을
+`sourcePoints` 좌표로 옮긴다. determinant가 안전하지 않거나 budget을 넘으면
+부분 결과 없이 `selection-complexity-limit-exceeded`로 취소한다.
+
+- [ ] **Step 3: bounded boolean hit 구현**
+
+fragment의 1-unit 최소 길이 필터와 독립적인 `strokeTouchesPolygon()`을 만든다.
+polygon edge index, broad phase, 첫 접촉 early return, gesture 공유 operation
+budget을 사용한다. whole lasso는 splitter를 호출하지 않는다.
+
+- [ ] **Step 4: 점·초단 획의 부분 선택과 affine fragment 보존**
+
+분할할 수 없는 획은 touch 시 원본 ID를 `selectedPersistedIds`에 넣는다. 정상
+fragment는 원본 선형 transform과 pathOffset 차이를 반영한 scene center를 가져야
+한다. 혼합 선택의 이동/Delete는 각각 Undo 한 번으로 원본 ID·transform·z-order를
+왕복한다.
+
+- [ ] **Step 5: 정확도·불변식·성능 GREEN**
+
+false-positive 경계, 역방향 사각형, transform 조합, 혼합 선택, atomic abort를
+검증한다. 비-flaky 기준은 operation count 상한이며 wall-clock benchmark는
+20k×512/1024 입력이 250ms 이내인지 보조로 기록한다.
+
+### Task 6: preset 취소 상태와 좁은 화면 도구막대
+
+**Files:**
+- Modify: `renderer/scripts/modules/mpv-fabric-overlay-runtime.js`
+- Modify: `main/mpv-overlay-host.js`
+- Test: `scripts/tests/mpv-fabric-overlay-runtime.test.js`
+- Test: `scripts/tests/mpv-overlay-host.test.js` 또는 전용 숨김 Electron layout test
+
+- [ ] **Step 1: deferred viewport RED**
+
+native select 이동, custom 영역 gesture, pending partial 이동 각각에서 viewport를
+보류한 뒤 실제 preset을 바꾼다. 현재 revision 미적용, stale 정렬, 늦은 modified
+위험을 실패로 확인한다.
+
+- [ ] **Step 2: 취소 정리 뒤 current viewport 한 번 적용**
+
+preset 변경만 deferred viewport를 보존한다. transform rollback, pointer lifecycle,
+pending proxy 복구, active selection 정리 뒤 같은 session과 정확히 같은 current
+input revision이면 최신 명령을 한 번 적용한다. disable/session replacement/
+pointercancel/blur/destroy는 계속 폐기한다.
+
+- [ ] **Step 3: compact-wrap RED와 구현**
+
+400/500/640px에서 모든 버튼의 root 포함, 40x40 입력 영역, 비겹침, 최대 두 행을
+요구한다. production toolbar에 `max-width`, flex wrap, 좁은 화면 간격/요약 축약을
+적용하고 브러시 panel을 실제 toolbar 아래에 배치한다. root overflow, z-index,
+BrowserWindow 위치, DOM 재생성은 변경하지 않는다.
+
+- [ ] **Step 4: 접근성·리사이즈 회귀**
+
+짧은 저장 문구와 전체 `aria-label`/`title`, 같은 toolbar 노드 유지, B/V 전환과
+리사이즈 뒤 모든 action 접근 가능을 검증한다.
+
+### Task 7: 재번들·전체 회귀·최종 독립 리뷰
+
+- [ ] `npm run bundle:mpv-fabric-overlay`
+- [ ] `npm run test:fabric-drawing-pilot`
+- [ ] `npm run test:fabric-drawing-persistence`
+- [ ] `npm run test:mpv`
+- [ ] `npm run test:drawing`
+- [ ] `npm run lint`
+- [ ] source/bundle SHA-256 결정성 및 `git diff --check`
+- [ ] Task 5, Task 6 각각 독립 리뷰
+- [ ] `e0da8c2..HEAD` whole-branch 재리뷰에서 Critical/Important 0
+- [ ] PR/Codex review/merge 뒤 exact merged SHA build와 배포 hash mismatch 0
