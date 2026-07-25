@@ -1961,7 +1961,8 @@ function createFabricOverlayRuntime(options = {}) {
   let brushStyle = { ...DEFAULT_BRUSH_STYLE };
   let brushControls = null;
   let brushPanelOpen = false;
-  let selectionMode = 'stroke';
+  let selectionTarget = 'stroke';
+  let selectionShape = 'rectangle';
   let selectionControls = null;
   let transformStart = null;
   let selectGesture = null;
@@ -2010,35 +2011,65 @@ function createFabricOverlayRuntime(options = {}) {
   function syncSelectionControls(tool = currentSession?.tool) {
     if (!selectionControls) return;
     selectionControls.group.style.display = tool === 'select' ? 'flex' : 'none';
-    for (const [mode, button] of selectionControls.buttons) {
-      const active = selectionMode === mode;
+    for (const [target, button] of selectionControls.targetButtons) {
+      const active = selectionTarget === target;
+      button.dataset.active = String(active);
+      button.setAttribute?.('aria-pressed', String(active));
+    }
+    for (const [shape, button] of selectionControls.shapeButtons) {
+      const active = selectionShape === shape;
       button.dataset.active = String(active);
       button.setAttribute?.('aria-pressed', String(active));
     }
   }
 
-  function setSelectionMode(mode) {
-    const nextMode = mode === 'lasso' ? 'lasso' : 'stroke';
-    if (selectionMode !== nextMode) abortPendingLassoSelection();
-    const selectedObjectIds = sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
-    if (selectionMode !== nextMode && (activeLasso || selectGesture || transformStart || deferredViewport)) {
-      cancelActiveLasso();
-      cancelSelectInteraction();
-    }
-    selectionMode = nextMode;
-    if (currentSession?.tool === 'select') {
-      setToolMode('select');
-      if (selectionMode === 'lasso' && selectedObjectIds.length > 0) activateObjectIds(selectedObjectIds);
-    }
-    else syncSelectionControls();
-    return selectionMode;
+  function usesNativeRectangleSelection(tool = currentSession?.tool) {
+    return tool === 'select' &&
+      selectionTarget === 'stroke' &&
+      selectionShape === 'rectangle';
   }
 
-  function createSelectionModeControls() {
+  function clearSelectionForConfigurationChange() {
+    abortPendingLassoSelection();
+    if (activeLasso) cancelActiveLasso();
+    if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
+    fabricCanvas?.discardActiveObject();
+    sceneStore.selectObjects([]);
+    refreshSelectionInteractionPolicy();
+    fabricCanvas?.requestRenderAll();
+  }
+
+  function syncChangedSelectionConfiguration() {
+    if (currentSession?.tool === 'select') {
+      setToolMode('select');
+    } else {
+      syncSelectionControls();
+    }
+  }
+
+  function setSelectionTarget(target) {
+    const nextTarget = target === 'partial' ? 'partial' : 'stroke';
+    if (selectionTarget === nextTarget) return selectionTarget;
+    clearSelectionForConfigurationChange();
+    selectionTarget = nextTarget;
+    syncChangedSelectionConfiguration();
+    return selectionTarget;
+  }
+
+  function setSelectionShape(shape) {
+    const nextShape = shape === 'lasso' ? 'lasso' : 'rectangle';
+    if (selectionShape === nextShape) return selectionShape;
+    clearSelectionForConfigurationChange();
+    selectionShape = nextShape;
+    syncChangedSelectionConfiguration();
+    return selectionShape;
+  }
+
+  function createSelectionControls() {
     const group = documentRef.createElement('div');
-    group.dataset.fabricPilotGroup = 'selection-mode';
+    group.dataset.fabricPilotGroup = 'selection-controls';
     group.setAttribute?.('role', 'group');
-    group.setAttribute?.('aria-label', '선택 방식');
+    group.setAttribute?.('aria-label', '선택 설정');
     setStyles(group, {
       display: 'none',
       alignItems: 'center',
@@ -2048,21 +2079,51 @@ function createFabricOverlayRuntime(options = {}) {
       background: 'rgba(255, 255, 255, 0.08)'
     });
 
-    const strokeButton = createButton('획', 'select-stroke');
-    strokeButton.setAttribute?.('aria-label', '획 전체 선택');
-    const lassoButton = createButton('라쏘', 'select-lasso');
-    lassoButton.setAttribute?.('aria-label', '라쏘 부분 선택');
-    const buttons = new Map([
-      ['stroke', strokeButton],
-      ['lasso', lassoButton]
+    const targetGroup = documentRef.createElement('div');
+    targetGroup.dataset.fabricPilotGroup = 'selection-target';
+    targetGroup.setAttribute?.('role', 'group');
+    targetGroup.setAttribute?.('aria-label', '선택 대상');
+    setStyles(targetGroup, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+    const strokeTargetButton = createButton('획', 'select-target-stroke');
+    strokeTargetButton.setAttribute?.('aria-label', '획 전체 선택');
+    const partialTargetButton = createButton('부분', 'select-target-partial');
+    partialTargetButton.setAttribute?.('aria-label', '획 일부 선택');
+    const targetButtons = new Map([
+      ['stroke', strokeTargetButton],
+      ['partial', partialTargetButton]
     ]);
-    for (const button of buttons.values()) {
+    for (const button of targetButtons.values()) {
       button.setAttribute?.('aria-pressed', 'false');
-      group.appendChild(button);
+      targetGroup.appendChild(button);
     }
-    addDomListener(strokeButton, 'click', () => setSelectionMode('stroke'));
-    addDomListener(lassoButton, 'click', () => setSelectionMode('lasso'));
-    return { group, buttons, strokeButton, lassoButton };
+
+    const shapeGroup = documentRef.createElement('div');
+    shapeGroup.dataset.fabricPilotGroup = 'selection-shape';
+    shapeGroup.setAttribute?.('role', 'group');
+    shapeGroup.setAttribute?.('aria-label', '선택 모양');
+    setStyles(shapeGroup, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+    const rectangleShapeButton = createButton('사각형', 'select-shape-rectangle');
+    rectangleShapeButton.setAttribute?.('aria-label', '사각형 선택');
+    const lassoShapeButton = createButton('라쏘', 'select-shape-lasso');
+    lassoShapeButton.setAttribute?.('aria-label', '라쏘 선택');
+    const shapeButtons = new Map([
+      ['rectangle', rectangleShapeButton],
+      ['lasso', lassoShapeButton]
+    ]);
+    for (const button of shapeButtons.values()) {
+      button.setAttribute?.('aria-pressed', 'false');
+      shapeGroup.appendChild(button);
+    }
+
+    group.appendChild(targetGroup);
+    group.appendChild(shapeGroup);
+    addDomListener(strokeTargetButton, 'click', () => setSelectionTarget('stroke'));
+    addDomListener(partialTargetButton, 'click', () => setSelectionTarget('partial'));
+    addDomListener(rectangleShapeButton, 'click', () => setSelectionShape('rectangle'));
+    addDomListener(lassoShapeButton, 'click', () => setSelectionShape('lasso'));
+    return { group, targetGroup, shapeGroup, targetButtons, shapeButtons };
   }
 
   function setBrushColor(color) {
@@ -2450,7 +2511,7 @@ function createFabricOverlayRuntime(options = {}) {
     if (!fabricCanvas) return;
     if (tool !== 'select') abortPendingLassoSelection();
     const selectMode = tool === 'select';
-    const nativeSelectMode = selectMode && selectionMode === 'stroke';
+    const nativeSelectMode = usesNativeRectangleSelection(tool);
     for (const [buttonTool, button] of toolButtons) {
       const active = buttonTool === tool;
       button.dataset.active = String(active);
@@ -2459,7 +2520,7 @@ function createFabricOverlayRuntime(options = {}) {
     fabricCanvas.isDrawingMode = false;
     fabricCanvas.selection = nativeSelectMode;
     fabricCanvas.defaultCursor = selectMode
-      ? (selectionMode === 'lasso' ? 'crosshair' : 'default')
+      ? (nativeSelectMode ? 'default' : 'crosshair')
       : 'crosshair';
     fabricCanvas.hoverCursor = 'grab';
     fabricCanvas.moveCursor = 'grabbing';
@@ -3266,7 +3327,7 @@ function createFabricOverlayRuntime(options = {}) {
       return;
     }
     if (tool !== 'select' || selectGesture || activeStroke) return;
-    if (selectionMode === 'lasso') {
+    if (!usesNativeRectangleSelection(tool)) {
       if (activeLasso) return;
       if (pointerTargetsActiveSelection(event)) {
         selectGesture = {
@@ -3548,16 +3609,22 @@ function createFabricOverlayRuntime(options = {}) {
   function refreshSelectionInteractionPolicy(session = currentSession) {
     if (!fabricCanvas) return;
     const tolerance = resolveSelectionHitTolerance(session || {});
-    const selectTool = sceneStore.getDiagnostics().tool === 'select';
-    const nativeSelection = selectTool && selectionMode === 'stroke';
+    const tool = sceneStore.getDiagnostics().tool;
+    const selectTool = tool === 'select';
+    const nativeSelection = usesNativeRectangleSelection(tool);
     const activeIds = new Set(selectionIds());
     fabricCanvas.setTargetFindTolerance?.(tolerance);
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
       applyMoveOnlyConstraints(object);
       applyUnselectedPermanentPathPolicy(object, tolerance);
-      const activeInLasso = selectTool && selectionMode === 'lasso' && activeIds.has(object.__baeframeObjectId);
-      object.set({ selectable: nativeSelection || activeInLasso, evented: nativeSelection || activeInLasso });
+      const activeInCustomSelection = selectTool &&
+        !nativeSelection &&
+        activeIds.has(object.__baeframeObjectId);
+      object.set({
+        selectable: nativeSelection || activeInCustomSelection,
+        evented: nativeSelection || activeInCustomSelection
+      });
       object.setCoords?.();
     }
 
@@ -3734,7 +3801,7 @@ function createFabricOverlayRuntime(options = {}) {
       const deleteButton = createButton('Delete', 'delete-selection');
       const clearButton = createButton('Clear', 'clear-session');
       brushControls = createBrushSettingsControls();
-      selectionControls = createSelectionModeControls();
+      selectionControls = createSelectionControls();
       badge = documentRef.createElement('span');
       badge.className = 'mpv-fabric-pilot-badge';
       badge.textContent = formatFabricPersistenceBadge();
@@ -4029,7 +4096,8 @@ function createFabricOverlayRuntime(options = {}) {
       targetFrame: currentSession?.targetFrame ?? null,
       viewportRevision: currentSession?.viewportRevision ?? null,
       tool: scene.tool,
-      selectionMode,
+      selectionTarget,
+      selectionShape,
       objectCount: scene.objectCount,
       selectionCount: scene.selectionCount,
       mutationCount: scene.mutationCount,

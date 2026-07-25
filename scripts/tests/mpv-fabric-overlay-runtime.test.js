@@ -330,6 +330,18 @@ function findOne(root, predicate) {
   return findAll(root, predicate)[0] || null;
 }
 
+function clickSelectionControl(root, action) {
+  const control = findOne(root, node => node.dataset.fabricPilotAction === action);
+  assert.ok(control, `expected ${action} selection control`);
+  if (typeof control.click === 'function') control.click();
+  else control.dispatch('click');
+}
+
+function selectPartialLasso(root) {
+  clickSelectionControl(root, 'select-target-partial');
+  clickSelectionControl(root, 'select-shape-lasso');
+}
+
 function getBrushControls(root) {
   const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
   return {
@@ -1676,7 +1688,7 @@ function enableRealFabricLasso(harness, toolRevision = 1) {
     toolRevision,
     tool: 'select'
   });
-  findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+  selectPartialLasso(harness.root);
 }
 
 function lassoHistoryState(runtime) {
@@ -2061,7 +2073,7 @@ test('lasso selection preserves the rendered stroke until a fragment actually mo
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 65 },
       { x: 130, y: 65 },
@@ -2116,7 +2128,7 @@ test('dragging a lasso-selected fragment moves only that fragment', async () => 
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 75 },
       { x: 130, y: 75 },
@@ -2200,7 +2212,7 @@ test('one undo restores the original stroke after lasso split and fragment move'
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 75 },
       { x: 130, y: 75 },
@@ -2258,7 +2270,7 @@ test('one undo restores both a split fragment move and a fully enclosed stroke m
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 55 },
       { x: 135, y: 55 },
@@ -2308,7 +2320,7 @@ test('later drawing mutations keep ordered undo redo history without skipping ne
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 60 },
       { x: 130, y: 60 },
@@ -2384,7 +2396,7 @@ test('a failed fragment build aborts the whole lasso split without losing stroke
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     failFragmentBuild = true;
     harness.dragLasso([
       { x: 70, y: 75 },
@@ -2419,7 +2431,7 @@ test('lasso fragment limits abort before replacing a complex stroke', async () =
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 75 },
       { x: 130, y: 75 },
@@ -2453,7 +2465,7 @@ test('cancelling an in-progress lasso leaves the original stroke untouched', asy
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
 
     harness.dispatchPointer(harness.element, 'pointerdown', 70, 75, 69, 1);
     harness.dispatchPointer(harness.element, 'pointermove', 130, 75, 69, 1);
@@ -2488,7 +2500,7 @@ test('cancelling a no-move pending fragment selection rolls back to the original
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 75 },
       { x: 130, y: 75 },
@@ -2558,7 +2570,7 @@ test('pending lasso cancellation paths leave no proxy mutation or history', asyn
       }).accepted, true);
     }],
     ['selection preset change', harness => {
-      findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-stroke').click();
+      clickSelectionControl(harness.root, 'select-target-stroke');
     }],
     ['new lasso', harness => {
       harness.dispatchPointer(harness.element, 'pointerdown', 10, 10, 831, 1);
@@ -2891,7 +2903,7 @@ test('the newest viewport update applies as soon as a lasso gesture settles', as
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dispatchPointer(harness.element, 'pointerdown', 30, 30, 708, 1);
     harness.dispatchPointer(harness.element, 'pointermove', 60, 30, 708, 1);
     assert.deepEqual(harness.runtime.updateViewport({
@@ -2926,7 +2938,7 @@ test('a zero-area lasso line never cuts a nearby thick stroke', async () => {
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 99 },
       { x: 100, y: 99 },
@@ -2957,7 +2969,7 @@ test('empty and fully enclosing lassos select non-destructively', async () => {
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
 
     harness.dragLasso([
       { x: 140, y: 140 },
@@ -2989,36 +3001,6 @@ test('empty and fully enclosing lassos select non-destructively', async () => {
   }
 });
 
-test('switching a selected stroke into lasso mode keeps it immediately movable', async () => {
-  const harness = createRealFabricHarness();
-  try {
-    harness.drawStroke([
-      { x: 30, y: 100 },
-      { x: 80, y: 100 },
-      { x: 130, y: 100 }
-    ], 703);
-    harness.runtime.updateDrawingTool({
-      sessionId: 'real-fabric-session',
-      toolRevision: 1,
-      tool: 'select'
-    });
-    harness.clickStroke(0, 704);
-    const before = harness.sceneStore.getActiveSceneSnapshot();
-    assert.equal(before.selectedObjectIds.length, 1);
-
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
-    harness.dragActiveSelectionBy(20, 10, 705);
-    await Promise.resolve();
-
-    const after = harness.sceneStore.getActiveSceneSnapshot();
-    assert.deepEqual(after.selectedObjectIds, before.selectedObjectIds);
-    assert.equal(after.objects[0].transform.left, before.objects[0].transform.left + 20);
-    assert.equal(after.objects[0].transform.top, before.objects[0].transform.top + 10);
-  } finally {
-    await harness.destroy();
-  }
-});
-
 test('lasso commits an already moved stroke at its visible position without jumping', async () => {
   const harness = createRealFabricHarness();
   try {
@@ -3037,7 +3019,7 @@ test('lasso commits an already moved stroke at its visible position without jump
     });
     harness.dragStrokeBy(0, 20, 30, undefined, 72);
     await Promise.resolve();
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
 
     harness.dragLasso([
       { x: 90, y: 105 },
@@ -3095,7 +3077,7 @@ test('lasso stages the visible edge of a thick stroke without mutating the scene
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 84 },
       { x: 130, y: 84 },
@@ -3133,7 +3115,7 @@ test('one lasso moves matching segments from two strokes and releases the group 
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 50 },
       { x: 130, y: 50 },
@@ -3196,7 +3178,7 @@ test('lasso keeps untouched strokes between the replacement fragments at their o
       toolRevision: 1,
       tool: 'select'
     });
-    findOne(harness.root, node => node.dataset.fabricPilotAction === 'select-lasso').click();
+    selectPartialLasso(harness.root);
     harness.dragLasso([
       { x: 70, y: 45 },
       { x: 130, y: 45 },
@@ -3252,6 +3234,58 @@ test('real Fabric thin stroke hit margin drives honest hover cursors', async () 
   } finally {
     await harness.destroy();
   }
+});
+
+async function assertWholeStrokeSelectionClearsOnControlChange(currentAction, nextAction) {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(70, 190);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+    harness.clickStroke(0, 191);
+    await Promise.resolve();
+
+    const activeObject = harness.canvas.getActiveObject();
+    const selectedObjectIds = harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds;
+    assert.ok(activeObject);
+    assert.equal(selectedObjectIds.length, 1);
+
+    clickSelectionControl(harness.root, currentAction);
+    assert.equal(harness.canvas.getActiveObject(), activeObject);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      selectedObjectIds
+    );
+
+    const before = harness.runtime.getDiagnostics();
+    clickSelectionControl(harness.root, nextAction);
+    const after = harness.runtime.getDiagnostics();
+    assert.equal(harness.canvas.getActiveObject(), undefined);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assert.equal(after.selectionCount, 0);
+    assert.equal(after.mutationCount, before.mutationCount);
+    assert.equal(after.dirty, before.dirty);
+    assert.equal(after.metrics.saveAttemptCount, before.metrics.saveAttemptCount);
+  } finally {
+    await harness.destroy();
+  }
+}
+
+test('switching a whole-stroke selection to partial target clears it immediately', async () => {
+  await assertWholeStrokeSelectionClearsOnControlChange(
+    'select-target-stroke',
+    'select-target-partial'
+  );
+});
+
+test('switching a whole-stroke selection to lasso shape clears it immediately', async () => {
+  await assertWholeStrokeSelectionClearsOnControlChange(
+    'select-shape-rectangle',
+    'select-shape-lasso'
+  );
 });
 
 test('selected stroke owns its full bounds with a move cursor and restores pixel hit testing on switch', async () => {
@@ -4419,7 +4453,7 @@ test('local toolbar changes do not consume controller tool revisions', () => {
   assert.equal(disabled.tool, 'select');
 });
 
-test('V exposes separate stroke and lasso selection modes and remembers the local choice', () => {
+test('V exposes independent selection target and shape controls', () => {
   FakeCanvas.instances = [];
   const document = new FakeDocument();
   const root = document.createElement('div');
@@ -4433,35 +4467,63 @@ test('V exposes separate stroke and lasso selection modes and remembers the loca
   const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
   const brushButton = findOne(toolbar, node => node.dataset.fabricPilotAction === 'brush');
   const selectButton = findOne(toolbar, node => node.dataset.fabricPilotAction === 'select');
-  const modeGroup = findOne(toolbar, node => node.dataset.fabricPilotGroup === 'selection-mode');
-  const strokeMode = findOne(toolbar, node => node.dataset.fabricPilotAction === 'select-stroke');
-  const lassoMode = findOne(toolbar, node => node.dataset.fabricPilotAction === 'select-lasso');
+  const controlsGroup = findOne(toolbar, node => node.dataset.fabricPilotGroup === 'selection-controls');
+  const targetGroup = findOne(toolbar, node => node.dataset.fabricPilotGroup === 'selection-target');
+  const shapeGroup = findOne(toolbar, node => node.dataset.fabricPilotGroup === 'selection-shape');
+  const strokeTarget = findOne(toolbar, node =>
+    node.dataset.fabricPilotAction === 'select-target-stroke');
+  const partialTarget = findOne(toolbar, node =>
+    node.dataset.fabricPilotAction === 'select-target-partial');
+  const rectangleShape = findOne(toolbar, node =>
+    node.dataset.fabricPilotAction === 'select-shape-rectangle');
+  const lassoShape = findOne(toolbar, node =>
+    node.dataset.fabricPilotAction === 'select-shape-lasso');
   const canvas = FakeCanvas.instances[0];
 
-  assert.ok(modeGroup);
-  assert.ok(strokeMode);
-  assert.ok(lassoMode);
-  assert.equal(modeGroup.style.display, 'none');
+  assert.ok(controlsGroup);
+  assert.ok(targetGroup);
+  assert.ok(shapeGroup);
+  assert.ok(strokeTarget);
+  assert.ok(partialTarget);
+  assert.ok(rectangleShape);
+  assert.ok(lassoShape);
+  assert.equal(controlsGroup.style.display, 'none');
+  assert.equal(targetGroup.getAttribute('role'), 'group');
+  assert.equal(shapeGroup.getAttribute('role'), 'group');
+  assert.equal(runtime.getDiagnostics().selectionTarget, 'stroke');
+  assert.equal(runtime.getDiagnostics().selectionShape, 'rectangle');
 
   selectButton.dispatch('click');
-  assert.equal(modeGroup.style.display, 'flex');
-  assert.equal(strokeMode.getAttribute('aria-pressed'), 'true');
-  assert.equal(lassoMode.getAttribute('aria-pressed'), 'false');
-  assert.equal(runtime.getDiagnostics().selectionMode, 'stroke');
+  const before = runtime.getDiagnostics();
+  assert.equal(controlsGroup.style.display, 'flex');
+  assert.equal(strokeTarget.getAttribute('aria-pressed'), 'true');
+  assert.equal(partialTarget.getAttribute('aria-pressed'), 'false');
+  assert.equal(rectangleShape.getAttribute('aria-pressed'), 'true');
+  assert.equal(lassoShape.getAttribute('aria-pressed'), 'false');
   assert.equal(canvas.selection, true);
 
-  lassoMode.dispatch('click');
-  assert.equal(strokeMode.getAttribute('aria-pressed'), 'false');
-  assert.equal(lassoMode.getAttribute('aria-pressed'), 'true');
-  assert.equal(runtime.getDiagnostics().selectionMode, 'lasso');
+  partialTarget.dispatch('click');
+  lassoShape.dispatch('click');
+  const after = runtime.getDiagnostics();
+  assert.equal(strokeTarget.getAttribute('aria-pressed'), 'false');
+  assert.equal(partialTarget.getAttribute('aria-pressed'), 'true');
+  assert.equal(rectangleShape.getAttribute('aria-pressed'), 'false');
+  assert.equal(lassoShape.getAttribute('aria-pressed'), 'true');
+  assert.equal(after.selectionTarget, 'partial');
+  assert.equal(after.selectionShape, 'lasso');
   assert.equal(canvas.selection, false);
+  assert.equal(after.mutationCount, before.mutationCount);
+  assert.equal(after.dirty, before.dirty);
+  assert.equal(after.metrics.saveAttemptCount, before.metrics.saveAttemptCount);
 
   brushButton.dispatch('click');
-  assert.equal(modeGroup.style.display, 'none');
+  assert.equal(controlsGroup.style.display, 'none');
   selectButton.dispatch('click');
-  assert.equal(modeGroup.style.display, 'flex');
-  assert.equal(lassoMode.getAttribute('aria-pressed'), 'true');
-  assert.equal(runtime.getDiagnostics().selectionMode, 'lasso');
+  assert.equal(controlsGroup.style.display, 'flex');
+  assert.equal(partialTarget.getAttribute('aria-pressed'), 'true');
+  assert.equal(lassoShape.getAttribute('aria-pressed'), 'true');
+  assert.equal(runtime.getDiagnostics().selectionTarget, 'partial');
+  assert.equal(runtime.getDiagnostics().selectionShape, 'lasso');
 });
 
 test('brush settings expose the familiar bounded palette without mutating the scene', () => {
