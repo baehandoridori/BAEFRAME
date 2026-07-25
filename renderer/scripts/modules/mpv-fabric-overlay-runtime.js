@@ -2041,13 +2041,21 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function clearSelectionForConfigurationChange() {
-    abortPendingLassoSelection();
+    const viewportContext = {
+      sessionId: currentSession?.sessionId,
+      inputRevision: tokenState.inputRevision
+    };
     if (activeLasso) cancelActiveLasso();
-    if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
+    if (selectGesture || transformStart) {
+      ignoreLateModifiedEvents(transformStart?.target || fabricCanvas?.getActiveObject?.());
+      cancelSelectInteraction(undefined, { preserveDeferredViewport: true });
+    }
+    abortPendingLassoSelection();
     fabricCanvas?.discardActiveObject();
     sceneStore.selectObjects([]);
     refreshSelectionInteractionPolicy();
     fabricCanvas?.requestRenderAll();
+    return viewportContext;
   }
 
   function syncChangedSelectionConfiguration() {
@@ -2061,18 +2069,20 @@ function createFabricOverlayRuntime(options = {}) {
   function setSelectionTarget(target) {
     const nextTarget = target === 'partial' ? 'partial' : 'stroke';
     if (selectionTarget === nextTarget) return selectionTarget;
-    clearSelectionForConfigurationChange();
+    const viewportContext = clearSelectionForConfigurationChange();
     selectionTarget = nextTarget;
     syncChangedSelectionConfiguration();
+    settleDeferredViewport(viewportContext.sessionId, viewportContext.inputRevision);
     return selectionTarget;
   }
 
   function setSelectionShape(shape) {
     const nextShape = shape === 'lasso' ? 'lasso' : 'rectangle';
     if (selectionShape === nextShape) return selectionShape;
-    clearSelectionForConfigurationChange();
+    const viewportContext = clearSelectionForConfigurationChange();
     selectionShape = nextShape;
     syncChangedSelectionConfiguration();
+    settleDeferredViewport(viewportContext.sessionId, viewportContext.inputRevision);
     return selectionShape;
   }
 
@@ -3511,8 +3521,9 @@ function createFabricOverlayRuntime(options = {}) {
     } catch (_error) { /* best-effort Fabric pointer lifecycle cleanup */ }
   }
 
-  function cancelSelectInteraction(event) {
+  function cancelSelectInteraction(event, options = {}) {
     const gesture = selectGesture;
+    const preserveDeferredViewport = options.preserveDeferredViewport === true;
     const hadTransformTarget = !!transformStart?.target;
     const wasTracking = gesture?.phase === 'tracking';
     if (gesture) gesture.phase = 'cancelling';
@@ -3527,7 +3538,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
     selectGesture = null;
     transformStart = null;
-    deferredViewport = null;
+    if (!preserveDeferredViewport) deferredViewport = null;
     if (gesture && pendingLassoSelection) {
       abortPendingLassoSelection();
       return;
@@ -3541,6 +3552,7 @@ function createFabricOverlayRuntime(options = {}) {
     deferredViewport = null;
     if (!pending || pending.sessionId !== sessionId || pending.inputRevision !== inputRevision) return false;
     if (destroyed || !inputEnabled || !fabricCanvas || currentSession?.sessionId !== sessionId) return false;
+    if (tokenState.inputRevision !== inputRevision) return false;
     if (pending.command.revision <= currentSession.viewportRevision) return false;
     applyViewportCommand(pending.command);
     return true;
@@ -3671,9 +3683,8 @@ function createFabricOverlayRuntime(options = {}) {
   function onPointerCancel(event) {
     if (activeLasso) {
       if (event.pointerId !== undefined && event.pointerId !== activeLasso.pointerId) return;
-      const { sessionId, inputRevision } = activeLasso;
       cancelActiveLasso();
-      settleDeferredViewport(sessionId, inputRevision);
+      deferredViewport = null;
       return;
     }
     if (activeStroke) {

@@ -1775,6 +1775,38 @@ function lassoHistoryState(runtime) {
   };
 }
 
+function makeDeferredViewportCommand(revision) {
+  return {
+    revision,
+    canvasRect: {
+      left: revision,
+      top: revision + 1,
+      width: 200 - revision * 5,
+      height: 190 - revision * 5
+    },
+    scale: 1 + revision / 20,
+    panX: revision,
+    panY: -revision
+  };
+}
+
+function captureSelectionStability(harness) {
+  return {
+    objects: harness.sceneStore.getActiveSceneSnapshot().objects,
+    history: lassoHistoryState(harness.runtime),
+    saveAttemptCount: harness.runtime.getDiagnostics().metrics.saveAttemptCount
+  };
+}
+
+function assertSelectionStability(harness, expected) {
+  assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, expected.objects);
+  assert.deepEqual(lassoHistoryState(harness.runtime), expected.history);
+  assert.equal(
+    harness.runtime.getDiagnostics().metrics.saveAttemptCount,
+    expected.saveAttemptCount
+  );
+}
+
 function pendingLassoObjects(canvas) {
   return canvas.getObjects().filter(object => object.__baeframePendingLasso);
 }
@@ -4946,6 +4978,271 @@ test('cancelled select gestures restore Fabric input for paths, active selection
   }
 });
 
+test('a real preset change settles the latest viewport after cancelling a native select drag', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(70, 900);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+    harness.clickStroke(0, 901);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const before = captureSelectionStability(harness);
+    const originalPath = harness.canvas.getObjects()[0];
+    const center = harness.canvas.getActiveObject().getCenterPoint();
+    const pointerId = 902;
+    harness.dispatchPointer(harness.element, 'pointerdown', center.x, center.y, pointerId, 1);
+    harness.dispatchPointer(
+      harness.environment.document,
+      'pointermove',
+      center.x + 18,
+      center.y + 9,
+      pointerId,
+      1
+    );
+    assert.deepEqual(
+      harness.runtime.updateViewport(makeDeferredViewportCommand(1)),
+      { accepted: true, deferred: true, revision: 1 }
+    );
+    assert.deepEqual(
+      harness.runtime.updateViewport(makeDeferredViewportCommand(3)),
+      { accepted: true, deferred: true, revision: 3 }
+    );
+    assert.deepEqual(
+      harness.runtime.updateViewport(makeDeferredViewportCommand(2)),
+      { accepted: false, reason: 'stale-viewport' }
+    );
+    assert.equal(harness.runtime.getDiagnostics().viewportRevision, 0);
+
+    clickSelectionControl(harness.root, 'select-target-partial');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const afterPreset = harness.runtime.getDiagnostics();
+    assert.equal(afterPreset.selectionTarget, 'partial');
+    assert.equal(afterPreset.viewportRevision, 3);
+    assert.equal(harness.element.hasPointerCapture(pointerId), false);
+    assert.equal(harness.canvas.getActiveObject() ?? null, null);
+    assert.equal(harness.canvas.getObjects()[0], originalPath);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assertSelectionStability(harness, before);
+
+    harness.dispatchPointer(
+      harness.environment.document,
+      'pointerup',
+      center.x + 18,
+      center.y + 9,
+      pointerId,
+      0
+    );
+    await Promise.resolve();
+    assert.equal(harness.runtime.getDiagnostics().viewportRevision, 3);
+    assertSelectionStability(harness, before);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a real preset change settles a deferred viewport after cancelling a custom lasso', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 910);
+    enableRealFabricLasso(harness);
+    const before = captureSelectionStability(harness);
+    const originalPath = harness.canvas.getObjects()[0];
+    const pointerId = 911;
+
+    harness.dispatchPointer(harness.element, 'pointerdown', 65, 70, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 135, 70, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 135, 130, pointerId, 1);
+    assert.equal(
+      harness.canvas.getObjects().some(object => object.__baeframeTransient),
+      true
+    );
+    assert.deepEqual(
+      harness.runtime.updateViewport(makeDeferredViewportCommand(4)),
+      { accepted: true, deferred: true, revision: 4 }
+    );
+
+    clickSelectionControl(harness.root, 'select-shape-rectangle');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const afterPreset = harness.runtime.getDiagnostics();
+    assert.equal(afterPreset.selectionShape, 'rectangle');
+    assert.equal(afterPreset.viewportRevision, 4);
+    assert.equal(harness.element.hasPointerCapture(pointerId), false);
+    assert.equal(
+      harness.canvas.getObjects().some(object => object.__baeframeTransient),
+      false
+    );
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.equal(harness.canvas.getActiveObject() ?? null, null);
+    assert.equal(harness.canvas.getObjects()[0], originalPath);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assertSelectionStability(harness, before);
+
+    harness.dispatchPointer(
+      harness.environment.document,
+      'pointerup',
+      135,
+      130,
+      pointerId,
+      0
+    );
+    await Promise.resolve();
+    assert.equal(harness.runtime.getDiagnostics().viewportRevision, 4);
+    assertSelectionStability(harness, before);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('custom lasso pointer cancellation and blur discard a deferred viewport', async t => {
+  const scenarios = [
+    ['pointercancel', (harness, pointerId) => {
+      harness.dispatchPointer(harness.element, 'pointercancel', 135, 130, pointerId, 0);
+    }],
+    ['blur', harness => {
+      harness.environment.window.dispatchEvent(new harness.environment.window.Event('blur'));
+    }]
+  ];
+
+  for (let index = 0; index < scenarios.length; index += 1) {
+    const [name, cancel] = scenarios[index];
+    await t.test(name, async () => {
+      const harness = createRealFabricHarness();
+      try {
+        harness.drawStroke(crossingStrokePoints(), 940 + index * 10);
+        enableRealFabricLasso(harness);
+        const before = captureSelectionStability(harness);
+        const pointerId = 941 + index * 10;
+        harness.dispatchPointer(harness.element, 'pointerdown', 65, 70, pointerId, 1);
+        harness.dispatchPointer(harness.element, 'pointermove', 135, 70, pointerId, 1);
+        harness.dispatchPointer(harness.element, 'pointermove', 135, 130, pointerId, 1);
+        assert.deepEqual(
+          harness.runtime.updateViewport(makeDeferredViewportCommand(8 + index)),
+          { accepted: true, deferred: true, revision: 8 + index }
+        );
+
+        cancel(harness, pointerId);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        assert.equal(harness.runtime.getDiagnostics().viewportRevision, 0);
+        assert.equal(harness.element.hasPointerCapture(pointerId), false);
+        assert.equal(
+          harness.canvas.getObjects().some(object => object.__baeframeTransient),
+          false
+        );
+        assertSelectionStability(harness, before);
+      } finally {
+        await harness.destroy();
+      }
+    });
+  }
+});
+
+test('preset change rolls back a moving pending partial selection before applying viewport', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const before = stageCrossingLasso(harness, 920);
+    const beforeStability = captureSelectionStability(harness);
+    const originalPath = harness.canvas.getObjects().find(
+      object => object.__baeframeObjectId === before.objects[0].id
+    );
+    const center = harness.canvas.getActiveObject().getCenterPoint();
+    const pointerId = 922;
+    harness.dispatchPointer(harness.element, 'pointerdown', center.x, center.y, pointerId, 1);
+    harness.dispatchPointer(
+      harness.environment.document,
+      'pointermove',
+      center.x + 20,
+      center.y + 10,
+      pointerId,
+      1
+    );
+    assert.equal(harness.canvas.getObjects().filter(object => object.__baeframeObjectId).length, 3);
+    assert.deepEqual(
+      harness.runtime.updateViewport(makeDeferredViewportCommand(5)),
+      { accepted: true, deferred: true, revision: 5 }
+    );
+
+    clickSelectionControl(harness.root, 'select-target-stroke');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const afterPreset = harness.runtime.getDiagnostics();
+    assert.equal(afterPreset.selectionTarget, 'stroke');
+    assert.equal(afterPreset.viewportRevision, 5);
+    assert.equal(harness.element.hasPointerCapture(pointerId), false);
+    assert.equal(harness.canvas.getActiveObject() ?? null, null);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assert.deepEqual(
+      harness.canvas.getObjects().map(object => object.__baeframeObjectId),
+      before.objects.map(object => object.id)
+    );
+    assert.equal(harness.canvas.getObjects()[0], originalPath);
+    assertSelectionStability(harness, beforeStability);
+
+    harness.dispatchPointer(
+      harness.environment.document,
+      'pointerup',
+      center.x + 20,
+      center.y + 10,
+      pointerId,
+      0
+    );
+    await Promise.resolve();
+    assert.equal(harness.runtime.getDiagnostics().viewportRevision, 5);
+    assertSelectionStability(harness, beforeStability);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('same-value preset click leaves an active select gesture and deferred viewport untouched', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(70, 930);
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+    const center = harness.canvas.getObjects()[0].getCenterPoint();
+    const pointerId = 931;
+    harness.dispatchPointer(harness.element, 'pointerdown', center.x, center.y, pointerId, 1);
+    assert.deepEqual(
+      harness.runtime.updateViewport(makeDeferredViewportCommand(6)),
+      { accepted: true, deferred: true, revision: 6 }
+    );
+
+    clickSelectionControl(harness.root, 'select-target-stroke');
+
+    assert.equal(harness.runtime.getDiagnostics().viewportRevision, 0);
+    assert.equal(harness.runtime.getDiagnostics().selectionTarget, 'stroke');
+    assert.equal(harness.element.hasPointerCapture(pointerId), true);
+
+    harness.dispatchCapturedPointerUp(center.x, center.y, pointerId);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(harness.runtime.getDiagnostics().viewportRevision, 6);
+    assert.deepEqual(
+      harness.canvas.getActiveObjects(),
+      [harness.canvas.getObjects()[0]]
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('latest deferred viewport wins after one select gesture settles', () => {
   FakeCanvas.instances = [];
   const queuedMicrotasks = [];
@@ -5123,6 +5420,7 @@ test('stale deferred viewport is discarded by input disable or session replaceme
   const replacementApplyCount = replacementHarness.canvas.calcOffsetCalls;
   replacementHarness.queuedMicrotasks.shift()();
   assert.equal(replacementHarness.runtime.getDiagnostics().activeSessionId, 'replacement-session');
+  assert.equal(replacementHarness.runtime.getDiagnostics().tokens.inputRevision, 2);
   assert.equal(replacementHarness.runtime.getDiagnostics().viewportRevision, 0);
   assert.equal(replacementHarness.canvas.calcOffsetCalls, replacementApplyCount);
   replacementHarness.runtime.destroy();
