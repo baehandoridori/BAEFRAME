@@ -3681,3 +3681,12 @@ test('stable overlay host does not include the old manual verification HUD', () 
     false
   );
 });
+
+test('standard mpv suite includes the hidden Fabric toolbar Chromium layout regression', () => {
+  const packageJson = require('../../package.json');
+
+  assert.match(
+    packageJson.scripts['test:mpv'],
+    /mpv-fabric-overlay-toolbar-layout\.test\.js/
+  );
+});

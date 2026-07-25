@@ -32,10 +32,10 @@
 ## 검증
 
 - `node --test scripts/tests/mpv-fabric-overlay-runtime.test.js`: 169/169 통과
-- `node --test scripts/tests/mpv-overlay-host.test.js`: 67/67 통과
-- 숨김 Electron Chromium 레이아웃 실측: 1/1 통과, 정상 종료 및 잔존 probe 프로세스 없음
+- `node --test scripts/tests/mpv-overlay-host.test.js`: 68/68 통과
+- 숨김 Electron Chromium 레이아웃/오류 종료: 2/2 통과, 정상 종료 및 잔존 probe 프로세스 없음
 - `npm run test:fabric-drawing-pilot`: 261/261 통과
-- `npm run test:mpv`: 229/229 통과
+- `npm run test:mpv`: 232/232 통과
 - `npm run lint`: 오류 0, 기존 경고 59
 - `git diff --check`: 통과
 
@@ -44,4 +44,7 @@
 - `BrowserWindow({ show: false })` 및 `host.setVisible(false)`로 화면을 띄우지 않았다.
 - 사용자 마우스 커서를 조작하지 않았다.
 - 400px, 500px, 640px에서 버튼 존재/가시성/포인터 입력/최소 크기/화면 내 포함/상호 비겹침을 실측했다.
-- 설정 패널이 툴바 아래에서 열리고 root 안에 포함되는지 실측했다.
+- 긴 프레임 번호가 실제로 배지 폭을 넘는 조건에서 block container, hidden overflow, ellipsis, `scrollWidth > clientWidth`를 확인했다.
+- 400px, 500px, 640px 각각에서 설정 패널이 툴바 아래에서 열리고 root 안에 포함되는지 실측했다.
+- probe 내부 오류가 성공으로 가려지지 않고 비정상 종료되는지 강제로 검사했다.
+- 숨김 Chromium 검사를 표준 `npm run test:mpv` 회귀망에 연결했다.

@@ -349,12 +349,12 @@ const OVERLAY_HTML = String.raw`
       outline-offset: 2px;
     }
     .mpv-fabric-pilot-badge {
-      display: flex;
+      display: block;
       flex: 0 1 120px;
-      align-items: center;
       min-width: 72px;
       max-width: 120px;
       min-height: 40px;
+      line-height: 40px;
       padding: 0 12px;
       border-radius: 8px;
       background: rgba(0, 0, 0, 0.28);

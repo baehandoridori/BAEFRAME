@@ -34,6 +34,9 @@ async function runElectronProbe() {
   let host = null;
 
   try {
+    if (process.env.BAEFRAME_TOOLBAR_LAYOUT_FORCE_FAILURE === '1') {
+      throw new Error('forced toolbar layout probe failure');
+    }
     app.setPath('userData', path.join(tempDir, 'user-data'));
     app.commandLine.appendSwitch('disable-gpu');
     esbuild.buildSync({
@@ -54,7 +57,7 @@ async function runElectronProbe() {
       show: false,
       width: 900,
       height: 700,
-      webPreferences: { sandbox: true }
+      webPreferences: { sandbox: true, backgroundThrottling: false }
     });
     await mainWindow.loadURL('data:text/html;charset=utf-8,<body></body>');
     host = new MPVOverlayHost({
@@ -83,7 +86,7 @@ async function runElectronProbe() {
       session: {
         sessionId: 'toolbar-layout-session',
         stableVideoIdentity: 'toolbar-layout-video',
-        targetFrame: 12345,
+        targetFrame: 999999999,
         sourceWidth: 1920,
         sourceHeight: 1080,
         canvasRect: { left: 0, top: 0, width: 400, height: 360 },
@@ -102,6 +105,7 @@ async function runElectronProbe() {
 
     const widths = [400, 500, 640];
     const measurements = [];
+    const panelMeasurements = [];
     for (const width of widths) {
       host.updateBounds({ x: 0, y: 0, width, height: 360 });
       await host.window.webContents.executeJavaScript(`
@@ -136,6 +140,7 @@ async function runElectronProbe() {
           const root = document.getElementById('root');
           const toolbar = document.querySelector('.mpv-fabric-pilot-toolbar');
           const badge = document.querySelector('.mpv-fabric-pilot-badge');
+          const badgeStyle = getComputedStyle(badge);
           const controls = actions.map(action => {
             const element = document.querySelector(
               '[data-fabric-pilot-action="' + action + '"]'
@@ -161,6 +166,11 @@ async function runElectronProbe() {
             root: rect(root),
             toolbar: rect(toolbar),
             badge: rect(badge),
+            badgeDisplay: badgeStyle.display,
+            badgeTextOverflow: badgeStyle.textOverflow,
+            badgeOverflowX: badgeStyle.overflowX,
+            badgeScrollWidth: badge.scrollWidth,
+            badgeClientWidth: badge.clientWidth,
             controls,
             directItems,
             summaryDisplay: getComputedStyle(summary).display,
@@ -173,43 +183,47 @@ async function runElectronProbe() {
         })();
       `, true);
       measurements.push({ width, ...measurement });
-    }
 
-    const panelMeasurement = await host.window.webContents.executeJavaScript(`
-      (async () => {
-        document.querySelector(
-          '[data-fabric-pilot-action="brush-settings"]'
-        ).click();
-        await new Promise(resolve =>
-          requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        const rect = element => {
-          const value = element.getBoundingClientRect();
-          return {
-            left: value.left,
-            top: value.top,
-            right: value.right,
-            bottom: value.bottom,
-            width: value.width,
-            height: value.height
+      const panelMeasurement = await host.window.webContents.executeJavaScript(`
+        (async () => {
+          const settingsButton = document.querySelector(
+            '[data-fabric-pilot-action="brush-settings"]'
+          );
+          settingsButton.click();
+          await new Promise(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const rect = element => {
+            const value = element.getBoundingClientRect();
+            return {
+              left: value.left,
+              top: value.top,
+              right: value.right,
+              bottom: value.bottom,
+              width: value.width,
+              height: value.height
+            };
           };
-        };
-        const root = document.getElementById('root');
-        const toolbar = document.querySelector('.mpv-fabric-pilot-toolbar');
-        const panel = document.querySelector(
-          '[data-fabric-pilot-panel="brush-settings"]'
-        );
-        return {
-          root: rect(root),
-          toolbar: rect(toolbar),
-          panel: rect(panel),
-          overflowY: getComputedStyle(panel).overflowY
-        };
-      })();
-    `, true);
+          const root = document.getElementById('root');
+          const toolbar = document.querySelector('.mpv-fabric-pilot-toolbar');
+          const panel = document.querySelector(
+            '[data-fabric-pilot-panel="brush-settings"]'
+          );
+          const result = {
+            root: rect(root),
+            toolbar: rect(toolbar),
+            panel: rect(panel),
+            overflowY: getComputedStyle(panel).overflowY
+          };
+          settingsButton.click();
+          return result;
+        })();
+      `, true);
+      panelMeasurements.push({ width, ...panelMeasurement });
+    }
 
     process.stdout.write(`${PROBE_PREFIX}${JSON.stringify({
       measurements,
-      panelMeasurement
+      panelMeasurements
     })}\n`);
   } finally {
     try {
@@ -218,19 +232,23 @@ async function runElectronProbe() {
     try {
       mainWindow?.destroy();
     } catch (_error) {}
-    app.exit(0);
   }
 }
 
 if (process.versions.electron) {
-  runElectronProbe().catch(error => {
-    process.stderr.write(`${error.stack || error.message}\n`);
-    try {
-      require('electron').app.exit(1);
-    } catch (_exitError) {
-      process.exitCode = 1;
+  runElectronProbe().then(
+    () => {
+      require('electron').app.exit(0);
+    },
+    error => {
+      process.stderr.write(`${error.stack || error.message}\n`);
+      try {
+        require('electron').app.exit(1);
+      } catch (_exitError) {
+        process.exitCode = 1;
+      }
     }
-  });
+  );
 } else {
   const { test } = require('node:test');
   const assert = require('node:assert/strict');
@@ -277,6 +295,13 @@ if (process.versions.electron) {
       assert.ok(toolbar.right <= root.right - 11.5, `${measurement.width}px right inset`);
       assert.ok(toolbar.height <= 100.5, `${measurement.width}px two-row toolbar height`);
       assert.ok(clusterRows(directItems).length <= 2, `${measurement.width}px row count`);
+      assert.equal(measurement.badgeDisplay, 'block', `${measurement.width}px badge container`);
+      assert.equal(measurement.badgeTextOverflow, 'ellipsis', `${measurement.width}px badge ellipsis`);
+      assert.equal(measurement.badgeOverflowX, 'hidden', `${measurement.width}px badge overflow`);
+      assert.ok(
+        measurement.badgeScrollWidth > measurement.badgeClientWidth,
+        `${measurement.width}px badge exercises real overflow`
+      );
 
       for (const control of controls) {
         assert.notEqual(control.display, 'none', `${measurement.width}px ${control.action} display`);
@@ -301,11 +326,52 @@ if (process.versions.electron) {
       }
     }
 
-    const { root, toolbar, panel, overflowY } = probe.panelMeasurement;
-    assert.ok(panel.top >= toolbar.bottom + 5.5, 'brush panel starts below wrapped toolbar');
-    assert.ok(panel.left >= root.left + 11.5, 'brush panel keeps left inset');
-    assert.ok(panel.right <= root.right - 11.5, 'brush panel stays within root width');
-    assert.ok(panel.bottom <= root.bottom - 11.5, 'brush panel stays within root height');
-    assert.equal(overflowY, 'auto');
+    assert.equal(probe.panelMeasurements.length, 3);
+    for (const measurement of probe.panelMeasurements) {
+      const { root, toolbar, panel, overflowY } = measurement;
+      assert.ok(
+        panel.top >= toolbar.bottom + 5.5,
+        `${measurement.width}px brush panel starts below wrapped toolbar`
+      );
+      assert.ok(
+        panel.left >= root.left + 11.5,
+        `${measurement.width}px brush panel keeps left inset`
+      );
+      assert.ok(
+        panel.right <= root.right - 11.5,
+        `${measurement.width}px brush panel stays within root width`
+      );
+      assert.ok(
+        panel.bottom <= root.bottom - 11.5,
+        `${measurement.width}px brush panel stays within root height`
+      );
+      assert.equal(overflowY, 'auto', `${measurement.width}px brush panel scroll`);
+    }
+  });
+
+  test('hidden Chromium layout probe exits non-zero when its setup fails', {
+    timeout: 45000
+  }, () => {
+    const electronPath = require('electron');
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'baeframe-toolbar-failure-'));
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    env.BAEFRAME_TOOLBAR_LAYOUT_TEMP_DIR = tempDir;
+    env.BAEFRAME_TOOLBAR_LAYOUT_FORCE_FAILURE = '1';
+    let result;
+    try {
+      result = spawnSync(electronPath, [__filename], {
+        cwd: rootDir,
+        encoding: 'utf8',
+        env,
+        timeout: 40000,
+        windowsHide: true
+      });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+
+    assert.notEqual(result.status, 0, 'failed hidden probe must not report success');
+    assert.match(result.stderr, /forced toolbar layout probe failure/);
   });
 }
