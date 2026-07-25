@@ -129,6 +129,8 @@
     "renderer/scripts/modules/drawing-v3/lasso-geometry.js"(exports, module) {
       "use strict";
       var EPSILON = 1e-7;
+      var PARAMETER_EPSILON = 1e-12;
+      var DEFAULT_EDGE_INDEX_LEAF_SIZE = 8;
       function finiteNumber(value, fallback = 0) {
         const number = Number(value);
         return Number.isFinite(number) ? number : fallback;
@@ -224,6 +226,137 @@
       function boundsIntersect(left, right) {
         return !!left && !!right && left.right >= right.left - EPSILON && left.left <= right.right + EPSILON && left.bottom >= right.top - EPSILON && left.top <= right.bottom + EPSILON;
       }
+      function createGeometryBudget(maxOperations = Number.POSITIVE_INFINITY) {
+        const numericLimit = Number(maxOperations);
+        const limit = Number.isFinite(numericLimit) ? Math.max(0, Math.trunc(numericLimit)) : Number.POSITIVE_INFINITY;
+        let operations = 0;
+        let limitExceeded = false;
+        return {
+          consume(count = 1) {
+            const amount = Math.max(0, Math.trunc(finiteNumber(count, 1)));
+            if (limitExceeded) return false;
+            if (operations + amount > limit) {
+              limitExceeded = true;
+              return false;
+            }
+            operations += amount;
+            return true;
+          },
+          get operations() {
+            return operations;
+          },
+          get maxOperations() {
+            return limit;
+          },
+          get limitExceeded() {
+            return limitExceeded;
+          }
+        };
+      }
+      function boundsForEdge(start, end) {
+        return {
+          left: Math.min(finiteNumber(start?.x), finiteNumber(end?.x)),
+          right: Math.max(finiteNumber(start?.x), finiteNumber(end?.x)),
+          top: Math.min(finiteNumber(start?.y), finiteNumber(end?.y)),
+          bottom: Math.max(finiteNumber(start?.y), finiteNumber(end?.y))
+        };
+      }
+      function unionBounds(entries) {
+        if (!entries.length) return null;
+        return entries.reduce((bounds, entry) => ({
+          left: Math.min(bounds.left, entry.bounds.left),
+          right: Math.max(bounds.right, entry.bounds.right),
+          top: Math.min(bounds.top, entry.bounds.top),
+          bottom: Math.max(bounds.bottom, entry.bounds.bottom)
+        }), { ...entries[0].bounds });
+      }
+      function buildEdgeIndexNode(entries, leafSize) {
+        const bounds = unionBounds(entries);
+        if (entries.length <= leafSize) return { bounds, edges: entries };
+        const width = bounds.right - bounds.left;
+        const height = bounds.bottom - bounds.top;
+        const axis = width >= height ? "x" : "y";
+        const ordered = [...entries].sort((left, right) => {
+          const leftCenter = axis === "x" ? (left.bounds.left + left.bounds.right) / 2 : (left.bounds.top + left.bounds.bottom) / 2;
+          const rightCenter = axis === "x" ? (right.bounds.left + right.bounds.right) / 2 : (right.bounds.top + right.bounds.bottom) / 2;
+          return leftCenter - rightCenter || left.index - right.index;
+        });
+        const middle = Math.ceil(ordered.length / 2);
+        return {
+          bounds,
+          left: buildEdgeIndexNode(ordered.slice(0, middle), leafSize),
+          right: buildEdgeIndexNode(ordered.slice(middle), leafSize)
+        };
+      }
+      function createPolygonEdgeIndex(polygon = [], options = {}) {
+        const budget = options.budget || createGeometryBudget();
+        const leafSize = Math.max(
+          2,
+          Math.trunc(finiteNumber(options.leafSize, DEFAULT_EDGE_INDEX_LEAF_SIZE))
+        );
+        const normalized = Array.isArray(polygon) ? polygon.map((point) => ({ x: finiteNumber(point?.x), y: finiteNumber(point?.y) })) : [];
+        const polygonBounds = boundsForPoints(normalized);
+        const edges = normalized.length >= 3 ? normalized.map((start, index) => {
+          const end = normalized[(index + 1) % normalized.length];
+          return { index, start, end, bounds: boundsForEdge(start, end) };
+        }) : [];
+        const buildCost = edges.length > 0 ? edges.length * (Math.ceil(Math.log2(edges.length + 1)) + 1) : 0;
+        const buildAccepted = budget.consume(buildCost);
+        const root = buildAccepted && edges.length > 0 ? buildEdgeIndexNode(edges, leafSize) : null;
+        const queryEdges = (bounds) => {
+          if (!root || !bounds) return budget.limitExceeded ? null : [];
+          const matches = [];
+          const stack = [root];
+          while (stack.length > 0) {
+            const node = stack.pop();
+            if (!budget.consume()) return null;
+            if (!boundsIntersect(node.bounds, bounds)) continue;
+            if (node.edges) {
+              for (const edge of node.edges) {
+                if (!budget.consume()) return null;
+                if (boundsIntersect(edge.bounds, bounds)) matches.push(edge);
+              }
+            } else {
+              if (node.right) stack.push(node.right);
+              if (node.left) stack.push(node.left);
+            }
+          }
+          return matches;
+        };
+        const contains = (point) => {
+          if (!polygonBounds || finiteNumber(point?.x) < polygonBounds.left - EPSILON || finiteNumber(point?.x) > polygonBounds.right + EPSILON || finiteNumber(point?.y) < polygonBounds.top - EPSILON || finiteNumber(point?.y) > polygonBounds.bottom + EPSILON) {
+            return false;
+          }
+          const candidates = queryEdges({
+            left: finiteNumber(point?.x),
+            right: polygonBounds.right,
+            top: finiteNumber(point?.y),
+            bottom: finiteNumber(point?.y)
+          });
+          if (candidates === null) return null;
+          let inside = false;
+          for (const edge of candidates) {
+            if (!budget.consume()) return null;
+            if (pointOnSegment(point, edge.start, edge.end)) return true;
+            const startY = edge.start.y;
+            const endY = edge.end.y;
+            const pointY = finiteNumber(point?.y);
+            if (endY > pointY === startY > pointY) continue;
+            const crossingX = (edge.start.x - edge.end.x) * (pointY - endY) / (startY - endY) + edge.end.x;
+            if (finiteNumber(point?.x) < crossingX) inside = !inside;
+          }
+          return inside;
+        };
+        return {
+          __baeframePolygonEdgeIndex: true,
+          polygon: normalized,
+          bounds: polygonBounds,
+          edges,
+          budget,
+          queryEdges,
+          contains
+        };
+      }
       function simplifyOpenPolyline(points, tolerance) {
         if (points.length <= 2) return points.map((point) => ({ ...point }));
         const keep = new Uint8Array(points.length);
@@ -281,39 +414,47 @@
         const simplified = [...firstHalf, ...secondHalf.slice(1, -1)];
         return simplified.length >= 3 ? simplified : deduplicated;
       }
-      function segmentPolygonIntersectionParameters(start, end, polygon = []) {
+      function segmentEdgeIntersectionParameters(start, end, edgeStart, edgeEnd) {
         const ax = finiteNumber(start?.x);
         const ay = finiteNumber(start?.y);
         const rx = finiteNumber(end?.x) - ax;
         const ry = finiteNumber(end?.y) - ay;
         const parameters = [];
-        for (let index = 0; index < polygon.length; index += 1) {
-          const edgeStart = polygon[index];
-          const edgeEnd = polygon[(index + 1) % polygon.length];
-          const qx = finiteNumber(edgeStart?.x);
-          const qy = finiteNumber(edgeStart?.y);
-          const sx = finiteNumber(edgeEnd?.x) - qx;
-          const sy = finiteNumber(edgeEnd?.y) - qy;
-          const denominator = cross(rx, ry, sx, sy);
-          const qpx = qx - ax;
-          const qpy = qy - ay;
-          if (Math.abs(denominator) <= EPSILON) {
-            if (Math.abs(cross(qpx, qpy, rx, ry)) > EPSILON) continue;
-            const lengthSquared = rx * rx + ry * ry;
-            if (lengthSquared <= EPSILON) continue;
-            for (const edgePoint of [edgeStart, edgeEnd]) {
-              const t2 = ((finiteNumber(edgePoint?.x) - ax) * rx + (finiteNumber(edgePoint?.y) - ay) * ry) / lengthSquared;
-              if (t2 > EPSILON && t2 < 1 - EPSILON) parameters.push(t2);
-            }
-            continue;
+        const qx = finiteNumber(edgeStart?.x);
+        const qy = finiteNumber(edgeStart?.y);
+        const sx = finiteNumber(edgeEnd?.x) - qx;
+        const sy = finiteNumber(edgeEnd?.y) - qy;
+        const denominator = cross(rx, ry, sx, sy);
+        const qpx = qx - ax;
+        const qpy = qy - ay;
+        if (Math.abs(denominator) <= EPSILON) {
+          if (Math.abs(cross(qpx, qpy, rx, ry)) > EPSILON) return parameters;
+          const lengthSquared = rx * rx + ry * ry;
+          if (lengthSquared <= EPSILON) return parameters;
+          for (const edgePoint of [edgeStart, edgeEnd]) {
+            const t2 = ((finiteNumber(edgePoint?.x) - ax) * rx + (finiteNumber(edgePoint?.y) - ay) * ry) / lengthSquared;
+            if (t2 > PARAMETER_EPSILON && t2 < 1 - PARAMETER_EPSILON) parameters.push(t2);
           }
-          const t = cross(qpx, qpy, sx, sy) / denominator;
-          const u = cross(qpx, qpy, rx, ry) / denominator;
-          if (t >= -EPSILON && t <= 1 + EPSILON && u >= -EPSILON && u <= 1 + EPSILON) {
-            parameters.push(Math.min(1, Math.max(0, t)));
-          }
+          return parameters;
         }
-        return parameters.sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > EPSILON);
+        const t = cross(qpx, qpy, sx, sy) / denominator;
+        const u = cross(qpx, qpy, rx, ry) / denominator;
+        if (t >= -PARAMETER_EPSILON && t <= 1 + PARAMETER_EPSILON && u >= -PARAMETER_EPSILON && u <= 1 + PARAMETER_EPSILON) {
+          parameters.push(Math.min(1, Math.max(0, t)));
+        }
+        return parameters;
+      }
+      function segmentPolygonIntersectionParameters(start, end, polygon = []) {
+        const parameters = [];
+        for (let index = 0; index < polygon.length; index += 1) {
+          parameters.push(...segmentEdgeIntersectionParameters(
+            start,
+            end,
+            polygon[index],
+            polygon[(index + 1) % polygon.length]
+          ));
+        }
+        return parameters.sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > PARAMETER_EPSILON);
       }
       module.exports = {
         EPSILON,
@@ -323,7 +464,10 @@
         polygonHasArea,
         boundsForPoints,
         boundsIntersect,
+        createGeometryBudget,
+        createPolygonEdgeIndex,
         simplifyClosedPolygon,
+        segmentEdgeIntersectionParameters,
         segmentPolygonIntersectionParameters
       };
     }
@@ -335,14 +479,15 @@
       "use strict";
       var {
         EPSILON,
-        pointInPolygon,
-        pointToPolygonDistance,
+        boundsForPoints,
+        boundsIntersect,
+        createGeometryBudget,
+        createPolygonEdgeIndex,
         pointToSegmentDistance,
-        segmentPolygonIntersectionParameters
+        segmentEdgeIntersectionParameters
       } = require_lasso_geometry();
       var DEFAULT_THINNING = 0.65;
-      var MINIMIZE_ITERATIONS = 14;
-      var ROOT_ITERATIONS = 20;
+      var PARAMETER_EPSILON = 1e-12;
       function finiteNumber(value, fallback = 0) {
         const number = Number(value);
         return Number.isFinite(number) ? number : fallback;
@@ -362,8 +507,13 @@
       function samePoint(left, right) {
         return Math.abs(finiteNumber(left?.x) - finiteNumber(right?.x)) <= EPSILON && Math.abs(finiteNumber(left?.y) - finiteNumber(right?.y)) <= EPSILON;
       }
+      function sameGeometrySample(left, right) {
+        return samePoint(left, right) && Math.abs(
+          finiteNumber(left?.pressure, 0.5) - finiteNumber(right?.pressure, 0.5)
+        ) <= PARAMETER_EPSILON;
+      }
       function appendPoint(run, point) {
-        if (!run.length || !samePoint(run[run.length - 1], point)) run.push(point);
+        if (!run.length || !sameGeometrySample(run[run.length - 1], point)) run.push(point);
       }
       function hasVisibleLength(run) {
         let length = 0;
@@ -371,8 +521,12 @@
           const dx = finiteNumber(run[index]?.x) - finiteNumber(run[index - 1]?.x);
           const dy = finiteNumber(run[index]?.y) - finiteNumber(run[index - 1]?.y);
           length += Math.hypot(dx, dy);
+          if (length + EPSILON >= 1) return true;
         }
-        return length + EPSILON >= 1;
+        return false;
+      }
+      function strokeHasSplittableLength(points = []) {
+        return Array.isArray(points) && points.length >= 2 && hasVisibleLength(points);
       }
       function strokeRadius(sample, options = {}) {
         const size = Math.max(1, finiteNumber(options.size, 0));
@@ -381,126 +535,524 @@
         const pressure = Math.min(1, Math.max(0, finiteNumber(sample?.pressure, 0.5)));
         return Math.max(0.01, size * (0.5 - thinning * (0.5 - pressure)));
       }
-      function boundsOverlapWithPadding(start, end, edgeStart, edgeEnd, padding) {
-        const left = Math.min(finiteNumber(start?.x), finiteNumber(end?.x)) - padding;
-        const right = Math.max(finiteNumber(start?.x), finiteNumber(end?.x)) + padding;
-        const top = Math.min(finiteNumber(start?.y), finiteNumber(end?.y)) - padding;
-        const bottom = Math.max(finiteNumber(start?.y), finiteNumber(end?.y)) + padding;
-        return right >= Math.min(finiteNumber(edgeStart?.x), finiteNumber(edgeEnd?.x)) - EPSILON && left <= Math.max(finiteNumber(edgeStart?.x), finiteNumber(edgeEnd?.x)) + EPSILON && bottom >= Math.min(finiteNumber(edgeStart?.y), finiteNumber(edgeEnd?.y)) - EPSILON && top <= Math.max(finiteNumber(edgeStart?.y), finiteNumber(edgeEnd?.y)) + EPSILON;
+      function isPolygonQuery(value) {
+        return value?.__baeframePolygonEdgeIndex === true;
       }
-      function proximityMetric(start, end, edgeStart, edgeEnd, options, amount) {
+      function resolvePolygonQuery(value, options = {}) {
+        if (isPolygonQuery(value)) return value;
+        const budget = options.budget || createGeometryBudget();
+        return createPolygonEdgeIndex(value, { budget });
+      }
+      function segmentBounds(start, end, padding = 0) {
+        const safePadding = Math.max(0, finiteNumber(padding));
+        return {
+          left: Math.min(finiteNumber(start?.x), finiteNumber(end?.x)) - safePadding,
+          right: Math.max(finiteNumber(start?.x), finiteNumber(end?.x)) + safePadding,
+          top: Math.min(finiteNumber(start?.y), finiteNumber(end?.y)) - safePadding,
+          bottom: Math.max(finiteNumber(start?.y), finiteNumber(end?.y)) + safePadding
+        };
+      }
+      function deduplicateStrokePoints(points = []) {
+        const deduplicated = [];
+        for (const point of points) {
+          if (!deduplicated.length || !sameGeometrySample(deduplicated[deduplicated.length - 1], point)) {
+            deduplicated.push(point);
+          }
+        }
+        if (deduplicated.length > 1 && deduplicated.every((point) => samePoint(point, deduplicated[0]))) {
+          return [deduplicated[0]];
+        }
+        return deduplicated;
+      }
+      function restoreSamePositionPressureChains(runs, sourcePoints, samplePositions) {
+        const chainsBySegmentStart = /* @__PURE__ */ new Map();
+        const chainsBySegmentEnd = /* @__PURE__ */ new Map();
+        for (let startIndex = 0; startIndex < sourcePoints.length; ) {
+          let endIndex = startIndex + 1;
+          while (endIndex < sourcePoints.length && samePoint(sourcePoints[startIndex], sourcePoints[endIndex])) {
+            endIndex += 1;
+          }
+          if (endIndex - startIndex > 1) {
+            const chain = sourcePoints.slice(startIndex, endIndex);
+            if (startIndex > 0) chainsBySegmentEnd.set(startIndex - 1, chain);
+            if (endIndex < sourcePoints.length) chainsBySegmentStart.set(endIndex - 1, chain);
+          }
+          startIndex = endIndex;
+        }
+        const chainForPoint = (point) => {
+          const position = samplePositions.get(point);
+          if (!position) return null;
+          if (position.amount <= PARAMETER_EPSILON) {
+            return chainsBySegmentStart.get(position.segmentIndex) || null;
+          }
+          if (position.amount >= 1 - PARAMETER_EPSILON) {
+            return chainsBySegmentEnd.get(position.segmentIndex) || null;
+          }
+          return null;
+        };
+        for (const run of runs) {
+          const restored = [];
+          for (let index = 0; index < run.points.length; ) {
+            let endIndex = index + 1;
+            while (endIndex < run.points.length && samePoint(run.points[index], run.points[endIndex])) {
+              endIndex += 1;
+            }
+            const chain = run.points.slice(index, endIndex).map(chainForPoint).find(Boolean);
+            restored.push(...chain || run.points.slice(index, endIndex));
+            index = endIndex;
+          }
+          run.points.splice(0, run.points.length, ...restored);
+        }
+      }
+      function quadraticRoots(coefficients) {
+        const { a, b, c } = coefficients;
+        const coefficientScale = Math.max(1, Math.abs(a), Math.abs(b), Math.abs(c));
+        const coefficientTolerance = Number.EPSILON * coefficientScale * 64;
+        if (Math.abs(a) <= coefficientTolerance) {
+          if (Math.abs(b) <= coefficientTolerance) return [];
+          return [-c / b];
+        }
+        const discriminantTerm = 4 * a * c;
+        const discriminant = b * b - discriminantTerm;
+        const discriminantScale = Math.max(1, b * b, Math.abs(discriminantTerm));
+        if (discriminant < -Number.EPSILON * discriminantScale * 128) return [];
+        const squareRoot = Math.sqrt(Math.max(0, discriminant));
+        if (squareRoot <= Number.EPSILON * Math.max(1, Math.abs(b)) * 64) {
+          return [-b / (2 * a)];
+        }
+        const q = -0.5 * (b + (b < 0 ? -squareRoot : squareRoot));
+        if (Math.abs(q) <= Number.EPSILON * coefficientScale * 64) {
+          return [-b / (2 * a)];
+        }
+        return [q / a, c / q].sort((left, right) => left - right);
+      }
+      function quadraticHitIntervals(coefficients, from, to, budget, hitAtAmount) {
+        if (!budget.consume()) return { intervals: [], limitExceeded: true };
+        const roots = quadraticRoots(coefficients).filter((root) => root >= from - PARAMETER_EPSILON && root <= to + PARAMETER_EPSILON).map((root) => Math.min(to, Math.max(from, root)));
+        const cuts = [from, ...roots, to].sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > PARAMETER_EPSILON);
+        const intervals = [];
+        for (let index = 0; index < cuts.length - 1; index += 1) {
+          const intervalStart = cuts[index];
+          const intervalEnd = cuts[index + 1];
+          const middle = (intervalStart + intervalEnd) / 2;
+          if (hitAtAmount(middle)) {
+            intervals.push([intervalStart, intervalEnd]);
+          }
+        }
+        for (const cut of cuts) {
+          if (!hitAtAmount(cut)) continue;
+          if (!intervals.some((interval) => cut >= interval[0] - PARAMETER_EPSILON && cut <= interval[1] + PARAMETER_EPSILON)) {
+            intervals.push([cut, cut]);
+          }
+        }
+        return { intervals, limitExceeded: false };
+      }
+      function pointDistanceSquaredCoefficients(start, end, point) {
+        const offsetX = finiteNumber(start?.x) - finiteNumber(point?.x);
+        const offsetY = finiteNumber(start?.y) - finiteNumber(point?.y);
+        const deltaX = finiteNumber(end?.x) - finiteNumber(start?.x);
+        const deltaY = finiteNumber(end?.y) - finiteNumber(start?.y);
+        return {
+          a: deltaX * deltaX + deltaY * deltaY,
+          b: 2 * (offsetX * deltaX + offsetY * deltaY),
+          c: offsetX * offsetX + offsetY * offsetY
+        };
+      }
+      function lineDistanceSquaredCoefficients(start, end, edgeStart, edgeDelta, edgeLengthSquared) {
+        const offsetX = finiteNumber(start?.x) - finiteNumber(edgeStart?.x);
+        const offsetY = finiteNumber(start?.y) - finiteNumber(edgeStart?.y);
+        const deltaX = finiteNumber(end?.x) - finiteNumber(start?.x);
+        const deltaY = finiteNumber(end?.y) - finiteNumber(start?.y);
+        const crossStart = offsetX * edgeDelta.y - offsetY * edgeDelta.x;
+        const crossDelta = deltaX * edgeDelta.y - deltaY * edgeDelta.x;
+        return {
+          a: crossDelta * crossDelta / edgeLengthSquared,
+          b: 2 * crossStart * crossDelta / edgeLengthSquared,
+          c: crossStart * crossStart / edgeLengthSquared
+        };
+      }
+      function subtractRadiusSquared(coefficients, start, end, options) {
+        const radiusStart = strokeRadius(start, options) + EPSILON;
+        const radiusEnd = strokeRadius(end, options) + EPSILON;
+        const radiusDelta = radiusEnd - radiusStart;
+        return {
+          a: coefficients.a - radiusDelta * radiusDelta,
+          b: coefficients.b - 2 * radiusStart * radiusDelta,
+          c: coefficients.c - radiusStart * radiusStart
+        };
+      }
+      function clipEdgeToStrokeCaps(start, end, edgeStart, edgeEnd, caps = {}) {
+        if (caps.start !== false && caps.end !== false) {
+          return { start: edgeStart, end: edgeEnd };
+        }
+        const strokeDelta = {
+          x: finiteNumber(end?.x) - finiteNumber(start?.x),
+          y: finiteNumber(end?.y) - finiteNumber(start?.y)
+        };
+        const strokeLength = Math.hypot(strokeDelta.x, strokeDelta.y);
+        if (strokeLength <= EPSILON) return null;
+        const direction = {
+          x: strokeDelta.x / strokeLength,
+          y: strokeDelta.y / strokeLength
+        };
+        const edgeDelta = {
+          x: finiteNumber(edgeEnd?.x) - finiteNumber(edgeStart?.x),
+          y: finiteNumber(edgeEnd?.y) - finiteNumber(edgeStart?.y)
+        };
+        const edgeStartDistance = (finiteNumber(edgeStart?.x) - finiteNumber(start?.x)) * direction.x + (finiteNumber(edgeStart?.y) - finiteNumber(start?.y)) * direction.y;
+        const edgeDistanceDelta = edgeDelta.x * direction.x + edgeDelta.y * direction.y;
+        let from = 0;
+        let to = 1;
+        const clipLower = (boundary) => {
+          if (Math.abs(edgeDistanceDelta) <= EPSILON) {
+            return edgeStartDistance >= boundary - EPSILON;
+          }
+          const amount = (boundary - edgeStartDistance) / edgeDistanceDelta;
+          if (edgeDistanceDelta > 0) from = Math.max(from, amount);
+          else to = Math.min(to, amount);
+          return from <= to + PARAMETER_EPSILON;
+        };
+        const clipUpper = (boundary) => {
+          if (Math.abs(edgeDistanceDelta) <= EPSILON) {
+            return edgeStartDistance <= boundary + EPSILON;
+          }
+          const amount = (boundary - edgeStartDistance) / edgeDistanceDelta;
+          if (edgeDistanceDelta > 0) to = Math.min(to, amount);
+          else from = Math.max(from, amount);
+          return from <= to + PARAMETER_EPSILON;
+        };
+        if (caps.start === false && !clipLower(0)) return null;
+        if (caps.end === false && !clipUpper(strokeLength)) return null;
+        const clippedFrom = Math.min(1, Math.max(0, from));
+        const clippedTo = Math.min(1, Math.max(0, to));
+        if (clippedFrom > clippedTo + PARAMETER_EPSILON) return null;
+        return {
+          start: {
+            x: finiteNumber(edgeStart?.x) + edgeDelta.x * clippedFrom,
+            y: finiteNumber(edgeStart?.y) + edgeDelta.y * clippedFrom
+          },
+          end: {
+            x: finiteNumber(edgeStart?.x) + edgeDelta.x * clippedTo,
+            y: finiteNumber(edgeStart?.y) + edgeDelta.y * clippedTo
+          }
+        };
+      }
+      function proximityHitAtAmount(start, end, edgeStart, edgeEnd, options, amount) {
         const sample = interpolateSample(start, end, amount);
-        return pointToSegmentDistance(sample, edgeStart, edgeEnd) - strokeRadius(sample, options);
+        const distance = pointToSegmentDistance(sample, edgeStart, edgeEnd);
+        const radius = strokeRadius(sample, options) + EPSILON;
+        const distanceSquared = distance * distance;
+        const radiusSquared = radius * radius;
+        const distanceTolerance = Number.EPSILON * Math.max(1, distanceSquared, radiusSquared) * 64;
+        return distanceSquared - radiusSquared <= distanceTolerance;
       }
-      function findRoot(metric, low, high, lowIsHit) {
-        let left = low;
-        let right = high;
-        for (let iteration = 0; iteration < ROOT_ITERATIONS; iteration += 1) {
-          const middle = (left + right) / 2;
-          const middleIsHit = metric(middle) <= EPSILON;
-          if (middleIsHit === lowIsHit) left = middle;
-          else right = middle;
-        }
-        return (left + right) / 2;
-      }
-      function edgeProximityInterval(start, end, edgeStart, edgeEnd, options) {
+      function edgeProximityIntervals(start, end, edgeStart, edgeEnd, options, budget, caps = {}) {
+        const clippedEdge = clipEdgeToStrokeCaps(start, end, edgeStart, edgeEnd, caps);
+        if (!clippedEdge) return { intervals: [], limitExceeded: false };
+        const clippedEdgeStart = clippedEdge.start;
+        const clippedEdgeEnd = clippedEdge.end;
         const maximumRadius = Math.max(strokeRadius(start, options), strokeRadius(end, options));
-        if (!boundsOverlapWithPadding(start, end, edgeStart, edgeEnd, maximumRadius)) return null;
-        const metric = (amount) => proximityMetric(start, end, edgeStart, edgeEnd, options, amount);
-        let left = 0;
-        let right = 1;
-        for (let iteration = 0; iteration < MINIMIZE_ITERATIONS; iteration += 1) {
-          const first = left + (right - left) / 3;
-          const second = right - (right - left) / 3;
-          if (metric(first) <= metric(second)) right = second;
-          else left = first;
+        if (!boundsIntersect(
+          segmentBounds(start, end, maximumRadius),
+          segmentBounds(clippedEdgeStart, clippedEdgeEnd)
+        )) {
+          return { intervals: [], limitExceeded: false };
         }
-        const minimum = (left + right) / 2;
-        if (metric(minimum) > EPSILON) return null;
-        const startAmount = metric(0) <= EPSILON ? 0 : findRoot(metric, 0, minimum, false);
-        const endAmount = metric(1) <= EPSILON ? 1 : findRoot(metric, minimum, 1, true);
-        return [startAmount, endAmount];
+        const edgeDelta = {
+          x: finiteNumber(clippedEdgeEnd?.x) - finiteNumber(clippedEdgeStart?.x),
+          y: finiteNumber(clippedEdgeEnd?.y) - finiteNumber(clippedEdgeStart?.y)
+        };
+        const edgeLengthSquared = edgeDelta.x * edgeDelta.x + edgeDelta.y * edgeDelta.y;
+        const domains = [0, 1];
+        let projectionStart = 0;
+        let projectionDelta = 0;
+        if (edgeLengthSquared > EPSILON) {
+          const strokeDelta = {
+            x: finiteNumber(end?.x) - finiteNumber(start?.x),
+            y: finiteNumber(end?.y) - finiteNumber(start?.y)
+          };
+          projectionStart = ((finiteNumber(start?.x) - finiteNumber(clippedEdgeStart?.x)) * edgeDelta.x + (finiteNumber(start?.y) - finiteNumber(clippedEdgeStart?.y)) * edgeDelta.y) / edgeLengthSquared;
+          projectionDelta = (strokeDelta.x * edgeDelta.x + strokeDelta.y * edgeDelta.y) / edgeLengthSquared;
+          if (Math.abs(projectionDelta) > PARAMETER_EPSILON) {
+            for (const projectionBoundary of [0, 1]) {
+              const amount = (projectionBoundary - projectionStart) / projectionDelta;
+              if (amount > PARAMETER_EPSILON && amount < 1 - PARAMETER_EPSILON) {
+                domains.push(amount);
+              }
+            }
+          }
+        }
+        domains.sort((left, right) => left - right);
+        const intervals = [];
+        for (let index = 0; index < domains.length - 1; index += 1) {
+          const from = domains[index];
+          const to = domains[index + 1];
+          const middle = (from + to) / 2;
+          const projection = projectionStart + projectionDelta * middle;
+          let distanceSquared;
+          if (edgeLengthSquared <= EPSILON || projection <= 0) {
+            distanceSquared = pointDistanceSquaredCoefficients(start, end, clippedEdgeStart);
+          } else if (projection >= 1) {
+            distanceSquared = pointDistanceSquaredCoefficients(start, end, clippedEdgeEnd);
+          } else {
+            distanceSquared = lineDistanceSquaredCoefficients(
+              start,
+              end,
+              clippedEdgeStart,
+              edgeDelta,
+              edgeLengthSquared
+            );
+          }
+          const hit = quadraticHitIntervals(
+            subtractRadiusSquared(distanceSquared, start, end, options),
+            from,
+            to,
+            budget,
+            (amount) => proximityHitAtAmount(
+              start,
+              end,
+              clippedEdgeStart,
+              clippedEdgeEnd,
+              options,
+              amount
+            )
+          );
+          if (hit.limitExceeded) return hit;
+          intervals.push(...hit.intervals);
+        }
+        return { intervals, limitExceeded: false };
       }
-      function centerlineIntervals(start, end, polygon) {
-        const cuts = [0, ...segmentPolygonIntersectionParameters(start, end, polygon), 1].sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > EPSILON);
+      function endpointCapIntervals(start, end, edgeStart, edgeEnd, capSample, endpoint, options, budget) {
+        if (!capSample) return { intervals: [], limitExceeded: false };
+        const pressure = finiteNumber(capSample.pressure, 0.5);
+        const proximity = edgeProximityIntervals(
+          { ...start, pressure },
+          { ...end, pressure },
+          edgeStart,
+          edgeEnd,
+          options,
+          budget,
+          { start: true, end: true }
+        );
+        if (proximity.limitExceeded) return proximity;
+        return {
+          intervals: proximity.intervals.filter((interval) => endpoint === "start" ? interval[0] <= PARAMETER_EPSILON : interval[1] >= 1 - PARAMETER_EPSILON),
+          limitExceeded: false
+        };
+      }
+      function centerlineIntervals(start, end, query, budget) {
+        const candidates = query.queryEdges(segmentBounds(start, end));
+        if (candidates === null) return { intervals: [], limitExceeded: true };
+        const parameters = [];
+        for (const edge of candidates) {
+          if (!budget.consume()) return { intervals: [], limitExceeded: true };
+          parameters.push(...segmentEdgeIntersectionParameters(start, end, edge.start, edge.end));
+        }
+        const cuts = [0, ...parameters, 1].sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > PARAMETER_EPSILON);
         const intervals = [];
         for (let index = 0; index < cuts.length - 1; index += 1) {
           const from = cuts[index];
           const to = cuts[index + 1];
-          if (pointInPolygon(interpolateSample(start, end, (from + to) / 2), polygon)) {
+          const contained = query.contains(interpolateSample(start, end, (from + to) / 2));
+          if (contained === null) return { intervals: [], limitExceeded: true };
+          if (contained) {
             intervals.push([from, to]);
           }
         }
-        return intervals;
+        return { intervals, limitExceeded: false };
       }
       function mergeIntervals(intervals) {
-        const ordered = intervals.filter((interval) => interval && interval[1] - interval[0] > EPSILON).sort((left, right) => left[0] - right[0]);
+        const ordered = intervals.filter((interval) => interval && interval[1] - interval[0] > PARAMETER_EPSILON).sort((left, right) => left[0] - right[0]);
         const merged = [];
         for (const interval of ordered) {
           const previous = merged[merged.length - 1];
-          if (!previous || interval[0] > previous[1] + EPSILON) merged.push([...interval]);
-          else previous[1] = Math.max(previous[1], interval[1]);
+          if (!previous || interval[0] > previous[1] + PARAMETER_EPSILON) {
+            merged.push([...interval]);
+          } else previous[1] = Math.max(previous[1], interval[1]);
         }
         return merged;
       }
-      function segmentSelectionIntervals(start, end, polygon, options) {
-        const intervals = centerlineIntervals(start, end, polygon);
+      function segmentSelectionIntervals(start, end, query, options, budget, caps) {
+        const centerline = centerlineIntervals(start, end, query, budget);
+        if (centerline.limitExceeded) return centerline;
+        const intervals = centerline.intervals;
         const radiusEnabled = Number.isFinite(Number(options?.size)) && Number(options.size) > 0;
         if (radiusEnabled) {
-          for (let index = 0; index < polygon.length; index += 1) {
-            const interval = edgeProximityInterval(
+          const maximumRadius = Math.max(
+            strokeRadius(start, options),
+            strokeRadius(end, options),
+            caps.roundStart ? strokeRadius(caps.roundStart, options) : 0,
+            caps.roundEnd ? strokeRadius(caps.roundEnd, options) : 0
+          );
+          const candidates = query.queryEdges(segmentBounds(start, end, maximumRadius));
+          if (candidates === null) return { intervals: [], limitExceeded: true };
+          for (const edge of candidates) {
+            const proximity = edgeProximityIntervals(
               start,
               end,
-              polygon[index],
-              polygon[(index + 1) % polygon.length],
-              options
+              edge.start,
+              edge.end,
+              options,
+              budget,
+              { start: caps.bodyStart, end: caps.bodyEnd }
             );
-            if (interval) intervals.push(interval);
+            if (proximity.limitExceeded) return { intervals: [], limitExceeded: true };
+            intervals.push(...proximity.intervals);
+            for (const [capSample, endpoint] of [
+              [caps.roundStart, "start"],
+              [caps.roundEnd, "end"]
+            ]) {
+              const cap = endpointCapIntervals(
+                start,
+                end,
+                edge.start,
+                edge.end,
+                capSample,
+                endpoint,
+                options,
+                budget
+              );
+              if (cap.limitExceeded) return { intervals: [], limitExceeded: true };
+              intervals.push(...cap.intervals);
+            }
           }
         }
-        return mergeIntervals(intervals);
+        return { intervals: mergeIntervals(intervals), limitExceeded: false };
       }
       function intervalContains(intervals, amount) {
-        return intervals.some((interval) => amount >= interval[0] - EPSILON && amount <= interval[1] + EPSILON);
+        return intervals.some((interval) => amount >= interval[0] - PARAMETER_EPSILON && amount <= interval[1] + PARAMETER_EPSILON);
+      }
+      function pointTouchesPolygon(point, query, options, budget, includeRadius = true) {
+        const contained = query.contains(point);
+        if (contained === null) return { hit: false, limitExceeded: true };
+        if (contained) return { hit: true, limitExceeded: false };
+        if (!includeRadius) return { hit: false, limitExceeded: false };
+        const radius = strokeRadius(point, options);
+        const candidates = query.queryEdges(segmentBounds(point, point, radius));
+        if (candidates === null) return { hit: false, limitExceeded: true };
+        for (const edge of candidates) {
+          if (!budget.consume()) return { hit: false, limitExceeded: true };
+          if (pointToSegmentDistance(point, edge.start, edge.end) <= radius + EPSILON) {
+            return { hit: true, limitExceeded: false };
+          }
+        }
+        return { hit: false, limitExceeded: false };
+      }
+      function segmentTouchesPolygon(start, end, query, options, budget, caps) {
+        const startTouch = pointTouchesPolygon(start, query, options, budget, caps.bodyStart);
+        if (startTouch.hit || startTouch.limitExceeded) return startTouch;
+        if (caps.roundStart) {
+          const roundStartTouch = pointTouchesPolygon(caps.roundStart, query, options, budget);
+          if (roundStartTouch.hit || roundStartTouch.limitExceeded) return roundStartTouch;
+        }
+        const endContained = query.contains(end);
+        if (endContained === null) return { hit: false, limitExceeded: true };
+        if (endContained) return { hit: true, limitExceeded: false };
+        if (caps.roundEnd) {
+          const roundEndTouch = pointTouchesPolygon(caps.roundEnd, query, options, budget);
+          if (roundEndTouch.hit || roundEndTouch.limitExceeded) return roundEndTouch;
+        }
+        const maximumRadius = Math.max(strokeRadius(start, options), strokeRadius(end, options));
+        const candidates = query.queryEdges(segmentBounds(start, end, maximumRadius));
+        if (candidates === null) return { hit: false, limitExceeded: true };
+        for (const edge of candidates) {
+          if (!budget.consume()) return { hit: false, limitExceeded: true };
+          if (segmentEdgeIntersectionParameters(start, end, edge.start, edge.end).length > 0) {
+            return { hit: true, limitExceeded: false };
+          }
+          const proximity = edgeProximityIntervals(
+            start,
+            end,
+            edge.start,
+            edge.end,
+            options,
+            budget,
+            { start: caps.bodyStart, end: caps.bodyEnd }
+          );
+          if (proximity.limitExceeded) return { hit: false, limitExceeded: true };
+          if (proximity.intervals.length > 0) return { hit: true, limitExceeded: false };
+        }
+        return { hit: false, limitExceeded: false };
+      }
+      function segmentCaps(options, index, segmentCount, sourcePoints) {
+        const firstSegment = index === 0;
+        const lastSegment = index === segmentCount - 1;
+        return {
+          bodyStart: !firstSegment,
+          bodyEnd: !lastSegment,
+          roundStart: firstSegment && options?.strokeCaps?.start !== false ? sourcePoints[0] : null,
+          roundEnd: lastSegment && options?.strokeCaps?.end !== false ? sourcePoints.at(-1) : null
+        };
+      }
+      function strokeTouchesPolygon(points = [], polygon = [], options = {}) {
+        if (!Array.isArray(points) || points.length === 0) {
+          return { hit: false, limitExceeded: false };
+        }
+        const budget = options.budget || (isPolygonQuery(polygon) ? polygon.budget : createGeometryBudget(options.maxOperations));
+        const query = resolvePolygonQuery(polygon, { budget });
+        if (!query.bounds || query.edges.length < 3 || budget.limitExceeded) {
+          return { hit: false, limitExceeded: budget.limitExceeded };
+        }
+        const deduplicated = deduplicateStrokePoints(points);
+        const maximumRadius = deduplicated.reduce(
+          (maximum, point) => Math.max(maximum, strokeRadius(point, options)),
+          0
+        );
+        if (!boundsIntersect(boundsForPoints(deduplicated, maximumRadius), query.bounds)) {
+          return { hit: false, limitExceeded: false };
+        }
+        if (deduplicated.length === 1) {
+          const pointHasVisibleCap = options?.strokeCaps?.start !== false || options?.strokeCaps?.end !== false;
+          return pointTouchesPolygon(deduplicated[0], query, options, budget, pointHasVisibleCap);
+        }
+        const visibleSegmentIndexes = [];
+        for (let index = 0; index < deduplicated.length - 1; index += 1) {
+          if (!samePoint(deduplicated[index], deduplicated[index + 1])) {
+            visibleSegmentIndexes.push(index);
+          }
+        }
+        for (let visibleIndex = 0; visibleIndex < visibleSegmentIndexes.length; visibleIndex += 1) {
+          if (!budget.consume()) return { hit: false, limitExceeded: true };
+          const pointIndex = visibleSegmentIndexes[visibleIndex];
+          const result = segmentTouchesPolygon(
+            deduplicated[pointIndex],
+            deduplicated[pointIndex + 1],
+            query,
+            options,
+            budget,
+            segmentCaps(options, visibleIndex, visibleSegmentIndexes.length, deduplicated)
+          );
+          if (result.hit || result.limitExceeded) return result;
+        }
+        return { hit: false, limitExceeded: false };
       }
       function shortStrokeTouchesPolygon(points = [], polygon = [], options = {}) {
-        if (!Array.isArray(points) || points.length === 0 || !Array.isArray(polygon) || polygon.length < 3) {
-          return false;
-        }
-        const deduplicated = [];
-        for (const point of points) {
-          if (!deduplicated.length || !samePoint(deduplicated[deduplicated.length - 1], point)) {
-            deduplicated.push(point);
-          }
-        }
-        if (hasVisibleLength(deduplicated)) return false;
-        if (deduplicated.length === 1) {
-          return pointInPolygon(deduplicated[0], polygon) || pointToPolygonDistance(deduplicated[0], polygon) <= strokeRadius(deduplicated[0], options) + EPSILON;
-        }
-        for (let index = 0; index < deduplicated.length - 1; index += 1) {
-          if (segmentSelectionIntervals(
-            deduplicated[index],
-            deduplicated[index + 1],
-            polygon,
-            options
-          ).length > 0) {
-            return true;
-          }
-        }
-        return false;
+        const deduplicated = deduplicateStrokePoints(points);
+        if (strokeHasSplittableLength(deduplicated)) return false;
+        return strokeTouchesPolygon(deduplicated, polygon, options).hit;
       }
       function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
-        if (!Array.isArray(points) || points.length < 2 || !Array.isArray(polygon) || polygon.length < 3) {
+        const polygonArray = isPolygonQuery(polygon) ? polygon.polygon : polygon;
+        const sourcePoints = Array.isArray(points) ? deduplicateStrokePoints(points) : [];
+        if (sourcePoints.length < 2 || !Array.isArray(polygonArray) || polygonArray.length < 3) {
           const outside = Array.isArray(points) && points.length ? [[...points]] : [];
           return { inside: [], outside, runs: outside.map((run) => ({ kind: "outside", points: run })) };
         }
         const result = { inside: [], outside: [], runs: [], limitExceeded: false };
+        const budget = options.budget || (isPolygonQuery(polygon) ? polygon.budget : createGeometryBudget(options.maxOperations));
+        const query = resolvePolygonQuery(polygon, { budget });
+        if (budget.limitExceeded) {
+          return { ...result, limitExceeded: true, limitReason: "operations" };
+        }
         const maxRuns = Number.isInteger(Number(options.maxRuns)) && Number(options.maxRuns) > 0 ? Number(options.maxRuns) : Number.POSITIVE_INFINITY;
+        let limitReason = null;
         let currentKind = null;
         let currentRun = null;
+        const samplePositions = /* @__PURE__ */ new WeakMap();
         const startRun = (kind, point) => {
           if (result.runs.length >= maxRuns) {
             result.limitExceeded = true;
+            limitReason = "runs";
             return false;
           }
           currentKind = kind;
@@ -509,14 +1061,43 @@
           result.runs.push({ kind, points: currentRun });
           return true;
         };
-        outer: for (let index = 0; index < points.length - 1; index += 1) {
-          const start = points[index];
-          const end = points[index + 1];
-          const selectionIntervals = segmentSelectionIntervals(start, end, polygon, options);
-          const cuts = [0, ...selectionIntervals.flat(), 1].sort((left, right) => left - right).filter((value, cutIndex, values) => cutIndex === 0 || Math.abs(value - values[cutIndex - 1]) > EPSILON);
+        const visibleSegmentIndexes = [];
+        for (let index = 0; index < sourcePoints.length - 1; index += 1) {
+          if (!samePoint(sourcePoints[index], sourcePoints[index + 1])) {
+            visibleSegmentIndexes.push(index);
+          }
+        }
+        outer: for (let visibleIndex = 0; visibleIndex < visibleSegmentIndexes.length; visibleIndex += 1) {
+          if (!budget.consume()) {
+            result.limitExceeded = true;
+            limitReason = "operations";
+            break;
+          }
+          const pointIndex = visibleSegmentIndexes[visibleIndex];
+          const start = sourcePoints[pointIndex];
+          const end = sourcePoints[pointIndex + 1];
+          const selection = segmentSelectionIntervals(
+            start,
+            end,
+            query,
+            options,
+            budget,
+            segmentCaps(options, visibleIndex, visibleSegmentIndexes.length, sourcePoints)
+          );
+          if (selection.limitExceeded) {
+            result.limitExceeded = true;
+            limitReason = "operations";
+            break;
+          }
+          const selectionIntervals = selection.intervals;
+          const cuts = [0, ...selectionIntervals.flat(), 1].sort((left, right) => left - right).filter((value, cutIndex, values) => cutIndex === 0 || Math.abs(value - values[cutIndex - 1]) > PARAMETER_EPSILON);
           for (let cutIndex = 0; cutIndex < cuts.length - 1; cutIndex += 1) {
-            const from = interpolateSample(start, end, cuts[cutIndex]);
-            const to = interpolateSample(start, end, cuts[cutIndex + 1]);
+            const fromAmount = cuts[cutIndex];
+            const toAmount = cuts[cutIndex + 1];
+            const from = interpolateSample(start, end, fromAmount);
+            const to = interpolateSample(start, end, toAmount);
+            samplePositions.set(from, { segmentIndex: pointIndex, amount: fromAmount });
+            samplePositions.set(to, { segmentIndex: pointIndex, amount: toAmount });
             const midpoint = (cuts[cutIndex] + cuts[cutIndex + 1]) / 2;
             const kind = intervalContains(selectionIntervals, midpoint) ? "inside" : "outside";
             if ((currentKind !== kind || !currentRun) && !startRun(kind, from)) break outer;
@@ -524,15 +1105,19 @@
             appendPoint(currentRun, to);
           }
         }
+        restoreSamePositionPressureChains(result.runs, sourcePoints, samplePositions);
         result.runs = result.runs.filter(({ points: run }) => run.length >= 2 && hasVisibleLength(run));
         result.inside = result.runs.filter((run) => run.kind === "inside").map((run) => run.points);
         result.outside = result.runs.filter((run) => run.kind === "outside").map((run) => run.points);
+        if (result.limitExceeded) result.limitReason = limitReason || "operations";
         return result;
       }
       module.exports = {
         interpolateSample,
         shortStrokeTouchesPolygon,
+        strokeHasSplittableLength,
         strokeRadius,
+        strokeTouchesPolygon,
         splitStrokePointsByPolygon
       };
     }
@@ -10385,13 +10970,16 @@ void main() {
         createFabricDrawingPilotMetrics
       } = require_fabric_drawing_pilot_metrics();
       var {
-        shortStrokeTouchesPolygon,
+        strokeHasSplittableLength,
+        strokeTouchesPolygon,
         splitStrokePointsByPolygon
       } = require_stroke_splitter();
       var {
         polygonHasArea,
         boundsForPoints,
         boundsIntersect,
+        createGeometryBudget,
+        createPolygonEdgeIndex,
         simplifyClosedPolygon
       } = require_lasso_geometry();
       var {
@@ -10406,6 +10994,7 @@ void main() {
       var DEFAULT_MAX_ACTIONS = 2048;
       var MAX_STROKE_POINTS = 2e4;
       var MAX_LASSO_POINTS = 1024;
+      var DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS = 25e4;
       var DEFAULT_MAX_OBJECTS = 1e4;
       var MAX_PERSISTED_KEYFRAMES = 1e4;
       var MAX_PERSISTED_OBJECTS_TOTAL = 1e5;
@@ -10523,6 +11112,10 @@ void main() {
       function formatFabricPersistenceBadge(targetFrame = null) {
         const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0 ? targetFrame : "-";
         return `${FABRIC_PERSISTENCE_BADGE_PREFIX} \xB7 \uD504\uB808\uC784 ${frameLabel}`;
+      }
+      function formatCompactFabricPersistenceBadge(targetFrame = null) {
+        const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0 ? targetFrame : "-";
+        return `\uC790\uB3D9 \uC800\uC7A5 \xB7 F${frameLabel}`;
       }
       function clonePlain(value) {
         if (value === void 0) return void 0;
@@ -11958,7 +12551,7 @@ void main() {
         const sourcePoints = samples.map((sample) => ({
           x: finiteNumber(sample.x),
           y: finiteNumber(sample.y),
-          pressure: normalizePressure(sample.pressure, sample.pointerType),
+          pressure: options.alreadyNormalizedPressure === true ? Math.min(1, Math.max(0, finiteNumber(sample.pressure, 0.5))) : normalizePressure(sample.pressure, sample.pointerType),
           time: finiteNumber(sample.time ?? sample.timeStamp)
         }));
         const { getStroke } = require_cjs();
@@ -12075,6 +12668,10 @@ void main() {
         const actionDeduper = options.actionDeduper || createActionDeduper(options.actionDeduperOptions);
         const strokePathFactory = options.strokePathFactory || createStrokePathData;
         const maxLassoFragments = positiveInteger(options.maxLassoFragments, 512);
+        const maxSelectionGeometryOperations = positiveInteger(
+          options.maxSelectionGeometryOperations,
+          DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS
+        );
         const tokenState = { hostGeneration: -1, videoGeneration: -1, inputRevision: -1 };
         const domListeners = [];
         const fabricListeners = [];
@@ -12138,6 +12735,18 @@ void main() {
           }
           return button;
         }
+        function labelToolbarButton(button, label) {
+          button.setAttribute?.("aria-label", label);
+          button.setAttribute?.("title", label);
+          return button;
+        }
+        function syncPersistenceBadge(targetFrame = null) {
+          if (!badge) return;
+          const fullLabel = formatFabricPersistenceBadge(targetFrame);
+          badge.textContent = formatCompactFabricPersistenceBadge(targetFrame);
+          badge.setAttribute?.("aria-label", fullLabel);
+          badge.setAttribute?.("title", fullLabel);
+        }
         function syncSelectionControls(tool = currentSession?.tool) {
           if (!selectionControls) return;
           selectionControls.group.style.display = tool === "select" ? "flex" : "none";
@@ -12156,13 +12765,21 @@ void main() {
           return tool === "select" && selectionTarget === "stroke" && selectionShape === "rectangle";
         }
         function clearSelectionForConfigurationChange() {
-          abortPendingLassoSelection();
+          const viewportContext = {
+            sessionId: currentSession?.sessionId,
+            inputRevision: tokenState.inputRevision
+          };
           if (activeLasso) cancelActiveLasso();
-          if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
+          if (selectGesture || transformStart) {
+            ignoreLateModifiedEvents(transformStart?.target || fabricCanvas?.getActiveObject?.());
+            cancelSelectInteraction(void 0, { preserveDeferredViewport: true });
+          }
+          abortPendingLassoSelection();
           fabricCanvas?.discardActiveObject();
           sceneStore.selectObjects([]);
           refreshSelectionInteractionPolicy();
           fabricCanvas?.requestRenderAll();
+          return viewportContext;
         }
         function syncChangedSelectionConfiguration() {
           if (currentSession?.tool === "select") {
@@ -12174,17 +12791,19 @@ void main() {
         function setSelectionTarget(target) {
           const nextTarget = target === "partial" ? "partial" : "stroke";
           if (selectionTarget === nextTarget) return selectionTarget;
-          clearSelectionForConfigurationChange();
+          const viewportContext = clearSelectionForConfigurationChange();
           selectionTarget = nextTarget;
           syncChangedSelectionConfiguration();
+          settleDeferredViewport(viewportContext.sessionId, viewportContext.inputRevision);
           return selectionTarget;
         }
         function setSelectionShape(shape) {
           const nextShape = shape === "lasso" ? "lasso" : "rectangle";
           if (selectionShape === nextShape) return selectionShape;
-          clearSelectionForConfigurationChange();
+          const viewportContext = clearSelectionForConfigurationChange();
           selectionShape = nextShape;
           syncChangedSelectionConfiguration();
+          settleDeferredViewport(viewportContext.sessionId, viewportContext.inputRevision);
           return selectionShape;
         }
         function createSelectionControls() {
@@ -12205,10 +12824,14 @@ void main() {
           targetGroup.setAttribute?.("role", "group");
           targetGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uB300\uC0C1");
           setStyles(targetGroup, { display: "flex", alignItems: "center", gap: "4px" });
-          const strokeTargetButton = createButton("\uD68D", "select-target-stroke");
-          strokeTargetButton.setAttribute?.("aria-label", "\uD68D \uC804\uCCB4 \uC120\uD0DD");
-          const partialTargetButton = createButton("\uBD80\uBD84", "select-target-partial");
-          partialTargetButton.setAttribute?.("aria-label", "\uD68D \uC77C\uBD80 \uC120\uD0DD");
+          const strokeTargetButton = labelToolbarButton(
+            createButton("\uD68D", "select-target-stroke"),
+            "\uD68D \uC804\uCCB4 \uC120\uD0DD"
+          );
+          const partialTargetButton = labelToolbarButton(
+            createButton("\uBD80\uBD84", "select-target-partial"),
+            "\uD68D \uC77C\uBD80 \uC120\uD0DD"
+          );
           const targetButtons = /* @__PURE__ */ new Map([
             ["stroke", strokeTargetButton],
             ["partial", partialTargetButton]
@@ -12222,10 +12845,14 @@ void main() {
           shapeGroup.setAttribute?.("role", "group");
           shapeGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uBAA8\uC591");
           setStyles(shapeGroup, { display: "flex", alignItems: "center", gap: "4px" });
-          const rectangleShapeButton = createButton("\uC0AC\uAC01\uD615", "select-shape-rectangle");
-          rectangleShapeButton.setAttribute?.("aria-label", "\uC0AC\uAC01\uD615 \uC120\uD0DD");
-          const lassoShapeButton = createButton("\uB77C\uC3D8", "select-shape-lasso");
-          lassoShapeButton.setAttribute?.("aria-label", "\uB77C\uC3D8 \uC120\uD0DD");
+          const rectangleShapeButton = labelToolbarButton(
+            createButton("\uC0AC\uAC01\uD615", "select-shape-rectangle"),
+            "\uC0AC\uAC01\uD615 \uC120\uD0DD"
+          );
+          const lassoShapeButton = labelToolbarButton(
+            createButton("\uB77C\uC3D8", "select-shape-lasso"),
+            "\uB77C\uC3D8 \uC120\uD0DD"
+          );
           const shapeButtons = /* @__PURE__ */ new Map([
             ["rectangle", rectangleShapeButton],
             ["lasso", lassoShapeButton]
@@ -12290,9 +12917,11 @@ void main() {
           }
         }
         function createBrushSettingsControls() {
-          const settingsButton = createButton("", "brush-settings");
+          const settingsButton = labelToolbarButton(
+            createButton("", "brush-settings"),
+            "\uBE0C\uB7EC\uC2DC \uC124\uC815"
+          );
           settingsButton.setAttribute?.("aria-expanded", "false");
-          settingsButton.setAttribute?.("aria-label", "\uBE0C\uB7EC\uC2DC \uC124\uC815");
           setStyles(settingsButton, {
             display: "inline-flex",
             alignItems: "center",
@@ -12319,10 +12948,13 @@ void main() {
           setStyles(panel, {
             display: "none",
             position: "absolute",
-            top: "52px",
+            top: "calc(100% + 6px)",
             left: "0",
             width: "360px",
             maxWidth: "calc(100vw - 24px)",
+            maxHeight: "calc(100vh - 100% - 30px)",
+            overflowY: "auto",
+            overscrollBehavior: "contain",
             flexDirection: "column",
             gap: "12px",
             padding: "12px",
@@ -12741,29 +13373,125 @@ void main() {
           releasePointerCapture(fabricCanvas?.upperCanvasEl || canvasElement, pointerId);
           fabricCanvas?.requestRenderAll();
         }
-        function flattenStrokeSourcePoints(record, object) {
-          const points = Array.isArray(record?.sourcePoints) ? record.sourcePoints : [];
-          const { Point, util } = resolveFabric();
-          if (!object?.calcTransformMatrix || !object?.pathOffset || !Point || !util?.transformPoint) {
-            return points.map((point) => ({ ...point }));
+        function strokeObjectSceneBounds(record, object, padding = 0) {
+          const safePadding = Math.max(0, finiteNumber(padding));
+          const rectangle = object?.getBoundingRect?.();
+          if (rectangle && [rectangle.left, rectangle.top, rectangle.width, rectangle.height].every((value) => Number.isFinite(Number(value)))) {
+            const left = finiteNumber(rectangle.left);
+            const top = finiteNumber(rectangle.top);
+            const right = left + finiteNumber(rectangle.width);
+            const bottom = top + finiteNumber(rectangle.height);
+            return {
+              left: Math.min(left, right) - safePadding,
+              right: Math.max(left, right) + safePadding,
+              top: Math.min(top, bottom) - safePadding,
+              bottom: Math.max(top, bottom) + safePadding
+            };
           }
-          const matrix = object.calcTransformMatrix();
-          return points.map((point) => {
-            const local = new Point(
-              finiteNumber(point.x) - finiteNumber(object.pathOffset.x),
-              finiteNumber(point.y) - finiteNumber(object.pathOffset.y)
-            );
-            const transformed = util.transformPoint(local, matrix);
-            return { ...point, x: transformed.x, y: transformed.y };
-          });
+          return boundsForPoints(record?.sourcePoints || [], safePadding);
         }
-        function createStrokeFragment(record, points, selected, caps = {}) {
+        function createSourcePolygonQuery(object, scenePolygon, budget) {
+          const { Path, Point, util } = resolveFabric();
+          if (!object || !Path || !(object instanceof Path) || typeof object.calcTransformMatrix !== "function" || !object.pathOffset || !Number.isFinite(Number(object.pathOffset.x)) || !Number.isFinite(Number(object.pathOffset.y)) || !Point || !util?.transformPoint || !util?.invertTransform) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          let matrix;
+          try {
+            matrix = Array.from(object.calcTransformMatrix() || []);
+          } catch (_error) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          if (matrix.length < 6 || matrix.some((value) => !Number.isFinite(Number(value)))) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          const a = finiteNumber(matrix[0]);
+          const b = finiteNumber(matrix[1]);
+          const c = finiteNumber(matrix[2]);
+          const d = finiteNumber(matrix[3]);
+          const determinant = a * d - b * c;
+          const linearMagnitudeSquared = a * a + b * b + c * c + d * d;
+          const discriminant = Math.max(
+            0,
+            linearMagnitudeSquared * linearMagnitudeSquared - 4 * determinant * determinant
+          );
+          const maximumSingularValueSquared = (linearMagnitudeSquared + Math.sqrt(discriminant)) / 2;
+          const relativeDeterminant = Math.abs(determinant) / maximumSingularValueSquared;
+          if (!Number.isFinite(determinant) || !Number.isFinite(maximumSingularValueSquared) || maximumSingularValueSquared <= 0 || !Number.isFinite(relativeDeterminant) || relativeDeterminant <= 1e-8) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          let inverse;
+          try {
+            inverse = util.invertTransform(matrix);
+          } catch (_error) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          if (!Array.isArray(inverse) || inverse.length < 6 || inverse.some((value) => !Number.isFinite(Number(value)))) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          const sourcePolygon = [];
+          for (const point of scenePolygon) {
+            if (!budget.consume()) {
+              return { query: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            let local;
+            try {
+              local = util.transformPoint(
+                new Point(finiteNumber(point?.x), finiteNumber(point?.y)),
+                inverse
+              );
+            } catch (_error) {
+              return { query: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            if (!Number.isFinite(Number(local?.x)) || !Number.isFinite(Number(local?.y))) {
+              return { query: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            sourcePolygon.push({
+              x: finiteNumber(local?.x) + finiteNumber(object.pathOffset.x),
+              y: finiteNumber(local?.y) + finiteNumber(object.pathOffset.y)
+            });
+          }
+          return {
+            query: createPolygonEdgeIndex(sourcePolygon, { budget }),
+            reason: budget.limitExceeded ? "selection-complexity-limit-exceeded" : null
+          };
+        }
+        function applySourceTransformToFragment(path, sourceObject) {
+          if (!sourceObject) return true;
+          const sourceTransform = captureTransform(sourceObject);
+          if (!sourceObject.calcTransformMatrix) {
+            path.set(sourceTransform);
+            path.setCoords?.();
+            return true;
+          }
+          const inheritedTransform = {};
+          for (const field of TRANSFORM_FIELDS) {
+            if (field !== "left" && field !== "top") inheritedTransform[field] = sourceTransform[field];
+          }
+          path.set(inheritedTransform);
+          const { Point, util } = resolveFabric();
+          if (!path.pathOffset || !sourceObject.pathOffset || !path.setPositionByOrigin || !Point || !util?.transformPoint) {
+            return false;
+          }
+          const sourceMatrix = sourceObject.calcTransformMatrix();
+          const fragmentCenter = util.transformPoint(new Point(
+            finiteNumber(path.pathOffset.x) - finiteNumber(sourceObject.pathOffset.x),
+            finiteNumber(path.pathOffset.y) - finiteNumber(sourceObject.pathOffset.y)
+          ), sourceMatrix);
+          if (!Number.isFinite(Number(fragmentCenter?.x)) || !Number.isFinite(Number(fragmentCenter?.y))) {
+            return false;
+          }
+          path.setPositionByOrigin(fragmentCenter, "center", "center");
+          path.setCoords?.();
+          return true;
+        }
+        function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null) {
           if (!Array.isArray(points) || points.length < 2) return null;
           let strokeData;
           try {
             strokeData = strokePathFactory(points, {
               size: record.style?.size,
               last: true,
+              alreadyNormalizedPressure: true,
               start: { cap: caps.start !== false },
               end: { cap: caps.end !== false }
             });
@@ -12787,6 +13515,7 @@ void main() {
             }
           };
           const path = makeFabricPath(fragment);
+          if (!applySourceTransformToFragment(path, sourceObject)) return null;
           fragment.transform = captureTransform(path);
           return fragment;
         }
@@ -13108,19 +13837,43 @@ void main() {
           );
           const polygonBounds = boundsForPoints(polygon);
           const selectedObjectIds = [];
+          const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
           for (const record of snapshot?.objects || []) {
             if (record.type !== "stroke") continue;
-            const flattenedPoints = flattenStrokeSourcePoints(record, canvasObjects.get(record.id));
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
-            if (!boundsIntersect(boundsForPoints(flattenedPoints, maximumRadius), polygonBounds)) continue;
+            const object = canvasObjects.get(record.id);
+            if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
+              continue;
+            }
+            const sourceSelection = createSourcePolygonQuery(object, polygon, geometryBudget);
+            if (!sourceSelection.query || sourceSelection.reason) {
+              activateObjectIds([]);
+              return {
+                applied: false,
+                reason: sourceSelection.reason || "selection-geometry-unavailable",
+                selectedObjectIds: []
+              };
+            }
             const splitOptions = {
               size: record.style?.size,
-              thinning: 0.65
+              thinning: 0.65,
+              strokeCaps: record.strokeCaps,
+              budget: geometryBudget
             };
-            const split = splitStrokePointsByPolygon(flattenedPoints, polygon, splitOptions);
-            if (split.inside.length > 0 || shortStrokeTouchesPolygon(flattenedPoints, polygon, splitOptions)) {
-              selectedObjectIds.push(record.id);
+            const touch = strokeTouchesPolygon(
+              record.sourcePoints,
+              sourceSelection.query,
+              splitOptions
+            );
+            if (touch.limitExceeded) {
+              activateObjectIds([]);
+              return {
+                applied: false,
+                reason: "selection-complexity-limit-exceeded",
+                selectedObjectIds: []
+              };
             }
+            if (touch.hit) selectedObjectIds.push(record.id);
           }
           activateObjectIds(selectedObjectIds);
           return { applied: false, selectedObjectIds };
@@ -13139,20 +13892,60 @@ void main() {
           const selectedFragmentIds = /* @__PURE__ */ new Set();
           const polygonBounds = boundsForPoints(polygon);
           const sceneLimits = sceneStore.getDiagnostics();
+          const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
           let accumulatedFragments = 0;
           for (const record of snapshot?.objects || []) {
             if (record.type !== "stroke") continue;
-            const flattenedPoints = flattenStrokeSourcePoints(record, canvasObjects.get(record.id));
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
-            if (!boundsIntersect(boundsForPoints(flattenedPoints, maximumRadius), polygonBounds)) continue;
-            const split = splitStrokePointsByPolygon(flattenedPoints, polygon, {
+            const object = canvasObjects.get(record.id);
+            if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
+              continue;
+            }
+            const sourceSelection = createSourcePolygonQuery(object, polygon, geometryBudget);
+            if (!sourceSelection.query || sourceSelection.reason) {
+              activateObjectIds([]);
+              return {
+                applied: false,
+                reason: sourceSelection.reason || "selection-geometry-unavailable",
+                selectedObjectIds: []
+              };
+            }
+            const splitOptions = {
               size: record.style?.size,
               thinning: 0.65,
-              maxRuns: Math.max(1, maxLassoFragments - accumulatedFragments + 1)
-            });
+              strokeCaps: record.strokeCaps,
+              maxRuns: Math.max(1, maxLassoFragments - accumulatedFragments + 1),
+              budget: geometryBudget
+            };
+            if (!strokeHasSplittableLength(record.sourcePoints)) {
+              const touch = strokeTouchesPolygon(
+                record.sourcePoints,
+                sourceSelection.query,
+                splitOptions
+              );
+              if (touch.limitExceeded) {
+                activateObjectIds([]);
+                return {
+                  applied: false,
+                  reason: "selection-complexity-limit-exceeded",
+                  selectedObjectIds: []
+                };
+              }
+              if (touch.hit) selectedPersistedIds.add(record.id);
+              continue;
+            }
+            const split = splitStrokePointsByPolygon(
+              record.sourcePoints,
+              sourceSelection.query,
+              splitOptions
+            );
             if (split.limitExceeded) {
               activateObjectIds([]);
-              return { applied: false, reason: "lasso-fragment-limit-exceeded", selectedObjectIds: [] };
+              return {
+                applied: false,
+                reason: split.limitReason === "operations" ? "selection-complexity-limit-exceeded" : "lasso-fragment-limit-exceeded",
+                selectedObjectIds: []
+              };
             }
             if (split.inside.length === 0) continue;
             if (split.outside.length === 0) {
@@ -13174,7 +13967,7 @@ void main() {
               const fragment = createStrokeFragment(record, run.points, selected, {
                 start: runIndex === 0 ? originalCaps.start !== false : false,
                 end: runIndex === split.runs.length - 1 ? originalCaps.end !== false : false
-              });
+              }, object);
               if (!fragment) {
                 fragmentBuildFailed = true;
                 break;
@@ -13336,8 +14129,9 @@ void main() {
           } catch (_error) {
           }
         }
-        function cancelSelectInteraction(event) {
+        function cancelSelectInteraction(event, options2 = {}) {
           const gesture = selectGesture;
+          const preserveDeferredViewport = options2.preserveDeferredViewport === true;
           const hadTransformTarget = !!transformStart?.target;
           const wasTracking = gesture?.phase === "tracking";
           if (gesture) gesture.phase = "cancelling";
@@ -13352,7 +14146,7 @@ void main() {
           }
           selectGesture = null;
           transformStart = null;
-          deferredViewport = null;
+          if (!preserveDeferredViewport) deferredViewport = null;
           if (gesture && pendingLassoSelection) {
             abortPendingLassoSelection();
             return;
@@ -13365,6 +14159,7 @@ void main() {
           deferredViewport = null;
           if (!pending || pending.sessionId !== sessionId || pending.inputRevision !== inputRevision) return false;
           if (destroyed || !inputEnabled || !fabricCanvas || currentSession?.sessionId !== sessionId) return false;
+          if (tokenState.inputRevision !== inputRevision) return false;
           if (pending.command.revision <= currentSession.viewportRevision) return false;
           applyViewportCommand(pending.command);
           return true;
@@ -13490,9 +14285,8 @@ void main() {
         function onPointerCancel(event) {
           if (activeLasso) {
             if (event.pointerId !== void 0 && event.pointerId !== activeLasso.pointerId) return;
-            const { sessionId, inputRevision } = activeLasso;
             cancelActiveLasso();
-            settleDeferredViewport(sessionId, inputRevision);
+            deferredViewport = null;
             return;
           }
           if (activeStroke) {
@@ -13755,7 +14549,7 @@ void main() {
           inputEnabled = false;
           currentSession = null;
           sceneStore.deactivateSession();
-          if (badge) badge.textContent = formatFabricPersistenceBadge();
+          syncPersistenceBadge();
         }
         function releaseSurfaceResources() {
           cancelSelectInteraction();
@@ -13838,22 +14632,30 @@ void main() {
               top: "12px",
               left: "12px",
               display: "flex",
-              gap: "6px",
               zIndex: "2",
               transition: "opacity 100ms ease",
               pointerEvents: "none"
             });
-            const brushButton = createButton("Brush", "brush");
-            const selectButton = createButton("V", "select");
-            const undoButton = createButton("Undo", "undo");
-            const redoButton = createButton("Redo", "redo");
-            const deleteButton = createButton("Delete", "delete-selection");
-            const clearButton = createButton("Clear", "clear-session");
+            const brushButton = labelToolbarButton(createButton("Brush", "brush"), "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)");
+            const selectButton = labelToolbarButton(createButton("V", "select"), "\uC120\uD0DD \uB3C4\uAD6C (V)");
+            const undoButton = labelToolbarButton(createButton("Undo", "undo"), "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)");
+            const redoButton = labelToolbarButton(createButton("Redo", "redo"), "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Y)");
+            const deleteButton = labelToolbarButton(
+              createButton("Delete", "delete-selection"),
+              "\uC120\uD0DD\uD55C \uD68D \uC0AD\uC81C (Delete)"
+            );
+            const clearButton = labelToolbarButton(
+              createButton("Clear", "clear-session"),
+              "\uD604\uC7AC \uD504\uB808\uC784 \uB4DC\uB85C\uC789 \uC804\uCCB4 \uC0AD\uC81C"
+            );
             brushControls = createBrushSettingsControls();
             selectionControls = createSelectionControls();
             badge = documentRef.createElement("span");
             badge.className = "mpv-fabric-pilot-badge";
-            badge.textContent = formatFabricPersistenceBadge();
+            badge.setAttribute?.("role", "status");
+            badge.setAttribute?.("aria-live", "polite");
+            badge.setAttribute?.("aria-atomic", "true");
+            syncPersistenceBadge();
             toolbar.appendChild(brushButton);
             toolbar.appendChild(selectButton);
             toolbar.appendChild(selectionControls.group);
@@ -13963,7 +14765,7 @@ void main() {
           setToolMode(session.tool);
           inputEnabled = true;
           setSurfaceInput(true);
-          badge.textContent = formatFabricPersistenceBadge(session.targetFrame);
+          syncPersistenceBadge(session.targetFrame);
           metrics.recordToggleLatency(now() - startedAt);
           return { accepted: true, enabled: true, restored: activation.restored };
         }
