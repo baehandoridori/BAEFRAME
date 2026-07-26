@@ -2541,12 +2541,926 @@ test('partial lasso stages the rendered perfect-freehand L-turn corner', async (
       repeatedRectangle[0],
       repeatedRectangle[2]
     ], 7935);
-    assertSelectionStability(harness, beforeRepeatedPartial);
+    assertSelectionStability(harness, beforeRepeatedPartial, { selection: false });
     assert.equal(
-      pendingLassoObjects(harness.canvas).length,
-      0,
-      'a wrapped source interval must cancel instead of staging ambiguous geometry'
+      pendingLassoObjects(harness.canvas).length > 0,
+      true,
+      'saved render geometry must remain partially selectable after hydration'
     );
+    const repeatedSelectedId =
+      harness.canvas.getActiveObjects()[0]?.__baeframeObjectId;
+    assert.ok(repeatedSelectedId);
+    harness.dragActiveSelectionBy(10, 0, 7936);
+    await Promise.resolve();
+
+    const repeatedlyMoved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(repeatedlyMoved.selectedObjectIds, [repeatedSelectedId]);
+    assert.notDeepEqual(repeatedlyMoved.objects, beforeRepeatedPartial.objects);
+    assert.equal(
+      repeatedlyMoved.objects.every(record => record.renderGeometry?.version === 1),
+      true
+    );
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session-reloaded',
+      actionId: 'undo-repeated-render-geometry-partial',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      beforeRepeatedPartial.objects
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+for (const selectionShape of ['rectangle', 'lasso']) {
+  test(`partial ${selectionShape} stages a sparse curved stroke when display smoothing splits its centerline coverage`, async () => {
+    const harness = createRealFabricHarness();
+    try {
+      harness.drawStroke([
+        { x: 20, y: 130 },
+        { x: 73.333, y: 69.378 },
+        { x: 126.667, y: 69.378 },
+        { x: 180, y: 130 }
+      ], selectionShape === 'rectangle' ? 79351 : 79361);
+      const before = harness.sceneStore.getActiveSceneSnapshot();
+      const sourceObject = harness.canvas.getObjects()[0];
+      harness.runtime.updateDrawingTool({
+        sessionId: 'real-fabric-session',
+        toolRevision: 1,
+        tool: 'select'
+      });
+      if (selectionShape === 'rectangle') selectPartialRectangle(harness.root);
+      else selectPartialLasso(harness.root);
+      const sourcePolygon = [
+        { x: 80, y: 60 },
+        { x: 120, y: 60 },
+        { x: 120, y: 140 },
+        { x: 80, y: 140 }
+      ];
+      const scenePolygon = sourcePolygonInRealFabricScene(
+        sourceObject,
+        selectionShape === 'rectangle'
+          ? [sourcePolygon[0], sourcePolygon[2]]
+          : [...sourcePolygon, sourcePolygon[0]]
+      );
+
+      harness.dragLasso(
+        scenePolygon,
+        selectionShape === 'rectangle' ? 79352 : 79362
+      );
+
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        before.objects,
+        'partial selection must remain non-destructive until move or delete'
+      );
+      assert.equal(
+        pendingLassoObjects(harness.canvas).length > 0,
+        true,
+        'the visibly enclosed curved fragment must be staged'
+      );
+      assert.ok(harness.canvas.getActiveObject(), 'the staged fragment must be movable');
+      const selectedId = harness.canvas.getActiveObjects()[0].__baeframeObjectId;
+
+      harness.dragActiveSelectionBy(
+        10,
+        0,
+        selectionShape === 'rectangle' ? 79353 : 79363
+      );
+      await Promise.resolve();
+
+      const moved = harness.sceneStore.getActiveSceneSnapshot();
+      assert.equal(moved.objects.length, 3);
+      assert.deepEqual(moved.objects.map(record => record.sourcePoints.length), [3, 3, 2]);
+      assert.deepEqual(moved.objects.map(record => record.strokeCaps), [
+        { start: true, end: false },
+        { start: false, end: false },
+        { start: false, end: true }
+      ]);
+      assert.equal(
+        moved.objects.every(record => record.renderGeometry?.version === 1),
+        true
+      );
+      assert.equal(
+        moved.objects.filter(record => record.id === selectedId).length,
+        1
+      );
+      assert.deepEqual(moved.selectedObjectIds, [selectedId]);
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session',
+        actionId: `undo-sparse-curve-${selectionShape}`,
+        action: 'undo'
+      }).applied, true);
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        before.objects
+      );
+    } finally {
+      await harness.destroy();
+    }
+  });
+}
+
+for (const selectionShape of ['rectangle', 'lasso']) {
+  test(`partial ${selectionShape} ignores rounded near-duplicate cap edges on a thick curve`, async () => {
+    const harness = createRealFabricHarness();
+    try {
+      const sizeInput = findOne(
+        harness.root,
+        node => node.dataset?.fabricPilotSetting === 'size'
+      );
+      sizeInput.value = '12';
+      sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+      harness.drawStroke(Array.from({ length: 65 }, (_value, index) => {
+        const amount = index / 64;
+        return {
+          x: 20 + 160 * amount,
+          y: 130 - 70 * Math.sin(Math.PI * amount)
+        };
+      }), selectionShape === 'rectangle' ? 79371 : 79381);
+      const before = harness.sceneStore.getActiveSceneSnapshot();
+      const sourceObject = harness.canvas.getObjects()[0];
+      harness.runtime.updateDrawingTool({
+        sessionId: 'real-fabric-session',
+        toolRevision: 1,
+        tool: 'select'
+      });
+      if (selectionShape === 'rectangle') selectPartialRectangle(harness.root);
+      else selectPartialLasso(harness.root);
+      const sourcePolygon = [
+        { x: 80, y: 40 },
+        { x: 120, y: 40 },
+        { x: 120, y: 140 },
+        { x: 80, y: 140 }
+      ];
+
+      harness.dragLasso(sourcePolygonInRealFabricScene(
+        sourceObject,
+        selectionShape === 'rectangle'
+          ? [sourcePolygon[0], sourcePolygon[2]]
+          : [...sourcePolygon, sourcePolygon[0]]
+      ), selectionShape === 'rectangle' ? 79372 : 79382);
+
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        before.objects
+      );
+      assert.equal(
+        pendingLassoObjects(harness.canvas).length > 0,
+        true,
+        'rounded cap noise must not cancel an otherwise valid partial selection'
+      );
+      assert.ok(harness.canvas.getActiveObject());
+    } finally {
+      await harness.destroy();
+    }
+  });
+}
+
+for (const selectionShape of ['rectangle', 'lasso']) {
+  test(`partial ${selectionShape} detaches a source segment when the selection only covers part of the stroke thickness`, async () => {
+    const harness = createRealFabricHarness();
+    try {
+      const sizeInput = findOne(
+        harness.root,
+        node => node.dataset?.fabricPilotSetting === 'size'
+      );
+      sizeInput.value = '12';
+      sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+      harness.drawStroke(Array.from({ length: 65 }, (_value, index) => {
+        const amount = index / 64;
+        return {
+          x: 20 + 160 * amount,
+          y: 130 - 70 * Math.sin(Math.PI * amount)
+        };
+      }), selectionShape === 'rectangle' ? 79385 : 79388);
+      const before = harness.sceneStore.getActiveSceneSnapshot();
+      const sourceObject = harness.canvas.getObjects()[0];
+      harness.runtime.updateDrawingTool({
+        sessionId: 'real-fabric-session',
+        toolRevision: 1,
+        tool: 'select'
+      });
+      if (selectionShape === 'rectangle') selectPartialRectangle(harness.root);
+      else selectPartialLasso(harness.root);
+      const sourcePolygon = [
+        { x: 80, y: 60 },
+        { x: 120, y: 60 },
+        { x: 120, y: 140 },
+        { x: 80, y: 140 }
+      ];
+
+      harness.dragLasso(sourcePolygonInRealFabricScene(
+        sourceObject,
+        selectionShape === 'rectangle'
+          ? [sourcePolygon[0], sourcePolygon[2]]
+          : [...sourcePolygon, sourcePolygon[0]]
+      ), selectionShape === 'rectangle' ? 79386 : 79389);
+
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        before.objects,
+        'partial selection must remain non-destructive until move or delete'
+      );
+      assert.equal(
+        pendingLassoObjects(harness.canvas).length > 0,
+        true,
+        'a visible partial-thickness cut must stage a movable stroke segment'
+      );
+      assert.ok(harness.canvas.getActiveObject());
+      const activeFragment = harness.canvas.getActiveObjects()[0];
+      const selectedId = activeFragment.__baeframeObjectId;
+      const selectedFill = flattenFabricPath(activeFragment.path, {
+        budget: createGeometryBudget(250_000),
+        tolerance: 0.25,
+        fillRule: activeFragment.fillRule
+      });
+      assert.equal(selectedFill.reason, null);
+      assert.ok(
+        selectedFill.geometry.bounds.top >= 60 - 1e-7,
+        'free selection must not pull the unselected upper half of the stroke outside the rectangle'
+      );
+
+      harness.dragActiveSelectionBy(
+        0,
+        40,
+        selectionShape === 'rectangle' ? 79387 : 79390
+      );
+      await Promise.resolve();
+
+      const moved = harness.sceneStore.getActiveSceneSnapshot();
+      assert.equal(moved.objects.length, 2);
+      assert.deepEqual(moved.selectedObjectIds, [selectedId]);
+      assert.equal(
+        moved.objects.filter(record => record.id === selectedId).length,
+        1
+      );
+      assert.equal(
+        moved.objects.every(record => record.renderGeometry?.version === 1),
+        true
+      );
+      harness.canvas.renderAll();
+      const movedRaster = harness.canvas.toCanvasElement().getContext('2d');
+      assert.ok(
+        movedRaster.getImageData(100, 57, 1, 1).data[3] > 128,
+        'the unselected upper half of the stroke must stay at the original position'
+      );
+      assert.ok(
+        movedRaster.getImageData(100, 63, 1, 1).data[3] < 128,
+        'the selected lower half of the stroke must leave its original position'
+      );
+      assert.ok(
+        movedRaster.getImageData(100, 103, 1, 1).data[3] > 128,
+        'only the clipped lower half of the stroke must move'
+      );
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session',
+        actionId: `undo-partial-thickness-${selectionShape}`,
+        action: 'undo'
+      }).applied, true);
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        before.objects
+      );
+    } finally {
+      await harness.destroy();
+    }
+  });
+}
+
+for (const selectionShape of ['rectangle', 'lasso']) {
+  test(`partial ${selectionShape} detaches a middle band without duplicating same-owner source lineage`, async () => {
+    const harness = createRealFabricHarness();
+    try {
+      const sizeInput = findOne(
+        harness.root,
+        node => node.dataset?.fabricPilotSetting === 'size'
+      );
+      sizeInput.value = '20';
+      sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+      harness.drawStroke([
+        { x: 20, y: 100 },
+        { x: 180, y: 100 }
+      ], selectionShape === 'rectangle' ? 793101 : 793111);
+      const before = harness.sceneStore.getActiveSceneSnapshot();
+      const sourceObject = harness.canvas.getObjects()[0];
+      harness.runtime.updateDrawingTool({
+        sessionId: 'real-fabric-session',
+        toolRevision: 1,
+        tool: 'select'
+      });
+      if (selectionShape === 'rectangle') selectPartialRectangle(harness.root);
+      else selectPartialLasso(harness.root);
+      const sourcePolygon = [
+        { x: 0, y: 96 },
+        { x: 200, y: 96 },
+        { x: 200, y: 104 },
+        { x: 0, y: 104 }
+      ];
+
+      harness.dragLasso(sourcePolygonInRealFabricScene(
+        sourceObject,
+        selectionShape === 'rectangle'
+          ? [sourcePolygon[0], sourcePolygon[2]]
+          : [...sourcePolygon, sourcePolygon[0]]
+      ), selectionShape === 'rectangle' ? 793102 : 793112);
+
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        before.objects,
+        'partial selection must remain non-destructive until move or delete'
+      );
+      assert.equal(
+        pendingLassoObjects(harness.canvas).length > 0,
+        true,
+        'a visible middle band must stage even when the remaining fill has two contours'
+      );
+      const selectedId =
+        harness.canvas.getActiveObjects()[0]?.__baeframeObjectId;
+      assert.ok(selectedId);
+      harness.dragActiveSelectionBy(
+        0,
+        30,
+        selectionShape === 'rectangle' ? 793103 : 793113
+      );
+      await Promise.resolve();
+
+      const moved = harness.sceneStore.getActiveSceneSnapshot();
+      assert.equal(
+        moved.objects.length,
+        2,
+        'same-owner upper and lower contours must share one source-lineage record'
+      );
+      assert.deepEqual(moved.selectedObjectIds, [selectedId]);
+      assert.equal(
+        moved.objects.every(record => record.renderGeometry?.version === 1),
+        true
+      );
+      harness.canvas.renderAll();
+      const raster = harness.canvas.toCanvasElement().getContext('2d');
+      assert.ok(
+        raster.getImageData(100, 92, 1, 1).data[3] > 128,
+        'the upper remaining contour must stay in place'
+      );
+      assert.ok(
+        raster.getImageData(100, 100, 1, 1).data[3] < 128,
+        'the selected center band must leave its original position'
+      );
+      assert.ok(
+        raster.getImageData(100, 130, 1, 1).data[3] > 128,
+        'the selected center band must appear at its moved position'
+      );
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session',
+        actionId: `undo-middle-band-${selectionShape}`,
+        action: 'undo'
+      }).applied, true);
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        before.objects
+      );
+    } finally {
+      await harness.destroy();
+    }
+  });
+}
+
+for (const selectionShape of ['rectangle', 'lasso']) {
+  test(`partial ${selectionShape} stages an asymmetric monotone curve with multiple wrapped fill components`, async () => {
+    const harness = createRealFabricHarness();
+    try {
+      const sizeInput = findOne(
+        harness.root,
+        node => node.dataset?.fabricPilotSetting === 'size'
+      );
+      sizeInput.value = '8';
+      sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+      harness.drawStroke(Array.from({ length: 65 }, (_value, index) => {
+        const amount = index / 64;
+        return {
+          x: 20 + 160 * amount,
+          y: 130 -
+            51 * Math.sin(Math.PI * amount) +
+            2.3199785947799683 * Math.sin(2 * Math.PI * amount)
+        };
+      }), selectionShape === 'rectangle' ? 79391 : 79392);
+      const before = harness.sceneStore.getActiveSceneSnapshot();
+      const sourceObject = harness.canvas.getObjects()[0];
+      harness.canvas.renderAll();
+      assert.ok(
+        harness.canvas.toCanvasElement().getContext('2d')
+          .getImageData(100, 81, 1, 1).data[3] > 128,
+        'the selection rectangle must visibly intersect the asymmetric curve'
+      );
+      harness.runtime.updateDrawingTool({
+        sessionId: 'real-fabric-session',
+        toolRevision: 1,
+        tool: 'select'
+      });
+      if (selectionShape === 'rectangle') selectPartialRectangle(harness.root);
+      else selectPartialLasso(harness.root);
+      const sourcePolygon = [
+        { x: 75, y: 79 },
+        { x: 125, y: 79 },
+        { x: 125, y: 146 },
+        { x: 75, y: 146 }
+      ];
+
+      harness.dragLasso(sourcePolygonInRealFabricScene(
+        sourceObject,
+        selectionShape === 'rectangle'
+          ? [sourcePolygon[0], sourcePolygon[2]]
+          : [...sourcePolygon, sourcePolygon[0]]
+      ), selectionShape === 'rectangle' ? 79393 : 79394);
+
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        before.objects,
+        'partial selection must remain non-destructive until move or delete'
+      );
+      assert.equal(
+        pendingLassoObjects(harness.canvas).length > 0,
+        true,
+        'multiple wrapped fill components from a normal curve must not cancel selection'
+      );
+      const selectedId =
+        harness.canvas.getActiveObjects()[0]?.__baeframeObjectId;
+      assert.ok(selectedId);
+      harness.dragActiveSelectionBy(
+        10,
+        0,
+        selectionShape === 'rectangle' ? 79395 : 79396
+      );
+      await Promise.resolve();
+
+      const moved = harness.sceneStore.getActiveSceneSnapshot();
+      assert.deepEqual(moved.selectedObjectIds, [selectedId]);
+      assert.notDeepEqual(moved.objects, before.objects);
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session',
+        actionId: `undo-asymmetric-curve-${selectionShape}`,
+        action: 'undo'
+      }).applied, true);
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        before.objects
+      );
+    } finally {
+      await harness.destroy();
+    }
+  });
+}
+
+test('partial rectangle retains a visible fill backed by a sub-unit centerline interval', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const size = 6.5396276894025505;
+    const firstWave = 71.45745788235217;
+    const secondWave = -7.8048635348677635;
+    const thirdWave = 3.9719747230410576;
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = String(size);
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(Array.from({ length: 65 }, (_value, index) => {
+      const amount = index / 64;
+      return {
+        x: 20 + 160 * amount,
+        y: 135 -
+          firstWave * Math.sin(Math.PI * amount) +
+          secondWave * Math.sin(2 * Math.PI * amount) +
+          thirdWave * Math.sin(3 * Math.PI * amount)
+      };
+    }), 793121);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const sourceObject = harness.canvas.getObjects()[0];
+    const top = 135 -
+      firstWave -
+      thirdWave -
+      0.14276446368545292 * size;
+    const sourceRectangle = [
+      { x: 55.04499645344913, y: top },
+      { x: 121.33158065285534, y: 178 }
+    ];
+    const sceneRectangle = sourcePolygonInRealFabricScene(
+      sourceObject,
+      sourceRectangle
+    );
+    harness.canvas.renderAll();
+    const raster = harness.canvas.toCanvasElement().getContext('2d');
+    const left = Math.floor(Math.min(sceneRectangle[0].x, sceneRectangle[1].x));
+    const upper = Math.floor(Math.min(sceneRectangle[0].y, sceneRectangle[1].y));
+    const width = Math.max(
+      1,
+      Math.ceil(Math.abs(sceneRectangle[1].x - sceneRectangle[0].x))
+    );
+    const height = Math.max(
+      1,
+      Math.ceil(Math.abs(sceneRectangle[1].y - sceneRectangle[0].y))
+    );
+    const pixels = raster.getImageData(left, upper, width, height).data;
+    let visiblePixels = 0;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] > 128) visiblePixels += 1;
+    }
+    assert.ok(
+      visiblePixels > 0,
+      'the selected rectangle must contain visible fill before staging'
+    );
+    enableRealFabricPartialRectangle(harness);
+
+    harness.dragLasso(sceneRectangle, 793122);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects
+    );
+    assert.equal(
+      pendingLassoObjects(harness.canvas).length > 0,
+      true,
+      'a visible clipped component must not disappear because its centerline interval is shorter than one source unit'
+    );
+    const selectedId =
+      harness.canvas.getActiveObjects()[0]?.__baeframeObjectId;
+    assert.ok(selectedId);
+    harness.dragActiveSelectionBy(10, 0, 793123);
+    await Promise.resolve();
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [selectedId]
+    );
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'undo-sub-unit-centerline-fragment',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a partial-thickness curve survives hydration and remains free-selectable', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '12';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(Array.from({ length: 65 }, (_value, index) => {
+      const amount = index / 64;
+      return {
+        x: 20 + 160 * amount,
+        y: 130 - 70 * Math.sin(Math.PI * amount)
+      };
+    }), 79393);
+    const sourceObject = harness.canvas.getObjects()[0];
+    enableRealFabricPartialRectangle(harness);
+    const sourceRectangle = [
+      { x: 80, y: 60 },
+      { x: 120, y: 140 }
+    ];
+    harness.dragLasso(
+      sourcePolygonInRealFabricScene(sourceObject, sourceRectangle),
+      79394
+    );
+    const selectedFragmentId =
+      harness.canvas.getActiveObjects()[0]?.__baeframeObjectId;
+    assert.ok(selectedFragmentId);
+    harness.dragActiveSelectionBy(0, 40, 79395);
+    await Promise.resolve();
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(moved.objects.length, 2);
+
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+    const persistedObjects = structuredClone(moved.objects);
+    for (const record of persistedObjects) {
+      const baseTime = record.sourcePoints[0].time;
+      for (const point of record.sourcePoints) point.time -= baseTime;
+    }
+    const hydration = harness.runtime.hydrateDrawingVideo(makePersistenceHydration({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'partial-thickness-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 200,
+      keyframes: [{
+        id: 'partial-thickness-frame',
+        frame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        mutationSequence: moved.mutationCount,
+        objects: persistedObjects
+      }]
+    }));
+    assert.equal(hydration.accepted, true, JSON.stringify(hydration));
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 3,
+      enabled: true,
+      session: {
+        sessionId: 'partial-thickness-reloaded',
+        stableVideoIdentity: 'real-fabric-video',
+        targetFrame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+        viewportTransform: { scale: 1, panX: 0, panY: 0 },
+        tool: 'select'
+      }
+    }).accepted, true);
+
+    const beforeRepeatedPartial = captureSelectionStability(harness);
+    const remainingObject = harness.canvas.getObjects().find(
+      object => object.__baeframeObjectId !== selectedFragmentId
+    );
+    assert.ok(remainingObject);
+    selectPartialLasso(harness.root);
+    harness.dragLasso(sourcePolygonInRealFabricScene(remainingObject, [
+      { x: 90, y: 52 },
+      { x: 110, y: 52 },
+      { x: 110, y: 59 },
+      { x: 90, y: 59 },
+      { x: 90, y: 52 }
+    ]), 79396);
+
+    assertSelectionStability(harness, beforeRepeatedPartial, { selection: false });
+    assert.equal(
+      pendingLassoObjects(harness.canvas).length > 0,
+      true,
+      'the persisted remaining fill must stage another exact free selection'
+    );
+    const repeatedSelectedId =
+      harness.canvas.getActiveObjects()[0]?.__baeframeObjectId;
+    assert.ok(repeatedSelectedId);
+    harness.dragActiveSelectionBy(10, 0, 79397);
+    await Promise.resolve();
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [repeatedSelectedId]
+    );
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'partial-thickness-reloaded',
+      actionId: 'undo-reloaded-partial-thickness',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      beforeRepeatedPartial.objects
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('persisted clipped fill reselects when hidden source lineage leaves an endpoint projection gap', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '12';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(Array.from({ length: 65 }, (_value, index) => {
+      const amount = index / 64;
+      return {
+        x: 20 + 160 * amount,
+        y: 135 -
+          35 * Math.sin(Math.PI * amount) +
+          6 * Math.sin(2 * Math.PI * amount) -
+          4 * Math.sin(3 * Math.PI * amount)
+      };
+    }), 793131);
+    const sourceObject = harness.canvas.getObjects()[0];
+    harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision: 1,
+      tool: 'select'
+    });
+    selectPartialLasso(harness.root);
+    harness.dragLasso(sourcePolygonInRealFabricScene(sourceObject, [
+      { x: 70, y: 104 },
+      { x: 130, y: 104 },
+      { x: 130, y: 175 },
+      { x: 70, y: 175 },
+      { x: 70, y: 104 }
+    ]), 793132);
+    assert.equal(pendingLassoObjects(harness.canvas).length > 0, true);
+    harness.dragActiveSelectionBy(8, 6, 793133);
+    await Promise.resolve();
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.ok(moved.objects.length >= 2);
+
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+    const persistedObjects = structuredClone(moved.objects);
+    for (const record of persistedObjects) {
+      const baseTime = record.sourcePoints[0].time;
+      for (const point of record.sourcePoints) point.time -= baseTime;
+    }
+    const hydration = harness.runtime.hydrateDrawingVideo(makePersistenceHydration({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'hidden-source-gap-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 200,
+      keyframes: [{
+        id: 'hidden-source-gap-frame',
+        frame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        mutationSequence: moved.mutationCount,
+        objects: persistedObjects
+      }]
+    }));
+    assert.equal(hydration.accepted, true, JSON.stringify(hydration));
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 3,
+      enabled: true,
+      session: {
+        sessionId: 'hidden-source-gap-reloaded',
+        stableVideoIdentity: 'real-fabric-video',
+        targetFrame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+        viewportTransform: { scale: 1, panX: 0, panY: 0 },
+        tool: 'select'
+      }
+    }).accepted, true);
+
+    const beforeRepeatedPartial = captureSelectionStability(harness);
+    const leftRemainingObject = harness.canvas.getObjects().find(object => {
+      const record = persistedObjects.find(
+        candidate => candidate.id === object.__baeframeObjectId
+      );
+      return record &&
+        Math.max(...record.sourcePoints.map(point => point.x)) < 80;
+    });
+    assert.ok(leftRemainingObject);
+    const leftRemainingId = leftRemainingObject.__baeframeObjectId;
+    const leftRemainingRecord = persistedObjects.find(
+      record => record.id === leftRemainingId
+    );
+    assert.ok(leftRemainingRecord);
+    const unrelatedIds = new Set(
+      persistedObjects
+        .filter(record => record.id !== leftRemainingId)
+        .map(record => record.id)
+    );
+    const hiddenTail = leftRemainingRecord.sourcePoints.at(-1);
+    selectPartialRectangle(harness.root);
+    harness.dragLasso(sourcePolygonInRealFabricScene(leftRemainingObject, [
+      { x: 34, y: 119.50919297821657 },
+      { x: 56, y: 175 }
+    ]), 793134);
+
+    assertSelectionStability(harness, beforeRepeatedPartial, { selection: false });
+    assert.equal(
+      pendingLassoObjects(harness.canvas).length > 0,
+      true,
+      'hidden source lineage outside the exact fill must not cancel a visible re-selection'
+    );
+    const selectedId =
+      harness.canvas.getActiveObjects()[0]?.__baeframeObjectId;
+    assert.ok(selectedId);
+    harness.dragActiveSelectionBy(10, 0, 793135);
+    await Promise.resolve();
+    const repeatedlyMoved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(
+      repeatedlyMoved.selectedObjectIds,
+      [selectedId]
+    );
+    const descendants = repeatedlyMoved.objects.filter(
+      record => !unrelatedIds.has(record.id)
+    );
+    assert.ok(descendants.length >= 2);
+    assert.equal(
+      descendants.some(record => record.sourcePoints.some(point => (
+        Object.is(point.x, hiddenTail.x) &&
+        Object.is(point.y, hiddenTail.y) &&
+        Object.is(point.pressure, hiddenTail.pressure) &&
+        Object.is(point.time, hiddenTail.time)
+      ))),
+      true,
+      'the hidden trailing source sample must remain assigned to a descendant fragment'
+    );
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'hidden-source-gap-reloaded',
+      actionId: 'undo-hidden-source-gap-reselection',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      beforeRepeatedPartial.objects
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial selection rejects interval bridging that would leave an unassigned source gap', async () => {
+  const harness = createRealFabricHarness({
+    sourceWidth: 300,
+    sourceHeight: 100
+  });
+  try {
+    const samples = [
+      [34.175258475588635, 16.07026282697916],
+      [63.333810351323336, 38.35076402872801],
+      [77.75514748529531, 21.05356089770794],
+      [92.70632768748328, 42.26234890520573],
+      [115.43870833818801, 72.03615244477987],
+      [126.44562942674384, 35.961361117661],
+      [139.83677482814528, 5],
+      [165.43701516231522, 32.02058732509613],
+      [177.31287249480374, 47.4703786149621],
+      [201.91668561426923, 64.86038696020842],
+      [207.70615716115572, 28.150884732604027],
+      [217.29679298354313, 16.931552663445473],
+      [222.3508622602094, 5],
+      [236.47547665750608, 5],
+      [262.4332705757115, 5]
+    ].map(([x, y], index) => ({
+      x,
+      y,
+      pressure: 0.5,
+      pointerType: 'mouse',
+      time: index
+    }));
+    const canonical = createStrokePathData(samples, {
+      size: 2.130254316376522,
+      last: true,
+      alreadyNormalizedPressure: true,
+      start: { cap: true },
+      end: { cap: true }
+    });
+    harness.drawStroke([{ x: 20, y: 20 }, { x: 40, y: 20 }], 79391);
+    const placeholder = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    const fixture = {
+      ...placeholder,
+      pathData: canonical.pathData,
+      sourcePoints: canonical.sourcePoints,
+      style: {
+        ...placeholder.style,
+        size: 2.130254316376522
+      },
+      strokeCaps: { start: true, end: true }
+    };
+    assert.equal(harness.sceneStore.replaceObjects({
+      replacements: [{
+        removeId: placeholder.id,
+        addObjects: [fixture]
+      }],
+      selectedObjectIds: [],
+      kind: 'split-stroke'
+    }).applied, true);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'source-gap-fixture-undo',
+      action: 'undo'
+    }).applied, true);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'source-gap-fixture-redo',
+      action: 'redo'
+    }).applied, true);
+    const before = captureSelectionStability(harness);
+    const sourceObject = harness.canvas.getObjects()[0];
+    enableRealFabricPartialRectangle(harness);
+    const sceneRectangle = sourcePolygonInRealFabricScene(sourceObject, [
+      { x: 117.8189293295145, y: 26.31418011151254 },
+      { x: 167.95883158920333, y: 56.471165088005364 }
+    ]);
+
+    harness.dragLasso(sceneRectangle, 79392);
+
+    assertSelectionStability(harness, before);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
   } finally {
     await harness.destroy();
   }
@@ -9186,6 +10100,41 @@ test('actual fill clipping reconstructs simple intersection and disjoint differe
   assert.equal(remaining.components.every(component => component.contours.length === 1), true);
 });
 
+test('flattened fill clipping removes sub-tolerance closing seams without losing the contour', () => {
+  const budget = createGeometryBudget(250_000);
+  const flattened = flattenFabricPath([
+    ['M', 0, 0],
+    ['L', 10, 0],
+    ['L', 10, 10],
+    ['L', 0, 10],
+    ['L', 0.001, 0.001],
+    ['Z']
+  ], {
+    budget,
+    tolerance: 0.25,
+    fillRule: 'nonzero'
+  });
+  assert.equal(flattened.reason, null);
+  assert.equal(flattened.geometry.contours[0].length, 4);
+  const fill = createPathFillQuery(flattened.geometry, budget);
+  const selection = createPolygonEdgeIndex([
+    { x: 4, y: -1 },
+    { x: 6, y: -1 },
+    { x: 6, y: 11 },
+    { x: 4, y: 11 }
+  ], { budget });
+
+  assert.deepEqual(pathFillOverlapsPolygon(fill, selection, budget), {
+    hit: true,
+    limitExceeded: false
+  });
+  const pair = clipSimplePathFillPair(fill, selection, { budget });
+  assert.equal(pair.difference.reason, null);
+  assert.equal(pair.difference.components.length, 2);
+  assert.equal(pair.intersection.reason, null);
+  assert.equal(pair.intersection.components.length, 1);
+});
+
 test('thin actual fill boundaries stay selectable and remain clip-safe after repeated selection', () => {
   const contourCommands = contours => contours.flatMap(contour => [
     ['M', contour[0].x, contour[0].y],
@@ -9979,6 +10928,33 @@ test('source-position interval splitting keeps duplicate source indexes and reje
   assert.equal(splitStrokePointsBySourceIntervals(points, [[Number.NaN, 1]], {
     budget: createGeometryBudget(1000)
   }).geometryUnavailable, true);
+});
+
+test('source-position interval splitting can retain sub-unit lineage for exact render geometry', () => {
+  const points = [
+    { x: 0, y: 0, pressure: 0.5, time: 0 },
+    { x: 10, y: 0, pressure: 0.5, time: 10 }
+  ];
+  assert.deepEqual(
+    splitStrokePointsBySourceIntervals(points, [[0.495, 0.505]], {
+      budget: createGeometryBudget(1000)
+    }).inside,
+    []
+  );
+
+  const retained = splitStrokePointsBySourceIntervals(
+    points,
+    [[0.495, 0.505]],
+    {
+      budget: createGeometryBudget(1000),
+      retainSubunitRuns: true
+    }
+  );
+
+  assert.equal(retained.inside.length, 1);
+  assert.equal(retained.inside[0].length, 2);
+  assert.equal(retained.inside[0][0].x, 4.95);
+  assert.equal(retained.inside[0].at(-1).x, 5.05);
 });
 
 test('round cap hit testing uses the actual trailing pressure sample', () => {

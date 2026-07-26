@@ -522,13 +522,17 @@
       function appendPoint(run, point) {
         if (!run.length || !sameGeometrySample(run[run.length - 1], point)) run.push(point);
       }
-      function hasVisibleLength(run) {
+      function hasVisibleLength(run, minimumLength = 1) {
+        const requiredLength = Math.max(
+          Number.EPSILON,
+          finiteNumber(minimumLength, 1)
+        );
         let length = 0;
         for (let index = 1; index < run.length; index += 1) {
           const dx = finiteNumber(run[index]?.x) - finiteNumber(run[index - 1]?.x);
           const dy = finiteNumber(run[index]?.y) - finiteNumber(run[index - 1]?.y);
           length += Math.hypot(dx, dy);
-          if (length + EPSILON >= 1) return true;
+          if (length + Number.EPSILON >= requiredLength) return true;
         }
         return false;
       }
@@ -1229,7 +1233,8 @@
             appendPoint(currentRun, to);
           }
         }
-        result.runs = result.runs.filter(({ points: run }) => run.length >= 2 && hasVisibleLength(run));
+        const minimumRunLength = options.retainSubunitRuns === true ? Number.EPSILON : 1;
+        result.runs = result.runs.filter(({ points: run }) => run.length >= 2 && hasVisibleLength(run, minimumRunLength));
         result.inside = result.runs.filter((run) => run.kind === "inside").map((run) => run.points);
         result.outside = result.runs.filter((run) => run.kind === "outside").map((run) => run.points);
         if (result.limitExceeded) result.limitReason = limitReason || "operations";
@@ -1447,6 +1452,7 @@
       var DEFAULT_MAX_FLATTENED_SEGMENTS = 65536;
       var DEFAULT_EDGE_INDEX_LEAF_SIZE = 8;
       var MAX_CURVE_SUBDIVISION_DEPTH = 24;
+      var MINIMUM_FLATTENED_EDGE_TOLERANCE_RATIO = 0.01;
       function unionBounds(entries) {
         if (!entries.length) return null;
         return entries.reduce((bounds, entry) => ({
@@ -1583,6 +1589,29 @@
           y: (left.y + right.y) / 2
         };
       }
+      function normalizeFlattenedContour(contour, tolerance, budget) {
+        const minimumEdgeLength = Math.max(
+          EPSILON,
+          tolerance * MINIMUM_FLATTENED_EDGE_TOLERANCE_RATIO
+        );
+        const normalized = [];
+        for (const point of contour) {
+          if (!budget.consume()) return null;
+          const previous = normalized.at(-1);
+          if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) <= minimumEdgeLength) {
+            continue;
+          }
+          normalized.push(point);
+        }
+        while (normalized.length > 1) {
+          if (!budget.consume()) return null;
+          const first = normalized[0];
+          const last = normalized.at(-1);
+          if (Math.hypot(first.x - last.x, first.y - last.y) > minimumEdgeLength) break;
+          normalized.pop();
+        }
+        return normalized;
+      }
       function flattenQuadratic(start, control, end, tolerance, acceptPoint) {
         const stack = [{ start, control, end, depth: 0 }];
         while (stack.length > 0) {
@@ -1674,8 +1703,9 @@
         };
         const finishContour = () => {
           if (!current) return;
-          if (current.length > 1 && samePoint(current[0], current.at(-1))) current.pop();
-          if (current.length >= 3) contours.push(current);
+          const normalized = normalizeFlattenedContour(current, tolerance, budget);
+          if (!normalized) flattenFailed = true;
+          else if (normalized.length >= 3) contours.push(normalized);
           current = null;
           currentPoint = null;
         };
@@ -13141,6 +13171,7 @@ void main() {
       var SELECTION_HIT_MARGIN_CSS_PX = 6;
       var MIN_SELECTION_HIT_TOLERANCE = 2;
       var MAX_SELECTION_HIT_TOLERANCE = 96;
+      var SOURCE_INTERVAL_EPSILON = 1e-7;
       var DRAWING_ACTIONS = /* @__PURE__ */ new Set([
         "delete-selection",
         "clear-session",
@@ -15730,7 +15761,7 @@ void main() {
             end: contour[(index + 1) % contour.length]
           })));
         }
-        function projectFillComponentToIndexInterval(component, centerline, budget) {
+        function projectFillComponentToSourceIntervals(component, centerline, budget) {
           const onCenterline = centerlineIntervalsInsideComponent(component, centerline, {
             budget
           });
@@ -15742,17 +15773,254 @@ void main() {
               centerline,
               { budget, distanceTolerance: 0.25 }
             );
-            if (projected.reason) return { interval: null, reason: projected.reason };
+            if (projected.reason) return { intervals: null, reason: projected.reason };
             sourceIntervals = projected.intervals;
           }
-          if (sourceIntervals.length !== 1) {
-            return { interval: null, reason: "selection-geometry-unavailable" };
+          if (sourceIntervals.length === 0) {
+            return { intervals: null, reason: "selection-geometry-unavailable" };
           }
-          const intervals = sourceIntervalsToIndexIntervals(sourceIntervals, centerline);
-          if (!Array.isArray(intervals) || intervals.length !== 1) {
-            return { interval: null, reason: "selection-geometry-unavailable" };
+          return { intervals: sourceIntervals, reason: null };
+        }
+        function sourceIntervalsFormExactPartition(projections, budget) {
+          const partition = [];
+          for (const projection of projections) {
+            for (const interval of projection.intervals || []) {
+              if (!budget.consume()) {
+                return {
+                  exact: false,
+                  reason: "selection-complexity-limit-exceeded"
+                };
+              }
+              partition.push(interval);
+            }
           }
-          return { interval: intervals[0], reason: null };
+          const sortCost = partition.length * (Math.ceil(Math.log2(partition.length + 1)) + 2);
+          if (!budget.consume(sortCost)) {
+            return {
+              exact: false,
+              reason: "selection-complexity-limit-exceeded"
+            };
+          }
+          partition.sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+          let coveredUntil = 0;
+          for (const interval of partition) {
+            if (!budget.consume()) {
+              return {
+                exact: false,
+                reason: "selection-complexity-limit-exceeded"
+              };
+            }
+            if (Math.abs(interval[0] - coveredUntil) > SOURCE_INTERVAL_EPSILON || interval[1] <= coveredUntil + SOURCE_INTERVAL_EPSILON) {
+              return { exact: false, reason: null };
+            }
+            coveredUntil = interval[1];
+          }
+          return {
+            exact: Math.abs(coveredUntil - 1) <= SOURCE_INTERVAL_EPSILON,
+            reason: null
+          };
+        }
+        function centerlineIsStrictlyChordMonotone(centerline, budget) {
+          const points = centerline?.points;
+          const segments = centerline?.segments;
+          if (!Array.isArray(points) || points.length < 2 || !Array.isArray(segments) || segments.length === 0) {
+            return {
+              monotone: false,
+              reason: "selection-geometry-unavailable"
+            };
+          }
+          const first = points[0];
+          const last = points.at(-1);
+          const chordX = last.x - first.x;
+          const chordY = last.y - first.y;
+          const chordLength = Math.hypot(chordX, chordY);
+          if (!Number.isFinite(chordLength) || chordLength <= SOURCE_INTERVAL_EPSILON) {
+            return {
+              monotone: false,
+              reason: "selection-geometry-unavailable"
+            };
+          }
+          const axisX = chordX / chordLength;
+          const axisY = chordY / chordLength;
+          for (const segment of segments) {
+            if (!budget.consume()) {
+              return {
+                monotone: false,
+                reason: "selection-complexity-limit-exceeded"
+              };
+            }
+            const sourceProgress = segment.end.sourcePosition - segment.start.sourcePosition;
+            const chordProgress = (segment.end.x - segment.start.x) * axisX + (segment.end.y - segment.start.y) * axisY;
+            if (!Number.isFinite(sourceProgress) || !Number.isFinite(chordProgress) || sourceProgress < -SOURCE_INTERVAL_EPSILON || chordProgress <= SOURCE_INTERVAL_EPSILON) {
+              return {
+                monotone: false,
+                reason: "selection-geometry-unavailable"
+              };
+            }
+          }
+          return { monotone: true, reason: null };
+        }
+        function sourceEnvelopesCoverSourceDomain(planned, budget) {
+          const envelopes = planned.map((projection) => projection.envelope);
+          const sortCost = envelopes.length * (Math.ceil(Math.log2(envelopes.length + 1)) + 2);
+          if (!budget.consume(sortCost)) {
+            return {
+              covered: false,
+              reason: "selection-complexity-limit-exceeded"
+            };
+          }
+          envelopes.sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+          let coveredUntil = 0;
+          for (const envelope of envelopes) {
+            if (!budget.consume()) {
+              return {
+                covered: false,
+                reason: "selection-complexity-limit-exceeded"
+              };
+            }
+            if (envelope[0] > coveredUntil + SOURCE_INTERVAL_EPSILON) {
+              return { covered: false, reason: null };
+            }
+            coveredUntil = Math.max(coveredUntil, envelope[1]);
+          }
+          return {
+            covered: coveredUntil >= 1 - SOURCE_INTERVAL_EPSILON,
+            reason: null
+          };
+        }
+        function bridgeHiddenSourceEnvelopeGaps(planned, budget) {
+          if (planned.length === 0 || planned.some((projection) => projection.maskedSource !== true)) {
+            return { bridged: false, reason: null };
+          }
+          const sortCost = planned.length * (Math.ceil(Math.log2(planned.length + 1)) + 2);
+          if (!budget.consume(sortCost)) {
+            return {
+              bridged: false,
+              reason: "selection-complexity-limit-exceeded"
+            };
+          }
+          const ordered = [...planned].sort((left, right) => left.envelope[0] - right.envelope[0] || left.envelope[1] - right.envelope[1]);
+          let coverageOwner = ordered[0];
+          coverageOwner.envelope[0] = 0;
+          let coveredUntil = coverageOwner.envelope[1];
+          for (let index = 1; index < ordered.length; index += 1) {
+            if (!budget.consume()) {
+              return {
+                bridged: false,
+                reason: "selection-complexity-limit-exceeded"
+              };
+            }
+            const current = ordered[index];
+            if (current.envelope[0] > coveredUntil + SOURCE_INTERVAL_EPSILON) {
+              const boundary = (coveredUntil + current.envelope[0]) / 2;
+              coverageOwner.envelope[1] = boundary;
+              current.envelope[0] = boundary;
+            }
+            if (current.envelope[1] > coveredUntil) {
+              coverageOwner = current;
+              coveredUntil = current.envelope[1];
+            }
+          }
+          coverageOwner.envelope[1] = 1;
+          return { bridged: true, reason: null };
+        }
+        function bridgeUnambiguousComponentIntervals(projections, budget) {
+          const planned = [];
+          for (const projection of projections) {
+            const intervals = projection.intervals;
+            if (!Array.isArray(intervals) || intervals.length === 0 || intervals.some((interval, index) => !Array.isArray(interval) || !Number.isFinite(interval[0]) || !Number.isFinite(interval[1]) || interval[0] < -SOURCE_INTERVAL_EPSILON || interval[1] > 1 + SOURCE_INTERVAL_EPSILON || interval[1] - interval[0] <= SOURCE_INTERVAL_EPSILON || index > 0 && interval[0] < intervals[index - 1][1] - SOURCE_INTERVAL_EPSILON)) {
+              return { projections: null, reason: "selection-geometry-unavailable" };
+            }
+            if (!budget.consume(intervals.length + 1)) {
+              return { projections: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            planned.push({
+              ...projection,
+              envelope: [intervals[0][0], intervals.at(-1)[1]]
+            });
+          }
+          const wrapped = planned.filter((projection) => projection.intervals.length > 1);
+          const partition = sourceIntervalsFormExactPartition(planned, budget);
+          if (partition.reason) {
+            return { projections: null, reason: partition.reason };
+          }
+          const requiresEnvelopeBridge = wrapped.length > 0 || !partition.exact;
+          if (requiresEnvelopeBridge) {
+            const centerline = planned[0]?.centerline;
+            if (!centerline || planned.some((projection) => projection.centerline !== centerline)) {
+              return { projections: null, reason: "selection-geometry-unavailable" };
+            }
+            const monotone = centerlineIsStrictlyChordMonotone(centerline, budget);
+            if (monotone.reason) {
+              return { projections: null, reason: monotone.reason };
+            }
+            if (!monotone.monotone) {
+              return { projections: null, reason: "selection-geometry-unavailable" };
+            }
+            const coverage = sourceEnvelopesCoverSourceDomain(planned, budget);
+            if (coverage.reason) {
+              return { projections: null, reason: coverage.reason };
+            }
+            if (!coverage.covered) {
+              const hiddenBridge = bridgeHiddenSourceEnvelopeGaps(planned, budget);
+              if (hiddenBridge.reason) {
+                return { projections: null, reason: hiddenBridge.reason };
+              }
+              if (!hiddenBridge.bridged) {
+                return { projections: null, reason: "selection-geometry-unavailable" };
+              }
+              const bridgedCoverage = sourceEnvelopesCoverSourceDomain(planned, budget);
+              if (bridgedCoverage.reason) {
+                return { projections: null, reason: bridgedCoverage.reason };
+              }
+              if (!bridgedCoverage.covered) {
+                return { projections: null, reason: "selection-geometry-unavailable" };
+              }
+            }
+          }
+          for (const projection of planned) {
+            const sourceIntervals = requiresEnvelopeBridge ? [projection.envelope] : projection.intervals;
+            const intervals = sourceIntervalsToIndexIntervals(sourceIntervals, projection.centerline);
+            if (!Array.isArray(intervals) || intervals.length !== 1) {
+              return { projections: null, reason: "selection-geometry-unavailable" };
+            }
+            projection.interval = intervals[0];
+          }
+          return { projections: planned, reason: null };
+        }
+        function groupProjectedComponentsBySourceInterval(projections, budget) {
+          const sortCost = projections.length * (Math.ceil(Math.log2(projections.length + 1)) + 2);
+          if (!budget.consume(sortCost)) {
+            return {
+              groups: null,
+              reason: "selection-complexity-limit-exceeded"
+            };
+          }
+          const ordered = [...projections].sort((left, right) => Number(left.selected) - Number(right.selected) || left.interval[0] - right.interval[0] || left.interval[1] - right.interval[1]);
+          const groups = [];
+          for (const projection of ordered) {
+            if (!budget.consume()) {
+              return {
+                groups: null,
+                reason: "selection-complexity-limit-exceeded"
+              };
+            }
+            const previous = groups.at(-1);
+            if (previous && previous.selected === projection.selected && projection.interval[0] <= previous.interval[1] + SOURCE_INTERVAL_EPSILON) {
+              previous.interval[1] = Math.max(
+                previous.interval[1],
+                projection.interval[1]
+              );
+              previous.components.push(projection.component);
+              continue;
+            }
+            groups.push({
+              selected: projection.selected,
+              interval: [...projection.interval],
+              components: [projection.component]
+            });
+          }
+          return { groups, reason: null };
         }
         function applySourceTransformToFragment(path, sourceObject) {
           if (!sourceObject) return true;
@@ -16317,54 +16585,81 @@ void main() {
             if (!centerline.geometry || centerline.reason) {
               return fail(centerline.reason || "selection-geometry-unavailable");
             }
-            const componentPlans = [];
+            const projectedComponents = [];
             for (const group of [
               { selected: false, components: remainingClip.components },
               { selected: true, components: selectedClip.components }
             ]) {
               for (const component of group.components) {
-                const projected = projectFillComponentToIndexInterval(
+                const projected = projectFillComponentToSourceIntervals(
                   component,
                   centerline.geometry,
                   geometryBudget
                 );
-                if (!projected.interval || projected.reason) {
+                if (!projected.intervals || projected.reason) {
                   return fail(projected.reason || "selection-geometry-unavailable");
                 }
-                const sliced = splitStrokePointsBySourceIntervals(
-                  record.sourcePoints,
-                  [projected.interval],
-                  {
-                    budget: geometryBudget,
-                    maxRuns: 3
-                  }
-                );
-                if (sliced.limitExceeded) {
-                  return fail(sliced.limitReason === "operations" ? "selection-complexity-limit-exceeded" : "lasso-fragment-limit-exceeded");
-                }
-                if (sliced.geometryUnavailable || sliced.inside.length !== 1 || sliced.inside[0].length < 2) {
-                  return fail("selection-geometry-unavailable");
-                }
-                const renderPathData = contourPathData(component.contours);
-                if (!renderPathData || renderPathData.length > MAX_PERSISTENCE_STRING_LENGTH) {
-                  return fail("selection-geometry-unavailable");
-                }
-                const originalCaps = record.strokeCaps || { start: true, end: true };
-                componentPlans.push({
+                projectedComponents.push({
                   selected: group.selected,
-                  points: sliced.inside[0],
-                  interval: projected.interval,
-                  caps: {
-                    start: projected.interval[0] <= 1e-7 ? originalCaps.start !== false : false,
-                    end: projected.interval[1] >= record.sourcePoints.length - 1 - 1e-7 ? originalCaps.end !== false : false
-                  },
-                  renderGeometry: {
-                    version: 1,
-                    pathData: renderPathData,
-                    fillRule: "evenodd"
-                  }
+                  component,
+                  intervals: projected.intervals,
+                  centerline: centerline.geometry,
+                  maskedSource: record.renderGeometry !== void 0
                 });
               }
+            }
+            const bridged = bridgeUnambiguousComponentIntervals(
+              projectedComponents,
+              geometryBudget
+            );
+            if (!bridged.projections || bridged.reason) {
+              return fail(bridged.reason || "selection-geometry-unavailable");
+            }
+            const grouped = groupProjectedComponentsBySourceInterval(
+              bridged.projections,
+              geometryBudget
+            );
+            if (!grouped.groups || grouped.reason) {
+              return fail(grouped.reason || "selection-geometry-unavailable");
+            }
+            const componentPlans = [];
+            for (const projected of grouped.groups) {
+              const sliced = splitStrokePointsBySourceIntervals(
+                record.sourcePoints,
+                [projected.interval],
+                {
+                  budget: geometryBudget,
+                  maxRuns: 3,
+                  retainSubunitRuns: true
+                }
+              );
+              if (sliced.limitExceeded) {
+                return fail(sliced.limitReason === "operations" ? "selection-complexity-limit-exceeded" : "lasso-fragment-limit-exceeded");
+              }
+              if (sliced.geometryUnavailable || sliced.inside.length !== 1 || sliced.inside[0].length < 2) {
+                return fail("selection-geometry-unavailable");
+              }
+              const renderPathData = contourPathData(
+                projected.components.flatMap((component) => component.contours)
+              );
+              if (!renderPathData || renderPathData.length > MAX_PERSISTENCE_STRING_LENGTH) {
+                return fail("selection-geometry-unavailable");
+              }
+              const originalCaps = record.strokeCaps || { start: true, end: true };
+              componentPlans.push({
+                selected: projected.selected,
+                points: sliced.inside[0],
+                interval: projected.interval,
+                caps: {
+                  start: projected.interval[0] <= 1e-7 ? originalCaps.start !== false : false,
+                  end: projected.interval[1] >= record.sourcePoints.length - 1 - 1e-7 ? originalCaps.end !== false : false
+                },
+                renderGeometry: {
+                  version: 1,
+                  pathData: renderPathData,
+                  fillRule: "evenodd"
+                }
+              });
             }
             const totalPlannedPoints = componentPlans.reduce(
               (count, plan) => count + plan.points.length,

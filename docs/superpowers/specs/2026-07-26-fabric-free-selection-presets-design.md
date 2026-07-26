@@ -193,6 +193,32 @@ authoritative geometry만 화면에 실제로 그려지는 Path 채움으로 승
 - 실제 채움이 hit와 clip의 기준이어도 `sourcePoints`, pressure/time, caps,
   transform은 canonical 편집 계보로 남는다. 채움 component는 BVH로 가속한
   centerline 투영을 통해 단조 source-position 구간과 연결한다.
+- 선택 경계가 획 두께의 일부만 가를 때는 하나의 잔여 채움 component가 서로
+  떨어진 여러 source-position 구간으로 투영될 수 있고, 정상적인 단조 곡선에서도
+  이런 component가 둘 이상 생길 수 있다. raw 구간이 source domain을 정확히
+  분할하면 그대로 사용한다. raw 구간에 중첩·내부 공백·여러 구간이 있어
+  source envelope가 필요할 때는 모든 envelope의 합집합이 domain 전체를 덮고,
+  모든 component가 같은 centerline을 사용하며, centerline이 시작점→끝점 chord
+  방향으로 엄격히 전진할 때만 masked 계보를 허용한다. 이 규칙은 최초 분리와
+  저장된 `renderGeometry` 재선택에 동일하게 적용한다. 실제 표시와 재선택
+  기준은 envelope가 아니라 교집합·차집합의 `renderGeometry`를 그대로 유지한다.
+- 저장된 `renderGeometry`는 이전 분리에서 화면에 없는 source 구간을 계보로
+  보존할 수 있다. 재선택 투영에서 이 숨은 구간이 leading, trailing, internal
+  gap으로 나타나면, 같은 단조 centerline 검증을 통과한 경우에만 인접 envelope
+  사이에 결정적으로 배분해 source domain을 빠짐없이 보존한다. 최초 canonical
+  획에서 발견된 실제 source gap은 이 보정을 사용하지 않고 계속 취소한다.
+- 같은 선택 소유권과 서로 겹치는 source envelope를 가진 disjoint component는
+  하나의 multi-contour `renderGeometry` fragment로 묶어 sourcePoints를 한 번만
+  보존한다. 굵은 획의 가운데 띠를 떼었을 때 위·아래 잔여 모양이 원본 계보를
+  각각 복제하여 point budget을 넘거나 저장 데이터가 불필요하게 늘지 않아야 한다.
+- 정확한 clipped fill이 보이는 경우에는 source index 길이가 1보다 짧아도
+  보간한 양 끝 source sample을 보존한다. 기존 centerline/polygon 기반 split의
+  sub-pixel 폐기 기준은 유지하고, authoritative `renderGeometry` fragment를
+  만드는 경로에서만 이 예외를 사용한다.
+- envelope 계보와 반대편 fragment의 source 구간은 일부 겹칠 수 있지만 표시
+  채움은 겹치지 않는다. U-turn처럼 chord 방향 진행이 멈추거나 되돌아가는 획,
+  self-cross처럼 여러 분기가 선택되는 획, raw source domain에 공백이 생기는
+  투영은 기존처럼 전체 gesture를 원자적으로 취소한다.
 - 잘라낸 표시 모양은 version 1 `renderGeometry`로 이동·Delete·Undo/Redo와
   리뷰 데이터 저장/복원을 왕복한다. 이후 재선택도 저장된 채움을 다시
   authoritative geometry로 사용한다.
@@ -213,6 +239,11 @@ cache hit도 cold build의 logical cost를 동일하게 차감한다.
 | 400점 실제 획 | 300점과 같은 실제 runtime 왕복, direct paired clip 200k 미만, 각 검증 1초 미만 |
 | 1,000점 실제 획 | 250k 이내에서 `selection-complexity-limit-exceeded`, 교집합·차집합 모두 빈 실패 결과, 부분 출력 없음 |
 | 20,000-edge Path | flatten/index 단계가 250k 이내에서 같은 complexity reason으로 중단, UI 장기 정지나 cache 우회 없음 |
+
+추가 회귀 검증은 두께 일부만 걸친 곡선 획을 사각형과 라쏘로 각각 선택해,
+선택 경계 밖 픽셀은 제자리에 남고 안쪽 픽셀만 이동하는지 확인한다. 이동 결과를
+저장·hydrate한 뒤 남은 `renderGeometry`를 다시 부분 선택해 이동·Undo할 수 있어야
+한다. U-turn, self-cross, source-gap fixture는 계속 원자적으로 취소되어야 한다.
 
 이 표와 L-turn 실제 픽셀 hit/miss, 저장 후 재선택, thin/tangent/kissing/hole
 fixture가 모두 통과해야 Task 8을 완료한 것으로 본다.

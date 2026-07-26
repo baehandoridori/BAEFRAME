@@ -49,13 +49,17 @@ function appendPoint(run, point) {
   if (!run.length || !sameGeometrySample(run[run.length - 1], point)) run.push(point);
 }
 
-function hasVisibleLength(run) {
+function hasVisibleLength(run, minimumLength = 1) {
+  const requiredLength = Math.max(
+    Number.EPSILON,
+    finiteNumber(minimumLength, 1)
+  );
   let length = 0;
   for (let index = 1; index < run.length; index += 1) {
     const dx = finiteNumber(run[index]?.x) - finiteNumber(run[index - 1]?.x);
     const dy = finiteNumber(run[index]?.y) - finiteNumber(run[index - 1]?.y);
     length += Math.hypot(dx, dy);
-    if (length + EPSILON >= 1) return true;
+    if (length + Number.EPSILON >= requiredLength) return true;
   }
   return false;
 }
@@ -889,8 +893,11 @@ function splitStrokePointsBySourceIntervals(points = [], intervals = [], options
     }
   }
 
+  const minimumRunLength = options.retainSubunitRuns === true
+    ? Number.EPSILON
+    : 1;
   result.runs = result.runs.filter(({ points: run }) => (
-    run.length >= 2 && hasVisibleLength(run)
+    run.length >= 2 && hasVisibleLength(run, minimumRunLength)
   ));
   result.inside = result.runs.filter(run => run.kind === 'inside').map(run => run.points);
   result.outside = result.runs.filter(run => run.kind === 'outside').map(run => run.points);
