@@ -41,6 +41,9 @@ const {
 const {
   createDrawingEngineAdapter
 } = require(drawingV3AdapterPath);
+const {
+  validateDrawingRenderPathData
+} = require(path.join(rootDir, 'shared/drawing-render-geometry.js'));
 
 function runAutoSingletonProbe(source) {
   const result = spawnSync(process.execPath, ['-e', [
@@ -654,7 +657,11 @@ test('runtime hydrate rejects every persistence-store record violation atomicall
         strokeCaps: { start: true, end: false },
         renderGeometry: {
           version: 1,
-          pathData: 'M 1 1 L 9 1 L 9 9 L 1 9 Z',
+          pathData: [
+            'M 0 0 L 12 0 L 12 12 L 0 12 Z',
+            'M 3 3 L 3 9 L 9 9 L 9 3 Z',
+            'M 12 12 L 16 12 L 16 16 L 12 16 Z'
+          ].join(' '),
           fillRule: 'evenodd'
         }
       })]
@@ -740,6 +747,26 @@ test('runtime hydrate rejects every persistence-store record violation atomicall
       value.keyframes[0].objects[0].renderGeometry.pathData =
         'M 1 1 L 9 1 L 9 9';
     }],
+    ['render geometry degenerate edge', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 0 0 L 8 0 L 8 0 L 0 8 Z';
+    }],
+    ['render geometry fewer than three distinct vertices', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 0 0 L 8 0 L 0 0 Z';
+    }],
+    ['render geometry zero-area contour', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 0 0 L 4 0 L 8 0 Z';
+    }],
+    ['render geometry repeated edge', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 0 0 L 8 0 L 4 0 L 8 0 L 8 8 L 0 8 Z';
+    }],
+    ['render geometry self-crossing contour', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 0 0 L 8 8 L 0 8 L 8 0 Z';
+    }],
     ['unsupported render geometry fill rule', value => {
       value.keyframes[0].objects[0].renderGeometry.fillRule = 'nonzero';
     }],
@@ -767,6 +794,17 @@ test('runtime hydrate rejects every persistence-store record violation atomicall
     );
   }
   runtime.destroy();
+});
+
+test('render geometry topology validation fails closed at explicit budgets', () => {
+  const square = 'M 0 0 L 8 0 L 8 8 L 0 8 Z';
+  assert.equal(validateDrawingRenderPathData(square), true);
+  assert.equal(validateDrawingRenderPathData(square, {
+    maxTopologyOperations: 1
+  }), false);
+  assert.equal(validateDrawingRenderPathData(square, {
+    maxTopologyPoints: 3
+  }), false);
 });
 
 test('runtime persistence bridge ignores hover and cannot roll back a committed stroke', () => {
@@ -3823,6 +3861,168 @@ function stageCrossingLasso(harness, pointerBase = 800) {
   return before;
 }
 
+test('failed zero-area replacement keeps the same pending lasso usable', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const original = stageCrossingLasso(harness, 814);
+    const proxiesBefore = pendingLassoObjects(harness.canvas);
+    const selectedIdsBefore = harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds;
+    const activeIdsBefore = harness.canvas.getActiveObjects()
+      .map(object => object.__baeframeObjectId);
+    assert.equal(proxiesBefore.length, 1);
+
+    harness.dragLasso([
+      { x: 5, y: 5 },
+      { x: 15, y: 5 },
+      { x: 5, y: 5 }
+    ], 816);
+
+    const proxiesAfter = pendingLassoObjects(harness.canvas);
+    assert.equal(proxiesAfter.length, proxiesBefore.length);
+    assert.equal(proxiesAfter[0], proxiesBefore[0]);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      selectedIdsBefore
+    );
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      activeIdsBefore
+    );
+
+    harness.dragActiveSelectionBy(20, 0, 817);
+    await Promise.resolve();
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(moved.objects.length, 3);
+    assert.equal(moved.objects.some(object => object.id === original.objects[0].id), false);
+    assert.deepEqual(moved.selectedObjectIds, activeIdsBefore);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('failed geometry replacement keeps the same pending lasso usable', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const original = stageCrossingLasso(harness, 818);
+    const proxyBefore = pendingLassoObjects(harness.canvas)[0];
+    const activeIdsBefore = harness.canvas.getActiveObjects()
+      .map(object => object.__baeframeObjectId);
+    const sourceObject = harness.canvas.getObjects()
+      .find(object => !object.__baeframePendingLasso && object.__baeframeObjectId);
+    const originalPathOffset = sourceObject.pathOffset;
+    sourceObject.pathOffset = null;
+
+    harness.dragLasso([
+      { x: 0, y: 0 },
+      { x: 190, y: 0 },
+      { x: 190, y: 150 },
+      { x: 0, y: 150 },
+      { x: 0, y: 0 }
+    ], 820);
+    sourceObject.pathOffset = originalPathOffset;
+
+    assert.equal(pendingLassoObjects(harness.canvas)[0], proxyBefore);
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      activeIdsBefore
+    );
+
+    harness.dragActiveSelectionBy(20, 0, 821);
+    await Promise.resolve();
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(moved.objects.length, 3);
+    assert.equal(moved.objects.some(object => object.id === original.objects[0].id), false);
+    assert.deepEqual(moved.selectedObjectIds, activeIdsBefore);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('failed proxy-stage replacement keeps the same pending lasso usable', async () => {
+  const realFabric = require('fabric/node');
+  let armed = false;
+  let proxyFailureCount = 0;
+  const constructionCountsByPath = new Map();
+  class ThrowingReplacementProxyPath extends realFabric.Path {
+    constructor(...args) {
+      if (armed && args[1]?.stroke === null) {
+        const pathData = String(args[0] || '');
+        const count = (constructionCountsByPath.get(pathData) || 0) + 1;
+        constructionCountsByPath.set(pathData, count);
+        if (count === 2) {
+          proxyFailureCount += 1;
+          throw new Error('synthetic replacement proxy construction failure');
+        }
+      }
+      super(...args);
+    }
+  }
+  const harness = createRealFabricHarness({
+    fabric: { Path: ThrowingReplacementProxyPath }
+  });
+  try {
+    const original = stageCrossingLasso(harness, 822);
+    const proxyBefore = pendingLassoObjects(harness.canvas)[0];
+    const activeIdsBefore = harness.canvas.getActiveObjects()
+      .map(object => object.__baeframeObjectId);
+    armed = true;
+
+    assert.doesNotThrow(() => harness.dragLasso(middleLassoPoints(), 824));
+
+    assert.equal(proxyFailureCount, 1);
+    assert.equal(pendingLassoObjects(harness.canvas)[0], proxyBefore);
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      activeIdsBefore
+    );
+
+    armed = false;
+    harness.dragActiveSelectionBy(20, 0, 825);
+    await Promise.resolve();
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(moved.objects.length, 3);
+    assert.equal(moved.objects.some(object => object.id === original.objects[0].id), false);
+    assert.deepEqual(moved.selectedObjectIds, activeIdsBefore);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('stale failed replacement never resurrects or retains the prior pending lasso', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    stageCrossingLasso(harness, 826);
+    const staleIds = harness.canvas.getActiveObjects()
+      .map(object => object.__baeframeObjectId);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 1);
+
+    harness.dispatchPointer(harness.element, 'pointerdown', 5, 5, 828, 1);
+    const external = makeHistoryStroke('external-during-pending-replacement', {
+      sourcePoints: [
+        { x: 150, y: 170, pressure: 0.5, time: 0 },
+        { x: 180, y: 170, pressure: 0.5, time: 1 }
+      ]
+    });
+    assert.equal(harness.sceneStore.addStroke(external).applied, true);
+    harness.dispatchCapturedPointerUp(5, 5, 828);
+
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.equal(
+      harness.canvas.getActiveObjects()
+        .some(object => staleIds.includes(object.__baeframeObjectId)),
+      false
+    );
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects
+        .some(object => object.id === external.id),
+      true
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('lasso pointerup keeps scene objects mutation dirty undo and redo unchanged', async () => {
   const harness = createRealFabricHarness();
   try {
@@ -3965,6 +4165,35 @@ test('whole-selection geometry failure restores the exact prior multi-selection'
   }
 });
 
+test('zero-area whole selection restores the exact prior multi-selection', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(30, 8754);
+    harness.drawStrokeAt(50, 8755);
+    harness.drawStrokeAt(110, 8756);
+    enableRealFabricWholeStrokeLasso(harness);
+    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    const priorIds = activateRealFabricSelection(
+      harness,
+      snapshot.objects.slice(0, 2).map(object => object.id)
+    );
+    const before = captureSelectionStability(harness);
+
+    harness.dragLasso([
+      { x: 10, y: 80 },
+      { x: 70, y: 80 },
+      { x: 10, y: 80 }
+    ], 8757);
+
+    assert.deepEqual(before.selectedObjectIds, priorIds);
+    assert.deepEqual(before.activeObjectIds, priorIds);
+    assertSelectionStability(harness, before);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('partial-selection budget failure restores the exact prior multi-selection', async () => {
   const harness = createRealFabricHarness({ maxSelectionGeometryOperations: 3 });
   try {
@@ -3986,6 +4215,35 @@ test('partial-selection budget failure restores the exact prior multi-selection'
       { x: 10, y: 140 },
       { x: 10, y: 80 }
     ], 8763);
+
+    assert.deepEqual(before.selectedObjectIds, priorIds);
+    assert.deepEqual(before.activeObjectIds, priorIds);
+    assertSelectionStability(harness, before);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('zero-area partial selection restores the exact prior multi-selection', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(30, 8764);
+    harness.drawStrokeAt(50, 8765);
+    harness.drawStrokeAt(110, 8766);
+    enableRealFabricLasso(harness);
+    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    const priorIds = activateRealFabricSelection(
+      harness,
+      snapshot.objects.slice(0, 2).map(object => object.id)
+    );
+    const before = captureSelectionStability(harness);
+
+    harness.dragLasso([
+      { x: 10, y: 80 },
+      { x: 70, y: 80 },
+      { x: 10, y: 80 }
+    ], 8767);
 
     assert.deepEqual(before.selectedObjectIds, priorIds);
     assert.deepEqual(before.activeObjectIds, priorIds);
@@ -4400,6 +4658,146 @@ test('a failed fragment build aborts the whole lasso split without losing stroke
   } finally {
     await harness.destroy();
   }
+});
+
+test('first fragment Fabric constructor failure restores the exact prior selection', async () => {
+  const realFabric = require('fabric/node');
+  let armed = false;
+  let constructorFailures = 0;
+  class ThrowingFirstFragmentPath extends realFabric.Path {
+    constructor(...args) {
+      if (armed && args[1]?.stroke === null) {
+        armed = false;
+        constructorFailures += 1;
+        throw new Error('synthetic first fragment constructor failure');
+      }
+      super(...args);
+    }
+  }
+  const harness = createRealFabricHarness({
+    fabric: { Path: ThrowingFirstFragmentPath }
+  });
+  try {
+    harness.drawStrokeAt(30, 716);
+    harness.drawStrokeAt(50, 717);
+    harness.drawStroke(crossingStrokePoints(), 718);
+    enableRealFabricLasso(harness);
+    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    const priorIds = activateRealFabricSelection(
+      harness,
+      snapshot.objects.slice(0, 2).map(object => object.id)
+    );
+    const before = captureSelectionStability(harness);
+    armed = true;
+
+    assert.doesNotThrow(() => harness.dragLasso(middleLassoPoints(), 719));
+
+    assert.equal(constructorFailures, 1);
+    assert.deepEqual(before.selectedObjectIds, priorIds);
+    assert.deepEqual(before.activeObjectIds, priorIds);
+    assertSelectionStability(harness, before);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('fragment transform exceptions restore the exact prior selection', async t => {
+  const runScenario = async (pointerBase, options = {}) => {
+    const harness = createRealFabricHarness(options.runtimeOptions || {});
+    try {
+      harness.drawStrokeAt(30, pointerBase);
+      harness.drawStrokeAt(50, pointerBase + 1);
+      harness.drawStroke(crossingStrokePoints(), pointerBase + 2);
+      enableRealFabricLasso(harness);
+      const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+      const priorIds = activateRealFabricSelection(
+        harness,
+        snapshot.objects.slice(0, 2).map(object => object.id)
+      );
+      const sourceObject = harness.canvas.getObjects()[2];
+      const before = captureSelectionStability(harness);
+      options.arm?.(sourceObject);
+
+      assert.doesNotThrow(() => harness.dragLasso(middleLassoPoints(), pointerBase + 3));
+
+      assert.equal(options.failureCount(), 1);
+      assert.deepEqual(before.selectedObjectIds, priorIds);
+      assert.deepEqual(before.activeObjectIds, priorIds);
+      assertSelectionStability(harness, before);
+      assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    } finally {
+      await harness.destroy();
+    }
+  };
+
+  await t.test('calcTransformMatrix throw', async () => {
+    let failureCount = 0;
+    await runScenario(730, {
+      arm(sourceObject) {
+        const original = sourceObject.calcTransformMatrix.bind(sourceObject);
+        sourceObject.calcTransformMatrix = (...args) => {
+          if (new Error().stack.includes('applySourceTransformToFragment')) {
+            failureCount += 1;
+            throw new Error('synthetic fragment matrix failure');
+          }
+          return original(...args);
+        };
+      },
+      failureCount: () => failureCount
+    });
+  });
+
+  await t.test('transformPoint throw', async () => {
+    const realFabric = require('fabric/node');
+    let armed = false;
+    let failureCount = 0;
+    const transformPoint = realFabric.util.transformPoint.bind(realFabric.util);
+    await runScenario(740, {
+      runtimeOptions: {
+        fabric: {
+          util: {
+            ...realFabric.util,
+            transformPoint(...args) {
+              if (armed && new Error().stack.includes('applySourceTransformToFragment')) {
+                failureCount += 1;
+                throw new Error('synthetic fragment point transform failure');
+              }
+              return transformPoint(...args);
+            }
+          }
+        }
+      },
+      arm() {
+        armed = true;
+      },
+      failureCount: () => failureCount
+    });
+  });
+
+  await t.test('setPositionByOrigin throw', async () => {
+    const realFabric = require('fabric/node');
+    let armed = false;
+    let failureCount = 0;
+    class ThrowingFragmentPositionPath extends realFabric.Path {
+      setPositionByOrigin(...args) {
+        if (armed && new Error().stack.includes('applySourceTransformToFragment')) {
+          failureCount += 1;
+          throw new Error('synthetic fragment position failure');
+        }
+        return super.setPositionByOrigin(...args);
+      }
+    }
+    await runScenario(750, {
+      runtimeOptions: {
+        fabric: { Path: ThrowingFragmentPositionPath }
+      },
+      arm() {
+        armed = true;
+      },
+      failureCount: () => failureCount
+    });
+  });
 });
 
 test('lasso fragment limits abort before replacing a complex stroke', async () => {
@@ -9056,6 +9454,38 @@ test('Fabric path flattening is strict immutable and atomically rejects malforme
   }
 });
 
+test('Fabric path flattening rejects an open contour before a new move command', () => {
+  const result = flattenFabricPath([
+    ['M', 0, 0],
+    ['L', 10, 0],
+    ['L', 10, 10],
+    ['M', 20, 20],
+    ['L', 30, 20],
+    ['L', 30, 30],
+    ['Z']
+  ], {
+    budget: createGeometryBudget(250_000),
+    tolerance: 0.01
+  });
+
+  assert.equal(result.geometry, null);
+  assert.equal(result.reason, 'selection-geometry-unavailable');
+});
+
+test('Fabric path flattening rejects an open contour at end of input', () => {
+  const result = flattenFabricPath([
+    ['M', 0, 0],
+    ['L', 10, 0],
+    ['L', 10, 10]
+  ], {
+    budget: createGeometryBudget(250_000),
+    tolerance: 0.01
+  });
+
+  assert.equal(result.geometry, null);
+  assert.equal(result.reason, 'selection-geometry-unavailable');
+});
+
 test('spatial contour validation accepts 1024 simple points and rejects a self-cross', () => {
   const contour = Array.from({ length: 1024 }, (_value, index) => {
     const angle = index * Math.PI * 2 / 1024;
@@ -9155,7 +9585,28 @@ test('paired clipping fits a realistic 400-sample gesture and caps 1000 samples 
 });
 
 test('paired clipping discards both outputs when the second loop exhausts the budget', () => {
-  const budget = createGeometryBudget(412);
+  const baseBudget = createGeometryBudget(250_000);
+  let rejectConsumes = false;
+  let injectedLimitExceeded = false;
+  const budget = {
+    consume(count) {
+      if (rejectConsumes) {
+        injectedLimitExceeded = true;
+        return false;
+      }
+      return baseBudget.consume(count);
+    },
+    get operations() {
+      return baseBudget.operations;
+    },
+    get maxOperations() {
+      return baseBudget.maxOperations;
+    },
+    get limitExceeded() {
+      return injectedLimitExceeded || baseBudget.limitExceeded;
+    }
+  };
+  const operationPhases = [];
   const flattened = flattenFabricPath([
     ['M', 0, 0],
     ['L', 10, 0],
@@ -9174,8 +9625,20 @@ test('paired clipping discards both outputs when the second loop exhausts the bu
     { x: 12, y: 12 },
     { x: -2, y: 12 }
   ], { budget });
-  const pair = clipSimplePathFillPair(fill, selection, { budget });
+  const pair = clipSimplePathFillPair(fill, selection, {
+    budget,
+    operationObserver(operation, phase) {
+      operationPhases.push(`${operation}:${phase}`);
+      if (operation === 'intersection' && phase === 'start') rejectConsumes = true;
+    }
+  });
 
+  assert.deepEqual(operationPhases, [
+    'difference:start',
+    'difference:complete',
+    'intersection:start'
+  ]);
+  assert.equal(injectedLimitExceeded, true);
   assert.equal(budget.limitExceeded, true);
   assert.deepEqual(pair, {
     difference: {

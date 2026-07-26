@@ -295,7 +295,7 @@ function flattenFabricPath(pathCommands, options = {}) {
     if (type === 'M') {
       const point = finitePoint(command[1], command[2]);
       if (!point) return { geometry: null, reason: 'selection-geometry-unavailable' };
-      finishContour();
+      if (current) return { geometry: null, reason: 'selection-geometry-unavailable' };
       current = [point];
       currentPoint = point;
       continue;
@@ -326,7 +326,6 @@ function flattenFabricPath(pathCommands, options = {}) {
       finishContour();
     }
   }
-  finishContour();
   if (flattenFailed || budget.limitExceeded || segmentCount > maxSegments) {
     return {
       geometry: null,
@@ -334,6 +333,9 @@ function flattenFabricPath(pathCommands, options = {}) {
         ? 'selection-complexity-limit-exceeded'
         : 'selection-geometry-unavailable'
     };
+  }
+  if (current) {
+    return { geometry: null, reason: 'selection-geometry-unavailable' };
   }
   if (contours.length === 0) {
     return { geometry: null, reason: 'selection-geometry-unavailable' };
@@ -1197,6 +1199,7 @@ function clipPathFillOperations(fillQuery, polygonQuery, operations, options = {
   const polygonReason = collect(polygonQuery.edges, fillQuery);
   if (polygonReason) return failAll(polygonReason);
   for (const operation of operations) {
+    options.operationObserver?.(operation, 'start');
     const loopResult = buildBoundaryLoops(atomic[operation], quantum, budget);
     if (loopResult.reason) {
       return failAll(budget.limitExceeded
@@ -1213,6 +1216,7 @@ function clipPathFillOperations(fillQuery, polygonQuery, operations, options = {
       components: grouped.components,
       reason: null
     };
+    options.operationObserver?.(operation, 'complete');
   }
   return operationResults;
 }

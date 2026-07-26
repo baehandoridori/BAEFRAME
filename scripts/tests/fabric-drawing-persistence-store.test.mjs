@@ -253,7 +253,11 @@ test('render geometry persistence is optional and strictly versioned', async () 
     keyframes: [keyframe(3, [record('render-fragment', {
       renderGeometry: {
         version: 1,
-        pathData: 'M -1 2e1 L 9 1 L 9 9 L 1 9 Z M 2 2 L 3 2 L 3 3 Z',
+        pathData: [
+          'M 0 0 L 12 0 L 12 12 L 0 12 Z',
+          'M 3 3 L 3 9 L 9 9 L 9 3 Z',
+          'M 12 12 L 16 12 L 16 16 L 12 16 Z'
+        ].join(' '),
         fillRule: 'evenodd'
       }
     })])]
@@ -276,6 +280,11 @@ test('render geometry persistence is optional and strictly versioned', async () 
     value => { value.pathData = 'M 1 1 L 9 1 L 9 9'; },
     value => { value.pathData = 'M .5 1 L 9 1 L 9 9 Z'; },
     value => { value.pathData = 'M 01 1 L 9 1 L 9 9 Z'; },
+    value => { value.pathData = 'M 0 0 L 8 0 L 8 0 L 0 8 Z'; },
+    value => { value.pathData = 'M 0 0 L 8 0 L 0 0 Z'; },
+    value => { value.pathData = 'M 0 0 L 4 0 L 8 0 Z'; },
+    value => { value.pathData = 'M 0 0 L 8 0 L 4 0 L 8 0 L 8 8 L 0 8 Z'; },
+    value => { value.pathData = 'M 0 0 L 8 8 L 0 8 L 8 0 Z'; },
     value => { value.fillRule = 'nonzero'; },
     value => { value.vendor = true; }
   ];

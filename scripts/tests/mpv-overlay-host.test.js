@@ -833,7 +833,11 @@ test('drawing export rejects non-exact requests and returns only a validated clo
   const runtimeSnapshot = makePersistenceSnapshot(1);
   runtimeSnapshot.scenes[0].objects[0].renderGeometry = {
     version: 1,
-    pathData: 'M 1 1 L 9 1 L 9 9 L 1 9 Z',
+    pathData: [
+      'M 0 0 L 12 0 L 12 12 L 0 12 Z',
+      'M 3 3 L 3 9 L 9 9 L 9 3 Z',
+      'M 12 12 L 16 12 L 16 16 L 12 16 Z'
+    ].join(' '),
     fillRule: 'evenodd'
   };
   const harness = createDrawingHostHarness({
@@ -958,6 +962,20 @@ test('drawing export rejects snapshot fence mismatches and every non-exact inner
       value.scenes[0].objects[0].renderGeometry = {
         version: 1,
         pathData: 'M 1001000001 1 L 2 1 L 2 2 Z',
+        fillRule: 'evenodd'
+      };
+    }],
+    ['render geometry degenerate edge', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 0 0 L 8 0 L 8 0 L 0 8 Z',
+        fillRule: 'evenodd'
+      };
+    }],
+    ['render geometry self-crossing contour', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 0 0 L 8 8 L 0 8 L 8 0 Z',
         fillRule: 'evenodd'
       };
     }],

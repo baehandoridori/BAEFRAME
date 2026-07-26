@@ -2006,6 +2006,7 @@ function createFabricOverlayRuntime(options = {}) {
   let activeStroke = null;
   let activeLasso = null;
   let pendingLassoSelection = null;
+  let preservingPendingLassoSelectionEvent = false;
   let brushStyle = { ...DEFAULT_BRUSH_STYLE };
   let brushControls = null;
   let brushPanelOpen = false;
@@ -3151,10 +3152,16 @@ function createFabricOverlayRuntime(options = {}) {
       }
     };
     if (renderGeometry) fragment.renderGeometry = clonePlain(renderGeometry);
-    const path = makeFabricPath(fragment);
-    if (!applySourceTransformToFragment(path, sourceObject)) return null;
-    fragment.transform = captureTransform(path);
-    return fragment;
+    try {
+      const path = makeFabricPath(fragment);
+      if (!applySourceTransformToFragment(path, sourceObject)) return null;
+      fragment.transform = captureTransform(path);
+      return fragment;
+    } catch (error) {
+      lastError = error.message;
+      metrics.recordSurfaceError();
+      return null;
+    }
   }
 
   function pendingTargetMatches(target, objectIds) {
@@ -3208,7 +3215,7 @@ function createFabricOverlayRuntime(options = {}) {
     if (!fabricCanvas || !currentSession || replacements.length === 0 || selectedFragmentIds.size === 0) {
       return { staged: false, reason: 'invalid-pending-lasso' };
     }
-    abortPendingLassoSelection();
+    const previousPendingSelection = pendingLassoSelection;
     const originalFabricObjects = replacements.map(replacement => {
       const object = canvasObjects.get(replacement.removeId);
       return object
@@ -3256,6 +3263,17 @@ function createFabricOverlayRuntime(options = {}) {
       for (const object of fragmentFabricObjects.values()) fabricCanvas.remove(object);
       return { staged: false, reason: 'fragment-proxy-build-failed' };
     }
+    if (previousPendingSelection) {
+      if (pendingLassoSelection !== previousPendingSelection ||
+          !pendingLassoIsFresh(previousPendingSelection)) {
+        for (const object of fragmentFabricObjects.values()) fabricCanvas.remove(object);
+        if (pendingLassoSelection === previousPendingSelection) {
+          abortPendingLassoSelection({ authoritative: true });
+        }
+        return { staged: false, reason: 'stale-pending-lasso' };
+      }
+      abortPendingLassoSelection();
+    }
     pendingLassoSelection = {
       sessionId: currentSession.sessionId,
       inputRevision: tokenState.inputRevision,
@@ -3291,8 +3309,9 @@ function createFabricOverlayRuntime(options = {}) {
       return true;
     }
 
+    const pendingFabricObjects = new Set(pending.fragmentFabricObjects?.values() || []);
     for (const object of [...fabricCanvas.getObjects()]) {
-      if (object.__baeframePendingLasso) fabricCanvas.remove(object);
+      if (pendingFabricObjects.has(object)) fabricCanvas.remove(object);
     }
     const existingIds = new Set(
       fabricCanvas.getObjects().map(object => object.__baeframeObjectId).filter(Boolean)
@@ -3490,6 +3509,17 @@ function createFabricOverlayRuntime(options = {}) {
         context.sessionId !== currentSession?.sessionId ||
         context.inputRevision !== tokenState.inputRevision ||
         context.mutationCount !== sceneStore.getDiagnostics().mutationCount) {
+      if (context?.pendingSelection &&
+          pendingLassoSelection === context.pendingSelection &&
+          !pendingLassoIsFresh(context.pendingSelection)) {
+        abortPendingLassoSelection({ authoritative: true });
+        return [...(sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [])];
+      }
+      return [...currentSelectedIds];
+    }
+    if (context.pendingSelection &&
+        (pendingLassoSelection !== context.pendingSelection ||
+         !pendingLassoIsFresh(context.pendingSelection))) {
       return [...currentSelectedIds];
     }
     const existingIds = new Set(
@@ -3516,8 +3546,12 @@ function createFabricOverlayRuntime(options = {}) {
 
   function finalizeWholeStrokeSelectionPolygon(polygon, failureSelectionContext = null) {
     if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
-      activateObjectIds([]);
-      return { applied: false, reason: 'lasso-too-small', selectedObjectIds: [] };
+      const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
+      return {
+        applied: false,
+        reason: 'lasso-too-small',
+        selectedObjectIds: restoredSelectionIds
+      };
     }
 
     const snapshot = sceneStore.getActiveSceneSnapshot();
@@ -3575,8 +3609,12 @@ function createFabricOverlayRuntime(options = {}) {
 
   function finalizePartialSelectionPolygon(polygon, failureSelectionContext = null) {
     if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
-      activateObjectIds([]);
-      return { applied: false, reason: 'lasso-too-small' };
+      const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
+      return {
+        applied: false,
+        reason: 'lasso-too-small',
+        selectedObjectIds: restoredSelectionIds
+      };
     }
 
     const snapshot = sceneStore.getActiveSceneSnapshot();
@@ -4020,7 +4058,10 @@ function createFabricOverlayRuntime(options = {}) {
         } catch (_error) { /* pointer capture is best-effort */ }
         return;
       }
-      abortPendingLassoSelection();
+      if (pendingLassoSelection && !pendingLassoIsFresh(pendingLassoSelection)) {
+        abortPendingLassoSelection({ authoritative: true });
+      }
+      const previousPendingSelection = pendingLassoSelection;
       const activeObjectIds = fabricCanvas.getActiveObjects?.()
         .map(object => object.__baeframeObjectId)
         .filter(Boolean) || [];
@@ -4036,12 +4077,18 @@ function createFabricOverlayRuntime(options = {}) {
           objectIds: [...previousSelectedObjectIds],
           sessionId: currentSession?.sessionId,
           inputRevision: tokenState.inputRevision,
-          mutationCount: sceneStore.getDiagnostics().mutationCount
+          mutationCount: sceneStore.getDiagnostics().mutationCount,
+          pendingSelection: previousPendingSelection
         },
         points: [],
         preview: null
       };
-      fabricCanvas.discardActiveObject();
+      preservingPendingLassoSelectionEvent = !!previousPendingSelection;
+      try {
+        fabricCanvas.discardActiveObject();
+      } finally {
+        preservingPendingLassoSelectionEvent = false;
+      }
       sceneStore.selectObjects([]);
       try {
         event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -4166,6 +4213,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onSelectionChanged() {
+    if (preservingPendingLassoSelectionEvent) return;
     if (pendingLassoSelection &&
         !pendingTargetMatches(fabricCanvas?.getActiveObject?.(), pendingLassoSelection.selectedIds)) {
       abortPendingLassoSelection();
@@ -4176,6 +4224,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onSelectionCleared() {
+    if (preservingPendingLassoSelectionEvent) return;
     if (pendingLassoSelection) {
       abortPendingLassoSelection();
       return;
