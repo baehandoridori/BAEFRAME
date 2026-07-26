@@ -108,10 +108,14 @@ gesture 전체 연산 budget으로 최악 입력을 제한한다. 한도를 넘�
 1. scene polygon을 획의 실제 표시 Path 좌표계로 역변환한다.
 2. `renderGeometry`가 있으면 이를, 없으면 canonical `pathData`를 실제 채움으로
    삼아 polygon과 교집합·차집합을 함께 계산한다.
-3. 선택/잔여 채움 component를 원본 centerline의 단조 source-position 구간에
-   투영한다. centerline은 데이터 계보를 찾는 데만 쓰며 hit/clip 판정의 근거로
-   쓰지 않는다.
-4. source-position 구간으로 원본 pressure/time chain을 보존한 fragment를 만든다.
+3. 선택/잔여 채움 component가 원본 centerline을 중복 없이 나눌 수 있으면
+   source-position 구간에 투영한다. 굵기 방향 절단, U-turn, self-cross처럼
+   centerline 복제가 필요한 경우에는 정확한 clipped fill을 compact outline
+   fragment로 전환한다. centerline은 가능한 경우의 계보 보존에만 쓰며 hit/clip
+   판정의 근거로 쓰지 않는다.
+4. 단순 분할은 원본 pressure/time chain을 보존한다. compact outline fragment는
+   저장 스키마 호환과 fallback을 위한 결정적 2-point support만 보존하고,
+   `renderGeometry`를 이후 표시·hit·재분할의 권위 데이터로 사용한다.
 5. 선택 시점에는 투명 fragment proxy만 준비한다.
 6. 실제 이동 또는 Delete에서만 `split-stroke` command 하나로 확정한다.
 
@@ -131,9 +135,10 @@ gesture 전체 연산 budget으로 최악 입력을 제한한다. 한도를 넘�
 - fragment 하나라도 만들 수 없거나 용량 제한을 넘으면 원본 장면을 유지한다.
 - geometry 연산 한도나 역행렬 검증을 통과하지 못하면 일부 선택 없이 원본 장면을
   유지한다.
-- 선택 결과의 실제 채움은 선택/잔여 fragment별 `renderGeometry`로 저장하되,
-  `sourcePoints`, pressure/time, canonical `pathData`, transform은 계속 편집·Undo의
-  기준 데이터로 유지한다.
+- 선택 결과의 실제 채움은 선택/잔여 fragment별 `renderGeometry`로 저장한다.
+  단순 길이 분할은 `sourcePoints`, pressure/time, canonical `pathData`를 유지하고,
+  중복 계보가 필요한 복잡한 분할은 compact outline으로 전환해 `sourcePoints`를
+  두 점으로 제한한다. transform과 원본 Undo archive는 어느 경로에서도 유지한다.
 - 저장 가능한 `renderGeometry`는 exact-key `{ version: 1, pathData, fillRule:
   'evenodd' }`이며 닫힌 `M/L/Z` contour, 문자열 길이, 좌표 범위를 모두 통과해야
   한다. 저장·hydrate·host 경계 중 하나라도 거부하면 문서 전체를 원자적으로
@@ -190,35 +195,41 @@ authoritative geometry만 화면에 실제로 그려지는 Path 채움으로 승
 
 ### 7.2 계보·저장·복구
 
-- 실제 채움이 hit와 clip의 기준이어도 `sourcePoints`, pressure/time, caps,
-  transform은 canonical 편집 계보로 남는다. 채움 component는 BVH로 가속한
-  centerline 투영을 통해 단조 source-position 구간과 연결한다.
+- 실제 채움이 hit와 clip의 기준이다. 채움 component가 원본 centerline을 중복 없이
+  나눌 수 있을 때만 `sourcePoints`, pressure/time, caps를 canonical 편집 계보로
+  유지한다. 이 경로는 BVH로 가속한 centerline 투영을 통해 단조 source-position
+  구간과 연결한다.
 - 선택 경계가 획 두께의 일부만 가를 때는 하나의 잔여 채움 component가 서로
   떨어진 여러 source-position 구간으로 투영될 수 있고, 정상적인 단조 곡선에서도
   이런 component가 둘 이상 생길 수 있다. raw 구간이 source domain을 정확히
   분할하면 그대로 사용한다. raw 구간에 중첩·내부 공백·여러 구간이 있어
   source envelope가 필요할 때는 모든 envelope의 합집합이 domain 전체를 덮고,
   모든 component가 같은 centerline을 사용하며, centerline이 시작점→끝점 chord
-  방향으로 엄격히 전진할 때만 masked 계보를 허용한다. 이 규칙은 최초 분리와
-  저장된 `renderGeometry` 재선택에 동일하게 적용한다. 실제 표시와 재선택
-  기준은 envelope가 아니라 교집합·차집합의 `renderGeometry`를 그대로 유지한다.
-- 저장된 `renderGeometry`는 이전 분리에서 화면에 없는 source 구간을 계보로
-  보존할 수 있다. 재선택 투영에서 이 숨은 구간이 leading, trailing, internal
-  gap으로 나타나면, 같은 단조 centerline 검증을 통과한 경우에만 인접 envelope
-  사이에 결정적으로 배분해 source domain을 빠짐없이 보존한다. 최초 canonical
-  획에서 발견된 실제 source gap은 이 보정을 사용하지 않고 계속 취소한다.
-- 같은 선택 소유권과 서로 겹치는 source envelope를 가진 disjoint component는
-  하나의 multi-contour `renderGeometry` fragment로 묶어 sourcePoints를 한 번만
-  보존한다. 굵은 획의 가운데 띠를 떼었을 때 위·아래 잔여 모양이 원본 계보를
-  각각 복제하여 point budget을 넘거나 저장 데이터가 불필요하게 늘지 않아야 한다.
+  방향으로 엄격히 전진할 때만 masked 계보를 허용한다. 이 검사는 최초 canonical
+  분리에만 적용한다. 실제 표시 기준은 envelope가 아니라 교집합·차집합의
+  `renderGeometry`다.
+- 저장된 `renderGeometry`는 이미 outline fragment이므로 재선택 때 centerline
+  envelope를 다시 복원하거나 숨은 구간을 이웃 조각에 배분하지 않는다. 현재의
+  exact clipped fill을 다시 둘로 자르고 양쪽을 compact outline으로 저장한다.
+  이 규칙으로 leading, trailing, internal gap이 다음 세대에 재편입되지 않는다.
+  최초 canonical 획에서 발견된 실제 source gap은 계속 취소한다.
+- 같은 선택 소유권을 가진 disjoint component는 하나의 multi-contour
+  `renderGeometry` fragment로 묶는다. 굵은 획의 가운데 띠를 떼었을 때 위·아래
+  잔여 모양이 원본 계보를 각각 복제하지 않고 하나의 compact outline과 두 개의
+  support point만 저장해야 한다.
 - 정확한 clipped fill이 보이는 경우에는 source index 길이가 1보다 짧아도
   보간한 양 끝 source sample을 보존한다. 기존 centerline/polygon 기반 split의
   sub-pixel 폐기 기준은 유지하고, authoritative `renderGeometry` fragment를
   만드는 경로에서만 이 예외를 사용한다.
-- envelope 계보와 반대편 fragment의 source 구간은 일부 겹칠 수 있지만 표시
-  채움은 겹치지 않는다. U-turn처럼 chord 방향 진행이 멈추거나 되돌아가는 획,
-  self-cross처럼 여러 분기가 선택되는 획, raw source domain에 공백이 생기는
-  투영은 기존처럼 전체 gesture를 원자적으로 취소한다.
+- envelope 계보가 원본보다 의미 있게 커지거나 선택/잔여 fragment가 원본
+  centerline을 대량으로 공유해야 하면 canonical 분할을 사용하지 않는다. U-turn,
+  self-cross, 굵기 방향 절단은 선택/잔여 component를 각각 하나의 multi-contour
+  compact outline fragment로 묶고, 각 fragment의 `sourcePoints`는 결정적 두 점으로
+  제한한다. 이미 `renderGeometry`가 있는 fragment를 다시 자를 때도 항상 이 경로를
+  사용하므로 반복 선택이 이전 계보를 다시 복제하지 않는다.
+- canonical raw source domain에 실제 공백이 생기고 exact clipped fill도 만들 수
+  없는 경우, geometry operation budget이나 fragment/문자열 한도를 넘는 경우에는
+  전체 gesture를 원자적으로 취소한다.
 - 잘라낸 표시 모양은 version 1 `renderGeometry`로 이동·Delete·Undo/Redo와
   리뷰 데이터 저장/복원을 왕복한다. 이후 재선택도 저장된 채움을 다시
   authoritative geometry로 사용한다.
@@ -243,7 +254,9 @@ cache hit도 cold build의 logical cost를 동일하게 차감한다.
 추가 회귀 검증은 두께 일부만 걸친 곡선 획을 사각형과 라쏘로 각각 선택해,
 선택 경계 밖 픽셀은 제자리에 남고 안쪽 픽셀만 이동하는지 확인한다. 이동 결과를
 저장·hydrate한 뒤 남은 `renderGeometry`를 다시 부분 선택해 이동·Undo할 수 있어야
-한다. U-turn, self-cross, source-gap fixture는 계속 원자적으로 취소되어야 한다.
+한다. U-turn과 self-cross는 compact outline으로 성공해야 하며, 반복 분할 뒤 모든
+outline fragment의 `sourcePoints`는 두 점을 유지해야 한다. 실제 source-gap,
+geometry/budget 실패 fixture는 계속 원자적으로 취소되어야 한다.
 
 이 표와 L-turn 실제 픽셀 hit/miss, 저장 후 재선택, thin/tangent/kissing/hole
 fixture가 모두 통과해야 Task 8을 완료한 것으로 본다.

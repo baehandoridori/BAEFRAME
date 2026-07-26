@@ -108,6 +108,29 @@ function createDrawingHostHarness(options = {}) {
               activeSessionId: 'session-1',
               targetFrame: 24,
               tool: 'select',
+              selectionTarget: 'partial',
+              selectionShape: 'lasso',
+              selectionControlEventCount: 4,
+              lastSelectionControlAction: {
+                kind: 'shape',
+                value: 'lasso',
+                source: 'pointerdown',
+                eventCount: 4,
+                scene: { mustNotLeak: true }
+              },
+              activeSelectionGesture: null,
+              lastSelectionGesture: {
+                target: 'partial',
+                shape: 'lasso',
+                pointerPointCount: 7,
+                polygonPointCount: 5,
+                polygonBounds: { left: 10, right: 110, top: 20, bottom: 120 },
+                pending: true,
+                applied: false,
+                selectedCount: 2,
+                reason: null,
+                scene: { mustNotLeak: true }
+              },
               objectCount: 1,
               selectionCount: 1,
               mutationCount: 2,
@@ -147,6 +170,10 @@ function createDrawingHostHarness(options = {}) {
           fakeMainWindow.focused = false;
         }
       }
+    }
+    focus() {
+      this.focused = true;
+      events.push(['overlay.focus']);
     }
     showInactive() {
       events.push(['showInactive']);
@@ -1454,7 +1481,7 @@ test('successful drawing activation repaints before pointer input without z-orde
   );
 });
 
-test('returns focus to the main window and relays keyboard input while the drawing overlay owns focus', async () => {
+test('relays keyboard input through the focused main renderer and restores main focus on disable', async () => {
   const { host, events, windows } = createDrawingHostHarness();
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
   const { hostGeneration } = ensured.drawingCapability;
@@ -1484,10 +1511,10 @@ test('returns focus to the main window and relays keyboard input while the drawi
     key: 'b',
     code: 'KeyB',
     shift: false,
-    control: true,
+    control: false,
     alt: false,
     meta: false,
-    isAutoRepeat: true
+    isAutoRepeat: false
   });
 
   assert.equal(prevented, true);
@@ -1498,12 +1525,16 @@ test('returns focus to the main window and relays keyboard input while the drawi
       key: 'b',
       code: 'KeyB',
       shiftKey: false,
-      ctrlKey: true,
+      ctrlKey: false,
       altKey: false,
       metaKey: false,
-      repeat: true
-    }]
+      repeat: false
+    }],
+    ['overlay.focus']
   ]);
+  const relayDiagnostics = await host.getDrawingDiagnostics();
+  assert.equal(relayDiagnostics.keyboardRelayCount, 1);
+  assert.equal(relayDiagnostics.lastKeyboardRelayCode, 'KeyB');
 
   events.length = 0;
   windows[0].focused = true;
@@ -1519,6 +1550,85 @@ test('returns focus to the main window and relays keyboard input while the drawi
   assert.ok(ignoreIndex >= 0);
   assert.ok(focusableDisableIndex > ignoreIndex);
   assert.ok(mainFocusIndex > focusableDisableIndex);
+});
+
+test('V Delete Space and repeat relay keep the active drawing overlay focused', async () => {
+  const { host, events, windows, mainWindow } = createDrawingHostHarness();
+  await activateDrawingHost({ host, events, windows, mainWindow }, {
+    sessionId: 'session-toolbar-focus-relay'
+  });
+  windows[0].focused = true;
+  mainWindow.focused = false;
+  events.length = 0;
+
+  const emit = input => {
+    let prevented = false;
+    windows[0].webContents.emit('before-input-event', {
+      preventDefault() {
+        prevented = true;
+      }
+    }, {
+      type: 'keyDown',
+      key: '',
+      code: '',
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+    assert.equal(prevented, true);
+  };
+
+  emit({ key: 'v', code: 'KeyV' });
+  emit({ key: 'v', code: 'KeyV', isAutoRepeat: true });
+  emit({ key: 'Delete', code: 'Delete' });
+  emit({ key: ' ', code: 'Space' });
+  emit({ type: 'keyUp', key: 'v', code: 'KeyV' });
+  emit({ key: 'b', code: 'KeyB', isAutoRepeat: true });
+  emit({ type: 'keyUp', key: 'b', code: 'KeyB' });
+
+  assert.equal(
+    events.filter(([name]) => name === 'mainWindow.send').length,
+    7
+  );
+  assert.equal(
+    events.some(([name]) => name === 'mainWindow.focus'),
+    false,
+    'non-toggle relay must not turn the next toolbar click into a window activation click'
+  );
+  assert.equal(windows[0].focused, true);
+  assert.equal(mainWindow.focused, false);
+});
+
+test('disabling a focused overlay completes main focus handoff without B pre-focus', async () => {
+  const harness = createDrawingHostHarness({
+    simulateFocusableDisableDeactivation: true
+  });
+  const tokens = await activateDrawingHost(harness, {
+    sessionId: 'session-custom-toggle-focus-handoff'
+  });
+  harness.windows[0].focused = true;
+  harness.mainWindow.focused = false;
+  harness.events.length = 0;
+
+  await harness.host.setDrawingInput(makeDrawingInput(tokens.hostGeneration, {
+    videoGeneration: tokens.videoGeneration,
+    inputRevision: tokens.inputRevision + 1,
+    enabled: false
+  }));
+
+  const focusableDisableIndex = harness.events.findIndex(([name, value]) =>
+    name === 'setFocusable' && value === false);
+  const mainFocusIndex = harness.events.findIndex(([name]) =>
+    name === 'mainWindow.focus');
+  const mainWebContentsFocusIndex = harness.events.findIndex(([name]) =>
+    name === 'mainWindow.webContents.focus');
+  assert.ok(focusableDisableIndex >= 0);
+  assert.ok(mainFocusIndex > focusableDisableIndex);
+  assert.ok(mainWebContentsFocusIndex > mainFocusIndex);
+  assert.equal(harness.mainWindow.focused, true);
 });
 
 test('completes the main-window focus handoff when relayed B disables a focused drawing overlay', async () => {
@@ -1542,9 +1652,8 @@ test('completes the main-window focus handoff when relayed B disables a focused 
     }
   }));
 
-  // A pointer interaction gives the native overlay keyboard focus. Relaying B moves
-  // focus to main, then Electron's Windows setFocusable(false) deactivation can move
-  // it again to a sibling owned window unless main is restored afterward.
+  // A pointer interaction gives the native overlay keyboard focus. Relaying B keeps
+  // that focus until disable so the host can complete one deterministic handoff.
   windows[0].focused = true;
   windows[0].webContents.emit('before-input-event', { preventDefault() {} }, {
     type: 'keyDown',
@@ -2063,10 +2172,35 @@ test('leaves the original overlay key untouched when forwarding fails', async ()
   }, { type: 'keyDown', key: 'v', code: 'KeyV' }));
   assert.equal(prevented, false);
   assert.equal(events.some(([name]) => name === 'mainWindow.send'), true);
+
+  events.length = 0;
+  prevented = false;
+  windows[0].focused = true;
+  assert.doesNotThrow(() => windows[0].webContents.emit('before-input-event', {
+    preventDefault: () => {
+      prevented = true;
+    }
+  }, {
+    type: 'keyDown',
+    key: 'b',
+    code: 'KeyB',
+    shift: false,
+    control: false,
+    alt: false,
+    meta: false,
+    isAutoRepeat: false
+  }));
+  assert.equal(prevented, false);
+  assert.deepEqual(events.map(([name]) => name), [
+    'mainWindow.focus',
+    'mainWindow.send',
+    'overlay.focus'
+  ]);
+  assert.equal(windows[0].focused, true);
 });
 
 test('rejects stale host video input session and tool revisions at the host boundary', async () => {
-  const { host } = createDrawingHostHarness();
+  const { host, events } = createDrawingHostHarness();
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
   const { hostGeneration } = ensured.drawingCapability;
   const session = {
@@ -2117,6 +2251,11 @@ test('rejects stale host video input session and tool revisions at the host boun
   assert.equal((await host.updateDrawingTool({ ...currentTool, sessionId: 'session-stale' })).success, false);
   assert.equal((await host.updateDrawingTool(currentTool)).success, true);
   assert.equal((await host.updateDrawingTool({ ...currentTool, toolRevision: 1, tool: 'brush' })).success, false);
+  assert.equal(
+    events.filter(([name]) => name === 'overlay.focus').length,
+    1,
+    'only the accepted V tool change restores overlay focus for the next toolbar click'
+  );
 });
 
 test('stale disable requests cannot close native input owned by the current active session', async () => {
@@ -2212,6 +2351,26 @@ test('deduplicates drawing actions and allowlists lightweight host responses', a
   assert.equal(diagnostics.inputRevision, 2);
   assert.equal(diagnostics.activeSessionId, 'session-actions');
   assert.equal(diagnostics.objectCount, 1);
+  assert.equal(diagnostics.selectionTarget, 'partial');
+  assert.equal(diagnostics.selectionShape, 'lasso');
+  assert.equal(diagnostics.selectionControlEventCount, 4);
+  assert.deepEqual(diagnostics.lastSelectionControlAction, {
+    kind: 'shape',
+    value: 'lasso',
+    source: 'pointerdown',
+    eventCount: 4
+  });
+  assert.deepEqual(diagnostics.lastSelectionGesture, {
+    target: 'partial',
+    shape: 'lasso',
+    pointerPointCount: 7,
+    polygonPointCount: 5,
+    polygonBounds: { left: 10, right: 110, top: 20, bottom: 120 },
+    pending: true,
+    applied: false,
+    selectedCount: 2,
+    reason: null
+  });
   assert.equal(diagnostics.undoDepth, 2);
   assert.equal(diagnostics.redoDepth, 1);
   assert.equal(diagnostics.historyBytes, 1024);
@@ -3701,18 +3860,18 @@ test('Fabric 시험 툴바는 작은 화면에서도 읽기 쉽고 현재 도구
     hostSource,
     /\.mpv-fabric-pilot-badge\s*\{[^}]*font-variant-numeric:\s*tabular-nums[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s
   );
-  assert.match(hostSource, /@media\s*\(max-width:\s*640px\)\s*\{/s);
+  assert.match(hostSource, /@media\s*\(max-width:\s*800px\)\s*\{/s);
   assert.match(
     hostSource,
-    /@media\s*\(max-width:\s*640px\)[\s\S]*?--fabric-toolbar-gap:\s*4px[\s\S]*?padding:\s*4px/s
+    /@media\s*\(max-width:\s*800px\)[\s\S]*?--fabric-toolbar-gap:\s*4px[\s\S]*?padding:\s*4px/s
   );
   assert.match(
     hostSource,
-    /@media\s*\(max-width:\s*640px\)[\s\S]*?\.mpv-fabric-pilot-toolbar button\s*\{[^}]*padding-inline:\s*8px/s
+    /@media\s*\(max-width:\s*800px\)[\s\S]*?\.mpv-fabric-pilot-toolbar button\s*\{[^}]*padding-inline:\s*8px/s
   );
   assert.match(
     hostSource,
-    /@media\s*\(max-width:\s*640px\)[\s\S]*?data-fabric-pilot-output="summary"[\s\S]*?display:\s*none/s
+    /@media\s*\(max-width:\s*800px\)[\s\S]*?data-fabric-pilot-output="summary"[\s\S]*?display:\s*none/s
   );
   assert.match(hostSource, /#root\s*\{[^}]*overflow:\s*hidden/s);
   assert.doesNotMatch(

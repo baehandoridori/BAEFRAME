@@ -14837,6 +14837,7 @@ void main() {
         let currentSession = null;
         let activeStroke = null;
         let activeLasso = null;
+        let lastSelectionGesture = null;
         let pendingLassoSelection = null;
         let preservingPendingLassoSelectionEvent = false;
         let brushStyle = { ...DEFAULT_BRUSH_STYLE };
@@ -14844,6 +14845,8 @@ void main() {
         let brushPanelOpen = false;
         let selectionTarget = "stroke";
         let selectionShape = "rectangle";
+        let selectionControlEventCount = 0;
+        let lastSelectionControlAction = null;
         let selectionControls = null;
         let transformStart = null;
         let selectGesture = null;
@@ -14910,6 +14913,7 @@ void main() {
             button.dataset.active = String(active);
             button.setAttribute?.("aria-pressed", String(active));
           }
+          selectionControls.summary.textContent = selectionTarget === "partial" ? `\uD604\uC7AC: \uBD80\uBD84 \uC790\uB974\uAE30 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}` : `\uD604\uC7AC: \uD68D \uC804\uCCB4 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}`;
         }
         function usesNativeRectangleSelection(tool = currentSession?.tool) {
           return tool === "select" && selectionTarget === "stroke" && selectionShape === "rectangle";
@@ -14938,8 +14942,18 @@ void main() {
             syncSelectionControls();
           }
         }
-        function setSelectionTarget(target) {
+        function recordSelectionControlAction(kind, value, source = "click") {
+          selectionControlEventCount += 1;
+          lastSelectionControlAction = {
+            kind,
+            value,
+            source,
+            eventCount: selectionControlEventCount
+          };
+        }
+        function setSelectionTarget(target, source = "click") {
           const nextTarget = target === "partial" ? "partial" : "stroke";
+          recordSelectionControlAction("target", nextTarget, source);
           if (selectionTarget === nextTarget) return selectionTarget;
           const viewportContext = clearSelectionForConfigurationChange();
           selectionTarget = nextTarget;
@@ -14947,8 +14961,9 @@ void main() {
           settleDeferredViewport(viewportContext.sessionId, viewportContext.inputRevision);
           return selectionTarget;
         }
-        function setSelectionShape(shape) {
+        function setSelectionShape(shape, source = "click") {
           const nextShape = shape === "lasso" ? "lasso" : "rectangle";
+          recordSelectionControlAction("shape", nextShape, source);
           if (selectionShape === nextShape) return selectionShape;
           const viewportContext = clearSelectionForConfigurationChange();
           selectionShape = nextShape;
@@ -14964,7 +14979,7 @@ void main() {
           setStyles(group, {
             display: "none",
             alignItems: "center",
-            gap: "4px",
+            gap: "8px",
             padding: "3px",
             borderRadius: "8px",
             background: "rgba(255, 255, 255, 0.08)"
@@ -14973,19 +14988,35 @@ void main() {
           targetGroup.dataset.fabricPilotGroup = "selection-target";
           targetGroup.setAttribute?.("role", "group");
           targetGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uB300\uC0C1");
-          setStyles(targetGroup, { display: "flex", alignItems: "center", gap: "4px" });
+          setStyles(targetGroup, {
+            display: "flex",
+            alignItems: "center",
+            gap: "4px",
+            paddingRight: "8px",
+            borderRight: "1px solid rgba(255, 255, 255, 0.18)"
+          });
+          const targetLabel = documentRef.createElement("span");
+          targetLabel.dataset.fabricPilotLabel = "selection-target";
+          targetLabel.textContent = "\uC120\uD0DD \uB300\uC0C1";
+          setStyles(targetLabel, {
+            color: "rgba(255, 255, 255, 0.64)",
+            fontSize: "11px",
+            fontWeight: "600",
+            whiteSpace: "nowrap"
+          });
           const strokeTargetButton = labelToolbarButton(
-            createButton("\uD68D", "select-target-stroke"),
+            createButton("\uD68D \uC804\uCCB4", "select-target-stroke"),
             "\uD68D \uC804\uCCB4 \uC120\uD0DD"
           );
           const partialTargetButton = labelToolbarButton(
-            createButton("\uBD80\uBD84", "select-target-partial"),
+            createButton("\uBD80\uBD84 \uC790\uB974\uAE30", "select-target-partial"),
             "\uD68D \uC77C\uBD80 \uC120\uD0DD"
           );
           const targetButtons = /* @__PURE__ */ new Map([
             ["stroke", strokeTargetButton],
             ["partial", partialTargetButton]
           ]);
+          targetGroup.appendChild(targetLabel);
           for (const button of targetButtons.values()) {
             button.setAttribute?.("aria-pressed", "false");
             targetGroup.appendChild(button);
@@ -14995,29 +15026,65 @@ void main() {
           shapeGroup.setAttribute?.("role", "group");
           shapeGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uBAA8\uC591");
           setStyles(shapeGroup, { display: "flex", alignItems: "center", gap: "4px" });
+          const shapeLabel = documentRef.createElement("span");
+          shapeLabel.dataset.fabricPilotLabel = "selection-shape";
+          shapeLabel.textContent = "\uC601\uC5ED \uBAA8\uC591";
+          setStyles(shapeLabel, {
+            color: "rgba(255, 255, 255, 0.64)",
+            fontSize: "11px",
+            fontWeight: "600",
+            whiteSpace: "nowrap"
+          });
           const rectangleShapeButton = labelToolbarButton(
-            createButton("\uC0AC\uAC01\uD615", "select-shape-rectangle"),
+            createButton("\uC0AC\uAC01 \uC601\uC5ED", "select-shape-rectangle"),
             "\uC0AC\uAC01\uD615 \uC120\uD0DD"
           );
           const lassoShapeButton = labelToolbarButton(
-            createButton("\uB77C\uC3D8", "select-shape-lasso"),
+            createButton("\uB77C\uC3D8 \uC601\uC5ED", "select-shape-lasso"),
             "\uB77C\uC3D8 \uC120\uD0DD"
           );
           const shapeButtons = /* @__PURE__ */ new Map([
             ["rectangle", rectangleShapeButton],
             ["lasso", lassoShapeButton]
           ]);
+          shapeGroup.appendChild(shapeLabel);
           for (const button of shapeButtons.values()) {
             button.setAttribute?.("aria-pressed", "false");
             shapeGroup.appendChild(button);
           }
+          const summary = documentRef.createElement("span");
+          summary.dataset.fabricPilotOutput = "selection-summary";
+          summary.setAttribute?.("role", "status");
+          summary.setAttribute?.("aria-live", "polite");
+          setStyles(summary, {
+            minWidth: "150px",
+            color: "rgba(255, 255, 255, 0.76)",
+            fontSize: "11px",
+            fontWeight: "650",
+            whiteSpace: "nowrap"
+          });
           group.appendChild(targetGroup);
           group.appendChild(shapeGroup);
-          addDomListener(strokeTargetButton, "click", () => setSelectionTarget("stroke"));
-          addDomListener(partialTargetButton, "click", () => setSelectionTarget("partial"));
-          addDomListener(rectangleShapeButton, "click", () => setSelectionShape("rectangle"));
-          addDomListener(lassoShapeButton, "click", () => setSelectionShape("lasso"));
-          return { group, targetGroup, shapeGroup, targetButtons, shapeButtons };
+          group.appendChild(summary);
+          const bindSelectionControl = (button, action) => {
+            addDomListener(button, "pointerdown", (event) => {
+              if (event?.button !== void 0 && event.button !== 0) return;
+              action("pointerdown");
+            });
+            addDomListener(button, "click", () => action("click"));
+          };
+          bindSelectionControl(strokeTargetButton, (source) => setSelectionTarget("stroke", source));
+          bindSelectionControl(partialTargetButton, (source) => setSelectionTarget("partial", source));
+          bindSelectionControl(rectangleShapeButton, (source) => setSelectionShape("rectangle", source));
+          bindSelectionControl(lassoShapeButton, (source) => setSelectionShape("lasso", source));
+          return {
+            group,
+            targetGroup,
+            shapeGroup,
+            targetButtons,
+            shapeButtons,
+            summary
+          };
         }
         function setBrushColor(color) {
           if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
@@ -15524,6 +15591,12 @@ void main() {
           removeLassoPreview();
           activeLasso = null;
           releasePointerCapture(fabricCanvas?.upperCanvasEl || canvasElement, pointerId);
+          if (previousSelectionContext?.pendingSelection && pendingLassoSelection === previousSelectionContext.pendingSelection) {
+            abortPendingLassoSelection({
+              authoritative: !pendingLassoIsFresh(previousSelectionContext.pendingSelection)
+            });
+            return;
+          }
           restoreSelectionContext(previousSelectionContext);
         }
         function strokeObjectSceneBounds(record, object, padding = 0) {
@@ -15837,7 +15910,7 @@ void main() {
           if (!Number.isFinite(chordLength) || chordLength <= SOURCE_INTERVAL_EPSILON) {
             return {
               monotone: false,
-              reason: "selection-geometry-unavailable"
+              reason: Number.isFinite(chordLength) ? null : "selection-geometry-unavailable"
             };
           }
           const axisX = chordX / chordLength;
@@ -15851,11 +15924,14 @@ void main() {
             }
             const sourceProgress = segment.end.sourcePosition - segment.start.sourcePosition;
             const chordProgress = (segment.end.x - segment.start.x) * axisX + (segment.end.y - segment.start.y) * axisY;
-            if (!Number.isFinite(sourceProgress) || !Number.isFinite(chordProgress) || sourceProgress < -SOURCE_INTERVAL_EPSILON || chordProgress <= SOURCE_INTERVAL_EPSILON) {
+            if (!Number.isFinite(sourceProgress) || !Number.isFinite(chordProgress) || sourceProgress < -SOURCE_INTERVAL_EPSILON) {
               return {
                 monotone: false,
                 reason: "selection-geometry-unavailable"
               };
+            }
+            if (chordProgress <= SOURCE_INTERVAL_EPSILON) {
+              return { monotone: false, reason: null };
             }
           }
           return { monotone: true, reason: null };
@@ -15955,7 +16031,10 @@ void main() {
               return { projections: null, reason: monotone.reason };
             }
             if (!monotone.monotone) {
-              return { projections: null, reason: "selection-geometry-unavailable" };
+              return {
+                projections: null,
+                reason: "selection-nonmonotone-centerline"
+              };
             }
             const coverage = sourceEnvelopesCoverSourceDomain(planned, budget);
             if (coverage.reason) {
@@ -16050,6 +16129,71 @@ void main() {
           path.setPositionByOrigin(fragmentCenter, "center", "center");
           path.setCoords?.();
           return true;
+        }
+        function compactOutlineSourcePoints(sourcePoints, budget) {
+          if (!Array.isArray(sourcePoints) || sourcePoints.length < 2) {
+            return { points: null, reason: "selection-geometry-unavailable" };
+          }
+          if (!budget.consume(sourcePoints.length)) {
+            return { points: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          const first = sourcePoints[0];
+          let furthest = sourcePoints.at(-1);
+          let furthestDistance = -1;
+          for (let index = 1; index < sourcePoints.length; index += 1) {
+            const candidate = sourcePoints[index];
+            const dx = finiteNumber(candidate.x) - finiteNumber(first.x);
+            const dy = finiteNumber(candidate.y) - finiteNumber(first.y);
+            const distance = dx * dx + dy * dy;
+            if (distance > furthestDistance) {
+              furthestDistance = distance;
+              furthest = candidate;
+            }
+          }
+          return {
+            points: [clonePlain(first), clonePlain(furthest)],
+            reason: null
+          };
+        }
+        function createCompactOutlineComponentPlans(record, remainingComponents, selectedComponents, budget) {
+          const support = compactOutlineSourcePoints(record.sourcePoints, budget);
+          if (!support.points || support.reason) {
+            return { plans: null, reason: support.reason };
+          }
+          const plans = [];
+          for (const group of [
+            { selected: false, components: remainingComponents },
+            { selected: true, components: selectedComponents }
+          ]) {
+            const contourCount = group.components.reduce(
+              (count, component) => count + (component?.contours?.length || 0),
+              0
+            );
+            if (!budget.consume(group.components.length + contourCount + 1)) {
+              return {
+                plans: null,
+                reason: "selection-complexity-limit-exceeded"
+              };
+            }
+            const renderPathData = contourPathData(
+              group.components.flatMap((component) => component.contours)
+            );
+            if (!renderPathData || renderPathData.length > MAX_PERSISTENCE_STRING_LENGTH) {
+              return { plans: null, reason: "selection-geometry-unavailable" };
+            }
+            plans.push({
+              selected: group.selected,
+              points: support.points.map((point) => clonePlain(point)),
+              interval: [0, record.sourcePoints.length - 1],
+              caps: { start: false, end: false },
+              renderGeometry: {
+                version: 1,
+                pathData: renderPathData,
+                fillRule: "evenodd"
+              }
+            });
+          }
+          return { plans, reason: null };
         }
         function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null, renderGeometry = null) {
           if (!Array.isArray(points) || points.length < 2) return null;
@@ -16527,6 +16671,15 @@ void main() {
               selectedObjectIds: restoredSelectionIds
             };
           };
+          const queueReplacementPlan = (record, object, componentPlans) => {
+            accumulatedFragments += componentPlans.length;
+            const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) + accumulatedFragments;
+            if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
+              return false;
+            }
+            replacementPlans.push({ record, object, componentPlans });
+            return true;
+          };
           if (!validateSimpleContour(polygon, geometryBudget)) {
             return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
           }
@@ -16581,6 +16734,21 @@ void main() {
             const selectedClip = clipped.intersection;
             if (selectedClip.reason) return fail(selectedClip.reason);
             if (selectedClip.components.length === 0) continue;
+            if (record.renderGeometry !== void 0) {
+              const compact = createCompactOutlineComponentPlans(
+                record,
+                remainingClip.components,
+                selectedClip.components,
+                geometryBudget
+              );
+              if (!compact.plans || compact.reason) {
+                return fail(compact.reason || "selection-geometry-unavailable");
+              }
+              if (!queueReplacementPlan(record, object, compact.plans)) {
+                return fail("lasso-fragment-limit-exceeded");
+              }
+              continue;
+            }
             const centerline = createStoredCenterline(record, geometryBudget);
             if (!centerline.geometry || centerline.reason) {
               return fail(centerline.reason || "selection-geometry-unavailable");
@@ -16613,6 +16781,21 @@ void main() {
               geometryBudget
             );
             if (!bridged.projections || bridged.reason) {
+              if (bridged.reason === "selection-nonmonotone-centerline") {
+                const compact = createCompactOutlineComponentPlans(
+                  record,
+                  remainingClip.components,
+                  selectedClip.components,
+                  geometryBudget
+                );
+                if (!compact.plans || compact.reason) {
+                  return fail(compact.reason || "selection-geometry-unavailable");
+                }
+                if (!queueReplacementPlan(record, object, compact.plans)) {
+                  return fail("lasso-fragment-limit-exceeded");
+                }
+                continue;
+              }
               return fail(bridged.reason || "selection-geometry-unavailable");
             }
             const grouped = groupProjectedComponentsBySourceInterval(
@@ -16661,20 +16844,30 @@ void main() {
                 }
               });
             }
-            const totalPlannedPoints = componentPlans.reduce(
+            let totalPlannedPoints = componentPlans.reduce(
               (count, plan) => count + plan.points.length,
               0
             );
-            if (totalPlannedPoints > record.sourcePoints.length * 2 + componentPlans.length * 2) {
-              return fail("selection-geometry-unavailable");
+            if (totalPlannedPoints > record.sourcePoints.length + componentPlans.length * 2) {
+              const compact = createCompactOutlineComponentPlans(
+                record,
+                remainingClip.components,
+                selectedClip.components,
+                geometryBudget
+              );
+              if (!compact.plans || compact.reason) {
+                return fail(compact.reason || "selection-geometry-unavailable");
+              }
+              componentPlans.splice(0, componentPlans.length, ...compact.plans);
+              totalPlannedPoints = componentPlans.reduce(
+                (count, plan) => count + plan.points.length,
+                0
+              );
             }
             componentPlans.sort((left, right) => left.interval[0] - right.interval[0] || Number(left.selected) - Number(right.selected) || left.interval[1] - right.interval[1]);
-            accumulatedFragments += componentPlans.length;
-            const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) + accumulatedFragments;
-            if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
+            if (!queueReplacementPlan(record, object, componentPlans)) {
               return fail("lasso-fragment-limit-exceeded");
             }
-            replacementPlans.push({ record, object, componentPlans });
           }
           const replacements = [];
           const selectedFragmentIds = /* @__PURE__ */ new Set();
@@ -16738,7 +16931,25 @@ void main() {
           );
           removeLassoPreview();
           activeLasso = null;
-          return selectionTarget === "stroke" ? finalizeWholeStrokeSelectionPolygon(polygon, gesture.previousSelectionContext) : finalizePartialSelectionPolygon(polygon, gesture.previousSelectionContext);
+          const result = selectionTarget === "stroke" ? finalizeWholeStrokeSelectionPolygon(polygon, gesture.previousSelectionContext) : finalizePartialSelectionPolygon(polygon, gesture.previousSelectionContext);
+          const polygonBounds = boundsForPoints(polygon);
+          lastSelectionGesture = {
+            target: selectionTarget,
+            shape: gesture.shape,
+            pointerPointCount: gesture.points.length,
+            polygonPointCount: polygon.length,
+            polygonBounds: polygonBounds ? {
+              left: finiteNumber(polygonBounds.left),
+              right: finiteNumber(polygonBounds.right),
+              top: finiteNumber(polygonBounds.top),
+              bottom: finiteNumber(polygonBounds.bottom)
+            } : null,
+            pending: result?.pending === true,
+            applied: result?.applied === true,
+            selectedCount: Array.isArray(result?.selectedObjectIds) ? result.selectedObjectIds.length : 0,
+            reason: typeof result?.reason === "string" ? result.reason.slice(0, 128) : null
+          };
+          return result;
         }
         function pointerTargetsActiveSelection(event) {
           const activeObject = fabricCanvas?.getActiveObject?.();
@@ -16946,6 +17157,7 @@ void main() {
               pointerId: event.pointerId,
               sessionId: currentSession?.sessionId,
               inputRevision: tokenState.inputRevision,
+              phase: "tracking",
               shape: selectionShape,
               previousSelectionContext: {
                 objectIds: [...previousSelectedObjectIds],
@@ -17002,6 +17214,7 @@ void main() {
           if (activeLasso) {
             if (event.pointerId !== activeLasso.pointerId) return;
             const { sessionId, inputRevision } = activeLasso;
+            activeLasso.phase = "settling";
             appendLassoPoint(event);
             releasePointerCapture(event.currentTarget || fabricCanvas?.upperCanvasEl, event.pointerId);
             finalizeActiveLasso();
@@ -17026,6 +17239,7 @@ void main() {
         function onPointerCancel(event) {
           if (activeLasso) {
             if (event.pointerId !== void 0 && event.pointerId !== activeLasso.pointerId) return;
+            if (event.type === "lostpointercapture" && activeLasso.phase === "settling") return;
             cancelActiveLasso();
             deferredViewport = null;
             return;
@@ -17037,6 +17251,7 @@ void main() {
           }
           const gesture = selectGesture;
           if (!gesture) {
+            if (event.type === "lostpointercapture") return;
             if (pendingLassoSelection) abortPendingLassoSelection();
             return;
           }
@@ -17669,6 +17884,14 @@ void main() {
             tool: scene.tool,
             selectionTarget,
             selectionShape,
+            selectionControlEventCount,
+            lastSelectionControlAction: lastSelectionControlAction ? clonePlain(lastSelectionControlAction) : null,
+            activeSelectionGesture: activeLasso ? {
+              target: selectionTarget,
+              shape: activeLasso.shape,
+              pointerPointCount: activeLasso.points.length
+            } : null,
+            lastSelectionGesture: lastSelectionGesture ? clonePlain(lastSelectionGesture) : null,
             objectCount: scene.objectCount,
             selectionCount: scene.selectionCount,
             mutationCount: scene.mutationCount,
