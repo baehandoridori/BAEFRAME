@@ -94,22 +94,26 @@ native marquee를 끄고 overlay가 pointer capture와 polygon preview를 관리
 - 선택된 active object의 경계 안에서 시작한 드래그만 기존 선택 이동으로 처리한다.
 
 선택 polygon은 각 Fabric Path의 `calcTransformMatrix()` 역행렬을 통과시킨 뒤
-`pathOffset`을 더해 원본 `sourcePoints`와 같은 좌표계로 옮긴다. 이 방식으로
-비균일 확대, 회전, 기울임, flip까지 원본 pressure/굵기 판정과 일치시킨다.
+`pathOffset`을 더해 실제 표시 Path와 같은 좌표계로 옮긴다. 이 방식으로 비균일
+확대, 회전, 기울임, flip이 있어도 화면에 보이는 채움과 선택 경계가 일치한다.
 
-`획 전체 + 라쏘`는 fragment splitter와 분리된 early-exit
-`strokeTouchesPolygon()`을 사용한다. 접촉 길이가 1 source-unit보다 짧아도 보이는
-획과 닿으면 원본 객체 ID 전체를 선택하며 fragment나 history를 만들지 않는다.
-polygon edge index와 gesture 전체 연산 budget으로 최악 입력을 제한한다. 한도를
-넘으면 일부 ID를 선택하지 않고 전체 선택을 원자적으로 취소한다.
+`획 전체 + 라쏘`는 fragment splitter와 분리된 실제 Path 채움 hit query를
+사용한다. 접촉 길이가 1 source-unit보다 짧아도 보이는 채움과 닿으면 원본 객체 ID
+전체를 선택하며 fragment나 history를 만들지 않는다. polygon/fill edge index와
+gesture 전체 연산 budget으로 최악 입력을 제한한다. 한도를 넘으면 일부 ID를
+선택하지 않고 전체 선택을 원자적으로 취소한다.
 
 `영역 일부 + 사각/라쏘`는 같은 polygon 이후 경로를 사용한다.
 
-1. scene polygon을 획의 원본 좌표계로 역변환한다.
-2. polygon과 원본 pressure를 포함한 실제 반폭 교차를 계산한다.
-3. inside/outside run을 만든다.
-4. 선택 시점에는 투명 fragment proxy만 준비한다.
-5. 실제 이동 또는 Delete에서만 `split-stroke` command 하나로 확정한다.
+1. scene polygon을 획의 실제 표시 Path 좌표계로 역변환한다.
+2. `renderGeometry`가 있으면 이를, 없으면 canonical `pathData`를 실제 채움으로
+   삼아 polygon과 교집합·차집합을 함께 계산한다.
+3. 선택/잔여 채움 component를 원본 centerline의 단조 source-position 구간에
+   투영한다. centerline은 데이터 계보를 찾는 데만 쓰며 hit/clip 판정의 근거로
+   쓰지 않는다.
+4. source-position 구간으로 원본 pressure/time chain을 보존한 fragment를 만든다.
+5. 선택 시점에는 투명 fragment proxy만 준비한다.
+6. 실제 이동 또는 Delete에서만 `split-stroke` command 하나로 확정한다.
 
 원본 획 자체가 점 또는 1 source-unit 미만이면 조작 가능한 fragment로 나눌 수
 없으므로, polygon과 닿을 때 원본 ID 전체를 부분 선택 transaction에 포함한다.
@@ -127,6 +131,13 @@ polygon edge index와 gesture 전체 연산 budget으로 최악 입력을 제한
 - fragment 하나라도 만들 수 없거나 용량 제한을 넘으면 원본 장면을 유지한다.
 - geometry 연산 한도나 역행렬 검증을 통과하지 못하면 일부 선택 없이 원본 장면을
   유지한다.
+- 선택 결과의 실제 채움은 선택/잔여 fragment별 `renderGeometry`로 저장하되,
+  `sourcePoints`, pressure/time, canonical `pathData`, transform은 계속 편집·Undo의
+  기준 데이터로 유지한다.
+- 저장 가능한 `renderGeometry`는 exact-key `{ version: 1, pathData, fillRule:
+  'evenodd' }`이며 닫힌 `M/L/Z` contour, 문자열 길이, 좌표 범위를 모두 통과해야
+  한다. 저장·hydrate·host 경계 중 하나라도 거부하면 문서 전체를 원자적으로
+  거부한다.
 - 선택 직후 lower canvas 픽셀은 바뀌지 않는다.
 - B/Space, mpv 재생, 타임라인, 리뷰 저장 형식은 변경하지 않는다.
 - 기존 HTML 드로잉 엔진과 legacy 픽셀 자유 선택은 사용하지 않는다.
@@ -154,3 +165,54 @@ polygon edge index와 gesture 전체 연산 budget으로 최악 입력을 제한
 14. 20,000점 획과 512/1024-edge polygon도 연산 budget 안에서 early-exit 또는
     원자적 취소한다.
 15. 400/500/640px에서 모든 도구막대 동작이 보이고 겹치지 않으며 최대 두 행이다.
+
+## 7. Task 8 addendum: 실제 채움 기준 자유 선택
+
+Task 5까지의 centerline/반폭 판정은 일반 획에는 충분하지만 perfect-freehand가 만든
+곡선 모서리, 압력 변화, 끝단에서 실제 Fabric 채움과 픽셀이 달라질 수 있다. Task
+8은 기존 네 선택 조합과 pending transaction 계약을 바꾸지 않고, 선택의
+authoritative geometry만 화면에 실제로 그려지는 Path 채움으로 승격한다.
+
+### 7.1 채움 해석과 topology
+
+- Fabric의 대문자 `M/L/Q/C/Z` Path만 엄격히 받아 `Q/C`를 허용 오차 내 선분으로
+  평탄화한다. 잘못된 command, 비유한 좌표, 열린 contour, 자기 교차로 결과를
+  확정할 수 없는 입력은 추정하지 않고 원자적으로 거부한다.
+- 원본 Path의 `evenodd`와 `nonzero` 채움 규칙을 그대로 해석한다. hole, 중첩
+  island, 동일/부분 공유 경계, 외부 tangent, 같은 점에서 닿는 크기가 같거나 다른
+  component, 상쇄 contour를 구분한다.
+- 높이 `0.1`, `0.05`, `0.01` source-unit의 얇은 실제 채움도 놓치지 않아야 하며,
+  상쇄 contour 옆의 빈 틈은 채움으로 오판하지 않는다. 한 번 잘라 저장한
+  `renderGeometry`를 다시 선택해도 같은 규칙이 유지된다.
+- partial clip의 교집합과 차집합은 한 번의 paired operation으로 만든다. 둘 중
+  하나라도 geometry/budget 실패이면 두 결과를 모두 폐기하며 원본 획 전체 선택으로
+  대체하지 않는다.
+
+### 7.2 계보·저장·복구
+
+- 실제 채움이 hit와 clip의 기준이어도 `sourcePoints`, pressure/time, caps,
+  transform은 canonical 편집 계보로 남는다. 채움 component는 BVH로 가속한
+  centerline 투영을 통해 단조 source-position 구간과 연결한다.
+- 잘라낸 표시 모양은 version 1 `renderGeometry`로 이동·Delete·Undo/Redo와
+  리뷰 데이터 저장/복원을 왕복한다. 이후 재선택도 저장된 채움을 다시
+  authoritative geometry로 사용한다.
+- 같은 gesture에서 geometry unavailable, fragment build, 역행렬, 공유 budget
+  실패가 나면 scene/history/save attempt뿐 아니라 gesture 시작 전 Fabric active
+  object와 `selectedObjectIds`도 정확히 복원한다. 중간에 scene/session revision이
+  달라졌다면 오래된 선택을 되살리지 않는다.
+
+### 7.3 연산 한도와 검증 기준
+
+flatten, spatial index, hit, paired clip, centerline 투영은 gesture당 하나의
+`250,000` operation budget을 공유한다. Path/contour BVH와 bounds query를 사용하며,
+cache hit도 cold build의 logical cost를 동일하게 차감한다.
+
+| fixture | 필수 결과 |
+| --- | --- |
+| 300점 실제 획 | 부분 사각 선택은 비파괴 stage 후 이동 시 3 fragment, Undo 시 원본 정확 복원, 250k 미만 |
+| 400점 실제 획 | 300점과 같은 실제 runtime 왕복, direct paired clip 200k 미만, 각 검증 1초 미만 |
+| 1,000점 실제 획 | 250k 이내에서 `selection-complexity-limit-exceeded`, 교집합·차집합 모두 빈 실패 결과, 부분 출력 없음 |
+| 20,000-edge Path | flatten/index 단계가 250k 이내에서 같은 complexity reason으로 중단, UI 장기 정지나 cache 우회 없음 |
+
+이 표와 L-turn 실제 픽셀 hit/miss, 저장 후 재선택, thin/tangent/kissing/hole
+fixture가 모두 통과해야 Task 8을 완료한 것으로 본다.

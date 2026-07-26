@@ -4,7 +4,7 @@
 
 **Goal:** V 도구에서 획 전체/영역 일부와 사각/라쏘를 독립적으로 선택하고, 사각형으로 고른 획 일부도 안전하게 이동·삭제·Undo/Redo한다.
 
-**Architecture:** overlay runtime의 로컬 선택 상태를 대상과 모양 두 축으로 나눈다. 사각 드래그는 네 점 polygon으로 바꾸고, 기존 라쏘의 검증된 polygon splitter와 pending `split-stroke` transaction을 그대로 재사용한다.
+**Architecture:** overlay runtime의 로컬 선택 상태를 대상과 모양 두 축으로 나눈다. 사각 드래그는 네 점 polygon으로 바꾸고, 사각/라쏘가 같은 pending `split-stroke` transaction을 사용한다. 최종 hit와 clip은 centerline 반폭 추정이 아니라 실제 Fabric Path 채움을 authoritative geometry로 사용한다.
 
 **Tech Stack:** Electron, Fabric.js 7.4, CommonJS, Node test runner, esbuild
 
@@ -13,6 +13,11 @@
 - 선택 대상과 모양은 리뷰 파일과 IPC에 저장하지 않는다.
 - 부분 선택 pointerup은 scene, history, dirty, save attempt를 바꾸지 않는다.
 - 실제 이동 또는 Delete에서만 원자적 `split-stroke` 한 번을 기록한다.
+- 실제 채움으로 잘라낸 표시 모양은 엄격히 검증한 version 1 `renderGeometry`로
+  저장하되 `sourcePoints`, pressure/time, caps, transform은 canonical 계보로
+  유지한다.
+- flatten, hit, paired clip, source-position 투영은 gesture당 하나의 250,000
+  operation budget을 공유하고, 실패 시 부분 결과를 적용하지 않는다.
 - 기존 B/Space/mpv/타임라인/리뷰 저장 계약을 바꾸지 않는다.
 - 기존 HTML 픽셀 자유 선택 코드는 재사용하지 않는다.
 
@@ -182,9 +187,9 @@ Expected: 독립 shape/target 조합이 없어 FAIL.
 
 - [ ] **Step 3: 비파괴 whole-hit 경로 구현**
 
-각 획에 `splitStrokePointsByPolygon()`을 적용하되 inside run 존재 여부만 사용한다.
-hit된 원본 ID를 `activateObjectIds()`에 전달하고 replacement, pending proxy,
-history를 만들지 않는다.
+각 획의 실제 표시 Path 채움과 selection polygon의 overlap만 판정한다. hit된 원본
+ID를 `activateObjectIds()`에 전달하고 replacement, pending proxy, history를 만들지
+않는다. Task 8의 fill query가 이 단계의 최종 geometry authority다.
 
 - [ ] **Step 4: 네 조합과 기존 선택 UX 회귀 확인**
 
@@ -246,8 +251,11 @@ branch를 push하고 사용자용 변경 요약, 상세 기술 설명, 개발 �
 
 ## Final review hardening addendum
 
-최초 Task 4 뒤 whole-branch 독립 리뷰에서 실제 재현된 여섯 Important를 출시 전에
-닫는다. 아래 Task 5~7이 완료되기 전에는 PR, 병합, 배포하지 않는다.
+최초 Task 4 뒤 whole-branch 독립 리뷰에서 실제 재현된 Important를 출시 전에
+닫는다. 아래 Task 5~8이 완료되기 전에는 PR, 병합, 배포하지 않는다. Task 8은
+Task 2/3/5의 최종 hit·clip 구현을 실제 채움 기준으로 대체하며 UX와 pending
+transaction 계약은 그대로 유지한다. Task 8 뒤에는 Task 7 전체 gate를 다시
+실행한다.
 
 ### Task 5: 변환 정확도·boolean hit·부분 점 획·연산 한도
 
@@ -341,3 +349,164 @@ BrowserWindow 위치, DOM 재생성은 변경하지 않는다.
 - [ ] Task 5, Task 6 각각 독립 리뷰
 - [ ] `e0da8c2..HEAD` whole-branch 재리뷰에서 Critical/Important 0
 - [ ] PR/Codex review/merge 뒤 exact merged SHA build와 배포 hash mismatch 0
+
+### Task 8: 실제 표시 채움 기반 hit·clip·저장
+
+Task 8은 Task 2/3/5의 centerline 반폭 기반 hit·clip을 대체한다. centerline은
+선택된 채움과 canonical `sourcePoints` 구간을 연결하는 계보 투영에만 사용한다.
+
+**Files:**
+- Create: `renderer/scripts/modules/drawing-v3/stroke-fill-geometry.js`
+- Create: `shared/drawing-render-geometry.js`
+- Modify: `renderer/scripts/modules/drawing-v3/stroke-splitter.js`
+- Modify: `renderer/scripts/modules/mpv-fabric-overlay-runtime.js`
+- Modify: `renderer/scripts/modules/fabric-drawing-persistence-store.js`
+- Modify: `main/mpv-overlay-host.js`
+- Test: `scripts/tests/mpv-fabric-overlay-runtime.test.js`
+- Test: `scripts/tests/fabric-drawing-persistence-store.test.mjs`
+- Test: `scripts/tests/mpv-overlay-host.test.js`
+
+**Interfaces:**
+- Consumes: Fabric Path의 대문자 `M/L/Q/C/Z`, selection polygon,
+  canonical stroke record, gesture 공유 geometry budget
+- Produces: `flattenFabricPath()`, `createPathFillQuery()`,
+  `pathFillOverlapsPolygon()`, fail-all `clipSimplePathFillPair()`,
+  version 1 `renderGeometry`
+- Preserves: `sourcePoints`, pressure/time, `strokeCaps`, transform, z-order,
+  pending 선택의 비파괴 stage 및 단일 `split-stroke` history command
+
+- [ ] **Step 1: centerline 추정과 실제 픽셀의 차이를 RED로 고정**
+
+실제 Fabric canvas에 size 20 perfect-freehand L-turn을 그리고, 모서리의 실제 alpha가
+255인 점을 작은 polygon으로 감싼다. whole/partial 모두 해당 점을 선택해야 한다.
+반대로 기존 raw centerline-radius에는 포함되지만 실제 alpha가 없는 바깥 점은 두
+모드 모두 선택하지 않아야 한다.
+
+Run:
+
+```powershell
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --test-name-pattern="rendered perfect-freehand L-turn|raw centerline-radius false positive" scripts/tests/mpv-fabric-overlay-runtime.test.js
+```
+
+Expected: centerline 반폭만 쓰는 구현은 실제 모서리 hit 또는 바깥 miss 중 하나가
+FAIL.
+
+- [ ] **Step 2: 실제 Path flatten과 fill query 구현**
+
+`flattenFabricPath()`는 command arity, 대문자 command, 유한 좌표, 닫힌 contour를
+엄격히 확인하고 `Q/C`를 허용 오차에 맞춰 선분화한다. 결과 edge와 contour는
+불변으로 만들고 bounds BVH를 구성한다. `createPathFillQuery()`는 원본 Path의
+`evenodd | nonzero` 규칙으로 hole/island/상쇄 contour를 판정한다.
+
+다음 fixture를 각각 양 winding과 두 fill rule에서 검증한다.
+
+- 동일 경계, 일부 공유 경계, 외부 tangent
+- 같은 점에서 닿는 동일/상이 크기 component
+- 중첩 hole/island와 완전히 상쇄된 contour
+- 높이 0.1/0.05/0.01의 얇은 채움과 그 옆의 빈 clearance
+
+Run:
+
+```powershell
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --test-name-pattern="thin actual fill|collinear equal|point-touching fills|nested evenodd|canceled contours" scripts/tests/mpv-fabric-overlay-runtime.test.js
+```
+
+Expected: 모든 overlap과 component/area assertion PASS.
+
+- [ ] **Step 3: paired clip과 canonical source 구간 투영**
+
+교집합과 차집합은 `clipSimplePathFillPair()` 한 번으로 계산한다. 어느 loop든
+geometry 또는 budget 실패가 나면 다음과 같이 두 결과를 함께 폐기한다.
+
+```js
+{
+  intersection: { components: [], reason: 'selection-complexity-limit-exceeded' },
+  difference: { components: [], reason: 'selection-complexity-limit-exceeded' }
+}
+```
+
+각 fill component는 centerline BVH의 bounds candidate만 조회해 단조
+source-position interval로 투영한다. `splitStrokePointsBySourceIntervals()`가
+그 구간을 잘라 원본 pressure/time chain과 caps를 보존한다. 분기점이 모호하거나
+component와 source interval을 일대일로 연결할 수 없으면 추정하지 않고
+`selection-geometry-unavailable`로 전체 gesture를 취소한다.
+
+- [ ] **Step 4: clipped `renderGeometry` 저장·복원 경계 구현**
+
+선택/잔여 fragment의 표시 채움은 다음 exact-key 형식으로 저장한다.
+
+```js
+{
+  version: 1,
+  pathData: 'M ... L ... Z',
+  fillRule: 'evenodd'
+}
+```
+
+`shared/drawing-render-geometry.js`의 동일 validator를 runtime, persistence store,
+host가 사용한다. `pathData`는 닫힌 `M/L/Z` contour만 허용하고 command injection,
+추가 key, 다른 version/fill rule, 비유한·범위 밖 좌표, 문자열 한도를 모두
+거부한다. 표시에는 `renderGeometry`를 우선 사용하지만 canonical `pathData`는
+계속 `sourcePoints`와 pressure에서 재생성 가능한 값이어야 한다.
+
+L-turn fragment의 이동 → Undo/Redo → export → hydrate → 같은 fragment 재선택을
+왕복해 실제 잘린 픽셀과 canonical source 데이터가 모두 유지되는지 확인한다.
+
+Run:
+
+```powershell
+npm run test:fabric-drawing-persistence
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --test-name-pattern="render geometry|rendered perfect-freehand L-turn" scripts/tests/mpv-fabric-overlay-runtime.test.js scripts/tests/mpv-overlay-host.test.js
+```
+
+Expected: valid version 1 값은 정확히 왕복하고 모든 malformed fixture는 원자적으로
+거부.
+
+- [ ] **Step 5: 공유 250k budget·cache 동등성·선택 복구**
+
+flatten, fill/path BVH, overlap, paired clip, centerline 투영은 같은
+`createGeometryBudget(250_000)`을 사용한다. cache hit도 저장된
+`logicalBuildCost`를 차감해 cold/warm 입력의 허용 여부가 같아야 한다.
+
+gesture 시작 시 active object ID와 `selectedObjectIds`를 함께 캡처한다. geometry,
+역행렬, fragment build, budget 실패가 나면 같은 scene/session revision에서만
+그 선택을 정확히 복구한다. scene/history/mutation/save attempt와 pending proxy는
+실패 전 상태여야 하며, revision이 바뀐 뒤에는 오래된 선택을 복구하지 않는다.
+
+- [ ] **Step 6: 300/400/1,000/20,000 검증 계약**
+
+동일한 sine 획, size 5.5, x=70..95 부분 사각 fixture로 다음을 고정한다.
+
+| 입력 | Expected |
+| --- | --- |
+| 300 samples | 비파괴 stage → 이동 후 3 fragments → Undo 원본 복구, 250k 미만 |
+| 400 samples | 같은 실제 runtime 왕복, direct paired clip 200k 미만, 각 1초 미만 |
+| 1,000 samples | 250k 안에서 complexity failure, intersection/difference 모두 폐기, 1초 미만 |
+| 20,000 edges | flatten 단계가 250k 안에서 complexity failure, 2초 미만 |
+
+Run:
+
+```powershell
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --test-name-pattern="realistic 300 and 400|paired clipping fits|fill cache logical cost|shared geometry operation budget|restores the exact prior multi-selection" scripts/tests/mpv-fabric-overlay-runtime.test.js
+```
+
+Expected: 표의 결과와 이전 다중 선택 exact restore 모두 PASS.
+
+- [ ] **Step 7: Task 8 이후 출시 gate 재실행**
+
+Run:
+
+```powershell
+npm run bundle:mpv-fabric-overlay
+npm run test:fabric-drawing-pilot
+npm run test:fabric-drawing-persistence
+npm run test:mpv
+npm run test:drawing
+npm run lint
+git diff --check
+```
+
+Expected: 모든 테스트 0 failures, lint 0 errors, source/browser bundle 계약 일치,
+diff check clean. Task 8 geometry, persistence/host, runtime 선택 복구를 각각 독립
+리뷰하고 `e0da8c2..HEAD` whole-branch Critical/Important 0을 확인한 뒤에만 PR,
+병합, exact merged SHA 빌드와 hash mismatch 0 배포로 진행한다.
