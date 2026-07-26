@@ -9612,6 +9612,17 @@ async function initApp() {
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
     const ownsDrawingShortcut =
       fabricDrawingPilotController.shouldOwnDrawingShortcut();
+    const bInput = snapshot?.bInput || {};
+    document.body.dataset.fabricDrawingPilotState = String(nextState || 'unknown');
+    document.body.dataset.fabricDrawingBInputAttempted = String(
+      Math.max(0, Math.trunc(Number(bInput.attempted) || 0))
+    );
+    document.body.dataset.fabricDrawingBInputAccepted = String(
+      Math.max(0, Math.trunc(Number(bInput.accepted) || 0))
+    );
+    document.body.dataset.fabricDrawingBInputRejected = String(
+      Math.max(0, Math.trunc(Number(bInput.rejected) || 0))
+    );
     document.body.classList.toggle(
       'fabric-drawing-pilot-enabled',
       ownsDrawingShortcut

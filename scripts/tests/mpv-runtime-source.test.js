@@ -514,6 +514,13 @@ test('package exposes an mpv pilot test command', () => {
   );
 });
 
+test('Fabric overlay bundling preserves logical node_modules paths in linked worktrees', () => {
+  assert.match(
+    packageJson.scripts['bundle:mpv-fabric-overlay'],
+    /(?:^|\s)--preserve-symlinks(?:\s|$)/
+  );
+});
+
 test('preload exposes a narrow mpv API surface', () => {
   assert.match(preloadSource, /mpvIsEnabled: \(\) => ipcRenderer\.invoke\('mpv:is-enabled'\)/);
   assert.match(preloadSource, /mpvIsAvailable: \(\) => ipcRenderer\.invoke\('mpv:is-available'\)/);

@@ -1775,6 +1775,63 @@ test('one hundred B-style warm reentries never duplicate the shadow document or 
   runtime.destroy();
 });
 
+test('B disable keeps committed Fabric drawings visible and restores the same scene on reentry', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([
+      { x: 30, y: 70 },
+      { x: 80, y: 90 },
+      { x: 140, y: 75 }
+    ], 507);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(before.objects.length, 1);
+
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+    assert.deepEqual(
+      harness.sceneStore.getSceneSnapshot('real-fabric-video', 0).objects,
+      before.objects
+    );
+    assert.equal(
+      harness.canvas.getObjects().filter(object => !object.__baeframeTransient).length,
+      1,
+      'B-off must leave committed vector paths on the overlay canvas'
+    );
+    assert.notEqual(harness.canvas.lowerCanvasEl.style.visibility, 'hidden');
+
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 3,
+      enabled: true,
+      session: {
+        sessionId: 'real-fabric-session',
+        stableVideoIdentity: 'real-fabric-video',
+        targetFrame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+        viewportTransform: { scale: 1, panX: 0, panY: 0 },
+        tool: 'brush'
+      }
+    }).accepted, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects
+    );
+    assert.equal(
+      harness.canvas.getObjects().filter(object => !object.__baeframeTransient).length,
+      1
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
 const crossingStrokePoints = (y = 100) => [
   { x: 20, y },
   { x: 50, y },
@@ -2190,7 +2247,7 @@ test('partial selection keeps a fully enclosed self-crossing stroke whole', asyn
   }
 });
 
-test('partial selection atomically rejects tied branches at a self-crossing stroke', async () => {
+test('partial selection moves exactly partitioned branches at a self-crossing stroke', async () => {
   const harness = createRealFabricHarness();
   try {
     harness.drawStroke(selfCrossingStrokePoints(), 79330);
@@ -2205,15 +2262,47 @@ test('partial selection atomically rejects tied branches at a self-crossing stro
       { x: 92, y: 92 }
     ], 79331);
 
-    assertSelectionStability(harness, before);
-    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
-    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects
+    );
+    assert.deepEqual(lassoHistoryState(harness.runtime), before.history);
+    assert.equal(
+      pendingLassoObjects(harness.canvas).length > 0,
+      true,
+      'an exact crossing partition must stage its intersecting branches'
+    );
+    harness.dragActiveSelectionBy(20, 10, 793311);
+    await Promise.resolve();
+
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(moved.objects.length > before.objects.length, true);
+    assert.equal(moved.objects.some(object => object.id === before.objects[0].id), false);
+    assert.equal(
+      moved.objects.every(record => record.renderGeometry?.version === 1),
+      true
+    );
+    assert.equal(
+      moved.objects.every(record => record.sourcePoints.length === 2),
+      true,
+      'a complex outline split must not duplicate the original centerline'
+    );
+    assert.equal(moved.selectedObjectIds.length > 0, true);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'self-crossing-partial-move-undo',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects
+    );
   } finally {
     await harness.destroy();
   }
 });
 
-test('partial selection atomically restores prior selection when one retained fill maps to wrapped source intervals', async () => {
+test('partial selection moves a U-turn whose retained fill maps to wrapped source intervals', async () => {
   const harness = createRealFabricHarness();
   try {
     const uTurnSamples = [
@@ -2307,8 +2396,219 @@ test('partial selection atomically restores prior selection when one retained fi
 
     assert.deepEqual(before.selectedObjectIds, priorIds);
     assert.deepEqual(before.activeObjectIds, priorIds);
-    assertSelectionStability(harness, before);
-    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.equal(
+      pendingLassoObjects(harness.canvas).length > 0,
+      true,
+      'the wrapped U-turn must stage an exact partial selection'
+    );
+    assert.equal(
+      harness.canvas.getActiveObjects()
+        .some(object => object.__baeframeObjectId === uTurnRecord.id),
+      false,
+      'the successful partial selection must not restore the whole U-turn'
+    );
+    assert.deepEqual(lassoHistoryState(harness.runtime), before.history);
+
+    harness.dragActiveSelectionBy(25, 15, 79336);
+    await Promise.resolve();
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(moved.objects.length > before.objects.length, true);
+    assert.equal(moved.objects.some(object => object.id === uTurnRecord.id), false);
+    assert.equal(
+      moved.selectedObjectIds.length > 0,
+      true,
+      'moving the staged fragments must commit their selection'
+    );
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'wrapped-source-interval-move-undo',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects
+    );
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'wrapped-source-interval-move-redo',
+      action: 'redo'
+    }).applied, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      moved.objects
+    );
+
+    const uTurnFragments = moved.objects.filter(record => record.style?.size === 20);
+    assert.equal(uTurnFragments.length > 1, true);
+    assert.equal(
+      uTurnFragments.every(record => record.renderGeometry?.version === 1),
+      true,
+      'every U-turn fragment must persist its exact two-dimensional fill'
+    );
+    assert.equal(
+      uTurnFragments.every(record => record.sourcePoints.length === 2),
+      true,
+      'U-turn fragments must use bounded outline support instead of duplicated lineage'
+    );
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+    const persistedObjects = structuredClone(moved.objects);
+    for (const record of persistedObjects) {
+      const baseTime = record.sourcePoints[0].time;
+      for (const point of record.sourcePoints) point.time -= baseTime;
+    }
+    const hydration = harness.runtime.hydrateDrawingVideo(makePersistenceHydration({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'wrapped-u-turn-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 200,
+      keyframes: [{
+        id: 'wrapped-u-turn-frame',
+        frame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        mutationSequence: moved.mutationCount,
+        objects: persistedObjects
+      }]
+    }));
+    assert.equal(hydration.accepted, true, JSON.stringify(hydration));
+    const exported = harness.runtime.exportDrawingVideo(makePersistenceExport({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'wrapped-u-turn-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 200
+    }));
+    assert.equal(exported.accepted, true, JSON.stringify(exported));
+    assert.deepEqual(exported.snapshot.scenes[0].objects, persistedObjects);
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 3,
+      enabled: true,
+      session: {
+        sessionId: 'wrapped-u-turn-reloaded',
+        stableVideoIdentity: 'real-fabric-video',
+        targetFrame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+        viewportTransform: { scale: 1, panX: 0, panY: 0 },
+        tool: 'select'
+      }
+    }).accepted, true);
+    selectPartialRectangle(harness.root);
+    harness.dragLasso([
+      { x: 49, y: 42 },
+      { x: 65, y: 58 }
+    ], 793361);
+    assert.equal(
+      pendingLassoObjects(harness.canvas).length > 0,
+      true,
+      'the persisted wrapped U-turn must remain partially selectable'
+    );
+    harness.dragActiveSelectionBy(10, 5, 793362);
+    await Promise.resolve();
+    const repeatedlyMoved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.notDeepEqual(repeatedlyMoved.objects, persistedObjects);
+    assert.equal(
+      repeatedlyMoved.objects
+        .filter(record => record.style?.size === 20)
+        .every(record => record.sourcePoints.length === 2),
+      true,
+      'reselection must keep complex outline support bounded after hydration'
+    );
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'wrapped-u-turn-reloaded',
+      actionId: 'wrapped-u-turn-reselection-undo',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      persistedObjects
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial rectangle moves a non-monotone U-turn and restores it with Undo', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '20';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    const points = [
+      ...Array.from({ length: 31 }, (_value, index) => ({
+        x: 40 + index * 4,
+        y: 60
+      })),
+      ...Array.from({ length: 20 }, (_value, index) => ({
+        x: 160,
+        y: 64 + index * 4
+      })),
+      ...Array.from({ length: 31 }, (_value, index) => ({
+        x: 156 - index * 4,
+        y: 140
+      }))
+    ];
+    harness.drawStroke(points, 79337);
+    const before = captureSelectionStability(harness);
+    enableRealFabricPartialRectangle(harness);
+
+    harness.dragLasso([
+      { x: 90, y: 20 },
+      { x: 190, y: 180 }
+    ], 79338);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects
+    );
+    assert.deepEqual(lassoHistoryState(harness.runtime), before.history);
+    assert.equal(
+      pendingLassoObjects(harness.canvas).length > 0,
+      true,
+      'the rectangle must stage the visible right side of the U-turn'
+    );
+    harness.dragActiveSelectionBy(15, 10, 79339);
+    await Promise.resolve();
+
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(moved.objects.length > before.objects.length, true);
+    assert.equal(moved.selectedObjectIds.length > 0, true);
+    assert.equal(
+      moved.objects.every(record => record.renderGeometry?.version === 1),
+      true
+    );
+    assert.equal(
+      moved.objects.reduce(
+        (count, record) => count + record.sourcePoints.length,
+        0
+      ) <= before.objects[0].sourcePoints.length + moved.objects.length * 2,
+      true,
+      'an exact axial split may retain lineage but must not duplicate it'
+    );
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'non-monotone-u-turn-rectangle-undo',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects
+    );
   } finally {
     await harness.destroy();
   }
@@ -2758,6 +3058,7 @@ for (const selectionShape of ['rectangle', 'lasso']) {
           ? [sourcePolygon[0], sourcePolygon[2]]
           : [...sourcePolygon, sourcePolygon[0]]
       ), selectionShape === 'rectangle' ? 79386 : 79389);
+      await Promise.resolve();
 
       assert.deepEqual(
         harness.sceneStore.getActiveSceneSnapshot().objects,
@@ -2769,6 +3070,14 @@ for (const selectionShape of ['rectangle', 'lasso']) {
         true,
         'a visible partial-thickness cut must stage a movable stroke segment'
       );
+      const gestureDiagnostics = harness.runtime.getDiagnostics().lastSelectionGesture;
+      assert.equal(gestureDiagnostics.target, 'partial');
+      assert.equal(gestureDiagnostics.shape, selectionShape);
+      assert.ok(gestureDiagnostics.pointerPointCount >= 2);
+      assert.ok(gestureDiagnostics.polygonPointCount >= 3);
+      assert.equal(gestureDiagnostics.pending, true);
+      assert.equal(gestureDiagnostics.selectedCount > 0, true);
+      assert.equal(gestureDiagnostics.reason, null);
       assert.ok(harness.canvas.getActiveObject());
       const activeFragment = harness.canvas.getActiveObjects()[0];
       const selectedId = activeFragment.__baeframeObjectId;
@@ -8378,6 +8687,12 @@ test('V exposes independent selection target and shape controls', () => {
     node.dataset.fabricPilotAction === 'select-shape-rectangle');
   const lassoShape = findOne(toolbar, node =>
     node.dataset.fabricPilotAction === 'select-shape-lasso');
+  const targetLabel = findOne(toolbar, node =>
+    node.dataset.fabricPilotLabel === 'selection-target');
+  const shapeLabel = findOne(toolbar, node =>
+    node.dataset.fabricPilotLabel === 'selection-shape');
+  const selectionSummary = findOne(toolbar, node =>
+    node.dataset.fabricPilotOutput === 'selection-summary');
   const canvas = FakeCanvas.instances[0];
 
   assert.ok(controlsGroup);
@@ -8387,6 +8702,11 @@ test('V exposes independent selection target and shape controls', () => {
   assert.ok(partialTarget);
   assert.ok(rectangleShape);
   assert.ok(lassoShape);
+  assert.equal(targetLabel.textContent, '선택 대상');
+  assert.equal(shapeLabel.textContent, '영역 모양');
+  assert.equal(strokeTarget.textContent, '획 전체');
+  assert.equal(partialTarget.textContent, '부분 자르기');
+  assert.equal(selectionSummary.textContent, '현재: 획 전체 · 사각 영역');
   assert.equal(controlsGroup.style.display, 'none');
   assert.equal(targetGroup.getAttribute('role'), 'group');
   assert.equal(shapeGroup.getAttribute('role'), 'group');
@@ -8411,6 +8731,13 @@ test('V exposes independent selection target and shape controls', () => {
   assert.equal(lassoShape.getAttribute('aria-pressed'), 'true');
   assert.equal(after.selectionTarget, 'partial');
   assert.equal(after.selectionShape, 'lasso');
+  assert.equal(selectionSummary.textContent, '현재: 부분 자르기 · 라쏘 영역');
+  assert.deepEqual(after.lastSelectionControlAction, {
+    kind: 'shape',
+    value: 'lasso',
+    source: 'click',
+    eventCount: 2
+  });
   assert.equal(canvas.selection, false);
   assert.equal(after.mutationCount, before.mutationCount);
   assert.equal(after.dirty, before.dirty);
@@ -8424,6 +8751,37 @@ test('V exposes independent selection target and shape controls', () => {
   assert.equal(lassoShape.getAttribute('aria-pressed'), 'true');
   assert.equal(runtime.getDiagnostics().selectionTarget, 'partial');
   assert.equal(runtime.getDiagnostics().selectionShape, 'lasso');
+});
+
+test('selection controls apply on pointerdown before a Windows activation click can be lost', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput({
+    session: {
+      ...makeInput().session,
+      tool: 'select'
+    }
+  }));
+
+  const partialTarget = findOne(root, node =>
+    node.dataset.fabricPilotAction === 'select-target-partial');
+  partialTarget.dispatch('pointerdown', { button: 0 });
+
+  const diagnostics = runtime.getDiagnostics();
+  assert.equal(diagnostics.selectionTarget, 'partial');
+  assert.equal(diagnostics.selectionControlEventCount, 1);
+  assert.deepEqual(diagnostics.lastSelectionControlAction, {
+    kind: 'target',
+    value: 'partial',
+    source: 'pointerdown',
+    eventCount: 1
+  });
 });
 
 test('brush settings expose the familiar bounded palette without mutating the scene', () => {

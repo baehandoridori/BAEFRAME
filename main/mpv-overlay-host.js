@@ -367,6 +367,7 @@ const OVERLAY_HTML = String.raw`
       min-height: 40px;
       line-height: 40px;
       padding: 0 12px;
+      box-sizing: border-box;
       border-radius: 8px;
       background: rgba(0, 0, 0, 0.28);
       color: var(--text-tertiary);
@@ -376,7 +377,7 @@ const OVERLAY_HTML = String.raw`
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    @media (max-width: 640px) {
+    @media (max-width: 800px) {
       .mpv-fabric-pilot-toolbar {
         --fabric-toolbar-gap: 4px;
         padding: 4px;
@@ -385,7 +386,25 @@ const OVERLAY_HTML = String.raw`
       .mpv-fabric-pilot-toolbar button {
         padding-inline: 8px;
       }
-      .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="summary"] {
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-controls"] {
+        gap: 4px !important;
+        padding: 0 !important;
+        background: transparent !important;
+      }
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-target"] {
+        gap: 2px !important;
+        padding-right: 4px !important;
+      }
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-shape"] {
+        gap: 2px !important;
+      }
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-controls"] button {
+        padding-inline: 4px;
+        font-size: 11px;
+      }
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="summary"],
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="selection-summary"],
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-label] {
         display: none;
       }
       .mpv-fabric-pilot-badge {
@@ -1091,6 +1110,16 @@ function createForwardedKeyboardInput(input = {}) {
   };
 }
 
+function forwardedInputNeedsMainFocus(input = {}) {
+  return input.type === 'keyDown' &&
+    input.code === 'KeyB' &&
+    input.repeat !== true &&
+    input.shiftKey !== true &&
+    input.ctrlKey !== true &&
+    input.altKey !== true &&
+    input.metaKey !== true;
+}
+
 function overlayHistoryActionFromInput(input = {}) {
   if (input.type !== 'keyDown' ||
       input.isComposing === true ||
@@ -1689,6 +1718,8 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.keyboardRelayCount = 0;
+    this.lastKeyboardRelayCode = null;
     this.completedActionIds = new Map();
     this.inFlightDrawingActions = new Map();
     this.maxProcessedActionIds = 2048;
@@ -1812,6 +1843,7 @@ class MPVOverlayHost {
   }
 
   async updateDrawingTool(request = {}) {
+    const hostWindow = this.window;
     const toolRevision = Number(request.toolRevision);
     const currentTokensMatch = request.hostGeneration === this.hostGeneration &&
       request.videoGeneration === this.currentVideoGeneration &&
@@ -1835,6 +1867,12 @@ class MPVOverlayHost {
         return { success: false, accepted: false, error: 'stale drawing tool response' };
       }
       this.currentToolRevision = toolRevision;
+      // V는 overlay에서 메인 renderer로 전달되며 처리 중 main 창이 잠시 포커스를
+      // 소유한다. 도구 변경이 확정된 뒤 overlay를 다시 활성화해야 다음 툴바
+      // 클릭이 Windows의 창 활성화 클릭으로 소모되지 않는다.
+      if (this.window === hostWindow && !hostWindow?.isDestroyed?.()) {
+        hostWindow.focus?.();
+      }
       return { success: true, accepted: true, tool: result.tool === 'select' ? 'select' : 'brush' };
     } catch (error) {
       return { success: false, accepted: false, error: error.message };
@@ -1926,7 +1964,9 @@ class MPVOverlayHost {
       hostGeneration: this.hostGeneration,
       videoGeneration: this.currentVideoGeneration,
       inputRevision: this.currentInputRevision,
-      desiredInputEnabled: this.desiredInputEnabled
+      desiredInputEnabled: this.desiredInputEnabled,
+      keyboardRelayCount: this.keyboardRelayCount,
+      lastKeyboardRelayCode: this.lastKeyboardRelayCode
     };
     if (this.fabricReadyGeneration !== this.hostGeneration) {
       return {
@@ -1946,6 +1986,18 @@ class MPVOverlayHost {
         };
       }
       const cache = result?.cache && typeof result.cache === 'object' ? result.cache : {};
+      const activeSelectionGesture = result?.activeSelectionGesture &&
+        typeof result.activeSelectionGesture === 'object'
+        ? result.activeSelectionGesture
+        : null;
+      const lastSelectionGesture = result?.lastSelectionGesture &&
+        typeof result.lastSelectionGesture === 'object'
+        ? result.lastSelectionGesture
+        : null;
+      const lastSelectionBounds = lastSelectionGesture?.polygonBounds &&
+        typeof lastSelectionGesture.polygonBounds === 'object'
+        ? lastSelectionGesture.polygonBounds
+        : null;
       return {
         success: true,
         ...hostDiagnostics,
@@ -1955,6 +2007,69 @@ class MPVOverlayHost {
         activeSessionId: this.activeSessionId,
         targetFrame: Number.isInteger(Number(result?.targetFrame)) ? Number(result.targetFrame) : null,
         tool: result?.tool === 'select' ? 'select' : 'brush',
+        selectionTarget: result?.selectionTarget === 'partial' ? 'partial' : 'stroke',
+        selectionShape: result?.selectionShape === 'lasso' ? 'lasso' : 'rectangle',
+        selectionControlEventCount: Math.max(
+          0,
+          Math.trunc(finiteDiagnosticNumber(result?.selectionControlEventCount))
+        ),
+        lastSelectionControlAction: result?.lastSelectionControlAction &&
+          typeof result.lastSelectionControlAction === 'object'
+          ? {
+            kind: result.lastSelectionControlAction.kind === 'shape' ? 'shape' : 'target',
+            value: result.lastSelectionControlAction.kind === 'shape'
+              ? (result.lastSelectionControlAction.value === 'lasso' ? 'lasso' : 'rectangle')
+              : (result.lastSelectionControlAction.value === 'partial' ? 'partial' : 'stroke'),
+            source: result.lastSelectionControlAction.source === 'pointerdown'
+              ? 'pointerdown'
+              : 'click',
+            eventCount: Math.max(
+              0,
+              Math.trunc(finiteDiagnosticNumber(result.lastSelectionControlAction.eventCount))
+            )
+          }
+          : null,
+        activeSelectionGesture: activeSelectionGesture
+          ? {
+            target: activeSelectionGesture.target === 'partial' ? 'partial' : 'stroke',
+            shape: activeSelectionGesture.shape === 'lasso' ? 'lasso' : 'rectangle',
+            pointerPointCount: Math.max(
+              0,
+              Math.trunc(finiteDiagnosticNumber(activeSelectionGesture.pointerPointCount))
+            )
+          }
+          : null,
+        lastSelectionGesture: lastSelectionGesture
+          ? {
+            target: lastSelectionGesture.target === 'partial' ? 'partial' : 'stroke',
+            shape: lastSelectionGesture.shape === 'lasso' ? 'lasso' : 'rectangle',
+            pointerPointCount: Math.max(
+              0,
+              Math.trunc(finiteDiagnosticNumber(lastSelectionGesture.pointerPointCount))
+            ),
+            polygonPointCount: Math.max(
+              0,
+              Math.trunc(finiteDiagnosticNumber(lastSelectionGesture.polygonPointCount))
+            ),
+            polygonBounds: lastSelectionBounds
+              ? {
+                left: finiteDiagnosticNumber(lastSelectionBounds.left),
+                right: finiteDiagnosticNumber(lastSelectionBounds.right),
+                top: finiteDiagnosticNumber(lastSelectionBounds.top),
+                bottom: finiteDiagnosticNumber(lastSelectionBounds.bottom)
+              }
+              : null,
+            pending: lastSelectionGesture.pending === true,
+            applied: lastSelectionGesture.applied === true,
+            selectedCount: Math.max(
+              0,
+              Math.trunc(finiteDiagnosticNumber(lastSelectionGesture.selectedCount))
+            ),
+            reason: typeof lastSelectionGesture.reason === 'string'
+              ? lastSelectionGesture.reason.slice(0, 128)
+              : null
+          }
+          : null,
         objectCount: Math.trunc(finiteDiagnosticNumber(result?.objectCount)),
         selectionCount: Math.trunc(finiteDiagnosticNumber(result?.selectionCount)),
         mutationCount: Math.trunc(finiteDiagnosticNumber(result?.mutationCount)),
@@ -2544,6 +2659,8 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.keyboardRelayCount = 0;
+    this.lastKeyboardRelayCode = null;
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
@@ -2603,6 +2720,8 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.keyboardRelayCount = 0;
+    this.lastKeyboardRelayCode = null;
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
@@ -2673,14 +2792,33 @@ class MPVOverlayHost {
           typeof mainWindow.webContents?.send !== 'function') {
         return;
       }
+      const needsMainFocusHandoff = forwardedInputNeedsMainFocus(forwardedInput);
       try {
         // overlay가 획 클릭으로 포커스를 얻어도 물리 키 위치(code)를 보존해
         // 사용자 지정 단축키를 메인 renderer의 단일 처리 경로로 보낸다.
-        mainWindow.focus?.();
+        // 기본 B 토글은 Windows의 창 비활성화 handoff를 위해 main을 먼저
+        // 활성화하되, renderer 전달 직후 overlay를 되돌려 둔다. B가 실제
+        // 토글이면 disable 경로가 main으로 최종 handoff하고, 커스텀 단축키
+        // 설정이나 전달 실패라면 다음 툴바 클릭이 소모되지 않는다.
+        if (needsMainFocusHandoff) {
+          mainWindow.focus?.();
+        }
         mainWindow.webContents.send(FORWARDED_KEYBOARD_CHANNEL, forwardedInput);
+        this.keyboardRelayCount += 1;
+        this.lastKeyboardRelayCode = forwardedInput.code;
         event?.preventDefault?.();
       } catch (error) {
         this.logger.debug('Fabric overlay keyboard relay failed', { error: error.message });
+      } finally {
+        if (needsMainFocusHandoff &&
+            this.window === hostWindow &&
+            this.hostGeneration === hostGeneration &&
+            this.desiredInputEnabled === true &&
+            !hostWindow.isDestroyed?.()) {
+          try {
+            hostWindow.focus?.();
+          } catch (_error) { /* best-effort focus restoration */ }
+        }
       }
     });
     hostWindow.webContents?.on?.('render-process-gone', () => {
@@ -2702,6 +2840,8 @@ class MPVOverlayHost {
       this.desiredInputEnabled = false;
       this.activeSessionId = null;
       this.currentToolRevision = -1;
+      this.keyboardRelayCount = 0;
+      this.lastKeyboardRelayCode = null;
       this.completedActionIds.clear();
       this.inFlightDrawingActions.clear();
       this.suppressedOverlayHistoryKeys.clear();

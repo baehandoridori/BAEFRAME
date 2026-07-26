@@ -103,7 +103,7 @@ async function runElectronProbe() {
       true;
     `, true);
 
-    const widths = [400, 500, 640];
+    const widths = [400, 500, 640, 641, 768, 800, 801];
     const measurements = [];
     const panelMeasurements = [];
     for (const width of widths) {
@@ -254,7 +254,7 @@ if (process.versions.electron) {
   const assert = require('node:assert/strict');
   const { spawnSync } = require('node:child_process');
 
-  test('hidden Chromium keeps every Fabric toolbar control usable at 400 500 and 640px', {
+  test('hidden Chromium keeps every Fabric toolbar control usable across compact breakpoints', {
     timeout: 45000
   }, () => {
     const electronPath = require('electron');
@@ -290,11 +290,22 @@ if (process.versions.electron) {
       const { root, toolbar, controls, directItems } = measurement;
       assert.equal(measurement.toolbarCount, 1, `${measurement.width}px toolbar count`);
       assert.equal(measurement.sameToolbar, true, `${measurement.width}px toolbar identity`);
-      assert.equal(measurement.summaryDisplay, 'none', `${measurement.width}px compact summary`);
+      assert.equal(
+        measurement.summaryDisplay,
+        measurement.width <= 800 ? 'none' : 'block',
+        `${measurement.width}px responsive summary`
+      );
       assert.ok(toolbar.left >= root.left + 11.5, `${measurement.width}px left inset`);
       assert.ok(toolbar.right <= root.right - 11.5, `${measurement.width}px right inset`);
-      assert.ok(toolbar.height <= 100.5, `${measurement.width}px two-row toolbar height`);
-      assert.ok(clusterRows(directItems).length <= 2, `${measurement.width}px row count`);
+      const maxTwoRowHeight = measurement.width <= 800 ? 100.5 : 104.5;
+      assert.ok(
+        toolbar.height <= maxTwoRowHeight,
+        `${measurement.width}px two-row toolbar height (actual ${toolbar.height}px)`
+      );
+      assert.ok(
+        clusterRows(directItems).length <= 2,
+        `${measurement.width}px row count (actual ${clusterRows(directItems).length})`
+      );
       assert.equal(measurement.badgeDisplay, 'block', `${measurement.width}px badge container`);
       assert.equal(measurement.badgeTextOverflow, 'ellipsis', `${measurement.width}px badge ellipsis`);
       assert.equal(measurement.badgeOverflowX, 'hidden', `${measurement.width}px badge overflow`);
@@ -326,7 +337,7 @@ if (process.versions.electron) {
       }
     }
 
-    assert.equal(probe.panelMeasurements.length, 3);
+    assert.equal(probe.panelMeasurements.length, 7);
     for (const measurement of probe.panelMeasurements) {
       const { root, toolbar, panel, overflowY } = measurement;
       assert.ok(
