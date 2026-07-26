@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+  DRAWING_RENDER_GEOMETRY_KEYS,
+  validateDrawingRenderGeometry
+} = require('../../../../shared/drawing-render-geometry.js');
+
 const HARD_LIMITS = Object.freeze({
   maxObjectsPerKeyframe: 10_000,
   maxInputPointsPerStroke: 20_000,
@@ -69,6 +74,7 @@ const STROKE_KEYS = Object.freeze([
   'caps',
   'style'
 ]);
+const STROKE_OPTIONAL_KEYS = Object.freeze(['renderGeometry']);
 const POINT_KEYS = Object.freeze(['x', 'y', 'pressure', 'time']);
 const CAPS_KEYS = Object.freeze(['start', 'end']);
 const STYLE_KEYS = Object.freeze([
@@ -282,7 +288,9 @@ function isValidCaps(value) {
 }
 
 function validateStrokeObject(object, limits, source = 'user') {
-  if (!hasExactDataKeys(object, STROKE_KEYS)) return 'invalid-object';
+  if (!hasExactDataKeys(object, STROKE_KEYS, STROKE_OPTIONAL_KEYS)) {
+    return 'invalid-object';
+  }
   if (!isNonemptyString(object.id) || object.type !== 'stroke' ||
     (object.tool !== 'pen' && object.tool !== 'brush') ||
     typeof object.visible !== 'boolean' ||
@@ -299,6 +307,11 @@ function validateStrokeObject(object, limits, source = 'user') {
   if (object.points.length > pointLimit) return 'point-limit-exceeded';
   if (!isValidCaps(object.caps)) return 'invalid-object';
   if (!isValidStyle(object.style)) return 'invalid-object';
+  if (object.renderGeometry !== undefined &&
+    (!hasExactDataKeys(object.renderGeometry, DRAWING_RENDER_GEOMETRY_KEYS) ||
+      !validateDrawingRenderGeometry(object.renderGeometry))) {
+    return 'invalid-object';
+  }
 
   let previousTime = 0;
   for (const point of object.points) {

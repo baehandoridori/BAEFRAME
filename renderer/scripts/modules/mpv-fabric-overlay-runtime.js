@@ -3048,8 +3048,7 @@ function createFabricOverlayRuntime(options = {}) {
   function projectFillComponentToIndexInterval(
     component,
     centerline,
-    budget,
-    options = {}
+    budget
   ) {
     const onCenterline = centerlineIntervalsInsideComponent(component, centerline, {
       budget
@@ -3064,12 +3063,6 @@ function createFabricOverlayRuntime(options = {}) {
       );
       if (projected.reason) return { interval: null, reason: projected.reason };
       sourceIntervals = projected.intervals;
-    }
-    if (sourceIntervals.length > 1 && options.allowContinuousSpan === true) {
-      sourceIntervals = [[
-        sourceIntervals[0][0],
-        sourceIntervals.at(-1)[1]
-      ]];
     }
     if (sourceIntervals.length !== 1) {
       return { interval: null, reason: 'selection-geometry-unavailable' };
@@ -3719,8 +3712,7 @@ function createFabricOverlayRuntime(options = {}) {
           const projected = projectFillComponentToIndexInterval(
             component,
             centerline.geometry,
-            geometryBudget,
-            { allowContinuousSpan: group.selected === false }
+            geometryBudget
           );
           if (!projected.interval || projected.reason) {
             return fail(projected.reason || 'selection-geometry-unavailable');

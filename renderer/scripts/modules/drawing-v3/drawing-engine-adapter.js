@@ -3,6 +3,9 @@
 const {
   createDrawingDocumentV3
 } = require('./drawing-document.js');
+const {
+  validateDrawingRenderGeometry
+} = require('../../../../shared/drawing-render-geometry.js');
 
 const DEFAULT_LIMITS = Object.freeze({
   maxSeedObjects: 10_000,
@@ -204,7 +207,10 @@ function immutableContentSignature(object) {
     blendMode: object.blendMode,
     points: object.points,
     caps: object.caps,
-    style: object.style
+    style: object.style,
+    ...(object.renderGeometry === undefined
+      ? {}
+      : { renderGeometry: object.renderGeometry })
   });
   return `${serialized.length}:` +
     `${hashText(serialized, 0x811c9dc5, 0x01000193)}:` +
@@ -262,6 +268,17 @@ function canonicalizeRecord(record, baseline) {
       end: record.strokeCaps.end
     };
   }
+  let renderGeometry;
+  if (record.renderGeometry !== undefined) {
+    if (!validateDrawingRenderGeometry(record.renderGeometry)) {
+      return { valid: false, reason: 'invalid-transition' };
+    }
+    renderGeometry = {
+      version: record.renderGeometry.version,
+      pathData: record.renderGeometry.pathData,
+      fillRule: record.renderGeometry.fillRule
+    };
+  }
   const object = {
     id: record.id,
     type: 'stroke',
@@ -283,6 +300,7 @@ function canonicalizeRecord(record, baseline) {
       outlineWidth: 0
     }
   };
+  if (renderGeometry !== undefined) object.renderGeometry = renderGeometry;
   let estimatedBytes;
   let contentSignature;
   try {

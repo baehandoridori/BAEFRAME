@@ -2213,6 +2213,107 @@ test('partial selection atomically rejects tied branches at a self-crossing stro
   }
 });
 
+test('partial selection atomically restores prior selection when one retained fill maps to wrapped source intervals', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const uTurnSamples = [
+      ...Array.from({ length: 21 }, (_value, index) => ({
+        x: index,
+        y: 0,
+        pressure: 0.5,
+        pointerType: 'mouse',
+        time: index
+      })),
+      ...Array.from({ length: 20 }, (_value, index) => ({
+        x: 20,
+        y: index + 1,
+        pressure: 0.5,
+        pointerType: 'mouse',
+        time: index + 21
+      })),
+      ...Array.from({ length: 20 }, (_value, index) => ({
+        x: 19 - index,
+        y: 20,
+        pressure: 0.5,
+        pointerType: 'mouse',
+        time: index + 41
+      }))
+    ];
+    const canonical = createStrokePathData(uTurnSamples, {
+      size: 20,
+      last: true,
+      alreadyNormalizedPressure: true,
+      start: { cap: true },
+      end: { cap: true }
+    });
+    harness.drawStroke([{ x: 60, y: 60 }, { x: 80, y: 60 }], 79332);
+    const placeholder = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    const uTurnRecord = {
+      ...placeholder,
+      pathData: canonical.pathData,
+      sourcePoints: canonical.sourcePoints,
+      style: { ...placeholder.style, size: 20 },
+      transform: {
+        left: 70,
+        top: 70,
+        scaleX: 1,
+        scaleY: 1,
+        angle: 0,
+        skewX: 0,
+        skewY: 0,
+        flipX: false,
+        flipY: false
+      },
+      strokeCaps: { start: true, end: true }
+    };
+    assert.equal(harness.sceneStore.replaceObjects({
+      replacements: [{
+        removeId: placeholder.id,
+        addObjects: [uTurnRecord]
+      }],
+      selectedObjectIds: [],
+      kind: 'split-stroke'
+    }).applied, true);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'wrapped-source-interval-fixture-undo',
+      action: 'undo'
+    }).applied, true);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'wrapped-source-interval-fixture-redo',
+      action: 'redo'
+    }).applied, true);
+    harness.drawStroke([{ x: 120, y: 150 }, { x: 150, y: 150 }], 79333);
+    harness.drawStroke([{ x: 120, y: 175 }, { x: 150, y: 175 }], 79334);
+    enableRealFabricLasso(harness);
+    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(snapshot.objects[0].sourcePoints, canonical.sourcePoints);
+    const priorIds = activateRealFabricSelection(
+      harness,
+      snapshot.objects.slice(1).map(object => object.id)
+    );
+    const before = captureSelectionStability(harness);
+    const sourceObject = harness.canvas.getObjects()
+      .find(object => object.__baeframeObjectId === uTurnRecord.id);
+
+    harness.dragLasso(sourcePolygonInRealFabricScene(sourceObject, [
+      { x: 5, y: -40 },
+      { x: 50, y: -40 },
+      { x: 50, y: 60 },
+      { x: 5, y: 60 },
+      { x: 5, y: -40 }
+    ]), 79335);
+
+    assert.deepEqual(before.selectedObjectIds, priorIds);
+    assert.deepEqual(before.activeObjectIds, priorIds);
+    assertSelectionStability(harness, before);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('persisted render geometry supports equal shared and external tangent partial selection', async () => {
   const harness = createRealFabricHarness();
   try {
@@ -2422,7 +2523,7 @@ test('partial lasso stages the rendered perfect-freehand L-turn corner', async (
         .getImageData(75, 120, 1, 1).data[3] > 128,
       'saved render geometry must survive hydration'
     );
-    const beforeRepeatedPartial = harness.sceneStore.getActiveSceneSnapshot();
+    const beforeRepeatedPartial = captureSelectionStability(harness);
     const remainingFabricObject = harness.canvas.getObjects().find(
       object => object.__baeframeObjectId !== selectedFragmentId
     );
@@ -2440,12 +2541,12 @@ test('partial lasso stages the rendered perfect-freehand L-turn corner', async (
       repeatedRectangle[0],
       repeatedRectangle[2]
     ], 7935);
-    assert.deepEqual(
-      harness.sceneStore.getActiveSceneSnapshot().objects,
-      beforeRepeatedPartial.objects,
-      'repeated partial selection must remain staged after reload'
+    assertSelectionStability(harness, beforeRepeatedPartial);
+    assert.equal(
+      pendingLassoObjects(harness.canvas).length,
+      0,
+      'a wrapped source interval must cancel instead of staging ambiguous geometry'
     );
-    assert.equal(pendingLassoObjects(harness.canvas).length > 0, true);
   } finally {
     await harness.destroy();
   }

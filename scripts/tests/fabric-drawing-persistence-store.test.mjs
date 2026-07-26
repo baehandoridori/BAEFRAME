@@ -1,8 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+const require = createRequire(import.meta.url);
+const {
+  validateDrawingRenderGeometry
+} = require('../../shared/drawing-render-geometry.js');
 const moduleUrl = pathToFileURL(path.resolve(
   import.meta.dirname,
   '../../renderer/scripts/modules/fabric-drawing-persistence-store.js'
@@ -294,6 +299,129 @@ test('render geometry persistence is optional and strictly versioned', async () 
     assert.equal(
       createFabricDrawingPersistenceStore().importRootValue(candidate, META).accepted,
       false
+    );
+  }
+});
+
+test('shared and persistence render geometry validators stay in parity', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const validSimple = {
+    version: 1,
+    pathData: 'M 0 0 L 20 0 L 20 20 L 0 20 Z',
+    fillRule: 'evenodd'
+  };
+  const validEvenoddContours = {
+    version: 1,
+    pathData: [
+      'M 0 0 L 20 0 L 20 20 L 0 20 Z',
+      'M 5 5 L 5 15 L 15 15 L 15 5 Z',
+      'M 30 30 L 36 30 L 36 36 L 30 36 Z'
+    ].join(' '),
+    fillRule: 'evenodd'
+  };
+  const cases = [
+    ['valid simple contour', validSimple, true],
+    ['valid evenodd hole and disjoint island contours', validEvenoddContours, true],
+    ['unknown geometry key', { ...validSimple, vendor: true }, false],
+    ['unsupported version', { ...validSimple, version: 2 }, false],
+    ['unsupported fill rule', { ...validSimple, fillRule: 'nonzero' }, false],
+    ['empty path', { ...validSimple, pathData: '' }, false],
+    [
+      'oversized path',
+      {
+        ...validSimple,
+        pathData: `M 0 0 L 1 0 L 0 1 ${' '.repeat(32_768)}Z`
+      },
+      false
+    ],
+    [
+      'unsupported quadratic command',
+      { ...validSimple, pathData: 'M 0 0 Q 5 10 10 0 L 0 10 Z' },
+      false
+    ],
+    [
+      'unsupported lowercase commands',
+      { ...validSimple, pathData: 'm 0 0 l 10 0 l 0 10 z' },
+      false
+    ],
+    [
+      'nonfinite coordinate',
+      { ...validSimple, pathData: 'M 0 0 L 1e309 0 L 0 10 Z' },
+      false
+    ],
+    [
+      'overflow coordinate',
+      { ...validSimple, pathData: 'M 0 0 L 1001000001 0 L 0 10 Z' },
+      false
+    ],
+    [
+      'open contour',
+      { ...validSimple, pathData: 'M 0 0 L 10 0 L 0 10' },
+      false
+    ],
+    [
+      'degenerate collinear contour',
+      { ...validSimple, pathData: 'M 0 0 L 5 0 L 10 0 Z' },
+      false
+    ],
+    [
+      'degenerate repeated vertex',
+      { ...validSimple, pathData: 'M 0 0 L 10 0 L 10 0 L 0 10 Z' },
+      false
+    ],
+    [
+      'self-crossing contour',
+      { ...validSimple, pathData: 'M 0 0 L 10 8 L 0 12 L 8 0 Z' },
+      false
+    ],
+    [
+      'repeated edge in one contour',
+      {
+        ...validSimple,
+        pathData: 'M 0 0 L 10 0 L 10 10 L 0 10 L 10 10 Z'
+      },
+      false
+    ],
+    [
+      'multi-contour repeated edge',
+      {
+        ...validSimple,
+        pathData: [
+          'M 0 0 L 10 0 L 10 10 L 0 10 Z',
+          'M 0 0 L 10 0 L 5 -5 Z'
+        ].join(' ')
+      },
+      false
+    ],
+    [
+      'multi-contour invalid second contour',
+      {
+        ...validSimple,
+        pathData: [
+          'M 0 0 L 10 0 L 10 10 L 0 10 Z',
+          'M 20 20 L 30 30 L 20 30 L 28 20 Z'
+        ].join(' ')
+      },
+      false
+    ]
+  ];
+
+  for (const [name, geometry, expected] of cases) {
+    const sharedAccepted = validateDrawingRenderGeometry(geometry);
+    const input = rootValue({
+      keyframes: [keyframe(3, [record(`parity-${name}`, {
+        renderGeometry: structuredClone(geometry)
+      })])]
+    });
+    const persistenceAccepted =
+      createFabricDrawingPersistenceStore().importRootValue(input, META).accepted;
+
+    assert.equal(sharedAccepted, expected, `${name}: shared validator`);
+    assert.equal(persistenceAccepted, expected, `${name}: persistence validator`);
+    assert.equal(
+      persistenceAccepted,
+      sharedAccepted,
+      `${name}: validators diverged`
     );
   }
 });

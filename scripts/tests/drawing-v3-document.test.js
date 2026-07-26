@@ -32,6 +32,14 @@ function createStroke(id = 'stroke-1', overrides = {}) {
   };
 }
 
+function createRenderGeometry(pathData = 'M 0 0 L 10 0 L 0 10 Z') {
+  return {
+    version: 1,
+    pathData,
+    fillRule: 'evenodd'
+  };
+}
+
 function createPoints(count) {
   return Array.from({ length: count }, (_, index) => ({
     x: index,
@@ -492,6 +500,52 @@ for (const [name, mutate] of invalidInitialCases) {
 
     assert.throws(() => createDrawingDocumentV3(options), TypeError);
     assert.deepEqual(options, before);
+  });
+}
+
+test('optional render geometry is validated and isolated across document snapshots', () => {
+  const renderGeometry = createRenderGeometry();
+  const options = createDocumentOptions({
+    initialLayers: [createLayerFixture({
+      keyframes: [createKeyframeFixture({
+        objects: [createStroke('clipped', { renderGeometry })]
+      })]
+    })]
+  });
+  const document = createDrawingDocumentV3(options);
+  const firstSnapshot = document.getContentSnapshot();
+  const firstGeometry =
+    firstSnapshot.layers[0].keyframes[0].objects[0].renderGeometry;
+
+  assert.deepEqual(firstGeometry, createRenderGeometry());
+  assert.notStrictEqual(firstGeometry, renderGeometry);
+
+  renderGeometry.pathData = 'M 0 0 L 20 0 L 0 20 Z';
+  firstGeometry.pathData = 'M 0 0 L 30 0 L 0 30 Z';
+
+  const secondGeometry =
+    document.getContentSnapshot().layers[0].keyframes[0].objects[0].renderGeometry;
+  assert.deepEqual(secondGeometry, createRenderGeometry());
+  assert.notStrictEqual(secondGeometry, firstGeometry);
+});
+
+for (const [name, renderGeometry] of [
+  ['unknown key', { ...createRenderGeometry(), extra: true }],
+  ['missing key', { version: 1, pathData: 'M 0 0 L 10 0 L 0 10 Z' }],
+  ['unsupported version', { ...createRenderGeometry(), version: 2 }],
+  ['unsupported fill rule', { ...createRenderGeometry(), fillRule: 'nonzero' }],
+  ['invalid path data', { ...createRenderGeometry(), pathData: 'M 0 0 Z' }]
+]) {
+  test(`render geometry validator rejects ${name}`, () => {
+    const options = createDocumentOptions({
+      initialLayers: [createLayerFixture({
+        keyframes: [createKeyframeFixture({
+          objects: [createStroke('clipped', { renderGeometry })]
+        })]
+      })]
+    });
+
+    assert.throws(() => createDrawingDocumentV3(options), TypeError);
   });
 }
 
