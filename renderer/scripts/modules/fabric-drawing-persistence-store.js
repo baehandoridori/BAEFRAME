@@ -37,7 +37,7 @@ const RECORD_REQUIRED_KEYS = Object.freeze([
   'style',
   'transform'
 ]);
-const RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps']);
+const RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps', 'renderGeometry']);
 const STYLE_KEYS = Object.freeze(['color', 'size', 'opacity']);
 const TRANSFORM_KEYS = Object.freeze([
   'left',
@@ -53,6 +53,7 @@ const TRANSFORM_KEYS = Object.freeze([
 const POINT_REQUIRED_KEYS = Object.freeze(['x', 'y', 'pressure', 'time']);
 const POINT_OPTIONAL_KEYS = Object.freeze(['pointerType']);
 const CAPS_KEYS = Object.freeze(['start', 'end']);
+const RENDER_GEOMETRY_KEYS = Object.freeze(['version', 'pathData', 'fillRule']);
 const EVENT_KEYS = Object.freeze([
   'hostGeneration',
   'videoGeneration',
@@ -110,6 +111,10 @@ const MAX_POINT_COORDINATE = 1_000_000_000;
 const MAX_POINT_TIME = 1_000_000_000_000;
 const MAX_BRUSH_SIZE = 1_000_000;
 const MAX_TRANSFORM_MAGNITUDE = 1_000_000_000;
+const MAX_RENDER_GEOMETRY_TOPOLOGY_OPERATIONS = 250_000;
+const MAX_RENDER_GEOMETRY_TOPOLOGY_POINTS = 4_096;
+const RENDER_GEOMETRY_NUMBER =
+  /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?$/i;
 const encoder = new TextEncoder();
 
 function isPlainRecord(value) {
@@ -140,6 +145,157 @@ function hasExactKeys(value, required, optional = []) {
 
 function isNonemptyString(value, maximum = 1024) {
   return typeof value === 'string' && value.length > 0 && value.length <= maximum;
+}
+
+function renderGeometryPointKey(point) {
+  return `${point.x}\u0000${point.y}`;
+}
+
+function renderGeometryEdgeKey(start, end) {
+  const startKey = renderGeometryPointKey(start);
+  const endKey = renderGeometryPointKey(end);
+  return startKey < endKey
+    ? `${startKey}\u0001${endKey}`
+    : `${endKey}\u0001${startKey}`;
+}
+
+function renderGeometryCrossProduct(start, end, point) {
+  return (end.x - start.x) * (point.y - start.y) -
+    (end.y - start.y) * (point.x - start.x);
+}
+
+function renderGeometryPointWithinEdgeBounds(point, start, end) {
+  return point.x >= Math.min(start.x, end.x) &&
+    point.x <= Math.max(start.x, end.x) &&
+    point.y >= Math.min(start.y, end.y) &&
+    point.y <= Math.max(start.y, end.y);
+}
+
+function renderGeometryEdgesIntersect(left, right) {
+  const leftStart = renderGeometryCrossProduct(left.start, left.end, right.start);
+  const leftEnd = renderGeometryCrossProduct(left.start, left.end, right.end);
+  const rightStart = renderGeometryCrossProduct(right.start, right.end, left.start);
+  const rightEnd = renderGeometryCrossProduct(right.start, right.end, left.end);
+  if (leftStart === 0 &&
+      renderGeometryPointWithinEdgeBounds(right.start, left.start, left.end)) {
+    return true;
+  }
+  if (leftEnd === 0 &&
+      renderGeometryPointWithinEdgeBounds(right.end, left.start, left.end)) {
+    return true;
+  }
+  if (rightStart === 0 &&
+      renderGeometryPointWithinEdgeBounds(left.start, right.start, right.end)) {
+    return true;
+  }
+  if (rightEnd === 0 &&
+      renderGeometryPointWithinEdgeBounds(left.end, right.start, right.end)) {
+    return true;
+  }
+  return (leftStart < 0) !== (leftEnd < 0) &&
+    (rightStart < 0) !== (rightEnd < 0);
+}
+
+function validateRenderGeometryContours(contours) {
+  const totalPointCount = contours.reduce((count, contour) => count + contour.length, 0);
+  if (totalPointCount > MAX_RENDER_GEOMETRY_TOPOLOGY_POINTS) return false;
+  let operations = 0;
+  const consume = (count = 1) => {
+    if (operations + count > MAX_RENDER_GEOMETRY_TOPOLOGY_OPERATIONS) return false;
+    operations += count;
+    return true;
+  };
+  const seenEdges = new Set();
+
+  for (const contour of contours) {
+    if (!consume(contour.length)) return false;
+    const distinctVertices = new Set(contour.map(renderGeometryPointKey));
+    if (distinctVertices.size < 3 || distinctVertices.size !== contour.length) return false;
+
+    let doubleArea = 0;
+    const origin = contour[0];
+    const edges = [];
+    for (let index = 0; index < contour.length; index += 1) {
+      const start = contour[index];
+      const end = contour[(index + 1) % contour.length];
+      if (start.x === end.x && start.y === end.y) return false;
+      const signature = renderGeometryEdgeKey(start, end);
+      if (seenEdges.has(signature)) return false;
+      seenEdges.add(signature);
+      doubleArea += (start.x - origin.x) * (end.y - origin.y) -
+        (end.x - origin.x) * (start.y - origin.y);
+      edges.push({
+        index,
+        start,
+        end,
+        minX: Math.min(start.x, end.x),
+        maxX: Math.max(start.x, end.x),
+        minY: Math.min(start.y, end.y),
+        maxY: Math.max(start.y, end.y)
+      });
+    }
+    if (!Number.isFinite(doubleArea) || doubleArea === 0) return false;
+
+    const sortCost = edges.length * Math.ceil(Math.log2(edges.length + 1));
+    if (!consume(sortCost)) return false;
+    const orderedEdges = [...edges].sort((left, right) => (
+      left.minX - right.minX ||
+      left.minY - right.minY ||
+      left.index - right.index
+    ));
+    for (let leftIndex = 0; leftIndex < orderedEdges.length; leftIndex += 1) {
+      const left = orderedEdges[leftIndex];
+      for (let rightIndex = leftIndex + 1; rightIndex < orderedEdges.length; rightIndex += 1) {
+        const right = orderedEdges[rightIndex];
+        if (right.minX > left.maxX) break;
+        if (!consume()) return false;
+        const adjacentDistance = Math.abs(left.index - right.index);
+        if (adjacentDistance === 1 || adjacentDistance === contour.length - 1) continue;
+        if (right.minY > left.maxY || right.maxY < left.minY) continue;
+        if (renderGeometryEdgesIntersect(left, right)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function validateRenderGeometryPathData(pathData, maximumLength) {
+  if (typeof pathData !== 'string' ||
+      pathData.length === 0 ||
+      pathData.length > maximumLength ||
+      pathData.trim() !== pathData) {
+    return false;
+  }
+  const tokens = pathData.split(/\s+/);
+  const maximumCoordinate = MAX_POINT_COORDINATE + MAX_BRUSH_SIZE;
+  const coordinateAt = index => {
+    const token = tokens[index];
+    if (!RENDER_GEOMETRY_NUMBER.test(token || '')) return null;
+    const coordinate = Number(token);
+    return Number.isFinite(coordinate) && Math.abs(coordinate) <= maximumCoordinate
+      ? coordinate
+      : null;
+  };
+  let cursor = 0;
+  const contours = [];
+  while (cursor < tokens.length) {
+    const moveX = coordinateAt(cursor + 1);
+    const moveY = coordinateAt(cursor + 2);
+    if (tokens[cursor] !== 'M' || moveX === null || moveY === null) return false;
+    const contour = [{ x: moveX, y: moveY }];
+    cursor += 3;
+    while (tokens[cursor] === 'L') {
+      const lineX = coordinateAt(cursor + 1);
+      const lineY = coordinateAt(cursor + 2);
+      if (lineX === null || lineY === null) return false;
+      contour.push({ x: lineX, y: lineY });
+      cursor += 3;
+    }
+    if (contour.length < 3 || tokens[cursor] !== 'Z') return false;
+    cursor += 1;
+    contours.push(contour);
+  }
+  return contours.length > 0 && validateRenderGeometryContours(contours);
 }
 
 function isSafeCount(value) {
@@ -217,6 +373,16 @@ function validateRecord(value, limits) {
       (!hasExactKeys(value.strokeCaps, CAPS_KEYS) ||
        typeof value.strokeCaps.start !== 'boolean' ||
        typeof value.strokeCaps.end !== 'boolean')) {
+    return false;
+  }
+  if (value.renderGeometry !== undefined &&
+      (!hasExactKeys(value.renderGeometry, RENDER_GEOMETRY_KEYS) ||
+       value.renderGeometry.version !== 1 ||
+       value.renderGeometry.fillRule !== 'evenodd' ||
+       !validateRenderGeometryPathData(
+         value.renderGeometry.pathData,
+         Math.min(32768, limits.maxDocumentBytes)
+       ))) {
     return false;
   }
   return true;

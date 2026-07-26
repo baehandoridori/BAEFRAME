@@ -10,6 +10,9 @@ const fs = require('fs');
 const path = require('path');
 const { createLogger } = require('./logger');
 const { normalizeEmbedBounds } = require('./mpv-embed-host');
+const {
+  validateDrawingRenderGeometry
+} = require('../shared/drawing-render-geometry');
 
 const log = createLogger('MPVOverlayHost');
 const DEFAULT_FABRIC_BUNDLE_PATH = path.join(
@@ -119,7 +122,10 @@ const FABRIC_DRAWING_RECORD_REQUIRED_KEYS = Object.freeze([
   'style',
   'transform'
 ]);
-const FABRIC_DRAWING_RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps']);
+const FABRIC_DRAWING_RECORD_OPTIONAL_KEYS = Object.freeze([
+  'strokeCaps',
+  'renderGeometry'
+]);
 const FABRIC_DRAWING_STYLE_KEYS = Object.freeze(['color', 'size', 'opacity']);
 const FABRIC_DRAWING_TRANSFORM_KEYS = Object.freeze([
   'left',
@@ -140,6 +146,11 @@ const FABRIC_DRAWING_POINT_REQUIRED_KEYS = Object.freeze([
 ]);
 const FABRIC_DRAWING_POINT_OPTIONAL_KEYS = Object.freeze(['pointerType']);
 const FABRIC_DRAWING_CAPS_KEYS = Object.freeze(['start', 'end']);
+const FABRIC_DRAWING_RENDER_GEOMETRY_KEYS = Object.freeze([
+  'version',
+  'pathData',
+  'fillRule'
+]);
 const FABRIC_DRAWING_REMOVAL_KEYS = Object.freeze(['id', 'index']);
 const FABRIC_DRAWING_INSERTION_KEYS = Object.freeze([
   'index',
@@ -290,8 +301,15 @@ const OVERLAY_HTML = String.raw`
       pointer-events: none;
     }
     .mpv-fabric-pilot-toolbar {
+      --fabric-toolbar-gap: 6px;
+      flex-flow: row wrap;
       align-items: center;
+      align-content: flex-start;
+      gap: var(--fabric-toolbar-gap);
+      width: max-content;
+      max-width: calc(100% - 24px);
       padding: 6px;
+      box-sizing: border-box;
       border-radius: 14px;
       background: rgba(15, 15, 15, 0.86);
       box-shadow:
@@ -300,6 +318,10 @@ const OVERLAY_HTML = String.raw`
       color: var(--text-primary);
       font-family: Inter, Pretendard, "Segoe UI", sans-serif;
       -webkit-font-smoothing: antialiased;
+    }
+    .mpv-fabric-pilot-toolbar > button,
+    .mpv-fabric-pilot-toolbar > [data-fabric-pilot-group="selection-controls"] {
+      flex: 0 0 auto;
     }
     .mpv-fabric-pilot-toolbar button {
       min-width: 40px;
@@ -314,6 +336,7 @@ const OVERLAY_HTML = String.raw`
       font: inherit;
       font-size: 12px;
       font-weight: 650;
+      white-space: nowrap;
       transition-property: transform, background-color, box-shadow;
       transition-duration: 120ms;
       transition-timing-function: ease-out;
@@ -337,9 +360,12 @@ const OVERLAY_HTML = String.raw`
       outline-offset: 2px;
     }
     .mpv-fabric-pilot-badge {
-      display: flex;
-      align-items: center;
+      display: block;
+      flex: 0 1 120px;
+      min-width: 72px;
+      max-width: 120px;
       min-height: 40px;
+      line-height: 40px;
       padding: 0 12px;
       border-radius: 8px;
       background: rgba(0, 0, 0, 0.28);
@@ -347,6 +373,26 @@ const OVERLAY_HTML = String.raw`
       font-size: 11px;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    @media (max-width: 640px) {
+      .mpv-fabric-pilot-toolbar {
+        --fabric-toolbar-gap: 4px;
+        padding: 4px;
+        border-radius: 10px;
+      }
+      .mpv-fabric-pilot-toolbar button {
+        padding-inline: 8px;
+      }
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="summary"] {
+        display: none;
+      }
+      .mpv-fabric-pilot-badge {
+        flex-basis: 108px;
+        max-width: 108px;
+        padding-inline: 6px;
+      }
     }
     .mirror-canvas {
       position: absolute;
@@ -1285,10 +1331,25 @@ function validateFabricDrawingRecord(value, maxPathLength) {
     if (!validateFabricDrawingPoint(point) || point.time < previousTime) return false;
     previousTime = point.time;
   }
-  return value.strokeCaps === undefined ||
-    (hasExactPersistenceKeys(value.strokeCaps, FABRIC_DRAWING_CAPS_KEYS) &&
-     typeof value.strokeCaps.start === 'boolean' &&
-     typeof value.strokeCaps.end === 'boolean');
+  if (value.strokeCaps !== undefined &&
+      (!hasExactPersistenceKeys(value.strokeCaps, FABRIC_DRAWING_CAPS_KEYS) ||
+       typeof value.strokeCaps.start !== 'boolean' ||
+       typeof value.strokeCaps.end !== 'boolean')) {
+    return false;
+  }
+  if (value.renderGeometry !== undefined &&
+      (!hasExactPersistenceKeys(
+        value.renderGeometry,
+        FABRIC_DRAWING_RENDER_GEOMETRY_KEYS
+      ) ||
+       !validateDrawingRenderGeometry(value.renderGeometry, {
+         maxPathLength: Math.min(FABRIC_DRAWING_MAX_STRING_LENGTH, maxPathLength),
+         maxCoordinate: FABRIC_DRAWING_MAX_POINT_COORDINATE +
+           FABRIC_DRAWING_MAX_BRUSH_SIZE
+       }))) {
+    return false;
+  }
+  return true;
 }
 
 function normalizeFabricDrawingPersistenceRequest(request, {

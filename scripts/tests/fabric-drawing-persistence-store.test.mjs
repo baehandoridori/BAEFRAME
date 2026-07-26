@@ -1,8 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+const require = createRequire(import.meta.url);
+const {
+  validateDrawingRenderGeometry
+} = require('../../shared/drawing-render-geometry.js');
 const moduleUrl = pathToFileURL(path.resolve(
   import.meta.dirname,
   '../../renderer/scripts/modules/fabric-drawing-persistence-store.js'
@@ -203,6 +208,11 @@ test('multiple frames and every Fabric record field round-trip exactly without a
   const { createFabricDrawingPersistenceStore } = await loadModule();
   const first = record('first', {
     pathData: 'M 1 2 Q 3 4 5 6 Z',
+    renderGeometry: {
+      version: 1,
+      pathData: 'M 1 2 L 5 2 L 5 6 Z',
+      fillRule: 'evenodd'
+    },
     strokeCaps: { start: false, end: true },
     style: { color: '#4a9eff', size: 19, opacity: 0.4 },
     transform: {
@@ -240,6 +250,180 @@ test('multiple frames and every Fabric record field round-trip exactly without a
   exported.keyframes[0].objects[0].sourcePoints[0].x = 999;
   assert.equal(store.exportRootValue().keyframes[0].objects[0].style.color, '#4a9eff');
   assert.equal(store.exportRootValue().keyframes[0].objects[0].sourcePoints[0].x, 0);
+});
+
+test('render geometry persistence is optional and strictly versioned', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const valid = rootValue({
+    keyframes: [keyframe(3, [record('render-fragment', {
+      renderGeometry: {
+        version: 1,
+        pathData: [
+          'M 0 0 L 12 0 L 12 12 L 0 12 Z',
+          'M 3 3 L 3 9 L 9 9 L 9 3 Z',
+          'M 12 12 L 16 12 L 16 16 L 12 16 Z'
+        ].join(' '),
+        fillRule: 'evenodd'
+      }
+    })])]
+  });
+  const store = createFabricDrawingPersistenceStore();
+  assert.equal(store.importRootValue(valid, META).accepted, true);
+  assert.deepEqual(
+    store.exportRootValue().keyframes[0].objects[0].renderGeometry,
+    valid.keyframes[0].objects[0].renderGeometry
+  );
+
+  const invalidCases = [
+    value => { value.version = 2; },
+    value => { value.pathData = ''; },
+    value => { value.pathData = 'M 1 1 Q 5 0 9 1 L 9 9 L 1 9 Z'; },
+    value => { value.pathData = 'm 1 1 l 9 1 l 9 9 z'; },
+    value => { value.pathData = 'M 1e309 1 L 9 1 L 9 9 Z'; },
+    value => { value.pathData = 'M 1001000001 1 L 9 1 L 9 9 Z'; },
+    value => { value.pathData = 'M 1 1 L 9 1 L 9 9 Z <script>'; },
+    value => { value.pathData = 'M 1 1 L 9 1 L 9 9'; },
+    value => { value.pathData = 'M .5 1 L 9 1 L 9 9 Z'; },
+    value => { value.pathData = 'M 01 1 L 9 1 L 9 9 Z'; },
+    value => { value.pathData = 'M 0 0 L 8 0 L 8 0 L 0 8 Z'; },
+    value => { value.pathData = 'M 0 0 L 8 0 L 0 0 Z'; },
+    value => { value.pathData = 'M 0 0 L 4 0 L 8 0 Z'; },
+    value => { value.pathData = 'M 0 0 L 8 0 L 4 0 L 8 0 L 8 8 L 0 8 Z'; },
+    value => { value.pathData = 'M 0 0 L 8 8 L 0 8 L 8 0 Z'; },
+    value => { value.fillRule = 'nonzero'; },
+    value => { value.vendor = true; }
+  ];
+  for (const mutate of invalidCases) {
+    const candidate = structuredClone(valid);
+    mutate(candidate.keyframes[0].objects[0].renderGeometry);
+    assert.equal(
+      createFabricDrawingPersistenceStore().importRootValue(candidate, META).accepted,
+      false
+    );
+  }
+});
+
+test('shared and persistence render geometry validators stay in parity', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const validSimple = {
+    version: 1,
+    pathData: 'M 0 0 L 20 0 L 20 20 L 0 20 Z',
+    fillRule: 'evenodd'
+  };
+  const validEvenoddContours = {
+    version: 1,
+    pathData: [
+      'M 0 0 L 20 0 L 20 20 L 0 20 Z',
+      'M 5 5 L 5 15 L 15 15 L 15 5 Z',
+      'M 30 30 L 36 30 L 36 36 L 30 36 Z'
+    ].join(' '),
+    fillRule: 'evenodd'
+  };
+  const cases = [
+    ['valid simple contour', validSimple, true],
+    ['valid evenodd hole and disjoint island contours', validEvenoddContours, true],
+    ['unknown geometry key', { ...validSimple, vendor: true }, false],
+    ['unsupported version', { ...validSimple, version: 2 }, false],
+    ['unsupported fill rule', { ...validSimple, fillRule: 'nonzero' }, false],
+    ['empty path', { ...validSimple, pathData: '' }, false],
+    [
+      'oversized path',
+      {
+        ...validSimple,
+        pathData: `M 0 0 L 1 0 L 0 1 ${' '.repeat(32_768)}Z`
+      },
+      false
+    ],
+    [
+      'unsupported quadratic command',
+      { ...validSimple, pathData: 'M 0 0 Q 5 10 10 0 L 0 10 Z' },
+      false
+    ],
+    [
+      'unsupported lowercase commands',
+      { ...validSimple, pathData: 'm 0 0 l 10 0 l 0 10 z' },
+      false
+    ],
+    [
+      'nonfinite coordinate',
+      { ...validSimple, pathData: 'M 0 0 L 1e309 0 L 0 10 Z' },
+      false
+    ],
+    [
+      'overflow coordinate',
+      { ...validSimple, pathData: 'M 0 0 L 1001000001 0 L 0 10 Z' },
+      false
+    ],
+    [
+      'open contour',
+      { ...validSimple, pathData: 'M 0 0 L 10 0 L 0 10' },
+      false
+    ],
+    [
+      'degenerate collinear contour',
+      { ...validSimple, pathData: 'M 0 0 L 5 0 L 10 0 Z' },
+      false
+    ],
+    [
+      'degenerate repeated vertex',
+      { ...validSimple, pathData: 'M 0 0 L 10 0 L 10 0 L 0 10 Z' },
+      false
+    ],
+    [
+      'self-crossing contour',
+      { ...validSimple, pathData: 'M 0 0 L 10 8 L 0 12 L 8 0 Z' },
+      false
+    ],
+    [
+      'repeated edge in one contour',
+      {
+        ...validSimple,
+        pathData: 'M 0 0 L 10 0 L 10 10 L 0 10 L 10 10 Z'
+      },
+      false
+    ],
+    [
+      'multi-contour repeated edge',
+      {
+        ...validSimple,
+        pathData: [
+          'M 0 0 L 10 0 L 10 10 L 0 10 Z',
+          'M 0 0 L 10 0 L 5 -5 Z'
+        ].join(' ')
+      },
+      false
+    ],
+    [
+      'multi-contour invalid second contour',
+      {
+        ...validSimple,
+        pathData: [
+          'M 0 0 L 10 0 L 10 10 L 0 10 Z',
+          'M 20 20 L 30 30 L 20 30 L 28 20 Z'
+        ].join(' ')
+      },
+      false
+    ]
+  ];
+
+  for (const [name, geometry, expected] of cases) {
+    const sharedAccepted = validateDrawingRenderGeometry(geometry);
+    const input = rootValue({
+      keyframes: [keyframe(3, [record(`parity-${name}`, {
+        renderGeometry: structuredClone(geometry)
+      })])]
+    });
+    const persistenceAccepted =
+      createFabricDrawingPersistenceStore().importRootValue(input, META).accepted;
+
+    assert.equal(sharedAccepted, expected, `${name}: shared validator`);
+    assert.equal(persistenceAccepted, expected, `${name}: persistence validator`);
+    assert.equal(
+      persistenceAccepted,
+      sharedAccepted,
+      `${name}: validators diverged`
+    );
+  }
 });
 
 test('delta byte accounting never stringifies untouched records in the active frame', async () => {

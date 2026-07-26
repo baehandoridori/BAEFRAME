@@ -129,6 +129,8 @@
     "renderer/scripts/modules/drawing-v3/lasso-geometry.js"(exports, module) {
       "use strict";
       var EPSILON = 1e-7;
+      var PARAMETER_EPSILON = 1e-12;
+      var DEFAULT_EDGE_INDEX_LEAF_SIZE = 8;
       function finiteNumber(value, fallback = 0) {
         const number = Number(value);
         return Number.isFinite(number) ? number : fallback;
@@ -224,6 +226,143 @@
       function boundsIntersect(left, right) {
         return !!left && !!right && left.right >= right.left - EPSILON && left.left <= right.right + EPSILON && left.bottom >= right.top - EPSILON && left.top <= right.bottom + EPSILON;
       }
+      function createGeometryBudget(maxOperations = Number.POSITIVE_INFINITY) {
+        const numericLimit = Number(maxOperations);
+        const limit = Number.isFinite(numericLimit) ? Math.max(0, Math.trunc(numericLimit)) : Number.POSITIVE_INFINITY;
+        let operations = 0;
+        let limitExceeded = false;
+        return {
+          consume(count = 1) {
+            const amount = Math.max(0, Math.trunc(finiteNumber(count, 1)));
+            if (limitExceeded) return false;
+            if (operations + amount > limit) {
+              limitExceeded = true;
+              return false;
+            }
+            operations += amount;
+            return true;
+          },
+          get operations() {
+            return operations;
+          },
+          get maxOperations() {
+            return limit;
+          },
+          get limitExceeded() {
+            return limitExceeded;
+          }
+        };
+      }
+      function boundsForEdge(start, end) {
+        return {
+          left: Math.min(finiteNumber(start?.x), finiteNumber(end?.x)),
+          right: Math.max(finiteNumber(start?.x), finiteNumber(end?.x)),
+          top: Math.min(finiteNumber(start?.y), finiteNumber(end?.y)),
+          bottom: Math.max(finiteNumber(start?.y), finiteNumber(end?.y))
+        };
+      }
+      function unionBounds(entries) {
+        if (!entries.length) return null;
+        return entries.reduce((bounds, entry) => ({
+          left: Math.min(bounds.left, entry.bounds.left),
+          right: Math.max(bounds.right, entry.bounds.right),
+          top: Math.min(bounds.top, entry.bounds.top),
+          bottom: Math.max(bounds.bottom, entry.bounds.bottom)
+        }), { ...entries[0].bounds });
+      }
+      function buildEdgeIndexNode(entries, leafSize) {
+        const bounds = unionBounds(entries);
+        if (entries.length <= leafSize) return { bounds, edges: entries };
+        const width = bounds.right - bounds.left;
+        const height = bounds.bottom - bounds.top;
+        const axis = width >= height ? "x" : "y";
+        const ordered = [...entries].sort((left, right) => {
+          const leftCenter = axis === "x" ? (left.bounds.left + left.bounds.right) / 2 : (left.bounds.top + left.bounds.bottom) / 2;
+          const rightCenter = axis === "x" ? (right.bounds.left + right.bounds.right) / 2 : (right.bounds.top + right.bounds.bottom) / 2;
+          return leftCenter - rightCenter || left.index - right.index;
+        });
+        const middle = Math.ceil(ordered.length / 2);
+        return {
+          bounds,
+          left: buildEdgeIndexNode(ordered.slice(0, middle), leafSize),
+          right: buildEdgeIndexNode(ordered.slice(middle), leafSize)
+        };
+      }
+      function createPolygonEdgeIndex(polygon = [], options = {}) {
+        const budget = options.budget || createGeometryBudget();
+        const leafSize = Math.max(
+          2,
+          Math.trunc(finiteNumber(options.leafSize, DEFAULT_EDGE_INDEX_LEAF_SIZE))
+        );
+        const normalized = Array.isArray(polygon) ? polygon.map((point) => ({ x: finiteNumber(point?.x), y: finiteNumber(point?.y) })) : [];
+        const polygonBounds = boundsForPoints(normalized);
+        const edges = normalized.length >= 3 ? normalized.map((start, index) => {
+          const end = normalized[(index + 1) % normalized.length];
+          return { index, start, end, bounds: boundsForEdge(start, end) };
+        }) : [];
+        const buildCost = edges.length > 0 ? edges.length * (Math.ceil(Math.log2(edges.length + 1)) + 1) : 0;
+        const buildAccepted = budget.consume(buildCost);
+        const root = buildAccepted && edges.length > 0 ? buildEdgeIndexNode(edges, leafSize) : null;
+        const queryEdges = (bounds) => {
+          if (!root || !bounds) return budget.limitExceeded ? null : [];
+          const matches = [];
+          const stack = [root];
+          while (stack.length > 0) {
+            const node = stack.pop();
+            if (!budget.consume()) return null;
+            if (!boundsIntersect(node.bounds, bounds)) continue;
+            if (node.edges) {
+              for (const edge of node.edges) {
+                if (!budget.consume()) return null;
+                if (boundsIntersect(edge.bounds, bounds)) matches.push(edge);
+              }
+            } else {
+              if (node.right) stack.push(node.right);
+              if (node.left) stack.push(node.left);
+            }
+          }
+          return matches;
+        };
+        const classify = (point) => {
+          if (!polygonBounds || finiteNumber(point?.x) < polygonBounds.left - EPSILON || finiteNumber(point?.x) > polygonBounds.right + EPSILON || finiteNumber(point?.y) < polygonBounds.top - EPSILON || finiteNumber(point?.y) > polygonBounds.bottom + EPSILON) {
+            return "outside";
+          }
+          const candidates = queryEdges({
+            left: finiteNumber(point?.x),
+            right: polygonBounds.right,
+            top: finiteNumber(point?.y),
+            bottom: finiteNumber(point?.y)
+          });
+          if (candidates === null) return null;
+          let inside = false;
+          for (const edge of candidates) {
+            if (!budget.consume()) return null;
+            if (pointOnSegment(point, edge.start, edge.end)) return "boundary";
+            const startY = edge.start.y;
+            const endY = edge.end.y;
+            const pointY = finiteNumber(point?.y);
+            if (endY > pointY === startY > pointY) continue;
+            const crossingX = (edge.start.x - edge.end.x) * (pointY - endY) / (startY - endY) + edge.end.x;
+            if (finiteNumber(point?.x) < crossingX) inside = !inside;
+          }
+          return inside ? "inside" : "outside";
+        };
+        const contains = (point) => {
+          const classification = classify(point);
+          if (classification === null) return null;
+          return classification !== "outside";
+        };
+        return {
+          __baeframePolygonEdgeIndex: true,
+          polygon: normalized,
+          bounds: polygonBounds,
+          edges,
+          budget,
+          queryEdges,
+          classify,
+          contains
+        };
+      }
       function simplifyOpenPolyline(points, tolerance) {
         if (points.length <= 2) return points.map((point) => ({ ...point }));
         const keep = new Uint8Array(points.length);
@@ -281,39 +420,47 @@
         const simplified = [...firstHalf, ...secondHalf.slice(1, -1)];
         return simplified.length >= 3 ? simplified : deduplicated;
       }
-      function segmentPolygonIntersectionParameters(start, end, polygon = []) {
+      function segmentEdgeIntersectionParameters(start, end, edgeStart, edgeEnd) {
         const ax = finiteNumber(start?.x);
         const ay = finiteNumber(start?.y);
         const rx = finiteNumber(end?.x) - ax;
         const ry = finiteNumber(end?.y) - ay;
         const parameters = [];
-        for (let index = 0; index < polygon.length; index += 1) {
-          const edgeStart = polygon[index];
-          const edgeEnd = polygon[(index + 1) % polygon.length];
-          const qx = finiteNumber(edgeStart?.x);
-          const qy = finiteNumber(edgeStart?.y);
-          const sx = finiteNumber(edgeEnd?.x) - qx;
-          const sy = finiteNumber(edgeEnd?.y) - qy;
-          const denominator = cross(rx, ry, sx, sy);
-          const qpx = qx - ax;
-          const qpy = qy - ay;
-          if (Math.abs(denominator) <= EPSILON) {
-            if (Math.abs(cross(qpx, qpy, rx, ry)) > EPSILON) continue;
-            const lengthSquared = rx * rx + ry * ry;
-            if (lengthSquared <= EPSILON) continue;
-            for (const edgePoint of [edgeStart, edgeEnd]) {
-              const t2 = ((finiteNumber(edgePoint?.x) - ax) * rx + (finiteNumber(edgePoint?.y) - ay) * ry) / lengthSquared;
-              if (t2 > EPSILON && t2 < 1 - EPSILON) parameters.push(t2);
-            }
-            continue;
+        const qx = finiteNumber(edgeStart?.x);
+        const qy = finiteNumber(edgeStart?.y);
+        const sx = finiteNumber(edgeEnd?.x) - qx;
+        const sy = finiteNumber(edgeEnd?.y) - qy;
+        const denominator = cross(rx, ry, sx, sy);
+        const qpx = qx - ax;
+        const qpy = qy - ay;
+        if (Math.abs(denominator) <= EPSILON) {
+          if (Math.abs(cross(qpx, qpy, rx, ry)) > EPSILON) return parameters;
+          const lengthSquared = rx * rx + ry * ry;
+          if (lengthSquared <= EPSILON) return parameters;
+          for (const edgePoint of [edgeStart, edgeEnd]) {
+            const t2 = ((finiteNumber(edgePoint?.x) - ax) * rx + (finiteNumber(edgePoint?.y) - ay) * ry) / lengthSquared;
+            if (t2 > PARAMETER_EPSILON && t2 < 1 - PARAMETER_EPSILON) parameters.push(t2);
           }
-          const t = cross(qpx, qpy, sx, sy) / denominator;
-          const u = cross(qpx, qpy, rx, ry) / denominator;
-          if (t >= -EPSILON && t <= 1 + EPSILON && u >= -EPSILON && u <= 1 + EPSILON) {
-            parameters.push(Math.min(1, Math.max(0, t)));
-          }
+          return parameters;
         }
-        return parameters.sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > EPSILON);
+        const t = cross(qpx, qpy, sx, sy) / denominator;
+        const u = cross(qpx, qpy, rx, ry) / denominator;
+        if (t >= -PARAMETER_EPSILON && t <= 1 + PARAMETER_EPSILON && u >= -PARAMETER_EPSILON && u <= 1 + PARAMETER_EPSILON) {
+          parameters.push(Math.min(1, Math.max(0, t)));
+        }
+        return parameters;
+      }
+      function segmentPolygonIntersectionParameters(start, end, polygon = []) {
+        const parameters = [];
+        for (let index = 0; index < polygon.length; index += 1) {
+          parameters.push(...segmentEdgeIntersectionParameters(
+            start,
+            end,
+            polygon[index],
+            polygon[(index + 1) % polygon.length]
+          ));
+        }
+        return parameters.sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > PARAMETER_EPSILON);
       }
       module.exports = {
         EPSILON,
@@ -323,7 +470,10 @@
         polygonHasArea,
         boundsForPoints,
         boundsIntersect,
+        createGeometryBudget,
+        createPolygonEdgeIndex,
         simplifyClosedPolygon,
+        segmentEdgeIntersectionParameters,
         segmentPolygonIntersectionParameters
       };
     }
@@ -335,19 +485,23 @@
       "use strict";
       var {
         EPSILON,
-        pointInPolygon,
+        boundsForPoints,
+        boundsIntersect,
+        createGeometryBudget,
+        createPolygonEdgeIndex,
         pointToSegmentDistance,
-        segmentPolygonIntersectionParameters
+        segmentEdgeIntersectionParameters
       } = require_lasso_geometry();
       var DEFAULT_THINNING = 0.65;
-      var MINIMIZE_ITERATIONS = 14;
-      var ROOT_ITERATIONS = 20;
+      var PARAMETER_EPSILON = 1e-12;
       function finiteNumber(value, fallback = 0) {
         const number = Number(value);
         return Number.isFinite(number) ? number : fallback;
       }
       function interpolateSample(start, end, amount) {
         const t = Math.min(1, Math.max(0, finiteNumber(amount)));
+        if (t <= 0) return { ...start };
+        if (t >= 1) return { ...end };
         const sample = {
           ...start,
           x: finiteNumber(start?.x) + (finiteNumber(end?.x) - finiteNumber(start?.x)) * t,
@@ -355,14 +509,18 @@
           pressure: finiteNumber(start?.pressure, 0.5) + (finiteNumber(end?.pressure, 0.5) - finiteNumber(start?.pressure, 0.5)) * t,
           time: finiteNumber(start?.time) + (finiteNumber(end?.time) - finiteNumber(start?.time)) * t
         };
-        if (t >= 1) return { ...end, ...sample };
         return sample;
       }
       function samePoint(left, right) {
         return Math.abs(finiteNumber(left?.x) - finiteNumber(right?.x)) <= EPSILON && Math.abs(finiteNumber(left?.y) - finiteNumber(right?.y)) <= EPSILON;
       }
+      function sameGeometrySample(left, right) {
+        return samePoint(left, right) && Math.abs(
+          finiteNumber(left?.pressure, 0.5) - finiteNumber(right?.pressure, 0.5)
+        ) <= PARAMETER_EPSILON;
+      }
       function appendPoint(run, point) {
-        if (!run.length || !samePoint(run[run.length - 1], point)) run.push(point);
+        if (!run.length || !sameGeometrySample(run[run.length - 1], point)) run.push(point);
       }
       function hasVisibleLength(run) {
         let length = 0;
@@ -370,8 +528,12 @@
           const dx = finiteNumber(run[index]?.x) - finiteNumber(run[index - 1]?.x);
           const dy = finiteNumber(run[index]?.y) - finiteNumber(run[index - 1]?.y);
           length += Math.hypot(dx, dy);
+          if (length + EPSILON >= 1) return true;
         }
-        return length + EPSILON >= 1;
+        return false;
+      }
+      function strokeHasSplittableLength(points = []) {
+        return Array.isArray(points) && points.length >= 2 && hasVisibleLength(points);
       }
       function strokeRadius(sample, options = {}) {
         const size = Math.max(1, finiteNumber(options.size, 0));
@@ -380,100 +542,524 @@
         const pressure = Math.min(1, Math.max(0, finiteNumber(sample?.pressure, 0.5)));
         return Math.max(0.01, size * (0.5 - thinning * (0.5 - pressure)));
       }
-      function boundsOverlapWithPadding(start, end, edgeStart, edgeEnd, padding) {
-        const left = Math.min(finiteNumber(start?.x), finiteNumber(end?.x)) - padding;
-        const right = Math.max(finiteNumber(start?.x), finiteNumber(end?.x)) + padding;
-        const top = Math.min(finiteNumber(start?.y), finiteNumber(end?.y)) - padding;
-        const bottom = Math.max(finiteNumber(start?.y), finiteNumber(end?.y)) + padding;
-        return right >= Math.min(finiteNumber(edgeStart?.x), finiteNumber(edgeEnd?.x)) - EPSILON && left <= Math.max(finiteNumber(edgeStart?.x), finiteNumber(edgeEnd?.x)) + EPSILON && bottom >= Math.min(finiteNumber(edgeStart?.y), finiteNumber(edgeEnd?.y)) - EPSILON && top <= Math.max(finiteNumber(edgeStart?.y), finiteNumber(edgeEnd?.y)) + EPSILON;
+      function isPolygonQuery(value) {
+        return value?.__baeframePolygonEdgeIndex === true;
       }
-      function proximityMetric(start, end, edgeStart, edgeEnd, options, amount) {
+      function resolvePolygonQuery(value, options = {}) {
+        if (isPolygonQuery(value)) return value;
+        const budget = options.budget || createGeometryBudget();
+        return createPolygonEdgeIndex(value, { budget });
+      }
+      function segmentBounds(start, end, padding = 0) {
+        const safePadding = Math.max(0, finiteNumber(padding));
+        return {
+          left: Math.min(finiteNumber(start?.x), finiteNumber(end?.x)) - safePadding,
+          right: Math.max(finiteNumber(start?.x), finiteNumber(end?.x)) + safePadding,
+          top: Math.min(finiteNumber(start?.y), finiteNumber(end?.y)) - safePadding,
+          bottom: Math.max(finiteNumber(start?.y), finiteNumber(end?.y)) + safePadding
+        };
+      }
+      function deduplicateStrokePoints(points = []) {
+        const deduplicated = [];
+        for (const point of points) {
+          if (!deduplicated.length || !sameGeometrySample(deduplicated[deduplicated.length - 1], point)) {
+            deduplicated.push(point);
+          }
+        }
+        if (deduplicated.length > 1 && deduplicated.every((point) => samePoint(point, deduplicated[0]))) {
+          return [deduplicated[0]];
+        }
+        return deduplicated;
+      }
+      function restoreSamePositionPressureChains(runs, sourcePoints, samplePositions) {
+        const chainsBySegmentStart = /* @__PURE__ */ new Map();
+        const chainsBySegmentEnd = /* @__PURE__ */ new Map();
+        for (let startIndex = 0; startIndex < sourcePoints.length; ) {
+          let endIndex = startIndex + 1;
+          while (endIndex < sourcePoints.length && samePoint(sourcePoints[startIndex], sourcePoints[endIndex])) {
+            endIndex += 1;
+          }
+          if (endIndex - startIndex > 1) {
+            const chain = sourcePoints.slice(startIndex, endIndex);
+            if (startIndex > 0) chainsBySegmentEnd.set(startIndex - 1, chain);
+            if (endIndex < sourcePoints.length) chainsBySegmentStart.set(endIndex - 1, chain);
+          }
+          startIndex = endIndex;
+        }
+        const chainForPoint = (point) => {
+          const position = samplePositions.get(point);
+          if (!position) return null;
+          if (position.amount <= PARAMETER_EPSILON) {
+            return chainsBySegmentStart.get(position.segmentIndex) || null;
+          }
+          if (position.amount >= 1 - PARAMETER_EPSILON) {
+            return chainsBySegmentEnd.get(position.segmentIndex) || null;
+          }
+          return null;
+        };
+        for (const run of runs) {
+          const restored = [];
+          for (let index = 0; index < run.points.length; ) {
+            let endIndex = index + 1;
+            while (endIndex < run.points.length && samePoint(run.points[index], run.points[endIndex])) {
+              endIndex += 1;
+            }
+            const chain = run.points.slice(index, endIndex).map(chainForPoint).find(Boolean);
+            restored.push(...chain || run.points.slice(index, endIndex));
+            index = endIndex;
+          }
+          run.points.splice(0, run.points.length, ...restored);
+        }
+      }
+      function quadraticRoots(coefficients) {
+        const { a, b, c } = coefficients;
+        const coefficientScale = Math.max(1, Math.abs(a), Math.abs(b), Math.abs(c));
+        const coefficientTolerance = Number.EPSILON * coefficientScale * 64;
+        if (Math.abs(a) <= coefficientTolerance) {
+          if (Math.abs(b) <= coefficientTolerance) return [];
+          return [-c / b];
+        }
+        const discriminantTerm = 4 * a * c;
+        const discriminant = b * b - discriminantTerm;
+        const discriminantScale = Math.max(1, b * b, Math.abs(discriminantTerm));
+        if (discriminant < -Number.EPSILON * discriminantScale * 128) return [];
+        const squareRoot = Math.sqrt(Math.max(0, discriminant));
+        if (squareRoot <= Number.EPSILON * Math.max(1, Math.abs(b)) * 64) {
+          return [-b / (2 * a)];
+        }
+        const q = -0.5 * (b + (b < 0 ? -squareRoot : squareRoot));
+        if (Math.abs(q) <= Number.EPSILON * coefficientScale * 64) {
+          return [-b / (2 * a)];
+        }
+        return [q / a, c / q].sort((left, right) => left - right);
+      }
+      function quadraticHitIntervals(coefficients, from, to, budget, hitAtAmount) {
+        if (!budget.consume()) return { intervals: [], limitExceeded: true };
+        const roots = quadraticRoots(coefficients).filter((root) => root >= from - PARAMETER_EPSILON && root <= to + PARAMETER_EPSILON).map((root) => Math.min(to, Math.max(from, root)));
+        const cuts = [from, ...roots, to].sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > PARAMETER_EPSILON);
+        const intervals = [];
+        for (let index = 0; index < cuts.length - 1; index += 1) {
+          const intervalStart = cuts[index];
+          const intervalEnd = cuts[index + 1];
+          const middle = (intervalStart + intervalEnd) / 2;
+          if (hitAtAmount(middle)) {
+            intervals.push([intervalStart, intervalEnd]);
+          }
+        }
+        for (const cut of cuts) {
+          if (!hitAtAmount(cut)) continue;
+          if (!intervals.some((interval) => cut >= interval[0] - PARAMETER_EPSILON && cut <= interval[1] + PARAMETER_EPSILON)) {
+            intervals.push([cut, cut]);
+          }
+        }
+        return { intervals, limitExceeded: false };
+      }
+      function pointDistanceSquaredCoefficients(start, end, point) {
+        const offsetX = finiteNumber(start?.x) - finiteNumber(point?.x);
+        const offsetY = finiteNumber(start?.y) - finiteNumber(point?.y);
+        const deltaX = finiteNumber(end?.x) - finiteNumber(start?.x);
+        const deltaY = finiteNumber(end?.y) - finiteNumber(start?.y);
+        return {
+          a: deltaX * deltaX + deltaY * deltaY,
+          b: 2 * (offsetX * deltaX + offsetY * deltaY),
+          c: offsetX * offsetX + offsetY * offsetY
+        };
+      }
+      function lineDistanceSquaredCoefficients(start, end, edgeStart, edgeDelta, edgeLengthSquared) {
+        const offsetX = finiteNumber(start?.x) - finiteNumber(edgeStart?.x);
+        const offsetY = finiteNumber(start?.y) - finiteNumber(edgeStart?.y);
+        const deltaX = finiteNumber(end?.x) - finiteNumber(start?.x);
+        const deltaY = finiteNumber(end?.y) - finiteNumber(start?.y);
+        const crossStart = offsetX * edgeDelta.y - offsetY * edgeDelta.x;
+        const crossDelta = deltaX * edgeDelta.y - deltaY * edgeDelta.x;
+        return {
+          a: crossDelta * crossDelta / edgeLengthSquared,
+          b: 2 * crossStart * crossDelta / edgeLengthSquared,
+          c: crossStart * crossStart / edgeLengthSquared
+        };
+      }
+      function subtractRadiusSquared(coefficients, start, end, options) {
+        const radiusStart = strokeRadius(start, options) + EPSILON;
+        const radiusEnd = strokeRadius(end, options) + EPSILON;
+        const radiusDelta = radiusEnd - radiusStart;
+        return {
+          a: coefficients.a - radiusDelta * radiusDelta,
+          b: coefficients.b - 2 * radiusStart * radiusDelta,
+          c: coefficients.c - radiusStart * radiusStart
+        };
+      }
+      function clipEdgeToStrokeCaps(start, end, edgeStart, edgeEnd, caps = {}) {
+        if (caps.start !== false && caps.end !== false) {
+          return { start: edgeStart, end: edgeEnd };
+        }
+        const strokeDelta = {
+          x: finiteNumber(end?.x) - finiteNumber(start?.x),
+          y: finiteNumber(end?.y) - finiteNumber(start?.y)
+        };
+        const strokeLength = Math.hypot(strokeDelta.x, strokeDelta.y);
+        if (strokeLength <= EPSILON) return null;
+        const direction = {
+          x: strokeDelta.x / strokeLength,
+          y: strokeDelta.y / strokeLength
+        };
+        const edgeDelta = {
+          x: finiteNumber(edgeEnd?.x) - finiteNumber(edgeStart?.x),
+          y: finiteNumber(edgeEnd?.y) - finiteNumber(edgeStart?.y)
+        };
+        const edgeStartDistance = (finiteNumber(edgeStart?.x) - finiteNumber(start?.x)) * direction.x + (finiteNumber(edgeStart?.y) - finiteNumber(start?.y)) * direction.y;
+        const edgeDistanceDelta = edgeDelta.x * direction.x + edgeDelta.y * direction.y;
+        let from = 0;
+        let to = 1;
+        const clipLower = (boundary) => {
+          if (Math.abs(edgeDistanceDelta) <= EPSILON) {
+            return edgeStartDistance >= boundary - EPSILON;
+          }
+          const amount = (boundary - edgeStartDistance) / edgeDistanceDelta;
+          if (edgeDistanceDelta > 0) from = Math.max(from, amount);
+          else to = Math.min(to, amount);
+          return from <= to + PARAMETER_EPSILON;
+        };
+        const clipUpper = (boundary) => {
+          if (Math.abs(edgeDistanceDelta) <= EPSILON) {
+            return edgeStartDistance <= boundary + EPSILON;
+          }
+          const amount = (boundary - edgeStartDistance) / edgeDistanceDelta;
+          if (edgeDistanceDelta > 0) to = Math.min(to, amount);
+          else from = Math.max(from, amount);
+          return from <= to + PARAMETER_EPSILON;
+        };
+        if (caps.start === false && !clipLower(0)) return null;
+        if (caps.end === false && !clipUpper(strokeLength)) return null;
+        const clippedFrom = Math.min(1, Math.max(0, from));
+        const clippedTo = Math.min(1, Math.max(0, to));
+        if (clippedFrom > clippedTo + PARAMETER_EPSILON) return null;
+        return {
+          start: {
+            x: finiteNumber(edgeStart?.x) + edgeDelta.x * clippedFrom,
+            y: finiteNumber(edgeStart?.y) + edgeDelta.y * clippedFrom
+          },
+          end: {
+            x: finiteNumber(edgeStart?.x) + edgeDelta.x * clippedTo,
+            y: finiteNumber(edgeStart?.y) + edgeDelta.y * clippedTo
+          }
+        };
+      }
+      function proximityHitAtAmount(start, end, edgeStart, edgeEnd, options, amount) {
         const sample = interpolateSample(start, end, amount);
-        return pointToSegmentDistance(sample, edgeStart, edgeEnd) - strokeRadius(sample, options);
+        const distance = pointToSegmentDistance(sample, edgeStart, edgeEnd);
+        const radius = strokeRadius(sample, options) + EPSILON;
+        const distanceSquared = distance * distance;
+        const radiusSquared = radius * radius;
+        const distanceTolerance = Number.EPSILON * Math.max(1, distanceSquared, radiusSquared) * 64;
+        return distanceSquared - radiusSquared <= distanceTolerance;
       }
-      function findRoot(metric, low, high, lowIsHit) {
-        let left = low;
-        let right = high;
-        for (let iteration = 0; iteration < ROOT_ITERATIONS; iteration += 1) {
-          const middle = (left + right) / 2;
-          const middleIsHit = metric(middle) <= EPSILON;
-          if (middleIsHit === lowIsHit) left = middle;
-          else right = middle;
-        }
-        return (left + right) / 2;
-      }
-      function edgeProximityInterval(start, end, edgeStart, edgeEnd, options) {
+      function edgeProximityIntervals(start, end, edgeStart, edgeEnd, options, budget, caps = {}) {
+        const clippedEdge = clipEdgeToStrokeCaps(start, end, edgeStart, edgeEnd, caps);
+        if (!clippedEdge) return { intervals: [], limitExceeded: false };
+        const clippedEdgeStart = clippedEdge.start;
+        const clippedEdgeEnd = clippedEdge.end;
         const maximumRadius = Math.max(strokeRadius(start, options), strokeRadius(end, options));
-        if (!boundsOverlapWithPadding(start, end, edgeStart, edgeEnd, maximumRadius)) return null;
-        const metric = (amount) => proximityMetric(start, end, edgeStart, edgeEnd, options, amount);
-        let left = 0;
-        let right = 1;
-        for (let iteration = 0; iteration < MINIMIZE_ITERATIONS; iteration += 1) {
-          const first = left + (right - left) / 3;
-          const second = right - (right - left) / 3;
-          if (metric(first) <= metric(second)) right = second;
-          else left = first;
+        if (!boundsIntersect(
+          segmentBounds(start, end, maximumRadius),
+          segmentBounds(clippedEdgeStart, clippedEdgeEnd)
+        )) {
+          return { intervals: [], limitExceeded: false };
         }
-        const minimum = (left + right) / 2;
-        if (metric(minimum) > EPSILON) return null;
-        const startAmount = metric(0) <= EPSILON ? 0 : findRoot(metric, 0, minimum, false);
-        const endAmount = metric(1) <= EPSILON ? 1 : findRoot(metric, minimum, 1, true);
-        return [startAmount, endAmount];
+        const edgeDelta = {
+          x: finiteNumber(clippedEdgeEnd?.x) - finiteNumber(clippedEdgeStart?.x),
+          y: finiteNumber(clippedEdgeEnd?.y) - finiteNumber(clippedEdgeStart?.y)
+        };
+        const edgeLengthSquared = edgeDelta.x * edgeDelta.x + edgeDelta.y * edgeDelta.y;
+        const domains = [0, 1];
+        let projectionStart = 0;
+        let projectionDelta = 0;
+        if (edgeLengthSquared > EPSILON) {
+          const strokeDelta = {
+            x: finiteNumber(end?.x) - finiteNumber(start?.x),
+            y: finiteNumber(end?.y) - finiteNumber(start?.y)
+          };
+          projectionStart = ((finiteNumber(start?.x) - finiteNumber(clippedEdgeStart?.x)) * edgeDelta.x + (finiteNumber(start?.y) - finiteNumber(clippedEdgeStart?.y)) * edgeDelta.y) / edgeLengthSquared;
+          projectionDelta = (strokeDelta.x * edgeDelta.x + strokeDelta.y * edgeDelta.y) / edgeLengthSquared;
+          if (Math.abs(projectionDelta) > PARAMETER_EPSILON) {
+            for (const projectionBoundary of [0, 1]) {
+              const amount = (projectionBoundary - projectionStart) / projectionDelta;
+              if (amount > PARAMETER_EPSILON && amount < 1 - PARAMETER_EPSILON) {
+                domains.push(amount);
+              }
+            }
+          }
+        }
+        domains.sort((left, right) => left - right);
+        const intervals = [];
+        for (let index = 0; index < domains.length - 1; index += 1) {
+          const from = domains[index];
+          const to = domains[index + 1];
+          const middle = (from + to) / 2;
+          const projection = projectionStart + projectionDelta * middle;
+          let distanceSquared;
+          if (edgeLengthSquared <= EPSILON || projection <= 0) {
+            distanceSquared = pointDistanceSquaredCoefficients(start, end, clippedEdgeStart);
+          } else if (projection >= 1) {
+            distanceSquared = pointDistanceSquaredCoefficients(start, end, clippedEdgeEnd);
+          } else {
+            distanceSquared = lineDistanceSquaredCoefficients(
+              start,
+              end,
+              clippedEdgeStart,
+              edgeDelta,
+              edgeLengthSquared
+            );
+          }
+          const hit = quadraticHitIntervals(
+            subtractRadiusSquared(distanceSquared, start, end, options),
+            from,
+            to,
+            budget,
+            (amount) => proximityHitAtAmount(
+              start,
+              end,
+              clippedEdgeStart,
+              clippedEdgeEnd,
+              options,
+              amount
+            )
+          );
+          if (hit.limitExceeded) return hit;
+          intervals.push(...hit.intervals);
+        }
+        return { intervals, limitExceeded: false };
       }
-      function centerlineIntervals(start, end, polygon) {
-        const cuts = [0, ...segmentPolygonIntersectionParameters(start, end, polygon), 1].sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > EPSILON);
+      function endpointCapIntervals(start, end, edgeStart, edgeEnd, capSample, endpoint, options, budget) {
+        if (!capSample) return { intervals: [], limitExceeded: false };
+        const pressure = finiteNumber(capSample.pressure, 0.5);
+        const proximity = edgeProximityIntervals(
+          { ...start, pressure },
+          { ...end, pressure },
+          edgeStart,
+          edgeEnd,
+          options,
+          budget,
+          { start: true, end: true }
+        );
+        if (proximity.limitExceeded) return proximity;
+        return {
+          intervals: proximity.intervals.filter((interval) => endpoint === "start" ? interval[0] <= PARAMETER_EPSILON : interval[1] >= 1 - PARAMETER_EPSILON),
+          limitExceeded: false
+        };
+      }
+      function centerlineIntervals(start, end, query, budget) {
+        const candidates = query.queryEdges(segmentBounds(start, end));
+        if (candidates === null) return { intervals: [], limitExceeded: true };
+        const parameters = [];
+        for (const edge of candidates) {
+          if (!budget.consume()) return { intervals: [], limitExceeded: true };
+          parameters.push(...segmentEdgeIntersectionParameters(start, end, edge.start, edge.end));
+        }
+        const cuts = [0, ...parameters, 1].sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > PARAMETER_EPSILON);
         const intervals = [];
         for (let index = 0; index < cuts.length - 1; index += 1) {
           const from = cuts[index];
           const to = cuts[index + 1];
-          if (pointInPolygon(interpolateSample(start, end, (from + to) / 2), polygon)) {
+          const contained = query.contains(interpolateSample(start, end, (from + to) / 2));
+          if (contained === null) return { intervals: [], limitExceeded: true };
+          if (contained) {
             intervals.push([from, to]);
           }
         }
-        return intervals;
+        return { intervals, limitExceeded: false };
       }
       function mergeIntervals(intervals) {
-        const ordered = intervals.filter((interval) => interval && interval[1] - interval[0] > EPSILON).sort((left, right) => left[0] - right[0]);
+        const ordered = intervals.filter((interval) => interval && interval[1] - interval[0] > PARAMETER_EPSILON).sort((left, right) => left[0] - right[0]);
         const merged = [];
         for (const interval of ordered) {
           const previous = merged[merged.length - 1];
-          if (!previous || interval[0] > previous[1] + EPSILON) merged.push([...interval]);
-          else previous[1] = Math.max(previous[1], interval[1]);
+          if (!previous || interval[0] > previous[1] + PARAMETER_EPSILON) {
+            merged.push([...interval]);
+          } else previous[1] = Math.max(previous[1], interval[1]);
         }
         return merged;
       }
-      function segmentSelectionIntervals(start, end, polygon, options) {
-        const intervals = centerlineIntervals(start, end, polygon);
+      function segmentSelectionIntervals(start, end, query, options, budget, caps) {
+        const centerline = centerlineIntervals(start, end, query, budget);
+        if (centerline.limitExceeded) return centerline;
+        const intervals = centerline.intervals;
         const radiusEnabled = Number.isFinite(Number(options?.size)) && Number(options.size) > 0;
         if (radiusEnabled) {
-          for (let index = 0; index < polygon.length; index += 1) {
-            const interval = edgeProximityInterval(
+          const maximumRadius = Math.max(
+            strokeRadius(start, options),
+            strokeRadius(end, options),
+            caps.roundStart ? strokeRadius(caps.roundStart, options) : 0,
+            caps.roundEnd ? strokeRadius(caps.roundEnd, options) : 0
+          );
+          const candidates = query.queryEdges(segmentBounds(start, end, maximumRadius));
+          if (candidates === null) return { intervals: [], limitExceeded: true };
+          for (const edge of candidates) {
+            const proximity = edgeProximityIntervals(
               start,
               end,
-              polygon[index],
-              polygon[(index + 1) % polygon.length],
-              options
+              edge.start,
+              edge.end,
+              options,
+              budget,
+              { start: caps.bodyStart, end: caps.bodyEnd }
             );
-            if (interval) intervals.push(interval);
+            if (proximity.limitExceeded) return { intervals: [], limitExceeded: true };
+            intervals.push(...proximity.intervals);
+            for (const [capSample, endpoint] of [
+              [caps.roundStart, "start"],
+              [caps.roundEnd, "end"]
+            ]) {
+              const cap = endpointCapIntervals(
+                start,
+                end,
+                edge.start,
+                edge.end,
+                capSample,
+                endpoint,
+                options,
+                budget
+              );
+              if (cap.limitExceeded) return { intervals: [], limitExceeded: true };
+              intervals.push(...cap.intervals);
+            }
           }
         }
-        return mergeIntervals(intervals);
+        return { intervals: mergeIntervals(intervals), limitExceeded: false };
       }
       function intervalContains(intervals, amount) {
-        return intervals.some((interval) => amount >= interval[0] - EPSILON && amount <= interval[1] + EPSILON);
+        return intervals.some((interval) => amount >= interval[0] - PARAMETER_EPSILON && amount <= interval[1] + PARAMETER_EPSILON);
+      }
+      function pointTouchesPolygon(point, query, options, budget, includeRadius = true) {
+        const contained = query.contains(point);
+        if (contained === null) return { hit: false, limitExceeded: true };
+        if (contained) return { hit: true, limitExceeded: false };
+        if (!includeRadius) return { hit: false, limitExceeded: false };
+        const radius = strokeRadius(point, options);
+        const candidates = query.queryEdges(segmentBounds(point, point, radius));
+        if (candidates === null) return { hit: false, limitExceeded: true };
+        for (const edge of candidates) {
+          if (!budget.consume()) return { hit: false, limitExceeded: true };
+          if (pointToSegmentDistance(point, edge.start, edge.end) <= radius + EPSILON) {
+            return { hit: true, limitExceeded: false };
+          }
+        }
+        return { hit: false, limitExceeded: false };
+      }
+      function segmentTouchesPolygon(start, end, query, options, budget, caps) {
+        const startTouch = pointTouchesPolygon(start, query, options, budget, caps.bodyStart);
+        if (startTouch.hit || startTouch.limitExceeded) return startTouch;
+        if (caps.roundStart) {
+          const roundStartTouch = pointTouchesPolygon(caps.roundStart, query, options, budget);
+          if (roundStartTouch.hit || roundStartTouch.limitExceeded) return roundStartTouch;
+        }
+        const endContained = query.contains(end);
+        if (endContained === null) return { hit: false, limitExceeded: true };
+        if (endContained) return { hit: true, limitExceeded: false };
+        if (caps.roundEnd) {
+          const roundEndTouch = pointTouchesPolygon(caps.roundEnd, query, options, budget);
+          if (roundEndTouch.hit || roundEndTouch.limitExceeded) return roundEndTouch;
+        }
+        const maximumRadius = Math.max(strokeRadius(start, options), strokeRadius(end, options));
+        const candidates = query.queryEdges(segmentBounds(start, end, maximumRadius));
+        if (candidates === null) return { hit: false, limitExceeded: true };
+        for (const edge of candidates) {
+          if (!budget.consume()) return { hit: false, limitExceeded: true };
+          if (segmentEdgeIntersectionParameters(start, end, edge.start, edge.end).length > 0) {
+            return { hit: true, limitExceeded: false };
+          }
+          const proximity = edgeProximityIntervals(
+            start,
+            end,
+            edge.start,
+            edge.end,
+            options,
+            budget,
+            { start: caps.bodyStart, end: caps.bodyEnd }
+          );
+          if (proximity.limitExceeded) return { hit: false, limitExceeded: true };
+          if (proximity.intervals.length > 0) return { hit: true, limitExceeded: false };
+        }
+        return { hit: false, limitExceeded: false };
+      }
+      function segmentCaps(options, index, segmentCount, sourcePoints) {
+        const firstSegment = index === 0;
+        const lastSegment = index === segmentCount - 1;
+        return {
+          bodyStart: !firstSegment,
+          bodyEnd: !lastSegment,
+          roundStart: firstSegment && options?.strokeCaps?.start !== false ? sourcePoints[0] : null,
+          roundEnd: lastSegment && options?.strokeCaps?.end !== false ? sourcePoints.at(-1) : null
+        };
+      }
+      function strokeTouchesPolygon(points = [], polygon = [], options = {}) {
+        if (!Array.isArray(points) || points.length === 0) {
+          return { hit: false, limitExceeded: false };
+        }
+        const budget = options.budget || (isPolygonQuery(polygon) ? polygon.budget : createGeometryBudget(options.maxOperations));
+        const query = resolvePolygonQuery(polygon, { budget });
+        if (!query.bounds || query.edges.length < 3 || budget.limitExceeded) {
+          return { hit: false, limitExceeded: budget.limitExceeded };
+        }
+        const deduplicated = deduplicateStrokePoints(points);
+        const maximumRadius = deduplicated.reduce(
+          (maximum, point) => Math.max(maximum, strokeRadius(point, options)),
+          0
+        );
+        if (!boundsIntersect(boundsForPoints(deduplicated, maximumRadius), query.bounds)) {
+          return { hit: false, limitExceeded: false };
+        }
+        if (deduplicated.length === 1) {
+          const pointHasVisibleCap = options?.strokeCaps?.start !== false || options?.strokeCaps?.end !== false;
+          return pointTouchesPolygon(deduplicated[0], query, options, budget, pointHasVisibleCap);
+        }
+        const visibleSegmentIndexes = [];
+        for (let index = 0; index < deduplicated.length - 1; index += 1) {
+          if (!samePoint(deduplicated[index], deduplicated[index + 1])) {
+            visibleSegmentIndexes.push(index);
+          }
+        }
+        for (let visibleIndex = 0; visibleIndex < visibleSegmentIndexes.length; visibleIndex += 1) {
+          if (!budget.consume()) return { hit: false, limitExceeded: true };
+          const pointIndex = visibleSegmentIndexes[visibleIndex];
+          const result = segmentTouchesPolygon(
+            deduplicated[pointIndex],
+            deduplicated[pointIndex + 1],
+            query,
+            options,
+            budget,
+            segmentCaps(options, visibleIndex, visibleSegmentIndexes.length, deduplicated)
+          );
+          if (result.hit || result.limitExceeded) return result;
+        }
+        return { hit: false, limitExceeded: false };
+      }
+      function shortStrokeTouchesPolygon(points = [], polygon = [], options = {}) {
+        const deduplicated = deduplicateStrokePoints(points);
+        if (strokeHasSplittableLength(deduplicated)) return false;
+        return strokeTouchesPolygon(deduplicated, polygon, options).hit;
       }
       function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
-        if (!Array.isArray(points) || points.length < 2 || !Array.isArray(polygon) || polygon.length < 3) {
+        const polygonArray = isPolygonQuery(polygon) ? polygon.polygon : polygon;
+        const sourcePoints = Array.isArray(points) ? deduplicateStrokePoints(points) : [];
+        if (sourcePoints.length < 2 || !Array.isArray(polygonArray) || polygonArray.length < 3) {
           const outside = Array.isArray(points) && points.length ? [[...points]] : [];
           return { inside: [], outside, runs: outside.map((run) => ({ kind: "outside", points: run })) };
         }
         const result = { inside: [], outside: [], runs: [], limitExceeded: false };
+        const budget = options.budget || (isPolygonQuery(polygon) ? polygon.budget : createGeometryBudget(options.maxOperations));
+        const query = resolvePolygonQuery(polygon, { budget });
+        if (budget.limitExceeded) {
+          return { ...result, limitExceeded: true, limitReason: "operations" };
+        }
         const maxRuns = Number.isInteger(Number(options.maxRuns)) && Number(options.maxRuns) > 0 ? Number(options.maxRuns) : Number.POSITIVE_INFINITY;
+        let limitReason = null;
         let currentKind = null;
         let currentRun = null;
+        const samplePositions = /* @__PURE__ */ new WeakMap();
         const startRun = (kind, point) => {
           if (result.runs.length >= maxRuns) {
             result.limitExceeded = true;
+            limitReason = "runs";
             return false;
           }
           currentKind = kind;
@@ -482,16 +1068,162 @@
           result.runs.push({ kind, points: currentRun });
           return true;
         };
-        outer: for (let index = 0; index < points.length - 1; index += 1) {
-          const start = points[index];
-          const end = points[index + 1];
-          const selectionIntervals = segmentSelectionIntervals(start, end, polygon, options);
-          const cuts = [0, ...selectionIntervals.flat(), 1].sort((left, right) => left - right).filter((value, cutIndex, values) => cutIndex === 0 || Math.abs(value - values[cutIndex - 1]) > EPSILON);
+        const visibleSegmentIndexes = [];
+        for (let index = 0; index < sourcePoints.length - 1; index += 1) {
+          if (!samePoint(sourcePoints[index], sourcePoints[index + 1])) {
+            visibleSegmentIndexes.push(index);
+          }
+        }
+        outer: for (let visibleIndex = 0; visibleIndex < visibleSegmentIndexes.length; visibleIndex += 1) {
+          if (!budget.consume()) {
+            result.limitExceeded = true;
+            limitReason = "operations";
+            break;
+          }
+          const pointIndex = visibleSegmentIndexes[visibleIndex];
+          const start = sourcePoints[pointIndex];
+          const end = sourcePoints[pointIndex + 1];
+          const selection = segmentSelectionIntervals(
+            start,
+            end,
+            query,
+            options,
+            budget,
+            segmentCaps(options, visibleIndex, visibleSegmentIndexes.length, sourcePoints)
+          );
+          if (selection.limitExceeded) {
+            result.limitExceeded = true;
+            limitReason = "operations";
+            break;
+          }
+          const selectionIntervals = selection.intervals;
+          const cuts = [0, ...selectionIntervals.flat(), 1].sort((left, right) => left - right).filter((value, cutIndex, values) => cutIndex === 0 || Math.abs(value - values[cutIndex - 1]) > PARAMETER_EPSILON);
           for (let cutIndex = 0; cutIndex < cuts.length - 1; cutIndex += 1) {
-            const from = interpolateSample(start, end, cuts[cutIndex]);
-            const to = interpolateSample(start, end, cuts[cutIndex + 1]);
+            const fromAmount = cuts[cutIndex];
+            const toAmount = cuts[cutIndex + 1];
+            const from = interpolateSample(start, end, fromAmount);
+            const to = interpolateSample(start, end, toAmount);
+            samplePositions.set(from, { segmentIndex: pointIndex, amount: fromAmount });
+            samplePositions.set(to, { segmentIndex: pointIndex, amount: toAmount });
             const midpoint = (cuts[cutIndex] + cuts[cutIndex + 1]) / 2;
             const kind = intervalContains(selectionIntervals, midpoint) ? "inside" : "outside";
+            if ((currentKind !== kind || !currentRun) && !startRun(kind, from)) break outer;
+            else appendPoint(currentRun, from);
+            appendPoint(currentRun, to);
+          }
+        }
+        restoreSamePositionPressureChains(result.runs, sourcePoints, samplePositions);
+        result.runs = result.runs.filter(({ points: run }) => run.length >= 2 && hasVisibleLength(run));
+        result.inside = result.runs.filter((run) => run.kind === "inside").map((run) => run.points);
+        result.outside = result.runs.filter((run) => run.kind === "outside").map((run) => run.points);
+        if (result.limitExceeded) result.limitReason = limitReason || "operations";
+        return result;
+      }
+      function splitStrokePointsBySourceIntervals(points = [], intervals = [], options = {}) {
+        const sourcePoints = Array.isArray(points) ? [...points] : [];
+        const maximumPosition = Math.max(0, sourcePoints.length - 1);
+        const budget = options.budget || createGeometryBudget(options.maxOperations);
+        const unavailable = () => ({
+          inside: [],
+          outside: sourcePoints.length > 0 ? [sourcePoints] : [],
+          runs: sourcePoints.length > 0 ? [{ kind: "outside", points: sourcePoints }] : [],
+          limitExceeded: false,
+          geometryUnavailable: true
+        });
+        if (!Array.isArray(intervals)) return unavailable();
+        const normalizedIntervals = [];
+        for (const interval of intervals) {
+          if (!budget.consume() || !Array.isArray(interval) || interval.length !== 2) {
+            return budget.limitExceeded ? { ...unavailable(), limitExceeded: true, limitReason: "operations" } : unavailable();
+          }
+          const start = Number(interval[0]);
+          const end = Number(interval[1]);
+          if (!Number.isFinite(start) || !Number.isFinite(end) || start < -PARAMETER_EPSILON || end > maximumPosition + PARAMETER_EPSILON || start > end + PARAMETER_EPSILON) {
+            return unavailable();
+          }
+          if (end - start > PARAMETER_EPSILON) {
+            normalizedIntervals.push([
+              Math.max(0, start),
+              Math.min(maximumPosition, end)
+            ]);
+          }
+        }
+        normalizedIntervals.sort((left, right) => left[0] - right[0]);
+        const mergedIntervals = [];
+        for (const interval of normalizedIntervals) {
+          const previous = mergedIntervals.at(-1);
+          if (!previous || interval[0] > previous[1] + PARAMETER_EPSILON) {
+            mergedIntervals.push([...interval]);
+          } else {
+            previous[1] = Math.max(previous[1], interval[1]);
+          }
+        }
+        if (sourcePoints.length < 2 || mergedIntervals.length === 0) {
+          const outside = sourcePoints.length > 0 ? [sourcePoints] : [];
+          return {
+            inside: [],
+            outside,
+            runs: outside.map((run) => ({ kind: "outside", points: run })),
+            limitExceeded: false
+          };
+        }
+        const maxRuns = Number.isInteger(Number(options.maxRuns)) && Number(options.maxRuns) > 0 ? Number(options.maxRuns) : Number.POSITIVE_INFINITY;
+        const result = { inside: [], outside: [], runs: [], limitExceeded: false };
+        let currentKind = null;
+        let currentRun = null;
+        let limitReason = null;
+        const boundaries = mergedIntervals.flat();
+        let boundaryCursor = 0;
+        let membershipCursor = 0;
+        const startRun = (kind, point) => {
+          if (result.runs.length >= maxRuns) {
+            result.limitExceeded = true;
+            limitReason = "runs";
+            return false;
+          }
+          currentKind = kind;
+          currentRun = [point];
+          result.runs.push({ kind, points: currentRun });
+          return true;
+        };
+        outer: for (let index = 0; index < sourcePoints.length - 1; index += 1) {
+          if (!budget.consume()) {
+            result.limitExceeded = true;
+            limitReason = "operations";
+            break;
+          }
+          const cuts = [0, 1];
+          while (boundaryCursor < boundaries.length && boundaries[boundaryCursor] <= index + PARAMETER_EPSILON) {
+            boundaryCursor += 1;
+          }
+          let nextBoundary = boundaryCursor;
+          while (nextBoundary < boundaries.length && boundaries[nextBoundary] < index + 1 - PARAMETER_EPSILON) {
+            if (!budget.consume()) {
+              result.limitExceeded = true;
+              limitReason = "operations";
+              break outer;
+            }
+            cuts.push(boundaries[nextBoundary] - index);
+            nextBoundary += 1;
+          }
+          boundaryCursor = nextBoundary;
+          cuts.sort((left, right) => left - right);
+          for (let cutIndex = 0; cutIndex < cuts.length - 1; cutIndex += 1) {
+            if (!budget.consume()) {
+              result.limitExceeded = true;
+              limitReason = "operations";
+              break outer;
+            }
+            const fromAmount = cuts[cutIndex];
+            const toAmount = cuts[cutIndex + 1];
+            const from = interpolateSample(sourcePoints[index], sourcePoints[index + 1], fromAmount);
+            const to = interpolateSample(sourcePoints[index], sourcePoints[index + 1], toAmount);
+            const midpoint = index + (fromAmount + toAmount) / 2;
+            while (membershipCursor < mergedIntervals.length && mergedIntervals[membershipCursor][1] < midpoint - PARAMETER_EPSILON) {
+              membershipCursor += 1;
+            }
+            const interval = mergedIntervals[membershipCursor];
+            const kind = interval && midpoint >= interval[0] - PARAMETER_EPSILON && midpoint <= interval[1] + PARAMETER_EPSILON ? "inside" : "outside";
             if ((currentKind !== kind || !currentRun) && !startRun(kind, from)) break outer;
             else appendPoint(currentRun, from);
             appendPoint(currentRun, to);
@@ -500,12 +1232,1965 @@
         result.runs = result.runs.filter(({ points: run }) => run.length >= 2 && hasVisibleLength(run));
         result.inside = result.runs.filter((run) => run.kind === "inside").map((run) => run.points);
         result.outside = result.runs.filter((run) => run.kind === "outside").map((run) => run.points);
+        if (result.limitExceeded) result.limitReason = limitReason || "operations";
         return result;
       }
       module.exports = {
         interpolateSample,
+        shortStrokeTouchesPolygon,
+        strokeHasSplittableLength,
         strokeRadius,
-        splitStrokePointsByPolygon
+        strokeTouchesPolygon,
+        splitStrokePointsByPolygon,
+        splitStrokePointsBySourceIntervals
+      };
+    }
+  });
+
+  // node_modules/perfect-freehand/dist/cjs/index.js
+  var require_cjs = __commonJS({
+    "node_modules/perfect-freehand/dist/cjs/index.js"(exports) {
+      Object.defineProperties(exports, { __esModule: { value: true }, [Symbol.toStringTag]: { value: `Module` } });
+      var { PI: e } = Math;
+      var t = e + 1e-4;
+      var n = 0.5;
+      var r = [1, 1];
+      function i(e2, t2, n2, r2 = (e3) => e3) {
+        return e2 * r2(0.5 - t2 * (0.5 - n2));
+      }
+      var { min: a } = Math;
+      function o(e2, t2, n2) {
+        let r2 = a(1, t2 / n2);
+        return a(1, e2 + (a(1, 1 - r2) - e2) * (r2 * 0.275));
+      }
+      function s(e2) {
+        return [-e2[0], -e2[1]];
+      }
+      function c(e2, t2) {
+        return [e2[0] + t2[0], e2[1] + t2[1]];
+      }
+      function l(e2, t2, n2) {
+        return e2[0] = t2[0] + n2[0], e2[1] = t2[1] + n2[1], e2;
+      }
+      function u(e2, t2) {
+        return [e2[0] - t2[0], e2[1] - t2[1]];
+      }
+      function d(e2, t2, n2) {
+        return e2[0] = t2[0] - n2[0], e2[1] = t2[1] - n2[1], e2;
+      }
+      function f(e2, t2) {
+        return [e2[0] * t2, e2[1] * t2];
+      }
+      function p(e2, t2, n2) {
+        return e2[0] = t2[0] * n2, e2[1] = t2[1] * n2, e2;
+      }
+      function m(e2, t2) {
+        return [e2[0] / t2, e2[1] / t2];
+      }
+      function h(e2) {
+        return [e2[1], -e2[0]];
+      }
+      function g(e2, t2) {
+        let n2 = t2[0];
+        return e2[0] = t2[1], e2[1] = -n2, e2;
+      }
+      function ee(e2, t2) {
+        return e2[0] * t2[0] + e2[1] * t2[1];
+      }
+      function _(e2, t2) {
+        return e2[0] === t2[0] && e2[1] === t2[1];
+      }
+      function v(e2) {
+        return Math.hypot(e2[0], e2[1]);
+      }
+      function y(e2, t2) {
+        let n2 = e2[0] - t2[0], r2 = e2[1] - t2[1];
+        return n2 * n2 + r2 * r2;
+      }
+      function b(e2) {
+        return m(e2, v(e2));
+      }
+      function x(e2, t2) {
+        return Math.hypot(e2[1] - t2[1], e2[0] - t2[0]);
+      }
+      function S(e2, t2, n2) {
+        let r2 = Math.sin(n2), i2 = Math.cos(n2), a2 = e2[0] - t2[0], o2 = e2[1] - t2[1], s2 = a2 * i2 - o2 * r2, c2 = a2 * r2 + o2 * i2;
+        return [s2 + t2[0], c2 + t2[1]];
+      }
+      function C(e2, t2, n2, r2) {
+        let i2 = Math.sin(r2), a2 = Math.cos(r2), o2 = t2[0] - n2[0], s2 = t2[1] - n2[1], c2 = o2 * a2 - s2 * i2, l2 = o2 * i2 + s2 * a2;
+        return e2[0] = c2 + n2[0], e2[1] = l2 + n2[1], e2;
+      }
+      function w(e2, t2, n2) {
+        return c(e2, f(u(t2, e2), n2));
+      }
+      function te(e2, t2, n2, r2) {
+        let i2 = n2[0] - t2[0], a2 = n2[1] - t2[1];
+        return e2[0] = t2[0] + i2 * r2, e2[1] = t2[1] + a2 * r2, e2;
+      }
+      function T(e2, t2, n2) {
+        return c(e2, f(t2, n2));
+      }
+      var E = [0, 0];
+      var D = [0, 0];
+      var O = [0, 0];
+      function k(e2, n2) {
+        let r2 = T(e2, b(h(u(e2, c(e2, [1, 1])))), -n2), i2 = [], a2 = 1 / 13;
+        for (let n3 = a2; n3 <= 1; n3 += a2) i2.push(S(r2, e2, t * 2 * n3));
+        return i2;
+      }
+      function A(e2, n2, r2) {
+        let i2 = [], a2 = 1 / r2;
+        for (let r3 = a2; r3 <= 1; r3 += a2) i2.push(S(n2, e2, t * r3));
+        return i2;
+      }
+      function j(e2, t2, n2) {
+        let r2 = u(t2, n2), i2 = f(r2, 0.5), a2 = f(r2, 0.51);
+        return [u(e2, i2), u(e2, a2), c(e2, a2), c(e2, i2)];
+      }
+      function M(e2, n2, r2, i2) {
+        let a2 = [], o2 = T(e2, n2, r2), s2 = 1 / i2;
+        for (let n3 = s2; n3 < 1; n3 += s2) a2.push(S(o2, e2, t * 3 * n3));
+        return a2;
+      }
+      function ne(e2, t2, n2) {
+        return [c(e2, f(t2, n2)), c(e2, f(t2, n2 * 0.99)), u(e2, f(t2, n2 * 0.99)), u(e2, f(t2, n2))];
+      }
+      function N(e2, t2, n2) {
+        return e2 === false || e2 === void 0 ? 0 : e2 === true ? Math.max(t2, n2) : e2;
+      }
+      function re(e2, t2, n2) {
+        return e2.slice(0, 10).reduce((e3, r2) => {
+          let i2 = r2.pressure;
+          return t2 && (i2 = o(e3, r2.distance, n2)), (e3 + i2) / 2;
+        }, e2[0].pressure);
+      }
+      function P(e2, n2 = {}) {
+        let { size: r2 = 16, smoothing: a2 = 0.5, thinning: f2 = 0.5, simulatePressure: m2 = true, easing: _2 = (e3) => e3, start: v2 = {}, end: b2 = {}, last: x2 = false } = n2, { cap: S2 = true, easing: w2 = (e3) => e3 * (2 - e3) } = v2, { cap: T2 = true, easing: P2 = (e3) => --e3 * e3 * e3 + 1 } = b2;
+        if (e2.length === 0 || r2 <= 0) return [];
+        let F2 = e2[e2.length - 1].runningLength, I2 = N(v2.taper, r2, F2), L2 = N(b2.taper, r2, F2), R2 = (r2 * a2) ** 2, z2 = [], B = [], V = re(e2, m2, r2), H = i(r2, f2, e2[e2.length - 1].pressure, _2), U, W = e2[0].vector, G = e2[0].point, K = G, q = G, J = K, Y = false;
+        for (let n3 = 0; n3 < e2.length; n3++) {
+          let { pressure: a3 } = e2[n3], { point: s2, vector: h2, distance: v3, runningLength: b3 } = e2[n3], x3 = n3 === e2.length - 1;
+          if (!x3 && F2 - b3 < 3) continue;
+          f2 ? (m2 && (a3 = o(V, v3, r2)), H = i(r2, f2, a3, _2)) : H = r2 / 2, U === void 0 && (U = H);
+          let S3 = b3 < I2 ? w2(b3 / I2) : 1, T3 = F2 - b3 < L2 ? P2((F2 - b3) / L2) : 1;
+          H = Math.max(0.01, H * Math.min(S3, T3));
+          let k2 = (x3 ? e2[n3] : e2[n3 + 1]).vector, A2 = x3 ? 1 : ee(h2, k2), j2 = ee(h2, W) < 0 && !Y, M2 = A2 !== null && A2 < 0;
+          if (j2 || M2) {
+            g(E, W), p(E, E, H);
+            for (let e3 = 0; e3 <= 1; e3 += 0.07692307692307693) d(D, s2, E), C(D, D, s2, t * e3), q = [D[0], D[1]], z2.push(q), l(O, s2, E), C(O, O, s2, t * -e3), J = [O[0], O[1]], B.push(J);
+            G = q, K = J, M2 && (Y = true);
+            continue;
+          }
+          if (Y = false, x3) {
+            g(E, h2), p(E, E, H), z2.push(u(s2, E)), B.push(c(s2, E));
+            continue;
+          }
+          te(E, k2, h2, A2), g(E, E), p(E, E, H), d(D, s2, E), q = [D[0], D[1]], (n3 <= 1 || y(G, q) > R2) && (z2.push(q), G = q), l(O, s2, E), J = [O[0], O[1]], (n3 <= 1 || y(K, J) > R2) && (B.push(J), K = J), V = a3, W = h2;
+        }
+        let X = [e2[0].point[0], e2[0].point[1]], Z = e2.length > 1 ? [e2[e2.length - 1].point[0], e2[e2.length - 1].point[1]] : c(e2[0].point, [1, 1]), Q = [], $ = [];
+        if (e2.length === 1) {
+          if (!(I2 || L2) || x2) return k(X, U || H);
+        } else {
+          I2 || L2 && e2.length === 1 || (S2 ? Q.push(...A(X, B[0], 13)) : Q.push(...j(X, z2[0], B[0])));
+          let t2 = h(s(e2[e2.length - 1].vector));
+          L2 || I2 && e2.length === 1 ? $.push(Z) : T2 ? $.push(...M(Z, t2, H, 29)) : $.push(...ne(Z, t2, H));
+        }
+        return z2.concat($, B.reverse(), Q);
+      }
+      var F = [0, 0];
+      function I(e2) {
+        return e2 != null && e2 >= 0;
+      }
+      function L(e2, t2 = {}) {
+        let { streamline: i2 = 0.5, size: a2 = 16, last: o2 = false } = t2;
+        if (e2.length === 0) return [];
+        let s2 = 0.15 + (1 - i2) * 0.85, l2 = Array.isArray(e2[0]) ? e2 : e2.map(({ x: e3, y: t3, pressure: r2 = n }) => [e3, t3, r2]);
+        if (l2.length === 2) {
+          let e3 = l2[1];
+          l2 = l2.slice(0, -1);
+          for (let t3 = 1; t3 < 5; t3++) l2.push(w(l2[0], e3, t3 / 4));
+        }
+        l2.length === 1 && (l2 = [...l2, [...c(l2[0], r), ...l2[0].slice(2)]]);
+        let u2 = [{ point: [l2[0][0], l2[0][1]], pressure: I(l2[0][2]) ? l2[0][2] : 0.25, vector: [...r], distance: 0, runningLength: 0 }], f2 = false, p2 = 0, m2 = u2[0], h2 = l2.length - 1;
+        for (let e3 = 1; e3 < l2.length; e3++) {
+          let t3 = o2 && e3 === h2 ? [l2[e3][0], l2[e3][1]] : w(m2.point, l2[e3], s2);
+          if (_(m2.point, t3)) continue;
+          let r2 = x(t3, m2.point);
+          if (p2 += r2, e3 < h2 && !f2) {
+            if (p2 < a2) continue;
+            f2 = true;
+          }
+          d(F, m2.point, t3), m2 = { point: t3, pressure: I(l2[e3][2]) ? l2[e3][2] : n, vector: b(F), distance: r2, runningLength: p2 }, u2.push(m2);
+        }
+        return u2[0].vector = u2[1]?.vector || [0, 0], u2;
+      }
+      function R(e2, t2 = {}) {
+        return P(L(e2, t2), t2);
+      }
+      var z = R;
+      exports.default = z, exports.getStroke = R, exports.getStrokeOutlinePoints = P, exports.getStrokePoints = L;
+    }
+  });
+
+  // renderer/scripts/modules/drawing-v3/stroke-fill-geometry.js
+  var require_stroke_fill_geometry = __commonJS({
+    "renderer/scripts/modules/drawing-v3/stroke-fill-geometry.js"(exports, module) {
+      "use strict";
+      var {
+        EPSILON,
+        boundsForPoints,
+        boundsIntersect,
+        polygonHasArea,
+        segmentEdgeIntersectionParameters
+      } = require_lasso_geometry();
+      var DEFAULT_MAX_FLATTENED_SEGMENTS = 65536;
+      var DEFAULT_EDGE_INDEX_LEAF_SIZE = 8;
+      var MAX_CURVE_SUBDIVISION_DEPTH = 24;
+      function unionBounds(entries) {
+        if (!entries.length) return null;
+        return entries.reduce((bounds, entry) => ({
+          left: Math.min(bounds.left, entry.bounds.left),
+          right: Math.max(bounds.right, entry.bounds.right),
+          top: Math.min(bounds.top, entry.bounds.top),
+          bottom: Math.max(bounds.bottom, entry.bounds.bottom)
+        }), { ...entries[0].bounds });
+      }
+      function buildOrderedSpatialIndex(entries, budget) {
+        if (!entries.length) return null;
+        const levels = Math.max(1, Math.ceil(Math.log2(entries.length + 1)));
+        if (!budget.consume(entries.length * (levels + 4))) return null;
+        const center = (entry, axis) => axis === "x" ? (entry.bounds.left + entry.bounds.right) / 2 : (entry.bounds.top + entry.bounds.bottom) / 2;
+        const compare = (axis) => (left, right) => center(left, axis) - center(right, axis) || left.index - right.index;
+        const xOrdered = [...entries].sort(compare("x"));
+        const yOrdered = [...entries].sort(compare("y"));
+        const build = (xEntries, yEntries) => {
+          if (xEntries.length <= DEFAULT_EDGE_INDEX_LEAF_SIZE) {
+            return { bounds: unionBounds(xEntries), edges: xEntries };
+          }
+          const bounds = unionBounds(xEntries);
+          const splitOnX = bounds.right - bounds.left >= bounds.bottom - bounds.top;
+          const primary = splitOnX ? xEntries : yEntries;
+          const midpointIndex = Math.ceil(primary.length / 2);
+          const leftPrimary = primary.slice(0, midpointIndex);
+          const rightPrimary = primary.slice(midpointIndex);
+          const leftIndexes = new Set(leftPrimary.map((entry) => entry.index));
+          const secondary = splitOnX ? yEntries : xEntries;
+          const leftSecondary = [];
+          const rightSecondary = [];
+          for (const entry of secondary) {
+            (leftIndexes.has(entry.index) ? leftSecondary : rightSecondary).push(entry);
+          }
+          const left = splitOnX ? build(leftPrimary, leftSecondary) : build(leftSecondary, leftPrimary);
+          const right = splitOnX ? build(rightPrimary, rightSecondary) : build(rightSecondary, rightPrimary);
+          return { bounds, left, right };
+        };
+        return build(xOrdered, yOrdered);
+      }
+      function freezeSpatialIndex(node) {
+        if (!node || Object.isFrozen(node)) return node;
+        if (node.edges) Object.freeze(node.edges);
+        freezeSpatialIndex(node.left);
+        freezeSpatialIndex(node.right);
+        Object.freeze(node.bounds);
+        return Object.freeze(node);
+      }
+      function freezePathGeometry(geometry) {
+        for (const contour of geometry.contours) {
+          for (const point of contour) Object.freeze(point);
+          Object.freeze(contour);
+        }
+        for (const edge of geometry.edges) {
+          Object.freeze(edge.bounds);
+          Object.freeze(edge);
+        }
+        Object.freeze(geometry.contours);
+        Object.freeze(geometry.edges);
+        Object.freeze(geometry.bounds);
+        freezeSpatialIndex(geometry.root);
+        return Object.freeze(geometry);
+      }
+      function freezeCenterlineGeometry(geometry) {
+        for (const point of geometry.points) Object.freeze(point);
+        for (const segment of geometry.segments) {
+          Object.freeze(segment.bounds);
+          Object.freeze(segment);
+        }
+        Object.freeze(geometry.points);
+        Object.freeze(geometry.segments);
+        Object.freeze(geometry.sourceDistances);
+        Object.freeze(geometry.sourcePositions);
+        if (geometry.bounds) Object.freeze(geometry.bounds);
+        freezeSpatialIndex(geometry.root);
+        return Object.freeze(geometry);
+      }
+      function queryOrderedSpatialIndex(root, bounds, budget) {
+        if (!root || !bounds) return [];
+        const matches = [];
+        const stack = [root];
+        while (stack.length > 0) {
+          const node = stack.pop();
+          if (!budget.consume()) return null;
+          if (!boundsIntersect(node.bounds, bounds)) continue;
+          if (node.edges) {
+            for (const edge of node.edges) {
+              if (!budget.consume()) return null;
+              if (boundsIntersect(edge.bounds, bounds)) matches.push(edge);
+            }
+          } else {
+            if (node.right) stack.push(node.right);
+            if (node.left) stack.push(node.left);
+          }
+        }
+        return matches;
+      }
+      function finitePoint(x, y) {
+        const nextX = Number(x);
+        const nextY = Number(y);
+        return Number.isFinite(nextX) && Number.isFinite(nextY) ? { x: nextX, y: nextY } : null;
+      }
+      function samePoint(left, right) {
+        return Math.abs(left.x - right.x) <= EPSILON && Math.abs(left.y - right.y) <= EPSILON;
+      }
+      function pointOnSegment(point, start, end) {
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const cross = (point.x - start.x) * dy - (point.y - start.y) * dx;
+        if (Math.abs(cross) > EPSILON) return false;
+        return point.x >= Math.min(start.x, end.x) - EPSILON && point.x <= Math.max(start.x, end.x) + EPSILON && point.y >= Math.min(start.y, end.y) - EPSILON && point.y <= Math.max(start.y, end.y) + EPSILON;
+      }
+      function pointLineDistance(point, start, end) {
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const length = Math.hypot(dx, dy);
+        if (length <= EPSILON) return Math.hypot(point.x - start.x, point.y - start.y);
+        return Math.abs((point.x - start.x) * dy - (point.y - start.y) * dx) / length;
+      }
+      function pointSegmentDistance(point, start, end) {
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const lengthSquared = dx * dx + dy * dy;
+        if (lengthSquared <= EPSILON) return Math.hypot(point.x - start.x, point.y - start.y);
+        const amount = Math.min(1, Math.max(0, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+        return Math.hypot(
+          point.x - (start.x + dx * amount),
+          point.y - (start.y + dy * amount)
+        );
+      }
+      function midpoint(left, right) {
+        return {
+          x: (left.x + right.x) / 2,
+          y: (left.y + right.y) / 2
+        };
+      }
+      function flattenQuadratic(start, control, end, tolerance, acceptPoint) {
+        const stack = [{ start, control, end, depth: 0 }];
+        while (stack.length > 0) {
+          const curve = stack.pop();
+          if (pointLineDistance(curve.control, curve.start, curve.end) <= tolerance) {
+            if (!acceptPoint(curve.end)) return false;
+            continue;
+          }
+          if (curve.depth >= MAX_CURVE_SUBDIVISION_DEPTH) return false;
+          const startControl = midpoint(curve.start, curve.control);
+          const controlEnd = midpoint(curve.control, curve.end);
+          const center = midpoint(startControl, controlEnd);
+          const depth = curve.depth + 1;
+          stack.push(
+            { start: center, control: controlEnd, end: curve.end, depth },
+            { start: curve.start, control: startControl, end: center, depth }
+          );
+        }
+        return true;
+      }
+      function flattenCubic(start, controlA, controlB, end, tolerance, acceptPoint) {
+        const stack = [{ start, controlA, controlB, end, depth: 0 }];
+        while (stack.length > 0) {
+          const curve = stack.pop();
+          const flatness = Math.max(
+            pointLineDistance(curve.controlA, curve.start, curve.end),
+            pointLineDistance(curve.controlB, curve.start, curve.end)
+          );
+          if (flatness <= tolerance) {
+            if (!acceptPoint(curve.end)) return false;
+            continue;
+          }
+          if (curve.depth >= MAX_CURVE_SUBDIVISION_DEPTH) return false;
+          const startA = midpoint(curve.start, curve.controlA);
+          const controls = midpoint(curve.controlA, curve.controlB);
+          const controlEnd = midpoint(curve.controlB, curve.end);
+          const leftControl = midpoint(startA, controls);
+          const rightControl = midpoint(controls, controlEnd);
+          const center = midpoint(leftControl, rightControl);
+          const depth = curve.depth + 1;
+          stack.push(
+            {
+              start: center,
+              controlA: rightControl,
+              controlB: controlEnd,
+              end: curve.end,
+              depth
+            },
+            {
+              start: curve.start,
+              controlA: startA,
+              controlB: leftControl,
+              end: center,
+              depth
+            }
+          );
+        }
+        return true;
+      }
+      function flattenFabricPath(pathCommands, options = {}) {
+        const budget = options.budget;
+        if (!budget || typeof budget.consume !== "function" || !Array.isArray(pathCommands)) {
+          return { geometry: null, reason: "selection-geometry-unavailable" };
+        }
+        const operationsBefore = budget.operations;
+        const tolerance = Math.max(Number.EPSILON, Number(options.tolerance) || 0.25);
+        const maxSegments = Math.max(
+          3,
+          Math.trunc(Number(options.maxSegments) || DEFAULT_MAX_FLATTENED_SEGMENTS)
+        );
+        const contours = [];
+        let current = null;
+        let currentPoint = null;
+        let segmentCount = 0;
+        let flattenFailed = false;
+        const acceptPoint = (point) => {
+          if (!point || !budget.consume()) {
+            flattenFailed = true;
+            return false;
+          }
+          segmentCount += 1;
+          if (segmentCount > maxSegments) {
+            flattenFailed = true;
+            return false;
+          }
+          if (!samePoint(current.at(-1), point)) current.push(point);
+          currentPoint = point;
+          return true;
+        };
+        const finishContour = () => {
+          if (!current) return;
+          if (current.length > 1 && samePoint(current[0], current.at(-1))) current.pop();
+          if (current.length >= 3) contours.push(current);
+          current = null;
+          currentPoint = null;
+        };
+        const commandLengths = { M: 3, L: 3, Q: 5, C: 7, Z: 1 };
+        for (const command of pathCommands) {
+          if (!Array.isArray(command) || typeof command[0] !== "string" || !budget.consume()) {
+            return {
+              geometry: null,
+              reason: budget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable"
+            };
+          }
+          const type = command[0];
+          if (!Object.hasOwn(commandLengths, type) || command.length !== commandLengths[type]) {
+            return { geometry: null, reason: "selection-geometry-unavailable" };
+          }
+          if (type === "M") {
+            const point = finitePoint(command[1], command[2]);
+            if (!point) return { geometry: null, reason: "selection-geometry-unavailable" };
+            if (current) return { geometry: null, reason: "selection-geometry-unavailable" };
+            current = [point];
+            currentPoint = point;
+            continue;
+          }
+          if (!current || !currentPoint) {
+            return { geometry: null, reason: "selection-geometry-unavailable" };
+          }
+          if (type === "L") {
+            if (!acceptPoint(finitePoint(command[1], command[2]))) break;
+          } else if (type === "Q") {
+            const control = finitePoint(command[1], command[2]);
+            const end = finitePoint(command[3], command[4]);
+            if (!control || !end || !flattenQuadratic(currentPoint, control, end, tolerance, acceptPoint)) {
+              flattenFailed = true;
+              break;
+            }
+          } else if (type === "C") {
+            const controlA = finitePoint(command[1], command[2]);
+            const controlB = finitePoint(command[3], command[4]);
+            const end = finitePoint(command[5], command[6]);
+            if (!controlA || !controlB || !end || !flattenCubic(currentPoint, controlA, controlB, end, tolerance, acceptPoint)) {
+              flattenFailed = true;
+              break;
+            }
+          } else if (type === "Z") {
+            finishContour();
+          }
+        }
+        if (flattenFailed || budget.limitExceeded || segmentCount > maxSegments) {
+          return {
+            geometry: null,
+            reason: budget.limitExceeded || segmentCount > maxSegments ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable"
+          };
+        }
+        if (current) {
+          return { geometry: null, reason: "selection-geometry-unavailable" };
+        }
+        if (contours.length === 0) {
+          return { geometry: null, reason: "selection-geometry-unavailable" };
+        }
+        const edges = [];
+        for (const contour of contours) {
+          for (let index = 0; index < contour.length; index += 1) {
+            const start = contour[index];
+            const end = contour[(index + 1) % contour.length];
+            if (samePoint(start, end)) continue;
+            edges.push({
+              index: edges.length,
+              start,
+              end,
+              bounds: {
+                left: Math.min(start.x, end.x),
+                right: Math.max(start.x, end.x),
+                top: Math.min(start.y, end.y),
+                bottom: Math.max(start.y, end.y)
+              }
+            });
+          }
+        }
+        if (edges.length < 3) return { geometry: null, reason: "selection-geometry-unavailable" };
+        const root = buildOrderedSpatialIndex(edges, budget);
+        if (!root) {
+          return { geometry: null, reason: "selection-complexity-limit-exceeded" };
+        }
+        return {
+          geometry: freezePathGeometry({
+            contours,
+            edges,
+            root,
+            bounds: boundsForPoints(contours.flat()),
+            fillRule: options.fillRule === "evenodd" ? "evenodd" : "nonzero",
+            tolerance,
+            logicalBuildCost: budget.operations - operationsBefore
+          }),
+          reason: null
+        };
+      }
+      function createPathFillQuery(geometry, budget) {
+        if (!geometry?.root || !budget || typeof budget.consume !== "function") return null;
+        const queryEdges = (bounds) => {
+          if (!bounds || !boundsIntersect(geometry.bounds, bounds)) return [];
+          return queryOrderedSpatialIndex(geometry.root, bounds, budget);
+        };
+        const classifyPoint = (point) => {
+          if (!geometry.bounds || point.x < geometry.bounds.left - EPSILON || point.x > geometry.bounds.right + EPSILON || point.y < geometry.bounds.top - EPSILON || point.y > geometry.bounds.bottom + EPSILON) {
+            return "outside";
+          }
+          const candidates = queryEdges({
+            left: point.x,
+            right: geometry.bounds.right,
+            top: point.y,
+            bottom: point.y
+          });
+          if (candidates === null) return null;
+          let winding = 0;
+          let crossings = 0;
+          for (const edge of candidates) {
+            if (!budget.consume()) return null;
+            if (pointOnSegment(point, edge.start, edge.end)) {
+              return "boundary";
+            }
+            const upward = edge.start.y <= point.y && edge.end.y > point.y;
+            const downward = edge.start.y > point.y && edge.end.y <= point.y;
+            if (!upward && !downward) continue;
+            const side = (edge.end.x - edge.start.x) * (point.y - edge.start.y) - (point.x - edge.start.x) * (edge.end.y - edge.start.y);
+            if (upward && side > EPSILON) {
+              winding += 1;
+              crossings += 1;
+            } else if (downward && side < -EPSILON) {
+              winding -= 1;
+              crossings += 1;
+            }
+          }
+          const inside = geometry.fillRule === "evenodd" ? crossings % 2 === 1 : winding !== 0;
+          return inside ? "inside" : "outside";
+        };
+        const containsPoint = (point, includeBoundary) => {
+          const classification = classifyPoint(point);
+          if (classification === null) return null;
+          return classification === "inside" || includeBoundary && classification === "boundary";
+        };
+        const visibleBoundarySegment = (segment) => {
+          const dx = segment.end.x - segment.start.x;
+          const dy = segment.end.y - segment.start.y;
+          const length = Math.hypot(dx, dy);
+          if (length <= EPSILON) return false;
+          const middle = midpoint(segment.start, segment.end);
+          const coordinateScale = Math.max(1, Math.abs(middle.x), Math.abs(middle.y));
+          const minimumOffset = Math.max(
+            Number.EPSILON * coordinateScale * 64,
+            EPSILON * 4 / Math.max(1, length)
+          );
+          let offset = Math.max(
+            minimumOffset,
+            Math.min(geometry.tolerance * 0.25, length * 0.1)
+          );
+          const nearest = localBoundaryClearance(
+            middle,
+            offset,
+            [{ queryEdges }],
+            budget
+          );
+          if (nearest === null) return null;
+          if (Number.isFinite(nearest)) {
+            offset = Math.min(
+              offset,
+              Math.max(minimumOffset, nearest / 4)
+            );
+          }
+          const certifiedOffset = offset;
+          for (let attempt = 0; attempt < 16; attempt += 1) {
+            if (!budget.consume()) return null;
+            const normalX = -dy / length * offset;
+            const normalY = dx / length * offset;
+            const left = classifyPoint({
+              x: middle.x + normalX,
+              y: middle.y + normalY
+            });
+            const right = classifyPoint({
+              x: middle.x - normalX,
+              y: middle.y - normalY
+            });
+            if (left === null || right === null) return null;
+            const bothOffBoundary = left !== "boundary" && right !== "boundary";
+            if (bothOffBoundary && left !== right) return true;
+            if (bothOffBoundary && certifiedOffset !== null && offset <= certifiedOffset + Number.EPSILON) {
+              return false;
+            }
+            if (offset <= minimumOffset) return false;
+            offset = Math.max(minimumOffset, offset / 4);
+          }
+          return null;
+        };
+        const query = {
+          __baeframePathFillQuery: true,
+          geometry,
+          bounds: geometry.bounds,
+          edges: geometry.edges,
+          budget,
+          queryEdges,
+          classify: classifyPoint,
+          contains: (point) => containsPoint(point, true),
+          containsStrict: (point) => containsPoint(point, false)
+        };
+        const visibleSubsegmentsCache = /* @__PURE__ */ new Map();
+        query.visibleSubsegments = (edge) => {
+          const startKey = `${edge.start.x}:${edge.start.y}`;
+          const endKey = `${edge.end.x}:${edge.end.y}`;
+          const cacheKey = startKey < endKey ? `${startKey}>${endKey}` : `${endKey}>${startKey}`;
+          if (visibleSubsegmentsCache.has(cacheKey)) {
+            return visibleSubsegmentsCache.get(cacheKey);
+          }
+          const split = splitBoundaryEdge(
+            edge,
+            { queryEdges: () => [] },
+            budget,
+            query
+          );
+          if (split.reason) return null;
+          const visible = [];
+          for (const segment of split.segments) {
+            const active = visibleBoundarySegment(segment);
+            if (active === null) return null;
+            if (active) visible.push(segment);
+          }
+          visibleSubsegmentsCache.set(cacheKey, visible);
+          return visible;
+        };
+        return query;
+      }
+      function pathFillOverlapsPolygon(fillQuery, polygonQuery, budget) {
+        if (!fillQuery || !polygonQuery?.bounds || !boundsIntersect(fillQuery.bounds, polygonQuery.bounds)) {
+          return { hit: false, limitExceeded: false };
+        }
+        for (const edge of polygonQuery.edges) {
+          const candidates = fillQuery.queryEdges(edge.bounds);
+          if (candidates === null) return { hit: false, limitExceeded: true };
+          for (const fillEdge of candidates) {
+            if (!budget.consume()) return { hit: false, limitExceeded: true };
+            const visibleSegments = fillQuery.visibleSubsegments(fillEdge);
+            if (visibleSegments === null) return { hit: false, limitExceeded: true };
+            for (const visibleSegment of visibleSegments) {
+              if (!budget.consume()) return { hit: false, limitExceeded: true };
+              if (segmentEdgeIntersectionParameters(
+                edge.start,
+                edge.end,
+                visibleSegment.start,
+                visibleSegment.end
+              ).length > 0) {
+                return { hit: true, limitExceeded: false };
+              }
+            }
+          }
+        }
+        for (const point of polygonQuery.polygon) {
+          const contained = fillQuery.containsStrict(point);
+          if (contained === null) return { hit: false, limitExceeded: true };
+          if (contained) return { hit: true, limitExceeded: false };
+        }
+        for (const edge of fillQuery.edges) {
+          if (!budget.consume()) return { hit: false, limitExceeded: true };
+          const visibleSegments = fillQuery.visibleSubsegments(edge);
+          if (visibleSegments === null) return { hit: false, limitExceeded: true };
+          for (const visibleSegment of visibleSegments) {
+            const contained = polygonQuery.contains(midpoint(
+              visibleSegment.start,
+              visibleSegment.end
+            ));
+            if (contained === null) return { hit: false, limitExceeded: true };
+            if (contained) return { hit: true, limitExceeded: false };
+          }
+        }
+        return { hit: false, limitExceeded: false };
+      }
+      function interpolatePoint(start, end, amount) {
+        return {
+          x: start.x + (end.x - start.x) * amount,
+          y: start.y + (end.y - start.y) * amount
+        };
+      }
+      function uniqueParameters(parameters, budget) {
+        const logicalSortCost = parameters.length * (Math.ceil(Math.log2(parameters.length + 1)) + 2);
+        if (!budget.consume(logicalSortCost)) return null;
+        return parameters.filter((value) => Number.isFinite(value) && value >= -EPSILON && value <= 1 + EPSILON).map((value) => Math.min(1, Math.max(0, value))).sort((left, right) => left - right).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > EPSILON);
+      }
+      function signedDoubleArea(points) {
+        let area = 0;
+        for (let index = 0; index < points.length; index += 1) {
+          const current = points[index];
+          const next = points[(index + 1) % points.length];
+          area += current.x * next.y - next.x * current.y;
+        }
+        return area;
+      }
+      function segmentsHaveCollinearOverlap(start, end, otherStart, otherEnd) {
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const otherDx = otherEnd.x - otherStart.x;
+        const otherDy = otherEnd.y - otherStart.y;
+        const cross = dx * otherDy - dy * otherDx;
+        const offsetCross = (otherStart.x - start.x) * dy - (otherStart.y - start.y) * dx;
+        if (Math.abs(cross) > EPSILON || Math.abs(offsetCross) > EPSILON) return false;
+        const useX = Math.abs(dx) >= Math.abs(dy);
+        const [startValue, endValue] = useX ? [start.x, end.x] : [start.y, end.y];
+        const [otherStartValue, otherEndValue] = useX ? [otherStart.x, otherEnd.x] : [otherStart.y, otherEnd.y];
+        const overlap = Math.min(
+          Math.max(startValue, endValue),
+          Math.max(otherStartValue, otherEndValue)
+        ) - Math.max(
+          Math.min(startValue, endValue),
+          Math.min(otherStartValue, otherEndValue)
+        );
+        return overlap > EPSILON;
+      }
+      function simpleContourIsValid(contour, budget) {
+        if (!Array.isArray(contour) || contour.length < 3 || !polygonHasArea(contour, 0)) {
+          return false;
+        }
+        for (let index = 0; index < contour.length; index += 1) {
+          if (!budget.consume()) return false;
+          const point = contour[index];
+          const next = contour[(index + 1) % contour.length];
+          if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y) || !Number.isFinite(next?.x) || !Number.isFinite(next?.y) || samePoint(point, next)) {
+            return false;
+          }
+        }
+        const edges = contour.map((start, index) => {
+          const end = contour[(index + 1) % contour.length];
+          return {
+            index,
+            start,
+            end,
+            bounds: {
+              left: Math.min(start.x, end.x),
+              right: Math.max(start.x, end.x),
+              top: Math.min(start.y, end.y),
+              bottom: Math.max(start.y, end.y)
+            }
+          };
+        });
+        const root = buildOrderedSpatialIndex(edges, budget);
+        if (!root) return false;
+        for (const edge of edges) {
+          const candidates = queryOrderedSpatialIndex(root, edge.bounds, budget);
+          if (candidates === null) return false;
+          for (const candidate of candidates) {
+            if (candidate.index <= edge.index) continue;
+            const distance = candidate.index - edge.index;
+            if (distance === 1 || distance === contour.length - 1) continue;
+            if (!budget.consume()) return false;
+            if (segmentsHaveCollinearOverlap(
+              edge.start,
+              edge.end,
+              candidate.start,
+              candidate.end
+            ) || segmentEdgeIntersectionParameters(
+              edge.start,
+              edge.end,
+              candidate.start,
+              candidate.end
+            ).length > 0) {
+              return false;
+            }
+          }
+        }
+        return true;
+      }
+      function splitBoundaryEdge(edge, otherQuery, budget, selfQuery = null) {
+        const candidates = otherQuery.queryEdges(edge.bounds);
+        const selfCandidates = selfQuery?.queryEdges(edge.bounds) || [];
+        if (candidates === null || selfCandidates === null) {
+          return { segments: [], reason: "selection-complexity-limit-exceeded" };
+        }
+        const parameters = [0, 1];
+        for (const candidate of [...candidates, ...selfCandidates]) {
+          if (!budget.consume()) {
+            return { segments: [], reason: "selection-complexity-limit-exceeded" };
+          }
+          if (candidate === edge) continue;
+          parameters.push(...segmentEdgeIntersectionParameters(
+            edge.start,
+            edge.end,
+            candidate.start,
+            candidate.end
+          ));
+        }
+        const cuts = uniqueParameters(parameters, budget);
+        if (!cuts) {
+          return { segments: [], reason: "selection-complexity-limit-exceeded" };
+        }
+        const segments = [];
+        for (let index = 0; index < cuts.length - 1; index += 1) {
+          if (!budget.consume()) {
+            return { segments: [], reason: "selection-complexity-limit-exceeded" };
+          }
+          const from = cuts[index];
+          const to = cuts[index + 1];
+          if (to - from <= EPSILON) continue;
+          const start = interpolatePoint(edge.start, edge.end, from);
+          const end = interpolatePoint(edge.start, edge.end, to);
+          if (!samePoint(start, end)) segments.push({ start, end });
+        }
+        return { segments, reason: null };
+      }
+      function queryClassification(query, point) {
+        if (typeof query?.classify !== "function") return null;
+        return query.classify(point);
+      }
+      function resultContainsClassifications(fill, polygon, operation) {
+        if (fill === "boundary" || polygon === "boundary") return "boundary";
+        const fillContains = fill === "inside";
+        const polygonContains = polygon === "inside";
+        return operation === "difference" ? fillContains && !polygonContains : fillContains && polygonContains;
+      }
+      function localBoundaryClearance(middle, offset, queries, budget) {
+        let nearest = Number.POSITIVE_INFINITY;
+        const bounds = {
+          left: middle.x - offset,
+          right: middle.x + offset,
+          top: middle.y - offset,
+          bottom: middle.y + offset
+        };
+        for (const query of queries) {
+          const candidates = query.queryEdges(bounds);
+          if (candidates === null) return null;
+          for (const candidate of candidates) {
+            if (!budget.consume()) return null;
+            if (pointOnSegment(middle, candidate.start, candidate.end)) continue;
+            const distance = pointSegmentDistance(middle, candidate.start, candidate.end);
+            if (distance > 0) nearest = Math.min(nearest, distance);
+          }
+        }
+        return nearest;
+      }
+      function orientResultBoundarySegments(segment, fillQuery, polygonQuery, operations, quantum, budget) {
+        if (!budget.consume()) {
+          return { segments: {}, reason: "selection-complexity-limit-exceeded" };
+        }
+        const dx = segment.end.x - segment.start.x;
+        const dy = segment.end.y - segment.start.y;
+        const length = Math.hypot(dx, dy);
+        if (length <= quantum) {
+          return { segments: {}, reason: null };
+        }
+        const middle = midpoint(segment.start, segment.end);
+        const coordinateScale = Math.max(1, Math.abs(middle.x), Math.abs(middle.y));
+        const minimumOffset = Math.max(
+          Number.EPSILON * coordinateScale * 64,
+          EPSILON * 4 / Math.max(1, length),
+          quantum
+        );
+        let offset = Math.max(minimumOffset, Math.min(
+          length * 0.2,
+          Math.max(quantum * 16, EPSILON * 16 / Math.max(1, length))
+        ));
+        const nearest = localBoundaryClearance(
+          middle,
+          offset,
+          [fillQuery, polygonQuery],
+          budget
+        );
+        if (nearest === null) {
+          return { segments: {}, reason: "selection-complexity-limit-exceeded" };
+        }
+        if (Number.isFinite(nearest)) {
+          offset = Math.min(
+            offset,
+            Math.max(minimumOffset, nearest / 4)
+          );
+        }
+        const certifiedOffset = offset;
+        for (let attempt = 0; attempt < 16; attempt += 1) {
+          if (!budget.consume()) {
+            return { segments: {}, reason: "selection-complexity-limit-exceeded" };
+          }
+          const normalX = -dy / length * offset;
+          const normalY = dx / length * offset;
+          const leftPoint = {
+            x: middle.x + normalX,
+            y: middle.y + normalY
+          };
+          const rightPoint = {
+            x: middle.x - normalX,
+            y: middle.y - normalY
+          };
+          const leftFill = queryClassification(fillQuery, leftPoint);
+          const leftPolygon = queryClassification(polygonQuery, leftPoint);
+          const rightFill = queryClassification(fillQuery, rightPoint);
+          const rightPolygon = queryClassification(polygonQuery, rightPoint);
+          if ([leftFill, leftPolygon, rightFill, rightPolygon].includes(null)) {
+            return { segments: {}, reason: "selection-complexity-limit-exceeded" };
+          }
+          const sourceOffBoundary = ![
+            leftFill,
+            leftPolygon,
+            rightFill,
+            rightPolygon
+          ].includes("boundary");
+          if (sourceOffBoundary) {
+            const oriented = {};
+            for (const operation of operations) {
+              const leftContains = resultContainsClassifications(
+                leftFill,
+                leftPolygon,
+                operation
+              );
+              const rightContains = resultContainsClassifications(
+                rightFill,
+                rightPolygon,
+                operation
+              );
+              if (leftContains === rightContains) continue;
+              oriented[operation] = leftContains ? segment : { start: segment.end, end: segment.start };
+            }
+            if (Object.keys(oriented).length > 0) {
+              return { segments: oriented, reason: null };
+            }
+          }
+          if (sourceOffBoundary && certifiedOffset !== null && offset <= certifiedOffset + Number.EPSILON) {
+            return { segments: {}, reason: null };
+          }
+          if (offset <= minimumOffset) {
+            return {
+              segments: {},
+              reason: sourceOffBoundary ? null : "selection-geometry-unavailable"
+            };
+          }
+          offset = Math.max(minimumOffset, offset / 4);
+        }
+        return { segments: {}, reason: "selection-geometry-unavailable" };
+      }
+      function quantizationScale(fillQuery, polygonQuery, tolerance) {
+        const values = [
+          fillQuery.bounds?.left,
+          fillQuery.bounds?.right,
+          fillQuery.bounds?.top,
+          fillQuery.bounds?.bottom,
+          polygonQuery.bounds?.left,
+          polygonQuery.bounds?.right,
+          polygonQuery.bounds?.top,
+          polygonQuery.bounds?.bottom
+        ].filter(Number.isFinite);
+        const coordinateScale = Math.max(1, ...values.map(Math.abs));
+        return Math.max(
+          coordinateScale * Number.EPSILON * 64,
+          Math.max(Number.EPSILON, tolerance) * 1e-5
+        );
+      }
+      function vertexKey(point, quantum) {
+        const x = Math.round(point.x / quantum);
+        const y = Math.round(point.y / quantum);
+        if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) return null;
+        return `${x}:${y}`;
+      }
+      function buildBoundaryLoops(segments, quantum, budget) {
+        const vertices = /* @__PURE__ */ new Map();
+        const directed = [];
+        const directedKeys = /* @__PURE__ */ new Set();
+        for (const segment of segments) {
+          if (!budget.consume()) {
+            return { loops: [], reason: "selection-complexity-limit-exceeded" };
+          }
+          const startKey = vertexKey(segment.start, quantum);
+          const endKey = vertexKey(segment.end, quantum);
+          if (!startKey || !endKey || startKey === endKey) {
+            return { loops: [], reason: "selection-geometry-unavailable" };
+          }
+          for (const [key, point] of [[startKey, segment.start], [endKey, segment.end]]) {
+            const vertex = vertices.get(key);
+            if (vertex && Math.hypot(vertex.point.x - point.x, vertex.point.y - point.y) > quantum * 2) {
+              return { loops: [], reason: "selection-geometry-unavailable" };
+            }
+            if (!vertex) {
+              vertices.set(key, {
+                point: { x: point.x, y: point.y },
+                incoming: [],
+                outgoing: []
+              });
+            }
+          }
+          const edgeKey = `${startKey}>${endKey}`;
+          const reverseKey = `${endKey}>${startKey}`;
+          if (directedKeys.has(edgeKey)) continue;
+          if (directedKeys.has(reverseKey)) {
+            return { loops: [], reason: "selection-geometry-unavailable" };
+          }
+          const edge = {
+            index: directed.length,
+            startKey,
+            endKey,
+            used: false,
+            successor: null
+          };
+          directedKeys.add(edgeKey);
+          directed.push(edge);
+          vertices.get(startKey).outgoing.push(edge);
+          vertices.get(endKey).incoming.push(edge);
+        }
+        if (directed.length === 0) return { loops: [], reason: null };
+        for (const vertex of vertices.values()) {
+          if (vertex.incoming.length === 0 || vertex.incoming.length !== vertex.outgoing.length) {
+            return { loops: [], reason: "selection-geometry-unavailable" };
+          }
+          const degree = vertex.outgoing.length;
+          const logicalSortCost = degree * (Math.ceil(Math.log2(degree + 1)) + 2);
+          if (!budget.consume(logicalSortCost)) {
+            return { loops: [], reason: "selection-complexity-limit-exceeded" };
+          }
+          const outgoing = [...vertex.outgoing].sort((left, right) => {
+            const leftEnd = vertices.get(left.endKey).point;
+            const rightEnd = vertices.get(right.endKey).point;
+            const leftAngle = Math.atan2(
+              leftEnd.y - vertex.point.y,
+              leftEnd.x - vertex.point.x
+            );
+            const rightAngle = Math.atan2(
+              rightEnd.y - vertex.point.y,
+              rightEnd.x - vertex.point.x
+            );
+            return leftAngle - rightAngle || left.index - right.index;
+          });
+          const assigned = /* @__PURE__ */ new Set();
+          for (const incoming of vertex.incoming) {
+            if (!budget.consume(degree)) {
+              return { loops: [], reason: "selection-complexity-limit-exceeded" };
+            }
+            const incomingStart = vertices.get(incoming.startKey).point;
+            const reverseAngle = Math.atan2(
+              incomingStart.y - vertex.point.y,
+              incomingStart.x - vertex.point.x
+            );
+            let successor = null;
+            let bestClockwiseTurn = Number.POSITIVE_INFINITY;
+            for (const candidate of outgoing) {
+              let clockwiseTurn = reverseAngle - Math.atan2(
+                vertices.get(candidate.endKey).point.y - vertex.point.y,
+                vertices.get(candidate.endKey).point.x - vertex.point.x
+              );
+              while (clockwiseTurn < 0) clockwiseTurn += Math.PI * 2;
+              while (clockwiseTurn >= Math.PI * 2) clockwiseTurn -= Math.PI * 2;
+              if (clockwiseTurn < bestClockwiseTurn - Number.EPSILON || Math.abs(clockwiseTurn - bestClockwiseTurn) <= Number.EPSILON && candidate.index < (successor?.index ?? Number.POSITIVE_INFINITY)) {
+                successor = candidate;
+                bestClockwiseTurn = clockwiseTurn;
+              }
+            }
+            if (!successor || assigned.has(successor)) {
+              return { loops: [], reason: "selection-geometry-unavailable" };
+            }
+            assigned.add(successor);
+            incoming.successor = successor;
+          }
+          if (assigned.size !== degree) {
+            return { loops: [], reason: "selection-geometry-unavailable" };
+          }
+        }
+        const loops = [];
+        for (const edge of directed) {
+          if (edge.used) continue;
+          const loop = [];
+          const firstKey = edge.startKey;
+          let current = edge;
+          while (!current.used) {
+            if (!budget.consume()) {
+              return { loops: [], reason: "selection-complexity-limit-exceeded" };
+            }
+            current.used = true;
+            loop.push(vertices.get(current.startKey).point);
+            current = current.successor;
+            if (!current) return { loops: [], reason: "selection-geometry-unavailable" };
+          }
+          if (current !== edge || edge.startKey !== firstKey || loop.length < 3 || !simpleContourIsValid(loop, budget) || Math.abs(signedDoubleArea(loop)) <= quantum * quantum) {
+            return { loops: [], reason: "selection-geometry-unavailable" };
+          }
+          loops.push(loop);
+        }
+        if (directed.some((edge) => !edge.used)) {
+          return { loops: [], reason: "selection-geometry-unavailable" };
+        }
+        return { loops, reason: null };
+      }
+      function classifyPointInContour(point, contour, budget) {
+        if (!budget.consume(contour.length)) return null;
+        let inside = false;
+        for (let index = 0; index < contour.length; index += 1) {
+          const start = contour[index];
+          const end = contour[(index + 1) % contour.length];
+          if (pointOnSegment(point, start, end)) return "boundary";
+          const crossesRay = end.y > point.y !== start.y > point.y;
+          if (!crossesRay) continue;
+          const crossingX = (start.x - end.x) * (point.y - end.y) / (start.y - end.y) + end.x;
+          if (point.x < crossingX) inside = !inside;
+        }
+        return inside ? "inside" : "outside";
+      }
+      function strictContourContainment(child, candidate, budget) {
+        for (const point of child) {
+          const classification = classifyPointInContour(point, candidate, budget);
+          if (classification === null) {
+            return {
+              contained: false,
+              reason: "selection-complexity-limit-exceeded"
+            };
+          }
+          if (classification === "boundary") continue;
+          return { contained: classification === "inside", reason: null };
+        }
+        return { contained: false, reason: "selection-geometry-unavailable" };
+      }
+      function groupBoundaryLoops(loops, budget) {
+        const nodes = [];
+        for (const contour of loops) {
+          if (!budget.consume()) {
+            return { components: [], reason: "selection-complexity-limit-exceeded" };
+          }
+          const area = signedDoubleArea(contour);
+          if (area === 0) return { components: [], reason: "selection-geometry-unavailable" };
+          nodes.push({
+            contour,
+            signedArea: area,
+            area: Math.abs(area),
+            parent: -1,
+            depth: -1,
+            component: null
+          });
+        }
+        for (let childIndex = 0; childIndex < nodes.length; childIndex += 1) {
+          const child = nodes[childIndex];
+          let parentIndex = -1;
+          for (let candidateIndex = 0; candidateIndex < nodes.length; candidateIndex += 1) {
+            if (candidateIndex === childIndex) continue;
+            const candidate = nodes[candidateIndex];
+            if (candidate.area <= child.area + EPSILON) continue;
+            const containment = strictContourContainment(
+              child.contour,
+              candidate.contour,
+              budget
+            );
+            if (containment.reason) {
+              return { components: [], reason: containment.reason };
+            }
+            if (!containment.contained) continue;
+            if (parentIndex < 0 || candidate.area < nodes[parentIndex].area) {
+              parentIndex = candidateIndex;
+            }
+          }
+          child.parent = parentIndex;
+        }
+        const resolveDepth = (nodeIndex) => {
+          const visited = /* @__PURE__ */ new Set();
+          let current = nodeIndex;
+          let depth = 0;
+          while (nodes[current].parent >= 0) {
+            if (!budget.consume() || visited.has(current)) return null;
+            visited.add(current);
+            current = nodes[current].parent;
+            depth += 1;
+            if (depth > nodes.length) return null;
+          }
+          return depth;
+        };
+        for (let index = 0; index < nodes.length; index += 1) {
+          const depth = resolveDepth(index);
+          if (depth === null) {
+            return {
+              components: [],
+              reason: budget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable"
+            };
+          }
+          nodes[index].depth = depth;
+          const expectsPositiveArea = depth % 2 === 0;
+          if (nodes[index].signedArea > 0 !== expectsPositiveArea) {
+            return { components: [], reason: "selection-geometry-unavailable" };
+          }
+        }
+        const components = [];
+        for (const node of nodes) {
+          if (node.depth % 2 !== 0) continue;
+          node.component = { contours: [node.contour] };
+          components.push(node.component);
+        }
+        for (const node of nodes) {
+          if (node.depth % 2 === 0) continue;
+          const parent = nodes[node.parent];
+          if (!parent?.component) {
+            return { components: [], reason: "selection-geometry-unavailable" };
+          }
+          parent.component.contours.push(node.contour);
+        }
+        return { components, reason: null };
+      }
+      function clipPathFillOperations(fillQuery, polygonQuery, operations, options = {}) {
+        const budget = options.budget;
+        const operationResults = Object.fromEntries(
+          operations.map((operation) => [operation, { components: [], reason: null }])
+        );
+        const failAll = (reason) => Object.fromEntries(
+          operations.map((operation) => [operation, { components: [], reason }])
+        );
+        if (!budget || !fillQuery?.geometry || !polygonQuery?.polygon || !Array.isArray(fillQuery.geometry.contours) || fillQuery.geometry.contours.length === 0 || fillQuery.geometry.contours.some((contour) => !Array.isArray(contour) || contour.length < 3 || contour.some((point) => !Number.isFinite(point?.x) || !Number.isFinite(point?.y))) || options.polygonValidated !== true && !simpleContourIsValid(polygonQuery.polygon, budget)) {
+          return failAll(budget?.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
+        }
+        const quantum = quantizationScale(
+          fillQuery,
+          polygonQuery,
+          fillQuery.geometry.tolerance
+        );
+        const atomic = Object.fromEntries(operations.map((operation) => [operation, []]));
+        const collect = (edges, otherQuery, selfQuery = null) => {
+          for (const edge of edges) {
+            const split = splitBoundaryEdge(edge, otherQuery, budget, selfQuery);
+            if (split.reason) return split.reason;
+            for (const segment of split.segments) {
+              const oriented = orientResultBoundarySegments(
+                segment,
+                fillQuery,
+                polygonQuery,
+                operations,
+                quantum,
+                budget
+              );
+              if (oriented.reason) return oriented.reason;
+              for (const operation of operations) {
+                const resultSegment = oriented.segments[operation];
+                if (!resultSegment) continue;
+                atomic[operation].push(resultSegment);
+                if (atomic[operation].length > DEFAULT_MAX_FLATTENED_SEGMENTS) {
+                  return "selection-complexity-limit-exceeded";
+                }
+              }
+            }
+          }
+          return null;
+        };
+        const fillReason = collect(fillQuery.edges, polygonQuery, fillQuery);
+        if (fillReason) return failAll(fillReason);
+        const polygonReason = collect(polygonQuery.edges, fillQuery);
+        if (polygonReason) return failAll(polygonReason);
+        for (const operation of operations) {
+          options.operationObserver?.(operation, "start");
+          const loopResult = buildBoundaryLoops(atomic[operation], quantum, budget);
+          if (loopResult.reason) {
+            return failAll(budget.limitExceeded ? "selection-complexity-limit-exceeded" : loopResult.reason);
+          }
+          const grouped = groupBoundaryLoops(loopResult.loops, budget);
+          if (grouped.reason) {
+            return failAll(budget.limitExceeded ? "selection-complexity-limit-exceeded" : grouped.reason);
+          }
+          operationResults[operation] = {
+            components: grouped.components,
+            reason: null
+          };
+          options.operationObserver?.(operation, "complete");
+        }
+        return operationResults;
+      }
+      function clipSimplePathFill(fillQuery, polygonQuery, options = {}) {
+        const operation = options.operation === "difference" ? "difference" : "intersection";
+        return clipPathFillOperations(fillQuery, polygonQuery, [operation], options)[operation];
+      }
+      function clipSimplePathFillPair(fillQuery, polygonQuery, options = {}) {
+        return clipPathFillOperations(
+          fillQuery,
+          polygonQuery,
+          ["difference", "intersection"],
+          options
+        );
+      }
+      function contourPathData(contours) {
+        if (!Array.isArray(contours) || contours.length === 0) return null;
+        const commands = [];
+        for (const contour of contours) {
+          if (!Array.isArray(contour) || contour.length < 3) return null;
+          commands.push(`M ${contour[0].x} ${contour[0].y}`);
+          for (let index = 1; index < contour.length; index += 1) {
+            commands.push(`L ${contour[index].x} ${contour[index].y}`);
+          }
+          commands.push("Z");
+        }
+        return commands.join(" ");
+      }
+      function createComponentFillQuery(component, budget) {
+        if (!budget || !Array.isArray(component?.contours) || component.contours.length === 0 || component.contours.some((contour) => !Array.isArray(contour) || contour.length < 3)) {
+          return { query: null, reason: "selection-geometry-unavailable" };
+        }
+        const edgeCount = component.contours.reduce(
+          (count, contour) => count + contour.length,
+          0
+        );
+        if (edgeCount > DEFAULT_MAX_FLATTENED_SEGMENTS) {
+          return { query: null, reason: "selection-complexity-limit-exceeded" };
+        }
+        const edges = [];
+        for (const contour of component.contours) {
+          for (let index = 0; index < contour.length; index += 1) {
+            if (!budget.consume()) {
+              return { query: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            const start = contour[index];
+            const end = contour[(index + 1) % contour.length];
+            if (!Number.isFinite(start?.x) || !Number.isFinite(start?.y) || !Number.isFinite(end?.x) || !Number.isFinite(end?.y) || samePoint(start, end)) {
+              return { query: null, reason: "selection-geometry-unavailable" };
+            }
+            edges.push({
+              index: edges.length,
+              start,
+              end,
+              bounds: {
+                left: Math.min(start.x, end.x),
+                right: Math.max(start.x, end.x),
+                top: Math.min(start.y, end.y),
+                bottom: Math.max(start.y, end.y)
+              }
+            });
+          }
+        }
+        const root = buildOrderedSpatialIndex(edges, budget);
+        if (!root) {
+          return {
+            query: null,
+            reason: budget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable"
+          };
+        }
+        const query = createPathFillQuery({
+          contours: component.contours,
+          edges,
+          root,
+          bounds: boundsForPoints(component.contours.flat()),
+          fillRule: "evenodd",
+          tolerance: Number.EPSILON
+        }, budget);
+        return {
+          query,
+          reason: query ? null : "selection-geometry-unavailable"
+        };
+      }
+      function centerlineIntervalsInsideComponent(component, centerline, options = {}) {
+        const budget = options.budget;
+        if (!budget || !Array.isArray(component?.contours) || !Array.isArray(centerline?.segments)) {
+          return { intervals: [], reason: "selection-geometry-unavailable" };
+        }
+        const componentFill = createComponentFillQuery(component, budget);
+        if (!componentFill.query) {
+          return { intervals: [], reason: componentFill.reason };
+        }
+        const intervals = [];
+        let previousSegment = null;
+        let previousInside = null;
+        for (const segment of centerline.segments) {
+          const parameters = [0, 1];
+          const candidates = componentFill.query.queryEdges(segment.bounds);
+          if (candidates === null) {
+            return { intervals: [], reason: "selection-complexity-limit-exceeded" };
+          }
+          for (const candidate of candidates) {
+            if (!budget.consume()) {
+              return { intervals: [], reason: "selection-complexity-limit-exceeded" };
+            }
+            parameters.push(...segmentEdgeIntersectionParameters(
+              segment.start,
+              segment.end,
+              candidate.start,
+              candidate.end
+            ));
+          }
+          const cuts = uniqueParameters(parameters, budget);
+          if (!cuts) {
+            return { intervals: [], reason: "selection-complexity-limit-exceeded" };
+          }
+          const continuous = previousSegment && samePoint(previousSegment.end, segment.start) && Math.abs(
+            previousSegment.end.sourcePosition - segment.start.sourcePosition
+          ) <= EPSILON;
+          let segmentEndInside = null;
+          for (let index = 0; index < cuts.length - 1; index += 1) {
+            if (!budget.consume()) {
+              return { intervals: [], reason: "selection-complexity-limit-exceeded" };
+            }
+            const from = cuts[index];
+            const to = cuts[index + 1];
+            if (to - from <= EPSILON) continue;
+            const canCarry = candidates.length === 0 && continuous && previousInside !== null;
+            const contained = canCarry ? previousInside : componentFill.query.contains(interpolatePoint(
+              segment.start,
+              segment.end,
+              (from + to) / 2
+            ));
+            if (contained === null) {
+              return { intervals: [], reason: "selection-complexity-limit-exceeded" };
+            }
+            segmentEndInside = contained;
+            if (!contained) continue;
+            const start = segment.start.sourcePosition + (segment.end.sourcePosition - segment.start.sourcePosition) * from;
+            const end = segment.start.sourcePosition + (segment.end.sourcePosition - segment.start.sourcePosition) * to;
+            if (end - start > EPSILON) intervals.push([start, end]);
+          }
+          previousSegment = segment;
+          previousInside = segmentEndInside;
+        }
+        const mergeCost = intervals.length * (Math.ceil(Math.log2(intervals.length + 1)) + 2);
+        if (!budget.consume(mergeCost)) {
+          return { intervals: [], reason: "selection-complexity-limit-exceeded" };
+        }
+        return { intervals: mergeSourceIntervals(intervals), reason: null };
+      }
+      function squaredDistanceToBounds(point, bounds) {
+        const dx = point.x < bounds.left ? bounds.left - point.x : point.x > bounds.right ? point.x - bounds.right : 0;
+        const dy = point.y < bounds.top ? bounds.top - point.y : point.y > bounds.bottom ? point.y - bounds.bottom : 0;
+        return dx * dx + dy * dy;
+      }
+      function projectPointToSegment(point, segment) {
+        const dx = segment.end.x - segment.start.x;
+        const dy = segment.end.y - segment.start.y;
+        const lengthSquared = dx * dx + dy * dy;
+        const amount = lengthSquared <= EPSILON ? 0 : Math.min(1, Math.max(0, ((point.x - segment.start.x) * dx + (point.y - segment.start.y) * dy) / lengthSquared));
+        const projected = interpolatePoint(segment.start, segment.end, amount);
+        return {
+          distance: Math.hypot(point.x - projected.x, point.y - projected.y),
+          sourcePosition: segment.start.sourcePosition + (segment.end.sourcePosition - segment.start.sourcePosition) * amount,
+          segmentIndex: segment.index
+        };
+      }
+      function projectPointToCenterline(point, centerline, options = {}) {
+        const budget = options.budget;
+        if (!budget || !centerline?.root) {
+          return { candidates: [], reason: "selection-geometry-unavailable" };
+        }
+        const distanceTolerance = Math.max(
+          Number.EPSILON,
+          Number(options.distanceTolerance) || 0.25
+        );
+        const maxCandidates = Math.max(2, Math.trunc(Number(options.maxCandidates) || 64));
+        let bestDistance = Number.POSITIVE_INFINITY;
+        let candidates = [];
+        const stack = [centerline.root];
+        while (stack.length > 0) {
+          const node = stack.pop();
+          if (!budget.consume()) {
+            return { candidates: [], reason: "selection-complexity-limit-exceeded" };
+          }
+          const maximumDistance = bestDistance + distanceTolerance;
+          if (squaredDistanceToBounds(point, node.bounds) > maximumDistance * maximumDistance) {
+            continue;
+          }
+          if (node.edges) {
+            for (const segment of node.edges) {
+              if (!budget.consume()) {
+                return { candidates: [], reason: "selection-complexity-limit-exceeded" };
+              }
+              const candidate = projectPointToSegment(point, segment);
+              if (candidate.distance < bestDistance - distanceTolerance) {
+                bestDistance = candidate.distance;
+                candidates = [candidate];
+              } else if (candidate.distance <= bestDistance + distanceTolerance) {
+                bestDistance = Math.min(bestDistance, candidate.distance);
+                candidates.push(candidate);
+              }
+            }
+            continue;
+          }
+          const children = [node.left, node.right].filter(Boolean).sort((left, right) => squaredDistanceToBounds(point, right.bounds) - squaredDistanceToBounds(point, left.bounds));
+          stack.push(...children);
+        }
+        const candidateSortCost = candidates.length * (Math.ceil(Math.log2(candidates.length + 1)) + 2);
+        if (!budget.consume(candidateSortCost)) {
+          return { candidates: [], reason: "selection-complexity-limit-exceeded" };
+        }
+        candidates = candidates.filter((candidate) => candidate.distance <= bestDistance + distanceTolerance).sort((left, right) => left.sourcePosition - right.sourcePosition || left.segmentIndex - right.segmentIndex);
+        const unique = candidates.filter((candidate, index, values) => index === 0 || candidate.segmentIndex !== values[index - 1].segmentIndex || Math.abs(candidate.sourcePosition - values[index - 1].sourcePosition) > EPSILON);
+        if (unique.length === 0 || unique.length > maxCandidates) {
+          return { candidates: [], reason: "selection-geometry-unavailable" };
+        }
+        return { candidates: unique, reason: null };
+      }
+      function candidateSetsConnect(left, middle, right, budget) {
+        const connects = (source, target) => {
+          for (const candidate of source) {
+            let matched = false;
+            for (const other of target) {
+              if (!budget.consume()) return null;
+              if (Math.abs(candidate.segmentIndex - other.segmentIndex) <= 2) {
+                matched = true;
+                break;
+              }
+            }
+            if (!matched) return false;
+          }
+          return true;
+        };
+        for (const [source, target] of [
+          [left, middle],
+          [middle, left],
+          [middle, right],
+          [right, middle]
+        ]) {
+          const connected = connects(source, target);
+          if (connected === null) return null;
+          if (!connected) return false;
+        }
+        return true;
+      }
+      function projectBoundarySegment(segment, centerline, options, samples) {
+        const projectAt = (amount) => {
+          const point = interpolatePoint(segment.start, segment.end, amount);
+          return projectPointToCenterline(point, centerline, options);
+        };
+        const start = projectAt(0);
+        const end = projectAt(1);
+        if (start.reason || end.reason) return { reason: start.reason || end.reason };
+        const stack = [{ from: 0, to: 1, start, end, depth: 0 }];
+        const ordered = [{ amount: 0, candidates: start.candidates }];
+        while (stack.length > 0) {
+          const section = stack.pop();
+          const middleAmount = (section.from + section.to) / 2;
+          const middle = projectAt(middleAmount);
+          if (middle.reason) return { reason: middle.reason };
+          const connected = candidateSetsConnect(
+            section.start.candidates,
+            middle.candidates,
+            section.end.candidates,
+            options.budget
+          );
+          if (connected === null) return { reason: "selection-complexity-limit-exceeded" };
+          if (!connected && section.depth >= 12) {
+            return { reason: "selection-geometry-unavailable" };
+          }
+          if (!connected) {
+            const depth = section.depth + 1;
+            stack.push(
+              {
+                from: middleAmount,
+                to: section.to,
+                start: middle,
+                end: section.end,
+                depth
+              },
+              {
+                from: section.from,
+                to: middleAmount,
+                start: section.start,
+                end: middle,
+                depth
+              }
+            );
+            continue;
+          }
+          ordered.push(
+            { amount: middleAmount, candidates: middle.candidates },
+            { amount: section.to, candidates: section.end.candidates }
+          );
+        }
+        const orderedSortCost = ordered.length * (Math.ceil(Math.log2(ordered.length + 1)) + 2);
+        if (!options.budget.consume(orderedSortCost)) {
+          return { reason: "selection-complexity-limit-exceeded" };
+        }
+        ordered.sort((left, right) => left.amount - right.amount);
+        for (const sample of ordered) {
+          const previous = samples.at(-1);
+          if (!previous || Math.abs(previous.amount - sample.amount) > EPSILON) {
+            samples.push(sample);
+          }
+        }
+        return { reason: null };
+      }
+      function branchIntervalsFromSamples(samples, budget) {
+        let branches = [];
+        const completed = [];
+        for (const sample of samples) {
+          if (!budget.consume(sample.candidates.length + branches.length)) {
+            return { intervals: [], reason: "selection-complexity-limit-exceeded" };
+          }
+          const available = [...sample.candidates];
+          const nextBranches = [];
+          for (const branch of branches) {
+            let bestIndex = -1;
+            let bestDistance = Number.POSITIVE_INFINITY;
+            for (let index = 0; index < available.length; index += 1) {
+              if (!budget.consume()) {
+                return { intervals: [], reason: "selection-complexity-limit-exceeded" };
+              }
+              const distance = Math.abs(available[index].segmentIndex - branch.segmentIndex);
+              if (distance <= 2 && distance < bestDistance) {
+                bestIndex = index;
+                bestDistance = distance;
+              }
+            }
+            if (bestIndex < 0) {
+              completed.push(branch);
+              continue;
+            }
+            const candidate = available.splice(bestIndex, 1)[0];
+            nextBranches.push({
+              segmentIndex: candidate.segmentIndex,
+              minimum: Math.min(branch.minimum, candidate.sourcePosition),
+              maximum: Math.max(branch.maximum, candidate.sourcePosition),
+              count: branch.count + 1
+            });
+          }
+          for (const candidate of available) {
+            nextBranches.push({
+              segmentIndex: candidate.segmentIndex,
+              minimum: candidate.sourcePosition,
+              maximum: candidate.sourcePosition,
+              count: 1
+            });
+          }
+          branches = nextBranches;
+        }
+        completed.push(...branches);
+        return {
+          intervals: completed.filter((branch) => branch.count >= 2 && branch.maximum - branch.minimum > EPSILON).map((branch) => [branch.minimum, branch.maximum]),
+          reason: null
+        };
+      }
+      function mergeSourceIntervals(intervals) {
+        const ordered = intervals.filter((interval) => Array.isArray(interval) && Number.isFinite(interval[0]) && Number.isFinite(interval[1]) && interval[1] - interval[0] > EPSILON).sort((left, right) => left[0] - right[0]);
+        const merged = [];
+        for (const interval of ordered) {
+          const previous = merged.at(-1);
+          if (!previous || interval[0] > previous[1] + EPSILON) {
+            merged.push([...interval]);
+          } else {
+            previous[1] = Math.max(previous[1], interval[1]);
+          }
+        }
+        return merged;
+      }
+      function projectRetainedBoundaryToSourceIntervals(segments, centerline, options = {}) {
+        if (!Array.isArray(segments) || !centerline?.root || !options.budget) {
+          return { intervals: [], reason: "selection-geometry-unavailable" };
+        }
+        const intervals = [];
+        for (const segment of segments) {
+          const samples = [];
+          const projected = projectBoundarySegment(segment, centerline, options, samples);
+          if (projected.reason) return { intervals: [], reason: projected.reason };
+          const branches = branchIntervalsFromSamples(samples, options.budget);
+          if (branches.reason) return branches;
+          intervals.push(...branches.intervals);
+        }
+        const mergeCost = intervals.length * (Math.ceil(Math.log2(intervals.length + 1)) + 2);
+        if (!options.budget.consume(mergeCost)) {
+          return { intervals: [], reason: "selection-complexity-limit-exceeded" };
+        }
+        return { intervals: mergeSourceIntervals(intervals), reason: null };
+      }
+      function sourcePositionToIndex(sourcePositions, value, endBoundary) {
+        if (!Array.isArray(sourcePositions) || sourcePositions.length < 2 || !Number.isFinite(value)) {
+          return null;
+        }
+        const clamped = Math.min(1, Math.max(0, value));
+        if (clamped <= EPSILON) {
+          if (!endBoundary) return 0;
+          let index = 0;
+          while (index + 1 < sourcePositions.length && Math.abs(sourcePositions[index + 1]) <= EPSILON) {
+            index += 1;
+          }
+          return index;
+        }
+        if (clamped >= 1 - EPSILON) {
+          if (endBoundary) return sourcePositions.length - 1;
+          let index = sourcePositions.length - 1;
+          while (index > 0 && Math.abs(sourcePositions[index - 1] - 1) <= EPSILON) {
+            index -= 1;
+          }
+          return index;
+        }
+        let low = 0;
+        let high = sourcePositions.length - 1;
+        while (low + 1 < high) {
+          const middle = Math.floor((low + high) / 2);
+          if (sourcePositions[middle] < clamped) low = middle;
+          else high = middle;
+        }
+        if (Math.abs(sourcePositions[high] - clamped) <= EPSILON) {
+          let index = high;
+          if (endBoundary) {
+            while (index + 1 < sourcePositions.length && Math.abs(sourcePositions[index + 1] - clamped) <= EPSILON) {
+              index += 1;
+            }
+          } else {
+            while (index > 0 && Math.abs(sourcePositions[index - 1] - clamped) <= EPSILON) {
+              index -= 1;
+            }
+          }
+          return index;
+        }
+        const span = sourcePositions[high] - sourcePositions[low];
+        if (span <= EPSILON) return endBoundary ? high : low;
+        return low + (clamped - sourcePositions[low]) / span;
+      }
+      function sourceIntervalsToIndexIntervals(intervals, centerline) {
+        if (!Array.isArray(intervals) || !Array.isArray(centerline?.sourcePositions)) {
+          return null;
+        }
+        const converted = [];
+        for (const interval of intervals) {
+          const start = sourcePositionToIndex(centerline.sourcePositions, interval?.[0], false);
+          const end = sourcePositionToIndex(centerline.sourcePositions, interval?.[1], true);
+          if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start + EPSILON) {
+            continue;
+          }
+          converted.push([start, end]);
+        }
+        return mergeSourceIntervals(converted);
+      }
+      function interpolateInputPoint(start, end, amount, pressure) {
+        return {
+          x: start.x + (end.x - start.x) * amount,
+          y: start.y + (end.y - start.y) * amount,
+          pressure
+        };
+      }
+      function sameStrokePointGeometry(left, right) {
+        return left && right && Object.is(left.point?.[0], right.point?.[0]) && Object.is(left.point?.[1], right.point?.[1]) && Object.is(left.vector?.[0], right.vector?.[0]) && Object.is(left.vector?.[1], right.vector?.[1]) && Object.is(left.distance, right.distance) && Object.is(left.runningLength, right.runningLength);
+      }
+      function lowerBoundSourceSegment(segments, sourcePosition) {
+        let low = 0;
+        let high = segments.length;
+        while (low < high) {
+          const middle = Math.floor((low + high) / 2);
+          if (segments[middle].end.sourcePosition < sourcePosition) low = middle + 1;
+          else high = middle;
+        }
+        return Math.min(segments.length - 1, Math.max(0, low));
+      }
+      function spatialSourcePosition(point, markerSourcePosition, sourceSegments, previousSourcePosition, previousSegmentIndex) {
+        if (sourceSegments.length === 0) return 0;
+        const markerIndex = lowerBoundSourceSegment(sourceSegments, markerSourcePosition);
+        const indexes = /* @__PURE__ */ new Set();
+        for (const center of [markerIndex, previousSegmentIndex]) {
+          for (let offset = -8; offset <= 8; offset += 1) {
+            const index = center + offset;
+            if (index >= 0 && index < sourceSegments.length) indexes.add(index);
+          }
+        }
+        let best = null;
+        for (const index of indexes) {
+          const candidate = projectPointToSegment(point, sourceSegments[index]);
+          if (candidate.sourcePosition < previousSourcePosition - EPSILON) continue;
+          const markerDistance = Math.abs(candidate.sourcePosition - markerSourcePosition);
+          if (!best || candidate.distance < best.distance - EPSILON || Math.abs(candidate.distance - best.distance) <= EPSILON && markerDistance < best.markerDistance - EPSILON) {
+            best = { ...candidate, markerDistance, segmentIndex: index };
+          }
+        }
+        return best;
+      }
+      function createSmoothedCenterlineGeometry(sourcePoints, options = {}) {
+        const budget = options.budget;
+        if (!budget || typeof budget.consume !== "function" || !Array.isArray(sourcePoints) || sourcePoints.length === 0) {
+          return { geometry: null, reason: "selection-geometry-unavailable" };
+        }
+        const operationsBefore = budget.operations;
+        if (!budget.consume(sourcePoints.length * 2)) {
+          return { geometry: null, reason: "selection-complexity-limit-exceeded" };
+        }
+        const normalized = [];
+        for (const sourcePoint of sourcePoints) {
+          const point = finitePoint(sourcePoint?.x, sourcePoint?.y);
+          const pressure = Number(sourcePoint?.pressure);
+          if (!point || !Number.isFinite(pressure)) {
+            return { geometry: null, reason: "selection-geometry-unavailable" };
+          }
+          normalized.push({
+            ...point,
+            pressure: Math.min(1, Math.max(0, pressure))
+          });
+        }
+        const pfOptions = {
+          size: Math.max(1e-5, Number(options.size) || 16),
+          streamline: Number.isFinite(Number(options.streamline)) ? Number(options.streamline) : 0.5,
+          last: options.last !== false
+        };
+        const sourceDistances = [0];
+        for (let index = 1; index < normalized.length; index += 1) {
+          sourceDistances.push(
+            sourceDistances[index - 1] + Math.hypot(
+              normalized[index].x - normalized[index - 1].x,
+              normalized[index].y - normalized[index - 1].y
+            )
+          );
+        }
+        const totalSourceLength = sourceDistances.at(-1) || 0;
+        const sourcePositions = sourceDistances.map((distance) => totalSourceLength > EPSILON ? distance / totalSourceLength : 0);
+        const sourceSegments = [];
+        let maximumSourceGap = 0;
+        for (let index = 0; index < normalized.length - 1; index += 1) {
+          if (samePoint(normalized[index], normalized[index + 1])) continue;
+          const length = Math.hypot(
+            normalized[index + 1].x - normalized[index].x,
+            normalized[index + 1].y - normalized[index].y
+          );
+          maximumSourceGap = Math.max(maximumSourceGap, length);
+          sourceSegments.push({
+            index: sourceSegments.length,
+            start: {
+              ...normalized[index],
+              sourcePosition: sourcePositions[index]
+            },
+            end: {
+              ...normalized[index + 1],
+              sourcePosition: sourcePositions[index + 1]
+            }
+          });
+        }
+        const actualInputs = normalized;
+        let markerInputs;
+        if (normalized.length === 1) {
+          markerInputs = [{ ...normalized[0], pressure: 0 }];
+        } else if (normalized.length === 2) {
+          markerInputs = Array.from({ length: 5 }, (_value, index) => {
+            const amount = index / 4;
+            const sourcePosition = sourcePositions[0] + (sourcePositions[1] - sourcePositions[0]) * amount;
+            return interpolateInputPoint(normalized[0], normalized[1], amount, sourcePosition);
+          });
+        } else {
+          markerInputs = normalized.map((point, index) => ({
+            ...point,
+            pressure: sourcePositions[index]
+          }));
+        }
+        let actual;
+        let markers;
+        try {
+          const { getStrokePoints } = require_cjs();
+          actual = getStrokePoints(actualInputs, pfOptions);
+          markers = getStrokePoints(markerInputs, pfOptions);
+        } catch (_error) {
+          return { geometry: null, reason: "selection-geometry-unavailable" };
+        }
+        if (!Array.isArray(actual) || actual.length === 0 || actual.length !== markers?.length || actual.some((point, index) => !sameStrokePointGeometry(point, markers[index]))) {
+          return { geometry: null, reason: "selection-geometry-unavailable" };
+        }
+        const points = [];
+        let previousPosition = Number.NEGATIVE_INFINITY;
+        let previousSourceSegmentIndex = 0;
+        const useMarkerProvenance = maximumSourceGap <= pfOptions.size * 2;
+        for (let index = 0; index < actual.length; index += 1) {
+          if (!budget.consume()) {
+            return { geometry: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          const markerSourcePosition = Number(markers[index].pressure);
+          const point = finitePoint(actual[index].point?.[0], actual[index].point?.[1]);
+          const spatial = !useMarkerProvenance && point ? spatialSourcePosition(
+            point,
+            markerSourcePosition,
+            sourceSegments,
+            Math.max(0, previousPosition),
+            previousSourceSegmentIndex
+          ) : null;
+          const sourcePosition = spatial?.sourcePosition ?? markerSourcePosition;
+          if (spatial) previousSourceSegmentIndex = spatial.segmentIndex;
+          if (!point || !Number.isFinite(markerSourcePosition) || !Number.isFinite(sourcePosition) || sourcePosition < previousPosition - EPSILON || sourcePosition < -EPSILON || sourcePosition > 1 + EPSILON) {
+            return { geometry: null, reason: "selection-geometry-unavailable" };
+          }
+          previousPosition = sourcePosition;
+          points.push({ ...point, sourcePosition });
+        }
+        const segments = [];
+        for (let index = 0; index < points.length - 1; index += 1) {
+          const start = points[index];
+          const end = points[index + 1];
+          if (samePoint(start, end)) continue;
+          segments.push({
+            index: segments.length,
+            start,
+            end,
+            bounds: {
+              left: Math.min(start.x, end.x),
+              right: Math.max(start.x, end.x),
+              top: Math.min(start.y, end.y),
+              bottom: Math.max(start.y, end.y)
+            }
+          });
+        }
+        if (segments.length === 0) {
+          return {
+            geometry: freezeCenterlineGeometry({
+              points,
+              segments,
+              root: null,
+              bounds: boundsForPoints(points),
+              sourceDistances,
+              sourcePositions,
+              totalSourceLength,
+              logicalBuildCost: budget.operations - operationsBefore
+            }),
+            reason: null
+          };
+        }
+        const root = buildOrderedSpatialIndex(segments, budget);
+        if (!root) return { geometry: null, reason: "selection-complexity-limit-exceeded" };
+        return {
+          geometry: freezeCenterlineGeometry({
+            points,
+            segments,
+            root,
+            bounds: boundsForPoints(points),
+            sourceDistances,
+            sourcePositions,
+            totalSourceLength,
+            logicalBuildCost: budget.operations - operationsBefore
+          }),
+          reason: null
+        };
+      }
+      module.exports = {
+        flattenFabricPath,
+        createPathFillQuery,
+        pathFillOverlapsPolygon,
+        clipSimplePathFill,
+        clipSimplePathFillPair,
+        contourPathData,
+        centerlineIntervalsInsideComponent,
+        createSmoothedCenterlineGeometry,
+        projectRetainedBoundaryToSourceIntervals,
+        sourceIntervalsToIndexIntervals,
+        validateSimpleContour: simpleContourIsValid
       };
     }
   });
@@ -609,10 +3294,190 @@
     }
   });
 
+  // shared/drawing-render-geometry.js
+  var require_drawing_render_geometry = __commonJS({
+    "shared/drawing-render-geometry.js"(exports, module) {
+      "use strict";
+      var DRAWING_RENDER_GEOMETRY_KEYS = Object.freeze([
+        "version",
+        "pathData",
+        "fillRule"
+      ]);
+      var DRAWING_RENDER_GEOMETRY_VERSION = 1;
+      var DRAWING_RENDER_GEOMETRY_FILL_RULE = "evenodd";
+      var DRAWING_RENDER_GEOMETRY_MAX_PATH_LENGTH = 32768;
+      var DRAWING_RENDER_GEOMETRY_MAX_COORDINATE = 1001e6;
+      var DRAWING_RENDER_GEOMETRY_MAX_TOPOLOGY_OPERATIONS = 25e4;
+      var DRAWING_RENDER_GEOMETRY_MAX_TOPOLOGY_POINTS = 4096;
+      var PATH_NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?$/i;
+      function hasExactRenderGeometryKeys(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+        const prototype = Object.getPrototypeOf(value);
+        if (prototype !== Object.prototype && prototype !== null) return false;
+        const keys = Reflect.ownKeys(value);
+        return keys.length === DRAWING_RENDER_GEOMETRY_KEYS.length && keys.every((key) => typeof key === "string" && DRAWING_RENDER_GEOMETRY_KEYS.includes(key)) && DRAWING_RENDER_GEOMETRY_KEYS.every((key) => Object.hasOwn(value, key));
+      }
+      function validPathCoordinate(token, maximumCoordinate) {
+        if (typeof token !== "string" || !PATH_NUMBER_PATTERN.test(token)) return false;
+        const value = Number(token);
+        return Number.isFinite(value) && Math.abs(value) <= maximumCoordinate;
+      }
+      function boundedTopologyLimit(value, fallback) {
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : fallback;
+      }
+      function pointKey(point) {
+        return `${point.x}\0${point.y}`;
+      }
+      function edgeKey(start, end) {
+        const startKey = pointKey(start);
+        const endKey = pointKey(end);
+        return startKey < endKey ? `${startKey}${endKey}` : `${endKey}${startKey}`;
+      }
+      function crossProduct(start, end, point) {
+        return (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x);
+      }
+      function pointWithinEdgeBounds(point, start, end) {
+        return point.x >= Math.min(start.x, end.x) && point.x <= Math.max(start.x, end.x) && point.y >= Math.min(start.y, end.y) && point.y <= Math.max(start.y, end.y);
+      }
+      function edgesIntersect(left, right) {
+        const leftStart = crossProduct(left.start, left.end, right.start);
+        const leftEnd = crossProduct(left.start, left.end, right.end);
+        const rightStart = crossProduct(right.start, right.end, left.start);
+        const rightEnd = crossProduct(right.start, right.end, left.end);
+        if (leftStart === 0 && pointWithinEdgeBounds(right.start, left.start, left.end)) return true;
+        if (leftEnd === 0 && pointWithinEdgeBounds(right.end, left.start, left.end)) return true;
+        if (rightStart === 0 && pointWithinEdgeBounds(left.start, right.start, right.end)) return true;
+        if (rightEnd === 0 && pointWithinEdgeBounds(left.end, right.start, right.end)) return true;
+        return leftStart < 0 !== leftEnd < 0 && rightStart < 0 !== rightEnd < 0;
+      }
+      function validateDrawingRenderContours(contours, options = {}) {
+        const maximumPoints = boundedTopologyLimit(
+          options.maxTopologyPoints,
+          DRAWING_RENDER_GEOMETRY_MAX_TOPOLOGY_POINTS
+        );
+        const maximumOperations = boundedTopologyLimit(
+          options.maxTopologyOperations,
+          DRAWING_RENDER_GEOMETRY_MAX_TOPOLOGY_OPERATIONS
+        );
+        const totalPointCount = contours.reduce((count, contour) => count + contour.length, 0);
+        if (totalPointCount > maximumPoints) return false;
+        let operations = 0;
+        const consume = (count = 1) => {
+          if (operations + count > maximumOperations) return false;
+          operations += count;
+          return true;
+        };
+        const seenEdges = /* @__PURE__ */ new Set();
+        for (const contour of contours) {
+          if (!consume(contour.length)) return false;
+          const distinctVertices = new Set(contour.map(pointKey));
+          if (distinctVertices.size < 3 || distinctVertices.size !== contour.length) return false;
+          let doubleArea = 0;
+          const origin = contour[0];
+          const edges = [];
+          for (let index = 0; index < contour.length; index += 1) {
+            const start = contour[index];
+            const end = contour[(index + 1) % contour.length];
+            if (start.x === end.x && start.y === end.y) return false;
+            const signature = edgeKey(start, end);
+            if (seenEdges.has(signature)) return false;
+            seenEdges.add(signature);
+            doubleArea += (start.x - origin.x) * (end.y - origin.y) - (end.x - origin.x) * (start.y - origin.y);
+            edges.push({
+              index,
+              start,
+              end,
+              minX: Math.min(start.x, end.x),
+              maxX: Math.max(start.x, end.x),
+              minY: Math.min(start.y, end.y),
+              maxY: Math.max(start.y, end.y)
+            });
+          }
+          if (!Number.isFinite(doubleArea) || doubleArea === 0) return false;
+          const sortCost = edges.length * Math.ceil(Math.log2(edges.length + 1));
+          if (!consume(sortCost)) return false;
+          const orderedEdges = [...edges].sort((left, right) => left.minX - right.minX || left.minY - right.minY || left.index - right.index);
+          for (let leftIndex = 0; leftIndex < orderedEdges.length; leftIndex += 1) {
+            const left = orderedEdges[leftIndex];
+            for (let rightIndex = leftIndex + 1; rightIndex < orderedEdges.length; rightIndex += 1) {
+              const right = orderedEdges[rightIndex];
+              if (right.minX > left.maxX) break;
+              if (!consume()) return false;
+              const adjacentDistance = Math.abs(left.index - right.index);
+              if (adjacentDistance === 1 || adjacentDistance === contour.length - 1) continue;
+              if (right.minY > left.maxY || right.maxY < left.minY) continue;
+              if (edgesIntersect(left, right)) return false;
+            }
+          }
+        }
+        return true;
+      }
+      function validateDrawingRenderPathData(pathData, options = {}) {
+        const maximumLength = Math.max(
+          1,
+          Math.trunc(Number(options.maxPathLength) || DRAWING_RENDER_GEOMETRY_MAX_PATH_LENGTH)
+        );
+        const maximumCoordinate = Math.max(
+          1,
+          Number(options.maxCoordinate) || DRAWING_RENDER_GEOMETRY_MAX_COORDINATE
+        );
+        if (typeof pathData !== "string" || pathData.length === 0 || pathData.length > maximumLength || pathData.trim() !== pathData) {
+          return false;
+        }
+        const tokens = pathData.split(/\s+/);
+        let cursor = 0;
+        const contours = [];
+        while (cursor < tokens.length) {
+          if (tokens[cursor] !== "M" || !validPathCoordinate(tokens[cursor + 1], maximumCoordinate) || !validPathCoordinate(tokens[cursor + 2], maximumCoordinate)) {
+            return false;
+          }
+          const contour = [{
+            x: Number(tokens[cursor + 1]),
+            y: Number(tokens[cursor + 2])
+          }];
+          cursor += 3;
+          while (tokens[cursor] === "L") {
+            if (!validPathCoordinate(tokens[cursor + 1], maximumCoordinate) || !validPathCoordinate(tokens[cursor + 2], maximumCoordinate)) {
+              return false;
+            }
+            contour.push({
+              x: Number(tokens[cursor + 1]),
+              y: Number(tokens[cursor + 2])
+            });
+            cursor += 3;
+          }
+          if (contour.length < 3 || tokens[cursor] !== "Z") return false;
+          cursor += 1;
+          contours.push(contour);
+        }
+        return contours.length > 0 && validateDrawingRenderContours(contours, options);
+      }
+      function validateDrawingRenderGeometry(value, options = {}) {
+        return hasExactRenderGeometryKeys(value) && value.version === DRAWING_RENDER_GEOMETRY_VERSION && value.fillRule === DRAWING_RENDER_GEOMETRY_FILL_RULE && validateDrawingRenderPathData(value.pathData, options);
+      }
+      module.exports = {
+        DRAWING_RENDER_GEOMETRY_FILL_RULE,
+        DRAWING_RENDER_GEOMETRY_KEYS,
+        DRAWING_RENDER_GEOMETRY_MAX_COORDINATE,
+        DRAWING_RENDER_GEOMETRY_MAX_PATH_LENGTH,
+        DRAWING_RENDER_GEOMETRY_MAX_TOPOLOGY_OPERATIONS,
+        DRAWING_RENDER_GEOMETRY_MAX_TOPOLOGY_POINTS,
+        DRAWING_RENDER_GEOMETRY_VERSION,
+        validateDrawingRenderGeometry,
+        validateDrawingRenderPathData
+      };
+    }
+  });
+
   // renderer/scripts/modules/drawing-v3/drawing-document.js
   var require_drawing_document = __commonJS({
     "renderer/scripts/modules/drawing-v3/drawing-document.js"(exports, module) {
       "use strict";
+      var {
+        DRAWING_RENDER_GEOMETRY_KEYS,
+        validateDrawingRenderGeometry
+      } = require_drawing_render_geometry();
       var HARD_LIMITS = Object.freeze({
         maxObjectsPerKeyframe: 1e4,
         maxInputPointsPerStroke: 2e4,
@@ -681,6 +3546,7 @@
         "caps",
         "style"
       ]);
+      var STROKE_OPTIONAL_KEYS = Object.freeze(["renderGeometry"]);
       var POINT_KEYS = Object.freeze(["x", "y", "pressure", "time"]);
       var CAPS_KEYS = Object.freeze(["start", "end"]);
       var STYLE_KEYS = Object.freeze([
@@ -861,7 +3727,9 @@
         return hasExactDataKeys(value, CAPS_KEYS) && typeof value.start === "boolean" && typeof value.end === "boolean";
       }
       function validateStrokeObject(object, limits, source = "user") {
-        if (!hasExactDataKeys(object, STROKE_KEYS)) return "invalid-object";
+        if (!hasExactDataKeys(object, STROKE_KEYS, STROKE_OPTIONAL_KEYS)) {
+          return "invalid-object";
+        }
         if (!isNonemptyString(object.id) || object.type !== "stroke" || object.tool !== "pen" && object.tool !== "brush" || typeof object.visible !== "boolean" || typeof object.locked !== "boolean" || !isFiniteInRange(object.opacity, 0, 1) || object.blendMode !== "source-over" || !isDenseArray(object.points) || object.points.length === 0) {
           return "invalid-object";
         }
@@ -869,6 +3737,9 @@
         if (object.points.length > pointLimit) return "point-limit-exceeded";
         if (!isValidCaps(object.caps)) return "invalid-object";
         if (!isValidStyle(object.style)) return "invalid-object";
+        if (object.renderGeometry !== void 0 && (!hasExactDataKeys(object.renderGeometry, DRAWING_RENDER_GEOMETRY_KEYS) || !validateDrawingRenderGeometry(object.renderGeometry))) {
+          return "invalid-object";
+        }
         let previousTime = 0;
         for (const point of object.points) {
           if (!isValidPoint(point, previousTime)) return "invalid-object";
@@ -1734,6 +4605,9 @@
       var {
         createDrawingDocumentV3
       } = require_drawing_document();
+      var {
+        validateDrawingRenderGeometry
+      } = require_drawing_render_geometry();
       var DEFAULT_LIMITS = Object.freeze({
         maxSeedObjects: 1e4,
         maxSeedBytes: 32 * 1024 * 1024,
@@ -1900,7 +4774,8 @@
           blendMode: object.blendMode,
           points: object.points,
           caps: object.caps,
-          style: object.style
+          style: object.style,
+          ...object.renderGeometry === void 0 ? {} : { renderGeometry: object.renderGeometry }
         });
         return `${serialized.length}:${hashText(serialized, 2166136261, 16777619)}:` + hashText(serialized, 2654435769, 2246822507);
       }
@@ -1941,6 +4816,17 @@
             end: record.strokeCaps.end
           };
         }
+        let renderGeometry;
+        if (record.renderGeometry !== void 0) {
+          if (!validateDrawingRenderGeometry(record.renderGeometry)) {
+            return { valid: false, reason: "invalid-transition" };
+          }
+          renderGeometry = {
+            version: record.renderGeometry.version,
+            pathData: record.renderGeometry.pathData,
+            fillRule: record.renderGeometry.fillRule
+          };
+        }
         const object = {
           id: record.id,
           type: "stroke",
@@ -1962,6 +4848,7 @@
             outlineWidth: 0
           }
         };
+        if (renderGeometry !== void 0) object.renderGeometry = renderGeometry;
         let estimatedBytes;
         let contentSignature;
         try {
@@ -2810,192 +5697,6 @@
         };
       }
       module.exports = { createDrawingEngineAdapter };
-    }
-  });
-
-  // node_modules/perfect-freehand/dist/cjs/index.js
-  var require_cjs = __commonJS({
-    "node_modules/perfect-freehand/dist/cjs/index.js"(exports) {
-      Object.defineProperties(exports, { __esModule: { value: true }, [Symbol.toStringTag]: { value: `Module` } });
-      var { PI: e } = Math;
-      var t = e + 1e-4;
-      var n = 0.5;
-      var r = [1, 1];
-      function i(e2, t2, n2, r2 = (e3) => e3) {
-        return e2 * r2(0.5 - t2 * (0.5 - n2));
-      }
-      var { min: a } = Math;
-      function o(e2, t2, n2) {
-        let r2 = a(1, t2 / n2);
-        return a(1, e2 + (a(1, 1 - r2) - e2) * (r2 * 0.275));
-      }
-      function s(e2) {
-        return [-e2[0], -e2[1]];
-      }
-      function c(e2, t2) {
-        return [e2[0] + t2[0], e2[1] + t2[1]];
-      }
-      function l(e2, t2, n2) {
-        return e2[0] = t2[0] + n2[0], e2[1] = t2[1] + n2[1], e2;
-      }
-      function u(e2, t2) {
-        return [e2[0] - t2[0], e2[1] - t2[1]];
-      }
-      function d(e2, t2, n2) {
-        return e2[0] = t2[0] - n2[0], e2[1] = t2[1] - n2[1], e2;
-      }
-      function f(e2, t2) {
-        return [e2[0] * t2, e2[1] * t2];
-      }
-      function p(e2, t2, n2) {
-        return e2[0] = t2[0] * n2, e2[1] = t2[1] * n2, e2;
-      }
-      function m(e2, t2) {
-        return [e2[0] / t2, e2[1] / t2];
-      }
-      function h(e2) {
-        return [e2[1], -e2[0]];
-      }
-      function g(e2, t2) {
-        let n2 = t2[0];
-        return e2[0] = t2[1], e2[1] = -n2, e2;
-      }
-      function ee(e2, t2) {
-        return e2[0] * t2[0] + e2[1] * t2[1];
-      }
-      function _(e2, t2) {
-        return e2[0] === t2[0] && e2[1] === t2[1];
-      }
-      function v(e2) {
-        return Math.hypot(e2[0], e2[1]);
-      }
-      function y(e2, t2) {
-        let n2 = e2[0] - t2[0], r2 = e2[1] - t2[1];
-        return n2 * n2 + r2 * r2;
-      }
-      function b(e2) {
-        return m(e2, v(e2));
-      }
-      function x(e2, t2) {
-        return Math.hypot(e2[1] - t2[1], e2[0] - t2[0]);
-      }
-      function S(e2, t2, n2) {
-        let r2 = Math.sin(n2), i2 = Math.cos(n2), a2 = e2[0] - t2[0], o2 = e2[1] - t2[1], s2 = a2 * i2 - o2 * r2, c2 = a2 * r2 + o2 * i2;
-        return [s2 + t2[0], c2 + t2[1]];
-      }
-      function C(e2, t2, n2, r2) {
-        let i2 = Math.sin(r2), a2 = Math.cos(r2), o2 = t2[0] - n2[0], s2 = t2[1] - n2[1], c2 = o2 * a2 - s2 * i2, l2 = o2 * i2 + s2 * a2;
-        return e2[0] = c2 + n2[0], e2[1] = l2 + n2[1], e2;
-      }
-      function w(e2, t2, n2) {
-        return c(e2, f(u(t2, e2), n2));
-      }
-      function te(e2, t2, n2, r2) {
-        let i2 = n2[0] - t2[0], a2 = n2[1] - t2[1];
-        return e2[0] = t2[0] + i2 * r2, e2[1] = t2[1] + a2 * r2, e2;
-      }
-      function T(e2, t2, n2) {
-        return c(e2, f(t2, n2));
-      }
-      var E = [0, 0];
-      var D = [0, 0];
-      var O = [0, 0];
-      function k(e2, n2) {
-        let r2 = T(e2, b(h(u(e2, c(e2, [1, 1])))), -n2), i2 = [], a2 = 1 / 13;
-        for (let n3 = a2; n3 <= 1; n3 += a2) i2.push(S(r2, e2, t * 2 * n3));
-        return i2;
-      }
-      function A(e2, n2, r2) {
-        let i2 = [], a2 = 1 / r2;
-        for (let r3 = a2; r3 <= 1; r3 += a2) i2.push(S(n2, e2, t * r3));
-        return i2;
-      }
-      function j(e2, t2, n2) {
-        let r2 = u(t2, n2), i2 = f(r2, 0.5), a2 = f(r2, 0.51);
-        return [u(e2, i2), u(e2, a2), c(e2, a2), c(e2, i2)];
-      }
-      function M(e2, n2, r2, i2) {
-        let a2 = [], o2 = T(e2, n2, r2), s2 = 1 / i2;
-        for (let n3 = s2; n3 < 1; n3 += s2) a2.push(S(o2, e2, t * 3 * n3));
-        return a2;
-      }
-      function ne(e2, t2, n2) {
-        return [c(e2, f(t2, n2)), c(e2, f(t2, n2 * 0.99)), u(e2, f(t2, n2 * 0.99)), u(e2, f(t2, n2))];
-      }
-      function N(e2, t2, n2) {
-        return e2 === false || e2 === void 0 ? 0 : e2 === true ? Math.max(t2, n2) : e2;
-      }
-      function re(e2, t2, n2) {
-        return e2.slice(0, 10).reduce((e3, r2) => {
-          let i2 = r2.pressure;
-          return t2 && (i2 = o(e3, r2.distance, n2)), (e3 + i2) / 2;
-        }, e2[0].pressure);
-      }
-      function P(e2, n2 = {}) {
-        let { size: r2 = 16, smoothing: a2 = 0.5, thinning: f2 = 0.5, simulatePressure: m2 = true, easing: _2 = (e3) => e3, start: v2 = {}, end: b2 = {}, last: x2 = false } = n2, { cap: S2 = true, easing: w2 = (e3) => e3 * (2 - e3) } = v2, { cap: T2 = true, easing: P2 = (e3) => --e3 * e3 * e3 + 1 } = b2;
-        if (e2.length === 0 || r2 <= 0) return [];
-        let F2 = e2[e2.length - 1].runningLength, I2 = N(v2.taper, r2, F2), L2 = N(b2.taper, r2, F2), R2 = (r2 * a2) ** 2, z2 = [], B = [], V = re(e2, m2, r2), H = i(r2, f2, e2[e2.length - 1].pressure, _2), U, W = e2[0].vector, G = e2[0].point, K = G, q = G, J = K, Y = false;
-        for (let n3 = 0; n3 < e2.length; n3++) {
-          let { pressure: a3 } = e2[n3], { point: s2, vector: h2, distance: v3, runningLength: b3 } = e2[n3], x3 = n3 === e2.length - 1;
-          if (!x3 && F2 - b3 < 3) continue;
-          f2 ? (m2 && (a3 = o(V, v3, r2)), H = i(r2, f2, a3, _2)) : H = r2 / 2, U === void 0 && (U = H);
-          let S3 = b3 < I2 ? w2(b3 / I2) : 1, T3 = F2 - b3 < L2 ? P2((F2 - b3) / L2) : 1;
-          H = Math.max(0.01, H * Math.min(S3, T3));
-          let k2 = (x3 ? e2[n3] : e2[n3 + 1]).vector, A2 = x3 ? 1 : ee(h2, k2), j2 = ee(h2, W) < 0 && !Y, M2 = A2 !== null && A2 < 0;
-          if (j2 || M2) {
-            g(E, W), p(E, E, H);
-            for (let e3 = 0; e3 <= 1; e3 += 0.07692307692307693) d(D, s2, E), C(D, D, s2, t * e3), q = [D[0], D[1]], z2.push(q), l(O, s2, E), C(O, O, s2, t * -e3), J = [O[0], O[1]], B.push(J);
-            G = q, K = J, M2 && (Y = true);
-            continue;
-          }
-          if (Y = false, x3) {
-            g(E, h2), p(E, E, H), z2.push(u(s2, E)), B.push(c(s2, E));
-            continue;
-          }
-          te(E, k2, h2, A2), g(E, E), p(E, E, H), d(D, s2, E), q = [D[0], D[1]], (n3 <= 1 || y(G, q) > R2) && (z2.push(q), G = q), l(O, s2, E), J = [O[0], O[1]], (n3 <= 1 || y(K, J) > R2) && (B.push(J), K = J), V = a3, W = h2;
-        }
-        let X = [e2[0].point[0], e2[0].point[1]], Z = e2.length > 1 ? [e2[e2.length - 1].point[0], e2[e2.length - 1].point[1]] : c(e2[0].point, [1, 1]), Q = [], $ = [];
-        if (e2.length === 1) {
-          if (!(I2 || L2) || x2) return k(X, U || H);
-        } else {
-          I2 || L2 && e2.length === 1 || (S2 ? Q.push(...A(X, B[0], 13)) : Q.push(...j(X, z2[0], B[0])));
-          let t2 = h(s(e2[e2.length - 1].vector));
-          L2 || I2 && e2.length === 1 ? $.push(Z) : T2 ? $.push(...M(Z, t2, H, 29)) : $.push(...ne(Z, t2, H));
-        }
-        return z2.concat($, B.reverse(), Q);
-      }
-      var F = [0, 0];
-      function I(e2) {
-        return e2 != null && e2 >= 0;
-      }
-      function L(e2, t2 = {}) {
-        let { streamline: i2 = 0.5, size: a2 = 16, last: o2 = false } = t2;
-        if (e2.length === 0) return [];
-        let s2 = 0.15 + (1 - i2) * 0.85, l2 = Array.isArray(e2[0]) ? e2 : e2.map(({ x: e3, y: t3, pressure: r2 = n }) => [e3, t3, r2]);
-        if (l2.length === 2) {
-          let e3 = l2[1];
-          l2 = l2.slice(0, -1);
-          for (let t3 = 1; t3 < 5; t3++) l2.push(w(l2[0], e3, t3 / 4));
-        }
-        l2.length === 1 && (l2 = [...l2, [...c(l2[0], r), ...l2[0].slice(2)]]);
-        let u2 = [{ point: [l2[0][0], l2[0][1]], pressure: I(l2[0][2]) ? l2[0][2] : 0.25, vector: [...r], distance: 0, runningLength: 0 }], f2 = false, p2 = 0, m2 = u2[0], h2 = l2.length - 1;
-        for (let e3 = 1; e3 < l2.length; e3++) {
-          let t3 = o2 && e3 === h2 ? [l2[e3][0], l2[e3][1]] : w(m2.point, l2[e3], s2);
-          if (_(m2.point, t3)) continue;
-          let r2 = x(t3, m2.point);
-          if (p2 += r2, e3 < h2 && !f2) {
-            if (p2 < a2) continue;
-            f2 = true;
-          }
-          d(F, m2.point, t3), m2 = { point: t3, pressure: I(l2[e3][2]) ? l2[e3][2] : n, vector: b(F), distance: r2, runningLength: p2 }, u2.push(m2);
-        }
-        return u2[0].vector = u2[1]?.vector || [0, 0], u2;
-      }
-      function R(e2, t2 = {}) {
-        return P(L(e2, t2), t2);
-      }
-      var z = R;
-      exports.default = z, exports.getStroke = R, exports.getStrokeOutlinePoints = P, exports.getStrokePoints = L;
     }
   });
 
@@ -10357,26 +13058,48 @@ void main() {
         createFabricDrawingPilotMetrics
       } = require_fabric_drawing_pilot_metrics();
       var {
-        splitStrokePointsByPolygon
+        strokeHasSplittableLength,
+        splitStrokePointsByPolygon,
+        splitStrokePointsBySourceIntervals
       } = require_stroke_splitter();
       var {
         polygonHasArea,
         boundsForPoints,
         boundsIntersect,
+        createGeometryBudget,
+        createPolygonEdgeIndex,
         simplifyClosedPolygon
       } = require_lasso_geometry();
+      var {
+        clipSimplePathFillPair,
+        contourPathData,
+        centerlineIntervalsInsideComponent,
+        flattenFabricPath,
+        createPathFillQuery,
+        pathFillOverlapsPolygon,
+        createSmoothedCenterlineGeometry,
+        projectRetainedBoundaryToSourceIntervals,
+        sourceIntervalsToIndexIntervals,
+        validateSimpleContour
+      } = require_stroke_fill_geometry();
       var {
         createDrawingCommandHistory
       } = require_drawing_command_history();
       var {
         createDrawingEngineAdapter
       } = require_drawing_engine_adapter();
+      var {
+        validateDrawingRenderGeometry
+      } = require_drawing_render_geometry();
       var SCENE_KEY_SEPARATOR = "\0";
       var DEFAULT_MAX_VIDEOS = 10;
       var DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
       var DEFAULT_MAX_ACTIONS = 2048;
       var MAX_STROKE_POINTS = 2e4;
       var MAX_LASSO_POINTS = 1024;
+      var DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS = 25e4;
+      var MAX_STROKE_GEOMETRY_CACHE_ENTRIES = 512;
+      var MAX_STROKE_GEOMETRY_CACHE_WEIGHT = 25e4;
       var DEFAULT_MAX_OBJECTS = 1e4;
       var MAX_PERSISTED_KEYFRAMES = 1e4;
       var MAX_PERSISTED_OBJECTS_TOTAL = 1e5;
@@ -10483,17 +13206,26 @@ void main() {
         "style",
         "transform"
       ]);
-      var PERSISTENCE_RECORD_OPTIONAL_KEYS = Object.freeze(["strokeCaps"]);
+      var PERSISTENCE_RECORD_OPTIONAL_KEYS = Object.freeze(["strokeCaps", "renderGeometry"]);
       var PERSISTENCE_STYLE_KEYS = Object.freeze(["color", "size", "opacity"]);
       var PERSISTENCE_POINT_REQUIRED_KEYS = Object.freeze(["x", "y", "pressure", "time"]);
       var PERSISTENCE_POINT_OPTIONAL_KEYS = Object.freeze(["pointerType"]);
       var PERSISTENCE_CAPS_KEYS = Object.freeze(["start", "end"]);
+      var PERSISTENCE_RENDER_GEOMETRY_KEYS = Object.freeze([
+        "version",
+        "pathData",
+        "fillRule"
+      ]);
       var PERSISTENCE_POINTER_TYPES = /* @__PURE__ */ new Set(["mouse", "pen", "touch"]);
       var PERSISTENCE_HEX_COLOR = /^#[0-9a-f]{6}$/i;
       var persistenceUtf8Encoder = new TextEncoder();
       function formatFabricPersistenceBadge(targetFrame = null) {
         const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0 ? targetFrame : "-";
         return `${FABRIC_PERSISTENCE_BADGE_PREFIX} \xB7 \uD504\uB808\uC784 ${frameLabel}`;
+      }
+      function formatCompactFabricPersistenceBadge(targetFrame = null) {
+        const frameLabel = Number.isSafeInteger(targetFrame) && targetFrame >= 0 ? targetFrame : "-";
+        return `\uC790\uB3D9 \uC800\uC7A5 \xB7 F${frameLabel}`;
       }
       function clonePlain(value) {
         if (value === void 0) return void 0;
@@ -10701,6 +13433,12 @@ void main() {
           previousTime = point.time;
         }
         if (record.strokeCaps !== void 0 && (!hasExactKeys(record.strokeCaps, PERSISTENCE_CAPS_KEYS) || typeof record.strokeCaps.start !== "boolean" || typeof record.strokeCaps.end !== "boolean")) {
+          return false;
+        }
+        if (record.renderGeometry !== void 0 && (!hasExactKeys(record.renderGeometry, PERSISTENCE_RENDER_GEOMETRY_KEYS) || !validateDrawingRenderGeometry(record.renderGeometry, {
+          maxPathLength: Math.min(MAX_PERSISTENCE_STRING_LENGTH, maxDocumentBytes),
+          maxCoordinate: MAX_PERSISTED_POINT_COORDINATE + MAX_PERSISTED_BRUSH_SIZE
+        }))) {
           return false;
         }
         return true;
@@ -11929,7 +14667,7 @@ void main() {
         const sourcePoints = samples.map((sample) => ({
           x: finiteNumber(sample.x),
           y: finiteNumber(sample.y),
-          pressure: normalizePressure(sample.pressure, sample.pointerType),
+          pressure: options.alreadyNormalizedPressure === true ? Math.min(1, Math.max(0, finiteNumber(sample.pressure, 0.5))) : normalizePressure(sample.pressure, sample.pointerType),
           time: finiteNumber(sample.time ?? sample.timeStamp)
         }));
         const { getStroke } = require_cjs();
@@ -12046,6 +14784,10 @@ void main() {
         const actionDeduper = options.actionDeduper || createActionDeduper(options.actionDeduperOptions);
         const strokePathFactory = options.strokePathFactory || createStrokePathData;
         const maxLassoFragments = positiveInteger(options.maxLassoFragments, 512);
+        const maxSelectionGeometryOperations = positiveInteger(
+          options.maxSelectionGeometryOperations,
+          DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS
+        );
         const tokenState = { hostGeneration: -1, videoGeneration: -1, inputRevision: -1 };
         const domListeners = [];
         const fabricListeners = [];
@@ -12065,10 +14807,12 @@ void main() {
         let activeStroke = null;
         let activeLasso = null;
         let pendingLassoSelection = null;
+        let preservingPendingLassoSelectionEvent = false;
         let brushStyle = { ...DEFAULT_BRUSH_STYLE };
         let brushControls = null;
         let brushPanelOpen = false;
-        let selectionMode = "stroke";
+        let selectionTarget = "stroke";
+        let selectionShape = "rectangle";
         let selectionControls = null;
         let transformStart = null;
         let selectGesture = null;
@@ -12079,6 +14823,8 @@ void main() {
         let lastError = null;
         let appliedSourceWidth = null;
         let appliedSourceHeight = null;
+        const strokeFillGeometryCache = /* @__PURE__ */ new Map();
+        let strokeFillGeometryCacheWeight = 0;
         function resolveFabric() {
           if (!fabricModule) fabricModule = options.fabric || require_index_min();
           if (!fabricModule?.Canvas || !fabricModule?.Path) throw new Error("Fabric Canvas and Path exports are required");
@@ -12108,35 +14854,82 @@ void main() {
           }
           return button;
         }
+        function labelToolbarButton(button, label) {
+          button.setAttribute?.("aria-label", label);
+          button.setAttribute?.("title", label);
+          return button;
+        }
+        function syncPersistenceBadge(targetFrame = null) {
+          if (!badge) return;
+          const fullLabel = formatFabricPersistenceBadge(targetFrame);
+          badge.textContent = formatCompactFabricPersistenceBadge(targetFrame);
+          badge.setAttribute?.("aria-label", fullLabel);
+          badge.setAttribute?.("title", fullLabel);
+        }
         function syncSelectionControls(tool = currentSession?.tool) {
           if (!selectionControls) return;
           selectionControls.group.style.display = tool === "select" ? "flex" : "none";
-          for (const [mode, button] of selectionControls.buttons) {
-            const active = selectionMode === mode;
+          for (const [target, button] of selectionControls.targetButtons) {
+            const active = selectionTarget === target;
+            button.dataset.active = String(active);
+            button.setAttribute?.("aria-pressed", String(active));
+          }
+          for (const [shape, button] of selectionControls.shapeButtons) {
+            const active = selectionShape === shape;
             button.dataset.active = String(active);
             button.setAttribute?.("aria-pressed", String(active));
           }
         }
-        function setSelectionMode(mode) {
-          const nextMode = mode === "lasso" ? "lasso" : "stroke";
-          if (selectionMode !== nextMode) abortPendingLassoSelection();
-          const selectedObjectIds = sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
-          if (selectionMode !== nextMode && (activeLasso || selectGesture || transformStart || deferredViewport)) {
-            cancelActiveLasso();
-            cancelSelectInteraction();
+        function usesNativeRectangleSelection(tool = currentSession?.tool) {
+          return tool === "select" && selectionTarget === "stroke" && selectionShape === "rectangle";
+        }
+        function clearSelectionForConfigurationChange() {
+          const viewportContext = {
+            sessionId: currentSession?.sessionId,
+            inputRevision: tokenState.inputRevision
+          };
+          if (activeLasso) cancelActiveLasso();
+          if (selectGesture || transformStart) {
+            ignoreLateModifiedEvents(transformStart?.target || fabricCanvas?.getActiveObject?.());
+            cancelSelectInteraction(void 0, { preserveDeferredViewport: true });
           }
-          selectionMode = nextMode;
+          abortPendingLassoSelection();
+          fabricCanvas?.discardActiveObject();
+          sceneStore.selectObjects([]);
+          refreshSelectionInteractionPolicy();
+          fabricCanvas?.requestRenderAll();
+          return viewportContext;
+        }
+        function syncChangedSelectionConfiguration() {
           if (currentSession?.tool === "select") {
             setToolMode("select");
-            if (selectionMode === "lasso" && selectedObjectIds.length > 0) activateObjectIds(selectedObjectIds);
-          } else syncSelectionControls();
-          return selectionMode;
+          } else {
+            syncSelectionControls();
+          }
         }
-        function createSelectionModeControls() {
+        function setSelectionTarget(target) {
+          const nextTarget = target === "partial" ? "partial" : "stroke";
+          if (selectionTarget === nextTarget) return selectionTarget;
+          const viewportContext = clearSelectionForConfigurationChange();
+          selectionTarget = nextTarget;
+          syncChangedSelectionConfiguration();
+          settleDeferredViewport(viewportContext.sessionId, viewportContext.inputRevision);
+          return selectionTarget;
+        }
+        function setSelectionShape(shape) {
+          const nextShape = shape === "lasso" ? "lasso" : "rectangle";
+          if (selectionShape === nextShape) return selectionShape;
+          const viewportContext = clearSelectionForConfigurationChange();
+          selectionShape = nextShape;
+          syncChangedSelectionConfiguration();
+          settleDeferredViewport(viewportContext.sessionId, viewportContext.inputRevision);
+          return selectionShape;
+        }
+        function createSelectionControls() {
           const group = documentRef.createElement("div");
-          group.dataset.fabricPilotGroup = "selection-mode";
+          group.dataset.fabricPilotGroup = "selection-controls";
           group.setAttribute?.("role", "group");
-          group.setAttribute?.("aria-label", "\uC120\uD0DD \uBC29\uC2DD");
+          group.setAttribute?.("aria-label", "\uC120\uD0DD \uC124\uC815");
           setStyles(group, {
             display: "none",
             alignItems: "center",
@@ -12145,21 +14938,55 @@ void main() {
             borderRadius: "8px",
             background: "rgba(255, 255, 255, 0.08)"
           });
-          const strokeButton = createButton("\uD68D", "select-stroke");
-          strokeButton.setAttribute?.("aria-label", "\uD68D \uC804\uCCB4 \uC120\uD0DD");
-          const lassoButton = createButton("\uB77C\uC3D8", "select-lasso");
-          lassoButton.setAttribute?.("aria-label", "\uB77C\uC3D8 \uBD80\uBD84 \uC120\uD0DD");
-          const buttons = /* @__PURE__ */ new Map([
-            ["stroke", strokeButton],
-            ["lasso", lassoButton]
+          const targetGroup = documentRef.createElement("div");
+          targetGroup.dataset.fabricPilotGroup = "selection-target";
+          targetGroup.setAttribute?.("role", "group");
+          targetGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uB300\uC0C1");
+          setStyles(targetGroup, { display: "flex", alignItems: "center", gap: "4px" });
+          const strokeTargetButton = labelToolbarButton(
+            createButton("\uD68D", "select-target-stroke"),
+            "\uD68D \uC804\uCCB4 \uC120\uD0DD"
+          );
+          const partialTargetButton = labelToolbarButton(
+            createButton("\uBD80\uBD84", "select-target-partial"),
+            "\uD68D \uC77C\uBD80 \uC120\uD0DD"
+          );
+          const targetButtons = /* @__PURE__ */ new Map([
+            ["stroke", strokeTargetButton],
+            ["partial", partialTargetButton]
           ]);
-          for (const button of buttons.values()) {
+          for (const button of targetButtons.values()) {
             button.setAttribute?.("aria-pressed", "false");
-            group.appendChild(button);
+            targetGroup.appendChild(button);
           }
-          addDomListener(strokeButton, "click", () => setSelectionMode("stroke"));
-          addDomListener(lassoButton, "click", () => setSelectionMode("lasso"));
-          return { group, buttons, strokeButton, lassoButton };
+          const shapeGroup = documentRef.createElement("div");
+          shapeGroup.dataset.fabricPilotGroup = "selection-shape";
+          shapeGroup.setAttribute?.("role", "group");
+          shapeGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uBAA8\uC591");
+          setStyles(shapeGroup, { display: "flex", alignItems: "center", gap: "4px" });
+          const rectangleShapeButton = labelToolbarButton(
+            createButton("\uC0AC\uAC01\uD615", "select-shape-rectangle"),
+            "\uC0AC\uAC01\uD615 \uC120\uD0DD"
+          );
+          const lassoShapeButton = labelToolbarButton(
+            createButton("\uB77C\uC3D8", "select-shape-lasso"),
+            "\uB77C\uC3D8 \uC120\uD0DD"
+          );
+          const shapeButtons = /* @__PURE__ */ new Map([
+            ["rectangle", rectangleShapeButton],
+            ["lasso", lassoShapeButton]
+          ]);
+          for (const button of shapeButtons.values()) {
+            button.setAttribute?.("aria-pressed", "false");
+            shapeGroup.appendChild(button);
+          }
+          group.appendChild(targetGroup);
+          group.appendChild(shapeGroup);
+          addDomListener(strokeTargetButton, "click", () => setSelectionTarget("stroke"));
+          addDomListener(partialTargetButton, "click", () => setSelectionTarget("partial"));
+          addDomListener(rectangleShapeButton, "click", () => setSelectionShape("rectangle"));
+          addDomListener(lassoShapeButton, "click", () => setSelectionShape("lasso"));
+          return { group, targetGroup, shapeGroup, targetButtons, shapeButtons };
         }
         function setBrushColor(color) {
           if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
@@ -12209,9 +15036,11 @@ void main() {
           }
         }
         function createBrushSettingsControls() {
-          const settingsButton = createButton("", "brush-settings");
+          const settingsButton = labelToolbarButton(
+            createButton("", "brush-settings"),
+            "\uBE0C\uB7EC\uC2DC \uC124\uC815"
+          );
           settingsButton.setAttribute?.("aria-expanded", "false");
-          settingsButton.setAttribute?.("aria-label", "\uBE0C\uB7EC\uC2DC \uC124\uC815");
           setStyles(settingsButton, {
             display: "inline-flex",
             alignItems: "center",
@@ -12238,10 +15067,13 @@ void main() {
           setStyles(panel, {
             display: "none",
             position: "absolute",
-            top: "52px",
+            top: "calc(100% + 6px)",
             left: "0",
             width: "360px",
             maxWidth: "calc(100vw - 24px)",
+            maxHeight: "calc(100vh - 100% - 30px)",
+            overflowY: "auto",
+            overscrollBehavior: "contain",
             flexDirection: "column",
             gap: "12px",
             padding: "12px",
@@ -12466,8 +15298,9 @@ void main() {
         }
         function makeFabricPath(record, transient = false) {
           const { Path } = resolveFabric();
-          const path = new Path(record.pathData, {
+          const path = new Path(record.renderGeometry?.pathData || record.pathData, {
             fill: record.style?.color || DEFAULT_BRUSH_STYLE.color,
+            fillRule: record.renderGeometry?.fillRule || "nonzero",
             opacity: normalizePathOpacity(record.style?.opacity),
             stroke: null,
             strokeWidth: 0,
@@ -12503,6 +15336,8 @@ void main() {
         }
         function renderActiveScene() {
           if (!fabricCanvas) return;
+          strokeFillGeometryCache.clear();
+          strokeFillGeometryCacheWeight = 0;
           const snapshot = sceneStore.getActiveSceneSnapshot();
           fabricCanvas.clear();
           for (const record of snapshot?.objects || []) fabricCanvas.add(makeFabricPath(record));
@@ -12514,7 +15349,7 @@ void main() {
           if (!fabricCanvas) return;
           if (tool !== "select") abortPendingLassoSelection();
           const selectMode = tool === "select";
-          const nativeSelectMode = selectMode && selectionMode === "stroke";
+          const nativeSelectMode = usesNativeRectangleSelection(tool);
           for (const [buttonTool, button] of toolButtons) {
             const active = buttonTool === tool;
             button.dataset.active = String(active);
@@ -12522,7 +15357,7 @@ void main() {
           }
           fabricCanvas.isDrawingMode = false;
           fabricCanvas.selection = nativeSelectMode;
-          fabricCanvas.defaultCursor = selectMode ? selectionMode === "lasso" ? "crosshair" : "default" : "crosshair";
+          fabricCanvas.defaultCursor = selectMode ? nativeSelectMode ? "default" : "crosshair" : "crosshair";
           fabricCanvas.hoverCursor = "grab";
           fabricCanvas.moveCursor = "grabbing";
           fabricCanvas.freeDrawingCursor = "crosshair";
@@ -12619,6 +15454,11 @@ void main() {
           if (!point) return;
           const previous = activeLasso.points[activeLasso.points.length - 1];
           if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < 0.5) return;
+          if (activeLasso.shape === "rectangle") {
+            if (activeLasso.points.length === 0) activeLasso.points.push(point);
+            else activeLasso.points[1] = point;
+            return;
+          }
           if (activeLasso.points.length >= MAX_LASSO_POINTS) {
             activeLasso.points = activeLasso.points.filter((_sample, index) => index === 0 || index % 2 === 0);
           }
@@ -12628,8 +15468,9 @@ void main() {
           if (!activeLasso || activeLasso.points.length < 2 || !fabricCanvas) return;
           removeLassoPreview();
           const { Path } = resolveFabric();
-          const [first, ...rest] = activeLasso.points;
-          const pathData = `M ${first.x} ${first.y} ${rest.map((point) => `L ${point.x} ${point.y}`).join(" ")}`;
+          const previewPoints = activeLasso.shape === "rectangle" ? rectanglePolygon(activeLasso.points[0], activeLasso.points.at(-1)) : activeLasso.points;
+          const [first, ...rest] = previewPoints;
+          const pathData = `M ${first.x} ${first.y} ${rest.map((point) => `L ${point.x} ${point.y}`).join(" ")}${activeLasso.shape === "rectangle" ? " Z" : ""}`;
           const preview = new Path(pathData, {
             fill: "rgba(255, 208, 0, 0.08)",
             stroke: "#ffd000",
@@ -12648,35 +15489,308 @@ void main() {
         }
         function cancelActiveLasso() {
           if (!activeLasso) return;
-          const pointerId = activeLasso.pointerId;
+          const { pointerId, previousSelectionContext = null } = activeLasso;
           removeLassoPreview();
           activeLasso = null;
           releasePointerCapture(fabricCanvas?.upperCanvasEl || canvasElement, pointerId);
-          fabricCanvas?.requestRenderAll();
+          restoreSelectionContext(previousSelectionContext);
         }
-        function flattenStrokeSourcePoints(record, object) {
-          const points = Array.isArray(record?.sourcePoints) ? record.sourcePoints : [];
-          const { Point, util } = resolveFabric();
-          if (!object?.calcTransformMatrix || !object?.pathOffset || !Point || !util?.transformPoint) {
-            return points.map((point) => ({ ...point }));
+        function strokeObjectSceneBounds(record, object, padding = 0) {
+          const safePadding = Math.max(0, finiteNumber(padding));
+          const rectangle = object?.getBoundingRect?.();
+          if (rectangle && [rectangle.left, rectangle.top, rectangle.width, rectangle.height].every((value) => Number.isFinite(Number(value)))) {
+            const left = finiteNumber(rectangle.left);
+            const top = finiteNumber(rectangle.top);
+            const right = left + finiteNumber(rectangle.width);
+            const bottom = top + finiteNumber(rectangle.height);
+            return {
+              left: Math.min(left, right) - safePadding,
+              right: Math.max(left, right) + safePadding,
+              top: Math.min(top, bottom) - safePadding,
+              bottom: Math.max(top, bottom) + safePadding
+            };
           }
-          const matrix = object.calcTransformMatrix();
-          return points.map((point) => {
-            const local = new Point(
-              finiteNumber(point.x) - finiteNumber(object.pathOffset.x),
-              finiteNumber(point.y) - finiteNumber(object.pathOffset.y)
-            );
-            const transformed = util.transformPoint(local, matrix);
-            return { ...point, x: transformed.x, y: transformed.y };
-          });
+          return boundsForPoints(record?.sourcePoints || [], safePadding);
         }
-        function createStrokeFragment(record, points, selected, caps = {}) {
+        function createSourcePolygonQuery(object, scenePolygon, budget) {
+          const { Path, Point, util } = resolveFabric();
+          if (!object || !Path || !(object instanceof Path) || typeof object.calcTransformMatrix !== "function" || !object.pathOffset || !Number.isFinite(Number(object.pathOffset.x)) || !Number.isFinite(Number(object.pathOffset.y)) || !Point || !util?.transformPoint || !util?.invertTransform) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          let matrix;
+          try {
+            matrix = Array.from(object.calcTransformMatrix() || []);
+          } catch (_error) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          if (matrix.length < 6 || matrix.some((value) => !Number.isFinite(Number(value)))) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          const a = finiteNumber(matrix[0]);
+          const b = finiteNumber(matrix[1]);
+          const c = finiteNumber(matrix[2]);
+          const d = finiteNumber(matrix[3]);
+          const determinant = a * d - b * c;
+          const linearMagnitudeSquared = a * a + b * b + c * c + d * d;
+          const discriminant = Math.max(
+            0,
+            linearMagnitudeSquared * linearMagnitudeSquared - 4 * determinant * determinant
+          );
+          const maximumSingularValueSquared = (linearMagnitudeSquared + Math.sqrt(discriminant)) / 2;
+          const relativeDeterminant = Math.abs(determinant) / maximumSingularValueSquared;
+          if (!Number.isFinite(determinant) || !Number.isFinite(maximumSingularValueSquared) || maximumSingularValueSquared <= 0 || !Number.isFinite(relativeDeterminant) || relativeDeterminant <= 1e-8) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          let inverse;
+          try {
+            inverse = util.invertTransform(matrix);
+          } catch (_error) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          if (!Array.isArray(inverse) || inverse.length < 6 || inverse.some((value) => !Number.isFinite(Number(value)))) {
+            return { query: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          const sourcePolygon = [];
+          for (const point of scenePolygon) {
+            if (!budget.consume()) {
+              return { query: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            let local;
+            try {
+              local = util.transformPoint(
+                new Point(finiteNumber(point?.x), finiteNumber(point?.y)),
+                inverse
+              );
+            } catch (_error) {
+              return { query: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            if (!Number.isFinite(Number(local?.x)) || !Number.isFinite(Number(local?.y))) {
+              return { query: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            sourcePolygon.push({
+              x: finiteNumber(local?.x) + finiteNumber(object.pathOffset.x),
+              y: finiteNumber(local?.y) + finiteNumber(object.pathOffset.y)
+            });
+          }
+          return {
+            query: createPolygonEdgeIndex(sourcePolygon, { budget }),
+            maximumScale: Math.sqrt(maximumSingularValueSquared),
+            reason: budget.limitExceeded ? "selection-complexity-limit-exceeded" : null
+          };
+        }
+        function strokeGeometryCacheEntryWeight(entry) {
+          const fillEdges = entry?.geometry?.edges?.length || 0;
+          const fillPoints = (entry?.geometry?.contours || []).reduce(
+            (count, contour) => count + contour.length,
+            0
+          );
+          const centerlinePoints = entry?.centerline?.points?.length || 0;
+          const centerlineSegments = entry?.centerline?.segments?.length || 0;
+          const sourceSignatureValues = entry?.centerlineSourceGeometry?.length || 0;
+          return Math.max(
+            1,
+            fillEdges * 3 + fillPoints + centerlineSegments * 3 + centerlinePoints + sourceSignatureValues
+          );
+        }
+        function deleteStrokeGeometryCacheEntry(id) {
+          const existing = strokeFillGeometryCache.get(id);
+          if (!existing) return false;
+          strokeFillGeometryCache.delete(id);
+          strokeFillGeometryCacheWeight = Math.max(
+            0,
+            strokeFillGeometryCacheWeight - strokeGeometryCacheEntryWeight(existing)
+          );
+          return true;
+        }
+        function storeStrokeGeometryCacheEntry(id, entry) {
+          deleteStrokeGeometryCacheEntry(id);
+          strokeFillGeometryCache.set(id, entry);
+          strokeFillGeometryCacheWeight += strokeGeometryCacheEntryWeight(entry);
+          while (strokeFillGeometryCache.size > MAX_STROKE_GEOMETRY_CACHE_ENTRIES || strokeFillGeometryCacheWeight > MAX_STROKE_GEOMETRY_CACHE_WEIGHT) {
+            deleteStrokeGeometryCacheEntry(strokeFillGeometryCache.keys().next().value);
+          }
+        }
+        function touchStrokeGeometryCacheEntry(id, entry) {
+          if (!strokeFillGeometryCache.has(id)) return;
+          strokeFillGeometryCache.delete(id);
+          strokeFillGeometryCache.set(id, entry);
+        }
+        function createStoredPathFillQuery(record, object, sourceSelection, budget) {
+          if (!record?.id || !object || !Array.isArray(object.path)) {
+            return { query: null, reason: "selection-geometry-unavailable" };
+          }
+          const maximumScale = Math.max(1e-9, finiteNumber(sourceSelection?.maximumScale, 1));
+          const requiredTolerance = Math.max(
+            Number.EPSILON,
+            Math.min(0.25, 0.25 / maximumScale)
+          );
+          const displayPathData = record.renderGeometry?.pathData || record.pathData;
+          let cached = strokeFillGeometryCache.get(record.id);
+          if (!cached || cached.displayPathData !== displayPathData || cached.pathCommands !== object.path || cached.fillRule !== object.fillRule || !Object.is(cached.tolerance, requiredTolerance)) {
+            const flattened = flattenFabricPath(object.path, {
+              tolerance: requiredTolerance,
+              fillRule: object.fillRule,
+              budget
+            });
+            if (!flattened.geometry) {
+              deleteStrokeGeometryCacheEntry(record.id);
+              return { query: null, reason: flattened.reason };
+            }
+            cached = {
+              displayPathData,
+              pathCommands: object.path,
+              fillRule: object.fillRule,
+              tolerance: flattened.geometry.tolerance,
+              geometry: flattened.geometry,
+              centerlinePathData: null,
+              centerlineSize: null,
+              centerlineSourceGeometry: null,
+              centerline: null
+            };
+            storeStrokeGeometryCacheEntry(record.id, cached);
+          } else {
+            if (!budget.consume(cached.geometry.logicalBuildCost || 0)) {
+              return { query: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            touchStrokeGeometryCacheEntry(record.id, cached);
+          }
+          const query = createPathFillQuery(cached.geometry, budget);
+          return {
+            query,
+            reason: query ? null : budget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable"
+          };
+        }
+        function canonicalStrokePathMatches(record, budget) {
+          if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return false;
+          const logicalCost = record.sourcePoints.length * 2 + Math.ceil(record.pathData.length / 8);
+          if (!budget?.consume(logicalCost)) return false;
+          let canonical;
+          try {
+            canonical = strokePathFactory(record.sourcePoints, {
+              size: record.style?.size,
+              last: true,
+              alreadyNormalizedPressure: true,
+              start: { cap: record.strokeCaps?.start !== false },
+              end: { cap: record.strokeCaps?.end !== false }
+            });
+          } catch (_error) {
+            return false;
+          }
+          return canonical?.pathData === record.pathData;
+        }
+        function sourceGeometryMatches(signature, sourcePoints) {
+          if (!Array.isArray(signature) || signature.length !== sourcePoints.length * 3) return false;
+          for (let index = 0; index < sourcePoints.length; index += 1) {
+            const point = sourcePoints[index];
+            const offset = index * 3;
+            if (!Object.is(signature[offset], point.x) || !Object.is(signature[offset + 1], point.y) || !Object.is(signature[offset + 2], point.pressure)) {
+              return false;
+            }
+          }
+          return true;
+        }
+        function captureSourceGeometry(sourcePoints) {
+          return Object.freeze(sourcePoints.flatMap((point) => [
+            point.x,
+            point.y,
+            point.pressure
+          ]));
+        }
+        function createStoredCenterline(record, budget) {
+          const cached = strokeFillGeometryCache.get(record.id);
+          if (!cached) return { geometry: null, reason: "selection-geometry-unavailable" };
+          if (!budget.consume(record.sourcePoints.length)) {
+            return { geometry: null, reason: "selection-complexity-limit-exceeded" };
+          }
+          const centerlineSize = Number(record.style?.size);
+          if (cached.centerline && cached.centerlinePathData === record.pathData && Object.is(cached.centerlineSize, centerlineSize) && sourceGeometryMatches(cached.centerlineSourceGeometry, record.sourcePoints)) {
+            if (!budget.consume(cached.centerline.logicalBuildCost || 0)) {
+              return { geometry: null, reason: "selection-complexity-limit-exceeded" };
+            }
+            return { geometry: cached.centerline, reason: null };
+          }
+          const built = createSmoothedCenterlineGeometry(record.sourcePoints, {
+            size: record.style?.size,
+            streamline: 0.5,
+            last: true,
+            budget
+          });
+          if (!built.geometry) return built;
+          deleteStrokeGeometryCacheEntry(record.id);
+          cached.centerlinePathData = record.pathData;
+          cached.centerlineSize = centerlineSize;
+          cached.centerlineSourceGeometry = captureSourceGeometry(record.sourcePoints);
+          cached.centerline = built.geometry;
+          storeStrokeGeometryCacheEntry(record.id, cached);
+          return built;
+        }
+        function componentBoundarySegments(component) {
+          return (component?.contours || []).flatMap((contour) => contour.map((start, index) => ({
+            start,
+            end: contour[(index + 1) % contour.length]
+          })));
+        }
+        function projectFillComponentToIndexInterval(component, centerline, budget) {
+          const onCenterline = centerlineIntervalsInsideComponent(component, centerline, {
+            budget
+          });
+          if (onCenterline.reason) return { interval: null, reason: onCenterline.reason };
+          let sourceIntervals = onCenterline.intervals;
+          if (sourceIntervals.length === 0) {
+            const projected = projectRetainedBoundaryToSourceIntervals(
+              componentBoundarySegments(component),
+              centerline,
+              { budget, distanceTolerance: 0.25 }
+            );
+            if (projected.reason) return { interval: null, reason: projected.reason };
+            sourceIntervals = projected.intervals;
+          }
+          if (sourceIntervals.length !== 1) {
+            return { interval: null, reason: "selection-geometry-unavailable" };
+          }
+          const intervals = sourceIntervalsToIndexIntervals(sourceIntervals, centerline);
+          if (!Array.isArray(intervals) || intervals.length !== 1) {
+            return { interval: null, reason: "selection-geometry-unavailable" };
+          }
+          return { interval: intervals[0], reason: null };
+        }
+        function applySourceTransformToFragment(path, sourceObject) {
+          if (!sourceObject) return true;
+          const sourceTransform = captureTransform(sourceObject);
+          if (!sourceObject.calcTransformMatrix) {
+            path.set(sourceTransform);
+            path.setCoords?.();
+            return true;
+          }
+          const inheritedTransform = {};
+          for (const field of TRANSFORM_FIELDS) {
+            if (field !== "left" && field !== "top") inheritedTransform[field] = sourceTransform[field];
+          }
+          path.set(inheritedTransform);
+          const { Point, util } = resolveFabric();
+          if (!path.pathOffset || !sourceObject.pathOffset || !path.setPositionByOrigin || !Point || !util?.transformPoint) {
+            return false;
+          }
+          const sourceMatrix = sourceObject.calcTransformMatrix();
+          const fragmentCenter = util.transformPoint(new Point(
+            finiteNumber(path.pathOffset.x) - finiteNumber(sourceObject.pathOffset.x),
+            finiteNumber(path.pathOffset.y) - finiteNumber(sourceObject.pathOffset.y)
+          ), sourceMatrix);
+          if (!Number.isFinite(Number(fragmentCenter?.x)) || !Number.isFinite(Number(fragmentCenter?.y))) {
+            return false;
+          }
+          path.setPositionByOrigin(fragmentCenter, "center", "center");
+          path.setCoords?.();
+          return true;
+        }
+        function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null, renderGeometry = null) {
           if (!Array.isArray(points) || points.length < 2) return null;
           let strokeData;
           try {
             strokeData = strokePathFactory(points, {
               size: record.style?.size,
               last: true,
+              alreadyNormalizedPressure: true,
               start: { cap: caps.start !== false },
               end: { cap: caps.end !== false }
             });
@@ -12699,9 +15813,17 @@ void main() {
               end: caps.end !== false
             }
           };
-          const path = makeFabricPath(fragment);
-          fragment.transform = captureTransform(path);
-          return fragment;
+          if (renderGeometry) fragment.renderGeometry = clonePlain(renderGeometry);
+          try {
+            const path = makeFabricPath(fragment);
+            if (!applySourceTransformToFragment(path, sourceObject)) return null;
+            fragment.transform = captureTransform(path);
+            return fragment;
+          } catch (error) {
+            lastError = error.message;
+            metrics.recordSurfaceError();
+            return null;
+          }
         }
         function pendingTargetMatches(target, objectIds) {
           if (!target || !objectIds?.size) return false;
@@ -12741,7 +15863,7 @@ void main() {
           if (!fabricCanvas || !currentSession || replacements.length === 0 || selectedFragmentIds.size === 0) {
             return { staged: false, reason: "invalid-pending-lasso" };
           }
-          abortPendingLassoSelection();
+          const previousPendingSelection = pendingLassoSelection;
           const originalFabricObjects = replacements.map((replacement) => {
             const object = canvasObjects.get(replacement.removeId);
             return object ? {
@@ -12788,6 +15910,16 @@ void main() {
             for (const object of fragmentFabricObjects.values()) fabricCanvas.remove(object);
             return { staged: false, reason: "fragment-proxy-build-failed" };
           }
+          if (previousPendingSelection) {
+            if (pendingLassoSelection !== previousPendingSelection || !pendingLassoIsFresh(previousPendingSelection)) {
+              for (const object of fragmentFabricObjects.values()) fabricCanvas.remove(object);
+              if (pendingLassoSelection === previousPendingSelection) {
+                abortPendingLassoSelection({ authoritative: true });
+              }
+              return { staged: false, reason: "stale-pending-lasso" };
+            }
+            abortPendingLassoSelection();
+          }
           pendingLassoSelection = {
             sessionId: currentSession.sessionId,
             inputRevision: tokenState.inputRevision,
@@ -12821,8 +15953,9 @@ void main() {
             renderActiveScene();
             return true;
           }
+          const pendingFabricObjects = new Set(pending.fragmentFabricObjects?.values() || []);
           for (const object of [...fabricCanvas.getObjects()]) {
-            if (object.__baeframePendingLasso) fabricCanvas.remove(object);
+            if (pendingFabricObjects.has(object)) fabricCanvas.remove(object);
           }
           const existingIds = new Set(
             fabricCanvas.getObjects().map((object) => object.__baeframeObjectId).filter(Boolean)
@@ -12983,7 +16116,10 @@ void main() {
           if (!fabricCanvas) return;
           const ids = new Set(objectIds);
           fabricCanvas.discardActiveObject();
-          const objects = fabricCanvas.getObjects().filter((object) => ids.has(object.__baeframeObjectId));
+          const objectsById = new Map(
+            fabricCanvas.getObjects().filter((object) => ids.has(object.__baeframeObjectId)).map((object) => [object.__baeframeObjectId, object])
+          );
+          const objects = objectIds.map((id) => objectsById.get(id)).filter(Boolean);
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
             const selected = ids.has(object.__baeframeObjectId);
@@ -13001,76 +16137,278 @@ void main() {
           refreshSelectionInteractionPolicy();
           fabricCanvas.requestRenderAll();
         }
-        function finalizeActiveLasso() {
-          if (!activeLasso) return { applied: false, reason: "no-active-lasso" };
-          const sourcePerCssPixel = currentSession ? currentSession.sourceWidth / Math.max(1, currentSession.canvasRect.width) / Math.max(0.01, Math.abs(finiteNumber(currentSession.viewportTransform?.scale, 1))) : 1;
-          const polygon = simplifyClosedPolygon(
-            activeLasso.points,
-            Math.min(8, Math.max(0.25, sourcePerCssPixel * 1.5))
+        function restoreSelectionContext(context) {
+          const currentSelectedIds = sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
+          if (!context || context.sessionId !== currentSession?.sessionId || context.inputRevision !== tokenState.inputRevision || context.mutationCount !== sceneStore.getDiagnostics().mutationCount) {
+            if (context?.pendingSelection && pendingLassoSelection === context.pendingSelection && !pendingLassoIsFresh(context.pendingSelection)) {
+              abortPendingLassoSelection({ authoritative: true });
+              return [...sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || []];
+            }
+            return [...currentSelectedIds];
+          }
+          if (context.pendingSelection && (pendingLassoSelection !== context.pendingSelection || !pendingLassoIsFresh(context.pendingSelection))) {
+            return [...currentSelectedIds];
+          }
+          const existingIds = new Set(
+            fabricCanvas?.getObjects().map((object) => object.__baeframeObjectId).filter(Boolean) || []
           );
-          removeLassoPreview();
-          activeLasso = null;
+          if (context.objectIds.some((id) => !existingIds.has(id))) {
+            return [...currentSelectedIds];
+          }
+          activateObjectIds(context.objectIds);
+          return [...context.objectIds];
+        }
+        function retireReplacedPendingSelection(context) {
+          const replacedPendingSelection = context?.pendingSelection;
+          if (!replacedPendingSelection || pendingLassoSelection !== replacedPendingSelection) {
+            return false;
+          }
+          return abortPendingLassoSelection();
+        }
+        function rectanglePolygon(start, end) {
+          if (!start || !end) return [];
+          return [
+            { x: start.x, y: start.y },
+            { x: end.x, y: start.y },
+            { x: end.x, y: end.y },
+            { x: start.x, y: end.y }
+          ];
+        }
+        function finalizeWholeStrokeSelectionPolygon(polygon, failureSelectionContext = null) {
           if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
-            activateObjectIds([]);
-            return { applied: false, reason: "lasso-too-small" };
+            const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
+            return {
+              applied: false,
+              reason: "lasso-too-small",
+              selectedObjectIds: restoredSelectionIds
+            };
           }
           const snapshot = sceneStore.getActiveSceneSnapshot();
           const canvasObjects = new Map(
             fabricCanvas.getObjects().filter((object) => object.__baeframeObjectId).map((object) => [object.__baeframeObjectId, object])
           );
-          const replacements = [];
-          const selectedPersistedIds = /* @__PURE__ */ new Set();
-          const selectedFragmentIds = /* @__PURE__ */ new Set();
           const polygonBounds = boundsForPoints(polygon);
-          const sceneLimits = sceneStore.getDiagnostics();
-          let accumulatedFragments = 0;
+          const selectedObjectIds = [];
+          const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
+          const fail = (reason) => {
+            const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
+            return {
+              applied: false,
+              reason,
+              selectedObjectIds: restoredSelectionIds
+            };
+          };
           for (const record of snapshot?.objects || []) {
             if (record.type !== "stroke") continue;
-            const flattenedPoints = flattenStrokeSourcePoints(record, canvasObjects.get(record.id));
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
-            if (!boundsIntersect(boundsForPoints(flattenedPoints, maximumRadius), polygonBounds)) continue;
-            const split = splitStrokePointsByPolygon(flattenedPoints, polygon, {
-              size: record.style?.size,
-              thinning: 0.65,
-              maxRuns: Math.max(1, maxLassoFragments - accumulatedFragments + 1)
-            });
-            if (split.limitExceeded) {
-              activateObjectIds([]);
-              return { applied: false, reason: "lasso-fragment-limit-exceeded", selectedObjectIds: [] };
+            const object = canvasObjects.get(record.id);
+            if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
+              continue;
             }
-            if (split.inside.length === 0) continue;
-            if (split.outside.length === 0) {
+            const sourceSelection = createSourcePolygonQuery(object, polygon, geometryBudget);
+            if (!sourceSelection.query || sourceSelection.reason) {
+              return fail(sourceSelection.reason || "selection-geometry-unavailable");
+            }
+            const fillSelection = createStoredPathFillQuery(
+              record,
+              object,
+              sourceSelection,
+              geometryBudget
+            );
+            if (!fillSelection.query || fillSelection.reason) {
+              return fail(fillSelection.reason || "selection-geometry-unavailable");
+            }
+            const touch = pathFillOverlapsPolygon(
+              fillSelection.query,
+              sourceSelection.query,
+              geometryBudget
+            );
+            if (touch.limitExceeded) {
+              return fail("selection-complexity-limit-exceeded");
+            }
+            if (touch.hit) selectedObjectIds.push(record.id);
+          }
+          retireReplacedPendingSelection(failureSelectionContext);
+          activateObjectIds(selectedObjectIds);
+          return { applied: false, selectedObjectIds };
+        }
+        function finalizePartialSelectionPolygon(polygon, failureSelectionContext = null) {
+          if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
+            const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
+            return {
+              applied: false,
+              reason: "lasso-too-small",
+              selectedObjectIds: restoredSelectionIds
+            };
+          }
+          const snapshot = sceneStore.getActiveSceneSnapshot();
+          const canvasObjects = new Map(
+            fabricCanvas.getObjects().filter((object) => object.__baeframeObjectId).map((object) => [object.__baeframeObjectId, object])
+          );
+          const replacementPlans = [];
+          const selectedPersistedIds = /* @__PURE__ */ new Set();
+          const polygonBounds = boundsForPoints(polygon);
+          const sceneLimits = sceneStore.getDiagnostics();
+          const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
+          let accumulatedFragments = 0;
+          const fail = (reason) => {
+            const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
+            return {
+              applied: false,
+              reason,
+              selectedObjectIds: restoredSelectionIds
+            };
+          };
+          if (!validateSimpleContour(polygon, geometryBudget)) {
+            return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
+          }
+          for (const record of snapshot?.objects || []) {
+            if (record.type !== "stroke") continue;
+            const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
+            const object = canvasObjects.get(record.id);
+            if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
+              continue;
+            }
+            const sourceSelection = createSourcePolygonQuery(object, polygon, geometryBudget);
+            if (!sourceSelection.query || sourceSelection.reason) {
+              return fail(sourceSelection.reason || "selection-geometry-unavailable");
+            }
+            const fillSelection = createStoredPathFillQuery(
+              record,
+              object,
+              sourceSelection,
+              geometryBudget
+            );
+            if (!fillSelection.query || fillSelection.reason) {
+              return fail(fillSelection.reason || "selection-geometry-unavailable");
+            }
+            const touch = pathFillOverlapsPolygon(
+              fillSelection.query,
+              sourceSelection.query,
+              geometryBudget
+            );
+            if (touch.limitExceeded) return fail("selection-complexity-limit-exceeded");
+            if (!touch.hit) continue;
+            if (!canonicalStrokePathMatches(record, geometryBudget)) {
+              return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
+            }
+            if (!strokeHasSplittableLength(record.sourcePoints)) {
               selectedPersistedIds.add(record.id);
               continue;
             }
-            accumulatedFragments += split.runs.length;
-            const projectedObjectCount = snapshot.objects.length - (replacements.length + 1) + accumulatedFragments;
-            if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
-              activateObjectIds([]);
-              return { applied: false, reason: "lasso-fragment-limit-exceeded", selectedObjectIds: [] };
+            const clipped = clipSimplePathFillPair(
+              fillSelection.query,
+              sourceSelection.query,
+              {
+                budget: geometryBudget,
+                polygonValidated: true
+              }
+            );
+            const remainingClip = clipped.difference;
+            if (remainingClip.reason) return fail(remainingClip.reason);
+            if (remainingClip.components.length === 0) {
+              selectedPersistedIds.add(record.id);
+              continue;
             }
+            const selectedClip = clipped.intersection;
+            if (selectedClip.reason) return fail(selectedClip.reason);
+            if (selectedClip.components.length === 0) continue;
+            const centerline = createStoredCenterline(record, geometryBudget);
+            if (!centerline.geometry || centerline.reason) {
+              return fail(centerline.reason || "selection-geometry-unavailable");
+            }
+            const componentPlans = [];
+            for (const group of [
+              { selected: false, components: remainingClip.components },
+              { selected: true, components: selectedClip.components }
+            ]) {
+              for (const component of group.components) {
+                const projected = projectFillComponentToIndexInterval(
+                  component,
+                  centerline.geometry,
+                  geometryBudget
+                );
+                if (!projected.interval || projected.reason) {
+                  return fail(projected.reason || "selection-geometry-unavailable");
+                }
+                const sliced = splitStrokePointsBySourceIntervals(
+                  record.sourcePoints,
+                  [projected.interval],
+                  {
+                    budget: geometryBudget,
+                    maxRuns: 3
+                  }
+                );
+                if (sliced.limitExceeded) {
+                  return fail(sliced.limitReason === "operations" ? "selection-complexity-limit-exceeded" : "lasso-fragment-limit-exceeded");
+                }
+                if (sliced.geometryUnavailable || sliced.inside.length !== 1 || sliced.inside[0].length < 2) {
+                  return fail("selection-geometry-unavailable");
+                }
+                const renderPathData = contourPathData(component.contours);
+                if (!renderPathData || renderPathData.length > MAX_PERSISTENCE_STRING_LENGTH) {
+                  return fail("selection-geometry-unavailable");
+                }
+                const originalCaps = record.strokeCaps || { start: true, end: true };
+                componentPlans.push({
+                  selected: group.selected,
+                  points: sliced.inside[0],
+                  interval: projected.interval,
+                  caps: {
+                    start: projected.interval[0] <= 1e-7 ? originalCaps.start !== false : false,
+                    end: projected.interval[1] >= record.sourcePoints.length - 1 - 1e-7 ? originalCaps.end !== false : false
+                  },
+                  renderGeometry: {
+                    version: 1,
+                    pathData: renderPathData,
+                    fillRule: "evenodd"
+                  }
+                });
+              }
+            }
+            const totalPlannedPoints = componentPlans.reduce(
+              (count, plan) => count + plan.points.length,
+              0
+            );
+            if (totalPlannedPoints > record.sourcePoints.length * 2 + componentPlans.length * 2) {
+              return fail("selection-geometry-unavailable");
+            }
+            componentPlans.sort((left, right) => left.interval[0] - right.interval[0] || Number(left.selected) - Number(right.selected) || left.interval[1] - right.interval[1]);
+            accumulatedFragments += componentPlans.length;
+            const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) + accumulatedFragments;
+            if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
+              return fail("lasso-fragment-limit-exceeded");
+            }
+            replacementPlans.push({ record, object, componentPlans });
+          }
+          const replacements = [];
+          const selectedFragmentIds = /* @__PURE__ */ new Set();
+          for (const replacementPlan of replacementPlans) {
             const addObjects = [];
             let fragmentBuildFailed = false;
-            const originalCaps = record.strokeCaps || { start: true, end: true };
-            for (let runIndex = 0; runIndex < split.runs.length; runIndex += 1) {
-              const run = split.runs[runIndex];
-              const selected = run.kind === "inside";
-              const fragment = createStrokeFragment(record, run.points, selected, {
-                start: runIndex === 0 ? originalCaps.start !== false : false,
-                end: runIndex === split.runs.length - 1 ? originalCaps.end !== false : false
-              });
+            for (const plan of replacementPlan.componentPlans) {
+              const fragment = createStrokeFragment(
+                replacementPlan.record,
+                plan.points,
+                plan.selected,
+                plan.caps,
+                replacementPlan.object,
+                plan.renderGeometry
+              );
               if (!fragment) {
                 fragmentBuildFailed = true;
                 break;
               }
               addObjects.push(fragment);
-              if (selected) selectedFragmentIds.add(fragment.id);
+              if (plan.selected) selectedFragmentIds.add(fragment.id);
             }
             if (fragmentBuildFailed) {
-              activateObjectIds([]);
-              return { applied: false, reason: "fragment-build-failed", selectedObjectIds: [] };
+              return fail("fragment-build-failed");
             }
-            replacements.push({ removeId: record.id, addObjects });
+            replacements.push({
+              removeId: replacementPlan.record.id,
+              addObjects
+            });
           }
           const selectedObjectIds = [...selectedPersistedIds, ...selectedFragmentIds];
           let result = { applied: false, selectedObjectIds };
@@ -13083,17 +16421,29 @@ void main() {
               canvasObjects
             });
             if (!staged.staged) {
-              activateObjectIds([]);
-              return { applied: false, reason: staged.reason, selectedObjectIds: [] };
+              return fail(staged.reason);
             }
             result = { applied: false, pending: true, selectedObjectIds };
           }
+          retireReplacedPendingSelection(failureSelectionContext);
           activateObjectIds(selectedObjectIds);
           if (pendingLassoSelection) {
             pendingLassoSelection.activeTarget = fabricCanvas.getActiveObject?.() || null;
             pendingLassoSelection.initialTargetTransform = captureTransform(pendingLassoSelection.activeTarget);
           }
           return { ...result, selectedObjectIds };
+        }
+        function finalizeActiveLasso() {
+          if (!activeLasso) return { applied: false, reason: "no-active-lasso" };
+          const gesture = activeLasso;
+          const sourcePerCssPixel = currentSession ? currentSession.sourceWidth / Math.max(1, currentSession.canvasRect.width) / Math.max(0.01, Math.abs(finiteNumber(currentSession.viewportTransform?.scale, 1))) : 1;
+          const polygon = gesture.shape === "rectangle" ? rectanglePolygon(gesture.points[0], gesture.points.at(-1)) : simplifyClosedPolygon(
+            gesture.points,
+            Math.min(8, Math.max(0.25, sourcePerCssPixel * 1.5))
+          );
+          removeLassoPreview();
+          activeLasso = null;
+          return selectionTarget === "stroke" ? finalizeWholeStrokeSelectionPolygon(polygon, gesture.previousSelectionContext) : finalizePartialSelectionPolygon(polygon, gesture.previousSelectionContext);
         }
         function pointerTargetsActiveSelection(event) {
           const activeObject = fabricCanvas?.getActiveObject?.();
@@ -13208,8 +16558,9 @@ void main() {
           } catch (_error) {
           }
         }
-        function cancelSelectInteraction(event) {
+        function cancelSelectInteraction(event, options2 = {}) {
           const gesture = selectGesture;
+          const preserveDeferredViewport = options2.preserveDeferredViewport === true;
           const hadTransformTarget = !!transformStart?.target;
           const wasTracking = gesture?.phase === "tracking";
           if (gesture) gesture.phase = "cancelling";
@@ -13224,7 +16575,7 @@ void main() {
           }
           selectGesture = null;
           transformStart = null;
-          deferredViewport = null;
+          if (!preserveDeferredViewport) deferredViewport = null;
           if (gesture && pendingLassoSelection) {
             abortPendingLassoSelection();
             return;
@@ -13237,6 +16588,7 @@ void main() {
           deferredViewport = null;
           if (!pending || pending.sessionId !== sessionId || pending.inputRevision !== inputRevision) return false;
           if (destroyed || !inputEnabled || !fabricCanvas || currentSession?.sessionId !== sessionId) return false;
+          if (tokenState.inputRevision !== inputRevision) return false;
           if (pending.command.revision <= currentSession.viewportRevision) return false;
           applyViewportCommand(pending.command);
           return true;
@@ -13274,7 +16626,7 @@ void main() {
             return;
           }
           if (tool !== "select" || selectGesture || activeStroke) return;
-          if (selectionMode === "lasso") {
+          if (!usesNativeRectangleSelection(tool)) {
             if (activeLasso) return;
             if (pointerTargetsActiveSelection(event)) {
               selectGesture = {
@@ -13289,15 +16641,33 @@ void main() {
               }
               return;
             }
-            abortPendingLassoSelection();
+            if (pendingLassoSelection && !pendingLassoIsFresh(pendingLassoSelection)) {
+              abortPendingLassoSelection({ authoritative: true });
+            }
+            const previousPendingSelection = pendingLassoSelection;
+            const activeObjectIds = fabricCanvas.getActiveObjects?.().map((object) => object.__baeframeObjectId).filter(Boolean) || [];
+            const previousSelectedObjectIds = activeObjectIds.length > 0 ? activeObjectIds : sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
             activeLasso = {
               pointerId: event.pointerId,
               sessionId: currentSession?.sessionId,
               inputRevision: tokenState.inputRevision,
+              shape: selectionShape,
+              previousSelectionContext: {
+                objectIds: [...previousSelectedObjectIds],
+                sessionId: currentSession?.sessionId,
+                inputRevision: tokenState.inputRevision,
+                mutationCount: sceneStore.getDiagnostics().mutationCount,
+                pendingSelection: previousPendingSelection
+              },
               points: [],
               preview: null
             };
-            fabricCanvas.discardActiveObject();
+            preservingPendingLassoSelectionEvent = !!previousPendingSelection;
+            try {
+              fabricCanvas.discardActiveObject();
+            } finally {
+              preservingPendingLassoSelectionEvent = false;
+            }
             sceneStore.selectObjects([]);
             try {
               event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -13361,9 +16731,8 @@ void main() {
         function onPointerCancel(event) {
           if (activeLasso) {
             if (event.pointerId !== void 0 && event.pointerId !== activeLasso.pointerId) return;
-            const { sessionId, inputRevision } = activeLasso;
             cancelActiveLasso();
-            settleDeferredViewport(sessionId, inputRevision);
+            deferredViewport = null;
             return;
           }
           if (activeStroke) {
@@ -13417,6 +16786,7 @@ void main() {
           });
         }
         function onSelectionChanged() {
+          if (preservingPendingLassoSelectionEvent) return;
           if (pendingLassoSelection && !pendingTargetMatches(fabricCanvas?.getActiveObject?.(), pendingLassoSelection.selectedIds)) {
             abortPendingLassoSelection();
             return;
@@ -13425,6 +16795,7 @@ void main() {
           sceneStore.selectObjects(selectionIds());
         }
         function onSelectionCleared() {
+          if (preservingPendingLassoSelectionEvent) return;
           if (pendingLassoSelection) {
             abortPendingLassoSelection();
             return;
@@ -13543,16 +16914,20 @@ void main() {
         function refreshSelectionInteractionPolicy(session = currentSession) {
           if (!fabricCanvas) return;
           const tolerance = resolveSelectionHitTolerance(session || {});
-          const selectTool = sceneStore.getDiagnostics().tool === "select";
-          const nativeSelection = selectTool && selectionMode === "stroke";
+          const tool = sceneStore.getDiagnostics().tool;
+          const selectTool = tool === "select";
+          const nativeSelection = usesNativeRectangleSelection(tool);
           const activeIds = new Set(selectionIds());
           fabricCanvas.setTargetFindTolerance?.(tolerance);
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
             applyMoveOnlyConstraints(object);
             applyUnselectedPermanentPathPolicy(object, tolerance);
-            const activeInLasso = selectTool && selectionMode === "lasso" && activeIds.has(object.__baeframeObjectId);
-            object.set({ selectable: nativeSelection || activeInLasso, evented: nativeSelection || activeInLasso });
+            const activeInCustomSelection = selectTool && !nativeSelection && activeIds.has(object.__baeframeObjectId);
+            object.set({
+              selectable: nativeSelection || activeInCustomSelection,
+              evented: nativeSelection || activeInCustomSelection
+            });
             object.setCoords?.();
           }
           const activeObject = fabricCanvas.getActiveObject?.();
@@ -13622,7 +16997,7 @@ void main() {
           inputEnabled = false;
           currentSession = null;
           sceneStore.deactivateSession();
-          if (badge) badge.textContent = formatFabricPersistenceBadge();
+          syncPersistenceBadge();
         }
         function releaseSurfaceResources() {
           cancelSelectInteraction();
@@ -13705,22 +17080,30 @@ void main() {
               top: "12px",
               left: "12px",
               display: "flex",
-              gap: "6px",
               zIndex: "2",
               transition: "opacity 100ms ease",
               pointerEvents: "none"
             });
-            const brushButton = createButton("Brush", "brush");
-            const selectButton = createButton("V", "select");
-            const undoButton = createButton("Undo", "undo");
-            const redoButton = createButton("Redo", "redo");
-            const deleteButton = createButton("Delete", "delete-selection");
-            const clearButton = createButton("Clear", "clear-session");
+            const brushButton = labelToolbarButton(createButton("Brush", "brush"), "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)");
+            const selectButton = labelToolbarButton(createButton("V", "select"), "\uC120\uD0DD \uB3C4\uAD6C (V)");
+            const undoButton = labelToolbarButton(createButton("Undo", "undo"), "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)");
+            const redoButton = labelToolbarButton(createButton("Redo", "redo"), "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Y)");
+            const deleteButton = labelToolbarButton(
+              createButton("Delete", "delete-selection"),
+              "\uC120\uD0DD\uD55C \uD68D \uC0AD\uC81C (Delete)"
+            );
+            const clearButton = labelToolbarButton(
+              createButton("Clear", "clear-session"),
+              "\uD604\uC7AC \uD504\uB808\uC784 \uB4DC\uB85C\uC789 \uC804\uCCB4 \uC0AD\uC81C"
+            );
             brushControls = createBrushSettingsControls();
-            selectionControls = createSelectionModeControls();
+            selectionControls = createSelectionControls();
             badge = documentRef.createElement("span");
             badge.className = "mpv-fabric-pilot-badge";
-            badge.textContent = formatFabricPersistenceBadge();
+            badge.setAttribute?.("role", "status");
+            badge.setAttribute?.("aria-live", "polite");
+            badge.setAttribute?.("aria-atomic", "true");
+            syncPersistenceBadge();
             toolbar.appendChild(brushButton);
             toolbar.appendChild(selectButton);
             toolbar.appendChild(selectionControls.group);
@@ -13830,7 +17213,7 @@ void main() {
           setToolMode(session.tool);
           inputEnabled = true;
           setSurfaceInput(true);
-          badge.textContent = formatFabricPersistenceBadge(session.targetFrame);
+          syncPersistenceBadge(session.targetFrame);
           metrics.recordToggleLatency(now() - startedAt);
           return { accepted: true, enabled: true, restored: activation.restored };
         }
@@ -13989,7 +17372,8 @@ void main() {
             targetFrame: currentSession?.targetFrame ?? null,
             viewportRevision: currentSession?.viewportRevision ?? null,
             tool: scene.tool,
-            selectionMode,
+            selectionTarget,
+            selectionShape,
             objectCount: scene.objectCount,
             selectionCount: scene.selectionCount,
             mutationCount: scene.mutationCount,
@@ -14018,6 +17402,8 @@ void main() {
           if (destroyed) return { destroyed: true, reused: true };
           disableInput();
           releaseSurfaceResources();
+          strokeFillGeometryCache.clear();
+          strokeFillGeometryCacheWeight = 0;
           sceneStore.destroy();
           try {
             drawingV3Adapter?.destroy();

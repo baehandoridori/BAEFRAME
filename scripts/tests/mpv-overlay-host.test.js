@@ -831,6 +831,15 @@ test('drawing persistence hydrate/export enforce fences, input state, and bounde
 test('drawing export rejects non-exact requests and returns only a validated cloned snapshot', async () => {
   let exportCalls = 0;
   const runtimeSnapshot = makePersistenceSnapshot(1);
+  runtimeSnapshot.scenes[0].objects[0].renderGeometry = {
+    version: 1,
+    pathData: [
+      'M 0 0 L 12 0 L 12 12 L 0 12 Z',
+      'M 3 3 L 3 9 L 9 9 L 9 3 Z',
+      'M 12 12 L 16 12 L 16 16 L 12 16 Z'
+    ].join(' '),
+    fillRule: 'evenodd'
+  };
   const harness = createDrawingHostHarness({
     executeDrawing(script) {
       if (!script.includes('.exportDrawingVideo(')) return undefined;
@@ -920,6 +929,56 @@ test('drawing export rejects snapshot fence mismatches and every non-exact inner
     ['snapshot extra field', value => { value.secret = 'snapshot-secret'; }],
     ['scene extra field', value => { value.scenes[0].secret = 'scene-secret'; }],
     ['record extra field', value => { value.scenes[0].objects[0].secret = 'record-secret'; }],
+    ['render geometry extra field', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1 1 L 2 1 L 2 2 Z',
+        fillRule: 'evenodd',
+        secret: true
+      };
+    }],
+    ['render geometry fill rule', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1 1 L 2 1 L 2 2 Z',
+        fillRule: 'nonzero'
+      };
+    }],
+    ['render geometry curve command', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1 1 Q 2 0 3 1 L 3 3 L 1 3 Z',
+        fillRule: 'evenodd'
+      };
+    }],
+    ['render geometry trailing injection token', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1 1 L 2 1 L 2 2 Z <script>',
+        fillRule: 'evenodd'
+      };
+    }],
+    ['render geometry coordinate bound', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1001000001 1 L 2 1 L 2 2 Z',
+        fillRule: 'evenodd'
+      };
+    }],
+    ['render geometry degenerate edge', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 0 0 L 8 0 L 8 0 L 0 8 Z',
+        fillRule: 'evenodd'
+      };
+    }],
+    ['render geometry self-crossing contour', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 0 0 L 8 8 L 0 8 L 8 0 Z',
+        fillRule: 'evenodd'
+      };
+    }],
     ['style extra field', value => { value.scenes[0].objects[0].style.secret = true; }],
     ['point coordinate bound', value => {
       value.scenes[0].objects[0].sourcePoints[0].x = 1_000_000_001;
@@ -3622,10 +3681,44 @@ test('Fabric 시험 툴바는 작은 화면에서도 읽기 쉽고 현재 도구
 
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*background:\s*rgba\(/s);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*border-radius:\s*14px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*--fabric-toolbar-gap:\s*6px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*flex-flow:\s*row wrap/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*width:\s*max-content/s);
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar\s*\{[^}]*max-width:\s*calc\(100% - 24px\)/s
+  );
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*box-sizing:\s*border-box/s);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*min-width:\s*40px[^}]*min-height:\s*40px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar\s*>\s*button,[\s\S]*?data-fabric-pilot-group="selection-controls"[\s\S]*?\{[^}]*flex:\s*0 0 auto/s
+  );
   assert.match(hostSource, /button\[data-active="true"\]\s*\{/);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button:active\s*\{[^}]*transform:\s*scale\(0\.96\)/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-badge\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-badge\s*\{[^}]*font-variant-numeric:\s*tabular-nums[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s
+  );
+  assert.match(hostSource, /@media\s*\(max-width:\s*640px\)\s*\{/s);
+  assert.match(
+    hostSource,
+    /@media\s*\(max-width:\s*640px\)[\s\S]*?--fabric-toolbar-gap:\s*4px[\s\S]*?padding:\s*4px/s
+  );
+  assert.match(
+    hostSource,
+    /@media\s*\(max-width:\s*640px\)[\s\S]*?\.mpv-fabric-pilot-toolbar button\s*\{[^}]*padding-inline:\s*8px/s
+  );
+  assert.match(
+    hostSource,
+    /@media\s*\(max-width:\s*640px\)[\s\S]*?data-fabric-pilot-output="summary"[\s\S]*?display:\s*none/s
+  );
+  assert.match(hostSource, /#root\s*\{[^}]*overflow:\s*hidden/s);
+  assert.doesNotMatch(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar\s*\{[^}]*overflow-x:\s*auto/s
+  );
   assert.doesNotMatch(
     hostSource,
     /\.mpv-fabric-pilot-toolbar(?: button)?\s*\{[^}]*transition:\s*all\b/s
@@ -3645,5 +3738,14 @@ test('stable overlay host does not include the old manual verification HUD', () 
   assert.equal(
     Object.prototype.hasOwnProperty.call(normalized, 'fabricPilotStatusText'),
     false
+  );
+});
+
+test('standard mpv suite includes the hidden Fabric toolbar Chromium layout regression', () => {
+  const packageJson = require('../../package.json');
+
+  assert.match(
+    packageJson.scripts['test:mpv'],
+    /mpv-fabric-overlay-toolbar-layout\.test\.js/
   );
 });

@@ -70,6 +70,14 @@ function makeRecord(id = 'stroke-1', overrides = {}) {
   return record;
 }
 
+function makeRenderGeometry(pathData = 'M 0 0 L 10 0 L 0 10 Z') {
+  return {
+    version: 1,
+    pathData,
+    fillRule: 'evenodd'
+  };
+}
+
 function makeScene(overrides = {}) {
   return {
     sceneInstanceId: 'scene-1',
@@ -310,6 +318,36 @@ test('projects exact points, style, opacity, caps and isolates input aliases', (
       }
     }
   ]);
+});
+
+test('projects and strictly clones optional render geometry without changing legacy strokes', () => {
+  const harness = makeHarness();
+  const scene = makeScene();
+  const legacy = makeRecord('legacy');
+  const clipped = makeRecord('clipped', {
+    renderGeometry: makeRenderGeometry()
+  });
+  const originalRenderGeometry = structuredClone(clipped.renderGeometry);
+
+  assert.equal(harness.adapter.activateScene(scene, new Map([
+    [legacy.id, legacy],
+    [clipped.id, clipped]
+  ])).activated, true);
+
+  const firstProjection = projectionObjects(harness.adapter, scene.sceneInstanceId);
+  assert.equal(Object.hasOwn(firstProjection[0], 'renderGeometry'), false);
+  assert.deepEqual(firstProjection[1].renderGeometry, originalRenderGeometry);
+  assert.notStrictEqual(firstProjection[1].renderGeometry, clipped.renderGeometry);
+
+  clipped.renderGeometry.pathData = 'M 0 0 L 20 0 L 0 20 Z';
+  firstProjection[1].renderGeometry.pathData = 'M 0 0 L 30 0 L 0 30 Z';
+
+  const secondProjection = projectionObjects(harness.adapter, scene.sceneInstanceId);
+  assert.deepEqual(secondProjection[1].renderGeometry, originalRenderGeometry);
+  assert.notStrictEqual(
+    secondProjection[1].renderGeometry,
+    firstProjection[1].renderGeometry
+  );
 });
 
 test('quarantines invalid and over-budget seeds without throwing', () => {
@@ -650,6 +688,40 @@ test('history reinsertion must match the archived immutable stroke content', () 
     reason: 'unsupported-field-mutation'
   });
   assert.equal(harness.adapter.getSceneProjection(scene.sceneInstanceId), null);
+});
+
+test('history reinsertion with different render geometry is immutable-content divergence', () => {
+  const harness = makeHarness();
+  const scene = makeScene({ targetFrame: 0 });
+  const original = makeRecord('clipped-archive', {
+    renderGeometry: makeRenderGeometry()
+  });
+  harness.adapter.activateScene(
+    scene,
+    new Map([['clipped-archive', original]])
+  );
+  assert.equal(harness.adapter.applyTransition(makeEvent(scene, 1, {
+    kind: 'delete-objects',
+    removals: [{ id: 'clipped-archive', index: 0 }]
+  })).applied, true);
+
+  const changed = makeRecord('clipped-archive', {
+    renderGeometry: makeRenderGeometry('M 0 0 L 20 0 L 0 20 Z')
+  });
+  const result = harness.adapter.applyTransition(makeEvent(scene, 2, {
+    origin: 'history',
+    insertions: [{ index: 0, record: changed, baseTransform: null }]
+  }));
+
+  assert.deepEqual(result, {
+    applied: false,
+    reason: 'unsupported-field-mutation'
+  });
+  assert.equal(harness.adapter.getSceneProjection(scene.sceneInstanceId), null);
+  assert.equal(
+    harness.adapter.getDiagnostics(scene.sceneInstanceId).divergenceCount,
+    1
+  );
 });
 
 test('a first live insertion must start at its declared baseline transform', () => {
