@@ -3534,6 +3534,15 @@ function createFabricOverlayRuntime(options = {}) {
     return [...context.objectIds];
   }
 
+  function retireReplacedPendingSelection(context) {
+    const replacedPendingSelection = context?.pendingSelection;
+    if (!replacedPendingSelection ||
+        pendingLassoSelection !== replacedPendingSelection) {
+      return false;
+    }
+    return abortPendingLassoSelection();
+  }
+
   function rectanglePolygon(start, end) {
     if (!start || !end) return [];
     return [
@@ -3603,6 +3612,7 @@ function createFabricOverlayRuntime(options = {}) {
       if (touch.hit) selectedObjectIds.push(record.id);
     }
 
+    retireReplacedPendingSelection(failureSelectionContext);
     activateObjectIds(selectedObjectIds);
     return { applied: false, selectedObjectIds };
   }
@@ -3827,6 +3837,7 @@ function createFabricOverlayRuntime(options = {}) {
       }
       result = { applied: false, pending: true, selectedObjectIds };
     }
+    retireReplacedPendingSelection(failureSelectionContext);
     activateObjectIds(selectedObjectIds);
     if (pendingLassoSelection) {
       pendingLassoSelection.activeTarget = fabricCanvas.getActiveObject?.() || null;

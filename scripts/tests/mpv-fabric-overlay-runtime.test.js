@@ -3861,6 +3861,138 @@ function stageCrossingLasso(harness, pointerBase = 800) {
   return before;
 }
 
+test('successful empty partial lasso retires the prior pending split before Delete', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const original = stageCrossingLasso(harness, 802);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    const beforeSaveAttemptCount = harness.runtime.getDiagnostics().metrics.saveAttemptCount;
+    assert.equal(pendingLassoObjects(harness.canvas).length, 1);
+
+    harness.dragLasso([
+      { x: 5, y: 5 },
+      { x: 15, y: 5 },
+      { x: 15, y: 15 },
+      { x: 5, y: 15 },
+      { x: 5, y: 5 }
+    ], 804);
+
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(harness.canvas.getActiveObjects(), []);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      []
+    );
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      original.objects
+    );
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+
+    const deletion = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'delete-after-empty-pending-replacement',
+      action: 'delete-selection'
+    });
+
+    assert.equal(deletion.applied, false);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      original.objects
+    );
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(
+      harness.runtime.getDiagnostics().metrics.saveAttemptCount,
+      beforeSaveAttemptCount
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('successful persisted-only partial lasso replaces the prior pending split selection', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 806);
+    harness.drawStroke([
+      { x: 165, y: 165 },
+      { x: 165, y: 165 }
+    ], 807);
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    const [crossingRecord, pointRecord] = original.objects;
+    enableRealFabricLasso(harness);
+    harness.dragLasso(middleLassoPoints(), 808);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 1);
+
+    harness.dragLasso([
+      { x: 155, y: 155 },
+      { x: 175, y: 155 },
+      { x: 175, y: 175 },
+      { x: 155, y: 175 },
+      { x: 155, y: 155 }
+    ], 809);
+
+    const selected = harness.sceneStore.getActiveSceneSnapshot();
+    const activeObjects = harness.canvas.getActiveObjects();
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(selected.objects, original.objects);
+    assert.deepEqual(selected.objects.map(object => object.id), [
+      crossingRecord.id,
+      pointRecord.id
+    ]);
+    assert.deepEqual(selected.selectedObjectIds, [pointRecord.id]);
+    assert.deepEqual(
+      activeObjects.map(object => object.__baeframeObjectId),
+      [pointRecord.id]
+    );
+    assert.equal(activeObjects[0].selectable, true);
+    assert.equal(activeObjects[0].evented, true);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('whole lasso selects a new stroke after retiring a prior pending partial selection', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 810);
+    harness.drawStrokeAt(165, 811);
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    const selectedId = original.objects[1].id;
+    enableRealFabricLasso(harness);
+    harness.dragLasso(middleLassoPoints(), 812);
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 1);
+
+    clickSelectionControl(harness.root, 'select-target-stroke');
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    harness.dragLasso([
+      { x: 10, y: 155 },
+      { x: 70, y: 155 },
+      { x: 70, y: 175 },
+      { x: 10, y: 175 },
+      { x: 10, y: 155 }
+    ], 813);
+
+    const selected = harness.sceneStore.getActiveSceneSnapshot();
+    const activeObjects = harness.canvas.getActiveObjects();
+    assert.deepEqual(selected.objects, original.objects);
+    assert.deepEqual(selected.selectedObjectIds, [selectedId]);
+    assert.deepEqual(
+      activeObjects.map(object => object.__baeframeObjectId),
+      [selectedId]
+    );
+    assert.equal(activeObjects[0].selectable, true);
+    assert.equal(activeObjects[0].evented, true);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('failed zero-area replacement keeps the same pending lasso usable', async () => {
   const harness = createRealFabricHarness();
   try {
