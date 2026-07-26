@@ -4,7 +4,6 @@ const {
   EPSILON,
   boundsForPoints,
   boundsIntersect,
-  pointInPolygon,
   polygonHasArea,
   segmentEdgeIntersectionParameters
 } = require('./lasso-geometry.js');
@@ -155,6 +154,21 @@ function pointLineDistance(point, start, end) {
   const length = Math.hypot(dx, dy);
   if (length <= EPSILON) return Math.hypot(point.x - start.x, point.y - start.y);
   return Math.abs((point.x - start.x) * dy - (point.y - start.y) * dx) / length;
+}
+
+function pointSegmentDistance(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= EPSILON) return Math.hypot(point.x - start.x, point.y - start.y);
+  const amount = Math.min(1, Math.max(0, (
+    (point.x - start.x) * dx +
+    (point.y - start.y) * dy
+  ) / lengthSquared));
+  return Math.hypot(
+    point.x - (start.x + dx * amount),
+    point.y - (start.y + dy * amount)
+  );
 }
 
 function midpoint(left, right) {
@@ -370,13 +384,13 @@ function createPathFillQuery(geometry, budget) {
     if (!bounds || !boundsIntersect(geometry.bounds, bounds)) return [];
     return queryOrderedSpatialIndex(geometry.root, bounds, budget);
   };
-  const containsPoint = (point, includeBoundary) => {
+  const classifyPoint = point => {
     if (!geometry.bounds ||
         point.x < geometry.bounds.left - EPSILON ||
         point.x > geometry.bounds.right + EPSILON ||
         point.y < geometry.bounds.top - EPSILON ||
         point.y > geometry.bounds.bottom + EPSILON) {
-      return false;
+      return 'outside';
     }
     const candidates = queryEdges({
       left: point.x,
@@ -390,8 +404,7 @@ function createPathFillQuery(geometry, budget) {
     for (const edge of candidates) {
       if (!budget.consume()) return null;
       if (pointOnSegment(point, edge.start, edge.end)) {
-        if (includeBoundary) return true;
-        continue;
+        return 'boundary';
       }
       const upward = edge.start.y <= point.y && edge.end.y > point.y;
       const downward = edge.start.y > point.y && edge.end.y <= point.y;
@@ -406,7 +419,16 @@ function createPathFillQuery(geometry, budget) {
         crossings += 1;
       }
     }
-    return geometry.fillRule === 'evenodd' ? crossings % 2 === 1 : winding !== 0;
+    const inside = geometry.fillRule === 'evenodd'
+      ? crossings % 2 === 1
+      : winding !== 0;
+    return inside ? 'inside' : 'outside';
+  };
+  const containsPoint = (point, includeBoundary) => {
+    const classification = classifyPoint(point);
+    if (classification === null) return null;
+    return classification === 'inside' ||
+      (includeBoundary && classification === 'boundary');
   };
   const visibleBoundarySegment = segment => {
     const dx = segment.end.x - segment.start.x;
@@ -415,22 +437,51 @@ function createPathFillQuery(geometry, budget) {
     if (length <= EPSILON) return false;
     const middle = midpoint(segment.start, segment.end);
     const coordinateScale = Math.max(1, Math.abs(middle.x), Math.abs(middle.y));
-    const offset = Math.max(
-      Number.EPSILON * coordinateScale * 16,
+    const minimumOffset = Math.max(
+      Number.EPSILON * coordinateScale * 64,
+      EPSILON * 4 / Math.max(1, length)
+    );
+    let offset = Math.max(
+      minimumOffset,
       Math.min(geometry.tolerance * 0.25, length * 0.1)
     );
-    const normalX = -dy / length * offset;
-    const normalY = dx / length * offset;
-    const left = containsPoint({
-      x: middle.x + normalX,
-      y: middle.y + normalY
-    }, false);
-    const right = containsPoint({
-      x: middle.x - normalX,
-      y: middle.y - normalY
-    }, false);
-    if (left === null || right === null) return null;
-    return left !== right;
+    const nearest = localBoundaryClearance(
+      middle,
+      offset,
+      [{ queryEdges }],
+      budget
+    );
+    if (nearest === null) return null;
+    if (Number.isFinite(nearest)) {
+      offset = Math.min(
+        offset,
+        Math.max(minimumOffset, nearest / 4)
+      );
+    }
+    const certifiedOffset = offset;
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      if (!budget.consume()) return null;
+      const normalX = -dy / length * offset;
+      const normalY = dx / length * offset;
+      const left = classifyPoint({
+        x: middle.x + normalX,
+        y: middle.y + normalY
+      });
+      const right = classifyPoint({
+        x: middle.x - normalX,
+        y: middle.y - normalY
+      });
+      if (left === null || right === null) return null;
+      const bothOffBoundary = left !== 'boundary' && right !== 'boundary';
+      if (bothOffBoundary && left !== right) return true;
+      if (bothOffBoundary && certifiedOffset !== null &&
+          offset <= certifiedOffset + Number.EPSILON) {
+        return false;
+      }
+      if (offset <= minimumOffset) return false;
+      offset = Math.max(minimumOffset, offset / 4);
+    }
+    return null;
   };
   const query = {
     __baeframePathFillQuery: true,
@@ -439,13 +490,19 @@ function createPathFillQuery(geometry, budget) {
     edges: geometry.edges,
     budget,
     queryEdges,
+    classify: classifyPoint,
     contains: point => containsPoint(point, true),
     containsStrict: point => containsPoint(point, false)
   };
   const visibleSubsegmentsCache = new Map();
   query.visibleSubsegments = edge => {
-    if (visibleSubsegmentsCache.has(edge.index)) {
-      return visibleSubsegmentsCache.get(edge.index);
+    const startKey = `${edge.start.x}:${edge.start.y}`;
+    const endKey = `${edge.end.x}:${edge.end.y}`;
+    const cacheKey = startKey < endKey
+      ? `${startKey}>${endKey}`
+      : `${endKey}>${startKey}`;
+    if (visibleSubsegmentsCache.has(cacheKey)) {
+      return visibleSubsegmentsCache.get(cacheKey);
     }
     const split = splitBoundaryEdge(
       edge,
@@ -460,7 +517,7 @@ function createPathFillQuery(geometry, budget) {
       if (active === null) return null;
       if (active) visible.push(segment);
     }
-    visibleSubsegmentsCache.set(edge.index, visible);
+    visibleSubsegmentsCache.set(cacheKey, visible);
     return visible;
   };
   return query;
@@ -628,21 +685,12 @@ function splitBoundaryEdge(edge, otherQuery, budget, selfQuery = null) {
   if (candidates === null || selfCandidates === null) {
     return { segments: [], reason: 'selection-complexity-limit-exceeded' };
   }
-  const selfCandidateSet = new Set(selfCandidates);
   const parameters = [0, 1];
   for (const candidate of [...candidates, ...selfCandidates]) {
     if (!budget.consume()) {
       return { segments: [], reason: 'selection-complexity-limit-exceeded' };
     }
     if (candidate === edge) continue;
-    if (segmentsHaveCollinearOverlap(
-      edge.start,
-      edge.end,
-      candidate.start,
-      candidate.end
-    ) && !selfCandidateSet.has(candidate)) {
-      return { segments: [], reason: 'selection-geometry-unavailable' };
-    }
     parameters.push(...segmentEdgeIntersectionParameters(
       edge.start,
       edge.end,
@@ -669,68 +717,147 @@ function splitBoundaryEdge(edge, otherQuery, budget, selfQuery = null) {
   return { segments, reason: null };
 }
 
-function resultContains(fillQuery, polygonQuery, point, operation) {
-  const fillContains = fillQuery.contains(point);
-  if (fillContains === null) return null;
-  const polygonContains = polygonQuery.contains(point);
-  if (polygonContains === null) return null;
+function queryClassification(query, point) {
+  if (typeof query?.classify !== 'function') return null;
+  return query.classify(point);
+}
+
+function resultContainsClassifications(fill, polygon, operation) {
+  if (fill === 'boundary' || polygon === 'boundary') return 'boundary';
+  const fillContains = fill === 'inside';
+  const polygonContains = polygon === 'inside';
   return operation === 'difference'
     ? fillContains && !polygonContains
     : fillContains && polygonContains;
 }
 
-function orientResultBoundarySegment(
+function localBoundaryClearance(middle, offset, queries, budget) {
+  let nearest = Number.POSITIVE_INFINITY;
+  const bounds = {
+    left: middle.x - offset,
+    right: middle.x + offset,
+    top: middle.y - offset,
+    bottom: middle.y + offset
+  };
+  for (const query of queries) {
+    const candidates = query.queryEdges(bounds);
+    if (candidates === null) return null;
+    for (const candidate of candidates) {
+      if (!budget.consume()) return null;
+      if (pointOnSegment(middle, candidate.start, candidate.end)) continue;
+      const distance = pointSegmentDistance(middle, candidate.start, candidate.end);
+      if (distance > 0) nearest = Math.min(nearest, distance);
+    }
+  }
+  return nearest;
+}
+
+function orientResultBoundarySegments(
   segment,
   fillQuery,
   polygonQuery,
-  operation,
+  operations,
   quantum,
   budget
 ) {
   if (!budget.consume()) {
-    return { segment: null, reason: 'selection-complexity-limit-exceeded' };
+    return { segments: {}, reason: 'selection-complexity-limit-exceeded' };
   }
   const dx = segment.end.x - segment.start.x;
   const dy = segment.end.y - segment.start.y;
   const length = Math.hypot(dx, dy);
   if (length <= quantum) {
-    return { segment: null, reason: null };
+    return { segments: {}, reason: null };
   }
   const middle = midpoint(segment.start, segment.end);
-  const offset = Math.min(
+  const coordinateScale = Math.max(1, Math.abs(middle.x), Math.abs(middle.y));
+  const minimumOffset = Math.max(
+    Number.EPSILON * coordinateScale * 64,
+    EPSILON * 4 / Math.max(1, length),
+    quantum
+  );
+  let offset = Math.max(minimumOffset, Math.min(
     length * 0.2,
     Math.max(quantum * 16, EPSILON * 16 / Math.max(1, length))
+  ));
+  const nearest = localBoundaryClearance(
+    middle,
+    offset,
+    [fillQuery, polygonQuery],
+    budget
   );
-  const left = {
-    x: middle.x - dy / length * offset,
-    y: middle.y + dx / length * offset
-  };
-  const right = {
-    x: middle.x + dy / length * offset,
-    y: middle.y - dx / length * offset
-  };
-  const leftContains = resultContains(
-    fillQuery,
-    polygonQuery,
-    left,
-    operation
-  );
-  const rightContains = resultContains(
-    fillQuery,
-    polygonQuery,
-    right,
-    operation
-  );
-  if (leftContains === null || rightContains === null) {
-    return { segment: null, reason: 'selection-complexity-limit-exceeded' };
+  if (nearest === null) {
+    return { segments: {}, reason: 'selection-complexity-limit-exceeded' };
   }
-  if (leftContains === rightContains) return { segment: null, reason: null };
-  return {
-    segment: leftContains
-      ? segment
-      : { start: segment.end, end: segment.start },
-    reason: null
-  };
+  if (Number.isFinite(nearest)) {
+    offset = Math.min(
+      offset,
+      Math.max(minimumOffset, nearest / 4)
+    );
+  }
+  const certifiedOffset = offset;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    if (!budget.consume()) {
+      return { segments: {}, reason: 'selection-complexity-limit-exceeded' };
+    }
+    const normalX = -dy / length * offset;
+    const normalY = dx / length * offset;
+    const leftPoint = {
+      x: middle.x + normalX,
+      y: middle.y + normalY
+    };
+    const rightPoint = {
+      x: middle.x - normalX,
+      y: middle.y - normalY
+    };
+    const leftFill = queryClassification(fillQuery, leftPoint);
+    const leftPolygon = queryClassification(polygonQuery, leftPoint);
+    const rightFill = queryClassification(fillQuery, rightPoint);
+    const rightPolygon = queryClassification(polygonQuery, rightPoint);
+    if ([leftFill, leftPolygon, rightFill, rightPolygon].includes(null)) {
+      return { segments: {}, reason: 'selection-complexity-limit-exceeded' };
+    }
+    const sourceOffBoundary = ![
+      leftFill,
+      leftPolygon,
+      rightFill,
+      rightPolygon
+    ].includes('boundary');
+    if (sourceOffBoundary) {
+      const oriented = {};
+      for (const operation of operations) {
+        const leftContains = resultContainsClassifications(
+          leftFill,
+          leftPolygon,
+          operation
+        );
+        const rightContains = resultContainsClassifications(
+          rightFill,
+          rightPolygon,
+          operation
+        );
+        if (leftContains === rightContains) continue;
+        oriented[operation] = leftContains
+          ? segment
+          : { start: segment.end, end: segment.start };
+      }
+      if (Object.keys(oriented).length > 0) {
+        return { segments: oriented, reason: null };
+      }
+    }
+    if (sourceOffBoundary && certifiedOffset !== null &&
+        offset <= certifiedOffset + Number.EPSILON) {
+      return { segments: {}, reason: null };
+    }
+    if (offset <= minimumOffset) {
+      return {
+        segments: {},
+        reason: sourceOffBoundary ? null : 'selection-geometry-unavailable'
+      };
+    }
+    offset = Math.max(minimumOffset, offset / 4);
+  }
+  return { segments: {}, reason: 'selection-geometry-unavailable' };
 }
 
 function quantizationScale(fillQuery, polygonQuery, tolerance) {
@@ -786,10 +913,17 @@ function buildBoundaryLoops(segments, quantum, budget) {
     }
     const edgeKey = `${startKey}>${endKey}`;
     const reverseKey = `${endKey}>${startKey}`;
-    if (directedKeys.has(edgeKey) || directedKeys.has(reverseKey)) {
+    if (directedKeys.has(edgeKey)) continue;
+    if (directedKeys.has(reverseKey)) {
       return { loops: [], reason: 'selection-geometry-unavailable' };
     }
-    const edge = { startKey, endKey, used: false };
+    const edge = {
+      index: directed.length,
+      startKey,
+      endKey,
+      used: false,
+      successor: null
+    };
     directedKeys.add(edgeKey);
     directed.push(edge);
     vertices.get(startKey).outgoing.push(edge);
@@ -797,7 +931,62 @@ function buildBoundaryLoops(segments, quantum, budget) {
   }
   if (directed.length === 0) return { loops: [], reason: null };
   for (const vertex of vertices.values()) {
-    if (vertex.incoming.length !== 1 || vertex.outgoing.length !== 1) {
+    if (vertex.incoming.length === 0 ||
+        vertex.incoming.length !== vertex.outgoing.length) {
+      return { loops: [], reason: 'selection-geometry-unavailable' };
+    }
+    const degree = vertex.outgoing.length;
+    const logicalSortCost = degree *
+      (Math.ceil(Math.log2(degree + 1)) + 2);
+    if (!budget.consume(logicalSortCost)) {
+      return { loops: [], reason: 'selection-complexity-limit-exceeded' };
+    }
+    const outgoing = [...vertex.outgoing].sort((left, right) => {
+      const leftEnd = vertices.get(left.endKey).point;
+      const rightEnd = vertices.get(right.endKey).point;
+      const leftAngle = Math.atan2(
+        leftEnd.y - vertex.point.y,
+        leftEnd.x - vertex.point.x
+      );
+      const rightAngle = Math.atan2(
+        rightEnd.y - vertex.point.y,
+        rightEnd.x - vertex.point.x
+      );
+      return leftAngle - rightAngle || left.index - right.index;
+    });
+    const assigned = new Set();
+    for (const incoming of vertex.incoming) {
+      if (!budget.consume(degree)) {
+        return { loops: [], reason: 'selection-complexity-limit-exceeded' };
+      }
+      const incomingStart = vertices.get(incoming.startKey).point;
+      const reverseAngle = Math.atan2(
+        incomingStart.y - vertex.point.y,
+        incomingStart.x - vertex.point.x
+      );
+      let successor = null;
+      let bestClockwiseTurn = Number.POSITIVE_INFINITY;
+      for (const candidate of outgoing) {
+        let clockwiseTurn = reverseAngle - Math.atan2(
+          vertices.get(candidate.endKey).point.y - vertex.point.y,
+          vertices.get(candidate.endKey).point.x - vertex.point.x
+        );
+        while (clockwiseTurn < 0) clockwiseTurn += Math.PI * 2;
+        while (clockwiseTurn >= Math.PI * 2) clockwiseTurn -= Math.PI * 2;
+        if (clockwiseTurn < bestClockwiseTurn - Number.EPSILON ||
+            (Math.abs(clockwiseTurn - bestClockwiseTurn) <= Number.EPSILON &&
+             candidate.index < (successor?.index ?? Number.POSITIVE_INFINITY))) {
+          successor = candidate;
+          bestClockwiseTurn = clockwiseTurn;
+        }
+      }
+      if (!successor || assigned.has(successor)) {
+        return { loops: [], reason: 'selection-geometry-unavailable' };
+      }
+      assigned.add(successor);
+      incoming.successor = successor;
+    }
+    if (assigned.size !== degree) {
       return { loops: [], reason: 'selection-geometry-unavailable' };
     }
   }
@@ -814,12 +1003,10 @@ function buildBoundaryLoops(segments, quantum, budget) {
       }
       current.used = true;
       loop.push(vertices.get(current.startKey).point);
-      const nextKey = current.endKey;
-      if (nextKey === firstKey) break;
-      current = vertices.get(nextKey)?.outgoing?.[0];
+      current = current.successor;
       if (!current) return { loops: [], reason: 'selection-geometry-unavailable' };
     }
-    if (current.endKey !== firstKey || loop.length < 3 ||
+    if (current !== edge || edge.startKey !== firstKey || loop.length < 3 ||
         !simpleContourIsValid(loop, budget) ||
         Math.abs(signedDoubleArea(loop)) <= quantum * quantum) {
       return { loops: [], reason: 'selection-geometry-unavailable' };
@@ -830,6 +1017,37 @@ function buildBoundaryLoops(segments, quantum, budget) {
     return { loops: [], reason: 'selection-geometry-unavailable' };
   }
   return { loops, reason: null };
+}
+
+function classifyPointInContour(point, contour, budget) {
+  if (!budget.consume(contour.length)) return null;
+  let inside = false;
+  for (let index = 0; index < contour.length; index += 1) {
+    const start = contour[index];
+    const end = contour[(index + 1) % contour.length];
+    if (pointOnSegment(point, start, end)) return 'boundary';
+    const crossesRay = (end.y > point.y) !== (start.y > point.y);
+    if (!crossesRay) continue;
+    const crossingX = (start.x - end.x) *
+      (point.y - end.y) / (start.y - end.y) + end.x;
+    if (point.x < crossingX) inside = !inside;
+  }
+  return inside ? 'inside' : 'outside';
+}
+
+function strictContourContainment(child, candidate, budget) {
+  for (const point of child) {
+    const classification = classifyPointInContour(point, candidate, budget);
+    if (classification === null) {
+      return {
+        contained: false,
+        reason: 'selection-complexity-limit-exceeded'
+      };
+    }
+    if (classification === 'boundary') continue;
+    return { contained: classification === 'inside', reason: null };
+  }
+  return { contained: false, reason: 'selection-geometry-unavailable' };
 }
 
 function groupBoundaryLoops(loops, budget) {
@@ -857,10 +1075,15 @@ function groupBoundaryLoops(loops, budget) {
       if (candidateIndex === childIndex) continue;
       const candidate = nodes[candidateIndex];
       if (candidate.area <= child.area + EPSILON) continue;
-      if (!budget.consume(candidate.contour.length)) {
-        return { components: [], reason: 'selection-complexity-limit-exceeded' };
+      const containment = strictContourContainment(
+        child.contour,
+        candidate.contour,
+        budget
+      );
+      if (containment.reason) {
+        return { components: [], reason: containment.reason };
       }
-      if (!pointInPolygon(child.contour[0], candidate.contour)) continue;
+      if (!containment.contained) continue;
       if (parentIndex < 0 || candidate.area < nodes[parentIndex].area) {
         parentIndex = candidateIndex;
       }
@@ -915,9 +1138,14 @@ function groupBoundaryLoops(loops, budget) {
   return { components, reason: null };
 }
 
-function clipSimplePathFill(fillQuery, polygonQuery, options = {}) {
+function clipPathFillOperations(fillQuery, polygonQuery, operations, options = {}) {
   const budget = options.budget;
-  const operation = options.operation === 'difference' ? 'difference' : 'intersection';
+  const operationResults = Object.fromEntries(
+    operations.map(operation => [operation, { components: [], reason: null }])
+  );
+  const failAll = reason => Object.fromEntries(
+    operations.map(operation => [operation, { components: [], reason }])
+  );
   if (!budget || !fillQuery?.geometry || !polygonQuery?.polygon ||
       !Array.isArray(fillQuery.geometry.contours) ||
       fillQuery.geometry.contours.length === 0 ||
@@ -928,50 +1156,79 @@ function clipSimplePathFill(fillQuery, polygonQuery, options = {}) {
       )) ||
       (options.polygonValidated !== true &&
        !simpleContourIsValid(polygonQuery.polygon, budget))) {
-    return {
-      components: [],
-      reason: budget?.limitExceeded
-        ? 'selection-complexity-limit-exceeded'
-        : 'selection-geometry-unavailable'
-    };
+    return failAll(budget?.limitExceeded
+      ? 'selection-complexity-limit-exceeded'
+      : 'selection-geometry-unavailable');
   }
   const quantum = quantizationScale(
     fillQuery,
     polygonQuery,
     fillQuery.geometry.tolerance
   );
-  const atomic = [];
+  const atomic = Object.fromEntries(operations.map(operation => [operation, []]));
   const collect = (edges, otherQuery, selfQuery = null) => {
     for (const edge of edges) {
       const split = splitBoundaryEdge(edge, otherQuery, budget, selfQuery);
       if (split.reason) return split.reason;
       for (const segment of split.segments) {
-        const oriented = orientResultBoundarySegment(
+        const oriented = orientResultBoundarySegments(
           segment,
           fillQuery,
           polygonQuery,
-          operation,
+          operations,
           quantum,
           budget
         );
         if (oriented.reason) return oriented.reason;
-        if (oriented.segment) atomic.push(oriented.segment);
+        for (const operation of operations) {
+          const resultSegment = oriented.segments[operation];
+          if (!resultSegment) continue;
+          atomic[operation].push(resultSegment);
+          if (atomic[operation].length > DEFAULT_MAX_FLATTENED_SEGMENTS) {
+            return 'selection-complexity-limit-exceeded';
+          }
+        }
       }
     }
     return null;
   };
   const fillReason = collect(fillQuery.edges, polygonQuery, fillQuery);
-  if (fillReason) return { components: [], reason: fillReason };
+  if (fillReason) return failAll(fillReason);
   const polygonReason = collect(polygonQuery.edges, fillQuery);
-  if (polygonReason) return { components: [], reason: polygonReason };
-  const loopResult = buildBoundaryLoops(atomic, quantum, budget);
-  if (loopResult.reason) return { components: [], reason: loopResult.reason };
-  const grouped = groupBoundaryLoops(loopResult.loops, budget);
-  if (grouped.reason) return { components: [], reason: grouped.reason };
-  return {
-    components: grouped.components,
-    reason: null
-  };
+  if (polygonReason) return failAll(polygonReason);
+  for (const operation of operations) {
+    const loopResult = buildBoundaryLoops(atomic[operation], quantum, budget);
+    if (loopResult.reason) {
+      return failAll(budget.limitExceeded
+        ? 'selection-complexity-limit-exceeded'
+        : loopResult.reason);
+    }
+    const grouped = groupBoundaryLoops(loopResult.loops, budget);
+    if (grouped.reason) {
+      return failAll(budget.limitExceeded
+        ? 'selection-complexity-limit-exceeded'
+        : grouped.reason);
+    }
+    operationResults[operation] = {
+      components: grouped.components,
+      reason: null
+    };
+  }
+  return operationResults;
+}
+
+function clipSimplePathFill(fillQuery, polygonQuery, options = {}) {
+  const operation = options.operation === 'difference' ? 'difference' : 'intersection';
+  return clipPathFillOperations(fillQuery, polygonQuery, [operation], options)[operation];
+}
+
+function clipSimplePathFillPair(fillQuery, polygonQuery, options = {}) {
+  return clipPathFillOperations(
+    fillQuery,
+    polygonQuery,
+    ['difference', 'intersection'],
+    options
+  );
 }
 
 function contourPathData(contours) {
@@ -988,13 +1245,66 @@ function contourPathData(contours) {
   return commands.join(' ');
 }
 
-function componentContainsPoint(component, point, budget) {
-  let contained = false;
-  for (const contour of component?.contours || []) {
-    if (!budget.consume(contour.length)) return null;
-    if (pointInPolygon(point, contour)) contained = !contained;
+function createComponentFillQuery(component, budget) {
+  if (!budget || !Array.isArray(component?.contours) ||
+      component.contours.length === 0 ||
+      component.contours.some(contour => !Array.isArray(contour) || contour.length < 3)) {
+    return { query: null, reason: 'selection-geometry-unavailable' };
   }
-  return contained;
+  const edgeCount = component.contours.reduce(
+    (count, contour) => count + contour.length,
+    0
+  );
+  if (edgeCount > DEFAULT_MAX_FLATTENED_SEGMENTS) {
+    return { query: null, reason: 'selection-complexity-limit-exceeded' };
+  }
+  const edges = [];
+  for (const contour of component.contours) {
+    for (let index = 0; index < contour.length; index += 1) {
+      if (!budget.consume()) {
+        return { query: null, reason: 'selection-complexity-limit-exceeded' };
+      }
+      const start = contour[index];
+      const end = contour[(index + 1) % contour.length];
+      if (!Number.isFinite(start?.x) || !Number.isFinite(start?.y) ||
+          !Number.isFinite(end?.x) || !Number.isFinite(end?.y) ||
+          samePoint(start, end)) {
+        return { query: null, reason: 'selection-geometry-unavailable' };
+      }
+      edges.push({
+        index: edges.length,
+        start,
+        end,
+        bounds: {
+          left: Math.min(start.x, end.x),
+          right: Math.max(start.x, end.x),
+          top: Math.min(start.y, end.y),
+          bottom: Math.max(start.y, end.y)
+        }
+      });
+    }
+  }
+  const root = buildOrderedSpatialIndex(edges, budget);
+  if (!root) {
+    return {
+      query: null,
+      reason: budget.limitExceeded
+        ? 'selection-complexity-limit-exceeded'
+        : 'selection-geometry-unavailable'
+    };
+  }
+  const query = createPathFillQuery({
+    contours: component.contours,
+    edges,
+    root,
+    bounds: boundsForPoints(component.contours.flat()),
+    fillRule: 'evenodd',
+    tolerance: Number.EPSILON
+  }, budget);
+  return {
+    query,
+    reason: query ? null : 'selection-geometry-unavailable'
+  };
 }
 
 function centerlineIntervalsInsideComponent(component, centerline, options = {}) {
@@ -1003,26 +1313,40 @@ function centerlineIntervalsInsideComponent(component, centerline, options = {})
       !Array.isArray(centerline?.segments)) {
     return { intervals: [], reason: 'selection-geometry-unavailable' };
   }
+  const componentFill = createComponentFillQuery(component, budget);
+  if (!componentFill.query) {
+    return { intervals: [], reason: componentFill.reason };
+  }
   const intervals = [];
+  let previousSegment = null;
+  let previousInside = null;
   for (const segment of centerline.segments) {
     const parameters = [0, 1];
-    for (const contour of component.contours) {
-      for (let index = 0; index < contour.length; index += 1) {
-        if (!budget.consume()) {
-          return { intervals: [], reason: 'selection-complexity-limit-exceeded' };
-        }
-        parameters.push(...segmentEdgeIntersectionParameters(
-          segment.start,
-          segment.end,
-          contour[index],
-          contour[(index + 1) % contour.length]
-        ));
+    const candidates = componentFill.query.queryEdges(segment.bounds);
+    if (candidates === null) {
+      return { intervals: [], reason: 'selection-complexity-limit-exceeded' };
+    }
+    for (const candidate of candidates) {
+      if (!budget.consume()) {
+        return { intervals: [], reason: 'selection-complexity-limit-exceeded' };
       }
+      parameters.push(...segmentEdgeIntersectionParameters(
+        segment.start,
+        segment.end,
+        candidate.start,
+        candidate.end
+      ));
     }
     const cuts = uniqueParameters(parameters, budget);
     if (!cuts) {
       return { intervals: [], reason: 'selection-complexity-limit-exceeded' };
     }
+    const continuous = previousSegment &&
+      samePoint(previousSegment.end, segment.start) &&
+      Math.abs(
+        previousSegment.end.sourcePosition - segment.start.sourcePosition
+      ) <= EPSILON;
+    let segmentEndInside = null;
     for (let index = 0; index < cuts.length - 1; index += 1) {
       if (!budget.consume()) {
         return { intervals: [], reason: 'selection-complexity-limit-exceeded' };
@@ -1030,11 +1354,20 @@ function centerlineIntervalsInsideComponent(component, centerline, options = {})
       const from = cuts[index];
       const to = cuts[index + 1];
       if (to - from <= EPSILON) continue;
-      const middlePoint = interpolatePoint(segment.start, segment.end, (from + to) / 2);
-      const contained = componentContainsPoint(component, middlePoint, budget);
+      const canCarry = candidates.length === 0 &&
+        continuous &&
+        previousInside !== null;
+      const contained = canCarry
+        ? previousInside
+        : componentFill.query.contains(interpolatePoint(
+          segment.start,
+          segment.end,
+          (from + to) / 2
+        ));
       if (contained === null) {
         return { intervals: [], reason: 'selection-complexity-limit-exceeded' };
       }
+      segmentEndInside = contained;
       if (!contained) continue;
       const start = segment.start.sourcePosition +
         (segment.end.sourcePosition - segment.start.sourcePosition) * from;
@@ -1042,6 +1375,8 @@ function centerlineIntervalsInsideComponent(component, centerline, options = {})
         (segment.end.sourcePosition - segment.start.sourcePosition) * to;
       if (end - start > EPSILON) intervals.push([start, end]);
     }
+    previousSegment = segment;
+    previousInside = segmentEndInside;
   }
   const mergeCost = intervals.length *
     (Math.ceil(Math.log2(intervals.length + 1)) + 2);
@@ -1647,6 +1982,7 @@ module.exports = {
   createPathFillQuery,
   pathFillOverlapsPolygon,
   clipSimplePathFill,
+  clipSimplePathFillPair,
   contourPathData,
   centerlineIntervalsInsideComponent,
   createSmoothedCenterlineGeometry,

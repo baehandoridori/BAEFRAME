@@ -17,7 +17,7 @@ const {
   simplifyClosedPolygon
 } = require('./drawing-v3/lasso-geometry.js');
 const {
-  clipSimplePathFill,
+  clipSimplePathFillPair,
   contourPathData,
   centerlineIntervalsInsideComponent,
   flattenFabricPath,
@@ -2757,11 +2757,11 @@ function createFabricOverlayRuntime(options = {}) {
 
   function cancelActiveLasso() {
     if (!activeLasso) return;
-    const pointerId = activeLasso.pointerId;
+    const { pointerId, previousSelectionContext = null } = activeLasso;
     removeLassoPreview();
     activeLasso = null;
     releasePointerCapture(fabricCanvas?.upperCanvasEl || canvasElement, pointerId);
-    fabricCanvas?.requestRenderAll();
+    restoreSelectionContext(previousSelectionContext);
   }
 
   function strokeObjectSceneBounds(record, object, padding = 0) {
@@ -3460,7 +3460,12 @@ function createFabricOverlayRuntime(options = {}) {
     if (!fabricCanvas) return;
     const ids = new Set(objectIds);
     fabricCanvas.discardActiveObject();
-    const objects = fabricCanvas.getObjects().filter(object => ids.has(object.__baeframeObjectId));
+    const objectsById = new Map(
+      fabricCanvas.getObjects()
+        .filter(object => ids.has(object.__baeframeObjectId))
+        .map(object => [object.__baeframeObjectId, object])
+    );
+    const objects = objectIds.map(id => objectsById.get(id)).filter(Boolean);
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
       const selected = ids.has(object.__baeframeObjectId);
@@ -3479,6 +3484,26 @@ function createFabricOverlayRuntime(options = {}) {
     fabricCanvas.requestRenderAll();
   }
 
+  function restoreSelectionContext(context) {
+    const currentSelectedIds = sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
+    if (!context ||
+        context.sessionId !== currentSession?.sessionId ||
+        context.inputRevision !== tokenState.inputRevision ||
+        context.mutationCount !== sceneStore.getDiagnostics().mutationCount) {
+      return [...currentSelectedIds];
+    }
+    const existingIds = new Set(
+      fabricCanvas?.getObjects()
+        .map(object => object.__baeframeObjectId)
+        .filter(Boolean) || []
+    );
+    if (context.objectIds.some(id => !existingIds.has(id))) {
+      return [...currentSelectedIds];
+    }
+    activateObjectIds(context.objectIds);
+    return [...context.objectIds];
+  }
+
   function rectanglePolygon(start, end) {
     if (!start || !end) return [];
     return [
@@ -3489,7 +3514,7 @@ function createFabricOverlayRuntime(options = {}) {
     ];
   }
 
-  function finalizeWholeStrokeSelectionPolygon(polygon) {
+  function finalizeWholeStrokeSelectionPolygon(polygon, failureSelectionContext = null) {
     if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
       activateObjectIds([]);
       return { applied: false, reason: 'lasso-too-small', selectedObjectIds: [] };
@@ -3504,6 +3529,14 @@ function createFabricOverlayRuntime(options = {}) {
     const polygonBounds = boundsForPoints(polygon);
     const selectedObjectIds = [];
     const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
+    const fail = reason => {
+      const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
+      return {
+        applied: false,
+        reason,
+        selectedObjectIds: restoredSelectionIds
+      };
+    };
 
     for (const record of snapshot?.objects || []) {
       if (record.type !== 'stroke') continue;
@@ -3514,12 +3547,7 @@ function createFabricOverlayRuntime(options = {}) {
       }
       const sourceSelection = createSourcePolygonQuery(object, polygon, geometryBudget);
       if (!sourceSelection.query || sourceSelection.reason) {
-        activateObjectIds([]);
-        return {
-          applied: false,
-          reason: sourceSelection.reason || 'selection-geometry-unavailable',
-          selectedObjectIds: []
-        };
+        return fail(sourceSelection.reason || 'selection-geometry-unavailable');
       }
       const fillSelection = createStoredPathFillQuery(
         record,
@@ -3528,12 +3556,7 @@ function createFabricOverlayRuntime(options = {}) {
         geometryBudget
       );
       if (!fillSelection.query || fillSelection.reason) {
-        activateObjectIds([]);
-        return {
-          applied: false,
-          reason: fillSelection.reason || 'selection-geometry-unavailable',
-          selectedObjectIds: []
-        };
+        return fail(fillSelection.reason || 'selection-geometry-unavailable');
       }
       const touch = pathFillOverlapsPolygon(
         fillSelection.query,
@@ -3541,12 +3564,7 @@ function createFabricOverlayRuntime(options = {}) {
         geometryBudget
       );
       if (touch.limitExceeded) {
-        activateObjectIds([]);
-        return {
-          applied: false,
-          reason: 'selection-complexity-limit-exceeded',
-          selectedObjectIds: []
-        };
+        return fail('selection-complexity-limit-exceeded');
       }
       if (touch.hit) selectedObjectIds.push(record.id);
     }
@@ -3555,7 +3573,7 @@ function createFabricOverlayRuntime(options = {}) {
     return { applied: false, selectedObjectIds };
   }
 
-  function finalizePartialSelectionPolygon(polygon) {
+  function finalizePartialSelectionPolygon(polygon, failureSelectionContext = null) {
     if (polygon.length < 3 || !polygonHasArea(polygon, 1)) {
       activateObjectIds([]);
       return { applied: false, reason: 'lasso-too-small' };
@@ -3574,8 +3592,12 @@ function createFabricOverlayRuntime(options = {}) {
     const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
     let accumulatedFragments = 0;
     const fail = reason => {
-      activateObjectIds([]);
-      return { applied: false, reason, selectedObjectIds: [] };
+      const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
+      return {
+        applied: false,
+        reason,
+        selectedObjectIds: restoredSelectionIds
+      };
     };
     if (!validateSimpleContour(polygon, geometryBudget)) {
       return fail(geometryBudget.limitExceeded
@@ -3619,29 +3641,21 @@ function createFabricOverlayRuntime(options = {}) {
         selectedPersistedIds.add(record.id);
         continue;
       }
-      const remainingClip = clipSimplePathFill(
+      const clipped = clipSimplePathFillPair(
         fillSelection.query,
         sourceSelection.query,
         {
-          operation: 'difference',
           budget: geometryBudget,
           polygonValidated: true
         }
       );
+      const remainingClip = clipped.difference;
       if (remainingClip.reason) return fail(remainingClip.reason);
       if (remainingClip.components.length === 0) {
         selectedPersistedIds.add(record.id);
         continue;
       }
-      const selectedClip = clipSimplePathFill(
-        fillSelection.query,
-        sourceSelection.query,
-        {
-          operation: 'intersection',
-          budget: geometryBudget,
-          polygonValidated: true
-        }
-      );
+      const selectedClip = clipped.intersection;
       if (selectedClip.reason) return fail(selectedClip.reason);
       if (selectedClip.components.length === 0) continue;
       const centerline = createStoredCenterline(record, geometryBudget);
@@ -3771,8 +3785,7 @@ function createFabricOverlayRuntime(options = {}) {
         canvasObjects
       });
       if (!staged.staged) {
-        activateObjectIds([]);
-        return { applied: false, reason: staged.reason, selectedObjectIds: [] };
+        return fail(staged.reason);
       }
       result = { applied: false, pending: true, selectedObjectIds };
     }
@@ -3800,8 +3813,8 @@ function createFabricOverlayRuntime(options = {}) {
     removeLassoPreview();
     activeLasso = null;
     return selectionTarget === 'stroke'
-      ? finalizeWholeStrokeSelectionPolygon(polygon)
-      : finalizePartialSelectionPolygon(polygon);
+      ? finalizeWholeStrokeSelectionPolygon(polygon, gesture.previousSelectionContext)
+      : finalizePartialSelectionPolygon(polygon, gesture.previousSelectionContext);
   }
 
   function pointerTargetsActiveSelection(event) {
@@ -4008,11 +4021,23 @@ function createFabricOverlayRuntime(options = {}) {
         return;
       }
       abortPendingLassoSelection();
+      const activeObjectIds = fabricCanvas.getActiveObjects?.()
+        .map(object => object.__baeframeObjectId)
+        .filter(Boolean) || [];
+      const previousSelectedObjectIds = activeObjectIds.length > 0
+        ? activeObjectIds
+        : sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
       activeLasso = {
         pointerId: event.pointerId,
         sessionId: currentSession?.sessionId,
         inputRevision: tokenState.inputRevision,
         shape: selectionShape,
+        previousSelectionContext: {
+          objectIds: [...previousSelectedObjectIds],
+          sessionId: currentSession?.sessionId,
+          inputRevision: tokenState.inputRevision,
+          mutationCount: sceneStore.getDiagnostics().mutationCount
+        },
         points: [],
         preview: null
       };

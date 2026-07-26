@@ -31,6 +31,7 @@ const {
 } = require(path.join(rootDir, 'renderer/scripts/modules/drawing-v3/stroke-splitter.js'));
 const {
   clipSimplePathFill,
+  clipSimplePathFillPair,
   createPathFillQuery,
   createSmoothedCenterlineGeometry,
   flattenFabricPath,
@@ -864,6 +865,8 @@ function createRealFabricHarness(runtimeOptions = {}) {
   const realFabric = require('fabric/node');
   const environment = realFabric.getEnv();
   const canvases = [];
+  const sourceWidth = Number(runtimeOptions.sourceWidth) || 200;
+  const sourceHeight = Number(runtimeOptions.sourceHeight) || 200;
   const useRuntimeSceneStore = runtimeOptions.useRuntimeSceneStore === true;
   const sceneStore = useRuntimeSceneStore
     ? null
@@ -872,6 +875,8 @@ function createRealFabricHarness(runtimeOptions = {}) {
   const fabricOverrides = overlayOptions.fabric || {};
   delete overlayOptions.useRuntimeSceneStore;
   delete overlayOptions.sceneStore;
+  delete overlayOptions.sourceWidth;
+  delete overlayOptions.sourceHeight;
   if (!useRuntimeSceneStore) delete overlayOptions.sceneStoreOptions;
   delete overlayOptions.fabric;
   class CaptureCanvas extends realFabric.Canvas {
@@ -906,9 +911,9 @@ function createRealFabricHarness(runtimeOptions = {}) {
       sessionId: 'real-fabric-session',
       stableVideoIdentity: 'real-fabric-video',
       targetFrame: 0,
-      sourceWidth: 200,
-      sourceHeight: 200,
-      canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+      sourceWidth,
+      sourceHeight,
+      canvasRect: { left: 0, top: 0, width: sourceWidth, height: sourceHeight },
       viewportTransform: { scale: 1, panX: 0, panY: 0 },
       tool: 'brush'
     }
@@ -943,10 +948,10 @@ function createRealFabricHarness(runtimeOptions = {}) {
   const rect = {
     left: 0,
     top: 0,
-    right: 200,
-    bottom: 200,
-    width: 200,
-    height: 200,
+    right: sourceWidth,
+    bottom: sourceHeight,
+    width: sourceWidth,
+    height: sourceHeight,
     x: 0,
     y: 0,
     toJSON() { return this; }
@@ -1845,6 +1850,29 @@ function transformRealFabricStroke(harness, objectIndex, transform) {
   return object;
 }
 
+function activateRealFabricSelection(harness, objectIds) {
+  const realFabric = require('fabric/node');
+  const ids = new Set(objectIds);
+  const objects = harness.canvas.getObjects()
+    .filter(object => ids.has(object.__baeframeObjectId));
+  harness.canvas.discardActiveObject();
+  for (const object of harness.canvas.getObjects()) {
+    if (object.__baeframeTransient) continue;
+    const selected = ids.has(object.__baeframeObjectId);
+    object.set({ selectable: selected, evented: selected });
+  }
+  if (objects.length === 1) {
+    harness.canvas.setActiveObject(objects[0]);
+  } else if (objects.length > 1) {
+    harness.canvas.setActiveObject(new realFabric.ActiveSelection(objects, {
+      canvas: harness.canvas
+    }));
+  }
+  harness.sceneStore.selectObjects(objects.map(object => object.__baeframeObjectId));
+  harness.canvas.requestRenderAll();
+  return objects.map(object => object.__baeframeObjectId);
+}
+
 function sourcePointInRealFabricScene(object, point) {
   const realFabric = require('fabric/node');
   return realFabric.util.transformPoint(
@@ -1887,15 +1915,27 @@ function makeDeferredViewportCommand(revision) {
 }
 
 function captureSelectionStability(harness) {
+  const snapshot = harness.sceneStore.getActiveSceneSnapshot();
   return {
-    objects: harness.sceneStore.getActiveSceneSnapshot().objects,
+    objects: snapshot.objects,
+    selectedObjectIds: snapshot.selectedObjectIds,
+    activeObjectIds: harness.canvas.getActiveObjects()
+      .map(object => object.__baeframeObjectId),
     history: lassoHistoryState(harness.runtime),
     saveAttemptCount: harness.runtime.getDiagnostics().metrics.saveAttemptCount
   };
 }
 
-function assertSelectionStability(harness, expected) {
-  assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, expected.objects);
+function assertSelectionStability(harness, expected, options = {}) {
+  const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+  assert.deepEqual(snapshot.objects, expected.objects);
+  if (options.selection !== false) {
+    assert.deepEqual(snapshot.selectedObjectIds, expected.selectedObjectIds);
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      expected.activeObjectIds
+    );
+  }
   assert.deepEqual(lassoHistoryState(harness.runtime), expected.history);
   assert.equal(
     harness.runtime.getDiagnostics().metrics.saveAttemptCount,
@@ -2089,7 +2129,15 @@ test('partial selection keeps a fully enclosed self-crossing stroke whole', asyn
       { x: 10, y: 10 }
     ], 79326);
 
-    assertSelectionStability(harness, before);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects
+    );
+    assert.deepEqual(lassoHistoryState(harness.runtime), before.history);
+    assert.equal(
+      harness.runtime.getDiagnostics().metrics.saveAttemptCount,
+      before.saveAttemptCount
+    );
     assert.deepEqual(
       harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
       [original.id]
@@ -2122,6 +2170,87 @@ test('partial selection atomically rejects tied branches at a self-crossing stro
     assertSelectionStability(harness, before);
     assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
     assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('persisted render geometry supports equal shared and external tangent partial selection', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(crossingStrokePoints(), 79340);
+    const original = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    const rendered = {
+      ...original,
+      renderGeometry: {
+        version: 1,
+        pathData: 'M 20 95 L 180 95 L 180 105 L 20 105 Z',
+        fillRule: 'evenodd'
+      }
+    };
+    assert.equal(harness.sceneStore.replaceObjects({
+      replacements: [{ removeId: original.id, addObjects: [rendered] }],
+      selectedObjectIds: [],
+      kind: 'split-stroke'
+    }).applied, true);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'render-geometry-boundary-undo',
+      action: 'undo'
+    }).applied, true);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'render-geometry-boundary-redo',
+      action: 'redo'
+    }).applied, true);
+    enableRealFabricLasso(harness);
+    const displayedObject = harness.canvas.getObjects()[0];
+    const selectSourcePolygon = (points, pointerId) => harness.dragLasso(
+      sourcePolygonInRealFabricScene(displayedObject, [...points, points[0]]),
+      pointerId
+    );
+
+    const beforeEqual = captureSelectionStability(harness);
+    selectSourcePolygon([
+      { x: 20, y: 95 },
+      { x: 180, y: 95 },
+      { x: 180, y: 105 },
+      { x: 20, y: 105 }
+    ], 79341);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [original.id]
+    );
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      beforeEqual.objects
+    );
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeEqual.history);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+
+    const beforeTangent = captureSelectionStability(harness);
+    selectSourcePolygon([
+      { x: 70, y: 85 },
+      { x: 130, y: 85 },
+      { x: 130, y: 95 },
+      { x: 70, y: 95 }
+    ], 79342);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, beforeTangent.objects);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assert.equal(harness.canvas.getActiveObjects().length, 0);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeTangent.history);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+
+    const beforeShared = captureSelectionStability(harness);
+    selectSourcePolygon([
+      { x: 70, y: 95 },
+      { x: 130, y: 95 },
+      { x: 130, y: 100 },
+      { x: 70, y: 100 }
+    ], 79343);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, beforeShared.objects);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeShared.history);
+    assert.equal(pendingLassoObjects(harness.canvas).length > 0, true);
   } finally {
     await harness.destroy();
   }
@@ -2752,6 +2881,72 @@ test('partial selection aborts atomically when the shared geometry operation bud
     assert.equal(pendingLassoObjects(harness.canvas).length, 0);
   } finally {
     await harness.destroy();
+  }
+});
+
+test('realistic 300 and 400-sample partial rectangles stage move and undo under budget', async () => {
+  for (const sampleCount of [300, 400]) {
+    const harness = createRealFabricHarness({
+      sourceWidth: 500,
+      sourceHeight: 500
+    });
+    try {
+      const sizeInput = findOne(
+        harness.root,
+        node => node.dataset?.fabricPilotSetting === 'size'
+      );
+      sizeInput.value = '5.5';
+      sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+      const sourcePoints = Array.from({ length: sampleCount }, (_value, index) => ({
+        x: index,
+        y: 250 + Math.sin(index / 9) * 17
+      }));
+      const pointerId = 882 + sampleCount;
+      harness.drawStroke(sourcePoints, pointerId);
+      const original = harness.sceneStore.getActiveSceneSnapshot();
+      const originalId = original.objects[0].id;
+      enableRealFabricPartialRectangle(harness);
+
+      const startedAt = performance.now();
+      harness.dragLasso([
+        { x: 70, y: 0 },
+        { x: 95, y: 500 }
+      ], pointerId + 1);
+      const elapsedMs = performance.now() - startedAt;
+
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        original.objects,
+        `${sampleCount}: staging must remain non-destructive`
+      );
+      assert.ok(
+        pendingLassoObjects(harness.canvas).length > 0,
+        `${sampleCount}: expected pending fragments`
+      );
+      assert.ok(harness.canvas.getActiveObject(), `${sampleCount}: expected active proxy`);
+      assert.ok(elapsedMs < 1000, `${sampleCount}: ${elapsedMs.toFixed(1)}ms`);
+
+      harness.dragActiveSelectionBy(20, 0, pointerId + 2);
+      await Promise.resolve();
+
+      const moved = harness.sceneStore.getActiveSceneSnapshot();
+      assert.equal(moved.objects.length, 3, String(sampleCount));
+      assert.equal(moved.objects.some(object => object.id === originalId), false);
+      assert.equal(moved.selectedObjectIds.length, 1, String(sampleCount));
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session',
+        actionId: `undo-realistic-${sampleCount}-partial`,
+        action: 'undo'
+      }).applied, true);
+      assert.deepEqual(
+        harness.sceneStore.getActiveSceneSnapshot().objects,
+        original.objects,
+        String(sampleCount)
+      );
+      assert.equal(harness.runtime.getDiagnostics().lastError, null);
+    } finally {
+      await harness.destroy();
+    }
   }
 });
 
@@ -3735,6 +3930,109 @@ test('partial fragments plus a fully enclosed stroke Delete round-trip as one co
   }
 });
 
+test('whole-selection geometry failure restores the exact prior multi-selection', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(30, 8750);
+    harness.drawStrokeAt(50, 8751);
+    harness.drawStrokeAt(110, 8752);
+    enableRealFabricWholeStrokeLasso(harness);
+    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    const priorIds = activateRealFabricSelection(
+      harness,
+      snapshot.objects.slice(0, 2).map(object => object.id)
+    );
+    const failingObject = harness.canvas.getObjects()[2];
+    const originalPathOffset = failingObject.pathOffset;
+    failingObject.pathOffset = null;
+    const before = captureSelectionStability(harness);
+
+    harness.dragLasso([
+      { x: 0, y: 0 },
+      { x: 190, y: 0 },
+      { x: 190, y: 150 },
+      { x: 0, y: 150 },
+      { x: 0, y: 0 }
+    ], 8753);
+    failingObject.pathOffset = originalPathOffset;
+
+    assert.deepEqual(before.selectedObjectIds, priorIds);
+    assert.deepEqual(before.activeObjectIds, priorIds);
+    assertSelectionStability(harness, before);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial-selection budget failure restores the exact prior multi-selection', async () => {
+  const harness = createRealFabricHarness({ maxSelectionGeometryOperations: 3 });
+  try {
+    harness.drawStrokeAt(30, 8760);
+    harness.drawStrokeAt(50, 8761);
+    harness.drawStrokeAt(110, 8762);
+    enableRealFabricLasso(harness);
+    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    const priorIds = activateRealFabricSelection(
+      harness,
+      snapshot.objects.slice(0, 2).map(object => object.id)
+    );
+    const before = captureSelectionStability(harness);
+
+    harness.dragLasso([
+      { x: 10, y: 80 },
+      { x: 70, y: 80 },
+      { x: 70, y: 140 },
+      { x: 10, y: 140 },
+      { x: 10, y: 80 }
+    ], 8763);
+
+    assert.deepEqual(before.selectedObjectIds, priorIds);
+    assert.deepEqual(before.activeObjectIds, priorIds);
+    assertSelectionStability(harness, before);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('stale custom-lasso cancellation never resurrects selection after a source mutation', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(30, 8770);
+    harness.drawStrokeAt(50, 8771);
+    harness.drawStrokeAt(110, 8772);
+    enableRealFabricLasso(harness);
+    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    activateRealFabricSelection(
+      harness,
+      snapshot.objects.slice(0, 2).map(object => object.id)
+    );
+    const pointerId = 8773;
+    harness.dispatchPointer(harness.element, 'pointerdown', 0, 80, pointerId, 1);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+
+    const external = makeHistoryStroke('external-during-custom-lasso', {
+      sourcePoints: [
+        { x: 150, y: 170, pressure: 0.5, time: 0 },
+        { x: 180, y: 170, pressure: 0.5, time: 1 }
+      ]
+    });
+    assert.equal(harness.sceneStore.addStroke(external).applied, true);
+    harness.dispatchPointer(harness.element, 'pointercancel', 0, 80, pointerId, 0);
+
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assert.equal(harness.canvas.getActiveObjects().length, 0);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.some(object => object.id === external.id),
+      true
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('lasso selection preserves the rendered stroke until a fragment actually moves', async () => {
   const harness = createRealFabricHarness();
   const renderedPixels = () => {
@@ -4524,17 +4822,23 @@ test('pending lasso proxy construction failure restores the untouched original',
   }
   const harness = createRealFabricHarness({ fabric: { Path: ThrowingPendingPath } });
   try {
+    harness.drawStroke(crossingStrokePoints(30), 978);
+    harness.drawStroke(crossingStrokePoints(50), 979);
     harness.drawStroke(crossingStrokePoints(90), 980);
     harness.drawStroke(crossingStrokePoints(110), 981);
-    const before = harness.sceneStore.getActiveSceneSnapshot();
-    const beforeHistory = lassoHistoryState(harness.runtime);
     enableRealFabricLasso(harness);
+    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    const priorIds = activateRealFabricSelection(
+      harness,
+      snapshot.objects.slice(0, 2).map(object => object.id)
+    );
+    const before = captureSelectionStability(harness);
     armed = true;
 
     assert.doesNotThrow(() => harness.dragLasso(middleLassoPoints(70, 130), 982));
     assert.equal(repeatedStrokePathCount, 2);
-    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot(), before);
-    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.deepEqual(before.selectedObjectIds, priorIds);
+    assertSelectionStability(harness, before);
     assert.equal(pendingLassoObjects(harness.canvas).length, 0);
     assert.deepEqual(
       harness.canvas.getObjects().map(object => object.__baeframeObjectId),
@@ -5508,7 +5812,7 @@ test('a real preset change settles the latest viewport after cancelling a native
     assert.equal(harness.canvas.getActiveObject() ?? null, null);
     assert.equal(harness.canvas.getObjects()[0], originalPath);
     assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
-    assertSelectionStability(harness, before);
+    assertSelectionStability(harness, before, { selection: false });
 
     harness.dispatchPointer(
       harness.environment.document,
@@ -5520,7 +5824,7 @@ test('a real preset change settles the latest viewport after cancelling a native
     );
     await Promise.resolve();
     assert.equal(harness.runtime.getDiagnostics().viewportRevision, 3);
-    assertSelectionStability(harness, before);
+    assertSelectionStability(harness, before, { selection: false });
   } finally {
     await harness.destroy();
   }
@@ -5667,7 +5971,7 @@ test('preset change rolls back a moving pending partial selection before applyin
       before.objects.map(object => object.id)
     );
     assert.equal(harness.canvas.getObjects()[0], originalPath);
-    assertSelectionStability(harness, beforeStability);
+    assertSelectionStability(harness, beforeStability, { selection: false });
 
     harness.dispatchPointer(
       harness.environment.document,
@@ -5679,7 +5983,7 @@ test('preset change rolls back a moving pending partial selection before applyin
     );
     await Promise.resolve();
     assert.equal(harness.runtime.getDiagnostics().viewportRevision, 5);
-    assertSelectionStability(harness, beforeStability);
+    assertSelectionStability(harness, beforeStability, { selection: false });
   } finally {
     await harness.destroy();
   }
@@ -8251,6 +8555,214 @@ test('actual fill clipping reconstructs simple intersection and disjoint differe
   assert.equal(remaining.components.every(component => component.contours.length === 1), true);
 });
 
+test('thin actual fill boundaries stay selectable and remain clip-safe after repeated selection', () => {
+  const contourCommands = contours => contours.flatMap(contour => [
+    ['M', contour[0].x, contour[0].y],
+    ...contour.slice(1).map(point => ['L', point.x, point.y]),
+    ['Z']
+  ]);
+  for (const fillRule of ['evenodd', 'nonzero']) {
+    for (const height of [0.1, 0.05, 0.01]) {
+      const budget = createGeometryBudget(250_000);
+      const flattened = flattenFabricPath([
+        ['M', 0, 0],
+        ['L', 10, 0],
+        ['L', 10, height],
+        ['L', 0, height],
+        ['Z']
+      ], {
+        budget,
+        tolerance: 0.25,
+        fillRule
+      });
+      const fill = createPathFillQuery(flattened.geometry, budget);
+      const selection = createPolygonEdgeIndex([
+        { x: 4, y: -1 },
+        { x: 6, y: -1 },
+        { x: 6, y: 1 },
+        { x: 4, y: 1 }
+      ], { budget });
+
+      assert.deepEqual(pathFillOverlapsPolygon(fill, selection, budget), {
+        hit: true,
+        limitExceeded: false
+      }, `${fillRule} height=${height}`);
+      const pair = clipSimplePathFillPair(fill, selection, { budget });
+      const intersection = pair.intersection;
+      const difference = pair.difference;
+      assert.equal(intersection.reason, null, `intersection ${fillRule} height=${height}`);
+      assert.equal(intersection.components.length, 1, `intersection ${fillRule} height=${height}`);
+      assert.equal(difference.reason, null, `difference ${fillRule} height=${height}`);
+      assert.equal(difference.components.length, 2, `difference ${fillRule} height=${height}`);
+
+      const repeatedGeometry = flattenFabricPath(
+        contourCommands(intersection.components[0].contours),
+        {
+          budget,
+          tolerance: 0.25,
+          fillRule: 'evenodd'
+        }
+      );
+      assert.equal(repeatedGeometry.reason, null, `repeat geometry ${fillRule} height=${height}`);
+      const repeatedFill = createPathFillQuery(repeatedGeometry.geometry, budget);
+      const innerSelection = createPolygonEdgeIndex([
+        { x: 4.5, y: -1 },
+        { x: 5.5, y: -1 },
+        { x: 5.5, y: 1 },
+        { x: 4.5, y: 1 }
+      ], { budget });
+      assert.deepEqual(pathFillOverlapsPolygon(repeatedFill, innerSelection, budget), {
+        hit: true,
+        limitExceeded: false
+      }, `repeat overlap ${fillRule} height=${height}`);
+      const repeatedPair = clipSimplePathFillPair(
+        repeatedFill,
+        innerSelection,
+        { budget }
+      );
+      assert.equal(repeatedPair.intersection.reason, null);
+      assert.equal(repeatedPair.intersection.components.length, 1);
+      assert.equal(repeatedPair.difference.reason, null);
+      assert.equal(repeatedPair.difference.components.length, 2);
+    }
+  }
+});
+
+test('collinear equal and shared boundaries clip as valid boolean geometry', () => {
+  const signedArea = contour => contour.reduce((area, point, index) => {
+    const next = contour[(index + 1) % contour.length];
+    return area + point.x * next.y - next.x * point.y;
+  }, 0) / 2;
+  const componentArea = components => components.reduce((total, component) => (
+    total + Math.abs(component.contours.reduce(
+      (area, contour) => area + signedArea(contour),
+      0
+    ))
+  ), 0);
+  const cases = [
+    {
+      name: 'identical',
+      polygon: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 }
+      ],
+      intersectionArea: 100,
+      differenceArea: 0
+    },
+    {
+      name: 'shared partial edge',
+      polygon: [
+        { x: 2, y: 0 },
+        { x: 8, y: 0 },
+        { x: 8, y: 5 },
+        { x: 2, y: 5 }
+      ],
+      intersectionArea: 30,
+      differenceArea: 70
+    },
+    {
+      name: 'outside tangent',
+      polygon: [
+        { x: 2, y: -5 },
+        { x: 8, y: -5 },
+        { x: 8, y: 0 },
+        { x: 2, y: 0 }
+      ],
+      intersectionArea: 0,
+      differenceArea: 100
+    }
+  ];
+
+  for (const fixture of cases) {
+    for (const polygon of [fixture.polygon, [...fixture.polygon].reverse()]) {
+      const budget = createGeometryBudget(250_000);
+      const flattened = flattenFabricPath([
+        ['M', 0, 0],
+        ['L', 10, 0],
+        ['L', 10, 10],
+        ['L', 0, 10],
+        ['Z']
+      ], { budget, tolerance: 0.25, fillRule: 'evenodd' });
+      const fill = createPathFillQuery(flattened.geometry, budget);
+      const selection = createPolygonEdgeIndex(polygon, { budget });
+      const intersection = clipSimplePathFill(fill, selection, {
+        operation: 'intersection',
+        budget
+      });
+      const difference = clipSimplePathFill(fill, selection, {
+        operation: 'difference',
+        budget
+      });
+
+      assert.equal(intersection.reason, null, `${fixture.name} intersection`);
+      assert.equal(difference.reason, null, `${fixture.name} difference`);
+      assert.ok(
+        Math.abs(componentArea(intersection.components) - fixture.intersectionArea) < 1e-6,
+        `${fixture.name} intersection area`
+      );
+      assert.ok(
+        Math.abs(componentArea(difference.components) - fixture.differenceArea) < 1e-6,
+        `${fixture.name} difference area`
+      );
+    }
+  }
+});
+
+test('boolean clipping keeps equal and unequal point-touching fills as separate loops', () => {
+  const fixtures = [
+    {
+      name: 'equal',
+      commands: [
+        ['M', 0, 0], ['L', 5, 0], ['L', 5, 5], ['L', 0, 5], ['Z'],
+        ['M', 5, 5], ['L', 10, 5], ['L', 10, 10], ['L', 5, 10], ['Z']
+      ],
+      outer: [
+        { x: -1, y: -1 },
+        { x: 11, y: -1 },
+        { x: 11, y: 11 },
+        { x: -1, y: 11 }
+      ]
+    },
+    {
+      name: 'unequal',
+      commands: [
+        ['M', 0, 0], ['L', 10, 0], ['L', 10, 10], ['L', 0, 10], ['Z'],
+        ['M', 10, 10], ['L', 12, 10], ['L', 12, 12], ['L', 10, 12], ['Z']
+      ],
+      outer: [
+        { x: -1, y: -1 },
+        { x: 13, y: -1 },
+        { x: 13, y: 13 },
+        { x: -1, y: 13 }
+      ]
+    }
+  ];
+  for (const fixture of fixtures) {
+    for (const fillRule of ['evenodd', 'nonzero']) {
+      const budget = createGeometryBudget(250_000);
+      const flattened = flattenFabricPath(fixture.commands, {
+        budget,
+        tolerance: 0.25,
+        fillRule
+      });
+      const fill = createPathFillQuery(flattened.geometry, budget);
+      const outer = createPolygonEdgeIndex(fixture.outer, { budget });
+      const pair = clipSimplePathFillPair(fill, outer, { budget });
+      const label = `${fixture.name} ${fillRule}`;
+
+      assert.equal(pair.intersection.reason, null, label);
+      assert.deepEqual(
+        pair.intersection.components.map(component => component.contours.length),
+        [1, 1],
+        label
+      );
+      assert.deepEqual(pair.difference, { components: [], reason: null }, label);
+    }
+  }
+});
+
 test('actual fill clipping handles both containment directions and nested evenodd islands', () => {
   const rectangleCommands = [
     ['M', 0, 0],
@@ -8384,6 +8896,106 @@ test('fill overlap ignores contours canceled by evenodd and nonzero rules', () =
   }
 });
 
+test('large canceled contours stay a bounded no-hit under the 250k selection budget', () => {
+  const pointCount = 1024;
+  const points = [];
+  for (let index = 0; index < pointCount; index += 1) {
+    const angle = index * Math.PI * 2 / pointCount;
+    points.push([Math.cos(angle) * 100, Math.sin(angle) * 100]);
+  }
+  const commandsForPoints = values => [
+    ['M', values[0][0], values[0][1]],
+    ...values.slice(1).map(point => ['L', point[0], point[1]]),
+    ['Z']
+  ];
+  const contour = commandsForPoints(points);
+  const reverseContour = [
+    ...commandsForPoints([...points].reverse())
+  ];
+  const fixtures = [
+    { fillRule: 'evenodd', commands: [...contour, ...contour.map(command => [...command])] },
+    { fillRule: 'nonzero', commands: [...contour, ...reverseContour] }
+  ];
+
+  for (const fixture of fixtures) {
+    const budget = createGeometryBudget(250_000);
+    const flattened = flattenFabricPath(fixture.commands, {
+      budget,
+      tolerance: 0.25,
+      fillRule: fixture.fillRule
+    });
+    assert.equal(flattened.reason, null);
+    assert.equal(flattened.geometry.edges.length, 2048);
+    const fill = createPathFillQuery(flattened.geometry, budget);
+    const polygon = createPolygonEdgeIndex([
+      { x: -2, y: -2 },
+      { x: 2, y: -2 },
+      { x: 2, y: 2 },
+      { x: -2, y: 2 }
+    ], { budget });
+    assert.deepEqual(pathFillOverlapsPolygon(fill, polygon, budget), {
+      hit: false,
+      limitExceeded: false
+    }, fixture.fillRule);
+    assert.ok(budget.operations < 250_000, `${fixture.fillRule}: ${budget.operations}`);
+  }
+});
+
+test('canceled contours beside a thin real fill never bridge the empty clearance gap', () => {
+  const commandsForPoints = points => [
+    ['M', points[0].x, points[0].y],
+    ...points.slice(1).map(point => ['L', point.x, point.y]),
+    ['Z']
+  ];
+  const realStrip = commandsForPoints([
+    { x: 0, y: -0.1 },
+    { x: 10, y: -0.1 },
+    { x: 10, y: -0.01 },
+    { x: 0, y: -0.01 }
+  ]);
+  const canceledPoints = [
+    { x: 2, y: 0 },
+    { x: 8, y: 0 },
+    { x: 8, y: 0.5 },
+    { x: 2, y: 0.5 }
+  ];
+  const canceled = commandsForPoints(canceledPoints);
+  const cases = [
+    {
+      fillRule: 'evenodd',
+      commands: [...realStrip, ...canceled, ...canceled.map(command => [...command])]
+    },
+    {
+      fillRule: 'nonzero',
+      commands: [
+        ...realStrip,
+        ...canceled,
+        ...commandsForPoints([...canceledPoints].reverse())
+      ]
+    }
+  ];
+  for (const fixture of cases) {
+    const budget = createGeometryBudget(250_000);
+    const flattened = flattenFabricPath(fixture.commands, {
+      budget,
+      tolerance: 0.25,
+      fillRule: fixture.fillRule
+    });
+    const fill = createPathFillQuery(flattened.geometry, budget);
+    const gap = createPolygonEdgeIndex([
+      { x: 4, y: -0.001 },
+      { x: 6, y: -0.001 },
+      { x: 6, y: 0.001 },
+      { x: 4, y: 0.001 }
+    ], { budget });
+
+    assert.deepEqual(pathFillOverlapsPolygon(fill, gap, budget), {
+      hit: false,
+      limitExceeded: false
+    }, fixture.fillRule);
+  }
+});
+
 test('fill overlap distinguishes active and canceled portions of one collinear edge', () => {
   const commands = [
     ['M', 0, 0], ['L', 10, 0], ['L', 10, 10], ['L', 0, 10], ['Z'],
@@ -8459,6 +9071,122 @@ test('spatial contour validation accepts 1024 simple points and rejects a self-c
     { x: 0, y: 10 },
     { x: 10, y: 0 }
   ], createGeometryBudget(250_000)), false);
+});
+
+test('paired clipping fits a realistic 400-sample gesture and caps 1000 samples atomically', () => {
+  const realFabric = require('fabric/node');
+  const run = count => {
+    // 400 samples represents about 3.3 s at 120 Hz or 6.7 s at 60 Hz.
+    const sourcePoints = Array.from({ length: count }, (_value, index) => ({
+      x: index,
+      y: Math.sin(index / 9) * 17,
+      pressure: 0.5,
+      time: index
+    }));
+    const pathData = createStrokePathData(sourcePoints, {
+      size: 5.5,
+      last: true,
+      alreadyNormalizedPressure: true
+    }).pathData;
+    const fabricPath = new realFabric.Path(pathData);
+    const budget = createGeometryBudget(250_000);
+    const startedAt = performance.now();
+    const flattened = flattenFabricPath(fabricPath.path, {
+      budget,
+      tolerance: 0.25,
+      fillRule: 'nonzero'
+    });
+    if (!flattened.geometry) {
+      return {
+        edgeCount: 0,
+        operations: budget.operations,
+        elapsedMs: performance.now() - startedAt,
+        pair: {
+          difference: { components: [], reason: flattened.reason },
+          intersection: { components: [], reason: flattened.reason }
+        }
+      };
+    }
+    const fill = createPathFillQuery(flattened.geometry, budget);
+    const selection = createPolygonEdgeIndex([
+      { x: 70, y: -100 },
+      { x: 95, y: -100 },
+      { x: 95, y: 100 },
+      { x: 70, y: 100 }
+    ], { budget });
+    assert.deepEqual(pathFillOverlapsPolygon(fill, selection, budget), {
+      hit: true,
+      limitExceeded: false
+    });
+    const pair = clipSimplePathFillPair(fill, selection, {
+      budget,
+      polygonValidated: true
+    });
+    return {
+      edgeCount: flattened.geometry.edges.length,
+      operations: budget.operations,
+      limitExceeded: budget.limitExceeded,
+      elapsedMs: performance.now() - startedAt,
+      pair
+    };
+  };
+
+  const threeHundred = run(300);
+  assert.equal(threeHundred.edgeCount, 354);
+  assert.equal(threeHundred.pair.difference.reason, null);
+  assert.equal(threeHundred.pair.intersection.reason, null);
+  assert.ok(threeHundred.operations < 250_000, String(threeHundred.operations));
+
+  const fourHundred = run(400);
+  assert.equal(fourHundred.edgeCount, 461);
+  assert.equal(fourHundred.pair.difference.reason, null);
+  assert.equal(fourHundred.pair.intersection.reason, null);
+  assert.ok(fourHundred.operations < 200_000, String(fourHundred.operations));
+  assert.ok(fourHundred.elapsedMs < 1000, `${fourHundred.elapsedMs.toFixed(1)}ms`);
+
+  // 1000 samples is an unusually long 8.3 s at 120 Hz; it must stop without partial output.
+  const oneThousand = run(1000);
+  assert.equal(oneThousand.edgeCount, 1093);
+  assert.equal(oneThousand.pair.difference.reason, 'selection-complexity-limit-exceeded');
+  assert.equal(oneThousand.pair.intersection.reason, 'selection-complexity-limit-exceeded');
+  assert.equal(oneThousand.limitExceeded, true);
+  assert.ok(oneThousand.operations <= 250_000, String(oneThousand.operations));
+  assert.ok(oneThousand.elapsedMs < 1000, `${oneThousand.elapsedMs.toFixed(1)}ms`);
+});
+
+test('paired clipping discards both outputs when the second loop exhausts the budget', () => {
+  const budget = createGeometryBudget(412);
+  const flattened = flattenFabricPath([
+    ['M', 0, 0],
+    ['L', 10, 0],
+    ['L', 10, 10],
+    ['L', 0, 10],
+    ['Z']
+  ], {
+    budget,
+    tolerance: 0.25,
+    fillRule: 'evenodd'
+  });
+  const fill = createPathFillQuery(flattened.geometry, budget);
+  const selection = createPolygonEdgeIndex([
+    { x: -2, y: -2 },
+    { x: 12, y: -2 },
+    { x: 12, y: 12 },
+    { x: -2, y: 12 }
+  ], { budget });
+  const pair = clipSimplePathFillPair(fill, selection, { budget });
+
+  assert.equal(budget.limitExceeded, true);
+  assert.deepEqual(pair, {
+    difference: {
+      components: [],
+      reason: 'selection-complexity-limit-exceeded'
+    },
+    intersection: {
+      components: [],
+      reason: 'selection-complexity-limit-exceeded'
+    }
+  });
 });
 
 test('fill cache logical cost makes cold and warm budgets identical and caps 20k edges', () => {

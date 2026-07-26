@@ -230,13 +230,13 @@ function createPolygonEdgeIndex(polygon = [], options = {}) {
     return matches;
   };
 
-  const contains = point => {
+  const classify = point => {
     if (!polygonBounds ||
         finiteNumber(point?.x) < polygonBounds.left - EPSILON ||
         finiteNumber(point?.x) > polygonBounds.right + EPSILON ||
         finiteNumber(point?.y) < polygonBounds.top - EPSILON ||
         finiteNumber(point?.y) > polygonBounds.bottom + EPSILON) {
-      return false;
+      return 'outside';
     }
     const candidates = queryEdges({
       left: finiteNumber(point?.x),
@@ -248,7 +248,7 @@ function createPolygonEdgeIndex(polygon = [], options = {}) {
     let inside = false;
     for (const edge of candidates) {
       if (!budget.consume()) return null;
-      if (pointOnSegment(point, edge.start, edge.end)) return true;
+      if (pointOnSegment(point, edge.start, edge.end)) return 'boundary';
       const startY = edge.start.y;
       const endY = edge.end.y;
       const pointY = finiteNumber(point?.y);
@@ -257,7 +257,12 @@ function createPolygonEdgeIndex(polygon = [], options = {}) {
         (pointY - endY) / (startY - endY) + edge.end.x;
       if (finiteNumber(point?.x) < crossingX) inside = !inside;
     }
-    return inside;
+    return inside ? 'inside' : 'outside';
+  };
+  const contains = point => {
+    const classification = classify(point);
+    if (classification === null) return null;
+    return classification !== 'outside';
   };
 
   return {
@@ -267,6 +272,7 @@ function createPolygonEdgeIndex(polygon = [], options = {}) {
     edges,
     budget,
     queryEdges,
+    classify,
     contains
   };
 }
