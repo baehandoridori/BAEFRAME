@@ -203,6 +203,11 @@ test('multiple frames and every Fabric record field round-trip exactly without a
   const { createFabricDrawingPersistenceStore } = await loadModule();
   const first = record('first', {
     pathData: 'M 1 2 Q 3 4 5 6 Z',
+    renderGeometry: {
+      version: 1,
+      pathData: 'M 1 2 L 5 2 L 5 6 Z',
+      fillRule: 'evenodd'
+    },
     strokeCaps: { start: false, end: true },
     style: { color: '#4a9eff', size: 19, opacity: 0.4 },
     transform: {
@@ -240,6 +245,48 @@ test('multiple frames and every Fabric record field round-trip exactly without a
   exported.keyframes[0].objects[0].sourcePoints[0].x = 999;
   assert.equal(store.exportRootValue().keyframes[0].objects[0].style.color, '#4a9eff');
   assert.equal(store.exportRootValue().keyframes[0].objects[0].sourcePoints[0].x, 0);
+});
+
+test('render geometry persistence is optional and strictly versioned', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const valid = rootValue({
+    keyframes: [keyframe(3, [record('render-fragment', {
+      renderGeometry: {
+        version: 1,
+        pathData: 'M -1 2e1 L 9 1 L 9 9 L 1 9 Z M 2 2 L 3 2 L 3 3 Z',
+        fillRule: 'evenodd'
+      }
+    })])]
+  });
+  const store = createFabricDrawingPersistenceStore();
+  assert.equal(store.importRootValue(valid, META).accepted, true);
+  assert.deepEqual(
+    store.exportRootValue().keyframes[0].objects[0].renderGeometry,
+    valid.keyframes[0].objects[0].renderGeometry
+  );
+
+  const invalidCases = [
+    value => { value.version = 2; },
+    value => { value.pathData = ''; },
+    value => { value.pathData = 'M 1 1 Q 5 0 9 1 L 9 9 L 1 9 Z'; },
+    value => { value.pathData = 'm 1 1 l 9 1 l 9 9 z'; },
+    value => { value.pathData = 'M 1e309 1 L 9 1 L 9 9 Z'; },
+    value => { value.pathData = 'M 1001000001 1 L 9 1 L 9 9 Z'; },
+    value => { value.pathData = 'M 1 1 L 9 1 L 9 9 Z <script>'; },
+    value => { value.pathData = 'M 1 1 L 9 1 L 9 9'; },
+    value => { value.pathData = 'M .5 1 L 9 1 L 9 9 Z'; },
+    value => { value.pathData = 'M 01 1 L 9 1 L 9 9 Z'; },
+    value => { value.fillRule = 'nonzero'; },
+    value => { value.vendor = true; }
+  ];
+  for (const mutate of invalidCases) {
+    const candidate = structuredClone(valid);
+    mutate(candidate.keyframes[0].objects[0].renderGeometry);
+    assert.equal(
+      createFabricDrawingPersistenceStore().importRootValue(candidate, META).accepted,
+      false
+    );
+  }
 });
 
 test('delta byte accounting never stringifies untouched records in the active frame', async () => {

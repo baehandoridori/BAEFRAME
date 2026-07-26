@@ -10,6 +10,9 @@ const fs = require('fs');
 const path = require('path');
 const { createLogger } = require('./logger');
 const { normalizeEmbedBounds } = require('./mpv-embed-host');
+const {
+  validateDrawingRenderGeometry
+} = require('../shared/drawing-render-geometry');
 
 const log = createLogger('MPVOverlayHost');
 const DEFAULT_FABRIC_BUNDLE_PATH = path.join(
@@ -119,7 +122,10 @@ const FABRIC_DRAWING_RECORD_REQUIRED_KEYS = Object.freeze([
   'style',
   'transform'
 ]);
-const FABRIC_DRAWING_RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps']);
+const FABRIC_DRAWING_RECORD_OPTIONAL_KEYS = Object.freeze([
+  'strokeCaps',
+  'renderGeometry'
+]);
 const FABRIC_DRAWING_STYLE_KEYS = Object.freeze(['color', 'size', 'opacity']);
 const FABRIC_DRAWING_TRANSFORM_KEYS = Object.freeze([
   'left',
@@ -140,6 +146,11 @@ const FABRIC_DRAWING_POINT_REQUIRED_KEYS = Object.freeze([
 ]);
 const FABRIC_DRAWING_POINT_OPTIONAL_KEYS = Object.freeze(['pointerType']);
 const FABRIC_DRAWING_CAPS_KEYS = Object.freeze(['start', 'end']);
+const FABRIC_DRAWING_RENDER_GEOMETRY_KEYS = Object.freeze([
+  'version',
+  'pathData',
+  'fillRule'
+]);
 const FABRIC_DRAWING_REMOVAL_KEYS = Object.freeze(['id', 'index']);
 const FABRIC_DRAWING_INSERTION_KEYS = Object.freeze([
   'index',
@@ -1320,10 +1331,25 @@ function validateFabricDrawingRecord(value, maxPathLength) {
     if (!validateFabricDrawingPoint(point) || point.time < previousTime) return false;
     previousTime = point.time;
   }
-  return value.strokeCaps === undefined ||
-    (hasExactPersistenceKeys(value.strokeCaps, FABRIC_DRAWING_CAPS_KEYS) &&
-     typeof value.strokeCaps.start === 'boolean' &&
-     typeof value.strokeCaps.end === 'boolean');
+  if (value.strokeCaps !== undefined &&
+      (!hasExactPersistenceKeys(value.strokeCaps, FABRIC_DRAWING_CAPS_KEYS) ||
+       typeof value.strokeCaps.start !== 'boolean' ||
+       typeof value.strokeCaps.end !== 'boolean')) {
+    return false;
+  }
+  if (value.renderGeometry !== undefined &&
+      (!hasExactPersistenceKeys(
+        value.renderGeometry,
+        FABRIC_DRAWING_RENDER_GEOMETRY_KEYS
+      ) ||
+       !validateDrawingRenderGeometry(value.renderGeometry, {
+         maxPathLength: Math.min(FABRIC_DRAWING_MAX_STRING_LENGTH, maxPathLength),
+         maxCoordinate: FABRIC_DRAWING_MAX_POINT_COORDINATE +
+           FABRIC_DRAWING_MAX_BRUSH_SIZE
+       }))) {
+    return false;
+  }
+  return true;
 }
 
 function normalizeFabricDrawingPersistenceRequest(request, {

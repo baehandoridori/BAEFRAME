@@ -26,8 +26,17 @@ const {
 } = require(path.join(rootDir, 'renderer/scripts/modules/drawing-v3/lasso-geometry.js'));
 const {
   strokeHasSplittableLength,
-  strokeTouchesPolygon
+  strokeTouchesPolygon,
+  splitStrokePointsBySourceIntervals
 } = require(path.join(rootDir, 'renderer/scripts/modules/drawing-v3/stroke-splitter.js'));
+const {
+  clipSimplePathFill,
+  createPathFillQuery,
+  createSmoothedCenterlineGeometry,
+  flattenFabricPath,
+  pathFillOverlapsPolygon,
+  validateSimpleContour
+} = require(path.join(rootDir, 'renderer/scripts/modules/drawing-v3/stroke-fill-geometry.js'));
 const {
   createDrawingEngineAdapter
 } = require(drawingV3AdapterPath);
@@ -463,6 +472,11 @@ test('runtime hydrate and export round-trip one video atomically while drawing i
   assert.equal(runtime.prepare(root).prepared, true);
 
   const persisted = makeHistoryStroke('persisted-runtime-stroke', {
+    renderGeometry: {
+      version: 1,
+      pathData: 'M 1 1 L 9 1 L 9 9 L 1 9 Z',
+      fillRule: 'evenodd'
+    },
     transform: {
       left: 12,
       top: -4,
@@ -636,7 +650,12 @@ test('runtime hydrate rejects every persistence-store record violation atomicall
       sourceHeight: 1080,
       mutationSequence: 6,
       objects: [makeHistoryStroke('strict-stroke', {
-        strokeCaps: { start: true, end: false }
+        strokeCaps: { start: true, end: false },
+        renderGeometry: {
+          version: 1,
+          pathData: 'M 1 1 L 9 1 L 9 9 L 1 9 Z',
+          fillRule: 'evenodd'
+        }
       })]
     }]
   });
@@ -686,6 +705,42 @@ test('runtime hydrate rejects every persistence-store record violation atomicall
     }],
     ['non-boolean cap', value => {
       value.keyframes[0].objects[0].strokeCaps.start = 1;
+    }],
+    ['unknown render geometry field', value => {
+      value.keyframes[0].objects[0].renderGeometry.vendor = true;
+    }],
+    ['unsupported render geometry version', value => {
+      value.keyframes[0].objects[0].renderGeometry.version = 2;
+    }],
+    ['empty render geometry path', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData = '';
+    }],
+    ['render geometry curve command', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 1 1 Q 5 0 9 1 L 9 9 L 1 9 Z';
+    }],
+    ['render geometry lowercase command', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'm 1 1 l 9 1 l 9 9 z';
+    }],
+    ['render geometry nonfinite coordinate', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 1e309 1 L 9 1 L 9 9 Z';
+    }],
+    ['render geometry coordinate above fill bound', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 1001000001 1 L 9 1 L 9 9 Z';
+    }],
+    ['render geometry trailing injection token', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 1 1 L 9 1 L 9 9 Z <script>';
+    }],
+    ['render geometry open contour', value => {
+      value.keyframes[0].objects[0].renderGeometry.pathData =
+        'M 1 1 L 9 1 L 9 9';
+    }],
+    ['unsupported render geometry fill rule', value => {
+      value.keyframes[0].objects[0].renderGeometry.fillRule = 'nonzero';
     }],
     ['duplicate keyframe id', value => {
       value.keyframes.push({
@@ -1694,6 +1749,47 @@ const middleLassoPoints = (top = 75, bottom = 125) => [
   { x: 70, y: top }
 ];
 
+const lTurnStrokePoints = () => [
+  ...Array.from({ length: 21 }, (_value, index) => ({
+    x: 50 + index * 5,
+    y: 50
+  })),
+  ...Array.from({ length: 20 }, (_value, index) => ({
+    x: 150,
+    y: 55 + index * 5
+  }))
+];
+
+const lTurnFillPolygon = () => [
+  { x: 135.2, y: 60.2 },
+  { x: 136.8, y: 60.2 },
+  { x: 136.8, y: 61.8 },
+  { x: 135.2, y: 61.8 }
+];
+
+const selfCrossingStrokePoints = () => {
+  const vertices = [
+    { x: 30, y: 30 },
+    { x: 170, y: 170 },
+    { x: 30, y: 170 },
+    { x: 170, y: 30 }
+  ];
+  const points = [];
+  for (let segmentIndex = 0; segmentIndex < vertices.length - 1; segmentIndex += 1) {
+    const start = vertices[segmentIndex];
+    const end = vertices[segmentIndex + 1];
+    for (let index = 0; index < 24; index += 1) {
+      if (segmentIndex > 0 && index === 0) continue;
+      const amount = index / 23;
+      points.push({
+        x: start.x + (end.x - start.x) * amount,
+        y: start.y + (end.y - start.y) * amount
+      });
+    }
+  }
+  return points;
+};
+
 function enableRealFabricLasso(harness, toolRevision = 1) {
   harness.runtime.updateDrawingTool({
     sessionId: 'real-fabric-session',
@@ -1845,6 +1941,344 @@ test('whole-stroke lasso selects two touched pressure strokes by original ID wit
     assert.equal(afterDiagnostics.metrics.saveAttemptCount, beforeDiagnostics.metrics.saveAttemptCount);
     assert.equal(harness.canvas.getObjects().length, originalIds.length);
     assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('whole-stroke lasso follows the rendered perfect-freehand L-turn fill', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '20';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(lTurnStrokePoints(), 7930);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const sourceObject = harness.canvas.getObjects()[0];
+    harness.canvas.renderAll();
+    const raster = harness.canvas.toCanvasElement();
+    const alpha = raster.getContext('2d').getImageData(135, 60, 1, 1).data[3];
+    assert.equal(alpha, 255, 'fixture must prove that Fabric renders this corner pixel');
+    enableRealFabricWholeStrokeLasso(harness);
+
+    harness.dragLasso(sourcePolygonInRealFabricScene(sourceObject, [
+      ...lTurnFillPolygon(),
+      lTurnFillPolygon()[0]
+    ]), 7931);
+
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [before.objects[0].id]
+    );
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [before.objects[0].id]
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('whole and partial lasso ignore a raw centerline-radius false positive outside the actual fill', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '20';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(lTurnStrokePoints(), 79310);
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    const sourceObject = harness.canvas.getObjects()[0];
+    const sourcePolygon = [
+      { x: 132.45, y: 38.95 },
+      { x: 133.55, y: 38.95 },
+      { x: 133.55, y: 40.05 },
+      { x: 132.45, y: 40.05 }
+    ];
+    assert.equal(strokeTouchesPolygon(
+      original.objects[0].sourcePoints,
+      sourcePolygon,
+      {
+        size: original.objects[0].style.size,
+        thinning: 0.65,
+        strokeCaps: original.objects[0].strokeCaps
+      }
+    ).hit, true, 'fixture must be a legacy raw-tube false positive');
+    const scenePolygon = sourcePolygonInRealFabricScene(sourceObject, [
+      ...sourcePolygon,
+      sourcePolygon[0]
+    ]);
+
+    enableRealFabricWholeStrokeLasso(harness);
+    harness.dragLasso(scenePolygon, 79311);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+
+    const beforePartial = captureSelectionStability(harness);
+    enableRealFabricLasso(harness, 2);
+    harness.dragLasso(scenePolygon, 79312);
+    assertSelectionStability(harness, beforePartial);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+    assert.equal(harness.canvas.getActiveObjects().length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('whole selection accepts but partial selection atomically rejects a short noncanonical record', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([
+      { x: 50, y: 100 },
+      { x: 50.4, y: 100 }
+    ], 79320);
+    const original = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    assert.equal(harness.sceneStore.replaceObjects({
+      replacements: [{
+        removeId: original.id,
+        addObjects: [{ ...original, pathData: `${original.pathData} ` }]
+      }],
+      selectedObjectIds: [],
+      kind: 'split-stroke'
+    }).applied, true);
+    const mismatched = harness.sceneStore.getActiveSceneSnapshot();
+    const beforeHistory = lassoHistoryState(harness.runtime);
+    const polygon = [
+      { x: 40, y: 90 },
+      { x: 60, y: 90 },
+      { x: 60, y: 110 },
+      { x: 40, y: 110 },
+      { x: 40, y: 90 }
+    ];
+
+    enableRealFabricWholeStrokeLasso(harness);
+    harness.dragLasso(polygon, 79321);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [original.id]
+    );
+
+    enableRealFabricLasso(harness, 2);
+    harness.dragLasso(polygon, 79322);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, mismatched.objects);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assert.deepEqual(lassoHistoryState(harness.runtime), beforeHistory);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial selection keeps a fully enclosed self-crossing stroke whole', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(selfCrossingStrokePoints(), 79325);
+    const original = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    const before = captureSelectionStability(harness);
+    enableRealFabricLasso(harness);
+
+    harness.dragLasso([
+      { x: 10, y: 10 },
+      { x: 190, y: 10 },
+      { x: 190, y: 190 },
+      { x: 10, y: 190 },
+      { x: 10, y: 10 }
+    ], 79326);
+
+    assertSelectionStability(harness, before);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [original.id]
+    );
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [original.id]
+    );
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial selection atomically rejects tied branches at a self-crossing stroke', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke(selfCrossingStrokePoints(), 79330);
+    const before = captureSelectionStability(harness);
+    enableRealFabricLasso(harness);
+
+    harness.dragLasso([
+      { x: 92, y: 92 },
+      { x: 108, y: 92 },
+      { x: 108, y: 108 },
+      { x: 92, y: 108 },
+      { x: 92, y: 92 }
+    ], 79331);
+
+    assertSelectionStability(harness, before);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('partial lasso stages the rendered perfect-freehand L-turn corner', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '20';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(lTurnStrokePoints(), 7932);
+    const original = harness.sceneStore.getActiveSceneSnapshot();
+    const sourceObject = harness.canvas.getObjects()[0];
+    enableRealFabricLasso(harness);
+
+    harness.dragLasso(sourcePolygonInRealFabricScene(sourceObject, [
+      ...lTurnFillPolygon(),
+      lTurnFillPolygon()[0]
+    ]), 7933);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      original.objects,
+      'staging must stay non-destructive'
+    );
+    const selectedProxy = harness.canvas.getActiveObject();
+    assert.ok(selectedProxy, 'the visible corner must stage a fragment proxy');
+    const selectedFragmentId = selectedProxy.__baeframeObjectId;
+    assert.equal(pendingLassoObjects(harness.canvas).length > 0, true);
+
+    harness.dragActiveSelectionBy(-60, 60, 7934);
+    await Promise.resolve();
+
+    const moved = harness.sceneStore.getActiveSceneSnapshot();
+    assert.equal(moved.objects.length, 2);
+    assert.equal(moved.objects.every(record => record.renderGeometry?.version === 1), true);
+    assert.equal(moved.objects.every(record => (
+      createStrokePathData(record.sourcePoints, {
+        size: record.style.size,
+        last: true,
+        alreadyNormalizedPressure: true,
+        start: { cap: record.strokeCaps.start },
+        end: { cap: record.strokeCaps.end }
+      }).pathData === record.pathData
+    )), true, 'raw paths must remain canonical provenance');
+    harness.canvas.renderAll();
+    const movedRaster = harness.canvas.toCanvasElement().getContext('2d');
+    assert.ok(
+      movedRaster.getImageData(135, 60, 1, 1).data[3] < 128,
+      'the moved corner must leave only boundary antialiasing at the original pixel'
+    );
+    assert.ok(
+      movedRaster.getImageData(75, 120, 1, 1).data[3] > 128,
+      'the clipped visible corner must move without being regenerated'
+    );
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'undo-l-turn-render-geometry',
+      action: 'undo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, original.objects);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'redo-l-turn-render-geometry',
+      action: 'redo'
+    }).applied, true);
+    assert.deepEqual(harness.sceneStore.getActiveSceneSnapshot().objects, moved.objects);
+
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+    const persistedObjects = structuredClone(moved.objects);
+    for (const record of persistedObjects) {
+      const baseTime = record.sourcePoints[0].time;
+      for (const point of record.sourcePoints) point.time -= baseTime;
+    }
+    const hydration = makePersistenceHydration({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'l-turn-render-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 200,
+      keyframes: [{
+        id: 'l-turn-render-frame',
+        frame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        mutationSequence: moved.mutationCount,
+        objects: persistedObjects
+      }]
+    });
+    const hydrated = harness.runtime.hydrateDrawingVideo(hydration);
+    assert.equal(hydrated.accepted, true, JSON.stringify(hydrated));
+    const exported = harness.runtime.exportDrawingVideo(makePersistenceExport({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'l-turn-render-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 200
+    }));
+    assert.equal(exported.accepted, true);
+    assert.deepEqual(exported.snapshot.scenes[0].objects, persistedObjects);
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 3,
+      enabled: true,
+      session: {
+        sessionId: 'real-fabric-session-reloaded',
+        stableVideoIdentity: 'real-fabric-video',
+        targetFrame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+        viewportTransform: { scale: 1, panX: 0, panY: 0 },
+        tool: 'select'
+      }
+    }).accepted, true);
+    harness.canvas.renderAll();
+    assert.ok(
+      harness.canvas.toCanvasElement().getContext('2d')
+        .getImageData(75, 120, 1, 1).data[3] > 128,
+      'saved render geometry must survive hydration'
+    );
+    const beforeRepeatedPartial = harness.sceneStore.getActiveSceneSnapshot();
+    const remainingFabricObject = harness.canvas.getObjects().find(
+      object => object.__baeframeObjectId !== selectedFragmentId
+    );
+    const repeatedRectangle = sourcePolygonInRealFabricScene(
+      remainingFabricObject,
+      [
+        { x: 145, y: 105 },
+        { x: 155, y: 105 },
+        { x: 155, y: 120 },
+        { x: 145, y: 120 }
+      ]
+    );
+    selectPartialRectangle(harness.root);
+    harness.dragLasso([
+      repeatedRectangle[0],
+      repeatedRectangle[2]
+    ], 7935);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      beforeRepeatedPartial.objects,
+      'repeated partial selection must remain staged after reload'
+    );
+    assert.equal(pendingLassoObjects(harness.canvas).length > 0, true);
   } finally {
     await harness.destroy();
   }
@@ -2554,20 +2988,45 @@ test('runtime respects flat stroke caps for whole and partial selection', async 
       { x: 50, y: 100 },
       { x: 60, y: 100 }
     ], 900);
-    const sourceObject = harness.canvas.getObjects()[0];
     const original = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    const flatStroke = createStrokePathData(original.sourcePoints, {
+      size: original.style.size,
+      last: true,
+      alreadyNormalizedPressure: true,
+      start: { cap: false },
+      end: { cap: false }
+    });
     assert.equal(harness.sceneStore.replaceObjects({
       replacements: [{
         removeId: original.id,
         addObjects: [{
           ...original,
+          sourcePoints: flatStroke.sourcePoints,
+          pathData: flatStroke.pathData,
           strokeCaps: { start: false, end: false }
         }]
       }],
       selectedObjectIds: [],
       kind: 'split-stroke'
     }).applied, true);
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: true,
+      session: {
+        sessionId: 'real-fabric-session',
+        stableVideoIdentity: 'real-fabric-video',
+        targetFrame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+        viewportTransform: { scale: 1, panX: 0, panY: 0 },
+        tool: 'brush'
+      }
+    }).accepted, true);
     const flatRecord = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    const sourceObject = harness.canvas.getObjects()[0];
     const end = flatRecord.sourcePoints.at(-1);
     const sceneLasso = sourcePolygonInRealFabricScene(sourceObject, [
       { x: end.x + 2, y: end.y - 1 },
@@ -2609,20 +3068,45 @@ test('runtime respects flat stroke caps when a short stroke cannot be split', as
       { x: 50, y: 100 },
       { x: 50.4, y: 100 }
     ], 903);
-    const sourceObject = harness.canvas.getObjects()[0];
     const original = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    const flatStroke = createStrokePathData(original.sourcePoints, {
+      size: original.style.size,
+      last: true,
+      alreadyNormalizedPressure: true,
+      start: { cap: false },
+      end: { cap: false }
+    });
     assert.equal(harness.sceneStore.replaceObjects({
       replacements: [{
         removeId: original.id,
         addObjects: [{
           ...original,
+          sourcePoints: flatStroke.sourcePoints,
+          pathData: flatStroke.pathData,
           strokeCaps: { start: false, end: false }
         }]
       }],
       selectedObjectIds: [],
       kind: 'split-stroke'
     }).applied, true);
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: true,
+      session: {
+        sessionId: 'real-fabric-session',
+        stableVideoIdentity: 'real-fabric-video',
+        targetFrame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+        viewportTransform: { scale: 1, panX: 0, panY: 0 },
+        tool: 'brush'
+      }
+    }).accepted, true);
     const flatRecord = harness.sceneStore.getActiveSceneSnapshot().objects[0];
+    const sourceObject = harness.canvas.getObjects()[0];
     assert.equal(strokeHasSplittableLength(flatRecord.sourcePoints), false);
     const end = flatRecord.sourcePoints.at(-1);
     const sceneLasso = sourcePolygonInRealFabricScene(sourceObject, [
@@ -2690,14 +3174,9 @@ test('partial pressure-chain fragments keep exact shapes through Move Delete Und
       { x: 120, y: 120 },
       { x: 80, y: 120 }
     ];
-    const expectedSplit = splitStrokePointsByPolygon(
+    const expectedSplit = splitStrokePointsBySourceIntervals(
       originalRecord.sourcePoints,
-      sourcePolygon,
-      {
-        size: originalRecord.style.size,
-        thinning: 0.65,
-        strokeCaps: originalRecord.strokeCaps
-      }
+      [[1.75, 2.25]]
     );
     assert.equal(expectedSplit.runs.length, 3);
     const expectedShapes = expectedSplit.runs.map((run, index) => {
@@ -4033,7 +4512,7 @@ test('pending lasso proxy construction failure restores the untouched original',
         const pathData = String(args[0] || '');
         const constructionCount = (constructionCountsByPath.get(pathData) || 0) + 1;
         constructionCountsByPath.set(pathData, constructionCount);
-        if (constructionCount === 2 && pathData.includes(' Q ')) {
+        if (constructionCount === 2 && args[1]?.stroke === null) {
           repeatedStrokePathCount += 1;
           if (repeatedStrokePathCount === 2) {
             throw new Error('synthetic pending proxy construction failure');
@@ -4266,18 +4745,18 @@ test('lasso commits an already moved stroke at its visible position without jump
       Number(fragment.minX.toFixed(1)),
       Number(fragment.maxX.toFixed(1))
     ]), [
-      [20, 68.5],
-      [68.5, 131.5],
-      [131.5, 180]
+      [20, 70],
+      [70, 130],
+      [130, 180]
     ]);
     assert.equal(fragments.every(fragment => fragment.ys.every(y => y === 100)), true);
     assert.deepEqual(fragments.map(fragment => [
       Number(fragment.sceneMinX.toFixed(1)),
       Number(fragment.sceneMaxX.toFixed(1))
     ]), [
-      [40, 88.5],
-      [98.5, 161.5],
-      [151.5, 200]
+      [40, 90],
+      [100, 160],
+      [150, 200]
     ]);
     assert.equal(fragments.every(
       fragment => fragment.sceneYs.every(y => Number(y.toFixed(1)) === 130)
@@ -7712,6 +8191,370 @@ test('partial split keeps separate pressure chains when a stroke revisits one po
       { pressure: 0.8, time: 0 }
     ]
   );
+});
+
+test('perfect-freehand smoothed centerline keeps monotonic source-position provenance', () => {
+  const sourcePoints = lTurnStrokePoints().map((point, index) => ({
+    ...point,
+    pressure: index % 3 === 0 ? 0.1 : 0.9,
+    time: index
+  }));
+  const budget = createGeometryBudget(250_000);
+  const result = createSmoothedCenterlineGeometry(sourcePoints, {
+    size: 20,
+    last: true,
+    budget
+  });
+
+  assert.equal(result.reason, null);
+  assert.ok(result.geometry.points.length > 2);
+  assert.equal(result.geometry.points[0].sourcePosition, 0);
+  assert.equal(result.geometry.points.at(-1).sourcePosition, 1);
+  assert.equal(result.geometry.points.every((point, index, points) => (
+    index === 0 || point.sourcePosition >= points[index - 1].sourcePosition
+  )), true);
+  assert.equal(budget.limitExceeded, false);
+});
+
+test('actual fill clipping reconstructs simple intersection and disjoint difference loops', () => {
+  const budget = createGeometryBudget(25_000);
+  const flattened = flattenFabricPath([
+    ['M', 0, 0],
+    ['L', 10, 0],
+    ['L', 10, 4],
+    ['L', 0, 4],
+    ['Z']
+  ], { budget, tolerance: 0.01 });
+  assert.equal(flattened.reason, null);
+  const fillQuery = createPathFillQuery(flattened.geometry, budget);
+  const polygonQuery = createPolygonEdgeIndex([
+    { x: 4, y: -1 },
+    { x: 6, y: -1 },
+    { x: 6, y: 5 },
+    { x: 4, y: 5 }
+  ], { budget });
+
+  const selected = clipSimplePathFill(fillQuery, polygonQuery, {
+    operation: 'intersection',
+    budget
+  });
+  const remaining = clipSimplePathFill(fillQuery, polygonQuery, {
+    operation: 'difference',
+    budget
+  });
+
+  assert.equal(selected.reason, null);
+  assert.equal(selected.components.length, 1);
+  assert.equal(selected.components[0].contours.length, 1);
+  assert.equal(remaining.reason, null);
+  assert.equal(remaining.components.length, 2);
+  assert.equal(remaining.components.every(component => component.contours.length === 1), true);
+});
+
+test('actual fill clipping handles both containment directions and nested evenodd islands', () => {
+  const rectangleCommands = [
+    ['M', 0, 0],
+    ['L', 10, 0],
+    ['L', 10, 10],
+    ['L', 0, 10],
+    ['Z']
+  ];
+  {
+    const budget = createGeometryBudget(250_000);
+    const flattened = flattenFabricPath(rectangleCommands, {
+      budget,
+      tolerance: 0.01,
+      fillRule: 'nonzero'
+    });
+    const fill = createPathFillQuery(flattened.geometry, budget);
+    const inner = createPolygonEdgeIndex([
+      { x: 2, y: 2 },
+      { x: 8, y: 2 },
+      { x: 8, y: 8 },
+      { x: 2, y: 8 }
+    ], { budget });
+    const intersection = clipSimplePathFill(fill, inner, {
+      operation: 'intersection',
+      budget
+    });
+    const difference = clipSimplePathFill(fill, inner, {
+      operation: 'difference',
+      budget
+    });
+    assert.equal(intersection.reason, null);
+    assert.deepEqual(intersection.components.map(component => component.contours.length), [1]);
+    assert.equal(difference.reason, null);
+    assert.deepEqual(difference.components.map(component => component.contours.length), [2]);
+  }
+  {
+    const budget = createGeometryBudget(250_000);
+    const flattened = flattenFabricPath(rectangleCommands, {
+      budget,
+      tolerance: 0.01,
+      fillRule: 'nonzero'
+    });
+    const fill = createPathFillQuery(flattened.geometry, budget);
+    const outer = createPolygonEdgeIndex([
+      { x: -2, y: -2 },
+      { x: 12, y: -2 },
+      { x: 12, y: 12 },
+      { x: -2, y: 12 }
+    ], { budget });
+    const intersection = clipSimplePathFill(fill, outer, {
+      operation: 'intersection',
+      budget
+    });
+    const difference = clipSimplePathFill(fill, outer, {
+      operation: 'difference',
+      budget
+    });
+    assert.equal(intersection.reason, null);
+    assert.deepEqual(intersection.components.map(component => component.contours.length), [1]);
+    assert.deepEqual(difference, { components: [], reason: null });
+  }
+  {
+    const budget = createGeometryBudget(250_000);
+    const nested = flattenFabricPath([
+      ['M', 0, 0], ['L', 20, 0], ['L', 20, 20], ['L', 0, 20], ['Z'],
+      ['M', 4, 4], ['L', 16, 4], ['L', 16, 16], ['L', 4, 16], ['Z'],
+      ['M', 8, 8], ['L', 12, 8], ['L', 12, 12], ['L', 8, 12], ['Z']
+    ], { budget, tolerance: 0.01, fillRule: 'evenodd' });
+    const fill = createPathFillQuery(nested.geometry, budget);
+    const outer = createPolygonEdgeIndex([
+      { x: -1, y: -1 },
+      { x: 21, y: -1 },
+      { x: 21, y: 21 },
+      { x: -1, y: 21 }
+    ], { budget });
+    const intersection = clipSimplePathFill(fill, outer, {
+      operation: 'intersection',
+      budget
+    });
+    assert.equal(intersection.reason, null);
+    assert.deepEqual(
+      intersection.components.map(component => component.contours.length).sort(),
+      [1, 2]
+    );
+  }
+});
+
+test('fill overlap ignores contours canceled by evenodd and nonzero rules', () => {
+  const selection = [
+    { x: 2, y: 2 },
+    { x: 8, y: 2 },
+    { x: 8, y: 8 },
+    { x: 2, y: 8 }
+  ];
+  const cases = [
+    {
+      fillRule: 'evenodd',
+      commands: [
+        ['M', 0, 0], ['L', 10, 0], ['L', 10, 10], ['L', 0, 10], ['Z'],
+        ['M', 0, 0], ['L', 10, 0], ['L', 10, 10], ['L', 0, 10], ['Z']
+      ]
+    },
+    {
+      fillRule: 'nonzero',
+      commands: [
+        ['M', 0, 0], ['L', 10, 0], ['L', 10, 10], ['L', 0, 10], ['Z'],
+        ['M', 0, 0], ['L', 0, 10], ['L', 10, 10], ['L', 10, 0], ['Z']
+      ]
+    }
+  ];
+  for (const fixture of cases) {
+    const budget = createGeometryBudget(250_000);
+    const flattened = flattenFabricPath(fixture.commands, {
+      budget,
+      tolerance: 0.01,
+      fillRule: fixture.fillRule
+    });
+    const fill = createPathFillQuery(flattened.geometry, budget);
+    const polygon = createPolygonEdgeIndex(selection, { budget });
+    assert.deepEqual(pathFillOverlapsPolygon(fill, polygon, budget), {
+      hit: false,
+      limitExceeded: false
+    });
+    assert.deepEqual(clipSimplePathFill(fill, polygon, {
+      operation: 'intersection',
+      budget
+    }), {
+      components: [],
+      reason: null
+    });
+  }
+});
+
+test('fill overlap distinguishes active and canceled portions of one collinear edge', () => {
+  const commands = [
+    ['M', 0, 0], ['L', 10, 0], ['L', 10, 10], ['L', 0, 10], ['Z'],
+    ['M', 8, 0], ['L', 10, 0], ['L', 10, 10], ['L', 8, 10], ['Z']
+  ];
+  const check = (centerX, expectedHit) => {
+    const budget = createGeometryBudget(250_000);
+    const flattened = flattenFabricPath(commands, {
+      budget,
+      tolerance: 0.01,
+      fillRule: 'evenodd'
+    });
+    const fill = createPathFillQuery(flattened.geometry, budget);
+    const polygon = createPolygonEdgeIndex([
+      { x: centerX - 0.1, y: -0.1 },
+      { x: centerX + 0.1, y: -0.1 },
+      { x: centerX + 0.1, y: 0.1 },
+      { x: centerX - 0.1, y: 0.1 }
+    ], { budget });
+    assert.deepEqual(pathFillOverlapsPolygon(fill, polygon, budget), {
+      hit: expectedHit,
+      limitExceeded: false
+    });
+  };
+  check(5, true);
+  check(9, false);
+});
+
+test('Fabric path flattening is strict immutable and atomically rejects malformed commands', () => {
+  const validBudget = createGeometryBudget(250_000);
+  const valid = flattenFabricPath([
+    ['M', 0, 0],
+    ['Q', 5, -5, 10, 0],
+    ['C', 12, 2, 12, 8, 10, 10],
+    ['L', 0, 10],
+    ['Z']
+  ], { budget: validBudget, tolerance: 0.01 });
+  assert.equal(valid.reason, null);
+  assert.equal(Object.isFrozen(valid.geometry), true);
+  assert.equal(Object.isFrozen(valid.geometry.contours), true);
+  assert.equal(Object.isFrozen(valid.geometry.edges[0]), true);
+  assert.equal(Object.isFrozen(valid.geometry.root), true);
+
+  const invalidPaths = [
+    [['m', 0, 0], ['L', 1, 0], ['L', 1, 1], ['Z']],
+    [['M', 0, 0, 1], ['L', 1, 0], ['L', 1, 1], ['Z']],
+    [['M', 0, 0], ['Q', 1, 1, 2], ['L', 1, 1], ['Z']],
+    [['M', 0, 0], ['L', Number.NaN, 0], ['L', 1, 1], ['Z']],
+    [['L', 1, 0], ['L', 1, 1], ['L', 0, 1], ['Z']]
+  ];
+  for (const commands of invalidPaths) {
+    const result = flattenFabricPath(commands, {
+      budget: createGeometryBudget(250_000),
+      tolerance: 0.01
+    });
+    assert.equal(result.geometry, null);
+    assert.equal(result.reason, 'selection-geometry-unavailable');
+  }
+});
+
+test('spatial contour validation accepts 1024 simple points and rejects a self-cross', () => {
+  const contour = Array.from({ length: 1024 }, (_value, index) => {
+    const angle = index * Math.PI * 2 / 1024;
+    return { x: Math.cos(angle) * 100, y: Math.sin(angle) * 100 };
+  });
+  const budget = createGeometryBudget(250_000);
+  assert.equal(validateSimpleContour(contour, budget), true);
+  assert.equal(budget.limitExceeded, false);
+  assert.ok(budget.operations < 250_000, String(budget.operations));
+  assert.equal(validateSimpleContour([
+    { x: 0, y: 0 },
+    { x: 10, y: 10 },
+    { x: 0, y: 10 },
+    { x: 10, y: 0 }
+  ], createGeometryBudget(250_000)), false);
+});
+
+test('fill cache logical cost makes cold and warm budgets identical and caps 20k edges', () => {
+  const circleCommands = count => {
+    const commands = [['M', 100, 0]];
+    for (let index = 1; index < count; index += 1) {
+      const angle = index * Math.PI * 2 / count;
+      commands.push(['L', Math.cos(angle) * 100, Math.sin(angle) * 100]);
+    }
+    commands.push(['Z']);
+    return commands;
+  };
+  const selection = [
+    { x: -2, y: -2 },
+    { x: 2, y: -2 },
+    { x: 2, y: 2 },
+    { x: -2, y: 2 }
+  ];
+  const coldBudget = createGeometryBudget(10_000_000);
+  const cold = flattenFabricPath(circleCommands(1000), {
+    budget: coldBudget,
+    tolerance: 0.01
+  });
+  const coldPolygon = createPolygonEdgeIndex(selection, { budget: coldBudget });
+  const coldHit = pathFillOverlapsPolygon(
+    createPathFillQuery(cold.geometry, coldBudget),
+    coldPolygon,
+    coldBudget
+  );
+  const coldOperations = coldBudget.operations;
+
+  const warmBudget = createGeometryBudget(10_000_000);
+  assert.equal(warmBudget.consume(cold.geometry.logicalBuildCost), true);
+  const warmPolygon = createPolygonEdgeIndex(selection, { budget: warmBudget });
+  const warmHit = pathFillOverlapsPolygon(
+    createPathFillQuery(cold.geometry, warmBudget),
+    warmPolygon,
+    warmBudget
+  );
+  assert.deepEqual(warmHit, coldHit);
+  assert.equal(warmBudget.operations, coldOperations);
+
+  const heavyBudget = createGeometryBudget(250_000);
+  const startedAt = performance.now();
+  const heavy = flattenFabricPath(circleCommands(20_000), {
+    budget: heavyBudget,
+    tolerance: 0.01
+  });
+  const elapsedMs = performance.now() - startedAt;
+  assert.equal(heavy.geometry, null);
+  assert.equal(heavy.reason, 'selection-complexity-limit-exceeded');
+  assert.equal(heavyBudget.limitExceeded, true);
+  assert.ok(heavyBudget.operations <= 250_000);
+  assert.ok(elapsedMs < 2000, `${elapsedMs.toFixed(1)}ms`);
+});
+
+test('source-position interval splitting preserves pressure chains at fragment cuts', () => {
+  const points = [
+    { x: 0, y: 0, pressure: 0, time: 0 },
+    { x: 0, y: 0, pressure: 1, time: 0 },
+    { x: 10, y: 0, pressure: 1, time: 1 },
+    { x: 20, y: 0, pressure: 0.2, time: 2 },
+    { x: 20, y: 0, pressure: 0.8, time: 2 },
+    { x: 30, y: 0, pressure: 0.8, time: 3 }
+  ];
+  const result = splitStrokePointsBySourceIntervals(points, [[1.5, 4.5]], {
+    budget: createGeometryBudget(1000)
+  });
+
+  assert.deepEqual(result.runs.map(run => run.kind), ['outside', 'inside', 'outside']);
+  assert.deepEqual(
+    result.runs.flatMap(run => run.points)
+      .filter(point => point.x === 0 || point.x === 20)
+      .map(point => point.pressure),
+    [0, 1, 0.2, 0.8]
+  );
+  assert.equal(result.inside[0][0].x, 5);
+  assert.equal(result.inside[0].at(-1).x, 25);
+});
+
+test('source-position interval splitting keeps duplicate source indexes and rejects malformed ranges', () => {
+  const points = [
+    { x: 0, y: 0, pressure: 1, time: 0 },
+    { x: 0, y: 0, pressure: 1, time: 1 },
+    { x: 10, y: 0, pressure: 1, time: 2 }
+  ];
+  const split = splitStrokePointsBySourceIntervals(points, [[0.5, 1.5]], {
+    budget: createGeometryBudget(1000)
+  });
+
+  assert.equal(split.inside[0][0].x, 0);
+  assert.equal(split.inside[0].at(-1).x, 5);
+  assert.equal(split.inside[0][0].time, 0.5);
+  assert.equal(splitStrokePointsBySourceIntervals(points, [[Number.NaN, 1]], {
+    budget: createGeometryBudget(1000)
+  }).geometryUnavailable, true);
 });
 
 test('round cap hit testing uses the actual trailing pressure sample', () => {

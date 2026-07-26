@@ -831,6 +831,11 @@ test('drawing persistence hydrate/export enforce fences, input state, and bounde
 test('drawing export rejects non-exact requests and returns only a validated cloned snapshot', async () => {
   let exportCalls = 0;
   const runtimeSnapshot = makePersistenceSnapshot(1);
+  runtimeSnapshot.scenes[0].objects[0].renderGeometry = {
+    version: 1,
+    pathData: 'M 1 1 L 9 1 L 9 9 L 1 9 Z',
+    fillRule: 'evenodd'
+  };
   const harness = createDrawingHostHarness({
     executeDrawing(script) {
       if (!script.includes('.exportDrawingVideo(')) return undefined;
@@ -920,6 +925,42 @@ test('drawing export rejects snapshot fence mismatches and every non-exact inner
     ['snapshot extra field', value => { value.secret = 'snapshot-secret'; }],
     ['scene extra field', value => { value.scenes[0].secret = 'scene-secret'; }],
     ['record extra field', value => { value.scenes[0].objects[0].secret = 'record-secret'; }],
+    ['render geometry extra field', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1 1 L 2 1 L 2 2 Z',
+        fillRule: 'evenodd',
+        secret: true
+      };
+    }],
+    ['render geometry fill rule', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1 1 L 2 1 L 2 2 Z',
+        fillRule: 'nonzero'
+      };
+    }],
+    ['render geometry curve command', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1 1 Q 2 0 3 1 L 3 3 L 1 3 Z',
+        fillRule: 'evenodd'
+      };
+    }],
+    ['render geometry trailing injection token', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1 1 L 2 1 L 2 2 Z <script>',
+        fillRule: 'evenodd'
+      };
+    }],
+    ['render geometry coordinate bound', value => {
+      value.scenes[0].objects[0].renderGeometry = {
+        version: 1,
+        pathData: 'M 1001000001 1 L 2 1 L 2 2 Z',
+        fillRule: 'evenodd'
+      };
+    }],
     ['style extra field', value => { value.scenes[0].objects[0].style.secret = true; }],
     ['point coordinate bound', value => {
       value.scenes[0].objects[0].sourcePoints[0].x = 1_000_000_001;

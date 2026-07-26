@@ -37,7 +37,7 @@ const RECORD_REQUIRED_KEYS = Object.freeze([
   'style',
   'transform'
 ]);
-const RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps']);
+const RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps', 'renderGeometry']);
 const STYLE_KEYS = Object.freeze(['color', 'size', 'opacity']);
 const TRANSFORM_KEYS = Object.freeze([
   'left',
@@ -53,6 +53,7 @@ const TRANSFORM_KEYS = Object.freeze([
 const POINT_REQUIRED_KEYS = Object.freeze(['x', 'y', 'pressure', 'time']);
 const POINT_OPTIONAL_KEYS = Object.freeze(['pointerType']);
 const CAPS_KEYS = Object.freeze(['start', 'end']);
+const RENDER_GEOMETRY_KEYS = Object.freeze(['version', 'pathData', 'fillRule']);
 const EVENT_KEYS = Object.freeze([
   'hostGeneration',
   'videoGeneration',
@@ -110,6 +111,8 @@ const MAX_POINT_COORDINATE = 1_000_000_000;
 const MAX_POINT_TIME = 1_000_000_000_000;
 const MAX_BRUSH_SIZE = 1_000_000;
 const MAX_TRANSFORM_MAGNITUDE = 1_000_000_000;
+const RENDER_GEOMETRY_NUMBER =
+  /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?$/i;
 const encoder = new TextEncoder();
 
 function isPlainRecord(value) {
@@ -140,6 +143,43 @@ function hasExactKeys(value, required, optional = []) {
 
 function isNonemptyString(value, maximum = 1024) {
   return typeof value === 'string' && value.length > 0 && value.length <= maximum;
+}
+
+function validateRenderGeometryPathData(pathData, maximumLength) {
+  if (typeof pathData !== 'string' ||
+      pathData.length === 0 ||
+      pathData.length > maximumLength ||
+      pathData.trim() !== pathData) {
+    return false;
+  }
+  const tokens = pathData.split(/\s+/);
+  const maximumCoordinate = MAX_POINT_COORDINATE + MAX_BRUSH_SIZE;
+  const coordinateAt = index => {
+    const token = tokens[index];
+    if (!RENDER_GEOMETRY_NUMBER.test(token || '')) return false;
+    const coordinate = Number(token);
+    return Number.isFinite(coordinate) && Math.abs(coordinate) <= maximumCoordinate;
+  };
+  let cursor = 0;
+  let contourCount = 0;
+  while (cursor < tokens.length) {
+    if (tokens[cursor] !== 'M' ||
+        !coordinateAt(cursor + 1) ||
+        !coordinateAt(cursor + 2)) {
+      return false;
+    }
+    cursor += 3;
+    let pointCount = 1;
+    while (tokens[cursor] === 'L') {
+      if (!coordinateAt(cursor + 1) || !coordinateAt(cursor + 2)) return false;
+      cursor += 3;
+      pointCount += 1;
+    }
+    if (pointCount < 3 || tokens[cursor] !== 'Z') return false;
+    cursor += 1;
+    contourCount += 1;
+  }
+  return contourCount > 0;
 }
 
 function isSafeCount(value) {
@@ -217,6 +257,16 @@ function validateRecord(value, limits) {
       (!hasExactKeys(value.strokeCaps, CAPS_KEYS) ||
        typeof value.strokeCaps.start !== 'boolean' ||
        typeof value.strokeCaps.end !== 'boolean')) {
+    return false;
+  }
+  if (value.renderGeometry !== undefined &&
+      (!hasExactKeys(value.renderGeometry, RENDER_GEOMETRY_KEYS) ||
+       value.renderGeometry.version !== 1 ||
+       value.renderGeometry.fillRule !== 'evenodd' ||
+       !validateRenderGeometryPathData(
+         value.renderGeometry.pathData,
+         Math.min(32768, limits.maxDocumentBytes)
+       ))) {
     return false;
   }
   return true;

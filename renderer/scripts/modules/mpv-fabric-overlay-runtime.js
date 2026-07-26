@@ -5,8 +5,8 @@ const {
 } = require('./fabric-drawing-pilot-metrics.js');
 const {
   strokeHasSplittableLength,
-  strokeTouchesPolygon,
-  splitStrokePointsByPolygon
+  splitStrokePointsByPolygon,
+  splitStrokePointsBySourceIntervals
 } = require('./drawing-v3/stroke-splitter.js');
 const {
   polygonHasArea,
@@ -17,11 +17,26 @@ const {
   simplifyClosedPolygon
 } = require('./drawing-v3/lasso-geometry.js');
 const {
+  clipSimplePathFill,
+  contourPathData,
+  centerlineIntervalsInsideComponent,
+  flattenFabricPath,
+  createPathFillQuery,
+  pathFillOverlapsPolygon,
+  createSmoothedCenterlineGeometry,
+  projectRetainedBoundaryToSourceIntervals,
+  sourceIntervalsToIndexIntervals,
+  validateSimpleContour
+} = require('./drawing-v3/stroke-fill-geometry.js');
+const {
   createDrawingCommandHistory
 } = require('./drawing-v3/drawing-command-history.js');
 const {
   createDrawingEngineAdapter
 } = require('./drawing-v3/drawing-engine-adapter.js');
+const {
+  validateDrawingRenderGeometry
+} = require('../../../shared/drawing-render-geometry.js');
 
 const SCENE_KEY_SEPARATOR = '\u0000';
 const DEFAULT_MAX_VIDEOS = 10;
@@ -30,6 +45,8 @@ const DEFAULT_MAX_ACTIONS = 2048;
 const MAX_STROKE_POINTS = 20000;
 const MAX_LASSO_POINTS = 1024;
 const DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS = 250_000;
+const MAX_STROKE_GEOMETRY_CACHE_ENTRIES = 512;
+const MAX_STROKE_GEOMETRY_CACHE_WEIGHT = 250_000;
 const DEFAULT_MAX_OBJECTS = 10000;
 const MAX_PERSISTED_KEYFRAMES = 10000;
 const MAX_PERSISTED_OBJECTS_TOTAL = 100000;
@@ -136,11 +153,16 @@ const PERSISTENCE_RECORD_REQUIRED_KEYS = Object.freeze([
   'style',
   'transform'
 ]);
-const PERSISTENCE_RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps']);
+const PERSISTENCE_RECORD_OPTIONAL_KEYS = Object.freeze(['strokeCaps', 'renderGeometry']);
 const PERSISTENCE_STYLE_KEYS = Object.freeze(['color', 'size', 'opacity']);
 const PERSISTENCE_POINT_REQUIRED_KEYS = Object.freeze(['x', 'y', 'pressure', 'time']);
 const PERSISTENCE_POINT_OPTIONAL_KEYS = Object.freeze(['pointerType']);
 const PERSISTENCE_CAPS_KEYS = Object.freeze(['start', 'end']);
+const PERSISTENCE_RENDER_GEOMETRY_KEYS = Object.freeze([
+  'version',
+  'pathData',
+  'fillRule'
+]);
 const PERSISTENCE_POINTER_TYPES = new Set(['mouse', 'pen', 'touch']);
 const PERSISTENCE_HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const persistenceUtf8Encoder = new TextEncoder();
@@ -433,6 +455,14 @@ function validatePersistedRecord(record, maxDocumentBytes) {
       (!hasExactKeys(record.strokeCaps, PERSISTENCE_CAPS_KEYS) ||
        typeof record.strokeCaps.start !== 'boolean' ||
        typeof record.strokeCaps.end !== 'boolean')) {
+    return false;
+  }
+  if (record.renderGeometry !== undefined &&
+      (!hasExactKeys(record.renderGeometry, PERSISTENCE_RENDER_GEOMETRY_KEYS) ||
+       !validateDrawingRenderGeometry(record.renderGeometry, {
+         maxPathLength: Math.min(MAX_PERSISTENCE_STRING_LENGTH, maxDocumentBytes),
+         maxCoordinate: MAX_PERSISTED_POINT_COORDINATE + MAX_PERSISTED_BRUSH_SIZE
+       }))) {
     return false;
   }
   return true;
@@ -1991,6 +2021,8 @@ function createFabricOverlayRuntime(options = {}) {
   let lastError = null;
   let appliedSourceWidth = null;
   let appliedSourceHeight = null;
+  const strokeFillGeometryCache = new Map();
+  let strokeFillGeometryCacheWeight = 0;
 
   function resolveFabric() {
     if (!fabricModule) fabricModule = options.fabric || require('fabric');
@@ -2515,8 +2547,9 @@ function createFabricOverlayRuntime(options = {}) {
 
   function makeFabricPath(record, transient = false) {
     const { Path } = resolveFabric();
-    const path = new Path(record.pathData, {
+    const path = new Path(record.renderGeometry?.pathData || record.pathData, {
       fill: record.style?.color || DEFAULT_BRUSH_STYLE.color,
+      fillRule: record.renderGeometry?.fillRule || 'nonzero',
       opacity: normalizePathOpacity(record.style?.opacity),
       stroke: null,
       strokeWidth: 0,
@@ -2554,6 +2587,8 @@ function createFabricOverlayRuntime(options = {}) {
 
   function renderActiveScene() {
     if (!fabricCanvas) return;
+    strokeFillGeometryCache.clear();
+    strokeFillGeometryCacheWeight = 0;
     const snapshot = sceneStore.getActiveSceneSnapshot();
     fabricCanvas.clear();
     for (const record of snapshot?.objects || []) fabricCanvas.add(makeFabricPath(record));
@@ -2823,8 +2858,226 @@ function createFabricOverlayRuntime(options = {}) {
     }
     return {
       query: createPolygonEdgeIndex(sourcePolygon, { budget }),
+      maximumScale: Math.sqrt(maximumSingularValueSquared),
       reason: budget.limitExceeded ? 'selection-complexity-limit-exceeded' : null
     };
+  }
+
+  function strokeGeometryCacheEntryWeight(entry) {
+    const fillEdges = entry?.geometry?.edges?.length || 0;
+    const fillPoints = (entry?.geometry?.contours || []).reduce(
+      (count, contour) => count + contour.length,
+      0
+    );
+    const centerlinePoints = entry?.centerline?.points?.length || 0;
+    const centerlineSegments = entry?.centerline?.segments?.length || 0;
+    const sourceSignatureValues = entry?.centerlineSourceGeometry?.length || 0;
+    return Math.max(
+      1,
+      fillEdges * 3 +
+      fillPoints +
+      centerlineSegments * 3 +
+      centerlinePoints +
+      sourceSignatureValues
+    );
+  }
+
+  function deleteStrokeGeometryCacheEntry(id) {
+    const existing = strokeFillGeometryCache.get(id);
+    if (!existing) return false;
+    strokeFillGeometryCache.delete(id);
+    strokeFillGeometryCacheWeight = Math.max(
+      0,
+      strokeFillGeometryCacheWeight - strokeGeometryCacheEntryWeight(existing)
+    );
+    return true;
+  }
+
+  function storeStrokeGeometryCacheEntry(id, entry) {
+    deleteStrokeGeometryCacheEntry(id);
+    strokeFillGeometryCache.set(id, entry);
+    strokeFillGeometryCacheWeight += strokeGeometryCacheEntryWeight(entry);
+    while (strokeFillGeometryCache.size > MAX_STROKE_GEOMETRY_CACHE_ENTRIES ||
+        strokeFillGeometryCacheWeight > MAX_STROKE_GEOMETRY_CACHE_WEIGHT) {
+      deleteStrokeGeometryCacheEntry(strokeFillGeometryCache.keys().next().value);
+    }
+  }
+
+  function touchStrokeGeometryCacheEntry(id, entry) {
+    if (!strokeFillGeometryCache.has(id)) return;
+    strokeFillGeometryCache.delete(id);
+    strokeFillGeometryCache.set(id, entry);
+  }
+
+  function createStoredPathFillQuery(record, object, sourceSelection, budget) {
+    if (!record?.id || !object || !Array.isArray(object.path)) {
+      return { query: null, reason: 'selection-geometry-unavailable' };
+    }
+    const maximumScale = Math.max(1e-9, finiteNumber(sourceSelection?.maximumScale, 1));
+    const requiredTolerance = Math.max(
+      Number.EPSILON,
+      Math.min(0.25, 0.25 / maximumScale)
+    );
+    const displayPathData = record.renderGeometry?.pathData || record.pathData;
+    let cached = strokeFillGeometryCache.get(record.id);
+    if (!cached ||
+        cached.displayPathData !== displayPathData ||
+        cached.pathCommands !== object.path ||
+        cached.fillRule !== object.fillRule ||
+        !Object.is(cached.tolerance, requiredTolerance)) {
+      const flattened = flattenFabricPath(object.path, {
+        tolerance: requiredTolerance,
+        fillRule: object.fillRule,
+        budget
+      });
+      if (!flattened.geometry) {
+        deleteStrokeGeometryCacheEntry(record.id);
+        return { query: null, reason: flattened.reason };
+      }
+      cached = {
+        displayPathData,
+        pathCommands: object.path,
+        fillRule: object.fillRule,
+        tolerance: flattened.geometry.tolerance,
+        geometry: flattened.geometry,
+        centerlinePathData: null,
+        centerlineSize: null,
+        centerlineSourceGeometry: null,
+        centerline: null
+      };
+      storeStrokeGeometryCacheEntry(record.id, cached);
+    } else {
+      if (!budget.consume(cached.geometry.logicalBuildCost || 0)) {
+        return { query: null, reason: 'selection-complexity-limit-exceeded' };
+      }
+      touchStrokeGeometryCacheEntry(record.id, cached);
+    }
+    const query = createPathFillQuery(cached.geometry, budget);
+    return {
+      query,
+      reason: query
+        ? null
+        : budget.limitExceeded
+          ? 'selection-complexity-limit-exceeded'
+          : 'selection-geometry-unavailable'
+    };
+  }
+
+  function canonicalStrokePathMatches(record, budget) {
+    if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return false;
+    const logicalCost = record.sourcePoints.length * 2 +
+      Math.ceil(record.pathData.length / 8);
+    if (!budget?.consume(logicalCost)) return false;
+    let canonical;
+    try {
+      canonical = strokePathFactory(record.sourcePoints, {
+        size: record.style?.size,
+        last: true,
+        alreadyNormalizedPressure: true,
+        start: { cap: record.strokeCaps?.start !== false },
+        end: { cap: record.strokeCaps?.end !== false }
+      });
+    } catch (_error) {
+      return false;
+    }
+    return canonical?.pathData === record.pathData;
+  }
+
+  function sourceGeometryMatches(signature, sourcePoints) {
+    if (!Array.isArray(signature) || signature.length !== sourcePoints.length * 3) return false;
+    for (let index = 0; index < sourcePoints.length; index += 1) {
+      const point = sourcePoints[index];
+      const offset = index * 3;
+      if (!Object.is(signature[offset], point.x) ||
+          !Object.is(signature[offset + 1], point.y) ||
+          !Object.is(signature[offset + 2], point.pressure)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function captureSourceGeometry(sourcePoints) {
+    return Object.freeze(sourcePoints.flatMap(point => [
+      point.x,
+      point.y,
+      point.pressure
+    ]));
+  }
+
+  function createStoredCenterline(record, budget) {
+    const cached = strokeFillGeometryCache.get(record.id);
+    if (!cached) return { geometry: null, reason: 'selection-geometry-unavailable' };
+    if (!budget.consume(record.sourcePoints.length)) {
+      return { geometry: null, reason: 'selection-complexity-limit-exceeded' };
+    }
+    const centerlineSize = Number(record.style?.size);
+    if (cached.centerline &&
+        cached.centerlinePathData === record.pathData &&
+        Object.is(cached.centerlineSize, centerlineSize) &&
+        sourceGeometryMatches(cached.centerlineSourceGeometry, record.sourcePoints)) {
+      if (!budget.consume(cached.centerline.logicalBuildCost || 0)) {
+        return { geometry: null, reason: 'selection-complexity-limit-exceeded' };
+      }
+      return { geometry: cached.centerline, reason: null };
+    }
+    const built = createSmoothedCenterlineGeometry(record.sourcePoints, {
+      size: record.style?.size,
+      streamline: 0.5,
+      last: true,
+      budget
+    });
+    if (!built.geometry) return built;
+    deleteStrokeGeometryCacheEntry(record.id);
+    cached.centerlinePathData = record.pathData;
+    cached.centerlineSize = centerlineSize;
+    cached.centerlineSourceGeometry = captureSourceGeometry(record.sourcePoints);
+    cached.centerline = built.geometry;
+    storeStrokeGeometryCacheEntry(record.id, cached);
+    return built;
+  }
+
+  function componentBoundarySegments(component) {
+    return (component?.contours || []).flatMap(contour => contour.map((start, index) => ({
+      start,
+      end: contour[(index + 1) % contour.length]
+    })));
+  }
+
+  function projectFillComponentToIndexInterval(
+    component,
+    centerline,
+    budget,
+    options = {}
+  ) {
+    const onCenterline = centerlineIntervalsInsideComponent(component, centerline, {
+      budget
+    });
+    if (onCenterline.reason) return { interval: null, reason: onCenterline.reason };
+    let sourceIntervals = onCenterline.intervals;
+    if (sourceIntervals.length === 0) {
+      const projected = projectRetainedBoundaryToSourceIntervals(
+        componentBoundarySegments(component),
+        centerline,
+        { budget, distanceTolerance: 0.25 }
+      );
+      if (projected.reason) return { interval: null, reason: projected.reason };
+      sourceIntervals = projected.intervals;
+    }
+    if (sourceIntervals.length > 1 && options.allowContinuousSpan === true) {
+      sourceIntervals = [[
+        sourceIntervals[0][0],
+        sourceIntervals.at(-1)[1]
+      ]];
+    }
+    if (sourceIntervals.length !== 1) {
+      return { interval: null, reason: 'selection-geometry-unavailable' };
+    }
+    const intervals = sourceIntervalsToIndexIntervals(sourceIntervals, centerline);
+    if (!Array.isArray(intervals) || intervals.length !== 1) {
+      return { interval: null, reason: 'selection-geometry-unavailable' };
+    }
+    return { interval: intervals[0], reason: null };
   }
 
   function applySourceTransformToFragment(path, sourceObject) {
@@ -2860,7 +3113,14 @@ function createFabricOverlayRuntime(options = {}) {
     return true;
   }
 
-  function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null) {
+  function createStrokeFragment(
+    record,
+    points,
+    selected,
+    caps = {},
+    sourceObject = null,
+    renderGeometry = null
+  ) {
     if (!Array.isArray(points) || points.length < 2) return null;
     let strokeData;
     try {
@@ -2890,6 +3150,7 @@ function createFabricOverlayRuntime(options = {}) {
         end: caps.end !== false
       }
     };
+    if (renderGeometry) fragment.renderGeometry = clonePlain(renderGeometry);
     const path = makeFabricPath(fragment);
     if (!applySourceTransformToFragment(path, sourceObject)) return null;
     fragment.transform = captureTransform(path);
@@ -3260,16 +3521,24 @@ function createFabricOverlayRuntime(options = {}) {
           selectedObjectIds: []
         };
       }
-      const splitOptions = {
-        size: record.style?.size,
-        thinning: 0.65,
-        strokeCaps: record.strokeCaps,
-        budget: geometryBudget
-      };
-      const touch = strokeTouchesPolygon(
-        record.sourcePoints,
+      const fillSelection = createStoredPathFillQuery(
+        record,
+        object,
+        sourceSelection,
+        geometryBudget
+      );
+      if (!fillSelection.query || fillSelection.reason) {
+        activateObjectIds([]);
+        return {
+          applied: false,
+          reason: fillSelection.reason || 'selection-geometry-unavailable',
+          selectedObjectIds: []
+        };
+      }
+      const touch = pathFillOverlapsPolygon(
+        fillSelection.query,
         sourceSelection.query,
-        splitOptions
+        geometryBudget
       );
       if (touch.limitExceeded) {
         activateObjectIds([]);
@@ -3298,13 +3567,21 @@ function createFabricOverlayRuntime(options = {}) {
         .filter(object => object.__baeframeObjectId)
         .map(object => [object.__baeframeObjectId, object])
     );
-    const replacements = [];
+    const replacementPlans = [];
     const selectedPersistedIds = new Set();
-    const selectedFragmentIds = new Set();
     const polygonBounds = boundsForPoints(polygon);
     const sceneLimits = sceneStore.getDiagnostics();
     const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
     let accumulatedFragments = 0;
+    const fail = reason => {
+      activateObjectIds([]);
+      return { applied: false, reason, selectedObjectIds: [] };
+    };
+    if (!validateSimpleContour(polygon, geometryBudget)) {
+      return fail(geometryBudget.limitExceeded
+        ? 'selection-complexity-limit-exceeded'
+        : 'selection-geometry-unavailable');
+    }
 
     for (const record of snapshot?.objects || []) {
       if (record.type !== 'stroke') continue;
@@ -3315,85 +3592,172 @@ function createFabricOverlayRuntime(options = {}) {
       }
       const sourceSelection = createSourcePolygonQuery(object, polygon, geometryBudget);
       if (!sourceSelection.query || sourceSelection.reason) {
-        activateObjectIds([]);
-        return {
-          applied: false,
-          reason: sourceSelection.reason || 'selection-geometry-unavailable',
-          selectedObjectIds: []
-        };
+        return fail(sourceSelection.reason || 'selection-geometry-unavailable');
       }
-      const splitOptions = {
-        size: record.style?.size,
-        thinning: 0.65,
-        strokeCaps: record.strokeCaps,
-        maxRuns: Math.max(1, maxLassoFragments - accumulatedFragments + 1),
-        budget: geometryBudget
-      };
-      if (!strokeHasSplittableLength(record.sourcePoints)) {
-        const touch = strokeTouchesPolygon(
-          record.sourcePoints,
-          sourceSelection.query,
-          splitOptions
-        );
-        if (touch.limitExceeded) {
-          activateObjectIds([]);
-          return {
-            applied: false,
-            reason: 'selection-complexity-limit-exceeded',
-            selectedObjectIds: []
-          };
-        }
-        if (touch.hit) selectedPersistedIds.add(record.id);
-        continue;
-      }
-      const split = splitStrokePointsByPolygon(
-        record.sourcePoints,
-        sourceSelection.query,
-        splitOptions
+      const fillSelection = createStoredPathFillQuery(
+        record,
+        object,
+        sourceSelection,
+        geometryBudget
       );
-      if (split.limitExceeded) {
-        activateObjectIds([]);
-        return {
-          applied: false,
-          reason: split.limitReason === 'operations'
-            ? 'selection-complexity-limit-exceeded'
-            : 'lasso-fragment-limit-exceeded',
-          selectedObjectIds: []
-        };
+      if (!fillSelection.query || fillSelection.reason) {
+        return fail(fillSelection.reason || 'selection-geometry-unavailable');
       }
-      if (split.inside.length === 0) continue;
-      if (split.outside.length === 0) {
+      const touch = pathFillOverlapsPolygon(
+        fillSelection.query,
+        sourceSelection.query,
+        geometryBudget
+      );
+      if (touch.limitExceeded) return fail('selection-complexity-limit-exceeded');
+      if (!touch.hit) continue;
+      if (!canonicalStrokePathMatches(record, geometryBudget)) {
+        return fail(geometryBudget.limitExceeded
+          ? 'selection-complexity-limit-exceeded'
+          : 'selection-geometry-unavailable');
+      }
+      if (!strokeHasSplittableLength(record.sourcePoints)) {
         selectedPersistedIds.add(record.id);
         continue;
       }
-      accumulatedFragments += split.runs.length;
-      const projectedObjectCount = snapshot.objects.length - (replacements.length + 1) + accumulatedFragments;
-      if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
-        activateObjectIds([]);
-        return { applied: false, reason: 'lasso-fragment-limit-exceeded', selectedObjectIds: [] };
+      const remainingClip = clipSimplePathFill(
+        fillSelection.query,
+        sourceSelection.query,
+        {
+          operation: 'difference',
+          budget: geometryBudget,
+          polygonValidated: true
+        }
+      );
+      if (remainingClip.reason) return fail(remainingClip.reason);
+      if (remainingClip.components.length === 0) {
+        selectedPersistedIds.add(record.id);
+        continue;
       }
+      const selectedClip = clipSimplePathFill(
+        fillSelection.query,
+        sourceSelection.query,
+        {
+          operation: 'intersection',
+          budget: geometryBudget,
+          polygonValidated: true
+        }
+      );
+      if (selectedClip.reason) return fail(selectedClip.reason);
+      if (selectedClip.components.length === 0) continue;
+      const centerline = createStoredCenterline(record, geometryBudget);
+      if (!centerline.geometry || centerline.reason) {
+        return fail(centerline.reason || 'selection-geometry-unavailable');
+      }
+      const componentPlans = [];
+      for (const group of [
+        { selected: false, components: remainingClip.components },
+        { selected: true, components: selectedClip.components }
+      ]) {
+        for (const component of group.components) {
+          const projected = projectFillComponentToIndexInterval(
+            component,
+            centerline.geometry,
+            geometryBudget,
+            { allowContinuousSpan: group.selected === false }
+          );
+          if (!projected.interval || projected.reason) {
+            return fail(projected.reason || 'selection-geometry-unavailable');
+          }
+          const sliced = splitStrokePointsBySourceIntervals(
+            record.sourcePoints,
+            [projected.interval],
+            {
+              budget: geometryBudget,
+              maxRuns: 3
+            }
+          );
+          if (sliced.limitExceeded) {
+            return fail(sliced.limitReason === 'operations'
+              ? 'selection-complexity-limit-exceeded'
+              : 'lasso-fragment-limit-exceeded');
+          }
+          if (sliced.geometryUnavailable ||
+              sliced.inside.length !== 1 ||
+              sliced.inside[0].length < 2) {
+            return fail('selection-geometry-unavailable');
+          }
+          const renderPathData = contourPathData(component.contours);
+          if (!renderPathData ||
+              renderPathData.length > MAX_PERSISTENCE_STRING_LENGTH) {
+            return fail('selection-geometry-unavailable');
+          }
+          const originalCaps = record.strokeCaps || { start: true, end: true };
+          componentPlans.push({
+            selected: group.selected,
+            points: sliced.inside[0],
+            interval: projected.interval,
+            caps: {
+              start: projected.interval[0] <= 1e-7
+                ? originalCaps.start !== false
+                : false,
+              end: projected.interval[1] >= record.sourcePoints.length - 1 - 1e-7
+                ? originalCaps.end !== false
+                : false
+            },
+            renderGeometry: {
+              version: 1,
+              pathData: renderPathData,
+              fillRule: 'evenodd'
+            }
+          });
+        }
+      }
+      const totalPlannedPoints = componentPlans.reduce(
+        (count, plan) => count + plan.points.length,
+        0
+      );
+      if (totalPlannedPoints >
+          record.sourcePoints.length * 2 + componentPlans.length * 2) {
+        return fail('selection-geometry-unavailable');
+      }
+      componentPlans.sort((left, right) => (
+        left.interval[0] - right.interval[0] ||
+        Number(left.selected) - Number(right.selected) ||
+        left.interval[1] - right.interval[1]
+      ));
+      accumulatedFragments += componentPlans.length;
+      const projectedObjectCount = snapshot.objects.length -
+        (replacementPlans.length + 1) +
+        accumulatedFragments;
+      if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
+        return fail('lasso-fragment-limit-exceeded');
+      }
+      replacementPlans.push({ record, object, componentPlans });
+    }
+
+    const replacements = [];
+    const selectedFragmentIds = new Set();
+    for (const replacementPlan of replacementPlans) {
       const addObjects = [];
       let fragmentBuildFailed = false;
-      const originalCaps = record.strokeCaps || { start: true, end: true };
-      for (let runIndex = 0; runIndex < split.runs.length; runIndex += 1) {
-        const run = split.runs[runIndex];
-        const selected = run.kind === 'inside';
-        const fragment = createStrokeFragment(record, run.points, selected, {
-          start: runIndex === 0 ? originalCaps.start !== false : false,
-          end: runIndex === split.runs.length - 1 ? originalCaps.end !== false : false
-        }, object);
+      for (const plan of replacementPlan.componentPlans) {
+        const fragment = createStrokeFragment(
+          replacementPlan.record,
+          plan.points,
+          plan.selected,
+          plan.caps,
+          replacementPlan.object,
+          plan.renderGeometry
+        );
         if (!fragment) {
           fragmentBuildFailed = true;
           break;
         }
         addObjects.push(fragment);
-        if (selected) selectedFragmentIds.add(fragment.id);
+        if (plan.selected) selectedFragmentIds.add(fragment.id);
       }
       if (fragmentBuildFailed) {
-        activateObjectIds([]);
-        return { applied: false, reason: 'fragment-build-failed', selectedObjectIds: [] };
+        return fail('fragment-build-failed');
       }
-      replacements.push({ removeId: record.id, addObjects });
+      replacements.push({
+        removeId: replacementPlan.record.id,
+        addObjects
+      });
     }
 
     const selectedObjectIds = [...selectedPersistedIds, ...selectedFragmentIds];
@@ -4437,6 +4801,8 @@ function createFabricOverlayRuntime(options = {}) {
     if (destroyed) return { destroyed: true, reused: true };
     disableInput();
     releaseSurfaceResources();
+    strokeFillGeometryCache.clear();
+    strokeFillGeometryCacheWeight = 0;
     sceneStore.destroy();
     try {
       drawingV3Adapter?.destroy();

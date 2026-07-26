@@ -20,6 +20,8 @@ function finiteNumber(value, fallback = 0) {
 
 function interpolateSample(start, end, amount) {
   const t = Math.min(1, Math.max(0, finiteNumber(amount)));
+  if (t <= 0) return { ...start };
+  if (t >= 1) return { ...end };
   const sample = {
     ...start,
     x: finiteNumber(start?.x) + (finiteNumber(end?.x) - finiteNumber(start?.x)) * t,
@@ -28,7 +30,6 @@ function interpolateSample(start, end, amount) {
       (finiteNumber(end?.pressure, 0.5) - finiteNumber(start?.pressure, 0.5)) * t,
     time: finiteNumber(start?.time) + (finiteNumber(end?.time) - finiteNumber(start?.time)) * t
   };
-  if (t >= 1) return { ...end, ...sample };
   return sample;
 }
 
@@ -759,11 +760,150 @@ function splitStrokePointsByPolygon(points = [], polygon = [], options = {}) {
   return result;
 }
 
+function splitStrokePointsBySourceIntervals(points = [], intervals = [], options = {}) {
+  const sourcePoints = Array.isArray(points) ? [...points] : [];
+  const maximumPosition = Math.max(0, sourcePoints.length - 1);
+  const budget = options.budget || createGeometryBudget(options.maxOperations);
+  const unavailable = () => ({
+    inside: [],
+    outside: sourcePoints.length > 0 ? [sourcePoints] : [],
+    runs: sourcePoints.length > 0
+      ? [{ kind: 'outside', points: sourcePoints }]
+      : [],
+    limitExceeded: false,
+    geometryUnavailable: true
+  });
+  if (!Array.isArray(intervals)) return unavailable();
+  const normalizedIntervals = [];
+  for (const interval of intervals) {
+    if (!budget.consume() || !Array.isArray(interval) || interval.length !== 2) {
+      return budget.limitExceeded
+        ? { ...unavailable(), limitExceeded: true, limitReason: 'operations' }
+        : unavailable();
+    }
+    const start = Number(interval[0]);
+    const end = Number(interval[1]);
+    if (!Number.isFinite(start) || !Number.isFinite(end) ||
+        start < -PARAMETER_EPSILON ||
+        end > maximumPosition + PARAMETER_EPSILON ||
+        start > end + PARAMETER_EPSILON) {
+      return unavailable();
+    }
+    if (end - start > PARAMETER_EPSILON) {
+      normalizedIntervals.push([
+        Math.max(0, start),
+        Math.min(maximumPosition, end)
+      ]);
+    }
+  }
+  normalizedIntervals.sort((left, right) => left[0] - right[0]);
+  const mergedIntervals = [];
+  for (const interval of normalizedIntervals) {
+    const previous = mergedIntervals.at(-1);
+    if (!previous || interval[0] > previous[1] + PARAMETER_EPSILON) {
+      mergedIntervals.push([...interval]);
+    } else {
+      previous[1] = Math.max(previous[1], interval[1]);
+    }
+  }
+  if (sourcePoints.length < 2 || mergedIntervals.length === 0) {
+    const outside = sourcePoints.length > 0 ? [sourcePoints] : [];
+    return {
+      inside: [],
+      outside,
+      runs: outside.map(run => ({ kind: 'outside', points: run })),
+      limitExceeded: false
+    };
+  }
+
+  const maxRuns = Number.isInteger(Number(options.maxRuns)) && Number(options.maxRuns) > 0
+    ? Number(options.maxRuns)
+    : Number.POSITIVE_INFINITY;
+  const result = { inside: [], outside: [], runs: [], limitExceeded: false };
+  let currentKind = null;
+  let currentRun = null;
+  let limitReason = null;
+  const boundaries = mergedIntervals.flat();
+  let boundaryCursor = 0;
+  let membershipCursor = 0;
+  const startRun = (kind, point) => {
+    if (result.runs.length >= maxRuns) {
+      result.limitExceeded = true;
+      limitReason = 'runs';
+      return false;
+    }
+    currentKind = kind;
+    currentRun = [point];
+    result.runs.push({ kind, points: currentRun });
+    return true;
+  };
+
+  outer: for (let index = 0; index < sourcePoints.length - 1; index += 1) {
+    if (!budget.consume()) {
+      result.limitExceeded = true;
+      limitReason = 'operations';
+      break;
+    }
+    const cuts = [0, 1];
+    while (boundaryCursor < boundaries.length &&
+        boundaries[boundaryCursor] <= index + PARAMETER_EPSILON) {
+      boundaryCursor += 1;
+    }
+    let nextBoundary = boundaryCursor;
+    while (nextBoundary < boundaries.length &&
+        boundaries[nextBoundary] < index + 1 - PARAMETER_EPSILON) {
+      if (!budget.consume()) {
+        result.limitExceeded = true;
+        limitReason = 'operations';
+        break outer;
+      }
+      cuts.push(boundaries[nextBoundary] - index);
+      nextBoundary += 1;
+    }
+    boundaryCursor = nextBoundary;
+    cuts.sort((left, right) => left - right);
+    for (let cutIndex = 0; cutIndex < cuts.length - 1; cutIndex += 1) {
+      if (!budget.consume()) {
+        result.limitExceeded = true;
+        limitReason = 'operations';
+        break outer;
+      }
+      const fromAmount = cuts[cutIndex];
+      const toAmount = cuts[cutIndex + 1];
+      const from = interpolateSample(sourcePoints[index], sourcePoints[index + 1], fromAmount);
+      const to = interpolateSample(sourcePoints[index], sourcePoints[index + 1], toAmount);
+      const midpoint = index + (fromAmount + toAmount) / 2;
+      while (membershipCursor < mergedIntervals.length &&
+          mergedIntervals[membershipCursor][1] < midpoint - PARAMETER_EPSILON) {
+        membershipCursor += 1;
+      }
+      const interval = mergedIntervals[membershipCursor];
+      const kind = interval &&
+        midpoint >= interval[0] - PARAMETER_EPSILON &&
+        midpoint <= interval[1] + PARAMETER_EPSILON
+        ? 'inside'
+        : 'outside';
+      if ((currentKind !== kind || !currentRun) && !startRun(kind, from)) break outer;
+      else appendPoint(currentRun, from);
+      appendPoint(currentRun, to);
+    }
+  }
+
+  result.runs = result.runs.filter(({ points: run }) => (
+    run.length >= 2 && hasVisibleLength(run)
+  ));
+  result.inside = result.runs.filter(run => run.kind === 'inside').map(run => run.points);
+  result.outside = result.runs.filter(run => run.kind === 'outside').map(run => run.points);
+  if (result.limitExceeded) result.limitReason = limitReason || 'operations';
+  return result;
+}
+
 module.exports = {
   interpolateSample,
   shortStrokeTouchesPolygon,
   strokeHasSplittableLength,
   strokeRadius,
   strokeTouchesPolygon,
-  splitStrokePointsByPolygon
+  splitStrokePointsByPolygon,
+  splitStrokePointsBySourceIntervals
 };
