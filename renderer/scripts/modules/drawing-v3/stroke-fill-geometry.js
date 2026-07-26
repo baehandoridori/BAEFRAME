@@ -11,6 +11,7 @@ const {
 const DEFAULT_MAX_FLATTENED_SEGMENTS = 65_536;
 const DEFAULT_EDGE_INDEX_LEAF_SIZE = 8;
 const MAX_CURVE_SUBDIVISION_DEPTH = 24;
+const MINIMUM_FLATTENED_EDGE_TOLERANCE_RATIO = 0.01;
 
 function unionBounds(entries) {
   if (!entries.length) return null;
@@ -178,6 +179,30 @@ function midpoint(left, right) {
   };
 }
 
+function normalizeFlattenedContour(contour, tolerance, budget) {
+  const minimumEdgeLength = Math.max(
+    EPSILON,
+    tolerance * MINIMUM_FLATTENED_EDGE_TOLERANCE_RATIO
+  );
+  const normalized = [];
+  for (const point of contour) {
+    if (!budget.consume()) return null;
+    const previous = normalized.at(-1);
+    if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) <= minimumEdgeLength) {
+      continue;
+    }
+    normalized.push(point);
+  }
+  while (normalized.length > 1) {
+    if (!budget.consume()) return null;
+    const first = normalized[0];
+    const last = normalized.at(-1);
+    if (Math.hypot(first.x - last.x, first.y - last.y) > minimumEdgeLength) break;
+    normalized.pop();
+  }
+  return normalized;
+}
+
 function flattenQuadratic(start, control, end, tolerance, acceptPoint) {
   const stack = [{ start, control, end, depth: 0 }];
   while (stack.length > 0) {
@@ -272,8 +297,9 @@ function flattenFabricPath(pathCommands, options = {}) {
   };
   const finishContour = () => {
     if (!current) return;
-    if (current.length > 1 && samePoint(current[0], current.at(-1))) current.pop();
-    if (current.length >= 3) contours.push(current);
+    const normalized = normalizeFlattenedContour(current, tolerance, budget);
+    if (!normalized) flattenFailed = true;
+    else if (normalized.length >= 3) contours.push(normalized);
     current = null;
     currentPoint = null;
   };
