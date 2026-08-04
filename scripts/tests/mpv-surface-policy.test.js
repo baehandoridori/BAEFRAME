@@ -55,6 +55,7 @@ test('surface registry derives block, observed mirror, and generic HTML mirror s
     MPV_BLOCKING_OVERLAY_SELECTOR,
     MPV_MIRRORED_OVERLAY_SELECTOR,
     MPV_HTML_MIRROR_OVERLAY_SELECTOR,
+    MPV_SURFACE_REGISTRY,
     getMpvSurfaceSelectors
   } = await loadPolicy();
 
@@ -70,6 +71,11 @@ test('surface registry derives block, observed mirror, and generic HTML mirror s
   assert.ok(htmlMirrorSelectors.includes('.composition-layer-snap-guide'));
   assert.match(MPV_HTML_MIRROR_OVERLAY_SELECTOR, /\.scrub-preview-overlay\.active/);
   assert.match(MPV_MIRRORED_OVERLAY_SELECTOR, /\.comment-marker-tooltip/);
+  const scrubPreviewEntry = MPV_SURFACE_REGISTRY.find(
+    entry => entry.selector === '.scrub-preview-overlay.active'
+  );
+  assert.equal(scrubPreviewEntry?.observeSelector, '.scrub-preview-overlay');
+  assert.match(MPV_MIRRORED_OVERLAY_SELECTOR, /\.scrub-preview-overlay(?:,|$)/);
 });
 
 test('a registered surface blocks mpv when a visible overflow child overlaps the host', async () => {

@@ -46,10 +46,14 @@ export const MPV_SURFACE_REGISTRY = Object.freeze([
     '.video-zoom-controls',
     '.video-comment-overlay-controls',
     '.video-comment-range-overlay',
-    '.scrub-preview-overlay.active',
     '.composition-layer-transform-handle',
     '.composition-layer-snap-guide'
   ].map(selector => Object.freeze({ selector, mode: MPV_SURFACE_MODE.HTML_MIRROR })),
+  Object.freeze({
+    selector: '.scrub-preview-overlay.active',
+    observeSelector: '.scrub-preview-overlay',
+    mode: MPV_SURFACE_MODE.HTML_MIRROR
+  }),
   Object.freeze({
     selector: '.controls-bar',
     observeSelector: 'body.app-fullscreen.show-controls .controls-bar',
