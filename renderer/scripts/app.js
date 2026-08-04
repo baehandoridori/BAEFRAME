@@ -78,6 +78,13 @@ import {
 import {
   dispatchMpvOverlayKeyboardInput
 } from './modules/mpv-overlay-keyboard-relay.js';
+import {
+  MPV_SURFACE_MODE,
+  MPV_MIRRORED_OVERLAY_SELECTOR,
+  getMpvSurfaceElements,
+  findClosestMpvSurface,
+  isMpvSurfaceVisiblyOverlappingHost
+} from './modules/mpv-surface-policy.js';
 
 const log = createLogger('App');
 
@@ -91,6 +98,7 @@ const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
 const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
+const MPV_SURFACE_MOTION_RECHECK_MS = 500;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 function createMpvOverlayLifecycle({ onWarning = () => {} } = {}) {
@@ -1249,7 +1257,15 @@ async function initApp() {
 
   // 댓글/그리기/재생 동기화 매니저
   const commentSync = new CommentSync({ liveblocksManager, commentManager });
-  const drawingSync = new DrawingSync({ liveblocksManager, drawingManager });
+  let remoteStrokeOverlayForMpv = null;
+  const drawingSync = new DrawingSync({
+    liveblocksManager,
+    drawingManager,
+    onRemoteStrokeOverlayChange: ({ overlay }) => {
+      remoteStrokeOverlayForMpv = overlay || null;
+      scheduleMpvOverlayStateSync({ liveDrawing: true });
+    }
+  });
   const playbackSync = getPlaybackSync(liveblocksManager);
 
   // ReviewDataManager에 LiveblocksManager 연결
@@ -1661,6 +1677,7 @@ async function initApp() {
   videoPlayer.addEventListener('externalstopped', (e) => {
     elements.videoWrapper?.classList.remove('mpv-pilot-mode');
     document.body.classList.remove('mpv-pilot-mode');
+    invalidateMpvHostVisibilityRequests();
     mpvHostLastRequestedVisible = null;
 
     const detail = e.detail || {};
@@ -5884,6 +5901,10 @@ async function initApp() {
   window.electronAPI.onMpvOverlayKeyboardInput?.((input) => {
     dispatchMpvOverlayKeyboardInput(input, { ownerDocument: document });
   });
+  window.electronAPI.onMpvOverlayPointerPresence?.((cursor) => {
+    if (!liveblocksManager.isConnected) return;
+    liveblocksManager.updatePresence({ cursor });
+  });
   document.addEventListener('click', handleFabricDrawingPilotLegacyClick, true);
 
   // ====== 캔버스 오버레이 동기화 ======
@@ -6178,7 +6199,7 @@ async function initApp() {
             if (!window.electronAPI?.mpvSetHostVisible) {
               throw new Error('mpv 호스트 표시 API를 찾을 수 없습니다.');
             }
-            return window.electronAPI.mpvSetHostVisible(false);
+            return applyMpvHostVisibility(false);
           },
           didHideApply: result => didMpvHostVisibilityApply(result, false),
           markCandidateReady: () => {
@@ -6202,8 +6223,8 @@ async function initApp() {
             mpvHostLastRequestedVisible = null;
             if (!window.electronAPI?.mpvSetHostVisible) return false;
             try {
-              const result = await window.electronAPI.mpvSetHostVisible(true);
-              if (result?.success) {
+              const result = await applyMpvHostVisibility(true);
+              if (didMpvHostVisibilityApply(result, true)) {
                 mpvHostLastRequestedVisible = true;
                 return true;
               }
@@ -6245,10 +6266,12 @@ async function initApp() {
 
       try {
         mpvHostLastRequestedVisible = null;
-        const result = await window.electronAPI.mpvSetHostVisible(true);
+        const result = await applyMpvHostVisibility(true);
         if (token !== mpvReviewFreezeToken) return;
-        if (!result?.success) {
-          log.warn('mpv 호스트 복원 실패, 정지 프레임을 유지합니다.', { error: result?.error });
+        if (!didMpvHostVisibilityApply(result, true)) {
+          log.warn('mpv 호스트 복원 실패, 정지 프레임을 유지합니다.', {
+            error: result?.stale ? 'stale visibility request' : result?.error
+          });
           return false;
         }
         mpvHostLastRequestedVisible = true;
@@ -6331,6 +6354,7 @@ async function initApp() {
 
     elements.videoWrapper?.classList.remove('mpv-pilot-mode');
     document.body.classList.remove('mpv-pilot-mode');
+    invalidateMpvHostVisibilityRequests();
     mpvHostLastRequestedVisible = null;
     videoPlayer.useHtml5Engine();
     videoPlayer.isLoaded = false;
@@ -7110,6 +7134,7 @@ async function initApp() {
   });
   let mpvOverlayStateSyncPendingOwner = null;
   let mpvOverlayRemoteCursorSyncPendingOwner = null;
+  let mpvOverlayRemoteCursorRevision = 0;
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
   let mpvOverlayRecoveryOwner = null;
@@ -7120,6 +7145,7 @@ async function initApp() {
   let expectedMpvHtml5FallbackStop = null;
   let expectedMpvHtml5FallbackStopSequence = 0;
   let mpvHostVisibilitySyncPending = false;
+  let mpvHostVisibilityRequestRevision = 0;
   let mpvHostLastRequestedVisible = null;
   let mpvPilotHostPreparing = false;
   let fullscreenTimecodeOverlay = null;
@@ -7453,54 +7479,6 @@ async function initApp() {
     return true;
   }
 
-  const MPV_BLOCKING_OVERLAY_SELECTOR = [
-    '.modal-overlay.active',
-    '.thread-overlay.open',
-    '.image-viewer-overlay.open',
-    '.split-view-overlay.open',
-    '.prompt-modal-overlay.open',
-    '.credits-overlay.active',
-    '.codec-error-overlay.active',
-    '.app-saving-overlay.active',
-    '#videoLoadingOverlay.active',
-    '.transcode-overlay.active',
-    '.composition-layer-context-menu',
-    '.comment-marker-input-wrapper',
-    '.composition-drop-choice-overlay',
-    '.video-wrapper.mpv-review-freeze-ready',
-    '.marker-popup',
-    '.layer-settings-popup',
-    '.highlight-popup',
-    '.shortcuts-menu.visible',
-    '.comment-settings-dropdown.open',
-    '.filter-dropdown-menu.open',
-    '.mention-dropdown',
-    '.recent-dropdown-menu.open',
-    '.version-dropdown.open .version-dropdown-menu',
-    '.split-version-selector.open .split-version-menu'
-  ].join(',');
-
-  const MPV_MIRRORED_OVERLAY_SELECTOR = [
-    '.comment-markers-container',
-    '.comment-marker',
-    '.comment-marker-tooltip',
-    '.video-comment-range-overlay',
-    '.current-cut-overlay',
-    '.zoom-indicator-overlay',
-    '.fullscreen-timecode-overlay',
-    '.fullscreen-scrub-overlay',
-    '.toast-container',
-    '#compositionLayerOverlay',
-    '.composition-layer-panel',
-    '.video-zoom-controls',
-    '.video-comment-overlay-controls',
-    // 피드백 28(a): 반드시 전체화면+표시 중으로 한정할 것. 무조건 '.controls-bar'로
-    // 넣으면 재생 중 매 프레임 갱신되는 진행률 바(#seekbarProgress)·타임코드 변이가
-    // installMpvMirroredOverlayObserver(6198~)를 통해 모든 mpv 재생에서 프레임당
-    // 전체 미러 재동기화(= 드로잉 합성 PNG 재인코딩 포함)를 유발한다.
-    'body.app-fullscreen.show-controls .controls-bar'
-  ].join(',');
-
   const MPV_HTML_OVERLAY_STYLE_PROPERTIES = [
     'align-items',
     'animation',
@@ -7559,35 +7537,63 @@ async function initApp() {
     '-webkit-backdrop-filter'
   ];
 
-  function doesRectOverlapMpvHost(rect) {
+  function getMpvHostRect() {
     const hostRect = elements.videoWrapper?.getBoundingClientRect();
-    if (!hostRect || hostRect.width <= 0 || hostRect.height <= 0) return false;
-    return rect.right > hostRect.left &&
-      rect.left < hostRect.right &&
-      rect.bottom > hostRect.top &&
-      rect.top < hostRect.bottom;
+    return hostRect && hostRect.width > 0 && hostRect.height > 0 ? hostRect : null;
   }
 
   function isElementVisiblyBlockingMpv(element) {
-    if (!element) return false;
-    const style = window.getComputedStyle(element);
-    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0) {
-      return false;
-    }
-    const rect = element.getBoundingClientRect();
-    if (!doesRectOverlapMpvHost(rect)) return false;
-    return rect.width > 0 && rect.height > 0;
+    return isMpvSurfaceVisiblyOverlappingHost(
+      element,
+      getMpvHostRect(),
+      window.getComputedStyle.bind(window)
+    );
   }
 
   function hasBlockingOverlayForMpv() {
-    return Array.from(document.querySelectorAll(MPV_BLOCKING_OVERLAY_SELECTOR))
+    return getMpvSurfaceElements(document, MPV_SURFACE_MODE.BLOCK)
       .some(isElementVisiblyBlockingMpv);
   }
 
   function didMpvHostVisibilityApply(result, shouldShowMpvHost) {
-    if (!result?.success) return false;
+    if (!result?.success || result?.stale) return false;
     if (shouldShowMpvHost) return true;
     return result.embed?.ready === true && result.overlay?.ready === true;
+  }
+
+  function setMpvNativeHostVisibleClass(visible) {
+    document.body.classList.toggle('mpv-native-host-visible', visible === true);
+  }
+
+  async function applyMpvHostVisibility(visible) {
+    const requestRevision = ++mpvHostVisibilityRequestRevision;
+    const shouldShow = visible === true;
+    if (!shouldShow) setMpvNativeHostVisibleClass(false);
+    if (!window.electronAPI?.mpvSetHostVisible) {
+      setMpvNativeHostVisibleClass(false);
+      return { success: false, error: 'mpv host visibility API is unavailable' };
+    }
+
+    try {
+      const result = await window.electronAPI.mpvSetHostVisible(shouldShow);
+      if (requestRevision !== mpvHostVisibilityRequestRevision) {
+        return { ...(result || {}), stale: true };
+      }
+      if (didMpvHostVisibilityApply(result, shouldShow)) {
+        setMpvNativeHostVisibleClass(shouldShow);
+      } else if (shouldShow) {
+        setMpvNativeHostVisibleClass(false);
+      }
+      return result;
+    } catch (error) {
+      if (shouldShow) setMpvNativeHostVisibleClass(false);
+      throw error;
+    }
+  }
+
+  function invalidateMpvHostVisibilityRequests() {
+    mpvHostVisibilityRequestRevision += 1;
+    setMpvNativeHostVisibleClass(false);
   }
 
   function forceMpvHostVisibilitySync() {
@@ -7608,7 +7614,7 @@ async function initApp() {
     const shouldShowMpvHost = shouldShowMpvHostForCurrentState();
     mpvHostLastRequestedVisible = null;
     try {
-      const result = await window.electronAPI.mpvSetHostVisible(shouldShowMpvHost);
+      const result = await applyMpvHostVisibility(shouldShowMpvHost);
       if (!didMpvHostVisibilityApply(result, shouldShowMpvHost)) return false;
       mpvHostLastRequestedVisible = shouldShowMpvHost;
       return true;
@@ -7630,7 +7636,7 @@ async function initApp() {
       if (mpvHostLastRequestedVisible === shouldShowMpvHost) return;
 
       try {
-        const result = await window.electronAPI.mpvSetHostVisible(shouldShowMpvHost);
+        const result = await applyMpvHostVisibility(shouldShowMpvHost);
         if (didMpvHostVisibilityApply(result, shouldShowMpvHost)) {
           mpvHostLastRequestedVisible = shouldShowMpvHost;
         }
@@ -7656,6 +7662,61 @@ async function initApp() {
   }
 
   installMpvBlockingOverlayObserver();
+
+  let mpvBlockingSurfaceMotionDeadline = 0;
+  let mpvBlockingSurfaceMotionFrame = null;
+
+  function recheckMpvBlockingSurfaceDuringMotion() {
+    mpvBlockingSurfaceMotionDeadline = Math.max(
+      mpvBlockingSurfaceMotionDeadline,
+      performance.now() + MPV_SURFACE_MOTION_RECHECK_MS
+    );
+    if (mpvBlockingSurfaceMotionFrame !== null) return;
+
+    const recheck = (now) => {
+      syncMpvHostVisibilityWithDom();
+      if (now < mpvBlockingSurfaceMotionDeadline) {
+        mpvBlockingSurfaceMotionFrame = requestAnimationFrame(recheck);
+        return;
+      }
+      mpvBlockingSurfaceMotionFrame = null;
+    };
+    mpvBlockingSurfaceMotionFrame = requestAnimationFrame(recheck);
+  }
+
+  function handleMpvSurfaceMotionStart(event) {
+    if (findClosestMpvSurface(event.target, MPV_SURFACE_MODE.BLOCK)) {
+      // Opening panels can still report a zero-height first frame. Recheck for
+      // the whole transition so mpv is hidden as soon as an overflow child
+      // enters the video area.
+      recheckMpvBlockingSurfaceDuringMotion();
+    }
+    if (findClosestMpvSurface(event.target, [
+      MPV_SURFACE_MODE.HTML_MIRROR,
+      MPV_SURFACE_MODE.DEDICATED_MIRROR
+    ])) {
+      scheduleMpvOverlayStateSync({ force: true });
+    }
+  }
+
+  function handleMpvSurfaceMotionEnd(event) {
+    if (findClosestMpvSurface(event.target, MPV_SURFACE_MODE.BLOCK)) {
+      syncMpvHostVisibilityWithDom();
+    }
+    if (findClosestMpvSurface(event.target, [
+      MPV_SURFACE_MODE.HTML_MIRROR,
+      MPV_SURFACE_MODE.DEDICATED_MIRROR
+    ])) {
+      scheduleMpvOverlayStateSync({ force: true });
+    }
+  }
+
+  ['transitionrun', 'transitionstart', 'animationstart'].forEach((eventName) => {
+    document.addEventListener(eventName, handleMpvSurfaceMotionStart, true);
+  });
+  ['transitionend', 'transitioncancel', 'animationend', 'animationcancel'].forEach((eventName) => {
+    document.addEventListener(eventName, handleMpvSurfaceMotionEnd, true);
+  });
 
   function getMutationElementTarget(target) {
     if (!target) return null;
@@ -8023,21 +8084,7 @@ async function initApp() {
     if (!wrapperRect) return '';
 
     const htmlOverlay = document.createElement('div');
-    [
-      elements.currentCutOverlay,
-      elements.zoomIndicatorOverlay,
-      videoCommentRangeOverlay,
-      fullscreenTimecodeOverlay,
-      fullscreenScrubOverlay,
-      // 피드백 28(a): 전체화면 컨트롤바(자식인 전체화면 시크바 포함)를 mpv 위에 미러링.
-      // 숨김(opacity 0)·wrapper 비겹침이면 cloneMpvHtmlOverlayElement가 스스로 스킵한다.
-      elements.controlsBar,
-      // 사용자 지시(2026-07-15): mpv에 가려지던 UI를 미러로 표시.
-      // 클릭은 호스트 창 관통으로 실제 DOM에 도달하므로 보이기만 하면 조작된다.
-      elements.compositionLayerPanel?.classList.contains('open') ? elements.compositionLayerPanel : null,
-      elements.videoZoomControls,
-      elements.videoCommentOverlayControls
-    ].filter(Boolean).forEach((element) => {
+    getMpvSurfaceElements(document, MPV_SURFACE_MODE.HTML_MIRROR).forEach((element) => {
       const clone = cloneMpvHtmlOverlayElement(element, wrapperRect);
       if (clone) htmlOverlay.appendChild(clone);
     });
@@ -8092,9 +8139,17 @@ async function initApp() {
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
     if (!wrapperRect || !canvasRect) return null;
     const suppressLegacyDrawing = shouldSuppressLegacyDrawingForFabricPilot();
+    const remoteStrokeIsVisible = remoteStrokeOverlayForMpv &&
+      remoteStrokeOverlayForMpv.style.display !== 'none';
 
     return {
       drawingDataUrl: suppressLegacyDrawing ? '' : getCompositedDrawingOverlayDataUrl(),
+      remoteStrokeDataUrl: remoteStrokeIsVisible
+        ? getCanvasOverlayDataUrl(remoteStrokeOverlayForMpv)
+        : '',
+      remoteStrokeOpacity: remoteStrokeIsVisible
+        ? Math.max(0, Math.min(1, Number.parseFloat(remoteStrokeOverlayForMpv.style.opacity || '1')))
+        : 0,
       // 피드백 32: 어니언 스킨이 꺼져 있으면 전체 해상도 투명 PNG 인코딩을 생략한다.
       onionDataUrl: !suppressLegacyDrawing && drawingManager.onionSkin?.enabled
         ? getCanvasOverlayDataUrl(elements.onionSkinCanvas)
@@ -8104,7 +8159,6 @@ async function initApp() {
       tooltipHtml: serializeMpvOverlayTooltipHtml(),
       htmlOverlayHtml: serializeMpvOverlayHtml(),
       toastHtml: serializeMpvOverlayToastHtml(),
-      remoteCursorHtml: serializeMpvOverlayRemoteCursorHtml(),
       compositionLayers: compositionLayerManager.getMpvOverlayLayers({
         currentTime: videoPlayer.currentTime,
         isPlaying: videoPlayer.isPlaying
@@ -8126,7 +8180,7 @@ async function initApp() {
   // 32 잔존: 미러 HTML/이미지 필드를 이전 전송값과 비교해, 변경 없으면 생략한다.
   // 생략된 필드는 JSON.stringify에서 사라지고, 호스트는 undefined 필드를 건너뛴다(부분 업데이트).
   // 호스트가 재생성되면 owner가 바뀌어 전체 재전송된다.
-  const MPV_OVERLAY_DIFF_FIELDS = ['drawingDataUrl', 'onionDataUrl', 'markerHtml', 'tooltipHtml', 'htmlOverlayHtml', 'toastHtml'];
+  const MPV_OVERLAY_DIFF_FIELDS = ['drawingDataUrl', 'remoteStrokeDataUrl', 'remoteStrokeOpacity', 'onionDataUrl', 'markerHtml', 'tooltipHtml', 'htmlOverlayHtml', 'toastHtml'];
   const mpvOverlayMirrorFieldCache = { owner: null, canvasKey: '', fields: {} };
 
   function filterUnchangedMpvOverlayFields(state, owner) {
@@ -8137,7 +8191,9 @@ async function initApp() {
     for (const field of MPV_OVERLAY_DIFF_FIELDS) {
       const value = state[field];
       // 이미지 필드는 canvas 사각형이 바뀌면 위치 재적용이 필요해 생략하지 않는다.
-      const isImageField = field === 'drawingDataUrl' || field === 'onionDataUrl';
+      const isImageField = field === 'drawingDataUrl' ||
+        field === 'remoteStrokeDataUrl' ||
+        field === 'onionDataUrl';
       if (cacheValid && !(isImageField && canvasChanged) && mpvOverlayMirrorFieldCache.fields[field] === value) {
         delete next[field];
       } else {
@@ -8194,11 +8250,14 @@ async function initApp() {
         mpvOverlayRemoteCursorSyncPendingOwner = null;
       }
       if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
-      const remoteCursorHtml = serializeMpvOverlayRemoteCursorHtml();
+      const cursorState = {
+        revision: ++mpvOverlayRemoteCursorRevision,
+        html: serializeMpvOverlayRemoteCursorHtml()
+      };
       if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
 
       try {
-        const result = await window.electronAPI.mpvUpdateOverlayRemoteCursors(remoteCursorHtml);
+        const result = await window.electronAPI.mpvUpdateOverlayRemoteCursors(cursorState);
         if (!result?.success) {
           if (!mpvOverlayLifecycle.owns(overlayOwner) || overlaySyncEpoch !== mpvOverlaySyncEpoch) return;
           markMpvOverlayHostUnavailable(overlayOwner, result?.error);
@@ -8301,6 +8360,7 @@ async function initApp() {
   }
 
   async function destroyMpvPilotHosts() {
+    invalidateMpvHostVisibilityRequests();
     try {
       await window.electronAPI?.mpvDestroyOverlay?.();
     } finally {
@@ -8518,6 +8578,7 @@ async function initApp() {
     syncMpvEmbedBounds();
     syncMpvVideoTransform();
     scheduleMpvOverlayStateSync();
+    scheduleMpvOverlayRemoteCursorStateSync();
 
     const mpvInitialFrame = resolveInitialFrameFromOptions(initialFrame, initialTime);
     if (Number.isFinite(Number(mpvInitialFrame)) && Number(mpvInitialFrame) > 0) {
@@ -8843,6 +8904,7 @@ async function initApp() {
       if (fileIsAudio) {
         elements.videoWrapper?.classList.remove('mpv-pilot-mode');
         document.body.classList.remove('mpv-pilot-mode');
+        invalidateMpvHostVisibilityRequests();
 
         // 오디오 모드 활성화
         state.isAudioMode = true;
@@ -8994,6 +9056,7 @@ async function initApp() {
         } else {
           elements.videoWrapper?.classList.remove('mpv-pilot-mode');
           document.body.classList.remove('mpv-pilot-mode');
+          invalidateMpvHostVisibilityRequests();
 
           // 비디오 플레이어에 로드 (트랜스코딩된 경우 변환된 파일 사용)
           const html5InitialFrame = () => resolveInitialFrameFromOptions(initialFrame, initialTime);
@@ -16068,6 +16131,18 @@ async function initApp() {
       const rect = collaboratorsIndicator.getBoundingClientRect();
       originX = rect.left + rect.width / 2;
       originY = rect.top + rect.height / 2;
+    }
+
+    if (document.body.classList.contains('mpv-pilot-mode') &&
+        window.electronAPI?.mpvTriggerOverlayCollabRipple) {
+      const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
+      if (wrapperRect?.width > 0 && wrapperRect?.height > 0) {
+        const normalizedX = Math.max(0, Math.min(1, (originX - wrapperRect.left) / wrapperRect.width));
+        const normalizedY = Math.max(0, Math.min(1, (originY - wrapperRect.top) / wrapperRect.height));
+        void window.electronAPI
+          .mpvTriggerOverlayCollabRipple({ x: normalizedX, y: normalizedY })
+          .catch(error => log.debug('mpv 협업 연결 신호 미러 실패', { error: error.message }));
+      }
     }
 
     const maxRadius = Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height);

@@ -130,6 +130,43 @@ test('main preload overlay keyboard bridge preserves Enter Tab Numpad and keyup 
   ]);
 });
 
+test('main preload exposes a narrow validated overlay pointer presence subscription', () => {
+  const harness = loadMainPreload();
+  const electronAPI = harness.exposed.get('electronAPI');
+  assert.equal(typeof electronAPI.onMpvOverlayPointerPresence, 'function');
+
+  const received = [];
+  const unsubscribe = electronAPI.onMpvOverlayPointerPresence(presence => {
+    received.push(presence);
+  });
+  const listener = harness.listeners.get('mpv-overlay:pointer-presence');
+  assert.equal(typeof listener, 'function');
+
+  const validPresence = { x: 0.25, y: 1 };
+  listener({}, validPresence);
+  listener({}, null);
+  assert.deepEqual(received, [{ x: 0.25, y: 1 }, null]);
+  assert.notEqual(received[0], validPresence);
+
+  for (const malformed of [
+    undefined,
+    {},
+    [],
+    { x: 0.2, y: 0.3, extra: true },
+    { x: -0.01, y: 0.5 },
+    { x: 0.5, y: 1.01 },
+    { x: Number.NaN, y: 0.5 },
+    { x: '0.5', y: 0.5 }
+  ]) {
+    listener({}, malformed);
+  }
+  assert.equal(received.length, 2);
+
+  unsubscribe();
+  assert.equal(harness.listeners.has('mpv-overlay:pointer-presence'), false);
+  assert.equal(harness.removed.length, 1);
+});
+
 test('renderer relay rebuilds a bubbling keyboard event with the exact physical code', async () => {
   assert.equal(
     fs.existsSync(relayModulePath),

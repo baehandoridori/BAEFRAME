@@ -56,6 +56,7 @@ const FABRIC_DRAWING_MAX_POINT_TIME = 1_000_000_000_000;
 const FABRIC_DRAWING_MAX_BRUSH_SIZE = 1_000_000;
 const FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE = 1_000_000_000;
 const FABRIC_DRAWING_MAX_STRING_LENGTH = 32768;
+const MAX_MPV_REMOTE_CURSOR_HTML_BYTES = 256 * 1024;
 const FABRIC_DRAWING_TRANSITION_KEYS = Object.freeze([
   'hostGeneration',
   'videoGeneration',
@@ -426,6 +427,18 @@ const OVERLAY_HTML = String.raw`
     #drawingCanvasMirror {
       z-index: 3;
     }
+    #remoteStrokeMirror {
+      z-index: 42;
+    }
+    #collabRippleMirror {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 44;
+      display: none;
+      pointer-events: none;
+    }
     #markerMirror,
     #tooltipMirror,
     #toastMirror,
@@ -670,10 +683,12 @@ const OVERLAY_HTML = String.raw`
   <div id="root">
     <img id="onionCanvasMirror" class="mirror-canvas" alt="">
     <img id="drawingCanvasMirror" class="mirror-canvas" alt="">
+    <img id="remoteStrokeMirror" class="mirror-canvas" alt="">
     <div id="compositionMirror"></div>
     <div id="htmlOverlay"></div>
     <div id="markerMirror"></div>
     <div id="tooltipMirror"></div>
+    <canvas id="collabRippleMirror"></canvas>
     <div id="remoteCursorMirror" class="remote-cursors-container"></div>
     <div id="toastMirror"></div>
   </div>
@@ -744,8 +759,90 @@ const OVERLAY_HTML = String.raw`
       remoteCursorMirror.innerHTML = sanitizeRemoteCursorHtml(remoteCursorHtml);
     }
 
-    window.__applyMpvRemoteCursorState = function applyMpvRemoteCursorState(remoteCursorHtml) {
-      applyRemoteCursorHtml(remoteCursorHtml);
+    let remoteCursorRevision = -1;
+    window.__applyMpvRemoteCursorState = function applyMpvRemoteCursorState(state) {
+      const revision = Number(state?.revision);
+      if (!Number.isSafeInteger(revision) || revision <= remoteCursorRevision) return false;
+      remoteCursorRevision = revision;
+      applyRemoteCursorHtml(state?.html);
+      return true;
+    };
+
+    let collabRippleAnimationId = null;
+    window.__triggerMpvCollabRipple = function triggerMpvCollabRipple(state) {
+      const canvas = document.getElementById('collabRippleMirror');
+      if (!canvas) return false;
+      if (collabRippleAnimationId !== null) cancelAnimationFrame(collabRippleAnimationId);
+
+      const width = Math.max(1, canvas.clientWidth || document.documentElement.clientWidth || 1);
+      const height = Math.max(1, canvas.clientHeight || document.documentElement.clientHeight || 1);
+      const dpr = Math.max(1, Number(window.devicePixelRatio) || 1);
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return false;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      canvas.style.display = 'block';
+
+      const originX = Math.max(0, Math.min(1, Number(state?.x) || 0)) * width;
+      const originY = Math.max(0, Math.min(1, Number(state?.y) || 0)) * height;
+      const maxRadius = Math.hypot(width, height);
+      const duration = 1800;
+      const startedAt = performance.now();
+      const waves = [
+        { delay: 0, thickness: 80, color: [255, 208, 0] },
+        { delay: 120, thickness: 60, color: [255, 180, 40] },
+        { delay: 280, thickness: 40, color: [255, 220, 100] }
+      ];
+
+      function draw(now) {
+        const elapsed = now - startedAt;
+        ctx.clearRect(0, 0, width, height);
+        if (elapsed > duration + 400) {
+          canvas.style.display = 'none';
+          collabRippleAnimationId = null;
+          return;
+        }
+
+        for (const wave of waves) {
+          const waveElapsed = elapsed - wave.delay;
+          if (waveElapsed < 0) continue;
+          const progress = Math.min(waveElapsed / duration, 1);
+          const eased = 1 - Math.pow(1 - progress, 3);
+          const radius = eased * maxRadius;
+          const thickness = wave.thickness * (1 - progress * 0.5);
+          let alpha = progress < 0.1
+            ? progress / 0.1
+            : progress < 0.4
+              ? 1
+              : 1 - (progress - 0.4) / 0.6;
+          alpha *= 0.35;
+          const [r, g, b] = wave.color;
+          const glow = ctx.createRadialGradient(
+            originX, originY, Math.max(0, radius - thickness * 2),
+            originX, originY, radius + thickness
+          );
+          glow.addColorStop(0, 'rgba(' + r + ', ' + g + ', ' + b + ', 0)');
+          glow.addColorStop(0.3, 'rgba(' + r + ', ' + g + ', ' + b + ', ' + (alpha * 0.3) + ')');
+          glow.addColorStop(0.5, 'rgba(' + r + ', ' + g + ', ' + b + ', ' + (alpha * 0.6) + ')');
+          glow.addColorStop(0.7, 'rgba(' + r + ', ' + g + ', ' + b + ', ' + (alpha * 0.3) + ')');
+          glow.addColorStop(1, 'rgba(' + r + ', ' + g + ', ' + b + ', 0)');
+          ctx.beginPath();
+          ctx.arc(originX, originY, radius + thickness, 0, Math.PI * 2);
+          ctx.fillStyle = glow;
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(originX, originY, radius, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(' + r + ', ' + g + ', ' + b + ', ' + (alpha * 0.8) + ')';
+          ctx.lineWidth = 2 * (1 - progress * 0.7);
+          ctx.stroke();
+        }
+
+        collabRippleAnimationId = requestAnimationFrame(draw);
+      }
+
+      collabRippleAnimationId = requestAnimationFrame(draw);
+      return true;
     };
 
     function getCompositionElement(root, layer) {
@@ -855,11 +952,15 @@ const OVERLAY_HTML = String.raw`
       // 재생 중 프레임마다 미러를 파괴·재생성해 등장/확대 애니메이션을 반복 재생하던 문제의 수정.
       if (nextState.onionDataUrl !== undefined) applyImage('onionCanvasMirror', nextState.onionDataUrl, nextState.canvas);
       if (nextState.drawingDataUrl !== undefined) applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas);
+      if (nextState.remoteStrokeDataUrl !== undefined) applyImage('remoteStrokeMirror', nextState.remoteStrokeDataUrl, nextState.canvas);
+      if (nextState.remoteStrokeOpacity !== undefined) {
+        const remoteStrokeMirror = document.getElementById('remoteStrokeMirror');
+        if (remoteStrokeMirror) remoteStrokeMirror.style.opacity = String(nextState.remoteStrokeOpacity);
+      }
       applyCompositionLayers(nextState.compositionLayers, nextState.canvas);
       if (typeof nextState.htmlOverlayHtml === 'string') htmlOverlay.innerHTML = nextState.htmlOverlayHtml;
       if (typeof nextState.markerHtml === 'string') markerMirror.innerHTML = nextState.markerHtml;
       if (typeof nextState.tooltipHtml === 'string') tooltipMirror.innerHTML = nextState.tooltipHtml;
-      applyRemoteCursorHtml(nextState.remoteCursorHtml);
       if (typeof nextState.toastHtml === 'string') toastMirror.innerHTML = nextState.toastHtml;
       applyOverlayTransform(markerMirror, nextState);
       tooltipMirror.style.transform = 'none';
@@ -876,7 +977,8 @@ const OVERLAY_HTML = String.raw`
 const OVERLAY_HOST_URL = `data:text/html;charset=utf-8,${encodeURIComponent(OVERLAY_HTML)}`;
 const OVERLAY_API_READY_SCRIPT = [
   "typeof window.__applyMpvOverlayState === 'function'",
-  "typeof window.__applyMpvRemoteCursorState === 'function'"
+  "typeof window.__applyMpvRemoteCursorState === 'function'",
+  "typeof window.__triggerMpvCollabRipple === 'function'"
 ].join(' && ');
 
 function getDefaultBrowserWindow() {
@@ -963,13 +1065,16 @@ function normalizeOverlayState(state = {}) {
   const canvas = state.canvas || {};
   return {
     drawingDataUrl: state.drawingDataUrl === undefined ? undefined : normalizeImageDataUrl(state.drawingDataUrl),
+    remoteStrokeDataUrl: state.remoteStrokeDataUrl === undefined ? undefined : normalizeImageDataUrl(state.remoteStrokeDataUrl),
+    remoteStrokeOpacity: state.remoteStrokeOpacity === undefined
+      ? undefined
+      : Math.max(0, Math.min(1, normalizeFloat(state.remoteStrokeOpacity, 1))),
     onionDataUrl: state.onionDataUrl === undefined ? undefined : normalizeImageDataUrl(state.onionDataUrl),
     markerHtml: state.markerHtml === undefined ? undefined : (typeof state.markerHtml === 'string' ? state.markerHtml : ''),
     tooltipHtml: state.tooltipHtml === undefined ? undefined : (typeof state.tooltipHtml === 'string' ? state.tooltipHtml : ''),
     htmlOverlayHtml: state.htmlOverlayHtml === undefined ? undefined : (typeof state.htmlOverlayHtml === 'string' ? state.htmlOverlayHtml : ''),
     toastHtml: state.toastHtml === undefined ? undefined : (typeof state.toastHtml === 'string' ? state.toastHtml : ''),
     commentPlayheadLeft: typeof state.commentPlayheadLeft === 'string' ? state.commentPlayheadLeft : '',
-    remoteCursorHtml: typeof state.remoteCursorHtml === 'string' ? state.remoteCursorHtml : '',
     fabricViewport: normalizeFabricViewport(state.fabricViewport),
     compositionLayers: normalizeCompositionLayers(state.compositionLayers),
     markerTransform: typeof state.markerTransform === 'string' ? state.markerTransform : '',
@@ -1715,6 +1820,7 @@ class MPVOverlayHost {
         : FABRIC_DRAWING_SNAPSHOT_MAX_BYTES;
     this.currentVideoGeneration = -1;
     this.currentInputRevision = -1;
+    this.remoteCursorRevision = -1;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
@@ -2600,20 +2706,47 @@ class MPVOverlayHost {
     }
   }
 
-  async updateRemoteCursorState(remoteCursorHtml) {
+  async updateRemoteCursorState(state) {
     if (!this.window || this.window.isDestroyed?.() || !this.contentLoaded) {
       return { success: false, error: 'mpv overlay host is not ready' };
     }
 
-    const safeRemoteCursorHtml = typeof remoteCursorHtml === 'string' ? remoteCursorHtml : '';
+    const revision = Number(state?.revision);
+    if (!Number.isSafeInteger(revision) || revision < 0 || typeof state?.html !== 'string' ||
+        Buffer.byteLength(state.html, 'utf8') > MAX_MPV_REMOTE_CURSOR_HTML_BYTES) {
+      return { success: false, accepted: false, error: 'invalid remote cursor state' };
+    }
+    if (revision <= this.remoteCursorRevision) {
+      return { success: true, accepted: false, stale: true };
+    }
+    this.remoteCursorRevision = revision;
+    const safeState = { revision, html: state.html };
     try {
-      await this.window.webContents?.executeJavaScript?.(
-        `window.__applyMpvRemoteCursorState(${JSON.stringify(safeRemoteCursorHtml)});`,
+      const accepted = await this.window.webContents?.executeJavaScript?.(
+        `window.__applyMpvRemoteCursorState(${JSON.stringify(safeState)});`,
         true
       );
-      return { success: true };
+      return { success: true, accepted: accepted !== false };
     } catch (error) {
       this.logger.debug('mpv overlay remote cursor update failed', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  }
+
+  async triggerCollabRipple(state) {
+    if (!this.window || this.window.isDestroyed?.() || !this.contentLoaded) {
+      return { success: false, error: 'mpv overlay host is not ready' };
+    }
+    const clampUnit = value => Math.max(0, Math.min(1, normalizeFloat(value, 0)));
+    const safeState = { x: clampUnit(state?.x), y: clampUnit(state?.y) };
+    try {
+      const accepted = await this.window.webContents?.executeJavaScript?.(
+        `window.__triggerMpvCollabRipple(${JSON.stringify(safeState)});`,
+        true
+      );
+      return { success: true, accepted: accepted !== false };
+    } catch (error) {
+      this.logger.debug('mpv overlay collaboration ripple failed', { error: error.message });
       return { success: false, error: error.message };
     }
   }
@@ -2656,6 +2789,7 @@ class MPVOverlayHost {
     this.fabricRetryAfter = 0;
     this.currentVideoGeneration = -1;
     this.currentInputRevision = -1;
+    this.remoteCursorRevision = -1;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
@@ -2717,6 +2851,7 @@ class MPVOverlayHost {
     this.fabricRetryAfter = 0;
     this.currentVideoGeneration = -1;
     this.currentInputRevision = -1;
+    this.remoteCursorRevision = -1;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
@@ -2837,6 +2972,7 @@ class MPVOverlayHost {
       this.fabricRetryAfter = 0;
       this.currentVideoGeneration = -1;
       this.currentInputRevision = -1;
+      this.remoteCursorRevision = -1;
       this.desiredInputEnabled = false;
       this.activeSessionId = null;
       this.currentToolRevision = -1;

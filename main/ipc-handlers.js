@@ -26,6 +26,7 @@ const Store = require('electron-store');
 
 const log = createLogger('IPC');
 const DEFAULT_FABRIC_DRAWING_PILOT_STATE = Object.freeze({ enabled: false });
+const MAX_MPV_REMOTE_CURSOR_HTML_BYTES = 256 * 1024;
 
 function isCurrentMainRendererSender(event) {
   const mainWindow = getMainWindow();
@@ -34,6 +35,40 @@ function isCurrentMainRendererSender(event) {
   return !!mainWebContents &&
     !mainWebContents.isDestroyed?.() &&
     event?.sender === mainWebContents;
+}
+
+function normalizeMpvOverlayPointerPresence(value) {
+  if (value === null) return null;
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const fields = Object.keys(value);
+    if (fields.length !== 2 || !fields.includes('x') || !fields.includes('y') ||
+        !Number.isFinite(value.x) ||
+        !Number.isFinite(value.y) ||
+        value.x < 0 || value.x > 1 ||
+        value.y < 0 || value.y > 1) {
+      return undefined;
+    }
+    return { x: value.x, y: value.y };
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function normalizeMpvRemoteCursorState(value) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const fields = Object.keys(value);
+    if (fields.length !== 2 || !fields.includes('revision') || !fields.includes('html') ||
+        !Number.isSafeInteger(value.revision) || value.revision < 0 ||
+        typeof value.html !== 'string' ||
+        Buffer.byteLength(value.html, 'utf8') > MAX_MPV_REMOTE_CURSOR_HTML_BYTES) {
+      return null;
+    }
+    return { revision: value.revision, html: value.html };
+  } catch (_error) {
+    return null;
+  }
 }
 
 /**
@@ -295,6 +330,20 @@ function setupIpcHandlers({
     invokeFabricDrawingHost(event, () => mpvOverlayHost.hydrateDrawingVideo(request)));
   ipcMain.handle('mpv:export-overlay-drawing-video', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.exportDrawingVideo(request)));
+  ipcMain.on('mpv-overlay:pointer-presence', (event, presence) => {
+    if (!mpvOverlayHost.isCurrentOverlaySender(event)) return;
+    const normalized = normalizeMpvOverlayPointerPresence(presence);
+    if (normalized === undefined) return;
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed?.()) return;
+    const mainWebContents = mainWindow.webContents;
+    if (!mainWebContents || mainWebContents.isDestroyed?.()) return;
+    try {
+      mainWebContents.send('mpv-overlay:pointer-presence', normalized);
+    } catch (_error) {
+      // Cursor presence is ephemeral; the next pointer event recovers the signal.
+    }
+  });
   ipcMain.on('mpv-overlay:fabric-drawing-persistence', (event, message) => {
     if (!isFabricDrawingPilotEnabled ||
         !mpvOverlayHost.isCurrentOverlaySender(event)) {
@@ -1840,11 +1889,30 @@ function setupIpcHandlers({
     }
   });
 
-  ipcMain.handle('mpv:update-overlay-remote-cursors', async (event, remoteCursorHtml) => {
+  ipcMain.handle('mpv:update-overlay-remote-cursors', async (event, state) => {
     try {
-      return await mpvOverlayHost.updateRemoteCursorState(remoteCursorHtml);
+      if (!isCurrentMainRendererSender(event)) {
+        return { success: false, error: 'mpv remote cursor IPC sender is not allowed' };
+      }
+      const normalized = normalizeMpvRemoteCursorState(state);
+      if (!normalized) {
+        return { success: false, error: 'invalid mpv remote cursor state' };
+      }
+      return await mpvOverlayHost.updateRemoteCursorState(normalized);
     } catch (error) {
       log.debug('mpv 오버레이 원격 커서 갱신 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:trigger-overlay-collab-ripple', async (event, state) => {
+    try {
+      if (!isCurrentMainRendererSender(event)) {
+        return { success: false, error: 'mpv ripple IPC sender is not allowed' };
+      }
+      return await mpvOverlayHost.triggerCollabRipple(state);
+    } catch (error) {
+      log.debug('mpv 오버레이 협업 연결 신호 실패', { error: error.message });
       return { success: false, error: error.message };
     }
   });

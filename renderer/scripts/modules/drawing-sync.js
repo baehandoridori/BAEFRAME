@@ -62,11 +62,21 @@ function compareOrderVersions(left, right) {
  * 그리기 동기화 매니저 (Broadcast 기반)
  */
 export class DrawingSync {
-  constructor({ liveblocksManager, drawingManager, actorId = null }) {
+  constructor({
+    liveblocksManager,
+    drawingManager,
+    actorId = null,
+    onRemoteStrokeOverlayChange = null
+  }) {
     this._lm = liveblocksManager;
     this._dm = drawingManager;
+    this._onRemoteStrokeOverlayChange = typeof onRemoteStrokeOverlayChange === 'function'
+      ? onRemoteStrokeOverlayChange
+      : null;
 
     this._isRemoteUpdate = false;
+    this._remoteOverlay = null;
+    this._remoteStroke = null;
 
     // 실시간 스트로크 스트리밍용
     this._strokeBuffer = [];
@@ -214,6 +224,7 @@ export class DrawingSync {
     this._lastAppliedOrderVersion = { clock: 0, actorId: '' };
     this._broadcastGeneration += 1;
     this._pendingHistoryRestoreBroadcast = Promise.resolve();
+    this._clearRemoteStrokeOverlay('clear');
 
     this._started = false;
     log.info('그리기 동기화 중지됨');
@@ -942,6 +953,7 @@ export class DrawingSync {
 
     this._remoteOverlay.style.display = 'block';
     this._remoteOverlay.style.opacity = String(this._remoteStroke.opacity);
+    this._notifyRemoteStrokeOverlayChange('start');
   }
 
   /**
@@ -972,17 +984,38 @@ export class DrawingSync {
     const lastPt = points[points.length - 1];
     stroke.lastX = lastPt.x;
     stroke.lastY = lastPt.y;
+    this._notifyRemoteStrokeOverlayChange('move');
   }
 
   /**
    * 원격 스트로크 종료 → 오버레이 클리어 (이후 최종 PNG가 옴)
    */
   _onRemoteStrokeEnd() {
+    this._clearRemoteStrokeOverlay('end');
+  }
+
+  _clearRemoteStrokeOverlay(phase) {
     this._remoteStroke = null;
     if (this._remoteOverlay) {
       const ctx = this._remoteOverlay.getContext('2d');
       ctx.clearRect(0, 0, this._remoteOverlay.width, this._remoteOverlay.height);
       this._remoteOverlay.style.display = 'none';
+    }
+    this._notifyRemoteStrokeOverlayChange(phase);
+  }
+
+  _notifyRemoteStrokeOverlayChange(phase) {
+    if (!this._onRemoteStrokeOverlayChange) return;
+    try {
+      this._onRemoteStrokeOverlayChange({
+        phase,
+        overlay: this._remoteOverlay
+      });
+    } catch (error) {
+      log.warn('원격 스트로크 오버레이 변경 알림 실패', {
+        phase,
+        error: error?.message || String(error)
+      });
     }
   }
 

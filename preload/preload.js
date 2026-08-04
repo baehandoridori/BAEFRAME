@@ -6,6 +6,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const MPV_OVERLAY_KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
+const MPV_OVERLAY_POINTER_PRESENCE_CHANNEL = 'mpv-overlay:pointer-presence';
 const MPV_OVERLAY_NAMED_KEY_CODES = new Set([
   'Backspace', 'Tab', 'Enter', 'Delete', 'Insert', 'Home', 'End', 'PageUp', 'PageDown',
   'Escape', 'Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backquote',
@@ -69,6 +70,24 @@ function normalizeMpvOverlayKeyboardInput(value) {
     };
   } catch (_error) {
     return null;
+  }
+}
+
+function normalizeMpvOverlayPointerPresence(value) {
+  if (value === null) return null;
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const fields = Object.keys(value);
+    if (fields.length !== 2 || !fields.includes('x') || !fields.includes('y') ||
+        !Number.isFinite(value.x) ||
+        !Number.isFinite(value.y) ||
+        value.x < 0 || value.x > 1 ||
+        value.y < 0 || value.y > 1) {
+      return undefined;
+    }
+    return { x: value.x, y: value.y };
+  } catch (_error) {
+    return undefined;
   }
 }
 
@@ -203,7 +222,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvPrepareOverlay: (bounds) => ipcRenderer.invoke('mpv:prepare-overlay', bounds),
   mpvUpdateOverlayBounds: (bounds) => ipcRenderer.invoke('mpv:update-overlay-bounds', bounds),
   mpvUpdateOverlayState: (state) => ipcRenderer.invoke('mpv:update-overlay-state', state),
-  mpvUpdateOverlayRemoteCursors: (remoteCursorHtml) => ipcRenderer.invoke('mpv:update-overlay-remote-cursors', remoteCursorHtml),
+  mpvUpdateOverlayRemoteCursors: (state) => ipcRenderer.invoke('mpv:update-overlay-remote-cursors', state),
+  mpvTriggerOverlayCollabRipple: (state) => ipcRenderer.invoke('mpv:trigger-overlay-collab-ripple', state),
   mpvSetOverlayDrawingInput: (request) => ipcRenderer.invoke('mpv:set-overlay-drawing-input', request),
   mpvUpdateOverlayDrawingTool: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-tool', request),
   mpvApplyOverlayDrawingAction: (request) => ipcRenderer.invoke('mpv:apply-overlay-drawing-action', request),
@@ -218,6 +238,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
     ipcRenderer.on(MPV_OVERLAY_KEYBOARD_CHANNEL, listener);
     return () => ipcRenderer.removeListener(MPV_OVERLAY_KEYBOARD_CHANNEL, listener);
+  },
+  onMpvOverlayPointerPresence: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, presence) => {
+      const normalized = normalizeMpvOverlayPointerPresence(presence);
+      if (normalized !== undefined) callback(normalized);
+    };
+    ipcRenderer.on(MPV_OVERLAY_POINTER_PRESENCE_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(MPV_OVERLAY_POINTER_PRESENCE_CHANNEL, listener);
   },
   onFabricDrawingPersistenceEvent: (callback) => {
     if (typeof callback !== 'function') return () => {};
