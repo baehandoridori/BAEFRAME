@@ -194,12 +194,12 @@ test('mpv review freeze decodes before hiding native video and releases in the r
   assert.match(showSource, /if \(!hadValidFrame\) \{[\s\S]+disableMpvReviewInteractionAfterFreezeFailure\(\);/);
 
   const removeReadyIndex = releaseSource.indexOf("classList.remove('mpv-review-freeze-ready')");
-  const restoreIndex = releaseSource.indexOf('await window.electronAPI.mpvSetHostVisible(true)');
+  const restoreIndex = releaseSource.indexOf('await applyMpvHostVisibility(true)');
   const removeFrameIndex = releaseSource.indexOf('freezeElement.remove()');
   assert.ok(removeReadyIndex >= 0 && removeReadyIndex < restoreIndex && restoreIndex < removeFrameIndex, 'release must restore native video before removing its fallback frame');
   assert.match(releaseSource, /const token = \+\+mpvReviewFreezeToken;[\s\S]+mpvReviewFreezeCaptureOwner\.cancel\(\);/);
   assert.match(releaseSource, /if \(token !== mpvReviewFreezeToken\) return;/);
-  assert.match(releaseSource, /if \(!result\?\.success\) \{[\s\S]+return;/);
+  assert.match(releaseSource, /if \(!didMpvHostVisibilityApply\(result, true\)\) \{[\s\S]+return;/);
 });
 
 test('mpv review freeze refresh is throttled instead of perpetually debounced', () => {

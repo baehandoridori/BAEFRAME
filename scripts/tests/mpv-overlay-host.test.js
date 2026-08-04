@@ -3119,6 +3119,8 @@ test('renderer crash discards its current overlay and recovers in a new host gen
 test('normalizes overlay state to bounded serializable fields', () => {
   const state = normalizeOverlayState({
     drawingDataUrl: 'data:image/png;base64,abc',
+    remoteStrokeDataUrl: 'data:image/png;base64,remote-stroke',
+    remoteStrokeOpacity: 0.35,
     onionDataUrl: 'file://not-allowed',
     markerHtml: '<div class="comment-marker"></div>',
     tooltipHtml: '<div class="comment-marker-tooltip visible"></div>',
@@ -3132,12 +3134,15 @@ test('normalizes overlay state to bounded serializable fields', () => {
 
   assert.deepEqual(state.canvas, { left: 10, top: 21, width: 640, height: 361 });
   assert.equal(state.drawingDataUrl, 'data:image/png;base64,abc');
+  assert.equal(state.remoteStrokeDataUrl, 'data:image/png;base64,remote-stroke');
+  assert.equal(state.remoteStrokeOpacity, 0.35);
   assert.equal(state.onionDataUrl, '');
   assert.equal(state.markerHtml, '<div class="comment-marker"></div>');
   assert.equal(state.tooltipHtml, '<div class="comment-marker-tooltip visible"></div>');
   assert.equal(state.htmlOverlayHtml, '<div class="current-cut-overlay">Cut 01</div>');
   assert.equal(state.toastHtml, '<div class="toast-container"><div class="toast success">Saved</div></div>');
-  assert.equal(state.remoteCursorHtml, '<div class="remote-cursor"></div>');
+  assert.equal(state.remoteCursorHtml, undefined,
+    'general overlay state must never be a second writer for remote cursors');
   assert.equal(state.markerTransform, 'scale(2) translate(1px, 2px)');
   assert.equal(state.markerTransformOrigin, 'center center');
 });
@@ -3289,8 +3294,13 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.equal(overlayHtml.includes('toastMirror'), true);
   assert.equal(overlayHtml.includes('remoteCursorMirror'), true);
   assert.equal(overlayHtml.includes('__applyMpvRemoteCursorState'), true);
+  assert.equal(overlayHtml.includes('remoteStrokeMirror'), true);
+  assert.equal(overlayHtml.includes('collabRippleMirror'), true);
+  assert.equal(overlayHtml.includes('__triggerMpvCollabRipple'), true);
   assert.equal(overlayHtml.includes('.remote-cursors-container'), true);
   assert.equal(overlayHtml.includes("applyImage('drawingCanvasMirror', nextState.drawingDataUrl, nextState.canvas)"), true);
+  assert.equal(overlayHtml.includes("applyImage('remoteStrokeMirror', nextState.remoteStrokeDataUrl, nextState.canvas)"), true);
+  assert.equal(overlayHtml.includes('remoteStrokeMirror.style.opacity = String(nextState.remoteStrokeOpacity)'), true);
   assert.doesNotMatch(
     overlayHtml,
     /function applyImage\([\s\S]*?applyOverlayTransform\(element, state\)[\s\S]*?\n    \}/
@@ -3304,7 +3314,8 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.equal(overlayHtml.includes("const allowedTags = new Set(['div', 'span', 'svg', 'path'])"), true);
   assert.equal(overlayHtml.includes("name.startsWith('on')"), true);
   assert.equal(overlayHtml.includes('remoteCursorMirror.innerHTML = sanitizeRemoteCursorHtml(remoteCursorHtml)'), true);
-  assert.equal(overlayHtml.includes('applyRemoteCursorHtml(nextState.remoteCursorHtml)'), true);
+  assert.equal(overlayHtml.includes('applyRemoteCursorHtml(nextState.remoteCursorHtml)'), false,
+    'general overlay updates must not clear or rewind the dedicated cursor mirror');
   const viewportForwarder = overlayHtml.match(
     /if \(nextState\.fabricViewport !== undefined\) \{\s*window\.__mpvFabricOverlay\?\.updateViewport\?\.\(nextState\.fabricViewport\);\s*\}/
   )?.[0];
@@ -3583,8 +3594,8 @@ test('updates overlay state through the isolated overlay document', async () => 
     markerHtml: '<div class="comment-marker pending"></div>',
     htmlOverlayHtml: '<div class="current-cut-overlay">Cut 01</div>',
     toastHtml: '<div class="toast-container"><div class="toast info">Ready</div></div>',
-    remoteCursorHtml: '<div class="remote-cursor" style="display:block"></div>',
     drawingDataUrl: 'data:image/png;base64,draw',
+    remoteStrokeDataUrl: 'data:image/png;base64,remote-stroke',
     canvas: { left: 1, top: 2, width: 3, height: 4 }
   });
 
@@ -3594,15 +3605,34 @@ test('updates overlay state through the isolated overlay document', async () => 
   assert.match(scripts[0], /comment-marker pending/);
   assert.match(scripts[0], /current-cut-overlay/);
   assert.match(scripts[0], /toast info/);
-  assert.match(scripts[0], /remote-cursor/);
+  assert.doesNotMatch(scripts[0], /remote-cursor/);
   assert.match(scripts[0], /data:image\/png;base64,draw/);
+  assert.match(scripts[0], /data:image\/png;base64,remote-stroke/);
 
-  const cursorOnlyResult = await host.updateRemoteCursorState('<div class="remote-cursor" style="display:block"></div>');
+  const cursorOnlyResult = await host.updateRemoteCursorState({
+    revision: 2,
+    html: '<div class="remote-cursor" style="display:block"></div>'
+  });
   assert.equal(cursorOnlyResult.success, true);
+  assert.equal(cursorOnlyResult.accepted, true);
   assert.equal(scripts.length, 2);
   assert.match(scripts[1], /window\.__applyMpvRemoteCursorState/);
   assert.match(scripts[1], /remote-cursor/);
   assert.doesNotMatch(scripts[1], /drawingDataUrl|markerHtml|toastHtml/);
+
+  const staleCursorResult = await host.updateRemoteCursorState({
+    revision: 1,
+    html: '<div class="remote-cursor stale"></div>'
+  });
+  assert.deepEqual(staleCursorResult, { success: true, accepted: false, stale: true });
+  assert.equal(scripts.length, 2, 'a stale cursor revision must not reach the overlay document');
+
+  const rippleResult = await host.triggerCollabRipple({ x: 1.5, y: -1 });
+  assert.equal(rippleResult.success, true);
+  assert.equal(scripts.length, 3);
+  assert.match(scripts[2], /window\.__triggerMpvCollabRipple/);
+  assert.match(scripts[2], /"x":1/);
+  assert.match(scripts[2], /"y":0/);
 });
 
 test('hides and restores the native overlay host with the mpv embed host', async () => {
@@ -3816,6 +3846,8 @@ test('생략된 미러 필드는 이전 DOM을 유지하고 playhead는 별도 �
   assert.equal(partial.toastHtml, undefined);
   assert.equal(partial.drawingDataUrl, undefined);
   assert.equal(partial.onionDataUrl, undefined);
+  assert.equal(partial.remoteStrokeDataUrl, undefined);
+  assert.equal(partial.remoteCursorHtml, undefined);
   assert.equal(partial.markerHtml, '<div class="comment-marker"></div>');
 
   // 호스트 적용부가 playhead를 별도 필드로 갱신한다

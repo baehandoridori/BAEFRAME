@@ -697,7 +697,7 @@ body {
   overflow: hidden;
 }
 
-body.mpv-pilot-mode .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
+body.mpv-native-host-visible .video-wrapper.mpv-pilot-mode > .remote-cursors-container {
   visibility: hidden !important;
 }
 

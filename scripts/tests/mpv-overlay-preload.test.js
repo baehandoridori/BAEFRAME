@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '../..');
 const preloadPath = path.join(rootDir, 'preload/mpv-overlay-preload.js');
+const ipcHandlersPath = path.join(rootDir, 'main/ipc-handlers.js');
 const MAX_TRANSITION_BYTES = 8 * 1024 * 1024;
 
 function makeTransition(overrides = {}) {
@@ -32,11 +33,31 @@ function makeTransition(overrides = {}) {
   };
 }
 
-function loadOverlayPreload({ sendError = null } = {}) {
+function loadOverlayPreload({
+  sendError = null,
+  overlayDocument = undefined,
+  overlayWindow = undefined
+} = {}) {
   assert.equal(fs.existsSync(preloadPath), true, 'overlay persistence preload must exist');
   const sent = [];
   const exposed = new Map();
   const originalLoad = Module._load;
+  const originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  if (overlayDocument !== undefined) {
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      writable: true,
+      value: overlayDocument
+    });
+  }
+  if (overlayWindow !== undefined) {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      writable: true,
+      value: overlayWindow
+    });
+  }
   Module._load = function loadWithElectronStub(request, parent, isMain) {
     if (request === 'electron') {
       return {
@@ -62,8 +83,151 @@ function loadOverlayPreload({ sendError = null } = {}) {
   } finally {
     Module._load = originalLoad;
     delete require.cache[require.resolve(preloadPath)];
+    if (originalDocumentDescriptor) {
+      Object.defineProperty(globalThis, 'document', originalDocumentDescriptor);
+    } else {
+      delete globalThis.document;
+    }
+    if (originalWindowDescriptor) {
+      Object.defineProperty(globalThis, 'window', originalWindowDescriptor);
+    } else {
+      delete globalThis.window;
+    }
   }
   return { exposed, sent };
+}
+
+function createPointerEnvironment(rect = { left: 20, top: 10, width: 200, height: 100 }) {
+  const listeners = new Map();
+  const animationFrames = [];
+  const overlayDocument = {
+    documentElement: {
+      getBoundingClientRect() {
+        return { ...rect };
+      }
+    },
+    addEventListener(type, listener, options) {
+      listeners.set(type, { listener, options });
+    }
+  };
+  const overlayWindow = {
+    requestAnimationFrame(callback) {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    }
+  };
+  return {
+    animationFrames,
+    listeners,
+    overlayDocument,
+    overlayWindow,
+    flushAnimationFrame() {
+      const callbacks = animationFrames.splice(0);
+      callbacks.forEach(callback => callback(0));
+    }
+  };
+}
+
+function loadPointerPresenceIpcHandlers() {
+  const eventHandlers = new Map();
+  const invokeHandlers = new Map();
+  const sent = [];
+  const remoteCursorCalls = [];
+  const allowedOverlaySender = {};
+  const mainWebContents = {
+    isDestroyed: () => false,
+    send(channel, payload) {
+      sent.push([channel, payload]);
+    }
+  };
+  const mainWindow = {
+    isDestroyed: () => false,
+    webContents: mainWebContents
+  };
+  const noop = () => {};
+  const ipcMain = {
+    handle(channel, handler) {
+      invokeHandlers.set(channel, handler);
+    },
+    on(channel, handler) {
+      eventHandlers.set(channel, handler);
+    }
+  };
+  const fakeModules = new Map([
+    ['electron', {
+      ipcMain,
+      dialog: {},
+      app: {},
+      clipboard: {},
+      shell: {}
+    }],
+    ['./logger', {
+      createLogger: () => ({
+        debug: noop,
+        error: noop,
+        info: noop,
+        trace: () => ({ end: noop, error: noop }),
+        warn: noop
+      })
+    }],
+    ['./window', {
+      closeWindow: noop,
+      getMainWindow: () => mainWindow,
+      isFullscreen: () => false,
+      isMaximized: () => false,
+      minimizeWindow: noop,
+      toggleFullscreen: noop,
+      toggleMaximize: noop
+    }],
+    ['./recent-files-store', { RecentFilesStore: class RecentFilesStore {} }],
+    ['./recent-thumb-capture', {}],
+    ['./cutlist-paths', { validateCutlistFilePath: value => value }],
+    ['./mpv-manager', { MPVManager: class MPVManager {}, mpvManager: {} }],
+    ['./mpv-embed-host', { mpvEmbedHost: {} }],
+    ['./mpv-overlay-host', {
+      mpvOverlayHost: {
+        isCurrentOverlaySender(event) {
+          return event?.sender === allowedOverlaySender;
+        },
+        async updateRemoteCursorState(state) {
+          remoteCursorCalls.push(state);
+          return { success: true, accepted: true };
+        }
+      },
+      normalizeFabricDrawingPersistenceMessage: () => null
+    }],
+    ['./review-file-store', {
+      readReviewSnapshot: noop,
+      saveReviewFile: noop
+    }],
+    ['electron-store', class Store {}]
+  ]);
+  const originalLoad = Module._load;
+
+  delete require.cache[ipcHandlersPath];
+  Module._load = function loadWithFakes(request, parent, isMain) {
+    if (parent?.filename === ipcHandlersPath && fakeModules.has(request)) {
+      return fakeModules.get(request);
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+
+  try {
+    const { setupIpcHandlers } = require(ipcHandlersPath);
+    setupIpcHandlers();
+  } finally {
+    Module._load = originalLoad;
+    delete require.cache[ipcHandlersPath];
+  }
+  return {
+    allowedOverlaySender,
+    eventHandlers,
+    invokeHandlers,
+    mainWebContents,
+    mainWindow,
+    remoteCursorCalls,
+    sent
+  };
 }
 
 test('overlay preload exposes one narrow committed-transition bridge and sends plain JSON', () => {
@@ -132,4 +296,130 @@ test('overlay preload drops invalid fences and isolates send failures from commi
       false
     );
   });
+});
+
+test('overlay preload relays the latest pointer once per animation frame in normalized overlay coordinates', () => {
+  const pointer = createPointerEnvironment();
+  const harness = loadOverlayPreload({
+    overlayDocument: pointer.overlayDocument,
+    overlayWindow: pointer.overlayWindow
+  });
+  const moveRegistration = pointer.listeners.get('pointermove');
+  const leaveRegistration = pointer.listeners.get('pointerleave');
+
+  assert.equal(typeof moveRegistration?.listener, 'function');
+  assert.equal(moveRegistration?.options?.capture, true);
+  assert.equal(moveRegistration?.options?.passive, true);
+  assert.equal(typeof leaveRegistration?.listener, 'function');
+
+  moveRegistration.listener({ clientX: 30, clientY: 20 });
+  moveRegistration.listener({ clientX: 120, clientY: 60 });
+  moveRegistration.listener({ clientX: 180, clientY: 90 });
+  assert.equal(pointer.animationFrames.length, 1);
+  assert.deepEqual(harness.sent, []);
+
+  pointer.flushAnimationFrame();
+  assert.deepEqual(harness.sent, [[
+    'mpv-overlay:pointer-presence',
+    { x: 0.8, y: 0.8 }
+  ]]);
+
+  leaveRegistration.listener({});
+  pointer.flushAnimationFrame();
+  assert.deepEqual(harness.sent[1], ['mpv-overlay:pointer-presence', null]);
+});
+
+test('overlay pointer relay clamps captured coordinates and drops unusable bounds or values', () => {
+  const pointer = createPointerEnvironment();
+  const harness = loadOverlayPreload({
+    overlayDocument: pointer.overlayDocument,
+    overlayWindow: pointer.overlayWindow
+  });
+  const move = pointer.listeners.get('pointermove')?.listener;
+
+  move({ clientX: -50, clientY: 500 });
+  pointer.flushAnimationFrame();
+  assert.deepEqual(harness.sent, [[
+    'mpv-overlay:pointer-presence',
+    { x: 0, y: 1 }
+  ]]);
+
+  move({ clientX: Number.POSITIVE_INFINITY, clientY: 50 });
+  pointer.flushAnimationFrame();
+  assert.equal(harness.sent.length, 1);
+
+  pointer.overlayDocument.documentElement.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 100
+  });
+  move({ clientX: 20, clientY: 50 });
+  pointer.flushAnimationFrame();
+  assert.equal(harness.sent.length, 1);
+});
+
+test('main IPC forwards only strict pointer presence from the current native overlay sender', () => {
+  const harness = loadPointerPresenceIpcHandlers();
+  const relay = harness.eventHandlers.get('mpv-overlay:pointer-presence');
+  assert.equal(typeof relay, 'function');
+
+  const payload = { x: 0.125, y: 0.875 };
+  relay({ sender: harness.allowedOverlaySender }, payload);
+  relay({ sender: harness.allowedOverlaySender }, null);
+  assert.deepEqual(harness.sent, [
+    ['mpv-overlay:pointer-presence', { x: 0.125, y: 0.875 }],
+    ['mpv-overlay:pointer-presence', null]
+  ]);
+  assert.notEqual(harness.sent[0][1], payload);
+
+  for (const malformed of [
+    undefined,
+    [],
+    {},
+    { x: 0.5 },
+    { x: 0.5, y: 0.5, z: 0.5 },
+    { x: -1, y: 0.5 },
+    { x: 0.5, y: 2 },
+    { x: Number.POSITIVE_INFINITY, y: 0.5 },
+    { x: 0.5, y: '0.5' }
+  ]) {
+    relay({ sender: harness.allowedOverlaySender }, malformed);
+  }
+  relay({ sender: {} }, { x: 0.5, y: 0.5 });
+  assert.equal(harness.sent.length, 2);
+});
+
+test('main IPC accepts bounded remote cursor state only from the current main renderer', async () => {
+  const harness = loadPointerPresenceIpcHandlers();
+  const updateRemoteCursors = harness.invokeHandlers.get('mpv:update-overlay-remote-cursors');
+  assert.equal(typeof updateRemoteCursors, 'function');
+
+  assert.deepEqual(
+    await updateRemoteCursors({ sender: {} }, { revision: Number.MAX_SAFE_INTEGER, html: '' }),
+    { success: false, error: 'mpv remote cursor IPC sender is not allowed' }
+  );
+  assert.equal(harness.remoteCursorCalls.length, 0);
+
+  for (const malformed of [
+    null,
+    { revision: 1 },
+    { revision: -1, html: '' },
+    { revision: 1.5, html: '' },
+    { revision: 1, html: '', extra: true },
+    { revision: 1, html: 'x'.repeat(256 * 1024 + 1) }
+  ]) {
+    const result = await updateRemoteCursors({ sender: harness.mainWebContents }, malformed);
+    assert.equal(result.success, false);
+    assert.equal(result.error, 'invalid mpv remote cursor state');
+  }
+  assert.equal(harness.remoteCursorCalls.length, 0);
+
+  const state = { revision: 7, html: '<div class="remote-cursor"></div>' };
+  assert.deepEqual(
+    await updateRemoteCursors({ sender: harness.mainWebContents }, state),
+    { success: true, accepted: true }
+  );
+  assert.deepEqual(harness.remoteCursorCalls, [state]);
+  assert.notEqual(harness.remoteCursorCalls[0], state);
 });

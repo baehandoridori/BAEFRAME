@@ -13,6 +13,7 @@ const commentSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, '
 const mentionManagerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/mention-manager.js'), 'utf8'));
 const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'preload/preload.js'), 'utf8'));
 const ipcHandlersSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
+const mpvSurfacePolicySource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/mpv-surface-policy.js'), 'utf8'));
 
 test('comment editable fields recover focus when a parent pointer handler blocks default focus', () => {
   assert.match(appSource, /function getCommentEditableTarget\(target\) \{[\s\S]+target\.closest\('\.comment-input, \.comment-marker-input, \.comment-reply-input, \.comment-edit-textarea, \.comment-reply-edit-textarea, \.thread-editor\[contenteditable="true"\]'\)/);
@@ -79,7 +80,8 @@ test('comment mode pauses mpv and waits for a shared review freeze before native
   assert.match(commentModeHandler, /else \{[\s\S]+if \(!isMpvReviewInteractionActive\(\) && !suppressReviewFreezeReleaseForMediaChange\) \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
   assert.match(appSource, /async function prepareMpvCommentMode\(preparationToken\) \{[\s\S]+prepareFreeze: \(\) => showMpvReviewFreezeFrame\(\)[\s\S]+setReady: setCommentModeReadyState/);
   assert.match(appSource, /function setCommentModeReadyState\(ready\) \{[\s\S]+pointerEvents = ready \? 'auto' : 'none'/);
-  assert.match(appSource, /'\.video-wrapper\.mpv-review-freeze-ready'/);
+  assert.match(mpvSurfacePolicySource, /'\.video-wrapper\.mpv-review-freeze-ready'/);
+  assert.match(appSource, /getMpvSurfaceElements\(document, MPV_SURFACE_MODE\.BLOCK\)/);
 });
 
 test('pending comment editor stays visible near video edges', () => {
