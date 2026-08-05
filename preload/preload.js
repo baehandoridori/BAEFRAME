@@ -223,6 +223,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvUpdateOverlayBounds: (bounds) => ipcRenderer.invoke('mpv:update-overlay-bounds', bounds),
   mpvUpdateOverlayState: (state) => ipcRenderer.invoke('mpv:update-overlay-state', state),
   mpvUpdateOverlayRemoteCursors: (state) => ipcRenderer.invoke('mpv:update-overlay-remote-cursors', state),
+  mpvUpdateOverlayCollaboration: (state) => ipcRenderer.invoke('mpv:update-overlay-collaboration', state),
   mpvTriggerOverlayCollabRipple: (state) => ipcRenderer.invoke('mpv:trigger-overlay-collab-ripple', state),
   mpvSetOverlayDrawingInput: (request) => ipcRenderer.invoke('mpv:set-overlay-drawing-input', request),
   mpvUpdateOverlayDrawingTool: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-tool', request),

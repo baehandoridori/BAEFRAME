@@ -75,14 +75,18 @@ test('surface registry derives block, observed mirror, and generic HTML mirror s
   assert.match(MPV_MIRRORED_OVERLAY_SELECTOR, /\.scrub-preview-overlay(?:,|$)/);
 });
 
-test('collaboration status surfaces mirror above mpv without hiding the native host', async () => {
+test('collaboration status surfaces use the dedicated collaboration mirror without hiding the native host', async () => {
   const { MPV_SURFACE_MODE, getMpvSurfaceSelectors } = await loadPolicy();
   const blockSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.BLOCK);
   const htmlMirrorSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.HTML_MIRROR);
+  const collaborationMirrorSelectors = getMpvSurfaceSelectors(
+    MPV_SURFACE_MODE.COLLABORATION_MIRROR
+  );
 
   for (const selector of ['.collaborators-indicator', '.playback-sync-panel']) {
     assert.equal(blockSelectors.includes(selector), false);
-    assert.equal(htmlMirrorSelectors.includes(selector), true);
+    assert.equal(htmlMirrorSelectors.includes(selector), false);
+    assert.equal(collaborationMirrorSelectors.includes(selector), true);
   }
 });
 

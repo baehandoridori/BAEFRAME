@@ -1,7 +1,8 @@
 export const MPV_SURFACE_MODE = Object.freeze({
   BLOCK: 'block',
   HTML_MIRROR: 'htmlMirror',
-  DEDICATED_MIRROR: 'dedicatedMirror'
+  DEDICATED_MIRROR: 'dedicatedMirror',
+  COLLABORATION_MIRROR: 'collaborationMirror'
 });
 
 // Native mpv is a separate Windows surface, so ordinary DOM z-index cannot place
@@ -45,9 +46,7 @@ export const MPV_SURFACE_REGISTRY = Object.freeze([
     '.video-comment-overlay-controls',
     '.video-comment-range-overlay',
     '.composition-layer-transform-handle',
-    '.composition-layer-snap-guide',
-    '.collaborators-indicator',
-    '.playback-sync-panel'
+    '.composition-layer-snap-guide'
   ].map(selector => Object.freeze({ selector, mode: MPV_SURFACE_MODE.HTML_MIRROR })),
   Object.freeze({
     selector: '.scrub-preview-overlay.active',
@@ -65,7 +64,11 @@ export const MPV_SURFACE_REGISTRY = Object.freeze([
     '.comment-marker-tooltip',
     '.toast-container',
     '#compositionLayerOverlay'
-  ].map(selector => Object.freeze({ selector, mode: MPV_SURFACE_MODE.DEDICATED_MIRROR }))
+  ].map(selector => Object.freeze({ selector, mode: MPV_SURFACE_MODE.DEDICATED_MIRROR })),
+  ...[
+    '.collaborators-indicator',
+    '.playback-sync-panel'
+  ].map(selector => Object.freeze({ selector, mode: MPV_SURFACE_MODE.COLLABORATION_MIRROR }))
 ]);
 
 function normalizeModes(modes) {
@@ -99,8 +102,11 @@ export const MPV_HTML_MIRROR_OVERLAY_SELECTOR = joinMpvSurfaceSelectors(
 );
 export const MPV_MIRRORED_OVERLAY_SELECTOR = joinMpvSurfaceObservationSelectors([
   MPV_SURFACE_MODE.HTML_MIRROR,
-  MPV_SURFACE_MODE.DEDICATED_MIRROR
+  MPV_SURFACE_MODE.DEDICATED_MIRROR,
+  MPV_SURFACE_MODE.COLLABORATION_MIRROR
 ]);
+export const MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR =
+  joinMpvSurfaceObservationSelectors(MPV_SURFACE_MODE.COLLABORATION_MIRROR);
 
 function getStyleSafely(element, getStyle, styleCache) {
   if (styleCache.has(element)) return styleCache.get(element);

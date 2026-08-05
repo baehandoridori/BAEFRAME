@@ -57,6 +57,12 @@ const FABRIC_DRAWING_MAX_BRUSH_SIZE = 1_000_000;
 const FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE = 1_000_000_000;
 const FABRIC_DRAWING_MAX_STRING_LENGTH = 32768;
 const MAX_MPV_REMOTE_CURSOR_HTML_BYTES = 256 * 1024;
+const MAX_MPV_COLLABORATION_STATE_BYTES = 1024 * 1024;
+const MAX_MPV_COLLABORATION_SNAPSHOT_BYTES = 768 * 1024;
+const MAX_MPV_COLLABORATION_USERS = 64;
+const MAX_MPV_COLLABORATION_NAME_LENGTH = 64;
+const MAX_MPV_COLLABORATION_BOUND = 32768;
+const MPV_COLLABORATION_FALLBACK_COLOR = '#ffd000';
 const FABRIC_DRAWING_TRANSITION_KEYS = Object.freeze([
   'hostGeneration',
   'videoGeneration',
@@ -466,6 +472,235 @@ const OVERLAY_HTML = String.raw`
     #remoteCursorMirror {
       z-index: 45;
     }
+    #collaborationMirror {
+      position: absolute;
+      inset: 0;
+      z-index: 46;
+      pointer-events: none;
+      color: var(--text-primary);
+      font-family: Inter, Pretendard, "Segoe UI", sans-serif;
+      font-size: 12px;
+    }
+    #collaborationMirror[data-theme="light"] {
+      --bg-elevated: rgba(250, 250, 250, 0.96);
+      --bg-primary: #ffffff;
+      --border-subtle: rgba(0, 0, 0, 0.16);
+      --text-primary: #202124;
+      --text-tertiary: rgba(32, 33, 36, 0.62);
+    }
+    .mpv-collaboration-surface {
+      position: absolute;
+      display: none;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    #mpvCollaborationIndicator {
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 20px;
+      background: var(--bg-elevated);
+      overflow: hidden;
+    }
+    #mpvCollaborationAvatars {
+      display: flex;
+      flex-direction: row-reverse;
+      min-width: 0;
+    }
+    .mpv-collaboration-avatar {
+      width: 24px;
+      height: 24px;
+      margin-left: -8px;
+      box-sizing: border-box;
+      border: 2px solid var(--bg-primary);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 650;
+      text-transform: uppercase;
+    }
+    .mpv-collaboration-avatar:first-child { margin-left: 0; }
+    .mpv-collaboration-avatar.is-me { border-color: var(--accent-primary); }
+    .mpv-collaboration-info {
+      display: flex;
+      gap: 2px;
+      align-items: center;
+      white-space: nowrap;
+      color: var(--text-tertiary);
+    }
+    #mpvCollaborationCount { color: var(--text-primary); font-weight: 650; }
+    #mpvCollaborationBadge {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+      font-size: 15px;
+    }
+    #mpvCollaborationBadge[data-badge="syncing"] { color: #ffb347; }
+    #mpvCollaborationBadge[data-badge="synced"] { color: var(--success); }
+    #mpvCollaborationBadge[data-badge="error"] { color: var(--error); }
+    #mpvCollaborationPlexus {
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--bg-elevated);
+      box-shadow: var(--shadow-lg);
+    }
+    #mpvCollaborationPlexusImage {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+    }
+    .mpv-collaboration-plexus-footer {
+      position: absolute;
+      inset: auto 0 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 10px;
+      background: linear-gradient(transparent, var(--bg-elevated) 40%);
+    }
+    .mpv-collaboration-plexus-label {
+      color: var(--text-tertiary);
+      font-size: 10px;
+      letter-spacing: 0.5px;
+    }
+    .mpv-collaboration-actions { display: flex; gap: 6px; }
+    .mpv-collaboration-action {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-tertiary);
+      font: inherit;
+      font-size: 10px;
+    }
+    .mpv-collaboration-action.is-muted { opacity: 0.58; }
+    #mpvPlaybackSyncPanel {
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--bg-elevated);
+      box-shadow: var(--shadow-lg);
+    }
+    .mpv-playback-sync-header {
+      height: 39px;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .mpv-playback-sync-title { flex: 1; font-weight: 650; }
+    .mpv-playback-sync-header button {
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--text-tertiary);
+      font: inherit;
+    }
+    .mpv-playback-sync-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    #mpvPlaybackSyncPanel.collapsed .mpv-playback-sync-body { display: none; }
+    #mpvPlaybackSyncPanel.collapsed .mpv-playback-sync-header { border-bottom: 0; }
+    .mpv-playback-sync-toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-tertiary);
+    }
+    .mpv-playback-sync-track {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .mpv-playback-sync-knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--text-tertiary);
+    }
+    .mpv-playback-sync-toggle.enabled .mpv-playback-sync-track { background: var(--accent-primary); }
+    .mpv-playback-sync-toggle.enabled .mpv-playback-sync-knob {
+      left: 18px;
+      background: var(--bg-primary);
+    }
+    .mpv-playback-sync-modes {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .mpv-playback-sync-radio {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-tertiary);
+      font-size: 11px;
+    }
+    .mpv-playback-sync-radio-ring {
+      width: 14px;
+      height: 14px;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid var(--border-subtle);
+      border-radius: 50%;
+    }
+    .mpv-playback-sync-radio-dot {
+      width: 6px;
+      height: 6px;
+      display: none;
+      border-radius: 50%;
+      background: var(--accent-primary);
+    }
+    .mpv-playback-sync-radio.selected .mpv-playback-sync-radio-ring { border-color: var(--accent-primary); }
+    .mpv-playback-sync-radio.selected .mpv-playback-sync-radio-dot { display: block; }
+    .mpv-playback-sync-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border-subtle);
+      color: var(--text-tertiary);
+      font-size: 11px;
+    }
+    .mpv-playback-sync-status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-tertiary);
+    }
+    .mpv-playback-sync-status-dot.active { background: var(--success); }
+    .mpv-playback-sync-status-dot.leading { background: var(--accent-primary); }
     #markerMirror *,
     #tooltipMirror *,
     #toastMirror *,
@@ -691,6 +926,50 @@ const OVERLAY_HTML = String.raw`
     <div id="tooltipMirror"></div>
     <canvas id="collabRippleMirror"></canvas>
     <div id="remoteCursorMirror" class="remote-cursors-container"></div>
+    <div id="collaborationMirror" data-theme="dark">
+      <div id="mpvCollaborationIndicator" class="mpv-collaboration-surface" data-mpv-collab-target="collab.indicator">
+        <div id="mpvCollaborationAvatars"></div>
+        <div class="mpv-collaboration-info">
+          <span id="mpvCollaborationCount">0</span><span>명 작업 중</span>
+        </div>
+        <span id="mpvCollaborationBadge" aria-label="동기화 상태" data-mpv-collab-target="collab.sync-status">↻</span>
+      </div>
+      <div id="mpvCollaborationPlexus" class="mpv-collaboration-surface" data-mpv-collab-target="collab.panel">
+        <img id="mpvCollaborationPlexusImage" alt="">
+        <div class="mpv-collaboration-plexus-footer">
+          <span class="mpv-collaboration-plexus-label">실시간 협업 중</span>
+          <div class="mpv-collaboration-actions">
+            <button id="mpvCollaborationCursorToggle" class="mpv-collaboration-action" data-mpv-collab-target="collab.cursor-toggle">◉ <span id="mpvCollaborationCursorLabel">커서 숨기기</span></button>
+            <button class="mpv-collaboration-action" data-mpv-collab-target="collab.open-sync">⇧ <span>동기화 작업</span></button>
+          </div>
+        </div>
+      </div>
+      <div id="mpvPlaybackSyncPanel" class="mpv-collaboration-surface" data-mpv-collab-target="sync.panel">
+        <div class="mpv-playback-sync-header" data-mpv-collab-target="sync.drag-handle">
+          <span>⇧</span><span class="mpv-playback-sync-title">동기화 작업</span>
+          <button data-mpv-collab-target="sync.collapse" aria-label="접기/펼치기">⌄</button>
+          <button data-mpv-collab-target="sync.close" aria-label="패널 닫기">×</button>
+        </div>
+        <div class="mpv-playback-sync-body">
+          <div id="mpvPlaybackSyncToggle" class="mpv-playback-sync-toggle" role="checkbox" aria-checked="false" data-mpv-collab-target="sync.toggle">
+            <span class="mpv-playback-sync-track"><span class="mpv-playback-sync-knob"></span></span>
+            <span id="mpvPlaybackSyncToggleLabel">동기화 꺼짐</span>
+          </div>
+          <div class="mpv-playback-sync-modes">
+            <div id="mpvPlaybackSyncLead" class="mpv-playback-sync-radio" role="radio" aria-checked="true" data-mpv-collab-target="sync.lead">
+              <span class="mpv-playback-sync-radio-ring"><span class="mpv-playback-sync-radio-dot"></span></span><span>내가 주도</span>
+            </div>
+            <div id="mpvPlaybackSyncFollow" class="mpv-playback-sync-radio" role="radio" aria-checked="false" data-mpv-collab-target="sync.follow">
+              <span class="mpv-playback-sync-radio-ring"><span class="mpv-playback-sync-radio-dot"></span></span><span>팔로잉하기</span>
+            </div>
+          </div>
+          <div class="mpv-playback-sync-status">
+            <span id="mpvPlaybackSyncStatusDot" class="mpv-playback-sync-status-dot"></span>
+            <span id="mpvPlaybackSyncStatusText">동기화 꺼짐</span>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="toastMirror"></div>
   </div>
   <script>
@@ -766,6 +1045,91 @@ const OVERLAY_HTML = String.raw`
       if (!Number.isSafeInteger(revision) || revision <= remoteCursorRevision) return false;
       remoteCursorRevision = revision;
       applyRemoteCursorHtml(state?.html);
+      return true;
+    };
+
+    function applyMpvCollaborationBounds(element, surface, display) {
+      if (!element || !surface || !surface.bounds) return;
+      element.style.display = surface.visible ? display : 'none';
+      element.style.left = surface.bounds.left + 'px';
+      element.style.top = surface.bounds.top + 'px';
+      element.style.width = surface.bounds.width + 'px';
+      element.style.height = surface.bounds.height + 'px';
+    }
+
+    function applyMpvCollaborationUsers(users) {
+      const avatars = document.getElementById('mpvCollaborationAvatars');
+      if (!avatars) return;
+      const avatarElements = [];
+      for (const user of users) {
+        const avatar = document.createElement('span');
+        avatar.className = 'mpv-collaboration-avatar' + (user.isMe ? ' is-me' : '');
+        avatar.style.backgroundColor = user.color;
+        avatar.title = user.name + (user.isMe ? ' (나)' : '');
+        avatar.textContent = user.name.slice(0, 2);
+        avatarElements.unshift(avatar);
+      }
+      avatars.replaceChildren(...avatarElements);
+    }
+
+    let collaborationRevision = -1;
+    window.__applyMpvCollaborationState = function applyMpvCollaborationState(state) {
+      const revision = Number(state && state.revision);
+      if (!Number.isSafeInteger(revision) || revision <= collaborationRevision) return false;
+      collaborationRevision = revision;
+
+      const root = document.getElementById('collaborationMirror');
+      const indicator = document.getElementById('mpvCollaborationIndicator');
+      const plexus = document.getElementById('mpvCollaborationPlexus');
+      const playback = document.getElementById('mpvPlaybackSyncPanel');
+      if (!root || !indicator || !plexus || !playback) return false;
+      root.dataset.theme = state.theme;
+
+      applyMpvCollaborationBounds(indicator, state.indicator, 'flex');
+      applyMpvCollaborationUsers(state.indicator.users);
+      document.getElementById('mpvCollaborationCount').textContent = String(state.indicator.users.length);
+      const badge = document.getElementById('mpvCollaborationBadge');
+      badge.dataset.badge = state.indicator.badge;
+      badge.setAttribute('aria-label', {
+        idle: '동기화 대기',
+        syncing: '동기화 중',
+        synced: '동기화 완료',
+        error: '동기화 오류'
+      }[state.indicator.badge]);
+
+      applyMpvCollaborationBounds(plexus, state.plexus, 'block');
+      const plexusImage = document.getElementById('mpvCollaborationPlexusImage');
+      if (state.plexus.visible && state.plexus.snapshotDataUrl) {
+        plexusImage.src = state.plexus.snapshotDataUrl;
+      } else {
+        plexusImage.removeAttribute('src');
+      }
+      const cursorToggle = document.getElementById('mpvCollaborationCursorToggle');
+      cursorToggle.classList.toggle('is-muted', !state.plexus.showRemoteCursors);
+      cursorToggle.setAttribute('aria-pressed', String(!state.plexus.showRemoteCursors));
+      document.getElementById('mpvCollaborationCursorLabel').textContent =
+        state.plexus.showRemoteCursors ? '커서 숨기기' : '커서 보이기';
+
+      applyMpvCollaborationBounds(playback, state.playback, 'block');
+      playback.classList.toggle('collapsed', state.playback.collapsed);
+      const toggle = document.getElementById('mpvPlaybackSyncToggle');
+      toggle.classList.toggle('enabled', state.playback.syncEnabled);
+      toggle.setAttribute('aria-checked', String(state.playback.syncEnabled));
+      document.getElementById('mpvPlaybackSyncToggleLabel').textContent =
+        state.playback.syncEnabled ? '동기화 켜짐' : '동기화 꺼짐';
+      const lead = document.getElementById('mpvPlaybackSyncLead');
+      const follow = document.getElementById('mpvPlaybackSyncFollow');
+      const isLead = state.playback.leaderMode === 'lead';
+      lead.classList.toggle('selected', isLead);
+      lead.setAttribute('aria-checked', String(isLead));
+      follow.classList.toggle('selected', !isLead);
+      follow.setAttribute('aria-checked', String(!isLead));
+      const statusDot = document.getElementById('mpvPlaybackSyncStatusDot');
+      statusDot.classList.toggle('leading', state.playback.syncEnabled && isLead);
+      statusDot.classList.toggle('active', state.playback.syncEnabled && !isLead);
+      document.getElementById('mpvPlaybackSyncStatusText').textContent = !state.playback.syncEnabled
+        ? '동기화 꺼짐'
+        : isLead ? '내가 주도 중' : '팔로잉 중';
       return true;
     };
 
@@ -979,6 +1343,7 @@ const OVERLAY_HOST_URL = `data:text/html;charset=utf-8,${encodeURIComponent(OVER
 const OVERLAY_API_READY_SCRIPT = [
   "typeof window.__applyMpvOverlayState === 'function'",
   "typeof window.__applyMpvRemoteCursorState === 'function'",
+  "typeof window.__applyMpvCollaborationState === 'function'",
   "typeof window.__triggerMpvCollabRipple === 'function'"
 ].join(' && ');
 
@@ -1003,6 +1368,155 @@ function normalizeFloat(value, fallback = 0) {
 function normalizeImageDataUrl(value) {
   const text = typeof value === 'string' ? value : '';
   return text.startsWith('data:image/') ? text : '';
+}
+
+function isExactPlainRecord(value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const ownKeys = Reflect.ownKeys(value);
+  return ownKeys.length === keys.length &&
+    ownKeys.every(key => typeof key === 'string' && keys.includes(key));
+}
+
+function isDensePlainArray(value) {
+  if (!Array.isArray(value)) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) return false;
+  }
+  return Reflect.ownKeys(value).every(key => key === 'length' ||
+    (typeof key === 'string' && /^(0|[1-9]\d*)$/.test(key) && Number(key) < value.length));
+}
+
+function normalizeMpvCollaborationBounds(value) {
+  const keys = ['left', 'top', 'width', 'height'];
+  if (!isExactPlainRecord(value, keys)) return null;
+  if (!keys.every(key => Number.isFinite(value[key]) &&
+      Math.abs(value[key]) <= MAX_MPV_COLLABORATION_BOUND)) {
+    return null;
+  }
+  if (value.width < 0 || value.height < 0) return null;
+  return {
+    left: value.left,
+    top: value.top,
+    width: value.width,
+    height: value.height
+  };
+}
+
+function normalizeMpvCollaborationName(value) {
+  if (typeof value !== 'string') return null;
+  return value
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '')
+    .trim()
+    .slice(0, MAX_MPV_COLLABORATION_NAME_LENGTH);
+}
+
+function normalizeMpvCollaborationUser(value) {
+  if (!isExactPlainRecord(value, ['name', 'color', 'isMe', 'syncActive'])) return null;
+  const name = normalizeMpvCollaborationName(value.name);
+  if (name === null || typeof value.color !== 'string' ||
+      typeof value.isMe !== 'boolean' || typeof value.syncActive !== 'boolean') {
+    return null;
+  }
+  const color = /^#[0-9a-f]{6}$/i.test(value.color)
+    ? value.color.toLowerCase()
+    : MPV_COLLABORATION_FALLBACK_COLOR;
+  return { name, color, isMe: value.isMe, syncActive: value.syncActive };
+}
+
+function normalizeMpvCollaborationSnapshotDataUrl(value) {
+  if (value === '') return '';
+  if (typeof value !== 'string' ||
+      !/^data:image\/png;base64,[a-z0-9+/]*={0,2}$/i.test(value) ||
+      Buffer.byteLength(value, 'utf8') > MAX_MPV_COLLABORATION_SNAPSHOT_BYTES) {
+    return null;
+  }
+  return value;
+}
+
+function normalizeMpvCollaborationState(value) {
+  try {
+    if (!isExactPlainRecord(value, [
+      'revision',
+      'theme',
+      'indicator',
+      'plexus',
+      'playback'
+    ])) return null;
+    if (Buffer.byteLength(JSON.stringify(value), 'utf8') > MAX_MPV_COLLABORATION_STATE_BYTES ||
+        !Number.isSafeInteger(value.revision) || value.revision < 0 ||
+        !['dark', 'light'].includes(value.theme)) {
+      return null;
+    }
+
+    if (!isExactPlainRecord(value.indicator, ['visible', 'bounds', 'badge', 'users']) ||
+        typeof value.indicator.visible !== 'boolean' ||
+        !['idle', 'syncing', 'synced', 'error'].includes(value.indicator.badge) ||
+        !isDensePlainArray(value.indicator.users) ||
+        value.indicator.users.length > MAX_MPV_COLLABORATION_USERS) {
+      return null;
+    }
+    const indicatorBounds = normalizeMpvCollaborationBounds(value.indicator.bounds);
+    const users = value.indicator.users.map(normalizeMpvCollaborationUser);
+    if (!indicatorBounds || users.some(user => user === null)) return null;
+
+    if (!isExactPlainRecord(value.plexus, [
+      'visible',
+      'bounds',
+      'showRemoteCursors',
+      'snapshotDataUrl'
+    ]) || typeof value.plexus.visible !== 'boolean' ||
+        typeof value.plexus.showRemoteCursors !== 'boolean') {
+      return null;
+    }
+    const plexusBounds = normalizeMpvCollaborationBounds(value.plexus.bounds);
+    const snapshotDataUrl = normalizeMpvCollaborationSnapshotDataUrl(
+      value.plexus.snapshotDataUrl
+    );
+    if (!plexusBounds || snapshotDataUrl === null) return null;
+
+    if (!isExactPlainRecord(value.playback, [
+      'visible',
+      'bounds',
+      'collapsed',
+      'syncEnabled',
+      'leaderMode'
+    ]) || typeof value.playback.visible !== 'boolean' ||
+        typeof value.playback.collapsed !== 'boolean' ||
+        typeof value.playback.syncEnabled !== 'boolean' ||
+        !['lead', 'follow'].includes(value.playback.leaderMode)) {
+      return null;
+    }
+    const playbackBounds = normalizeMpvCollaborationBounds(value.playback.bounds);
+    if (!playbackBounds) return null;
+
+    return {
+      revision: value.revision,
+      theme: value.theme,
+      indicator: {
+        visible: value.indicator.visible,
+        bounds: indicatorBounds,
+        badge: value.indicator.badge,
+        users
+      },
+      plexus: {
+        visible: value.plexus.visible,
+        bounds: plexusBounds,
+        showRemoteCursors: value.plexus.showRemoteCursors,
+        snapshotDataUrl
+      },
+      playback: {
+        visible: value.playback.visible,
+        bounds: playbackBounds,
+        collapsed: value.playback.collapsed,
+        syncEnabled: value.playback.syncEnabled,
+        leaderMode: value.playback.leaderMode
+      }
+    };
+  } catch (_error) {
+    return null;
+  }
 }
 
 function normalizeCompositionLayer(layer = {}) {
@@ -1822,6 +2336,7 @@ class MPVOverlayHost {
     this.currentVideoGeneration = -1;
     this.currentInputRevision = -1;
     this.remoteCursorRevision = -1;
+    this.collaborationRevision = -1;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
@@ -2734,6 +3249,33 @@ class MPVOverlayHost {
     }
   }
 
+  async updateCollaborationState(state) {
+    if (!this.window || this.window.isDestroyed?.() || !this.contentLoaded) {
+      return { success: false, error: 'mpv overlay host is not ready' };
+    }
+
+    const normalized = normalizeMpvCollaborationState(state);
+    if (!normalized) {
+      return { success: false, accepted: false, error: 'invalid collaboration state' };
+    }
+    if (normalized.revision <= this.collaborationRevision) {
+      return { success: true, accepted: false, stale: true };
+    }
+    this.collaborationRevision = normalized.revision;
+    try {
+      const accepted = await this.window.webContents?.executeJavaScript?.(
+        `window.__applyMpvCollaborationState(${JSON.stringify(normalized)});`,
+        true
+      );
+      return { success: true, accepted: accepted !== false };
+    } catch (error) {
+      this.logger.debug('mpv overlay collaboration state update failed', {
+        error: error.message
+      });
+      return { success: false, error: error.message };
+    }
+  }
+
   async triggerCollabRipple(state) {
     if (!this.window || this.window.isDestroyed?.() || !this.contentLoaded) {
       return { success: false, error: 'mpv overlay host is not ready' };
@@ -2791,6 +3333,7 @@ class MPVOverlayHost {
     this.currentVideoGeneration = -1;
     this.currentInputRevision = -1;
     this.remoteCursorRevision = -1;
+    this.collaborationRevision = -1;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
@@ -2853,6 +3396,7 @@ class MPVOverlayHost {
     this.currentVideoGeneration = -1;
     this.currentInputRevision = -1;
     this.remoteCursorRevision = -1;
+    this.collaborationRevision = -1;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
@@ -2974,6 +3518,7 @@ class MPVOverlayHost {
       this.currentVideoGeneration = -1;
       this.currentInputRevision = -1;
       this.remoteCursorRevision = -1;
+      this.collaborationRevision = -1;
       this.desiredInputEnabled = false;
       this.activeSessionId = null;
       this.currentToolRevision = -1;
@@ -3139,5 +3684,6 @@ module.exports = {
   MPVOverlayHost,
   mpvOverlayHost,
   normalizeOverlayState,
+  normalizeMpvCollaborationState,
   normalizeFabricDrawingPersistenceMessage
 };

@@ -3,6 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const Module = require('node:module');
 const path = require('node:path');
+const {
+  normalizeMpvCollaborationState
+} = require('../../main/mpv-overlay-host');
 
 const rootDir = path.resolve(__dirname, '../..');
 const preloadPath = path.join(rootDir, 'preload/mpv-overlay-preload.js');
@@ -133,6 +136,7 @@ function loadPointerPresenceIpcHandlers() {
   const invokeHandlers = new Map();
   const sent = [];
   const remoteCursorCalls = [];
+  const collaborationCalls = [];
   const allowedOverlaySender = {};
   const mainWebContents = {
     isDestroyed: () => false,
@@ -192,8 +196,13 @@ function loadPointerPresenceIpcHandlers() {
         async updateRemoteCursorState(state) {
           remoteCursorCalls.push(state);
           return { success: true, accepted: true };
+        },
+        async updateCollaborationState(state) {
+          collaborationCalls.push(state);
+          return { success: true, accepted: true };
         }
       },
+      normalizeMpvCollaborationState,
       normalizeFabricDrawingPersistenceMessage: () => null
     }],
     ['./review-file-store', {
@@ -221,6 +230,7 @@ function loadPointerPresenceIpcHandlers() {
   }
   return {
     allowedOverlaySender,
+    collaborationCalls,
     eventHandlers,
     invokeHandlers,
     mainWebContents,
@@ -422,4 +432,54 @@ test('main IPC accepts bounded remote cursor state only from the current main re
   );
   assert.deepEqual(harness.remoteCursorCalls, [state]);
   assert.notEqual(harness.remoteCursorCalls[0], state);
+});
+
+test('main IPC accepts exact collaboration state only from the current main renderer', async () => {
+  const harness = loadPointerPresenceIpcHandlers();
+  const updateCollaboration = harness.invokeHandlers.get('mpv:update-overlay-collaboration');
+  assert.equal(typeof updateCollaboration, 'function');
+  const state = {
+    revision: 9,
+    theme: 'dark',
+    indicator: {
+      visible: true,
+      bounds: { left: 1, top: 2, width: 180, height: 36 },
+      badge: 'synced',
+      users: [{ name: 'Hansol', color: '#FFD000', isMe: true, syncActive: true }]
+    },
+    plexus: {
+      visible: false,
+      bounds: { left: 1, top: 46, width: 280, height: 0 },
+      showRemoteCursors: true,
+      snapshotDataUrl: ''
+    },
+    playback: {
+      visible: true,
+      bounds: { left: 400, top: 300, width: 220, height: 160 },
+      collapsed: false,
+      syncEnabled: true,
+      leaderMode: 'lead'
+    }
+  };
+
+  assert.deepEqual(await updateCollaboration({ sender: {} }, state), {
+    success: false,
+    error: 'mpv collaboration IPC sender is not allowed'
+  });
+  assert.equal(harness.collaborationCalls.length, 0);
+  const invalid = structuredClone(state);
+  invalid.injected = true;
+  assert.deepEqual(await updateCollaboration({ sender: harness.mainWebContents }, invalid), {
+    success: false,
+    error: 'invalid mpv collaboration state'
+  });
+  assert.equal(harness.collaborationCalls.length, 0);
+
+  assert.deepEqual(await updateCollaboration({ sender: harness.mainWebContents }, state), {
+    success: true,
+    accepted: true
+  });
+  assert.equal(harness.collaborationCalls.length, 1);
+  assert.equal(harness.collaborationCalls[0].indicator.users[0].color, '#ffd000');
+  assert.notEqual(harness.collaborationCalls[0], state);
 });

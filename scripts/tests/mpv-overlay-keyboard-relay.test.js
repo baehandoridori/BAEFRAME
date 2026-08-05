@@ -17,6 +17,7 @@ function loadMainPreload() {
   const exposed = new Map();
   const listeners = new Map();
   const removed = [];
+  const invoked = [];
   const originalLoad = Module._load;
   Module._load = function loadWithElectronStub(request, parent, isMain) {
     if (request === 'electron') {
@@ -27,7 +28,10 @@ function loadMainPreload() {
           }
         },
         ipcRenderer: {
-          invoke() {},
+          invoke(channel, ...args) {
+            invoked.push([channel, ...args]);
+            return Promise.resolve({ success: true });
+          },
           send() {},
           on(channel, listener) {
             listeners.set(channel, listener);
@@ -50,7 +54,7 @@ function loadMainPreload() {
     Module._load = originalLoad;
     delete require.cache[require.resolve(preloadPath)];
   }
-  return { exposed, listeners, removed };
+  return { exposed, invoked, listeners, removed };
 }
 
 function validInput(overrides = {}) {
@@ -165,6 +169,18 @@ test('main preload exposes a narrow validated overlay pointer presence subscript
   unsubscribe();
   assert.equal(harness.listeners.has('mpv-overlay:pointer-presence'), false);
   assert.equal(harness.removed.length, 1);
+});
+
+test('main preload exposes the dedicated collaboration state invoke channel', async () => {
+  const harness = loadMainPreload();
+  const electronAPI = harness.exposed.get('electronAPI');
+  assert.equal(typeof electronAPI.mpvUpdateOverlayCollaboration, 'function');
+  const state = { revision: 4 };
+  assert.deepEqual(await electronAPI.mpvUpdateOverlayCollaboration(state), { success: true });
+  assert.deepEqual(harness.invoked, [[
+    'mpv:update-overlay-collaboration',
+    state
+  ]]);
 });
 
 test('renderer relay rebuilds a bubbling keyboard event with the exact physical code', async () => {

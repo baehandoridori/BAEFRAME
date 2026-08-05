@@ -16,6 +16,7 @@ const { MPVManager, mpvManager } = require('./mpv-manager');
 const { mpvEmbedHost } = require('./mpv-embed-host');
 const {
   mpvOverlayHost,
+  normalizeMpvCollaborationState,
   normalizeFabricDrawingPersistenceMessage
 } = require('./mpv-overlay-host');
 const {
@@ -1901,6 +1902,22 @@ function setupIpcHandlers({
       return await mpvOverlayHost.updateRemoteCursorState(normalized);
     } catch (error) {
       log.debug('mpv 오버레이 원격 커서 갱신 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mpv:update-overlay-collaboration', async (event, state) => {
+    try {
+      if (!isCurrentMainRendererSender(event)) {
+        return { success: false, error: 'mpv collaboration IPC sender is not allowed' };
+      }
+      const normalized = normalizeMpvCollaborationState(state);
+      if (!normalized) {
+        return { success: false, error: 'invalid mpv collaboration state' };
+      }
+      return await mpvOverlayHost.updateCollaborationState(normalized);
+    } catch (error) {
+      log.debug('mpv 오버레이 협업 상태 갱신 실패', { error: error.message });
       return { success: false, error: error.message };
     }
   });
