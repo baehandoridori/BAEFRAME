@@ -52,18 +52,11 @@ function getComputedStyle(element) {
 test('surface registry derives block, observed mirror, and generic HTML mirror selectors', async () => {
   const {
     MPV_SURFACE_MODE,
-    MPV_BLOCKING_OVERLAY_SELECTOR,
     MPV_MIRRORED_OVERLAY_SELECTOR,
     MPV_HTML_MIRROR_OVERLAY_SELECTOR,
     MPV_SURFACE_REGISTRY,
     getMpvSurfaceSelectors
   } = await loadPolicy();
-
-  const blockSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.BLOCK);
-  assert.ok(blockSelectors.includes('.collaborators-indicator'));
-  assert.ok(blockSelectors.includes('.playback-sync-panel'));
-  assert.match(MPV_BLOCKING_OVERLAY_SELECTOR, /\.collaborators-indicator/);
-  assert.match(MPV_BLOCKING_OVERLAY_SELECTOR, /\.playback-sync-panel/);
 
   const htmlMirrorSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.HTML_MIRROR);
   assert.ok(htmlMirrorSelectors.includes('.scrub-preview-overlay.active'));
@@ -76,6 +69,17 @@ test('surface registry derives block, observed mirror, and generic HTML mirror s
   );
   assert.equal(scrubPreviewEntry?.observeSelector, '.scrub-preview-overlay');
   assert.match(MPV_MIRRORED_OVERLAY_SELECTOR, /\.scrub-preview-overlay(?:,|$)/);
+});
+
+test('collaboration status surfaces mirror above mpv without hiding the native host', async () => {
+  const { MPV_SURFACE_MODE, getMpvSurfaceSelectors } = await loadPolicy();
+  const blockSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.BLOCK);
+  const htmlMirrorSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.HTML_MIRROR);
+
+  for (const selector of ['.collaborators-indicator', '.playback-sync-panel']) {
+    assert.equal(blockSelectors.includes(selector), false);
+    assert.equal(htmlMirrorSelectors.includes(selector), true);
+  }
 });
 
 test('a registered surface blocks mpv when a visible overflow child overlaps the host', async () => {
@@ -117,14 +121,14 @@ test('hidden, transparent, and non-overlapping surfaces do not block mpv', async
 
 test('surface lookup finds the containing registered block surface', async () => {
   const { MPV_SURFACE_MODE, findClosestMpvSurface } = await loadPolicy();
-  const indicator = { id: 'indicator' };
+  const modal = { id: 'modal' };
   const eventTarget = {
     closest(selector) {
-      return selector.includes('.collaborators-indicator') ? indicator : null;
+      return selector.includes('.modal-overlay.active') ? modal : null;
     }
   };
 
-  assert.equal(findClosestMpvSurface(eventTarget, MPV_SURFACE_MODE.BLOCK), indicator);
+  assert.equal(findClosestMpvSurface(eventTarget, MPV_SURFACE_MODE.BLOCK), modal);
 });
 
 test('app consumes the registry for blocking, observation, serialization, and motion rechecks', () => {

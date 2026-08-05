@@ -3293,6 +3293,10 @@ test('creates a click-through overlay window above the viewer area', async () =>
   assert.equal(overlayHtml.includes('tooltipMirror'), true);
   assert.equal(overlayHtml.includes('toastMirror'), true);
   assert.equal(overlayHtml.includes('remoteCursorMirror'), true);
+  assert.match(
+    overlayHtml,
+    /#htmlOverlay \*\s*\{[^}]*pointer-events:\s*none !important;/
+  );
   assert.equal(overlayHtml.includes('__applyMpvRemoteCursorState'), true);
   assert.equal(overlayHtml.includes('remoteStrokeMirror'), true);
   assert.equal(overlayHtml.includes('collabRippleMirror'), true);

@@ -33,9 +33,7 @@ export const MPV_SURFACE_REGISTRY = Object.freeze([
     '.mention-dropdown',
     '.recent-dropdown-menu.open',
     '.version-dropdown.open .version-dropdown-menu',
-    '.split-version-selector.open .split-version-menu',
-    '.collaborators-indicator',
-    '.playback-sync-panel'
+    '.split-version-selector.open .split-version-menu'
   ].map(selector => Object.freeze({ selector, mode: MPV_SURFACE_MODE.BLOCK })),
   ...[
     '.current-cut-overlay',
@@ -47,7 +45,9 @@ export const MPV_SURFACE_REGISTRY = Object.freeze([
     '.video-comment-overlay-controls',
     '.video-comment-range-overlay',
     '.composition-layer-transform-handle',
-    '.composition-layer-snap-guide'
+    '.composition-layer-snap-guide',
+    '.collaborators-indicator',
+    '.playback-sync-panel'
   ].map(selector => Object.freeze({ selector, mode: MPV_SURFACE_MODE.HTML_MIRROR })),
   Object.freeze({
     selector: '.scrub-preview-overlay.active',

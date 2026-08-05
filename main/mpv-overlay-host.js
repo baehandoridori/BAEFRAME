@@ -469,7 +469,8 @@ const OVERLAY_HTML = String.raw`
     #markerMirror *,
     #tooltipMirror *,
     #toastMirror *,
-    #remoteCursorMirror * {
+    #remoteCursorMirror *,
+    #htmlOverlay * {
       pointer-events: none !important;
     }
     .remote-cursors-container {
