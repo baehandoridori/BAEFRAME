@@ -345,6 +345,9 @@ function setupIpcHandlers({
       // Cursor presence is ephemeral; the next pointer event recovers the signal.
     }
   });
+  ipcMain.on('mpv-overlay:collaboration-action', (event, action) => {
+    mpvOverlayHost.forwardCollaborationAction(event, action);
+  });
   ipcMain.on('mpv-overlay:fabric-drawing-persistence', (event, message) => {
     if (!isFabricDrawingPilotEnabled ||
         !mpvOverlayHost.isCurrentOverlaySender(event)) {

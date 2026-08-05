@@ -48,7 +48,15 @@ test('Fabric overlay persistence uses a narrow sender-fenced event bridge', () =
     overlayPreloadSource,
     /notifyCommittedTransition/
   );
-  assert.doesNotMatch(overlayPreloadSource, /ipcRenderer\.(?:on|invoke)/);
+  assert.doesNotMatch(overlayPreloadSource, /ipcRenderer\.invoke/);
+  const overlayInboundChannels = [
+    ...overlayPreloadSource.matchAll(/ipcRenderer\.on\?\.\(([^,]+),/g)
+  ].map(match => match[1].trim());
+  assert.deepEqual(
+    overlayInboundChannels,
+    ['COLLABORATION_DRAG_RESET_CHANNEL'],
+    'the isolated overlay accepts only the host-owned drag reset signal'
+  );
   assert.match(
     ipcSource,
     /ipcMain\.on\(\s*['"]mpv-overlay:fabric-drawing-persistence['"][\s\S]*?isCurrentOverlaySender\(event\)[\s\S]*?normalizeFabricDrawingPersistenceMessage[\s\S]*?mainWebContents\.send\(\s*['"]fabric-drawing:persistence-event['"]/
@@ -511,7 +519,7 @@ test('mpv teardown gate waiters stay blocked when another teardown is chained', 
 test('package exposes an mpv pilot test command', () => {
   assert.equal(
     packageJson.scripts['test:mpv'],
-    'node --test scripts/tests/runtime-profile.test.js scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-overlay-keyboard-relay.test.js scripts/tests/mpv-liveblocks-visibility.test.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-collaboration-mirror.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/mpv-fabric-overlay-toolbar-layout.test.js scripts/tests/external-frame-interpolation.test.mjs'
+    'node --test scripts/tests/runtime-profile.test.js scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-overlay-keyboard-relay.test.js scripts/tests/mpv-overlay-collaboration-action-relay.test.js scripts/tests/mpv-liveblocks-visibility.test.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-collaboration-mirror.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/mpv-fabric-overlay-toolbar-layout.test.js scripts/tests/external-frame-interpolation.test.mjs'
   );
 });
 
@@ -960,6 +968,37 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /function updateMarkerTooltipState\(marker\) \{[\s\S]+marker\.tooltipElement\.classList\.add\('visible', 'pinned'\);[\s\S]+scheduleMpvOverlayStateSync\(\);/);
   assert.match(appSource, /async function destroyMpvPilotHosts\(\) \{[\s\S]+await window\.electronAPI\?\.mpvDestroyOverlay\?\.\(\);[\s\S]+await window\.electronAPI\?\.mpvDestroyEmbed\?\.\(\);/);
   assert.match(appSource, /async function stopMpvPilotEngine\(overlayOwner = null\) \{[\s\S]+await destroyMpvPilotHosts\(\);/);
+});
+
+test('mpv collaboration actions share one playback sync model writer and current lifecycle fence', () => {
+  const syncStateListeners = appSource.match(
+    /playbackSync\.addEventListener\('syncStateChanged'/g
+  ) || [];
+  const leaderModeListeners = appSource.match(
+    /playbackSync\.addEventListener\('leaderModeChanged'/g
+  ) || [];
+  assert.equal(syncStateListeners.length, 1);
+  assert.equal(leaderModeListeners.length, 1);
+  assert.match(
+    appSource,
+    /function setPlaybackSyncEnabled\(enabled\) \{\n\s+playbackSync\.setSyncEnabled\(enabled === true\);\n\s+\}/
+  );
+  assert.match(
+    appSource,
+    /function setPlaybackSyncLeaderMode\(mode\) \{[\s\S]*?playbackSync\.setLeaderMode\(mode\);\n\s+\}/
+  );
+  assert.match(
+    appSource,
+    /playbackSync\.addEventListener\('syncStateChanged', syncPlaybackSyncControlsFromModel\);[\s\S]*?playbackSync\.addEventListener\('leaderModeChanged', syncPlaybackSyncControlsFromModel\);/
+  );
+  assert.match(
+    appSource,
+    /onMpvOverlayCollaborationAction\?\.\(\(message\) => \{\n\s+if \(!mpvOverlayLifecycle\.captureReadyOwner\(\)\) return;\n\s+mpvOverlayCollaborationActionRelay\.apply\(message\);/
+  );
+  assert.match(
+    appSource,
+    /fabricDrawingPilotStatusSnapshot = snapshot \? \{ \.\.\.snapshot \} : null;/
+  );
 });
 
 test('mpv pilot keeps toast notifications visible above the native video host', () => {

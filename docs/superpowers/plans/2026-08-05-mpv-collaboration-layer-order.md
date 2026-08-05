@@ -585,7 +585,7 @@ const allowed = [
 ];
 ```
 
-Non-drag actions accept no payload. Drag actions accept only finite `{ pointerId, clientX, clientY }` within the overlay viewport; cancel accepts only `{ pointerId }`. Unknown keys, unknown actions, non-finite coordinates, overlong values, arrays, and prototype-shaped input return `false` without sending IPC.
+Non-drag actions accept no payload. `sync.drag-start` accepts only finite `{ pointerId, clientX, clientY }` inside the overlay viewport. Once pointer capture owns that drag, move/end accept the same exact payload with signed finite overlay-local coordinates bounded to `±32768`, so the panel can keep following the pointer outside the video. Cancel accepts only `{ pointerId }`. Unknown keys, unknown actions, non-finite or out-of-bound coordinates, arrays, and prototype-shaped input return `false` without sending IPC.
 
 In host/runtime tests, assert:
 
@@ -635,6 +635,7 @@ In the trusted overlay document from `main/mpv-overlay-host.js`:
 - register `pointerenter`, `pointerleave`, `pointerdown`, `click`, and `change` behavior only for known `data-collaboration-action` controls;
 - for every collaboration control event received while Fabric input is active, call `preventDefault()` and `stopImmediatePropagation()` in capture phase before dispatch;
 - permit exactly one active drag `pointerId`, call `setPointerCapture(pointerId)`, and reject a second pointer;
+- require drag start inside the overlay viewport, but preserve signed bounded move/end coordinates after capture instead of clamping them to the video;
 - coalesce `pointermove` to one `sync.drag-move` per animation frame;
 - flush the last move before `sync.drag-end` on `pointerup`;
 - send `sync.drag-cancel` and release capture on `pointercancel`, `lostpointercapture`, blur, or a changed host/video/input/session fence.
@@ -659,7 +660,7 @@ Do not expose an arbitrary IPC channel name or a generic message sender to eithe
 
 Implement `applyMpvOverlayCollaborationAction(message)` in `renderer/scripts/app.js`. Before dispatch, compare the message fence to `fabricDrawingPilotController.getStatusSnapshot()` and the current overlay lifecycle owner. Require an active/prepared Fabric input session, exact host/video/input/session equality, and `sequence > lastAppliedCollaborationActionSequence`.
 
-Dispatch with a closed `switch` to the named functions from Step 3. For drag, retain one renderer-side drag record `{ pointerId, startX, startY, panelStartX, panelStartY }`, clamp the panel to the viewport on moves, commit the final point on end, and clear it on cancel or any fence change. Unknown or stale messages must return without touching DOM, `PlaybackSync`, `userSettings`, or Fabric.
+Dispatch with a closed `switch` to the named functions from Step 3. For drag, convert overlay-local coordinates to app client coordinates by adding only the current video wrapper's `left`/`top`, retain one renderer-side drag record `{ pointerId, startX, startY, panelStartX, panelStartY }`, let the existing authoritative panel-move function clamp the resulting panel position to the app viewport, commit the final point on end, and clear it on cancel or any fence change. Unknown or stale messages must return without touching DOM, `PlaybackSync`, `userSettings`, or Fabric.
 
 - [ ] **Step 7: Run focused and Fabric integration tests and verify GREEN**
 

@@ -6,6 +6,7 @@ const vm = require('node:vm');
 const {
   MPVOverlayHost,
   normalizeOverlayState,
+  normalizeMpvOverlayCollaborationAction,
   normalizeFabricDrawingPersistenceMessage
 } = require('../../main/mpv-overlay-host');
 
@@ -231,6 +232,353 @@ function makeDrawingInput(hostGeneration, overrides = {}) {
     ...overrides
   };
 }
+
+function makeCollaborationAction(action = 'sync.toggle', payload = null) {
+  return { action, payload };
+}
+
+test('normalizes only exact collaboration semantic action packets', () => {
+  assert.deepEqual(
+    normalizeMpvOverlayCollaborationAction(makeCollaborationAction()),
+    makeCollaborationAction()
+  );
+  assert.deepEqual(normalizeMpvOverlayCollaborationAction(makeCollaborationAction(
+    'sync.drag-move',
+    { pointerId: 3, clientX: -120.5, clientY: 800.25 }
+  )), {
+    action: 'sync.drag-move',
+    payload: { pointerId: 3, clientX: -120.5, clientY: 800.25 }
+  });
+  assert.deepEqual(normalizeMpvOverlayCollaborationAction(makeCollaborationAction(
+    'sync.drag-cancel',
+    { pointerId: 3 }
+  )), {
+    action: 'sync.drag-cancel',
+    payload: { pointerId: 3 }
+  });
+
+  for (const malformed of [
+    null,
+    [],
+    { action: 'sync.toggle' },
+    { action: 'sync.toggle', payload: null, fence: 1 },
+    { action: 'arbitrary', payload: null },
+    { action: 'sync.toggle', payload: {} },
+    { action: 'sync.drag-start', payload: { pointerId: 1, clientX: 2 } },
+    { action: 'sync.drag-end', payload: { pointerId: 1, clientX: -32769, clientY: 2 } },
+    { action: 'sync.drag-move', payload: { pointerId: 1, clientX: 2, clientY: 32769 } },
+    { action: 'sync.drag-cancel', payload: { pointerId: 1, extra: true } },
+    Object.assign(Object.create({ inherited: true }), makeCollaborationAction())
+  ]) {
+    assert.equal(normalizeMpvOverlayCollaborationAction(malformed), null);
+  }
+});
+
+test('forwards collaboration actions only from the current active Fabric session with host fences', async () => {
+  const { host, events, windows } = createDrawingHostHarness();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 9,
+    inputRevision: 1
+  }));
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 9,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'collaboration-input-session',
+      stableVideoIdentity: 'video-collaboration-actions',
+      targetFrame: 10,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  events.length = 0;
+
+  const currentSender = { sender: windows[0].webContents };
+  assert.deepEqual(
+    host.forwardCollaborationAction({ sender: {} }, makeCollaborationAction()),
+    { success: false, accepted: false, error: 'mpv collaboration action sender is not allowed' }
+  );
+  assert.deepEqual(
+    host.forwardCollaborationAction(currentSender, {
+      action: 'sync.toggle',
+      payload: null,
+      hostGeneration: -1
+    }),
+    { success: false, accepted: false, error: 'invalid mpv collaboration action' }
+  );
+
+  assert.deepEqual(
+    host.forwardCollaborationAction(currentSender, makeCollaborationAction()),
+    { success: true, accepted: true, sequence: 1 }
+  );
+  assert.deepEqual(
+    host.forwardCollaborationAction(currentSender, makeCollaborationAction('sync.follow')),
+    { success: true, accepted: true, sequence: 2 }
+  );
+  assert.deepEqual(host.forwardCollaborationAction(
+    currentSender,
+    makeCollaborationAction('sync.drag-start', {
+      pointerId: 8,
+      clientX: 100,
+      clientY: 80
+    })
+  ), { success: true, accepted: true, sequence: 3 });
+  assert.deepEqual(host.forwardCollaborationAction(
+    currentSender,
+    makeCollaborationAction('sync.drag-move', {
+      pointerId: 8,
+      clientX: -20,
+      clientY: 500
+    })
+  ), { success: true, accepted: true, sequence: 4 });
+  assert.deepEqual(host.forwardCollaborationAction(
+    currentSender,
+    makeCollaborationAction('sync.drag-end', {
+      pointerId: 8,
+      clientX: 900,
+      clientY: -30
+    })
+  ), { success: true, accepted: true, sequence: 5 });
+  const forwarded = events.filter(([name, channel]) =>
+    name === 'mainWindow.send' && channel === 'mpv-overlay:collaboration-action');
+  assert.deepEqual(forwarded.map(([, , message]) => message), [
+    {
+      action: 'sync.toggle',
+      payload: null,
+      hostGeneration,
+      videoGeneration: 9,
+      inputRevision: 2,
+      activeSessionId: 'collaboration-input-session',
+      sequence: 1
+    },
+    {
+      action: 'sync.follow',
+      payload: null,
+      hostGeneration,
+      videoGeneration: 9,
+      inputRevision: 2,
+      activeSessionId: 'collaboration-input-session',
+      sequence: 2
+    },
+    {
+      action: 'sync.drag-start',
+      payload: { pointerId: 8, clientX: 100, clientY: 80 },
+      hostGeneration,
+      videoGeneration: 9,
+      inputRevision: 2,
+      activeSessionId: 'collaboration-input-session',
+      sequence: 3
+    },
+    {
+      action: 'sync.drag-move',
+      payload: { pointerId: 8, clientX: -20, clientY: 500 },
+      hostGeneration,
+      videoGeneration: 9,
+      inputRevision: 2,
+      activeSessionId: 'collaboration-input-session',
+      sequence: 4
+    },
+    {
+      action: 'sync.drag-end',
+      payload: { pointerId: 8, clientX: 900, clientY: -30 },
+      hostGeneration,
+      videoGeneration: 9,
+      inputRevision: 2,
+      activeSessionId: 'collaboration-input-session',
+      sequence: 5
+    }
+  ]);
+  assert.equal(events.some(([name]) => name === 'setIgnoreMouseEvents'), false,
+    'semantic collaboration actions must not flip native click-through');
+
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 9,
+    inputRevision: 3
+  }));
+  events.length = 0;
+  assert.equal(
+    host.forwardCollaborationAction(currentSender, makeCollaborationAction()).accepted,
+    false
+  );
+  assert.equal(events.some(([name]) => name === 'setIgnoreMouseEvents'), false);
+
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 9,
+    inputRevision: 4,
+    enabled: true,
+    session: {
+      sessionId: 'collaboration-input-session-2',
+      stableVideoIdentity: 'video-collaboration-actions',
+      targetFrame: 11,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  events.length = 0;
+  assert.deepEqual(
+    host.forwardCollaborationAction(currentSender, makeCollaborationAction('sync.lead')),
+    { success: true, accepted: true, sequence: 1 }
+  );
+  assert.equal(
+    events.find(([, channel]) => channel === 'mpv-overlay:collaboration-action')?.[2]
+      ?.activeSessionId,
+    'collaboration-input-session-2'
+  );
+
+  const staleWebContents = windows[0].webContents;
+  host.destroy();
+  const recreated = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  assert.equal(
+    host.forwardCollaborationAction(
+      { sender: staleWebContents },
+      makeCollaborationAction('sync.lead')
+    ).accepted,
+    false
+  );
+  assert.equal(
+    host.forwardCollaborationAction(
+      { sender: windows[1].webContents },
+      makeCollaborationAction('sync.lead')
+    ).accepted,
+    false,
+    'a passive recreated overlay has no current Fabric session'
+  );
+  const recreatedGeneration = recreated.drawingCapability.hostGeneration;
+  await host.setDrawingInput(makeDrawingInput(recreatedGeneration, {
+    videoGeneration: 10,
+    inputRevision: 1
+  }));
+  await host.setDrawingInput(makeDrawingInput(recreatedGeneration, {
+    videoGeneration: 10,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'collaboration-input-session-recreated',
+      stableVideoIdentity: 'video-collaboration-actions-recreated',
+      targetFrame: 1,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  assert.deepEqual(host.forwardCollaborationAction(
+    { sender: windows[1].webContents },
+    makeCollaborationAction('sync.follow')
+  ), { success: true, accepted: true, sequence: 1 });
+});
+
+test('hiding an active collaboration drag cancels once and preserves the same-fence sequence', async () => {
+  const { host, events, windows } = createDrawingHostHarness();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 4,
+    inputRevision: 1
+  }));
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 4,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'drag-before-hide',
+      stableVideoIdentity: 'video-before-hide',
+      targetFrame: 1,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  events.length = 0;
+  const sender = { sender: windows[0].webContents };
+  assert.equal(host.forwardCollaborationAction(sender, makeCollaborationAction(
+    'sync.drag-start',
+    { pointerId: 6, clientX: 100, clientY: 60 }
+  )).accepted, true);
+
+  host.setVisible(false);
+  const actions = events.filter(([, channel]) =>
+    channel === 'mpv-overlay:collaboration-action').map(([, , message]) => message);
+  assert.deepEqual(actions.map(({ action, sequence }) => [action, sequence]), [
+    ['sync.drag-start', 1],
+    ['sync.drag-cancel', 2]
+  ]);
+  assert.equal(actions[1].activeSessionId, 'drag-before-hide');
+  assert.equal(host.collaborationActionSequence, 2);
+  assert.equal(host.activeCollaborationDragPointerId, null);
+
+  host.setVisible(true);
+  events.length = 0;
+  assert.deepEqual(host.forwardCollaborationAction(
+    sender,
+    makeCollaborationAction('sync.toggle')
+  ), { success: true, accepted: true, sequence: 3 });
+  assert.equal(events.some(([name]) => name === 'setIgnoreMouseEvents'), false);
+});
+
+test('parent hide cancels an active collaboration drag after the overlay is already hidden', async () => {
+  const { host, events, windows, mainWindow } = createDrawingHostHarness();
+  const parentListeners = new Map();
+  mainWindow.on = (eventName, handler) => {
+    const handlers = parentListeners.get(eventName) || [];
+    handlers.push(handler);
+    parentListeners.set(eventName, handlers);
+  };
+  mainWindow.off = (eventName, handler) => {
+    const handlers = parentListeners.get(eventName) || [];
+    parentListeners.set(eventName, handlers.filter(candidate => candidate !== handler));
+  };
+
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 5,
+    inputRevision: 1
+  }));
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 5,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'drag-before-parent-hide',
+      stableVideoIdentity: 'video-before-parent-hide',
+      targetFrame: 1,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  events.length = 0;
+  const sender = { sender: windows[0].webContents };
+  assert.equal(host.forwardCollaborationAction(sender, makeCollaborationAction(
+    'sync.drag-start',
+    { pointerId: 7, clientX: 120, clientY: 70 }
+  )).accepted, true);
+
+  windows[0].isVisible = () => false;
+  for (const handler of parentListeners.get('hide') || []) {
+    handler();
+  }
+
+  const actions = events.filter(([, channel]) =>
+    channel === 'mpv-overlay:collaboration-action').map(([, , message]) => message);
+  assert.deepEqual(actions.map(({ action, sequence }) => [action, sequence]), [
+    ['sync.drag-start', 1],
+    ['sync.drag-cancel', 2]
+  ]);
+  assert.equal(actions[1].activeSessionId, 'drag-before-parent-hide');
+  assert.equal(host.collaborationActionSequence, 2);
+  assert.equal(host.activeCollaborationDragPointerId, null);
+});
 
 function makePersistenceHydration(hostGeneration, overrides = {}) {
   return {

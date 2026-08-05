@@ -7,6 +7,30 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const MPV_OVERLAY_KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
 const MPV_OVERLAY_POINTER_PRESENCE_CHANNEL = 'mpv-overlay:pointer-presence';
+const MPV_OVERLAY_COLLABORATION_ACTION_CHANNEL = 'mpv-overlay:collaboration-action';
+const MPV_OVERLAY_COLLABORATION_ACTIONS = new Set([
+  'collab.indicator-enter',
+  'collab.indicator-leave',
+  'collab.panel-enter',
+  'collab.panel-leave',
+  'collab.sync-status',
+  'collab.cursor-toggle',
+  'collab.open-sync',
+  'sync.toggle',
+  'sync.lead',
+  'sync.follow',
+  'sync.collapse',
+  'sync.close',
+  'sync.drag-start',
+  'sync.drag-move',
+  'sync.drag-end',
+  'sync.drag-cancel'
+]);
+const MPV_OVERLAY_COLLABORATION_DRAG_ACTIONS = new Set([
+  'sync.drag-start',
+  'sync.drag-move',
+  'sync.drag-end'
+]);
 const MPV_OVERLAY_NAMED_KEY_CODES = new Set([
   'Backspace', 'Tab', 'Enter', 'Delete', 'Insert', 'Home', 'End', 'PageUp', 'PageDown',
   'Escape', 'Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backquote',
@@ -88,6 +112,84 @@ function normalizeMpvOverlayPointerPresence(value) {
     return { x: value.x, y: value.y };
   } catch (_error) {
     return undefined;
+  }
+}
+
+function isExactPlainObject(value, keys) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    const ownKeys = Reflect.ownKeys(value);
+    return ownKeys.length === keys.length &&
+      ownKeys.every(key => typeof key === 'string' && keys.includes(key));
+  } catch (_error) {
+    return false;
+  }
+}
+
+function normalizeMpvOverlayCollaborationActionPayload(action, payload) {
+  if (MPV_OVERLAY_COLLABORATION_DRAG_ACTIONS.has(action)) {
+    if (!isExactPlainObject(payload, ['pointerId', 'clientX', 'clientY']) ||
+        !Number.isSafeInteger(payload.pointerId) || payload.pointerId < 0 ||
+        !Number.isFinite(payload.clientX) || Math.abs(payload.clientX) > 32768 ||
+        !Number.isFinite(payload.clientY) || Math.abs(payload.clientY) > 32768) {
+      return undefined;
+    }
+    return {
+      pointerId: payload.pointerId,
+      clientX: payload.clientX,
+      clientY: payload.clientY
+    };
+  }
+  if (action === 'sync.drag-cancel') {
+    if (!isExactPlainObject(payload, ['pointerId']) ||
+        !Number.isSafeInteger(payload.pointerId) || payload.pointerId < 0) {
+      return undefined;
+    }
+    return { pointerId: payload.pointerId };
+  }
+  return payload === null ? null : undefined;
+}
+
+function normalizeMpvOverlayCollaborationAction(value) {
+  try {
+    const keys = [
+      'action',
+      'payload',
+      'hostGeneration',
+      'videoGeneration',
+      'inputRevision',
+      'activeSessionId',
+      'sequence'
+    ];
+    if (!isExactPlainObject(value, keys) ||
+        typeof value.action !== 'string' ||
+        !MPV_OVERLAY_COLLABORATION_ACTIONS.has(value.action) ||
+        !Number.isSafeInteger(value.hostGeneration) || value.hostGeneration < 0 ||
+        !Number.isSafeInteger(value.videoGeneration) || value.videoGeneration < 0 ||
+        !Number.isSafeInteger(value.inputRevision) || value.inputRevision < 0 ||
+        typeof value.activeSessionId !== 'string' ||
+        value.activeSessionId.length === 0 || value.activeSessionId.length > 32768 ||
+        !Number.isSafeInteger(value.sequence) || value.sequence <= 0) {
+      return null;
+    }
+    const payload = normalizeMpvOverlayCollaborationActionPayload(
+      value.action,
+      value.payload
+    );
+    if (payload === undefined) return null;
+    return {
+      action: value.action,
+      payload,
+      hostGeneration: value.hostGeneration,
+      videoGeneration: value.videoGeneration,
+      inputRevision: value.inputRevision,
+      activeSessionId: value.activeSessionId,
+      sequence: value.sequence
+    };
+  } catch (_error) {
+    return null;
   }
 }
 
@@ -248,6 +350,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
     ipcRenderer.on(MPV_OVERLAY_POINTER_PRESENCE_CHANNEL, listener);
     return () => ipcRenderer.removeListener(MPV_OVERLAY_POINTER_PRESENCE_CHANNEL, listener);
+  },
+  onMpvOverlayCollaborationAction: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, message) => {
+      const normalized = normalizeMpvOverlayCollaborationAction(message);
+      if (normalized) callback(normalized);
+    };
+    ipcRenderer.on(MPV_OVERLAY_COLLABORATION_ACTION_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(
+      MPV_OVERLAY_COLLABORATION_ACTION_CHANNEL,
+      listener
+    );
   },
   onFabricDrawingPersistenceEvent: (callback) => {
     if (typeof callback !== 'function') return () => {};

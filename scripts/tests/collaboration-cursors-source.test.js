@@ -37,3 +37,14 @@ test('remote cursor labels are built as text before mpv mirroring', () => {
   assert.match(appSource, /const svg = document\.createElementNS\(SVG_NAMESPACE, 'svg'\);/);
   assert.doesNotMatch(appSource, /cursorEl\.innerHTML = `[\s\S]*\$\{collab\.userName\}/);
 });
+
+test('collaborator avatars are built with text-only DOM operations', () => {
+  const updateMatch = appSource.match(
+    /function updateCollaboratorsUI\(collaborators\) \{([\s\S]*?)\n  \}\n\n  let _plexusStartTimer/
+  );
+  assert.ok(updateMatch, 'collaborator updater must remain discoverable');
+  assert.match(updateMatch[1], /document\.createElement\('div'\)/);
+  assert.match(updateMatch[1], /avatar\.textContent = initials/);
+  assert.match(updateMatch[1], /collaboratorsAvatars\.replaceChildren/);
+  assert.doesNotMatch(updateMatch[1], /innerHTML/);
+});

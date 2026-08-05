@@ -63,6 +63,27 @@ const MAX_MPV_COLLABORATION_USERS = 64;
 const MAX_MPV_COLLABORATION_NAME_LENGTH = 64;
 const MAX_MPV_COLLABORATION_BOUND = 32768;
 const MPV_COLLABORATION_FALLBACK_COLOR = '#ffd000';
+const MPV_OVERLAY_COLLABORATION_ACTION_CHANNEL = 'mpv-overlay:collaboration-action';
+const MPV_OVERLAY_COLLABORATION_DRAG_RESET_CHANNEL = 'mpv-overlay:collaboration-drag-reset';
+const MPV_OVERLAY_COLLABORATION_NON_DRAG_ACTIONS = new Set([
+  'collab.indicator-enter',
+  'collab.indicator-leave',
+  'collab.panel-enter',
+  'collab.panel-leave',
+  'collab.sync-status',
+  'collab.cursor-toggle',
+  'collab.open-sync',
+  'sync.toggle',
+  'sync.lead',
+  'sync.follow',
+  'sync.collapse',
+  'sync.close'
+]);
+const MPV_OVERLAY_COLLABORATION_DRAG_ACTIONS = new Set([
+  'sync.drag-start',
+  'sync.drag-move',
+  'sync.drag-end'
+]);
 const FABRIC_DRAWING_TRANSITION_KEYS = Object.freeze([
   'hostGeneration',
   'videoGeneration',
@@ -492,7 +513,8 @@ const OVERLAY_HTML = String.raw`
       position: absolute;
       display: none;
       box-sizing: border-box;
-      pointer-events: none;
+      pointer-events: auto;
+      touch-action: none;
     }
     #mpvCollaborationIndicator {
       align-items: center;
@@ -927,14 +949,14 @@ const OVERLAY_HTML = String.raw`
     <canvas id="collabRippleMirror"></canvas>
     <div id="remoteCursorMirror" class="remote-cursors-container"></div>
     <div id="collaborationMirror" data-theme="dark">
-      <div id="mpvCollaborationIndicator" class="mpv-collaboration-surface" data-mpv-collab-target="collab.indicator">
+      <div id="mpvCollaborationIndicator" class="mpv-collaboration-surface" data-mpv-collab-target="collab.indicator" data-mpv-collab-surface="indicator">
         <div id="mpvCollaborationAvatars"></div>
         <div class="mpv-collaboration-info">
           <span id="mpvCollaborationCount">0</span><span>명 작업 중</span>
         </div>
         <span id="mpvCollaborationBadge" aria-label="동기화 상태" data-mpv-collab-target="collab.sync-status">↻</span>
       </div>
-      <div id="mpvCollaborationPlexus" class="mpv-collaboration-surface" data-mpv-collab-target="collab.panel">
+      <div id="mpvCollaborationPlexus" class="mpv-collaboration-surface" data-mpv-collab-target="collab.panel" data-mpv-collab-surface="panel">
         <img id="mpvCollaborationPlexusImage" alt="">
         <div class="mpv-collaboration-plexus-footer">
           <span class="mpv-collaboration-plexus-label">실시간 협업 중</span>
@@ -1514,6 +1536,47 @@ function normalizeMpvCollaborationState(value) {
         leaderMode: value.playback.leaderMode
       }
     };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function normalizeMpvOverlayCollaborationAction(value) {
+  try {
+    if (!isExactPlainRecord(value, ['action', 'payload']) ||
+        typeof value.action !== 'string') {
+      return null;
+    }
+    if (MPV_OVERLAY_COLLABORATION_NON_DRAG_ACTIONS.has(value.action)) {
+      return value.payload === null ? { action: value.action, payload: null } : null;
+    }
+    if (MPV_OVERLAY_COLLABORATION_DRAG_ACTIONS.has(value.action)) {
+      if (!isExactPlainRecord(value.payload, ['pointerId', 'clientX', 'clientY']) ||
+          !Number.isSafeInteger(value.payload.pointerId) || value.payload.pointerId < 0 ||
+          !Number.isFinite(value.payload.clientX) ||
+          Math.abs(value.payload.clientX) > MAX_MPV_COLLABORATION_BOUND ||
+          !Number.isFinite(value.payload.clientY) ||
+          Math.abs(value.payload.clientY) > MAX_MPV_COLLABORATION_BOUND) {
+        return null;
+      }
+      return {
+        action: value.action,
+        payload: {
+          pointerId: value.payload.pointerId,
+          clientX: value.payload.clientX,
+          clientY: value.payload.clientY
+        }
+      };
+    }
+    if (value.action === 'sync.drag-cancel' &&
+        isExactPlainRecord(value.payload, ['pointerId']) &&
+        Number.isSafeInteger(value.payload.pointerId) && value.payload.pointerId >= 0) {
+      return {
+        action: value.action,
+        payload: { pointerId: value.payload.pointerId }
+      };
+    }
+    return null;
   } catch (_error) {
     return null;
   }
@@ -2337,6 +2400,8 @@ class MPVOverlayHost {
     this.currentInputRevision = -1;
     this.remoteCursorRevision = -1;
     this.collaborationRevision = -1;
+    this.collaborationActionSequence = 0;
+    this.activeCollaborationDragPointerId = null;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
@@ -2382,6 +2447,102 @@ class MPVOverlayHost {
       event?.sender === hostWindow.webContents;
   }
 
+  _collaborationActionRelayIsReady({ allowHidden = false } = {}) {
+    const hostWindow = this.window;
+    if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded ||
+        (!allowHidden && this.requestedVisible === false) ||
+        this.desiredInputEnabled !== true ||
+        this.fabricReadyGeneration !== this.hostGeneration ||
+        !Number.isSafeInteger(this.currentVideoGeneration) || this.currentVideoGeneration < 0 ||
+        !Number.isSafeInteger(this.currentInputRevision) || this.currentInputRevision < 0 ||
+        typeof this.activeSessionId !== 'string' || this.activeSessionId.length === 0) {
+      return false;
+    }
+    if (!allowHidden && typeof hostWindow.isVisible === 'function' && hostWindow.isVisible() !== true) {
+      return false;
+    }
+    const mainWindow = this.getMainWindow();
+    const mainWebContents = mainWindow?.webContents;
+    return !!mainWindow && !mainWindow.isDestroyed?.() &&
+      !!mainWebContents && !mainWebContents.isDestroyed?.() &&
+      typeof mainWebContents.send === 'function';
+  }
+
+  _sendCollaborationActionToMain(action, { allowHidden = false } = {}) {
+    if (!this._collaborationActionRelayIsReady({ allowHidden }) ||
+        this.collaborationActionSequence >= Number.MAX_SAFE_INTEGER) {
+      return { success: false, accepted: false, error: 'mpv collaboration action session is not active' };
+    }
+    const mainWindow = this.getMainWindow();
+    const sequence = this.collaborationActionSequence + 1;
+    const message = {
+      action: action.action,
+      payload: action.payload === null ? null : { ...action.payload },
+      hostGeneration: this.hostGeneration,
+      videoGeneration: this.currentVideoGeneration,
+      inputRevision: this.currentInputRevision,
+      activeSessionId: this.activeSessionId,
+      sequence
+    };
+    try {
+      mainWindow.webContents.send(MPV_OVERLAY_COLLABORATION_ACTION_CHANNEL, message);
+      this.collaborationActionSequence = sequence;
+      return { success: true, accepted: true, sequence };
+    } catch (error) {
+      this.logger.debug('mpv collaboration action forwarding failed', { error: error.message });
+      return { success: false, accepted: false, error: 'mpv collaboration action forwarding failed' };
+    }
+  }
+
+  forwardCollaborationAction(event, value) {
+    if (!this.isCurrentOverlaySender(event)) {
+      return { success: false, accepted: false, error: 'mpv collaboration action sender is not allowed' };
+    }
+    const action = normalizeMpvOverlayCollaborationAction(value);
+    if (!action) {
+      return { success: false, accepted: false, error: 'invalid mpv collaboration action' };
+    }
+    if (!this._collaborationActionRelayIsReady()) {
+      return { success: false, accepted: false, error: 'mpv collaboration action session is not active' };
+    }
+    const pointerId = action.payload?.pointerId;
+    if (action.action === 'sync.drag-start') {
+      if (this.activeCollaborationDragPointerId !== null) {
+        return { success: false, accepted: false, error: 'mpv collaboration drag is already active' };
+      }
+    } else if (MPV_OVERLAY_COLLABORATION_DRAG_ACTIONS.has(action.action) ||
+        action.action === 'sync.drag-cancel') {
+      if (this.activeCollaborationDragPointerId !== pointerId) {
+        return { success: false, accepted: false, error: 'stale mpv collaboration drag action' };
+      }
+    }
+    const result = this._sendCollaborationActionToMain(action);
+    if (!result.accepted) return result;
+    if (action.action === 'sync.drag-start') {
+      this.activeCollaborationDragPointerId = pointerId;
+    } else if (action.action === 'sync.drag-end' || action.action === 'sync.drag-cancel') {
+      this.activeCollaborationDragPointerId = null;
+    }
+    return result;
+  }
+
+  _resetCollaborationActionRelay({ cancelCurrent = true, resetSequence = true } = {}) {
+    const pointerId = this.activeCollaborationDragPointerId;
+    if (cancelCurrent && pointerId !== null) {
+      this._sendCollaborationActionToMain({
+        action: 'sync.drag-cancel',
+        payload: { pointerId }
+      }, { allowHidden: true });
+    }
+    this.activeCollaborationDragPointerId = null;
+    if (resetSequence) this.collaborationActionSequence = 0;
+    try {
+      this.window?.webContents?.send?.(MPV_OVERLAY_COLLABORATION_DRAG_RESET_CHANNEL);
+    } catch (_error) {
+      // The overlay may already be closing; the renderer fence still rejects stale drag input.
+    }
+  }
+
   async setDrawingInput() {
     const request = arguments[0] || {};
     const hostWindow = this.window;
@@ -2404,6 +2565,7 @@ class MPVOverlayHost {
     if (!request.enabled && videoGeneration < this.currentVideoGeneration) {
       return { success: false, accepted: false, error: 'stale drawing video generation' };
     }
+    this._resetCollaborationActionRelay();
     if (!request.enabled) {
       this._setNativeDrawingInput(hostWindow, false);
     }
@@ -2411,10 +2573,10 @@ class MPVOverlayHost {
     this.currentVideoGeneration = videoGeneration;
     this.currentInputRevision = inputRevision;
     this.desiredInputEnabled = request.enabled;
+    this.activeSessionId = null;
+    this.currentToolRevision = -1;
     if (!request.enabled) {
       this.suppressedOverlayHistoryKeys.clear();
-      this.activeSessionId = null;
-      this.currentToolRevision = -1;
     }
 
     // 준비된 Fabric surface가 없다면 disable은 native click-through만 보장하면 된다.
@@ -3296,6 +3458,10 @@ class MPVOverlayHost {
 
   setVisible(visible) {
     const nextVisible = visible !== false;
+    if (!nextVisible && this.requestedVisible !== false) {
+      // 현재 fence가 유효한 동안 drag-cancel을 먼저 전달한 뒤 visibility를 닫는다.
+      this._resetCollaborationActionRelay({ resetSequence: false });
+    }
     this.requestedVisible = nextVisible;
     if (nextVisible) {
       // 표시 복귀 시에는 다음 updateBounds가 반드시 실제 적용되도록 캐시를 비운다.
@@ -3318,6 +3484,7 @@ class MPVOverlayHost {
 
   destroy() {
     const hostWindow = this.window;
+    this._resetCollaborationActionRelay();
     hostWindow?.setIgnoreMouseEvents?.(true);
     hostWindow?.setFocusable?.(false);
     this.contentLoadGeneration += 1;
@@ -3334,6 +3501,8 @@ class MPVOverlayHost {
     this.currentInputRevision = -1;
     this.remoteCursorRevision = -1;
     this.collaborationRevision = -1;
+    this.collaborationActionSequence = 0;
+    this.activeCollaborationDragPointerId = null;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
@@ -3397,6 +3566,8 @@ class MPVOverlayHost {
     this.currentInputRevision = -1;
     this.remoteCursorRevision = -1;
     this.collaborationRevision = -1;
+    this.collaborationActionSequence = 0;
+    this.activeCollaborationDragPointerId = null;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
@@ -3503,6 +3674,7 @@ class MPVOverlayHost {
     });
     hostWindow.webContents?.on?.('render-process-gone', () => {
       if (this.window !== hostWindow || this.hostGeneration !== hostGeneration) return;
+      this._resetCollaborationActionRelay();
       hostWindow.setIgnoreMouseEvents?.(true);
       hostWindow.setFocusable?.(false);
       this.contentLoadGeneration += 1;
@@ -3519,6 +3691,8 @@ class MPVOverlayHost {
       this.currentInputRevision = -1;
       this.remoteCursorRevision = -1;
       this.collaborationRevision = -1;
+      this.collaborationActionSequence = 0;
+      this.activeCollaborationDragPointerId = null;
       this.desiredInputEnabled = false;
       this.activeSessionId = null;
       this.currentToolRevision = -1;
@@ -3533,9 +3707,12 @@ class MPVOverlayHost {
 
     hostWindow.on?.('closed', () => {
       if (this.window !== hostWindow) return;
+      this._resetCollaborationActionRelay();
       this.contentLoadGeneration += 1;
       this.window = null;
       this.contentLoaded = false;
+      this.collaborationActionSequence = 0;
+      this.activeCollaborationDragPointerId = null;
       this.suppressedOverlayHistoryKeys.clear();
     });
 
@@ -3558,6 +3735,7 @@ class MPVOverlayHost {
       this._scheduleRepositionToParent();
     };
     this.parentHideHandler = () => {
+      this._resetCollaborationActionRelay({ resetSequence: false });
       this._hideOverlayWindow();
     };
     this.parentShowHandler = () => {
@@ -3685,5 +3863,6 @@ module.exports = {
   mpvOverlayHost,
   normalizeOverlayState,
   normalizeMpvCollaborationState,
+  normalizeMpvOverlayCollaborationAction,
   normalizeFabricDrawingPersistenceMessage
 };

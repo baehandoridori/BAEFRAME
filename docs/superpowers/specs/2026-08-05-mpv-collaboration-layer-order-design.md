@@ -131,7 +131,7 @@ Fabric이 활성화된 동안 전용 협업 컨트롤은 capture 단계에서 `p
 
 오버레이 renderer는 동작 이름과 제한된 payload만 보낸다. 현재 `hostGeneration`, `videoGeneration`, `inputRevision`, `activeSessionId`, 단조 증가 `sequence`는 `MPVOverlayHost`가 현재 값으로 부착한다. 메인 renderer는 `fabricDrawingPilotController.getStatusSnapshot()`과 비교해 현재 Fabric 입력 세션에 정확히 일치하는 동작만 적용한다. 오래된 세대, 재사용된 sequence, 닫힌 세션의 동작은 버린다.
 
-드래그는 한 `pointerId`만 소유하고 `setPointerCapture()`를 사용한다. 이동은 `requestAnimationFrame`당 한 번으로 합치며, `pointerup` 전에 마지막 좌표를 반드시 반영한다. `pointercancel`, `lostpointercapture`, 창 blur, 호스트·영상·입력 세대 변경 시 `sync.drag-cancel`로 끝낸다.
+드래그는 한 `pointerId`만 소유하고 `setPointerCapture()`를 사용한다. 시작 좌표는 오버레이 viewport 안이어야 하지만, 캡처 이후의 이동·종료 좌표는 영상 밖으로 나갈 수 있으므로 `±32768` 범위의 유한한 오버레이 로컬 좌표를 그대로 전달한다. 메인 renderer는 여기에 영상 래퍼의 좌상단 위치만 더하고, 기존 패널 이동 함수가 앱 창 경계에서 최종 위치를 제한한다. 이동은 `requestAnimationFrame`당 한 번으로 합치며, `pointerup` 전에 마지막 좌표를 반드시 반영한다. `pointercancel`, `lostpointercapture`, 창 blur, 호스트·영상·입력 세대 변경 시 `sync.drag-cancel`로 끝낸다.
 
 협업 동작 때문에 `setIgnoreMouseEvents(true/false)`를 동적으로 전환하지 않는다. 전환은 OS 메시지 경계에서 레이스, 분리된 down/up, 포인터 캡처 상실을 만들 수 있기 때문이다. Fabric이 비활성화된 동안에는 현재처럼 창 전체가 마우스 관통 상태이므로 원본 DOM 이벤트가 처리한다.
 
