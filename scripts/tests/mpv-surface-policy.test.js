@@ -28,8 +28,9 @@ function rect({ left, top, right, bottom }) {
   };
 }
 
-function fakeElement(bounds, { style = {}, descendants = [] } = {}) {
+function fakeElement(bounds, { style = {}, descendants = [], parentElement = null } = {}) {
   return {
+    parentElement,
     getBoundingClientRect() {
       return bounds;
     },
@@ -40,6 +41,9 @@ function fakeElement(bounds, { style = {}, descendants = [] } = {}) {
       display: 'block',
       visibility: 'visible',
       opacity: '1',
+      overflow: 'visible',
+      overflowX: 'visible',
+      overflowY: 'visible',
       ...style
     }
   };
@@ -90,6 +94,7 @@ test('a registered surface blocks mpv when a visible overflow child overlaps the
     rect({ left: 360, top: 20, right: 480, bottom: 60 }),
     { descendants: [overflowPanel] }
   );
+  overflowPanel.parentElement = indicator;
 
   assert.equal(
     isMpvSurfaceVisiblyOverlappingHost(indicator, hostRect, getComputedStyle),
@@ -117,6 +122,58 @@ test('hidden, transparent, and non-overlapping surfaces do not block mpv', async
     hostRect,
     getComputedStyle
   ), false);
+});
+
+test('a descendant hidden by an ancestor cannot block mpv', async () => {
+  const { isMpvSurfaceVisiblyOverlappingHost } = await loadPolicy();
+  const hostRect = rect({ left: 100, top: 100, right: 500, bottom: 400 });
+  for (const style of [
+    { display: 'none' },
+    { visibility: 'hidden' },
+    { opacity: '0' }
+  ]) {
+    const ancestor = fakeElement(
+      rect({ left: 300, top: 80, right: 480, bottom: 200 }),
+      { style }
+    );
+    const child = fakeElement(
+      rect({ left: 320, top: 120, right: 470, bottom: 160 }),
+      { parentElement: ancestor }
+    );
+    const surface = fakeElement(
+      rect({ left: 300, top: 20, right: 480, bottom: 60 }),
+      { descendants: [ancestor, child] }
+    );
+    ancestor.parentElement = surface;
+    assert.equal(
+      isMpvSurfaceVisiblyOverlappingHost(surface, hostRect, getComputedStyle),
+      false
+    );
+  }
+});
+
+test('an overflow-clipped descendant outside the visible ancestor bounds cannot block mpv', async () => {
+  const { isMpvSurfaceVisiblyOverlappingHost } = await loadPolicy();
+  const hostRect = rect({ left: 100, top: 100, right: 500, bottom: 400 });
+  for (const overflow of ['hidden', 'clip', 'auto', 'scroll']) {
+    const ancestor = fakeElement(
+      rect({ left: 300, top: 20, right: 480, bottom: 60 }),
+      { style: { overflow, overflowX: overflow, overflowY: overflow } }
+    );
+    const child = fakeElement(
+      rect({ left: 320, top: 20, right: 470, bottom: 240 }),
+      { parentElement: ancestor }
+    );
+    const surface = fakeElement(
+      rect({ left: 300, top: 20, right: 480, bottom: 60 }),
+      { descendants: [ancestor, child] }
+    );
+    ancestor.parentElement = surface;
+    assert.equal(
+      isMpvSurfaceVisiblyOverlappingHost(surface, hostRect, getComputedStyle),
+      false
+    );
+  }
 });
 
 test('surface lookup finds the containing registered block surface', async () => {

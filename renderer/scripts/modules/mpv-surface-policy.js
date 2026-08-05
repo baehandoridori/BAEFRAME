@@ -102,16 +102,60 @@ export const MPV_MIRRORED_OVERLAY_SELECTOR = joinMpvSurfaceObservationSelectors(
   MPV_SURFACE_MODE.DEDICATED_MIRROR
 ]);
 
-function isStyleVisible(element, getStyle) {
-  let style;
+function getStyleSafely(element, getStyle, styleCache) {
+  if (styleCache.has(element)) return styleCache.get(element);
+  let style = null;
   try {
     style = getStyle(element);
   } catch (_error) {
-    return false;
+    style = null;
   }
-  if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
-  const opacity = Number.parseFloat(style.opacity);
-  return !Number.isFinite(opacity) || opacity > 0;
+  styleCache.set(element, style);
+  return style;
+}
+
+function isElementEffectivelyVisible(element, getStyle, styleCache) {
+  for (let current = element; current; current = current.parentElement) {
+    const style = getStyleSafely(current, getStyle, styleCache);
+    if (!style || style.display === 'none' ||
+        style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    const opacity = Number.parseFloat(style.opacity);
+    if (Number.isFinite(opacity) && opacity <= 0) return false;
+  }
+  return true;
+}
+
+function intersectRects(rect, clipRect, { clipX = true, clipY = true } = {}) {
+  const left = clipX ? Math.max(rect.left, clipRect.left) : rect.left;
+  const right = clipX ? Math.min(rect.right, clipRect.right) : rect.right;
+  const top = clipY ? Math.max(rect.top, clipRect.top) : rect.top;
+  const bottom = clipY ? Math.min(rect.bottom, clipRect.bottom) : rect.bottom;
+  if (right <= left || bottom <= top) return null;
+  return { left, right, top, bottom, width: right - left, height: bottom - top };
+}
+
+function clipsOverflow(value) {
+  return ['hidden', 'clip', 'auto', 'scroll'].includes(value);
+}
+
+function getElementVisibleRect(element, getStyle, styleCache) {
+  if (!element || typeof element.getBoundingClientRect !== 'function') return null;
+  let visibleRect = element.getBoundingClientRect();
+  if (!visibleRect || visibleRect.width <= 0 || visibleRect.height <= 0) return null;
+
+  for (let current = element.parentElement; current; current = current.parentElement) {
+    const style = getStyleSafely(current, getStyle, styleCache);
+    if (!style || typeof current.getBoundingClientRect !== 'function') continue;
+    const overflowX = style.overflowX || style.overflow || 'visible';
+    const overflowY = style.overflowY || style.overflow || 'visible';
+    if (!clipsOverflow(overflowX) && !clipsOverflow(overflowY)) continue;
+    visibleRect = intersectRects(visibleRect, current.getBoundingClientRect(), {
+      clipX: clipsOverflow(overflowX),
+      clipY: clipsOverflow(overflowY)
+    });
+    if (!visibleRect) return null;
+  }
+  return visibleRect;
 }
 
 export function doesMpvSurfaceRectOverlapHost(rect, hostRect) {
@@ -131,20 +175,23 @@ export function isMpvSurfaceVisiblyOverlappingHost(
   getStyle = globalThis.getComputedStyle
 ) {
   if (!element || typeof element.getBoundingClientRect !== 'function' ||
-      typeof getStyle !== 'function' || !isStyleVisible(element, getStyle)) {
+      typeof getStyle !== 'function') {
     return false;
   }
 
+  const styleCache = new Map();
   const candidates = [
     element,
     ...Array.from(element.querySelectorAll?.('*') || [])
   ];
-  return candidates.some(candidate => (
-    candidate &&
-    typeof candidate.getBoundingClientRect === 'function' &&
-    isStyleVisible(candidate, getStyle) &&
-    doesMpvSurfaceRectOverlapHost(candidate.getBoundingClientRect(), hostRect)
-  ));
+  return candidates.some(candidate => {
+    if (!candidate || typeof candidate.getBoundingClientRect !== 'function' ||
+        !isElementEffectivelyVisible(candidate, getStyle, styleCache)) {
+      return false;
+    }
+    const visibleRect = getElementVisibleRect(candidate, getStyle, styleCache);
+    return doesMpvSurfaceRectOverlapHost(visibleRect, hostRect);
+  });
 }
 
 export function findClosestMpvSurface(target, modes) {
