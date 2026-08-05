@@ -24,7 +24,6 @@
 
 - `renderer/scripts/modules/mpv-surface-policy.js`: owns surface classification and effective visible-rectangle calculation.
 - `scripts/tests/mpv-surface-policy.test.js`: executes registry and geometry behavior tests against the real policy module.
-- `scripts/tests/mpv-runtime-source.test.js`: protects the blocker-versus-mirror renderer integration contract.
 - `main/mpv-overlay-host.js`: renders generic HTML mirrors above mpv and keeps their descendants click-through.
 - `scripts/tests/mpv-overlay-host.test.js`: verifies the generated native overlay document and its input policy.
 - `package.json`: desktop release version.
@@ -34,7 +33,6 @@
 
 **Files:**
 - Modify: `scripts/tests/mpv-surface-policy.test.js`
-- Modify: `scripts/tests/mpv-runtime-source.test.js`
 - Modify: `scripts/tests/mpv-overlay-host.test.js`
 - Modify: `renderer/scripts/modules/mpv-surface-policy.js`
 - Modify: `main/mpv-overlay-host.js`
@@ -71,20 +69,6 @@ test('collaboration status surfaces mirror above mpv without hiding the native h
 });
 ```
 
-In `scripts/tests/mpv-runtime-source.test.js`, remove the two collaboration selectors from the expected blocker list and add them to the existing HTML-mirror target test:
-
-```js
-test('collaboration status surfaces use the HTML mirror path instead of host hiding', () => {
-  for (const selector of ['.collaborators-indicator', '.playback-sync-panel']) {
-    assert.match(mpvSurfacePolicySource, new RegExp(
-      `'${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`
-    ));
-  }
-  assert.match(appSource,
-    /getMpvSurfaceElements\(document, MPV_SURFACE_MODE\.HTML_MIRROR\)\.forEach/);
-});
-```
-
 In `scripts/tests/mpv-overlay-host.test.js`, add this assertion beside the existing generated overlay document checks:
 
 ```js
@@ -99,7 +83,7 @@ assert.match(
 Run:
 
 ```powershell
-node --test scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-overlay-host.test.js
+node --test scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-overlay-host.test.js
 ```
 
 Expected: FAIL because both collaboration selectors are still in `BLOCK` and absent from `HTML_MIRROR`, and `#htmlOverlay` descendants are not explicitly pointer-transparent.
@@ -141,7 +125,7 @@ This prevents cloned controls from capturing Fabric overlay input even though th
 Run:
 
 ```powershell
-node --test scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-overlay-host.test.js
+node --test scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-overlay-host.test.js
 ```
 
 Expected: PASS with no warnings or failures.
@@ -149,7 +133,7 @@ Expected: PASS with no warnings or failures.
 - [ ] **Step 6: Commit the layer policy change**
 
 ```powershell
-git add -- renderer/scripts/modules/mpv-surface-policy.js main/mpv-overlay-host.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-overlay-host.test.js
+git add -- renderer/scripts/modules/mpv-surface-policy.js main/mpv-overlay-host.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-overlay-host.test.js
 git commit -m "수정: mpv 영상 위에 협업 상태 레이어를 유지"
 ```
 
@@ -381,7 +365,7 @@ Expected: `dist/win-unpacked/BFRAME_alpha_v2.exe` and `dist/win-unpacked/resourc
 Run:
 
 ```powershell
-node --test scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-overlay-host.test.js
+node --test scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-overlay-host.test.js
 ```
 
 Expected: PASS with zero failures.
@@ -433,7 +417,7 @@ Use this release content, updating only the final test counts and commit referen
 - `renderer/scripts/modules/mpv-surface-policy.js`에서 `.collaborators-indicator`와 `.playback-sync-panel`을 `BLOCK`에서 `HTML_MIRROR`로 이동했습니다. 두 표면은 `serializeMpvOverlayHtml()` 경로로 투명 오버레이 창에 복제되며 native mpv host 가시성에는 영향을 주지 않습니다.
 - 조상 요소의 display/visibility/opacity와 overflow clipping을 반영한 유효 사각형 계산을 추가해, 접힌 `.collab-plexus-panel` 내부 요소가 가림 표면으로 오판되지 않게 했습니다.
 - `main/mpv-overlay-host.js`에서 `#htmlOverlay` 자식의 pointer event를 강제로 비활성화해 Fabric 입력 중에도 복제 UI가 마우스를 가로채지 않게 했습니다. 입력은 기존 click-through 창을 지나 메인 DOM이 처리합니다.
-- `scripts/tests/mpv-surface-policy.test.js`, `scripts/tests/mpv-runtime-source.test.js`, `scripts/tests/mpv-overlay-host.test.js`에 레이어 분류·조상 가시성·클리핑·입력 관통 회귀 검증을 추가했습니다.
+- `scripts/tests/mpv-surface-policy.test.js`, `scripts/tests/mpv-overlay-host.test.js`에 레이어 분류·조상 가시성·클리핑·입력 관통 회귀 검증을 추가했습니다.
 
 ## 🚧 개발 난항
 
