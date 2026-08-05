@@ -82,6 +82,9 @@ import {
   createMpvOverlayCollaborationActionRelay
 } from './modules/mpv-overlay-collaboration-action-relay.js';
 import {
+  createMpvCollaborationRetryController
+} from './modules/mpv-collaboration-retry.js';
+import {
   MPV_SURFACE_MODE,
   MPV_MIRRORED_OVERLAY_SELECTOR,
   MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR,
@@ -103,6 +106,8 @@ const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
 const MPV_OVERLAY_COLLABORATION_SNAPSHOT_INTERVAL_MS = 67;
 const MPV_OVERLAY_COLLABORATION_SNAPSHOT_MAX_BYTES = 768 * 1024;
+const MPV_OVERLAY_COLLABORATION_RETRY_BASE_MS = 250;
+const MPV_OVERLAY_COLLABORATION_RETRY_MAX_MS = 4000;
 const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
 const MPV_SURFACE_MOTION_RECHECK_MS = 500;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
@@ -7166,6 +7171,27 @@ async function initApp() {
   let fullscreenTimecodeOverlay = null;
   let fullscreenScrubOverlay = null;
   let remoteCursorsContainer = null;
+  const mpvOverlayCollaborationRetry = createMpvCollaborationRetryController({
+    baseDelayMs: MPV_OVERLAY_COLLABORATION_RETRY_BASE_MS,
+    maxDelayMs: MPV_OVERLAY_COLLABORATION_RETRY_MAX_MS,
+    isCurrentFence: (owner, overlaySyncEpoch) => (
+      mpvOverlayLifecycle.isReady(owner) && overlaySyncEpoch === mpvOverlaySyncEpoch
+    ),
+    shouldRun: () => (
+      document.body.classList.contains('mpv-pilot-mode') &&
+      Boolean(window.electronAPI?.mpvUpdateOverlayCollaboration)
+    ),
+    run: (owner, overlaySyncEpoch) => syncMpvOverlayCollaborationState({
+      retryOwner: owner,
+      retryEpoch: overlaySyncEpoch
+    }),
+    onSchedule: ({ delayMs, error }) => {
+      log.debug('mpv 협업 미러 갱신 실패, 영상 호스트를 유지하고 재시도합니다.', {
+        delayMs,
+        error: error?.message || error || 'unknown'
+      });
+    }
+  });
 
   function isCurrentMpvOverlayFallbackOwner(owner, filePath) {
     if (!owner || !filePath || !mpvOverlayLifecycle.owns(owner)) return false;
@@ -8402,42 +8428,83 @@ async function initApp() {
     };
   }
 
-  function syncMpvOverlayCollaborationState() {
-    if (!document.body.classList.contains('mpv-pilot-mode')) return;
-    if (!window.electronAPI?.mpvUpdateOverlayCollaboration) return;
+  function syncMpvOverlayCollaborationState(options = {}) {
+    if (!document.body.classList.contains('mpv-pilot-mode')) return false;
+    if (!window.electronAPI?.mpvUpdateOverlayCollaboration) return false;
     const overlayOwner = mpvOverlayLifecycle.captureReadyOwner();
-    if (!overlayOwner || mpvOverlayCollaborationSyncPendingOwner === overlayOwner) return;
+    if (!overlayOwner) return false;
     const overlaySyncEpoch = mpvOverlaySyncEpoch;
+    const isRetryAttempt = options.retryOwner === overlayOwner &&
+      options.retryEpoch === overlaySyncEpoch;
+    if (mpvOverlayCollaborationRetry.isPending(overlayOwner, overlaySyncEpoch) &&
+        !isRetryAttempt) return false;
+    if (mpvOverlayCollaborationSyncPendingOwner === overlayOwner) return false;
 
     mpvOverlayCollaborationSyncPendingOwner = overlayOwner;
     requestAnimationFrame(async () => {
       if (mpvOverlayCollaborationSyncPendingOwner === overlayOwner) {
         mpvOverlayCollaborationSyncPendingOwner = null;
       }
-      if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
+      if (!document.body.classList.contains('mpv-pilot-mode') ||
+          !mpvOverlayLifecycle.isReady(overlayOwner) ||
+          overlaySyncEpoch !== mpvOverlaySyncEpoch) {
+        if (isRetryAttempt) {
+          mpvOverlayCollaborationRetry.cancel(overlayOwner, overlaySyncEpoch);
+        }
+        return;
+      }
       const collaborationState = getMpvOverlayCollaborationState();
-      if (!collaborationState || !mpvOverlayLifecycle.isReady(overlayOwner)) return;
+      if (!collaborationState) {
+        if (isRetryAttempt) {
+          mpvOverlayCollaborationRetry.defer(
+            overlayOwner,
+            overlaySyncEpoch,
+            'collaboration state unavailable'
+          );
+        }
+        return;
+      }
+      if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
 
       try {
         const result = await window.electronAPI
           .mpvUpdateOverlayCollaboration(collaborationState);
-        if (!result?.success) {
-          if (!mpvOverlayLifecycle.owns(overlayOwner) ||
-              overlaySyncEpoch !== mpvOverlaySyncEpoch) return;
-          markMpvOverlayHostUnavailable(overlayOwner, result?.error);
-        }
-      } catch (error) {
-        if (!mpvOverlayLifecycle.owns(overlayOwner) ||
+        if (!mpvOverlayLifecycle.isReady(overlayOwner) ||
             overlaySyncEpoch !== mpvOverlaySyncEpoch) return;
-        markMpvOverlayHostUnavailable(overlayOwner, error.message);
+        if (!result?.success) {
+          mpvOverlayCollaborationRetry.recordFailure(
+            overlayOwner,
+            overlaySyncEpoch,
+            collaborationState.revision,
+            result?.error
+          );
+          return;
+        }
+        mpvOverlayCollaborationRetry.recordSuccess(
+          overlayOwner,
+          overlaySyncEpoch,
+          collaborationState.revision
+        );
+      } catch (error) {
+        if (!mpvOverlayLifecycle.isReady(overlayOwner) ||
+            overlaySyncEpoch !== mpvOverlaySyncEpoch) return;
+        mpvOverlayCollaborationRetry.recordFailure(
+          overlayOwner,
+          overlaySyncEpoch,
+          collaborationState.revision,
+          error
+        );
       }
     });
+    return true;
   }
 
   function scheduleMpvOverlayCollaborationStateSync(options = {}) {
-    if (options.force === true && mpvOverlayCollaborationSnapshotTimer) {
-      clearTimeout(mpvOverlayCollaborationSnapshotTimer);
-      mpvOverlayCollaborationSnapshotTimer = null;
+    if (options.force === true) {
+      if (mpvOverlayCollaborationSnapshotTimer) {
+        clearTimeout(mpvOverlayCollaborationSnapshotTimer);
+        mpvOverlayCollaborationSnapshotTimer = null;
+      }
     }
     if (options.livePlexus === true) {
       const elapsed = Date.now() - mpvOverlayLastCollaborationSnapshotAt;
@@ -8551,6 +8618,11 @@ async function initApp() {
 
   async function stopMpvPilotEngine(overlayOwner = null) {
     return mpvPilotOwnershipGate.runOwnedTeardown(overlayOwner, async () => {
+      if (overlayOwner) {
+        mpvOverlayCollaborationRetry.cancelOwner(overlayOwner);
+      } else {
+        mpvOverlayCollaborationRetry.dispose();
+      }
       try {
         await releaseMpvReviewFreezeFrame();
         return await window.electronAPI.mpvStop();

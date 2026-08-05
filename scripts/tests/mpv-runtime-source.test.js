@@ -519,7 +519,7 @@ test('mpv teardown gate waiters stay blocked when another teardown is chained', 
 test('package exposes an mpv pilot test command', () => {
   assert.equal(
     packageJson.scripts['test:mpv'],
-    'node --test scripts/tests/runtime-profile.test.js scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-overlay-keyboard-relay.test.js scripts/tests/mpv-overlay-collaboration-action-relay.test.js scripts/tests/mpv-liveblocks-visibility.test.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-collaboration-mirror.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/mpv-fabric-overlay-toolbar-layout.test.js scripts/tests/external-frame-interpolation.test.mjs'
+    'node --test scripts/tests/runtime-profile.test.js scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-overlay-keyboard-relay.test.js scripts/tests/mpv-overlay-collaboration-action-relay.test.js scripts/tests/mpv-collaboration-retry.test.js scripts/tests/mpv-liveblocks-visibility.test.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-collaboration-mirror.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/mpv-fabric-overlay-toolbar-layout.test.js scripts/tests/external-frame-interpolation.test.mjs'
   );
 });
 
@@ -1121,6 +1121,21 @@ test('mpv teardown removes a retained review freeze after native hosts are destr
   const stopMatch = appSource.match(/async function stopMpvPilotEngine\(overlayOwner = null\) \{([\s\S]*?)\n  \}/);
   assert.ok(stopMatch, 'stopMpvPilotEngine should exist');
   assert.match(stopMatch[1], /await releaseMpvReviewFreezeFrame\(\);[\s\S]+await window\.electronAPI\.mpvStop\(\);[\s\S]+await destroyMpvPilotHosts\(\);[\s\S]+forceRemoveMpvReviewFreezeFrame\(\);/);
+});
+
+test('collaboration mirror sync failures retry without invalidating the core mpv overlay', () => {
+  assert.match(appSource, /createMpvCollaborationRetryController/);
+  const syncMatch = appSource.match(/function syncMpvOverlayCollaborationState\(options = \{\}\) \{([\s\S]*?)\n  \}\n\n  function scheduleMpvOverlayCollaborationStateSync/);
+  assert.ok(syncMatch, 'syncMpvOverlayCollaborationState should exist');
+  assert.match(syncMatch[1], /mpvOverlayCollaborationRetry\.recordFailure\([\s\S]+collaborationState\.revision,/);
+  assert.match(syncMatch[1], /mpvOverlayCollaborationRetry\.recordSuccess\([\s\S]+collaborationState\.revision/);
+  assert.match(syncMatch[1], /mpvOverlayCollaborationRetry\.isPending\(overlayOwner, overlaySyncEpoch\)[\s\S]+!isRetryAttempt/);
+  assert.doesNotMatch(syncMatch[1], /markMpvOverlayHostUnavailable|recoverMpvOverlayHostOnce|mpvSetHostVisible/);
+
+  const schedulerMatch = appSource.match(/function scheduleMpvOverlayCollaborationStateSync\(options = \{\}\) \{([\s\S]*?)\n  \}\n\n  function scheduleMpvOverlayStateSync/);
+  assert.ok(schedulerMatch, 'scheduleMpvOverlayCollaborationStateSync should exist');
+  assert.doesNotMatch(schedulerMatch[1], /mpvOverlayCollaborationRetry\.(cancel|dispose)/);
+  assert.match(appSource, /async function stopMpvPilotEngine\(overlayOwner = null\) \{[\s\S]+mpvOverlayCollaborationRetry\.cancelOwner\(overlayOwner\);[\s\S]+mpvOverlayCollaborationRetry\.dispose\(\);/);
 });
 
 test('current overlay owner gets one serialized host reprepare after sync IPC failure', () => {

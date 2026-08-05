@@ -533,7 +533,7 @@ Use `z-index: 46`. `window.__applyMpvCollaborationState()` must update only pre-
 
 Call `scheduleMpvOverlayCollaborationStateSync()` after collaborator/connection updates, panel show/hide, cursor preference changes, sync enable/mode changes, panel show/collapse/close/drag, overlay bounds changes, and theme changes. While `_startPlexusAnimation()` draws, call the throttled live variant after the canvas frame is complete.
 
-Do not add collaboration snapshots to the generic `getMpvOverlayState()` payload. A failure on the dedicated channel may schedule overlay recovery for the current owner, but must not mark the native mpv video as blocked or call `mpvSetHostVisible(false)`.
+Do not add collaboration snapshots to the generic `getMpvOverlayState()` payload. A failure on the dedicated channel must use a bounded retry for the current owner and sync epoch. It must not mark the native mpv video as blocked, start core overlay recovery, or call `mpvSetHostVisible(false)`.
 
 - [ ] **Step 7: Run focused tests and verify GREEN**
 
