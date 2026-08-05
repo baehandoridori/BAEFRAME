@@ -28,8 +28,9 @@ function rect({ left, top, right, bottom }) {
   };
 }
 
-function fakeElement(bounds, { style = {}, descendants = [] } = {}) {
+function fakeElement(bounds, { style = {}, descendants = [], parentElement = null } = {}) {
   return {
+    parentElement,
     getBoundingClientRect() {
       return bounds;
     },
@@ -40,6 +41,9 @@ function fakeElement(bounds, { style = {}, descendants = [] } = {}) {
       display: 'block',
       visibility: 'visible',
       opacity: '1',
+      overflow: 'visible',
+      overflowX: 'visible',
+      overflowY: 'visible',
       ...style
     }
   };
@@ -52,18 +56,11 @@ function getComputedStyle(element) {
 test('surface registry derives block, observed mirror, and generic HTML mirror selectors', async () => {
   const {
     MPV_SURFACE_MODE,
-    MPV_BLOCKING_OVERLAY_SELECTOR,
     MPV_MIRRORED_OVERLAY_SELECTOR,
     MPV_HTML_MIRROR_OVERLAY_SELECTOR,
     MPV_SURFACE_REGISTRY,
     getMpvSurfaceSelectors
   } = await loadPolicy();
-
-  const blockSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.BLOCK);
-  assert.ok(blockSelectors.includes('.collaborators-indicator'));
-  assert.ok(blockSelectors.includes('.playback-sync-panel'));
-  assert.match(MPV_BLOCKING_OVERLAY_SELECTOR, /\.collaborators-indicator/);
-  assert.match(MPV_BLOCKING_OVERLAY_SELECTOR, /\.playback-sync-panel/);
 
   const htmlMirrorSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.HTML_MIRROR);
   assert.ok(htmlMirrorSelectors.includes('.scrub-preview-overlay.active'));
@@ -78,6 +75,21 @@ test('surface registry derives block, observed mirror, and generic HTML mirror s
   assert.match(MPV_MIRRORED_OVERLAY_SELECTOR, /\.scrub-preview-overlay(?:,|$)/);
 });
 
+test('collaboration status surfaces use the dedicated collaboration mirror without hiding the native host', async () => {
+  const { MPV_SURFACE_MODE, getMpvSurfaceSelectors } = await loadPolicy();
+  const blockSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.BLOCK);
+  const htmlMirrorSelectors = getMpvSurfaceSelectors(MPV_SURFACE_MODE.HTML_MIRROR);
+  const collaborationMirrorSelectors = getMpvSurfaceSelectors(
+    MPV_SURFACE_MODE.COLLABORATION_MIRROR
+  );
+
+  for (const selector of ['.collaborators-indicator', '.playback-sync-panel']) {
+    assert.equal(blockSelectors.includes(selector), false);
+    assert.equal(htmlMirrorSelectors.includes(selector), false);
+    assert.equal(collaborationMirrorSelectors.includes(selector), true);
+  }
+});
+
 test('a registered surface blocks mpv when a visible overflow child overlaps the host', async () => {
   const { isMpvSurfaceVisiblyOverlappingHost } = await loadPolicy();
   const hostRect = rect({ left: 100, top: 100, right: 500, bottom: 400 });
@@ -86,6 +98,7 @@ test('a registered surface blocks mpv when a visible overflow child overlaps the
     rect({ left: 360, top: 20, right: 480, bottom: 60 }),
     { descendants: [overflowPanel] }
   );
+  overflowPanel.parentElement = indicator;
 
   assert.equal(
     isMpvSurfaceVisiblyOverlappingHost(indicator, hostRect, getComputedStyle),
@@ -115,16 +128,189 @@ test('hidden, transparent, and non-overlapping surfaces do not block mpv', async
   ), false);
 });
 
+test('a descendant hidden by an ancestor cannot block mpv', async () => {
+  const { isMpvSurfaceVisiblyOverlappingHost } = await loadPolicy();
+  const hostRect = rect({ left: 100, top: 100, right: 500, bottom: 400 });
+  for (const style of [
+    { display: 'none' },
+    { visibility: 'hidden' },
+    { opacity: '0' }
+  ]) {
+    const ancestor = fakeElement(
+      rect({ left: 300, top: 80, right: 480, bottom: 200 }),
+      { style }
+    );
+    const child = fakeElement(
+      rect({ left: 320, top: 120, right: 470, bottom: 160 }),
+      { parentElement: ancestor }
+    );
+    const surface = fakeElement(
+      rect({ left: 300, top: 20, right: 480, bottom: 60 }),
+      { descendants: [ancestor, child] }
+    );
+    ancestor.parentElement = surface;
+    assert.equal(
+      isMpvSurfaceVisiblyOverlappingHost(surface, hostRect, getComputedStyle),
+      false
+    );
+  }
+});
+
+test('an overflow-clipped descendant outside the visible ancestor bounds cannot block mpv', async () => {
+  const { isMpvSurfaceVisiblyOverlappingHost } = await loadPolicy();
+  const hostRect = rect({ left: 100, top: 100, right: 500, bottom: 400 });
+  for (const overflow of ['hidden', 'clip', 'auto', 'scroll']) {
+    const ancestor = fakeElement(
+      rect({ left: 300, top: 20, right: 480, bottom: 60 }),
+      { style: { overflow, overflowX: overflow, overflowY: overflow } }
+    );
+    const child = fakeElement(
+      rect({ left: 320, top: 20, right: 470, bottom: 240 }),
+      { parentElement: ancestor }
+    );
+    const surface = fakeElement(
+      rect({ left: 300, top: 20, right: 480, bottom: 60 }),
+      { descendants: [ancestor, child] }
+    );
+    ancestor.parentElement = surface;
+    assert.equal(
+      isMpvSurfaceVisiblyOverlappingHost(surface, hostRect, getComputedStyle),
+      false
+    );
+  }
+});
+
+test('overflow-x clips only the x axis while overflow-y remains visible', async () => {
+  const { isMpvSurfaceVisiblyOverlappingHost } = await loadPolicy();
+  const hostRect = rect({ left: 100, top: 100, right: 500, bottom: 400 });
+
+  const xClippedChild = fakeElement(rect({ left: 20, top: 20, right: 200, bottom: 180 }));
+  const xClippingSurface = fakeElement(
+    rect({ left: 20, top: 20, right: 80, bottom: 80 }),
+    {
+      style: { overflowX: 'hidden', overflowY: 'visible' },
+      descendants: [xClippedChild]
+    }
+  );
+  xClippedChild.parentElement = xClippingSurface;
+  assert.equal(
+    isMpvSurfaceVisiblyOverlappingHost(xClippingSurface, hostRect, getComputedStyle),
+    false,
+    'the clipped x portion must not block mpv'
+  );
+
+  const yOverflowChild = fakeElement(rect({ left: 130, top: 20, right: 190, bottom: 180 }));
+  const yVisibleSurface = fakeElement(
+    rect({ left: 120, top: 20, right: 200, bottom: 80 }),
+    {
+      style: { overflowX: 'hidden', overflowY: 'visible' },
+      descendants: [yOverflowChild]
+    }
+  );
+  yOverflowChild.parentElement = yVisibleSurface;
+  assert.equal(
+    isMpvSurfaceVisiblyOverlappingHost(yVisibleSurface, hostRect, getComputedStyle),
+    true,
+    'visible y overflow must still block mpv when it reaches the host'
+  );
+});
+
+test('overflow-y clips only the y axis while overflow-x remains visible', async () => {
+  const { isMpvSurfaceVisiblyOverlappingHost } = await loadPolicy();
+  const hostRect = rect({ left: 100, top: 100, right: 500, bottom: 400 });
+
+  const yClippedChild = fakeElement(rect({ left: 20, top: 20, right: 200, bottom: 180 }));
+  const yClippingSurface = fakeElement(
+    rect({ left: 20, top: 20, right: 80, bottom: 80 }),
+    {
+      style: { overflowX: 'visible', overflowY: 'hidden' },
+      descendants: [yClippedChild]
+    }
+  );
+  yClippedChild.parentElement = yClippingSurface;
+  assert.equal(
+    isMpvSurfaceVisiblyOverlappingHost(yClippingSurface, hostRect, getComputedStyle),
+    false,
+    'the clipped y portion must not block mpv'
+  );
+
+  const xOverflowChild = fakeElement(rect({ left: 20, top: 130, right: 200, bottom: 190 }));
+  const xVisibleSurface = fakeElement(
+    rect({ left: 20, top: 120, right: 80, bottom: 200 }),
+    {
+      style: { overflowX: 'visible', overflowY: 'hidden' },
+      descendants: [xOverflowChild]
+    }
+  );
+  xOverflowChild.parentElement = xVisibleSurface;
+  assert.equal(
+    isMpvSurfaceVisiblyOverlappingHost(xVisibleSurface, hostRect, getComputedStyle),
+    true,
+    'visible x overflow must still block mpv when it reaches the host'
+  );
+});
+
+test('zero-size candidates and clipping ancestors never block mpv', async () => {
+  const { isMpvSurfaceVisiblyOverlappingHost } = await loadPolicy();
+  const hostRect = rect({ left: 100, top: 100, right: 500, bottom: 400 });
+
+  for (const zeroCandidate of [
+    fakeElement(rect({ left: 150, top: 140, right: 150, bottom: 220 })),
+    fakeElement(rect({ left: 150, top: 140, right: 220, bottom: 140 }))
+  ]) {
+    assert.equal(
+      isMpvSurfaceVisiblyOverlappingHost(zeroCandidate, hostRect, getComputedStyle),
+      false
+    );
+  }
+
+  const zeroWidthAncestor = fakeElement(
+    rect({ left: 150, top: 80, right: 150, bottom: 260 }),
+    { style: { overflowX: 'hidden', overflowY: 'visible' } }
+  );
+  const widthClippedChild = fakeElement(
+    rect({ left: 120, top: 120, right: 220, bottom: 220 }),
+    { parentElement: zeroWidthAncestor }
+  );
+  const widthSurface = fakeElement(
+    rect({ left: 0, top: 0, right: 20, bottom: 20 }),
+    { descendants: [zeroWidthAncestor, widthClippedChild] }
+  );
+  zeroWidthAncestor.parentElement = widthSurface;
+  assert.equal(
+    isMpvSurfaceVisiblyOverlappingHost(widthSurface, hostRect, getComputedStyle),
+    false
+  );
+
+  const zeroHeightAncestor = fakeElement(
+    rect({ left: 80, top: 150, right: 260, bottom: 150 }),
+    { style: { overflowX: 'visible', overflowY: 'hidden' } }
+  );
+  const heightClippedChild = fakeElement(
+    rect({ left: 120, top: 120, right: 220, bottom: 220 }),
+    { parentElement: zeroHeightAncestor }
+  );
+  const heightSurface = fakeElement(
+    rect({ left: 0, top: 0, right: 20, bottom: 20 }),
+    { descendants: [zeroHeightAncestor, heightClippedChild] }
+  );
+  zeroHeightAncestor.parentElement = heightSurface;
+  assert.equal(
+    isMpvSurfaceVisiblyOverlappingHost(heightSurface, hostRect, getComputedStyle),
+    false
+  );
+});
+
 test('surface lookup finds the containing registered block surface', async () => {
   const { MPV_SURFACE_MODE, findClosestMpvSurface } = await loadPolicy();
-  const indicator = { id: 'indicator' };
+  const modal = { id: 'modal' };
   const eventTarget = {
     closest(selector) {
-      return selector.includes('.collaborators-indicator') ? indicator : null;
+      return selector.includes('.modal-overlay.active') ? modal : null;
     }
   };
 
-  assert.equal(findClosestMpvSurface(eventTarget, MPV_SURFACE_MODE.BLOCK), indicator);
+  assert.equal(findClosestMpvSurface(eventTarget, MPV_SURFACE_MODE.BLOCK), modal);
 });
 
 test('app consumes the registry for blocking, observation, serialization, and motion rechecks', () => {

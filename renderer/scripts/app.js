@@ -79,8 +79,15 @@ import {
   dispatchMpvOverlayKeyboardInput
 } from './modules/mpv-overlay-keyboard-relay.js';
 import {
+  createMpvOverlayCollaborationActionRelay
+} from './modules/mpv-overlay-collaboration-action-relay.js';
+import {
+  createMpvCollaborationRetryController
+} from './modules/mpv-collaboration-retry.js';
+import {
   MPV_SURFACE_MODE,
   MPV_MIRRORED_OVERLAY_SELECTOR,
+  MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR,
   getMpvSurfaceElements,
   findClosestMpvSurface,
   isMpvSurfaceVisiblyOverlappingHost
@@ -97,6 +104,10 @@ const ALPHA_PRESERVING_COMPOSITION_EXTENSIONS = ['webm', 'webp'];
 const SUPPORTED_PLAYLIST_EXTENSION = 'bplaylist';
 const SUPPORTED_CUTLIST_EXTENSION = 'bcutlist';
 const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;
+const MPV_OVERLAY_COLLABORATION_SNAPSHOT_INTERVAL_MS = 67;
+const MPV_OVERLAY_COLLABORATION_SNAPSHOT_MAX_BYTES = 768 * 1024;
+const MPV_OVERLAY_COLLABORATION_RETRY_BASE_MS = 250;
+const MPV_OVERLAY_COLLABORATION_RETRY_MAX_MS = 4000;
 const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;
 const MPV_SURFACE_MOTION_RECHECK_MS = 500;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
@@ -3469,9 +3480,10 @@ async function initApp() {
     }
   }
   updateRemoteCursorToggleButton();
-  btnToggleRemoteCursors?.addEventListener('click', () => {
+  function toggleRemoteCollaboratorCursors() {
     userSettings.setShowRemoteCursors(!userSettings.getShowRemoteCursors());
-  });
+  }
+  btnToggleRemoteCursors?.addEventListener('click', toggleRemoteCollaboratorCursors);
 
   const savedBrush = userSettings.getBrushSettings();
 
@@ -7089,8 +7101,10 @@ async function initApp() {
   let mpvVideoTransformSyncPending = false;
   let fabricDrawingPilotFailureToastShown = false;
   let fabricDrawingPilotUiEngaged = false;
+  let fabricDrawingPilotStatusSnapshot = null;
   let fabricDrawingViewportRevision = 0;
   let fabricDrawingViewportSignature = '';
+  let resetMpvOverlayCollaborationDrag = () => {};
   const mpvOverlayLifecycle = createMpvOverlayLifecycle({
     onWarning: (error) => {
       log.warn('mpv 오버레이 동기화 실패, 호스트 복구를 시도합니다.', {
@@ -7135,6 +7149,12 @@ async function initApp() {
   let mpvOverlayStateSyncPendingOwner = null;
   let mpvOverlayRemoteCursorSyncPendingOwner = null;
   let mpvOverlayRemoteCursorRevision = 0;
+  let mpvOverlayCollaborationSyncPendingOwner = null;
+  let mpvOverlayCollaborationRevision = 0;
+  let mpvOverlayCollaborationSnapshotTimer = null;
+  let mpvOverlayLastCollaborationSnapshotAt = 0;
+  let mpvOverlayCollaborationSnapshotDataUrl = '';
+  let mpvCollaborationUsers = [];
   let mpvOverlayStateSyncTimer = null;
   let mpvOverlayLastLiveDrawSyncAt = 0;
   let mpvOverlayRecoveryOwner = null;
@@ -7151,6 +7171,27 @@ async function initApp() {
   let fullscreenTimecodeOverlay = null;
   let fullscreenScrubOverlay = null;
   let remoteCursorsContainer = null;
+  const mpvOverlayCollaborationRetry = createMpvCollaborationRetryController({
+    baseDelayMs: MPV_OVERLAY_COLLABORATION_RETRY_BASE_MS,
+    maxDelayMs: MPV_OVERLAY_COLLABORATION_RETRY_MAX_MS,
+    isCurrentFence: (owner, overlaySyncEpoch) => (
+      mpvOverlayLifecycle.isReady(owner) && overlaySyncEpoch === mpvOverlaySyncEpoch
+    ),
+    shouldRun: () => (
+      document.body.classList.contains('mpv-pilot-mode') &&
+      Boolean(window.electronAPI?.mpvUpdateOverlayCollaboration)
+    ),
+    run: (owner, overlaySyncEpoch) => syncMpvOverlayCollaborationState({
+      retryOwner: owner,
+      retryEpoch: overlaySyncEpoch
+    }),
+    onSchedule: ({ delayMs, error }) => {
+      log.debug('mpv 협업 미러 갱신 실패, 영상 호스트를 유지하고 재시도합니다.', {
+        delayMs,
+        error: error?.message || error || 'unknown'
+      });
+    }
+  });
 
   function isCurrentMpvOverlayFallbackOwner(owner, filePath) {
     if (!owner || !filePath || !mpvOverlayLifecycle.owns(owner)) return false;
@@ -7447,6 +7488,7 @@ async function initApp() {
         log.info('mpv 오버레이 호스트를 한 번 다시 준비했습니다.');
         scheduleMpvOverlayStateSync({ force: true });
         scheduleMpvOverlayRemoteCursorStateSync();
+        scheduleMpvOverlayCollaborationStateSync({ force: true });
         return { success: true };
       } catch (recoveryError) {
         return {
@@ -7697,6 +7739,9 @@ async function initApp() {
     ])) {
       scheduleMpvOverlayStateSync({ force: true });
     }
+    if (findClosestMpvSurface(event.target, MPV_SURFACE_MODE.COLLABORATION_MIRROR)) {
+      scheduleMpvOverlayCollaborationStateSync({ force: true });
+    }
   }
 
   function handleMpvSurfaceMotionEnd(event) {
@@ -7708,6 +7753,9 @@ async function initApp() {
       MPV_SURFACE_MODE.DEDICATED_MIRROR
     ])) {
       scheduleMpvOverlayStateSync({ force: true });
+    }
+    if (findClosestMpvSurface(event.target, MPV_SURFACE_MODE.COLLABORATION_MIRROR)) {
+      scheduleMpvOverlayCollaborationStateSync({ force: true });
     }
   }
 
@@ -7740,11 +7788,29 @@ async function initApp() {
     ));
   }
 
+  function isMpvCollaborationOverlayMutation(mutation) {
+    const target = getMutationElementTarget(mutation.target);
+    if (target && target.matches?.(MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR)) return true;
+    if (target && target.closest?.(MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR)) return true;
+    return Array.from(mutation.addedNodes || []).some((node) => (
+      node.nodeType === Node.ELEMENT_NODE &&
+      (node.matches?.(MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR) ||
+        node.querySelector?.(MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR))
+    )) || Array.from(mutation.removedNodes || []).some((node) => (
+      node.nodeType === Node.ELEMENT_NODE &&
+      (node.matches?.(MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR) ||
+        node.querySelector?.(MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR))
+    ));
+  }
+
   function installMpvMirroredOverlayObserver() {
     const observer = new MutationObserver((mutations) => {
       if (!document.body.classList.contains('mpv-pilot-mode')) return;
       if (!mutations.some(isMpvMirroredOverlayMutation)) return;
       scheduleMpvOverlayStateSync({ force: true });
+      if (mutations.some(isMpvCollaborationOverlayMutation)) {
+        scheduleMpvOverlayCollaborationStateSync({ force: true });
+      }
     });
     observer.observe(document.body, {
       subtree: true,
@@ -7915,6 +7981,7 @@ async function initApp() {
 
     try {
       await window.electronAPI.mpvUpdateOverlayBounds(bounds);
+      scheduleMpvOverlayCollaborationStateSync();
     } catch (error) {
       log.debug('mpv 오버레이 위치 갱신 실패', { error: error.message });
     }
@@ -8273,6 +8340,187 @@ async function initApp() {
     syncMpvOverlayRemoteCursorState();
   }
 
+  function getMpvCollaborationSurfaceState(element, wrapperRect) {
+    if (!element || !wrapperRect) {
+      return {
+        visible: false,
+        bounds: { left: 0, top: 0, width: 0, height: 0 }
+      };
+    }
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    const clampPosition = value => Math.max(-32768, Math.min(32768, Number(value) || 0));
+    const clampSize = value => Math.max(0, Math.min(32768, Number(value) || 0));
+    const bounds = {
+      left: clampPosition(rect.left - wrapperRect.left),
+      top: clampPosition(rect.top - wrapperRect.top),
+      width: clampSize(rect.width),
+      height: clampSize(rect.height)
+    };
+    return {
+      visible: style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        Number.parseFloat(style.opacity || '1') > 0 &&
+        bounds.width > 0 && bounds.height > 0,
+      bounds
+    };
+  }
+
+  function getMpvCollaborationBadge() {
+    const indicator = document.getElementById('syncStatus');
+    if (indicator?.classList.contains('error')) return 'error';
+    if (indicator?.classList.contains('syncing')) return 'syncing';
+    if (indicator?.classList.contains('synced')) return 'synced';
+    return 'idle';
+  }
+
+  function captureMpvCollaborationPlexusSnapshot(plexusVisible) {
+    if (!plexusVisible) {
+      mpvOverlayCollaborationSnapshotDataUrl = '';
+      return '';
+    }
+    const now = Date.now();
+    if (now - mpvOverlayLastCollaborationSnapshotAt <
+        MPV_OVERLAY_COLLABORATION_SNAPSHOT_INTERVAL_MS) {
+      return mpvOverlayCollaborationSnapshotDataUrl;
+    }
+    mpvOverlayLastCollaborationSnapshotAt = now;
+    const dataUrl = getCanvasOverlayDataUrl(elements.collabPlexusCanvas);
+    mpvOverlayCollaborationSnapshotDataUrl =
+      dataUrl.startsWith('data:image/png;base64,') &&
+      dataUrl.length <= MPV_OVERLAY_COLLABORATION_SNAPSHOT_MAX_BYTES
+        ? dataUrl
+        : '';
+    return mpvOverlayCollaborationSnapshotDataUrl;
+  }
+
+  function getMpvOverlayCollaborationState() {
+    const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
+    if (!wrapperRect || wrapperRect.width <= 0 || wrapperRect.height <= 0) return null;
+    const indicatorElement = document.getElementById('collaboratorsIndicator');
+    const plexusElement = elements.collabPlexusPanel;
+    const playbackElement = document.getElementById('playbackSyncPanel');
+    const indicator = getMpvCollaborationSurfaceState(indicatorElement, wrapperRect);
+    const plexus = getMpvCollaborationSurfaceState(plexusElement, wrapperRect);
+    plexus.visible = plexus.visible &&
+      plexusElement?.classList.contains('active') === true;
+    const playback = getMpvCollaborationSurfaceState(playbackElement, wrapperRect);
+
+    return {
+      revision: ++mpvOverlayCollaborationRevision,
+      theme: document.documentElement.classList.contains('light-mode') ? 'light' : 'dark',
+      indicator: {
+        ...indicator,
+        badge: getMpvCollaborationBadge(),
+        users: mpvCollaborationUsers.map(user => ({ ...user }))
+      },
+      plexus: {
+        ...plexus,
+        showRemoteCursors: userSettings.getShowRemoteCursors(),
+        snapshotDataUrl: captureMpvCollaborationPlexusSnapshot(plexus.visible)
+      },
+      playback: {
+        ...playback,
+        collapsed: playbackElement?.classList.contains('collapsed') === true,
+        syncEnabled: playbackSync.syncEnabled === true,
+        leaderMode: playbackSync.leaderMode === 'follow' ? 'follow' : 'lead'
+      }
+    };
+  }
+
+  function syncMpvOverlayCollaborationState(options = {}) {
+    if (!document.body.classList.contains('mpv-pilot-mode')) return false;
+    if (!window.electronAPI?.mpvUpdateOverlayCollaboration) return false;
+    const overlayOwner = mpvOverlayLifecycle.captureReadyOwner();
+    if (!overlayOwner) return false;
+    const overlaySyncEpoch = mpvOverlaySyncEpoch;
+    const isRetryAttempt = options.retryOwner === overlayOwner &&
+      options.retryEpoch === overlaySyncEpoch;
+    if (mpvOverlayCollaborationRetry.isPending(overlayOwner, overlaySyncEpoch) &&
+        !isRetryAttempt) return false;
+    if (mpvOverlayCollaborationSyncPendingOwner === overlayOwner) return false;
+
+    mpvOverlayCollaborationSyncPendingOwner = overlayOwner;
+    requestAnimationFrame(async () => {
+      if (mpvOverlayCollaborationSyncPendingOwner === overlayOwner) {
+        mpvOverlayCollaborationSyncPendingOwner = null;
+      }
+      if (!document.body.classList.contains('mpv-pilot-mode') ||
+          !mpvOverlayLifecycle.isReady(overlayOwner) ||
+          overlaySyncEpoch !== mpvOverlaySyncEpoch) {
+        if (isRetryAttempt) {
+          mpvOverlayCollaborationRetry.cancel(overlayOwner, overlaySyncEpoch);
+        }
+        return;
+      }
+      const collaborationState = getMpvOverlayCollaborationState();
+      if (!collaborationState) {
+        if (isRetryAttempt) {
+          mpvOverlayCollaborationRetry.defer(
+            overlayOwner,
+            overlaySyncEpoch,
+            'collaboration state unavailable'
+          );
+        }
+        return;
+      }
+      if (!mpvOverlayLifecycle.isReady(overlayOwner)) return;
+
+      try {
+        const result = await window.electronAPI
+          .mpvUpdateOverlayCollaboration(collaborationState);
+        if (!mpvOverlayLifecycle.isReady(overlayOwner) ||
+            overlaySyncEpoch !== mpvOverlaySyncEpoch) return;
+        if (!result?.success) {
+          mpvOverlayCollaborationRetry.recordFailure(
+            overlayOwner,
+            overlaySyncEpoch,
+            collaborationState.revision,
+            result?.error
+          );
+          return;
+        }
+        mpvOverlayCollaborationRetry.recordSuccess(
+          overlayOwner,
+          overlaySyncEpoch,
+          collaborationState.revision
+        );
+      } catch (error) {
+        if (!mpvOverlayLifecycle.isReady(overlayOwner) ||
+            overlaySyncEpoch !== mpvOverlaySyncEpoch) return;
+        mpvOverlayCollaborationRetry.recordFailure(
+          overlayOwner,
+          overlaySyncEpoch,
+          collaborationState.revision,
+          error
+        );
+      }
+    });
+    return true;
+  }
+
+  function scheduleMpvOverlayCollaborationStateSync(options = {}) {
+    if (options.force === true) {
+      if (mpvOverlayCollaborationSnapshotTimer) {
+        clearTimeout(mpvOverlayCollaborationSnapshotTimer);
+        mpvOverlayCollaborationSnapshotTimer = null;
+      }
+    }
+    if (options.livePlexus === true) {
+      const elapsed = Date.now() - mpvOverlayLastCollaborationSnapshotAt;
+      if (elapsed < MPV_OVERLAY_COLLABORATION_SNAPSHOT_INTERVAL_MS) {
+        if (!mpvOverlayCollaborationSnapshotTimer) {
+          mpvOverlayCollaborationSnapshotTimer = setTimeout(() => {
+            mpvOverlayCollaborationSnapshotTimer = null;
+            syncMpvOverlayCollaborationState();
+          }, MPV_OVERLAY_COLLABORATION_SNAPSHOT_INTERVAL_MS - elapsed);
+        }
+        return;
+      }
+    }
+    syncMpvOverlayCollaborationState();
+  }
+
   function scheduleMpvOverlayStateSync(options = {}) {
     if (options.force === true) {
       if (mpvOverlayStateSyncTimer) {
@@ -8370,6 +8618,11 @@ async function initApp() {
 
   async function stopMpvPilotEngine(overlayOwner = null) {
     return mpvPilotOwnershipGate.runOwnedTeardown(overlayOwner, async () => {
+      if (overlayOwner) {
+        mpvOverlayCollaborationRetry.cancelOwner(overlayOwner);
+      } else {
+        mpvOverlayCollaborationRetry.dispose();
+      }
       try {
         await releaseMpvReviewFreezeFrame();
         return await window.electronAPI.mpvStop();
@@ -8579,6 +8832,7 @@ async function initApp() {
     syncMpvVideoTransform();
     scheduleMpvOverlayStateSync();
     scheduleMpvOverlayRemoteCursorStateSync();
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
 
     const mpvInitialFrame = resolveInitialFrameFromOptions(initialFrame, initialTime);
     if (Number.isFinite(Number(mpvInitialFrame)) && Number(mpvInitialFrame) > 0) {
@@ -9673,6 +9927,7 @@ async function initApp() {
   }
 
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
+    fabricDrawingPilotStatusSnapshot = snapshot ? { ...snapshot } : null;
     const ownsDrawingShortcut =
       fabricDrawingPilotController.shouldOwnDrawingShortcut();
     const bInput = snapshot?.bInput || {};
@@ -9692,6 +9947,7 @@ async function initApp() {
     );
     const active = nextState === 'active';
     const preparing = nextState === 'preparing';
+    if (!active) resetMpvOverlayCollaborationDrag();
     const recoveringForResume = nextState === 'recovering' && snapshot?.resumeRequested === true;
     const engaged = ownsDrawingShortcut && isMpvPilotPlaybackActive() &&
       (active || preparing || nextState === 'recovering');
@@ -14247,6 +14503,7 @@ async function initApp() {
   const lightModeToggle = document.getElementById('appSettingsLightMode');
   function _applyLightMode(enabled) {
     document.documentElement.classList.toggle('light-mode', enabled);
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
   }
   // 초기 라이트 모드 적용
   _applyLightMode(userSettings.getLightMode());
@@ -15696,30 +15953,57 @@ async function initApp() {
   /**
    * 협업자 UI 업데이트
    */
+  function normalizeCollaborationUser(collaborator = {}) {
+    const name = typeof collaborator.name === 'string'
+      ? collaborator.name
+        .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '')
+        .trim()
+        .slice(0, 64)
+      : '';
+    const color = typeof collaborator.color === 'string' &&
+      /^#[0-9a-f]{6}$/i.test(collaborator.color)
+      ? collaborator.color.toLowerCase()
+      : '#ffd000';
+    return {
+      name,
+      color,
+      isMe: collaborator.isMe === true,
+      syncActive: collaborator.syncActive === true
+    };
+  }
+
   function updateCollaboratorsUI(collaborators) {
     if (!collaboratorsIndicator) return;
 
-    _currentCollaborators = collaborators;
+    const normalizedCollaborators = (Array.isArray(collaborators) ? collaborators : [])
+      .slice(0, 64)
+      .map(normalizeCollaborationUser);
+    _currentCollaborators = normalizedCollaborators;
+    mpvCollaborationUsers = normalizedCollaborators.map(user => ({ ...user }));
 
-    if (collaborators.length === 0) {
+    if (normalizedCollaborators.length === 0) {
       collaboratorsIndicator.style.display = 'none';
       _hideCollabPlexusPanel();
+      collaboratorsAvatars?.replaceChildren();
+      scheduleMpvOverlayCollaborationStateSync({ force: true });
       return;
     }
 
     collaboratorsIndicator.style.display = 'flex';
-    collaboratorsCount.textContent = collaborators.length;
+    collaboratorsCount.textContent = normalizedCollaborators.length;
 
     // 아바타 렌더링
-    collaboratorsAvatars.innerHTML = collaborators.map(collab => {
+    const avatars = normalizedCollaborators.map(collab => {
       const initials = collab.name.substring(0, 2);
-      const isMe = collab.isMe ? 'is-me' : '';
-      return `<div class="collaborator-avatar ${isMe}"
-                   style="background-color: ${collab.color}"
-                   title="${collab.name}${collab.isMe ? ' (나)' : ''}">
-                ${initials}
-              </div>`;
-    }).reverse().join(''); // reverse for proper stacking order
+      const avatar = document.createElement('div');
+      avatar.className = `collaborator-avatar${collab.isMe ? ' is-me' : ''}`;
+      avatar.style.backgroundColor = collab.color;
+      avatar.title = `${collab.name}${collab.isMe ? ' (나)' : ''}`;
+      avatar.textContent = initials;
+      return avatar;
+    }).reverse(); // reverse for proper stacking order
+    collaboratorsAvatars.replaceChildren(...avatars);
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
   }
 
   let _plexusStartTimer = null;
@@ -16028,6 +16312,7 @@ async function initApp() {
         canvas.width = rect.width;
         canvas.height = rect.height;
         _drawUserPlexus(ctx, rect.width, rect.height, _currentCollaborators, _plexusTime);
+        scheduleMpvOverlayCollaborationStateSync({ livePlexus: true });
       }
       _plexusAnimationId = requestAnimationFrame(animate);
     }
@@ -16050,6 +16335,7 @@ async function initApp() {
     if (!userSettings.settings.showPlexusPanel) return;
 
     panel.classList.add('active');
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
 
     // 이전 타이머 정리
     if (_plexusStartTimer) {
@@ -16074,37 +16360,45 @@ async function initApp() {
 
     panel.classList.remove('active');
     _stopPlexusAnimation();
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
   }
 
-  // 호버 이벤트 설정
-  collaboratorsIndicator?.addEventListener('mouseenter', () => {
+  function handleCollaborationIndicatorEnter() {
     clearTimeout(_collabPanelHoverTimer);
     _collabPanelHoverTimer = setTimeout(() => {
       _showCollabPlexusPanel();
     }, 200); // 200ms 딜레이 (오발 방지)
-  });
+  }
 
-  collaboratorsIndicator?.addEventListener('mouseleave', (e) => {
+  function handleCollaborationIndicatorLeave(relatedTarget = null) {
     clearTimeout(_collabPanelHoverTimer);
     // 패널로 마우스가 이동한 경우 숨기지 않음
     const panel = elements.collabPlexusPanel;
-    if (panel && panel.contains(e.relatedTarget)) return;
+    if (panel && panel.contains(relatedTarget)) return;
 
     _collabPanelHoverTimer = setTimeout(() => {
       _hideCollabPlexusPanel();
     }, 300);
-  });
+  }
 
-  elements.collabPlexusPanel?.addEventListener('mouseenter', () => {
+  function handleCollaborationPanelEnter() {
     clearTimeout(_collabPanelHoverTimer);
-  });
+  }
 
-  elements.collabPlexusPanel?.addEventListener('mouseleave', () => {
+  function handleCollaborationPanelLeave() {
     clearTimeout(_collabPanelHoverTimer);
     _collabPanelHoverTimer = setTimeout(() => {
       _hideCollabPlexusPanel();
     }, 300);
+  }
+
+  // 원본 DOM과 mpv 협업 미러가 동일한 권위 함수만 호출한다.
+  collaboratorsIndicator?.addEventListener('mouseenter', handleCollaborationIndicatorEnter);
+  collaboratorsIndicator?.addEventListener('mouseleave', (event) => {
+    handleCollaborationIndicatorLeave(event.relatedTarget);
   });
+  elements.collabPlexusPanel?.addEventListener('mouseenter', handleCollaborationPanelEnter);
+  elements.collabPlexusPanel?.addEventListener('mouseleave', handleCollaborationPanelLeave);
 
   // ====== 협업 연결 리플 효과 (캔버스 기반 화면 왜곡) ======
   let _rippleAnimationId = null;
@@ -16271,6 +16565,7 @@ async function initApp() {
       syncStatus.classList.add('error');
       syncStatus.title = '동기화 오류';
     }
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
   }
 
   /**
@@ -16370,6 +16665,7 @@ async function initApp() {
     } else {
       clearRemoteCursors();
     }
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
   });
 
   // 로컬 커서 → Presence 전송 (videoWrapper 위에서만)
@@ -16484,13 +16780,14 @@ async function initApp() {
   });
 
   // 수동 동기화 버튼 → Liveblocks에서는 항상 실시간이므로 상태 표시만
-  syncStatus?.addEventListener('click', () => {
+  function showCollaborationSyncStatus() {
     if (!liveblocksManager.hasOtherCollaborators()) {
       showToast('다른 협업자가 없습니다', 'info');
       return;
     }
     showToast('실시간 동기화 중입니다', 'info');
-  });
+  }
+  syncStatus?.addEventListener('click', showCollaborationSyncStatus);
 
   // ====== 재생 동기화 UI 초기화 ======
   const syncPanel = document.getElementById('playbackSyncPanel');
@@ -16518,85 +16815,194 @@ async function initApp() {
     }
   }
 
+  function syncPlaybackSyncControlsFromModel() {
+    const enabled = playbackSync.syncEnabled === true;
+    const leaderMode = playbackSync.leaderMode === 'follow' ? 'follow' : 'lead';
+    if (chkPlaybackSync) chkPlaybackSync.checked = enabled;
+    if (lblPlaybackSyncStatus) {
+      lblPlaybackSyncStatus.textContent = enabled ? '동기화 켜짐' : '동기화 꺼짐';
+    }
+    syncModeRadios.forEach(radio => {
+      radio.checked = radio.value === leaderMode;
+    });
+    updateSyncPanelStatus();
+    _currentCollaborators.forEach(collaborator => {
+      collaborator.syncActive = enabled;
+    });
+    mpvCollaborationUsers.forEach(collaborator => {
+      collaborator.syncActive = enabled;
+    });
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
+  }
+
+  function setPlaybackSyncEnabled(enabled) {
+    playbackSync.setSyncEnabled(enabled === true);
+  }
+
+  function togglePlaybackSyncEnabled() {
+    setPlaybackSyncEnabled(!playbackSync.syncEnabled);
+  }
+
+  function setPlaybackSyncLeaderMode(mode) {
+    if (mode !== 'lead' && mode !== 'follow') return;
+    playbackSync.setLeaderMode(mode);
+  }
+
+  function setPlaybackSyncPanelVisible(visible) {
+    if (!syncPanel) return;
+    syncPanel.style.display = visible === false ? 'none' : '';
+    if (visible === false) resetPlaybackSyncPanelDrag();
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
+  }
+
+  function togglePlaybackSyncPanelCollapsed() {
+    syncPanel?.classList.toggle('collapsed');
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
+  }
+
   // 협업 시작 시 동기화 패널 표시
   liveblocksManager.addEventListener('collaborationStarted', () => {
-    if (syncPanel) syncPanel.style.display = '';
+    setPlaybackSyncPanelVisible(true);
   });
 
   // 동기화 토글
   chkPlaybackSync?.addEventListener('change', (e) => {
-    playbackSync.setSyncEnabled(e.target.checked);
-    lblPlaybackSyncStatus.textContent = e.target.checked ? '동기화 켜짐' : '동기화 꺼짐';
-    updateSyncPanelStatus();
-    // 플렉서스에서 동기화 상태 반영
-    _currentCollaborators.forEach(c => { c.syncActive = e.target.checked; });
+    setPlaybackSyncEnabled(e.target.checked === true);
   });
 
   // 리더 모드 변경
   syncModeRadios.forEach(radio => {
     radio.addEventListener('change', (e) => {
-      playbackSync.setLeaderMode(e.target.value);
-      updateSyncPanelStatus();
+      if (e.target.checked) setPlaybackSyncLeaderMode(e.target.value);
     });
   });
 
+  playbackSync.addEventListener('syncStateChanged', syncPlaybackSyncControlsFromModel);
+  playbackSync.addEventListener('leaderModeChanged', syncPlaybackSyncControlsFromModel);
+
   // 패널 닫기
-  btnPlaybackSyncClose?.addEventListener('click', () => {
-    if (syncPanel) syncPanel.style.display = 'none';
-  });
+  btnPlaybackSyncClose?.addEventListener('click', () => setPlaybackSyncPanelVisible(false));
 
   // 플렉서스 패널에서 동기화 패널 열기
-  document.getElementById('btnOpenSyncFromPlexus')?.addEventListener('click', () => {
-    if (syncPanel) syncPanel.style.display = '';
-  });
+  document.getElementById('btnOpenSyncFromPlexus')?.addEventListener(
+    'click',
+    () => setPlaybackSyncPanelVisible(true)
+  );
 
   // 패널 접기/펼치기
   const btnPlaybackSyncCollapse = document.getElementById('btnPlaybackSyncCollapse');
-  btnPlaybackSyncCollapse?.addEventListener('click', () => {
-    syncPanel?.classList.toggle('collapsed');
-  });
+  btnPlaybackSyncCollapse?.addEventListener('click', togglePlaybackSyncPanelCollapsed);
 
   // 패널 드래그 이동
   const playbackSyncHeader = document.getElementById('playbackSyncHeader');
-  if (playbackSyncHeader && syncPanel) {
-    let isDragging = false;
-    let dragStartX = 0;
-    let dragStartY = 0;
-    let panelStartX = 0;
-    let panelStartY = 0;
+  let playbackSyncPanelDrag = null;
 
+  function resetPlaybackSyncPanelDrag() {
+    playbackSyncPanelDrag = null;
+    syncPanel?.classList.remove('dragging');
+  }
+
+  function startPlaybackSyncPanelDrag(payload) {
+    if (!syncPanel || playbackSyncPanelDrag ||
+        !Number.isSafeInteger(payload?.pointerId) ||
+        !Number.isFinite(payload?.clientX) || !Number.isFinite(payload?.clientY)) {
+      return false;
+    }
+    const rect = syncPanel.getBoundingClientRect();
+    playbackSyncPanelDrag = {
+      pointerId: payload.pointerId,
+      startX: payload.clientX,
+      startY: payload.clientY,
+      panelStartX: rect.left,
+      panelStartY: rect.top
+    };
+    syncPanel.classList.add('dragging');
+    return true;
+  }
+
+  function movePlaybackSyncPanelDrag(payload) {
+    const drag = playbackSyncPanelDrag;
+    if (!syncPanel || !drag || payload?.pointerId !== drag.pointerId ||
+        !Number.isFinite(payload?.clientX) || !Number.isFinite(payload?.clientY)) {
+      return false;
+    }
+    const newX = drag.panelStartX + payload.clientX - drag.startX;
+    const newY = drag.panelStartY + payload.clientY - drag.startY;
+    syncPanel.style.right = 'auto';
+    syncPanel.style.bottom = 'auto';
+    syncPanel.style.left = `${Math.max(0, Math.min(newX, window.innerWidth - syncPanel.offsetWidth))}px`;
+    syncPanel.style.top = `${Math.max(0, Math.min(newY, window.innerHeight - syncPanel.offsetHeight))}px`;
+    scheduleMpvOverlayCollaborationStateSync();
+    return true;
+  }
+
+  function endPlaybackSyncPanelDrag(payload) {
+    if (!playbackSyncPanelDrag || payload?.pointerId !== playbackSyncPanelDrag.pointerId) {
+      return false;
+    }
+    movePlaybackSyncPanelDrag(payload);
+    resetPlaybackSyncPanelDrag();
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
+    return true;
+  }
+
+  function cancelPlaybackSyncPanelDrag(payload = {}) {
+    if (!playbackSyncPanelDrag ||
+        (payload.pointerId !== undefined &&
+          payload.pointerId !== playbackSyncPanelDrag.pointerId)) {
+      return false;
+    }
+    resetPlaybackSyncPanelDrag();
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
+    return true;
+  }
+
+  if (playbackSyncHeader && syncPanel) {
     playbackSyncHeader.addEventListener('mousedown', (e) => {
       // 버튼 클릭은 드래그로 처리하지 않음
       if (e.target.closest('button')) return;
-      isDragging = true;
-      dragStartX = e.clientX;
-      dragStartY = e.clientY;
-      const rect = syncPanel.getBoundingClientRect();
-      panelStartX = rect.left;
-      panelStartY = rect.top;
-      syncPanel.classList.add('dragging');
-      e.preventDefault();
+      if (startPlaybackSyncPanelDrag({
+        pointerId: 0,
+        clientX: e.clientX,
+        clientY: e.clientY
+      })) e.preventDefault();
     });
 
     document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-      const dx = e.clientX - dragStartX;
-      const dy = e.clientY - dragStartY;
-      const newX = panelStartX + dx;
-      const newY = panelStartY + dy;
-      // position을 fixed left/top으로 전환
-      syncPanel.style.right = 'auto';
-      syncPanel.style.bottom = 'auto';
-      syncPanel.style.left = `${Math.max(0, Math.min(newX, window.innerWidth - syncPanel.offsetWidth))}px`;
-      syncPanel.style.top = `${Math.max(0, Math.min(newY, window.innerHeight - syncPanel.offsetHeight))}px`;
+      movePlaybackSyncPanelDrag({ pointerId: 0, clientX: e.clientX, clientY: e.clientY });
     });
 
-    document.addEventListener('mouseup', () => {
-      if (!isDragging) return;
-      isDragging = false;
-      syncPanel.classList.remove('dragging');
+    document.addEventListener('mouseup', (e) => {
+      endPlaybackSyncPanelDrag({ pointerId: 0, clientX: e.clientX, clientY: e.clientY });
     });
   }
+
+  resetMpvOverlayCollaborationDrag = resetPlaybackSyncPanelDrag;
+  const mpvOverlayCollaborationActionRelay = createMpvOverlayCollaborationActionRelay({
+    getStatusSnapshot: () => fabricDrawingPilotStatusSnapshot,
+    getVideoWrapperRect: () => elements.videoWrapper?.getBoundingClientRect(),
+    actions: {
+      handleCollaborationIndicatorEnter,
+      handleCollaborationIndicatorLeave,
+      handleCollaborationPanelEnter,
+      handleCollaborationPanelLeave,
+      showCollaborationSyncStatus,
+      toggleRemoteCollaboratorCursors,
+      setPlaybackSyncPanelVisible,
+      togglePlaybackSyncEnabled,
+      setPlaybackSyncLeaderMode,
+      togglePlaybackSyncPanelCollapsed,
+      startPlaybackSyncPanelDrag,
+      movePlaybackSyncPanelDrag,
+      endPlaybackSyncPanelDrag,
+      cancelPlaybackSyncPanelDrag,
+      resetPlaybackSyncPanelDrag
+    }
+  });
+  window.electronAPI.onMpvOverlayCollaborationAction?.((message) => {
+    if (!mpvOverlayLifecycle.captureReadyOwner()) return;
+    mpvOverlayCollaborationActionRelay.apply(message);
+  });
 
   function canHandleRemoteContinuousSync() {
     return playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0;
@@ -16669,14 +17075,6 @@ async function initApp() {
       return;
     }
     videoPlayer.seek(time);
-  });
-
-  // 리모트에서 리더 모드 변경 수신 → UI 반영
-  playbackSync.addEventListener('leaderModeChanged', (e) => {
-    const { mode } = e.detail;
-    syncModeRadios.forEach(radio => {
-      radio.checked = radio.value === mode;
-    });
   });
 
   // ====== 파일 변경 감지 (실시간 동기화) ======

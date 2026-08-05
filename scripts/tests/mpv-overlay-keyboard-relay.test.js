@@ -17,6 +17,7 @@ function loadMainPreload() {
   const exposed = new Map();
   const listeners = new Map();
   const removed = [];
+  const invoked = [];
   const originalLoad = Module._load;
   Module._load = function loadWithElectronStub(request, parent, isMain) {
     if (request === 'electron') {
@@ -27,7 +28,10 @@ function loadMainPreload() {
           }
         },
         ipcRenderer: {
-          invoke() {},
+          invoke(channel, ...args) {
+            invoked.push([channel, ...args]);
+            return Promise.resolve({ success: true });
+          },
           send() {},
           on(channel, listener) {
             listeners.set(channel, listener);
@@ -50,7 +54,7 @@ function loadMainPreload() {
     Module._load = originalLoad;
     delete require.cache[require.resolve(preloadPath)];
   }
-  return { exposed, listeners, removed };
+  return { exposed, invoked, listeners, removed };
 }
 
 function validInput(overrides = {}) {
@@ -165,6 +169,72 @@ test('main preload exposes a narrow validated overlay pointer presence subscript
   unsubscribe();
   assert.equal(harness.listeners.has('mpv-overlay:pointer-presence'), false);
   assert.equal(harness.removed.length, 1);
+});
+
+test('main preload exposes the dedicated collaboration state invoke channel', async () => {
+  const harness = loadMainPreload();
+  const electronAPI = harness.exposed.get('electronAPI');
+  assert.equal(typeof electronAPI.mpvUpdateOverlayCollaboration, 'function');
+  const state = { revision: 4 };
+  assert.deepEqual(await electronAPI.mpvUpdateOverlayCollaboration(state), { success: true });
+  assert.deepEqual(harness.invoked, [[
+    'mpv:update-overlay-collaboration',
+    state
+  ]]);
+});
+
+test('main preload exposes only exact host-fenced collaboration action messages', () => {
+  const harness = loadMainPreload();
+  const electronAPI = harness.exposed.get('electronAPI');
+  assert.equal(typeof electronAPI.onMpvOverlayCollaborationAction, 'function');
+  const received = [];
+  const unsubscribe = electronAPI.onMpvOverlayCollaborationAction(message => {
+    received.push(message);
+  });
+  const listener = harness.listeners.get('mpv-overlay:collaboration-action');
+  assert.equal(typeof listener, 'function');
+
+  const valid = {
+    action: 'sync.drag-move',
+    payload: { pointerId: 7, clientX: -20, clientY: 500 },
+    hostGeneration: 3,
+    videoGeneration: 9,
+    inputRevision: 12,
+    activeSessionId: 'fabric-session-current',
+    sequence: 4
+  };
+  listener({}, valid);
+  const validEnd = {
+    ...valid,
+    action: 'sync.drag-end',
+    payload: { pointerId: 7, clientX: 900, clientY: -30 },
+    sequence: 5
+  };
+  listener({}, validEnd);
+  assert.deepEqual(received, [valid, validEnd]);
+  assert.notEqual(received[0], valid);
+  assert.notEqual(received[0].payload, valid.payload);
+
+  for (const malformed of [
+    null,
+    [],
+    { ...valid, injected: true },
+    { ...valid, action: 'unknown' },
+    { ...valid, payload: null },
+    { ...valid, payload: { pointerId: 7, clientX: Infinity, clientY: 80 } },
+    { ...valid, hostGeneration: -1 },
+    { ...valid, videoGeneration: 1.5 },
+    { ...valid, inputRevision: -1 },
+    { ...valid, activeSessionId: '' },
+    { ...valid, sequence: 0 },
+    Object.assign(Object.create({ inherited: true }), valid)
+  ]) {
+    listener({}, malformed);
+  }
+  assert.equal(received.length, 2);
+
+  unsubscribe();
+  assert.equal(harness.listeners.has('mpv-overlay:collaboration-action'), false);
 });
 
 test('renderer relay rebuilds a bubbling keyboard event with the exact physical code', async () => {

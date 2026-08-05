@@ -63,6 +63,7 @@ export class PlaybackSync extends EventTarget {
   }
 
   stop() {
+    const wasSyncEnabled = this._syncEnabled;
     this._lm.removeEventListener('broadcastReceived', this._onBroadcast);
     if (this._seekThrottleTimer) {
       clearTimeout(this._seekThrottleTimer);
@@ -76,6 +77,11 @@ export class PlaybackSync extends EventTarget {
     this._started = false;
     this._syncEnabled = false;
     this._isRemoteUpdate = false;
+    if (wasSyncEnabled) {
+      this.dispatchEvent(new CustomEvent('syncStateChanged', {
+        detail: { enabled: false }
+      }));
+    }
     log.info('재생 동기화 중지됨');
   }
 
