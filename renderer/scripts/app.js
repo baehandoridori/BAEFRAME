@@ -10016,6 +10016,9 @@ async function initApp() {
     }
     if (enabled && isMpvPilotPlaybackActive()) {
       videoPlayer.pause();
+      // 하이브리드 스왑·freeze 준비가 끝날 때까지 준비중 표시를 즉시 켠다
+      setDrawModeReadyState(false);
+      setDrawModePreparingState(true);
       // 작업 4: 하이브리드 우선 — HTML5 직재생 가능하면 엔진 전환, 아니면 기존 freeze 준비.
       // (c-0)의 skipReviewTransition 덕에 preparationToken이 보존되어 실패 폴백이 성립한다.
       void enterHybridReviewEngineIfPossible().then((swapped) => {
@@ -10030,6 +10033,9 @@ async function initApp() {
         } else {
           void prepareMpvDrawMode(preparationToken);
         }
+      }, () => {
+        // 스왑 자체가 예외로 실패해도 준비중 표시가 고착되지 않도록 freeze 폴백으로 잇는다
+        if (state.isDrawMode) void prepareMpvDrawMode(preparationToken);
       });
     } else {
       setDrawModePreparingState(false);

@@ -1064,7 +1064,7 @@ export function createFabricDrawingPilotController(options = {}) {
         setState('recovering');
         return true;
       }
-      if (shouldResume) {
+      if (resumeRequested) {
         return startEnable(
           persistenceVideoContext,
           () => ownsPersistenceOwner(refreshOwner)
@@ -1241,13 +1241,14 @@ export function createFabricDrawingPilotController(options = {}) {
         enableContext,
         isStillCurrent
       );
-      if (!isStillCurrent()) return false;
+      // 수화 대기 중 B 취소(disable)로 입력 revision이 넘어갔으면 재개하지 않는다
+      if (!isCurrentInputRequest(request) || !isStillCurrent()) return false;
       if (!hydrated) {
         setState('passive');
         return false;
       }
     }
-    if (shouldResume) return startEnable(enableContext, isStillCurrent);
+    if (shouldResume || resumeRequested) return startEnable(enableContext, isStillCurrent);
     if (!isStillCurrent()) return false;
     setState(settledState);
     return true;
@@ -1520,15 +1521,24 @@ export function createFabricDrawingPilotController(options = {}) {
 
   function toggle() {
     if (!shouldOwnDrawingShortcut()) return Promise.resolve(false);
-    if (persistenceSourceRefreshInProgress ||
-        persistenceQuitSuspension !== null) {
-      return Promise.resolve(false);
-    }
+    if (persistenceQuitSuspension !== null) return Promise.resolve(false);
     const context = contextSnapshot();
     if (!validPilotContext(context)) return Promise.resolve(false);
+    if (persistenceSourceRefreshInProgress) {
+      // 저장 소스 갱신 중: B를 버리지 않고 갱신 완료 후 자동 진입/취소 예약으로 처리한다
+      resumeRequested = !resumeRequested;
+      notifyStateChange();
+      return Promise.resolve(true);
+    }
     if (state === 'active' || state === 'preparing' ||
         (state === 'recovering' && resumeRequested)) {
       return disable();
+    }
+    if (state === 'recovering') {
+      // 복구가 끝나면 자동으로 드로잉 모드에 진입하도록 예약한다
+      resumeRequested = true;
+      notifyStateChange();
+      return Promise.resolve(true);
     }
     if (state !== 'passive' && state !== 'failed') return Promise.resolve(false);
     if (!hostGeneration || !videoGeneration || !videoReady) {
