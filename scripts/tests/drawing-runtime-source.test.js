@@ -355,3 +355,16 @@ test('하이라이트 undo/redo 콜백은 getter 전용 colorInfo에 대입하�
   assert.doesNotMatch(appSource, /restored\.colorInfo\s*=/);
   assert.match(appSource, /restored\.colorKey = highlight\.colorKey;/);
 });
+
+test('fabric 히스토리가 비면 전역 undo로 폴백한다', () => {
+  const controllerSource = fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-pilot-controller.js'), 'utf8'
+  );
+  assert.match(controllerSource, /onHistoryFallback\(historyAction\)/);
+  assert.match(controllerSource, /reason === 'history-empty'/);
+  const hostSource = fs.readFileSync(
+    path.join(rootDir, 'main/mpv-overlay-host.js'), 'utf8'
+  );
+  assert.match(hostSource, /reason !== 'history-empty'/);
+  assert.match(hostSource, /typeof result\?\.reason === 'string'/);
+});

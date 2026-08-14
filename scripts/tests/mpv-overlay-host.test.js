@@ -2732,6 +2732,72 @@ test('deduplicates drawing actions and allowlists lightweight host responses', a
     /fabricJSON|objects|scene\s*:|deletedIds|undoBytes|undoState|command/i);
 });
 
+test('drawing action response forwards history-empty reason', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      return { applied: false, reason: 'history-empty' };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 8,
+    sessionId: 'session-history-empty-response'
+  });
+  const result = await harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'undo',
+    actionId: 'history-empty-response-1'
+  });
+
+  assert.equal(result.reason, 'history-empty');
+  assert.equal(result.success, false);
+});
+
+test('overlay history-empty relays to renderer while applied history stays local', async () => {
+  const runHistoryShortcut = async (drawingResult, sessionId) => {
+    const harness = createDrawingHostHarness({
+      executeDrawing(script) {
+        if (!script.includes('.applyDrawingAction(')) return undefined;
+        return drawingResult;
+      }
+    });
+    await activateDrawingHost(harness, {
+      videoGeneration: 8,
+      sessionId
+    });
+    harness.events.length = 0;
+    harness.windows[0].webContents.emit('before-input-event', {
+      preventDefault() {}
+    }, {
+      type: 'keyDown',
+      key: 'z',
+      code: 'KeyZ',
+      shift: false,
+      control: true,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false
+    });
+    await waitForAsyncReposition();
+    await waitForAsyncReposition();
+    return harness.events.filter(([name, channel]) =>
+      name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input');
+  };
+
+  const fallbackSends = await runHistoryShortcut(
+    { applied: false, reason: 'history-empty' },
+    'session-history-empty-fallback'
+  );
+  assert.equal(fallbackSends.length, 1);
+  assert.equal(fallbackSends[0][2].code, 'KeyZ');
+
+  const appliedSends = await runHistoryShortcut(
+    { applied: true },
+    'session-history-applied'
+  );
+  assert.equal(appliedSends.length, 0);
+});
+
 test('allowlists undo and redo while rejecting unknown drawing actions', async () => {
   const harness = createDrawingHostHarness();
   const tokens = await activateDrawingHost(harness, {

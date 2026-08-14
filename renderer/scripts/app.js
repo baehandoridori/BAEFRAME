@@ -7119,7 +7119,19 @@ async function initApp() {
     matchesDrawingToggleShortcut: event => userSettings.matchShortcut('drawMode', event),
     matchesSelectionShortcut: event => userSettings.matchShortcut('drawingToolSelect', event),
     persistenceStore: fabricDrawingPersistenceStore,
-    onStateChange: handleFabricDrawingPilotStateChange
+    onStateChange: handleFabricDrawingPilotStateChange,
+    // fabric 히스토리가 비어 있으면 전역 undo/redo로 폴백한다
+    onHistoryFallback: (action) => {
+      if (action === 'undo') {
+        void globalUndo().then(done => {
+          if (done) showToast('실행 취소됨', 'info');
+        });
+      } else if (action === 'redo') {
+        void globalRedo().then(done => {
+          if (done) showToast('다시 실행됨', 'info');
+        });
+      }
+    }
   });
   reviewDataManager.setFabricDrawingSourceRefreshHandler(
     ({ installSource }) =>

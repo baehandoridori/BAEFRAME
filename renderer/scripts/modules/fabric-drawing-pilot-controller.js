@@ -68,6 +68,9 @@ export function createFabricDrawingPilotController(options = {}) {
   const electronAPI = options.electronAPI || {};
   const getContext = typeof options.getContext === 'function' ? options.getContext : () => ({});
   const onStateChange = typeof options.onStateChange === 'function' ? options.onStateChange : () => {};
+  const onHistoryFallback = typeof options.onHistoryFallback === 'function'
+    ? options.onHistoryFallback
+    : () => {};
   const configuredDrawingToggleMatcher =
     typeof options.matchesDrawingToggleShortcut === 'function'
       ? options.matchesDrawingToggleShortcut
@@ -514,9 +517,11 @@ export function createFabricDrawingPilotController(options = {}) {
   async function sendDrawingActionRequest(request) {
     try {
       const response = await electronAPI.mpvApplyOverlayDrawingAction(request);
-      return response?.success === true;
+      return response && typeof response === 'object'
+        ? response
+        : { success: false, applied: false };
     } catch {
-      return false;
+      return { success: false, applied: false };
     }
   }
 
@@ -524,7 +529,17 @@ export function createFabricDrawingPilotController(options = {}) {
     const request = makeDrawingActionRequest(action);
     if (!request) return Promise.resolve(false);
     const operation = drawingActionQueue.then(() => sendDrawingActionRequest(request));
-    drawingActionQueue = operation.catch(() => false);
+    drawingActionQueue = operation.then(r => r?.success === true, () => false);
+    return operation.then(r => r?.success === true);
+  }
+
+  function applyHistoryAction(action) {
+    const request = makeDrawingActionRequest(action);
+    if (!request) {
+      return Promise.resolve({ success: false, applied: false });
+    }
+    const operation = drawingActionQueue.then(() => sendDrawingActionRequest(request));
+    drawingActionQueue = operation.then(r => r?.success === true, () => false);
     return operation;
   }
 
@@ -1533,11 +1548,20 @@ export function createFabricDrawingPilotController(options = {}) {
 
     const historyAction = drawingHistoryActionFromKeyEvent(event);
     if (historyAction) {
-      if (state !== 'preparing' && state !== 'active') return false;
-      consumeKeyEvent(event);
-      if (event.repeat !== true && state === 'active') {
-        runDetached(applyDrawingAction(historyAction));
+      if (state !== 'preparing' && state !== 'active' && state !== 'recovering') {
+        return false;
       }
+      consumeKeyEvent(event);
+      if (event.repeat === true) return true;
+      if (state !== 'active') {
+        // 세션 준비·복구 중에는 fabric 히스토리를 쓸 수 없다 — 전역 undo로 폴백
+        onHistoryFallback(historyAction);
+        return true;
+      }
+      runDetached(applyHistoryAction(historyAction).then(result => {
+        if (result?.applied === true || result?.duplicate === true) return;
+        if (result?.reason === 'history-empty') onHistoryFallback(historyAction);
+      }));
       return true;
     }
     const isDrawingToggleShortcut = matchesDrawingToggleShortcut(event);

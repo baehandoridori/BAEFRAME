@@ -2736,6 +2736,7 @@ class MPVOverlayHost {
         success: result?.applied === true || result?.duplicate === true,
         applied: result?.applied === true,
         duplicate: result?.duplicate === true,
+        ...(typeof result?.reason === 'string' ? { reason: result.reason } : {}),
         deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount)))
       };
     } catch (error) {
@@ -3631,7 +3632,20 @@ class MPVOverlayHost {
         event?.preventDefault?.();
         if (input.isAutoRepeat !== true) {
           const request = this._makeOverlayHistoryActionRequest(historyAction);
-          this.applyDrawingAction(request).catch(() => {});
+          this.applyDrawingAction(request).then(result => {
+            if (result?.applied === true || result?.duplicate === true) return;
+            if (result?.reason !== 'history-empty') return;
+            // fabric 히스토리가 비어 있으면 renderer의 전역 undo가 처리하도록 릴레이한다
+            const fallbackInput = createForwardedKeyboardInput(input);
+            const mainWindow = this.getMainWindow();
+            if (!fallbackInput ||
+                !mainWindow ||
+                mainWindow.isDestroyed?.() ||
+                typeof mainWindow.webContents?.send !== 'function') {
+              return;
+            }
+            mainWindow.webContents.send(FORWARDED_KEYBOARD_CHANNEL, fallbackInput);
+          }).catch(() => {});
         }
         return;
       }
