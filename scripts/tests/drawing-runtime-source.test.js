@@ -350,3 +350,8 @@ test('피드백 35 v2: 획 선택 벡터 커밋·다중 선택·hover가 배선�
   assert.match(drawingManagerSource, /strokesInRect\(readRecords, rect\)/);
   assert.match(drawingStrokeRecordsSource, /export function strokesInRect\(strokes, rect\)/);
 });
+
+test('하이라이트 undo/redo 콜백은 getter 전용 colorInfo에 대입하지 않는다', () => {
+  assert.doesNotMatch(appSource, /restored\.colorInfo\s*=/);
+  assert.match(appSource, /restored\.colorKey = highlight\.colorKey;/);
+});

@@ -1124,6 +1124,7 @@ async function initApp() {
     } catch (err) {
       log.error('Undo 실패', err);
       undoStack.push(action); // 롤백
+      showToast('실행 취소에 실패했습니다', 'error');
       return false;
     } finally {
       _isProcessingUndo = false;
@@ -1160,6 +1161,7 @@ async function initApp() {
     } catch (err) {
       log.error('Redo 실패', err);
       redoStack.push(action); // 롤백
+      showToast('다시 실행에 실패했습니다', 'error');
       return false;
     } finally {
       _isProcessingUndo = false;
@@ -4224,12 +4226,12 @@ async function initApp() {
         reviewDataManager.save();
       },
       redo: () => {
-        // 하이라이트 복원 (같은 속성으로)
+        // 하이라이트 복원 (같은 속성으로) — colorInfo는 getter라 colorKey만 복원한다
         const restored = highlightManager.createHighlight(highlight.startTime);
         restored.id = highlight.id;
         restored.endTime = highlight.endTime;
         restored.note = highlight.note;
-        restored.colorInfo = highlight.colorInfo;
+        restored.colorKey = highlight.colorKey;
         renderHighlights();
         reviewDataManager.save();
       }
@@ -4589,13 +4591,12 @@ async function initApp() {
         type: 'highlight-delete',
         data: { highlightId: deletedId },
         undo: () => {
-          // 하이라이트 복원
+          // 하이라이트 복원 — colorInfo는 getter라 colorKey만 복원한다
           const restored = highlightManager.createHighlight(deletedHighlight.startTime);
           restored.id = deletedHighlight.id;
           restored.endTime = deletedHighlight.endTime;
           restored.note = deletedHighlight.note;
           restored.colorKey = deletedHighlight.colorKey;
-          restored.colorInfo = deletedHighlight.colorInfo;
           renderHighlights();
           reviewDataManager.save();
         },
