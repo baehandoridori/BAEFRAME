@@ -2152,22 +2152,7 @@ async function initApp() {
     // 원격 변경, Redo 복원, 가져온 피드백은 알림/Undo 스킵
     if (remote || restored || imported) return;
 
-    // Slack 알림: @멘션 대상에게 웹훅 전송 (딥링크 전에 저장하여 최신 상태 보장)
-    if (reviewDataManager.getBframePath()) {
-      const saved = await reviewDataManager.save();
-      if (!saved) {
-        log.warn('bframe 저장 실패, Slack 알림 건너뜀');
-        return;
-      }
-    }
-    slackNotifier.notifyNewComment(marker, commentManager.getAuthor(), {
-      filePath: state.currentFile,
-      bframePath: reviewDataManager.getBframePath() || '',
-      fileName: elements.fileName?.textContent || '',
-      timecode: marker.startTimecode || ''
-    });
-
-    // Undo 스택에 추가
+    // Undo 스택에 추가 — 저장·알림보다 먼저 동기 등록해 생성 직후 Ctrl+Z를 보장한다
     const markerData = marker.toJSON();
     pushUndo({
       type: 'ADD_COMMENT',
@@ -2186,6 +2171,21 @@ async function initApp() {
         updateVideoMarkers();
         await reviewDataManager.save();
       }
+    });
+
+    // Slack 알림: @멘션 대상에게 웹훅 전송 (딥링크 전에 저장하여 최신 상태 보장)
+    if (reviewDataManager.getBframePath()) {
+      const saved = await reviewDataManager.save();
+      if (!saved) {
+        log.warn('bframe 저장 실패, Slack 알림 건너뜀');
+        return;
+      }
+    }
+    slackNotifier.notifyNewComment(marker, commentManager.getAuthor(), {
+      filePath: state.currentFile,
+      bframePath: reviewDataManager.getBframePath() || '',
+      fileName: elements.fileName?.textContent || '',
+      timecode: marker.startTimecode || ''
     });
   });
 
