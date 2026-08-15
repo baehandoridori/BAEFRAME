@@ -854,6 +854,7 @@ export class ReviewDataManager extends EventTarget {
     this._fabricDrawingCollectedRevision = null;
     this._fabricDrawingProviderUnsubscribe = null;
     this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+    this._drawingsV3ExternalStaleFingerprints = new Set();
     this._reviewMergeBase = createEmptyReviewMergeBase();
     this._hasCompletedReviewLoad = false;
     this._isConnected = false;
@@ -1105,6 +1106,7 @@ export class ReviewDataManager extends EventTarget {
     this._reviewFileVersionToken = null;
     this._invalidateFabricDrawingPersistenceProvider('video-load-started');
     this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+    this._drawingsV3ExternalStaleFingerprints.clear();
     this._reviewMergeBase = createEmptyReviewMergeBase();
     this._hasCompletedReviewLoad = false;
     this.currentVideoPath = videoPath;
@@ -1552,6 +1554,7 @@ export class ReviewDataManager extends EventTarget {
       log.error('.bframe 로드 실패', error);
       this._hasCompletedReviewLoad = false;
       this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
+      this._drawingsV3ExternalStaleFingerprints.clear();
       this._reviewMergeBase = createEmptyReviewMergeBase();
       this._invalidateFabricDrawingPersistenceProvider('review-load-failed');
       this.isLoading = false;
@@ -1883,8 +1886,25 @@ export class ReviewDataManager extends EventTarget {
     }
   }
 
+  _markReplacedDrawingsV3Stale(nextFingerprint) {
+    const previous = this._drawingsV3DiskState;
+    if (!previous?.known ||
+        typeof previous.fingerprint !== 'string' ||
+        previous.fingerprint === nextFingerprint) {
+      return;
+    }
+    this._drawingsV3ExternalStaleFingerprints.add(previous.fingerprint);
+    while (this._drawingsV3ExternalStaleFingerprints.size > 8) {
+      const oldest =
+        this._drawingsV3ExternalStaleFingerprints.values().next().value;
+      this._drawingsV3ExternalStaleFingerprints.delete(oldest);
+    }
+  }
+
   _recordDrawingsV3DiskState(data) {
-    this._drawingsV3DiskState = captureDrawingsV3DiskState(data);
+    const nextState = captureDrawingsV3DiskState(data);
+    this._markReplacedDrawingsV3Stale(nextState.fingerprint);
+    this._drawingsV3DiskState = nextState;
     this._hasCompletedReviewLoad = true;
   }
 
@@ -1957,6 +1977,11 @@ export class ReviewDataManager extends EventTarget {
         latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
       return true;
     }
+    // Broadcast로 이미 더 새로운 drawingsV3를 적용했고 디스크(Drive 복제 지연)가
+    // 아직 따라오지 못한 상태면, 구버전 디스크 상태를 재설치하지 않는다
+    if (this._drawingsV3ExternalStaleFingerprints.has(latestState.fingerprint)) {
+      return true;
+    }
 
     return this._runFabricDrawingSourceRefresh(async () => {
       if (!ownsOwner(owner)) {
@@ -1971,6 +1996,7 @@ export class ReviewDataManager extends EventTarget {
         return false;
       }
 
+      this._markReplacedDrawingsV3Stale(latestState.fingerprint);
       this._drawingsV3DiskState = latestState;
       this._hasCompletedReviewLoad = true;
       const installed = this._installRecordedDiskStateInProvider({
@@ -1989,6 +2015,63 @@ export class ReviewDataManager extends EventTarget {
       reason: 'external-drawings-v3-changed',
       fingerprint: latestState.fingerprint
     }, () => ownsOwner(owner));
+  }
+
+  /**
+   * 현재 메모리의 drawingsV3 루트 스냅샷(지문 포함)을 반환한다.
+   * FabricDrawingSync가 저장 완료 시점의 브로드캐스트 payload로 사용한다.
+   * stale=true면 이 루트는 Broadcast 적용 이전의 구버전 디스크 상태이므로
+   * 브로드캐스트하면 안 된다.
+   */
+  getDrawingsV3RootSnapshot() {
+    const state = captureDrawingsV3DiskState(this._opaqueRootFields || {});
+    return {
+      present: state.present,
+      value: state.value,
+      fingerprint: state.fingerprint,
+      stale: this._drawingsV3ExternalStaleFingerprints.has(state.fingerprint)
+    };
+  }
+
+  /**
+   * 원격(Broadcast)에서 받은 drawingsV3 루트를 디스크 반영 파이프라인으로 적용한다.
+   * 로컬 미저장 fabric 변경이 있으면 기존 fail-closed 가드가 적용을 거른다.
+   * 교체되는 직전 지문의 스테일 기록은 (a-0-2)의 설치 지점 마킹이 담당하므로
+   * 여기서는 반영만 위임한다.
+   */
+  async applyExternalDrawingsV3(rootValue) {
+    if (rootValue === undefined) return false;
+    try {
+      return (await this._reconcileDrawingsV3DiskState({ drawingsV3: rootValue })) === true;
+    } catch (error) {
+      log.warn('원격 drawingsV3 반영 실패', { error: error.message });
+      return false;
+    }
+  }
+
+  /**
+   * .bframe 파일에서 drawingsV3만 다시 읽어 반영한다.
+   * Liveblocks 연결 중에도 파일 채널로 드로잉을 동기화하기 위한 선별 경로다.
+   * 읽기 await 중 영상이 전환될 수 있으므로 owner를 먼저 캡처해 await 후
+   * 재검증하고, reconcile에도 같은 owner를 명시 전달한다 — 그러지 않으면
+   * reconcile이 전환된 새 컨텍스트를 기본 캡처해 이전 파일의 drawingsV3가
+   * 새 리뷰에 설치된다 (load()의 캡처→재검증 관용구(1135-1139)와 동일 패턴).
+   */
+  async reloadDrawingsV3FromDisk() {
+    const owner = this._captureReviewContextOwner();
+    if (!owner.bframePath) return false;
+    try {
+      const snapshot = await this._readReviewSnapshot(owner.bframePath);
+      if (!this._ownsReviewContext(owner)) return false;
+      const remoteData = snapshot?.data;
+      if (!remoteData || typeof remoteData !== 'object' || Array.isArray(remoteData)) {
+        return false;
+      }
+      return (await this._reconcileDrawingsV3DiskState(remoteData, owner)) === true;
+    } catch (error) {
+      log.warn('drawingsV3 파일 동기화 실패', { error: error.message });
+      return false;
+    }
   }
 
   _captureRootEnvelope(data, options = {}) {

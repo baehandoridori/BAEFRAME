@@ -176,3 +176,16 @@ test('playlist aggregate direct save protects identity and uses a version token 
     'review identity must be prepared before direct save'
   );
 });
+
+test('Fabric 드로잉(drawingsV3) 동기화가 배선되어 있다', () => {
+  assert.match(appSource, /new FabricDrawingSync\(\{/);
+  assert.match(appSource, /fabricDrawingSync\.broadcastCurrentState\?\.\(\);/);
+  assert.match(appSource, /reloadDrawingsV3FromDisk/);
+  assert.match(appSource, /_previousOthersCount = 0;\s*\n\s*_collaborationSessionStartedAt = Date\.now\(\);/);
+  assert.match(appSource, /currentOthersCount > _previousOthersCount &&\s*\n\s*Date\.now\(\) - _collaborationSessionStartedAt > 10000/);
+  const syncSource = fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-sync.js'), 'utf8'
+  );
+  assert.match(syncSource, /FABRIC_DRAWING_ROOT_CHUNK/);
+  assert.match(syncSource, /applyExternalDrawingsV3/);
+});

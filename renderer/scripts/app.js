@@ -19,6 +19,7 @@ import { ReviewDataManager, getBframePath } from './modules/review-data-manager.
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
 import { DrawingSync } from './modules/drawing-sync.js';
+import { FabricDrawingSync } from './modules/fabric-drawing-sync.js';
 import { createFabricDrawingPilotController } from './modules/fabric-drawing-pilot-controller.js';
 import { createFabricDrawingPersistenceStore } from './modules/fabric-drawing-persistence-store.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
@@ -1278,6 +1279,11 @@ async function initApp() {
       remoteStrokeOverlayForMpv = overlay || null;
       scheduleMpvOverlayStateSync({ liveDrawing: true });
     }
+  });
+  // Fabric 드로잉(drawingsV3) 동기화 — 저장 스냅샷을 Broadcast로 전파
+  const fabricDrawingSync = new FabricDrawingSync({
+    liveblocksManager,
+    reviewDataManager
   });
   const playbackSync = getPlaybackSync(liveblocksManager);
 
@@ -6626,6 +6632,7 @@ async function initApp() {
     try {
       playbackSync.stop();
       drawingSync.stop();
+      fabricDrawingSync.stop();
       commentSync.stop();
       await liveblocksManager.stop();
     } catch (error) {
@@ -6678,10 +6685,16 @@ async function initApp() {
         return false;
       }
       drawingSync.start();
+      fabricDrawingSync.start();
       playbackSync.start();
+      // 새 협업 세션 기준값 초기화 — LiveblocksManager.stop()은 collaboratorsChanged([])를
+      // 발생시키지 않아 이전 방의 참여자 수가 남으면 새 방의 late seed 조건을 놓친다
+      _previousOthersCount = 0;
+      _collaborationSessionStartedAt = Date.now();
       if (seedCurrentState) {
         commentSync.broadcastCurrentState?.();
         drawingSync.broadcastCurrentState?.();
+        fabricDrawingSync.broadcastCurrentState?.();
       }
       log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
     } catch (error) {
@@ -9109,6 +9122,7 @@ async function initApp() {
           } finally {
             commentSync.stop();
             drawingSync.stop();
+            fabricDrawingSync.stop();
           }
           // 협업 UI 초기화 (이전 세션의 아바타/인원 표시 제거)
           updateCollaboratorsUI([]);
@@ -13765,6 +13779,7 @@ async function initApp() {
     // 협업 세션 종료 (presence 제거)
     commentSync.stop();
     drawingSync.stop();
+    fabricDrawingSync.stop();
     try {
       await liveblocksManager.stop();
     } catch (error) {
@@ -16742,6 +16757,7 @@ async function initApp() {
 
   // Liveblocks 협업 이벤트 리스너
   let _previousOthersCount = 0;
+  let _collaborationSessionStartedAt = 0;
   liveblocksManager.addEventListener('collaboratorsChanged', (e) => {
     // 자기 자신 + 다른 사용자 모두 표시
     const isSyncing = playbackSync.syncEnabled;
@@ -16764,6 +16780,15 @@ async function initApp() {
     if (currentOthersCount > 0 && _previousOthersCount === 0) {
       showToast('실시간 협업 세션에 참여했습니다', 'info');
       _triggerCollabRipple();
+    }
+    // 참여자가 늘어나면 현재 드로잉·댓글 상태를 재전송해 늦은 참여자를 seed한다.
+    // 단 자신이 방금 합류한 쪽이면(연결 10초 이내) 구버전 로컬 상태를 방에
+    // 뿌리지 않도록 억제한다 — 기존 멤버 측 재전송만으로 seed가 완성된다.
+    if (currentOthersCount > _previousOthersCount &&
+        Date.now() - _collaborationSessionStartedAt > 10000) {
+      commentSync.broadcastCurrentState?.();
+      drawingSync.broadcastCurrentState?.();
+      fabricDrawingSync.broadcastCurrentState?.();
     }
     _previousOthersCount = currentOthersCount;
 
@@ -17099,6 +17124,7 @@ async function initApp() {
   // ====== 파일 변경 감지 (실시간 동기화) ======
   // 다른 사용자가 저장하면 즉시 동기화
   let lastSyncTime = 0;
+  let lastDrawingsV3SyncTime = 0;
   const MIN_SYNC_INTERVAL = 500; // 최소 500ms 간격
 
   async function syncReviewFileFromDisk(filePath, options = {}) {
@@ -17112,9 +17138,16 @@ async function initApp() {
     // 현재 열린 파일이 아니면 무시
     if (!isSameFilePath(filePath, reviewDataManager.currentBframePath)) return false;
 
-    // Liveblocks 연결 중이면 Broadcast가 실시간 동기화를 담당하므로
-    // 파일 기반 동기화 건너뛰기 (구버전 파일로 덮어쓰는 것 방지)
+    // Liveblocks 연결 중이면 댓글·레거시 드로잉은 Broadcast가 담당하므로
+    // 파일 기반 동기화를 건너뛴다 (구버전 파일로 덮어쓰는 것 방지).
+    // 단 Fabric 드로잉(drawingsV3)은 Broadcast가 없던 시절 저장분·오프라인 저장분이
+    // 파일로만 도착할 수 있어, 드로잉만 선별 반영한다 (지문 비교로 no-op 보장).
     if (liveblocksManager.isConnected) {
+      const now = Date.now();
+      if (now - lastDrawingsV3SyncTime >= MIN_SYNC_INTERVAL) {
+        lastDrawingsV3SyncTime = now;
+        void reviewDataManager.reloadDrawingsV3FromDisk?.();
+      }
       return false;
     }
 

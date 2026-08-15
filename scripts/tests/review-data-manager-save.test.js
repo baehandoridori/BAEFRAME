@@ -3711,3 +3711,189 @@ test('scalar metadata uses three-way merge and keeps remote on concurrent confli
     );
   }
 });
+
+test('drawingsV3 disk reload cannot install video A after switching to video B', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const originalImportRootValue = fabricStore.importRootValue;
+  let importRootValueCalls = 0;
+  const fabricStoreSpy = {
+    ...fabricStore,
+    importRootValue(...args) {
+      importRootValueCalls += 1;
+      return originalImportRootValue(...args);
+    }
+  };
+  const videoA = 'C:/reviews/drawings-v3-disk-owner-a.mp4';
+  const videoB = 'C:/reviews/drawings-v3-disk-owner-b.mp4';
+  const pathA = 'C:/reviews/drawings-v3-disk-owner-a.bframe';
+  const pathB = 'C:/reviews/drawings-v3-disk-owner-b.bframe';
+  const initialFabricA = createFabricRoot({
+    documentId: 'fabric-document-disk-owner-a'
+  });
+  const externalFabricA = createFabricRoot({
+    documentId: 'fabric-document-disk-owner-a-external',
+    revision: 8,
+    keyframes: [{
+      id: 'drawings-v3-disk-owner-a-external-frame',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [createFabricRecord('drawings-v3-disk-owner-a-external-stroke')]
+    }]
+  });
+  const fabricB = createFabricRoot({
+    documentId: 'fabric-document-disk-owner-b',
+    revision: 3,
+    keyframes: [{
+      id: 'drawings-v3-disk-owner-b-frame',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [createFabricRecord('drawings-v3-disk-owner-b-stroke')]
+    }]
+  });
+  const roots = new Map([
+    [pathA, createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      videoFile: 'drawings-v3-disk-owner-a.mp4',
+      videoPath: videoA,
+      drawingsV3: initialFabricA
+    })],
+    [pathB, createReviewRoot({
+      reviewDocumentId: REVIEW_ID_REMOTE,
+      videoFile: 'drawings-v3-disk-owner-b.mp4',
+      videoPath: videoB,
+      drawingsV3: fabricB
+    })]
+  ]);
+  const reloadReadStarted = createDeferred();
+  const reloadReadA = createDeferred();
+  window.electronAPI = {
+    loadReview: async path => structuredClone(roots.get(path) || null),
+    loadReviewSnapshot: async path => {
+      assert.equal(path, pathA);
+      reloadReadStarted.resolve();
+      return reloadReadA.promise;
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    fabricDrawingPersistenceProvider: fabricStoreSpy
+  });
+  manager.connect();
+  assert.equal(await manager.setVideoFile(videoA, {
+    fabricDrawingPersistenceContext: {
+      ...FABRIC_CONTEXT,
+      stableVideoIdentity: videoA
+    }
+  }), true);
+
+  const reloadingA = manager.reloadDrawingsV3FromDisk();
+  await reloadReadStarted.promise;
+  assert.equal(await manager.setVideoFile(videoB, {
+    skipSave: true,
+    fabricDrawingPersistenceContext: {
+      ...FABRIC_CONTEXT,
+      stableVideoIdentity: videoB
+    }
+  }), true);
+  assert.deepEqual(fabricStore.exportRootValue(), fabricB);
+  importRootValueCalls = 0;
+
+  reloadReadA.resolve({
+    data: createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      videoFile: 'drawings-v3-disk-owner-a.mp4',
+      videoPath: videoA,
+      drawingsV3: externalFabricA
+    }),
+    versionToken: 'drawings-v3-disk-owner-a-late'
+  });
+
+  assert.equal(await reloadingA, false);
+  assert.equal(importRootValueCalls, 0);
+  assert.deepEqual(fabricStore.exportRootValue(), fabricB);
+  manager.disconnect();
+});
+
+test('Fabric drawing sync drops queued roots from a stopped session after restart', async () => {
+  const { FabricDrawingSync } = await import(
+    '../../renderer/scripts/modules/fabric-drawing-sync.js'
+  );
+  const firstApply = createDeferred();
+
+  class StubLiveblocksManager extends EventTarget {
+    hasOtherCollaborators() {
+      return false;
+    }
+
+    broadcastEvent() {}
+
+    receive(event) {
+      this.dispatchEvent(new CustomEvent('broadcastReceived', {
+        detail: { event }
+      }));
+    }
+  }
+
+  class StubReviewDataManager extends EventTarget {
+    constructor() {
+      super();
+      this.currentBframePath = 'C:/reviews/session-generation-a.bframe';
+      this.appliedRoots = [];
+    }
+
+    async applyExternalDrawingsV3(rootValue) {
+      this.appliedRoots.push(structuredClone(rootValue));
+      if (this.appliedRoots.length === 1) {
+        return firstApply.promise;
+      }
+      return true;
+    }
+  }
+
+  const liveblocksManager = new StubLiveblocksManager();
+  const reviewDataManager = new StubReviewDataManager();
+  const sync = new FabricDrawingSync({
+    liveblocksManager,
+    reviewDataManager
+  });
+  const receiveRoot = id => {
+    liveblocksManager.receive({
+      type: 'FABRIC_DRAWING_ROOT',
+      root: { id },
+      fingerprint: `fingerprint-${id}`
+    });
+  };
+
+  sync.start();
+  receiveRoot('A1');
+  await Promise.resolve();
+  assert.deepEqual(reviewDataManager.appliedRoots.map(root => root.id), ['A1']);
+
+  receiveRoot('A2');
+  sync.stop();
+  reviewDataManager.currentBframePath = 'C:/reviews/session-generation-b.bframe';
+  reviewDataManager.currentBframePath = 'C:/reviews/session-generation-a.bframe';
+  sync.start();
+
+  firstApply.resolve(true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(
+    reviewDataManager.appliedRoots.map(root => root.id),
+    ['A1'],
+    'A2 queued by the stopped session must be discarded after restart'
+  );
+
+  receiveRoot('A3');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(
+    reviewDataManager.appliedRoots.map(root => root.id),
+    ['A1', 'A3'],
+    'the restarted session must still apply new roots'
+  );
+  sync.stop();
+});
