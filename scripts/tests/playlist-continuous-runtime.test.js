@@ -701,7 +701,7 @@ test('manual video loads cancel active continuous playback and stale loads', () 
 test('rapid playlist item selections cannot let older pre-load checks win', () => {
   assert.match(appSource, /let playlistSelectionLoadToken = 0;/);
 
-  const selectedMatch = appSource.match(/playlistManager\.onItemSelected = async \(item, index\) => \{([\s\S]*?)\n    \};/);
+  const selectedMatch = appSource.match(/playlistManager\.onItemSelected = async \(item, index, previousIndex\) => \{([\s\S]*?)\n    \};/);
   assert.ok(selectedMatch, 'playlist item selected callback should exist');
   const selectedSource = selectedMatch[1];
   assert.match(selectedSource, /const selectionLoadToken = \+\+playlistSelectionLoadToken;/);
@@ -1350,4 +1350,28 @@ test('continuous playback stops with one toast when a global drawing gate cancel
     continuousLoadMatch[1],
     /lastVideoLoadFabricCancelReason = null;[\s\S]+loadVideoFromPlaylist\(item, \{[\s\S]+if \(lastVideoLoadFabricCancelReason !== null\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+showToast\('드로잉 저장 문제로 이어붙이기 재생을 중단했습니다\.', 'error'\);[\s\S]+return false;[\s\S]+\}[\s\S]+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.ERROR, '건너뜀'\);/
   );
+});
+
+test('playlist clicks highlight immediately, roll back on failure, and retry skipped items', () => {
+  const selectedMatch = appSource.match(/playlistManager\.onItemSelected = async \(item, index, previousIndex\) => \{([\s\S]*?)\n    \};/);
+  assert.ok(selectedMatch, 'playlist item selected callback should exist');
+  const selectedSource = selectedMatch[1];
+
+  const suppressReturnIndex = selectedSource.indexOf('return;');
+  const optimisticIndex = selectedSource.indexOf('updatePlaylistCurrentItem();', suppressReturnIndex);
+  const loadIndex = selectedSource.indexOf('loadVideoFromPlaylist(item, {');
+  assert.ok(
+    optimisticIndex !== -1 && optimisticIndex < loadIndex,
+    'selection highlight must render before the video load starts'
+  );
+
+  assert.match(
+    selectedSource,
+    /if \(loaded === false\) \{\s+playlistManager\.currentIndex = Number\.isInteger\(previousIndex\) \? previousIndex : -1;\s+\}/
+  );
+  assert.match(
+    selectedSource,
+    /if \(item\.continuousStatus === CONTINUOUS_STATUS\.SKIPPED \|\|\s+item\.continuousStatus === CONTINUOUS_STATUS\.ERROR\) \{\s+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.IDLE, ''\);\s+\}/
+  );
+  assert.match(selectedSource, /holdPreviousFrameUntilReady: true,/);
 });

@@ -549,12 +549,13 @@ export class PlaylistManager {
       return null;
     }
 
+    const previousIndex = this.currentIndex;
     this.currentIndex = index;
     const item = this.currentPlaylist.items[index];
 
     log.info('아이템 선택', { index, fileName: item.fileName });
 
-    this.onItemSelected?.(item, index);
+    this.onItemSelected?.(item, index, previousIndex);
     return item;
   }
 

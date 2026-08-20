@@ -19457,7 +19457,7 @@ async function initApp() {
       }, 2000);
     };
 
-    playlistManager.onItemSelected = async (item, index) => {
+    playlistManager.onItemSelected = async (item, index, previousIndex) => {
       log.info('재생목록 아이템 선택', { index, fileName: item.fileName });
       const selectionLoadToken = ++playlistSelectionLoadToken;
       const shouldContinuePlaylistSelectionLoad = () => (
@@ -19472,11 +19472,30 @@ async function initApp() {
         return;
       }
 
-      const loaded = await loadVideoFromPlaylist(item, {
-        playWhenMediaReady: shouldAutoPlaySelectedItem,
-        shouldContinue: shouldContinuePlaylistSelectionLoad
-      });
+      // 클릭 즉시 선택 표시를 반영한다. 로드 실패 시 아래에서 이전 선택으로 복원한다.
+      updatePlaylistCurrentItem();
+      updatePlaylistPosition();
+      // 이전 세션에서 '건너뜀' 처리된 항목도 직접 클릭하면 다시 시도할 수 있게 마크를 리셋한다.
+      if (item.continuousStatus === CONTINUOUS_STATUS.SKIPPED ||
+          item.continuousStatus === CONTINUOUS_STATUS.ERROR) {
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.IDLE, '');
+      }
+
+      let loaded = false;
+      try {
+        loaded = await loadVideoFromPlaylist(item, {
+          playWhenMediaReady: shouldAutoPlaySelectedItem,
+          holdPreviousFrameUntilReady: true,
+          shouldContinue: shouldContinuePlaylistSelectionLoad
+        });
+      } catch (error) {
+        log.error('재생목록 선택 영상 로드 실패', { fileName: item.fileName, error: error?.message });
+        loaded = false;
+      }
       if (!shouldContinuePlaylistSelectionLoad()) return;
+      if (loaded === false) {
+        playlistManager.currentIndex = Number.isInteger(previousIndex) ? previousIndex : -1;
+      }
       updatePlaylistCurrentItem();
       updatePlaylistPosition();
       updatePlaylistContinuousTimeline();
