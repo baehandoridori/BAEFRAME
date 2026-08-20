@@ -855,6 +855,7 @@ export class ReviewDataManager extends EventTarget {
     this._fabricDrawingProviderUnsubscribe = null;
     this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
     this._drawingsV3ExternalStaleFingerprints = new Set();
+    this._drawingsV3LastObservedDiskFingerprint = null;
     this._drawingsV3DiskReloadRequestEpoch = 0;
     this._reviewMergeBase = createEmptyReviewMergeBase();
     this._hasCompletedReviewLoad = false;
@@ -1108,6 +1109,7 @@ export class ReviewDataManager extends EventTarget {
     this._invalidateFabricDrawingPersistenceProvider('video-load-started');
     this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
     this._drawingsV3ExternalStaleFingerprints.clear();
+    this._drawingsV3LastObservedDiskFingerprint = null;
     this._reviewMergeBase = createEmptyReviewMergeBase();
     this._hasCompletedReviewLoad = false;
     this.currentVideoPath = videoPath;
@@ -1556,6 +1558,7 @@ export class ReviewDataManager extends EventTarget {
       this._hasCompletedReviewLoad = false;
       this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
       this._drawingsV3ExternalStaleFingerprints.clear();
+      this._drawingsV3LastObservedDiskFingerprint = null;
       this._reviewMergeBase = createEmptyReviewMergeBase();
       this._invalidateFabricDrawingPersistenceProvider('review-load-failed');
       this.isLoading = false;
@@ -1907,8 +1910,16 @@ export class ReviewDataManager extends EventTarget {
     }
   }
 
+  _recordDrawingsV3DiskObservation(fingerprint) {
+    if (typeof fingerprint !== 'string') return;
+    this._drawingsV3LastObservedDiskFingerprint = fingerprint;
+    // 현재 실제 파일 지문은 cap 밖의 scalar가 보호하므로 중복 슬롯을 비운다.
+    this._drawingsV3ExternalStaleFingerprints.delete(fingerprint);
+  }
+
   _recordDrawingsV3DiskState(data) {
     const nextState = captureDrawingsV3DiskState(data);
+    this._recordDrawingsV3DiskObservation(nextState.fingerprint);
     this._markReplacedDrawingsV3Stale(nextState.fingerprint);
     this._drawingsV3DiskState = nextState;
     this._hasCompletedReviewLoad = true;
@@ -1993,9 +2004,13 @@ export class ReviewDataManager extends EventTarget {
       typeof options.allowSupersededFingerprint === 'string'
         ? options.allowSupersededFingerprint
         : null;
+    const confirmDiskObservation = options.confirmDiskObservation !== false;
     const latestState = captureDrawingsV3DiskState(data);
     if (this._drawingsV3DiskState.known &&
         latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
+      if (confirmDiskObservation) {
+        this._recordDrawingsV3DiskObservation(latestState.fingerprint);
+      }
       if (latestState.fingerprint === allowSupersededFingerprint) {
         this._drawingsV3ExternalStaleFingerprints.delete(latestState.fingerprint);
       }
@@ -2003,8 +2018,14 @@ export class ReviewDataManager extends EventTarget {
     }
     // Broadcast로 이미 더 새로운 drawingsV3를 적용했고 디스크(Drive 복제 지연)가
     // 아직 따라오지 못한 상태면, 구버전 디스크 상태를 재설치하지 않는다
-    if (this._drawingsV3ExternalStaleFingerprints.has(latestState.fingerprint) &&
+    const matchesObservedDisk = confirmDiskObservation &&
+      latestState.fingerprint === this._drawingsV3LastObservedDiskFingerprint;
+    if ((matchesObservedDisk ||
+         this._drawingsV3ExternalStaleFingerprints.has(latestState.fingerprint)) &&
         latestState.fingerprint !== allowSupersededFingerprint) {
+      if (confirmDiskObservation) {
+        this._recordDrawingsV3DiskObservation(latestState.fingerprint);
+      }
       this._adoptDrawingsV3OpaqueRootState(this._drawingsV3DiskState);
       return true;
     }
@@ -2015,6 +2036,9 @@ export class ReviewDataManager extends EventTarget {
       }
       if (this._drawingsV3DiskState.known &&
           latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
+        if (confirmDiskObservation) {
+          this._recordDrawingsV3DiskObservation(latestState.fingerprint);
+        }
         if (latestState.fingerprint === allowSupersededFingerprint) {
           this._drawingsV3ExternalStaleFingerprints.delete(latestState.fingerprint);
         }
@@ -2035,6 +2059,9 @@ export class ReviewDataManager extends EventTarget {
       if (!accepted) {
         this._writeBlockedReason = 'fabric-drawing-source-refresh-failed';
         return false;
+      }
+      if (confirmDiskObservation) {
+        this._recordDrawingsV3DiskObservation(latestState.fingerprint);
       }
       this._markReplacedDrawingsV3Stale(latestState.fingerprint);
       this._drawingsV3DiskState = latestState;
@@ -2091,7 +2118,10 @@ export class ReviewDataManager extends EventTarget {
         { drawingsV3: rootValue },
         undefined,
         undefined,
-        { allowSupersededFingerprint: externalState.fingerprint }
+        {
+          allowSupersededFingerprint: externalState.fingerprint,
+          confirmDiskObservation: false
+        }
       )) === true;
     } catch (error) {
       log.warn('원격 drawingsV3 반영 실패', { error: error.message });

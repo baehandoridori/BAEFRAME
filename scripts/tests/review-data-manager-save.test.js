@@ -4619,3 +4619,96 @@ test('a causally superseded Fabric root cannot return through disk reload', asyn
   );
   manager.disconnect();
 });
+
+test('the currently observed disk root stays protected beyond the stale history cap', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  let diskRoot = createFabricRoot({
+    documentId: 'fabric-observed-disk-d0',
+    revision: 0
+  });
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: diskRoot
+    })
+  };
+  const originalImportRootValue = fabricStore.importRootValue;
+  let reloadImportCount = 0;
+  const spyingFabricStore = {
+    ...fabricStore,
+    importRootValue(rootValue, context) {
+      reloadImportCount += 1;
+      return originalImportRootValue(rootValue, context);
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    fabricDrawingPersistenceProvider: spyingFabricStore
+  });
+  manager.connect();
+  assert.equal(await manager.setVideoFile('C:/reviews/observed-disk-cap.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  }), true);
+
+  const broadcastRoots = Array.from({ length: 9 }, (_unused, index) =>
+    createFabricRoot({
+      documentId: `fabric-observed-disk-d${index + 1}`,
+      revision: index + 1
+    }));
+  for (const broadcastRoot of broadcastRoots) {
+    assert.equal(await manager.applyExternalDrawingsV3(broadcastRoot), true);
+  }
+  const latestBroadcastRoot = broadcastRoots.at(-1);
+  assert.deepEqual(fabricStore.exportRootValue(), latestBroadcastRoot);
+
+  reloadImportCount = 0;
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.equal(reloadImportCount, 0);
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    latestBroadcastRoot,
+    'the still-observed D0 disk root must not be evicted by D1-D9 history'
+  );
+  const finalSnapshot = manager.getDrawingsV3RootSnapshot();
+  assert.equal(finalSnapshot.stale, false);
+  assert.deepEqual(finalSnapshot.value, latestBroadcastRoot);
+
+  diskRoot = broadcastRoots[0];
+  reloadImportCount = 0;
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.equal(reloadImportCount, 0);
+  assert.deepEqual(fabricStore.exportRootValue(), latestBroadcastRoot);
+
+  const laterBroadcastRoots = Array.from({ length: 9 }, (_unused, index) =>
+    createFabricRoot({
+      documentId: `fabric-observed-disk-d${index + 10}`,
+      revision: index + 10
+    }));
+  for (const broadcastRoot of laterBroadcastRoots) {
+    assert.equal(await manager.applyExternalDrawingsV3(broadcastRoot), true);
+  }
+  const finalBroadcastRoot = laterBroadcastRoots.at(-1);
+  reloadImportCount = 0;
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.equal(reloadImportCount, 0);
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    finalBroadcastRoot,
+    'a confirmed D0-to-D1 disk advance must move the protected fingerprint to D1'
+  );
+
+  diskRoot = createFabricRoot({
+    documentId: 'fabric-observed-disk-new-d19',
+    revision: 19
+  });
+  reloadImportCount = 0;
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.equal(reloadImportCount, 1);
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    diskRoot,
+    'a genuinely new disk root outside the observed/stale history must still install'
+  );
+  manager.disconnect();
+});
