@@ -6616,6 +6616,9 @@ async function initApp() {
   let latestVideoLoadToken = 0;
   let activeVideoLoadToken = null;
   let activeVideoLoadPath = null;
+  // 직전 loadVideo가 fabric persistence 게이트에서 취소됐는지를 연속 재생 루프에 알린다.
+  // 전역 원인 실패를 항목별 '건너뜀'으로 오기록해 연쇄 스킵되는 것을 막기 위한 채널.
+  let lastVideoLoadFabricCancelReason = null;
   let activeMpvPilotLoadToken = null;
   let deferredReviewFileDiscovery = null;
   const DEFERRED_REVIEW_FILE_POLL_INTERVAL_MS = 3000;
@@ -9053,13 +9056,26 @@ async function initApp() {
       (!allowNavigationGuardAbort || shouldContinueVideoLoad())
     );
     if (!canContinueVideoLoad()) return false;
+    lastVideoLoadFabricCancelReason = null;
     if (!engineSwap) {
       await fabricDrawingPilotInitialization;
       if (!canContinueVideoLoad()) return false;
-      const fabricPersistenceReadyToLeave =
+      let fabricPersistenceReadyToLeave =
         await fabricDrawingPilotController.flushPersistenceBeforeLeave();
       if (!canContinueVideoLoad()) return false;
+      if (!fabricPersistenceReadyToLeave && !preserveContinuousSession) {
+        // 드로잉 저장 실패가 영상 전환을 영구히 막지 않도록 사용자에게 탈출구를 준다.
+        // 이어붙이기 자동 전환(preserveContinuousSession)에서는 모달을 띄우지 않는다.
+        const abandonDrawing = confirm('드로잉을 저장하지 못했습니다. 드로잉 저장을 포기하고 영상을 전환할까요?');
+        if (abandonDrawing && canContinueVideoLoad()) {
+          fabricDrawingPilotController.abandonPersistenceForVideoChange();
+          fabricPersistenceReadyToLeave = true;
+        }
+      }
       if (!fabricPersistenceReadyToLeave) {
+        if (preserveContinuousSession) {
+          lastVideoLoadFabricCancelReason = 'fabric-persistence';
+        }
         showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
         return false;
       }
@@ -9180,10 +9196,28 @@ async function initApp() {
           await fabricDrawingPilotController.beforeVideoChange(loadToken);
         if (!fabricReadyForVideoChange || !canContinueVideoLoad()) return false;
 
-        const finalFabricPersistenceReadyToLeave =
+        let finalFabricPersistenceReadyToLeave =
           await fabricDrawingPilotController.flushPersistenceBeforeLeave();
         if (!canContinueVideoLoad()) return false;
+        if (!finalFabricPersistenceReadyToLeave && !preserveContinuousSession) {
+          const abandonDrawing = confirm('드로잉을 저장하지 못했습니다. 드로잉 저장을 포기하고 영상을 전환할까요?');
+          if (abandonDrawing && canContinueVideoLoad()) {
+            fabricDrawingPilotController.abandonPersistenceForVideoChange();
+            // 포기(settle)는 videoChange 추적(videoChangePending)까지 초기화한다. 이 상태로
+            // 로드를 계속하면 afterVideoReady가 새 영상을 확정하지 못해(컨트롤러 1406-1409의
+            // videoGeneration>0 조기 return) 그 영상에서 B 드로잉이 죽는다. 입력 펜스를
+            // 다시 세워 추적을 재수립한 뒤에만 전환을 계속한다.
+            const rearmedAfterAbandon =
+              await fabricDrawingPilotController.beforeVideoChange(loadToken);
+            if (rearmedAfterAbandon && canContinueVideoLoad()) {
+              finalFabricPersistenceReadyToLeave = true;
+            }
+          }
+        }
         if (!finalFabricPersistenceReadyToLeave) {
+          if (preserveContinuousSession) {
+            lastVideoLoadFabricCancelReason = 'fabric-persistence';
+          }
           showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
           return false;
         }
@@ -18254,6 +18288,10 @@ async function initApp() {
     try {
       prepareNextPlaylistItem(sessionId);
       const preparedVideoPath = continuousPlaybackState.preparedMediaPaths.get(item.id);
+      // 이 로드의 결과만 읽도록 이전 로드가 남긴 사유를 지운다.
+      // (loadVideoFromPlaylist가 loadVideo 진입 전에 false를 반환하는 경로 — 파일 없음 등 —
+      //  에서는 loadVideo의 진입부 리셋이 실행되지 않으므로 여기서 지워야 오염이 없다.)
+      lastVideoLoadFabricCancelReason = null;
       const loaded = await loadVideoFromPlaylist(item, {
         preserveContinuousSession: true,
         holdPreviousFrameUntilReady: true,
@@ -18264,6 +18302,14 @@ async function initApp() {
       });
       if (!isContinuousSessionActive(sessionId)) return false;
       if (loaded === false) {
+        if (lastVideoLoadFabricCancelReason !== null) {
+          // 드로잉 게이트 같은 전역 원인 실패는 항목 고유 문제가 아니다.
+          // 항목을 '건너뜀'으로 오염시키며 연쇄 스킵하는 대신 세션을 중단하고 1회 알린다.
+          lastVideoLoadFabricCancelReason = null;
+          stopContinuousPlayback();
+          showToast('드로잉 저장 문제로 이어붙이기 재생을 중단했습니다.', 'error');
+          return false;
+        }
         markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
         continuousPlaybackState.skippedBatch.push(item);
         return false;

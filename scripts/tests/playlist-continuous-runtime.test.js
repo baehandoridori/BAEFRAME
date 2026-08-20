@@ -1342,3 +1342,12 @@ test('ffmpeg detection checks the main checkout when running from a git worktree
 test('playlist test script includes continuous runtime coverage', () => {
   assert.match(packageJson.scripts['test:playlist'], /playlist-continuous-runtime\.test\.js/);
 });
+
+test('continuous playback stops with one toast when a global drawing gate cancels the load', () => {
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
+  assert.match(
+    continuousLoadMatch[1],
+    /lastVideoLoadFabricCancelReason = null;[\s\S]+loadVideoFromPlaylist\(item, \{[\s\S]+if \(lastVideoLoadFabricCancelReason !== null\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+showToast\('드로잉 저장 문제로 이어붙이기 재생을 중단했습니다\.', 'error'\);[\s\S]+return false;[\s\S]+\}[\s\S]+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.ERROR, '건너뜀'\);/
+  );
+});

@@ -1722,6 +1722,9 @@ export function createFabricDrawingPilotController(options = {}) {
     disable,
     preparePersistenceSnapshotForSave,
     flushPersistenceBeforeLeave,
+    // 게이트 실패 시 사용자가 '드로잉 저장 포기'를 선택하면 차단 상태를 정리하고
+    // 전환을 허용하기 위한 탈출구. settleWithoutPilotVideo가 세션·래치를 함께 정리한다.
+    abandonPersistenceForVideoChange: settleWithoutPilotVideo,
     refreshPersistenceSource,
     preparePersistenceForQuit,
     resumeAfterQuitCancelled,
