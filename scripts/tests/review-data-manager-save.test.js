@@ -3922,6 +3922,73 @@ test('drawingsV3 disk reload cannot install video A after switching to video B',
   manager.disconnect();
 });
 
+test('newer same-file drawingsV3 reload wins when an older hydration finishes later', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const initialFabric = createFabricRoot({
+    documentId: 'fabric-document-same-file-initial'
+  });
+  const olderFabric = createFabricRoot({
+    documentId: 'fabric-document-same-file-older',
+    revision: 5
+  });
+  const newerFabric = createFabricRoot({
+    documentId: 'fabric-document-same-file-newer',
+    revision: 6
+  });
+  const reviewPath = 'C:/reviews/same-file-reload-order.bframe';
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: initialFabric
+    })
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    fabricDrawingPersistenceProvider: fabricStore
+  });
+  manager.connect();
+  assert.equal(await manager.setVideoFile('C:/reviews/same-file-reload-order.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  }), true);
+  assert.equal(manager.currentBframePath, reviewPath);
+
+  const snapshots = [olderFabric, newerFabric];
+  window.electronAPI.loadReviewSnapshot = async _path => ({
+    data: createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: snapshots.shift()
+    }),
+    versionToken: `same-file-reload-${snapshots.length}`
+  });
+  const olderRefreshEntered = createDeferred();
+  const releaseOlderRefresh = createDeferred();
+  let refreshCount = 0;
+  manager.setFabricDrawingSourceRefreshHandler(async ({ installSource }) => {
+    refreshCount += 1;
+    if (refreshCount === 1) {
+      olderRefreshEntered.resolve();
+      await releaseOlderRefresh.promise;
+    }
+    return installSource();
+  });
+
+  const olderReload = manager.reloadDrawingsV3FromDisk();
+  await olderRefreshEntered.promise;
+  const newerReload = manager.reloadDrawingsV3FromDisk();
+  assert.equal(await newerReload, true);
+  assert.deepEqual(fabricStore.exportRootValue(), newerFabric);
+
+  releaseOlderRefresh.resolve();
+  assert.equal(await olderReload, false);
+  assert.equal(refreshCount, 2);
+  assert.deepEqual(fabricStore.exportRootValue(), newerFabric);
+  const finalSnapshot = manager.getDrawingsV3RootSnapshot();
+  assert.equal(finalSnapshot.stale, false);
+  assert.deepEqual(finalSnapshot.value, newerFabric);
+  manager.disconnect();
+});
+
 test('Fabric drawing sync drops queued roots from a stopped session after restart', async () => {
   const { FabricDrawingSync } = await import(
     '../../renderer/scripts/modules/fabric-drawing-sync.js'

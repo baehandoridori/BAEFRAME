@@ -855,6 +855,7 @@ export class ReviewDataManager extends EventTarget {
     this._fabricDrawingProviderUnsubscribe = null;
     this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
     this._drawingsV3ExternalStaleFingerprints = new Set();
+    this._drawingsV3DiskReloadRequestEpoch = 0;
     this._reviewMergeBase = createEmptyReviewMergeBase();
     this._hasCompletedReviewLoad = false;
     this._isConnected = false;
@@ -2070,16 +2071,24 @@ export class ReviewDataManager extends EventTarget {
    * 새 리뷰에 설치된다 (load()의 캡처→재검증 관용구(1135-1139)와 동일 패턴).
    */
   async reloadDrawingsV3FromDisk() {
+    const reloadRequestEpoch = ++this._drawingsV3DiskReloadRequestEpoch;
     const owner = this._captureReviewContextOwner();
+    const ownsReload = candidate =>
+      reloadRequestEpoch === this._drawingsV3DiskReloadRequestEpoch &&
+      this._ownsReviewContext(candidate);
     if (!owner.bframePath) return false;
     try {
       const snapshot = await this._readReviewSnapshot(owner.bframePath);
-      if (!this._ownsReviewContext(owner)) return false;
+      if (!ownsReload(owner)) return false;
       const remoteData = snapshot?.data;
       if (!remoteData || typeof remoteData !== 'object' || Array.isArray(remoteData)) {
         return false;
       }
-      return (await this._reconcileDrawingsV3DiskState(remoteData, owner)) === true;
+      return (await this._reconcileDrawingsV3DiskState(
+        remoteData,
+        owner,
+        ownsReload
+      )) === true;
     } catch (error) {
       log.warn('drawingsV3 파일 동기화 실패', { error: error.message });
       return false;
