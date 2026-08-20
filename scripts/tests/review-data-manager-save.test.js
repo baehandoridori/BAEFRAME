@@ -2454,6 +2454,109 @@ test('external supported drawingsV3 is re-imported before an unrelated save when
   manager.disconnect();
 });
 
+test('accepted broadcast drawingsV3 remains the save baseline while disk replication is stale', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const commentManager = createCommentManager();
+  const initialFabric = createFabricRoot({
+    documentId: 'fabric-document-broadcast-baseline-a'
+  });
+  const broadcastFabric = createFabricRoot({
+    documentId: 'fabric-document-broadcast-baseline-b',
+    revision: 9,
+    keyframes: [{
+      id: 'broadcast-baseline-frame',
+      frame: 36,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [createFabricRecord('broadcast-baseline-stroke')]
+    }]
+  });
+  const diskRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    drawingsV3: initialFabric
+  });
+  let savedRoot = null;
+  window.electronAPI = {
+    loadReview: async () => structuredClone(diskRoot),
+    saveReview: async (_path, data) => {
+      savedRoot = structuredClone(data);
+      return { success: true };
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    commentManager,
+    fabricDrawingPersistenceProvider: fabricStore
+  });
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/fabric.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  });
+
+  assert.equal(await manager.applyExternalDrawingsV3(broadcastFabric), true);
+  const acceptedSnapshot = manager.getDrawingsV3RootSnapshot();
+  assert.equal(acceptedSnapshot.present, true);
+  assert.equal(acceptedSnapshot.stale, false);
+  assert.deepEqual(acceptedSnapshot.value, broadcastFabric);
+  assert.deepEqual(fabricStore.exportRootValue(), broadcastFabric);
+
+  addSubstantiveComment(manager, commentManager, 'broadcast-baseline-comment');
+  assert.equal(await manager.save(), true);
+  assert.deepEqual(savedRoot.drawingsV3, broadcastFabric);
+  assert.deepEqual(fabricStore.exportRootValue(), broadcastFabric);
+  manager.disconnect();
+});
+
+test('failed external drawingsV3 installation retries the same payload instead of accepting it early', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const originalImportRootValue = fabricStore.importRootValue;
+  const initialFabric = createFabricRoot({
+    documentId: 'fabric-document-retry-baseline-a'
+  });
+  const externalFabric = createFabricRoot({
+    documentId: 'fabric-document-retry-baseline-b',
+    revision: 4
+  });
+  let externalImportAttempts = 0;
+  const retryingFabricStore = {
+    ...fabricStore,
+    importRootValue(rootValue, context) {
+      if (rootValue?.documentId === externalFabric.documentId) {
+        externalImportAttempts += 1;
+        if (externalImportAttempts === 1) {
+          return { accepted: false, preserved: false };
+        }
+      }
+      return originalImportRootValue(rootValue, context);
+    }
+  };
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: initialFabric
+    })
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    fabricDrawingPersistenceProvider: retryingFabricStore
+  });
+  await manager.setVideoFile('C:/reviews/fabric.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  });
+
+  assert.equal(await manager.applyExternalDrawingsV3(externalFabric), false);
+  assert.equal(externalImportAttempts, 1);
+  assert.equal(await manager.applyExternalDrawingsV3(externalFabric), true);
+  assert.equal(externalImportAttempts, 2, 'the rejected payload must reach the provider again');
+  assert.deepEqual(fabricStore.exportRootValue(), externalFabric);
+  const acceptedSnapshot = manager.getDrawingsV3RootSnapshot();
+  assert.equal(acceptedSnapshot.stale, false);
+  assert.deepEqual(acceptedSnapshot.value, externalFabric);
+});
+
 test('external future and missing drawingsV3 are adopted opaquely when local Fabric is clean', async () => {
   const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
 
@@ -3896,4 +3999,117 @@ test('Fabric drawing sync drops queued roots from a stopped session after restar
     'the restarted session must still apply new roots'
   );
   sync.stop();
+});
+
+test('Fabric drawing sync requests a stable peer seed after an earlier join broadcast was missed', async () => {
+  const { FabricDrawingSync } = await import(
+    '../../renderer/scripts/modules/fabric-drawing-sync.js'
+  );
+  let now = 0;
+
+  class LinkedLiveblocksManager extends EventTarget {
+    constructor() {
+      super();
+      this.peer = null;
+      this.hasOthers = false;
+      this.sentEvents = [];
+    }
+
+    hasOtherCollaborators() {
+      return this.hasOthers;
+    }
+
+    broadcastEvent(event) {
+      this.sentEvents.push(structuredClone(event));
+      this.peer?.dispatchEvent(new CustomEvent('broadcastReceived', {
+        detail: { event: structuredClone(event) }
+      }));
+    }
+  }
+
+  class StubReviewDataManager extends EventTarget {
+    constructor(rootValue) {
+      super();
+      this.currentBframePath = 'C:/reviews/fabric-handshake.bframe';
+      this.rootValue = structuredClone(rootValue);
+      this.appliedRoots = [];
+    }
+
+    getDrawingsV3RootSnapshot() {
+      return {
+        present: true,
+        value: structuredClone(this.rootValue),
+        fingerprint: `present:${JSON.stringify(this.rootValue)}`,
+        stale: false
+      };
+    }
+
+    async applyExternalDrawingsV3(rootValue) {
+      this.appliedRoots.push(structuredClone(rootValue));
+      this.rootValue = structuredClone(rootValue);
+      return true;
+    }
+  }
+
+  const latestRoot = createFabricRoot({
+    documentId: 'fabric-document-stable-peer',
+    revision: 12
+  });
+  const staleRoot = createFabricRoot({
+    documentId: 'fabric-document-joining-peer',
+    revision: 2
+  });
+  const liveblocksA = new LinkedLiveblocksManager();
+  const liveblocksB = new LinkedLiveblocksManager();
+  liveblocksA.peer = liveblocksB;
+  liveblocksB.peer = liveblocksA;
+  const reviewA = new StubReviewDataManager(latestRoot);
+  const reviewB = new StubReviewDataManager(staleRoot);
+  const syncA = new FabricDrawingSync({
+    liveblocksManager: liveblocksA,
+    reviewDataManager: reviewA,
+    now: () => now
+  });
+  const syncB = new FabricDrawingSync({
+    liveblocksManager: liveblocksB,
+    reviewDataManager: reviewB,
+    now: () => now
+  });
+
+  syncA.start();
+  liveblocksA.hasOthers = true;
+  syncA.broadcastCurrentState();
+  assert.deepEqual(reviewB.appliedRoots, [], 'the pre-subscription seed must be missed');
+  liveblocksA.sentEvents.length = 0;
+  liveblocksB.sentEvents.length = 0;
+  liveblocksA.hasOthers = false;
+
+  now = 10001;
+  syncB.start();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(
+    liveblocksB.sentEvents.filter(event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST').length,
+    1,
+    'the joining peer must request one post-subscription seed'
+  );
+  assert.equal(
+    liveblocksA.sentEvents.filter(event => event.type === 'FABRIC_DRAWING_ROOT').length,
+    1,
+    'the stable peer must answer once even before its Others view catches up'
+  );
+  assert.deepEqual(reviewB.appliedRoots, [latestRoot]);
+
+  liveblocksA.sentEvents.length = 0;
+  liveblocksB.sentEvents.length = 0;
+  liveblocksA.broadcastEvent({ type: 'FABRIC_DRAWING_ROOT_REQUEST' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(
+    liveblocksB.sentEvents.filter(event => event.type === 'FABRIC_DRAWING_ROOT').length,
+    0,
+    'a newly joined peer must not seed its potentially stale root during stabilization'
+  );
+
+  syncB.stop();
+  syncA.stop();
 });

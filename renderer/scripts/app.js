@@ -2187,11 +2187,16 @@ async function initApp() {
         return;
       }
     }
-    slackNotifier.notifyNewComment(marker, commentManager.getAuthor(), {
+    const currentMarker = commentManager.getMarker(markerData.id);
+    if (!currentMarker || currentMarker.deleted) {
+      log.info('저장 대기 중 취소된 댓글의 Slack 알림 건너뜀', { id: markerData.id });
+      return;
+    }
+    slackNotifier.notifyNewComment(currentMarker, commentManager.getAuthor(), {
       filePath: state.currentFile,
       bframePath: reviewDataManager.getBframePath() || '',
       fileName: elements.fileName?.textContent || '',
-      timecode: marker.startTimecode || ''
+      timecode: currentMarker.startTimecode || ''
     });
   });
 

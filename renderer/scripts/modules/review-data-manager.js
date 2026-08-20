@@ -1908,6 +1908,16 @@ export class ReviewDataManager extends EventTarget {
     this._hasCompletedReviewLoad = true;
   }
 
+  _adoptDrawingsV3OpaqueRootState(state) {
+    const opaqueRootFields = { ...this._opaqueRootFields };
+    if (state.present) {
+      opaqueRootFields.drawingsV3 = cloneJson(state.value);
+    } else {
+      delete opaqueRootFields.drawingsV3;
+    }
+    this._opaqueRootFields = opaqueRootFields;
+  }
+
   async _readReviewSnapshot(filePath) {
     if (typeof window.electronAPI.loadReviewSnapshot === 'function') {
       const snapshot = await window.electronAPI.loadReviewSnapshot(filePath);
@@ -1980,6 +1990,7 @@ export class ReviewDataManager extends EventTarget {
     // Broadcast로 이미 더 새로운 drawingsV3를 적용했고 디스크(Drive 복제 지연)가
     // 아직 따라오지 못한 상태면, 구버전 디스크 상태를 재설치하지 않는다
     if (this._drawingsV3ExternalStaleFingerprints.has(latestState.fingerprint)) {
+      this._adoptDrawingsV3OpaqueRootState(this._drawingsV3DiskState);
       return true;
     }
 
@@ -1996,10 +2007,7 @@ export class ReviewDataManager extends EventTarget {
         return false;
       }
 
-      this._markReplacedDrawingsV3Stale(latestState.fingerprint);
-      this._drawingsV3DiskState = latestState;
-      this._hasCompletedReviewLoad = true;
-      const installed = this._installRecordedDiskStateInProvider({
+      const installed = this._installFabricDrawingRootInProvider(latestState, {
         clearLocalChanges: true,
         failureReason: 'disk-reconcile-failed'
       });
@@ -2010,6 +2018,10 @@ export class ReviewDataManager extends EventTarget {
         this._writeBlockedReason = 'fabric-drawing-source-refresh-failed';
         return false;
       }
+      this._markReplacedDrawingsV3Stale(latestState.fingerprint);
+      this._drawingsV3DiskState = latestState;
+      this._hasCompletedReviewLoad = true;
+      this._adoptDrawingsV3OpaqueRootState(latestState);
       return true;
     }, {
       reason: 'external-drawings-v3-changed',

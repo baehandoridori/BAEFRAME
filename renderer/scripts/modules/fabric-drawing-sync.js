@@ -21,6 +21,7 @@ const MAX_ROOT_TRANSFER_BYTES = 32 * 1024 * 1024;
 const MAX_ROOT_CHUNKS = Math.ceil(MAX_ROOT_TRANSFER_BYTES / ROOT_CHUNK_RAW_SIZE);
 // 이 크기 미만이면 청크 없이 인라인 전송 (봉투 오버헤드 포함 Liveblocks 1MB 제한 준수)
 const INLINE_ROOT_MAX_BYTES = 700 * 1024;
+const ROOT_REQUEST_STABILIZATION_MS = 10000;
 
 // drawingsV3 지문(review-data-manager의 captureDrawingsV3DiskState)은 해시가 아니라
 // 'present:' + 전체 canonical JSON 문자열이다 — 와이어에 그대로 실으면 payload가
@@ -53,13 +54,15 @@ function base64ToBytes(value) {
 }
 
 export class FabricDrawingSync {
-  constructor({ liveblocksManager, reviewDataManager }) {
+  constructor({ liveblocksManager, reviewDataManager, now = () => Date.now() }) {
     this._lm = liveblocksManager;
     this._rdm = reviewDataManager;
+    this._now = now;
     this._started = false;
     // stop()마다 증가하는 세션 세대 — stop→start 경계를 넘어 살아남은
     // 이전 세션의 적용 큐 항목을 무효화하는 fence다
     this._sessionGeneration = 0;
+    this._sessionStartedAt = 0;
     this._lastSentFingerprint = null;
     this._transfer = null;
     this._applyQueue = Promise.resolve();
@@ -72,7 +75,13 @@ export class FabricDrawingSync {
     if (this._started) return;
     this._rdm.addEventListener('saved', this._onSaved);
     this._lm.addEventListener('broadcastReceived', this._onBroadcast);
+    this._sessionStartedAt = this._now();
     this._started = true;
+    try {
+      this._lm.broadcastEvent({ type: 'FABRIC_DRAWING_ROOT_REQUEST' });
+    } catch (error) {
+      log.warn('drawingsV3 seed 요청 실패', { error: error?.message || String(error) });
+    }
     log.info('Fabric 드로잉 동기화 시작됨');
   }
 
@@ -83,6 +92,7 @@ export class FabricDrawingSync {
     this._clearTransfer();
     this._lastSentFingerprint = null;
     this._started = false;
+    this._sessionStartedAt = 0;
     // 이 세션에서 큐잉된 적용을 전부 무효화한다 (stop→start 재시작 후 실행 방지).
     // 리스너는 이미 해제되어 정지 중 새 큐잉은 없으므로 stop 시점 증가로 충분하다.
     this._sessionGeneration += 1;
@@ -98,8 +108,8 @@ export class FabricDrawingSync {
     this._broadcastRoot({ force: false });
   }
 
-  _broadcastRoot({ force }) {
-    if (!this._started || !this._lm.hasOtherCollaborators()) return;
+  _broadcastRoot({ force, peerConfirmed = false }) {
+    if (!this._started || (!peerConfirmed && !this._lm.hasOtherCollaborators())) return;
     const snapshot = this._rdm.getDrawingsV3RootSnapshot?.();
     if (!snapshot?.present) return;
     // 구버전 디스크 상태(Broadcast 적용 이전)를 재전파하지 않는다
@@ -153,6 +163,13 @@ export class FabricDrawingSync {
   _onBroadcast(e) {
     const event = e.detail?.event || e.detail;
     if (!event?.type) return;
+
+    if (event.type === 'FABRIC_DRAWING_ROOT_REQUEST') {
+      if (this._now() - this._sessionStartedAt > ROOT_REQUEST_STABILIZATION_MS) {
+        this._broadcastRoot({ force: true, peerConfirmed: true });
+      }
+      return;
+    }
 
     if (event.type === 'FABRIC_DRAWING_ROOT') {
       if (event.root !== undefined) {
