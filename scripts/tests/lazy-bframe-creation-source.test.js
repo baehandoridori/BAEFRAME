@@ -80,6 +80,31 @@ test('new review room can be attached to first save without recursively saving a
   assert.match(newRoomBranch[1], /await reviewDataManager\.save\(\{ skipMerge: true \}\);/);
 });
 
+test('late collaborator seed excludes additive legacy drawings while preserving explicit recovery seed', () => {
+  const handlerStart = appSource.indexOf(
+    "liveblocksManager.addEventListener('collaboratorsChanged'"
+  );
+  const handlerEnd = appSource.indexOf(
+    "liveblocksManager.addEventListener('collaborationStarted'",
+    handlerStart
+  );
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
+  const collaboratorsChangedHandler = appSource.slice(handlerStart, handlerEnd);
+  const lateSeedBlock = collaboratorsChangedHandler.match(
+    /if \(currentOthersCount > _previousOthersCount &&[\s\S]*?\) \{([\s\S]*?)\n\s*\}/
+  );
+  assert.ok(lateSeedBlock, 'collaborator increase seed block should exist');
+  assert.match(lateSeedBlock[1], /commentSync\.broadcastCurrentState\?\.\(\);/);
+  assert.doesNotMatch(lateSeedBlock[1], /drawingSync\.broadcastCurrentState\?\.\(\);/);
+  assert.match(lateSeedBlock[1], /fabricDrawingSync\.broadcastCurrentState\?\.\(\);/);
+
+  const explicitSeedBlock = appSource.match(
+    /if \(seedCurrentState\) \{([\s\S]*?)\n\s*\}/
+  );
+  assert.ok(explicitSeedBlock, 'explicit recovery seed block should exist');
+  assert.match(explicitSeedBlock[1], /drawingSync\.broadcastCurrentState\?\.\(\);/);
+});
+
 test('first .bframe save is protected against another user creating the file first', () => {
   assert.match(reviewDataManagerSource, /setBeforeSaveHandler\(handler\)/);
   assert.match(reviewDataManagerSource, /setInitialSaveConflictHandler\(handler\)/);
