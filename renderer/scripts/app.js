@@ -1176,12 +1176,16 @@ async function initApp() {
   /**
    * 글로벌 Undo 실행 (통합 타임라인)
    */
-  async function globalUndo() {
+  async function globalUndo({ fromFabricFallback = false } = {}) {
     if (_isProcessingUndo || undoStack.length === 0) return false;
     _isProcessingUndo = true;
+    const advanceHistoryRevision = () => {
+      if (!fromFabricFallback) advanceGlobalHistoryRevision();
+    };
 
     const action = undoStack.pop();
-    advanceGlobalHistoryRevision();
+    advanceHistoryRevision();
+    const historyMutationRevision = globalHistoryRevision;
     try {
       if (action && action.undo) {
         // redo를 위해 현재 상태 캡처 (DRAWING 타입인 경우)
@@ -1190,15 +1194,20 @@ async function initApp() {
           action._redoSnapshot = currentSnapshot;
         }
         await action.undo();
+        // 비동기 undo 중 새 작업·파일 전환이 끼면 과거 action을 새 redo 스택에 되살리지 않는다.
+        if (historyMutationRevision !== globalHistoryRevision) return true;
         redoStack.push(action);
-        advanceGlobalHistoryRevision();
+        advanceHistoryRevision();
         return true;
       }
       return false;
     } catch (err) {
       log.error('Undo 실패', err);
-      undoStack.push(action); // 롤백
-      advanceGlobalHistoryRevision();
+      if (historyMutationRevision === globalHistoryRevision) {
+        undoStack.push(action); // 롤백
+        // 실패한 Fabric 폴백도 같은 키 입력 묶음의 후속 재실행을 막는 barrier가 된다.
+        advanceGlobalHistoryRevision();
+      }
       showToast('실행 취소에 실패했습니다', 'error');
       return false;
     } finally {
@@ -1209,12 +1218,16 @@ async function initApp() {
   /**
    * 글로벌 Redo 실행 (통합 타임라인)
    */
-  async function globalRedo() {
+  async function globalRedo({ fromFabricFallback = false } = {}) {
     if (_isProcessingUndo || redoStack.length === 0) return false;
     _isProcessingUndo = true;
+    const advanceHistoryRevision = () => {
+      if (!fromFabricFallback) advanceGlobalHistoryRevision();
+    };
 
     const action = redoStack.pop();
-    advanceGlobalHistoryRevision();
+    advanceHistoryRevision();
+    const historyMutationRevision = globalHistoryRevision;
     try {
       if (action) {
         // DRAWING 타입의 경우 redo 콜백 대신 _redoSnapshot으로 복원
@@ -1230,15 +1243,20 @@ async function initApp() {
         } else if (action.redo) {
           await action.redo();
         }
+        // 비동기 redo 중 새 작업·파일 전환이 끼면 과거 action을 새 undo 스택에 되살리지 않는다.
+        if (historyMutationRevision !== globalHistoryRevision) return true;
         undoStack.push(action);
-        advanceGlobalHistoryRevision();
+        advanceHistoryRevision();
         return true;
       }
       return false;
     } catch (err) {
       log.error('Redo 실패', err);
-      redoStack.push(action); // 롤백
-      advanceGlobalHistoryRevision();
+      if (historyMutationRevision === globalHistoryRevision) {
+        redoStack.push(action); // 롤백
+        // 실패한 Fabric 폴백도 같은 키 입력 묶음의 후속 재실행을 막는 barrier가 된다.
+        advanceGlobalHistoryRevision();
+      }
       showToast('다시 실행에 실패했습니다', 'error');
       return false;
     } finally {
@@ -7218,14 +7236,17 @@ async function initApp() {
     // fabric 히스토리가 비어 있으면 전역 undo/redo로 폴백한다
     onHistoryFallback: (action) => {
       if (action === 'undo') {
-        void globalUndo().then(done => {
+        return globalUndo({ fromFabricFallback: true }).then(done => {
           if (done) showToast('실행 취소됨', 'info');
+          return done;
         });
       } else if (action === 'redo') {
-        void globalRedo().then(done => {
+        return globalRedo({ fromFabricFallback: true }).then(done => {
           if (done) showToast('다시 실행됨', 'info');
+          return done;
         });
       }
+      return Promise.resolve(false);
     }
   });
   reviewDataManager.setFabricDrawingSourceRefreshHandler(

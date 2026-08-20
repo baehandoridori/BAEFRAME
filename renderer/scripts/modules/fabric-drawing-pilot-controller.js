@@ -546,12 +546,29 @@ export function createFabricDrawingPilotController(options = {}) {
     return operation.then(r => r?.success === true);
   }
 
-  function applyHistoryAction(action) {
-    const request = makeDrawingActionRequest(action);
+  function enqueueHistoryFallback(historyAction, historyRevision) {
+    const operation = drawingActionQueue.then(async () => {
+      if (historyRevision !== readHistoryRevision()) return false;
+      return onHistoryFallback(historyAction);
+    });
+    drawingActionQueue = operation.then(result => result === true, () => false);
+    return operation;
+  }
+
+  function applyHistoryAction(historyAction, historyRevision) {
+    const request = makeDrawingActionRequest(historyAction);
     if (!request) {
       return Promise.resolve({ success: false, applied: false });
     }
-    const operation = drawingActionQueue.then(() => sendDrawingActionRequest(request));
+    const operation = drawingActionQueue.then(async () => {
+      const result = await sendDrawingActionRequest(request);
+      if (result?.applied === true || result?.duplicate === true) return result;
+      if (result?.reason === 'history-empty' &&
+          historyRevision === readHistoryRevision()) {
+        await onHistoryFallback(historyAction);
+      }
+      return result;
+    });
     drawingActionQueue = operation.then(r => r?.success === true, () => false);
     return operation;
   }
@@ -1576,19 +1593,13 @@ export function createFabricDrawingPilotController(options = {}) {
       }
       consumeKeyEvent(event);
       if (event.repeat === true) return true;
+      const historyRevision = readHistoryRevision();
       if (state !== 'active') {
         // 세션 준비·복구 중에는 fabric 히스토리를 쓸 수 없다 — 전역 undo로 폴백
-        onHistoryFallback(historyAction);
+        runDetached(enqueueHistoryFallback(historyAction, historyRevision));
         return true;
       }
-      const historyRevision = readHistoryRevision();
-      runDetached(applyHistoryAction(historyAction).then(result => {
-        if (result?.applied === true || result?.duplicate === true) return;
-        if (result?.reason === 'history-empty' &&
-            historyRevision === readHistoryRevision()) {
-          onHistoryFallback(historyAction);
-        }
-      }));
+      runDetached(applyHistoryAction(historyAction, historyRevision));
       return true;
     }
     const isDrawingToggleShortcut = matchesDrawingToggleShortcut(event);

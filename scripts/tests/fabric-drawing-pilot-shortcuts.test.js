@@ -681,6 +681,73 @@ test('delayed empty Fabric history falls back only while global history is uncha
   }
 });
 
+test('queued empty Fabric history preserves each shortcut but still fences unrelated changes', async () => {
+  const cases = [
+    ['z', { code: 'KeyZ', ctrlKey: true }, 'undo'],
+    ['y', { code: 'KeyY', ctrlKey: true }, 'redo']
+  ];
+
+  for (const [key, modifiers, action] of cases) {
+    for (const mutateHistory of [false, true]) {
+      let historyRevision = 23;
+      let fallbackInFlight = false;
+      let concurrentFallbacks = 0;
+      const fallbacks = [];
+      const firstFallbackStarted = deferred();
+      const firstFallbackGate = deferred();
+      const harness = createHarness({
+        getHistoryRevision: () => historyRevision,
+        onAction: () => ({
+          success: true,
+          applied: false,
+          duplicate: false,
+          reason: 'history-empty'
+        }),
+        onHistoryFallback: async fallbackAction => {
+          if (fallbackInFlight) {
+            concurrentFallbacks += 1;
+            return false;
+          }
+          fallbackInFlight = true;
+          fallbacks.push(fallbackAction);
+          if (fallbacks.length === 1) {
+            firstFallbackStarted.resolve();
+            await firstFallbackGate.promise;
+          }
+          fallbackInFlight = false;
+          return true;
+        }
+      });
+      await preparePassive(harness);
+      await harness.controller.toggle();
+
+      assert.equal(harness.controller.routeKeydown(createKeyEvent(key, modifiers)), true);
+      assert.equal(harness.controller.routeKeydown(createKeyEvent(key, modifiers)), true);
+      await firstFallbackStarted.promise;
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(
+        harness.calls.action.length,
+        1,
+        'the second Fabric history request must wait for the first fallback'
+      );
+      if (mutateHistory) historyRevision += 1;
+      firstFallbackGate.resolve();
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      assert.equal(harness.calls.action.length, 2);
+      assert.equal(concurrentFallbacks, 0);
+      assert.deepEqual(
+        fallbacks,
+        mutateHistory ? [action] : [action, action],
+        mutateHistory
+          ? 'a new global-history mutation must discard the queued fallback'
+          : 'an earlier queued fallback must not discard the next shortcut intent'
+      );
+    }
+  }
+});
+
 test('preparing and auto-repeat history shortcuts are consumed without actions', async () => {
   const pendingEnable = deferred();
   const harness = createHarness({
