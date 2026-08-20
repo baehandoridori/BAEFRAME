@@ -71,6 +71,9 @@ export function createFabricDrawingPilotController(options = {}) {
   const onHistoryFallback = typeof options.onHistoryFallback === 'function'
     ? options.onHistoryFallback
     : () => {};
+  const getHistoryRevision = typeof options.getHistoryRevision === 'function'
+    ? options.getHistoryRevision
+    : null;
   const configuredDrawingToggleMatcher =
     typeof options.matchesDrawingToggleShortcut === 'function'
       ? options.matchesDrawingToggleShortcut
@@ -141,6 +144,16 @@ export function createFabricDrawingPilotController(options = {}) {
     return overrides && typeof overrides === 'object'
       ? { ...current, ...overrides }
       : { ...current };
+  }
+
+  function readHistoryRevision() {
+    if (!getHistoryRevision) return null;
+    try {
+      return getHistoryRevision();
+    } catch {
+      // 설정된 fence를 읽지 못하면 서로 다른 객체를 반환해 fallback을 fail-close한다.
+      return {};
+    }
   }
 
   function localSnapshot() {
@@ -1568,9 +1581,13 @@ export function createFabricDrawingPilotController(options = {}) {
         onHistoryFallback(historyAction);
         return true;
       }
+      const historyRevision = readHistoryRevision();
       runDetached(applyHistoryAction(historyAction).then(result => {
         if (result?.applied === true || result?.duplicate === true) return;
-        if (result?.reason === 'history-empty') onHistoryFallback(historyAction);
+        if (result?.reason === 'history-empty' &&
+            historyRevision === readHistoryRevision()) {
+          onHistoryFallback(historyAction);
+        }
       }));
       return true;
     }

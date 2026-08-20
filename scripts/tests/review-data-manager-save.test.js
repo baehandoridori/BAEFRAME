@@ -4912,6 +4912,87 @@ test('the currently observed disk root stays protected beyond the stale history 
   manager.disconnect();
 });
 
+test('an accepted intermediate root stays blocked when Drive exposes it after later broadcasts', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const diskRoot0 = createFabricRoot({
+    documentId: 'fabric-delayed-intermediate-d0',
+    revision: 0
+  });
+  let diskRoot = diskRoot0;
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: diskRoot
+    })
+  };
+  const originalImportRootValue = fabricStore.importRootValue;
+  let reloadImportCount = 0;
+  const spyingFabricStore = {
+    ...fabricStore,
+    importRootValue(rootValue, context) {
+      reloadImportCount += 1;
+      return originalImportRootValue(rootValue, context);
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    fabricDrawingPersistenceProvider: spyingFabricStore
+  });
+  manager.connect();
+  assert.equal(await manager.setVideoFile('C:/reviews/delayed-intermediate.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  }), true);
+
+  const acceptedRoots = Array.from({ length: 10 }, (_unused, index) =>
+    createFabricRoot({
+      documentId: `fabric-delayed-intermediate-d${index + 1}`,
+      revision: index + 1
+    }));
+  for (const rootValue of acceptedRoots) {
+    assert.equal(await manager.applyExternalDrawingsV3(rootValue), true);
+  }
+  const currentRoot = acceptedRoots.at(-1);
+  const staleIdentities = [...manager._drawingsV3ExternalStaleFingerprints];
+  assert.equal(staleIdentities.length, 10);
+  assert.ok(staleIdentities.every(identity => identity.length <= 80));
+  assert.ok(staleIdentities.every(identity => !identity.includes('fabric-delayed-intermediate')));
+  diskRoot = acceptedRoots[0];
+  reloadImportCount = 0;
+
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.equal(
+    reloadImportCount,
+    0,
+    'an accepted D1 must not be forgotten before delayed disk replication exposes it'
+  );
+  assert.deepEqual(fabricStore.exportRootValue(), currentRoot);
+  assert.deepEqual(manager.getDrawingsV3RootSnapshot().value, currentRoot);
+  assert.equal(manager.getDrawingsV3RootSnapshot().stale, false);
+
+  const unseenDiskRoot = createFabricRoot({
+    documentId: 'fabric-delayed-intermediate-unseen',
+    revision: 11
+  });
+  diskRoot = unseenDiskRoot;
+  reloadImportCount = 0;
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.equal(reloadImportCount, 1);
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    unseenDiskRoot,
+    'a genuinely unseen disk root must still install'
+  );
+
+  assert.equal(await manager.applyExternalDrawingsV3(acceptedRoots[0]), true);
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    acceptedRoots[0],
+    'an explicit causal winner must still bypass stale disk protection once'
+  );
+  manager.disconnect();
+});
+
 test('Fabric drawing sync propagates an absent drawingsV3 tombstone without resurrecting a delayed root', async () => {
   const { FabricDrawingSync } = await import(
     '../../renderer/scripts/modules/fabric-drawing-sync.js'

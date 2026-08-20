@@ -1153,6 +1153,11 @@ async function initApp() {
   const redoStack = [];
   const MAX_UNDO_STACK = 50;
   let _isProcessingUndo = false;
+  let globalHistoryRevision = 0;
+
+  function advanceGlobalHistoryRevision() {
+    globalHistoryRevision += 1;
+  }
 
   /**
    * Undo 스택에 작업 추가
@@ -1165,6 +1170,7 @@ async function initApp() {
       undoStack.shift();
     }
     redoStack.length = 0; // Redo 스택 초기화
+    advanceGlobalHistoryRevision();
   }
 
   /**
@@ -1175,6 +1181,7 @@ async function initApp() {
     _isProcessingUndo = true;
 
     const action = undoStack.pop();
+    advanceGlobalHistoryRevision();
     try {
       if (action && action.undo) {
         // redo를 위해 현재 상태 캡처 (DRAWING 타입인 경우)
@@ -1184,12 +1191,14 @@ async function initApp() {
         }
         await action.undo();
         redoStack.push(action);
+        advanceGlobalHistoryRevision();
         return true;
       }
       return false;
     } catch (err) {
       log.error('Undo 실패', err);
       undoStack.push(action); // 롤백
+      advanceGlobalHistoryRevision();
       showToast('실행 취소에 실패했습니다', 'error');
       return false;
     } finally {
@@ -1205,6 +1214,7 @@ async function initApp() {
     _isProcessingUndo = true;
 
     const action = redoStack.pop();
+    advanceGlobalHistoryRevision();
     try {
       if (action) {
         // DRAWING 타입의 경우 redo 콜백 대신 _redoSnapshot으로 복원
@@ -1221,12 +1231,14 @@ async function initApp() {
           await action.redo();
         }
         undoStack.push(action);
+        advanceGlobalHistoryRevision();
         return true;
       }
       return false;
     } catch (err) {
       log.error('Redo 실패', err);
       redoStack.push(action); // 롤백
+      advanceGlobalHistoryRevision();
       showToast('다시 실행에 실패했습니다', 'error');
       return false;
     } finally {
@@ -7203,6 +7215,7 @@ async function initApp() {
     matchesSelectionShortcut: event => userSettings.matchShortcut('drawingToolSelect', event),
     persistenceStore: fabricDrawingPersistenceStore,
     onStateChange: handleFabricDrawingPilotStateChange,
+    getHistoryRevision: () => globalHistoryRevision,
     // fabric 히스토리가 비어 있으면 전역 undo/redo로 폴백한다
     onHistoryFallback: (action) => {
       if (action === 'undo') {
@@ -9237,6 +9250,7 @@ async function initApp() {
         // Undo/Redo 스택 초기화 (파일 전환 시 크로스파일 오염 방지)
         undoStack.length = 0;
         redoStack.length = 0;
+        advanceGlobalHistoryRevision();
         // 그리기 매니저 초기화
         drawingManager.reset();
         // 하이라이트 매니저 초기화

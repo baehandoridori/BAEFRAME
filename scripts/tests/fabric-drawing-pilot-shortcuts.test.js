@@ -92,6 +92,8 @@ function createHarness(options = {}) {
     matchesSelectionShortcut: options.matchesSelectionShortcut,
     persistenceStore: options.persistenceStore,
     persistenceSessionIdFactory: options.persistenceSessionIdFactory,
+    getHistoryRevision: options.getHistoryRevision,
+    onHistoryFallback: options.onHistoryFallback,
     uuid: () => `uuid-${++id}`
   });
 
@@ -619,6 +621,63 @@ test('active Ctrl or Cmd history shortcuts send exactly one semantic action', as
     assert.equal(request.inputRevision, 2);
     assert.equal(request.sessionId, harness.calls.input.at(-1).session.sessionId);
     assertEnvelope(request);
+  }
+});
+
+test('delayed empty Fabric history falls back only while global history is unchanged', async () => {
+  const cases = [
+    ['z', { code: 'KeyZ', ctrlKey: true }, 'undo'],
+    ['y', { code: 'KeyY', ctrlKey: true }, 'redo']
+  ];
+
+  for (const [key, modifiers, action] of cases) {
+    let historyRevision = 7;
+    const changedFallbacks = [];
+    const changedResponse = deferred();
+    const changed = createHarness({
+      getHistoryRevision: () => historyRevision,
+      onHistoryFallback: fallbackAction => changedFallbacks.push(fallbackAction),
+      onAction: () => changedResponse.promise
+    });
+    await preparePassive(changed);
+    await changed.controller.toggle();
+
+    assert.equal(changed.controller.routeKeydown(createKeyEvent(key, modifiers)), true);
+    await new Promise(resolve => setImmediate(resolve));
+    historyRevision += 1;
+    changedResponse.resolve({
+      success: true,
+      applied: false,
+      duplicate: false,
+      reason: 'history-empty'
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(
+      changedFallbacks,
+      [],
+      `${action} must not target a global item created after keydown`
+    );
+
+    const unchangedFallbacks = [];
+    const unchangedResponse = deferred();
+    const unchanged = createHarness({
+      getHistoryRevision: () => 11,
+      onHistoryFallback: fallbackAction => unchangedFallbacks.push(fallbackAction),
+      onAction: () => unchangedResponse.promise
+    });
+    await preparePassive(unchanged);
+    await unchanged.controller.toggle();
+
+    assert.equal(unchanged.controller.routeKeydown(createKeyEvent(key, modifiers)), true);
+    await new Promise(resolve => setImmediate(resolve));
+    unchangedResponse.resolve({
+      success: true,
+      applied: false,
+      duplicate: false,
+      reason: 'history-empty'
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(unchangedFallbacks, [action]);
   }
 });
 

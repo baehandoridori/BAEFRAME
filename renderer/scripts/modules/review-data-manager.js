@@ -128,6 +128,21 @@ function canonicalizeJson(value) {
   return result;
 }
 
+// stale history는 활성 리뷰 컨텍스트 동안 과거 루트를 잊으면 안 된다. 전체
+// canonical JSON 대신 Broadcast wire와 같은 고정 길이 이중 해시+길이를 보관해,
+// 지연 복제 안전성을 유지하면서 루트 크기에 비례한 메모리 누적을 피한다.
+function compactDrawingsV3Fingerprint(fingerprint) {
+  if (typeof fingerprint !== 'string') return null;
+  let h1 = 0x811c9dc5;
+  let h2 = 0xcbf29ce4;
+  for (let index = 0; index < fingerprint.length; index++) {
+    const code = fingerprint.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ code, 0x01000197) >>> 0;
+  }
+  return `${h1.toString(36)}-${h2.toString(36)}-${fingerprint.length.toString(36)}`;
+}
+
 function captureDrawingsV3DiskState(data) {
   const present = Boolean(
     data &&
@@ -1901,27 +1916,25 @@ export class ReviewDataManager extends EventTarget {
   }
 
   _rememberDrawingsV3StaleFingerprint(fingerprint) {
-    if (typeof fingerprint !== 'string') return;
-    this._drawingsV3ExternalStaleFingerprints.add(fingerprint);
-    while (this._drawingsV3ExternalStaleFingerprints.size > 8) {
-      const oldest =
-        this._drawingsV3ExternalStaleFingerprints.values().next().value;
-      this._drawingsV3ExternalStaleFingerprints.delete(oldest);
-    }
+    const identity = compactDrawingsV3Fingerprint(fingerprint);
+    if (identity === null) return;
+    this._drawingsV3ExternalStaleFingerprints.add(identity);
+  }
+
+  _isDrawingsV3FingerprintStale(fingerprint) {
+    const identity = compactDrawingsV3Fingerprint(fingerprint);
+    return identity !== null && this._drawingsV3ExternalStaleFingerprints.has(identity);
   }
 
   _recordDrawingsV3DiskObservation(fingerprint) {
     if (typeof fingerprint !== 'string') return;
     const previousObservedFingerprint = this._drawingsV3LastObservedDiskFingerprint;
     this._drawingsV3LastObservedDiskFingerprint = fingerprint;
-    // 현재 실제 파일 지문은 cap 밖의 scalar가 보호하므로 중복 슬롯을 비운다.
-    this._drawingsV3ExternalStaleFingerprints.delete(fingerprint);
     if (typeof previousObservedFingerprint === 'string' &&
         previousObservedFingerprint !== fingerprint &&
         previousObservedFingerprint !== this._drawingsV3DiskState?.fingerprint) {
-      // scalar 보호가 새 실제 파일 지문으로 이동하면 직전 관측 지문을 capped
-      // history의 최신 항목으로 승계해, 이후 Drive rollback에도 재설치되지 않게 한다.
-      this._drawingsV3ExternalStaleFingerprints.delete(previousObservedFingerprint);
+      // scalar 보호가 새 실제 파일 지문으로 이동하면 직전 관측 지문도 compact
+      // history에 남겨, 이후 Drive rollback에도 재설치되지 않게 한다.
       this._rememberDrawingsV3StaleFingerprint(previousObservedFingerprint);
     }
   }
@@ -2020,9 +2033,6 @@ export class ReviewDataManager extends EventTarget {
       if (confirmDiskObservation) {
         this._recordDrawingsV3DiskObservation(latestState.fingerprint);
       }
-      if (latestState.fingerprint === allowSupersededFingerprint) {
-        this._drawingsV3ExternalStaleFingerprints.delete(latestState.fingerprint);
-      }
       return true;
     }
     // Broadcast로 이미 더 새로운 drawingsV3를 적용했고 디스크(Drive 복제 지연)가
@@ -2030,7 +2040,7 @@ export class ReviewDataManager extends EventTarget {
     const matchesObservedDisk = confirmDiskObservation &&
       latestState.fingerprint === this._drawingsV3LastObservedDiskFingerprint;
     if ((matchesObservedDisk ||
-         this._drawingsV3ExternalStaleFingerprints.has(latestState.fingerprint)) &&
+         this._isDrawingsV3FingerprintStale(latestState.fingerprint)) &&
         latestState.fingerprint !== allowSupersededFingerprint) {
       if (confirmDiskObservation) {
         this._recordDrawingsV3DiskObservation(latestState.fingerprint);
@@ -2047,9 +2057,6 @@ export class ReviewDataManager extends EventTarget {
           latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
         if (confirmDiskObservation) {
           this._recordDrawingsV3DiskObservation(latestState.fingerprint);
-        }
-        if (latestState.fingerprint === allowSupersededFingerprint) {
-          this._drawingsV3ExternalStaleFingerprints.delete(latestState.fingerprint);
         }
         return true;
       }
@@ -2076,9 +2083,6 @@ export class ReviewDataManager extends EventTarget {
       this._drawingsV3DiskState = latestState;
       this._hasCompletedReviewLoad = true;
       this._adoptDrawingsV3OpaqueRootState(latestState);
-      if (latestState.fingerprint === allowSupersededFingerprint) {
-        this._drawingsV3ExternalStaleFingerprints.delete(latestState.fingerprint);
-      }
       return true;
     }, {
       reason: 'external-drawings-v3-changed',
@@ -2094,11 +2098,14 @@ export class ReviewDataManager extends EventTarget {
    */
   getDrawingsV3RootSnapshot() {
     const state = captureDrawingsV3DiskState(this._opaqueRootFields || {});
+    const isCurrentAuthoritativeRoot =
+      state.fingerprint === this._drawingsV3DiskState?.fingerprint;
     return {
       present: state.present,
       value: state.value,
       fingerprint: state.fingerprint,
-      stale: this._drawingsV3ExternalStaleFingerprints.has(state.fingerprint)
+      stale: !isCurrentAuthoritativeRoot &&
+        this._isDrawingsV3FingerprintStale(state.fingerprint)
     };
   }
 

@@ -356,15 +356,21 @@ test('하이라이트 undo/redo 콜백은 getter 전용 colorInfo에 대입하�
   assert.match(appSource, /restored\.colorKey = highlight\.colorKey;/);
 });
 
-test('fabric 히스토리가 비면 전역 undo로 폴백한다', () => {
+test('fabric 히스토리 폴백은 renderer 단일 경로에서 처리한다', () => {
   const controllerSource = fs.readFileSync(
     path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-pilot-controller.js'), 'utf8'
   );
   assert.match(controllerSource, /onHistoryFallback\(historyAction\)/);
   assert.match(controllerSource, /reason === 'history-empty'/);
+  assert.match(controllerSource, /getHistoryRevision/);
+  assert.match(controllerSource, /historyRevision === readHistoryRevision\(\)/);
+  assert.match(appSource, /let globalHistoryRevision = 0;/);
+  assert.match(appSource, /getHistoryRevision: \(\) => globalHistoryRevision/);
+  assert.match(appSource, /advanceGlobalHistoryRevision\(\);/);
   const hostSource = fs.readFileSync(
     path.join(rootDir, 'main/mpv-overlay-host.js'), 'utf8'
   );
-  assert.match(hostSource, /reason !== 'history-empty'/);
-  assert.match(hostSource, /typeof result\?\.reason === 'string'/);
+  assert.match(hostSource, /const historyAction = overlayHistoryActionFromInput\(input\);/);
+  assert.match(hostSource, /mainWindow\.webContents\.send\(FORWARDED_KEYBOARD_CHANNEL, forwardedInput\);/);
+  assert.doesNotMatch(hostSource, /this\.applyDrawingAction\(request\)\.then/);
 });
