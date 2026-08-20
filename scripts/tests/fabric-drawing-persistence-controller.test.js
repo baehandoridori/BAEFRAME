@@ -853,3 +853,21 @@ test('quit cancellation cannot resume Fabric after the prepared video owner has 
   );
   assert.notEqual(harness.controller.getState(), 'active');
 });
+
+test('overlay-host-unavailable export failure settles the session instead of blocking leave', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  harness.setExportHandler(() => ({
+    success: false,
+    accepted: false,
+    reason: 'overlay-host-unavailable'
+  }));
+
+  // 죽은 호스트: 게이트는 세션을 정리하고 전환을 허용해야 한다.
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, false);
+  assert.equal(harness.controller.getState(), 'passive');
+  // 세션이 정리됐으므로 두 번째 게이트도 즉시 통과한다.
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+});

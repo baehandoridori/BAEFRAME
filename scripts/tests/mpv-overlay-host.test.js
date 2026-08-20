@@ -4355,3 +4355,39 @@ test('standard mpv suite includes the hidden Fabric toolbar Chromium layout regr
     /mpv-fabric-overlay-toolbar-layout\.test\.js/
   );
 });
+
+test('drawing input disable and export degrade gracefully when the overlay host is gone', async () => {
+  const harness = createDrawingHostHarness();
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  harness.host.destroy();
+
+  // 죽은 호스트에서 disable 요청은 no-op 성공이어야 한다(영상 전환 교착 방지).
+  assert.deepEqual(await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 0,
+    inputRevision: 1,
+    enabled: false
+  })), {
+    success: true,
+    accepted: true,
+    enabled: false,
+    fabricReady: false,
+    hostUnavailable: true
+  });
+
+  // enable 요청은 기존대로 실패한다.
+  assert.deepEqual(await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 0,
+    inputRevision: 2,
+    enabled: true
+  })), { success: false, error: 'mpv overlay host is not ready' });
+
+  // 죽은 호스트에 대한 export는 stale이 아니라 회복 불가 사유를 반환한다.
+  assert.deepEqual(await harness.host.exportDrawingVideo(
+    makePersistenceExport(hostGeneration)
+  ), {
+    success: false,
+    accepted: false,
+    reason: 'overlay-host-unavailable'
+  });
+});

@@ -2546,6 +2546,12 @@ class MPVOverlayHost {
     const request = arguments[0] || {};
     const hostWindow = this.window;
     if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded) {
+      // 호스트 창이 이미 없으면 차단할 드로잉 입력 표면도 없다.
+      // disable 요청을 실패로 돌려주면 영상 전환의 입력 펜스가 죽은 호스트에
+      // 막혀 교착되므로, fabric 미준비 disable와 같은 원리로 no-op 성공 처리한다.
+      if (request.enabled === false) {
+        return { success: true, accepted: true, enabled: false, fabricReady: false, hostUnavailable: true };
+      }
       return { success: false, error: 'mpv overlay host is not ready' };
     }
 
@@ -2982,6 +2988,15 @@ class MPVOverlayHost {
       };
     }
     const hostWindow = this.window;
+    if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded) {
+      // 호스트 창 소멸은 세대 불일치(stale)와 달리 회복 불가능한 상태다.
+      // 렌더러가 이를 구분해 차단 래치 대신 세션 정리를 선택할 수 있게 사유를 분리한다.
+      return {
+        success: false,
+        accepted: false,
+        reason: 'overlay-host-unavailable'
+      };
+    }
     if (!this._drawingPersistenceRequestIsCurrent(hostWindow, normalizedRequest)) {
       return {
         success: false,
