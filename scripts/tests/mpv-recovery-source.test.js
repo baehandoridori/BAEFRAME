@@ -895,3 +895,10 @@ test('draw playback state is cancelled before mode exit or media replacement', (
     /activeVideoLoadPath = filePath;[\s\S]*?mpvDrawPlaybackTransitionToken \+= 1;[\s\S]*?classList\.remove\('playback-hidden'\);[\s\S]*?let videoLoadCompleted = false;/
   );
 });
+
+test('failed video loads clear the drive loading overlay in the finally block', () => {
+  assert.match(
+    appSource,
+    /if \(activeVideoLoadToken === loadToken\) \{[\s\S]+if \(!videoLoadCompleted && driveLoadingFeedbackShown\) \{[\s\S]+hideVideoLoadingOverlay\('drive'\);[\s\S]+\}[\s\S]+await settlePendingMpvReviewFreezeMediaChange\(\{ loaded: videoLoadCompleted \}\);/
+  );
+});

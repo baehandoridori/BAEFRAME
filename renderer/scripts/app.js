@@ -9728,6 +9728,10 @@ async function initApp() {
       if (activeVideoLoadToken === loadToken) {
         activeVideoLoadToken = null;
         activeVideoLoadPath = null;
+        // 조기 return false 탈출(게이트 취소 등)에서도 드라이브 로딩 오버레이가 남지 않게 한다.
+        if (!videoLoadCompleted && driveLoadingFeedbackShown) {
+          hideVideoLoadingOverlay('drive');
+        }
         await settlePendingMpvReviewFreezeMediaChange({ loaded: videoLoadCompleted });
         retryDeferredMpvOverlayFallback();
       }
