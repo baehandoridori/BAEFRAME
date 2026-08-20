@@ -907,6 +907,60 @@ test('explicit persistence abandon preserves rollback when the target load later
   assert.equal(await harness.controller.toggle(), true);
 });
 
+test('explicit persistence abandon preserves active drawing intent when the target load succeeds', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+
+  harness.setExportHandler(() => ({
+    success: false,
+    accepted: false,
+    reason: 'overlay-unavailable'
+  }));
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), false);
+  assert.deepEqual({
+    persistenceBlocked: harness.controller.getStatusSnapshot().persistenceBlocked,
+    resumeRequested: harness.controller.getStatusSnapshot().resumeRequested,
+    state: harness.controller.getState()
+  }, {
+    persistenceBlocked: true,
+    resumeRequested: false,
+    state: 'passive'
+  });
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  assert.deepEqual({
+    persistenceBlocked: harness.controller.getStatusSnapshot().persistenceBlocked,
+    resumeRequested: harness.controller.getStatusSnapshot().resumeRequested,
+    state: harness.controller.getState()
+  }, {
+    persistenceBlocked: false,
+    resumeRequested: true,
+    state: 'passive'
+  });
+  harness.setExportHandler(null);
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'C:/shot/scene-002.mov',
+    targetFrame: 24,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    fps: 24,
+    totalFrames: 240
+  }), true);
+  assert.deepEqual({
+    state: harness.controller.getState(),
+    inputEnabled: harness.calls.input.at(-1)?.enabled,
+    stableVideoIdentity: harness.calls.input.at(-1)?.session?.stableVideoIdentity
+  }, {
+    state: 'active',
+    inputEnabled: true,
+    stableVideoIdentity: 'C:/shot/scene-002.mov'
+  });
+});
+
 test('overlay-host-unavailable save preserves the current video for host recovery rehydrate', async () => {
   const harness = createHarness();
   assert.equal(await prepareVideo(harness), true);

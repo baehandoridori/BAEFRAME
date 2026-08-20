@@ -444,6 +444,9 @@ export function createFabricDrawingPilotController(options = {}) {
   }
 
   function abandonPersistenceForVideoChange() {
+    if (videoChangePending && videoChangeRollback?.shouldResume === true) {
+      resumeRequested = true;
+    }
     clearPersistenceBypass();
     return true;
   }
