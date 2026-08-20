@@ -71,7 +71,7 @@ test('new review room can be attached to first save without recursively saving a
   assert.match(appSource, /async function startCollaborationForVideoLoad\(loadToken, bframePath, options = \{\}\)/);
   assert.match(appSource, /persistNewRoom = true,/);
   assert.match(appSource, /seedCurrentState = false/);
-  assert.match(appSource, /if \(seedCurrentState\) \{[\s\S]*commentSync\.broadcastCurrentState\?\.\(\);[\s\S]*drawingSync\.broadcastCurrentState\?\.\(\);/);
+  assert.match(appSource, /if \(seedCurrentState\) \{[\s\S]*fabricDrawingSync\.broadcastCurrentState\?\.\(\);/);
 
   const newRoomBranch = appSource.match(/if \(isNewRoom && isCurrentReviewPath\(bframePath\)\) \{([\s\S]*?)\n      \}/);
   assert.ok(newRoomBranch, 'startCollaborationForVideoLoad should handle newly-created rooms explicitly');
@@ -80,7 +80,7 @@ test('new review room can be attached to first save without recursively saving a
   assert.match(newRoomBranch[1], /await reviewDataManager\.save\(\{ skipMerge: true \}\);/);
 });
 
-test('late collaborator seed excludes additive legacy drawings while preserving explicit recovery seed', () => {
+test('all collaboration seeds exclude additive legacy snapshots while preserving causal Fabric seed', () => {
   const handlerStart = appSource.indexOf(
     "liveblocksManager.addEventListener('collaboratorsChanged'"
   );
@@ -94,7 +94,7 @@ test('late collaborator seed excludes additive legacy drawings while preserving 
     /if \(currentOthersCount > _previousOthersCount &&[\s\S]*?\) \{([\s\S]*?)\n\s*\}/
   );
   assert.ok(lateSeedBlock, 'collaborator increase seed block should exist');
-  assert.match(lateSeedBlock[1], /commentSync\.broadcastCurrentState\?\.\(\);/);
+  assert.doesNotMatch(lateSeedBlock[1], /commentSync\.broadcastCurrentState\?\.\(\);/);
   assert.doesNotMatch(lateSeedBlock[1], /drawingSync\.broadcastCurrentState\?\.\(\);/);
   assert.match(lateSeedBlock[1], /fabricDrawingSync\.broadcastCurrentState\?\.\(\);/);
 
@@ -102,7 +102,22 @@ test('late collaborator seed excludes additive legacy drawings while preserving 
     /if \(seedCurrentState\) \{([\s\S]*?)\n\s*\}/
   );
   assert.ok(explicitSeedBlock, 'explicit recovery seed block should exist');
-  assert.match(explicitSeedBlock[1], /drawingSync\.broadcastCurrentState\?\.\(\);/);
+  assert.doesNotMatch(explicitSeedBlock[1], /commentSync\.broadcastCurrentState\?\.\(\);/);
+  assert.doesNotMatch(explicitSeedBlock[1], /drawingSync\.broadcastCurrentState\?\.\(\);/);
+  assert.match(explicitSeedBlock[1], /fabricDrawingSync\.broadcastCurrentState\?\.\(\);/);
+
+  const mergeSeedStart = appSource.indexOf('async function prepareReviewFileBeforeSave');
+  const mergeSeedEnd = appSource.indexOf('async function prepareCompositionLayerMedia', mergeSeedStart);
+  assert.ok(mergeSeedStart >= 0 && mergeSeedEnd > mergeSeedStart);
+  const mergeSeedHandlers = appSource.slice(mergeSeedStart, mergeSeedEnd);
+  assert.equal((mergeSeedHandlers.match(/seedCurrentState:\s*true/g) || []).length, 3);
+
+  const quitHandlerStart = appSource.indexOf('window.electronAPI.onRequestSaveBeforeQuit');
+  const quitHandlerEnd = appSource.indexOf('// ====== 사용자 이름 초기화', quitHandlerStart);
+  assert.ok(quitHandlerStart >= 0 && quitHandlerEnd > quitHandlerStart);
+  const quitHandler = appSource.slice(quitHandlerStart, quitHandlerEnd);
+  assert.doesNotMatch(quitHandler, /seedCurrentState:\s*true/);
+  assert.equal((quitHandler.match(/seedCurrentState:\s*false/g) || []).length, 2);
 });
 
 test('first .bframe save is protected against another user creating the file first', () => {

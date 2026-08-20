@@ -6774,8 +6774,7 @@ async function initApp() {
       _previousOthersCount = 0;
       _collaborationSessionStartedAt = Date.now();
       if (seedCurrentState) {
-        commentSync.broadcastCurrentState?.();
-        drawingSync.broadcastCurrentState?.();
+        // 댓글·레거시 drawing seed는 삭제 경합을 수렴시킬 causal 정보가 없어 제외한다.
         fabricDrawingSync.broadcastCurrentState?.();
       }
       log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
@@ -13901,7 +13900,7 @@ async function initApp() {
           await startCollaborationForVideoLoad(
             latestVideoLoadToken,
             reviewDataManager.currentBframePath,
-            { persistNewRoom: false, seedCurrentState: true }
+            { persistNewRoom: false, seedCurrentState: false }
           );
           saveBeforeQuitInProgress = false;
         }
@@ -13921,7 +13920,7 @@ async function initApp() {
         await startCollaborationForVideoLoad(
           latestVideoLoadToken,
           reviewDataManager.currentBframePath,
-          { persistNewRoom: false, seedCurrentState: true }
+          { persistNewRoom: false, seedCurrentState: false }
         );
         saveBeforeQuitInProgress = false;
       }
@@ -16865,14 +16864,13 @@ async function initApp() {
       showToast('실시간 협업 세션에 참여했습니다', 'info');
       _triggerCollabRipple();
     }
-    // 참여자가 늘어나면 댓글 상태와 causal Fabric root를 재전송해 늦은 참여자를 seed한다.
+    // 참여자가 늘어나면 causal Fabric root를 재전송해 늦은 참여자를 seed한다.
     // 단 자신이 방금 합류한 쪽이면(연결 10초 이내) 구버전 로컬 상태를 방에
     // 뿌리지 않도록 억제한다 — 기존 멤버 측 재전송만으로 seed가 완성된다.
-    // 레거시 drawing current-state seed는 삭제 tombstone이 없는 additive 전송이므로
-    // 검증되지 않은 기존 peer에서 자동 재전송하지 않는다.
+    // 댓글·레거시 drawing current-state seed는 삭제 상태를 전파하지 않는 additive
+    // 전송이므로 검증되지 않은 기존 peer에서 자동 재전송하지 않는다.
     if (currentOthersCount > _previousOthersCount &&
         Date.now() - _collaborationSessionStartedAt > 10000) {
-      commentSync.broadcastCurrentState?.();
       fabricDrawingSync.broadcastCurrentState?.();
     }
     _previousOthersCount = currentOthersCount;
