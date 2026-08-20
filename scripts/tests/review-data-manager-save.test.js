@@ -4083,6 +4083,101 @@ test('an accepted Broadcast invalidates an older pending drawingsV3 disk reload'
   manager.disconnect();
 });
 
+test('a higher-version same-root Broadcast invalidates an older pending disk reload', async () => {
+  const { FabricDrawingSync } = await import(
+    '../../renderer/scripts/modules/fabric-drawing-sync.js'
+  );
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const currentFabric = createFabricRoot({
+    documentId: 'fabric-same-root-epoch-current',
+    revision: 1
+  });
+  const olderDiskFabric = createFabricRoot({
+    documentId: 'fabric-same-root-epoch-older-disk',
+    revision: 2
+  });
+  const diskReadStarted = createDeferred();
+  const diskRead = createDeferred();
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: currentFabric
+    }),
+    loadReviewSnapshot: async () => {
+      diskReadStarted.resolve();
+      return diskRead.promise;
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    fabricDrawingPersistenceProvider: fabricStore
+  });
+  manager.connect();
+  assert.equal(await manager.setVideoFile('C:/reviews/fabric-same-root-epoch.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  }), true);
+
+  class StubLiveblocksManager extends EventTarget {
+    constructor() {
+      super();
+      this.sentEvents = [];
+    }
+
+    getSelf() {
+      return { connectionId: 'same-root-local' };
+    }
+
+    hasOtherCollaborators() {
+      return true;
+    }
+
+    broadcastEvent(event) {
+      this.sentEvents.push(structuredClone(event));
+    }
+
+    receive(event) {
+      this.dispatchEvent(new CustomEvent('broadcastReceived', {
+        detail: { event: structuredClone(event) }
+      }));
+    }
+  }
+  const liveblocksManager = new StubLiveblocksManager();
+  const sync = new FabricDrawingSync({
+    liveblocksManager,
+    reviewDataManager: manager,
+    actorId: 'same-root-local'
+  });
+  sync.start();
+  liveblocksManager.sentEvents.length = 0;
+  sync.broadcastCurrentState();
+  const currentRootEvent = liveblocksManager.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
+  assert.ok(currentRootEvent?.fingerprint);
+
+  const olderReload = manager.reloadDrawingsV3FromDisk();
+  await diskReadStarted.promise;
+  liveblocksManager.receive({
+    ...currentRootEvent,
+    transferId: 'same-root-remote-higher-version',
+    syncVersion: { clock: 10, actorId: 'same-root-remote' }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  diskRead.resolve({
+    data: createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: olderDiskFabric
+    }),
+    versionToken: 'same-root-older-disk'
+  });
+
+  assert.equal(await olderReload, false);
+  assert.deepEqual(fabricStore.exportRootValue(), currentFabric);
+  sync.stop();
+  manager.disconnect();
+});
+
 test('Fabric drawing sync drops queued roots from a stopped session after restart', async () => {
   const { FabricDrawingSync } = await import(
     '../../renderer/scripts/modules/fabric-drawing-sync.js'

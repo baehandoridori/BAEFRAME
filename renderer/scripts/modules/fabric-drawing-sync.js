@@ -517,7 +517,12 @@ export class FabricDrawingSync {
       );
       const comparison = compareSyncVersions(syncVersion, current.version);
       if (sameRoot) {
-        if (comparison > 0) this._currentRootVersion = syncVersion;
+        if (comparison > 0) {
+          // 내용이 같아 provider 적용을 생략해도 더 높은 외부 인과 버전을
+          // 수락했으므로, 그보다 먼저 시작한 disk reload는 함께 무효화한다.
+          this._rdm.invalidatePendingDrawingsV3DiskReloadsForExternalSync?.();
+          this._currentRootVersion = syncVersion;
+        }
         this._discardPendingExternalRootAtOrBelow(
           this._currentRootVersion,
           fingerprint

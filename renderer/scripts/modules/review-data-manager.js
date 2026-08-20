@@ -2114,6 +2114,11 @@ export class ReviewDataManager extends EventTarget {
     return true;
   }
 
+  /** 수락한 외부 인과 버전보다 먼저 시작한 drawingsV3 disk reload를 무효화한다. */
+  invalidatePendingDrawingsV3DiskReloadsForExternalSync() {
+    this._drawingsV3DiskReloadRequestEpoch += 1;
+  }
+
   /**
    * 원격(Broadcast)에서 받은 drawingsV3 루트를 디스크 반영 파이프라인으로 적용한다.
    * 로컬 미저장 fabric 변경이 있으면 기존 fail-closed 가드가 적용을 거른다.
@@ -2130,7 +2135,7 @@ export class ReviewDataManager extends EventTarget {
       const externalState = captureDrawingsV3DiskState(externalData);
       // 이 explicit Broadcast보다 먼저 시작한 disk snapshot은 causal winner를
       // 뒤늦게 덮을 수 없도록 reconcile 진입 전에 reload 세대를 무효화한다.
-      this._drawingsV3DiskReloadRequestEpoch += 1;
+      this.invalidatePendingDrawingsV3DiskReloadsForExternalSync();
       return (await this._reconcileDrawingsV3DiskState(
         externalData,
         undefined,
