@@ -22,6 +22,29 @@ const MAX_ROOT_CHUNKS = Math.ceil(MAX_ROOT_TRANSFER_BYTES / ROOT_CHUNK_RAW_SIZE)
 // 이 크기 미만이면 청크 없이 인라인 전송 (봉투 오버헤드 포함 Liveblocks 1MB 제한 준수)
 const INLINE_ROOT_MAX_BYTES = 700 * 1024;
 const ROOT_REQUEST_STABILIZATION_MS = 10000;
+const ROOT_EVENT_TYPE = 'FABRIC_DRAWING_ROOT';
+const ROOT_CHUNK_EVENT_TYPE = 'FABRIC_DRAWING_ROOT_CHUNK';
+const ROOT_REQUEST_EVENT_TYPE = 'FABRIC_DRAWING_ROOT_REQUEST_V2';
+const ROOT_RESPONSE_EVENT_TYPE = 'FABRIC_DRAWING_ROOT_RESPONSE';
+const ROOT_RESPONSE_CHUNK_EVENT_TYPE = 'FABRIC_DRAWING_ROOT_RESPONSE_CHUNK';
+const MAX_BASELINE_CONFLICT_ACTORS = 64;
+const FABRIC_STORAGE_SCHEMA = 'baeframe-fabric-scenes';
+const FABRIC_STORAGE_VERSION = '1.0.0';
+const FABRIC_STORAGE_ENGINE = 'fabric-7';
+const ROOT_IDENTITY_KIND = Object.freeze({
+  ABSENT: 'absent',
+  OPAQUE: 'opaque',
+  REVISIONED: 'revisioned'
+});
+const ROOT_REQUEST_DECISION = Object.freeze({
+  CONFLICT: 'conflict',
+  EQUAL: 'equal',
+  IGNORE: 'ignore',
+  PULL: 'pull',
+  PULL_WITH_PROMOTION: 'pull-with-promotion',
+  RESPOND: 'respond',
+  RESPOND_WITH_PROMOTION: 'respond-with-promotion'
+});
 
 // drawingsV3 지문(review-data-manager의 captureDrawingsV3DiskState)은 해시가 아니라
 // 'present:' + 전체 canonical JSON 문자열이다 — 와이어에 그대로 실으면 payload가
@@ -51,6 +74,101 @@ function createSyncActorId() {
 function getRootRevision(rootValue) {
   const revision = Number(rootValue?.revision);
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+}
+
+function describeRootIdentity(snapshot) {
+  if (!snapshot || typeof snapshot.present !== 'boolean') return null;
+  if (!snapshot.present) return { kind: ROOT_IDENTITY_KIND.ABSENT };
+  const rootValue = snapshot.value;
+  const documentId = rootValue?.documentId;
+  const revision = Number(rootValue?.revision);
+  if (snapshot.compatible === true &&
+      rootValue?.storageSchema === FABRIC_STORAGE_SCHEMA &&
+      rootValue?.storageVersion === FABRIC_STORAGE_VERSION &&
+      rootValue?.engine === FABRIC_STORAGE_ENGINE &&
+      typeof documentId === 'string' && documentId.length > 0 &&
+      documentId.length <= 512 &&
+      Number.isSafeInteger(revision) && revision >= 0) {
+    return {
+      kind: ROOT_IDENTITY_KIND.REVISIONED,
+      documentId,
+      revision
+    };
+  }
+  return { kind: ROOT_IDENTITY_KIND.OPAQUE };
+}
+
+function normalizeRootIdentity(value, present) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (present === false && value.kind === ROOT_IDENTITY_KIND.ABSENT) {
+    return { kind: ROOT_IDENTITY_KIND.ABSENT };
+  }
+  if (present !== true) return null;
+  if (value.kind === ROOT_IDENTITY_KIND.OPAQUE) {
+    return { kind: ROOT_IDENTITY_KIND.OPAQUE };
+  }
+  const revision = Number(value.revision);
+  if (value.kind !== ROOT_IDENTITY_KIND.REVISIONED ||
+      typeof value.documentId !== 'string' || value.documentId.length < 1 ||
+      value.documentId.length > 512 ||
+      !Number.isSafeInteger(revision) || revision < 0) {
+    return null;
+  }
+  return {
+    kind: ROOT_IDENTITY_KIND.REVISIONED,
+    documentId: value.documentId,
+    revision
+  };
+}
+
+function decideRootRequest(
+  current,
+  requestVersion,
+  requestIdentity
+) {
+  if (!current?.version || !requestVersion || !requestIdentity) {
+    return ROOT_REQUEST_DECISION.IGNORE;
+  }
+  if (current.fingerprint && current.fingerprint === requestVersion.fingerprint) {
+    return ROOT_REQUEST_DECISION.EQUAL;
+  }
+  const currentIdentity = describeRootIdentity(current.snapshot);
+  if (!currentIdentity) return ROOT_REQUEST_DECISION.IGNORE;
+
+  const currentHasCausalActor = current.version.actorId.length > 0;
+  const requesterHasCausalActor = requestVersion.actorId.length > 0;
+  if (currentHasCausalActor !== requesterHasCausalActor) {
+    return currentHasCausalActor
+      ? ROOT_REQUEST_DECISION.RESPOND_WITH_PROMOTION
+      : ROOT_REQUEST_DECISION.PULL_WITH_PROMOTION;
+  }
+
+  const comparison = compareSyncVersions(current.version, requestVersion);
+  if (currentHasCausalActor && requesterHasCausalActor) {
+    if (comparison > 0) return ROOT_REQUEST_DECISION.RESPOND;
+    if (comparison < 0) return ROOT_REQUEST_DECISION.PULL;
+    return ROOT_REQUEST_DECISION.EQUAL;
+  }
+
+  const sameRevisionedDocument =
+    currentIdentity.kind === ROOT_IDENTITY_KIND.REVISIONED &&
+    requestIdentity.kind === ROOT_IDENTITY_KIND.REVISIONED &&
+    currentIdentity.documentId === requestIdentity.documentId;
+  if (sameRevisionedDocument) {
+    if (comparison > 0) return ROOT_REQUEST_DECISION.RESPOND;
+    if (comparison < 0) return ROOT_REQUEST_DECISION.PULL;
+    return ROOT_REQUEST_DECISION.EQUAL;
+  }
+
+  // fresh baseline끼리 삭제/opaque/서로 다른 documentId가 충돌하면
+  // 권위를 추론하지 않고 양쪽 저장을 fail-closed로 보류한다.
+  return ROOT_REQUEST_DECISION.CONFLICT;
+}
+
+function normalizeRequestActorId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512
+    ? value
+    : null;
 }
 
 function normalizeSyncVersion(value, fingerprint) {
@@ -97,7 +215,9 @@ export class FabricDrawingSync {
     liveblocksManager,
     reviewDataManager,
     now = () => Date.now(),
-    actorId = null
+    actorId = null,
+    scheduleSeedRetry = (callback, delay) => setTimeout(callback, delay),
+    cancelSeedRetry = timer => clearTimeout(timer)
   }) {
     this._lm = liveblocksManager;
     this._rdm = reviewDataManager;
@@ -105,6 +225,8 @@ export class FabricDrawingSync {
     this._explicitActorId = typeof actorId === 'string' && actorId.length > 0
       ? actorId
       : null;
+    this._scheduleSeedRetryCallback = scheduleSeedRetry;
+    this._cancelSeedRetryCallback = cancelSeedRetry;
     this._actorId = null;
     this._rootClock = 0;
     this._currentRootVersion = null;
@@ -114,6 +236,11 @@ export class FabricDrawingSync {
     // 이전 세션의 적용 큐 항목을 무효화하는 fence다
     this._sessionGeneration = 0;
     this._sessionStartedAt = 0;
+    this._seedRetryTimer = null;
+    this._sessionBaselineFingerprint = null;
+    this._sessionBaselineHadLocalChanges = false;
+    this._baselineConflictActors = new Set();
+    this._hasUnattributedBaselineConflict = false;
     this._lastSentFingerprint = null;
     this._transfer = null;
     this._applyQueue = Promise.resolve();
@@ -133,23 +260,21 @@ export class FabricDrawingSync {
     this._currentRootVersion = null;
     this._pendingExternalRoot = null;
     const current = this._ensureCurrentRootVersion();
+    // 협업 시작 시 이미 존재하던 baseline은 저장 이벤트나 명시 seed만으로
+    // publish하지 않는다. 실제 Fabric 변경으로 지문이 달라질 때만 전송한다.
+    this._lastSentFingerprint = current.snapshot?.localChanges === true
+      ? null
+      : current.fingerprint;
+    this._sessionBaselineFingerprint = current.fingerprint;
+    this._sessionBaselineHadLocalChanges = current.snapshot?.localChanges === true;
+    this._baselineConflictActors.clear();
+    this._hasUnattributedBaselineConflict = current.snapshot?.baselineConflict === true;
     this._rdm.addEventListener('saved', this._onSaved);
     this._lm.addEventListener('broadcastReceived', this._onBroadcast);
     this._sessionStartedAt = this._now();
     this._started = true;
-    try {
-      const requestEvent = { type: 'FABRIC_DRAWING_ROOT_REQUEST' };
-      if (current.version) {
-        requestEvent.fingerprint = current.fingerprint;
-        requestEvent.syncVersion = {
-          clock: current.version.clock,
-          actorId: current.version.actorId
-        };
-      }
-      this._lm.broadcastEvent(requestEvent);
-    } catch (error) {
-      log.warn('drawingsV3 seed 요청 실패', { error: error?.message || String(error) });
-    }
+    this._scheduleRootRequestRetry();
+    this._broadcastRootRequest();
     log.info('Fabric 드로잉 동기화 시작됨');
   }
 
@@ -158,6 +283,9 @@ export class FabricDrawingSync {
     this._rdm.removeEventListener('saved', this._onSaved);
     this._lm.removeEventListener('broadcastReceived', this._onBroadcast);
     this._clearTransfer();
+    this._clearRootRequestRetry();
+    this._sessionBaselineFingerprint = null;
+    this._sessionBaselineHadLocalChanges = false;
     this._lastSentFingerprint = null;
     this._started = false;
     this._sessionStartedAt = 0;
@@ -165,15 +293,145 @@ export class FabricDrawingSync {
     this._rootClock = 0;
     this._currentRootVersion = null;
     this._pendingExternalRoot = null;
+    this._baselineConflictActors.clear();
+    this._hasUnattributedBaselineConflict = false;
     // 이 세션에서 큐잉된 적용을 전부 무효화한다 (stop→start 재시작 후 실행 방지).
     // 리스너는 이미 해제되어 정지 중 새 큐잉은 없으므로 stop 시점 증가로 충분하다.
     this._sessionGeneration += 1;
     log.info('Fabric 드로잉 동기화 중지됨');
   }
 
-  /** 늦게 참여한 협업자 seed용 — 지문 중복 검사 없이 현재 상태를 전송한다 */
+  _broadcastRootRequest({ stabilizationRetry = false } = {}) {
+    if (!this._started) return false;
+    const current = this._ensureCurrentRootVersion();
+    const requestEvent = { type: ROOT_REQUEST_EVENT_TYPE };
+    if (stabilizationRetry) requestEvent.stabilizationRetry = true;
+    if (typeof current.snapshot?.present === 'boolean') {
+      requestEvent.present = current.snapshot.present;
+    }
+    const rootIdentity = describeRootIdentity(current.snapshot);
+    if (rootIdentity) requestEvent.rootIdentity = rootIdentity;
+    if (this._actorId) requestEvent.requestActorId = this._actorId;
+    if (current.version) {
+      requestEvent.fingerprint = current.fingerprint;
+      requestEvent.syncVersion = {
+        clock: current.version.clock,
+        actorId: current.version.actorId
+      };
+    }
+    try {
+      this._lm.broadcastEvent(requestEvent);
+      return true;
+    } catch (error) {
+      log.warn('drawingsV3 seed 요청 실패', { error: error?.message || String(error) });
+      return false;
+    }
+  }
+
+  _scheduleRootRequestRetry() {
+    this._clearRootRequestRetry();
+    const sessionGeneration = this._sessionGeneration;
+    const expectedBframePath = this._rdm.currentBframePath || null;
+    let timer = null;
+    let invoked = false;
+    const retry = () => {
+      if (invoked) return;
+      invoked = true;
+      if (this._seedRetryTimer === timer) this._seedRetryTimer = null;
+      if (!this._started || sessionGeneration !== this._sessionGeneration ||
+          (this._rdm.currentBframePath || null) !== expectedBframePath) {
+        return;
+      }
+      this._broadcastRootRequest({ stabilizationRetry: true });
+    };
+    timer = this._scheduleSeedRetryCallback(
+      retry,
+      ROOT_REQUEST_STABILIZATION_MS + 1
+    );
+    this._seedRetryTimer = timer;
+    timer?.unref?.();
+  }
+
+  _clearRootRequestRetry() {
+    if (this._seedRetryTimer === null) return;
+    this._cancelSeedRetryCallback(this._seedRetryTimer);
+    this._seedRetryTimer = null;
+  }
+
+  _markBaselineConflict(actorId = null) {
+    const normalizedActorId = normalizeRequestActorId(actorId);
+    if (normalizedActorId) {
+      if (!this._baselineConflictActors.has(normalizedActorId)) {
+        if (this._baselineConflictActors.size < MAX_BASELINE_CONFLICT_ACTORS) {
+          this._baselineConflictActors.add(normalizedActorId);
+        } else {
+          // reconnect actor가 무한히 쌓이면 메모리 대신 fail-closed latch로 승격한다.
+          this._hasUnattributedBaselineConflict = true;
+        }
+      }
+    } else {
+      this._hasUnattributedBaselineConflict = true;
+    }
+    this._rdm.markDrawingsV3BaselineConflict?.();
+  }
+
+  _resolveBaselineConflict(actorId) {
+    const normalizedActorId = normalizeRequestActorId(actorId);
+    if (!normalizedActorId) return;
+    this._baselineConflictActors.delete(normalizedActorId);
+    if (this._baselineConflictActors.size === 0 &&
+        !this._hasUnattributedBaselineConflict) {
+      this._rdm.clearDrawingsV3BaselineConflict?.();
+    }
+  }
+
+  _clearAllBaselineConflicts() {
+    this._baselineConflictActors.clear();
+    this._hasUnattributedBaselineConflict = false;
+    this._rdm.clearDrawingsV3BaselineConflict?.();
+  }
+
+  _broadcastControlEvent(event, label) {
+    try {
+      this._lm.broadcastEvent(event);
+      return true;
+    } catch (error) {
+      log.warn(label, { error: error?.message || String(error) });
+      return false;
+    }
+  }
+
+  _sendRootAcknowledgement(
+    targetActorId,
+    fingerprint,
+    syncVersion = this._currentRootVersion
+  ) {
+    const normalizedTargetActorId = normalizeRequestActorId(targetActorId);
+    if (!normalizedTargetActorId || !this._actorId) return false;
+    const normalizedVersion = normalizeSyncVersion(syncVersion, fingerprint);
+    return this._broadcastControlEvent({
+      type: 'FABRIC_DRAWING_ROOT_ACK',
+      targetActorId: normalizedTargetActorId,
+      sourceActorId: this._actorId,
+      fingerprint,
+      ...(normalizedVersion
+        ? {
+          syncVersion: {
+            clock: normalizedVersion.clock,
+            actorId: normalizedVersion.actorId
+          }
+        }
+        : {})
+    }, 'drawingsV3 seed 확인 전송 실패');
+  }
+
+  /** 늦게 참여한 협업자 seed용 — 세션 baseline이 아닌 현재 상태만 전송한다 */
   broadcastCurrentState() {
-    this._broadcastRoot({ force: true });
+    const current = this._ensureCurrentRootVersion();
+    // 세션 시작 당시의 unverified baseline은 force seed로도 권위 승격하지 않는다.
+    // 합류자는 ROOT_REQUEST/단발 stabilization retry로 안전하게 동기화한다.
+    if (current.fingerprint === this._sessionBaselineFingerprint) return false;
+    return this._broadcastRoot({ force: true });
   }
 
   _onSaved() {
@@ -183,6 +441,8 @@ export class FabricDrawingSync {
       peerConfirmed: Boolean(this._pendingExternalRoot)
     });
     if (published?.createdVersion) {
+      this._sessionBaselineHadLocalChanges = false;
+      this._clearAllBaselineConflicts();
       this._discardPendingExternalRootAtOrBelow(
         published.version,
         published.version.fingerprint
@@ -194,24 +454,53 @@ export class FabricDrawingSync {
     force,
     peerConfirmed = false,
     localSave = false,
-    causalFloor = null
+    causalFloor = null,
+    preserveCurrentVersion = false,
+    targetActorId = null
   }) {
-    if (!this._started || (!peerConfirmed && !this._lm.hasOtherCollaborators())) return;
+    if (!this._started) return;
     const snapshot = this._rdm.getDrawingsV3RootSnapshot?.();
     if (!snapshot || typeof snapshot.present !== 'boolean') return;
     // 구버전 디스크 상태(Broadcast 적용 이전)를 재전파하지 않는다
     if (snapshot.stale === true) return;
     const wireFingerprint = hashFingerprint(snapshot.fingerprint);
-    if (!force && wireFingerprint === this._lastSentFingerprint) return;
+    const mustConfirmRawLocalSave = Boolean(
+      localSave &&
+      this._sessionBaselineHadLocalChanges &&
+      this._currentRootVersion?.fingerprint === wireFingerprint &&
+      this._currentRootVersion.actorId === ''
+    );
+    if (!force && wireFingerprint === this._lastSentFingerprint &&
+        !mustConfirmRawLocalSave) {
+      return;
+    }
     const preparedVersion = this._prepareOutgoingRootVersion(
       snapshot.value,
       wireFingerprint,
-      { localSave, causalFloor }
+      { localSave, causalFloor, preserveCurrentVersion }
     );
+    if (!peerConfirmed && !this._lm.hasOtherCollaborators()) {
+      return preparedVersion;
+    }
     const syncVersion = {
       clock: preparedVersion.version.clock,
       actorId: preparedVersion.version.actorId
     };
+    const normalizedTargetActorId = normalizeRequestActorId(targetActorId);
+    const rootEventType = normalizedTargetActorId
+      ? ROOT_RESPONSE_EVENT_TYPE
+      : ROOT_EVENT_TYPE;
+    const chunkEventType = normalizedTargetActorId
+      ? ROOT_RESPONSE_CHUNK_EVENT_TYPE
+      : ROOT_CHUNK_EVENT_TYPE;
+    const routing = this._actorId
+      ? {
+        sourceActorId: this._actorId,
+        ...(normalizedTargetActorId
+          ? { targetActorId: normalizedTargetActorId }
+          : {})
+      }
+      : {};
     try {
       const payloadBytes = snapshot.present
         ? new TextEncoder().encode(JSON.stringify(snapshot.value))
@@ -223,19 +512,21 @@ export class FabricDrawingSync {
       const transferId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       if (!snapshot.present) {
         this._lm.broadcastEvent({
-          type: 'FABRIC_DRAWING_ROOT',
+          type: rootEventType,
           transferId,
           present: false,
           fingerprint: wireFingerprint,
-          syncVersion
+          syncVersion,
+          ...routing
         });
       } else if (payloadBytes.length < INLINE_ROOT_MAX_BYTES) {
         this._lm.broadcastEvent({
-          type: 'FABRIC_DRAWING_ROOT',
+          type: rootEventType,
           transferId,
           present: true,
           fingerprint: wireFingerprint,
           syncVersion,
+          ...routing,
           root: snapshot.value
         });
       } else {
@@ -245,17 +536,18 @@ export class FabricDrawingSync {
           return;
         }
         this._lm.broadcastEvent({
-          type: 'FABRIC_DRAWING_ROOT',
+          type: rootEventType,
           transferId,
           present: true,
           fingerprint: wireFingerprint,
           syncVersion,
+          ...routing,
           chunkCount: count
         });
         for (let index = 0; index < count; index++) {
           const start = index * ROOT_CHUNK_RAW_SIZE;
           this._lm.broadcastEvent({
-            type: 'FABRIC_DRAWING_ROOT_CHUNK',
+            type: chunkEventType,
             transferId,
             index,
             count,
@@ -274,6 +566,12 @@ export class FabricDrawingSync {
 
   _ensureCurrentRootVersion() {
     const snapshot = this._rdm.getDrawingsV3RootSnapshot?.();
+    if (snapshot?.baselineConflict === false &&
+        (this._baselineConflictActors.size > 0 ||
+         this._hasUnattributedBaselineConflict)) {
+      this._baselineConflictActors.clear();
+      this._hasUnattributedBaselineConflict = false;
+    }
     if (!snapshot || typeof snapshot.present !== 'boolean' ||
         typeof snapshot.fingerprint !== 'string') {
       this._currentRootVersion = null;
@@ -284,7 +582,9 @@ export class FabricDrawingSync {
       return { snapshot, fingerprint, version: this._currentRootVersion };
     }
     const version = {
-      clock: Math.max(this._rootClock, getRootRevision(snapshot.value)),
+      // raw/unverified baseline의 순서는 문서 revision으로만 비교한다.
+      // 관측한 Lamport max는 _rootClock에 별도 보존해 다음 실제 로컬 저장만 넘는다.
+      clock: getRootRevision(snapshot.value),
       actorId: '',
       fingerprint: fingerprint || ''
     };
@@ -293,7 +593,11 @@ export class FabricDrawingSync {
     return { snapshot, fingerprint, version };
   }
 
-  _prepareOutgoingRootVersion(rootValue, fingerprint, { localSave, causalFloor = null }) {
+  _prepareOutgoingRootVersion(
+    rootValue,
+    fingerprint,
+    { localSave, causalFloor = null, preserveCurrentVersion = false }
+  ) {
     const currentMatches = this._currentRootVersion?.fingerprint === fingerprint;
     if (causalFloor) {
       this._rootClock = Math.max(this._rootClock, causalFloor.clock);
@@ -303,7 +607,15 @@ export class FabricDrawingSync {
       causalFloor.fingerprint !== fingerprint &&
       compareSyncVersions(this._currentRootVersion, causalFloor) <= 0
     );
+    const createsLocalCausalWinner = Boolean(
+      localSave &&
+      (!currentMatches || this._currentRootVersion?.actorId === '' ||
+       requiresCausalPromotion)
+    );
     let createdVersion = false;
+    if (preserveCurrentVersion && currentMatches && this._currentRootVersion) {
+      return { version: this._currentRootVersion, createdVersion: false };
+    }
     if (!currentMatches || this._currentRootVersion.actorId === '' ||
         requiresCausalPromotion) {
       const rootRevision = getRootRevision(rootValue);
@@ -315,7 +627,7 @@ export class FabricDrawingSync {
         actorId: this._actorId || '',
         fingerprint: fingerprint || ''
       };
-      createdVersion = localSave && !currentMatches;
+      createdVersion = createsLocalCausalWinner;
     }
     this._rootClock = Math.max(this._rootClock, this._currentRootVersion.clock);
     return { version: this._currentRootVersion, createdVersion };
@@ -372,36 +684,153 @@ export class FabricDrawingSync {
     const event = e.detail?.event || e.detail;
     if (!event?.type) return;
 
-    if (event.type === 'FABRIC_DRAWING_ROOT_REQUEST') {
+    if (event.type === ROOT_REQUEST_EVENT_TYPE ||
+        event.type === 'FABRIC_DRAWING_ROOT_REQUEST') {
       const requestVersion = normalizeSyncVersion(
         event.syncVersion,
         event.fingerprint
       );
+      const requestIdentity = normalizeRootIdentity(event.rootIdentity, event.present);
+      const requestActorId = normalizeRequestActorId(event.requestActorId);
       if (requestVersion) {
         this._rootClock = Math.max(this._rootClock, requestVersion.clock);
       }
-      if (this._now() - this._sessionStartedAt > ROOT_REQUEST_STABILIZATION_MS) {
+      const current = this._ensureCurrentRootVersion();
+      const decision = decideRootRequest(current, requestVersion, requestIdentity);
+      if (decision === ROOT_REQUEST_DECISION.EQUAL) {
+        if (compareSyncVersions(requestVersion, current.version) > 0) {
+          // 내용이 같은 더 높은 인과 버전도 수락해야, 그 요청보다 먼저 시작한
+          // disk reload가 뒤늦게 같은 root를 구버전으로 되돌리지 못한다.
+          this._rdm.invalidatePendingDrawingsV3DiskReloadsForExternalSync?.();
+          this._currentRootVersion = requestVersion;
+        }
+        if (requestVersion?.actorId.length > 0) {
+          this._clearAllBaselineConflicts();
+        } else {
+          this._resolveBaselineConflict(requestActorId);
+        }
+        this._sendRootAcknowledgement(requestActorId, current.fingerprint);
+        return;
+      }
+      if (decision !== ROOT_REQUEST_DECISION.IGNORE && requestActorId) {
+        // 서로 다른 baseline을 확인한 즉시 양쪽 저장을 hold한다. 실제 root 전송은
+        // 안정화 시간이 지난 뒤에만 수행해 fresh stale peer의 seed는 계속 막는다.
+        this._markBaselineConflict(requestActorId);
+        this._broadcastControlEvent({
+          type: 'FABRIC_DRAWING_ROOT_CONFLICT',
+          targetActorId: requestActorId,
+          sourceActorId: this._actorId,
+          requestFingerprint: requestVersion?.fingerprint || null
+        }, 'drawingsV3 baseline 충돌 알림 실패');
+      }
+      if (this._now() - this._sessionStartedAt < ROOT_REQUEST_STABILIZATION_MS) {
+        return;
+      }
+      if (decision === ROOT_REQUEST_DECISION.CONFLICT) {
+        return;
+      }
+      if (decision === ROOT_REQUEST_DECISION.PULL ||
+          decision === ROOT_REQUEST_DECISION.PULL_WITH_PROMOTION) {
+        if (!requestActorId) return;
+        this._broadcastControlEvent({
+          type: 'FABRIC_DRAWING_ROOT_PULL',
+          targetActorId: requestActorId,
+          sourceActorId: this._actorId,
+          requestFingerprint: requestVersion?.fingerprint || null,
+          causalFloor: current.version,
+          promote: decision === ROOT_REQUEST_DECISION.PULL_WITH_PROMOTION
+        }, 'drawingsV3 pull 요청 실패');
+        return;
+      }
+      if (decision === ROOT_REQUEST_DECISION.RESPOND ||
+          decision === ROOT_REQUEST_DECISION.RESPOND_WITH_PROMOTION) {
         this._broadcastRoot({
           force: true,
           peerConfirmed: true,
-          causalFloor: requestVersion
+          causalFloor: requestVersion,
+          preserveCurrentVersion: decision === ROOT_REQUEST_DECISION.RESPOND,
+          targetActorId: requestActorId
         });
       }
       return;
     }
 
-    if (event.type === 'FABRIC_DRAWING_ROOT') {
+    if (event.type === 'FABRIC_DRAWING_ROOT_CONFLICT') {
+      if (normalizeRequestActorId(event.targetActorId) !== this._actorId) return;
+      const current = this._ensureCurrentRootVersion();
+      if (event.requestFingerprint !== current.fingerprint) return;
+      this._markBaselineConflict(event.sourceActorId);
+      return;
+    }
+
+    if (event.type === 'FABRIC_DRAWING_ROOT_PULL') {
+      if (normalizeRequestActorId(event.targetActorId) !== this._actorId) return;
+      const sourceActorId = normalizeRequestActorId(event.sourceActorId);
+      if (!sourceActorId) return;
+      const current = this._ensureCurrentRootVersion();
+      if (event.requestFingerprint !== current.fingerprint) return;
+      const causalFloor = normalizeSyncVersion(
+        event.causalFloor,
+        event.causalFloor?.fingerprint
+      );
+      this._broadcastRoot({
+        force: true,
+        peerConfirmed: true,
+        causalFloor,
+        preserveCurrentVersion: event.promote !== true,
+        targetActorId: sourceActorId
+      });
+      return;
+    }
+
+    if (event.type === 'FABRIC_DRAWING_ROOT_ACK') {
+      if (normalizeRequestActorId(event.targetActorId) !== this._actorId) return;
+      const sourceActorId = normalizeRequestActorId(event.sourceActorId);
+      if (!sourceActorId) return;
+      const current = this._ensureCurrentRootVersion();
+      if (event.fingerprint !== current.fingerprint) return;
+      const acknowledgedVersion = normalizeSyncVersion(
+        event.syncVersion,
+        event.fingerprint
+      );
+      if (acknowledgedVersion) {
+        this._rootClock = Math.max(this._rootClock, acknowledgedVersion.clock);
+        if (compareSyncVersions(acknowledgedVersion, current.version) > 0) {
+          this._rdm.invalidatePendingDrawingsV3DiskReloadsForExternalSync?.();
+          this._currentRootVersion = acknowledgedVersion;
+        }
+      }
+      this._resolveBaselineConflict(sourceActorId);
+      return;
+    }
+
+    if (event.type === ROOT_EVENT_TYPE ||
+        event.type === ROOT_RESPONSE_EVENT_TYPE) {
+      const isTargetedResponse = event.type === ROOT_RESPONSE_EVENT_TYPE;
+      const targetActorId = normalizeRequestActorId(event.targetActorId);
+      if ((isTargetedResponse || event.targetActorId !== undefined) &&
+          targetActorId !== this._actorId) {
+        return;
+      }
+      const sourceActorId = normalizeRequestActorId(event.sourceActorId);
       if (event.present === false) {
         this._enqueueApply(
           undefined,
           event.fingerprint,
           event.syncVersion,
-          false
+          false,
+          sourceActorId
         );
         return;
       }
       if (event.root !== undefined) {
-        this._enqueueApply(event.root, event.fingerprint, event.syncVersion, true);
+        this._enqueueApply(
+          event.root,
+          event.fingerprint,
+          event.syncVersion,
+          true,
+          sourceActorId
+        );
         return;
       }
       const count = Math.trunc(Number(event.chunkCount));
@@ -436,6 +865,10 @@ export class FabricDrawingSync {
         transferId: event.transferId,
         fingerprint,
         syncVersion: event.syncVersion,
+        sourceActorId,
+        chunkEventType: isTargetedResponse
+          ? ROOT_RESPONSE_CHUNK_EVENT_TYPE
+          : ROOT_CHUNK_EVENT_TYPE,
         orderingVersion,
         chunks: new Array(count),
         received: 0,
@@ -445,9 +878,11 @@ export class FabricDrawingSync {
       return;
     }
 
-    if (event.type === 'FABRIC_DRAWING_ROOT_CHUNK') {
+    if (event.type === ROOT_CHUNK_EVENT_TYPE ||
+        event.type === ROOT_RESPONSE_CHUNK_EVENT_TYPE) {
       const transfer = this._transfer;
-      if (!transfer || transfer.transferId !== event.transferId) return;
+      if (!transfer || transfer.transferId !== event.transferId ||
+          transfer.chunkEventType !== event.type) return;
       const index = Math.trunc(Number(event.index));
       if (!Number.isFinite(index) || index < 0 || index >= transfer.count ||
           typeof event.data !== 'string' || transfer.chunks[index] !== undefined) {
@@ -460,6 +895,7 @@ export class FabricDrawingSync {
       let rootValue;
       const fingerprint = transfer.fingerprint;
       const syncVersion = transfer.syncVersion;
+      const sourceActorId = transfer.sourceActorId;
       try {
         const chunkBytes = transfer.chunks.map(chunk => base64ToBytes(chunk));
         const totalLength = chunkBytes.reduce((sum, bytes) => sum + bytes.length, 0);
@@ -479,11 +915,17 @@ export class FabricDrawingSync {
         return;
       }
       this._clearTransfer();
-      this._enqueueApply(rootValue, fingerprint, syncVersion, true);
+      this._enqueueApply(rootValue, fingerprint, syncVersion, true, sourceActorId);
     }
   }
 
-  _enqueueApply(rootValue, fingerprint, syncVersionValue, present = true) {
+  _enqueueApply(
+    rootValue,
+    fingerprint,
+    syncVersionValue,
+    present = true,
+    sourceActorId = null
+  ) {
     const syncVersion = this._normalizeIncomingRootVersion(
       rootValue,
       fingerprint,
@@ -528,6 +970,12 @@ export class FabricDrawingSync {
           fingerprint
         );
         this._lastSentFingerprint = fingerprint;
+        if (syncVersion.actorId.length > 0) {
+          this._clearAllBaselineConflicts();
+        } else {
+          this._resolveBaselineConflict(sourceActorId);
+        }
+        this._sendRootAcknowledgement(sourceActorId, fingerprint);
         return;
       }
       if (comparison <= 0) {
@@ -560,6 +1008,12 @@ export class FabricDrawingSync {
           this._currentRootVersion,
           fingerprint
         );
+        if (syncVersion.actorId.length > 0) {
+          this._clearAllBaselineConflicts();
+        } else {
+          this._resolveBaselineConflict(sourceActorId);
+        }
+        this._sendRootAcknowledgement(sourceActorId, fingerprint);
         log.info('원격 drawingsV3 반영됨');
       } else if (postApplyComparison <= 0) {
         this._markExternalRootSuperseded(rootValue, present);

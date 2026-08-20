@@ -866,6 +866,10 @@ export class ReviewDataManager extends EventTarget {
     this._fabricDrawingPersistenceContext = {};
     this._fabricDrawingProviderLoadedForCurrentReview = false;
     this._fabricDrawingHasLocalChanges = false;
+    this._fabricDrawingBaselineConflict = false;
+    this._fabricDrawingAuthorityEpoch = 0;
+    this._fabricDrawingAuthorityChangeContextEpoch = null;
+    this._fabricDrawingAuthorityChangeInFlight = 0;
     this._fabricDrawingCollectedRevision = null;
     this._fabricDrawingProviderUnsubscribe = null;
     this._drawingsV3DiskState = createUnknownDrawingsV3DiskState();
@@ -1297,6 +1301,8 @@ export class ReviewDataManager extends EventTarget {
           });
         }
         this._assertSaveOwner(saveOwner);
+        this._assertRootEnvelopeWritable();
+        const attemptFabricDrawingAuthorityEpoch = this._fabricDrawingAuthorityEpoch;
         const localData = this._collectData();
         const attemptReviewMergeBase = captureReviewMergeBase(localData);
         const data = this._mergeBeforeSave(localData, latestRoot);
@@ -1385,6 +1391,37 @@ export class ReviewDataManager extends EventTarget {
         }
         this._hasPersistedFile = true;
         this._reviewDocumentIdPersisted = true;
+        if (attemptFabricDrawingAuthorityEpoch !== this._fabricDrawingAuthorityEpoch) {
+          // IPC write는 이미 끝났지만, collect 이후 더 최신 Fabric 권위가 생겼다.
+          // 방금 쓴 payload를 current로 승인하거나 saved로 전파하지 않고 다시 저장한다.
+          const writtenState = captureDrawingsV3DiskState(data);
+          this._recordDrawingsV3DiskObservation(writtenState.fingerprint);
+          if (writtenState.fingerprint !== this._drawingsV3DiskState?.fingerprint) {
+            this._rememberDrawingsV3StaleFingerprint(writtenState.fingerprint);
+          }
+          this.isDirty = true;
+          log.warn('.bframe 저장 중 Fabric 권위 변경 감지, 최신 상태로 재시도', {
+            path: saveOwner.bframePath
+          });
+          if ((this._fabricDrawingBaselineConflict &&
+               !this._fabricDrawingHasLocalChanges) ||
+              this._hasFabricDrawingAuthorityChangeInFlight(saveOwner)) {
+            this._emit('saveDeferred', {
+              path: saveOwner.bframePath,
+              reason: 'fabric-drawing-authority-changed'
+            });
+            return false;
+          }
+          if (attempt < maxAttempts - 1) {
+            continue;
+          }
+          if (this.autoSaveEnabled) this._scheduleAutoSave();
+          this._emit('saveDeferred', {
+            path: saveOwner.bframePath,
+            reason: 'fabric-drawing-authority-changed'
+          });
+          return false;
+        }
         savedData = data;
         savedChangeRevision = attemptChangeRevision;
         savedFabricDrawingRevision = attemptFabricDrawingRevision;
@@ -1803,6 +1840,7 @@ export class ReviewDataManager extends EventTarget {
     this._writeBlockedVersion = null;
     this._writeBlockedVersionDetected = false;
     this._writeBlockedReason = null;
+    this._fabricDrawingBaselineConflict = false;
   }
 
   _resetFabricDrawingPersistenceProvider() {
@@ -2031,7 +2069,11 @@ export class ReviewDataManager extends EventTarget {
     if (this._drawingsV3DiskState.known &&
         latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
       if (confirmDiskObservation) {
+        const diskAdvanced =
+          typeof this._drawingsV3LastObservedDiskFingerprint === 'string' &&
+          this._drawingsV3LastObservedDiskFingerprint !== latestState.fingerprint;
         this._recordDrawingsV3DiskObservation(latestState.fingerprint);
+        if (diskAdvanced) this.clearDrawingsV3BaselineConflict();
       }
       return true;
     }
@@ -2056,7 +2098,11 @@ export class ReviewDataManager extends EventTarget {
       if (this._drawingsV3DiskState.known &&
           latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
         if (confirmDiskObservation) {
+          const diskAdvanced =
+            typeof this._drawingsV3LastObservedDiskFingerprint === 'string' &&
+            this._drawingsV3LastObservedDiskFingerprint !== latestState.fingerprint;
           this._recordDrawingsV3DiskObservation(latestState.fingerprint);
+          if (diskAdvanced) this.clearDrawingsV3BaselineConflict();
         }
         return true;
       }
@@ -2076,8 +2122,10 @@ export class ReviewDataManager extends EventTarget {
         this._writeBlockedReason = 'fabric-drawing-source-refresh-failed';
         return false;
       }
+      this._fabricDrawingAuthorityEpoch += 1;
       if (confirmDiskObservation) {
         this._recordDrawingsV3DiskObservation(latestState.fingerprint);
+        this.clearDrawingsV3BaselineConflict();
       }
       this._markReplacedDrawingsV3Stale(latestState.fingerprint);
       this._drawingsV3DiskState = latestState;
@@ -2100,10 +2148,22 @@ export class ReviewDataManager extends EventTarget {
     const state = captureDrawingsV3DiskState(this._opaqueRootFields || {});
     const isCurrentAuthoritativeRoot =
       state.fingerprint === this._drawingsV3DiskState?.fingerprint;
+    let compatible = null;
+    if (state.present) {
+      try {
+        compatible = this.fabricDrawingPersistenceProvider?.getStatus?.()
+          ?.compatible === true;
+      } catch (_error) {
+        compatible = false;
+      }
+    }
     return {
       present: state.present,
       value: state.value,
       fingerprint: state.fingerprint,
+      compatible,
+      localChanges: this._fabricDrawingHasLocalChanges === true,
+      baselineConflict: this._fabricDrawingBaselineConflict === true,
       stale: !isCurrentAuthoritativeRoot &&
         this._isDrawingsV3FingerprintStale(state.fingerprint)
     };
@@ -2121,9 +2181,79 @@ export class ReviewDataManager extends EventTarget {
     return true;
   }
 
+  /** 권위를 비교할 수 없는 협업 baseline 충돌 동안 comment-only 저장을 막는다. */
+  markDrawingsV3BaselineConflict() {
+    const changed = !this._fabricDrawingBaselineConflict;
+    this._fabricDrawingBaselineConflict = true;
+    if (changed) {
+      this._fabricDrawingAuthorityEpoch += 1;
+      this._cancelAutoSave();
+    }
+    return changed;
+  }
+
+  /** 인과 root 적용·실제 Fabric 저장·파일 확인으로 baseline 충돌이 해소됐다. */
+  clearDrawingsV3BaselineConflict() {
+    const changed = this._fabricDrawingBaselineConflict;
+    this._fabricDrawingBaselineConflict = false;
+    if (changed) this._resumeAutoSaveAfterBaselineConflict();
+    return changed;
+  }
+
+  _resumeAutoSaveAfterBaselineConflict() {
+    const scheduleIfNeeded = () => {
+      if (this.isLoading || !this._isConnected ||
+          this._fabricDrawingBaselineConflict ||
+          this._hasFabricDrawingAuthorityChangeInFlight() || !this.isDirty ||
+          !this.autoSaveEnabled || this._savePromise) {
+        return;
+      }
+      this._scheduleAutoSave();
+    };
+    if (!this._savePromise) {
+      scheduleIfNeeded();
+      return;
+    }
+    Promise.resolve(this._savePromise).finally(() => {
+      queueMicrotask(scheduleIfNeeded);
+    }).catch(() => {});
+  }
+
+  _beginFabricDrawingAuthorityChange(
+    owner = this._captureReviewContextOwner()
+  ) {
+    const contextEpoch = owner?.contextEpoch;
+    if (!Number.isSafeInteger(contextEpoch)) return null;
+    if (this._fabricDrawingAuthorityChangeContextEpoch !== contextEpoch) {
+      this._fabricDrawingAuthorityChangeContextEpoch = contextEpoch;
+      this._fabricDrawingAuthorityChangeInFlight = 0;
+    }
+    this._fabricDrawingAuthorityChangeInFlight += 1;
+    this._fabricDrawingAuthorityEpoch += 1;
+    return contextEpoch;
+  }
+
+  _endFabricDrawingAuthorityChange(contextEpoch) {
+    if (!Number.isSafeInteger(contextEpoch) ||
+        contextEpoch !== this._fabricDrawingAuthorityChangeContextEpoch) return;
+    this._fabricDrawingAuthorityChangeInFlight = Math.max(
+      0,
+      this._fabricDrawingAuthorityChangeInFlight - 1
+    );
+    this._resumeAutoSaveAfterBaselineConflict();
+  }
+
+  _hasFabricDrawingAuthorityChangeInFlight(
+    owner = this._captureSaveOwner()
+  ) {
+    return owner?.contextEpoch === this._fabricDrawingAuthorityChangeContextEpoch &&
+      this._fabricDrawingAuthorityChangeInFlight > 0;
+  }
+
   /** 수락한 외부 인과 버전보다 먼저 시작한 drawingsV3 disk reload를 무효화한다. */
   invalidatePendingDrawingsV3DiskReloadsForExternalSync() {
     this._drawingsV3DiskReloadRequestEpoch += 1;
+    this._fabricDrawingAuthorityEpoch += 1;
   }
 
   /**
@@ -2137,9 +2267,11 @@ export class ReviewDataManager extends EventTarget {
   async applyExternalDrawingsV3(rootValue, options = {}) {
     const present = options.present !== false;
     if (present && rootValue === undefined) return false;
+    let authorityChangeContextEpoch = null;
     try {
       const externalData = present ? { drawingsV3: rootValue } : {};
       const externalState = captureDrawingsV3DiskState(externalData);
+      authorityChangeContextEpoch = this._beginFabricDrawingAuthorityChange();
       // 이 explicit Broadcast보다 먼저 시작한 disk snapshot은 causal winner를
       // 뒤늦게 덮을 수 없도록 reconcile 진입 전에 reload 세대를 무효화한다.
       this.invalidatePendingDrawingsV3DiskReloadsForExternalSync();
@@ -2155,6 +2287,8 @@ export class ReviewDataManager extends EventTarget {
     } catch (error) {
       log.warn('원격 drawingsV3 반영 실패', { error: error.message });
       return false;
+    } finally {
+      this._endFabricDrawingAuthorityChange(authorityChangeContextEpoch);
     }
   }
 
@@ -2173,6 +2307,8 @@ export class ReviewDataManager extends EventTarget {
       reloadRequestEpoch === this._drawingsV3DiskReloadRequestEpoch &&
       this._ownsReviewContext(candidate);
     if (!owner.bframePath) return false;
+    const authorityChangeContextEpoch =
+      this._beginFabricDrawingAuthorityChange(owner);
     try {
       const snapshot = await this._readReviewSnapshot(owner.bframePath);
       if (!ownsReload(owner)) return false;
@@ -2188,6 +2324,8 @@ export class ReviewDataManager extends EventTarget {
     } catch (error) {
       log.warn('drawingsV3 파일 동기화 실패', { error: error.message });
       return false;
+    } finally {
+      this._endFabricDrawingAuthorityChange(authorityChangeContextEpoch);
     }
   }
 
@@ -2290,6 +2428,20 @@ export class ReviewDataManager extends EventTarget {
 
     if (this._writeBlockedReason === 'fabric-drawing-conflict') {
       throw new Error('다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.');
+    }
+
+    if (this._fabricDrawingBaselineConflict &&
+        !this._fabricDrawingHasLocalChanges) {
+      throw new Error(
+        '협업 드로잉 기준이 서로 달라 원본 보호를 위해 저장을 중단했습니다.'
+      );
+    }
+
+    if (this._hasFabricDrawingAuthorityChangeInFlight() &&
+        !this._fabricDrawingHasLocalChanges) {
+      throw new Error(
+        '협업 드로잉 권위 상태가 바뀌는 중이라 원본 보호를 위해 저장을 중단했습니다.'
+      );
     }
 
     if (this._writeBlockedReason === 'fabric-drawing-source-refresh-stale') {
@@ -2422,6 +2574,7 @@ export class ReviewDataManager extends EventTarget {
     const currentRevision = this.fabricDrawingPersistenceProvider?.getRevision?.();
     if (currentRevision === savedRevision) {
       this._fabricDrawingHasLocalChanges = false;
+      this._fabricDrawingBaselineConflict = false;
     }
   }
 
@@ -2572,13 +2725,15 @@ export class ReviewDataManager extends EventTarget {
     if (eventType) {
       this._emit('dataChanged', { event: eventType, data: event });
     }
-    if (scheduleAutoSave && this.autoSaveEnabled && !this._savePromise) {
+    if (scheduleAutoSave && !this.isLoading &&
+        this.autoSaveEnabled && !this._savePromise) {
       this._scheduleAutoSave();
     }
   }
 
   _onFabricDrawingPersistenceChanged(change) {
     if (!this._fabricDrawingProviderLoadedForCurrentReview) return;
+    this._fabricDrawingAuthorityEpoch += 1;
     this._fabricDrawingHasLocalChanges = true;
     this._markDirty({
       eventType: 'fabricDrawingChanged',
@@ -2609,6 +2764,7 @@ export class ReviewDataManager extends EventTarget {
 
     this.autoSaveTimer = setTimeout(async () => {
       if (this.hasUnsavedChanges()) {
+        if (this.isLoading) return;
         log.info('자동 저장 실행');
         await this.save();
       }

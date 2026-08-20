@@ -2571,10 +2571,11 @@ test('failed external drawingsV3 installation retries the same payload instead o
   assert.deepEqual(fabricStore.exportRootValue(), externalFabric);
   const acceptedSnapshot = manager.getDrawingsV3RootSnapshot();
   assert.equal(acceptedSnapshot.stale, false);
+  assert.equal(acceptedSnapshot.compatible, true);
   assert.deepEqual(acceptedSnapshot.value, externalFabric);
 });
 
-test('external future and missing drawingsV3 are adopted opaquely when local Fabric is clean', async () => {
+test('external future, malformed, and missing drawingsV3 are adopted opaquely when local Fabric is clean', async () => {
   const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
 
   for (const [label, externalDrawing, expectedState] of [
@@ -2583,6 +2584,13 @@ test('external future and missing drawingsV3 are adopted opaquely when local Fab
       storageVersion: '8.0.0',
       engine: 'future-engine',
       futurePayload: { preserve: ['exactly'] }
+    }, 'incompatible'],
+    ['malformed', {
+      ...createFabricRoot({
+        documentId: 'fabric-external-malformed',
+        revision: 100
+      }),
+      keyframes: 'invalid-opaque'
     }, 'incompatible'],
     ['missing', undefined, 'ready']
   ]) {
@@ -2629,6 +2637,10 @@ test('external future and missing drawingsV3 are adopted opaquely when local Fab
       assert.equal(fabricStore.exportRootValue().keyframes.length, 0);
     }
     assert.equal(fabricStore.getStatus().state, expectedState);
+    assert.equal(
+      manager.getDrawingsV3RootSnapshot().compatible,
+      externalDrawing === undefined ? null : false
+    );
     manager.disconnect();
   }
 });
@@ -3891,12 +3903,28 @@ test('drawingsV3 disk reload cannot install video A after switching to video B',
   ]);
   const reloadReadStarted = createDeferred();
   const reloadReadA = createDeferred();
+  const savedVideoBRoots = [];
   window.electronAPI = {
     loadReview: async path => structuredClone(roots.get(path) || null),
     loadReviewSnapshot: async path => {
-      assert.equal(path, pathA);
-      reloadReadStarted.resolve();
-      return reloadReadA.promise;
+      if (path === pathA) {
+        reloadReadStarted.resolve();
+        return reloadReadA.promise;
+      }
+      assert.equal(path, pathB);
+      return {
+        data: structuredClone(roots.get(pathB)),
+        versionToken: 'drawings-v3-disk-owner-b-current'
+      };
+    },
+    saveReview: async (path, data) => {
+      assert.equal(path, pathB);
+      savedVideoBRoots.push(structuredClone(data));
+      roots.set(pathB, structuredClone(data));
+      return {
+        success: true,
+        versionToken: 'drawings-v3-disk-owner-b-saved'
+      };
     }
   };
   const manager = new ReviewDataManager({
@@ -3921,6 +3949,14 @@ test('drawingsV3 disk reload cannot install video A after switching to video B',
     }
   }), true);
   assert.deepEqual(fabricStore.exportRootValue(), fabricB);
+  manager.setVersionInfo({ fileName: 'video-b-save-before-a-reload-finishes.mp4' });
+  assert.equal(
+    await manager.save(),
+    true,
+    'an old video A reload must not block a current video B save'
+  );
+  assert.equal(savedVideoBRoots.length, 1);
+  assert.deepEqual(savedVideoBRoots[0].drawingsV3, fabricB);
   importRootValueCalls = 0;
 
   reloadReadA.resolve({
@@ -4149,18 +4185,20 @@ test('a higher-version same-root Broadcast invalidates an older pending disk rel
     actorId: 'same-root-local'
   });
   sync.start();
-  liveblocksManager.sentEvents.length = 0;
-  sync.broadcastCurrentState();
-  const currentRootEvent = liveblocksManager.sentEvents.find(
-    event => event.type === 'FABRIC_DRAWING_ROOT'
+  const currentRootRequest = liveblocksManager.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST_V2'
   );
-  assert.ok(currentRootEvent?.fingerprint);
+  liveblocksManager.sentEvents.length = 0;
+  assert.ok(currentRootRequest?.fingerprint);
 
   const olderReload = manager.reloadDrawingsV3FromDisk();
   await diskReadStarted.promise;
   liveblocksManager.receive({
-    ...currentRootEvent,
+    type: 'FABRIC_DRAWING_ROOT',
     transferId: 'same-root-remote-higher-version',
+    present: true,
+    root: structuredClone(currentFabric),
+    fingerprint: currentRootRequest.fingerprint,
     syncVersion: { clock: 10, actorId: 'same-root-remote' }
   });
   await new Promise(resolve => setImmediate(resolve));
@@ -4296,6 +4334,8 @@ test('Fabric drawing sync requests a stable peer seed after an earlier join broa
         present: true,
         value: structuredClone(this.rootValue),
         fingerprint: `present:${JSON.stringify(this.rootValue)}`,
+        compatible: true,
+        localChanges: false,
         stale: false
       };
     }
@@ -4308,14 +4348,12 @@ test('Fabric drawing sync requests a stable peer seed after an earlier join broa
   }
 
   const latestRoot = createFabricRoot({
-    documentId: 'fabric-document-stable-peer',
+    documentId: 'fabric-document-handshake-shared',
     revision: 12
   });
   const staleRoot = createFabricRoot({
-    documentId: 'fabric-document-joining-peer',
-    // 같은 revision이어도 안정 peer의 첫 publish 버전이 newcomer baseline보다 높아야 한다.
-    // 이 두 root의 wire fingerprint 순서는 stable < joining이라 단순 hash tie-break면 실패한다.
-    revision: 12
+    documentId: 'fabric-document-handshake-shared',
+    revision: 11
   });
   const liveblocksA = new LinkedLiveblocksManager();
   const liveblocksB = new LinkedLiveblocksManager();
@@ -4347,23 +4385,32 @@ test('Fabric drawing sync requests a stable peer seed after an earlier join broa
   await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(
-    liveblocksB.sentEvents.filter(event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST').length,
+    liveblocksB.sentEvents.filter(
+      event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST_V2'
+    ).length,
     1,
     'the joining peer must request one post-subscription seed'
   );
   assert.equal(
-    liveblocksA.sentEvents.filter(event => event.type === 'FABRIC_DRAWING_ROOT').length,
+    liveblocksA.sentEvents.filter(
+      event => event.type === 'FABRIC_DRAWING_ROOT_RESPONSE'
+    ).length,
     1,
     'the stable peer must answer once even before its Others view catches up'
   );
   assert.deepEqual(reviewB.appliedRoots, [latestRoot]);
+  const joiningRequest = structuredClone(
+    liveblocksB.sentEvents.find(event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST_V2')
+  );
   const firstSeedVersion = structuredClone(
-    liveblocksA.sentEvents.find(event => event.type === 'FABRIC_DRAWING_ROOT').syncVersion
+    liveblocksA.sentEvents.find(
+      event => event.type === 'FABRIC_DRAWING_ROOT_RESPONSE'
+    ).syncVersion
   );
   now = 10002;
-  liveblocksB.broadcastEvent({ type: 'FABRIC_DRAWING_ROOT_REQUEST' });
+  liveblocksB.broadcastEvent(joiningRequest);
   const repeatedSeeds = liveblocksA.sentEvents.filter(
-    event => event.type === 'FABRIC_DRAWING_ROOT'
+    event => event.type === 'FABRIC_DRAWING_ROOT_RESPONSE'
   );
   assert.equal(repeatedSeeds.length, 2);
   assert.deepEqual(
@@ -4377,13 +4424,1252 @@ test('Fabric drawing sync requests a stable peer seed after an earlier join broa
   liveblocksA.broadcastEvent({ type: 'FABRIC_DRAWING_ROOT_REQUEST' });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(
-    liveblocksB.sentEvents.filter(event => event.type === 'FABRIC_DRAWING_ROOT').length,
+    liveblocksB.sentEvents.filter(
+      event => event.type === 'FABRIC_DRAWING_ROOT_RESPONSE'
+    ).length,
     0,
     'a newly joined peer must not seed its potentially stale root during stabilization'
   );
 
   syncB.stop();
   syncA.stop();
+});
+
+test('Fabric drawing sync retries once after simultaneous fresh joins and fences stale retry timers', async () => {
+  const { FabricDrawingSync } = await import(
+    '../../renderer/scripts/modules/fabric-drawing-sync.js'
+  );
+  let now = 0;
+
+  class FakeSeedRetryScheduler {
+    constructor() {
+      this.tasks = [];
+    }
+
+    schedule(callback, delay) {
+      const task = { callback, delay, cancelled: false };
+      this.tasks.push(task);
+      return task;
+    }
+
+    cancel(task) {
+      if (task) task.cancelled = true;
+    }
+  }
+
+  class LinkedLiveblocksManager extends EventTarget {
+    constructor(connectionId) {
+      super();
+      this.connectionId = connectionId;
+      this.peer = null;
+      this.sentEvents = [];
+    }
+
+    getSelf() {
+      return { connectionId: this.connectionId };
+    }
+
+    hasOtherCollaborators() {
+      return Boolean(this.peer);
+    }
+
+    broadcastEvent(event) {
+      this.sentEvents.push(structuredClone(event));
+      this.peer?.dispatchEvent(new CustomEvent('broadcastReceived', {
+        detail: { event: structuredClone(event) }
+      }));
+    }
+  }
+
+  class StubReviewDataManager extends EventTarget {
+    constructor(rootValue, path, {
+      present = rootValue !== undefined,
+      compatible = present,
+      localChanges = false
+    } = {}) {
+      super();
+      this.currentBframePath = path;
+      this.present = present;
+      this.compatible = present ? compatible : null;
+      this.localChanges = localChanges;
+      this.baselineConflict = false;
+      this.rootValue = present ? structuredClone(rootValue) : undefined;
+      this.appliedRoots = [];
+      this.invalidatedReloads = 0;
+    }
+
+    getDrawingsV3RootSnapshot() {
+      return {
+        present: this.present,
+        value: this.present ? structuredClone(this.rootValue) : undefined,
+        fingerprint: this.present
+          ? `present:${JSON.stringify(this.rootValue)}`
+          : 'missing',
+        compatible: this.compatible,
+        localChanges: this.localChanges,
+        baselineConflict: this.baselineConflict,
+        stale: false
+      };
+    }
+
+    markDrawingsV3BaselineConflict() {
+      this.baselineConflict = true;
+      return true;
+    }
+
+    clearDrawingsV3BaselineConflict() {
+      const changed = this.baselineConflict;
+      this.baselineConflict = false;
+      return changed;
+    }
+
+    invalidatePendingDrawingsV3DiskReloadsForExternalSync() {
+      this.invalidatedReloads += 1;
+    }
+
+    async applyExternalDrawingsV3(rootValue, { present = true } = {}) {
+      this.appliedRoots.push(present ? structuredClone(rootValue) : undefined);
+      if (this.localChanges) return false;
+      this.present = present;
+      this.compatible = present;
+      this.rootValue = present ? structuredClone(rootValue) : undefined;
+      return true;
+    }
+  }
+
+  const createSync = ({ liveblocksManager, reviewDataManager, scheduler, actorId }) =>
+    new FabricDrawingSync({
+      liveblocksManager,
+      reviewDataManager,
+      actorId,
+      now: () => now,
+      scheduleSeedRetry: (callback, delay) => scheduler.schedule(callback, delay),
+      cancelSeedRetry: timer => scheduler.cancel(timer)
+    });
+  const requestCount = manager => manager.sentEvents.filter(
+    event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST_V2'
+  ).length;
+  const rootCount = manager => manager.sentEvents.filter(
+    event => event.type === 'FABRIC_DRAWING_ROOT' ||
+      event.type === 'FABRIC_DRAWING_ROOT_RESPONSE'
+  ).length;
+  const flushApplyQueue = async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+  };
+
+  const latestRoot = createFabricRoot({
+    documentId: 'fabric-simultaneous-shared',
+    revision: 2
+  });
+  const staleRoot = createFabricRoot({
+    documentId: 'fabric-simultaneous-shared',
+    revision: 1
+  });
+  const simultaneousScheduler = new FakeSeedRetryScheduler();
+  const liveblocksA = new LinkedLiveblocksManager('actor-a');
+  const liveblocksB = new LinkedLiveblocksManager('actor-b');
+  liveblocksA.peer = liveblocksB;
+  liveblocksB.peer = liveblocksA;
+  const reviewA = new StubReviewDataManager(latestRoot, 'C:/reviews/simultaneous.bframe');
+  const reviewB = new StubReviewDataManager(staleRoot, 'C:/reviews/simultaneous.bframe');
+  const syncA = createSync({
+    liveblocksManager: liveblocksA,
+    reviewDataManager: reviewA,
+    scheduler: simultaneousScheduler,
+    actorId: 'actor-a'
+  });
+  const syncB = createSync({
+    liveblocksManager: liveblocksB,
+    reviewDataManager: reviewB,
+    scheduler: simultaneousScheduler,
+    actorId: 'actor-b'
+  });
+
+  syncA.start();
+  syncB.start();
+  await flushApplyQueue();
+  assert.equal(requestCount(liveblocksA), 1);
+  assert.equal(requestCount(liveblocksB), 1);
+  assert.equal(rootCount(liveblocksA) + rootCount(liveblocksB), 0);
+  assert.notDeepEqual(reviewA.rootValue, reviewB.rootValue);
+  assert.equal(reviewA.baselineConflict, true);
+  assert.equal(reviewB.baselineConflict, true);
+  assert.equal(simultaneousScheduler.tasks.length, 2);
+  assert.deepEqual(
+    simultaneousScheduler.tasks.map(task => task.delay),
+    [10001, 10001]
+  );
+
+  reviewB.dispatchEvent(new CustomEvent('saved', {
+    detail: { path: reviewB.currentBframePath }
+  }));
+  await flushApplyQueue();
+  assert.equal(
+    rootCount(liveblocksA) + rootCount(liveblocksB),
+    0,
+    'an unrelated save before stabilization must not publish the unchanged stale baseline'
+  );
+  assert.deepEqual(reviewA.rootValue, latestRoot);
+
+  now = 10001;
+  simultaneousScheduler.tasks[0].callback();
+  await flushApplyQueue();
+  simultaneousScheduler.tasks[1].callback();
+  await flushApplyQueue();
+
+  assert.equal(requestCount(liveblocksA), 2, 'A must retry only once after stabilization');
+  assert.equal(requestCount(liveblocksB), 2, 'B must retry only once after stabilization');
+  assert.equal(liveblocksA.sentEvents.filter(
+    event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST_V2'
+  ).at(-1).stabilizationRetry, true);
+  assert.equal(liveblocksB.sentEvents.filter(
+    event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST_V2'
+  ).at(-1).stabilizationRetry, true);
+  assert.deepEqual(reviewA.rootValue, latestRoot);
+  assert.deepEqual(reviewB.rootValue, latestRoot);
+  assert.deepEqual(syncA._currentRootVersion, syncB._currentRootVersion);
+  assert.equal(reviewA.baselineConflict, false);
+  assert.equal(reviewB.baselineConflict, false);
+  const requestsAfterConvergence = requestCount(liveblocksA) + requestCount(liveblocksB);
+  simultaneousScheduler.tasks.forEach(task => task.callback());
+  await flushApplyQueue();
+  assert.equal(requestCount(liveblocksA) + requestCount(liveblocksB), requestsAfterConvergence);
+  reviewB.dispatchEvent(new CustomEvent('saved', {
+    detail: { path: reviewB.currentBframePath }
+  }));
+  await flushApplyQueue();
+  assert.deepEqual(reviewA.rootValue, latestRoot, 'a later save must not restore the stale baseline');
+  syncB.stop();
+  syncA.stop();
+
+  const preserveMissingAgainstUnverifiedPresentRoot = async ({ missingStartsFirst }) => {
+    const scheduler = new FakeSeedRetryScheduler();
+    const liveblocksMissing = new LinkedLiveblocksManager('actor-missing');
+    const liveblocksPresent = new LinkedLiveblocksManager('actor-present');
+    liveblocksMissing.peer = liveblocksPresent;
+    liveblocksPresent.peer = liveblocksMissing;
+    const reviewMissing = new StubReviewDataManager(
+      undefined,
+      'C:/reviews/simultaneous-tombstone.bframe',
+      { present: false }
+    );
+    const reviewPresent = new StubReviewDataManager(
+      createFabricRoot({
+        documentId: 'fabric-simultaneous-stale-present',
+        revision: 12
+      }),
+      'C:/reviews/simultaneous-tombstone.bframe'
+    );
+    const syncMissing = createSync({
+      liveblocksManager: liveblocksMissing,
+      reviewDataManager: reviewMissing,
+      scheduler,
+      actorId: 'actor-missing'
+    });
+    const syncPresent = createSync({
+      liveblocksManager: liveblocksPresent,
+      reviewDataManager: reviewPresent,
+      scheduler,
+      actorId: 'actor-present'
+    });
+
+    now = 0;
+    if (missingStartsFirst) {
+      syncMissing.start();
+      syncPresent.start();
+    } else {
+      syncPresent.start();
+      syncMissing.start();
+    }
+    await flushApplyQueue();
+    assert.equal(rootCount(liveblocksMissing) + rootCount(liveblocksPresent), 0);
+    assert.equal(reviewMissing.baselineConflict, true);
+    assert.equal(reviewPresent.baselineConflict, true);
+    now = 10001;
+    for (const task of scheduler.tasks) {
+      task.callback();
+      await flushApplyQueue();
+    }
+    assert.equal(reviewMissing.getDrawingsV3RootSnapshot().present, false);
+    assert.equal(reviewPresent.getDrawingsV3RootSnapshot().present, true);
+    assert.equal(rootCount(liveblocksMissing) + rootCount(liveblocksPresent), 0);
+    syncPresent.stop();
+    syncMissing.stop();
+  };
+  await preserveMissingAgainstUnverifiedPresentRoot({ missingStartsFirst: true });
+  await preserveMissingAgainstUnverifiedPresentRoot({ missingStartsFirst: false });
+
+  const preserveOpaqueAgainstUnverifiedSupportedRoot = async ({ opaqueStartsFirst }) => {
+    const scheduler = new FakeSeedRetryScheduler();
+    const liveblocksOpaque = new LinkedLiveblocksManager('actor-opaque');
+    const liveblocksSupported = new LinkedLiveblocksManager('actor-supported');
+    liveblocksOpaque.peer = liveblocksSupported;
+    liveblocksSupported.peer = liveblocksOpaque;
+    const opaqueRoot = {
+      storageSchema: 'baeframe-fabric-scenes',
+      storageVersion: '8.0.0',
+      engine: 'fabric-future',
+      futurePayload: { preserve: 'byte-exact' }
+    };
+    const reviewOpaque = new StubReviewDataManager(
+      opaqueRoot,
+      'C:/reviews/simultaneous-opaque.bframe',
+      { compatible: false }
+    );
+    const reviewSupported = new StubReviewDataManager(
+      createFabricRoot({
+        documentId: 'fabric-simultaneous-stale-supported',
+        revision: 12
+      }),
+      'C:/reviews/simultaneous-opaque.bframe'
+    );
+    const syncOpaque = createSync({
+      liveblocksManager: liveblocksOpaque,
+      reviewDataManager: reviewOpaque,
+      scheduler,
+      actorId: 'actor-opaque'
+    });
+    const syncSupported = createSync({
+      liveblocksManager: liveblocksSupported,
+      reviewDataManager: reviewSupported,
+      scheduler,
+      actorId: 'actor-supported'
+    });
+
+    now = 0;
+    if (opaqueStartsFirst) {
+      syncOpaque.start();
+      syncSupported.start();
+    } else {
+      syncSupported.start();
+      syncOpaque.start();
+    }
+    await flushApplyQueue();
+    assert.equal(rootCount(liveblocksOpaque) + rootCount(liveblocksSupported), 0);
+    now = 10001;
+    for (const task of scheduler.tasks) {
+      task.callback();
+      await flushApplyQueue();
+    }
+    assert.deepEqual(reviewOpaque.rootValue, opaqueRoot);
+    assert.equal(reviewSupported.rootValue.documentId, 'fabric-simultaneous-stale-supported');
+    assert.equal(rootCount(liveblocksOpaque) + rootCount(liveblocksSupported), 0);
+    syncSupported.stop();
+    syncOpaque.stop();
+  };
+  await preserveOpaqueAgainstUnverifiedSupportedRoot({ opaqueStartsFirst: true });
+  await preserveOpaqueAgainstUnverifiedSupportedRoot({ opaqueStartsFirst: false });
+
+  const preserveMalformedOpaqueAgainstSupportedRoot = async ({ opaqueStartsFirst }) => {
+    const scheduler = new FakeSeedRetryScheduler();
+    const liveblocksOpaque = new LinkedLiveblocksManager('actor-malformed-opaque');
+    const liveblocksSupported = new LinkedLiveblocksManager('actor-valid-supported');
+    liveblocksOpaque.peer = liveblocksSupported;
+    liveblocksSupported.peer = liveblocksOpaque;
+    const malformedOpaqueRoot = {
+      ...createFabricRoot({
+        documentId: 'fabric-malformed-shared',
+        revision: 100
+      }),
+      keyframes: 'invalid-opaque'
+    };
+    const supportedRoot = createFabricRoot({
+      documentId: 'fabric-malformed-shared',
+      revision: 1
+    });
+    const reviewOpaque = new StubReviewDataManager(
+      malformedOpaqueRoot,
+      'C:/reviews/simultaneous-malformed.bframe',
+      { compatible: false }
+    );
+    const reviewSupported = new StubReviewDataManager(
+      supportedRoot,
+      'C:/reviews/simultaneous-malformed.bframe'
+    );
+    const syncOpaque = createSync({
+      liveblocksManager: liveblocksOpaque,
+      reviewDataManager: reviewOpaque,
+      scheduler,
+      actorId: 'actor-malformed-opaque'
+    });
+    const syncSupported = createSync({
+      liveblocksManager: liveblocksSupported,
+      reviewDataManager: reviewSupported,
+      scheduler,
+      actorId: 'actor-valid-supported'
+    });
+
+    now = 0;
+    if (opaqueStartsFirst) {
+      syncOpaque.start();
+      syncSupported.start();
+    } else {
+      syncSupported.start();
+      syncOpaque.start();
+    }
+    await flushApplyQueue();
+    now = 10001;
+    for (const task of scheduler.tasks) {
+      task.callback();
+      await flushApplyQueue();
+    }
+    assert.deepEqual(reviewOpaque.rootValue, malformedOpaqueRoot);
+    assert.deepEqual(reviewSupported.rootValue, supportedRoot);
+    assert.equal(rootCount(liveblocksOpaque) + rootCount(liveblocksSupported), 0);
+    syncSupported.stop();
+    syncOpaque.stop();
+  };
+  await preserveMalformedOpaqueAgainstSupportedRoot({ opaqueStartsFirst: true });
+  await preserveMalformedOpaqueAgainstSupportedRoot({ opaqueStartsFirst: false });
+
+  const convergeSameDocumentAfterEarlyEdit = async ({ reverseRetryOrder }) => {
+    const scheduler = new FakeSeedRetryScheduler();
+    const liveblocksHigh = new LinkedLiveblocksManager('actor-high-baseline');
+    const liveblocksEdited = new LinkedLiveblocksManager('actor-early-edit');
+    liveblocksHigh.peer = liveblocksEdited;
+    liveblocksEdited.peer = liveblocksHigh;
+    const highRoot = createFabricRoot({
+      documentId: 'fabric-early-edit-shared',
+      revision: 10
+    });
+    const lowRoot = createFabricRoot({
+      documentId: 'fabric-early-edit-shared',
+      revision: 1
+    });
+    const editedRoot = createFabricRoot({
+      documentId: 'fabric-early-edit-shared',
+      revision: 2
+    });
+    const reviewHigh = new StubReviewDataManager(
+      highRoot,
+      'C:/reviews/simultaneous-early-edit.bframe'
+    );
+    const reviewEdited = new StubReviewDataManager(
+      lowRoot,
+      'C:/reviews/simultaneous-early-edit.bframe'
+    );
+    const syncHigh = createSync({
+      liveblocksManager: liveblocksHigh,
+      reviewDataManager: reviewHigh,
+      scheduler,
+      actorId: 'actor-high-baseline'
+    });
+    const syncEdited = createSync({
+      liveblocksManager: liveblocksEdited,
+      reviewDataManager: reviewEdited,
+      scheduler,
+      actorId: 'actor-early-edit'
+    });
+
+    now = 0;
+    syncHigh.start();
+    syncEdited.start();
+    reviewEdited.rootValue = structuredClone(editedRoot);
+    reviewEdited.dispatchEvent(new CustomEvent('saved', {
+      detail: { path: reviewEdited.currentBframePath }
+    }));
+    await flushApplyQueue();
+    assert.deepEqual(reviewHigh.rootValue, highRoot);
+    assert.deepEqual(reviewEdited.rootValue, editedRoot);
+
+    now = 10001;
+    const retryTasks = reverseRetryOrder
+      ? [...scheduler.tasks].reverse()
+      : scheduler.tasks;
+    for (const task of retryTasks) {
+      task.callback();
+      await flushApplyQueue();
+    }
+    assert.deepEqual(reviewHigh.rootValue, editedRoot);
+    assert.deepEqual(reviewEdited.rootValue, editedRoot);
+    syncEdited.stop();
+    syncHigh.stop();
+  };
+  await convergeSameDocumentAfterEarlyEdit({ reverseRetryOrder: false });
+  await convergeSameDocumentAfterEarlyEdit({ reverseRetryOrder: true });
+
+  const dirtyScheduler = new FakeSeedRetryScheduler();
+  const liveblocksStableDirty = new LinkedLiveblocksManager('actor-stable-dirty');
+  const liveblocksLocalDirty = new LinkedLiveblocksManager('actor-local-dirty');
+  liveblocksStableDirty.peer = liveblocksLocalDirty;
+  liveblocksLocalDirty.peer = liveblocksStableDirty;
+  const stableDirtyRoot = createFabricRoot({
+    documentId: 'fabric-startup-local-dirty',
+    revision: 10
+  });
+  const localDirtyRoot = createFabricRoot({
+    documentId: 'fabric-startup-local-dirty',
+    revision: 2
+  });
+  const reviewStableDirty = new StubReviewDataManager(
+    stableDirtyRoot,
+    'C:/reviews/startup-local-dirty.bframe'
+  );
+  const reviewLocalDirty = new StubReviewDataManager(
+    localDirtyRoot,
+    'C:/reviews/startup-local-dirty.bframe',
+    { localChanges: true }
+  );
+  const syncStableDirty = createSync({
+    liveblocksManager: liveblocksStableDirty,
+    reviewDataManager: reviewStableDirty,
+    scheduler: dirtyScheduler,
+    actorId: 'actor-stable-dirty'
+  });
+  const syncLocalDirty = createSync({
+    liveblocksManager: liveblocksLocalDirty,
+    reviewDataManager: reviewLocalDirty,
+    scheduler: dirtyScheduler,
+    actorId: 'actor-local-dirty'
+  });
+  now = 0;
+  syncStableDirty.start();
+  now = 10001;
+  syncLocalDirty.start();
+  await flushApplyQueue();
+  assert.deepEqual(reviewLocalDirty.rootValue, localDirtyRoot);
+  assert.ok(syncLocalDirty._pendingExternalRoot);
+  assert.equal(syncLocalDirty.broadcastCurrentState(), false);
+  reviewLocalDirty.localChanges = false;
+  reviewLocalDirty.dispatchEvent(new CustomEvent('saved', {
+    detail: { path: reviewLocalDirty.currentBframePath }
+  }));
+  await flushApplyQueue();
+  assert.equal(rootCount(liveblocksLocalDirty), 1);
+  assert.deepEqual(reviewStableDirty.rootValue, localDirtyRoot);
+  assert.deepEqual(reviewLocalDirty.rootValue, localDirtyRoot);
+  assert.equal(syncLocalDirty._pendingExternalRoot, null);
+  syncLocalDirty.stop();
+  syncStableDirty.stop();
+
+  const dirtyResponseScheduler = new FakeSeedRetryScheduler();
+  const liveblocksDirtyResponder = new LinkedLiveblocksManager('dirty-responder');
+  const liveblocksDirtyRequester = new LinkedLiveblocksManager('dirty-requester');
+  liveblocksDirtyResponder.peer = liveblocksDirtyRequester;
+  liveblocksDirtyRequester.peer = liveblocksDirtyResponder;
+  const dirtyResponseRoot = createFabricRoot({
+    documentId: 'fabric-dirty-response',
+    revision: 2
+  });
+  const dirtyRequestRoot = createFabricRoot({
+    documentId: 'fabric-dirty-response',
+    revision: 1
+  });
+  const reviewDirtyResponder = new StubReviewDataManager(
+    dirtyResponseRoot,
+    'C:/reviews/dirty-response.bframe',
+    { localChanges: true }
+  );
+  const reviewDirtyRequester = new StubReviewDataManager(
+    dirtyRequestRoot,
+    'C:/reviews/dirty-response.bframe'
+  );
+  const syncDirtyResponder = createSync({
+    liveblocksManager: liveblocksDirtyResponder,
+    reviewDataManager: reviewDirtyResponder,
+    scheduler: dirtyResponseScheduler,
+    actorId: 'dirty-responder'
+  });
+  const syncDirtyRequester = createSync({
+    liveblocksManager: liveblocksDirtyRequester,
+    reviewDataManager: reviewDirtyRequester,
+    scheduler: dirtyResponseScheduler,
+    actorId: 'dirty-requester'
+  });
+  now = 0;
+  syncDirtyResponder.start();
+  syncDirtyRequester.start();
+  now = 10001;
+  dirtyResponseScheduler.tasks[1].callback();
+  await flushApplyQueue();
+  assert.equal(liveblocksDirtyResponder.sentEvents.filter(
+    event => event.type === 'FABRIC_DRAWING_ROOT_RESPONSE'
+  ).length, 1);
+  reviewDirtyResponder.localChanges = false;
+  reviewDirtyResponder.dispatchEvent(new CustomEvent('saved', {
+    detail: { path: reviewDirtyResponder.currentBframePath }
+  }));
+  await flushApplyQueue();
+  const confirmedDirtySave = liveblocksDirtyResponder.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
+  assert.equal(confirmedDirtySave.syncVersion.actorId, 'dirty-responder');
+  assert.ok(confirmedDirtySave.syncVersion.clock > 2);
+  syncDirtyRequester.stop();
+  syncDirtyResponder.stop();
+
+  const observedClockScheduler = new FakeSeedRetryScheduler();
+  const liveblocksObservedClock = new LinkedLiveblocksManager('observed-clock-peer');
+  const liveblocksRawLatest = new LinkedLiveblocksManager('raw-latest-peer');
+  liveblocksObservedClock.peer = liveblocksRawLatest;
+  liveblocksRawLatest.peer = liveblocksObservedClock;
+  const observedInitialRoot = createFabricRoot({
+    documentId: 'fabric-observed-clock-shared',
+    revision: 10
+  });
+  const observedLowerRoot = createFabricRoot({
+    documentId: 'fabric-observed-clock-shared',
+    revision: 8
+  });
+  const observedLocalEdit = createFabricRoot({
+    documentId: 'fabric-observed-clock-shared',
+    revision: 11
+  });
+  const reviewObservedClock = new StubReviewDataManager(
+    observedInitialRoot,
+    'C:/reviews/observed-clock-raw-version.bframe'
+  );
+  const reviewRawLatest = new StubReviewDataManager(
+    observedInitialRoot,
+    'C:/reviews/observed-clock-raw-version.bframe'
+  );
+  const syncObservedClock = createSync({
+    liveblocksManager: liveblocksObservedClock,
+    reviewDataManager: reviewObservedClock,
+    scheduler: observedClockScheduler,
+    actorId: 'observed-clock-peer'
+  });
+  const syncRawLatest = createSync({
+    liveblocksManager: liveblocksRawLatest,
+    reviewDataManager: reviewRawLatest,
+    scheduler: observedClockScheduler,
+    actorId: 'raw-latest-peer'
+  });
+  now = 0;
+  syncObservedClock.start();
+  liveblocksObservedClock.dispatchEvent(new CustomEvent('broadcastReceived', {
+    detail: {
+      event: {
+        type: 'FABRIC_DRAWING_ROOT',
+        transferId: 'observed-clock-header',
+        present: true,
+        fingerprint: 'observed-clock-only',
+        syncVersion: { clock: 100, actorId: 'remote-clock-peer' },
+        chunkCount: 1
+      }
+    }
+  }));
+  reviewObservedClock.rootValue = structuredClone(observedLowerRoot);
+  now = 10001;
+  syncRawLatest.start();
+  await flushApplyQueue();
+  assert.deepEqual(
+    reviewObservedClock.rootValue,
+    observedInitialRoot,
+    'an observed Lamport clock must not make a lower raw revision win'
+  );
+  assert.deepEqual(reviewRawLatest.rootValue, observedInitialRoot);
+  reviewObservedClock.rootValue = structuredClone(observedLocalEdit);
+  reviewObservedClock.dispatchEvent(new CustomEvent('saved', {
+    detail: { path: reviewObservedClock.currentBframePath }
+  }));
+  await flushApplyQueue();
+  const localAfterObservedClock = liveblocksObservedClock.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
+  assert.ok(localAfterObservedClock.syncVersion.clock > 100);
+  assert.equal(localAfterObservedClock.syncVersion.actorId, 'observed-clock-peer');
+  assert.deepEqual(reviewRawLatest.rootValue, observedLocalEdit);
+  syncRawLatest.stop();
+  syncObservedClock.stop();
+
+  const preserveDifferentDocumentBaselines = async ({ newDocumentStartsFirst }) => {
+    const scheduler = new FakeSeedRetryScheduler();
+    const liveblocksNew = new LinkedLiveblocksManager('actor-new-document');
+    const liveblocksOld = new LinkedLiveblocksManager('actor-old-document');
+    liveblocksNew.peer = liveblocksOld;
+    liveblocksOld.peer = liveblocksNew;
+    const newDocumentRoot = createFabricRoot({
+      documentId: 'fabric-after-reset',
+      revision: 1
+    });
+    const oldDocumentRoot = createFabricRoot({
+      documentId: 'fabric-before-reset',
+      revision: 12
+    });
+    const reviewNew = new StubReviewDataManager(
+      newDocumentRoot,
+      'C:/reviews/simultaneous-reset.bframe'
+    );
+    const reviewOld = new StubReviewDataManager(
+      oldDocumentRoot,
+      'C:/reviews/simultaneous-reset.bframe'
+    );
+    const syncNew = createSync({
+      liveblocksManager: liveblocksNew,
+      reviewDataManager: reviewNew,
+      scheduler,
+      actorId: 'actor-new-document'
+    });
+    const syncOld = createSync({
+      liveblocksManager: liveblocksOld,
+      reviewDataManager: reviewOld,
+      scheduler,
+      actorId: 'actor-old-document'
+    });
+
+    now = 0;
+    if (newDocumentStartsFirst) {
+      syncNew.start();
+      syncOld.start();
+    } else {
+      syncOld.start();
+      syncNew.start();
+    }
+    await flushApplyQueue();
+    syncOld.broadcastCurrentState();
+    await flushApplyQueue();
+    assert.equal(
+      rootCount(liveblocksOld),
+      0,
+      'an explicit force seed must not publish the unverified startup baseline'
+    );
+    now = 10001;
+    for (const task of scheduler.tasks) {
+      task.callback();
+      await flushApplyQueue();
+    }
+    assert.deepEqual(reviewNew.rootValue, newDocumentRoot);
+    assert.deepEqual(reviewOld.rootValue, oldDocumentRoot);
+    assert.equal(rootCount(liveblocksNew) + rootCount(liveblocksOld), 0);
+
+    reviewOld.dispatchEvent(new CustomEvent('saved', {
+      detail: { path: reviewOld.currentBframePath }
+    }));
+    await flushApplyQueue();
+    assert.equal(
+      rootCount(liveblocksOld),
+      0,
+      'an unrelated save must not promote an incomparable pre-reset baseline'
+    );
+    assert.deepEqual(reviewNew.rootValue, newDocumentRoot);
+
+    const editedNewDocumentRoot = createFabricRoot({
+      documentId: 'fabric-after-reset',
+      revision: 2
+    });
+    reviewNew.rootValue = structuredClone(editedNewDocumentRoot);
+    reviewNew.dispatchEvent(new CustomEvent('saved', {
+      detail: { path: reviewNew.currentBframePath }
+    }));
+    await flushApplyQueue();
+    assert.equal(rootCount(liveblocksNew), 1);
+    assert.deepEqual(
+      reviewOld.rootValue,
+      editedNewDocumentRoot,
+      'a real Fabric edit after startup must still publish and converge'
+    );
+    syncOld.stop();
+    syncNew.stop();
+  };
+  await preserveDifferentDocumentBaselines({ newDocumentStartsFirst: true });
+  await preserveDifferentDocumentBaselines({ newDocumentStartsFirst: false });
+
+  const acceptedScheduler = new FakeSeedRetryScheduler();
+  const liveblocksStable = new LinkedLiveblocksManager('actor-stable');
+  const liveblocksJoining = new LinkedLiveblocksManager('actor-joining');
+  liveblocksStable.peer = liveblocksJoining;
+  liveblocksJoining.peer = liveblocksStable;
+  const reviewStable = new StubReviewDataManager(latestRoot, 'C:/reviews/accepted.bframe');
+  const reviewJoining = new StubReviewDataManager(staleRoot, 'C:/reviews/accepted.bframe');
+  const syncStable = createSync({
+    liveblocksManager: liveblocksStable,
+    reviewDataManager: reviewStable,
+    scheduler: acceptedScheduler,
+    actorId: 'actor-stable'
+  });
+  const syncJoining = createSync({
+    liveblocksManager: liveblocksJoining,
+    reviewDataManager: reviewJoining,
+    scheduler: acceptedScheduler,
+    actorId: 'actor-joining'
+  });
+  now = 0;
+  syncStable.start();
+  now = 10001;
+  syncJoining.start();
+  await flushApplyQueue();
+  assert.deepEqual(reviewJoining.rootValue, latestRoot);
+  const joiningRetry = acceptedScheduler.tasks[1];
+  assert.equal(
+    joiningRetry.cancelled,
+    false,
+    'every live session must retain its one stabilization retry for multiparty convergence'
+  );
+  const joiningRequests = requestCount(liveblocksJoining);
+  const stableRoots = rootCount(liveblocksStable);
+  joiningRetry.callback();
+  await flushApplyQueue();
+  assert.equal(requestCount(liveblocksJoining), joiningRequests + 1);
+  assert.equal(
+    rootCount(liveblocksStable),
+    stableRoots,
+    'an equal accepted root must not trigger a redundant retry response'
+  );
+  joiningRetry.callback();
+  assert.equal(requestCount(liveblocksJoining), joiningRequests + 1);
+  syncJoining.stop();
+  syncStable.stop();
+
+  class MeshLiveblocksManager extends EventTarget {
+    constructor(connectionId) {
+      super();
+      this.connectionId = connectionId;
+      this.peers = [];
+      this.sentEvents = [];
+    }
+
+    getSelf() {
+      return { connectionId: this.connectionId };
+    }
+
+    hasOtherCollaborators() {
+      return this.peers.length > 0;
+    }
+
+    broadcastEvent(event) {
+      this.sentEvents.push(structuredClone(event));
+      for (const peer of this.peers) {
+        peer.receive(event);
+      }
+    }
+
+    receive(event) {
+      this.dispatchEvent(new CustomEvent('broadcastReceived', {
+        detail: { event: structuredClone(event) }
+      }));
+    }
+  }
+
+  const meshScheduler = new FakeSeedRetryScheduler();
+  const meshLiveblocksA = new MeshLiveblocksManager('mesh-a');
+  const meshLiveblocksB = new MeshLiveblocksManager('mesh-b');
+  const meshLiveblocksC = new MeshLiveblocksManager('mesh-c');
+  meshLiveblocksA.peers = [meshLiveblocksB, meshLiveblocksC];
+  meshLiveblocksB.peers = [meshLiveblocksA, meshLiveblocksC];
+  meshLiveblocksC.peers = [meshLiveblocksA, meshLiveblocksB];
+  const meshHighRoot = createFabricRoot({
+    documentId: 'fabric-mesh-shared',
+    revision: 10
+  });
+  const meshLowRoot = createFabricRoot({
+    documentId: 'fabric-mesh-shared',
+    revision: 1
+  });
+  const meshReviewA = new StubReviewDataManager(
+    meshHighRoot,
+    'C:/reviews/simultaneous-mesh.bframe'
+  );
+  const meshReviewB = new StubReviewDataManager(
+    meshLowRoot,
+    'C:/reviews/simultaneous-mesh.bframe'
+  );
+  const meshReviewC = new StubReviewDataManager(
+    meshLowRoot,
+    'C:/reviews/simultaneous-mesh.bframe'
+  );
+  const meshSyncA = createSync({
+    liveblocksManager: meshLiveblocksA,
+    reviewDataManager: meshReviewA,
+    scheduler: meshScheduler,
+    actorId: 'mesh-a'
+  });
+  const meshSyncB = createSync({
+    liveblocksManager: meshLiveblocksB,
+    reviewDataManager: meshReviewB,
+    scheduler: meshScheduler,
+    actorId: 'mesh-b'
+  });
+  const meshSyncC = createSync({
+    liveblocksManager: meshLiveblocksC,
+    reviewDataManager: meshReviewC,
+    scheduler: meshScheduler,
+    actorId: 'mesh-c'
+  });
+  now = 0;
+  meshSyncA.start();
+  meshSyncB.start();
+  meshSyncC.start();
+  await flushApplyQueue();
+  const meshLowRequest = meshLiveblocksB.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST_V2'
+  );
+  const meshLowSeed = {
+    type: 'FABRIC_DRAWING_ROOT',
+    transferId: 'mesh-low-seed',
+    present: true,
+    root: structuredClone(meshLowRoot),
+    fingerprint: meshLowRequest.fingerprint,
+    syncVersion: structuredClone(meshLowRequest.syncVersion)
+  };
+  meshLiveblocksB.receive(meshLowSeed);
+  meshLiveblocksC.receive(meshLowSeed);
+  await flushApplyQueue();
+
+  now = 10001;
+  for (const task of meshScheduler.tasks) {
+    task.callback();
+    await flushApplyQueue();
+  }
+  assert.deepEqual(meshReviewA.rootValue, meshHighRoot);
+  assert.deepEqual(meshReviewB.rootValue, meshHighRoot);
+  assert.deepEqual(meshReviewC.rootValue, meshHighRoot);
+  assert.deepEqual(
+    [meshLiveblocksA, meshLiveblocksB, meshLiveblocksC].map(requestCount),
+    [2, 2, 2],
+    'an accepted same-root seed must not cancel another peer\'s stabilization request'
+  );
+  const meshRequestsAfterRetry = [meshLiveblocksA, meshLiveblocksB, meshLiveblocksC]
+    .map(requestCount);
+  meshScheduler.tasks.forEach(task => task.callback());
+  assert.deepEqual(
+    [meshLiveblocksA, meshLiveblocksB, meshLiveblocksC].map(requestCount),
+    meshRequestsAfterRetry
+  );
+  meshSyncC.stop();
+  meshSyncB.stop();
+  meshSyncA.stop();
+
+  const convergeComparablePairWithoutOverwritingThird = async ({ reverseRetryOrder }) => {
+    const scheduler = new FakeSeedRetryScheduler();
+    const liveblocksHigh = new MeshLiveblocksManager('target-high');
+    const liveblocksLow = new MeshLiveblocksManager('target-low');
+    const liveblocksOther = new MeshLiveblocksManager('target-other');
+    liveblocksHigh.peers = [liveblocksLow, liveblocksOther];
+    liveblocksLow.peers = [liveblocksHigh, liveblocksOther];
+    liveblocksOther.peers = [liveblocksHigh, liveblocksLow];
+    const highRoot = createFabricRoot({
+      documentId: 'fabric-target-shared',
+      revision: 10
+    });
+    const lowRoot = createFabricRoot({
+      documentId: 'fabric-target-shared',
+      revision: 9
+    });
+    const otherRoot = createFabricRoot({
+      documentId: 'fabric-target-incomparable',
+      revision: 1
+    });
+    const reviewHigh = new StubReviewDataManager(
+      highRoot,
+      'C:/reviews/targeted-handshake.bframe'
+    );
+    const reviewLow = new StubReviewDataManager(
+      lowRoot,
+      'C:/reviews/targeted-handshake.bframe'
+    );
+    const reviewOther = new StubReviewDataManager(
+      otherRoot,
+      'C:/reviews/targeted-handshake.bframe'
+    );
+    const syncHigh = createSync({
+      liveblocksManager: liveblocksHigh,
+      reviewDataManager: reviewHigh,
+      scheduler,
+      actorId: 'target-high'
+    });
+    const syncLow = createSync({
+      liveblocksManager: liveblocksLow,
+      reviewDataManager: reviewLow,
+      scheduler,
+      actorId: 'target-low'
+    });
+    const syncOther = createSync({
+      liveblocksManager: liveblocksOther,
+      reviewDataManager: reviewOther,
+      scheduler,
+      actorId: 'target-other'
+    });
+
+    now = 0;
+    syncHigh.start();
+    syncLow.start();
+    syncOther.start();
+    await flushApplyQueue();
+    assert.equal(reviewHigh.baselineConflict, true);
+    assert.equal(reviewLow.baselineConflict, true);
+    assert.equal(reviewOther.baselineConflict, true);
+
+    now = 10001;
+    const retryTasks = reverseRetryOrder
+      ? [...scheduler.tasks].reverse()
+      : scheduler.tasks;
+    for (const task of retryTasks) {
+      task.callback();
+      await flushApplyQueue();
+    }
+
+    assert.deepEqual(reviewHigh.rootValue, highRoot);
+    assert.deepEqual(reviewLow.rootValue, highRoot);
+    assert.deepEqual(
+      reviewOther.rootValue,
+      otherRoot,
+      'a root response for a comparable peer must not overwrite an incomparable third peer'
+    );
+    const responseRoots = [liveblocksHigh, liveblocksLow, liveblocksOther]
+      .flatMap(manager => manager.sentEvents)
+      .filter(event => event.type === 'FABRIC_DRAWING_ROOT_RESPONSE');
+    assert.ok(responseRoots.length > 0);
+    assert.ok(responseRoots.every(event => typeof event.targetActorId === 'string'));
+    assert.ok(responseRoots.every(event => event.syncVersion.clock <= 10));
+    assert.equal(reviewHigh.baselineConflict, true);
+    assert.equal(reviewLow.baselineConflict, true);
+    assert.equal(reviewOther.baselineConflict, true);
+
+    const editedOtherRoot = createFabricRoot({
+      documentId: 'fabric-target-incomparable',
+      revision: 2
+    });
+    reviewOther.rootValue = structuredClone(editedOtherRoot);
+    reviewOther.dispatchEvent(new CustomEvent('saved', {
+      detail: { path: reviewOther.currentBframePath }
+    }));
+    await flushApplyQueue();
+    assert.deepEqual(reviewHigh.rootValue, editedOtherRoot);
+    assert.deepEqual(reviewLow.rootValue, editedOtherRoot);
+    assert.deepEqual(reviewOther.rootValue, editedOtherRoot);
+    assert.equal(reviewHigh.baselineConflict, false);
+    assert.equal(reviewLow.baselineConflict, false);
+    assert.equal(reviewOther.baselineConflict, false);
+    syncOther.stop();
+    syncLow.stop();
+    syncHigh.stop();
+  };
+  await convergeComparablePairWithoutOverwritingThird({ reverseRetryOrder: false });
+  await convergeComparablePairWithoutOverwritingThird({ reverseRetryOrder: true });
+
+  const soloDirtyScheduler = new FakeSeedRetryScheduler();
+  const liveblocksSolo = new LinkedLiveblocksManager('actor-solo-dirty');
+  const soloDirtyRoot = createFabricRoot({
+    documentId: 'fabric-solo-dirty',
+    revision: 2
+  });
+  const reviewSolo = new StubReviewDataManager(
+    soloDirtyRoot,
+    'C:/reviews/solo-dirty.bframe',
+    { localChanges: true }
+  );
+  const syncSolo = createSync({
+    liveblocksManager: liveblocksSolo,
+    reviewDataManager: reviewSolo,
+    scheduler: soloDirtyScheduler,
+    actorId: 'actor-solo-dirty'
+  });
+  now = 0;
+  syncSolo.start();
+  reviewSolo.localChanges = false;
+  reviewSolo.dispatchEvent(new CustomEvent('saved', {
+    detail: { path: reviewSolo.currentBframePath }
+  }));
+  await flushApplyQueue();
+  assert.equal(rootCount(liveblocksSolo), 0);
+  assert.equal(syncSolo._currentRootVersion.actorId, 'actor-solo-dirty');
+
+  const liveblocksSoloJoiner = new LinkedLiveblocksManager('actor-solo-joiner');
+  const soloJoinerScheduler = new FakeSeedRetryScheduler();
+  const reviewSoloJoiner = new StubReviewDataManager(
+    undefined,
+    'C:/reviews/solo-dirty.bframe',
+    { present: false }
+  );
+  const syncSoloJoiner = createSync({
+    liveblocksManager: liveblocksSoloJoiner,
+    reviewDataManager: reviewSoloJoiner,
+    scheduler: soloJoinerScheduler,
+    actorId: 'actor-solo-joiner'
+  });
+  liveblocksSolo.peer = liveblocksSoloJoiner;
+  liveblocksSoloJoiner.peer = liveblocksSolo;
+  now = 20000;
+  syncSoloJoiner.start();
+  await flushApplyQueue();
+  assert.deepEqual(reviewSoloJoiner.rootValue, soloDirtyRoot);
+  assert.equal(reviewSoloJoiner.present, true);
+  syncSoloJoiner.stop();
+  syncSolo.stop();
+
+  const sameRootScheduler = new FakeSeedRetryScheduler();
+  const liveblocksSameRoot = new LinkedLiveblocksManager('actor-same-root');
+  const reviewSameRoot = new StubReviewDataManager(
+    latestRoot,
+    'C:/reviews/same-root-request.bframe'
+  );
+  const syncSameRoot = createSync({
+    liveblocksManager: liveblocksSameRoot,
+    reviewDataManager: reviewSameRoot,
+    scheduler: sameRootScheduler,
+    actorId: 'actor-same-root'
+  });
+  now = 0;
+  syncSameRoot.start();
+  const sameRootRequest = liveblocksSameRoot.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST_V2'
+  );
+  liveblocksSameRoot.dispatchEvent(new CustomEvent('broadcastReceived', {
+    detail: {
+      event: {
+        ...sameRootRequest,
+        requestActorId: 'actor-causal-peer',
+        syncVersion: { clock: 20, actorId: 'actor-causal-peer' }
+      }
+    }
+  }));
+  assert.equal(reviewSameRoot.invalidatedReloads, 1);
+  assert.deepEqual(syncSameRoot._currentRootVersion, {
+    clock: 20,
+    actorId: 'actor-causal-peer',
+    fingerprint: sameRootRequest.fingerprint
+  });
+  for (let index = 0; index < 65; index++) {
+    syncSameRoot._markBaselineConflict(`overflow-peer-${index}`);
+  }
+  assert.equal(syncSameRoot._baselineConflictActors.size, 64);
+  assert.equal(syncSameRoot._hasUnattributedBaselineConflict, true);
+  syncSameRoot._clearAllBaselineConflicts();
+  syncSameRoot.stop();
+
+  const sameRootAckScheduler = new FakeSeedRetryScheduler();
+  const liveblocksSameRootStable = new LinkedLiveblocksManager('ack-stable');
+  const liveblocksSameRootJoining = new LinkedLiveblocksManager('ack-joining');
+  liveblocksSameRootStable.peer = liveblocksSameRootJoining;
+  liveblocksSameRootJoining.peer = liveblocksSameRootStable;
+  const sharedAckRoot = createFabricRoot({
+    documentId: 'fabric-same-root-ack',
+    revision: 1
+  });
+  const reviewSameRootStable = new StubReviewDataManager(
+    sharedAckRoot,
+    'C:/reviews/same-root-ack.bframe'
+  );
+  const reviewSameRootJoining = new StubReviewDataManager(
+    sharedAckRoot,
+    'C:/reviews/same-root-ack.bframe'
+  );
+  const syncSameRootStable = createSync({
+    liveblocksManager: liveblocksSameRootStable,
+    reviewDataManager: reviewSameRootStable,
+    scheduler: sameRootAckScheduler,
+    actorId: 'ack-stable'
+  });
+  const syncSameRootJoining = createSync({
+    liveblocksManager: liveblocksSameRootJoining,
+    reviewDataManager: reviewSameRootJoining,
+    scheduler: sameRootAckScheduler,
+    actorId: 'ack-joining'
+  });
+  now = 0;
+  syncSameRootStable.start();
+  syncSameRootStable._currentRootVersion = {
+    clock: 100,
+    actorId: 'ack-stable',
+    fingerprint: syncSameRootStable._currentRootVersion.fingerprint
+  };
+  syncSameRootStable._rootClock = 100;
+  now = 20000;
+  syncSameRootJoining.start();
+  await flushApplyQueue();
+  assert.deepEqual(syncSameRootJoining._currentRootVersion, {
+    clock: 100,
+    actorId: 'ack-stable',
+    fingerprint: syncSameRootStable._currentRootVersion.fingerprint
+  });
+  const editedAckRoot = createFabricRoot({
+    documentId: 'fabric-same-root-ack',
+    revision: 2
+  });
+  reviewSameRootJoining.rootValue = structuredClone(editedAckRoot);
+  reviewSameRootJoining.dispatchEvent(new CustomEvent('saved', {
+    detail: { path: reviewSameRootJoining.currentBframePath }
+  }));
+  await flushApplyQueue();
+  const editedAckEvent = liveblocksSameRootJoining.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
+  assert.ok(editedAckEvent.syncVersion.clock > 100);
+  assert.deepEqual(reviewSameRootStable.rootValue, editedAckRoot);
+  syncSameRootJoining.stop();
+  syncSameRootStable.stop();
+
+  const responseWireScheduler = new FakeSeedRetryScheduler();
+  const responseWireLiveblocks = new LinkedLiveblocksManager('response-wire');
+  const responseWireReview = new StubReviewDataManager(
+    undefined,
+    'C:/reviews/response-wire.bframe',
+    { present: false }
+  );
+  const responseWireSync = createSync({
+    liveblocksManager: responseWireLiveblocks,
+    reviewDataManager: responseWireReview,
+    scheduler: responseWireScheduler,
+    actorId: 'response-wire'
+  });
+  responseWireSync.start();
+  responseWireLiveblocks.sentEvents.length = 0;
+  responseWireSync._broadcastRoot({
+    force: true,
+    peerConfirmed: true,
+    targetActorId: 'response-target'
+  });
+  assert.equal(responseWireLiveblocks.sentEvents.length, 1);
+  assert.equal(
+    responseWireLiveblocks.sentEvents[0].type,
+    'FABRIC_DRAWING_ROOT_RESPONSE'
+  );
+  assert.equal(responseWireLiveblocks.sentEvents[0].present, false);
+
+  responseWireReview.present = true;
+  responseWireReview.compatible = true;
+  responseWireReview.rootValue = {
+    ...createFabricRoot({
+      documentId: 'fabric-response-wire-large',
+      revision: 1
+    }),
+    padding: 'x'.repeat(720 * 1024)
+  };
+  responseWireLiveblocks.sentEvents.length = 0;
+  responseWireSync._broadcastRoot({
+    force: true,
+    peerConfirmed: true,
+    targetActorId: 'response-target'
+  });
+  assert.equal(
+    responseWireLiveblocks.sentEvents[0].type,
+    'FABRIC_DRAWING_ROOT_RESPONSE'
+  );
+  assert.ok(responseWireLiveblocks.sentEvents.slice(1).every(
+    event => event.type === 'FABRIC_DRAWING_ROOT_RESPONSE_CHUNK'
+  ));
+  assert.equal(responseWireLiveblocks.sentEvents.some(
+    event => event.type === 'FABRIC_DRAWING_ROOT' ||
+      event.type === 'FABRIC_DRAWING_ROOT_CHUNK'
+  ), false);
+  responseWireSync.stop();
+
+  const restartScheduler = new FakeSeedRetryScheduler();
+  const liveblocksRestart = new LinkedLiveblocksManager('actor-restart');
+  const reviewRestart = new StubReviewDataManager(latestRoot, 'C:/reviews/restart.bframe');
+  const syncRestart = createSync({
+    liveblocksManager: liveblocksRestart,
+    reviewDataManager: reviewRestart,
+    scheduler: restartScheduler,
+    actorId: 'actor-restart'
+  });
+  now = 0;
+  syncRestart.start();
+  const oldSessionRetry = restartScheduler.tasks[0];
+  syncRestart.stop();
+  syncRestart.start();
+  const newSessionRetry = restartScheduler.tasks[1];
+  const requestsBeforeCallbacks = requestCount(liveblocksRestart);
+  now = 10001;
+  oldSessionRetry.callback();
+  assert.equal(requestCount(liveblocksRestart), requestsBeforeCallbacks);
+  newSessionRetry.callback();
+  assert.equal(requestCount(liveblocksRestart), requestsBeforeCallbacks + 1);
+  syncRestart.stop();
+  newSessionRetry.callback();
+  assert.equal(requestCount(liveblocksRestart), requestsBeforeCallbacks + 1);
 });
 
 test('Fabric drawing sync causally converges concurrent and dirty-overlap saves', async () => {
@@ -4583,14 +5869,11 @@ test('Fabric drawing sync causally converges concurrent and dirty-overlap saves'
     revision: 100,
     owner: 'causal-winner-b'
   };
-  const conflictingStale = createPair('conflicting-stale', {
-    rootA: staleWinnerRoot,
-    rootB: causalWinnerRoot
-  });
+  const conflictingStale = createPair('conflicting-stale');
   conflictingStale.reviewA.staleOwners.add(causalWinnerRoot.owner);
   conflictingStale.reviewB.staleOwners.add(staleWinnerRoot.owner);
-  conflictingStale.syncA.broadcastCurrentState();
-  conflictingStale.syncB.broadcastCurrentState();
+  conflictingStale.reviewA.saveRoot(staleWinnerRoot);
+  conflictingStale.reviewB.saveRoot(causalWinnerRoot);
   const staleWinnerEvent = rootEvent(conflictingStale.liveblocksA);
   const causalWinnerEvent = rootEvent(conflictingStale.liveblocksB);
   conflictingStale.liveblocksB.receive(staleWinnerEvent);
@@ -4993,7 +6276,7 @@ test('an accepted intermediate root stays blocked when Drive exposes it after la
   manager.disconnect();
 });
 
-test('Fabric drawing sync propagates an absent drawingsV3 tombstone without resurrecting a delayed root', async () => {
+test('Fabric drawing sync propagates causal tombstones without trusting incomparable startup baselines', async () => {
   const { FabricDrawingSync } = await import(
     '../../renderer/scripts/modules/fabric-drawing-sync.js'
   );
@@ -5021,10 +6304,23 @@ test('Fabric drawing sync propagates an absent drawingsV3 tombstone without resu
     })],
     ['C:/reviews/fabric-tombstone-joining-missing.bframe', createReviewRoot({
       reviewDocumentId: REVIEW_ID_REMOTE
+    })],
+    ['C:/reviews/baseline-conflict-await.bframe', createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: oldRoot
+    })],
+    ['C:/reviews/baseline-conflict-autosave.bframe', createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: oldRoot
     })]
   ]);
+  let saveReviewCalls = 0;
   window.electronAPI = {
-    loadReview: async path => structuredClone(reviewRoots.get(path) || null)
+    loadReview: async path => structuredClone(reviewRoots.get(path) || null),
+    saveReview: async () => {
+      saveReviewCalls += 1;
+      return { success: true };
+    }
   };
 
   class LinkedLiveblocksManager extends EventTarget {
@@ -5122,12 +6418,44 @@ test('Fabric drawing sync propagates an absent drawingsV3 tombstone without resu
     suffix: 'tombstone-missing'
   });
   const joinRequest = missingPair.joiningLiveblocks.sentEvents.find(
-    event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST'
-  );
-  const tombstoneEvent = missingPair.stableLiveblocks.sentEvents.find(
-    event => event.type === 'FABRIC_DRAWING_ROOT'
+    event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST_V2'
   );
   assert.ok(joinRequest?.syncVersion);
+  assert.equal(
+    missingPair.stableLiveblocks.sentEvents.filter(
+      event => event.type === 'FABRIC_DRAWING_ROOT' ||
+        event.type === 'FABRIC_DRAWING_ROOT_RESPONSE'
+    ).length,
+    0,
+    'an established but unverified missing baseline must not overwrite an incomparable root'
+  );
+  assert.equal(joiningResetCount, 0);
+  assert.equal(stableMissingReview.getDrawingsV3RootSnapshot().present, false);
+  assert.equal(joiningOldReview.getDrawingsV3RootSnapshot().present, true);
+  assert.equal(stableMissingReview.getDrawingsV3RootSnapshot().baselineConflict, true);
+  assert.equal(joiningOldReview.getDrawingsV3RootSnapshot().baselineConflict, true);
+  joiningOldReview.isDirty = true;
+  assert.equal(
+    await joiningOldReview.save(),
+    false,
+    'an incomparable startup root must block comment-only disk writes immediately'
+  );
+  assert.equal(saveReviewCalls, 0);
+  assert.equal(
+    joiningOldReview.getDrawingsV3RootSnapshot().baselineConflict,
+    true,
+    'rereading the same local disk root must not clear the collaboration hold'
+  );
+
+  assert.equal(await joiningOldReview.applyExternalDrawingsV3(undefined, {
+    present: false
+  }), true);
+  joiningOldReview.dispatchEvent(new CustomEvent('saved'));
+  await flush();
+  await flush();
+  const tombstoneEvent = missingPair.joiningLiveblocks.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
   assert.equal(tombstoneEvent?.present, false);
   assert.equal(Object.hasOwn(tombstoneEvent, 'root'), false);
   assert.equal(Object.hasOwn(tombstoneEvent, 'chunkCount'), false);
@@ -5175,16 +6503,414 @@ test('Fabric drawing sync propagates an absent drawingsV3 tombstone without resu
     suffix: 'tombstone-present'
   });
   const presentSeed = presentPair.stableLiveblocks.sentEvents.find(
-    event => event.type === 'FABRIC_DRAWING_ROOT'
+    event => event.type === 'FABRIC_DRAWING_ROOT' ||
+      event.type === 'FABRIC_DRAWING_ROOT_RESPONSE'
   );
-  assert.equal(presentSeed?.present, true);
-  assert.deepEqual(
-    joiningMissingReview.getDrawingsV3RootSnapshot().value,
-    stablePresentRoot,
-    'a stale missing joiner must not erase the stable peer root'
+  assert.equal(presentSeed, undefined);
+  assert.deepEqual(stablePresentReview.getDrawingsV3RootSnapshot().value, stablePresentRoot);
+  assert.equal(
+    joiningMissingReview.getDrawingsV3RootSnapshot().present,
+    false,
+    'incomparable present/missing startup baselines must be preserved on both peers'
   );
   presentPair.stableSync.stop();
   presentPair.joiningSync.stop();
   stablePresentReview.disconnect();
   joiningMissingReview.disconnect();
+
+  const awaitComments = createCommentManager();
+  const awaitStore = await createFabricStore();
+  const awaitManager = new ReviewDataManager({
+    autoSave: false,
+    commentManager: awaitComments,
+    fabricDrawingPersistenceProvider: awaitStore
+  });
+  awaitManager.connect();
+  assert.equal(await awaitManager.setVideoFile(
+    'C:/reviews/baseline-conflict-await.mp4',
+    { fabricDrawingPersistenceContext: FABRIC_CONTEXT }
+  ), true);
+  addSubstantiveComment(awaitManager, awaitComments, 'baseline-await-comment');
+  const finalSnapshotStarted = createDeferred();
+  const finalSnapshotGate = createDeferred();
+  awaitManager.setFinalFabricSnapshotHandler(async () => {
+    finalSnapshotStarted.resolve();
+    await finalSnapshotGate.promise;
+  });
+  const saveCallsBeforeAwaitRace = saveReviewCalls;
+  const pendingAwaitSave = awaitManager.save();
+  await finalSnapshotStarted.promise;
+  awaitManager.markDrawingsV3BaselineConflict();
+  finalSnapshotGate.resolve();
+  assert.equal(await pendingAwaitSave, false);
+  assert.equal(
+    saveReviewCalls,
+    saveCallsBeforeAwaitRace,
+    'a conflict received during final Fabric hydration must stop the pending write'
+  );
+  awaitManager.disconnect();
+
+  const ipcConflictRoot = createFabricRoot({
+    documentId: 'fabric-ipc-conflict-root',
+    revision: 4
+  });
+  let ipcConflictDisk = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    drawingsV3: ipcConflictRoot
+  });
+  const ipcConflictStarted = createDeferred();
+  const ipcConflictGate = createDeferred();
+  let ipcConflictWrites = 0;
+  window.electronAPI = {
+    loadReview: async () => structuredClone(ipcConflictDisk),
+    saveReview: async (_path, data) => {
+      ipcConflictWrites += 1;
+      ipcConflictStarted.resolve();
+      await ipcConflictGate.promise;
+      ipcConflictDisk = structuredClone(data);
+      return { success: true, versionToken: 'ipc-conflict-write' };
+    }
+  };
+  const ipcConflictComments = createCommentManager();
+  const ipcConflictStore = await createFabricStore();
+  const ipcConflictManager = new ReviewDataManager({
+    autoSave: false,
+    commentManager: ipcConflictComments,
+    fabricDrawingPersistenceProvider: ipcConflictStore
+  });
+  let ipcConflictSavedEvents = 0;
+  ipcConflictManager.addEventListener('saved', () => {
+    ipcConflictSavedEvents += 1;
+  });
+  ipcConflictManager.connect();
+  assert.equal(await ipcConflictManager.setVideoFile(
+    'C:/reviews/baseline-conflict-ipc.mp4',
+    { fabricDrawingPersistenceContext: FABRIC_CONTEXT }
+  ), true);
+  addSubstantiveComment(
+    ipcConflictManager,
+    ipcConflictComments,
+    'baseline-conflict-during-ipc'
+  );
+  const pendingIpcConflictSave = ipcConflictManager.save();
+  await ipcConflictStarted.promise;
+  ipcConflictManager.markDrawingsV3BaselineConflict();
+  ipcConflictGate.resolve();
+  assert.equal(await pendingIpcConflictSave, false);
+  assert.equal(ipcConflictWrites, 1, 'the already-started physical write cannot be undone');
+  assert.equal(ipcConflictSavedEvents, 0);
+  assert.equal(
+    ipcConflictManager.getDrawingsV3RootSnapshot().baselineConflict,
+    true
+  );
+  assert.equal(ipcConflictManager.hasUnsavedChanges(), true);
+  ipcConflictManager.disconnect();
+
+  const ipcRaceRootA = createFabricRoot({
+    documentId: 'fabric-ipc-race-a',
+    revision: 7
+  });
+  const ipcRaceRootB = createFabricRoot({
+    documentId: 'fabric-ipc-race-b',
+    revision: 7
+  });
+  let ipcRaceDisk = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    drawingsV3: ipcRaceRootA
+  });
+  const ipcRaceStarted = createDeferred();
+  const ipcRaceGate = createDeferred();
+  const ipcRacePayloads = [];
+  window.electronAPI = {
+    loadReview: async () => structuredClone(ipcRaceDisk),
+    saveReview: async (_path, data) => {
+      ipcRacePayloads.push(structuredClone(data));
+      if (ipcRacePayloads.length === 1) {
+        ipcRaceStarted.resolve();
+        await ipcRaceGate.promise;
+      }
+      ipcRaceDisk = structuredClone(data);
+      return {
+        success: true,
+        versionToken: `ipc-race-write-${ipcRacePayloads.length}`
+      };
+    }
+  };
+  const ipcRaceComments = createCommentManager();
+  const ipcRaceStore = await createFabricStore();
+  const ipcRaceManager = new ReviewDataManager({
+    autoSave: false,
+    commentManager: ipcRaceComments,
+    fabricDrawingPersistenceProvider: ipcRaceStore
+  });
+  let ipcRaceSavedEvents = 0;
+  ipcRaceManager.addEventListener('saved', () => {
+    ipcRaceSavedEvents += 1;
+  });
+  ipcRaceManager.connect();
+  assert.equal(await ipcRaceManager.setVideoFile(
+    'C:/reviews/external-root-during-ipc.mp4',
+    { fabricDrawingPersistenceContext: FABRIC_CONTEXT }
+  ), true);
+  addSubstantiveComment(ipcRaceManager, ipcRaceComments, 'external-root-during-ipc');
+  const pendingIpcRaceSave = ipcRaceManager.save();
+  await ipcRaceStarted.promise;
+  assert.equal(await ipcRaceManager.applyExternalDrawingsV3(ipcRaceRootB), true);
+  ipcRaceGate.resolve();
+  assert.equal(await pendingIpcRaceSave, true);
+  assert.equal(ipcRacePayloads.length, 2);
+  assert.deepEqual(ipcRacePayloads[0].drawingsV3, ipcRaceRootA);
+  assert.deepEqual(ipcRacePayloads[1].drawingsV3, ipcRaceRootB);
+  assert.deepEqual(ipcRaceDisk.drawingsV3, ipcRaceRootB);
+  assert.deepEqual(ipcRaceStore.exportRootValue(), ipcRaceRootB);
+  assert.deepEqual(ipcRaceManager.getDrawingsV3RootSnapshot().value, ipcRaceRootB);
+  assert.equal(ipcRaceManager.getDrawingsV3RootSnapshot().stale, false);
+  assert.equal(ipcRaceSavedEvents, 1);
+  ipcRaceManager.disconnect();
+
+  let inFlightDisk = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    drawingsV3: ipcRaceRootA
+  });
+  const inFlightSaveStarted = createDeferred();
+  const inFlightSaveGate = createDeferred();
+  const inFlightInstallStarted = createDeferred();
+  const inFlightInstallGate = createDeferred();
+  const inFlightPayloads = [];
+  window.electronAPI = {
+    loadReview: async () => structuredClone(inFlightDisk),
+    saveReview: async (_path, data) => {
+      inFlightPayloads.push(structuredClone(data));
+      if (inFlightPayloads.length === 1) {
+        inFlightSaveStarted.resolve();
+        await inFlightSaveGate.promise;
+      }
+      inFlightDisk = structuredClone(data);
+      return {
+        success: true,
+        versionToken: `in-flight-write-${inFlightPayloads.length}`
+      };
+    }
+  };
+  const inFlightComments = createCommentManager();
+  const inFlightStore = await createFabricStore();
+  const inFlightManager = new ReviewDataManager({
+    autoSave: false,
+    commentManager: inFlightComments,
+    fabricDrawingPersistenceProvider: inFlightStore
+  });
+  let inFlightSavedEvents = 0;
+  inFlightManager.addEventListener('saved', () => {
+    inFlightSavedEvents += 1;
+  });
+  inFlightManager.connect();
+  assert.equal(await inFlightManager.setVideoFile(
+    'C:/reviews/external-root-hydration-during-ipc.mp4',
+    { fabricDrawingPersistenceContext: FABRIC_CONTEXT }
+  ), true);
+  inFlightManager.setFabricDrawingSourceRefreshHandler(async ({ installSource }) => {
+    inFlightInstallStarted.resolve();
+    await inFlightInstallGate.promise;
+    return installSource();
+  });
+  addSubstantiveComment(
+    inFlightManager,
+    inFlightComments,
+    'external-root-hydration-during-ipc'
+  );
+  const pendingInFlightSave = inFlightManager.save();
+  await inFlightSaveStarted.promise;
+  const pendingInFlightApply = inFlightManager.applyExternalDrawingsV3(ipcRaceRootB);
+  await inFlightInstallStarted.promise;
+  inFlightSaveGate.resolve();
+  assert.equal(await pendingInFlightSave, false);
+  assert.equal(inFlightPayloads.length, 1);
+  assert.equal(inFlightSavedEvents, 0);
+  assert.equal(inFlightManager.hasUnsavedChanges(), true);
+  inFlightInstallGate.resolve();
+  assert.equal(await pendingInFlightApply, true);
+  assert.deepEqual(inFlightStore.exportRootValue(), ipcRaceRootB);
+  assert.equal(await inFlightManager.save(), true);
+  assert.equal(inFlightPayloads.length, 2);
+  assert.deepEqual(inFlightPayloads[1].drawingsV3, ipcRaceRootB);
+  assert.deepEqual(inFlightDisk.drawingsV3, ipcRaceRootB);
+  assert.equal(inFlightSavedEvents, 1);
+  inFlightManager.disconnect();
+
+  const localRaceRoot = createFabricRoot({
+    documentId: 'fabric-local-change-during-ipc',
+    revision: 0
+  });
+  let localRaceDisk = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING,
+    drawingsV3: localRaceRoot
+  });
+  const localRaceStarted = createDeferred();
+  const localRaceGate = createDeferred();
+  const localRacePayloads = [];
+  window.electronAPI = {
+    loadReview: async () => structuredClone(localRaceDisk),
+    saveReview: async (_path, data) => {
+      localRacePayloads.push(structuredClone(data));
+      if (localRacePayloads.length === 1) {
+        localRaceStarted.resolve();
+        await localRaceGate.promise;
+      }
+      localRaceDisk = structuredClone(data);
+      return {
+        success: true,
+        versionToken: `local-race-write-${localRacePayloads.length}`
+      };
+    }
+  };
+  const localRaceComments = createCommentManager();
+  const localRaceStore = await createFabricStore();
+  const localRaceManager = new ReviewDataManager({
+    autoSave: false,
+    commentManager: localRaceComments,
+    fabricDrawingPersistenceProvider: localRaceStore
+  });
+  localRaceManager.connect();
+  assert.equal(await localRaceManager.setVideoFile(
+    'C:/reviews/local-fabric-change-during-ipc.mp4',
+    { fabricDrawingPersistenceContext: FABRIC_CONTEXT }
+  ), true);
+  addSubstantiveComment(
+    localRaceManager,
+    localRaceComments,
+    'local-fabric-change-during-ipc'
+  );
+  const pendingLocalRaceSave = localRaceManager.save();
+  await localRaceStarted.promise;
+  const localRaceRecord = createFabricRecord('local-change-during-ipc');
+  assert.equal(localRaceStore.applyTransition(
+    createFabricTransition(1, localRaceRecord)
+  ).applied, true);
+  const latestLocalRaceRoot = localRaceStore.exportRootValue();
+  localRaceGate.resolve();
+  assert.equal(await pendingLocalRaceSave, true);
+  assert.equal(localRacePayloads.length, 2);
+  assert.deepEqual(localRacePayloads[0].drawingsV3, localRaceRoot);
+  assert.deepEqual(localRacePayloads[1].drawingsV3, latestLocalRaceRoot);
+  assert.deepEqual(localRaceDisk.drawingsV3, latestLocalRaceRoot);
+  assert.equal(localRaceManager.hasUnsavedChanges(), false);
+  localRaceManager.disconnect();
+
+  let autoSaveWriteCalls = 0;
+  window.electronAPI = {
+    loadReview: async path => structuredClone(reviewRoots.get(path) || null),
+    saveReview: async () => {
+      autoSaveWriteCalls += 1;
+      return { success: true };
+    }
+  };
+  const autoSaveComments = createCommentManager();
+  const autoSaveStore = await createFabricStore();
+  const autoSaveManager = new ReviewDataManager({
+    autoSave: true,
+    autoSaveDelay: 5,
+    commentManager: autoSaveComments,
+    fabricDrawingPersistenceProvider: autoSaveStore
+  });
+  autoSaveManager.connect();
+  assert.equal(await autoSaveManager.setVideoFile(
+    'C:/reviews/baseline-conflict-autosave.mp4',
+    { fabricDrawingPersistenceContext: FABRIC_CONTEXT }
+  ), true);
+  autoSaveManager.markDrawingsV3BaselineConflict();
+  const saveCallsBeforeAutoSave = autoSaveWriteCalls;
+  addSubstantiveComment(
+    autoSaveManager,
+    autoSaveComments,
+    'baseline-autosave-comment'
+  );
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(autoSaveWriteCalls, saveCallsBeforeAutoSave);
+  assert.equal(autoSaveManager.hasUnsavedChanges(), true);
+  autoSaveManager.clearDrawingsV3BaselineConflict();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(
+    autoSaveWriteCalls,
+    saveCallsBeforeAutoSave + 1,
+    'clearing the hold must retry the dirty autosave without another user input'
+  );
+  assert.equal(autoSaveManager.hasUnsavedChanges(), false);
+  autoSaveManager.disconnect();
+
+  for (const stopMode of ['pause', 'disconnect']) {
+    const stoppedAutoSaveRoot = createFabricRoot({
+      documentId: `fabric-authority-autosave-${stopMode}`,
+      revision: 3
+    });
+    const stoppedReloadStarted = createDeferred();
+    const stoppedReloadGate = createDeferred();
+    let stoppedAutoSaveWrites = 0;
+    window.electronAPI = {
+      loadReview: async () => createReviewRoot({
+        reviewDocumentId: REVIEW_ID_EXISTING,
+        drawingsV3: stoppedAutoSaveRoot
+      }),
+      loadReviewSnapshot: async () => {
+        stoppedReloadStarted.resolve();
+        return stoppedReloadGate.promise;
+      },
+      saveReview: async () => {
+        stoppedAutoSaveWrites += 1;
+        return { success: true };
+      }
+    };
+    const stoppedComments = createCommentManager();
+    const stoppedStore = await createFabricStore();
+    const stoppedManager = new ReviewDataManager({
+      autoSave: true,
+      autoSaveDelay: 5,
+      commentManager: stoppedComments,
+      fabricDrawingPersistenceProvider: stoppedStore
+    });
+    stoppedManager.connect();
+    assert.equal(await stoppedManager.setVideoFile(
+      `C:/reviews/authority-autosave-${stopMode}.mp4`,
+      { fabricDrawingPersistenceContext: FABRIC_CONTEXT }
+    ), true);
+    addSubstantiveComment(
+      stoppedManager,
+      stoppedComments,
+      `authority-autosave-${stopMode}`
+    );
+    const pendingStoppedReload = stoppedManager.reloadDrawingsV3FromDisk();
+    await stoppedReloadStarted.promise;
+    if (stopMode === 'pause') {
+      stoppedManager.pauseAutoSave();
+    } else {
+      stoppedManager.disconnect();
+    }
+    stoppedReloadGate.resolve({
+      data: createReviewRoot({
+        reviewDocumentId: REVIEW_ID_EXISTING,
+        drawingsV3: stoppedAutoSaveRoot
+      }),
+      versionToken: `authority-autosave-${stopMode}`
+    });
+    assert.equal(await pendingStoppedReload, true);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(
+      stoppedAutoSaveWrites,
+      0,
+      `a completed authority transition must not restart ${stopMode}d autosave`
+    );
+    assert.equal(stoppedManager.hasUnsavedChanges(), true);
+    if (stopMode === 'pause') {
+      assert.equal(stoppedStore.applyTransition(
+        createFabricTransition(1, createFabricRecord('changed-while-autosave-paused'))
+      ).applied, true);
+      await new Promise(resolve => setTimeout(resolve, 30));
+      assert.equal(
+        stoppedAutoSaveWrites,
+        0,
+        'a Fabric transition received while paused must stay dirty without writing'
+      );
+      assert.equal(stoppedManager.getDrawingsV3RootSnapshot().localChanges, true);
+    }
+    stoppedManager.disconnect();
+  }
 });
