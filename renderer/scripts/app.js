@@ -7300,6 +7300,9 @@ async function initApp() {
   let mpvHostVisibilityRequestRevision = 0;
   let mpvHostLastRequestedVisible = null;
   let mpvPilotHostPreparing = false;
+  // mpv→mpv 전환에서 이전 프레임을 유지하기 위해 준비 구간의 호스트 숨김을 생략하는 플래그.
+  // loadVideo가 설정하고 같은 호출의 finally가 무조건 해제한다.
+  let mpvPilotSeamlessTransition = false;
   let fullscreenTimecodeOverlay = null;
   let fullscreenScrubOverlay = null;
   let remoteCursorsContainer = null;
@@ -7776,7 +7779,7 @@ async function initApp() {
   }
 
   function shouldShowMpvHostForCurrentState() {
-    return !mpvPilotHostPreparing &&
+    return (!mpvPilotHostPreparing || mpvPilotSeamlessTransition) &&
       document.body.classList.contains('mpv-pilot-mode') &&
       mpvReviewFreezeHostHideOwner === null &&
       !hasBlockingOverlayForMpv();
@@ -9119,6 +9122,11 @@ async function initApp() {
       let thumbnailVideoPath = actualVideoPath;
       const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath: hasConvertedPreparedVideoPath });
       if (!canContinueVideoLoad()) return false;
+      // mpv→mpv 전환에서는 호스트를 숨기지 않고 이전 프레임을 유지한다.
+      // keep-open + loadfile replace 조합이 다음 파일 첫 프레임까지 기존 프레임을 잡아주므로
+      // 검은 깜빡임 없이 이어진다. 실패 시에는 finally가 플래그를 해제하고 기존 정리 경로가 동작한다.
+      mpvPilotSeamlessTransition = useMpvPilot && !engineSwap && !fileIsAudio &&
+        holdPreviousFrameUntilReady && isMpvPilotPlaybackActive();
       if (useMpvPilot) {
         await cancelPlaylistBackgroundTranscodesForMpvPilot('mpv 직접 재생 시작');
         if (!canContinueVideoLoad()) return false;
@@ -9720,6 +9728,7 @@ async function initApp() {
       showToast('파일을 로드할 수 없습니다.', 'error');
       return false;
     } finally {
+      mpvPilotSeamlessTransition = false;
       if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
         await fabricDrawingPilotController.cancelVideoChange(loadToken, {
           restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted

@@ -1261,3 +1261,22 @@ test('미러 전송이 변경 필드만 보낸다 (32 잔존)', () => {
   // 32 잔존(f): 재생 playhead를 미러 재주입에서 분리하는 별도 필드
   assert.match(appSource, /commentPlayheadLeft:/);
 });
+
+test('mpv to mpv transitions keep the native host visible for seamless playback', () => {
+  assert.match(appSource, /let mpvPilotSeamlessTransition = false;/);
+  assert.match(
+    appSource,
+    /function shouldShowMpvHostForCurrentState\(\) \{\s+return \(!mpvPilotHostPreparing \|\| mpvPilotSeamlessTransition\) &&/
+  );
+  assert.match(
+    appSource,
+    /mpvPilotSeamlessTransition = useMpvPilot && !engineSwap && !fileIsAudio &&\s+holdPreviousFrameUntilReady && isMpvPilotPlaybackActive\(\);/
+  );
+  assert.match(appSource, /\} finally \{\s+mpvPilotSeamlessTransition = false;/);
+  // 드라이브 로딩 pill은 BLOCK이 아니라 HTML_MIRROR로 분류되어야 한다.
+  assert.doesNotMatch(mpvSurfacePolicySource, /'\.app-saving-overlay\.active',\s*'#videoLoadingOverlay\.active'/);
+  assert.match(
+    mpvSurfacePolicySource,
+    /selector: '#videoLoadingOverlay\.active',\s*observeSelector: '#videoLoadingOverlay',\s*mode: MPV_SURFACE_MODE\.HTML_MIRROR/
+  );
+});
