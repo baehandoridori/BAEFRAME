@@ -9081,6 +9081,7 @@ async function initApp() {
       (!allowNavigationGuardAbort || shouldContinueVideoLoad())
     );
     if (!canContinueVideoLoad()) return false;
+    let fabricPersistenceAbandonedForThisLoad = false;
     lastVideoLoadFabricCancelReason = null;
     if (!engineSwap) {
       await fabricDrawingPilotInitialization;
@@ -9094,14 +9095,16 @@ async function initApp() {
         const abandonDrawing = confirm('드로잉을 저장하지 못했습니다. 드로잉 저장을 포기하고 영상을 전환할까요?');
         if (abandonDrawing && canContinueVideoLoad()) {
           fabricDrawingPilotController.abandonPersistenceForVideoChange();
+          fabricPersistenceAbandonedForThisLoad = true;
           fabricPersistenceReadyToLeave = true;
         }
       }
       if (!fabricPersistenceReadyToLeave) {
         if (preserveContinuousSession) {
           lastVideoLoadFabricCancelReason = 'fabric-persistence';
+        } else {
+          showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
         }
-        showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
         return false;
       }
       await reviewDataManager.waitForPendingSave();
@@ -9226,29 +9229,26 @@ async function initApp() {
           await fabricDrawingPilotController.beforeVideoChange(loadToken);
         if (!fabricReadyForVideoChange || !canContinueVideoLoad()) return false;
 
-        let finalFabricPersistenceReadyToLeave =
-          await fabricDrawingPilotController.flushPersistenceBeforeLeave();
-        if (!canContinueVideoLoad()) return false;
+        let finalFabricPersistenceReadyToLeave = fabricPersistenceAbandonedForThisLoad;
+        if (!finalFabricPersistenceReadyToLeave) {
+          finalFabricPersistenceReadyToLeave =
+            await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+          if (!canContinueVideoLoad()) return false;
+        }
         if (!finalFabricPersistenceReadyToLeave && !preserveContinuousSession) {
           const abandonDrawing = confirm('드로잉을 저장하지 못했습니다. 드로잉 저장을 포기하고 영상을 전환할까요?');
           if (abandonDrawing && canContinueVideoLoad()) {
             fabricDrawingPilotController.abandonPersistenceForVideoChange();
-            // 포기(settle)는 videoChange 추적(videoChangePending)까지 초기화한다. 이 상태로
-            // 로드를 계속하면 afterVideoReady가 새 영상을 확정하지 못해(컨트롤러 1406-1409의
-            // videoGeneration>0 조기 return) 그 영상에서 B 드로잉이 죽는다. 입력 펜스를
-            // 다시 세워 추적을 재수립한 뒤에만 전환을 계속한다.
-            const rearmedAfterAbandon =
-              await fabricDrawingPilotController.beforeVideoChange(loadToken);
-            if (rearmedAfterAbandon && canContinueVideoLoad()) {
-              finalFabricPersistenceReadyToLeave = true;
-            }
+            fabricPersistenceAbandonedForThisLoad = true;
+            finalFabricPersistenceReadyToLeave = true;
           }
         }
         if (!finalFabricPersistenceReadyToLeave) {
           if (preserveContinuousSession) {
             lastVideoLoadFabricCancelReason = 'fabric-persistence';
+          } else {
+            showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
           }
-          showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
           return false;
         }
         await reviewDataManager.waitForPendingSave();

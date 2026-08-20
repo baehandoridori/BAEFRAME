@@ -443,6 +443,11 @@ export function createFabricDrawingPilotController(options = {}) {
     return true;
   }
 
+  function abandonPersistenceForVideoChange() {
+    clearPersistenceBypass();
+    return true;
+  }
+
   function currentVideoChangeOwner() {
     return {
       epoch: videoChangeEpoch,
@@ -858,8 +863,7 @@ export function createFabricDrawingPilotController(options = {}) {
   async function blockPersistenceAfterPullFailure(result) {
     if (result?.stale === true) return false;
     if (result?.hostUnavailable === true) {
-      // 죽은 호스트는 차단 대상이 아니라 정리 대상이다(작업 1 (d)와 같은 원리).
-      settleWithoutPilotVideo();
+      // 새 호스트가 현재 영상 소유권을 이어받아 재수화할 수 있도록 세션을 보존한다.
       return false;
     }
     setPersistenceBypass(result?.reason || 'drawing-export-failed', {
@@ -935,8 +939,7 @@ export function createFabricDrawingPilotController(options = {}) {
     if (result?.hostUnavailable === true) {
       // 오버레이 호스트가 이미 파괴된 상태: 회수할 드로잉 표면 자체가 없다.
       // 여기서 차단 래치를 걸면 모든 후속 영상 전환이 영구 거부되므로,
-      // 파일럿 세션을 정리하고 전환을 허용해 다음 로드가 호스트를 재생성하게 한다.
-      settleWithoutPilotVideo();
+      // 현재 영상 소유권은 보존하고 다음 호스트가 재수화하도록 저장만 통과시킨다.
       return true;
     }
     return blockPersistenceAfterPullFailure(result);
@@ -1722,9 +1725,7 @@ export function createFabricDrawingPilotController(options = {}) {
     disable,
     preparePersistenceSnapshotForSave,
     flushPersistenceBeforeLeave,
-    // 게이트 실패 시 사용자가 '드로잉 저장 포기'를 선택하면 차단 상태를 정리하고
-    // 전환을 허용하기 위한 탈출구. settleWithoutPilotVideo가 세션·래치를 함께 정리한다.
-    abandonPersistenceForVideoChange: settleWithoutPilotVideo,
+    abandonPersistenceForVideoChange,
     refreshPersistenceSource,
     preparePersistenceForQuit,
     resumeAfterQuitCancelled,

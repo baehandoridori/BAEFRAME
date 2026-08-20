@@ -854,20 +854,87 @@ test('quit cancellation cannot resume Fabric after the prepared video owner has 
   assert.notEqual(harness.controller.getState(), 'active');
 });
 
-test('overlay-host-unavailable export failure settles the session instead of blocking leave', async () => {
+test('explicit persistence abandon preserves the current video so B can recover before target inspection', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  harness.setExportHandler(() => ({
+    success: false,
+    accepted: false,
+    reason: 'overlay-unavailable'
+  }));
+
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), false);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, true);
+
+  // The target fails inspection before beforeVideoChange(), so the old video remains current.
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  assert.equal(harness.controller.getStatusSnapshot().videoReady, true);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceReady, true);
+  harness.setExportHandler(null);
+
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.equal(harness.calls.input.at(-1).enabled, true);
+});
+
+test('explicit persistence abandon preserves rollback when the target load later fails', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  const previousPersistenceSessionId = harness.calls.hydrate[0].persistenceSessionId;
+  harness.setExportHandler(() => ({
+    success: false,
+    accepted: false,
+    reason: 'overlay-unavailable'
+  }));
+
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), false);
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  harness.setExportHandler(null);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+
+  harness.calls.order.length = 0;
+  assert.equal(await harness.controller.cancelVideoChange('load-b', {
+    restorePreviousVideo: true
+  }), true);
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'hydrate:1',
+    'export:1'
+  ]);
+  assert.equal(harness.calls.hydrate.at(-1).persistenceSessionId, previousPersistenceSessionId);
+  assert.equal(harness.calls.hydrate.at(-1).stableVideoIdentity, 'C:/shot/scene-001.mov');
+  assert.equal(harness.controller.getStatusSnapshot().videoReady, true);
+  assert.equal(await harness.controller.toggle(), true);
+});
+
+test('overlay-host-unavailable save preserves the current video for host recovery rehydrate', async () => {
   const harness = createHarness();
   assert.equal(await prepareVideo(harness), true);
   assert.equal(await harness.controller.toggle(), true);
+  const currentPersistenceSessionId = harness.calls.hydrate[0].persistenceSessionId;
   harness.setExportHandler(() => ({
     success: false,
     accepted: false,
     reason: 'overlay-host-unavailable'
   }));
 
-  // 죽은 호스트: 게이트는 세션을 정리하고 전환을 허용해야 한다.
-  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(await harness.controller.preparePersistenceSnapshotForSave(), true);
   assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, false);
-  assert.equal(harness.controller.getState(), 'passive');
-  // 세션이 정리됐으므로 두 번째 게이트도 즉시 통과한다.
-  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(harness.controller.getStatusSnapshot().videoReady, true);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceReady, true);
+
+  harness.setExportHandler(null);
+  harness.calls.order.length = 0;
+  assert.equal(await harness.controller.adoptOverlayCapability({
+    passiveReady: true,
+    hostGeneration: 2
+  }), true);
+  assert.deepEqual(harness.calls.order, [
+    'input:off:2',
+    'hydrate:2',
+    'export:2',
+    'input:on:2'
+  ]);
+  assert.equal(harness.calls.hydrate.at(-1).persistenceSessionId, currentPersistenceSessionId);
+  assert.equal(harness.controller.getState(), 'active');
 });

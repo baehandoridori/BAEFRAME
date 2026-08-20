@@ -1367,6 +1367,23 @@ test('playlist test script includes continuous runtime coverage', () => {
 });
 
 test('continuous playback stops with one toast when a global drawing gate cancels the load', () => {
+  const loadVideoMatch = appSource.match(
+    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
+  );
+  assert.ok(loadVideoMatch, 'video loader should exist');
+  const loadVideoSource = loadVideoMatch[1];
+  const genericToast = 'showToast(\'새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.\', \'error\');';
+  const failureBranchPattern = persistenceVariable => new RegExp(
+    `if \\(!${persistenceVariable}\\) \\{\\s+` +
+    'if \\(preserveContinuousSession\\) \\{\\s+' +
+    'lastVideoLoadFabricCancelReason = \'fabric-persistence\';\\s+' +
+    `\\} else \\{\\s+${genericToast.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+` +
+    '\\}\\s+return false;\\s+\\}'
+  );
+  assert.match(loadVideoSource, failureBranchPattern('fabricPersistenceReadyToLeave'));
+  assert.match(loadVideoSource, failureBranchPattern('finalFabricPersistenceReadyToLeave'));
+  assert.equal(loadVideoSource.split(genericToast).length - 1, 2);
+
   const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
   assert.match(

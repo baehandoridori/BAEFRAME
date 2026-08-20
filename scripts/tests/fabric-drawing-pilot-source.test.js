@@ -284,14 +284,22 @@ test('stable Fabric UI does not create or poll the old manual verification HUD',
   assert.doesNotMatch(appSource, /fabricDrawingPilotController\.(?:getStatusSnapshot|diagnostics)\(\)/);
 });
 
-test('persistence gate failures offer abandon-and-continue instead of a permanent lock', () => {
+test('persistence gate abandon is load-local and does not rebuild transition ownership', () => {
+  const loadVideo = appSource.match(
+    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
+  )?.[1] || '';
+  assert.match(loadVideo, /let fabricPersistenceAbandonedForThisLoad = false;/);
   assert.match(
-    appSource,
-    /if \(!fabricPersistenceReadyToLeave && !preserveContinuousSession\) \{[\s\S]+confirm\('드로잉을 저장하지 못했습니다\. 드로잉 저장을 포기하고 영상을 전환할까요\?'\)[\s\S]+abandonPersistenceForVideoChange\(\);[\s\S]+fabricPersistenceReadyToLeave = true;/
+    loadVideo,
+    /if \(!fabricPersistenceReadyToLeave && !preserveContinuousSession\) \{[\s\S]+confirm\('드로잉을 저장하지 못했습니다\. 드로잉 저장을 포기하고 영상을 전환할까요\?'\)[\s\S]+abandonPersistenceForVideoChange\(\);\n\s+fabricPersistenceAbandonedForThisLoad = true;\n\s+fabricPersistenceReadyToLeave = true;/
   );
   assert.match(
-    appSource,
-    /if \(!finalFabricPersistenceReadyToLeave && !preserveContinuousSession\) \{[\s\S]+abandonPersistenceForVideoChange\(\);[\s\S]+finalFabricPersistenceReadyToLeave = true;/
+    loadVideo,
+    /let finalFabricPersistenceReadyToLeave = fabricPersistenceAbandonedForThisLoad;\n\s+if \(!finalFabricPersistenceReadyToLeave\) \{\n\s+finalFabricPersistenceReadyToLeave =\n\s+await fabricDrawingPilotController\.flushPersistenceBeforeLeave\(\);/
   );
-  assert.match(appSource, /lastVideoLoadFabricCancelReason = 'fabric-persistence';/);
+  assert.match(
+    loadVideo,
+    /if \(!finalFabricPersistenceReadyToLeave && !preserveContinuousSession\) \{[\s\S]+abandonPersistenceForVideoChange\(\);\n\s+fabricPersistenceAbandonedForThisLoad = true;\n\s+finalFabricPersistenceReadyToLeave = true;/
+  );
+  assert.doesNotMatch(loadVideo, /rearmedAfterAbandon/);
 });
