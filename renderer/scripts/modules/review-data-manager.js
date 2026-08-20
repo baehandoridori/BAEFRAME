@@ -1894,7 +1894,12 @@ export class ReviewDataManager extends EventTarget {
         previous.fingerprint === nextFingerprint) {
       return;
     }
-    this._drawingsV3ExternalStaleFingerprints.add(previous.fingerprint);
+    this._rememberDrawingsV3StaleFingerprint(previous.fingerprint);
+  }
+
+  _rememberDrawingsV3StaleFingerprint(fingerprint) {
+    if (typeof fingerprint !== 'string') return;
+    this._drawingsV3ExternalStaleFingerprints.add(fingerprint);
     while (this._drawingsV3ExternalStaleFingerprints.size > 8) {
       const oldest =
         this._drawingsV3ExternalStaleFingerprints.values().next().value;
@@ -1981,16 +1986,25 @@ export class ReviewDataManager extends EventTarget {
   async _reconcileDrawingsV3DiskState(
     data,
     owner = this._captureReviewContextOwner(),
-    ownsOwner = candidate => this._ownsReviewContext(candidate)
+    ownsOwner = candidate => this._ownsReviewContext(candidate),
+    options = {}
   ) {
+    const allowSupersededFingerprint =
+      typeof options.allowSupersededFingerprint === 'string'
+        ? options.allowSupersededFingerprint
+        : null;
     const latestState = captureDrawingsV3DiskState(data);
     if (this._drawingsV3DiskState.known &&
         latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
+      if (latestState.fingerprint === allowSupersededFingerprint) {
+        this._drawingsV3ExternalStaleFingerprints.delete(latestState.fingerprint);
+      }
       return true;
     }
     // Broadcast로 이미 더 새로운 drawingsV3를 적용했고 디스크(Drive 복제 지연)가
     // 아직 따라오지 못한 상태면, 구버전 디스크 상태를 재설치하지 않는다
-    if (this._drawingsV3ExternalStaleFingerprints.has(latestState.fingerprint)) {
+    if (this._drawingsV3ExternalStaleFingerprints.has(latestState.fingerprint) &&
+        latestState.fingerprint !== allowSupersededFingerprint) {
       this._adoptDrawingsV3OpaqueRootState(this._drawingsV3DiskState);
       return true;
     }
@@ -2001,6 +2015,9 @@ export class ReviewDataManager extends EventTarget {
       }
       if (this._drawingsV3DiskState.known &&
           latestState.fingerprint === this._drawingsV3DiskState.fingerprint) {
+        if (latestState.fingerprint === allowSupersededFingerprint) {
+          this._drawingsV3ExternalStaleFingerprints.delete(latestState.fingerprint);
+        }
         return true;
       }
       if (this._fabricDrawingHasLocalChanges) {
@@ -2023,6 +2040,9 @@ export class ReviewDataManager extends EventTarget {
       this._drawingsV3DiskState = latestState;
       this._hasCompletedReviewLoad = true;
       this._adoptDrawingsV3OpaqueRootState(latestState);
+      if (latestState.fingerprint === allowSupersededFingerprint) {
+        this._drawingsV3ExternalStaleFingerprints.delete(latestState.fingerprint);
+      }
       return true;
     }, {
       reason: 'external-drawings-v3-changed',
@@ -2046,16 +2066,33 @@ export class ReviewDataManager extends EventTarget {
     };
   }
 
+  /** 결정적 협업 버전 비교에서 패한 루트가 파일 채널로 되돌아오지 않게 기록한다. */
+  markExternalDrawingsV3Superseded(rootValue) {
+    if (rootValue === undefined) return false;
+    const state = captureDrawingsV3DiskState({ drawingsV3: rootValue });
+    if (state.fingerprint === this._drawingsV3DiskState?.fingerprint) return false;
+    this._rememberDrawingsV3StaleFingerprint(state.fingerprint);
+    return true;
+  }
+
   /**
    * 원격(Broadcast)에서 받은 drawingsV3 루트를 디스크 반영 파이프라인으로 적용한다.
    * 로컬 미저장 fabric 변경이 있으면 기존 fail-closed 가드가 적용을 거른다.
+   * 결정적 버전 비교를 통과한 명시 Broadcast만 같은 지문의 file-stale guard를
+   * 한 번 우회하며, 실제 설치 성공 뒤에만 해당 stale 표시를 해제한다.
    * 교체되는 직전 지문의 스테일 기록은 (a-0-2)의 설치 지점 마킹이 담당하므로
    * 여기서는 반영만 위임한다.
    */
   async applyExternalDrawingsV3(rootValue) {
     if (rootValue === undefined) return false;
     try {
-      return (await this._reconcileDrawingsV3DiskState({ drawingsV3: rootValue })) === true;
+      const externalState = captureDrawingsV3DiskState({ drawingsV3: rootValue });
+      return (await this._reconcileDrawingsV3DiskState(
+        { drawingsV3: rootValue },
+        undefined,
+        undefined,
+        { allowSupersededFingerprint: externalState.fingerprint }
+      )) === true;
     } catch (error) {
       log.warn('원격 drawingsV3 반영 실패', { error: error.message });
       return false;

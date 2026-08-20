@@ -299,6 +299,71 @@ function createCoalescedAsyncScheduler({
   return { schedule, cancel };
 }
 
+function createLeadingTrailingThrottle({
+  intervalMs,
+  run,
+  shouldRun = () => true,
+  now = () => Date.now(),
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+  onError = () => {}
+}) {
+  let lastRunAt = Number.NEGATIVE_INFINITY;
+  let timer = null;
+  let pendingValue;
+  let hasPending = false;
+
+  function invoke(value) {
+    if (!shouldRun(value)) return false;
+    lastRunAt = now();
+    try {
+      const result = run(value);
+      if (result && typeof result.catch === 'function') {
+        void result.catch(onError);
+      }
+    } catch (error) {
+      onError(error);
+    }
+    return true;
+  }
+
+  function schedule(value) {
+    pendingValue = value;
+    hasPending = true;
+    if (!shouldRun(value)) return;
+
+    const remaining = intervalMs - (now() - lastRunAt);
+    if (remaining <= 0) {
+      if (timer !== null) clearTimer(timer);
+      timer = null;
+      const nextValue = pendingValue;
+      pendingValue = undefined;
+      hasPending = false;
+      invoke(nextValue);
+      return;
+    }
+    if (timer !== null) return;
+
+    timer = setTimer(() => {
+      timer = null;
+      if (!hasPending) return;
+      const nextValue = pendingValue;
+      pendingValue = undefined;
+      hasPending = false;
+      invoke(nextValue);
+    }, remaining);
+  }
+
+  function cancel() {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+    pendingValue = undefined;
+    hasPending = false;
+  }
+
+  return { schedule, cancel };
+}
+
 function createSharedAsyncCaptureOwner() {
   let inFlight = null;
 
@@ -17129,8 +17194,16 @@ async function initApp() {
   // ====== 파일 변경 감지 (실시간 동기화) ======
   // 다른 사용자가 저장하면 즉시 동기화
   let lastSyncTime = 0;
-  let lastDrawingsV3SyncTime = 0;
   const MIN_SYNC_INTERVAL = 500; // 최소 500ms 간격
+  const connectedDrawingsV3ReloadThrottle = createLeadingTrailingThrottle({
+    intervalMs: MIN_SYNC_INTERVAL,
+    shouldRun: filePath => liveblocksManager.isConnected &&
+      isSameFilePath(filePath, reviewDataManager.currentBframePath),
+    run: () => reviewDataManager.reloadDrawingsV3FromDisk?.(),
+    onError: error => log.warn('drawingsV3 파일 동기화 실패', {
+      error: error?.message || String(error)
+    })
+  });
 
   async function syncReviewFileFromDisk(filePath, options = {}) {
     const {
@@ -17148,11 +17221,7 @@ async function initApp() {
     // 단 Fabric 드로잉(drawingsV3)은 Broadcast가 없던 시절 저장분·오프라인 저장분이
     // 파일로만 도착할 수 있어, 드로잉만 선별 반영한다 (지문 비교로 no-op 보장).
     if (liveblocksManager.isConnected) {
-      const now = Date.now();
-      if (now - lastDrawingsV3SyncTime >= MIN_SYNC_INTERVAL) {
-        lastDrawingsV3SyncTime = now;
-        void reviewDataManager.reloadDrawingsV3FromDisk?.();
-      }
+      connectedDrawingsV3ReloadThrottle.schedule(filePath);
       return false;
     }
 

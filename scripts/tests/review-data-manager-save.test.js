@@ -480,7 +480,10 @@ test('save preflight waits for Fabric source refresh and rechecks local dirty be
   const saving = manager.save();
   await refreshEntered.promise;
   assert.equal(saveCount, 0);
-  assert.deepEqual(fabricStore.exportRootValue(), initialFabric);
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    initialFabric
+  );
   releaseOldSnapshotPull.resolve();
   assert.equal(await saving, false);
 
@@ -2533,10 +2536,11 @@ test('failed external drawingsV3 installation retries the same payload instead o
       return originalImportRootValue(rootValue, context);
     }
   };
+  let diskFabric = initialFabric;
   window.electronAPI = {
     loadReview: async () => createReviewRoot({
       reviewDocumentId: REVIEW_ID_EXISTING,
-      drawingsV3: initialFabric
+      drawingsV3: diskFabric
     })
   };
   const manager = new ReviewDataManager({
@@ -2547,8 +2551,21 @@ test('failed external drawingsV3 installation retries the same payload instead o
     fabricDrawingPersistenceContext: FABRIC_CONTEXT
   });
 
+  diskFabric = externalFabric;
+  assert.equal(manager.markExternalDrawingsV3Superseded(externalFabric), true);
   assert.equal(await manager.applyExternalDrawingsV3(externalFabric), false);
   assert.equal(externalImportAttempts, 1);
+  const providerAfterFailedExternalInstall = fabricStore.exportRootValue();
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.equal(
+    externalImportAttempts,
+    1,
+    'a failed explicit install must keep the stale-file guard for disk reloads'
+  );
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    providerAfterFailedExternalInstall
+  );
   assert.equal(await manager.applyExternalDrawingsV3(externalFabric), true);
   assert.equal(externalImportAttempts, 2, 'the rejected payload must reach the provider again');
   assert.deepEqual(fabricStore.exportRootValue(), externalFabric);
@@ -4124,7 +4141,9 @@ test('Fabric drawing sync requests a stable peer seed after an earlier join broa
   });
   const staleRoot = createFabricRoot({
     documentId: 'fabric-document-joining-peer',
-    revision: 2
+    // 같은 revision이어도 안정 peer의 첫 publish 버전이 newcomer baseline보다 높아야 한다.
+    // 이 두 root의 wire fingerprint 순서는 stable < joining이라 단순 hash tie-break면 실패한다.
+    revision: 12
   });
   const liveblocksA = new LinkedLiveblocksManager();
   const liveblocksB = new LinkedLiveblocksManager();
@@ -4166,6 +4185,20 @@ test('Fabric drawing sync requests a stable peer seed after an earlier join broa
     'the stable peer must answer once even before its Others view catches up'
   );
   assert.deepEqual(reviewB.appliedRoots, [latestRoot]);
+  const firstSeedVersion = structuredClone(
+    liveblocksA.sentEvents.find(event => event.type === 'FABRIC_DRAWING_ROOT').syncVersion
+  );
+  now = 10002;
+  liveblocksB.broadcastEvent({ type: 'FABRIC_DRAWING_ROOT_REQUEST' });
+  const repeatedSeeds = liveblocksA.sentEvents.filter(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
+  assert.equal(repeatedSeeds.length, 2);
+  assert.deepEqual(
+    repeatedSeeds[1].syncVersion,
+    firstSeedVersion,
+    'repeated seed responses must reuse the same causal version'
+  );
 
   liveblocksA.sentEvents.length = 0;
   liveblocksB.sentEvents.length = 0;
@@ -4179,4 +4212,410 @@ test('Fabric drawing sync requests a stable peer seed after an earlier join broa
 
   syncB.stop();
   syncA.stop();
+});
+
+test('Fabric drawing sync causally converges concurrent and dirty-overlap saves', async () => {
+  const { FabricDrawingSync } = await import(
+    '../../renderer/scripts/modules/fabric-drawing-sync.js'
+  );
+
+  class BufferedLiveblocksManager extends EventTarget {
+    constructor() {
+      super();
+      this.sentEvents = [];
+    }
+
+    hasOtherCollaborators() {
+      return true;
+    }
+
+    broadcastEvent(event) {
+      this.sentEvents.push(structuredClone(event));
+    }
+
+    receive(event) {
+      this.dispatchEvent(new CustomEvent('broadcastReceived', {
+        detail: { event: structuredClone(event) }
+      }));
+    }
+  }
+
+  class StubReviewDataManager extends EventTarget {
+    constructor(rootValue, pathSuffix) {
+      super();
+      this.currentBframePath = `C:/reviews/causal-${pathSuffix}.bframe`;
+      this.rootValue = structuredClone(rootValue);
+      this.rejectNextApply = false;
+      this.deferNextApply = null;
+      this.appliedRoots = [];
+      this.supersededRoots = [];
+      this.staleOwners = new Set();
+    }
+
+    getDrawingsV3RootSnapshot() {
+      return {
+        present: true,
+        value: structuredClone(this.rootValue),
+        fingerprint: `present:${JSON.stringify(this.rootValue)}`,
+        stale: false
+      };
+    }
+
+    async applyExternalDrawingsV3(rootValue) {
+      this.appliedRoots.push(structuredClone(rootValue));
+      if (this.rejectNextApply) {
+        this.rejectNextApply = false;
+        return false;
+      }
+      this.staleOwners.delete(rootValue?.owner);
+      this.rootValue = structuredClone(rootValue);
+      if (this.deferNextApply) {
+        const gate = this.deferNextApply;
+        this.deferNextApply = null;
+        await gate.promise;
+      }
+      return true;
+    }
+
+    markExternalDrawingsV3Superseded(rootValue) {
+      this.supersededRoots.push(structuredClone(rootValue));
+      this.staleOwners.add(rootValue?.owner);
+      return true;
+    }
+
+    saveRoot(rootValue) {
+      this.rootValue = structuredClone(rootValue);
+      this.dispatchEvent(new CustomEvent('saved', {
+        detail: { path: this.currentBframePath }
+      }));
+    }
+  }
+
+  const initialRoot = {
+    schemaVersion: '3.0.0',
+    documentId: 'fabric-causal-shared',
+    revision: 0,
+    owner: 'initial'
+  };
+  const rootA = { ...initialRoot, revision: 1, owner: 'A' };
+  const rootB = { ...initialRoot, revision: 1, owner: 'B' };
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  const createPair = (suffix, roots = {}) => {
+    const liveblocksA = new BufferedLiveblocksManager();
+    const liveblocksB = new BufferedLiveblocksManager();
+    const reviewA = new StubReviewDataManager(
+      roots.rootA || initialRoot,
+      `${suffix}-a`
+    );
+    const reviewB = new StubReviewDataManager(
+      roots.rootB || initialRoot,
+      `${suffix}-b`
+    );
+    const syncA = new FabricDrawingSync({
+      liveblocksManager: liveblocksA,
+      reviewDataManager: reviewA,
+      actorId: 'actor-a'
+    });
+    const syncB = new FabricDrawingSync({
+      liveblocksManager: liveblocksB,
+      reviewDataManager: reviewB,
+      actorId: 'actor-b'
+    });
+    syncA.start();
+    syncB.start();
+    liveblocksA.sentEvents.length = 0;
+    liveblocksB.sentEvents.length = 0;
+    return { liveblocksA, liveblocksB, reviewA, reviewB, syncA, syncB };
+  };
+  const rootEvent = manager => manager.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
+
+  const concurrent = createPair('concurrent');
+  concurrent.reviewA.saveRoot(rootA);
+  concurrent.reviewB.saveRoot(rootB);
+  const concurrentEventA = rootEvent(concurrent.liveblocksA);
+  const concurrentEventB = rootEvent(concurrent.liveblocksB);
+  assert.ok(concurrentEventA?.syncVersion);
+  assert.ok(concurrentEventB?.syncVersion);
+  concurrent.liveblocksA.receive(concurrentEventB);
+  concurrent.liveblocksB.receive(concurrentEventA);
+  await flush();
+  await flush();
+  assert.deepEqual(concurrent.reviewA.rootValue, rootB);
+  assert.deepEqual(concurrent.reviewB.rootValue, rootB);
+  assert.deepEqual(concurrent.reviewB.supersededRoots, [rootA]);
+  concurrent.syncA.stop();
+  concurrent.syncB.stop();
+
+  const overlap = createPair('dirty-overlap');
+  overlap.reviewA.saveRoot(rootA);
+  const earlierEventA = rootEvent(overlap.liveblocksA);
+  overlap.reviewB.rejectNextApply = true;
+  overlap.liveblocksB.receive(earlierEventA);
+  await flush();
+  assert.deepEqual(overlap.reviewB.rootValue, initialRoot);
+
+  overlap.reviewB.saveRoot(rootB);
+  const laterEventB = rootEvent(overlap.liveblocksB);
+  assert.ok(
+    laterEventB.syncVersion.clock > earlierEventA.syncVersion.clock,
+    'a local save after observing a rejected root must advance the causal clock'
+  );
+  overlap.liveblocksA.receive(laterEventB);
+  await flush();
+  await flush();
+  assert.deepEqual(overlap.reviewA.rootValue, rootB);
+  assert.deepEqual(overlap.reviewB.rootValue, rootB);
+  assert.deepEqual(overlap.reviewB.supersededRoots, [rootA]);
+  overlap.syncA.stop();
+  overlap.syncB.stop();
+
+  const applyRace = createPair('apply-await-race');
+  const applyGate = createDeferred();
+  applyRace.reviewA.saveRoot(rootA);
+  const incomingBeforeLocalSave = rootEvent(applyRace.liveblocksA);
+  applyRace.reviewB.deferNextApply = applyGate;
+  applyRace.liveblocksB.receive(incomingBeforeLocalSave);
+  await Promise.resolve();
+  assert.deepEqual(applyRace.reviewB.rootValue, rootA);
+
+  const newerLocalRoot = { ...initialRoot, revision: 2, owner: 'B-newer' };
+  applyRace.reviewB.saveRoot(newerLocalRoot);
+  const newerLocalEvent = rootEvent(applyRace.liveblocksB);
+  applyGate.resolve();
+  await flush();
+  await flush();
+  assert.deepEqual(applyRace.reviewB.rootValue, newerLocalRoot);
+
+  applyRace.liveblocksB.sentEvents.length = 0;
+  applyRace.syncB.broadcastCurrentState();
+  const postApplySeed = rootEvent(applyRace.liveblocksB);
+  assert.deepEqual(postApplySeed.root, newerLocalRoot);
+  assert.deepEqual(
+    postApplySeed.syncVersion,
+    newerLocalEvent.syncVersion,
+    'a completed older apply must not downgrade the version created during its await'
+  );
+  assert.deepEqual(applyRace.reviewB.supersededRoots, [rootA]);
+  applyRace.syncA.stop();
+  applyRace.syncB.stop();
+
+  const staleWinnerRoot = {
+    ...initialRoot,
+    revision: 5,
+    owner: 'stale-winner-a'
+  };
+  const causalWinnerRoot = {
+    ...initialRoot,
+    revision: 100,
+    owner: 'causal-winner-b'
+  };
+  const conflictingStale = createPair('conflicting-stale', {
+    rootA: staleWinnerRoot,
+    rootB: causalWinnerRoot
+  });
+  conflictingStale.reviewA.staleOwners.add(causalWinnerRoot.owner);
+  conflictingStale.reviewB.staleOwners.add(staleWinnerRoot.owner);
+  conflictingStale.syncA.broadcastCurrentState();
+  conflictingStale.syncB.broadcastCurrentState();
+  const staleWinnerEvent = rootEvent(conflictingStale.liveblocksA);
+  const causalWinnerEvent = rootEvent(conflictingStale.liveblocksB);
+  conflictingStale.liveblocksB.receive(staleWinnerEvent);
+  conflictingStale.liveblocksA.receive(causalWinnerEvent);
+  await flush();
+  await flush();
+  assert.deepEqual(conflictingStale.reviewA.rootValue, causalWinnerRoot);
+  assert.deepEqual(conflictingStale.reviewB.rootValue, causalWinnerRoot);
+  assert.equal(conflictingStale.reviewA.staleOwners.has(causalWinnerRoot.owner), false);
+  assert.equal(
+    conflictingStale.liveblocksA.sentEvents.filter(
+      event => event.type === 'FABRIC_DRAWING_ROOT'
+    ).length + conflictingStale.liveblocksB.sentEvents.filter(
+      event => event.type === 'FABRIC_DRAWING_ROOT'
+    ).length,
+    2,
+    'conflicting stale histories must converge without causal reassert ping-pong'
+  );
+  conflictingStale.syncA.stop();
+  conflictingStale.syncB.stop();
+
+  const chunked = createPair('chunked-version');
+  const largeRoot = {
+    ...rootA,
+    revision: 5,
+    payload: 'x'.repeat(720 * 1024)
+  };
+  chunked.reviewA.saveRoot(largeRoot);
+  const chunkHeader = rootEvent(chunked.liveblocksA);
+  const chunkEvents = chunked.liveblocksA.sentEvents.filter(
+    event => event.type === 'FABRIC_DRAWING_ROOT_CHUNK'
+  );
+  assert.ok(chunkHeader?.syncVersion);
+  assert.ok(chunkEvents.length > 1);
+  chunked.liveblocksB.receive(chunkHeader);
+  const retryTransferId = `${chunkHeader.transferId}-retry`;
+  chunked.liveblocksB.receive({
+    ...chunkHeader,
+    transferId: retryTransferId
+  });
+  for (const event of chunkEvents) {
+    chunked.liveblocksB.receive({
+      ...event,
+      transferId: retryTransferId
+    });
+  }
+  await flush();
+  await flush();
+  assert.deepEqual(chunked.reviewB.rootValue, largeRoot);
+  assert.deepEqual(
+    chunked.reviewB.appliedRoots,
+    [largeRoot],
+    'a same-version chunk retry with a new transferId must replace an incomplete transfer'
+  );
+
+  chunked.liveblocksB.sentEvents.length = 0;
+  chunked.syncB.broadcastCurrentState();
+  const echoedChunkHeader = rootEvent(chunked.liveblocksB);
+  assert.deepEqual(
+    echoedChunkHeader.syncVersion,
+    chunkHeader.syncVersion,
+    'chunk hydration and force seed must preserve the accepted causal version'
+  );
+  chunked.syncA.stop();
+  chunked.syncB.stop();
+
+  const headerClock = createPair('chunk-header-clock');
+  headerClock.reviewA.saveRoot(largeRoot);
+  const delayedHeader = structuredClone(rootEvent(headerClock.liveblocksA));
+  delayedHeader.syncVersion = { clock: 100, actorId: 'actor-z' };
+  const delayedChunks = headerClock.liveblocksA.sentEvents.filter(
+    event => event.type === 'FABRIC_DRAWING_ROOT_CHUNK'
+  );
+  headerClock.liveblocksB.receive(delayedHeader);
+  const localAfterHeader = {
+    ...rootB,
+    revision: 6,
+    owner: 'B-after-header'
+  };
+  headerClock.reviewB.saveRoot(localAfterHeader);
+  const localAfterHeaderEvent = rootEvent(headerClock.liveblocksB);
+  assert.ok(
+    localAfterHeaderEvent.syncVersion.clock > delayedHeader.syncVersion.clock,
+    'a chunk header must advance the observed clock before a later local save'
+  );
+  for (const event of delayedChunks) headerClock.liveblocksB.receive(event);
+  await flush();
+  await flush();
+  assert.deepEqual(headerClock.reviewB.rootValue, localAfterHeader);
+  headerClock.syncA.stop();
+  headerClock.syncB.stop();
+
+  const chunkManagers = ['a', 'b', 'c'].map(actor => {
+    const liveblocksManager = new BufferedLiveblocksManager();
+    const reviewDataManager = new StubReviewDataManager(
+      initialRoot,
+      `chunk-interleave-${actor}`
+    );
+    const sync = new FabricDrawingSync({
+      liveblocksManager,
+      reviewDataManager,
+      actorId: `actor-${actor}`
+    });
+    sync.start();
+    liveblocksManager.sentEvents.length = 0;
+    return { actor, liveblocksManager, reviewDataManager, sync };
+  });
+  const chunkRoots = chunkManagers.map(({ actor }) => ({
+    ...initialRoot,
+    revision: 9,
+    owner: actor.toUpperCase(),
+    payload: actor.repeat(720 * 1024)
+  }));
+  chunkManagers.forEach((participant, index) => {
+    participant.reviewDataManager.saveRoot(chunkRoots[index]);
+  });
+  const transfers = chunkManagers.map(({ liveblocksManager }) => ({
+    header: rootEvent(liveblocksManager),
+    chunks: liveblocksManager.sentEvents.filter(
+      event => event.type === 'FABRIC_DRAWING_ROOT_CHUNK'
+    )
+  }));
+  const deliverInterleavedTransfers = (recipientIndex, firstIndex, secondIndex) => {
+    const recipient = chunkManagers[recipientIndex].liveblocksManager;
+    recipient.receive(transfers[firstIndex].header);
+    recipient.receive(transfers[secondIndex].header);
+    for (const event of transfers[firstIndex].chunks) recipient.receive(event);
+    for (const event of transfers[secondIndex].chunks) recipient.receive(event);
+  };
+  deliverInterleavedTransfers(0, 1, 2);
+  deliverInterleavedTransfers(1, 2, 0);
+  deliverInterleavedTransfers(2, 0, 1);
+  await flush();
+  await flush();
+  for (const participant of chunkManagers) {
+    assert.deepEqual(
+      participant.reviewDataManager.rootValue,
+      chunkRoots[2],
+      'interleaved chunk headers must preserve the highest causal transfer'
+    );
+    participant.sync.stop();
+  }
+});
+
+test('a causally superseded Fabric root cannot return through disk reload', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const winnerRoot = createFabricRoot({
+    documentId: 'fabric-causal-disk-winner',
+    revision: 8
+  });
+  const loserRoot = createFabricRoot({
+    documentId: 'fabric-causal-disk-loser',
+    revision: 7
+  });
+  let diskFabric = loserRoot;
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: winnerRoot
+    }),
+    loadReviewSnapshot: async () => ({
+      data: createReviewRoot({
+        reviewDocumentId: REVIEW_ID_EXISTING,
+        drawingsV3: diskFabric
+      }),
+      versionToken: 'causal-loser-disk-token'
+    })
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    fabricDrawingPersistenceProvider: fabricStore
+  });
+  manager.connect();
+  assert.equal(await manager.setVideoFile('C:/reviews/causal-disk-winner.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  }), true);
+
+  assert.equal(manager.markExternalDrawingsV3Superseded(loserRoot), true);
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.deepEqual(fabricStore.exportRootValue(), winnerRoot);
+  assert.equal(manager.getDrawingsV3RootSnapshot().stale, false);
+
+  assert.equal(await manager.applyExternalDrawingsV3(loserRoot), true);
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    loserRoot,
+    'an explicit causal winner must bypass its stale-file fingerprint once'
+  );
+  assert.equal(manager.getDrawingsV3RootSnapshot().stale, false);
+
+  diskFabric = winnerRoot;
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    loserRoot,
+    'the root replaced by the explicit winner must remain blocked on disk reload'
+  );
+  manager.disconnect();
 });

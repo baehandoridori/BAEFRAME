@@ -21,6 +21,31 @@ const reviewFileStoreSource = normalizeNewlines(
 const commentSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/comment-sync.js'), 'utf8'));
 const drawingSyncSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/drawing-sync.js'), 'utf8'));
 
+function extractNamedFunction(source, functionName) {
+  const functionStart = source.indexOf(`function ${functionName}`);
+  assert.ok(functionStart >= 0, `${functionName} should exist`);
+  const signatureEnd = /\)\s*\{/.exec(source.slice(functionStart));
+  const bodyStart = signatureEnd
+    ? functionStart + signatureEnd.index + signatureEnd[0].lastIndexOf('{')
+    : -1;
+  assert.ok(bodyStart > functionStart, `${functionName} should have a body`);
+
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    if (source[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(functionStart, index + 1);
+    }
+  }
+  assert.fail(`${functionName} body should be balanced`);
+}
+
+function loadNamedFunction(source, functionName) {
+  const functionSource = extractNamedFunction(source, functionName);
+  return Function(`"use strict"; return (${functionSource});`)();
+}
+
 test('missing .bframe loads enter deferred discovery instead of immediate collaboration save', () => {
   assert.match(appSource, /function startDeferredReviewFileDiscovery\(loadToken, bframePath\)/);
   assert.match(appSource, /async function stopDeferredReviewFileDiscovery\(bframePath = null\)/);
@@ -188,4 +213,71 @@ test('Fabric 드로잉(drawingsV3) 동기화가 배선되어 있다', () => {
   );
   assert.match(syncSource, /FABRIC_DRAWING_ROOT_CHUNK/);
   assert.match(syncSource, /applyExternalDrawingsV3/);
+});
+
+test('connected drawingsV3 file notifications keep one latest trailing reload', () => {
+  const createLeadingTrailingThrottle = loadNamedFunction(
+    appSource,
+    'createLeadingTrailingThrottle'
+  );
+  let now = 10000;
+  let currentPath = 'C:/reviews/a.bframe';
+  const timers = [];
+  const reloads = [];
+  const throttle = createLeadingTrailingThrottle({
+    intervalMs: 500,
+    now: () => now,
+    run: filePath => reloads.push(filePath),
+    shouldRun: filePath => filePath === currentPath,
+    setTimer: (callback, delay) => {
+      const timer = { callback, delay };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: timer => {
+      const index = timers.indexOf(timer);
+      if (index >= 0) timers.splice(index, 1);
+    }
+  });
+
+  throttle.schedule('C:/reviews/a.bframe');
+  assert.deepEqual(reloads, ['C:/reviews/a.bframe']);
+
+  now = 10350;
+  throttle.schedule('C:/reviews/a.bframe');
+  throttle.schedule('C:/reviews/a.bframe');
+  assert.equal(reloads.length, 1);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 150);
+
+  now = 10500;
+  timers.shift().callback();
+  assert.deepEqual(reloads, [
+    'C:/reviews/a.bframe',
+    'C:/reviews/a.bframe'
+  ]);
+
+  now = 10600;
+  throttle.schedule('C:/reviews/a.bframe');
+  assert.equal(timers.length, 1);
+  currentPath = 'C:/reviews/b.bframe';
+  now = 11000;
+  timers.shift().callback();
+  assert.equal(reloads.length, 2, 'a trailing reload for the previous file must be discarded');
+
+  currentPath = 'C:/reviews/b.bframe';
+  throttle.schedule('C:/reviews/b.bframe');
+  assert.deepEqual(reloads.at(-1), 'C:/reviews/b.bframe');
+  now = 11100;
+  throttle.schedule('C:/reviews/b.bframe');
+  assert.equal(timers.length, 1);
+  now = 11600;
+  throttle.schedule('C:/reviews/b.bframe');
+  assert.equal(timers.length, 0, 'an overdue timer must be cleared by the new leading run');
+  assert.equal(reloads.length, 4);
+
+  assert.match(
+    appSource,
+    /if \(liveblocksManager\.isConnected\) \{[\s\S]*connectedDrawingsV3ReloadThrottle\.schedule\(filePath\);[\s\S]*return false;/
+  );
 });
