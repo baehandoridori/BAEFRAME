@@ -40,3 +40,15 @@ test('모드 종료 시 mpv 복귀 정리가 배선되어 있다 (작업 4)', ()
   // 다른 파일 로드 시작 시 복귀 대상 정리(경합 방지)
   assert.match(appSource, /hybridReviewResumeMpvFile = null;/);
 });
+
+test('B 토글은 복구·소스 갱신 중에 침묵 폐기되지 않고 예약된다', () => {
+  const controllerSource = fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-pilot-controller.js'), 'utf8'
+  );
+  assert.match(controllerSource, /if \(state === 'recovering'\) \{\s*\n\s*\/\/ 복구가 끝나면 자동으로/);
+  assert.match(controllerSource, /resumeRequested = !resumeRequested;/);
+});
+
+test('레거시 드로잉 준비는 진입 즉시 준비중 표시를 켠다', () => {
+  assert.match(appSource, /videoPlayer\.pause\(\);\s*\n\s*\/\/ 하이브리드 스왑·freeze 준비가 끝날 때까지 준비중 표시를 즉시 켠다\s*\n\s*setDrawModeReadyState\(false\);\s*\n\s*setDrawModePreparingState\(true\);/);
+});

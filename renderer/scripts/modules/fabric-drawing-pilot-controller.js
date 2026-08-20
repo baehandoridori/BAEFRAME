@@ -68,6 +68,12 @@ export function createFabricDrawingPilotController(options = {}) {
   const electronAPI = options.electronAPI || {};
   const getContext = typeof options.getContext === 'function' ? options.getContext : () => ({});
   const onStateChange = typeof options.onStateChange === 'function' ? options.onStateChange : () => {};
+  const onHistoryFallback = typeof options.onHistoryFallback === 'function'
+    ? options.onHistoryFallback
+    : () => {};
+  const getHistoryRevision = typeof options.getHistoryRevision === 'function'
+    ? options.getHistoryRevision
+    : null;
   const configuredDrawingToggleMatcher =
     typeof options.matchesDrawingToggleShortcut === 'function'
       ? options.matchesDrawingToggleShortcut
@@ -138,6 +144,16 @@ export function createFabricDrawingPilotController(options = {}) {
     return overrides && typeof overrides === 'object'
       ? { ...current, ...overrides }
       : { ...current };
+  }
+
+  function readHistoryRevision() {
+    if (!getHistoryRevision) return null;
+    try {
+      return getHistoryRevision();
+    } catch {
+      // 설정된 fence를 읽지 못하면 서로 다른 객체를 반환해 fallback을 fail-close한다.
+      return {};
+    }
   }
 
   function localSnapshot() {
@@ -514,9 +530,11 @@ export function createFabricDrawingPilotController(options = {}) {
   async function sendDrawingActionRequest(request) {
     try {
       const response = await electronAPI.mpvApplyOverlayDrawingAction(request);
-      return response?.success === true;
+      return response && typeof response === 'object'
+        ? response
+        : { success: false, applied: false };
     } catch {
-      return false;
+      return { success: false, applied: false };
     }
   }
 
@@ -524,7 +542,34 @@ export function createFabricDrawingPilotController(options = {}) {
     const request = makeDrawingActionRequest(action);
     if (!request) return Promise.resolve(false);
     const operation = drawingActionQueue.then(() => sendDrawingActionRequest(request));
-    drawingActionQueue = operation.catch(() => false);
+    drawingActionQueue = operation.then(r => r?.success === true, () => false);
+    return operation.then(r => r?.success === true);
+  }
+
+  function enqueueHistoryFallback(historyAction, historyRevision) {
+    const operation = drawingActionQueue.then(async () => {
+      if (historyRevision !== readHistoryRevision()) return false;
+      return onHistoryFallback(historyAction);
+    });
+    drawingActionQueue = operation.then(result => result === true, () => false);
+    return operation;
+  }
+
+  function applyHistoryAction(historyAction, historyRevision) {
+    const request = makeDrawingActionRequest(historyAction);
+    if (!request) {
+      return Promise.resolve({ success: false, applied: false });
+    }
+    const operation = drawingActionQueue.then(async () => {
+      const result = await sendDrawingActionRequest(request);
+      if (result?.applied === true || result?.duplicate === true) return result;
+      if (result?.reason === 'history-empty' &&
+          historyRevision === readHistoryRevision()) {
+        await onHistoryFallback(historyAction);
+      }
+      return result;
+    });
+    drawingActionQueue = operation.then(r => r?.success === true, () => false);
     return operation;
   }
 
@@ -1049,7 +1094,7 @@ export function createFabricDrawingPilotController(options = {}) {
         setState('recovering');
         return true;
       }
-      if (shouldResume) {
+      if (resumeRequested) {
         return startEnable(
           persistenceVideoContext,
           () => ownsPersistenceOwner(refreshOwner)
@@ -1226,13 +1271,14 @@ export function createFabricDrawingPilotController(options = {}) {
         enableContext,
         isStillCurrent
       );
-      if (!isStillCurrent()) return false;
+      // 수화 대기 중 B 취소(disable)로 입력 revision이 넘어갔으면 재개하지 않는다
+      if (!isCurrentInputRequest(request) || !isStillCurrent()) return false;
       if (!hydrated) {
         setState('passive');
         return false;
       }
     }
-    if (shouldResume) return startEnable(enableContext, isStillCurrent);
+    if (shouldResume || resumeRequested) return startEnable(enableContext, isStillCurrent);
     if (!isStillCurrent()) return false;
     setState(settledState);
     return true;
@@ -1505,15 +1551,24 @@ export function createFabricDrawingPilotController(options = {}) {
 
   function toggle() {
     if (!shouldOwnDrawingShortcut()) return Promise.resolve(false);
-    if (persistenceSourceRefreshInProgress ||
-        persistenceQuitSuspension !== null) {
-      return Promise.resolve(false);
-    }
+    if (persistenceQuitSuspension !== null) return Promise.resolve(false);
     const context = contextSnapshot();
     if (!validPilotContext(context)) return Promise.resolve(false);
+    if (persistenceSourceRefreshInProgress) {
+      // 저장 소스 갱신 중: B를 버리지 않고 갱신 완료 후 자동 진입/취소 예약으로 처리한다
+      resumeRequested = !resumeRequested;
+      notifyStateChange();
+      return Promise.resolve(true);
+    }
     if (state === 'active' || state === 'preparing' ||
         (state === 'recovering' && resumeRequested)) {
       return disable();
+    }
+    if (state === 'recovering') {
+      // 복구가 끝나면 자동으로 드로잉 모드에 진입하도록 예약한다
+      resumeRequested = true;
+      notifyStateChange();
+      return Promise.resolve(true);
     }
     if (state !== 'passive' && state !== 'failed') return Promise.resolve(false);
     if (!hostGeneration || !videoGeneration || !videoReady) {
@@ -1533,11 +1588,18 @@ export function createFabricDrawingPilotController(options = {}) {
 
     const historyAction = drawingHistoryActionFromKeyEvent(event);
     if (historyAction) {
-      if (state !== 'preparing' && state !== 'active') return false;
-      consumeKeyEvent(event);
-      if (event.repeat !== true && state === 'active') {
-        runDetached(applyDrawingAction(historyAction));
+      if (state !== 'preparing' && state !== 'active' && state !== 'recovering') {
+        return false;
       }
+      consumeKeyEvent(event);
+      if (event.repeat === true) return true;
+      const historyRevision = readHistoryRevision();
+      if (state !== 'active') {
+        // 세션 준비·복구 중에는 fabric 히스토리를 쓸 수 없다 — 전역 undo로 폴백
+        runDetached(enqueueHistoryFallback(historyAction, historyRevision));
+        return true;
+      }
+      runDetached(applyHistoryAction(historyAction, historyRevision));
       return true;
     }
     const isDrawingToggleShortcut = matchesDrawingToggleShortcut(event);

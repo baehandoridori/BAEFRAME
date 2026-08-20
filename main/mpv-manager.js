@@ -103,6 +103,10 @@ function createMpvLaunchArgs({ ipcPath, forceWindow = true, wid = null, headless
     '--hwdec=auto',
     '--screenshot-format=png',
     '--screenshot-png-compression=1',
+    // mpv 자식 창이 키·마우스 입력을 소비하지 않도록 차단 (입력은 앱이 IPC로 전달)
+    '--input-default-bindings=no',
+    '--input-vo-keyboard=no',
+    '--input-cursor=no',
     `--input-ipc-server=${ipcPath}`
   ];
 

@@ -777,3 +777,14 @@ test('launch args pin png screenshot format', () => {
   const args = createMpvLaunchArgs({ ipcPath: '\\\\.\\pipe\\x' });
   assert.ok(args.includes('--screenshot-format=png'));
 });
+
+test('mpv 실행 인자는 자식 창 입력 소비를 차단한다', () => {
+  const args = createMpvLaunchArgs({ ipcPath: '\\\\.\\pipe\\test-mpv' });
+  assert.ok(args.includes('--input-default-bindings=no'));
+  assert.ok(args.includes('--input-vo-keyboard=no'));
+  assert.ok(args.includes('--input-cursor=no'));
+  const widArgs = createMpvLaunchArgs({ ipcPath: '\\\\.\\pipe\\test-mpv', wid: 4242 });
+  assert.ok(widArgs.includes('--input-default-bindings=no'));
+  const headlessArgs = createMpvLaunchArgs({ ipcPath: '\\\\.\\pipe\\test-mpv', headless: true });
+  assert.ok(headlessArgs.includes('--input-vo-keyboard=no'));
+});

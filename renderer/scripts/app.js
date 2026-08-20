@@ -19,6 +19,7 @@ import { ReviewDataManager, getBframePath } from './modules/review-data-manager.
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
 import { DrawingSync } from './modules/drawing-sync.js';
+import { FabricDrawingSync } from './modules/fabric-drawing-sync.js';
 import { createFabricDrawingPilotController } from './modules/fabric-drawing-pilot-controller.js';
 import { createFabricDrawingPersistenceStore } from './modules/fabric-drawing-persistence-store.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
@@ -293,6 +294,71 @@ function createCoalescedAsyncScheduler({
     timer = null;
     inFlight = null;
     trailing = false;
+  }
+
+  return { schedule, cancel };
+}
+
+function createLeadingTrailingThrottle({
+  intervalMs,
+  run,
+  shouldRun = () => true,
+  now = () => Date.now(),
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+  onError = () => {}
+}) {
+  let lastRunAt = Number.NEGATIVE_INFINITY;
+  let timer = null;
+  let pendingValue;
+  let hasPending = false;
+
+  function invoke(value) {
+    if (!shouldRun(value)) return false;
+    lastRunAt = now();
+    try {
+      const result = run(value);
+      if (result && typeof result.catch === 'function') {
+        void result.catch(onError);
+      }
+    } catch (error) {
+      onError(error);
+    }
+    return true;
+  }
+
+  function schedule(value) {
+    pendingValue = value;
+    hasPending = true;
+    if (!shouldRun(value)) return;
+
+    const remaining = intervalMs - (now() - lastRunAt);
+    if (remaining <= 0) {
+      if (timer !== null) clearTimer(timer);
+      timer = null;
+      const nextValue = pendingValue;
+      pendingValue = undefined;
+      hasPending = false;
+      invoke(nextValue);
+      return;
+    }
+    if (timer !== null) return;
+
+    timer = setTimer(() => {
+      timer = null;
+      if (!hasPending) return;
+      const nextValue = pendingValue;
+      pendingValue = undefined;
+      hasPending = false;
+      invoke(nextValue);
+    }, remaining);
+  }
+
+  function cancel() {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+    pendingValue = undefined;
+    hasPending = false;
   }
 
   return { schedule, cancel };
@@ -1087,6 +1153,11 @@ async function initApp() {
   const redoStack = [];
   const MAX_UNDO_STACK = 50;
   let _isProcessingUndo = false;
+  let globalHistoryRevision = 0;
+
+  function advanceGlobalHistoryRevision() {
+    globalHistoryRevision += 1;
+  }
 
   /**
    * Undo 스택에 작업 추가
@@ -1099,16 +1170,22 @@ async function initApp() {
       undoStack.shift();
     }
     redoStack.length = 0; // Redo 스택 초기화
+    advanceGlobalHistoryRevision();
   }
 
   /**
    * 글로벌 Undo 실행 (통합 타임라인)
    */
-  async function globalUndo() {
+  async function globalUndo({ fromFabricFallback = false } = {}) {
     if (_isProcessingUndo || undoStack.length === 0) return false;
     _isProcessingUndo = true;
+    const advanceHistoryRevision = () => {
+      if (!fromFabricFallback) advanceGlobalHistoryRevision();
+    };
 
     const action = undoStack.pop();
+    advanceHistoryRevision();
+    const historyMutationRevision = globalHistoryRevision;
     try {
       if (action && action.undo) {
         // redo를 위해 현재 상태 캡처 (DRAWING 타입인 경우)
@@ -1117,13 +1194,21 @@ async function initApp() {
           action._redoSnapshot = currentSnapshot;
         }
         await action.undo();
+        // 비동기 undo 중 새 작업·파일 전환이 끼면 과거 action을 새 redo 스택에 되살리지 않는다.
+        if (historyMutationRevision !== globalHistoryRevision) return true;
         redoStack.push(action);
+        advanceHistoryRevision();
         return true;
       }
       return false;
     } catch (err) {
       log.error('Undo 실패', err);
-      undoStack.push(action); // 롤백
+      if (historyMutationRevision === globalHistoryRevision) {
+        undoStack.push(action); // 롤백
+        // 실패한 Fabric 폴백도 같은 키 입력 묶음의 후속 재실행을 막는 barrier가 된다.
+        advanceGlobalHistoryRevision();
+      }
+      showToast('실행 취소에 실패했습니다', 'error');
       return false;
     } finally {
       _isProcessingUndo = false;
@@ -1133,11 +1218,16 @@ async function initApp() {
   /**
    * 글로벌 Redo 실행 (통합 타임라인)
    */
-  async function globalRedo() {
+  async function globalRedo({ fromFabricFallback = false } = {}) {
     if (_isProcessingUndo || redoStack.length === 0) return false;
     _isProcessingUndo = true;
+    const advanceHistoryRevision = () => {
+      if (!fromFabricFallback) advanceGlobalHistoryRevision();
+    };
 
     const action = redoStack.pop();
+    advanceHistoryRevision();
+    const historyMutationRevision = globalHistoryRevision;
     try {
       if (action) {
         // DRAWING 타입의 경우 redo 콜백 대신 _redoSnapshot으로 복원
@@ -1153,13 +1243,21 @@ async function initApp() {
         } else if (action.redo) {
           await action.redo();
         }
+        // 비동기 redo 중 새 작업·파일 전환이 끼면 과거 action을 새 undo 스택에 되살리지 않는다.
+        if (historyMutationRevision !== globalHistoryRevision) return true;
         undoStack.push(action);
+        advanceHistoryRevision();
         return true;
       }
       return false;
     } catch (err) {
       log.error('Redo 실패', err);
-      redoStack.push(action); // 롤백
+      if (historyMutationRevision === globalHistoryRevision) {
+        redoStack.push(action); // 롤백
+        // 실패한 Fabric 폴백도 같은 키 입력 묶음의 후속 재실행을 막는 barrier가 된다.
+        advanceGlobalHistoryRevision();
+      }
+      showToast('다시 실행에 실패했습니다', 'error');
       return false;
     } finally {
       _isProcessingUndo = false;
@@ -1276,6 +1374,11 @@ async function initApp() {
       remoteStrokeOverlayForMpv = overlay || null;
       scheduleMpvOverlayStateSync({ liveDrawing: true });
     }
+  });
+  // Fabric 드로잉(drawingsV3) 동기화 — 저장 스냅샷을 Broadcast로 전파
+  const fabricDrawingSync = new FabricDrawingSync({
+    liveblocksManager,
+    reviewDataManager
   });
   const playbackSync = getPlaybackSync(liveblocksManager);
 
@@ -2150,22 +2253,7 @@ async function initApp() {
     // 원격 변경, Redo 복원, 가져온 피드백은 알림/Undo 스킵
     if (remote || restored || imported) return;
 
-    // Slack 알림: @멘션 대상에게 웹훅 전송 (딥링크 전에 저장하여 최신 상태 보장)
-    if (reviewDataManager.getBframePath()) {
-      const saved = await reviewDataManager.save();
-      if (!saved) {
-        log.warn('bframe 저장 실패, Slack 알림 건너뜀');
-        return;
-      }
-    }
-    slackNotifier.notifyNewComment(marker, commentManager.getAuthor(), {
-      filePath: state.currentFile,
-      bframePath: reviewDataManager.getBframePath() || '',
-      fileName: elements.fileName?.textContent || '',
-      timecode: marker.startTimecode || ''
-    });
-
-    // Undo 스택에 추가
+    // Undo 스택에 추가 — 저장·알림보다 먼저 동기 등록해 생성 직후 Ctrl+Z를 보장한다
     const markerData = marker.toJSON();
     pushUndo({
       type: 'ADD_COMMENT',
@@ -2184,6 +2272,26 @@ async function initApp() {
         updateVideoMarkers();
         await reviewDataManager.save();
       }
+    });
+
+    // Slack 알림: @멘션 대상에게 웹훅 전송 (딥링크 전에 저장하여 최신 상태 보장)
+    if (reviewDataManager.getBframePath()) {
+      const saved = await reviewDataManager.save();
+      if (!saved) {
+        log.warn('bframe 저장 실패, Slack 알림 건너뜀');
+        return;
+      }
+    }
+    const currentMarker = commentManager.getMarker(markerData.id);
+    if (!currentMarker || currentMarker.deleted) {
+      log.info('저장 대기 중 취소된 댓글의 Slack 알림 건너뜀', { id: markerData.id });
+      return;
+    }
+    slackNotifier.notifyNewComment(currentMarker, commentManager.getAuthor(), {
+      filePath: state.currentFile,
+      bframePath: reviewDataManager.getBframePath() || '',
+      fileName: elements.fileName?.textContent || '',
+      timecode: currentMarker.startTimecode || ''
     });
   });
 
@@ -4224,12 +4332,12 @@ async function initApp() {
         reviewDataManager.save();
       },
       redo: () => {
-        // 하이라이트 복원 (같은 속성으로)
+        // 하이라이트 복원 (같은 속성으로) — colorInfo는 getter라 colorKey만 복원한다
         const restored = highlightManager.createHighlight(highlight.startTime);
         restored.id = highlight.id;
         restored.endTime = highlight.endTime;
         restored.note = highlight.note;
-        restored.colorInfo = highlight.colorInfo;
+        restored.colorKey = highlight.colorKey;
         renderHighlights();
         reviewDataManager.save();
       }
@@ -4589,13 +4697,12 @@ async function initApp() {
         type: 'highlight-delete',
         data: { highlightId: deletedId },
         undo: () => {
-          // 하이라이트 복원
+          // 하이라이트 복원 — colorInfo는 getter라 colorKey만 복원한다
           const restored = highlightManager.createHighlight(deletedHighlight.startTime);
           restored.id = deletedHighlight.id;
           restored.endTime = deletedHighlight.endTime;
           restored.note = deletedHighlight.note;
           restored.colorKey = deletedHighlight.colorKey;
-          restored.colorInfo = deletedHighlight.colorInfo;
           renderHighlights();
           reviewDataManager.save();
         },
@@ -6625,6 +6732,7 @@ async function initApp() {
     try {
       playbackSync.stop();
       drawingSync.stop();
+      fabricDrawingSync.stop();
       commentSync.stop();
       await liveblocksManager.stop();
     } catch (error) {
@@ -6677,10 +6785,15 @@ async function initApp() {
         return false;
       }
       drawingSync.start();
+      fabricDrawingSync.start();
       playbackSync.start();
+      // 새 협업 세션 기준값 초기화 — LiveblocksManager.stop()은 collaboratorsChanged([])를
+      // 발생시키지 않아 이전 방의 참여자 수가 남으면 새 방의 late seed 조건을 놓친다
+      _previousOthersCount = 0;
+      _collaborationSessionStartedAt = Date.now();
       if (seedCurrentState) {
-        commentSync.broadcastCurrentState?.();
-        drawingSync.broadcastCurrentState?.();
+        // 댓글·레거시 drawing seed는 삭제 경합을 수렴시킬 causal 정보가 없어 제외한다.
+        fabricDrawingSync.broadcastCurrentState?.();
       }
       log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
     } catch (error) {
@@ -7118,7 +7231,23 @@ async function initApp() {
     matchesDrawingToggleShortcut: event => userSettings.matchShortcut('drawMode', event),
     matchesSelectionShortcut: event => userSettings.matchShortcut('drawingToolSelect', event),
     persistenceStore: fabricDrawingPersistenceStore,
-    onStateChange: handleFabricDrawingPilotStateChange
+    onStateChange: handleFabricDrawingPilotStateChange,
+    getHistoryRevision: () => globalHistoryRevision,
+    // fabric 히스토리가 비어 있으면 전역 undo/redo로 폴백한다
+    onHistoryFallback: (action) => {
+      if (action === 'undo') {
+        return globalUndo({ fromFabricFallback: true }).then(done => {
+          if (done) showToast('실행 취소됨', 'info');
+          return done;
+        });
+      } else if (action === 'redo') {
+        return globalRedo({ fromFabricFallback: true }).then(done => {
+          if (done) showToast('다시 실행됨', 'info');
+          return done;
+        });
+      }
+      return Promise.resolve(false);
+    }
   });
   reviewDataManager.setFabricDrawingSourceRefreshHandler(
     ({ installSource }) =>
@@ -9096,6 +9225,7 @@ async function initApp() {
           } finally {
             commentSync.stop();
             drawingSync.stop();
+            fabricDrawingSync.stop();
           }
           // 협업 UI 초기화 (이전 세션의 아바타/인원 표시 제거)
           updateCollaboratorsUI([]);
@@ -9140,6 +9270,7 @@ async function initApp() {
         // Undo/Redo 스택 초기화 (파일 전환 시 크로스파일 오염 방지)
         undoStack.length = 0;
         redoStack.length = 0;
+        advanceGlobalHistoryRevision();
         // 그리기 매니저 초기화
         drawingManager.reset();
         // 하이라이트 매니저 초기화
@@ -10003,6 +10134,9 @@ async function initApp() {
     }
     if (enabled && isMpvPilotPlaybackActive()) {
       videoPlayer.pause();
+      // 하이브리드 스왑·freeze 준비가 끝날 때까지 준비중 표시를 즉시 켠다
+      setDrawModeReadyState(false);
+      setDrawModePreparingState(true);
       // 작업 4: 하이브리드 우선 — HTML5 직재생 가능하면 엔진 전환, 아니면 기존 freeze 준비.
       // (c-0)의 skipReviewTransition 덕에 preparationToken이 보존되어 실패 폴백이 성립한다.
       void enterHybridReviewEngineIfPossible().then((swapped) => {
@@ -10017,6 +10151,9 @@ async function initApp() {
         } else {
           void prepareMpvDrawMode(preparationToken);
         }
+      }, () => {
+        // 스왑 자체가 예외로 실패해도 준비중 표시가 고착되지 않도록 freeze 폴백으로 잇는다
+        if (state.isDrawMode) void prepareMpvDrawMode(preparationToken);
       });
     } else {
       setDrawModePreparingState(false);
@@ -13746,6 +13883,7 @@ async function initApp() {
     // 협업 세션 종료 (presence 제거)
     commentSync.stop();
     drawingSync.stop();
+    fabricDrawingSync.stop();
     try {
       await liveblocksManager.stop();
     } catch (error) {
@@ -13783,7 +13921,7 @@ async function initApp() {
           await startCollaborationForVideoLoad(
             latestVideoLoadToken,
             reviewDataManager.currentBframePath,
-            { persistNewRoom: false, seedCurrentState: true }
+            { persistNewRoom: false, seedCurrentState: false }
           );
           saveBeforeQuitInProgress = false;
         }
@@ -13803,7 +13941,7 @@ async function initApp() {
         await startCollaborationForVideoLoad(
           latestVideoLoadToken,
           reviewDataManager.currentBframePath,
-          { persistNewRoom: false, seedCurrentState: true }
+          { persistNewRoom: false, seedCurrentState: false }
         );
         saveBeforeQuitInProgress = false;
       }
@@ -16723,6 +16861,7 @@ async function initApp() {
 
   // Liveblocks 협업 이벤트 리스너
   let _previousOthersCount = 0;
+  let _collaborationSessionStartedAt = 0;
   liveblocksManager.addEventListener('collaboratorsChanged', (e) => {
     // 자기 자신 + 다른 사용자 모두 표시
     const isSyncing = playbackSync.syncEnabled;
@@ -16745,6 +16884,15 @@ async function initApp() {
     if (currentOthersCount > 0 && _previousOthersCount === 0) {
       showToast('실시간 협업 세션에 참여했습니다', 'info');
       _triggerCollabRipple();
+    }
+    // 참여자가 늘어나면 causal Fabric root를 재전송해 늦은 참여자를 seed한다.
+    // 단 자신이 방금 합류한 쪽이면(연결 10초 이내) 구버전 로컬 상태를 방에
+    // 뿌리지 않도록 억제한다 — 기존 멤버 측 재전송만으로 seed가 완성된다.
+    // 댓글·레거시 drawing current-state seed는 삭제 상태를 전파하지 않는 additive
+    // 전송이므로 검증되지 않은 기존 peer에서 자동 재전송하지 않는다.
+    if (currentOthersCount > _previousOthersCount &&
+        Date.now() - _collaborationSessionStartedAt > 10000) {
+      fabricDrawingSync.broadcastCurrentState?.();
     }
     _previousOthersCount = currentOthersCount;
 
@@ -17081,6 +17229,15 @@ async function initApp() {
   // 다른 사용자가 저장하면 즉시 동기화
   let lastSyncTime = 0;
   const MIN_SYNC_INTERVAL = 500; // 최소 500ms 간격
+  const connectedDrawingsV3ReloadThrottle = createLeadingTrailingThrottle({
+    intervalMs: MIN_SYNC_INTERVAL,
+    shouldRun: filePath => liveblocksManager.isConnected &&
+      isSameFilePath(filePath, reviewDataManager.currentBframePath),
+    run: () => reviewDataManager.reloadDrawingsV3FromDisk?.(),
+    onError: error => log.warn('drawingsV3 파일 동기화 실패', {
+      error: error?.message || String(error)
+    })
+  });
 
   async function syncReviewFileFromDisk(filePath, options = {}) {
     const {
@@ -17093,9 +17250,12 @@ async function initApp() {
     // 현재 열린 파일이 아니면 무시
     if (!isSameFilePath(filePath, reviewDataManager.currentBframePath)) return false;
 
-    // Liveblocks 연결 중이면 Broadcast가 실시간 동기화를 담당하므로
-    // 파일 기반 동기화 건너뛰기 (구버전 파일로 덮어쓰는 것 방지)
+    // Liveblocks 연결 중이면 댓글·레거시 드로잉은 Broadcast가 담당하므로
+    // 파일 기반 동기화를 건너뛴다 (구버전 파일로 덮어쓰는 것 방지).
+    // 단 Fabric 드로잉(drawingsV3)은 Broadcast가 없던 시절 저장분·오프라인 저장분이
+    // 파일로만 도착할 수 있어, 드로잉만 선별 반영한다 (지문 비교로 no-op 보장).
     if (liveblocksManager.isConnected) {
+      connectedDrawingsV3ReloadThrottle.schedule(filePath);
       return false;
     }
 

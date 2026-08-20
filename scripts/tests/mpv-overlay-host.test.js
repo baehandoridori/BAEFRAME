@@ -2245,7 +2245,7 @@ test('overlay physical key relay rejects malformed and composing input without f
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
 });
 
-test('overlay history shortcuts execute once without relaying to the main window', async () => {
+test('overlay history shortcuts relay once to the main renderer without host-side history execution', async () => {
   const harness = createDrawingHostHarness();
   await activateDrawingHost(harness, {
     videoGeneration: 12,
@@ -2275,6 +2275,10 @@ test('overlay history shortcuts execute once without relaying to the main window
   };
 
   assert.equal(emit({ control: true }), true);
+  assert.deepEqual(harness.events.filter(([name, channel]) =>
+    name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , input]) => input.code), ['KeyZ'],
+  'the physical history key must relay synchronously to the renderer');
   assert.equal(emit({
     control: false,
     isAutoRepeat: true
@@ -2287,15 +2291,13 @@ test('overlay history shortcuts execute once without relaying to the main window
   assert.equal(emit({ key: 'y', code: 'KeyY', control: true }), true);
   assert.equal(emit({ control: true, shift: true }), true);
   assert.equal(emit({ control: true, isAutoRepeat: true }), true);
-  await waitForAsyncReposition();
-  await waitForAsyncReposition();
-
-  const actionPayloads = harness.events
-    .filter(([name, script]) => name === 'executeJavaScript' && script.includes?.('.applyDrawingAction('))
-    .map(([, script]) => readFabricMethodPayload(script, 'applyDrawingAction'));
-  assert.deepEqual(actionPayloads.map(request => request.action), ['undo', 'undo', 'redo', 'redo']);
-  assert.equal(new Set(actionPayloads.map(request => request.actionId)).size, 4);
-  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
+  const relayedInputs = harness.events
+    .filter(([name, channel]) =>
+      name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , input]) => input);
+  assert.deepEqual(relayedInputs.map(input => input.code), ['KeyZ', 'KeyZ', 'KeyY', 'KeyZ']);
+  assert.equal(harness.events.some(([name, script]) =>
+    name === 'executeJavaScript' && script.includes?.('.applyDrawingAction(')), false);
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), false);
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
 });
@@ -2352,7 +2354,7 @@ test('overlay history routing leaves invalid combinations and Electron IME input
   assert.equal(harness.events.filter(([name]) => name === 'mainWindow.send').length, 7);
 });
 
-test('controller-origin and overlay-origin actions share one serialized host queue', async () => {
+test('overlay history relay bypasses an in-flight controller-origin host queue', async () => {
   const firstAttempt = createDeferred();
   const actionOrder = [];
   const harness = createDrawingHostHarness({
@@ -2390,14 +2392,17 @@ test('controller-origin and overlay-origin actions share one serialized host que
     isAutoRepeat: false
   });
   assert.equal(overlayPrevented, true);
+  assert.deepEqual(harness.events
+    .filter(([name, channel]) =>
+      name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , input]) => input.code), ['KeyY']);
   await waitForAsyncReposition();
   assert.deepEqual(actionOrder, ['undo']);
 
   firstAttempt.resolve({ applied: true, deletedCount: 0 });
   assert.equal((await controllerAction).success, true);
   await waitForAsyncReposition();
-  await waitForAsyncReposition();
-  assert.deepEqual(actionOrder, ['undo', 'redo']);
+  assert.deepEqual(actionOrder, ['undo']);
 });
 
 test('overlay keeps forwarding B V Delete and Space through the main renderer route', async () => {
@@ -2730,6 +2735,64 @@ test('deduplicates drawing actions and allowlists lightweight host responses', a
   });
   assert.doesNotMatch(JSON.stringify(diagnostics),
     /fabricJSON|objects|scene\s*:|deletedIds|undoBytes|undoState|command/i);
+});
+
+test('drawing action response forwards history-empty reason', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      return { applied: false, reason: 'history-empty' };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 8,
+    sessionId: 'session-history-empty-response'
+  });
+  const result = await harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'undo',
+    actionId: 'history-empty-response-1'
+  });
+
+  assert.equal(result.reason, 'history-empty');
+  assert.equal(result.success, false);
+});
+
+test('overlay history relay does not await or invoke host Fabric history', async () => {
+  const delayedHistory = createDeferred();
+  let hostHistoryCallCount = 0;
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      hostHistoryCallCount += 1;
+      return delayedHistory.promise;
+    }
+  });
+  await activateDrawingHost(harness, {
+    videoGeneration: 8,
+    sessionId: 'session-history-single-owner'
+  });
+  harness.events.length = 0;
+
+  harness.windows[0].webContents.emit('before-input-event', {
+    preventDefault() {}
+  }, {
+    type: 'keyDown',
+    key: 'z',
+    code: 'KeyZ',
+    shift: false,
+    control: true,
+    alt: false,
+    meta: false,
+    isAutoRepeat: false
+  });
+
+  const relayedInputs = harness.events.filter(([name, channel]) =>
+    name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input');
+  assert.equal(relayedInputs.length, 1);
+  assert.equal(relayedInputs[0][2].code, 'KeyZ');
+  assert.equal(hostHistoryCallCount, 0);
+  delayedHistory.resolve({ applied: true });
 });
 
 test('allowlists undo and redo while rejecting unknown drawing actions', async () => {

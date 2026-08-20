@@ -55,6 +55,7 @@ export function isTextEntryShortcutTarget(target) {
 
 export function getEffectiveKeyboardShortcutTarget(event, ownerDocument = globalThis.document) {
   const target = event?.target || null;
+  if (target && target === ownerDocument) return target;
   const tagName = getTagName(target);
   if (target && tagName !== 'BODY' && tagName !== 'HTML' && tagName !== '') {
     return target;

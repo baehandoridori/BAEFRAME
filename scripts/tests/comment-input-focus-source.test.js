@@ -145,6 +145,23 @@ test('loading review comments refreshes the right sidebar comment list', () => {
   assert.match(loadedHandlerSource, /updateCommentList\(\);/);
 });
 
+test('comment notifications are cancelled when creation is undone while save is pending', () => {
+  const handlerStart = appSource.indexOf("  commentManager.addEventListener('markerAdded', async (e) => {");
+  const handlerEnd = appSource.indexOf('  // 마커 삭제됨', handlerStart);
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, 'markerAdded handler should be bounded');
+  const markerAddedHandler = appSource.slice(handlerStart, handlerEnd);
+
+  const saveIndex = markerAddedHandler.indexOf('const saved = await reviewDataManager.save();');
+  const currentMarkerIndex = markerAddedHandler.indexOf('const currentMarker = commentManager.getMarker(markerData.id);');
+  const deletedGuardIndex = markerAddedHandler.indexOf('if (!currentMarker || currentMarker.deleted)');
+  const notifyIndex = markerAddedHandler.indexOf('slackNotifier.notifyNewComment(currentMarker');
+
+  assert.ok(saveIndex >= 0, 'new comments should be saved before Slack notification');
+  assert.ok(currentMarkerIndex > saveIndex, 'the marker must be re-read after the pending save');
+  assert.ok(deletedGuardIndex > currentMarkerIndex, 'deleted comments must stop notification delivery');
+  assert.ok(notifyIndex > deletedGuardIndex, 'only the still-active marker may be notified');
+});
+
 test('right sidebar reply editors grow with long replies', () => {
   assert.match(appSource, /function resizeReplyEditorToContent\(editor\) \{/);
   assert.match(appSource, /replyInput\?\.addEventListener\('input', \(\) => resizeReplyEditorToContent\(replyInput\)\);/);

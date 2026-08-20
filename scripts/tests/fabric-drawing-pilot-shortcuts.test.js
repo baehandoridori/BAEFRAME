@@ -75,7 +75,8 @@ function createHarness(options = {}) {
     async mpvGetOverlayDrawingDiagnostics(request) {
       calls.diagnostics.push(request);
       return { success: true, state: 'passive' };
-    }
+    },
+    ...(options.electronMethods || {})
   };
   const electronAPI = new Proxy(methods, {
     get(target, property) {
@@ -89,6 +90,10 @@ function createHarness(options = {}) {
     onStateChange: (state, snapshot) => states.push({ state, snapshot }),
     matchesDrawingToggleShortcut: options.matchesDrawingToggleShortcut,
     matchesSelectionShortcut: options.matchesSelectionShortcut,
+    persistenceStore: options.persistenceStore,
+    persistenceSessionIdFactory: options.persistenceSessionIdFactory,
+    getHistoryRevision: options.getHistoryRevision,
+    onHistoryFallback: options.onHistoryFallback,
     uuid: () => `uuid-${++id}`
   });
 
@@ -208,7 +213,7 @@ test('capability adoption validates passive readiness and never creates a video 
   assert.equal((await harness.controller.diagnostics()).videoGeneration, 0);
 });
 
-test('initial video confirmation sends an accepted disable before B can enable', async () => {
+test('initial video confirmation queues B and auto-enables after the disable settles', async () => {
   const firstDisable = deferred();
   const harness = createHarness({
     onInput(request, index) {
@@ -223,17 +228,19 @@ test('initial video confirmation sends an accepted disable before B can enable',
   assert.equal(harness.calls.input.length, 1);
   assert.equal(harness.calls.input[0].enabled, false);
   assert.equal(harness.controller.getState(), 'recovering');
-  assert.equal(await harness.controller.toggle(), false);
+  assert.equal(await harness.controller.toggle(), true);
   assert.equal(harness.calls.input.filter(request => request.enabled).length, 0);
 
   firstDisable.resolve({ success: true, accepted: true, enabled: false });
   assert.equal(await ready, true);
-  assert.equal(harness.controller.getState(), 'passive');
-
-  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(harness.controller.getState(), 'active');
   assert.equal(harness.calls.input[1].enabled, true);
   assertEnvelope(harness.calls.input[0]);
   assertEnvelope(harness.calls.input[1]);
+
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(harness.calls.input.at(-1).enabled, false);
+  assert.equal(harness.controller.getState(), 'passive');
 });
 
 test('100 direct B toggles issue exactly 50 enables and 50 disables after setup', async () => {
@@ -614,6 +621,130 @@ test('active Ctrl or Cmd history shortcuts send exactly one semantic action', as
     assert.equal(request.inputRevision, 2);
     assert.equal(request.sessionId, harness.calls.input.at(-1).session.sessionId);
     assertEnvelope(request);
+  }
+});
+
+test('delayed empty Fabric history falls back only while global history is unchanged', async () => {
+  const cases = [
+    ['z', { code: 'KeyZ', ctrlKey: true }, 'undo'],
+    ['y', { code: 'KeyY', ctrlKey: true }, 'redo']
+  ];
+
+  for (const [key, modifiers, action] of cases) {
+    let historyRevision = 7;
+    const changedFallbacks = [];
+    const changedResponse = deferred();
+    const changed = createHarness({
+      getHistoryRevision: () => historyRevision,
+      onHistoryFallback: fallbackAction => changedFallbacks.push(fallbackAction),
+      onAction: () => changedResponse.promise
+    });
+    await preparePassive(changed);
+    await changed.controller.toggle();
+
+    assert.equal(changed.controller.routeKeydown(createKeyEvent(key, modifiers)), true);
+    await new Promise(resolve => setImmediate(resolve));
+    historyRevision += 1;
+    changedResponse.resolve({
+      success: true,
+      applied: false,
+      duplicate: false,
+      reason: 'history-empty'
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(
+      changedFallbacks,
+      [],
+      `${action} must not target a global item created after keydown`
+    );
+
+    const unchangedFallbacks = [];
+    const unchangedResponse = deferred();
+    const unchanged = createHarness({
+      getHistoryRevision: () => 11,
+      onHistoryFallback: fallbackAction => unchangedFallbacks.push(fallbackAction),
+      onAction: () => unchangedResponse.promise
+    });
+    await preparePassive(unchanged);
+    await unchanged.controller.toggle();
+
+    assert.equal(unchanged.controller.routeKeydown(createKeyEvent(key, modifiers)), true);
+    await new Promise(resolve => setImmediate(resolve));
+    unchangedResponse.resolve({
+      success: true,
+      applied: false,
+      duplicate: false,
+      reason: 'history-empty'
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(unchangedFallbacks, [action]);
+  }
+});
+
+test('queued empty Fabric history preserves each shortcut but still fences unrelated changes', async () => {
+  const cases = [
+    ['z', { code: 'KeyZ', ctrlKey: true }, 'undo'],
+    ['y', { code: 'KeyY', ctrlKey: true }, 'redo']
+  ];
+
+  for (const [key, modifiers, action] of cases) {
+    for (const mutateHistory of [false, true]) {
+      let historyRevision = 23;
+      let fallbackInFlight = false;
+      let concurrentFallbacks = 0;
+      const fallbacks = [];
+      const firstFallbackStarted = deferred();
+      const firstFallbackGate = deferred();
+      const harness = createHarness({
+        getHistoryRevision: () => historyRevision,
+        onAction: () => ({
+          success: true,
+          applied: false,
+          duplicate: false,
+          reason: 'history-empty'
+        }),
+        onHistoryFallback: async fallbackAction => {
+          if (fallbackInFlight) {
+            concurrentFallbacks += 1;
+            return false;
+          }
+          fallbackInFlight = true;
+          fallbacks.push(fallbackAction);
+          if (fallbacks.length === 1) {
+            firstFallbackStarted.resolve();
+            await firstFallbackGate.promise;
+          }
+          fallbackInFlight = false;
+          return true;
+        }
+      });
+      await preparePassive(harness);
+      await harness.controller.toggle();
+
+      assert.equal(harness.controller.routeKeydown(createKeyEvent(key, modifiers)), true);
+      assert.equal(harness.controller.routeKeydown(createKeyEvent(key, modifiers)), true);
+      await firstFallbackStarted.promise;
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(
+        harness.calls.action.length,
+        1,
+        'the second Fabric history request must wait for the first fallback'
+      );
+      if (mutateHistory) historyRevision += 1;
+      firstFallbackGate.resolve();
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      assert.equal(harness.calls.action.length, 2);
+      assert.equal(concurrentFallbacks, 0);
+      assert.deepEqual(
+        fallbacks,
+        mutateHistory ? [action] : [action, action],
+        mutateHistory
+          ? 'a new global-history mutation must discard the queued fallback'
+          : 'an earlier queued fallback must not discard the next shortcut intent'
+      );
+    }
   }
 });
 
@@ -1609,4 +1740,88 @@ test('all dependencies and request envelopes stay inside the Task 3 pilot bridge
 
   const source = fs.readFileSync(controllerPath, 'utf8');
   assert.doesNotMatch(source, /DrawingManager|ReviewDataManager|save|videoPlayer|loadVideo|pause|hybrid|freeze/);
+});
+
+test('B cancellation during deferred hydration prevents a queued recovery from enabling', async () => {
+  const storePath = path.join(
+    __dirname,
+    '..',
+    '..',
+    'renderer',
+    'scripts',
+    'modules',
+    'fabric-drawing-persistence-store.js'
+  );
+  const { createFabricDrawingPersistenceStore } = await import(pathToFileURL(storePath).href);
+  const store = createFabricDrawingPersistenceStore({
+    createId: prefix => `${prefix}-test`
+  });
+  assert.equal(store.reset({
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'video-a'
+  }).accepted, true);
+
+  const pendingHydration = deferred();
+  const hydrationCalls = [];
+  const harness = createHarness({
+    context: { fps: 24, totalFrames: 240 },
+    persistenceStore: store,
+    persistenceSessionIdFactory: () => 'persistence-session-1',
+    electronMethods: {
+      onFabricDrawingPersistenceEvent() {
+        return () => {};
+      },
+      async mpvHydrateOverlayDrawingVideo(request) {
+        hydrationCalls.push(request);
+        return pendingHydration.promise;
+      },
+      async mpvExportOverlayDrawingVideo(request) {
+        return {
+          success: true,
+          accepted: true,
+          snapshot: {
+            hostGeneration: request.hostGeneration,
+            videoGeneration: request.videoGeneration,
+            persistenceSessionId: request.persistenceSessionId,
+            stableVideoIdentity: request.stableVideoIdentity,
+            fps: request.fps,
+            totalFrames: request.totalFrames,
+            scenes: []
+          }
+        };
+      }
+    }
+  });
+  assert.equal(await harness.controller.initialize(), true);
+  assert.equal(await harness.controller.adoptOverlayCapability({
+    passiveReady: true,
+    hostGeneration: 1
+  }), true);
+
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal((await harness.controller.diagnostics()).resumeRequested, true);
+
+  const ready = harness.controller.afterVideoReady({
+    loadToken: 'load-a',
+    stableVideoIdentity: 'video-a',
+    fps: 24,
+    totalFrames: 240
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(hydrationCalls.length, 1);
+  assert.equal(harness.controller.getState(), 'recovering');
+
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(harness.controller.getState(), 'passive');
+
+  pendingHydration.resolve({
+    success: true,
+    accepted: true,
+    sceneCount: 0,
+    objectCount: 0
+  });
+  assert.equal(await ready, false);
+  assert.equal(harness.calls.input.filter(request => request.enabled).length, 0);
+  assert.equal(harness.controller.getState(), 'passive');
 });

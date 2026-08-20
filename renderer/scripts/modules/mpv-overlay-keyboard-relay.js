@@ -64,6 +64,14 @@ function normalizeKeyboardInput(value) {
   }
 }
 
+function isOverlayHistoryShortcut(input) {
+  if (input.type !== 'keyDown' || input.altKey === true) return false;
+  const exactlyOnePrimaryModifier = input.ctrlKey !== input.metaKey;
+  if (!exactlyOnePrimaryModifier) return false;
+  if (input.code === 'KeyZ') return true;
+  return input.code === 'KeyY' && input.shiftKey !== true;
+}
+
 export function dispatchMpvOverlayKeyboardInput(
   value,
   {
@@ -94,7 +102,8 @@ export function dispatchMpvOverlayKeyboardInput(
         composed: false
       }
     );
-    const dispatchTarget = typeof ownerDocument.activeElement?.dispatchEvent === 'function'
+    const dispatchTarget = !isOverlayHistoryShortcut(input) &&
+        typeof ownerDocument.activeElement?.dispatchEvent === 'function'
       ? ownerDocument.activeElement
       : ownerDocument;
     dispatchTarget.dispatchEvent(event);

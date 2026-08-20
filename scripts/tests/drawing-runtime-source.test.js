@@ -350,3 +350,166 @@ test('피드백 35 v2: 획 선택 벡터 커밋·다중 선택·hover가 배선�
   assert.match(drawingManagerSource, /strokesInRect\(readRecords, rect\)/);
   assert.match(drawingStrokeRecordsSource, /export function strokesInRect\(strokes, rect\)/);
 });
+
+test('하이라이트 undo/redo 콜백은 getter 전용 colorInfo에 대입하지 않는다', () => {
+  assert.doesNotMatch(appSource, /restored\.colorInfo\s*=/);
+  assert.match(appSource, /restored\.colorKey = highlight\.colorKey;/);
+});
+
+test('fabric 히스토리 폴백은 renderer 단일 경로에서 처리한다', async () => {
+  const controllerSource = fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-pilot-controller.js'), 'utf8'
+  );
+  assert.match(controllerSource, /onHistoryFallback\(historyAction\)/);
+  assert.match(controllerSource, /reason === 'history-empty'/);
+  assert.match(controllerSource, /getHistoryRevision/);
+  assert.match(controllerSource, /historyRevision === readHistoryRevision\(\)/);
+  assert.match(appSource, /let globalHistoryRevision = 0;/);
+  assert.match(appSource, /getHistoryRevision: \(\) => globalHistoryRevision/);
+  assert.match(appSource, /advanceGlobalHistoryRevision\(\);/);
+  assert.match(appSource, /async function globalUndo\(\{ fromFabricFallback = false \} = \{\}\)/);
+  assert.match(appSource, /async function globalRedo\(\{ fromFabricFallback = false \} = \{\}\)/);
+  assert.match(appSource, /if \(!fromFabricFallback\) advanceGlobalHistoryRevision\(\);/);
+  assert.match(appSource, /return globalUndo\(\{ fromFabricFallback: true \}\)\.then/);
+  assert.match(appSource, /return globalRedo\(\{ fromFabricFallback: true \}\)\.then/);
+  assert.equal(
+    (appSource.match(/const historyMutationRevision = globalHistoryRevision;/g) || []).length,
+    2
+  );
+  assert.equal(
+    (appSource.match(/historyMutationRevision !== globalHistoryRevision/g) || []).length,
+    2
+  );
+  assert.equal(
+    (appSource.match(/historyMutationRevision === globalHistoryRevision/g) || []).length,
+    2
+  );
+
+  const historyBlock = appSource.match(
+    /  \/\/ ====== 글로벌 Undo\/Redo 시스템 ======\n([\s\S]*?)\n  \/\/ 마커 컨테이너 생성/
+  )?.[1];
+  assert.ok(historyBlock, 'global history block should be extractable for behavior checks');
+  const createHistoryHarness = new Function(
+    'drawingManager',
+    'log',
+    'showToast',
+    `${historyBlock}\nreturn {
+      pushUndo,
+      globalUndo,
+      globalRedo,
+      getUndoStack: () => [...undoStack],
+      getRedoStack: () => [...redoStack],
+      getHistoryRevision: () => globalHistoryRevision,
+      resetForFile: () => {
+        undoStack.length = 0;
+        redoStack.length = 0;
+        advanceGlobalHistoryRevision();
+      }
+    };`
+  );
+  const newHarness = (toasts = []) => createHistoryHarness(
+    { _createSnapshot() {}, _restoreSnapshot() {}, _emit() {} },
+    { error() {} },
+    (message, type) => toasts.push({ message, type })
+  );
+  const makeDeferred = () => {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+  };
+
+  const normal = newHarness();
+  const normalAction = {
+    type: 'TEST',
+    undo: async () => {},
+    redo: async () => {}
+  };
+  normal.pushUndo(normalAction);
+  assert.equal(await normal.globalUndo({ fromFabricFallback: true }), true);
+  assert.deepEqual(normal.getUndoStack(), []);
+  assert.deepEqual(normal.getRedoStack(), [normalAction]);
+  assert.equal(await normal.globalRedo({ fromFabricFallback: true }), true);
+  assert.deepEqual(normal.getUndoStack(), [normalAction]);
+  assert.deepEqual(normal.getRedoStack(), []);
+
+  const failedUndoToasts = [];
+  const failedUndo = newHarness(failedUndoToasts);
+  const failedUndoAction = {
+    type: 'TEST',
+    undo: async () => { throw new Error('expected undo failure'); },
+    redo: async () => {}
+  };
+  failedUndo.pushUndo(failedUndoAction);
+  const failedUndoRevision = failedUndo.getHistoryRevision();
+  assert.equal(await failedUndo.globalUndo({ fromFabricFallback: true }), false);
+  assert.equal(failedUndo.getHistoryRevision(), failedUndoRevision + 1);
+  assert.deepEqual(failedUndo.getUndoStack(), [failedUndoAction]);
+  assert.deepEqual(failedUndo.getRedoStack(), []);
+  assert.deepEqual(failedUndoToasts, [{ message: '실행 취소에 실패했습니다', type: 'error' }]);
+
+  const failedRedoToasts = [];
+  const failedRedo = newHarness(failedRedoToasts);
+  const failedRedoAction = {
+    type: 'TEST',
+    undo: async () => {},
+    redo: async () => { throw new Error('expected redo failure'); }
+  };
+  failedRedo.pushUndo(failedRedoAction);
+  assert.equal(await failedRedo.globalUndo({ fromFabricFallback: true }), true);
+  const failedRedoRevision = failedRedo.getHistoryRevision();
+  assert.equal(await failedRedo.globalRedo({ fromFabricFallback: true }), false);
+  assert.equal(failedRedo.getHistoryRevision(), failedRedoRevision + 1);
+  assert.deepEqual(failedRedo.getUndoStack(), []);
+  assert.deepEqual(failedRedo.getRedoStack(), [failedRedoAction]);
+  assert.deepEqual(failedRedoToasts, [{ message: '다시 실행에 실패했습니다', type: 'error' }]);
+
+  for (const direction of ['undo', 'redo']) {
+    for (const outcome of ['resolve', 'reject']) {
+      for (const interference of ['push', 'reset']) {
+        const harness = newHarness();
+        const gate = makeDeferred();
+        const oldAction = {
+          type: 'TEST',
+          undo: async () => {},
+          redo: async () => {}
+        };
+        harness.pushUndo(oldAction);
+        if (direction === 'redo') {
+          assert.equal(await harness.globalUndo({ fromFabricFallback: true }), true);
+        }
+        oldAction[direction] = () => gate.promise;
+
+        const operation = direction === 'undo'
+          ? harness.globalUndo({ fromFabricFallback: true })
+          : harness.globalRedo({ fromFabricFallback: true });
+        const newAction = { type: 'TEST', undo: async () => {}, redo: async () => {} };
+        if (interference === 'push') harness.pushUndo(newAction);
+        else harness.resetForFile();
+        if (outcome === 'resolve') gate.resolve();
+        else gate.reject(new Error('expected history failure'));
+        await operation;
+
+        assert.deepEqual(
+          harness.getUndoStack(),
+          interference === 'push' ? [newAction] : [],
+          `${direction} ${outcome} must not restore an old action after ${interference}`
+        );
+        assert.deepEqual(
+          harness.getRedoStack(),
+          [],
+          `${direction} ${outcome} must not commit an old action after ${interference}`
+        );
+      }
+    }
+  }
+  const hostSource = fs.readFileSync(
+    path.join(rootDir, 'main/mpv-overlay-host.js'), 'utf8'
+  );
+  assert.match(hostSource, /const historyAction = overlayHistoryActionFromInput\(input\);/);
+  assert.match(hostSource, /mainWindow\.webContents\.send\(FORWARDED_KEYBOARD_CHANNEL, forwardedInput\);/);
+  assert.doesNotMatch(hostSource, /this\.applyDrawingAction\(request\)\.then/);
+});

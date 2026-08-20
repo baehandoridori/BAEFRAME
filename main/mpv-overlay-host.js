@@ -2412,7 +2412,6 @@ class MPVOverlayHost {
     this.maxProcessedActionIds = 2048;
     this.drawingActionQueue = Promise.resolve();
     this.suppressedOverlayHistoryKeys = new Set();
-    this.overlayHistoryActionSequence = 0;
     this.drawingV3ShadowEnabled = false;
     this.drawingV3ShadowConfigured = false;
     this.drawingV3ShadowLocked = false;
@@ -2736,6 +2735,7 @@ class MPVOverlayHost {
         success: result?.applied === true || result?.duplicate === true,
         applied: result?.applied === true,
         duplicate: result?.duplicate === true,
+        ...(typeof result?.reason === 'string' ? { reason: result.reason } : {}),
         deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount)))
       };
     } catch (error) {
@@ -3266,18 +3266,6 @@ class MPVOverlayHost {
     }
   }
 
-  _makeOverlayHistoryActionRequest(action) {
-    this.overlayHistoryActionSequence += 1;
-    return {
-      hostGeneration: this.hostGeneration,
-      videoGeneration: this.currentVideoGeneration,
-      inputRevision: this.currentInputRevision,
-      sessionId: this.activeSessionId,
-      actionId: `overlay-history-${this.hostGeneration}-${this.overlayHistoryActionSequence}`,
-      action
-    };
-  }
-
   _executeFabricMethod(method, payload) {
     const argument = payload === undefined ? '' : JSON.stringify(payload);
     return this.window.webContents?.executeJavaScript?.(
@@ -3629,11 +3617,9 @@ class MPVOverlayHost {
       if (historyAction) {
         this.suppressedOverlayHistoryKeys.add(inputCode);
         event?.preventDefault?.();
-        if (input.isAutoRepeat !== true) {
-          const request = this._makeOverlayHistoryActionRequest(historyAction);
-          this.applyDrawingAction(request).catch(() => {});
-        }
-        return;
+        if (input.isAutoRepeat === true) return;
+        // renderer가 Fabric 실행과 전역 히스토리 fallback을 한 경로에서 판정하도록
+        // 물리 키 입력을 즉시 릴레이한다.
       }
       const forwardedInput = createForwardedKeyboardInput(input);
       const mainWindow = this.getMainWindow();

@@ -11,6 +11,10 @@ const relayModulePath = path.join(
   rootDir,
   'renderer/scripts/modules/mpv-overlay-keyboard-relay.js'
 );
+const shortcutTargetsModulePath = path.join(
+  rootDir,
+  'renderer/scripts/modules/keyboard-shortcut-targets.js'
+);
 const appPath = path.join(rootDir, 'renderer/scripts/app.js');
 
 function loadMainPreload() {
@@ -329,16 +333,23 @@ test('renderer relay rejects malformed payloads before DOM dispatch', async () =
   assert.equal(dispatched.length, 0);
 });
 
-test('renderer relay targets the remembered active element so editable input guards still apply', async () => {
+test('renderer relay keeps ordinary keys on the remembered editor but sends overlay history to the document', async () => {
   assert.equal(fs.existsSync(relayModulePath), true);
   const { dispatchMpvOverlayKeyboardInput } = await import(
     `${pathToFileURL(relayModulePath).href}?editable=${Date.now()}`
+  );
+  const {
+    getEffectiveKeyboardShortcutTarget,
+    shouldIgnoreGlobalShortcutTarget
+  } = await import(
+    `${pathToFileURL(shortcutTargetsModulePath).href}?overlay-history=${Date.now()}`
   );
   const activeEvents = [];
   const documentEvents = [];
   const activeElement = {
     tagName: 'TEXTAREA',
     dispatchEvent(event) {
+      event.target = this;
       activeEvents.push(event);
       return true;
     }
@@ -346,6 +357,7 @@ test('renderer relay targets the remembered active element so editable input gua
   const ownerDocument = {
     activeElement,
     dispatchEvent(event) {
+      event.target = this;
       documentEvents.push(event);
       return true;
     }
@@ -363,6 +375,20 @@ test('renderer relay targets the remembered active element so editable input gua
   ), true);
   assert.equal(activeEvents.length, 1);
   assert.equal(documentEvents.length, 0);
+
+  assert.equal(dispatchMpvOverlayKeyboardInput(
+    validInput({ key: 'z', code: 'KeyZ', ctrlKey: true }),
+    { ownerDocument, KeyboardEventConstructor: FakeKeyboardEvent }
+  ), true);
+  assert.equal(activeEvents.length, 1);
+  assert.equal(documentEvents.length, 1);
+  assert.equal(documentEvents[0].code, 'KeyZ');
+  const shortcutTarget = getEffectiveKeyboardShortcutTarget(
+    documentEvents[0],
+    ownerDocument
+  );
+  assert.equal(shortcutTarget, ownerDocument);
+  assert.equal(shouldIgnoreGlobalShortcutTarget(shortcutTarget), false);
 });
 
 test('app subscribes once and dispatches overlay keyboard payloads through the guarded relay', () => {
