@@ -1912,9 +1912,18 @@ export class ReviewDataManager extends EventTarget {
 
   _recordDrawingsV3DiskObservation(fingerprint) {
     if (typeof fingerprint !== 'string') return;
+    const previousObservedFingerprint = this._drawingsV3LastObservedDiskFingerprint;
     this._drawingsV3LastObservedDiskFingerprint = fingerprint;
     // 현재 실제 파일 지문은 cap 밖의 scalar가 보호하므로 중복 슬롯을 비운다.
     this._drawingsV3ExternalStaleFingerprints.delete(fingerprint);
+    if (typeof previousObservedFingerprint === 'string' &&
+        previousObservedFingerprint !== fingerprint &&
+        previousObservedFingerprint !== this._drawingsV3DiskState?.fingerprint) {
+      // scalar 보호가 새 실제 파일 지문으로 이동하면 직전 관측 지문을 capped
+      // history의 최신 항목으로 승계해, 이후 Drive rollback에도 재설치되지 않게 한다.
+      this._drawingsV3ExternalStaleFingerprints.delete(previousObservedFingerprint);
+      this._rememberDrawingsV3StaleFingerprint(previousObservedFingerprint);
+    }
   }
 
   _recordDrawingsV3DiskState(data) {
@@ -2094,9 +2103,12 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /** 결정적 협업 버전 비교에서 패한 루트가 파일 채널로 되돌아오지 않게 기록한다. */
-  markExternalDrawingsV3Superseded(rootValue) {
-    if (rootValue === undefined) return false;
-    const state = captureDrawingsV3DiskState({ drawingsV3: rootValue });
+  markExternalDrawingsV3Superseded(rootValue, options = {}) {
+    const present = options.present !== false;
+    if (present && rootValue === undefined) return false;
+    const state = captureDrawingsV3DiskState(
+      present ? { drawingsV3: rootValue } : {}
+    );
     if (state.fingerprint === this._drawingsV3DiskState?.fingerprint) return false;
     this._rememberDrawingsV3StaleFingerprint(state.fingerprint);
     return true;
@@ -2110,12 +2122,17 @@ export class ReviewDataManager extends EventTarget {
    * 교체되는 직전 지문의 스테일 기록은 (a-0-2)의 설치 지점 마킹이 담당하므로
    * 여기서는 반영만 위임한다.
    */
-  async applyExternalDrawingsV3(rootValue) {
-    if (rootValue === undefined) return false;
+  async applyExternalDrawingsV3(rootValue, options = {}) {
+    const present = options.present !== false;
+    if (present && rootValue === undefined) return false;
     try {
-      const externalState = captureDrawingsV3DiskState({ drawingsV3: rootValue });
+      const externalData = present ? { drawingsV3: rootValue } : {};
+      const externalState = captureDrawingsV3DiskState(externalData);
+      // 이 explicit Broadcast보다 먼저 시작한 disk snapshot은 causal winner를
+      // 뒤늦게 덮을 수 없도록 reconcile 진입 전에 reload 세대를 무효화한다.
+      this._drawingsV3DiskReloadRequestEpoch += 1;
       return (await this._reconcileDrawingsV3DiskState(
-        { drawingsV3: rootValue },
+        externalData,
         undefined,
         undefined,
         {

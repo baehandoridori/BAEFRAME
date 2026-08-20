@@ -4006,6 +4006,83 @@ test('newer same-file drawingsV3 reload wins when an older hydration finishes la
   manager.disconnect();
 });
 
+test('an accepted Broadcast invalidates an older pending drawingsV3 disk reload', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const fabricStore = await createFabricStore();
+  const initialFabric = createFabricRoot({
+    documentId: 'fabric-cross-channel-initial'
+  });
+  const olderDiskFabric = createFabricRoot({
+    documentId: 'fabric-cross-channel-disk-b',
+    revision: 5
+  });
+  const broadcastFabric = createFabricRoot({
+    documentId: 'fabric-cross-channel-broadcast-c',
+    revision: 6
+  });
+  const freshDiskFabric = createFabricRoot({
+    documentId: 'fabric-cross-channel-fresh-d',
+    revision: 7
+  });
+  const olderReadStarted = createDeferred();
+  const olderRead = createDeferred();
+  let snapshotReadCount = 0;
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: initialFabric
+    }),
+    loadReviewSnapshot: async () => {
+      snapshotReadCount += 1;
+      if (snapshotReadCount === 1) {
+        olderReadStarted.resolve();
+        return olderRead.promise;
+      }
+      return {
+        data: createReviewRoot({
+          reviewDocumentId: REVIEW_ID_EXISTING,
+          drawingsV3: freshDiskFabric
+        }),
+        versionToken: 'fabric-cross-channel-fresh-d'
+      };
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    fabricDrawingPersistenceProvider: fabricStore
+  });
+  manager.connect();
+  assert.equal(await manager.setVideoFile('C:/reviews/fabric-cross-channel.mp4', {
+    fabricDrawingPersistenceContext: FABRIC_CONTEXT
+  }), true);
+
+  const olderReload = manager.reloadDrawingsV3FromDisk();
+  await olderReadStarted.promise;
+  assert.equal(await manager.applyExternalDrawingsV3(broadcastFabric), true);
+  assert.deepEqual(fabricStore.exportRootValue(), broadcastFabric);
+
+  olderRead.resolve({
+    data: createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: olderDiskFabric
+    }),
+    versionToken: 'fabric-cross-channel-older-b'
+  });
+  assert.equal(await olderReload, false);
+  assert.deepEqual(fabricStore.exportRootValue(), broadcastFabric);
+  const broadcastSnapshot = manager.getDrawingsV3RootSnapshot();
+  assert.equal(broadcastSnapshot.stale, false);
+  assert.deepEqual(broadcastSnapshot.value, broadcastFabric);
+
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.deepEqual(
+    fabricStore.exportRootValue(),
+    freshDiskFabric,
+    'the Broadcast fence must not block a later fresh disk reload'
+  );
+  manager.disconnect();
+});
+
 test('Fabric drawing sync drops queued roots from a stopped session after restart', async () => {
   const { FabricDrawingSync } = await import(
     '../../renderer/scripts/modules/fabric-drawing-sync.js'
@@ -4710,5 +4787,228 @@ test('the currently observed disk root stays protected beyond the stale history 
     diskRoot,
     'a genuinely new disk root outside the observed/stale history must still install'
   );
+
+  const previouslyObservedDiskRoot = structuredClone(diskRoot);
+  const postInstallBroadcastRoots = Array.from({ length: 9 }, (_unused, index) =>
+    createFabricRoot({
+      documentId: `fabric-observed-disk-d${index + 20}`,
+      revision: index + 20
+    }));
+  for (const broadcastRoot of postInstallBroadcastRoots) {
+    assert.equal(await manager.applyExternalDrawingsV3(broadcastRoot), true);
+  }
+  const postInstallWinner = postInstallBroadcastRoots.at(-1);
+  reloadImportCount = 0;
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.equal(reloadImportCount, 0);
+  assert.deepEqual(fabricStore.exportRootValue(), postInstallWinner);
+
+  diskRoot = postInstallWinner;
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  diskRoot = previouslyObservedDiskRoot;
+  reloadImportCount = 0;
+  assert.equal(await manager.reloadDrawingsV3FromDisk(), true);
+  assert.equal(
+    reloadImportCount,
+    0,
+    'the previous observed root must enter stale history when disk observation advances'
+  );
+  assert.deepEqual(fabricStore.exportRootValue(), postInstallWinner);
   manager.disconnect();
+});
+
+test('Fabric drawing sync propagates an absent drawingsV3 tombstone without resurrecting a delayed root', async () => {
+  const { FabricDrawingSync } = await import(
+    '../../renderer/scripts/modules/fabric-drawing-sync.js'
+  );
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  const oldRoot = createFabricRoot({
+    documentId: 'fabric-tombstone-delayed-old',
+    revision: 12
+  });
+  const stablePresentRoot = createFabricRoot({
+    documentId: 'fabric-tombstone-stable-present',
+    revision: 12
+  });
+  const reviewRoots = new Map([
+    ['C:/reviews/fabric-tombstone-stable-missing.bframe', createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING
+    })],
+    ['C:/reviews/fabric-tombstone-joining-old.bframe', createReviewRoot({
+      reviewDocumentId: REVIEW_ID_REMOTE,
+      drawingsV3: oldRoot
+    })],
+    ['C:/reviews/fabric-tombstone-stable-present.bframe', createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING,
+      drawingsV3: stablePresentRoot
+    })],
+    ['C:/reviews/fabric-tombstone-joining-missing.bframe', createReviewRoot({
+      reviewDocumentId: REVIEW_ID_REMOTE
+    })]
+  ]);
+  window.electronAPI = {
+    loadReview: async path => structuredClone(reviewRoots.get(path) || null)
+  };
+
+  class LinkedLiveblocksManager extends EventTarget {
+    constructor(connectionId) {
+      super();
+      this.connectionId = connectionId;
+      this.peer = null;
+      this.sentEvents = [];
+    }
+
+    getSelf() {
+      return { connectionId: this.connectionId };
+    }
+
+    hasOtherCollaborators() {
+      return true;
+    }
+
+    broadcastEvent(event) {
+      const cloned = structuredClone(event);
+      this.sentEvents.push(cloned);
+      this.peer?.dispatchEvent(new CustomEvent('broadcastReceived', {
+        detail: { event: cloned }
+      }));
+    }
+  }
+
+  const createLoadedManager = async (videoPath, fabricStore) => {
+    const manager = new ReviewDataManager({
+      autoSave: false,
+      fabricDrawingPersistenceProvider: fabricStore
+    });
+    manager.connect();
+    assert.equal(await manager.setVideoFile(videoPath, {
+      fabricDrawingPersistenceContext: FABRIC_CONTEXT
+    }), true);
+    return manager;
+  };
+  const startStableAndJoiner = async ({ stableReview, joiningReview, suffix }) => {
+    let now = 0;
+    const stableLiveblocks = new LinkedLiveblocksManager(`${suffix}-stable`);
+    const joiningLiveblocks = new LinkedLiveblocksManager(`${suffix}-joining`);
+    stableLiveblocks.peer = joiningLiveblocks;
+    joiningLiveblocks.peer = stableLiveblocks;
+    const stableSync = new FabricDrawingSync({
+      liveblocksManager: stableLiveblocks,
+      reviewDataManager: stableReview,
+      now: () => now,
+      actorId: `${suffix}-stable`
+    });
+    const joiningSync = new FabricDrawingSync({
+      liveblocksManager: joiningLiveblocks,
+      reviewDataManager: joiningReview,
+      now: () => now,
+      actorId: `${suffix}-joining`
+    });
+    stableSync.start();
+    stableLiveblocks.sentEvents.length = 0;
+    joiningLiveblocks.sentEvents.length = 0;
+    now = 10001;
+    joiningSync.start();
+    await flush();
+    await flush();
+    return {
+      stableLiveblocks,
+      joiningLiveblocks,
+      stableSync,
+      joiningSync
+    };
+  };
+
+  const stableMissingStore = await createFabricStore();
+  const joiningOldStore = await createFabricStore();
+  const originalJoiningReset = joiningOldStore.reset;
+  let joiningResetCount = 0;
+  const joiningOldStoreSpy = {
+    ...joiningOldStore,
+    reset(...args) {
+      joiningResetCount += 1;
+      return originalJoiningReset(...args);
+    }
+  };
+  const stableMissingReview = await createLoadedManager(
+    'C:/reviews/fabric-tombstone-stable-missing.mp4',
+    stableMissingStore
+  );
+  const joiningOldReview = await createLoadedManager(
+    'C:/reviews/fabric-tombstone-joining-old.mp4',
+    joiningOldStoreSpy
+  );
+  joiningResetCount = 0;
+  const missingPair = await startStableAndJoiner({
+    stableReview: stableMissingReview,
+    joiningReview: joiningOldReview,
+    suffix: 'tombstone-missing'
+  });
+  const joinRequest = missingPair.joiningLiveblocks.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT_REQUEST'
+  );
+  const tombstoneEvent = missingPair.stableLiveblocks.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
+  assert.ok(joinRequest?.syncVersion);
+  assert.equal(tombstoneEvent?.present, false);
+  assert.equal(Object.hasOwn(tombstoneEvent, 'root'), false);
+  assert.equal(Object.hasOwn(tombstoneEvent, 'chunkCount'), false);
+  assert.ok(tombstoneEvent.syncVersion.clock > joinRequest.syncVersion.clock);
+  assert.equal(joiningResetCount, 1);
+  const joiningMissingSnapshot = joiningOldReview.getDrawingsV3RootSnapshot();
+  assert.equal(joiningMissingSnapshot.present, false);
+  assert.equal(joiningMissingSnapshot.stale, false);
+
+  missingPair.joiningLiveblocks.sentEvents.length = 0;
+  joiningOldReview.dispatchEvent(new CustomEvent('saved'));
+  assert.equal(
+    missingPair.joiningLiveblocks.sentEvents.filter(
+      event => event.type === 'FABRIC_DRAWING_ROOT'
+    ).length,
+    0,
+    'an unrelated save after tombstone hydration must not resurrect the delayed root'
+  );
+  missingPair.joiningSync.broadcastCurrentState();
+  await flush();
+  const repeatedTombstone = missingPair.joiningLiveblocks.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
+  assert.equal(repeatedTombstone?.present, false);
+  assert.deepEqual(repeatedTombstone.syncVersion, tombstoneEvent.syncVersion);
+  assert.equal(stableMissingReview.getDrawingsV3RootSnapshot().present, false);
+  missingPair.stableSync.stop();
+  missingPair.joiningSync.stop();
+  stableMissingReview.disconnect();
+  joiningOldReview.disconnect();
+
+  const stablePresentStore = await createFabricStore();
+  const joiningMissingStore = await createFabricStore();
+  const stablePresentReview = await createLoadedManager(
+    'C:/reviews/fabric-tombstone-stable-present.mp4',
+    stablePresentStore
+  );
+  const joiningMissingReview = await createLoadedManager(
+    'C:/reviews/fabric-tombstone-joining-missing.mp4',
+    joiningMissingStore
+  );
+  const presentPair = await startStableAndJoiner({
+    stableReview: stablePresentReview,
+    joiningReview: joiningMissingReview,
+    suffix: 'tombstone-present'
+  });
+  const presentSeed = presentPair.stableLiveblocks.sentEvents.find(
+    event => event.type === 'FABRIC_DRAWING_ROOT'
+  );
+  assert.equal(presentSeed?.present, true);
+  assert.deepEqual(
+    joiningMissingReview.getDrawingsV3RootSnapshot().value,
+    stablePresentRoot,
+    'a stale missing joiner must not erase the stable peer root'
+  );
+  presentPair.stableSync.stop();
+  presentPair.joiningSync.stop();
+  stablePresentReview.disconnect();
+  joiningMissingReview.disconnect();
 });
