@@ -228,6 +228,25 @@ function createMpvPilotOwnershipGate({
   };
 }
 
+function createMpvPilotSeamlessTransitionGate() {
+  let activeLoadToken = null;
+
+  return {
+    begin(loadToken, isSeamless) {
+      activeLoadToken = isSeamless ? loadToken : null;
+      return activeLoadToken === loadToken;
+    },
+    clear(loadToken) {
+      if (activeLoadToken !== loadToken) return false;
+      activeLoadToken = null;
+      return true;
+    },
+    isActive() {
+      return activeLoadToken !== null;
+    }
+  };
+}
+
 function createCoalescedAsyncScheduler({
   delayMs,
   run,
@@ -959,6 +978,11 @@ async function initApp() {
 
   function isSameFilePath(a, b) {
     return normalizeComparableFilePath(a) === normalizeComparableFilePath(b);
+  }
+
+  function findPlaylistItemIndexByVideoPath(items, videoPath) {
+    if (!videoPath || !Array.isArray(items)) return -1;
+    return items.findIndex(item => isSameFilePath(item?.videoPath, videoPath));
   }
 
   function invalidatePlaylistBackgroundWork() {
@@ -7278,6 +7302,7 @@ async function initApp() {
       activeMpvPilotLoadToken = loadToken;
     }
   });
+  const mpvPilotSeamlessTransitionGate = createMpvPilotSeamlessTransitionGate();
   let mpvOverlayStateSyncPendingOwner = null;
   let mpvOverlayRemoteCursorSyncPendingOwner = null;
   let mpvOverlayRemoteCursorRevision = 0;
@@ -7300,9 +7325,6 @@ async function initApp() {
   let mpvHostVisibilityRequestRevision = 0;
   let mpvHostLastRequestedVisible = null;
   let mpvPilotHostPreparing = false;
-  // mpv→mpv 전환에서 이전 프레임을 유지하기 위해 준비 구간의 호스트 숨김을 생략하는 플래그.
-  // loadVideo가 설정하고 같은 호출의 finally가 무조건 해제한다.
-  let mpvPilotSeamlessTransition = false;
   let fullscreenTimecodeOverlay = null;
   let fullscreenScrubOverlay = null;
   let remoteCursorsContainer = null;
@@ -7779,7 +7801,7 @@ async function initApp() {
   }
 
   function shouldShowMpvHostForCurrentState() {
-    return (!mpvPilotHostPreparing || mpvPilotSeamlessTransition) &&
+    return (!mpvPilotHostPreparing || mpvPilotSeamlessTransitionGate.isActive()) &&
       document.body.classList.contains('mpv-pilot-mode') &&
       mpvReviewFreezeHostHideOwner === null &&
       !hasBlockingOverlayForMpv();
@@ -9125,8 +9147,8 @@ async function initApp() {
       // mpv→mpv 전환에서는 호스트를 숨기지 않고 이전 프레임을 유지한다.
       // keep-open + loadfile replace 조합이 다음 파일 첫 프레임까지 기존 프레임을 잡아주므로
       // 검은 깜빡임 없이 이어진다. 실패 시에는 finally가 플래그를 해제하고 기존 정리 경로가 동작한다.
-      mpvPilotSeamlessTransition = useMpvPilot && !engineSwap && !fileIsAudio &&
-        holdPreviousFrameUntilReady && isMpvPilotPlaybackActive();
+      mpvPilotSeamlessTransitionGate.begin(loadToken, useMpvPilot && !engineSwap && !fileIsAudio &&
+        holdPreviousFrameUntilReady && isMpvPilotPlaybackActive());
       if (useMpvPilot) {
         await cancelPlaylistBackgroundTranscodesForMpvPilot('mpv 직접 재생 시작');
         if (!canContinueVideoLoad()) return false;
@@ -9728,7 +9750,7 @@ async function initApp() {
       showToast('파일을 로드할 수 없습니다.', 'error');
       return false;
     } finally {
-      mpvPilotSeamlessTransition = false;
+      mpvPilotSeamlessTransitionGate.clear(loadToken);
       if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
         await fabricDrawingPilotController.cancelVideoChange(loadToken, {
           restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted
@@ -19466,7 +19488,7 @@ async function initApp() {
       }, 2000);
     };
 
-    playlistManager.onItemSelected = async (item, index, previousIndex) => {
+    playlistManager.onItemSelected = async (item, index) => {
       log.info('재생목록 아이템 선택', { index, fileName: item.fileName });
       const selectionLoadToken = ++playlistSelectionLoadToken;
       const shouldContinuePlaylistSelectionLoad = () => (
@@ -19503,7 +19525,7 @@ async function initApp() {
       }
       if (!shouldContinuePlaylistSelectionLoad()) return;
       if (loaded === false) {
-        playlistManager.currentIndex = Number.isInteger(previousIndex) ? previousIndex : -1;
+        playlistManager.currentIndex = findPlaylistItemIndexByVideoPath(playlistManager.getItems?.() || [], state.currentFile);
       }
       updatePlaylistCurrentItem();
       updatePlaylistPosition();

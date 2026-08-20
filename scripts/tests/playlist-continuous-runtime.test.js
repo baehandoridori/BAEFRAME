@@ -15,6 +15,29 @@ const splitViewSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 're
 const playlistCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/playlist-panel.css'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
+function loadPlaylistVideoPathIndexHelper() {
+  const helperNames = [
+    'normalizeComparableFilePath',
+    'isSameFilePath',
+    'findPlaylistItemIndexByVideoPath'
+  ];
+  const helperSources = helperNames.map((name) => {
+    const functionStart = appSource.indexOf(`function ${name}(`);
+    assert.notEqual(functionStart, -1, `${name} should exist`);
+
+    const bodyStart = appSource.indexOf(') {', functionStart) + 2;
+    let depth = 0;
+    for (let index = bodyStart; index < appSource.length; index += 1) {
+      if (appSource[index] === '{') depth += 1;
+      if (appSource[index] === '}') depth -= 1;
+      if (depth === 0) return appSource.slice(functionStart, index + 1);
+    }
+    assert.fail(`${name} should have a complete body`);
+  });
+
+  return new Function(`${helperSources.join('\n')}\nreturn findPlaylistItemIndexByVideoPath;`)();
+}
+
 test('continuous runtime imports the shared helper module', () => {
   assert.match(appSource, /CONTINUOUS_STATUS[\s\S]+findNextPlayableIndex[\s\S]+createSkippedToastMessage[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
 });
@@ -701,7 +724,7 @@ test('manual video loads cancel active continuous playback and stale loads', () 
 test('rapid playlist item selections cannot let older pre-load checks win', () => {
   assert.match(appSource, /let playlistSelectionLoadToken = 0;/);
 
-  const selectedMatch = appSource.match(/playlistManager\.onItemSelected = async \(item, index, previousIndex\) => \{([\s\S]*?)\n    \};/);
+  const selectedMatch = appSource.match(/playlistManager\.onItemSelected = async \(item, index\) => \{([\s\S]*?)\n    \};/);
   assert.ok(selectedMatch, 'playlist item selected callback should exist');
   const selectedSource = selectedMatch[1];
   assert.match(selectedSource, /const selectionLoadToken = \+\+playlistSelectionLoadToken;/);
@@ -1352,8 +1375,25 @@ test('continuous playback stops with one toast when a global drawing gate cancel
   );
 });
 
-test('playlist clicks highlight immediately, roll back on failure, and retry skipped items', () => {
-  const selectedMatch = appSource.match(/playlistManager\.onItemSelected = async \(item, index, previousIndex\) => \{([\s\S]*?)\n    \};/);
+test('playlist failure rollback finds the actual loaded item despite optimistic intermediate selections', () => {
+  const findPlaylistItemIndexByVideoPath = loadPlaylistVideoPathIndexHelper();
+  const items = [
+    { id: 'O', videoPath: 'C:\\show\\original.mp4' },
+    { id: 'A', videoPath: 'C:\\show\\optimistic-a.mp4' },
+    { id: 'B', videoPath: 'C:\\show\\target-b.mp4' }
+  ];
+
+  assert.equal(
+    findPlaylistItemIndexByVideoPath(items, 'C:/SHOW/ORIGINAL.MP4'),
+    0,
+    'B must roll back to O, not the optimistic A selection'
+  );
+  assert.equal(findPlaylistItemIndexByVideoPath(items, null), -1);
+  assert.equal(findPlaylistItemIndexByVideoPath(items, 'C:/show/missing.mp4'), -1);
+});
+
+test('playlist clicks highlight immediately, roll back from current media, and retry skipped items', () => {
+  const selectedMatch = appSource.match(/playlistManager\.onItemSelected = async \(item, index\) => \{([\s\S]*?)\n    \};/);
   assert.ok(selectedMatch, 'playlist item selected callback should exist');
   const selectedSource = selectedMatch[1];
 
@@ -1367,8 +1407,10 @@ test('playlist clicks highlight immediately, roll back on failure, and retry ski
 
   assert.match(
     selectedSource,
-    /if \(loaded === false\) \{\s+playlistManager\.currentIndex = Number\.isInteger\(previousIndex\) \? previousIndex : -1;\s+\}/
+    /if \(loaded === false\) \{\s+playlistManager\.currentIndex = findPlaylistItemIndexByVideoPath\(playlistManager\.getItems\?\.\(\) \|\| \[\], state\.currentFile\);\s+\}/
   );
+  assert.doesNotMatch(selectedSource, /previousIndex/);
+  assert.doesNotMatch(playlistManagerSource, /onItemSelected\?\.\(item, index, previousIndex\)/);
   assert.match(
     selectedSource,
     /if \(item\.continuousStatus === CONTINUOUS_STATUS\.SKIPPED \|\|\s+item\.continuousStatus === CONTINUOUS_STATUS\.ERROR\) \{\s+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.IDLE, ''\);\s+\}/
