@@ -1526,12 +1526,42 @@ test('drawing persistence maps prepare, runtime rejection, and runtime exception
   );
 });
 
-test('drawing persistence rejects a result that becomes stale during host execution', async () => {
+test('drawing export reports host loss after asynchronous Fabric preparation failure', async () => {
+  const preparation = createDeferred();
+  const preparationStarted = createDeferred();
+  const harness = createDrawingHostHarness();
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  harness.host._ensureFabricRuntime = () => {
+    preparationStarted.resolve();
+    return preparation.promise;
+  };
+
+  const pending = harness.host.exportDrawingVideo(makePersistenceExport(hostGeneration));
+  await preparationStarted.promise;
+  harness.host.destroy();
+  preparation.resolve({ success: false, error: 'late Fabric preparation failure' });
+
+  assert.deepEqual(await pending, {
+    success: false,
+    accepted: false,
+    reason: 'overlay-host-unavailable'
+  });
+});
+
+test('drawing export reports host loss after asynchronous runtime success', async () => {
   const deferred = createDeferred();
+  const runtimeStarted = createDeferred();
   const harness = createDrawingHostHarness({
     executeDrawing(script) {
-      if (script.includes('.exportDrawingVideo(')) return deferred.promise;
-      return undefined;
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      runtimeStarted.resolve();
+      return deferred.promise;
     }
   });
   const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
@@ -1541,22 +1571,82 @@ test('drawing persistence rejects a result that becomes stale during host execut
     inputRevision: 1,
     enabled: false
   }));
-  await harness.host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration));
 
   const pending = harness.host.exportDrawingVideo(makePersistenceExport(hostGeneration));
+  await runtimeStarted.promise;
   harness.host.destroy();
   deferred.resolve({
     accepted: true,
-    snapshot: {
-      hostGeneration,
-      videoGeneration: 7,
-      persistenceSessionId: 'host-persistence-session',
-      stableVideoIdentity: 'C:/shots/host-video.mov',
-      fps: 24,
-      totalFrames: 240,
-      scenes: []
+    snapshot: makePersistenceSnapshot(hostGeneration)
+  });
+
+  assert.deepEqual(await pending, {
+    success: false,
+    accepted: false,
+    reason: 'overlay-host-unavailable'
+  });
+});
+
+test('drawing export reports host loss after asynchronous runtime failure', async () => {
+  const deferred = createDeferred();
+  const runtimeStarted = createDeferred();
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      runtimeStarted.resolve();
+      return deferred.promise;
     }
   });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+
+  const pending = harness.host.exportDrawingVideo(makePersistenceExport(hostGeneration));
+  await runtimeStarted.promise;
+  harness.host.destroy();
+  deferred.reject(new Error('late Fabric export failure'));
+
+  assert.deepEqual(await pending, {
+    success: false,
+    accepted: false,
+    reason: 'overlay-host-unavailable'
+  });
+});
+
+test('drawing export keeps a live-host video-generation change classified as stale', async () => {
+  const deferred = createDeferred();
+  const runtimeStarted = createDeferred();
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      runtimeStarted.resolve();
+      return deferred.promise;
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+
+  const pending = harness.host.exportDrawingVideo(makePersistenceExport(hostGeneration));
+  await runtimeStarted.promise;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 8,
+    inputRevision: 2,
+    enabled: false
+  }));
+  deferred.resolve({
+    accepted: true,
+    snapshot: makePersistenceSnapshot(hostGeneration)
+  });
+
   assert.deepEqual(await pending, {
     success: false,
     accepted: false,

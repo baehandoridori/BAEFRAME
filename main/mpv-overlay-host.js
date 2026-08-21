@@ -3005,6 +3005,13 @@ class MPVOverlayHost {
       };
     }
     const prepared = await this._ensureFabricRuntime();
+    if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded) {
+      return {
+        success: false,
+        accepted: false,
+        reason: 'overlay-host-unavailable'
+      };
+    }
     if (!prepared.success) {
       return {
         success: false,
@@ -3024,6 +3031,13 @@ class MPVOverlayHost {
         'exportDrawingVideo',
         normalizedRequest
       );
+      if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded) {
+        return {
+          success: false,
+          accepted: false,
+          reason: 'overlay-host-unavailable'
+        };
+      }
       if (!this._drawingPersistenceRequestIsCurrent(
         hostWindow,
         normalizedRequest,
@@ -3063,6 +3077,13 @@ class MPVOverlayHost {
         snapshot: normalizedSnapshot.snapshot
       };
     } catch (_error) {
+      if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded) {
+        return {
+          success: false,
+          accepted: false,
+          reason: 'overlay-host-unavailable'
+        };
+      }
       return {
         success: false,
         accepted: false,

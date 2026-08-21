@@ -9126,6 +9126,10 @@ async function initApp() {
     }
 
     const driveLoadingFeedbackShown = showDriveVideoLoadingFeedback(filePath, { preparedVideoPath });
+    const driveLoadingOverlay = document.getElementById('videoLoadingOverlay');
+    if (!driveLoadingFeedbackShown && driveLoadingOverlay?.dataset.loadingKind === 'drive') {
+      hideVideoLoadingOverlay('drive');
+    }
     // 작업 4: engineSwap에서는 G:드라이브 로딩 오버레이 플래시를 억제한다(호출 리터럴은 테스트가 단언).
     if (engineSwap && driveLoadingFeedbackShown) {
       hideVideoLoadingOverlay('drive');
