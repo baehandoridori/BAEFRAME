@@ -961,6 +961,213 @@ test('explicit persistence abandon preserves active drawing intent when the targ
   });
 });
 
+test('explicit persistence abandon keeps the first active intent across two queued final-pull failures', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+
+  const firstExport = deferred();
+  const secondExport = deferred();
+  const pendingExports = [firstExport, secondExport];
+  const exportCountBeforeFinalPulls = harness.calls.export.length;
+  harness.setExportHandler(() => pendingExports.shift().promise);
+  const firstFlush = harness.controller.flushPersistenceBeforeLeave();
+  const secondFlush = harness.controller.flushPersistenceBeforeLeave();
+  await flushDetachedWork();
+  assert.equal(harness.calls.export.length, exportCountBeforeFinalPulls + 1);
+
+  firstExport.resolve({
+    success: false,
+    accepted: false,
+    reason: 'overlay-unavailable'
+  });
+  assert.equal(await firstFlush, false);
+  await flushDetachedWork();
+  assert.equal(harness.calls.export.length, exportCountBeforeFinalPulls + 2);
+  assert.deepEqual({
+    persistenceBlocked: harness.controller.getStatusSnapshot().persistenceBlocked,
+    resumeRequested: harness.controller.getStatusSnapshot().resumeRequested,
+    state: harness.controller.getState()
+  }, {
+    persistenceBlocked: true,
+    resumeRequested: false,
+    state: 'passive'
+  });
+
+  secondExport.resolve({
+    success: false,
+    accepted: false,
+    reason: 'overlay-unavailable'
+  });
+  assert.equal(await secondFlush, false);
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  harness.setExportHandler(null);
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'C:/shot/scene-002.mov',
+    targetFrame: 24,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    fps: 24,
+    totalFrames: 240
+  }), true);
+  assert.deepEqual({
+    state: harness.controller.getState(),
+    inputEnabled: harness.calls.input.at(-1)?.enabled,
+    stableVideoIdentity: harness.calls.input.at(-1)?.session?.stableVideoIdentity
+  }, {
+    state: 'active',
+    inputEnabled: true,
+    stableVideoIdentity: 'C:/shot/scene-002.mov'
+  });
+});
+
+test('explicit persistence abandon preserves a drawing resume cancellation made during the final pull', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+
+  const finalExport = deferred();
+  const exportCountBeforeFinalPull = harness.calls.export.length;
+  harness.setExportHandler(() => finalExport.promise);
+  const finalFlush = harness.controller.flushPersistenceBeforeLeave();
+  await flushDetachedWork();
+  assert.equal(harness.calls.export.length, exportCountBeforeFinalPull + 1);
+
+  assert.equal(await harness.controller.toggle(), true);
+  assert.deepEqual({
+    resumeRequested: harness.controller.getStatusSnapshot().resumeRequested,
+    state: harness.controller.getState()
+  }, {
+    resumeRequested: false,
+    state: 'passive'
+  });
+
+  finalExport.resolve({
+    success: false,
+    accepted: false,
+    reason: 'overlay-unavailable'
+  });
+  assert.equal(await finalFlush, false);
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  harness.setExportHandler(null);
+  const inputOnCountBeforeReady = harness.calls.input.filter(
+    request => request.enabled
+  ).length;
+
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'C:/shot/scene-002.mov',
+    targetFrame: 24,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    fps: 24,
+    totalFrames: 240
+  }), true);
+  assert.deepEqual({
+    state: harness.controller.getState(),
+    inputEnabled: harness.calls.input.at(-1)?.enabled,
+    inputOnCount: harness.calls.input.filter(request => request.enabled).length
+  }, {
+    state: 'passive',
+    inputEnabled: false,
+    inputOnCount: inputOnCountBeforeReady
+  });
+});
+
+test('explicit persistence abandon preserves a drawing resume cancellation when the old video is restored', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+
+  const finalExport = deferred();
+  const exportCountBeforeFinalPull = harness.calls.export.length;
+  harness.setExportHandler(() => finalExport.promise);
+  const finalFlush = harness.controller.flushPersistenceBeforeLeave();
+  await flushDetachedWork();
+  assert.equal(harness.calls.export.length, exportCountBeforeFinalPull + 1);
+
+  assert.equal(await harness.controller.toggle(), true);
+  assert.deepEqual({
+    resumeRequested: harness.controller.getStatusSnapshot().resumeRequested,
+    state: harness.controller.getState()
+  }, {
+    resumeRequested: false,
+    state: 'passive'
+  });
+
+  finalExport.resolve({
+    success: false,
+    accepted: false,
+    reason: 'overlay-unavailable'
+  });
+  assert.equal(await finalFlush, false);
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  harness.setExportHandler(null);
+  const inputOnCountBeforeCancel = harness.calls.input.filter(
+    request => request.enabled
+  ).length;
+
+  assert.equal(await harness.controller.cancelVideoChange('load-b', {
+    restorePreviousVideo: true
+  }), true);
+  assert.equal(harness.controller.getStatusSnapshot().videoReady, true);
+  assert.equal(harness.calls.hydrate.at(-1).stableVideoIdentity, 'C:/shot/scene-001.mov');
+  assert.deepEqual({
+    state: harness.controller.getState(),
+    inputEnabled: harness.calls.input.at(-1)?.enabled,
+    inputOnCount: harness.calls.input.filter(request => request.enabled).length
+  }, {
+    state: 'passive',
+    inputEnabled: false,
+    inputOnCount: inputOnCountBeforeCancel
+  });
+});
+
+test('an explicit drawing resume request during recovery activates the old video when the load is cancelled', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(harness.controller.getState(), 'passive');
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+  assert.equal(harness.controller.getStatusSnapshot().resumeRequested, false);
+
+  assert.equal(await harness.controller.toggle(), true);
+  assert.deepEqual({
+    resumeRequested: harness.controller.getStatusSnapshot().resumeRequested,
+    state: harness.controller.getState()
+  }, {
+    resumeRequested: true,
+    state: 'recovering'
+  });
+  const inputOnCountBeforeCancel = harness.calls.input.filter(
+    request => request.enabled
+  ).length;
+
+  assert.equal(await harness.controller.cancelVideoChange('load-b', {
+    restorePreviousVideo: true
+  }), true);
+  assert.equal(harness.controller.getStatusSnapshot().videoReady, true);
+  assert.equal(harness.calls.hydrate.at(-1).stableVideoIdentity, 'C:/shot/scene-001.mov');
+  assert.deepEqual({
+    state: harness.controller.getState(),
+    inputEnabled: harness.calls.input.at(-1)?.enabled,
+    inputOnCount: harness.calls.input.filter(request => request.enabled).length,
+    stableVideoIdentity: harness.calls.input.at(-1)?.session?.stableVideoIdentity
+  }, {
+    state: 'active',
+    inputEnabled: true,
+    inputOnCount: inputOnCountBeforeCancel + 1,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  });
+});
+
 test('overlay-host-unavailable save preserves the current video for host recovery rehydrate', async () => {
   const harness = createHarness();
   assert.equal(await prepareVideo(harness), true);

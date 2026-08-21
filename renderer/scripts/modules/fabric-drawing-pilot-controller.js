@@ -130,6 +130,7 @@ export function createFabricDrawingPilotController(options = {}) {
   let persistenceResyncTrailing = false;
   let legacyBypass = false;
   let persistenceBlocked = false;
+  let persistenceAbandonResumeRequested = false;
   let persistenceFailureReason = null;
   let persistenceVideoContext = null;
   let persistenceBoundSourceEpoch = null;
@@ -232,7 +233,19 @@ export function createFabricDrawingPilotController(options = {}) {
     notifyStateChange();
   }
 
+  function syncExplicitResumeIntent() {
+    if (videoChangePending && videoChangeRollback) {
+      videoChangeRollback.shouldResume = resumeRequested;
+    }
+  }
+
   function setPersistenceBypass(reason, { blocked = false } = {}) {
+    if (blocked === true && !persistenceBlocked) {
+      persistenceAbandonResumeRequested =
+        resumeRequested || state === 'active' || state === 'preparing';
+    } else if (blocked !== true) {
+      persistenceAbandonResumeRequested = false;
+    }
     const normalizedReason = typeof reason === 'string' && reason
       ? reason.slice(0, 512)
       : 'persistence-unavailable';
@@ -261,6 +274,7 @@ export function createFabricDrawingPilotController(options = {}) {
     const changed = legacyBypass || persistenceBlocked || persistenceFailureReason !== null;
     legacyBypass = false;
     persistenceBlocked = false;
+    persistenceAbandonResumeRequested = false;
     persistenceFailureReason = null;
     if (changed) notifyStateChange();
   }
@@ -444,8 +458,8 @@ export function createFabricDrawingPilotController(options = {}) {
   }
 
   function abandonPersistenceForVideoChange() {
-    if (videoChangePending && videoChangeRollback?.shouldResume === true) {
-      resumeRequested = true;
+    if (persistenceBlocked) {
+      resumeRequested = persistenceAbandonResumeRequested;
     }
     clearPersistenceBypass();
     return true;
@@ -1553,6 +1567,7 @@ export function createFabricDrawingPilotController(options = {}) {
   function disable() {
     persistenceQuitSuspension = null;
     resumeRequested = false;
+    syncExplicitResumeIntent();
     desiredInputEnabled = false;
     currentSession = null;
     setState(pilotEnabled ? 'passive' : 'disabled');
@@ -1576,6 +1591,7 @@ export function createFabricDrawingPilotController(options = {}) {
     if (persistenceSourceRefreshInProgress) {
       // 저장 소스 갱신 중: B를 버리지 않고 갱신 완료 후 자동 진입/취소 예약으로 처리한다
       resumeRequested = !resumeRequested;
+      syncExplicitResumeIntent();
       notifyStateChange();
       return Promise.resolve(true);
     }
@@ -1586,6 +1602,7 @@ export function createFabricDrawingPilotController(options = {}) {
     if (state === 'recovering') {
       // 복구가 끝나면 자동으로 드로잉 모드에 진입하도록 예약한다
       resumeRequested = true;
+      syncExplicitResumeIntent();
       notifyStateChange();
       return Promise.resolve(true);
     }
