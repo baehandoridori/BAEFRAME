@@ -15,6 +15,29 @@ const splitViewSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 're
 const playlistCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/playlist-panel.css'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 
+function loadPlaylistVideoPathIndexHelper() {
+  const helperNames = [
+    'normalizeComparableFilePath',
+    'isSameFilePath',
+    'findPlaylistItemIndexByVideoPath'
+  ];
+  const helperSources = helperNames.map((name) => {
+    const functionStart = appSource.indexOf(`function ${name}(`);
+    assert.notEqual(functionStart, -1, `${name} should exist`);
+
+    const bodyStart = appSource.indexOf(') {', functionStart) + 2;
+    let depth = 0;
+    for (let index = bodyStart; index < appSource.length; index += 1) {
+      if (appSource[index] === '{') depth += 1;
+      if (appSource[index] === '}') depth -= 1;
+      if (depth === 0) return appSource.slice(functionStart, index + 1);
+    }
+    assert.fail(`${name} should have a complete body`);
+  });
+
+  return new Function(`${helperSources.join('\n')}\nreturn findPlaylistItemIndexByVideoPath;`)();
+}
+
 test('continuous runtime imports the shared helper module', () => {
   assert.match(appSource, /CONTINUOUS_STATUS[\s\S]+findNextPlayableIndex[\s\S]+createSkippedToastMessage[\s\S]+from '\.\/modules\/playlist-continuous-core\.js'/);
 });
@@ -1341,4 +1364,73 @@ test('ffmpeg detection checks the main checkout when running from a git worktree
 
 test('playlist test script includes continuous runtime coverage', () => {
   assert.match(packageJson.scripts['test:playlist'], /playlist-continuous-runtime\.test\.js/);
+});
+
+test('continuous playback stops with one toast when a global drawing gate cancels the load', () => {
+  const loadVideoMatch = appSource.match(
+    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
+  );
+  assert.ok(loadVideoMatch, 'video loader should exist');
+  const loadVideoSource = loadVideoMatch[1];
+  const genericToast = 'showToast(\'새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.\', \'error\');';
+  const failureBranchPattern = persistenceVariable => new RegExp(
+    `if \\(!${persistenceVariable}\\) \\{\\s+` +
+    'if \\(preserveContinuousSession\\) \\{\\s+' +
+    'lastVideoLoadFabricCancelReason = \'fabric-persistence\';\\s+' +
+    `\\} else \\{\\s+${genericToast.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+` +
+    '\\}\\s+return false;\\s+\\}'
+  );
+  assert.match(loadVideoSource, failureBranchPattern('fabricPersistenceReadyToLeave'));
+  assert.match(loadVideoSource, failureBranchPattern('finalFabricPersistenceReadyToLeave'));
+  assert.equal(loadVideoSource.split(genericToast).length - 1, 2);
+
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
+  assert.match(
+    continuousLoadMatch[1],
+    /lastVideoLoadFabricCancelReason = null;[\s\S]+loadVideoFromPlaylist\(item, \{[\s\S]+if \(lastVideoLoadFabricCancelReason !== null\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+showToast\('드로잉 저장 문제로 이어붙이기 재생을 중단했습니다\.', 'error'\);[\s\S]+return false;[\s\S]+\}[\s\S]+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.ERROR, '건너뜀'\);/
+  );
+});
+
+test('playlist failure rollback finds the actual loaded item despite optimistic intermediate selections', () => {
+  const findPlaylistItemIndexByVideoPath = loadPlaylistVideoPathIndexHelper();
+  const items = [
+    { id: 'O', videoPath: 'C:\\show\\original.mp4' },
+    { id: 'A', videoPath: 'C:\\show\\optimistic-a.mp4' },
+    { id: 'B', videoPath: 'C:\\show\\target-b.mp4' }
+  ];
+
+  assert.equal(
+    findPlaylistItemIndexByVideoPath(items, 'C:/SHOW/ORIGINAL.MP4'),
+    0,
+    'B must roll back to O, not the optimistic A selection'
+  );
+  assert.equal(findPlaylistItemIndexByVideoPath(items, null), -1);
+  assert.equal(findPlaylistItemIndexByVideoPath(items, 'C:/show/missing.mp4'), -1);
+});
+
+test('playlist clicks highlight immediately, roll back from current media, and retry skipped items', () => {
+  const selectedMatch = appSource.match(/playlistManager\.onItemSelected = async \(item, index\) => \{([\s\S]*?)\n    \};/);
+  assert.ok(selectedMatch, 'playlist item selected callback should exist');
+  const selectedSource = selectedMatch[1];
+
+  const suppressReturnIndex = selectedSource.indexOf('return;');
+  const optimisticIndex = selectedSource.indexOf('updatePlaylistCurrentItem();', suppressReturnIndex);
+  const loadIndex = selectedSource.indexOf('loadVideoFromPlaylist(item, {');
+  assert.ok(
+    optimisticIndex !== -1 && optimisticIndex < loadIndex,
+    'selection highlight must render before the video load starts'
+  );
+
+  assert.match(
+    selectedSource,
+    /if \(loaded === false\) \{\s+playlistManager\.currentIndex = findPlaylistItemIndexByVideoPath\(playlistManager\.getItems\?\.\(\) \|\| \[\], state\.currentFile\);\s+\}/
+  );
+  assert.doesNotMatch(selectedSource, /previousIndex/);
+  assert.doesNotMatch(playlistManagerSource, /onItemSelected\?\.\(item, index, previousIndex\)/);
+  assert.match(
+    selectedSource,
+    /if \(item\.continuousStatus === CONTINUOUS_STATUS\.SKIPPED \|\|\s+item\.continuousStatus === CONTINUOUS_STATUS\.ERROR\) \{\s+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.IDLE, ''\);\s+\}/
+  );
+  assert.match(selectedSource, /holdPreviousFrameUntilReady: true,/);
 });

@@ -19,7 +19,6 @@ export const MPV_SURFACE_REGISTRY = Object.freeze([
     '.credits-overlay.active',
     '.codec-error-overlay.active',
     '.app-saving-overlay.active',
-    '#videoLoadingOverlay.active',
     '.transcode-overlay.active',
     '.composition-layer-context-menu',
     '.comment-marker-input-wrapper',
@@ -51,6 +50,11 @@ export const MPV_SURFACE_REGISTRY = Object.freeze([
   Object.freeze({
     selector: '.scrub-preview-overlay.active',
     observeSelector: '.scrub-preview-overlay',
+    mode: MPV_SURFACE_MODE.HTML_MIRROR
+  }),
+  Object.freeze({
+    selector: '#videoLoadingOverlay.active',
+    observeSelector: '#videoLoadingOverlay',
     mode: MPV_SURFACE_MODE.HTML_MIRROR
   }),
   Object.freeze({

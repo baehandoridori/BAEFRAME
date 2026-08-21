@@ -46,7 +46,7 @@ test('overlay capability and real load tokens reconcile only confirmed normal vi
     'beginDestructiveMpvReviewMediaChange(loadToken)'
   );
   const finalFlushIndex = loadVideo.indexOf(
-    'const finalFabricPersistenceReadyToLeave'
+    'let finalFabricPersistenceReadyToLeave'
   );
   const finalSaveIndex = loadVideo.indexOf(
     'const finalSavedBeforeVideoChange = await reviewDataManager.save()'
@@ -151,7 +151,7 @@ test('Fabric persistence is pulled after root refresh and before save and video 
     'if (reviewDataManager.hasUnsavedChanges())'
   );
   const finalFlushIndex = loadVideo.indexOf(
-    'const finalFabricPersistenceReadyToLeave'
+    'let finalFabricPersistenceReadyToLeave'
   );
   const finalDirtyCheckIndex = loadVideo.indexOf(
     'if (reviewDataManager.hasUnsavedChanges())',
@@ -175,7 +175,7 @@ test('Fabric persistence is pulled after root refresh and before save and video 
   );
   assert.match(
     loadVideo,
-    /const fabricPersistenceReadyToLeave =\s*await fabricDrawingPilotController\.flushPersistenceBeforeLeave\(\);[\s\S]+if \(!fabricPersistenceReadyToLeave\) \{[\s\S]+showToast\('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다\.', 'error'\);[\s\S]+return false;[\s\S]+\}/
+    /let fabricPersistenceReadyToLeave =\s*await fabricDrawingPilotController\.flushPersistenceBeforeLeave\(\);[\s\S]+if \(!fabricPersistenceReadyToLeave\) \{[\s\S]+showToast\('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다\.', 'error'\);[\s\S]+return false;[\s\S]+\}/
   );
 });
 
@@ -282,4 +282,24 @@ test('stable Fabric UI does not create or poll the old manual verification HUD',
   assert.doesNotMatch(appSource, /fabricPilotStatusText|scheduleFabricPilotStatusRefresh/);
   assert.doesNotMatch(appSource, /createFabricPilotStatusRefreshCoordinator/);
   assert.doesNotMatch(appSource, /fabricDrawingPilotController\.(?:getStatusSnapshot|diagnostics)\(\)/);
+});
+
+test('persistence gate abandon is load-local and does not rebuild transition ownership', () => {
+  const loadVideo = appSource.match(
+    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
+  )?.[1] || '';
+  assert.match(loadVideo, /let fabricPersistenceAbandonedForThisLoad = false;/);
+  assert.match(
+    loadVideo,
+    /if \(!fabricPersistenceReadyToLeave && !preserveContinuousSession\) \{[\s\S]+confirm\('드로잉을 저장하지 못했습니다\. 드로잉 저장을 포기하고 영상을 전환할까요\?'\)[\s\S]+abandonPersistenceForVideoChange\(\);\n\s+fabricPersistenceAbandonedForThisLoad = true;\n\s+fabricPersistenceReadyToLeave = true;/
+  );
+  assert.match(
+    loadVideo,
+    /let finalFabricPersistenceReadyToLeave = fabricPersistenceAbandonedForThisLoad;\n\s+if \(!finalFabricPersistenceReadyToLeave\) \{\n\s+finalFabricPersistenceReadyToLeave =\n\s+await fabricDrawingPilotController\.flushPersistenceBeforeLeave\(\);/
+  );
+  assert.match(
+    loadVideo,
+    /if \(!finalFabricPersistenceReadyToLeave && !preserveContinuousSession\) \{[\s\S]+abandonPersistenceForVideoChange\(\);\n\s+fabricPersistenceAbandonedForThisLoad = true;\n\s+finalFabricPersistenceReadyToLeave = true;/
+  );
+  assert.doesNotMatch(loadVideo, /rearmedAfterAbandon/);
 });

@@ -895,3 +895,34 @@ test('draw playback state is cancelled before mode exit or media replacement', (
     /activeVideoLoadPath = filePath;[\s\S]*?mpvDrawPlaybackTransitionToken \+= 1;[\s\S]*?classList\.remove\('playback-hidden'\);[\s\S]*?let videoLoadCompleted = false;/
   );
 });
+
+test('failed video loads clear the drive loading overlay in the finally block', () => {
+  assert.match(
+    appSource,
+    /if \(activeVideoLoadToken === loadToken\) \{[\s\S]+if \(!videoLoadCompleted && driveLoadingFeedbackShown\) \{[\s\S]+hideVideoLoadingOverlay\('drive'\);[\s\S]+\}[\s\S]+await settlePendingMpvReviewFreezeMediaChange\(\{ loaded: videoLoadCompleted \}\);/
+  );
+});
+
+test('a newer non-drive load clears stale drive loading feedback before tracing', () => {
+  const loadSetupMatch = appSource.match(
+    /activeVideoLoadToken = loadToken;([\s\S]*?)const trace = log\.trace\('loadVideo'\);/
+  );
+  assert.ok(loadSetupMatch, 'loadVideo setup before trace should exist');
+  const loadSetupSource = loadSetupMatch[0];
+  const tokenIndex = loadSetupSource.indexOf('activeVideoLoadToken = loadToken;');
+  const showIndex = loadSetupSource.indexOf('showDriveVideoLoadingFeedback(filePath, { preparedVideoPath })');
+  const overlayIndex = loadSetupSource.indexOf("const driveLoadingOverlay = document.getElementById('videoLoadingOverlay');");
+  const staleDriveGuardIndex = loadSetupSource.indexOf(
+    "if (!driveLoadingFeedbackShown && driveLoadingOverlay?.dataset.loadingKind === 'drive')"
+  );
+  const hideIndex = loadSetupSource.indexOf("hideVideoLoadingOverlay('drive');", staleDriveGuardIndex);
+
+  assert.ok(
+    tokenIndex >= 0 &&
+      tokenIndex < showIndex &&
+      showIndex < overlayIndex &&
+      overlayIndex < staleDriveGuardIndex &&
+      staleDriveGuardIndex < hideIndex,
+    'the newest load should clear inherited drive feedback only after checking the live drive overlay'
+  );
+});

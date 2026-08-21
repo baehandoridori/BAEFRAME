@@ -228,6 +228,25 @@ function createMpvPilotOwnershipGate({
   };
 }
 
+function createMpvPilotSeamlessTransitionGate() {
+  let activeLoadToken = null;
+
+  return {
+    begin(loadToken, isSeamless) {
+      activeLoadToken = isSeamless ? loadToken : null;
+      return activeLoadToken === loadToken;
+    },
+    clear(loadToken) {
+      if (activeLoadToken !== loadToken) return false;
+      activeLoadToken = null;
+      return true;
+    },
+    isActive() {
+      return activeLoadToken !== null;
+    }
+  };
+}
+
 function createCoalescedAsyncScheduler({
   delayMs,
   run,
@@ -959,6 +978,11 @@ async function initApp() {
 
   function isSameFilePath(a, b) {
     return normalizeComparableFilePath(a) === normalizeComparableFilePath(b);
+  }
+
+  function findPlaylistItemIndexByVideoPath(items, videoPath) {
+    if (!videoPath || !Array.isArray(items)) return -1;
+    return items.findIndex(item => isSameFilePath(item?.videoPath, videoPath));
   }
 
   function invalidatePlaylistBackgroundWork() {
@@ -6616,6 +6640,9 @@ async function initApp() {
   let latestVideoLoadToken = 0;
   let activeVideoLoadToken = null;
   let activeVideoLoadPath = null;
+  // 직전 loadVideo가 fabric persistence 게이트에서 취소됐는지를 연속 재생 루프에 알린다.
+  // 전역 원인 실패를 항목별 '건너뜀'으로 오기록해 연쇄 스킵되는 것을 막기 위한 채널.
+  let lastVideoLoadFabricCancelReason = null;
   let activeMpvPilotLoadToken = null;
   let deferredReviewFileDiscovery = null;
   const DEFERRED_REVIEW_FILE_POLL_INTERVAL_MS = 3000;
@@ -7275,6 +7302,7 @@ async function initApp() {
       activeMpvPilotLoadToken = loadToken;
     }
   });
+  const mpvPilotSeamlessTransitionGate = createMpvPilotSeamlessTransitionGate();
   let mpvOverlayStateSyncPendingOwner = null;
   let mpvOverlayRemoteCursorSyncPendingOwner = null;
   let mpvOverlayRemoteCursorRevision = 0;
@@ -7773,7 +7801,7 @@ async function initApp() {
   }
 
   function shouldShowMpvHostForCurrentState() {
-    return !mpvPilotHostPreparing &&
+    return (!mpvPilotHostPreparing || mpvPilotSeamlessTransitionGate.isActive()) &&
       document.body.classList.contains('mpv-pilot-mode') &&
       mpvReviewFreezeHostHideOwner === null &&
       !hasBlockingOverlayForMpv();
@@ -9053,14 +9081,30 @@ async function initApp() {
       (!allowNavigationGuardAbort || shouldContinueVideoLoad())
     );
     if (!canContinueVideoLoad()) return false;
+    let fabricPersistenceAbandonedForThisLoad = false;
+    lastVideoLoadFabricCancelReason = null;
     if (!engineSwap) {
       await fabricDrawingPilotInitialization;
       if (!canContinueVideoLoad()) return false;
-      const fabricPersistenceReadyToLeave =
+      let fabricPersistenceReadyToLeave =
         await fabricDrawingPilotController.flushPersistenceBeforeLeave();
       if (!canContinueVideoLoad()) return false;
+      if (!fabricPersistenceReadyToLeave && !preserveContinuousSession) {
+        // 드로잉 저장 실패가 영상 전환을 영구히 막지 않도록 사용자에게 탈출구를 준다.
+        // 이어붙이기 자동 전환(preserveContinuousSession)에서는 모달을 띄우지 않는다.
+        const abandonDrawing = confirm('드로잉을 저장하지 못했습니다. 드로잉 저장을 포기하고 영상을 전환할까요?');
+        if (abandonDrawing && canContinueVideoLoad()) {
+          fabricDrawingPilotController.abandonPersistenceForVideoChange();
+          fabricPersistenceAbandonedForThisLoad = true;
+          fabricPersistenceReadyToLeave = true;
+        }
+      }
       if (!fabricPersistenceReadyToLeave) {
-        showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
+        if (preserveContinuousSession) {
+          lastVideoLoadFabricCancelReason = 'fabric-persistence';
+        } else {
+          showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
+        }
         return false;
       }
       await reviewDataManager.waitForPendingSave();
@@ -9082,6 +9126,10 @@ async function initApp() {
     }
 
     const driveLoadingFeedbackShown = showDriveVideoLoadingFeedback(filePath, { preparedVideoPath });
+    const driveLoadingOverlay = document.getElementById('videoLoadingOverlay');
+    if (!driveLoadingFeedbackShown && driveLoadingOverlay?.dataset.loadingKind === 'drive') {
+      hideVideoLoadingOverlay('drive');
+    }
     // 작업 4: engineSwap에서는 G:드라이브 로딩 오버레이 플래시를 억제한다(호출 리터럴은 테스트가 단언).
     if (engineSwap && driveLoadingFeedbackShown) {
       hideVideoLoadingOverlay('drive');
@@ -9103,6 +9151,11 @@ async function initApp() {
       let thumbnailVideoPath = actualVideoPath;
       const useMpvPilot = allowMpvPilot && await shouldUseMpvPilot(filePath, { fileIsAudio, hasPreparedVideoPath: hasConvertedPreparedVideoPath });
       if (!canContinueVideoLoad()) return false;
+      // mpv→mpv 전환에서는 호스트를 숨기지 않고 이전 프레임을 유지한다.
+      // keep-open + loadfile replace 조합이 다음 파일 첫 프레임까지 기존 프레임을 잡아주므로
+      // 검은 깜빡임 없이 이어진다. 실패 시에는 finally가 플래그를 해제하고 기존 정리 경로가 동작한다.
+      mpvPilotSeamlessTransitionGate.begin(loadToken, useMpvPilot && !engineSwap && !fileIsAudio &&
+        holdPreviousFrameUntilReady && isMpvPilotPlaybackActive());
       if (useMpvPilot) {
         await cancelPlaylistBackgroundTranscodesForMpvPilot('mpv 직접 재생 시작');
         if (!canContinueVideoLoad()) return false;
@@ -9180,11 +9233,26 @@ async function initApp() {
           await fabricDrawingPilotController.beforeVideoChange(loadToken);
         if (!fabricReadyForVideoChange || !canContinueVideoLoad()) return false;
 
-        const finalFabricPersistenceReadyToLeave =
-          await fabricDrawingPilotController.flushPersistenceBeforeLeave();
-        if (!canContinueVideoLoad()) return false;
+        let finalFabricPersistenceReadyToLeave = fabricPersistenceAbandonedForThisLoad;
         if (!finalFabricPersistenceReadyToLeave) {
-          showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
+          finalFabricPersistenceReadyToLeave =
+            await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+          if (!canContinueVideoLoad()) return false;
+        }
+        if (!finalFabricPersistenceReadyToLeave && !preserveContinuousSession) {
+          const abandonDrawing = confirm('드로잉을 저장하지 못했습니다. 드로잉 저장을 포기하고 영상을 전환할까요?');
+          if (abandonDrawing && canContinueVideoLoad()) {
+            fabricDrawingPilotController.abandonPersistenceForVideoChange();
+            fabricPersistenceAbandonedForThisLoad = true;
+            finalFabricPersistenceReadyToLeave = true;
+          }
+        }
+        if (!finalFabricPersistenceReadyToLeave) {
+          if (preserveContinuousSession) {
+            lastVideoLoadFabricCancelReason = 'fabric-persistence';
+          } else {
+            showToast('새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.', 'error');
+          }
           return false;
         }
         await reviewDataManager.waitForPendingSave();
@@ -9686,6 +9754,7 @@ async function initApp() {
       showToast('파일을 로드할 수 없습니다.', 'error');
       return false;
     } finally {
+      mpvPilotSeamlessTransitionGate.clear(loadToken);
       if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
         await fabricDrawingPilotController.cancelVideoChange(loadToken, {
           restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted
@@ -9694,6 +9763,10 @@ async function initApp() {
       if (activeVideoLoadToken === loadToken) {
         activeVideoLoadToken = null;
         activeVideoLoadPath = null;
+        // 조기 return false 탈출(게이트 취소 등)에서도 드라이브 로딩 오버레이가 남지 않게 한다.
+        if (!videoLoadCompleted && driveLoadingFeedbackShown) {
+          hideVideoLoadingOverlay('drive');
+        }
         await settlePendingMpvReviewFreezeMediaChange({ loaded: videoLoadCompleted });
         retryDeferredMpvOverlayFallback();
       }
@@ -18254,6 +18327,10 @@ async function initApp() {
     try {
       prepareNextPlaylistItem(sessionId);
       const preparedVideoPath = continuousPlaybackState.preparedMediaPaths.get(item.id);
+      // 이 로드의 결과만 읽도록 이전 로드가 남긴 사유를 지운다.
+      // (loadVideoFromPlaylist가 loadVideo 진입 전에 false를 반환하는 경로 — 파일 없음 등 —
+      //  에서는 loadVideo의 진입부 리셋이 실행되지 않으므로 여기서 지워야 오염이 없다.)
+      lastVideoLoadFabricCancelReason = null;
       const loaded = await loadVideoFromPlaylist(item, {
         preserveContinuousSession: true,
         holdPreviousFrameUntilReady: true,
@@ -18264,6 +18341,14 @@ async function initApp() {
       });
       if (!isContinuousSessionActive(sessionId)) return false;
       if (loaded === false) {
+        if (lastVideoLoadFabricCancelReason !== null) {
+          // 드로잉 게이트 같은 전역 원인 실패는 항목 고유 문제가 아니다.
+          // 항목을 '건너뜀'으로 오염시키며 연쇄 스킵하는 대신 세션을 중단하고 1회 알린다.
+          lastVideoLoadFabricCancelReason = null;
+          stopContinuousPlayback();
+          showToast('드로잉 저장 문제로 이어붙이기 재생을 중단했습니다.', 'error');
+          return false;
+        }
         markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
         continuousPlaybackState.skippedBatch.push(item);
         return false;
@@ -19422,11 +19507,30 @@ async function initApp() {
         return;
       }
 
-      const loaded = await loadVideoFromPlaylist(item, {
-        playWhenMediaReady: shouldAutoPlaySelectedItem,
-        shouldContinue: shouldContinuePlaylistSelectionLoad
-      });
+      // 클릭 즉시 선택 표시를 반영한다. 로드 실패 시 아래에서 이전 선택으로 복원한다.
+      updatePlaylistCurrentItem();
+      updatePlaylistPosition();
+      // 이전 세션에서 '건너뜀' 처리된 항목도 직접 클릭하면 다시 시도할 수 있게 마크를 리셋한다.
+      if (item.continuousStatus === CONTINUOUS_STATUS.SKIPPED ||
+          item.continuousStatus === CONTINUOUS_STATUS.ERROR) {
+        markPlaylistItemStatus(item, CONTINUOUS_STATUS.IDLE, '');
+      }
+
+      let loaded = false;
+      try {
+        loaded = await loadVideoFromPlaylist(item, {
+          playWhenMediaReady: shouldAutoPlaySelectedItem,
+          holdPreviousFrameUntilReady: true,
+          shouldContinue: shouldContinuePlaylistSelectionLoad
+        });
+      } catch (error) {
+        log.error('재생목록 선택 영상 로드 실패', { fileName: item.fileName, error: error?.message });
+        loaded = false;
+      }
       if (!shouldContinuePlaylistSelectionLoad()) return;
+      if (loaded === false) {
+        playlistManager.currentIndex = findPlaylistItemIndexByVideoPath(playlistManager.getItems?.() || [], state.currentFile);
+      }
       updatePlaylistCurrentItem();
       updatePlaylistPosition();
       updatePlaylistContinuousTimeline();

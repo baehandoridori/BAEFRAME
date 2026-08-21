@@ -151,6 +151,24 @@ function loadMpvPilotOwnershipGateFactory() {
   assert.fail('mpv pilot ownership gate factory should have a complete body');
 }
 
+function loadMpvPilotSeamlessTransitionGateFactory() {
+  const functionStart = appSource.indexOf('function createMpvPilotSeamlessTransitionGate(');
+  assert.notEqual(functionStart, -1, 'mpv seamless transition gate factory should exist');
+
+  const bodyStart = appSource.indexOf(') {', functionStart) + 2;
+  let depth = 0;
+  for (let index = bodyStart; index < appSource.length; index += 1) {
+    if (appSource[index] === '{') depth += 1;
+    if (appSource[index] === '}') depth -= 1;
+    if (depth === 0) {
+      const functionSource = appSource.slice(functionStart, index + 1);
+      return new Function(`return (${functionSource});`)();
+    }
+  }
+
+  assert.fail('mpv seamless transition gate factory should have a complete body');
+}
+
 function createDeferred() {
   let resolve;
   const promise = new Promise((resolvePromise) => {
@@ -1260,4 +1278,47 @@ test('미러 전송이 변경 필드만 보낸다 (32 잔존)', () => {
   assert.match(appSource, /targetElement\.style\.animation = 'none';/);
   // 32 잔존(f): 재생 playhead를 미러 재주입에서 분리하는 별도 필드
   assert.match(appSource, /commentPlayheadLeft:/);
+});
+
+test('stale mpv load cleanup cannot clear the newest seamless transition owner', () => {
+  const createMpvPilotSeamlessTransitionGate = loadMpvPilotSeamlessTransitionGateFactory();
+  const gate = createMpvPilotSeamlessTransitionGate();
+
+  gate.begin('load-a', true);
+  gate.begin('load-b', true);
+  assert.equal(gate.isActive(), true);
+  assert.equal(gate.clear('load-a'), false, 'A finally must not clear B ownership');
+  assert.equal(gate.isActive(), true);
+  assert.equal(gate.clear('load-b'), true);
+  assert.equal(gate.isActive(), false);
+});
+
+test('new non-seamless mpv load immediately disables a prior seamless owner', () => {
+  const createMpvPilotSeamlessTransitionGate = loadMpvPilotSeamlessTransitionGateFactory();
+  const gate = createMpvPilotSeamlessTransitionGate();
+
+  gate.begin('load-a', true);
+  assert.equal(gate.isActive(), true);
+  gate.begin('load-b', false);
+  assert.equal(gate.isActive(), false);
+  assert.equal(gate.clear('load-a'), false);
+});
+
+test('mpv to mpv transitions keep the native host visible for seamless playback', () => {
+  assert.match(appSource, /const mpvPilotSeamlessTransitionGate = createMpvPilotSeamlessTransitionGate\(\);/);
+  assert.match(
+    appSource,
+    /function shouldShowMpvHostForCurrentState\(\) \{\s+return \(!mpvPilotHostPreparing \|\| mpvPilotSeamlessTransitionGate\.isActive\(\)\) &&/
+  );
+  assert.match(
+    appSource,
+    /mpvPilotSeamlessTransitionGate\.begin\(loadToken, useMpvPilot && !engineSwap && !fileIsAudio &&\s+holdPreviousFrameUntilReady && isMpvPilotPlaybackActive\(\)\);/
+  );
+  assert.match(appSource, /\} finally \{\s+mpvPilotSeamlessTransitionGate\.clear\(loadToken\);/);
+  // 드라이브 로딩 pill은 BLOCK이 아니라 HTML_MIRROR로 분류되어야 한다.
+  assert.doesNotMatch(mpvSurfacePolicySource, /'\.app-saving-overlay\.active',\s*'#videoLoadingOverlay\.active'/);
+  assert.match(
+    mpvSurfacePolicySource,
+    /selector: '#videoLoadingOverlay\.active',\s*observeSelector: '#videoLoadingOverlay',\s*mode: MPV_SURFACE_MODE\.HTML_MIRROR/
+  );
 });
