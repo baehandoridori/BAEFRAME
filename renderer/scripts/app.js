@@ -911,6 +911,7 @@ async function initApp() {
     preparedMediaPaths: new Map(),
     sessionId: 0
   };
+  let continuousTransitionFlight = null;
   // 멈춘 세션 재시작 진행 중 플래그: draw 모드에서는 스페이스 1회가 keydown+keyup으로
   // 토글을 2회 호출하므로(13343·13830 부근), 두 번째 호출이 방금 시작한 세션을 되돌리지 않게 막는다.
   let continuousStalledResumeInFlight = false;
@@ -1015,6 +1016,9 @@ async function initApp() {
 
   function commitPlaylistReplacement() {
     playlistSelectionLoadToken += 1;
+    playlistContinuousNavigationToken += 1;
+    videoLoadIntentGeneration += 1;
+    hardAbandonContinuousTransitionFlight();
     invalidateActiveVideoLoad();
     stopContinuousPlayback();
     invalidatePlaylistBackgroundWork();
@@ -1777,6 +1781,8 @@ async function initApp() {
         return;
       }
     }
+
+    if (pendingUserVideoLoadIntent === videoLoadIntentGeneration || pendingUserVideoLoadIntent?.intentGeneration === videoLoadIntentGeneration) return;
 
     const playlistManager = getPlaylistManager();
     if (continuousPlaybackState.active) {
@@ -6502,9 +6508,9 @@ async function initApp() {
     return pendingMpvReviewFreezeMediaChange;
   }
 
-  async function settlePendingMpvReviewFreezeMediaChange({ loaded = false } = {}) {
+  async function settlePendingMpvReviewFreezeMediaChange({ expectedLoadToken = null, loaded = false } = {}) {
     const transition = pendingMpvReviewFreezeMediaChange;
-    if (!transition) return false;
+    if (!transition || transition.loadToken !== expectedLoadToken) return false;
     pendingMpvReviewFreezeMediaChange = null;
     if (loaded) return true;
 
@@ -6651,8 +6657,11 @@ async function initApp() {
   let activeTranscodeOverlayToken = 0;
   let activeTranscodeOverlayCleanup = null;
   let latestVideoLoadToken = 0;
+  let videoLoadIntentGeneration = 0;
+  let pendingUserVideoLoadIntent = null;
   let activeVideoLoadToken = null;
   let activeVideoLoadPath = null;
+  let activeVideoLoadCompletion = null;
   // 직전 loadVideo가 fabric persistence 게이트에서 취소됐는지를 연속 재생 루프에 알린다.
   // 전역 원인 실패를 항목별 '건너뜀'으로 오기록해 연쇄 스킵되는 것을 막기 위한 채널.
   let lastVideoLoadFabricCancelReason = null;
@@ -6667,8 +6676,23 @@ async function initApp() {
   }
 
   function invalidateActiveVideoLoad() {
+    if (activeVideoLoadCompletion) { activeVideoLoadCompletion.hardInvalidated = true; activeVideoLoadCompletion.settle(false); }
     latestVideoLoadToken += 1;
     supersedeActiveTranscodeOverlay('재생목록 교체');
+  }
+
+  function beginActiveVideoLoadCompletion(filePath, intentGeneration, loadToken) {
+    const record = { filePath, intentGeneration, loadToken, hardInvalidated: false };
+    record.promise = new Promise(resolve => { record.settle = resolve; });
+    activeVideoLoadCompletion = record;
+    return record;
+  }
+
+  function getActiveVideoLoadCompletionForPath(filePath) {
+    return activeVideoLoadCompletion && !activeVideoLoadCompletion.hardInvalidated &&
+      activeVideoLoadCompletion.intentGeneration === videoLoadIntentGeneration &&
+      isSameFilePath(activeVideoLoadCompletion.filePath, filePath)
+      ? activeVideoLoadCompletion : null;
   }
 
   function isStaleVideoLoadToken(loadToken) {
@@ -9084,8 +9108,22 @@ async function initApp() {
       preparedVideoPath = null,
       allowMpvPilot = true,
       engineSwap = false,
-      shouldContinue = null
+      shouldContinue = null,
+      videoLoadIntent = null
     } = options;
+    const loadIntent = Number.isInteger(videoLoadIntent)
+      ? videoLoadIntent
+      : ++videoLoadIntentGeneration;
+    const ownsPendingUserIntent = !engineSwap && !preserveContinuousSession &&
+      pendingUserVideoLoadIntent !== loadIntent;
+    if (ownsPendingUserIntent) {
+      pendingUserVideoLoadIntent = loadIntent;
+      playlistContinuousNavigationToken += 1;
+      hardAbandonContinuousTransitionFlight();
+      if (continuousPlaybackState.active) stopContinuousPlayback();
+    }
+    /* eslint-disable indent */
+    try {
     const shouldContinueVideoLoad = typeof shouldContinue === 'function'
       ? shouldContinue
       : () => true;
@@ -9094,6 +9132,7 @@ async function initApp() {
     let allowNavigationGuardAbort = true;
     const canContinueVideoLoad = () => (
       !isStaleVideoLoad() &&
+      loadIntent === videoLoadIntentGeneration &&
       (!allowNavigationGuardAbort || shouldContinueVideoLoad())
     );
     if (!canContinueVideoLoad()) return false;
@@ -9138,6 +9177,7 @@ async function initApp() {
     mpvDrawPlaybackTransitionToken += 1;
     elements.drawingTools?.classList.remove('playback-hidden');
     let videoLoadCompleted = false;
+    const videoLoadCompletion = beginActiveVideoLoadCompletion(filePath, loadIntent, loadToken);
     let fabricVideoChangeStarted = false;
     let destructiveMpvReviewMediaChangeStarted = false;
     supersedeActiveTranscodeOverlay('새 영상 선택');
@@ -9520,6 +9560,7 @@ async function initApp() {
               showToast('mpv 준비가 중단되어 기존 방식으로 다시 시도합니다.', 'warning');
               const fallbackOptions = {
                 ...options,
+                videoLoadIntent: loadIntent,
                 allowMpvPilot: false,
                 preparedVideoPath: preparedVideoPathIsOriginal ? null : preparedVideoPath
               };
@@ -9531,6 +9572,7 @@ async function initApp() {
             showToast('mpv 재생에 실패해 기존 방식으로 다시 시도합니다.', 'warning');
             const fallbackOptions = {
               ...options,
+              videoLoadIntent: loadIntent,
               allowMpvPilot: false,
               preparedVideoPath: preparedVideoPathIsOriginal ? null : preparedVideoPath
             };
@@ -9589,6 +9631,7 @@ async function initApp() {
 
       // 원본 파일 경로 저장 (UI/메타데이터용)
       state.currentFile = filePath;
+      if (pendingUserVideoLoadIntent === loadIntent) pendingUserVideoLoadIntent = null;
       elements.fileName.textContent = fileInfo.name;
       elements.fileName.classList.remove('file-name-clickable'); // 파일 로드 후 클릭 가능 상태 제거
       elements.filePath.textContent = fileInfo.dir;
@@ -9775,6 +9818,7 @@ async function initApp() {
       return true;
 
     } catch (error) {
+      if (loadIntent !== videoLoadIntentGeneration || isStaleVideoLoad() || !shouldContinueVideoLoad()) return false;
       trace.error(error);
       // 에러 발생 시에도 자동 저장 재개
       reviewDataManager.resumeAutoSave();
@@ -9785,22 +9829,34 @@ async function initApp() {
       return false;
     } finally {
       mpvPilotSeamlessTransitionGate.clear(loadToken);
-      if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
-        await fabricDrawingPilotController.cancelVideoChange(loadToken, {
-          restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted
-        });
-      }
-      if (activeVideoLoadToken === loadToken) {
-        activeVideoLoadToken = null;
-        activeVideoLoadPath = null;
-        // 조기 return false 탈출(게이트 취소 등)에서도 드라이브 로딩 오버레이가 남지 않게 한다.
-        if (!videoLoadCompleted && driveLoadingFeedbackShown) {
-          hideVideoLoadingOverlay('drive');
+      try {
+        if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
+          await fabricDrawingPilotController.cancelVideoChange(loadToken, {
+            restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted
+          });
         }
-        await settlePendingMpvReviewFreezeMediaChange({ loaded: videoLoadCompleted });
-        retryDeferredMpvOverlayFallback();
+        const ownsActiveLoad = activeVideoLoadToken === loadToken;
+        if (activeVideoLoadToken === loadToken) {
+          activeVideoLoadToken = null;
+          activeVideoLoadPath = null;
+          // 조기 return false 탈출(게이트 취소 등)에서도 드라이브 로딩 오버레이가 남지 않게 한다.
+          if (!videoLoadCompleted && driveLoadingFeedbackShown) {
+            hideVideoLoadingOverlay('drive');
+          }
+        }
+        await settlePendingMpvReviewFreezeMediaChange({
+          expectedLoadToken: loadToken,
+          loaded: videoLoadCompleted || (!videoLoadCompletion.hardInvalidated && (loadIntent !== videoLoadIntentGeneration || !shouldContinueVideoLoad()))
+        });
+        if (videoLoadCompletion.hardInvalidated || (ownsActiveLoad && loadIntent === videoLoadIntentGeneration && shouldContinueVideoLoad())) retryDeferredMpvOverlayFallback();
+      } finally {
+        videoLoadCompletion.settle(videoLoadCompleted === true);
       }
     }
+    } finally {
+      if (ownsPendingUserIntent && pendingUserVideoLoadIntent === loadIntent) pendingUserVideoLoadIntent = null;
+    }
+    /* eslint-enable indent */
   }
 
   // 피드백 36: 이전 버전 댓글 읽기 전용 표시 상태
@@ -17317,7 +17373,6 @@ async function initApp() {
       }
       if (continuousPlaybackState.active) {
         stopContinuousPlayback();
-        invalidateActiveVideoLoad();
       }
       videoPlayer.pause();
       void seekContinuousTimeline(time, { resumePlayback: false });
@@ -17820,7 +17875,6 @@ async function initApp() {
         : null;
       if (continuousPlaybackState.active) {
         stopContinuousPlayback();
-        invalidateActiveVideoLoad();
       }
       videoPlayer.togglePlay();
       if (continuousPausePosition) {
@@ -17860,7 +17914,6 @@ async function initApp() {
     if (continuousPlaybackState.active) {
       const continuousPausePosition = getPlaybackSyncPosition(videoPlayer.currentTime, { forceContinuous: true });
       stopContinuousPlayback();
-      invalidateActiveVideoLoad();
       videoPlayer.pause();
       playbackSync.broadcastPause(continuousPausePosition.time, continuousPausePosition.options);
       return;
@@ -17920,6 +17973,9 @@ async function initApp() {
 
     const item = playlistManager.getItems()[mapped.segment.index];
     if (!item) return false;
+    const currentLoadCompletion = getActiveVideoLoadCompletionForPath(item.videoPath);
+    let navigationLoadIntent = currentLoadCompletion?.intentGeneration ?? ++videoLoadIntentGeneration;
+    pendingUserVideoLoadIntent = currentLoadCompletion ?? navigationLoadIntent;
     const wasContinuousActive = continuousPlaybackState.active === true;
     const shouldResumePlayback = resumePlayback && (videoPlayer.isPlaying === true || wasContinuousActive);
     const manualSessionId = wasContinuousActive
@@ -17928,71 +17984,151 @@ async function initApp() {
     const navigationToken = ++playlistContinuousNavigationToken;
     const isCurrentNavigation = () => (
       navigationToken === playlistContinuousNavigationToken &&
+      navigationLoadIntent === videoLoadIntentGeneration &&
       playlistUIState.mode === 'continuous' &&
       timeline.playlistDuration > 0 &&
       (manualSessionId === null || isContinuousSessionActive(manualSessionId))
     );
 
-    if (playlistManager.getCurrentItem?.()?.id !== item.id) {
-      suppressPlaylistSelectionLoad = true;
-      try {
-        playlistManager.selectItemById(item.id);
-      } finally {
-        suppressPlaylistSelectionLoad = false;
-      }
+    const performNavigation = async () => {
       if (!isCurrentNavigation()) return false;
-    }
-
-    const isAlreadyLoaded = isSameFilePath(state.currentFile, item.videoPath) &&
-      !hasActiveVideoLoadForDifferentFile(item.videoPath);
-    const targetFrame = Math.max(0, Math.floor(mapped.localTime * (mapped.segment.fps || item.fps || videoPlayer.fps || 24)));
-    const previousLoadingItemId = continuousPlaybackState.loadingItemId;
-    const previousLoadingSessionId = continuousPlaybackState.loadingSessionId;
-    let setManualLoadingItem = false;
-    try {
-      if (!isAlreadyLoaded) {
-        continuousPlaybackState.loadingItemId = item.id;
-        continuousPlaybackState.loadingSessionId = manualSessionId;
-        setManualLoadingItem = true;
-        const loaded = await loadVideoFromPlaylist(item, {
-          preserveContinuousSession: true,
-          initialFrame: targetFrame,
-          revealAfterInitialSeek: true,
-          holdPreviousFrameUntilReady: true,
-          shouldContinue: isCurrentNavigation
-        });
-        if (!loaded) return false;
+      if (playlistManager.getCurrentItem?.()?.id !== item.id) {
+        suppressPlaylistSelectionLoad = true;
+        try {
+          playlistManager.selectItemById(item.id);
+        } finally {
+          suppressPlaylistSelectionLoad = false;
+        }
         if (!isCurrentNavigation()) return false;
       }
 
+      const canReuseCurrentMedia = currentLoadCompletion ? await currentLoadCompletion.promise :
+        !(activeVideoLoadCompletion && isSameFilePath(activeVideoLoadCompletion.filePath, item.videoPath));
       if (!isCurrentNavigation()) return false;
-      videoPlayer.seek(mapped.localTime);
-      playbackSync.broadcastSeek(mapLocalTimeToGlobal(mapped.segment, mapped.localTime), {
-        playlistContinuous: true
-      });
-      timeline.setCurrentTime(mapLocalTimeToGlobal(mapped.segment, mapped.localTime));
-      updatePlaylistCurrentItem();
-      updatePlaylistPosition();
-    } finally {
-      if (
-        setManualLoadingItem &&
+      if (currentLoadCompletion && canReuseCurrentMedia === false) {
+        navigationLoadIntent = ++videoLoadIntentGeneration;
+        pendingUserVideoLoadIntent = navigationLoadIntent;
+      }
+      const isAlreadyLoaded = canReuseCurrentMedia && isSameFilePath(state.currentFile, item.videoPath) &&
+      !hasActiveVideoLoadForDifferentFile(item.videoPath);
+      const targetFrame = Math.max(0, Math.floor(mapped.localTime * (mapped.segment.fps || item.fps || videoPlayer.fps || 24)));
+      const previousLoadingItemId = continuousPlaybackState.loadingItemId;
+      const previousLoadingSessionId = continuousPlaybackState.loadingSessionId;
+      let setManualLoadingItem = false;
+      try {
+        if (!isAlreadyLoaded) {
+          continuousPlaybackState.loadingItemId = item.id;
+          continuousPlaybackState.loadingSessionId = manualSessionId;
+          setManualLoadingItem = true;
+          if (pendingUserVideoLoadIntent === currentLoadCompletion) pendingUserVideoLoadIntent = navigationLoadIntent;
+          const loaded = await loadVideoFromPlaylist(item, {
+            preserveContinuousSession: true,
+            initialFrame: targetFrame,
+            revealAfterInitialSeek: true,
+            holdPreviousFrameUntilReady: true,
+            videoLoadIntent: navigationLoadIntent,
+            shouldContinue: isCurrentNavigation
+          });
+          if (!loaded) return false;
+          if (!isCurrentNavigation()) return false;
+        }
+
+        if (!isCurrentNavigation()) return false;
+        videoPlayer.seek(mapped.localTime);
+        playbackSync.broadcastSeek(mapLocalTimeToGlobal(mapped.segment, mapped.localTime), {
+          playlistContinuous: true
+        });
+        timeline.setCurrentTime(mapLocalTimeToGlobal(mapped.segment, mapped.localTime));
+        updatePlaylistCurrentItem();
+        updatePlaylistPosition();
+      } finally {
+        if (
+          setManualLoadingItem &&
         continuousPlaybackState.loadingItemId === item.id &&
         continuousPlaybackState.loadingSessionId === manualSessionId
-      ) {
-        continuousPlaybackState.loadingItemId = previousLoadingItemId;
-        continuousPlaybackState.loadingSessionId = previousLoadingSessionId;
+        ) {
+          continuousPlaybackState.loadingItemId = previousLoadingItemId;
+          continuousPlaybackState.loadingSessionId = previousLoadingSessionId;
+        }
       }
+      if (manualSessionId !== null) {
+        prepareNextPlaylistItem(manualSessionId);
+      }
+      if (shouldResumePlayback) {
+        await playVideoAfterMediaLoad({
+          silent: true,
+          logContext: { fileName: item.fileName, continuousSeek: true }
+        });
+      }
+      return true;
+    };
+
+    const navigationPromise = (manualSessionId !== null ||
+      (continuousTransitionFlight && !continuousTransitionFlight.hardAbandoned))
+      ? runContinuousTransitionFlight(manualSessionId ?? continuousPlaybackState.sessionId, performNavigation)
+      : performNavigation();
+    return navigationPromise.finally(() => {
+      if (pendingUserVideoLoadIntent === currentLoadCompletion || pendingUserVideoLoadIntent === navigationLoadIntent) pendingUserVideoLoadIntent = null;
+    });
+  }
+
+  function hardAbandonContinuousTransitionFlight() {
+    const flight = continuousTransitionFlight;
+    if (!flight) return null;
+    flight.hardAbandoned = true;
+    flight.pendingAdvance = false;
+    flight.abandon?.();
+  }
+
+  async function waitForContinuousTransitionFlight(flight, currentFlight) {
+    const completion = activeVideoLoadCompletion?.loadToken === activeVideoLoadToken
+      ? activeVideoLoadCompletion : null;
+    let timedOut = false;
+    let timer;
+    await Promise.race([
+      flight.promise.catch(() => {}),
+      currentFlight.abandonPromise,
+      new Promise(resolve => { timer = setTimeout(() => { timedOut = true; resolve(); }, CONTINUOUS_TRANSITION_DEADLINE_MS); })
+    ]);
+    clearTimeout(timer);
+    if (!timedOut || currentFlight.hardAbandoned || continuousTransitionFlight !== currentFlight ||
+      currentFlight.sessionId !== continuousPlaybackState.sessionId) return;
+    flight.hardAbandoned = true;
+    flight.pendingAdvance = false;
+    flight.abandon?.();
+    if (completion && activeVideoLoadCompletion === completion && activeVideoLoadToken === completion.loadToken) invalidateActiveVideoLoad();
+    await flight.promise.catch(() => {});
+  }
+
+  function runContinuousTransitionFlight(sessionId, operation) {
+    const previousFlight = continuousTransitionFlight;
+    let abandon;
+    const abandonPromise = new Promise(resolve => { abandon = resolve; });
+    const flight = { sessionId, promise: null, pendingAdvance: false, hardAbandoned: false, abandonPromise, abandon };
+    continuousTransitionFlight = flight;
+    const workPromise = (async () => {
+      if (previousFlight && !previousFlight.hardAbandoned) await waitForContinuousTransitionFlight(previousFlight, flight);
+      if (flight.hardAbandoned) return null;
+      let result = await operation(flight);
+      while (flight.pendingAdvance && !flight.hardAbandoned && isContinuousSessionActive(sessionId)) {
+        flight.pendingAdvance = false;
+        result = await playNextContinuousItem(sessionId, { inFlight: true });
+      }
+      return result;
+    })();
+    flight.promise = Promise.race([workPromise, abandonPromise]).finally(() => {
+      if (continuousTransitionFlight === flight) continuousTransitionFlight = null;
+    });
+    return flight.promise;
+  }
+
+  function requestContinuousPlaybackAdvance(sessionId) {
+    const flight = continuousTransitionFlight;
+    if (flight && !flight.hardAbandoned && flight.sessionId === sessionId) {
+      flight.pendingAdvance = true;
+      return flight.promise;
     }
-    if (manualSessionId !== null) {
-      prepareNextPlaylistItem(manualSessionId);
-    }
-    if (shouldResumePlayback) {
-      await playVideoAfterMediaLoad({
-        silent: true,
-        logContext: { fileName: item.fileName, continuousSeek: true }
-      });
-    }
-    return true;
+    return runContinuousTransitionFlight(sessionId, () => playNextContinuousItem(sessionId, { inFlight: true }));
   }
 
   function resetContinuousPlaybackRuntimeState(active) {
@@ -18013,6 +18149,7 @@ async function initApp() {
   }
 
   function stopContinuousPlayback() {
+    if (continuousTransitionFlight) continuousTransitionFlight.pendingAdvance = false;
     continuousPlaybackState.sessionId += 1;
     resetContinuousPlaybackRuntimeState(false);
   }
@@ -18408,7 +18545,7 @@ async function initApp() {
     }
   }
 
-  async function loadContinuousPlaylistItem(item, sessionId) {
+  async function loadContinuousPlaylistItem(item, sessionId, videoLoadIntent) {
     if (!isContinuousSessionActive(sessionId)) return false;
 
     continuousPlaybackState.loadingItemId = item.id;
@@ -18426,6 +18563,7 @@ async function initApp() {
         playWhenMediaReady: true,
         deferCollaborationStart: true,
         preparedVideoPath,
+        videoLoadIntent,
         shouldContinue: () => isContinuousSessionActive(sessionId)
       });
       if (!isContinuousSessionActive(sessionId)) return false;
@@ -18470,6 +18608,7 @@ async function initApp() {
         fileName: item?.fileName || null,
         deadlineMs: CONTINUOUS_TRANSITION_DEADLINE_MS
       });
+      hardAbandonContinuousTransitionFlight();
       stopContinuousPlayback();
       invalidateActiveVideoLoad();
       showToast('영상 전환이 멈춰 이어붙이기 재생을 중단했습니다. 스페이스로 다시 시작할 수 있습니다.', 'error');
@@ -18667,7 +18806,13 @@ async function initApp() {
       showToast('재생목록에 영상을 먼저 추가해주세요.', 'warning');
       return null;
     }
-
+    const initialItem = playlistManager.getCurrentItem();
+    const initialLoadCompletion = initialItem
+      ? getActiveVideoLoadCompletionForPath(initialItem.videoPath) : null;
+    let startLoadIntent = initialLoadCompletion?.intentGeneration ?? ++videoLoadIntentGeneration;
+    if (pendingUserVideoLoadIntent !== null || !initialItem || !isSameFilePath(state.currentFile, initialItem.videoPath) ||
+      hasActiveVideoLoadForDifferentFile(initialItem.videoPath) || (!initialLoadCompletion && activeVideoLoadCompletion &&
+        isSameFilePath(activeVideoLoadCompletion.filePath, initialItem.videoPath))) pendingUserVideoLoadIntent = startLoadIntent;
     continuousPlaybackState.sessionId += 1;
     const sessionId = continuousPlaybackState.sessionId;
     continuousPlaybackState.active = true;
@@ -18676,57 +18821,77 @@ async function initApp() {
     continuousPlaybackState.preparePromises.clear();
     continuousPersistenceAbandonNotified = false;
 
-    try {
-      const currentItem = playlistManager.getCurrentItem() || selectPlaylistItemForContinuous(0);
-      if (!isContinuousSessionActive(sessionId)) return null;
-      if (!currentItem) {
+    return runContinuousTransitionFlight(sessionId, async flight => {
+      try {
+        const currentItem = playlistManager.getCurrentItem() || selectPlaylistItemForContinuous(0);
+        if (!isContinuousSessionActive(sessionId)) return null;
+        if (!currentItem) {
+          stopContinuousPlayback();
+          return null;
+        }
+
+        const checked = await quickCheckPlaylistForContinuous(sessionId, [currentItem]);
+        if (!isContinuousSessionActive(sessionId) || !checked) return null;
+        const remainingItems = playlistManager.getItems().filter(item => item.id !== currentItem.id);
+        if (remainingItems.length > 0) {
+          void quickCheckPlaylistForContinuous(sessionId, remainingItems);
+        }
+
+        const ready = await waitForPreparedOrSkip(currentItem, sessionId);
+        if (!isContinuousSessionActive(sessionId)) return null;
+        if (!ready) {
+          return await playNextContinuousItem(sessionId, { inFlight: true });
+        }
+
+        const currentLoadCompletion = getActiveVideoLoadCompletionForPath(currentItem.videoPath);
+        const currentLoadResult = currentLoadCompletion
+          ? await Promise.race([currentLoadCompletion.promise, flight.abandonPromise])
+          : activeVideoLoadCompletion && isSameFilePath(activeVideoLoadCompletion.filePath, currentItem.videoPath)
+            ? false : null;
+        if (flight.hardAbandoned || !isContinuousSessionActive(sessionId)) return null;
+        const alreadyLoaded = currentLoadResult !== false &&
+        isSameFilePath(state.currentFile, currentItem.videoPath) &&
+        !hasActiveVideoLoadForDifferentFile(currentItem.videoPath);
+        if (!alreadyLoaded) {
+          if ((currentLoadCompletion && currentLoadResult === false) || initialLoadCompletion?.hardInvalidated) {
+            startLoadIntent = ++videoLoadIntentGeneration;
+            pendingUserVideoLoadIntent = startLoadIntent;
+          }
+          const transitionDeadline = startContinuousTransitionDeadline(currentItem, sessionId);
+          const loaded = await loadContinuousPlaylistItem(currentItem, sessionId, startLoadIntent);
+          transitionDeadline.cancel();
+          if (!isContinuousSessionActive(sessionId)) return null;
+          if (!loaded) {
+            return await playNextContinuousItem(sessionId, { inFlight: true });
+          }
+          videoPlayer.seekToFrame(0);
+        }
+        if (!isContinuousSessionActive(sessionId)) return null;
+        prepareNextPlaylistItem(sessionId);
+        const started = await playContinuousItemWithWatchdog(currentItem, sessionId);
+        if (!isContinuousSessionActive(sessionId)) return null;
+        if (!started) {
+          return await playNextContinuousItem(sessionId, { inFlight: true });
+        }
+        return currentItem;
+      } catch (error) {
+        if (!isContinuousSessionActive(sessionId)) return null;
+        log.warn('타임라인 이어붙이기 시작 실패', { error: error.message });
         stopContinuousPlayback();
+        showToast('타임라인 이어붙이기를 시작할 수 없습니다.', 'error');
         return null;
       }
-
-      const checked = await quickCheckPlaylistForContinuous(sessionId, [currentItem]);
-      if (!isContinuousSessionActive(sessionId) || !checked) return null;
-      const remainingItems = playlistManager.getItems().filter(item => item.id !== currentItem.id);
-      if (remainingItems.length > 0) {
-        void quickCheckPlaylistForContinuous(sessionId, remainingItems);
-      }
-
-      const ready = await waitForPreparedOrSkip(currentItem, sessionId);
-      if (!isContinuousSessionActive(sessionId)) return null;
-      if (!ready) {
-        return await playNextContinuousItem(sessionId);
-      }
-
-      const alreadyLoaded = isSameFilePath(state.currentFile, currentItem.videoPath);
-      if (!alreadyLoaded) {
-        const transitionDeadline = startContinuousTransitionDeadline(currentItem, sessionId);
-        const loaded = await loadContinuousPlaylistItem(currentItem, sessionId);
-        transitionDeadline.cancel();
-        if (!isContinuousSessionActive(sessionId)) return null;
-        if (!loaded) {
-          return await playNextContinuousItem(sessionId);
-        }
-        videoPlayer.seekToFrame(0);
-      }
-      if (!isContinuousSessionActive(sessionId)) return null;
-      prepareNextPlaylistItem(sessionId);
-      const started = await playContinuousItemWithWatchdog(currentItem, sessionId);
-      if (!isContinuousSessionActive(sessionId)) return null;
-      if (!started) {
-        return await playNextContinuousItem(sessionId);
-      }
-      return currentItem;
-    } catch (error) {
-      if (!isContinuousSessionActive(sessionId)) return null;
-      log.warn('타임라인 이어붙이기 시작 실패', { error: error.message });
-      stopContinuousPlayback();
-      showToast('타임라인 이어붙이기를 시작할 수 없습니다.', 'error');
-      return null;
-    }
+    }).finally(() => pendingUserVideoLoadIntent === startLoadIntent && (pendingUserVideoLoadIntent = null));
   }
 
-  async function playNextContinuousItem(sessionId) {
+  async function playNextContinuousItem(sessionId, options = {}) {
+    if (!options.inFlight) return requestContinuousPlaybackAdvance(sessionId);
     if (!isContinuousSessionActive(sessionId)) return null;
+    const videoLoadIntent = pendingUserVideoLoadIntent = ++videoLoadIntentGeneration;
+    if (continuousTransitionFlight?.sessionId === sessionId) continuousTransitionFlight.pendingAdvance = false;
+    return playNextContinuousItemForIntent(sessionId, videoLoadIntent).finally(() => pendingUserVideoLoadIntent === videoLoadIntent && (pendingUserVideoLoadIntent = null));
+  }
+  async function playNextContinuousItemForIntent(sessionId, videoLoadIntent) {
     const playlistManager = getPlaylistManager();
     const items = playlistManager.getItems();
     const settings = playlistManager.getContinuousSettings();
@@ -18745,22 +18910,22 @@ async function initApp() {
     const ready = await waitForPreparedOrSkip(nextItem, sessionId);
     if (!isContinuousSessionActive(sessionId)) return null;
     if (!ready) {
-      return await playNextContinuousItem(sessionId);
+      return await playNextContinuousItem(sessionId, { inFlight: true });
     }
 
     flushSkippedToastBatch();
     const transitionDeadline = startContinuousTransitionDeadline(nextItem, sessionId);
-    const loaded = await loadContinuousPlaylistItem(nextItem, sessionId);
+    const loaded = await loadContinuousPlaylistItem(nextItem, sessionId, videoLoadIntent);
     transitionDeadline.cancel();
     if (!isContinuousSessionActive(sessionId)) return null;
     if (!loaded) {
-      return await playNextContinuousItem(sessionId);
+      return await playNextContinuousItem(sessionId, { inFlight: true });
     }
     prepareNextPlaylistItem(sessionId);
     const started = await playContinuousItemWithWatchdog(nextItem, sessionId);
     if (!isContinuousSessionActive(sessionId)) return null;
     if (!started) {
-      return await playNextContinuousItem(sessionId);
+      return await playNextContinuousItem(sessionId, { inFlight: true });
     }
     return nextItem;
   }
@@ -19905,33 +20070,48 @@ async function initApp() {
 
   // 재생목록에서 영상 로드
   async function loadVideoFromPlaylist(item, options = {}) {
-    const { shouldContinue = null, ...loadOptions } = options;
-    const canContinuePlaylistLoad = () => typeof shouldContinue !== 'function' || shouldContinue();
+    const { shouldContinue = null, videoLoadIntent = null, ...loadOptions } = options;
+    const loadIntent = Number.isInteger(videoLoadIntent)
+      ? videoLoadIntent
+      : ++videoLoadIntentGeneration;
+    const canContinuePlaylistLoad = () => loadIntent === videoLoadIntentGeneration &&
+      (typeof shouldContinue !== 'function' || shouldContinue());
     if (!canContinuePlaylistLoad()) return false;
+    if (!loadOptions.preserveContinuousSession && !loadOptions.engineSwap) {
+      pendingUserVideoLoadIntent = loadIntent;
+      playlistContinuousNavigationToken += 1;
+      hardAbandonContinuousTransitionFlight();
+      if (continuousPlaybackState.active) stopContinuousPlayback();
+    }
 
+    try {
     // 파일 존재 확인
-    const exists = await window.electronAPI.fileExists(item.videoPath);
-    if (!canContinuePlaylistLoad()) return false;
-    if (!exists) {
-      showToast(`파일을 찾을 수 없습니다: ${item.fileName}`, 'error');
-      markPlaylistItemAsMissing(item.id);
-      return false;
-    }
-
-    // 현재 영상 저장
-    if (reviewDataManager.isModified) {
-      await reviewDataManager.save();
+      const exists = await window.electronAPI.fileExists(item.videoPath);
       if (!canContinuePlaylistLoad()) return false;
-    }
+      if (!exists) {
+        showToast(`파일을 찾을 수 없습니다: ${item.fileName}`, 'error');
+        markPlaylistItemAsMissing(item.id);
+        return false;
+      }
 
-    // 새 영상 로드
-    if (!canContinuePlaylistLoad()) return false;
-    const loaded = await loadVideo(item.videoPath, {
-      ...loadOptions,
-      shouldContinue: canContinuePlaylistLoad
-    });
-    if (!canContinuePlaylistLoad()) return false;
-    return loaded === true;
+      // 현재 영상 저장
+      if (reviewDataManager.isModified) {
+        await reviewDataManager.save();
+        if (!canContinuePlaylistLoad()) return false;
+      }
+
+      // 새 영상 로드
+      if (!canContinuePlaylistLoad()) return false;
+      const loaded = await loadVideo(item.videoPath, {
+        ...loadOptions,
+        videoLoadIntent: loadIntent,
+        shouldContinue: canContinuePlaylistLoad
+      });
+      if (!canContinuePlaylistLoad()) return false;
+      return loaded === true;
+    } finally {
+      if (pendingUserVideoLoadIntent === loadIntent) pendingUserVideoLoadIntent = null;
+    }
   }
 
   async function playPlaylistSelectedItemImmediately(item) {
