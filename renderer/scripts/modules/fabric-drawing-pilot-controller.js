@@ -91,6 +91,13 @@ export function createFabricDrawingPilotController(options = {}) {
     typeof options.persistenceSessionIdFactory === 'function'
       ? options.persistenceSessionIdFactory
       : () => globalThis.crypto?.randomUUID?.() || uuid();
+  // 오버레이 호스트 IPC 응답 데드라인. 호스트가 응답하지 않으면 게이트가 영구 pending이 되어
+  // 이어붙이기 전환 전체가 침묵 정지하므로(2026-08-21), 경계에서 유한 시간으로 자른다.
+  const persistenceIpcDeadlineMs =
+    Number.isFinite(Number(options.persistenceIpcDeadlineMs)) &&
+    Number(options.persistenceIpcDeadlineMs) > 0
+      ? Number(options.persistenceIpcDeadlineMs)
+      : 3000;
 
   let initializePromise = null;
   let pilotEnabled = false;
@@ -386,12 +393,47 @@ export function createFabricDrawingPilotController(options = {}) {
       request.enabled === desiredInputEnabled;
   }
 
+  function withPersistenceIpcDeadline(operation, deadlineValue) {
+    return new Promise(resolve => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve(deadlineValue);
+      }, persistenceIpcDeadlineMs);
+      Promise.resolve(operation).then(
+        value => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        },
+        rejection => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          // 거부(rejection)는 타임아웃과 다른 사유로 남긴다 — 진단 정보(실제 오류 메시지)를
+          // 보존하고, 회수 실패의 기존 래치 의미론('persistence-ipc-rejected'는 비래치
+          // 통과 목록에 없으므로 종전처럼 차단 래치)을 바꾸지 않기 위함이다.
+          resolve({
+            ...deadlineValue,
+            reason: 'persistence-ipc-rejected',
+            error: rejection instanceof Error ? rejection.message : String(rejection)
+          });
+        }
+      );
+    });
+  }
+
   async function invokeInput(request) {
     if (typeof electronAPI.mpvSetOverlayDrawingInput !== 'function') {
       return { success: false, accepted: false, enabled: false };
     }
     try {
-      const response = await electronAPI.mpvSetOverlayDrawingInput(request);
+      const response = await withPersistenceIpcDeadline(
+        electronAPI.mpvSetOverlayDrawingInput(request),
+        { success: false, accepted: false, enabled: false, error: 'persistence-ipc-timeout' }
+      );
       if (!request.enabled && isCurrentInputRequest(request) &&
           isAcceptedInputResponse(response, false) &&
           (response.tool === 'brush' || response.tool === 'select')) {
@@ -521,7 +563,10 @@ export function createFabricDrawingPilotController(options = {}) {
       tool
     };
     try {
-      const response = await electronAPI.mpvUpdateOverlayDrawingTool(request);
+      const response = await withPersistenceIpcDeadline(
+        electronAPI.mpvUpdateOverlayDrawingTool(request),
+        { success: false, accepted: false, tool: request.tool, error: 'persistence-ipc-timeout' }
+      );
       const accepted = response?.success === true && response.accepted === true;
       if (accepted && currentSession?.sessionId === request.sessionId) {
         currentSession.tool = tool;
@@ -703,8 +748,11 @@ export function createFabricDrawingPilotController(options = {}) {
 
       let hydration;
       try {
-        hydration = await electronAPI.mpvHydrateOverlayDrawingVideo(
-          persistenceRequestFrom(owner, documentValue.keyframes)
+        hydration = await withPersistenceIpcDeadline(
+          electronAPI.mpvHydrateOverlayDrawingVideo(
+            persistenceRequestFrom(owner, documentValue.keyframes)
+          ),
+          { success: false, accepted: false, reason: 'persistence-ipc-timeout' }
         );
       } catch (_error) {
         hydration = null;
@@ -721,8 +769,11 @@ export function createFabricDrawingPilotController(options = {}) {
 
       let exported;
       try {
-        exported = await electronAPI.mpvExportOverlayDrawingVideo(
-          persistenceRequestFrom(owner)
+        exported = await withPersistenceIpcDeadline(
+          electronAPI.mpvExportOverlayDrawingVideo(
+            persistenceRequestFrom(owner)
+          ),
+          { success: false, accepted: false, reason: 'persistence-ipc-timeout' }
         );
       } catch (_error) {
         exported = null;
@@ -804,8 +855,11 @@ export function createFabricDrawingPilotController(options = {}) {
       }
       let exported;
       try {
-        exported = await electronAPI.mpvExportOverlayDrawingVideo(
-          persistenceRequestFrom(owner)
+        exported = await withPersistenceIpcDeadline(
+          electronAPI.mpvExportOverlayDrawingVideo(
+            persistenceRequestFrom(owner)
+          ),
+          { success: false, accepted: false, reason: 'persistence-ipc-timeout' }
         );
       } catch (_error) {
         exported = null;
@@ -948,6 +1002,16 @@ export function createFabricDrawingPilotController(options = {}) {
 
   async function preparePersistenceSnapshotForSave() {
     await persistenceSourceRefreshQueue;
+    if (inFlightReadyReconciliation) {
+      // 직전 영상 확정 처리(재수화·검증 회수)가 진행 중이면 완료를 기다린다.
+      // 동시 진행 시 두 재수화가 서로의 source epoch를 무효화해 IPC 왕복이 수 배로 늘고
+      // 결과가 stale로 흔들린다(2026-08 하네스 실측: 1.4초 → 9.9초).
+      try {
+        await inFlightReadyReconciliation.promise;
+      } catch (_error) {
+        // 확정 처리 실패는 아래 pull이 실상태 기준으로 다시 판정한다.
+      }
+    }
     if (!persistenceStore) return true;
     if (legacyBypass) return !persistenceBlocked;
     if (!persistenceSessionId) return true;
@@ -957,6 +1021,11 @@ export function createFabricDrawingPilotController(options = {}) {
       // 오버레이 호스트가 이미 파괴된 상태: 회수할 드로잉 표면 자체가 없다.
       // 여기서 차단 래치를 걸면 모든 후속 영상 전환이 영구 거부되므로,
       // 현재 영상 소유권은 보존하고 다음 호스트가 재수화하도록 저장만 통과시킨다.
+      return true;
+    }
+    if (result?.reason === 'persistence-ipc-timeout') {
+      // 호스트 응답 지연: 회수 실패를 차단 래치로 승격하지 않고 게이트를 통과시킨다.
+      // 다음 영상 확정 시의 재수화가 성공하면 정상 경로로 복귀한다.
       return true;
     }
     return blockPersistenceAfterPullFailure(result);

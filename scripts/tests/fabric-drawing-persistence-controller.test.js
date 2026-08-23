@@ -162,6 +162,7 @@ function createHarness(options = {}) {
   let runtimeSnapshot = null;
   let exportHandler = null;
   let inputHandler = null;
+  let hydrateGate = null;
   const calls = {
     input: [],
     hydrate: [],
@@ -193,6 +194,11 @@ function createHarness(options = {}) {
     async mpvHydrateOverlayDrawingVideo(request) {
       calls.hydrate.push(clone(request));
       calls.order.push(`hydrate:${request.hostGeneration}`);
+      if (hydrateGate) {
+        const gate = hydrateGate;
+        hydrateGate = null;
+        await gate;
+      }
       if (options.onHydrate) return options.onHydrate(request);
       runtimeSnapshot = snapshotFromHydrate(request);
       return {
@@ -226,6 +232,7 @@ function createHarness(options = {}) {
     persistenceStore: store,
     persistenceSessionIdFactory:
       options.persistenceSessionIdFactory || (() => 'persistence-session-1'),
+    persistenceIpcDeadlineMs: options.persistenceIpcDeadlineMs,
     uuid: (() => {
       let sequence = 0;
       return () => `request-${++sequence}`;
@@ -248,6 +255,9 @@ function createHarness(options = {}) {
     },
     setExportHandler(handler) {
       exportHandler = handler;
+    },
+    setHydrateGate(promise) {
+      hydrateGate = promise;
     },
     setInputHandler(handler) {
       inputHandler = handler;
@@ -1198,4 +1208,55 @@ test('overlay-host-unavailable save preserves the current video for host recover
   ]);
   assert.equal(harness.calls.hydrate.at(-1).persistenceSessionId, currentPersistenceSessionId);
   assert.equal(harness.controller.getState(), 'active');
+});
+
+test('오버레이 호스트가 응답하지 않아도 전환 게이트는 데드라인 안에 통과한다', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 80 });
+  assert.equal(await prepareVideo(harness), true);
+
+  harness.setExportHandler(() => new Promise(() => {}));
+  const startedAt = Date.now();
+  const flushed = await harness.controller.flushPersistenceBeforeLeave();
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(flushed, true, '응답 없는 회수는 비래치로 통과해야 한다');
+  assert.ok(elapsedMs < 5000, `게이트가 데드라인 안에 끝나야 한다 (실측 ${elapsedMs}ms)`);
+  assert.equal(
+    harness.controller.getStatusSnapshot().persistenceBlocked,
+    false,
+    '데드라인 초과가 차단 래치를 걸면 안 된다'
+  );
+});
+
+test('전환 게이트는 진행 중인 영상 확정 처리를 기다린 뒤 회수한다', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 2000 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+
+  const gate = deferred();
+  harness.setHydrateGate(gate.promise);
+  const hydrateCallsBefore = harness.calls.hydrate.length;
+  const readyPromise = harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'C:/shot/scene-002.mov',
+    targetFrame: 24,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    fps: 24,
+    totalFrames: 240
+  });
+  await flushDetachedWork();
+  assert.equal(harness.calls.hydrate.length, hydrateCallsBefore + 1);
+
+  const flushPromise = harness.controller.flushPersistenceBeforeLeave();
+  await flushDetachedWork();
+  assert.equal(
+    harness.calls.hydrate.length,
+    hydrateCallsBefore + 1,
+    '게이트가 확정 처리 완료 전에 두 번째 재수화를 기동하면 안 된다'
+  );
+
+  gate.resolve();
+  assert.equal(await readyPromise, true);
+  assert.equal(await flushPromise, true);
 });
