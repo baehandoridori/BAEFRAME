@@ -18485,8 +18485,14 @@ async function initApp() {
       const currentTime = Math.max(0, Number(videoPlayer.currentTime) || 0);
       const duration = Math.max(0, Number(videoPlayer.duration) || 0);
       const externalEofReached = videoPlayer.externalEofReached === true;
+      // 보간(벽시계) 값이 아닌 폴링 실측 시각 — 전진 판정은 이 값으로 해야
+      // 엔진이 실제로 멈춰 있을 때 워치독이 '전진'으로 오판하지 않는다.
+      const statusTime = Number.isFinite(Number(videoPlayer.lastExternalStatusTime))
+        ? Math.max(0, Number(videoPlayer.lastExternalStatusTime))
+        : currentTime;
       return {
         currentTime,
+        statusTime,
         duration,
         ended: externalEofReached || (duration > 0 && duration - currentTime <= 0.25 && !videoPlayer.isPlaying),
         externalEofReached,
@@ -18497,6 +18503,7 @@ async function initApp() {
 
     return {
       currentTime: Math.max(0, Number(media?.currentTime ?? videoPlayer.currentTime) || 0),
+      statusTime: Math.max(0, Number(media?.currentTime ?? videoPlayer.currentTime) || 0),
       duration: Math.max(0, Number(media?.duration ?? videoPlayer.duration) || 0),
       ended: media?.ended === true,
       paused: media?.paused === true,
@@ -18549,6 +18556,7 @@ async function initApp() {
 
     const snapshot = getContinuousPlaybackSnapshot();
     const startTime = snapshot.currentTime;
+    const startStatusTime = snapshot.statusTime;
     if (hasContinuousPlaybackReachedMediaEnd(snapshot)) return Promise.resolve(true);
 
     return new Promise(resolve => {
@@ -18568,6 +18576,10 @@ async function initApp() {
 
       const hasAdvanced = () => {
         const currentSnapshot = getContinuousPlaybackSnapshot();
+        if (videoPlayer.engine !== 'html5') {
+          // 외부 엔진: 보간이 아닌 폴링 실측 시각으로 실제 전진을 판정한다.
+          return currentSnapshot.statusTime - startStatusTime >= minDelta;
+        }
         return currentSnapshot.currentTime - startTime >= minDelta;
       };
 
@@ -18620,7 +18632,7 @@ async function initApp() {
       }
     }
 
-    const advanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 800 });
+    const advanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 1500 });
     if (!isContinuousSessionActive(sessionId)) return false;
     if (advanced) return true;
 
@@ -18640,7 +18652,7 @@ async function initApp() {
       return false;
     }
 
-    const retryAdvanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 1400 });
+    const retryAdvanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 3000 });
     if (retryAdvanced) return true;
 
     markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');

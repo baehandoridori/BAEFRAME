@@ -1329,3 +1329,50 @@ test('렌더러 WARN 이상 로그는 파일로 강제 기록된다', () => {
   assert.match(loggerSource, /if \(shouldWriteFile && typeof window !== 'undefined' && window\.electronAPI\?\.writeLog\) \{/);
   assert.match(ipcSource, /ipcMain\.on\('log:write', \(event, logData\) => \{/);
 });
+
+test('외부 엔진 폴링은 보간과 분리된 실측 시각을 기록한다', () => {
+  assert.match(videoPlayerSource, /this\.lastExternalStatusTime = null;/);
+  assert.match(videoPlayerSource, /this\.lastExternalStatusTime = candidateTime;/);
+  assert.match(videoPlayerSource, /this\.lastExternalStatusTime = this\.currentTime;/);
+  const syncIndex = videoPlayerSource.indexOf('this.lastExternalStatusTime = candidateTime;');
+  const totalFramesIndex = videoPlayerSource.indexOf(
+    'this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));'
+  );
+  assert.ok(
+    syncIndex !== -1 && syncIndex < totalFramesIndex,
+    'polling must record the observed time before deriving frame totals'
+  );
+});
+
+test('외부 엔진 폴링은 수용한 상태 시각만 실측 시각으로 기록한다', () => {
+  assert.match(
+    videoPlayerSource,
+    /let candidateTime = this\.currentTime;\s+let acceptedStatusTime = false;/
+  );
+  assert.match(
+    videoPlayerSource,
+    /if \(candidateFrame === this\._seekTargetFrame\) \{\s+candidateTime = statusTime;\s+acceptedStatusTime = true;\s+this\._finishManualSeek\(\);/
+  );
+  assert.match(
+    videoPlayerSource,
+    /\} else \{\s+candidateTime = statusTime;\s+acceptedStatusTime = true;\s+\}/
+  );
+  assert.match(
+    videoPlayerSource,
+    /if \(acceptedStatusTime\) \{\s+this\.lastExternalStatusTime = candidateTime;\s+\}/
+  );
+  const syncMatch = videoPlayerSource.match(
+    /async _syncExternalStatus\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/
+  );
+  assert.ok(syncMatch, '_syncExternalStatus should exist');
+  const statusAssignments = syncMatch[1].match(/this\.lastExternalStatusTime = candidateTime;/g) || [];
+  assert.equal(
+    statusAssignments.length,
+    1,
+    '_syncExternalStatus must not add an unconditional second status-time assignment'
+  );
+  assert.match(
+    syncMatch[1],
+    /if \(acceptedStatusTime\) \{\s+this\.lastExternalStatusTime = candidateTime;\s+\}/
+  );
+});

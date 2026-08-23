@@ -548,6 +548,8 @@ test('continuous playback watchdog uses VideoPlayer state for external engines',
   assert.match(advanceSource, /if \(hasContinuousPlaybackReachedMediaEnd\(snapshot\)\) return Promise\.resolve\(true\);/);
   assert.match(advanceSource, /const currentSnapshot = getContinuousPlaybackSnapshot\(\);/);
   assert.match(advanceSource, /return currentSnapshot\.currentTime - startTime >= minDelta;/);
+  assert.match(advanceSource, /const startStatusTime = snapshot\.statusTime;/);
+  assert.match(advanceSource, /return currentSnapshot\.statusTime - startStatusTime >= minDelta;/);
   assert.match(advanceSource, /hasAdvanced\(\) \|\| hasContinuousPlaybackReachedMediaEnd\(currentSnapshot\)/);
   assert.doesNotMatch(advanceSource, /currentSnapshot\.paused && !videoPlayer\.isPlaying[\s\S]+finish\(true\)/);
   assert.doesNotMatch(advanceSource, /media\.currentTime \|\| videoPlayer\.currentTime/);

@@ -33,6 +33,10 @@ export class VideoPlayer extends EventTarget {
     this._externalFrameRafId = null;
     this._externalPlaybackClock = null;
     this.externalEofReached = false;
+    // 외부 엔진 폴링이 마지막으로 관측한 재생 시각. 폴링이 새 값을 주지 못한 틱에서는
+    // 직전 값이 유지된다 — 벽시계 보간으로 저절로 전진하지 않는다는 점이 핵심이다.
+    // 전진 판정은 이 값을 써야 엔진이 실제로 멈춰 있을 때 오판하지 않는다.
+    this.lastExternalStatusTime = null;
 
     // 상태
     this.isLoaded = false;
@@ -259,6 +263,7 @@ export class VideoPlayer extends EventTarget {
     this.externalControls = null;
     this._externalEndedEmitted = false;
     this.externalEofReached = false;
+    this.lastExternalStatusTime = null;
 
     if (wasExternalPlaying) {
       this.isPlaying = false;
@@ -284,6 +289,7 @@ export class VideoPlayer extends EventTarget {
     this.videoHeight = Math.max(0, Number(config.height) || 0);
     this.currentTime = Math.max(0, Number(config.currentTime) || 0);
     this.currentFrame = Math.floor(this.currentTime * this.fps);
+    this.lastExternalStatusTime = this.currentTime;
     this.isLoaded = true;
     this.isPlaying = config.paused === false;
 
@@ -1098,17 +1104,23 @@ export class VideoPlayer extends EventTarget {
         metadataChanged = true;
       }
       let candidateTime = this.currentTime;
+      let acceptedStatusTime = false;
       if (Number.isFinite(nextTime)) {
         const statusTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
         if (this._isSeeking && this._seekTargetFrame !== null) {
           const candidateFrame = this._timeToFrame(statusTime);
           if (candidateFrame === this._seekTargetFrame) {
             candidateTime = statusTime;
+            acceptedStatusTime = true;
             this._finishManualSeek();
           }
         } else {
           candidateTime = statusTime;
+          acceptedStatusTime = true;
         }
+      }
+      if (acceptedStatusTime) {
+        this.lastExternalStatusTime = candidateTime;
       }
       this.totalFrames = Math.max(0, Math.floor((this.duration || 0) * this.fps));
       const hasKnownDuration = this.duration > 0;
