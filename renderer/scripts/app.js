@@ -911,6 +911,9 @@ async function initApp() {
     preparedMediaPaths: new Map(),
     sessionId: 0
   };
+  // 멈춘 세션 재시작 진행 중 플래그: draw 모드에서는 스페이스 1회가 keydown+keyup으로
+  // 토글을 2회 호출하므로(13343·13830 부근), 두 번째 호출이 방금 시작한 세션을 되돌리지 않게 막는다.
+  let continuousStalledResumeInFlight = false;
 
   let suppressPlaylistSelectionLoad = false;
   let playlistAutoPlayAfterSelection = false;
@@ -17824,6 +17827,32 @@ async function initApp() {
         playbackSync.broadcastPause(continuousPausePosition.time, continuousPausePosition.options);
       } else {
         broadcastCurrentPlaybackPause();
+      }
+      return;
+    }
+
+    // 멈춘 세션 재시작이 진행 중이면 뒤따르는 토글(draw 모드 keyup·빠른 2연타)이
+    // 방금 시작한 세션을 '인계 중 일시정지' 분기로 되돌리지 않도록 무시한다.
+    if (continuousStalledResumeInFlight) return;
+
+    if (
+      continuousPlaybackState.active &&
+      continuousPlaybackState.loadingItemId === null &&
+      hasContinuousPlaybackReachedMediaEnd()
+    ) {
+      // 세션은 살아 있는데 영상 끝에서 전환이 진행되지 않는 상태(체인 침묵 정지).
+      // 이때의 스페이스 1회는 '정지'가 아니라 '다음 항목부터 재개'다 —
+      // 기존 분기대로면 1회차는 세션만 닫고, 2회차에야 재생이 시작된다.
+      log.warn('이어붙이기 재개: 멈춘 세션을 재시작합니다', getContinuousPlaybackSnapshot());
+      continuousStalledResumeInFlight = true;
+      try {
+        stopContinuousPlayback();
+        const restartedItem = await startContinuousPlayback();
+        if (restartedItem) {
+          broadcastPlaylistContinuousPlaybackPlay(restartedItem, videoPlayer.currentTime);
+        }
+      } finally {
+        continuousStalledResumeInFlight = false;
       }
       return;
     }

@@ -1487,3 +1487,23 @@ test('이어붙이기 전환은 예외 격리와 제한 시간 감시자를 가�
   assert.match(ipcHandlersSourceLocal, /const FILE_EXISTS_DEADLINE_MS = 3000;/);
   assert.match(ipcHandlersSourceLocal, /파일 존재 확인 지연, 존재로 간주하고 진행/);
 });
+
+test('영상 끝에서 멈춘 이어붙이기 세션은 스페이스 1회로 재개된다', () => {
+  const handleMatch = appSource.match(/async function handleUserPlayPauseToggle\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(handleMatch, 'play/pause toggle handler should exist');
+  const handleSource = handleMatch[1];
+  const resumeBranch = handleSource.match(
+    /continuousPlaybackState\.active &&\s+continuousPlaybackState\.loadingItemId === null &&\s+hasContinuousPlaybackReachedMediaEnd\(\)\s*\) \{([\s\S]*?)\n    \}/
+  );
+  assert.ok(resumeBranch, 'stalled-session resume branch should exist');
+  assert.match(resumeBranch[1], /stopContinuousPlayback\(\);/);
+  assert.match(resumeBranch[1], /const restartedItem = await startContinuousPlayback\(\);/);
+  assert.match(resumeBranch[1], /finally \{\s+continuousStalledResumeInFlight = false;/);
+  assert.match(handleSource, /if \(continuousStalledResumeInFlight\) return;/);
+  assert.match(appSource, /let continuousStalledResumeInFlight = false;/);
+  assert.ok(
+    handleSource.indexOf('hasContinuousPlaybackReachedMediaEnd()') <
+      handleSource.indexOf('const continuousPausePosition = getPlaybackSyncPosition(videoPlayer.currentTime, { forceContinuous: true });\n      stopContinuousPlayback();'),
+    'resume branch must run before the handoff-pause branch'
+  );
+});
