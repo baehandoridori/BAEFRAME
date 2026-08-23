@@ -1434,3 +1434,28 @@ test('playlist clicks highlight immediately, roll back from current media, and r
   );
   assert.match(selectedSource, /holdPreviousFrameUntilReady: true,/);
 });
+
+test('이어붙이기 자동 전환은 게이트 실패를 세션 중단으로 승격하지 않고 우회한다', () => {
+  assert.match(appSource, /function bypassContinuousPersistenceGate\(stage\) \{/);
+  assert.match(
+    appSource,
+    /if \(!fabricPersistenceReadyToLeave && preserveContinuousSession\) \{[\s\S]{0,400}bypassContinuousPersistenceGate\('first-gate'\)[\s\S]{0,200}fabricPersistenceReadyToLeave = true;/
+  );
+  assert.match(
+    appSource,
+    /if \(!finalFabricPersistenceReadyToLeave && preserveContinuousSession\) \{[\s\S]{0,400}bypassContinuousPersistenceGate\('final-gate'\)[\s\S]{0,200}finalFabricPersistenceReadyToLeave = true;/
+  );
+  assert.match(
+    appSource,
+    /fabricDrawingPilotStatusSnapshot\?\.persistenceBlocked === true/
+  );
+  assert.match(appSource, /continuousPersistenceAbandonNotified = false;/);
+  const bypassMatch = appSource.match(/function bypassContinuousPersistenceGate\(stage\) \{([\s\S]*?)\n  \}/);
+  assert.ok(bypassMatch, 'bypass helper should exist');
+  assert.match(bypassMatch[1], /abandonPersistenceForVideoChange\(\);/);
+  assert.equal(
+    bypassMatch[1].split('showToast').length - 1,
+    1,
+    'bypass helper should raise at most one toast path'
+  );
+});
