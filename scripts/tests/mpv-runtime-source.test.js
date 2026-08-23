@@ -1322,3 +1322,10 @@ test('mpv to mpv transitions keep the native host visible for seamless playback'
     /selector: '#videoLoadingOverlay\.active',\s*observeSelector: '#videoLoadingOverlay',\s*mode: MPV_SURFACE_MODE\.HTML_MIRROR/
   );
 });
+
+test('렌더러 WARN 이상 로그는 파일로 강제 기록된다', () => {
+  const loggerSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/logger.js'), 'utf8'));
+  assert.match(loggerSource, /const shouldWriteFile = this\.enableFile \|\| level >= LOG_LEVELS\.WARN;/);
+  assert.match(loggerSource, /if \(shouldWriteFile && typeof window !== 'undefined' && window\.electronAPI\?\.writeLog\) \{/);
+  assert.match(ipcSource, /ipcMain\.on\('log:write', \(event, logData\) => \{/);
+});

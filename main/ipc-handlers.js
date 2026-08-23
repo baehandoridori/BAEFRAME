@@ -1868,6 +1868,7 @@ function setupIpcHandlers({
 
   ipcMain.handle('mpv:prepare-overlay', async (event, bounds) => {
     try {
+      log.info('mpv 오버레이 호스트 준비 요청');
       return await mpvOverlayHost.ensure(bounds);
     } catch (error) {
       log.warn('mpv 오버레이 호스트 준비 실패', { error: error.message });
@@ -1939,6 +1940,7 @@ function setupIpcHandlers({
 
   ipcMain.handle('mpv:destroy-overlay', async () => {
     try {
+      log.info('mpv 오버레이 호스트 파괴 요청');
       return mpvOverlayHost.destroy();
     } catch (error) {
       return { success: false, error: error.message };
@@ -2022,6 +2024,7 @@ function setupIpcHandlers({
 
   ipcMain.handle('mpv:stop', async () => {
     try {
+      log.info('mpv 재생 엔진 중지 요청');
       const result = await mpvManager.stop();
       mpvOverlayHost.destroy();
       mpvEmbedHost.destroy();

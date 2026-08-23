@@ -7242,6 +7242,7 @@ async function initApp() {
   let fabricDrawingPilotFailureToastShown = false;
   let fabricDrawingPilotUiEngaged = false;
   let fabricDrawingPilotStatusSnapshot = null;
+  let lastLoggedFabricPersistenceReason = null;
   let fabricDrawingViewportRevision = 0;
   let fabricDrawingViewportSignature = '';
   let resetMpvOverlayCollaborationDrag = () => {};
@@ -10132,6 +10133,18 @@ async function initApp() {
 
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
     fabricDrawingPilotStatusSnapshot = snapshot ? { ...snapshot } : null;
+    // persistence 우회/차단 사유가 바뀌는 순간을 파일 로그로 남긴다(이어붙이기 정지 진단용).
+    const fabricPersistenceReason = snapshot?.persistenceFailureReason || null;
+    if (fabricPersistenceReason !== lastLoggedFabricPersistenceReason) {
+      lastLoggedFabricPersistenceReason = fabricPersistenceReason;
+      if (fabricPersistenceReason !== null) {
+        log.warn('Fabric persistence 우회/차단 상태 변경', {
+          reason: fabricPersistenceReason,
+          blocked: snapshot?.persistenceBlocked === true,
+          pilotState: String(nextState || 'unknown')
+        });
+      }
+    }
     const ownsDrawingShortcut =
       fabricDrawingPilotController.shouldOwnDrawingShortcut();
     const bInput = snapshot?.bInput || {};
