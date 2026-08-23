@@ -484,11 +484,36 @@ function setupIpcHandlers({
 
   // 파일 존재 여부 확인
   ipcMain.handle('file:exists', async (event, filePath) => {
+    // Google Drive 스트리밍 경로는 access가 수십 초 이상 멈출 수 있다.
+    // 지연 시 '존재'로 간주해 진행한다 — 진짜 부재는 빠르게 실패하고,
+    // 지연된 존재 확인이 이어붙이기 전환을 침묵 정지시키면 안 된다(2026-08-21).
+    const FILE_EXISTS_DEADLINE_MS = 3000;
+    let deadlineTimer = null;
     try {
-      await fs.promises.access(filePath, fs.constants.F_OK);
-      return true;
+      const startedAt = Date.now();
+      const result = await Promise.race([
+        fs.promises.access(filePath, fs.constants.F_OK).then(() => true, () => false),
+        new Promise((resolve) => {
+          deadlineTimer = setTimeout(() => resolve('deadline'), FILE_EXISTS_DEADLINE_MS);
+        })
+      ]);
+      if (result === 'deadline') {
+        log.warn('파일 존재 확인 지연, 존재로 간주하고 진행', {
+          filePath,
+          deadlineMs: FILE_EXISTS_DEADLINE_MS
+        });
+        return true;
+      }
+      const durationMs = Date.now() - startedAt;
+      if (durationMs > 500) {
+        log.warn('파일 존재 확인 지연', { filePath, durationMs });
+      }
+      return result;
     } catch {
       return false;
+    } finally {
+      // 재생목록 전 항목 일괄 확인(quickCheck) 시 3초짜리 타이머가 항목 수만큼 쌓이지 않게 해제한다.
+      clearTimeout(deadlineTimer);
     }
   });
 

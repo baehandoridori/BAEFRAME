@@ -1782,7 +1782,17 @@ async function initApp() {
         return;
       }
       log.info('타임라인 이어붙이기: 다음 재생 가능 항목으로 이동');
-      void playNextContinuousItem(continuousPlaybackState.sessionId);
+      const advanceSessionId = continuousPlaybackState.sessionId;
+      const advancePromise = playNextContinuousItem(continuousPlaybackState.sessionId);
+      void advancePromise.catch((error) => {
+        // 전환 체인이 예외로 죽으면 세션이 active인 채 침묵 정지한다(2026-08-21 관측 후보).
+        // 예외는 그 세션만 명시적으로 닫고 알린다 — 스페이스 1회로 재개할 수 있다.
+        log.error('타임라인 이어붙이기 전환 실패', { error: error?.message || String(error) });
+        if (isContinuousSessionActive(advanceSessionId)) {
+          stopContinuousPlayback();
+          showToast('이어붙이기 재생 중 오류가 발생해 중단했습니다. 스페이스로 다시 시작할 수 있습니다.', 'error');
+        }
+      });
       return;
     }
 
@@ -18419,6 +18429,27 @@ async function initApp() {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  const CONTINUOUS_TRANSITION_DEADLINE_MS = 20000;
+
+  function startContinuousTransitionDeadline(item, sessionId) {
+    const timer = setTimeout(() => {
+      if (!isContinuousSessionActive(sessionId)) return;
+      if (continuousPlaybackState.loadingItemId !== item.id) return;
+      // 전환이 이 시간 안에 끝나지 않으면(드라이브 스톨·응답 유실 등) 침묵 정지 대신
+      // 세션을 닫고 알린다. 진행 중이던 로드는 토큰 무효화로 뒤늦게 깨어나도 중단된다.
+      log.error('이어붙이기 전환이 제한 시간을 초과했습니다', {
+        fileName: item?.fileName || null,
+        deadlineMs: CONTINUOUS_TRANSITION_DEADLINE_MS
+      });
+      stopContinuousPlayback();
+      invalidateActiveVideoLoad();
+      showToast('영상 전환이 멈춰 이어붙이기 재생을 중단했습니다. 스페이스로 다시 시작할 수 있습니다.', 'error');
+    }, CONTINUOUS_TRANSITION_DEADLINE_MS);
+    return {
+      cancel: () => clearTimeout(timer)
+    };
+  }
+
   function getContinuousPlaybackSnapshot() {
     const media = videoPlayer.videoElement;
     if (videoPlayer.engine !== 'html5') {
@@ -18627,7 +18658,9 @@ async function initApp() {
 
       const alreadyLoaded = isSameFilePath(state.currentFile, currentItem.videoPath);
       if (!alreadyLoaded) {
+        const transitionDeadline = startContinuousTransitionDeadline(currentItem, sessionId);
         const loaded = await loadContinuousPlaylistItem(currentItem, sessionId);
+        transitionDeadline.cancel();
         if (!isContinuousSessionActive(sessionId)) return null;
         if (!loaded) {
           return await playNextContinuousItem(sessionId);
@@ -18675,7 +18708,9 @@ async function initApp() {
     }
 
     flushSkippedToastBatch();
+    const transitionDeadline = startContinuousTransitionDeadline(nextItem, sessionId);
     const loaded = await loadContinuousPlaylistItem(nextItem, sessionId);
+    transitionDeadline.cancel();
     if (!isContinuousSessionActive(sessionId)) return null;
     if (!loaded) {
       return await playNextContinuousItem(sessionId);

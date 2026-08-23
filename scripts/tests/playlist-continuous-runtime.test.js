@@ -1459,3 +1459,31 @@ test('이어붙이기 자동 전환은 게이트 실패를 세션 중단으로 �
     'bypass helper should raise at most one toast path'
   );
 });
+
+test('이어붙이기 전환은 예외 격리와 제한 시간 감시자를 가진다', () => {
+  const endedListenerMatch = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(endedListenerMatch, 'ended listener should exist');
+  assert.match(
+    endedListenerMatch[1],
+    /const advanceSessionId = continuousPlaybackState\.sessionId;\s+const advancePromise = playNextContinuousItem\(continuousPlaybackState\.sessionId\);\s+void advancePromise\.catch/
+  );
+  assert.match(endedListenerMatch[1], /isContinuousSessionActive\(advanceSessionId\)/);
+  assert.match(appSource, /const CONTINUOUS_TRANSITION_DEADLINE_MS = 20000;/);
+  assert.match(appSource, /function startContinuousTransitionDeadline\(item, sessionId\) \{/);
+  const deadlineMatch = appSource.match(/function startContinuousTransitionDeadline\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function getContinuousPlaybackSnapshot/);
+  assert.ok(deadlineMatch, 'transition deadline helper should exist');
+  assert.match(deadlineMatch[1], /if \(!isContinuousSessionActive\(sessionId\)\) return;/);
+  assert.match(deadlineMatch[1], /continuousPlaybackState\.loadingItemId !== item\.id/);
+  assert.match(deadlineMatch[1], /invalidateActiveVideoLoad\(\);/);
+  assert.match(
+    appSource,
+    /const transitionDeadline = startContinuousTransitionDeadline\(nextItem, sessionId\);\s+const loaded = await loadContinuousPlaylistItem\(nextItem, sessionId\);\s+transitionDeadline\.cancel\(\);/
+  );
+  assert.match(
+    appSource,
+    /const transitionDeadline = startContinuousTransitionDeadline\(currentItem, sessionId\);\s+const loaded = await loadContinuousPlaylistItem\(currentItem, sessionId\);\s+transitionDeadline\.cancel\(\);/
+  );
+  const ipcHandlersSourceLocal = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
+  assert.match(ipcHandlersSourceLocal, /const FILE_EXISTS_DEADLINE_MS = 3000;/);
+  assert.match(ipcHandlersSourceLocal, /파일 존재 확인 지연, 존재로 간주하고 진행/);
+});
