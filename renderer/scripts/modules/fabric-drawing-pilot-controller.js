@@ -1024,9 +1024,9 @@ export function createFabricDrawingPilotController(options = {}) {
       return true;
     }
     if (result?.reason === 'persistence-ipc-timeout') {
-      // 호스트 응답 지연: 회수 실패를 차단 래치로 승격하지 않고 게이트를 통과시킨다.
-      // 다음 영상 확정 시의 재수화가 성공하면 정상 경로로 복귀한다.
-      return true;
+      // 호스트 응답 지연은 차단 래치로 승격하지 않지만,
+      // 권위 스냅샷을 확인하지 못한 현재 전환은 중단한다.
+      return false;
     }
     return blockPersistenceAfterPullFailure(result);
   }
@@ -1619,6 +1619,14 @@ export function createFabricDrawingPilotController(options = {}) {
         videoReady &&
         String(rollback.context.stableVideoIdentity || '') === confirmedVideoIdentity
       );
+      if (options?.preserveAuthoritativeOverlay === true) {
+        if (!isStillCurrent()) return false;
+        if (legacyBypass || persistenceBlocked || !rollback.shouldResume) {
+          setState('passive');
+          return true;
+        }
+        return startEnable(rollback.context, isStillCurrent);
+      }
       const restored = await reconcileCurrentVideo(
         rollback.shouldResume,
         'passive',

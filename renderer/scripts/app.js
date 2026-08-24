@@ -6665,8 +6665,6 @@ async function initApp() {
   // 직전 loadVideo가 fabric persistence 게이트에서 취소됐는지를 연속 재생 루프에 알린다.
   // 전역 원인 실패를 항목별 '건너뜀'으로 오기록해 연쇄 스킵되는 것을 막기 위한 채널.
   let lastVideoLoadFabricCancelReason = null;
-  // 이어붙이기 세션당 1회만 드로잉 저장 포기 경고를 띄우기 위한 플래그 (작업 3).
-  let continuousPersistenceAbandonNotified = false;
   let activeMpvPilotLoadToken = null;
   let deferredReviewFileDiscovery = null;
   const DEFERRED_REVIEW_FILE_POLL_INTERVAL_MS = 3000;
@@ -9154,13 +9152,6 @@ async function initApp() {
           fabricPersistenceReadyToLeave = true;
         }
       }
-      if (!fabricPersistenceReadyToLeave && preserveContinuousSession) {
-        // 이어붙이기 자동 전환: 게이트 실패가 세션 전면 중단으로 승격되지 않게 한다(v2.0.3 회귀 취소).
-        if (bypassContinuousPersistenceGate('first-gate')) {
-          fabricPersistenceAbandonedForThisLoad = true;
-        }
-        fabricPersistenceReadyToLeave = true;
-      }
       if (!fabricPersistenceReadyToLeave) {
         if (preserveContinuousSession) {
           lastVideoLoadFabricCancelReason = 'fabric-persistence';
@@ -9179,6 +9170,7 @@ async function initApp() {
     let videoLoadCompleted = false;
     const videoLoadCompletion = beginActiveVideoLoadCompletion(filePath, loadIntent, loadToken);
     let fabricVideoChangeStarted = false;
+    let preserveAuthoritativeFabricOverlayOnCancel = false;
     let destructiveMpvReviewMediaChangeStarted = false;
     supersedeActiveTranscodeOverlay('새 영상 선택');
     // 작업 4: engineSwap(같은 파일 엔진 전환)에서는 연속 재생 세션을 끊지 않는다.
@@ -9300,6 +9292,9 @@ async function initApp() {
         if (!finalFabricPersistenceReadyToLeave) {
           finalFabricPersistenceReadyToLeave =
             await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+          if (!finalFabricPersistenceReadyToLeave) {
+            preserveAuthoritativeFabricOverlayOnCancel = true;
+          }
           if (!canContinueVideoLoad()) return false;
         }
         if (!finalFabricPersistenceReadyToLeave && !preserveContinuousSession) {
@@ -9307,15 +9302,9 @@ async function initApp() {
           if (abandonDrawing && canContinueVideoLoad()) {
             fabricDrawingPilotController.abandonPersistenceForVideoChange();
             fabricPersistenceAbandonedForThisLoad = true;
+            preserveAuthoritativeFabricOverlayOnCancel = false;
             finalFabricPersistenceReadyToLeave = true;
           }
-        }
-        if (!finalFabricPersistenceReadyToLeave && preserveContinuousSession) {
-          // 이어붙이기 자동 전환의 2차 게이트도 1차와 동일하게 처리한다.
-          if (bypassContinuousPersistenceGate('final-gate')) {
-            fabricPersistenceAbandonedForThisLoad = true;
-          }
-          finalFabricPersistenceReadyToLeave = true;
         }
         if (!finalFabricPersistenceReadyToLeave) {
           if (preserveContinuousSession) {
@@ -9832,7 +9821,10 @@ async function initApp() {
       try {
         if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
           await fabricDrawingPilotController.cancelVideoChange(loadToken, {
-            restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted
+            restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted,
+            preserveAuthoritativeOverlay:
+              preserveAuthoritativeFabricOverlayOnCancel &&
+              !destructiveMpvReviewMediaChangeStarted
           });
         }
         const ownsActiveLoad = activeVideoLoadToken === loadToken;
@@ -18200,27 +18192,6 @@ async function initApp() {
     }
   }
 
-  function bypassContinuousPersistenceGate(stage) {
-    const persistenceBlocked = fabricDrawingPilotStatusSnapshot?.persistenceBlocked === true;
-    if (persistenceBlocked) {
-      // 차단 래치는 수동 전환의 confirm과 동일한 '포기'를 자동으로 1회 수행해 우회한다.
-      // 자동 재생 중에는 모달을 띄울 수 없고, 래치를 방치하면 모든 후속 전환이 거부된다.
-      fabricDrawingPilotController.abandonPersistenceForVideoChange();
-      log.warn('이어붙이기 전환: 차단된 드로잉 저장을 포기하고 진행합니다', { stage });
-      if (!continuousPersistenceAbandonNotified) {
-        continuousPersistenceAbandonNotified = true;
-        showToast('드로잉 저장이 차단되어 이번 이어붙이기에서는 저장을 건너뛰고 재생을 계속합니다.', 'warning');
-      }
-      return true;
-    }
-    // 비래치 실패(stale 계열): 회수할 스냅샷의 소유권이 이미 넘어간 상태 — 전환을 막을 이유가 없다.
-    log.warn('이어붙이기 전환: 드로잉 저장 게이트 일시 실패를 우회하고 진행합니다', {
-      stage,
-      reason: fabricDrawingPilotStatusSnapshot?.persistenceFailureReason || null
-    });
-    return false;
-  }
-
   function flushSkippedToastBatch() {
     if (continuousPlaybackState.skippedBatch.length === 0) return;
     showToast(createSkippedToastMessage(continuousPlaybackState.skippedBatch), 'warning');
@@ -18572,6 +18543,16 @@ async function initApp() {
           // 드로잉 게이트 같은 전역 원인 실패는 항목 고유 문제가 아니다.
           // 항목을 '건너뜀'으로 오염시키며 연쇄 스킵하는 대신 세션을 중단하고 1회 알린다.
           lastVideoLoadFabricCancelReason = null;
+          const playlistManager = getPlaylistManager();
+          const currentMediaIndex = findPlaylistItemIndexByVideoPath(
+            playlistManager.getItems?.() || [],
+            state.currentFile
+          );
+          if (currentMediaIndex >= 0) {
+            playlistManager.currentIndex = currentMediaIndex;
+            updatePlaylistCurrentItem();
+            updatePlaylistPosition();
+          }
           stopContinuousPlayback();
           showToast('드로잉 저장 문제로 이어붙이기 재생을 중단했습니다.', 'error');
           return false;
@@ -18819,7 +18800,6 @@ async function initApp() {
     continuousPlaybackState.waiting = false;
     continuousPlaybackState.skippedBatch = [];
     continuousPlaybackState.preparePromises.clear();
-    continuousPersistenceAbandonNotified = false;
 
     return runContinuousTransitionFlight(sessionId, async flight => {
       try {

@@ -1210,7 +1210,7 @@ test('overlay-host-unavailable save preserves the current video for host recover
   assert.equal(harness.controller.getState(), 'active');
 });
 
-test('오버레이 호스트가 응답하지 않아도 전환 게이트는 데드라인 안에 통과한다', async () => {
+test('오버레이 호스트가 응답하지 않으면 전환 게이트는 데드라인 안에 안전하게 실패한다', async () => {
   const harness = createHarness({ persistenceIpcDeadlineMs: 80 });
   assert.equal(await prepareVideo(harness), true);
 
@@ -1219,13 +1219,118 @@ test('오버레이 호스트가 응답하지 않아도 전환 게이트는 데�
   const flushed = await harness.controller.flushPersistenceBeforeLeave();
   const elapsedMs = Date.now() - startedAt;
 
-  assert.equal(flushed, true, '응답 없는 회수는 비래치로 통과해야 한다');
+  assert.equal(flushed, false, '응답 없는 회수를 저장 성공으로 처리하면 안 된다');
   assert.ok(elapsedMs < 5000, `게이트가 데드라인 안에 끝나야 한다 (실측 ${elapsedMs}ms)`);
   assert.equal(
     harness.controller.getStatusSnapshot().persistenceBlocked,
     false,
     '데드라인 초과가 차단 래치를 걸면 안 된다'
   );
+  assert.equal(harness.controller.getStatusSnapshot().legacyBypass, false);
+});
+
+test('최종 회수 타임아웃 취소는 최신 오버레이를 보존하고 재시도에서 마지막 획을 회수한다', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 80 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  const stableStatus = harness.controller.getStatusSnapshot();
+  const persistenceSessionId = harness.calls.hydrate[0].persistenceSessionId;
+
+  const latest = harness.getRuntimeSnapshot();
+  const lastStroke = makeRecord('last-stroke');
+  latest.scenes[0].objects.push(lastStroke);
+  latest.scenes[0].mutationSequence = 2;
+  harness.setRuntimeSnapshot(latest);
+
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+  const lateEventAccepted = harness.emitPersistence({
+    type: 'transition',
+    transition: {
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'persistence-session-1',
+      stableVideoIdentity: 'C:/shot/scene-001.mov',
+      scene: {
+        sceneInstanceId: latest.scenes[0].sceneInstanceId,
+        targetFrame: 12,
+        sourceWidth: 1920,
+        sourceHeight: 1080
+      },
+      mutationSequence: 2,
+      origin: 'live',
+      kind: 'add-objects',
+      estimatedBytes: 512,
+      unsupportedReason: null,
+      removals: [],
+      insertions: [{
+        index: 1,
+        record: lastStroke,
+        baseTransform: { ...lastStroke.transform }
+      }],
+      transforms: []
+    }
+  });
+  assert.equal(lateEventAccepted, false);
+
+  harness.setExportHandler(() => new Promise(() => {}));
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), false);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['stroke-1'],
+    '타임아웃 시점에는 마지막 획이 아직 공유 저장소에 없어야 재현이 유효하다'
+  );
+
+  const hydrateCountBeforeCancel = harness.calls.hydrate.length;
+  const orderCountBeforeCancel = harness.calls.order.length;
+  assert.equal(await harness.controller.cancelVideoChange('load-b', {
+    restorePreviousVideo: true,
+    preserveAuthoritativeOverlay: true
+  }), true);
+  assert.equal(harness.calls.hydrate.length, hydrateCountBeforeCancel);
+  assert.deepEqual(harness.calls.order.slice(orderCountBeforeCancel), ['input:on:1']);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.deepEqual(
+    harness.getRuntimeSnapshot().scenes[0].objects.map(object => object.id),
+    ['stroke-1', 'last-stroke'],
+    '취소 복구가 오래된 저장소로 최신 오버레이를 덮으면 안 된다'
+  );
+  assert.equal(harness.controller.getStatusSnapshot().hostGeneration, stableStatus.hostGeneration);
+  assert.equal(harness.controller.getStatusSnapshot().videoGeneration, stableStatus.videoGeneration);
+  assert.equal(harness.controller.getStatusSnapshot().legacyBypass, false);
+
+  harness.setExportHandler(null);
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(harness.calls.export.at(-1).persistenceSessionId, persistenceSessionId);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['stroke-1', 'last-stroke']
+  );
+});
+
+test('최종 회수 차단 뒤 최신 오버레이를 보존하면 입력을 재개하지 않고 안전하게 복귀한다', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+
+  harness.setExportHandler(() => ({
+    success: false,
+    accepted: false,
+    reason: 'overlay-unavailable'
+  }));
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), false);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, true);
+
+  const hydrateCountBeforeCancel = harness.calls.hydrate.length;
+  assert.equal(await harness.controller.cancelVideoChange('load-b', {
+    restorePreviousVideo: true,
+    preserveAuthoritativeOverlay: true
+  }), true);
+  assert.equal(harness.calls.hydrate.length, hydrateCountBeforeCancel);
+  assert.equal(harness.controller.getState(), 'passive');
+  assert.equal(harness.controller.getStatusSnapshot().videoReady, true);
 });
 
 test('전환 게이트는 진행 중인 영상 확정 처리를 기다린 뒤 회수한다', async () => {

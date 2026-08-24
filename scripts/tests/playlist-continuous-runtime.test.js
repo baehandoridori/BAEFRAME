@@ -1476,29 +1476,10 @@ test('playlist clicks highlight immediately, roll back from current media, and r
   assert.match(selectedSource, /holdPreviousFrameUntilReady: true,/);
 });
 
-test('이어붙이기 자동 전환은 게이트 실패를 세션 중단으로 승격하지 않고 우회한다', () => {
-  assert.match(appSource, /function bypassContinuousPersistenceGate\(stage\) \{/);
-  assert.match(
-    appSource,
-    /if \(!fabricPersistenceReadyToLeave && preserveContinuousSession\) \{[\s\S]{0,400}bypassContinuousPersistenceGate\('first-gate'\)[\s\S]{0,200}fabricPersistenceReadyToLeave = true;/
-  );
-  assert.match(
-    appSource,
-    /if \(!finalFabricPersistenceReadyToLeave && preserveContinuousSession\) \{[\s\S]{0,400}bypassContinuousPersistenceGate\('final-gate'\)[\s\S]{0,200}finalFabricPersistenceReadyToLeave = true;/
-  );
-  assert.match(
-    appSource,
-    /fabricDrawingPilotStatusSnapshot\?\.persistenceBlocked === true/
-  );
-  assert.match(appSource, /continuousPersistenceAbandonNotified = false;/);
-  const bypassMatch = appSource.match(/function bypassContinuousPersistenceGate\(stage\) \{([\s\S]*?)\n  \}/);
-  assert.ok(bypassMatch, 'bypass helper should exist');
-  assert.match(bypassMatch[1], /abandonPersistenceForVideoChange\(\);/);
-  assert.equal(
-    bypassMatch[1].split('showToast').length - 1,
-    1,
-    'bypass helper should raise at most one toast path'
-  );
+test('이어붙이기 자동 전환은 드로잉 저장 실패를 자동 포기하거나 우회하지 않는다', () => {
+  assert.doesNotMatch(appSource, /function bypassContinuousPersistenceGate\(stage\) \{/);
+  assert.doesNotMatch(appSource, /continuousPersistenceAbandonNotified/);
+  assert.doesNotMatch(appSource, /bypassContinuousPersistenceGate\('(?:first|final)-gate'\)/);
 });
 
 test('이어붙이기 전환은 예외 격리와 제한 시간 감시자를 가진다', () => {
@@ -1730,7 +1711,8 @@ function createActualLoadRaceScenario({
   useActualContinuousLoad = false,
   failFirstContinuousLoad = false,
   failFirstPreparedItem = false,
-  holdSecondFileExists = false
+  holdSecondFileExists = false,
+  fabricFlushResults = null
 } = {}) {
   const effects = {
     mediaLoads: [],
@@ -1740,8 +1722,18 @@ function createActualLoadRaceScenario({
     fallbacks: 0,
     normalAutoNext: 0,
     queuedAutoAdvances: 0,
-    playAfterLoad: 0
+    playAfterLoad: 0,
+    fabricFlushes: 0,
+    fabricBeforeChanges: 0,
+    fabricCancellations: [],
+    persistenceBypassStages: [],
+    persistenceAbandons: 0,
+    playlistStatusChanges: [],
+    toasts: []
   };
+  const queuedFabricFlushResults = Array.isArray(fabricFlushResults)
+    ? [...fabricFlushResults]
+    : null;
   let releaseOldTail;
   let notifyOldTailStarted;
   const oldTailStarted = new Promise(resolve => { notifyOldTailStarted = resolve; });
@@ -1846,9 +1838,25 @@ function createActualLoadRaceScenario({
     setVideoFile: async () => false, setFps: () => {}, getManualVersions: () => []
   };
   const fabricDrawingPilotController = {
-    flushPersistenceBeforeLeave: async () => true,
-    beforeVideoChange: async () => true,
-    cancelVideoChange: async () => {}, afterVideoReady: async () => {}
+    flushPersistenceBeforeLeave: async () => {
+      effects.fabricFlushes += 1;
+      return queuedFabricFlushResults?.length
+        ? queuedFabricFlushResults.shift()
+        : true;
+    },
+    beforeVideoChange: async () => {
+      effects.fabricBeforeChanges += 1;
+      return true;
+    },
+    cancelVideoChange: async (loadToken, options) => {
+      effects.fabricCancellations.push({ loadToken, options });
+      return true;
+    },
+    abandonPersistenceForVideoChange: () => {
+      effects.persistenceAbandons += 1;
+      return true;
+    },
+    afterVideoReady: async () => {}
   };
   const pendingReview = { token: null };
   const runtime = createActualLoadRaceHarness({
@@ -1860,7 +1868,10 @@ function createActualLoadRaceScenario({
     fabricDrawingPilotInitialization: Promise.resolve(true),
     fabricDrawingPilotController,
     confirm: () => false,
-    bypassContinuousPersistenceGate: () => false,
+    bypassContinuousPersistenceGate: stage => {
+      effects.persistenceBypassStages.push(stage);
+      return false;
+    },
     supersedeActiveTranscodeOverlay: () => {},
     showDriveVideoLoadingFeedback: () => false,
     hideVideoLoadingOverlay: () => {},
@@ -1929,7 +1940,9 @@ function createActualLoadRaceScenario({
     toVersionInfo: () => ({}), generateThumbnails: async () => {},
     getThumbnailGenerator: () => ({ clear: () => {} }),
     scheduleDeferredCollaborationStart: () => {}, startCollaborationForVideoLoad: async () => true,
-    startDeferredReviewFileDiscovery: () => {}, showToast: () => {}, renderVideoMarkers: () => {},
+    startDeferredReviewFileDiscovery: () => {},
+    showToast: (message, type) => { effects.toasts.push({ message, type }); },
+    renderVideoMarkers: () => {},
     updateTimelineMarkers: () => {}, updateCommentList: () => {},
     compositionLayerManager: { setVideoInfo: () => {}, setPlaybackState: () => {}, render: () => {} },
     renderCompositionLayerTimeline: () => {}, renderHighlights: () => {},
@@ -1994,6 +2007,8 @@ function createActualLoadRaceScenario({
       localTime: Math.max(0, time - (seekItemIndex * 10))
     }),
     mapLocalTimeToGlobal: (segment, localTime) => segment.startTime + localTime,
+    findPlaylistItemIndexByVideoPath: (playlistItems, videoPath) =>
+      playlistItems.findIndex(item => item.videoPath === videoPath),
     updatePlaylistCurrentItem: () => {}, updatePlaylistPosition: () => {},
     getPlaybackSyncPosition: () => ({ time: 0, options: { playlistContinuous: true } }),
     playbackSync: { broadcastPause: () => {}, broadcastSeek: () => {} },
@@ -2003,7 +2018,9 @@ function createActualLoadRaceScenario({
     hasContinuousPlaybackReachedMediaEnd: () => mediaEnded,
     findNextPlayableIndex: (_items, index) => (index + 1) % items.length,
     flushSkippedToastBatch: () => {},
-    markPlaylistItemStatus: () => {},
+    markPlaylistItemStatus: (item, status, message) => {
+      effects.playlistStatusChanges.push({ itemId: item?.id, status, message });
+    },
     CONTINUOUS_STATUS: { ERROR: 'error' },
     playIconSVG: '',
     syncCompositionLayerPlaybackState: () => {},
@@ -2027,6 +2044,48 @@ function createActualLoadRaceScenario({
     fireDeadline: () => { assert.equal(typeof capturedDeadline, 'function'); capturedDeadline(); }
   };
 }
+
+test('드로잉 저장 게이트 실패는 이어붙이기를 한 번만 중단하고 현재 영상 선택을 복원한다', async (t) => {
+  const cases = [
+    { name: 'first gate', flushResults: [false], expectedFlushes: 1, expectedBeforeChanges: 0, expectedCancellations: 0 },
+    { name: 'final gate', flushResults: [true, false], expectedFlushes: 2, expectedBeforeChanges: 1, expectedCancellations: 1 }
+  ];
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const scenario = createActualLoadRaceScenario({
+        useActualPlayNext: true,
+        useActualContinuousLoad: true,
+        fabricFlushResults: testCase.flushResults
+      });
+      scenario.state.currentFile = scenario.items[0].videoPath;
+      scenario.releaseOldTail();
+
+      const result = await scenario.runtime.requestContinuousPlaybackAdvance(7);
+
+      assert.equal(result, null);
+      assert.equal(scenario.continuousPlaybackState.active, false);
+      assert.equal(scenario.effects.fabricFlushes, testCase.expectedFlushes);
+      assert.equal(scenario.effects.fabricBeforeChanges, testCase.expectedBeforeChanges);
+      assert.equal(scenario.effects.fabricCancellations.length, testCase.expectedCancellations);
+      assert.deepEqual(scenario.effects.persistenceBypassStages, []);
+      assert.equal(scenario.effects.persistenceAbandons, 0);
+      assert.deepEqual(scenario.effects.mediaLoads, []);
+      assert.deepEqual(scenario.effects.playlistStatusChanges, []);
+      assert.equal(scenario.playlistManager.currentIndex, 0);
+      assert.deepEqual(scenario.effects.toasts, [{
+        message: '드로잉 저장 문제로 이어붙이기 재생을 중단했습니다.',
+        type: 'error'
+      }]);
+      if (testCase.expectedCancellations > 0) {
+        assert.equal(
+          scenario.effects.fabricCancellations[0].options?.preserveAuthoritativeOverlay,
+          true
+        );
+      }
+    });
+  }
+});
 
 function createSingleFlightScenario({ itemCount = 2, currentIndex = 0, captureDeadline = false } = {}) {
   const items = Array.from({ length: itemCount }, (_, index) => ({
