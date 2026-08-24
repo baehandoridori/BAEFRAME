@@ -1,6 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawn: spawnProcess } = require('node:child_process');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
+const Module = require('node:module');
 const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '../..');
@@ -14,6 +17,70 @@ const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'prel
 const splitViewSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/split-view-manager.js'), 'utf8'));
 const playlistCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/playlist-panel.css'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+
+function loadFileExistsHandler({ spawnImpl = spawnProcess } = {}) {
+  const handlers = new Map();
+  const warnings = [];
+  const noop = () => {};
+  const ipcHandlersPath = path.join(rootDir, 'main/ipc-handlers.js');
+  const ipcMain = {
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+    on: noop
+  };
+  const fakeModules = new Map([
+    ['electron', { ipcMain, dialog: {}, app: {}, clipboard: {}, shell: {} }],
+    ['child_process', { spawn: spawnImpl }],
+    ['./logger', {
+      createLogger: () => ({
+        debug: noop,
+        error: noop,
+        info: noop,
+        trace: () => ({ end: noop, error: noop }),
+        warn: (message, data) => warnings.push({ message, data })
+      })
+    }],
+    ['./window', {
+      closeWindow: noop,
+      getMainWindow: () => null,
+      isFullscreen: () => false,
+      isMaximized: () => false,
+      minimizeWindow: noop,
+      toggleFullscreen: noop,
+      toggleMaximize: noop
+    }],
+    ['./recent-files-store', { RecentFilesStore: class RecentFilesStore {} }],
+    ['./recent-thumb-capture', {}],
+    ['./cutlist-paths', { validateCutlistFilePath: value => value }],
+    ['./mpv-manager', { MPVManager: class MPVManager {}, mpvManager: {} }],
+    ['./mpv-embed-host', { mpvEmbedHost: {} }],
+    ['./mpv-overlay-host', { mpvOverlayHost: {} }],
+    ['electron-store', class Store {}]
+  ]);
+  const originalLoad = Module._load;
+
+  delete require.cache[ipcHandlersPath];
+  Module._load = function loadWithFakes(request, parent, isMain) {
+    if (parent?.filename === ipcHandlersPath && fakeModules.has(request)) {
+      return fakeModules.get(request);
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+
+  try {
+    const { setupIpcHandlers } = require(ipcHandlersPath);
+    setupIpcHandlers();
+  } finally {
+    Module._load = originalLoad;
+    delete require.cache[ipcHandlersPath];
+  }
+
+  return {
+    handler: handlers.get('file:exists'),
+    warnings
+  };
+}
 
 function extractAppFunctionSource(name) {
   const match = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(appSource);
@@ -1508,6 +1575,164 @@ test('이어붙이기 전환은 예외 격리와 제한 시간 감시자를 가�
   const ipcHandlersSourceLocal = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
   assert.match(ipcHandlersSourceLocal, /const FILE_EXISTS_DEADLINE_MS = 3000;/);
   assert.match(ipcHandlersSourceLocal, /파일 존재 확인 지연, 존재로 간주하고 진행/);
+  const fileExistsHandlerSource = ipcHandlersSourceLocal.match(
+    /ipcMain\.handle\('file:exists',[\s\S]*?\n  \}\);/
+  );
+  assert.ok(fileExistsHandlerSource, 'file:exists handler should exist');
+  assert.match(fileExistsHandlerSource[0], /probeFileExistsInChild\(filePath, FILE_EXISTS_DEADLINE_MS\)/);
+  assert.doesNotMatch(fileExistsHandlerSource[0], /fs\.promises\.access|Promise\.race/);
+});
+
+test('file exists deadline terminates every isolated probe before returning', { timeout: 10_000 }, async (t) => {
+  const blockedPrefix = '__baeframe_blocked_file_probe__';
+  const probeInvocations = [];
+  const probeChildren = [];
+  const spawnImpl = (command, args, options) => {
+    const probePath = options?.env?.BAEFRAME_FILE_EXISTS_PROBE_PATH;
+    probeInvocations.push({ command, args, options, probePath });
+    if (!String(probePath || '').startsWith(blockedPrefix)) {
+      return spawnProcess(command, args, options);
+    }
+
+    const child = spawnProcess(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 30000);'],
+      {
+        ...options,
+        env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' },
+        windowsVerbatimArguments: false
+      }
+    );
+    const originalKill = child.kill.bind(child);
+    const record = { child, closed: false, killSignals: [] };
+    child.kill = (signal) => {
+      record.killSignals.push(signal);
+      return originalKill(signal);
+    };
+    child.once('close', () => {
+      record.closed = true;
+    });
+    probeChildren.push(record);
+    return child;
+  };
+  const { handler, warnings } = loadFileExistsHandler({ spawnImpl });
+  assert.equal(typeof handler, 'function');
+
+  t.after(async () => {
+    await Promise.all(probeChildren.map(async (record) => {
+      if (record.closed) return;
+      const closed = new Promise(resolve => record.child.once('close', resolve));
+      record.child.kill('SIGKILL');
+      await closed;
+    }));
+  });
+
+  const originalSetTimeout = global.setTimeout;
+  let acceleratedDeadlineCount = 0;
+  global.setTimeout = (callback, delay, ...args) => {
+    if (delay === 3000) {
+      acceleratedDeadlineCount += 1;
+      return originalSetTimeout(callback, 250, ...args);
+    }
+    return originalSetTimeout(callback, delay, ...args);
+  };
+
+  let blockedResults;
+  try {
+    blockedResults = await Promise.all(
+      Array.from({ length: 8 }, (_, index) => handler({}, `${blockedPrefix}${index}`))
+    );
+  } finally {
+    global.setTimeout = originalSetTimeout;
+  }
+
+  assert.deepEqual(blockedResults, Array(8).fill(true));
+  assert.equal(acceleratedDeadlineCount, 8);
+  assert.equal(probeChildren.length, 8);
+  assert.equal(probeChildren.every(record => record.closed), true);
+  assert.equal(
+    probeChildren.every(record => record.killSignals.length === 1 && record.killSignals[0] === 'SIGKILL'),
+    true
+  );
+  assert.equal(
+    probeChildren.every(record => record.child.exitCode !== null || record.child.signalCode !== null),
+    true
+  );
+  assert.equal(
+    warnings.filter(entry => entry.message === '파일 존재 확인 지연, 존재로 간주하고 진행').length,
+    8
+  );
+  const expectedProbeCommand = process.platform === 'win32'
+    ? 'powershell.exe'
+    : process.execPath;
+  assert.equal(probeInvocations.every(entry => entry.command === expectedProbeCommand), true);
+  if (process.platform === 'win32') {
+    assert.equal(probeInvocations.every(entry => entry.args?.includes('-Command')), true);
+    assert.equal(
+      probeInvocations.every(entry => entry.args?.join(' ').includes('[System.IO.File]::Exists($probePath)')),
+      true
+    );
+    assert.equal(
+      probeInvocations.every(entry => entry.args?.join(' ').includes('[System.IO.Directory]::Exists($probePath)')),
+      true
+    );
+    assert.equal(probeInvocations.every(entry => !entry.args?.join(' ').includes('Test-Path')), true);
+  } else {
+    assert.equal(probeInvocations.every(entry => entry.args?.[0] === '-e'), true);
+    assert.equal(
+      probeInvocations.every(entry => entry.options?.env?.ELECTRON_RUN_AS_NODE === '1'),
+      true
+    );
+  }
+
+  assert.equal(await handler({}, __filename), true);
+  assert.equal(await handler({}, process.execPath), true);
+  assert.equal(await handler({}, rootDir), true);
+  assert.equal(
+    await handler({}, path.join(rootDir, '__baeframe_file_probe_missing__')),
+    false
+  );
+  const untrustedPath = 'missing"; exit 0; #';
+  assert.equal(await handler({}, untrustedPath), false);
+  const untrustedInvocation = probeInvocations.at(-1);
+  assert.equal(untrustedInvocation.options.env.BAEFRAME_FILE_EXISTS_PROBE_PATH, untrustedPath);
+  assert.equal(untrustedInvocation.args.join(' ').includes(untrustedPath), false);
+  if (process.platform === 'win32') {
+    assert.equal(await handler({}, 'Env:PATH'), false);
+    assert.equal(await handler({}, 'Variable:PSVersionTable'), false);
+  }
+
+  const { handler: failedSpawnHandler } = loadFileExistsHandler({
+    spawnImpl: () => {
+      throw new Error('file probe spawn failed');
+    }
+  });
+  assert.equal(await failedSpawnHandler({}, __filename), false);
+
+  let asyncErrorClosed = false;
+  const { handler: asyncErrorHandler } = loadFileExistsHandler({
+    spawnImpl: () => {
+      const child = new EventEmitter();
+      child.kill = () => true;
+      setImmediate(() => {
+        child.emit('error', new Error('file probe async failure'));
+        setImmediate(() => {
+          asyncErrorClosed = true;
+          child.emit('close', 1, null);
+        });
+      });
+      return child;
+    }
+  });
+  let asyncErrorSettled = false;
+  const asyncErrorResult = asyncErrorHandler({}, __filename).then((value) => {
+    asyncErrorSettled = true;
+    return value;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(asyncErrorSettled, false);
+  assert.equal(await asyncErrorResult, false);
+  assert.equal(asyncErrorClosed, true);
 });
 
 test('영상 끝에서 멈춘 이어붙이기 세션은 스페이스 1회로 재개된다', () => {

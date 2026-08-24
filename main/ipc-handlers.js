@@ -170,6 +170,107 @@ function runPowerShellCommand(commandText) {
   });
 }
 
+const FILE_EXISTS_POWERSHELL_PROBE_COMMAND = [
+  "$ErrorActionPreference = 'Stop';",
+  'try {',
+  '  $probePath = $env:BAEFRAME_FILE_EXISTS_PROBE_PATH;',
+  '  if ([System.IO.File]::Exists($probePath) -or [System.IO.Directory]::Exists($probePath)) { exit 0 }',
+  '  exit 1',
+  '} catch {',
+  '  exit 1',
+  '}'
+].join(' ');
+const FILE_EXISTS_NODE_PROBE_SOURCE = [
+  "const fs = require('node:fs');",
+  'try {',
+  '  fs.accessSync(process.env.BAEFRAME_FILE_EXISTS_PROBE_PATH, fs.constants.F_OK);',
+  '  process.exitCode = 0;',
+  '} catch {',
+  '  process.exitCode = 1;',
+  '}'
+].join('\n');
+
+function probeFileExistsInChild(filePath, deadlineMs) {
+  return new Promise((resolve) => {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
+      resolve({ exists: false, timedOut: false });
+      return;
+    }
+
+    let deadlineTimer = null;
+    let deadlineReached = false;
+    let childError = null;
+    let settled = false;
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadlineTimer);
+      resolve(result);
+    };
+
+    let child;
+    try {
+      const probeEnv = {
+        ...process.env,
+        BAEFRAME_FILE_EXISTS_PROBE_PATH: filePath
+      };
+      if (process.platform === 'win32') {
+        child = spawn(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            FILE_EXISTS_POWERSHELL_PROBE_COMMAND
+          ],
+          {
+            env: probeEnv,
+            windowsHide: true,
+            stdio: 'ignore'
+          }
+        );
+      } else {
+        child = spawn(
+          process.execPath,
+          ['-e', FILE_EXISTS_NODE_PROBE_SOURCE],
+          {
+            env: { ...probeEnv, ELECTRON_RUN_AS_NODE: '1' },
+            windowsHide: true,
+            stdio: 'ignore'
+          }
+        );
+      }
+    } catch (error) {
+      settle({ exists: false, timedOut: false, error });
+      return;
+    }
+
+    child.once('error', (error) => {
+      childError = error;
+    });
+    child.once('close', (code) => {
+      settle({
+        exists: deadlineReached || (!childError && code === 0),
+        timedOut: deadlineReached,
+        error: childError
+      });
+    });
+    deadlineTimer = setTimeout(() => {
+      deadlineReached = true;
+      try {
+        child.kill('SIGKILL');
+      } catch (error) {
+        childError = error;
+        try {
+          process.kill(child.pid, 'SIGKILL');
+        } catch (fallbackError) {
+          childError = fallbackError;
+        }
+      }
+    }, deadlineMs);
+  });
+}
+
 function resolveIntegrationInstaller() {
   const appPath = app.getAppPath();
 
@@ -484,20 +585,15 @@ function setupIpcHandlers({
 
   // 파일 존재 여부 확인
   ipcMain.handle('file:exists', async (event, filePath) => {
-    // Google Drive 스트리밍 경로는 access가 수십 초 이상 멈출 수 있다.
+    // Google Drive 스트리밍 경로는 파일 확인이 수십 초 이상 멈출 수 있다.
     // 지연 시 '존재'로 간주해 진행한다 — 진짜 부재는 빠르게 실패하고,
     // 지연된 존재 확인이 이어붙이기 전환을 침묵 정지시키면 안 된다(2026-08-21).
     const FILE_EXISTS_DEADLINE_MS = 3000;
-    let deadlineTimer = null;
     try {
       const startedAt = Date.now();
-      const result = await Promise.race([
-        fs.promises.access(filePath, fs.constants.F_OK).then(() => true, () => false),
-        new Promise((resolve) => {
-          deadlineTimer = setTimeout(() => resolve('deadline'), FILE_EXISTS_DEADLINE_MS);
-        })
-      ]);
-      if (result === 'deadline') {
+      // main의 libuv 파일 작업을 버리지 않고, 종료 가능한 별도 프로세스에서 확인한다.
+      const result = await probeFileExistsInChild(filePath, FILE_EXISTS_DEADLINE_MS);
+      if (result.timedOut) {
         log.warn('파일 존재 확인 지연, 존재로 간주하고 진행', {
           filePath,
           deadlineMs: FILE_EXISTS_DEADLINE_MS
@@ -508,12 +604,9 @@ function setupIpcHandlers({
       if (durationMs > 500) {
         log.warn('파일 존재 확인 지연', { filePath, durationMs });
       }
-      return result;
+      return result.exists;
     } catch {
       return false;
-    } finally {
-      // 재생목록 전 항목 일괄 확인(quickCheck) 시 3초짜리 타이머가 항목 수만큼 쌓이지 않게 해제한다.
-      clearTimeout(deadlineTimer);
     }
   });
 
