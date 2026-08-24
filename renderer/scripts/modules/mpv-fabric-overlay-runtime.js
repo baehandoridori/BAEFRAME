@@ -2004,6 +2004,7 @@ function createFabricOverlayRuntime(options = {}) {
   let destroyed = false;
   let inputEnabled = false;
   let currentSession = null;
+  let lastPaintedScene = null;
   let activeStroke = null;
   let activeLasso = null;
   let lastSelectionGesture = null;
@@ -2675,6 +2676,43 @@ function createFabricOverlayRuntime(options = {}) {
       fabricCanvas.requestRenderAll();
     }
     updateObjectMetric();
+  }
+
+  function repaintLastPaintedScene(options = {}) {
+    if (destroyed || !fabricCanvas || inputEnabled || !lastPaintedScene) return;
+    if (typeof sceneStore.getSceneSnapshot !== 'function') return;
+    const snapshot = sceneStore.getSceneSnapshot(
+      lastPaintedScene.stableVideoIdentity,
+      lastPaintedScene.targetFrame
+    );
+    if (!snapshot) {
+      // 스냅샷 부재의 의미는 호출 맥락에 따라 다르다:
+      // - disable 경로(기본): '정보 없음'(씬 축출 등) — 화면을 보존한다.
+      // - 수화 직후((e), clearWhenMissing): 수화가 그 프레임 키프레임을 싣지 않았다는
+      //   '삭제 확정' — 삭제된 획이 화면에 남지 않게 캔버스를 비운다.
+      if (options.clearWhenMissing === true) {
+        fabricCanvas.clear();
+        if (typeof fabricCanvas.renderAll === 'function') fabricCanvas.renderAll();
+        else fabricCanvas.requestRenderAll();
+      }
+      return;
+    }
+    if (options.force !== true) {
+      const snapshotIds = (snapshot.objects || []).map(record => record.id || null);
+      const canvasIds = fabricCanvas.getObjects()
+        .filter(object => !object.__baeframeTransient)
+        .map(object => object.__baeframeObjectId);
+      if (snapshotIds.length === canvasIds.length &&
+          snapshotIds.every((id, index) => id === canvasIds[index])) {
+        return;
+      }
+    }
+    const paths = (snapshot.objects || []).map(record => makeFabricPath(record));
+    for (const path of paths) path.set({ selectable: false, evented: false });
+    fabricCanvas.clear();
+    for (const path of paths) fabricCanvas.add(path);
+    if (typeof fabricCanvas.renderAll === 'function') fabricCanvas.renderAll();
+    else fabricCanvas.requestRenderAll();
   }
 
   function setToolMode(tool) {
@@ -5000,6 +5038,7 @@ function createFabricOverlayRuntime(options = {}) {
     inputEnabled = false;
     currentSession = null;
     sceneStore.deactivateSession();
+    repaintLastPaintedScene();
     syncPersistenceBadge();
   }
 
@@ -5217,6 +5256,10 @@ function createFabricOverlayRuntime(options = {}) {
     currentSession = session;
     applyViewport(session);
     renderActiveScene({ immediate: true });
+    lastPaintedScene = {
+      stableVideoIdentity: session.stableVideoIdentity,
+      targetFrame: session.targetFrame
+    };
     setToolMode(session.tool);
     inputEnabled = true;
     setSurfaceInput(true);
@@ -5237,7 +5280,25 @@ function createFabricOverlayRuntime(options = {}) {
       return { accepted: false, reason: 'persistence-unavailable' };
     }
     try {
-      return sceneStore.hydrateVideo(clonePlain(request));
+      const result = sceneStore.hydrateVideo(clonePlain(request));
+      if (result?.accepted === true) {
+        if (lastPaintedScene &&
+            lastPaintedScene.stableVideoIdentity === String(request?.stableVideoIdentity || '')) {
+          // 수화는 같은 objectId를 유지한 채 내용(pathData·transform)만 바꿀 수 있으므로
+          // id 비교를 생략하고 강제 재도색하며(disable 배선은 기본 호출 = id 비교 유지),
+          // 수화 결과에 이 프레임 키프레임이 없으면 '삭제 확정'이므로 캔버스를 비운다
+          repaintLastPaintedScene({ force: true, clearWhenMissing: true });
+        } else if (lastPaintedScene) {
+          // 다른 영상의 수화: 이전 영상 잔상이 새 영상 위에 남지 않게 캔버스를 비운다
+          lastPaintedScene = null;
+          if (fabricCanvas) {
+            fabricCanvas.clear();
+            if (typeof fabricCanvas.renderAll === 'function') fabricCanvas.renderAll();
+            else fabricCanvas.requestRenderAll();
+          }
+        }
+      }
+      return result;
     } catch (_error) {
       return { accepted: false, reason: 'invalid-hydration-request' };
     }
@@ -5438,6 +5499,7 @@ function createFabricOverlayRuntime(options = {}) {
 
   function destroy() {
     if (destroyed) return { destroyed: true, reused: true };
+    lastPaintedScene = null;
     disableInput();
     releaseSurfaceResources();
     strokeFillGeometryCache.clear();

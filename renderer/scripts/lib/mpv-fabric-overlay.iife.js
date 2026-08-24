@@ -14835,6 +14835,7 @@ void main() {
         let destroyed = false;
         let inputEnabled = false;
         let currentSession = null;
+        let lastPaintedScene = null;
         let activeStroke = null;
         let activeLasso = null;
         let lastSelectionGesture = null;
@@ -15447,6 +15448,35 @@ void main() {
             fabricCanvas.requestRenderAll();
           }
           updateObjectMetric();
+        }
+        function repaintLastPaintedScene(options2 = {}) {
+          if (destroyed || !fabricCanvas || inputEnabled || !lastPaintedScene) return;
+          if (typeof sceneStore.getSceneSnapshot !== "function") return;
+          const snapshot = sceneStore.getSceneSnapshot(
+            lastPaintedScene.stableVideoIdentity,
+            lastPaintedScene.targetFrame
+          );
+          if (!snapshot) {
+            if (options2.clearWhenMissing === true) {
+              fabricCanvas.clear();
+              if (typeof fabricCanvas.renderAll === "function") fabricCanvas.renderAll();
+              else fabricCanvas.requestRenderAll();
+            }
+            return;
+          }
+          if (options2.force !== true) {
+            const snapshotIds = (snapshot.objects || []).map((record) => record.id || null);
+            const canvasIds = fabricCanvas.getObjects().filter((object) => !object.__baeframeTransient).map((object) => object.__baeframeObjectId);
+            if (snapshotIds.length === canvasIds.length && snapshotIds.every((id, index) => id === canvasIds[index])) {
+              return;
+            }
+          }
+          const paths = (snapshot.objects || []).map((record) => makeFabricPath(record));
+          for (const path of paths) path.set({ selectable: false, evented: false });
+          fabricCanvas.clear();
+          for (const path of paths) fabricCanvas.add(path);
+          if (typeof fabricCanvas.renderAll === "function") fabricCanvas.renderAll();
+          else fabricCanvas.requestRenderAll();
         }
         function setToolMode(tool) {
           if (!fabricCanvas) return;
@@ -17512,6 +17542,7 @@ void main() {
           inputEnabled = false;
           currentSession = null;
           sceneStore.deactivateSession();
+          repaintLastPaintedScene();
           syncPersistenceBadge();
         }
         function releaseSurfaceResources() {
@@ -17724,6 +17755,10 @@ void main() {
           currentSession = session;
           applyViewport(session);
           renderActiveScene({ immediate: true });
+          lastPaintedScene = {
+            stableVideoIdentity: session.stableVideoIdentity,
+            targetFrame: session.targetFrame
+          };
           setToolMode(session.tool);
           inputEnabled = true;
           setSurfaceInput(true);
@@ -17743,7 +17778,20 @@ void main() {
             return { accepted: false, reason: "persistence-unavailable" };
           }
           try {
-            return sceneStore.hydrateVideo(clonePlain(request));
+            const result = sceneStore.hydrateVideo(clonePlain(request));
+            if (result?.accepted === true) {
+              if (lastPaintedScene && lastPaintedScene.stableVideoIdentity === String(request?.stableVideoIdentity || "")) {
+                repaintLastPaintedScene({ force: true, clearWhenMissing: true });
+              } else if (lastPaintedScene) {
+                lastPaintedScene = null;
+                if (fabricCanvas) {
+                  fabricCanvas.clear();
+                  if (typeof fabricCanvas.renderAll === "function") fabricCanvas.renderAll();
+                  else fabricCanvas.requestRenderAll();
+                }
+              }
+            }
+            return result;
           } catch (_error) {
             return { accepted: false, reason: "invalid-hydration-request" };
           }
@@ -17922,6 +17970,7 @@ void main() {
         }
         function destroy() {
           if (destroyed) return { destroyed: true, reused: true };
+          lastPaintedScene = null;
           disableInput();
           releaseSurfaceResources();
           strokeFillGeometryCache.clear();
