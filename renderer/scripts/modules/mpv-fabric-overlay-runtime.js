@@ -5079,7 +5079,6 @@ function createFabricOverlayRuntime(options = {}) {
         left: '12px',
         display: 'flex',
         zIndex: '2',
-        transition: 'opacity 100ms ease',
         pointerEvents: 'none'
       });
       const brushButton = labelToolbarButton(createButton('Brush', 'brush'), '브러시 도구 (B)');

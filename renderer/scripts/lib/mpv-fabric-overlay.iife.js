@@ -17591,7 +17591,6 @@ void main() {
               left: "12px",
               display: "flex",
               zIndex: "2",
-              transition: "opacity 100ms ease",
               pointerEvents: "none"
             });
             const brushButton = labelToolbarButton(createButton("Brush", "brush"), "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)");
