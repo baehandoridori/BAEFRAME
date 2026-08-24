@@ -11551,3 +11551,158 @@ test('runtime and adapter sources have no review persistence or IPC integration'
     /ReviewDataManager|saveReview|saveError|_onDataChanged|ipcRenderer|electronAPI/
   );
 });
+
+test('재진입 재도색은 rAF를 기다리지 않고 화면 컨텍스트에 동기 반영된다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([
+      { x: 30, y: 70 },
+      { x: 80, y: 90 },
+      { x: 140, y: 75 }
+    ], 907);
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+    // 재진입 직전에 화면 컨텍스트를 비워 '이전 잔상'과 신규 도색을 구분한다
+    harness.canvas.contextContainer.clearRect(
+      0, 0, harness.canvas.lowerCanvasEl.width, harness.canvas.lowerCanvasEl.height
+    );
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 3,
+      enabled: true,
+      session: {
+        sessionId: 'real-fabric-session-repaint',
+        stableVideoIdentity: 'real-fabric-video',
+        targetFrame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+        viewportTransform: { scale: 1, panX: 0, panY: 0 },
+        tool: 'brush'
+      }
+    }).accepted, true);
+    // rAF/타이머를 flush하지 않은 동기 시점에 화면 컨텍스트에 픽셀이 있어야 한다
+    const { width, height } = harness.canvas.lowerCanvasEl;
+    const data = harness.canvas.lowerCanvasEl.getContext('2d')
+      .getImageData(0, 0, width, height).data;
+    let painted = 0;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] > 0) painted += 1;
+    }
+    assert.ok(painted > 0, '재진입 직후 rAF 없이 획이 화면 컨텍스트에 그려져 있어야 한다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('passive 수화 직후 현재 씬이 캔버스에 재도색된다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([
+      { x: 30, y: 70 },
+      { x: 80, y: 90 },
+      { x: 140, y: 75 }
+    ], 917);
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+    // 소실 상황 재현: 외부 요인으로 캔버스가 비워졌다고 가정한다
+    harness.canvas.clear();
+    assert.equal(
+      harness.canvas.getObjects().filter(object => !object.__baeframeTransient).length,
+      0
+    );
+    const hydrated = harness.runtime.hydrateDrawingVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'real-fabric-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240,
+      keyframes: [{
+        id: 'hydrated-keyframe',
+        frame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        mutationSequence: 1,
+        objects: [makeHistoryStroke('hydrated-stroke')]
+      }]
+    });
+    assert.equal(hydrated.accepted, true);
+    const restored = harness.canvas.getObjects().filter(object => !object.__baeframeTransient);
+    assert.equal(restored.length, 1, '수화 직후 현재 프레임 씬이 캔버스에 다시 그려져야 한다');
+    assert.equal(restored[0].__baeframeObjectId, 'hydrated-stroke');
+    assert.equal(restored[0].selectable, false);
+    assert.equal(restored[0].evented, false);
+    // 같은 id로 내용(transform)만 바뀐 재수화도 화면에 반영되어야 한다 — force 재도색 검증
+    const rehydrated = harness.runtime.hydrateDrawingVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'real-fabric-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240,
+      keyframes: [{
+        id: 'hydrated-keyframe-2',
+        frame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        mutationSequence: 2,
+        objects: [{
+          ...makeHistoryStroke('hydrated-stroke'),
+          transform: {
+            left: 120, top: 0, scaleX: 1, scaleY: 1, angle: 0,
+            skewX: 0, skewY: 0, flipX: false, flipY: false
+          }
+        }]
+      }]
+    });
+    assert.equal(rehydrated.accepted, true);
+    const moved = harness.canvas.getObjects().filter(object => !object.__baeframeTransient);
+    assert.equal(moved.length, 1);
+    assert.equal(moved[0].left, 120, '같은 id의 내용 변경 재수화가 화면에 반영되어야 한다');
+    // 해당 프레임 키프레임이 빠진(=삭제된) 재수화는 캔버스를 비워야 한다 — clearWhenMissing 검증
+    const emptied = harness.runtime.hydrateDrawingVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'real-fabric-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240,
+      keyframes: []
+    });
+    assert.equal(emptied.accepted, true);
+    assert.equal(
+      harness.canvas.getObjects().filter(object => !object.__baeframeTransient).length,
+      0,
+      '삭제 확정 재수화 후 캔버스에 획이 남으면 안 된다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('lastPaintedScene이 없는 초기 상태의 disable은 예외 없이 완료된다', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  assert.equal(runtime.prepare(root).prepared, true);
+  assert.equal(runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 1,
+    enabled: false
+  }).accepted, true);
+});
