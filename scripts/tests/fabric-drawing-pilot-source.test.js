@@ -123,7 +123,7 @@ test('capture keyboard and click firewalls stop legacy drawing mutations while k
   assert.match(mainCss, /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-overlay[\s\S]+visibility:\s*hidden;[\s\S]+pointer-events:\s*none(?:\s*!important)?;/);
   assert.match(
     mainCss,
-    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header,[\s\S]+body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-track-row[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/
+    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\),[\s\S]+body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-track-row:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\)[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/
   );
   assert.match(appSource, /function shouldSuppressLegacyDrawingForFabricPilot\(\) \{[\s\S]+fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+\}/);
   assert.match(appSource, /const suppressLegacyDrawing = shouldSuppressLegacyDrawingForFabricPilot\(\);[\s\S]+drawingDataUrl: suppressLegacyDrawing \? '' : getCompositedDrawingOverlayDataUrl\(\),[\s\S]+onionDataUrl: !suppressLegacyDrawing && drawingManager\.onionSkin\?\.enabled/);
@@ -312,4 +312,75 @@ test('Fabric 툴바 표시는 페이드 없이 한 프레임에 완성된다', (
     'utf8'
   ));
   assert.equal(iifeSource.includes('opacity 100ms ease'), false);
+});
+
+test('파일럿 드로잉은 타임라인에 읽기 전용으로 투영된다', () => {
+  assert.match(appSource, /function getFabricPilotTimelineLayers\(\)/);
+  assert.match(appSource, /function renderActiveDrawingLayers\(\)/);
+  assert.match(appSource, /fabricDrawingPersistenceStore\.subscribe\(\(\) => \{/);
+  // 헬퍼 외부에 직접 렌더 호출이 남지 않았다 (헬퍼 내부 폴백 1건만 허용)
+  const directCalls = appSource.match(
+    /timeline\.renderDrawingLayers\(drawingManager\.layers, drawingManager\.activeLayerId\);/g
+  ) || [];
+  assert.equal(directCalls.length, 1);
+  // 상태 변화 훅이 조기 반환보다 앞에서 투영을 갱신한다
+  assert.match(
+    appSource,
+    /scheduleMpvOverlayStateSync\(\{ force: true \}\);\n\s+renderActiveDrawingLayers\(\);\n\s+if \(!engaged && !wasEngaged\) \{/
+  );
+  // 투영 레이어 드래그·삭제 차단
+  assert.match(
+    appSource,
+    /keyframesMove', \(e\) => \{[\s\S]{0,400}?if \(getFabricPilotTimelineLayers\(\)\) return;/
+  );
+  assert.match(
+    appSource,
+    /function deleteSelectedOrCurrentKeyframes\(\) \{[\s\S]{0,400}?if \(getFabricPilotTimelineLayers\(\)\) return false;/
+  );
+});
+
+test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레이어를 렌더한다', () => {
+  const renderSource = appSource.match(
+    /function renderActiveDrawingLayers\(\) \{[\s\S]*?\n  \}\n\n  function requiresMpvReviewFreeze/
+  )?.[0]?.replace(/\n\n  function requiresMpvReviewFreeze$/, '');
+  assert.ok(renderSource, 'renderActiveDrawingLayers source should be extractable');
+
+  const legacyLayers = [{ id: 'legacy-layer' }];
+  const calls = [];
+  const timelineHarness = {
+    selectedKeyframes: [{ layerId: 'fabric-pilot-drawing-layer', frame: 0 }],
+    clearSelection() {
+      calls.push('clear');
+      this.selectedKeyframes = [];
+    },
+    renderDrawingLayers(layers, activeLayerId) {
+      calls.push({ type: 'render', layers, activeLayerId });
+    }
+  };
+  const renderActiveDrawingLayers = new Function(
+    'getFabricPilotTimelineLayers',
+    'timeline',
+    'drawingManager',
+    `${renderSource}\nreturn renderActiveDrawingLayers;`
+  )(
+    () => null,
+    timelineHarness,
+    { layers: legacyLayers, activeLayerId: 'legacy-layer' }
+  );
+
+  renderActiveDrawingLayers();
+
+  assert.deepEqual(calls, [
+    'clear',
+    { type: 'render', layers: legacyLayers, activeLayerId: 'legacy-layer' }
+  ]);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'legacy-layer', frame: 12 }];
+
+  renderActiveDrawingLayers();
+
+  assert.deepEqual(calls, [
+    { type: 'render', layers: legacyLayers, activeLayerId: 'legacy-layer' }
+  ]);
 });
