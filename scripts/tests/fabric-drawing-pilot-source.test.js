@@ -487,3 +487,128 @@ test('읽기 전용 합성 행의 가시성·잠금 버튼은 숨긴다', () => 
     /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-lock \{\n\s+display:\s*none;\n\s+pointer-events:\s*none;\n\}/
   );
 });
+
+test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단한다', () => {
+  const guardSource = appSource.match(
+    /function shouldBlockFabricDrawingLegacyShortcut\(event\) \{[\s\S]*?\n  \}\n\n  function handleFabricDrawingPilotLegacyClick/
+  )?.[0]?.replace(/\n\n  function handleFabricDrawingPilotLegacyClick$/, '');
+  assert.ok(guardSource, 'legacy shortcut guard source should be extractable');
+
+  const actionListSource = appSource.match(
+    /const FABRIC_DRAWING_LEGACY_SHORTCUTS = new Set\(\[([\s\S]*?)\n  \]\);/
+  )?.[1] || '';
+  const actions = [...actionListSource.matchAll(/'([^']+)'/g)].map(match => match[1]);
+  const actionSet = new Set(actions);
+  let engaged = false;
+  let projectionOwned = true;
+  const shouldBlock = new Function(
+    'FABRIC_DRAWING_LEGACY_SHORTCUTS',
+    'userSettings',
+    'isFabricDrawingPilotEngaged',
+    'shouldSuppressLegacyDrawingForFabricPilot',
+    `${guardSource}\nreturn shouldBlockFabricDrawingLegacyShortcut;`
+  )(
+    actionSet,
+    { matchShortcut: (action, event) => action === event.action },
+    () => engaged,
+    () => projectionOwned
+  );
+
+  const passiveExceptions = new Set(['undo', 'redo', 'drawMode']);
+  for (const action of actions) {
+    assert.equal(
+      shouldBlock({ action, key: '', code: '' }),
+      !passiveExceptions.has(action),
+      `passive projection shortcut boundary: ${action}`
+    );
+  }
+  assert.equal(shouldBlock({ action: 'prevKeyframe', key: '', code: '' }), false);
+  assert.equal(shouldBlock({ key: 'e', code: 'KeyE' }), false);
+
+  projectionOwned = false;
+  assert.equal(shouldBlock({ action: 'insertFrame', key: '', code: '' }), false);
+
+  engaged = true;
+  assert.equal(shouldBlock({ key: 'z', code: 'KeyZ', ctrlKey: true }), true);
+});
+
+test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 숨긴다', () => {
+  const projectionSource = appSource.match(
+    /function getFabricPilotTimelineLayers\(\) \{[\s\S]*?\n  \}\n\n  let lastFabricPilotTimeline/
+  )?.[0]?.replace(/\n\n  let lastFabricPilotTimeline$/, '');
+  assert.ok(projectionSource, 'timeline projection source should be extractable');
+
+  let mpvActive = true;
+  let hydrationReads = 0;
+  const playlistState = { mode: 'review' };
+  const timelineState = { playlistDuration: 0, cutlistDuration: 0 };
+  const cutlistState = { active: false };
+  const getProjection = new Function(
+    'fabricDrawingPilotController',
+    'isMpvPilotPlaybackActive',
+    'fabricDrawingPersistenceStore',
+    'playlistUIState',
+    'timeline',
+    'cutlistUIState',
+    `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
+  )(
+    { shouldOwnDrawingShortcut: () => true },
+    () => mpvActive,
+    {
+      getHydrationDocument: () => {
+        hydrationReads += 1;
+        return { keyframes: [{ frame: 12, objects: [{}] }] };
+      }
+    },
+    playlistState,
+    timelineState,
+    cutlistState
+  );
+
+  assert.equal(getProjection().length, 1);
+  assert.equal(hydrationReads, 1);
+
+  playlistState.mode = 'continuous';
+  const playlistProjection = getProjection();
+  assert.deepEqual(playlistProjection, []);
+  assert.equal(Boolean(playlistProjection), true);
+  assert.equal(hydrationReads, 1);
+
+  playlistState.mode = 'review';
+  cutlistState.active = true;
+  const cutlistProjection = getProjection();
+  assert.deepEqual(cutlistProjection, []);
+  assert.equal(Boolean(cutlistProjection), true);
+  assert.equal(hydrationReads, 1);
+
+  cutlistState.active = false;
+  timelineState.cutlistDuration = 0;
+  mpvActive = false;
+  assert.equal(getProjection(), null);
+});
+
+test('집계 모드 전환은 드로잉 투영 캐시를 즉시 다시 그린다', () => {
+  const playlistModeSource = appSource.match(
+    /function setPlaylistMode\(mode\) \{[\s\S]*?\n  \}\n\n  function exitPlaylistContinuousModeForCutlist/
+  )?.[0] || '';
+  assert.match(
+    playlistModeSource,
+    /playlistUIState\.mode = nextMode;[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
+  const showCutlistSource = appSource.match(
+    /function showCutlistSidebar\(\) \{[\s\S]*?\n  \}\n\n  function hideCutlistSidebar/
+  )?.[0] || '';
+  assert.match(
+    showCutlistSource,
+    /cutlistUIState\.active = true;[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
+  const hideCutlistSource = appSource.match(
+    /function hideCutlistSidebar\(\) \{[\s\S]*?\n  \}\n\n  function updateCutlistUI/
+  )?.[0] || '';
+  assert.match(
+    hideCutlistSource,
+    /cutlistUIState\.active = false;[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+});

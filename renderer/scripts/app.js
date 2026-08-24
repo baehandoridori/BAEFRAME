@@ -6023,14 +6023,20 @@ async function initApp() {
   ].join(',');
 
   function shouldBlockFabricDrawingLegacyShortcut(event) {
-    if (!isFabricDrawingPilotEngaged()) return false;
+    const engaged = isFabricDrawingPilotEngaged();
+    if (!engaged && !shouldSuppressLegacyDrawingForFabricPilot()) return false;
+    const matchedAction = [...FABRIC_DRAWING_LEGACY_SHORTCUTS]
+      .find(action => userSettings.matchShortcut(action, event));
+    if (!engaged) {
+      return Boolean(matchedAction) &&
+        !['undo', 'redo', 'drawMode'].includes(matchedAction);
+    }
     const key = String(event.key || '').toLowerCase();
     if ((event.ctrlKey || event.metaKey) && ['c', 'v', 'z', 'y'].includes(key)) return true;
     if (event.code === 'KeyE' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
       return true;
     }
-    return [...FABRIC_DRAWING_LEGACY_SHORTCUTS]
-      .some(action => userSettings.matchShortcut(action, event));
+    return Boolean(matchedAction);
   }
 
   function handleFabricDrawingPilotLegacyClick(event) {
@@ -6180,6 +6186,9 @@ async function initApp() {
     if (!fabricDrawingPilotController.shouldOwnDrawingShortcut() ||
         !isMpvPilotPlaybackActive()) {
       return null;
+    }
+    if (playlistUIState.mode === 'continuous' || cutlistUIState.active) {
+      return [];
     }
     const doc = fabricDrawingPersistenceStore.getHydrationDocument?.();
     const keyframes = (doc?.keyframes || [])
@@ -18750,6 +18759,7 @@ async function initApp() {
       timeline.clearCommentMarkers();
       updatePlaylistContinuousTimeline();
     }
+    renderActiveDrawingLayers();
   }
 
   function exitPlaylistContinuousModeForCutlist() {
@@ -18975,6 +18985,7 @@ async function initApp() {
     updateCurrentCutDisplay(currentCut);
     void refreshCommentRangesForCurrentMode();
     updateCommentList(getActiveCommentFilter());
+    renderActiveDrawingLayers();
   }
 
   function hideCutlistSidebar() {
@@ -18989,6 +19000,7 @@ async function initApp() {
     timeline.setCutlistTimeline([], 0);
     void refreshCommentRangesForCurrentMode();
     updateCommentList(getActiveCommentFilter());
+    renderActiveDrawingLayers();
   }
 
   function updateCutlistUI() {
