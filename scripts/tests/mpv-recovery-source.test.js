@@ -750,7 +750,7 @@ test('failed superseding video load safely tears down a destructive review trans
     'watch and collaboration teardown must run inside the destructive transition boundary'
   );
   assert.match(source, /videoLoadCompleted = true;[\s\S]+return true;/);
-  assert.match(source, /const ownsActiveLoad = activeVideoLoadToken === loadToken;[\s\S]+await settlePendingMpvReviewFreezeMediaChange\(\{\s+expectedLoadToken: loadToken,\s+loaded: videoLoadCompleted \|\| \(!videoLoadCompletion\.hardInvalidated && \(loadIntent !== videoLoadIntentGeneration \|\| !shouldContinueVideoLoad\(\)\)\)\s+\}\);/);
+  assert.match(source, /const ownsActiveLoad = activeVideoLoadToken === loadToken;[\s\S]+await settlePendingMpvReviewFreezeMediaChange\(\{\s+expectedLoadToken: loadToken,\s+loaded: videoLoadCompleted \|\| \(!videoLoadCompletion\.hardInvalidated && loadIntent !== videoLoadIntentGeneration\)\s+\}\);/);
 });
 
 test('leaving draw mode forces a final mpv overlay sync so saved drawings stay visible', () => {
@@ -899,7 +899,7 @@ test('draw playback state is cancelled before mode exit or media replacement', (
 test('failed video loads clear the drive loading overlay in the finally block', () => {
   assert.match(
     appSource,
-    /const ownsActiveLoad = activeVideoLoadToken === loadToken;[\s\S]+if \(!videoLoadCompleted && driveLoadingFeedbackShown\) \{[\s\S]+hideVideoLoadingOverlay\('drive'\);[\s\S]+\}[\s\S]+await settlePendingMpvReviewFreezeMediaChange\(\{\s+expectedLoadToken: loadToken,\s+loaded: videoLoadCompleted \|\| \(!videoLoadCompletion\.hardInvalidated && \(loadIntent !== videoLoadIntentGeneration \|\| !shouldContinueVideoLoad\(\)\)\)\s+\}\);/
+    /const ownsActiveLoad = activeVideoLoadToken === loadToken;[\s\S]+if \(!videoLoadCompleted && driveLoadingFeedbackShown\) \{[\s\S]+hideVideoLoadingOverlay\('drive'\);[\s\S]+\}[\s\S]+await settlePendingMpvReviewFreezeMediaChange\(\{\s+expectedLoadToken: loadToken,\s+loaded: videoLoadCompleted \|\| \(!videoLoadCompletion\.hardInvalidated && loadIntent !== videoLoadIntentGeneration\)\s+\}\);/
   );
 });
 

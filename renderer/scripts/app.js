@@ -9838,7 +9838,7 @@ async function initApp() {
         }
         await settlePendingMpvReviewFreezeMediaChange({
           expectedLoadToken: loadToken,
-          loaded: videoLoadCompleted || (!videoLoadCompletion.hardInvalidated && (loadIntent !== videoLoadIntentGeneration || !shouldContinueVideoLoad()))
+          loaded: videoLoadCompleted || (!videoLoadCompletion.hardInvalidated && loadIntent !== videoLoadIntentGeneration)
         });
         if (videoLoadCompletion.hardInvalidated || (ownsActiveLoad && loadIntent === videoLoadIntentGeneration && shouldContinueVideoLoad())) retryDeferredMpvOverlayFallback();
       } finally {

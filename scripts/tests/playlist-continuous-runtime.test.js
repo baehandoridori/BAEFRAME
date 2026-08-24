@@ -2995,6 +2995,33 @@ test('a standalone local pause soft-settles the current production tail without 
   assert.equal(scenario.effects.teardowns, 0);
 });
 
+test('a paused continuous handoff tears down retained review media when the media load rejects', async () => {
+  const scenario = createActualLoadRaceScenario({
+    holdFirstMediaLoad: true,
+    failFirstMediaLoad: true
+  });
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.firstMediaLoadStarted;
+  const oldToken = scenario.runtime.getLatestVideoLoadToken();
+  const oldIntent = scenario.runtime.getIntentGeneration();
+
+  await scenario.runtime.handleUserPlayPauseToggle();
+  scenario.releaseFirstMediaLoad();
+  const result = await oldLoad;
+
+  assert.equal(result, false);
+  assert.equal(scenario.continuousPlaybackState.active, false);
+  assert.equal(scenario.runtime.getIntentGeneration(), oldIntent, 'a pause must not create a successor load intent');
+  assert.equal(scenario.effects.settlements.find(entry => entry.expectedLoadToken === oldToken)?.loaded, false);
+  assert.equal(scenario.effects.teardowns, 1);
+  assert.equal(scenario.effects.fabricCancellations.at(-1)?.options.restorePreviousVideo, false);
+});
+
 test('Space reloads a hard-abandoned same-file tail that settled before resume', async () => {
   const scenario = createActualLoadRaceScenario();
   const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
