@@ -75,7 +75,10 @@ class Logger {
     }
 
     // 파일 출력 (IPC를 통해 메인 프로세스로)
-    if (this.enableFile && window.electronAPI) {
+    // WARN 이상은 옵션과 무관하게 항상 파일로 남긴다 — 렌더러 경고가 파일에 남지 않아
+    // 이어붙이기 자동 재생 정지(2026-08-21)의 원인 확정이 불가능했던 공백의 재발 방지.
+    const shouldWriteFile = this.enableFile || level >= LOG_LEVELS.WARN;
+    if (shouldWriteFile && typeof window !== 'undefined' && window.electronAPI?.writeLog) {
       window.electronAPI.writeLog(log);
     }
   }

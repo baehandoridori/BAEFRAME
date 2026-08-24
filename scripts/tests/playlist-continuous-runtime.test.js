@@ -1,6 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawn: spawnProcess } = require('node:child_process');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
+const Module = require('node:module');
 const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '../..');
@@ -14,6 +17,107 @@ const preloadSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'prel
 const splitViewSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/split-view-manager.js'), 'utf8'));
 const playlistCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/playlist-panel.css'), 'utf8'));
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+
+function loadFileExistsHandler({ spawnImpl = spawnProcess } = {}) {
+  const handlers = new Map();
+  const warnings = [];
+  const noop = () => {};
+  const ipcHandlersPath = path.join(rootDir, 'main/ipc-handlers.js');
+  const ipcMain = {
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+    on: noop
+  };
+  const fakeModules = new Map([
+    ['electron', { ipcMain, dialog: {}, app: {}, clipboard: {}, shell: {} }],
+    ['child_process', { spawn: spawnImpl }],
+    ['./logger', {
+      createLogger: () => ({
+        debug: noop,
+        error: noop,
+        info: noop,
+        trace: () => ({ end: noop, error: noop }),
+        warn: (message, data) => warnings.push({ message, data })
+      })
+    }],
+    ['./window', {
+      closeWindow: noop,
+      getMainWindow: () => null,
+      isFullscreen: () => false,
+      isMaximized: () => false,
+      minimizeWindow: noop,
+      toggleFullscreen: noop,
+      toggleMaximize: noop
+    }],
+    ['./recent-files-store', { RecentFilesStore: class RecentFilesStore {} }],
+    ['./recent-thumb-capture', {}],
+    ['./cutlist-paths', { validateCutlistFilePath: value => value }],
+    ['./mpv-manager', { MPVManager: class MPVManager {}, mpvManager: {} }],
+    ['./mpv-embed-host', { mpvEmbedHost: {} }],
+    ['./mpv-overlay-host', { mpvOverlayHost: {} }],
+    ['electron-store', class Store {}]
+  ]);
+  const originalLoad = Module._load;
+
+  delete require.cache[ipcHandlersPath];
+  Module._load = function loadWithFakes(request, parent, isMain) {
+    if (parent?.filename === ipcHandlersPath && fakeModules.has(request)) {
+      return fakeModules.get(request);
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+
+  try {
+    const { setupIpcHandlers } = require(ipcHandlersPath);
+    setupIpcHandlers();
+  } finally {
+    Module._load = originalLoad;
+    delete require.cache[ipcHandlersPath];
+  }
+
+  return {
+    handler: handlers.get('file:exists'),
+    warnings
+  };
+}
+
+function extractAppFunctionSource(name) {
+  const match = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(appSource);
+  assert.ok(match, `${name} should exist`);
+
+  const functionStart = match.index;
+  const bodyStart = appSource.indexOf(') {', functionStart) + 2;
+  assert.ok(bodyStart > 1, `${name} should have a function body`);
+  let depth = 0;
+  for (let index = bodyStart; index < appSource.length; index += 1) {
+    if (appSource[index] === '{') depth += 1;
+    if (appSource[index] === '}') depth -= 1;
+    if (depth === 0) return appSource.slice(functionStart, index + 1);
+  }
+  assert.fail(`${name} should have a complete body`);
+}
+
+function extractOptionalAppFunctions(names) {
+  return names
+    .filter(name => new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).test(appSource))
+    .map(extractAppFunctionSource)
+    .join('\n');
+}
+
+function extractRemotePauseHandlerSource() {
+  const match = appSource.match(
+    /playbackSync\.addEventListener\('remotePause', (\(e\) => \{[\s\S]*?\n  \})\);/
+  );
+  assert.ok(match, 'remotePause handler should exist');
+  return match[1];
+}
+
+function extractEndedHandlerSource() {
+  const match = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(match, 'videoPlayer ended handler should exist');
+  return match[1];
+}
 
 function loadPlaylistVideoPathIndexHelper() {
   const helperNames = [
@@ -295,7 +399,7 @@ test('manual continuous timeline seeks restart active sessions and preserve the 
   assert.match(seekSource, /const wasContinuousActive = continuousPlaybackState\.active === true;/);
   assert.match(seekSource, /const shouldResumePlayback = resumePlayback && \(videoPlayer\.isPlaying === true \|\| wasContinuousActive\);/);
   assert.match(seekSource, /const manualSessionId = wasContinuousActive[\s\S]+restartContinuousPlaybackSessionForManualSeek\(\)/);
-  assert.match(seekSource, /const isAlreadyLoaded = isSameFilePath\(state\.currentFile, item\.videoPath\) &&[\s\S]+!hasActiveVideoLoadForDifferentFile\(item\.videoPath\);/);
+  assert.match(seekSource, /const isAlreadyLoaded = canReuseCurrentMedia && isSameFilePath\(state\.currentFile, item\.videoPath\) &&[\s\S]+!hasActiveVideoLoadForDifferentFile\(item\.videoPath\);/);
   assert.match(seekSource, /preserveContinuousSession: true/);
   assert.match(seekSource, /initialFrame: targetFrame/);
   assert.match(seekSource, /revealAfterInitialSeek: true/);
@@ -521,8 +625,8 @@ test('continuous playback verifies that native playback actually advances', () =
   assert.match(appSource, /waitForContinuousPlaybackAdvance\(sessionId/);
   assert.match(appSource, /연속 재생이 멈춘 상태라 다시 시도합니다/);
   assert.match(appSource, /showToast\('영상을 재생할 수 없어 다음 영상으로 넘어갑니다\.', 'warning'\)/);
-  assert.match(appSource, /const started = await playContinuousItemWithWatchdog\(currentItem, sessionId\);[\s\S]+if \(!started\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
-  assert.match(appSource, /const started = await playContinuousItemWithWatchdog\(nextItem, sessionId\);[\s\S]+if \(!started\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
+  assert.match(appSource, /const started = await playContinuousItemWithWatchdog\(currentItem, sessionId\);[\s\S]+if \(!started\) \{[\s\S]+await playNextContinuousItem\(sessionId, \{ inFlight: true \}\);/);
+  assert.match(appSource, /const started = await playContinuousItemWithWatchdog\(nextItem, sessionId\);[\s\S]+if \(!started\) \{[\s\S]+await playNextContinuousItem\(sessionId, \{ inFlight: true \}\);/);
 
   const watchdogMatch = appSource.match(/async function playContinuousItemWithWatchdog\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  async function startContinuousPlayback/);
   assert.ok(watchdogMatch, 'playContinuousItemWithWatchdog should exist');
@@ -548,6 +652,8 @@ test('continuous playback watchdog uses VideoPlayer state for external engines',
   assert.match(advanceSource, /if \(hasContinuousPlaybackReachedMediaEnd\(snapshot\)\) return Promise\.resolve\(true\);/);
   assert.match(advanceSource, /const currentSnapshot = getContinuousPlaybackSnapshot\(\);/);
   assert.match(advanceSource, /return currentSnapshot\.currentTime - startTime >= minDelta;/);
+  assert.match(advanceSource, /const startStatusTime = snapshot\.statusTime;/);
+  assert.match(advanceSource, /return currentSnapshot\.statusTime - startStatusTime >= minDelta;/);
   assert.match(advanceSource, /hasAdvanced\(\) \|\| hasContinuousPlaybackReachedMediaEnd\(currentSnapshot\)/);
   assert.doesNotMatch(advanceSource, /currentSnapshot\.paused && !videoPlayer\.isPlaying[\s\S]+finish\(true\)/);
   assert.doesNotMatch(advanceSource, /media\.currentTime \|\| videoPlayer\.currentTime/);
@@ -597,7 +703,8 @@ test('spacebar pauses an active continuous handoff instead of starting a duplica
   const handleSource = handleMatch[1];
   assert.match(handleSource, /const continuousPausePosition = continuousPlaybackState\.active[\s\S]+getPlaybackSyncPosition\(videoPlayer\.currentTime, \{ forceContinuous: true \}\)/);
   assert.match(handleSource, /playbackSync\.broadcastPause\(continuousPausePosition\.time, continuousPausePosition\.options\);/);
-  assert.match(handleSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+const continuousPausePosition = getPlaybackSyncPosition\(videoPlayer\.currentTime, \{ forceContinuous: true \}\);[\s\S]+stopContinuousPlayback\(\);[\s\S]+invalidateActiveVideoLoad\(\);[\s\S]+videoPlayer\.pause\(\);[\s\S]+playbackSync\.broadcastPause\(continuousPausePosition\.time, continuousPausePosition\.options\);[\s\S]+return;/);
+  assert.match(handleSource, /if \(continuousPlaybackState\.active\) \{[\s\S]+const continuousPausePosition = getPlaybackSyncPosition\(videoPlayer\.currentTime, \{ forceContinuous: true \}\);[\s\S]+stopContinuousPlayback\(\);[\s\S]+videoPlayer\.pause\(\);[\s\S]+playbackSync\.broadcastPause\(continuousPausePosition\.time, continuousPausePosition\.options\);[\s\S]+return;/);
+  assert.doesNotMatch(handleSource, /invalidateActiveVideoLoad\(\);/);
   assert.match(handleSource, /const startedItem = await startContinuousPlayback\(\);[\s\S]+broadcastPlaylistContinuousPlaybackPlay\(startedItem, videoPlayer\.currentTime\);/);
   assert.doesNotMatch(handleSource, /void startContinuousPlayback\(\);[\s\S]+broadcastCurrentPlaybackPlay\(\);/);
   assert.ok(
@@ -627,10 +734,10 @@ test('continuous playback starts next-item preparation before playback watchdog 
       startSource.indexOf('const started = await playContinuousItemWithWatchdog(currentItem, sessionId);'),
     'next item preparation should begin before playback watchdog waits'
   );
-  assert.match(startSource, /return await playNextContinuousItem\(sessionId\);/);
+  assert.match(startSource, /return await playNextContinuousItem\(sessionId, \{ inFlight: true \}\);/);
   assert.match(startSource, /return currentItem;/);
 
-  const nextMatch = appSource.match(/async function playNextContinuousItem\(sessionId\) \{([\s\S]*?)\n  \}\n\n  function setPlaylistMode/);
+  const nextMatch = appSource.match(/async function playNextContinuousItem\(sessionId, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  function setPlaylistMode/);
   assert.ok(nextMatch, 'playNextContinuousItem should exist');
   const nextSource = nextMatch[1];
   assert.ok(
@@ -638,7 +745,7 @@ test('continuous playback starts next-item preparation before playback watchdog 
       nextSource.indexOf('const started = await playContinuousItemWithWatchdog(nextItem, sessionId);'),
     'following item preparation should begin before playback watchdog waits'
   );
-  assert.match(nextSource, /return await playNextContinuousItem\(sessionId\);/);
+  assert.match(nextSource, /return await playNextContinuousItem\(sessionId, \{ inFlight: true \}\);/);
   assert.match(nextSource, /return nextItem;/);
 });
 
@@ -713,7 +820,7 @@ test('manual video loads cancel active continuous playback and stale loads', () 
   assert.match(loadVideoSource, /const canContinueVideoLoad = \(\) => \([\s\S]+!isStaleVideoLoad\(\) &&[\s\S]+\(!allowNavigationGuardAbort \|\| shouldContinueVideoLoad\(\)\)[\s\S]+\);/);
   assert.match(loadVideoSource, /activeVideoLoadPath = filePath;/);
   assert.match(loadVideoSource, /allowNavigationGuardAbort = false;[\s\S]+\/\/ ====== 이전 파일 감시 및 협업 세션 정리/);
-  assert.match(loadVideoSource, /finally \{[\s\S]+if \(activeVideoLoadToken === loadToken\) \{[\s\S]+activeVideoLoadToken = null;[\s\S]+activeVideoLoadPath = null;/);
+  assert.match(loadVideoSource, /finally \{[\s\S]+const ownsActiveLoad = activeVideoLoadToken === loadToken;[\s\S]+if \(activeVideoLoadToken === loadToken\) \{[\s\S]+activeVideoLoadToken = null;[\s\S]+activeVideoLoadPath = null;/);
   assert.match(loadVideoSource, /if \(!preserveContinuousSession && continuousPlaybackState\.active\) \{[\s\S]+stopContinuousPlayback\(\);[\s\S]+\}/);
   assert.match(loadVideoSource, /const isStaleVideoLoad = \(\) => loadToken !== latestVideoLoadToken;/);
   assert.match(loadVideoSource, /if \(!canContinueVideoLoad\(\)\) return false;/);
@@ -736,7 +843,7 @@ test('rapid playlist item selections cannot let older pre-load checks win', () =
   assert.ok(playlistLoaderMatch, 'playlist loader should exist');
   const playlistLoaderSource = playlistLoaderMatch[1];
   assert.match(playlistLoaderSource, /shouldContinue = null/);
-  assert.match(playlistLoaderSource, /const canContinuePlaylistLoad = \(\) => typeof shouldContinue !== 'function' \|\| shouldContinue\(\);/);
+  assert.match(playlistLoaderSource, /const canContinuePlaylistLoad = \(\) => loadIntent === videoLoadIntentGeneration &&[\s\S]+typeof shouldContinue !== 'function' \|\| shouldContinue\(\)/);
   assert.match(playlistLoaderSource, /if \(!canContinuePlaylistLoad\(\)\) return false;/);
   assert.ok(
     playlistLoaderSource.indexOf('if (!canContinuePlaylistLoad()) return false;') <
@@ -768,7 +875,7 @@ test('continuous async flows are guarded by a session id', () => {
   assert.match(appSource, /async function quickCheckPlaylistForContinuous\(sessionId, itemsToCheck = null\)/);
   assert.match(appSource, /async function waitForPreparedOrSkip\(item, sessionId\)/);
   assert.match(appSource, /async function startContinuousPlayback\(\)[\s\S]+const sessionId = continuousPlaybackState\.sessionId;/);
-  assert.match(appSource, /async function playNextContinuousItem\(sessionId\)/);
+  assert.match(appSource, /async function playNextContinuousItem\(sessionId, options = \{\}\)/);
   assert.match(appSource, /if \(!isContinuousSessionActive\(sessionId\)\) return;/);
 });
 
@@ -822,12 +929,12 @@ test('continuous playback only checks the current item before first play', () =>
 });
 
 test('continuous playback skips item when playlist load fails', () => {
-  assert.match(appSource, /async function loadContinuousPlaylistItem\(item, sessionId\)/);
+  assert.match(appSource, /async function loadContinuousPlaylistItem\(item, sessionId, videoLoadIntent\)/);
   assert.match(appSource, /const loaded = await loadVideoFromPlaylist\(item, \{[\s\S]+preserveContinuousSession: true,[\s\S]+preparedVideoPath[\s\S]+\}\);/);
   assert.match(appSource, /markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.ERROR, '건너뜀'\);/);
   assert.match(appSource, /continuousPlaybackState\.skippedBatch\.push\(item\);/);
-  assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(currentItem, sessionId\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
-  assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(nextItem, sessionId\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId\);/);
+  assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(currentItem, sessionId, startLoadIntent\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId, \{ inFlight: true \}\);/);
+  assert.match(appSource, /const loaded = await loadContinuousPlaylistItem\(nextItem, sessionId, videoLoadIntent\);[\s\S]+if \(!loaded\) \{[\s\S]+await playNextContinuousItem\(sessionId, \{ inFlight: true \}\);/);
 });
 
 test('continuous playlist loads hold the previous frame during source switches', () => {
@@ -842,7 +949,7 @@ test('continuous playlist loads hold the previous frame during source switches',
   assert.match(loadVideoSource, /captureVideoTransitionFreezeFrame\(\)/);
   assert.match(loadVideoSource, /await waitForVideoRenderable\(elements\.videoPlayer\)/);
 
-  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId, videoLoadIntent\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
   const continuousLoadSource = continuousLoadMatch[1];
 
@@ -862,7 +969,7 @@ test('continuous playlist source switches defer collaboration startup off the tr
   assert.match(loadVideoSource, /if \(hasExistingData\) \{[\s\S]*if \(deferCollaborationStart\) \{[\s\S]*scheduleDeferredCollaborationStart\(loadToken, currentBframePath\);[\s\S]*\} else \{[\s\S]*await startCollaborationForVideoLoad\(loadToken, currentBframePath\);/);
   assert.match(loadVideoSource, /else \{\s*startDeferredReviewFileDiscovery\(loadToken, currentBframePath\);\s*\}/);
 
-  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId, videoLoadIntent\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
   assert.match(continuousLoadMatch[1], /deferCollaborationStart: true/);
 });
@@ -881,7 +988,7 @@ test('playlist marker refreshes update visible progress without rebuilding scrol
 });
 
 test('continuous playlist starts playback as soon as the next media is renderable', () => {
-  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId, videoLoadIntent\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
   const continuousLoadSource = continuousLoadMatch[1];
 
@@ -910,7 +1017,7 @@ test('continuous source switches suppress stale zero-time timeline updates', () 
   assert.ok(frameUpdateMatch, 'frameUpdate handler should exist');
   assert.match(frameUpdateMatch[1], /syncPlaybackPositionUI\(time, frame/);
 
-  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId, videoLoadIntent\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
   assert.match(continuousLoadMatch[1], /continuousPlaybackState\.loadingItemId = item\.id/);
   assert.match(continuousLoadMatch[1], /continuousPlaybackState\.loadingSessionId = sessionId/);
@@ -958,7 +1065,7 @@ test('continuous playback reuses prepared media paths at cut boundaries', () => 
   assert.match(loadVideoSource, /let actualVideoPath = hasPreparedVideoPath \? preparedVideoPath : filePath;/);
   assert.match(loadVideoSource, /!hasPreparedVideoPath && !fileIsAudio && await window\.electronAPI\.ffmpegIsAvailable\(\)/);
 
-  const continuousLoaderMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}/);
+  const continuousLoaderMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId, videoLoadIntent\) \{([\s\S]*?)\n  \}/);
   assert.ok(continuousLoaderMatch, 'continuous playlist loader should exist');
   const continuousLoaderSource = continuousLoaderMatch[1];
   assert.match(continuousLoaderSource, /const preparedVideoPath = continuousPlaybackState\.preparedMediaPaths\.get\(item\.id\);/);
@@ -970,7 +1077,7 @@ test('playlist loading returns the real loadVideo result', () => {
   assert.ok(loadVideoFromPlaylistMatch, 'playlist loader should exist');
 
   const playlistLoaderSource = loadVideoFromPlaylistMatch[1];
-  assert.match(playlistLoaderSource, /const \{ shouldContinue = null, \.\.\.loadOptions \} = options;/);
+  assert.match(playlistLoaderSource, /const \{ shouldContinue = null, videoLoadIntent = null, \.\.\.loadOptions \} = options;/);
   assert.match(playlistLoaderSource, /const loaded = await loadVideo\(item\.videoPath, \{[\s\S]+\.\.\.loadOptions,[\s\S]+shouldContinue: canContinuePlaylistLoad[\s\S]+\}\);/);
   assert.match(playlistLoaderSource, /return loaded === true;/);
   assert.doesNotMatch(playlistLoaderSource, /await loadVideo\(item\.videoPath\);\s*return true;/);
@@ -1015,7 +1122,8 @@ test('continuous timeline uses aggregate time for playback and seek', () => {
   assert.match(appSource, /playbackSync\.addEventListener\('remotePause', \(e\) => \{[\s\S]+if \(playlistContinuous\) \{[\s\S]+if \(!canHandleRemoteContinuousSync\(\)\) \{[\s\S]+warnRemoteContinuousSyncUnavailable\('pause', time\);[\s\S]+return;[\s\S]+\}/);
   const remotePauseMatch = appSource.match(/playbackSync\.addEventListener\('remotePause', \(e\) => \{([\s\S]*?)\n  \}\);/);
   assert.ok(remotePauseMatch, 'remotePause handler should exist');
-  assert.match(remotePauseMatch[1], /stopContinuousPlayback\(\);[\s\S]+invalidateActiveVideoLoad\(\);/);
+  assert.match(remotePauseMatch[1], /stopContinuousPlayback\(\);/);
+  assert.doesNotMatch(remotePauseMatch[1], /invalidateActiveVideoLoad\(\);/);
   assert.ok(
     remotePauseMatch[1].indexOf('if (!canHandleRemoteContinuousSync())') <
       remotePauseMatch[1].indexOf('videoPlayer.pause();'),
@@ -1384,7 +1492,7 @@ test('continuous playback stops with one toast when a global drawing gate cancel
   assert.match(loadVideoSource, failureBranchPattern('finalFabricPersistenceReadyToLeave'));
   assert.equal(loadVideoSource.split(genericToast).length - 1, 2);
 
-  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
+  const continuousLoadMatch = appSource.match(/async function loadContinuousPlaylistItem\(item, sessionId, videoLoadIntent\) \{([\s\S]*?)\n  \}\n\n  function waitForContinuousDelay/);
   assert.ok(continuousLoadMatch, 'continuous playlist loader should exist');
   assert.match(
     continuousLoadMatch[1],
@@ -1433,4 +1541,2098 @@ test('playlist clicks highlight immediately, roll back from current media, and r
     /if \(item\.continuousStatus === CONTINUOUS_STATUS\.SKIPPED \|\|\s+item\.continuousStatus === CONTINUOUS_STATUS\.ERROR\) \{\s+markPlaylistItemStatus\(item, CONTINUOUS_STATUS\.IDLE, ''\);\s+\}/
   );
   assert.match(selectedSource, /holdPreviousFrameUntilReady: true,/);
+});
+
+test('이어붙이기 자동 전환은 드로잉 저장 실패를 자동 포기하거나 우회하지 않는다', () => {
+  assert.doesNotMatch(appSource, /function bypassContinuousPersistenceGate\(stage\) \{/);
+  assert.doesNotMatch(appSource, /continuousPersistenceAbandonNotified/);
+  assert.doesNotMatch(appSource, /bypassContinuousPersistenceGate\('(?:first|final)-gate'\)/);
+});
+
+test('이어붙이기 전환은 예외 격리와 제한 시간 감시자를 가진다', () => {
+  const endedListenerMatch = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(endedListenerMatch, 'ended listener should exist');
+  assert.match(
+    endedListenerMatch[1],
+    /const advanceSessionId = continuousPlaybackState\.sessionId;\s+const advancePromise = playNextContinuousItem\(continuousPlaybackState\.sessionId\);\s+void advancePromise\.catch/
+  );
+  assert.match(endedListenerMatch[1], /isContinuousSessionActive\(advanceSessionId\)/);
+  assert.match(appSource, /const CONTINUOUS_TRANSITION_DEADLINE_MS = 20000;/);
+  assert.match(appSource, /function startContinuousTransitionDeadline\(item, sessionId\) \{/);
+  const deadlineMatch = appSource.match(/function startContinuousTransitionDeadline\(item, sessionId\) \{([\s\S]*?)\n  \}\n\n  function getContinuousPlaybackSnapshot/);
+  assert.ok(deadlineMatch, 'transition deadline helper should exist');
+  assert.match(deadlineMatch[1], /if \(!isContinuousSessionActive\(sessionId\)\) return;/);
+  assert.match(deadlineMatch[1], /continuousPlaybackState\.loadingItemId !== item\.id/);
+  assert.match(deadlineMatch[1], /invalidateActiveVideoLoad\(\);/);
+  assert.match(
+    appSource,
+    /const transitionDeadline = startContinuousTransitionDeadline\(nextItem, sessionId\);\s+const loaded = await loadContinuousPlaylistItem\(nextItem, sessionId, videoLoadIntent\);\s+transitionDeadline\.cancel\(\);/
+  );
+  assert.match(
+    appSource,
+    /const transitionDeadline = startContinuousTransitionDeadline\(currentItem, sessionId\);\s+const loaded = await loadContinuousPlaylistItem\(currentItem, sessionId, startLoadIntent\);\s+transitionDeadline\.cancel\(\);/
+  );
+  const ipcHandlersSourceLocal = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'main/ipc-handlers.js'), 'utf8'));
+  assert.match(ipcHandlersSourceLocal, /const FILE_EXISTS_DEADLINE_MS = 3000;/);
+  assert.match(ipcHandlersSourceLocal, /파일 존재 확인 지연, 존재로 간주하고 진행/);
+  const fileExistsHandlerSource = ipcHandlersSourceLocal.match(
+    /ipcMain\.handle\('file:exists',[\s\S]*?\n  \}\);/
+  );
+  assert.ok(fileExistsHandlerSource, 'file:exists handler should exist');
+  assert.match(fileExistsHandlerSource[0], /probeFileExistsInChild\(filePath, FILE_EXISTS_DEADLINE_MS\)/);
+  assert.doesNotMatch(fileExistsHandlerSource[0], /fs\.promises\.access|Promise\.race/);
+});
+
+test('file exists deadline terminates every isolated probe before returning', { timeout: 10_000 }, async (t) => {
+  const blockedPrefix = '__baeframe_blocked_file_probe__';
+  const probeInvocations = [];
+  const probeChildren = [];
+  const spawnImpl = (command, args, options) => {
+    const probePath = options?.env?.BAEFRAME_FILE_EXISTS_PROBE_PATH;
+    probeInvocations.push({ command, args, options, probePath });
+    if (!String(probePath || '').startsWith(blockedPrefix)) {
+      return spawnProcess(command, args, options);
+    }
+
+    const child = spawnProcess(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 30000);'],
+      {
+        ...options,
+        env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' },
+        windowsVerbatimArguments: false
+      }
+    );
+    const originalKill = child.kill.bind(child);
+    const record = { child, closed: false, killSignals: [] };
+    child.kill = (signal) => {
+      record.killSignals.push(signal);
+      return originalKill(signal);
+    };
+    child.once('close', () => {
+      record.closed = true;
+    });
+    probeChildren.push(record);
+    return child;
+  };
+  const { handler, warnings } = loadFileExistsHandler({ spawnImpl });
+  assert.equal(typeof handler, 'function');
+
+  t.after(async () => {
+    await Promise.all(probeChildren.map(async (record) => {
+      if (record.closed) return;
+      const closed = new Promise(resolve => record.child.once('close', resolve));
+      record.child.kill('SIGKILL');
+      await closed;
+    }));
+  });
+
+  const originalSetTimeout = global.setTimeout;
+  let acceleratedDeadlineCount = 0;
+  global.setTimeout = (callback, delay, ...args) => {
+    if (delay === 3000) {
+      acceleratedDeadlineCount += 1;
+      return originalSetTimeout(callback, 250, ...args);
+    }
+    return originalSetTimeout(callback, delay, ...args);
+  };
+
+  let blockedResults;
+  try {
+    blockedResults = await Promise.all(
+      Array.from({ length: 8 }, (_, index) => handler({}, `${blockedPrefix}${index}`))
+    );
+  } finally {
+    global.setTimeout = originalSetTimeout;
+  }
+
+  assert.deepEqual(blockedResults, Array(8).fill(true));
+  assert.equal(acceleratedDeadlineCount, 8);
+  assert.equal(probeChildren.length, 8);
+  assert.equal(probeChildren.every(record => record.closed), true);
+  assert.equal(
+    probeChildren.every(record => record.killSignals.length === 1 && record.killSignals[0] === 'SIGKILL'),
+    true
+  );
+  assert.equal(
+    probeChildren.every(record => record.child.exitCode !== null || record.child.signalCode !== null),
+    true
+  );
+  assert.equal(
+    warnings.filter(entry => entry.message === '파일 존재 확인 지연, 존재로 간주하고 진행').length,
+    8
+  );
+  const expectedProbeCommand = process.platform === 'win32'
+    ? 'powershell.exe'
+    : process.execPath;
+  assert.equal(probeInvocations.every(entry => entry.command === expectedProbeCommand), true);
+  if (process.platform === 'win32') {
+    assert.equal(probeInvocations.every(entry => entry.args?.includes('-Command')), true);
+    assert.equal(
+      probeInvocations.every(entry => entry.args?.join(' ').includes('[System.IO.File]::Exists($probePath)')),
+      true
+    );
+    assert.equal(
+      probeInvocations.every(entry => entry.args?.join(' ').includes('[System.IO.Directory]::Exists($probePath)')),
+      true
+    );
+    assert.equal(probeInvocations.every(entry => !entry.args?.join(' ').includes('Test-Path')), true);
+  } else {
+    assert.equal(probeInvocations.every(entry => entry.args?.[0] === '-e'), true);
+    assert.equal(
+      probeInvocations.every(entry => entry.options?.env?.ELECTRON_RUN_AS_NODE === '1'),
+      true
+    );
+  }
+
+  assert.equal(await handler({}, __filename), true);
+  assert.equal(await handler({}, process.execPath), true);
+  assert.equal(await handler({}, rootDir), true);
+  assert.equal(
+    await handler({}, path.join(rootDir, '__baeframe_file_probe_missing__')),
+    false
+  );
+  const untrustedPath = 'missing"; exit 0; #';
+  assert.equal(await handler({}, untrustedPath), false);
+  const untrustedInvocation = probeInvocations.at(-1);
+  assert.equal(untrustedInvocation.options.env.BAEFRAME_FILE_EXISTS_PROBE_PATH, untrustedPath);
+  assert.equal(untrustedInvocation.args.join(' ').includes(untrustedPath), false);
+  if (process.platform === 'win32') {
+    assert.equal(await handler({}, 'Env:PATH'), false);
+    assert.equal(await handler({}, 'Variable:PSVersionTable'), false);
+  }
+
+  const { handler: failedSpawnHandler } = loadFileExistsHandler({
+    spawnImpl: () => {
+      throw new Error('file probe spawn failed');
+    }
+  });
+  assert.equal(await failedSpawnHandler({}, __filename), false);
+
+  let asyncErrorClosed = false;
+  const { handler: asyncErrorHandler } = loadFileExistsHandler({
+    spawnImpl: () => {
+      const child = new EventEmitter();
+      child.kill = () => true;
+      setImmediate(() => {
+        child.emit('error', new Error('file probe async failure'));
+        setImmediate(() => {
+          asyncErrorClosed = true;
+          child.emit('close', 1, null);
+        });
+      });
+      return child;
+    }
+  });
+  let asyncErrorSettled = false;
+  const asyncErrorResult = asyncErrorHandler({}, __filename).then((value) => {
+    asyncErrorSettled = true;
+    return value;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(asyncErrorSettled, false);
+  assert.equal(await asyncErrorResult, false);
+  assert.equal(asyncErrorClosed, true);
+});
+
+test('영상 끝에서 멈춘 이어붙이기 세션은 스페이스 1회로 재개된다', () => {
+  const handleMatch = appSource.match(/async function handleUserPlayPauseToggle\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(handleMatch, 'play/pause toggle handler should exist');
+  const handleSource = handleMatch[1];
+  const resumeBranch = handleSource.match(
+    /continuousPlaybackState\.active &&\s+continuousPlaybackState\.loadingItemId === null &&\s+hasContinuousPlaybackReachedMediaEnd\(\)\s*\) \{([\s\S]*?)\n    \}/
+  );
+  assert.ok(resumeBranch, 'stalled-session resume branch should exist');
+  assert.match(resumeBranch[1], /stopContinuousPlayback\(\);/);
+  assert.match(resumeBranch[1], /const restartedItem = await startContinuousPlayback\(\);/);
+  assert.match(resumeBranch[1], /finally \{\s+continuousStalledResumeInFlight = false;/);
+  assert.match(handleSource, /if \(continuousStalledResumeInFlight\) return;/);
+  assert.match(appSource, /let continuousStalledResumeInFlight = false;/);
+  assert.ok(
+    handleSource.indexOf('hasContinuousPlaybackReachedMediaEnd()') <
+      handleSource.indexOf('const continuousPausePosition = getPlaybackSyncPosition(videoPlayer.currentTime, { forceContinuous: true });\n      stopContinuousPlayback();'),
+    'resume branch must run before the handoff-pause branch'
+  );
+});
+
+function createContinuousSingleFlightHarness(dependencies) {
+  const optionalSources = extractOptionalAppFunctions([
+    'hardAbandonContinuousTransitionFlight',
+    'waitForContinuousTransitionFlight',
+    'runContinuousTransitionFlight',
+    'requestContinuousPlaybackAdvance',
+    'getActiveVideoLoadCompletionForPath',
+    'startContinuousPlaybackInFlight'
+  ]);
+  const runtimeFactory = new Function('dependencies', `
+    with (dependencies) {
+      let continuousTransitionFlight = null;
+      let activeVideoLoadCompletion = null;
+      let activeVideoLoadToken = null;
+      let videoLoadIntentGeneration = 0;
+      let pendingUserVideoLoadIntent = null;
+      let continuousPersistenceAbandonNotified = false;
+      let continuousStalledResumeInFlight = false;
+      let lastVideoLoadFabricCancelReason = null;
+      let playlistSelectionLoadToken = 0;
+      let playlistContinuousNavigationToken = 0;
+      let suppressPlaylistSelectionLoad = false;
+      const CONTINUOUS_TRANSITION_DEADLINE_MS = 20000;
+      ${optionalSources}
+      ${extractAppFunctionSource('isContinuousSessionActive')}
+      ${extractAppFunctionSource('resetContinuousPlaybackRuntimeState')}
+      ${extractAppFunctionSource('restartContinuousPlaybackSessionForManualSeek')}
+      ${extractAppFunctionSource('stopContinuousPlayback')}
+      ${extractAppFunctionSource('commitPlaylistReplacement')}
+      ${extractAppFunctionSource('loadContinuousPlaylistItem')}
+      ${extractAppFunctionSource('startContinuousTransitionDeadline')}
+      ${extractAppFunctionSource('startContinuousPlayback')}
+      ${extractAppFunctionSource('playNextContinuousItemForIntent')}
+      ${extractAppFunctionSource('playNextContinuousItem')}
+      ${extractAppFunctionSource('seekContinuousTimeline')}
+      ${extractAppFunctionSource('handleUserPlayPauseToggle')}
+      const handleRemotePause = ${extractRemotePauseHandlerSource()};
+      return {
+        playNextContinuousItem,
+        startContinuousPlayback,
+        seekContinuousTimeline,
+        commitPlaylistReplacement,
+        handleUserPlayPauseToggle,
+        handleRemotePause,
+        setActiveVideoLoadCompletion: record => { activeVideoLoadCompletion = record; },
+        setActiveVideoLoadState: (record, token) => {
+          activeVideoLoadCompletion = record;
+          activeVideoLoadToken = token;
+        },
+        getFlight: () => continuousTransitionFlight
+      };
+    }
+  `);
+  return runtimeFactory(dependencies);
+}
+
+function createNormalPlaylistLoadPriorityHarness(dependencies) {
+  const optionalSources = extractOptionalAppFunctions([
+    'hardAbandonContinuousTransitionFlight',
+    'preemptContinuousPlaybackForUserLoad',
+    'waitForContinuousTransitionFlight'
+  ]);
+  const runtimeFactory = new Function('dependencies', `
+    with (dependencies) {
+      let continuousTransitionFlight = null;
+      let videoLoadIntentGeneration = 0;
+      let pendingUserVideoLoadIntent = null;
+      let playlistContinuousNavigationToken = 0;
+      ${optionalSources}
+      ${extractAppFunctionSource('isContinuousSessionActive')}
+      ${extractAppFunctionSource('resetContinuousPlaybackRuntimeState')}
+      ${extractAppFunctionSource('stopContinuousPlayback')}
+      ${extractAppFunctionSource('loadVideoFromPlaylist')}
+      return {
+        loadVideoFromPlaylist,
+        setFlight: flight => { continuousTransitionFlight = flight; },
+        getFlight: () => continuousTransitionFlight
+      };
+    }
+  `);
+  return runtimeFactory(dependencies);
+}
+
+function createActualLoadRaceHarness(dependencies, {
+  useActualPlayNext = false,
+  useActualContinuousLoad = false
+} = {}) {
+  const optionalSources = extractOptionalAppFunctions([
+    'beginActiveVideoLoadCompletion',
+    'completeActiveVideoLoad',
+    'getActiveVideoLoadCompletionForPath',
+    'hardAbandonContinuousTransitionFlight',
+    'preemptContinuousPlaybackForUserLoad',
+    'waitForContinuousTransitionFlight',
+    'runContinuousTransitionFlight',
+    'requestContinuousPlaybackAdvance',
+    ...(useActualPlayNext ? ['playNextContinuousItemForIntent', 'playNextContinuousItem'] : []),
+    ...(useActualContinuousLoad ? ['loadContinuousPlaylistItem'] : [])
+  ]);
+  const runtimeFactory = new Function('dependencies', `
+    with (dependencies) {
+      let latestVideoLoadToken = 0;
+      let activeVideoLoadToken = null;
+      let activeVideoLoadPath = null;
+      let activeVideoLoadCompletion = null;
+      let continuousTransitionFlight = null;
+      let videoLoadIntentGeneration = 0;
+      let pendingUserVideoLoadIntent = null;
+      let lastVideoLoadFabricCancelReason = null;
+      let continuousPersistenceAbandonNotified = false;
+      let continuousStalledResumeInFlight = false;
+      let playlistSelectionLoadToken = 0;
+      let playlistContinuousNavigationToken = 0;
+      let suppressPlaylistSelectionLoad = false;
+      let mpvDrawPlaybackTransitionToken = 0;
+      let hybridReviewResumeMpvFile = null;
+      let suppressReviewFreezeReleaseForMediaChange = false;
+      let playlistAutoPlayAfterSelection = false;
+      let previousVersionComments = null;
+      const undoStack = [];
+      const redoStack = [];
+      const CONTINUOUS_TRANSITION_DEADLINE_MS = 20000;
+      ${optionalSources}
+      ${extractAppFunctionSource('hasActiveVideoLoadForDifferentFile')}
+      ${extractAppFunctionSource('invalidateActiveVideoLoad')}
+      ${extractAppFunctionSource('isContinuousSessionActive')}
+      ${extractAppFunctionSource('resetContinuousPlaybackRuntimeState')}
+      ${extractAppFunctionSource('restartContinuousPlaybackSessionForManualSeek')}
+      ${extractAppFunctionSource('stopContinuousPlayback')}
+      ${extractAppFunctionSource('loadVideoWithHtml5Fallback')}
+      ${extractAppFunctionSource('loadVideo')}
+      ${extractAppFunctionSource('loadVideoFromPlaylist')}
+      ${extractAppFunctionSource('seekContinuousTimeline')}
+      ${extractAppFunctionSource('commitPlaylistReplacement')}
+      ${extractAppFunctionSource('startContinuousTransitionDeadline')}
+      ${extractAppFunctionSource('startContinuousPlayback')}
+      ${extractAppFunctionSource('handleUserPlayPauseToggle')}
+      const handleEnded = () => {${extractEndedHandlerSource()}\n      };
+      return {
+        loadVideo,
+        loadVideoFromPlaylist,
+        seekContinuousTimeline,
+        commitPlaylistReplacement,
+        startContinuousPlayback,
+        startContinuousTransitionDeadline,
+        handleUserPlayPauseToggle,
+        handleEnded,
+        requestContinuousPlaybackAdvance,
+        hardAbandonContinuousTransitionFlight,
+        setFlight: flight => {
+          flight.completion = activeVideoLoadCompletion;
+          continuousTransitionFlight = flight;
+        },
+        getFlight: () => continuousTransitionFlight,
+        setActiveVideoLoadState: ({ completion, token = null, filePath = null }) => {
+          activeVideoLoadCompletion = completion;
+          activeVideoLoadToken = token;
+          activeVideoLoadPath = filePath;
+        },
+        getLatestVideoLoadToken: () => latestVideoLoadToken,
+        getIntentGeneration: () => videoLoadIntentGeneration,
+        getPendingUserVideoLoadIntent: () => pendingUserVideoLoadIntent
+      };
+    }
+  `);
+  return runtimeFactory(dependencies);
+}
+
+function createActualLoadRaceScenario({
+  holdFirstFileExists = false,
+  useMpvPilot = false,
+  invalidSeekMap = false,
+  seekItemIndex = 1,
+  continuousMediaEnded = false,
+  holdFirstMediaLoad = false,
+  failFirstMediaLoad = false,
+  holdSecondMediaLoad = false,
+  useActualPlayNext = false,
+  useActualContinuousLoad = false,
+  failFirstContinuousLoad = false,
+  failFirstPreparedItem = false,
+  holdSecondFileExists = false,
+  fabricFlushResults = null
+} = {}) {
+  const effects = {
+    mediaLoads: [],
+    continuousLoads: 0,
+    settlements: [],
+    teardowns: 0,
+    fallbacks: 0,
+    normalAutoNext: 0,
+    queuedAutoAdvances: 0,
+    playAfterLoad: 0,
+    fabricFlushes: 0,
+    fabricBeforeChanges: 0,
+    fabricCancellations: [],
+    persistenceBypassStages: [],
+    persistenceAbandons: 0,
+    playlistStatusChanges: [],
+    toasts: []
+  };
+  const queuedFabricFlushResults = Array.isArray(fabricFlushResults)
+    ? [...fabricFlushResults]
+    : null;
+  let releaseOldTail;
+  let notifyOldTailStarted;
+  const oldTailStarted = new Promise(resolve => { notifyOldTailStarted = resolve; });
+  const heldOldTail = new Promise(resolve => { releaseOldTail = resolve; });
+  let versionCallCount = 0;
+  let releaseFirstFileExists;
+  let notifyFirstFileExistsStarted;
+  const firstFileExistsStarted = new Promise(resolve => { notifyFirstFileExistsStarted = resolve; });
+  const heldFirstFileExists = new Promise(resolve => { releaseFirstFileExists = resolve; });
+  let releaseSecondFileExists;
+  let notifySecondFileExistsStarted;
+  const secondFileExistsStarted = new Promise(resolve => { notifySecondFileExistsStarted = resolve; });
+  const heldSecondFileExists = new Promise(resolve => { releaseSecondFileExists = resolve; });
+  let fileExistsCalls = 0;
+  let releaseFirstMediaLoad;
+  let notifyFirstMediaLoadStarted;
+  const firstMediaLoadStarted = new Promise(resolve => { notifyFirstMediaLoadStarted = resolve; });
+  const heldFirstMediaLoad = new Promise(resolve => { releaseFirstMediaLoad = resolve; });
+  let releaseSecondMediaLoad;
+  let notifySecondMediaLoadStarted;
+  const secondMediaLoadStarted = new Promise(resolve => { notifySecondMediaLoadStarted = resolve; });
+  const heldSecondMediaLoad = new Promise(resolve => { releaseSecondMediaLoad = resolve; });
+  let mediaLoadCalls = 0;
+  let capturedDeadline = null;
+  let preparedItemCalls = 0;
+  let mediaEnded = continuousMediaEnded;
+  const continuousPlaybackState = {
+    active: true,
+    waiting: false,
+    skippedBatch: [],
+    preparePromises: new Map(),
+    preparedMediaPaths: new Map(),
+    loadingItemId: null,
+    loadingSessionId: null,
+    sessionId: 7
+  };
+  const state = { isDrawMode: false, isCommentMode: false, isAudioMode: false, currentFile: null };
+  const items = [
+    { id: 'item-a', fileName: 'a.mp4', videoPath: 'C:/clips/a.mp4', continuousStatus: 'ready', fps: 24 },
+    { id: 'item-c', fileName: 'c.mp4', videoPath: 'C:/clips/c.mp4', continuousStatus: 'ready', fps: 24 }
+  ];
+  const playlistManager = {
+    currentIndex: 0,
+    isActive: () => true,
+    isEmpty: () => false,
+    getItems: () => items,
+    getCurrentItem: () => items[playlistManager.currentIndex],
+    selectItemById: itemId => {
+      const index = items.findIndex(item => item.id === itemId);
+      if (index >= 0) playlistManager.currentIndex = index;
+      return items[playlistManager.currentIndex];
+    },
+    getContinuousSettings: () => ({ loop: true }),
+    hasNext: () => true,
+    next: () => { effects.normalAutoNext += 1; return items[0]; }
+  };
+  const makeElement = () => {
+    const element = {
+      style: {}, dataset: {}, textContent: '', innerHTML: '',
+      classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
+      addEventListener: () => {}, removeEventListener: () => {}, setAttribute: () => {},
+      removeAttribute: () => {}, remove: () => {}, querySelector: () => null,
+      closest: () => element
+    };
+    return element;
+  };
+  const fallbackElement = makeElement();
+  const elements = new Proxy({
+    videoPlayer: makeElement(), videoWrapper: makeElement(), drawingTools: makeElement(),
+    fileName: makeElement(), filePath: makeElement(), dropZone: makeElement(),
+    btnOpenFolder: makeElement(), btnOpenOther: makeElement(), videoTrackClip: makeElement(),
+    btnDrawMode: makeElement(), videoZoomControls: makeElement()
+  }, { get: (target, key) => target[key] || fallbackElement });
+  const videoPlayer = {
+    engine: 'html5', fps: 24, totalFrames: 240, currentFrame: 0, currentTime: 0,
+    duration: 10, isPlaying: false, isAudioMode: false,
+    setFps: () => {}, seekToFrame: () => {},
+    seek: time => { videoPlayer.currentTime = time; },
+    pause: () => { videoPlayer.isPlaying = false; },
+    togglePlay: () => { videoPlayer.isPlaying = !videoPlayer.isPlaying; },
+    load: async filePath => {
+      effects.mediaLoads.push(filePath);
+      mediaLoadCalls += 1;
+      if (holdFirstMediaLoad && mediaLoadCalls === 1) {
+        notifyFirstMediaLoadStarted();
+        await heldFirstMediaLoad;
+      }
+      if (failFirstMediaLoad && mediaLoadCalls === 1) throw new Error('first media load failed');
+      if (holdSecondMediaLoad && mediaLoadCalls === 2) {
+        notifySecondMediaLoadStarted();
+        await heldSecondMediaLoad;
+      }
+    }
+  };
+  const reviewDataManager = {
+    currentBframePath: null,
+    isModified: false,
+    waitForPendingSave: async () => {},
+    hasUnsavedChanges: () => false,
+    save: async () => true,
+    pauseAutoSave: () => {}, resumeAutoSave: () => {}, setVersionInfo: () => {},
+    setVideoFile: async () => false, setFps: () => {}, getManualVersions: () => []
+  };
+  const fabricDrawingPilotController = {
+    flushPersistenceBeforeLeave: async () => {
+      effects.fabricFlushes += 1;
+      return queuedFabricFlushResults?.length
+        ? queuedFabricFlushResults.shift()
+        : true;
+    },
+    beforeVideoChange: async () => {
+      effects.fabricBeforeChanges += 1;
+      return true;
+    },
+    cancelVideoChange: async (loadToken, options) => {
+      effects.fabricCancellations.push({ loadToken, options });
+      return true;
+    },
+    abandonPersistenceForVideoChange: () => {
+      effects.persistenceAbandons += 1;
+      return true;
+    },
+    afterVideoReady: async () => {}
+  };
+  const pendingReview = { token: null };
+  const runtime = createActualLoadRaceHarness({
+    continuousPlaybackState,
+    state,
+    elements,
+    videoPlayer,
+    reviewDataManager,
+    fabricDrawingPilotInitialization: Promise.resolve(true),
+    fabricDrawingPilotController,
+    confirm: () => false,
+    bypassContinuousPersistenceGate: stage => {
+      effects.persistenceBypassStages.push(stage);
+      return false;
+    },
+    supersedeActiveTranscodeOverlay: () => {},
+    showDriveVideoLoadingFeedback: () => false,
+    hideVideoLoadingOverlay: () => {},
+    document: { body: makeElement(), getElementById: () => fallbackElement, querySelectorAll: () => [] },
+    window: {
+      electronAPI: {
+        getFileInfo: async filePath => ({ name: path.basename(filePath), dir: path.dirname(filePath), ext: '.mp4', size: 1 }),
+        ffmpegIsAvailable: async () => false,
+        watchFileStop: async () => {},
+        fileExists: async () => {
+          fileExistsCalls += 1;
+          if (holdFirstFileExists && fileExistsCalls === 1) {
+            notifyFirstFileExistsStarted();
+            await heldFirstFileExists;
+          }
+          if (holdSecondFileExists && fileExistsCalls === 2) {
+            notifySecondFileExistsStarted();
+            await heldSecondFileExists;
+          }
+          return true;
+        }
+      }
+    },
+    log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, trace: () => ({ end: () => {}, error: () => {} }) },
+    isAudioFile: () => false,
+    isSameFilePath: (left, right) => left === right,
+    shouldUseMpvPilot: async () => useMpvPilot,
+    mpvPilotSeamlessTransitionGate: { begin: () => {}, clear: () => {} },
+    isMpvPilotPlaybackActive: () => false,
+    cancelPlaylistBackgroundTranscodesForMpvPilot: async () => {},
+    beginDestructiveMpvReviewMediaChange: loadToken => { pendingReview.token = loadToken; return true; },
+    stopDeferredReviewFileDiscovery: () => {},
+    liveblocksManager: { stop: async () => {} },
+    commentSync: { stop: () => {} }, drawingSync: { stop: () => {} }, fabricDrawingSync: { stop: () => {} },
+    updateCollaboratorsUI: () => {}, commentManager: { setCommentMode: () => {}, clear: () => {} },
+    setCommentModeReadyState: () => {}, setCommentModePreparingState: () => {},
+    preserveMpvReviewFreezeFrameForMediaChange: () => false,
+    releaseMpvReviewFreezeFrame: async () => {}, resetCommentFilters: () => {},
+    advanceGlobalHistoryRevision: () => {},
+    drawingManager: { reset: () => {}, setPlaying: () => {}, layers: [], activeLayerId: null, renderFrame: () => {} },
+    highlightManager: { reset: () => {}, setVideoInfo: () => {} },
+    timeline: {
+      playlistDuration: 20,
+      playlistSegments: items.map((item, index) => ({ index, itemId: item.id, startTime: index * 10, duration: 10, fps: 24 })),
+      clearMarkers: () => {}, renderDrawingLayers: () => {}, setCurrentTime: () => {}, setPlayingState: () => {}
+    },
+    markerContainer: makeElement(), codecErrorOverlay: makeElement(),
+    getAudioWaveform: () => ({ hide: () => {}, reset: () => {}, setPlaying: () => {} }),
+    invalidateMpvHostVisibilityRequests: () => {}, resolveInitialFrameFromOptions: () => null,
+    captureVideoTransitionFreezeFrame: () => false, releaseVideoTransitionFreezeFrame: () => {},
+    resolveHtml5PlaybackFps: async () => 24, seekInitialVideoFrameBeforeReveal: async () => {},
+    waitForVideoRenderable: async () => true, waitForNextVideoPaint: async () => {},
+    playVideoAfterMediaLoad: async () => { effects.playAfterLoad += 1; return true; },
+    parseVersion: () => ({ version: 1 }),
+    getVersionManager: () => ({
+      setCurrentFile: async () => {
+        versionCallCount += 1;
+        if (versionCallCount === 1) {
+          notifyOldTailStarted();
+          await heldOldTail;
+        }
+      },
+      setManualVersions: () => {}
+    }),
+    getVersionDropdown: () => ({ show: () => {}, onVersionSelect: () => {}, _render: () => {} }),
+    toVersionInfo: () => ({}), generateThumbnails: async () => {},
+    getThumbnailGenerator: () => ({ clear: () => {} }),
+    scheduleDeferredCollaborationStart: () => {}, startCollaborationForVideoLoad: async () => true,
+    startDeferredReviewFileDiscovery: () => {},
+    showToast: (message, type) => { effects.toasts.push({ message, type }); },
+    renderVideoMarkers: () => {},
+    updateTimelineMarkers: () => {}, updateCommentList: () => {},
+    compositionLayerManager: { setVideoInfo: () => {}, setPlaybackState: () => {}, render: () => {} },
+    renderCompositionLayerTimeline: () => {}, renderHighlights: () => {},
+    refreshCommentRangesForCurrentMode: async () => {}, recentFilesManager: { add: () => {} },
+    getFabricDrawingPilotContext: () => ({}),
+    settlePendingMpvReviewFreezeMediaChange: async options => {
+      effects.settlements.push(options);
+      if (pendingReview.token !== options?.expectedLoadToken) return false;
+      pendingReview.token = null;
+      if (options.loaded !== true) effects.teardowns += 1;
+      return options.loaded === true;
+    },
+    retryDeferredMpvOverlayFallback: () => { effects.fallbacks += 1; }, resolveMpvThumbnailVideoPath: async filePath => filePath,
+    loadVideoWithMpvPilot: async () => false,
+    beginMpvHtml5FallbackReviewTransition: () => null,
+    beginExpectedMpvHtml5FallbackStop: () => 1,
+    finishMpvHtml5FallbackReviewTransition: () => {},
+    scheduleExpectedMpvHtml5FallbackStopCleanup: () => {},
+    clearPlaylistMediaPreload: () => {}, getPlaylistManager: () => playlistManager,
+    selectPlaylistItemForContinuous: index => {
+      playlistManager.currentIndex = index;
+      return items[index];
+    },
+    quickCheckPlaylistForContinuous: async () => true,
+    waitForPreparedOrSkip: async () => {
+      preparedItemCalls += 1;
+      return !(failFirstPreparedItem && preparedItemCalls === 1);
+    },
+    prepareNextPlaylistItem: () => {},
+    playContinuousItemWithWatchdog: async () => true,
+    playNextContinuousItem: (sessionId, options = {}) => {
+      if (!options.inFlight) return runtime.requestContinuousPlaybackAdvance(sessionId);
+      effects.queuedAutoAdvances += 1;
+      return Promise.resolve(null);
+    },
+    loadContinuousPlaylistItem: async (item, sessionId, videoLoadIntent) => {
+      effects.continuousLoads += 1;
+      if (failFirstContinuousLoad && effects.continuousLoads === 1) return false;
+      return runtime.loadVideo(item.videoPath, {
+        preserveContinuousSession: true,
+        playWhenMediaReady: true,
+        allowMpvPilot: false,
+        videoLoadIntent,
+        shouldContinue: () => continuousPlaybackState.active && continuousPlaybackState.sessionId === sessionId
+      });
+    },
+    setTimeout: (callback, delay) => {
+      if (delay === 20000) { capturedDeadline = callback; return { deadline: true }; }
+      const timer = setTimeout(callback, delay); timer.unref?.(); return timer;
+    },
+    clearTimeout: timer => { if (!timer?.deadline) clearTimeout(timer); },
+    invalidatePlaylistBackgroundWork: () => {}, resetPlaylistContinuousTimelineState: () => {},
+    playlistUIState: { mode: 'continuous' },
+    mapGlobalTimeToSegment: (_segments, time) => invalidSeekMap ? null : ({
+      segment: {
+        index: seekItemIndex,
+        itemId: items[seekItemIndex].id,
+        startTime: seekItemIndex * 10,
+        duration: 10,
+        fps: 24
+      },
+      localTime: Math.max(0, time - (seekItemIndex * 10))
+    }),
+    mapLocalTimeToGlobal: (segment, localTime) => segment.startTime + localTime,
+    findPlaylistItemIndexByVideoPath: (playlistItems, videoPath) =>
+      playlistItems.findIndex(item => item.videoPath === videoPath),
+    updatePlaylistCurrentItem: () => {}, updatePlaylistPosition: () => {},
+    getPlaybackSyncPosition: () => ({ time: 0, options: { playlistContinuous: true } }),
+    playbackSync: { broadcastPause: () => {}, broadcastSeek: () => {} },
+    broadcastCurrentPlaybackPause: () => {}, broadcastCurrentPlaybackPlay: () => {},
+    broadcastPlaylistContinuousPlaybackPlay: () => {}, warmPlaylistAutoPlayQueue: () => {},
+    shouldStartPlaylistContinuousAutoPlayback: () => true,
+    hasContinuousPlaybackReachedMediaEnd: () => mediaEnded,
+    findNextPlayableIndex: (_items, index) => (index + 1) % items.length,
+    flushSkippedToastBatch: () => {},
+    markPlaylistItemStatus: (item, status, message) => {
+      effects.playlistStatusChanges.push({ itemId: item?.id, status, message });
+    },
+    CONTINUOUS_STATUS: { ERROR: 'error' },
+    playIconSVG: '',
+    syncCompositionLayerPlaybackState: () => {},
+    restoreMpvDrawFreezeAfterPlayback: () => {},
+    cutlistUIState: { active: false },
+    getCutlistManager: () => ({ isActive: () => false }),
+    getNextCutlistCut: () => null,
+    advanceCutlistPlaybackFromCut: () => {},
+    getContinuousPlaybackSnapshot: () => ({}),
+    userSettings: { getPlaylistAutoPlay: () => true }
+  }, { useActualPlayNext, useActualContinuousLoad });
+
+  return {
+    effects, runtime, state, continuousPlaybackState, items, playlistManager,
+    oldTailStarted, releaseOldTail,
+    firstFileExistsStarted, releaseFirstFileExists,
+    secondFileExistsStarted, releaseSecondFileExists,
+    firstMediaLoadStarted, releaseFirstMediaLoad,
+    secondMediaLoadStarted, releaseSecondMediaLoad,
+    setContinuousMediaEnded: ended => { mediaEnded = ended; },
+    fireDeadline: () => { assert.equal(typeof capturedDeadline, 'function'); capturedDeadline(); }
+  };
+}
+
+test('드로잉 저장 게이트 실패는 이어붙이기를 한 번만 중단하고 현재 영상 선택을 복원한다', async (t) => {
+  const cases = [
+    { name: 'first gate', flushResults: [false], expectedFlushes: 1, expectedBeforeChanges: 0, expectedCancellations: 0 },
+    { name: 'final gate', flushResults: [true, false], expectedFlushes: 2, expectedBeforeChanges: 1, expectedCancellations: 1 }
+  ];
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const scenario = createActualLoadRaceScenario({
+        useActualPlayNext: true,
+        useActualContinuousLoad: true,
+        fabricFlushResults: testCase.flushResults
+      });
+      scenario.state.currentFile = scenario.items[0].videoPath;
+      scenario.releaseOldTail();
+
+      const result = await scenario.runtime.requestContinuousPlaybackAdvance(7);
+
+      assert.equal(result, null);
+      assert.equal(scenario.continuousPlaybackState.active, false);
+      assert.equal(scenario.effects.fabricFlushes, testCase.expectedFlushes);
+      assert.equal(scenario.effects.fabricBeforeChanges, testCase.expectedBeforeChanges);
+      assert.equal(scenario.effects.fabricCancellations.length, testCase.expectedCancellations);
+      assert.deepEqual(scenario.effects.persistenceBypassStages, []);
+      assert.equal(scenario.effects.persistenceAbandons, 0);
+      assert.deepEqual(scenario.effects.mediaLoads, []);
+      assert.deepEqual(scenario.effects.playlistStatusChanges, []);
+      assert.equal(scenario.playlistManager.currentIndex, 0);
+      assert.deepEqual(scenario.effects.toasts, [{
+        message: '드로잉 저장 문제로 이어붙이기 재생을 중단했습니다.',
+        type: 'error'
+      }]);
+      if (testCase.expectedCancellations > 0) {
+        assert.equal(
+          scenario.effects.fabricCancellations[0].options?.preserveAuthoritativeOverlay,
+          true
+        );
+      }
+    });
+  }
+});
+
+function createSingleFlightScenario({ itemCount = 2, currentIndex = 0, captureDeadline = false } = {}) {
+  const items = Array.from({ length: itemCount }, (_, index) => ({
+    id: `item-${index}`,
+    fileName: `clip-${index}.mp4`,
+    videoPath: `C:/clips/clip-${index}.mp4`,
+    continuousStatus: 'ready'
+  }));
+  const continuousPlaybackState = {
+    active: true,
+    waiting: false,
+    skippedBatch: [],
+    preparePromises: new Map(),
+    preparedMediaPaths: new Map(),
+    loadingItemId: null,
+    loadingSessionId: null,
+    sessionId: 7
+  };
+  const state = { currentFile: items[currentIndex]?.videoPath || null };
+  const playlistManager = {
+    currentIndex,
+    isActive: () => true,
+    isEmpty: () => false,
+    getItems: () => items,
+    getCurrentItem: () => items[playlistManager.currentIndex] || null,
+    selectItemById: itemId => {
+      const index = items.findIndex(item => item.id === itemId);
+      if (index >= 0) playlistManager.currentIndex = index;
+      return items[playlistManager.currentIndex] || null;
+    },
+    getContinuousSettings: () => ({ loop: true })
+  };
+  const loadCalls = [];
+  const heldLoads = [];
+  let holdLoads = true;
+  let activeLoads = 0;
+  let maxConcurrentLoads = 0;
+  let invalidations = 0;
+  const deadlineCallbacks = [];
+  const videoPlayer = {
+    isPlaying: false,
+    currentTime: 0,
+    seekToFrame: () => {},
+    seek: time => { videoPlayer.currentTime = time; },
+    pause: () => { videoPlayer.isPlaying = false; },
+    togglePlay: () => { videoPlayer.isPlaying = !videoPlayer.isPlaying; }
+  };
+  const runtime = createContinuousSingleFlightHarness({
+    continuousPlaybackState,
+    state,
+    getPlaylistManager: () => playlistManager,
+    findNextPlayableIndex: (_items, index) => (index + 1) % items.length,
+    selectPlaylistItemForContinuous: index => {
+      playlistManager.currentIndex = index;
+      return items[index];
+    },
+    waitForPreparedOrSkip: async () => true,
+    flushSkippedToastBatch: () => {},
+    showToast: () => {},
+    prepareNextPlaylistItem: () => {},
+    playContinuousItemWithWatchdog: async () => true,
+    loadVideoFromPlaylist: async (item, options) => {
+      loadCalls.push({ item, options });
+      activeLoads += 1;
+      maxConcurrentLoads = Math.max(maxConcurrentLoads, activeLoads);
+      if (!holdLoads) {
+        state.currentFile = item.videoPath;
+        activeLoads -= 1;
+        return true;
+      }
+      return new Promise(resolve => {
+        heldLoads.push(() => {
+          state.currentFile = item.videoPath;
+          activeLoads -= 1;
+          resolve(true);
+        });
+      });
+    },
+    markPlaylistItemStatus: () => {},
+    CONTINUOUS_STATUS: { ERROR: 'error' },
+    clearPlaylistMediaPreload: () => {},
+    setTimeout: (callback, delay) => {
+      if (captureDeadline && delay === 20000) {
+        const deadline = { callback, cancelled: false };
+        deadlineCallbacks.push(deadline);
+        return deadline;
+      }
+      const timer = setTimeout(callback, delay);
+      timer.unref?.();
+      return timer;
+    },
+    clearTimeout: timer => {
+      if (timer && Object.hasOwn(timer, 'cancelled')) {
+        timer.cancelled = true;
+        return;
+      }
+      clearTimeout(timer);
+    },
+    invalidateActiveVideoLoad: () => { invalidations += 1; },
+    invalidatePlaylistBackgroundWork: () => {},
+    resetPlaylistContinuousTimelineState: () => {},
+    log: { error: () => {}, warn: () => {} },
+    isSameFilePath: (left, right) => left === right,
+    hasActiveVideoLoadForDifferentFile: () => false,
+    quickCheckPlaylistForContinuous: async () => true,
+    videoPlayer,
+    playlistUIState: { mode: 'continuous' },
+    timeline: {
+      playlistDuration: itemCount * 10,
+      playlistSegments: items.map((item, index) => ({
+        index,
+        itemId: item.id,
+        startTime: index * 10,
+        duration: 10,
+        fps: 24
+      })),
+      setCurrentTime: () => {}
+    },
+    mapGlobalTimeToSegment: (_segments, globalTime) => {
+      const index = Math.max(0, Math.min(items.length - 1, Math.floor(globalTime / 10)));
+      return {
+        segment: { index, itemId: items[index].id, startTime: index * 10, duration: 10, fps: 24 },
+        localTime: globalTime - index * 10
+      };
+    },
+    mapLocalTimeToGlobal: (segment, localTime) => segment.startTime + localTime,
+    updatePlaylistCurrentItem: () => {},
+    updatePlaylistPosition: () => {},
+    playVideoAfterMediaLoad: async () => true,
+    getPlaybackSyncPosition: () => ({ time: 0, options: { playlistContinuous: true } }),
+    playbackSync: { broadcastPause: () => {}, broadcastSeek: () => {} },
+    broadcastCurrentPlaybackPause: () => {},
+    broadcastCurrentPlaybackPlay: () => {},
+    broadcastPlaylistContinuousPlaybackPlay: () => {},
+    warmPlaylistAutoPlayQueue: () => {},
+    shouldStartPlaylistContinuousAutoPlayback: () => true,
+    hasContinuousPlaybackReachedMediaEnd: () => false,
+    canHandleRemoteContinuousSync: () => true,
+    warnRemoteContinuousSyncUnavailable: () => {}
+  });
+
+  return {
+    continuousPlaybackState,
+    items,
+    loadCalls,
+    runtime,
+    state,
+    videoPlayer,
+    getInvalidations: () => invalidations,
+    getMaxConcurrentLoads: () => maxConcurrentLoads,
+    fireLatestDeadline: () => {
+      const deadline = [...deadlineCallbacks].reverse().find(candidate => !candidate.cancelled);
+      assert.ok(deadline, 'a live 20 second transition deadline should exist');
+      deadline.callback();
+    },
+    releaseNextLoad: () => heldLoads.shift()?.(),
+    releaseAllLoads: () => {
+      holdLoads = false;
+      heldLoads.splice(0).forEach(release => release());
+    }
+  };
+}
+
+test('single-flight coalesces duplicate EOF while the early-play load tail is pending', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 3, currentIndex: 0 });
+  const firstAdvance = scenario.runtime.playNextContinuousItem(7);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scenario.loadCalls.length, 1);
+
+  const duplicateEofA = scenario.runtime.playNextContinuousItem(7);
+  const duplicateEofB = scenario.runtime.playNextContinuousItem(7);
+  await new Promise(resolve => setImmediate(resolve));
+  const callsBeforeTailRelease = scenario.loadCalls.length;
+
+  scenario.releaseAllLoads();
+  await Promise.allSettled([firstAdvance, duplicateEofA, duplicateEofB]);
+
+  assert.equal(callsBeforeTailRelease, 1, 'duplicate EOF must not start a concurrent transition');
+  assert.deepEqual(
+    scenario.loadCalls.map(call => call.item.id),
+    ['item-1', 'item-2'],
+    'the pending EOF flag must be consumed exactly once after the current tail settles'
+  );
+  assert.ok(scenario.loadCalls.every(call => call.options.playWhenMediaReady === true));
+});
+
+test('local pause followed by immediate Space waits for the old production transition tail', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 2, currentIndex: 0 });
+  scenario.videoPlayer.isPlaying = true;
+  const oldTransition = scenario.runtime.playNextContinuousItem(7);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scenario.loadCalls.length, 1);
+
+  await scenario.runtime.handleUserPlayPauseToggle();
+  const resumed = scenario.runtime.handleUserPlayPauseToggle();
+  await new Promise(resolve => setImmediate(resolve));
+  const callsBeforeTailRelease = scenario.loadCalls.length;
+  const invalidationsBeforeTailRelease = scenario.getInvalidations();
+
+  scenario.releaseAllLoads();
+  await Promise.allSettled([oldTransition, resumed]);
+
+  assert.equal(callsBeforeTailRelease, 1, 'Space resume must not mint a replacement load before the old tail settles');
+  assert.equal(invalidationsBeforeTailRelease, 0, 'a user pause must not destructively invalidate the retained media');
+});
+
+test('immediate Space hard-abandons a permanently stalled soft predecessor after the deadline', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 2, currentIndex: 0, captureDeadline: true });
+  scenario.videoPlayer.isPlaying = true;
+  const oldTransition = scenario.runtime.playNextContinuousItem(7);
+  await waitForScenarioLoadCount(scenario, 1);
+  scenario.runtime.setActiveVideoLoadState({
+    filePath: scenario.items[1].videoPath,
+    intentGeneration: 1,
+    loadToken: 41,
+    hardInvalidated: false,
+    promise: Promise.resolve(false)
+  }, 41);
+
+  await scenario.runtime.handleUserPlayPauseToggle();
+  const resumed = scenario.runtime.handleUserPlayPauseToggle();
+  await new Promise(resolve => setImmediate(resolve));
+  scenario.fireLatestDeadline();
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(scenario.loadCalls.length, 2, 'the latest session must start without waiting for stalled predecessor I/O');
+  assert.equal(scenario.getInvalidations(), 1, 'the timed-out predecessor media load must be hard-invalidated');
+  assert.equal(scenario.continuousPlaybackState.active, true, 'the latest resumed session must remain active');
+
+  scenario.releaseAllLoads();
+  await Promise.allSettled([oldTransition, resumed]);
+});
+
+test('a superseded soft-flight deadline cannot hard-invalidate a newer active completion', async () => {
+  const scenario = createActualLoadRaceScenario();
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.oldTailStarted;
+  scenario.runtime.setFlight({ sessionId: 7, promise: oldLoad, pendingAdvance: false, hardAbandoned: false });
+  const resumed = scenario.runtime.startContinuousPlayback();
+  await new Promise(resolve => setImmediate(resolve));
+
+  const newerCompletion = {
+    filePath: 'C:/clips/newer.mp4', intentGeneration: 2, loadToken: 91,
+    hardInvalidated: false, promise: new Promise(() => {}), settle: () => {}
+  };
+  scenario.runtime.hardAbandonContinuousTransitionFlight();
+  scenario.runtime.setActiveVideoLoadState({ completion: newerCompletion, token: 91, filePath: newerCompletion.filePath });
+  scenario.fireDeadline();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(newerCompletion.hardInvalidated, false, 'an obsolete wait timer must not invalidate newer media ownership');
+  scenario.releaseOldTail();
+  await Promise.allSettled([oldLoad, resumed]);
+});
+
+test('a preflight soft-flight timeout leaves an inactive prior completion reusable', async () => {
+  const scenario = createActualLoadRaceScenario();
+  scenario.continuousPlaybackState.active = false;
+  scenario.state.currentFile = scenario.items[0].videoPath;
+  const priorCompletion = {
+    filePath: scenario.items[0].videoPath, intentGeneration: 0, loadToken: 41,
+    hardInvalidated: false, promise: Promise.resolve(true), settle: () => {}
+  };
+  scenario.runtime.setActiveVideoLoadState({ completion: priorCompletion });
+  let abandonPreflight;
+  const stalledPreflight = new Promise(resolve => { abandonPreflight = resolve; });
+  scenario.runtime.setFlight({
+    sessionId: 7,
+    promise: stalledPreflight,
+    pendingAdvance: false,
+    hardAbandoned: false,
+    abandon: abandonPreflight
+  });
+
+  const resumed = scenario.runtime.startContinuousPlayback();
+  await new Promise(resolve => setImmediate(resolve));
+  scenario.fireDeadline();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(priorCompletion.hardInvalidated, false, 'a settled record is not the stalled preflight media owner');
+
+  scenario.releaseOldTail();
+  await resumed;
+});
+
+test('a soft-flight timeout after the resumed session is paused leaves retained media intact', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 2, currentIndex: 0, captureDeadline: true });
+  scenario.videoPlayer.isPlaying = true;
+  const oldTransition = scenario.runtime.playNextContinuousItem(7);
+  await waitForScenarioLoadCount(scenario, 1);
+  scenario.runtime.setActiveVideoLoadState({
+    filePath: scenario.items[1].videoPath,
+    intentGeneration: 1,
+    loadToken: 51,
+    hardInvalidated: false,
+    promise: Promise.resolve(false)
+  }, 51);
+
+  await scenario.runtime.handleUserPlayPauseToggle();
+  const resumed = scenario.runtime.handleUserPlayPauseToggle();
+  await new Promise(resolve => setImmediate(resolve));
+  await scenario.runtime.handleUserPlayPauseToggle();
+  scenario.fireLatestDeadline();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(scenario.continuousPlaybackState.active, false);
+  assert.equal(scenario.getInvalidations(), 0, 'a timer owned by an inactive resumed session must be inert');
+  scenario.releaseAllLoads();
+  await Promise.allSettled([oldTransition, resumed]);
+});
+
+test('an inactive remote cross-file seek times out its stalled predecessor and continues', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 3, currentIndex: 0, captureDeadline: true });
+  const oldTransition = scenario.runtime.playNextContinuousItem(7);
+  await waitForScenarioLoadCount(scenario, 1);
+  scenario.runtime.setActiveVideoLoadState({
+    filePath: scenario.items[1].videoPath,
+    intentGeneration: 1,
+    loadToken: 61,
+    hardInvalidated: false,
+    promise: Promise.resolve(false)
+  }, 61);
+
+  scenario.runtime.handleRemotePause({ detail: { time: 21, playlistContinuous: true } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scenario.continuousPlaybackState.active, false);
+  assert.equal(scenario.runtime.getFlight()?.sessionId, scenario.continuousPlaybackState.sessionId);
+  assert.equal(scenario.loadCalls.length, 1);
+  scenario.fireLatestDeadline();
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(scenario.loadCalls.length, 2, 'the latest inactive navigation must bypass stalled predecessor I/O');
+  assert.equal(scenario.loadCalls[1].item.id, 'item-2');
+  assert.equal(scenario.getInvalidations(), 1);
+  scenario.releaseAllLoads();
+  await oldTransition;
+});
+
+test('hard abandonment releases a soft transition waiter before the retained tail settles', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 2, currentIndex: 0 });
+  scenario.videoPlayer.isPlaying = true;
+  const oldTransition = scenario.runtime.playNextContinuousItem(7);
+  await waitForScenarioLoadCount(scenario, 1);
+
+  await scenario.runtime.handleUserPlayPauseToggle();
+  const queuedResume = scenario.runtime.handleUserPlayPauseToggle();
+  await new Promise(resolve => setImmediate(resolve));
+  scenario.runtime.commitPlaylistReplacement();
+  const resumeSettledBeforeOldTail = await Promise.race([
+    queuedResume.then(() => true),
+    new Promise(resolve => setImmediate(() => resolve(false)))
+  ]);
+
+  assert.equal(resumeSettledBeforeOldTail, true, 'hard abandonment must signal and release an already waiting soft flight');
+  scenario.releaseAllLoads();
+  await oldTransition;
+});
+
+test('a normal playlist load claims priority before its first persistence await', async () => {
+  let releaseFlight;
+  const oldFlightPromise = new Promise(resolve => { releaseFlight = resolve; });
+  let releaseSave;
+  let notifySaveStarted;
+  const saveStarted = new Promise(resolve => { notifySaveStarted = resolve; });
+  const heldSave = new Promise(resolve => { releaseSave = resolve; });
+  const continuousPlaybackState = {
+    active: true,
+    waiting: false,
+    skippedBatch: [],
+    preparePromises: new Map(),
+    preparedMediaPaths: new Map(),
+    loadingItemId: 'continuous-item',
+    loadingSessionId: 7,
+    sessionId: 7
+  };
+  let loadCalls = 0;
+  const runtime = createNormalPlaylistLoadPriorityHarness({
+    continuousPlaybackState,
+    clearPlaylistMediaPreload: () => {},
+    window: { electronAPI: { fileExists: async () => true } },
+    reviewDataManager: {
+      isModified: true,
+      save: async () => {
+        notifySaveStarted();
+        await heldSave;
+        return true;
+      }
+    },
+    loadVideo: async () => {
+      loadCalls += 1;
+      return true;
+    },
+    showToast: () => {},
+    markPlaylistItemAsMissing: () => {}
+  });
+  runtime.setFlight({
+    sessionId: 7,
+    promise: oldFlightPromise,
+    pendingAdvance: true,
+    hardAbandoned: false
+  });
+
+  const normalLoad = runtime.loadVideoFromPlaylist({
+    id: 'normal-item',
+    fileName: 'normal.mp4',
+    videoPath: 'C:/clips/normal.mp4'
+  });
+  await saveStarted;
+  const activeDuringPersistence = continuousPlaybackState.active;
+  const pendingAdvanceDuringPersistence = runtime.getFlight()?.pendingAdvance;
+
+  releaseFlight();
+  releaseSave();
+  assert.equal(await normalLoad, true);
+  assert.equal(activeDuringPersistence, false, 'normal load intent must stop the continuous session before persistence waits');
+  assert.equal(pendingAdvanceDuringPersistence, false, 'queued EOF must yield to the normal load intent');
+  assert.equal(loadCalls, 1);
+});
+
+async function waitForScenarioLoadCount(scenario, expected) {
+  for (let attempt = 0; attempt < 20 && scenario.loadCalls.length < expected; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(scenario.loadCalls.length, expected);
+}
+
+test('eight short items keep one load in flight across three exact loops', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 8, currentIndex: 7 });
+  const transitionPromises = [scenario.runtime.playNextContinuousItem(7)];
+
+  for (let index = 0; index < 24; index += 1) {
+    await waitForScenarioLoadCount(scenario, index + 1);
+    if (index < 23) {
+      transitionPromises.push(scenario.runtime.playNextContinuousItem(7));
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    scenario.releaseNextLoad();
+  }
+  await Promise.allSettled(transitionPromises);
+
+  assert.equal(scenario.getMaxConcurrentLoads(), 1);
+  assert.deepEqual(
+    scenario.loadCalls.map(call => call.item.id),
+    Array.from({ length: 24 }, (_, index) => `item-${index % 8}`)
+  );
+});
+
+test('a hard deadline drops queued EOF and Space starts one replacement transition', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 3, currentIndex: 0, captureDeadline: true });
+  const stalledTransition = scenario.runtime.playNextContinuousItem(7);
+  await waitForScenarioLoadCount(scenario, 1);
+  const queuedEof = scenario.runtime.playNextContinuousItem(7);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scenario.loadCalls.length, 1);
+
+  scenario.fireLatestDeadline();
+  const resumed = scenario.runtime.handleUserPlayPauseToggle();
+  await waitForScenarioLoadCount(scenario, 2);
+  assert.equal(scenario.loadCalls.length, 2, 'hard abandonment must allow exactly one fresh Space transition');
+
+  scenario.releaseAllLoads();
+  await Promise.allSettled([stalledTransition, queuedEof, resumed]);
+});
+
+test('playlist replacement clears a queued EOF without loading an old-playlist item', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 3, currentIndex: 0 });
+  const transition = scenario.runtime.playNextContinuousItem(7);
+  await waitForScenarioLoadCount(scenario, 1);
+  const queuedEof = scenario.runtime.playNextContinuousItem(7);
+  await new Promise(resolve => setImmediate(resolve));
+
+  scenario.runtime.commitPlaylistReplacement();
+  scenario.releaseAllLoads();
+  await Promise.allSettled([transition, queuedEof]);
+
+  assert.equal(scenario.loadCalls.length, 1);
+  assert.equal(scenario.continuousPlaybackState.active, false);
+  assert.equal(scenario.getInvalidations(), 1);
+});
+
+test('rapid same-file then cross-file manual seeks run only the latest navigation after the old tail', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 3, currentIndex: 0 });
+  const oldTransition = scenario.runtime.playNextContinuousItem(7);
+  await waitForScenarioLoadCount(scenario, 1);
+
+  const sameFileSeek = scenario.runtime.seekContinuousTimeline(1, { resumePlayback: false });
+  const crossFileSeek = scenario.runtime.seekContinuousTimeline(21, { resumePlayback: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scenario.loadCalls.length, 1, 'manual navigation must wait for the retained transition tail');
+
+  scenario.releaseNextLoad();
+  await waitForScenarioLoadCount(scenario, 2);
+  scenario.releaseNextLoad();
+  const [sameResult, crossResult] = await Promise.all([sameFileSeek, crossFileSeek]);
+  await oldTransition;
+
+  assert.equal(sameResult, false);
+  assert.equal(crossResult, true);
+  assert.equal(scenario.loadCalls[1].item.id, 'item-2');
+  assert.equal(scenario.getMaxConcurrentLoads(), 1);
+});
+
+test('initial same-file continuous start waits for the ordinary load completion record', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 2, currentIndex: 0 });
+  scenario.continuousPlaybackState.active = false;
+  let resolveOrdinaryTail;
+  const ordinaryTail = new Promise(resolve => { resolveOrdinaryTail = resolve; });
+  scenario.runtime.setActiveVideoLoadCompletion({
+    loadToken: 41,
+    filePath: scenario.items[0].videoPath,
+    intentGeneration: 0,
+    result: null,
+    promise: ordinaryTail
+  });
+
+  let startSettled = false;
+  const started = scenario.runtime.startContinuousPlayback().then(result => {
+    startSettled = true;
+    return result;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(startSettled, false, 'same-file fast path must wait for the ordinary review tail');
+  assert.equal(scenario.loadCalls.length, 0);
+
+  resolveOrdinaryTail(true);
+  assert.equal(await started, scenario.items[0]);
+  assert.equal(scenario.loadCalls.length, 0);
+});
+
+test('remote pause cross-file seek waits for the retained tail without destructive invalidation', async () => {
+  const scenario = createSingleFlightScenario({ itemCount: 3, currentIndex: 0 });
+  const oldTransition = scenario.runtime.playNextContinuousItem(7);
+  await waitForScenarioLoadCount(scenario, 1);
+
+  scenario.runtime.handleRemotePause({ detail: { time: 21, playlistContinuous: true } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scenario.loadCalls.length, 1);
+  assert.equal(scenario.getInvalidations(), 0);
+
+  scenario.releaseNextLoad();
+  await waitForScenarioLoadCount(scenario, 2);
+  assert.equal(scenario.loadCalls[1].item.id, 'item-2');
+  assert.equal(scenario.getMaxConcurrentLoads(), 1);
+  scenario.releaseNextLoad();
+  await oldTransition;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scenario.state.currentFile, scenario.items[2].videoPath);
+});
+
+test('stale rejection is suppressed while current rejection and mpv HTML5 fallback stay live', async () => {
+  const loadOptions = [];
+  const runtimeFactory = new Function('dependencies', `
+    with (dependencies) {
+      ${extractAppFunctionSource('loadVideoWithHtml5Fallback')}
+      return { loadVideoWithHtml5Fallback };
+    }
+  `);
+  const runtime = runtimeFactory({
+    beginMpvHtml5FallbackReviewTransition: () => ({ drawModeWasActive: false }),
+    beginExpectedMpvHtml5FallbackStop: () => 1,
+    finishMpvHtml5FallbackReviewTransition: () => {},
+    scheduleExpectedMpvHtml5FallbackStopCleanup: () => {},
+    loadVideo: async (_filePath, options) => {
+      loadOptions.push(options);
+      return true;
+    }
+  });
+
+  const loadVideoSource = extractAppFunctionSource('loadVideo');
+  const quietFailureIndex = loadVideoSource.indexOf('if (loadIntent !== videoLoadIntentGeneration || isStaleVideoLoad() || !shouldContinueVideoLoad()) return false;');
+  assert.notEqual(quietFailureIndex, -1);
+  assert.ok(quietFailureIndex < loadVideoSource.indexOf('trace.error(error);'));
+  assert.equal(await runtime.loadVideoWithHtml5Fallback('C:/clips/fallback.mp4', {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true
+  }), true);
+  assert.equal(loadOptions.length, 1);
+  assert.equal(loadOptions[0].allowMpvPilot, false);
+  assert.equal(loadOptions[0].preserveContinuousSession, true);
+  assert.equal(loadOptions[0].playWhenMediaReady, true);
+});
+
+test('hard deadline Space resume bypasses the active production tail and same-file completion join', async () => {
+  const scenario = createActualLoadRaceScenario();
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  scenario.runtime.setFlight({
+    sessionId: 7,
+    promise: oldLoad,
+    pendingAdvance: false,
+    hardAbandoned: false
+  });
+  scenario.continuousPlaybackState.loadingItemId = scenario.items[0].id;
+  scenario.continuousPlaybackState.loadingSessionId = 7;
+  await scenario.oldTailStarted;
+  const oldToken = scenario.runtime.getLatestVideoLoadToken();
+
+  scenario.runtime.startContinuousTransitionDeadline(scenario.items[0], 7);
+  scenario.fireDeadline();
+  const resumed = scenario.runtime.handleUserPlayPauseToggle();
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  const loadsBeforeOldRelease = scenario.effects.continuousLoads;
+  const tokenBeforeOldRelease = scenario.runtime.getLatestVideoLoadToken();
+  const fallbacksBeforeOldRelease = scenario.effects.fallbacks;
+
+  scenario.releaseOldTail();
+  await Promise.allSettled([oldLoad, resumed]);
+  assert.equal(loadsBeforeOldRelease, 1, 'hard-abandoned completion must not block the replacement load');
+  assert.ok(tokenBeforeOldRelease > oldToken);
+  assert.equal(scenario.effects.fallbacks, fallbacksBeforeOldRelease + 1, 'hard old cleanup keeps its fallback after a newer token starts');
+  assert.equal(scenario.effects.settlements.find(entry => entry.expectedLoadToken === oldToken)?.loaded, false);
+});
+
+test('a soft timeout gives its same-file replacement fresh EOF ownership before media claim', async () => {
+  const scenario = createActualLoadRaceScenario({
+    holdSecondMediaLoad: true
+  });
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.oldTailStarted;
+  let abandonOldFlight;
+  const oldFlightAbandoned = new Promise(resolve => { abandonOldFlight = resolve; });
+  scenario.runtime.setFlight({
+    sessionId: 7,
+    promise: Promise.race([oldLoad, oldFlightAbandoned]),
+    pendingAdvance: false,
+    hardAbandoned: false,
+    abandon: abandonOldFlight
+  });
+
+  await scenario.runtime.handleUserPlayPauseToggle();
+  const resumed = scenario.runtime.handleUserPlayPauseToggle();
+  await new Promise(resolve => setImmediate(resolve));
+  scenario.fireDeadline();
+  await scenario.secondMediaLoadStarted;
+  scenario.setContinuousMediaEnded(true);
+  scenario.runtime.handleEnded();
+  scenario.releaseSecondMediaLoad();
+  await resumed;
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(scenario.state.currentFile, scenario.items[0].videoPath);
+  assert.equal(scenario.effects.queuedAutoAdvances, 0, 'old EOF must not skip the timeout replacement');
+  scenario.releaseOldTail();
+  await oldLoad;
+});
+
+test('a standalone local pause soft-settles the current production tail without fallback', async () => {
+  const scenario = createActualLoadRaceScenario();
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.oldTailStarted;
+  const oldToken = scenario.runtime.getLatestVideoLoadToken();
+  const fallbacksBeforePause = scenario.effects.fallbacks;
+
+  await scenario.runtime.handleUserPlayPauseToggle();
+  scenario.releaseOldTail();
+  await oldLoad;
+
+  assert.equal(scenario.continuousPlaybackState.active, false);
+  assert.equal(scenario.effects.settlements.find(entry => entry.expectedLoadToken === oldToken)?.loaded, true);
+  assert.equal(scenario.effects.fallbacks, fallbacksBeforePause);
+  assert.equal(scenario.effects.teardowns, 0);
+});
+
+test('a paused continuous handoff tears down retained review media when the media load rejects', async () => {
+  const scenario = createActualLoadRaceScenario({
+    holdFirstMediaLoad: true,
+    failFirstMediaLoad: true
+  });
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.firstMediaLoadStarted;
+  const oldToken = scenario.runtime.getLatestVideoLoadToken();
+  const oldIntent = scenario.runtime.getIntentGeneration();
+
+  await scenario.runtime.handleUserPlayPauseToggle();
+  scenario.releaseFirstMediaLoad();
+  const result = await oldLoad;
+
+  assert.equal(result, false);
+  assert.equal(scenario.continuousPlaybackState.active, false);
+  assert.equal(scenario.runtime.getIntentGeneration(), oldIntent, 'a pause must not create a successor load intent');
+  assert.equal(scenario.effects.settlements.find(entry => entry.expectedLoadToken === oldToken)?.loaded, false);
+  assert.equal(scenario.effects.teardowns, 1);
+  assert.equal(scenario.effects.fabricCancellations.at(-1)?.options.restorePreviousVideo, false);
+});
+
+test('Space reloads a hard-abandoned same-file tail that settled before resume', async () => {
+  const scenario = createActualLoadRaceScenario();
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  scenario.runtime.setFlight({ sessionId: 7, promise: oldLoad, pendingAdvance: false, hardAbandoned: false });
+  scenario.continuousPlaybackState.loadingItemId = scenario.items[0].id;
+  scenario.continuousPlaybackState.loadingSessionId = 7;
+  await scenario.oldTailStarted;
+
+  scenario.runtime.startContinuousTransitionDeadline(scenario.items[0], 7);
+  scenario.fireDeadline();
+  scenario.releaseOldTail();
+  await oldLoad;
+  const resumed = scenario.runtime.handleUserPlayPauseToggle();
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(scenario.effects.continuousLoads, 1, 'a settled hard tail must not satisfy the same-file fast path');
+  await resumed;
+});
+
+test('playlist replacement and normal production load bypass a permanently hard-abandoned flight', async () => {
+  const scenario = createActualLoadRaceScenario();
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  scenario.runtime.setFlight({
+    sessionId: 7,
+    promise: oldLoad,
+    pendingAdvance: false,
+    hardAbandoned: false
+  });
+  await scenario.oldTailStarted;
+  const oldToken = scenario.runtime.getLatestVideoLoadToken();
+
+  scenario.runtime.commitPlaylistReplacement();
+  const normalLoad = scenario.runtime.loadVideo('C:/clips/normal.mp4', { allowMpvPilot: false });
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  const tokenBeforeOldRelease = scenario.runtime.getLatestVideoLoadToken();
+  const normalStartedBeforeOldRelease = scenario.effects.mediaLoads.includes('C:/clips/normal.mp4');
+
+  scenario.releaseOldTail();
+  await Promise.allSettled([oldLoad, normalLoad]);
+  assert.ok(tokenBeforeOldRelease > oldToken);
+  assert.equal(normalStartedBeforeOldRelease, true);
+  assert.ok(scenario.effects.settlements.every(settlement => Number.isInteger(settlement.expectedLoadToken)));
+  assert.equal(scenario.effects.teardowns, 0);
+});
+
+test('newer cross-file navigation fences an older normal preflight intent after a stalled production tail', async () => {
+  const scenario = createActualLoadRaceScenario({ holdFirstFileExists: true });
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  scenario.runtime.setFlight({
+    sessionId: 7,
+    promise: oldLoad,
+    pendingAdvance: false,
+    hardAbandoned: false
+  });
+  await scenario.oldTailStarted;
+  const oldToken = scenario.runtime.getLatestVideoLoadToken();
+
+  const olderNormalLoad = scenario.runtime.loadVideoFromPlaylist({
+    id: 'normal-b', fileName: 'b.mp4', videoPath: 'C:/clips/b.mp4'
+  });
+  await scenario.firstFileExistsStarted;
+  const newerNavigation = scenario.runtime.seekContinuousTimeline(11, { resumePlayback: false });
+  assert.equal(await newerNavigation, true);
+  const fallbacksBeforeOldRelease = scenario.effects.fallbacks;
+
+  scenario.releaseOldTail();
+  await oldLoad;
+  scenario.releaseFirstFileExists();
+  const normalResult = await olderNormalLoad;
+
+  assert.equal(normalResult, false);
+  assert.equal(scenario.state.currentFile, scenario.items[1].videoPath);
+  assert.equal(scenario.effects.mediaLoads.includes('C:/clips/b.mp4'), false);
+  assert.ok(scenario.effects.settlements.every(settlement => Number.isInteger(settlement.expectedLoadToken)));
+  assert.equal(scenario.effects.settlements.find(entry => entry.expectedLoadToken === oldToken)?.loaded, true);
+  assert.equal(scenario.effects.fallbacks, fallbacksBeforeOldRelease, 'soft stale tails must not run destructive fallback');
+  assert.equal(scenario.effects.teardowns, 0);
+});
+
+test('a normal preflight soft-stales the old production tail without running fallback', async () => {
+  const scenario = createActualLoadRaceScenario({ holdFirstFileExists: true });
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.oldTailStarted;
+  const oldToken = scenario.runtime.getLatestVideoLoadToken();
+
+  const normalLoad = scenario.runtime.loadVideoFromPlaylist({
+    id: 'normal-b', fileName: 'b.mp4', videoPath: 'C:/clips/b.mp4'
+  });
+  await scenario.firstFileExistsStarted;
+  const fallbacksBeforeOldRelease = scenario.effects.fallbacks;
+  scenario.releaseOldTail();
+  assert.equal(await oldLoad, false);
+  const fallbacksAfterOldRelease = scenario.effects.fallbacks;
+
+  scenario.releaseFirstFileExists();
+  assert.equal(await normalLoad, true);
+  assert.equal(fallbacksAfterOldRelease, fallbacksBeforeOldRelease);
+  assert.equal(scenario.effects.settlements.find(entry => entry.expectedLoadToken === oldToken)?.loaded, true);
+  assert.equal(scenario.state.currentFile, 'C:/clips/b.mp4');
+  assert.equal(scenario.effects.teardowns, 0);
+});
+
+test('a newer continuous start takes over a stalled normal intent before its media EOF', async () => {
+  const scenario = createActualLoadRaceScenario({
+    holdFirstFileExists: true,
+    continuousMediaEnded: true
+  });
+  const normalLoad = scenario.runtime.loadVideoFromPlaylist({
+    id: 'normal-b', fileName: 'b.mp4', videoPath: 'C:/clips/b.mp4'
+  });
+  await scenario.firstFileExistsStarted;
+
+  const started = scenario.runtime.startContinuousPlayback();
+  await scenario.oldTailStarted;
+  scenario.runtime.handleEnded();
+  scenario.releaseOldTail();
+  await started;
+  const queuedAfterNewMediaEof = scenario.effects.queuedAutoAdvances;
+
+  scenario.releaseFirstFileExists();
+  const normalResult = await normalLoad;
+  assert.equal(normalResult, false);
+  assert.equal(queuedAfterNewMediaEof, 1);
+  assert.equal(scenario.runtime.getPendingUserVideoLoadIntent(), null);
+  assert.equal(scenario.state.currentFile, scenario.items[0].videoPath);
+});
+
+test('an initial cross-file start fences the old media EOF until production media claim', async () => {
+  const scenario = createActualLoadRaceScenario({
+    continuousMediaEnded: true,
+    holdFirstMediaLoad: true
+  });
+  scenario.continuousPlaybackState.active = false;
+  scenario.state.currentFile = scenario.items[1].videoPath;
+
+  const started = scenario.runtime.startContinuousPlayback();
+  await scenario.firstMediaLoadStarted;
+  scenario.runtime.handleEnded();
+  scenario.releaseFirstMediaLoad();
+  await scenario.oldTailStarted;
+  scenario.releaseOldTail();
+  const startResult = await started;
+
+  assert.equal(startResult, scenario.items[0]);
+  assert.equal(scenario.effects.queuedAutoAdvances, 0, 'old media EOF must not skip the newly claimed item');
+  assert.equal(scenario.state.currentFile, scenario.items[0].videoPath);
+});
+
+test('a hard-invalidated same-file start fences old EOF until replacement media claim', async () => {
+  const scenario = createActualLoadRaceScenario({
+    continuousMediaEnded: true,
+    holdFirstMediaLoad: true,
+    holdSecondMediaLoad: true
+  });
+  scenario.state.currentFile = scenario.items[0].videoPath;
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.firstMediaLoadStarted;
+  scenario.continuousPlaybackState.loadingItemId = scenario.items[0].id;
+  scenario.continuousPlaybackState.loadingSessionId = 7;
+  scenario.runtime.startContinuousTransitionDeadline(scenario.items[0], 7);
+  scenario.fireDeadline();
+
+  const started = scenario.runtime.startContinuousPlayback();
+  await scenario.secondMediaLoadStarted;
+  scenario.runtime.handleEnded();
+  scenario.releaseSecondMediaLoad();
+  await scenario.oldTailStarted;
+  scenario.releaseOldTail();
+  const startResult = await started;
+
+  assert.equal(startResult, scenario.items[0]);
+  assert.equal(scenario.effects.queuedAutoAdvances, 0, 'old EOF must not skip the same-path replacement');
+  scenario.releaseFirstMediaLoad();
+  await oldLoad;
+});
+
+test('a null current item start fences old EOF until index zero claims production media', async () => {
+  const scenario = createActualLoadRaceScenario({
+    continuousMediaEnded: true,
+    holdFirstMediaLoad: true
+  });
+  scenario.continuousPlaybackState.active = false;
+  scenario.playlistManager.currentIndex = -1;
+  scenario.state.currentFile = scenario.items[1].videoPath;
+
+  const started = scenario.runtime.startContinuousPlayback();
+  await scenario.firstMediaLoadStarted;
+  scenario.runtime.handleEnded();
+  scenario.releaseFirstMediaLoad();
+  await scenario.oldTailStarted;
+  scenario.releaseOldTail();
+  const startResult = await started;
+
+  assert.equal(startResult, scenario.items[0]);
+  assert.equal(scenario.effects.queuedAutoAdvances, 0, 'old EOF must not skip the selected index-zero item');
+});
+
+test('an initial already-loaded same-file start leaves genuine EOF navigation live', async () => {
+  const scenario = createActualLoadRaceScenario({ continuousMediaEnded: true });
+  scenario.continuousPlaybackState.active = false;
+  scenario.state.currentFile = scenario.items[0].videoPath;
+
+  assert.equal(await scenario.runtime.startContinuousPlayback(), scenario.items[0]);
+  assert.equal(scenario.runtime.getPendingUserVideoLoadIntent(), null);
+  scenario.runtime.handleEnded();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(scenario.effects.queuedAutoAdvances, 1);
+});
+
+test('a failed current start does not hide the next production item EOF', async () => {
+  const scenario = createActualLoadRaceScenario({
+    holdFirstFileExists: true,
+    continuousMediaEnded: true,
+    useActualPlayNext: true,
+    failFirstContinuousLoad: true
+  });
+  const normalLoad = scenario.runtime.loadVideoFromPlaylist({
+    id: 'normal-b', fileName: 'b.mp4', videoPath: 'C:/clips/b.mp4'
+  });
+  await scenario.firstFileExistsStarted;
+
+  const started = scenario.runtime.startContinuousPlayback();
+  await scenario.oldTailStarted;
+  scenario.runtime.handleEnded();
+  scenario.releaseOldTail();
+  await started;
+  const continuousLoadsAfterNextEof = scenario.effects.continuousLoads;
+
+  scenario.releaseFirstFileExists();
+  assert.equal(await normalLoad, false);
+  assert.equal(continuousLoadsAfterNextEof, 3);
+  assert.equal(scenario.effects.mediaLoads.length, 2);
+  assert.equal(scenario.runtime.getPendingUserVideoLoadIntent(), null);
+  assert.equal(scenario.state.currentFile, scenario.items[0].videoPath);
+});
+
+test('a failed current start fences old EOF during the next production preflight', async () => {
+  const scenario = createActualLoadRaceScenario({
+    holdFirstFileExists: true,
+    holdSecondFileExists: true,
+    continuousMediaEnded: true,
+    useActualPlayNext: true,
+    useActualContinuousLoad: true,
+    failFirstPreparedItem: true
+  });
+  const normalLoad = scenario.runtime.loadVideoFromPlaylist({
+    id: 'normal-b', fileName: 'b.mp4', videoPath: 'C:/clips/b.mp4'
+  });
+  await scenario.firstFileExistsStarted;
+
+  const started = scenario.runtime.startContinuousPlayback();
+  await scenario.secondFileExistsStarted;
+  scenario.runtime.handleEnded();
+  scenario.releaseSecondFileExists();
+  await scenario.oldTailStarted;
+  scenario.releaseOldTail();
+  await started;
+  const mediaLoadsAfterNextItem = scenario.effects.mediaLoads.slice();
+
+  scenario.releaseFirstFileExists();
+  assert.equal(await normalLoad, false);
+  assert.deepEqual(mediaLoadsAfterNextItem, [scenario.items[1].videoPath]);
+  assert.equal(scenario.state.currentFile, scenario.items[1].videoPath);
+  assert.equal(scenario.runtime.getPendingUserVideoLoadIntent(), null);
+});
+
+test('a same-file seek reuses and waits for the current production load completion', async () => {
+  const scenario = createActualLoadRaceScenario({ seekItemIndex: 0 });
+  scenario.continuousPlaybackState.active = false;
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, { allowMpvPilot: false });
+  await scenario.oldTailStarted;
+  const tokenBeforeSeek = scenario.runtime.getLatestVideoLoadToken();
+  const intentBeforeSeek = scenario.runtime.getIntentGeneration();
+
+  let seekSettled = false;
+  const seek = scenario.runtime.seekContinuousTimeline(1, { resumePlayback: false })
+    .finally(() => { seekSettled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  const seekSettledBeforeRelease = seekSettled;
+  const tokenDuringSeek = scenario.runtime.getLatestVideoLoadToken();
+  const intentDuringSeek = scenario.runtime.getIntentGeneration();
+
+  scenario.releaseOldTail();
+  const [loadResult, seekResult] = await Promise.all([oldLoad, seek]);
+  assert.equal(seekSettledBeforeRelease, false);
+  assert.equal(tokenDuringSeek, tokenBeforeSeek);
+  assert.equal(intentDuringSeek, intentBeforeSeek);
+  assert.equal(loadResult, true);
+  assert.equal(seekResult, true);
+});
+
+test('a same-file start gives a failed normal producer retry fresh EOF ownership', async () => {
+  const scenario = createActualLoadRaceScenario({
+    continuousMediaEnded: true,
+    holdFirstMediaLoad: true,
+    failFirstMediaLoad: true,
+    holdSecondMediaLoad: true
+  });
+  scenario.continuousPlaybackState.active = false;
+  const normalLoad = scenario.runtime.loadVideoFromPlaylist(scenario.items[0], { allowMpvPilot: false });
+  await scenario.firstMediaLoadStarted;
+  const producerIntent = scenario.runtime.getIntentGeneration();
+
+  const started = scenario.runtime.startContinuousPlayback();
+  await new Promise(resolve => setImmediate(resolve));
+  scenario.releaseFirstMediaLoad();
+  await scenario.secondMediaLoadStarted;
+  await new Promise(resolve => setImmediate(resolve));
+  const retryIntent = scenario.runtime.getIntentGeneration();
+  scenario.runtime.handleEnded();
+
+  scenario.releaseSecondMediaLoad();
+  await scenario.oldTailStarted;
+  scenario.releaseOldTail();
+  const [normalResult, startResult] = await Promise.all([normalLoad, started]);
+  assert.equal(normalResult, false);
+  assert.equal(startResult, scenario.items[0]);
+  assert.ok(retryIntent > producerIntent, 'a failed producer retry must reserve a new load intent');
+  assert.equal(scenario.effects.queuedAutoAdvances, 0, 'old EOF must stay fenced until the retry claims media');
+});
+
+test('a same-file seek gives a failed normal producer retry fresh EOF ownership', async () => {
+  const scenario = createActualLoadRaceScenario({
+    seekItemIndex: 0,
+    holdFirstMediaLoad: true,
+    failFirstMediaLoad: true,
+    holdSecondFileExists: true
+  });
+  scenario.continuousPlaybackState.active = false;
+  scenario.state.currentFile = scenario.items[0].videoPath;
+  const normalLoad = scenario.runtime.loadVideoFromPlaylist(scenario.items[0], { allowMpvPilot: false });
+  await scenario.firstMediaLoadStarted;
+  const producerIntent = scenario.runtime.getIntentGeneration();
+
+  const seek = scenario.runtime.seekContinuousTimeline(1, { resumePlayback: false });
+  await new Promise(resolve => setImmediate(resolve));
+  scenario.releaseFirstMediaLoad();
+  await scenario.secondFileExistsStarted;
+  await new Promise(resolve => setImmediate(resolve));
+  const retryIntent = scenario.runtime.getIntentGeneration();
+  scenario.runtime.handleEnded();
+  const autoNextDuringRetry = scenario.effects.normalAutoNext;
+
+  scenario.releaseSecondFileExists();
+  await scenario.oldTailStarted;
+  scenario.releaseOldTail();
+  const [normalResult, seekResult] = await Promise.all([normalLoad, seek]);
+  assert.equal(normalResult, false);
+  assert.equal(seekResult, true);
+  assert.ok(retryIntent > producerIntent, 'a failed producer retry must reserve a new load intent');
+  assert.equal(autoNextDuringRetry, 0, 'old EOF must stay fenced through retry preflight');
+});
+
+test('a pre-claim same-file join keeps its ended fence through the old review tail', async () => {
+  const scenario = createActualLoadRaceScenario({
+    seekItemIndex: 0,
+    continuousMediaEnded: true,
+    holdFirstMediaLoad: true
+  });
+  scenario.state.currentFile = scenario.items[0].videoPath;
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.firstMediaLoadStarted;
+
+  const seek = scenario.runtime.seekContinuousTimeline(1);
+  await new Promise(resolve => setImmediate(resolve));
+  scenario.releaseFirstMediaLoad();
+  await scenario.oldTailStarted;
+  scenario.runtime.handleEnded();
+  scenario.releaseOldTail();
+  const [loadResult, seekResult] = await Promise.all([oldLoad, seek]);
+
+  assert.equal(loadResult, true);
+  assert.equal(scenario.effects.queuedAutoAdvances, 0);
+  assert.equal(seekResult, true);
+  assert.equal(scenario.state.currentFile, scenario.items[0].videoPath);
+});
+
+test('playlist replacement releases an inactive same-file completion waiter', async () => {
+  const scenario = createActualLoadRaceScenario({
+    seekItemIndex: 0,
+    holdFirstMediaLoad: true
+  });
+  scenario.continuousPlaybackState.active = false;
+  scenario.state.currentFile = scenario.items[0].videoPath;
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, { allowMpvPilot: false });
+  await scenario.firstMediaLoadStarted;
+
+  let seekSettled = false;
+  const seek = scenario.runtime.seekContinuousTimeline(1, { resumePlayback: false })
+    .finally(() => { seekSettled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  scenario.runtime.commitPlaylistReplacement();
+  await new Promise(resolve => setImmediate(resolve));
+  const settledBeforeOldIoRelease = seekSettled;
+  const pendingBeforeOldIoRelease = scenario.runtime.getPendingUserVideoLoadIntent();
+
+  scenario.releaseFirstMediaLoad();
+  const [loadResult, seekResult] = await Promise.all([oldLoad, seek]);
+  assert.equal(settledBeforeOldIoRelease, true);
+  assert.equal(pendingBeforeOldIoRelease, null);
+  assert.equal(loadResult, false);
+  assert.equal(seekResult, false);
+});
+
+test('a same-file seek reloads a hard-invalidated production completion', async () => {
+  const scenario = createActualLoadRaceScenario({ seekItemIndex: 0 });
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.oldTailStarted;
+  const oldToken = scenario.runtime.getLatestVideoLoadToken();
+  scenario.continuousPlaybackState.loadingItemId = scenario.items[0].id;
+  scenario.continuousPlaybackState.loadingSessionId = 7;
+  scenario.runtime.startContinuousTransitionDeadline(scenario.items[0], 7);
+  scenario.fireDeadline();
+
+  const seekResult = await scenario.runtime.seekContinuousTimeline(1, { resumePlayback: false });
+  const replacementToken = scenario.runtime.getLatestVideoLoadToken();
+  const mediaLoadsBeforeOldRelease = scenario.effects.mediaLoads.length;
+  scenario.releaseOldTail();
+  const oldResult = await oldLoad;
+
+  assert.equal(seekResult, true);
+  assert.ok(replacementToken > oldToken);
+  assert.equal(mediaLoadsBeforeOldRelease, 2);
+  assert.equal(oldResult, false);
+  assert.equal(scenario.effects.teardowns, 0);
+});
+
+test('an invalid production seek does not stale the active media load intent', async () => {
+  const scenario = createActualLoadRaceScenario({ invalidSeekMap: true });
+  const oldLoad = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    allowMpvPilot: false,
+    shouldContinue: () => scenario.continuousPlaybackState.active
+  });
+  await scenario.oldTailStarted;
+  const intentBeforeSeek = scenario.runtime.getIntentGeneration();
+
+  const seekResult = await scenario.runtime.seekContinuousTimeline(-1, { resumePlayback: false });
+  const intentAfterSeek = scenario.runtime.getIntentGeneration();
+  scenario.releaseOldTail();
+  const loadResult = await oldLoad;
+
+  assert.equal(seekResult, false);
+  assert.equal(intentAfterSeek, intentBeforeSeek);
+  assert.equal(loadResult, true);
+});
+
+test('an inactive cross-file seek fences old-media ended autoplay during production preflight', async () => {
+  const scenario = createActualLoadRaceScenario({ holdFirstFileExists: true });
+  scenario.continuousPlaybackState.active = false;
+  scenario.state.currentFile = scenario.items[0].videoPath;
+
+  const navigation = scenario.runtime.seekContinuousTimeline(11, { resumePlayback: false });
+  await scenario.firstFileExistsStarted;
+  scenario.runtime.handleEnded();
+  const autoNextDuringPreflight = scenario.effects.normalAutoNext;
+
+  scenario.releaseFirstFileExists();
+  await scenario.oldTailStarted;
+  scenario.releaseOldTail();
+  assert.equal(await navigation, true);
+  assert.equal(autoNextDuringPreflight, 0);
+});
+
+test('an active cross-file seek fences old EOF from queuing a post-load advance', async () => {
+  const scenario = createActualLoadRaceScenario({
+    holdFirstFileExists: true,
+    continuousMediaEnded: true
+  });
+  scenario.state.currentFile = scenario.items[0].videoPath;
+
+  const navigation = scenario.runtime.seekContinuousTimeline(11);
+  await scenario.firstFileExistsStarted;
+  scenario.runtime.handleEnded();
+  scenario.releaseFirstFileExists();
+  await scenario.oldTailStarted;
+  scenario.releaseOldTail();
+  const navigationResult = await navigation;
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(scenario.effects.playAfterLoad, 1);
+  assert.equal(scenario.effects.queuedAutoAdvances, 0);
+  assert.equal(scenario.state.currentFile, scenario.items[1].videoPath);
+  assert.equal(navigationResult, true);
+});
+
+test('a pending normal production intent fences the actual ended autoplay callback', () => {
+  const endedMatch = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);
+  assert.ok(endedMatch, 'videoPlayer ended handler should exist');
+  let nextCalls = 0;
+  const playlistManager = {
+    isActive: () => true,
+    hasNext: () => true,
+    next: () => { nextCalls += 1; return {}; }
+  };
+  const runtimeFactory = new Function('dependencies', `
+    with (dependencies) {
+      let pendingUserVideoLoadIntent = 12;
+      let videoLoadIntentGeneration = 12;
+      let playlistAutoPlayAfterSelection = false;
+      const handleEnded = () => {${endedMatch[1]}\n      };
+      return {
+        handleEnded,
+        clearPendingIntent: () => { pendingUserVideoLoadIntent = null; }
+      };
+    }
+  `);
+  const runtime = runtimeFactory({
+    elements: { btnPlay: { innerHTML: '' }, drawingTools: { classList: { contains: () => false } } },
+    playIconSVG: '',
+    drawingManager: { setPlaying: () => {} },
+    timeline: { setPlayingState: () => {} },
+    syncCompositionLayerPlaybackState: () => {},
+    videoPlayer: { currentTime: 0 },
+    getAudioWaveform: () => ({ setPlaying: () => {} }),
+    state: { isDrawMode: false },
+    fabricDrawingPilotController: { isActiveOrPreparing: () => false },
+    isMpvPilotPlaybackActive: () => false,
+    restoreMpvDrawFreezeAfterPlayback: () => {},
+    cutlistUIState: { active: false },
+    getCutlistManager: () => ({ isActive: () => false }),
+    getNextCutlistCut: () => null,
+    advanceCutlistPlaybackFromCut: () => {},
+    getPlaylistManager: () => playlistManager,
+    continuousPlaybackState: { active: false, sessionId: 7 },
+    hasContinuousPlaybackReachedMediaEnd: () => false,
+    getContinuousPlaybackSnapshot: () => ({}),
+    playNextContinuousItem: async () => null,
+    isContinuousSessionActive: () => false,
+    stopContinuousPlayback: () => {},
+    showToast: () => {},
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+    userSettings: { getPlaylistAutoPlay: () => true }
+  });
+
+  runtime.handleEnded();
+  assert.equal(nextCalls, 0);
+  runtime.clearPendingIntent();
+  runtime.handleEnded();
+  assert.equal(nextCalls, 1);
+});
+
+test('a normal production load fences old-media EOF but releases it at the new media claim', async () => {
+  const scenario = createActualLoadRaceScenario({ holdFirstFileExists: true });
+  scenario.continuousPlaybackState.active = false;
+  scenario.state.currentFile = scenario.items[0].videoPath;
+  const normalLoad = scenario.runtime.loadVideoFromPlaylist(scenario.items[1], {
+    allowMpvPilot: false,
+    playWhenMediaReady: true
+  });
+
+  await scenario.firstFileExistsStarted;
+  scenario.runtime.handleEnded();
+  assert.equal(scenario.effects.normalAutoNext, 0, 'old media EOF must stay fenced during preflight');
+
+  scenario.releaseFirstFileExists();
+  await scenario.oldTailStarted;
+  assert.equal(scenario.state.currentFile, scenario.items[1].videoPath);
+  scenario.runtime.handleEnded();
+  assert.equal(scenario.effects.normalAutoNext, 1, 'new media EOF must be live after ownership is claimed');
+
+  scenario.releaseOldTail();
+  assert.equal(await normalLoad, true);
+  assert.equal(scenario.runtime.getPendingUserVideoLoadIntent(), null);
+});
+
+test('mpv to HTML5 fallback reuses the top-level intent and finishes without deadlock', async () => {
+  const scenario = createActualLoadRaceScenario({ useMpvPilot: true });
+  const load = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    preserveContinuousSession: true,
+    playWhenMediaReady: true
+  });
+  await scenario.oldTailStarted;
+  assert.equal(scenario.runtime.getIntentGeneration(), 1);
+
+  scenario.releaseOldTail();
+  assert.equal(await load, true);
+  assert.equal(scenario.runtime.getIntentGeneration(), 1);
 });

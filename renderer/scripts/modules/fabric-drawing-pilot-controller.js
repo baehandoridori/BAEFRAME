@@ -91,6 +91,13 @@ export function createFabricDrawingPilotController(options = {}) {
     typeof options.persistenceSessionIdFactory === 'function'
       ? options.persistenceSessionIdFactory
       : () => globalThis.crypto?.randomUUID?.() || uuid();
+  // 오버레이 호스트 IPC 응답 데드라인. 호스트가 응답하지 않으면 게이트가 영구 pending이 되어
+  // 이어붙이기 전환 전체가 침묵 정지하므로(2026-08-21), 경계에서 유한 시간으로 자른다.
+  const persistenceIpcDeadlineMs =
+    Number.isFinite(Number(options.persistenceIpcDeadlineMs)) &&
+    Number(options.persistenceIpcDeadlineMs) > 0
+      ? Number(options.persistenceIpcDeadlineMs)
+      : 3000;
 
   let initializePromise = null;
   let pilotEnabled = false;
@@ -386,12 +393,47 @@ export function createFabricDrawingPilotController(options = {}) {
       request.enabled === desiredInputEnabled;
   }
 
+  function withPersistenceIpcDeadline(operation, deadlineValue) {
+    return new Promise(resolve => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve(deadlineValue);
+      }, persistenceIpcDeadlineMs);
+      Promise.resolve(operation).then(
+        value => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        },
+        rejection => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          // 거부(rejection)는 타임아웃과 다른 사유로 남긴다 — 진단 정보(실제 오류 메시지)를
+          // 보존하고, 회수 실패의 기존 래치 의미론('persistence-ipc-rejected'는 비래치
+          // 통과 목록에 없으므로 종전처럼 차단 래치)을 바꾸지 않기 위함이다.
+          resolve({
+            ...deadlineValue,
+            reason: 'persistence-ipc-rejected',
+            error: rejection instanceof Error ? rejection.message : String(rejection)
+          });
+        }
+      );
+    });
+  }
+
   async function invokeInput(request) {
     if (typeof electronAPI.mpvSetOverlayDrawingInput !== 'function') {
       return { success: false, accepted: false, enabled: false };
     }
     try {
-      const response = await electronAPI.mpvSetOverlayDrawingInput(request);
+      const response = await withPersistenceIpcDeadline(
+        electronAPI.mpvSetOverlayDrawingInput(request),
+        { success: false, accepted: false, enabled: false, error: 'persistence-ipc-timeout' }
+      );
       if (!request.enabled && isCurrentInputRequest(request) &&
           isAcceptedInputResponse(response, false) &&
           (response.tool === 'brush' || response.tool === 'select')) {
@@ -521,7 +563,10 @@ export function createFabricDrawingPilotController(options = {}) {
       tool
     };
     try {
-      const response = await electronAPI.mpvUpdateOverlayDrawingTool(request);
+      const response = await withPersistenceIpcDeadline(
+        electronAPI.mpvUpdateOverlayDrawingTool(request),
+        { success: false, accepted: false, tool: request.tool, error: 'persistence-ipc-timeout' }
+      );
       const accepted = response?.success === true && response.accepted === true;
       if (accepted && currentSession?.sessionId === request.sessionId) {
         currentSession.tool = tool;
@@ -667,7 +712,7 @@ export function createFabricDrawingPilotController(options = {}) {
   async function hydratePersistenceForCurrentVideo(
     contextOverrides = null,
     isStillCurrent = () => true,
-    { allowVideoNotReady = false } = {}
+    { allowVideoNotReady = false, onIpcFailure = null } = {}
   ) {
     if (!persistenceStore) return true;
     const owner = capturePersistenceOwner(contextOverrides, {
@@ -703,17 +748,31 @@ export function createFabricDrawingPilotController(options = {}) {
 
       let hydration;
       try {
-        hydration = await electronAPI.mpvHydrateOverlayDrawingVideo(
-          persistenceRequestFrom(owner, documentValue.keyframes)
+        hydration = await withPersistenceIpcDeadline(
+          electronAPI.mpvHydrateOverlayDrawingVideo(
+            persistenceRequestFrom(owner, documentValue.keyframes)
+          ),
+          { success: false, accepted: false, reason: 'persistence-ipc-timeout' }
         );
       } catch (_error) {
         hydration = null;
+      }
+      const hydrationAccepted = hydration?.success === true &&
+        hydration?.accepted === true;
+      if (!hydrationAccepted && typeof onIpcFailure === 'function') {
+        onIpcFailure(
+          hydration?.reason || hydration?.error || 'drawing-hydration-failed'
+        );
       }
       if (!ownsPersistenceOwner(owner, { allowVideoNotReady }) ||
           !isStillCurrent()) {
         return false;
       }
-      if (hydration?.success !== true || hydration?.accepted !== true) {
+      if (!hydrationAccepted) {
+        if (hydration?.reason === 'persistence-ipc-rejected' &&
+            typeof onIpcFailure === 'function') {
+          return false;
+        }
         return setPersistenceBypass(
           hydration?.reason || 'drawing-hydration-failed'
         );
@@ -721,19 +780,33 @@ export function createFabricDrawingPilotController(options = {}) {
 
       let exported;
       try {
-        exported = await electronAPI.mpvExportOverlayDrawingVideo(
-          persistenceRequestFrom(owner)
+        exported = await withPersistenceIpcDeadline(
+          electronAPI.mpvExportOverlayDrawingVideo(
+            persistenceRequestFrom(owner)
+          ),
+          { success: false, accepted: false, reason: 'persistence-ipc-timeout' }
         );
       } catch (_error) {
         exported = null;
+      }
+      const exportAccepted = exported?.success === true &&
+        exported?.accepted === true &&
+        !!exported.snapshot;
+      if (!exportAccepted && typeof onIpcFailure === 'function') {
+        onIpcFailure(
+          exported?.reason || exported?.error ||
+          'drawing-hydration-verification-failed'
+        );
       }
       if (!ownsPersistenceOwner(owner, { allowVideoNotReady }) ||
           !isStillCurrent()) {
         return false;
       }
-      if (exported?.success !== true ||
-          exported?.accepted !== true ||
-          !exported.snapshot) {
+      if (!exportAccepted) {
+        if (exported?.reason === 'persistence-ipc-rejected' &&
+            typeof onIpcFailure === 'function') {
+          return false;
+        }
         return setPersistenceBypass(
           exported?.reason || 'drawing-hydration-verification-failed'
         );
@@ -804,8 +877,11 @@ export function createFabricDrawingPilotController(options = {}) {
       }
       let exported;
       try {
-        exported = await electronAPI.mpvExportOverlayDrawingVideo(
-          persistenceRequestFrom(owner)
+        exported = await withPersistenceIpcDeadline(
+          electronAPI.mpvExportOverlayDrawingVideo(
+            persistenceRequestFrom(owner)
+          ),
+          { success: false, accepted: false, reason: 'persistence-ipc-timeout' }
         );
       } catch (_error) {
         exported = null;
@@ -893,36 +969,60 @@ export function createFabricDrawingPilotController(options = {}) {
   async function ensurePersistenceBindingCurrent() {
     const sourceEpoch = getPersistenceSourceEpoch();
     if (sourceEpoch === null || sourceEpoch === persistenceBoundSourceEpoch) {
-      return true;
+      return { ok: true, reason: null };
     }
     if (videoReady) {
       const shouldResume = resumeRequested ||
         state === 'active' ||
         state === 'preparing';
       const owner = capturePersistenceOwner();
-      if (!owner) return false;
-      return reconcileCurrentVideo(
+      if (!owner) return { ok: false, reason: null };
+      let failureReason = null;
+      const reconciled = await reconcileCurrentVideo(
         shouldResume,
         'passive',
         persistenceVideoContext,
-        () => ownsPersistenceOwner(owner)
+        () => ownsPersistenceOwner(owner),
+        reason => {
+          failureReason = reason;
+        }
       );
+      return {
+        ok: reconciled,
+        stale: !reconciled && !ownsPersistenceOwner(owner),
+        hostUnavailable: failureReason === 'overlay-host-unavailable',
+        reason: failureReason
+      };
     }
     const owner = capturePersistenceOwner(null, {
       allowVideoNotReady: true
     });
-    if (!owner) return false;
-    return hydratePersistenceForCurrentVideo(
+    if (!owner) return { ok: false, reason: null };
+    let failureReason = null;
+    const hydrated = await hydratePersistenceForCurrentVideo(
       persistenceVideoContext,
       () => ownsPersistenceOwner(owner, { allowVideoNotReady: true }),
-      { allowVideoNotReady: true }
+      {
+        allowVideoNotReady: true,
+        onIpcFailure: reason => {
+          failureReason = reason;
+        }
+      }
     );
+    return {
+      ok: hydrated,
+      stale: !hydrated && !ownsPersistenceOwner(owner, { allowVideoNotReady: true }),
+      hostUnavailable: failureReason === 'overlay-host-unavailable',
+      reason: failureReason
+    };
   }
 
   async function pullWithCurrentPersistenceBinding() {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (!await ensurePersistenceBindingCurrent()) {
-        if (legacyBypass && !persistenceBlocked) {
+      const binding = await ensurePersistenceBindingCurrent();
+      if (binding?.ok !== true) {
+        if (binding?.reason !== 'persistence-ipc-rejected' &&
+            legacyBypass && !persistenceBlocked) {
           return {
             ok: true,
             bypassed: true,
@@ -931,8 +1031,10 @@ export function createFabricDrawingPilotController(options = {}) {
         }
         return {
           ok: false,
+          stale: binding?.stale === true,
+          hostUnavailable: binding?.hostUnavailable === true,
           eventEpoch: persistenceEventEpoch,
-          reason: persistenceFailureReason || 'persistence-rebind-failed'
+          reason: binding?.reason || persistenceFailureReason || 'persistence-rebind-failed'
         };
       }
       const result = await enqueuePersistencePull();
@@ -948,6 +1050,16 @@ export function createFabricDrawingPilotController(options = {}) {
 
   async function preparePersistenceSnapshotForSave() {
     await persistenceSourceRefreshQueue;
+    if (inFlightReadyReconciliation) {
+      // 직전 영상 확정 처리(재수화·검증 회수)가 진행 중이면 완료를 기다린다.
+      // 동시 진행 시 두 재수화가 서로의 source epoch를 무효화해 IPC 왕복이 수 배로 늘고
+      // 결과가 stale로 흔들린다(2026-08 하네스 실측: 1.4초 → 9.9초).
+      try {
+        await inFlightReadyReconciliation.promise;
+      } catch (_error) {
+        // 확정 처리 실패는 아래 pull이 실상태 기준으로 다시 판정한다.
+      }
+    }
     if (!persistenceStore) return true;
     if (legacyBypass) return !persistenceBlocked;
     if (!persistenceSessionId) return true;
@@ -958,6 +1070,11 @@ export function createFabricDrawingPilotController(options = {}) {
       // 여기서 차단 래치를 걸면 모든 후속 영상 전환이 영구 거부되므로,
       // 현재 영상 소유권은 보존하고 다음 호스트가 재수화하도록 저장만 통과시킨다.
       return true;
+    }
+    if (result?.reason === 'persistence-ipc-timeout') {
+      // 호스트 응답 지연은 차단 래치로 승격하지 않지만,
+      // 권위 스냅샷을 확인하지 못한 현재 전환은 중단한다.
+      return false;
     }
     return blockPersistenceAfterPullFailure(result);
   }
@@ -980,6 +1097,7 @@ export function createFabricDrawingPilotController(options = {}) {
         persistenceResyncTrailing = false;
         result = await pullWithCurrentPersistenceBinding();
         if (result?.ok !== true) {
+          if (result?.reason === 'persistence-ipc-timeout') return false;
           await blockPersistenceAfterPullFailure(result);
           return false;
         }
@@ -1084,6 +1202,19 @@ export function createFabricDrawingPilotController(options = {}) {
       const pulled = await enqueuePersistencePull();
       if (!persistenceVideoMatches(owner)) return false;
       if (pulled?.ok !== true) {
+        if (pulled?.reason === 'persistence-ipc-timeout') {
+          if (persistenceQuitSuspension) {
+            resumeRequested = quitResumeIntent;
+          } else if (resumeRequested) {
+            await startEnable(
+              persistenceVideoContext,
+              () => ownsPersistenceOwner(owner)
+            );
+          } else {
+            setState('passive');
+          }
+          return false;
+        }
         await blockPersistenceAfterPullFailure(pulled);
         return false;
       }
@@ -1214,6 +1345,7 @@ export function createFabricDrawingPilotController(options = {}) {
       return false;
     }
     if (pulled?.ok !== true) {
+      if (pulled?.reason === 'persistence-ipc-timeout') return false;
       persistenceQuitSuspension = null;
       return blockPersistenceAfterPullFailure(pulled);
     }
@@ -1257,7 +1389,11 @@ export function createFabricDrawingPilotController(options = {}) {
     );
   }
 
-  async function startEnable(contextOverrides = null, isStillCurrent = () => true) {
+  async function startEnable(
+    contextOverrides = null,
+    isStillCurrent = () => true,
+    onInputFailure = null
+  ) {
     if (!isStillCurrent() ||
         !shouldOwnDrawingShortcut() ||
         !hostGeneration ||
@@ -1284,12 +1420,20 @@ export function createFabricDrawingPilotController(options = {}) {
     });
     setState('preparing');
     const response = await invokeInput(request);
+    const inputAccepted = isAcceptedInputResponse(response, true);
+    if (!inputAccepted && typeof onInputFailure === 'function') {
+      onInputFailure(response?.reason || response?.error || null);
+    }
     const stillCurrent = isCurrentInputRequest(request) &&
       isStillCurrent() &&
       currentSession?.sessionId === session.sessionId &&
       state === 'preparing';
     if (!stillCurrent) return false;
-    if (!isAcceptedInputResponse(response, true)) {
+    if (!inputAccepted) {
+      if (response?.reason === 'persistence-ipc-rejected' &&
+          typeof onInputFailure === 'function') {
+        return false;
+      }
       return enterFailure(response?.error);
     }
 
@@ -1305,30 +1449,54 @@ export function createFabricDrawingPilotController(options = {}) {
     shouldResume,
     settledState = 'passive',
     enableContext = null,
-    isStillCurrent = () => true
+    isStillCurrent = () => true,
+    onInputFailure = null
   ) {
     if (!isStillCurrent() || !hostGeneration || !videoGeneration || !videoReady) return false;
     desiredInputEnabled = false;
     currentSession = null;
     const request = makeInputRequest(false);
     const response = await invokeInput(request);
+    const inputAccepted = isAcceptedInputResponse(response, false);
+    if (!inputAccepted && typeof onInputFailure === 'function') {
+      onInputFailure(response?.reason || response?.error || null);
+    }
     if (!isCurrentInputRequest(request) || !isStillCurrent()) return false;
-    if (!isAcceptedInputResponse(response, false)) {
+    if (!inputAccepted) {
+      if (response?.reason === 'persistence-ipc-rejected' &&
+          typeof onInputFailure === 'function') {
+        return false;
+      }
       return enterFailure(response?.error);
     }
     if (persistenceStore) {
+      let hydrationFailureReason = null;
+      const hydrationOptions = {};
+      if (typeof onInputFailure === 'function') {
+        hydrationOptions.onIpcFailure = reason => {
+          hydrationFailureReason = reason;
+          onInputFailure(reason);
+        };
+      }
       const hydrated = await hydratePersistenceForCurrentVideo(
         enableContext,
-        isStillCurrent
+        isStillCurrent,
+        hydrationOptions
       );
       // 수화 대기 중 B 취소(disable)로 입력 revision이 넘어갔으면 재개하지 않는다
       if (!isCurrentInputRequest(request) || !isStillCurrent()) return false;
       if (!hydrated) {
+        if (hydrationFailureReason === 'persistence-ipc-rejected' &&
+            typeof onInputFailure === 'function') {
+          return false;
+        }
         setState('passive');
         return false;
       }
     }
-    if (shouldResume || resumeRequested) return startEnable(enableContext, isStillCurrent);
+    if (shouldResume || resumeRequested) {
+      return startEnable(enableContext, isStillCurrent, onInputFailure);
+    }
     if (!isStillCurrent()) return false;
     setState(settledState);
     return true;
@@ -1567,6 +1735,14 @@ export function createFabricDrawingPilotController(options = {}) {
         videoReady &&
         String(rollback.context.stableVideoIdentity || '') === confirmedVideoIdentity
       );
+      if (options?.preserveAuthoritativeOverlay === true) {
+        if (!isStillCurrent()) return false;
+        if (legacyBypass || persistenceBlocked || !rollback.shouldResume) {
+          setState('passive');
+          return true;
+        }
+        return startEnable(rollback.context, isStillCurrent);
+      }
       const restored = await reconcileCurrentVideo(
         rollback.shouldResume,
         'passive',
