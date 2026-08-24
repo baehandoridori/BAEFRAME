@@ -6209,15 +6209,25 @@ async function initApp() {
     }];
   }
 
+  let lastFabricPilotTimelineSourceEpoch = null;
+
   function renderActiveDrawingLayers() {
     try {
       const pilotLayers = getFabricPilotTimelineLayers();
+      const hasFabricPilotSelection = Array.isArray(timeline.selectedKeyframes) &&
+        timeline.selectedKeyframes.some(keyframe => keyframe.layerId === 'fabric-pilot-drawing-layer');
       if (pilotLayers) {
+        const sourceEpoch = fabricDrawingPersistenceStore.getSourceEpoch();
+        if (lastFabricPilotTimelineSourceEpoch !== null &&
+            sourceEpoch !== lastFabricPilotTimelineSourceEpoch &&
+            hasFabricPilotSelection) {
+          timeline.clearSelection();
+        }
+        lastFabricPilotTimelineSourceEpoch = sourceEpoch;
         timeline.renderDrawingLayers(pilotLayers, null);
         return;
       }
-      const hasFabricPilotSelection = Array.isArray(timeline.selectedKeyframes) &&
-        timeline.selectedKeyframes.some(keyframe => keyframe.layerId === 'fabric-pilot-drawing-layer');
+      lastFabricPilotTimelineSourceEpoch = null;
       if (hasFabricPilotSelection) timeline.clearSelection();
       timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
     } catch (_error) {

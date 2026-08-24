@@ -361,11 +361,15 @@ test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레�
     'getFabricPilotTimelineLayers',
     'timeline',
     'drawingManager',
+    'fabricDrawingPersistenceStore',
+    'lastFabricPilotTimelineSourceEpoch',
     `${renderSource}\nreturn renderActiveDrawingLayers;`
   )(
     () => null,
     timelineHarness,
-    { layers: legacyLayers, activeLayerId: 'legacy-layer' }
+    { layers: legacyLayers, activeLayerId: 'legacy-layer' },
+    { getSourceEpoch: () => 1 },
+    null
   );
 
   renderActiveDrawingLayers();
@@ -383,4 +387,59 @@ test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레�
   assert.deepEqual(calls, [
     { type: 'render', layers: legacyLayers, activeLayerId: 'legacy-layer' }
   ]);
+});
+
+test('mpv 드로잉 소스가 바뀌면 이전 합성 키프레임 선택을 지운다', () => {
+  const renderSource = appSource.match(
+    /function renderActiveDrawingLayers\(\) \{[\s\S]*?\n  \}\n\n  function requiresMpvReviewFreeze/
+  )?.[0]?.replace(/\n\n  function requiresMpvReviewFreeze$/, '');
+  assert.ok(renderSource, 'renderActiveDrawingLayers source should be extractable');
+
+  let sourceEpoch = 1;
+  const calls = [];
+  const timelineHarness = {
+    selectedKeyframes: [{ layerId: 'fabric-pilot-drawing-layer', frame: 12 }],
+    clearSelection() {
+      calls.push('clear');
+      this.selectedKeyframes = [];
+    },
+    renderDrawingLayers() {
+      calls.push('render');
+    }
+  };
+  const renderActiveDrawingLayers = new Function(
+    'getFabricPilotTimelineLayers',
+    'timeline',
+    'drawingManager',
+    'fabricDrawingPersistenceStore',
+    'lastFabricPilotTimelineSourceEpoch',
+    `${renderSource}\nreturn renderActiveDrawingLayers;`
+  )(
+    () => [{ id: 'fabric-pilot-drawing-layer' }],
+    timelineHarness,
+    { layers: [], activeLayerId: null },
+    { getSourceEpoch: () => sourceEpoch },
+    null
+  );
+
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['render']);
+
+  calls.length = 0;
+  sourceEpoch = 2;
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['clear', 'render']);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 24 }];
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['render']);
+  assert.match(appSource, /let lastFabricPilotTimelineSourceEpoch = null;/);
+});
+
+test('읽기 전용 합성 행의 가시성·잠금 버튼은 숨긴다', () => {
+  assert.match(
+    mainCss,
+    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-lock \{\n\s+display:\s*none;\n\s+pointer-events:\s*none;\n\}/
+  );
 });

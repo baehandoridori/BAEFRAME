@@ -1132,6 +1132,12 @@ body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-track-row:not([data-la
   pointer-events: none;
 }
 
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header[data-layer-id="fabric-pilot-drawing-layer"] .layer-visibility,
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header[data-layer-id="fabric-pilot-drawing-layer"] .layer-lock {
+  display: none;
+  pointer-events: none;
+}
+
 .mpv-review-freeze-frame {
   position: absolute;
   z-index: 1;
