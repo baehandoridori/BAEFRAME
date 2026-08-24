@@ -3215,6 +3215,8 @@ class MPVOverlayHost {
       hostWindow.webContents?.invalidate?.();
       hostWindow.setFocusable?.(true);
       hostWindow.setIgnoreMouseEvents?.(false);
+      // 네이티브 확장 스타일 변경이 직전 repaint 예약을 무효화할 수 있어 한 번 더 강제한다
+      hostWindow.webContents?.invalidate?.();
       return;
     }
 
@@ -3863,6 +3865,8 @@ class MPVOverlayHost {
       this.window.show();
     }
     this.window.moveTop?.();
+    // 숨김 중 갱신된 DOM(툴바·드로잉)이 이전 프레임으로 남지 않게 재표시 직후 재합성을 강제한다
+    this.window.webContents?.invalidate?.();
   }
 
   _toScreenBounds(bounds, mainWindow) {

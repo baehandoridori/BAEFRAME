@@ -1219,12 +1219,29 @@ export function createFabricDrawingPilotController(options = {}) {
         return false;
       }
 
+      let installedSource = null;
       try {
-        await installSource();
+        installedSource = await installSource();
       } catch (error) {
         installError = error;
       }
       if (!persistenceVideoMatches(owner)) return false;
+      if (installError === null && installedSource === false) {
+        // 소스 설치가 명시적으로 거부되면 설치 안 된 소스로 재수화하지 않는다.
+        // 사용자가 그리던 중이면 드로잉 입력만 복원하고, 아니면 대기 상태로 내린다.
+        if (resumeRequested) {
+          const rejectOwner = capturePersistenceOwner();
+          return startEnable(persistenceVideoContext, () => ownsPersistenceOwner(rejectOwner));
+        }
+        if (persistenceQuitSuspension) {
+          // 종료 준비 유예 중에는 정상 경로(1120-1128행)처럼 재개 의도를 복원하고 recovering으로 홀드한다
+          resumeRequested = quitResumeIntent;
+          setState('recovering');
+          return false;
+        }
+        setState('passive');
+        return false;
+      }
 
       persistenceOwnerEpoch += 1;
       persistenceBoundSourceEpoch = null;

@@ -1903,3 +1903,94 @@ test('전환 게이트는 진행 중인 영상 확정 처리를 기다린 뒤 �
   assert.equal(await readyPromise, true);
   assert.equal(await flushPromise, true);
 });
+
+test('a rejected passive source refresh skips hydration and stays passive', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  const hydrateCount = harness.calls.hydrate.length;
+  harness.calls.order.length = 0;
+
+  const result = await harness.controller.refreshPersistenceSource(() => {
+    harness.calls.order.push('install-source');
+    return false;
+  });
+
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1',
+    'install-source'
+  ]);
+  assert.equal(harness.calls.hydrate.length, hydrateCount);
+  assert.equal(result, false);
+  assert.equal(harness.controller.getState(), 'passive');
+});
+
+test('a rejected active source refresh skips hydration and restores drawing input', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const hydrateCount = harness.calls.hydrate.length;
+  harness.calls.order.length = 0;
+
+  const result = await harness.controller.refreshPersistenceSource(() => {
+    harness.calls.order.push('install-source');
+    return false;
+  });
+
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1',
+    'install-source',
+    'input:on:1'
+  ]);
+  assert.equal(harness.calls.hydrate.length, hydrateCount);
+  assert.equal(result, true);
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('a throwing source install releases the refresh queue for a later refresh', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+
+  await assert.rejects(
+    harness.controller.refreshPersistenceSource(() => {
+      harness.calls.order.push('install-source:throw');
+      throw new Error('source install failed');
+    }),
+    /source install failed/
+  );
+
+  const result = await harness.controller.refreshPersistenceSource(() => {
+    harness.calls.order.push('install-source:retry');
+    return true;
+  });
+  assert.equal(result, true);
+  assert.equal(harness.calls.order.includes('install-source:retry'), true);
+  assert.equal(harness.controller.getState(), 'passive');
+});
+
+test('a rejected source refresh preserves quit suspension resume intent', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(await harness.controller.preparePersistenceForQuit(), true);
+  const hydrateCount = harness.calls.hydrate.length;
+  harness.calls.order.length = 0;
+
+  const result = await harness.controller.refreshPersistenceSource(() => {
+    harness.calls.order.push('install-source');
+    return false;
+  });
+
+  assert.equal(result, false);
+  assert.equal(harness.controller.getState(), 'recovering');
+  assert.equal(harness.controller.getStatusSnapshot().resumeRequested, true);
+  assert.equal(harness.calls.hydrate.length, hydrateCount);
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1',
+    'install-source'
+  ]);
+  assert.equal(await harness.controller.resumeAfterQuitCancelled(), true);
+  assert.equal(harness.controller.getState(), 'active');
+});

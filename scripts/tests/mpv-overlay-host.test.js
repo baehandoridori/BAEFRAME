@@ -1917,6 +1917,14 @@ test('successful drawing activation repaints before pointer input without z-orde
     0,
     'toggling drawing input must not restack the native window or reintroduce flicker'
   );
+  const repaintIndices = events
+    .map(([name], index) => (name === 'webContents.invalidate' ? index : -1))
+    .filter(index => index >= 0);
+  assert.ok(repaintIndices.length >= 2, '활성화 시퀀스는 강제 재합성을 두 번 이상 예약해야 한다');
+  assert.ok(
+    repaintIndices[repaintIndices.length - 1] > nativeEnableIndex,
+    '네이티브 플래그 확정 뒤에도 재합성이 한 번 더 강제되어야 한다'
+  );
 });
 
 test('relays keyboard input through the focused main renderer and restores main focus on disable', async () => {
@@ -4151,7 +4159,8 @@ test('hides and restores the native overlay host with the mpv embed host', async
     constructor() {
       this.destroyed = false;
       this.webContents = {
-        executeJavaScript: async () => true
+        executeJavaScript: async () => true,
+        invalidate: () => events.push(['webContents.invalidate'])
       };
     }
     loadURL() {
@@ -4192,6 +4201,11 @@ test('hides and restores the native overlay host with the mpv embed host', async
   assert.deepEqual(showResult, { success: true, visible: true, ready: true });
   assert.ok(events.some(([name]) => name === 'hide'));
   assert.ok(events.filter(([name]) => name === 'showInactive').length >= 2);
+  const showIndex = events.map(([name]) => name).lastIndexOf('showInactive');
+  const repaintAfterShow = events.findIndex(
+    ([name], index) => name === 'webContents.invalidate' && index > showIndex
+  );
+  assert.ok(repaintAfterShow > showIndex, '창 재표시 직후 재합성이 강제되어야 한다');
   assert.equal(host.window.isDestroyed(), false);
 });
 

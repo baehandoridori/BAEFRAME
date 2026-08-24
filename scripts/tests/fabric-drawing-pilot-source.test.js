@@ -303,3 +303,13 @@ test('persistence gate abandon stays manual, load-local, and clears overlay pres
   );
   assert.doesNotMatch(loadVideo, /rearmedAfterAbandon/);
 });
+
+test('Fabric 툴바 표시는 페이드 없이 한 프레임에 완성된다', () => {
+  // 툴바 opacity 트랜지션은 오버레이 창이 연속 프레임을 만들지 못해 표시를 무한 지연시킨다
+  assert.doesNotMatch(fabricRuntimeSource, /transition:\s*'opacity/);
+  const iifeSource = normalizeNewlines(fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/lib/mpv-fabric-overlay.iife.js'),
+    'utf8'
+  ));
+  assert.equal(iifeSource.includes('opacity 100ms ease'), false);
+});
