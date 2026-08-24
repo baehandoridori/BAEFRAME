@@ -363,13 +363,25 @@ test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레�
     'drawingManager',
     'fabricDrawingPersistenceStore',
     'lastFabricPilotTimelineSourceEpoch',
+    'fabricDrawingPilotStatusSnapshot',
+    'lastFabricPilotTimelineVideoGeneration',
+    'lastFabricPilotTimelineStableVideoIdentity',
+    'videoPlayer',
+    'state',
+    'normalizeComparableFilePath',
     `${renderSource}\nreturn renderActiveDrawingLayers;`
   )(
     () => null,
     timelineHarness,
     { layers: legacyLayers, activeLayerId: 'legacy-layer' },
     { getSourceEpoch: () => 1 },
-    null
+    null,
+    { videoGeneration: 1 },
+    null,
+    null,
+    { filePath: 'C:\\videos\\a.mp4' },
+    { currentFile: 'C:\\videos\\a.mp4' },
+    value => String(value || '').replace(/\//g, '\\').toLowerCase()
   );
 
   renderActiveDrawingLayers();
@@ -389,13 +401,15 @@ test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레�
   ]);
 });
 
-test('mpv 드로잉 소스가 바뀌면 이전 합성 키프레임 선택을 지운다', () => {
+test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만 선택을 지운다', () => {
   const renderSource = appSource.match(
     /function renderActiveDrawingLayers\(\) \{[\s\S]*?\n  \}\n\n  function requiresMpvReviewFreeze/
   )?.[0]?.replace(/\n\n  function requiresMpvReviewFreeze$/, '');
   assert.ok(renderSource, 'renderActiveDrawingLayers source should be extractable');
 
   let sourceEpoch = 1;
+  const statusSnapshot = { videoGeneration: 1 };
+  const videoPlayerHarness = { filePath: 'C:\\videos\\a.mp4' };
   const calls = [];
   const timelineHarness = {
     selectedKeyframes: [{ layerId: 'fabric-pilot-drawing-layer', frame: 12 }],
@@ -413,13 +427,25 @@ test('mpv 드로잉 소스가 바뀌면 이전 합성 키프레임 선택을 지
     'drawingManager',
     'fabricDrawingPersistenceStore',
     'lastFabricPilotTimelineSourceEpoch',
+    'fabricDrawingPilotStatusSnapshot',
+    'lastFabricPilotTimelineVideoGeneration',
+    'lastFabricPilotTimelineStableVideoIdentity',
+    'videoPlayer',
+    'state',
+    'normalizeComparableFilePath',
     `${renderSource}\nreturn renderActiveDrawingLayers;`
   )(
     () => [{ id: 'fabric-pilot-drawing-layer' }],
     timelineHarness,
     { layers: [], activeLayerId: null },
     { getSourceEpoch: () => sourceEpoch },
-    null
+    null,
+    statusSnapshot,
+    null,
+    null,
+    videoPlayerHarness,
+    { currentFile: videoPlayerHarness.filePath },
+    value => String(value || '').replace(/\//g, '\\').toLowerCase()
   );
 
   renderActiveDrawingLayers();
@@ -428,13 +454,31 @@ test('mpv 드로잉 소스가 바뀌면 이전 합성 키프레임 선택을 지
   calls.length = 0;
   sourceEpoch = 2;
   renderActiveDrawingLayers();
-  assert.deepEqual(calls, ['clear', 'render']);
+  assert.deepEqual(calls, ['render']);
 
   calls.length = 0;
   timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 24 }];
+  videoPlayerHarness.filePath = 'C:\\videos\\b.mp4';
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['clear', 'render']);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 36 }];
   renderActiveDrawingLayers();
   assert.deepEqual(calls, ['render']);
-  assert.match(appSource, /let lastFabricPilotTimelineSourceEpoch = null;/);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 48 }];
+  statusSnapshot.videoGeneration = 2;
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['clear', 'render']);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 60 }];
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['render']);
+  assert.match(appSource, /let lastFabricPilotTimelineVideoGeneration = null;/);
+  assert.match(appSource, /let lastFabricPilotTimelineStableVideoIdentity = null;/);
 });
 
 test('읽기 전용 합성 행의 가시성·잠금 버튼은 숨긴다', () => {

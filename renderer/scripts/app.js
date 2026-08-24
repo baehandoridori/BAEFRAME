@@ -6209,7 +6209,8 @@ async function initApp() {
     }];
   }
 
-  let lastFabricPilotTimelineSourceEpoch = null;
+  let lastFabricPilotTimelineVideoGeneration = null;
+  let lastFabricPilotTimelineStableVideoIdentity = null;
 
   function renderActiveDrawingLayers() {
     try {
@@ -6217,17 +6218,26 @@ async function initApp() {
       const hasFabricPilotSelection = Array.isArray(timeline.selectedKeyframes) &&
         timeline.selectedKeyframes.some(keyframe => keyframe.layerId === 'fabric-pilot-drawing-layer');
       if (pilotLayers) {
-        const sourceEpoch = fabricDrawingPersistenceStore.getSourceEpoch();
-        if (lastFabricPilotTimelineSourceEpoch !== null &&
-            sourceEpoch !== lastFabricPilotTimelineSourceEpoch &&
+        const videoGeneration = fabricDrawingPilotStatusSnapshot?.videoGeneration ?? null;
+        const stableVideoIdentity = normalizeComparableFilePath(
+          videoPlayer.filePath || state.currentFile
+        );
+        const sourceChanged =
+          (lastFabricPilotTimelineVideoGeneration !== null &&
+            videoGeneration !== lastFabricPilotTimelineVideoGeneration) ||
+          (lastFabricPilotTimelineStableVideoIdentity !== null &&
+            stableVideoIdentity !== lastFabricPilotTimelineStableVideoIdentity);
+        if (sourceChanged &&
             hasFabricPilotSelection) {
           timeline.clearSelection();
         }
-        lastFabricPilotTimelineSourceEpoch = sourceEpoch;
+        lastFabricPilotTimelineVideoGeneration = videoGeneration;
+        lastFabricPilotTimelineStableVideoIdentity = stableVideoIdentity;
         timeline.renderDrawingLayers(pilotLayers, null);
         return;
       }
-      lastFabricPilotTimelineSourceEpoch = null;
+      lastFabricPilotTimelineVideoGeneration = null;
+      lastFabricPilotTimelineStableVideoIdentity = null;
       if (hasFabricPilotSelection) timeline.clearSelection();
       timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
     } catch (_error) {
