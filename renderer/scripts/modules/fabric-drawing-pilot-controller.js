@@ -712,7 +712,7 @@ export function createFabricDrawingPilotController(options = {}) {
   async function hydratePersistenceForCurrentVideo(
     contextOverrides = null,
     isStillCurrent = () => true,
-    { allowVideoNotReady = false } = {}
+    { allowVideoNotReady = false, onIpcFailure = null } = {}
   ) {
     if (!persistenceStore) return true;
     const owner = capturePersistenceOwner(contextOverrides, {
@@ -757,11 +757,22 @@ export function createFabricDrawingPilotController(options = {}) {
       } catch (_error) {
         hydration = null;
       }
+      const hydrationAccepted = hydration?.success === true &&
+        hydration?.accepted === true;
+      if (!hydrationAccepted && typeof onIpcFailure === 'function') {
+        onIpcFailure(
+          hydration?.reason || hydration?.error || 'drawing-hydration-failed'
+        );
+      }
       if (!ownsPersistenceOwner(owner, { allowVideoNotReady }) ||
           !isStillCurrent()) {
         return false;
       }
-      if (hydration?.success !== true || hydration?.accepted !== true) {
+      if (!hydrationAccepted) {
+        if (hydration?.reason === 'persistence-ipc-rejected' &&
+            typeof onIpcFailure === 'function') {
+          return false;
+        }
         return setPersistenceBypass(
           hydration?.reason || 'drawing-hydration-failed'
         );
@@ -778,13 +789,24 @@ export function createFabricDrawingPilotController(options = {}) {
       } catch (_error) {
         exported = null;
       }
+      const exportAccepted = exported?.success === true &&
+        exported?.accepted === true &&
+        !!exported.snapshot;
+      if (!exportAccepted && typeof onIpcFailure === 'function') {
+        onIpcFailure(
+          exported?.reason || exported?.error ||
+          'drawing-hydration-verification-failed'
+        );
+      }
       if (!ownsPersistenceOwner(owner, { allowVideoNotReady }) ||
           !isStillCurrent()) {
         return false;
       }
-      if (exported?.success !== true ||
-          exported?.accepted !== true ||
-          !exported.snapshot) {
+      if (!exportAccepted) {
+        if (exported?.reason === 'persistence-ipc-rejected' &&
+            typeof onIpcFailure === 'function') {
+          return false;
+        }
         return setPersistenceBypass(
           exported?.reason || 'drawing-hydration-verification-failed'
         );
@@ -947,36 +969,60 @@ export function createFabricDrawingPilotController(options = {}) {
   async function ensurePersistenceBindingCurrent() {
     const sourceEpoch = getPersistenceSourceEpoch();
     if (sourceEpoch === null || sourceEpoch === persistenceBoundSourceEpoch) {
-      return true;
+      return { ok: true, reason: null };
     }
     if (videoReady) {
       const shouldResume = resumeRequested ||
         state === 'active' ||
         state === 'preparing';
       const owner = capturePersistenceOwner();
-      if (!owner) return false;
-      return reconcileCurrentVideo(
+      if (!owner) return { ok: false, reason: null };
+      let failureReason = null;
+      const reconciled = await reconcileCurrentVideo(
         shouldResume,
         'passive',
         persistenceVideoContext,
-        () => ownsPersistenceOwner(owner)
+        () => ownsPersistenceOwner(owner),
+        reason => {
+          failureReason = reason;
+        }
       );
+      return {
+        ok: reconciled,
+        stale: !reconciled && !ownsPersistenceOwner(owner),
+        hostUnavailable: failureReason === 'overlay-host-unavailable',
+        reason: failureReason
+      };
     }
     const owner = capturePersistenceOwner(null, {
       allowVideoNotReady: true
     });
-    if (!owner) return false;
-    return hydratePersistenceForCurrentVideo(
+    if (!owner) return { ok: false, reason: null };
+    let failureReason = null;
+    const hydrated = await hydratePersistenceForCurrentVideo(
       persistenceVideoContext,
       () => ownsPersistenceOwner(owner, { allowVideoNotReady: true }),
-      { allowVideoNotReady: true }
+      {
+        allowVideoNotReady: true,
+        onIpcFailure: reason => {
+          failureReason = reason;
+        }
+      }
     );
+    return {
+      ok: hydrated,
+      stale: !hydrated && !ownsPersistenceOwner(owner, { allowVideoNotReady: true }),
+      hostUnavailable: failureReason === 'overlay-host-unavailable',
+      reason: failureReason
+    };
   }
 
   async function pullWithCurrentPersistenceBinding() {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (!await ensurePersistenceBindingCurrent()) {
-        if (legacyBypass && !persistenceBlocked) {
+      const binding = await ensurePersistenceBindingCurrent();
+      if (binding?.ok !== true) {
+        if (binding?.reason !== 'persistence-ipc-rejected' &&
+            legacyBypass && !persistenceBlocked) {
           return {
             ok: true,
             bypassed: true,
@@ -985,8 +1031,10 @@ export function createFabricDrawingPilotController(options = {}) {
         }
         return {
           ok: false,
+          stale: binding?.stale === true,
+          hostUnavailable: binding?.hostUnavailable === true,
           eventEpoch: persistenceEventEpoch,
-          reason: persistenceFailureReason || 'persistence-rebind-failed'
+          reason: binding?.reason || persistenceFailureReason || 'persistence-rebind-failed'
         };
       }
       const result = await enqueuePersistencePull();
@@ -1049,6 +1097,7 @@ export function createFabricDrawingPilotController(options = {}) {
         persistenceResyncTrailing = false;
         result = await pullWithCurrentPersistenceBinding();
         if (result?.ok !== true) {
+          if (result?.reason === 'persistence-ipc-timeout') return false;
           await blockPersistenceAfterPullFailure(result);
           return false;
         }
@@ -1153,6 +1202,19 @@ export function createFabricDrawingPilotController(options = {}) {
       const pulled = await enqueuePersistencePull();
       if (!persistenceVideoMatches(owner)) return false;
       if (pulled?.ok !== true) {
+        if (pulled?.reason === 'persistence-ipc-timeout') {
+          if (persistenceQuitSuspension) {
+            resumeRequested = quitResumeIntent;
+          } else if (resumeRequested) {
+            await startEnable(
+              persistenceVideoContext,
+              () => ownsPersistenceOwner(owner)
+            );
+          } else {
+            setState('passive');
+          }
+          return false;
+        }
         await blockPersistenceAfterPullFailure(pulled);
         return false;
       }
@@ -1266,6 +1328,7 @@ export function createFabricDrawingPilotController(options = {}) {
       return false;
     }
     if (pulled?.ok !== true) {
+      if (pulled?.reason === 'persistence-ipc-timeout') return false;
       persistenceQuitSuspension = null;
       return blockPersistenceAfterPullFailure(pulled);
     }
@@ -1309,7 +1372,11 @@ export function createFabricDrawingPilotController(options = {}) {
     );
   }
 
-  async function startEnable(contextOverrides = null, isStillCurrent = () => true) {
+  async function startEnable(
+    contextOverrides = null,
+    isStillCurrent = () => true,
+    onInputFailure = null
+  ) {
     if (!isStillCurrent() ||
         !shouldOwnDrawingShortcut() ||
         !hostGeneration ||
@@ -1336,12 +1403,20 @@ export function createFabricDrawingPilotController(options = {}) {
     });
     setState('preparing');
     const response = await invokeInput(request);
+    const inputAccepted = isAcceptedInputResponse(response, true);
+    if (!inputAccepted && typeof onInputFailure === 'function') {
+      onInputFailure(response?.reason || response?.error || null);
+    }
     const stillCurrent = isCurrentInputRequest(request) &&
       isStillCurrent() &&
       currentSession?.sessionId === session.sessionId &&
       state === 'preparing';
     if (!stillCurrent) return false;
-    if (!isAcceptedInputResponse(response, true)) {
+    if (!inputAccepted) {
+      if (response?.reason === 'persistence-ipc-rejected' &&
+          typeof onInputFailure === 'function') {
+        return false;
+      }
       return enterFailure(response?.error);
     }
 
@@ -1357,30 +1432,54 @@ export function createFabricDrawingPilotController(options = {}) {
     shouldResume,
     settledState = 'passive',
     enableContext = null,
-    isStillCurrent = () => true
+    isStillCurrent = () => true,
+    onInputFailure = null
   ) {
     if (!isStillCurrent() || !hostGeneration || !videoGeneration || !videoReady) return false;
     desiredInputEnabled = false;
     currentSession = null;
     const request = makeInputRequest(false);
     const response = await invokeInput(request);
+    const inputAccepted = isAcceptedInputResponse(response, false);
+    if (!inputAccepted && typeof onInputFailure === 'function') {
+      onInputFailure(response?.reason || response?.error || null);
+    }
     if (!isCurrentInputRequest(request) || !isStillCurrent()) return false;
-    if (!isAcceptedInputResponse(response, false)) {
+    if (!inputAccepted) {
+      if (response?.reason === 'persistence-ipc-rejected' &&
+          typeof onInputFailure === 'function') {
+        return false;
+      }
       return enterFailure(response?.error);
     }
     if (persistenceStore) {
+      let hydrationFailureReason = null;
+      const hydrationOptions = {};
+      if (typeof onInputFailure === 'function') {
+        hydrationOptions.onIpcFailure = reason => {
+          hydrationFailureReason = reason;
+          onInputFailure(reason);
+        };
+      }
       const hydrated = await hydratePersistenceForCurrentVideo(
         enableContext,
-        isStillCurrent
+        isStillCurrent,
+        hydrationOptions
       );
       // 수화 대기 중 B 취소(disable)로 입력 revision이 넘어갔으면 재개하지 않는다
       if (!isCurrentInputRequest(request) || !isStillCurrent()) return false;
       if (!hydrated) {
+        if (hydrationFailureReason === 'persistence-ipc-rejected' &&
+            typeof onInputFailure === 'function') {
+          return false;
+        }
         setState('passive');
         return false;
       }
     }
-    if (shouldResume || resumeRequested) return startEnable(enableContext, isStillCurrent);
+    if (shouldResume || resumeRequested) {
+      return startEnable(enableContext, isStillCurrent, onInputFailure);
+    }
     if (!isStillCurrent()) return false;
     setState(settledState);
     return true;

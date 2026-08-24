@@ -444,6 +444,55 @@ test('resync-required events coalesce in flight and pull one trailing authoritat
   );
 });
 
+test('백그라운드 resync 타임아웃은 입력을 차단하지 않고 다음 이벤트에서 재시도한다', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 40 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+
+  const latest = harness.getRuntimeSnapshot();
+  latest.scenes[0].objects.push(makeRecord('stroke-after-timeout'));
+  latest.scenes[0].mutationSequence = 2;
+  harness.setRuntimeSnapshot(latest);
+  const fence = {
+    type: 'resync-required',
+    hostGeneration: 1,
+    videoGeneration: 1,
+    persistenceSessionId: 'persistence-session-1',
+    stableVideoIdentity: 'C:/shot/scene-001.mov',
+    reason: 'transition-too-large'
+  };
+  const inputCountBeforeTimeout = harness.calls.input.length;
+  const exportCountBeforeTimeout = harness.calls.export.length;
+
+  harness.setExportHandler(() => new Promise(() => {}));
+  assert.equal(harness.emitPersistence(fence), true);
+  await new Promise(resolve => setTimeout(resolve, 120));
+  await flushDetachedWork();
+
+  const timedOutStatus = harness.controller.getStatusSnapshot();
+  assert.equal(timedOutStatus.persistenceBlocked, false);
+  assert.equal(timedOutStatus.legacyBypass, false);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.equal(harness.controller.shouldOwnDrawingShortcut(), true);
+  assert.equal(harness.calls.input.length, inputCountBeforeTimeout);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['stroke-1']
+  );
+
+  harness.setExportHandler(null);
+  assert.equal(harness.emitPersistence(fence), true);
+  await flushDetachedWork();
+  await flushDetachedWork();
+
+  assert.equal(harness.calls.export.length, exportCountBeforeTimeout + 2);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['stroke-1', 'stroke-after-timeout']
+  );
+  assert.equal(harness.controller.getState(), 'active');
+});
+
 test('final save pull catches a lost last event without disabling active input', async () => {
   const harness = createHarness();
   assert.equal(await prepareVideo(harness), true);
@@ -552,6 +601,325 @@ test('an active external drawingsV3 refresh resumes drawing only after rehydrate
     harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
     ['external-active-stroke']
   );
+});
+
+test('source rebind superseded input timeout stays retryable without a blocking latch', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 40 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-rebind-timeout-stroke')]
+    }]
+  });
+  assert.equal(harness.store.importRootValue(externalRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  }).accepted, true);
+  const exportCountBeforeTimeout = harness.calls.export.length;
+  const firstInputOff = deferred();
+  let inputOffCount = 0;
+  harness.calls.order.length = 0;
+  harness.setInputHandler(request => {
+    if (request.enabled) {
+      return { success: true, accepted: true, enabled: true };
+    }
+    inputOffCount += 1;
+    if (inputOffCount === 1) {
+      firstInputOff.resolve();
+      return new Promise(() => {});
+    }
+    return { success: true, accepted: true, enabled: false };
+  });
+
+  const timedOutFlush = harness.controller.flushPersistenceBeforeLeave();
+  await firstInputOff.promise;
+  assert.equal(await harness.controller.disable(), true);
+  assert.equal(await timedOutFlush, false);
+  const timedOutStatus = harness.controller.getStatusSnapshot();
+  assert.equal(timedOutStatus.persistenceBlocked, false);
+  assert.equal(timedOutStatus.legacyBypass, false);
+  assert.equal(timedOutStatus.state, 'passive');
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'input:off:1'
+  ]);
+  assert.equal(harness.calls.export.length, exportCountBeforeTimeout);
+
+  harness.setInputHandler(null);
+  harness.calls.order.length = 0;
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'hydrate:1',
+    'export:1',
+    'export:1'
+  ]);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['external-rebind-timeout-stroke']
+  );
+  assert.equal(harness.controller.getState(), 'passive');
+});
+
+test('source rebind input-on timeout stays retryable without a blocking latch', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 40 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-input-on-timeout-stroke')]
+    }]
+  });
+  assert.equal(harness.store.importRootValue(externalRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  }).accepted, true);
+  harness.calls.order.length = 0;
+  harness.setInputHandler(request => request.enabled
+    ? new Promise(() => {})
+    : { success: true, accepted: true, enabled: false });
+
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), false);
+  const timedOutStatus = harness.controller.getStatusSnapshot();
+  assert.equal(timedOutStatus.persistenceBlocked, false);
+  assert.equal(timedOutStatus.legacyBypass, false);
+  assert.equal(timedOutStatus.state, 'failed');
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'hydrate:1',
+    'export:1',
+    'input:on:1',
+    'input:off:1'
+  ]);
+
+  harness.setInputHandler(null);
+  harness.calls.order.length = 0;
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), true);
+  assert.deepEqual(harness.calls.order, ['export:1']);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['external-input-on-timeout-stroke']
+  );
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('source rebind hydrate timeout stays non-blocking after the owner is superseded', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 40 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-hydrate-timeout-stroke')]
+    }]
+  });
+  assert.equal(harness.store.importRootValue(externalRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  }).accepted, true);
+  harness.setHydrateGate(new Promise(() => {}));
+  const hydrateCountBeforeTimeout = harness.calls.hydrate.length;
+  harness.calls.order.length = 0;
+
+  const timedOutFlush = harness.controller.flushPersistenceBeforeLeave();
+  await flushDetachedWork();
+  assert.equal(harness.calls.hydrate.length, hydrateCountBeforeTimeout + 1);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+  assert.equal(await timedOutFlush, false);
+  const timedOutStatus = harness.controller.getStatusSnapshot();
+  assert.equal(timedOutStatus.persistenceBlocked, false);
+  assert.equal(timedOutStatus.legacyBypass, false);
+
+  assert.equal(await harness.controller.cancelVideoChange('load-b', {
+    restorePreviousVideo: true
+  }), true);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['external-hydrate-timeout-stroke']
+  );
+});
+
+test('source rebind rejection stays blocking even when its error text says timeout', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 40 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-rejected-stroke')]
+    }]
+  });
+  assert.equal(harness.store.importRootValue(externalRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  }).accepted, true);
+  harness.setInputHandler(request => request.enabled
+    ? { success: true, accepted: true, enabled: true }
+    : Promise.reject(new Error('persistence-ipc-timeout')));
+
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), false);
+  const rejectedStatus = harness.controller.getStatusSnapshot();
+  assert.equal(rejectedStatus.persistenceBlocked, true);
+  assert.equal(rejectedStatus.legacyBypass, true);
+  assert.equal(rejectedStatus.persistenceFailureReason, 'persistence-ipc-rejected');
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  assert.equal(harness.controller.getStatusSnapshot().resumeRequested, true);
+});
+
+test('source rebind superseded rejection preserves the latest disable intent', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 40 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-superseded-rejection-stroke')]
+    }]
+  });
+  assert.equal(harness.store.importRootValue(externalRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  }).accepted, true);
+  const firstInputOff = deferred();
+  const rejectedInputOff = deferred();
+  let inputOffCount = 0;
+  harness.setInputHandler(request => {
+    if (request.enabled) {
+      return { success: true, accepted: true, enabled: true };
+    }
+    inputOffCount += 1;
+    if (inputOffCount === 1) {
+      firstInputOff.resolve();
+      return rejectedInputOff.promise;
+    }
+    return { success: true, accepted: true, enabled: false };
+  });
+
+  const rejectedFlush = harness.controller.flushPersistenceBeforeLeave();
+  await firstInputOff.promise;
+  assert.equal(await harness.controller.disable(), true);
+  rejectedInputOff.reject(new Error('persistence-ipc-timeout'));
+  assert.equal(await rejectedFlush, false);
+  const rejectedStatus = harness.controller.getStatusSnapshot();
+  assert.equal(rejectedStatus.persistenceBlocked, true);
+  assert.equal(rejectedStatus.persistenceFailureReason, 'persistence-ipc-rejected');
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  assert.equal(harness.controller.getStatusSnapshot().resumeRequested, false);
+  assert.equal(harness.controller.getState(), 'passive');
+});
+
+test('source rebind hydrate rejection stays blocking', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 40 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-rejected-hydrate-stroke')]
+    }]
+  });
+  assert.equal(harness.store.importRootValue(externalRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  }).accepted, true);
+  const rejectedHydrate = deferred();
+  harness.setHydrateGate(rejectedHydrate.promise);
+
+  const rejectedFlush = harness.controller.flushPersistenceBeforeLeave();
+  await flushDetachedWork();
+  rejectedHydrate.reject(new Error('persistence-ipc-timeout'));
+  assert.equal(await rejectedFlush, false);
+  const rejectedStatus = harness.controller.getStatusSnapshot();
+  assert.equal(rejectedStatus.persistenceBlocked, true);
+  assert.equal(rejectedStatus.legacyBypass, true);
+  assert.equal(rejectedStatus.persistenceFailureReason, 'persistence-ipc-rejected');
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  assert.equal(harness.controller.getStatusSnapshot().resumeRequested, true);
+  assert.equal(await harness.controller.beforeVideoChange('load-b'), true);
+  assert.equal(await harness.controller.afterVideoReady({
+    loadToken: 'load-b',
+    stableVideoIdentity: 'C:/shot/scene-002.mov',
+    targetFrame: 24,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    fps: 24,
+    totalFrames: 240
+  }), true);
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('source rebind verification rejection stays blocking', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 40 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-rejected-verification-stroke')]
+    }]
+  });
+  assert.equal(harness.store.importRootValue(externalRoot, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  }).accepted, true);
+  harness.setExportHandler(() => Promise.reject(
+    new Error('persistence-ipc-timeout')
+  ));
+
+  assert.equal(await harness.controller.flushPersistenceBeforeLeave(), false);
+  const rejectedStatus = harness.controller.getStatusSnapshot();
+  assert.equal(rejectedStatus.persistenceBlocked, true);
+  assert.equal(rejectedStatus.legacyBypass, true);
+  assert.equal(rejectedStatus.persistenceFailureReason, 'persistence-ipc-rejected');
+  assert.equal(harness.controller.abandonPersistenceForVideoChange(), true);
+  assert.equal(harness.controller.getStatusSnapshot().resumeRequested, true);
 });
 
 test('an external future drawingsV3 refresh preserves the root and hands B to legacy without blocking save', async () => {
@@ -663,6 +1031,108 @@ test('active source refresh disables input, pulls the old source, installs, hydr
     true
   );
 
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1',
+    'install-source',
+    'hydrate:1',
+    'export:1',
+    'input:on:1'
+  ]);
+  assert.equal(
+    harness.calls.hydrate.at(-1).persistenceSessionId,
+    'persistence-session-after-refresh'
+  );
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['external-source-stroke']
+  );
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('source refresh pull timeout preserves the current overlay and retries without a blocking latch', async () => {
+  const persistenceSessions = [
+    'persistence-session-before-refresh',
+    'persistence-session-after-refresh'
+  ];
+  const harness = createHarness({
+    persistenceIpcDeadlineMs: 40,
+    persistenceSessionIdFactory: () => persistenceSessions.shift()
+  });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+
+  const latest = harness.getRuntimeSnapshot();
+  latest.scenes[0].objects.push(makeRecord('stroke-before-timeout'));
+  latest.scenes[0].mutationSequence = 2;
+  harness.setRuntimeSnapshot(latest);
+  const hydrateCountBeforeTimeout = harness.calls.hydrate.length;
+  let installCount = 0;
+  harness.calls.order.length = 0;
+  harness.setExportHandler(() => new Promise(() => {}));
+
+  assert.equal(
+    await harness.controller.refreshPersistenceSource(() => {
+      installCount += 1;
+    }),
+    false
+  );
+  assert.equal(installCount, 0);
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1',
+    'input:on:1'
+  ]);
+  const timedOutStatus = harness.controller.getStatusSnapshot();
+  assert.equal(timedOutStatus.persistenceBlocked, false);
+  assert.equal(timedOutStatus.legacyBypass, false);
+  assert.equal(timedOutStatus.resumeRequested, false);
+  assert.equal(timedOutStatus.state, 'active');
+  assert.equal(timedOutStatus.sessionId, harness.calls.input.at(-1).session.sessionId);
+  assert.equal(
+    harness.calls.export.at(-1).persistenceSessionId,
+    'persistence-session-before-refresh'
+  );
+  assert.equal(harness.calls.hydrate.length, hydrateCountBeforeTimeout);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['stroke-1']
+  );
+  assert.deepEqual(
+    harness.getRuntimeSnapshot().scenes[0].objects.map(object => object.id),
+    ['stroke-1', 'stroke-before-timeout']
+  );
+
+  const externalRoot = makeRoot({
+    revision: 8,
+    keyframes: [{
+      id: 'external-keyframe',
+      frame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeRecord('external-source-stroke')]
+    }]
+  });
+  harness.setExportHandler(null);
+  harness.calls.order.length = 0;
+  assert.equal(
+    await harness.controller.refreshPersistenceSource(() => {
+      assert.deepEqual(
+        harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+        ['stroke-1', 'stroke-before-timeout']
+      );
+      installCount += 1;
+      harness.calls.order.push('install-source');
+      return harness.store.importRootValue(externalRoot, {
+        fps: 24,
+        totalFrames: 240,
+        stableVideoIdentity: 'C:/shot/scene-001.mov'
+      });
+    }),
+    true
+  );
+  assert.equal(installCount, 1);
   assert.deepEqual(harness.calls.order, [
     'input:off:1',
     'export:1',
@@ -839,6 +1309,74 @@ test('quit preparation disables input before the final pull, rejects a late tran
     'export:1',
     'input:on:1'
   ]);
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('quit final pull timeout preserves cancellation recovery and retries without a blocking latch', async () => {
+  const harness = createHarness({ persistenceIpcDeadlineMs: 40 });
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+
+  const latest = harness.getRuntimeSnapshot();
+  latest.scenes[0].objects.push(makeRecord('quit-timeout-stroke'));
+  latest.scenes[0].mutationSequence = 2;
+  harness.setRuntimeSnapshot(latest);
+  const hydrateCountBeforeTimeout = harness.calls.hydrate.length;
+  harness.calls.order.length = 0;
+  harness.setExportHandler(() => new Promise(() => {}));
+
+  assert.equal(await harness.controller.preparePersistenceForQuit(), false);
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1'
+  ]);
+  const timedOutStatus = harness.controller.getStatusSnapshot();
+  assert.deepEqual({
+    state: timedOutStatus.state,
+    desiredInputEnabled: timedOutStatus.desiredInputEnabled,
+    sessionId: timedOutStatus.sessionId,
+    resumeRequested: timedOutStatus.resumeRequested,
+    persistenceQuitPrepared: timedOutStatus.persistenceQuitPrepared,
+    legacyBypass: timedOutStatus.legacyBypass,
+    persistenceBlocked: timedOutStatus.persistenceBlocked,
+    persistenceFailureReason: timedOutStatus.persistenceFailureReason
+  }, {
+    state: 'recovering',
+    desiredInputEnabled: false,
+    sessionId: null,
+    resumeRequested: true,
+    persistenceQuitPrepared: true,
+    legacyBypass: false,
+    persistenceBlocked: false,
+    persistenceFailureReason: null
+  });
+  assert.equal(harness.calls.hydrate.length, hydrateCountBeforeTimeout);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['stroke-1']
+  );
+  assert.deepEqual(
+    harness.getRuntimeSnapshot().scenes[0].objects.map(object => object.id),
+    ['stroke-1', 'quit-timeout-stroke']
+  );
+
+  harness.setExportHandler(null);
+  assert.equal(await harness.controller.resumeAfterQuitCancelled(), true);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.equal(harness.calls.order.at(-1), 'input:on:1');
+  assert.equal(harness.calls.hydrate.length, hydrateCountBeforeTimeout);
+
+  harness.calls.order.length = 0;
+  assert.equal(await harness.controller.preparePersistenceForQuit(), true);
+  assert.deepEqual(harness.calls.order, [
+    'input:off:1',
+    'export:1'
+  ]);
+  assert.deepEqual(
+    harness.store.exportRootValue().keyframes[0].objects.map(object => object.id),
+    ['stroke-1', 'quit-timeout-stroke']
+  );
+  assert.equal(await harness.controller.resumeAfterQuitCancelled(), true);
   assert.equal(harness.controller.getState(), 'active');
 });
 
