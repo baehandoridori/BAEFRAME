@@ -11551,3 +11551,51 @@ test('runtime and adapter sources have no review persistence or IPC integration'
     /ReviewDataManager|saveReview|saveError|_onDataChanged|ipcRenderer|electronAPI/
   );
 });
+
+test('재진입 재도색은 rAF를 기다리지 않고 화면 컨텍스트에 동기 반영된다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([
+      { x: 30, y: 70 },
+      { x: 80, y: 90 },
+      { x: 140, y: 75 }
+    ], 907);
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+    // 재진입 직전에 화면 컨텍스트를 비워 '이전 잔상'과 신규 도색을 구분한다
+    harness.canvas.contextContainer.clearRect(
+      0, 0, harness.canvas.lowerCanvasEl.width, harness.canvas.lowerCanvasEl.height
+    );
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 3,
+      enabled: true,
+      session: {
+        sessionId: 'real-fabric-session-repaint',
+        stableVideoIdentity: 'real-fabric-video',
+        targetFrame: 0,
+        sourceWidth: 200,
+        sourceHeight: 200,
+        canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+        viewportTransform: { scale: 1, panX: 0, panY: 0 },
+        tool: 'brush'
+      }
+    }).accepted, true);
+    // rAF/타이머를 flush하지 않은 동기 시점에 화면 컨텍스트에 픽셀이 있어야 한다
+    const { width, height } = harness.canvas.lowerCanvasEl;
+    const data = harness.canvas.lowerCanvasEl.getContext('2d')
+      .getImageData(0, 0, width, height).data;
+    let painted = 0;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] > 0) painted += 1;
+    }
+    assert.ok(painted > 0, '재진입 직후 rAF 없이 획이 화면 컨텍스트에 그려져 있어야 한다');
+  } finally {
+    await harness.destroy();
+  }
+});

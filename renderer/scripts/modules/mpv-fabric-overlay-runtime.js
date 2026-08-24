@@ -2660,15 +2660,20 @@ function createFabricOverlayRuntime(options = {}) {
     metrics.setObjectCount(sceneStore.getDiagnostics().objectCount);
   }
 
-  function renderActiveScene() {
+  function renderActiveScene(options = {}) {
     if (!fabricCanvas) return;
     strokeFillGeometryCache.clear();
     strokeFillGeometryCacheWeight = 0;
     const snapshot = sceneStore.getActiveSceneSnapshot();
+    const paths = (snapshot?.objects || []).map(record => makeFabricPath(record));
     fabricCanvas.clear();
-    for (const record of snapshot?.objects || []) fabricCanvas.add(makeFabricPath(record));
+    for (const path of paths) fabricCanvas.add(path);
     refreshSelectionInteractionPolicy();
-    fabricCanvas.requestRenderAll();
+    if (options.immediate === true && typeof fabricCanvas.renderAll === 'function') {
+      fabricCanvas.renderAll();
+    } else {
+      fabricCanvas.requestRenderAll();
+    }
     updateObjectMetric();
   }
 
@@ -5211,7 +5216,7 @@ function createFabricOverlayRuntime(options = {}) {
     tokenState.inputRevision = Number(request.inputRevision);
     currentSession = session;
     applyViewport(session);
-    renderActiveScene();
+    renderActiveScene({ immediate: true });
     setToolMode(session.tool);
     inputEnabled = true;
     setSurfaceInput(true);
