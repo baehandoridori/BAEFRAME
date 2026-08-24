@@ -1003,6 +1003,7 @@ async function initApp() {
     playlistTimelineUpdateToken += 1;
     playlistAggregateCommentRanges = [];
     timeline.clearPlaylistTimeline();
+    renderActiveDrawingLayers();
   }
 
   function beginPlaylistReplacement() {
@@ -6187,7 +6188,14 @@ async function initApp() {
         !isMpvPilotPlaybackActive()) {
       return null;
     }
-    if (playlistUIState.mode === 'continuous' || cutlistUIState.active) {
+    const hasPlaylistAggregateTimeline = playlistUIState.mode === 'continuous' &&
+      timeline.playlistDuration > 0 &&
+      timeline.playlistSegments?.length > 0;
+    const hasCutlistAggregateTimeline = cutlistUIState.active &&
+      getCutlistManager().isActive() &&
+      timeline.cutlistDuration > 0 &&
+      timeline.cutlistSegments?.length > 0;
+    if (hasPlaylistAggregateTimeline || hasCutlistAggregateTimeline) {
       return [];
     }
     const doc = fabricDrawingPersistenceStore.getHydrationDocument?.();
@@ -6207,11 +6215,9 @@ async function initApp() {
       opacity: 1,
       keyframes,
       getKeyframeRanges(totalFrames) {
-        return keyframes.map((kf, index) => ({
+        return keyframes.map(kf => ({
           start: kf.frame,
-          end: keyframes[index + 1]
-            ? keyframes[index + 1].frame - 1
-            : Math.max(kf.frame, (Number(totalFrames) || 0) - 1),
+          end: kf.frame,
           keyframe: kf
         }));
       }
@@ -18193,6 +18199,7 @@ async function initApp() {
 
       const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
       timeline.setPlaylistTimeline(segments, totalDuration);
+      renderActiveDrawingLayers();
       timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
 
       const aggregateRanges = [];
@@ -19357,12 +19364,14 @@ async function initApp() {
       timeline.setCurrentCutId(null);
       timeline.setCutlistTimeline([], 0);
       cutlistAggregateCommentRanges = [];
+      renderActiveDrawingLayers();
       return;
     }
 
     const cutlistTimeline = cutlistManager.getTimeline();
     timeline.setCutlistTimeline(cutlistTimeline.segments, cutlistTimeline.totalDuration);
     timeline.setCurrentCutId(cutlistManager.currentCutId);
+    renderActiveDrawingLayers();
   }
 
   async function updateCutlistAggregateComments() {

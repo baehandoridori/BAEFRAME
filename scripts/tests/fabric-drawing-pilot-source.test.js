@@ -540,8 +540,14 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
 
   let mpvActive = true;
   let hydrationReads = 0;
+  let cutlistManagerActive = false;
   const playlistState = { mode: 'review' };
-  const timelineState = { playlistDuration: 0, cutlistDuration: 0 };
+  const timelineState = {
+    playlistDuration: 0,
+    playlistSegments: [],
+    cutlistDuration: 0,
+    cutlistSegments: []
+  };
   const cutlistState = { active: false };
   const getProjection = new Function(
     'fabricDrawingPilotController',
@@ -550,6 +556,7 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
     'playlistUIState',
     'timeline',
     'cutlistUIState',
+    'getCutlistManager',
     `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
   )(
     { shouldOwnDrawingShortcut: () => true },
@@ -562,32 +569,113 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
     },
     playlistState,
     timelineState,
-    cutlistState
+    cutlistState,
+    () => ({ isActive: () => cutlistManagerActive })
   );
 
   assert.equal(getProjection().length, 1);
   assert.equal(hydrationReads, 1);
 
   playlistState.mode = 'continuous';
+  assert.equal(getProjection().length, 1);
+  assert.equal(hydrationReads, 2);
+
+  timelineState.playlistDuration = 30;
+  timelineState.playlistSegments = [{}];
   const playlistProjection = getProjection();
   assert.deepEqual(playlistProjection, []);
   assert.equal(Boolean(playlistProjection), true);
-  assert.equal(hydrationReads, 1);
+  assert.equal(hydrationReads, 2);
 
   playlistState.mode = 'review';
+  timelineState.playlistDuration = 0;
+  timelineState.playlistSegments = [];
   cutlistState.active = true;
+  assert.equal(getProjection().length, 1);
+  assert.equal(hydrationReads, 3);
+
+  cutlistManagerActive = true;
+  assert.equal(getProjection().length, 1);
+  assert.equal(hydrationReads, 4);
+
+  timelineState.cutlistDuration = 30;
+  timelineState.cutlistSegments = [{}];
   const cutlistProjection = getProjection();
   assert.deepEqual(cutlistProjection, []);
   assert.equal(Boolean(cutlistProjection), true);
-  assert.equal(hydrationReads, 1);
+  assert.equal(hydrationReads, 4);
 
   cutlistState.active = false;
   timelineState.cutlistDuration = 0;
+  timelineState.cutlistSegments = [];
   mpvActive = false;
   assert.equal(getProjection(), null);
 });
 
+test('파일럿 투영 범위는 저장된 장면의 단일 프레임만 표시한다', () => {
+  const projectionSource = appSource.match(
+    /function getFabricPilotTimelineLayers\(\) \{[\s\S]*?\n  \}\n\n  let lastFabricPilotTimeline/
+  )?.[0]?.replace(/\n\n  let lastFabricPilotTimeline$/, '');
+  assert.ok(projectionSource, 'timeline projection source should be extractable');
+
+  const getProjection = new Function(
+    'fabricDrawingPilotController',
+    'isMpvPilotPlaybackActive',
+    'fabricDrawingPersistenceStore',
+    'playlistUIState',
+    'timeline',
+    'cutlistUIState',
+    'getCutlistManager',
+    `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
+  )(
+    { shouldOwnDrawingShortcut: () => true },
+    () => true,
+    {
+      getHydrationDocument: () => ({
+        keyframes: [
+          { frame: 10, objects: [{}] },
+          { frame: 20, objects: [{}] }
+        ]
+      })
+    },
+    { mode: 'review' },
+    {
+      playlistDuration: 0,
+      playlistSegments: [],
+      cutlistDuration: 0,
+      cutlistSegments: []
+    },
+    { active: false },
+    () => ({ isActive: () => false })
+  );
+
+  const [layer] = getProjection();
+  assert.deepEqual(
+    layer.getKeyframeRanges(100).map(range => ({ start: range.start, end: range.end })),
+    [
+      { start: 10, end: 10 },
+      { start: 20, end: 20 }
+    ]
+  );
+});
+
 test('집계 모드 전환은 드로잉 투영 캐시를 즉시 다시 그린다', () => {
+  const resetPlaylistSource = appSource.match(
+    /function resetPlaylistContinuousTimelineState\(\) \{[\s\S]*?\n  \}\n\n  function beginPlaylistReplacement/
+  )?.[0] || '';
+  assert.match(
+    resetPlaylistSource,
+    /timeline\.clearPlaylistTimeline\(\);[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
+  const updatePlaylistSource = appSource.match(
+    /async function updatePlaylistContinuousTimeline\(\) \{[\s\S]*?\n  \}\n\n  async function quickCheckPlaylistForContinuous/
+  )?.[0] || '';
+  assert.match(
+    updatePlaylistSource,
+    /timeline\.setPlaylistTimeline\(segments, totalDuration\);[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
   const playlistModeSource = appSource.match(
     /function setPlaylistMode\(mode\) \{[\s\S]*?\n  \}\n\n  function exitPlaylistContinuousModeForCutlist/
   )?.[0] || '';
@@ -610,5 +698,13 @@ test('집계 모드 전환은 드로잉 투영 캐시를 즉시 다시 그린다
   assert.match(
     hideCutlistSource,
     /cutlistUIState\.active = false;[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
+  const updateCutlistSource = appSource.match(
+    /function updateCutlistTimeline\(\) \{[\s\S]*?\n  \}\n\n  async function updateCutlistAggregateComments/
+  )?.[0] || '';
+  assert.equal(
+    (updateCutlistSource.match(/renderActiveDrawingLayers\(\);/g) || []).length,
+    2
   );
 });
