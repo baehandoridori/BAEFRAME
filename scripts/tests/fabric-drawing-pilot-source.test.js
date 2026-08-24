@@ -123,7 +123,7 @@ test('capture keyboard and click firewalls stop legacy drawing mutations while k
   assert.match(mainCss, /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-overlay[\s\S]+visibility:\s*hidden;[\s\S]+pointer-events:\s*none(?:\s*!important)?;/);
   assert.match(
     mainCss,
-    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header,[\s\S]+body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-track-row[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/
+    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\),[\s\S]+body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-track-row:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\)[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/
   );
   assert.match(appSource, /function shouldSuppressLegacyDrawingForFabricPilot\(\) \{[\s\S]+fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+\}/);
   assert.match(appSource, /const suppressLegacyDrawing = shouldSuppressLegacyDrawingForFabricPilot\(\);[\s\S]+drawingDataUrl: suppressLegacyDrawing \? '' : getCompositedDrawingOverlayDataUrl\(\),[\s\S]+onionDataUrl: !suppressLegacyDrawing && drawingManager\.onionSkin\?\.enabled/);
@@ -312,4 +312,399 @@ test('Fabric 툴바 표시는 페이드 없이 한 프레임에 완성된다', (
     'utf8'
   ));
   assert.equal(iifeSource.includes('opacity 100ms ease'), false);
+});
+
+test('파일럿 드로잉은 타임라인에 읽기 전용으로 투영된다', () => {
+  assert.match(appSource, /function getFabricPilotTimelineLayers\(\)/);
+  assert.match(appSource, /function renderActiveDrawingLayers\(\)/);
+  assert.match(appSource, /fabricDrawingPersistenceStore\.subscribe\(\(\) => \{/);
+  // 헬퍼 외부에 직접 렌더 호출이 남지 않았다 (헬퍼 내부 폴백 1건만 허용)
+  const directCalls = appSource.match(
+    /timeline\.renderDrawingLayers\(drawingManager\.layers, drawingManager\.activeLayerId\);/g
+  ) || [];
+  assert.equal(directCalls.length, 1);
+  // 상태 변화 훅이 조기 반환보다 앞에서 투영을 갱신한다
+  assert.match(
+    appSource,
+    /scheduleMpvOverlayStateSync\(\{ force: true \}\);\n\s+renderActiveDrawingLayers\(\);\n\s+if \(!engaged && !wasEngaged\) \{/
+  );
+  // 투영 레이어 드래그·삭제 차단
+  assert.match(
+    appSource,
+    /keyframesMove', \(e\) => \{[\s\S]{0,400}?if \(getFabricPilotTimelineLayers\(\)\) return;/
+  );
+  assert.match(
+    appSource,
+    /function deleteSelectedOrCurrentKeyframes\(\) \{[\s\S]{0,400}?if \(getFabricPilotTimelineLayers\(\)\) return false;/
+  );
+});
+
+test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레이어를 렌더한다', () => {
+  const renderSource = appSource.match(
+    /function renderActiveDrawingLayers\(\) \{[\s\S]*?\n  \}\n\n  function requiresMpvReviewFreeze/
+  )?.[0]?.replace(/\n\n  function requiresMpvReviewFreeze$/, '');
+  assert.ok(renderSource, 'renderActiveDrawingLayers source should be extractable');
+
+  const legacyLayers = [{ id: 'legacy-layer' }];
+  const calls = [];
+  const timelineHarness = {
+    selectedKeyframes: [{ layerId: 'fabric-pilot-drawing-layer', frame: 0 }],
+    clearSelection() {
+      calls.push('clear');
+      this.selectedKeyframes = [];
+    },
+    renderDrawingLayers(layers, activeLayerId) {
+      calls.push({ type: 'render', layers, activeLayerId });
+    }
+  };
+  const renderActiveDrawingLayers = new Function(
+    'getFabricPilotTimelineLayers',
+    'timeline',
+    'drawingManager',
+    'fabricDrawingPersistenceStore',
+    'lastFabricPilotTimelineSourceEpoch',
+    'fabricDrawingPilotStatusSnapshot',
+    'lastFabricPilotTimelineVideoGeneration',
+    'lastFabricPilotTimelineStableVideoIdentity',
+    'videoPlayer',
+    'state',
+    'normalizeComparableFilePath',
+    `${renderSource}\nreturn renderActiveDrawingLayers;`
+  )(
+    () => null,
+    timelineHarness,
+    { layers: legacyLayers, activeLayerId: 'legacy-layer' },
+    { getSourceEpoch: () => 1 },
+    null,
+    { videoGeneration: 1 },
+    null,
+    null,
+    { filePath: 'C:\\videos\\a.mp4' },
+    { currentFile: 'C:\\videos\\a.mp4' },
+    value => String(value || '').replace(/\//g, '\\').toLowerCase()
+  );
+
+  renderActiveDrawingLayers();
+
+  assert.deepEqual(calls, [
+    'clear',
+    { type: 'render', layers: legacyLayers, activeLayerId: 'legacy-layer' }
+  ]);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'legacy-layer', frame: 12 }];
+
+  renderActiveDrawingLayers();
+
+  assert.deepEqual(calls, [
+    { type: 'render', layers: legacyLayers, activeLayerId: 'legacy-layer' }
+  ]);
+});
+
+test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만 선택을 지운다', () => {
+  const renderSource = appSource.match(
+    /function renderActiveDrawingLayers\(\) \{[\s\S]*?\n  \}\n\n  function requiresMpvReviewFreeze/
+  )?.[0]?.replace(/\n\n  function requiresMpvReviewFreeze$/, '');
+  assert.ok(renderSource, 'renderActiveDrawingLayers source should be extractable');
+
+  let sourceEpoch = 1;
+  const statusSnapshot = { videoGeneration: 1 };
+  const videoPlayerHarness = { filePath: 'C:\\videos\\a.mp4' };
+  const calls = [];
+  const timelineHarness = {
+    selectedKeyframes: [{ layerId: 'fabric-pilot-drawing-layer', frame: 12 }],
+    clearSelection() {
+      calls.push('clear');
+      this.selectedKeyframes = [];
+    },
+    renderDrawingLayers() {
+      calls.push('render');
+    }
+  };
+  const renderActiveDrawingLayers = new Function(
+    'getFabricPilotTimelineLayers',
+    'timeline',
+    'drawingManager',
+    'fabricDrawingPersistenceStore',
+    'lastFabricPilotTimelineSourceEpoch',
+    'fabricDrawingPilotStatusSnapshot',
+    'lastFabricPilotTimelineVideoGeneration',
+    'lastFabricPilotTimelineStableVideoIdentity',
+    'videoPlayer',
+    'state',
+    'normalizeComparableFilePath',
+    `${renderSource}\nreturn renderActiveDrawingLayers;`
+  )(
+    () => [{ id: 'fabric-pilot-drawing-layer' }],
+    timelineHarness,
+    { layers: [], activeLayerId: null },
+    { getSourceEpoch: () => sourceEpoch },
+    null,
+    statusSnapshot,
+    null,
+    null,
+    videoPlayerHarness,
+    { currentFile: videoPlayerHarness.filePath },
+    value => String(value || '').replace(/\//g, '\\').toLowerCase()
+  );
+
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['render']);
+
+  calls.length = 0;
+  sourceEpoch = 2;
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['render']);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 24 }];
+  videoPlayerHarness.filePath = 'C:\\videos\\b.mp4';
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['clear', 'render']);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 36 }];
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['render']);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 48 }];
+  statusSnapshot.videoGeneration = 2;
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['clear', 'render']);
+
+  calls.length = 0;
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 60 }];
+  renderActiveDrawingLayers();
+  assert.deepEqual(calls, ['render']);
+  assert.match(appSource, /let lastFabricPilotTimelineVideoGeneration = null;/);
+  assert.match(appSource, /let lastFabricPilotTimelineStableVideoIdentity = null;/);
+});
+
+test('읽기 전용 합성 행의 가시성·잠금 버튼은 숨긴다', () => {
+  assert.match(
+    mainCss,
+    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-lock \{\n\s+display:\s*none;\n\s+pointer-events:\s*none;\n\}/
+  );
+});
+
+test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단한다', () => {
+  const guardSource = appSource.match(
+    /function shouldBlockFabricDrawingLegacyShortcut\(event\) \{[\s\S]*?\n  \}\n\n  function handleFabricDrawingPilotLegacyClick/
+  )?.[0]?.replace(/\n\n  function handleFabricDrawingPilotLegacyClick$/, '');
+  assert.ok(guardSource, 'legacy shortcut guard source should be extractable');
+
+  const actionListSource = appSource.match(
+    /const FABRIC_DRAWING_LEGACY_SHORTCUTS = new Set\(\[([\s\S]*?)\n  \]\);/
+  )?.[1] || '';
+  const actions = [...actionListSource.matchAll(/'([^']+)'/g)].map(match => match[1]);
+  const actionSet = new Set(actions);
+  let engaged = false;
+  let projectionOwned = true;
+  const shouldBlock = new Function(
+    'FABRIC_DRAWING_LEGACY_SHORTCUTS',
+    'userSettings',
+    'isFabricDrawingPilotEngaged',
+    'shouldSuppressLegacyDrawingForFabricPilot',
+    `${guardSource}\nreturn shouldBlockFabricDrawingLegacyShortcut;`
+  )(
+    actionSet,
+    { matchShortcut: (action, event) => action === event.action },
+    () => engaged,
+    () => projectionOwned
+  );
+
+  const passiveExceptions = new Set(['undo', 'redo', 'drawMode']);
+  for (const action of actions) {
+    assert.equal(
+      shouldBlock({ action, key: '', code: '' }),
+      !passiveExceptions.has(action),
+      `passive projection shortcut boundary: ${action}`
+    );
+  }
+  assert.equal(shouldBlock({ action: 'prevKeyframe', key: '', code: '' }), false);
+  assert.equal(shouldBlock({ key: 'e', code: 'KeyE' }), false);
+
+  projectionOwned = false;
+  assert.equal(shouldBlock({ action: 'insertFrame', key: '', code: '' }), false);
+
+  engaged = true;
+  assert.equal(shouldBlock({ key: 'z', code: 'KeyZ', ctrlKey: true }), true);
+});
+
+test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 숨긴다', () => {
+  const projectionSource = appSource.match(
+    /function getFabricPilotTimelineLayers\(\) \{[\s\S]*?\n  \}\n\n  let lastFabricPilotTimeline/
+  )?.[0]?.replace(/\n\n  let lastFabricPilotTimeline$/, '');
+  assert.ok(projectionSource, 'timeline projection source should be extractable');
+
+  let mpvActive = true;
+  let hydrationReads = 0;
+  let cutlistManagerActive = false;
+  const playlistState = { mode: 'review' };
+  const timelineState = {
+    playlistDuration: 0,
+    playlistSegments: [],
+    cutlistDuration: 0,
+    cutlistSegments: []
+  };
+  const cutlistState = { active: false };
+  const getProjection = new Function(
+    'fabricDrawingPilotController',
+    'isMpvPilotPlaybackActive',
+    'fabricDrawingPersistenceStore',
+    'playlistUIState',
+    'timeline',
+    'cutlistUIState',
+    'getCutlistManager',
+    `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
+  )(
+    { shouldOwnDrawingShortcut: () => true },
+    () => mpvActive,
+    {
+      getHydrationDocument: () => {
+        hydrationReads += 1;
+        return { keyframes: [{ frame: 12, objects: [{}] }] };
+      }
+    },
+    playlistState,
+    timelineState,
+    cutlistState,
+    () => ({ isActive: () => cutlistManagerActive })
+  );
+
+  assert.equal(getProjection().length, 1);
+  assert.equal(hydrationReads, 1);
+
+  playlistState.mode = 'continuous';
+  assert.equal(getProjection().length, 1);
+  assert.equal(hydrationReads, 2);
+
+  timelineState.playlistDuration = 30;
+  timelineState.playlistSegments = [{}];
+  const playlistProjection = getProjection();
+  assert.deepEqual(playlistProjection, []);
+  assert.equal(Boolean(playlistProjection), true);
+  assert.equal(hydrationReads, 2);
+
+  playlistState.mode = 'review';
+  timelineState.playlistDuration = 0;
+  timelineState.playlistSegments = [];
+  cutlistState.active = true;
+  assert.equal(getProjection().length, 1);
+  assert.equal(hydrationReads, 3);
+
+  cutlistManagerActive = true;
+  assert.equal(getProjection().length, 1);
+  assert.equal(hydrationReads, 4);
+
+  timelineState.cutlistDuration = 30;
+  timelineState.cutlistSegments = [{}];
+  const cutlistProjection = getProjection();
+  assert.deepEqual(cutlistProjection, []);
+  assert.equal(Boolean(cutlistProjection), true);
+  assert.equal(hydrationReads, 4);
+
+  cutlistState.active = false;
+  timelineState.cutlistDuration = 0;
+  timelineState.cutlistSegments = [];
+  mpvActive = false;
+  assert.equal(getProjection(), null);
+});
+
+test('파일럿 투영 범위는 저장된 장면의 단일 프레임만 표시한다', () => {
+  const projectionSource = appSource.match(
+    /function getFabricPilotTimelineLayers\(\) \{[\s\S]*?\n  \}\n\n  let lastFabricPilotTimeline/
+  )?.[0]?.replace(/\n\n  let lastFabricPilotTimeline$/, '');
+  assert.ok(projectionSource, 'timeline projection source should be extractable');
+
+  const getProjection = new Function(
+    'fabricDrawingPilotController',
+    'isMpvPilotPlaybackActive',
+    'fabricDrawingPersistenceStore',
+    'playlistUIState',
+    'timeline',
+    'cutlistUIState',
+    'getCutlistManager',
+    `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
+  )(
+    { shouldOwnDrawingShortcut: () => true },
+    () => true,
+    {
+      getHydrationDocument: () => ({
+        keyframes: [
+          { frame: 10, objects: [{}] },
+          { frame: 20, objects: [{}] }
+        ]
+      })
+    },
+    { mode: 'review' },
+    {
+      playlistDuration: 0,
+      playlistSegments: [],
+      cutlistDuration: 0,
+      cutlistSegments: []
+    },
+    { active: false },
+    () => ({ isActive: () => false })
+  );
+
+  const [layer] = getProjection();
+  assert.deepEqual(
+    layer.getKeyframeRanges(100).map(range => ({ start: range.start, end: range.end })),
+    [
+      { start: 10, end: 10 },
+      { start: 20, end: 20 }
+    ]
+  );
+});
+
+test('집계 모드 전환은 드로잉 투영 캐시를 즉시 다시 그린다', () => {
+  const resetPlaylistSource = appSource.match(
+    /function resetPlaylistContinuousTimelineState\(\) \{[\s\S]*?\n  \}\n\n  function beginPlaylistReplacement/
+  )?.[0] || '';
+  assert.match(
+    resetPlaylistSource,
+    /timeline\.clearPlaylistTimeline\(\);[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
+  const updatePlaylistSource = appSource.match(
+    /async function updatePlaylistContinuousTimeline\(\) \{[\s\S]*?\n  \}\n\n  async function quickCheckPlaylistForContinuous/
+  )?.[0] || '';
+  assert.match(
+    updatePlaylistSource,
+    /timeline\.setPlaylistTimeline\(segments, totalDuration\);[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
+  const playlistModeSource = appSource.match(
+    /function setPlaylistMode\(mode\) \{[\s\S]*?\n  \}\n\n  function exitPlaylistContinuousModeForCutlist/
+  )?.[0] || '';
+  assert.match(
+    playlistModeSource,
+    /playlistUIState\.mode = nextMode;[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
+  const showCutlistSource = appSource.match(
+    /function showCutlistSidebar\(\) \{[\s\S]*?\n  \}\n\n  function hideCutlistSidebar/
+  )?.[0] || '';
+  assert.match(
+    showCutlistSource,
+    /cutlistUIState\.active = true;[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
+  const hideCutlistSource = appSource.match(
+    /function hideCutlistSidebar\(\) \{[\s\S]*?\n  \}\n\n  function updateCutlistUI/
+  )?.[0] || '';
+  assert.match(
+    hideCutlistSource,
+    /cutlistUIState\.active = false;[\s\S]*renderActiveDrawingLayers\(\);/
+  );
+
+  const updateCutlistSource = appSource.match(
+    /function updateCutlistTimeline\(\) \{[\s\S]*?\n  \}\n\n  async function updateCutlistAggregateComments/
+  )?.[0] || '';
+  assert.equal(
+    (updateCutlistSource.match(/renderActiveDrawingLayers\(\);/g) || []).length,
+    2
+  );
 });

@@ -1007,6 +1007,7 @@ async function initApp() {
     playlistTimelineUpdateToken += 1;
     playlistAggregateCommentRanges = [];
     timeline.clearPlaylistTimeline();
+    renderActiveDrawingLayers();
   }
 
   function beginPlaylistReplacement() {
@@ -1603,7 +1604,7 @@ async function initApp() {
 
     // .bframe에서 로드된 데이터가 있으면 다시 렌더링
     if (drawingManager.layers.length > 0) {
-      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      renderActiveDrawingLayers();
       drawingManager.renderFrame(videoPlayer.currentFrame);
     }
 
@@ -1934,7 +1935,7 @@ async function initApp() {
 
   // 레이어 변경 시 타임라인 업데이트
   drawingManager.addEventListener('layersChanged', () => {
-    timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+    renderActiveDrawingLayers();
     scheduleMpvOverlayStateSync();
   });
 
@@ -1977,7 +1978,7 @@ async function initApp() {
   // 레이어 선택
   timeline.addEventListener('layerSelect', (e) => {
     drawingManager.setActiveLayer(e.detail.layerId);
-    timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+    renderActiveDrawingLayers();
   });
 
   // 레이어 가시성 토글
@@ -2121,6 +2122,8 @@ async function initApp() {
 
   // 키프레임 이동
   timeline.addEventListener('keyframesMove', (e) => {
+    // 파일럿 투영 레이어는 읽기 전용 — 드래그 이동이 레거시 undo 히스토리를 오염시키지 않게 차단
+    if (getFabricPilotTimelineLayers()) return;
     const { keyframes, frameDelta, anchor } = e.detail;
     if (drawingManager.moveKeyframes(keyframes)) {
       // 이동 성공 시 선택 상태 업데이트
@@ -2129,12 +2132,14 @@ async function initApp() {
         frame: kf.toFrame
       }));
       timeline.setKeyframeSelection(movedSelection, { anchor });
-      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      renderActiveDrawingLayers();
       showToast(`키프레임 ${frameDelta > 0 ? '+' : ''}${frameDelta} 프레임 이동`, 'info');
     }
   });
 
   function deleteSelectedOrCurrentKeyframes() {
+    // 파일럿 투영 레이어는 읽기 전용 — passive에서 선택된 투영 키프레임의 삭제 시도를 차단
+    if (getFabricPilotTimelineLayers()) return false;
     const selectedKeyframes = Array.isArray(timeline.selectedKeyframes)
       ? timeline.selectedKeyframes
       : [];
@@ -2143,7 +2148,7 @@ async function initApp() {
       const removedCount = drawingManager.removeKeyframes(selectedKeyframes);
       if (removedCount > 0) {
         timeline.clearSelection();
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        renderActiveDrawingLayers();
         showToast(`키프레임 ${removedCount}개가 삭제되었습니다.`, 'info');
       } else {
         showToast('삭제할 수 있는 선택 키프레임이 없습니다.', 'warn');
@@ -2153,7 +2158,7 @@ async function initApp() {
 
     const removed = drawingManager.removeKeyframe();
     if (removed) {
-      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      renderActiveDrawingLayers();
       showToast('키프레임이 삭제되었습니다.', 'info');
     } else {
       showToast('삭제할 키프레임이 없습니다.', 'warn');
@@ -4031,7 +4036,7 @@ async function initApp() {
   });
 
   function renderDrawingLayerTimeline() {
-    timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+    renderActiveDrawingLayers();
   }
 
   function addDrawingLayer() {
@@ -6038,14 +6043,20 @@ async function initApp() {
   ].join(',');
 
   function shouldBlockFabricDrawingLegacyShortcut(event) {
-    if (!isFabricDrawingPilotEngaged()) return false;
+    const engaged = isFabricDrawingPilotEngaged();
+    if (!engaged && !shouldSuppressLegacyDrawingForFabricPilot()) return false;
+    const matchedAction = [...FABRIC_DRAWING_LEGACY_SHORTCUTS]
+      .find(action => userSettings.matchShortcut(action, event));
+    if (!engaged) {
+      return Boolean(matchedAction) &&
+        !['undo', 'redo', 'drawMode'].includes(matchedAction);
+    }
     const key = String(event.key || '').toLowerCase();
     if ((event.ctrlKey || event.metaKey) && ['c', 'v', 'z', 'y'].includes(key)) return true;
     if (event.code === 'KeyE' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
       return true;
     }
-    return [...FABRIC_DRAWING_LEGACY_SHORTCUTS]
-      .some(action => userSettings.matchShortcut(action, event));
+    return Boolean(matchedAction);
   }
 
   function handleFabricDrawingPilotLegacyClick(event) {
@@ -6187,6 +6198,86 @@ async function initApp() {
 
   function isFabricDrawingPilotEngaged() {
     return isMpvPilotPlaybackActive() && isFabricDrawingPilotControllerEngaged();
+  }
+
+  // 파일럿 드로잉(drawingsV3)을 타임라인 드로잉 레이어로 읽기 전용 투영한다.
+  // 레거시 drawings 필드와의 이중 기록을 피하기 위해 데이터는 절대 쓰지 않는다.
+  function getFabricPilotTimelineLayers() {
+    if (!fabricDrawingPilotController.shouldOwnDrawingShortcut() ||
+        !isMpvPilotPlaybackActive()) {
+      return null;
+    }
+    const hasPlaylistAggregateTimeline = playlistUIState.mode === 'continuous' &&
+      timeline.playlistDuration > 0 &&
+      timeline.playlistSegments?.length > 0;
+    const hasCutlistAggregateTimeline = cutlistUIState.active &&
+      getCutlistManager().isActive() &&
+      timeline.cutlistDuration > 0 &&
+      timeline.cutlistSegments?.length > 0;
+    if (hasPlaylistAggregateTimeline || hasCutlistAggregateTimeline) {
+      return [];
+    }
+    const doc = fabricDrawingPersistenceStore.getHydrationDocument?.();
+    const keyframes = (doc?.keyframes || [])
+      .map(kf => ({
+        frame: Number(kf.frame),
+        isEmpty: !(Array.isArray(kf.objects) && kf.objects.length > 0)
+      }))
+      .filter(kf => Number.isInteger(kf.frame) && kf.frame >= 0)
+      .sort((a, b) => a.frame - b.frame);
+    return [{
+      id: 'fabric-pilot-drawing-layer',
+      name: '드로잉',
+      color: '#4f8ef7',
+      visible: true,
+      locked: true,
+      opacity: 1,
+      keyframes,
+      getKeyframeRanges(totalFrames) {
+        return keyframes.map(kf => ({
+          start: kf.frame,
+          end: kf.frame,
+          keyframe: kf
+        }));
+      }
+    }];
+  }
+
+  let lastFabricPilotTimelineVideoGeneration = null;
+  let lastFabricPilotTimelineStableVideoIdentity = null;
+
+  function renderActiveDrawingLayers() {
+    try {
+      const pilotLayers = getFabricPilotTimelineLayers();
+      const hasFabricPilotSelection = Array.isArray(timeline.selectedKeyframes) &&
+        timeline.selectedKeyframes.some(keyframe => keyframe.layerId === 'fabric-pilot-drawing-layer');
+      if (pilotLayers) {
+        const videoGeneration = fabricDrawingPilotStatusSnapshot?.videoGeneration ?? null;
+        const stableVideoIdentity = normalizeComparableFilePath(
+          videoPlayer.filePath || state.currentFile
+        );
+        const sourceChanged =
+          (lastFabricPilotTimelineVideoGeneration !== null &&
+            videoGeneration !== lastFabricPilotTimelineVideoGeneration) ||
+          (lastFabricPilotTimelineStableVideoIdentity !== null &&
+            stableVideoIdentity !== lastFabricPilotTimelineStableVideoIdentity);
+        if (sourceChanged &&
+            hasFabricPilotSelection) {
+          timeline.clearSelection();
+        }
+        lastFabricPilotTimelineVideoGeneration = videoGeneration;
+        lastFabricPilotTimelineStableVideoIdentity = stableVideoIdentity;
+        timeline.renderDrawingLayers(pilotLayers, null);
+        return;
+      }
+      lastFabricPilotTimelineVideoGeneration = null;
+      lastFabricPilotTimelineStableVideoIdentity = null;
+      if (hasFabricPilotSelection) timeline.clearSelection();
+      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+    } catch (_error) {
+      // 파일럿 상태 훅(notifyStateChange)이 예외를 빈 catch로 삼키므로,
+      // 렌더 실패가 뒤따르는 UI 상태 확정 흐름까지 끊지 않게 여기서 격리한다
+    }
   }
 
   function requiresMpvReviewFreeze() {
@@ -7313,6 +7404,15 @@ async function initApp() {
       }
       return Promise.resolve(false);
     }
+  });
+  let fabricPilotTimelineRenderQueued = false;
+  fabricDrawingPersistenceStore.subscribe(() => {
+    if (fabricPilotTimelineRenderQueued) return;
+    fabricPilotTimelineRenderQueued = true;
+    requestAnimationFrame(() => {
+      fabricPilotTimelineRenderQueued = false;
+      renderActiveDrawingLayers();
+    });
   });
   reviewDataManager.setFabricDrawingSourceRefreshHandler(
     ({ installSource }) =>
@@ -9760,7 +9860,7 @@ async function initApp() {
       updateTimelineMarkers();
       updateCommentList();
       // 그리기 레이어 UI 및 캔버스 다시 렌더링
-      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      renderActiveDrawingLayers();
       drawingManager.renderFrame(videoPlayer.currentFrame);
       compositionLayerManager.setVideoInfo({ duration: videoPlayer.duration });
       compositionLayerManager.setPlaybackState({
@@ -10247,6 +10347,7 @@ async function initApp() {
       (active || preparing || nextState === 'recovering');
     const wasEngaged = fabricDrawingPilotUiEngaged;
     scheduleMpvOverlayStateSync({ force: true });
+    renderActiveDrawingLayers();
     if (!engaged && !wasEngaged) {
       if (nextState === 'failed') notifyFabricDrawingPilotFailure();
       else fabricDrawingPilotFailureToastShown = false;
@@ -13732,7 +13833,7 @@ async function initApp() {
       e.stopPropagation();
       const pastedCount = drawingManager.pasteFrames();
       if (pastedCount > 0) {
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        renderActiveDrawingLayers();
         showToast(`프레임 ${pastedCount}개 붙여넣기됨`, 'success');
       } else {
         showToast('붙여넣을 프레임이 없습니다', 'warning');
@@ -13856,14 +13957,14 @@ async function initApp() {
     if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
       e.preventDefault();
       drawingManager.addBlankKeyframe();
-      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      renderActiveDrawingLayers();
       return;
     }
     // Shift+2: 키프레임을 일반 프레임으로 변환
     if (userSettings.matchShortcut('keyframeConvertToFrame', e)) {
       e.preventDefault();
       if (drawingManager.convertKeyframeToFrame()) {
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        renderActiveDrawingLayers();
       }
       return;
     }
@@ -13871,7 +13972,7 @@ async function initApp() {
     if (userSettings.matchShortcut('keyframeConvertToKeyframe', e)) {
       e.preventDefault();
       if (drawingManager.convertFrameToKeyframe()) {
-        timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+        renderActiveDrawingLayers();
       }
       return;
     }
@@ -13879,14 +13980,14 @@ async function initApp() {
     if (userSettings.matchShortcut('insertFrame', e)) {
       e.preventDefault();
       drawingManager.insertFrame();
-      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      renderActiveDrawingLayers();
       return;
     }
     // 4: 프레임 삭제
     if (userSettings.matchShortcut('deleteFrame', e)) {
       e.preventDefault();
       drawingManager.deleteFrame();
-      timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
+      renderActiveDrawingLayers();
       return;
     }
     // E: 지우개 모드 (드로잉 모드에서만 작동)
@@ -18295,6 +18396,7 @@ async function initApp() {
 
       const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
       timeline.setPlaylistTimeline(segments, totalDuration);
+      renderActiveDrawingLayers();
       timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
 
       const aggregateRanges = [];
@@ -18936,6 +19038,7 @@ async function initApp() {
       timeline.clearCommentMarkers();
       updatePlaylistContinuousTimeline();
     }
+    renderActiveDrawingLayers();
   }
 
   function exitPlaylistContinuousModeForCutlist() {
@@ -19161,6 +19264,7 @@ async function initApp() {
     updateCurrentCutDisplay(currentCut);
     void refreshCommentRangesForCurrentMode();
     updateCommentList(getActiveCommentFilter());
+    renderActiveDrawingLayers();
   }
 
   function hideCutlistSidebar() {
@@ -19175,6 +19279,7 @@ async function initApp() {
     timeline.setCutlistTimeline([], 0);
     void refreshCommentRangesForCurrentMode();
     updateCommentList(getActiveCommentFilter());
+    renderActiveDrawingLayers();
   }
 
   function updateCutlistUI() {
@@ -19531,12 +19636,14 @@ async function initApp() {
       timeline.setCurrentCutId(null);
       timeline.setCutlistTimeline([], 0);
       cutlistAggregateCommentRanges = [];
+      renderActiveDrawingLayers();
       return;
     }
 
     const cutlistTimeline = cutlistManager.getTimeline();
     timeline.setCutlistTimeline(cutlistTimeline.segments, cutlistTimeline.totalDuration);
     timeline.setCurrentCutId(cutlistManager.currentCutId);
+    renderActiveDrawingLayers();
   }
 
   async function updateCutlistAggregateComments() {

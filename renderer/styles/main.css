@@ -1126,8 +1126,14 @@ body.fabric-drawing-pilot-enabled.mpv-pilot-mode .layer-settings-popup {
 }
 
 body.fabric-drawing-pilot-enabled.mpv-pilot-mode .layer-action-btn,
-body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header,
-body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-track-row {
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header:not([data-layer-id="fabric-pilot-drawing-layer"]),
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-track-row:not([data-layer-id="fabric-pilot-drawing-layer"]) {
+  display: none;
+  pointer-events: none;
+}
+
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header[data-layer-id="fabric-pilot-drawing-layer"] .layer-visibility,
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header[data-layer-id="fabric-pilot-drawing-layer"] .layer-lock {
   display: none;
   pointer-events: none;
 }
