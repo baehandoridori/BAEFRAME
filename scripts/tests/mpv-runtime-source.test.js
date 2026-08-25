@@ -26,7 +26,9 @@ test('Fabric drawing pilot IPC channels and preload bridge names stay fixed', ()
     ['fabric-drawing:get-pilot-state', 'getFabricDrawingPilotState'],
     ['mpv:set-overlay-drawing-input', 'mpvSetOverlayDrawingInput'],
     ['mpv:update-overlay-drawing-tool', 'mpvUpdateOverlayDrawingTool'],
+    ['mpv:update-overlay-drawing-frame', 'mpvUpdateOverlayDrawingFrame'],
     ['mpv:apply-overlay-drawing-action', 'mpvApplyOverlayDrawingAction'],
+    ['mpv:present-overlay-drawing-frame', 'mpvPresentOverlayDrawingFrame'],
     ['mpv:get-overlay-drawing-diagnostics', 'mpvGetOverlayDrawingDiagnostics'],
     ['mpv:hydrate-overlay-drawing-video', 'mpvHydrateOverlayDrawingVideo'],
     ['mpv:export-overlay-drawing-video', 'mpvExportOverlayDrawingVideo']
@@ -84,7 +86,9 @@ test('Fabric drawing mutation IPC rejects pilot-off and non-main-renderer calls 
   const guardedCalls = [
     ['mpv:set-overlay-drawing-input', 'setDrawingInput'],
     ['mpv:update-overlay-drawing-tool', 'updateDrawingTool'],
+    ['mpv:update-overlay-drawing-frame', 'updateDrawingFrame'],
     ['mpv:apply-overlay-drawing-action', 'applyDrawingAction'],
+    ['mpv:present-overlay-drawing-frame', 'presentDrawingFrame'],
     ['mpv:get-overlay-drawing-diagnostics', 'getDrawingDiagnostics'],
     ['mpv:hydrate-overlay-drawing-video', 'hydrateDrawingVideo'],
     ['mpv:export-overlay-drawing-video', 'exportDrawingVideo']

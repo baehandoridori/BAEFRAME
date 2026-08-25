@@ -8,6 +8,16 @@ const { contextBridge, ipcRenderer } = require('electron');
 const MPV_OVERLAY_KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
 const MPV_OVERLAY_POINTER_PRESENCE_CHANNEL = 'mpv-overlay:pointer-presence';
 const MPV_OVERLAY_COLLABORATION_ACTION_CHANNEL = 'mpv-overlay:collaboration-action';
+const MPV_OVERLAY_DRAWING_POINTERDOWN_FRAME_CHANNEL =
+  'mpv-overlay:drawing-pointerdown-frame-request';
+const MPV_OVERLAY_DRAWING_POINTERDOWN_FRAME_KEYS = Object.freeze([
+  'hostGeneration',
+  'videoGeneration',
+  'inputRevision',
+  'sessionId',
+  'pointerdownId',
+  'pointerdownAt'
+]);
 const MPV_OVERLAY_COLLABORATION_ACTIONS = new Set([
   'collab.indicator-enter',
   'collab.indicator-leave',
@@ -126,6 +136,28 @@ function isExactPlainObject(value, keys) {
   } catch (_error) {
     return false;
   }
+}
+
+function normalizeMpvOverlayDrawingPointerdownFrame(value) {
+  if (!isExactPlainObject(value, MPV_OVERLAY_DRAWING_POINTERDOWN_FRAME_KEYS) ||
+      !Number.isSafeInteger(value.hostGeneration) || value.hostGeneration <= 0 ||
+      !Number.isSafeInteger(value.videoGeneration) || value.videoGeneration <= 0 ||
+      !Number.isSafeInteger(value.inputRevision) || value.inputRevision <= 0 ||
+      typeof value.sessionId !== 'string' || value.sessionId.length === 0 ||
+      value.sessionId.length > 256 ||
+      typeof value.pointerdownId !== 'string' || value.pointerdownId.length === 0 ||
+      value.pointerdownId.length > 256 ||
+      !Number.isSafeInteger(value.pointerdownAt) || value.pointerdownAt < 0) {
+    return null;
+  }
+  return {
+    hostGeneration: value.hostGeneration,
+    videoGeneration: value.videoGeneration,
+    inputRevision: value.inputRevision,
+    sessionId: value.sessionId,
+    pointerdownId: value.pointerdownId,
+    pointerdownAt: value.pointerdownAt
+  };
 }
 
 function normalizeMpvOverlayCollaborationActionPayload(action, payload) {
@@ -329,7 +361,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvTriggerOverlayCollabRipple: (state) => ipcRenderer.invoke('mpv:trigger-overlay-collab-ripple', state),
   mpvSetOverlayDrawingInput: (request) => ipcRenderer.invoke('mpv:set-overlay-drawing-input', request),
   mpvUpdateOverlayDrawingTool: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-tool', request),
+  mpvUpdateOverlayDrawingFrame: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-frame', request),
   mpvApplyOverlayDrawingAction: (request) => ipcRenderer.invoke('mpv:apply-overlay-drawing-action', request),
+  mpvConfirmOverlayDrawingPointerdownFrame: (request) =>
+    ipcRenderer.invoke('mpv:confirm-overlay-drawing-pointerdown-frame', request),
+  mpvPresentOverlayDrawingFrame: (request) => ipcRenderer.invoke('mpv:present-overlay-drawing-frame', request),
   mpvGetOverlayDrawingDiagnostics: () => ipcRenderer.invoke('mpv:get-overlay-drawing-diagnostics'),
   mpvHydrateOverlayDrawingVideo: (request) => ipcRenderer.invoke('mpv:hydrate-overlay-drawing-video', request),
   mpvExportOverlayDrawingVideo: (request) => ipcRenderer.invoke('mpv:export-overlay-drawing-video', request),
@@ -350,6 +386,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
     ipcRenderer.on(MPV_OVERLAY_POINTER_PRESENCE_CHANNEL, listener);
     return () => ipcRenderer.removeListener(MPV_OVERLAY_POINTER_PRESENCE_CHANNEL, listener);
+  },
+  onMpvOverlayDrawingPointerdownFrame: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, value) => {
+      const request = normalizeMpvOverlayDrawingPointerdownFrame(value);
+      if (request) callback(request);
+    };
+    ipcRenderer.on(MPV_OVERLAY_DRAWING_POINTERDOWN_FRAME_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(
+      MPV_OVERLAY_DRAWING_POINTERDOWN_FRAME_CHANNEL,
+      listener
+    );
   },
   onMpvOverlayCollaborationAction: (callback) => {
     if (typeof callback !== 'function') return () => {};

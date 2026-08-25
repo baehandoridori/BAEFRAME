@@ -1937,7 +1937,13 @@ function createActualLoadRaceScenario({
   failFirstContinuousLoad = false,
   failFirstPreparedItem = false,
   holdSecondFileExists = false,
-  fabricFlushResults = null
+  fabricFlushResults = null,
+  hasExistingReviewData = false,
+  holdCollaborationStart = false,
+  afterVideoReadyResult = true,
+  fabricPilotOwnsDrawing = true,
+  fileIsAudio = false,
+  mpvLoadSucceeds = false
 } = {}) {
   const effects = {
     mediaLoads: [],
@@ -1954,7 +1960,9 @@ function createActualLoadRaceScenario({
     persistenceBypassStages: [],
     persistenceAbandons: 0,
     playlistStatusChanges: [],
-    toasts: []
+    toasts: [],
+    fabricAfterVideoReady: 0,
+    loadReadinessEvents: []
   };
   const queuedFabricFlushResults = Array.isArray(fabricFlushResults)
     ? [...fabricFlushResults]
@@ -1981,6 +1989,10 @@ function createActualLoadRaceScenario({
   let notifySecondMediaLoadStarted;
   const secondMediaLoadStarted = new Promise(resolve => { notifySecondMediaLoadStarted = resolve; });
   const heldSecondMediaLoad = new Promise(resolve => { releaseSecondMediaLoad = resolve; });
+  let releaseCollaborationStart;
+  let notifyCollaborationStarted;
+  const collaborationStarted = new Promise(resolve => { notifyCollaborationStarted = resolve; });
+  const heldCollaborationStart = new Promise(resolve => { releaseCollaborationStart = resolve; });
   let mediaLoadCalls = 0;
   let capturedDeadline = null;
   let preparedItemCalls = 0;
@@ -2053,6 +2065,14 @@ function createActualLoadRaceScenario({
       }
     }
   };
+  const audioWaveform = {
+    canvas: null,
+    _seekHandler: null,
+    mount: () => { audioWaveform.canvas = {}; },
+    show: () => {}, hide: () => {}, reset: () => {}, setPlaying: () => {},
+    loadAudio: async () => {},
+    addEventListener: () => {}, removeEventListener: () => {}
+  };
   const reviewDataManager = {
     currentBframePath: null,
     isModified: false,
@@ -2060,7 +2080,13 @@ function createActualLoadRaceScenario({
     hasUnsavedChanges: () => false,
     save: async () => true,
     pauseAutoSave: () => {}, resumeAutoSave: () => {}, setVersionInfo: () => {},
-    setVideoFile: async () => false, setFps: () => {}, getManualVersions: () => []
+    setVideoFile: async filePath => {
+      effects.loadReadinessEvents.push('local-review-installed');
+      reviewDataManager.currentBframePath = `${filePath}.bframe`;
+      return hasExistingReviewData;
+    },
+    setFps: () => { effects.loadReadinessEvents.push('local-review-fps-ready'); },
+    getManualVersions: () => []
   };
   const fabricDrawingPilotController = {
     flushPersistenceBeforeLeave: async () => {
@@ -2081,7 +2107,12 @@ function createActualLoadRaceScenario({
       effects.persistenceAbandons += 1;
       return true;
     },
-    afterVideoReady: async () => {}
+    afterVideoReady: async () => {
+      effects.fabricAfterVideoReady += 1;
+      effects.loadReadinessEvents.push('fabric-after-video-ready');
+      return afterVideoReadyResult;
+    },
+    shouldOwnDrawingShortcut: () => fabricPilotOwnsDrawing
   };
   const pendingReview = { token: null };
   const runtime = createActualLoadRaceHarness({
@@ -2121,9 +2152,10 @@ function createActualLoadRaceScenario({
       }
     },
     log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, trace: () => ({ end: () => {}, error: () => {} }) },
-    isAudioFile: () => false,
+    isAudioFile: () => fileIsAudio,
     isSameFilePath: (left, right) => left === right,
-    shouldUseMpvPilot: async () => useMpvPilot,
+    shouldUseMpvPilot: async (_filePath, options = {}) =>
+      useMpvPilot && options.fileIsAudio !== true,
     mpvPilotSeamlessTransitionGate: { begin: () => {}, clear: () => {} },
     isMpvPilotPlaybackActive: () => false,
     cancelPlaylistBackgroundTranscodesForMpvPilot: async () => {},
@@ -2144,12 +2176,16 @@ function createActualLoadRaceScenario({
       clearMarkers: () => {}, renderDrawingLayers: () => {}, setCurrentTime: () => {}, setPlayingState: () => {}
     },
     markerContainer: makeElement(), codecErrorOverlay: makeElement(),
-    getAudioWaveform: () => ({ hide: () => {}, reset: () => {}, setPlaying: () => {} }),
+    getAudioWaveform: () => audioWaveform,
     invalidateMpvHostVisibilityRequests: () => {}, resolveInitialFrameFromOptions: () => null,
     captureVideoTransitionFreezeFrame: () => false, releaseVideoTransitionFreezeFrame: () => {},
     resolveHtml5PlaybackFps: async () => 24, seekInitialVideoFrameBeforeReveal: async () => {},
     waitForVideoRenderable: async () => true, waitForNextVideoPaint: async () => {},
-    playVideoAfterMediaLoad: async () => { effects.playAfterLoad += 1; return true; },
+    playVideoAfterMediaLoad: async () => {
+      effects.playAfterLoad += 1;
+      effects.loadReadinessEvents.push('play-after-media-load');
+      return true;
+    },
     parseVersion: () => ({ version: 1 }),
     getVersionManager: () => ({
       setCurrentFile: async () => {
@@ -2164,7 +2200,16 @@ function createActualLoadRaceScenario({
     getVersionDropdown: () => ({ show: () => {}, onVersionSelect: () => {}, _render: () => {} }),
     toVersionInfo: () => ({}), generateThumbnails: async () => {},
     getThumbnailGenerator: () => ({ clear: () => {} }),
-    scheduleDeferredCollaborationStart: () => {}, startCollaborationForVideoLoad: async () => true,
+    scheduleDeferredCollaborationStart: () => {},
+    startCollaborationForVideoLoad: async () => {
+      effects.loadReadinessEvents.push('collaboration-started');
+      notifyCollaborationStarted();
+      if (holdCollaborationStart) {
+        await heldCollaborationStart;
+      }
+      effects.loadReadinessEvents.push('collaboration-resolved');
+      return true;
+    },
     startDeferredReviewFileDiscovery: () => {},
     showToast: (message, type) => { effects.toasts.push({ message, type }); },
     renderVideoMarkers: () => {}, renderActiveDrawingLayers: () => {},
@@ -2181,7 +2226,7 @@ function createActualLoadRaceScenario({
       return options.loaded === true;
     },
     retryDeferredMpvOverlayFallback: () => { effects.fallbacks += 1; }, resolveMpvThumbnailVideoPath: async filePath => filePath,
-    loadVideoWithMpvPilot: async () => false,
+    loadVideoWithMpvPilot: async () => mpvLoadSucceeds,
     beginMpvHtml5FallbackReviewTransition: () => null,
     beginExpectedMpvHtml5FallbackStop: () => 1,
     finishMpvHtml5FallbackReviewTransition: () => {},
@@ -2255,7 +2300,10 @@ function createActualLoadRaceScenario({
     getNextCutlistCut: () => null,
     advanceCutlistPlaybackFromCut: () => {},
     getContinuousPlaybackSnapshot: () => ({}),
-    userSettings: { getPlaylistAutoPlay: () => true }
+    userSettings: { getPlaylistAutoPlay: () => true },
+    requestAnimationFrame: callback => { callback(); return 1; },
+    isFabricDrawingPilotControllerEngaged: () => false,
+    exitDrawModeForSystemPath: () => {}
   }, { useActualPlayNext, useActualContinuousLoad });
 
   return {
@@ -2265,10 +2313,139 @@ function createActualLoadRaceScenario({
     secondFileExistsStarted, releaseSecondFileExists,
     firstMediaLoadStarted, releaseFirstMediaLoad,
     secondMediaLoadStarted, releaseSecondMediaLoad,
+    collaborationStarted, releaseCollaborationStart,
     setContinuousMediaEnded: ended => { mediaEnded = ended; },
     fireDeadline: () => { assert.equal(typeof capturedDeadline, 'function'); capturedDeadline(); }
   };
 }
+
+test('local Fabric review becomes ready before awaited collaboration startup resolves', async () => {
+  const scenario = createActualLoadRaceScenario({
+    hasExistingReviewData: true,
+    holdCollaborationStart: true
+  });
+  scenario.releaseOldTail();
+
+  const load = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    allowMpvPilot: false
+  });
+  await scenario.collaborationStarted;
+
+  assert.deepEqual(scenario.effects.loadReadinessEvents, [
+    'local-review-installed',
+    'local-review-fps-ready',
+    'fabric-after-video-ready',
+    'collaboration-started'
+  ]);
+  assert.equal(scenario.effects.fabricAfterVideoReady, 1);
+
+  scenario.releaseCollaborationStart();
+  assert.equal(await load, true);
+  assert.equal(scenario.effects.fabricAfterVideoReady, 1, 'local Fabric readiness must run exactly once');
+});
+
+test('automatic playback waits for local Fabric readiness before collaboration startup', async () => {
+  const scenario = createActualLoadRaceScenario({
+    hasExistingReviewData: true,
+    holdCollaborationStart: true
+  });
+  scenario.releaseOldTail();
+
+  const load = scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    allowMpvPilot: false,
+    playWhenMediaReady: true
+  });
+  await scenario.collaborationStarted;
+
+  assert.deepEqual(scenario.effects.loadReadinessEvents, [
+    'local-review-installed',
+    'local-review-fps-ready',
+    'fabric-after-video-ready',
+    'play-after-media-load',
+    'collaboration-started'
+  ]);
+
+  scenario.releaseCollaborationStart();
+  assert.equal(await load, true);
+  assert.equal(scenario.effects.playAfterLoad, 1);
+  assert.equal(scenario.effects.fabricAfterVideoReady, 1);
+});
+
+test('mpv Fabric readiness rejection fails the load before autoplay and runs destructive cleanup', async () => {
+  const scenario = createActualLoadRaceScenario({
+    useMpvPilot: true,
+    mpvLoadSucceeds: true,
+    afterVideoReadyResult: false,
+    fabricPilotOwnsDrawing: true
+  });
+  scenario.releaseOldTail();
+
+  const loaded = await scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    allowMpvPilot: true,
+    playWhenMediaReady: true
+  });
+
+  assert.equal(scenario.effects.playAfterLoad, 0, 'autoplay must not outrun rejected Fabric readiness');
+  assert.equal(loaded, false, 'loadVideo must expose the readiness failure to its caller');
+  assert.deepEqual(scenario.effects.loadReadinessEvents, [
+    'local-review-installed',
+    'local-review-fps-ready',
+    'fabric-after-video-ready'
+  ]);
+  assert.equal(scenario.effects.fabricCancellations.length, 1);
+  assert.equal(scenario.effects.fabricCancellations[0].options?.restorePreviousVideo, false);
+  assert.equal(scenario.effects.settlements.at(-1)?.loaded, false);
+  assert.equal(scenario.effects.teardowns, 1);
+});
+
+test('non-applicable Fabric readiness rejection preserves existing autoplay routes', async (t) => {
+  const cases = [
+    {
+      name: 'HTML5 video',
+      scenario: { useMpvPilot: false },
+      loadOptions: {}
+    },
+    {
+      name: 'audio',
+      scenario: { useMpvPilot: true, fileIsAudio: true },
+      loadOptions: {}
+    },
+    {
+      name: 'engine swap',
+      scenario: { useMpvPilot: true, mpvLoadSucceeds: true },
+      loadOptions: { engineSwap: true }
+    },
+    {
+      name: 'mpv without Fabric ownership',
+      scenario: {
+        useMpvPilot: true,
+        mpvLoadSucceeds: true,
+        fabricPilotOwnsDrawing: false
+      },
+      loadOptions: {}
+    }
+  ];
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const scenario = createActualLoadRaceScenario({
+        ...testCase.scenario,
+        afterVideoReadyResult: false
+      });
+      scenario.releaseOldTail();
+
+      const loaded = await scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+        allowMpvPilot: true,
+        playWhenMediaReady: true,
+        ...testCase.loadOptions
+      });
+
+      assert.equal(loaded, true);
+      assert.equal(scenario.effects.playAfterLoad, 1);
+      assert.equal(scenario.effects.fabricAfterVideoReady, testCase.loadOptions.engineSwap ? 0 : 1);
+    });
+  }
+});
 
 test('드로잉 저장 게이트 실패는 이어붙이기를 한 번만 중단하고 현재 영상 선택을 복원한다', async (t) => {
   const cases = [

@@ -36,6 +36,18 @@ function makeTransition(overrides = {}) {
   };
 }
 
+function makePointerdownFrameRequest(overrides = {}) {
+  return {
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 11,
+    sessionId: 'overlay-pointerdown-session',
+    pointerdownId: 'pointerdown-frame-1',
+    pointerdownAt: 1234,
+    ...overrides
+  };
+}
+
 function loadOverlayPreload({
   sendError = null,
   overlayDocument = undefined,
@@ -147,13 +159,15 @@ function createPointerEnvironment(rect = { left: 20, top: 10, width: 200, height
   };
 }
 
-function loadPointerPresenceIpcHandlers() {
+function loadPointerPresenceIpcHandlers(setupOptions) {
   const eventHandlers = new Map();
   const invokeHandlers = new Map();
   const sent = [];
   const remoteCursorCalls = [];
   const collaborationCalls = [];
   const collaborationActionCalls = [];
+  const pointerdownFrameCalls = [];
+  const pointerdownFrameConfirmCalls = [];
   const allowedOverlaySender = {};
   const mainWebContents = {
     isDestroyed: () => false,
@@ -221,6 +235,19 @@ function loadPointerPresenceIpcHandlers() {
         forwardCollaborationAction(event, action) {
           collaborationActionCalls.push([event, action]);
           return { success: true, accepted: true, sequence: collaborationActionCalls.length };
+        },
+        forwardDrawingPointerdownFrameRequest(event, request) {
+          pointerdownFrameCalls.push([event, request]);
+          return { success: true, accepted: true };
+        },
+        confirmDrawingPointerdownFrame(request) {
+          pointerdownFrameConfirmCalls.push(request);
+          return {
+            success: true,
+            accepted: true,
+            pointerdownId: request.pointerdownId,
+            targetFrame: request.targetFrame
+          };
         }
       },
       normalizeMpvCollaborationState,
@@ -244,7 +271,7 @@ function loadPointerPresenceIpcHandlers() {
 
   try {
     const { setupIpcHandlers } = require(ipcHandlersPath);
-    setupIpcHandlers();
+    setupIpcHandlers(setupOptions);
   } finally {
     Module._load = originalLoad;
     delete require.cache[ipcHandlersPath];
@@ -257,6 +284,8 @@ function loadPointerPresenceIpcHandlers() {
     invokeHandlers,
     mainWebContents,
     mainWindow,
+    pointerdownFrameCalls,
+    pointerdownFrameConfirmCalls,
     remoteCursorCalls,
     sent
   };
@@ -266,7 +295,11 @@ test('overlay preload exposes one narrow committed-transition bridge and sends p
   const harness = loadOverlayPreload();
   assert.deepEqual(
     [...harness.exposed.keys()],
-    ['mpvOverlayPersistence', 'mpvOverlayCollaborationActions']
+    [
+      'mpvOverlayPersistence',
+      'mpvOverlayCollaborationActions',
+      'mpvOverlayDrawingFrame'
+    ]
   );
   const bridge = harness.exposed.get('mpvOverlayPersistence');
   assert.deepEqual(Object.keys(bridge), ['notifyCommittedTransition']);
@@ -278,6 +311,46 @@ test('overlay preload exposes one narrow committed-transition bridge and sends p
     { type: 'transition', transition }
   ]]);
   assert.notEqual(harness.sent[0][1].transition, transition);
+});
+
+test('overlay preload sends only exact bounded pointerdown frame requests', () => {
+  const harness = loadOverlayPreload();
+  const bridge = harness.exposed.get('mpvOverlayDrawingFrame');
+  assert.equal(Object.isFrozen(bridge), true);
+  assert.deepEqual(Object.keys(bridge), ['requestPointerdownFrame']);
+
+  const request = makePointerdownFrameRequest();
+  assert.equal(bridge.requestPointerdownFrame(request), true);
+  assert.deepEqual(harness.sent, [[
+    'mpv-overlay:drawing-pointerdown-frame-request',
+    request
+  ]]);
+  assert.notEqual(harness.sent[0][1], request);
+
+  const malformed = [
+    null,
+    [],
+    makePointerdownFrameRequest({ hostGeneration: 0 }),
+    makePointerdownFrameRequest({ videoGeneration: 1.5 }),
+    makePointerdownFrameRequest({ inputRevision: -1 }),
+    makePointerdownFrameRequest({ sessionId: '' }),
+    makePointerdownFrameRequest({ sessionId: 's'.repeat(257) }),
+    makePointerdownFrameRequest({ pointerdownId: '' }),
+    makePointerdownFrameRequest({ pointerdownId: 'p'.repeat(257) }),
+    makePointerdownFrameRequest({ pointerdownAt: -1 }),
+    makePointerdownFrameRequest({ pointerdownAt: 1.5 }),
+    { ...makePointerdownFrameRequest(), injected: true },
+    Object.defineProperty(makePointerdownFrameRequest(), 'hiddenInjected', {
+      value: true,
+      enumerable: false
+    }),
+    Object.assign(makePointerdownFrameRequest(), { [Symbol('injected')]: true }),
+    Object.assign(Object.create({ inherited: true }), makePointerdownFrameRequest())
+  ];
+  for (const value of malformed) {
+    assert.equal(bridge.requestPointerdownFrame(value), false);
+  }
+  assert.equal(harness.sent.length, 1);
 });
 
 test('overlay collaboration bridge accepts only exact allowlisted semantic actions', () => {
@@ -919,4 +992,66 @@ test('main IPC delegates raw collaboration actions to the overlay host sender fe
 
   relay(event, action);
   assert.deepEqual(harness.collaborationActionCalls, [[event, action]]);
+});
+
+test('main IPC relays pointerdown frame requests only for the enabled pilot and current overlay sender', () => {
+  const enabled = loadPointerPresenceIpcHandlers({
+    fabricDrawingPilot: { enabled: true }
+  });
+  const relay = enabled.eventHandlers.get('mpv-overlay:drawing-pointerdown-frame-request');
+  assert.equal(typeof relay, 'function');
+  const request = makePointerdownFrameRequest();
+  const currentEvent = { sender: enabled.allowedOverlaySender };
+
+  relay(currentEvent, request);
+  relay({ sender: {} }, request);
+  assert.deepEqual(enabled.pointerdownFrameCalls, [[currentEvent, request]]);
+
+  const disabled = loadPointerPresenceIpcHandlers({
+    fabricDrawingPilot: { enabled: false }
+  });
+  const disabledRelay = disabled.eventHandlers.get(
+    'mpv-overlay:drawing-pointerdown-frame-request'
+  );
+  disabledRelay({ sender: disabled.allowedOverlaySender }, request);
+  assert.equal(disabled.pointerdownFrameCalls.length, 0);
+});
+
+test('main IPC confirms pointerdown frames only for the enabled pilot and current main renderer', async () => {
+  const enabled = loadPointerPresenceIpcHandlers({
+    fabricDrawingPilot: { enabled: true }
+  });
+  const confirm = enabled.invokeHandlers.get(
+    'mpv:confirm-overlay-drawing-pointerdown-frame'
+  );
+  assert.equal(typeof confirm, 'function');
+  const confirmation = {
+    ...makePointerdownFrameRequest(),
+    targetFrame: 42
+  };
+
+  assert.deepEqual(await confirm({ sender: enabled.mainWebContents }, confirmation), {
+    success: true,
+    accepted: true,
+    pointerdownId: confirmation.pointerdownId,
+    targetFrame: 42
+  });
+  assert.deepEqual(enabled.pointerdownFrameConfirmCalls, [confirmation]);
+  assert.deepEqual(await confirm({ sender: {} }, confirmation), {
+    success: false,
+    error: 'Fabric drawing IPC sender is not allowed'
+  });
+  assert.equal(enabled.pointerdownFrameConfirmCalls.length, 1);
+
+  const disabled = loadPointerPresenceIpcHandlers({
+    fabricDrawingPilot: { enabled: false }
+  });
+  const disabledConfirm = disabled.invokeHandlers.get(
+    'mpv:confirm-overlay-drawing-pointerdown-frame'
+  );
+  assert.deepEqual(
+    await disabledConfirm({ sender: disabled.mainWebContents }, confirmation),
+    { success: false, error: 'Fabric drawing pilot is disabled' }
+  );
+  assert.equal(disabled.pointerdownFrameConfirmCalls.length, 0);
 });

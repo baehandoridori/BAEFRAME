@@ -1,7 +1,8 @@
-const { test } = require('node:test');
+const { before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const rootDir = path.resolve(__dirname, '../..');
 const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
@@ -10,6 +11,14 @@ const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer
 const userSettingsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/user-settings.js'), 'utf8'));
 const indexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8'));
 const mainCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/main.css'), 'utf8'));
+let Timeline;
+
+before(async () => {
+  ({ Timeline } = await import(pathToFileURL(path.join(
+    rootDir,
+    'renderer/scripts/modules/timeline.js'
+  )).href));
+});
 
 test('keyframe drag ghost renders as an exact one-frame cell', () => {
   assert.match(timelineSource, /keyframe-drag-ghost-cell/);
@@ -38,10 +47,16 @@ test('keyframe drag ghost previews every selected keyframe while dragging', () =
   assert.match(timelineSource, /parseInt\(ghostCell\.dataset\.sourceFrame \|\| '0', 10\) \+ frameDelta/);
   assert.match(timelineSource, /this\.dragSourceElements\.forEach\(element => \{/);
   assert.match(timelineSource, /this\.dragGhostItems\.forEach\(ghost => ghost\.remove\(\)\)/);
-  assert.match(timelineSource, /const keyframesToMove = this\.dragGhostKeyframes\.map\(kf => \(/);
+  assert.match(
+    timelineSource,
+    /const keyframesToMove = this\.dragGhostKeyframes\s*\.filter\(kf => this\._isKeyframeLayerMovable\(kf\.layerId, kf\.frame\)\)\s*\.map\(kf => \(/
+  );
+  const movePayloadIndex = timelineSource.indexOf(
+    'const keyframesToMove = this.dragGhostKeyframes'
+  );
   assert.ok(
-    timelineSource.indexOf('const keyframesToMove = this.dragGhostKeyframes.map') <
-      timelineSource.indexOf('this.dragGhostKeyframes = [];', timelineSource.indexOf('const keyframesToMove = this.dragGhostKeyframes.map')),
+    movePayloadIndex >= 0 &&
+      movePayloadIndex < timelineSource.indexOf('this.dragGhostKeyframes = [];', movePayloadIndex),
     'drag ghost keyframes must be cleared after move payload creation'
   );
 });
@@ -57,11 +72,162 @@ test('keyframe drag ghost clamps group delta before preview and move emit', () =
   assert.match(timelineSource, /this\.dragGhost\.dataset\.targetFrame = targetFrame;/);
 });
 
-test('keyframe drag ghost excludes locked layers from preview, clamp, and move emit', () => {
-  assert.match(timelineSource, /_isKeyframeLayerMovable\(layerId\)/);
-  assert.match(timelineSource, /return keyframes\.filter\(keyframe => this\._isKeyframeLayerMovable\(keyframe\.layerId\)\);/);
-  assert.match(timelineSource, /const layer = this\._lastDrawingLayers\.find\(item => item\.id === layerId\);/);
-  assert.match(timelineSource, /return layer\?\.locked !== true;/);
+test('keyframe drag allows the explicit locked synthetic exception while ordinary locked layers stay blocked', () => {
+  const timeline = Object.create(Timeline.prototype);
+  timeline._lastDrawingLayers = [
+    {
+      id: 'fabric-synthetic',
+      locked: true,
+      timelineKeyframesMovable: true,
+      keyframes: [{ frame: 10 }, { frame: 20 }]
+    },
+    {
+      id: 'ordinary-locked',
+      locked: true,
+      keyframes: [{ frame: 30 }]
+    },
+    {
+      id: 'ordinary-unlocked',
+      locked: false,
+      keyframes: [{ frame: 40 }]
+    }
+  ];
+  timeline.selectedKeyframes = [
+    { layerId: 'fabric-synthetic', frame: 10 },
+    { layerId: 'fabric-synthetic', frame: 20 },
+    { layerId: 'ordinary-locked', frame: 30 },
+    { layerId: 'ordinary-unlocked', frame: 40 }
+  ];
+
+  assert.equal(timeline._isKeyframeLayerMovable('fabric-synthetic', 10), true);
+  assert.equal(timeline._isKeyframeLayerMovable('ordinary-locked', 30), false);
+  assert.deepEqual(timeline._getDragGhostKeyframes('fabric-synthetic', 10), [
+    { layerId: 'fabric-synthetic', frame: 10 },
+    { layerId: 'fabric-synthetic', frame: 20 },
+    { layerId: 'ordinary-unlocked', frame: 40 }
+  ]);
+});
+
+test('keyframe drag payload excludes stale selections outside the current rendered markers', () => {
+  const timeline = Object.create(Timeline.prototype);
+  timeline._lastDrawingLayers = [{
+    id: 'fabric-synthetic',
+    locked: true,
+    timelineKeyframesMovable: true,
+    keyframes: [{ frame: 10 }, { frame: 20 }]
+  }];
+  timeline.selectedKeyframes = [
+    { layerId: 'fabric-synthetic', frame: 10 },
+    { layerId: 'fabric-synthetic', frame: 99 },
+    { layerId: 'stale-layer', frame: 10 }
+  ];
+
+  assert.deepEqual(timeline._getDragGhostKeyframes('fabric-synthetic', 10), [
+    { layerId: 'fabric-synthetic', frame: 10 }
+  ]);
+  assert.equal(timeline._isKeyframeLayerMovable('stale-layer', 10), false);
+  timeline._lastDrawingLayers = null;
+  assert.equal(timeline._isKeyframeLayerMovable('fabric-synthetic', 10), false);
+});
+
+test('keyframe drag finish drops a selection that became stale during the drag', () => {
+  const timeline = Object.create(Timeline.prototype);
+  timeline._lastDrawingLayers = [{
+    id: 'fabric-synthetic',
+    locked: true,
+    timelineKeyframesMovable: true,
+    keyframes: [{ frame: 20 }]
+  }];
+  timeline.draggedKeyframe = { layerId: 'stale-layer', frame: 10 };
+  timeline.dragStartFrame = 10;
+  timeline.dragGhost = {
+    dataset: { targetFrame: '15' },
+    remove() {}
+  };
+  timeline.dragGhostItems = [];
+  timeline.dragSourceElements = [];
+  timeline.dragTooltip = null;
+  timeline.dragGhostKeyframes = [
+    { layerId: 'stale-layer', frame: 10 },
+    { layerId: 'fabric-synthetic', frame: 20 }
+  ];
+  const emitted = [];
+  timeline._emit = (name, detail) => emitted.push({ name, detail });
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  globalThis.document = { body: { style: {} } };
+  globalThis.window = {};
+  try {
+    timeline._finishKeyframeDrag({});
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+
+  assert.deepEqual(emitted, [{
+    name: 'keyframesMove',
+    detail: {
+      keyframes: [{
+        layerId: 'fabric-synthetic',
+        fromFrame: 20,
+        toFrame: 25
+      }],
+      frameDelta: 5,
+      anchor: null
+    }
+  }]);
+});
+
+test('keyframe drag finish drops the old gesture after drawing layers rerender with the same marker identity', () => {
+  const timeline = Object.create(Timeline.prototype);
+  timeline._lastDrawingLayers = [{
+    id: 'fabric-synthetic',
+    locked: true,
+    timelineKeyframesMovable: true,
+    keyframes: [{ frame: 10 }]
+  }];
+  timeline._drawingLayerRenderRevision = 4;
+  timeline.dragDrawingLayerRenderRevision = 4;
+  timeline.tracksContainer = { querySelectorAll: () => [] };
+  timeline.layerHeaders = { querySelectorAll: () => [] };
+  timeline._renderLayerHeader = () => {};
+  timeline._renderLayerTrack = () => {};
+  timeline._syncFrameGridContainerMetrics = () => {};
+  timeline.renderDrawingLayers([{
+    id: 'fabric-synthetic',
+    locked: true,
+    timelineKeyframesMovable: true,
+    keyframes: [{ frame: 10 }]
+  }], null);
+
+  timeline.draggedKeyframe = { layerId: 'fabric-synthetic', frame: 10 };
+  timeline.dragStartFrame = 10;
+  timeline.dragGhost = {
+    dataset: { targetFrame: '15' },
+    remove() {}
+  };
+  timeline.dragGhostItems = [];
+  timeline.dragSourceElements = [];
+  timeline.dragTooltip = null;
+  timeline.dragGhostKeyframes = [{ layerId: 'fabric-synthetic', frame: 10 }];
+  const emitted = [];
+  timeline._emit = (name, detail) => emitted.push({ name, detail });
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  globalThis.document = { body: { style: {} } };
+  globalThis.window = {};
+  try {
+    timeline._finishKeyframeDrag({});
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+
+  assert.deepEqual(emitted, []);
 });
 
 test('frame cell mode is stored and wired through the timeline toolbar', () => {

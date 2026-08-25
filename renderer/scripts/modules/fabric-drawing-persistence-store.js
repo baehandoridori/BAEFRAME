@@ -95,6 +95,17 @@ const OVERLAY_SCENE_KEYS = Object.freeze([
   'mutationSequence',
   'objects'
 ]);
+const KEYFRAME_MOVE_KEYS = Object.freeze(['fromFrame', 'toFrame']);
+const KEYFRAME_EDIT_KEYS = Object.freeze([
+  'schema',
+  'kind',
+  'documentId',
+  'before',
+  'after'
+]);
+const KEYFRAME_EDIT_SNAPSHOT_KEYS = Object.freeze(['frame', 'keyframe']);
+const KEYFRAME_EDIT_SCHEMA = 'baeframe-fabric-keyframe-edit';
+const KEYFRAME_EDIT_KIND = 'move-keyframes';
 const VALID_ORIGINS = new Set(['live', 'history']);
 const VALID_KINDS = new Set([
   'add-objects',
@@ -308,6 +319,21 @@ function isPositiveFinite(value) {
 
 function clonePlain(value) {
   return structuredClone(value);
+}
+
+function samePlainValue(left, right) {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) => samePlainValue(item, right[index]));
+  }
+  if (!isPlainRecord(left) || !isPlainRecord(right)) return false;
+  const leftKeys = Reflect.ownKeys(left);
+  const rightKeys = Reflect.ownKeys(right);
+  return leftKeys.length === rightKeys.length &&
+    leftKeys.every(key => Object.hasOwn(right, key) && samePlainValue(left[key], right[key]));
 }
 
 function jsonBytes(value) {
@@ -787,6 +813,227 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     }
   }
 
+  function resolveKeyframeAtFrame(targetFrame) {
+    if (state !== 'ready' || !documentValue ||
+        !Number.isSafeInteger(targetFrame) || targetFrame < 0 ||
+        targetFrame >= documentValue.totalFrames) {
+      return null;
+    }
+
+    let lower = 0;
+    let upper = documentValue.keyframes.length - 1;
+    let resolvedIndex = -1;
+    while (lower <= upper) {
+      const middle = Math.floor((lower + upper) / 2);
+      if (documentValue.keyframes[middle].frame <= targetFrame) {
+        resolvedIndex = middle;
+        lower = middle + 1;
+      } else {
+        upper = middle - 1;
+      }
+    }
+    return resolvedIndex >= 0
+      ? clonePlain(documentValue.keyframes[resolvedIndex])
+      : null;
+  }
+
+  function snapshotKeyframesAtFrames(frames, keyframes = documentValue?.keyframes || []) {
+    const keyframesByFrame = new Map(keyframes.map(keyframe => [keyframe.frame, keyframe]));
+    return frames.map(frame => ({
+      frame,
+      keyframe: keyframesByFrame.has(frame)
+        ? clonePlain(keyframesByFrame.get(frame))
+        : null
+    }));
+  }
+
+  function validateKeyframeEditSnapshots(snapshots) {
+    if (!isDenseArray(snapshots) || snapshots.length === 0) return false;
+    let previousFrame = -1;
+    for (const snapshot of snapshots) {
+      if (!hasExactKeys(snapshot, KEYFRAME_EDIT_SNAPSHOT_KEYS) ||
+          !Number.isSafeInteger(snapshot.frame) || snapshot.frame < 0 ||
+          snapshot.frame >= documentValue.totalFrames ||
+          snapshot.frame <= previousFrame) {
+        return false;
+      }
+      if (snapshot.keyframe !== null) {
+        const validation = validateKeyframes(
+          [snapshot.keyframe],
+          documentValue.totalFrames,
+          limits
+        );
+        if (!validation.valid || snapshot.keyframe.frame !== snapshot.frame) return false;
+      }
+      previousFrame = snapshot.frame;
+    }
+    return true;
+  }
+
+  function validateKeyframeEdit(edit) {
+    if (!hasExactKeys(edit, KEYFRAME_EDIT_KEYS) ||
+        edit.schema !== KEYFRAME_EDIT_SCHEMA ||
+        edit.kind !== KEYFRAME_EDIT_KIND ||
+        edit.documentId !== documentValue.documentId ||
+        !validateKeyframeEditSnapshots(edit.before) ||
+        !validateKeyframeEditSnapshots(edit.after) ||
+        edit.before.length !== edit.after.length) {
+      return false;
+    }
+    return edit.before.every((snapshot, index) => snapshot.frame === edit.after[index].frame);
+  }
+
+  function buildDocumentFromSnapshots(snapshots, revision) {
+    const keyframesByFrame = new Map(
+      documentValue.keyframes.map(keyframe => [keyframe.frame, keyframe])
+    );
+    snapshots.forEach(snapshot => {
+      if (snapshot.keyframe === null) keyframesByFrame.delete(snapshot.frame);
+      else keyframesByFrame.set(snapshot.frame, clonePlain(snapshot.keyframe));
+    });
+    return {
+      ...documentValue,
+      revision,
+      keyframes: [...keyframesByFrame.values()].sort((left, right) => left.frame - right.frame)
+    };
+  }
+
+  function commitKeyframeDocument(nextDocument, touchedFrames, change) {
+    documentValue = nextDocument;
+    issuedIds.add(documentValue.documentId);
+    for (const keyframe of documentValue.keyframes) {
+      issuedIds.add(keyframe.id);
+      for (const object of keyframe.objects) issuedIds.add(object.id);
+    }
+    rebuildByteAccounting(documentValue);
+    touchedFrames.forEach(frame => sceneInstances.delete(frame));
+    emitChange(change);
+  }
+
+  function moveKeyframes(moves) {
+    if (state !== 'ready' || !documentValue) {
+      return { applied: false, reason: 'store-incompatible' };
+    }
+    if (!isDenseArray(moves) || moves.length === 0 ||
+        !moves.every(move =>
+          hasExactKeys(move, KEYFRAME_MOVE_KEYS) &&
+          Number.isSafeInteger(move.fromFrame) &&
+          Number.isSafeInteger(move.toFrame))) {
+      return { applied: false, reason: 'invalid-moves' };
+    }
+    if (moves.some(move => move.fromFrame === move.toFrame)) {
+      return { applied: false, reason: 'no-op' };
+    }
+    if (moves.some(move =>
+      move.fromFrame < 0 || move.fromFrame >= documentValue.totalFrames ||
+      move.toFrame < 0 || move.toFrame >= documentValue.totalFrames)) {
+      return { applied: false, reason: 'frame-out-of-range' };
+    }
+
+    const sourceFrames = new Set(moves.map(move => move.fromFrame));
+    if (sourceFrames.size !== moves.length) {
+      return { applied: false, reason: 'duplicate-source-frame' };
+    }
+    const targetFrames = new Set(moves.map(move => move.toFrame));
+    if (targetFrames.size !== moves.length) {
+      return { applied: false, reason: 'duplicate-target-frame' };
+    }
+    const currentByFrame = new Map(
+      documentValue.keyframes.map(keyframe => [keyframe.frame, keyframe])
+    );
+    if (moves.some(move => !currentByFrame.has(move.fromFrame))) {
+      return { applied: false, reason: 'source-keyframe-not-found' };
+    }
+    if (documentValue.revision >= Number.MAX_SAFE_INTEGER) {
+      return { applied: false, reason: 'revision-overflow' };
+    }
+
+    const touchedFrames = [...new Set(moves.flatMap(move => [
+      move.fromFrame,
+      move.toFrame
+    ]))].sort((left, right) => left - right);
+    const before = snapshotKeyframesAtFrames(touchedFrames);
+    const sourceSnapshots = new Map(moves.map(move => [
+      move.fromFrame,
+      clonePlain(currentByFrame.get(move.fromFrame))
+    ]));
+    moves.forEach(move => currentByFrame.delete(move.fromFrame));
+    moves.forEach(move => {
+      currentByFrame.set(move.toFrame, {
+        ...sourceSnapshots.get(move.fromFrame),
+        frame: move.toFrame
+      });
+    });
+
+    const nextDocument = {
+      ...documentValue,
+      revision: documentValue.revision + 1,
+      keyframes: [...currentByFrame.values()].sort((left, right) => left.frame - right.frame)
+    };
+    const validation = validateRootValue(nextDocument, limits);
+    if (!validation.valid) return { applied: false, reason: validation.reason };
+
+    const after = snapshotKeyframesAtFrames(touchedFrames, nextDocument.keyframes);
+    const edit = {
+      schema: KEYFRAME_EDIT_SCHEMA,
+      kind: KEYFRAME_EDIT_KIND,
+      documentId: documentValue.documentId,
+      before,
+      after
+    };
+    commitKeyframeDocument(nextDocument, touchedFrames, {
+      kind: 'move-keyframes',
+      origin: 'timeline',
+      frame: null,
+      mutationSequence: null,
+      revision: nextDocument.revision
+    });
+    return {
+      applied: true,
+      revision: documentValue.revision,
+      edit
+    };
+  }
+
+  function applyKeyframeEdit(edit, direction) {
+    if (state !== 'ready' || !documentValue) {
+      return { applied: false, reason: 'store-incompatible' };
+    }
+    if (direction !== 'undo' && direction !== 'redo') {
+      return { applied: false, reason: 'invalid-direction' };
+    }
+    if (!validateKeyframeEdit(edit)) {
+      return { applied: false, reason: 'invalid-edit' };
+    }
+    if (documentValue.revision >= Number.MAX_SAFE_INTEGER) {
+      return { applied: false, reason: 'revision-overflow' };
+    }
+
+    const expected = direction === 'undo' ? edit.after : edit.before;
+    const replacement = direction === 'undo' ? edit.before : edit.after;
+    const touchedFrames = expected.map(snapshot => snapshot.frame);
+    const current = snapshotKeyframesAtFrames(touchedFrames);
+    if (!samePlainValue(current, expected)) {
+      return { applied: false, reason: 'edit-state-mismatch' };
+    }
+
+    const nextDocument = buildDocumentFromSnapshots(
+      replacement,
+      documentValue.revision + 1
+    );
+    const validation = validateRootValue(nextDocument, limits);
+    if (!validation.valid) return { applied: false, reason: validation.reason };
+
+    commitKeyframeDocument(nextDocument, touchedFrames, {
+      kind: 'apply-keyframe-edit',
+      origin: direction,
+      frame: null,
+      mutationSequence: null,
+      revision: nextDocument.revision
+    });
+    return { applied: true, revision: documentValue.revision };
+  }
+
   function applyTransition(event) {
     if (state !== 'ready' || !documentValue) {
       return eventFailure('store-incompatible');
@@ -1175,6 +1422,9 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     importRootValue,
     reset,
     invalidate,
+    resolveKeyframeAtFrame,
+    moveKeyframes,
+    applyKeyframeEdit,
     applyTransition,
     replaceFromOverlay,
     exportRootValue,

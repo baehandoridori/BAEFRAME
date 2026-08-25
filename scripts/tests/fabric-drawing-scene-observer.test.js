@@ -869,6 +869,9 @@ test('warm source dimension mismatch quarantines only the shadow projection', ()
   });
 
   assert.equal(store.activateSession(session()).accepted, true);
+  // 저장되지 않은 빈 target은 copy-on-write 임시 장면이므로 deactivate 때 폐기된다.
+  // warm signature 계약은 실제 변경으로 materialize된 같은 장면에서 검증한다.
+  assert.equal(store.addStroke(stroke('materialized-before-resize')).applied, true);
   assert.equal(store.deactivateSession('session-a').accepted, true);
   assert.equal(store.activateSession(session({
     sessionId: 'session-resized-source',
@@ -877,7 +880,7 @@ test('warm source dimension mismatch quarantines only the shadow projection', ()
   assert.equal(adapter.getSceneProjection('scene-dimensions'), null);
   assert.equal(adapter.getDiagnostics('scene-dimensions').lastReason, 'seed-signature-changed');
   assert.equal(store.addStroke(stroke('primary-still-works')).applied, true);
-  assert.equal(store.getActiveSceneSnapshot().objects.length, 1);
+  assert.equal(store.getActiveSceneSnapshot().objects.length, 2);
 });
 
 test('a final enqueue exception immediately hides the real shadow without rolling back Fabric', () => {

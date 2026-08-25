@@ -1994,3 +1994,216 @@ test('a rejected source refresh preserves quit suspension resume intent', async 
   assert.equal(await harness.controller.resumeAfterQuitCancelled(), true);
   assert.equal(harness.controller.getState(), 'active');
 });
+
+function makeKeyframe(frame, id, objectIds = [], overrides = {}) {
+  return {
+    id,
+    frame,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    mutationSequence: frame + 1,
+    objects: objectIds.map(makeRecord),
+    ...overrides
+  };
+}
+
+function createStoreWithKeyframes(keyframes, options = {}) {
+  const store = createFabricDrawingPersistenceStore({
+    createId: prefix => `${prefix}-generated`,
+    ...options
+  });
+  const imported = store.importRootValue(makeRoot({
+    revision: options.revision ?? 1,
+    keyframes
+  }), {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity: 'C:/shot/scene-001.mov'
+  });
+  assert.equal(imported.accepted, true);
+  return store;
+}
+
+test('hold resolver returns the last exact or held keyframe while preserving an empty hold break', () => {
+  const store = createStoreWithKeyframes([
+    makeKeyframe(100, 'keyframe-100', ['stroke-100']),
+    makeKeyframe(150, 'keyframe-150'),
+    makeKeyframe(200, 'keyframe-200', ['stroke-200'])
+  ]);
+
+  assert.equal(store.resolveKeyframeAtFrame(99), null);
+  assert.equal(store.resolveKeyframeAtFrame(-1), null);
+  assert.equal(store.resolveKeyframeAtFrame(240), null);
+  assert.equal(store.resolveKeyframeAtFrame(100.5), null);
+  assert.deepEqual(
+    { frame: store.resolveKeyframeAtFrame(100).frame, ids: store.resolveKeyframeAtFrame(100).objects.map(item => item.id) },
+    { frame: 100, ids: ['stroke-100'] }
+  );
+  assert.deepEqual(
+    { frame: store.resolveKeyframeAtFrame(149).frame, ids: store.resolveKeyframeAtFrame(149).objects.map(item => item.id) },
+    { frame: 100, ids: ['stroke-100'] }
+  );
+  assert.deepEqual(
+    { frame: store.resolveKeyframeAtFrame(150).frame, objects: store.resolveKeyframeAtFrame(150).objects },
+    { frame: 150, objects: [] }
+  );
+  assert.deepEqual(
+    { frame: store.resolveKeyframeAtFrame(199).frame, objects: store.resolveKeyframeAtFrame(199).objects },
+    { frame: 150, objects: [] }
+  );
+  assert.deepEqual(
+    { frame: store.resolveKeyframeAtFrame(200).frame, ids: store.resolveKeyframeAtFrame(200).objects.map(item => item.id) },
+    { frame: 200, ids: ['stroke-200'] }
+  );
+
+  const resolvedClone = store.resolveKeyframeAtFrame(149);
+  resolvedClone.objects[0].style.color = '#000000';
+  assert.equal(store.resolveKeyframeAtFrame(149).objects[0].style.color, '#ff4757');
+  assert.equal(createFabricDrawingPersistenceStore().resolveKeyframeAtFrame(0), null);
+});
+
+test('single keyframe move preserves the source snapshot and emits one revision', () => {
+  const source = makeKeyframe(10, 'keyframe-10', ['stroke-10'], {
+    sourceWidth: 1280,
+    sourceHeight: 720,
+    mutationSequence: 77
+  });
+  const store = createStoreWithKeyframes([source]);
+  const changes = [];
+  store.subscribe(change => changes.push(change));
+
+  const result = store.moveKeyframes([{ fromFrame: 10, toFrame: 15 }]);
+
+  assert.equal(result.applied, true);
+  assert.equal(result.revision, 2);
+  assert.deepEqual(Object.keys(result.edit), [
+    'schema',
+    'kind',
+    'documentId',
+    'before',
+    'after'
+  ]);
+  assert.deepEqual(result.edit.before.map(item => item.frame), [10, 15]);
+  assert.deepEqual(result.edit.after.map(item => item.frame), [10, 15]);
+  assert.deepEqual(store.exportRootValue().keyframes, [{ ...source, frame: 15 }]);
+  assert.equal(store.getStatus().objectCount, 1);
+  assert.deepEqual(changes.map(change => change.revision), [2]);
+});
+
+test('multi-keyframe move uses the starting snapshot for overlap and overwrites destinations atomically', () => {
+  const frame100 = makeKeyframe(100, 'keyframe-100', ['stroke-100']);
+  const frame200 = makeKeyframe(200, 'keyframe-200', ['stroke-200']);
+  const overwritten = makeKeyframe(220, 'keyframe-220', ['stroke-overwritten']);
+  const store = createStoreWithKeyframes([frame100, frame200, overwritten]);
+  const changes = [];
+  store.subscribe(change => changes.push(change));
+
+  const result = store.moveKeyframes([
+    { fromFrame: 100, toFrame: 200 },
+    { fromFrame: 200, toFrame: 220 }
+  ]);
+
+  assert.equal(result.applied, true);
+  assert.deepEqual(
+    store.exportRootValue().keyframes.map(keyframe => ({
+      frame: keyframe.frame,
+      id: keyframe.id,
+      objectIds: keyframe.objects.map(object => object.id)
+    })),
+    [
+      { frame: 200, id: 'keyframe-100', objectIds: ['stroke-100'] },
+      { frame: 220, id: 'keyframe-200', objectIds: ['stroke-200'] }
+    ]
+  );
+  assert.deepEqual(result.edit.before.map(item => item.frame), [100, 200, 220]);
+  assert.deepEqual(result.edit.after.map(item => item.frame), [100, 200, 220]);
+  assert.equal(store.getStatus().objectCount, 2);
+  assert.equal(changes.length, 1);
+});
+
+test('invalid keyframe move batches leave the document, revision, and events untouched', () => {
+  const invalidBatches = [
+    [{ fromFrame: 10, toFrame: 240 }],
+    [{ fromFrame: 10, toFrame: 11 }, { fromFrame: 99, toFrame: 12 }],
+    [{ fromFrame: 10, toFrame: 11 }, { fromFrame: 10, toFrame: 12 }],
+    [{ fromFrame: 10, toFrame: 12 }, { fromFrame: 20, toFrame: 12 }],
+    [{ fromFrame: 10, toFrame: 10 }]
+  ];
+
+  invalidBatches.forEach(moves => {
+    const store = createStoreWithKeyframes([
+      makeKeyframe(10, 'keyframe-10', ['stroke-10']),
+      makeKeyframe(20, 'keyframe-20', ['stroke-20'])
+    ]);
+    const before = store.exportRootValue();
+    const changes = [];
+    store.subscribe(change => changes.push(change));
+
+    assert.equal(store.moveKeyframes(moves).applied, false);
+    assert.deepEqual(store.exportRootValue(), before);
+    assert.equal(store.getRevision(), before.revision);
+    assert.equal(changes.length, 0);
+  });
+
+  const overflowStore = createStoreWithKeyframes([
+    makeKeyframe(10, 'keyframe-10', ['stroke-10'])
+  ], { revision: Number.MAX_SAFE_INTEGER });
+  const overflowBefore = overflowStore.exportRootValue();
+  assert.deepEqual(
+    overflowStore.moveKeyframes([{ fromFrame: 10, toFrame: 11 }]),
+    { applied: false, reason: 'revision-overflow' }
+  );
+  assert.deepEqual(overflowStore.exportRootValue(), overflowBefore);
+});
+
+test('keyframe move edit restores an overwritten destination on undo and can redo the move', () => {
+  const original10 = makeKeyframe(10, 'keyframe-10', ['stroke-10']);
+  const original20 = makeKeyframe(20, 'keyframe-20', ['stroke-20']);
+  const store = createStoreWithKeyframes([original10, original20]);
+  const changes = [];
+  store.subscribe(change => changes.push(change));
+
+  const moved = store.moveKeyframes([{ fromFrame: 10, toFrame: 20 }]);
+  assert.equal(moved.applied, true);
+  assert.deepEqual(
+    store.exportRootValue().keyframes.map(keyframe => keyframe.id),
+    ['keyframe-10']
+  );
+
+  assert.deepEqual(store.applyKeyframeEdit(moved.edit, 'undo'), {
+    applied: true,
+    revision: 3
+  });
+  assert.deepEqual(store.exportRootValue().keyframes, [original10, original20]);
+
+  assert.deepEqual(store.applyKeyframeEdit(moved.edit, 'redo'), {
+    applied: true,
+    revision: 4
+  });
+  assert.deepEqual(store.exportRootValue().keyframes, [{ ...original10, frame: 20 }]);
+  assert.deepEqual(changes.map(change => change.revision), [2, 3, 4]);
+});
+
+test('keyframe edit rejects wrong documents, malformed tokens, and changed touched frames atomically', () => {
+  const store = createStoreWithKeyframes([
+    makeKeyframe(10, 'keyframe-10', ['stroke-10']),
+    makeKeyframe(20, 'keyframe-20', ['stroke-20'])
+  ]);
+  const firstMove = store.moveKeyframes([{ fromFrame: 10, toFrame: 20 }]);
+  assert.equal(firstMove.applied, true);
+  const secondMove = store.moveKeyframes([{ fromFrame: 20, toFrame: 21 }]);
+  assert.equal(secondMove.applied, true);
+  const beforeRejectedEdits = store.exportRootValue();
+
+  assert.equal(store.applyKeyframeEdit(firstMove.edit, 'undo').applied, false);
+  assert.equal(store.applyKeyframeEdit({
+    ...firstMove.edit,
+    documentId: 'another-document'
+  }, 'undo').applied, false);
+  assert.equal(store.applyKeyframeEdit({
+    ...firstMove.edit,
+    unexpected: true
+  }, 'undo').applied, false);
+  assert.equal(store.applyKeyframeEdit(firstMove.edit, 'sideways').applied, false);
+  assert.deepEqual(store.exportRootValue(), beforeRejectedEdits);
+});
