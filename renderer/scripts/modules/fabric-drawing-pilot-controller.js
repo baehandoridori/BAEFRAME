@@ -250,6 +250,21 @@ export function createFabricDrawingPilotController(options = {}) {
   }
 
   function resolveSourceFrame(targetFrame) {
+    if (typeof persistenceStore?.resolveSourceFrameAtFrame === 'function') {
+      let sourceFrame = null;
+      try {
+        sourceFrame = persistenceStore.resolveSourceFrameAtFrame(targetFrame);
+      } catch {
+        return null;
+      }
+      if (sourceFrame === null) return { sourceFrame: null };
+      const normalizedSourceFrame = Number(sourceFrame);
+      if (!Number.isSafeInteger(normalizedSourceFrame) || normalizedSourceFrame < 0 ||
+          normalizedSourceFrame > targetFrame) {
+        return null;
+      }
+      return { sourceFrame: normalizedSourceFrame };
+    }
     if (typeof persistenceStore?.resolveKeyframeAtFrame !== 'function') return null;
     let keyframe = null;
     try {
@@ -424,7 +439,17 @@ export function createFabricDrawingPilotController(options = {}) {
     void (async () => {
       let accepted = false;
       try {
-        const response = await entry.presentFrame(entry.request);
+        const response = await withPersistenceIpcDeadline(
+          entry.presentFrame(entry.request),
+          {
+            success: false,
+            accepted: false,
+            presentationRevision: entry.request.presentationRevision,
+            targetFrame: entry.request.targetFrame,
+            sourceFrame: entry.request.sourceFrame,
+            reason: 'passive-presentation-ipc-timeout'
+          }
+        );
         accepted = responseMatchesPassivePresentation(response, entry.request) &&
           passivePresentationEntryIsCurrent(entry);
         if (accepted) lastAcceptedPresentationSignature = entry.signature;

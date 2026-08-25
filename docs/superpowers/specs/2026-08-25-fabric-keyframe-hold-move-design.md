@@ -42,7 +42,7 @@ Windows 콜드 스타트 검증에서는 세 번째 결함도 확인됐다. `loa
 
 controller는 passive 표시 요청과 active 프레임 후보 요청을 각각 최신 하나로 직렬화한다. 요청은 host/video/input/session/revision과 영상 identity로 fence한다. preload/IPC/overlay host는 두 요청을 분리해 전달한다.
 
-- passive runtime은 저장·selection·history를 바꾸지 않은 채 source scene을 non-interactive canvas에 그린다. source가 없거나 empty이면 즉시 비운다.
+- passive runtime은 저장·selection·history를 바꾸지 않은 채 source scene을 non-interactive canvas에 그린다. source가 없거나 empty이면 즉시 비운다. renderer의 프레임 hot path는 held source의 frame 번호만 binary search로 해석하고 전체 object payload를 clone하지 않는다.
 - passive controller는 host/runtime가 허용하는 표시 전용 exact-key DTO만 전송하며 공통 protocol envelope를 섞지 않는다.
 - passive 표시 요청은 영상 원본 크기, 캔버스 영역, zoom/pan 정보를 함께 보내 fresh host와 B-off resize에서도 같은 좌표를 유지한다.
 - B active 재생 중 runtime은 자기 최신 committed scene으로 hold source를 찾아 읽기 전용 미리보기만 갱신한다. 이 프레임 알림만으로 keyframe·transition·provisional scene을 만들지 않는다.
@@ -50,6 +50,7 @@ controller는 passive 표시 요청과 active 프레임 후보 요청을 각각 
 - B를 끄거나 수화·영상 전환이 끝나 passive가 되면 현재 playhead를 다시 동기화한다.
 - passive 장면 렌더가 현재 요청으로 승인되면 overlay host는 `moveTop()` 뒤 Chromium 합성을 무효화한다. stale·reject·실패 응답은 창 순서를 바꾸지 않는다.
 - 재생 시작 시 현재 playhead를 한 번 force-present하여 이미 hold 구간 안에서 시작해도 장면과 네이티브 창 순서를 복구한다. 이후에는 source·store·viewport가 바뀔 때만 다시 표시한다.
+- passive 표시 IPC도 bounded deadline을 사용한다. host가 응답하지 않으면 in-flight를 해제하고 대기열의 최신 프레임 한 건만 이어서 전송하며, 늦은 응답은 현재 accepted signature를 바꾸지 않는다.
 - 새 영상 로드는 `로컬 review 설치 → FPS 설정 → Fabric afterVideoReady → 선택적 자동재생 → 협업 시작` 순서를 지킨다. 협업 Promise가 pending 또는 reject여도 로컬 passive 표시 준비는 먼저 끝나야 한다.
 - mpv·비음성·Fabric 소유 경로에서는 `afterVideoReady()`의 명시적 성공(`true`)이 자동재생의 선행 조건이다. `false`면 자동재생 전에 load를 실패로 닫고 해당 영상의 Fabric 준비와 미디어 surface를 정리한다.
 - HTML5, 음성, engine swap, mpv 비소유 경로는 위 fail-closed 판정의 비적용 범위다. 이 경로들은 기존 자동재생을 유지하며, engine swap은 기존 Fabric 세션을 재사용하고 중복 `afterVideoReady()`를 호출하지 않는다.
@@ -111,7 +112,9 @@ synthetic 행은 레이어 잠금 상태를 유지하되 `timelineKeyframesMovab
 9. 콜드 스타트: 협업 Promise를 pending으로 둬도 `afterVideoReady`가 먼저 완료되고, 자동재생은 그 뒤에만 시작하며, 정상 협업·engine swap·stale/cancel 경로에는 중복 준비·재생이 없음.
 10. readiness 실패: 적용 대상 mpv Fabric의 `afterVideoReady=false`는 자동재생 전 load 실패·정리를 만들고, HTML5·음성·engine swap·mpv 비소유 control은 기존 자동재생을 유지한다.
 11. history 순서: 이동 tail 중 Undo 대기, 이동 뒤 외부 push FIFO, owner 상실 시 대기 action 보존, 진행 중 global Undo와 inverse 이동의 store commit 차단.
-12. 회귀: B toggle z-order, mpv runtime/host, HTML5 legacy, playlist/cutlist, 전체 테스트.
+12. playback hot path: held source frame 해석이 object payload를 clone하지 않고 exact/hold/empty-break를 보존한다.
+13. passive IPC deadline: 미응답 요청 뒤 최신 trailing이 진행되고, 늦은 응답·자동 retry가 현재 표시를 덮지 않는다.
+14. 회귀: B toggle z-order, mpv runtime/host, HTML5 legacy, playlist/cutlist, 전체 테스트.
 
 ## 릴리스
 

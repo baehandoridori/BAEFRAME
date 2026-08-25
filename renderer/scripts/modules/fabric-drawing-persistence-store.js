@@ -813,11 +813,11 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     }
   }
 
-  function resolveKeyframeAtFrame(targetFrame) {
+  function resolveKeyframeIndexAtFrame(targetFrame) {
     if (state !== 'ready' || !documentValue ||
         !Number.isSafeInteger(targetFrame) || targetFrame < 0 ||
         targetFrame >= documentValue.totalFrames) {
-      return null;
+      return -1;
     }
 
     let lower = 0;
@@ -832,9 +832,17 @@ export function createFabricDrawingPersistenceStore(options = {}) {
         upper = middle - 1;
       }
     }
-    return resolvedIndex >= 0
-      ? clonePlain(documentValue.keyframes[resolvedIndex])
-      : null;
+    return resolvedIndex;
+  }
+
+  function resolveSourceFrameAtFrame(targetFrame) {
+    const resolvedIndex = resolveKeyframeIndexAtFrame(targetFrame);
+    return resolvedIndex >= 0 ? documentValue.keyframes[resolvedIndex].frame : null;
+  }
+
+  function resolveKeyframeAtFrame(targetFrame) {
+    const resolvedIndex = resolveKeyframeIndexAtFrame(targetFrame);
+    return resolvedIndex >= 0 ? clonePlain(documentValue.keyframes[resolvedIndex]) : null;
   }
 
   function snapshotKeyframesAtFrames(frames, keyframes = documentValue?.keyframes || []) {
@@ -1422,6 +1430,7 @@ export function createFabricDrawingPersistenceStore(options = {}) {
     importRootValue,
     reset,
     invalidate,
+    resolveSourceFrameAtFrame,
     resolveKeyframeAtFrame,
     moveKeyframes,
     applyKeyframeEdit,

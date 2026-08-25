@@ -64,7 +64,9 @@ function createHarness(options = {}) {
     present: [],
     frame: [],
     pointerdownConfirm: [],
-    action: []
+    action: [],
+    sourceFrameResolution: [],
+    keyframeResolution: []
   };
   let pointerdownFrameListener = null;
   let runtimeSnapshot = null;
@@ -92,7 +94,18 @@ function createHarness(options = {}) {
     }),
     replaceFromOverlay: () => ({ accepted: true, changed: false, revision }),
     applyTransition: () => ({ applied: true, revision }),
+    resolveSourceFrameAtFrame(targetFrame) {
+      calls.sourceFrameResolution.push(targetFrame);
+      const source = [...keyframes]
+        .reverse()
+        .find(keyframe => keyframe.frame <= targetFrame);
+      return source?.frame ?? null;
+    },
     resolveKeyframeAtFrame(targetFrame) {
+      calls.keyframeResolution.push(targetFrame);
+      if (options.rejectFullKeyframeResolution) {
+        throw new Error('passive display must not clone the full keyframe payload');
+      }
       const source = [...keyframes]
         .reverse()
         .find(keyframe => keyframe.frame <= targetFrame);
@@ -287,6 +300,16 @@ test('passive display resolves held sources and resends the same source when vie
   assert.equal(harness.calls.present.at(-1).storeRevision, 5);
 });
 
+test('passive display resolves only the source frame without cloning held scene payloads', async () => {
+  const harness = createHarness({ rejectFullKeyframeResolution: true });
+  await preparePassive(harness);
+
+  assert.equal(await harness.controller.syncDisplayFrame(149), true);
+  assert.equal(harness.calls.present.at(-1)?.sourceFrame, 100);
+  assert.deepEqual(harness.calls.sourceFrameResolution, [149, 149]);
+  assert.deepEqual(harness.calls.keyframeResolution, []);
+});
+
 test('passive display serializes one request and keeps only the newest trailing source', async () => {
   const first = deferred();
   const harness = createHarness({
@@ -320,6 +343,53 @@ test('passive display serializes one request and keeps only the newest trailing 
   assert.equal(await firstResult, false);
   assert.equal(await newestTrailing, true);
   assert.deepEqual(harness.calls.present.map(request => request.sourceFrame), [100, 200]);
+});
+
+test('an unresolved passive presentation times out and releases the newest trailing frame', async () => {
+  const first = deferred();
+  const harness = createHarness({
+    persistenceIpcDeadlineMs: 10,
+    onPresent(request, index) {
+      if (index === 0) return first.promise;
+      return {
+        success: true,
+        accepted: true,
+        presentationRevision: request.presentationRevision,
+        targetFrame: request.targetFrame,
+        sourceFrame: request.sourceFrame
+      };
+    }
+  });
+  await preparePassive(harness);
+
+  const firstResult = harness.controller.syncDisplayFrame(100);
+  const discardedTrailing = harness.controller.syncDisplayFrame(150);
+  const newestTrailing = harness.controller.syncDisplayFrame(200);
+  assert.equal(await discardedTrailing, false);
+  assert.deepEqual(harness.calls.present.map(request => request.targetFrame), [100]);
+
+  const settled = await Promise.race([
+    Promise.all([firstResult, newestTrailing]),
+    new Promise(resolve => setTimeout(() => resolve('test-timeout'), 150))
+  ]);
+  assert.deepEqual(settled, [false, true]);
+  assert.deepEqual(harness.calls.present.map(request => request.targetFrame), [100, 200]);
+
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(harness.calls.present.length, 2, 'a timed-out request must not start a retry loop');
+
+  const firstRequest = harness.calls.present[0];
+  first.resolve({
+    success: true,
+    accepted: true,
+    presentationRevision: firstRequest.presentationRevision,
+    targetFrame: firstRequest.targetFrame,
+    sourceFrame: firstRequest.sourceFrame
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(await harness.controller.syncDisplayFrame(100), true);
+  assert.deepEqual(harness.calls.present.map(request => request.targetFrame), [100, 200, 100]);
 });
 
 test('seeking A to B and back to in-flight A replaces the stale B trailing request', async () => {
