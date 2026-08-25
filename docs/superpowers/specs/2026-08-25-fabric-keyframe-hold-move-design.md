@@ -99,6 +99,7 @@ synthetic 행은 레이어 잠금 상태를 유지하되 `timelineKeyframesMovab
 - 협업 연결 지연·실패는 로컬 Fabric 준비와 B-off 표시를 차단하지 않는다.
 - 적용 대상 mpv Fabric readiness 실패는 자동재생보다 먼저 load를 실패로 닫고, HTML5·음성·engine swap·mpv 비소유 경로의 기존 재생 의미는 유지한다.
 - 이동 history 예약이 열린 동안의 undo/redo와 외부 push는 FIFO 장벽을 따르며, owner 상실·이동 실패에서도 대기 action을 유실하지 않는다.
+- pointerdown 프레임 승인 대기 중에도 coalesced 펜 좌표·압력을 순서대로 보존하고, bounded pending buffer를 넘으면 전체 gesture를 실패로 닫는다.
 
 ## RED→GREEN 검증
 
@@ -116,7 +117,8 @@ synthetic 행은 레이어 잠금 상태를 유지하되 `timelineKeyframesMovab
 12. playback hot path: held source frame 해석이 object payload를 clone하지 않고 exact/hold/empty-break를 보존한다.
 13. passive IPC deadline: 미응답 요청 뒤 최신 trailing이 진행되고, 늦은 응답·자동 retry가 현재 표시를 덮지 않는다.
 14. delayed B-on: input 승인 전 playhead가 이동하면 첫 pointerdown과 runtime preview가 승인 시점 live frame을 사용한다.
-15. 회귀: B toggle z-order, mpv runtime/host, HTML5 legacy, playlist/cutlist, 전체 테스트.
+15. 입력 정밀도: pointerdown 승인 대기 중 coalesced move 좌표·압력·pointerup 순서를 보존하고, 1,024개 상한 초과 시 저장 없이 capture를 해제한다.
+16. 회귀: B toggle z-order, mpv runtime/host, HTML5 legacy, playlist/cutlist, 전체 테스트.
 
 ## 릴리스
 

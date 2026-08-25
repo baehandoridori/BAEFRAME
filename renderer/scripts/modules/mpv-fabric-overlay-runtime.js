@@ -5387,11 +5387,16 @@ function createFabricOverlayRuntime(options = {}) {
     event.preventDefault?.();
     event.stopImmediatePropagation?.();
     event.stopPropagation?.();
-    if (pending.events.length >= MAX_PENDING_POINTER_EVENTS) {
+    const coalesced = event.type === 'pointermove' &&
+      typeof event.getCoalescedEvents === 'function'
+      ? event.getCoalescedEvents()
+      : [];
+    const samples = coalesced.length > 0 ? coalesced : [event];
+    if (pending.events.length + samples.length > MAX_PENDING_POINTER_EVENTS) {
       cancelPendingPointerdownFrame();
       return true;
     }
-    pending.events.push(snapshotPointerEvent(event));
+    for (const sample of samples) pending.events.push(snapshotPointerEvent(sample));
     return true;
   }
 

@@ -11914,6 +11914,132 @@ test('pointerdown confirmation pins the controller-captured frame instead of an 
   runtime.destroy();
 });
 
+test('pending pointerdown replays every coalesced move sample before its buffered pointerup', () => {
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1907,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  canvas.upperCanvasEl.dispatch('pointermove', {
+    pointerId: 1907,
+    pointerType: 'pen',
+    buttons: 1,
+    clientX: 999,
+    clientY: 999,
+    pressure: 1,
+    getCoalescedEvents: () => [
+      {
+        type: 'pointermove', pointerId: 1907, pointerType: 'pen', buttons: 1,
+        clientX: 20, clientY: 30, pressure: 0.2
+      },
+      {
+        type: 'pointermove', pointerId: 1907, pointerType: 'pen', buttons: 1,
+        clientX: 40, clientY: 50, pressure: 0.8
+      }
+    ]
+  });
+  canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 1907,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 60,
+    clientY: 70,
+    pressure: 0.4
+  });
+
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, true);
+  const stroke = runtime.exportDrawingVideo(makePersistenceExport())
+    .snapshot.scenes[0].objects[0];
+  assert.deepEqual(
+    stroke.sourcePoints.map(({ x, y, pressure }) => ({ x, y, pressure })),
+    [
+      { x: 20, y: 40, pressure: 0.3 },
+      { x: 40, y: 60, pressure: 0.2 },
+      { x: 80, y: 100, pressure: 0.8 },
+      { x: 120, y: 140, pressure: 0.4 }
+    ]
+  );
+  runtime.destroy();
+});
+
+test('a coalesced pending move cannot exceed the existing pointer event buffer limit', () => {
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1908,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  canvas.upperCanvasEl.dispatch('pointermove', {
+    pointerId: 1908,
+    pointerType: 'pen',
+    buttons: 1,
+    clientX: 20,
+    clientY: 30,
+    pressure: 0.4,
+    getCoalescedEvents: () => Array.from({ length: 1024 }, (_value, index) => ({
+      type: 'pointermove',
+      pointerId: 1908,
+      pointerType: 'pen',
+      buttons: 1,
+      clientX: 20 + index,
+      clientY: 30 + index,
+      pressure: 0.4
+    }))
+  });
+
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false);
+  assert.deepEqual(canvas.upperCanvasEl.pointerReleaseRequests, [1908]);
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    0
+  );
+  runtime.destroy();
+});
+
 test('a fenced negative pointerdown acknowledgement releases input while stale cancel leaves the next gesture intact', () => {
   const pointerdownRequests = [];
   const source = makeHistoryStroke('pointerdown-cancel-source');
