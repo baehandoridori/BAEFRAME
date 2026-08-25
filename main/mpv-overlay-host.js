@@ -2611,6 +2611,12 @@ class MPVOverlayHost {
     }
 
     const stillCurrent = this._inputRequestStillDesired(hostWindow, request);
+    if (!request.enabled && runtimeResult?.accepted === true && stillCurrent) {
+      // focusable:false 전환은 Windows에서 sibling mpv 창을 위로 올릴 수 있다.
+      // passive 장면을 다시 그린 뒤 overlay의 순서를 복원하고 즉시 present한다.
+      hostWindow.moveTop?.();
+      hostWindow.webContents?.invalidate?.();
+    }
     if (request.enabled && runtimeResult?.accepted === true && stillCurrent) {
       this.activeSessionId = request.session?.sessionId || null;
       this.currentToolRevision = 0;
@@ -3215,7 +3221,9 @@ class MPVOverlayHost {
       hostWindow.webContents?.invalidate?.();
       hostWindow.setFocusable?.(true);
       hostWindow.setIgnoreMouseEvents?.(false);
-      // 네이티브 확장 스타일 변경이 직전 repaint 예약을 무효화할 수 있어 한 번 더 강제한다
+      // 네이티브 확장 스타일 변경이 sibling mpv 창을 위로 올릴 수 있으므로
+      // overlay 순서를 복원한 뒤 재합성을 한 번 더 강제한다.
+      hostWindow.moveTop?.();
       hostWindow.webContents?.invalidate?.();
       return;
     }
@@ -3291,6 +3299,10 @@ class MPVOverlayHost {
     };
     try {
       await this._executeFabricMethod('setDrawingInput', disableRequest);
+      if (this._inputRequestStillDesired(hostWindow, disableRequest)) {
+        hostWindow.moveTop?.();
+        hostWindow.webContents?.invalidate?.();
+      }
     } catch (error) {
       this.fabricLastError = error.message;
       this.logger.debug('stale Fabric drawing enable compensation failed', { error: error.message });
